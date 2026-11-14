@@ -15,7 +15,7 @@ const UI_PROPS = new Set(['textContent', 'innerText', 'innerHTML', 'outerHTML', 
 const UI_CALLS = new Set(['toast', 'alert', 'confirm', 'prompt', 'setCustomValidity', 'say', 'note', 'show', 'announce', 'tell', 'setStatus',
   'status', 'append', 'prepend', 'replaceChildren', 'insertAdjacentText', 'insertAdjacentHTML', 'createTextNode', 'element', 'el', 'make', 'node',
   'button', 'btn', 'chip', 'h', 'tag', 'create', 'option', 'plain', 'primary', 'cancel', 'labelled', 'add', 'line', 'row', 'cell', 'heading',
-  'field', 'section', 'group', 'link', 'item', 'tab', 'action', 'menuItem', 'choice', 'pick', 'toggle', 'fail', 'fill', 'message', 'reason', 'finish']);
+  'field', 'section', 'group', 'link', 'item', 'tab', 'action', 'menuItem', 'choice', 'pick', 'toggle', 'radio', 'check', 'checkbox', 'fail', 'fill', 'message', 'reason', 'finish']);
 const UI_KEYS = new Set(['t', 'label', 'title', 'text', 'name', 'help', 'hint', 'summary', 'caption', 'legend', 'word', 'words', 'placeholder',
   'tip', 'why', 'empty', 'none', 'message', 'msg', 'heading', 'note', 'status', 'reason', 'detail', 'notice', 'absent', 'guidance', 'error']);
 const UI_ATTRS = new Set(['title', 'aria-label', 'placeholder', 'alt', 'aria-valuetext', 'aria-description']);
@@ -59,7 +59,11 @@ function kind(n) {
 // A value of a table of words (an object property) or one of the words a choice gives is a candidate too: whether it
 // is a label is then judged by its own form (english_label in worklist_language_collect.py).
 function ui(n) {
+  let table = false;
   for (let child = n, p = n.parent; p; child = p, p = p.parent) {
+    // A table of labels the code walks or keeps ([[key, Label], ...]) is a candidate as well.
+    if (ts.isArrayLiteralExpression(p)) table = true;
+    if (table && (ts.isForOfStatement(p) && child === p.expression || ts.isVariableDeclaration(p) || ts.isReturnStatement(p))) return true;
     if (ts.isConditionalExpression(p) && child !== p.condition) return true;
     if (ts.isBinaryExpression(p) && [ts.SyntaxKind.BarBarToken, ts.SyntaxKind.QuestionQuestionToken].includes(p.operatorToken.kind) && child === p.right) return true;
     if (ts.isParenthesizedExpression(p) || ts.isTemplateSpan(p) || ts.isTemplateExpression(p)
@@ -68,8 +72,9 @@ function ui(n) {
     if (ts.isBinaryExpression(p) && [ts.SyntaxKind.EqualsToken, ts.SyntaxKind.PlusEqualsToken].includes(p.operatorToken.kind) && child === p.right)
       return ts.isPropertyAccessExpression(p.left) && UI_PROPS.has(p.left.name.text);
     if (ts.isPropertyAssignment(p) && child === p.initializer) return true;
+    if (table && ts.isPropertyAccessExpression(p)) continue;
     if (ts.isCallExpression(p) || ts.isNewExpression(p)) {
-      if (child === p.expression) return false;
+      if (child === p.expression) return table;
       const callee = p.expression, name = ts.isIdentifier(callee) ? callee.text : ts.isPropertyAccessExpression(callee) ? callee.name.text : '';
       if (ts.isNewExpression(p)) return name === 'Option' && p.arguments?.[0] === child;
       if (name === 'setAttribute') return p.arguments.length > 1 && p.arguments[1] === child && ts.isStringLiteral(p.arguments[0]) && UI_ATTRS.has(p.arguments[0].text);

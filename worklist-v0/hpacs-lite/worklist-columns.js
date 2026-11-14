@@ -196,7 +196,7 @@
           generation++;
           part.hidden = input.checked ? part.hidden.filter(k => k !== key) : [...part.hidden, key];
         });
-        label.append(input, document.createTextNode(column.t + (REQUIRED.includes(key) ? ' (Required)' : ''))); row.append(label);
+        label.append(input, column.t, REQUIRED.includes(key) ? ' (Required)' : ''); row.append(label);
         const width = document.createElement('input'); width.type = 'number'; width.min = '64'; width.max = '600'; width.step = '1';
         width.className = 'wc-width'; width.placeholder = 'Auto'; width.value = a.widths[key] ?? '';
         width.setAttribute('aria-label', column.t + ' content width (px)');

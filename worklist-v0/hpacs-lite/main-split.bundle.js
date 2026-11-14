@@ -1190,7 +1190,8 @@
           const label = document.createElement("label"), box = document.createElement("input");
           box.type = "checkbox"; box.checked = c.shown; box.disabled = c.required;
           box.addEventListener("change", () => { columnPrefs.setShown(m, c.k, box.checked); });
-          label.append(box, document.createTextNode(" " + c.t + (c.required ? " (Required)" : "")));
+          // The column name and the (Required) mark are each their own text (the label reads the same).
+          label.append(box, " ", c.t, c.required ? " (Required)" : "");
           const width = document.createElement("input"); width.type = "number";
           width.min = "64"; width.max = "600"; width.step = "1"; width.placeholder = "Auto";
           width.setAttribute("aria-label", c.t + " width (px)"); width.value = c.width ?? "";
