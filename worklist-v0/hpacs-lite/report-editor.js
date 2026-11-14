@@ -293,7 +293,9 @@
       const line = $("#report-editor-rs");
       if (!line) return;
       const a = selectedUid ? appState[selectedUid] : null;
-      line.textContent = reportStatusLine(a);
+      // Each part is its own text (the line reads the same), so the screen language reaches every part.
+      const parts = typeof reportStatusParts === "function" ? reportStatusParts(a) : [reportStatusLine(a)].filter(Boolean);
+      line.replaceChildren(...parts.flatMap((part, i) => i ? [" · ", part] : [part]));
       line.title = !line.textContent ? ""
         : reportFinalized(a) ? "승인 후 24시간이 지나 확정된 판독문입니다 — Addendum으로만 덧붙일 수 있습니다"
         : a.amendUntil && !a.addendumAt ? "승인한 판독의가 이 시각까지 본문을 고쳐 다시 승인할 수 있습니다" : "";

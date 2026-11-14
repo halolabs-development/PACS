@@ -141,13 +141,14 @@
         : { open: false, title: `승인됨 — 본문을 고치면 다시 Approve할 수 있습니다 (${until}까지)` };
     }
     /** 편집기 머리줄의 판독 상태(승인본일 때만): Approved/Finalized, 수정 가능 MM-DD HH:mm까지, 수정됨 MM-DD HH:mm. */
-    function reportStatusLine(a, now) {
-      if (a?.rs !== "A") return "";
+    function reportStatusParts(a, now) {
+      if (a?.rs !== "A") return [];
       const parts = [reportStatusWord(a, now)];
       if (a.amendUntil && !a.addendumAt && !reportFinalized(a, now)) parts.push(`수정 가능 ${amendTime(a.amendUntil)}까지`);
       if (a.amendedAt) parts.push(`수정됨 ${amendTime(a.amendedAt)}`);
-      return parts.join(" · ");
+      return parts;
     }
+    function reportStatusLine(a, now) { return reportStatusParts(a, now).join(" · "); }
 
     // 특수 렌더링이 필요한 칸만 함수로
     let studyPriority = null;
