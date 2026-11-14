@@ -104,7 +104,7 @@ window.addEventListener('message', function (event) {
     return;
   }
   parent.postMessage({ type: 'kin-editor-reply', request: data.request, result: window.__result || 'ok',
-    owner: data.owner, studies: data.studies, activeUid: data.activeUid,
+    owner: data.owner, studies: data.studies, activeUid: data.activeUid, examStamp: data.examStamp,
     session: window.__session || 's1', editor: parent.__body }, event.origin);
 });
 """
@@ -115,7 +115,7 @@ window.addEventListener('message', function (event) {
   if (!relay || relay.type !== 'kin-editor-relay') return;
   var data = relay.request;
   parent.postMessage({ type: 'kin-editor-reply', request: data.request, result: 'ok',
-    owner: data.owner, studies: data.studies, activeUid: data.activeUid,
+    owner: data.owner, studies: data.studies, activeUid: data.activeUid, examStamp: data.examStamp,
     session: 's1', editor: parent.__body }, event.origin);
 });
 """
@@ -593,6 +593,7 @@ class ViewerJobPrintPages(unittest.TestCase):
         page = self.context.new_page()
         page.set_content("<!doctype html><html><body></body></html>")
         page.evaluate(CORNERSTONE)
+        page.add_script_tag(path=str(LINK_MODULE.with_name("exam-scope.js")))
         page.add_script_tag(path=str(LINK_MODULE))
         page.add_script_tag(path=str(MODULE))
         load_citation_modules(page)
@@ -823,6 +824,7 @@ class ViewerJobPrintPages(unittest.TestCase):
             status=200, content_type="text/html", body="<!doctype html><html><body></body></html>"))
         page.goto(self.SECURE)
         page.evaluate(CORNERSTONE)
+        page.add_script_tag(path=str(LINK_MODULE.with_name("exam-scope.js")))
         page.add_script_tag(path=str(LINK_MODULE))
         page.add_script_tag(path=str(MODULE))
         load_citation_modules(page)
@@ -914,7 +916,8 @@ class ViewerJobPrintPages(unittest.TestCase):
       window.kinReadingEditorReply = m => KinViewerWindows.editorReply(m, { owner: () => owner, target: () => window.__target,
         modal: () => !!document.querySelector('dialog[open]'), field: id => document.getElementById(id),
         usable: field => field.isConnected && !!field.getClientRects().length && !field.disabled,
-        session: (who, uid) => 'list|' + who + '|' + uid });
+        session: (who, uid) => 'list|' + who + '|' + uid,
+        examStamp: uid => JSON.stringify([uid, null, null]) });
       return window.__registry.linked('/ohif/viewer?StudyInstanceUIDs=' + args.studies.join(','), 0);
     }"""
 
@@ -947,6 +950,7 @@ class ViewerJobPrintPages(unittest.TestCase):
         viewer.goto(self.WINDOWS.rstrip("/") + link)
         self.assertFalse(viewer.evaluate("() => !!window.opener"))
         viewer.evaluate(CORNERSTONE)
+        viewer.add_script_tag(path=str(LINK_MODULE.with_name("exam-scope.js")))
         viewer.add_script_tag(path=str(LINK_MODULE))
         viewer.add_script_tag(path=str(MODULE))
         load_citation_modules(viewer)

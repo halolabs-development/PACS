@@ -5,17 +5,19 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 
+require('../worklist-v0/hpacs-lite/exam-scope.js');
 const link = require('../worklist-v0/hpacs-lite/viewer-editor-link.js');
 
 const OWNER = JSON.stringify(['INST-1', 'subject-1']);
 const CURRENT = 'uid-current', COMPARE = 'uid-compare';
+const STAMP = JSON.stringify([CURRENT,null,null]);
 const REQUEST = '11111111-2222-3333-4444-555555555555';
 
 const expected = (extra) => Object.assign({ request: REQUEST, owner: OWNER,
   studies: [CURRENT, COMPARE], activeUid: CURRENT }, extra);
 const body = (extra) => Object.assign({ findings: 'F', conclusion: 'C', recommendation: 'R' }, extra);
 const reply = (extra) => Object.assign({ type: 'kin-editor-reply', request: REQUEST, result: 'ok',
-  owner: OWNER, studies: [CURRENT, COMPARE], activeUid: CURRENT, session: 'sess-1', editor: body() }, extra);
+  owner: OWNER, studies: [CURRENT, COMPARE], activeUid: CURRENT, session: 'sess-1', examStamp: STAMP, editor: body() }, extra);
 test('editor reply from an earlier exam generation is refused even when UID and owner match',()=>{
   assert.deepEqual(link.validReply(reply({examStamp:'old'}),expected({examStamp:'new'})),{ok:false,reason:'context'});
   assert.equal(link.validReply(reply({examStamp:'new'}),expected({examStamp:'new'})).examStamp,'new');
@@ -29,7 +31,7 @@ test('module loads under require and still defines the browser factory', () => {
 
 test('validReply accepts only the exact answer to this request', () => {
   const ok = link.validReply(reply(), expected());
-  assert.deepEqual(ok, { ok: true, editor: { findings: 'F', conclusion: 'C', recommendation: 'R' }, session: 'sess-1' });
+  assert.deepEqual(ok, { ok: true, editor: { findings: 'F', conclusion: 'C', recommendation: 'R' }, session: 'sess-1', examStamp: STAMP });
   // The returned body is a fresh object holding only the three fields.
   assert.deepEqual(Object.keys(ok.editor), ['findings', 'conclusion', 'recommendation']);
   const extra = link.validReply(reply({ editor: body({ secret: 'x' }) }), expected());
@@ -113,11 +115,11 @@ test('validReply refuses a body longer than the field limit', () => {
 });
 
 test('sameEditor compares owner, study, session and the exact body', () => {
-  const base = { owner: OWNER, uid: CURRENT, session: 'sess-1', editor: body() };
+  const base = { owner: OWNER, uid: CURRENT, session: 'sess-1', examStamp: STAMP, editor: body() };
   const copy = () => JSON.parse(JSON.stringify(base));
   assert.equal(link.sameEditor(base, copy()), true);
   // Key order of the body must not decide the answer.
-  assert.equal(link.sameEditor(base, { session: 'sess-1', uid: CURRENT, owner: OWNER,
+  assert.equal(link.sameEditor(base, { session: 'sess-1', examStamp: STAMP, uid: CURRENT, owner: OWNER,
     editor: { recommendation: 'R', conclusion: 'C', findings: 'F' } }), true);
   const changed = [
     { owner: JSON.stringify(['INST-2', 'subject-1']) },
@@ -182,9 +184,9 @@ test('the adapter asks the bound window with the request it will accept', async 
   assert.equal(kit.target.sent.length, 1);
   assert.equal(kit.target.sent[0].origin, ORIGIN);
   assert.deepEqual(kit.target.sent[0].data, { type: 'kin-editor-request', request: REQUEST,
-    owner: OWNER, studies: [CURRENT, COMPARE], activeUid: CURRENT });
+    owner: OWNER, studies: [CURRENT, COMPARE], activeUid: CURRENT, examStamp: STAMP });
   kit.deliver({ origin: ORIGIN, source: kit.target, data: reply() });
-  assert.deepEqual(await answer, { owner: OWNER, uid: CURRENT, session: 'sess-1',
+  assert.deepEqual(await answer, { owner: OWNER, uid: CURRENT, session: 'sess-1', examStamp: STAMP,
     editor: { findings: 'F', conclusion: 'C', recommendation: 'R' } });
   assert.equal(kit.listeners.size, 0);
 });
@@ -227,7 +229,7 @@ test('a foreign reply does not consume the answer the bound window still sends',
   kit.deliver({ origin: ORIGIN, source: kit.target, data: reply() });
   const value = await answer;
   assert.equal(value.editor.findings, 'F');
-  assert.deepEqual(value, { owner: OWNER, uid: CURRENT, session: 'sess-1',
+  assert.deepEqual(value, { owner: OWNER, uid: CURRENT, session: 'sess-1', examStamp: STAMP,
     editor: { findings: 'F', conclusion: 'C', recommendation: 'R' } });
 });
 
@@ -256,7 +258,7 @@ test('a delayed editor answer cannot outlive the window or its current owner', a
 
 test('cancelling document preparation does not revive its older editor request', async () => {
   const work = require('../worklist-v0/hpacs-lite/work-context.js').create();
-  work.follow({ onLifecycle(listener) { listener({ state: 'active', session: 'sess-1' }); } });
+  work.follow({ onLifecycle(listener) { listener({ state: 'active', session: 'sess-1', examStamp: STAMP }); } });
   const kit = harness();
   kit.view.KinWorkContext = work;
   const answer = kit.adapter.read();
@@ -298,13 +300,13 @@ test('without an opener the adapter asks the list document that linked it, on it
   assert.equal(kit.channels.length, 1);
   assert.equal(kit.channels[0].name, 'kin-viewer-windows:' + GROUP);
   assert.deepEqual(kit.channels[0].sent, [{ type: 'kin-editor-request', request: REQUEST, owner: OWNER,
-    studies: [CURRENT, COMPARE], activeUid: CURRENT, list: LIST }]);
+    studies: [CURRENT, COMPARE], activeUid: CURRENT, list: LIST, examStamp: STAMP }]);
   // Other traffic on the group channel: another viewer's request, a window announcement, an answer to another request.
   kit.deliver({ type: 'kin-editor-request', request: REQUEST, owner: OWNER, studies: [CURRENT], activeUid: CURRENT, list: LIST });
   kit.deliver({ type: 'present', owner: OWNER, index: 0 });
   kit.deliver(reply({ request: '99999999-2222-3333-4444-555555555555', editor: body({ findings: 'OTHER' }) }));
   kit.deliver(reply());
-  assert.deepEqual(await answer, { owner: OWNER, uid: CURRENT, session: 'sess-1',
+  assert.deepEqual(await answer, { owner: OWNER, uid: CURRENT, session: 'sess-1', examStamp: STAMP,
     editor: { findings: 'F', conclusion: 'C', recommendation: 'R' } });
   assert.equal(kit.channels[0].closed, true);
   assert.equal(kit.listening(), 0);

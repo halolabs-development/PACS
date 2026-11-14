@@ -20,6 +20,27 @@
   }
   const key = value => { const s=read(value);return s ? JSON.stringify([s.reportUid,s.groupId??null,s.part??null]) : null; };
   const stamp = value => { const s=read(value);return s ? JSON.stringify([key(s),s.generation??null]) : null; };
+  // A draft epoch is not a change of the images in an ordinary study.
+  function screenScope(value) {
+    const scope=read(value);
+    return scope && (scope.groupId || scope.hasMembership || scope.kind==='merge' || scope.kind==='split') ? scope : null;
+  }
+  const screenStamp = value => { const scope=screenScope(value);return scope ? stamp(scope) : null; };
+  function originalLabel(value, original, label, before=false) {
+    return screenScope(value) && original ? (before ? original+' · '+label : label+' · '+original) : label;
+  }
+  function sourceRequest(value, sourceUid, body) {
+    return screenScope(value) ? {...body,sourceUid} : body;
+  }
+  const seriesValue = (value, sourceUid, seriesUid) => screenScope(value) ? JSON.stringify({sourceUid,seriesUid}) : seriesUid;
+  const seriesRequest = (value, selected) => screenScope(value) ? JSON.parse(selected) : {seriesUid:selected};
+  function attachmentTarget(value) {
+    const scope=read(value),plain=!!scope&&!screenScope(scope);
+    return {scope,sourceUid:plain?scope.reportUid:null,canAttach:plain};
+  }
+  function attachmentHeaders(value, sourceUid, generation) {
+    return screenScope(value) ? {'X-KIN-Source-Uid':sourceUid,'X-KIN-Exam-Generation':generation} : {};
+  }
   function storedReport(value,reportUid) {
     const group=value?.group;
     if(!group?.readable)return null;
@@ -52,8 +73,25 @@
     }
     return out;
   }
-  async function fetchScope(api, uid, {purpose='current',version,signal,at}={}) {
+  function viewingSelection(selection, rows) {
+    if(!selection || !Array.isArray(selection.studyUids))return null;
+    const studyUids=[];
+    for(const uid of selection.studyUids) {
+      const row=rows.find(row=>row.uid===uid),scope=read(row);
+      if(!scope || row.examUnavailable)return null;
+      for(const source of scope.sources)if(!studyUids.includes(source.studyUid))studyUids.push(source.studyUid);
+    }
+    return {...selection,studyUids};
+  }
+  function originalInput(studyUids) {
+    const input=viewerInput({uid:studyUids[0]},studyUids[1]?{uid:studyUids[1]}:null);
+    return {...input,purpose:'stored'};
+  }
+  function readingScope(value, uid) { return read(value || {uid}); }
+  const readingStamp = (value, uid) => key(readingScope(value,uid));
+  async function fetchScope(api, uid, {purpose='current',version,reference,signal,at}={}) {
     const query=new URLSearchParams({purpose});if(version!=null)query.set('version',String(version));
+    if(reference)query.set('reference',JSON.stringify(reference));
     const answer=await api('GET','/studies/'+encodeURIComponent(uid)+'/exam-scope?'+query,undefined,signal,at);
     const scope=read(answer?.scope||answer);
     if(!scope)throw new Error('검사 범위를 확인할 수 없습니다.');
@@ -74,7 +112,7 @@
     if(!scope || prior&&!comparison)throw new Error('검사 범위를 확인할 수 없습니다.');
     if([...scope.sources,...(comparison?.sources||[])].some(s=>s.studyUid.length>64||!/^\d+(?:\.\d+)+$/.test(s.studyUid)))throw new Error('원본 검사 UID를 확인할 수 없습니다.');
     return {reportUid:scope.reportUid,key:key(scope),generation:scope.generation,current:scope,prior:comparison,version,priorVersion,
-      scoped:!!(scope.groupId||scope.hasMembership||comparison?.groupId||comparison?.hasMembership||current?.examScope||prior?.examScope),
+      scoped:!!(screenScope(scope)||screenScope(comparison)),
       studyUids:[...new Set([...scope.sources,...(comparison?.sources||[])].map(s=>s.studyUid))]};
   }
   const reference = s => s ? {reportUid:s.reportUid,groupId:s.groupId??null,part:s.part??null} : null;
@@ -99,6 +137,10 @@
   }
   function snapshotReference(input) {
     return {version:1,purpose:input.purpose==='stored'||input.version!=null?'stored':'current',current:reference(input.current),prior:reference(input.prior)};
+  }
+  function jobSnapshot(value,input,studyUids,originals=false) {
+    const opening=input || originalInput(studyUids);
+    return {...value,exam:snapshotReference({...opening,purpose:originals?'stored':input?.purpose||'current'})};
   }
   function snapshotUrl(snapshot) {
     const exam=snapshot.exam;
@@ -147,7 +189,7 @@
       dialog.addEventListener('close',()=>{dialog.remove();resolve(result);},{once:true});dialog.append(go,close);document.body.append(dialog);dialog.showModal();
     });
   }
-  const api={read,key,stamp,storedReport,allows,metadata,projections,values,originals,fetch:fetchScope,dicom,viewerInput,viewerUrl,viewerReference,reference,roleRows,snapshotReference,snapshotUrl,preload,chooseOriginals,changes};
+  const api={read,key,stamp,screenScope,screenStamp,originalLabel,sourceRequest,seriesValue,seriesRequest,attachmentTarget,attachmentHeaders,storedReport,allows,metadata,projections,values,originals,viewingSelection,originalInput,readingScope,readingStamp,fetch:fetchScope,dicom,viewerInput,viewerUrl,viewerReference,reference,roleRows,snapshotReference,jobSnapshot,snapshotUrl,preload,chooseOriginals,changes};
   root.KinExamScope=api;
   if(typeof module==='object'&&module.exports)module.exports=api;
 })(globalThis);

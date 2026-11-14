@@ -144,7 +144,7 @@
             ${v.findings || v.conclusion || v.recommendation
               ? `<pre>${esc([v.findings, v.conclusion, v.recommendation].filter(Boolean).join("\n---\n"))}</pre>`
               : `<div style="color:#556;padding:4px 0">(내용 없음)</div>`}
-            <div class="vcite-row"><button class="chip" data-history-images="${esc(v.version)}" ${v.group && !v.group.readable ? "disabled" : ""}>Open Images</button> <button class="vcite-btn" data-version="${esc(v.version)}"
+            <div class="vcite-row">${v.group ? `<button class="chip" data-history-images="${esc(v.version)}" ${!v.group.readable ? "disabled" : ""}>Open Images</button> ` : ""}<button class="vcite-btn" data-version="${esc(v.version)}"
                  title="이 판의 인용 증적을 서버에서 확인합니다">Show Citations</button></div>
             <div class="vcite-host" data-version="${esc(v.version)}"></div>
           </div>`).join("")

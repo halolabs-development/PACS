@@ -6,6 +6,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 
+const scopeModel=require('../worklist-v0/hpacs-lite/exam-scope.js');
 const panel = require('../worklist-v0/hpacs-lite/viewer-report-panel.js');
 const link = require('../worklist-v0/hpacs-lite/viewer-editor-link.js');
 const windows = require('../worklist-v0/hpacs-lite/viewer-windows.js');
@@ -23,7 +24,7 @@ test('report panel rejects an earlier scope generation and hides unreadable stor
   const item={...row({version:2,findings:'SYN saved'}),examScope:{reportUid:UID,groupId:'g',kind:'merge',generation:'new',
     sources:[{studyUid:UID,series:{mode:'all',uids:[]}}]}};
   assert.equal(panel.choose({uid:UID,row:item,live:{uid:UID,editor:text('SYN stale'),examStamp:'old'}}).fields.findings,'SYN saved');
-  assert.equal(panel.choose({uid:UID,row:item,live:{uid:UID,editor:text('SYN live'),examStamp:scopes.stamp(item)}}).fields.findings,'SYN live');
+  assert.equal(panel.choose({uid:UID,row:item,live:{uid:UID,editor:text('SYN live'),examStamp:scopes.readingStamp(item)}}).fields.findings,'SYN live');
   item.state.reportReadable=false;assert.equal(panel.choose({uid:UID,row:item}).kind,'hidden');
   const ticket={uid:UID,sequence:1,request:1,session:OWNER,list:'list',examStamp:'old'};
   assert.equal(panel.current(ticket,{...ticket,examStamp:'new'}),false);
@@ -114,7 +115,7 @@ function reader(overrides = {}) {
   const state = { owner: OWNER, target: OTHER, listed: [UID, OTHER], modal: false, usable: true, busy: false };
   const field = { id: 'findings' };
   const value = {
-    calls, state,
+    calls, state, examStamp:uid=>scopeModel.readingStamp(null,uid), verifyExam:async()=>true,
     owner: () => state.owner, busy: () => state.busy, listed: uid => state.listed.includes(uid), modal: () => state.modal,
     target: () => state.target, field: id => (id === 'findings' ? field : null), usable: () => state.usable,
     select: uid => { calls.push(['select', uid]); state.target = uid; return { status: 'clear', uid }; },
@@ -122,7 +123,14 @@ function reader(overrides = {}) {
   };
   return Object.assign(value, overrides);
 }
-const open = extra => Object.assign({ type: 'kin-editor-open', request: REQUEST, owner: OWNER, uid: UID, list: 'L' }, extra);
+const open = extra => Object.assign({ type: 'kin-editor-open', request: REQUEST, owner: OWNER, uid: UID, list: 'L', examStamp:scopeModel.readingStamp(null,UID) }, extra);
+
+test('an ordinary viewer cannot first connect Reading after the server groups its study or omit its scope',async()=>{
+ const r=reader({verifyExam:async()=>false});
+ assert.equal((await windows.editorOpen(open(),r)).reason,'stale');assert.deepEqual(r.calls,[]);
+ const plain=reader();const message=open();delete message.examStamp;
+ assert.equal((await windows.editorOpen(message,plain)).reason,'stale');assert.deepEqual(plain.calls,[]);
+});
 
 test('editorOpen moves through the page select and focuses Findings only after a real move', async () => {
   const r = reader();
@@ -173,6 +181,12 @@ test('editorOpen checks the target scope before and after the study move',async(
   let generation='one';const moving=reader({examStamp:()=>generation,select:uid=>{moving.state.target=uid;generation='two';return {status:'clear'};}});
   assert.equal((await windows.editorOpen(open({examStamp:'one'}),moving)).reason,'stale');
   assert.ok(moving.calls.every(call=>call[0]!=='focus'));
+});
+
+test('an opening withdrawn while its scope is checked never selects or focuses Reading',async()=>{
+  let finish,current=true;const r=reader({verifyExam:()=>new Promise(resolve=>finish=resolve),admitted:()=>current});
+  const answer=windows.editorOpen(open(),r);current=false;finish(true);
+  assert.equal((await answer).reason,'stale');assert.deepEqual(r.calls,[]);
 });
 test('editorOpen ignores a malformed request', async () => {
   for (const extra of [{ type: 'kin-editor-request' }, { request: 'not-a-uuid' }, { owner: '' }, { owner: 3 }, { uid: 'abc' }, { uid: '1.' + '2'.repeat(70) }]) {

@@ -12,7 +12,8 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
     if (!scope) return;
     const studies = new URLSearchParams(search).get('StudyInstanceUIDs').split(',');
     const exam=window.KinViewerExamScope?.snapshot(),reportUid=exam?.reportUid||studies[0];
-    const withExam=value=>exam?{...value,exam:window.KinExamScope.snapshotReference(exam)}:value;
+    const withExam=value=>window.KinExamScope.jobSnapshot(value,exam,studies,
+      new URLSearchParams(location.hash.slice(1)).has('kin-w9')||new URLSearchParams(search).has('kinJob'));
     const grid = services.viewportGridService, cs = services.cornerstoneViewportService, ds = services.displaySetService;
     // The MPR Job owns the volume layout; the ordinary frame cell of a mixed layout stays
     // this panel's own shape and is lent to it rather than reimplemented there.
@@ -116,7 +117,7 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
         }
         if (!live()) return;
         printer ||= window.kinViewerJobPrint({ api, authenticate, live,
-          editor: window.kinViewerEditorLink({ studies, owner: () => me ? [me.institution, me.sub] : null, live }) });
+          editor: window.kinViewerEditorLink({ studies:[reportUid], examScope:exam?.current, owner: () => me ? [me.institution, me.sub] : null, live }) });
         if (row) printer.open(reportUid, row.id,row.snapshotVersion);
         else { if (!unchanged()) throw new Error('현재 영상이 바뀌었습니다. 다시 출력하세요.'); printer.openCurrent(reportUid, snapshot, unchanged); }
       } catch (e) { failure = e.message; if (live()) status.textContent = e.message; }

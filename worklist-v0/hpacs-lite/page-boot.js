@@ -322,7 +322,7 @@
       KinStudyAccessStatus.mount({button:$('#study-access-open'),session:()=>KinAuth.session(),refresh:async()=>(await load())===true});
       multiSelection = KinWorklistSelection.mount({host:$('#worklist-selection'),tbody:$('#rows'),owner:()=>KinViewerOpening.key(KinAuth.session()),rows:orderedStudies,current:()=>selectedUid,open:uid=>select(uid,{openSelected:true}),compare:(uid,prior)=>openFilmbox(uid,prior),
         // W9: Open Selected Studies (toolbar, Selection Details); a changed selection closes its row menu.
-        openSet:set=>multiStudyView?.open({...set,session:work.session()}),changed:generation=>closeSelectionMenu(generation),
+        openSet:set=>multiStudyView?.open(KinExamScope.viewingSelection({...set,session:work.session()},studies)),changed:generation=>closeSelectionMenu(generation),
         openBlocked:()=>!serverMode||offline||demoMode?'서버 연결과 로그인 상태를 확인한 뒤 다시 여세요.':!KinAuth.has('radiologist')?'여러 검사 열기는 판독의 권한이 필요합니다.':null,
         // FC-028 Batch Reading (worklist-batch-report.js, mounted below).
         batchRead:{shown:()=>!!batchReport?.shown(),blocked:()=>batchReport?.blocked()??null,open:set=>batchReport?.open(set)},
@@ -366,7 +366,7 @@
       // exist. It reads the page's own gate, transport, Reading Target, W4 select and launcher; it ends with the session.
       multiStudyView = KinMultiStudyView.mount({ host: $('#multi-study'), work,
         context: () => ({ owner: KinViewerOpening.key(KinAuth.session()), session: work.session() }),
-        selection: () => { const set = multiSelection?.snapshot(); return set && { ...set, session: work.session() }; },
+        selection: () => { const set = multiSelection?.snapshot(); return KinExamScope.viewingSelection(set && { ...set, session: work.session() },studies); },
         allowed: () => !!sess && serverMode && !demoMode && !offline,
         target: () => selectedUid,
         targetLabel: uid => { const s = studies.find(x => x.uid === uid); return s ? [s.name, s.id, s.date, s.modality, shownStudyDesc(s)].filter(Boolean).join(' · ') : null; },

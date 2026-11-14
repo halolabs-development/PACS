@@ -93,11 +93,13 @@ LIST_SETUP = """args => {
   window.__target = args.target; window.__listed = args.listed; window.__selects = []; window.__how = 'clear';
   const reader = { owner: () => owner, target: () => window.__target, modal: () => !!document.querySelector('dialog[open]'),
     field: id => document.getElementById(id), usable: f => f.isConnected && !!f.getClientRects().length && !f.disabled,
-    session: (who, uid) => 'list|' + who + '|' + uid };
+    session: (who, uid) => 'list|' + who + '|' + uid,
+    examStamp: uid => JSON.stringify([uid, null, null]) };
   window.kinReadingEditorReply = m => KinViewerWindows.editorReply(m, reader);
   // The page's select(uid) stand-in: its result is the case's (current-study.js statuses); 'clear' and 'saved' move.
   let opening = false;
   const openReader = { ...reader, busy: () => opening, listed: uid => window.__listed.includes(uid),
+    verifyExam: async (uid, stamp) => stamp === JSON.stringify([uid, null, null]),
     select: uid => {
       window.__selects.push(uid);
       const how = window.__how;

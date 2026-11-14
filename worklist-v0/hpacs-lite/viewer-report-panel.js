@@ -46,7 +46,7 @@
     const state = row.state;
     if (state.prelimHidden === true) return { kind: 'hidden', source: SOURCES.hidden, fields: { ...EMPTY } };
     if (live && live.uid === uid && live.editor && typeof live.editor === 'object' &&
-        (!row.examScope || root.KinExamScope?.stamp(row) === live.examStamp))
+        (!row.examScope || root.KinExamScope?.readingStamp(row) === live.examStamp))
       return { kind: 'live', source: SOURCES.live, fields: pick(live.editor) };
     if (state.draft && typeof state.draft === 'object') {
       const at = clock(state.draft.at);
@@ -122,7 +122,7 @@ globalThis.KinViewerReportPanel = (() => {
     const scope = () => {
       let value = null; try { value = tabs.snapshot(); } catch (_) { value = null; }
       return value && Array.isArray(value.studyUIDs) && typeof value.studyUIDs[0] === 'string'
-        ? { uid: value.examScope?.reportUid || value.studyUIDs[0], examScope:value.examScope||null, examStamp:value.examScope?view.KinExamScope.stamp(value.examScope):null, key: value.key, sequence: value.sequence, patient: value.patient || {} } : null;
+        ? { uid: value.examScope?.reportUid || value.studyUIDs[0], examScope:view.KinExamScope.readingScope(value.examScope,value.studyUIDs[0]), examStamp:view.KinExamScope.readingStamp(value.examScope,value.studyUIDs[0]), key: value.key, sequence: value.sequence, patient: value.patient || {} } : null;
     };
     const sessionKey = () => { try { return JSON.stringify([session.owner(), work?.session?.() ?? null]); } catch (_) { return null; } };
     // The list document that linked this window (viewer-windows.js linked()); a relinked window is another link.
@@ -166,7 +166,7 @@ globalThis.KinViewerReportPanel = (() => {
         const data = await response.json();
         if (!alive() || !admitted(context) || !pure.current(ticket, now(serverRequest))) return;
         row = pure.scopedRow(data?.studies, ticket.uid, scope()?.key);
-        if(ticket.examStamp && view.KinExamScope.stamp(row)!==ticket.examStamp)throw Error('scope');
+        if(row && view.KinExamScope.readingStamp(row)!==ticket.examStamp)throw Error('scope');
         loaded = true; failed = false;
         if (status.textContent === pure.TEXT.failed) status.textContent = '';
       } catch (_) {

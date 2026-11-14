@@ -25,13 +25,27 @@ function kinCreateViewerPrior() {
     const closeList = () => { controller.close(); if (anchor?.isConnected) anchor.focus(); };
     const report = (uid, opener) => { reportUid = uid; reportOpener = opener; controller.openReport(uid); };
     const controller = window.KinViewerPriorController.create({ viewer,
-      async loadStudy(uid, origin, row) {
+      async loadStudy(uid, origin, row, options = {}) {
         const input=window.KinViewerExamScope?.snapshot();
         let scope=null;
         if(input||row?.examScope){
           if(input)await window.KinViewerExamScope.ensure(true);
+          if(options.valid && !options.valid())return [];
           scope=input&&[input.current,input.prior].find(value=>value?.reportUid===uid);
-          if(!scope)throw Error('현재 열어 둔 검사 범위에 없는 비교 검사입니다. 목록에서 Compare로 함께 여세요.');
+          if(!scope){
+            const before=viewer.snapshot(),model=window.KinExamScope;
+            const current=input?.current||model.read({uid:before.studyUIDs[0]});
+            const prior=model.read(row);
+            const next=model.viewerInput(current,prior,input?.version??null);
+            if(input?.purpose)next.purpose=input.purpose;
+            // Reopening admits both roles through the existing window and unsaved-work gate.
+            next.scoped=true;
+            const url=new URL(model.viewerUrl(next,options.seriesUid),location.origin);
+            url.hash=location.hash;
+            const opened=await window.kinViewerOpenPatient?.(url.href,{signal:options.signal});
+            if(!opened)throw Error('저장·편집 또는 배치를 확인한 뒤 다시 시도하세요. 현재 영상은 유지합니다.');
+            return {reopened:true};
+          }
         }
         const source = extensions.getActiveDataSource()[0];
         const originals=scope?scope.sources.map(value=>value.studyUid):[uid];

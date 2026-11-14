@@ -40,7 +40,7 @@
       return [...byUid.values()].sort((a, b) => a.uid.localeCompare(b.uid));
     }
     function keyFor(items) {
-      return JSON.stringify(items.map(item => [item.uid, item.series, item.count, scopes.stamp(item.scope)]));
+      return JSON.stringify(items.map(item => [item.uid, item.series, item.count, scopes.screenStamp(item.scope)]));
     }
     function clear(nextStudies, nextKey, nextOwner) {
       stopRequests();

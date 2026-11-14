@@ -70,6 +70,7 @@ window.KinStudyAttachments = function (app) {
   const head = node('p', 'attach-study');
   const sourceLabel = node('label', null, 'Original exam '), sourceChoice = node('select');
   sourceChoice.setAttribute('aria-label','Original exam');sourceLabel.append(sourceChoice);
+  sourceLabel.hidden=true;
   sourceChoice.onchange=()=>{if(session){session.sourceUid=sourceChoice.value;render();}};
   const fileList = node('ul', 'attach-files');
   const status = node('p', 'attach-status');
@@ -128,7 +129,7 @@ window.KinStudyAttachments = function (app) {
     const row = app.study(uid);
     if (row?.tele) { toast(TEXT.received); return; }
     // The dialog keeps its chosen exam when the background list selection moves.
-    pickFor = { uid, seq: ++seq, scopeStamp:window.KinExamScope.stamp(row), at:work.capture("document") };
+    pickFor = { uid, seq: ++seq, scopeStamp:window.KinExamScope.screenStamp(row), at:work.capture("document") };
     picker.value = '';
     picker.click();
   }
@@ -150,11 +151,12 @@ window.KinStudyAttachments = function (app) {
     if (!target || target.seq !== seq) return;
     if (session) end();
     seq++;
-    session = { uid: target.uid, seq, scopeStamp:target.scopeStamp, at:target.at, sourceUid:null, scope:null, canAttach:false, sending: false, canWithdraw: false, listSeq: 0,
+    session = { uid: target.uid, seq, scopeStamp:target.scopeStamp, at:target.at, ...window.KinExamScope.attachmentTarget(app.study(target.uid)), sending: false, canWithdraw: false, listSeq: 0,
       entries: files.map((file, index) => ({ index, file, type: typeOf(file), rotation: 0, state: 'ready', reason: '',
         requestId: crypto.randomUUID(), url: null, sent: null })) };
     for (const entry of session.entries) if (entry.type && entry.type !== 'application/pdf') entry.url = URL.createObjectURL(entry.file);
     sourceChoice.replaceChildren();
+    sourceLabel.hidden=!window.KinExamScope.screenScope(session.scope);
     renderHead();
     render();
     attachedList.replaceChildren();
@@ -248,7 +250,7 @@ window.KinStudyAttachments = function (app) {
   }
 
   /** Still the dialog, study and choice this work began in, under the same admitted session. */
-  const current = (mine, context) => session === mine && mine.seq === seq && work.admits(context) && work.admits(mine.at) && window.KinExamScope.stamp(app.study(mine.uid))===mine.scopeStamp;
+  const current = (mine, context) => session === mine && mine.seq === seq && work.admits(context) && work.admits(mine.at) && window.KinExamScope.screenStamp(app.study(mine.uid))===mine.scopeStamp;
 
   async function attachOne(mine, entry) {
     if (!entry.type) { entry.state = 'failed'; entry.reason = TEXT.type; return; }
@@ -267,7 +269,7 @@ window.KinStudyAttachments = function (app) {
       }
       if (!current(mine, context)) return;
       if (body.size > PNG_MAX_BYTES) { entry.state = 'failed'; entry.reason = TEXT.imageTooLarge; return; }
-      entry.sent = { body, type, name, requestId: entry.requestId, sourceUid:mine.sourceUid, generation:mine.scope.generation };
+      entry.sent = { body, type, name, requestId: entry.requestId, headers:window.KinExamScope.attachmentHeaders(mine.scope,mine.sourceUid,mine.scope?.generation) };
     }
     if (!current(mine, context)) return;
     entry.state = 'sending';
@@ -277,7 +279,7 @@ window.KinStudyAttachments = function (app) {
     try {
       answer = await app.transport.request(app.api + '/studies/' + encodeURIComponent(mine.uid) + '/attachments', {
         method: 'POST', body: sent.body, context, deadlineMs: 120000,
-        headers: { 'Content-Type': sent.type, 'X-KIN-File-Name': encodeURIComponent(sent.name), 'X-KIN-Request-Id': sent.requestId, 'X-KIN-Source-Uid':sent.sourceUid, 'X-KIN-Exam-Generation':sent.generation } });
+        headers: { 'Content-Type': sent.type, 'X-KIN-File-Name': encodeURIComponent(sent.name), 'X-KIN-Request-Id': sent.requestId, ...sent.headers } });
     } catch (_) { answer = null; }
     // Drawn only for the dialog, study and choice this request left from, and while the session still admits it.
     if (!current(mine, context)) return;
@@ -322,6 +324,7 @@ window.KinStudyAttachments = function (app) {
     for(const source of sources){const item=metadata.find(s=>s.uid===source.studyUid);const option=node('option',null,item?.acc||source.studyUid);option.value=source.studyUid;sourceChoice.append(option);}
     mine.sourceUid=sources.some(s=>s.studyUid===mine.sourceUid)?mine.sourceUid:sources.length===1?sources[0].studyUid:'';
     sourceChoice.value=mine.sourceUid;
+    sourceLabel.hidden=!window.KinExamScope.screenScope(mine.scope);
     if(!mine.canAttach)status.textContent='이 범위에는 새 문서를 붙일 수 없습니다. 원본 검사의 첫째 범위에서 붙이세요.';
     render();
     renderAttached(mine, answer.body.attachments);

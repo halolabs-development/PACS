@@ -927,3 +927,29 @@ test('viewer references survive report draft epochs while new grouping is refuse
  const after=await f.svc.scope(reader,A,{reference});assert.notEqual(after.generation,before.generation);assert.deepEqual(after.sources,before.sources);
  f.db.groups[0].dissolvedAt=new Date();await assert.rejects(f.svc.scope(reader,A,{reference}),e=>status(e)===409);
 });
+
+test('a new ordinary Job refuses a grouping change under its parent lock while stored originals stay original',async()=>{
+ const {currentViewerSnapshot,resolveViewerSnapshot}=require('/app/dist/exam-merge.service');
+ let change=false;
+ const f=fixture({onLock:db=>{if(change){const group=merged(G1,A,[A,B]);db.groups=group.groups;db.members=group.members;change=false;}}});
+ const snapshot=currentViewerSnapshot({studies:[A],cells:[{study:A,series:'2.25.701'}]});
+ const prepared=await resolveViewerSnapshot(f.prisma,f.access,reader,snapshot);
+ change=true;
+ await assert.rejects(resolveViewerSnapshot(f.prisma,f.access,reader,snapshot,prepared.scopes),e=>status(e)===409);
+ assert.deepEqual(f.db.locks[0].uids,[A]);
+ const stored={...snapshot,exam:{...snapshot.exam,purpose:'stored'}};
+ const reopened=await resolveViewerSnapshot(f.prisma,f.access,reader,stored);
+ assert.deepEqual(reopened.snapshot.studies,[A]);assert.equal(reopened.scopes[0].groupId,null);
+ await assert.rejects(f.svc.scope(reader,A,{reference:JSON.stringify(snapshot.exam.current)}),e=>status(e)===409);
+});
+
+test('ordinary ended draft records do not prevent study deletion',async()=>{
+ const {PacsStudyState}=require('/app/dist/pacs/study-state');const f=fixture();let deleted=false;
+ f.prisma.studyGroupMember.findFirst=async()=>null;
+ f.prisma.reportDraftPurposeEnd={findFirst:async()=>({uid:A,groupId:null})};
+ for(const name of ['viewerItem','techNoteRevision','viewerJob','studyQuestion','studyImageRequest','criticalResult','reportVersion'])f.prisma[name]={findFirst:async()=>null};
+ Object.assign(f.prisma.reportDraft,{findFirst:async()=>null,deleteMany:async()=>({count:0})});
+ f.prisma.studyState.delete=async()=>{deleted=true;};
+ const unit=Object.assign(Object.create(PacsStudyState.prototype),{prisma:f.prisma,studyAccess:f.access,access:{gate:async()=>f.db.states.get(A),visible:(s,c)=>s.institutionId===c}});
+ assert.deepEqual(await unit.removeState(A,tech),{ok:true});assert.equal(deleted,true);
+});

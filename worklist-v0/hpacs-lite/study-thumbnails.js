@@ -46,13 +46,13 @@
       if (imageThumbnails?.sync()) return;
       cancelThumbs();
       if (!uid) { wrap.innerHTML = ""; return; }
-      const seq = thumbSeq, scope = KinExamScope.read(viewed()), scopeStamp = KinExamScope.stamp(viewed());
+      const seq = thumbSeq, scope = KinExamScope.read(viewed()), scopeStamp = KinExamScope.screenStamp(viewed());
       const controller = thumbController = new AbortController();
       const signal = controller.signal;
       // 이 그리기를 시작한 문맥. 받은 목록·영상·실패가 화면에 닿는 자리는 모두 이 문맥(세션·작업 세대)과 아래 stale()
       // (요청 세대·보는 검사)을 함께 지난다. 받은 blob으로 만든 URL은 이 그리기의 것이라 통과한 뒤에만 만든다.
       const at = work.capture("document");
-      const stale = () => signal.aborted || seq !== thumbSeq || uid !== viewingUid() || scopeStamp !== KinExamScope.stamp(viewed());
+      const stale = () => signal.aborted || seq !== thumbSeq || uid !== viewingUid() || scopeStamp !== KinExamScope.screenStamp(viewed());
       const apply = effect => work.commit(at, () => { if (!stale()) effect(); });
       if (demoMode) {
         wrap.innerHTML = `<div class="thumbs" style="grid-template-columns:repeat(2,1fr)"><img src="${DEMO_IMG}"></div>`;

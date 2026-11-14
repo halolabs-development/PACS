@@ -101,7 +101,7 @@
         else if(!base)summary.textContent='기준 검사(Base)를 고르세요.';
         else {
           go.disabled=busy;
-          summary.replaceChildren(note(`결과: 검사 1건 (기준 ${text(base.acc)}, ${text(base.date)}) · 시리즈 ${count(sum(rows,'series'))} · 영상 ${count(sum(rows,'count'))}. 원래 검사 ${rows.length}건의 연결은 보존합니다.`),
+          summary.replaceChildren(note(`결과: 검사 1건 (기준 ${text(base.acc)}, ${text(base.date)}) · 시리즈 ${count(sum(rows,'series'))} · 영상 ${count(sum(rows,'count'))}. 원래 검사 ${rows.length}건의 묶음은 기록으로 남아 되돌릴 수 있습니다.`),
             note('판독문은 합치지 않습니다. 기준 검사에서 판독하며 판독문에 영상 범위를 남깁니다. 원본 영상·UID는 바뀌지 않습니다. Query/Retrieve와 원본 내보내기는 원래 검사 단위입니다.','muted'));
         }
       }

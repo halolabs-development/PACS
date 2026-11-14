@@ -16,7 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def assemble(root=ROOT):
     directory = root / "config/ohif"
-    sources = json.loads((directory / "source-order.json").read_bytes())["sources"]
+    manifest = json.loads((directory / "source-order.json").read_bytes())
+    sources = manifest["sources"]
     if not isinstance(sources, list) or not sources or not all(isinstance(s, str) for s in sources):
         raise ValueError("source-order.json must list source filenames")
     if len(sources) != len(set(sources)):
@@ -26,7 +27,10 @@ def assemble(root=ROOT):
     if listed != available:
         raise ValueError("source-order.json differs from source files: "
                          f"unlisted={sorted(available - listed)}, missing={sorted(listed - available)}")
-    return b"".join((directory / name).read_bytes() for name in sources)
+    shared = manifest.get("shared", [])
+    if shared not in ([], ["worklist-v0/hpacs-lite/exam-scope.js"]):
+        raise ValueError("Unknown shared viewer source")
+    return b"".join((root / name).read_bytes() for name in shared) + b"".join((directory / name).read_bytes() for name in sources)
 
 
 def main():

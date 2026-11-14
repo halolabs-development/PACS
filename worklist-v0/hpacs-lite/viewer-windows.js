@@ -49,7 +49,7 @@
     try {
       const owner = reader.owner();
       if (typeof owner !== 'string' || !owner || owner !== m.owner) return reply('session');
-      if (reader.target() !== m.activeUid || m.examStamp!==undefined && reader.examStamp?.()!==m.examStamp) return reply('context');
+      if (reader.target() !== m.activeUid || typeof m.examStamp!=='string' || reader.examStamp?.()!==m.examStamp) return reply('context');
       if (reader.modal()) return reply('modal');
       const fields = EDITOR_FIELDS.map(id => reader.field(id));
       if (!fields[0] || !reader.usable(fields[0]) || fields.some(field => !field || typeof field.value !== 'string')) return reply('unavailable');
@@ -78,15 +78,18 @@
       if (reader.owner() !== m.owner) return reply('refused', 'session');
       if (reader.busy?.()) return reply('refused', 'busy');
       if (!reader.listed(m.uid)) return reply('refused', 'unlisted');
-      if(m.examStamp!==undefined && reader.examStamp?.(m.uid)!==m.examStamp)return reply('refused','stale');
+      if(typeof m.examStamp!=='string' || reader.examStamp?.(m.uid)!==m.examStamp)return reply('refused','stale');
       if (reader.modal()) return reply('refused', 'modal');
+      if (!await reader.verifyExam?.(m.uid,m.examStamp)) return reply('refused','stale');
+      if (reader.admitted && !reader.admitted(m.request)) return reply('refused','stale');
+      if (reader.owner()!==m.owner || reader.examStamp?.(m.uid)!==m.examStamp) return reply('refused','stale');
       let outcome;
       try { outcome = await reader.select(m.uid); } catch (_) { return reply('refused', 'unavailable'); }
       if (reader.owner() !== m.owner) return reply('refused', 'session');
       const status = outcome && typeof outcome === 'object' ? outcome.status : null;
       if (!['same', 'clear', 'saved'].includes(status)) return reply('refused', OPEN_STATUS[status] || 'unavailable');
       if (reader.target() !== m.uid) return reply('refused', 'stale');
-      if(m.examStamp!==undefined && reader.examStamp?.(m.uid)!==m.examStamp)return reply('refused','stale');
+      if(typeof m.examStamp!=='string' || reader.examStamp?.(m.uid)!==m.examStamp)return reply('refused','stale');
       if (reader.modal()) return reply('refused', 'modal');
       const field = reader.field('findings');
       if (!field || !reader.usable(field)) return reply('refused', 'unavailable');

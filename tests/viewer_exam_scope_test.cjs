@@ -20,13 +20,97 @@ test('ordinary opening retains the URL, one study and compare protocol without s
  assert.equal(model.viewerUrl(model.viewerInput({uid:A},{uid:B}),S),`/ohif/viewer?StudyInstanceUIDs=${A},${B}&hangingProtocolId=@ohif/hpCompare&initialSeriesInstanceUID=${S}`);
 });
 
+test('ordinary screen observations keep selection and labels across draft epochs and temporary absence',()=>{
+ const first={uid:A,state:{draftEpoch:'before'}},later={uid:A,state:{draftEpoch:'after'}};
+ assert.equal(model.screenStamp(first),model.screenStamp(later));
+ assert.equal(model.screenStamp(first),model.screenStamp({uid:A,origin:'logical'}));
+ const selection=require('../worklist-v0/hpacs-lite/worklist-selection.js').create();
+ selection.reconcile([first]);selection.toggle(A,[first]);const before=selection.generation();
+ selection.reconcile([later]);assert.equal(selection.generation(),before);
+ const single={...model.read(first),generation:'server-generation',kind:null};
+ assert.equal(model.viewerInput(single).scoped,false);
+ assert.equal(model.viewerInput({examScope:single}).scoped,false);
+ assert.equal(model.originalLabel(single,'Study '+A,'Series '+S,true),'Series '+S);
+ assert.equal(model.seriesValue(single,A,S),S);
+ assert.deepEqual(model.sourceRequest(single,A,{seriesUid:S}),{seriesUid:S});
+ assert.deepEqual(model.seriesRequest(single,S),{seriesUid:S});
+ assert.deepEqual(model.attachmentHeaders(single,A,single.generation),{});
+ assert.equal(model.attachmentTarget(first).canAttach,true);
+ assert.equal(model.attachmentTarget(first).sourceUid,A);
+ const grouped={uid:A,examScope:scope(A,[source(A),source(B)])};
+ assert.equal(model.attachmentTarget(grouped).canAttach,false);
+ assert.deepEqual(model.attachmentHeaders(grouped,B,'verified'),{'X-KIN-Source-Uid':B,'X-KIN-Exam-Generation':'verified'});
+ selection.reconcile([grouped]);assert.equal(selection.generation(),before+1);
+ assert.notEqual(model.screenStamp(grouped),model.screenStamp(first));
+});
+
+test('ordinary previews retain one original request while grouped labels name their sources',async()=>{
+ const calls=[],plain=model.read({uid:A});
+ const rows=await model.dicom(plain,'instances',async path=>{calls.push(path);return [row(A,S)];});
+ assert.deepEqual(calls,[`/dicom-web/studies/${A}/instances`]);
+ assert.deepEqual(rows,[{sourceUid:A,row:row(A,S)}]);
+ const merged=scope(A,[source(A),source(B)]);
+ assert.equal(model.originalLabel(merged,'Study '+B,'Series '+S,true),'Study '+B+' · Series '+S);
+});
+
+test('Viewing Set expands every merged original and deduplicates both split parts before its selection limit',()=>{
+ const first={uid:A,examScope:scope(A,[source(A,'exclude',[S])],0)};
+ const second={uid:B,examScope:scope(B,[source(A,'include',[S])],1)};
+ const pick=(studyUids,rows)=>model.viewingSelection({owner:'reader',generation:2,studyUids},rows);
+ assert.deepEqual(pick([A,B],[first,second]).studyUids,[A]);
+ const w9=require('../worklist-v0/hpacs-lite/multi-study-view.js');
+ assert.equal(w9.orderedSelection(pick([A,B],[first,second]).studyUids,A),null);
+ const merged={uid:C,examScope:scope(C,[source(C),source(P)])};
+ assert.deepEqual(pick([B,C,A],[first,second,merged]).studyUids,[A,C,P]);
+ const input=model.originalInput([A,C]);
+ assert.equal(model.viewerUrl(input),`/ohif/viewer?StudyInstanceUIDs=${A},${C}&hangingProtocolId=@ohif/hpCompare`);
+ assert.equal(input.current.groupId,null);assert.equal(input.purpose,'stored');
+});
+
+test('new ordinary logical Jobs carry compact current references and original viewing stays explicit',()=>{
+ const value={studies:[A,P],cells:[]},saved=model.jobSnapshot(value,null,value.studies);
+ assert.deepEqual(saved.exam,{version:1,purpose:'current',current:{reportUid:A,groupId:null,part:null},prior:{reportUid:P,groupId:null,part:null}});
+ assert.equal(model.jobSnapshot(value,null,value.studies,true).exam.purpose,'stored');
+ assert.equal(model.readingStamp(null,A),model.readingStamp({uid:A,state:{draftEpoch:'later'}}));
+ assert.notEqual(model.readingStamp(null,A),model.readingStamp(scope(A,[source(A),source(B)])));
+});
+
+test('adding a logical comparison reopens current and prior through the existing unsaved-work gate',async()=>{
+ const ts=require('../api/node_modules/typescript');
+ const tree=ts.createSourceFile('viewer-prior.js',fs.readFileSync('config/ohif/viewer-prior.js','utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
+ let method;function visit(node){if(ts.isMethodDeclaration(node)&&node.name?.getText(tree)==='loadStudy')method=node.getText(tree);ts.forEachChild(node,visit);}visit(tree);
+ const current=scope(A,[source(A,'exclude',[S])],0),prior=scope(B,[source(A,'include',[S])],1);
+ let opening=model.viewerInput(current),allowed=false;const gates=[],retrieved=[];
+ const root={KinExamScope:model,KinViewerExamScope:{snapshot:()=>opening,ensure:async()=>opening},
+  KinViewerHangingSettings:{rank:sets=>sets},
+  kinViewerOpenPatient:async(href,options)=>{gates.push({href,options});return allowed;}};
+ const sandbox={window:root,URL,location:new URL('https://pacs.test/ohif/viewer#kin-window-group=keep'),
+  viewer:{snapshot:()=>({studyUIDs:[A]})},
+  extensions:{getActiveDataSource:()=>[{retrieve:{series:{metadata:async value=>retrieved.push(value)}},deleteStudyMetadataPromise(){}}]},
+  services:{displaySetService:{getActiveDisplaySets:()=>[{StudyInstanceUID:P,SeriesInstanceUID:T,images:[{}]}]}}};
+ const loader=vm.runInNewContext('({'+method+'}).loadStudy',sandbox),abort=new AbortController();
+ await assert.rejects(loader(B,{}, {uid:B,examScope:prior},{signal:abort.signal}),/현재 영상은 유지/);
+ assert.deepEqual(retrieved,[]);
+ allowed=true;const answer=await loader(B,{}, {uid:B,examScope:prior},{signal:abort.signal,seriesUid:S,valid:()=>true});
+ assert.equal(answer.reopened,true);
+ const url=new URL(gates.at(-1).href),refs=JSON.parse(url.searchParams.get('kinExamScopes'));
+ assert.deepEqual(refs.current,model.reference(current));assert.deepEqual(refs.prior,model.reference(prior));
+ assert.equal(url.searchParams.get('StudyInstanceUIDs'),A);assert.equal(url.searchParams.get('initialSeriesInstanceUID'),S);
+ assert.equal(url.hash,'#kin-window-group=keep');assert.equal(gates.at(-1).options.signal,abort.signal);
+ const count=gates.length;await loader(B,{}, {uid:B,examScope:prior},{valid:()=>false});assert.equal(gates.length,count);
+ opening={...opening,purpose:'stored'};await loader(B,{}, {uid:B,examScope:prior});
+ assert.equal(JSON.parse(new URL(gates.at(-1).href).searchParams.get('kinExamScopes')).purpose,'stored');
+ opening=null;await loader(P,{studyUid:A,seriesUid:T}, {uid:P});assert.equal(retrieved.length,1);assert.equal(retrieved[0].StudyInstanceUID,P);
+ assert.equal(gates.length,count+1);
+});
+
 test('clinician ordinary openings keep the native URL and request count while stored split openings recheck their scope',async()=>{
  const ts=require('../api/node_modules/typescript');
  const tree=ts.createSourceFile('clinician.js',fs.readFileSync('worklist-v0/hpacs-lite/clinician.js','utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
  let open;function visit(node){if(ts.isFunctionDeclaration(node)&&node.name?.text==='openViewer')open=node.getText(tree);ts.forEachChild(node,visit);}visit(tree);
  const plain={...scope(A,[source(A)]),groupId:null,kind:'single',part:null},calls=[],opened=[],note={};
  const popup={location:{replace:url=>opened.push(url)},focus(){}};
- const context={root:{KinExamScope:model,open:()=>popup},KinAuth:{sessionId:()=> 'session'},
+ const context={root:{KinExamScope:model,open:url=>{if(url)opened.push(url);return popup;}},KinAuth:{sessionId:()=> 'session'},
   byUid:new Map([[A,{uid:A}],[P,{uid:P}]]),selected:A,leaving:false,reportSeq:1,viewerSequence:0,
   displayedExam:plain,displayedReport:{uid:A,version:4},STUDY_UID:/^\d+(?:\.\d+)+$/,VIEWER_WINDOW:'viewer',
   $:()=>note,TEXT:{},patientKey:()=> 'patient',describe:e=>e.message,

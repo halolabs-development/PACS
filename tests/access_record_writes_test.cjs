@@ -90,7 +90,7 @@ test('B2-01 each PACS write surface commits a 기재/추가기재/수정 record 
 const UID = '2.25.100', SERIES = '2.25.101', SOP = '2.25.102';
 const RAD = { kind: 'member', sub: 'syn-sub-rad', actor: 'syn-rad@synthetic.test', institution: INST, roles: ['radiologist'] };
 const keyItem = { schemaVersion: 1, kind: 'key', seriesUid: SERIES, sopUid: SOP, frame: 1, title: 'SYNTHETIC key' };
-const access = { prepareSourceIdentity:async()=>{}, assertIdentifiedSource:()=>({sourcePatientId:'SYN-PID-1',sourceInstitution:INST}), prepare: async () => {}, snapshot: async () => {}, require: async () => {}, allowed: async (_c, refs) => new Set(refs) };
+const access = { prepareSourceIdentity:async()=>{}, assertUnsplitSource:()=>({sourcePatientId:'SYN-PID-1',sourceInstitution:INST}), assertIdentifiedSource:()=>({sourcePatientId:'SYN-PID-1',sourceInstitution:INST}), prepare: async () => {}, snapshot: async () => {}, require: async () => {}, allowed: async (_c, refs) => new Set(refs) };
 
 /** Committed rows; a transaction works on a copy and commits it only when its work returns. */
 function viewerDatabase() {
@@ -164,7 +164,9 @@ function jobDatabase() {
   const parent = { uid: UID, institutionId: INST, teleInstitutionId: null, rs: 'W', preDoc: null, preReviewer: null, preDocSub: null, preReviewerSub: null };
   const store = { jobs: new Map(), revisions: [], audit: [] };
   const client = s => ({
-    studyState: { findMany: async () => [parent] },
+    studyState: { findMany: async () => [parent], findUnique: async () => parent },
+    studyGroupMember: { findMany: async () => [] },
+    studyGroup: { findMany: async () => [] },
     viewerJob: {
       findUnique: async ({ where }) => s.jobs.get(where.id) ?? null,
       create: async ({ data }) => { const row = { hidden: false, createdAt: new Date(0), ...data }; s.jobs.set(data.id, row); return { ...row }; },

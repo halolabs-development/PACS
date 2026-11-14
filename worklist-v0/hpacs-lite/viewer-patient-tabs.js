@@ -202,7 +202,7 @@ window.KinViewerPatientTabs = (() => {
   }
   const OPEN_WAIT_MS = 6000;
   const reading = () => { try { return !!session && !session.ended() && !session.readOnly?.() && !!session.owner(); } catch (_) { return false; } };
-  const editorLink = uid => window.kinViewerEditorLink?.({ studies: [uid], owner: () => session.owner(), live: reading, openTimeoutMs: OPEN_WAIT_MS }) || null;
+  const editorLink = uid => window.kinViewerEditorLink?.({ studies: [uid], examScope:[current?.exam?.current,current?.exam?.prior].find(scope=>scope?.reportUid===uid), owner: () => session.owner(), live: reading, openTimeoutMs: OPEN_WAIT_MS }) || null;
   // Makes the linked reading screen's report target this study (its own move: viewer-windows.js editorOpen → select).
   async function target(uid) {
     const link = editorLink(uid);

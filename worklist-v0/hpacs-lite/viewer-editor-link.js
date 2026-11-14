@@ -82,6 +82,7 @@ globalThis.kinViewerEditorLink = function (options) {
   const studies = Array.isArray(settings.studies) ? settings.studies.slice() : [];
   const owner = typeof settings.owner === 'function' ? settings.owner : () => null;
   const live = typeof settings.live === 'function' ? settings.live : () => false;
+  const examStamp = globalThis.KinExamScope.readingStamp(settings.examScope,studies[0]);
   const target = 'target' in settings ? settings.target
     : (view.opener || (view.parent !== view ? view.parent : null));
   const origin = settings.origin || view.location?.origin;
@@ -119,7 +120,7 @@ globalThis.kinViewerEditorLink = function (options) {
       if (!available() || !bound) { resolve({ ok: false, reason: 'missing' }); return; }
       const work = view.KinWorkContext, context = work?.capture('document');
       const request = view.crypto.randomUUID();
-      const expected = { request, owner: bound, studies: studies.slice(), activeUid: studies[0], ...(settings.examScope?{examStamp:globalThis.KinExamScope.stamp(settings.examScope)}:{}) };
+      const expected = { request, owner: bound, studies: studies.slice(), activeUid: studies[0], examStamp };
       const entry = { cancel: null };
       // The window-group channel (a same-origin BroadcastChannel) when there is no bound window; closed with the request.
       // A relink of this window while the request waits cancels it, and the answer is read only under the same link.
@@ -165,7 +166,7 @@ globalThis.kinViewerEditorLink = function (options) {
       if (signal?.aborted) { onAbort(); return; }
       timer = setTimeout(() => finish({ ok: false, reason: 'timeout' }), timeoutMs);
       try {
-        const message = { type: 'kin-editor-request', request, owner: bound, studies: studies.slice(), activeUid: studies[0], ...(settings.examScope?{examStamp:globalThis.KinExamScope.stamp(settings.examScope)}:{}) };
+        const message = { type: 'kin-editor-request', request, owner: bound, studies: studies.slice(), activeUid: studies[0], examStamp };
         if (name) link.postMessage({ ...message, list: name.list }); else target.postMessage(message, origin);
       } catch (_) { finish({ ok: false, reason: 'missing' }); }
     });
@@ -214,7 +215,7 @@ globalThis.kinViewerEditorLink = function (options) {
       for (const type of ['hashchange', 'kin-window-link-changed']) view.addEventListener(type, onRelink);
       timer = setTimeout(() => { withdraw(); finish({ ok: false, reason: 'timeout' }); }, openTimeoutMs);
       try { link.postMessage({ type: 'kin-editor-open', request, owner: bound, uid, list: name.list,
-        ...(settings.examScope?{examStamp:globalThis.KinExamScope.stamp(settings.examScope)}:{}) }); }
+        examStamp }); }
       catch (_) { finish({ ok: false, reason: 'missing' }); }
     });
   }

@@ -535,6 +535,14 @@
       current: () => selectedUid, study: uid => studies.find(s => s.uid === uid),
       formatDate: fmtD,
       viewerInput: viewerOpening,
+      verifyExam: async (uid,stamp) => {
+        const at=work.capture('document'),row=studies.find(s=>s.uid===uid);
+        if(KinExamScope.readingStamp(row)!==stamp)return false;
+        try {
+          const scope=await KinExamScope.fetch(api,uid,{reference:KinExamScope.reference(KinExamScope.read(row)),at});
+          return work.admits(at)&&KinExamScope.readingStamp(scope)===stamp&&KinExamScope.readingStamp(studies.find(s=>s.uid===uid))===stamp;
+        } catch (_) {return false;}
+      },
       prior: autoPrior, move, select, queue: orderedStudies, layout: () => applyLayout(), popup: openOhifWindow,
       // A viewer's withdrawn Open in Reading Screen: a move to this study still waiting for the save gate is dropped.
       cancelMove: uid => { if (pendingLeave?.target?.uid !== uid) return false; pendingLeave.target = null; return true; },

@@ -639,6 +639,19 @@ class Site:
             return route.fulfill(json=self.list_body(account))
         if method == "GET" and path == "/api/colleagues":
             return route.fulfill(json=[])
+        scope_path = re.fullmatch(r"/api/studies/([^/]+)/exam-scope", path)
+        if method == "GET" and scope_path:
+            uid = scope_path.group(1)
+            visible = next((row for row in self.list_body(account)["studies"] if row["uid"] == uid), None)
+            if not visible:
+                return route.fulfill(status=404, json={"message": "검사가 없습니다"})
+            scope = visible.get("examScope") or {
+                "reportUid": uid, "groupId": None, "part": None, "kind": None, "active": True,
+                "generation": "synthetic-scope", "sources": [{"studyUid": uid, "series": {"mode": "all", "uids": []}}]}
+            reference = json.loads(parse_qs(query).get("reference", ["null"])[0])
+            if reference != {key: scope[key] for key in ("reportUid", "groupId", "part")}:
+                return route.fulfill(status=409, json={"code": "EXAM_SCOPE_CHANGED"})
+            return route.fulfill(json=scope)
         if method == "GET" and path == "/api/prefs":
             return route.fulfill(json={"filters": [], "templates": []})
         if method == "GET" and path == "/api/worklist-columns":

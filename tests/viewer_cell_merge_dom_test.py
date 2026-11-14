@@ -267,6 +267,7 @@ class ViewerCellMergeDOMTest(unittest.TestCase):
         page.add_script_tag(content=JOB_FIXTURE)
         page.add_script_tag(content=VOLUME_JOB)
         page.add_script_tag(content=STACK_RESTORE)
+        page.add_script_tag(path=str(ROOT / "worklist-v0/hpacs-lite/exam-scope.js"))
         page.add_script_tag(content=JOBS)
         self.assertTrue(page.evaluate("mountDirect()"))
         page.evaluate("mountJobs()")

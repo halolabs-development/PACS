@@ -139,7 +139,7 @@
       if (!uid) { ctx.toast('인쇄할 검사를 먼저 고르세요.', 'err'); return; }
       stopWatching();
       const mine = ++seq;
-      session = { uid, seq: mine, scopeStamp:window.KinExamScope.stamp(ctx.study(uid)), at:ctx.work("document"), destinations: { printers: [], devices: [] }, layout: null, film: 1 };
+      session = { uid, seq: mine, scopeStamp:window.KinExamScope.screenStamp(ctx.study(uid)), at:ctx.work("document"), destinations: { printers: [], devices: [] }, layout: null, film: 1 };
       const s = ctx.study(uid) || {};
       head.textContent = [s.name, s.id, s.date, s.modality, s.desc].filter(v => v != null && String(v).trim() !== '').join(' · ');
       head.dataset.uid = uid;
@@ -167,7 +167,7 @@
       await loadLayout(1, true);
     }
 
-    function current(mine) { return !!session && session.seq === mine && dialog.open && ctx.admits(session.at) && window.KinExamScope.stamp(ctx.study(session.uid)) === session.scopeStamp; }
+    function current(mine) { return !!session && session.seq === mine && dialog.open && ctx.admits(session.at) && window.KinExamScope.screenStamp(ctx.study(session.uid)) === session.scopeStamp; }
 
     function paintTargets(last = remembered()) {
       const list = kind() === 'device' ? session.destinations.devices : session.destinations.printers;
@@ -203,16 +203,16 @@
       label_();
       try {
         const body = { studyUid: session.uid, format: format.value, filmSize: size.value, orientation: orientation.value, film: filmNumber,
-          ...(firstSeries || !series.value ? {} : JSON.parse(series.value)) };
+          ...(firstSeries || !series.value ? {} : window.KinExamScope.seriesRequest(ctx.study(session.uid),series.value)) };
         const layout = await ctx.api('POST', '/film-print/layout', body, undefined, doc());
         if (!current(mine)) return;
         session.layout = layout;
         session.film = layout.film;
         {
-          series.replaceChildren(...layout.series.map(s => node('option', { value: JSON.stringify({sourceUid:s.sourceUid,seriesUid:s.uid}),
-            textContent: [s.sourceUid, s.number != null ? `#${s.number}` : '', s.modality, s.description, `${s.images} image${s.images === 1 ? '' : 's'}`].filter(Boolean).join(' · ') })));
+          series.replaceChildren(...layout.series.map(s => node('option', { value: window.KinExamScope.seriesValue(ctx.study(session.uid),s.sourceUid,s.uid),
+            textContent: window.KinExamScope.originalLabel(ctx.study(session.uid),s.sourceUid,[s.number != null ? `#${s.number}` : '', s.modality, s.description, `${s.images} image${s.images === 1 ? '' : 's'}`].filter(Boolean).join(' · '),true) })));
         }
-        series.value = JSON.stringify({sourceUid:layout.sourceUid,seriesUid:layout.seriesUid});
+        series.value = window.KinExamScope.seriesValue(ctx.study(session.uid),layout.sourceUid,layout.seriesUid);
         paintFilm();
         label_();
       } catch (error) {
@@ -327,7 +327,7 @@
       label_();
       const n = Math.min(5, Math.max(1, Math.round(Number(copies.value) || 1)));
       copies.value = n;
-      const body = { requestId: crypto.randomUUID(), studyUid: session.uid, sourceUid:session.layout.sourceUid, seriesUid: session.layout.seriesUid, format: format.value,
+      const body = { requestId: crypto.randomUUID(), studyUid: session.uid, ...window.KinExamScope.sourceRequest(ctx.study(session.uid),session.layout.sourceUid,{}), seriesUid: session.layout.seriesUid, format: format.value,
         filmSize: size.value, orientation: orientation.value, film: session.layout.film, copies: n, plan: session.layout.plan,
         destination: { kind: kind(), peerId: target.value } };
       say([['', `Sending — film ${body.film} of ${session.layout.films} to ${where}`]]);

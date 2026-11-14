@@ -130,7 +130,7 @@
       for(const uid of observedExamScopes.keys()) if(!present.has(uid)) observeExamScope({uid,origin:"logical"});
     }
     function observeExamScope(s) {
-      const next = KinExamScope.stamp(s), previous = observedExamScopes.get(s.uid);
+      const next = KinExamScope.screenStamp(s), previous = observedExamScopes.get(s.uid);
       observedExamScopes.set(s.uid, next);
       if (previous === undefined || previous === next) return;
       if (reportConverge.has(s.uid)) {

@@ -209,11 +209,11 @@ test('editorReply answers this login and report target only, with the exact text
   const fields = { findings: { value: 'F line\n' }, conclusion: { value: 'C' }, recommendation: { value: '' } };
   const base = { owner: '["i","a"]', target: '1.2.1', modal: false, usable: true };
   let state = base;
-  const reader = { owner: () => state.owner, target: () => state.target, modal: () => state.modal, field: id => fields[id],
+  const reader = { examStamp:()=>JSON.stringify(['1.2.1',null,null]), owner: () => state.owner, target: () => state.target, modal: () => state.modal, field: id => fields[id],
     usable: field => field === fields.findings && state.usable, session: (owner, uid) => 'S|' + owner + '|' + uid };
-  const m = { type: 'kin-editor-request', request: REQ, owner: '["i","a"]', studies: ['1.2.1', '1.2.0'], activeUid: '1.2.1' };
+  const m = { type: 'kin-editor-request', request: REQ, owner: '["i","a"]', studies: ['1.2.1', '1.2.0'], activeUid: '1.2.1', examStamp:JSON.stringify(['1.2.1',null,null]) };
   const echo = { type: 'kin-editor-reply', request: REQ, owner: '["i","a"]', studies: ['1.2.1', '1.2.0'], activeUid: '1.2.1' };
-  assert.deepEqual(model.editorReply(m, reader), { ...echo, result: 'ok', session: 'S|["i","a"]|1.2.1',
+  assert.deepEqual(model.editorReply(m, reader), { ...echo, result: 'ok', examStamp:JSON.stringify(['1.2.1',null,null]), session: 'S|["i","a"]|1.2.1',
     editor: { findings: 'F line\n', conclusion: 'C', recommendation: '' } });
   for (const [change, result] of [[{ owner: '["i","b"]' }, 'session'], [{ owner: null }, 'session'], [{ target: '1.2.0' }, 'context'],
     [{ target: null }, 'context'], [{ modal: true }, 'modal'], [{ usable: false }, 'unavailable']]) {

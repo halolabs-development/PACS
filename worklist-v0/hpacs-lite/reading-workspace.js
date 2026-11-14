@@ -76,7 +76,7 @@ window.KinReadingWorkspace = function (app) {
     catch (_) { app.notice('자동 열기 설정을 저장하지 못했습니다. 현재 화면에서만 적용됩니다.'); }
     maybeAutoNote();
   };
-  const separate = button('Open Viewer Window', () => { if (shown && sameTarget()) app.popup(shown.uid, shown.prior, shown.series, returnLink(), shown.exam ? {exam:shown.exam} : null); });
+  const separate = button('Open Viewer Window', () => { if (shown && sameTarget()) app.popup(shown.uid, shown.prior, shown.series, returnLink(), shown.viewingSet ? {exam:window.KinExamScope.originalInput([shown.uid,shown.prior].filter(Boolean)),viewingSet:shown.viewingSet} : shown.exam ? {exam:shown.exam} : null); });
   button('Exit Workspace', leave);
   const target = node('div', '', bar); target.id = 'reading-target';
   const shortcutHelp = node('details', '', bar); shortcutHelp.id = 'reading-shortcut-help';
@@ -330,7 +330,7 @@ window.KinReadingWorkspace = function (app) {
   const editorReader={
     owner:()=>!ended&&app.allowed()?app.noteOwner?.():null,
     target:()=>app.current(),
-    examStamp:(uid=app.current())=>window.KinExamScope.stamp(app.study(uid)),
+    examStamp:(uid=app.current())=>window.KinExamScope.readingStamp(app.study(uid),uid),
     modal:()=>modalOpen(document),
     field:id=>$('#'+id),
     usable:field=>field.isConnected&&!!field.getClientRects().length&&!field.disabled&&!field.closest('[inert]'),
@@ -344,6 +344,8 @@ window.KinReadingWorkspace = function (app) {
   const openReader={...editorReader,
     busy:()=>editorOpening,
     listed:uid=>!!app.study(uid),
+    verifyExam:(uid,stamp)=>app.verifyExam(uid,stamp),
+    admitted:request=>opening?.request===request&&!opening.cancelled,
     select:uid=>app.select(uid),
     focus:()=>{if(active&&!ended)focusPane('report');else app.focusReport?.();},
   };
@@ -357,7 +359,7 @@ window.KinReadingWorkspace = function (app) {
   // The viewer withdrew the opening it is waiting for no more (viewer-editor-link.js): a move still waiting for this page's
   // study-move gate does not happen; the page stays on the study it is on.
   window.kinReadingEditorCancel=message=>{
-    if(opening&&message&&message.request===opening.request&&message.uid===opening.uid)app.cancelMove?.(opening.uid);
+    if(opening&&message&&message.request===opening.request&&message.uid===opening.uid){opening.cancelled=true;app.cancelMove?.(opening.uid);}
   };
   // Read on every message rather than captured once: the frame and the document state are current values.
   window.addEventListener('message',e=>{
@@ -655,7 +657,7 @@ window.KinReadingWorkspace = function (app) {
     return { uid, prior: prior && prior !== uid ? prior : null, series, reportUid: app.current(), ...(exam?{exam}:{}) };
   }
   function url(r) {
-    if (app.viewerInput) return window.KinExamScope.viewerUrl(app.viewerInput(r.uid, r.prior, r.exam), r.series) +
+    if (app.viewerInput) return window.KinExamScope.viewerUrl(r.viewingSet ? window.KinExamScope.originalInput([r.uid,r.prior].filter(Boolean)) : app.viewerInput(r.uid, r.prior, r.exam), r.series) +
       (r.job ? '&kinJob=' + encodeURIComponent(r.job) : '') + (r.viewingSet ? '#kin-w9=' + r.viewingSet : '');
     return '/ohif/viewer?StudyInstanceUIDs=' + encodeURIComponent(r.uid) + (r.prior ? ',' + encodeURIComponent(r.prior) + '&hangingProtocolId=@ohif/hpCompare' : '') +
       (r.series ? '&initialSeriesInstanceUID=' + encodeURIComponent(r.series) : '') + (r.job ? '&kinJob=' + encodeURIComponent(r.job) : '') +

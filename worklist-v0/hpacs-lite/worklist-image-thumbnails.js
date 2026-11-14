@@ -11,7 +11,7 @@
     const host=options.host;
     let ended=false,source=null,view=null,generation=0,controller=null,urls=[],frames=[],page=0,order='ascending',work=Promise.resolve();
     const owned=()=>!ended&&boundOwner&&options.owner()===boundOwner;
-    const current=()=>owned()&&source&&options.currentUid()===source.uid&&(!options.currentStudy||root.KinExamScope.stamp(options.currentStudy())===source.scopeStamp);
+    const current=()=>owned()&&source&&options.currentUid()===source.uid&&(!options.currentStudy||root.KinExamScope.screenStamp(options.currentStudy())===source.scopeStamp);
     const sourceIs=(value)=>current()&&source===value;
     const find=selector=>view?.querySelector(selector);
     function revoke(){for(const value of urls)URL.revokeObjectURL(value);urls=[];}
@@ -142,7 +142,7 @@
       if(!owned()||!host||!value||!uid(value.uid)||value.uid!==options.currentUid()||!uid(value.series))return false;
       const scope=root.KinExamScope.read(value),sourceUid=value.sourceUid||value.uid;
         if(!scope?.sources.some(s=>s.studyUid===sourceUid&&root.KinExamScope.allows(s,value.series)))return false;
-        close();source={...value,sourceUid,scopeStamp:root.KinExamScope.stamp(value)};order='ascending';page=0;view=makeView();host.replaceChildren(view);find('#thumb-images-series').textContent=`Series ${value.series}`;find('#thumb-images-status').textContent='원본 영상 목록을 불러오는 중…';find('#thumb-images-order').disabled=true;find('#thumb-images-retry').disabled=true;updatePages();
+        close();source={...value,sourceUid,scopeStamp:root.KinExamScope.screenStamp(value)};order='ascending';page=0;view=makeView();host.replaceChildren(view);find('#thumb-images-series').textContent=`Series ${value.series}`;find('#thumb-images-status').textContent='원본 영상 목록을 불러오는 중…';find('#thumb-images-order').disabled=true;find('#thumb-images-retry').disabled=true;updatePages();
       startInventory();return true;
     }
     gate.onInvalidate(event=>{

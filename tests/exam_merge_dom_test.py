@@ -215,7 +215,7 @@ class ExamMerge(unittest.TestCase):
         expect(other.locator("input[type=checkbox]")).not_to_be_checked()
         expect(base_b).to_contain_text("1 / 12")
         expect(self.result(win)).to_contain_text("결과: 검사 1건 (기준 SYNACC-A1, 2026-10-03) · 시리즈 2 · 영상 20.")
-        expect(self.result(win)).to_contain_text("원래 검사 2건의 연결은 보존합니다.")
+        expect(self.result(win)).to_contain_text("원래 검사 2건의 묶음은 기록으로 남아 되돌릴 수 있습니다.")
         expect(self.result(win)).to_contain_text("Query/Retrieve와 원본 내보내기는 원래 검사 단위입니다.")
         merge = win.locator(".order-dialog-foot button", has_text=re.compile("^Merge$"))
         expect(merge).to_be_enabled()

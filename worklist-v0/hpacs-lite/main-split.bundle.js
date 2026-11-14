@@ -1488,7 +1488,7 @@
       for(const uid of observedExamScopes.keys()) if(!present.has(uid)) observeExamScope({uid,origin:"logical"});
     }
     function observeExamScope(s) {
-      const next = KinExamScope.stamp(s), previous = observedExamScopes.get(s.uid);
+      const next = KinExamScope.screenStamp(s), previous = observedExamScopes.get(s.uid);
       observedExamScopes.set(s.uid, next);
       if (previous === undefined || previous === next) return;
       if (reportConverge.has(s.uid)) {
@@ -3301,13 +3301,13 @@
       if (imageThumbnails?.sync()) return;
       cancelThumbs();
       if (!uid) { wrap.innerHTML = ""; return; }
-      const seq = thumbSeq, scope = KinExamScope.read(viewed()), scopeStamp = KinExamScope.stamp(viewed());
+      const seq = thumbSeq, scope = KinExamScope.read(viewed()), scopeStamp = KinExamScope.screenStamp(viewed());
       const controller = thumbController = new AbortController();
       const signal = controller.signal;
       // 이 그리기를 시작한 문맥. 받은 목록·영상·실패가 화면에 닿는 자리는 모두 이 문맥(세션·작업 세대)과 아래 stale()
       // (요청 세대·보는 검사)을 함께 지난다. 받은 blob으로 만든 URL은 이 그리기의 것이라 통과한 뒤에만 만든다.
       const at = work.capture("document");
-      const stale = () => signal.aborted || seq !== thumbSeq || uid !== viewingUid() || scopeStamp !== KinExamScope.stamp(viewed());
+      const stale = () => signal.aborted || seq !== thumbSeq || uid !== viewingUid() || scopeStamp !== KinExamScope.screenStamp(viewed());
       const apply = effect => work.commit(at, () => { if (!stale()) effect(); });
       if (demoMode) {
         wrap.innerHTML = `<div class="thumbs" style="grid-template-columns:repeat(2,1fr)"><img src="${DEMO_IMG}"></div>`;
@@ -8317,7 +8317,7 @@
         version: Number.isSafeInteger(a.version) ? a.version : 0,
         draftRevision: typeof a.draftRevision === "string" ? a.draftRevision : null,
         draftEpoch: a.draftEpoch ?? null,
-        examGeneration: KinExamScope.stamp(studies.find(s => s.uid === uid)),
+        examGeneration: KinExamScope.screenStamp(studies.find(s => s.uid === uid)),
       };
     }
     /** 묶음 실행이 한 건 확정의 잠금을 쥔다. 확정·삽입이 나가 있으면 시작하지 않는다(false). */
@@ -9628,7 +9628,7 @@
           const known = new Map(studies.map(x => [x.uid, x]));
           const knownOriginals=new Set(KinExamScope.originals(studies).map(s=>s.uid));
           const fresh = KinExamScope.originals(r.studies).filter(s=>!knownOriginals.has(s.uid));
-          const scopeChanged = r.studies.some(s=>KinExamScope.stamp(s)!==KinExamScope.stamp(known.get(s.uid)));
+          const scopeChanged = r.studies.some(s=>KinExamScope.screenStamp(s)!==KinExamScope.screenStamp(known.get(s.uid)));
 
           // 목록이 달라졌으면(도착·삭제) 통째로 다시 그린다.
           if (scopeChanged || fresh.length || r.studies.length !== studies.length) {
@@ -9861,7 +9861,7 @@
             ${v.findings || v.conclusion || v.recommendation
               ? `<pre>${esc([v.findings, v.conclusion, v.recommendation].filter(Boolean).join("\n---\n"))}</pre>`
               : `<div style="color:#556;padding:4px 0">(내용 없음)</div>`}
-            <div class="vcite-row"><button class="chip" data-history-images="${esc(v.version)}" ${v.group && !v.group.readable ? "disabled" : ""}>Open Images</button> <button class="vcite-btn" data-version="${esc(v.version)}"
+            <div class="vcite-row">${v.group ? `<button class="chip" data-history-images="${esc(v.version)}" ${!v.group.readable ? "disabled" : ""}>Open Images</button> ` : ""}<button class="vcite-btn" data-version="${esc(v.version)}"
                  title="이 판의 인용 증적을 서버에서 확인합니다">Show Citations</button></div>
             <div class="vcite-host" data-version="${esc(v.version)}"></div>
           </div>`).join("")
@@ -9896,6 +9896,7 @@
     }
     $("#b-history").addEventListener("click", showHistory);
     $("#hist-close").addEventListener("click", closeHistory);
+
 
     /**
      * Clear — 세 칸을 한 번에 비운다.
@@ -10633,7 +10634,7 @@
       if (viewingSetToWorkspace() && !preservePartner) return { status: 'reserved', kind: 'workspace' };
       if (demoMode) return { status: 'refused', message: '데모 모드에서는 뷰어를 열 수 없습니다.' };
       if (!viewerWindows) return { status: 'refused', message: '영상 창 연결을 확인하지 못했습니다. 통합 판독 화면을 사용하거나 목록을 새로고침하세요.' };
-      const url = KinExamScope.viewerUrl(viewerOpening(uids[0], uids[1] || null));
+      const url = KinExamScope.viewerUrl(KinExamScope.originalInput(uids));
       // A previous composition may leave this retry document open. Reuse its slot through the normal launch guards.
       const ownRetryWindow = preservePartner && viewingSetRetryWindow?.isOpen() && viewerWindows.rows().some(row => row.popup === viewingSetRetryWindow.popup);
       const choice = viewerWindows.choose(url, 1, preservePartner && !ownRetryWindow ? { freshDocument: true } : { singleWindow: true });
@@ -10661,7 +10662,7 @@
         return readingWorkspace.openViewingSet(plan.uid, plan.priorUid, { opening, metadata });
       }
       if (reservation?.kind !== 'window') return { status: 'refused', message: '영상 창을 확인하지 못했습니다. 다시 여세요.' };
-      return Promise.resolve(openOhifWindow(plan.uid, plan.priorUid, null, null, { reservation, viewingSet: opening, signal })).then(result => {
+      return Promise.resolve(openOhifWindow(plan.uid, plan.priorUid, null, null, { reservation, viewingSet: opening, signal, exam:KinExamScope.originalInput(uids) })).then(result => {
         if (result.status === 'accepted') {
           const sequence = ohifPopupSequences.get(reservation.popup);
           result.isOpen = () => !reservation.popup.closed && ohifPopupSequences.get(reservation.popup) === sequence;
@@ -11438,6 +11439,14 @@
       current: () => selectedUid, study: uid => studies.find(s => s.uid === uid),
       formatDate: fmtD,
       viewerInput: viewerOpening,
+      verifyExam: async (uid,stamp) => {
+        const at=work.capture('document'),row=studies.find(s=>s.uid===uid);
+        if(KinExamScope.readingStamp(row)!==stamp)return false;
+        try {
+          const scope=await KinExamScope.fetch(api,uid,{reference:KinExamScope.reference(KinExamScope.read(row)),at});
+          return work.admits(at)&&KinExamScope.readingStamp(scope)===stamp&&KinExamScope.readingStamp(studies.find(s=>s.uid===uid))===stamp;
+        } catch (_) {return false;}
+      },
       prior: autoPrior, move, select, queue: orderedStudies, layout: () => applyLayout(), popup: openOhifWindow,
       // A viewer's withdrawn Open in Reading Screen: a move to this study still waiting for the save gate is dropped.
       cancelMove: uid => { if (pendingLeave?.target?.uid !== uid) return false; pendingLeave.target = null; return true; },
@@ -14422,7 +14431,7 @@
       KinStudyAccessStatus.mount({button:$('#study-access-open'),session:()=>KinAuth.session(),refresh:async()=>(await load())===true});
       multiSelection = KinWorklistSelection.mount({host:$('#worklist-selection'),tbody:$('#rows'),owner:()=>KinViewerOpening.key(KinAuth.session()),rows:orderedStudies,current:()=>selectedUid,open:uid=>select(uid,{openSelected:true}),compare:(uid,prior)=>openFilmbox(uid,prior),
         // W9: Open Selected Studies (toolbar, Selection Details); a changed selection closes its row menu.
-        openSet:set=>multiStudyView?.open({...set,session:work.session()}),changed:generation=>closeSelectionMenu(generation),
+        openSet:set=>multiStudyView?.open(KinExamScope.viewingSelection({...set,session:work.session()},studies)),changed:generation=>closeSelectionMenu(generation),
         openBlocked:()=>!serverMode||offline||demoMode?'서버 연결과 로그인 상태를 확인한 뒤 다시 여세요.':!KinAuth.has('radiologist')?'여러 검사 열기는 판독의 권한이 필요합니다.':null,
         // FC-028 Batch Reading (worklist-batch-report.js, mounted below).
         batchRead:{shown:()=>!!batchReport?.shown(),blocked:()=>batchReport?.blocked()??null,open:set=>batchReport?.open(set)},
@@ -14466,7 +14475,7 @@
       // exist. It reads the page's own gate, transport, Reading Target, W4 select and launcher; it ends with the session.
       multiStudyView = KinMultiStudyView.mount({ host: $('#multi-study'), work,
         context: () => ({ owner: KinViewerOpening.key(KinAuth.session()), session: work.session() }),
-        selection: () => { const set = multiSelection?.snapshot(); return set && { ...set, session: work.session() }; },
+        selection: () => { const set = multiSelection?.snapshot(); return KinExamScope.viewingSelection(set && { ...set, session: work.session() },studies); },
         allowed: () => !!sess && serverMode && !demoMode && !offline,
         target: () => selectedUid,
         targetLabel: uid => { const s = studies.find(x => x.uid === uid); return s ? [s.name, s.id, s.date, s.modality, shownStudyDesc(s)].filter(Boolean).join(' · ') : null; },

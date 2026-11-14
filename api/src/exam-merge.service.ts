@@ -309,7 +309,7 @@ export function scopeIncludesSeries(scope: ResolvedExamScope, studyUid: string, 
 /** Public scope facts, shared by read responses and stored output records. No state or lock implementation escapes. */
 export function examScopeView(scope: ResolvedExamScope) {
   return { reportUid: scope.reportUid, groupId: scope.groupId, kind: scope.kind, part: scope.part, active: scope.active,
-    sources: scope.sources, generation: scope.generation };
+    sources: scope.sources, generation: scope.generation, ...(scope.hasMembership ? {hasMembership:true} : {}) };
 }
 
 /** Existing wire bodies gain scope fields only when there is a grouping history to describe. */
@@ -322,6 +322,12 @@ export function examScopeReference(scope: ResolvedExamScope) {
 }
 
 /** Saved viewer layouts retain their own current/prior roles and original series, independently of later grouping. */
+export function currentViewerSnapshot(snapshot:any) {
+  if(snapshot.exam)return snapshot;
+  const ref=(uid:string)=>({reportUid:uid,groupId:null,part:null});
+  return {...snapshot,exam:{version:1,purpose:'current',current:ref(snapshot.studies[0]),prior:snapshot.studies[1]?ref(snapshot.studies[1]):null}};
+}
+
 export async function resolveViewerSnapshot(db:any,access:StudyAccessService,c:Caller,snapshot:any,
     prepared?:ResolvedExamScope[]) {
   if(!snapshot.exam)return {snapshot,scopes:[] as ResolvedExamScope[]};
@@ -336,7 +342,7 @@ export async function resolveViewerSnapshot(db:any,access:StudyAccessService,c:C
     scopes.push(scope);
   }
   if(JSON.stringify(unique(scopes.flatMap(scope=>scope.studies)))!==JSON.stringify(snapshot.studies))throw examScopeChanged();
-  for(const cell of [...snapshot.cells,snapshot.volume,snapshot.batch?.cell].filter(Boolean))
+  for(const cell of [...snapshot.cells,snapshot.volume,snapshot.batch?.cell].filter(cell=>cell?.study && cell?.series))
     if(!scopes.some(scope=>scopeIncludesSeries(scope,cell.study,cell.series)))throw examScopeChanged();
   const stored=[];
   for(const scope of scopes)stored.push(await resolveExamScope(db,access,c,{uid:scope.reportUid,purpose:'stored',record:{groupId:scope.groupId},identity:true}));

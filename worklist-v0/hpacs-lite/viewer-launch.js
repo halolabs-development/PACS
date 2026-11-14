@@ -373,7 +373,7 @@
       if (viewingSetToWorkspace() && !preservePartner) return { status: 'reserved', kind: 'workspace' };
       if (demoMode) return { status: 'refused', message: '데모 모드에서는 뷰어를 열 수 없습니다.' };
       if (!viewerWindows) return { status: 'refused', message: '영상 창 연결을 확인하지 못했습니다. 통합 판독 화면을 사용하거나 목록을 새로고침하세요.' };
-      const url = KinExamScope.viewerUrl(viewerOpening(uids[0], uids[1] || null));
+      const url = KinExamScope.viewerUrl(KinExamScope.originalInput(uids));
       // A previous composition may leave this retry document open. Reuse its slot through the normal launch guards.
       const ownRetryWindow = preservePartner && viewingSetRetryWindow?.isOpen() && viewerWindows.rows().some(row => row.popup === viewingSetRetryWindow.popup);
       const choice = viewerWindows.choose(url, 1, preservePartner && !ownRetryWindow ? { freshDocument: true } : { singleWindow: true });
@@ -401,7 +401,7 @@
         return readingWorkspace.openViewingSet(plan.uid, plan.priorUid, { opening, metadata });
       }
       if (reservation?.kind !== 'window') return { status: 'refused', message: '영상 창을 확인하지 못했습니다. 다시 여세요.' };
-      return Promise.resolve(openOhifWindow(plan.uid, plan.priorUid, null, null, { reservation, viewingSet: opening, signal })).then(result => {
+      return Promise.resolve(openOhifWindow(plan.uid, plan.priorUid, null, null, { reservation, viewingSet: opening, signal, exam:KinExamScope.originalInput(uids) })).then(result => {
         if (result.status === 'accepted') {
           const sequence = ohifPopupSequences.get(reservation.popup);
           result.isOpen = () => !reservation.popup.closed && ohifPopupSequences.get(reservation.popup) === sequence;

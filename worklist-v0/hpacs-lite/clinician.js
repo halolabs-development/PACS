@@ -679,18 +679,19 @@
     if(![target?.uid||row.uid,...(other?[other.uid]:[])].every(uid=>typeof uid==='string'&&uid.length<=64&&STUDY_UID.test(uid))){note.textContent=TEXT.viewerUid;return;}
     const expectedSession=KinAuth.sessionId();
     if(!expectedSession){note.textContent='세션을 확인할 수 없습니다. 목록을 다시 열어 주세요.';return;}
-    let popup=null;try{popup=root.open('',VIEWER_WINDOW);}catch(_){}
+    let input;
+    try {
+      if(!scope&&row.exam&&!row.exam.scope||other?.exam&&!other.exam.scope)throw Error('검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.');
+      input=root.KinExamScope.viewerInput(scope||row.report?.scope||row.exam?.scope||row,
+        other&&(other.report?.scope||other.exam?.scope||other),target?.version??null,other?.report?.final?other.report.version:null);
+    } catch(error) { note.textContent=describe(error);return; }
+    let popup=null;try{popup=root.open(input.scoped?'':root.KinExamScope.viewerUrl(input),VIEWER_WINDOW);}catch(_){}
     if(!popup){note.textContent=TEXT.viewerBlocked;return;}
     const fresh=()=>!leaving&&selected===row.uid&&mine===reportSeq&&at===viewerSequence&&KinAuth.sessionId()===expectedSession;
     const apiRead=(_method,path)=>request(path);
     (async()=>{
       try {
         const priorVersion=other?.report?.final?other.report.version:null;
-        const currentHint=scope||row.report?.scope||row.exam?.scope||row;
-        const priorHint=other&&(other.report?.scope||other.exam?.scope||other);
-        if(!scope&&row.exam&&!row.exam.scope||other?.exam&&!other.exam.scope)throw Error('검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.');
-        let input=root.KinExamScope.viewerInput(row.exam?{examScope:root.KinExamScope.read(currentHint)}:currentHint,
-          other?.exam?{examScope:root.KinExamScope.read(priorHint)}:priorHint,target?.version??null,priorVersion);
         if(input.scoped){
           const current=await root.KinExamScope.fetch(apiRead,target?.uid||row.uid,{purpose:target?'stored':'current',version:target?.version});
           const prior=other?await root.KinExamScope.fetch(apiRead,other.uid,{purpose:priorVersion?'stored':'current',version:priorVersion}):null;
@@ -699,7 +700,7 @@
         }
         if(!fresh())return;
         popup.name='kin-viewer-entry:'+JSON.stringify({session:expectedSession,name:VIEWER_WINDOW});popup.opener=null;
-        popup.location.replace(root.KinExamScope.viewerUrl(input));popup.focus();
+        if(input.scoped)popup.location.replace(root.KinExamScope.viewerUrl(input));popup.focus();
         note.textContent=other?TEXT.compareAsked:TEXT.viewerAsked;
       }catch(error){if(fresh())note.textContent=describe(error);}
     })();
@@ -791,7 +792,7 @@
     entry.append(node('p', 'key-title', typeof item.title === 'string' && item.title.trim() ? item.title : TEXT.untitled));
     if (typeof item.description === 'string' && item.description.trim()) entry.append(node('p', 'key-description', item.description));
     const frame = Number.isSafeInteger(item.frame) ? String(item.frame) : '—';
-    entry.append(node('p', 'key-ref', `Study ${dash(key?.sourceUid)} · Series ${dash(item.seriesUid)} · Instance ${dash(item.sopUid)} · Frame ${frame}`));
+    entry.append(node('p', 'key-ref', root.KinExamScope.originalLabel(displayedExam, key?.sourceUid ? 'Study '+key.sourceUid : null, `Series ${dash(item.seriesUid)} · Instance ${dash(item.sopUid)} · Frame ${frame}`, true)));
     return entry;
   }
 
