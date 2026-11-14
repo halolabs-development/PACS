@@ -49,8 +49,8 @@
       const known=relatedCandidates().filter(x=>relatedParts.get(x.uid)?.parts).length;
       const partTokens=[...new Set(relatedCandidates().flatMap(x=>relatedParts.get(x.uid)?.parts||[]))].filter(Boolean).sort();
       const body=$('#related-body-part'),bodyOptions=[new Option('All Body Parts',''),new Option('Unverified','?'),new Option('Unspecified',JSON.stringify('')),
-        ...partTokens.map(v=>new Option(v,JSON.stringify(v)))];
-      if(relatedBodyPart&&!bodyOptions.some(o=>o.value===relatedBodyPart))bodyOptions.push(new Option(JSON.parse(relatedBodyPart),relatedBodyPart));
+        ...partTokens.map(v=>Object.assign(new Option(v,JSON.stringify(v)),{translate:false}))];
+      if(relatedBodyPart&&!bodyOptions.some(o=>o.value===relatedBodyPart))bodyOptions.push(Object.assign(new Option(JSON.parse(relatedBodyPart),relatedBodyPart),{translate:false}));
       body.replaceChildren(...bodyOptions);body.value=relatedBodyPart;body.disabled=!s;body.title=body.selectedOptions[0]?.textContent||'';
       $('#related-parts-status').textContent=relatedParts.note() || (s?`${relatedParts.busy()?'조회 중 · ':''}부위 확인 ${known}/${relatedCandidates().length} · 미조회·실패는 Unverified` : '');
       const modality = $("#related-modality");

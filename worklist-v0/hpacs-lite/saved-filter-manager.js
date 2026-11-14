@@ -402,7 +402,7 @@
             }
             navigation();
           });
-          const summary = document.createElement('summary'); summary.textContent = name;
+          const summary = document.createElement('summary'); summary.textContent = name; summary.translate = false;
           if (metadata.get(path)?.description) summary.title = metadata.get(path).description;
           details.append(summary); branch(child, details, path); container.append(details);
         }

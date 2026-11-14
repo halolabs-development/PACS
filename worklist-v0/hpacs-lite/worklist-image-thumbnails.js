@@ -98,7 +98,7 @@
       find('#thumb-images-status').textContent=batch.length?'현재 페이지 영상을 확인하는 중…':'표시할 원본 영상이 없습니다.';updatePages();
       enqueue(async()=>{
         if(!op.valid())return;const account={bytes:0};let next=0,halted=false,completed=0;
-        const timer=setTimeout(()=>{op.timedOut=true;abort.abort();gate.commit(context,()=>{if(ticket===generation&&sourceIs(selected)){cards.forEach(item=>{item.button.disabled=true;if(item.preview.textContent==='Loading…'||item.preview.textContent.startsWith('Not started'))item.preview.textContent='Not loaded · Retry Images';});find('#thumb-images-status').textContent='응답 시간이 초과됐습니다. Retry Images로 다시 확인하세요.';}});},15000);
+        const timer=setTimeout(()=>{op.timedOut=true;abort.abort();gate.commit(context,()=>{if(ticket===generation&&sourceIs(selected)){cards.forEach(item=>{item.button.disabled=true;const shown=window.KinLanguage?window.KinLanguage.source(item.preview):item.preview.textContent;if(shown==='Loading…'||shown.startsWith('Not started'))item.preview.textContent='Not loaded · Retry Images';});find('#thumb-images-status').textContent='응답 시간이 초과됐습니다. Retry Images로 다시 확인하세요.';}});},15000);
         const worker=async()=>{
           while(op.valid()&&!halted&&next<cards.length){
             const item=cards[next++];

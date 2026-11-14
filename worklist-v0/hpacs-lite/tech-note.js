@@ -305,7 +305,8 @@ window.KinTechNote = function (app) {
         learn(item); // T23: an id found in the history settles its attempt; the input stays
         const entry = document.createElement('section'), title = document.createElement('h3'), body = document.createElement('pre');
         title.textContent = `v${item.version} · ${item.author} · ${new Date(item.createdAt).toLocaleString()}`;
-        body.textContent = (item.text || '(메모 비움)') + '\n수정 사유: ' + (item.reason || '(사유 없음)');
+        body.translate = false;
+      body.textContent = (item.text || '(메모 비움)') + '\n수정 사유: ' + (item.reason || '(사유 없음)');
         entry.append(title, body);
         const signed = window.KinClinicalSignature?.(result.emr, item.version);
         if (signed) { const proof = document.createElement('p'); proof.textContent = signed; entry.append(proof); }
@@ -335,7 +336,7 @@ window.KinTechNote = function (app) {
   $('history').onclick = () => {
     if (busy) return;
     if (historyOpen) { foldHistory(); return; }
-    beforeHistory = { sentence: $('status').textContent, facts: historyFacts() };
+    beforeHistory = { sentence: (window.KinLanguage ? window.KinLanguage.source($('status')) : $('status').textContent), facts: historyFacts() };
     history(false);
   };
   $('more').onclick = () => history(true);
@@ -368,7 +369,7 @@ window.KinTechNote = function (app) {
   const unsubscribe=work.onInvalidate(event=>{
     if(event.reason==='lifecycle'&&!['active','preparing'].includes(event.state))end();
     // T24: a logout preparation stops new writes (the context refuses them) and keeps the input.
-    if(event.reason==='prepare'&&d.open){beforePreparation??=$('status').textContent;status('로그아웃 확인 중이며 입력은 유지됩니다.');}
+    if(event.reason==='prepare'&&d.open){beforePreparation??=(window.KinLanguage ? window.KinLanguage.source($('status')) : $('status').textContent);status('로그아웃 확인 중이며 입력은 유지됩니다.');}
     if(event.reason==='cancel'){
       ++seq;busy=false;controls();
       const previous=beforePreparation;beforePreparation=null;

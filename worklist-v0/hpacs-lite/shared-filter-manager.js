@@ -101,7 +101,7 @@
       for (const path of [...paths].sort((a,b) => a.split('/').length - b.split('/').length ||
         (metadata.get(a)?.ordinal || 0) - (metadata.get(b)?.ordinal || 0) || a.localeCompare(b))) {
         const details = document.createElement('details'); details.open = true;
-        const summary = document.createElement('summary'); summary.textContent = path.split('/').pop();
+        const summary = document.createElement('summary'); summary.textContent = path.split('/').pop(); summary.translate = false;
         summary.title = metadata.get(path)?.description || ''; details.append(summary);
         const parent = path.split('/').slice(0,-1).join('/'); containers.get(parent).append(details); containers.set(path, details);
       }
@@ -110,7 +110,7 @@
         check.dataset.sharedId = String(filter.id); check.checked = checked.has(filter.id);
         check.setAttribute('aria-label', 'Select Shared Search: ' + filter.name);
         check.addEventListener('change', () => { if (check.checked) checked.add(filter.id); else checked.delete(filter.id); $('count').textContent = `${checked.size} selected`; preview(); });
-        label.append(check, document.createTextNode(filter.name)); label.title = filter.description;
+        label.append(check, document.createTextNode(filter.name)); label.title = filter.description; label.translate = false;
         (containers.get(filter.folder) || $('list')).append(label);
       }
       $('count').textContent = `${checked.size} selected`; preview(); lock(busy);

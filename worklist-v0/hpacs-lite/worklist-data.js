@@ -542,7 +542,9 @@
           // CELL[]은 우리가 만든 HTML이라 그대로, 나머지는 전부 외부 문자열이라 이스케이프
           const v = c.k === "no" ? offset + i + 1 : (CELL[c.k] ? CELL[c.k](s) : esc(s[c.k] ?? ""));
           const classes = [c.num ? "num" : "", c.k === "acc" ? "acc" : "", ["id", "birth"].includes(c.k) ? "dim" : ""];
-          return `<td class="${classes.filter(Boolean).join(" ")}">${v}</td>`;
+          // A cell holding data of the study is never translated (the screen language changes labels and states only).
+          const data = c.k !== "no" && c.k !== "ptClass" && (!CELL[c.k] || ["desc", "preDoc", "preReviewer"].includes(c.k));
+          return `<td class="${classes.filter(Boolean).join(" ")}"${data ? ' translate="no"' : ""}>${v}</td>`;
         }).join("") + `</tr>`).join("")
         || `<tr><td class="empty" colspan="${shown.length}">${bodyPartNote ? '부위 확인 전인 검사가 있어 검색 결과가 아직 완전하지 않습니다.' : 'No records found'}</td></tr>`;
       columnPrefs?.decorate(mode);
@@ -809,7 +811,7 @@
       holder.innerHTML = rows.map(({ i, uf, count, label, partial }) =>
         `<button class="chip" data-i="${i}" data-name="${esc(uf.name)}" aria-label="${esc(label)}" aria-pressed="${uf.name === activeFilterName}" aria-haspopup="menu" ` +
         `title="${esc(label)} · 클릭: 적용 / 우클릭 또는 Shift+F10: 메뉴">` +
-        `${uf.isDefault ? "⚑ " : ""}${esc(uf.name)} <span aria-hidden="true">(${count}${partial ? ' · Partial' : ''})</span></button>`
+        `${uf.isDefault ? "⚑ " : ""}<span translate="no">${esc(uf.name)}</span> <span aria-hidden="true">(${count}${partial ? ' · Partial' : ''})</span></button>`
       ).join("");
       holder.dataset.renderSignature = signature;
       if (focused !== null) focusFilterChip(focused);

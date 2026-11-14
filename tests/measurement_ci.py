@@ -662,6 +662,14 @@ PROFILES = {
         'suite_timeout': 900,
         'suites': (('e2e/test_auto_save_view.py', 'AutoSaveViewE2E', 'ci-auto-save-view'),),
     },
+    'screen-language': {
+        'out': ROOT / 'tests/e2e/artifacts/screen-language-ci',
+        'project_prefix': 'kin-screen-language-ci-',
+        # Dispatch only (Focused integration): Korean on both screens, a real signed approval through the Korean buttons and
+        # Revert, then English with a known and an unknown server error, on a real stack.
+        'suite_timeout': 900,
+        'suites': (('e2e/test_worklist_language.py', 'WorklistLanguageE2E', 'ci-screen-language'),),
+    },
 }
 
 # S4-EG1 A3: the gateway-e2e suite names its own Compose project here before its first compose call, so the project

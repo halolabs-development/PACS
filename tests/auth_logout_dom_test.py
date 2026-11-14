@@ -132,6 +132,9 @@ SERVED_FILES = (
     "worklist-v0/hpacs-lite/marker-style.js",
     "worklist-v0/hpacs-lite/reading-appearance.js",
     "worklist-v0/hpacs-lite/reading-appearance-account.js",
+    # Screen language (main.html tags both before auth.js).
+    "worklist-v0/hpacs-lite/worklist-language-terms.js",
+    "worklist-v0/hpacs-lite/worklist-language.js",
     "worklist-v0/hpacs-lite/workspace-roaming.js",
     "worklist-v0/hpacs-lite/report-preview.js",
     # Film / DICOM Print (main.html tags it after report-preview.js, before the bundle).

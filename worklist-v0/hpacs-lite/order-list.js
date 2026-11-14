@@ -33,7 +33,7 @@
         <tr data-oid="${esc(o.oid)}" class="${o.oid === selectedOid ? "sel" : ""}">
           <td class="num">${i + 1}</td>
           <td><span class="mt ${esc(o.matched)}">${esc(o.matched)}</span></td>
-          <td>${esc(o.id)}</td><td>${esc(o.name)}</td><td>${esc(o.sex)}</td><td>${esc(o.birth)}</td>
+          <td translate="no">${esc(o.id)}</td><td translate="no">${esc(o.name)}</td><td>${esc(o.sex)}</td><td>${esc(o.birth)}</td>
           <td>${esc(o.sched)}</td><td>${esc(o.modality)}</td><td>${esc(o.desc)}</td><td>${esc(o.ward)}</td><td>${esc(o.reqDoc)}</td>
         </tr>`).join("") || `<tr><td class="empty" colspan="11">오더 없음</td></tr>`;
 

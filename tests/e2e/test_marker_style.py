@@ -149,7 +149,8 @@ class MarkerStyleE2E(ViewerHistoryE2E):
         work.locator('#appearance-account-save').click()
         expect(work.locator('#appearance-account-status')).to_have_text('표시 설정을 계정에 저장했습니다.')
         stored = document_request(work, 'GET', self.stack.api + '/reading-appearance').json()
-        self.assertEqual(stored['sizes']['version'], 11)
+        # Version 12 adds the screen language; the marker choice is unchanged.
+        self.assertEqual(stored['sizes']['version'], 12)
         self.assertEqual(stored['sizes']['markers'], {'version': 2, 'color': 'red', 'width': 'thick', 'line': 'default', 'arrowheads': 'on', 'font': 'default'})
 
         # Reset returns both windows to the viewer's own style.

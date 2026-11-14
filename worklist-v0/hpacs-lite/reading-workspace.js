@@ -11,7 +11,7 @@ window.KinReadingWorkspace = function (app) {
     if (parent) parent.append(el); return el;
   };
   const bar = node('section'); bar.id = 'reading-bar'; bar.hidden = true;
-  bar.setAttribute('aria-label', '판독 작업공간 이동');
+  bar.setAttribute('aria-label', '판독 작업공간 이동'); bar.setAttribute('data-kin-lang-region', 'reading');
   $('.split').before(bar);
   const nav = node('div', '', bar); nav.className = 'reading-actions';
   const button = (label, action, parent = nav) => {
@@ -86,9 +86,11 @@ window.KinReadingWorkspace = function (app) {
   const shortcutButtons = {list,image:imageFocus,prior:priorFocus,report:reportFocus,context,note,tools:toolsFocus,nativeTools:nativeToolsFocus,previous,next};
   const shortcuts = KinWorkspaceShortcuts.create({host:nav,owner:app.noteOwner,allowed:app.allowed,changed:map=>{
     for(const [id,b] of Object.entries(shortcutButtons)){if(map[id])b.setAttribute('aria-keyshortcuts',KinWorkspaceShortcuts.display(map[id]));else b.removeAttribute('aria-keyshortcuts');}
-    hints.textContent=Object.entries(shortcutButtons).map(([id,b])=>b.textContent+' '+KinWorkspaceShortcuts.display(map[id])).join(' · ')+' (입력 중 검사 이동 제외)'
-      // C-R01-008: Approve is in the same map (Ctrl+S by default); the summary names it too.
-      +' · Approve '+KinWorkspaceShortcuts.display(map.finalize);
+    // Each button name is its own text (the words the button was given), so the screen language reaches it like the button.
+    const label=text=>Object.assign(document.createElement('span'),{textContent:text}),parts=[];
+    Object.entries(shortcutButtons).forEach(([id,b],i)=>{if(i)parts.push(' · ');parts.push(label(window.KinLanguage?window.KinLanguage.source(b):b.textContent),' '+KinWorkspaceShortcuts.display(map[id]));});
+    // C-R01-008: Approve is in the same map (Ctrl+S by default); the summary names it too.
+    hints.replaceChildren(...parts,' (입력 중 검사 이동 제외)',' · ',label('Approve'),' '+KinWorkspaceShortcuts.display(map.finalize));
   }});
   /* C-R01-008: the summary also names the letter keys of the Viewer window. They are the saved viewer keys of the account
    * (/api/workspace-shortcuts viewerSettings), or the viewer defaults when none are saved, read from the viewer
@@ -128,7 +130,7 @@ window.KinReadingWorkspace = function (app) {
   }
   shortcutHelp.addEventListener('toggle', () => { if (shortcutHelp.open) void paintViewerKeys(); else viewerKeysTicket++; });
   const host = node('section'); host.id = 'reading-viewer'; host.hidden = true;
-  host.setAttribute('aria-label', '영상 작업공간'); $('.split').prepend(host);
+  host.setAttribute('aria-label', '영상 작업공간'); host.setAttribute('data-kin-lang-region', 'reading'); $('.split').prepend(host);
   const info = node('div', '', host); info.id = 'reading-images';
   const status = node('div', '', host); status.id = 'reading-status'; status.setAttribute('role', 'status');
   const recovery = node('div', '', host); recovery.id = 'reading-recovery'; recovery.hidden = true;

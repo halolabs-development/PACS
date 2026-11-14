@@ -103,7 +103,8 @@
         if (!select) continue;
         const want = ["", ...c.choices()], chosen = String(fval[c.k] ?? "");
         if ([...select.options].map(o => o.value).join("\n") === want.join("\n")) continue;
-        select.replaceChildren(...want.map(o => new Option(o, o, o === chosen, o === chosen)));
+        // These choices are the loaded studies own values (departments), never translated.
+        select.replaceChildren(...want.map(o => Object.assign(new Option(o, o, o === chosen, o === chosen), { translate: false })));
       }
     }
 
@@ -152,12 +153,12 @@
     let studyPriority = null;
     const viewingNames = new Map();
     const CELL = {
-      assignedReader:s=>`<button type="button" class="chip" data-reader-assignment="${esc(s.uid)}" ${!serverMode||demoMode||offline?'disabled':''}>${esc(s.assignedReader||'Unassigned')}</button>`,
+      assignedReader:s=>`<button type="button" class="chip" data-reader-assignment="${esc(s.uid)}" ${!serverMode||demoMode||offline?'disabled':''}>${s.assignedReader?`<span translate="no">${esc(s.assignedReader)}</span>`:'Unassigned'}</button>`,
       techNote: s => `<button type="button" class="chip" data-tech-note="${esc(s.uid)}" aria-label="${esc(s.id)} Tech Note ${noteLabel(s.uid)}" title="${noteHelp(s.uid)}" ${!serverMode || demoMode || offline ? 'disabled' : ''}>${noteLabel(s.uid)}</button>`,
       em: s => {const phase=studyPriority?.get(s.uid)?.phase;return phase?`<span title="${phase==='saving'?'응급 상태를 저장 중입니다':'저장 결과 미확인 — 문맥 메뉴의 Refresh Status로 확인하세요'}">${phase==='saving'?'Saving':'Unverified'}</span>`:s.em === "E" ? `<span class="em-e">E</span>` : "";},
       // 판독 상태 이름은 목록과 건수 줄에서 같은 계약을 따른다. 승인(A) 뒤 24시간이 지난 판독문은 낱말만 Finalized다(값은 A).
       rs: s => { const finalized = reportFinalized({ rs: s.rs, amendUntil: appState[s.uid]?.amendUntil }), word = finalized ? "Finalized" : RS_WORD[s.rs] ?? s.rs;
-        return `<span class="rs ${esc(s.rs)}" title="${esc(s.holdReason || (finalized ? "승인 후 24시간이 지나 확정된 판독문 — Addendum으로만 덧붙일 수 있습니다" : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : ""))}">${esc(word)}</span>`; },
+        return `<span class="rs ${esc(s.rs)}"${s.holdReason ? ' data-kin-keep="title"' : ''} title="${esc(s.holdReason || (finalized ? "승인 후 24시간이 지나 확정된 판독문 — Addendum으로만 덧붙일 수 있습니다" : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : ""))}">${esc(word)}</span>`; },
       confirm: s => esc(confirmText({ ...appState[s.uid], rs: s.rs })),
       ts: s => `<span class="ts ts-${esc(s.ts)}">${esc(s.ts)}</span>`,
       ss: s => `<span class="ss ${esc(s.ss)}">${esc(s.ss)}</span>`,
@@ -170,9 +171,9 @@
       viewing: s => {
         const hold = !s.holder ? '' : s.holder === user
           ? `<span class="hold me" title="내가 작성 중">✎ 나</span>`
-          : `<span class="hold other" title="${s.holder === '다른 기관' ? '다른 기관 판독의가' : s.holder === '작성자 비공개' ? '비공개 작성자가' : esc(displayActor(s.holder)) + ' 님이'} 작성 중">✎ ${esc(displayActor(s.holder))}</span>`;
+          : `<span class="hold other" title="${s.holder === '다른 기관' ? '다른 기관 판독의가' : s.holder === '작성자 비공개' ? '비공개 작성자가' : esc(displayActor(s.holder)) + ' 님이'} 작성 중">✎ <span translate="no">${esc(displayActor(s.holder))}</span></span>`;
         const presence = esc(viewingNames.get(s.uid) || '');
-        return hold + (hold && presence ? ' · ' : '') + presence;
+        return hold + (hold && presence ? ' · ' : '') + (presence ? `<span translate="no">${presence}</span>` : '');
       },
       // S7-U3b Hospital: 서버가 준 소유 기관 이름만 쓴다. Tele는 행의 tele만 따른다 — 이름을 내 기관 이름과 비교하면
       // 등록 이름이 같은 두 기관에서 틀리고, reqHosp는 Technician에서 손으로 바꿀 수 있는 값이다.
@@ -182,7 +183,7 @@
         return text ? `<span class="pf" title="${esc(entry.reason || '미리 받기 상태입니다. 자세한 내용은 선택 막대의 Preload 패널에 있습니다.')}">${esc(text)}</span>` : esc(s.pf ?? "");
       },
       institutionName: s => {
-        const name = typeof s.institutionName === "string" && s.institutionName !== "" ? esc(s.institutionName) : "—";
+        const name = typeof s.institutionName === "string" && s.institutionName !== "" ? `<span translate="no">${esc(s.institutionName)}</span>` : "—";
         return s.tele === true ? `${name} <span class="tele-tag" title="원격판독으로 의뢰받은 검사입니다.">Tele</span>` : name;
       },
     };

@@ -452,7 +452,7 @@
     }
 
     function fillRecipients(recipients) {
-      const options = recipients.map(r => new Option(`${r.name} (${r.actor}) · ${ROLES[r.role]}`, r.sub));
+      const options = recipients.map(r => Object.assign(new Option(`${r.name} (${r.actor}) · ${ROLES[r.role]}`, r.sub), { translate: false }));
       recipientField.replaceChildren(new Option('Choose Recipient', ''), ...options);
       recipientField.value = '';
     }

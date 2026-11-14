@@ -338,14 +338,14 @@
     const templateClass = value => String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
     const templateModalities = value => String(value ?? "").split(",").map(templateClass).filter(Boolean);
     function renderTemplateBodyparts() {
-      const select = $("#t-body"), chosen = select.value, label = select.selectedOptions[0]?.textContent;
+      const select = $("#t-body"), chosen = select.value, label = select.selectedOptions[0] && (window.KinLanguage ? window.KinLanguage.source(select.selectedOptions[0]) : select.selectedOptions[0].textContent);
       const classes = new Map();
       for (const t of templates) {
         const key = templateClass(t.bodypart);
         if (key && !classes.has(key)) classes.set(key, String(t.bodypart).trim().replace(/\s+/g, " "));
       }
       const options = [new Option("전체 부위", ""), new Option("미지정", JSON.stringify("")),
-        ...[...classes].sort(([a], [b]) => a.localeCompare(b)).map(([key, name]) => new Option(name, JSON.stringify(key)))];
+        ...[...classes].sort(([a], [b]) => a.localeCompare(b)).map(([key, name]) => Object.assign(new Option(name, JSON.stringify(key)), { translate: false }))];
       // 마지막 항목의 부위를 바꿔도 사용자가 고른 조건을 몰래 '전체'로 넓히지 않는다.
       if (chosen && !options.some(option => option.value === chosen)) options.push(new Option(label, chosen));
       select.replaceChildren(...options); select.value = chosen;
@@ -365,11 +365,11 @@
       });
       const modStatus = !useMod ? "Modality 전체" : !s ? "검사 미선택 · Modality 미적용"
         : !modalities.length ? "검사 Modality 없음 · 미적용" : "Modality: " + modalities.join(", ").toUpperCase();
-      $("#tpl-filter-status").textContent = `${list.length} / ${templates.length}개 · ${modStatus} · ${$("#t-body").selectedOptions[0].textContent}${words.length ? " · 검색 적용" : ""}`;
+      $("#tpl-filter-status").textContent = `${list.length} / ${templates.length}개 · ${modStatus} · ${window.KinLanguage ? window.KinLanguage.source($("#t-body").selectedOptions[0]) : $("#t-body").selectedOptions[0].textContent}${words.length ? " · 검색 적용" : ""}`;
       $("#tplrows").innerHTML = list.map(t => `
         <tr data-i="${templates.indexOf(t)}" title="더블클릭: 판독문에 삽입${
           t.shortcut ? ` / 판독문에서 &quot;${esc(t.shortcut)}&quot; 입력 후 Tab` : ""} / 우클릭: 편집">
-          <td>${esc(t.title)}</td><td>${esc(t.shortcut)}</td><td>${esc(t.modality)}</td>
+          <td translate="no">${esc(t.title)}</td><td translate="no">${esc(t.shortcut)}</td><td>${esc(t.modality)}</td>
           <td><button type="button" class="chip" data-tpl-preview aria-label="상용구 미리보기: ${esc(t.title)}">View</button></td>
         </tr>`).join("") || `<tr><td class="empty" colspan="4">${templates.length ? "조건에 맞는 상용구가 없습니다" : "상용구 없음 — 우클릭해서 추가하세요"}</td></tr>`;
       updateTemplatePreview();
@@ -935,7 +935,8 @@
         if (!select) continue;
         const want = ["", ...c.choices()], chosen = String(fval[c.k] ?? "");
         if ([...select.options].map(o => o.value).join("\n") === want.join("\n")) continue;
-        select.replaceChildren(...want.map(o => new Option(o, o, o === chosen, o === chosen)));
+        // These choices are the loaded studies own values (departments), never translated.
+        select.replaceChildren(...want.map(o => Object.assign(new Option(o, o, o === chosen, o === chosen), { translate: false })));
       }
     }
 
@@ -984,12 +985,12 @@
     let studyPriority = null;
     const viewingNames = new Map();
     const CELL = {
-      assignedReader:s=>`<button type="button" class="chip" data-reader-assignment="${esc(s.uid)}" ${!serverMode||demoMode||offline?'disabled':''}>${esc(s.assignedReader||'Unassigned')}</button>`,
+      assignedReader:s=>`<button type="button" class="chip" data-reader-assignment="${esc(s.uid)}" ${!serverMode||demoMode||offline?'disabled':''}>${s.assignedReader?`<span translate="no">${esc(s.assignedReader)}</span>`:'Unassigned'}</button>`,
       techNote: s => `<button type="button" class="chip" data-tech-note="${esc(s.uid)}" aria-label="${esc(s.id)} Tech Note ${noteLabel(s.uid)}" title="${noteHelp(s.uid)}" ${!serverMode || demoMode || offline ? 'disabled' : ''}>${noteLabel(s.uid)}</button>`,
       em: s => {const phase=studyPriority?.get(s.uid)?.phase;return phase?`<span title="${phase==='saving'?'응급 상태를 저장 중입니다':'저장 결과 미확인 — 문맥 메뉴의 Refresh Status로 확인하세요'}">${phase==='saving'?'Saving':'Unverified'}</span>`:s.em === "E" ? `<span class="em-e">E</span>` : "";},
       // 판독 상태 이름은 목록과 건수 줄에서 같은 계약을 따른다. 승인(A) 뒤 24시간이 지난 판독문은 낱말만 Finalized다(값은 A).
       rs: s => { const finalized = reportFinalized({ rs: s.rs, amendUntil: appState[s.uid]?.amendUntil }), word = finalized ? "Finalized" : RS_WORD[s.rs] ?? s.rs;
-        return `<span class="rs ${esc(s.rs)}" title="${esc(s.holdReason || (finalized ? "승인 후 24시간이 지나 확정된 판독문 — Addendum으로만 덧붙일 수 있습니다" : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : ""))}">${esc(word)}</span>`; },
+        return `<span class="rs ${esc(s.rs)}"${s.holdReason ? ' data-kin-keep="title"' : ''} title="${esc(s.holdReason || (finalized ? "승인 후 24시간이 지나 확정된 판독문 — Addendum으로만 덧붙일 수 있습니다" : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : ""))}">${esc(word)}</span>`; },
       confirm: s => esc(confirmText({ ...appState[s.uid], rs: s.rs })),
       ts: s => `<span class="ts ts-${esc(s.ts)}">${esc(s.ts)}</span>`,
       ss: s => `<span class="ss ${esc(s.ss)}">${esc(s.ss)}</span>`,
@@ -1002,9 +1003,9 @@
       viewing: s => {
         const hold = !s.holder ? '' : s.holder === user
           ? `<span class="hold me" title="내가 작성 중">✎ 나</span>`
-          : `<span class="hold other" title="${s.holder === '다른 기관' ? '다른 기관 판독의가' : s.holder === '작성자 비공개' ? '비공개 작성자가' : esc(displayActor(s.holder)) + ' 님이'} 작성 중">✎ ${esc(displayActor(s.holder))}</span>`;
+          : `<span class="hold other" title="${s.holder === '다른 기관' ? '다른 기관 판독의가' : s.holder === '작성자 비공개' ? '비공개 작성자가' : esc(displayActor(s.holder)) + ' 님이'} 작성 중">✎ <span translate="no">${esc(displayActor(s.holder))}</span></span>`;
         const presence = esc(viewingNames.get(s.uid) || '');
-        return hold + (hold && presence ? ' · ' : '') + presence;
+        return hold + (hold && presence ? ' · ' : '') + (presence ? `<span translate="no">${presence}</span>` : '');
       },
       // S7-U3b Hospital: 서버가 준 소유 기관 이름만 쓴다. Tele는 행의 tele만 따른다 — 이름을 내 기관 이름과 비교하면
       // 등록 이름이 같은 두 기관에서 틀리고, reqHosp는 Technician에서 손으로 바꿀 수 있는 값이다.
@@ -1014,7 +1015,7 @@
         return text ? `<span class="pf" title="${esc(entry.reason || '미리 받기 상태입니다. 자세한 내용은 선택 막대의 Preload 패널에 있습니다.')}">${esc(text)}</span>` : esc(s.pf ?? "");
       },
       institutionName: s => {
-        const name = typeof s.institutionName === "string" && s.institutionName !== "" ? esc(s.institutionName) : "—";
+        const name = typeof s.institutionName === "string" && s.institutionName !== "" ? `<span translate="no">${esc(s.institutionName)}</span>` : "—";
         return s.tele === true ? `${name} <span class="tele-tag" title="원격판독으로 의뢰받은 검사입니다.">Tele</span>` : name;
       },
     };
@@ -1301,8 +1302,8 @@
       const known=relatedCandidates().filter(x=>relatedParts.get(x.uid)?.parts).length;
       const partTokens=[...new Set(relatedCandidates().flatMap(x=>relatedParts.get(x.uid)?.parts||[]))].filter(Boolean).sort();
       const body=$('#related-body-part'),bodyOptions=[new Option('All Body Parts',''),new Option('Unverified','?'),new Option('Unspecified',JSON.stringify('')),
-        ...partTokens.map(v=>new Option(v,JSON.stringify(v)))];
-      if(relatedBodyPart&&!bodyOptions.some(o=>o.value===relatedBodyPart))bodyOptions.push(new Option(JSON.parse(relatedBodyPart),relatedBodyPart));
+        ...partTokens.map(v=>Object.assign(new Option(v,JSON.stringify(v)),{translate:false}))];
+      if(relatedBodyPart&&!bodyOptions.some(o=>o.value===relatedBodyPart))bodyOptions.push(Object.assign(new Option(JSON.parse(relatedBodyPart),relatedBodyPart),{translate:false}));
       body.replaceChildren(...bodyOptions);body.value=relatedBodyPart;body.disabled=!s;body.title=body.selectedOptions[0]?.textContent||'';
       $('#related-parts-status').textContent=relatedParts.note() || (s?`${relatedParts.busy()?'조회 중 · ':''}부위 확인 ${known}/${relatedCandidates().length} · 미조회·실패는 Unverified` : '');
       const modality = $("#related-modality");
@@ -1890,7 +1891,9 @@
           // CELL[]은 우리가 만든 HTML이라 그대로, 나머지는 전부 외부 문자열이라 이스케이프
           const v = c.k === "no" ? offset + i + 1 : (CELL[c.k] ? CELL[c.k](s) : esc(s[c.k] ?? ""));
           const classes = [c.num ? "num" : "", c.k === "acc" ? "acc" : "", ["id", "birth"].includes(c.k) ? "dim" : ""];
-          return `<td class="${classes.filter(Boolean).join(" ")}">${v}</td>`;
+          // A cell holding data of the study is never translated (the screen language changes labels and states only).
+          const data = c.k !== "no" && c.k !== "ptClass" && (!CELL[c.k] || ["desc", "preDoc", "preReviewer"].includes(c.k));
+          return `<td class="${classes.filter(Boolean).join(" ")}"${data ? ' translate="no"' : ""}>${v}</td>`;
         }).join("") + `</tr>`).join("")
         || `<tr><td class="empty" colspan="${shown.length}">${bodyPartNote ? '부위 확인 전인 검사가 있어 검색 결과가 아직 완전하지 않습니다.' : 'No records found'}</td></tr>`;
       columnPrefs?.decorate(mode);
@@ -2157,7 +2160,7 @@
       holder.innerHTML = rows.map(({ i, uf, count, label, partial }) =>
         `<button class="chip" data-i="${i}" data-name="${esc(uf.name)}" aria-label="${esc(label)}" aria-pressed="${uf.name === activeFilterName}" aria-haspopup="menu" ` +
         `title="${esc(label)} · 클릭: 적용 / 우클릭 또는 Shift+F10: 메뉴">` +
-        `${uf.isDefault ? "⚑ " : ""}${esc(uf.name)} <span aria-hidden="true">(${count}${partial ? ' · Partial' : ''})</span></button>`
+        `${uf.isDefault ? "⚑ " : ""}<span translate="no">${esc(uf.name)}</span> <span aria-hidden="true">(${count}${partial ? ' · Partial' : ''})</span></button>`
       ).join("");
       holder.dataset.renderSignature = signature;
       if (focused !== null) focusFilterChip(focused);
@@ -2621,7 +2624,7 @@
               const details = document.createElement('details'), summary = document.createElement('summary');
               summary.textContent = title + ' · ' + entry.values.length + '개'; details.append(summary); details.open = depth < 2;
               entry.values.forEach((item, i) => { const group = document.createElement('div'); group.style.marginLeft = '16px'; const heading = document.createElement('strong'); heading.textContent = 'Item ' + (i + 1); group.append(heading); render(item,group,depth+1); details.append(group); }); parent.append(details);
-            } else { const line = document.createElement('div'); line.textContent = title + ' = ' + (entry.values.length ? entry.values.join(' \\ ') : '(빈 값)'); parent.append(line); }
+            } else { const line = document.createElement('div'); line.translate = false; line.textContent = title + ' = ' + (entry.values.length ? entry.values.join(' \\ ') : '(빈 값)'); parent.append(line); }
           }
         }
         const primary = new Set(['0040A040','0040A043','0040A050','0040A491','0040A493','0040A730']);
@@ -2932,16 +2935,16 @@
       $("#clinical").innerHTML = s ? `
         <div class="clinical-scope">${s.uid === selectedUid ? '판독 대상 검사 정보' : '관련 검사 정보 · 판독 대상은 바뀌지 않습니다'}</div>
         <table>
-          <tr><td>Patient</td><td>${esc(s.name)} (${esc(s.id)})</td></tr>
-          <tr><td>Sex/Age</td><td>${esc(s.sex)} / ${esc(s.age)}</td></tr>
-          <tr><td>Birth</td><td>${esc(s.birth)}</td></tr>
-          <tr><td>Study</td><td>${esc(shownStudyDesc(s))}</td></tr>
-          <tr><td>Date</td><td>${esc(s.date)}</td></tr>
-          <tr><td>AccNo</td><td>${esc(s.acc)}</td></tr>
+          <tr><td>Patient</td><td translate="no">${esc(s.name)} (${esc(s.id)})</td></tr>
+          <tr><td>Sex/Age</td><td translate="no">${esc(s.sex)} / ${esc(s.age)}</td></tr>
+          <tr><td>Birth</td><td translate="no">${esc(s.birth)}</td></tr>
+          <tr><td>Study</td><td translate="no">${esc(shownStudyDesc(s))}</td></tr>
+          <tr><td>Date</td><td translate="no">${esc(s.date)}</td></tr>
+          <tr><td>AccNo</td><td translate="no">${esc(s.acc)}</td></tr>
           <tr><td>Img/Se</td><td>${esc(s.count)} / ${esc(s.series)}</td></tr>
           <tr><td>SS / Mt</td><td>${esc(s.ss)} / ${s.matched === "M" ? "Matched" : "Unmatched"}</td></tr>
-          <tr><td>Ward</td><td>${esc(s.ward) || "-"}</td></tr>
-          <tr><td>Study UID</td><td>${esc(s.uid)}</td></tr>
+          <tr><td>Ward</td><td translate="no">${esc(s.ward) || "-"}</td></tr>
+          <tr><td>Study UID</td><td translate="no">${esc(s.uid)}</td></tr>
         </table>` : "No clinical information provided.";
       renderStudyIdentity();
       renderObservation();
@@ -3297,7 +3300,7 @@
             label.className = "thumb-label";
             const number = document.createElement("div"), detail = document.createElement("div");
             number.className = "thumb-number"; number.textContent = heading;
-            detail.className = "thumb-description"; detail.textContent = description;
+            detail.className = "thumb-description"; detail.textContent = description; detail.translate = false;
             label.append(number, detail);
             // title과 생략 표시만으로는 키보드나 터치에서 전체 식별 정보를 읽을 수 없다.
             const disclosure = document.createElement("details"), summary = document.createElement("summary"), full = document.createElement("div");
@@ -3403,7 +3406,7 @@
         <tr data-oid="${esc(o.oid)}" class="${o.oid === selectedOid ? "sel" : ""}">
           <td class="num">${i + 1}</td>
           <td><span class="mt ${esc(o.matched)}">${esc(o.matched)}</span></td>
-          <td>${esc(o.id)}</td><td>${esc(o.name)}</td><td>${esc(o.sex)}</td><td>${esc(o.birth)}</td>
+          <td translate="no">${esc(o.id)}</td><td translate="no">${esc(o.name)}</td><td>${esc(o.sex)}</td><td>${esc(o.birth)}</td>
           <td>${esc(o.sched)}</td><td>${esc(o.modality)}</td><td>${esc(o.desc)}</td><td>${esc(o.ward)}</td><td>${esc(o.reqDoc)}</td>
         </tr>`).join("") || `<tr><td class="empty" colspan="11">오더 없음</td></tr>`;
 
@@ -6831,7 +6834,7 @@
       if (!structPane) return;
       const pane = structPane;
       const item = pane.item;
-      $("#struct-template").textContent = pane.template ? pane.template.title : "";
+      $("#struct-template").textContent = pane.template ? pane.template.title : ""; $("#struct-template").translate = false;
       for (const [id, on] of [["#struct-value-choice", item.valueType === "choice"],
                               ["#struct-value-number", item.valueType === "number"],
                               ["#struct-value-text", item.valueType === "text"],
@@ -6850,7 +6853,7 @@
        * 무엇이 사라지는지 눈으로 볼 수 없는데, 이 단위에서 본문 글자를 지우는 경로는 여기 하나뿐이다.
        * 줄 번호만 말하면 "몇 번째 줄"이 맞는지 확인할 방법이 없다.
        */
-      $("#struct-line").textContent = pane.line ?? "";
+      $("#struct-line").textContent = pane.line ?? ""; $("#struct-line").translate = false;
       const removing = pane.plan && pane.plan.mode2 === "replace" && pane.previous
         ? String(pane.previous.renderedText ?? "") : "";
       $("#struct-removed").textContent = removing;
@@ -9926,12 +9929,12 @@
             <div class="vh">
               <b>v${v.version}</b>
               <span class="tag ${esc(v.action)}" title="${esc(HINT[v.action] ?? "")}">${esc(LABEL[v.action] ?? v.action)}</span>
-              <span>${esc(displayActor(v.author))}</span>
+              <span translate="no">${esc(displayActor(v.author))}</span>
               <span style="color:#b4b4b4">${esc(String(v.at).replace("T", " ").slice(0, 19))}</span>
             </div>
             ${v.reason ? `<div class="vr">사유: ${esc(v.reason)}</div>` : ""}
             ${v.findings || v.conclusion || v.recommendation
-              ? `<pre>${esc([v.findings, v.conclusion, v.recommendation].filter(Boolean).join("\n---\n"))}</pre>`
+              ? `<pre translate="no">${esc([v.findings, v.conclusion, v.recommendation].filter(Boolean).join("\n---\n"))}</pre>`
               : `<div style="color:#556;padding:4px 0">(내용 없음)</div>`}
             ${Array.isArray(v.drawings) && v.drawings.length ? `<div class="vdraw" data-version="${esc(v.version)}"
                  style="display:flex;flex-wrap:wrap;gap:8px;padding:4px 0"><small>Image Report · ${v.drawings.length}</small>${v.drawings.map(d => `
@@ -9968,7 +9971,7 @@
       } catch (e) {
         // 늦게 온 **실패**도 새 열람의 목록을 오류 문구로 덮지 않는다.
         if (!work.admits(at) || !historyLive(epoch, uid)) return;
-        box.innerHTML = `<div style="color:#ff8080;padding:10px">${esc(e.message)}</div>`;
+        box.innerHTML = `<div data-kin-error style="color:#ff8080;padding:10px">${esc(e.message)}</div>`;
       }
     }
     $("#b-history").addEventListener("click", showHistory);
@@ -12458,7 +12461,7 @@
         li.dataset.kind = entry.kind;
         const meta = make('p', 'question-muted');
         meta.append(make('strong', null, KINDS[entry.kind]), ` · ${person(entry.author)} (${ROLES[entry.author.role]}) · ${time(entry.at)}`);
-        const body = entry.body ? make('p', 'question-body', entry.body) : make('p', 'question-muted', TEXT.closeEmpty);
+        const body = entry.body ? Object.assign(make('p', 'question-body', entry.body), { translate: false }) : make('p', 'question-muted', TEXT.closeEmpty);
         li.append(meta, body);
         const signed = window.KinClinicalSignature?.(evidence, entry.seq);
         if (signed) li.append(make('p', 'question-muted', signed));

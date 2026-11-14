@@ -180,7 +180,7 @@ window.KinStudyAttachments = function (app) {
         img.style.transform = `rotate(${entry.rotation}deg)`;
         thumb.append(img);
       } else thumb.textContent = entry.type === 'application/pdf' ? 'PDF' : '—';
-      const name = node('span', 'attach-name', entry.file.name);
+      const name = node('span', 'attach-name', entry.file.name); name.translate = false;
       const size = node('span', 'attach-size', (entry.file.size / 1024 / 1024).toFixed(1) + ' MB');
       li.append(thumb, name, size);
       // A file whose request may have been stored (no answer) is sent again exactly as it was: no Rotate, no Remove.

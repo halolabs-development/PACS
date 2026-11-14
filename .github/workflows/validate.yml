@@ -1648,6 +1648,12 @@ jobs:
     - name: Auto Save View saved view per reader and study, read-back checks and Discard against an in-memory database
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/viewer-saved-view-service --cwd . --tree api/src --file api/prisma/schema.prisma --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/viewer_auto_view_service_test.cjs -- node --test tests/viewer_auto_view_service_test.cjs
+    - name: Screen language in the account appearance (version 12 form, other display choices kept, an older client cannot erase it)
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/worklist-language-service --cwd . --tree api/src --file api/prisma/schema.prisma --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/worklist_language_service_test.cjs -- node --test tests/worklist_language_service_test.cjs
+    - name: Screen language glossary (two languages per entry, same slots) and every word of the worklist and reading screens in it
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/worklist-language-glossary --cwd . --tree worklist-v0/hpacs-lite --tree api/src --file scripts/main-split-order.json --file tests/worklist_language_collect.py --file tests/worklist_language_source_test.py -- python3 -B tests/worklist_language_source_test.py
     - name: Keep pinned browser dependencies independent of unused Chrome APT repository
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: |
@@ -1729,6 +1735,9 @@ jobs:
     - name: Image Report window (marks, backgrounds, Text, Attach and Remove as draft writes, Discard and Clear, view only, saved image) on the delivered split page
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/report-drawing-page --cwd . --tree worklist-v0/hpacs-lite --tree tests --file scripts/main-split-order.json --file scripts/build-main-split-bundle.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/image_report_dom_test.py
+    - name: Screen language (Language window, Apply To one or both screens, Revert, account restore on another start, data and names kept, dialogs and errors) on the delivered split page
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/worklist-language-page --cwd . --tree worklist-v0/hpacs-lite --tree tests --file scripts/main-split-order.json --file scripts/build-main-split-bundle.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/worklist_language_dom_test.py
     - name: Film / DICOM Print helper (Print SCU order and attributes, Printed / No answer / warnings, device C-STORE) against synthetic printers
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/film-print-helper --cwd . --tree api/print --file tests/film_print_scp.py --file tests/film_print_helper_test.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/film_print_helper_test.py

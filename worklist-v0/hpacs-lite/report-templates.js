@@ -25,14 +25,14 @@
     const templateClass = value => String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
     const templateModalities = value => String(value ?? "").split(",").map(templateClass).filter(Boolean);
     function renderTemplateBodyparts() {
-      const select = $("#t-body"), chosen = select.value, label = select.selectedOptions[0]?.textContent;
+      const select = $("#t-body"), chosen = select.value, label = select.selectedOptions[0] && (window.KinLanguage ? window.KinLanguage.source(select.selectedOptions[0]) : select.selectedOptions[0].textContent);
       const classes = new Map();
       for (const t of templates) {
         const key = templateClass(t.bodypart);
         if (key && !classes.has(key)) classes.set(key, String(t.bodypart).trim().replace(/\s+/g, " "));
       }
       const options = [new Option("전체 부위", ""), new Option("미지정", JSON.stringify("")),
-        ...[...classes].sort(([a], [b]) => a.localeCompare(b)).map(([key, name]) => new Option(name, JSON.stringify(key)))];
+        ...[...classes].sort(([a], [b]) => a.localeCompare(b)).map(([key, name]) => Object.assign(new Option(name, JSON.stringify(key)), { translate: false }))];
       // 마지막 항목의 부위를 바꿔도 사용자가 고른 조건을 몰래 '전체'로 넓히지 않는다.
       if (chosen && !options.some(option => option.value === chosen)) options.push(new Option(label, chosen));
       select.replaceChildren(...options); select.value = chosen;
@@ -52,11 +52,11 @@
       });
       const modStatus = !useMod ? "Modality 전체" : !s ? "검사 미선택 · Modality 미적용"
         : !modalities.length ? "검사 Modality 없음 · 미적용" : "Modality: " + modalities.join(", ").toUpperCase();
-      $("#tpl-filter-status").textContent = `${list.length} / ${templates.length}개 · ${modStatus} · ${$("#t-body").selectedOptions[0].textContent}${words.length ? " · 검색 적용" : ""}`;
+      $("#tpl-filter-status").textContent = `${list.length} / ${templates.length}개 · ${modStatus} · ${window.KinLanguage ? window.KinLanguage.source($("#t-body").selectedOptions[0]) : $("#t-body").selectedOptions[0].textContent}${words.length ? " · 검색 적용" : ""}`;
       $("#tplrows").innerHTML = list.map(t => `
         <tr data-i="${templates.indexOf(t)}" title="더블클릭: 판독문에 삽입${
           t.shortcut ? ` / 판독문에서 &quot;${esc(t.shortcut)}&quot; 입력 후 Tab` : ""} / 우클릭: 편집">
-          <td>${esc(t.title)}</td><td>${esc(t.shortcut)}</td><td>${esc(t.modality)}</td>
+          <td translate="no">${esc(t.title)}</td><td translate="no">${esc(t.shortcut)}</td><td>${esc(t.modality)}</td>
           <td><button type="button" class="chip" data-tpl-preview aria-label="상용구 미리보기: ${esc(t.title)}">View</button></td>
         </tr>`).join("") || `<tr><td class="empty" colspan="4">${templates.length ? "조건에 맞는 상용구가 없습니다" : "상용구 없음 — 우클릭해서 추가하세요"}</td></tr>`;
       updateTemplatePreview();

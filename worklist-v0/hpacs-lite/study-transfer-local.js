@@ -1072,7 +1072,7 @@ window.KinStudyTransferLocal = function (app) {
     for (const f of op.files) {
       const li = node('li', 'study-transfer-file');
       li.dataset.index = String(f.index);
-      li.append(node('span', 'study-transfer-name', f.name || `#${f.index}`), node('span', 'study-transfer-state', stateName(f)));
+      li.append(Object.assign(node('span', 'study-transfer-name', f.name || `#${f.index}`), { translate: false }), node('span', 'study-transfer-state', stateName(f)));
       if (f.state === 'result' && f.identity === 'not_comparable') li.append(node('span', 'study-transfer-mark', 'Unverified'));
       const text = describe(f);
       if (text) li.append(node('span', 'study-transfer-reason', text));

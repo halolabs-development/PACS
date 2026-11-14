@@ -455,9 +455,13 @@ export class PacsPreferences {
       Object.keys(v).sort().join(',') === (v.version === 2 ? 'arrowheads,color,font,line,version,width' : 'color,version,width') &&
       ['default', 'red', 'cyan', 'magenta', 'white'].includes(v.color) && ['standard', 'thick', 'extra-thick'].includes(v.width) &&
       (v.version === 1 || ['default', 'solid', 'dashed'].includes(v.line) && ['on', 'off'].includes(v.arrowheads) && ['default', 'sans', 'serif', 'mono'].includes(v.font));
+    // Screen language of the worklist and the reading screen (appearance version 12). null keeps the screen as it is.
+    const validLanguage = (v: any) => object(v) && Object.keys(v).sort().join(',') === 'reading,version,worklist' && v.version === 1 &&
+      [null, 'en', 'ko'].includes(v.worklist) && [null, 'en', 'ko'].includes(v.reading);
     const validAppearance = (v: any) => object(v) && ['list', 'current', 'prior'].every(k => [12, 14, 16, 18, 20].includes(v[k])) &&
       (v.version === 1 ? Object.keys(v).sort().join(',') === 'current,list,prior,version' :
-        [2, 3, 4, 5, 6, 7, 8, 9, 10, 11].includes(v.version) && Object.keys(v).sort().join(',') === (v.version >= 10 ? 'colors,current,dock,fonts,list,markers,mpr,prior,toolbar,version,viewer' : v.version >= 7 ? 'colors,current,dock,fonts,list,mpr,prior,toolbar,version,viewer' : v.version === 6 ? 'colors,current,dock,fonts,list,prior,toolbar,version,viewer' : v.version >= 4 ? 'colors,current,dock,fonts,list,prior,version,viewer' : v.version === 3 ? 'colors,current,dock,fonts,list,prior,version' : 'colors,current,fonts,list,prior,version') &&
+        [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(v.version) && (v.version < 12 || validLanguage(v.language)) &&
+        Object.keys(v).sort().join(',') === (v.version >= 12 ? 'colors,current,dock,fonts,language,list,markers,mpr,prior,toolbar,version,viewer' : v.version >= 10 ? 'colors,current,dock,fonts,list,markers,mpr,prior,toolbar,version,viewer' : v.version >= 7 ? 'colors,current,dock,fonts,list,mpr,prior,toolbar,version,viewer' : v.version === 6 ? 'colors,current,dock,fonts,list,prior,toolbar,version,viewer' : v.version >= 4 ? 'colors,current,dock,fonts,list,prior,version,viewer' : v.version === 3 ? 'colors,current,dock,fonts,list,prior,version' : 'colors,current,fonts,list,prior,version') &&
         (v.version < 3 || validDock(v.dock, v.version)) && (v.version < 4 || validViewer(v.viewer, v.version)) && (v.version < 6 || validToolbar(v.toolbar)) && (v.version < 7 || validMpr(v.mpr)) && (v.version < 10 || validMarkers(v.markers, v.version)) &&
         choices(v.fonts, ['default', 'sans', 'serif', 'mono']) && choices(v.colors, ['default', 'warm', 'cool', 'white']));
     if (!object(body) || Object.keys(body).sort().join(',') !== 'expectedOwner,revision,sizes' ||
@@ -472,6 +476,7 @@ export class PacsPreferences {
         ...(body.sizes.version >= 3 ? { dock: { version: body.sizes.dock.version, placement: body.sizes.dock.placement, panel: body.sizes.dock.panel, ...(body.sizes.version >= 5 ? { autoHide: body.sizes.dock.autoHide } : {}) } } : {}),
         ...(body.sizes.version >= 6 ? { toolbar: { version: 1, order: body.sizes.toolbar.order.slice(), hidden: body.sizes.toolbar.hidden.slice() } } : {}),
         ...(body.sizes.version >= 7 ? { mpr: { version: 1, progressive: body.sizes.mpr.progressive, display: { ...body.sizes.mpr.display }, mouse: { ...body.sizes.mpr.mouse }, sync: { ...body.sizes.mpr.sync } } } : {}),
+        ...(body.sizes.version >= 12 ? { language: { version: 1, worklist: body.sizes.language.worklist, reading: body.sizes.language.reading } } : {}),
         ...(body.sizes.version >= 10 ? { markers: { version: body.sizes.markers.version, color: body.sizes.markers.color, width: body.sizes.markers.width,
           ...(body.sizes.markers.version === 2 ? { line: body.sizes.markers.line, arrowheads: body.sizes.markers.arrowheads, font: body.sizes.markers.font } : {}) } } : {}),
         ...(body.sizes.version >= 4 ? { viewer: { version: body.sizes.viewer.version, ...Object.fromEntries(['current','prior'].map(role => { const p = body.sizes.viewer[role];

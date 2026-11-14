@@ -30,7 +30,7 @@ window.KinStudyTags=function(app){
     state=value;app.changed(value);
   }
   function draw(preserve=false){const previous=selected;if(!tag())selected=catalog()?.tags[0]?.id??null;$('scope').value=scope;$('list').replaceChildren();
-    for(const t of catalog()?.tags??[]){const b=document.createElement('button');b.type='button';b.dataset.tagId=t.id;b.textContent=t.name+' · '+t.uids.length+'건'+(current&&t.uids.includes(current)?' · 선택 검사에 부여됨':'');b.setAttribute('aria-pressed',String(t.id===selected));b.onclick=()=>{selected=t.id;draw();};$('list').append(b);}
+    for(const t of catalog()?.tags??[]){const b=document.createElement('button');b.type='button';b.dataset.tagId=t.id;const tagName=document.createElement('span');tagName.translate=false;tagName.textContent=t.name;b.append(tagName,' · '+t.uids.length+'건'+(current&&t.uids.includes(current)?' · 선택 검사에 부여됨':''));b.setAttribute('aria-pressed',String(t.id===selected));b.onclick=()=>{selected=t.id;draw();};$('list').append(b);}
     const t=tag();if(!preserve||previous!==selected)$('name').value=names.get(nameKey())??t?.name??'';$('new').value=newNames.get(scope)??'';$('current').textContent=current?'대상 검사 · '+label(current):'목록에서 검사를 먼저 선택하세요.';
     $('assigned').textContent=t&&current?(t.uids.includes(current)?'이 검사에 부여된 태그입니다.':'이 검사에는 아직 부여되지 않았습니다.'):'태그를 선택하세요.';
     $('count').textContent=t?'접근 가능한 검사 '+t.uids.length+'건'+(t.unavailable?' · 접근 불가 '+t.unavailable+'건':''):'';controls();}

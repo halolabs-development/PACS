@@ -117,7 +117,7 @@
             label.className = "thumb-label";
             const number = document.createElement("div"), detail = document.createElement("div");
             number.className = "thumb-number"; number.textContent = heading;
-            detail.className = "thumb-description"; detail.textContent = description;
+            detail.className = "thumb-description"; detail.textContent = description; detail.translate = false;
             label.append(number, detail);
             // title과 생략 표시만으로는 키보드나 터치에서 전체 식별 정보를 읽을 수 없다.
             const disclosure = document.createElement("details"), summary = document.createElement("summary"), full = document.createElement("div");

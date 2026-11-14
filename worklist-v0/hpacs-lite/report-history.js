@@ -139,12 +139,12 @@
             <div class="vh">
               <b>v${v.version}</b>
               <span class="tag ${esc(v.action)}" title="${esc(HINT[v.action] ?? "")}">${esc(LABEL[v.action] ?? v.action)}</span>
-              <span>${esc(displayActor(v.author))}</span>
+              <span translate="no">${esc(displayActor(v.author))}</span>
               <span style="color:#b4b4b4">${esc(String(v.at).replace("T", " ").slice(0, 19))}</span>
             </div>
             ${v.reason ? `<div class="vr">사유: ${esc(v.reason)}</div>` : ""}
             ${v.findings || v.conclusion || v.recommendation
-              ? `<pre>${esc([v.findings, v.conclusion, v.recommendation].filter(Boolean).join("\n---\n"))}</pre>`
+              ? `<pre translate="no">${esc([v.findings, v.conclusion, v.recommendation].filter(Boolean).join("\n---\n"))}</pre>`
               : `<div style="color:#556;padding:4px 0">(내용 없음)</div>`}
             ${Array.isArray(v.drawings) && v.drawings.length ? `<div class="vdraw" data-version="${esc(v.version)}"
                  style="display:flex;flex-wrap:wrap;gap:8px;padding:4px 0"><small>Image Report · ${v.drawings.length}</small>${v.drawings.map(d => `
@@ -181,7 +181,7 @@
       } catch (e) {
         // 늦게 온 **실패**도 새 열람의 목록을 오류 문구로 덮지 않는다.
         if (!work.admits(at) || !historyLive(epoch, uid)) return;
-        box.innerHTML = `<div style="color:#ff8080;padding:10px">${esc(e.message)}</div>`;
+        box.innerHTML = `<div data-kin-error style="color:#ff8080;padding:10px">${esc(e.message)}</div>`;
       }
     }
     $("#b-history").addEventListener("click", showHistory);

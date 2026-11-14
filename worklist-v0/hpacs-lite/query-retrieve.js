@@ -59,7 +59,7 @@
       const peers = Array.isArray(body?.peers) ? body.peers : [];
       for (const peer of peers) {
         const option = document.createElement('option');
-        option.value = peer.id; option.textContent = peer.name;
+        option.value = peer.id; option.textContent = peer.name; option.translate = false;
         select.append(option);
       }
       if (!peers.length) { status(body?.message || '등록된 상대 PACS가 없습니다'); return; }
@@ -95,7 +95,7 @@
         pick.setAttribute('aria-label', `Select ${row.patientId} ${row.studyDate}`);
         const first = document.createElement('td'); first.append(pick); tr.append(first);
         for (const value of [row.patientId, row.patientName, row.studyDate, row.modality, row.description, row.accession]) {
-          const td = document.createElement('td'); td.textContent = value ?? ''; tr.append(td);
+          const td = document.createElement('td'); td.textContent = value ?? ''; td.translate = false; tr.append(td);
         }
         const here = document.createElement('td'); here.className = 'qr-here'; tr.append(here);
         const state = document.createElement('td'); state.className = 'qr-state'; tr.append(state);

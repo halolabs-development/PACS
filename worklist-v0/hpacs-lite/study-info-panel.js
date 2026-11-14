@@ -17,16 +17,16 @@
       $("#clinical").innerHTML = s ? `
         <div class="clinical-scope">${s.uid === selectedUid ? '판독 대상 검사 정보' : '관련 검사 정보 · 판독 대상은 바뀌지 않습니다'}</div>
         <table>
-          <tr><td>Patient</td><td>${esc(s.name)} (${esc(s.id)})</td></tr>
-          <tr><td>Sex/Age</td><td>${esc(s.sex)} / ${esc(s.age)}</td></tr>
-          <tr><td>Birth</td><td>${esc(s.birth)}</td></tr>
-          <tr><td>Study</td><td>${esc(shownStudyDesc(s))}</td></tr>
-          <tr><td>Date</td><td>${esc(s.date)}</td></tr>
-          <tr><td>AccNo</td><td>${esc(s.acc)}</td></tr>
+          <tr><td>Patient</td><td translate="no">${esc(s.name)} (${esc(s.id)})</td></tr>
+          <tr><td>Sex/Age</td><td translate="no">${esc(s.sex)} / ${esc(s.age)}</td></tr>
+          <tr><td>Birth</td><td translate="no">${esc(s.birth)}</td></tr>
+          <tr><td>Study</td><td translate="no">${esc(shownStudyDesc(s))}</td></tr>
+          <tr><td>Date</td><td translate="no">${esc(s.date)}</td></tr>
+          <tr><td>AccNo</td><td translate="no">${esc(s.acc)}</td></tr>
           <tr><td>Img/Se</td><td>${esc(s.count)} / ${esc(s.series)}</td></tr>
           <tr><td>SS / Mt</td><td>${esc(s.ss)} / ${s.matched === "M" ? "Matched" : "Unmatched"}</td></tr>
-          <tr><td>Ward</td><td>${esc(s.ward) || "-"}</td></tr>
-          <tr><td>Study UID</td><td>${esc(s.uid)}</td></tr>
+          <tr><td>Ward</td><td translate="no">${esc(s.ward) || "-"}</td></tr>
+          <tr><td>Study UID</td><td translate="no">${esc(s.uid)}</td></tr>
         </table>` : "No clinical information provided.";
       renderStudyIdentity();
       renderObservation();

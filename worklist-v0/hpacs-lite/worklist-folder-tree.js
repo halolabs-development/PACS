@@ -235,6 +235,7 @@
           ? toggleModality(item.id) : choose(item.id, 'user')), item.id);
         if (item.kind === 'modality') control.setAttribute('aria-pressed', String(selected.includes(item.id)));
         else if (selected.includes(item.id)) control.setAttribute('aria-current', 'true');
+        if (item.kind === 'shortcut' || item.kind === 'search') control.translate = false;
         control.disabled = !!item.unavailable; li.append(control); parent.append(li); return li;
       }
       const all = items(); itemRow(all[0], list);

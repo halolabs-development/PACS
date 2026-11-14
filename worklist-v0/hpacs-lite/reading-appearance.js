@@ -278,16 +278,19 @@ window.KinReadingAppearance = function (options) {
   subscribeStorage();window.addEventListener('pagehide',end);
   const normalizeAccount=v=>{
     const legacy=normalize(v);if(legacy)return legacy;
-    if(!v||typeof v!=='object'||Array.isArray(v)||![2,3,4,5,6,7,8,9,10,11].includes(v.version)||Object.keys(v).sort().join(',')!==(v.version>=10?'colors,current,dock,fonts,list,markers,mpr,prior,toolbar,version,viewer':v.version>=7?'colors,current,dock,fonts,list,mpr,prior,toolbar,version,viewer':v.version===6?'colors,current,dock,fonts,list,prior,toolbar,version,viewer':v.version>=4?'colors,current,dock,fonts,list,prior,version,viewer':v.version===3?'colors,current,dock,fonts,list,prior,version':'colors,current,fonts,list,prior,version'))return null;
+    if(!v||typeof v!=='object'||Array.isArray(v)||![2,3,4,5,6,7,8,9,10,11,12].includes(v.version)||Object.keys(v).sort().join(',')!==(v.version>=12?'colors,current,dock,fonts,language,list,markers,mpr,prior,toolbar,version,viewer':v.version>=10?'colors,current,dock,fonts,list,markers,mpr,prior,toolbar,version,viewer':v.version>=7?'colors,current,dock,fonts,list,mpr,prior,toolbar,version,viewer':v.version===6?'colors,current,dock,fonts,list,prior,toolbar,version,viewer':v.version>=4?'colors,current,dock,fonts,list,prior,version,viewer':v.version===3?'colors,current,dock,fonts,list,prior,version':'colors,current,fonts,list,prior,version'))return null;
     if(v.version>=4&&v.viewer?.version!==(v.version>=9?3:v.version===8?2:1))return null;
     const clean=normalize({version:1,list:v.list,current:v.current,prior:v.prior}),f=normalizeFonts(v.fonts),c=normalizeColors(v.colors);
     const dock=v.version>=3?normalizeDock(v.dock):null,checkedView=v.version>=4?viewer.normalize(v.viewer):null;
     const view=checkedView&&clone(v.viewer);
     const toolbar=v.version>=6?normalizeToolbar(v.toolbar):null,mpr=v.version>=7?mprModel?.normalize(v.mpr):null,marks=v.version>=10&&v.markers?.version===(v.version>=11?2:1)?markers.normalize(v.markers):null;
-    return clean&&f&&c&&(v.version===2||dock)&&(v.version<4||view)&&(v.version<6||toolbar)&&(v.version<7||mpr)&&(v.version<10||marks)&&(v.version<3||dock?.version===(v.version>=5?2:1))?{...clean,version:v.version,fonts:f,colors:c,...(dock?{dock}:{}),...(view?{viewer:view}:{}),...(toolbar?{toolbar}:{}),...(mpr?{mpr}:{}),...(marks?{markers:marks}:{})}:null;
+    // Version 12 adds the screen language (worklist-language.js); a page without that module reads it as unknown.
+    const language=v.version>=12?window.KinLanguage?.normalize(v.language)??null:null;
+    return clean&&f&&c&&(v.version===2||dock)&&(v.version<4||view)&&(v.version<6||toolbar)&&(v.version<7||mpr)&&(v.version<10||marks)&&(v.version<12||language)&&(v.version<3||dock?.version===(v.version>=5?2:1))?{...clean,version:v.version,fonts:f,colors:c,...(dock?{dock}:{}),...(view?{viewer:view}:{}),...(toolbar?{toolbar}:{}),...(mpr?{mpr}:{}),...(marks?{markers:marks}:{}),...(language?{language}:{})}:null;
   };
   const legacyViewer=()=>({version:1,...Object.fromEntries(['current','prior'].map(role=>{const p=viewerValue[role];return [role,{size:p.size,font:p.font,color:p.color,name:p.name,date:p.date,description:p.description}];}))});
-  return {host:account,read:()=>({...value,version:mprModel?11:6,...(mprModel?{mpr:readMpr(),markers:{...markerValue}}:{}),fonts:{...fontValue},colors:{...colorValue},dock:{...dockValue},viewer:mprModel?viewer.normalize(viewerValue):legacyViewer(),toolbar:normalizeToolbar(toolbarValue)}),generation:()=>generation,normalize:normalizeAccount,allowed:()=>live()&&!!mprModel,
+  const readLanguage=()=>mprModel&&window.KinLanguage?window.KinLanguage.value():null;
+  return {host:account,read:()=>({...value,version:mprModel?(readLanguage()?12:11):6,...(mprModel?{mpr:readMpr(),markers:{...markerValue}}:{}),...(readLanguage()?{language:readLanguage()}:{}),fonts:{...fontValue},colors:{...colorValue},dock:{...dockValue},viewer:mprModel?viewer.normalize(viewerValue):legacyViewer(),toolbar:normalizeToolbar(toolbarValue)}),generation:()=>generation,normalize:normalizeAccount,allowed:()=>live()&&!!mprModel,
     apply:next=>{const clean=normalizeAccount(next);if(!live()||!clean)return false;
       if(clean.version>=6){const controller=options.getToolbar?.();if(controller&&!controller.canApply(clean.toolbar))return false;}
       if(clean.version>=3&&!setDock(clean.dock))return false;
@@ -295,6 +298,7 @@ window.KinReadingAppearance = function (options) {
       if(clean.version>=4&&!setViewer(clean.viewer))return false;
       if(clean.version>=7&&!setMpr(clean.mpr))return false;
       if(clean.version>=10&&!setMarkers(clean.markers))return false;
+      if(clean.version>=12)window.KinLanguage?.restore(clean.language);
       value={version:1,list:clean.list,current:clean.current,prior:clean.prior};
       if(clean.version>=2){fontValue=clean.fonts;colorValue=clean.colors;applyFonts();applyColors();saveFonts();saveColors();}
       apply();save();return true;}};

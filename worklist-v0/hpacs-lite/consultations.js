@@ -60,7 +60,7 @@ window.KinConsultations = function(app) {
     row=item(value);createUid=null;$('create').hidden=true;$('detail').hidden=false;$('heading').textContent='Request Details';
     $('study').textContent=identity(row.studyUid);$('participants').textContent=`From: ${row.requesterActor} · To: ${row.recipientName} · ${row.recipientActor}`;
     $('current-state').textContent=[row.state,new Date(row.updatedAt).toLocaleString(),row.changedBy,window.KinClinicalSignature?.(evidence,row.revision)].filter(Boolean).join(' · ');
-    $('original').textContent=row.reason;$('answer').textContent=row.reply||row.cancelReason||'—';$('reason').value=$('note').value='';drawList();
+    $('original').translate=$('answer').translate=$('study').translate=false;$('original').textContent=row.reason;$('answer').textContent=row.reply||row.cancelReason||'—';$('reason').value=$('note').value='';drawList();
   }
   let interruptedTask=null;
   async function run(task) {
@@ -99,7 +99,7 @@ window.KinConsultations = function(app) {
       work.commit(at,()=>{if(!current())return;verified(value);
       if(!Array.isArray(value.readers))throw Error('수신자 목록을 확인할 수 없습니다');
       const blank=document.createElement('option');blank.value='';blank.textContent='Select Consultant';$('reader').replaceChildren(blank);
-      for(const reader of value.readers){const option=document.createElement('option');option.value=reader.sub;option.textContent=reader.name+' · '+reader.actor;$('reader').append(option);}
+      for(const reader of value.readers){const option=document.createElement('option');option.value=reader.sub;option.textContent=reader.name+' · '+reader.actor;option.translate=false;$('reader').append(option);}
       $('status').textContent='수신자와 의뢰 사유를 확인한 뒤 Send Request를 누르세요.';});});
   }
   function send() {

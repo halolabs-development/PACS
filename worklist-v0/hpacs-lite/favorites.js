@@ -44,7 +44,7 @@ window.KinFavorites = function (app) {
     const f=folder();if(!preserve||previous!==selected)$('name').value=names.get(selected)??f?.name??'';
     $('links').replaceChildren();$('count').textContent=f?`접근 가능한 링크 ${f.uids.length}건`+(f.unavailable?` · 접근 불가 ${f.unavailable}건`:''):'폴더를 만들거나 선택하세요.';
     for(const uid of f?.uids??[]){const row=document.createElement('div');row.className='favorite-link';row.dataset.uid=uid;
-      const text=document.createElement('span');text.textContent=label(uid);row.append(text);
+      const text=document.createElement('span');text.textContent=label(uid);text.translate=false;row.append(text);
       button('검사 선택',()=>choose(uid),row);button('보기 상태 연결',()=>editView(uid),row);if(f.views?.[uid]){button('저장 보기 열기',()=>openView(uid),row);button('보기 연결 해제',()=>command('view',{uid,jobId:null}),row);}button('링크 제거',()=>command('remove',{uid}),row);$('links').append(row);}
     $('current').textContent=current?'추가할 선택 검사 · '+label(current):'목록에서 검사를 선택하면 폴더에 추가할 수 있습니다.';controls();
   }

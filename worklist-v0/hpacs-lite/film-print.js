@@ -167,7 +167,7 @@
 
     function paintTargets(last = remembered()) {
       const list = kind() === 'device' ? session.destinations.devices : session.destinations.printers;
-      target.replaceChildren(...list.map(p => node('option', { value: p.id, textContent: `${p.name} · AE ${p.aet}` })));
+      target.replaceChildren(...list.map(p => node('option', { value: p.id, textContent: `${p.name} · AE ${p.aet}`, translate: false })));
       if (!list.length) target.append(node('option', { value: '', textContent: kind() === 'device' ? 'No DICOM device is registered' : 'No film printer is registered' }));
       const keep = last[kind()];
       if (list.some(p => p.id === keep)) target.value = keep;
@@ -206,7 +206,7 @@
         session.film = layout.film;
         if (firstSeries || series.options.length !== layout.series.length) {
           series.replaceChildren(...layout.series.map(s => node('option', { value: s.uid,
-            textContent: [s.number != null ? `#${s.number}` : '', s.modality, s.description, `${s.images} image${s.images === 1 ? '' : 's'}`].filter(Boolean).join(' · ') })));
+            textContent: [s.number != null ? `#${s.number}` : '', s.modality, s.description, `${s.images} image${s.images === 1 ? '' : 's'}`].filter(Boolean).join(' · '), translate: false })));
         }
         series.value = layout.seriesUid;
         paintFilm();

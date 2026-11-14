@@ -131,7 +131,8 @@ body.report-window-doc { height: 100vh; margin: 0; display: flex; flex-direction
       if (!shown) return;
       const next = nextButton();
       shown.approve.disabled = approving || !next || next.disabled;
-      shown.approve.title = next?.disabled ? (next.title || TEXT.approveTitle) : TEXT.approveTitle;
+      const nextTitle = next && (root.KinLanguage ? root.KinLanguage.source(next, 'title') : next.title);
+      shown.approve.title = next?.disabled ? (nextTitle || TEXT.approveTitle) : TEXT.approveTitle;
       const n = notice();
       const asking = !!n && n.style.display !== 'none';
       shown.note.textContent = asking ? TEXT.notice : shown.kind === 'box' ? TEXT.noWindow : '';
@@ -258,6 +259,8 @@ body.report-window-doc { height: 100vh; margin: 0; display: flex; flex-direction
         if (win) {
           copyStyles(win.document);
           s = frame('window', win, win.document);
+          // The Pop Out window is the reading screen too: the same screen language follows it there.
+          root.KinLanguage?.attach(win.document, 'reading');
           s.unlisten = listen(win.document);
           win.document.body.append(s.shell);
           win.addEventListener('pagehide', () => closed(s), { once: true });
@@ -266,6 +269,7 @@ body.report-window-doc { height: 100vh; margin: 0; display: flex; flex-direction
       }
       if (!s) {
         s = frame('box', root, doc);
+        s.shell.setAttribute('data-kin-lang-region', 'reading');
         doc.body.append(s.shell);
       }
       shown = s;
