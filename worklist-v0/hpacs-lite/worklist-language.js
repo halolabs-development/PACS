@@ -14,11 +14,14 @@
 (function () {
   'use strict';
   const HANGUL = /[가-힣]/;
-  // Filled-in parts: {0} data, {t0} words the code chose, {e0} an error message; a named part ({observedAt}) is filled by
-  // the page from its own table of words or values and is translated only when it is a whole glossary entry.
-  const SLOT = /\{(?:[te]?\d+|[A-Za-z]\w*)\}/;
-  const SLOTS = /(\{(?:[te]?\d+|[A-Za-z]\w*)\})/;
-  const slotKind = slot => /^\{[A-Za-z]/.test(slot) ? (/^\{[te]\d/.test(slot) ? slot[1] : 't') : '';
+  // Filled-in parts: {0} data, {n0} a number, {t0} words the code chose, {e0} an error message; a named part
+  // ({observedAt}) is filled by the page from its own table of words or values and is translated only when it is a
+  // whole glossary entry.
+  const SLOT = /\{(?:[ten]?\d+|[A-Za-z]\w*)\}/;
+  const SLOTS = /(\{(?:[ten]?\d+|[A-Za-z]\w*)\})/;
+  const slotKind = slot => /^\{[A-Za-z]/.test(slot) ? (/^\{[ten]\d/.test(slot) ? slot[1] : 't') : '';
+  // A number part takes whole numbers only (never a digit of the text around it), so it has one reading.
+  const NUMBER = '(?<!\\d)(\\d+(?:[.,]\\d+)*)(?!\\d)';
   const LANGS = ['en', 'ko'];
   const REGIONS = ['worklist', 'reading'];
   const NAMES = { en: 'English', ko: '한국어' };
@@ -37,10 +40,14 @@
       const entry = korean ? { en: term[1], ko: term[3] || source } : { en: term[3] || source, ko: term[1] };
       if (!SLOT.test(source)) { exact.set(source, entry); continue; }
       const slots = [], parts = source.split(SLOTS), isSlot = part => SLOTS.test(part) && part.match(SLOTS)[0] === part;
-      const pattern = parts.map(part => isSlot(part) ? (slots.push(part), '(.*?)') : escape(part)).join('');
+      // The fixed words match the page text as written (any run of spaces or line breaks), so a filled-in part keeps
+      // its own spaces; the lazy and the greedy reading of one text must agree, or the parts are not known for sure.
+      const fixedRe = part => escape(part).replace(/\s+/g, '\\s+');
+      const pattern = group => '^' + parts.map(part => isSlot(part) ? (slotKind(part) === 'n' ? NUMBER : group) : fixedRe(part)).join('') + '$';
+      parts.forEach(part => { if (isSlot(part)) slots.push(part); });
       const fixed = parts.filter(part => !isSlot(part));
-      templates.push({ re: new RegExp('^' + pattern + '$', 's'), slots, entry, anchor: fixed.slice().sort((a, b) => b.length - a.length)[0] || '',
-        weight: fixed.join('').replace(/\s/g, '').length });
+      templates.push({ lazy: new RegExp(pattern('([\\s\\S]*?)')), greedy: new RegExp(pattern('([\\s\\S]*)')), slots, entry,
+        anchor: space(fixed.slice().sort((a, b) => b.length - a.length)[0] || ''), weight: fixed.join('').replace(/\s/g, '').length });
     }
     // The longest fixed words first; of two with the same words, the one that knows its parts are words or errors.
     const typed = t => t.slots.filter(slot => slotKind(slot)).length;
@@ -53,34 +60,39 @@
   const foreign = (text, lang) => lang === 'en' ? HANGUL.test(text) : !HANGUL.test(text) && /[A-Za-z]{2}/.test(text);
   const unknownError = (text, lang) => (exact.get(UNKNOWN_ERROR)?.[lang] || UNKNOWN_ERROR) + ' ' + text;
   const cache = { en: new Map(), ko: new Map() };
+  /** One text as the page wrote it (ends trimmed): the glossary entry, or a template whose parts are filled in once. */
   function translate(text, lang, depth) {
-    const hit = exact.get(text);
+    const flat = space(text), hit = exact.get(flat);
     if (hit) return hit[lang];
     for (const t of templates) {
-      if (t.anchor && !text.includes(t.anchor)) continue;
-      const m = t.re.exec(text);
+      if (t.anchor && !flat.includes(t.anchor)) continue;
+      const m = t.lazy.exec(text);
       if (!m) continue;
+      // Two readings of the same text (a part that holds the words of the template itself): the parts are not known.
+      const g = t.greedy.exec(text);
+      if (!g || m.some((part, k) => part !== g[k])) continue;
       // A template with almost no words of its own ({0}건) only fits counts, never names or sentences.
       if (t.weight < 3 && t.slots.some((slot, k) => !slotKind(slot) && !/^[\d\s.,:%+\-/()~–—]*$/.test(m[k + 1]))) continue;
-      let out = t.entry[lang];
+      const filled = {};
       t.slots.forEach((slot, k) => {
         const value = m[k + 1], kind = slotKind(slot);
-        let filled = value;
+        let out = value;
         if ((kind === 't' || kind === 'e') && depth < 3 && value.trim()) {
-          filled = translate(space(value), lang, depth + 1);
-          if (filled === space(value)) filled = value;
-          if (kind === 'e' && filled === value && foreign(value, lang)) filled = unknownError(value.trim(), lang);
+          const inner = translate(value.trim(), lang, depth + 1);
+          if (inner !== value.trim()) out = value.match(/^\s*/)[0] + inner + value.match(/\s*$/)[0];
+          else if (kind === 'e' && foreign(value, lang)) out = unknownError(value.trim(), lang);
         }
-        out = out.split(slot).join(filled);
+        filled[slot] = out;
       });
-      return out;
+      // Each part goes in once, as it is: a part that reads like a slot is never filled again.
+      return t.entry[lang].replace(new RegExp(SLOTS.source, 'g'), slot => Object.hasOwn(filled, slot) ? filled[slot] : slot);
     }
     return text;
   }
   /** The words of the page in lang (en or ko); null or words outside the glossary come back unchanged. */
   function tr(text, lang) {
     if (!lang || typeof text !== 'string' || !/[A-Za-z가-힣]/.test(text)) return text;
-    const core = space(text);
+    const core = text.trim();
     let out = cache[lang].get(core);
     if (out === undefined) { out = translate(core, lang, 0); cache[lang].set(core, out); }
     if (out === core) return text;
@@ -95,13 +107,16 @@
     return marked ? marked.getAttribute('data-kin-lang-region') : lastRegion;
   };
   const langOf = el => state[regionOf(el)] || null;
-  const FIELD = 'script,style,textarea,[contenteditable=""],[contenteditable="true"],[translate="no"]';
+  // What the reader or the data wrote: the words of a field and of an option whose words are its value stay; a field
+  // keeps its own placeholder and title translated (they are the page words around the input).
+  const DATA = 'script,style,[contenteditable=""],[contenteditable="true"],[translate="no"]';
   function frozen(el) {
     if (!el || el.nodeType !== 1) return true;
-    if (el.closest(FIELD)) return true;
+    if (el.closest(DATA + ',textarea')) return true;
     const option = el.closest('option');
     return !!option && !option.hasAttribute('value');
   }
+  const frozenAttr = el => !el || el.nodeType !== 1 || !!el.closest(DATA);
 
   // The words the page wrote, kept per text node and per attribute so a later language (or none) starts from them.
   const texts = new WeakMap(), attrs = new WeakMap();
@@ -129,7 +144,7 @@
     if (now === null) { if (rec) delete map[name]; return; }
     if (rec && now !== rec.shown) rec = null;
     const orig = rec ? rec.orig : now;
-    const keep = frozen(el) || (el.getAttribute('data-kin-keep') || '').split(' ').includes(name);
+    const keep = frozenAttr(el) || (el.getAttribute('data-kin-keep') || '').split(' ').includes(name);
     const lang = forced === undefined ? (keep ? null : langOf(el)) : forced;
     if (!lang && !rec) return;
     const want = lang ? tr(orig, lang) : orig;
@@ -167,6 +182,9 @@
     if (!doc || docs.has(doc)) return;
     docs.set(doc, { observer: null });
     if (region) doc.documentElement.setAttribute('data-kin-lang-region', region);
+    // Its pointer and keys say which screen was used last too (a dialog it starts follows that screen).
+    doc.addEventListener('pointerdown', remember, true);
+    doc.addEventListener('keydown', remember, true);
     styleCss(doc);
     mark(doc);
     if (active()) { paintTree(doc.documentElement); watch(doc); }
@@ -214,22 +232,21 @@
       if (typeof native !== 'function') continue;
       window[name] = function (message, ...rest) {
         const lang = state[lastRegion];
-        if (lang && typeof message === 'string') {
-          message = tr(message, lang);
-          if (name === 'prompt' && typeof rest[0] === 'string') rest[0] = tr(rest[0], lang);
-        }
+        // The question only: the value offered in a prompt and the answer belong to the reader.
+        if (lang && typeof message === 'string') message = tr(message, lang);
         return native.call(this, message, ...rest);
       };
     }
-    for (const type of [HTMLInputElement, HTMLSelectElement, HTMLTextAreaElement, HTMLButtonElement, HTMLOutputElement, HTMLFieldSetElement, HTMLObjectElement]) {
-      const proto = type.prototype, native = proto.setCustomValidity;
-      if (typeof native !== 'function' || nativeValidity.has(proto)) continue;
-      nativeValidity.set(proto, native);
-      proto.setCustomValidity = function (message) {
-        if (message) validity.set(this, String(message)); else validity.delete(this);
-        return native.call(this, message ? tr(String(message), langOf(this)) : message);
-      };
-    }
+  }
+  // A form field validity message is recorded from the page start, so a later choice of language reaches one already set.
+  for (const type of [HTMLInputElement, HTMLSelectElement, HTMLTextAreaElement, HTMLButtonElement, HTMLOutputElement, HTMLFieldSetElement, HTMLObjectElement]) {
+    const proto = type.prototype, native = proto.setCustomValidity;
+    if (typeof native !== 'function' || nativeValidity.has(proto)) continue;
+    nativeValidity.set(proto, native);
+    proto.setCustomValidity = function (message) {
+      if (message) validity.set(this, String(message)); else validity.delete(this);
+      return native.call(this, message ? tr(String(message), langOf(this)) : message);
+    };
   }
   const remember = e => { const el = e.target?.closest?.('[data-kin-lang-region]'); if (el) lastRegion = el.getAttribute('data-kin-lang-region'); };
   document.addEventListener('pointerdown', remember, true);

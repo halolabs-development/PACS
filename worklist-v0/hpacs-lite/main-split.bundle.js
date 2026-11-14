@@ -347,7 +347,7 @@
       const options = [new Option("전체 부위", ""), new Option("미지정", JSON.stringify("")),
         ...[...classes].sort(([a], [b]) => a.localeCompare(b)).map(([key, name]) => Object.assign(new Option(name, JSON.stringify(key)), { translate: false }))];
       // 마지막 항목의 부위를 바꿔도 사용자가 고른 조건을 몰래 '전체'로 넓히지 않는다.
-      if (chosen && !options.some(option => option.value === chosen)) options.push(new Option(label, chosen));
+      if (chosen && !options.some(option => option.value === chosen)) options.push(Object.assign(new Option(label, chosen), { translate: false }));
       select.replaceChildren(...options); select.value = chosen;
     }
     function renderTemplates() {
@@ -1305,7 +1305,7 @@
       const body=$('#related-body-part'),bodyOptions=[new Option('All Body Parts',''),new Option('Unverified','?'),new Option('Unspecified',JSON.stringify('')),
         ...partTokens.map(v=>Object.assign(new Option(v,JSON.stringify(v)),{translate:false}))];
       if(relatedBodyPart&&!bodyOptions.some(o=>o.value===relatedBodyPart))bodyOptions.push(Object.assign(new Option(JSON.parse(relatedBodyPart),relatedBodyPart),{translate:false}));
-      body.replaceChildren(...bodyOptions);body.value=relatedBodyPart;body.disabled=!s;body.title=body.selectedOptions[0]?.textContent||'';
+      body.replaceChildren(...bodyOptions);body.value=relatedBodyPart;body.disabled=!s;body.title=body.selectedOptions[0]?.textContent||'';if(body.selectedOptions[0]?.translate===false)body.setAttribute('data-kin-keep','title');else body.removeAttribute('data-kin-keep');
       $('#related-parts-status').textContent=relatedParts.note() || (s?`${relatedParts.busy()?'조회 중 · ':''}부위 확인 ${known}/${relatedCandidates().length} · 미조회·실패는 Unverified` : '');
       const modality = $("#related-modality");
       const tokens = [...new Set(rel.flatMap(relatedModalities))].sort();
@@ -1340,7 +1340,7 @@
             return `
             <tr data-uid="${esc(x.uid)}" class="${x.uid === relatedUid || (x.uid === s.uid && !relatedUid) ? "related-selected" : ""}">
               <td title="${x.uid === s.uid ? "지금 판독하는 검사" : esc(relatedDateTitle(x))} · ${x.uid === relatedUid || (x.uid === s.uid && !relatedUid) ? "Showing: 지금 Related Report에 보이는 검사" : "Compare: 눌러서 비교해 볼 수 있는 검사"}">${x.uid === s.uid ? "Reading Target" : relatedDateLabel(x)} · ${x.uid === relatedUid || (x.uid === s.uid && !relatedUid) ? "👁 Showing" : "Compare"}</td>
-              <td>${esc(x.date)}${x.uid !== s.uid && relatedInterval(x) ? ` <span class="rel-interval" title="판독 대상 검사 날짜와의 간격">${esc(relatedInterval(x))}</span>` : ""}</td><td>${esc(x.modality)}</td><td>${esc(shownStudyDesc(x))}</td><td class="num">${esc(x.count)}</td>
+              <td>${esc(x.date)}${x.uid !== s.uid && relatedInterval(x) ? ` <span class="rel-interval" title="판독 대상 검사 날짜와의 간격">${esc(relatedInterval(x))}</span>` : ""}</td><td translate="no">${esc(x.modality)}</td><td translate="no">${esc(shownStudyDesc(x))}</td><td class="num">${esc(x.count)}</td>
               <td><span class="rs ${esc(x.rs)}">${esc(x.rs)}</span></td>
               <td>${({ W: "Unread", T: "In Progress", P: "Preliminary", A: "Approved", H: "On Hold", D: "Destroyed" })[x.rs] || "Unverified"} <button class="chip" type="button" data-related-open="${esc(x.uid)}">${x.uid === s.uid ? 'Open Images' : 'Compare Images'}</button></td>
             </tr>`;
@@ -3410,8 +3410,8 @@
         <tr data-oid="${esc(o.oid)}" class="${o.oid === selectedOid ? "sel" : ""}">
           <td class="num">${i + 1}</td>
           <td><span class="mt ${esc(o.matched)}">${esc(o.matched)}</span></td>
-          <td translate="no">${esc(o.id)}</td><td translate="no">${esc(o.name)}</td><td>${esc(o.sex)}</td><td>${esc(o.birth)}</td>
-          <td>${esc(o.sched)}</td><td>${esc(o.modality)}</td><td>${esc(o.desc)}</td><td>${esc(o.ward)}</td><td>${esc(o.reqDoc)}</td>
+          <td translate="no">${esc(o.id)}</td><td translate="no">${esc(o.name)}</td><td translate="no">${esc(o.sex)}</td><td translate="no">${esc(o.birth)}</td>
+          <td translate="no">${esc(o.sched)}</td><td translate="no">${esc(o.modality)}</td><td translate="no">${esc(o.desc)}</td><td translate="no">${esc(o.ward)}</td><td translate="no">${esc(o.reqDoc)}</td>
         </tr>`).join("") || `<tr><td class="empty" colspan="11">오더 없음</td></tr>`;
 
       const s = cur(), o = curOrder();
@@ -11808,6 +11808,8 @@
         items.forEach((part, i) => {
           if (i) out.append(' · ');
           const span = node('span', part.text, part.badge ? 'cc-badge' : null);
+        // A line part is the record itself (dates, modalities, descriptions, authors); only a badge is a word of the screen.
+        if (!part.badge) span.translate = false;
           if (part.title) span.title = part.title;
           out.append(span);
         });
@@ -11882,7 +11884,7 @@
               if (item.details) {
                 const details = node('details'), key = section.name + ' ' + item.key;
                 details.append(node('summary', model.TEXT.reportText));
-                for (const body of item.details) details.append(node('div', body.label, 'cc-note'), node('div', body.text, 'cc-body'));
+                for (const body of item.details) { const text = node('div', body.text, 'cc-body'); text.translate = false; details.append(node('div', body.label, 'cc-note'), text); }
                 details.open = wasOpen.has(key);
                 opened.set(key, details);
                 entry.append(details);

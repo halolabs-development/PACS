@@ -305,8 +305,9 @@ window.KinTechNote = function (app) {
         learn(item); // T23: an id found in the history settles its attempt; the input stays
         const entry = document.createElement('section'), title = document.createElement('h3'), body = document.createElement('pre');
         title.textContent = `v${item.version} · ${item.author} · ${new Date(item.createdAt).toLocaleString()}`;
-        body.translate = false;
-      body.textContent = (item.text || '(메모 비움)') + '\n수정 사유: ' + (item.reason || '(사유 없음)');
+        // The memo and its reason are the record; the words around them are the screen.
+      const kept = (text, empty) => text ? Object.assign(document.createElement('span'), { textContent: text, translate: false }) : empty;
+      body.replaceChildren(kept(item.text, '(메모 비움)'), '\n', '수정 사유: ', kept(item.reason, '(사유 없음)'));
         entry.append(title, body);
         const signed = window.KinClinicalSignature?.(result.emr, item.version);
         if (signed) { const proof = document.createElement('p'); proof.textContent = signed; entry.append(proof); }

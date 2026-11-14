@@ -107,7 +107,7 @@
     const unwatch = watch(() => { if (live()) paint(); });
     function fill() {
       const list = o.searches();
-      const options = [new Option('Off', ''), ...list.map(s => new Option(s.name, s.id))];
+      const options = [new Option('Off', ''), ...list.map(s => Object.assign(new Option(s.name, s.id), { translate: false }))];
       if (setting.search && !list.some(s => s.id === setting.search)) options.push(new Option('(저장 검색 없음)', setting.search));
       o.select.replaceChildren(...options);
       o.select.value = setting.search || '';
@@ -216,8 +216,9 @@
       try { shown?.(!panel.hidden); } catch (_) {}
       const counts = {};
       for (const s of list) counts[s.status] = (counts[s.status] || 0) + 1;
-      summary.textContent = 'Preload: ' + (['Downloading', 'Queued', 'Ready', 'Failed', 'Evicted']
-        .filter(name => counts[name]).map(name => `${counts[name]} ${name}`).join(' · ') || '0');
+      // Each state name is its own text (the line reads the same), so the screen language reaches every one.
+      const states = ['Downloading', 'Queued', 'Ready', 'Failed', 'Evicted'].filter(name => counts[name]);
+      summary.replaceChildren('Preload: ', ...(states.length ? states.flatMap((name, i) => [(i ? ' · ' : '') + counts[name] + ' ', name]) : ['0']));
       storage.textContent = own?.budget == null
         ? own?.unavailable || '미리 받기 저장 용량을 확인하고 있습니다.'
         : `보관 ${gb(own.used)} / ${gb(own.budget)} GB · 받은 뒤 72시간이 지나면 자동으로 지웁니다. 다른 계정으로는 읽을 수 없습니다. 만료 항목은 표시하지 않으며, 실행 중 10분 이내 또는 다음 실행의 첫 응답 전에 지웁니다.`;
@@ -227,7 +228,7 @@
         const tr = document.createElement('tr');
         tr.dataset.uid = s.uid;
         const cell = text => { const td = document.createElement('td'); td.textContent = text; tr.append(td); return td; };
-        cell(s.label || s.uid);
+        cell(s.label || s.uid).translate = false;
         cell(s.status + (s.status === 'Ready' && s.expiresAt ? ' · ' + new Date(s.expiresAt).toLocaleString() + '까지' : '') + (s.open ? ' (Open)' : ''));
         // Retry beside the status, so it stays in view however long the note is.
         const act = cell('');

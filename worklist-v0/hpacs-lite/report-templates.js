@@ -34,7 +34,7 @@
       const options = [new Option("전체 부위", ""), new Option("미지정", JSON.stringify("")),
         ...[...classes].sort(([a], [b]) => a.localeCompare(b)).map(([key, name]) => Object.assign(new Option(name, JSON.stringify(key)), { translate: false }))];
       // 마지막 항목의 부위를 바꿔도 사용자가 고른 조건을 몰래 '전체'로 넓히지 않는다.
-      if (chosen && !options.some(option => option.value === chosen)) options.push(new Option(label, chosen));
+      if (chosen && !options.some(option => option.value === chosen)) options.push(Object.assign(new Option(label, chosen), { translate: false }));
       select.replaceChildren(...options); select.value = chosen;
     }
     function renderTemplates() {

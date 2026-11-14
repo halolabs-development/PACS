@@ -205,8 +205,9 @@
         session.layout = layout;
         session.film = layout.film;
         if (firstSeries || series.options.length !== layout.series.length) {
-          series.replaceChildren(...layout.series.map(s => node('option', { value: s.uid,
-            textContent: [s.number != null ? `#${s.number}` : '', s.modality, s.description, `${s.images} image${s.images === 1 ? '' : 's'}`].filter(Boolean).join(' · '), translate: false })));
+          // The series values lead (data); the image count closes the line as one template the screen language reads.
+          series.replaceChildren(...layout.series.map(s => { const lead = [s.number != null ? `#${s.number}` : '', s.modality, s.description].filter(Boolean).join(' · ');
+            return node('option', { value: s.uid, textContent: `${lead ? lead + ' · ' : ''}${s.images} image${s.images === 1 ? '' : 's'}` }); }));
         }
         series.value = layout.seriesUid;
         paintFilm();

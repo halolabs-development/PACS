@@ -9,6 +9,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -18,7 +19,7 @@ import worklist_language_collect as collect  # noqa: E402
 ROOT = collect.ROOT
 PAGE = collect.PAGE_DIR
 TERMS = PAGE / "worklist-language-terms.js"
-SLOT = re.compile(r"\{[te]?\d+\}")
+SLOT = re.compile(r"\{[ten]?\d+\}")
 HANGUL = re.compile(r"[가-힣]")
 NODE = "node"
 
@@ -81,16 +82,21 @@ class Glossary(unittest.TestCase):
             self.assertIn(word, texts)
 
     def test_collector_builds_templates_where_the_code_joins_words(self):
+        """Read with the TypeScript parser: joined words become one template, each part with its kind."""
         src = ("toast('서버 저장 실패: ' + e.message, 'err');\n"
-               "x.textContent = `불러온 목록 중 ${a}건` + (b ? ' · 일부' : '');\n"
-               "el.title = '승인: ' + (ok ? '가능' : '불가') + ' · ' + name;\n")
-        lits = collect.tokenize(src)
-        built = sorted(t for lit in lits for t in collect.pieces_of(lit.value, lit.exprs))
+               "x.textContent = `불러온 목록 중 ${rows.length}건` + (b ? ' · 일부' : '');\n"
+               "el.title = '승인: ' + (ok ? '가능' : '불가') + ' · ' + name;\n"
+               "body.textContent = (item.text || '(메모 비움)') + ' 사유: ' + item.reason;\n"
+               "status.textContent = '조회 실패: ' + (error?.message || '응답 없음');\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sample.js"
+            path.write_text(src, encoding="utf-8")
+            built = sorted(t for lit in collect.parse(path) for t in collect.pieces_of(lit["value"], lit["kinds"]))
         self.assertIn("서버 저장 실패: {e0}", built)
-        self.assertIn("불러온 목록 중 {0}건{t1}", built)
+        self.assertIn("불러온 목록 중 {n0}건{t1}", built)
         self.assertIn("승인: {t0} · {1}", built)
-        self.assertEqual("", collect.slot_kind("item.text || '(메모 비움)'"), "a value that may be data stays data")
-        self.assertEqual("e", collect.slot_kind("error?.message"))
+        self.assertIn("{0} 사유: {1}", built, "a value that may be data stays data")
+        self.assertIn("조회 실패: {e0}", built)
 
 
 class Page(unittest.TestCase):

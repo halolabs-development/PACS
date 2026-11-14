@@ -38,6 +38,8 @@
         items.forEach((part, i) => {
           if (i) out.append(' · ');
           const span = node('span', part.text, part.badge ? 'cc-badge' : null);
+        // A line part is the record itself (dates, modalities, descriptions, authors); only a badge is a word of the screen.
+        if (!part.badge) span.translate = false;
           if (part.title) span.title = part.title;
           out.append(span);
         });
@@ -112,7 +114,7 @@
               if (item.details) {
                 const details = node('details'), key = section.name + ' ' + item.key;
                 details.append(node('summary', model.TEXT.reportText));
-                for (const body of item.details) details.append(node('div', body.label, 'cc-note'), node('div', body.text, 'cc-body'));
+                for (const body of item.details) { const text = node('div', body.text, 'cc-body'); text.translate = false; details.append(node('div', body.label, 'cc-note'), text); }
                 details.open = wasOpen.has(key);
                 opened.set(key, details);
                 entry.append(details);

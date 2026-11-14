@@ -290,7 +290,23 @@ window.KinReadingAppearance = function (options) {
   };
   const legacyViewer=()=>({version:1,...Object.fromEntries(['current','prior'].map(role=>{const p=viewerValue[role];return [role,{size:p.size,font:p.font,color:p.color,name:p.name,date:p.date,description:p.description}];}))});
   const readLanguage=()=>mprModel&&window.KinLanguage?window.KinLanguage.value():null;
-  return {host:account,read:()=>({...value,version:mprModel?(readLanguage()?12:11):6,...(mprModel?{mpr:readMpr(),markers:{...markerValue}}:{}),...(readLanguage()?{language:readLanguage()}:{}),fonts:{...fontValue},colors:{...colorValue},dock:{...dockValue},viewer:mprModel?viewer.normalize(viewerValue):legacyViewer(),toolbar:normalizeToolbar(toolbarValue)}),generation:()=>generation,normalize:normalizeAccount,allowed:()=>live()&&!!mprModel,
+  // Any stored form brought to the current one: what it holds stays (older parts converted as Load converts them), only
+  // the parts its version did not have come from this page. Null when this page cannot write the current form.
+  function upgradeAccount(stored){
+    const page=read();if(page.version<11)return null;
+    const out={...page,version:12};if(!stored)return out;
+    Object.assign(out,{list:stored.list,current:stored.current,prior:stored.prior});
+    if(stored.version>=2){out.fonts=stored.fonts;out.colors=stored.colors;}
+    if(stored.version>=3&&stored.dock){const d=normalizeDock(stored.dock);if(d)out.dock={...d,version:2,autoHide:d.autoHide??page.dock.autoHide};}
+    if(stored.version>=4&&stored.viewer){const v=viewer.normalize(stored.viewer);if(v)out.viewer=v;}
+    if(stored.version>=6&&stored.toolbar)out.toolbar=stored.toolbar;
+    if(stored.version>=7&&stored.mpr)out.mpr=stored.mpr;
+    if(stored.version>=10&&stored.markers){const m=markers.normalize(stored.markers);if(m)out.markers=m;}
+    if(stored.version>=12&&stored.language)out.language=stored.language;
+    return out;
+  }
+  const read=()=>({...value,version:mprModel?(readLanguage()?12:11):6,...(mprModel?{mpr:readMpr(),markers:{...markerValue}}:{}),...(readLanguage()?{language:readLanguage()}:{}),fonts:{...fontValue},colors:{...colorValue},dock:{...dockValue},viewer:mprModel?viewer.normalize(viewerValue):legacyViewer(),toolbar:normalizeToolbar(toolbarValue)});
+  return {host:account,upgrade:upgradeAccount,read,generation:()=>generation,normalize:normalizeAccount,allowed:()=>live()&&!!mprModel,
     apply:next=>{const clean=normalizeAccount(next);if(!live()||!clean)return false;
       if(clean.version>=6){const controller=options.getToolbar?.();if(controller&&!controller.canApply(clean.toolbar))return false;}
       if(clean.version>=3&&!setDock(clean.dock))return false;

@@ -310,6 +310,81 @@ class WorklistLanguageDOM(unittest.TestCase):
         self.apply("en")
         self.assertEqual([], self.visible_words("en"))
 
+    def test_template_parts_go_in_once_as_written_and_two_readings_are_not_translated(self):
+        self.boot()
+        tr = lambda text, lang: self.page.evaluate("([t, l]) => KinLanguage.tr(t, l)", [text, lang])
+        # The data part keeps its own spaces and line breaks; a part that reads like a slot is never filled again.
+        self.assertEqual("Reason: A  B\nC", tr("사유: A  B\nC", "en"))
+        shown = tr("단축어: {1} · Modality: CT · Bodypart: Chest", "en")
+        self.assertIn("{1}", shown)
+        self.assertNotIn("단축어", shown)
+        # A part that holds the fixed words of its own template has two readings: left as the page wrote it.
+        twice = "단축어: a · Modality: b · Modality: c · Bodypart: d"
+        self.assertEqual(twice, tr(twice, "en"))
+
+    def test_a_stored_row_in_an_older_form_keeps_its_values_when_only_the_language_is_saved(self):
+        def profile(size, color):
+            return {"size": size, "font": "default", "color": color, "name": True, "date": True, "description": False}
+        v4 = {"version": 4, "list": 14, "current": 16, "prior": 12,
+              "fonts": {"version": 1, "list": "default", "current": "sans", "prior": "default"},
+              "colors": {"version": 1, "list": "default", "current": "default", "prior": "warm"},
+              "dock": {"version": 1, "placement": "top", "panel": 1},
+              "viewer": {"version": 1, "current": profile(20, "white"), "prior": profile(12, "warm")}}
+        self.site.appearance, self.site.appearance_revision = v4, 4
+        self.boot()
+        self.apply("ko", worklist=False)
+        stored = self.site.appearance
+        self.assertEqual((12, {"version": 1, "worklist": None, "reading": "ko"}), (stored["version"], stored["language"]))
+        self.assertEqual((14, 16, 12, "sans"), (stored["list"], stored["current"], stored["prior"], stored["fonts"]["current"]))
+        self.assertEqual(("top", 1), (stored["dock"]["placement"], stored["dock"]["panel"]))
+        self.assertEqual((20, "white"), (stored["viewer"]["current"]["size"], stored["viewer"]["current"]["color"]))
+
+    def test_a_marker_choice_of_version_10_stays_when_only_the_language_is_saved(self):
+        self.boot()
+        self.apply("ko")
+        v12 = self.site.appearance
+        v10 = {k: v for k, v in v12.items() if k != "language"} | {"version": 10, "markers": {"version": 1, "color": "red", "width": "extra-thick"}}
+        # Another client stored the row in version 10 since: a later language choice keeps that marker choice.
+        self.site.appearance, self.site.appearance_revision = v10, self.site.appearance_revision + 1
+        self.apply("en", reading=False)
+        stored = self.site.appearance
+        self.assertEqual(("red", "extra-thick", 12), (stored["markers"]["color"], stored["markers"]["width"], stored["version"]))
+        self.assertEqual({"version": 1, "worklist": "en", "reading": None}, stored["language"], "the language of a row with none starts from none")
+
+    def test_dialog_values_placeholders_validity_and_the_pop_out_follow_their_screen(self):
+        self.boot()
+        page = self.page
+        field = page.locator("#findings")
+        placeholder = field.get_attribute("placeholder")
+        # A validity message the page set before any language was chosen follows the later choice.
+        page.evaluate("() => document.querySelector('#page-size').setCustomValidity('계정 설정이 변경되었습니다. 불러온 뒤 다시 저장하세요')")
+        self.apply("ko", worklist=False)
+        if placeholder:
+            expect(field).not_to_have_attribute("placeholder", placeholder)
+        self.apply("en", reading=False)
+        self.assertNotRegex(page.evaluate("() => document.querySelector('#page-size').validationMessage"), "[가-힣]")
+        # The question of a prompt is translated; the value it offers is the reader's.
+        values = []
+        page.remove_listener("dialog", self.answer)
+        page.on("dialog", lambda d: (values.append((d.message, d.default_value)), d.dismiss()))
+        page.locator("#rows tr").first.click()
+        page.evaluate("() => window.prompt('검사를 선택하세요.', 'Unread')")
+        self.assertEqual([("Select a study.", "Unread")], values)
+
+    def test_an_alert_started_in_the_pop_out_window_follows_the_reading_screen(self):
+        self.boot()
+        self.apply("en", worklist=False)
+        self.page.locator("#report-popout").click()
+        for _ in range(250):
+            if len(self.context.pages) == 2:
+                break
+            self.page.wait_for_timeout(20)
+        pip = self.context.pages[1]
+        expect(pip.locator("#findings")).to_be_visible()
+        pip.locator("#findings").click()
+        self.page.evaluate("() => window.alert('검사를 선택하세요.')")
+        self.assertTrue(self.dialogs and not re.search("[가-힣]", self.dialogs[-1]), self.dialogs)
+
     def test_an_account_that_never_chose_keeps_the_page_as_it_is(self):
         self.boot()
         page = self.page

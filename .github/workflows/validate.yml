@@ -1653,7 +1653,7 @@ jobs:
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/worklist-language-service --cwd . --tree api/src --file api/prisma/schema.prisma --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/worklist_language_service_test.cjs -- node --test tests/worklist_language_service_test.cjs
     - name: Screen language glossary (two languages per entry, same slots) and every word of the worklist and reading screens in it
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
-      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/worklist-language-glossary --cwd . --tree worklist-v0/hpacs-lite --tree api/src --file scripts/main-split-order.json --file tests/worklist_language_collect.py --file tests/worklist_language_source_test.py -- python3 -B tests/worklist_language_source_test.py
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/worklist-language-glossary --cwd . --tree worklist-v0/hpacs-lite --tree api/src --file scripts/main-split-order.json --file tests/worklist_language_collect.py --file tests/worklist_language_collect.cjs --file api/package-lock.json --file tests/worklist_language_source_test.py -- python3 -B tests/worklist_language_source_test.py
     - name: Keep pinned browser dependencies independent of unused Chrome APT repository
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: |

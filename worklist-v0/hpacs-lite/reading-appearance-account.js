@@ -1,5 +1,5 @@
 /* Explicit account text restore preserves newer local appearance choices. */
-window.KinReadingAppearanceAccount = function ({ owner, host, read, apply, generation, normalize, allowed, endpoint, sessionEndpoint }) {
+window.KinReadingAppearanceAccount = function ({ owner, host, read, apply, generation, normalize, allowed, endpoint, sessionEndpoint, upgrade }) {
   host.textContent='';
   const make = (tag, text, id) => { const el = document.createElement(tag); el.textContent = text; el.id = id; host.append(el); return el; };
   const load = make('button', 'Load Appearance', 'appearance-account-load');
@@ -92,15 +92,11 @@ window.KinReadingAppearanceAccount = function ({ owner, host, read, apply, gener
       const stored = current.sizes === null ? null : normalize(current.sizes);
       const before = stored?.language ?? empty;
       if (expect && JSON.stringify(before) !== JSON.stringify(expect)) return fail('다른 창에서 언어 설정이 바뀌어 되돌리지 않았습니다. Language에서 다시 고르세요.');
-      const page = read();
-      if (!(page.version >= 11)) return fail('이 화면의 표시 설정을 계정 형식으로 만들 수 없어 언어를 저장하지 못했습니다.');
-      // What an older row already holds in the current format stays; the parts it lacks come from this page.
-      const kept = !stored ? {} : { list: stored.list, current: stored.current, prior: stored.prior,
-        ...(stored.version >= 2 ? { fonts: stored.fonts, colors: stored.colors } : {}), ...(stored.version >= 5 ? { dock: stored.dock } : {}),
-        ...(stored.version >= 6 ? { toolbar: stored.toolbar } : {}), ...(stored.version >= 7 ? { mpr: stored.mpr } : {}),
-        ...(stored.version >= 9 ? { viewer: stored.viewer } : {}), ...(stored.version >= 11 ? { markers: stored.markers } : {}) };
+      // The stored row brought to the current form (what it holds stays; only parts its version lacks come from this page).
+      const base = typeof upgrade === 'function' ? upgrade(stored) : null;
+      if (!base) return fail('이 화면의 표시 설정을 계정 형식으로 만들 수 없어 언어를 저장하지 못했습니다.');
       const next = { ...before, ...(patch || {}), version: 1 };
-      const saved = await call('PUT', { expectedOwner: owner, revision: current.revision, sizes: { ...page, ...kept, version: 12, language: next } });
+      const saved = await call('PUT', { expectedOwner: owner, revision: current.revision, sizes: { ...base, version: 12, language: next } });
       const language = normalize(saved.sizes)?.language ?? null;
       if (!language) return fail('계정 설정 응답을 확인할 수 없습니다.');
       if (!work.commit(at, () => { revision = saved.revision; })) return fail('세션이 변경되었습니다. 다시 로그인하세요.');
