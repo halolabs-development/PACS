@@ -50,7 +50,7 @@
     const preloadQueue=root.KinPreloadQueue?.available()?root.KinPreloadQueue:null;
     const preload=preloadQueue?element('button','Preload',host):null;
     if(preload){preload.type='button';preload.id='multi-selection-preload';preload.title='선택한 검사의 영상을 암호화해 72시간 보관합니다. 열 때 서버의 권한 확인과 열람 기록을 거칩니다.';
-      preload.onclick=()=>{const list=rows();if(!live()||!list.length)return;preloadQueue.add(list.map(s=>({uid:s.uid,label:[s.id,s.name,s.date,s.modality].filter(Boolean).join(' · ')})),root.KinWorkContext?.session?.());};}
+      preload.onclick=()=>{const list=rows();if(!live()||!list.length)return;preloadQueue.add(list.map(s=>({uid:s.uid,...(s.examScope?{examScope:s.examScope}:{}),label:[s.id,s.name,s.date,s.modality].filter(Boolean).join(' · ')})),root.KinWorkContext?.session?.());};}
     // FC-028 Batch Reading (options.batchRead): one of my Reading Templates saved to the selected studies. Shown only where the
     // page offers it (Radiology, a radiologist, the server); it moves no Reading Target either.
     const batchRead=options.batchRead?element('button','Batch Reading',host):null;

@@ -644,3 +644,12 @@ test('a complete volume above 256 originals can be saved and source-verified',()
  assert.equal(command(s).snapshot.volume.sops.length,257);
  assert.match(verifyVolumeReference(s,originals,'SYNTHETIC'),/^[a-f0-9]{64}$/);
 });
+
+test('scoped Jobs accept compact logical references for all originals while ordinary Jobs retain the two-study limit',()=>{
+ const exam={version:1,purpose:'current',current:{reportUid:'2.25.90',groupId:'00000000-0000-4000-8000-000000000002',part:1},prior:null};
+ const scoped={...structuredClone(stackOnly),studies:[volume.study,'2.25.20','2.25.21'],exam};
+ assert.deepEqual(JSON.parse(JSON.stringify(command(scoped).snapshot.exam)),exam);assert.equal(command(scoped).snapshot.studies.length,3);
+ const ordinary=structuredClone(scoped);delete ordinary.exam;rejected(()=>command(ordinary));
+ for(const ref of [{...exam.current,sources:[]},{...exam.current,generation:'a'.repeat(64)},{...exam.current,part:2}])rejected(()=>command({...scoped,exam:{...exam,current:ref}}));
+ for(const prior of [false,0,'',[]])rejected(()=>command({...scoped,exam:{...exam,prior}}));
+});

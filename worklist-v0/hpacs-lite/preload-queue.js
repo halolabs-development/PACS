@@ -37,6 +37,7 @@
   /** Queue studies `[{ uid, label, urgent? }]` for the given session, in the reader's order. `auto`: an Auto Preload add. */
   function add(studies, session, { auto = false } = {}) {
     if (!connect() || typeof session !== 'string' || !session) return false;
+    if(root.KinExamScope)studies=root.KinExamScope.preload(studies);
     port.postMessage(auto ? { type: 'add', session, studies, auto: true } : { type: 'add', session, studies });
     return true;
   }
@@ -62,7 +63,7 @@
    */
   function pick(matched, all, { priors = false, label = s => s.uid } = {}) {
     const out = [], seen = new Set();
-    const put = (s, urgent) => { if (s && !seen.has(s.uid)) { seen.add(s.uid); out.push({ uid: s.uid, label: label(s), urgent }); } };
+    const put = (s, urgent) => { if (s && !seen.has(s.uid)) { seen.add(s.uid); out.push({ uid: s.uid, label: label(s), urgent, ...(s.examScope?{examScope:s.examScope}:{}) }); } };
     for (const urgent of [true, false]) {
       for (const s of matched) {
         if ((s.em === 'E') !== urgent) continue;

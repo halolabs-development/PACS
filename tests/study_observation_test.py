@@ -443,7 +443,7 @@ for _kind, _extra in {
 for _kind, _extra in {
     "ids": {"receipt-retry": 1, "receipt-retry-note": 1},
     "functions": {"requestGatewayRetry": 1},
-    "selectors": {"#receipt-retry": 3, "#receipt-retry-note": 1},
+    "selectors": {"#receipt-retry": 4, "#receipt-retry-note": 2},
 }.items():
     assert not set(_extra) & set(ADDED[_kind]), _kind
     ADDED[_kind].update(_extra)
@@ -715,6 +715,9 @@ class Stage3Anchors(unittest.TestCase):
             with self.subTest(kind):
                 rest = Counter(current[kind])
                 for key, count in ADDED[kind].items():
+                    # The frozen move predates the per-original receipt panel.
+                    if kind == "selectors":
+                        count = {"#receipt-retry": 3, "#receipt-retry-note": 1}.get(key, count)
                     self.assertEqual(count, rest.pop(key, 0), key)
                 for key, (before, after) in RECOUNTED[kind].items():
                     self.assertEqual(after, rest[key], key)

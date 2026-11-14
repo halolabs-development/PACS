@@ -1746,6 +1746,9 @@ jobs:
     - name: A1 FA-153 default colour scheme on the worklist, report editor and their dialogs
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/work-palette-page --cwd . --tree worklist-v0/hpacs-lite --tree tests --file scripts/main-split-order.json --file scripts/build-main-split-bundle.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/work_palette_dom_test.py
+    - name: Viewer exam scope admission and series boundaries
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/viewer-exam-scope --cwd . --file tests/viewer_exam_scope_test.cjs --file tests/gateway_exam_receipt_test.cjs --file worklist-v0/hpacs-lite/study-info-panel.js --file worklist-v0/hpacs-lite/study-arrivals.js --file worklist-v0/hpacs-lite/clinician.js --file worklist-v0/hpacs-lite/exam-scope.js --file worklist-v0/hpacs-lite/viewer-exam-scope.js -- node --test tests/viewer_exam_scope_test.cjs tests/gateway_exam_receipt_test.cjs
     - name: S9 worklist shortcut and accessible-name boundary
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/s9-u4a-keys --cwd . --tree worklist-v0/hpacs-lite --tree tests --file scripts/run-tests.py -- $RUNNER_TEMP/measurement-python/bin/python -B scripts/run-tests.py --module tests/s9_a11y_dom_test.py --class S9AccessibilityPage --mode pure --unit s9-u4a-keys
@@ -1855,8 +1858,8 @@ jobs:
           tests/e2e/artifacts/technician-orders-ci/
         if-no-files-found: error
         retention-days: 7
-    - name: Isolated declared Merge Exam / Unmerge (three studies as one exam, viewer, report, late image, approved refusal)
-      timeout-minutes: 28
+    - name: Isolated declared Merge Exam / Split (rendered originals, report, Unsplit, late series, lost or changed source)
+      timeout-minutes: 38
       run: |
         "$RUNNER_TEMP/measurement-python/bin/python" tests/measurement_ci.py --profile exam-merge
       if: ${{ !cancelled() && !github.event.pull_request.draft }}

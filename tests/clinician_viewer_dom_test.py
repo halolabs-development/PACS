@@ -35,7 +35,7 @@ ORIGIN = "https://clinician.test"
 
 BASE = "/worklist/hpacs-lite/"
 
-SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "viewer-resources.js", "viewer-preload.js", "viewer-session.js", "critical-result-inbox.js", "clinical-signature.js")}
+SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "viewer-resources.js", "viewer-preload.js", "viewer-session.js", "viewer-exam-scope.js", "critical-result-inbox.js", "clinical-signature.js")}
 
 CONFIG = lf_text(ROOT / "config" / "ohif.js")
 
@@ -106,11 +106,10 @@ def exam_scope(target, report=None):
             "sources": [{"studyUid": target, "series": {"mode": "all", "uids": []}}]}
 
 def scope_reference(scope):
-    return {key:scope[key] for key in ('reportUid','groupId','part','generation')}
+    return {key:scope[key] for key in ('reportUid','groupId','part')}
 
 def viewer_query(current, prior=None):
-    value={'StudyInstanceUIDs': [current + (',' + prior if prior else '')], 'kinReportUid': [current],
-        'kinExamScopes': [json.dumps({'current': scope_reference(exam_scope(current)), 'prior': scope_reference(exam_scope(prior)) if prior else None, 'version': 4, 'priorVersion':None}, separators=(',', ':'))]}
+    value={'StudyInstanceUIDs': [current + (',' + prior if prior else '')]}
     if prior: value['hangingProtocolId']=['@ohif/hpCompare']
     return value
 
@@ -884,6 +883,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.writer_paged = False
         self.rows = copy.deepcopy(ROWS)
         self.extra_reports = {}
+        self.scope_reads = []
         self.files = dict(SHIPPED)
         self.config = CONFIG
         self.viewer_page = False
@@ -1015,6 +1015,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         scope_target = re.fullmatch('/api/studies/([^/]+)/exam-scope', path)
         if method == 'GET' and scope_target:
             target = unquote(scope_target.group(1))
+            self.scope_reads.append(target)
             row = next((row for row in self.rows if row['uid'] == target), None)
             route.fulfill(json=self.extra_reports[target]['scope'] if target in self.extra_reports else row.get('reportScope', exam_scope(target)) if row else exam_scope(target))
             return
@@ -1353,6 +1354,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         popup.wait_for_url(re.compile(r'.*hangingProtocolId=.*'))
         self.assertEqual(2, len(self.context.pages), 'one viewer window, reused')
         self.assertEqual(COMPARE_ASKED, self.page.locator('#viewer-note').text_content())
+        self.assertEqual([], self.scope_reads, 'ordinary viewer entry adds no exam-scope requests')
         self.pick(BAD)
         self.page.locator('#open-viewer').click()
         self.settle()

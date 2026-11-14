@@ -11,6 +11,8 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
     const search = location.search, scope = model.scope(search);
     if (!scope) return;
     const studies = new URLSearchParams(search).get('StudyInstanceUIDs').split(',');
+    const exam=window.KinViewerExamScope?.snapshot(),reportUid=exam?.reportUid||studies[0];
+    const withExam=value=>exam?{...value,exam:window.KinExamScope.snapshotReference(exam)}:value;
     const grid = services.viewportGridService, cs = services.cornerstoneViewportService, ds = services.displaySetService;
     // The MPR Job owns the volume layout; the ordinary frame cell of a mixed layout stays
     // this panel's own shape and is lent to it rather than reimplemented there.
@@ -46,8 +48,8 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
     const ownsWindowUnload = window.top === window;
     if (ownsWindowUnload) window.addEventListener('beforeunload', beforeUnload);
     const abort = new AbortController(), buttons = new Set();
-    const live = () => !ended && !session?.ended() && location.search === search;
-    const path = '/studies/' + studies[0] + '/viewer-jobs';
+    const live = () => !ended && !session?.ended() && location.search === search && (!exam || !!window.KinViewerExamScope?.snapshot());
+    const path = '/studies/' + reportUid + '/viewer-jobs';
     const ordered = () => [...grid.getState().viewports.values()].sort((a, b) => a.y-b.y || a.x-b.x);
     const writable = () => me?.roles?.includes('radiologist');
     let printer, printLoading, openingPrint = false;
@@ -115,8 +117,8 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
         if (!live()) return;
         printer ||= window.kinViewerJobPrint({ api, authenticate, live,
           editor: window.kinViewerEditorLink({ studies, owner: () => me ? [me.institution, me.sub] : null, live }) });
-        if (row) printer.open(studies[0], row.id,row.snapshotVersion);
-        else { if (!unchanged()) throw new Error('현재 영상이 바뀌었습니다. 다시 출력하세요.'); printer.openCurrent(studies[0], snapshot, unchanged); }
+        if (row) printer.open(reportUid, row.id,row.snapshotVersion);
+        else { if (!unchanged()) throw new Error('현재 영상이 바뀌었습니다. 다시 출력하세요.'); printer.openCurrent(reportUid, snapshot, unchanged); }
       } catch (e) { failure = e.message; if (live()) status.textContent = e.message; }
       finally { printLoading = null; openingPrint = false; }
       return failure;
@@ -202,7 +204,7 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
       const uniform = views.length === rows*cols && views.every((g, i) =>
         Math.abs(g.x-(i%cols)/cols)<=1e-6 && Math.abs(g.y-Math.floor(i/cols)/rows)<=1e-6 &&
         Math.abs(g.width-1/cols)<=1e-6 && Math.abs(g.height-1/rows)<=1e-6);
-      if(layoutType==='grid'&&(!uniform||views.some(g=>cs.getCornerstoneViewport(g.viewportId)?.type==='orthographic')))return volumeTools().capture(readOnly,!currentOutput);
+      if(layoutType==='grid'&&(!uniform||views.some(g=>cs.getCornerstoneViewport(g.viewportId)?.type==='orthographic')))return withExam(volumeTools().capture(readOnly,!currentOutput));
       if (layoutType !== 'grid' || ![1, 2].includes(rows) || ![1, 2].includes(cols)) throw new Error('현재 일반 CT 1·2·4화면 배치에서 저장할 수 있습니다.');
       let totalPixels = 0;
       const cells = views.map(g => {
@@ -216,7 +218,7 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
         });
       });
       if (cells.every(c => !c)) throw new Error('저장할 영상이 없습니다.');
-      return JSON.parse(JSON.stringify({ version: 2, studies, rows, cols, active: views.findIndex(v => v.viewportId === state.activeViewportId), cells }));
+      return JSON.parse(JSON.stringify(withExam({ version: 2, studies, rows, cols, active: views.findIndex(v => v.viewportId === state.activeViewportId), cells })));
     }
     const signature = (readOnly = false) => { try { return JSON.stringify(capture(false, readOnly)); } catch (_) { return JSON.stringify(ordered().map(g => [g.viewportId, g.displaySetInstanceUIDs])); } };
     // A click on a Job's card selects that card only: the image, the Job and its buttons are unchanged. A redrawn list keeps the
@@ -383,7 +385,10 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
           if (frame !== null && frame !== mark.volume.frameOfReferenceUid) throw refusal('source-changed', LOCATION_TEXT['source-changed']);
         }
       }
-      if (JSON.stringify(job.snapshot.studies) !== JSON.stringify(studies)) {
+      const sameExam=!job.snapshot.exam&&!exam || job.snapshot.exam&&exam && [job.snapshot.exam.current,job.snapshot.exam.prior].every((ref,i)=>{
+        const scope=i?exam.prior:exam.current;return !ref&&!scope||ref&&scope&&ref.reportUid===scope.reportUid&&ref.groupId===scope.groupId&&ref.part===scope.part;
+      });
+      if (!sameExam || JSON.stringify(job.snapshot.studies) !== JSON.stringify(studies)) {
         if (located && located.request.mode !== 'continue') throw refusal('job-studies', LOCATION_TEXT['job-studies']);
         if (title.value || description.value) throw refusal('unsaved', '작성 중인 작업 제목·설명을 저장하거나 비운 뒤 비교 검사를 여세요.');
         // Opening the saved comparison replaces this document; finding drafts (held ones included)
@@ -392,7 +397,14 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
         if (findings?.dirty || findings?.busy) { ctx.refused = 'findings-unsaved'; throw new Error('저장하지 않은 소견 작성 내용이 있어 비교 검사를 열지 않았습니다. 소견을 저장하거나 버린 뒤 복원하세요.'); }
         // The server rechecks both studies on the new page before applying;
         // this same-origin navigation never changes the worklist report target.
-        const next = new URL('/ohif/viewer', location.origin);
+        if(job.snapshot.exam && !window.KinExamScope)await new Promise((resolve,reject)=>{
+          const asset=document.createElement('script');asset.src='/worklist/hpacs-lite/exam-scope.js';
+          const finish=error=>{clearTimeout(timer);asset.remove();error?reject(error):resolve();};
+          const timer=setTimeout(()=>finish(Error('검사 범위 연결 시간이 초과되었습니다.')),10000);
+          asset.onload=()=>finish();asset.onerror=()=>finish(Error('검사 범위를 불러오지 못했습니다.'));document.head.append(asset);
+        });
+        if(!live()||ticket!==serial)throw refusal('ended','화면이 변경되어 복원하지 않았습니다.');
+        const next = new URL(job.snapshot.exam ? window.KinExamScope.snapshotUrl(job.snapshot) : '/ohif/viewer', location.origin);
         next.searchParams.set('StudyInstanceUIDs', job.snapshot.studies.join(','));
         if (located) {
           // A finding continues in the new page, where its own store proves the result: no kinJob, a one-use nonce, and a text
@@ -450,7 +462,7 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
           waitReady: value.waitReady === true, studies: Array.isArray(studiesIn) ? Array.from({ length: studiesIn.length }, (_, i) => studiesIn[i]) : null, mark: null, finding: null };
         if (typeof request.subject !== 'string' || !request.subject || !uuidOk(request.jobId) || !countOk(request.revision) ||
             !VOLUME_VERSIONS.concat([1, 2, 3]).includes(request.snapshotVersion) || !['same-document', 'continue'].includes(request.mode) ||
-            !request.studies || request.studies.length < 1 || request.studies.length > 2 || !request.studies.every(uidOk) ||
+            !request.studies || request.studies.length < 1 || request.studies.length > (exam?20:2) || !request.studies.every(uidOk) ||
             new Set(request.studies).size !== request.studies.length) return null;
         if (markIn !== null && markIn !== undefined) {
           const point = markIn.point, volume = markIn.volume;
@@ -608,7 +620,7 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
           const savedId = sent.id || pending.url.split('/').at(-2);
           // A successful HTTP status without this request's receipt leaves the
           // outcome unknown. Keep the same request and all local work for retry.
-          if (receipt?.id !== savedId || receipt?.studyUid !== studies[0] || !Number.isInteger(receipt?.revision) ||
+          if (receipt?.id !== savedId || receipt?.studyUid !== reportUid || !Number.isInteger(receipt?.revision) ||
               (sent.snapshot ? receipt.snapshotVersion !== sent.snapshot.version || receipt.revision < 1 : receipt.revision !== sent.expectedRevision + 1))
             throw new Error('저장 응답을 확인하지 못했습니다. 같은 요청을 재시도하세요.');
           // A MIP Job is Saved only for this very body: the committed summary names the sent id and its version, 12 or 13. That is

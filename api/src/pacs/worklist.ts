@@ -23,7 +23,8 @@ import type { PacsInstitutions } from './institutions';
 import type { PacsPreferences } from './preferences';
 import type { PacsAudit } from './audit';
 import { worklistRead } from '../emr-viewing/consumer-read';
-import { currentExams, prepareExamRead, readableExamRecord, scopeIncludesSeries, examLookupSources, examParentAccess, examScopeView } from '../exam-merge.service';
+import { currentExams, prepareExamRead, readableExamRecord, scopeIncludesSeries, examLookupSources, examParentAccess, examScopeView,
+  examTargets, relatedExamReports, resolveExamScope, storedExamScope } from '../exam-merge.service';
 import type { ResolvedExamScope } from '../exam-merge.service';
 
 /** An order's accession as stored (trimmed); null when it has none. */
@@ -351,7 +352,8 @@ export class PacsWorklist {
     const assignments = await this.prisma.readerAssignment.findMany({where:{studyUid:{in:pageUids},institutionId:me}});
     const assignmentByUid=new Map(assignments.map(a=>[a.studyUid,a]));
     // S4-U3 axis C: only receipts this institution's own Gateway credentials wrote, and below only on its own rows.
-    const receipts = await this.prisma.gatewayReceipt.findMany({ where: { studyUid: { in: pageUids }, institutionId: me } });
+    const receiptUids = [...new Set(pageUids.flatMap(uid => examByUid.get(uid)?.sources.map(source => source.studyUid) ?? [uid]))];
+    const receipts = await this.prisma.gatewayReceipt.findMany({ where: { studyUid: { in: receiptUids }, institutionId: me } });
     const receiptByUid = new Map(receipts.map(r => [r.studyUid, r]));
     // FC-076: attachments the archive holds (seen there) but nobody is served - pending, failed or withdrawn - are not
     // counted, under the study Orthanc actually holds each in. Each is one series of one instance.
@@ -439,6 +441,7 @@ export class PacsWorklist {
           orderAccession: orderAccessionOf(order), ...requestColumns(order, { referringPhysician, requestingPhysician }),
           referringPhysician, requestingPhysician, techNote: noteByUid.get(sourceUid) ?? { version: 0, present: false },
           metadataTarget: sourceUid, assignmentTarget: scope.reportUid,
+          gatewayReceipt: state?.institutionId === me ? projectGatewayReceipt(receiptByUid.get(sourceUid)) : null,
           ss: state?.ss ?? null, em: state?.em ?? null, matched: state?.matched ?? null, orderOid: state?.orderOid ?? null };
       });
       return {
@@ -449,6 +452,18 @@ export class PacsWorklist {
           members: sourceMetadata },
       };
     };
+    const retained = new Map<string, any>();
+    if (exams) for (const link of await examTargets(this.prisma, pageUids)) {
+      if (!link.targets.some(target => target.groupId !== null)) continue;
+      try {
+        await prepareExamRead(this.prisma, this.studyAccess, c, link.uid);
+        const scope = examByUid.get(link.uid) ?? await resolveExamScope(this.prisma, this.studyAccess, c, { uid: link.uid, purpose: 'current' });
+        retained.set(link.uid, { examScope: storedExamScope(scope), relatedExamReports: await relatedExamReports(this.prisma, this.studyAccess, c, link.uid) });
+      } catch (error) {
+        if (!(error instanceof NotFoundException || error instanceof ConflictException)) throw error;
+        retained.set(link.uid, { examUnavailable: true, relatedExamReports: [] });
+      }
+    }
     const out: any[] = [];
     for (const st of sourceRows) {
       const uid = uidOf(st);
@@ -501,6 +516,7 @@ export class PacsWorklist {
         reportScope: recordScopes.get(uid) ? examScopeView(recordScopes.get(uid)!) : null,
         reportReadable: !repByUid.has(uid) || !!recordScopes.get(uid),
         ...reportGroupOf(uid),
+        ...retained.get(uid),
         // Merge Exam: a merged exam's Count and Series are of all its studies, and `group` lists them (the base first).
         ...(mergedView(uid, st) ?? {}),
       });

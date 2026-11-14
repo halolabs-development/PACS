@@ -139,7 +139,7 @@
             </div>
             ${v.reason ? `<div class="vr">사유: ${esc(v.reason)}</div>` : ""}
             ${v.group ? `<div class="vr" data-exam-group="${esc(v.group.id)}"><b>Exam scope</b> — ${v.group.readable
-              ? `원본 검사(${esc(v.group.studies.map(u => studies.find(s => s.uid === u)?.acc || u).join(" + "))})의 영상으로 쓴 판입니다${v.group.active ? "" : " · 지금은 되돌린 범위"}`
+              ? `원본 검사(${esc((KinExamScope.storedReport(v,uid)?.sources||[]).map(source => studies.find(s => s.uid === source.studyUid)?.acc || source.studyUid).join(" + "))})의 영상으로 쓴 판입니다${v.group.active ? "" : " · 지금은 되돌린 범위"}`
               : "저장된 범위의 일부 영상을 볼 수 없어 이 판의 본문을 보이지 않습니다"}</div>` : ""}
             ${v.findings || v.conclusion || v.recommendation
               ? `<pre>${esc([v.findings, v.conclusion, v.recommendation].filter(Boolean).join("\n---\n"))}</pre>`

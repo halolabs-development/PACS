@@ -25,15 +25,23 @@ function kinCreateViewerPrior() {
     const closeList = () => { controller.close(); if (anchor?.isConnected) anchor.focus(); };
     const report = (uid, opener) => { reportUid = uid; reportOpener = opener; controller.openReport(uid); };
     const controller = window.KinViewerPriorController.create({ viewer,
-      async loadStudy(uid, origin) {
+      async loadStudy(uid, origin, row) {
+        const input=window.KinViewerExamScope?.snapshot();
+        let scope=null;
+        if(input||row?.examScope){
+          if(input)await window.KinViewerExamScope.ensure(true);
+          scope=input&&[input.current,input.prior].find(value=>value?.reportUid===uid);
+          if(!scope)throw Error('현재 열어 둔 검사 범위에 없는 비교 검사입니다. 목록에서 Compare로 함께 여세요.');
+        }
         const source = extensions.getActiveDataSource()[0];
-        try { await source.retrieve.series.metadata({ StudyInstanceUID: uid, madeInClient: true }); }
+        const originals=scope?scope.sources.map(value=>value.studyUid):[uid];
+        try { for(const original of originals)await source.retrieve.series.metadata({ StudyInstanceUID: original, madeInClient: true }); }
         catch (error) {
           // The pinned loader caches failed metadata promises. A user's Retry
           // must reach the data source again rather than replay that failure.
-          source.deleteStudyMetadataPromise(uid); throw error;
+          for(const original of originals)source.deleteStudyMetadataPromise(original); throw error;
         }
-        const sets = services.displaySetService.getActiveDisplaySets().filter(set => set.StudyInstanceUID === uid && set.images?.length)
+        const sets = services.displaySetService.getActiveDisplaySets().filter(set => (scope?scope.sources.some(original=>original.studyUid===set.StudyInstanceUID&&window.KinExamScope.allows(original,set.SeriesInstanceUID)):set.StudyInstanceUID === uid) && set.images?.length)
           .sort((a, b) => Number(a.SeriesNumber || 0) - Number(b.SeriesNumber || 0) || a.SeriesInstanceUID.localeCompare(b.SeriesInstanceUID));
         // Priors are ranked against the display set in the cell that asked, which for a split series is one of its parts.
         const own = origin.displaySetUid && services.displaySetService.getDisplaySetByUID(origin.displaySetUid);

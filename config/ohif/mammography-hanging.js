@@ -68,8 +68,9 @@ function kinCreateMammographyHanging() {
     const opened = new URLSearchParams(search).get('StudyInstanceUIDs')?.split(',') || [];
     // Merge Exam: a merged exam's studies are one current exam (kinExam=merged) — never a current study and its prior.
     const merged = new URLSearchParams(search).get('kinExam') === 'merged';
+    const exam = window.KinViewerExamScope?.snapshot();
     requestedLayout = null;
-    preference = { layout: opened.length > 1 && !merged ? 'compare' : 'current', kind: null };
+    preference = { layout: exam ? (exam.prior?'compare':'current') : opened.length > 1 && !merged ? 'compare' : 'current', kind: null };
     try { preferences.set(preferenceProvider?.({ studyInstanceUIDs: opened.slice() }), { accountDefault: true }); } catch (_) { /* Use the study-aware default. */ }
     const retrieve = series.metadata, run = hp.run;
     let ended = false, last = null, cells = [], stageCells = [], panel = null, missing = null;
@@ -333,8 +334,11 @@ function kinCreateMammographyHanging() {
     function protocol(data) {
       const model = window.KinMammographyModel;
       const displaySets = data.displaySets;
-      const studies = opened.slice(0, merged ? 1 : 2).map((uid, i) => ({ uid, role: i ? 'prior' : 'current', institution,
-        instances: [...raw.values()].filter(item => item['0020000D']?.Value?.[0] === uid) }));
+      const studies = exam ? [exam.current,exam.prior].filter(Boolean).map((scope,i)=>({uid:scope.reportUid,role:i?'prior':'current',institution,
+        sourceUids:scope.sources.map(source=>source.studyUid), instances:[...raw.values()].filter(item=>scope.sources.some(source=>
+          source.studyUid===item['0020000D']?.Value?.[0]&&window.KinExamScope.allows(source,item['0020000E']?.Value?.[0])))}))
+        : opened.slice(0, merged ? 1 : 2).map((uid, i) => ({ uid, role: i ? 'prior' : 'current', institution,
+          instances: [...raw.values()].filter(item => item['0020000D']?.Value?.[0] === uid) }));
       // The institution here is the viewing session's scope. The DICOMweb server has already
       // authorized these objects; this client classification does not grant access to a study.
       const plan = model.plan({ institution, studies });
@@ -427,7 +431,7 @@ function kinCreateMammographyHanging() {
       document.querySelector('#kin-viewer-layout')?.append(panel);
     }
     const wrappedRun = function (data, requested, options) {
-      if (!live() || !data.displaySets.some(d => d.StudyInstanceUID === opened[0] && (d.Modality === 'MG' ||
+      if (!live() || !data.displaySets.some(d => (exam ? exam.current.sources.some(s=>s.studyUid===d.StudyInstanceUID&&window.KinExamScope.allows(s,d.SeriesInstanceUID)) : d.StudyInstanceUID === opened[0]) && (d.Modality === 'MG' ||
           d.images?.some(i => raw.has(i.SOPInstanceUID) && window.KinMammographyModel.classify(raw.get(i.SOPInstanceUID)).basis === 'ct-breast-tomosynthesis'))) ||
           (requested && !['@ohif/hpCompare', 'default'].includes(requested) && !requested.startsWith('kin.mammography'))) {
         last = null; return run.call(this, data, requested, options);

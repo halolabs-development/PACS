@@ -93,5 +93,13 @@
           }).join("") || `<tr><td class="empty" colspan="7">${relatedModality || relatedBodyPart ? "조건에 맞는 관련 검사 없음" : "관련 검사 없음"}</td></tr>`)
         : `<tr><td class="empty" colspan="7">검사를 선택하세요</td></tr>`;
       columnPrefs?.decorateRelated(mode);
+      for (const report of s?.relatedExamReports || []) {
+        if (report.uid === s.uid) continue;
+        const row=document.createElement('tr'),cell=document.createElement('td'),link=document.createElement('button');
+        cell.colSpan=7;link.type='button';link.className='chip';link.textContent='Related Report · '+(report.scope?.part===1?'Exam 2':'Exam')+' · v'+report.version;
+        link.title='묶음을 되돌리기 전 저장한 판독문과 당시 영상 범위를 엽니다.';
+        const selected=s.uid;link.onclick=()=>{if(selectedUid===selected)showHistory(report.uid);};
+        cell.append(link);row.append(cell);$('#relrows').append(row);
+      }
       relatedRowNavigation?.sync();
     }

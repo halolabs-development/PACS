@@ -685,12 +685,19 @@
     const apiRead=(_method,path)=>request(path);
     (async()=>{
       try {
-        const current=await root.KinExamScope.fetch(apiRead,target?.uid||row.uid,{purpose:target?'stored':'current',version:target?.version});
         const priorVersion=other?.report?.final?other.report.version:null;
-        const prior=other?await root.KinExamScope.fetch(apiRead,other.uid,{purpose:priorVersion?'stored':'current',version:priorVersion}):null;
+        const currentHint=scope||row.report?.scope||row.exam?.scope||row;
+        const priorHint=other&&(other.report?.scope||other.exam?.scope||other);
+        if(!scope&&row.exam&&!row.exam.scope||other?.exam&&!other.exam.scope)throw Error('검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.');
+        let input=root.KinExamScope.viewerInput(row.exam?{examScope:root.KinExamScope.read(currentHint)}:currentHint,
+          other?.exam?{examScope:root.KinExamScope.read(priorHint)}:priorHint,target?.version??null,priorVersion);
+        if(input.scoped){
+          const current=await root.KinExamScope.fetch(apiRead,target?.uid||row.uid,{purpose:target?'stored':'current',version:target?.version});
+          const prior=other?await root.KinExamScope.fetch(apiRead,other.uid,{purpose:priorVersion?'stored':'current',version:priorVersion}):null;
+          if(scope&&root.KinExamScope.stamp(scope)!==root.KinExamScope.stamp(current))throw Error('판독 영상 범위가 바뀌었습니다. 판독문을 다시 여세요.');
+          input=root.KinExamScope.viewerInput({examScope:current},prior,target?.version??null,priorVersion);
+        }
         if(!fresh())return;
-        if(scope&&root.KinExamScope.stamp(scope)!==root.KinExamScope.stamp(current))throw Error('판독 영상 범위가 바뀌었습니다. 판독문을 다시 여세요.');
-        const input=root.KinExamScope.viewerInput(current,prior,target?.version??null,priorVersion);
         popup.name='kin-viewer-entry:'+JSON.stringify({session:expectedSession,name:VIEWER_WINDOW});popup.opener=null;
         popup.location.replace(root.KinExamScope.viewerUrl(input));popup.focus();
         note.textContent=other?TEXT.compareAsked:TEXT.viewerAsked;

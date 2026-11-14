@@ -20,6 +20,13 @@
   }
   const key = value => { const s=read(value);return s ? JSON.stringify([s.reportUid,s.groupId??null,s.part??null]) : null; };
   const stamp = value => { const s=read(value);return s ? JSON.stringify([key(s),s.generation??null]) : null; };
+  function storedReport(value,reportUid) {
+    const group=value?.group;
+    if(!group?.readable)return null;
+    const sources=group.sources || (group.part==null&&group.studies?.map(studyUid=>({studyUid,series:{mode:'all',uids:[]}})));
+    return sources?read({reportUid,groupId:group.id,kind:group.part==null?'merge':'split',part:group.part??null,
+      generation:group.generation,active:group.active,sources}):null;
+  }
   const allows = (source, seriesUid) => source.series.mode === 'all' ||
     (source.series.mode === 'include' ? source.series.uids.includes(seriesUid) : !source.series.uids.includes(seriesUid));
   function metadata(row) {
@@ -62,21 +69,57 @@
     return out;
   }
   function viewerInput(current, prior = null, version = null, priorVersion = null) {
+    if(current?.examUnavailable||prior?.examUnavailable)throw Error('검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.');
     const scope=read(current),comparison=prior?read(prior):null;
     if(!scope || prior&&!comparison)throw new Error('검사 범위를 확인할 수 없습니다.');
     if([...scope.sources,...(comparison?.sources||[])].some(s=>s.studyUid.length>64||!/^\d+(?:\.\d+)+$/.test(s.studyUid)))throw new Error('원본 검사 UID를 확인할 수 없습니다.');
     return {reportUid:scope.reportUid,key:key(scope),generation:scope.generation,current:scope,prior:comparison,version,priorVersion,
+      scoped:!!(scope.groupId||scope.hasMembership||comparison?.groupId||comparison?.hasMembership||current?.examScope||prior?.examScope),
       studyUids:[...new Set([...scope.sources,...(comparison?.sources||[])].map(s=>s.studyUid))]};
+  }
+  const reference = s => s ? {reportUid:s.reportUid,groupId:s.groupId??null,part:s.part??null} : null;
+  function viewerReference(input) {
+    return {current:reference(input.current),prior:reference(input.prior),version:input.version??null,priorVersion:input.priorVersion??null,
+      ...(input.purpose ? {purpose:input.purpose} : {})};
   }
   function viewerUrl(input, initialSeries = null) {
     // The viewer re-reads these exact scope references. A long Split series list must not overflow the URL.
-    const reference=s=>s?{reportUid:s.reportUid,groupId:s.groupId??null,part:s.part??null,generation:s.generation}:null;
-    const query=new URLSearchParams({StudyInstanceUIDs:input.studyUids.join(','),kinReportUid:input.reportUid,
-      kinExamScopes:JSON.stringify({current:reference(input.current),prior:reference(input.prior),version:input.version,priorVersion:input.priorVersion??null})});
-    if(input.current.kind==='merge')query.set('kinExam','merged');
-    if(input.prior)query.set('hangingProtocolId','@ohif/hpCompare');
-    if(initialSeries)query.set('initialSeriesInstanceUID',initialSeries);
-    return '/ohif/viewer?'+query;
+    return '/ohif/viewer?StudyInstanceUIDs='+input.studyUids.map(encodeURIComponent).join(',')+
+      (input.prior?'&hangingProtocolId=@ohif/hpCompare':'')+
+      (input.scoped?'&kinReportUid='+encodeURIComponent(input.reportUid)+'&kinExamScopes='+encodeURIComponent(JSON.stringify(viewerReference(input)))+
+        (input.current.kind==='merge'?'&kinExam=merged':''):'')+
+      (initialSeries?'&initialSeriesInstanceUID='+encodeURIComponent(initialSeries):'');
+  }
+  function roleRows(input, rows, sets = []) {
+    return [input.current,input.prior].filter(Boolean).map(scope=>{
+      const row=rows.find(row=>row.uid===scope.reportUid)||rows.find(row=>scope.sources.some(source=>source.studyUid===row.uid || row.examScope?.sources?.some(s=>s.studyUid===source.studyUid)));
+      if(!row)throw Error('현재 검사 정보를 확인할 수 없습니다.');
+      return {...row,uid:scope.reportUid,examScope:scope,displaySetIds:sets.filter(set=>scope.sources.some(source=>source.studyUid===set.StudyInstanceUID&&allows(source,set.SeriesInstanceUID))).map(set=>set.displaySetInstanceUID)};
+    });
+  }
+  function snapshotReference(input) {
+    return {version:1,purpose:input.purpose==='stored'||input.version!=null?'stored':'current',current:reference(input.current),prior:reference(input.prior)};
+  }
+  function snapshotUrl(snapshot) {
+    const exam=snapshot.exam;
+    if(!exam)return '/ohif/viewer?StudyInstanceUIDs='+snapshot.studies.map(encodeURIComponent).join(',');
+    return '/ohif/viewer?StudyInstanceUIDs='+snapshot.studies.map(encodeURIComponent).join(',')+
+      '&kinReportUid='+encodeURIComponent(exam.current.reportUid)+'&kinExamScopes='+encodeURIComponent(JSON.stringify({
+        current:exam.current,prior:exam.prior,version:null,priorVersion:null,purpose:'stored'}))+(exam.prior?'&hangingProtocolId=@ohif/hpCompare':'');
+  }
+  function preload(rows) {
+    const sources=new Map();
+    for(const row of rows) {
+      const scope=read(row);
+      if(!scope)throw Error('미리 받을 검사 범위를 확인할 수 없습니다.');
+      for(const source of scope.sources) {
+        const entry=sources.get(source.studyUid)||{uid:source.studyUid,label:row.label??null,urgent:row.urgent===true};
+        if(row.examScope)entry.examRefs=[...entry.examRefs||[],reference(scope)].filter((ref,index,list)=>list.findIndex(r=>JSON.stringify(r)===JSON.stringify(ref))===index);
+        else entry.whole=true;
+        sources.set(source.studyUid,entry);
+      }
+    }
+    return [...sources.values()].map(({whole,...entry})=>{if(whole)delete entry.examRefs;return entry;});
   }
   function changes(owner, receive) {
     if(typeof root.BroadcastChannel!=='function')return {send(){},close(){}};
@@ -104,7 +147,7 @@
       dialog.addEventListener('close',()=>{dialog.remove();resolve(result);},{once:true});dialog.append(go,close);document.body.append(dialog);dialog.showModal();
     });
   }
-  const api={read,key,stamp,allows,metadata,projections,values,originals,fetch:fetchScope,dicom,viewerInput,viewerUrl,chooseOriginals,changes};
+  const api={read,key,stamp,storedReport,allows,metadata,projections,values,originals,fetch:fetchScope,dicom,viewerInput,viewerUrl,viewerReference,reference,roleRows,snapshotReference,snapshotUrl,preload,chooseOriginals,changes};
   root.KinExamScope=api;
   if(typeof module==='object'&&module.exports)module.exports=api;
 })(globalThis);

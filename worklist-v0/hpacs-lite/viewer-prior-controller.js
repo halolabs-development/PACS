@@ -37,8 +37,9 @@ window.KinViewerPriorController = (() => {
       if (!Array.isArray(data?.studies)) throw new Error('검사 목록 응답을 확인할 수 없습니다.');
       const patient = viewer.snapshot();
       const studies = data.studies.map(study => ({ ...study, date: date(study.date) }));
-      const reference = studies.find(study => study.uid === patient.studyUIDs[0] && study.sourcePatientKey === value.patientKey);
-      const source = studies.find(study => study.uid === value.studyUid && study.sourcePatientKey === value.patientKey);
+      const reference = studies.find(study => study.uid === (patient.examScope?.reportUid || patient.studyUIDs[0]) && study.sourcePatientKey === value.patientKey);
+      const source = studies.find(study => study.uid === value.studyUid && study.sourcePatientKey === value.patientKey) ||
+        (patient.examScope?.sources.some(source=>source.studyUid===value.studyUid)?reference:null);
       if (!reference || !source) return null;
       return studies.filter(study => study.sourcePatientKey === value.patientKey && !study.state?.identityUnresolved)
         .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || b.uid.localeCompare(a.uid))
@@ -106,7 +107,7 @@ window.KinViewerPriorController = (() => {
       const admitted = () => imageRequest === request && !request.signal.aborted && current();
       onList({ state: 'ready', origin, studies: rows, message: '영상을 불러오는 중…' });
       try {
-        const sets = await loadStudy(uid, value);
+        const sets = await loadStudy(uid, value, rows.find(row=>row.uid===uid));
         if (!admitted()) return;
         if (!sets.length) throw new Error('표시할 영상 시리즈가 없습니다.');
         if (!await viewer.compare(value, [sets[0].displaySetInstanceUID], { signal: request.signal, studies: rows })) {
@@ -132,7 +133,7 @@ window.KinViewerPriorController = (() => {
       // (into the cell itself when it is the cell's own study). Resolves true when the grid changed.
       async open(value, uid, { seriesUid = null, signal, studies } = {}) {
         if (!same(value) || !studies?.some(row => row.uid === uid)) return false;
-        const sets = await loadStudy(uid, value);
+        const sets = await loadStudy(uid, value, studies.find(row=>row.uid===uid));
         if (signal?.aborted || !same(value)) return false;
         const set = seriesUid ? sets.find(item => item.SeriesInstanceUID === seriesUid) : sets[0];
         if (!set) throw new Error('표시할 영상 시리즈가 없습니다.');
@@ -146,7 +147,7 @@ window.KinViewerPriorController = (() => {
         if (!entries.length || entries.some(entry => !same(entry.value) || !studies?.some(row => row.uid === entry.uid))) return false;
         const plan = [];
         for (const entry of entries) {
-          const sets = await loadStudy(entry.uid, entry.value);
+          const sets = await loadStudy(entry.uid, entry.value, studies.find(row=>row.uid===entry.uid));
           if (signal?.aborted || entries.some(item => !same(item.value))) return false;
           if (!sets.length) throw new Error('표시할 영상 시리즈가 없습니다.');
           plan.push({ value: entry.value, displaySetInstanceUIDs: [sets[0].displaySetInstanceUID] });

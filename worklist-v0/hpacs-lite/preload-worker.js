@@ -195,7 +195,16 @@ async function download(study, mine) {
   controller = new AbortController(); const signal = controller.signal;
   await idle(); if (!live() || !store.start(uid)) return;
   broadcast();
-  const list = objects(await (await get(`/dicom-web/studies/${uid}/metadata`, { Accept: 'application/dicom+json' }, signal, bound)).json());
+  const scopes=[];
+  for(const ref of study.examRefs||[]) {
+    const query=new URLSearchParams({purpose:'current',reference:JSON.stringify(ref)});
+    const scope=await (await get('/api/studies/'+encodeURIComponent(ref.reportUid)+'/exam-scope?'+query,{},signal,bound)).json();
+    const source=scope.sources?.find(source=>source.studyUid===uid);
+    if(!source)throw new Stop(MESSAGES.changed);
+    scopes.push(source.series);
+  }
+  const list = objects(await (await get(`/dicom-web/studies/${uid}/metadata`, { Accept: 'application/dicom+json' }, signal, bound)).json())
+    .filter(object=>!scopes.length||scopes.some(series=>series.mode==='all'||(series.mode==='include'?series.uids.includes(object.series):!series.uids.includes(object.series))));
   if (!live()) return;
   if (!list.length) throw new Stop(MESSAGES.empty);
   const { first, rest } = framePaths(uid, list);
@@ -263,6 +272,10 @@ async function download(study, mine) {
     }
     broadcast();
   }
+  for(const ref of study.examRefs||[]) {
+    const query=new URLSearchParams({purpose:'current',reference:JSON.stringify(ref)});
+    await get('/api/studies/'+encodeURIComponent(ref.reportUid)+'/exam-scope?'+query,{},signal,bound);
+  }
   await locked(async () => { if (live()) { store.ready(uid); await persist(uid); } });
 }
 async function pump() {
@@ -325,7 +338,7 @@ async function handle(port, message, mine) {
       if (message.type === 'add' && !(auto && reason)) {
         const list = (Array.isArray(message.studies) ? message.studies : []).filter(s => /^[0-9.]{1,64}$/.test(s?.uid));
         const added = store.add(list.map(s => ({ uid: s.uid, label: typeof s.label === 'string' ? s.label.slice(0, 200) : null,
-          urgent: s.urgent === true })), { auto });
+          urgent: s.urgent === true, ...(Array.isArray(s.examRefs)&&s.examRefs.length?{examRefs:s.examRefs}:{}) })), { auto });
         for (const uid of added) {
           if (reason) store.fail(uid, reason);
           else if (!await persist(uid)) { store.get(uid).waiting = true; store.get(uid).reason = MESSAGES.space; }

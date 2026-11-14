@@ -317,6 +317,32 @@ export function storedExamScope(scope: ResolvedExamScope) {
   return scope.hasMembership ? examScopeView(scope) : undefined;
 }
 
+export function examScopeReference(scope: ResolvedExamScope) {
+  return {reportUid:scope.reportUid,groupId:scope.groupId,part:scope.part};
+}
+
+/** Saved viewer layouts retain their own current/prior roles and original series, independently of later grouping. */
+export async function resolveViewerSnapshot(db:any,access:StudyAccessService,c:Caller,snapshot:any,
+    prepared?:ResolvedExamScope[]) {
+  if(!snapshot.exam)return {snapshot,scopes:[] as ResolvedExamScope[]};
+  const refs=[snapshot.exam.current,snapshot.exam.prior].filter(Boolean),scopes:ResolvedExamScope[]=[];
+  const locks=prepared?.flatMap(scope=>scope.lockUids)??[];
+  for(const [index,ref] of refs.entries()) {
+    const purpose=snapshot.exam.purpose;
+    const scope=await resolveExamScope(db,access,c,{uid:ref.reportUid,purpose,
+      ...(purpose==='stored'?{record:{groupId:ref.groupId}}:{}),
+      ...(prepared?{phase:'write' as const,prepared:prepared[index],related:locks}:{}),identity:true});
+    if(scope.groupId!==ref.groupId||scope.part!==ref.part)throw examScopeChanged();
+    scopes.push(scope);
+  }
+  if(JSON.stringify(unique(scopes.flatMap(scope=>scope.studies)))!==JSON.stringify(snapshot.studies))throw examScopeChanged();
+  for(const cell of [...snapshot.cells,snapshot.volume,snapshot.batch?.cell].filter(Boolean))
+    if(!scopes.some(scope=>scopeIncludesSeries(scope,cell.study,cell.series)))throw examScopeChanged();
+  const stored=[];
+  for(const scope of scopes)stored.push(await resolveExamScope(db,access,c,{uid:scope.reportUid,purpose:'stored',record:{groupId:scope.groupId},identity:true}));
+  return {scopes,snapshot:{...snapshot,exam:{version:1,purpose:'stored',current:examScopeReference(stored[0]),prior:stored[1]?examScopeReference(stored[1]):null}}};
+}
+
 /** A fixed record needs its saved membership reference, never the current report text. */
 export function reportExamReference(db: any, uid: string, version?: number) {
   return version === undefined ? db.report.findUnique({ where: { uid }, select: { groupId: true } })
@@ -532,19 +558,29 @@ export class ExamMergeService {
   }
 
   async scope(c: Caller, uid: string, query: any = {}) {
-    if(Object.keys(query).some(k=>!['purpose','version'].includes(k))||query.purpose!==undefined&&!['current','source','stored'].includes(query.purpose)
+    if(Object.keys(query).some(k=>!['purpose','version','reference'].includes(k))||query.purpose!==undefined&&!['current','source','stored'].includes(query.purpose)
       ||query.version!==undefined&&(!/^[1-9]\d*$/.test(String(query.version))||!Number.isSafeInteger(Number(query.version))))
       throw new BadRequestException('검사 범위 조회 형식을 확인하세요');
+    let reference: any;
+    if (query.reference !== undefined) {
+      try { reference = JSON.parse(query.reference); } catch (_) { throw new BadRequestException('검사 범위 참조를 확인하세요'); }
+      if (!reference || Array.isArray(reference) || Object.keys(reference).sort().join(',') !== 'groupId,part,reportUid'
+        || reference.reportUid !== uid || reference.groupId !== null && !GROUP_ID.test(reference.groupId)
+        || reference.part !== null && ![0, 1].includes(reference.part))
+        throw new BadRequestException('검사 범위 참조를 확인하세요');
+    }
     await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
     return this.prisma.$transaction(async tx=>{
       const purpose=query.purpose??(query.version===undefined?'current':'stored');
       if(query.version!==undefined&&purpose!=='stored')throw new BadRequestException('저장 판의 범위를 선택하세요');
-      const record=purpose==='stored'?(query.version===undefined?await tx.report.findUnique({where:{uid}})
+      const record=purpose==='stored'?(query.version===undefined?(reference ? {groupId:reference.groupId} : await tx.report.findUnique({where:{uid}}))
         :await tx.reportVersion.findUnique({where:{uid_version:{uid,version:Number(query.version)}}})):undefined;
       if(purpose==='stored'&&!record)throw absent();
       const {state,lockUids,scopeRevision,hasMembership,...scope}=await resolveExamScope(tx,this.studyAccess,c,{uid,purpose,record,identity:true});
       if(!canReadPreliminary(state,c))throw absent();
-      return scope;
+      if(reference && (reference.groupId !== scope.groupId || reference.part !== scope.part))
+        throw examScopeChanged();
+      return { ...scope, ...(hasMembership ? {hasMembership:true} : {}) };
     },{isolationLevel:'RepeatableRead'});
   }
 

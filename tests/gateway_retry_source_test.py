@@ -704,8 +704,8 @@ class ClientPins(unittest.TestCase):
         self.assertEqual(MAIN.count('$("#receipt-retry").addEventListener("click", requestGatewayRetry);'), 1)
         # U3 client pins keep: the receipt key count and the observation functions stay free of requests.
         # 5 -> 6 at S4-F01V: one `row.gatewayReceipt ?? null` for the Not Observed item (F01VPins below).
-        self.assertEqual(MAIN.count("gatewayReceipt"), 6)
-        self.assertIn('$("#receipt-gateway").title = labels.gateway.title;\n    }', js_function(MAIN, "renderObservation") + "\n")
+        self.assertEqual(MAIN.count("gatewayReceipt"), 8)
+        self.assertIn('$("#receipt-gateway").title = labels.gateway.title;', js_function(MAIN, "renderObservation"))
 
     def test_study_observation_inventory_names_exactly_these_additions(self):
         counts = {
@@ -715,10 +715,10 @@ class ClientPins(unittest.TestCase):
         }
         # "#receipt-retry-note" 2 -> 1 at S4-F01V: the request writes the note right after the clicked control.
         self.assertEqual(counts, {"ids": {"receipt-retry": 1, "receipt-retry-note": 1}, "functions": {"requestGatewayRetry": 1},
-                                  "selectors": {"#receipt-retry": 3, "#receipt-retry-note": 1}})
+                                  "selectors": {"#receipt-retry": 4, "#receipt-retry-note": 2}})
         observation = text("tests", "study_observation_test.py")
         self.assertIn('    "ids": {"receipt-retry": 1, "receipt-retry-note": 1},\n    "functions": {"requestGatewayRetry": 1},\n'
-                      '    "selectors": {"#receipt-retry": 3, "#receipt-retry-note": 1},', observation)
+                      '    "selectors": {"#receipt-retry": 4, "#receipt-retry-note": 2},', observation)
 
     def test_the_pure_helpers_keep_u1b_and_the_gateway_label(self):
         # R3(c): the U1b needles, BANNED line included, stay byte-identical and exactly once.
@@ -787,7 +787,7 @@ def f01v_problems(main, arrivals):
         problems.append("drawRetry")
     for needle, count in (("drawRetry(row, labels.retry, button, note);", 1),
                           ('drawRetry(s, labels.retry, $("#receipt-retry"), $("#receipt-retry-note"));', 1),
-                          ("drawRetry(", 2), ('addEventListener("click", requestGatewayRetry);', 1),
+                          ("drawRetry(", 3), ('addEventListener("click", requestGatewayRetry);', 1),
                           ("row.gatewayReceipt ?? null", 1), ('$("#not-observed-list")', 1),
                           ("let item = kept.get(row.uid);", 1), ("item.dataset.uid = row.uid;", 1),
                           ('for (const item of kept.values()) item.querySelector("button").dataset.request = "";', 1),
@@ -796,9 +796,11 @@ def f01v_problems(main, arrivals):
                            '            + (gateway === null ? "" : ` · ${labels.gateway.text}`);', 1)):
         if render.count(needle) != count:
             problems.append("render %s" % needle[:40])
-    for banned in ("innerHTML", "api(", "fetch(", "id="):
+    for banned in ("innerHTML", "api(", "fetch("):
         if banned in render:
             problems.append("render " + banned)
+    if re.search(r"\bid\s*=", render):
+        problems.append("render id=")
     if main.count('addEventListener("click", requestGatewayRetry);') != 2:
         problems.append("two listeners")
     request = js_function(main, "requestGatewayRetry")

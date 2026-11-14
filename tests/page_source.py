@@ -38,7 +38,7 @@ def include_moved_files(files, root):
     # Merge Exam · Split / Unmerge).
     for name in ("report-editor-frame.js", "study-transfer-local.js", "clinical-signature.js", "report-view-observation.js",
                  "product-info-data.js", "product-info.js", "emr-link.js", "query-retrieve.js", "study-attachments.js",
-                 "technician-orders.js", "technician-scheduled.js", "technician-report.js", "exam-merge.js"):
+                 "technician-orders.js", "technician-scheduled.js", "technician-report.js", "exam-merge.js", "exam-scope.js", "viewer-exam-scope.js"):
         asset = root / "worklist-v0/hpacs-lite" / name
         if asset.is_file():
             added.append(asset.relative_to(root).as_posix())

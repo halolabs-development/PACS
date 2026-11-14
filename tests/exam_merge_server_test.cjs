@@ -63,7 +63,7 @@ function fixture({states=[A,B,C,D,E,F].map(uid=>state(uid)),groups=[],members=[]
   prisma.$transaction=async work=>{db.tx+=1;const before=clone({groups:db.groups,members:db.members,audits:db.audits,states:[...db.states]});
     try{return await work(prisma);}catch(e){db.groups=before.groups;db.members=before.members;db.audits=before.audits;db.states=new Map(before.states);throw e;}};
   const access={prepared:[],prepare:async(_c,uids=[])=>{access.prepared.push([...uids]);},prepareSourceIdentity:async(_c,uids)=>{access.prepared.push([...uids]);},
-    require:async(_c,uids)=>{if(uids.some(uid=>denied.includes(uid))){const {NotFoundException}=require('@nestjs/common');throw new NotFoundException('검사를 찾을 수 없습니다');}},
+    require:async(_c,uids)=>{if(uids.some(uid=>denied.includes(uid)))throw Object.assign(new Error('검사를 찾을 수 없습니다'),{getStatus:()=>404});},
     assertUnsplitSource:(_c,uid)=>({sourcePatientId:PATIENT[uid]??null,sourceInstitution:'hallym'}),
     assertIdentifiedSource:(_c,uid)=>({sourcePatientId:PATIENT[uid]??null,sourceInstitution:'hallym'}),
     requireSourceOwner:async()=>{},sourceSeries:async()=>[{uid:'2.25.701',count:3,images:true},{uid:'2.25.702',count:5,images:true}]};
@@ -691,7 +691,7 @@ async function start(svc,prisma,names){
   const log=console.log;console.log=()=>{};
   try{await svc.onModuleInit();}finally{console.log=log;if(saved.order)prisma.order=saved.order;else delete prisma.order;if(saved.institution)prisma.institution=saved.institution;else delete prisma.institution;}
 }
-async function listFixture({rows=[qido(A,'ACC-A',8,1),qido(B,'ACC-B',8,1),qido(C,'ACC-C',4,2),qido(D,'ACC-D',3,1,'SYN-P2')],group=merged(G1,B,[B,A,C]),reports=[],drafts=[],extraStates=[],series=[],attachments=[],policy=null}={}){
+async function listFixture({rows=[qido(A,'ACC-A',8,1),qido(B,'ACC-B',8,1),qido(C,'ACC-C',4,2),qido(D,'ACC-D',3,1,'SYN-P2')],group=merged(G1,B,[B,A,C]),reports=[],versions=[],receipts=[],drafts=[],extraStates=[],series=[],attachments=[],policy=null}={}){
   const states=[...rows.map(r=>({...state(r['0020000D'].Value[0]),origin:'dicom',createdAt:new Date('2020-01-01T00:00:00Z'),matched:'U',orderOid:null})).filter(s=>!extraStates.some(e=>e.uid===s.uid)),...extraStates];
   const project=(list,select)=>select?list.map(r=>Object.fromEntries(Object.keys(select).map(k=>[k,r[k]]))):list;
   const prisma={
@@ -703,7 +703,8 @@ async function listFixture({rows=[qido(A,'ACC-A',8,1),qido(B,'ACC-B',8,1),qido(C
     studyGroup:{findMany:async({where,select})=>(group?.groups??[]).filter(g=>match(g,where)).map(g=>pick(clone(g),select))},
     studyGroupMember:{findMany:async({where,select})=>(group?.members??[]).filter(m=>match(m,where)).map(m=>pick(clone(m),select))},
     report:{findMany:async({where})=>clone(reports).filter(r=>where.uid.in.includes(r.uid))},reportDraft:{findMany:async({where})=>clone(drafts).filter(d=>match(d,where))},readerAssignment:{findMany:async()=>[]},
-    studyAttachment:{groupBy:async()=>[],findMany:async()=>clone(attachments),findFirst:async()=>null},gatewayReceipt:{findMany:async()=>[]},
+    reportVersion:{findFirst:async({where})=>clone(versions.filter(r=>match(r,where)).sort((a,b)=>b.version-a.version)[0]??null)},
+    studyAttachment:{groupBy:async()=>[],findMany:async()=>clone(attachments),findFirst:async()=>null},gatewayReceipt:{findMany:async({where})=>clone(receipts.filter(r=>match(r,where)))},
     readingTemplate:{count:async()=>1,findMany:async()=>[]},userFilter:{findMany:async()=>[]},
     auditLog:{create:async()=>{throw new Error('no audit');}},$queryRaw:async()=>policy?[{institution:'hallym',revision:1,policy}]:[],
   };
@@ -859,4 +860,70 @@ test('worklist: a report written on a merged exam says so after Unmerge, and its
   // A report of the study alone keeps its row shape (no reportGroup key).
   const plain = await listFixture({ group: null, reports: [{ ...report, groupId: null }] });
   assert.equal('reportGroup' in (await plain.listStudies(reader)).studies.find(s => s.uid === B), false);
+});
+
+
+test('viewer references are server resolved, reject edits, and retain a dissolved saved group',async()=>{
+ const f=fixture(merged(G1,A,[A,B,C]));
+ const current=await f.svc.scope(reader,A),ref={reportUid:A,groupId:G1,part:null};
+ assert.deepEqual((await f.svc.scope(reader,A,{reference:JSON.stringify(ref)})).sources,current.sources);
+ await assert.rejects(f.svc.scope(reader,A,{reference:JSON.stringify({...ref,part:1})}),e=>status(e)===409);
+ await assert.rejects(f.svc.scope(reader,A,{reference:JSON.stringify({...ref,sources:[]})}),e=>status(e)===400);
+ const stored=await resolveExamScope(f.prisma,f.access,reader,{uid:A,purpose:'stored',record:{groupId:G1}});
+ f.db.groups[0].dissolvedAt=new Date();f.db.states.get(A).draftEpoch='new-epoch';
+ await assert.rejects(f.svc.scope(reader,A,{reference:JSON.stringify(ref)}),e=>status(e)===409);
+ const reopened=await f.svc.scope(reader,A,{purpose:'stored',reference:JSON.stringify(ref)});assert.equal(reopened.active,false);assert.equal(reopened.sources.length,3);
+});
+test('viewer reference for a plain prior permits only a never-grouped source and checks every original',async()=>{
+ const plain=fixture(),ref={reportUid:A,groupId:null,part:null};
+ assert.equal((await plain.svc.scope(reader,A,{reference:JSON.stringify(ref)})).groupId,null);
+ const grouped=fixture(merged(G1,A,[A,B]));await assert.rejects(grouped.svc.scope(reader,A,{reference:JSON.stringify(ref)}),e=>status(e)===409);
+ const denied=fixture({...merged(G1,A,[A,B]),denied:[B]});await assert.rejects(denied.svc.scope(reader,A),e=>status(e)===404);
+});
+test('worklist exposes each grouped source receipt and no new keys on a never-grouped row',async()=>{
+ const receipts=[A,B,C].map((studyUid,i)=>({studyUid,institutionId:'hallym',phase:'complete',successCount:i+1,localCount:i+1,attempt:1,epoch:'00000000-0000-4000-8000-000000000001',seq:1n,receivedAt:new Date()}));
+ const svc=await listFixture({receipts});const rows=(await svc.listStudies(reader)).studies;
+ const merged=rows.find(r=>r.uid===B);assert.equal(merged.sourceMetadata.length,3);
+ assert.deepEqual(merged.sourceMetadata.map(source=>[source.uid,source.gatewayReceipt.successCount]),[[B,2],[A,1],[C,3]]);
+ const plain=rows.find(r=>r.uid===D);assert(!Object.hasOwn(plain,'examScope'));assert(!Object.hasOwn(plain,'relatedExamReports'));
+});
+
+test('Unsplit lists the retained second report through its preserved part without exposing an inaccessible source',async()=>{
+ const group={groups:[{id:G1,institutionId:'hallym',kind:'split',baseUid:A,dissolvedAt:new Date()}],members:[
+  {groupId:G1,logicalUid:A,studyUid:A,part:0,seriesUids:[]},{groupId:G1,logicalUid:B,studyUid:A,part:1,seriesUids:['2.25.701']}]};
+ const svc=await listFixture({group,rows:[qido(A,'ACC-A',8,2)],extraStates:[state(B,{origin:'logical'})],
+  versions:[{uid:B,version:1,action:'save',groupId:G1}]});
+ const rows=(await svc.listStudies(reader)).studies;assert.deepEqual(rows.map(row=>row.uid),[A]);
+ assert.equal(rows[0].relatedExamReports.length,1);const linked=rows[0].relatedExamReports[0];
+ assert.equal(linked.uid,B);assert.equal(linked.scope.part,1);assert.equal(linked.scope.active,false);assert.deepEqual(linked.scope.sources[0].series,{mode:'include',uids:['2.25.701']});
+});
+test('Job scopes freeze the saved group and reject excluded series or a changed current group',async()=>{
+ const {resolveViewerSnapshot,examScopeReference}=require('/app/dist/exam-merge.service');
+ const f=fixture({groups:[{id:G1,institutionId:'hallym',kind:'split',baseUid:A,dissolvedAt:null}],members:[
+  {groupId:G1,logicalUid:A,studyUid:A,part:0,seriesUids:[]},{groupId:G1,logicalUid:B,studyUid:A,part:1,seriesUids:['2.25.701']}]});
+ const current=await resolveExamScope(f.prisma,f.access,reader,{uid:B,purpose:'current'});
+ const snapshot={studies:[A],exam:{version:1,purpose:'current',current:examScopeReference(current),prior:null},cells:[{study:A,series:'2.25.701'}]};
+ const frozen=await resolveViewerSnapshot(f.prisma,f.access,reader,snapshot);assert.equal(frozen.snapshot.exam.purpose,'stored');
+ await assert.rejects(resolveViewerSnapshot(f.prisma,f.access,reader,{...snapshot,cells:[{study:A,series:'2.25.702'}]}),e=>status(e)===409);
+ f.db.groups[0].dissolvedAt=new Date();
+ await assert.rejects(resolveViewerSnapshot(f.prisma,f.access,reader,snapshot),e=>status(e)===409);
+ const restored=await resolveViewerSnapshot(f.prisma,f.access,reader,frozen.snapshot);assert.equal(restored.scopes[0].active,false);
+});
+
+test('a second-part Job list checks the original permission and preserves the logical report parent after Unsplit',async()=>{
+ const {ViewerJobService}=require('/app/dist/viewer-job.service');
+ const f=fixture({states:[state(A),state(B,{origin:'logical'})],groups:[{id:G1,institutionId:'hallym',kind:'split',baseUid:A,dissolvedAt:new Date()}],members:[
+  {groupId:G1,logicalUid:A,studyUid:A,part:0,seriesUids:[]},{groupId:G1,logicalUid:B,studyUid:A,part:1,seriesUids:['2.25.701']}],denied:[B]});
+ const snapshot={studies:[A],exam:{version:1,purpose:'stored',current:{reportUid:B,groupId:G1,part:1},prior:null},cells:[{study:A,series:'2.25.701'}]};
+ const id='00000000-0000-4000-8000-000000000009';
+ f.prisma.viewerJob={findMany:async()=>[{id,studyUid:B,studies:[A],title:'Second part',description:'',revision:1,createdAt:new Date(),updatedAt:new Date(),snapshot}]};
+ f.access.snapshot=async()=>({});f.access.allowed=async(_c,uids)=>new Set(uids.filter(uid=>uid===A));
+ const service=new ViewerJobService(f.prisma,{},f.access);const answer=await service.list(B,{},reader);
+ assert.equal(answer.jobs.length,1);assert.equal(answer.jobs[0].studyUid,B);
+});
+test('viewer references survive report draft epochs while new grouping is refused',async()=>{
+ const f=fixture(merged(G1,A,[A,B]));const reference=JSON.stringify({reportUid:A,groupId:G1,part:null});
+ const before=await f.svc.scope(reader,A,{reference});f.db.states.get(A).draftEpoch='changed-report-epoch';
+ const after=await f.svc.scope(reader,A,{reference});assert.notEqual(after.generation,before.generation);assert.deepEqual(after.sources,before.sources);
+ f.db.groups[0].dissolvedAt=new Date();await assert.rejects(f.svc.scope(reader,A,{reference}),e=>status(e)===409);
 });

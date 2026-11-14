@@ -17,11 +17,11 @@
       if (values.length !== 1) return null;
       const studies = values[0].split(',');
       // A study and its prior, or a merged exam's studies (Merge Exam, at most 10, the base first).
-      if (studies.length < 1 || studies.length > 10 || new Set(studies).size !== studies.length ||
+      if (studies.length < 1 || studies.length > (url.searchParams.has("kinExamScopes") ? 20 : 10) || new Set(studies).size !== studies.length ||
           studies.some(v => v.length > 64 || !/^\d+(?:\.\d+)+$/.test(v))) return null;
       const series = url.searchParams.get('initialSeriesInstanceUID');
       if (series !== null && (series.length > 64 || !/^\d+(?:\.\d+)+$/.test(series))) return null;
-      return { studies, series };
+      return { studies, series, ...(url.searchParams.has('kinExamScopes') ? {exam:url.searchParams.get('kinExamScopes')} : {}) };
     } catch (_) { return null; }
   }
   // A viewer reports its outer geometry only; the receiving list validates it.

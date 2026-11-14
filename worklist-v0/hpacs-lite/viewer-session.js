@@ -117,7 +117,8 @@
     // D1880: under the transport (admitted and bound first), every image read names its opening, and frames of a
     // preloaded study may come from memory once the study passed its live check for that opening (viewer-preload.js).
     const send = win.KinViewerPreload ? win.KinViewerPreload.attach(win, originalFetch) : originalFetch;
-    const transport = win.KinSessionTransport.page({ fetch: send, authFailure });
+    const transport = win.KinSessionTransport.page({ fetch: (url, init) => win.KinViewerExamScope
+      ? win.KinViewerExamScope.send(send, url, init) : send(url, init), authFailure });
     // S7-U5 session end: auth.js keeps the end record of each session under that session's own key
     // (`kin-session-end:<session>`, or the cookie `kin-session-end.<session>` when localStorage takes no write).
     // One reader for both copies, the later of the two as auth.js reads them. A viewer ends on the record of ITS OWN

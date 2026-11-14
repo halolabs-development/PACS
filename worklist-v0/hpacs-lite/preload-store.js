@@ -51,6 +51,7 @@
       manifest(uid) {
         const s = studies.get(uid);
         return { uid: s.uid, label: s.label, status: s.status === STATUS.downloading ? STATUS.queued : s.status,
+          ...(s.examRefs?{examRefs:s.examRefs}:{}),
           reason: s.reason, revision: s.revision, copy: s.copy, seq: s.seq, total: s.total,
           queuedAt: s.queuedAt, fetchedAt: s.fetchedAt, bytes: s.bytes,
           frames: Object.fromEntries([...s.frames].map(([path, f]) => [path, f.entryId])) };
@@ -85,12 +86,16 @@
        */
       add(list, { auto = false } = {}) {
         const added = [], urgent = [];
-        for (const { uid, label, urgent: first } of list) {
+        for (const { uid, label, urgent: first, examRefs } of list) {
           const known = studies.get(uid);
+          if(known && JSON.stringify(known.examRefs||null)!==JSON.stringify(examRefs||null)) {
+            released.push(...release(known));
+            studies.set(uid,{...known,examRefs,status:STATUS.queued,reason:null,waiting:false,seq:++seq,queuedAt:now(),fetchedAt:null,expiresAt:now()+TTL});added.push(uid);continue;
+          }
           if (known && (auto || ![STATUS.failed, STATUS.evicted].includes(known.status))) continue;
           if (first === true) urgent.push(uid);
           if (known) { known.status = STATUS.queued; known.reason = null; known.seq = ++seq; known.queuedAt = now(); known.fetchedAt = null; known.expiresAt = now() + TTL; known.label = label ?? known.label; added.push(uid); continue; }
-          studies.set(uid, { uid, label: label ?? null, status: STATUS.queued, reason: null, waiting: false, seq: ++seq,
+          studies.set(uid, { uid, ...(examRefs?{examRefs}:{}), label: label ?? null, status: STATUS.queued, reason: null, waiting: false, seq: ++seq,
             queuedAt: now(), fetchedAt: null, expiresAt: now() + TTL, frames: new Map(), bytes: 0, total: 0, revision: null, estimate: null, copy: null, opens: 0, closedAt: null });
           added.push(uid);
         }

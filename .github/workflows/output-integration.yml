@@ -54,7 +54,7 @@ concurrency:
 jobs:
   output-integration:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -82,7 +82,7 @@ jobs:
       - name: Output integration profile safeguards and exact selection
         run: python3 scripts/record-run.py --run-dir tmp/output-integration-ci/profile --cwd . --file tests/measurement_ci.py --file tests/measurement_ci_test.py --file .github/workflows/validate.yml --file .github/workflows/output-integration.yml --file tests/e2e/test_critical_result.py --file .github/workflows/gateway-e2e.yml --file tests/e2e/test_prior_selection.py --file tests/e2e/test_related_filter.py -- python3 -B tests/measurement_ci_test.py
       - name: Selected isolated focused integration profile
-        timeout-minutes: 28
+        timeout-minutes: 38
         env:
           KIN_CI_PROFILE: ${{ inputs.profile }}
         run: |

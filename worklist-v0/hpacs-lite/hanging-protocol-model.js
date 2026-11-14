@@ -289,10 +289,11 @@
     const source=studies[0]?.sourcePatientKey;
     if(typeof source!=='string'||!source||studies.some(s=>s.sourcePatientKey!==source))throw Error('현재/관련 검사가 같은 원본 환자인지 확인할 수 없습니다.');
     const current=studies[0],related=studies[1]||null,currentDate=date(current.date??current.StudyDate),relatedDate=date(related?.date??related?.StudyDate);
+    const belongs=(study,set)=>Array.isArray(study.displaySetIds)?study.displaySetIds.includes(set?.displaySetInstanceUID):set?.StudyInstanceUID===(study.uid??study.StudyInstanceUID);
     const candidates=selectedRuleId===null?library.rules.filter(r=>r.enabled):library.rules.filter(r=>r.id===selectedRuleId&&r.enabled);
     if(selectedRuleId!==null&&!uuid(selectedRuleId))throw Error('선택한 규칙을 확인할 수 없습니다.');
     for(const rule of candidates){
-      const currentUid=current.uid??current.StudyInstanceUID,currentSets=sets.filter(ds=>ds?.StudyInstanceUID===currentUid);
+      const currentUid=current.uid??current.StudyInstanceUID,currentSets=sets.filter(ds=>belongs(current,ds));
       if(!fieldsMatch(studyMetadata(current,currentSets),rule.match))continue;
       const chosen=new Map(),byAlias=new Map(rule.selectors.map(s=>[s.alias,s]));let failed=false;
       const specs=rule.layout.cells.map(cell=>cell===null?null:cellSpec(cell));
@@ -301,7 +302,7 @@
         const selector=byAlias.get(alias),study=selector.role==='current'?current:related;
         if(!study||selector.historical&&(!currentDate||!relatedDate||relatedDate>=currentDate)){failed=true;break;}
         const studyUid=study.uid??study.StudyInstanceUID;
-        const pool=sets.filter(ds=>ds?.StudyInstanceUID===studyUid&&uid(ds.SeriesInstanceUID)&&typeof ds.displaySetInstanceUID==='string'&&ds.displaySetInstanceUID&&Array.isArray(ds.images)&&ds.images.length>0&&fieldsMatch(displayMetadata(ds),selector));
+        const pool=sets.filter(ds=>belongs(study,ds)&&uid(ds.SeriesInstanceUID)&&typeof ds.displaySetInstanceUID==='string'&&ds.displaySetInstanceUID&&Array.isArray(ds.images)&&ds.images.length>0&&fieldsMatch(displayMetadata(ds),selector));
         const seriesCounts=new Map();for(const ds of pool)seriesCounts.set(ds.SeriesInstanceUID,(seriesCounts.get(ds.SeriesInstanceUID)||0)+1);
         if([...seriesCounts.values()].some(n=>n!==1)){failed=true;break;}
         pool.sort((a,b)=>{const am=displayMetadata(a),bm=displayMetadata(b),an=am.seriesNumber,bn=bm.seriesNumber;

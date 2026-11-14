@@ -176,6 +176,7 @@
         reqDate: localStamp(s.reqDate), reqDept: requestText(s.reqDept), reqDoc: requestText(s.reqDoc), ptClass: requestText(s.ptClass),
         // Merge Exam: the studies of a merged exam (the base first); Count and Series above are already of all of them.
         examScope: s.examScope ?? null, reportScope: s.reportScope ?? null,
+        relatedExamReports: s.relatedExamReports ?? [], examUnavailable: s.examUnavailable === true,
         draftEpoch: s.state?.draftEpoch ?? null,
         sourceMetadata: (s.sourceMetadata || []).map(m => ({ ...m, sourceAcc: m.acc,
           acc: m.orderAccession || m.acc, date: fmtD(m.date), reqDate: localStamp(m.reqDate) })),

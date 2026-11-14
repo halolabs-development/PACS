@@ -12,6 +12,7 @@ import { canonical, viewerUid, viewerUuid, verifyViewerReference, isManualMeasur
 import { jobCommand, jobFingerprint, verifyJobCell, previewCommand } from './viewer-job-input';
 import { verifyVolumeReference, compactVolumeTags } from './viewer-volume-reference';
 import { readSnapshot, writeSnapshot } from './viewer-job-snapshot';
+import { examParentAccess, prepareExamRead, resolveViewerSnapshot } from './exam-merge.service';
 const deny = (): never => { throw new ForbiddenException('비교 작업에 접근할 수 없습니다'); };
 const conflict = (): never => { throw new ConflictException('비교 작업이 변경되었습니다. 목록을 새로 확인하세요'); };
 // Every kind of saved frame mark, the Measure menu's text marks and circles included, travels with a Job.
@@ -30,6 +31,11 @@ const jobChange = (surface: string, j: { id: string; studyUid: string; revision:
 @Injectable()
 export class ViewerJobService {
   constructor(private prisma: PrismaService, private orthanc: OrthancService, private studyAccess:StudyAccessService) {}
+  private async prepareScope(c:Caller,snapshot:any) {
+    if(snapshot.exam)for(const ref of [snapshot.exam.current,snapshot.exam.prior].filter(Boolean))
+      await prepareExamRead(this.prisma,this.studyAccess,c,ref.reportUid,true);
+    return resolveViewerSnapshot(this.prisma,this.studyAccess,c,snapshot);
+  }
   private member(c: Caller, write = false) {
     if (c.kind !== 'member' || !c.sub || !c.actor || !c.institution || write && !c.roles.includes('radiologist')) deny();
   }
@@ -56,7 +62,9 @@ export class ViewerJobService {
     const rows = lock ? await tx.$queryRaw`SELECT uid, "institutionId", "teleInstitutionId", rs, "preDoc", "preReviewer", "preDocSub", "preReviewerSub" FROM "StudyState" WHERE uid IN (${Prisma.join([...studies].sort())}) ORDER BY uid FOR UPDATE`
       : await tx.studyState.findMany({ where: { uid: { in: studies } } });
     if (rows.length !== studies.length || rows.some(s => !allowed(s, c))) deny();
-    await this.studyAccess.require(c,studies,tx);
+    const logical=rows.filter(row=>row.origin==='logical');
+    for(const row of logical)await examParentAccess(tx,this.studyAccess,c,row.uid,true,'reading',row);
+    await this.studyAccess.require(c,studies.filter(uid=>!logical.some(row=>row.uid===uid)),tx);
     return rows;
   }
   private async sources(snapshot: any, old = false, sources = new Map<string, any>()) {
@@ -166,7 +174,21 @@ export class ViewerJobService {
       const byUid = new Map(parents.map(s => [s.uid, s]));
       const permitted=await this.studyAccess.allowed(c,refs,tx);
       // Even titles and descriptions may refer to a prior whose permission was revoked.
-      const body = { jobs: jobs.filter(j => j.studies.every(s => permitted.has(s)&&allowed(byUid.get(s), c))).map(summary) };
+      const readable = [];
+      for (const job of jobs) {
+        if (!job.studies.every(s => permitted.has(s)&&allowed(byUid.get(s), c))) continue;
+        if ((job.snapshot as any)?.exam) {
+          try {
+            await this.prepareScope(c,job.snapshot);
+            await resolveViewerSnapshot(tx,this.studyAccess,c,job.snapshot);
+          } catch(error) {
+            if (error instanceof NotFoundException || error instanceof ConflictException || error instanceof ForbiddenException) continue;
+            throw error;
+          }
+        }
+        readable.push(job);
+      }
+      const body = { jobs: readable.map(summary) };
       return { body, sources: body.jobs.map((job, index) => consumerSource('comparison-description', uid, parent.institutionId,
         job.id, job.revision, ['jobs', index])) };
     }, true);
@@ -192,6 +214,7 @@ export class ViewerJobService {
     this.member(c); viewerUid(uid); viewerUuid(id);
     const j = await this.head(uid, id, c);
     if (j.hidden) conflict();
+    await this.prepareScope(c,j.snapshot);
     const sources = new Map<string, any>();
     await this.sources(j.snapshot, true, sources);
     const refs = j.snapshot['version'] === 3 && Array.isArray(j.snapshot['annotations']) ? j.snapshot['annotations'] : [];
@@ -201,6 +224,7 @@ export class ViewerJobService {
     // Orthanc calls happen outside locks; permission and metadata revision must
     // still be current after those calls before returning a restorable snapshot.
     const latest = await this.head(uid, id, c); if (latest.hidden || latest.revision !== j.revision) conflict();
+    await resolveViewerSnapshot(this.prisma,this.studyAccess,c,latest.snapshot);
     const body = { ...summary(latest), snapshot: latest.snapshot, ...(annotations ? { annotations } : {}) };
     // A restored comparison includes each participating study, not just its anchor.
     return { body, sources: [
@@ -218,11 +242,13 @@ export class ViewerJobService {
   private async selectPreview(uid: string, raw: Buffer, c: Caller) {
     this.member(c); viewerUid(uid);
     const input = previewCommand(raw);
-    if (input.studies[0] !== uid) throw new BadRequestException('판독 대상 검사가 일치하지 않습니다');
+    if ((input.exam?.current.reportUid ?? input.studies[0]) !== uid) throw new BadRequestException('판독 대상 검사가 일치하지 않습니다');
+    await this.prepareScope(c,input);
     this.sameInstitution(await this.parents(this.prisma, input.studies, c));
     const { snapshot } = await this.sources(input);
     // Recheck access after remote reads. This preview has no stored comparison revision.
     const parents = await this.parents(this.prisma, input.studies, c);
+    await resolveViewerSnapshot(this.prisma,this.studyAccess,c,input);
     this.sameInstitution(parents);
     return { body: { snapshot }, sources: input.studies.map(study => consumerSource('comparison-layout', study,
       parents[0].institutionId, study, null, ['snapshot'])) };
@@ -230,7 +256,8 @@ export class ViewerJobService {
   async create(uid: string, raw: Buffer, c: Caller, recorded?: RecordedTransaction) {
     this.member(c, true); viewerUid(uid);
     const b = jobCommand(raw, true), fingerprint = jobFingerprint({ uid, ...b });
-    if (b.snapshot.studies[0] !== uid) throw new BadRequestException('판독 대상 검사가 일치하지 않습니다');
+    if ((b.snapshot.exam?.current.reportUid ?? b.snapshot.studies[0]) !== uid) throw new BadRequestException('판독 대상 검사가 일치하지 않습니다');
+    const exam = await this.prepareScope(c,b.snapshot);
     this.sameInstitution(await this.parents(this.prisma, b.snapshot.studies, c));
     const known = await this.prisma.viewerJob.findUnique({ where: { id: b.id } });
     const sources = new Map<string, any>();
@@ -239,6 +266,7 @@ export class ViewerJobService {
       OR: snapshot.cells.filter(Boolean).map(c => ({ studyUid: c.study, AND: [{ snapshot: { path: ['sopUid'], equals: c.sop } }, { snapshot: { path: ['seriesUid'], equals: c.series } },
         { snapshot: { path: ['frame'], equals: c.frame } }] })) }, select: { snapshot: true } })).map(h => h.snapshot), sources);
     return this.transaction(async (tx, workflow) => {
+      const savedScope = await resolveViewerSnapshot(tx,this.studyAccess,c,b.snapshot,b.snapshot.exam?exam.scopes:undefined);
       const parents = await this.parents(tx, b.snapshot.studies, c, true);
       this.sameInstitution(parents);
       const replay = await tx.viewerJob.findUnique({ where: { id: b.id } });
@@ -247,7 +275,8 @@ export class ViewerJobService {
         return summary(replay);
       }
       if (known) conflict();
-      const frozen = snapshot.version === 3 ? await this.freezeAnnotations(tx, snapshot, sources) : snapshot;
+      const scoped = snapshot.exam ? {...snapshot,exam:savedScope.snapshot.exam} : snapshot;
+      const frozen = snapshot.version === 3 ? await this.freezeAnnotations(tx, scoped, sources) : scoped;
       const now = new Date();
       const j = await tx.viewerJob.create({ data: { id: b.id, studyUid: uid, authorSub: c.sub, authorActor: c.actor, studies: b.snapshot.studies,
         fingerprint, snapshot: {}, title: b.title, description: b.description, revision: 1, updatedAt: now },
@@ -270,7 +299,9 @@ export class ViewerJobService {
   async revise(uid: string, id: string, raw: Buffer, c: Caller, recorded?: RecordedTransaction) { await this.studyAccess.prepare(c);
     this.member(c, true); viewerUid(uid); viewerUuid(id); const b = jobCommand(raw, false);
     const head = await this.head(uid, id, c);
+    const exam = await this.prepareScope(c,head.snapshot);
     return this.transaction(async (tx, workflow) => {
+      await resolveViewerSnapshot(tx,this.studyAccess,c,head.snapshot,head.snapshot.exam?exam.scopes:undefined);
       const parents = await this.parents(tx, head.studies, c, true);
       this.sameInstitution(parents);
       const j = await tx.viewerJob.findUnique({ where: { id } });

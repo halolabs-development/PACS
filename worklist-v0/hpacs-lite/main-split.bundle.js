@@ -1346,8 +1346,17 @@
           }).join("") || `<tr><td class="empty" colspan="7">${relatedModality || relatedBodyPart ? "조건에 맞는 관련 검사 없음" : "관련 검사 없음"}</td></tr>`)
         : `<tr><td class="empty" colspan="7">검사를 선택하세요</td></tr>`;
       columnPrefs?.decorateRelated(mode);
+      for (const report of s?.relatedExamReports || []) {
+        if (report.uid === s.uid) continue;
+        const row=document.createElement('tr'),cell=document.createElement('td'),link=document.createElement('button');
+        cell.colSpan=7;link.type='button';link.className='chip';link.textContent='Related Report · '+(report.scope?.part===1?'Exam 2':'Exam')+' · v'+report.version;
+        link.title='묶음을 되돌리기 전 저장한 판독문과 당시 영상 범위를 엽니다.';
+        const selected=s.uid;link.onclick=()=>{if(selectedUid===selected)showHistory(report.uid);};
+        cell.append(link);row.append(cell);$('#relrows').append(row);
+      }
       relatedRowNavigation?.sync();
     }
+
     const relatedParts = KinRelatedParts.create({
       owner:()=>{const key=KinViewerOpening.key(KinAuth.session());return key||null;},
       changed:()=>renderRelated()
@@ -1525,6 +1534,7 @@
         reqDate: localStamp(s.reqDate), reqDept: requestText(s.reqDept), reqDoc: requestText(s.reqDoc), ptClass: requestText(s.ptClass),
         // Merge Exam: the studies of a merged exam (the base first); Count and Series above are already of all of them.
         examScope: s.examScope ?? null, reportScope: s.reportScope ?? null,
+        relatedExamReports: s.relatedExamReports ?? [], examUnavailable: s.examUnavailable === true,
         draftEpoch: s.state?.draftEpoch ?? null,
         sourceMetadata: (s.sourceMetadata || []).map(m => ({ ...m, sourceAcc: m.acc,
           acc: m.orderAccession || m.acc, date: fmtD(m.date), reqDate: localStamp(m.reqDate) })),
@@ -3063,7 +3073,11 @@
       const s = viewed(), receipt = $("#study-receipt");
       if (!receipt) return;
       receipt.hidden = !s;
-      if (!s) return;
+      if (!s) {
+        const originals=receipt.querySelector('.exam-original-receipts');
+        for(const control of originals?.querySelectorAll('button')||[])control.dataset.request='';
+        originals?.replaceChildren();return;
+      }
       // Every worklist row passed the visible() boundary on the server, so axis A is `assigned` here;
       // a study whose sending hospital is unknown is held and reaches no list (D1882).
       const labels = KinStudyArrivals.receiptLabels({ assignment: "assigned",
@@ -3083,19 +3097,34 @@
       let originals=receipt.querySelector('.exam-original-receipts');
       if(!originals){originals=document.createElement('div');originals.className='exam-original-receipts';receipt.append(originals);}
       const scope=KinExamScope.read(s);
-      originals.replaceChildren();originals.hidden=!scope?.groupId;
+      const receiptScope=scope?.groupId?KinExamScope.stamp(s):'';
+      if(originals.dataset.scope!==receiptScope){
+        for(const control of originals.querySelectorAll('button'))control.dataset.request='';
+        originals.replaceChildren();originals.dataset.scope=receiptScope;
+      }
+      originals.hidden=!scope?.groupId;
       if(scope?.groupId){
         $("#receipt-observation").textContent='Original exams';
         $("#receipt-observation").title='보유 수와 도착 변화는 원본 검사별 관측입니다.';
         $("#receipt-gateway").textContent='';$("#receipt-gateway").title='';
         $("#receipt-retry").hidden=true;$("#receipt-retry-note").textContent='';
-        for(const source of KinExamScope.metadata(s)){
+        const kept=new Map([...originals.children].map(line=>[line.dataset.uid,line]));
+        const lines=KinExamScope.metadata(s).map(source=>{
           const own=KinStudyArrivals.receiptLabels({assignment:'assigned',observation:KinStudyArrivals.studyObservation(studyObservationModel,source.uid),gateway:source.gatewayReceipt??null});
-          const line=document.createElement('div');
-          line.textContent=[source.acc||source.uid,own.observation.text,own.change?.text,
+          let line=kept.get(source.uid);kept.delete(source.uid);
+          if(!line){
+            line=document.createElement('div');line.dataset.uid=source.uid;
+            const control=document.createElement('button');control.type='button';control.className='chip';
+            control.textContent=KinStudyArrivals.RETRY_TEXT.button;control.addEventListener('click',requestGatewayRetry);
+            line.append(document.createElement('span'),' ',control,' ',document.createElement('span'));
+          }
+          const [text,control,note]=line.children;
+          text.textContent=[source.acc||source.uid,own.observation.text,own.change?.text,
             source.gatewayReceipt===undefined?'Gateway 영수증 정보가 이 목록에 제공되지 않았습니다.':own.gateway.text].filter(Boolean).join(' · ');
-          originals.append(line);
-        }
+          drawRetry(source,own.retry,control,note);return line;
+        });
+        for(const line of kept.values())line.querySelector('button').dataset.request='';
+        if(lines.length!==originals.children.length||lines.some((line,i)=>line!==originals.children[i]))originals.replaceChildren(...lines);
       }
     }
 
@@ -9827,7 +9856,7 @@
             </div>
             ${v.reason ? `<div class="vr">사유: ${esc(v.reason)}</div>` : ""}
             ${v.group ? `<div class="vr" data-exam-group="${esc(v.group.id)}"><b>Exam scope</b> — ${v.group.readable
-              ? `원본 검사(${esc(v.group.studies.map(u => studies.find(s => s.uid === u)?.acc || u).join(" + "))})의 영상으로 쓴 판입니다${v.group.active ? "" : " · 지금은 되돌린 범위"}`
+              ? `원본 검사(${esc((KinExamScope.storedReport(v,uid)?.sources||[]).map(source => studies.find(s => s.uid === source.studyUid)?.acc || source.studyUid).join(" + "))})의 영상으로 쓴 판입니다${v.group.active ? "" : " · 지금은 되돌린 범위"}`
               : "저장된 범위의 일부 영상을 볼 수 없어 이 판의 본문을 보이지 않습니다"}</div>` : ""}
             ${v.findings || v.conclusion || v.recommendation
               ? `<pre>${esc([v.findings, v.conclusion, v.recommendation].filter(Boolean).join("\n---\n"))}</pre>`
@@ -10251,44 +10280,37 @@
         .sort((a, b) => b.date.localeCompare(a.date) || b.uid.localeCompare(a.uid))[0]?.uid ?? null;
     }
 
+    function viewerOpening(uid, priorUid = null, supplied = null) {
+      if (supplied) return supplied;
+      const current = studies.find(row => row.uid === uid) || {uid};
+      const prior = priorUid && priorUid !== uid ? studies.find(row => row.uid === priorUid) || {uid:priorUid} : null;
+      return KinExamScope.viewerInput(current, prior);
+    }
     function openFilmbox(uid, priorUid = autoPrior(uid), initialSeriesUid = null, openingOptions = null) {
-      if (openingOptions?.exam) return openOhifWindow(uid, priorUid, initialSeriesUid, null, openingOptions);
       // WORKLIST-SPLIT-UID: a study (or comparison) the last list excluded as unresolved replaces no window or workspace
       // pane. A stale button or a direct URL still meets the image gate's 403 on the server.
       if ([uid, priorUid].some(value => value && appState[value]?.identityUnresolved)) {
         toast("환자 식별 불일치로 이 검사를 사용할 수 없습니다. 원본 확인이 필요합니다.", "err");
         return false;
       }
-      // Merge Exam: the Reading Workspace shows one study and its prior; a merged exam (all its studies as one) opens in the viewer
-      // window, which carries the whole exam.
-      if (mergedStudies(uid) && (readingWorkspace.active() || imageOpening?.snapshot().listTarget === 'workspace')) {
-        toast("합친 검사는 모든 검사의 영상을 함께 보도록 별도 영상 창에서 엽니다.", "info");
-        return openOhifWindow(uid, null, initialSeriesUid);
-      }
       if (readingWorkspace.active() || imageOpening?.snapshot().listTarget === 'workspace')
-        return readingWorkspace.open(uid, priorUid, initialSeriesUid);
-      return openOhifWindow(uid, priorUid, initialSeriesUid);
-    }
-    /** Merge Exam: the studies of a merged exam row (the base first, at most 10), or null for any other row. */
-    function mergedStudies(uid) {
-      const members = studies.find(x => x.uid === uid)?.group?.members;
-      if (!Array.isArray(members) || members.length < 2 || members.length > 10 || members[0]?.uid !== uid) return null;
-      const uids = members.map(m => m?.uid);
-      return uids.every(v => typeof v === "string" && /^\d+(?:\.\d+)+$/.test(v)) && new Set(uids).size === uids.length ? uids : null;
+        return openingOptions?.exam ? openOhifWindow(uid, priorUid, initialSeriesUid, null, openingOptions) : readingWorkspace.open(uid, priorUid, initialSeriesUid);
+      return openOhifWindow(uid, priorUid, initialSeriesUid, null, openingOptions);
     }
     function ohifScope(value) {
       try {
         const location = new URL(value, window.location.origin);
         if (location.origin !== window.location.origin || location.pathname !== "/ohif/viewer") return null;
         const studies = (location.searchParams.get("StudyInstanceUIDs") || "").split(",");
-        // Two at most (the study and its prior), or a merged exam's studies (at most 10).
-        if (studies.length < 1 || studies.length > 10 || studies.some(uid => !/^\d+(?:\.\d+)+$/.test(uid))) return null;
-        return { studies, series: location.searchParams.get("initialSeriesInstanceUID") || null };
+        // Current and prior each retain their independently resolved original sets.
+        if (studies.length < 1 || studies.length > (location.searchParams.has("kinExamScopes") ? 20 : 10) || studies.some(uid => !/^\d+(?:\.\d+)+$/.test(uid))) return null;
+        return { studies, series: location.searchParams.get("initialSeriesInstanceUID") || null,
+          exam:location.searchParams.get('kinExamScopes') };
       } catch (_) { return null; }
     }
     function sameOhifScope(left, right) {
       const a = ohifScope(left), b = ohifScope(right);
-      return !!a && !!b && a.series === b.series && JSON.stringify(a.studies) === JSON.stringify(b.studies);
+      return !!a && !!b && a.series === b.series && a.exam === b.exam && JSON.stringify(a.studies) === JSON.stringify(b.studies);
     }
     function ohifPopupState(popup) {
       try {
@@ -10368,14 +10390,11 @@
       const UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
       const returnHash=typeof readingReturn==='string'&&UUID4.test(readingReturn)?'#kin-reading-return='+readingReturn:'';
       const viewingSet = typeof openingOptions?.viewingSet === 'string' && UUID4.test(openingOptions.viewingSet) ? openingOptions.viewingSet : null;
-      // Merge Exam: a merged exam opens as one current study — all its studies (the base first), no prior and no compare layout.
-      const merged = mergedStudies(uid);
-      let url = `/ohif/viewer?StudyInstanceUIDs=${(merged ?? [uid]).map(encodeURIComponent).join(',')}` +
-        (!merged && priorUid && priorUid !== uid ? `,${encodeURIComponent(priorUid)}&hangingProtocolId=@ohif/hpCompare` : "") +
-        (merged ? "&kinExam=merged" : "") +
-        (initialSeriesUid === null ? "" : `&initialSeriesInstanceUID=${encodeURIComponent(initialSeriesUid)}`)+returnHash+
+      let input;
+      try { input = viewerOpening(uid, priorUid, openingOptions?.exam); }
+      catch (error) { notify(error.message, 'err'); return outcome('failed', error.message); }
+      let url = KinExamScope.viewerUrl(input, initialSeriesUid)+returnHash+
         (viewingSet ? (returnHash ? '&' : '#') + 'kin-w9=' + viewingSet : '');
-      if (openingOptions?.exam) url = KinExamScope.viewerUrl(openingOptions.exam, initialSeriesUid) + returnHash;
       const seq = ++ohifOpenSeq;
       if (!viewerWindows) { notify('영상 창 연결을 확인하지 못했습니다. 통합 판독 화면을 사용하거나 목록을 새로고침하세요.', 'err'); return outcome('refused', '영상 창 연결을 확인하지 못했습니다. 통합 판독 화면을 사용하거나 목록을 새로고침하세요.'); }
       // A saved multi-window preference must not allocate another viewer. Keep
@@ -10614,7 +10633,7 @@
       if (viewingSetToWorkspace() && !preservePartner) return { status: 'reserved', kind: 'workspace' };
       if (demoMode) return { status: 'refused', message: '데모 모드에서는 뷰어를 열 수 없습니다.' };
       if (!viewerWindows) return { status: 'refused', message: '영상 창 연결을 확인하지 못했습니다. 통합 판독 화면을 사용하거나 목록을 새로고침하세요.' };
-      const url = `/ohif/viewer?StudyInstanceUIDs=${uids.map(encodeURIComponent).join(',')}` + (uids.length === 2 ? '&hangingProtocolId=@ohif/hpCompare' : '');
+      const url = KinExamScope.viewerUrl(viewerOpening(uids[0], uids[1] || null));
       // A previous composition may leave this retry document open. Reuse its slot through the normal launch guards.
       const ownRetryWindow = preservePartner && viewingSetRetryWindow?.isOpen() && viewerWindows.rows().some(row => row.popup === viewingSetRetryWindow.popup);
       const choice = viewerWindows.choose(url, 1, preservePartner && !ownRetryWindow ? { freshDocument: true } : { singleWindow: true });
@@ -10827,7 +10846,9 @@
           if (!target) { status.textContent = '기존 영상 창의 검사와 계정을 확인한 뒤 다시 여세요.'; return; }
           status.textContent = '';
           const readingReturn = new URLSearchParams(new URL(state.href, location.origin).hash.slice(1)).get('kin-reading-return');
-          openOhifWindow(target.studies[0], target.studies[1] || null, target.series, readingReturn, { freshDocument: true, notice: message => { status.textContent = message; } });
+          const input = target.exam ? popup.KinViewerExamScope?.snapshot() : null;
+          if (target.exam && !input) { status.textContent = "검사 범위를 확인한 뒤 목록에서 다시 여세요."; return; }
+          openOhifWindow(input?.reportUid || target.studies[0], input?.prior?.reportUid || (!input && target.studies[1]) || null, target.series, readingReturn, { ...(input ? {exam:input} : {}), freshDocument: true, notice: message => { status.textContent = message; } });
           render(); return;
         }
         if (action === 'close') {
@@ -11416,6 +11437,7 @@
     const readingWorkspace = KinReadingWorkspace({
       current: () => selectedUid, study: uid => studies.find(s => s.uid === uid),
       formatDate: fmtD,
+      viewerInput: viewerOpening,
       prior: autoPrior, move, select, queue: orderedStudies, layout: () => applyLayout(), popup: openOhifWindow,
       // A viewer's withdrawn Open in Reading Screen: a move to this study still waiting for the save gate is dropped.
       cancelMove: uid => { if (pendingLeave?.target?.uid !== uid) return false; pendingLeave.target = null; return true; },

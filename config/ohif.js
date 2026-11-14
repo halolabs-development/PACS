@@ -34,7 +34,8 @@ const KIN_VIEWER_EXPECTED_SESSION = (() => {
 
 // The first extension sets the page defaults before shared modules and data sources start work.
 function kinCreateSessionBoundary() {
-  return { id: 'kin.session-boundary', async preRegistration() {
+  return { id: 'kin.session-boundary', async preRegistration({servicesManager} = {}) {
+    kinExamViewerServices=servicesManager?.services;
     for (const name of ['work-context.js', 'session-transport.js', 'viewer-resources.js', 'viewer-preload.js', 'viewer-session.js']) {
       await new Promise((resolve, reject) => {
         const script = document.createElement('script');
@@ -77,8 +78,28 @@ function kinCreateSessionBoundary() {
     await boundary.ready;
     window.dispatchEvent(new Event('kin-viewer-session-ready'));
     await boundary.wait();
+    await kinPrepareExamViewer(location.href);
   } };
 }
+
+// Ordinary routes load no extra asset and make no scope request.
+let kinExamViewerLoading,kinExamViewerServices;
+async function kinPrepareExamViewer(href) {
+  if (!new URL(href,location.origin).searchParams.has('kinExamScopes')) return null;
+  if (!window.KinViewerExamScope) await (kinExamViewerLoading ||= (async () => {
+    for (const [name,global] of [['exam-scope.js','KinExamScope'],['viewer-exam-scope.js','KinViewerExamScope']]) {
+      if (window[global]) continue;
+      await new Promise((resolve,reject)=>{
+        const script=document.createElement('script');script.src='/worklist/hpacs-lite/'+name;
+        script.onload=resolve;script.onerror=()=>reject(Error('검사 범위 도구를 불러오지 못했습니다.'));document.head.append(script);
+      });
+    }
+  })().catch(error=>{kinExamViewerLoading=null;throw error;}));
+  window.KinViewerExamScope.watch();
+  window.KinViewerExamScope.install(kinExamViewerServices);
+  return href===location.href ? window.KinViewerExamScope.ensure() : window.KinViewerExamScope.resolve(href);
+}
+window.kinPrepareExamViewer=kinPrepareExamViewer;
 
 // A subscription follows the document gate, never a raw cross-document notice.
 function kinViewerOnEnd(run) {
@@ -2952,7 +2973,8 @@ function kinCreateViewerLayout() {
       if (kinViewerSession.sameAccount(me) !== true) throw new Error('계정 응답이 일치하지 않습니다.');
       kinViewerSession.note(me);
       if (!live() || !next) { end(); throw new Error('계정이 변경되어 배치를 적용하지 않았습니다.'); }
-      key = next;
+      const exam=window.KinViewerExamScope?.snapshot();
+      key = next+(exam?'|'+JSON.stringify([exam.key,exam.prior&&window.KinExamScope.key(exam.prior)]):'');
       hpOwner = { institution: me.institution, subject: me.sub };
     }
     // S5-U2b: 배치 저장·복원과 Hanging Protocol은 작성자 목록을 읽고 계정에 쓰므로, 문서가 clinician-only로 확인되면(이 패널의
@@ -2983,7 +3005,8 @@ function kinCreateViewerLayout() {
           const data = await get('/api/studies', signal);
           // Current/Related follows the opening order, unlike Recent Layout's canonical scope.
           const uids = new URLSearchParams(search).get('StudyInstanceUIDs').split(',');
-          const rows = uids.map(uid => data.studies?.find(row => row.uid === uid));
+          const exam=await window.KinViewerExamScope?.ensure(true);
+          const rows = exam?window.KinExamScope.roleRows(exam,data.studies||[],ds.getActiveDisplaySets()):uids.map(uid => data.studies?.find(row => row.uid === uid));
           if (rows.some(row => !row)) throw new Error('현재 검사 접근 권한을 확인할 수 없습니다.');
           await authenticate(signal);
           if (signal.aborted) throw new Error('Hanging Protocol 확인이 중단되었습니다.');
@@ -3029,8 +3052,10 @@ function kinCreateViewerLayout() {
       busy = true; refresh(); status.textContent = '계정과 검사 접근 확인 중…'; const before = signature();
       try {
         await authenticate();
+        const exam=window.KinViewerExamScope?.snapshot();
+        if(exam)await window.KinViewerExamScope.ensure(true);
         const data = await get('/api/studies');
-        const rows = studies.map(uid => data.studies?.find(s => s.uid === uid));
+        const rows = exam ? window.KinExamScope.roleRows(exam,data.studies||[]) : studies.map(uid => data.studies?.find(s => s.uid === uid));
         if (rows.some(s => !s) || (rows.length > 1 && (!rows[0].sourcePatientKey || rows.some(s => s.sourcePatientKey !== rows[0].sourcePatientKey)))) throw new Error('현재 검사의 접근 권한과 같은 환자 여부를 확인할 수 없습니다.');
         // A delayed permission response must not overwrite a newer manual layout or selection.
         if (!live() || before !== signature()) throw new Error('화면 배치가 변경되어 작업을 적용하지 않았습니다. 다시 시도하세요.');
@@ -5033,8 +5058,9 @@ function kinCreateMammographyHanging() {
     const opened = new URLSearchParams(search).get('StudyInstanceUIDs')?.split(',') || [];
     // Merge Exam: a merged exam's studies are one current exam (kinExam=merged) — never a current study and its prior.
     const merged = new URLSearchParams(search).get('kinExam') === 'merged';
+    const exam = window.KinViewerExamScope?.snapshot();
     requestedLayout = null;
-    preference = { layout: opened.length > 1 && !merged ? 'compare' : 'current', kind: null };
+    preference = { layout: exam ? (exam.prior?'compare':'current') : opened.length > 1 && !merged ? 'compare' : 'current', kind: null };
     try { preferences.set(preferenceProvider?.({ studyInstanceUIDs: opened.slice() }), { accountDefault: true }); } catch (_) { /* Use the study-aware default. */ }
     const retrieve = series.metadata, run = hp.run;
     let ended = false, last = null, cells = [], stageCells = [], panel = null, missing = null;
@@ -5298,8 +5324,11 @@ function kinCreateMammographyHanging() {
     function protocol(data) {
       const model = window.KinMammographyModel;
       const displaySets = data.displaySets;
-      const studies = opened.slice(0, merged ? 1 : 2).map((uid, i) => ({ uid, role: i ? 'prior' : 'current', institution,
-        instances: [...raw.values()].filter(item => item['0020000D']?.Value?.[0] === uid) }));
+      const studies = exam ? [exam.current,exam.prior].filter(Boolean).map((scope,i)=>({uid:scope.reportUid,role:i?'prior':'current',institution,
+        sourceUids:scope.sources.map(source=>source.studyUid), instances:[...raw.values()].filter(item=>scope.sources.some(source=>
+          source.studyUid===item['0020000D']?.Value?.[0]&&window.KinExamScope.allows(source,item['0020000E']?.Value?.[0])))}))
+        : opened.slice(0, merged ? 1 : 2).map((uid, i) => ({ uid, role: i ? 'prior' : 'current', institution,
+          instances: [...raw.values()].filter(item => item['0020000D']?.Value?.[0] === uid) }));
       // The institution here is the viewing session's scope. The DICOMweb server has already
       // authorized these objects; this client classification does not grant access to a study.
       const plan = model.plan({ institution, studies });
@@ -5392,7 +5421,7 @@ function kinCreateMammographyHanging() {
       document.querySelector('#kin-viewer-layout')?.append(panel);
     }
     const wrappedRun = function (data, requested, options) {
-      if (!live() || !data.displaySets.some(d => d.StudyInstanceUID === opened[0] && (d.Modality === 'MG' ||
+      if (!live() || !data.displaySets.some(d => (exam ? exam.current.sources.some(s=>s.studyUid===d.StudyInstanceUID&&window.KinExamScope.allows(s,d.SeriesInstanceUID)) : d.StudyInstanceUID === opened[0]) && (d.Modality === 'MG' ||
           d.images?.some(i => raw.has(i.SOPInstanceUID) && window.KinMammographyModel.classify(raw.get(i.SOPInstanceUID)).basis === 'ct-breast-tomosynthesis'))) ||
           (requested && !['@ohif/hpCompare', 'default'].includes(requested) && !requested.startsWith('kin.mammography'))) {
         last = null; return run.call(this, data, requested, options);
@@ -6133,15 +6162,23 @@ function kinCreateViewerPrior() {
     const closeList = () => { controller.close(); if (anchor?.isConnected) anchor.focus(); };
     const report = (uid, opener) => { reportUid = uid; reportOpener = opener; controller.openReport(uid); };
     const controller = window.KinViewerPriorController.create({ viewer,
-      async loadStudy(uid, origin) {
+      async loadStudy(uid, origin, row) {
+        const input=window.KinViewerExamScope?.snapshot();
+        let scope=null;
+        if(input||row?.examScope){
+          if(input)await window.KinViewerExamScope.ensure(true);
+          scope=input&&[input.current,input.prior].find(value=>value?.reportUid===uid);
+          if(!scope)throw Error('현재 열어 둔 검사 범위에 없는 비교 검사입니다. 목록에서 Compare로 함께 여세요.');
+        }
         const source = extensions.getActiveDataSource()[0];
-        try { await source.retrieve.series.metadata({ StudyInstanceUID: uid, madeInClient: true }); }
+        const originals=scope?scope.sources.map(value=>value.studyUid):[uid];
+        try { for(const original of originals)await source.retrieve.series.metadata({ StudyInstanceUID: original, madeInClient: true }); }
         catch (error) {
           // The pinned loader caches failed metadata promises. A user's Retry
           // must reach the data source again rather than replay that failure.
-          source.deleteStudyMetadataPromise(uid); throw error;
+          for(const original of originals)source.deleteStudyMetadataPromise(original); throw error;
         }
-        const sets = services.displaySetService.getActiveDisplaySets().filter(set => set.StudyInstanceUID === uid && set.images?.length)
+        const sets = services.displaySetService.getActiveDisplaySets().filter(set => (scope?scope.sources.some(original=>original.studyUid===set.StudyInstanceUID&&window.KinExamScope.allows(original,set.SeriesInstanceUID)):set.StudyInstanceUID === uid) && set.images?.length)
           .sort((a, b) => Number(a.SeriesNumber || 0) - Number(b.SeriesNumber || 0) || a.SeriesInstanceUID.localeCompare(b.SeriesInstanceUID));
         // Priors are ranked against the display set in the cell that asked, which for a split series is one of its parts.
         const own = origin.displaySetUid && services.displaySetService.getDisplaySetByUID(origin.displaySetUid);

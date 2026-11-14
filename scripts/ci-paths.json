@@ -148,7 +148,10 @@
     "worklist-v0/hpacs-lite/worklist-startup.js",
     "worklist-v0/hpacs-lite/workspace-layout.js",
     "worklist-v0/hpacs-lite/workspace-roaming.js",
-    "worklist-v0/hpacs-lite/workspace-shortcuts.js"
+    "worklist-v0/hpacs-lite/workspace-shortcuts.js",
+    "worklist-v0/hpacs-lite/viewer-exam-scope.js",
+    "tests/viewer_exam_scope_test.cjs",
+    "tests/gateway_exam_receipt_test.cjs"
   ],
   "browser_jobs": [
     "asr-engine",

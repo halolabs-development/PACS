@@ -7,7 +7,9 @@ window.KinViewerPatientTabs = (() => {
   const text = value => typeof value === 'object' && value !== null
     ? String(value.Alphabetic || value.Ideographic || value.Phonetic || '') : String(value ?? '');
   const studies = href => (new URL(href, location.origin).searchParams.get('StudyInstanceUIDs') || '').split(',').filter(Boolean);
-  const snapshot = () => current ? { key: current.key, studyUIDs: [...current.studies], patient: { ...current.patient }, sequence } : null;
+  const snapshot = () => current ? { key: current.patientKey || current.key, studyUIDs: [...current.studies], patient: { ...current.patient }, sequence,
+    ...(current.exam ? {examScope:current.exam.current,exam:current.exam} : {}) } : null;
+  const openingKey = href => {const url=new URL(href,location.origin);return JSON.stringify([studies(href),url.searchParams.get('kinExamScopes')]);};
   const publish = () => { const value = snapshot(); listeners.forEach(listener => listener(value)); };
   function refresh() {
     const header = document.getElementById('kin-viewer-brand')?.closest('.bg-secondary-dark.z-20');
@@ -241,7 +243,7 @@ window.KinViewerPatientTabs = (() => {
     try {
       if (!guard()) return { ok: false, message: status?.textContent || '지금은 환자를 옮길 수 없습니다.' };
       // A reading screen linked when the move starts is the report target to move; losing it later is not "no link".
-      const probe = editorLink(to.studies[0]), linked = !!probe?.available(); probe?.dispose();
+      const probe = editorLink((to.exam?.reportUid || to.studies[0])), linked = !!probe?.available(); probe?.dispose();
       const reason = await settled(from, await ask(intent, from.studies, LEAVE_WAIT_MS));
       if (current !== from) return { ok: false, message: '환자가 그 사이 바뀌었습니다.' };
       if (reason !== null) return { ok: false, message: say(`${from.patient.name}의 판독문 ${intent === 'save' ? '저장' : '버리기'}이 확인되지 않아 환자를 옮기지 않았습니다 (${reason}).`) };
@@ -256,15 +258,15 @@ window.KinViewerPatientTabs = (() => {
           : `${to.patient.name}의 영상이 표시되지 않았고 되돌리기도 확인되지 않았습니다. 영상은 ${current?.patient.name || '없음'}입니다.`) };
       }
       if (!linked) return { ok: true, imagesOnly: true, message: say(`${to.patient.name}의 영상으로 옮겼습니다. 연결된 판독 화면이 없어 영상만 옮겼습니다.`) };
-      const moved = await target(to.studies[0]);
-      if (moved?.ok === true && current === to) return { ok: true, reportTarget: to.studies[0], message: say(`${to.patient.name}의 영상과 판독 대상으로 옮겼습니다.`) };
+      const moved = await target((to.exam?.reportUid || to.studies[0]));
+      if (moved?.ok === true && current === to) return { ok: true, reportTarget: (to.exam?.reportUid || to.studies[0]), message: say(`${to.patient.name}의 영상과 판독 대상으로 옮겼습니다.`) };
       // The report target did not follow (a timed-out opening was told to drop its move): back to the patient left,
       // images and report target both, each confirmed.
       const why = notOpened(moved);
       const imagesBack = current === to && await open(from.href) && await shown(from);
-      const reportBack = imagesBack ? await targetBack(from.studies[0]) : null;
+      const reportBack = imagesBack ? await targetBack((from.exam?.reportUid || from.studies[0])) : null;
       if (imagesBack && reportBack?.ok === true)
-        return { ok: false, reportTarget: from.studies[0], message: say(`판독 화면이 ${to.patient.name}의 검사를 열지 못해(${why}) 영상도 ${from.patient.name}에게 되돌렸습니다.`) };
+        return { ok: false, reportTarget: (from.exam?.reportUid || from.studies[0]), message: say(`판독 화면이 ${to.patient.name}의 검사를 열지 못해(${why}) 영상도 ${from.patient.name}에게 되돌렸습니다.`) };
       return { ok: false, mismatch: true, message: say(`판독 화면이 ${to.patient.name}의 검사를 열지 못했고(${why}) 되돌리기도 확인되지 않았습니다. ` +
         `영상은 ${current?.patient.name || '없음'}입니다. 판독 화면의 대상을 확인하세요.`) };
     } finally { if (moving === ticket) moving = null; }
@@ -382,7 +384,8 @@ window.KinViewerPatientTabs = (() => {
     renderLeave();
   }
   async function resolve(href, signal) {
-    const wanted = studies(href), found = new Map();
+    const exam = await window.kinPrepareExamViewer?.(href);
+    const wanted = exam?.studyUids || studies(href), found = new Map();
     if (session.state() === 'unconfirmed') await session.decide();
     const endpoint = session.readOnly() ? '/api/clinician/studies' : '/api/studies';
     // Match only the open studies through the existing scoped endpoint. The
@@ -392,19 +395,25 @@ window.KinViewerPatientTabs = (() => {
       const response = await fetch(endpoint + '?' + query, { credentials: 'same-origin', signal });
       if (!response.ok) throw new Error('환자 정보를 불러오지 못했습니다. 영상은 계속 볼 수 있습니다. 다시 시도하세요.');
       const result = await response.json();
-      for (const row of result.studies || []) if (wanted.includes(row.uid)) found.set(row.uid, row);
+      for (const row of result.studies || []) {
+        if (wanted.includes(row.uid)) found.set(row.uid, row);
+        if (exam) for (const source of row.sourceMetadata || []) if (wanted.includes(source.uid))
+          found.set(source.uid,{...row,...source,sourcePatientKey:row.sourcePatientKey});
+      }
     }
     const rows = wanted.map(uid => found.get(uid));
     if (!rows.length || rows.some(row => !row?.sourcePatientKey) || rows.some(row => row.sourcePatientKey !== rows[0].sourcePatientKey))
       throw new Error('같은 환자의 검사인지 확인할 수 없어 현재 화면을 유지합니다.');
     const row = rows[0], born = String(row.birth || '').replace(/-/g, ''), date = String(row.date || '').replace(/-/g, '');
     const years = /^\d{8}$/.test(born) && /^\d{8}$/.test(date) ? Math.floor((Number(date) - Number(born)) / 10000) : -1;
-    return { key: row.sourcePatientKey, href: new URL(href, location.origin).href, studies: wanted,
+    return { key: row.sourcePatientKey+(exam ? '|'+JSON.stringify([exam.key,exam.prior&&window.KinExamScope.key(exam.prior)]) : ''),
+      href: new URL(href, location.origin).href, studies: wanted, ...(exam?{exam,patientKey:row.sourcePatientKey}:{}),
       patient: { name: text(row.name) || 'Unknown', id: text(row.id) || 'Unknown', age: years >= 0 ? years + 'Y' : 'Unknown', sex: text(row.sex) || 'Unknown' } };
   }
   function navigate(tab, opening) {
     // The tab's new opening is taken before its scope is exposed, so every read it starts names that opening.
     opening.commit();
+    window.KinViewerExamScope?.activate(tab.href,tab.exam);
     tab.restorePending = !!tab.view;
     current = tab; explicitlyClosed = false; pending = false; render(); publish();
     if (location.href === tab.href) { restore(); return; }
@@ -420,7 +429,8 @@ window.KinViewerPatientTabs = (() => {
     if (signal?.aborted) return false;
     const url = new URL(href, location.origin);
     if (url.origin !== location.origin || url.pathname !== '/ohif/viewer') return false;
-    if (current && JSON.stringify(studies(href)) === JSON.stringify(current.studies)) {
+    if (current && openingKey(href) === openingKey(current.href)) {
+      if (current.exam) try { await window.KinViewerExamScope.resolve(href,{signal}); } catch (error) { status.textContent=error.message;return false; }
       if (pending) { sequence++; controller?.abort(); pending = false; render(); publish(); }
       return true;
     }
@@ -445,7 +455,7 @@ window.KinViewerPatientTabs = (() => {
       capture();
       let tab = tabs.find(tab => tab.key === resolved.key);
       if (!tab) { tab = resolved; tabs.push(tab); }
-      else if (JSON.stringify(tab.studies) !== JSON.stringify(resolved.studies)) {
+      else if (openingKey(tab.href) !== openingKey(resolved.href)) {
         // A patient can have several examinations. Preserve the tab identity,
         // but never restore the previous examination over the requested one.
         Object.assign(tab, resolved, { view: null });

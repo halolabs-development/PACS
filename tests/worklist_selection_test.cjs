@@ -27,7 +27,7 @@ test('stored scope fetch and viewer input preserve current and prior roles and t
   assert.equal(calls[0][1],'/studies/1.2/exam-scope?purpose=stored&version=4');
   const input=examScopes.viewerInput(current,prior,4),url=new URL(examScopes.viewerUrl(input),'https://synthetic.test');
   assert.deepEqual(input.studyUids,['1.1']);assert.equal(input.reportUid,'1.2');
-  const ref=s=>({reportUid:s.reportUid,groupId:s.groupId,part:s.part,generation:s.generation});
+  const ref=s=>({reportUid:s.reportUid,groupId:s.groupId,part:s.part});
   assert.deepEqual(JSON.parse(url.searchParams.get('kinExamScopes')),{current:ref(current),prior:ref(prior),version:4,priorVersion:null});
   const large={...current,sources:[{studyUid:'1.1',series:{mode:'include',uids:Array.from({length:500},(_,i)=>'1.1.'+i)}}]};
   assert.ok(examScopes.viewerUrl(examScopes.viewerInput(large)).length<2000);

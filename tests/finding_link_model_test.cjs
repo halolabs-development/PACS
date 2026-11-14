@@ -1007,13 +1007,33 @@ test('mounted guard: a finding draft blocks Next Study, window reuse/close, Hang
   assert.deepEqual(plain(w.kinViewerFindingsState()), { scope: '1.1', dirty: true, busy: true, held: 0 });
 });
 
-test('mounted guard: the Job panel keeps its mark-only guard; only a document-replacing comparison restore refuses unsaved findings', () => {
+test('mounted guard: the Job panel keeps its mark-only guard; only a document-replacing comparison restore refuses unsaved findings', async () => {
   const jobs = shippedFile('viewer-jobs.js');
   assert.equal(jobs.split('window.kinViewerHistoryHasUnsaved?.()').length - 1, 3, 'Job save and restore keep the mark-only guard');
-  const branch = jobs.indexOf('if (JSON.stringify(job.snapshot.studies) !== JSON.stringify(studies)) {');
-  const guard = jobs.indexOf("throw new Error('저장하지 않은 소견 작성 내용이 있어 비교 검사를 열지 않았습니다.");
-  const assign = jobs.indexOf('location.assign(next.href)');
-  assert.ok(branch > 0 && branch < guard && guard < assign, 'the findings refusal sits in the cross-study branch before navigation');
+  const ts = require('../api/node_modules/typescript');
+  const tree = ts.createSourceFile('viewer-jobs.js', jobs, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  let navigation;
+  const containsAssign = node => {
+    let found = false;
+    const visit = child => { if (ts.isCallExpression(child) && ts.isPropertyAccessExpression(child.expression) &&
+      child.expression.name.text === 'assign' && ts.isIdentifier(child.expression.expression) && child.expression.expression.text === 'location') found = true;
+      ts.forEachChild(child, visit); };
+    visit(node); return found;
+  };
+  const walk = node => { if(ts.isIfStatement(node) && ts.isBlock(node.thenStatement) && containsAssign(node.thenStatement))navigation=node;ts.forEachChild(node,walk); };
+  walk(tree); assert(navigation);
+  const statements = [];
+  for(const statement of navigation.thenStatement.statements) {
+    if(ts.isVariableStatement(statement) && statement.declarationList.declarations.some(d=>d.name.getText(tree)==='next'))break;
+    statements.push(statement.getText(tree));
+  }
+  for(const [sameExam, otherStudy, refuses] of [[true,false,false],[true,true,true],[false,false,true]]) {
+    const context={sameExam,job:{snapshot:{studies:otherStudy?[B]:[A]}},studies:[A],located:null,title:{value:''},description:{value:''},
+      ctx:{},window:{kinViewerFindingsState:()=>({dirty:true})}};
+    const run=()=>vm.runInNewContext(`(async()=>{ if(${navigation.expression.getText(tree)}) { ${statements.join('\n')} } })()`,context);
+    if(refuses) {await assert.rejects(run,/저장하지 않은 소견/);assert.equal(context.ctx.refused,'findings-unsaved');}
+    else await assert.doesNotReject(run);
+  }
   assert.equal(jobs.split('kinViewerFindingsState').length - 1, 2, 'no other Job path reads findings');
   const marks = source.slice(source.indexOf('const jobGuard = () =>'), source.indexOf('const findingsWork = () =>'));
   assert.ok(marks.length > 0 && !marks.includes('kinViewerFindingsState'), 'kinViewerHistoryHasUnsaved stays mark-only');
