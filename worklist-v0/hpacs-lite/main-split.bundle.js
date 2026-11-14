@@ -1966,7 +1966,9 @@
       $("#study-identity-tags").replaceChildren(...view.rows.map(row => {
         const line = document.createElement("div"), value = document.createElement("span"), relation = document.createElement("span");
         line.setAttribute("role", "listitem"); line.dataset.tag = row.key;
-        value.textContent = `${row.tag} ${row.label}: ${row.value}`; value.title = row.valueTitle;
+        // The DICOM value is data; the attribute name is a label (each its own text, the line reads the same).
+        const shown = document.createElement("span"); shown.translate = false; shown.textContent = row.value;
+        value.replaceChildren(row.tag + " ", Object.assign(document.createElement("span"), { textContent: row.label }), ": ", shown); value.title = row.valueTitle;
         relation.textContent = row.relation ? ` · ${row.relation}` : ""; relation.title = row.title;
         line.append(value, relation);
         return line;
@@ -2942,7 +2944,7 @@
           <tr><td>Date</td><td translate="no">${esc(s.date)}</td></tr>
           <tr><td>AccNo</td><td translate="no">${esc(s.acc)}</td></tr>
           <tr><td>Img/Se</td><td>${esc(s.count)} / ${esc(s.series)}</td></tr>
-          <tr><td>SS / Mt</td><td>${esc(s.ss)} / ${s.matched === "M" ? "Matched" : "Unmatched"}</td></tr>
+          <tr><td>SS / Mt</td><td><span>${esc(s.ss)}</span> / <span>${s.matched === "M" ? "Matched" : "Unmatched"}</span></td></tr>
           <tr><td>Ward</td><td translate="no">${esc(s.ward) || "-"}</td></tr>
           <tr><td>Study UID</td><td translate="no">${esc(s.uid)}</td></tr>
         </table>` : "No clinical information provided.";
@@ -3048,6 +3050,7 @@
       if (institution) {
         const name = typeof s.institutionName === "string" ? s.institutionName.trim() : "";
         institution.textContent = name ? `${name} · ` : "";
+        institution.translate = false;
         institution.title = name ? "HALO PACS에 등록된 보낸 기관 이름입니다. DICOM 원문 기관명은 DICOM Identity의 (0008,0080) 줄에 있습니다." : "";
       }
       $("#receipt-assignment").textContent = labels.assignment.text; $("#receipt-assignment").title = labels.assignment.title;
@@ -7093,12 +7096,13 @@
       }
       bar.style.display = "flex";
       $("#b-cite-list").style.display = row ? "" : "none";
-      $("#citemsg").textContent = row
-        ? (unknownDraft
+      // The note is a sentence of its own (its own text), so the screen language reaches it whole.
+      if (!row) { $("#citemsg").replaceChildren("● ", note); }
+      else $("#citemsg").textContent =
+        (unknownDraft
             ? `● 승인본 ${row.head.length}건 · 저장된 초안의 인용은 다시 확인하는 중입니다` + (note ? ` (${note})` : "")
             : `● 인용 ${count}건 — 승인본 ${row.head.length}건 · 저장된 초안 ${row.draft.length}건`) +
-          (reportConverge.has(uid) ? " · 마지막 인용이 화면에 반영되지 않아 다음 자동 저장이 서버 내용을 화면에 맞춥니다" : "")
-        : `● ${note}`;
+          (reportConverge.has(uid) ? " · 마지막 인용이 화면에 반영되지 않아 다음 자동 저장이 서버 내용을 화면에 맞춥니다" : "");
       if (!row || !citationListOpen) {
         list.hidden = true; list.replaceChildren();
         $("#b-cite-list").setAttribute("aria-expanded", "false");
@@ -11822,6 +11826,7 @@
         retry.hidden = true;
         next.hidden = !visible || !answer?.nextCursor; next.disabled = loading;
         status.replaceChildren();
+        status.removeAttribute('data-kin-error');
         status.title = '';
         conflict.replaceChildren();
         conflict.hidden = true;
@@ -11830,6 +11835,7 @@
         if (loading) status.textContent = model.TEXT.loading;
         if (!answer) {
           if (!loading && failure) {
+            status.setAttribute('data-kin-error', '');
             line(model.failedSummary(failure));
             retry.hidden = false;
           }
@@ -11856,7 +11862,10 @@
             again.addEventListener('click', reread);
             head.append(' ', again);
           }
-          box.append(head, node('div', section.description, 'cc-note'));
+          const note = node('div', section.description, 'cc-note');
+          // A section that failed shows an error: one with no text in the screen language yet still says it failed.
+          if (section.retry) note.setAttribute('data-kin-error', '');
+          box.append(head, note);
           if (section.checked) box.append(node('div', section.checked, 'cc-note'));
           if (section.items.length) {
             const items = node('ul');

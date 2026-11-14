@@ -173,7 +173,7 @@ class WorklistLanguageDOM(unittest.TestCase):
         expect(page.locator("#rows")).to_contain_text(auth.PATIENT)
         expect(page.locator("#rows")).to_contain_text("SYN CT CHEST")
         expect(page.locator("#language-applied")).to_contain_text("Revert")
-        self.assertEqual("ko", page.evaluate("document.documentElement.lang"))
+        self.assertEqual("ko", page.evaluate("document.documentElement.getAttribute('data-kin-lang-worklist')"))
         self.assertEqual("KO", mark.inner_text().strip())
         page.locator("#language-revert").click()
         expect(page.locator("#language-applied")).to_be_hidden()
@@ -282,6 +282,33 @@ class WorklistLanguageDOM(unittest.TestCase):
         self.page.locator("#language-revert").click()
         expect(pip.locator("#b-save")).to_have_text("Save")
         expect(pip.get_by_role("button", name="Pin: Off")).to_be_visible()
+
+    def visible_words(self, lang):
+        """Visible words of the other language on the page (data and names people give are excluded where they are
+        drawn); product names, codes and the synthetic data of this site are not words to translate."""
+        return self.page.evaluate("""lang => { const out = new Set();
+          const keep = /\\b(HALO PACS|PACS|DICOM|HL7|EMR|PDF|CSV|JPG|PNG|SR|CT|MR|CR|DX|US|MG|XA|PT|NM|SC|OT|AE|UID|ID|W\\/L|Ctrl|Alt|Shift|Enter|Esc|Tab|Space|Home|End|SYN[\\w-]*|KIM MINJUN|Brain CT|Language|English|Korean)\\b/g;
+          const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+            const el = n.parentElement, text = n.nodeValue.trim();
+            if (!text || !el || el.closest('script,style,textarea,[translate="no"],[contenteditable="true"],#language-dialog,#language-applied')) continue;
+            const box = el.getBoundingClientRect();
+            if (!box.width || !box.height || box.bottom < 0 || box.top > innerHeight || getComputedStyle(el).visibility === 'hidden') continue;
+            // An error with no text in this language yet: the general sentence, then the original words on purpose.
+            if (/^(The request could not be processed\\. Original message:|요청을 처리하지 못했습니다\\. 원문:)/.test(text)) continue;
+            const bare = text.replace(keep, '');
+            if (lang === 'ko' ? /[A-Za-z]{3,}/.test(bare) && !/[\\uac00-\\ud7a3]/.test(bare) : /[\\uac00-\\ud7a3]/.test(bare)) out.add(text.slice(0, 80));
+          }
+          return [...out].sort(); }""", lang)
+
+    def test_no_visible_word_is_left_in_the_other_language(self):
+        """The screen as a reader sees it after Apply: no label left in English on the Korean screen, no Korean
+        explanation left on the English one (the static check names the file and line; this one the screen)."""
+        self.boot()
+        self.apply("ko")
+        self.assertEqual([], self.visible_words("ko"))
+        self.apply("en")
+        self.assertEqual([], self.visible_words("en"))
 
     def test_an_account_that_never_chose_keeps_the_page_as_it_is(self):
         self.boot()

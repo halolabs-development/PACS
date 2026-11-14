@@ -249,6 +249,7 @@ EN_SINK = re.compile(
     r"|(toast|alert|confirm|prompt|note|status|say|setStatus|announce|tell|show|setCustomValidity)\s*\([^()]*$"
     r"|setAttribute\(\s*['\"](title|aria-label|placeholder|alt|aria-valuetext)['\"]\s*,\s*[^()]*$"
     r"|new Option\(\s*$"
+    r"|\b(button|btn|chip|action|menuItem|item|tab|link|plain|primary|cancel|choice|pick|toggle)\s*\(\s*$"
     r"|\b(element|el|make|node|button|btn|chip|h|tag|create|item|add|option|plain|primary|text|line|row|cell|heading|labelled|control|link|field|section|group|note|say)"
     r"\s*\(\s*(?:['\"][\w-]*['\"]|[\w$.]+)\s*,\s*(?:(?:\{[^{}]*\}|null|undefined|['\"][\w -]*['\"])\s*,\s*)?$"
     r"|\b(t|label|title|text|name|help|hint|summary|caption|legend|word|words|placeholder|tip|why|empty|none|message|msg)\s*:\s*$"

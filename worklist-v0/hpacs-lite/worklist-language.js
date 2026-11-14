@@ -14,7 +14,11 @@
 (function () {
   'use strict';
   const HANGUL = /[가-힣]/;
-  const SLOT = /\{[te]?\d+\}/;
+  // Filled-in parts: {0} data, {t0} words the code chose, {e0} an error message; a named part ({observedAt}) is filled by
+  // the page from its own table of words or values and is translated only when it is a whole glossary entry.
+  const SLOT = /\{(?:[te]?\d+|[A-Za-z]\w*)\}/;
+  const SLOTS = /(\{(?:[te]?\d+|[A-Za-z]\w*)\})/;
+  const slotKind = slot => /^\{[A-Za-z]/.test(slot) ? (/^\{[te]\d/.test(slot) ? slot[1] : 't') : '';
   const LANGS = ['en', 'ko'];
   const REGIONS = ['worklist', 'reading'];
   const NAMES = { en: 'English', ko: '한국어' };
@@ -29,17 +33,17 @@
   function index(terms) {
     for (const term of terms || []) {
       if (!Array.isArray(term) || typeof term[0] !== 'string' || typeof term[1] !== 'string') continue;
-      const source = space(term[0]), korean = HANGUL.test(source.replace(/\{[te]?\d+\}/g, ''));
+      const source = space(term[0]), korean = HANGUL.test(source.replace(new RegExp(SLOT.source, 'g'), ''));
       const entry = korean ? { en: term[1], ko: term[3] || source } : { en: term[3] || source, ko: term[1] };
       if (!SLOT.test(source)) { exact.set(source, entry); continue; }
-      const slots = [], parts = source.split(/(\{[te]?\d+\})/);
-      const pattern = parts.map(part => /^\{[te]?\d+\}$/.test(part) ? (slots.push(part), '(.*?)') : escape(part)).join('');
-      const fixed = parts.filter(part => !/^\{[te]?\d+\}$/.test(part));
+      const slots = [], parts = source.split(SLOTS), isSlot = part => SLOTS.test(part) && part.match(SLOTS)[0] === part;
+      const pattern = parts.map(part => isSlot(part) ? (slots.push(part), '(.*?)') : escape(part)).join('');
+      const fixed = parts.filter(part => !isSlot(part));
       templates.push({ re: new RegExp('^' + pattern + '$', 's'), slots, entry, anchor: fixed.slice().sort((a, b) => b.length - a.length)[0] || '',
         weight: fixed.join('').replace(/\s/g, '').length });
     }
     // The longest fixed words first; of two with the same words, the one that knows its parts are words or errors.
-    const typed = t => t.slots.filter(slot => slot.length > 3).length;
+    const typed = t => t.slots.filter(slot => slotKind(slot)).length;
     templates.sort((a, b) => b.weight - a.weight || typed(b) - typed(a));
   }
   const terms = window.KinLanguageTerms || { terms: [], css: [] };
@@ -57,10 +61,10 @@
       const m = t.re.exec(text);
       if (!m) continue;
       // A template with almost no words of its own ({0}건) only fits counts, never names or sentences.
-      if (t.weight < 3 && t.slots.some((slot, k) => slot.length === 3 && !/^[\d\s.,:%+\-/()~–—]*$/.test(m[k + 1]))) continue;
+      if (t.weight < 3 && t.slots.some((slot, k) => !slotKind(slot) && !/^[\d\s.,:%+\-/()~–—]*$/.test(m[k + 1]))) continue;
       let out = t.entry[lang];
       t.slots.forEach((slot, k) => {
-        const value = m[k + 1], kind = slot[1];
+        const value = m[k + 1], kind = slotKind(slot);
         let filled = value;
         if ((kind === 't' || kind === 'e') && depth < 3 && value.trim()) {
           filled = translate(space(value), lang, depth + 1);
@@ -170,7 +174,6 @@
   function mark(doc) {
     for (const r of REGIONS) { if (state[r]) doc.documentElement.setAttribute('data-kin-lang-' + r, state[r]); else doc.documentElement.removeAttribute('data-kin-lang-' + r); }
   }
-  const originalLang = document.documentElement.getAttribute('lang');
   function repaint() {
     for (const [doc, entry] of docs) {
       if (!doc.defaultView || doc.defaultView.closed) { entry.observer?.disconnect(); docs.delete(doc); continue; }
@@ -178,8 +181,7 @@
       paintTree(doc.documentElement);
       if (active()) watch(doc); else { entry.observer?.disconnect(); entry.observer = null; }
     }
-    if (state.worklist) document.documentElement.lang = state.worklist;
-    else if (originalLang !== null) document.documentElement.lang = originalLang; else document.documentElement.removeAttribute('lang');
+    // The page keeps its own lang: lang=ko would draw every line, English ones too, with the Korean font metrics.
     if (active()) wrapBrowser();
     for (const el of validity.keys()) { if (el.isConnected) setValidity(el); else validity.delete(el); }
     showLabel();
@@ -295,6 +297,9 @@
     #language-applied { position: fixed; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 2147483000; display: flex; gap: 10px; align-items: center;
       background: var(--kin-panel, #172333); color: var(--kin-text, #dce7f5); border: 1px solid var(--kin-line2, #819bb7); border-radius: 6px; padding: 6px 10px; font-size: 12px; box-shadow: 0 2px 10px #0008; }
     #language-applied[hidden] { display: none; }
+    /* Korean letters draw taller lines than the Latin face of the reading screen (measured 3px per line at 11px): there the
+       lines keep the English line height, so Korean words never push the report buttons down. */
+    html[data-kin-lang-reading="ko"] .split > .right, html[data-kin-lang-reading="ko"] .split > .right :is(button, select, input, summary) { line-height: 1.15; }
     #language-applied button { font: inherit; padding: 3px 10px; background: var(--kin-bg, #263b53); color: inherit; border: 1px solid var(--kin-line2, #849bb4); border-radius: 4px; }
   `;
   let dialog = null, bar = null, busy = false, previous = null, applied = null;
@@ -410,7 +415,8 @@
     styleCss(document);
     document.head.append(make('style', { id: 'language-style', textContent: css }));
     document.getElementById('language-open')?.addEventListener('click', openDialog);
-    showLabel();
+    // A choice restored before the page finished loading is painted now.
+    if (active()) repaint(); else showLabel();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();
 

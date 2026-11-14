@@ -129,7 +129,7 @@
     return {state:'outside_list'};
   }
 
-  function kinHeld(count,at,format){return (count===null?'HALO PACS 보유 개수 모름':'HALO PACS 보유 '+count+'건')+'('+format(at)+')';}
+  function kinHeld(count,at,format){return count===null?'HALO PACS 보유 개수 모름('+format(at)+')':'HALO PACS 보유 '+count+'건('+format(at)+')';}
 
   function assignmentLabel(value){
     if(value==='assigned')return {key:'assigned',text:'Institution Assigned',title:'검사가 기관에 연결되어 있습니다. 영상 수신 상태가 아닙니다.'};

@@ -59,6 +59,7 @@
         retry.hidden = true;
         next.hidden = !visible || !answer?.nextCursor; next.disabled = loading;
         status.replaceChildren();
+        status.removeAttribute('data-kin-error');
         status.title = '';
         conflict.replaceChildren();
         conflict.hidden = true;
@@ -67,6 +68,7 @@
         if (loading) status.textContent = model.TEXT.loading;
         if (!answer) {
           if (!loading && failure) {
+            status.setAttribute('data-kin-error', '');
             line(model.failedSummary(failure));
             retry.hidden = false;
           }
@@ -93,7 +95,10 @@
             again.addEventListener('click', reread);
             head.append(' ', again);
           }
-          box.append(head, node('div', section.description, 'cc-note'));
+          const note = node('div', section.description, 'cc-note');
+          // A section that failed shows an error: one with no text in the screen language yet still says it failed.
+          if (section.retry) note.setAttribute('data-kin-error', '');
+          box.append(head, note);
           if (section.checked) box.append(node('div', section.checked, 'cc-note'));
           if (section.items.length) {
             const items = node('ul');

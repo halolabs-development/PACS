@@ -617,7 +617,9 @@
       $("#study-identity-tags").replaceChildren(...view.rows.map(row => {
         const line = document.createElement("div"), value = document.createElement("span"), relation = document.createElement("span");
         line.setAttribute("role", "listitem"); line.dataset.tag = row.key;
-        value.textContent = `${row.tag} ${row.label}: ${row.value}`; value.title = row.valueTitle;
+        // The DICOM value is data; the attribute name is a label (each its own text, the line reads the same).
+        const shown = document.createElement("span"); shown.translate = false; shown.textContent = row.value;
+        value.replaceChildren(row.tag + " ", Object.assign(document.createElement("span"), { textContent: row.label }), ": ", shown); value.title = row.valueTitle;
         relation.textContent = row.relation ? ` · ${row.relation}` : ""; relation.title = row.title;
         line.append(value, relation);
         return line;

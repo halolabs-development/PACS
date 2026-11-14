@@ -40,12 +40,13 @@
       }
       bar.style.display = "flex";
       $("#b-cite-list").style.display = row ? "" : "none";
-      $("#citemsg").textContent = row
-        ? (unknownDraft
+      // The note is a sentence of its own (its own text), so the screen language reaches it whole.
+      if (!row) { $("#citemsg").replaceChildren("● ", note); }
+      else $("#citemsg").textContent =
+        (unknownDraft
             ? `● 승인본 ${row.head.length}건 · 저장된 초안의 인용은 다시 확인하는 중입니다` + (note ? ` (${note})` : "")
             : `● 인용 ${count}건 — 승인본 ${row.head.length}건 · 저장된 초안 ${row.draft.length}건`) +
-          (reportConverge.has(uid) ? " · 마지막 인용이 화면에 반영되지 않아 다음 자동 저장이 서버 내용을 화면에 맞춥니다" : "")
-        : `● ${note}`;
+          (reportConverge.has(uid) ? " · 마지막 인용이 화면에 반영되지 않아 다음 자동 저장이 서버 내용을 화면에 맞춥니다" : "");
       if (!row || !citationListOpen) {
         list.hidden = true; list.replaceChildren();
         $("#b-cite-list").setAttribute("aria-expanded", "false");
