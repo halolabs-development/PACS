@@ -1376,37 +1376,63 @@ class RelatedLayoutDOMTest(Base):
     # above the editor then carried Approve & Next out of the window: Save Failed (73px) at 1152x768, a hold by another
     # reader or the citations at 720px high. The report column's height is divided in one place (reading-workspace.css):
     # the field region yields to one text line, then every other row before the button row to one line of its own; the
-    # row never yields. Each case is judged in the windows where the column is shortest - every width on both sides of
-    # the 1251px head boundary at 720 and 768px high, a short 900px window and stacked Reading at 768x1024 - and in the
-    # page's font and in Arial and Verdana wherever they lay text out differently from it (wider glyphs wrap the head,
-    # the notices and the row onto more lines; a runner without them falls back to the page's own, measured once): the
-    # row whole and on top, the head whole, the visible report text above the row, and the first line of every row
-    # above the editor whole (the Reading target line excepted: it yields first and all the way, the head naming the
-    # same study).
+    # row never yields; only below every floor does the column scroll. Each case is judged in the windows where the
+    # column is shortest - every width on both sides of the 1251px head boundary at 720 and 768px high, a short 900px
+    # window and stacked Reading at 768x1024 - and in the page's font and in Arial and Verdana wherever they lay a sample
+    # line out at another width or height (wider glyphs wrap the head, the notices and the row onto more lines; a runner
+    # without them falls back to the page's own, measured once): the row whole and on top, the head whole, the visible
+    # report text above the row, and in every other row before the button row its first line whole and none of its
+    # words squeezed to no width. With the questions opened (their read failed: the page's own line and Retry) their
+    # controls stay whole too. With the questions opened and in the 900x600 window (below the Reading windows claimed,
+    # 720px high and up) the row is whole wherever the rows' floors fit the column; where they do not, each of them must
+    # have given up all it may (then the column scrolls - the floors are the rule there, not the window).
     ROW_STATE_WINDOWS = [(1024, 720), (1152, 720), (1250, 720), (1251, 720), (1024, 768), (1152, 768), (1250, 768),
                          (900, 600), (768, 1024)]
     ROW_FONTS = ("", "Arial, sans-serif", "Verdana, sans-serif")
     OTHER_HOLDER = "syn-other-reader@synthetic.test"
-    # The first text line of each row before the editor, against every box that clips it.
+    # Every row before the button row but the editor: its first text line against every box that clips it, the words
+    # squeezed to no width, and how much it could still give up (height over its floor: min-height plus, content-box, its
+    # padding and borders; the editor's field region over its 32px).
     ABOVE_PROBE = r"""
-      const compose = document.querySelector('.report-compose');
-      return [...compose.parentElement.children].filter(e => (e.compareDocumentPosition(compose) & 4) && e.getBoundingClientRect().height
-                                                             && e.id !== 'reading-report-target')
-        .map(e => { const t = texts(e)[0]; if (!t) return null; const line = firstRect(t), cut = clip(t.parentElement, line);
-          return {row: e.id || e.className, text: t.nodeValue.trim().slice(0, 40), line, cut,
-                  whole: cut[1] <= line[1] + 0.5 && cut[3] >= line[3] - 0.5}; }).filter(Boolean);"""
+      const row = document.querySelector('.rfoot2'), compose = document.querySelector('.report-compose');
+      const px = v => parseFloat(v) || 0;
+      const slack = e => { if (e === compose) return document.querySelector('.redit').getBoundingClientRect().height - 32;
+        const s = getComputedStyle(e), extra = s.boxSizing === 'content-box' ? px(s.paddingTop) + px(s.paddingBottom) + px(s.borderTopWidth) + px(s.borderBottomWidth) : 0;
+        return e.getBoundingClientRect().height - (px(s.minHeight) + extra); };
+      return [...row.parentElement.children].filter(e => (e.compareDocumentPosition(row) & 4) && e.getBoundingClientRect().height)
+        .map(e => { const out = {row: e.id || e.className, slack: +slack(e).toFixed(1)};
+          if (e === compose || e.id === 'reading-report-target') return out;
+          const t = texts(e)[0];
+          if (t) { const line = firstRect(t), cut = clip(t.parentElement, line);
+            Object.assign(out, {text: t.nodeValue.trim().slice(0, 40), line, cut, whole: cut[1] <= line[1] + 0.5 && cut[3] >= line[3] - 0.5}); }
+          out.no_width = texts(e).map(n => n.parentElement).filter(p => p.getClientRects().length && p.getBoundingClientRect().width < 1)
+            .map(p => p.id || p.tagName);
+          return out; });"""
+    # The questions' controls, each brought into view inside its own box as a reader's Tab would.
+    QUESTION_PROBE = r"""
+      const q = document.getElementById('question-p'), out = {};
+      for (const b of q.querySelectorAll('button')) if (b.getClientRects().length) {
+        b.scrollIntoView({block: 'nearest', inline: 'nearest'}); out[b.textContent.trim()] = (await io(b)).ratio; }
+      return out;"""
     FONT = """font => { let tag = document.getElementById('rl13c-font');
       if (!tag) { tag = document.createElement('style'); tag.id = 'rl13c-font'; document.head.append(tag); }
       tag.textContent = font ? `.report-p, .report-p * { font-family: ${font} !important; }` : ''; }"""
-    # How wide a sample line is in each font, as the report column lays it out.
+    # How wide and high a sample line is in each font, as the report column lays it out.
     FONT_WIDTHS = """fonts => { const s = document.createElement('span'), host = document.querySelector('.report-editor-head');
       s.textContent = 'Report Editor Read Only Approve & Next SYN PATIENT 판독 대상'; s.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap';
-      host.append(s); const out = fonts.map(f => { s.style.fontFamily = f || ''; return s.getBoundingClientRect().width; }); s.remove(); return out; }"""
+      host.append(s); const out = fonts.map(f => { s.style.fontFamily = f || ''; const r = s.getBoundingClientRect(); return [r.width, r.height]; });
+      s.remove(); return out; }"""
 
-    def open_row_case(self, *, holder=None, save_failed=False):
+    def open_row_case(self, *, holder=None, save_failed=False, questions_failed=False):
         long_rows = self.report_row_rows()
         long_rows[0]["state"]["holder"] = holder
-        w = self.open_reading((1366, 768), long_rows, prepare=self.answer_empty_reads)
+
+        def prepare(page):
+            self.answer_empty_reads(page)
+            if questions_failed:   # the target's questions read fails: the bar says so and offers Retry
+                page.route(lambda url: urlparse(url).path == f"/api/studies/{long_rows[0]['uid']}/questions", lambda route: route.fulfill(
+                    status=503, json={"message": "SYN questions unavailable"}) if route.request.method == "GET" else route.fallback())
+        w = self.open_reading((1366, 768), long_rows, prepare=prepare)
         page = w.page
         # The fields by id: held by another reader, their accessible names carry the read-only reason too.
         buttons, _, title = self.report_row_parts(page)
@@ -1417,6 +1443,10 @@ class RelatedLayoutDOMTest(Base):
         harness.expect(inbox.get_by_role("status")).not_to_have_text("Loading")
         if holder:
             harness.expect(page.locator("#holdmsg")).to_contain_text("판독 중입니다")
+        if questions_failed:
+            harness.expect(page.locator("#question-p")).to_be_visible(timeout=10000)
+            page.locator("#question-toggle").click()
+            harness.expect(page.locator("#question-pane")).to_be_visible()
         if save_failed:
             # Typing: the draft's baseline read is not answered here, so after some 19s the notice above the editor
             # settles on Save Failed (73px at 1152x768, three lines), the one train15 met in RL-13b.
@@ -1430,14 +1460,15 @@ class RelatedLayoutDOMTest(Base):
 
     def row_fonts(self, page):
         """The page's font, then each other font whose sample width differs from every font kept before it."""
-        widths, kept = page.evaluate(self.FONT_WIDTHS, list(self.ROW_FONTS)), []
-        for font, width in zip(self.ROW_FONTS, widths):
-            if all(abs(width - widths[self.ROW_FONTS.index(k)]) > 0.5 for k in kept):
+        sizes, kept = page.evaluate(self.FONT_WIDTHS, list(self.ROW_FONTS)), []
+        for font, size in zip(self.ROW_FONTS, sizes):
+            if all(max(abs(a - b) for a, b in zip(size, sizes[self.ROW_FONTS.index(k)])) > 0.5 for k in kept):
                 kept.append(font)
+        widths = sizes
         measure("RL-13c fonts", widths=dict(zip(self.ROW_FONTS, widths)), kept=kept)
         return kept
 
-    def sweep_row_case(self, w, parts, name):
+    def sweep_row_case(self, w, parts, name, questions=False):
         page = w.page
         fonts = self.row_fonts(page)
         for width, height in self.ROW_STATE_WINDOWS:
@@ -1448,11 +1479,28 @@ class RelatedLayoutDOMTest(Base):
                 with self.subTest(case=tag):
                     page.evaluate(self.FONT, font)
                     self.bring_report_into_view(page, parts)
-                    self.assert_report_row(w, tag, parts)
                     above = js(page, self.ABOVE_PROBE)
+                    if questions:
+                        controls = js(page, self.QUESTION_PROBE)
+                        measure(tag, questions=controls)
+                        for label, ratio in controls.items():
+                            self.assertGreaterEqual(ratio, 0.999, f"{tag}: the questions' {label} is not whole {controls}")
+                        self.bring_report_into_view(page, parts)
+                    if questions or height < 720:   # below the Reading windows claimed (720px and up): the rule's floors
+                        seen = self.report_row(page, parts)
+                        if any(b["ratio"] < 0.999 for b in seen["buttons"].values()):
+                            measure(f"{tag} floors exceed the column", above=above, report_row=seen)
+                            for row in above:
+                                self.assertLessEqual(row["slack"], 1, f"{tag}: the row left the window while {row['row']} could still give way {above}")
+                        else:
+                            self.assert_report_row(w, tag, parts)
+                    else:
+                        self.assert_report_row(w, tag, parts)
                     measure(tag, above=above)
                     for row in above:
-                        self.assertTrue(row["whole"], f"{tag}: the first line of {row['row']} above the editor is cut {row}")
+                        if "whole" in row:
+                            self.assertTrue(row["whole"], f"{tag}: the first line of {row['row']} is cut {row}")
+                        self.assertEqual([], row.get("no_width", []), f"{tag}: words in {row['row']} squeezed to no width {row}")
         page.evaluate(self.FONT, "")
 
     def test_rl13c_report_buttons_with_notices_above_the_editor(self):
@@ -1465,6 +1513,10 @@ class RelatedLayoutDOMTest(Base):
         w.screen.finish()
         w, parts = self.open_row_case(save_failed=True)
         self.sweep_row_case(w, parts, "Reading, Save Failed")
+        harness.expect(w.page.locator("#draftmsg")).to_contain_text("Save Failed")   # the state held through the sweep
+        w.screen.finish()
+        w, parts = self.open_row_case(questions_failed=True)
+        self.sweep_row_case(w, parts, "Reading, questions opened (read failed)", questions=True)
         w.screen.finish()
 
 
