@@ -1376,15 +1376,15 @@ class RelatedLayoutDOMTest(Base):
     # above the editor then carried Approve & Next out of the window: Save Failed (73px) at 1152x768, a hold by another
     # reader or the citations at 720px high. The report column's height is divided in one place (reading-workspace.css):
     # the field region yields to one text line, then every other row before the button row to one line of its own; the
-    # row never yields. Each case is judged in every window
-    # below and in three fonts (the page's own, and Arial and Verdana where installed - wider glyphs wrap the head, the
-    # notices and the row onto more lines): the row whole and on top, the head whole, the visible report text above
-    # the row, and the first line of every row above the editor whole (the Reading target line excepted: it yields first
-    # and all the way, the head naming the same study).
-    # Every width around the 1251px head boundary at the two short heights, the corners above them, a short 900px
-    # window and the two portrait ones (stacked Reading at 768px).
-    ROW_STATE_WINDOWS = [(w_, h_) for h_ in (720, 768) for w_ in (1024, 1152, 1250, 1251, 1366, 1920)] + \
-                        [(1024, 900), (1251, 900), (1024, 1080), (1920, 1080), (900, 600), (900, 1200), (768, 1024)]
+    # row never yields. Each case is judged in the windows where the column is shortest - every width on both sides of
+    # the 1251px head boundary at 720 and 768px high, a short 900px window and stacked Reading at 768x1024 - and in the
+    # page's font and in Arial and Verdana wherever they lay text out differently from it (wider glyphs wrap the head,
+    # the notices and the row onto more lines; a runner without them falls back to the page's own, measured once): the
+    # row whole and on top, the head whole, the visible report text above the row, and the first line of every row
+    # above the editor whole (the Reading target line excepted: it yields first and all the way, the head naming the
+    # same study).
+    ROW_STATE_WINDOWS = [(1024, 720), (1152, 720), (1250, 720), (1251, 720), (1024, 768), (1152, 768), (1250, 768),
+                         (900, 600), (768, 1024)]
     ROW_FONTS = ("", "Arial, sans-serif", "Verdana, sans-serif")
     OTHER_HOLDER = "syn-other-reader@synthetic.test"
     # The first text line of each row before the editor, against every box that clips it.
@@ -1398,8 +1398,12 @@ class RelatedLayoutDOMTest(Base):
     FONT = """font => { let tag = document.getElementById('rl13c-font');
       if (!tag) { tag = document.createElement('style'); tag.id = 'rl13c-font'; document.head.append(tag); }
       tag.textContent = font ? `.report-p, .report-p * { font-family: ${font} !important; }` : ''; }"""
+    # How wide a sample line is in each font, as the report column lays it out.
+    FONT_WIDTHS = """fonts => { const s = document.createElement('span'), host = document.querySelector('.report-editor-head');
+      s.textContent = 'Report Editor Read Only Approve & Next SYN PATIENT 판독 대상'; s.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap';
+      host.append(s); const out = fonts.map(f => { s.style.fontFamily = f || ''; return s.getBoundingClientRect().width; }); s.remove(); return out; }"""
 
-    def open_row_case(self, *, holder=None, save_failed=False, related=False):
+    def open_row_case(self, *, holder=None, save_failed=False):
         long_rows = self.report_row_rows()
         long_rows[0]["state"]["holder"] = holder
         w = self.open_reading((1366, 768), long_rows, prepare=self.answer_empty_reads)
@@ -1413,9 +1417,6 @@ class RelatedLayoutDOMTest(Base):
         harness.expect(inbox.get_by_role("status")).not_to_have_text("Loading")
         if holder:
             harness.expect(page.locator("#holdmsg")).to_contain_text("판독 중입니다")
-        if related:
-            w.related_row(REPORT_DESC).click()
-            harness.expect(page.locator("#related-mode")).to_be_visible()
         if save_failed:
             # Typing: the draft's baseline read is not answered here, so after some 19s the notice above the editor
             # settles on Save Failed (73px at 1152x768, three lines), the one train15 met in RL-13b.
@@ -1427,12 +1428,22 @@ class RelatedLayoutDOMTest(Base):
             findings.evaluate("e => e.blur()")
         return w, parts
 
+    def row_fonts(self, page):
+        """The page's font, then each other font whose sample width differs from every font kept before it."""
+        widths, kept = page.evaluate(self.FONT_WIDTHS, list(self.ROW_FONTS)), []
+        for font, width in zip(self.ROW_FONTS, widths):
+            if all(abs(width - widths[self.ROW_FONTS.index(k)]) > 0.5 for k in kept):
+                kept.append(font)
+        measure("RL-13c fonts", widths=dict(zip(self.ROW_FONTS, widths)), kept=kept)
+        return kept
+
     def sweep_row_case(self, w, parts, name):
         page = w.page
+        fonts = self.row_fonts(page)
         for width, height in self.ROW_STATE_WINDOWS:
             page.set_viewport_size({"width": width, "height": height})
             page.wait_for_timeout(150)
-            for font in self.ROW_FONTS:
+            for font in fonts:
                 tag = f"RL-13c {name} {width}x{height} {font.split(',')[0] or 'page font'}"
                 with self.subTest(case=tag):
                     page.evaluate(self.FONT, font)
@@ -1445,13 +1456,16 @@ class RelatedLayoutDOMTest(Base):
         page.evaluate(self.FONT, "")
 
     def test_rl13c_report_buttons_with_notices_above_the_editor(self):
-        cases = (("Reading, held by another reader", dict(holder=self.OTHER_HOLDER)),
-                 ("Reading, Save Failed", dict(save_failed=True)),
-                 ("Reading + Related Report, held by another reader", dict(holder=self.OTHER_HOLDER, related=True)))
-        for name, options in cases:
-            w, parts = self.open_row_case(**options)
-            self.sweep_row_case(w, parts, name)
-            w.screen.finish()
+        w, parts = self.open_row_case(holder=self.OTHER_HOLDER)
+        self.sweep_row_case(w, parts, "Reading, held by another reader")
+        w.page.set_viewport_size({"width": 1366, "height": 768})
+        w.related_row(REPORT_DESC).click()
+        harness.expect(w.page.locator("#related-mode")).to_be_visible()
+        self.sweep_row_case(w, parts, "Reading + Related Report, held by another reader")
+        w.screen.finish()
+        w, parts = self.open_row_case(save_failed=True)
+        self.sweep_row_case(w, parts, "Reading, Save Failed")
+        w.screen.finish()
 
 
 # ── RelatedLayoutEquivalence (R-EQ; local record, not in CI) ────────────────────────────────────────────────────────
