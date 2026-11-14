@@ -53,6 +53,31 @@ test('legacy explicit-null scope bytes survive as signed and unsigned predecesso
   }
 });
 
+test('paper copies render both unsigned and signed grouped native reports without changing the stored original', async () => {
+  for (const signed of [false, true]) {
+    const f = fixture(), row = f.commit(UID, 'save', 'SYN GROUPED FINDINGS').row;
+    Object.assign(row, { groupId: '00000000-0000-4000-8000-000000000001', snapshotFormat: 2 });
+    if (signed) row.action = 'approve';
+    const { snapshotFormat, ...record } = row;
+    const body = JSON.stringify({ formatVersion: 'native-report/2', report: record, exam: { reportUid: UID, groupId: row.groupId } });
+    if (signed) f.sign(row, null, 'approve-sign', { body });
+    else {
+      const approved = f.commit(UID, 'save', 'SYN APPROVED GROUP').row;
+      Object.assign(approved, { action: 'approve', groupId: row.groupId, snapshotFormat: 2 });
+      const { snapshotFormat, ...report } = approved;
+      f.sign(approved, row, 'approve-sign', { previousSha: sha(body),
+        body: JSON.stringify({ formatVersion: 'native-report/2', report, exam: { reportUid: UID, groupId: row.groupId } }) });
+    }
+    const prepared = await f.controller.prepare({}, copyIntake('SYN-GROUPED-PAPER-' + signed, all(), 'paper-print'));
+    const issued = await f.controller.issue({}, prepared.issuanceId);
+    const html = Buffer.from(issued.artifact, 'base64').toString('utf8');
+    assert.ok(html.includes('SYN GROUPED FINDINGS'));
+    assert.ok(html.includes('<dd>' + UID + '</dd>'));
+    assert.ok(html.includes(signed ? '<dd>Signed</dd>' : '<dd>Not Signed</dd>'));
+    assert.equal((await f.controller.issue({}, prepared.issuanceId)).artifact, issued.artifact);
+  }
+});
+
 test('a native report is copied as its head chain: unsigned saves, signed approvals and a content reset', async () => {
   const f = fixture();
   f.commit(UID, 'save', '저장한 소견'); const approved = f.commit(UID, 'approve', '확정 소견');

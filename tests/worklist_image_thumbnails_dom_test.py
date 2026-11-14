@@ -114,7 +114,9 @@ class WorklistImageThumbnailsDOMTest(unittest.TestCase):
         rendered = self.page.evaluate("fetchCalls.filter(x=>x.includes('/frames/'))")
         self.assertEqual(12, len(rendered)); self.assertTrue(all("?width=256&height=256" in x for x in rendered))
         cards.nth(7).get_by_role("button", name="Preview Image", exact=False).click()
-        self.assertEqual({"uid": STUDY, "series": SERIES, "name": "Literal <patient>", "id": "P&1", "sop": SOP1, "frame": 1}, self.page.evaluate("previewCalls[0]"))
+        # The stamp names the storage key and the scope kind; a late preview answer is dropped when it no longer matches.
+        stamp = '["[\\"%s\\",null,null]","[\\"single\\",null]"]' % STUDY
+        self.assertEqual({"uid": STUDY, "sourceUid": STUDY, "examScope": None, "scopeStamp": stamp, "series": SERIES, "name": "Literal <patient>", "id": "P&1", "sop": SOP1, "frame": 1}, self.page.evaluate("previewCalls[0]"))
         detached = cards.first.locator(".thumb-image-open").element_handle()
         self.page.get_by_role("button", name="Next Page", exact=True).click()
         expect(self.page.locator("#thumb-images-status")).to_have_text("2 / 2 images ready")

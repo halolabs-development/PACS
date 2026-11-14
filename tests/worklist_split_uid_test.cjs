@@ -123,7 +123,8 @@ function world({ resources = [], states = [], policy = null, institutions = INST
       if (sql.includes('pg_advisory')) return [{ locked: 1 }];
       if (sql.includes('AuthSession')) return [{ held: 1 }];
       if (sql.includes('TechNoteRevision')) return [];
-      if (sql.includes('FROM "StudyState" WHERE uid')) { const row = store.states.get(values[0]); return row ? [clone(row)] : []; }
+      if (sql.includes('FROM "StudyState" WHERE uid')) return [...store.states.values()]
+        .filter(row => values.flatMap(value => value?.values ?? [value]).includes(row.uid)).map(clone);
       if (sql.includes('FROM "ReportDraft"')) { const row = store.drafts.get(values[0] + '|' + values[1]); return row ? [clone(row)] : []; }
       if (sql.includes('LEFT JOIN "Report"')) return [...store.states.values()].filter(s => values.flatMap(v => v?.values ?? [v]).includes(s.uid))
         .map(s => ({ uid: s.uid, institutionId: s.institutionId, teleInstitutionId: s.teleInstitutionId, rs: s.rs, repDoc: s.repDoc,

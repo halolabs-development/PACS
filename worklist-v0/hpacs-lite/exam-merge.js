@@ -168,6 +168,7 @@
     }
     async function showSplit(win) {
       const scope=await scopes.fetch(ctx.api,win.row.uid,{at:win.at});
+      if(!win.live())return;
       const inventory=await scopes.dicom(scope,'series',async path=>{
         const response=await window.KinSessionTransport.page().request(path,{context:win.at,cache:'no-store'});
         if(!response.ok)throw Error('시리즈 목록을 불러오지 못했습니다.');return response.body;

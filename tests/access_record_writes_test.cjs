@@ -290,6 +290,7 @@ function criticalDatabase({ groups = [], members = [], extraUids = [] } = {}) {
     $queryRaw: async (strings, ...values) => {
       const sql = strings.join('?');
       // The fixed-record key is the EMR record contract's text, JSON ['emr-fixed-record', <Study UID>].
+      if (sql.includes('FROM "StudyGroupMember"')) return members.filter(row => row.logicalUid === values[0] || row.studyUid === values[0]);
       if (sql.includes('pg_advisory_xact_lock')) {
         const [kind, recordId] = JSON.parse(values[0]);
         assert.equal(kind, 'emr-fixed-record');
@@ -327,6 +328,28 @@ const source = { reportPreviewStudy: async () => ({ '00100010': { Value: [{ Alph
 const owner = c => [c.institution, c.sub];
 const MESSAGE = 'SYNTHETIC critical finding';
 
+test('ordinary critical writes and replay keep the existing record-only reads and never prepare source identity', async () => {
+  const db = criticalDatabase(), committed = [], blocked = new Set(['studyGroupMember', 'studyGroup', 'report', 'reportVersion']);
+  const guard = (client, transaction = false) => new Proxy(client, { get(target, key) {
+    assert.ok(!blocked.has(key) && !(transaction && key === 'studyState'), 'ordinary critical records do not read ' + String(key));
+    if (key === '$transaction') return work => target.$transaction(tx => work(guard(tx, true)));
+    return target[key];
+  } });
+  const observed = [];
+  const policy = { ...access, prepareSourceIdentity: async () => { throw Error('unexpected source identity read'); } };
+  const svc = new CriticalResultService(guard(db), policy, {}, { reportPreviewStudy: async uid => {
+    observed.push(uid); return source.reportPreviewStudy(uid);
+  } });
+  const body = { requestId: sub(81), expectedOwner: owner(SENDER), recipientSub: RECIPIENT.sub, sourceVersion: 1, message: MESSAGE };
+  const first = await svc.create(UID, SENDER, body, recorded(guard(db), committed));
+  const replay = await svc.create(UID, SENDER, body, recorded(guard(db), committed));
+  assert.deepEqual(replay, { ...first, replayed: true });
+  assert.deepEqual(observed, [UID]);
+  assert.equal(committed.length, 1);
+  await svc.ack(sub(81), RECIPIENT, { requestId: sub(82), expectedOwner: owner(RECIPIENT), revision: 1 }, recorded(guard(db), committed));
+  assert.equal(committed.length, 2);
+});
+
 test('critical replacement locks both saved exam scopes and refuses a recipient missing any original', async () => {
   const other = '2.25.8002', newer = '2.25.8003', g1 = sub(71), g2 = sub(72);
   const groups = [g1, g2].map(id => ({ id, kind: 'merge', baseUid: UID, institutionId: INST, dissolvedAt: new Date(0) }));
@@ -336,7 +359,7 @@ test('critical replacement locks both saved exam scopes and refuses a recipient 
   db.versions[0].groupId = g1;
   let denied = false;
   const policy = { ...access, requireSourceOwner: async () => {}, require: async (c, uids) => {
-    if (denied && c.sub === RECIPIENT.sub && uids.includes(other)) throw new (require('@nestjs/common').NotFoundException)();
+    if (denied && c.sub === RECIPIENT.sub && uids.includes(other)) throw new (require('/app/node_modules/@nestjs/common').NotFoundException)();
   } };
   const svc = new CriticalResultService(db, policy, {}, source);
   const request = { requestId: sub(73), expectedOwner: owner(SENDER), recipientSub: RECIPIENT.sub, sourceVersion: 1, message: MESSAGE };

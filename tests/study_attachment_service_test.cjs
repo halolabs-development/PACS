@@ -205,7 +205,7 @@ function harness(state) {
     $executeRaw: async () => 0,
     $queryRaw: async (strings, ...values) => {
       const sql = strings.join('?');
-      if (sql.includes('"StudyState"')) { const s = studies.get(values[0]?.values?.[0]??values[0]); return s ? [{ institutionId: s.institutionId, rs: s.rs }] : []; }
+      if (sql.includes('"StudyState"')) { const s = studies.get(values[0]?.values?.[0]??values[0]); return s ? [{ ...s }] : []; }
       if (sql.includes('"StudyAttachment"')) { const r = table().find(x => x.id === values[0]); return r ? [{ state: r.state }] : []; }
       throw new Error('unexpected SQL ' + sql);
     },
@@ -218,7 +218,7 @@ function harness(state) {
     finally { live = before; }
   };
   const access = { split: false, refused: new Set(), calls: [],
-    prepare: async () => {}, require: async (c, uids) => { access.calls.push(uids[0]); if (access.refused.has(uids[0])) throw new (require('@nestjs/common').NotFoundException)('outside'); },
+    prepare: async () => {}, require: async (c, uids) => { access.calls.push(uids[0]); if (access.refused.has(uids[0])) throw Object.assign(new Error('outside'), { getStatus: () => 404 }); },
     prepareSourceIdentity: async () => {},
     assertIdentifiedSource: (...args) => access.assertUnsplitSource(...args),
     assertUnsplitSource: () => { if (access.split) throw Object.assign(new Error('split'), { getStatus: () => 409 }); return { sourcePatientId: 'P-SYN-1' }; } };

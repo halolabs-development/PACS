@@ -170,7 +170,7 @@ test('(1) a metadata rule reads source tags before $transaction and never inside
   const start = w.events.indexOf('tx:start');
   assert.ok(start > 0);
   const reads = w.events.map((event, index) => [event, index]).filter(([event]) => event.startsWith('orthanc:'));
-  assert.ok(reads.length>0&&reads.every(([event])=>event==='orthanc:studyIdentityResources'), 'the UID route observes only original identity');
+  assert.deepEqual(reads.map(([event]) => event), ['orthanc:studyIdentityResources'], 'the UID route prepares one study');
   assert.ok(reads.every(([, index]) => index < start), 'the source read ends before the transaction');
   assert.deepEqual(orthancAfterStart(w), []);
   assert.ok(w.events.indexOf('tx:study') > start && w.events.indexOf('tx:receipt') > w.events.indexOf('tx:study'),
@@ -224,7 +224,7 @@ test('(4) the service is constructed from PrismaService and StudyAccessService o
   assert.equal(/\.(?:transfer|transferBasis|processingAgreement)\b/.test(compiled), false);
 });
 
-test('(5) only studyIdentityResources and studyIdentities(true) reach Orthanc, with original identity checked independently of metadata rules', async () => {
+test('(5) only studyIdentityResources and studyIdentities(true) reach Orthanc, and nothing without a metadata rule', async () => {
   const flows = async w => {
     await create(w, { ...clinician }, id(31));
     await change(w, id(31), { ...technician }, id(32), 1, 'accept');
@@ -244,7 +244,7 @@ test('(5) only studyIdentityResources and studyIdentities(true) reach Orthanc, w
   for (const policy of [null, uidPolicy()]) {
     const w = world(policy);
     await flows(w);
-    assert.ok(w.calls.length>0&&w.calls.every(call=>call.name==='studyIdentityResources'), 'current exam identity is observed even under a UID-only policy');
+    assert.deepEqual(w.calls, [], JSON.stringify(policy));
     assert.deepEqual(w.writes, { request: 1, update: 2, receipt: 3, audit: 3 });
   }
 });

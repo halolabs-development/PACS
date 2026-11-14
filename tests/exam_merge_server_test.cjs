@@ -464,15 +464,16 @@ test('report service eligibility refuses changed originals for reading and allow
         : action === 'clear' ? f.service.putReport(A, { ...input, findings: '', conclusion: '', recommendation: '' }, who, null)
         : action === 'force' ? f.service.forceDiscardDrafts(A, f.request(admin), admin, null)
         : f.service.commitReport(A, { ...input, action: 'reset', reason: 'SYN reset' }, who, null);
-      if (['open', 'hold', 'draft', 'commit'].includes(action)) {
+      if (grouped && ['open', 'hold', 'draft', 'commit'].includes(action)) {
         await assert.rejects(pending, e => { assert.equal(status(e), 409, e.stack); return true; }, [grouped, alteration, action].join('/'));
         assert.equal(f.db.drafts[0].findings, 'SYN PRIVATE');
       } else {
         const answer = await pending;
-        assert.equal(f.db.drafts[0].present, false, action);
+        if (!grouped && action === 'commit') assert.equal(f.versions.at(-1).snapshotFormat, 1, 'ordinary signed content keeps the native row format');
+        if (!['open', 'hold', 'draft', 'commit'].includes(action)) assert.equal(f.db.drafts[0].present, false, action);
         if (action === 'discard') {
-          assert.equal(JSON.stringify(answer).includes('SYN HEAD'), false);
-          assert.equal(answer.state.version, 1); assert.equal(answer.state.reportReadable, false);
+          assert.equal(JSON.stringify(answer).includes('SYN HEAD'), !grouped);
+          assert.equal(answer.state.version, 1); assert.equal(answer.state.reportReadable, !grouped);
         }
         if (['reset', 'force'].includes(action)) assert.ok(f.versions.some(v => v.action === 'discarded' && v.groupId === (grouped ? G1 : null)));
       }
@@ -563,13 +564,13 @@ test('merge: three studies of one patient become one exam on the base; members, 
   const {svc,db}=fixture();
   const out=await svc.merge(tech,{baseUid:B,uids:[C,A,B]});
   assert.equal(out.group.baseUid,B);
-  assert.deepEqual(out.group.members.map(m=>[m.studyUid,m.part]),[[B,0],[A,1],[C,2]]);
+  assert.deepEqual(out.group.members.map(m=>[m.studyUid,m.part]),[[B,0],[C,1],[A,2]]);
   assert.equal(db.groups.length,1);assert.equal(db.groups[0].kind,'merge');assert.equal(db.groups[0].institutionId,'hallym');
   assert.deepEqual(db.members.map(m=>m.studyUid).sort(),[A,B,C]);
   // Locked once, in UID order, before anything was judged.
   assert.deepEqual(db.locks.map(l=>l.uids),[[A,B,C]]);
   assert.deepEqual(db.audits.map(a=>[a.action,a.target]),[['study.merge',B]]);
-  assert.deepEqual(JSON.parse(db.audits[0].detail),{by:'hallym',group:out.group.id,base:B,studies:[B,A,C]});
+  assert.deepEqual(JSON.parse(db.audits[0].detail),{by:'hallym',group:out.group.id,base:B,studies:[B,C,A]});
   for(const uid of [A,B,C])assert.notEqual(db.states.get(uid).draftEpoch,state(uid).draftEpoch,'a screen of the old grouping cannot write');
   assert.equal(db.states.get(D).draftEpoch,state(D).draftEpoch);
 });

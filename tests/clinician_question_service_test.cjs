@@ -85,6 +85,7 @@ function world(policy, { questions = [] } = {}) {
     : sql.includes('FROM "StudyQuestion" q') ? 'list' : sql.includes('FROM "StudyQuestion" WHERE') ? 'question'
       : sql.includes('JOIN "Report"') ? 'head' : sql.includes('"ReportVersion"') ? 'anchor' : sql.includes('"StudyState"') ? 'study' : 'unknown';
   const query = async (where, view, index, strings, values, state = null) => {
+    if (strings.join('?').includes('FROM "StudyGroupMember"')) return [];
     const sql = strings.join('?'), k = kind(sql);
     log(where + ':' + k);
     if (state) {
@@ -247,7 +248,7 @@ test('(4) the service is constructed from PrismaService and StudyAccessService o
     assert.equal(compiled.includes(name), false, name);
 });
 
-test('(5) only studyIdentityResources and studyIdentities(true) reach Orthanc, with original identity checked independently of metadata rules', async () => {
+test('(5) only studyIdentityResources and studyIdentities(true) reach Orthanc, and nothing without a metadata rule', async () => {
   const flows = async w => {
     await create(w, { ...clinician }, id(31));
     await reply(w, id(31), { ...radiologist }, id(32), 1);
@@ -266,7 +267,7 @@ test('(5) only studyIdentityResources and studyIdentities(true) reach Orthanc, w
   for (const policy of [null, uidPolicy()]) {
     const w = world(policy);
     await flows(w);
-    assert.ok(w.calls.length>0&&w.calls.every(call=>call.name==='studyIdentityResources'), 'current exam identity is observed even under a UID-only policy');
+    assert.deepEqual(w.calls, [], JSON.stringify(policy));
     assert.deepEqual(w.writes, { question: 1, update: 2, entry: 3, audit: 3 });
   }
 });

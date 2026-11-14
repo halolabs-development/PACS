@@ -10,7 +10,7 @@ import { clinicianFinal } from './clinician-policy';
 import type { Caller } from './pacs.service';
 import type { ClinicalWorkflow, RecordedTransaction, WorkflowRecord } from './emr-clinical/routes';
 import { lockFixedRecords } from './emr-runtime/fixed-record-lock';
-import { prepareExamRead, resolveExamScope, readableExamRecord, examParentAccess, examScopeView } from './exam-merge.service';
+import { prepareRecordExamRead, resolveExamScope, readableExamRecord, examParentAccess, storedExamScope, reportExamReference, withGroupedExam } from './exam-merge.service';
 import {
   CRITICAL_RESULT_CODES as CODE, CRITICAL_RESULT_PAGE, CRITICAL_RESULT_PINNABLE_ACTIONS, CRITICAL_RESULT_STATE_FILTERS, Head,
   RADIOLOGIST, RecipientClass, Refusal, ackFingerprint, ackRefusal, appliedResult, auditDetail, cancelFingerprint, clip,
@@ -139,9 +139,11 @@ export class CriticalResultService {
   /** 원본 신원 한 건(§3.2). 트랜잭션 밖에서만 부른다. 영상 저장·전송·변경 호출은 없다. */
   private async identity(uid: string,c:Caller) {
     try {
-      await prepareExamRead(this.prisma,this.studyAccess,c,uid);
-      const scope=await examParentAccess(this.prisma,this.studyAccess,c,uid);
-      const row = await this.orthanc.reportPreviewStudy(scope.sources[0].studyUid);
+      const source = await withGroupedExam(this.prisma, uid, async () => uid, async () => {
+        await prepareRecordExamRead(this.prisma, this.studyAccess, c, uid);
+        return (await examParentAccess(this.prisma, this.studyAccess, c, uid)).sources[0].studyUid;
+      });
+      const row = await this.orthanc.reportPreviewStudy(source);
       // ModalitiesInStudy is multi-valued: joined as the worklist row joins it (pacs/worklist.ts).
       const listed = row?.['00080061']?.Value;
       const modalities = (Array.isArray(listed) ? listed : []).filter((v: unknown) => typeof v === 'string').join(',');
@@ -168,9 +170,10 @@ export class CriticalResultService {
   private subject(c: Caller, institution: string, sub: string): Caller { return { ...c, institution, sub }; }
 
   private async readableBy(subject: Caller, uid: string, tx:any=this.prisma, version?:number) {
-    const record=version===undefined?await tx.report.findUnique({where:{uid},select:{groupId:true}})
-      :await tx.reportVersion.findUnique({where:{uid_version:{uid,version}},select:{groupId:true}});
-    return !!record&&!!await readableExamRecord(tx,this.studyAccess,subject,uid,record);
+    return withGroupedExam(tx, uid, async () => (await this.studyAccess.allowed(subject, [uid], tx)).has(uid), async () => {
+      const record = await reportExamReference(tx, uid, version);
+      return !!record&&!!await readableExamRecord(tx,this.studyAccess,subject,uid,record);
+    });
   }
 
   private async readableIds(tx:any,c:Caller) {
@@ -186,28 +189,32 @@ export class CriticalResultService {
 
   private async reportScopes(tx: any, c: Caller, rows: any[]) {
     for (const row of rows) {
-      const record = await tx.reportVersion.findUnique({ where: { uid_version: { uid: row.studyUid, version: row.sourceVersion } },
-        select: { groupId: true } });
-      if (!record) throw recordMissing();
-      row.examScope = examScopeView(await resolveExamScope(tx, this.studyAccess, c, { uid: row.studyUid, purpose: 'stored', record }));
+      await withGroupedExam(tx, row.studyUid, async () => {}, async () => {
+        const record = await reportExamReference(tx, row.studyUid, row.sourceVersion);
+        if (!record) throw recordMissing();
+        row.examScope = storedExamScope(await resolveExamScope(tx, this.studyAccess, c, { uid: row.studyUid, purpose: 'stored', record }));
+      });
     }
     return rows;
   }
 
-  private async lockReportScope(tx: any, c: Caller, uid: string, version: number, pins = false, nextVersion?: number) {
-    const record = await tx.reportVersion.findUnique({ where: { uid_version: { uid, version } }, select: { groupId: true } });
+  private async lockReportScope(tx: any, c: Caller, uid: string, version: number, pins = false, nextVersion?: number, missing = studyMissing) {
+    return withGroupedExam(tx, uid, async () => { if (pins) await lockFixedRecords(tx, [uid]); }, async () => {
+    try {
+    const record = await reportExamReference(tx, uid, version);
     // An invalid create still reaches the established source refusal after locking the current head.
-    const fallback = record ?? await tx.report.findUnique({ where: { uid }, select: { groupId: true } });
+    const fallback = record ?? await reportExamReference(tx, uid);
     const request = fallback ? { uid, purpose: 'stored' as const, record: fallback } : { uid, purpose: 'source' as const };
     const prepared = await resolveExamScope(tx, this.studyAccess, c, request);
     const next = nextVersion === undefined ? null
-      : await tx.reportVersion.findUnique({ where: { uid_version: { uid, version: nextVersion } }, select: { groupId: true } });
+      : await reportExamReference(tx, uid, nextVersion);
     const nextScope = next ? await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: next }) : null;
     const parents = [...prepared.lockUids, ...nextScope?.lockUids ?? []];
     if (pins) await lockFixedRecords(tx, parents);
     const scope = await resolveExamScope(tx, this.studyAccess, c, { ...request, phase: 'write', prepared, related: parents });
     if (nextScope) await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: next, prepared: nextScope });
-    return scope;
+    } catch (error) { if (error instanceof NotFoundException) throw missing(); throw error; }
+    });
   }
 
   /**
@@ -218,7 +225,7 @@ export class CriticalResultService {
   private async run<T>(c: Caller, subjects: Caller[], fn: (tx: any, workflow?: ClinicalWorkflow) => Promise<T>, read = false,
     recorded?: RecordedTransaction): Promise<T> {
     for(const uid of new Set<string>((await this.recordsFor(this.prisma,c)).map(row=>row.studyUid)))
-      await prepareExamRead(this.prisma,this.studyAccess,c,uid);
+      await prepareRecordExamRead(this.prisma,this.studyAccess,c,uid);
     try {
       const body = async (tx: any, workflow?: ClinicalWorkflow) => {
         await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
@@ -313,7 +320,9 @@ export class CriticalResultService {
   private async visibleStudy(tx: any, uid: string, c: Caller, state: any, missing: () => HttpException): Promise<string> {
     const institution = senderScope(state, c.institution);
     if (!institution) throw missing();
-    try { await examParentAccess(tx,this.studyAccess,c,uid); }
+    try { await withGroupedExam(tx, uid, () => this.studyAccess.require(c, [uid], tx), async () => {
+      await examParentAccess(tx, this.studyAccess, c, uid, false, 'reading', state);
+    }); }
     catch (e) { if (e instanceof NotFoundException) throw missing(); throw e; }
     return institution;
   }
@@ -333,9 +342,11 @@ export class CriticalResultService {
     const sees = (row: any, state: any) => as === 'sender' ? senderSees(row, state, c) : recipientSees(row, state, c);
     const first = await this.recordRow(tx, id, false);
     if (!first || !party(first)) throw recordMissing();
-    await this.lockReportScope(tx, c, first.studyUid, first.sourceVersion, pins, nextVersion);
+    await this.lockReportScope(tx, c, first.studyUid, first.sourceVersion, pins, nextVersion, recordMissing);
     const state = await this.studyRow(tx, first.studyUid, true);
     if (!sees(first, state)) throw recordMissing();
+    try { await this.studyAccess.require(c, [first.studyUid], tx); }
+    catch (error) { if (error instanceof NotFoundException) throw recordMissing(); throw error; }
     const head = await this.head(tx, first.studyUid);
     const row = await this.recordRow(tx, id, true);
     if (!row || row.studyUid !== first.studyUid || !party(row) || !sees(row, state)) throw recordMissing();
@@ -428,7 +439,7 @@ export class CriticalResultService {
     if (!studyUidValue(uid)) throw invalid('검사 UID를 확인하세요');
     const institution = await this.scope(uid, c);
     if (!institution) throw studyMissing();
-    await prepareExamRead(this.prisma,this.studyAccess,c,uid);
+    await prepareRecordExamRead(this.prisma,this.studyAccess,c,uid);
     // 후보는 기록 기관(검사 소유 기관)의 회원이다. tele 발신자 기관(B)의 회원은 수신자가 아니다(TR-02).
     let members: KeycloakUser[];
     try { members = await this.keycloak.institutionMembers(institution); } catch { throw unavailable(); }
@@ -437,7 +448,7 @@ export class CriticalResultService {
       const cls = eligibleRecipient(user, { sub: user.id, institution, sender: c.sub });
       if (!cls) continue;
       const subject = this.subject(c, institution, user.id);
-      await prepareExamRead(this.prisma,this.studyAccess,subject,uid);
+      await prepareRecordExamRead(this.prisma,this.studyAccess,subject,uid);
       candidates.push({ user, cls, subject });
     }
     const out = await this.run(c, [], async tx => {
@@ -490,8 +501,8 @@ export class CriticalResultService {
       }
     }
     const subject = recipient && prepared ? this.subject(c, prepared, recipientSub) : null;
-    await prepareExamRead(this.prisma,this.studyAccess,c,uid);
-    if (subject) await prepareExamRead(this.prisma,this.studyAccess,subject,uid);
+    await prepareRecordExamRead(this.prisma,this.studyAccess,c,uid);
+    if (subject) await prepareRecordExamRead(this.prisma,this.studyAccess,subject,uid);
     return this.run(c, subject ? [subject] : [], async (tx, workflow) => {
       // 판독·Related·Tech Note·질문 쓰기처럼 정책 공유 잠금 뒤, 검사 행 앞에 이 검사의 fixed-record 키를 잡는다. 같은 키를
       // 쓰는 writer가 모두 이 순서여야 머리 판을 바꾸는 쓰기와 그 판을 고정하는 쓰기가 서로 반대 순서로 기다리지 않는다.
@@ -641,7 +652,7 @@ export class CriticalResultService {
         identity = await this.identity(prior.studyUid,c);
         if (recipient) {
           subject = this.subject(c, prior.institutionId, prior.recipientSub);
-          await prepareExamRead(this.prisma,this.studyAccess,subject,prior.studyUid);
+          await prepareRecordExamRead(this.prisma,this.studyAccess,subject,prior.studyUid);
         }
       }
     }
@@ -704,7 +715,7 @@ export class CriticalResultService {
         const subject=this.subject(c,institution,sub),allowed=new Set<string>();
         try {
           for(const x of items) {
-            await prepareExamRead(this.prisma,this.studyAccess,subject,x.row.studyUid);
+            await prepareRecordExamRead(this.prisma,this.studyAccess,subject,x.row.studyUid);
             if(await this.readableBy(subject,x.row.studyUid,this.prisma,x.row.sourceVersion))allowed.add(x.row.id);
           }
         }
@@ -857,7 +868,7 @@ export class CriticalResultService {
     const cls = recipientClass(c.roles);
     if (!cls) throw roleRequired();
     if (!studyUidValue(uid)) throw invalid('검사 UID를 확인하세요');
-    await prepareExamRead(this.prisma,this.studyAccess,c,uid);
+    await prepareRecordExamRead(this.prisma,this.studyAccess,c,uid);
     const radiologist = holds(c.roles, RADIOLOGIST);
     const out = await this.run(c, [], async tx => {
       const state = await this.studyRow(tx, uid, false);

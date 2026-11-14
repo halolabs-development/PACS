@@ -141,7 +141,7 @@ export class ImageRequestService {
       ? await tx.$queryRaw`SELECT uid,"institutionId" FROM "StudyState" WHERE uid=${uid} FOR UPDATE`
       : await tx.$queryRaw`SELECT uid,"institutionId" FROM "StudyState" WHERE uid=${uid}`;
     if (!rows[0] || rows[0].institutionId !== c.institution) throw missing();
-    try { await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:'source'}); }
+    try { await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:'source',state:rows[0]}); }
     catch (e) { if (e instanceof NotFoundException) throw missing(); throw e; }
     return rows[0];
   }

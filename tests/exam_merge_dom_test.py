@@ -16,6 +16,7 @@ merged exam is its base row with server examScope and sourceMetadata, and the ot
 """
 import json
 import re
+import time
 import unittest
 from urllib.parse import urlparse, parse_qs
 
@@ -264,6 +265,7 @@ class ExamMerge(unittest.TestCase):
         self.pick(h.UID)
         self.page.locator("#t-split-unmerge").click()
         win = self.window("unmerge")
+        expect(win.locator("table tbody tr")).to_have_count(2)
         cells = win.locator("table tbody tr").evaluate_all("rows => rows.map(r => [...r.children].map(td => td.textContent))")
         self.assertEqual([["SYNACC-A1", "2026-10-03", "SYN CT CHEST", "1 / 8"], ["SYNACC-A2", "2026-10-03", "SYN CT CHEST", "1 / 12"]], cells)
         expect(win.locator(".exam-merge-checks li")).to_have_text([
@@ -353,6 +355,9 @@ class ExamMerge(unittest.TestCase):
         self.site.held_scope=[]
         with self.page.expect_request(re.compile(r"/exam-scope\?")):
             self.page.locator("#t-split-unmerge").click()
+        deadline = time.monotonic() + 5
+        while not self.site.held_scope and time.monotonic() < deadline:
+            self.page.wait_for_timeout(10)
         self.assertEqual(1,len(self.site.held_scope))
         self.page.evaluate("async uids => { await select(uids[0]); await select(uids[1]); }",[rf.UID_C,h.UID])
         route,scope=self.site.held_scope[0]

@@ -87,7 +87,7 @@ export class StudyAttachmentService implements OnModuleInit, OnModuleDestroy {
     if (!visible) throw new NotFoundException(M.notFound);
     await this.studyAccess.prepare(c, [uid]);
     try { await this.studyAccess.require(c, [uid]); } catch { throw new NotFoundException(M.notFound); }
-    await resolveExamScope(this.prisma,this.studyAccess,c,{uid,purpose:'source'});
+    await resolveExamScope(this.prisma,this.studyAccess,c,{uid,purpose:'source',state:study});
     if (study.institutionId !== me) throw new ForbiddenException(M.received);
     refuseDestroyed(study);
     if (identity) {
@@ -103,7 +103,7 @@ export class StudyAttachmentService implements OnModuleInit, OnModuleDestroy {
     if (!rows.length || rows[0].institutionId !== c.institution) throw new NotFoundException(M.notFound);
     refuseDestroyed(rows[0]);
     await this.studyAccess.require(c, [uid], tx);
-    await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:'source'});
+    await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:'source',state:rows[0]});
   }
 
   // ── POST /api/studies/:uid/attachments ──

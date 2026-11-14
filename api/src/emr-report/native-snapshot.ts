@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
+/** New ordinary reports keep the established row format; grouped testimony explicitly names its exam. */
+export function nativeReportScope(groupId: string | null, hasMembership = groupId !== null) {
+  return { groupId, snapshotFormat: hasMembership ? 2 : 1 };
+}
+
 /** The legacy row was signed before nullable scope columns existed. Never add those nulls to its signed bytes. */
 export function nativeReportSnapshot(row: Record<string, any>): string {
   const { snapshotFormat, ...record } = row;

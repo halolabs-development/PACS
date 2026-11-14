@@ -109,7 +109,7 @@ export class PacsAccess {
     if (s && !this.visible(s, me))
       throw new NotFoundException('검사를 찾을 수 없습니다');
     if(s) {
-      await examParentAccess(db,this.studyAccess,c,uid,db===this.prisma);
+      await examParentAccess(db,this.studyAccess,c,uid,db===this.prisma,'reading',s);
     }
     return s;
   }

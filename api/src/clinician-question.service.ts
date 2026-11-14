@@ -3,7 +3,7 @@ import { Injectable, BadRequestException, ConflictException, ForbiddenException,
 import { createHash } from 'node:crypto';
 import { PrismaService } from './prisma.service';
 import { StudyAccessService } from './study-access.service';
-import { prepareExamRead, resolveExamScope, examScopeView } from './exam-merge.service';
+import { prepareExamRead, resolveExamScope, examScopeView, withGroupedExam, reportExamReference } from './exam-merge.service';
 import { CLINICIAN_ROLE } from './clinician-policy';
 import type { Caller } from './pacs.service';
 
@@ -119,7 +119,7 @@ export class ClinicianQuestionService {
       ? await tx.$queryRaw`SELECT uid,"institutionId",rs FROM "StudyState" WHERE uid=${uid} FOR UPDATE`
       : await tx.$queryRaw`SELECT uid,"institutionId",rs FROM "StudyState" WHERE uid=${uid}`;
     if (!rows[0] || rows[0].institutionId !== c.institution) throw missing();
-    try { await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:'source'}); }
+    try { await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:'source',state:rows[0]}); }
     catch (e) { if (e instanceof NotFoundException) throw missing(); throw e; }
     return rows[0];
   }
@@ -166,10 +166,12 @@ export class ClinicianQuestionService {
     const state = typeof rs === 'string' ? rs : 'W';
     if (head == null && kept == null) return { rs: state, version: null };
     if (Number.isSafeInteger(head) && head > 0 && typeof headAction === 'string' && headAction !== 'discarded' && kept === head) {
-      const record=await tx.reportVersion.findUnique({where:{uid_version:{uid,version:head}},select:{groupId:true}});
-      if(!record)throw reportUnavailable();
-      await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:'stored',record});
-      return { rs: state, version: head };
+      return withGroupedExam(tx, uid, async () => ({ rs: state, version: head }), async () => {
+        const record=await reportExamReference(tx, uid, head);
+        if(!record)throw reportUnavailable();
+        await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:'stored',record});
+        return { rs: state, version: head };
+      });
     }
     throw reportUnavailable();
   }

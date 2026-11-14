@@ -262,13 +262,20 @@ test('FT1 native head chain from the real commit route is prepared, issued, reop
   await commit(b, 'save', '다시 저장'); await commit(b, 'approve', '다시 확정');
   for (const s of [a, b]) {
     const rows = await versions(s.uid), head = rows.filter(r => r.action !== 'discarded'), outcomes = await signed(s.uid);
+    // Storage metadata must not add keys to ordinary native testimony or its predecessor hash.
+    const ordinary = row => {
+      const { groupId, snapshotFormat, ...content } = row;
+      assert.equal(groupId, null); assert.equal(snapshotFormat, 1);
+      return content;
+    };
     const { verifyRegisteredServerEnvelope } = product('emr-signature/server-verification');
     // Independent check of the native contract: each signed version names the previous head row digest.
     for (const outcome of outcomes) {
       const p = verifyRegisteredServerEnvelope(outcome.envelope, outcome.keyAtSigning).payload;
       const index = head.findIndex(r => String(r.version) === outcome.versionId), prior = head[index - 1];
       assert.ok(index >= 0, 'signature on a head row');
-      assert.deepEqual(p.previousVersion, prior ? { recordId: s.uid, versionId: String(prior.version), sha256: sha(JSON.stringify(prior)) } : null);
+      assert.deepEqual(JSON.parse(p.text.body), JSON.parse(JSON.stringify(ordinary(head[index]))));
+      assert.deepEqual(p.previousVersion, prior ? { recordId: s.uid, versionId: String(prior.version), sha256: sha(JSON.stringify(ordinary(prior))) } : null);
     }
     note('ft1-' + s.uid, { rows: rows.map(r => [r.version, r.action]), signed: outcomes.map(o => o.versionId) });
     const prepared = await audit('POST', 'issuances', copy(s.uid));
@@ -281,7 +288,7 @@ test('FT1 native head chain from the real commit route is prepared, issued, reop
     for (const [i, v] of record.versions.entries()) {
       const outcome = outcomes.find(o => o.versionId === v.versionId);
       if (outcome) assert.deepEqual(JSON.parse(originals[i].original), outcome);
-      else assert.deepEqual(JSON.parse(JSON.parse(originals[i].original).reportVersion), JSON.parse(JSON.stringify(head[i])));
+      else assert.deepEqual(JSON.parse(JSON.parse(originals[i].original).reportVersion), JSON.parse(JSON.stringify(ordinary(head[i]))));
     }
     const read = await ok('GET', `issuances/${encodeURIComponent(prepared.body.issuanceId)}`);
     assert.equal(read.artifact, issued.artifact); assert.equal(sha(Buffer.from(read.artifact, 'base64')), read.sha256);

@@ -37,10 +37,10 @@ export class PacsHold {
   async hold(uid: string, c: Caller, body?: any) {
     const renew = body?.renew === true;
     need(c.roles, 'radiologist', '판독문 점유');
-    const prepared = await resolveExamScope(this.prisma, this.studyAccess, c, { uid, purpose: 'current', phase: 'prepare' });
+    const prepared = await resolveExamScope(this.prisma, this.studyAccess, c, { uid, purpose: 'current', phase: 'prepare', identity: true });
     return this.prisma.$transaction(async tx => {
       await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
-      const scope = await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'current', phase: 'write', prepared });
+      const scope = await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'current', phase: 'write', prepared, identity: true });
       const prev = scope.state;
       refuseDestroyed(prev);
       if(prev.ss==='Unverified'&&prev.em!=='E')throw new ConflictException('촬영 중(미확인) 검사입니다 — 기사 확인(Verify) 뒤 판독할 수 있습니다');

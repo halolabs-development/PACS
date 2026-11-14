@@ -341,7 +341,7 @@ window.KinStudyAttachments = function (app) {
       const li = node('li', 'attach-done');
       li.dataset.id = row.id;
       li.dataset.state = row.state;
-      li.append(node('span', 'attach-name', row.fileName+' · '+(row.sourceUid||row.uid||'')), node('span', 'attach-kind', row.kind === 'pdf' ? 'PDF' : 'Image'),
+      li.append(node('span', 'attach-name', row.fileName+(mine.scope?.groupId?' · '+(row.sourceUid||row.uid||''):'')), node('span', 'attach-kind', row.kind === 'pdf' ? 'PDF' : 'Image'),
         node('span', 'attach-by', row.createdBy || ''), node('span', 'attach-at', when(row.createdAt)),
         node('span', 'attach-state', row.state === 'stored' ? '' : STATE_NAMES[row.state] || row.state));
       if (row.state === 'withdrawn' && row.withdrawReason) {

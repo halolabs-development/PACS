@@ -1159,14 +1159,16 @@ class TransferPanelPage(rf.ReportFlowPage):
         self.attach_site()
         self.open_as(TECH, "Technician")
         self.attach_unconfirmed = 1
-        self.attach_list_held = []
         self.attach_files([{"name": "scan.png", "mimeType": "image/png", "buffer": self.png(3, 2)}], via=h.PATIENT)
         dialog = self.attach_dialog()
-        self.wait(lambda: len(self.attach_list_held) == 1, "the opening list read")
-        opening = self.attach_list_held.pop()
+        # The initial answer selects the server-authorized source; delay a later refresh, not this prerequisite.
+        expect(dialog.locator("#attach-send")).to_be_enabled()
+        self.attach_list_held = []
         dialog.locator('.attach-files li[data-index="0"] button', has_text="Rotate").click()
         dialog.locator("#attach-send").click()
         expect(dialog.locator('.attach-files li[data-index="0"] .attach-result')).to_contain_text("Failed — 저장 결과를 아직 확인하지 못했습니다")
+        self.wait(lambda: len(self.attach_list_held) == 1, "the post-attempt list read")
+        opening = self.attach_list_held.pop()
         # The request may be stored: the file cannot be turned or removed, and a retry sends the same bytes under the same id.
         expect(dialog.locator('.attach-files li[data-index="0"] button', has_text="Rotate")).to_be_disabled()
         expect(dialog.locator('.attach-files li[data-index="0"] button', has_text="Remove")).to_be_disabled()
@@ -1181,7 +1183,7 @@ class TransferPanelPage(rf.ReportFlowPage):
         self.assertEqual(3, len(self.attach_posts))
         self.assertEqual(1, len({(p["request"], p["body"]) for p in self.attach_posts}), "the same request, the same bytes")
         expect(dialog.locator(".attach-attached li")).to_have_count(1)
-        # The list read the dialog started with comes back last, empty: it does not replace the newer list.
+        # The older refresh comes back last, empty: it does not replace the newer list.
         self.release_list(opening)
         self.settle(300)
         expect(dialog.locator(".attach-attached li")).to_have_count(1)
@@ -1945,7 +1947,7 @@ class TransferPanelPage(rf.ReportFlowPage):
                 try:
                     context.route('**/*', lambda r: r.fulfill(content_type='text/html', body='<button id="t-import">Import DICOM</button><div id="study-transfer"></div>'))
                     page.goto('http://localhost/fixture')
-                    for name in ('work-context.js', 'session-transport.js', 'study-transfer-local.js'):
+                    for name in ('work-context.js', 'session-transport.js', 'exam-scope.js', 'study-transfer-local.js'):
                         source = (Path(__file__).resolve().parents[1]/'worklist-v0/hpacs-lite'/name).read_text(encoding='utf-8')
                         if self.asset_source and self.asset_source[0] == name: source = self.asset_source[1]
                         page.add_script_tag(content=source)
@@ -2609,7 +2611,7 @@ class TransferPanelPage(rf.ReportFlowPage):
         """A new document of the same tab (sessionStorage stays) mounted for `owner`. fault (method, key): that storage
         call throws for that key while window.synFault is true (cleared to model recovery in the same document)."""
         page.goto('http://localhost/fixture')
-        for name in ('work-context.js', 'session-transport.js', 'study-transfer-local.js'):
+        for name in ('work-context.js', 'session-transport.js', 'exam-scope.js', 'study-transfer-local.js'):
             source = (Path(__file__).resolve().parents[1] / 'worklist-v0/hpacs-lite' / name).read_text(encoding='utf-8')
             if self.asset_source and self.asset_source[0] == name:
                 source = self.asset_source[1]

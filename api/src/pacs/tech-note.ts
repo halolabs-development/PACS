@@ -44,7 +44,7 @@ export class PacsTechNote {
       : await tx.$queryRaw`SELECT * FROM "StudyState" WHERE uid = ${uid} FOR SHARE`;
     const study = rows[0];
     if (!study || !this.access.visible(study, me)) throw new NotFoundException('검사를 찾을 수 없습니다');
-    await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:'source'});
+    await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:'source',state:study});
     if (writing && study.institutionId !== me) throw new ForbiddenException('촬영 기관에서만 Tech 메모를 작성할 수 있습니다');
     return study;
   }

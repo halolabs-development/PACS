@@ -16,7 +16,8 @@ import type { DraftOwner } from './values';
 import { need, inst } from './access';
 import type { Caller, PacsAccess } from './access';
 import type { PacsAudit } from './audit';
-import { examScopeChanged, resolveExamScope, prepareExamRead, examParentAccess, readableExamRecord, ResolvedExamScope, ExamScopeRequest } from '../exam-merge.service';
+import { nativeReportScope } from '../emr-report/native-snapshot';
+import { examScopeChanged, assertExamSource, resolveExamScope, prepareExamRead, examParentAccess, readableExamRecord, ResolvedExamScope, ExamScopeRequest } from '../exam-merge.service';
 import type { PacsReportEvidence } from './report-evidence';
 import { relatedInsertInput, relatedInsertId, relatedEvidenceIds, relatedRequestHash, relatedProposalHash, relatedInsertionText,
   relatedOwnReceipt, relatedSameBinding, relatedResult, relatedInsertInvalid, relatedInsertRefusal, relatedInsertIdReused }
@@ -145,7 +146,7 @@ export class PacsReportDraft {
     // WORKLIST-SPLIT-UID: observed before the transaction by the caller (dictationGate); refused inside the scope only.
     if (prev) {
       const scope = await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'current' });
-      for (const source of scope.studies) this.studyAccess.assertIdentifiedSource(c, source);
+      assertExamSource(this.studyAccess, c, scope);
     }
     return this.reportDraftRules(prev, c);
   }
@@ -183,8 +184,8 @@ export class PacsReportDraft {
     // transaction; no Orthanc read ever happens under the study lock.
     const prepared = await draftBounded((async () => {
       await prepare();
-      await prepareExamRead(this.prisma, this.studyAccess, c, uid);
-      return resolveExamScope(this.prisma, this.studyAccess, c, { uid, purpose: 'current', phase: 'prepare', intent });
+      await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
+      return resolveExamScope(this.prisma, this.studyAccess, c, { uid, purpose: 'current', phase: 'prepare', intent, identity: true });
     })());
     const sourceRecord = related?.source ? await this.prisma.reportVersion.findUnique({
       where: { uid_version: { uid: related.source, version: related.sourceVersion } }, select: { groupId: true } }) : null;
@@ -208,7 +209,7 @@ export class PacsReportDraft {
       await this.studyAccess.require(c, prepared.studies, tx);
       const sourceParents = sourcePrepared?.lockUids ?? (source === null ? [] : [source]);
       await lockFixedRecords(tx, [...prepared.lockUids, ...sourceParents]);
-      const scope = await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'current', phase: 'write', prepared, intent,
+      const scope = await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'current', phase: 'write', prepared, intent, identity: true,
         related: sourceParents });
       const state = scope.state;
       refuseDestroyed(state);
@@ -412,7 +413,7 @@ export class PacsReportDraft {
     need(c.roles, 'radiologist', '판독문 초안 조회');
     const owner: DraftOwner = { institution: inst(c), sub: c.sub, author: c.actor };
     const receiptId = insertRequestId === undefined ? null : relatedInsertId(insertRequestId);
-    await prepareExamRead(this.prisma, this.studyAccess, c, uid);
+    await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
     const snapshot = await this.prisma.$transaction(async tx => {
       const state = await this.access.gate(uid, c, tx);
       if (!state) throw new NotFoundException('검사를 찾을 수 없습니다');
@@ -443,7 +444,7 @@ export class PacsReportDraft {
   }
 
   async dictationGate(uid: string, c: Caller) {
-    await prepareExamRead(this.prisma, this.studyAccess, c, uid);
+    await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
     return this.access.scopeWrite(uid, c, async tx => { await this.reportDraftGate(uid, c, tx); });
   }
 
@@ -502,13 +503,13 @@ export class PacsReportDraft {
        * 읽기 전에 409 STUDY_IDENTITY_UNRESOLVED다 — 이미 적용·취소·거절된 영수증이 있어도 그 내용도 봉투도 답하지 않는다.
        */
       await draftBounded((async () => {
-        await prepareExamRead(this.prisma,this.studyAccess,c,uid);
+        await prepareExamRead(this.prisma,this.studyAccess,c, uid, true);
       })());
       const early = await this.prisma.$transaction(async tx => {
         const state = await this.access.gate(uid, c, tx);
         if (!state) throw new NotFoundException('검사를 찾을 수 없습니다');
         const parent = await examParentAccess(tx,this.studyAccess,c,uid);
-        for (const source of parent.studies) this.studyAccess.assertIdentifiedSource(c, source);
+        assertExamSource(this.studyAccess, c, parent);
         if (!canReadPreliminary(state, c))
           throw new ForbiddenException(
             `예비 판독(RS: P) 중입니다. ${state?.preReviewer ?? '지정된 판독의'}만 볼 수 있습니다.`);
@@ -533,7 +534,7 @@ export class PacsReportDraft {
           await this.studyAccess.prepare(c,[uid]);
           // 취소는 Source를 읽지 않는다. 새 적용·refused 재시도만 Source의 현재 가독과 원본 관찰을 다시 요구한다(잠금 밖, 유한하게).
           if (related.intent === 'apply') {
-            await prepareExamRead(this.prisma,this.studyAccess,c,related.source.uid);
+            await prepareExamRead(this.prisma,this.studyAccess,c, related.source.uid, true);
           }
         }, async (tx, state, audit, record, sourceScope) => {
         // 지금 Target 개인 초안의 가독이 영수증 판정보다 먼저다(replay도 지금 권한 아래에서만 답한다).
@@ -599,7 +600,7 @@ export class PacsReportDraft {
         try {
           const scope = await resolveExamScope(tx, this.studyAccess, c,
             { uid: related.source.uid, purpose: 'stored', record: { groupId: sourceScope.groupId }, prepared: sourceScope });
-          for (const source of scope.studies) this.studyAccess.assertIdentifiedSource(c, source);
+          assertExamSource(this.studyAccess, c, scope);
         } catch (error) {
           if (error instanceof NotFoundException) return refuse('SOURCE_UNAVAILABLE');
           throw error;
@@ -859,7 +860,7 @@ export class PacsReportDraft {
           reason: `관리자 강제 초안 해제 (해제자: ${c.actor})`,
           author: d.author,   // 지운 관리자가 아니라 실제로 **쓴 사람**이 저자다
           // Merge Exam: the kept text keeps the exam group it was written on.
-          groupId: d.groupId ?? null,
+          ...nativeReportScope(d.groupId ?? null),
         })),
       });
       // 보존한 판 하나하나도 새로 기재된 판독 기록이다(서명 없는 discarded 판이어도 보수적으로 남긴다).

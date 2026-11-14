@@ -40,6 +40,7 @@ export interface ExamGroup { id: string; kind: string; baseUid: string; institut
 export interface ExamScope { groupId: string | null; kind: 'merge' | 'split' | null; baseUid: string; studies: string[] }
 
 export interface ResolvedExamScope extends ExamScope {
+  hasMembership: boolean;
   reportUid: string;
   part: number | null;
   active: boolean;
@@ -60,15 +61,45 @@ export interface ExamScopeRequest {
   prepared?: ResolvedExamScope;
   /** Other report parents needed by a compound operation, locked in the same order. */
   related?: string[];
+  /** Reuse the state already selected by the owning route. */
+  state?: any;
+  /** Ordinary report operations retain their existing ambiguous-source check. */
+  identity?: boolean;
 }
 
 const unique = (uids: string[]) => [...new Set(uids)];
 const absent = () => new NotFoundException('검사를 찾을 수 없습니다');
 const visible = (s: any, c: Caller) => s?.institutionId != null && (s.institutionId === inst(c) || s.teleInstitutionId === inst(c));
 
+/** Record-only readers use SQL membership facts without opening clinical model delegates or reading report text. */
+export async function withGroupedExam<T>(db: any, uid: string, original: () => Promise<T>, grouped: () => Promise<T>): Promise<T> {
+  const members: any[] = await db.$queryRaw`SELECT "groupId" FROM "StudyGroupMember" WHERE "logicalUid"=${uid} OR "studyUid"=${uid}`;
+  return members.length ? grouped() : original();
+}
+
+/** Critical records already carry their own source testimony. Do not observe Orthanc again for an ordinary record. */
+export async function prepareRecordExamRead(db: any, access: StudyAccessService, c: Caller, uid: string) {
+  return withGroupedExam(db, uid, () => access.prepare(c, [uid]), async () => { await prepareExamRead(db, access, c, uid); });
+}
+
+/** Ordinary sources keep the established ambiguity rule; only logical exams require complete source identities. */
+export function assertExamSource(access: StudyAccessService, c: Caller, scope: ResolvedExamScope) {
+  return scope.studies.map(uid => scope.hasMembership ? access.assertIdentifiedSource(c, uid) : access.assertUnsplitSource(c, uid));
+}
+
 /** All membership interpretation lives here. A stored null is explicitly the original study, never today's group. */
 async function describeScope(db: any, request: ExamScopeRequest): Promise<ResolvedExamScope> {
   const { uid, purpose } = request;
+  const parts: ExamGroupMember[] = await db.studyGroupMember.findMany({ where: { OR: [{ logicalUid: uid }, { studyUid: uid }] } });
+  if (!parts.length && request.record?.groupId == null) {
+    if (purpose === 'stored' && !request.record) throw examScopeChanged();
+    const state = request.state !== undefined ? request.state : await db.studyState.findUnique({ where: { uid } });
+    const sources: ResolvedExamScope['sources'] = [{ studyUid: uid, series: { mode: 'all', uids: [] } }];
+    const scopeRevision = createHash('sha256').update(JSON.stringify([uid, null, null, sources, []])).digest('hex');
+    return { hasMembership: false, groupId: null, kind: null, baseUid: uid, reportUid: uid, part: null, active: true,
+      sources, studies: [uid], lockUids: [uid], state, scopeRevision,
+      generation: createHash('sha256').update(JSON.stringify([scopeRevision, purpose !== 'stored' ? state?.draftEpoch ?? null : null])).digest('hex') };
+  }
   let group: ExamGroup | undefined;
   let history: string[] = [];
   if (purpose === 'stored') {
@@ -87,7 +118,6 @@ async function describeScope(db: any, request: ExamScopeRequest): Promise<Resolv
   }
   // A retired logical part must never turn into an original DICOM study.
   if (!group) {
-    const parts: ExamGroupMember[] = await db.studyGroupMember.findMany({ where: { logicalUid: uid } });
     history = purpose === 'stored' ? [] : unique(parts.map(p => p.groupId)).sort();
     const retired = parts.find(p => p.studyUid !== uid);
     if (retired) {
@@ -112,8 +142,8 @@ async function describeScope(db: any, request: ExamScopeRequest): Promise<Resolv
     sources = [{ studyUid: selected.studyUid, series: { mode: part === 0 ? 'exclude' : 'include', uids: [...second.seriesUids].sort() } }];
   } else if (group) throw examScopeChanged();
   else sources = [{ studyUid: uid, series: { mode: 'all', uids: [] } }];
-  const state = await db.studyState.findUnique({ where: { uid } });
-  const scope = { groupId: group?.id ?? null, kind: (group?.kind ?? null) as ExamScope['kind'], baseUid: group?.baseUid ?? uid,
+  const state = request.state !== undefined ? request.state : await db.studyState.findUnique({ where: { uid } });
+  const scope = { hasMembership: !!group || parts.length > 0, groupId: group?.id ?? null, kind: (group?.kind ?? null) as ExamScope['kind'], baseUid: group?.baseUid ?? uid,
     reportUid: uid, part, active: group ? group.dissolvedAt == null : true, sources,
     ...(group?.kind === 'merge' && group.baseUid !== uid ? { redirectUid: group.baseUid } : {}),
     studies: sources.map(s => s.studyUid), lockUids: unique([uid, ...members.flatMap(m => [m.logicalUid, m.studyUid])]).sort(), state };
@@ -128,18 +158,29 @@ async function describeScope(db: any, request: ExamScopeRequest): Promise<Resolv
  * widens the lock set in response to a concurrent group change. Reads supplied a transaction stay on that transaction.
  */
 export async function resolveExamScope(db: any, access: StudyAccessService, c: Caller, request: ExamScopeRequest): Promise<ResolvedExamScope> {
+  let state = request.state;
   if (request.phase === 'write') {
     if (!request.prepared) throw examScopeChanged();
     await access.require(c, request.prepared.studies, db);
-    await lockExamStates(db, unique([...request.prepared.lockUids, ...request.related ?? []]).sort());
+    const rows = await lockExamStates(db, unique([...request.prepared.lockUids, ...request.related ?? []]).sort());
+    state = rows.find(row => row.uid === request.uid) ?? null;
   }
-  const scope = await describeScope(db, request);
+  const scope = await describeScope(db, { ...request, state });
   if (request.prepared && scope.generation !== request.prepared.generation) {
     const before = request.prepared;
     if (scope.scopeRevision === before.scopeRevision) throw draftConflict();
     throw examScopeChanged();
   }
   if (!visible(scope.state, c)) throw absent();
+  if (!scope.hasMembership) {
+    if (request.phase === 'prepare') {
+      await access.prepare(c, scope.studies);
+      if (request.identity) await access.prepareSourceIdentity(c, scope.studies);
+    }
+    await access.require(c, scope.studies, db);
+    if (request.phase !== 'prepare' && request.identity && request.intent !== 'cleanup') assertExamSource(access, c, scope);
+    return scope;
+  }
   if (request.phase === 'prepare') {
     await access.prepare(c, scope.studies);
     if (request.intent !== 'cleanup') await access.prepareSourceIdentity(c, scope.studies);
@@ -183,25 +224,25 @@ function requireCurrentTarget(scope: ResolvedExamScope) {
 }
 
 /** Prepare all historical originals once, outside a read transaction. The record itself is selected inside it. */
-export async function prepareExamRead(db: any, access: StudyAccessService, c: Caller, uid: string) {
+export async function prepareExamRead(db: any, access: StudyAccessService, c: Caller, uid: string, identity = false) {
   const touched: ExamGroupMember[] = await db.studyGroupMember.findMany({ where: { logicalUid: uid } });
   const members: ExamGroupMember[] = touched.length
     ? await db.studyGroupMember.findMany({ where: { groupId: { in: unique(touched.map(m => m.groupId)) } } }) : [];
   const studies = unique(members.length ? members.map(m => m.studyUid) : [uid]);
   await access.prepare(c, studies);
-  await access.prepareSourceIdentity(c, studies);
+  if (touched.length || identity) await access.prepareSourceIdentity(c, studies);
   return studies;
 }
 
 /** Authorization of a report parent, including a retired split part. It does not relabel any stored body. */
 export async function examParentAccess(db: any, access: StudyAccessService, c: Caller, uid: string, prepare = false,
-    intent: ExamScopeRequest['intent'] = 'reading') {
+    intent: ExamScopeRequest['intent'] = 'reading', state?: any) {
   const parts: ExamGroupMember[] = await db.studyGroupMember.findMany({ where: { logicalUid: uid } });
   const part = parts.find(p => p.studyUid !== uid);
   if (part && prepare) await prepareExamRead(db, access, c, uid);
   return resolveExamScope(db, access, c, part
-    ? { uid, purpose: 'stored', record: { groupId: part.groupId }, intent }
-    : { uid, purpose: 'source', intent });
+    ? { uid, purpose: 'stored', record: { groupId: part.groupId }, intent, state }
+    : { uid, purpose: 'source', intent, state });
 }
 
 export async function prepareExamParent(db: any, access: StudyAccessService, c: Caller, uid: string) {
@@ -269,6 +310,17 @@ export function scopeIncludesSeries(scope: ResolvedExamScope, studyUid: string, 
 export function examScopeView(scope: ResolvedExamScope) {
   return { reportUid: scope.reportUid, groupId: scope.groupId, kind: scope.kind, part: scope.part, active: scope.active,
     sources: scope.sources, generation: scope.generation };
+}
+
+/** Existing wire bodies gain scope fields only when there is a grouping history to describe. */
+export function storedExamScope(scope: ResolvedExamScope) {
+  return scope.hasMembership ? examScopeView(scope) : undefined;
+}
+
+/** A fixed record needs its saved membership reference, never the current report text. */
+export function reportExamReference(db: any, uid: string, version?: number) {
+  return version === undefined ? db.report.findUnique({ where: { uid }, select: { groupId: true } })
+    : db.reportVersion.findUnique({ where: { uid_version: { uid, version } }, select: { groupId: true } });
 }
 
 /** Every report target associated with a source, including ended groups. This enumerates references, not access. */
@@ -439,7 +491,7 @@ export class ExamMergeService {
       if (refusals.length) throw this.refused('합칠 수 없습니다', refusals);
       const id = randomUUID(), at = new Date();
       await tx.studyGroup.create({ data: { id, institutionId: me, kind: 'merge', baseUid, createdBy: c.actor, createdBySub: c.sub, createdAt: at } });
-      const order = [baseUid, ...sorted.filter(uid => uid !== baseUid)];
+      const order = [baseUid, ...uids.filter(uid => uid !== baseUid)];
       await tx.studyGroupMember.createMany({ data: order.map((uid, part) => ({ groupId: id, logicalUid: uid, studyUid: uid, part, seriesUids: [],
         ...this.studyAccess.assertIdentifiedSource(c, uid) })) });
       await this.newEpochs(tx, sorted);
@@ -483,14 +535,14 @@ export class ExamMergeService {
     if(Object.keys(query).some(k=>!['purpose','version'].includes(k))||query.purpose!==undefined&&!['current','source','stored'].includes(query.purpose)
       ||query.version!==undefined&&(!/^[1-9]\d*$/.test(String(query.version))||!Number.isSafeInteger(Number(query.version))))
       throw new BadRequestException('검사 범위 조회 형식을 확인하세요');
-    await prepareExamRead(this.prisma, this.studyAccess, c, uid);
+    await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
     return this.prisma.$transaction(async tx=>{
       const purpose=query.purpose??(query.version===undefined?'current':'stored');
       if(query.version!==undefined&&purpose!=='stored')throw new BadRequestException('저장 판의 범위를 선택하세요');
       const record=purpose==='stored'?(query.version===undefined?await tx.report.findUnique({where:{uid}})
         :await tx.reportVersion.findUnique({where:{uid_version:{uid,version:Number(query.version)}}})):undefined;
       if(purpose==='stored'&&!record)throw absent();
-      const {state,lockUids,scopeRevision,...scope}=await resolveExamScope(tx,this.studyAccess,c,{uid,purpose,record});
+      const {state,lockUids,scopeRevision,hasMembership,...scope}=await resolveExamScope(tx,this.studyAccess,c,{uid,purpose,record,identity:true});
       if(!canReadPreliminary(state,c))throw absent();
       return scope;
     },{isolationLevel:'RepeatableRead'});

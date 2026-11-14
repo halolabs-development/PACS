@@ -18,6 +18,7 @@ import { citationLimit, structureLimit, isStructureCheck, isCitationCheck } from
 import type { PacsReportEvidence } from './report-evidence';
 import type { PacsReportDraft, DraftRequestFacts, EndedWork } from './report-draft';
 import { resolveExamScope, examScopeChanged } from '../exam-merge.service';
+import { nativeReportScope } from '../emr-report/native-snapshot';
 
 export class PacsReportCommit {
   constructor(
@@ -287,9 +288,9 @@ export class PacsReportCommit {
          * own group) goes on. Merge refuses a study with a report or a draft, so this meets a report saved on a merged exam
          * that was then unmerged.
          */
-        const scope = await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'current', intent });
-        if (cur) await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: cur, intent });
-        if (draft) await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: draft, intent });
+        const scope = await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'current', intent, state: prev });
+        if (cur) await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: cur, intent, state: prev });
+        if (draft) await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: draft, intent, state: prev });
         if (action !== 'reset' && ((cur && (cur.findings || cur.conclusion || cur.recommendation) && (cur.groupId ?? null) !== scope.groupId)
             || (draft && (draft.groupId ?? null) !== scope.groupId)))
           throw examScopeChanged();
@@ -390,7 +391,7 @@ export class PacsReportCommit {
             uid, version, action: 'discarded',
             findings: cur.findings, conclusion: cur.conclusion,
             recommendation: cur.recommendation,
-            groupId: cur.groupId ?? null,
+            ...nativeReportScope(cur.groupId ?? null),
             // 비우기 직전의 본문을 판으로 남기면서 그 증언만 버리면, 보존된 글이 어디서
             // 왔는지 되짚을 수 없다. 같은 머리 판 행에서 읽은 그대로 함께 보존한다.
             citations: headCitations,
@@ -429,13 +430,13 @@ export class PacsReportCommit {
         const savedVersion = await tx.reportVersion.create({ data: {
           uid, version, action, ...content, citations,
           ...(structured.length ? { structured } : {}),
-          reason, author: c.actor, groupId: scope.groupId } });
+          reason, author: c.actor, ...nativeReportScope(scope.groupId, scope.hasMembership) } });
         let signature = null;
         // An empty reset before any report exists is only a state change. C2
         // cancellation refers to a real previous version; never invent one.
         // 수정(amend)이 묶는 이전 판은 직전 머리 판(`cur.version`)이다 — 두 번째 수정은 첫 수정 판을 잇는다.
         if (['approve', 'amend', 'addendum'].includes(action) || action === 'reset' && cur) {
-          await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:'stored',record:savedVersion,intent});
+          await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:'stored',record:savedVersion,intent,state});
           if (!this.signing || !facts.request) throw new ServiceUnavailableException('온라인 서명 연결을 확인할 수 없습니다. 입력은 보존됩니다.');
           try { signature = await this.signing.sign(tx, facts.request, facts.requestId, savedVersion, cur?.version ?? 0); }
           catch (error) {
