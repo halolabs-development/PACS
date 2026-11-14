@@ -1283,13 +1283,16 @@ class RelatedLayoutDOMTest(Base):
         inbox = page.get_by_role("region", name="Critical Results", exact=True, include_hidden=True)
         harness.expect(inbox).to_be_visible(timeout=10000)
         harness.expect(inbox.get_by_role("status")).not_to_have_text("Loading")
-        # A reader brings the report column into view: nothing moves beside the image; stacked below it, the page
-        # scrolls down to the column's end.
+        self.bring_report_into_view(page, parts)
+        return w, parts
+
+    def bring_report_into_view(self, page, parts):
+        """A reader brings the report column into view: nothing moves beside the image; stacked below it, the page
+        scrolls down to the column's end."""
         js(page, "let c = arg[0]; while (c && !arg.every(e => c.contains(e))) c = c.parentElement;"
                  " c.scrollIntoView({block: 'end', inline: 'nearest'}); return null;",
            [parts[2].element_handle(), *[b.element_handle() for b in parts[0]]])
         page.wait_for_timeout(150)
-        return w, parts
 
     def test_rl13_report_buttons_stay_in_the_bottom_row_and_only_the_report_text_scrolls(self):
         for size in self.ROW_SIZES:
@@ -1347,20 +1350,14 @@ class RelatedLayoutDOMTest(Base):
     def test_rl13b_report_buttons_across_window_widths(self):
         """The same row at every landscape width from 1024 to 1920 (heights 720-1080), on one long report: opened, and
         after typing at the end of Findings. How many lines the row takes is measured (it wraps in a narrow column).
-        Not claimed: 1024 and 1152 wide at 720 high. Their report column (340px wide, 229px high) holds the three-line
-        target line (80px), the editor's head, the field region's floor and the two-line row (63px) only until the
-        Unsaved Draft notice (41px) joins it while typing; the row is then 8px short. Those two windows are measured
-        (RL-MEASURE "not claimed") before any typing, not asserted."""
+        1024 and 1152 wide at 720 high were not claimed until the rows above the editor gave way (reading-workspace.css,
+        the report column's height): their column (340px wide, 229px high) held the three-line target line (80px), the
+        editor's head, the field region's floor and the two-line row (63px) only until the Unsaved Draft notice joined."""
         w, parts = self.open_report_row((1366, 768))
         page, findings = w.page, parts[1][0]
         for height in (720, 768, 900, 1080):
             for width in (1024, 1152, 1280, 1366, 1440, 1536, 1600, 1680, 1792, 1920):
                 tag = f"RL-13b {width}x{height}"
-                if height == 720 and width < 1280:
-                    page.set_viewport_size({"width": width, "height": height})
-                    page.wait_for_timeout(150)
-                    measure(f"{tag} not claimed", report_row=self.report_row(page, parts))
-                    continue
                 with self.subTest(size=tag):
                     page.set_viewport_size({"width": width, "height": height})
                     page.wait_for_timeout(150)
@@ -1373,6 +1370,88 @@ class RelatedLayoutDOMTest(Base):
                     self.assert_report_row(w, f"{tag} Findings end", parts, seen, fixed=("row",))
                     findings.evaluate("e => e.blur()")
         w.screen.finish()
+
+    # ── RL-13c: the same row whatever stands above the editor ─────────────────────────────────────────────────────
+    # On Windows fonts the head of a 340px Reading column takes two lines (Pop Out and Image Report wrap), and a notice
+    # above the editor then carried Approve & Next out of the window: Save Failed (73px) at 1152x768, a hold by another
+    # reader or the citations at 720px high. The report column's height is divided in one place (reading-workspace.css):
+    # the field region yields to one text line, then every other row before the button row to one line of its own; the
+    # row never yields. Each case is judged in every window
+    # below and in three fonts (the page's own, and Arial and Verdana where installed - wider glyphs wrap the head, the
+    # notices and the row onto more lines): the row whole and on top, the head whole, the visible report text above
+    # the row, and the first line of every row above the editor whole (the Reading target line excepted: it yields first
+    # and all the way, the head naming the same study).
+    # Every width around the 1251px head boundary at the two short heights, the corners above them, a short 900px
+    # window and the two portrait ones (stacked Reading at 768px).
+    ROW_STATE_WINDOWS = [(w_, h_) for h_ in (720, 768) for w_ in (1024, 1152, 1250, 1251, 1366, 1920)] + \
+                        [(1024, 900), (1251, 900), (1024, 1080), (1920, 1080), (900, 600), (900, 1200), (768, 1024)]
+    ROW_FONTS = ("", "Arial, sans-serif", "Verdana, sans-serif")
+    OTHER_HOLDER = "syn-other-reader@synthetic.test"
+    # The first text line of each row before the editor, against every box that clips it.
+    ABOVE_PROBE = r"""
+      const compose = document.querySelector('.report-compose');
+      return [...compose.parentElement.children].filter(e => (e.compareDocumentPosition(compose) & 4) && e.getBoundingClientRect().height
+                                                             && e.id !== 'reading-report-target')
+        .map(e => { const t = texts(e)[0]; if (!t) return null; const line = firstRect(t), cut = clip(t.parentElement, line);
+          return {row: e.id || e.className, text: t.nodeValue.trim().slice(0, 40), line, cut,
+                  whole: cut[1] <= line[1] + 0.5 && cut[3] >= line[3] - 0.5}; }).filter(Boolean);"""
+    FONT = """font => { let tag = document.getElementById('rl13c-font');
+      if (!tag) { tag = document.createElement('style'); tag.id = 'rl13c-font'; document.head.append(tag); }
+      tag.textContent = font ? `.report-p, .report-p * { font-family: ${font} !important; }` : ''; }"""
+
+    def open_row_case(self, *, holder=None, save_failed=False, related=False):
+        long_rows = self.report_row_rows()
+        long_rows[0]["state"]["holder"] = holder
+        w = self.open_reading((1366, 768), long_rows, prepare=self.answer_empty_reads)
+        page = w.page
+        # The fields by id: held by another reader, their accessible names carry the read-only reason too.
+        buttons, _, title = self.report_row_parts(page)
+        parts = buttons, [page.locator("#findings"), page.locator("#conclusion")], title
+        harness.expect(parts[1][0]).to_have_value(self.LONG_FINDINGS)
+        inbox = page.get_by_role("region", name="Critical Results", exact=True, include_hidden=True)
+        harness.expect(inbox).to_be_visible(timeout=10000)
+        harness.expect(inbox.get_by_role("status")).not_to_have_text("Loading")
+        if holder:
+            harness.expect(page.locator("#holdmsg")).to_contain_text("판독 중입니다")
+        if related:
+            w.related_row(REPORT_DESC).click()
+            harness.expect(page.locator("#related-mode")).to_be_visible()
+        if save_failed:
+            # Typing: the draft's baseline read is not answered here, so after some 19s the notice above the editor
+            # settles on Save Failed (73px at 1152x768, three lines), the one train15 met in RL-13b.
+            findings = parts[1][0]
+            findings.focus()
+            page.keyboard.press("Control+End")
+            page.keyboard.type("\nSYN unsaved line")
+            harness.expect(page.locator("#draftmsg")).to_contain_text("Save Failed", timeout=40000)
+            findings.evaluate("e => e.blur()")
+        return w, parts
+
+    def sweep_row_case(self, w, parts, name):
+        page = w.page
+        for width, height in self.ROW_STATE_WINDOWS:
+            page.set_viewport_size({"width": width, "height": height})
+            page.wait_for_timeout(150)
+            for font in self.ROW_FONTS:
+                tag = f"RL-13c {name} {width}x{height} {font.split(',')[0] or 'page font'}"
+                with self.subTest(case=tag):
+                    page.evaluate(self.FONT, font)
+                    self.bring_report_into_view(page, parts)
+                    self.assert_report_row(w, tag, parts)
+                    above = js(page, self.ABOVE_PROBE)
+                    measure(tag, above=above)
+                    for row in above:
+                        self.assertTrue(row["whole"], f"{tag}: the first line of {row['row']} above the editor is cut {row}")
+        page.evaluate(self.FONT, "")
+
+    def test_rl13c_report_buttons_with_notices_above_the_editor(self):
+        cases = (("Reading, held by another reader", dict(holder=self.OTHER_HOLDER)),
+                 ("Reading, Save Failed", dict(save_failed=True)),
+                 ("Reading + Related Report, held by another reader", dict(holder=self.OTHER_HOLDER, related=True)))
+        for name, options in cases:
+            w, parts = self.open_row_case(**options)
+            self.sweep_row_case(w, parts, name)
+            w.screen.finish()
 
 
 # ── RelatedLayoutEquivalence (R-EQ; local record, not in CI) ────────────────────────────────────────────────────────

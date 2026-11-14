@@ -135,12 +135,18 @@ body.reading #dictation-pane:has(> #dictation-text:not([hidden])) > .dictation-f
    (report-editor-frame.js fit), and the column scrolled as a whole, so a long report carried the button row and the
    editor's head out of the window (Save at y 3801 of a 768px window, 80 Findings lines). Here the field region
    (.redit) is the column's scroller: the rows above it and the button row below it keep their places, and the caret
-   is kept inside the region, which the row never overlaps. The region gives up height first, down to one text line
-   (its 32px minimum, line 69: the caret's line still shows while typing, the label scrolled away); only below that
-   does the column itself scroll again, and then the rows under the button row (Critical Results) leave the window
-   before the row does. Measured limit (RL-13b): 1024-1250px wide and 720px high leave the column 229px, which holds
-   the 80px three-line target line, the head, that floor and the 63px two-line row until the 41px Unsaved Draft
-   notice joins them; the row is then 8px short.
+   is kept inside the region, which the row never overlaps. The column's height, in order (the button row never yields):
+   1. The region gives up height first, down to one text line (its 32px minimum, line 69: the caret's line still shows
+      while typing, the label scrolled away). The editor's head keeps every one of its lines.
+   2. Then every other row before the button row yields, each down to one line of its own, and scrolls its own words
+      (the rule after .redit's below): the target line first and all the way (the editor's head names the same study on
+      its first line), the notices (report, draft, hold, on-hold, citations, Recommendation), and the questions under
+      the editor down to their bar. The dictation pane keeps its own rule above (its transcript yields).
+   3. Only below those floors does the column itself scroll, and the rows under the button row (image requests,
+      Critical Results) leave the window before the row does.
+   Until 2026-11-15 step 2 did not exist: the editor's head takes two lines below 1251px since Image Report, and at
+   1024-1250px wide a notice above the editor then carried the row out of the window - Unsaved Draft at 720px high,
+   Save Failed (73px) at 768 (Approve & Next 0.43 in the window at 1152x768), a hold by another reader, the citations.
    Beside the image the column fits the window: the 621px work-row and 370px column minimums made the outer column
    scroll 73px at 1366x768 (also 1024x768 and 1280x720). They stay while Study Info is open above the work row.
    Stacked below the image (850px and narrower) the column takes the window's height, so the page scrolls to it once
@@ -150,6 +156,16 @@ body.reading .report-compose { flex: 1 1 0; }
    edge itself, the line's fractional pixel lay 0.5px under the row at 768x1024 (RL-13). The native caret scroll and
    report-editor-frame.js both keep this room. */
 body.reading .redit { flex: 1 1 0; overflow-y: auto; scroll-padding-block: 4px; }
+/* Step 2 above. The floor is one line of the row's text inside its own padding: content-box, as the page is border-box,
+   where 1lh held the padding and left a 12px sliver of an 11px line. `safe`: a centred notice that yields shows its
+   first line, not its middle (its wrapped message lost its top lines out of reach above the box). Each row yields in
+   proportion to its height, so an opened list gives the most. */
+body.reading .report-p > :not(.report-compose, #dictation-pane, .rfoot2, .rfoot2 ~ *) { flex-shrink: 1;
+  box-sizing: content-box; min-height: 1lh; overflow-y: auto; align-items: safe center; }
+body.reading .report-p > #reading-report-target { flex-shrink: 20; min-height: 0; }
+/* The questions keep their bar whole (main.html: 24px buttons, 3px padding); only their opened list yields. */
+body.reading .report-p > #question-p:not([hidden]) { display: flex; flex-direction: column; min-height: calc(24px + 2 * 3px); }
+body.reading #question-p > #question-pane { flex: 0 1 auto; min-height: 0; }
 /* The target line at the column's top names the study in full. In the editor's head the same words take what is left
    of its first line instead of a line of their own (one or two more head lines, 18-37px, in a 340-420px column). */
 body.reading #report-editor-target { flex: 1 1 0; }
