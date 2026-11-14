@@ -57,6 +57,14 @@ class FilmSite(rf.FlowSite):
         self.held_job_reads = []
         self.plan_changed = False           # the next print is refused: the series changed since its preview
         self.source_uids = {}
+        self.exam_scopes = {}
+
+    def list_body(self, account, rename=None):
+        body = super().list_body(account, rename)
+        for row in body["studies"]:
+            if row["uid"] in self.exam_scopes:
+                row["examScope"] = self.exam_scopes[row["uid"]]
+        return body
 
     def handle(self, route, request):
         url = urlparse(request.url)
@@ -238,18 +246,27 @@ class FilmPrintWindow(unittest.TestCase):
         self.assertEqual(SERIES[1]["uid"], self.site.layouts[-1]["seriesUid"])
 
     def test_scope_generation_change_disables_the_old_film_plan(self):
-        self.start()
+        self.start(self.merged_site())
         self.open_study()
         self.open_from_more()
-        self.page.evaluate("""() => { const row=studies.find(s=>s.uid===selectedUid); row.draftEpoch='changed'; render(); }""")
+        expect(self.page.locator("#film-print-go")).to_be_enabled()
+        self.site.exam_scopes[h.UID]["generation"] = "scope-2"
+        self.page.evaluate("() => load()")
         expect(self.page.locator("#film-print-go")).to_be_disabled()
         expect(self.page.locator("#film-print-status")).to_contain_text("검사 범위가 바뀌었습니다")
         self.assertEqual([],self.site.posts)
 
+    def merged_site(self):
+        site = FilmSite()
+        site.exam_scopes[h.UID] = {"reportUid": h.UID, "groupId": "syn-group", "kind": "merge", "part": None,
+                                  "active": True, "generation": "scope-1",
+                                  "sources": [{"studyUid": uid, "series": {"mode": "all", "uids": []}}
+                                              for uid in (h.UID, h.UID_B)]}
+        site.source_uids[SERIES[1]["uid"]] = h.UID_B
+        return site
+
     def test_film_series_choice_keeps_the_server_original_uid(self):
-        site=FilmSite()
-        site.source_uids[SERIES[1]['uid']]=h.UID_B
-        self.start(site)
+        self.start(self.merged_site())
         self.open_study()
         self.open_from_more()
         self.page.locator('#film-print-series').select_option(index=1)
@@ -258,6 +275,24 @@ class FilmPrintWindow(unittest.TestCase):
         self.wait_status('Printed')
         self.assertEqual(h.UID_B,self.site.posts[0]['sourceUid'])
         self.assertEqual(h.UID,self.site.posts[0]['studyUid'])
+        self.assertEqual(h.UID_B, self.site.layouts[-1]['sourceUid'])
+
+    def test_plain_study_draft_epoch_keeps_the_film_plan_and_plain_requests(self):
+        self.start()
+        self.open_study()
+        self.open_from_more()
+        self.page.evaluate("""() => { const row=studies.find(s=>s.uid===selectedUid); row.draftEpoch='changed'; render(); }""")
+        expect(self.page.locator("#film-print-go")).to_be_enabled()
+        expect(self.page.locator("#film-print-status")).to_be_empty()
+        expect(self.page.locator("#film-print-series option")).to_have_text([
+            "#1 · CT · SYN AXIAL · 7 images", "#2 · CT · SYN CORONAL · 2 images"])
+        self.page.locator("#film-print-series").select_option(SERIES[1]["uid"])
+        expect(self.page.locator("#film-print-film-of")).to_have_text("Film 1 of 1")
+        self.page.locator("#film-print-go").click()
+        self.wait_status("Printed")
+        self.assertEqual(SERIES[1]["uid"], self.site.posts[0]["seriesUid"])
+        for body in [*self.site.layouts, *self.site.posts]:
+            self.assertNotIn("sourceUid", body)
 
     def test_destination_decides_the_list_and_the_main_button(self):
         self.start()
@@ -282,7 +317,7 @@ class FilmPrintWindow(unittest.TestCase):
         self.wait_status("Printed")
         self.assertEqual(["Sending", "Sent", "Printed"], [s.split(" ")[0] for s in self.statuses()])
         post = self.site.posts[0]
-        self.assertEqual({"studyUid": h.UID, "sourceUid": h.UID, "seriesUid": SERIES[0]["uid"], "format": "2x2", "filmSize": "14INX17IN", "orientation": "PORTRAIT",
+        self.assertEqual({"studyUid": h.UID, "seriesUid": SERIES[0]["uid"], "format": "2x2", "filmSize": "14INX17IN", "orientation": "PORTRAIT",
                           "film": 1, "copies": 2, "destination": {"kind": "printer", "peerId": PRINTER_A["id"]},
                           "plan": self.site.layout_of(self.site.layouts[-1])["plan"]},
                          {k: v for k, v in post.items() if k != "requestId"})

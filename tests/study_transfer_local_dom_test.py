@@ -341,6 +341,7 @@ class TransferSite(rf.FlowSite):
 
     def __init__(self, count=3):
         super().__init__(count)
+        self.exam_scopes = {}
         self.imports = []               # each POST /api/dicom-import as the server received it
         self.held_imports = []          # (route, record) answered by the case
         self.import_answers = []        # per POST: a result dict | (status, body) | "hold" | "abort"
@@ -363,6 +364,8 @@ class TransferSite(rf.FlowSite):
         body = super().list_body(account, rename)
         for row in body["studies"]:
             row["tele"] = row["uid"] in self.tele
+            if row["uid"] in self.exam_scopes:
+                row["examScope"] = self.exam_scopes[row["uid"]]
         return body
 
     def api(self, route, request, method, path, query):
@@ -956,11 +959,13 @@ class TransferPanelPage(rf.ReportFlowPage):
         self.attach_site()
         self.attach_scope = lambda uid: {"reportUid": uid, "groupId": "syn-group", "kind": "merge", "part": None, "generation": "scope-2",
             "sources": [{"studyUid": source, "series": {"mode": "all", "uids": []}} for source in (UID_A, h.UID_B)]}
+        self.site.exam_scopes[UID_A] = self.attach_scope(UID_A)
         self.open_as(TECH, "Technician")
         self.attach_files([{"name": "referral.pdf", "mimeType": "application/pdf", "buffer": self.PDF}], via=h.PATIENT)
         dialog=self.attach_dialog()
         expect(dialog.locator("#attach-send")).to_be_disabled()
         dialog.get_by_role("combobox", name="Original exam").select_option(h.UID_B)
+        expect(dialog.locator("#attach-send")).to_be_enabled()
         dialog.locator("#attach-send").click()
         expect(dialog.locator(".attach-files li")).to_contain_text("Attached")
         self.assertEqual((h.UID_B, "scope-2"), (self.attach_posts[0]["sourceUid"], self.attach_posts[0]["generation"]))
@@ -970,6 +975,7 @@ class TransferPanelPage(rf.ReportFlowPage):
         self.attach_allowed=False
         self.attach_scope = lambda uid: {"reportUid": uid, "groupId": "syn-group", "kind": "split", "part": 1, "generation": "scope-3",
             "sources": [{"studyUid": UID_A, "series": {"mode": "include", "uids": [UID_A + ".1"]}}]}
+        self.site.exam_scopes[UID_A] = self.attach_scope(UID_A)
         self.open_as(TECH, "Technician")
         self.attach_files([{"name": "referral.pdf", "mimeType": "application/pdf", "buffer": self.PDF}], via=h.PATIENT)
         dialog=self.attach_dialog()
@@ -977,6 +983,32 @@ class TransferPanelPage(rf.ReportFlowPage):
         expect(dialog).to_contain_text("새 문서를 붙일 수 없습니다")
         expect(dialog.locator(".attach-files li")).to_have_count(1)
         self.assertEqual([],self.attach_posts)
+
+    def test_plain_study_attaches_without_an_original_choice_or_scope_headers(self):
+        self.attach_site()
+        self.attach_list_held = []
+        self.open_as(TECH, "Technician")
+        self.attach_files([{"name": "referral.pdf", "mimeType": "application/pdf", "buffer": self.PDF}], via=h.PATIENT)
+        dialog = self.attach_dialog()
+        self.wait(lambda: len(self.attach_list_held) == 1, "the opening list read")
+        opening = self.attach_list_held.pop()
+        # Plain studies can send before the attachment list arrives, as on main.
+        expect(dialog.locator("#attach-send")).to_be_enabled()
+        expect(dialog.get_by_role("combobox", name="Original exam")).to_be_hidden()
+        dialog.locator("#attach-send").click()
+        expect(dialog.locator(".attach-files li")).to_contain_text("Attached")
+        self.assertEqual(1, len(self.attach_posts))
+        post = self.attach_posts[0]
+        self.assertEqual((UID_A, "application/pdf", "referral.pdf", self.PDF),
+                         (post["uid"], post["type"], post["name"], post["body"]))
+        self.assertIsNone(post["sourceUid"])
+        self.assertIsNone(post["generation"])
+        self.wait(lambda: len(self.attach_list_held) == 1, "the post-upload list read")
+        self.release_list(self.attach_list_held.pop())
+        expect(dialog.locator(".attach-attached li")).to_have_count(1)
+        self.release_list(opening)
+        expect(dialog.get_by_role("combobox", name="Original exam")).to_be_hidden()
+        expect(dialog.locator(".attach-status")).to_be_empty()
 
     def test_fc076_attach_document_menu_places_bar_button_and_received_study(self):
         self.attach_site()
@@ -1159,16 +1191,14 @@ class TransferPanelPage(rf.ReportFlowPage):
         self.attach_site()
         self.open_as(TECH, "Technician")
         self.attach_unconfirmed = 1
+        self.attach_list_held = []
         self.attach_files([{"name": "scan.png", "mimeType": "image/png", "buffer": self.png(3, 2)}], via=h.PATIENT)
         dialog = self.attach_dialog()
-        # The initial answer selects the server-authorized source; delay a later refresh, not this prerequisite.
-        expect(dialog.locator("#attach-send")).to_be_enabled()
-        self.attach_list_held = []
+        self.wait(lambda: len(self.attach_list_held) == 1, "the opening list read")
+        opening = self.attach_list_held.pop()
         dialog.locator('.attach-files li[data-index="0"] button', has_text="Rotate").click()
         dialog.locator("#attach-send").click()
         expect(dialog.locator('.attach-files li[data-index="0"] .attach-result')).to_contain_text("Failed — 저장 결과를 아직 확인하지 못했습니다")
-        self.wait(lambda: len(self.attach_list_held) == 1, "the post-attempt list read")
-        opening = self.attach_list_held.pop()
         # The request may be stored: the file cannot be turned or removed, and a retry sends the same bytes under the same id.
         expect(dialog.locator('.attach-files li[data-index="0"] button', has_text="Rotate")).to_be_disabled()
         expect(dialog.locator('.attach-files li[data-index="0"] button', has_text="Remove")).to_be_disabled()
@@ -1183,7 +1213,7 @@ class TransferPanelPage(rf.ReportFlowPage):
         self.assertEqual(3, len(self.attach_posts))
         self.assertEqual(1, len({(p["request"], p["body"]) for p in self.attach_posts}), "the same request, the same bytes")
         expect(dialog.locator(".attach-attached li")).to_have_count(1)
-        # The older refresh comes back last, empty: it does not replace the newer list.
+        # The list read the dialog started with comes back last, empty: it does not replace the newer list.
         self.release_list(opening)
         self.settle(300)
         expect(dialog.locator(".attach-attached li")).to_have_count(1)
@@ -3231,7 +3261,7 @@ def main():
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     names = sys.argv[1:] or own_cases()
     suite = unittest.TestSuite(TransferPanelPage(n) for n in names)
-    result = unittest.TextTestRunner(verbosity=2, failfast=True).run(suite)
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
     return 0 if result.wasSuccessful() and not result.skipped else 1
 
 
