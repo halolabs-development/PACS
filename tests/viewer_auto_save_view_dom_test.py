@@ -126,8 +126,8 @@ SETUP = """config => {
     await Promise.race([hold, new Promise((_, reject) => signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))))]);
   };
   window.fetch = async (url, init = {}) => {
-    const s = synServer, path = String(url), method = init.method || 'GET';
-    synRequests.push(method + ' ' + path);
+    const s = synServer, path = new URL(url, location.origin).pathname, method = init.method || 'GET';
+    synRequests.push(method + ' ' + String(url));
     if (path === VIEW && method === 'GET') {
       const hold = s.holdRead; s.holdRead = null;
       await held(hold, init.signal);

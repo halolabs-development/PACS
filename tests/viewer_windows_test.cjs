@@ -26,11 +26,11 @@ test('scope refuses other origins, duplicate queries, malformed and excessive st
   assert.deepEqual(model.scope(url(1), origin), { studies: ['1.2.1'], series: null });
   for (const href of ['https://other.test/ohif/viewer?StudyInstanceUIDs=1.2', '/other?StudyInstanceUIDs=1.2',
     '/ohif/viewer?StudyInstanceUIDs=1.2&StudyInstanceUIDs=1.3', '/ohif/viewer?StudyInstanceUIDs=1.2,1.2',
-    '/ohif/viewer?StudyInstanceUIDs=' + Array.from({ length: 11 }, (_, i) => '1.' + (i + 2)).join(','),
+    '/ohif/viewer?StudyInstanceUIDs=1.2,1.3,1.4',
     '/ohif/viewer?StudyInstanceUIDs=1..2',
     '/ohif/viewer?StudyInstanceUIDs=1.2&initialSeriesInstanceUID=bad']) assert.equal(model.scope(href, origin), null);
   // Merge Exam: a merged exam opens its studies (at most 10, the base first) as one scope.
-  assert.deepEqual(model.scope('/ohif/viewer?StudyInstanceUIDs=1.2,1.3,1.4', origin), { studies: ['1.2', '1.3', '1.4'], series: null });
+  assert.deepEqual(model.scope('/ohif/viewer?StudyInstanceUIDs=1.2,1.3,1.4&kinExamScopes=ref', origin), { studies: ['1.2', '1.3', '1.4'], series: null, exam: 'ref' });
 });
 test('one window reuses slot zero; several windows retain distinct scopes until explicitly closed', () => {
   const { registry:r, values } = setup();
@@ -209,11 +209,11 @@ test('editorReply answers this login and report target only, with the exact text
   const fields = { findings: { value: 'F line\n' }, conclusion: { value: 'C' }, recommendation: { value: '' } };
   const base = { owner: '["i","a"]', target: '1.2.1', modal: false, usable: true };
   let state = base;
-  const reader = { examStamp:()=>JSON.stringify(['1.2.1',null,null]), owner: () => state.owner, target: () => state.target, modal: () => state.modal, field: id => fields[id],
+  const reader = { owner: () => state.owner, target: () => state.target, modal: () => state.modal, field: id => fields[id],
     usable: field => field === fields.findings && state.usable, session: (owner, uid) => 'S|' + owner + '|' + uid };
-  const m = { type: 'kin-editor-request', request: REQ, owner: '["i","a"]', studies: ['1.2.1', '1.2.0'], activeUid: '1.2.1', examStamp:JSON.stringify(['1.2.1',null,null]) };
+  const m = { type: 'kin-editor-request', request: REQ, owner: '["i","a"]', studies: ['1.2.1', '1.2.0'], activeUid: '1.2.1' };
   const echo = { type: 'kin-editor-reply', request: REQ, owner: '["i","a"]', studies: ['1.2.1', '1.2.0'], activeUid: '1.2.1' };
-  assert.deepEqual(model.editorReply(m, reader), { ...echo, result: 'ok', examStamp:JSON.stringify(['1.2.1',null,null]), session: 'S|["i","a"]|1.2.1',
+  assert.deepEqual(model.editorReply(m, reader), { ...echo, result: 'ok', session: 'S|["i","a"]|1.2.1',
     editor: { findings: 'F line\n', conclusion: 'C', recommendation: '' } });
   for (const [change, result] of [[{ owner: '["i","b"]' }, 'session'], [{ owner: null }, 'session'], [{ target: '1.2.0' }, 'context'],
     [{ target: null }, 'context'], [{ modal: true }, 'modal'], [{ usable: false }, 'unavailable']]) {

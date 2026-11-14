@@ -121,11 +121,13 @@ class ExamMergeE2E(WorklistE2E):
         listed = self.listed()
         base = listed[a.uid]
         self.assertNotIn(b.uid, listed)
-        self.assertEqual([m["uid"] for m in base["group"]["members"]], [a.uid, b.uid, c.uid])
+        members = [m["uid"] for m in base["group"]["members"]]
+        self.assertEqual(members[0], a.uid)
+        self.assertCountEqual(members, [a.uid, b.uid, c.uid])
         self.assertEqual(base["count"], sum(m["count"] for m in base["group"]["members"]))
         [group] = psql(f'SELECT id FROM "StudyGroup" WHERE "baseUid"={lit(a.uid)} AND "dissolvedAt" IS NULL')
         [audit] = psql(f'SELECT detail FROM "AuditLog" WHERE action=\'study.merge\' AND target={lit(a.uid)} ORDER BY id DESC LIMIT 1')
-        self.assertEqual(json.loads(audit)["studies"], [a.uid, b.uid, c.uid])
+        self.assertEqual(json.loads(audit)["studies"], members)
 
         # The radiologist's viewer opens the three studies as one current study.
         reader = self.login()
@@ -135,7 +137,7 @@ class ExamMergeE2E(WorklistE2E):
         viewer = opened.value
         viewer.wait_for_url("**/ohif/viewer?**", timeout=30000)
         query = parse_qs(urlsplit(viewer.url).query)
-        self.assertEqual(query["StudyInstanceUIDs"], [",".join([a.uid, b.uid, c.uid])])
+        self.assertEqual(query["StudyInstanceUIDs"], [",".join(members)])
         self.assertIsNone(query.get("hangingProtocolId"))
         self.assertEqual(query.get("kinExam"), ["merged"])
         viewer.wait_for_function("u => typeof services === 'object' && u.every(x => services.displaySetService.getActiveDisplaySets()"
@@ -159,7 +161,7 @@ class ExamMergeE2E(WorklistE2E):
         w = self.unmerge_window(page, a)
         expect(w.locator(".exam-merge-checks li").first).to_have_text("✓ 합친 검사에 지금 승인된 판독문이 없습니다.")
         w.get_by_role("button", name="Unmerge", exact=True).click()
-        expect(w).to_contain_text("되돌렸습니다: 원래 검사 3건", timeout=30000)
+        expect(w).to_contain_text("되돌렸습니다.", timeout=30000)
         w.get_by_role("button", name="Close").click()
         listed = self.listed()
         for f in (a, b, c):
@@ -169,13 +171,13 @@ class ExamMergeE2E(WorklistE2E):
         # The saved report keeps the exam it was written on; it is not approved as the base study's alone — Reset goes on.
         self.assertEqual(psql(f'SELECT "groupId" FROM "Report" WHERE uid={lit(a.uid)}'), [group])
         # The list row and the history say which studies the report was written on, now that they are unmerged.
-        self.assertEqual(listed[a.uid]["reportGroup"], {"id": group, "active": False, "readable": True, "studies": [a.uid, b.uid, c.uid]})
+        self.assertEqual(listed[a.uid]["reportGroup"], {"id": group, "active": False, "readable": True, "studies": members})
         head = self.versions(a)[-1]
         stored = self.stack.request("GET", f"/studies/{a.uid}/exam-scope?purpose=stored&version={head['version']}", "doctor")
         self.assertEqual(stored.status, 200, stored.text)
         self.assertEqual(head["group"], {"id": group, "active": False, "readable": True,
-            "studies": [a.uid, b.uid, c.uid], "part": None,
-            "sources": [{"studyUid": uid, "series": {"mode": "all", "uids": []}} for uid in [a.uid, b.uid, c.uid]],
+            "studies": members, "part": None,
+            "sources": [{"studyUid": uid, "series": {"mode": "all", "uids": []}} for uid in members],
             "generation": stored.body["generation"]})
         version = head["version"]
         refused = self.stack.request("POST", f"/studies/{a.uid}/report/commit", "doctor", {

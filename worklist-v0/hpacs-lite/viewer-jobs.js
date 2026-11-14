@@ -117,7 +117,7 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
         }
         if (!live()) return;
         printer ||= window.kinViewerJobPrint({ api, authenticate, live,
-          editor: window.kinViewerEditorLink({ studies:[reportUid], examScope:exam?.current, owner: () => me ? [me.institution, me.sub] : null, live }) });
+          editor: window.kinViewerEditorLink({ studies:exam?[reportUid]:studies, ...(exam?{examScope:exam.current}:{}), owner: () => me ? [me.institution, me.sub] : null, live }) });
         if (row) printer.open(reportUid, row.id,row.snapshotVersion);
         else { if (!unchanged()) throw new Error('현재 영상이 바뀌었습니다. 다시 출력하세요.'); printer.openCurrent(reportUid, snapshot, unchanged); }
       } catch (e) { failure = e.message; if (live()) status.textContent = e.message; }

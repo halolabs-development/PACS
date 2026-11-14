@@ -1,3 +1,4 @@
+// Ordinary Job snapshots must retain their existing JSON bytes and keys for restore and output compatibility.
 // Server-admitted exam scopes bound original images without changing their DICOM identifiers.
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const model=require('../worklist-v0/hpacs-lite/exam-scope.js');
@@ -67,10 +68,10 @@ test('Viewing Set expands every merged original and deduplicates both split part
  assert.equal(input.current.groupId,null);assert.equal(input.purpose,'stored');
 });
 
-test('new ordinary logical Jobs carry compact current references and original viewing stays explicit',()=>{
+test('ordinary Jobs omit references while grouped Reading keeps its distinct scope',()=>{
  const value={studies:[A,P],cells:[]},saved=model.jobSnapshot(value,null,value.studies);
- assert.deepEqual(saved.exam,{version:1,purpose:'current',current:{reportUid:A,groupId:null,part:null},prior:{reportUid:P,groupId:null,part:null}});
- assert.equal(model.jobSnapshot(value,null,value.studies,true).exam.purpose,'stored');
+ assert.deepEqual(saved,value);
+ assert.deepEqual(model.jobSnapshot(value,null,value.studies,true),value);
  assert.equal(model.readingStamp(null,A),model.readingStamp({uid:A,state:{draftEpoch:'later'}}));
  assert.notEqual(model.readingStamp(null,A),model.readingStamp(scope(A,[source(A),source(B)])));
 });
@@ -185,4 +186,19 @@ test('native comparison selects current and prior by logical scope even when bot
  assert.equal(protocol.displaySetSelectors['exam-0'].seriesMatchingRules[0].constraint.equals.value,'first');
  assert.equal(protocol.displaySetSelectors['exam-1'].seriesMatchingRules[0].constraint.equals.value,'second');
  services.hangingProtocolService.run({displaySets:sets},'personal');assert.equal(called,'personal');
+});
+
+// Byte identity is the ordinary Job persistence contract, including every volume recipe version.
+test('ordinary Job capture and stored-original capture preserve the original JSON bytes and omit scope',()=>{
+ for(const version of [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) {
+  const value={version,studies:[A,P],rows:1,cols:2,active:0,cells:[null,null]};
+  for(const input of [null,model.viewerInput({uid:A},{uid:P}),model.originalInput([A,P])]) {
+   assert.equal(JSON.stringify(model.jobSnapshot(value,input,value.studies)),JSON.stringify(value));
+   assert.equal(JSON.stringify(model.jobSnapshot(value,input,value.studies,true)),JSON.stringify(value));
+  }
+ }
+ const input=model.viewerInput(scope(A,[source(A),source(B)]));
+ assert.deepEqual(model.jobSnapshot({studies:[A,B]},input,[A,B]).exam,model.snapshotReference(input));
+ assert.equal(model.readingStamp({uid:A}),undefined);
+ assert.equal(model.readingScope({uid:A}),null);
 });

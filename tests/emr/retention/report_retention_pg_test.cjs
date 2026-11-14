@@ -44,20 +44,21 @@ const { PrismaClient } = require('/app/node_modules/@prisma/client');
 const M = require('/app/dist/emr-contract/composition');
 const CTX = require('/app/dist/emr-runtime/context');
 const R = require('/app/dist/emr-retention/report-retention');
+const { nativeReportScope, nativeReportSnapshot } = require('/app/dist/emr-report/native-snapshot');
 const SWEEP = require('/app/dist/emr-retention/report-retention-sweep');
 const { RetentionGate } = require('/app/dist/emr-retention/retention-gate');
 const C = require('/app/dist/emr-signature/server-crypto');
 M.composeEmrAdapters(CTX.runtimeAdapters);
 
 // The stored approval native signing writes (emr-report/native-signing.ts → online-store.ts): the current signServerPayload
-// over the whole saved version row (seedReport), signed with the clock set to the seeded time, and the key registration retained beside it.
+// over the native version snapshot (seedReport), signed with the clock set to the seeded time, and the key registration retained beside it.
 const KEYS = C.generateServerKeyPair();
 const SIGNER = { issuer: 'SYN', subject: 'syn-reader', id: 'syn-reader' };
 const KEY = { kid: 'SYN-KID', publicKey: KEYS.publicKey, status: 'active', registeredAt: '2010-01-01T00:00:00.000Z', endedAt: null,
   doctor: { identity: SIGNER, identityRegistrationId: 'SYN-REG', institutionId: 'SYN-SITE', canSign: true } };
 const SIGNING_ACTION = { approve: 'approve-sign', addendum: 'addendum', reset: 'cancel', save: 'approve-sign' };
 function approval(row, signedAt, operationId) {
-  const content = { formatVersion: 'emr-signature/1', text: { kind: 'clinical-entry', body: JSON.stringify(row) },
+  const content = { formatVersion: 'emr-signature/1', text: { kind: 'clinical-entry', body: nativeReportSnapshot(row) },
     patient: { linkId: 'SYN-LINK', patientId: 'SYN-PATIENT', assigningAuthority: 'SYN-SITE' }, studyId: row.uid,
     managingInstitutionId: 'SYN-SITE', actingInstitutionId: 'SYN-SITE', recordKind: 'report-version', recordId: row.uid,
     versionId: String(row.version), author: SIGNER, signer: SIGNER, identityRegistrationId: 'SYN-REG', action: SIGNING_ACTION[row.action],
@@ -114,9 +115,9 @@ async function seedReport(witness, { rs = 'A', versions = [['approve', true]], b
   for (const [action, signed] of versions) {
     n += 1;
     const signedAt = at(base, 60 * n), operationId = randomUUID(), findings = 'SYN findings ' + n;
-    // The row as report-commit.ts saves it (citation and structured testimony included) and native signing signs it: the
-    // whole saved row the store hands back, never a hand-picked subset of its fields.
-    const row = await witness.reportVersion.create({ data: { uid, version: n, action, findings, conclusion: 'SYN conclusion',
+    // Seed the same ordinary scope and signing snapshot as the report writer, including citations and structured testimony.
+    // Internal scope columns must not silently change the legacy signed bytes.
+    const row = await witness.reportVersion.create({ data: { uid, ...nativeReportScope(null), version: n, action, findings, conclusion: 'SYN conclusion',
       recommendation: '', reason: null, author: 'syn-reader', at: new Date(at(signedAt, -1)),
       citations: [{ v: 2, cid: `syn-c${n}`, field: 'findings', findingId: 'syn-f', findingRevision: 1, sourceIndex: 0, sourceRef: {},
         linkStateAtInsert: 'current', headRevisionAtInsert: 1, insertedText: findings, insertedAt: at(signedAt, -2), insertedBy: 'syn-reader' }],

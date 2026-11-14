@@ -87,8 +87,8 @@
     const input=viewerInput({uid:studyUids[0]},studyUids[1]?{uid:studyUids[1]}:null);
     return {...input,purpose:'stored'};
   }
-  function readingScope(value, uid) { return read(value || {uid}); }
-  const readingStamp = (value, uid) => key(readingScope(value,uid));
+  function readingScope(value, uid) { return screenScope(value || {uid}); }
+  const readingStamp = (value, uid) => { const scope=readingScope(value,uid); return scope ? key(scope) : undefined; };
   async function fetchScope(api, uid, {purpose='current',version,reference,signal,at}={}) {
     const query=new URLSearchParams({purpose});if(version!=null)query.set('version',String(version));
     if(reference)query.set('reference',JSON.stringify(reference));
@@ -139,8 +139,8 @@
     return {version:1,purpose:input.purpose==='stored'||input.version!=null?'stored':'current',current:reference(input.current),prior:reference(input.prior)};
   }
   function jobSnapshot(value,input,studyUids,originals=false) {
-    const opening=input || originalInput(studyUids);
-    return {...value,exam:snapshotReference({...opening,purpose:originals?'stored':input?.purpose||'current'})};
+    if (!input?.scoped) return value;
+    return {...value,exam:snapshotReference({...input,purpose:originals?'stored':input.purpose||'current'})};
   }
   function snapshotUrl(snapshot) {
     const exam=snapshot.exam;

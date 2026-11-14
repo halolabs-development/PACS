@@ -93,13 +93,11 @@ LIST_SETUP = """args => {
   window.__target = args.target; window.__listed = args.listed; window.__selects = []; window.__how = 'clear';
   const reader = { owner: () => owner, target: () => window.__target, modal: () => !!document.querySelector('dialog[open]'),
     field: id => document.getElementById(id), usable: f => f.isConnected && !!f.getClientRects().length && !f.disabled,
-    session: (who, uid) => 'list|' + who + '|' + uid,
-    examStamp: uid => JSON.stringify([uid, null, null]) };
+    session: (who, uid) => 'list|' + who + '|' + uid };
   window.kinReadingEditorReply = m => KinViewerWindows.editorReply(m, reader);
   // The page's select(uid) stand-in: its result is the case's (current-study.js statuses); 'clear' and 'saved' move.
   let opening = false;
   const openReader = { ...reader, busy: () => opening, listed: uid => window.__listed.includes(uid),
-    verifyExam: async (uid, stamp) => stamp === JSON.stringify([uid, null, null]),
     select: uid => {
       window.__selects.push(uid);
       const how = window.__how;
@@ -601,6 +599,28 @@ class ReadingScreenOpen(h.LogoutDOMTest):
         self.assertEqual("unlisted", self.ask("1.2.826.0.1.3680043.10.7707.99")["reason"])
         expect(self.page.locator("#clinical")).to_contain_text(h.PATIENT_B)
 
+    def test_an_ordinary_viewer_cannot_first_connect_to_an_exam_grouped_after_it_opened(self):
+        self.open_main()
+        self.assertEqual("ok", self.ask(h.UID)["result"])
+        requests = []
+
+        def changed(route):
+            requests.append(route.request.url)
+            body = self.site.list_body(h.RAD)
+            row = next(row for row in body["studies"] if row["uid"] == h.UID_B)
+            row["examScope"] = {"reportUid": h.UID_B, "groupId": "00000000-0000-4000-8000-000000000021",
+                                "kind": "merge", "part": None, "active": True, "generation": "changed",
+                                "sources": [{"studyUid": uid, "series": {"mode": "all", "uids": []}}
+                                            for uid in (h.UID_B, h.UID)]}
+            route.fulfill(json={"studies": [row]})
+
+        self.page.route("**/api/studies?uids=*", changed)
+        answer = self.ask(h.UID_B)
+        self.assertEqual(("refused", "stale"), (answer["result"], answer["reason"]), answer)
+        self.assertEqual(1, len(requests))
+        self.assertTrue(requests[0].endswith("/api/studies?uids=" + h.UID_B), requests)
+        expect(self.page.locator("#clinical")).to_contain_text(h.PATIENT)
+
     def test_text_the_server_has_not_confirmed_keeps_the_study_and_refuses(self):
         self.open_main()
         self.site.put_answers = [(503, {"code": "SYN_DOWN", "message": "SYN server down"})] * 8
@@ -627,9 +647,9 @@ class ReadingScreenOpen(h.LogoutDOMTest):
         self.page.evaluate("""args => { window.__opening = Promise.resolve(window.kinReadingEditorOpen({ type: 'kin-editor-open',
             request: args.request, owner: args.owner, uid: args.uid, list: 'L' })); }""",
                            {"request": request, "owner": self.owner(), "uid": h.UID_B})
+        self.wait_until(lambda: self.site.held_puts, "the page's save on the wire")
         self.page.evaluate("args => window.kinReadingEditorCancel({ type: 'kin-editor-open-cancel', request: args.request, uid: args.uid, list: 'L' })",
                            {"request": request, "uid": h.UID_B})
-        self.wait_until(lambda: self.site.held_puts, "the page's save on the wire")
         self.site.finish_put()
         answer = self.page.evaluate("() => window.__opening")
         self.assertEqual("refused", answer["result"], answer)

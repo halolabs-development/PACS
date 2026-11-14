@@ -321,11 +321,11 @@ export function examScopeReference(scope: ResolvedExamScope) {
   return {reportUid:scope.reportUid,groupId:scope.groupId,part:scope.part};
 }
 
-/** Saved viewer layouts retain their own current/prior roles and original series, independently of later grouping. */
-export function currentViewerSnapshot(snapshot:any) {
-  if(snapshot.exam)return snapshot;
-  const ref=(uid:string)=>({reportUid:uid,groupId:null,part:null});
-  return {...snapshot,exam:{version:1,purpose:'current',current:ref(snapshot.studies[0]),prior:snapshot.studies[1]?ref(snapshot.studies[1]):null}};
+/** A new unscoped viewer must still belong to ordinary studies. Stored Jobs keep their original testimony. */
+export async function requireUnscopedViewer(db:any, snapshot:any) {
+  if (snapshot.exam) return;
+  for (const uid of snapshot.studies)
+    await withGroupedExam(db, uid, async () => {}, async () => { throw examScopeChanged(); });
 }
 
 export async function resolveViewerSnapshot(db:any,access:StudyAccessService,c:Caller,snapshot:any,
@@ -540,7 +540,7 @@ export class ExamMergeService {
     if (!studyUidOf(uid) || !Array.isArray(selected) || !selected.length || !selected.every(studyUidOf)
       || new Set(selected).size !== selected.length || Object.keys(body).some(k => !['uid', 'seriesUids'].includes(k)))
       throw new BadRequestException('둘째 검사로 옮길 시리즈를 선택하세요');
-    const prepared = await resolveExamScope(this.prisma, this.studyAccess, c, { uid, purpose: 'source', phase: 'prepare' });
+    const prepared = await resolveExamScope(this.prisma, this.studyAccess, c, { uid, purpose: 'source', phase: 'prepare', identity: true });
     const series = await this.studyAccess.sourceSeries(uid);
     if (selected.some(s => !series.some(row => row.uid === s)) || !series.some(row => row.images && !selected.includes(row.uid)))
       throw new BadRequestException('존재하는 시리즈 중 일부를 선택하세요. 전체 시리즈를 옮길 수 없습니다');

@@ -916,8 +916,7 @@ class ViewerJobPrintPages(unittest.TestCase):
       window.kinReadingEditorReply = m => KinViewerWindows.editorReply(m, { owner: () => owner, target: () => window.__target,
         modal: () => !!document.querySelector('dialog[open]'), field: id => document.getElementById(id),
         usable: field => field.isConnected && !!field.getClientRects().length && !field.disabled,
-        session: (who, uid) => 'list|' + who + '|' + uid,
-        examStamp: uid => JSON.stringify([uid, null, null]) });
+        session: (who, uid) => 'list|' + who + '|' + uid });
       return window.__registry.linked('/ohif/viewer?StudyInstanceUIDs=' + args.studies.join(','), 0);
     }"""
 

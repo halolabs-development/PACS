@@ -125,11 +125,13 @@ function reader(overrides = {}) {
 }
 const open = extra => Object.assign({ type: 'kin-editor-open', request: REQUEST, owner: OWNER, uid: UID, list: 'L', examStamp:scopeModel.readingStamp(null,UID) }, extra);
 
-test('an ordinary viewer cannot first connect Reading after the server groups its study or omit its scope',async()=>{
+test('an ordinary viewer cannot first connect Reading after the server groups its study',async()=>{
  const r=reader({verifyExam:async()=>false});
  assert.equal((await windows.editorOpen(open(),r)).reason,'stale');assert.deepEqual(r.calls,[]);
  const plain=reader();const message=open();delete message.examStamp;
- assert.equal((await windows.editorOpen(message,plain)).reason,'stale');assert.deepEqual(plain.calls,[]);
+ assert.equal((await windows.editorOpen(message,plain)).result,'ok');
+ const grouped=reader({examStamp:()=> 'group'});
+ assert.equal((await windows.editorOpen(message,grouped)).reason,'stale');assert.deepEqual(grouped.calls,[]);
 });
 
 test('editorOpen moves through the page select and focuses Findings only after a real move', async () => {

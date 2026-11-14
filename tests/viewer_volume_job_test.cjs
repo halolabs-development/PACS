@@ -481,6 +481,7 @@ function fakeDatabase(options={}){
    assert.equal(sql,'UPDATE "ViewerJob" SET "snapshot" = ?::jsonb WHERE "id" = ?::uuid');assert.equal(typeof values[0],'string');
    const row=s.jobs.get(values[1]);if(!row||options.updateRows===0)return 0;JSON.parse(values[0]);row.snapshot=values[0];return 1;},
   $queryRaw:async(strings,...values)=>{const sql=strings.join('?');log.push({sql,values});if(sql.includes('FROM "StudyState"')){if(sql.includes('FOR UPDATE'))options.onLock?.();return [parentStudy];}
+   if(sql.includes('FROM "StudyGroupMember"'))return (options.members||[]).filter(m=>m.logicalUid===values[0]||m.studyUid===values[1]).map(m=>({groupId:m.groupId}));
    assert.equal(sql,'SELECT "snapshot"::text AS "snapshot" FROM "ViewerJob" WHERE "id" = ?::uuid');return s.jobs.has(values[0])?[{snapshot:s.jobs.get(values[0]).snapshot}]:[];}});
  return {store,log,...client(store),$transaction:async work=>{const staged=structuredClone(store),out=await work(client(staged));Object.assign(store,staged);return out;}};
 }
@@ -506,8 +507,9 @@ test('a plain viewer cannot save a new logical Job after Split, including a chan
  split();
  assert.equal((await jobs.create(volume.study,raw,caller)).revision,1);
  const stored=await jobs.get(volume.study,jobId,caller);
- assert.equal(stored.snapshot.exam.purpose,'stored');assert.equal(stored.snapshot.exam.current.groupId,null);
+ assert.equal(Object.hasOwn(stored.snapshot,'exam'),false);
  const command=JSON.parse(raw);command.id='00000000-0000-4000-8000-000000000091';
+ await assert.rejects(jobs.create(volume.study,Buffer.from(JSON.stringify(command)),caller),e=>e.getStatus?.()===409);
  command.snapshot.exam={version:1,purpose:'current',current:{reportUid:volume.study,groupId:null,part:null},prior:null};
  await assert.rejects(jobs.create(volume.study,Buffer.from(JSON.stringify(command)),caller),e=>e.getStatus?.()===409);
  delete options.group;delete options.members;options.onLock=split;delete command.snapshot.exam;
@@ -535,7 +537,7 @@ test('a created version 4, 11, 12 or 13 Job stores and restores every snapshot n
   assert.deepEqual([created.id,created.revision,created.snapshotVersion,created.hidden],[jobId,1,version,false]);
   const text=db.store.jobs.get(jobId).snapshot,stored=JSON.parse(text);
   assert.match(stored.volume.sourceDigest,/^[a-f0-9]{64}$/);
-  assert.deepStrictEqual(stored,{...s,exam:{version:1,purpose:'stored',current:{reportUid:volume.study,groupId:null,part:null},prior:null},volume:{...s.volume,sourceDigest:stored.volume.sourceDigest}});
+  assert.deepStrictEqual(stored,{...s,volume:{...s.volume,sourceDigest:stored.volume.sourceDigest}});
   assert.deepStrictEqual(db.store.revisions.map(r=>[r.jobId,r.revision,r.reason,r.actor]),[[jobId,1,'','dr.synthetic']]);assert.equal(db.store.audit.length,1);
   const writes=db.log.filter(q=>q.sql.startsWith('UPDATE'));assert.equal(writes.length,1);assert.deepEqual(writes[0].values,[text,jobId]);
   // The Json column value of this row is the altered one; an exact restore therefore proves the text read.

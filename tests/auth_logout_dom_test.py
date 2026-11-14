@@ -640,6 +640,10 @@ class Site:
                 return self.answer(route, status, body, {"X-KIN-Auth-Code": body["code"]}
                                    if str(body.get("code", "")).startswith("AUTH_") else None)
             return route.fulfill(json=self.list_body(account))
+        if method == "GET" and path == "/api/studies" and parse_qs(query).get("uids"):
+            wanted = parse_qs(query)["uids"][0].split(",")
+            data = self.list_body(account)
+            return route.fulfill(json={**data, "studies": [row for row in data["studies"] if row["uid"] in wanted]})
         if method == "GET" and path == "/api/colleagues":
             return route.fulfill(json=[])
         scope_path = re.fullmatch(r"/api/studies/([^/]+)/exam-scope", path)

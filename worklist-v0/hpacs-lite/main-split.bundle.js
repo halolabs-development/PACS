@@ -10509,7 +10509,7 @@
         if (location.origin !== window.location.origin || location.pathname !== "/ohif/viewer") return null;
         const studies = (location.searchParams.get("StudyInstanceUIDs") || "").split(",");
         // Current and prior each retain their independently resolved original sets.
-        if (studies.length < 1 || studies.length > (location.searchParams.has("kinExamScopes") ? 20 : 10) || studies.some(uid => !/^\d+(?:\.\d+)+$/.test(uid))) return null;
+        if (studies.length < 1 || studies.length > (location.searchParams.has("kinExamScopes") ? 20 : 2) || studies.some(uid => !/^\d+(?:\.\d+)+$/.test(uid))) return null;
         return { studies, series: location.searchParams.get("initialSeriesInstanceUID") || null,
           exam:location.searchParams.get('kinExamScopes') };
       } catch (_) { return null; }
@@ -11648,7 +11648,11 @@
         const at=work.capture('document'),row=studies.find(s=>s.uid===uid);
         if(KinExamScope.readingStamp(row)!==stamp)return false;
         try {
-          const scope=await KinExamScope.fetch(api,uid,{reference:KinExamScope.reference(KinExamScope.read(row)),at});
+          // An ordinary viewer keeps the existing study read; a changed row cannot bind its old editor link.
+          const scope=stamp===undefined
+            ? (await api('GET','/studies?uids='+encodeURIComponent(uid),undefined,undefined,at))?.studies?.find(s=>s.uid===uid)
+            : await KinExamScope.fetch(api,uid,{reference:KinExamScope.reference(KinExamScope.read(row)),at});
+          if(!scope)return false;
           return work.admits(at)&&KinExamScope.readingStamp(scope)===stamp&&KinExamScope.readingStamp(studies.find(s=>s.uid===uid))===stamp;
         } catch (_) {return false;}
       },

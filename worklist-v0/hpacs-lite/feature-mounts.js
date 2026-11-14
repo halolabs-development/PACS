@@ -539,7 +539,11 @@
         const at=work.capture('document'),row=studies.find(s=>s.uid===uid);
         if(KinExamScope.readingStamp(row)!==stamp)return false;
         try {
-          const scope=await KinExamScope.fetch(api,uid,{reference:KinExamScope.reference(KinExamScope.read(row)),at});
+          // An ordinary viewer keeps the existing study read; a changed row cannot bind its old editor link.
+          const scope=stamp===undefined
+            ? (await api('GET','/studies?uids='+encodeURIComponent(uid),undefined,undefined,at))?.studies?.find(s=>s.uid===uid)
+            : await KinExamScope.fetch(api,uid,{reference:KinExamScope.reference(KinExamScope.read(row)),at});
+          if(!scope)return false;
           return work.admits(at)&&KinExamScope.readingStamp(scope)===stamp&&KinExamScope.readingStamp(studies.find(s=>s.uid===uid))===stamp;
         } catch (_) {return false;}
       },

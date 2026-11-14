@@ -12,7 +12,7 @@ import { canonical, viewerUid, viewerUuid, verifyViewerReference, isManualMeasur
 import { jobCommand, jobFingerprint, verifyJobCell, previewCommand } from './viewer-job-input';
 import { verifyVolumeReference, compactVolumeTags } from './viewer-volume-reference';
 import { readSnapshot, writeSnapshot } from './viewer-job-snapshot';
-import { examParentAccess, prepareExamRead, resolveViewerSnapshot, currentViewerSnapshot } from './exam-merge.service';
+import { examParentAccess, prepareExamRead, resolveViewerSnapshot, requireUnscopedViewer } from './exam-merge.service';
 const deny = (): never => { throw new ForbiddenException('비교 작업에 접근할 수 없습니다'); };
 const conflict = (): never => { throw new ConflictException('비교 작업이 변경되었습니다. 목록을 새로 확인하세요'); };
 // Every kind of saved frame mark, the Measure menu's text marks and circles included, travels with a Job.
@@ -259,9 +259,10 @@ export class ViewerJobService {
     if ((b.snapshot.exam?.current.reportUid ?? b.snapshot.studies[0]) !== uid) throw new BadRequestException('판독 대상 검사가 일치하지 않습니다');
     const known = await this.prisma.viewerJob.findUnique({ where: { id: b.id } });
     if (known && (known.studyUid !== uid || known.authorSub !== c.sub || known.fingerprint !== fingerprint)) conflict();
-    const requested = known ? known.snapshot : currentViewerSnapshot(b.snapshot);
+    const requested = known ? known.snapshot : b.snapshot;
     const exam = await this.prepareScope(c,requested);
     this.sameInstitution(await this.parents(this.prisma, b.snapshot.studies, c));
+    if (!known) await requireUnscopedViewer(this.prisma, requested);
     const sources = new Map<string, any>();
     const verified = known ? null : await this.sources(b.snapshot, false, sources), snapshot = verified?.snapshot;
     if (snapshot?.version === 3) await this.volumeSources((await this.prisma.viewerItem.findMany({ where: { hidden: false, snapshot: { path: ['kind'], equals: 'volume' },
@@ -277,7 +278,9 @@ export class ViewerJobService {
         return summary(replay);
       }
       if (known) conflict();
-      const scoped = {...snapshot,exam:savedScope.snapshot.exam};
+      // Membership changes lock these same parents. Recheck after locking before admitting a new ordinary Job.
+      await requireUnscopedViewer(tx, requested);
+      const scoped = snapshot.exam ? {...snapshot,exam:savedScope.snapshot.exam} : snapshot;
       const frozen = snapshot.version === 3 ? await this.freezeAnnotations(tx, scoped, sources) : scoped;
       const now = new Date();
       const j = await tx.viewerJob.create({ data: { id: b.id, studyUid: uid, authorSub: c.sub, authorActor: c.actor, studies: b.snapshot.studies,

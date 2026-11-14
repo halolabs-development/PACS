@@ -43,6 +43,7 @@ function fixture({states=[A,B,C,D,E,F].map(uid=>state(uid)),groups=[],members=[]
         if(onLock)await onLock(db,uids);
         return [...uids].sort().flatMap(uid=>db.states.has(uid)?[clone(db.states.get(uid))]:[]);
       }
+      if(sql.includes('FROM "StudyGroupMember"'))return db.members.filter(m=>m.logicalUid===values[0]||m.studyUid===values[1]).map(m=>({groupId:m.groupId}));
       throw new Error('unexpected raw query: '+sql);
     },
     institution:{findMany:async()=>[{id:'hallym',name:'hallym',dicomNames:''}]},
@@ -1038,18 +1039,30 @@ test('viewer references survive report draft epochs while new grouping is refuse
 });
 
 test('a new ordinary Job refuses a grouping change under its parent lock while stored originals stay original',async()=>{
- const {currentViewerSnapshot,resolveViewerSnapshot}=require('/app/dist/exam-merge.service');
+ const {requireUnscopedViewer,resolveViewerSnapshot,lockExamStates}=require('/app/dist/exam-merge.service');
  let change=false;
  const f=fixture({onLock:db=>{if(change){const group=merged(G1,A,[A,B]);db.groups=group.groups;db.members=group.members;change=false;}}});
- const snapshot=currentViewerSnapshot({studies:[A],cells:[{study:A,series:'2.25.701'}]});
- const prepared=await resolveViewerSnapshot(f.prisma,f.access,reader,snapshot);
- change=true;
- await assert.rejects(resolveViewerSnapshot(f.prisma,f.access,reader,snapshot,prepared.scopes),e=>status(e)===409);
+ const snapshot={studies:[A],cells:[{study:A,series:'2.25.701'}]};
+ await requireUnscopedViewer(f.prisma,snapshot);
+ assert.equal((await resolveViewerSnapshot(f.prisma,f.access,reader,snapshot)).snapshot,snapshot);
+ change=true;await lockExamStates(f.prisma,[A]);
+ await assert.rejects(requireUnscopedViewer(f.prisma,snapshot),e=>status(e)===409);
  assert.deepEqual(f.db.locks[0].uids,[A]);
- const stored={...snapshot,exam:{...snapshot.exam,purpose:'stored'}};
- const reopened=await resolveViewerSnapshot(f.prisma,f.access,reader,stored);
- assert.deepEqual(reopened.snapshot.studies,[A]);assert.equal(reopened.scopes[0].groupId,null);
- await assert.rejects(f.svc.scope(reader,A,{reference:JSON.stringify(snapshot.exam.current)}),e=>status(e)===409);
+ const reopened=await resolveViewerSnapshot(f.prisma,f.access,reader,snapshot);
+ assert.deepEqual(reopened.snapshot,snapshot);assert.equal('exam' in reopened.snapshot,false);
+ f.db.groups[0].dissolvedAt=new Date();
+ await assert.rejects(requireUnscopedViewer(f.prisma,snapshot),e=>status(e)===409);
+});
+
+test('splitting a previously ordinary study observes source identity in this request before writing membership',async()=>{
+ const f=fixture(),observed=new Set();
+ f.access.prepareSourceIdentity=async(_c,uids)=>uids.forEach(uid=>observed.add(uid));
+ f.access.assertIdentifiedSource=(_c,uid)=>{
+   assert.ok(observed.has(uid),'membership must use identity observed by this request');
+   return {sourcePatientId:PATIENT[uid],sourceInstitution:'hallym'};
+ };
+ const result=await f.svc.split(tech,{uid:A,seriesUids:['2.25.701']});
+ assert.equal(result.group.kind,'split');assert.equal(f.db.members.length,2);
 });
 
 test('ordinary ended draft records do not prevent study deletion',async()=>{

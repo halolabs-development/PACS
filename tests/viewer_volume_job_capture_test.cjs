@@ -629,8 +629,8 @@ test('behind the open MIP Viewer a read-only Job capture is the version 12 body 
  try{
   w.gate.dialog=true;
   const outcome=await w.command.save({title:'MIP oblique Raysum',description:''});assert.equal(outcome.state,'saved',outcome.message);assert.equal(w.posts.length,1);
-  const {exam,...captured}=w.posts[0].snapshot;
-  assert.deepEqual(exam,{version:1,purpose:'current',current:{reportUid:STUDY,groupId:null,part:null},prior:null});
+  const captured=w.posts[0].snapshot;
+  assert.equal(Object.hasOwn(captured,'exam'),false);
   w.gate.readOnly.length=0;assert.deepEqual(JSON.parse(JSON.stringify(w.job().capture(true))),captured);assert.deepEqual(w.gate.readOnly,[true]);
   w.gate.readOnly.length=0;assert.throws(()=>w.job().capture(),{message:'다른 작업을 마친 뒤 MPR 방향을 조절하세요.'});assert.deepEqual(w.gate.readOnly,[false]);
  }finally{w.stop();}

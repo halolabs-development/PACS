@@ -406,9 +406,10 @@ test('Image Report drawings ride the draft boundary, are bound and signed with t
       expectedRevision: plainApproved.body.revision, baseVersion: plainApproved.body.state.version, action: 'amend' });
     assert.equal(plainAmended.status, 201, JSON.stringify(plainAmended.body));
     const plainFirst = await witness.reportVersion.findUnique({ where: { uid_version: { uid: plain.uid, version: plainApproved.body.state.version } } });
-    const { drawings: _none, ...asSigned } = plainFirst;
+    const asSigned = product('emr-report/native-snapshot').nativeReportSnapshot(plainFirst);
+    assert.deepEqual(JSON.parse(plainSigned.text.body), JSON.parse(asSigned));
     const plainAmendSigned = verify(plainAmended.body.signature.envelope, plainAmended.body.signature.keyAtSigning).payload;
-    assert.equal(plainAmendSigned.previousVersion.sha256, require('node:crypto').createHash('sha256').update(JSON.stringify(asSigned)).digest('hex'));
+    assert.equal(plainAmendSigned.previousVersion.sha256, require('node:crypto').createHash('sha256').update(asSigned).digest('hex'));
     assert.ok(await witness.$transaction(tx => loadFixedVersions(tx, plain.uid, 'report')));
 
     // ── a discard that names the list the draft holds ends it; the drawing it alone held is then served to nobody ──

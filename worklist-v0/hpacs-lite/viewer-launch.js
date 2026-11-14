@@ -43,7 +43,7 @@
         if (location.origin !== window.location.origin || location.pathname !== "/ohif/viewer") return null;
         const studies = (location.searchParams.get("StudyInstanceUIDs") || "").split(",");
         // Current and prior each retain their independently resolved original sets.
-        if (studies.length < 1 || studies.length > (location.searchParams.has("kinExamScopes") ? 20 : 10) || studies.some(uid => !/^\d+(?:\.\d+)+$/.test(uid))) return null;
+        if (studies.length < 1 || studies.length > (location.searchParams.has("kinExamScopes") ? 20 : 2) || studies.some(uid => !/^\d+(?:\.\d+)+$/.test(uid))) return null;
         return { studies, series: location.searchParams.get("initialSeriesInstanceUID") || null,
           exam:location.searchParams.get('kinExamScopes') };
       } catch (_) { return null; }

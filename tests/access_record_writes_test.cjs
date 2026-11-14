@@ -179,6 +179,7 @@ function jobDatabase() {
     $executeRaw: async (strings, ...values) => { if (strings.join('?').includes('"snapshot"')) { s.jobs.get(values[1]).snapshot = values[0]; return 1; } return 0; },
     $queryRaw: async (strings, ...values) => { const sql = strings.join('?'); if (sql.includes('FROM "StudyState"')) return [parent];
       if (sql.includes('FROM "ViewerJob"')) return s.jobs.has(values[0]) ? [{ snapshot: s.jobs.get(values[0]).snapshot }] : [];
+      if (sql.includes('FROM "StudyGroupMember"')) return [];
       throw new Error('job double: unexpected statement'); },
   });
   return { store, ...client(store), $transaction: async work => {
