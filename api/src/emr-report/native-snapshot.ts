@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { signedReportRow } from '../image-report';
 
 /** New ordinary reports keep the established row format; grouped testimony explicitly names its exam. */
 export function nativeReportScope(groupId: string | null, hasMembership = groupId !== null) {
@@ -8,7 +9,7 @@ export function nativeReportScope(groupId: string | null, hasMembership = groupI
 
 /** The legacy row was signed before nullable scope columns existed. Never add those nulls to its signed bytes. */
 export function nativeReportSnapshot(row: Record<string, any>): string {
-  const { snapshotFormat, ...record } = row;
+  const { snapshotFormat, ...record } = signedReportRow(row);
   if ((snapshotFormat ?? 1) === 1) {
     if (record.groupId == null) delete record.groupId;
     return JSON.stringify(record);
@@ -39,7 +40,7 @@ export function nativeReportMatches(row: Record<string, any>, body: string): boo
 export function nativeReportSnapshots(row: Record<string, any>): string[] {
   const standard = nativeReportSnapshot(row);
   if ((row.snapshotFormat ?? 1) !== 1 || row.groupId != null) return [standard];
-  const { snapshotFormat, ...record } = row;
+  const { snapshotFormat, ...record } = signedReportRow(row);
   return [standard, JSON.stringify({ ...record, groupId: null })];
 }
 

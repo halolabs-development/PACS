@@ -21,6 +21,7 @@ import { reportVersionCitationsRead, reportVersionsRead } from '../emr-viewing/r
 import { LocalReadResponse } from '../emr-viewing/local-read';
 import { consumerSource } from '../emr-viewing/consumer-read';
 import { resolveExamScope, readableExamRecord, prepareExamRead, examParentAccess } from '../exam-merge.service';
+import { draftDrawings, effectiveDrawingIds, versionDrawings, drawingEntries, assertDrawingScope } from '../image-report';
 
 /**
  * **서명 순간에 새로 생기는 유일한 거절이다.**
@@ -339,13 +340,13 @@ export class PacsReportEvidence {
      */
     const rows = await tx.reportVersion.findMany({ where: { uid }, orderBy: { version: 'desc' },
       select: { id: true, uid: true, version: true, action: true, findings: true, conclusion: true,
-        recommendation: true, reason: true, author: true, at: true, groupId: true } });
+        recommendation: true, reason: true, author: true, at: true, drawings: true, groupId: true } });
     // Merge Exam: a version written on an exam group says which studies it was written on; its text is shown only to a caller
     // who may read every one of them now. A version of the study alone keeps its shape (no group key).
     const scoped = [];
-    for (const { groupId, ...row } of rows) {
+    for (const { groupId, drawings, ...row } of rows) {
       const scope = await readableExamRecord(tx, this.studyAccess, c, uid, { groupId });
-      scoped.push({ ...row, ...(scope ? {} : { findings: '', conclusion: '', recommendation: '' }),
+      scoped.push({ ...row, ...(scope && versionDrawings(drawings).length ? { drawings: versionDrawings(drawings).map(d => ({ id: d.id, background: d.background, source: d.source ?? null })) } : {}), ...(scope ? {} : { findings: '', conclusion: '', recommendation: '' }),
         ...(groupId ? { group: { id: groupId, active: scope?.active ?? false, readable: !!scope, studies: scope?.studies ?? [],
           ...(scope ? { part: scope.part, sources: scope.sources, generation: scope.generation } : {}) } } : {}) });
     }
@@ -438,6 +439,104 @@ export class PacsReportEvidence {
     }, { isolationLevel: 'RepeatableRead', maxWait: 2000, timeout: 5000 });
   }
 
+  /**
+   * Image Report: the drawings of the head version and of my draft (ids and what each was drawn on; the pictures come
+   * one by one from `reportDrawing`). Same gate as `versions()` (institution, preliminary reading, destroyed). My draft's
+   * part is the list the next version would hold if I committed now (my additions and removals over the head).
+   */
+  async reportDrawings(uid: string, c: Caller) {
+    await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
+    const prev = await this.access.gate(uid, c);
+    if (!prev) throw new NotFoundException('검사를 찾을 수 없습니다');
+    const parentScope = await examParentAccess(this.prisma, this.studyAccess, c, uid);
+    const sourceIdentity = this.studyAccess.assertUnsplitSource(c, parentScope.studies[0]);
+    if (!canReadPreliminary(prev, c))
+      throw new ForbiddenException(
+        `예비 판독(RS: P) 중입니다. ${prev?.preReviewer ?? '지정된 판독의'}만 볼 수 있습니다.`);
+    refuseDestroyed(prev);
+    return this.prisma.$transaction(async tx => {
+      const state = await this.access.gate(uid, c, tx);
+      if (!state) throw new NotFoundException('검사를 찾을 수 없습니다');
+      if (!canReadPreliminary(state, c)) throw new ForbiddenException('예비 판독 중입니다');
+      refuseDestroyed(state);
+      const report = await tx.report.findUnique({ where: { uid }, select: { version: true, groupId: true } });
+      const headRow = report?.version ? await tx.reportVersion.findUnique({
+        where: { uid_version: { uid, version: report.version } }, select: { drawings: true, groupId: true } }) : null;
+      const headScope = headRow ? await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: headRow }) : null;
+      const head = versionDrawings(headRow?.drawings);
+      if (headScope) await drawingEntries(tx, uid, head.map(d => d.id), headScope);
+      const draft = await tx.reportDraft.findUnique({
+        where: { uid_author: { uid, author: c.actor } }, select: { drawings: true, revision: true, present: true, workSince: true, groupId: true } });
+      const epoch = await tx.studyState.findUnique({ where: { uid }, select: { draftEpoch: true } });
+      if (!epoch) throw new NotFoundException('검사를 찾을 수 없습니다');
+      const mine = draftDrawings(draft?.present ? draft.drawings : null);
+      const draftScope = draft?.present ? await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: draft }) : null;
+      const draftHead = draftScope && headScope && draftScope.groupId !== headScope.groupId ? [] : head.map(d => d.id);
+      const effective = effectiveDrawingIds(mine, draftHead);
+      if (draftScope) await drawingEntries(tx, uid, effective, draftScope);
+      const ids = [...new Set([...head.map(d => d.id), ...effective])];
+      const rows = ids.length ? await tx.reportDrawing.findMany({ where: { studyUid: uid, id: { in: ids } },
+        select: { id: true, background: true, source: true, width: true, height: true, sha256: true, authorActor: true, createdAt: true } }) : [];
+      const meta = (id: string) => {
+        const row = rows.find(r => r.id === id);
+        return row ? { id, background: row.background, source: row.source ?? null, width: row.width, height: row.height,
+          sha256: row.sha256, author: row.authorActor, createdAt: row.createdAt.toISOString() } : null;
+      };
+      const body = { version: report?.version ?? 0, head: head.map(d => meta(d.id)).filter(Boolean),
+        // since: when my present draft's work started - a draft discarded and written again is another work.
+        // ids: my draft's own drawing list, named only when it holds one (as the draft snapshot does): no list is not an
+        // empty list - an empty one removes the report's drawings.
+        draft: draft?.present ? { ...(mine ? { ids: mine.ids } : {}), drawings: effective.map(meta).filter(Boolean),
+          since: draft.workSince ? draft.workSince.toISOString() : null } : null,
+        draftRevision: draftToken(epoch.draftEpoch, draft?.revision ?? 0) };
+      return new LocalReadResponse(body, [
+        ...(report ? [consumerSource('report-evidence', uid, prev.institutionId, uid, report.version, ['head'], sourceIdentity)] : []),
+        ...(draft?.present ? [consumerSource('private-draft', uid, prev.institutionId, JSON.stringify([uid, c.actor]), body.draftRevision, ['draft'], sourceIdentity)] : []),
+      ]);
+    }, { isolationLevel: 'RepeatableRead', maxWait: 2000, timeout: 5000 });
+  }
+
+  /**
+   * Image Report: one drawing's picture. Served only while a version of this study holds it (under the `versions()` gate)
+   * or my own live draft holds it - a drawing removed, discarded or cleared before any version held it is not served,
+   * to its author either.
+   */
+  async reportDrawing(uid: string, id: string, c: Caller) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) throw new NotFoundException('그림을 찾을 수 없습니다');
+    await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
+    const prev = await this.access.gate(uid, c);
+    if (!prev) throw new NotFoundException('검사를 찾을 수 없습니다');
+    const parentScope = await examParentAccess(this.prisma, this.studyAccess, c, uid);
+    const sourceIdentity = this.studyAccess.assertUnsplitSource(c, parentScope.studies[0]);
+    if (!canReadPreliminary(prev, c))
+      throw new ForbiddenException(
+        `예비 판독(RS: P) 중입니다. ${prev?.preReviewer ?? '지정된 판독의'}만 볼 수 있습니다.`);
+    refuseDestroyed(prev);
+    return this.prisma.$transaction(async tx => {
+      const state = await this.access.gate(uid, c, tx);
+      if (!state) throw new NotFoundException('검사를 찾을 수 없습니다');
+      if (!canReadPreliminary(state, c)) throw new ForbiddenException('예비 판독 중입니다');
+      refuseDestroyed(state);
+      const held = await tx.$queryRaw<any[]>`SELECT version, "groupId" FROM "ReportVersion" WHERE uid = ${uid}
+        AND drawings @> jsonb_build_array(jsonb_build_object('id', ${id}::text)) ORDER BY version DESC LIMIT 1`;
+      const draft = held.length ? null : await tx.reportDraft.findUnique({
+        where: { uid_author: { uid, author: c.actor } }, select: { drawings: true, present: true, revision: true, groupId: true } });
+      if (!held.length && !(draft?.present && draftDrawings(draft.drawings)?.ids.includes(id)))
+        throw new NotFoundException('그림을 찾을 수 없습니다');
+      const scope = await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: held[0] ?? draft! });
+      const row = await tx.reportDrawing.findFirst({ where: { id, studyUid: uid } });
+      if (!row) throw new NotFoundException('그림을 찾을 수 없습니다');
+      assertDrawingScope(row, scope);
+      const body = { id, background: row.background, source: row.source ?? null, width: row.width, height: row.height,
+        sha256: row.sha256, png: Buffer.from(row.png).toString('base64') };
+      // The record this picture is read from: the version that holds it, or my draft at its revision (as reportCitations names it).
+      const epoch = held.length ? null : await tx.studyState.findUnique({ where: { uid }, select: { draftEpoch: true } });
+      return new LocalReadResponse(body, [held.length
+        ? consumerSource('report-evidence', uid, prev.institutionId, uid, held[0].version, [], sourceIdentity)
+        : consumerSource('private-draft', uid, prev.institutionId, JSON.stringify([uid, c.actor]),
+            draftToken(epoch!.draftEpoch, draft!.revision), [], sourceIdentity)]);
+    }, { isolationLevel: 'RepeatableRead', maxWait: 2000, timeout: 5000 });
+  }
   /**
    * 구조화 전용 읽기 — 머리 판과 내 초안의 타입 있는 값.
    *

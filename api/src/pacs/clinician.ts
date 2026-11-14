@@ -18,6 +18,7 @@ import type { PacsWorklist } from './worklist';
 import { LocalReadResponse } from '../emr-viewing/local-read';
 import { consumerSource, viewerSources } from '../emr-viewing/consumer-read';
 import { resolveExamScope, prepareExamRead, relatedExamRecord, relatedExamReports, readableExamRecord, examScopeView, scopeIncludesSeries, ResolvedExamScope } from '../exam-merge.service';
+import { versionDrawings, drawingEntries } from '../image-report';
 
 export class PacsClinician {
   constructor(
@@ -99,10 +100,18 @@ export class PacsClinician {
         select: { id: true, revision: true, hidden: true, snapshot: true, studyUid:true } });
       const rows=candidates.filter(row=>scopeIncludesSeries(scope,row.studyUid,(row.snapshot as any)?.seriesUid));
       if (rows.length > 512) throw new ForbiddenException('키 이미지 목록 한도를 초과했습니다');
+      // Image Report: the drawings of that same head version, with their pictures (at most three). Not while preliminary.
+      const pinned = versionDrawings(head?.drawings);
+      if (pinned.length) await drawingEntries(tx, uid, pinned.map(d => d.id), scope);
+      const pictures = pinned.length ? await tx.reportDrawing.findMany({ where: { studyUid: uid, id: { in: pinned.map(d => d.id) } },
+        select: { id: true, png: true } }) : [];
+      const drawings = pinned.map(d => ({ id: d.id, background: d.background, source: d.source ?? null,
+        png: Buffer.from(pictures.find(p => p.id === d.id)?.png ?? []).toString('base64') }));
       const body = { uid, report, scope:examScopeView(scope), keys: rows.flatMap(row=>{
         const key=clinicianKeyImage(row);return key?[{...key,sourceUid:row.studyUid}]:[];
-      }) };
+      }), ...(drawings.length ? { drawings } : {}) };
       return new LocalReadResponse(body, [
+        ...(head && drawings.length ? [consumerSource('report-version', uid, state.institutionId, String(head.id), head.version, ['drawings'], identity)] : []),
         ...(head ? [consumerSource('report-version', uid, state.institutionId, String(head.id), head.version, ['report'], identity)]
           : [consumerSource('study-metadata', uid, state.institutionId, uid, null, ['report'], identity)]),
         ...viewerSources(uid, state.institutionId, body.keys, ['keys'], identity)]);
@@ -171,7 +180,7 @@ export class PacsClinician {
       const scope=await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:report?'stored':'current',...(report?{record:report}:{}),state,identity:true});
       const head = report?.version > 0 ? await tx.reportVersion.findUnique({
         where: { uid_version: { uid, version: report.version } },
-        select: { id: true, version: true, action: true, findings: true, conclusion: true, recommendation: true } }) : null;
+        select: { id: true, version: true, action: true, findings: true, conclusion: true, recommendation: true, drawings: true } }) : null;
       return work(tx, state, head,scope);
     }, { isolationLevel: 'RepeatableRead', maxWait: 2000, timeout: 5000 });
   }

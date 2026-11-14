@@ -9,6 +9,7 @@ import { refuseDestroyed } from './pacs/values';
 import { LocalReadResponse } from './emr-viewing/local-read';
 import { consumerSource, viewerSources } from './emr-viewing/consumer-read';
 import { prepareExamRead, resolveExamScope, scopeIncludesSeries, examScopeView, examScopeChanged, examParentAccess } from './exam-merge.service';
+import { versionDrawings, draftDrawings, effectiveDrawingIds, drawingEntries } from './image-report';
 
 const member = (req: any): Caller => ({ sub: req.sub, actor: req.actor, roles: req.roles ?? [],
   institution: req.institution ?? null, kind: req.kind ?? 'member' });
@@ -80,6 +81,14 @@ export class ReportPreviewController {
       const scope=await resolveExamScope(tx,this.studyAccess,caller,{uid,purpose:report?'stored':'current',...(report?{record:report}:{}),prepared:before});
       if(query.generation!==undefined&&query.generation!==scope.generation)throw examScopeChanged();
       const version = report?.version ? await tx.reportVersion.findUnique({ where: { uid_version: { uid, version: report.version } } }) : null;
+      let pinned = versionDrawings(version?.drawings);
+      if (query.draft) {
+        const head = await tx.report.findUnique({ where: { uid } });
+        const headVersion = head?.version && (head.groupId ?? null) === scope.groupId
+          ? await tx.reportVersion.findUnique({ where: { uid_version: { uid, version: head.version } } }) : null;
+        pinned = await drawingEntries(tx, uid, effectiveDrawingIds(draftDrawings(report.drawings),
+          versionDrawings(headVersion?.drawings).map(d => d.id)), scope);
+      } else if (pinned.length) await drawingEntries(tx, uid, pinned.map(d => d.id), scope);
       const candidates = await tx.viewerItem.findMany({ where: { studyUid: {in:scope.studies}, hidden: false,
         snapshot: { path: ['kind'], equals: 'key' } }, orderBy: { id: 'asc' } });
       const heads=candidates.filter(head=>scopeIncludesSeries(scope,head.studyUid, (head.snapshot as any)?.seriesUid));
@@ -98,12 +107,16 @@ export class ReportPreviewController {
         report: { scope:examScopeView(scope), version: report?.version ?? 0, rs: state.rs, action: version?.action ?? null, author: version?.author ?? null,
           repDoc: state.repDoc ?? null, confirm: state.confirm ?? null,
           findings: report?.findings ?? '', conclusion: report?.conclusion ?? '', recommendation: report?.recommendation ?? '' },
-        keys: heads.map(head => ({ id: head.id, revision: head.revision, sourceUid:head.studyUid, author: head.authorActor, item: head.snapshot })) };
+        keys: heads.map(head => ({ id: head.id, revision: head.revision, sourceUid:head.studyUid, author: head.authorActor, item: head.snapshot })),
+        ...(pinned.length ? { drawings: pinned
+          .map(d => ({ id: d.id, background: d.background, source: d.source ?? null })) } : {}) };
       const identity = { sourcePatientId: tag('00100020') || null, sourceInstitution: tag('00080080') || null };
       const sources = [consumerSource('study-metadata', uid, state.institutionId, uid, null, ['study'], identity),
         ...viewerSources(uid, state.institutionId, body.keys, ['keys'], identity)];
       if (report) sources.push(consumerSource(query.draft?'private-draft':query.version?'report-version':'report-head', uid, state.institutionId,
         query.draft?JSON.stringify([uid,caller.actor]):query.version?String(report.id):uid, query.draft?report.revision:report.version, ['report'], identity));
+      if (report && (body as any).drawings) sources.push(consumerSource(query.draft?'private-draft':query.version?'report-version':'report-head', uid, state.institutionId,
+        query.draft?JSON.stringify([uid,caller.actor]):query.version?String(report.id):uid, query.draft?report.revision:report.version, ['drawings'], identity));
       return new LocalReadResponse(body, sources);
     }, { isolationLevel: 'RepeatableRead', maxWait: 2000, timeout: 5000 });
   }

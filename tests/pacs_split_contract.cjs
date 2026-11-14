@@ -29,8 +29,11 @@ function historicalSource() {
     const overrides = Object.fromEntries(files.map(file => [path.join(apiSrc, file.slice('api/src/'.length)),
       execFileSync('git', ['show', `${landed}:${file}`], { cwd: root, encoding: 'utf8', maxBuffer: 8e6 })]));
     const output = path.join(dir, 'client');
+    // Resolve the installed generator normally; a command provider can exit without generating on Windows.
+    // The client output stays in this temporary directory, never in the shared installed dependencies.
+    fs.symlinkSync(fs.realpathSync(path.join(root, 'api/node_modules')), path.join(dir, 'node_modules'), 'junction');
     const schema = execFileSync('git', ['show', `${landed}:api/prisma/schema.prisma`], { cwd: root, encoding: 'utf8' })
-      .replace('provider = "prisma-client-js"', `provider = ${JSON.stringify('node ' + fs.realpathSync(path.join(root, 'api/node_modules/@prisma/client/generator-build/index.js')).replace(/\\/g, '/'))}\n  output = ${JSON.stringify(output.replace(/\\/g, '/'))}`);
+      .replace('provider = "prisma-client-js"', `provider = "prisma-client-js"\n  output = ${JSON.stringify(output.replace(/\\/g, '/'))}`);
     fs.writeFileSync(path.join(dir, 'schema.prisma'), schema);
     execFileSync(process.execPath, [path.join(root, 'api/node_modules/prisma/build/index.js'), 'generate', '--schema', path.join(dir, 'schema.prisma')],
       { cwd: root, env: { ...process.env, PRISMA_GENERATE_SKIP_AUTOINSTALL: 'true' }, maxBuffer: 8e6, timeout: 60000 });

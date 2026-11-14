@@ -74,6 +74,76 @@ const merged=(id,base,list,extra={})=>({groups:[{id,institutionId:'hallym',kind:
   members:list.map((uid,part)=>({groupId:id,logicalUid:uid,studyUid:uid,part,seriesUids:[]}))});
 const G1='00000000-0000-4000-8000-00000000a001';
 
+function drawingStore(f, uid, head = null, draft = null) {
+  const rows = [], keys = [], versions = head ? [head] : [];
+  f.prisma.report = { findUnique: async () => head };
+  f.prisma.reportVersion = { findUnique: async ({where}) => versions.find(v => v.version === where.uid_version.version) ?? null };
+  f.prisma.reportDraft.findUnique = async () => draft;
+  f.prisma.reportDraft.create = async ({data}) => (draft = { ...data, updatedAt: new Date() });
+  f.prisma.viewerItem = { findFirst: async ({where}) => keys.find(k => match(k,where)) ?? null, findMany: async () => keys };
+  f.prisma.reportDrawing = {
+    findMany: async ({where}) => rows.filter(r => match(r,where)),
+    findFirst: async ({where}) => rows.find(r => match(r,where)) ?? null,
+    create: async ({data}) => { const row = {groupId:null,createdAt:new Date(),...data}; rows.push(row); return row; },
+  };
+  const raw = f.prisma.$queryRaw;
+  f.prisma.$queryRaw = async (sql,...values) => sql.join('').includes('FROM "ReportVersion"')
+    ? versions.filter(v => v.uid === values[0] && v.drawings?.some(d => d.id === values[1])).slice(-1)
+    : raw(sql,...values);
+  const { PacsReportDraft } = require('/app/dist/pacs/report-draft');
+  const { PacsReportEvidence } = require('/app/dist/pacs/report-evidence');
+  const { PacsAccess } = require('/app/dist/pacs/access');
+  const evidence = new PacsReportEvidence(f.prisma,f.access,{},new PacsAccess(f.prisma,f.access));
+  const writer = new PacsReportDraft(f.prisma,f.access,{}, {}, {
+    reportLimitChecked: async fn => fn(), draftCitations: async () => ({entries:[]}), draftStructure: async () => ({entries:[]}),
+  }, {});
+  // The ledger/transaction collaborator is outside this in-memory contract; the real draft and drawing writes run.
+  writer.draftTransaction = async (_uid,_c,_session,_epoch,_prepare,work) => work(f.prisma,f.db.states.get(uid),async()=>{});
+  writer.ownDraft = async () => draft;
+  return {rows,keys,versions,evidence,writer,draft:()=>draft};
+}
+function drawingBody(f, uid, key) {
+  const zlib = require('node:zlib');
+  const crc = bytes => { let c=-1; for(const b of bytes){c^=b;for(let i=0;i<8;i++)c=c&1?0xedb88320^(c>>>1):c>>>1;}return (c^-1)>>>0; };
+  const chunk = (name,data) => { const type=Buffer.from(name),size=Buffer.alloc(4),sum=Buffer.alloc(4);size.writeUInt32BE(data.length);sum.writeUInt32BE(crc(Buffer.concat([type,data])));return Buffer.concat([size,type,data,sum]); };
+  const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(1);ihdr.writeUInt32BE(1,4);ihdr[8]=8;ihdr[9]=2;
+  const png=Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),chunk('IHDR',ihdr),chunk('IDAT',zlib.deflateSync(Buffer.from([0,255,255,255]))),chunk('IEND',Buffer.alloc(0))]);
+  return { expectedOwner:{institution:reader.institution,sub:reader.sub,author:reader.actor}, expectedRevision:f.db.states.get(uid).draftEpoch+':0',
+    findings:'SYN drawing',conclusion:'',recommendation:'',baseVersion:0,citationIds:[],structureIds:[],drawingIds:null,
+    drawing:{background:key?'image':'breast',...(key?{source:{keyImageId:key.id,keyImageRevision:key.revision,frame:1}}:{}),
+      strokes:[{tool:'line',color:'#000000',points:[[0,0],[1,1]]}],png:png.toString('base64')} };
+}
+test('a saved image drawing on another merged original belongs to the report scope and remains readable after Unmerge', async () => {
+  const f=fixture(merged(G1,A,[A,B])),d=drawingStore(f,A);
+  const key={id:'00000000-0000-4000-8000-000000000d01',studyUid:B,hidden:false,revision:1,snapshot:{kind:'key',seriesUid:B+'.1',sopUid:B+'.1.1',frame:1}};
+  d.keys.push(key);
+  const answer=await d.writer.putReport(A,drawingBody(f,A,key),reader,null,{});
+  assert.equal(answer.present,true);assert.equal(d.draft().groupId,G1);
+  assert.equal(d.rows[0].groupId,G1);assert.equal(d.rows[0].source.studyUid,B);
+  d.versions.push({uid:A,version:1,groupId:G1,drawings:[{id:d.rows[0].id}]});
+  f.db.groups[0].dissolvedAt=new Date();
+  const picture=JSON.parse((await d.evidence.reportDrawing(A,d.rows[0].id,reader)).json);
+  assert.equal(picture.png,drawingBody(f,A,key).drawing.png);
+  const requireAccess=f.access.require;
+  f.access.require=async(c,uids)=>{if(uids.includes(B))throw Object.assign(new Error('unreadable original'),{getStatus:()=>404});return requireAccess(c,uids);};
+  await assert.rejects(d.evidence.reportDrawing(A,d.rows[0].id,reader),e=>status(e)===404);
+});
+test('a Split drawing refuses a key outside its series and stays on the saved part after Unsplit', async () => {
+  const f=fixture({groups:[{id:G1,institutionId:'hallym',kind:'split',baseUid:A,dissolvedAt:null}],members:[
+    {groupId:G1,logicalUid:A,studyUid:A,part:0,seriesUids:[]},
+    {groupId:G1,logicalUid:B,studyUid:A,part:1,seriesUids:[A+'.2']}]}),d=drawingStore(f,B);
+  const key={id:'00000000-0000-4000-8000-000000000d02',studyUid:A,hidden:false,revision:1,snapshot:{kind:'key',seriesUid:A+'.1',sopUid:A+'.1.1',frame:1}};
+  d.keys.push(key);
+  await assert.rejects(d.writer.putReport(B,drawingBody(f,B,key),reader,null,{}),e=>body(e)?.code==='REPORT_DRAWING_SOURCE');
+  assert.equal(d.rows.length,0);assert.equal(d.draft(),null);
+  key.snapshot.seriesUid=A+'.2';key.snapshot.sopUid=A+'.2.1';
+  await d.writer.putReport(B,drawingBody(f,B,key),reader,null,{});
+  f.db.groups[0].dissolvedAt=new Date();
+  const picture=JSON.parse((await d.evidence.reportDrawing(B,d.rows[0].id,reader)).json);
+  assert.equal(picture.source.seriesUid,A+'.2');
+  assert.equal(d.draft().groupId,G1);
+});
+
 test('tele changes all original channels atomically and closes every receiving assignment on cancellation', async () => {
   const { PacsStudyState } = require('/app/dist/pacs/study-state');
   const { PacsAccess } = require('/app/dist/pacs/access');
@@ -451,6 +521,45 @@ function reportingFixture(grouped, alteration) {
 
 // The ledger and signer are ports in this fixture. This checks scope eligibility; native cancellation signing has
 // its own patient-snapshot requirement and must also be exercised with the real signer before delivery.
+test('committing draft drawings freezes the same report group and refuses a drawing from another scope', async () => {
+  const id = '00000000-0000-4000-8000-000000000d03';
+  for (const variant of ['merged', 'ordinary', 'wrong-group', 'outside-source']) {
+    const grouped = variant !== 'ordinary', f = reportingFixture(grouped);
+    const groupId = grouped ? G1 : null;
+    f.db.drafts[0].drawings = { seed: [], ids: [id] };
+    const row = { id, studyUid: A, groupId: variant === 'wrong-group' ? '00000000-0000-4000-8000-000000000099' : groupId,
+      background: 'image', width: 1, height: 1, sha256: 'a'.repeat(64),
+      source: { keyImageId: id, keyImageRevision: 1, seriesUid: A + '.2', sopUid: A + '.2.1', frame: 1,
+        ...(grouped ? { studyUid: variant === 'outside-source' ? D : B } : {}) } };
+    f.prisma.reportDrawing = { findMany: async ({ where }) => match(row, where) ? [row] : [] };
+    const commit = () => f.service.commitReport(A, { ...f.request(), action: 'save', findings: 'SYN PRIVATE',
+      conclusion: '', recommendation: '', drawingIds: [id], expectedEffectiveDrawingIds: [id] }, { ...reader }, null);
+    if (variant.startsWith('wrong') || variant.startsWith('outside')) {
+      await assert.rejects(commit(), e => body(e)?.code === 'EXAM_SCOPE_CHANGED');
+      assert.equal(f.versions.length, 1); assert.equal(f.db.drafts[0].present, true);
+    } else {
+      await commit();
+      assert.equal(f.versions.at(-1).groupId, groupId);
+      assert.deepEqual(f.versions.at(-1).drawings.map(d => d.id), [id]);
+      assert.equal(f.db.drafts[0].present, false);
+    }
+  }
+});
+
+test('forced draft cleanup preserves drawings in their dissolved saved scope', async () => {
+  const f = reportingFixture(true), admin = { ...reader, roles: ['admin'] };
+  const id = '00000000-0000-4000-8000-000000000d04';
+  f.db.groups[0].dissolvedAt = new Date();
+  f.db.drafts[0].drawings = { seed: [], ids: [id] };
+  const row = { id, studyUid: A, groupId: G1, background: 'breast', source: null, sha256: 'b'.repeat(64) };
+  f.prisma.reportDrawing = { findMany: async ({ where }) => match(row, where) ? [row] : [] };
+  await f.service.forceDiscardDrafts(A, f.request(admin), admin, null);
+  const kept = f.versions.at(-1);
+  assert.equal(kept.action, 'discarded'); assert.equal(kept.groupId, G1);
+  assert.deepEqual(kept.drawings.map(d => d.id), [id]);
+  assert.equal(f.db.drafts[0].present, false);
+});
+
 test('report service eligibility refuses changed originals for reading and allows cleanup including Reset and Unmerge', async () => {
   for (const grouped of [false, true]) for (const alteration of ['missing', 'patient']) {
     for (const action of ['open', 'hold', 'draft', 'commit', 'discard', 'clear', 'force', 'reset']) {
