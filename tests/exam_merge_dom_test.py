@@ -49,6 +49,9 @@ class MergeSite(rf.FlowSite):
                        {"rule": "transfer", "ok": True, "message": "이 검사들의 전송·내보내기가 진행 중이지 않습니다.", "uids": []},
                        {"rule": "held", "ok": True, "message": "합친 검사의 판독문을 쓰는 사람이 없습니다.", "uids": []}]
         self.report_groups = {}         # uid -> reportGroup of the row (a report written on a merged exam)
+        self.desc = {}                  # uid -> StudyDesc of the row and of its original in a merged exam
+        self.series_names = ["SYN Series 1", "SYN Series 2"]
+        self.related_reports = {}       # uid -> relatedExamReports of the row
 
     def scope(self, uid):
         if self.split and uid in (self.split["uid"], SPLIT_UID):
@@ -65,7 +68,7 @@ class MergeSite(rf.FlowSite):
         path = urlparse(request.url).path
         if path == f"/dicom-web/studies/{h.UID}/series":
             return route.fulfill(json=[{"0020000D": {"Value": [h.UID]}, "0020000E": {"Value": [uid]},
-                                       "00200011": {"Value": [i + 1]}, "0008103E": {"Value": [f"SYN Series {i + 1}"]},
+                                       "00200011": {"Value": [i + 1]}, "0008103E": {"Value": [self.series_names[i]]},
                                        "00080060": {"Value": ["CT"]}, "00201209": {"Value": [4]}}
                                       for i, uid in enumerate(SERIES)])
         if path == f"/dicom-web/studies/{rf.UID_C}/series":
@@ -77,11 +80,15 @@ class MergeSite(rf.FlowSite):
         rows = {row["uid"]: row for row in body["studies"]}
         for uid, row in rows.items():
             row.update(acc=ACC[uid], count=COUNT[uid], series=1)
+            if uid in self.desc:
+                row["desc"] = self.desc[uid]
+            if uid in self.related_reports:
+                row["relatedExamReports"] = self.related_reports[uid]
         hidden = {uid for members in self.groups.values() for uid in members[1:]}
         for base, members in self.groups.items():
             row = rows[base]
             row["group"] = {"id": GROUP_ID, "kind": "merge", "baseUid": base, "members": [
-                {"uid": uid, "acc": ACC[uid], "date": "20261003", "time": "", "desc": "SYN CT CHEST", "modality": "CT",
+                {"uid": uid, "acc": ACC[uid], "date": "20261003", "time": "", "desc": self.desc.get(uid, "SYN CT CHEST"), "modality": "CT",
                  "count": COUNT[uid], "series": 1} for uid in members]}
             row["count"] = sum(COUNT[uid] for uid in members)
             row["series"] = len(members)
@@ -394,6 +401,146 @@ class ExamMerge(unittest.TestCase):
         self.page.evaluate(f"() => select({json.dumps(rf.UID_C)})")
         expect(win).to_have_count(0)
         self.assertEqual(1, sum(m == "POST" for m, _, _ in self.site.sent))
+
+    # ── screen language: the real translator of the page; words change, data never does ──
+    def language(self, lang):
+        self.assertTrue(self.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", lang))
+
+    def texts(self, locator):
+        return locator.evaluate_all("nodes => nodes.map(n => n.textContent.trim())")
+
+    def test_korean_merge_window_translates_its_words_and_keeps_its_data(self):
+        # A study description that reads like a glossary template ("Split {0}") is still data.
+        self.site.desc[h.UID_B] = "Split Chest CT"
+        self.page.evaluate("() => load()")
+        self.language("ko")
+        self.pick(h.UID)
+        self.page.locator("#t-merge-exam").click()
+        win = self.window("merge")
+        expect(win.locator("h3")).to_have_text("검사 합치기")
+        self.assertEqual(["합치기", "기준", "ID", "이름", "검사일", "검사명", "접수 번호", "시리즈 / 영상", "판독문"],
+                         self.texts(win.locator("thead th")))
+        cells = self.texts(self.row_of(win, h.UID_B).locator("td"))
+        self.assertEqual("Split Chest CT", cells[5])
+        self.assertEqual("SYNACC-A2", cells[6])
+        self.assertEqual("1 / 12", cells[7])
+        self.assertEqual("미판독", cells[8], "the report status is a word of the screen")
+        expect(self.result(win)).to_contain_text("결과: 검사 1건 (기준 SYNACC-A1, 2026-10-03)")
+
+    def test_english_screen_shows_the_server_checks_and_refusals_in_english(self):
+        self.site.groups[h.UID] = [h.UID, h.UID_B]
+        self.page.evaluate("() => load()")
+        self.language("en")
+        self.pick(h.UID)
+        self.page.locator("#t-split-unmerge").click()
+        win = self.window("unmerge")
+        self.assertEqual(["Original exam", "StudyDate", "StudyDesc", "Series / Images back"], self.texts(win.locator("thead th")))
+        expect(win.locator(".exam-merge-checks li")).to_have_text([
+            "✓ The merged exam has no approved report now.", "✓ No transfer or export of these studies is in progress.",
+            "✓ No one is writing the report of the merged exam."])
+        win.locator("button", has_text="Close").click()
+        self.site.groups.clear()
+        self.page.evaluate("() => load()")
+        expect(self.page.locator("#rows tr[data-uid]")).to_have_count(3)
+        self.site.merge_refusal = (409, {"code": "EXAM_GROUP_REFUSED", "message": "SYN refused",
+                                         "refusals": [{"uid": h.UID_B, "rule": "reported", "message": "판독문이 있습니다(RS T). 먼저 판독 취소(Reset)를 하세요."}]})
+        self.pick(h.UID)
+        self.page.locator("#t-merge-exam").click()
+        win = self.window("merge")
+        win.locator(".order-dialog-foot button", has_text=re.compile("^Merge$")).click()
+        expect(win.locator(".exam-merge-refused")).to_have_text("SYNACC-A2: There is a report (RS T). Reset to Unread first.")
+
+    def test_korean_unmerge_and_split_windows_keep_their_data(self):
+        self.site.groups[h.UID] = [h.UID, h.UID_B]
+        self.site.desc[h.UID_B] = "Split Chest CT"
+        self.page.evaluate("() => load()")
+        self.language("ko")
+        self.pick(h.UID)
+        self.page.locator("#t-split-unmerge").click()
+        win = self.window("unmerge")
+        self.assertEqual(["원본 검사", "검사일", "검사명", "되돌아갈 시리즈 / 영상"], self.texts(win.locator("thead th")))
+        self.assertEqual(["SYNACC-A2", "2026-10-03", "Split Chest CT", "1 / 12"], self.texts(win.locator("tbody tr").nth(1).locator("td")))
+        win.locator("button", has_text="닫기").click()
+        self.site.groups.clear()
+        self.site.series_names = ["SYN Series 1", "Split Chest CT"]
+        self.page.evaluate("() => load()")
+        expect(self.page.locator("#rows tr[data-uid]")).to_have_count(3)
+        self.pick(h.UID)
+        self.page.locator("#t-split-unmerge").click()
+        win = self.window("unmerge")
+        expect(win.locator("tbody tr")).to_have_count(2)
+        self.assertEqual(["검사 2", "시리즈", "시리즈 설명", "장비", "영상"], self.texts(win.locator("thead th")))
+        self.assertEqual(["", "2", "Split Chest CT", "CT", "4"], self.texts(win.locator("tbody tr").nth(1).locator("td")))
+        win.get_by_role("checkbox", name="Split Chest CT 나누기").check()
+        expect(win).to_contain_text("검사 1: 시리즈 1 · 영상 4 / 검사 2: 시리즈 1 · 영상 4")
+
+    def test_report_scope_lines_follow_the_language_and_keep_the_accession_numbers(self):
+        self.site.groups[h.UID] = [h.UID, h.UID_B]
+        self.site.report_groups[rf.UID_C] = {"id": GROUP_ID, "active": False, "readable": True, "studies": [rf.UID_C, h.UID]}
+        self.page.evaluate("() => load()")
+        expect(self.page.locator("#rows tr[data-uid]")).to_have_count(2)
+        scope = self.page.locator(".exam-report-scope")
+        self.page.evaluate("() => setMode('Radiology')")
+        self.pick(rf.UID_C)
+        self.language("en")
+        expect(scope).to_contain_text("Merged exam — SYNACC-C1 + SYNACC-A1 · This report is of a scope that has since been restored.")
+        self.language("ko")
+        expect(scope).to_contain_text("합친 검사 — SYNACC-C1 + SYNACC-A1 · 지금은 되돌린 범위의 판독입니다.")
+        expect(scope.get_by_role("button", name="판독문 이력 · SYNACC-A1")).to_be_visible()
+        # Report History: one version written on the merged exam, one whose scope can no longer be read.
+        versions = [{"version": 2, "action": "approve", "author": "SYN Doctor", "at": "2026-10-02T00:00:00Z",
+                     "group": {"id": GROUP_ID, "readable": True, "active": False, "studies": [rf.UID_C, h.UID]}},
+                    {"version": 1, "action": "save", "author": "SYN Doctor", "at": "2026-10-01T00:00:00Z",
+                     "group": {"id": GROUP_ID, "readable": False, "active": False}}]
+        self.page.route("**/api/studies/*/report/versions", lambda route: route.fulfill(json=versions))
+        self.language("en")
+        # The technician's screen has no History button; the window is the same one the Report History button opens.
+        self.page.evaluate("() => { showHistory(); }")
+        lines = self.page.locator("#hist-body [data-exam-group]")
+        expect(lines).to_have_text([
+            "Exam scope — This version was written on the images of the original exams (SYNACC-C1 + SYNACC-A1) · scope since restored",
+            "Exam scope — Some images of the stored scope cannot be viewed, so the text of this version is not shown"])
+        self.language("ko")
+        expect(lines).to_have_text([
+            "검사 범위 — 원본 검사(SYNACC-C1 + SYNACC-A1)의 영상으로 쓴 판입니다 · 지금은 되돌린 범위",
+            "검사 범위 — 저장된 범위의 일부 영상을 볼 수 없어 이 판의 본문을 보이지 않습니다"])
+
+    def test_related_report_line_names_the_exam_scope_not_the_exam_column(self):
+        self.site.related_reports[rf.UID_C] = [{"uid": h.UID, "version": 3, "scope": {"part": None}},
+                                               {"uid": SPLIT_UID, "version": 2, "scope": {"part": 1}}]
+        self.page.evaluate("() => load()")
+        self.pick(rf.UID_C)
+        links = self.page.locator("#relrows button.chip")
+        expect(links).to_have_text(["Related Report · Exam · v3", "Related Report · Exam 2 · v2"])
+        self.language("ko")
+        expect(links).to_have_text(["관련 판독문 · 검사 범위 · v3", "관련 판독문 · 검사 2 · v2"])
+        self.language("en")
+        expect(links).to_have_text(["Related Report · Exam · v3", "Related Report · Exam 2 · v2"])
+
+    def test_original_receipt_lines_translate_their_words_not_the_accession_numbers(self):
+        self.site.groups[h.UID] = [h.UID, h.UID_B]
+        self.page.evaluate("() => load()")
+        self.pick(h.UID)
+        line = self.page.locator("#study-receipt .exam-original-receipts > div").first
+        expect(line).to_contain_text("SYNACC-A1 · ")
+        self.language("en")
+        expect(line).to_contain_text("Gateway receipt information was not provided in this list.")
+        self.assertEqual("SYNACC-A1", line.locator("[translate=no]").first.text_content())
+        self.language("ko")
+        expect(line).to_contain_text("Gateway 영수증 정보가 이 목록에 제공되지 않았습니다.")
+
+    def test_original_choices_keep_their_data_untranslated(self):
+        self.site.groups[h.UID] = [h.UID, h.UID_B]
+        self.site.desc[h.UID_B] = "Split Chest CT"
+        self.page.evaluate("() => load()")
+        self.language("ko")
+        self.pick(h.UID)
+        self.page.locator(f"#rows tr[data-uid='{h.UID}']").click(button="right")
+        self.page.get_by_text("원본 내려받기", exact=True).click()
+        dialog = self.page.locator("dialog[open]").filter(has_text="원본 내려받기")
+        expect(dialog.locator("label [translate=no]")).to_have_count(2)
+        expect(dialog.locator("label").nth(1)).to_contain_text("SYNACC-A2 · Split Chest CT")
+        dialog.get_by_role("button", name="취소", exact=True).click()
 
 
 if __name__ == "__main__":

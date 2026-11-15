@@ -96,7 +96,9 @@
       for (const report of s?.relatedExamReports || []) {
         if (report.uid === s.uid) continue;
         const row=document.createElement('tr'),cell=document.createElement('td'),link=document.createElement('button');
-        cell.colSpan=7;link.type='button';link.className='chip';link.textContent='Related Report · '+(report.scope?.part===1?'Exam 2':'Exam')+' · v'+report.version;
+        // "Exam" here names the exam scope the report was written on (not the Exam column): each line is one template.
+        cell.colSpan=7;link.type='button';link.className='chip';
+        kinWrite(link,kinSay(report.scope?.part===1?'Related Report · Exam 2 · v{n0}':'Related Report · Exam · v{n0}',report.version));
         link.title='묶음을 되돌리기 전 저장한 판독문과 당시 영상 범위를 엽니다.';
         const selected=s.uid;link.onclick=()=>{if(selectedUid===selected)showHistory(report.uid);};
         cell.append(link);row.append(cell);$('#relrows').append(row);

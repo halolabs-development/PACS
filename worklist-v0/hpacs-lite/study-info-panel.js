@@ -167,8 +167,11 @@
             line.append(document.createElement('span'),' ',control,' ',document.createElement('span'));
           }
           const [text,control,note]=line.children;
-          text.textContent=[source.acc||source.uid,own.observation.text,own.change?.text,
-            source.gatewayReceipt===undefined?'Gateway 영수증 정보가 이 목록에 제공되지 않았습니다.':own.gateway.text].filter(Boolean).join(' · ');
+          // The Accession No is data; each label after it is its own text so the screen language reads it.
+          const id=document.createElement('span');id.translate=false;id.textContent=source.acc||source.uid;
+          text.replaceChildren(id,...[own.observation.text,own.change?.text,
+            source.gatewayReceipt===undefined?'Gateway 영수증 정보가 이 목록에 제공되지 않았습니다.':own.gateway.text].filter(Boolean)
+            .flatMap(words=>[' · ',kinWrite(document.createElement('span'),words)]));
           drawRetry(source,own.retry,control,note);return line;
         });
         for(const line of kept.values())line.querySelector('button').dataset.request='';
