@@ -15,6 +15,7 @@ import { destructionRecordDecoder } from './destruction-record';
 import { RetentionAdapter, recordLedgerRestoration } from './retention-gate';
 import { AppendOnlyLedger, LedgerIo, LedgerEntry as FileEntry, LedgerRestoration, LedgerView as FileView, ledgerDirectory,
   ledgerMirrorDirectory, nodeLedgerIo, replaceAtomically } from './ledger-file';
+import { destroyWorkDrawings, workDrawingsLeft } from '../image-report';
 
 /*
  * CD-09-P: the end of a private draft work's purpose and the destruction of its content.
@@ -319,11 +320,13 @@ export async function judgeCommit(db: any, target: CommitTarget, ledger: Purpose
           return 'not-committed';
         return 'unknown';
       }
-      // The re-application deleted the ended rows and emptied the live rows of these units: locking them waits for it.
+      // The re-application deleted the ended rows, emptied the live rows and deleted the unnamed drawings of these units:
+      // locking them waits for it.
       const units = [...target.units];
       const ended = await tx.$queryRaw`SELECT "disposalUnitId" FROM "ReportDraftPurposeEnd" WHERE "disposalUnitId" = ANY(${units}::text[]) FOR UPDATE`;
       const live = await tx.$queryRaw`SELECT "workUnit" FROM "ReportDraft" WHERE "workUnit" = ANY(${units}::text[]) FOR UPDATE`;
-      return ended.length || live.length ? 'not-committed' : 'committed';
+      const drawings = await workDrawingsLeft(tx, units);
+      return ended.length || live.length || drawings ? 'not-committed' : 'committed';
   });
 }
 const HELD = new Set(['LegalHoldActive', 'HoldReleaseRequired']);
@@ -368,9 +371,11 @@ async function reapply(tx: Tx, unit: string): Promise<boolean> {
   // A copy taken while the work was still live holds the content in the author's row. Empty exactly that work: the row
   // keeps its revision boundary (and moves past it), so no request of the old work can write it back.
   const live = await tx.$executeRaw`UPDATE "ReportDraft" SET present = false, findings = '', conclusion = '', recommendation = '',
-    "baseVersion" = 0, citations = NULL, structured = NULL, revision = revision + 1, "workUnit" = NULL, "workSince" = NULL,
+    "baseVersion" = 0, citations = NULL, structured = NULL, drawings = NULL, revision = revision + 1, "workUnit" = NULL, "workSince" = NULL,
     "workIntent" = NULL, "updatedAt" = now() AT TIME ZONE 'UTC' WHERE "workUnit" = ${unit}`;
-  return ended + live > 0;
+  // Image Report: that work's drawings nothing else names (a copy may hold them with or without its ended or live row).
+  const drawings = await destroyWorkDrawings(tx, unit);
+  return ended + live + drawings > 0;
 }
 
 /** A promise with its settle functions, for one transaction that stays open across A's decision. */
@@ -510,6 +515,8 @@ export class DraftPurposeDisposal {
       }, now: () => this.now().toISOString() }, row, facts, this.now().toISOString(), async () => {
         const deleted = await tx.$executeRaw`DELETE FROM "ReportDraftPurposeEnd" WHERE "disposalUnitId" = ${unit}`;
         if (deleted !== 1) refuse('PurposeRowChanged');
+        // Image Report: the drawings attached in this work that no version, live draft or other ended work names.
+        await destroyWorkDrawings(tx, unit);
         const completedAt = this.now().toISOString();
         // The completed record will be seq+1 (this process holds the ledger lock). The anchor names it, so a stop between
         // this commit and that record is finished from these facts at the next match.

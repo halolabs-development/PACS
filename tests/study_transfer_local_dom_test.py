@@ -1671,7 +1671,8 @@ class TransferPanelPage(rf.ReportFlowPage):
               const original=Storage.prototype[m]; window.synStorage[m]=original;
               Storage.prototype[m]=function(k,...rest){if(String(k).startsWith(prefix))throw new Error('synthetic storage'); return original.call(this,k,...rest);};}}""",[methods, HISTORY])
             before=len(self.site.imports); self.site.import_answers=["abort"]; self.choose(self.files(1))
-            self.settle(250)
+            # Waits for the send itself (then settles), as the loop below does; a fixed 250 ms was sometimes too short in CI.
+            self.observed(lambda:len(self.site.imports)>before, "the import is sent")
             self.assertEqual(before + 1, len(self.site.imports), 'R5-A05: storage never governs fresh dispatch authority')
             self.assert_policy(row="R5-A05")
             if "setItem" in methods: self.assertIn("보존하지 못했습니다",self.panel().inner_text(),"R5-A05: persistence failure disclosed")

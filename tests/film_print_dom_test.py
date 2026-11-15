@@ -55,6 +55,10 @@ class FilmSite(rf.FlowSite):
         self.script = ["sent", "printed"]   # the states a job reaches, one per read after its creation
         self.post_answers = []              # "lost": the job is created and the answer dropped
         self.held_job_reads = []
+        self.hold_destinations = False      # the printer list is answered only when the test releases it
+        self.held_destinations = []
+        self.hold_layouts = False           # likewise every layout read: (route, body) in the order asked
+        self.held_layouts = []
         self.plan_changed = False           # the next print is refused: the series changed since its preview
         self.hold_destinations = False      # the destination list is not answered until the test releases it
         self.held_destinations = []
@@ -398,6 +402,61 @@ class FilmPrintWindow(unittest.TestCase):
         expect(self.page.locator("#film-print-go")).to_have_text("Send")
         self.page.locator("#film-print-to-printer").check()
         expect(self.page.locator("#film-print-go")).to_have_text("Print")
+
+    def test_a_format_chosen_while_the_printer_list_is_read_keeps_the_list(self):
+        # The layout a changed Format asks for is newer than the window's own first layout, but not newer than the
+        # printer list: that list still belongs to this window and is shown when it arrives.
+        site = FilmSite()
+        site.hold_destinations = True
+        self.start(site)
+        self.open_study()
+        self.page.locator("#report-more > summary").click()
+        self.page.locator("#b-film-print").click()
+        expect(self.page.locator("#film-print")).to_be_visible()
+        self.wait_held(site.held_destinations, 1, "the printer list is being read")
+        self.page.locator("#film-print-format").select_option("3x4")
+        expect(self.page.locator("#film-print-film .fp-cell")).to_have_count(12)
+        site.held_destinations.pop(0).fulfill(json={"printers": [PRINTER_A, PRINTER_B], "devices": [DEVICE]})
+        expect(self.page.locator("#film-print-target option")).to_have_text(["SYN Film Printer A · AE SYNPRA", "SYN Film Printer B · AE SYNPRB"])
+        expect(self.page.locator("#film-print-film-of")).to_have_text("Film 1 of 1")
+        expect(self.page.locator("#film-print-go")).to_be_enabled()
+
+    def test_a_list_that_changes_the_film_size_asks_again_for_a_layout_still_on_its_way(self):
+        # Format is changed before the list arrives, so a 14INX17IN layout is on its way; the list's only printer takes
+        # 8INX10IN. The size changes, the late 14INX17IN layout is not the film, and Print sends the 8INX10IN plan.
+        small = {**PRINTER_A, "filmSizes": ["8INX10IN"]}
+        site = FilmSite()
+        site.hold_destinations = site.hold_layouts = True
+        self.start(site)
+        self.open_study()
+        self.page.locator("#report-more > summary").click()
+        self.page.locator("#b-film-print").click()
+        expect(self.page.locator("#film-print")).to_be_visible()
+        self.wait_held(site.held_destinations, 1, "the printer list is being read")
+        self.page.locator("#film-print-format").select_option("3x4")
+        self.wait_held(site.held_layouts, 1, "the 3x4 layout is being read")
+        self.assertEqual("14INX17IN", site.held_layouts[0][1]["filmSize"])
+        site.held_destinations.pop(0).fulfill(json={"printers": [small], "devices": [DEVICE]})
+        expect(self.page.locator("#film-print-size")).to_have_value("8INX10IN")
+        self.wait_held(site.held_layouts, 2, "the layout is asked for again at the new size")
+        self.assertEqual("8INX10IN", site.held_layouts[1][1]["filmSize"])
+        expect(self.page.locator("#film-print-go")).to_be_disabled()
+        late, late_body = site.held_layouts.pop(0)
+        late.fulfill(json=site.layout_of(late_body))
+        self.page.wait_for_timeout(300)
+        expect(self.page.locator("#film-print-go")).to_be_disabled()
+        route, body = site.held_layouts.pop(0)
+        route.fulfill(json=site.layout_of(body))
+        expect(self.page.locator("#film-print-go")).to_be_enabled()
+        self.page.locator("#film-print-go").click()
+        self.wait_status("Printed")
+        self.assertEqual(("8INX10IN", site.layout_of(body)["plan"]), (site.posts[0]["filmSize"], site.posts[0]["plan"]))
+
+    def wait_held(self, held, count, what):
+        for _ in range(100):   # route callbacks are delivered while the page is waited on
+            if len(held) >= count: break
+            self.page.wait_for_timeout(50)
+        self.assertEqual(count, len(held), what)
 
     # ── the result line ──
     def test_printed_follows_sending_and_sent(self):

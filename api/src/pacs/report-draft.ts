@@ -768,6 +768,9 @@ export class PacsReportDraft {
     const saved = await this.storeDraft(tx, uid, c.actor, row,
       { ...content, citations: cited.entries, structured: structure.entries, ...(drawn ? { drawings: drawn.drawings } : {}) },
       state.rs === 'A' ? 'addendum' : 'approve', undefined, c);
+    // CD-09-P: an attached drawing belongs to the work this write continues or starts (storeDraft drew its unit).
+    if (drawn && 'added' in drawn.answer)
+      await tx.reportDrawing.update({ where: { id: drawn.answer.added }, data: { workUnit: saved!.workUnit } });
     // 판독문 전문을 감사로그에 통째로 넣지 않는다 — 길이와 개인정보 때문. 길이만 남긴다.
     await audit(c.actor, 'report.draft', uid, {
       institution: inst(c),

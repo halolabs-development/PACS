@@ -71,6 +71,11 @@ test('Image Report drawings ride the draft boundary, are bound and signed with t
   second.token = await bearer(second.author, second.sub);
   const witness = new PrismaClient({ datasources: { db: { url: process.env.KIN_D_WITNESS_URL } } });
   const runtime = new EmrRuntime(process.env.DATABASE_URL, process.env.KIN_D_SPOOL);
+  // CD-09-P as the server composes it (main.ts): ended works are destroyed after their commit, with their own drawings.
+  const { DraftPurposeDisposal, PurposeLedgerFile, configureDraftPurpose } = product('emr-retention/draft-purpose');
+  const purposeDb = new PrismaClient();
+  const purpose = configureDraftPurpose(new DraftPurposeDisposal(purposeDb,
+    new PurposeLedgerFile(require('node:fs').mkdtempSync(path.join(require('node:os').tmpdir(), 'drawing-purpose-')))));
   let app, ready = false;
   try {
     await witness.memberRightsImport.create({ data: { id: 'realm-v1' } });
@@ -154,6 +159,9 @@ test('Image Report drawings ride the draft boundary, are bound and signed with t
     assert.equal(stored.studyUid, uid); assert.equal(stored.authorSub, sub);
     assert.equal(stored.width, 640); assert.equal(stored.height, 440);
     assert.equal(stored.sha256, drawingRules.drawingHash({ background: 'breast', source: null, strokes, png: Buffer.from(breast.png, 'base64') }));
+    // It belongs to the work its attach started (the draft's own unit), the one CD-09-P destroys it with.
+    const work = (await witness.reportDraft.findUnique({ where: { uid_author: { uid, author } } })).workUnit;
+    assert.match(work, /^disposal:/); assert.equal(stored.workUnit, work);
 
     // ── a PNG that is not a whole picture is refused before anything is read or written ──
     const truncated = await put(uid, base(1, { drawingIds: [breastId], drawing: { ...breast, background: 'thyroid',
@@ -285,6 +293,12 @@ test('Image Report drawings ride the draft boundary, are bound and signed with t
     const signed = verify(approved.body.signature.envelope, approved.body.signature.keyAtSigning).payload;
     assert.deepEqual(signed.attachments, [breast2, imageId].map(id => ({ kind: 'report-evidence', recordId: id, versionId: '1', sha256: hashes[id] })));
     assert.deepEqual(JSON.parse(signed.text.body).drawings.map(d => d.id), [breast2, imageId]);
+    // The signed result ended the work: its destruction took the drawings the work replaced and removed (no version or
+    // draft names them) and left the version's two, which go with the report.
+    await purpose.drained();
+    assert.equal(await witness.reportDraftPurposeEnd.count({ where: { uid } }), 0, 'the ended work was destroyed');
+    const drawingIds = async study => (await witness.reportDrawing.findMany({ where: { studyUid: study }, select: { id: true } })).map(r => r.id).sort();
+    assert.deepEqual(await drawingIds(uid), [breast2, imageId].sort());
     // Another reader of the report reads a version's drawing; History names them.
     assert.equal((await read(uid, '/' + imageId, second.token)).status, 200);
     const history = await call('GET', uid, '/report/versions', undefined, second.token);
@@ -378,6 +392,10 @@ test('Image Report drawings ride the draft boundary, are bound and signed with t
     assert.equal(loneAmended.status, 201, JSON.stringify(loneAmended.body));
     const loneRows = await witness.reportVersion.findMany({ where: { uid: lone.uid }, orderBy: { version: 'asc' } });
     assert.deepEqual(loneRows.map(r => [r.action, (r.drawings || []).map(d => d.id)]), [['approve', [loneId]], ['amend', []]]);
+    // The amendment ended the removal's work; the drawing it removed is the first version's, so its destruction keeps it.
+    await purpose.drained();
+    assert.equal(await witness.reportDraftPurposeEnd.count({ where: { uid: lone.uid } }), 0);
+    assert.deepEqual(await drawingIds(lone.uid), [loneId]);
     // ── the fixed version chain (versions with and without drawings) still verifies ──
     const { loadFixedVersions } = product('emr-audit/fixed-versions');
     const listing = await witness.$transaction(tx => loadFixedVersions(tx, uid, 'report'));
@@ -418,11 +436,91 @@ test('Image Report drawings ride the draft boundary, are bound and signed with t
     const goneAttach = await put(gone.uid, { ...base(0, { drawingIds: null, drawing: breast }), ...goneAt(0) });
     assert.equal(goneAttach.status, 200, JSON.stringify(goneAttach.body));
     const goneId = goneAttach.body.drawn.added;
+    const goneWork = (await witness.reportDraft.findUnique({ where: { uid_author: { uid: gone.uid, author } } })).workUnit;
+    const goneRow = await witness.reportDrawing.findUnique({ where: { id: goneId } });
     const discarded = await discard(gone.uid, { ...goneAt(1), drawingIds: [goneId] });
     assert.equal(discarded.status, 200, JSON.stringify(discarded.body));
     assert.equal(discarded.body.present, false);
     assert.equal((await witness.reportDraft.findUnique({ where: { uid_author: { uid: gone.uid, author } } })).drawings, null);
-    assert.equal((await read(gone.uid, '/' + goneId)).status, 404);  } finally {
+    assert.equal((await read(gone.uid, '/' + goneId)).status, 404);
+    // CD-09-P destroyed the discarded work, and the drawing only it held with it.
+    await purpose.drained();
+    assert.equal(await witness.reportDraftPurposeEnd.count({ where: { uid: gone.uid } }), 0);
+    assert.deepEqual(await drawingIds(gone.uid), []);
+    // A restored older copy that holds that drawing again (nothing else of the work): the ledger completed the work, so its
+    // destruction is re-applied - the drawing goes, no new ledger record - and a second run finds nothing.
+    const ledgerBefore = require('node:fs').readFileSync(purpose.ledger.file);
+    const { source: _noSource, ...goneCopy } = goneRow;   // a NULL JSON column is left out of the row written back
+    await witness.reportDrawing.create({ data: goneCopy });
+    assert.equal((await purpose.destroy(goneWork)).outcome, 'reapplied');
+    assert.deepEqual(await drawingIds(gone.uid), []);
+    assert.equal((await purpose.destroy(goneWork)).outcome, 'absent');
+    // A copy taken while the work was still live: the author's draft holds the drawing again. The re-application empties
+    // that draft with its drawing list, and the drawing goes with it.
+    await witness.reportDrawing.create({ data: goneCopy });
+    const goneDraft = await witness.reportDraft.findUnique({ where: { uid_author: { uid: gone.uid, author } } });
+    await witness.reportDraft.update({ where: { uid_author: { uid: gone.uid, author } }, data: { present: true, findings: 'copy',
+      workUnit: goneWork, workSince: new Date(), workIntent: 'approve', drawings: { seed: [], ids: [goneId] } } });
+    assert.equal((await purpose.destroy(goneWork)).outcome, 'reapplied');
+    const goneEmptied = await witness.reportDraft.findUnique({ where: { uid_author: { uid: gone.uid, author } } });
+    assert.deepEqual([goneEmptied.present, goneEmptied.workUnit, goneEmptied.drawings, goneEmptied.revision],
+      [false, null, null, goneDraft.revision + 1]);
+    assert.deepEqual(await drawingIds(gone.uid), []);
+    assert.equal((await purpose.destroy(goneWork)).outcome, 'absent');
+    assert.deepEqual(require('node:fs').readFileSync(purpose.ledger.file), ledgerBefore);
+
+    // ── a work that ends without a purpose end (Save) keeps the drawing it replaced until the report's retention ends ──
+    const saving = await witness.studyState.create({ data: { uid: '1.2.840.9999.142', institutionId: institution, ss: 'Verified' } });
+    const keptAt = (revision, extra = {}) => ({ ...base(revision, extra), expectedRevision: saving.draftEpoch + ':' + revision });
+    const keptFirst = await put(saving.uid, keptAt(0, { drawingIds: null, drawing: breast }));
+    assert.equal(keptFirst.status, 200, JSON.stringify(keptFirst.body));
+    const keptOld = keptFirst.body.drawn.added;
+    const keptNew = (await put(saving.uid, keptAt(1, { drawingIds: [keptOld], drawing: { ...breast, replaces: keptOld } }))).body.drawn.added;
+    const keptSaved = await commit(saving.uid, { ...keptAt(2, texts), drawingIds: [keptNew], expectedEffectiveDrawingIds: [keptNew], action: 'save' });
+    assert.equal(keptSaved.status, 201, JSON.stringify(keptSaved.body));
+    await purpose.drained();
+    assert.equal(await witness.reportDraftPurposeEnd.count({ where: { uid: saving.uid } }), 0, 'a save is no purpose end');
+    assert.deepEqual(await drawingIds(saving.uid), [keptNew, keptOld].sort(), 'the replaced drawing stays (CD-09-D removes it with the report)');
+    assert.equal((await read(saving.uid, '/' + keptOld)).status, 404, 'kept, never served');
+
+    // ── the migration gives a drawing attached before the column the work that names it now, and no other ──
+    const keptThyroid = await put(saving.uid, { ...keptAt(3, { drawingIds: null, drawing: { ...breast, background: 'thyroid' } }), baseVersion: keptSaved.body.state.version });
+    assert.equal(keptThyroid.status, 200, JSON.stringify(keptThyroid.body));
+    const keptLive = keptThyroid.body.drawn.added;
+    const keptWork = (await witness.reportDraft.findUnique({ where: { uid_author: { uid: saving.uid, author } } })).workUnit;
+    await witness.reportDrawing.updateMany({ where: { studyUid: saving.uid }, data: { workUnit: null } });
+    const migration = require('node:fs').readFileSync(path.join(api, 'prisma/migrations/20261115120000_report_drawing_work/migration.sql'), 'utf8');
+    const backfill = migration.split(';').map(s => s.replace(/^\s*--.*$/gm, '').trim()).filter(s => /^UPDATE /.test(s));
+    assert.equal(backfill.length, 2);
+    for (const statement of backfill) await witness.$executeRawUnsafe(statement);
+    const attributed = Object.fromEntries((await witness.reportDrawing.findMany({ where: { studyUid: saving.uid } })).map(r => [r.id, r.workUnit]));
+    assert.deepEqual(attributed, { [keptOld]: null, [keptNew]: null, [keptLive]: keptWork },
+      'only the drawing the live draft alone holds: the version\'s may come from an earlier work, the replaced one no work names');
+
+    // ── two authors on one study: a work's destruction takes its own drawings only ──
+    const pair = await witness.studyState.create({ data: { uid: '1.2.840.9999.143', institutionId: institution, ss: 'Verified' } });
+    const pairAt = (revision, extra = {}, who = owner) => ({ ...base(revision, extra), expectedOwner: who, expectedRevision: pair.draftEpoch + ':' + revision });
+    const secondOwner = { institution, sub: second.sub, author: second.author };
+    const theirs = await put(pair.uid, pairAt(0, { drawingIds: null, drawing: breast }, secondOwner), second.token);
+    assert.equal(theirs.status, 200, JSON.stringify(theirs.body));
+    const theirId = theirs.body.drawn.added;
+    const mineFirst = await put(pair.uid, pairAt(0, { drawingIds: null, drawing: breast }));
+    assert.equal(mineFirst.status, 200, JSON.stringify(mineFirst.body));
+    const myId = mineFirst.body.drawn.added;
+    // Removing my only drawing with no text ends my draft (an explicit discard of the work): destroyed with its drawing.
+    const cleared = await put(pair.uid, pairAt(1, { drawingIds: [myId], removeDrawing: myId }));
+    assert.equal(cleared.status, 200, JSON.stringify(cleared.body));
+    assert.equal(cleared.body.present, false);
+    await purpose.drained();
+    assert.deepEqual(await drawingIds(pair.uid), [theirId], 'the other author\'s live draft keeps theirs');
+    const theirDiscard = await discard(pair.uid, { expectedOwner: secondOwner, expectedRevision: pair.draftEpoch + ':1', drawingIds: [theirId] }, second.token);
+    assert.equal(theirDiscard.status, 200, JSON.stringify(theirDiscard.body));
+    await purpose.drained();
+    assert.deepEqual(await drawingIds(pair.uid), []);
+    assert.equal(await witness.reportDraftPurposeEnd.count({ where: { uid: pair.uid } }), 0);
+  } finally {
+    await purpose.drained();
+    await purposeDb.$disconnect();
     if (app) await app.close();
     if (ready) await runtime.stop(Date.now() + 10000);
     await witness.$disconnect(); await new Promise(resolve => provider.close(resolve));
