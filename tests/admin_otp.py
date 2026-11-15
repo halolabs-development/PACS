@@ -112,14 +112,29 @@ def answer_call(browser, answered: tuple, username: str) -> tuple:
     return last or answered
 
 
+# One read of the current document. A document the browser has committed but not parsed yet ("loading") is empty, so it
+# says nothing about which page Keycloak answered; only a parsed one is judged.
+_PAGE_STATE = """() => ({parsed: document.readyState !== 'loading',
+  otp: !!document.querySelector('#kc-otp-login-form'), enrol: !!document.querySelector('#kc-totp-settings'),
+  password: !!document.querySelector('#kc-form-login'),
+  refused: !!document.querySelector('#input-error, .alert-error, #kc-error-message')})"""
+
+
 def answer_page(page, username: str, *, timeout: float = 30) -> None:
     """Call right after the password form is submitted. Waits until the browser is on the OTP form (administrators) or
-    anywhere else (everyone else: the product, or a Keycloak page the caller expects), answering the OTP form."""
+    anywhere else (everyone else: the product, or a Keycloak page the caller expects), answering the OTP form. While the
+    submitted password form itself is still the parsed document, it keeps waiting."""
     deadline = time.monotonic() + timeout
     tries = 0
     while True:
         try:
-            if page.locator("#kc-otp-login-form").count():
+            if "/realms/" not in urlparse(page.url).path:
+                return  # left Keycloak: the product
+            state = page.evaluate(_PAGE_STATE)
+        except Exception:
+            state = None  # the document changed under the read (navigation); look again
+        if state and state["parsed"]:
+            if state["otp"]:
                 if tries == 3:
                     raise RuntimeError(f"Keycloak refused the synthetic OTP of {username}")
                 tries += 1
@@ -127,16 +142,10 @@ def answer_page(page, username: str, *, timeout: float = 30) -> None:
                 with page.expect_navigation(timeout=timeout * 1000):
                     page.locator("#kc-login").click()
                 continue
-            if page.locator("#kc-totp-settings").count():
+            if state["enrol"]:
                 raise RuntimeError(f"{username} holds admin but has no synthetic OTP (admin_otp.seed)")
-            if "/realms/" not in urlparse(page.url).path or not page.locator("#kc-form-login").count():
-                return
-            if page.locator("#input-error, .alert-error, #kc-error-message").count():
-                return
-        except RuntimeError:
-            raise
-        except Exception:
-            pass  # the document changed under the query (navigation); look again
+            if not state["password"] or state["refused"]:
+                return  # another Keycloak page the caller expects, or a refused password
         if time.monotonic() > deadline:
             raise TimeoutError(f"Sign-in of {username} did not leave the password form")
         page.wait_for_timeout(100)
