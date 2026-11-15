@@ -284,9 +284,12 @@ export async function resolveExamScope(db: any, access: StudyAccessService, c: C
   return scope;
 }
 
-export async function lockExamStates(tx: any, uids: string[]): Promise<any[]> {
+/** `share`: a read that only needs the rows to stay as they are until its transaction ends; other readers are not held up. */
+export async function lockExamStates(tx: any, uids: string[], mode: 'update' | 'share' = 'update'): Promise<any[]> {
   const sorted = unique(uids).sort();
-  return tx.$queryRaw`SELECT * FROM "StudyState" WHERE uid IN (${Prisma.join(sorted)}) ORDER BY uid FOR UPDATE`;
+  return mode === 'share'
+    ? tx.$queryRaw`SELECT * FROM "StudyState" WHERE uid IN (${Prisma.join(sorted)}) ORDER BY uid FOR SHARE`
+    : tx.$queryRaw`SELECT * FROM "StudyState" WHERE uid IN (${Prisma.join(sorted)}) ORDER BY uid FOR UPDATE`;
 }
 
 function requireCurrentTarget(scope: ResolvedExamScope) {

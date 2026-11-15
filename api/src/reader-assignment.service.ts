@@ -65,7 +65,7 @@ export class ReaderAssignmentService {
     // institution check below and the assignment rows could fall on either side of a close. Unlocked only for write()'s
     // early check outside any transaction.
     const scope=await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:'current',...(lock==='update'?{phase:'write' as const,prepared}:{})});
-    if(lock==='share')await lockExamStates(tx,scope.lockUids);
+    if(lock==='share')await lockExamStates(tx,scope.lockUids,'share');
     const rows=[(await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:'current',prepared:scope})).state];
     // The owner, and the tele institution while its channel is open (the visible() boundary); anyone else gets the
     // body an unknown UID gets, as gate() answers.
