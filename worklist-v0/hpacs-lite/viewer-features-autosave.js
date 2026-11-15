@@ -366,6 +366,21 @@
       }
       return false;
     }
+    // Waits while the Jobs panel is still putting the chosen Job on the screen, then until the view it left has not
+    // changed for the quiet time. An opening whose Job restore is already over (or has no Jobs panel) waits for nothing.
+    async function jobView() {
+      const until = Date.now() + START_MS;
+      let waited = false;
+      while (live() && Date.now() < until && window.kinViewerJobOpening?.() === true) { waited = true; await wait(100); }
+      if (!waited) return;
+      let before = null, since = 0;
+      while (live() && Date.now() < until) {
+        const view = captured(), now = view && JSON.stringify(view);
+        if (now && now === before) { if (Date.now() - since >= QUIET) return; }
+        else { before = now; since = Date.now(); }
+        await wait(100);
+      }
+    }
     let known;
     const settingsRead = new Promise(resolve => { known = resolve; });
     store.subscribe('autoSaveView', value => {
@@ -389,6 +404,10 @@
         catch (error) { console.error(error); }
         if (!live()) return;
       }
+      // A Job chosen to open this viewer is put on the screen by the Jobs panel once its images stand. That view is the
+      // starting point, not the reader's change: saving starts after the Job's restore has ended and its view stands.
+      if (jobChosen) await jobView();
+      if (!live()) return;
       phase = 'ready';
       // The view on the screen now is the starting point: it is saved once it changes.
       const now = captured(); issued = { text: now ? JSON.stringify(now) : null, seq: 0 };

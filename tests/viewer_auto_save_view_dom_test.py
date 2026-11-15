@@ -705,6 +705,21 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         self.assertTrue(page.evaluate('synServer.bodies[0].keepalive'))
         self.assertAlmostEqual(4, page.evaluate('synServer.saved.cells[0].zoom'))
 
+    def test_35_a_job_still_going_onto_the_screen_is_the_starting_point_not_a_change(self):
+        # The Jobs panel says the chosen Job is still opening; its view lands after the viewer's first quiet layout.
+        page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), query='&kinJob=00000000-0000-4000-8000-000000000001',
+                         setup="window.synJobOpening = true; window.kinViewerJobOpening = () => window.synJobOpening;")
+        self.started(page)
+        self.change(page, zoom=3, image=2)
+        page.evaluate("window.synJobOpening = false")
+        # Past the quiet time and the save delay: the Job's view was taken as the starting point and nothing was sent.
+        page.wait_for_timeout(3500)
+        self.assertEqual(['GET /api/studies/%s/viewer-auto-view' % STUDY], self.requests(page), 'the restored Job is not saved as a change')
+        # The reader's own change after it is saved.
+        self.change(page, zoom=4)
+        page.wait_for_function('synServer.posts.length === 1', timeout=6000)
+        self.assertAlmostEqual(4, page.evaluate('synServer.saved.cells[0].zoom'))
+
     def test_25_a_quick_replacement_also_restarts_quiet_without_changing_the_shown_image(self):
         page = self.open()
         self.started(page)
