@@ -27,6 +27,7 @@ from playwright.sync_api import expect, sync_playwright
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from invariants_live import LiveStack, ROOT, past_audit_guard, psql, s9u4_cleanup, s9u4_dicom, s9u4_uid  # noqa: E402
+import admin_otp  # noqa: E402
 from document_session import document_request
 
 
@@ -194,6 +195,7 @@ class WorklistE2E(unittest.TestCase):
                 title = type(unreadable).__name__
             raise RuntimeError(f"Real BFF login form could not be submitted at {stage}: {type(error).__name__}; "
                                f"page {where.netloc}{where.path} title {title!r}") from None
+        admin_otp.answer_page(page, self.stack.username(actor))
         page.wait_for_url("**/worklist/hpacs-lite/main.html", timeout=30000)
         expect(page.locator("#dbstat")).to_contain_text("DB Connected")
         expect(page.locator("#roles")).to_contain_text("technician" if actor == "tech" else "radiologist")
@@ -728,6 +730,7 @@ class WorklistE2E(unittest.TestCase):
             cause = (parse_qs(urlsplit(page.url).query).get("auth_error") or [""])[0]
             raise RuntimeError("Real BFF login form could not be submitted"
                                + (f" (landing auth_error={cause})" if re.fullmatch(r"[a-z_]{1,40}", cause) else "")) from None
+        admin_otp.answer_page(page, name)
         page.wait_for_url("**/worklist/hpacs-lite/main.html", timeout=30000)
         expect(page.locator("#dbstat")).to_contain_text("DB Connected")
 

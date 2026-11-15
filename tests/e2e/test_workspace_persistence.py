@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import expect
 from test_portrait_workspace import PortraitWorkspaceE2E
 import test_worklist as base
+import admin_otp
 from document_session import document_request
 
 # Browser profiles whose last session ended with sign_out(): S7-U5 keeps that end until the next explicit login. Kept at
@@ -59,6 +60,7 @@ class WorkspacePersistenceE2E(PortraitWorkspaceE2E):
             page.locator('#kc-login').click()
         except Exception:
             raise RuntimeError('D02B real login failed') from None
+        admin_otp.answer_page(page, self.stack.username(actor))
         page.wait_for_url('**/worklist/hpacs-lite/main.html', timeout=30000)
         expect(page.locator('#dbstat')).to_contain_text('DB Connected')
         me = document_request(page, "GET", self.stack.api + '/me').json()

@@ -300,7 +300,7 @@ async function clinicalHttp() {
     .setProtectedHeader({alg:'RS256',kid:jwk.kid}).setIssuer(issuer).setSubject(sub).setAudience('kin-api')
     .setIssuedAt().setExpirationTime('10m').sign(privateKey);
   const adminSub='synthetic-http-admin';
-  const adminToken=await new jose.SignJWT({email:adminSub+'@example.test',realm_access:{roles:['admin']},groups:['/'+institution]})
+  const adminToken=await new jose.SignJWT({email:adminSub+'@example.test',realm_access:{roles:['admin']},amr:['otp'],groups:['/'+institution]})
     .setProtectedHeader({alg:'RS256',kid:jwk.kid}).setIssuer(issuer).setSubject(adminSub).setAudience('kin-api')
     .setIssuedAt().setExpirationTime('10m').sign(privateKey);
   const witness=new PrismaClient({datasources:{db:{url:process.env.KIN_B2R_WITNESS_URL}}});

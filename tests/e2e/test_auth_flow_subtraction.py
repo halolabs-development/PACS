@@ -12,6 +12,7 @@ import uuid
 
 from playwright.sync_api import expect
 from test_worklist import WorklistE2E
+import admin_otp
 from document_session import document_request
 from invariants_live import psql
 from viewer_precision_fixture import synthetic_ct
@@ -32,6 +33,7 @@ class AuthFlowSubtractionE2E(WorklistE2E):
             page.locator('#kc-login').click()
         except Exception:
             raise RuntimeError('Synthetic login form could not be submitted') from None
+        admin_otp.answer_page(page, self.stack.username(actor))
         page.wait_for_url('**/worklist/hpacs-lite/main.html')
         page.wait_for_function('KinAuth.session() !== null')
 

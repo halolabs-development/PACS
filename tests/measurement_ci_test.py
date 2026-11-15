@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import measurement_ci as ci
 from ci_workflows import WorkflowCatalog
 from ci_regression_inputs import regression_inputs
-from live_admin_credential_test import ImportedAdminCredentialTests
+from live_admin_credential_test import AdminOtpHelperTests, ImportedAdminCredentialTests
 
 # validate.yml steps that run after a failure keep doing so on a ready run and exclude a draft run, whose
 # failed first step leaves nothing to collect (test_draft_pr_fails_every_required_check_...).

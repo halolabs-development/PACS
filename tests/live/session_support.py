@@ -10,6 +10,7 @@ import sys
 from urllib.parse import unquote, urlencode, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import admin_otp
 import auth_audit_live as audit
 from invariants_live import LiveStack, psql
 
@@ -42,8 +43,8 @@ class Session(audit.Browser):
         test.assertIsNotNone(action, "Keycloak login form")
         data = urlencode({"username": self.stack.username(actor),
                           "password": self.stack.passwords[actor], "credentialId": ""}).encode()
-        status, headers, _ = self.call("POST", html.unescape(action.group(1)), data,
-                                      {"Content-Type": "application/x-www-form-urlencoded"})
+        answered = self.call("POST", html.unescape(action.group(1)), data, {"Content-Type": "application/x-www-form-urlencoded"})
+        status, headers, _ = admin_otp.answer_call(self, answered, self.stack.username(actor))
         test.assertEqual(status, 302, "Keycloak authentication")
         status, headers, _ = self.call("GET", headers["Location"])
         test.assertEqual(status, 302, "BFF callback")

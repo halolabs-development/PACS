@@ -8,6 +8,7 @@ from playwright.sync_api import expect
 from test_s9_viewer_output_scope import ServedViewerFlow
 from test_viewer_ux_priors import ViewerUXPriorsE2E
 from test_prior_selection import canvas_ready
+import admin_otp
 
 
 class S9ViewerIdentityFlowE2E(ServedViewerFlow, ViewerUXPriorsE2E):
@@ -87,6 +88,7 @@ class S9ViewerIdentityFlowE2E(ServedViewerFlow, ViewerUXPriorsE2E):
         home.locator('#username').fill(self.stack.username(actor))
         home.locator('#password').fill(self.stack.passwords[actor])
         home.locator('#kc-login').click()
+        admin_otp.answer_page(home, self.stack.username(actor))
         home.wait_for_url('**/worklist/hpacs-lite/clinician.html')
         home.locator('#studies tr[data-uid="' + current.uid + '"]').click()
         with context.expect_page() as opened: home.locator('#open-viewer').click()

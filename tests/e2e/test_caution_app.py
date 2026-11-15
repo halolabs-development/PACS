@@ -11,6 +11,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import quote, urlencode
 from test_worklist import WorklistE2E, expect
+import admin_otp
 
 IDENTITY = ('email', 'firstName', 'lastName')
 
@@ -37,6 +38,7 @@ class CautionAppE2E(WorklistE2E):
         if account.locator('#password').is_visible():
             account.locator('#password').fill(self.stack.passwords[actor])
             account.locator('#kc-login').click()
+            admin_otp.answer_page(account, self.stack.username(actor))
         expect(account.locator('#password-new')).to_be_visible()
         return account
 

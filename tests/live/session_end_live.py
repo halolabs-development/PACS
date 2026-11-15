@@ -57,6 +57,7 @@ from urllib.request import Request, urlopen
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
+import admin_otp
 
 from invariants_live import ROOT, psql, purge_user_audit
 from session_support import cleanup_sessions, setup_stack
@@ -309,6 +310,7 @@ class SessionEndLive(unittest.TestCase):
                                  self.stack.username(self.logins[who]))
         page.fill("#password", self.stack.passwords[self.logins[who]])
         page.click("#kc-login")
+        admin_otp.answer_page(page, self.stack.username(self.logins[who]))
         try:
             page.wait_for_function("() => !location.pathname.startsWith('/auth/realms/kin/login-actions/authenticate') || !!document.querySelector('#input-error')")
         except PlaywrightTimeoutError:
