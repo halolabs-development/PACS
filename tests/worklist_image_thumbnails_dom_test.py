@@ -169,10 +169,18 @@ class WorklistImageThumbnailsDOMTest(unittest.TestCase):
 
     def test_page_timeout_marks_disabled_cards_and_late_stream_cannot_overwrite_status(self):
         self.open()
-        self.page.evaluate("""()=>{const real=window.setTimeout.bind(window);window.setTimeout=(fn,ms,...args)=>real(fn,ms===15000?100:ms,...args);
+        # The 15 s product timers are held by the test and fired once the two unheld frames are drawn. Shortening them to
+        # 100 ms raced the inventory read and those two frames on a slow runner: the inventory or the page could time out
+        # first, and the two images this case starts from never appeared.
+        self.page.evaluate("""()=>{const real=window.setTimeout.bind(window),realClear=window.clearTimeout.bind(window);
+          window.heldTimers=new Map();let next=-1;
+          window.setTimeout=(fn,ms,...args)=>{if(ms!==15000)return real(fn,ms,...args);const id=next--;heldTimers.set(id,()=>fn(...args));return id;};
+          window.clearTimeout=id=>{if(!heldTimers.delete(id))realClear(id);};
           renderMode='partial';document.querySelector('#thumb-images-retry').click()}""")
         self.page.wait_for_function("()=>document.querySelectorAll('#thumb-images-grid img').length===2")
         ready_button = self.page.locator(".thumb-image-open:enabled").first.element_handle()
+        self.assertEqual(1, self.page.evaluate("()=>{const due=[...heldTimers.values()];heldTimers.clear();due.forEach(f=>f());return due.length}"),
+                         'exactly the page timer is still pending once the inventory has answered')
         expect(self.page.locator("#thumb-images-status")).to_contain_text("응답 시간이 초과됐습니다.")
         self.assertTrue(ready_button.evaluate("e=>e.disabled"))
         self.assertEqual(12, self.page.locator(".thumb-image-open:disabled").count())
