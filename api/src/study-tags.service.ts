@@ -4,7 +4,7 @@ import { Prisma } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { PrismaService } from './prisma.service';
 import type { Caller } from './pacs.service';
-import { examLinks, examParentAccess, groupedExamUids, prepareExamRead } from './exam-merge.service';
+import { examLinks, examParentsAdmitted, groupedExamUids, prepareExamRead } from './exam-merge.service';
 type Tag = { id:string; name:string; uids:string[] };
 const uuid=(v:any)=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 const uid=(v:any)=>typeof v==='string'&&v.length<=64&&/^\d+(?:\.\d+)+$/.test(v);
@@ -25,16 +25,12 @@ export class StudyTagsService {
   }
   private async visible(tx:any,uids:string[],c:Caller,lock=false):Promise<Set<string>>{
     if(!uids.length)return new Set();
-    const rows=await tx.$queryRaw(Prisma.sql`SELECT uid FROM "StudyState" WHERE uid IN (${Prisma.join([...new Set(uids)].sort())})
-      AND ("institutionId"=${c.institution} OR "teleInstitutionId"=${c.institution})
+    // A study without an owning institution is nobody's, even with this institution in its tele column.
+    const rows=await tx.$queryRaw(Prisma.sql`SELECT uid,"institutionId","teleInstitutionId" FROM "StudyState" WHERE uid IN (${Prisma.join([...new Set(uids)].sort())})
+      AND "institutionId" IS NOT NULL AND ("institutionId"=${c.institution} OR "teleInstitutionId"=${c.institution})
       AND (rs<>'P' OR (CASE WHEN "preDocSub" IS NOT NULL THEN "preDocSub"=${c.sub} ELSE "preDoc"=${c.actor} END) OR (CASE WHEN "preReviewerSub" IS NOT NULL THEN "preReviewerSub"=${c.sub} ELSE "preReviewer"=${c.actor} END)) ORDER BY uid ${lock?Prisma.sql`FOR SHARE`:Prisma.empty}`);
-    // Never-grouped studies keep the one policy decision for the whole catalog; a study with a grouping history is
-    // admitted through its exam.
-    const found:string[]=rows.map((x:any)=>x.uid),grouped=await groupedExamUids(tx,found);
-    const seen=await this.studyAccess.allowed(c,found.filter(uid=>!grouped.has(uid)),tx);
-    for(const uid of found.filter(uid=>grouped.has(uid))){try{await examParentAccess(tx,this.studyAccess,c,uid);seen.add(uid);}
-      catch(error){if(!(error instanceof NotFoundException||error instanceof ConflictException))throw error;}}
-    return seen;
+    // One gate decides every study of the catalog as a single study is decided.
+    return examParentsAdmitted(tx,this.studyAccess,c,rows);
   }
   private async result(tx:any,c:Caller){
     const restricted=(await this.studyAccess.snapshot(c,tx)).policy.restricted;

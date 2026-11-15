@@ -327,6 +327,23 @@ export async function prepareExamParent(db: any, access: StudyAccessService, c: 
   return [uid];
 }
 
+/**
+ * The studies of a saved collection (favorites, tags) the caller may open now. Each gets the answer examParentAccess
+ * gives it alone: a never-grouped study by the institution boundary and one policy decision for all of them, a study
+ * with a grouping history through its exam. `states` are the collection's StudyState rows with their two institution
+ * columns; a row without an owning institution is nobody's, whatever its tele column says.
+ */
+export async function examParentsAdmitted(db: any, access: StudyAccessService, c: Caller,
+    states: { uid: string; institutionId?: string | null; teleInstitutionId?: string | null }[]): Promise<Set<string>> {
+  const grouped = await groupedExamUids(db, states.map(state => state.uid));
+  const admitted = await access.allowed(c, states.filter(state => !grouped.has(state.uid) && visible(state, c)).map(state => state.uid), db);
+  for (const { uid } of states) if (grouped.has(uid)) {
+    try { await examParentAccess(db, access, c, uid); admitted.add(uid); }
+    catch (error) { if (!(error instanceof NotFoundException || error instanceof ConflictException)) throw error; }
+  }
+  return admitted;
+}
+
 /** A body projection may withhold inaccessible preserved text, but never substitute the current scope for it. */
 export async function readableExamRecord(db: any, access: StudyAccessService, c: Caller, uid: string, record: { groupId?: string | null }) {
   try { return await resolveExamScope(db, access, c, { uid, purpose: 'stored', record }); }

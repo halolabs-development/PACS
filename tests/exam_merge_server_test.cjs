@@ -917,6 +917,157 @@ test('links of never-grouped studies are decided together and equal the scope ea
   assert.deepEqual(together.map(link=>link.exams.length),[1,1,0,0],'a study the policy denies or another institution owns has no link');
 });
 
+// ── a whole list is judged as one record is: the boundary inputs, site by site ──
+// Report-parent UIDs beyond A..F for the boundary rows.
+const P='2.25.507',H='2.25.508',J='2.25.509',K='2.25.510',N='2.25.599';
+const G2='00000000-0000-4000-8000-00000000a002',G3='00000000-0000-4000-8000-00000000a003';
+const refusedOrThrow=e=>{if([404,409].includes(status(e)))return null;throw e;};
+// The saved-collection statement as the database answers it: the rows its WHERE keeps, with the columns its SELECT names.
+// (The tag statement's preliminary-reader clause is not modelled: no row here is preliminary.)
+const collectionRows=(db,query)=>{
+  const sql=query.sql,named=sql.slice(sql.indexOf('SELECT')+6,sql.indexOf('FROM')).split(',').map(name=>name.trim().replaceAll('"',''));
+  return [...db.states.values()].filter(s=>query.values.includes(s.uid)&&(!sql.includes('"institutionId" IS NOT NULL')||s.institutionId!=null)
+    &&(s.institutionId===reader.institution||s.teleInstitutionId===reader.institution))
+    .sort((a,b)=>a.uid<b.uid?-1:1).map(s=>Object.fromEntries(named.map(name=>[name,s[name]])));
+};
+
+test('favorites and tags leave out a study without an owning institution, even with the caller\'s institution in its tele column',async()=>{
+  const {FavoriteService}=require('/app/dist/favorite.service');
+  const {StudyTagsService}=require('/app/dist/study-tags.service');
+  const {examParentAccess}=require('/app/dist/exam-merge.service');
+  // A: own. B: held without an owner, the tele column names the caller's institution. C: another owner's, sent here for
+  // tele reading. D: another institution's. E: denied by the access policy.
+  const f=fixture({states:[state(A),state(B,{institutionId:null,teleInstitutionId:'hallym'}),state(C,{institutionId:'other',teleInstitutionId:'hallym'}),
+    state(D,{institutionId:'other'}),state(E)],denied:[E]});
+  const all=[A,B,C,D,E],alone=[];
+  for(const uid of all)if(await examParentAccess(f.prisma,f.access,reader,uid).catch(refusedOrThrow))alone.push(uid);
+  assert.deepEqual(alone,[A,C],'what one study\'s own gate answers');
+  const saved={institution:'hallym',revision:1,value:JSON.stringify([{id:G1,name:'SYN collection',uids:all}])};
+  f.prisma.favoriteWorkspace={findUnique:async()=>saved,update:async()=>{throw new Error('a refused study was saved');}};
+  f.prisma.studyTagCatalog={findMany:async()=>[{...saved,ownerSub:reader.sub},{...saved,ownerSub:''}],update:async()=>{throw new Error('a refused study was saved');}};
+  f.access.snapshot=async()=>({policy:{restricted:false}});
+  f.prisma.$queryRaw=async query=>{
+    const sql=query.sql??query.join('?');
+    if(sql.includes('"FavoriteWorkspace"')||sql.includes('"StudyTagCatalog"'))return [saved];
+    if(sql.includes('FROM "StudyState" WHERE uid IN'))return collectionRows(f.db,query);
+    throw new Error('unexpected raw query: '+sql);
+  };
+  const favorites=new FavoriteService(f.prisma,{get:async()=>({})},f.access),tags=new StudyTagsService(f.prisma,f.access);
+  const folder=(await favorites.read(reader)).folders[0];
+  assert.deepEqual(folder.uids,alone);assert.equal(folder.unavailable,3);
+  assert.deepEqual(folder.links.map(link=>link.uid),alone);
+  for(const catalog of (await tags.read(reader)).catalogs){
+    assert.deepEqual(catalog.tags[0].uids,alone,catalog.scope);assert.equal(catalog.tags[0].unavailable,3,catalog.scope);
+  }
+  // Every write that asks the same gate refuses the held study as a study that does not exist.
+  const request='00000000-0000-4000-8000-00000000b00',owner=[reader.institution,reader.sub];
+  const favorite=(action,extra)=>favorites.write(reader,{expectedOwner:owner,revision:1,requestId:request+(action==='add'?1:2),folderId:G1,action,uid:B,...extra});
+  const tag=(action,scope)=>tags.write(reader,{expectedOwner:owner,scope,revision:1,requestId:request+(action==='add'?3:4),tagId:G1,action,uid:B});
+  for(const refused of [()=>favorite('add'),()=>favorite('view',{jobId:G2}),()=>tag('add','personal'),()=>tag('remove','institution')])
+    await assert.rejects(refused(),e=>status(e)===404);
+});
+
+test('the collection gate answers every study as its own gate answers it alone: owner, tele, policy, state and grouping history',async()=>{
+  const {examParentsAdmitted,examParentAccess}=require('/app/dist/exam-merge.service');
+  // An ended merge of A and B leaves history only; J (base) and K are merged now; an ended merge of H and N, where H lost
+  // its owner afterwards and N is denied by the policy.
+  const ended=merged(G1,A,[A,B],{dissolvedAt:new Date()}),active=merged(G2,J,[J,K]),held=merged(G3,H,[H,N],{dissolvedAt:new Date()});
+  const f=fixture({groups:[...ended.groups,...active.groups,...held.groups],members:[...ended.members,...active.members,...held.members],
+    denied:[E,N],states:[state(A),state(B),state(J),state(K),
+      state(C),                                                 // never grouped, own
+      state(D,{institutionId:null,teleInstitutionId:'hallym'}), // held without an owner, tele column set
+      state(F,{institutionId:'other',teleInstitutionId:'hallym'}), // tele only
+      state(P,{institutionId:'other'}),                         // another institution's
+      state(E),                                                 // denied by the policy
+      state('2.25.511',{rs:'D',holdReason:'SYN HOLD'}),          // disposed and on hold: not this gate's rule
+      state(H,{institutionId:null,teleInstitutionId:'hallym'}), // grouping history, and no owner now
+      state(N)]});                                              // grouping history, and denied by the policy
+  // A denied study answers with the gate's own refusal, as the access service does.
+  const NotFound=(await examParentAccess(f.prisma,f.access,reader,'2.25.598').catch(e=>e)).constructor;
+  f.access.require=async(_c,uids)=>{if(uids.some(uid=>[E,N].includes(uid)))throw new NotFound('검사를 찾을 수 없습니다');};
+  const states=[...f.db.states.values()],alone=[];
+  for(const {uid} of states)if(await examParentAccess(f.prisma,f.access,reader,uid).catch(refusedOrThrow))alone.push(uid);
+  assert.deepEqual(alone.sort(),[A,B,C,F,J,K,'2.25.511'].sort());
+  let members=0;const find=f.prisma.studyGroupMember.findMany;
+  f.prisma.studyGroupMember.findMany=async arg=>{if(arg.where?.OR?.[0]?.studyUid?.in)members++;return find(arg);};
+  const together=await examParentsAdmitted(f.prisma,f.access,reader,states);
+  assert.equal(members,1,'one membership read names the studies with a grouping history');
+  assert.deepEqual([...together].sort(),alone.sort());
+  // The rows are judged, not trusted: a statement that let a held row through changes nothing.
+  assert.deepEqual([...await examParentsAdmitted(f.prisma,f.access,reader,[{uid:D,institutionId:null,teleInstitutionId:'hallym'},{uid:D}])],[]);
+});
+
+test('links: a held, tele-only, foreign, denied or unregistered study gets the link it gets alone',async()=>{
+  const {examLinks,resolveExamScope,examScopeView}=require('/app/dist/exam-merge.service');
+  const f=fixture({denied:[E],states:[state(A),state(B,{institutionId:null,teleInstitutionId:'hallym'}),
+    state(C,{institutionId:'other',teleInstitutionId:'hallym'}),state(D,{institutionId:'other'}),state(E)]});
+  const together=await examLinks(f.prisma,f.access,reader,[A,B,C,D,E,N]);
+  for(const link of together){
+    const alone=await resolveExamScope(f.prisma,f.access,reader,{uid:link.uid,purpose:'source'}).then(examScopeView,refusedOrThrow);
+    assert.deepEqual(link.exams,alone?[alone]:[],link.uid);
+  }
+  assert.deepEqual(together.map(link=>[link.uid,link.exams.length]),[[A,1],[B,0],[C,1],[D,0],[E,0],[N,0]]);
+});
+
+// The boundary rows of a list: P never grouped; A and F an ended merge (history only, F's report written on it); C tele
+// only; H disposed and on hold; B held without an owner (its tele column names the caller); D foreign; E denied.
+async function boundaryList(roles=reader.roles){
+  const shown=[A,C,F,H,P],hidden=[B,D,E],all=[...shown,...hidden];
+  const reports=all.map(uid=>({uid,version:1,findings:'SYN '+uid,conclusion:'',recommendation:'',updatedBy:'syn-reader',groupId:uid===F?G1:null}));
+  const drafts=all.map(uid=>({uid,author:reader.actor,present:true,revision:1,findings:'SYN DRAFT '+uid,groupId:uid===F?G1:null}));
+  const extra={rs:'A',repDoc:'syn-reader',confirm:null,origin:'dicom',createdAt:new Date('2020-01-01T00:00:00Z'),matched:'U',orderOid:null};
+  const svc=await listFixture({group:merged(G1,F,[F,A],{dissolvedAt:new Date()}),reports,drafts,
+    versions:reports.map(report=>({...report,action:'approve'})),
+    rows:all.map(uid=>({...qido(uid,'ACC-'+uid.slice(-3),4,1),...(uid===B?{'00080080':{Value:['SYN UNREGISTERED']}}:{})})),
+    extraStates:[state(B,{...extra,institutionId:null,teleInstitutionId:'hallym'}),state(C,{...extra,institutionId:'other',teleInstitutionId:'hallym'}),
+      state(D,{...extra,institutionId:'other'}),state(H,{...extra,rs:'D',holdReason:'SYN HOLD'}),...[A,F,P,E].map(uid=>state(uid,extra))],
+    policy:{version:1,restricted:true,startsAt:null,endsAt:null,rules:[{patientId:null,modalities:[],dateFrom:null,dateTo:null,studyUids:all.filter(uid=>uid!==E)}]}});
+  const {resolveExamScope,prepareExamRead,examScopeView}=require('/app/dist/exam-merge.service');
+  const c={...reader,roles};
+  // What one stored record resolves to for this caller, or null when its own gate refuses it.
+  const single=async uid=>{
+    await prepareExamRead(svc.prisma,svc.studyAccess,c,uid);
+    return resolveExamScope(svc.prisma,svc.studyAccess,c,{uid,purpose:'stored',record:{groupId:uid===F?G1:null}}).then(examScopeView,refusedOrThrow);
+  };
+  return {svc,c,shown,hidden,single,reports};
+}
+
+test('worklist and bootstrap: at every boundary a report and a draft are given as one record is — held, tele, foreign, denied, on hold, ended group',async()=>{
+  for(const read of ['listStudies','bootstrap']){
+    const {svc,c,shown,hidden,single}=await boundaryList();
+    const out=await svc[read](c);
+    const states=read==='bootstrap'?out.states:Object.fromEntries(out.studies.map(row=>[row.uid,row.state]));
+    assert.deepEqual(Object.keys(states).sort(),[...shown].sort(),read);
+    for(const uid of shown){
+      const alone=await single(uid);
+      assert.ok(alone,read+' '+uid+': one record resolves');
+      assert.deepEqual(states[uid].reportScope,alone,read+' '+uid);
+      assert.equal(states[uid].findings,'SYN '+uid,read+' '+uid);
+      assert.equal(states[uid].draft?.findings,'SYN DRAFT '+uid,read+' '+uid);
+    }
+    for(const uid of hidden)assert.equal(await single(uid),null,read+' '+uid+': one record is refused, and the row is not there');
+  }
+});
+
+test('clinician list: at every boundary a report is given as one record is',async()=>{
+  const {svc,c,shown,hidden,single,reports}=await boundaryList(['clinician']);
+  // The list's one-statement snapshot (StudyState with its report head), as the database answers it.
+  const raw=svc.prisma.$queryRaw,states=uids=>svc.prisma.studyState.findMany({where:{uid:{in:uids}}});
+  svc.prisma.$queryRaw=async(strings,...values)=>!strings.join('?').includes('LEFT JOIN "Report"')?raw(strings,...values)
+    :(await states(values[0].values)).map(s=>{
+      const report=reports.find(r=>r.uid===s.uid);
+      return {uid:s.uid,institutionId:s.institutionId,teleInstitutionId:s.teleInstitutionId,rs:s.rs,repDoc:s.repDoc,confirm:s.confirm,
+        version:report.version,action:'approve',findings:report.findings,conclusion:'',recommendation:'',groupId:report.groupId};
+    });
+  const listed=JSON.parse((await svc.clinicianStudies(c)).json).studies;
+  assert.deepEqual(listed.map(row=>row.uid).sort(),[...shown].sort());
+  for(const row of listed.filter(row=>row.uid!==H)){
+    assert.deepEqual(row.report.scope,await single(row.uid),row.uid);
+    assert.equal(row.report.findings,'SYN '+row.uid,row.uid);
+  }
+  for(const uid of hidden)assert.equal(await single(uid),null,uid);
+});
+
 test('worklist: a caller who cannot see every study of a merged exam gets the original rows',async()=>{
   // C is not in this caller's list (another hospital's resource here): the exam is not shown merged.
   const svc=await listFixture({rows:[qido(A,'ACC-A',8,1),qido(B,'ACC-B',8,1),qido(D,'ACC-D',3,1,'SYN-P2')]});
