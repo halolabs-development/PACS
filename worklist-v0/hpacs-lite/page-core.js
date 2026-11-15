@@ -8,6 +8,9 @@
 
     // While the report editor is in its pop-up window (report-popout.js) its elements live in that window's document.
     const $ = s => document.querySelector(s) ?? (window.KinReportPopout?.find(s) ?? null);
+    // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
+    // Shared by the sources of this script, and by the functions a page test takes out of it (kinSayShared).
+    const kinSay = globalThis.kinSayShared = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
     const actorNames = new Map();
     function rememberActor(id, name, username = "") {
       const key = String(id ?? "");

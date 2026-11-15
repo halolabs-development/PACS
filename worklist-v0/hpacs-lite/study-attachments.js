@@ -15,6 +15,8 @@
  */
 window.KinStudyAttachments = function (app) {
   'use strict';
+  // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
   const work = window.KinWorkContext;
   const MAX_BYTES = 20 * 1024 * 1024;      // a chosen file
   const PNG_MAX_BYTES = 64 * 1024 * 1024;  // a picture as redrawn to PNG (the server's PNG limit)
@@ -202,7 +204,7 @@ window.KinStudyAttachments = function (app) {
       fileList.append(li);
     }
     const n = pending().length;
-    send.textContent = `Attach ${n} File${n === 1 ? '' : 's'}`;
+      send.textContent = kinSay('Attach {n0} File{t1}', n, { t: n === 1 ? '' : 's' });
     send.disabled = session.sending || n === 0 || !app.allowed();
   }
 

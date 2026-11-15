@@ -517,6 +517,8 @@
         ? op : null, busy);
     }
     function renderReportNotice() {
+      // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       if (reportNotice && (reportNotice.uid !== selectedUid || reportNotice.seq !== selectionSeq)) reportNotice = null;
       const n = reportNotice;
       reportNoticeShown = !!n;
@@ -539,27 +541,21 @@
         : `Save Failed — ${n.reason ?? "서버가 저장을 받지 않았습니다"}`;
       // W5: the same notice for a Related Report mode entry the gate held (its Retry/Check continue that entry).
       const entry = n.action?.kind === "related-enter";
-      const toward = n.target ? ` (${studyLabel(n.target.uid)}(으)로 가려던 이동)`
-        : entry ? ` (${studyLabel(n.action.source)}의 이전 판독문을 보려던 이동)` : "";
-      const notMoved = entry ? "Related Report 모드로 들어가지 않았습니다" : "검사를 옮기지 않았습니다";
-      const thenMove = entry ? "들어갑니다" : "이동합니다";
+      const toward = { t: n.target ? kinSay(" ({0}(으)로 가려던 이동)", studyLabel(n.target.uid))
+        : entry ? kinSay(" ({0}의 이전 판독문을 보려던 이동)", studyLabel(n.action.source)) : "" };
+      const notMoved = { t: entry ? "Related Report 모드로 들어가지 않았습니다" : "검사를 옮기지 않았습니다" };
+      const thenMove = { t: entry ? "들어갑니다" : "이동합니다" };
       // 서버의 초안에 이 화면의 글이 없다는 것을 읽어서 알았다: 다시 보내는 길(Retry, 쓰기 경로)을 함께 준다.
       const resend = checked === "different" && unconfirmed;
-      const text = checked === "unread" ? `서버의 저장 상태를 확인하지 못해 ${notMoved}${toward} — 입력한 내용은 그대로 ` +
-          "있습니다. 다시 확인하려면 Check를 누르세요."
-        : checked === "changed" ? `확인하는 사이 글이나 선택이 바뀌어 ${notMoved}${toward} — 입력한 내용은 그대로 있습니다. ` +
-          "다시 확인하려면 Check를 누르세요."
-        : resend ? `서버의 초안에 이 화면의 글이 없어 ${notMoved}${toward} — 입력한 내용은 그대로 있습니다. ` +
-          `Retry를 누르면 이 글을 다시 저장하고, 저장이 확인되면 ${thenMove}.`
-        : checked === "different" ? `서버에 있는 이 검사의 초안이 이 화면의 글과 달라 ${notMoved}${toward} — 이 화면의 글은 ` +
-          "그대로 있습니다. 다른 창에서 그 뒤에 저장했을 수 있습니다. 다시 확인하려면 Check를 누르세요."
-        : saved ? `쓰던 글의 저장이 확인됐습니다. Check를 누르면 서버의 초안을 한 번 더 읽어 이 화면의 글과 견주고 ${thenMove}${toward}.`
-        : n.status === "composing" ? `글자 조합(한글 입력)이 끝나지 않아 ${notMoved} — 입력을 마친 뒤 다시 누르세요.`
-        : n.status === "unknown" ? `쓰던 글의 저장을 확인하지 못해 ${notMoved}${toward} — 입력한 내용은 그대로 있습니다. ` +
-          `Check를 누르면 서버의 초안을 읽어 이 화면의 글과 견주고, 같으면 ${thenMove}.`
-        : n.status === "conflict" ? `${notMoved}${toward} — 입력한 내용은 그대로 있습니다. ` +
-          "초안 표시줄에서 Keep This Text 또는 Load Server Draft를 고른 뒤 다시 누르세요."
-        : `쓰던 글을 저장하지 못해 ${notMoved}${toward} — 입력한 내용은 그대로 있습니다. 원인을 해결한 뒤 Retry를 누르세요.`;
+      const text = checked === "unread" ? kinSay("서버의 저장 상태를 확인하지 못해 {t0}{t1} — 입력한 내용은 그대로 있습니다. 다시 확인하려면 Check를 누르세요.", notMoved, toward)
+        : checked === "changed" ? kinSay("확인하는 사이 글이나 선택이 바뀌어 {t0}{t1} — 입력한 내용은 그대로 있습니다. 다시 확인하려면 Check를 누르세요.", notMoved, toward)
+        : resend ? kinSay("서버의 초안에 이 화면의 글이 없어 {t0}{t1} — 입력한 내용은 그대로 있습니다. Retry를 누르면 이 글을 다시 저장하고, 저장이 확인되면 {t2}.", notMoved, toward, thenMove)
+        : checked === "different" ? kinSay("서버에 있는 이 검사의 초안이 이 화면의 글과 달라 {t0}{t1} — 이 화면의 글은 그대로 있습니다. 다른 창에서 그 뒤에 저장했을 수 있습니다. 다시 확인하려면 Check를 누르세요.", notMoved, toward)
+        : saved ? kinSay("쓰던 글의 저장이 확인됐습니다. Check를 누르면 서버의 초안을 한 번 더 읽어 이 화면의 글과 견주고 {t0}{t1}.", thenMove, toward)
+        : n.status === "composing" ? kinSay("글자 조합(한글 입력)이 끝나지 않아 {t0} — 입력을 마친 뒤 다시 누르세요.", notMoved)
+        : n.status === "unknown" ? kinSay("쓰던 글의 저장을 확인하지 못해 {t0}{t1} — 입력한 내용은 그대로 있습니다. Check를 누르면 서버의 초안을 읽어 이 화면의 글과 견주고, 같으면 {t2}.", notMoved, toward, thenMove)
+        : n.status === "conflict" ? kinSay("{t0}{t1} — 입력한 내용은 그대로 있습니다. 초안 표시줄에서 Keep This Text 또는 Load Server Draft를 고른 뒤 다시 누르세요.", notMoved, toward)
+        : kinSay("쓰던 글을 저장하지 못해 {t0}{t1} — 입력한 내용은 그대로 있습니다. 원인을 해결한 뒤 Retry를 누르세요.", notMoved, toward);
       const strong = document.createElement("b");
       strong.textContent = "● " + label;
       $("#report-notice-msg").replaceChildren(strong, " — " + text);

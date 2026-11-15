@@ -27,6 +27,8 @@
     }
 
     function renderOrders() {
+      // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       if (mode !== "Technician") return;
       const list = filteredOrders();
       $("#orderrows").innerHTML = list.map((o, i) => `
@@ -39,8 +41,8 @@
 
       const s = cur(), o = curOrder();
       $("#orderhint").textContent =
-        `선택: 검사 ${s ? s.name + " / " + s.date : "(없음)"}  ·  오더 ${o ? o.name + " / " + o.sched : "(없음)"}` +
-        (s && o && s.matched === "U" && o.matched === "U" ? "  → 우클릭 Match 가능" : "");
+        kinSay("선택: 검사 {0}  ·  오더 {1}{t2}", s ? s.name + " / " + s.date : { t: "(없음)" }, o ? o.name + " / " + o.sched : { t: "(없음)" },
+          { t: s && o && s.matched === "U" && o.matched === "U" ? "  → 우클릭 Match 가능" : "" });
       notifyAddOns("orders", [list.length]);
     }
     $("#orderrows").addEventListener("click", e => {

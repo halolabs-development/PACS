@@ -1,6 +1,8 @@
 /* Pure comparison of completed, permission-filtered worklist snapshots. */
 (function(root){
   'use strict';
+  // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
   const validUid=value=>typeof value==='string'&&value.length<=64&&/^\d+(?:\.\d+)+$/.test(value);
   // null is the server's "unknown" (tag absent or non-integer in QIDO). It is neither 0 nor an
   // error: a snapshot that carries it is still comparable on the axes that are known.
@@ -313,12 +315,12 @@
     let needsCheck=0;for(const row of m.rows.values())if(row.needsCheck)needsCheck++;
     const tail=needsCheck?' · Needs Check '+needsCheck:'';
     if(m.available===false)return {key:'observation_unavailable',
-      text:PHRASES.observationUnavailable+(m.observedAt?' · 마지막 관측 '+format(m.observedAt)+' 유지':'')+tail,
+    text:kinSay('{t0}{t1}{t2}',{t:PHRASES.observationUnavailable},{t:m.observedAt?kinSay(' · 마지막 관측 {0} 유지',format(m.observedAt)):''},{t:tail}),
       title:m.observedAt?'HALO PACS 관측 요청이 실패했습니다. 목록·개수·관측 시각은 마지막으로 성공한 관측값입니다.':'아직 성공한 HALO PACS 관측이 없습니다. 개수를 표시하지 않습니다.',
       notObserved:m.notObserved,needsCheck};
     if(m.available!==true)return {key:'not_attempted',text:'',title:'',notObserved:null,needsCheck};
-    const absent=m.notObserved===null?' · Not Observed Unknown':m.notObserved.length?' · Not Observed '+m.notObserved.length:'';
-    return {key:'observed',text:'Observed '+format(m.observedAt)+absent+tail,
+  const absent=m.notObserved===null?' · Not Observed Unknown':m.notObserved.length?kinSay(' · Not Observed {n0}',m.notObserved.length):'';
+  return {key:'observed',text:kinSay('Observed {0}{t1}{t2}',format(m.observedAt),{t:absent},{t:tail}),
       title:'HALO PACS가 이 시각에 성공한 관측으로 확인한 목록입니다.'+(m.notObserved===null?' 이번 관측으로는 부재를 판정하지 못했습니다.':''),
       notObserved:m.notObserved,needsCheck};
   }

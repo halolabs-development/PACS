@@ -14,14 +14,13 @@
 (function () {
   'use strict';
   const HANGUL = /[가-힣]/;
-  // Filled-in parts: {0} data, {n0} a number, {t0} words the code chose, {e0} an error message; a named part
-  // ({observedAt}) is filled by the page from its own table of words or values and is translated only when it is a
-  // whole glossary entry.
+  // Filled-in parts: {0} data, {n0} a number, {t0} words the code chose, {e0} an error message. A named part
+  // ({institutionName}) is data; a sentence built with say() states each part itself (its words are marked {t: words}).
   const SLOT = /\{(?:[ten]?\d+|[A-Za-z]\w*)\}/;
   const SLOTS = /(\{(?:[ten]?\d+|[A-Za-z]\w*)\})/;
-  const slotKind = slot => /^\{[A-Za-z]/.test(slot) ? (/^\{[ten]\d/.test(slot) ? slot[1] : 't') : '';
+  const slotKind = slot => /^\{[ten]\d/.test(slot) ? slot[1] : '';
   // A number part takes whole numbers only (never a digit of the text around it), so it has one reading.
-  const NUMBER = '(?<!\\d)(\\d+(?:[.,]\\d+)*)(?!\\d)';
+  const NUMBER = '(?<![\\d-])(-?\\d+(?:[.,]\\d+)*)(?!\\d)';
   const LANGS = ['en', 'ko'];
   const REGIONS = ['worklist', 'reading'];
   const NAMES = { en: 'English', ko: '한국어' };
@@ -30,7 +29,7 @@
 
   // ── Glossary ──────────────────────────────────────────────────────────────────────────────────────────────────
   // An entry is [words as the page writes them, the other language, kinds, the same language with translated names].
-  const exact = new Map(), templates = [];
+  const exact = new Map(), templates = [], bySource = new Map();
   const space = text => text.replace(/\s+/g, ' ').trim();
   const escape = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   function index(terms) {
@@ -39,10 +38,11 @@
       const source = space(term[0]), korean = HANGUL.test(source.replace(new RegExp(SLOT.source, 'g'), ''));
       const entry = korean ? { en: term[1], ko: term[3] || source } : { en: term[3] || source, ko: term[1] };
       if (!SLOT.test(source)) { exact.set(source, entry); continue; }
+      bySource.set(source, entry);
       const slots = [], parts = source.split(SLOTS), isSlot = part => SLOTS.test(part) && part.match(SLOTS)[0] === part;
       // The fixed words match the page text as written (any run of spaces or line breaks), so a filled-in part keeps
       // its own spaces; the lazy and the greedy reading of one text must agree, or the parts are not known for sure.
-      const fixedRe = part => escape(part).replace(/\s+/g, '\\s+');
+      const fixedRe = part => escape(part).replace(/\s+/g, '\\s+?');
       const pattern = group => '^' + parts.map(part => isSlot(part) ? (slotKind(part) === 'n' ? NUMBER : group) : fixedRe(part)).join('') + '$';
       parts.forEach(part => { if (isSlot(part)) slots.push(part); });
       const fixed = parts.filter(part => !isSlot(part));
@@ -60,8 +60,44 @@
   const foreign = (text, lang) => lang === 'en' ? HANGUL.test(text) : !HANGUL.test(text) && /[A-Za-z]{2}/.test(text);
   const unknownError = (text, lang) => (exact.get(UNKNOWN_ERROR)?.[lang] || UNKNOWN_ERROR) + ' ' + text;
   const cache = { en: new Map(), ko: new Map() };
+  // A sentence built by say(): its template and its parts as the page gave them, so nothing is read back from the text.
+  const said = new Map();
+  const word = value => value && typeof value === 'object' ? (value.t ?? value.e ?? '') : value;
+  function fillSaid(template, params, filler) {
+    const named = params.length === 1 && params[0] && typeof params[0] === 'object' && !('t' in params[0]) && !('e' in params[0]);
+    return template.replace(new RegExp(SLOTS.source, 'g'), slot => {
+      const key = slot.slice(1, -1).replace(/^[ten](?=\d)/, '');
+      const value = named ? params[0][key] : params[Number(key)];
+      return value === undefined ? slot : filler(value, slot);
+    });
+  }
+  /**
+   * Build a sentence of the page from its template (the glossary key) and its parts: a plain value is data (shown as
+   * it is), {t: words} words of the page, {e: message} an error message. Returns the sentence as the page shows it.
+   */
+  function say(template, ...params) {
+    const text = fillSaid(template, params, value => String(word(value)));
+    said.set(text.trim(), { source: space(template), params });
+    if (said.size > 2000) said.delete(said.keys().next().value);
+    return text;
+  }
+  function translateSaid(rec, lang, depth) {
+    // A template of parts only ({t0} · {t1}) is the same in both languages: its parts carry the words.
+    const entry = bySource.get(rec.source) || (/[A-Za-z가-힣]/.test(rec.source.replace(new RegExp(SLOTS.source, 'g'), '')) ? null : { en: rec.source, ko: rec.source });
+    if (!entry) return null;
+    return fillSaid(entry[lang], rec.params, value => {
+      if (!value || typeof value !== 'object') return String(value);
+      const text = String(word(value));
+      if (!text.trim() || depth >= 3) return text;
+      const inner = translate(text.trim(), lang, depth + 1);
+      if (inner !== text.trim()) return text.match(/^\s*/)[0] + inner + text.match(/\s*$/)[0];
+      return 'e' in value && foreign(text, lang) ? unknownError(text.trim(), lang) : text;
+    });
+  }
   /** One text as the page wrote it (ends trimmed): the glossary entry, or a template whose parts are filled in once. */
   function translate(text, lang, depth) {
+    const rec = said.get(text);
+    if (rec) { const out = translateSaid(rec, lang, depth); if (out !== null) return out; }
     const flat = space(text), hit = exact.get(flat);
     if (hit) return hit[lang];
     for (const t of templates) {
@@ -93,8 +129,8 @@
   function tr(text, lang) {
     if (!lang || typeof text !== 'string' || !/[A-Za-z가-힣]/.test(text)) return text;
     const core = text.trim();
-    let out = cache[lang].get(core);
-    if (out === undefined) { out = translate(core, lang, 0); cache[lang].set(core, out); }
+    let out = said.has(core) ? undefined : cache[lang].get(core);
+    if (out === undefined) { out = translate(core, lang, 0); if (!said.has(core)) cache[lang].set(core, out); }
     if (out === core) return text;
     return text.match(/^\s*/)[0] + out + text.match(/\s*$/)[0];
   }
@@ -179,7 +215,7 @@
   const active = () => REGIONS.some(r => state[r]);
   /** Another document showing the reading screen (the report Pop Out window): painted and watched like the page. */
   function attach(doc, region) {
-    if (!doc || docs.has(doc)) return;
+    if (!doc || docs.has(doc)) return () => {};
     docs.set(doc, { observer: null });
     if (region) doc.documentElement.setAttribute('data-kin-lang-region', region);
     // Its pointer and keys say which screen was used last too (a dialog it starts follows that screen).
@@ -188,6 +224,14 @@
     styleCss(doc);
     mark(doc);
     if (active()) { paintTree(doc.documentElement); watch(doc); }
+    // The window going away lets go of its document: no observer, no listeners, no entry.
+    return function detach() {
+      const entry = docs.get(doc);
+      entry?.observer?.disconnect();
+      doc.removeEventListener('pointerdown', remember, true);
+      doc.removeEventListener('keydown', remember, true);
+      docs.delete(doc);
+    };
   }
   function mark(doc) {
     for (const r of REGIONS) { if (state[r]) doc.documentElement.setAttribute('data-kin-lang-' + r, state[r]); else doc.documentElement.removeAttribute('data-kin-lang-' + r); }
@@ -448,7 +492,7 @@
   }
 
   window.KinLanguage = {
-    tr, normalize, value, attach, source, connect,
+    tr, say, normalize, value, attach, source, connect,
     /** The stored choice of the account (page start, Load Appearance). */
     restore: next => set(next),
     /** Changes with every choice applied, so a late answer read before it does not undo it. */

@@ -287,7 +287,7 @@ class WorklistLanguageDOM(unittest.TestCase):
         """Visible words of the other language on the page (data and names people give are excluded where they are
         drawn); product names, codes and the synthetic data of this site are not words to translate."""
         return self.page.evaluate("""lang => { const out = new Set();
-          const keep = /\\b(HALO PACS|PACS|DICOM|HL7|EMR|PDF|CSV|JPG|PNG|SR|CT|MR|CR|DX|US|MG|XA|PT|NM|SC|OT|AE|UID|ID|W\\/L|Ctrl|Alt|Shift|Enter|Esc|Tab|Space|Home|End|SYN[\\w-]*|KIM MINJUN|Brain CT|Language|English|Korean)\\b/g;
+          const keep = /\\b(HALO PACS|PACS|DICOM|Gateway|HTTP|[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+|HL7|EMR|PDF|CSV|JPG|PNG|SR|CT|MR|CR|DX|US|MG|XA|PT|NM|SC|OT|AE|UID|ID|W\\/L|Ctrl|Alt|Shift|Enter|Esc|Tab|Space|Home|End|SYN[\\w-]*|KIM MINJUN|Brain CT|Language|English|Korean)\\b/g;
           const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
           for (let n = walk.nextNode(); n; n = walk.nextNode()) {
             const el = n.parentElement, text = n.nodeValue.trim();
@@ -295,9 +295,10 @@ class WorklistLanguageDOM(unittest.TestCase):
             const box = el.getBoundingClientRect();
             if (!box.width || !box.height || box.bottom < 0 || box.top > innerHeight || getComputedStyle(el).visibility === 'hidden') continue;
             // An error with no text in this language yet: the general sentence, then the original words on purpose.
-            if (/^(The request could not be processed\\. Original message:|요청을 처리하지 못했습니다\\. 원문:)/.test(text)) continue;
+            if (/(The request could not be processed\\. Original message:|요청을 처리하지 못했습니다\\. 원문:)/.test(text)) continue;
             const bare = text.replace(keep, '');
-            if (lang === 'ko' ? /[A-Za-z]{3,}/.test(bare) && !/[\\uac00-\\ud7a3]/.test(bare) : /[\\uac00-\\ud7a3]/.test(bare)) out.add(text.slice(0, 80));
+            // Korean: no English word of three letters or more is left, even beside Korean words (a mixed line counts).
+            if (lang === 'ko' ? /[A-Za-z]{3,}/.test(bare) : /[\\uac00-\\ud7a3]/.test(bare)) out.add(text.slice(0, 80));
           }
           return [...out].sort(); }""", lang)
 
@@ -314,13 +315,36 @@ class WorklistLanguageDOM(unittest.TestCase):
         self.boot()
         tr = lambda text, lang: self.page.evaluate("([t, l]) => KinLanguage.tr(t, l)", [text, lang])
         # The data part keeps its own spaces and line breaks; a part that reads like a slot is never filled again.
-        self.assertEqual("Reason: A  B\nC", tr("사유: A  B\nC", "en"))
+        self.assertEqual("Cancellation reason: A  B\nC", tr("취소 사유: A  B\nC", "en"))
         shown = tr("단축어: {1} · Modality: CT · Bodypart: Chest", "en")
         self.assertIn("{1}", shown)
         self.assertNotIn("단축어", shown)
         # A part that holds the fixed words of its own template has two readings: left as the page wrote it.
         twice = "단축어: a · Modality: b · Modality: c · Bodypart: d"
         self.assertEqual(twice, tr(twice, "en"))
+
+    def test_sentences_built_with_their_parts_translate_the_words_and_keep_the_data(self):
+        self.boot()
+        run = lambda script, *args: self.page.evaluate(script, list(args))
+        say = "([t, p, l]) => KinLanguage.tr(KinLanguage.say(t, ...p), l)"
+        # Spaces and line breaks at the start of a data part stay.
+        tr = "([t, l]) => KinLanguage.tr(t, l)"
+        self.assertEqual("Cancellation reason:   A  B\nC", run(tr, "취소 사유:   A  B\nC", "en"))
+        self.assertEqual("Cancellation reason: \nA", run(tr, "취소 사유: \nA", "en"))
+        # A named part is data: an institution named like a label stays as named.
+        title = "원격판독 수신 권한으로 읽은 값입니다 · 소유 기관 {institutionName}. 원격판독이 닫히면 더 읽을 수 없습니다."
+        shown = run(say, title, [{"institutionName": "Unread"}], "en")
+        self.assertIn("Unread", shown)
+        self.assertNotRegex(shown, "[가-힣]")
+        # Parts next to each other are given, not guessed: words translated, data as it is.
+        self.assertEqual("2 new studies arrived: SYN", run(say, "새 검사 {n0}건이 도착했습니다: {1}{t2}", [2, "SYN", {"t": ""}], "en").strip())
+        both = run(say, "{t0} · {t1}", [{"t": "Unread"}, {"t": "Approved"}], "ko")
+        self.assertEqual("미판독 · 승인됨", both)
+        # A number keeps its sign; an English plural ending has no place in Korean.
+        self.assertIn("-1920", run(say, "Display {n0} · {1}, {2} · {3} × {4}", [2, -1920, 0, 1920, 1080], "ko"))
+        attach = run(say, "Attach {n0} File{t1}", [2, {"t": "s"}], "ko")
+        self.assertIn("2", attach)
+        self.assertNotIn("s", attach.replace(" ", ""))
 
     def test_a_stored_row_in_an_older_form_keeps_its_values_when_only_the_language_is_saved(self):
         def profile(size, color):

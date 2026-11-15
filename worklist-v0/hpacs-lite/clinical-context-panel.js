@@ -38,8 +38,8 @@
         items.forEach((part, i) => {
           if (i) out.append(' · ');
           const span = node('span', part.text, part.badge ? 'cc-badge' : null);
-        // A line part is the record itself (dates, modalities, descriptions, authors); only a badge is a word of the screen.
-        if (!part.badge) span.translate = false;
+        // A part the model marks as the record itself (dates, modalities, descriptions, authors, names) is never translated.
+        if (part.data) span.translate = false;
           if (part.title) span.title = part.title;
           out.append(span);
         });

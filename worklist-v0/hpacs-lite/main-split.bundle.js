@@ -8,6 +8,9 @@
 
     // While the report editor is in its pop-up window (report-popout.js) its elements live in that window's document.
     const $ = s => document.querySelector(s) ?? (window.KinReportPopout?.find(s) ?? null);
+    // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
+    // Shared by the sources of this script, and by the functions a page test takes out of it (kinSayShared).
+    const kinSay = globalThis.kinSayShared = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
     const actorNames = new Map();
     function rememberActor(id, name, username = "") {
       const key = String(id ?? "");
@@ -351,6 +354,8 @@
       select.replaceChildren(...options); select.value = chosen;
     }
     function renderTemplates() {
+      // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       const s = cur();
       const useMod = $("#t-mod").checked, modalities = templateModalities(s?.modality);
       renderTemplateBodyparts();
@@ -365,7 +370,10 @@
       });
       const modStatus = !useMod ? "Modality 전체" : !s ? "검사 미선택 · Modality 미적용"
         : !modalities.length ? "검사 Modality 없음 · 미적용" : "Modality: " + modalities.join(", ").toUpperCase();
-      $("#tpl-filter-status").textContent = `${list.length} / ${templates.length}개 · ${modStatus} · ${window.KinLanguage ? window.KinLanguage.source($("#t-body").selectedOptions[0]) : $("#t-body").selectedOptions[0].textContent}${words.length ? " · 검색 적용" : ""}`;
+      const chosenPart = $("#t-body").selectedOptions[0], chosenText = window.KinLanguage ? window.KinLanguage.source(chosenPart) : chosenPart.textContent;
+      // A body part class from the templates is data; the fixed choices are words of the page.
+      $("#tpl-filter-status").textContent = kinSay("{n0} / {n1}개 · {t2} · {3}{t4}", list.length, templates.length, { t: modStatus },
+        chosenPart.translate === false ? chosenText : { t: chosenText }, { t: words.length ? " · 검색 적용" : "" });
       $("#tplrows").innerHTML = list.map(t => `
         <tr data-i="${templates.indexOf(t)}" title="더블클릭: 판독문에 삽입${
           t.shortcut ? ` / 판독문에서 &quot;${esc(t.shortcut)}&quot; 입력 후 Tab` : ""} / 우클릭: 편집">
@@ -2138,6 +2146,8 @@
       $('#edit-active-filter').disabled = !stored;
     }
     function renderChips() {
+      // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       updateWorklistFolders();
       const holder = $("#chips");
       if (!holder) return;
@@ -2147,7 +2157,7 @@
       chipCountRows = userFilters.map((uf, i) => {
         const count = filteredFor(uf).length;
         const note = bodyPartCountNote(uf);
-        const label = `${uf.name}, 로드된 목록 기준 ${count}건${uf.isDefault ? ", 기본 필터" : ""}${note ? ' · ' + note : ''}`;
+        const label = kinSay("{0}, 로드된 목록 기준 {n1}건{t2}{t3}", uf.name, count, { t: uf.isDefault ? ", 기본 필터" : "" }, { t: note ? kinSay(" · {t0}", { t: note }) : "" });
         return { i, uf, count, label, partial: !!note };
       });
       chipCountKey = countKey;
@@ -2163,7 +2173,7 @@
       const focused = holder.contains(document.activeElement) ? userFilters[+document.activeElement.dataset.i]?.name : null;
       holder.innerHTML = rows.map(({ i, uf, count, label, partial }) =>
         `<button class="chip" data-i="${i}" data-name="${esc(uf.name)}" aria-label="${esc(label)}" aria-pressed="${uf.name === activeFilterName}" aria-haspopup="menu" ` +
-        `title="${esc(label)} · 클릭: 적용 / 우클릭 또는 Shift+F10: 메뉴">` +
+`title="${esc(kinSay("{t0} · 클릭: 적용 / 우클릭 또는 Shift+F10: 메뉴", { t: label }))}">` +
         `${uf.isDefault ? "⚑ " : ""}<span translate="no">${esc(uf.name)}</span> <span aria-hidden="true">(${count}${partial ? ' · Partial' : ''})</span></button>`
       ).join("");
       holder.dataset.renderSignature = signature;
@@ -2237,6 +2247,8 @@
       work.commit(at, () => { if (seq === storageSeq) paintStorage(bytes, reason); });
     }
     function paintStorage(bytes, reason) {
+      // This function is also run on its own (a page test takes it out of the page): the plain fill stands in then.
+      const storageSay = typeof globalThis.kinSayShared === "function" ? globalThis.kinSayShared : (t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => { const v = p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); });
       const box = $("#storage");
       if (!box) return;
       // The Operations row's units (admin.html KinAdminMetrics.formatBytes): powers of 1024, never rounded to 0.
@@ -2255,8 +2267,8 @@
           storageLast = { bytes, at };
         } else {
           view = { state: "unobservable", text: "Storage Unobservable",
-            title: `서버 전체 저장량을 관측하지 못했습니다. 0으로 두지 않습니다. ${reason}` + (storageLast
-              ? ` 마지막으로 관측한 값은 ${size(storageLast.bytes)}(${KinStudyArrivals.formatTime(storageLast.at)})이며 지금 값이 아닐 수 있습니다.` : "") };
+          title: storageSay("서버 전체 저장량을 관측하지 못했습니다. 0으로 두지 않습니다. {t0}{t1}", { t: reason }, { t: storageLast
+            ? storageSay(" 마지막으로 관측한 값은 {0}({1})이며 지금 값이 아닐 수 있습니다.", size(storageLast.bytes), KinStudyArrivals.formatTime(storageLast.at)) : "" }) };
         }
       } catch (e) {
         view = { state: "unobservable", text: "Storage Unobservable", title: "서버 전체 저장량을 표시하지 못했습니다. 0으로 두지 않습니다." };
@@ -3405,6 +3417,8 @@
     }
 
     function renderOrders() {
+      // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       if (mode !== "Technician") return;
       const list = filteredOrders();
       $("#orderrows").innerHTML = list.map((o, i) => `
@@ -3417,8 +3431,8 @@
 
       const s = cur(), o = curOrder();
       $("#orderhint").textContent =
-        `선택: 검사 ${s ? s.name + " / " + s.date : "(없음)"}  ·  오더 ${o ? o.name + " / " + o.sched : "(없음)"}` +
-        (s && o && s.matched === "U" && o.matched === "U" ? "  → 우클릭 Match 가능" : "");
+        kinSay("선택: 검사 {0}  ·  오더 {1}{t2}", s ? s.name + " / " + s.date : { t: "(없음)" }, o ? o.name + " / " + o.sched : { t: "(없음)" },
+          { t: s && o && s.matched === "U" && o.matched === "U" ? "  → 우클릭 Match 가능" : "" });
       notifyAddOns("orders", [list.length]);
     }
     $("#orderrows").addEventListener("click", e => {
@@ -5517,6 +5531,8 @@
         ? op : null, busy);
     }
     function renderReportNotice() {
+      // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       if (reportNotice && (reportNotice.uid !== selectedUid || reportNotice.seq !== selectionSeq)) reportNotice = null;
       const n = reportNotice;
       reportNoticeShown = !!n;
@@ -5539,27 +5555,21 @@
         : `Save Failed — ${n.reason ?? "서버가 저장을 받지 않았습니다"}`;
       // W5: the same notice for a Related Report mode entry the gate held (its Retry/Check continue that entry).
       const entry = n.action?.kind === "related-enter";
-      const toward = n.target ? ` (${studyLabel(n.target.uid)}(으)로 가려던 이동)`
-        : entry ? ` (${studyLabel(n.action.source)}의 이전 판독문을 보려던 이동)` : "";
-      const notMoved = entry ? "Related Report 모드로 들어가지 않았습니다" : "검사를 옮기지 않았습니다";
-      const thenMove = entry ? "들어갑니다" : "이동합니다";
+      const toward = { t: n.target ? kinSay(" ({0}(으)로 가려던 이동)", studyLabel(n.target.uid))
+        : entry ? kinSay(" ({0}의 이전 판독문을 보려던 이동)", studyLabel(n.action.source)) : "" };
+      const notMoved = { t: entry ? "Related Report 모드로 들어가지 않았습니다" : "검사를 옮기지 않았습니다" };
+      const thenMove = { t: entry ? "들어갑니다" : "이동합니다" };
       // 서버의 초안에 이 화면의 글이 없다는 것을 읽어서 알았다: 다시 보내는 길(Retry, 쓰기 경로)을 함께 준다.
       const resend = checked === "different" && unconfirmed;
-      const text = checked === "unread" ? `서버의 저장 상태를 확인하지 못해 ${notMoved}${toward} — 입력한 내용은 그대로 ` +
-          "있습니다. 다시 확인하려면 Check를 누르세요."
-        : checked === "changed" ? `확인하는 사이 글이나 선택이 바뀌어 ${notMoved}${toward} — 입력한 내용은 그대로 있습니다. ` +
-          "다시 확인하려면 Check를 누르세요."
-        : resend ? `서버의 초안에 이 화면의 글이 없어 ${notMoved}${toward} — 입력한 내용은 그대로 있습니다. ` +
-          `Retry를 누르면 이 글을 다시 저장하고, 저장이 확인되면 ${thenMove}.`
-        : checked === "different" ? `서버에 있는 이 검사의 초안이 이 화면의 글과 달라 ${notMoved}${toward} — 이 화면의 글은 ` +
-          "그대로 있습니다. 다른 창에서 그 뒤에 저장했을 수 있습니다. 다시 확인하려면 Check를 누르세요."
-        : saved ? `쓰던 글의 저장이 확인됐습니다. Check를 누르면 서버의 초안을 한 번 더 읽어 이 화면의 글과 견주고 ${thenMove}${toward}.`
-        : n.status === "composing" ? `글자 조합(한글 입력)이 끝나지 않아 ${notMoved} — 입력을 마친 뒤 다시 누르세요.`
-        : n.status === "unknown" ? `쓰던 글의 저장을 확인하지 못해 ${notMoved}${toward} — 입력한 내용은 그대로 있습니다. ` +
-          `Check를 누르면 서버의 초안을 읽어 이 화면의 글과 견주고, 같으면 ${thenMove}.`
-        : n.status === "conflict" ? `${notMoved}${toward} — 입력한 내용은 그대로 있습니다. ` +
-          "초안 표시줄에서 Keep This Text 또는 Load Server Draft를 고른 뒤 다시 누르세요."
-        : `쓰던 글을 저장하지 못해 ${notMoved}${toward} — 입력한 내용은 그대로 있습니다. 원인을 해결한 뒤 Retry를 누르세요.`;
+      const text = checked === "unread" ? kinSay("서버의 저장 상태를 확인하지 못해 {t0}{t1} — 입력한 내용은 그대로 있습니다. 다시 확인하려면 Check를 누르세요.", notMoved, toward)
+        : checked === "changed" ? kinSay("확인하는 사이 글이나 선택이 바뀌어 {t0}{t1} — 입력한 내용은 그대로 있습니다. 다시 확인하려면 Check를 누르세요.", notMoved, toward)
+        : resend ? kinSay("서버의 초안에 이 화면의 글이 없어 {t0}{t1} — 입력한 내용은 그대로 있습니다. Retry를 누르면 이 글을 다시 저장하고, 저장이 확인되면 {t2}.", notMoved, toward, thenMove)
+        : checked === "different" ? kinSay("서버에 있는 이 검사의 초안이 이 화면의 글과 달라 {t0}{t1} — 이 화면의 글은 그대로 있습니다. 다른 창에서 그 뒤에 저장했을 수 있습니다. 다시 확인하려면 Check를 누르세요.", notMoved, toward)
+        : saved ? kinSay("쓰던 글의 저장이 확인됐습니다. Check를 누르면 서버의 초안을 한 번 더 읽어 이 화면의 글과 견주고 {t0}{t1}.", thenMove, toward)
+        : n.status === "composing" ? kinSay("글자 조합(한글 입력)이 끝나지 않아 {t0} — 입력을 마친 뒤 다시 누르세요.", notMoved)
+        : n.status === "unknown" ? kinSay("쓰던 글의 저장을 확인하지 못해 {t0}{t1} — 입력한 내용은 그대로 있습니다. Check를 누르면 서버의 초안을 읽어 이 화면의 글과 견주고, 같으면 {t2}.", notMoved, toward, thenMove)
+        : n.status === "conflict" ? kinSay("{t0}{t1} — 입력한 내용은 그대로 있습니다. 초안 표시줄에서 Keep This Text 또는 Load Server Draft를 고른 뒤 다시 누르세요.", notMoved, toward)
+        : kinSay("쓰던 글을 저장하지 못해 {t0}{t1} — 입력한 내용은 그대로 있습니다. 원인을 해결한 뒤 Retry를 누르세요.", notMoved, toward);
       const strong = document.createElement("b");
       strong.textContent = "● " + label;
       $("#report-notice-msg").replaceChildren(strong, " — " + text);
@@ -7213,13 +7223,15 @@
      */
     function placementLine(field, plan) {
       if (!plan) return "";
+      // This function is also run on its own (a page test takes it out of the page): the plain fill stands in then.
+      const kinSay = typeof globalThis.kinSayShared === "function" ? globalThis.kinSayShared : (t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => { const v = p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); });
       const label = KinReportCitation.FIELD_LABEL[field] ?? field;
       if (plan.mode === "end")
-        return `삽입 위치: ${label} 칸 맨 끝 — 이 칸에서 확인된 커서 자리가 없어 끝에 붙입니다`;
-      return `삽입 위치: ${label} 칸 ${plan.line}번째 줄(줄바꿈 기준)부터` +
-        (plan.snapped === "line-end" ? " · 커서가 줄 중간이라 그 줄 다음으로 맞췄습니다" : "") +
-        (plan.snapped === "past-citation" ? " · 이미 인용된 문장을 쪼개지 않도록 그 뒤로 옮겼습니다" : "") +
-        (plan.mode === "selection" ? " · 선택한 글은 지우지 않고 그 뒤에 넣습니다" : "");
+        return kinSay("삽입 위치: {t0} 칸 맨 끝 — 이 칸에서 확인된 커서 자리가 없어 끝에 붙입니다", { t: label });
+      return kinSay("삽입 위치: {t0} 칸 {n1}번째 줄(줄바꿈 기준)부터{t2}{t3}{t4}", { t: label }, plan.line,
+        { t: plan.snapped === "line-end" ? " · 커서가 줄 중간이라 그 줄 다음으로 맞췄습니다" : "" },
+        { t: plan.snapped === "past-citation" ? " · 이미 인용된 문장을 쪼개지 않도록 그 뒤로 옮겼습니다" : "" },
+        { t: plan.mode === "selection" ? " · 선택한 글은 지우지 않고 그 뒤에 넣습니다" : "" });
     }
     /**
      * 200을 받은 뒤 **화면에** 놓을 계획(P-10). 보낸 문자열이 딛고 선 값이 아직 그대로면 그
@@ -9331,6 +9343,8 @@
      * 보낸다. 잡아 둔 원문은 답의 봉투(또는 그 뒤의 전체 읽기)가 작성자·검사·revision·원문 전부의 일치를 보일 때만 버린다.
      */
     async function recoverEndedDraft(prep) {
+      // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       if (logoutPrep !== prep || prep.state !== "ended" || prep.recovering) return;
       prep.recovering = true;
       // 닫힌 문서의 일이다: 업무 문맥이 아니라 이 문서의 닫힘 안내만 바꾸는 수명주기 문맥을 지난다.
@@ -9439,8 +9453,8 @@
             const stored = prep.reports.length - left.length;
             prep.uid = current.uid; prep.texts = current.texts; prep.reason = current.reason;
             showLogoutPanel(prep);
-            logoutStatus(prep, (stored ? `${stored}건은 저장했습니다. ` : "") + `${left.length}건은 저장하지 못했습니다 — 사유는 위 목록에 있습니다.`
-              + (current.reason === "conflict" ? " Overwrite Server Draft를 누르면 충돌한 검사를 이 창의 내용으로 덮어씁니다(글만 — 붙은 그림은 서버의 초안 것을 따릅니다)." : "") + kept);
+        logoutStatus(prep, kinSay("{t0}{n1}건은 저장하지 못했습니다 — 사유는 위 목록에 있습니다.{t2}{t3}", { t: stored ? kinSay("{n0}건은 저장했습니다. ", stored) : "" }, left.length,
+          { t: current.reason === "conflict" ? " Overwrite Server Draft를 누르면 충돌한 검사를 이 창의 내용으로 덮어씁니다(글만 — 붙은 그림은 서버의 초안 것을 따릅니다)." : "" }, { t: kept }));
             return;
           }
           forgetCapture(prep);
@@ -9483,6 +9497,8 @@
      * After session end, show only study identifiers, never patient labels or report text.
      */
     function showLogoutPanel(prep) {
+      // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       if (!prep.panel) {
         prep.panel = document.createElement("dialog");
         prep.panel.className = "kin-logout";
@@ -9506,9 +9522,11 @@
       else if (["failed", "ended"].includes(prep.state)) {
         const label = report => prep.state === "ended" ? report.uid : `${report.label || report.uid} (${report.uid})`;
         const current = (prep.reports || []).find(report => report.uid === prep.uid);
-        pending.textContent = "보존이 필요한 검사: " + (prep.reports || []).filter(r => !r.safe)
-          .map(report => label(report) + (report.reason ? " — " + LOGOUT_FAILED[report.reason] : "")).join("\n")
-          + (current ? " · 현재 확인 중: " + label(current) : "");
+      // Each study line keeps its own parts: the study (data) and the reason (words of the page).
+      const lines = (prep.reports || []).filter(r => !r.safe)
+        .map(report => kinSay("{0}{t1}", label(report), { t: report.reason ? kinSay(" — {t0}", { t: LOGOUT_FAILED[report.reason] }) : "" }));
+      pending.textContent = kinSay("보존이 필요한 검사: {t0}{t1}", { t: kinSay(lines.map((_, i) => "{t" + i + "}").join("\n"), ...lines.map(line => ({ t: line }))) },
+        { t: current ? kinSay(" · 현재 확인 중: {0}", label(current)) : "" });
       }
       const status = document.createElement("p");
       status.setAttribute("role", "status");
@@ -9624,6 +9642,8 @@
     // 기본 30초. 간격 변경은 진행 중인 이전 조회도 무효화한다.
     let poll = null, pollGeneration = 0;
     function startPolling() {
+      // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       // Up to three arrivals by name (patient · study · EM E when the row says emergency), then the rest as a count.
       function arrivalNames(rows) {
         const named = rows.slice(0, 3).map(s => [s.name, s.desc || s.modality, s.state?.em === "E" ? "EM E(응급)" : ""]
@@ -9724,9 +9744,11 @@
             render();
             if (selectedUid) { loadReport(); updateReportButtons(); }
             autoPreload?.afterList();   // FC-073: a study that just arrived is queued without a manual Refresh
-            if (fresh.length || arrivalNotice)
-              announceArrivals([fresh.length ? `새 검사 ${fresh.length}건이 도착했습니다: ${arrivalNames(fresh)}` +
-                    (fresh.some(s => s.state.ss === "Unverified") ? " — Technician 탭에서 확인(Verify)하세요" : "") : '', arrivalNotice].filter(Boolean).join(' · '));
+            if (fresh.length || arrivalNotice) {
+              const arrived = [fresh.length ? kinSay("새 검사 {n0}건이 도착했습니다: {1}{t2}", fresh.length, arrivalNames(fresh),
+                { t: fresh.some(s => s.state.ss === "Unverified") ? " — Technician 탭에서 확인(Verify)하세요" : "" }) : '', arrivalNotice].filter(Boolean);
+              announceArrivals(arrived.length > 1 ? kinSay("{t0} · {t1}", { t: arrived[0] }, { t: arrived[1] }) : arrived[0] || '');
+            }
             return;
           }
 
@@ -9940,7 +9962,7 @@
               <span translate="no">${esc(displayActor(v.author))}</span>
               <span style="color:#b4b4b4">${esc(String(v.at).replace("T", " ").slice(0, 19))}</span>
             </div>
-            ${v.reason ? `<div class="vr">사유: ${esc(v.reason)}</div>` : ""}
+${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</span></div>` : ""}
             ${v.findings || v.conclusion || v.recommendation
               ? `<pre translate="no">${esc([v.findings, v.conclusion, v.recommendation].filter(Boolean).join("\n---\n"))}</pre>`
               : `<div style="color:#556;padding:4px 0">(내용 없음)</div>`}
@@ -10809,6 +10831,8 @@
       spanChoices.append(spanHelp); list.before(spanChoices);
       let displaySignature = '';
       function renderDisplayChoices() {
+        // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+        const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
         const next = JSON.stringify(displayScreens);
         if (next !== displaySignature) {
           displaySignature = next;
@@ -10816,7 +10840,7 @@
           spanSelects.forEach((select, index) => {
             const previous = select.value || (saved?.[index] && KinViewerDisplayLayout.identity(saved[index]));
             select.replaceChildren(new Option('Select Display', ''));
-            displayScreens.forEach((screen, i) => select.add(new Option('Display ' + (i + 1) + ' · ' + screen.left + ', ' + screen.top + ' · ' + screen.width + ' × ' + screen.height, KinViewerDisplayLayout.identity(screen))));
+            displayScreens.forEach((screen, i) =>select.add(new Option(kinSay('Display {n0} · {1}, {2} · {3} × {4}', i + 1, screen.left, screen.top, screen.width, screen.height), KinViewerDisplayLayout.identity(screen))));
             select.value = previous || '';
           });
         }
@@ -11809,8 +11833,8 @@
         items.forEach((part, i) => {
           if (i) out.append(' · ');
           const span = node('span', part.text, part.badge ? 'cc-badge' : null);
-        // A line part is the record itself (dates, modalities, descriptions, authors); only a badge is a word of the screen.
-        if (!part.badge) span.translate = false;
+        // A part the model marks as the record itself (dates, modalities, descriptions, authors, names) is never translated.
+        if (part.data) span.translate = false;
           if (part.title) span.title = part.title;
           out.append(span);
         });

@@ -84,6 +84,12 @@ def english_label(text: str, ui: bool, has_tags: bool) -> bool:
     bare = SLOT.sub("", text)
     if HANGUL.search(bare) or not EN_WORDS.search(text) or not (ui or has_tags):
         return False
+    # A template the parser saw reach the screen keeps its fixed words even when they are one lowercase word
+    # ({0}{n1} image{t2}): they are what the reader reads around the values.
+    if ui and SLOT.search(text) and re.search(r"(^|\s)[A-Za-z]{2,}", bare):
+        # Code keys built from a value ({0}.kind, {0}-title, HTTP_{0}, {n0}px) are not words of the screen.
+        glued = re.search(r"\}[A-Za-z_.\-]|[_.\-/]\{", text)
+        return not glued and not re.search(r"[;=]|\.(js|css|svg|png|json|html)\b", bare)
     if NOT_TEXT.search(bare.strip()) and " " not in bare.strip():
         return bool(re.match(r"^[A-Z][a-z]+(?: ?[A-Z&][a-z]*)*[.…]?$|^[A-Z]{2,4}$", bare.strip()))
     return True

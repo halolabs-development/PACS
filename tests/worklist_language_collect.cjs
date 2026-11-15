@@ -12,7 +12,7 @@ const NUMBERS = new Set(['length', 'size', 'count', 'total', 'images', 'number',
   'selected', 'checked', 'skipped', 'added', 'removed', 'moved', 'width', 'height', 'frames', 'series', 'studies', 'rows', 'seconds', 'minutes', 'percent']);
 // Calls and properties through which a literal reaches the screen.
 const UI_PROPS = new Set(['textContent', 'innerText', 'innerHTML', 'outerHTML', 'title', 'placeholder', 'label', 'ariaLabel', 'alt']);
-const UI_CALLS = new Set(['toast', 'alert', 'confirm', 'prompt', 'setCustomValidity', 'say', 'note', 'show', 'announce', 'tell', 'setStatus',
+const UI_CALLS = new Set(['toast', 'alert', 'confirm', 'prompt', 'setCustomValidity', 'say', 'kinSay', 'note', 'show', 'announce', 'tell', 'setStatus',
   'status', 'append', 'prepend', 'replaceChildren', 'insertAdjacentText', 'insertAdjacentHTML', 'createTextNode', 'element', 'el', 'make', 'node',
   'button', 'btn', 'chip', 'h', 'tag', 'create', 'option', 'plain', 'primary', 'cancel', 'labelled', 'add', 'line', 'row', 'cell', 'heading',
   'field', 'section', 'group', 'link', 'item', 'tab', 'action', 'menuItem', 'choice', 'pick', 'toggle', 'radio', 'check', 'checkbox', 'fail', 'fill', 'message', 'reason', 'finish']);

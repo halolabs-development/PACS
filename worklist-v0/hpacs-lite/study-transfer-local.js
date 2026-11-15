@@ -16,6 +16,8 @@
  */
 window.KinStudyTransferLocal = function (app) {
   'use strict';
+  // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
   const work = window.KinWorkContext;
   const root = document.getElementById('study-transfer');
   const toolbarButton = document.getElementById('t-import');
@@ -69,8 +71,8 @@ window.KinStudyTransferLocal = function (app) {
     legacy: '이 탭에 이전 형식의 반입·다운로드 기록이 남아 있습니다. 어느 로그인 서버 계정의 기록인지 확인할 수 없어 자동으로 조회하거나 표시하지 않고 지우지 않은 채 보존합니다. 필요하면 관리자에게 확인을 요청하세요.',
     pollsEnded: '자동 상태 확인을 마쳤습니다. 이후 상태는 Check Again으로 확인하세요.',
     sending: (done, n) => `파일을 보내는 중입니다 (${done}/${n}).`,
-    summary: (kept, attention, refused = 0) => `반입 결과: 저장 확인 ${kept}개` + (refused ? `, 거절된 파일 ${refused}개` : '')
-      + (attention ? `, 확인이 필요한 파일 ${attention}개` : '') + '.',
+    summary: (kept, attention, refused = 0) => kinSay('반입 결과: 저장 확인 {n0}개{t1}{t2}.', kept, { t: refused ? kinSay(', 거절된 파일 {n0}개', refused) : '' },
+      { t: attention ? kinSay(', 확인이 필요한 파일 {n0}개', attention) : '' }),
     checking: '이 파일의 저장 결과를 다시 확인하는 중입니다…',
     sent: '서버가 이 검사의 모든 원본을 보냈습니다. 내 컴퓨터에 저장됐는지는 브라우저의 다운로드 목록에서 확인하세요.',
     ready: (n, size) => `검사 원본 ${n}개(${size})를 내려받을 준비가 되었습니다.`,

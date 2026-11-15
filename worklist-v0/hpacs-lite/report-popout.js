@@ -260,7 +260,7 @@ body.report-window-doc { height: 100vh; margin: 0; display: flex; flex-direction
           copyStyles(win.document);
           s = frame('window', win, win.document);
           // The Pop Out window is the reading screen too: the same screen language follows it there.
-          root.KinLanguage?.attach(win.document, 'reading');
+          s.detachLanguage = root.KinLanguage?.attach(win.document, 'reading');
           s.unlisten = listen(win.document);
           win.document.body.append(s.shell);
           win.addEventListener('pagehide', () => closed(s), { once: true });
@@ -292,6 +292,7 @@ body.report-window-doc { height: 100vh; margin: 0; display: flex; flex-direction
     function closed(s) {
       if (shown !== s) return;
       s.unlisten();
+      s.detachLanguage?.();
       for (const resolve of s.dialogs) resolve(false);
       s.dialogs.clear();
       const behind = s.closing === 'behind';

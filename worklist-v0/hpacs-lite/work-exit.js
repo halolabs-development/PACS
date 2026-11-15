@@ -495,6 +495,8 @@
      * 보낸다. 잡아 둔 원문은 답의 봉투(또는 그 뒤의 전체 읽기)가 작성자·검사·revision·원문 전부의 일치를 보일 때만 버린다.
      */
     async function recoverEndedDraft(prep) {
+      // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       if (logoutPrep !== prep || prep.state !== "ended" || prep.recovering) return;
       prep.recovering = true;
       // 닫힌 문서의 일이다: 업무 문맥이 아니라 이 문서의 닫힘 안내만 바꾸는 수명주기 문맥을 지난다.
@@ -603,8 +605,8 @@
             const stored = prep.reports.length - left.length;
             prep.uid = current.uid; prep.texts = current.texts; prep.reason = current.reason;
             showLogoutPanel(prep);
-            logoutStatus(prep, (stored ? `${stored}건은 저장했습니다. ` : "") + `${left.length}건은 저장하지 못했습니다 — 사유는 위 목록에 있습니다.`
-              + (current.reason === "conflict" ? " Overwrite Server Draft를 누르면 충돌한 검사를 이 창의 내용으로 덮어씁니다(글만 — 붙은 그림은 서버의 초안 것을 따릅니다)." : "") + kept);
+        logoutStatus(prep, kinSay("{t0}{n1}건은 저장하지 못했습니다 — 사유는 위 목록에 있습니다.{t2}{t3}", { t: stored ? kinSay("{n0}건은 저장했습니다. ", stored) : "" }, left.length,
+          { t: current.reason === "conflict" ? " Overwrite Server Draft를 누르면 충돌한 검사를 이 창의 내용으로 덮어씁니다(글만 — 붙은 그림은 서버의 초안 것을 따릅니다)." : "" }, { t: kept }));
             return;
           }
           forgetCapture(prep);
@@ -647,6 +649,8 @@
      * After session end, show only study identifiers, never patient labels or report text.
      */
     function showLogoutPanel(prep) {
+      // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       if (!prep.panel) {
         prep.panel = document.createElement("dialog");
         prep.panel.className = "kin-logout";
@@ -670,9 +674,11 @@
       else if (["failed", "ended"].includes(prep.state)) {
         const label = report => prep.state === "ended" ? report.uid : `${report.label || report.uid} (${report.uid})`;
         const current = (prep.reports || []).find(report => report.uid === prep.uid);
-        pending.textContent = "보존이 필요한 검사: " + (prep.reports || []).filter(r => !r.safe)
-          .map(report => label(report) + (report.reason ? " — " + LOGOUT_FAILED[report.reason] : "")).join("\n")
-          + (current ? " · 현재 확인 중: " + label(current) : "");
+      // Each study line keeps its own parts: the study (data) and the reason (words of the page).
+      const lines = (prep.reports || []).filter(r => !r.safe)
+        .map(report => kinSay("{0}{t1}", label(report), { t: report.reason ? kinSay(" — {t0}", { t: LOGOUT_FAILED[report.reason] }) : "" }));
+      pending.textContent = kinSay("보존이 필요한 검사: {t0}{t1}", { t: kinSay(lines.map((_, i) => "{t" + i + "}").join("\n"), ...lines.map(line => ({ t: line }))) },
+        { t: current ? kinSay(" · 현재 확인 중: {0}", label(current)) : "" });
       }
       const status = document.createElement("p");
       status.setAttribute("role", "status");

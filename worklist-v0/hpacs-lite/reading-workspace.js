@@ -3,6 +3,8 @@
 window.KinReadingWorkspace = function (app) {
   'use strict';
   const work=window.KinWorkContext;
+  // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
   const guarded=fn=>{const at=work.capture('document');return(...args)=>work.commit(at,()=>fn(...args));};
   let renewFrame=()=>{},renewReturn=()=>{};
   const $ = s => document.querySelector(s);
@@ -614,7 +616,7 @@ window.KinReadingWorkspace = function (app) {
   function identify() {
     const uid = app.current(); target.textContent = uid ? '판독 대상 · ' + label(uid) : '판독 대상을 선택하세요';
     reportTarget.textContent = target.textContent;
-    info.textContent = shown && sameTarget() ? '영상 열람 · ' + label(shown.uid, true) + (shown.prior ? '\n비교 영상 · ' + label(shown.prior, true) : '') : '';
+      info.textContent = shown && sameTarget() ? kinSay('영상 열람 · {0}{t1}', label(shown.uid, true), { t: shown.prior ? kinSay('\n비교 영상 · {0}', label(shown.prior, true)) : '' }) : '';
     separate.disabled = !frame || !sameTarget() || !loaded;
     imageFocus.disabled = separate.disabled;
     updateNote();

@@ -215,6 +215,8 @@
       const node = remember(element('button', label), key); node.type = 'button'; node.onclick = action; return node;
     }
     const status = element('p'); status.setAttribute('role', 'status'); status.setAttribute('lang', 'ko');
+    // This line shows the errors of the folder actions: one with no text in the screen language still says it failed.
+    status.setAttribute('data-kin-error', '');
     const selectionStatus = element('p'); selectionStatus.setAttribute('role', 'status'); selectionStatus.setAttribute('lang', 'ko');
     const content = element('div');
     nav.append(content, status, selectionStatus);

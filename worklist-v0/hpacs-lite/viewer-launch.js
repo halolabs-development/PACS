@@ -436,6 +436,8 @@
       spanChoices.append(spanHelp); list.before(spanChoices);
       let displaySignature = '';
       function renderDisplayChoices() {
+        // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+        const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
         const next = JSON.stringify(displayScreens);
         if (next !== displaySignature) {
           displaySignature = next;
@@ -443,7 +445,7 @@
           spanSelects.forEach((select, index) => {
             const previous = select.value || (saved?.[index] && KinViewerDisplayLayout.identity(saved[index]));
             select.replaceChildren(new Option('Select Display', ''));
-            displayScreens.forEach((screen, i) => select.add(new Option('Display ' + (i + 1) + ' · ' + screen.left + ', ' + screen.top + ' · ' + screen.width + ' × ' + screen.height, KinViewerDisplayLayout.identity(screen))));
+            displayScreens.forEach((screen, i) =>select.add(new Option(kinSay('Display {n0} · {1}, {2} · {3} × {4}', i + 1, screen.left, screen.top, screen.width, screen.height), KinViewerDisplayLayout.identity(screen))));
             select.value = previous || '';
           });
         }

@@ -50,8 +50,13 @@ class Glossary(unittest.TestCase):
             korean = bool(HANGUL.search(SLOT.sub("", source)))
             if korean and HANGUL.search(SLOT.sub("", other)) and not re.search(r"한국어", other): problems.append(("not English", source, other))
             if not korean and not HANGUL.search(other) and other != source: problems.append(("not Korean", source, other))
+            # An English plural ending ({t1} right after a letter, as in File{t1}) has no place in Korean.
+            plural = set() if korean else set(re.findall(r"[A-Za-z](\{t\d+\})", source))
             for text in [other] + ([same] if same else []):
-                if sorted(SLOT.findall(text)) != sorted(SLOT.findall(source)): problems.append(("slots", source, text))
+                want = sorted(s for s in SLOT.findall(source) if not (text is other and s in plural))
+                have = sorted(s for s in SLOT.findall(text) if not (text is other and s in plural))
+                if want != have: problems.append(("slots", source, text))
+                if text is other and plural & set(SLOT.findall(text)): problems.append(("plural kept", source, text))
         self.assertEqual([], problems)
 
     def test_skip_and_terms_do_not_overlap_and_css_is_whole(self):

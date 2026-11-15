@@ -81,6 +81,8 @@
     // 기본 30초. 간격 변경은 진행 중인 이전 조회도 무효화한다.
     let poll = null, pollGeneration = 0;
     function startPolling() {
+      // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       // Up to three arrivals by name (patient · study · EM E when the row says emergency), then the rest as a count.
       function arrivalNames(rows) {
         const named = rows.slice(0, 3).map(s => [s.name, s.desc || s.modality, s.state?.em === "E" ? "EM E(응급)" : ""]
@@ -181,9 +183,11 @@
             render();
             if (selectedUid) { loadReport(); updateReportButtons(); }
             autoPreload?.afterList();   // FC-073: a study that just arrived is queued without a manual Refresh
-            if (fresh.length || arrivalNotice)
-              announceArrivals([fresh.length ? `새 검사 ${fresh.length}건이 도착했습니다: ${arrivalNames(fresh)}` +
-                    (fresh.some(s => s.state.ss === "Unverified") ? " — Technician 탭에서 확인(Verify)하세요" : "") : '', arrivalNotice].filter(Boolean).join(' · '));
+            if (fresh.length || arrivalNotice) {
+              const arrived = [fresh.length ? kinSay("새 검사 {n0}건이 도착했습니다: {1}{t2}", fresh.length, arrivalNames(fresh),
+                { t: fresh.some(s => s.state.ss === "Unverified") ? " — Technician 탭에서 확인(Verify)하세요" : "" }) : '', arrivalNotice].filter(Boolean);
+              announceArrivals(arrived.length > 1 ? kinSay("{t0} · {t1}", { t: arrived[0] }, { t: arrived[1] }) : arrived[0] || '');
+            }
             return;
           }
 

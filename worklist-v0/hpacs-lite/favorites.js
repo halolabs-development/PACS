@@ -1,6 +1,8 @@
 /* Personal study links; no original or report writes belong in this dialog. */
 window.KinFavorites = function (app) {
   const work=window.KinWorkContext;
+  // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
   const d=document.createElement('dialog');d.id='favorite-dialog';d.setAttribute('aria-labelledby','favorite-title');
   d.innerHTML=`<h2 id="favorite-title">Favorites</h2><p>검사 링크를 계정에 저장합니다. 폴더·링크를 제거해도 원검사와 판독문은 유지됩니다.</p>
     <div class="favorite-layout"><aside><label>새 폴더 이름<input id="favorite-new-name" maxlength="120"></label><button id="favorite-create" type="button" title="새 폴더 만들기">New Folder</button><div id="favorite-folders"></div></aside>
@@ -75,7 +77,7 @@ window.KinFavorites = function (app) {
     catch(e){work.commit(at,()=>{if(ticket===seq&&same()){
 
       if([400,403,404,409].includes(e.status))pending=null;
-      message('저장 확인 실패: '+e.message+(pending?' · 같은 요청을 다시 시도하거나 최신 목록을 읽으세요.':' · 입력을 확인하거나 최신 목록을 읽으세요.')+' 입력은 유지했습니다.');
+message(kinSay('저장 확인 실패: {e0}{t1} 입력은 유지했습니다.',{e:e.message},{t:pending?' · 같은 요청을 다시 시도하거나 최신 목록을 읽으세요.':' · 입력을 확인하거나 최신 목록을 읽으세요.'}));
     }});}
     finally{work.commit(at,()=>{if(ticket===seq){busy=false;controls();}});}
   }

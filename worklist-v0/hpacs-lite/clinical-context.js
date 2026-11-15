@@ -11,6 +11,8 @@
  */
 (function (root) {
   'use strict';
+  // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
 
   const SCHEMA = 'kin.clinical-context/1';
   const SECTIONS = Object.freeze(['priorReports', 'history', 'requestTags', 'techNote']);
@@ -130,7 +132,9 @@
   const count = (value, min) => Number.isSafeInteger(value) && value >= min;
   const relation = value => typeof value === 'string' && RELATIONS.includes(value);
   const studyUid = value => typeof value === 'string' && value.length <= 64 && DICOM_UID.test(value);
-  const fill = (template, values) => template.replace(/\{(\w+)\}/g, (all, name) =>
+  // A named part is data unless the page marks it as its own words ({ t: words }).
+  const fill = (template, values) => kinSay(template, values);
+  const fillPlain = (template, values) => template.replace(/\{(\w+)\}/g, (all, name) =>
     Object.prototype.hasOwnProperty.call(values, name) ? String(values[name]) : all);
   const pad = value => String(value).padStart(2, '0');
   function localTime(iso) {
@@ -385,7 +389,7 @@
     const format = options && typeof options.format === 'function' ? options.format : localTime;
     const actor = options && typeof options.actor === 'function' ? options.actor : value => value;
     const shown = states(answer, stale), marksBy = stale || {};
-    const time = iso => ({ text: format(iso), title: iso });
+    const time = iso => ({ text: format(iso), title: iso, data: true });
     const recorded = iso => iso === null ? { text: fill(TEXT.recorded, { time: '-' }), title: TEXT.recordedAtNone }
       : { text: fill(TEXT.recorded, { time: format(iso) }), title: iso };
     const observed = iso => ({ text: fill(TEXT.observed, { time: format(iso) }), title: iso });
@@ -393,24 +397,24 @@
     const sections = SECTIONS.map(name => {
       const section = answer.sections[name], state = shown[name];
       let description;
-      if (state === 'present') description = fill(TEXT.present, { observedAt: format(section.observedAt), sourceLabel: SOURCE_TEXT[name] });
+    if (state === 'present') description = fill(TEXT.present, { observedAt: format(section.observedAt), sourceLabel: { t: SOURCE_TEXT[name] } });
       else if (state === 'absent') description = fill(TEXT.absent, { observedAt: format(section.observedAt) });
       else if (state === 'not_configured') description = TEXT.notConfigured[section.reason];
-      else if (state === 'failed') description = TEXT.failed + ' ' + reasonText(section.reason);
-      else description = fill(TEXT.stale, { observedAt: format(section.observedAt), cause: TEXT.staleCauses[marksBy[name]] });
+    else if (state === 'failed') description = kinSay('{t0} {t1}', { t: TEXT.failed }, { t: reasonText(section.reason) });
+    else description = fill(TEXT.stale, { observedAt: format(section.observedAt), cause: { t: TEXT.staleCauses[marksBy[name]] } });
       const list = section.items.map(item => {
         if (name === 'priorReports') {
           return { key: item.studyUid, marks: marks(item.identity),
-            line: [{ text: joined([item.study.date, item.study.modalities, item.study.description]) },
-              { text: TEXT.actions[item.report.action] + ' v' + item.report.version }, { text: actor(item.provenance.author) },
+        line: [{ text: joined([item.study.date, item.study.modalities, item.study.description]), data: true },
+          { text: kinSay('{t0} v{n1}', { t: TEXT.actions[item.report.action] }, item.report.version) }, { text: actor(item.provenance.author), data: true },
               time(item.provenance.recordedAt), accessBadge(item.access, answer.anchor)],
             source: [{ text: SOURCE_TEXT[name] }, observed(item.provenance.observedAt)],
             details: TEXT.bodies.map(([key, label]) => ({ label, text: item.report[key] })) };
         }
         if (name === 'history') {
           return { key: item.studyUid, marks: marks(item.identity),
-            line: [{ text: joined([item.study.date, item.study.modalities, item.study.description, item.study.accession]) },
-              { text: item.institutionName }, { text: 'RS ' + item.reading.rs },
+        line: [{ text: joined([item.study.date, item.study.modalities, item.study.description, item.study.accession]), data: true },
+          { text: item.institutionName, data: true }, { text: kinSay('RS {0}', item.reading.rs) },
               { text: item.reading.signed ? TEXT.signed : TEXT.unsigned }, accessBadge(item.access, answer.anchor)],
             source: [{ text: SOURCE_TEXT[name] }, recorded(item.provenance.recordedAt), observed(item.provenance.observedAt)],
             details: null };
@@ -418,13 +422,13 @@
         if (name === 'requestTags') {
           const code = '(' + item.tag.slice(0, 4) + ',' + item.tag.slice(4) + ')';
           return { key: item.tag, marks: [],
-            line: [{ text: item.keyword + ' ' + code + ': ' + (item.value === null ? TEXT.tagNotes[item.note] : item.value) }],
-            source: [{ text: 'DICOM header' }, { text: 'SOP ' + item.provenance.recordId }, recorded(item.provenance.recordedAt),
+        line: [{ text: kinSay('{0} {1}: {2}', item.keyword, code, item.value === null ? { t: TEXT.tagNotes[item.note] } : item.value) }],
+        source: [{ text: 'DICOM header' }, { text: 'SOP ' + item.provenance.recordId, data: true }, recorded(item.provenance.recordedAt),
               observed(item.provenance.observedAt), anchorBadge],
             details: null };
         }
         return { key: 'v' + item.version, marks: [],
-          line: [{ text: 'Tech Note v' + item.version }, { text: actor(item.provenance.author) }, time(item.provenance.recordedAt),
+        line: [{ text: kinSay('Tech Note v{n0}', item.version) }, { text: actor(item.provenance.author), data: true }, time(item.provenance.recordedAt),
             anchorBadge].concat(item.hasText ? [] : [{ text: TEXT.noText }]),
           source: [{ text: SOURCE_TEXT[name] }, observed(item.provenance.observedAt)],
           details: null };
