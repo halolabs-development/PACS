@@ -247,7 +247,9 @@ export async function resolveExamScope(db: any, access: StudyAccessService, c: C
       if (request.identity) await access.prepareSourceIdentity(c, scope.studies);
     }
     await access.require(c, scope.studies, db);
-    if (request.phase !== 'prepare' && request.identity && request.intent !== 'cleanup') assertExamSource(access, c, scope);
+    // A never-grouped study keeps the established rule for every operation, cleanup included: a UID two patient
+    // resources answer is refused. The cleanup allowance belongs to a logical exam whose original is gone.
+    if (request.phase !== 'prepare' && request.identity) assertExamSource(access, c, scope);
     return scope;
   }
   if (request.phase === 'prepare') {

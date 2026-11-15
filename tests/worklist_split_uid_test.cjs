@@ -481,13 +481,16 @@ async function clinical(resources, over = {}) {
   const w = await world({ resources, states: [row] }).start();
   return w;
 }
-test('TEST-WSU-08 an ambiguous original refuses reporting but permits preservation-only cleanup', async () => {
+test('TEST-WSU-08 every report write and read on a split UID is 409 STUDY_IDENTITY_UNRESOLVED with no write; a single resource proceeds', async () => {
   const c = caller({ roles: ['radiologist', 'admin'] });
   const entries = {
     readDraft: w => w.pacs.readDraft(SPLIT, c),
     hold: w => w.pacs.hold(SPLIT, c),
     putDraft: w => w.pacs.putReport(SPLIT, draftBody(c), c, null),
-    ...Object.fromEntries(['save', 'approve', 'defer', 'addendum'].map(action => ['commit-' + action,
+    clearDraft: w => w.pacs.putReport(SPLIT, draftBody(c, { findings: '' }), c, null),
+    discardDraft: w => w.pacs.discardDraft(SPLIT, { expectedOwner: owner(c), expectedRevision: EPOCH + ':0' }, c, null),
+    forceDiscard: w => w.pacs.forceDiscardDrafts(SPLIT, { expectedOwner: owner(c), expectedEpoch: EPOCH }, c, null),
+    ...Object.fromEntries(['save', 'approve', 'reset', 'defer', 'addendum'].map(action => ['commit-' + action,
       w => w.pacs.commitReport(SPLIT, { ...draftBody(c), action, reason: 'SYN reason', removeCitationIds: [] }, c, null)])),
     dictation: w => w.pacs.dictationGate(SPLIT, c),
     versions: w => w.pacs.versions(SPLIT, c),
@@ -507,18 +510,6 @@ test('TEST-WSU-08 an ambiguous original refuses reporting but permits preservati
     assert.deepEqual(w.writes, [], name + ' wrote');
     assert.equal(JSON.stringify([...w.states.values()]), before, name);
     assert.equal(w.orthanc.some(x => x.inTx), false, name + ' read the source inside a transaction');
-    assert.deepEqual(w.sourceWrites(), []);
-  }
-  const cleanup = {
-    clearDraft: w => w.pacs.putReport(SPLIT, draftBody(c, { findings: '' }), c, null),
-    discardDraft: w => w.pacs.discardDraft(SPLIT, { expectedOwner: owner(c), expectedRevision: EPOCH + ':0' }, c, null),
-    forceDiscard: w => w.pacs.forceDiscardDrafts(SPLIT, { expectedOwner: owner(c), expectedEpoch: EPOCH }, c, null),
-    reset: w => w.pacs.commitReport(SPLIT, { ...draftBody(c), action: 'reset', reason: 'SYN reason', removeCitationIds: [] }, c, null),
-  };
-  for (const [name, call] of Object.entries(cleanup)) {
-    const w = await clinical([A(), B()]);
-    await call(w);
-    assert.ok(w.writes.length > 0, name);
     assert.deepEqual(w.sourceWrites(), []);
   }
   // Positive control: the same draft save and hold on one resource write.
