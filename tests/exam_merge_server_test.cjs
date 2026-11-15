@@ -89,6 +89,8 @@ function drawingStore(f, uid, head = null, draft = null) {
     findMany: async ({where}) => rows.filter(r => match(r,where)),
     findFirst: async ({where}) => rows.find(r => match(r,where)) ?? null,
     create: async ({data}) => { const row = {groupId:null,createdAt:new Date(),...data}; rows.push(row); return row; },
+    // The draft write gives an attached drawing its work unit (CD-09-P) by id.
+    update: async ({where,data}) => { const row = rows.find(r => r.id === where.id); if (!row) throw new Error('no drawing ' + where.id); return Object.assign(row, data); },
   };
   const raw = f.prisma.$queryRaw;
   f.prisma.$queryRaw = async (sql,...values) => sql.join('').includes('FROM "ReportVersion"')
