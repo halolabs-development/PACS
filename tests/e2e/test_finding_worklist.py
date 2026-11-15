@@ -63,6 +63,22 @@ ENTRY_GEOMETRY = """()=>{
   for(const id of ['b-structured','reading-findings-open','struct-value-text','struct-apply','struct-cancel'])
     out.controls[id]=Object.assign({rect:box(q('#'+id))},seen(q('#'+id)));
   return out;}"""
+# The drawer's bound follows the report column in the next rendering update (a ResizeObserver, which
+# runs before paint), and a row under the report controls can appear at any moment of a pass: the
+# Critical Results row shows when its first read answers and lifts the controls by its own height.
+# Read between that change and the next rendering update, the rectangles describe a layout that is
+# never painted. So an overlap is read again after one rendering update (two animation frames: the
+# first runs before that update's observers). If the controls and the fields are where they were,
+# the overlap outlived a rendering update and is returned as it is, for `bound_holds` to fail; only
+# a layout that moved again (another row) is read again.
+FOLLOWED_GEOMETRY = """async()=>{const read=%s;
+  const holds=g=>!!(g.drawer&&g.reportControls&&g.reportFields)&&(g.drawer.b<=g.reportControls.y||g.drawer.y>=g.reportControls.b);
+  const where=g=>JSON.stringify([g.viewport,g.reportControls,g.reportFields]);
+  const update=()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+  let g=read();const reads=[];
+  for(let i=0;i<10&&!holds(g);i++){reads.push({drawer:g.drawer,reportControls:g.reportControls});
+    const before=where(g);await update();g=read();if(where(g)===before)break;}
+  g.overlapReads=reads;return g;}""" % ENTRY_GEOMETRY
 REACH_TARGET = ['.report-p .rbtns', '#b-structured']
 # S2-V: the frozen copies read with names and units; the ellipse numbers are API-seeded, never recomputed.
 ELLIPSE_VALUES = [400.26, 45.0, -20.0, 80.0, 1234]
@@ -717,6 +733,13 @@ class FindingWorklistE2E(navigation.FindingNavigationE2E):
             'the Image Findings drawer %s overlaps the report control row %s %s (fields %s) - '
             'the runtime bound did not apply' % (drawer, controls, when, fields))
 
+    def settled_geometry(self, w, when):
+        """The geometry once any layout change has had its one rendering update (FOLLOWED_GEOMETRY),
+        asserted by `bound_holds`; the overlapping reads before it travel in the failure message."""
+        seen = w.evaluate(FOLLOWED_GEOMETRY)
+        self.bound_holds(seen, '%s (overlapping reads before: %s)' % (when, seen.get('overlapReads')))
+        return seen
+
     def entry_pass(self, w, f, width, height):
         """One viewport, and it prints its numbers whatever happens.
 
@@ -736,9 +759,8 @@ class FindingWorklistE2E(navigation.FindingNavigationE2E):
         expect(w.locator('#structmodal')).to_be_hidden()
         initial, measured, before_scroll, reach, reached = None, None, None, {}, []
         try:
-            before_scroll = w.evaluate(ENTRY_GEOMETRY)
+            before_scroll = self.settled_geometry(w, 'before scrolling at %dx%d' % (width, height))
             reach['arrival'] = w.evaluate(column_reach.READ, REACH_TARGET)
-            self.bound_holds(before_scroll, 'before scrolling at %dx%d' % (width, height))
             button = before_scroll['controls']['b-structured']['rect']
             if button['b'] > height or button['y'] < 30:
                 # Provisional until Minhoon confirms (11-03 commander): at 1366x768 Reading Workspace the
@@ -753,11 +775,10 @@ class FindingWorklistE2E(navigation.FindingNavigationE2E):
             reach['revealed'] = w.evaluate(column_reach.READ, REACH_TARGET)
             self.assertEqual([], column_reach.reach_problems(reach['arrival'], reach['revealed']),
                              'the Structured entry at %dx%d is not reached by scrolling the report column' % (width, height))
-            initial = w.evaluate(ENTRY_GEOMETRY)
             # The bound, from rendered rectangles rather than from the stylesheet's text. The drawer
             # is opened once, before the first viewport, so on the second pass this is also the
             # answer to "does an ALREADY OPEN drawer follow a resize" - nothing reopens it.
-            self.bound_holds(initial, 'before opening at %dx%d' % (width, height))
+            initial = self.settled_geometry(w, 'before opening at %dx%d' % (width, height))
             # Reachability of the entry itself, asserted BEFORE the click. The click would find the
             # same thing, but only after burning 20 s on retries and without naming what covered it.
             entry = initial['controls']['b-structured']
@@ -770,11 +791,10 @@ class FindingWorklistE2E(navigation.FindingNavigationE2E):
             expect(w.locator('#reading-findings')).to_be_visible(); reached.append('both-visible')
             w.locator('#struct-item').select_option(label='Technique')
             expect(w.locator('#struct-value-text')).to_be_visible()
-            measured = w.evaluate(ENTRY_GEOMETRY)
             # Only the dialog's own controls are asserted here. `b-structured` and the drawer toggle
             # are recorded but NOT asserted once the dialog is open: the modal's backdrop covers the
             # whole viewport by design, so they are supposed to be unreachable at this moment.
-            self.bound_holds(measured, 'with the dialog open at %dx%d' % (width, height))
+            measured = self.settled_geometry(w, 'with the dialog open at %dx%d' % (width, height))
             for name in ('struct-value-text', 'struct-apply', 'struct-cancel'):
                 seen = measured['controls'][name]
                 self.assertTrue(seen['own'], '%s at %s is covered by %s' % (name, seen['rect'], seen['topId']))
