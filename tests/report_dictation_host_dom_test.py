@@ -137,7 +137,7 @@ MARKERS = {
     "MODAL_CSS": (".modal { display: none;", "/* ══ 클릭 피드백"),
     "RBTNS_HTML": ('<div class="rfoot2 rbtns">', "\n        </div>"),
     # W4: the Notice row that says why a study move did not happen sits right above the draft bar.
-    "BARS_HTML": ('<div class="draftbar" id="report-notice"', '<div id="citelist"'),
+    "BARS_HTML": ('<div class="report-notices"', '<div id="citelist"'),
     # The citation list and the dictation pane, up to the report fields.
     "DICTATION_HTML": ('<div id="citelist"', '<div class="redit">'),
     "REDIT_HTML": ('<div class="redit">', "\n        </div>"),

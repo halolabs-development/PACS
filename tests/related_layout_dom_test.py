@@ -1395,19 +1395,21 @@ class RelatedLayoutDOMTest(Base):
                          (900, 600), (768, 1024)]
     ROW_FONTS = ("", "Arial, sans-serif", "Verdana, sans-serif")
     OTHER_HOLDER = "syn-other-reader@synthetic.test"
-    # Every row before the button row but the editor: its first text line against every box that clips it, the words
-    # squeezed to no width, and how much it could still give up (height over its floor: min-height plus, content-box, its
-    # padding and borders; the editor's field region over its 32px).
+    # Every row before the button row but the editor: its first shown text line against every box that clips it, the
+    # words squeezed to no width, and how much it could still give up (height over its floor: min-height plus,
+    # content-box, its padding and borders; the editor's field region over its 32px; nothing for a row that does not
+    # shrink - the notice band, whose height is fixed and whose rows it scrolls).
     ABOVE_PROBE = r"""
       const row = document.querySelector('.rfoot2'), compose = document.querySelector('.report-compose');
       const px = v => parseFloat(v) || 0;
       const slack = e => { if (e === compose) return document.querySelector('.redit').getBoundingClientRect().height - 32;
         const s = getComputedStyle(e), extra = s.boxSizing === 'content-box' ? px(s.paddingTop) + px(s.paddingBottom) + px(s.borderTopWidth) + px(s.borderBottomWidth) : 0;
+        if (s.flexShrink === '0') return 0;
         return e.getBoundingClientRect().height - (px(s.minHeight) + extra); };
       return [...row.parentElement.children].filter(e => (e.compareDocumentPosition(row) & 4) && e.getBoundingClientRect().height)
         .map(e => { const out = {row: e.id || e.className, slack: +slack(e).toFixed(1)};
           if (e === compose || e.id === 'reading-report-target') return out;
-          const t = texts(e)[0];
+          const t = texts(e).find(n => firstRect(n));
           if (t) { const line = firstRect(t), cut = clip(t.parentElement, line);
             Object.assign(out, {text: t.nodeValue.trim().slice(0, 40), line, cut, whole: cut[1] <= line[1] + 0.5 && cut[3] >= line[3] - 0.5}); }
           out.no_width = texts(e).map(n => n.parentElement).filter(p => p.getClientRects().length && p.getBoundingClientRect().width < 1)
