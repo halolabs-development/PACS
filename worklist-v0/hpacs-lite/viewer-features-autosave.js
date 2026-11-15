@@ -64,6 +64,8 @@
     let issued = { text: null, seq: 0 }, waiting = 0;
     const outside = new Set();
     const pending = new Map();  // capture sequence -> Discard generation, including saves still waiting in the queue
+    // floor: the place in order of the starting point (rebase, below); settling: no starting point could be taken yet.
+    let floor = 0, settling = false;
 
     const element = (tag, text, parent, className) => {
       const node = document.createElement(tag); if (text) node.textContent = text; if (className) node.className = className; parent?.append(node); return node;
@@ -121,6 +123,19 @@
       return model.validate({ version: 1, studies: [...studies], rows, cols, active: active >= 0 ? active : 0, cells: saved }, study, exam ? 20 : 8);
     }
     const captured = () => { try { return capture(); } catch (error) { console.error(error); return null; } };
+    // The screen as it stands is not a change of the reader's: it is where saving starts from. This is said in two
+    // places only, as this viewer starts saving (`first`) and as a restore the address chose lets go of the screen.
+    // The point is later in order than every save before it (none before the first), so a late failure of one of
+    // those cannot unsend it, and going away does not send this screen for their sake (floor, in save). A screen that
+    // cannot be captured (a cell still loading, a layout this feature does not keep) is no starting point: saving
+    // stays closed until save() next finds one that can (settling), however long that takes.
+    function rebase(first = false) {
+      const now = captured();
+      settling = !now;
+      if (!now) return;
+      floor = first ? 0 : ++order;
+      issued = { text: JSON.stringify(now), seq: floor };
+    }
 
     // The session owner is [institution, subject], shared by this reader's windows but not by another account.
     const account = () => { const owner = session?.owner?.(); return owner ? JSON.stringify(owner) : null; };
@@ -179,12 +194,17 @@
     // the address chose is landing (the window closing included): a save captured before it still goes.
     function save(mode = 'queue') {
       if (!on || phase !== 'ready' || held || discarding || landing() || !path || !writer()) return chain;
+      // No starting point yet: this look takes one if the screen can be captured now. Either way nothing is sent
+      // (going away included); what the reader changes after it is.
+      if (settling) { rebase(); return chain; }
       if (window.KinViewerCellRules?.busy?.()) { if (mode === 'queue') changed(); return chain; }
       if (generation === null) { read().then(() => { if (live() && on && generation !== null) changed(); }); return chain; }
       const snapshot = captured(), text = snapshot && JSON.stringify(snapshot);
       // An old-generation request cannot overwrite this generation. It must not force the unchanged, discarded view
-      // to be captured again merely because the window closes before that old request answers.
-      const canOverwrite = [...pending.values()].includes(generation);
+      // to be captured again merely because the window closes before that old request answers. Nor does a save from
+      // before the starting point: the screen a restore left is not sent because the reader's earlier view is still
+      // on its way (that request goes on, and its own answer settles it).
+      const canOverwrite = [...pending].some(([seq, taken]) => seq > floor && taken === generation);
       if (!snapshot || (text === issued.text && !(mode !== 'queue' && canOverwrite))) return chain;
       const at = epoch, seq = ++order, when = stamp(), capturedGeneration = generation;
       issued = { text, seq };
@@ -206,6 +226,8 @@
     }
     function changed() {
       if (ended || !on || phase !== 'ready') return;
+      // With no starting point yet this is not a change to save after a quiet moment: save() looks at the screen now.
+      if (settling) { if (!switching()) save(); return; }
       if (generation === null && !timer) read();
       clearTimeout(timer);
       timer = setTimeout(() => { timer = null; if (!ended && !switching()) save(); }, DEBOUNCE);
@@ -377,17 +399,15 @@
     // A restore the address chose, on this screen. 'begin' is heard just before it first changes the screen, with no
     // hold taken yet: what the reader changed and is still waiting to be saved is captured and sent now, before the
     // restore covers it. 'end' is heard when it has let go: with no other still landing, the screen it left is the new
-    // starting point at once (a change right after it is the reader's, and a window closing right after it sends
-    // nothing), and that point is later in order than every save before it, so a late failure of one of those cannot
-    // unsend it. Whatever changed meanwhile was the restore's. A viewer not saving yet takes its starting point when
-    // it starts; one whose restore never began hears nothing.
+    // starting point at once (rebase: a change right after it is the reader's, and a window closing right after it
+    // sends nothing). Whatever changed meanwhile was the restore's. A viewer not saving yet takes its starting point
+    // when it starts; one whose restore never began hears nothing.
     addEventListener('kin-viewer-opening-restore', ({ detail }) => {
       if (ended || !detail?.hold || !(detail.hold.screen >= screen)) return;
       if (detail.phase === 'begin') { if (!landing()) { clearTimeout(timer); timer = null; save('now'); } return; }
       if (landing()) return;
       clearTimeout(timer); timer = null;
-      if (phase !== 'ready') return;
-      const now = captured(); issued = { text: now ? JSON.stringify(now) : null, seq: ++order };
+      if (phase === 'ready') rebase();
     }, { signal });
     let known;
     const settingsRead = new Promise(resolve => { known = resolve; });
@@ -414,8 +434,8 @@
       }
       phase = 'ready';
       // The view on the screen now is the starting point: it is saved once it changes. With a chosen restore landing
-      // right now, the screen that restore leaves takes its place.
-      const now = captured(); issued = { text: now ? JSON.stringify(now) : null, seq: 0 };
+      // right now, the screen that restore leaves takes its place; one that was over before this is here already.
+      rebase(true);
     })().catch(error => console.error(error));
 
     // ── What changes the view ──

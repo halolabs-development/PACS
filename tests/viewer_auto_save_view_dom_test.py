@@ -18,6 +18,15 @@ stack restore that a case can hold half done or make fail. Nothing is saved whil
 (however long, the closing window included), what the reader changed before it is sent as it begins, the first change
 after it is saved, and a restore that never begins, is refused while its Job is read or belongs to a screen that is
 over holds nothing back. Restore Job and a finding moved to within the document stay the reader's own changes.
+
+The screen such a restore leaves is never sent as a change, whatever else is going on. A save of the reader's from
+before it that is still unanswered does not make the closing window, a patient switch, the mode being left or a second
+restore send that screen (what the reader changes after it is sent again as ever, and so is a view with no restore at
+all). A screen that cannot be captured as the restore lets go (it failed, its rollback failed, an image is still to
+come) is waited for: the image coming, the camera, the grid, the save delay, the closing window, a patient switch, the
+mode being left, the check switched on later, either Discard and a Hanging Protocol send nothing, the first screen that
+can be captured is the starting point, and the reader's next change is saved. A viewer that starts saving after the
+restore was over, or with no restore and an image still to come, starts the same way.
 """
 from pathlib import Path
 import json
@@ -164,6 +173,12 @@ SETUP = """config => {
     const body = JSON.parse(init.body); s.revision++; s.viewerSettings = body.viewerSettings;
     return reply(200, { owner, revision: s.revision, viewerSettings: structuredClone(s.viewerSettings) });
   };
+  // The first cell as it stands, whatever its viewport is called now.
+  window.synFirst = () => { const v = [...synViewports.values()][0]; return { id: v.id, image: synMeta[v.getCurrentImageId()].SOPInstanceUID, zoom: v.getZoom() }; };
+  // A cell whose image has not come yet (it shows none: there is nothing to capture there), and its coming, with the
+  // viewer's own word of it (STACK_NEW_IMAGE) or with none.
+  window.synLoading = (index = 1) => { const v = [...synViewports.values()][index]; v.kept = v.ids; v.ids = []; };
+  window.synLoaded = (index = 1, silent = false) => { const v = [...synViewports.values()][index]; if (silent) v.ids = v.kept; else v.setStack(v.kept, 0); };
   window.synSession = { owner: () => owner, ended: () => synEnded, writer: () => synWriter, state: () => 'confirmed', decide: async () => {} };
   window.synMount = () => {
     window.synToolbar = KinViewerUXToolbar.mount({ services: synServices, commands: synCommands, session: synSession });
@@ -204,6 +219,14 @@ OPENING_PAIR = '저장한 비교 검사를 함께 여는 중…'
 LIST_FAILED = '소견 목록을 확인하지 못했습니다. Refresh로 다시 확인하세요.'
 SAVED = [SA + '.4', SB + '.2']  # the images of the saved view each of these pages starts with
 JOB_IMAGE = SA + '.6'           # the image the Job puts in the first cell
+# viewer-jobs.js: the restore failed and the screen before it could not be put back either.
+UNKNOWN = '복원과 이전 화면 복구에 실패했습니다.'
+# The next save's answer, or the next read's, kept back until the case lets it go (synServer.release, releaseRead).
+HOLD = "() => { synServer.hold = new Promise(resolve => { synServer.release = resolve; }); }"
+HOLD_READ = "() => { synServer.holdRead = new Promise(resolve => { synServer.releaseRead = resolve; }); }"
+# The reader's view (zoom 3, the third image) as it is sent before a restore while its first save stays unanswered:
+# after the usual delay, and once more as the restore begins.
+BEFORE = [(3, SA + '.3')] * 2
 
 
 def job_cell(series, n, scale, lower, upper):
@@ -306,8 +329,6 @@ COMBINED = """config => {
   // The mode left (every part of the screen taken down) and entered again at the same address.
   window.synLeaveMode = () => { window.synJobsPanel?.stop(); window.synFindings?.stop(); synKeys?.dispose?.(); synToolbar.dispose(); };
   window.synEnterMode = () => { synBuild(1, 2, [['left', 'set-A'], ['right', 'set-B']]); synMount(); };
-  // The first cell as it stands, whatever its viewport is called now.
-  window.synFirst = () => { const v = [...synViewports.values()][0]; return { id: v.id, image: synMeta[v.getCurrentImageId()].SOPInstanceUID, zoom: v.getZoom() }; };
 }"""
 
 
@@ -839,7 +860,7 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         self.assertAlmostEqual(4, page.evaluate('synServer.saved.cells[0].zoom'))
 
     # ── A restore the address chose, with the shipped Jobs panel and Findings section on the page ──
-    def combined(self, query=JOB, saved=True, on=True, job_studies=(STUDY,), findings_status=200, layout=True):
+    def combined(self, query=JOB, saved=True, on=True, job_studies=(STUDY,), findings_status=200, layout=True, setup=None):
         """A page with viewer-jobs.js, finding-link-model.js and viewer-findings.js loaded beside Auto Save View. Neither
         panel is mounted yet: a case mounts them when its story has them start (synMountJobs, synMountFindings)."""
         config = {'study': STUDY, 'owner': OWNER, 'row': JOB_ROW, 'job': job(job_studies), 'findings': [FOUND_ITEM], 'findingsStatus': findings_status, 'layout': layout,
@@ -850,7 +871,7 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
             for name in ['viewer-jobs.js', 'work-context.js', 'session-transport.js', 'finding-link-model.js', 'viewer-findings.js']:
                 page.add_script_tag(path=str(HPACS / name))
             page.evaluate('synConnect()')
-        return self.open(on=on, saved=view([cell(SA, 4), cell(SB, 2)]) if saved else None, query=query, prepare=prepare)
+        return self.open(on=on, saved=view([cell(SA, 4), cell(SB, 2)]) if saved else None, query=query, setup=setup, prepare=prepare)
 
     def held(self, steps=("{ gate: 'apply' }",), on=True):
         """The kinJob page with Auto Save View saving and the panel still reading its Job ('read'); `steps` are the applies."""
@@ -884,6 +905,38 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         self.change(page, cell=page.evaluate('synFirst().id'), zoom=zoom)
         page.wait_for_function('synServer.posts.length === %d' % count, timeout=6000)
         self.assertEqual((zoom, JOB_IMAGE), self.sent(page)[-1])
+
+    def switch_on(self, page):
+        """The check in the open Auto Save View window, set without a pointer: input is swallowed while a Job is applied."""
+        page.evaluate("""() => { const input = document.querySelector('section.kin-ux-feature-panel[aria-label="Auto Save View"] input[type=checkbox]');
+          input.checked = true; input.dispatchEvent(new Event('change')); }""")
+        page.wait_for_function('synServer.viewerSettings?.features?.autoSaveView === true')
+
+    def unsettled(self, on=True, before=None):
+        """The kinJob page whose restore failed and whose rollback failed too, with the second cell's image still to
+        come: the screen that restore left cannot be captured. `before`: what the reader does before the Job is read."""
+        page = self.held(steps=("{ gate: 'apply', fail: true }", "{ gate: 'back', fail: true }"), on=on)
+        if before:
+            before(page)
+        self.waiting(page, 'apply')
+        page.evaluate("synOpen('apply')")
+        page.wait_for_function("synRestore.waiting === 'back'")
+        page.evaluate("synLoading(); synOpen('back')")
+        page.wait_for_function("synJobsStatus().startsWith(%s)" % json.dumps(UNKNOWN))
+        self.assertEqual([['begin', 0, 0], ['end', 0, 0]], page.evaluate('synTold'))
+        return page
+
+    def stir(self, page):
+        """What the viewer says with nothing changed: the camera, the grid, the layout, the active cell."""
+        page.evaluate("""() => { synFire(synFirst().id, 'CAMERA_MODIFIED');
+          synEmit('grid', 'gridState', { viewports: [...synViewports.keys()].map(viewportId => ({ viewportId })) });
+          synEmit('grid', 'layout', {}); synEmit('grid', 'active', { viewportId: synActive }); }""")
+
+    def own(self, page, count, zoom=5):
+        """The reader's change of the first cell (zoom and its third image) is saved as the `count`th save."""
+        self.change(page, cell=page.evaluate('synFirst().id'), zoom=zoom, image=2)
+        page.wait_for_function('synServer.posts.length === %d' % count, timeout=6000)
+        self.assertEqual((zoom, SA + '.3'), self.sent(page)[-1])
 
     def test_late_jobs_and_refresh_continuation_preserve_user_view(self):
         # The Jobs panel starts well after Auto Save View is saving (a script that came late, an account confirmed late).
@@ -1121,11 +1174,7 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         self.assertEqual([READ], self.requests(page))
 
     def test_auto_save_view_starting_during_or_after_a_restore(self):
-        def switch_on(page):
-            # The check in the Auto Save View window, set without a pointer: input is swallowed while a Job is applied.
-            page.evaluate("""() => { const input = document.querySelector('section.kin-ux-feature-panel[aria-label="Auto Save View"] input[type=checkbox]');
-              input.checked = true; input.dispatchEvent(new Event('change')); }""")
-            page.wait_for_function('synServer.viewerSettings?.features?.autoSaveView === true')
+        switch_on = self.switch_on
         # Switched on while the Job is half on the screen: nothing is saved until the restore lets go.
         page = self.combined(on=False)
         self.started(page)
@@ -1168,6 +1217,235 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         page.wait_for_function('synServer.posts.length === 3', timeout=6000)
         self.assertEqual(JOB_IMAGE, self.sent(page)[2][1])
         self.assertEqual(([], 0), (page.evaluate('synTold'), page.evaluate('kinViewerOpeningRestore.holds.size')))
+
+    # ── The screen a restore left is the starting point, whatever else is still on its way or still to come ──
+    def before_restore(self, entry):
+        """The reader's view (zoom 3, the third image) is sent and not answered yet; then the address's restore puts
+        the Job on the screen. `entry`: the kinJob page, or a finding's saved location continued into the page."""
+        if entry == 'job':
+            page = self.held(steps=())
+        else:
+            page = self.combined(query=FOUND, findings_status=503)
+            page.evaluate('synMountJobs(); synMountFindings()')
+            page.wait_for_function("document.querySelector('#kin-viewer-findings-status')?.textContent.includes(%s)" % json.dumps(LIST_FAILED))
+            self.started(page)
+        page.evaluate(HOLD)
+        self.change(page, zoom=3, image=2)
+        page.wait_for_function('synServer.log.length === 1', timeout=6000)
+        if entry == 'job':
+            page.evaluate("synOpen('read')")
+            self.restored(page)
+        else:
+            page.evaluate('synFindingServer.status = 200')
+            page.get_by_role('button', name='Reload Findings').click()
+            page.wait_for_function("document.querySelector('[data-kin-location-result]')?.dataset.kinLocationResult === 'ok'")
+        self.assertEqual((BEFORE, JOB_IMAGE), (self.sent(page), page.evaluate('synFirst().image')))
+        return page
+
+    def leave(self, page, how):
+        if how == 'close':
+            page.evaluate("dispatchEvent(new Event('pagehide'))")
+        elif how == 'switch':
+            page.evaluate("document.body.classList.add('kin-patient-switching')")
+        else:
+            page.evaluate("synToolbar.dispose()")
+        page.wait_for_timeout(300)
+
+    def test_pending_pre_restore_save_never_resends_restored_view(self):
+        def answered(page):
+            # The reader's first save is answered at last. What stands saved is the reader's view from before the restore.
+            page.evaluate('synServer.release()')
+            page.wait_for_function("synServer.log.length === 4")
+            self.assertEqual((['save', 'save', 'saved', 'stale'], SA + '.3', 3), (page.evaluate('synServer.log'), page.evaluate('synServer.saved.cells[0].sop'),
+                                                                                round(page.evaluate('synServer.saved.cells[0].zoom'), 6)))
+        for entry in ('job', 'finding'):
+            for how in ('close', 'switch', 'end'):
+                with self.subTest(entry=entry, leave=how):
+                    page = self.before_restore(entry)
+                    self.leave(page, how)
+                    self.assertEqual(BEFORE, self.sent(page), 'the Job on the screen is not sent for the sake of the save before it')
+                    answered(page)
+        # The panel is taken down and comes back while that save is still unanswered: its second restore begins with
+        # the first one's screen standing, and that is not the reader's view to send ahead of it either.
+        page = self.before_restore('job')
+        page.evaluate('synJobsPanel.stop(); synMountJobs()')
+        page.wait_for_function('synTold.length === 4')
+        self.restored(page)
+        self.assertEqual(BEFORE, self.sent(page))
+        self.close(page)
+        self.assertEqual(BEFORE, self.sent(page))
+        answered(page)
+        # What the reader changes after the restore is the reader's as ever: saved, and sent again by the closing
+        # window while that save is unanswered.
+        page.evaluate(HOLD)
+        self.mine(page, 3)
+        self.close(page)
+        self.assertEqual(BEFORE + [(5, JOB_IMAGE)] * 2, self.sent(page))
+        self.assertEqual([False, False, False, True], page.evaluate('synServer.bodies.map(b => b.keepalive)'))
+
+    def test_uncapturable_restore_end_waits_for_a_capturable_screen(self):
+        def earlier(page):
+            # The reader's own view (the right cell on its third image) is saved and answered before the Job is read.
+            # The failed rollback puts only the first cell back: the screen it leaves is neither that view nor the Job.
+            self.change(page, cell='right', zoom=3, image=2)
+            page.wait_for_function("synServer.log.length === 2", timeout=6000)
+
+        def stands(page):
+            self.assertEqual((1, SB + '.3'), (len(self.posts(page)), page.evaluate('synServer.saved.cells[1].sop')), 'the reader\'s saved view stands')
+        page = self.unsettled(before=earlier)
+        # Nothing to start from yet. Neither what the viewer says of itself, nor the save delay, nor the window closing
+        # sends a thing.
+        self.stir(page)
+        self.quiet(page, 1, 2600)
+        self.close(page)
+        # The image comes, and the camera and the grid say so: that screen is where saving starts from, not a change.
+        page.evaluate('synLoaded()')
+        self.stir(page)
+        self.quiet(page, 1, 2600)
+        self.close(page)
+        stands(page)
+        self.own(page, 2)
+        # The image came with no word of it: the closing window finds the screen it can start from, and sends nothing.
+        page = self.unsettled(before=earlier)
+        page.evaluate('synLoaded(1, true)')
+        self.close(page)
+        self.stir(page)
+        self.quiet(page, 1, 2600)
+        stands(page)
+        self.own(page, 2)
+        # The starting point is taken as the image comes, not a moment later: what the reader changes right after it
+        # is the reader's change.
+        page = self.unsettled(before=earlier)
+        page.evaluate('synLoaded()')
+        self.own(page, 2)
+        self.quiet(page, 2, 2600)
+
+    def test_nothing_but_a_capturable_screen_ends_that_wait(self):
+        def kept(page):
+            # The reader's view from before the restore: its first save (after the usual delay) stays unanswered.
+            page.evaluate(HOLD)
+            self.change(page, zoom=3, image=2)
+            page.wait_for_function('synServer.log.length === 1', timeout=6000)
+
+        def failing(page):
+            # The reader's change is still waiting as the restore begins: it is sent then, and that save will fail.
+            page.evaluate("() => { synServer.hold = new Promise((_, reject) => { window.synFail = reject; }); }")
+            self.change(page, zoom=3, image=2)
+        # A patient switch, with the image there by then: nothing is sent.
+        switched = self.unsettled()
+        switched.evaluate("synLoaded(1, true); document.body.classList.add('kin-patient-switching')")
+        # The mode is left with the reader's earlier save still unanswered: the screen is not sent for its sake.
+        left = self.unsettled(before=kept)
+        self.assertEqual(BEFORE, self.sent(left))
+        left.evaluate('synLoaded(1, true); synToolbar.dispose()')
+        # The reader's latest save fails meanwhile: that does not make the screen the restore left one to send.
+        failed = self.unsettled(before=failing)
+        self.assertEqual(BEFORE[:1], self.sent(failed))
+        failed.evaluate("synFail(new TypeError('Failed to fetch'))")
+        failed.wait_for_function("synServer.log.length === 2")
+        failed.evaluate('synLoaded()')
+        # The check is off all the while and switched on once the image has come.
+        off = self.unsettled(on=False)
+        off.evaluate('synLoaded()')
+        self.window(off)
+        self.switch_on(off)
+        # Discard Saved View is pressed meanwhile, and another window's Discard is heard meanwhile.
+        discarded = self.unsettled()
+        panel = self.window(discarded)
+        panel.get_by_role('button', name='Discard Saved View').click()
+        expect(panel.get_by_role('status')).to_have_text('The saved view of this study was discarded.')
+        discarded.evaluate('synLoaded()')
+        heard = self.unsettled()
+        heard.evaluate("""study => { synServer.saved = null; synServer.generation = '1'; const c = new BroadcastChannel('kin-auto-view');
+          c.postMessage({ owner: JSON.stringify(synSession.owner()), study, generation: '1' }); c.close(); }""", STUDY)
+        heard.wait_for_timeout(200)
+        heard.evaluate('synLoaded()')
+        # A Hanging Protocol is applied meanwhile: the screen it leaves is the one to start from.
+        hung = self.unsettled()
+        hung.evaluate("""() => { synLoaded(1, true);
+          dispatchEvent(new CustomEvent('kin-hanging-protocol-applied', { detail: { viewportIds: [...synViewports.keys()], display: [null, null] } })); }""")
+        pages = {'switched': switched, 'left': left, 'failed': failed, 'off': off, 'discarded': discarded, 'heard': heard, 'hung': hung}
+        for page in pages.values():
+            if page is not left:
+                self.stir(page)
+        switched.wait_for_timeout(3000)
+        switched.evaluate("document.body.classList.remove('kin-patient-switching')")
+        for name, page in pages.items():
+            with self.subTest(page=name):
+                self.close(page)
+                before = {'left': 2, 'failed': 1}.get(name, 0)
+                self.assertEqual(BEFORE[:before], self.sent(page), 'nothing was sent of the screen the failed restore left')
+                if name == 'left':
+                    page.evaluate('synServer.release()')
+                    page.wait_for_function("synServer.log.length === 4")
+                    self.assertEqual((['save', 'save', 'saved', 'stale'], SA + '.3'), (page.evaluate('synServer.log'), page.evaluate('synServer.saved.cells[0].sop')))
+                    continue
+                self.assertEqual(['discard'] if name == 'discarded' else ['save', 'aborted'] if name == 'failed' else [], page.evaluate('synServer.log'))
+                self.own(page, before + 1, zoom=6)
+                self.assertEqual('1' if name in ('discarded', 'heard') else '0', page.evaluate('synServer.bodies.at(-1).generation'))
+
+    def test_restore_over_before_ready_takes_the_same_starting_point(self):
+        seen = "synRequests.some(r => r.startsWith('GET ') && r.endsWith('/viewer-auto-view'))"
+        # The Job is on the screen before this viewer's saved view is read (its answer is kept back): the restore's end
+        # is heard by a viewer not saving yet. The screen it left is where saving starts from once the read answers.
+        page = self.combined(setup=HOLD_READ)
+        page.evaluate('synMountJobs()')
+        self.restored(page)
+        page.wait_for_function(seen, timeout=8000)
+        page.evaluate('synServer.releaseRead()')
+        self.quiet(page, 0)
+        self.close(page)
+        self.assertEqual([READ], self.requests(page))
+        self.mine(page, 1)
+        # The restore and its rollback both fail before that, and one image is still to come as saving starts: the
+        # image coming is not a change to save.
+        page = self.combined(setup=HOLD_READ)
+        page.evaluate("synGate('read'); synRestore.steps.push({ gate: 'apply', fail: true }, { gate: 'back', fail: true }); synMountJobs()")
+        page.wait_for_function(seen, timeout=8000)
+        page.wait_for_function('synJobs.reads === 1')
+        self.waiting(page, 'apply')
+        page.evaluate("synOpen('apply')")
+        page.wait_for_function("synRestore.waiting === 'back'")
+        page.evaluate("synLoading(); synOpen('back')")
+        page.wait_for_function("synJobsStatus().startsWith(%s)" % json.dumps(UNKNOWN))
+        page.evaluate('synServer.releaseRead()')
+        page.wait_for_timeout(300)
+        page.evaluate('synLoaded()')
+        self.stir(page)
+        self.quiet(page, 0, 2600)
+        self.close(page)
+        self.assertEqual([READ], self.requests(page), 'loading alone saves nothing')
+        self.own(page, 1)
+        # No restore at all, and one image still to come as saving starts: the same.
+        page = self.open(setup=HOLD_READ)
+        page.wait_for_function(seen, timeout=8000)
+        page.evaluate('synLoading(); synServer.releaseRead()')
+        page.wait_for_timeout(300)
+        page.evaluate('synLoaded()')
+        self.stir(page)
+        self.quiet(page, 0, 2600)
+        self.close(page)
+        self.assertEqual([READ], self.requests(page), 'opening the viewer saves nothing, however late an image comes')
+        self.own(page, 1)
+
+    def test_leaving_with_a_save_unanswered_sends_the_view_again(self):
+        # No restore: going away while the save of the view on the screen is still on its way sends that view again
+        # (the first may not outlive the window or the viewer), as it always has.
+        for how in ('close', 'switch', 'end'):
+            with self.subTest(leave=how):
+                page = self.open()
+                self.started(page)
+                page.evaluate(HOLD)
+                self.change(page, zoom=2)
+                page.wait_for_function('synServer.log.length === 1', timeout=6000)
+                self.leave(page, how)
+                page.wait_for_function('synServer.log.length === 3', timeout=3000)
+                page.evaluate('synServer.release()')
+                page.wait_for_function('synServer.log.length === 4', timeout=3000)
+                self.assertEqual(['save', 'save', 'saved', 'stale'], page.evaluate('synServer.log'))
+                bodies, posts = page.evaluate('synServer.bodies'), self.posts(page)
+                self.assertEqual(([1, 2], [False, how == 'close']), ([b['seq'] for b in bodies], [b['keepalive'] for b in bodies]))
+                self.assertEqual(posts[0], posts[1], 'the same view')
 
     def test_25_a_quick_replacement_also_restarts_quiet_without_changing_the_shown_image(self):
         page = self.open()
