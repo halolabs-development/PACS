@@ -1465,7 +1465,7 @@ class RelatedLayoutDOMTest(Base):
             harness.expect(page.locator("#question-pane")).to_be_visible()
         if save_failed:
             # Typing: the draft's baseline read is not answered here, so after some 19s the notice above the editor
-            # settles on Save Failed (73px at 1152x768, three lines), the one train15 met in RL-13b.
+            # settles on Save Failed (73px at 1152x768, three lines), the notice under which RL-13b went red.
             findings = parts[1][0]
             findings.focus()
             page.keyboard.press("Control+End")
