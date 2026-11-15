@@ -162,10 +162,14 @@ body.reading .redit { flex: 1 1 0; overflow-y: auto; scroll-padding-block: 4px; 
 body.reading .report-p > :not(.report-compose, #dictation-pane, .rfoot2, .rfoot2 ~ *) { flex-shrink: 1;
   box-sizing: content-box; min-height: var(--kin-row-floor, 1lh); overflow-y: auto; }
 body.reading .report-p > #reading-report-target { flex-shrink: 20; }
-/* A notice row (a horizontal flex line of words and buttons) that yields keeps one line of its buttons (main.html .draftbar
-   button: an 11px line, 2px padding and a 1px border above and below) and shows its first line, not its middle: centred,
-   its wrapped message lost its top lines out of reach above the box. */
-body.reading .report-p > .draftbar { --kin-row-floor: calc(1lh + 6px); align-items: safe center; }
+/* A notice row (words and buttons on a flex line) keeps each button's words on one line and moves the buttons that do not
+   fit onto lines of their own: squeezed into a 340px column, Keep This Text and Load Server Draft wrapped to three lines
+   (42px), taller than the row's floor, and could not be scrolled whole into view. So every control is one line high -
+   main.html .draftbar button: an 11px line, 2px padding and a 1px border above and below - and that is the row's floor:
+   yielded, it scrolls each of them whole into view. It shows its first line, not its middle (`safe`: centred, its wrapped
+   message lost its top lines out of reach above the box). */
+body.reading .report-p > .draftbar { flex-wrap: wrap; --kin-row-floor: calc(1lh + 6px); align-items: safe center; }
+body.reading .report-p > .draftbar button { white-space: nowrap; }
 /* The questions keep their bar whole (main.html: 24px buttons, 3px padding); opened, their list keeps four lines inside
    its own border and padding (1px, 4px and 8px) - a message and its 24px controls - and scrolls the rest. */
 body.reading .report-p > #question-p:not([hidden]) { display: flex; flex-direction: column; min-height: calc(24px + 2 * 3px); }

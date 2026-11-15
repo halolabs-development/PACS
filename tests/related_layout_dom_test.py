@@ -1408,11 +1408,15 @@ class RelatedLayoutDOMTest(Base):
           out.no_width = texts(e).map(n => n.parentElement).filter(p => p.getClientRects().length && p.getBoundingClientRect().width < 1)
             .map(p => p.id || p.tagName);
           return out; });"""
-    # The questions' controls, each brought into view inside its own box as a reader's Tab would.
-    QUESTION_PROBE = r"""
-      const q = document.getElementById('question-p'), out = {};
-      for (const b of q.querySelectorAll('button')) if (b.getClientRects().length) {
-        b.scrollIntoView({block: 'nearest', inline: 'nearest'}); out[b.textContent.trim()] = (await io(b)).ratio; }
+    # Every control in the rows before the button row (not the editor), each brought into view inside its own box as a
+    # reader's Tab would: a yielded row scrolls it whole into view.
+    CONTROLS_PROBE = r"""
+      const row = document.querySelector('.rfoot2'), compose = document.querySelector('.report-compose'), out = {};
+      for (const e of [...row.parentElement.children].filter(e => e !== compose && (e.compareDocumentPosition(row) & 4) && e.getBoundingClientRect().height))
+        for (const b of e.querySelectorAll('button')) if (b.getClientRects().length) {
+          b.scrollIntoView({block: 'nearest', inline: 'nearest'}); out[(e.id || e.className) + ': ' + b.textContent.trim()] = (await io(b)).ratio; }
+      // Each row back at its start, as the reader left it before Tab.
+      for (const e of row.parentElement.children) for (const x of [e, ...e.querySelectorAll('*')]) if (x !== compose && !compose.contains(x) && x.scrollTop) x.scrollTop = 0;
       return out;"""
     FONT = """font => { let tag = document.getElementById('rl13c-font');
       if (!tag) { tag = document.createElement('style'); tag.id = 'rl13c-font'; document.head.append(tag); }
@@ -1423,7 +1427,7 @@ class RelatedLayoutDOMTest(Base):
       host.append(s); const out = fonts.map(f => { s.style.fontFamily = f || ''; const r = s.getBoundingClientRect(); return [r.width, r.height]; });
       s.remove(); return out; }"""
 
-    def open_row_case(self, *, holder=None, save_failed=False, questions_failed=False):
+    def open_row_case(self, *, holder=None, save_failed=False, questions_failed=False, conflict=False):
         long_rows = self.report_row_rows()
         long_rows[0]["state"]["holder"] = holder
 
@@ -1443,6 +1447,18 @@ class RelatedLayoutDOMTest(Base):
         harness.expect(inbox.get_by_role("status")).not_to_have_text("Loading")
         if holder:
             harness.expect(page.locator("#holdmsg")).to_contain_text("판독 중입니다")
+        if conflict:
+            # The draft bar of a conflict - another window's draft is on the server - as report-editor.js renderDraftBar draws
+            # it (its words, Keep This Text and Load Server Draft shown, Reload Report and Discard Draft hidden). Set here as
+            # drawn: the draft client the bar reads is frozen, and a real conflict needs the draft protocol's reads.
+            page.evaluate("""() => { const $ = id => document.getElementById(id);
+  $('draftbar').style.display = 'flex';
+  $('b-draft-discard').style.display = $('b-report-reload').style.display = 'none';
+  $('b-draft-keep').style.display = $('b-draft-load').style.display = ''; $('b-draft-keep').disabled = $('b-draft-load').disabled = false;
+  $('draftmsg').innerHTML = '<b>● 서버의 초안이 이 화면과 다릅니다</b> — 입력한 내용은 그대로 있습니다 · ' +
+    '이 화면의 글을 남기려면 Keep This Text, 서버의 초안으로 바꾸려면 Load Server Draft · ' +
+    'Keep This Text는 글만 남깁니다 — 붙은 그림은 서버의 초안 것(Conclusion 아래에 다시 불러온 그림)을 따릅니다'; }""")
+            harness.expect(page.get_by_role("button", name="Keep This Text", exact=True)).to_be_visible()
         if questions_failed:
             harness.expect(page.locator("#question-p")).to_be_visible(timeout=10000)
             page.locator("#question-toggle").click()
@@ -1480,12 +1496,6 @@ class RelatedLayoutDOMTest(Base):
                     page.evaluate(self.FONT, font)
                     self.bring_report_into_view(page, parts)
                     above = js(page, self.ABOVE_PROBE)
-                    if questions:
-                        controls = js(page, self.QUESTION_PROBE)
-                        measure(tag, questions=controls)
-                        for label, ratio in controls.items():
-                            self.assertGreaterEqual(ratio, 0.999, f"{tag}: the questions' {label} is not whole {controls}")
-                        self.bring_report_into_view(page, parts)
                     if questions or height < 720:   # below the Reading windows claimed (720px and up): the rule's floors
                         seen = self.report_row(page, parts)
                         if any(b["ratio"] < 0.999 for b in seen["buttons"].values()):
@@ -1496,7 +1506,10 @@ class RelatedLayoutDOMTest(Base):
                             self.assert_report_row(w, tag, parts)
                     else:
                         self.assert_report_row(w, tag, parts)
-                    measure(tag, above=above)
+                    controls = js(page, self.CONTROLS_PROBE)
+                    measure(tag, above=above, controls=controls)
+                    for label, ratio in controls.items():
+                        self.assertGreaterEqual(ratio, 0.999, f"{tag}: {label} cannot be brought whole into view {controls}")
                     for row in above:
                         if "whole" in row:
                             self.assertTrue(row["whole"], f"{tag}: the first line of {row['row']} is cut {row}")
@@ -1514,6 +1527,10 @@ class RelatedLayoutDOMTest(Base):
         w, parts = self.open_row_case(save_failed=True)
         self.sweep_row_case(w, parts, "Reading, Save Failed")
         harness.expect(w.page.locator("#draftmsg")).to_contain_text("Save Failed")   # the state held through the sweep
+        w.screen.finish()
+        w, parts = self.open_row_case(conflict=True)
+        self.sweep_row_case(w, parts, "Reading, draft conflict")
+        harness.expect(w.page.get_by_role("button", name="Load Server Draft", exact=True)).to_be_visible()   # held through the sweep
         w.screen.finish()
         w, parts = self.open_row_case(questions_failed=True)
         self.sweep_row_case(w, parts, "Reading, questions opened (read failed)", questions=True)
