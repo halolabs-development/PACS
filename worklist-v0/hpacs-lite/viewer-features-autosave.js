@@ -88,6 +88,8 @@
     const restoring = () => live() && on && restoreAt === restoreRun;
     // A restore the address chose is changing this screen now. No length of time ends it: only that restore letting go.
     const landing = () => { for (const hold of openings.holds) if (hold.screen >= screen) return true; return false; };
+    // Such a restore has held this screen at some time, be it over before this viewer was here to hear of it.
+    const restoredHere = () => openings.held >= screen;
     const writer = () => session?.writer?.() !== false && !session?.ended?.();
     const list = value => Array.from(value || [], Number);
 
@@ -128,9 +130,13 @@
     // The point is later in order than every save before it (none before the first), so a late failure of one of
     // those cannot unsend it, and going away does not send this screen for their sake (floor, in save). A screen that
     // cannot be captured (a cell still loading, a layout this feature does not keep) is no starting point: saving
-    // stays closed until save() next finds one that can (settling), however long that takes.
+    // stays closed until save() next finds one that can (settling), however long that takes. That wait keeps the
+    // screen a restore left from being sent. A viewer that starts saving on a screen no such restore ever held has
+    // none to keep back and does not wait: what was taken as sent before it (nothing, or the view a Discard found)
+    // stays so, and the first screen that can be captured and differs from it is saved.
     function rebase(first = false) {
       const now = captured();
+      if (!now && first && !restoredHere()) { settling = false; return; }
       settling = !now;
       if (!now) return;
       floor = first ? 0 : ++order;
@@ -435,6 +441,7 @@
       phase = 'ready';
       // The view on the screen now is the starting point: it is saved once it changes. With a chosen restore landing
       // right now, the screen that restore leaves takes its place; one that was over before this is here already.
+      // A screen that cannot be captured is waited for only where such a restore has been (rebase).
       rebase(true);
     })().catch(error => console.error(error));
 

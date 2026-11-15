@@ -344,13 +344,14 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
        moved to within this document are the reader's own and hold nothing.
        Each hold is let go only by the restore that took it. `screen` moves on each time a panel is taken down (stop,
        below) and a hold keeps the number it was taken under, so a restore of a screen that is over, settling late, is
-       not counted by the screen that came after it. */
+       not counted by the screen that came after it. `held` is the number of the latest hold taken and stays once that
+       hold is let go: a viewer that starts saving later, having heard nothing, still knows a restore held its screen. */
     const openings = window.kinViewerOpeningRestore ||= { screen: 0, holds: new Set() };
     const tellOpening = (phase, hold) => { try { window.dispatchEvent(new CustomEvent('kin-viewer-opening-restore', { detail: { phase, hold } })); } catch (_) {} };
     function holdOpening(ctx) {
       if (ctx.initialRestore !== true) return;
       const hold = Object.freeze({ screen: openings.screen });
-      tellOpening('begin', hold); openings.holds.add(hold); ctx.opening = hold;
+      tellOpening('begin', hold); openings.holds.add(hold); openings.held = hold.screen; ctx.opening = hold;
     }
     function releaseOpening(ctx) {
       const hold = ctx.opening; ctx.opening = null;
