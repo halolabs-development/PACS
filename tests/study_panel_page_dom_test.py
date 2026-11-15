@@ -950,21 +950,29 @@ class StudyPanelPageDOM(unittest.TestCase):
             expect(page.locator(field)).to_be_focused()
             page.keyboard.type(text)
             expect(page.locator(field)).to_have_value(text)
+        # Tab is judged from where the reader pressed it, in Conclusion: typing has added the draft notice above the
+        # editor since arrival, so Save may have been whole at arrival and below the card's edge now (the card scrolls
+        # once its rows' floors are more than its height). Whole before Tab: nothing may scroll; out of view: only the
+        # report column moves and Save ends whole.
+        before_tab = read_entry(page, '#b-save', SAVE_ROW[0])
         revealed, why = tab_into_view(page, '#b-save', SAVE_ROW[0])
         self.assertIsNone(why, f'{what}: Tab from Conclusion {revealed}')
         # The one place bottom_rounding is still needed (measured fix14): the browser's own focus scroll moves whole
         # pixels and stops short of a fractional edge - 900x768 focused Save with 0.453 px of its bottom under the card
         # edge at 761. The wheel path above needs no rounding. Top, left and right are judged exactly.
-        self.assertEqual([], column_reach.reach_problems(arrival, revealed, bottom_rounding=0.5),
+        self.assertEqual([], column_reach.reach_problems(before_tab, revealed, bottom_rounding=0.5),
                          f'{what}: Tab from Conclusion to Save')
         state, why = wheel_into_view(page, '#b-dictate', SAVE_ROW[0])
         self.assertIsNone(why, f'{what}: Dictate {state}')
         expect(page.locator('#b-dictate')).to_be_enabled()
         self.assertTrue(self.assert_report_usable(page, f'{what}, Dictate', ('#b-dictate',))['#b-dictate']['whole'])
         for count, (button, action) in enumerate((('#b-save', 'save'), ('#b-approve', 'approve')), 1):
+            # Enabled first, then where it is: Approve stays disabled until the save's answer, and that answer takes
+            # the draft notice away, which in a portrait window moves the row up by the notice's height.
+            expect(page.locator(button)).to_be_enabled()
+            settle(page)
             state, why = wheel_into_view(page, button, SAVE_ROW[0])
             self.assertIsNone(why, f'{what}: {button} {state}')
-            expect(page.locator(button)).to_be_enabled()
             expect(drawer).to_be_visible()
             click_center(page, state)
             wait_until(page, lambda: len(site.commits) == count, f'{what}: {button} pressed')

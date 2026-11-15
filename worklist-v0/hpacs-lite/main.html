@@ -451,28 +451,35 @@
        region and the card, which scrolled as a whole: 80 Findings lines put the button row at y 2355 of a 768px window.
        Here the field region is the scroller between the editor's head and the button row, which never yields:
        1. The region takes the height the card has left and gives it up first, down to its floor: both fields whole at
-          their own minimum heights (50 + 34px, the sections' floor described above, or one line of the reader's text
-          size if that is more: 1.5 times it plus the fields' 12px padding and 2px border) under their labels, so an
-          empty report shows both whole and a long one its first Findings lines. A label line is counted as one line of
-          the region's 13px text (1lh), at least the label's own 11px line.
+          the heights an empty report keeps readable (Findings 50px, its minimum; Conclusion 40px, more than its 34px
+          minimum, which the fields' shared shrink left at 39.5px with three service notices at 1400x900; or one line of
+          the reader's text size if that is more: 1.5 times it plus the fields' 12px padding and 2px border) under their
+          labels, so an empty report shows both whole and a long one its first Findings lines. A label line is counted
+          as one line of the region's 13px text (1lh), at least the label's own 11px line.
        2. Then every other row before the button row (the notices: report, draft, hold, on-hold, citations and their
           list, Recommendation; the questions under the editor; not the dictation pane, which keeps its own rule) gives
           up height and scrolls its own words, each down to the floor of the same row in the Reading Workspace: one line
           of its text; a notice row one control line, its buttons kept on one line each and moved to lines of their
           own; the questions their bar, or opened four lines of their list. Opened with two threads that list was 338px
-          and carried the row out of the card in 39 of 44 windows.
+          and carried the row out of the card in 39 of 44 windows. A floor never makes a row taller than it is: one
+          line of the row's own text (16px in the page font) and the padding came to 31px, where a notice's one control
+          line (its 11px buttons) is 27px, so a roomy card moved the editor 4px down; the floor is the smaller of the two.
        3. Only when those floors are more than the card does the card scroll as before, and then the rows under the
           button row (Critical Results) leave it before the row does. */
     body:not(.reading) .workrow > .report-p > .report-compose { flex: 1 1 0; }
     body:not(.reading) .workrow > .report-p .redit { flex: 1 1 0; overflow-y: auto; scroll-padding-block: 4px;
       --kin-field-line: calc(var(--kin-current-text, 12px) * 1.5 + 2 * 6px + 2 * 1px);
-      min-height: calc(2 * 4px + 2 * (1lh + 2 * 2px) + 3 * 2px + max(50px, var(--kin-field-line)) + max(34px, var(--kin-field-line))); }
+      --kin-findings-floor: max(50px, var(--kin-field-line)); --kin-conclusion-floor: max(40px, var(--kin-field-line));
+      min-height: calc(2 * 4px + 2 * (1lh + 2 * 2px) + 3 * 2px + var(--kin-findings-floor) + var(--kin-conclusion-floor)); }
+    body:not(.reading) .workrow > .report-p .redit > #findings { min-height: var(--kin-findings-floor); }
+    body:not(.reading) .workrow > .report-p .redit > #conclusion { min-height: var(--kin-conclusion-floor); }
     body:not(.reading) .workrow > .report-p > :not(.report-compose, #dictation-pane, .rfoot2, .rfoot2 ~ *) { flex-shrink: 1;
-      box-sizing: content-box; min-height: var(--kin-row-floor, 1lh); overflow-y: auto; }
+      box-sizing: content-box; min-height: var(--kin-row-floor, 1lh); overflow-y: auto;
+      min-height: calc-size(max-content, min(size, var(--kin-row-floor, 1lh))); }
     body:not(.reading) .workrow > .report-p > .draftbar { flex-wrap: wrap; --kin-row-floor: calc(1lh + 6px); align-items: safe center; }
     body:not(.reading) .workrow > .report-p > .draftbar button { white-space: nowrap; }
-    body:not(.reading) .workrow > .report-p > #question-p:not([hidden]) { display: flex; flex-direction: column; min-height: calc(24px + 2 * 3px); }
-    body:not(.reading) .workrow > .report-p > #question-p:has(> #question-pane:not([hidden])) { min-height: calc(24px + 2 * 3px + 1px + 4px + 4lh + 8px); }
+    body:not(.reading) .workrow > .report-p > #question-p:not([hidden]) { display: flex; flex-direction: column; --kin-row-floor: calc(24px + 2 * 3px); }
+    body:not(.reading) .workrow > .report-p > #question-p:has(> #question-pane:not([hidden])) { --kin-row-floor: calc(24px + 2 * 3px + 1px + 4px + 4lh + 8px); }
     body:not(.reading) .workrow > .report-p > #question-p > #question-pane { flex: 0 1 auto; min-height: 0; }
     /* The Recommendation line keeps its words on one line and scrolls them sideways (#recnote below). Its width did not
        count as its own: the card keeps the width its content needs (min-content, above), so a long recommendation
