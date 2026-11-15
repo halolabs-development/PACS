@@ -2,9 +2,15 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const ts=require('../api/node_modules/typescript');
 const model=require('../worklist-v0/hpacs-lite/exam-scope.js'),arrivals=require('../worklist-v0/hpacs-lite/study-arrivals.js');
-const tree=ts.createSourceFile('panel.js',fs.readFileSync('worklist-v0/hpacs-lite/study-info-panel.js','utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
-const names=new Set(['renderObservation','requestGatewayRetry']);
-const source=tree.statements.filter(node=>ts.isFunctionDeclaration(node)&&names.has(node.name?.text)).map(node=>node.getText(tree)).join('\n');
+const functions=(file,names)=>{
+ const tree=ts.createSourceFile(file,fs.readFileSync('worklist-v0/hpacs-lite/'+file,'utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
+ const found=tree.statements.filter(node=>ts.isFunctionDeclaration(node)&&names.includes(node.name?.text)).map(node=>node.getText(tree));
+ assert.equal(found.length,names.length,file+' declares '+names.join(', '));
+ return found;
+};
+// The panel writes its status through the writer of the page (page-core.js). No screen language is chosen here, so
+// the writer puts the words into the element as they are.
+const source=[...functions('page-core.js',['kinWrite']),...functions('study-info-panel.js',['renderObservation','requestGatewayRetry'])].join('\n');
 class Element {
  constructor(tag='div'){this.tag=tag;this.children=[];this.dataset={};this.hidden=false;this.textContent='';this.events={};}
  append(...items){for(const item of items)if(typeof item==='object'){item.parent=this;this.children.push(item);}}
@@ -18,7 +24,7 @@ function harness(){
  const nodes=new Map(),receipt=(phase,seq)=>({phase,epoch:'00000000-0000-4000-8000-000000000001',agentSeq:seq,successCount:1,localCount:2,attempt:1,errorCode:phase==='retry'?'CONNECT_FAILED':null,serverReceivedAt:'2026-01-01T00:00:00Z'});
  let row={uid:'1.2',examScope:{reportUid:'1.2',groupId:'group',generation:'first',sources:[{studyUid:'1.2',series:{mode:'all',uids:[]}},{studyUid:'1.3',series:{mode:'all',uids:[]}}]},sourceMetadata:[{uid:'1.2',gatewayReceipt:receipt('complete',1)},{uid:'1.3',gatewayReceipt:receipt('retry',2)}]};
  let finish;const requests=[];
- const context={KinExamScope:model,KinStudyArrivals:arrivals,studyObservationModel:arrivals.observationStart(),viewed:()=>row,
+ const context={window:{},KinExamScope:model,KinStudyArrivals:arrivals,studyObservationModel:arrivals.observationStart(),viewed:()=>row,
   $:id=>{if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);},document:{createElement:tag=>new Element(tag)},
   serverMode:true,offline:false,demoMode:false,KinAuth:{has:()=>true},gatewayRetryRequestSeq:0,
   work:{capture:()=>1,commit:(_at,fn)=>fn()},api:(...args)=>{requests.push(args);return new Promise(resolve=>finish=resolve);}};
