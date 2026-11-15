@@ -95,7 +95,7 @@
       "builtIn": false,
       "authenticationExecutions": [
         { "authenticatorConfig": "kin browser administrator", "authenticator": "conditional-user-role", "authenticatorFlow": false, "requirement": "REQUIRED", "priority": 10, "userSetupAllowed": false },
-        { "authenticator": "auth-otp-form", "authenticatorFlow": false, "requirement": "REQUIRED", "priority": 20, "userSetupAllowed": false }
+        { "authenticatorConfig": "kin browser administrator otp reference", "authenticator": "auth-otp-form", "authenticatorFlow": false, "requirement": "REQUIRED", "priority": 20, "userSetupAllowed": false }
       ]
     },
     {
@@ -147,7 +147,7 @@
       "builtIn": false,
       "authenticationExecutions": [
         { "authenticatorConfig": "kin reset administrator", "authenticator": "conditional-user-role", "authenticatorFlow": false, "requirement": "REQUIRED", "priority": 10, "userSetupAllowed": false },
-        { "authenticator": "auth-otp-form", "authenticatorFlow": false, "requirement": "REQUIRED", "priority": 20, "userSetupAllowed": false }
+        { "authenticatorConfig": "kin reset administrator otp reference", "authenticator": "auth-otp-form", "authenticatorFlow": false, "requirement": "REQUIRED", "priority": 20, "userSetupAllowed": false }
       ]
     }
   ],
@@ -156,7 +156,9 @@
     { "alias": "kin browser administrator", "config": { "condUserRole": "admin", "negate": "false" } },
     { "alias": "kin browser not administrator", "config": { "condUserRole": "admin", "negate": "true" } },
     { "alias": "kin reset administrator", "config": { "condUserRole": "admin", "negate": "false" } },
-    { "alias": "kin reset not administrator", "config": { "condUserRole": "admin", "negate": "true" } }
+    { "alias": "kin reset not administrator", "config": { "condUserRole": "admin", "negate": "true" } },
+    { "alias": "kin browser administrator otp reference", "config": { "default.reference.value": "otp", "default.reference.maxAge": "43200" } },
+    { "alias": "kin reset administrator otp reference", "config": { "default.reference.value": "otp", "default.reference.maxAge": "43200" } }
   ],
   "roles": {
     "realm": [
@@ -280,6 +282,17 @@
             "access.token.claim": "true",
             "userinfo.token.claim": "false",
             "claim.name": "groups"
+          }
+        },
+        {
+          "name": "kin-authentication-methods",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-amr-mapper",
+          "consentRequired": false,
+          "config": {
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
           }
         }
       ]
