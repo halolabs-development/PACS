@@ -3,6 +3,8 @@
  * owns every ticket/sequence decision) runs under Node; the DOM half lives in viewer-findings.js. */
 (function (root) {
   'use strict';
+  // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
   const LINK_STATES = ['current', 'revised', 'hidden', 'missing'];
   const LINK_LABELS = { current: 'Current', revised: 'Revised', hidden: 'Hidden', missing: 'Missing' };
   const LINK_TEXT = {
@@ -255,8 +257,9 @@
       if (!exact) return list.length ? UNVERIFIED + list.map(decimal).join(' / ') : '';
       const unit = circle[2] === 'hu' ? ' HU' : '', [d, area, mean, sd, min, max] = list.map(decimal);
       const basis = { pixel: 'PixelSpacing', detector: 'ImagerPixelSpacing · 검출기 기준', ermf: 'ImagerPixelSpacing / ERMF · 추정 보정', dbt: 'DBT PixelSpacing', us: 'US Region Calibration' }[circle[1]];
-      return '지름 ' + d + ' mm · 면적 ' + area + ' mm²' + (list.length === 7
-        ? ' · 평균 ' + mean + unit + ' · SD ' + sd + unit + ' · 최소 ' + min + unit + ' · 최대 ' + max + unit + ' · 화소 수 ' + String(list[6]) : ' · 통계 없음') + ' · ' + basis;
+      // The values are the measurement (as they are); the words around them and the spacing basis are words of the page.
+      return kinSay('지름 {0} mm · 면적 {1} mm²{t2} · {t3}', d, area, { t: list.length === 7
+        ? kinSay(' · 평균 {0}{1} · SD {2}{3} · 최소 {4}{5} · 최대 {6}{7} · 화소 수 {8}', mean, unit, sd, unit, min, unit, max, unit, String(list[6])) : ' · 통계 없음' }, { t: basis });
     }
     // The orthopaedic and spine measurements (viewer-features-measure-ortho.js): the calculator names the tool, the back's
     // side on the image for the Cobb angle, and the spacing basis ('px': pixels, the original has no spacing). Image sides,
@@ -270,12 +273,12 @@
       const unit = m[3] === 'px' ? ' px' : ' mm', [a, b, c] = list.map(decimal);
       const basis = { pixel: 'PixelSpacing', detector: 'ImagerPixelSpacing · 검출기 기준', ermf: 'ImagerPixelSpacing / ERMF · 추정 보정', dbt: 'DBT PixelSpacing', px: '픽셀 기준(간격 미확인)' }[m[3]];
       const side = n => n > 0 ? '영상 오른쪽' : '영상 왼쪽';
-      const text = kind === 'limbLength' ? '영상 왼쪽 ' + a + unit + ' · 영상 오른쪽 ' + b + unit + ' · 차 ' + c + unit :
-        kind === 'acetabular' ? '영상 왼쪽 ' + a + '° · 영상 오른쪽 ' + b + '°' :
-        kind === 'spineBalance' ? '가로 거리 ' + decimal(Math.abs(list[0])) + unit + (list[0] ? ' (위 척추체 중심이 ' + side(list[0]) + ')' : '') :
-        kind === 'spineCobb' ? (list[0] === null ? 'Cobb —' : (list[0] < 0 ? 'Lordosis ' : list[0] > 0 ? 'Kyphosis ' : 'Cobb ') + a + '°') + ' (등: 영상 ' + (m[2] === 'right' ? '오른쪽' : '왼쪽') + ')' :
-        'PI ' + a + '° · PT ' + b + '° · SS ' + c + '°';
-      return text + ' · ' + basis;
+      const text = kind === 'limbLength' ? kinSay('영상 왼쪽 {0}{1} · 영상 오른쪽 {2}{3} · 차 {4}{5}', a, unit, b, unit, c, unit) :
+        kind === 'acetabular' ? kinSay('영상 왼쪽 {0}° · 영상 오른쪽 {1}°', a, b) :
+        kind === 'spineBalance' ? kinSay('가로 거리 {0}{1}{t2}', decimal(Math.abs(list[0])), unit, { t: list[0] ? kinSay(' (위 척추체 중심이 {t0})', { t: side(list[0]) }) : '' }) :
+        kind === 'spineCobb' ? kinSay('{t0} (등: 영상 {t1})', { t: list[0] === null ? 'Cobb —' : kinSay('{t0}{1}°', { t: list[0] < 0 ? 'Lordosis ' : list[0] > 0 ? 'Kyphosis ' : 'Cobb ' }, a) }, { t: m[2] === 'right' ? '오른쪽' : '왼쪽' }) :
+        kinSay('PI {0}° · PT {1}° · SS {2}°', a, b, c);
+      return kinSay('{t0} · {t1}', { t: text }, { t: basis });
     }
     // The Measure menu's line tools (measure-lines-model.js); a value that cannot be defined is saved as null and shown as '—'.
     if (Object.prototype.hasOwnProperty.call(LINE_KINDS, kind)) {
@@ -767,9 +770,9 @@
           if (!hasWork(e)) s.entries.delete(id);
           else if (!lose(e)) dropped++;
         }
-        s.status = heads.length + '개 소견 · 소견 저장은 판독 확정과 별개입니다.' +
-          (dropped ? ' · 결과를 확인하지 못한 숨김·복원 요청이 있던 소견을 더 이상 볼 수 없어 목록에서 뺐습니다.' : '') +
-          (s.compat === 'old-api' ? ' · ' + OLD_API_TEXT : '') + (unrecorded ? ' · ' + unrecorded : '');
+      s.status = kinSay('{n0}개 소견 · 소견 저장은 판독 확정과 별개입니다.{t1}{t2}{t3}', heads.length,
+        { t: dropped ? ' · 결과를 확인하지 못한 숨김·복원 요청이 있던 소견을 더 이상 볼 수 없어 목록에서 뺐습니다.' : '' },
+        { t: s.compat === 'old-api' ? kinSay(' · {t0}', { t: OLD_API_TEXT }) : '' }, { t: unrecorded ? kinSay(' · {t0}', { t: unrecorded }) : '' });
         if (pairOf()) loadPair();
         if (s.continuation && !s.continuation.done) { s.continuation.done = true; Promise.resolve().then(() => { work.commit(workAt, () => { void continueLocation(); }); }); }
         });

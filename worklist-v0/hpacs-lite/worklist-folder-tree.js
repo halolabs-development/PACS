@@ -215,6 +215,8 @@
       const node = remember(element('button', label), key); node.type = 'button'; node.onclick = action; return node;
     }
     const status = element('p'); status.setAttribute('role', 'status'); status.setAttribute('lang', 'ko');
+    // This line shows the errors of the folder actions: one with no text in the screen language still says it failed.
+    status.setAttribute('data-kin-error', '');
     const selectionStatus = element('p'); selectionStatus.setAttribute('role', 'status'); selectionStatus.setAttribute('lang', 'ko');
     const content = element('div');
     nav.append(content, status, selectionStatus);
@@ -235,6 +237,7 @@
           ? toggleModality(item.id) : choose(item.id, 'user')), item.id);
         if (item.kind === 'modality') control.setAttribute('aria-pressed', String(selected.includes(item.id)));
         else if (selected.includes(item.id)) control.setAttribute('aria-current', 'true');
+        if (item.kind === 'shortcut' || item.kind === 'search') control.translate = false;
         control.disabled = !!item.unavailable; li.append(control); parent.append(li); return li;
       }
       const all = items(); itemRow(all[0], list);

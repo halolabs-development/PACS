@@ -1088,12 +1088,12 @@
       row.append(head);
       if (fold) row.append(...metaLines(model, true));
       for (const note of model.notes) row.append(make('p', 'cvr-inbox-note', note));
-      if (model.message !== null) row.append(make('p', 'cvr-inbox-message', model.message));
+      if (model.message !== null) row.append(Object.assign(make('p', 'cvr-inbox-message', model.message), { translate: false }));
       if (!fold) row.append(...metaLines(model, false));
       if (model.source !== null) row.append(make('p', 'cvr-inbox-meta', model.source));
       if (model.body !== null) {
         const box = make('div', 'cvr-inbox-report');
-        for (const [name, value] of model.body) box.append(make('p', 'cvr-inbox-field', name), make('p', 'cvr-inbox-value', value));
+        for (const [name, value] of model.body) box.append(make('p', 'cvr-inbox-field', name), Object.assign(make('p', 'cvr-inbox-value', value), { translate: false }));
         row.append(box);
       }
       for (const note of model.after) row.append(make('p', 'cvr-inbox-note', note));

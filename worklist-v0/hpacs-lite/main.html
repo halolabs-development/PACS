@@ -409,6 +409,7 @@
     body .menubar-status .mright { line-height: 1.1; font-size: 11px; }
     body .menubar-status #dbstat { flex: none; width: auto; min-width: 0; white-space: nowrap; }
     body .menubar-session .mright, body .menubar .logout { font-size: 11px; padding-top: 2px; padding-bottom: 2px; }
+    body .menubar-session .language-open { margin-left: 3px; padding-inline: 2px; }
     /* The "select an exam to read" status line above the Related Exam list (still in the DOM; scripts write to it). */
     #related-current { display: none !important; }
     /* 환자 ID는 기존 단축키로 복사하고 Context는 검사 전환 때 갱신하므로 임상 정보 띠의 중복 동작을 접는다. */
@@ -773,6 +774,15 @@
     .menubar .logout { font: inherit; font-size: 12px; background: none; border: 0; border-radius: 4px; padding: 6px 8px; }
     .menubar .logout:hover { background: var(--kin-row-hover); }
     .menubar .logout:focus-visible { outline: 2px solid var(--kin-accent); outline-offset: 1px; }
+    /* Screen language: like Product Information, the header button is folded to its mark at every width (the one-row
+       header has no room for the word beside the longest session and offline texts); Language is its accessible name,
+       tooltip and DOM text. */
+    .menubar .language-open { font: inherit; font-size: 12px; color: inherit; background: none; border: 0; border-radius: 4px; padding: 2px 3px;
+      margin-left: 4px; cursor: pointer; flex: none; }
+    .menubar .language-open .item-label { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0;
+      overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+    .menubar .language-open:hover { background: var(--kin-row-hover); }
+    .menubar .language-open:focus-visible { outline: 2px solid var(--kin-accent); outline-offset: 1px; }
     /* S7-U5: 세션이 끝난 문서는 업무 화면을 다시 보이지 않는다. 닫힘 안내와 로그아웃 창만 남는다. */
     html.kin-closed body > :not(.kin-closed-note):not(dialog) { display: none !important; }
     .kin-closed-note { margin: 48px auto; max-width: 520px; color: #c8d5e6; font-size: 14px; line-height: 1.7; text-align: center; }
@@ -1418,7 +1428,7 @@
         <div class="toolbar-section toolbar-section-saved" role="group" aria-label="Saved Searches">
           <span id="chips" style="display:flex;gap:4px;flex-wrap:wrap"></span>
           <span id="active-filter-info" hidden style="max-width:100%;overflow-wrap:anywhere">
-            <span id="active-filter-name"></span> · <span id="active-filter-state" role="status"></span>
+            <span id="active-filter-name" translate="no"></span> · <span id="active-filter-state" role="status"></span>
             <button class="chip" id="edit-active-filter" type="button" aria-haspopup="dialog" title="적용한 저장 검색을 편집합니다. 열기만으로 목록 조건은 바뀌지 않습니다.">Edit Search</button>
           </span>
         </div>
@@ -1438,21 +1448,22 @@
          사용자·기관 문구는 헤더에서 한 줄로 줄어 보일 수 있고, 전체 문구는 이 단추가 여는 Session details에 있다.
          계정 동작(Change Password)도 그 안에 있어 헤더 폭을 늘리지 않는다. -->
     <div class="menubar-session" role="group" aria-label="Session">
-      <button class="mright session-who" id="session-who" type="button" popovertarget="session-details">
-        <span id="user"></span>
-        <span id="roles" style="color:#4da3ff"></span>
+      <button class="mright session-who" id="session-who" data-kin-keep="title" type="button" popovertarget="session-details">
+        <span id="user" translate="no"></span>
+        <span id="roles" translate="no" style="color:#4da3ff"></span>
       </button>
       <div class="session-details" id="session-details" popover role="group" aria-label="Session details">
         <dl>
           <dt>User</dt>
-          <dd id="session-details-user"></dd>
+          <dd id="session-details-user" translate="no"></dd>
           <dt>Institution · Roles</dt>
-          <dd id="session-details-roles" title="Keycloak 렐름 롤"></dd>
+          <dd id="session-details-roles" translate="no" title="Keycloak 렐름 롤"></dd>
         </dl>
         <a class="session-action" href="/api/auth/login?action=UPDATE_PASSWORD" target="_blank" rel="noopener">Change Password</a>
       </div>
       <a class="mright member-link" id="member-link" href="admin.html" style="display:none">Members</a>
-      <div class="mright" title="메뉴·버튼은 영어, 설명·오류 안내는 한국어로 표시합니다.">EN</div>
+      <button class="mright language-open" id="language-open" type="button" aria-haspopup="dialog" aria-label="Language" title="Language" translate="no"><span aria-hidden="true">가A</span><span class="item-label">Language</span></button>
+      <div class="mright" id="language-label" title="메뉴·버튼은 영어, 설명·오류 안내는 한국어로 표시합니다.">EN</div>
       <button class="mright logout" id="logout" type="button">Log out</button>
     </div>
   </div>
@@ -1673,15 +1684,15 @@
         <div class="prior-report-pane">
           <div class="prior-report-head">
             <b>Related Report</b>
-            <span class="meta" id="prior-report-meta"></span>
+            <span class="meta" id="prior-report-meta" translate="no"></span>
             <span class="readonly">Read only</span>
           </div>
           <div class="prior-report-body">
             <div class="prior-report-status" id="prior-report-status">관련 검사를 선택하세요</div>
             <div id="prior-report-content" style="display:none">
-              <div class="prior-report-section"><h4>Findings</h4><div class="prior-report-value" id="prior-findings"></div></div>
-              <div class="prior-report-section"><h4>Conclusion</h4><div class="prior-report-value" id="prior-conclusion"></div></div>
-              <div class="prior-report-section" hidden><h4>Recommendation</h4><div class="prior-report-value" id="prior-recommendation"></div></div>
+              <div class="prior-report-section"><h4>Findings</h4><div class="prior-report-value" id="prior-findings" translate="no"></div></div>
+              <div class="prior-report-section"><h4>Conclusion</h4><div class="prior-report-value" id="prior-conclusion" translate="no"></div></div>
+              <div class="prior-report-section" hidden><h4>Recommendation</h4><div class="prior-report-value" id="prior-recommendation" translate="no"></div></div>
             </div>
           </div>
           <!-- W5 (설계 v5 §1): Related Report 모드. 비교 중인 검사의 승인 판독문을 읽기 전용으로 보이고, 검토한 글만 Insert로 현재 초안
@@ -1792,7 +1803,7 @@
           <div class="report-editor" id="report-editor" role="group" aria-labelledby="report-editor-title" data-editable="false">
             <div class="report-editor-head">
               <b id="report-editor-title">Report Editor</b>
-              <span id="report-editor-target" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+              <span id="report-editor-target" translate="no" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
               <span id="report-editor-state" class="report-editor-state">Read Only</span>
               <span id="report-editor-why" lang="ko"></span>
               <span id="report-editor-rs" lang="ko" style="flex:none;white-space:nowrap"></span>
@@ -2119,9 +2130,9 @@
       <p id="tpl-preview-place">각 칸의 커서 자리에 줄 단위로 넣습니다(커서가 줄 중간이면 그 줄 다음). 커서 자리가 확인되지 않은 칸은 맨 끝에 붙입니다. 기존 내용은 지우지 않습니다.</p>
       <div class="tpl-preview-body" tabindex="0" role="region" aria-label="상용구 내용">
         <p id="tpl-preview-meta"></p>
-        <h4>Findings</h4><pre id="tpl-preview-findings"></pre>
-        <h4>Conclusion</h4><pre id="tpl-preview-conclusion"></pre>
-        <h4>Recommendation</h4><pre id="tpl-preview-recommendation"></pre>
+        <h4>Findings</h4><pre id="tpl-preview-findings" translate="no"></pre>
+        <h4>Conclusion</h4><pre id="tpl-preview-conclusion" translate="no"></pre>
+        <h4>Recommendation</h4><pre id="tpl-preview-recommendation" translate="no"></pre>
       </div>
       <p id="tpl-preview-status" role="status"></p>
       <div class="foot">
@@ -2193,7 +2204,7 @@
            사람이 삽입 자리를 눈으로 확인할 수 없으므로, 이 줄이 유일한 고지다. -->
       <p id="cite-preview-place"></p>
       <div class="tpl-preview-body" tabindex="0" role="region" aria-label="판독문에 들어갈 내용">
-        <pre id="cite-preview-block"></pre>
+        <pre id="cite-preview-block" translate="no"></pre>
       </div>
       <p id="cite-preview-status" role="status"></p>
       <div class="foot">
@@ -2290,6 +2301,8 @@
     <p class="batch-report-actions"><button class="chip" type="button" data-batch-save>Approve 0 Studies</button> <button class="chip" type="button" data-batch-retry hidden>Retry Failed</button> <button class="chip" type="button" data-batch-cancel>Cancel</button> <button class="chip" type="button" data-batch-close hidden>Close</button></p>
   </dialog>
 
+  <script src="worklist-language-terms.js"></script>
+  <script src="worklist-language.js"></script>
   <script src="auth.js"></script>
   <script src="work-context.js"></script>
   <script src="session-transport.js"></script>

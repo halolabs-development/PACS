@@ -414,6 +414,21 @@ class ReportFlowPage(unittest.TestCase):
         expect(self.notice()).to_be_hidden()
         self.assertEqual([], self.dialogs)
 
+    def test_save_failure_notice_keeps_its_sentence_when_screen_language_changes(self):
+        self.open()
+        self.open_study(h.PATIENT)
+        self.type("SYN unsaved report")
+        self.site.put_answers = [(403, {"code": "REPORT_FORBIDDEN", "message": "검사를 선택하세요."})]
+        self.pick(h.PATIENT_B)
+        expect(self.notice()).to_be_visible()
+        original = self.notice().text_content()
+        self.page.evaluate("KinLanguage.restore({version:1,worklist:'en',reading:'en'})")
+        expect(self.notice()).not_to_contain_text(re.compile('[가-힣]'))
+        expect(self.notice()).to_contain_text(h.PATIENT_B)
+        self.assertEqual("SYN unsaved report", self.page.locator("#findings").input_value())
+        self.page.evaluate("KinLanguage.restore({version:1,worklist:null,reading:null})")
+        self.assertEqual(original, self.notice().text_content())
+
     def test_save_outcome_refused_stays_with_notice_and_retry_moves_after_the_cause_is_gone(self):
         self.open()
         self.open_study(h.PATIENT)

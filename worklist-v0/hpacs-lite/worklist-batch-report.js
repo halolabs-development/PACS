@@ -170,7 +170,7 @@
     const blocked=()=>options.blocked?.()||null;
     const chosen=()=>{if(!picker)return null;const list=state?.templates||[];const i=Number(picker.value);return picker.value!==''&&list[i]?list[i]:null;};
     const pending=()=>state.uids.filter(uid=>state.rows.get(uid).verdict.ok&&!state.rows.get(uid).result);
-    function cell(tr,text){const td=document.createElement('td');td.textContent=text;tr.append(td);return td;}
+    function cell(tr,text){const td=document.createElement('td');td.textContent=text;td.translate=false;tr.append(td);return td;}
     /**
      * Batch Approve's report cell: the first line of Findings and of Conclusion; opening the row shows the three fields in
      * full. It shows the captured text, which is the text sent and signed. Opening it is offered, never required.
@@ -185,7 +185,7 @@
         const v=String(texts?.[k]??'');if(!v)continue;
         const part=document.createElement('div');part.dataset.batchFull=k;
         const name=document.createElement('strong');name.textContent=LABELS[k];
-        const text=document.createElement('pre');text.textContent=v;
+        const text=document.createElement('pre');text.textContent=v;text.translate=false;
         part.append(name,text);box.append(part);
       }
       box.open=state.expanded.has(uid);
