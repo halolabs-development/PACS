@@ -53,9 +53,10 @@ def seed(call, user_id: str) -> None:
         raise RuntimeError(f"Cannot give the test identity its synthetic OTP: {added}")
 
 
-def code_at(counter: int, secret: bytes = SECRET.encode("utf-8")) -> str:
-    """The TOTP code of one time step (HmacSHA1, 6 digits) for `secret`: the synthetic one, or an enrolled one."""
-    digest = hmac.new(secret, struct.pack(">Q", counter), hashlib.sha1).digest()
+def code_at(counter: int, secret: bytes | None = None) -> str:
+    """The TOTP code of one time step (HmacSHA1, 6 digits) for `secret`: the synthetic one (read now), or an enrolled one."""
+    key = SECRET.encode("utf-8") if secret is None else secret
+    digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
     offset = digest[-1] & 15
     return str((struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF) % 1_000_000).zfill(6)
 
