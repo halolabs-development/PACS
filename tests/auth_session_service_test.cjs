@@ -1036,6 +1036,14 @@ test('AS-03 a failed login of a login this server started leaves one failure row
   p = await begin();
   await w.call(w.I1, 'callback', { cookie: p.pending, query: { error: 'temporarily_unavailable', state: p.state } });
   assert.deepEqual(await last(), failure('provider_error'), 'another error value: the same row, no error text');
+  // This server's own landing answers come only from its checks: a provider error carrying one (the administrator OTP
+  // answer, or any other) is a plain login failure, before any code exchange or token check.
+  for (const own of ['admin_otp_required', 'stale', 'session_active', 'login_failed']) {
+    p = await begin();
+    out = await w.call(w.I1, 'callback', { cookie: p.pending, query: { error: own, state: p.state } });
+    assert.equal(out.location, ORIGIN + '/worklist/hpacs-lite/index.html?auth_error=login_failed', own);
+    assert.deepEqual(await last(), failure('provider_error'), own);
+  }
   p = await begin();
   // A callback whose state is not a flow of this browser while a login this server started is pending (A010): the code
   // is not exchanged, the row is written, and - the browser has no session - the login is started again once, never a

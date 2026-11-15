@@ -61,6 +61,8 @@ export type LoginFailureCause =
   | 'admin_otp_required';
 /** 관리자 OTP 관문의 거절 문구(adminProved). 원인(막 등록함·역할 반영 전·역할 빠짐)을 가르지 않는다 — 답은 모두 다시 로그인이다. */
 const ADMIN_OTP_REQUIRED = '관리자 계정은 OTP 확인이 필요합니다. 다시 로그인해 주십시오';
+/** The landing answers this server gives itself (index.html ARRIVAL_NOTICES); a provider error never borrows one. */
+const OWN_LANDING_ERRORS: ReadonlySet<string> = new Set(['stale', 'session_active', 'login_failed', 'admin_otp_required']);
 type StorageStep = 'session_read' | 'session_write' | 'end_transaction' | 'login_transaction' | 'login_failure_row'
   | 'sweep_read' | 'sweep_target' | 'sweep_cycle'
   | 'change_write';
@@ -838,7 +840,9 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     const flow = own.pending;
     if (error) {
       await this.loginFailureRow(req, 'provider_error', null);
-      return { kind: 'landing', error };
+      // The provider's own error is shown as it came, but never as one of this server's answers: those (the administrator
+      // OTP answer above all) come only from this server's checks of a verified login.
+      return { kind: 'landing', error: OWN_LANDING_ERRORS.has(error) ? 'login_failed' : error };
     }
     if (!code) {
       await this.loginFailureRow(req, 'no_code', null);
