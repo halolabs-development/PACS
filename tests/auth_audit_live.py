@@ -730,7 +730,11 @@ class AuthAuditLive(unittest.TestCase):
         for row in self.stack.kc_admin("GET", f"/users/{enrolling}/credentials").body:
             if row.get("type") == "otp":
                 self.assertEqual(self.stack.kc_admin("DELETE", f"/users/{enrolling}/credentials/{row['id']}").status, 204)
-        browser, status, _, page = self.password_step(self.stack.username("u5-admin-new"), self.stack.passwords["u5-admin-new"])
+        browser, status, headers, page = self.password_step(self.stack.username("u5-admin-new"), self.stack.passwords["u5-admin-new"])
+        # Keycloak sends the browser to its own required-action page (CONFIGURE_TOTP), never back to the product.
+        self.assertEqual(status, 302)
+        self.assertEqual(urlparse(headers.get("Location", "")).path, "/auth/realms/kin/login-actions/required-action")
+        status, _, page = browser.call("GET", headers["Location"])
         self.assertEqual(status, 200, "an administrator without OTP is stopped at enrolment")
         self.assertIn('id="kc-totp-settings"', page)
         self.assertIsNone(browser.sid(), "no product session before OTP is enrolled")
