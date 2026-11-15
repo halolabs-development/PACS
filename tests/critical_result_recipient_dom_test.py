@@ -2668,8 +2668,15 @@ class CriticalResultRecipientDOMTest(unittest.TestCase):
     GEOMETRY = """() => { const q = s => document.querySelector(s), box = e => e.getBoundingClientRect();
       const panel = q('#cvr-inbox-p'), toggle = [...panel.querySelectorAll('button')].find(b => /^(Show|Hide) Received$/.test(b.textContent));
       const fields = [...q('.redit').querySelectorAll('textarea')];
-      const edit=q('.redit'), flex=edit.style.flex; edit.style.flex='0 0 auto';
-      const editMinimum=box(edit).height; edit.style.flex=flex;
+      // How far the field region yields: its height in a report card squeezed to nothing (as report_actions_dom_test
+      // measures it), with every scroll offset put back. The region scrolls the report and yields down to its own floor
+      // (Minhoon 2026-11-04); its content height (flex 0 0 auto) was that floor only while the region grew with the text.
+      const edit=q('.redit'), card=q('.report-p'), kept=card.getAttribute('style'), offsets=[];
+      for(let e=card;e;e=e.parentElement)offsets.push([e,e.scrollTop,e.scrollLeft]);
+      card.style.cssText+=';flex:none;height:0;min-height:0';
+      const editMinimum=box(edit).height;
+      if(kept===null)card.removeAttribute('style');else card.setAttribute('style',kept);
+      for(const [e,t,l] of offsets){e.scrollTop=t;e.scrollLeft=l;}
       const shown = { panel: box(panel).height, button: box(toggle).height, redit: box(q('.redit')).height, editBottom: box(q('.redit')).bottom,
         rbtns: [box(q('.rbtns')).top, box(q('.rbtns')).height], sent: q('#cvr-sent-p').outerHTML,
         reditMin: editMinimum,
