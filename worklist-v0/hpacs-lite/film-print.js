@@ -230,7 +230,9 @@
           series.replaceChildren(...layout.series.map(s => { const own = [s.number != null ? `#${s.number}` : '', s.modality, s.description].filter(Boolean).join(' · ');
             const lead = own && window.KinExamScope.originalLabel(study,s.sourceUid,own,true);
             return node('option', { value: window.KinExamScope.seriesValue(study,s.sourceUid,s.uid), textContent: lead ? kinSay('{0} · {n1} image{t2}', lead, s.images, { t: s.images === 1 ? '' : 's' })
-              : window.KinExamScope.originalLabel(study,s.sourceUid,kinSay('{n0} image{t1}', s.images, { t: s.images === 1 ? '' : 's' }),true) }); }));
+              // Without a lead, the original exam (data) stays before the count, and the count stays a sentence.
+              : window.KinExamScope.screenScope(study) && s.sourceUid ? kinSay('{0} · {t1}', s.sourceUid, { t: kinSay('{n0} image{t1}', s.images, { t: s.images === 1 ? '' : 's' }) })
+              : kinSay('{n0} image{t1}', s.images, { t: s.images === 1 ? '' : 's' }) }); }));
         }
         series.value = window.KinExamScope.seriesValue(ctx.study(session.uid),layout.sourceUid,layout.seriesUid);
         paintFilm();

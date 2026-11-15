@@ -119,7 +119,12 @@ class VolumeDisplayE2E(VolumeOrientationE2E):
   a,p,v=self.starting();VolumeCineE2E.cine_open(self,v);VolumeCineE2E.watch_cine(self,v);VolumeCineE2E.cine_play(self,v);v.wait_for_function('()=>cinePositions.length>=3')
   button=v.get_by_role('button',name='Reset Zoom / Pan',exact=True);expect(button).to_be_disabled();button.dispatch_event('click');count=v.evaluate('()=>cinePositions.length');v.wait_for_function('(n)=>cinePositions.length>n',arg=count);VolumeCineE2E.cine_play(self,v);v.wait_for_function("()=>services.cineService.getState().cines['mpr-axial'].isPlaying===false");expect(button).to_be_enabled()
   v.evaluate("()=>{window.displayOriginalBlob=HTMLCanvasElement.prototype.toBlob;HTMLCanvasElement.prototype.toBlob=function(...args){if(this.closest('[data-kin-batch-render]')){window.displayHeldBlob=()=>args[0](null);return;}return displayOriginalBlob.apply(this,args)}}")
-  for label,value in [('Batch Start Offset','0'),('Batch Interval','1'),('Batch Number','3')]:v.get_by_label(label,exact=True).fill(value)
+  # Cine stops on whatever plane it reached, and a stop within 2 mm of the volume's far end makes planes 0, 1, 2 mm
+  # leave the volume, which the batch rightly refuses. The start is taken back just far enough for the three planes to
+  # stay inside (the batch's own corner range along the plane normal); the busy gates below are what this case tests.
+  start=v.evaluate("()=>{const c=cineView.getCamera(),vol=cornerstone.cache.getVolume(cineView.getVolumeId()),d=vol.dimensions,n=c.viewPlaneNormal,dot=p=>p[0]*n[0]+p[1]*n[1]+p[2]*n[2];const ends=[0,d[0]-1].flatMap(x=>[0,d[1]-1].flatMap(y=>[0,d[2]-1].map(z=>dot(vol.imageData.indexToWorld([x,y,z]))))),room=Math.max(...ends)-2-dot(c.focalPoint);return room<0?String(Math.floor(room*10)/10):'0'}")
+  print('BATCH_START',start,flush=True)
+  for label,value in [('Batch Start Offset',start),('Batch Interval','1'),('Batch Number','3')]:v.get_by_label(label,exact=True).fill(value)
   v.get_by_role('button',name='Make Batch',exact=True).click()
   with failure_details(v,'BATCH capture failure',"() => ({status:document.querySelector('#kin-volume-batch [role=status]')?.textContent,busy:window.kinVolumeBatchState?.busy(),hookReached:typeof window.displayHeldBlob==='function'})"):
    v.wait_for_function("()=>typeof window.displayHeldBlob==='function'||(!kinVolumeBatchState.busy()&&!!document.querySelector('#kin-volume-batch [role=status]')?.textContent)")

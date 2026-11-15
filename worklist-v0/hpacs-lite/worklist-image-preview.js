@@ -73,7 +73,7 @@
             series=groups.findIndex(g=>g.uid===selectedStudy.series&&(!selectedStudy.sourceUid||g.sourceUid===selectedStudy.sourceUid));index=0;
             if(series<0)throw Error('선택한 시리즈가 원본 목록에 없습니다.');
             if(selectedStudy.sop){const instances=groups[series].instances,position=instances.findIndex(i=>i.sop===selectedStudy.sop);if(position<0)throw Error('선택한 영상이 원본 목록에 없습니다.');const direct=selectedStudy.frame===undefined?0:selectedStudy.frame;if(!Number.isSafeInteger(direct)||direct<0||direct>=instances[position].frames)throw Error('선택한 프레임이 원본 영상 범위를 벗어났습니다.');index=instances.slice(0,position).reduce((n,i)=>n+i.frames,0)+direct;}
-            const select=el('[data-series]');select.replaceChildren();groups.forEach((g,i)=>{const option=document.createElement('option');option.value=String(i);option.textContent=root.KinExamScope.originalLabel(selectedStudy,g.sourceUid,`${i+1} · ${g.label}`);select.append(option);});select.value=String(series);select.disabled=false;
+            const select=el('[data-series]');select.replaceChildren();groups.forEach((g,i)=>{const option=document.createElement('option');option.value=String(i);option.translate=false;option.textContent=root.KinExamScope.originalLabel(selectedStudy,g.sourceUid,`${i+1} · ${g.label}`);select.append(option);});select.value=String(series);select.disabled=false;
             }))return;
           }else {if(!work.commit(at,()=>{series=selectedSeries;index=selectedIndex;}))return;}
           const group=groups[series],frame=frameAt(group,index);if(!frame)throw Error('원본 프레임을 확인할 수 없습니다.');work.commit(at,controls);

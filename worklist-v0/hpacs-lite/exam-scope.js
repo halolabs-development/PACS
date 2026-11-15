@@ -181,7 +181,9 @@
       for(const source of scope.sources){
         const original=metadata(row).find(s=>s.uid===source.studyUid),label=document.createElement('label'),input=document.createElement('input');
         input.type=multiple?'checkbox':'radio';input.name='exam-source';input.value=source.studyUid;input.checked=scope.sources.length===1;
-        label.append(input,' '+[original?.acc,original?.desc,source.studyUid].filter(Boolean).join(' · '));dialog.append(label,document.createElement('br'));choices.push(input);
+        // Accession No, description and UID of the original are data.
+        const words=document.createElement('span');words.translate=false;words.textContent=[original?.acc,original?.desc,source.studyUid].filter(Boolean).join(' · ');
+        label.append(input,' ',words);dialog.append(label,document.createElement('br'));choices.push(input);
       }
       const go=document.createElement('button'),close=document.createElement('button');go.type=close.type='button';go.textContent='Continue';close.textContent='Cancel';
       const update=()=>{go.disabled=!choices.some(c=>c.checked);};dialog.onchange=update;update();

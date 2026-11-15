@@ -1361,7 +1361,9 @@
       for (const report of s?.relatedExamReports || []) {
         if (report.uid === s.uid) continue;
         const row=document.createElement('tr'),cell=document.createElement('td'),link=document.createElement('button');
-        cell.colSpan=7;link.type='button';link.className='chip';link.textContent='Related Report · '+(report.scope?.part===1?'Exam 2':'Exam')+' · v'+report.version;
+        // "Exam" here names the exam scope the report was written on (not the Exam column): each line is one template.
+        cell.colSpan=7;link.type='button';link.className='chip';
+        kinWrite(link,kinSay(report.scope?.part===1?'Related Report · Exam 2 · v{n0}':'Related Report · Exam · v{n0}',report.version));
         link.title='묶음을 되돌리기 전 저장한 판독문과 당시 영상 범위를 엽니다.';
         const selected=s.uid;link.onclick=()=>{if(selectedUid===selected)showHistory(report.uid);};
         cell.append(link);row.append(cell);$('#relrows').append(row);
@@ -3147,8 +3149,11 @@
             line.append(document.createElement('span'),' ',control,' ',document.createElement('span'));
           }
           const [text,control,note]=line.children;
-          text.textContent=[source.acc||source.uid,own.observation.text,own.change?.text,
-            source.gatewayReceipt===undefined?'Gateway 영수증 정보가 이 목록에 제공되지 않았습니다.':own.gateway.text].filter(Boolean).join(' · ');
+          // The Accession No is data; each label after it is its own text so the screen language reads it.
+          const accession=document.createElement('span');accession.translate=false;accession.textContent=source.acc||source.uid;
+          text.replaceChildren(accession,...[own.observation.text,own.change?.text,
+            source.gatewayReceipt===undefined?'Gateway 영수증 정보가 이 목록에 제공되지 않았습니다.':own.gateway.text].filter(Boolean)
+            .flatMap(words=>[' · ',kinWrite(document.createElement('span'),words)]));
           drawRetry(source,own.retry,control,note);return line;
         });
         for(const line of kept.values())line.querySelector('button').dataset.request='';
@@ -10059,9 +10064,7 @@
               <span style="color:#b4b4b4">${esc(String(v.at).replace("T", " ").slice(0, 19))}</span>
             </div>
 ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</span></div>` : ""}
-            ${v.group ? `<div class="vr" data-exam-group="${esc(v.group.id)}"><b>Exam scope</b> — ${v.group.readable
-              ? `원본 검사(${esc((KinExamScope.storedReport(v,uid)?.sources||[]).map(source => studies.find(s => s.uid === source.studyUid)?.acc || source.studyUid).join(" + "))})의 영상으로 쓴 판입니다${v.group.active ? "" : " · 지금은 되돌린 범위"}`
-              : "저장된 범위의 일부 영상을 볼 수 없어 이 판의 본문을 보이지 않습니다"}</div>` : ""}
+            ${v.group ? `<div class="vr" data-exam-group="${esc(v.group.id)}"><b>Exam scope</b> — <span data-exam-scope-text></span></div>` : ""}
             ${v.findings || v.conclusion || v.recommendation
               ? `<pre translate="no">${esc([v.findings, v.conclusion, v.recommendation].filter(Boolean).join("\n---\n"))}</pre>`
               : `<div style="color:#556;padding:4px 0">(내용 없음)</div>`}
@@ -10075,6 +10078,14 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
             <div class="vcite-host" data-version="${esc(v.version)}"></div>
           </div>`).join("")
           : "<div style='color:#667;padding:10px'>아직 확정된 판이 없습니다. Save 또는 Approve를 누르면 여기 쌓입니다.</div>";
+        // The Exam scope sentence is written whole, its Accession Nos as data, so the screen language reads it.
+        const scopeLines = box.querySelectorAll("[data-exam-scope-text]");
+        list.filter(v => v.group).forEach((v, i) => {
+          kinWrite(scopeLines[i], v.group.readable
+            ? kinSay("원본 검사({0})의 영상으로 쓴 판입니다{t1}", (KinExamScope.storedReport(v, uid)?.sources || [])
+                .map(source => studies.find(s => s.uid === source.studyUid)?.acc || source.studyUid).join(" + "), { t: v.group.active ? "" : " · 지금은 되돌린 범위" })
+            : "저장된 범위의 일부 영상을 볼 수 없어 이 판의 본문을 보이지 않습니다");
+        });
         for (const button of box.querySelectorAll("[data-history-images]")) button.onclick = async () => {
           const version = Number(button.dataset.historyImages);
           button.disabled = true;

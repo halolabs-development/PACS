@@ -1,11 +1,14 @@
 (function () {
   'use strict';
+  // A sentence of the page built from its template and its parts (page-core.js): data as is, {t: words}, {e: message}.
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+  const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
   const el = (tag, props = {}, ...children) => {
     const node = document.createElement(tag);
     for (const [key, value] of Object.entries(props)) {
       if (value === undefined || value === null) continue;
       if (key === 'className') node.className = value;
-      else if (key === 'text') node.textContent = value;
+      else if (key === 'text') kinWrite(node, value);
       else if (key in node && typeof value !== 'string') node[key] = value;
       else node.setAttribute(key, value);
     }
@@ -13,9 +16,11 @@
     return node;
   };
   const text = value => value === null || value === undefined || String(value).trim() === '' ? '—' : String(value);
+  // A cell of data (IDs, names, dates, descriptions, counts): never translated.
+  const data = value => el('td', { translate: 'no', text: text(value) });
   const button = (label, onClick, title) => {
     const b = el('button', { type: 'button', title });
-    b.textContent = label;
+    kinWrite(b, label);
     b.addEventListener('click', onClick);
     return b;
   };
@@ -39,12 +44,14 @@
   }
   const table = (heads, rows) => el('table', { className: 'order-table' },
     el('thead', {}, el('tr', {}, heads.map(h => el('th', { text: h })))),
-    el('tbody', {}, rows.map(r => r instanceof HTMLElement ? r : el('tr', {}, r.map(v => v instanceof Node ? el('td', {}, v) : el('td', { text: text(v) }))))));
+    el('tbody', {}, rows.map(r => r instanceof HTMLElement ? r : el('tr', {}, r.map(v => v instanceof Node ? el('td', {}, v) : data(v))))));
   // The server's refusals, each with the Accession No of the study it is about (when the page knows it).
   const reason = (error, accOf = uid => uid) => {
     const refusals = Array.isArray(error?.body?.refusals) ? error.body.refusals : [];
-    return refusals.length ? [...new Set(refusals.map(r => (r.uid ? accOf(r.uid) + ': ' : '') + r.message))]
-      : [error?.message || '서버가 변경을 받지 않았습니다.'];
+    if (!refusals.length) return [error?.message || '서버가 변경을 받지 않았습니다.'];
+    const seen = new Set();
+    return refusals.filter(r => { const key = (r.uid ? accOf(r.uid) : '') + '\u0000' + r.message; return !seen.has(key) && seen.add(key); })
+      .map(r => r.uid ? kinSay('{0}: {e1}', accOf(r.uid), { e: r.message }) : r.message);
   };
 
 
@@ -96,12 +103,13 @@
       function recompute() {
         const rows=picked(),base=rows.find(s=>bases.get(s.uid).checked),ids=[...new Set(rows.map(s=>s.id))];
         go.disabled=true;
-        if(rows.length<2)summary.textContent='합칠 검사를 2건 이상 체크하세요.';
-        else if(ids.length>1)summary.replaceChildren(note(`다른 환자의 검사는 합칠 수 없습니다 (${ids.join(', ')}).`,'warn'));
-        else if(!base)summary.textContent='기준 검사(Base)를 고르세요.';
+        if(rows.length<2)kinWrite(summary,'합칠 검사를 2건 이상 체크하세요.');
+        else if(ids.length>1)summary.replaceChildren(note(kinSay('다른 환자의 검사는 합칠 수 없습니다 ({0}).',ids.join(', ')),'warn'));
+        else if(!base)kinWrite(summary,'기준 검사(Base)를 고르세요.');
         else {
           go.disabled=busy;
-          summary.replaceChildren(note(`결과: 검사 1건 (기준 ${text(base.acc)}, ${text(base.date)}) · 시리즈 ${count(sum(rows,'series'))} · 영상 ${count(sum(rows,'count'))}. 원래 검사 ${rows.length}건의 묶음은 기록으로 남아 되돌릴 수 있습니다.`),
+          summary.replaceChildren(note(kinSay('결과: 검사 1건 (기준 {0}, {1}) · 시리즈 {2} · 영상 {3}. 원래 검사 {n4}건의 묶음은 기록으로 남아 되돌릴 수 있습니다.',
+            text(base.acc),text(base.date),count(sum(rows,'series')),count(sum(rows,'count')),rows.length)),
             note('판독문은 합치지 않습니다. 기준 검사에서 판독하며 판독문에 영상 범위를 남깁니다. 원본 영상·UID는 바뀌지 않습니다. Query/Retrieve와 원본 내보내기는 원래 검사 단위입니다.','muted'));
         }
       }
@@ -109,7 +117,9 @@
         const c=el('input',{type:'checkbox',checked:s.uid===sel.uid || s.id===sel.id&&s.date===sel.date,'aria-label':'Merge '+text(s.acc)});
         const b=el('input',{type:'radio',name:'exam-merge-base',checked:s.uid===sel.uid,'aria-label':'Base '+text(s.acc)});
         checks.set(s.uid,c);bases.set(s.uid,b);c.onchange=recompute;b.onchange=()=>{c.checked=true;recompute();};
-        return el('tr',{'data-uid':s.uid},...[c,b,s.id,s.name,s.date,s.desc,s.acc,seriesImages(s.series,s.count),RS_WORD[s.rs]||s.rs].map(v=>el('td',{},v instanceof Node?v:text(v))));
+        // The report status is a word of the screen; the other cells are data.
+        return el('tr',{'data-uid':s.uid},el('td',{},c),el('td',{},b),...[s.id,s.name,s.date,s.desc,s.acc,seriesImages(s.series,s.count)].map(data),
+          RS_WORD[s.rs]?el('td',{text:RS_WORD[s.rs]}):data(s.rs));
       });
       win.body.append(note('같은 날의 같은 환자 검사는 미리 체크되어 있습니다. 다른 날짜의 검사도 체크할 수 있습니다.'),summary,
         table(['Merge','Base','ID','Name','StudyDate','StudyDesc','Accession No','Series / Images','Report'],rows));
@@ -127,7 +137,7 @@
           }
           await ctx.api('POST','/exam-groups',{baseUid:base.uid,uids:chosen.map(s=>s.uid)},undefined,win.at);
           ctx.examChanged?.(chosen.map(s=>s.uid));
-          await changed(win,`합쳤습니다: 검사 ${chosen.length}건 → ${text(base.acc)} · ${count(sum(chosen,'count'))}장. 원본 내보내기는 원래 검사 단위이며 판독문은 합치지 않습니다.`,base.uid);
+          await changed(win,kinSay('합쳤습니다: 검사 {n0}건 → {1} · {2}장. 원본 내보내기는 원래 검사 단위이며 판독문은 합치지 않습니다.',chosen.length,text(base.acc),count(sum(chosen,'count'))),base.uid);
         } catch(error) { failure(win,error); }
         finally {busy=false;if(win.live())recompute();}
       }
@@ -148,7 +158,8 @@
       const sources=scopes.metadata(win.row),checks=el('ul',{className:'exam-merge-checks'});
       const go=button(split?'Unsplit':'Unmerge',submit);
       let busy=false;
-      const paint=()=>{checks.replaceChildren(...(answer.checks||[]).map(c=>el('li',{className:c.ok?'order-note ok':'order-note err',text:(c.ok?'✓ ':'✗ ')+c.message})));go.disabled=busy || !Array.isArray(answer.checks) || answer.checks.some(c=>!c.ok);};
+      // The mark, then the server's sentence for that check (in the glossary when the server writes one sentence).
+      const paint=()=>{checks.replaceChildren(...(answer.checks||[]).map(c=>el('li',{className:c.ok?'order-note ok':'order-note err',text:kinSay('{0}{t1}',c.ok?'✓ ':'✗ ',{t:c.message})})));go.disabled=busy || !Array.isArray(answer.checks) || answer.checks.some(c=>!c.ok);};
       win.body.replaceChildren(note(split?'나눈 검사를 원래 영상 소속으로 되돌립니다. 양쪽의 판독 이력은 남습니다.':'합친 검사를 원래 영상 소속으로 되돌립니다. 합친 동안 쓴 판독 이력은 남습니다.'),
         table(['Original exam','StudyDate','StudyDesc','Series / Images back'],sources.map(s=>[s.acc??s.uid,s.date,s.desc,seriesImages(s.series,s.count)])),el('h4',{text:'Checks'}),checks,
         note('현재 승인·점유·초안·진행 중 전송이 있으면 서버가 되돌리기를 거절합니다. 합친 뒤 도착한 영상은 자기 원본에 그대로 남습니다.','muted'));
@@ -184,10 +195,10 @@
       const images=items=>items.filter(s=>!['SR','DOC','PR','KO','SEG'].includes(s.modality));
       function paint(){const second=picked(),first=rows.filter(s=>!boxes.get(s.uid).checked);
         go.disabled=busy||!images(first).length||!images(second).length;
-        summary.textContent=`Exam 1: 시리즈 ${first.length} · 영상 ${count(sum(first,'count'))} / Exam 2: 시리즈 ${second.length} · 영상 ${count(sum(second,'count'))}`;
+        kinWrite(summary,kinSay('Exam 1: 시리즈 {n0} · 영상 {1} / Exam 2: 시리즈 {n2} · 영상 {3}',first.length,count(sum(first,'count')),second.length,count(sum(second,'count'))));
       }
       win.body.replaceChildren(note('체크한 시리즈는 둘째 검사로 옮깁니다. 두 검사는 따로 판독합니다. 새 시리즈는 첫째 검사에, 기존 시리즈의 새 영상은 그 시리즈가 있는 쪽에 붙습니다.'),summary,
-        table(['Exam 2','Series','Description','Modality','Images'],rows.map(s=>{
+        table(['Exam 2','Series','Series Description','Modality','Images'],rows.map(s=>{
           const c=el('input',{type:'checkbox','aria-label':'Split '+text(s.desc||s.uid)});boxes.set(s.uid,c);c.onchange=paint;
           return [c,s.number,s.desc,s.modality,count(s.count)];
         })));
@@ -207,13 +218,15 @@
     const reportScope=document.getElementById('exam-report-scope');
     function paintScope(){
       const row=selected(),current=scopes.read(row),stored=scopes.read(row,'stored');
-      if(row?.reportGroup?.readable===false){reportScope.hidden=false;reportScope.textContent='Exam scope — 저장된 판독 범위 일부를 볼 수 없어 본문을 보이지 않습니다.';return;}
+      if(row?.reportGroup?.readable===false){reportScope.hidden=false;kinWrite(reportScope,'Exam scope — 저장된 판독 범위 일부를 볼 수 없어 본문을 보이지 않습니다.');return;}
       const scope=stored||current;
       reportScope.hidden=!scope?.groupId;
       reportScope.replaceChildren();if(reportScope.hidden)return;
+      // The Accession Nos are data; the sentence after them is one glossary entry of its own.
       reportScope.append(el('b',{text:scope.kind==='split'?`Split ${(scope.part??0)+1}/2`:'Merged exam'}),
-        ' — '+scope.sources.map(s=>accOf(s.studyUid)).join(' + ')+(scope.active?'':' · 지금은 되돌린 범위의 판독입니다.'));
-      for(const source of scope.sources)reportScope.append(' ',button('Report History · '+accOf(source.studyUid),()=>ctx.report.history(source.studyUid)));
+        ' — ',el('span',{translate:'no',text:scope.sources.map(s=>accOf(s.studyUid)).join(' + ')}),
+        ...(scope.active?[]:[el('span',{text:' · 지금은 되돌린 범위의 판독입니다.'})]));
+      for(const source of scope.sources)reportScope.append(' ',button(kinSay('Report History · {0}',accOf(source.studyUid)),()=>ctx.report.history(source.studyUid)));
     }
     function paint(){roles();paintScope();
       if(active&&!active.completed&&!active.live()) {active.close();ctx.toast('선택 또는 검사 범위가 바뀌어 창을 닫았습니다. 다시 여세요.','info');}
@@ -221,7 +234,7 @@
         const cell=tr.querySelector('td.acc');if(!cell)continue;cell.querySelector('.exam-merged')?.remove();
         const row=ctx.study(tr.dataset.uid),scope=scopes.read(row);if(!scope?.groupId)continue;
         const label=scope.kind==='split'?`Split ${(scope.part??0)+1}/2`:`Merged ×${scope.sources.length} · ${count(row.count)} img`;
-        cell.append(' ',el('span',{className:'exam-merged',text:label,title:scopes.metadata(row).map(s=>text(s.acc??s.uid)).join(' + ')}));
+        cell.append(' ',el('span',{className:'exam-merged',text:label,title:scopes.metadata(row).map(s=>text(s.acc??s.uid)).join(' + '),'data-kin-keep':'title'}));
       }
     }
     const style=document.head.appendChild(el('style',{text:'.exam-merged{display:inline-block;margin-left:4px;padding:0 5px;border:1px solid var(--kin-line2);border-radius:3px;color:var(--kin-warn,#ffcf7a);font-size:11px;white-space:nowrap}.exam-merge-checks{margin:4px 0;padding-left:18px}.exam-report-scope{padding:2px 6px;font-size:12px;color:var(--kin-warn,#ffcf7a)}'}));

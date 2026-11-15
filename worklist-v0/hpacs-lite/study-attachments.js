@@ -324,7 +324,7 @@ window.KinStudyAttachments = function (app) {
     const sources=mine.scope?.sources||[],metadata=window.KinExamScope.metadata(app.study(mine.uid));
     sourceChoice.replaceChildren();
     if(sources.length>1){const empty=node('option',null,'Select original exam');empty.value='';sourceChoice.append(empty);}
-    for(const source of sources){const item=metadata.find(s=>s.uid===source.studyUid);const option=node('option',null,item?.acc||source.studyUid);option.value=source.studyUid;sourceChoice.append(option);}
+    for(const source of sources){const item=metadata.find(s=>s.uid===source.studyUid);const option=node('option',null,item?.acc||source.studyUid);option.value=source.studyUid;option.translate=false;sourceChoice.append(option);}
     mine.sourceUid=sources.some(s=>s.studyUid===mine.sourceUid)?mine.sourceUid:sources.length===1?sources[0].studyUid:'';
     sourceChoice.value=mine.sourceUid;
     sourceLabel.hidden=!window.KinExamScope.screenScope(mine.scope);
@@ -347,7 +347,8 @@ window.KinStudyAttachments = function (app) {
       const li = node('li', 'attach-done');
       li.dataset.id = row.id;
       li.dataset.state = row.state;
-      li.append(node('span', 'attach-name', row.fileName+(mine.scope?.groupId?' · '+(row.sourceUid||row.uid||''):'')), node('span', 'attach-kind', row.kind === 'pdf' ? 'PDF' : 'Image'),
+      const fileName = node('span', 'attach-name', row.fileName+(mine.scope?.groupId?' · '+(row.sourceUid||row.uid||''):'')); fileName.translate = false;
+      li.append(fileName,node('span', 'attach-kind', row.kind === 'pdf' ? 'PDF' : 'Image'),
         node('span', 'attach-by', row.createdBy || ''), node('span', 'attach-at', when(row.createdAt)),
         node('span', 'attach-state', row.state === 'stored' ? '' : STATE_NAMES[row.state] || row.state));
       if (row.state === 'withdrawn' && row.withdrawReason) {

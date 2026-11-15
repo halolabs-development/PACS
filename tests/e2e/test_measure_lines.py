@@ -164,9 +164,9 @@ class MeasureLinesE2E(MeasureBaseE2E):
             row = p.locator(f'#kin-viewer-history section[data-kind={kind}]')
             row.get_by_role('button', name='Edit', exact=True).click()
             uid = self.marks(p, kind)[0]['uid']
-            handle = p.locator(f'[data-kin-handle="{uid}"][data-kin-point="point:1"]')
-            expect(handle).to_be_visible()
-            box = handle.bounding_box(); x, y = box['x'] + box['width'] / 2, box['y'] + box['height'] / 2
+            handle = f'[data-kin-handle="{uid}"][data-kin-point="point:1"]'
+            expect(p.locator(handle)).to_be_visible()
+            x, y = self.handle_centre(p, handle)
             p.mouse.move(x, y); p.mouse.down(); p.mouse.move(x - 12, y + 10, steps=6); p.mouse.up()
             row.get_by_role('button', name='Save', exact=True).click(); expect(row).to_contain_text('Saved r2')
             edited = [h['item'] for h in self.items(f) if h['item']['kind'] == kind][0]
@@ -220,9 +220,9 @@ class MeasureLinesE2E(MeasureBaseE2E):
         # Edited: the Width's end is moved on its frame; the length and the volume are measured again and saved as r2.
         row = p.locator('#kin-viewer-history section[data-kind=volume]')
         row.get_by_role('button', name='Edit', exact=True).click()
-        handle = p.locator('[data-kin-point^="source:2:1:"]')
-        expect(handle).to_be_visible()
-        box = handle.bounding_box(); x, y = box['x'] + box['width'] / 2, box['y'] + box['height'] / 2
+        handle = '[data-kin-point^="source:2:1:"]'
+        expect(p.locator(handle)).to_be_visible()
+        x, y = self.handle_centre(p, handle)
         p.mouse.move(x, y); p.mouse.down(); p.mouse.move(x + 25, y, steps=6); p.mouse.up()
         row.get_by_role('button', name='Save', exact=True).click(); expect(row).to_contain_text('Saved r2')
         b2 = [h['item'] for h in self.items(f) if h['item']['kind'] == 'volume'][0]['baseline']
