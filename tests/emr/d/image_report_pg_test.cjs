@@ -454,6 +454,18 @@ test('Image Report drawings ride the draft boundary, are bound and signed with t
     assert.equal((await purpose.destroy(goneWork)).outcome, 'reapplied');
     assert.deepEqual(await drawingIds(gone.uid), []);
     assert.equal((await purpose.destroy(goneWork)).outcome, 'absent');
+    // A copy taken while the work was still live: the author's draft holds the drawing again. The re-application empties
+    // that draft with its drawing list, and the drawing goes with it.
+    await witness.reportDrawing.create({ data: goneCopy });
+    const goneDraft = await witness.reportDraft.findUnique({ where: { uid_author: { uid: gone.uid, author } } });
+    await witness.reportDraft.update({ where: { uid_author: { uid: gone.uid, author } }, data: { present: true, findings: 'copy',
+      workUnit: goneWork, workSince: new Date(), workIntent: 'approve', drawings: { seed: [], ids: [goneId] } } });
+    assert.equal((await purpose.destroy(goneWork)).outcome, 'reapplied');
+    const goneEmptied = await witness.reportDraft.findUnique({ where: { uid_author: { uid: gone.uid, author } } });
+    assert.deepEqual([goneEmptied.present, goneEmptied.workUnit, goneEmptied.drawings, goneEmptied.revision],
+      [false, null, null, goneDraft.revision + 1]);
+    assert.deepEqual(await drawingIds(gone.uid), []);
+    assert.equal((await purpose.destroy(goneWork)).outcome, 'absent');
     assert.deepEqual(require('node:fs').readFileSync(purpose.ledger.file), ledgerBefore);
 
     // ── a work that ends without a purpose end (Save) keeps the drawing it replaced until the report's retention ends ──
