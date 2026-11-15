@@ -50,7 +50,7 @@ PRESERVE = extract_function(MAIN, "preservedLocal")
 MERGE = extract_function(MAIN, "mergeObservedReportState")
 # S4-U1b: the poll now reports each observation to these; they are sliced, not re-described, so the
 # cases below judge the shipped labels and the shipped failure rule.
-OBSERVE = "\n".join(extract_function(MAIN, name) for name in ("applyObservation", "markObservationUnavailable", "renderObservation"))
+OBSERVE = "\n".join(extract_function(MAIN, name) for name in ("kinWrite", "applyObservation", "markObservationUnavailable", "renderObservation"))
 # S4-U2: applyObservation/markObservationUnavailable now hand the same observation to the order
 # reconciliation display. Sliced too; its model stays null here unless a case starts it
 # (tests/order_reconciliation_dom_test.py does), so the cases below run the same code path as before.

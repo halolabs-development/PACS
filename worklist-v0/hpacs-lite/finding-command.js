@@ -5,6 +5,8 @@
  * documents and renders. Navigation never opens, replaces or re-scopes a viewer and never writes. */
 (function (root) {
   'use strict';
+  // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
   const links = typeof module === 'object' && module.exports ? require('./finding-link-model.js') : root.kinFindingLinkModel;
   const VIEWER_REASONS = links.NAVIGATION_REASONS;
   const PAGE = 100;
@@ -42,7 +44,7 @@
   // `source` (the pressed copy) adds the S2-C notes from the viewer's live entry.
   function arrivalText(result, where, source) {
     const note = links.annotationText(result && result.annotation), live = source ? links.liveText(result, source.revision) : '';
-    return '영상 이동 확인 · ' + where + (result && result.phase ? ' · 비교 검사 영상 칸' : '') + (note ? ' · ' + note : '') + (live ? ' · ' + live : '');
+    return kinSay('영상 이동 확인 · {t0}{t1}{t2}{t3}', { t: where }, { t: result && result.phase ? ' · 비교 검사 영상 칸' : '' }, { t: note ? kinSay(' · {t0}', { t: note }) : '' }, { t: live ? kinSay(' · {t0}', { t: live }) : '' });
   }
   // A saved-location outcome from the viewer, in the worklist's words.
   function locationText(result, source, where) {
@@ -69,7 +71,7 @@
   function describeSource(s) {
     if (s && s.kind === 'job') return links.jobName(s);
     const values = links.valueText(s.kind, s.calculator, s.values, 'server-copy');
-    return (KINDS[s.kind] || s.kind) + (s.label ? ' · ' + s.label : '') + ' · 프레임 ' + s.frame + ' · r' + s.revision + (values ? ' · ' + values : '');
+    return kinSay('{t0}{1} · 프레임 {n2} · r{n3}{t4}', { t: KINDS[s.kind] || s.kind }, s.label ? ' · ' + s.label : '', s.frame, s.revision, { t: values ? kinSay(' · {t0}', { t: values }) : '' });
   }
   function timeText(value) {
     const d = text(value) ? new Date(value) : null;

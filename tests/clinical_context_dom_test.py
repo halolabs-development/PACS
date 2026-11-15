@@ -350,7 +350,8 @@ const synScope = new Proxy({}, {
   set: () => true,
 });
 const synShipped = new Function('return [api, cur, relatedStudy, viewed, viewingUid, renderClinical, applyObservation,'
-  + ' staleAnswer, notifyAccountChanged, onCommonEnd];\\n' + synPageScript)().map(String);
+  + ' staleAnswer, notifyAccountChanged, onCommonEnd, kinWrite];\\n' + synPageScript)().map(String);
+const kinWrite = eval("(" + synShipped[10] + ")");
 let api, cur, relatedStudy, viewed, viewingUid, renderClinical, applyObservation, staleAnswer, notifyAccountChanged, onCommonEnd;
 with (synScope) {
   api = eval('(' + synShipped[0] + ')'); cur = eval('(' + synShipped[1] + ')'); relatedStudy = eval('(' + synShipped[2] + ')');

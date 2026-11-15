@@ -8,6 +8,10 @@
 
     // While the report editor is in its pop-up window (report-popout.js) its elements live in that window's document.
     const $ = s => document.querySelector(s) ?? (window.KinReportPopout?.find(s) ?? null);
+    // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
+    // Shared by the sources of this script, and by the functions a page test takes out of it (kinSayShared).
+    const kinSay = globalThis.kinSayShared = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+    function kinWrite(el, value, name) { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; }
     const actorNames = new Map();
     function rememberActor(id, name, username = "") {
       const key = String(id ?? "");
@@ -179,7 +183,7 @@
     let toastTimer;
     function toast(msg, kind = "ok", ms = kind === "err" ? 4000 : 1900) {
       const el = $("#toast");
-      el.textContent = msg;
+      kinWrite(el, msg);
       el.className = "show " + kind;
       clearTimeout(toastTimer);
       toastTimer = setTimeout(() => { el.className = kind; }, ms);
@@ -339,19 +343,21 @@
     const templateClass = value => String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
     const templateModalities = value => String(value ?? "").split(",").map(templateClass).filter(Boolean);
     function renderTemplateBodyparts() {
-      const select = $("#t-body"), chosen = select.value, label = select.selectedOptions[0]?.textContent;
+      const select = $("#t-body"), chosen = select.value, label = select.selectedOptions[0] && (window.KinLanguage ? window.KinLanguage.source(select.selectedOptions[0]) : select.selectedOptions[0].textContent);
       const classes = new Map();
       for (const t of templates) {
         const key = templateClass(t.bodypart);
         if (key && !classes.has(key)) classes.set(key, String(t.bodypart).trim().replace(/\s+/g, " "));
       }
       const options = [new Option("전체 부위", ""), new Option("미지정", JSON.stringify("")),
-        ...[...classes].sort(([a], [b]) => a.localeCompare(b)).map(([key, name]) => new Option(name, JSON.stringify(key)))];
+        ...[...classes].sort(([a], [b]) => a.localeCompare(b)).map(([key, name]) => Object.assign(new Option(name, JSON.stringify(key)), { translate: false }))];
       // 마지막 항목의 부위를 바꿔도 사용자가 고른 조건을 몰래 '전체'로 넓히지 않는다.
-      if (chosen && !options.some(option => option.value === chosen)) options.push(new Option(label, chosen));
+      if (chosen && !options.some(option => option.value === chosen)) options.push(Object.assign(new Option(label, chosen), { translate: false }));
       select.replaceChildren(...options); select.value = chosen;
     }
     function renderTemplates() {
+      // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       const s = cur();
       const useMod = $("#t-mod").checked, modalities = templateModalities(s?.modality);
       renderTemplateBodyparts();
@@ -366,11 +372,14 @@
       });
       const modStatus = !useMod ? "Modality 전체" : !s ? "검사 미선택 · Modality 미적용"
         : !modalities.length ? "검사 Modality 없음 · 미적용" : "Modality: " + modalities.join(", ").toUpperCase();
-      $("#tpl-filter-status").textContent = `${list.length} / ${templates.length}개 · ${modStatus} · ${$("#t-body").selectedOptions[0].textContent}${words.length ? " · 검색 적용" : ""}`;
+      const chosenPart = $("#t-body").selectedOptions[0], chosenText = window.KinLanguage ? window.KinLanguage.source(chosenPart) : chosenPart.textContent;
+      // A body part class from the templates is data; the fixed choices are words of the page.
+      kinWrite($("#tpl-filter-status"), kinSay("{n0} / {n1}개 · {t2} · {3}{t4}", list.length, templates.length, { t: modStatus },
+        chosenPart.translate === false ? chosenText : { t: chosenText }, { t: words.length ? " · 검색 적용" : "" }));
       $("#tplrows").innerHTML = list.map(t => `
         <tr data-i="${templates.indexOf(t)}" title="더블클릭: 판독문에 삽입${
           t.shortcut ? ` / 판독문에서 &quot;${esc(t.shortcut)}&quot; 입력 후 Tab` : ""} / 우클릭: 편집">
-          <td>${esc(t.title)}</td><td>${esc(t.shortcut)}</td><td>${esc(t.modality)}</td>
+          <td translate="no">${esc(t.title)}</td><td translate="no">${esc(t.shortcut)}</td><td>${esc(t.modality)}</td>
           <td><button type="button" class="chip" data-tpl-preview aria-label="상용구 미리보기: ${esc(t.title)}">View</button></td>
         </tr>`).join("") || `<tr><td class="empty" colspan="4">${templates.length ? "조건에 맞는 상용구가 없습니다" : "상용구 없음 — 우클릭해서 추가하세요"}</td></tr>`;
       updateTemplatePreview();
@@ -936,7 +945,8 @@
         if (!select) continue;
         const want = ["", ...c.choices()], chosen = String(fval[c.k] ?? "");
         if ([...select.options].map(o => o.value).join("\n") === want.join("\n")) continue;
-        select.replaceChildren(...want.map(o => new Option(o, o, o === chosen, o === chosen)));
+        // These choices are the loaded studies own values (departments), never translated.
+        select.replaceChildren(...want.map(o => Object.assign(new Option(o, o, o === chosen, o === chosen), { translate: false })));
       }
     }
 
@@ -973,24 +983,25 @@
         : { open: false, title: `승인됨 — 본문을 고치면 다시 Approve할 수 있습니다 (${until}까지)` };
     }
     /** 편집기 머리줄의 판독 상태(승인본일 때만): Approved/Finalized, 수정 가능 MM-DD HH:mm까지, 수정됨 MM-DD HH:mm. */
-    function reportStatusLine(a, now) {
-      if (a?.rs !== "A") return "";
+    function reportStatusParts(a, now) {
+      if (a?.rs !== "A") return [];
       const parts = [reportStatusWord(a, now)];
       if (a.amendUntil && !a.addendumAt && !reportFinalized(a, now)) parts.push(`수정 가능 ${amendTime(a.amendUntil)}까지`);
       if (a.amendedAt) parts.push(`수정됨 ${amendTime(a.amendedAt)}`);
-      return parts.join(" · ");
+      return parts;
     }
+    function reportStatusLine(a, now) { return reportStatusParts(a, now).join(" · "); }
 
     // 특수 렌더링이 필요한 칸만 함수로
     let studyPriority = null;
     const viewingNames = new Map();
     const CELL = {
-      assignedReader:s=>`<button type="button" class="chip" data-reader-assignment="${esc(s.uid)}" ${!serverMode||demoMode||offline?'disabled':''}>${esc(s.assignedReader||'Unassigned')}</button>`,
+      assignedReader:s=>`<button type="button" class="chip" data-reader-assignment="${esc(s.uid)}" ${!serverMode||demoMode||offline?'disabled':''}>${s.assignedReader?`<span translate="no">${esc(s.assignedReader)}</span>`:'Unassigned'}</button>`,
       techNote: s => `<button type="button" class="chip" data-tech-note="${esc(s.uid)}" aria-label="${esc(s.id)} Tech Note ${noteLabel(s.uid)}" title="${noteHelp(s.uid)}" ${!serverMode || demoMode || offline ? 'disabled' : ''}>${noteLabel(s.uid)}</button>`,
       em: s => {const phase=studyPriority?.get(s.uid)?.phase;return phase?`<span title="${phase==='saving'?'응급 상태를 저장 중입니다':'저장 결과 미확인 — 문맥 메뉴의 Refresh Status로 확인하세요'}">${phase==='saving'?'Saving':'Unverified'}</span>`:s.em === "E" ? `<span class="em-e">E</span>` : "";},
       // 판독 상태 이름은 목록과 건수 줄에서 같은 계약을 따른다. 승인(A) 뒤 24시간이 지난 판독문은 낱말만 Finalized다(값은 A).
       rs: s => { const finalized = reportFinalized({ rs: s.rs, amendUntil: appState[s.uid]?.amendUntil }), word = finalized ? "Finalized" : RS_WORD[s.rs] ?? s.rs;
-        return `<span class="rs ${esc(s.rs)}" title="${esc(s.holdReason || (finalized ? "승인 후 24시간이 지나 확정된 판독문 — Addendum으로만 덧붙일 수 있습니다" : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : ""))}">${esc(word)}</span>`; },
+        return `<span class="rs ${esc(s.rs)}"${s.holdReason ? ' data-kin-keep="title"' : ''} title="${esc(s.holdReason || (finalized ? "승인 후 24시간이 지나 확정된 판독문 — Addendum으로만 덧붙일 수 있습니다" : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : ""))}">${esc(word)}</span>`; },
       confirm: s => esc(confirmText({ ...appState[s.uid], rs: s.rs })),
       ts: s => `<span class="ts ts-${esc(s.ts)}">${esc(s.ts)}</span>`,
       ss: s => `<span class="ss ${esc(s.ss)}">${esc(s.ss)}</span>`,
@@ -1003,9 +1014,9 @@
       viewing: s => {
         const hold = !s.holder ? '' : s.holder === user
           ? `<span class="hold me" title="내가 작성 중">✎ 나</span>`
-          : `<span class="hold other" title="${s.holder === '다른 기관' ? '다른 기관 판독의가' : s.holder === '작성자 비공개' ? '비공개 작성자가' : esc(displayActor(s.holder)) + ' 님이'} 작성 중">✎ ${esc(displayActor(s.holder))}</span>`;
+          : `<span class="hold other" title="${s.holder === '다른 기관' ? '다른 기관 판독의가' : s.holder === '작성자 비공개' ? '비공개 작성자가' : esc(displayActor(s.holder)) + ' 님이'} 작성 중">✎ <span translate="no">${esc(displayActor(s.holder))}</span></span>`;
         const presence = esc(viewingNames.get(s.uid) || '');
-        return hold + (hold && presence ? ' · ' : '') + presence;
+        return hold + (hold && presence ? ' · ' : '') + (presence ? `<span translate="no">${presence}</span>` : '');
       },
       // S7-U3b Hospital: 서버가 준 소유 기관 이름만 쓴다. Tele는 행의 tele만 따른다 — 이름을 내 기관 이름과 비교하면
       // 등록 이름이 같은 두 기관에서 틀리고, reqHosp는 Technician에서 손으로 바꿀 수 있는 값이다.
@@ -1015,7 +1026,7 @@
         return text ? `<span class="pf" title="${esc(entry.reason || '미리 받기 상태입니다. 자세한 내용은 선택 막대의 Preload 패널에 있습니다.')}">${esc(text)}</span>` : esc(s.pf ?? "");
       },
       institutionName: s => {
-        const name = typeof s.institutionName === "string" && s.institutionName !== "" ? esc(s.institutionName) : "—";
+        const name = typeof s.institutionName === "string" && s.institutionName !== "" ? `<span translate="no">${esc(s.institutionName)}</span>` : "—";
         return s.tele === true ? `${name} <span class="tele-tag" title="원격판독으로 의뢰받은 검사입니다.">Tele</span>` : name;
       },
     };
@@ -1189,7 +1200,8 @@
           const label = document.createElement("label"), box = document.createElement("input");
           box.type = "checkbox"; box.checked = c.shown; box.disabled = c.required;
           box.addEventListener("change", () => { columnPrefs.setShown(m, c.k, box.checked); });
-          label.append(box, document.createTextNode(" " + c.t + (c.required ? " (Required)" : "")));
+          // The column name and the (Required) mark are each their own text (the label reads the same).
+          label.append(box, " ", c.t, c.required ? " (Required)" : "");
           const width = document.createElement("input"); width.type = "number";
           width.min = "64"; width.max = "600"; width.step = "1"; width.placeholder = "Auto";
           width.setAttribute("aria-label", c.t + " width (px)"); width.value = c.width ?? "";
@@ -1302,9 +1314,9 @@
       const known=relatedCandidates().filter(x=>relatedParts.get(x.uid)?.parts).length;
       const partTokens=[...new Set(relatedCandidates().flatMap(x=>relatedParts.get(x.uid)?.parts||[]))].filter(Boolean).sort();
       const body=$('#related-body-part'),bodyOptions=[new Option('All Body Parts',''),new Option('Unverified','?'),new Option('Unspecified',JSON.stringify('')),
-        ...partTokens.map(v=>new Option(v,JSON.stringify(v)))];
-      if(relatedBodyPart&&!bodyOptions.some(o=>o.value===relatedBodyPart))bodyOptions.push(new Option(JSON.parse(relatedBodyPart),relatedBodyPart));
-      body.replaceChildren(...bodyOptions);body.value=relatedBodyPart;body.disabled=!s;body.title=body.selectedOptions[0]?.textContent||'';
+        ...partTokens.map(v=>Object.assign(new Option(v,JSON.stringify(v)),{translate:false}))];
+      if(relatedBodyPart&&!bodyOptions.some(o=>o.value===relatedBodyPart))bodyOptions.push(Object.assign(new Option(JSON.parse(relatedBodyPart),relatedBodyPart),{translate:false}));
+      body.replaceChildren(...bodyOptions);body.value=relatedBodyPart;body.disabled=!s;body.title=body.selectedOptions[0]?.textContent||'';if(body.selectedOptions[0]?.translate===false)body.setAttribute('data-kin-keep','title');else body.removeAttribute('data-kin-keep');
       $('#related-parts-status').textContent=relatedParts.note() || (s?`${relatedParts.busy()?'조회 중 · ':''}부위 확인 ${known}/${relatedCandidates().length} · 미조회·실패는 Unverified` : '');
       const modality = $("#related-modality");
       const tokens = [...new Set(rel.flatMap(relatedModalities))].sort();
@@ -1339,7 +1351,7 @@
             return `
             <tr data-uid="${esc(x.uid)}" class="${x.uid === relatedUid || (x.uid === s.uid && !relatedUid) ? "related-selected" : ""}">
               <td title="${x.uid === s.uid ? "지금 판독하는 검사" : esc(relatedDateTitle(x))} · ${x.uid === relatedUid || (x.uid === s.uid && !relatedUid) ? "Showing: 지금 Related Report에 보이는 검사" : "Compare: 눌러서 비교해 볼 수 있는 검사"}">${x.uid === s.uid ? "Reading Target" : relatedDateLabel(x)} · ${x.uid === relatedUid || (x.uid === s.uid && !relatedUid) ? "👁 Showing" : "Compare"}</td>
-              <td>${esc(x.date)}${x.uid !== s.uid && relatedInterval(x) ? ` <span class="rel-interval" title="판독 대상 검사 날짜와의 간격">${esc(relatedInterval(x))}</span>` : ""}</td><td>${esc(x.modality)}</td><td>${esc(shownStudyDesc(x))}</td><td class="num">${esc(x.count)}</td>
+              <td>${esc(x.date)}${x.uid !== s.uid && relatedInterval(x) ? ` <span class="rel-interval" title="판독 대상 검사 날짜와의 간격">${esc(relatedInterval(x))}</span>` : ""}</td><td translate="no">${esc(x.modality)}</td><td translate="no">${esc(shownStudyDesc(x))}</td><td class="num">${esc(x.count)}</td>
               <td><span class="rs ${esc(x.rs)}">${esc(x.rs)}</span></td>
               <td>${({ W: "Unread", T: "In Progress", P: "Preliminary", A: "Approved", H: "On Hold", D: "Destroyed" })[x.rs] || "Unverified"} <button class="chip" type="button" data-related-open="${esc(x.uid)}">${x.uid === s.uid ? 'Open Images' : 'Compare Images'}</button></td>
             </tr>`;
@@ -1927,7 +1939,9 @@
           // CELL[]은 우리가 만든 HTML이라 그대로, 나머지는 전부 외부 문자열이라 이스케이프
           const v = c.k === "no" ? offset + i + 1 : (CELL[c.k] ? CELL[c.k](s) : esc(s[c.k] ?? ""));
           const classes = [c.num ? "num" : "", c.k === "acc" ? "acc" : "", ["id", "birth"].includes(c.k) ? "dim" : ""];
-          return `<td class="${classes.filter(Boolean).join(" ")}">${v}</td>`;
+          // A cell holding data of the study is never translated (the screen language changes labels and states only).
+          const data = c.k !== "no" && c.k !== "ptClass" && (!CELL[c.k] || ["desc", "preDoc", "preReviewer"].includes(c.k));
+          return `<td class="${classes.filter(Boolean).join(" ")}"${data ? ' translate="no"' : ""}>${v}</td>`;
         }).join("") + `</tr>`).join("")
         || `<tr><td class="empty" colspan="${shown.length}">${bodyPartNote ? '부위 확인 전인 검사가 있어 검색 결과가 아직 완전하지 않습니다.' : 'No records found'}</td></tr>`;
       columnPrefs?.decorate(mode);
@@ -1993,14 +2007,16 @@
       box.dataset.view = drawn;
       box.hidden = view.hidden;
       if (view.hidden) return;
-      $("#study-identity-summary").textContent = view.summary.text;
+      kinWrite($("#study-identity-summary"), view.summary.text);
       $("#study-identity-summary").title = view.summary.title;
       const order = $("#study-identity-order");
       order.textContent = view.order?.text ?? ""; order.title = view.order?.title ?? "";
       $("#study-identity-tags").replaceChildren(...view.rows.map(row => {
         const line = document.createElement("div"), value = document.createElement("span"), relation = document.createElement("span");
         line.setAttribute("role", "listitem"); line.dataset.tag = row.key;
-        value.textContent = `${row.tag} ${row.label}: ${row.value}`; value.title = row.valueTitle;
+        // The DICOM value is data; the attribute name is a label (each its own text, the line reads the same).
+        const shown = document.createElement("span"); shown.translate = false; shown.textContent = row.value;
+        value.replaceChildren(row.tag + " ", Object.assign(document.createElement("span"), { textContent: row.label }), ": ", shown); value.title = row.valueTitle;
         relation.textContent = row.relation ? ` · ${row.relation}` : ""; relation.title = row.title;
         line.append(value, relation);
         return line;
@@ -2168,6 +2184,8 @@
       $('#edit-active-filter').disabled = !stored;
     }
     function renderChips() {
+      // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       updateWorklistFolders();
       const holder = $("#chips");
       if (!holder) return;
@@ -2177,7 +2195,7 @@
       chipCountRows = userFilters.map((uf, i) => {
         const count = filteredFor(uf).length;
         const note = bodyPartCountNote(uf);
-        const label = `${uf.name}, 로드된 목록 기준 ${count}건${uf.isDefault ? ", 기본 필터" : ""}${note ? ' · ' + note : ''}`;
+        const label = kinSay("{0}, 로드된 목록 기준 {n1}건{t2}{t3}", uf.name, count, { t: uf.isDefault ? ", 기본 필터" : "" }, { t: note ? kinSay(" · {t0}", { t: note }) : "" });
         return { i, uf, count, label, partial: !!note };
       });
       chipCountKey = countKey;
@@ -2191,11 +2209,15 @@
         return;
       }
       const focused = holder.contains(document.activeElement) ? userFilters[+document.activeElement.dataset.i]?.name : null;
-      holder.innerHTML = rows.map(({ i, uf, count, label, partial }) =>
-        `<button class="chip" data-i="${i}" data-name="${esc(uf.name)}" aria-label="${esc(label)}" aria-pressed="${uf.name === activeFilterName}" aria-haspopup="menu" ` +
-        `title="${esc(label)} · 클릭: 적용 / 우클릭 또는 Shift+F10: 메뉴">` +
-        `${uf.isDefault ? "⚑ " : ""}${esc(uf.name)} <span aria-hidden="true">(${count}${partial ? ' · Partial' : ''})</span></button>`
+      holder.innerHTML = rows.map(({ i, uf, count, partial }) =>
+        `<button class="chip" data-i="${i}" data-name="${esc(uf.name)}" aria-pressed="${uf.name === activeFilterName}" aria-haspopup="menu">` +
+        `${uf.isDefault ? "⚑ " : ""}<span translate="no">${esc(uf.name)}</span> <span aria-hidden="true">(${count}${partial ? ' · Partial' : ''})</span></button>`
       ).join("");
+      holder.querySelectorAll('button[data-i]').forEach(button => {
+        const { label } = rows.find(row => row.i === +button.dataset.i);
+        kinWrite(button, label, 'aria-label');
+        kinWrite(button, kinSay("{t0} · 클릭: 적용 / 우클릭 또는 Shift+F10: 메뉴", { t: label }), 'title');
+      });
       holder.dataset.renderSignature = signature;
       if (focused !== null) focusFilterChip(focused);
     }
@@ -2267,6 +2289,8 @@
       work.commit(at, () => { if (seq === storageSeq) paintStorage(bytes, reason); });
     }
     function paintStorage(bytes, reason) {
+      // This function is also run on its own (a page test takes it out of the page): the plain fill stands in then.
+      const storageSay = typeof globalThis.kinSayShared === "function" ? globalThis.kinSayShared : (t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => { const v = p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); });
       const box = $("#storage");
       if (!box) return;
       // The Operations row's units (admin.html KinAdminMetrics.formatBytes): powers of 1024, never rounded to 0.
@@ -2285,15 +2309,15 @@
           storageLast = { bytes, at };
         } else {
           view = { state: "unobservable", text: "Storage Unobservable",
-            title: `서버 전체 저장량을 관측하지 못했습니다. 0으로 두지 않습니다. ${reason}` + (storageLast
-              ? ` 마지막으로 관측한 값은 ${size(storageLast.bytes)}(${KinStudyArrivals.formatTime(storageLast.at)})이며 지금 값이 아닐 수 있습니다.` : "") };
+          title: storageSay("서버 전체 저장량을 관측하지 못했습니다. 0으로 두지 않습니다. {t0}{t1}", { t: reason }, { t: storageLast
+            ? storageSay(" 마지막으로 관측한 값은 {0}({1})이며 지금 값이 아닐 수 있습니다.", size(storageLast.bytes), KinStudyArrivals.formatTime(storageLast.at)) : "" }) };
         }
       } catch (e) {
         view = { state: "unobservable", text: "Storage Unobservable", title: "서버 전체 저장량을 표시하지 못했습니다. 0으로 두지 않습니다." };
       }
       box.dataset.state = view.state;
       box.textContent = view.text;
-      box.title = view.title;
+      kinWrite(box, view.title, "title");
     }
     async function load(options = {}) {
       const loadSequence = ++listLoadSequence, epoch = commitEpoch;
@@ -2662,7 +2686,7 @@
               const details = document.createElement('details'), summary = document.createElement('summary');
               summary.textContent = title + ' · ' + entry.values.length + '개'; details.append(summary); details.open = depth < 2;
               entry.values.forEach((item, i) => { const group = document.createElement('div'); group.style.marginLeft = '16px'; const heading = document.createElement('strong'); heading.textContent = 'Item ' + (i + 1); group.append(heading); render(item,group,depth+1); details.append(group); }); parent.append(details);
-            } else { const line = document.createElement('div'); line.textContent = title + ' = ' + (entry.values.length ? entry.values.join(' \\ ') : '(빈 값)'); parent.append(line); }
+            } else { const line = document.createElement('div'); line.translate = false; line.textContent = title + ' = ' + (entry.values.length ? entry.values.join(' \\ ') : '(빈 값)'); parent.append(line); }
           }
         }
         const primary = new Set(['0040A040','0040A043','0040A050','0040A491','0040A493','0040A730']);
@@ -2973,16 +2997,16 @@
       $("#clinical").innerHTML = s ? `
         <div class="clinical-scope">${s.uid === selectedUid ? '판독 대상 검사 정보' : '관련 검사 정보 · 판독 대상은 바뀌지 않습니다'}</div>
         <table>
-          <tr><td>Patient</td><td>${esc(s.name)} (${esc(s.id)})</td></tr>
-          <tr><td>Sex/Age</td><td>${esc(s.sex)} / ${esc(s.age)}</td></tr>
-          <tr><td>Birth</td><td>${esc(s.birth)}</td></tr>
-          <tr><td>Study</td><td>${esc(shownStudyDesc(s))}</td></tr>
-          <tr><td>Date</td><td>${esc(s.date)}</td></tr>
-          <tr><td>AccNo</td><td>${esc(s.acc)}</td></tr>
+          <tr><td>Patient</td><td translate="no">${esc(s.name)} (${esc(s.id)})</td></tr>
+          <tr><td>Sex/Age</td><td translate="no">${esc(s.sex)} / ${esc(s.age)}</td></tr>
+          <tr><td>Birth</td><td translate="no">${esc(s.birth)}</td></tr>
+          <tr><td>Study</td><td translate="no">${esc(shownStudyDesc(s))}</td></tr>
+          <tr><td>Date</td><td translate="no">${esc(s.date)}</td></tr>
+          <tr><td>AccNo</td><td translate="no">${esc(s.acc)}</td></tr>
           <tr><td>Img/Se</td><td>${esc(s.count)} / ${esc(s.series)}</td></tr>
-          <tr><td>SS / Mt</td><td>${esc(s.ss)} / ${s.matched === "M" ? "Matched" : "Unmatched"}</td></tr>
-          <tr><td>Ward</td><td>${esc(s.ward) || "-"}</td></tr>
-          <tr><td>Study UID</td><td>${esc(s.uid)}</td></tr>
+          <tr><td>SS / Mt</td><td><span>${esc(s.ss)}</span> / <span>${s.matched === "M" ? "Matched" : "Unmatched"}</span></td></tr>
+          <tr><td>Ward</td><td translate="no">${esc(s.ward) || "-"}</td></tr>
+          <tr><td>Study UID</td><td translate="no">${esc(s.uid)}</td></tr>
         </table>` : "No clinical information provided.";
       renderStudyIdentity();
       renderObservation();
@@ -3023,7 +3047,7 @@
     function renderObservation() {
       if (!studyObservationModel) return;
       const summary = KinStudyArrivals.observationSummary(studyObservationModel), status = $("#observation-status");
-      if (status) { status.hidden = !summary.text; status.textContent = summary.text; status.title = summary.title; }
+      if (status) { status.hidden = !summary.text; kinWrite(status, summary.text); status.title = summary.title; }
       // S4-U4 Now Retry, drawn only from labels.retry. Another study or a newer receipt drops the in-flight token
       // and the requested mark, so an answer for what was drawn before is never written over it (A->B->A too).
       // S4-F01V: one drawing serves the worklist panel and every Not Observed item, so both keep the same rules.
@@ -3090,6 +3114,7 @@
       if (institution) {
         const name = typeof s.institutionName === "string" ? s.institutionName.trim() : "";
         institution.textContent = name ? `${name} · ` : "";
+        institution.translate = false;
         institution.title = name ? "HALO PACS에 등록된 보낸 기관 이름입니다. DICOM 원문 기관명은 DICOM Identity의 (0008,0080) 줄에 있습니다." : "";
       }
       $("#receipt-assignment").textContent = labels.assignment.text; $("#receipt-assignment").title = labels.assignment.title;
@@ -3377,7 +3402,7 @@
             label.className = "thumb-label";
             const number = document.createElement("div"), detail = document.createElement("div");
             number.className = "thumb-number"; number.textContent = heading;
-            detail.className = "thumb-description"; detail.textContent = description;
+            detail.className = "thumb-description"; detail.textContent = description; detail.translate = false;
             label.append(number, detail);
             // title과 생략 표시만으로는 키보드나 터치에서 전체 식별 정보를 읽을 수 없다.
             const disclosure = document.createElement("details"), summary = document.createElement("summary"), full = document.createElement("div");
@@ -3477,20 +3502,21 @@
     }
 
     function renderOrders() {
+      // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       if (mode !== "Technician") return;
       const list = filteredOrders();
       $("#orderrows").innerHTML = list.map((o, i) => `
         <tr data-oid="${esc(o.oid)}" class="${o.oid === selectedOid ? "sel" : ""}">
           <td class="num">${i + 1}</td>
           <td><span class="mt ${esc(o.matched)}">${esc(o.matched)}</span></td>
-          <td>${esc(o.id)}</td><td>${esc(o.name)}</td><td>${esc(o.sex)}</td><td>${esc(o.birth)}</td>
-          <td>${esc(o.sched)}</td><td>${esc(o.modality)}</td><td>${esc(o.desc)}</td><td>${esc(o.ward)}</td><td>${esc(o.reqDoc)}</td>
+          <td translate="no">${esc(o.id)}</td><td translate="no">${esc(o.name)}</td><td translate="no">${esc(o.sex)}</td><td translate="no">${esc(o.birth)}</td>
+          <td translate="no">${esc(o.sched)}</td><td translate="no">${esc(o.modality)}</td><td translate="no">${esc(o.desc)}</td><td translate="no">${esc(o.ward)}</td><td translate="no">${esc(o.reqDoc)}</td>
         </tr>`).join("") || `<tr><td class="empty" colspan="11">오더 없음</td></tr>`;
 
       const s = cur(), o = curOrder();
-      $("#orderhint").textContent =
-        `선택: 검사 ${s ? s.name + " / " + s.date : "(없음)"}  ·  오더 ${o ? o.name + " / " + o.sched : "(없음)"}` +
-        (s && o && s.matched === "U" && o.matched === "U" ? "  → 우클릭 Match 가능" : "");
+      kinWrite($("#orderhint"), kinSay("선택: 검사 {0}  ·  오더 {1}{t2}", s ? s.name + " / " + s.date : { t: "(없음)" }, o ? o.name + " / " + o.sched : { t: "(없음)" },
+          { t: s && o && s.matched === "U" && o.matched === "U" ? "  → 우클릭 Match 가능" : "" }));
       notifyAddOns("orders", [list.length]);
     }
     $("#orderrows").addEventListener("click", e => {
@@ -5365,7 +5391,9 @@
       const line = $("#report-editor-rs");
       if (!line) return;
       const a = selectedUid ? appState[selectedUid] : null;
-      line.textContent = reportStatusLine(a);
+      // Each part is its own text (the line reads the same), so the screen language reaches every part.
+      const parts = typeof reportStatusParts === "function" ? reportStatusParts(a) : [reportStatusLine(a)].filter(Boolean);
+      line.replaceChildren(...parts.flatMap((part, i) => i ? [" · ", part] : [part]));
       line.title = !line.textContent ? ""
         : reportFinalized(a) ? "승인 후 24시간이 지나 확정된 판독문입니다 — Addendum으로만 덧붙일 수 있습니다"
         : a.amendUntil && !a.addendumAt ? "승인한 판독의가 이 시각까지 본문을 고쳐 다시 승인할 수 있습니다" : "";
@@ -5578,7 +5606,7 @@
         : "서버가 이 삽입 요청을 받을 수 없다고 답했습니다 — 넣은 글은 그대로 있습니다. " + review;
       const strong = document.createElement("b");
       strong.textContent = "● " + relatedInsertLabel(op) + (s === "refused" ? " — " + relatedRefusal(op.reason) : "");
-      $("#report-notice-msg").replaceChildren(strong, " — " + text);
+      $("#report-notice-msg").replaceChildren(strong, " — ", kinWrite(document.createTextNode(""), text));
       $("#report-notice-retry").style.display = ["unknown", "refused"].includes(s) && !unresolved ? "" : "none";
       $("#report-notice-check").style.display = ["unknown", "discard-unknown"].includes(s) || (busy && s === "checking") ? "" : "none";
       $("#report-notice-check").disabled = busy || unresolved;
@@ -5587,6 +5615,8 @@
         ? op : null, busy);
     }
     function renderReportNotice() {
+      // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       if (reportNotice && (reportNotice.uid !== selectedUid || reportNotice.seq !== selectionSeq)) reportNotice = null;
       const n = reportNotice;
       reportNoticeShown = !!n;
@@ -5606,33 +5636,27 @@
         : checked || n.status === "unknown" ? "Result Unknown"
         : n.status === "composing" ? "Not Moved"
         : n.status === "conflict" ? "Save Failed — 서버의 초안이 이 화면과 다릅니다"
-        : `Save Failed — ${n.reason ?? "서버가 저장을 받지 않았습니다"}`;
+        : kinSay("Save Failed — {0}", { e: n.reason ?? "서버가 저장을 받지 않았습니다" });
       // W5: the same notice for a Related Report mode entry the gate held (its Retry/Check continue that entry).
       const entry = n.action?.kind === "related-enter";
-      const toward = n.target ? ` (${studyLabel(n.target.uid)}(으)로 가려던 이동)`
-        : entry ? ` (${studyLabel(n.action.source)}의 이전 판독문을 보려던 이동)` : "";
-      const notMoved = entry ? "Related Report 모드로 들어가지 않았습니다" : "검사를 옮기지 않았습니다";
-      const thenMove = entry ? "들어갑니다" : "이동합니다";
+      const toward = { t: n.target ? kinSay(" ({0}(으)로 가려던 이동)", studyLabel(n.target.uid))
+        : entry ? kinSay(" ({0}의 이전 판독문을 보려던 이동)", studyLabel(n.action.source)) : "" };
+      const notMoved = { t: entry ? "Related Report 모드로 들어가지 않았습니다" : "검사를 옮기지 않았습니다" };
+      const thenMove = { t: entry ? "들어갑니다" : "이동합니다" };
       // 서버의 초안에 이 화면의 글이 없다는 것을 읽어서 알았다: 다시 보내는 길(Retry, 쓰기 경로)을 함께 준다.
       const resend = checked === "different" && unconfirmed;
-      const text = checked === "unread" ? `서버의 저장 상태를 확인하지 못해 ${notMoved}${toward} — 입력한 내용은 그대로 ` +
-          "있습니다. 다시 확인하려면 Check를 누르세요."
-        : checked === "changed" ? `확인하는 사이 글이나 선택이 바뀌어 ${notMoved}${toward} — 입력한 내용은 그대로 있습니다. ` +
-          "다시 확인하려면 Check를 누르세요."
-        : resend ? `서버의 초안에 이 화면의 글이 없어 ${notMoved}${toward} — 입력한 내용은 그대로 있습니다. ` +
-          `Retry를 누르면 이 글을 다시 저장하고, 저장이 확인되면 ${thenMove}.`
-        : checked === "different" ? `서버에 있는 이 검사의 초안이 이 화면의 글과 달라 ${notMoved}${toward} — 이 화면의 글은 ` +
-          "그대로 있습니다. 다른 창에서 그 뒤에 저장했을 수 있습니다. 다시 확인하려면 Check를 누르세요."
-        : saved ? `쓰던 글의 저장이 확인됐습니다. Check를 누르면 서버의 초안을 한 번 더 읽어 이 화면의 글과 견주고 ${thenMove}${toward}.`
-        : n.status === "composing" ? `글자 조합(한글 입력)이 끝나지 않아 ${notMoved} — 입력을 마친 뒤 다시 누르세요.`
-        : n.status === "unknown" ? `쓰던 글의 저장을 확인하지 못해 ${notMoved}${toward} — 입력한 내용은 그대로 있습니다. ` +
-          `Check를 누르면 서버의 초안을 읽어 이 화면의 글과 견주고, 같으면 ${thenMove}.`
-        : n.status === "conflict" ? `${notMoved}${toward} — 입력한 내용은 그대로 있습니다. ` +
-          "초안 표시줄에서 Keep This Text 또는 Load Server Draft를 고른 뒤 다시 누르세요."
-        : `쓰던 글을 저장하지 못해 ${notMoved}${toward} — 입력한 내용은 그대로 있습니다. 원인을 해결한 뒤 Retry를 누르세요.`;
+      const text = checked === "unread" ? kinSay("서버의 저장 상태를 확인하지 못해 {t0}{t1} — 입력한 내용은 그대로 있습니다. 다시 확인하려면 Check를 누르세요.", notMoved, toward)
+        : checked === "changed" ? kinSay("확인하는 사이 글이나 선택이 바뀌어 {t0}{t1} — 입력한 내용은 그대로 있습니다. 다시 확인하려면 Check를 누르세요.", notMoved, toward)
+        : resend ? kinSay("서버의 초안에 이 화면의 글이 없어 {t0}{t1} — 입력한 내용은 그대로 있습니다. Retry를 누르면 이 글을 다시 저장하고, 저장이 확인되면 {t2}.", notMoved, toward, thenMove)
+        : checked === "different" ? kinSay("서버에 있는 이 검사의 초안이 이 화면의 글과 달라 {t0}{t1} — 이 화면의 글은 그대로 있습니다. 다른 창에서 그 뒤에 저장했을 수 있습니다. 다시 확인하려면 Check를 누르세요.", notMoved, toward)
+        : saved ? kinSay("쓰던 글의 저장이 확인됐습니다. Check를 누르면 서버의 초안을 한 번 더 읽어 이 화면의 글과 견주고 {t0}{t1}.", thenMove, toward)
+        : n.status === "composing" ? kinSay("글자 조합(한글 입력)이 끝나지 않아 {t0} — 입력을 마친 뒤 다시 누르세요.", notMoved)
+        : n.status === "unknown" ? kinSay("쓰던 글의 저장을 확인하지 못해 {t0}{t1} — 입력한 내용은 그대로 있습니다. Check를 누르면 서버의 초안을 읽어 이 화면의 글과 견주고, 같으면 {t2}.", notMoved, toward, thenMove)
+        : n.status === "conflict" ? kinSay("{t0}{t1} — 입력한 내용은 그대로 있습니다. 초안 표시줄에서 Keep This Text 또는 Load Server Draft를 고른 뒤 다시 누르세요.", notMoved, toward)
+        : kinSay("쓰던 글을 저장하지 못해 {t0}{t1} — 입력한 내용은 그대로 있습니다. 원인을 해결한 뒤 Retry를 누르세요.", notMoved, toward);
       const strong = document.createElement("b");
-      strong.textContent = "● " + label;
-      $("#report-notice-msg").replaceChildren(strong, " — " + text);
+      kinWrite(strong, kinSay("● {t0}", { t: label }));
+      $("#report-notice-msg").replaceChildren(strong, " — ", kinWrite(document.createTextNode(""), text));
       const intent = !!n.target || entry;
       $("#report-notice-retry").style.display =
         intent && (resend || (!checked && !saved && ["refused", "owner"].includes(n.status))) ? "" : "none";
@@ -6912,7 +6936,7 @@
       if (!structPane) return;
       const pane = structPane;
       const item = pane.item;
-      $("#struct-template").textContent = pane.template ? pane.template.title : "";
+      $("#struct-template").textContent = pane.template ? pane.template.title : ""; $("#struct-template").translate = false;
       for (const [id, on] of [["#struct-value-choice", item.valueType === "choice"],
                               ["#struct-value-number", item.valueType === "number"],
                               ["#struct-value-text", item.valueType === "text"],
@@ -6931,7 +6955,7 @@
        * 무엇이 사라지는지 눈으로 볼 수 없는데, 이 단위에서 본문 글자를 지우는 경로는 여기 하나뿐이다.
        * 줄 번호만 말하면 "몇 번째 줄"이 맞는지 확인할 방법이 없다.
        */
-      $("#struct-line").textContent = pane.line ?? "";
+      $("#struct-line").textContent = pane.line ?? ""; $("#struct-line").translate = false;
       const removing = pane.plan && pane.plan.mode2 === "replace" && pane.previous
         ? String(pane.previous.renderedText ?? "") : "";
       $("#struct-removed").textContent = removing;
@@ -7171,12 +7195,13 @@
       }
       bar.style.display = "flex";
       $("#b-cite-list").style.display = row ? "" : "none";
-      $("#citemsg").textContent = row
-        ? (unknownDraft
+      // The note is a sentence of its own (its own text), so the screen language reaches it whole.
+      if (!row) { $("#citemsg").replaceChildren("● ", note); }
+      else $("#citemsg").textContent =
+        (unknownDraft
             ? `● 승인본 ${row.head.length}건 · 저장된 초안의 인용은 다시 확인하는 중입니다` + (note ? ` (${note})` : "")
             : `● 인용 ${count}건 — 승인본 ${row.head.length}건 · 저장된 초안 ${row.draft.length}건`) +
-          (reportConverge.has(uid) ? " · 마지막 인용이 화면에 반영되지 않아 다음 자동 저장이 서버 내용을 화면에 맞춥니다" : "")
-        : `● ${note}`;
+          (reportConverge.has(uid) ? " · 마지막 인용이 화면에 반영되지 않아 다음 자동 저장이 서버 내용을 화면에 맞춥니다" : "");
       if (!row || !citationListOpen) {
         list.hidden = true; list.replaceChildren();
         $("#b-cite-list").setAttribute("aria-expanded", "false");
@@ -7283,13 +7308,15 @@
      */
     function placementLine(field, plan) {
       if (!plan) return "";
+      // This function is also run on its own (a page test takes it out of the page): the plain fill stands in then.
+      const kinSay = typeof globalThis.kinSayShared === "function" ? globalThis.kinSayShared : (t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => { const v = p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); });
       const label = KinReportCitation.FIELD_LABEL[field] ?? field;
       if (plan.mode === "end")
-        return `삽입 위치: ${label} 칸 맨 끝 — 이 칸에서 확인된 커서 자리가 없어 끝에 붙입니다`;
-      return `삽입 위치: ${label} 칸 ${plan.line}번째 줄(줄바꿈 기준)부터` +
-        (plan.snapped === "line-end" ? " · 커서가 줄 중간이라 그 줄 다음으로 맞췄습니다" : "") +
-        (plan.snapped === "past-citation" ? " · 이미 인용된 문장을 쪼개지 않도록 그 뒤로 옮겼습니다" : "") +
-        (plan.mode === "selection" ? " · 선택한 글은 지우지 않고 그 뒤에 넣습니다" : "");
+        return kinSay("삽입 위치: {t0} 칸 맨 끝 — 이 칸에서 확인된 커서 자리가 없어 끝에 붙입니다", { t: label });
+      return kinSay("삽입 위치: {t0} 칸 {n1}번째 줄(줄바꿈 기준)부터{t2}{t3}{t4}", { t: label }, plan.line,
+        { t: plan.snapped === "line-end" ? " · 커서가 줄 중간이라 그 줄 다음으로 맞췄습니다" : "" },
+        { t: plan.snapped === "past-citation" ? " · 이미 인용된 문장을 쪼개지 않도록 그 뒤로 옮겼습니다" : "" },
+        { t: plan.mode === "selection" ? " · 선택한 글은 지우지 않고 그 뒤에 넣습니다" : "" });
     }
     /**
      * 200을 받은 뒤 **화면에** 놓을 계획(P-10). 보낸 문자열이 딛고 선 값이 아직 그대로면 그
@@ -7351,13 +7378,13 @@
       $("#cite-preview-target").textContent = s
         ? `삽입 대상: ${s.name} (${s.id})\n${s.date} · ${shownStudyDesc(s)} · AccNo: ${s.acc || "없음"}`
         : "삽입 대상: 검사 미선택";
-      $("#cite-preview-source").textContent =
-        `출처: ${citePane.sourceLabel} · 소견 r${citePane.findingRevision} · 인용 당시 연결 ${citePane.linkState}`;
+      kinWrite($("#cite-preview-source"), kinSay("출처: {0} · 소견 r{1} · 인용 당시 연결 {2}",
+        { t: citePane.sourceLabel }, citePane.findingRevision, citePane.linkState));
       // 미리보기는 **조립된 그 유니코드 문자열 그대로**를 보인다. 공백도 줄바꿈도 보존된다.
       $("#cite-preview-block").textContent = citePane.block;
       // 여기서 계획을 **다시 세우지 않는다.** 이 함수는 누름 자체에서도 여러 번 불리므로,
       // 여기서 갱신하면 열고 나서 바뀐 것을 조용히 흡수해 "확인한 자리"가 사라진다.
-      $("#cite-preview-place").textContent = placementLine($("#cite-preview-field").value, citePane.plan);
+      kinWrite($("#cite-preview-place"), placementLine($("#cite-preview-field").value, citePane.plan));
       $("#cite-preview-status").textContent = why ?? citePane.status ??
         (`확인을 누르면 서버가 이 문장과 증언을 함께 기록한 뒤 ${KinReportCitation.FIELD_LABEL[$("#cite-preview-field").value]} 칸에 붙입니다.` +
          " 기존 내용은 한 글자도 지우지 않고 위 위치에 줄 단위로 넣습니다.");
@@ -9402,6 +9429,8 @@
      * 보낸다. 잡아 둔 원문은 답의 봉투(또는 그 뒤의 전체 읽기)가 작성자·검사·revision·원문 전부의 일치를 보일 때만 버린다.
      */
     async function recoverEndedDraft(prep) {
+      // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       if (logoutPrep !== prep || prep.state !== "ended" || prep.recovering) return;
       prep.recovering = true;
       // 닫힌 문서의 일이다: 업무 문맥이 아니라 이 문서의 닫힘 안내만 바꾸는 수명주기 문맥을 지난다.
@@ -9510,8 +9539,8 @@
             const stored = prep.reports.length - left.length;
             prep.uid = current.uid; prep.texts = current.texts; prep.reason = current.reason;
             showLogoutPanel(prep);
-            logoutStatus(prep, (stored ? `${stored}건은 저장했습니다. ` : "") + `${left.length}건은 저장하지 못했습니다 — 사유는 위 목록에 있습니다.`
-              + (current.reason === "conflict" ? " Overwrite Server Draft를 누르면 충돌한 검사를 이 창의 내용으로 덮어씁니다(글만 — 붙은 그림은 서버의 초안 것을 따릅니다)." : "") + kept);
+        logoutStatus(prep, kinSay("{t0}{n1}건은 저장하지 못했습니다 — 사유는 위 목록에 있습니다.{t2}{t3}", { t: stored ? kinSay("{n0}건은 저장했습니다. ", stored) : "" }, left.length,
+          { t: current.reason === "conflict" ? " Overwrite Server Draft를 누르면 충돌한 검사를 이 창의 내용으로 덮어씁니다(글만 — 붙은 그림은 서버의 초안 것을 따릅니다)." : "" }, { t: kept }));
             return;
           }
           forgetCapture(prep);
@@ -9546,7 +9575,7 @@
 
     function logoutStatus(prep, text) {
       const line = prep.panel?.querySelector("[role=status]");
-      if (line) line.textContent = text;
+      if (line) kinWrite(line, text);
     }
 
     /**
@@ -9554,6 +9583,8 @@
      * After session end, show only study identifiers, never patient labels or report text.
      */
     function showLogoutPanel(prep) {
+      // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       if (!prep.panel) {
         prep.panel = document.createElement("dialog");
         prep.panel.className = "kin-logout";
@@ -9575,11 +9606,14 @@
       const pending = document.createElement("p");
       if (otherWork) pending.textContent = (prep.work || []).join("\n");
       else if (["failed", "ended"].includes(prep.state)) {
+        pending.style.whiteSpace = "pre-wrap";
         const label = report => prep.state === "ended" ? report.uid : `${report.label || report.uid} (${report.uid})`;
         const current = (prep.reports || []).find(report => report.uid === prep.uid);
-        pending.textContent = "보존이 필요한 검사: " + (prep.reports || []).filter(r => !r.safe)
-          .map(report => label(report) + (report.reason ? " — " + LOGOUT_FAILED[report.reason] : "")).join("\n")
-          + (current ? " · 현재 확인 중: " + label(current) : "");
+      // Each study line keeps its own parts: the study (data) and the reason (words of the page).
+      const lines = (prep.reports || []).filter(r => !r.safe)
+        .map(report => kinSay("{0}{t1}", label(report), { t: report.reason ? kinSay(" — {t0}", { t: LOGOUT_FAILED[report.reason] }) : "" }));
+      kinWrite(pending, kinSay("보존이 필요한 검사: {t0}{t1}", { t: kinSay(lines.map((_, i) => "{t" + i + "}").join("\n"), ...lines.map(line => ({ t: line }))) },
+        { t: current ? kinSay(" · 현재 확인 중: {0}", label(current)) : "" }));
       }
       const status = document.createElement("p");
       status.setAttribute("role", "status");
@@ -9612,7 +9646,8 @@
       prep.panel.replaceChildren(title, note, pending, status, actions);
       if (!prep.panel.open) prep.panel.showModal();
       actions.querySelector("button")?.focus();
-    }    // Presence follows the viewer heartbeat, independently of the optional list refresh.
+    }
+    // Presence follows the viewer heartbeat, independently of the optional list refresh.
     let viewingTimer = null, viewingRequest = null, viewingSequence = 0, viewingScope = '';
     function paintViewing() {
       // C-R01-109#3: the Report Editor head shows the same presence; fixtures without the editor module have no such line.
@@ -9699,6 +9734,8 @@
     // 기본 30초. 간격 변경은 진행 중인 이전 조회도 무효화한다.
     let poll = null, pollGeneration = 0;
     function startPolling() {
+      // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       // Up to three arrivals by name (patient · study · EM E when the row says emergency), then the rest as a count.
       function arrivalNames(rows) {
         const named = rows.slice(0, 3).map(s => [s.name, s.desc || s.modality, s.state?.em === "E" ? "EM E(응급)" : ""]
@@ -9728,7 +9765,7 @@
         const now = new Date();
         line.querySelector("#arrival-notice-time").textContent =
           `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-        line.querySelector("#arrival-notice-text").textContent = text;
+        kinWrite(line.querySelector("#arrival-notice-text"), text);
         line.hidden = false;
       }
       stopViewing();
@@ -9801,9 +9838,11 @@
             render();
             if (selectedUid) { loadReport(); updateReportButtons(); }
             autoPreload?.afterList();   // FC-073: a study that just arrived is queued without a manual Refresh
-            if (fresh.length || arrivalNotice)
-              announceArrivals([fresh.length ? `새 검사 ${fresh.length}건이 도착했습니다: ${arrivalNames(fresh)}` +
-                    (fresh.some(s => (s.state?.ss??s.ss) === "Unverified") ? " — Technician 탭에서 확인(Verify)하세요" : "") : '', arrivalNotice].filter(Boolean).join(' · '));
+            if (fresh.length || arrivalNotice) {
+              const arrived = [fresh.length ? kinSay("새 검사 {n0}건이 도착했습니다: {1}{t2}", fresh.length, arrivalNames(fresh),
+                { t: fresh.some(s => (s.state?.ss??s.ss) === "Unverified") ? " — Technician 탭에서 확인(Verify)하세요" : "" }) : '', arrivalNotice].filter(Boolean);
+              announceArrivals(arrived.length > 1 ? kinSay("{t0} · {t1}", { t: arrived[0] }, { t: arrived[1] }) : arrived[0] || '');
+            }
             return;
           }
 
@@ -10016,15 +10055,15 @@
             <div class="vh">
               <b>v${v.version}</b>
               <span class="tag ${esc(v.action)}" title="${esc(HINT[v.action] ?? "")}">${esc(LABEL[v.action] ?? v.action)}</span>
-              <span>${esc(displayActor(v.author))}</span>
+              <span translate="no">${esc(displayActor(v.author))}</span>
               <span style="color:#b4b4b4">${esc(String(v.at).replace("T", " ").slice(0, 19))}</span>
             </div>
-            ${v.reason ? `<div class="vr">사유: ${esc(v.reason)}</div>` : ""}
+${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</span></div>` : ""}
             ${v.group ? `<div class="vr" data-exam-group="${esc(v.group.id)}"><b>Exam scope</b> — ${v.group.readable
               ? `원본 검사(${esc((KinExamScope.storedReport(v,uid)?.sources||[]).map(source => studies.find(s => s.uid === source.studyUid)?.acc || source.studyUid).join(" + "))})의 영상으로 쓴 판입니다${v.group.active ? "" : " · 지금은 되돌린 범위"}`
               : "저장된 범위의 일부 영상을 볼 수 없어 이 판의 본문을 보이지 않습니다"}</div>` : ""}
             ${v.findings || v.conclusion || v.recommendation
-              ? `<pre>${esc([v.findings, v.conclusion, v.recommendation].filter(Boolean).join("\n---\n"))}</pre>`
+              ? `<pre translate="no">${esc([v.findings, v.conclusion, v.recommendation].filter(Boolean).join("\n---\n"))}</pre>`
               : `<div style="color:#556;padding:4px 0">(내용 없음)</div>`}
             ${Array.isArray(v.drawings) && v.drawings.length ? `<div class="vdraw" data-version="${esc(v.version)}"
                  style="display:flex;flex-wrap:wrap;gap:8px;padding:4px 0"><small>Image Report · ${v.drawings.length}</small>${v.drawings.map(d => `
@@ -10071,7 +10110,7 @@
       } catch (e) {
         // 늦게 온 **실패**도 새 열람의 목록을 오류 문구로 덮지 않는다.
         if (!work.admits(at) || !historyLive(epoch, uid)) return;
-        box.innerHTML = `<div style="color:#ff8080;padding:10px">${esc(e.message)}</div>`;
+        box.innerHTML = `<div data-kin-error style="color:#ff8080;padding:10px">${esc(e.message)}</div>`;
       }
     }
     $("#b-history").addEventListener("click", showHistory);
@@ -10911,6 +10950,8 @@
       spanChoices.append(spanHelp); list.before(spanChoices);
       let displaySignature = '';
       function renderDisplayChoices() {
+        // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+        const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
         const next = JSON.stringify(displayScreens);
         if (next !== displaySignature) {
           displaySignature = next;
@@ -10918,7 +10959,8 @@
           spanSelects.forEach((select, index) => {
             const previous = select.value || (saved?.[index] && KinViewerDisplayLayout.identity(saved[index]));
             select.replaceChildren(new Option('Select Display', ''));
-            displayScreens.forEach((screen, i) => select.add(new Option('Display ' + (i + 1) + ' · ' + screen.left + ', ' + screen.top + ' · ' + screen.width + ' × ' + screen.height, KinViewerDisplayLayout.identity(screen))));
+            displayScreens.forEach((screen, i) => select.add(kinWrite(new Option('', KinViewerDisplayLayout.identity(screen)),
+              kinSay('Display {n0} · {1}, {2} · {3} × {4}', i + 1, screen.left, screen.top, screen.width, screen.height))));
             select.value = previous || '';
           });
         }
@@ -11918,7 +11960,7 @@
         conflict = $('#clinical-context-conflict'), list = $('#clinical-context-sections');
       const node = (tag, text, className) => {
         const element = document.createElement(tag);
-        if (text !== null && text !== undefined) element.textContent = text;
+        if (text !== null && text !== undefined) kinWrite(element, text);
         if (className) element.className = className;
         return element;
       };
@@ -11938,15 +11980,17 @@
         items.forEach((part, i) => {
           if (i) out.append(' · ');
           const span = node('span', part.text, part.badge ? 'cc-badge' : null);
-          if (part.title) span.title = part.title;
+        // A part the model marks as the record itself (dates, modalities, descriptions, authors, names) is never translated.
+        if (part.data) span.translate = false;
+          if (part.title) kinWrite(span, part.title, 'title');
           out.append(span);
         });
         return out;
       }
       function line(summary) {
         if (summary.label) status.append(node('strong', summary.label), ' ');
-        status.append(summary.text);
-        status.title = summary.title || '';
+        status.append(kinWrite(document.createTextNode(''), summary.text));
+        kinWrite(status, summary.title || '', 'title');
       }
       function paint() {
         const visible = !ended && shownUid !== null;
@@ -11959,6 +12003,7 @@
         retry.hidden = true;
         next.hidden = !visible || !answer?.nextCursor; next.disabled = loading;
         status.replaceChildren();
+        status.removeAttribute('data-kin-error');
         status.title = '';
         conflict.replaceChildren();
         conflict.hidden = true;
@@ -11967,6 +12012,7 @@
         if (loading) status.textContent = model.TEXT.loading;
         if (!answer) {
           if (!loading && failure) {
+            status.setAttribute('data-kin-error', '');
             line(model.failedSummary(failure));
             retry.hidden = false;
           }
@@ -11974,7 +12020,7 @@
         }
         const shown = model.view(answer, stale, { actor });
         if (shown.conflict) {
-          conflict.append(node('strong', shown.conflict.title), ' ', shown.conflict.text);
+          conflict.append(node('strong', shown.conflict.title), ' ', kinWrite(document.createTextNode(''), shown.conflict.text));
           conflict.hidden = false;
         }
         for (const section of shown.sections) {
@@ -11993,7 +12039,10 @@
             again.addEventListener('click', reread);
             head.append(' ', again);
           }
-          box.append(head, node('div', section.description, 'cc-note'));
+          const note = node('div', section.description, 'cc-note');
+          // A section that failed shows an error: one with no text in the screen language yet still says it failed.
+          if (section.retry) note.setAttribute('data-kin-error', '');
+          box.append(head, note);
           if (section.checked) box.append(node('div', section.checked, 'cc-note'));
           if (section.items.length) {
             const items = node('ul');
@@ -12007,7 +12056,7 @@
               if (item.details) {
                 const details = node('details'), key = section.name + ' ' + item.key;
                 details.append(node('summary', model.TEXT.reportText));
-                for (const body of item.details) details.append(node('div', body.label, 'cc-note'), node('div', body.text, 'cc-body'));
+                for (const body of item.details) { const text = node('div', body.text, 'cc-body'); text.translate = false; details.append(node('div', body.label, 'cc-note'), text); }
                 details.open = wasOpen.has(key);
                 opened.set(key, details);
                 entry.append(details);
@@ -12598,7 +12647,7 @@
         li.dataset.kind = entry.kind;
         const meta = make('p', 'question-muted');
         meta.append(make('strong', null, KINDS[entry.kind]), ` · ${person(entry.author)} (${ROLES[entry.author.role]}) · ${time(entry.at)}`);
-        const body = entry.body ? make('p', 'question-body', entry.body) : make('p', 'question-muted', TEXT.closeEmpty);
+        const body = entry.body ? Object.assign(make('p', 'question-body', entry.body), { translate: false }) : make('p', 'question-muted', TEXT.closeEmpty);
         li.append(meta, body);
         const signed = window.KinClinicalSignature?.(evidence, entry.seq);
         if (signed) li.append(make('p', 'question-muted', signed));

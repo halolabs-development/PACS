@@ -44,7 +44,7 @@
       const radio=(value,label,count,note)=>{
         const line=el('div',null,scope),lab=el('label',null,line),input=el('input',null,lab);
         input.type='radio';input.name='worklist-export-scope';input.value=value;input.disabled=!count;
-        lab.append(` ${label} (${count})`);if(note)el('small',' '+note,line);return input;
+        lab.append(' ',label,` (${count})`);if(note)el('small',' '+note,line);return input;
       };
       const pickSelected=radio('selected','Selected Studies',selected.length,null);
       const pickAll=radio('all','All Search Results',listed.length,'현재 불러온 목록의 모든 페이지');

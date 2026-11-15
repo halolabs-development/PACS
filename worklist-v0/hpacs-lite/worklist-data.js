@@ -569,7 +569,9 @@
           // CELL[]은 우리가 만든 HTML이라 그대로, 나머지는 전부 외부 문자열이라 이스케이프
           const v = c.k === "no" ? offset + i + 1 : (CELL[c.k] ? CELL[c.k](s) : esc(s[c.k] ?? ""));
           const classes = [c.num ? "num" : "", c.k === "acc" ? "acc" : "", ["id", "birth"].includes(c.k) ? "dim" : ""];
-          return `<td class="${classes.filter(Boolean).join(" ")}">${v}</td>`;
+          // A cell holding data of the study is never translated (the screen language changes labels and states only).
+          const data = c.k !== "no" && c.k !== "ptClass" && (!CELL[c.k] || ["desc", "preDoc", "preReviewer"].includes(c.k));
+          return `<td class="${classes.filter(Boolean).join(" ")}"${data ? ' translate="no"' : ""}>${v}</td>`;
         }).join("") + `</tr>`).join("")
         || `<tr><td class="empty" colspan="${shown.length}">${bodyPartNote ? '부위 확인 전인 검사가 있어 검색 결과가 아직 완전하지 않습니다.' : 'No records found'}</td></tr>`;
       columnPrefs?.decorate(mode);
@@ -635,14 +637,16 @@
       box.dataset.view = drawn;
       box.hidden = view.hidden;
       if (view.hidden) return;
-      $("#study-identity-summary").textContent = view.summary.text;
+      kinWrite($("#study-identity-summary"), view.summary.text);
       $("#study-identity-summary").title = view.summary.title;
       const order = $("#study-identity-order");
       order.textContent = view.order?.text ?? ""; order.title = view.order?.title ?? "";
       $("#study-identity-tags").replaceChildren(...view.rows.map(row => {
         const line = document.createElement("div"), value = document.createElement("span"), relation = document.createElement("span");
         line.setAttribute("role", "listitem"); line.dataset.tag = row.key;
-        value.textContent = `${row.tag} ${row.label}: ${row.value}`; value.title = row.valueTitle;
+        // The DICOM value is data; the attribute name is a label (each its own text, the line reads the same).
+        const shown = document.createElement("span"); shown.translate = false; shown.textContent = row.value;
+        value.replaceChildren(row.tag + " ", Object.assign(document.createElement("span"), { textContent: row.label }), ": ", shown); value.title = row.valueTitle;
         relation.textContent = row.relation ? ` · ${row.relation}` : ""; relation.title = row.title;
         line.append(value, relation);
         return line;
@@ -810,6 +814,8 @@
       $('#edit-active-filter').disabled = !stored;
     }
     function renderChips() {
+      // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       updateWorklistFolders();
       const holder = $("#chips");
       if (!holder) return;
@@ -819,7 +825,7 @@
       chipCountRows = userFilters.map((uf, i) => {
         const count = filteredFor(uf).length;
         const note = bodyPartCountNote(uf);
-        const label = `${uf.name}, 로드된 목록 기준 ${count}건${uf.isDefault ? ", 기본 필터" : ""}${note ? ' · ' + note : ''}`;
+        const label = kinSay("{0}, 로드된 목록 기준 {n1}건{t2}{t3}", uf.name, count, { t: uf.isDefault ? ", 기본 필터" : "" }, { t: note ? kinSay(" · {t0}", { t: note }) : "" });
         return { i, uf, count, label, partial: !!note };
       });
       chipCountKey = countKey;
@@ -833,11 +839,15 @@
         return;
       }
       const focused = holder.contains(document.activeElement) ? userFilters[+document.activeElement.dataset.i]?.name : null;
-      holder.innerHTML = rows.map(({ i, uf, count, label, partial }) =>
-        `<button class="chip" data-i="${i}" data-name="${esc(uf.name)}" aria-label="${esc(label)}" aria-pressed="${uf.name === activeFilterName}" aria-haspopup="menu" ` +
-        `title="${esc(label)} · 클릭: 적용 / 우클릭 또는 Shift+F10: 메뉴">` +
-        `${uf.isDefault ? "⚑ " : ""}${esc(uf.name)} <span aria-hidden="true">(${count}${partial ? ' · Partial' : ''})</span></button>`
+      holder.innerHTML = rows.map(({ i, uf, count, partial }) =>
+        `<button class="chip" data-i="${i}" data-name="${esc(uf.name)}" aria-pressed="${uf.name === activeFilterName}" aria-haspopup="menu">` +
+        `${uf.isDefault ? "⚑ " : ""}<span translate="no">${esc(uf.name)}</span> <span aria-hidden="true">(${count}${partial ? ' · Partial' : ''})</span></button>`
       ).join("");
+      holder.querySelectorAll('button[data-i]').forEach(button => {
+        const { label } = rows.find(row => row.i === +button.dataset.i);
+        kinWrite(button, label, 'aria-label');
+        kinWrite(button, kinSay("{t0} · 클릭: 적용 / 우클릭 또는 Shift+F10: 메뉴", { t: label }), 'title');
+      });
       holder.dataset.renderSignature = signature;
       if (focused !== null) focusFilterChip(focused);
     }
@@ -909,6 +919,8 @@
       work.commit(at, () => { if (seq === storageSeq) paintStorage(bytes, reason); });
     }
     function paintStorage(bytes, reason) {
+      // This function is also run on its own (a page test takes it out of the page): the plain fill stands in then.
+      const storageSay = typeof globalThis.kinSayShared === "function" ? globalThis.kinSayShared : (t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => { const v = p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); });
       const box = $("#storage");
       if (!box) return;
       // The Operations row's units (admin.html KinAdminMetrics.formatBytes): powers of 1024, never rounded to 0.
@@ -927,15 +939,15 @@
           storageLast = { bytes, at };
         } else {
           view = { state: "unobservable", text: "Storage Unobservable",
-            title: `서버 전체 저장량을 관측하지 못했습니다. 0으로 두지 않습니다. ${reason}` + (storageLast
-              ? ` 마지막으로 관측한 값은 ${size(storageLast.bytes)}(${KinStudyArrivals.formatTime(storageLast.at)})이며 지금 값이 아닐 수 있습니다.` : "") };
+          title: storageSay("서버 전체 저장량을 관측하지 못했습니다. 0으로 두지 않습니다. {t0}{t1}", { t: reason }, { t: storageLast
+            ? storageSay(" 마지막으로 관측한 값은 {0}({1})이며 지금 값이 아닐 수 있습니다.", size(storageLast.bytes), KinStudyArrivals.formatTime(storageLast.at)) : "" }) };
         }
       } catch (e) {
         view = { state: "unobservable", text: "Storage Unobservable", title: "서버 전체 저장량을 표시하지 못했습니다. 0으로 두지 않습니다." };
       }
       box.dataset.state = view.state;
       box.textContent = view.text;
-      box.title = view.title;
+      kinWrite(box, view.title, "title");
     }
     async function load(options = {}) {
       const loadSequence = ++listLoadSequence, epoch = commitEpoch;

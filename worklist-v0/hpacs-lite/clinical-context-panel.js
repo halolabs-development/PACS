@@ -18,7 +18,7 @@
         conflict = $('#clinical-context-conflict'), list = $('#clinical-context-sections');
       const node = (tag, text, className) => {
         const element = document.createElement(tag);
-        if (text !== null && text !== undefined) element.textContent = text;
+        if (text !== null && text !== undefined) kinWrite(element, text);
         if (className) element.className = className;
         return element;
       };
@@ -38,15 +38,17 @@
         items.forEach((part, i) => {
           if (i) out.append(' · ');
           const span = node('span', part.text, part.badge ? 'cc-badge' : null);
-          if (part.title) span.title = part.title;
+        // A part the model marks as the record itself (dates, modalities, descriptions, authors, names) is never translated.
+        if (part.data) span.translate = false;
+          if (part.title) kinWrite(span, part.title, 'title');
           out.append(span);
         });
         return out;
       }
       function line(summary) {
         if (summary.label) status.append(node('strong', summary.label), ' ');
-        status.append(summary.text);
-        status.title = summary.title || '';
+        status.append(kinWrite(document.createTextNode(''), summary.text));
+        kinWrite(status, summary.title || '', 'title');
       }
       function paint() {
         const visible = !ended && shownUid !== null;
@@ -59,6 +61,7 @@
         retry.hidden = true;
         next.hidden = !visible || !answer?.nextCursor; next.disabled = loading;
         status.replaceChildren();
+        status.removeAttribute('data-kin-error');
         status.title = '';
         conflict.replaceChildren();
         conflict.hidden = true;
@@ -67,6 +70,7 @@
         if (loading) status.textContent = model.TEXT.loading;
         if (!answer) {
           if (!loading && failure) {
+            status.setAttribute('data-kin-error', '');
             line(model.failedSummary(failure));
             retry.hidden = false;
           }
@@ -74,7 +78,7 @@
         }
         const shown = model.view(answer, stale, { actor });
         if (shown.conflict) {
-          conflict.append(node('strong', shown.conflict.title), ' ', shown.conflict.text);
+          conflict.append(node('strong', shown.conflict.title), ' ', kinWrite(document.createTextNode(''), shown.conflict.text));
           conflict.hidden = false;
         }
         for (const section of shown.sections) {
@@ -93,7 +97,10 @@
             again.addEventListener('click', reread);
             head.append(' ', again);
           }
-          box.append(head, node('div', section.description, 'cc-note'));
+          const note = node('div', section.description, 'cc-note');
+          // A section that failed shows an error: one with no text in the screen language yet still says it failed.
+          if (section.retry) note.setAttribute('data-kin-error', '');
+          box.append(head, note);
           if (section.checked) box.append(node('div', section.checked, 'cc-note'));
           if (section.items.length) {
             const items = node('ul');
@@ -107,7 +114,7 @@
               if (item.details) {
                 const details = node('details'), key = section.name + ' ' + item.key;
                 details.append(node('summary', model.TEXT.reportText));
-                for (const body of item.details) details.append(node('div', body.label, 'cc-note'), node('div', body.text, 'cc-body'));
+                for (const body of item.details) { const text = node('div', body.text, 'cc-body'); text.translate = false; details.append(node('div', body.label, 'cc-note'), text); }
                 details.open = wasOpen.has(key);
                 opened.set(key, details);
                 entry.append(details);

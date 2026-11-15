@@ -1,6 +1,8 @@
 /* S4-U5 study identity display model. Engineering only; pure (no storage, network or DOM). */
 (function(root){
   'use strict';
+  // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
   /*
    * The server compares; this module only reads its answer. Each list row carries the tags the server read for that
    * row and, for an own-institution row linked both ways to an own-institution order, one relation per field. The
@@ -142,7 +144,7 @@
       :key==='no_linked_order'?{text:'No Linked Order',title:ORDER_TITLE.no_linked_order}
       :{text:'Unknown',title:ORDER_TITLE.unknown};
     const summary={
-      text:'DICOM Identity'+(patientMismatch?' · Patient Mismatch':'')+(accessionMismatch?' · Accession Mismatch':'')+tail,
+    text:kinSay('DICOM Identity{t0}{t1}{t2}',{t:patientMismatch?' · Patient Mismatch':''},{t:accessionMismatch?' · Accession Mismatch':''},{t:tail}),
       title:SUMMARY_TITLE+(patientMismatch?PATIENT_MISMATCH_TITLE:'')+(accessionMismatch?ACCESSION_MISMATCH_TITLE:'')+unavailableTitle};
     const show=patientMismatch||accessionMismatch||m.refused===uid;
     return {hidden:false,key,summary,order,rows,guidance:guidance(own.rs,show,key==='tele'),patientMismatch,accessionMismatch};
