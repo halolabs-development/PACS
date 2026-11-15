@@ -7,6 +7,7 @@ stored account value or the browser dialog text.
 import copy
 import json
 import re
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -24,6 +25,21 @@ WORKLIST = {"#m-reading": ("Reading Workspace", "판독 작업 공간"), "#m-ref
 READING = {"#b-approve": ("Approve", "승인"), "#b-save": ("Save", "저장"), "#b-unread": ("Reset to Unread", "미판독으로 되돌리기"),
            "#b-approve-next": ("Approve & Next", "승인 후 다음")}
 HEAD = "#heads th"
+
+
+def declarations(file, names):
+    """Run the shipped display function with synthetic state, using the installed JS parser to load it."""
+    script = r"""const fs=require('fs'), ts=require('./api/node_modules/typescript');
+      const source=ts.createSourceFile(process.argv[1],fs.readFileSync(process.argv[1],'utf8'),ts.ScriptTarget.Latest,true);
+      const names=new Set(JSON.parse(process.argv[2])), found=[];
+      for(const node of source.statements) {
+        if(ts.isFunctionDeclaration(node) && names.has(node.name.text)) found.push(node.getText(source));
+        if(ts.isVariableStatement(node) && node.declarationList.declarations.some(d=>names.has(d.name.getText(source)))) found.push(node.getText(source));
+      }
+      if(found.length!==names.size) throw Error('Missing display declarations');
+      process.stdout.write(found.join('\n'));"""
+    return subprocess.check_output(['node', '-e', script, str(dom.ROOT / 'worklist-v0/hpacs-lite' / file), json.dumps(names)],
+                                   cwd=dom.ROOT).decode('utf-8')
 
 
 class WithFilters:
@@ -49,10 +65,15 @@ class LanguageSite(WorkspaceSite):
         self.appearance, self.appearance_revision, self.appearance_writes = None, 0, []
         self.fail_write = None
         self.filters = []
+        self.clinical_fixture = None
 
     def api(self, route, request, method, path, query):
         if method == "GET" and path in ("/api/bootstrap", "/api/filter-folders") and self.filters:
             route = WithFilters(route, self.filters)
+        if method == 'GET' and path.endswith('/clinical-context') and self.clinical_fixture:
+            answer = copy.deepcopy(self.clinical_fixture)
+            answer['uid'] = path.split('/')[-2]
+            return route.fulfill(json=answer)
         if path != "/api/reading-appearance":
             return super().api(route, request, method, path, query)
         account, refused = self.authenticate(request)
@@ -362,6 +383,116 @@ class WorklistLanguageDOM(unittest.TestCase):
         self.assertEqual((14, 16, 12, "sans"), (stored["list"], stored["current"], stored["prior"], stored["fonts"]["current"]))
         self.assertEqual(("top", 1), (stored["dock"]["placement"], stored["dock"]["panel"]))
         self.assertEqual((20, "white"), (stored["viewer"]["current"]["size"], stored["viewer"]["current"]["color"]))
+
+    def test_sentence_keeps_data_spaces_in_text_attributes_and_browser_messages(self):
+        self.boot()
+        data = "  A  B\nC  "
+        self.page.evaluate("""data => {
+          const label = document.createElement('p'); label.id = 'sentence-data'; document.body.append(label);
+          const message = KinLanguage.say('취소 사유: {0}', data);
+          KinLanguage.write(label, message); KinLanguage.write(label, message, 'title');
+          document.querySelector('#page-size').setCustomValidity(message);
+          window.sentenceMessage = message;
+        }""", data)
+        for lang, prefix in (("en", "Cancellation reason: "), ("ko", "취소 사유: "), ("en", "Cancellation reason: ")):
+            self.apply(lang)
+            self.assertEqual(prefix + data, self.page.locator('#sentence-data').text_content())
+            self.assertEqual(prefix + data, self.page.locator('#sentence-data').get_attribute('title'))
+            self.assertEqual(prefix + data, self.page.evaluate("document.querySelector('#page-size').validationMessage"))
+            for name in ('alert', 'confirm', 'prompt'):
+                self.page.evaluate("name => window[name](window.sentenceMessage)", name)
+                self.assertEqual(prefix + data, self.dialogs[-1])
+        self.assertEqual('취소 사유: ' + data, self.page.evaluate("KinLanguage.source(document.querySelector('#sentence-data'))"))
+
+    def test_sentence_survives_more_than_two_thousand_other_messages_and_equal_text(self):
+        self.boot()
+        self.page.evaluate("""() => {
+          const first = document.createElement('p'); first.id = 'sentence-first'; document.body.append(first);
+          KinLanguage.write(first, KinLanguage.say('영상 열람 · {0}{t1}', 'Unread', {t: ''}));
+          for (let i = 0; i < 2001; i++) String(KinLanguage.say('{0} · {n1} image{t2}', 'SYN ' + i, i, {t: 's'}));
+          const data = document.createElement('p'); data.id = 'sentence-equal-data'; document.body.append(data);
+          const ui = document.createElement('p'); ui.id = 'sentence-equal-ui'; document.body.append(ui);
+          KinLanguage.write(data, KinLanguage.say('{0}', 'Unread'));
+          KinLanguage.write(ui, KinLanguage.say('{t0}', {t: 'Unread'}));
+        }""")
+        for lang in ('en', 'ko', 'en', 'ko'):
+            self.apply(lang)
+            self.assertEqual('Image viewing · Unread' if lang == 'en' else '영상 열람 · Unread', self.page.locator('#sentence-first').text_content())
+            self.assertEqual('Unread', self.page.locator('#sentence-equal-data').text_content())
+            self.assertEqual('미판독' if lang == 'ko' else 'Unread', self.page.locator('#sentence-equal-ui').text_content())
+        # A later ordinary write replaces the old sentence, including after a language is cleared.
+        self.page.evaluate("() => { document.querySelector('#sentence-first').textContent = 'Approve'; KinLanguage.restore({version:1,worklist:null,reading:null}); }")
+        self.assertEqual('Approve', self.page.locator('#sentence-first').text_content())
+
+    def test_nested_sentences_keep_line_breaks_and_translate_every_level(self):
+        self.boot()
+        result = self.page.evaluate(r"""() => {
+          const {say, tr, write} = KinLanguage;
+          let message = say('취소 사유: {0}', '  A  B\nC  ');
+          for (let i = 0; i < 12; i++) message = say('{t0}', {t: message});
+          const list = say('{t0}\n{t1}', {t: message}, {t: say('취소 사유: {0}', 'SYN second')});
+          const box = document.createElement('p'); box.id = 'sentence-lines'; document.body.append(box);
+          write(box, list);
+          const cycle = {t: ''}, sentence = say('{t0}', cycle); cycle.t = sentence;
+          return {en: tr(list, 'en'), ko: tr(list, 'ko'), cycle: tr(sentence, 'en')};
+        }""")
+        self.assertEqual('Cancellation reason:   A  B\nC  \nCancellation reason: SYN second', result['en'])
+        self.assertEqual('취소 사유:   A  B\nC  \n취소 사유: SYN second', result['ko'])
+        self.assertEqual('', result['cycle'])
+        self.apply('en')
+        self.assertEqual(result['en'], self.page.locator('#sentence-lines').text_content())
+        self.apply('ko')
+        self.assertEqual(result['ko'], self.page.locator('#sentence-lines').text_content())
+
+    def test_clinical_context_actions_and_identity_warning_keep_all_ui_parts(self):
+        self.boot()
+        result = self.page.evaluate("""() => {
+          const {say, tr} = KinLanguage;
+          return [tr(say('{t0} v{n1}', {t:'Approve'}, 3), 'ko'),
+            tr(say('{t0} v{n1}', {t:'Addendum'}, 2), 'ko'),
+            tr(say('DICOM Identity{t0}{t1}{t2}', {t:' · Patient Mismatch'}, {t:''}, {t:''}), 'ko')];
+        }""")
+        self.assertEqual(['승인 v3', '추가 기재 v2', 'DICOM 식별 정보 · 환자 불일치'], result)
+
+    def test_logout_preservation_list_keeps_two_lines_and_translates_the_failure_reasons(self):
+        self.boot()
+        display = declarations('work-exit.js', ['showLogoutPanel', 'LOGOUT_TITLES', 'LOGOUT_NOTES', 'LOGOUT_FAILED'])
+        self.page.evaluate("() => { const kinWrite=KinLanguage.write; " + display + """
+          const prep={state:'failed',reason:'refused',reports:[
+            {uid:'1.2.3',label:'SYN first',safe:false,reason:'refused'},
+            {uid:'1.2.4',label:'SYN second',safe:false,reason:'unknown'}]};
+          showLogoutPanel(prep);
+        }""")
+        pending = self.page.locator('dialog.kin-logout p').nth(1)
+        original = pending.text_content()
+        self.assertEqual(1, original.count('\n'))
+        self.assertEqual(1, pending.inner_text().count('\n'))
+        self.page.evaluate("KinLanguage.restore({version:1,worklist:'en',reading:'en'})")
+        expect(pending).not_to_contain_text(re.compile('[가-힣]'))
+        translated = pending.text_content()
+        self.assertEqual(1, translated.count('\n'))
+        self.assertEqual(1, pending.inner_text().count('\n'))
+        for text in ('SYN first (1.2.3)', 'SYN second (1.2.4)'):
+            self.assertIn(text, translated)
+        self.assertTrue(all(' — ' in line and len(line.split(' — ')[1]) > 10 for line in translated.split('\n')))
+        self.page.evaluate("KinLanguage.restore({version:1,worklist:null,reading:null})")
+        self.assertEqual(original, pending.text_content())
+
+    def test_clinical_context_renders_actions_conflicts_and_original_data_after_switching(self):
+        vectors = json.loads((dom.ROOT / 'tests/clinical_context_vectors.json').read_text(encoding='utf-8'))
+        self.site.clinical_fixture = copy.deepcopy(vectors['answers']['valid']['A-CONFLICT-BIRTH'])
+        self.site.clinical_fixture['sections']['requestTags'] = copy.deepcopy(vectors['answers']['valid']['A-PRESENT-OWNER']['sections']['requestTags'])
+        self.site.clinical_fixture['sections']['requestTags']['items'][0]['value'] = '  A  B\nC  '
+        self.boot()
+        region = self.page.locator('#clinical-context')
+        expect(region).to_contain_text('Approve v3')
+        self.apply('ko')
+        expect(region).to_contain_text('승인 v3')
+        self.assertIn('  A  B\nC  ', region.text_content())
+        self.apply('en')
+        expect(region).to_contain_text('Approve v3')
+        expect(self.page.locator('#clinical-context-conflict')).not_to_contain_text(re.compile('[가-힣]'))
+        self.assertIn('  A  B\nC  ', region.text_content())
 
     def test_a_marker_choice_of_version_10_stays_when_only_the_language_is_saved(self):
         self.boot()

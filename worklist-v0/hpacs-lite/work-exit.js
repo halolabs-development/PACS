@@ -641,7 +641,7 @@
 
     function logoutStatus(prep, text) {
       const line = prep.panel?.querySelector("[role=status]");
-      if (line) line.textContent = text;
+      if (line) kinWrite(line, text);
     }
 
     /**
@@ -672,13 +672,14 @@
       const pending = document.createElement("p");
       if (otherWork) pending.textContent = (prep.work || []).join("\n");
       else if (["failed", "ended"].includes(prep.state)) {
+        pending.style.whiteSpace = "pre-wrap";
         const label = report => prep.state === "ended" ? report.uid : `${report.label || report.uid} (${report.uid})`;
         const current = (prep.reports || []).find(report => report.uid === prep.uid);
       // Each study line keeps its own parts: the study (data) and the reason (words of the page).
       const lines = (prep.reports || []).filter(r => !r.safe)
         .map(report => kinSay("{0}{t1}", label(report), { t: report.reason ? kinSay(" — {t0}", { t: LOGOUT_FAILED[report.reason] }) : "" }));
-      pending.textContent = kinSay("보존이 필요한 검사: {t0}{t1}", { t: kinSay(lines.map((_, i) => "{t" + i + "}").join("\n"), ...lines.map(line => ({ t: line }))) },
-        { t: current ? kinSay(" · 현재 확인 중: {0}", label(current)) : "" });
+      kinWrite(pending, kinSay("보존이 필요한 검사: {t0}{t1}", { t: kinSay(lines.map((_, i) => "{t" + i + "}").join("\n"), ...lines.map(line => ({ t: line }))) },
+        { t: current ? kinSay(" · 현재 확인 중: {0}", label(current)) : "" }));
       }
       const status = document.createElement("p");
       status.setAttribute("role", "status");

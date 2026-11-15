@@ -445,7 +445,8 @@
           spanSelects.forEach((select, index) => {
             const previous = select.value || (saved?.[index] && KinViewerDisplayLayout.identity(saved[index]));
             select.replaceChildren(new Option('Select Display', ''));
-            displayScreens.forEach((screen, i) =>select.add(new Option(kinSay('Display {n0} · {1}, {2} · {3} × {4}', i + 1, screen.left, screen.top, screen.width, screen.height), KinViewerDisplayLayout.identity(screen))));
+            displayScreens.forEach((screen, i) => select.add(kinWrite(new Option('', KinViewerDisplayLayout.identity(screen)),
+              kinSay('Display {n0} · {1}, {2} · {3} × {4}', i + 1, screen.left, screen.top, screen.width, screen.height))));
             select.value = previous || '';
           });
         }

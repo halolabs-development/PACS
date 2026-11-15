@@ -1036,7 +1036,7 @@ def extract_function(source, name):
 STORAGE_ELEMENT = re.search(r'<div class="mright" id="storage"[^>]*>[^<]*</div>', MAIN_HTML).group(0)
 STORAGE_STATE = "    let storageSeq = 0, storageLast = null;\n"
 STORAGE_GUARD = "if (seq === storageSeq) "
-REFRESH_STORAGE = MAIN_HTML[MAIN_HTML.index("    async function refreshStorage("):MAIN_HTML.index("    async function load(options = {})")]
+REFRESH_STORAGE = extract_function(MAIN_HTML, "kinWrite") + "\n" + MAIN_HTML[MAIN_HTML.index("    async function refreshStorage("):MAIN_HTML.index("    async function load(options = {})")]
 # The page's `$`; fetch answers from a queue the case settles, in any order.
 STORAGE_HARNESS = """<!doctype html><html><body><div class="menubar">ELEMENT</div><script>
 const $ = s => document.querySelector(s);

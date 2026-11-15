@@ -18,7 +18,7 @@
         conflict = $('#clinical-context-conflict'), list = $('#clinical-context-sections');
       const node = (tag, text, className) => {
         const element = document.createElement(tag);
-        if (text !== null && text !== undefined) element.textContent = text;
+        if (text !== null && text !== undefined) kinWrite(element, text);
         if (className) element.className = className;
         return element;
       };
@@ -40,15 +40,15 @@
           const span = node('span', part.text, part.badge ? 'cc-badge' : null);
         // A part the model marks as the record itself (dates, modalities, descriptions, authors, names) is never translated.
         if (part.data) span.translate = false;
-          if (part.title) span.title = part.title;
+          if (part.title) kinWrite(span, part.title, 'title');
           out.append(span);
         });
         return out;
       }
       function line(summary) {
         if (summary.label) status.append(node('strong', summary.label), ' ');
-        status.append(summary.text);
-        status.title = summary.title || '';
+        status.append(kinWrite(document.createTextNode(''), summary.text));
+        kinWrite(status, summary.title || '', 'title');
       }
       function paint() {
         const visible = !ended && shownUid !== null;
@@ -78,7 +78,7 @@
         }
         const shown = model.view(answer, stale, { actor });
         if (shown.conflict) {
-          conflict.append(node('strong', shown.conflict.title), ' ', shown.conflict.text);
+          conflict.append(node('strong', shown.conflict.title), ' ', kinWrite(document.createTextNode(''), shown.conflict.text));
           conflict.hidden = false;
         }
         for (const section of shown.sections) {

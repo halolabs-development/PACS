@@ -610,7 +610,7 @@
       box.dataset.view = drawn;
       box.hidden = view.hidden;
       if (view.hidden) return;
-      $("#study-identity-summary").textContent = view.summary.text;
+      kinWrite($("#study-identity-summary"), view.summary.text);
       $("#study-identity-summary").title = view.summary.title;
       const order = $("#study-identity-order");
       order.textContent = view.order?.text ?? ""; order.title = view.order?.title ?? "";
@@ -812,11 +812,15 @@
         return;
       }
       const focused = holder.contains(document.activeElement) ? userFilters[+document.activeElement.dataset.i]?.name : null;
-      holder.innerHTML = rows.map(({ i, uf, count, label, partial }) =>
-        `<button class="chip" data-i="${i}" data-name="${esc(uf.name)}" aria-label="${esc(label)}" aria-pressed="${uf.name === activeFilterName}" aria-haspopup="menu" ` +
-`title="${esc(kinSay("{t0} · 클릭: 적용 / 우클릭 또는 Shift+F10: 메뉴", { t: label }))}">` +
+      holder.innerHTML = rows.map(({ i, uf, count, partial }) =>
+        `<button class="chip" data-i="${i}" data-name="${esc(uf.name)}" aria-pressed="${uf.name === activeFilterName}" aria-haspopup="menu">` +
         `${uf.isDefault ? "⚑ " : ""}<span translate="no">${esc(uf.name)}</span> <span aria-hidden="true">(${count}${partial ? ' · Partial' : ''})</span></button>`
       ).join("");
+      holder.querySelectorAll('button[data-i]').forEach(button => {
+        const { label } = rows.find(row => row.i === +button.dataset.i);
+        kinWrite(button, label, 'aria-label');
+        kinWrite(button, kinSay("{t0} · 클릭: 적용 / 우클릭 또는 Shift+F10: 메뉴", { t: label }), 'title');
+      });
       holder.dataset.renderSignature = signature;
       if (focused !== null) focusFilterChip(focused);
     }
@@ -916,7 +920,7 @@
       }
       box.dataset.state = view.state;
       box.textContent = view.text;
-      box.title = view.title;
+      kinWrite(box, view.title, "title");
     }
     async function load(options = {}) {
       const loadSequence = ++listLoadSequence, epoch = commitEpoch;

@@ -508,7 +508,7 @@
         : "서버가 이 삽입 요청을 받을 수 없다고 답했습니다 — 넣은 글은 그대로 있습니다. " + review;
       const strong = document.createElement("b");
       strong.textContent = "● " + relatedInsertLabel(op) + (s === "refused" ? " — " + relatedRefusal(op.reason) : "");
-      $("#report-notice-msg").replaceChildren(strong, " — " + text);
+      $("#report-notice-msg").replaceChildren(strong, " — ", kinWrite(document.createTextNode(""), text));
       $("#report-notice-retry").style.display = ["unknown", "refused"].includes(s) && !unresolved ? "" : "none";
       $("#report-notice-check").style.display = ["unknown", "discard-unknown"].includes(s) || (busy && s === "checking") ? "" : "none";
       $("#report-notice-check").disabled = busy || unresolved;
@@ -538,7 +538,7 @@
         : checked || n.status === "unknown" ? "Result Unknown"
         : n.status === "composing" ? "Not Moved"
         : n.status === "conflict" ? "Save Failed — 서버의 초안이 이 화면과 다릅니다"
-        : `Save Failed — ${n.reason ?? "서버가 저장을 받지 않았습니다"}`;
+        : kinSay("Save Failed — {0}", { e: n.reason ?? "서버가 저장을 받지 않았습니다" });
       // W5: the same notice for a Related Report mode entry the gate held (its Retry/Check continue that entry).
       const entry = n.action?.kind === "related-enter";
       const toward = { t: n.target ? kinSay(" ({0}(으)로 가려던 이동)", studyLabel(n.target.uid))
@@ -557,8 +557,8 @@
         : n.status === "conflict" ? kinSay("{t0}{t1} — 입력한 내용은 그대로 있습니다. 초안 표시줄에서 Keep This Text 또는 Load Server Draft를 고른 뒤 다시 누르세요.", notMoved, toward)
         : kinSay("쓰던 글을 저장하지 못해 {t0}{t1} — 입력한 내용은 그대로 있습니다. 원인을 해결한 뒤 Retry를 누르세요.", notMoved, toward);
       const strong = document.createElement("b");
-      strong.textContent = "● " + label;
-      $("#report-notice-msg").replaceChildren(strong, " — " + text);
+      kinWrite(strong, kinSay("● {t0}", { t: label }));
+      $("#report-notice-msg").replaceChildren(strong, " — ", kinWrite(document.createTextNode(""), text));
       const intent = !!n.target || entry;
       $("#report-notice-retry").style.display =
         intent && (resend || (!checked && !saved && ["refused", "owner"].includes(n.status))) ? "" : "none";

@@ -112,7 +112,7 @@
         const now = new Date();
         line.querySelector("#arrival-notice-time").textContent =
           `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-        line.querySelector("#arrival-notice-text").textContent = text;
+        kinWrite(line.querySelector("#arrival-notice-text"), text);
         line.hidden = false;
       }
       stopViewing();

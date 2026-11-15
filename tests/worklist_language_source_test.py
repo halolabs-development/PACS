@@ -50,8 +50,9 @@ class Glossary(unittest.TestCase):
             korean = bool(HANGUL.search(SLOT.sub("", source)))
             if korean and HANGUL.search(SLOT.sub("", other)) and not re.search(r"한국어", other): problems.append(("not English", source, other))
             if not korean and not HANGUL.search(other) and other != source: problems.append(("not Korean", source, other))
-            # An English plural ending ({t1} right after a letter, as in File{t1}) has no place in Korean.
-            plural = set() if korean else set(re.findall(r"[A-Za-z](\{t\d+\})", source))
+            # Only these slots are supplied with the English suffix '' / 's'. Other UI slots must survive.
+            plural = {"Attach {n0} File{t1}": {"{t1}"}, "{0} · {n1} image{t2}": {"{t2}"},
+                      "{n0} image{t1}": {"{t1}"}}.get(source, set())
             for text in [other] + ([same] if same else []):
                 want = sorted(s for s in SLOT.findall(source) if not (text is other and s in plural))
                 have = sorted(s for s in SLOT.findall(text) if not (text is other and s in plural))
@@ -85,6 +86,14 @@ class Glossary(unittest.TestCase):
         for word in ("Approve", "Reset to Unread", "Approve & Next", "↻ Refresh", "Findings", "Conclusion", "RS", "Unread",
                      "서버 저장 실패: {e0}", "Clinical Context", "계정 설정이 변경되었습니다. 불러온 뒤 다시 저장하세요"):
             self.assertIn(word, texts)
+
+    def test_collector_follows_the_sentence_writer_for_text_and_attributes(self):
+        source = "kinWrite(node, 'Approve'); window.KinLanguage.write(node, 'Unread', 'title');"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sample.js"
+            path.write_text(source, encoding="utf-8")
+            words = {piece["value"] for piece in collect.parse(path) if piece["ui"]}
+        self.assertTrue({"Approve", "Unread"}.issubset(words))
 
     def test_collector_builds_templates_where_the_code_joins_words(self):
         """Read with the TypeScript parser: joined words become one template, each part with its kind."""

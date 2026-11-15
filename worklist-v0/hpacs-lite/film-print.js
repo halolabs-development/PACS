@@ -20,6 +20,7 @@
 (function () {
   'use strict';
   // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
+  const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
   const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
   const LAST = 'kin.filmPrint.last';
   const FORMATS = [['1x1', '1 × 1'], ['1x2', '1 × 2'], ['2x2', '2 × 2'], ['3x4', '3 × 4'], ['4x5', '4 × 5']];
@@ -31,7 +32,9 @@
   function install(ctx) {
     const $ = selector => document.querySelector(selector);
     const node = (tag, props = {}, ...children) => {
-      const el = Object.assign(document.createElement(tag), props);
+      const { textContent, ...attributes } = props;
+      const el = Object.assign(document.createElement(tag), attributes);
+      if (textContent !== undefined) kinWrite(el, textContent);
       for (const child of children) if (child != null) el.append(child);
       return el;
     };

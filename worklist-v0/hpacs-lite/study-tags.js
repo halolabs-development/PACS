@@ -1,4 +1,5 @@
 window.KinStudyTags=function(app){
+  const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
   const work=window.KinWorkContext;
   // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
   const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
@@ -19,7 +20,7 @@ window.KinStudyTags=function(app){
   $('name').oninput=()=>{if(selected)names.set(nameKey(),$('name').value);};
   $('new').oninput=()=>newNames.set(scope,$('new').value);
   const label=uid=>{const s=app.study(uid);return s?[s.name,s.id,s.date,s.desc,uid].filter(Boolean).join(' · '):uid;};
-  const message=text=>$('status').textContent=text;
+  const message=text=>kinWrite($('status'),text);
   function controls(){d.querySelectorAll('button,input,select').forEach(x=>x.disabled=busy||!!pending||!same());
     $('retry').hidden=!pending;$('retry').disabled=busy;$('reload').disabled=busy;$('close').disabled=busy;
     for(const id of ['create','rename','delete'])$(id).disabled=busy||!!pending||!same()||!manages()||(id!=='create'&&!tag());

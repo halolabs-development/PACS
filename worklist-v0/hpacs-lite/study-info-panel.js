@@ -67,7 +67,7 @@
     function renderObservation() {
       if (!studyObservationModel) return;
       const summary = KinStudyArrivals.observationSummary(studyObservationModel), status = $("#observation-status");
-      if (status) { status.hidden = !summary.text; status.textContent = summary.text; status.title = summary.title; }
+      if (status) { status.hidden = !summary.text; kinWrite(status, summary.text); status.title = summary.title; }
       // S4-U4 Now Retry, drawn only from labels.retry. Another study or a newer receipt drops the in-flight token
       // and the requested mark, so an answer for what was drawn before is never written over it (A->B->A too).
       // S4-F01V: one drawing serves the worklist panel and every Not Observed item, so both keep the same rules.

@@ -56,8 +56,8 @@
         : !modalities.length ? "검사 Modality 없음 · 미적용" : "Modality: " + modalities.join(", ").toUpperCase();
       const chosenPart = $("#t-body").selectedOptions[0], chosenText = window.KinLanguage ? window.KinLanguage.source(chosenPart) : chosenPart.textContent;
       // A body part class from the templates is data; the fixed choices are words of the page.
-      $("#tpl-filter-status").textContent = kinSay("{n0} / {n1}개 · {t2} · {3}{t4}", list.length, templates.length, { t: modStatus },
-        chosenPart.translate === false ? chosenText : { t: chosenText }, { t: words.length ? " · 검색 적용" : "" });
+      kinWrite($("#tpl-filter-status"), kinSay("{n0} / {n1}개 · {t2} · {3}{t4}", list.length, templates.length, { t: modStatus },
+        chosenPart.translate === false ? chosenText : { t: chosenText }, { t: words.length ? " · 검색 적용" : "" }));
       $("#tplrows").innerHTML = list.map(t => `
         <tr data-i="${templates.indexOf(t)}" title="더블클릭: 판독문에 삽입${
           t.shortcut ? ` / 판독문에서 &quot;${esc(t.shortcut)}&quot; 입력 후 Tab` : ""} / 우클릭: 편집">

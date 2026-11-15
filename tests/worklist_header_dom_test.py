@@ -35,6 +35,7 @@ button and pointer target, and every session control, must still fit.
 Overlap checks compare painted bounds, not hidden continuation behind Session.
 """
 from page_source import read_page_source
+from worklist_arrivals_dom_test import extract_function
 import json
 import os
 import re
@@ -125,6 +126,7 @@ def session_block():
 
 def storage_block():
     block = cut(STORAGE_BLOCK_START, STORAGE_BLOCK_END)
+    writer = extract_function(read_page_source(ASSETS / 'main.html'), 'kinWrite')
     # Its own scope, like the page script's; only the function is handed out. S7-U5: the read leaves through the page's
     # session transport and its result is applied through the work-context gate, so the two shipped modules are loaded
     # as they are, following a session that is at work for the whole case.
@@ -132,7 +134,7 @@ def storage_block():
     return block and (modules + '(() => {\n  const $ = s => document.querySelector(s);\n'
                       + "  const work = KinWorkContext.create();\n"
                       + "  work.follow({ onLifecycle(listener) { listener({ state: 'active', session: 'SYN-SESSION' }); } });\n"
-                      + "  const transport = KinSessionTransport.create({ gate: work });\n" + block
+                      + "  const transport = KinSessionTransport.create({ gate: work });\n" + writer + '\n' + block
                       + '\n  window.kinRefreshStorage = refreshStorage;\n})();')
 
 

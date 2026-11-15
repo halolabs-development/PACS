@@ -1,5 +1,6 @@
 /* Personal study links; no original or report writes belong in this dialog. */
 window.KinFavorites = function (app) {
+  const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
   const work=window.KinWorkContext;
   // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
   const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
@@ -29,7 +30,7 @@ window.KinFavorites = function (app) {
     $('close').disabled=busy;
     if(viewUid){d.querySelectorAll('button,input,select').forEach(el=>el.disabled=true);$('view-choice').disabled=busy||!!pending;$('view-save').disabled=busy||!!pending||!$('view-choice').value;$('view-cancel').disabled=busy||!!pending;$('retry').disabled=busy;$('close').disabled=busy;}
   }
-  function message(text){$('status').textContent=text;}
+  function message(text){kinWrite($('status'),text);}
   function adopt(value){
     if(value&&JSON.stringify(value.owner)!==JSON.stringify(owner)){throw new Error('즐겨찾기 계정이 바뀌었습니다');}
     if(!value||!Number.isInteger(value.revision)||!Array.isArray(value.folders)

@@ -383,7 +383,7 @@ MODIFYBIND
 def correction_page(apply_state=None, cells=None, modify=None):
     functions = [apply_state or extract_function(MAIN, "applyState")]
     # applyState also writes the row's Confirm text and (without a server) the request columns with these three.
-    for name in ("saveApp", "apiFail", "preservedLocal", "mergeObservedReportState", "syncStudy", "applyStudyIdentity",
+    for name in ("kinWrite", "saveApp", "apiFail", "preservedLocal", "mergeObservedReportState", "syncStudy", "applyStudyIdentity",
                  "renderStudyIdentity", "openModify", "confirmText", "localStamp", "requestText"):
         functions.append(extract_function(MAIN, name))
     functions.append("async " + extract_function(MAIN, "saveModify"))

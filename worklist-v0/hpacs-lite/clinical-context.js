@@ -446,7 +446,7 @@
     const identity = answer.identity;
     const fields = identity.birth === 'mismatch' && identity.sex === 'mismatch' ? 'both' : identity.birth === 'mismatch' ? 'birth' : 'sex';
     return {
-      conflict: identity.conflict ? { title: TEXT.conflictTitle, text: fill(TEXT.conflict, { fields: TEXT.conflictFields[fields] }) } : null,
+      conflict: identity.conflict ? { title: TEXT.conflictTitle, text: fill(TEXT.conflict, { fields: { t: TEXT.conflictFields[fields] } }) } : null,
       sections, noInformation: noInformation(answer, stale),
     };
   }

@@ -1265,9 +1265,15 @@ class LogoutDOMTest(unittest.TestCase):
     def test_br01_a_401_that_names_the_session_ended_confirms_without_a_post(self):
         self.open_main()
         session = self.site.cookie
+        # End the session after Refresh has sent its read; a late startup read must not navigate away before the click.
+        self.site.held_lists = []
+        self.refresh()
+        self.wait_until(lambda: self.site.held_lists, "the refresh asking the server")
         self.site.ended.add(session)       # the server ended this session (idle, refresh refused, another device's logout)
         self.site.held_me = []             # the landing's own question is held, so that what it found can be read
-        self.refresh()
+        held, self.site.held_lists = self.site.held_lists, None
+        for route, _ in held:
+            self.site.refuse(route, 401, "AUTH_SESSION_ENDED")
         self.page.wait_for_url(INDEX_URL)
         self.wait_until(lambda: self.site.held_me, "the landing asking the server")
         # The document closed without a logout POST and recorded the end as the server's - not as the person leaving.

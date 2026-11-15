@@ -223,13 +223,13 @@
       $("#cite-preview-target").textContent = s
         ? `삽입 대상: ${s.name} (${s.id})\n${s.date} · ${shownStudyDesc(s)} · AccNo: ${s.acc || "없음"}`
         : "삽입 대상: 검사 미선택";
-      $("#cite-preview-source").textContent =
-        `출처: ${citePane.sourceLabel} · 소견 r${citePane.findingRevision} · 인용 당시 연결 ${citePane.linkState}`;
+      kinWrite($("#cite-preview-source"), kinSay("출처: {0} · 소견 r{1} · 인용 당시 연결 {2}",
+        { t: citePane.sourceLabel }, citePane.findingRevision, citePane.linkState));
       // 미리보기는 **조립된 그 유니코드 문자열 그대로**를 보인다. 공백도 줄바꿈도 보존된다.
       $("#cite-preview-block").textContent = citePane.block;
       // 여기서 계획을 **다시 세우지 않는다.** 이 함수는 누름 자체에서도 여러 번 불리므로,
       // 여기서 갱신하면 열고 나서 바뀐 것을 조용히 흡수해 "확인한 자리"가 사라진다.
-      $("#cite-preview-place").textContent = placementLine($("#cite-preview-field").value, citePane.plan);
+      kinWrite($("#cite-preview-place"), placementLine($("#cite-preview-field").value, citePane.plan));
       $("#cite-preview-status").textContent = why ?? citePane.status ??
         (`확인을 누르면 서버가 이 문장과 증언을 함께 기록한 뒤 ${KinReportCitation.FIELD_LABEL[$("#cite-preview-field").value]} 칸에 붙입니다.` +
          " 기존 내용은 한 글자도 지우지 않고 위 위치에 줄 단위로 넣습니다.");

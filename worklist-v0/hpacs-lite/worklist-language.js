@@ -60,44 +60,49 @@
   const foreign = (text, lang) => lang === 'en' ? HANGUL.test(text) : !HANGUL.test(text) && /[A-Za-z]{2}/.test(text);
   const unknownError = (text, lang) => (exact.get(UNKNOWN_ERROR)?.[lang] || UNKNOWN_ERROR) + ' ' + text;
   const cache = { en: new Map(), ko: new Map() };
-  // A sentence built by say(): its template and its parts as the page gave them, so nothing is read back from the text.
-  const said = new Map();
-  const word = value => value && typeof value === 'object' ? (value.t ?? value.e ?? '') : value;
+  // Sentences carry their parts to the writer; equal text can have different data boundaries.
+  const sentences = new WeakSet();
+  const isSentence = value => value !== null && typeof value === 'object' && sentences.has(value);
+  const word = value => value && typeof value === 'object' && !isSentence(value) ? (value.t ?? value.e ?? '') : value;
   function fillSaid(template, params, filler) {
-    const named = params.length === 1 && params[0] && typeof params[0] === 'object' && !('t' in params[0]) && !('e' in params[0]);
+    const named = params.length === 1 && params[0] && typeof params[0] === 'object' && !isSentence(params[0]) && !('t' in params[0]) && !('e' in params[0]);
     return template.replace(new RegExp(SLOTS.source, 'g'), slot => {
       const key = slot.slice(1, -1).replace(/^[ten](?=\d)/, '');
       const value = named ? params[0][key] : params[Number(key)];
       return value === undefined ? slot : filler(value, slot);
     });
   }
-  /**
-   * Build a sentence of the page from its template (the glossary key) and its parts: a plain value is data (shown as
-   * it is), {t: words} words of the page, {e: message} an error message. Returns the sentence as the page shows it.
-   */
+  /** Keep the template and parts until write() or a browser dialog displays the sentence. */
   function say(template, ...params) {
-    const text = fillSaid(template, params, value => String(word(value)));
-    said.set(text.trim(), { source: space(template), params });
-    if (said.size > 2000) said.delete(said.keys().next().value);
-    return text;
-  }
-  function translateSaid(rec, lang, depth) {
-    // A template of parts only ({t0} · {t1}) is the same in both languages: its parts carry the words.
-    const entry = bySource.get(rec.source) || (/[A-Za-z가-힣]/.test(rec.source.replace(new RegExp(SLOTS.source, 'g'), '')) ? null : { en: rec.source, ko: rec.source });
-    if (!entry) return null;
-    return fillSaid(entry[lang], rec.params, value => {
-      if (!value || typeof value !== 'object') return String(value);
-      const text = String(word(value));
-      if (!text.trim() || depth >= 3) return text;
-      const inner = translate(text.trim(), lang, depth + 1);
-      if (inner !== text.trim()) return text.match(/^\s*/)[0] + inner + text.match(/\s*$/)[0];
-      return 'e' in value && foreign(text, lang) ? unknownError(text.trim(), lang) : text;
+    const sentence = Object.freeze({ template, params,
+      toString() { return renderSentence(this, state[lastRegion]); },
+      toJSON() { return renderSentence(this, null); },
     });
+    sentences.add(sentence);
+    return sentence;
+  }
+  function renderSentence(sentence, lang, visiting = new Set()) {
+    if (visiting.has(sentence)) return '';
+    visiting.add(sentence);
+    try {
+      const source = sentence.template, key = space(source), entry = bySource.get(key) || exact.get(key);
+      // The lookup key alone collapses whitespace. A composition made only of slots keeps its line breaks.
+      const template = !lang || !entry || entry[lang] === key ? source
+        : source.match(/^\s*/)[0] + entry[lang] + source.match(/\s*$/)[0];
+      return fillSaid(template, sentence.params, value => {
+        if (isSentence(value)) return renderSentence(value, lang, visiting);
+        if (!value || typeof value !== 'object') return String(value);
+        const part = word(value);
+        if (isSentence(part)) return renderSentence(part, lang, visiting);
+        const text = String(part);
+        if (!lang || !text.trim()) return text;
+        const translated = tr(text, lang);
+        return translated === text && 'e' in value && foreign(text, lang) ? unknownError(text.trim(), lang) : translated;
+      });
+    } finally { visiting.delete(sentence); }
   }
   /** One text as the page wrote it (ends trimmed): the glossary entry, or a template whose parts are filled in once. */
   function translate(text, lang, depth) {
-    const rec = said.get(text);
-    if (rec) { const out = translateSaid(rec, lang, depth); if (out !== null) return out; }
     const flat = space(text), hit = exact.get(flat);
     if (hit) return hit[lang];
     for (const t of templates) {
@@ -127,10 +132,11 @@
   }
   /** The words of the page in lang (en or ko); null or words outside the glossary come back unchanged. */
   function tr(text, lang) {
+    if (isSentence(text)) return renderSentence(text, lang);
     if (!lang || typeof text !== 'string' || !/[A-Za-z가-힣]/.test(text)) return text;
     const core = text.trim();
-    let out = said.has(core) ? undefined : cache[lang].get(core);
-    if (out === undefined) { out = translate(core, lang, 0); if (!said.has(core)) cache[lang].set(core, out); }
+    let out = cache[lang].get(core);
+    if (out === undefined) { out = translate(core, lang, 0); cache[lang].set(core, out); }
     if (out === core) return text;
     return text.match(/^\s*/)[0] + out + text.match(/\s*$/)[0];
   }
@@ -168,10 +174,10 @@
     if (rec && now !== rec.shown) rec = null; // the page wrote new words: they are the original now
     const orig = rec ? rec.orig : now;
     if (!lang && !rec) return;
-    let want = lang ? tr(orig, lang) : orig;
+    let want = tr(orig, lang);
     if (lang && want === orig && el?.closest(ERROR) && foreign(orig, lang)) want = unknownError(orig.trim(), lang);
     if (want !== now) node.nodeValue = want;
-    if (want !== orig) texts.set(node, { orig, shown: want }); else texts.delete(node);
+    if (isSentence(orig) || want !== orig) texts.set(node, { orig, shown: want }); else texts.delete(node);
   }
   function paintAttr(el, name, forced) {
     const now = el.getAttribute(name);
@@ -183,9 +189,32 @@
     const keep = frozenAttr(el) || (el.getAttribute('data-kin-keep') || '').split(' ').includes(name);
     const lang = forced === undefined ? (keep ? null : langOf(el)) : forced;
     if (!lang && !rec) return;
-    const want = lang ? tr(orig, lang) : orig;
+    const want = tr(orig, lang);
     if (want !== now) el.setAttribute(name, want);
-    if (want !== orig) { let m = map; if (!m) attrs.set(el, m = {}); m[name] = { orig, shown: want }; } else if (map) delete map[name];
+    if (isSentence(orig) || want !== orig) { let m = map; if (!m) attrs.set(el, m = {}); m[name] = { orig, shown: want }; } else if (map) delete map[name];
+  }
+  /** Write screen words without losing the sentence at the DOM string boundary. */
+  function write(el, value, name) {
+    if (!el) return el;
+    const orig = isSentence(value) ? value : String(value ?? '');
+    const shown = tr(orig, null);
+    if (name) {
+      el.setAttribute(name, shown);
+      let map = attrs.get(el);
+      if (!map) attrs.set(el, map = {});
+      map[name] = { orig, shown };
+      if (el.isConnected) paintAttr(el, name);
+    } else {
+      let node = el;
+      if (el.nodeType !== 3) {
+        node = el.ownerDocument.createTextNode('');
+        el.replaceChildren(node);
+      }
+      node.nodeValue = shown;
+      texts.set(node, { orig, shown });
+      if (node.isConnected) paintText(node);
+    }
+    return el;
   }
   function paintTree(root, forced) {
     if (!root) return;
@@ -277,7 +306,7 @@
       window[name] = function (message, ...rest) {
         const lang = state[lastRegion];
         // The question only: the value offered in a prompt and the answer belong to the reader.
-        if (lang && typeof message === 'string') message = tr(message, lang);
+        message = tr(message, lang);
         return native.call(this, message, ...rest);
       };
     }
@@ -288,10 +317,11 @@
     if (typeof native !== 'function' || nativeValidity.has(proto)) continue;
     nativeValidity.set(proto, native);
     proto.setCustomValidity = function (message) {
-      if (message) validity.set(this, String(message)); else validity.delete(this);
-      return native.call(this, message ? tr(String(message), langOf(this)) : message);
+      if (message) validity.set(this, message); else validity.delete(this);
+      return native.call(this, message ? tr(message, langOf(this)) : message);
     };
   }
+  wrapBrowser();
   const remember = e => { const el = e.target?.closest?.('[data-kin-lang-region]'); if (el) lastRegion = el.getAttribute('data-kin-lang-region'); };
   document.addEventListener('pointerdown', remember, true);
   document.addEventListener('keydown', remember, true);
@@ -484,15 +514,15 @@
   /** The words the page wrote into this element (or one of its attributes), whatever language shows now. */
   function source(el, name) {
     if (!el) return null;
-    if (name) { const now = el.getAttribute(name), rec = attrs.get(el)?.[name]; return rec && rec.shown === now ? rec.orig : now; }
+    if (name) { const now = el.getAttribute(name), rec = attrs.get(el)?.[name]; return rec && rec.shown === now ? tr(rec.orig, null) : now; }
     let out = '';
     const walk = el.ownerDocument.createTreeWalker(el, 4 /* SHOW_TEXT */);
-    for (let n = walk.nextNode(); n; n = walk.nextNode()) { const rec = texts.get(n); out += rec && rec.shown === n.nodeValue ? rec.orig : n.nodeValue; }
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) { const rec = texts.get(n); out += rec && rec.shown === n.nodeValue ? tr(rec.orig, null) : n.nodeValue; }
     return out;
   }
 
   window.KinLanguage = {
-    tr, say, normalize, value, attach, source, connect,
+    tr, say, write, normalize, value, attach, source, connect,
     /** The stored choice of the account (page start, Load Appearance). */
     restore: next => set(next),
     /** Changes with every choice applied, so a late answer read before it does not undo it. */

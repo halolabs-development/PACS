@@ -17,6 +17,7 @@
 window.KinStudyTransferLocal = function (app) {
   'use strict';
   // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
+  const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
   const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
   const work = window.KinWorkContext;
   const root = document.getElementById('study-transfer');
@@ -821,7 +822,7 @@ window.KinStudyTransferLocal = function (app) {
       else if (f.state === 'result' && f.outcome === 'rejected') refused++;
       else attention++;
     }
-    if (kept || attention || refused) status.textContent = TEXT.summary(kept, attention, refused);
+    if (kept || attention || refused) kinWrite(status, TEXT.summary(kept, attention, refused));
   }
 
   // ── Download Originals (5.2, 5.3, 6) ──
