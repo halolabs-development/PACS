@@ -83,11 +83,23 @@ class MeasurementReadbackE2E(ViewerHistoryE2E):
                 WHERE "itemId" IN (SELECT id FROM "ViewerItem" WHERE "studyUid"={literal(f.uid)})''')
         persisted = rows()
         p.unroute('**/viewer-items', lost)
-        with p.expect_response(lambda r: r.request.method=='POST' and r.url.endswith('/viewer-items')) as response:
+        # The retry's answer is read where it is fetched and handed to the page unchanged. Reading it back
+        # from the browser afterwards (Response.json) asks Chromium's network log for a body it does not
+        # always keep, and then fails with "No data found for resource" after the server answered 200.
+        answered = []
+        def passed(route):
+            response = route.fetch()
+            answered.append((route.request.post_data, response.status, response.json()))
+            route.fulfill(response=response)
+        p.route('**/viewer-items', passed)
+        with p.expect_response(lambda r: r.request.method=='POST' and r.url.endswith('/viewer-items')):
             row.get_by_role('button', name='Retry Request').click()
-        receipt = response.value
-        self.assertEqual(receipt.request.post_data, seen[0])
-        self.assertEqual(receipt.json().get('referenceStatus'), 'verified')
+        p.unroute('**/viewer-items', passed)
+        self.assertEqual(1, len(answered))
+        sent, status, body = answered[0]
+        self.assertEqual(sent, seen[0])
+        self.assertEqual(status, 200)
+        self.assertEqual(body.get('referenceStatus'), 'verified')
         expect(row).to_contain_text('저장 완료')
         expect(p.locator('svg.svg-layer')).to_contain_text('mm')
         expect(p.locator('svg.svg-layer')).not_to_contain_text('재확인 필요')

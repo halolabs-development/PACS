@@ -43,6 +43,13 @@ class MeasureBaseE2E(ViewerJobPrintE2E):
         box = p.locator('.cornerstone-canvas').first.bounding_box()
         p.mouse.click(box['x'] + box['width'] * fx, box['y'] + box['height'] * fy)
 
+    # The centre of a drawn point handle, found and measured in one page task. The measurement layer is rebuilt on
+    # every render of its cell (viewer-features-measure.js draw: replaceChildren), so an element a locator resolved
+    # can be detached before a separate bounding_box call reads it, and that call then answers None.
+    def handle_centre(self, p, selector):
+        return p.wait_for_function("""selector => { const node = document.querySelector(selector), r = node?.getBoundingClientRect();
+          return r && r.width && r.height ? [r.left + r.width / 2, r.top + r.height / 2] : null; }""", arg=selector).json_value()
+
     def marks(self, p, kind):
         return p.evaluate("""tool => cornerstoneTools.annotation.state.getAllAnnotations().filter(a => a.metadata.toolName === tool)
           .map(a => ({ uid: a.annotationUID, text: a.data.text, title: a.data.title, points: a.data.handles.points, baseline: a.data.kinBaseline }))""", TOOLS[kind])
@@ -100,9 +107,8 @@ class MeasureBaseE2E(ViewerJobPrintE2E):
         # Edit: the circle is unlocked, moved by its handle, its values computed again at the new place, and saved as r2.
         row = p.locator('#kin-viewer-history section[data-kind=circle]')
         row.get_by_role('button', name='Edit', exact=True).click()
-        handle = p.locator('[data-kin-handle]').first
-        expect(handle).to_be_visible()
-        box = handle.bounding_box(); x, y = box['x'] + box['width'] / 2, box['y'] + box['height'] / 2
+        expect(p.locator('[data-kin-handle]').first).to_be_visible()
+        x, y = self.handle_centre(p, '[data-kin-handle]')
         p.mouse.move(x, y); p.mouse.down(); p.mouse.move(x + 30, y + 20, steps=6); p.mouse.up()
         row.get_by_role('button', name='Save', exact=True).click(); expect(row).to_contain_text('Saved r2')
         moved = [h for h in self.items(f) if h['item']['kind'] == 'circle'][0]['item']
