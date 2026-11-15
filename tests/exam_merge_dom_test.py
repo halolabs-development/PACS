@@ -410,8 +410,9 @@ class ExamMerge(unittest.TestCase):
         return locator.evaluate_all("nodes => nodes.map(n => n.textContent.trim())")
 
     def test_korean_merge_window_translates_its_words_and_keeps_its_data(self):
-        # A study description that reads like a glossary template ("Split {0}") is still data.
+        # A study description and a patient name that read like glossary templates ("Split {0}", "Base {0}") are still data.
         self.site.desc[h.UID_B] = "Split Chest CT"
+        self.site.flow = tuple((uid, "Base Nora" if patient == "SYN-P-001" else name, patient) for uid, name, patient in self.site.flow)
         self.page.evaluate("() => load()")
         self.language("ko")
         self.pick(h.UID)
@@ -421,11 +422,18 @@ class ExamMerge(unittest.TestCase):
         expect(win.locator("thead th")).to_have_text(["합치기", "기준", "ID", "이름", "검사일", "검사명", "접수 번호", "시리즈 / 영상", "판독문"])
         expect(self.row_of(win, h.UID_B).locator("td")).to_have_count(9)
         cells = self.texts(self.row_of(win, h.UID_B).locator("td"))
+        self.assertEqual("Base Nora", cells[3])
         self.assertEqual("Split Chest CT", cells[5])
         self.assertEqual("SYNACC-A2", cells[6])
         self.assertEqual("1 / 12", cells[7])
         self.assertEqual("미판독", cells[8], "the report status is a word of the screen")
         expect(self.result(win)).to_contain_text("결과: 검사 1건 (기준 SYNACC-A1, 2026-10-03)")
+        # The screen language changes while the window is open: the words follow, the data stays.
+        self.language("en")
+        expect(win.locator("thead th").nth(1)).to_have_text("Base")
+        expect(self.row_of(win, h.UID_B).locator("td").nth(8)).to_have_text("Unread")
+        cells = self.texts(self.row_of(win, h.UID_B).locator("td"))
+        self.assertEqual(("Base Nora", "Split Chest CT"), (cells[3], cells[5]))
 
     def test_english_screen_shows_the_server_checks_and_refusals_in_english(self):
         self.site.groups[h.UID] = [h.UID, h.UID_B]

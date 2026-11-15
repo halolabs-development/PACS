@@ -236,6 +236,21 @@ class FilmPrintWindow(unittest.TestCase):
         self.page.locator("#film-print-close").click()
         expect(self.page.locator("#film-print")).to_be_hidden()
 
+    def test_the_study_line_keeps_the_patient_data_in_either_screen_language(self):
+        # A patient name that reads like a glossary template ("Base {0}") is still data, before and after a language change.
+        site = FilmSite()
+        uid, _, patient_id = site.flow[1]
+        site.flow = (site.flow[0], (uid, "Base Nora", patient_id), *site.flow[2:])
+        self.start(site)
+        self.open_study("Base Nora")
+        self.open_from_more()
+        head = self.page.locator("#film-print .fp-study")
+        expect(head).to_have_text(re.compile(r"^Base Nora · "))
+        for lang in ("ko", "en"):
+            self.assertTrue(self.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", lang))
+            expect(self.page.locator("#film-print-title")).to_have_text("영상 인쇄" if lang == "ko" else "Print Images")
+            expect(head).to_have_text(re.compile(r"^Base Nora · "))
+
     def test_format_series_and_films(self):
         self.start()
         self.open_study()
