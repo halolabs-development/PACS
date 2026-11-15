@@ -156,16 +156,21 @@
       paintFilm();
       label_();
       if (!dialog.open) dialog.showModal();
+      // The list belongs to this window, not to one layout read: a Format, size or orientation chosen while it is read
+      // asks for a newer layout (and a newer seq), and the list that then arrives is still this window's list.
+      const opened = session, same = () => session === opened && dialog.open;
       try {
         const destinations = await ctx.api('GET', '/film-print/destinations', undefined, undefined, doc());
-        if (!current(mine)) return;
+        if (!same()) return;
         session.destinations = { printers: Array.isArray(destinations?.printers) ? destinations.printers : [],
           devices: Array.isArray(destinations?.devices) ? destinations.devices : [] };
         paintTargets(last);
       } catch (error) {
-        if (current(mine)) say([['err', 'Failed — ' + reason(error, '프린터 목록을 불러오지 못했습니다')]]);
+        if (!same()) return;
+        say([['err', 'Failed — ' + reason(error, '프린터 목록을 불러오지 못했습니다')]]);
       }
-      await loadLayout(1, true);
+      // A layout asked for since the window opened is newer than this first one and already on its way.
+      if (current(mine)) await loadLayout(1, true);
     }
 
     function current(mine) { return !!session && session.seq === mine && dialog.open; }

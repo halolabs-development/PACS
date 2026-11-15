@@ -55,6 +55,8 @@ class FilmSite(rf.FlowSite):
         self.script = ["sent", "printed"]   # the states a job reaches, one per read after its creation
         self.post_answers = []              # "lost": the job is created and the answer dropped
         self.held_job_reads = []
+        self.hold_destinations = False      # the printer list is answered only when the test releases it
+        self.held_destinations = []
         self.plan_changed = False           # the next print is refused: the series changed since its preview
 
     def handle(self, route, request):
@@ -88,6 +90,8 @@ class FilmSite(rf.FlowSite):
         if refused:
             return self.refuse(route, *refused)
         if method == "GET" and path == "/api/film-print/destinations":
+            if self.hold_destinations:
+                return self.held_destinations.append(route)
             return route.fulfill(json={"printers": [PRINTER_A, PRINTER_B], "devices": [DEVICE]})
         if method == "POST" and path == "/api/film-print/layout":
             body = request.post_data_json
@@ -247,6 +251,27 @@ class FilmPrintWindow(unittest.TestCase):
         expect(self.page.locator("#film-print-go")).to_have_text("Send")
         self.page.locator("#film-print-to-printer").check()
         expect(self.page.locator("#film-print-go")).to_have_text("Print")
+
+    def test_a_format_chosen_while_the_printer_list_is_read_keeps_the_list(self):
+        # The layout a changed Format asks for is newer than the window's own first layout, but not newer than the
+        # printer list: that list still belongs to this window and is shown when it arrives.
+        site = FilmSite()
+        site.hold_destinations = True
+        self.start(site)
+        self.open_study()
+        self.page.locator("#report-more > summary").click()
+        self.page.locator("#b-film-print").click()
+        expect(self.page.locator("#film-print")).to_be_visible()
+        for _ in range(100):   # route callbacks are delivered while the page is waited on
+            if site.held_destinations: break
+            self.page.wait_for_timeout(50)
+        self.assertEqual(1, len(site.held_destinations), "the printer list is being read")
+        self.page.locator("#film-print-format").select_option("3x4")
+        expect(self.page.locator("#film-print-film .fp-cell")).to_have_count(12)
+        site.held_destinations.pop(0).fulfill(json={"printers": [PRINTER_A, PRINTER_B], "devices": [DEVICE]})
+        expect(self.page.locator("#film-print-target option")).to_have_text(["SYN Film Printer A · AE SYNPRA", "SYN Film Printer B · AE SYNPRB"])
+        expect(self.page.locator("#film-print-film-of")).to_have_text("Film 1 of 1")
+        expect(self.page.locator("#film-print-go")).to_be_enabled()
 
     # ── the result line ──
     def test_printed_follows_sending_and_sent(self):
