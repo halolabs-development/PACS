@@ -30,8 +30,12 @@
     const scopedPath = suffix => path + suffix + (examReference ? '?exam=' + encodeURIComponent(JSON.stringify(examReference)) : '');
     const firstOpening = valid && !opened.has(openingKey);
     if (valid) opened.add(openingKey);
-    // A Job (or a finding's saved location) chosen to open this viewer wins over the saved view.
-    const jobChosen = ['kinJob', 'kinFinding'].some(name => query.has(name));
+    // A Job (or a finding's saved location) chosen to open this viewer wins over the saved view. Whoever puts it on the
+    // screen records under this address when that is over (window.kinViewerOpeningEnded): the Jobs panel for kinJob,
+    // the Findings section for kinFinding. Until that record stands it is still on its way — whether or not its module
+    // has started yet, and however long it takes.
+    const chosen = ['kinJob', 'kinFinding'].filter(name => query.has(name)), jobChosen = chosen.length > 0;
+    const opening = () => chosen.some(name => window.kinViewerOpeningEnded?.[name] !== search);
     const abort = new AbortController(), { signal } = abort;
     const convert = (lower, upper) => native?.utilities?.windowLevel?.toWindowLevel?.(lower, upper);
     // phase: starting (the viewer's first layout and images), restoring (the saved view going back), ready (saving).
@@ -366,15 +370,17 @@
       }
       return false;
     }
-    // Waits while the Jobs panel is still putting the chosen Job on the screen, then until the view it left has not
-    // changed for the quiet time. An opening whose Job restore is already over (or has no Jobs panel) waits for nothing.
+    // Waits until the chosen Job (or finding location) is recorded as over — restored, refused, failed or given up — and
+    // then until the view it left has not changed for the quiet time. No time limit ends the first wait: a restore
+    // still going is not taken for one that has ended, and while there is no record there is no starting point, so
+    // nothing is saved (the window closing included). An opening already over when this is reached waits for nothing.
     async function jobView() {
-      const until = Date.now() + START_MS;
       let waited = false;
-      while (live() && Date.now() < until && window.kinViewerJobOpening?.() === true) { waited = true; await wait(100); }
+      while (live() && opening()) { waited = true; await wait(100); }
       if (!waited) return;
+      // The restore itself is over; this only lets its last images stand. A view that never stands still is the reader's.
       let before = null, since = 0;
-      while (live() && Date.now() < until) {
+      for (const until = Date.now() + START_MS; live() && Date.now() < until;) {
         const view = captured(), now = view && JSON.stringify(view);
         if (now && now === before) { if (Date.now() - since >= QUIET) return; }
         else { before = now; since = Date.now(); }

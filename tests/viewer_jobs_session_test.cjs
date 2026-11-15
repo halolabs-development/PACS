@@ -24,7 +24,7 @@ const tick = async (n = 20) => { for (let i = 0; i < n; i++) await new Promise(r
 
 // A writer document (FIRST confirmed by the other panels) with the Job panel mounted and listing; `hold(url)` names the requests the
 // case answers itself.
-async function jobsWorld(source = JOBS) {
+async function jobsWorld(source = JOBS, search = '?StudyInstanceUIDs=' + STUDY, shown = LISTED) {
   const reasons = [], held = [], log = [];
   let hold = () => false;
   const answer = url => url === '/api/me' ? response(200, FIRST)
@@ -37,7 +37,7 @@ async function jobsWorld(source = JOBS) {
   const layout = element('details'); layout.append(element('summary'));
   const sandbox = { document: { createElement: element, head: element('head'), querySelector: selector => selector === '#kin-viewer-layout' ? layout : null,
       addEventListener() {}, removeEventListener() {} },
-    location: { search: '?StudyInstanceUIDs=' + STUDY, origin: 'https://kin.test', hash: '' }, fetch, crypto, AbortController, URL, URLSearchParams,
+    location: { search, origin: 'https://kin.test', hash: '' }, fetch, crypto, AbortController, URL, URLSearchParams,
     setTimeout: (callback, ms) => { const timer = setTimeout(callback, ms); timer.unref(); return timer; }, clearTimeout,
     // The panel's 1 s check never runs on its own here: a case that leaves the screen sees the answer before any tick would end it.
     setInterval: () => 0, clearInterval() {}, addEventListener() {}, removeEventListener() {} };
@@ -54,8 +54,10 @@ async function jobsWorld(source = JOBS) {
   await tick();
   const find = (root, match) => match(root) ? root : root.children.map(c => find(c, match)).find(Boolean) || null;
   const status = () => find(layout, e => e.id === 'kin-viewer-jobs-status').textContent;
-  assert.equal(status(), LISTED, 'the panel works for the document\'s account');
-  return { session, end: world.end, reasons, held, log, enders: () => enders, holdWhen: fn => { hold = fn; }, sandbox, panel, status,
+  assert.equal(status(), shown, 'the panel works for the document\'s account');
+  return { session, end: world.end, reasons, held, log, enders: () => enders, holdWhen: fn => { hold = fn; }, sandbox, panel, status, layout,
+    // What Auto Save View reads: the address under which this panel recorded that the Job it names is over.
+    over: () => sandbox.kinViewerOpeningEnded?.kinJob,
     // Everything the panel shows (texts, values, disabled and hidden controls), as one comparable value.
     view: () => JSON.stringify(layout),
     refresh: () => find(layout, e => e.tagName === 'button' && e.textContent === 'Refresh Jobs').onclick() };
@@ -121,6 +123,41 @@ test('U5 Job: a current matching identity proceeds; invalid or dropped identitie
   w.held[0].release(200, FIRST); await run; await tick();
   assert.equal(w.status(), LISTED);
   assert.equal(w.session.state(), 'writer');
+});
+
+// The Job an address names (kinJob) is put on the screen by this panel once its images stand. Auto Save View takes its
+// starting point only after the panel records that this is over; while there is no record the Job is still on its way.
+const OPENING = '?StudyInstanceUIDs=' + STUDY + '&kinJob=00000000-0000-4000-8000-000000000001';
+const WAITING = '저장한 비교 영상 로딩 중…';
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+test('Job opening: recorded as over only when it has settled, however it ends; a stopped panel takes its record along', async () => {
+  // An address that names no Job has nothing on its way.
+  const plain = await jobsWorld();
+  assert.equal(plain.over(), '?StudyInstanceUIDs=' + STUDY);
+  plain.panel.stop();
+  assert.equal(plain.over(), undefined, 'a stopped panel takes its record along: the next mount starts over');
+  // A mount that cannot show the panel puts nothing on the screen.
+  plain.sandbox.document.querySelector = () => null;
+  plain.panel.mount();
+  assert.equal(plain.over(), '?StudyInstanceUIDs=' + STUDY);
+  // The Job's images do not stand yet: nothing is recorded while the panel waits for them.
+  const waiting = async () => { const w = await jobsWorld(JOBS, OPENING, WAITING); await pause(250); assert.equal(w.over(), undefined, 'still on its way'); return w; };
+  // The reader's own request goes ahead of it: the opening is given up, and that is its end.
+  const input = await waiting();
+  await input.refresh(); await pause(250);
+  assert.equal(input.over(), OPENING);
+  // The session ends first: over.
+  const ended = await waiting();
+  ended.end(); await pause(250);
+  assert.equal(ended.over(), OPENING);
+  // The panel is stopped first (the mode left): nothing is recorded then or later.
+  const stopped = await waiting();
+  stopped.panel.stop(); await pause(250);
+  assert.equal(stopped.over(), undefined);
+  // The address changes under it: the panel ends, and the record names the address it was opened with.
+  const moved = await waiting();
+  moved.sandbox.location.search = '?StudyInstanceUIDs=' + OTHER_STUDY; await pause(250);
+  assert.equal(moved.over(), OPENING);
 });
 
 test('U5INT-F01: temporary coded refusal preserves the job panel and its retry', async () => {

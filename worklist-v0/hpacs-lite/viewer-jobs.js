@@ -9,7 +9,14 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
   function mount() {
     stop();
     const search = location.search, scope = model.scope(search);
-    if (!scope) return;
+    // The Job this address names is put on the screen once its images stand (initialize below). Auto Save View takes its
+    // starting point only after that is over, and it may start before or after this panel does: the end is kept on the
+    // window under the address. Without it the Job is still on its way, however long that takes. A mount that cannot
+    // show the panel puts nothing on the screen: for it the opening is over at once.
+    const openings = () => window.kinViewerOpeningEnded ||= {};
+    delete openings().kinJob;
+    const openingOver = () => { openings().kinJob = search; };
+    if (!scope) { openingOver(); return; }
     const studies = new URLSearchParams(search).get('StudyInstanceUIDs').split(',');
     const exam=window.KinViewerExamScope?.snapshot(),reportUid=exam?.reportUid||studies[0];
     const withExam=value=>window.KinExamScope.jobSnapshot(value,exam,studies,
@@ -20,7 +27,7 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
     const volumeJobs = window.kinCreateVolumeJob?.({grid,cs,ds,studies,
       stack:{cell:(g,measure)=>stackCell(g,measure),resolve:cell=>resolve(cell),prepare:(cells,ids,current)=>prepareStacks(cells,ids,current)}});
     const volumeTools = () => { if(!volumeJobs)throw new Error('MPR 저장 도구를 불러오지 못했습니다. 미저장 입력을 보존한 뒤 뷰어를 다시 여세요.');return volumeJobs; };
-    const parent = document.querySelector('#kin-viewer-layout'); if (!parent) return;
+    const parent = document.querySelector('#kin-viewer-layout'); if (!parent) { openingOver(); return; }
     parent.style.maxHeight = '40vh'; parent.style.overflow = 'auto';
     parent.querySelector('summary').textContent = 'Comparison & Layout';
     const panel = document.createElement('details'); panel.id = 'kin-viewer-jobs'; panel.open = true;
@@ -39,11 +46,6 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
     let ended = false, busy = false, me = null, serial = 0, editSerial = 0, pending = null, editRow = null, applying = false, channel, lastAuth = 0, checking = false;
     const workspaceState = () => ({ busy: !ended && (busy || applying), dirty: !ended && !!(pending || editRow || title.value || description.value || window.kinMprMarks?.dirty?.() || window.kinMprCurved?.dirty?.() || window.kinMprPath?.dirty?.() || window.kinVolumeMipJob?.dirty?.()) });
     window.kinViewerJobWorkspaceState = workspaceState;
-    // A Job named in the address is put on the screen once its images stand (initialize below). Until that ends, the
-    // view on the screen is still on its way to the Job's: Auto Save View takes its starting point after it.
-    let openingJob = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(new URLSearchParams(search).get('kinJob') || '');
-    const jobOpening = () => openingJob && !ended;
-    window.kinViewerJobOpening = jobOpening;
     // This panel also runs in the separate named viewer window, where the
     // worklist's embedded-frame guard cannot protect an unfinished title,
     // edit, or request when the window is closed directly.
@@ -717,8 +719,12 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
       }
       status.textContent = '비교 영상 로딩을 완료하지 못했습니다. 목록의 이 작업 복원으로 다시 시도하세요.';
     }
-    initialize().catch(e => { if (live()) status.textContent = e.message; }).finally(() => { openingJob = false; refresh(); });
-    stop = () => { if (window.kinViewerJobWorkspaceState === workspaceState) delete window.kinViewerJobWorkspaceState; if (window.kinViewerJobOpening === jobOpening) delete window.kinViewerJobOpening; if (window.kinViewerJobCommand === mipCommand) delete window.kinViewerJobCommand; if (window.kinViewerJobLocation === jobLocation) delete window.kinViewerJobLocation; offEnd(); end(); printer?.destroy(); clearInterval(timer); channel?.close();  if (ownsWindowUnload) window.removeEventListener('beforeunload', beforeUnload); for (const event of ['pointerdown', 'wheel', 'keydown']) document.removeEventListener(event, interaction, true); panel.remove(); };
+    // Over when initialize has settled — the Job restored, refused or failed, its images given up on, the reader's input
+    // or the end of this session ahead of it. A panel that is stopped (the mode left, the account no longer a writer)
+    // records nothing and takes its record with it: the next mount opens the Job again.
+    let stopped = false;
+    initialize().catch(e => { if (live()) status.textContent = e.message; }).finally(() => { if (!stopped) openingOver(); refresh(); });
+    stop = () => { stopped = true; if (openings().kinJob === search) delete openings().kinJob; if (window.kinViewerJobWorkspaceState === workspaceState) delete window.kinViewerJobWorkspaceState; if (window.kinViewerJobCommand === mipCommand) delete window.kinViewerJobCommand; if (window.kinViewerJobLocation === jobLocation) delete window.kinViewerJobLocation; offEnd(); end(); printer?.destroy(); clearInterval(timer); channel?.close();  if (ownsWindowUnload) window.removeEventListener('beforeunload', beforeUnload); for (const event of ['pointerdown', 'wheel', 'keydown']) document.removeEventListener(event, interaction, true); panel.remove(); };
   }
   return { mount, stop: () => stop() };
 };

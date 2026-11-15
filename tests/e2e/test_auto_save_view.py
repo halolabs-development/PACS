@@ -184,3 +184,6 @@ class AutoSaveViewE2E(ViewerDisplayMenuE2E):
         now = page.evaluate(STATE)
         self.assertEqual(0, now['index'], 'the chosen Job wins over the automatically saved image')
         self.assertIsNone(now['badge'])
+        # The Job on the screen was the starting point, not a change. The reader's own change after it is saved.
+        mine = self.change(page, 2, 400, 40, 3)
+        self.assertEqual(mine['sop'], self.saved(f)['snapshot']['cells'][0]['sop'], 'saving goes on after the Job has opened')

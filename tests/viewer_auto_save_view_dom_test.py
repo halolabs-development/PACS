@@ -24,6 +24,8 @@ OWNER = ['syn-site', 'syn-reader']
 STUDY = '1.2.826.0.1.3680043.8.498.140'
 SA, SB = STUDY + '.2', STUDY + '.3'
 CHECK = 'Save view changes automatically and apply on reopen'
+JOB = '&kinJob=00000000-0000-4000-8000-000000000001'
+READ = 'GET /api/studies/%s/viewer-auto-view' % STUDY
 
 HARNESS = """<!doctype html><html><head><style>
 body { margin: 0; background: #111; color: #eee; --kin-panel: #222; --kin-ux-text: #eee; --kin-ux-secondary: #999; --kin-accent: #6cf; }
@@ -110,6 +112,9 @@ SETUP = """config => {
   };
   window.kinViewerHistoryWorkspaceState = () => ({ busy: false });
   window.kinViewerJobWorkspaceState = () => ({ busy: false });
+  // The Jobs panel and the Findings section are not part of this harness. What they keep for this module is that a Job
+  // or a finding location named in the address is over; a test that leaves one on its way takes that record away.
+  window.kinViewerOpeningEnded = { kinJob: location.search, kinFinding: location.search };
   window.KinViewerHangingSettings = { modalities: [], defaults: {}, get: () => ({}), mount: () => ({ apply() {}, dispose() {} }), mountSizing: () => ({ dispose() {} }) };
   window.KinSessionTransport = { refusal: () => false, responseError: () => new Error('ended') };
   // The API: the account's viewer settings and this study's saved view (one per reader). `hold` keeps the next save's
@@ -706,16 +711,76 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         self.assertAlmostEqual(4, page.evaluate('synServer.saved.cells[0].zoom'))
 
     def test_35_a_job_still_going_onto_the_screen_is_the_starting_point_not_a_change(self):
-        # The Jobs panel says the chosen Job is still opening; its view lands after the viewer's first quiet layout.
-        page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), query='&kinJob=00000000-0000-4000-8000-000000000001',
-                         setup="window.synJobOpening = true; window.kinViewerJobOpening = () => window.synJobOpening;")
+        # The chosen Job is still on its way (its end is not recorded); its view lands after the viewer's first quiet layout.
+        page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), query=JOB, setup="delete window.kinViewerOpeningEnded.kinJob;")
         self.started(page)
         self.change(page, zoom=3, image=2)
-        page.evaluate("window.synJobOpening = false")
+        page.evaluate("window.kinViewerOpeningEnded.kinJob = location.search")
         # Past the quiet time and the save delay: the Job's view was taken as the starting point and nothing was sent.
         page.wait_for_timeout(3500)
-        self.assertEqual(['GET /api/studies/%s/viewer-auto-view' % STUDY], self.requests(page), 'the restored Job is not saved as a change')
+        self.assertEqual([READ], self.requests(page), 'the restored Job is not saved as a change')
         # The reader's own change after it is saved.
+        self.change(page, zoom=4)
+        page.wait_for_function('synServer.posts.length === 1', timeout=6000)
+        self.assertAlmostEqual(4, page.evaluate('synServer.saved.cells[0].zoom'))
+
+    def test_36_a_jobs_panel_that_has_not_started_is_not_a_job_that_is_over(self):
+        # Nothing has recorded anything: the module that puts the Job on the screen starts after this one. Its Job lands
+        # well after the viewer's first quiet layout, then its end is recorded.
+        page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), query=JOB, setup="delete window.kinViewerOpeningEnded;")
+        self.started(page); page.wait_for_timeout(1500)
+        self.change(page, zoom=3, image=2)
+        page.evaluate("window.kinViewerOpeningEnded = { kinJob: location.search }")
+        page.wait_for_timeout(3500)
+        self.assertEqual([READ], self.requests(page), 'a missing record is a Job still on its way, not a Job that is over')
+        self.assertAlmostEqual(2.5, page.evaluate('synServer.saved.cells[0].zoom'), msg='the saved view stands')
+        self.change(page, zoom=4)
+        page.wait_for_function('synServer.posts.length === 1', timeout=6000)
+        self.assertAlmostEqual(4, page.evaluate('synServer.saved.cells[0].zoom'))
+
+    def test_37_no_length_of_time_makes_a_job_still_on_its_way_over(self):
+        page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), query=JOB, setup="delete window.kinViewerOpeningEnded.kinJob;")
+        self.started(page); page.wait_for_timeout(500)
+        # More than the time this module gives the viewer's own first layout passes while the Job is still going on.
+        page.evaluate("(() => { const real = Date.now.bind(Date); Date.now = () => real() + 31000; })()")
+        page.wait_for_timeout(500)
+        self.change(page, zoom=3, image=2)
+        page.wait_for_timeout(3000)
+        self.assertEqual([READ], self.requests(page), 'the Job is still on its way: nothing is saved')
+        page.evaluate("window.kinViewerOpeningEnded.kinJob = location.search")
+        page.wait_for_timeout(3500)
+        self.assertEqual([READ], self.requests(page), 'the Job that landed meanwhile is the starting point')
+        self.change(page, zoom=4)
+        page.wait_for_function('synServer.posts.length === 1', timeout=6000)
+        self.assertAlmostEqual(4, page.evaluate('synServer.saved.cells[0].zoom'))
+
+    def test_38_closing_the_window_while_the_job_is_on_its_way_saves_nothing(self):
+        page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), query=JOB, setup="delete window.kinViewerOpeningEnded.kinJob;")
+        self.started(page)
+        self.change(page, zoom=3, image=2)
+        page.evaluate("dispatchEvent(new Event('pagehide'))")
+        page.wait_for_timeout(600)
+        self.assertEqual([READ], self.requests(page), 'there is no starting point yet: the Job half on the screen is not sent')
+        self.assertAlmostEqual(2.5, page.evaluate('synServer.saved.cells[0].zoom'), msg='the saved view stands')
+
+    def test_39_a_job_that_was_refused_leaves_the_first_layout_as_the_starting_point(self):
+        # The Job could not be read, was deleted or was given up on: its end is recorded and nothing landed.
+        page = self.open(query=JOB, setup="delete window.kinViewerOpeningEnded.kinJob;")
+        self.started(page); page.wait_for_timeout(500)
+        page.evaluate("window.kinViewerOpeningEnded.kinJob = location.search")
+        page.wait_for_timeout(1000)
+        self.change(page, zoom=4)
+        page.wait_for_function('synServer.posts.length === 1', timeout=6000)
+        self.assertAlmostEqual(4, page.evaluate('synServer.saved.cells[0].zoom'))
+
+    def test_40_a_findings_saved_location_still_on_its_way_is_the_starting_point_too(self):
+        page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), query='&kinFinding=00000000-0000-4000-8000-000000000002',
+                         setup="delete window.kinViewerOpeningEnded.kinFinding;")
+        self.started(page); page.wait_for_timeout(1500)
+        self.change(page, zoom=3, image=2)
+        page.evaluate("window.kinViewerOpeningEnded.kinFinding = location.search")
+        page.wait_for_timeout(3500)
+        self.assertEqual([READ], self.requests(page), 'the restored location is not saved as a change')
         self.change(page, zoom=4)
         page.wait_for_function('synServer.posts.length === 1', timeout=6000)
         self.assertAlmostEqual(4, page.evaluate('synServer.saved.cells[0].zoom'))
