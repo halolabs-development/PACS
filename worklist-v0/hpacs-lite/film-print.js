@@ -183,7 +183,9 @@
       if (list.some(p => p.id === keep)) target.value = keep;
       const before = size.value;
       fitSizes();
-      if (size.value !== before && session.layout) void loadLayout(1);
+      // A size the list no longer offers makes any layout already asked for (shown or still on its way) the wrong film;
+      // before the window's first layout is asked for, that first one reads the new size itself.
+      if (size.value !== before && session.asked) void loadLayout(1);
       label_();
     }
 
@@ -205,6 +207,7 @@
       if (!session) return;
       const mine = ++seq;
       session.seq = mine;
+      session.asked = true;
       session.layout = null;
       label_();
       try {
