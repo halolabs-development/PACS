@@ -39,6 +39,7 @@ from urllib.request import (
     HTTPCookieProcessor, HTTPRedirectHandler, HTTPSHandler, Request, build_opener, urlopen,
 )
 from live_test_gate import require_live_run
+import admin_otp
 import dictation_refusal_oracle as u5
 
 
@@ -854,8 +855,9 @@ class LiveStack:
             request = Request(action, data=urlencode({"username": "jmryu", "password": password, "credentialId": ""}).encode("utf-8"),
                               headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST")
             with opener.open(request, timeout=30) as response:
-                landed = urlparse(response.geturl())
-                response.read()
+                page, url = response.read().decode("utf-8", "replace"), response.geturl()
+            # The imported administrator holds admin: Keycloak asks its synthetic OTP (live_admin_credential seeds it).
+            landed = urlparse(admin_otp.answer_http(opener, page, url, "jmryu")[1])
             if not any(path == "/api/auth/callback" for path, _, _ in trace) or landed.path != "/worklist/hpacs-lite/main.html":
                 # Audit causes are allowlisted classifications, never the audit body or credentials.
                 causes = psql('SELECT detail::jsonb->>\'cause\' FROM "AuditLog" WHERE action=\'auth.login\' '
@@ -892,6 +894,9 @@ class LiveStack:
                 if time.monotonic() >= deadline:
                     raise RuntimeError("Fixture roster publication did not settle")
                 time.sleep(0.05)
+            if "admin" in result["roles"]:
+                # Administrators sign in with OTP (keycloak/README.md): the test identity gets the synthetic one.
+                admin_otp.seed(lambda method, path, body: (lambda r: (r.status, r.body))(self.kc_admin(method, path, body)), user_id)
         for logical, sub in self.user_ids.items():
             if sub == user_id:
                 self.tokens.pop(logical, None)
@@ -1150,7 +1155,8 @@ class LiveStack:
                           headers={"Content-Type": "application/x-www-form-urlencoded"})
         try:
             with opener.open(request, timeout=30) as response:
-                response.read()
+                page, url = response.read().decode("utf-8", "replace"), response.geturl()
+            admin_otp.answer_http(opener, page, url, username)  # administrators: the callback redirect raises below
             raise RuntimeError("Interactive credentials did not return an authorization code")
         except HTTPError as response:
             if response.code != 302:
@@ -1594,7 +1600,7 @@ class BffInvariantTests(unittest.TestCase):
             headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST",
         )
         with opener.open(submitted, timeout=30) as response:
-            response.read()
+            admin_otp.answer_http(opener, response.read().decode("utf-8", "replace"), response.geturl(), self.stack.username(username))
         sid = next((cookie.value for cookie in jar if cookie.name == "kin_sid"), None)
         if refused:
             self.assertIsNone(sid, "DB-refused member must not receive a product session")

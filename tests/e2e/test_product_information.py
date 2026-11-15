@@ -32,6 +32,7 @@ from urllib.request import Request, urlopen
 from playwright.sync_api import expect
 
 from test_worklist import WorklistE2E
+import admin_otp
 
 ROOT = Path(__file__).resolve().parents[2]
 NOTICES = json.loads((ROOT / "config/product-info.json").read_text(encoding="utf-8"))["notices"]
@@ -70,6 +71,7 @@ class ProductInformationE2E(WorklistE2E):
             page.locator("#kc-login").click()
         except Exception:
             raise RuntimeError("Real BFF clinician login could not be submitted") from None
+        admin_otp.answer_page(page, self.stack.username(actor))
         page.wait_for_url("**/worklist/hpacs-lite/clinician.html", timeout=30000)
         expect(page.locator("#actor")).to_contain_text(actor)
         return page

@@ -214,7 +214,7 @@ def run(target, candidate_sha):
     require(not plan_dir.exists(), "Candidate plan directory already exists")
     out, selected = configure(target, ci, runner, plan_dir)
     sources = sorted({row["file"] for row in selected} | {
-        "tests/measurement_ci.py", "tests/live_admin_credential.py", "scripts/run-tests.py"})
+        "tests/measurement_ci.py", "tests/live_admin_credential.py", "tests/admin_otp.py", "scripts/run-tests.py"})
     provenance = {"schema": 1, "requirement": "REQ-SERVER-UPDATE-20260911",
         "risks": ["RISK-DATA", "RISK-SOURCE", "RISK-ROLLBACK"], "test": "TEST-SERVER-UPDATE",
         "candidate_sha": candidate_sha, "tools_sha": github_sha,

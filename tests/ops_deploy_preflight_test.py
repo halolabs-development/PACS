@@ -296,5 +296,79 @@ class PreflightTests(unittest.TestCase):
             self.assertFalse(json.loads(result.stderr)["deployment_authorized"])
 
 
+def rows(*spec):
+    """Admin REST executions rows from (level, requirement, provider or None for a subflow[, config])."""
+    out = []
+    for level, requirement, provider, *config in spec:
+        row = {"level": level, "requirement": requirement, "id": "generated-%d" % len(out), "displayName": "any name", "priority": 999}
+        row.update({"authenticationFlow": True} if provider is None else {"providerId": provider})
+        if config:
+            row.update(authenticationConfig="generated-config", config=config[0])
+        out.append(row)
+    return out
+
+
+class AdminMfaTests(unittest.TestCase):
+    """keycloak/README.md 관리자 OTP 필수: the deploy refuses a realm whose browser or reset flow does not make OTP
+    required for the admin role, before any change (L-01)."""
+    ADMIN = {"condUserRole": "admin", "negate": "false"}
+    NOT_ADMIN = {"condUserRole": "admin", "negate": "true"}
+
+    def setUp(self):
+        self.realm = json.loads(deploy.REALM_FILE.read_text(encoding="utf-8"))
+
+    def shipped(self):
+        """A live read of a realm built from kin-realm.json, or by the README procedure (names, ids and priorities differ)."""
+        configured = lambda requirement: (2, requirement, "conditional-user-configured")
+        browser = rows((0, "ALTERNATIVE", "auth-cookie"), (0, "DISABLED", "auth-spnego"),
+                       (0, "ALTERNATIVE", "identity-provider-redirector"), (0, "ALTERNATIVE", None),
+                       (1, "CONDITIONAL", None), configured("REQUIRED"), (2, "ALTERNATIVE", "organization"),
+                       (0, "ALTERNATIVE", None), (1, "REQUIRED", "auth-username-password-form"), (1, "CONDITIONAL", None),
+                       configured("REQUIRED"), (2, "REQUIRED", "conditional-credential", {"credentials": "webauthn-passwordless"}),
+                       (2, "ALTERNATIVE", "auth-otp-form"), (2, "DISABLED", "webauthn-authenticator"),
+                       (2, "DISABLED", "auth-recovery-authn-code-form"), (2, "REQUIRED", "conditional-user-role", self.NOT_ADMIN),
+                       (1, "CONDITIONAL", None), (2, "REQUIRED", "conditional-user-role", self.ADMIN), (2, "REQUIRED", "auth-otp-form"))
+        reset = rows((0, "REQUIRED", "reset-credentials-choose-user"), (0, "REQUIRED", "reset-credential-email"),
+                     (0, "REQUIRED", "reset-password"), (0, "CONDITIONAL", None), (1, "REQUIRED", "conditional-user-configured"),
+                     (1, "REQUIRED", "reset-otp"), (1, "REQUIRED", "conditional-user-role", self.NOT_ADMIN), (0, "CONDITIONAL", None),
+                     (1, "REQUIRED", "conditional-user-role", self.ADMIN), (1, "REQUIRED", "auth-otp-form"))
+        return {"browserFlow": "kin browser", "resetFlow": "kin reset credentials", "browserOverrides": [],
+                "requiredActions": [{"alias": "CONFIGURE_TOTP", "enabled": True}], "executions": browser, "resetExecutions": reset}
+
+    def test_the_shipped_flows_pass_and_are_the_realm_files(self):
+        deploy.check_admin_mfa(self.shipped(), self.realm)
+        self.assertEqual(deploy.flow_shape(self.shipped()["executions"]),
+                         deploy.flow_shape(deploy.realm_flow_rows(self.realm, self.realm["browserFlow"])))
+
+    def test_an_existing_install_without_the_procedure_is_refused(self):
+        policy = self.shipped()
+        policy["executions"] = [row for row in policy["executions"] if row.get("providerId") != "conditional-user-role"][:-2]
+        with self.assertRaisesRegex(RuntimeError, "browser flow does not require OTP for administrators"):
+            deploy.check_admin_mfa(policy, self.realm)
+
+    def test_each_weakening_is_refused(self):
+        def browser(index, **change):
+            return lambda p: p["executions"][index].update(change)
+        changes = {
+            "admin OTP optional": browser(18, requirement="ALTERNATIVE"),
+            "admin gate negated": browser(17, config={**self.ADMIN, "negate": "true"}),
+            "gate names another role": browser(17, config={**self.ADMIN, "condUserRole": "radiologist"}),
+            "admin subflow disabled": browser(16, requirement="DISABLED"),
+            "admin OTP removed": lambda p: p["executions"].pop(18),
+            "reset admin OTP removed": lambda p: p["resetExecutions"].pop(),
+            "reset OTP optional": lambda p: p["resetExecutions"][9].update(requirement="ALTERNATIVE"),
+            "Configure OTP off": lambda p: p["requiredActions"][0].update(enabled=False),
+            "Configure OTP missing": lambda p: p.update(requiredActions=[]),
+            "a client binds its own browser flow": lambda p: p.update(browserOverrides=["kin-bff"]),
+            "overrides not read": lambda p: p.pop("browserOverrides"),
+            "reset flow not read": lambda p: p.pop("resetExecutions"),
+        }
+        for name, change in changes.items():
+            policy = copy.deepcopy(self.shipped())
+            change(policy)
+            with self.subTest(name), self.assertRaises(RuntimeError):
+                deploy.check_admin_mfa(policy, self.realm)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

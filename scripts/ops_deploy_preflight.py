@@ -354,6 +354,51 @@ def check_keycloak_serverinfo(selected):
     require(selected.get("persistentUserSessions") is True, "Keycloak persistent user sessions are not on")
 
 
+REALM_FILE = Path(__file__).resolve().parent.parent / "keycloak" / "kin-realm.json"
+
+
+def realm_flow_rows(realm, alias):
+    """A flow of the realm file in the shape Admin REST lists it (GET .../authentication/flows/{alias}/executions): depth
+    first, siblings by priority, each row its level, requirement, authenticator or subflow, and the authenticator's config."""
+    flows = {flow["alias"]: flow for flow in realm["authenticationFlows"]}
+    configs = {item["alias"]: item["config"] for item in realm.get("authenticatorConfig", [])}
+    rows = []
+
+    def walk(name, level):
+        for step in sorted(flows[name]["authenticationExecutions"], key=lambda step: step["priority"]):
+            row = {"level": level, "requirement": step["requirement"]}
+            if step.get("authenticatorFlow"):
+                rows.append({**row, "authenticationFlow": True})
+                walk(step["flowAlias"], level + 1)
+            else:
+                rows.append({**row, "providerId": step["authenticator"],
+                             **({"config": configs[step["authenticatorConfig"]]} if step.get("authenticatorConfig") else {})})
+    walk(alias, 0)
+    return rows
+
+
+def flow_shape(rows):
+    """What a flow does, without the names and ids an installation chose: level, requirement, step, step config."""
+    require(type(rows) is list and all(type(row) is dict for row in rows), "The realm's authentication flow could not be read")
+    return [(row.get("level"), row.get("requirement"), "subflow" if row.get("authenticationFlow") is True else row.get("providerId"),
+             sorted((row.get("config") or {}).items())) for row in rows]
+
+
+def check_admin_mfa(policy, realm=None):
+    """Administrators sign in with OTP (keycloak/README.md "관리자 OTP 필수"). The one rule is the shipped realm file: the live
+    browser and reset-credentials flows have the shape of kin-realm.json's, and CONFIGURE_TOTP is enabled so an administrator
+    without OTP enrols at the next sign-in. Existing installations apply it by hand before the deploy; this refuses until then."""
+    realm = realm or json.loads(REALM_FILE.read_text(encoding="utf-8"))
+    require(type(policy) is dict and type(policy.get("requiredActions")) is list, "The realm's login policy could not be read")
+    require(flow_shape(policy.get("executions")) == flow_shape(realm_flow_rows(realm, realm["browserFlow"])),
+            "The realm's browser flow does not require OTP for administrators (keycloak/README.md 관리자 OTP 필수)")
+    require(flow_shape(policy.get("resetExecutions")) == flow_shape(realm_flow_rows(realm, realm["resetCredentialsFlow"])),
+            "The realm's reset-credentials flow does not require OTP for administrators (keycloak/README.md 관리자 OTP 필수)")
+    require(any(type(row) is dict and row.get("alias") == "CONFIGURE_TOTP" and row.get("enabled") is True
+                for row in policy["requiredActions"]), "The realm's Configure OTP required action is not enabled")
+    require(policy.get("browserOverrides") == [], "A client has its own browser flow, outside the administrator OTP")
+
+
 def expected_member_rights(user, isolated, unconfirmed):
     """The row the product's import (api/src/member-rights-import.ts importMemberRights) writes for one realm member:
     the realm roles within APP_ROLES; approved only with exactly one group (the institution), at least one such role and

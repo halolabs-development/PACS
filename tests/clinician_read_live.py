@@ -410,7 +410,7 @@ class ClinicianReadLive(unittest.TestCase):
         data = urlencode({"username": username, "password": password, "credentialId": ""}).encode("utf-8")
         with opener.open(Request(html.unescape(form.group(1)), data=data, method="POST",
                                  headers={"Content-Type": "application/x-www-form-urlencoded"}), timeout=30) as response:
-            response.read()
+            admin_otp.answer_http(opener, response.read().decode("utf-8", "replace"), response.geturl(), username)
         sid = next((cookie.value for cookie in jar if cookie.name == "kin_sid"), None)
         self.assertIsNotNone(sid, "no kin_sid after the BFF login")
         # 같은 cookie jar의 최초 문서 부트스트랩만 읽고 이후에는 이 결속값을 보존한다.
