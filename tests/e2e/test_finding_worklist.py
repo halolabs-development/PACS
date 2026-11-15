@@ -7,7 +7,6 @@ superseded command only asserts what holds (no success text, same URL study set,
 viewer display may already have moved. Finding draft guards stay in FindingNavigationE2E 05/06."""
 import io, json, re, sys, unittest, uuid
 from urllib.parse import parse_qs, urlsplit
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from pydicom import dcmread
 import test_worklist as base
 import test_finding_navigation as navigation
@@ -64,14 +63,22 @@ ENTRY_GEOMETRY = """()=>{
   for(const id of ['b-structured','reading-findings-open','struct-value-text','struct-apply','struct-cancel'])
     out.controls[id]=Object.assign({rect:box(q('#'+id))},seen(q('#'+id)));
   return out;}"""
-# The drawer's bound follows the report column one rendering update later (a ResizeObserver), and a
-# row under the report controls can appear at any moment of a pass: the Critical Results row shows
-# when its first read answers and lifts the controls by its own height. Read between that change and
-# the next frame, the rectangles describe a layout that is never painted - the drawer still bounded
-# by where the controls were. So the geometry is read in animation frames until the bound holds; a
-# bound that never follows still fails, with its rectangles.
-SETTLED_GEOMETRY = """()=>{const g=(%s)();
-  return g.drawer&&g.reportControls&&g.reportFields&&(g.drawer.b<=g.reportControls.y||g.drawer.y>=g.reportControls.b)?g:false;}""" % ENTRY_GEOMETRY
+# The drawer's bound follows the report column in the next rendering update (a ResizeObserver, which
+# runs before paint), and a row under the report controls can appear at any moment of a pass: the
+# Critical Results row shows when its first read answers and lifts the controls by its own height.
+# Read between that change and the next rendering update, the rectangles describe a layout that is
+# never painted. So an overlap is read again after one rendering update (two animation frames: the
+# first runs before that update's observers). If the controls and the fields are where they were,
+# the overlap outlived a rendering update and is returned as it is, for `bound_holds` to fail; only
+# a layout that moved again (another row) is read again.
+FOLLOWED_GEOMETRY = """async()=>{const read=%s;
+  const holds=g=>!!(g.drawer&&g.reportControls&&g.reportFields)&&(g.drawer.b<=g.reportControls.y||g.drawer.y>=g.reportControls.b);
+  const where=g=>JSON.stringify([g.viewport,g.reportControls,g.reportFields]);
+  const update=()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+  let g=read();const reads=[];
+  for(let i=0;i<10&&!holds(g);i++){reads.push({drawer:g.drawer,reportControls:g.reportControls});
+    const before=where(g);await update();g=read();if(where(g)===before)break;}
+  g.overlapReads=reads;return g;}""" % ENTRY_GEOMETRY
 REACH_TARGET = ['.report-p .rbtns', '#b-structured']
 # S2-V: the frozen copies read with names and units; the ellipse numbers are API-seeded, never recomputed.
 ELLIPSE_VALUES = [400.26, 45.0, -20.0, 80.0, 1234]
@@ -727,14 +734,11 @@ class FindingWorklistE2E(navigation.FindingNavigationE2E):
             'the runtime bound did not apply' % (drawer, controls, when, fields))
 
     def settled_geometry(self, w, when):
-        """The geometry of a frame in which the bound holds (SETTLED_GEOMETRY). If none comes, the
-        last rectangles go to `bound_holds`, which names them."""
-        try:
-            return w.wait_for_function(SETTLED_GEOMETRY, timeout=5000).json_value()
-        except PlaywrightTimeoutError:
-            seen = w.evaluate(ENTRY_GEOMETRY)
-            self.bound_holds(seen, when)
-            return seen
+        """The geometry once any layout change has had its one rendering update (FOLLOWED_GEOMETRY),
+        asserted by `bound_holds`; the overlapping reads before it travel in the failure message."""
+        seen = w.evaluate(FOLLOWED_GEOMETRY)
+        self.bound_holds(seen, '%s (overlapping reads before: %s)' % (when, seen.get('overlapReads')))
+        return seen
 
     def entry_pass(self, w, f, width, height):
         """One viewport, and it prints its numbers whatever happens.
