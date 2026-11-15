@@ -62,6 +62,13 @@ AUTH_TIME_MAPPER = {
     "config": {"user.session.note": "AUTH_TIME", "claim.name": "auth_time", "jsonType.label": "long",
                "access.token.claim": "true", "id.token.claim": "true"},
 }
+# The authentication methods Keycloak recorded for the login (kin-bff's mapper in kin-realm.json): an administrator's token
+# carries "otp" only after the realm's administrator OTP step, and the API admits administrators only with it.
+AMR_MAPPER = {
+    "name": "kin-authentication-methods", "protocol": "openid-connect", "consentRequired": False,
+    "protocolMapper": "oidc-amr-mapper",
+    "config": {"id.token.claim": "false", "access.token.claim": "true", "introspection.token.claim": "true"},
+}
 
 
 def load_local_env() -> None:
@@ -619,6 +626,7 @@ class LiveStack:
         self.test_client_uuid = str(created.body)
         mappers = (
             AUTH_TIME_MAPPER,
+            AMR_MAPPER,
             {
                 "name": "kin-api-audience", "protocol": "openid-connect",
                 "protocolMapper": "oidc-audience-mapper", "consentRequired": False,

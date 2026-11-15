@@ -113,7 +113,7 @@ before(async () => {
   process.env.KC_JWKS_URL = 'http://127.0.0.1:' + ctx.provider.address().port + '/certs';
   ctx.tokens = {};
   for (const [sub, roles] of Object.entries(MEMBERS))
-    ctx.tokens[sub] = await new jose.SignJWT({ email: sub + '@example.test', realm_access: { roles }, groups: ['/' + institution] })
+    ctx.tokens[sub] = await new jose.SignJWT({ email: sub + '@example.test', realm_access: { roles }, amr: roles.includes('admin') ? ['otp'] : [], groups: ['/' + institution] })
       .setProtectedHeader({ alg: 'RS256', kid: jwk.kid }).setIssuer(issuer).setSubject(sub).setAudience('kin-api')
       .setIssuedAt().setExpirationTime('30m').sign(privateKey);
   ctx.witness = new PrismaClient({ datasources: { db: { url: process.env.KIN_F_WITNESS_URL } } });

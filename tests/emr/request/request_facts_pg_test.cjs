@@ -50,7 +50,7 @@ async function main() {
     ORTHANC_URL: 'http://127.0.0.1:' + provider.address().port, ORTHANC_USER: 'synthetic', ORTHANC_PASS: randomUUID(),
     KC_JWKS_URL: 'http://127.0.0.1:' + provider.address().port + '/certs' });
   const token = (subject = sub, iss = issuer, roles = ['admin'], extra = {}, expires = '10m') => new jose.SignJWT({
-    email: 'equal-display@example.test', name: 'Equal Display', realm_access: { roles }, groups: ['/' + institution], ...extra,
+    email: 'equal-display@example.test', name: 'Equal Display', realm_access: { roles }, amr: roles.includes('admin') ? ['otp'] : [], groups: ['/' + institution], ...extra,
   }).setProtectedHeader({ alg: 'RS256', kid: jwk.kid }).setIssuer(iss).setSubject(subject).setAudience('kin-api')
     .setIssuedAt().setExpirationTime(expires).sign(privateKey);
   const witness = new PrismaClient({ datasources: { db: { url: process.env.KIN_B2R_WITNESS_URL } } });

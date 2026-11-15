@@ -313,7 +313,7 @@ export const AUTH_END_CAUSES = freeze({
 } as const);
 export type AuthEndCause = typeof AUTH_END_CAUSES[keyof typeof AUTH_END_CAUSES][number];
 export const AUTH_FAILURE_CAUSES = freeze({
-  refused: ['provider-error', 'state-mismatch', 'no-code', 'exchange-failed', 'token-invalid', 'idp-session-ended', 'member-isolated', 'rights-pending'],
+  refused: ['provider-error', 'state-mismatch', 'no-code', 'exchange-failed', 'token-invalid', 'idp-session-ended', 'member-isolated', 'rights-pending', 'admin-otp-required'],
   failed: ['session-failed', 'storage-failure'],
 } as const);
 export type AuthFailureCause = typeof AUTH_FAILURE_CAUSES[keyof typeof AUTH_FAILURE_CAUSES][number];
