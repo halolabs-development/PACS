@@ -17,16 +17,16 @@
       $("#clinical").innerHTML = s ? `
         <div class="clinical-scope">${s.uid === selectedUid ? '판독 대상 검사 정보' : '관련 검사 정보 · 판독 대상은 바뀌지 않습니다'}</div>
         <table>
-          <tr><td>Patient</td><td>${esc(s.name)} (${esc(s.id)})</td></tr>
-          <tr><td>Sex/Age</td><td>${esc(s.sex)} / ${esc(s.age)}</td></tr>
-          <tr><td>Birth</td><td>${esc(s.birth)}</td></tr>
-          <tr><td>Study</td><td>${esc(shownStudyDesc(s))}</td></tr>
-          <tr><td>Date</td><td>${esc(s.date)}</td></tr>
-          <tr><td>AccNo</td><td>${esc(s.acc)}</td></tr>
+          <tr><td>Patient</td><td translate="no">${esc(s.name)} (${esc(s.id)})</td></tr>
+          <tr><td>Sex/Age</td><td translate="no">${esc(s.sex)} / ${esc(s.age)}</td></tr>
+          <tr><td>Birth</td><td translate="no">${esc(s.birth)}</td></tr>
+          <tr><td>Study</td><td translate="no">${esc(shownStudyDesc(s))}</td></tr>
+          <tr><td>Date</td><td translate="no">${esc(s.date)}</td></tr>
+          <tr><td>AccNo</td><td translate="no">${esc(s.acc)}</td></tr>
           <tr><td>Img/Se</td><td>${esc(s.count)} / ${esc(s.series)}</td></tr>
-          <tr><td>SS / Mt</td><td>${esc(s.ss)} / ${s.matched === "M" ? "Matched" : "Unmatched"}</td></tr>
-          <tr><td>Ward</td><td>${esc(s.ward) || "-"}</td></tr>
-          <tr><td>Study UID</td><td>${esc(s.uid)}</td></tr>
+          <tr><td>SS / Mt</td><td><span>${esc(s.ss)}</span> / <span>${s.matched === "M" ? "Matched" : "Unmatched"}</span></td></tr>
+          <tr><td>Ward</td><td translate="no">${esc(s.ward) || "-"}</td></tr>
+          <tr><td>Study UID</td><td translate="no">${esc(s.uid)}</td></tr>
         </table>` : "No clinical information provided.";
       renderStudyIdentity();
       renderObservation();
@@ -67,7 +67,7 @@
     function renderObservation() {
       if (!studyObservationModel) return;
       const summary = KinStudyArrivals.observationSummary(studyObservationModel), status = $("#observation-status");
-      if (status) { status.hidden = !summary.text; status.textContent = summary.text; status.title = summary.title; }
+      if (status) { status.hidden = !summary.text; kinWrite(status, summary.text); status.title = summary.title; }
       // S4-U4 Now Retry, drawn only from labels.retry. Another study or a newer receipt drops the in-flight token
       // and the requested mark, so an answer for what was drawn before is never written over it (A->B->A too).
       // S4-F01V: one drawing serves the worklist panel and every Not Observed item, so both keep the same rules.
@@ -130,6 +130,7 @@
       if (institution) {
         const name = typeof s.institutionName === "string" ? s.institutionName.trim() : "";
         institution.textContent = name ? `${name} · ` : "";
+        institution.translate = false;
         institution.title = name ? "HALO PACS에 등록된 보낸 기관 이름입니다. DICOM 원문 기관명은 DICOM Identity의 (0008,0080) 줄에 있습니다." : "";
       }
       $("#receipt-assignment").textContent = labels.assignment.text; $("#receipt-assignment").title = labels.assignment.title;

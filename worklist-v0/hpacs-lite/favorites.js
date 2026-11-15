@@ -1,6 +1,9 @@
 /* Personal study links; no original or report writes belong in this dialog. */
 window.KinFavorites = function (app) {
+  const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
   const work=window.KinWorkContext;
+  // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
   const d=document.createElement('dialog');d.id='favorite-dialog';d.setAttribute('aria-labelledby','favorite-title');
   d.innerHTML=`<h2 id="favorite-title">Favorites</h2><p>검사 링크를 계정에 저장합니다. 폴더·링크를 제거해도 원검사와 판독문은 유지됩니다.</p>
     <div class="favorite-layout"><aside><label>새 폴더 이름<input id="favorite-new-name" maxlength="120"></label><button id="favorite-create" type="button" title="새 폴더 만들기">New Folder</button><div id="favorite-folders"></div></aside>
@@ -27,7 +30,7 @@ window.KinFavorites = function (app) {
     $('close').disabled=busy;
     if(viewUid){d.querySelectorAll('button,input,select').forEach(el=>el.disabled=true);$('view-choice').disabled=busy||!!pending;$('view-save').disabled=busy||!!pending||!$('view-choice').value;$('view-cancel').disabled=busy||!!pending;$('retry').disabled=busy;$('close').disabled=busy;}
   }
-  function message(text){$('status').textContent=text;}
+  function message(text){kinWrite($('status'),text);}
   function adopt(value){
     if(value&&JSON.stringify(value.owner)!==JSON.stringify(owner)){throw new Error('즐겨찾기 계정이 바뀌었습니다');}
     if(!value||!Number.isInteger(value.revision)||!Array.isArray(value.folders)
@@ -44,7 +47,7 @@ window.KinFavorites = function (app) {
     const f=folder();if(!preserve||previous!==selected)$('name').value=names.get(selected)??f?.name??'';
     $('links').replaceChildren();$('count').textContent=f?`접근 가능한 링크 ${f.uids.length}건`+(f.unavailable?` · 접근 불가 ${f.unavailable}건`:''):'폴더를 만들거나 선택하세요.';
     for(const uid of f?.uids??[]){const row=document.createElement('div');row.className='favorite-link';row.dataset.uid=uid;
-      const text=document.createElement('span');text.textContent=label(uid);row.append(text);
+      const text=document.createElement('span');text.textContent=label(uid);text.translate=false;row.append(text);
       button('검사 선택',()=>choose(uid),row);button('보기 상태 연결',()=>editView(uid),row);if(f.views?.[uid]){button('저장 보기 열기',()=>openView(uid),row);button('보기 연결 해제',()=>command('view',{uid,jobId:null}),row);}button('링크 제거',()=>command('remove',{uid}),row);$('links').append(row);}
     $('current').textContent=current?'추가할 선택 검사 · '+label(current):'목록에서 검사를 선택하면 폴더에 추가할 수 있습니다.';controls();
   }
@@ -75,7 +78,7 @@ window.KinFavorites = function (app) {
     catch(e){work.commit(at,()=>{if(ticket===seq&&same()){
 
       if([400,403,404,409].includes(e.status))pending=null;
-      message('저장 확인 실패: '+e.message+(pending?' · 같은 요청을 다시 시도하거나 최신 목록을 읽으세요.':' · 입력을 확인하거나 최신 목록을 읽으세요.')+' 입력은 유지했습니다.');
+message(kinSay('저장 확인 실패: {e0}{t1} 입력은 유지했습니다.',{e:e.message},{t:pending?' · 같은 요청을 다시 시도하거나 최신 목록을 읽으세요.':' · 입력을 확인하거나 최신 목록을 읽으세요.'}));
     }});}
     finally{work.commit(at,()=>{if(ticket===seq){busy=false;controls();}});}
   }

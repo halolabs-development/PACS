@@ -32,7 +32,7 @@
     const head = el('div', { className: 'order-pane-head' }, el('b', { text: 'Report' }), ' ',
       el('small', { className: 'order-note muted', text: 'Technologists cannot edit or approve reports.' }));
     if (!s) { view.host.element.replaceChildren(head, el('p', { className: 'order-note muted', text: 'Select a study in Study List.' })); return; }
-    const meta = el('div', { className: 'order-note', text: `${s.name} · ${s.id} · ${s.desc || s.modality || ''}` });
+    const meta = Object.assign(el('div', { className: 'order-note', text: `${s.name} · ${s.id} · ${s.desc || s.modality || ''}` }), { translate: false });
     const rs = r?.rs ?? s.rs ?? 'W';
     const written = !!(r && (r.findings || r.conclusion || r.recommendation));
     if (rs === 'W' && !written) {
@@ -54,7 +54,7 @@
       catch (_) { status.textContent = 'Could not copy: clipboard access is blocked.'; }
     });
     const by = [r.repDoc, r.approvedAt ? 'Approved ' + when(r.approvedAt) : r.confirm].filter(Boolean).join(' · ');
-    const block = (title, value) => value ? [el('h5', { text: title }), el('pre', { className: 'order-report-text', text: value })] : [];
+    const block = (title, value) => value ? [el('h5', { text: title }), Object.assign(el('pre', { className: 'order-report-text', text: value }), { translate: false })] : [];
     view.host.element.replaceChildren(head, meta,
       el('div', {}, el('span', { className: 'order-badge ok', 'data-report-state': 'approved', text: 'Approved' }), by ? ' ' + by + ' ' : ' ', copy, ' ', status),
       ...block('Findings', r.findings || ' '), ...block('Conclusion', r.conclusion || ' '), ...block('Recommendation', r.recommendation));

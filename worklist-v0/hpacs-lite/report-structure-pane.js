@@ -106,7 +106,7 @@
       if (!structPane) return;
       const pane = structPane;
       const item = pane.item;
-      $("#struct-template").textContent = pane.template ? pane.template.title : "";
+      $("#struct-template").textContent = pane.template ? pane.template.title : ""; $("#struct-template").translate = false;
       for (const [id, on] of [["#struct-value-choice", item.valueType === "choice"],
                               ["#struct-value-number", item.valueType === "number"],
                               ["#struct-value-text", item.valueType === "text"],
@@ -125,7 +125,7 @@
        * 무엇이 사라지는지 눈으로 볼 수 없는데, 이 단위에서 본문 글자를 지우는 경로는 여기 하나뿐이다.
        * 줄 번호만 말하면 "몇 번째 줄"이 맞는지 확인할 방법이 없다.
        */
-      $("#struct-line").textContent = pane.line ?? "";
+      $("#struct-line").textContent = pane.line ?? ""; $("#struct-line").translate = false;
       const removing = pane.plan && pane.plan.mode2 === "replace" && pane.previous
         ? String(pane.previous.renderedText ?? "") : "";
       $("#struct-removed").textContent = removing;

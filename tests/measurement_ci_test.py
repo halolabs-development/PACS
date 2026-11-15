@@ -1884,6 +1884,32 @@ class MeasurementCiTests(unittest.TestCase):
         dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
         self.assertIn('- auto-save-view', dispatch)
         self.assertIn('tests/e2e/artifacts/auto-save-view-ci/', dispatch)
+
+    def test_screen_language_profile_is_exact_and_dispatch_only(self):
+        # Screen language: the declared cases of one class in one unit, reached only through the Focused integration dispatch.
+        import ast
+        profile = ci.PROFILES['screen-language']
+        suite, class_name, unit = 'e2e/test_worklist_language.py', 'WorklistLanguageE2E', 'ci-screen-language'
+        self.assertEqual(profile['suites'], ((suite, class_name, unit),))
+        self.assertEqual(profile['out'].name, 'screen-language-ci')
+        self.assertEqual(profile['project_prefix'], 'kin-screen-language-ci-')
+        command, outer = ci.guarded_profile_run(profile, *profile['suites'][0], 2000)
+        self.assertEqual(command[command.index('--class')+1], class_name)
+        self.assertEqual(outer, 935)
+        for name, other in ci.PROFILES.items():
+            if name != 'screen-language':
+                self.assertNotEqual(profile['out'], other['out'], name)
+                self.assertNotEqual(profile['project_prefix'], other['project_prefix'], name)
+                self.assertNotIn(suite, [row[0] for row in other['suites']], name)
+        tree = ast.parse((ci.ROOT/'tests'/suite).read_text(encoding='utf-8'))
+        cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
+        self.assertEqual([node.name for node in cls.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')],
+                         ['test_language_01_korean_buttons_approve_the_same_and_revert',
+                          'test_language_02_english_errors_known_and_unknown'])
+        self.assertNotIn('screen-language', self.catalog.text(automatic_only=True))
+        dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
+        self.assertIn('- screen-language', dispatch)
+        self.assertIn('tests/e2e/artifacts/screen-language-ci/', dispatch)
     def test_profiles_are_exact_and_use_separate_owned_artifacts(self):
         self.assertEqual(set(ci.PROFILES),
                          {'context-loss', 'measurement-accuracy', 'measurements', 'volume-rendering', 'output-integration',
@@ -1924,6 +1950,8 @@ class MeasurementCiTests(unittest.TestCase):
                           'image-report',
                           # Auto Save View on a real stack, Focused integration dispatch only.
                           'auto-save-view',
+                          # Screen language on a real stack, Focused integration dispatch only.
+                          'screen-language',
                           # S7-U5: the session contract job's eight profiles (validate.yml s7-u5-session-contracts matrix);
                           # u5-fixups is the fix round's five screen regressions (final review part 1, blocker 3).
                           'u5-session-api', 'u5-session-draft', 'u5-session-regression', 'u5-session-boundaries',
