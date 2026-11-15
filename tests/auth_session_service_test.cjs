@@ -1101,6 +1101,105 @@ test('AS-03 a failed login of a login this server started leaves one failure row
   await w.finish('AS-03');
 });
 
+test('AS-03b the callback over HTTP: a query value is one plain string; any other shape is a malformed callback', async t => {
+  const w = await world(t);
+  // The real Nest controller over the real Express query parser (arrays, objects and a repeated name are what it hands over).
+  const { Module, Logger } = require('/app/node_modules/@nestjs/common');
+  const { NestFactory } = require('/app/node_modules/@nestjs/core');
+  class CallbackHttp {}
+  Module({ controllers: [AuthController], providers: [{ provide: AuthService, useValue: w.I1.service }] })(CallbackHttp);
+  // A quiet start (no route-mapping lines in the captured output); `logger: false` replaces Nest's process-wide logger, so
+  // the one every other case reads is put back as soon as the server listens.
+  const saved = { ref: Logger.staticInstanceRef, levels: Logger.logLevels };
+  const app = await NestFactory.create(CallbackHttp, { logger: false });
+  try { await app.listen(0, '127.0.0.1'); }
+  finally { Logger.staticInstanceRef = saved.ref; Logger.logLevels = saved.levels; }
+  t.after(() => app.close());
+  const port = app.getHttpServer().address().port;
+  const get = (search, cookie) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: '/auth/callback?' + search,
+      headers: { 'x-real-ip': IP, ...(cookie ? { cookie } : {}) } }, res => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => { body += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode, location: res.headers.location ?? null, body,
+        setCookies: res.headers['set-cookie'] ?? [] }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+  const consumed = out => out.setCookies.filter(c => c.startsWith('kin_pending_') && /Max-Age=0/.test(c)).map(c => c.slice(0, c.indexOf('=')));
+  const sidWritten = out => out.setCookies.some(c => c.startsWith('kin_sid='));
+  const begin = async sid => {
+    const out = await w.call(w.I1, 'login', sid ? { sid, query: { prompt: 'UPDATE_PASSWORD' } } : {});
+    const state = new URL(out.location).searchParams.get('state');
+    w.secret('state', state);
+    return { cookie: out.pendingCookie, name: out.pendingCookie.slice(0, out.pendingCookie.indexOf('=')), state };
+  };
+  const failure = cause => ({ actor: 'unknown', action: 'auth.login', target: '',
+    detail: { institution: null, ip: IP, dataSubject: null, outcome: 'failure', cause } });
+  const q = encodeURIComponent;
+  kc.auto = () => reply.reject();
+  t.after(() => { kc.auto = null; });
+
+  // A plain string stays the value it is: the provider's error as it came, Keycloak's password outcome.
+  let p = await begin();
+  let rows = (await w.rows()).length;
+  let out = await get(`error=access_denied&state=${q(p.state)}`, p.cookie);
+  assert.deepEqual([out.status, out.location, consumed(out)], [302, landing('access_denied'), [p.name]]);
+  assert.deepEqual((await w.rows()).slice(rows), [failure('provider_error')]);
+
+  // Each shape that is not one plain string, in a login this server started: the general landing, no code exchange, one
+  // failure row without identity, and only the flow its (plain) state names is consumed. An empty error is an error answer.
+  const cases = [
+    ['error[]', s => `error[]=admin_otp_required&state=${q(s)}`, true],
+    ['error[x]', s => `error[x]=admin_otp_required&state=${q(s)}`, true],
+    ['error twice', s => `error=syn-error&error=admin_otp_required&state=${q(s)}`, true],
+    ['code[]', s => `code[]=syn-code&state=${q(s)}`, true],
+    ['code twice', s => `code=syn-code&code=syn-code-2&state=${q(s)}`, true],
+    ['code[x]', s => `code[x]=syn-code&state=${q(s)}`, true],
+    ['state[]', s => `code=syn-code&state[]=${q(s)}`, false],
+    ['state twice', s => `code=syn-code&state=${q(s)}&state=${q(s)}`, false],
+    ['kc_action_status[]', s => `code=syn-code&state=${q(s)}&kc_action_status[]=success`, true],
+    ['empty error with a code', s => `error=&code=syn-code&state=${q(s)}`, true],
+  ];
+  for (const [label, search, own] of cases) {
+    p = await begin();
+    rows = (await w.rows()).length;
+    const exchanged = kc.tokens;
+    out = await get(search(p.state), p.cookie);
+    assert.deepEqual([out.status, out.location, kc.tokens - exchanged, sidWritten(out)], [302, landing('login_failed'), 0, false], label);
+    assert.deepEqual((await w.rows()).slice(rows), [failure('provider_error')], label + ': one failure row');
+    assert.deepEqual(consumed(out), own ? [p.name] : [], label + ': only the flow its state names is consumed');
+  }
+  assert.equal(await w.sessions(), 0);
+
+  // No login this server started: the same landing and no row.
+  rows = (await w.rows()).length;
+  out = await get('error[]=admin_otp_required');
+  assert.deepEqual([out.status, out.location, (await w.rows()).length - rows], [302, landing('login_failed'), 0]);
+
+  // A browser with a session: a malformed callback is answered before the session shortcut, and the session stays.
+  const sid = await w.session(await w.issue('has', { sub: 'syn-sub-has' }));
+  out = await get('error[]=admin_otp_required', 'kin_sid=' + q(sid));
+  assert.deepEqual([out.status, out.location, sidWritten(out), await w.sessions()], [302, landing('login_failed'), false, 1]);
+
+  // A password action: a plain outcome is Keycloak's answer as before; a malformed one never reads as a password outcome.
+  p = await begin(sid);
+  rows = (await w.rows()).length;
+  out = await get(`state=${q(p.state)}&kc_action_status=success`, ['kin_sid=' + q(sid), p.cookie].join('; '));
+  assert.deepEqual([out.status, out.body.includes('비밀번호를 변경했습니다'), consumed(out), sidWritten(out), (await w.rows()).length - rows],
+    [200, true, [p.name], false, 0]);
+  p = await begin(sid);
+  rows = (await w.rows()).length;
+  const exchanged = kc.tokens;
+  out = await get(`code=syn-code&state=${q(p.state)}&kc_action_status[]=success`, ['kin_sid=' + q(sid), p.cookie].join('; '));
+  assert.deepEqual([out.status, out.location, kc.tokens - exchanged, consumed(out), sidWritten(out), await w.sessions()],
+    [302, landing('login_failed'), 0, [p.name], false, 1]);
+  assert.deepEqual((await w.rows()).slice(rows), [failure('provider_error')]);
+  await w.finish('AS-03b');
+});
+
 test('AS-04 logout: one row from the ended session, Bearer none, overlap one, a guard end its own cause', async t => {
   const w = await world(t);
   // (a) the row's actor, target and institution are the stored token's - the guard's own reading of it.

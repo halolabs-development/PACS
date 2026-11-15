@@ -1,5 +1,5 @@
 import { Body, Controller, Get, HttpCode, Post, Query, Req, Res } from '@nestjs/common';
-import { AuthService, markAuthCode, PasswordActionStatus } from './auth.service';
+import { AuthService, markAuthCode, PasswordActionStatus, readCallbackQuery } from './auth.service';
 import { Public } from './auth.guard';
 
 const PASSWORD_NOTICES: Record<PasswordActionStatus, string> = {
@@ -70,22 +70,23 @@ export class AuthController {
 
   /**
    * 로그인 콜백은 브라우저의 최상위 이동이다: 어느 경우에도 JSON 오류로 답하지 않고 갈 곳으로 보낸다(업무 문서,
-   * 사유가 붙은 랜딩). 판정은 서비스가 한다 — 여기는 그 답을 이동으로 옮길 뿐이다.
+   * 사유가 붙은 랜딩). 판정은 서비스가 한다 — 여기는 그 답을 이동으로 옮길 뿐이다. 쿼리 값은 HTTP 파서가 주는 그대로
+   * (문자열·배열·객체) 받아 `readCallbackQuery` 한 곳에서 읽는다.
    */
   @Public()
   @Get('callback')
   async callback(
     @Req() req: any,
     @Res() res: any,
-    @Query('code') code?: string,
-    @Query('state') state?: string,
-    @Query('error') error?: string,
-    @Query('kc_action_status') actionStatus?: string,
+    @Query('code') code?: unknown,
+    @Query('state') state?: unknown,
+    @Query('error') error?: unknown,
+    @Query('kc_action_status') actionStatus?: unknown,
   ) {
     const pages = `${this.origin()}/worklist/hpacs-lite`;
     let result;
     try {
-      result = await this.auth.finishCallback(req, res, { code, state, error, actionStatus });
+      result = await this.auth.finishCallback(req, res, readCallbackQuery({ code, state, error, actionStatus }));
     } catch {
       result = { kind: 'landing' as const, error: 'login_failed' };
     }

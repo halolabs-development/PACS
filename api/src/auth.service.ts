@@ -81,6 +81,26 @@ export type CallbackResult =
 /** Keycloak AIA의 `kc_action_status`. 모르는 값·error 콜백은 `error`다 — 바뀌었다고도 안 바뀌었다고도 말하지 않는다. */
 export type PasswordActionStatus = 'success' | 'cancelled' | 'error';
 /**
+ * The login callback's four query values as read by `readCallbackQuery`: each is absent or one plain string, and
+ * `malformed` says the callback carried any of them in another shape. A malformed callback's other shapes are not values.
+ */
+export type CallbackQuery = { code?: string; state?: string; error?: string; actionStatus?: string; malformed?: true };
+
+/**
+ * The one place the callback's query is read. A value is one plain string; any other shape the HTTP query parser hands
+ * over (an array, an object, the same name twice) is not a value but a malformed callback - never its first element and
+ * never its string conversion. An empty string is a string: `error=` is an explicit error answer.
+ */
+export function readCallbackQuery(raw: { code: unknown; state: unknown; error: unknown; actionStatus: unknown }): CallbackQuery {
+  const query: CallbackQuery = {};
+  for (const key of ['code', 'state', 'error', 'actionStatus'] as const) {
+    const value = raw[key];
+    if (typeof value === 'string') query[key] = value;
+    else if (value !== undefined) query.malformed = true;
+  }
+  return query;
+}
+/**
  * refresh 교환의 답. `refused`는 Keycloak이 **그 refresh token을 거절했다고 답한 것**(400 invalid_grant: 만료·철회)뿐이다.
  * 연결 실패·시간 초과·5xx·읽지 못한 답·검증하지 못한 새 토큰은 `unavailable`이다 — 세션이 끝났다는 증거가 아니다.
  */
@@ -817,10 +837,18 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** 자기 pending만 소비하고 세션과 성공 기록을 같은 transaction으로 만든다. */
-  async finishCallback(req: any, res: any, query: { code?: string; state?: string; error?: string; actionStatus?: string }): Promise<CallbackResult> {
+  async finishCallback(req: any, res: any, query: CallbackQuery): Promise<CallbackResult> {
     const { code, state, error } = query;
     const flows = this.pendingFlows(req);
     const own = state ? flows.find(item => item.name === this.pendingName(state) && item.pending?.state === state) : undefined;
+    // A malformed callback ends here, before the password action and the active-session shortcut read anything: the
+    // general landing, no code exchange, no session. Only the flow a plain state names is consumed - a malformed state
+    // names none, so another tab's flow stays. A login this server started leaves one failure row, as a provider error does.
+    if (query.malformed) {
+      if (own) this.expirePending(res, own.name);
+      if (flows.some(item => item.live)) await this.loginFailureRow(req, 'provider_error', null);
+      return { kind: 'landing', error: 'login_failed' };
+    }
     // The password action grants no product session: its code is never exchanged and the working document's
     // session/cookie stay as they were. The tab only reports Keycloak's own outcome so the user knows which password holds.
     // Recognised before the active-session shortcut: Keycloak's error answer carries state but no code, and would otherwise
@@ -828,21 +856,21 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     if (own?.live && own.pending?.action === 'UPDATE_PASSWORD') {
       this.expirePending(res, own.name);
       const status = query.actionStatus;
-      return { kind: 'password', status: !error && (status === 'success' || status === 'cancelled') ? status : 'error' };
+      return { kind: 'password', status: error === undefined && (status === 'success' || status === 'cancelled') ? status : 'error' };
     }
     if ((!code || !state) && await this.hasSession(req)) return { kind: 'work' };
     if (own) this.expirePending(res, own.name);
     if (!own?.live || !own.pending) {
       if (flows.some(item => item.live))
-        await this.loginFailureRow(req, error ? 'provider_error' : !code ? 'no_code' : 'state_mismatch', null);
+        await this.loginFailureRow(req, error !== undefined ? 'provider_error' : !code ? 'no_code' : 'state_mismatch', null);
       return await this.hasSession(req) ? { kind: 'work' } : { kind: 'landing', error: 'stale' };
     }
     const flow = own.pending;
-    if (error) {
+    if (error !== undefined) {
       await this.loginFailureRow(req, 'provider_error', null);
       // The provider's own error is shown as it came, but never as one of this server's answers: those (the administrator
-      // OTP answer above all) come only from this server's checks of a verified login.
-      return { kind: 'landing', error: OWN_LANDING_ERRORS.has(error) ? 'login_failed' : error };
+      // OTP answer above all) come only from this server's checks of a verified login. An empty error says nothing to show.
+      return { kind: 'landing', error: error && !OWN_LANDING_ERRORS.has(error) ? error : 'login_failed' };
     }
     if (!code) {
       await this.loginFailureRow(req, 'no_code', null);
