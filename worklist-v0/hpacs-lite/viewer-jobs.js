@@ -9,14 +9,7 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
   function mount() {
     stop();
     const search = location.search, scope = model.scope(search);
-    // The Job this address names is put on the screen once its images stand (initialize below). Auto Save View takes its
-    // starting point only after that is over, and it may start before or after this panel does: the end is kept on the
-    // window under the address. Without it the Job is still on its way, however long that takes. A mount that cannot
-    // show the panel puts nothing on the screen: for it the opening is over at once.
-    const openings = () => window.kinViewerOpeningEnded ||= {};
-    delete openings().kinJob;
-    const openingOver = () => { openings().kinJob = search; };
-    if (!scope) { openingOver(); return; }
+    if (!scope) return;
     const studies = new URLSearchParams(search).get('StudyInstanceUIDs').split(',');
     const exam=window.KinViewerExamScope?.snapshot(),reportUid=exam?.reportUid||studies[0];
     const withExam=value=>window.KinExamScope.jobSnapshot(value,exam,studies,
@@ -27,7 +20,7 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
     const volumeJobs = window.kinCreateVolumeJob?.({grid,cs,ds,studies,
       stack:{cell:(g,measure)=>stackCell(g,measure),resolve:cell=>resolve(cell),prepare:(cells,ids,current)=>prepareStacks(cells,ids,current)}});
     const volumeTools = () => { if(!volumeJobs)throw new Error('MPR 저장 도구를 불러오지 못했습니다. 미저장 입력을 보존한 뒤 뷰어를 다시 여세요.');return volumeJobs; };
-    const parent = document.querySelector('#kin-viewer-layout'); if (!parent) { openingOver(); return; }
+    const parent = document.querySelector('#kin-viewer-layout'); if (!parent) return;
     parent.style.maxHeight = '40vh'; parent.style.overflow = 'auto';
     parent.querySelector('summary').textContent = 'Comparison & Layout';
     const panel = document.createElement('details'); panel.id = 'kin-viewer-jobs'; panel.open = true;
@@ -341,6 +334,28 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
         : version === 13 || version === 15 ? 'MIP Batch 작업을 복원했습니다. 회전 투영 미리보기는 표시 전용이며 원본 영상과 W/L은 바뀌지 않았습니다.'
         : [4,5,6,7,8].includes(version) ? 'MPR 작업을 복원했습니다. 재구성 표시이며 원본 프레임 표식과 별개입니다.' : '비교 작업을 복원했습니다. 표식은 별도 저장한 최신 이력입니다.';
     }
+    /* A restore the address chose (the kinJob page, or a finding's saved location continued into this page) is not the
+       reader's change of view. From just before it first changes the screen until it has settled (applied or rolled back;
+       for a finding's location, after its 3D point move) it holds window.kinViewerOpeningRestore and says so with the
+       event kin-viewer-opening-restore: 'begin' is heard before the hold is taken, so a listener can still send the view
+       the reader left, and 'end' after it is let go. Auto Save View saves nothing while a hold of its screen stands and
+       takes the screen the last one leaves as its starting point. Reading and checking the Job are not held: the reader
+       can still change the view meanwhile, and a restore refused there has changed nothing. Restore Job and a finding
+       moved to within this document are the reader's own and hold nothing.
+       Each hold is let go only by the restore that took it. `screen` moves on each time a panel is taken down (stop,
+       below) and a hold keeps the number it was taken under, so a restore of a screen that is over, settling late, is
+       not counted by the screen that came after it. */
+    const openings = window.kinViewerOpeningRestore ||= { screen: 0, holds: new Set() };
+    const tellOpening = (phase, hold) => { try { window.dispatchEvent(new CustomEvent('kin-viewer-opening-restore', { detail: { phase, hold } })); } catch (_) {} };
+    function holdOpening(ctx) {
+      if (ctx.initialRestore !== true) return;
+      const hold = Object.freeze({ screen: openings.screen });
+      tellOpening('begin', hold); openings.holds.add(hold); ctx.opening = hold;
+    }
+    function releaseOpening(ctx) {
+      const hold = ctx.opening; ctx.opening = null;
+      if (hold && openings.holds.delete(hold)) tellOpening('end', hold);
+    }
     async function restoreJob(row, ctx) {
       const { ticket, before, initialRestore } = ctx, located = ctx.location;
       if (window.kinViewerHistoryHasUnsaved?.() || window.kinMprMarks?.dirty?.()) throw refusal('unsaved', '미저장 표식을 먼저 저장하거나 편집을 마친 뒤 복원하세요.');
@@ -438,6 +453,8 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
       try { if (VOLUME_VERSIONS.includes(job.snapshot.version)) volumeTools().resolve(job.snapshot); else job.snapshot.cells.forEach(resolve); }
       catch (e) { throw refusal(/도구/.test(e.message) ? 'tool-missing' : 'job-studies', e.message); }
       located?.ensure();
+      // Every check is passed: the screen is this restore's from here until it has settled (holdOpening, above).
+      holdOpening(ctx);
       applying = true;
       try { await apply(job.snapshot, ticket, () => { ctx.mutating = true; }); }
       catch (e) {
@@ -448,7 +465,8 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
         try { await apply(previous, ticket); } catch (_) { throw outcome('screen-unknown', 'apply-failed', '복원과 이전 화면 복구에 실패했습니다. 검사를 다시 여세요.'); }
         throw outcome('rolled-back', 'apply-failed', message);
       }
-      finally { if (!located) applying = false; }
+      // A finding's location keeps the screen for its point move: restoreLocation lets go.
+      finally { if (!located) { applying = false; releaseOpening(ctx); } }
       if (!live() || serial !== ticket) throw outcome('screen-unknown', 'apply-failed', '화면이 변경되어 복원 결과를 확인하지 못했습니다.');
       const marks = job.snapshot.version === 6 ? window.KinVolumeMarks?.normalize?.(job.snapshot.marks) ?? null : null;
       lastJob = { jobId: job.id, revision: job.revision, snapshotVersion: job.snapshot.version, marks };
@@ -553,7 +571,7 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
           if (e.status === 403) load().catch(() => {});
         } else if (e?.status === 409 || e?.status === 400) result = { state: 'refused', reason: 'job-conflict', message: e.message };
         else result = { state: 'refused', reason: 'job-unavailable', message: LOCATION_TEXT['job-unavailable'] };
-      } finally { clearTimeout(timer); controller.abort(); restoring = null; busy = false; applying = false; refresh(); }
+      } finally { clearTimeout(timer); controller.abort(); restoring = null; busy = false; applying = false; refresh(); releaseOpening(ctx); }
       if (live()) status.textContent = [result.message, result.pointMessage].filter(Boolean).join(' ');
       return plainOutcome(result);
     }
@@ -719,12 +737,9 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
       }
       status.textContent = '비교 영상 로딩을 완료하지 못했습니다. 목록의 이 작업 복원으로 다시 시도하세요.';
     }
-    // Over when initialize has settled — the Job restored, refused or failed, its images given up on, the reader's input
-    // or the end of this session ahead of it. A panel that is stopped (the mode left, the account no longer a writer)
-    // records nothing and takes its record with it: the next mount opens the Job again.
-    let stopped = false;
-    initialize().catch(e => { if (live()) status.textContent = e.message; }).finally(() => { if (!stopped) openingOver(); refresh(); });
-    stop = () => { stopped = true; if (openings().kinJob === search) delete openings().kinJob; if (window.kinViewerJobWorkspaceState === workspaceState) delete window.kinViewerJobWorkspaceState; if (window.kinViewerJobCommand === mipCommand) delete window.kinViewerJobCommand; if (window.kinViewerJobLocation === jobLocation) delete window.kinViewerJobLocation; offEnd(); end(); printer?.destroy(); clearInterval(timer); channel?.close();  if (ownsWindowUnload) window.removeEventListener('beforeunload', beforeUnload); for (const event of ['pointerdown', 'wheel', 'keydown']) document.removeEventListener(event, interaction, true); panel.remove(); };
+    initialize().catch(e => { if (live()) status.textContent = e.message; }).finally(refresh);
+    // This panel's screen is over: a restore of it that is still held lets go when it settles, without touching the next screen.
+    stop = () => { openings.screen++; if (window.kinViewerJobWorkspaceState === workspaceState) delete window.kinViewerJobWorkspaceState; if (window.kinViewerJobCommand === mipCommand) delete window.kinViewerJobCommand; if (window.kinViewerJobLocation === jobLocation) delete window.kinViewerJobLocation; offEnd(); end(); printer?.destroy(); clearInterval(timer); channel?.close();  if (ownsWindowUnload) window.removeEventListener('beforeunload', beforeUnload); for (const event of ['pointerdown', 'wheel', 'keydown']) document.removeEventListener(event, interaction, true); panel.remove(); };
   }
   return { mount, stop: () => stop() };
 };

@@ -1102,20 +1102,15 @@
       return finish(locationText(result, copy), { ok: reached === 'ok', result: reached, reason: result.reason, state: result.state, point: result.point });
     }
     // The new document of a continuation: once, after the first authorized list, only for the exact finding, revision and source.
-    // deps.continued is told once when it is over, whatever came of it (restored, refused, or this store ended first).
     async function continueLocation() {
-      try {
-        const c = s.continuation;
-        if (!c || s.ended) return;
-        const e = s.entries.get(c.finding), source = e && e.head ? e.head.item.sources[c.source] : null, copy = jobCopy(source, s.scope);
-        // Without session storage (jobId null) the URL alone names the source, and this runs once in this document.
-        const ok = !c.refused && !!e && e.head.revision === c.revision && !!copy && (c.jobId === null || copy.jobId === c.jobId) && !!studies &&
-          JSON.stringify(studies) === JSON.stringify(copy.studies);
-        if (!ok) { if (e) e.message = CONTINUE_REFUSED_TEXT; else s.status = joined(s.status, CONTINUE_REFUSED_TEXT); notify(); return; }
-        await navigateJob(e, source, c.source, true);
-      } finally {
-        try { if (typeof deps.continued === 'function') deps.continued(); } catch (_) { /* the listener's failure is not the continuation's */ }
-      }
+      const c = s.continuation;
+      if (!c || s.ended) return;
+      const e = s.entries.get(c.finding), source = e && e.head ? e.head.item.sources[c.source] : null, copy = jobCopy(source, s.scope);
+      // Without session storage (jobId null) the URL alone names the source, and this runs once in this document.
+      const ok = !c.refused && !!e && e.head.revision === c.revision && !!copy && (c.jobId === null || copy.jobId === c.jobId) && !!studies &&
+        JSON.stringify(studies) === JSON.stringify(copy.studies);
+      if (!ok) { if (e) e.message = CONTINUE_REFUSED_TEXT; else s.status = joined(s.status, CONTINUE_REFUSED_TEXT); notify(); return; }
+      await navigateJob(e, source, c.source, true);
     }
     // The viewer's current history scope for this same login, read once through deps.history; '' when unknown.
     function liveScope() {

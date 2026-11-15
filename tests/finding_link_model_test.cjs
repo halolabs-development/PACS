@@ -2672,38 +2672,6 @@ test('S2-L2b continuation: once, after the first authorized list, only for the e
   assert.deepEqual(k.loc.requests.map(r => r.jobId), [LM2]);
 });
 
-test('S2-L2b continuation: the store tells once when it is over, and never while its restore is still going on', async () => {
-  const items = [located(LF, [jobCopy()])], request = { finding: LF, revision: 2, source: 0, jobId: LJ, refused: false };
-  const held = async () => {
-    const own = locationDouble(), seen = { told: 0 }; own.answers.push('hold');
-    const k = await locatedStore(items, { continuation: request, continued: () => { seen.told++; }, location: () => own.api }); await tick();
-    assert.deepEqual([own.requests.length, seen.told], [1, 0], 'nothing is told while the location is on its way');
-    return { own, seen, k };
-  };
-  // Restored: told when the restore answers, and a later list tells nothing again.
-  const done = await held();
-  done.own.held.shift()({ state: 'restored', point: 'all-planes' }); await tick();
-  assert.equal(done.seen.told, 1);
-  await done.k.store.load(); await tick();
-  assert.equal(done.seen.told, 1);
-  // The store ended first: told when the restore it was waiting for lets go.
-  const gone = await held();
-  gone.k.store.end(); await tick();
-  gone.own.held.shift()({ state: 'restored', point: 'all-planes' }); await tick();
-  assert.equal(gone.seen.told, 1);
-  // Refused before any restore: told at once.
-  let refused = 0;
-  const r = await locatedStore(items, { continuation: { ...request, refused: true }, continued: () => { refused++; } }); await tick();
-  assert.deepEqual([r.loc.requests.length, refused], [0, 1]);
-  // A listener that throws does not disturb the continuation.
-  const t = await locatedStore(items, { continuation: request, continued: () => { throw new Error('SYN listener'); } }); await tick();
-  assert.equal(t.loc.requests.length, 1);
-  // No continuation: nothing to tell.
-  let none = 0;
-  await locatedStore(items, { continued: () => { none++; } }); await tick();
-  assert.equal(none, 0);
-});
-
 /* The shipped Findings section with a version 2 finding holding a characteristics line, a 3D point and a saved view. */
 async function locationViewer({ schemaHeader = '2', modelOverride } = {}) {
   const document = new EventTarget(); document.body = new Element('body'); document.createElement = tag => new Element(tag); document.querySelectorAll = selector => document.body.querySelectorAll(selector);
@@ -2879,8 +2847,7 @@ test('mounted locations: an older API makes the section read-only; another model
 const OLD_TEXT = () => model.OLD_API_TEXT;
 
 test('mounted continuation: the one-use nonce is consumed once; a missing record refuses the automatic restore', async () => {
-  const restored = { state: 'restored', message: '', point: 'all-planes' };
-  const load = async (search, stored, storage = true, answers = [restored, restored]) => {
+  const load = async (search, stored, storage = true) => {
     const store = new Map(stored ? [[stored[0], stored[1]]] : []);
     const saved = globalThis.__kinStorage;
     const viewer = await (async () => {
@@ -2888,7 +2855,7 @@ test('mounted continuation: the one-use nonce is consumed once; a missing record
       document.querySelector = selector => document.body.all().find(e => selector === '#' + e.id) || null;
       document.createTextNode = value => { const node = new Element('#text'); node.textContent = value; return node; };
       const host = new Element('div'); host.id = 'kin-viewer-history'; document.body.append(host);
-      const loc = locationDouble(); loc.answers.push(...answers);
+      const loc = locationDouble(); loc.answers.push({ state: 'restored', message: '', point: 'all-planes' }, { state: 'restored', message: '', point: 'all-planes' });
       const item = { schemaVersion: 2, title: 'C', text: '', characteristics: '', hidden: false, primary: 0, sources: [jobCopy({ jobStudyUid: VX, studyUid: VX, studies: [VX],
         mark: { ...jobCopy().mark, volume: { ...jobCopy().mark.volume, study: VX } } })] };
       const window = new EventTarget(), ticks = [];
@@ -2910,8 +2877,7 @@ test('mounted continuation: the one-use nonce is consumed once; a missing record
       const findings = window.kinViewerFindings({}, sandbox.kinFindingLinkModel);
       const sync = async () => { for (let i = 0; i < 3; i++) { for (const fn of [...ticks]) fn(); await flush(); } };
       findings.mount(); await sync();
-      // What Auto Save View reads: the address under which this section recorded that its saved location is over.
-      return { loc, findings, sync, store, over: () => window.kinViewerOpeningEnded?.kinFinding, text: () => textOf(document.body) };
+      return { loc, findings, sync, store, text: () => textOf(document.body) };
     })();
     globalThis.__kinStorage = saved;
     return viewer;
@@ -2922,26 +2888,17 @@ test('mounted continuation: the one-use nonce is consumed once; a missing record
   const good = await load(search, ['kin-finding-continue:' + nonce, record]);
   assert.equal(good.loc.requests.length, 1); assert.equal(good.loc.requests[0].waitReady, true);
   assert.equal(good.store.size, 0, 'the nonce is consumed');
-  assert.equal(good.over(), search, 'the restored location is recorded as over, under its address');
   // A second mount in the same document (mode re-entry) never runs it again.
   good.findings.stop(); good.findings.mount(); await good.sync();
   assert.equal(good.loc.requests.length, 1);
-  assert.equal(good.over(), search, 'and stays over: it will not run again in this document');
   const missing = await load(search, null);
   assert.equal(missing.loc.requests.length, 0); assert.ok(missing.text().includes(model.CONTINUE_REFUSED_TEXT));
-  assert.equal(missing.over(), search, 'a refused location is over too');
-  // Still on its way while its restore has not answered; a section that stops takes it along, so it is over then.
-  const going = await load(search, ['kin-finding-continue:' + nonce, record], true, ['hold']);
-  assert.deepEqual([going.loc.requests.length, going.over()], [1, undefined]);
-  going.findings.stop();
-  assert.equal(going.over(), search);
   const mismatched = await load(search, ['kin-finding-continue:' + nonce, JSON.stringify({ finding: LF, revision: 3, source: 0, jobId: LJ })]);
   assert.equal(mismatched.loc.requests.length, 0);
   const blocked = await load(search, null, false);
   assert.equal(blocked.loc.requests.length, 1, 'without session storage the request runs once in this document');
   const plainPage = await load('?StudyInstanceUIDs=' + VX, null);
   assert.equal(plainPage.loc.requests.length, 0); assert.equal(plainPage.text().includes(model.CONTINUE_REFUSED_TEXT), false);
-  assert.equal(plainPage.over(), undefined, 'an address that names no location records nothing');
   for (const v of [good, missing, mismatched, blocked, plainPage]) v.findings.stop();
 });
 

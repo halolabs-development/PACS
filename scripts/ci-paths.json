@@ -2092,6 +2092,7 @@
       "worklist-v0/hpacs-lite/viewer-identity.js",
       "worklist-v0/hpacs-lite/viewer-image-text.js",
       "worklist-v0/hpacs-lite/viewer-images-only.js",
+      "worklist-v0/hpacs-lite/viewer-jobs.js",
       "worklist-v0/hpacs-lite/viewer-launch.js",
       "worklist-v0/hpacs-lite/viewer-opening.js",
       "worklist-v0/hpacs-lite/viewer-placement.js",

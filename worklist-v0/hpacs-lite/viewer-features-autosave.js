@@ -14,6 +14,9 @@
   const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
   window.KinViewerFeatures?.module('autosave', async ({ services, session, store, ui }) => {
+    // The restores the address chose that are changing this window's screen now (viewer-jobs.js holdOpening). This
+    // screen counts the holds taken from its own start on: one taken before it belongs to a screen that is over.
+    const openings = window.kinViewerOpeningRestore ||= { screen: 0, holds: new Set() }, screen = openings.screen;
     await ui.load(['viewer-auto-view-model.js']);
     const model = window.KinAutoViewModel;
     const grid = services.viewportGridService, cells = services.cornerstoneViewportService, sets = services.displaySetService;
@@ -30,12 +33,10 @@
     const scopedPath = suffix => path + suffix + (examReference ? '?exam=' + encodeURIComponent(JSON.stringify(examReference)) : '');
     const firstOpening = valid && !opened.has(openingKey);
     if (valid) opened.add(openingKey);
-    // A Job (or a finding's saved location) chosen to open this viewer wins over the saved view. Whoever puts it on the
-    // screen records under this address when that is over (window.kinViewerOpeningEnded): the Jobs panel for kinJob,
-    // the Findings section for kinFinding. Until that record stands it is still on its way — whether or not its module
-    // has started yet, and however long it takes.
-    const chosen = ['kinJob', 'kinFinding'].filter(name => query.has(name)), jobChosen = chosen.length > 0;
-    const opening = () => chosen.some(name => window.kinViewerOpeningEnded?.[name] !== search);
+    // A Job (or a finding's saved location) chosen to open this viewer wins over the saved view: the saved view is not
+    // put back. Nothing waits for that Job. While it is being put on the screen nothing is saved, and the screen it
+    // leaves is the starting point (landing, below).
+    const jobChosen = ['kinJob', 'kinFinding'].some(name => query.has(name));
     const abort = new AbortController(), { signal } = abort;
     const convert = (lower, upper) => native?.utilities?.windowLevel?.toWindowLevel?.(lower, upper);
     // phase: starting (the viewer's first layout and images), restoring (the saved view going back), ready (saving).
@@ -83,6 +84,8 @@
     const live = () => !ended && location.search === search && !session?.ended?.();
     // Putting the saved view back stops where it is when the check is turned off (even if it is turned on again).
     const restoring = () => live() && on && restoreAt === restoreRun;
+    // A restore the address chose is changing this screen now. No length of time ends it: only that restore letting go.
+    const landing = () => { for (const hold of openings.holds) if (hold.screen >= screen) return true; return false; };
     const writer = () => session?.writer?.() !== false && !session?.ended?.();
     const list = value => Array.from(value || [], Number);
 
@@ -172,9 +175,10 @@
       if (!reached && issued.seq === seq) issued = { text: null, seq };
     }
     // Saves the view when it differs from the last one sent. Going away ('now', 'close') while another save is still
-    // waiting or on its way, the view on the screen is sent anyway, last in order.
+    // waiting or on its way, the view on the screen is sent anyway, last in order. Nothing is captured while a restore
+    // the address chose is landing (the window closing included): a save captured before it still goes.
     function save(mode = 'queue') {
-      if (!on || phase !== 'ready' || held || discarding || !path || !writer()) return chain;
+      if (!on || phase !== 'ready' || held || discarding || landing() || !path || !writer()) return chain;
       if (window.KinViewerCellRules?.busy?.()) { if (mode === 'queue') changed(); return chain; }
       if (generation === null) { read().then(() => { if (live() && on && generation !== null) changed(); }); return chain; }
       const snapshot = captured(), text = snapshot && JSON.stringify(snapshot);
@@ -370,23 +374,21 @@
       }
       return false;
     }
-    // Waits until the chosen Job (or finding location) is recorded as over — restored, refused, failed or given up — and
-    // then until the view it left has not changed for the quiet time. No time limit ends the first wait: a restore
-    // still going is not taken for one that has ended, and while there is no record there is no starting point, so
-    // nothing is saved (the window closing included). An opening already over when this is reached waits for nothing.
-    async function jobView() {
-      let waited = false;
-      while (live() && opening()) { waited = true; await wait(100); }
-      if (!waited) return;
-      // The restore itself is over; this only lets its last images stand. A view that never stands still is the reader's.
-      let before = null, since = 0;
-      for (const until = Date.now() + START_MS; live() && Date.now() < until;) {
-        const view = captured(), now = view && JSON.stringify(view);
-        if (now && now === before) { if (Date.now() - since >= QUIET) return; }
-        else { before = now; since = Date.now(); }
-        await wait(100);
-      }
-    }
+    // A restore the address chose, on this screen. 'begin' is heard just before it first changes the screen, with no
+    // hold taken yet: what the reader changed and is still waiting to be saved is captured and sent now, before the
+    // restore covers it. 'end' is heard when it has let go: with no other still landing, the screen it left is the new
+    // starting point at once (a change right after it is the reader's, and a window closing right after it sends
+    // nothing), and that point is later in order than every save before it, so a late failure of one of those cannot
+    // unsend it. Whatever changed meanwhile was the restore's. A viewer not saving yet takes its starting point when
+    // it starts; one whose restore never began hears nothing.
+    addEventListener('kin-viewer-opening-restore', ({ detail }) => {
+      if (ended || !detail?.hold || !(detail.hold.screen >= screen)) return;
+      if (detail.phase === 'begin') { if (!landing()) { clearTimeout(timer); timer = null; save('now'); } return; }
+      if (landing()) return;
+      clearTimeout(timer); timer = null;
+      if (phase !== 'ready') return;
+      const now = captured(); issued = { text: now ? JSON.stringify(now) : null, seq: ++order };
+    }, { signal });
     let known;
     const settingsRead = new Promise(resolve => { known = resolve; });
     store.subscribe('autoSaveView', value => {
@@ -410,12 +412,9 @@
         catch (error) { console.error(error); }
         if (!live()) return;
       }
-      // A Job chosen to open this viewer is put on the screen by the Jobs panel once its images stand. That view is the
-      // starting point, not the reader's change: saving starts after the Job's restore has ended and its view stands.
-      if (jobChosen) await jobView();
-      if (!live()) return;
       phase = 'ready';
-      // The view on the screen now is the starting point: it is saved once it changes.
+      // The view on the screen now is the starting point: it is saved once it changes. With a chosen restore landing
+      // right now, the screen that restore leaves takes its place.
       const now = captured(); issued = { text: now ? JSON.stringify(now) : null, seq: 0 };
     })().catch(error => console.error(error));
 

@@ -10,6 +10,14 @@ The shipped viewer-features.js, viewer-features-autosave.js, viewer-auto-view-mo
 hanging-protocol-model.js, viewer-image-filter.js, viewer-gsps.js), viewer-ux-shortcuts.js and viewer-ux-toolbar.js (with
 viewer-ux-theme.css) run in Chromium beside synthetic OHIF services, synthetic CT stacks and a synthetic API. The real
 viewer, server and database are in tests/e2e/test_auto_save_view.py.
+
+A restore the address chose (the kinJob page, a finding's saved location continued into the page) is the starting point
+and never a change: the last cases run the shipped viewer-jobs.js, finding-link-model.js and viewer-findings.js on the
+same page (with work-context.js and session-transport.js) and let those panels restore for themselves, over a synthetic
+stack restore that a case can hold half done or make fail. Nothing is saved while such a restore holds the screen
+(however long, the closing window included), what the reader changed before it is sent as it begins, the first change
+after it is saved, and a restore that never begins, is refused while its Job is read or belongs to a screen that is
+over holds nothing back. Restore Job and a finding moved to within the document stay the reader's own changes.
 """
 from pathlib import Path
 import json
@@ -74,6 +82,7 @@ SETUP = """config => {
       getProperties: () => structuredClone(v.properties),
       setProperties(next) { v.properties = { ...v.properties, ...structuredClone(next) }; if (next.voiRange) fire(v, 'VOI_MODIFIED', { range: next.voiRange }); },
       setVOI(range) { v.properties.voiRange = { ...range }; fire(v, 'VOI_MODIFIED', { range }); },
+      getDefaultActor: () => ({ actor: {} }), getCanvas: () => element.querySelector('canvas'),
       getImageData: () => ({ spacing: [0.5, 0.5, 1], imageData: { indexToWorld: ([i, j]) => [i * 0.5, j * 0.5, 0] } }), worldToCanvas: ([x, y]) => [x, y],
     });
     synViewports.set(id, v); synShown.set(id, { set: setUid, x, y, w: 1 / cols, h: 1 / rows });
@@ -104,7 +113,7 @@ SETUP = """config => {
     viewportGridService: grid,
     cornerstoneViewportService: { ...events('cells'), EVENTS: { VIEWPORT_DATA_CHANGED: 'data' }, getCornerstoneViewport: id => synViewports.get(id) },
     displaySetService: { getActiveDisplaySets: () => synSets.map(s => ({ displaySetInstanceUID: s.uid, StudyInstanceUID: STUDY, SeriesInstanceUID: s.series,
-      images: Array.from({ length: s.n }, (_, i) => ({ SOPInstanceUID: s.series + '.' + (i + 1) })) })) },
+      images: Array.from({ length: s.n }, (_, i) => ({ SOPInstanceUID: s.series + '.' + (i + 1), SOPClassUID: '1.2.840.10008.5.1.4.1.1.2' })) })) },
     customizationService: { get: () => undefined },
     uiNotificationService: { show: note => synNotes.push(note) },
     toolbarService: { EVENTS: { TOOL_BAR_MODIFIED: 'modified' }, getButtonSection: () => Object.keys(buttons).map(id => ({ id })), getButtons: () => buttons,
@@ -112,9 +121,6 @@ SETUP = """config => {
   };
   window.kinViewerHistoryWorkspaceState = () => ({ busy: false });
   window.kinViewerJobWorkspaceState = () => ({ busy: false });
-  // The Jobs panel and the Findings section are not part of this harness. What they keep for this module is that a Job
-  // or a finding location named in the address is over; a test that leaves one on its way takes that record away.
-  window.kinViewerOpeningEnded = { kinJob: location.search, kinFinding: location.search };
   window.KinViewerHangingSettings = { modalities: [], defaults: {}, get: () => ({}), mount: () => ({ apply() {}, dispose() {} }), mountSizing: () => ({ dispose() {} }) };
   window.KinSessionTransport = { refusal: () => false, responseError: () => new Error('ended') };
   // The API: the account's viewer settings and this study's saved view (one per reader). `hold` keeps the next save's
@@ -185,6 +191,125 @@ def view(cells, rows=1, cols=None, active=0):
 SORT_DOWN = {'magnification': 'fit', 'windowing': None, 'filter': 'none', 'sort': 'position-desc', 'rotate': 0, 'flip': 'none',
              'firstImage': 'first', 'gspsAuto': False, 'overlay': 'none'}
 
+# ── A restore the address chose: the shipped Jobs panel and Findings section beside Auto Save View ──
+JOB_ID = JOB.split('=')[1]
+FINDING, NONCE = 'f0000000-0000-4000-8000-00000000d001', '11111111-2222-4333-8444-555555555555'
+# A finding's saved location continued into this page (finding-link-model.js continueLocation).
+FOUND = '&kinFinding=%s&kinFindingRevision=4&kinFindingSource=0&kinFindingNonce=%s' % (FINDING, NONCE)
+OTHER = '1.2.826.0.1.3680043.8.498.141'
+# viewer-jobs.js restoredText and its refusal of a restore the reader's input came ahead of; finding-link-model.js.
+RESTORED = '비교 작업을 복원했습니다. 표식은 별도 저장한 최신 이력입니다.'
+INPUT_AHEAD = '영상 조작이 변경되어 복원하지 않았습니다. 다시 시도하세요. 입력은 유지됩니다.'
+OPENING_PAIR = '저장한 비교 검사를 함께 여는 중…'
+LIST_FAILED = '소견 목록을 확인하지 못했습니다. Refresh로 다시 확인하세요.'
+SAVED = [SA + '.4', SB + '.2']  # the images of the saved view each of these pages starts with
+JOB_IMAGE = SA + '.6'           # the image the Job puts in the first cell
+
+
+def job_cell(series, n, scale, lower, upper):
+    """One cell of a version 2 Job as viewer-jobs.js saves it."""
+    return {'study': STUDY, 'series': series, 'sop': series + '.' + str(n), 'frame': 1, 'viewport': {'width': 300, 'height': 200},
+            'camera': {'focalPoint': [1.5, -2.5, n * 5], 'position': [1.5, -2.5, n * 5 + 100], 'viewUp': [0, -1, 0], 'viewPlaneNormal': [0, 0, 1],
+                       'parallelScale': scale, 'rotation': 0, 'flipHorizontal': False, 'flipVertical': False},
+            'properties': {'voiRange': {'lower': lower, 'upper': upper}, 'VOILUTFunction': 'LINEAR', 'invert': False, 'interpolationType': 1}}
+
+
+def job(studies=(STUDY,)):
+    return {'id': JOB_ID, 'revision': 1, 'snapshotVersion': 2, 'snapshot': {'version': 2, 'studies': list(studies), 'rows': 1, 'cols': 2, 'active': 0,
+            'cells': [job_cell(SA, 6, 25, -1350, 150), job_cell(SB, 3, 50, -160, 239)]}}
+
+
+JOB_ROW = {'id': JOB_ID, 'studyUid': STUDY, 'authorSub': OWNER[1], 'authorActor': 'Reader', 'title': 'Synthetic Job', 'description': '', 'hidden': False,
+           'revision': 1, 'createdAt': 0, 'updatedAt': 0, 'snapshotVersion': 2}
+# A finding of this study whose one source is that Job's saved view.
+FOUND_ITEM = {'id': FINDING, 'studyUid': STUDY, 'authorSub': OWNER[1], 'authorActor': 'Reader', 'revision': 4, 'hidden': False, 'createdAt': 't', 'updatedAt': 't', 'links': [],
+              'item': {'schemaVersion': 2, 'title': 'Synthetic finding', 'text': '', 'characteristics': '', 'hidden': False, 'primary': 0,
+                       'sources': [{'kind': 'job', 'jobId': JOB_ID, 'revision': 1, 'jobStudyUid': STUDY, 'studyUid': STUDY, 'studies': [STUDY], 'snapshotVersion': 2,
+                                    'title': 'Synthetic Job', 'authorActor': 'Reader', 'mark': None}]}}
+
+# Run before the viewer mounts. Synthetic here: the hosts of the two panels, the API (/me, this study's Jobs and findings), the
+# session's end, and the stack restore the Jobs panel applies a version 2 Job with. A gate is a named point a case holds
+# until it opens it: 'read' is the Job's read; each apply of the stack restore takes its step (its gate, whether it fails)
+# from synRestore.steps. The stack restore lays the saved cells onto the synthetic viewports, the first cell before its
+# gate and the rest after it, so a restore can be seen half done; failing there, the layout has landed already and the
+# panel rolls back with another apply. synTold is what the panel says to the window, with the holds standing as it is said.
+COMBINED = """config => {
+  const STUDY = config.study, owner = config.owner, JOBS = '/api/studies/' + STUDY + '/viewer-jobs';
+  window.synGates = {};
+  window.synGate = name => { let open; const gate = new Promise(resolve => { open = resolve; }); synGates[name] = { gate, open }; };
+  window.synOpen = name => synGates[name].open();
+  const passed = async name => { if (synGates[name]) await synGates[name].gate; };
+  const hosts = document.createElement('div');
+  hosts.style.cssText = 'position:absolute;left:0;top:540px;width:1240px;height:340px;overflow:auto;font-size:11px';
+  hosts.innerHTML = (config.layout ? '<details id="kin-viewer-layout" open><summary>Layout</summary></details>' : '') + '<div id="kin-viewer-history"></div>';
+  document.body.append(hosts);
+  window.synJobs = { rows: [config.row], job: config.job, readStatus: 200, reads: 0 };
+  window.synFindingServer = { status: config.findingsStatus, items: config.findings, lists: 0 };
+  const reply = (status, body, headers = {}) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } });
+  const base = window.fetch;
+  window.fetch = async (url, init = {}) => {
+    const path = new URL(url, location.origin).pathname, method = init.method || 'GET';
+    if (path === '/api/me') return reply(200, { kind: 'member', sub: owner[1], institution: owner[0], roles: ['radiologist'] });
+    if (path === JOBS && method === 'GET') return reply(200, { jobs: structuredClone(synJobs.rows) });
+    if (path === JOBS + '/' + synJobs.job.id && method === 'GET') {
+      synJobs.reads++; await passed('read');
+      return synJobs.readStatus === 200 ? reply(200, structuredClone(synJobs.job)) : reply(synJobs.readStatus, { message: 'SYN job unavailable' });
+    }
+    if (path === '/api/studies/' + STUDY + '/findings' && method === 'GET') {
+      synFindingServer.lists++;
+      return synFindingServer.status === 200 ? reply(200, { items: structuredClone(synFindingServer.items), nextCursor: null }, { 'X-KIN-Finding-Schema': '2' })
+        : reply(synFindingServer.status, { message: 'SYN findings unavailable' });
+    }
+    return base(url, init);
+  };
+  window.synEnders = new Set();
+  window.kinViewerOnEnd = fn => { synEnders.add(fn); return { close() { synEnders.delete(fn); } }; };
+  window.synEndSession = () => { synEnded = true; for (const fn of [...synEnders]) fn(); };
+  window.kinViewerHistoryState = () => ({ scope: STUDY, subject: owner[1], ended: synEnded, suspended: false, writable: true, heads: [] });
+  if (config.continuation) sessionStorage.setItem('kin-finding-continue:' + config.continuation.nonce, JSON.stringify(config.continuation.record));
+  window.synRestore = { steps: [], waiting: null };
+  const place = (id, cell) => {
+    const v = synViewports.get(id); if (!v || !cell) return;
+    v.setImageIdIndex(v.getImageIds().findIndex(image => synMeta[image].SOPInstanceUID === cell.sop));
+    v.setProperties(structuredClone(cell.properties)); v.setCamera(structuredClone(cell.camera));
+  };
+  window.kinCreateStackRestore = () => ({
+    prepare: async (cells, sets) => cells.map((cell, index) => ({ cell, set: sets[index] })),
+    begin: (plans, ids) => ({
+      options: index => ({ viewportId: ids[index], viewportType: 'stack', toolGroupId: 'default', allowUnmatchedView: true }),
+      async complete() {
+        const step = synRestore.steps.shift() || {};
+        for (let n = 0; n < 200 && !ids.every((id, index) => !plans[index].cell || synViewports.has(id)); n++) await new Promise(resolve => setTimeout(resolve, 10));
+        place(ids[0], plans[0].cell);
+        if (step.gate) {
+          if (!synGates[step.gate]) synGate(step.gate);
+          synRestore.waiting = step.gate; await passed(step.gate);
+          if (synRestore.waiting === step.gate) synRestore.waiting = null;
+        }
+        if (step.fail) throw new Error('저장한 영상 표시를 확인하지 못했습니다.');
+        plans.forEach((plan, index) => { if (index) place(ids[index], plan.cell); });
+      },
+      verify() {}, dispose() {},
+    }),
+  });
+  window.synTold = [];
+  addEventListener('kin-viewer-opening-restore', event => synTold.push([event.detail.phase, event.detail.hold.screen, window.kinViewerOpeningRestore.holds.size]));
+  // After the scripts: the page's own work context and transport, as the Findings store reads them.
+  window.synConnect = () => {
+    const gate = KinWorkContext.create(); gate.follow({ onLifecycle(fn) { fn({ state: 'active', session: 'SYN' }); } });
+    const transport = KinSessionTransport.create({ gate, fetch: (url, options) => window.fetch(url, options), deadlineMs: 0 });
+    window.KinWorkContext = gate; window.KinSessionTransport = { ...KinSessionTransport, page: () => transport };
+  };
+  window.synMountJobs = () => { window.synJobsPanel ||= kinViewerJobs(synServices, { scope: () => [STUDY] }, null, () => ({})); synJobsPanel.mount(); };
+  window.synJobsStatus = () => document.querySelector('#kin-viewer-jobs-status')?.textContent || '';
+  window.synMountFindings = model => { window.synFindings ||= kinViewerFindings({}, model || kinFindingLinkModel); return synFindings.mount(); };
+  // The mode left (every part of the screen taken down) and entered again at the same address.
+  window.synLeaveMode = () => { window.synJobsPanel?.stop(); window.synFindings?.stop(); synKeys?.dispose?.(); synToolbar.dispose(); };
+  window.synEnterMode = () => { synBuild(1, 2, [['left', 'set-A'], ['right', 'set-B']]); synMount(); };
+  // The first cell as it stands, whatever its viewport is called now.
+  window.synFirst = () => { const v = [...synViewports.values()][0]; return { id: v.id, image: synMeta[v.getCurrentImageId()].SOPInstanceUID, zoom: v.getZoom() }; };
+}"""
+
 
 class ViewerAutoSaveViewDOMTest(unittest.TestCase):
     @classmethod
@@ -196,8 +321,9 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.browser.close(); cls.pw.stop()
 
-    def open(self, on=True, saved=None, cells=(('left', 'set-A'), ('right', 'set-B')), rows=1, query='', setup=None, late=(), opener=None, owner=OWNER):
-        """`setup`: script run before the viewer mounts; `late`: scripts held back until `self.pending` is fulfilled."""
+    def open(self, on=True, saved=None, cells=(('left', 'set-A'), ('right', 'set-B')), rows=1, query='', setup=None, late=(), opener=None, owner=OWNER, prepare=None):
+        """`setup`: script run before the viewer mounts; `late`: scripts held back until `self.pending` is fulfilled;
+        `prepare`: called with the page before the viewer mounts."""
         if opener:
             context = opener.context
             with opener.expect_popup() as popup:
@@ -223,6 +349,8 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         page.evaluate(SETUP, {'study': STUDY, 'owner': owner, 'sa': SA, 'sb': SB, 'settings': settings, 'saved': saved})
         if setup:
             page.evaluate(setup)
+        if prepare:
+            prepare(page)
         cells = [list(c) for c in cells]
         page.evaluate("([rows, cols, cells]) => { synBuild(rows, cols, cells); synMount(); }", [rows, len(cells) // rows, cells])
         page.wait_for_function("KinViewerFeatures.settings().some(s => s.id === 'autoSaveView')" + ("" if late else " && !!window.KinViewerCellRules"))
@@ -710,80 +838,336 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         self.assertTrue(page.evaluate('synServer.bodies[0].keepalive'))
         self.assertAlmostEqual(4, page.evaluate('synServer.saved.cells[0].zoom'))
 
-    def test_35_a_job_still_going_onto_the_screen_is_the_starting_point_not_a_change(self):
-        # The chosen Job is still on its way (its end is not recorded); its view lands after the viewer's first quiet layout.
-        page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), query=JOB, setup="delete window.kinViewerOpeningEnded.kinJob;")
+    # ── A restore the address chose, with the shipped Jobs panel and Findings section on the page ──
+    def combined(self, query=JOB, saved=True, on=True, job_studies=(STUDY,), findings_status=200, layout=True):
+        """A page with viewer-jobs.js, finding-link-model.js and viewer-findings.js loaded beside Auto Save View. Neither
+        panel is mounted yet: a case mounts them when its story has them start (synMountJobs, synMountFindings)."""
+        config = {'study': STUDY, 'owner': OWNER, 'row': JOB_ROW, 'job': job(job_studies), 'findings': [FOUND_ITEM], 'findingsStatus': findings_status, 'layout': layout,
+                  'continuation': {'nonce': NONCE, 'record': {'finding': FINDING, 'revision': 4, 'source': 0, 'jobId': JOB_ID}} if 'kinFinding' in query else None}
+
+        def prepare(page):
+            page.evaluate(COMBINED, config)
+            for name in ['viewer-jobs.js', 'work-context.js', 'session-transport.js', 'finding-link-model.js', 'viewer-findings.js']:
+                page.add_script_tag(path=str(HPACS / name))
+            page.evaluate('synConnect()')
+        return self.open(on=on, saved=view([cell(SA, 4), cell(SB, 2)]) if saved else None, query=query, prepare=prepare)
+
+    def held(self, steps=("{ gate: 'apply' }",), on=True):
+        """The kinJob page with Auto Save View saving and the panel still reading its Job ('read'); `steps` are the applies."""
+        page = self.combined(on=on)
+        page.evaluate("synGate('read'); synRestore.steps.push(%s); synMountJobs()" % ', '.join(steps))
         self.started(page)
-        self.change(page, zoom=3, image=2)
-        page.evaluate("window.kinViewerOpeningEnded.kinJob = location.search")
-        # Past the quiet time and the save delay: the Job's view was taken as the starting point and nothing was sent.
-        page.wait_for_timeout(3500)
-        self.assertEqual([READ], self.requests(page), 'the restored Job is not saved as a change')
-        # The reader's own change after it is saved.
-        self.change(page, zoom=4)
-        page.wait_for_function('synServer.posts.length === 1', timeout=6000)
-        self.assertAlmostEqual(4, page.evaluate('synServer.saved.cells[0].zoom'))
+        page.wait_for_function('synJobs.reads === 1')
+        return page
 
-    def test_36_a_jobs_panel_that_has_not_started_is_not_a_job_that_is_over(self):
-        # Nothing has recorded anything: the module that puts the Job on the screen starts after this one. Its Job lands
-        # well after the viewer's first quiet layout, then its end is recorded.
-        page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), query=JOB, setup="delete window.kinViewerOpeningEnded;")
-        self.started(page); page.wait_for_timeout(1500)
-        self.change(page, zoom=3, image=2)
-        page.evaluate("window.kinViewerOpeningEnded = { kinJob: location.search }")
-        page.wait_for_timeout(3500)
-        self.assertEqual([READ], self.requests(page), 'a missing record is a Job still on its way, not a Job that is over')
-        self.assertAlmostEqual(2.5, page.evaluate('synServer.saved.cells[0].zoom'), msg='the saved view stands')
-        self.change(page, zoom=4)
-        page.wait_for_function('synServer.posts.length === 1', timeout=6000)
-        self.assertAlmostEqual(4, page.evaluate('synServer.saved.cells[0].zoom'))
+    def waiting(self, page, gate):
+        page.evaluate("synOpen('read')")
+        page.wait_for_function("synRestore.waiting === '%s'" % gate)
 
-    def test_37_no_length_of_time_makes_a_job_still_on_its_way_over(self):
-        page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), query=JOB, setup="delete window.kinViewerOpeningEnded.kinJob;")
-        self.started(page); page.wait_for_timeout(500)
-        # More than the time this module gives the viewer's own first layout passes while the Job is still going on.
-        page.evaluate("(() => { const real = Date.now.bind(Date); Date.now = () => real() + 31000; })()")
-        page.wait_for_timeout(500)
-        self.change(page, zoom=3, image=2)
-        page.wait_for_timeout(3000)
-        self.assertEqual([READ], self.requests(page), 'the Job is still on its way: nothing is saved')
-        page.evaluate("window.kinViewerOpeningEnded.kinJob = location.search")
-        page.wait_for_timeout(3500)
-        self.assertEqual([READ], self.requests(page), 'the Job that landed meanwhile is the starting point')
-        self.change(page, zoom=4)
-        page.wait_for_function('synServer.posts.length === 1', timeout=6000)
-        self.assertAlmostEqual(4, page.evaluate('synServer.saved.cells[0].zoom'))
+    def restored(self, page):
+        page.wait_for_function("synJobsStatus() === %s" % json.dumps(RESTORED))
 
-    def test_38_closing_the_window_while_the_job_is_on_its_way_saves_nothing(self):
-        page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), query=JOB, setup="delete window.kinViewerOpeningEnded.kinJob;")
-        self.started(page)
-        self.change(page, zoom=3, image=2)
+    def close(self, page):
         page.evaluate("dispatchEvent(new Event('pagehide'))")
-        page.wait_for_timeout(600)
-        self.assertEqual([READ], self.requests(page), 'there is no starting point yet: the Job half on the screen is not sent')
-        self.assertAlmostEqual(2.5, page.evaluate('synServer.saved.cells[0].zoom'), msg='the saved view stands')
+        page.wait_for_timeout(300)
 
-    def test_39_a_job_that_was_refused_leaves_the_first_layout_as_the_starting_point(self):
-        # The Job could not be read, was deleted or was given up on: its end is recorded and nothing landed.
-        page = self.open(query=JOB, setup="delete window.kinViewerOpeningEnded.kinJob;")
-        self.started(page); page.wait_for_timeout(500)
-        page.evaluate("window.kinViewerOpeningEnded.kinJob = location.search")
+    def quiet(self, page, count, ms=3500):
+        """Past the save delay nothing more was sent."""
+        page.wait_for_timeout(ms)
+        self.assertEqual(count, len(self.posts(page)))
+
+    def sent(self, page):
+        return [(round(post['cells'][0]['zoom'], 6), post['cells'][0]['sop']) for post in self.posts(page)]
+
+    def mine(self, page, count, zoom=5):
+        """The reader's own change of the first cell after a restore is saved."""
+        self.change(page, cell=page.evaluate('synFirst().id'), zoom=zoom)
+        page.wait_for_function('synServer.posts.length === %d' % count, timeout=6000)
+        self.assertEqual((zoom, JOB_IMAGE), self.sent(page)[-1])
+
+    def test_late_jobs_and_refresh_continuation_preserve_user_view(self):
+        # The Jobs panel starts well after Auto Save View is saving (a script that came late, an account confirmed late).
+        page = self.combined()
+        self.started(page)
         page.wait_for_timeout(1000)
-        self.change(page, zoom=4)
-        page.wait_for_function('synServer.posts.length === 1', timeout=6000)
-        self.assertAlmostEqual(4, page.evaluate('synServer.saved.cells[0].zoom'))
-
-    def test_40_a_findings_saved_location_still_on_its_way_is_the_starting_point_too(self):
-        page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), query='&kinFinding=00000000-0000-4000-8000-000000000002',
-                         setup="delete window.kinViewerOpeningEnded.kinFinding;")
-        self.started(page); page.wait_for_timeout(1500)
         self.change(page, zoom=3, image=2)
-        page.evaluate("window.kinViewerOpeningEnded.kinFinding = location.search")
-        page.wait_for_timeout(3500)
-        self.assertEqual([READ], self.requests(page), 'the restored location is not saved as a change')
-        self.change(page, zoom=4)
+        page.wait_for_timeout(300)
+        self.assertEqual([], self.posts(page), 'the reader\'s change is still waiting to be saved')
+        page.evaluate('synMountJobs()')
+        self.restored(page)
+        # It was sent as the restore began, before the Job covered it. The Job's own view is the starting point.
+        self.assertEqual([(3, SA + '.3')], self.sent(page))
+        self.assertEqual([['begin', 0, 0], ['end', 0, 0]], page.evaluate('synTold'))
+        self.assertEqual(JOB_IMAGE, page.evaluate('synFirst().image'))
+        self.quiet(page, 1)
+        self.mine(page, 2)
+        # A finding's saved location whose list could not be read at first: Reload Findings runs it much later.
+        page = self.combined(query=FOUND, findings_status=503)
+        page.evaluate('synMountJobs(); synMountFindings()')
+        page.wait_for_function("document.querySelector('#kin-viewer-findings-status')?.textContent.includes(%s)" % json.dumps(LIST_FAILED))
+        self.started(page)
+        self.change(page, zoom=3, image=2)
         page.wait_for_function('synServer.posts.length === 1', timeout=6000)
-        self.assertAlmostEqual(4, page.evaluate('synServer.saved.cells[0].zoom'))
+        self.change(page, zoom=3.5, image=2)
+        page.evaluate('synFindingServer.status = 200')
+        page.get_by_role('button', name='Reload Findings').click()
+        page.wait_for_function("document.querySelector('[data-kin-location-result]')?.dataset.kinLocationResult === 'ok'")
+        self.assertEqual([(3, SA + '.3'), (3.5, SA + '.3')], self.sent(page))
+        self.assertEqual([['begin', 0, 0], ['end', 0, 0]], page.evaluate('synTold'))
+        self.assertEqual(JOB_IMAGE, page.evaluate('synFirst().image'))
+        self.quiet(page, 2)
+        self.mine(page, 3)
+
+    def test_slow_restore_and_rollback_never_save_partial_view(self):
+        page = self.held()
+        self.waiting(page, 'apply')
+        self.assertEqual(JOB_IMAGE, page.evaluate('synFirst().image'), 'the Job is half on the screen')
+        # More than every time limit of the viewer passes, and the save delay with it; then the window closes.
+        page.evaluate("(() => { const real = Date.now.bind(Date); Date.now = () => real() + 3600000; })()")
+        page.wait_for_timeout(3000)
+        self.close(page)
+        self.assertEqual([READ], self.requests(page), 'no length of time makes a restore still going on over')
+        page.evaluate("synOpen('apply')")
+        self.restored(page)
+        self.quiet(page, 0)
+        self.assertEqual(SAVED, [c['sop'] for c in page.evaluate('synServer.saved.cells')], 'the saved view stands')
+        self.mine(page, 1)
+        # The apply fails after its layout landed: the panel puts the previous screen back, and that takes time too.
+        page = self.held(steps=("{ gate: 'apply', fail: true }", "{ gate: 'back' }"))
+        self.change(page, zoom=3, image=2)
+        page.wait_for_function('synServer.posts.length === 1', timeout=6000)
+        self.waiting(page, 'apply')
+        page.wait_for_timeout(2500)
+        self.close(page)
+        self.assertEqual(1, len(self.posts(page)), 'half applied')
+        page.evaluate("synOpen('apply')")
+        page.wait_for_function("synRestore.waiting === 'back'")
+        page.wait_for_timeout(2500)
+        self.close(page)
+        self.assertEqual(1, len(self.posts(page)), 'half rolled back')
+        page.evaluate("synOpen('back')")
+        page.wait_for_function("synJobsStatus().startsWith('저장한 영상 표시를 확인하지 못했습니다.')")
+        self.assertEqual([['begin', 0, 0], ['end', 0, 0]], page.evaluate('synTold'), 'one hold, let go after the rollback')
+        self.assertEqual(SA + '.3', page.evaluate('synFirst().image'))
+        self.quiet(page, 1)
+        self.change(page, cell=page.evaluate('synFirst().id'), zoom=5, image=2)
+        page.wait_for_function('synServer.posts.length === 2', timeout=6000)
+        self.assertEqual((5, SA + '.3'), self.sent(page)[-1])
+
+    def test_failed_or_unmounted_restore_allows_change_and_close(self):
+        def saves(page, what):
+            # A change is saved after the usual delay and the next one by the closing window; nothing was ever held.
+            self.started(page)
+            self.change(page, zoom=3, image=2)
+            page.wait_for_function('synServer.posts.length === 1', timeout=6000)
+            self.change(page, zoom=4, image=2)
+            self.close(page)
+            self.assertEqual([(3, SA + '.3'), (4, SA + '.3')], self.sent(page), what)
+            self.assertEqual([], page.evaluate('window.synTold || []'), what)
+        # The finding's list cannot be read: its saved location never starts.
+        page = self.combined(query=FOUND, findings_status=503)
+        page.evaluate('synMountJobs(); synMountFindings()')
+        page.wait_for_function("document.querySelector('#kin-viewer-findings-status')?.textContent.includes(%s)" % json.dumps(LIST_FAILED))
+        saves(page, 'a findings list that failed')
+        # The Findings section refuses to mount beside another version of its model.
+        page = self.combined(query=FOUND)
+        self.assertFalse(page.evaluate('(synMountJobs(), synMountFindings(Object.assign({}, kinFindingLinkModel, { SCHEMA: 1 })))'))
+        saves(page, 'a Findings section that was not mounted')
+        # No place for the Jobs panel: it mounts nothing and restores nothing.
+        page = self.combined(layout=False)
+        page.evaluate('synMountJobs()')
+        saves(page, 'a Jobs panel that was not mounted')
+        # Neither module ever arrives (a script that failed to load, an account that is not a writer).
+        page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), query=JOB)
+        saves(page, 'no Jobs module')
+
+    def test_job_read_refusal_preserves_changes_made_during_read(self):
+        def refused(status):
+            page = self.held()
+            page.evaluate('synJobs.readStatus = %d' % status)
+            self.change(page, zoom=3, image=2)
+            page.evaluate("synOpen('read')")
+            page.wait_for_function("synJobsStatus().startsWith('SYN job unavailable')")
+            return page
+        # The Job is gone: what the reader changed while it was read is saved after the usual delay.
+        page = refused(404)
+        page.wait_for_function('synServer.posts.length === 1', timeout=6000)
+        self.assertEqual(([(3, SA + '.3')], []), (self.sent(page), page.evaluate('synTold')))
+        # The Job cannot be read and the window closes right after: the change goes with it.
+        page = refused(500)
+        self.close(page)
+        self.assertEqual(([(3, SA + '.3')], True, []), (self.sent(page), page.evaluate('synServer.bodies[0].keepalive'), page.evaluate('synTold')))
+        # The reader's own input comes ahead of the Job: the restore is refused and the change is the reader's.
+        page = self.held()
+        page.mouse.click(150, 180)
+        self.change(page, zoom=3, image=2)
+        page.evaluate("synOpen('read')")
+        page.wait_for_function("synJobsStatus() === %s" % json.dumps(INPUT_AHEAD))
+        page.wait_for_function('synServer.posts.length === 1', timeout=6000)
+        self.assertEqual(([(3, SA + '.3')], []), (self.sent(page), page.evaluate('synTold')))
+        self.assertEqual(SA + '.3', page.evaluate('synFirst().image'))
+
+    def test_first_change_immediately_after_restore_is_saved(self):
+        after = "addEventListener('kin-viewer-opening-restore', event => { if (event.detail.phase === 'end') Promise.resolve().then(() => { %s; }); })"
+        # The reader zooms in the very task the restore lets go in: that is the reader's change, not the starting point.
+        page = self.held()
+        self.waiting(page, 'apply')
+        page.evaluate(after % 'synViewports.get(synFirst().id).setZoom(5)')
+        page.evaluate("synOpen('apply')")
+        self.restored(page)
+        page.wait_for_function('synServer.posts.length === 1', timeout=6000)
+        self.assertEqual([(5, JOB_IMAGE)], self.sent(page))
+        self.quiet(page, 1, 2500)
+        # The window closes in that task instead: the Job's view is not sent.
+        page = self.held()
+        self.waiting(page, 'apply')
+        page.evaluate(after % "dispatchEvent(new Event('pagehide'))")
+        page.evaluate("synOpen('apply')")
+        self.restored(page)
+        self.quiet(page, 0, 600)
+        self.assertEqual([READ], self.requests(page))
+        # A save sent as the restore began fails after it: the starting point the restore left is not unsent with it.
+        page = self.held()
+        self.change(page, zoom=3, image=2)
+        page.evaluate("() => { synServer.hold = new Promise((_, reject) => { window.synFail = reject; }); }")
+        self.waiting(page, 'apply')
+        self.assertEqual([(3, SA + '.3')], self.sent(page))
+        page.evaluate("synOpen('apply')")
+        self.restored(page)
+        page.evaluate("synFail(new TypeError('Failed to fetch')); synFire(synFirst().id, 'CAMERA_MODIFIED')")
+        self.quiet(page, 1, 3000)
+        self.mine(page, 2)
+
+    def test_old_restore_completion_cannot_rebase_reentered_mode(self):
+        def reentered():
+            # The first screen's restore is half done when the mode is left; the same address is entered again.
+            page = self.held(steps=("{ gate: 'old' }",))
+            self.waiting(page, 'old')
+            page.evaluate("synLeaveMode(); synGate('read'); synEnterMode(); synMountJobs()")
+            self.assertEqual([], self.posts(page), 'leaving with the Job half on the screen saves nothing')
+            page.wait_for_function("KinViewerFeatures.settings().some(s => s.id === 'autoSaveView')")
+            self.started(page)
+            page.wait_for_function('synJobs.reads === 2')
+            self.assertGreater(page.evaluate('kinViewerOpeningRestore.screen'), 0)
+            return page
+        # The old restore settles while the new screen holds a change of the reader's and no restore of its own yet.
+        page = reentered()
+        self.change(page, zoom=3, image=2)
+        page.evaluate("synOpen('old')")
+        page.wait_for_function("synTold.some(told => told[0] === 'end')")
+        self.assertEqual([['begin', 0, 0], ['end', 0, 0]], page.evaluate('synTold'))
+        page.wait_for_function('synServer.posts.length === 1', timeout=6000)
+        self.assertEqual([(3, SA + '.3')], self.sent(page), 'the old restore\'s end is not the new screen\'s starting point')
+        page.evaluate("synOpen('read')")
+        self.restored(page)
+        self.quiet(page, 1)
+        self.mine(page, 2)
+        # The old restore settles while the new screen's own restore is half done: that one still holds.
+        page = reentered()
+        page.evaluate("synRestore.steps.push({ gate: 'new' })")
+        self.waiting(page, 'new')
+        page.evaluate("synOpen('old')")
+        page.wait_for_function("synTold.some(told => told[0] === 'end')")
+        self.assertEqual(1, page.evaluate('kinViewerOpeningRestore.holds.size'), 'the old restore let go of its own hold only')
+        page.wait_for_timeout(2500)
+        self.close(page)
+        self.assertEqual([], self.posts(page), 'the new screen is still held')
+        page.evaluate("synOpen('new')")
+        self.restored(page)
+        self.quiet(page, 0)
+        self.mine(page, 1)
+
+    def test_popout_comparison_url_change_and_session_end_are_isolated(self):
+        # Pop Out: the same study in another window has its own state and saves on, while this one is held.
+        page = self.held()
+        self.waiting(page, 'apply')
+        other = self.open(opener=page)
+        self.started(other)
+        self.change(other, zoom=3, image=2)
+        other.wait_for_function('synServer.posts.length === 1', timeout=6000)
+        self.assertEqual((0, 1), (other.evaluate('kinViewerOpeningRestore.holds.size'), page.evaluate('kinViewerOpeningRestore.holds.size')))
+        self.close(page)
+        self.assertEqual([], self.posts(page))
+        # A Job of another set of studies opens in a new document: this one changes nothing and holds nothing.
+        page = self.combined(job_studies=(STUDY, OTHER))
+        page.evaluate("""() => { window.synNavigations = [];
+          navigation.addEventListener('navigate', event => { synNavigations.push(event.destination.url); event.preventDefault(); });
+          synGate('read'); synMountJobs(); }""")
+        self.started(page)
+        page.wait_for_function('synJobs.reads === 1')
+        self.change(page, zoom=3, image=2)
+        page.evaluate("synOpen('read')")
+        page.wait_for_function('synNavigations.length === 1')
+        self.assertIn('StudyInstanceUIDs=' + STUDY + '%2C' + OTHER + '&kinJob=' + JOB_ID, page.evaluate('synNavigations[0]'))
+        self.assertEqual((OPENING_PAIR, []), (page.evaluate('synJobsStatus()'), page.evaluate('synTold')))
+        page.wait_for_function('synServer.posts.length === 1', timeout=6000)
+        self.assertEqual([(3, SA + '.3')], self.sent(page), 'what the reader changed before the move is saved')
+        # The address changes under a restore half done (a patient tab): nothing of it is saved, then or after it lets go.
+        page = self.held()
+        self.waiting(page, 'apply')
+        page.evaluate("history.replaceState(null, '', location.pathname + '?StudyInstanceUIDs=%s'); synOpen('apply')" % OTHER)
+        page.wait_for_function('kinViewerOpeningRestore.holds.size === 0')
+        self.quiet(page, 0, 3000)
+        self.close(page)
+        self.assertEqual([READ], self.requests(page))
+        # The session ends under a restore half done: the same.
+        page = self.held()
+        self.waiting(page, 'apply')
+        page.evaluate("synEndSession(); synOpen('apply')")
+        page.wait_for_function('kinViewerOpeningRestore.holds.size === 0')
+        self.change(page, cell=page.evaluate('synFirst().id'), zoom=5)
+        self.quiet(page, 0, 3000)
+        self.close(page)
+        self.assertEqual([READ], self.requests(page))
+
+    def test_auto_save_view_starting_during_or_after_a_restore(self):
+        def switch_on(page):
+            # The check in the Auto Save View window, set without a pointer: input is swallowed while a Job is applied.
+            page.evaluate("""() => { const input = document.querySelector('section.kin-ux-feature-panel[aria-label="Auto Save View"] input[type=checkbox]');
+              input.checked = true; input.dispatchEvent(new Event('change')); }""")
+            page.wait_for_function('synServer.viewerSettings?.features?.autoSaveView === true')
+        # Switched on while the Job is half on the screen: nothing is saved until the restore lets go.
+        page = self.combined(on=False)
+        self.started(page)
+        self.window(page)
+        page.evaluate("synRestore.steps.push({ gate: 'apply' }); synMountJobs()")
+        page.wait_for_function("synRestore.waiting === 'apply'")
+        switch_on(page)
+        page.wait_for_timeout(3000)
+        self.close(page)
+        self.assertEqual([READ], self.requests(page))
+        page.evaluate("synOpen('apply')")
+        self.restored(page)
+        self.quiet(page, 0)
+        self.mine(page, 1)
+        # Switched on after the restore is over: the Job on the screen is where saving starts from.
+        page = self.combined(on=False)
+        self.started(page)
+        self.window(page)
+        page.evaluate('synMountJobs()')
+        self.restored(page)
+        switch_on(page)
+        self.quiet(page, 0)
+        self.assertEqual([READ], self.requests(page))
+        self.mine(page, 1)
+
+    def test_restore_job_button_and_same_document_finding_move_say_nothing(self):
+        page = self.combined(query='', saved=False)
+        page.evaluate('synMountJobs(); synMountFindings()')
+        self.started(page)
+        # Restore Job is the reader's own: the Job's view is saved as any change is.
+        page.locator('#kin-viewer-jobs').get_by_role('button', name='Restore Job').click()
+        self.restored(page)
+        page.wait_for_function('synServer.posts.length === 1', timeout=6000)
+        self.assertEqual(JOB_IMAGE, self.sent(page)[0][1])
+        self.change(page, cell=page.evaluate('synFirst().id'), zoom=3, image=2)
+        page.wait_for_function('synServer.posts.length === 2', timeout=6000)
+        # A finding's saved view opened within this document is the reader's own too.
+        page.locator('#kin-viewer-findings').get_by_role('button', name='Open Saved View').click()
+        page.wait_for_function("document.querySelector('[data-kin-location-result]')?.dataset.kinLocationResult === 'ok'")
+        page.wait_for_function('synServer.posts.length === 3', timeout=6000)
+        self.assertEqual(JOB_IMAGE, self.sent(page)[2][1])
+        self.assertEqual(([], 0), (page.evaluate('synTold'), page.evaluate('kinViewerOpeningRestore.holds.size')))
 
     def test_25_a_quick_replacement_also_restarts_quiet_without_changing_the_shown_image(self):
         page = self.open()

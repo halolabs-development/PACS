@@ -53,19 +53,11 @@ window.kinViewerFindings = function (services, model) {
       host.append(refused); stop = () => { refused.remove(); stop = () => {}; }; return false;
     }
     const studies = urlStudies();
-    // The saved location this address names goes onto the screen at most once in this document. Auto Save View takes its
-    // starting point only after that is over — restored, refused, or never to run because this section went first —
-    // and it may start before or after this section: the end is kept on the window under the address, as the Jobs
-    // panel keeps a Job's. Without it the location is still on its way.
-    const request = continuation();
-    let continuing = !!request, opened = null;
-    try { opened = location.search; } catch (_) { opened = null; }
-    const continued = () => { if (!continuing) return; continuing = false; try { (window.kinViewerOpeningEnded ||= {}).kinFinding = opened; } catch (_) {} };
-    const store = model.createStore({ fetch: (url, options) => window.fetch(url, options), uuid: () => crypto.randomUUID(), recovered: held, studies, continued,
+    const store = model.createStore({ fetch: (url, options) => window.fetch(url, options), uuid: () => crypto.randomUUID(), recovered: held, studies,
       navigate: target => typeof window.kinViewerHistoryNavigate === 'function' ? window.kinViewerHistoryNavigate(target) : { ok: false, reason: 'tool-missing' },
       history: () => typeof window.kinViewerHistoryState === 'function' ? window.kinViewerHistoryState() : null,
       activate: study => typeof window.kinViewerHistoryActivate === 'function' ? window.kinViewerHistoryActivate(study) : { ok: false, reason: 'tool-missing' },
-      location: () => window.kinViewerJobLocation || null, continuation: request });
+      location: () => window.kinViewerJobLocation || null, continuation: continuation() });
     window.KinViewerSessionBoundary?.guardMethods(store, ['discardHeld', 'setScope', 'syncHistory', 'newDraft',
       'updateDraft', 'toggleSource', 'setPrimary', 'refreshSource', 'useLatest', 'discard', 'edit', 'save', 'toggleJob',
       'load', 'loadPair', 'loadJobs', 'navigate', 'history']);
@@ -395,8 +387,6 @@ window.kinViewerFindings = function (services, model) {
       keep(store.detach());
       if (window.kinViewerFindingsState === state) delete window.kinViewerFindingsState;
       store.dispose(); panel.remove(); rows.clear(); editors.clear(); histories.clear(); stop = () => {};
-      // A continuation this section took with it will not run again in this document.
-      continued();
     };
     render();
     return true;

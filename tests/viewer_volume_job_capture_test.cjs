@@ -1398,8 +1398,11 @@ const lStack=()=>({version:2,studies:[L_STUDY],rows:1,cols:1,active:0,cells:[{st
  properties:{voiRange:{lower:0,upper:1},VOILUTFunction:'LINEAR',invert:false,interpolationType:1}}]});
 const lMark=(extra={})=>({id:L_MARK,label:'병변',point:[L_DOUBLE,2,3],volume:{study:L_STUDY,series:L_SERIES,frameOfReferenceUid:L_FRAME,sourceDigest:L_HEX,sopCount:3},...extra});
 const lRequest=(extra={})=>({subject:'u1',jobId:L_JOB,revision:1,snapshotVersion:6,studies:[L_STUDY],mode:'same-document',mark:lMark(),...extra});
-async function locationWorld({snapshot=lSnapshot(),studies=[L_STUDY]}={}){
- const c=lClock(),log=[],calls=[],assigned=[],storage=new Map(),listeners=new Map();
+// `job`: the address names the Job (kinJob), so the panel restores it itself once its images stand. `told` is what the panel
+// says to the window about a restore the address chose (kin-viewer-opening-restore): each with the holds standing as it is said,
+// the applies logged so far and the point moves made so far.
+async function locationWorld({snapshot=lSnapshot(),studies=[L_STUDY],job=false}={}){
+ const c=lClock(),log=[],calls=[],assigned=[],storage=new Map(),listeners=new Map(),told=[];
  const element=tag=>{const children=[];return {tagName:tag,children,style:{},dataset:{},textContent:'',value:'',checked:false,disabled:false,isConnected:true,
   append:(...items)=>{children.push(...items);},prepend:(...items)=>{children.unshift(...items);},insertBefore:item=>{children.push(item);},
   replaceChildren:(...items)=>{children.splice(0,children.length,...items);},setAttribute(){},remove(){},querySelector:selector=>children.find(x=>x.tagName===selector)||null,contains:()=>false};};
@@ -1469,9 +1472,12 @@ async function locationWorld({snapshot=lSnapshot(),studies=[L_STUDY]}={}){
  const sessionStorage={setItem:(k,v)=>{storage.set(k,v);},getItem:k=>storage.get(k)??null,removeItem:k=>storage.delete(k)};
  class FakeDate extends Date{static now(){return c.now();}}
  const sandbox={document:{visibilityState:'visible',createElement:element,head:element('head'),querySelector:selector=>selector==='#kin-viewer-layout'?layout:null,addEventListener(){},removeEventListener(){}},
-  location:{search:'?StudyInstanceUIDs='+studies.join(','),origin:'https://kin.test',assign:url=>assigned.push(url)},fetch,crypto,AbortController,URL,URLSearchParams,sessionStorage,Date:FakeDate,
+  location:{search:'?StudyInstanceUIDs='+studies.join(',')+(job?'&kinJob='+L_JOB:''),origin:'https://kin.test',assign:url=>assigned.push(url)},fetch,crypto,AbortController,URL,URLSearchParams,sessionStorage,Date:FakeDate,
   performance:{now:()=>c.now()},queueMicrotask,setTimeout:c.setTimeout,clearTimeout:c.clearTimeout,setInterval:()=>0,clearInterval(){},
   addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener(){},
+  CustomEvent:class{constructor(type,init){this.type=type;this.detail=init?.detail;}},
+  dispatchEvent:e=>{if(e.type==='kin-viewer-opening-restore')told.push({phase:e.detail.phase,screen:e.detail.hold.screen,held:sandbox.kinViewerOpeningRestore.holds.size,
+   log:[...log],points:marks.records.length});return true;},
   kinCreateVolumeJob:()=>volumeJob,kinMprMarks:marks,KinVolumeMarks:{normalize:v=>structuredClone(v)},
   cornerstone:{eventTarget:nativeEvents,Enums:{Events:E},metaData:{get:(type,id)=>type==='instance'&&typeof id==='string'?{StudyInstanceUID:L_STUDY,SeriesInstanceUID:L_STACK_SERIES,SOPInstanceUID:id.slice(4)}:null}}};
  sandbox.window=sandbox.top=sandbox;const page=pageDefaults(sandbox,fetch);const realm=vm.createContext(sandbox);
@@ -1483,7 +1489,7 @@ async function locationWorld({snapshot=lSnapshot(),studies=[L_STUDY]}={}){
  const find=(root,match)=>match(root)?root:root.children.map(x=>find(x,match)).find(Boolean)||null;
  await lSettle();
  assert.equal(typeof sandbox.kinViewerJobLocation?.restore,'function','the location API is exported');
- return Object.assign(w,{c,log,calls,assigned,storage,server,marks,sandbox,planes,
+ return Object.assign(w,{c,log,calls,assigned,storage,server,marks,sandbox,planes,told,openings:()=>sandbox.kinViewerOpeningRestore,mount:()=>panel.mount(),
   location:()=>sandbox.kinViewerJobLocation,restore:req=>sandbox.kinViewerJobLocation.restore(req),
   endSession:page.end,
   status:()=>find(layout,e=>e.id==='kin-viewer-jobs-status').textContent,button:label=>find(layout,e=>e.tagName==='button'&&e.textContent===label),
@@ -1701,6 +1707,94 @@ test('S2-L2a continuation: another study set continues in a new page with a one-
   assert.equal(new URL(pair.assigned[0]).searchParams.get('StudyInstanceUIDs'),L_STUDY);
   assert.equal(single.message.includes('비교 검사를 함께 여는'),false);
  }finally{pair.stop();}
+});
+
+/* A restore the address chose (a finding's location continued into this page: waitReady; or the kinJob page) holds
+   window.kinViewerOpeningRestore from just before it first changes the screen until it has settled, and says so. Reading and
+   checking the Job are not held, and a restore the reader asked for holds nothing. */
+const chosen=(extra={})=>lRequest({waitReady:true,...extra});
+const phases=w=>w.told.map(t=>t.phase);
+test('opening hold: taken after the last check and before the screen changes, let go after the point move or the rollback',async()=>{
+ const w=await locationWorld();
+ try{
+  assert.deepEqual([w.openings().screen,w.openings().holds.size],[0,0]);
+  // The reader's own move within this document: nothing is held or said.
+  w.go=()=>{w.during=w.openings().holds.size;return {ok:true,moved:'all'};};
+  assert.equal((await w.restore(lRequest())).state,'restored');
+  assert.deepEqual([w.told,w.during,w.openings().holds.size],[[],0,0]);
+  w.log.length=0;w.marks.records.length=0;
+  // The address's: 'begin' is said before the hold is taken and before anything is applied; the hold stands through the
+  // point move; 'end' is said after it is let go.
+  assert.equal((await w.restore(chosen())).point,'all-planes');
+  assert.deepEqual(w.told,[{phase:'begin',screen:0,held:0,log:[],points:0},{phase:'end',screen:0,held:0,log:['apply:6'],points:1}]);
+  assert.equal(w.during,1,'still held while the point moves');
+  // Refused while it is read or checked (hidden, gone, unreadable, changed, unsaved marks, merged cells): never held.
+  w.told.length=0;
+  w.server.row.hidden=true;assert.equal((await w.restore(chosen())).reason,'job-hidden');w.server.row.hidden=false;
+  w.server.job=()=>({status:404,body:{message:'none'}});assert.equal((await w.restore(chosen())).reason,'job-unavailable');
+  w.server.job=()=>({status:500,body:{message:'down'}});assert.equal((await w.restore(chosen())).reason,'job-unavailable');
+  w.server.job=()=>{const snapshot=lSnapshot();snapshot.volume.series='1.2.99';return {status:200,body:{id:L_JOB,revision:1,snapshotVersion:6,snapshot}};};
+  assert.equal((await w.restore(chosen())).reason,'source-changed');
+  w.server.job=w.server.good;
+  w.marks.dirty=()=>true;assert.equal((await w.restore(chosen())).reason,'unsaved');w.marks.dirty=()=>false;
+  w.sandbox.kinCellMergeWorkspaceState=()=>({busy:false,merged:true});assert.equal((await w.restore(chosen())).reason,'layout-merged');
+  delete w.sandbox.kinCellMergeWorkspaceState;
+  assert.deepEqual([w.told,w.openings().holds.size],[[],0]);
+  // Another study set: this page changes nothing and holds nothing; the page it opens will.
+  w.server.job=()=>({status:200,body:{id:L_JOB,revision:1,snapshotVersion:6,snapshot:lSnapshot({studies:[L_STUDY,L_OTHER]})}});
+  assert.equal((await w.restore(chosen({studies:[L_STUDY,L_OTHER],mode:'continue',finding:{id:L_FINDING,revision:4,source:2}}))).state,'continuing');
+  assert.deepEqual([w.told,w.assigned.length],[[],1]);
+  w.server.job=w.server.good;
+  // Rolled back: held until the previous screen is back. A failed rollback lets go as well.
+  w.log.length=0;w.apply=[Error('INJECTED APPLY FAILURE')];
+  assert.equal((await w.restore(chosen())).state,'rolled-back');
+  assert.deepEqual(w.told.map(t=>[t.phase,t.held,t.log]),[['begin',0,[]],['end',0,['apply:6','apply:4']]]);
+  w.told.length=0;w.apply=[Error('INJECTED APPLY FAILURE'),Error('INJECTED ROLLBACK FAILURE')];
+  assert.equal((await w.restore(chosen())).state,'screen-unknown');
+  assert.deepEqual([phases(w),w.openings().holds.size],[['begin','end'],0]);
+  // An apply that fails before it has changed the screen: taken and let go, with the screen as it was.
+  w.told.length=0;w.log.length=0;w.server.row.snapshotVersion=2;
+  w.server.job=()=>({status:200,body:{id:L_JOB,revision:1,snapshotVersion:2,snapshot:lStack()}});
+  const adapter=w.sandbox.kinCreateStackRestore;w.sandbox.kinCreateStackRestore=undefined;
+  const unprepared=await w.restore(chosen({snapshotVersion:2,mark:null}));
+  assert.deepEqual([unprepared.state,unprepared.reason,phases(w),w.log,w.openings().holds.size],['refused','apply-failed',['begin','end'],[],0]);
+  w.sandbox.kinCreateStackRestore=adapter;
+ }finally{w.stop();}
+ // The kinJob page: the panel's own restore of the Job the address names is held the same way, once.
+ const page=await locationWorld({job:true});
+ try{
+  await lSettle(80);
+  assert.deepEqual(page.told,[{phase:'begin',screen:0,held:0,log:[],points:0},{phase:'end',screen:0,held:0,log:['apply:6'],points:0}]);
+  assert.equal(page.status(),'MPR 작업을 복원했습니다. 재구성 표시이며 원본 프레임 표식과 별개입니다.');
+  // Restore Job pressed in the list afterwards is the reader's own.
+  await page.button('Restore Job').onclick();await lSettle();
+  assert.deepEqual([phases(page),page.log],[['begin','end'],['apply:6','apply:6']]);
+ }finally{page.stop();}
+});
+
+test('opening hold: each restore lets go of its own only, and a panel taken down moves the screen on',async()=>{
+ const w=await locationWorld();
+ try{
+  let first;w.apply=[()=>new Promise(r=>{first=r;})];
+  const old=w.restore(chosen());await lSettle();
+  assert.deepEqual([phases(w),w.openings().holds.size,[...w.openings().holds][0].screen],[['begin'],1,0]);
+  // The panel is taken down while its restore is still applied (the mode left): the hold is not dropped, only outdated.
+  w.stop();
+  assert.equal(w.openings().screen,1);
+  assert.equal(w.openings().holds.size,1,'nothing is cleared for it: only that restore lets go');
+  // The next screen's panel and its own restore, under a later number.
+  w.mount();await lSettle();
+  let second;w.apply=[()=>new Promise(r=>{second=r;})];
+  const next=w.restore(chosen());await lSettle();
+  assert.equal(w.openings().holds.size,2);
+  assert.ok(w.told.at(-1).phase==='begin'&&w.told.at(-1).screen>=1,'the new hold carries the new screen: '+JSON.stringify(w.told.at(-1)));
+  // The old restore settles late: it lets go of its own hold and of nothing else.
+  first();assert.equal((await old).state,'screen-unknown');
+  assert.deepEqual([w.told.at(-1).phase,w.told.at(-1).screen,w.openings().holds.size],['end',0,1]);
+  assert.ok([...w.openings().holds][0].screen>=1,'the hold still standing is the new screen\'s');
+  second();assert.equal((await next).state,'restored');
+  assert.equal(w.openings().holds.size,0);
+ }finally{w.stop();}
 });
 
 // D751: a stack that did not initialize at the saved SOP is refused and rolled back.
