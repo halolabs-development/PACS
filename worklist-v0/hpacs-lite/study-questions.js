@@ -414,7 +414,7 @@
         li.dataset.kind = entry.kind;
         const meta = make('p', 'question-muted');
         meta.append(make('strong', null, KINDS[entry.kind]), ` · ${person(entry.author)} (${ROLES[entry.author.role]}) · ${time(entry.at)}`);
-        const body = entry.body ? make('p', 'question-body', entry.body) : make('p', 'question-muted', TEXT.closeEmpty);
+        const body = entry.body ? Object.assign(make('p', 'question-body', entry.body), { translate: false }) : make('p', 'question-muted', TEXT.closeEmpty);
         li.append(meta, body);
         const signed = window.KinClinicalSignature?.(evidence, entry.seq);
         if (signed) li.append(make('p', 'question-muted', signed));

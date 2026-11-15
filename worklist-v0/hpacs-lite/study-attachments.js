@@ -15,6 +15,9 @@
  */
 window.KinStudyAttachments = function (app) {
   'use strict';
+  // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
+  const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
   const work = window.KinWorkContext;
   const MAX_BYTES = 20 * 1024 * 1024;      // a chosen file
   const PNG_MAX_BYTES = 64 * 1024 * 1024;  // a picture as redrawn to PNG (the server's PNG limit)
@@ -180,7 +183,7 @@ window.KinStudyAttachments = function (app) {
         img.style.transform = `rotate(${entry.rotation}deg)`;
         thumb.append(img);
       } else thumb.textContent = entry.type === 'application/pdf' ? 'PDF' : '—';
-      const name = node('span', 'attach-name', entry.file.name);
+      const name = node('span', 'attach-name', entry.file.name); name.translate = false;
       const size = node('span', 'attach-size', (entry.file.size / 1024 / 1024).toFixed(1) + ' MB');
       li.append(thumb, name, size);
       // A file whose request may have been stored (no answer) is sent again exactly as it was: no Rotate, no Remove.
@@ -202,7 +205,7 @@ window.KinStudyAttachments = function (app) {
       fileList.append(li);
     }
     const n = pending().length;
-    send.textContent = `Attach ${n} File${n === 1 ? '' : 's'}`;
+      kinWrite(send, kinSay('Attach {n0} File{t1}', n, { t: n === 1 ? '' : 's' }));
     send.disabled = session.sending || n === 0 || !app.allowed();
   }
 

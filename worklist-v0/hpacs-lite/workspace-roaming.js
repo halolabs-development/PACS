@@ -53,7 +53,7 @@
     // The kind of the last failed read of the account copy (null after a read that confirmed it). It survives a reload of
     // this tab only (sessionStorage), so the check at start can say what it is re-checking; nothing depends on it.
     let access = null;
-    const loadButton = buttons.find(b => b.dataset.action === 'load'), loadLabel = loadButton?.textContent, loadTitle = loadButton?.title;
+    const loadButton = buttons.find(b => b.dataset.action === 'load'), loadLabel = loadButton && (window.KinLanguage ? window.KinLanguage.source(loadButton) : loadButton.textContent), loadTitle = loadButton && (window.KinLanguage ? window.KinLanguage.source(loadButton, 'title') : loadButton.title);
     const memory = owner ? 'kin-workspace-account-check:' + JSON.stringify(owner) : null;
     const remember = kind => { try { if (!memory) return; if (kind) sessionStorage.setItem(memory, kind); else sessionStorage.removeItem(memory); } catch (_) {} };
     try { const kind = memory && sessionStorage.getItem(memory); if (READ_FAILED[kind]) access = kind; } catch (_) {}

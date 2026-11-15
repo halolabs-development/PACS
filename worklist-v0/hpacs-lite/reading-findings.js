@@ -7,6 +7,8 @@
  * textContent. Control names English, messages Korean. */
 window.KinReadingFindings = function (app) {
   'use strict';
+  const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
   const work = window.KinWorkContext, transport = window.KinSessionTransport.page();
   const effect = (fn, scope = 'document') => { const at = work.capture(scope); return (...args) => { work.commit(at, () => { fn(...args); }); }; };
   const command = window.kinFindingCommand, links = window.kinFindingLinkModel, citation = window.KinReportCitation;
@@ -17,7 +19,7 @@ window.KinReadingFindings = function (app) {
   // server would refuse - or, worse, one it would accept under a different rule.
   if (links.SCHEMA !== 2 || command.SCHEMA !== 2 || citation.SCHEMA !== 2)
     throw new Error(links.MODULE_MISMATCH_TEXT || '화면 구성 요소 판이 다릅니다. 새로고침하세요.');
-  const node = (tag, value, parent) => { const el = document.createElement(tag); if (value) el.textContent = value; if (parent) parent.append(el); return el; };
+  const node = (tag, value, parent) => { const el = document.createElement(tag); if (value) kinWrite(el, value); if (parent) parent.append(el); return el; };
   const button = (label, run, parent) => { const b = node('button', label, parent); b.type = 'button'; b.addEventListener('click', run); return b; };
   const toggle = button('Image Findings', () => show(panel.hidden), null);
   toggle.id = 'reading-findings-open'; toggle.setAttribute('aria-controls', 'reading-findings'); toggle.setAttribute('aria-expanded', 'false');
@@ -200,7 +202,7 @@ window.KinReadingFindings = function (app) {
     }
   }
   function setResult(message, state, canRetry) {
-    result.textContent = message; result.dataset.result = state; retryShown = !!canRetry;
+    kinWrite(result, message); result.dataset.result = state; retryShown = !!canRetry;
     renderRecovery();
   }
 
@@ -418,7 +420,8 @@ window.KinReadingFindings = function (app) {
         const job = s.kind === 'job';
         const item = node('li', '', sources); item.dataset.linkState = s.linkState;
         if (job) { item.dataset.jobId = s.jobId; item.dataset.sourceKind = s.mark ? 'point' : 'view'; } else item.dataset.itemId = s.itemId;
-        const label = node('span', (i === row.primary ? '★ ' : '') + s.description + ' · ', item); label.id = 'reading-findings-label-' + (++labels);
+        const label = node('span', '', item); label.id = 'reading-findings-label-' + (++labels);
+        kinWrite(label, kinSay('{t0}{t1} · ', { t: i === row.primary ? '★ ' : '' }, { t: s.description }));
         const badge = node('strong', s.linkLabel, item); badge.dataset.kinLinkState = s.linkState;
         if ((s.linkState === 'revised' || s.linkState === 'metadata-changed') && s.headRevision) node('span', ' (현재 r' + s.headRevision + ')', item);
         if (s.linkState !== 'current') node('span', ' · ' + s.linkText, item);

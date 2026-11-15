@@ -1,5 +1,8 @@
 window.KinStudyTags=function(app){
+  const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
   const work=window.KinWorkContext;
+  // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
   const d=document.createElement('dialog');d.id='study-tag-dialog';d.setAttribute('aria-labelledby','study-tag-title');
   d.innerHTML=`<h2 id="study-tag-title">검사 태그 관리·검색</h2><p>개인 태그는 이 계정에서만 보입니다. 기관 태그 이름은 관리자가 관리하고, 검사 부여·해제는 기관 업무 사용자가 할 수 있습니다. 태그를 지워도 원검사·판독문은 유지됩니다.</p>
     <label>태그 범위<select id="study-tag-scope"><option value="personal">개인 태그</option><option value="institution">기관 태그</option></select></label>
@@ -17,7 +20,7 @@ window.KinStudyTags=function(app){
   $('name').oninput=()=>{if(selected)names.set(nameKey(),$('name').value);};
   $('new').oninput=()=>newNames.set(scope,$('new').value);
   const label=uid=>{const s=app.study(uid);return s?[s.name,s.id,s.date,s.desc,uid].filter(Boolean).join(' · '):uid;};
-  const message=text=>$('status').textContent=text;
+  const message=text=>kinWrite($('status'),text);
   function controls(){d.querySelectorAll('button,input,select').forEach(x=>x.disabled=busy||!!pending||!same());
     $('retry').hidden=!pending;$('retry').disabled=busy;$('reload').disabled=busy;$('close').disabled=busy;
     for(const id of ['create','rename','delete'])$(id).disabled=busy||!!pending||!same()||!manages()||(id!=='create'&&!tag());
@@ -30,7 +33,7 @@ window.KinStudyTags=function(app){
     state=value;app.changed(value);
   }
   function draw(preserve=false){const previous=selected;if(!tag())selected=catalog()?.tags[0]?.id??null;$('scope').value=scope;$('list').replaceChildren();
-    for(const t of catalog()?.tags??[]){const b=document.createElement('button');b.type='button';b.dataset.tagId=t.id;b.textContent=t.name+' · '+t.uids.length+'건'+(current&&t.uids.includes(current)?' · 선택 검사에 부여됨':'');b.setAttribute('aria-pressed',String(t.id===selected));b.onclick=()=>{selected=t.id;draw();};$('list').append(b);}
+    for(const t of catalog()?.tags??[]){const b=document.createElement('button');b.type='button';b.dataset.tagId=t.id;const tagName=document.createElement('span');tagName.translate=false;tagName.textContent=t.name;b.append(tagName,' · '+t.uids.length+'건'+(current&&t.uids.includes(current)?' · 선택 검사에 부여됨':''));b.setAttribute('aria-pressed',String(t.id===selected));b.onclick=()=>{selected=t.id;draw();};$('list').append(b);}
     const t=tag();if(!preserve||previous!==selected)$('name').value=names.get(nameKey())??t?.name??'';$('new').value=newNames.get(scope)??'';$('current').textContent=current?'대상 검사 · '+label(current):'목록에서 검사를 먼저 선택하세요.';
     $('assigned').textContent=t&&current?(t.uids.includes(current)?'이 검사에 부여된 태그입니다.':'이 검사에는 아직 부여되지 않았습니다.'):'태그를 선택하세요.';
     $('count').textContent=t?'접근 가능한 검사 '+t.uids.length+'건'+(t.unavailable?' · 접근 불가 '+t.unavailable+'건':''):'';controls();}
@@ -48,7 +51,7 @@ window.KinStudyTags=function(app){
     const at=work.capture('document');if(busy||!pending||!same())return;const ticket=++seq,body=pending;busy=true;controls();message('태그 변경을 저장하는 중…');
     try{const value=await request('POST',body,at);
       work.commit(at,()=>{if(ticket!==seq||!same())return;adopt(value);pending=null;if(['rename','delete'].includes(body.action))names.delete(body.scope+':'+body.tagId);if(body.action==='create'){selected=body.tagId;newNames.delete(body.scope);$('new').value='';}draw(['add','remove'].includes(body.action));message('저장되었습니다.');});}
-    catch(e){work.commit(at,()=>{if(ticket===seq&&same()){if([400,403,404,409].includes(e.status))pending=null;message('저장 확인 실패: '+e.message+(pending?' · 같은 요청을 다시 시도하거나 최신 목록을 읽으세요.':' · 입력을 확인하거나 최신 목록을 읽으세요.')+' 입력은 유지했습니다.');}});}
+    catch(e){work.commit(at,()=>{if(ticket===seq&&same()){if([400,403,404,409].includes(e.status))pending=null;message(kinSay('저장 확인 실패: {e0}{t1} 입력은 유지했습니다.',{e:e.message},{t:pending?' · 같은 요청을 다시 시도하거나 최신 목록을 읽으세요.':' · 입력을 확인하거나 최신 목록을 읽으세요.'}));}});}
     finally{work.commit(at,()=>{if(ticket===seq){busy=false;controls();}});}}
   async function apply(){
     const at=work.capture('document');if(busy||pending||!same()||!tag())return;const ticket=++seq,wanted=selected;busy=true;controls();

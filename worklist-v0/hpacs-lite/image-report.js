@@ -451,7 +451,7 @@
         session.list = list;
         tellChanged(uid, list);
         session.images = images || [];
-        imageSelect.replaceChildren(...session.images.map(i => node('option', { value: i.id, textContent: i.label })));
+        imageSelect.replaceChildren(...session.images.map(i => node('option', { value: i.id, textContent: i.label, translate: false })));
         bgRadios[2].input.disabled = !session.images.length;
         imageNote.textContent = images === null ? '저장한 영상 목록을 읽지 못했습니다' : session.images.length ? '' : '이 검사에 저장된 영상이 없습니다';
         const why = ctx.report.editBlock(uid);

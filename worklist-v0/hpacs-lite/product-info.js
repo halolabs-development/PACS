@@ -82,7 +82,7 @@ dialog.kpi-dialog :focus-visible { outline: 2px solid #9cc3ff; outline-offset: 2
     state.append(el('span', { class: 'kpi-status', 'data-status': row.status }, row.statusLabel));
     tr.append(state);
     const detail = el('td');
-    if (row.value !== null && row.value !== undefined) detail.append(el('div', { class: 'kpi-value' }, row.value));
+    if (row.value !== null && row.value !== undefined) detail.append(Object.assign(el('div', { class: 'kpi-value' }, row.value), { translate: false }));
     for (const item of row.details || []) detail.append(el('p', { class: 'kpi-detail' }, `${item.label}: ${item.value}`));
     if (row.href) {
       const line = el('div');

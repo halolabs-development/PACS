@@ -19,6 +19,9 @@
  */
 (function () {
   'use strict';
+  // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
+  const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
   const LAST = 'kin.filmPrint.last';
   const FORMATS = [['1x1', '1 × 1'], ['1x2', '1 × 2'], ['2x2', '2 × 2'], ['3x4', '3 × 4'], ['4x5', '4 × 5']];
   const SIZES = [['14INX17IN', '14 × 17 in'], ['11INX14IN', '11 × 14 in'], ['10INX12IN', '10 × 12 in'], ['8INX10IN', '8 × 10 in']];
@@ -29,7 +32,9 @@
   function install(ctx) {
     const $ = selector => document.querySelector(selector);
     const node = (tag, props = {}, ...children) => {
-      const el = Object.assign(document.createElement(tag), props);
+      const { textContent, ...attributes } = props;
+      const el = Object.assign(document.createElement(tag), attributes);
+      if (textContent !== undefined) kinWrite(el, textContent);
       for (const child of children) if (child != null) el.append(child);
       return el;
     };
@@ -167,7 +172,7 @@
 
     function paintTargets(last = remembered()) {
       const list = kind() === 'device' ? session.destinations.devices : session.destinations.printers;
-      target.replaceChildren(...list.map(p => node('option', { value: p.id, textContent: `${p.name} · AE ${p.aet}` })));
+      target.replaceChildren(...list.map(p => node('option', { value: p.id, textContent: `${p.name} · AE ${p.aet}`, translate: false })));
       if (!list.length) target.append(node('option', { value: '', textContent: kind() === 'device' ? 'No DICOM device is registered' : 'No film printer is registered' }));
       const keep = last[kind()];
       if (list.some(p => p.id === keep)) target.value = keep;
@@ -205,8 +210,10 @@
         session.layout = layout;
         session.film = layout.film;
         if (firstSeries || series.options.length !== layout.series.length) {
-          series.replaceChildren(...layout.series.map(s => node('option', { value: s.uid,
-            textContent: [s.number != null ? `#${s.number}` : '', s.modality, s.description, `${s.images} image${s.images === 1 ? '' : 's'}`].filter(Boolean).join(' · ') })));
+          // The series values lead (data); the image count closes the line as one template the screen language reads.
+          series.replaceChildren(...layout.series.map(s => { const lead = [s.number != null ? `#${s.number}` : '', s.modality, s.description].filter(Boolean).join(' · ');
+            return node('option', { value: s.uid, textContent: lead ? kinSay('{0} · {n1} image{t2}', lead, s.images, { t: s.images === 1 ? '' : 's' })
+              : kinSay('{n0} image{t1}', s.images, { t: s.images === 1 ? '' : 's' }) }); }));
         }
         series.value = layout.seriesUid;
         paintFilm();

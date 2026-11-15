@@ -111,7 +111,8 @@ MODAL_CSS = slice_between(MAIN, ".modal { display: none;", "/* ══ 클릭 피
 # The two script runs by the TypeScript-AST fixture projection (S9-U0a-PRE moved some of their declarations ahead of
 # their first callers, so they are no longer one stretch of text).
 # (Computed where the page is built, not at import: main_split_harness.fixture_block.)
-API_FN = extract_function(MAIN, "api")
+API_FN = "\n".join((ROOT / "worklist-v0/hpacs-lite" / name).read_text(encoding="utf-8")
+                         for name in ("worklist-language-terms.js", "worklist-language.js")) + "\nconst kinSay=KinLanguage.say;\n" + extract_function(MAIN, "kinWrite") + "\n" + extract_function(MAIN, "api")
 WRITE_BLOCK_FN = extract_function(MAIN, "reportWriteBlock")
 EDITOR_BLOCK_FN = extract_function(MAIN, "reportEditorBlock")
 # The template half lives outside every sliced region, so it is taken by name (P-7).

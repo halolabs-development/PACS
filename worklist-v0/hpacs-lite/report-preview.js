@@ -152,6 +152,8 @@
     paper.style.cssText = 'flex:1;min-width:0;border:0;background:white';
     const footer = el('div', undefined, dialog); footer.style.cssText = 'display:flex;gap:12px;align-items:center;padding:12px';
     const status = el('span', '', footer); status.setAttribute('role', 'status'); status.style.cssText = 'flex:1;white-space:pre-wrap';
+    // An error the page shows as it came: marked as an error, so one with no text in the screen language still says it failed.
+    const showError = text => { const shown = document.createElement('span'); shown.setAttribute('data-kin-error', ''); shown.textContent = text; status.replaceChildren(shown); };
     const printButton = el('button', '인쇄 / PDF', footer); printButton.disabled = true;
     document.body.append(dialog);
     let epoch = 0, session = null, request = null, urls = [], rendered = null, printWindow = null, focusBefore = null;
@@ -160,7 +162,7 @@
     function syncGeometry() {
       const previous = targetKey.value, keys = session?.data ? selectedKeys() : [];
       targetKey.replaceChildren(); const all = el('option', '체크한 키 이미지 전체', targetKey); all.value = 'all';
-      for (const key of keys) { const option = el('option', key.item.title || '(제목 없음)', targetKey); option.value = key.id; }
+      for (const key of keys) { const option = el('option', key.item.title || '(제목 없음)', targetKey); option.value = key.id; if (key.item.title) option.translate = false; }
       targetKey.value = keys.some(key => key.id === previous) ? previous : 'all';
       const values = keys.filter(key => targetKey.value === 'all' || targetKey.value === key.id).map(key => edits.get(key.id) || originalGeometry());
       const mixed = values.some(value => !same(value, values[0])); const value = mixed ? originalGeometry() : values[0] || originalGeometry();
@@ -470,7 +472,7 @@
         });
       } catch (error) {
         if (session !== s || selectionEpoch !== s.selectionEpoch) return;
-        work.commit(at, () => { releaseImages(); status.textContent = error.name === 'AbortError' ? '불러오기가 지연됐습니다. 다시 확인을 누르세요.' : error.message; });
+        work.commit(at, () => { releaseImages(); if (error.name === 'AbortError') status.textContent = '불러오기가 지연됐습니다. 다시 확인을 누르세요.'; else showError(error.message); });
       } finally { ownedUrls.forEach(URL.revokeObjectURL); }
     }
     async function reload() {
@@ -486,13 +488,13 @@
         if (!s.data.canPreviewEditor) source.value = 'saved'; source.disabled = false; layout.disabled = false; windowControls.disabled = false;
         for (const key of s.data.keys) {
           const label = el('label', undefined, choices); label.style.cssText = 'display:block;padding:8px 0;border-bottom:1px solid #465362;overflow-wrap:anywhere';
-          const input = el('input', undefined, label); input.type = 'checkbox'; input.value = key.id; input.setAttribute('aria-label', key.item.title || '제목 없는 키 이미지');
+          const input = el('input', undefined, label); input.type = 'checkbox'; input.value = key.id; input.setAttribute('aria-label', key.item.title || '제목 없는 키 이미지'); if (key.item.title) input.setAttribute('data-kin-keep', 'aria-label');
           el('span', ` ${key.item.title || '(제목 없음)'} · 프레임 ${key.item.frame}`, label); input.onchange = prepare;
         }
         if (!s.data.keys.length) el('p', '저장한 키 이미지가 없습니다.', choices);
         void prepare();
         });
-      } catch (error) { work.commit(at, () => { if (session === s) { releaseImages(); status.textContent = error.name === 'AbortError' ? '조회가 지연됐습니다. 다시 확인을 누르세요.' : error.message; } }); }
+      } catch (error) { work.commit(at, () => { if (session === s) { releaseImages(); if (error.name === 'AbortError') status.textContent = '조회가 지연됐습니다. 다시 확인을 누르세요.'; else showError(error.message); } }); }
     }
     async function print() {
       const at = work.capture('study');
@@ -533,7 +535,7 @@
       } catch (error) {
         if (!target.closed) target.close();
         // A late cancelled print owns only its captured output, not a newer layout.
-        work.commit(at, () => { if (session === s && rendered === ready) { releaseImages(); status.textContent = error.message; } });
+        work.commit(at, () => { if (session === s && rendered === ready) { releaseImages(); showError(error.message); } });
       }
       finally { work.commit(at, () => { if (session === s && rendered === ready) printButton.disabled = !supportsPageIdentity(); }); }
     }
@@ -562,7 +564,7 @@
         }
         for (const key of selectedKeys()) if (targetKey.value === 'all' || key.id === targetKey.value) edits.set(key.id, { ...value });
         geometryDirty = false; targetKey.disabled = false; void prepare();
-      } catch (error) { status.textContent = error.message; }
+      } catch (error) { showError(error.message); }
     }
     applyGeometry.onclick = () => changeGeometry(false); resetGeometry.onclick = () => changeGeometry(true);
     dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });

@@ -145,6 +145,7 @@
         line.className = 'related-mode-line';
         name.className = 'related-mode-label';
         name.textContent = label;
+        text.setAttribute('translate', 'no');
         text.textContent = value === null || value === undefined || value === '' ? UNKNOWN : String(value);
         line.append(name, text);
         nodes.push(line);

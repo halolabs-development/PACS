@@ -40,12 +40,13 @@
       }
       bar.style.display = "flex";
       $("#b-cite-list").style.display = row ? "" : "none";
-      $("#citemsg").textContent = row
-        ? (unknownDraft
+      // The note is a sentence of its own (its own text), so the screen language reaches it whole.
+      if (!row) { $("#citemsg").replaceChildren("● ", note); }
+      else $("#citemsg").textContent =
+        (unknownDraft
             ? `● 승인본 ${row.head.length}건 · 저장된 초안의 인용은 다시 확인하는 중입니다` + (note ? ` (${note})` : "")
             : `● 인용 ${count}건 — 승인본 ${row.head.length}건 · 저장된 초안 ${row.draft.length}건`) +
-          (reportConverge.has(uid) ? " · 마지막 인용이 화면에 반영되지 않아 다음 자동 저장이 서버 내용을 화면에 맞춥니다" : "")
-        : `● ${note}`;
+          (reportConverge.has(uid) ? " · 마지막 인용이 화면에 반영되지 않아 다음 자동 저장이 서버 내용을 화면에 맞춥니다" : "");
       if (!row || !citationListOpen) {
         list.hidden = true; list.replaceChildren();
         $("#b-cite-list").setAttribute("aria-expanded", "false");
@@ -152,13 +153,15 @@
      */
     function placementLine(field, plan) {
       if (!plan) return "";
+      // This function is also run on its own (a page test takes it out of the page): the plain fill stands in then.
+      const kinSay = typeof globalThis.kinSayShared === "function" ? globalThis.kinSayShared : (t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => { const v = p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); });
       const label = KinReportCitation.FIELD_LABEL[field] ?? field;
       if (plan.mode === "end")
-        return `삽입 위치: ${label} 칸 맨 끝 — 이 칸에서 확인된 커서 자리가 없어 끝에 붙입니다`;
-      return `삽입 위치: ${label} 칸 ${plan.line}번째 줄(줄바꿈 기준)부터` +
-        (plan.snapped === "line-end" ? " · 커서가 줄 중간이라 그 줄 다음으로 맞췄습니다" : "") +
-        (plan.snapped === "past-citation" ? " · 이미 인용된 문장을 쪼개지 않도록 그 뒤로 옮겼습니다" : "") +
-        (plan.mode === "selection" ? " · 선택한 글은 지우지 않고 그 뒤에 넣습니다" : "");
+        return kinSay("삽입 위치: {t0} 칸 맨 끝 — 이 칸에서 확인된 커서 자리가 없어 끝에 붙입니다", { t: label });
+      return kinSay("삽입 위치: {t0} 칸 {n1}번째 줄(줄바꿈 기준)부터{t2}{t3}{t4}", { t: label }, plan.line,
+        { t: plan.snapped === "line-end" ? " · 커서가 줄 중간이라 그 줄 다음으로 맞췄습니다" : "" },
+        { t: plan.snapped === "past-citation" ? " · 이미 인용된 문장을 쪼개지 않도록 그 뒤로 옮겼습니다" : "" },
+        { t: plan.mode === "selection" ? " · 선택한 글은 지우지 않고 그 뒤에 넣습니다" : "" });
     }
     /**
      * 200을 받은 뒤 **화면에** 놓을 계획(P-10). 보낸 문자열이 딛고 선 값이 아직 그대로면 그
@@ -220,13 +223,13 @@
       $("#cite-preview-target").textContent = s
         ? `삽입 대상: ${s.name} (${s.id})\n${s.date} · ${shownStudyDesc(s)} · AccNo: ${s.acc || "없음"}`
         : "삽입 대상: 검사 미선택";
-      $("#cite-preview-source").textContent =
-        `출처: ${citePane.sourceLabel} · 소견 r${citePane.findingRevision} · 인용 당시 연결 ${citePane.linkState}`;
+      kinWrite($("#cite-preview-source"), kinSay("출처: {0} · 소견 r{1} · 인용 당시 연결 {2}",
+        { t: citePane.sourceLabel }, citePane.findingRevision, citePane.linkState));
       // 미리보기는 **조립된 그 유니코드 문자열 그대로**를 보인다. 공백도 줄바꿈도 보존된다.
       $("#cite-preview-block").textContent = citePane.block;
       // 여기서 계획을 **다시 세우지 않는다.** 이 함수는 누름 자체에서도 여러 번 불리므로,
       // 여기서 갱신하면 열고 나서 바뀐 것을 조용히 흡수해 "확인한 자리"가 사라진다.
-      $("#cite-preview-place").textContent = placementLine($("#cite-preview-field").value, citePane.plan);
+      kinWrite($("#cite-preview-place"), placementLine($("#cite-preview-field").value, citePane.plan));
       $("#cite-preview-status").textContent = why ?? citePane.status ??
         (`확인을 누르면 서버가 이 문장과 증언을 함께 기록한 뒤 ${KinReportCitation.FIELD_LABEL[$("#cite-preview-field").value]} 칸에 붙입니다.` +
          " 기존 내용은 한 글자도 지우지 않고 위 위치에 줄 단위로 넣습니다.");
