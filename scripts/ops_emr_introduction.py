@@ -2717,10 +2717,14 @@ const get=(url,options={})=>fetch(url,{...options,signal:AbortSignal.timeout(150
  const executions=await flow(realm.browserFlow);
  const resetExecutions=await flow(realm.resetCredentialsFlow);
  // A client bound to its own browser flow would not meet the realm's administrator OTP.
- const browserOverrides=(await read('/clients?max=1000')).filter(c=>c.authenticationFlowBindingOverrides&&c.authenticationFlowBindingOverrides.browser).map(c=>c.clientId);
+ const clients=await read('/clients?max=1000');
+ const browserOverrides=clients.filter(c=>c.authenticationFlowBindingOverrides&&c.authenticationFlowBindingOverrides.browser).map(c=>c.clientId);
+ // kin-bff's token mappers: the administrator's OTP reaches the API only through its AMR mapper.
+ const bff=clients.find(c=>c.clientId==='kin-bff');
+ const bffMappers=bff?(await read('/clients/'+encodeURIComponent(bff.id)+'/protocol-mappers/models')).map(m=>({protocolMapper:m.protocolMapper,config:m.config||{}})):[];
  process.stdout.write('KIN_RESULT '+JSON.stringify({useCaches:caches===undefined?null:String(caches),persistentUserSessions:persistent?persistent.enabled===true:null,
    smokePolicy:{browserFlow:realm.browserFlow,passwordPolicy:realm.passwordPolicy||'',organizationsEnabled:realm.organizationsEnabled,requiredActions,executions,
-   resetFlow:realm.resetCredentialsFlow,resetExecutions,browserOverrides}})+'\n');
+   resetFlow:realm.resetCredentialsFlow,resetExecutions,browserOverrides,bffMappers}})+'\n');
 })().catch(e=>{process.stderr.write(String((e&&e.message)||e).slice(0,80)+'\n');process.exitCode=1;});
 """
 STATE_VOLUME_SCRIPT = r"""

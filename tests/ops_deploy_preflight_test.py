@@ -313,6 +313,10 @@ class AdminMfaTests(unittest.TestCase):
     required for the admin role, before any change (L-01)."""
     ADMIN = {"condUserRole": "admin", "negate": "false"}
     NOT_ADMIN = {"condUserRole": "admin", "negate": "true"}
+    # The administrator OTP step's authentication reference as Admin REST shows it: both values masked.
+    REFERENCE = {"default.reference.value": "**********", "default.reference.maxAge": "**********"}
+    AMR = {"protocolMapper": "oidc-amr-mapper", "config": {"id.token.claim": "false", "access.token.claim": "true",
+                                                           "introspection.token.claim": "true"}}
 
     def setUp(self):
         self.realm = json.loads(deploy.REALM_FILE.read_text(encoding="utf-8"))
@@ -327,18 +331,41 @@ class AdminMfaTests(unittest.TestCase):
                        configured("REQUIRED"), (2, "REQUIRED", "conditional-credential", {"credentials": "webauthn-passwordless"}),
                        (2, "ALTERNATIVE", "auth-otp-form"), (2, "DISABLED", "webauthn-authenticator"),
                        (2, "DISABLED", "auth-recovery-authn-code-form"), (2, "REQUIRED", "conditional-user-role", self.NOT_ADMIN),
-                       (1, "CONDITIONAL", None), (2, "REQUIRED", "conditional-user-role", self.ADMIN), (2, "REQUIRED", "auth-otp-form"))
+                       (1, "CONDITIONAL", None), (2, "REQUIRED", "conditional-user-role", self.ADMIN),
+                       (2, "REQUIRED", "auth-otp-form", dict(self.REFERENCE)))
         reset = rows((0, "REQUIRED", "reset-credentials-choose-user"), (0, "REQUIRED", "reset-credential-email"),
                      (0, "REQUIRED", "reset-password"), (0, "CONDITIONAL", None), (1, "REQUIRED", "conditional-user-configured"),
                      (1, "REQUIRED", "reset-otp"), (1, "REQUIRED", "conditional-user-role", self.NOT_ADMIN), (0, "CONDITIONAL", None),
-                     (1, "REQUIRED", "conditional-user-role", self.ADMIN), (1, "REQUIRED", "auth-otp-form"))
+                     (1, "REQUIRED", "conditional-user-role", self.ADMIN), (1, "REQUIRED", "auth-otp-form", dict(self.REFERENCE)))
         return {"browserFlow": "kin browser", "resetFlow": "kin reset credentials", "browserOverrides": [],
-                "requiredActions": [{"alias": "CONFIGURE_TOTP", "enabled": True}], "executions": browser, "resetExecutions": reset}
+                "requiredActions": [{"alias": "CONFIGURE_TOTP", "enabled": True}], "executions": browser, "resetExecutions": reset,
+                "bffMappers": [{"protocolMapper": "oidc-group-membership-mapper", "config": {}}, copy.deepcopy(self.AMR)]}
 
     def test_the_shipped_flows_pass_and_are_the_realm_files(self):
         deploy.check_admin_mfa(self.shipped(), self.realm)
         self.assertEqual(deploy.flow_shape(self.shipped()["executions"]),
                          deploy.flow_shape(deploy.realm_flow_rows(self.realm, self.realm["browserFlow"])))
+        # A reference value Admin REST shows unmasked passes when it is the file's.
+        policy = self.shipped()
+        policy["executions"][-1]["config"] = {"default.reference.value": "otp", "default.reference.maxAge": "43200"}
+        deploy.check_admin_mfa(policy, self.realm)
+
+    def test_the_file_marks_the_administrator_otp_for_the_whole_session(self):
+        """The reference lives exactly on the two administrator OTP steps, for the SSO session's lifespan (Keycloak's default
+        0 drops it after the second it was performed), and kin-bff's access token carries it."""
+        configs = {item["alias"]: item["config"] for item in self.realm["authenticatorConfig"]}
+        marked = [(flow["alias"], step["authenticator"]) for flow in self.realm["authenticationFlows"]
+                  for step in flow["authenticationExecutions"]
+                  if "default.reference.value" in configs.get(step.get("authenticatorConfig"), {})]
+        self.assertEqual(marked, [("kin browser administrator otp", "auth-otp-form"), ("kin reset administrator otp", "auth-otp-form")])
+        for flow in self.realm["authenticationFlows"]:
+            for step in flow["authenticationExecutions"]:
+                config = configs.get(step.get("authenticatorConfig"), {})
+                if "default.reference.value" in config:
+                    self.assertEqual(config, {"default.reference.value": "otp",
+                                              "default.reference.maxAge": str(self.realm["ssoSessionMaxLifespan"])})
+        bff = next(client for client in self.realm["clients"] if client["clientId"] == "kin-bff")
+        self.assertIn(self.AMR, [{"protocolMapper": m["protocolMapper"], "config": m["config"]} for m in bff["protocolMappers"]])
 
     def test_an_existing_install_without_the_procedure_is_refused(self):
         policy = self.shipped()
@@ -362,6 +389,13 @@ class AdminMfaTests(unittest.TestCase):
             "a client binds its own browser flow": lambda p: p.update(browserOverrides=["kin-bff"]),
             "overrides not read": lambda p: p.pop("browserOverrides"),
             "reset flow not read": lambda p: p.pop("resetExecutions"),
+            "admin OTP reference missing": lambda p: p["executions"][18].pop("config"),
+            "reset OTP reference missing": lambda p: p["resetExecutions"][9].pop("config"),
+            "reference max age left at 0": browser(18, config={**self.REFERENCE, "default.reference.maxAge": "0"}),
+            "reference names another method": browser(18, config={**self.REFERENCE, "default.reference.value": "pwd"}),
+            "kin-bff without the AMR mapper": lambda p: p["bffMappers"].pop(),
+            "AMR only in the id token": lambda p: p["bffMappers"][-1]["config"].update({"access.token.claim": "false"}),
+            "kin-bff mappers not read": lambda p: p.pop("bffMappers"),
         }
         for name, change in changes.items():
             policy = copy.deepcopy(self.shipped())

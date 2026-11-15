@@ -1516,7 +1516,9 @@ class FakeDocker:
         policy = {"browserFlow": realm["browserFlow"], "passwordPolicy": "", "organizationsEnabled": False, "browserOverrides": [],
                   "requiredActions": [{"alias": "CONFIGURE_TOTP", "enabled": True, "defaultAction": False}],
                   "executions": pre.realm_flow_rows(realm, realm["browserFlow"]),
-                  "resetFlow": realm["resetCredentialsFlow"], "resetExecutions": pre.realm_flow_rows(realm, realm["resetCredentialsFlow"])}
+                  "resetFlow": realm["resetCredentialsFlow"], "resetExecutions": pre.realm_flow_rows(realm, realm["resetCredentialsFlow"]),
+                  "bffMappers": [{"protocolMapper": m["protocolMapper"], "config": m.get("config", {})} for client in realm["clients"]
+                                 if client["clientId"] == "kin-bff" for m in client.get("protocolMappers", [])]}
         self.run_output = ("KIN_RESULT " + json.dumps({"useCaches": "false", "persistentUserSessions": True, "smokePolicy": policy}) + "\n").encode()
         self.failing = None        # a predicate over argv: those calls exit 1
         self.crontab = ""
@@ -3306,14 +3308,17 @@ class RoundThreeHostTests(HostHarness, unittest.TestCase):
         role = {"providerId": "conditional-user-role", "requirement": "REQUIRED", "level": 1, "authenticationConfig": "c1"}
         smoke_policy = {"browserFlow": "browser", "passwordPolicy": "", "requiredActions": [], "executions": [],
                         "resetFlow": "kin reset", "resetExecutions": [{**role, "config": {"condUserRole": "admin", "negate": "false"}}],
-                        "browserOverrides": ["other"]}
+                        "browserOverrides": ["other"],
+                        "bffMappers": [{"protocolMapper": "oidc-amr-mapper", "config": {"access.token.claim": "true"}}]}
         answers.update({("GET", "/admin/realms/kin"): [(200, {"browserFlow": "browser", "passwordPolicy": "", "resetCredentialsFlow": "kin reset"})],
                         ("GET", "/admin/realms/kin/authentication/required-actions"): [(200, [])],
                         ("GET", "/admin/realms/kin/authentication/flows/browser/executions"): [(200, [])],
                         ("GET", "/admin/realms/kin/authentication/flows/kin%20reset/executions"): [(200, [role])],
                         ("GET", "/admin/realms/kin/authentication/config/c1"): [(200, {"config": {"condUserRole": "admin", "negate": "false"}})],
-                        ("GET", "/admin/realms/kin/clients"): [(200, [{"clientId": "kin-bff"},
-                                                                      {"clientId": "other", "authenticationFlowBindingOverrides": {"browser": "f"}}])]})
+                        ("GET", "/admin/realms/kin/clients"): [(200, [{"clientId": "kin-bff", "id": "bff-1"},
+                                                                      {"clientId": "other", "authenticationFlowBindingOverrides": {"browser": "f"}}])],
+                        ("GET", "/admin/realms/kin/clients/bff-1/protocol-mappers/models"): [
+                            (200, [{"name": "methods", "protocolMapper": "oidc-amr-mapper", "config": {"access.token.claim": "true"}}])]})
         answers.update({("GET", "/realms/master"): [(404, {}), (200, {})], ("POST", "/realms/master/protocol/openid-connect/token"): token,
                         ("GET", "/admin/serverinfo"): [(404, {}), (200, info)]})
         out = subprocess.run(["node", "-e", intro.SERVERINFO_SCRIPT], env=env, capture_output=True, timeout=120)

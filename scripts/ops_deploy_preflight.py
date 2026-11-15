@@ -377,26 +377,52 @@ def realm_flow_rows(realm, alias):
     return rows
 
 
+# Admin REST answers these step-config values masked (GET .../authentication/config/{id}, Keycloak 26.7.3): the deploy can see
+# that the authentication reference is set, not its value. A value it can read is compared as it is.
+MASKED_CONFIG = "**********"
+MASKED_CONFIG_KEYS = frozenset({"default.reference.value", "default.reference.maxAge"})
+
+
 def flow_shape(rows):
-    """What a flow does, without the names and ids an installation chose: level, requirement, step, step config."""
+    """What a flow does, without the names and ids an installation chose: level, requirement, step, step config. An
+    authentication reference value counts as set (Admin REST masks it); flows_match compares the ones it can read."""
     require(type(rows) is list and all(type(row) is dict for row in rows), "The realm's authentication flow could not be read")
+    seen = lambda key, value: "set" if key in MASKED_CONFIG_KEYS and value not in ("", None) else value
     return [(row.get("level"), row.get("requirement"), "subflow" if row.get("authenticationFlow") is True else row.get("providerId"),
-             sorted((row.get("config") or {}).items())) for row in rows]
+             sorted((key, seen(key, value)) for key, value in (row.get("config") or {}).items())) for row in rows]
+
+
+def flows_match(live, file_rows):
+    """The live flow has the file's shape; a reference value the live read shows (not masked) must also be the file's."""
+    if flow_shape(live) != flow_shape(file_rows):
+        return False
+    for row, expected in zip(live, file_rows):
+        for key in MASKED_CONFIG_KEYS & set(row.get("config") or {}):
+            if row["config"][key] != MASKED_CONFIG and row["config"][key] != (expected.get("config") or {}).get(key):
+                return False
+    return True
 
 
 def check_admin_mfa(policy, realm=None):
     """Administrators sign in with OTP (keycloak/README.md "관리자 OTP 필수"). The one rule is the shipped realm file: the live
-    browser and reset-credentials flows have the shape of kin-realm.json's, and CONFIGURE_TOTP is enabled so an administrator
-    without OTP enrols at the next sign-in. Existing installations apply it by hand before the deploy; this refuses until then."""
+    browser and reset-credentials flows have the shape of kin-realm.json's (the administrator OTP steps carry the `otp`
+    authentication reference), kin-bff's access token carries the authentication methods (the AMR mapper: the API admits
+    administrators only with `otp` in it), and CONFIGURE_TOTP is enabled so an administrator without OTP enrols at the next
+    sign-in. Existing installations apply it by hand before the deploy; this refuses until then. What it cannot see: the
+    reference values Admin REST masks (only that they are set) and whether a real sign-in yields the claim."""
     realm = realm or json.loads(REALM_FILE.read_text(encoding="utf-8"))
     require(type(policy) is dict and type(policy.get("requiredActions")) is list, "The realm's login policy could not be read")
-    require(flow_shape(policy.get("executions")) == flow_shape(realm_flow_rows(realm, realm["browserFlow"])),
+    require(flows_match(policy.get("executions"), realm_flow_rows(realm, realm["browserFlow"])),
             "The realm's browser flow does not require OTP for administrators (keycloak/README.md 관리자 OTP 필수)")
-    require(flow_shape(policy.get("resetExecutions")) == flow_shape(realm_flow_rows(realm, realm["resetCredentialsFlow"])),
+    require(flows_match(policy.get("resetExecutions"), realm_flow_rows(realm, realm["resetCredentialsFlow"])),
             "The realm's reset-credentials flow does not require OTP for administrators (keycloak/README.md 관리자 OTP 필수)")
     require(any(type(row) is dict and row.get("alias") == "CONFIGURE_TOTP" and row.get("enabled") is True
                 for row in policy["requiredActions"]), "The realm's Configure OTP required action is not enabled")
     require(policy.get("browserOverrides") == [], "A client has its own browser flow, outside the administrator OTP")
+    mappers = policy.get("bffMappers")
+    require(type(mappers) is list and any(type(m) is dict and m.get("protocolMapper") == "oidc-amr-mapper"
+                                          and (m.get("config") or {}).get("access.token.claim") == "true" for m in mappers),
+            "kin-bff's access token does not carry the authentication methods (keycloak/README.md 관리자 OTP 필수)")
 
 
 def expected_member_rights(user, isolated, unconfirmed):
