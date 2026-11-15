@@ -58,6 +58,8 @@ class FilmSite(rf.FlowSite):
         self.plan_changed = False           # the next print is refused: the series changed since its preview
         self.hold_destinations = False      # the destination list is not answered until the test releases it
         self.held_destinations = []
+        self.hold_layouts = False           # a layout is not answered until the test releases it
+        self.held_layouts = []
         self.source_uids = {}
         self.exam_scopes = {}
 
@@ -106,6 +108,8 @@ class FilmSite(rf.FlowSite):
         if method == "POST" and path == "/api/film-print/layout":
             body = request.post_data_json
             self.layouts.append(body)
+            if self.hold_layouts:
+                return self.held_layouts.append((route, body))
             return route.fulfill(json=self.layout_of(body))
         if method == "POST" and path == "/api/film-print/jobs":
             body = request.post_data_json
@@ -323,6 +327,49 @@ class FilmPrintWindow(unittest.TestCase):
         self.page.locator("#film-print-go").click()
         self.wait_status("Printed")
         self.assertEqual((PRINTER_A["id"], "3x4"), (site.posts[0]["destination"]["peerId"], site.posts[0]["format"]))
+
+    def test_a_film_size_the_printer_changes_asks_for_the_layout_again_while_one_is_on_its_way(self):
+        small = {**PRINTER_A, "filmSizes": ["8INX10IN"]}
+
+        def until(ready, what):
+            for _ in range(100):
+                if ready():
+                    return
+                self.page.wait_for_timeout(50)
+            self.fail(what)
+
+        # Each control that asks for a layout before the destinations arrive.
+        for control, value in (("format", "3x4"), ("size", "11INX14IN"), ("orientation", "LANDSCAPE")):
+            with self.subTest(control=control):
+                site = FilmSite()
+                site.hold_destinations = site.hold_layouts = True
+                self.start(site)
+                self.open_study()
+                self.page.locator("#report-more > summary").click()
+                self.page.locator("#b-film-print").click()
+                expect(self.page.locator("#film-print")).to_be_visible()
+                until(lambda: site.held_destinations, "the window asked for its destinations")
+                self.page.locator(f"#film-print-{control}").select_option(value)
+                until(lambda: len(site.held_layouts) == 1, "the reader's layout was asked for")
+                self.assertNotEqual("8INX10IN", site.layouts[0]["filmSize"])
+                # The only printer offers 8 x 10 in: the film size changes under the layout that is still on its way.
+                site.held_destinations.pop().fulfill(json={"printers": [small], "devices": [DEVICE]})
+                expect(self.page.locator("#film-print-size")).to_have_value("8INX10IN")
+                until(lambda: len(site.layouts) == 2, "the changed film size asks for its own layout: " + json.dumps(site.layouts))
+                self.assertEqual("8INX10IN", site.layouts[1]["filmSize"])
+                # The earlier layout answers now. It is not the film that would be printed: nothing is drawn, Print stays off.
+                route, body = site.held_layouts.pop(0)
+                route.fulfill(json=site.layout_of(body))
+                self.page.wait_for_timeout(300)
+                expect(self.page.locator("#film-print-go")).to_be_disabled()
+                expect(self.page.locator("#film-print-film-of")).to_have_text("")
+                route, body = site.held_layouts.pop(0)
+                route.fulfill(json=site.layout_of(body))
+                expect(self.page.locator("#film-print-go")).to_be_enabled()
+                self.page.locator("#film-print-go").click()
+                self.wait_status("Printed")
+                self.assertEqual(("8INX10IN", site.layout_of(site.layouts[1])["plan"]), (site.posts[0]["filmSize"], site.posts[0]["plan"]),
+                                 "the print names the layout of the film size it asks for")
 
     def test_destination_decides_the_list_and_the_main_button(self):
         self.start()

@@ -179,18 +179,24 @@
       if (!list.length) target.append(node('option', { value: '', textContent: kind() === 'device' ? 'No DICOM device is registered' : 'No film printer is registered' }));
       const keep = last[kind()];
       if (list.some(p => p.id === keep)) target.value = keep;
-      const before = size.value;
       fitSizes();
-      if (size.value !== before && session.layout) void loadLayout(1);
       label_();
     }
 
-    /** A printer registered for some film sizes only offers those. */
+    /**
+     * A printer registered for some film sizes only offers those. When that changes the film size, the layout is asked
+     * for again, whether one is shown or still on its way: a layout made for another film size is not the film this
+     * window would print, and its late answer is dropped. Returns whether the film size changed.
+     */
     function fitSizes() {
+      const before = size.value;
       const printer = kind() === 'printer' ? session?.destinations.printers.find(p => p.id === target.value) : null;
       const allowed = printer && Array.isArray(printer.filmSizes) ? new Set(printer.filmSizes) : null;
       for (const o of size.options) o.disabled = !!allowed && !allowed.has(o.value);
       if (size.selectedOptions[0]?.disabled) size.value = [...size.options].find(o => !o.disabled)?.value ?? size.value;
+      if (size.value === before) return false;
+      void loadLayout(1);
+      return true;
     }
 
     function label_() {
@@ -386,10 +392,9 @@
     target.addEventListener('change', () => {
       stopWatching();
       steps.replaceChildren();
-      const before = size.value;
-      fitSizes();
+      const resized = fitSizes();
       remember();
-      if (size.value !== before) void loadLayout(1); else label_();
+      if (!resized) label_();
     });
     prev.addEventListener('click', () => { if (session?.layout) void loadLayout(session.layout.film - 1); });
     next.addEventListener('click', () => { if (session?.layout) void loadLayout(session.layout.film + 1); });
