@@ -62,7 +62,26 @@ ENTRY_GEOMETRY = """()=>{
              controls:{}};
   for(const id of ['b-structured','reading-findings-open','struct-value-text','struct-apply','struct-cancel'])
     out.controls[id]=Object.assign({rect:box(q('#'+id))},seen(q('#'+id)));
+  const rf=q('#reading-findings');
+  out.diag={t:performance.now(),reportColumn:box(q('.report-p')),
+    vars:rf?[rf.style.getPropertyValue('--reading-findings-top'),rf.style.getPropertyValue('--reading-findings-bottom')]:null,
+    work:window.KinWorkContext?window.KinWorkContext.state():null,
+    rows:[...(q('.report-p')?.children||[])].map(e=>({id:e.id||e.className,shown:e.getBoundingClientRect().height>0,
+      state:e.dataset.state||null,box:box(e)})).filter(e=>e.shown),
+    timeline:window.__layoutLog||null};
   return out;}"""
+# Records, with the page clock, every visibility change of the report column's rows and every bound
+# the drawer writes, so a failing pass shows which row moved the control row and whether the bound followed.
+LAYOUT_LOG = """()=>{if(window.__layoutLog)return;const log=window.__layoutLog=[];
+  const col=document.querySelector('.report-p'),rf=document.querySelector('#reading-findings');
+  const note=(what)=>log.push([Math.round(performance.now()),what]);
+  new MutationObserver(ms=>{for(const m of ms){const e=m.target;
+    if(e===rf)note('bound '+rf.style.getPropertyValue('--reading-findings-top')+' '+rf.style.getPropertyValue('--reading-findings-bottom')+(rf.hidden?' hidden':''));
+    else if(e.parentElement===col)note((e.id||e.className)+(e.getBoundingClientRect().height>0?' shown':' gone'));}})
+    .observe(document.body,{subtree:true,attributes:true,attributeFilter:['hidden','style']});
+  const ctl=document.querySelector('.report-p .rbtns');let last=null;
+  (function tick(){const y=Math.round(ctl.getBoundingClientRect().top);if(y!==last){note('controls '+y);last=y;}
+    if(log.length<400)requestAnimationFrame(tick);})();}"""
 REACH_TARGET = ['.report-p .rbtns', '#b-structured']
 # S2-V: the frozen copies read with names and units; the ellipse numbers are API-seeded, never recomputed.
 ELLIPSE_VALUES = [400.26, 45.0, -20.0, 80.0, 1234]
@@ -854,6 +873,7 @@ class FindingWorklistE2E(navigation.FindingNavigationE2E):
         f = self.specimen(slices=2); self.seed_report(f)
         self.seed(f)
         w = self.login(); self.observe(w); w.on('dialog', lambda d: d.accept())
+        w.evaluate(LAYOUT_LOG)
         self.select(w, f)
         expect(w.locator('#findings')).to_have_value(f.secret)
         self.open_findings(w, f)
