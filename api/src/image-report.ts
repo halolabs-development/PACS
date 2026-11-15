@@ -11,6 +11,7 @@
  */
 import { createHash } from 'node:crypto';
 import { inflateSync } from 'node:zlib';
+import { Prisma } from '@prisma/client';
 import { examScopeChanged, scopeIncludesSeries, ResolvedExamScope } from './exam-merge.service';
 
 export const DRAWING_LIMITS = Object.freeze({
@@ -219,6 +220,31 @@ export async function drawingEntries(tx: any, uid: string, ids: readonly string[
     return { id: row.id, background: row.background, source: row.source ?? null, sha256: row.sha256 };
   });
 }
+/**
+ * CD-09-P: the drawings of one private draft work destroyed with it. Called only by the transaction that destroys that
+ * work (its purpose end decided, holds read) or re-applies a destruction the ledger completed - never by a draft write,
+ * and never for a study as a whole: a drawing is destroyed only as part of the work it was attached in.
+ *
+ * Of that work's drawings, one is kept while anything still names it: a report version (any, as every version is fixed
+ * and kept until the report's retention ends), a live draft, or another ended work not yet destroyed. A version-held
+ * drawing goes with the report (CD-09-D). The references are read in this one statement; no write names a drawing nobody
+ * named any more (a new reference is always moved or copied from a held one, or is a new row), so none can come back.
+ */
+export async function destroyWorkDrawings(tx: any, unit: string): Promise<number> {
+  return tx.$executeRaw`DELETE FROM "ReportDrawing" r WHERE r."workUnit" = ${unit} AND ${UNNAMED}`;
+}
+/** The drawings of these works the destruction would still delete, locked (the commit judgement of a re-application). */
+export async function workDrawingsLeft(tx: any, units: readonly string[]): Promise<number> {
+  const rows: unknown[] = await tx.$queryRaw`SELECT r.id FROM "ReportDrawing" r WHERE r."workUnit" = ANY(${[...units]}::text[])
+    AND ${UNNAMED} FOR UPDATE OF r`;
+  return rows.length;
+}
+// `r` is named by no report version, no live draft and no ended work not yet destroyed.
+const UNNAMED = Prisma.sql`NOT EXISTS (SELECT 1 FROM "ReportVersion" v WHERE v.uid = r."studyUid"
+      AND v.drawings @> jsonb_build_array(jsonb_build_object('id', r.id::text)))
+    AND NOT EXISTS (SELECT 1 FROM "ReportDraft" d WHERE d.uid = r."studyUid" AND d.present AND d.drawings -> 'ids' ? r.id::text)
+    AND NOT EXISTS (SELECT 1 FROM "ReportDraftPurposeEnd" p WHERE p.uid = r."studyUid" AND p.drawings -> 'ids' ? r.id::text)`;
+
 /**
  * A report version row as signed and as hashed for the next version: a row without drawings serializes exactly as it did
  * before the column existed, so a stored signature and a stored previous-version hash stay the hashes of that row.
