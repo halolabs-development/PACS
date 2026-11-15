@@ -738,6 +738,32 @@ class AuthAuditLive(unittest.TestCase):
         self.assertEqual(status, 200, "an administrator without OTP is stopped at enrolment")
         self.assertIn('id="kc-totp-settings"', page)
         self.assertIsNone(browser.sid(), "no product session before OTP is enrolled")
+
+        # The enrolment itself (with the page's own secret): Keycloak returns to the product, but that sign-in's token records
+        # the enrolment, not an OTP step (no amr "otp"), so the product refuses it with its dedicated notice and no session.
+        form = next(f for f in re.findall(r"<form[^>]*>.*?</form>", page, re.S | re.I) if "totpSecret" in f)
+        fields = {name: html.unescape(value) for name, value in re.findall(r'<input[^>]*\bname="([^"]+)"[^>]*\bvalue="([^"]*)"', form)}
+        secret = fields["totpSecret"].encode("utf-8")
+        step = int(time.time() // admin_otp.PERIOD)
+        fields.update(totp=admin_otp.code_at(step, secret), userLabel=admin_otp.LABEL + " (enrolled)")
+        action = html.unescape(re.search(r'action="([^"]+)"', form).group(1))
+        status, headers, _ = browser.call("POST", action, urlencode(fields).encode("utf-8"), admin_otp.FORM_HEADERS)
+        self.assertEqual((status, urlparse(headers.get("Location", "")).path), (302, "/api/auth/callback"), "enrolment returns")
+        status, headers, _ = browser.call("GET", headers["Location"])
+        landed = urlparse(headers.get("Location", ""))
+        self.assertEqual((status, landed.path, parse_qs(landed.query).get("auth_error")),
+                         (302, "/worklist/hpacs-lite/index.html", ["admin_otp_required"]), "the enrolment sign-in is refused")
+        self.assertIsNone(browser.sid(), "no product session from the enrolment sign-in")
+        # The next sign-in answers the OTP form with the enrolled code and enters as administrator.
+        browser, status, _, page = self.password_step(self.stack.username("u5-admin-new"), self.stack.passwords["u5-admin-new"])
+        self.assertIn(admin_otp.OTP_FORM, page)
+        action = html.unescape(re.search(r'<form[^>]+id="kc-otp-login-form"[^>]*action="([^"]+)"', page).group(1))
+        status, headers, _ = browser.call("POST", action, urlencode({"otp": admin_otp.code_at(step + 1, secret)}).encode("ascii"),
+                                          admin_otp.FORM_HEADERS)
+        self.assertEqual((status, urlparse(headers.get("Location", "")).path), (302, "/api/auth/callback"))
+        status, headers, _ = browser.call("GET", headers["Location"])
+        self.assertEqual((status, urlparse(headers.get("Location", "")).path), (302, "/worklist/hpacs-lite/main.html"))
+        self.assertIsNotNone(browser.sid(), "the sign-in after enrolment enters")
         print("S7-U5-AUTH-LIVE " + json.dumps({"case": "AL-11c", "rows": 0, "hits": [], "ip_ok": True}))
 
     def test_12_cleanup_leaves_no_owned_row_or_session(self):

@@ -65,6 +65,25 @@ OTP를 등록한다. Change Password(`UPDATE_PASSWORD` 동작)는 SSO 위에서 
 OTP 기기를 잃은 관리자는 이메일 재설정으로 풀리지 않는다(재설정도 기존 OTP를 묻는다). Keycloak 관리 콘솔 → `kin` →
 Users → 그 사용자 → Credentials에서 OTP를 Delete 하면 다음 로그인에 다시 등록한다(관리 이력에 남는다).
 
+**PACS도 OTP를 확인한다.** PACS의 권한은 Keycloak 역할이 아니라 DB 회원 권한이 정한다. 그 권한이 `admin`을 주면 PACS는
+로그인 토큰(검증된 access token)에 `admin` 역할과 **실제로 OTP를 입력했다는 표시**(`amr`의 `otp`)가 둘 다 있을 때만 받아들인다
+(`api/src/auth.service.ts` `adminProved` — 콜백·세션·토큰 갱신·Bearer가 모두 지난다). 그 표시는 렐름 파일이 두 관리자 OTP
+단계(`kin browser administrator otp`·`kin reset administrator otp`의 `OTP Form`)에 붙인 인증 참조 `otp`(`default.reference.value`,
+유효 `default.reference.maxAge` 43200초 = `ssoSessionMaxLifespan`; Keycloak 기본값 0이면 그 초가 지나면 사라진다)와 kin-bff의 AMR
+매퍼(`kin-authentication-methods`, access token)가 만든다. 그래서:
+
+- **관리자는 OTP를 처음 등록한 뒤 한 번 더 로그인한다.** 등록하는 로그인의 토큰에는 `otp`가 없다(Keycloak 26.7.3은 등록을
+  OTP 입력으로 세지 않는다). PACS는 그 로그인을 세션 없이 거절하고 첫 화면에 "관리자 계정은 OTP 확인이 필요합니다. 다시
+  로그인해 주십시오."를 보인다(접속기록 원인 `admin_otp_required`). 로그인 버튼으로 다시 들어가 비밀번호와 방금 등록한 코드를
+  넣으면 들어간다.
+- 같은 안내는 DB는 관리자인데 Keycloak에 `admin` 역할이 없을 때도 나온다(승격 뒤 역할 반영이 늦거나 실패함, 콘솔에서 역할이
+  빠짐). 이때는 다시 로그인해도 거절된다 — Keycloak이 `admin`이 아니면 OTP를 묻지 않는다. 마지막 관리자에게도 로그인 예외는
+  없다. 복구: 반영 기록이 확인되지 않은(`unknown`·`void`) 명부 변경은 운영자 CLI `node prisma/import-member-rights.cjs --retry-roster`
+  (api 컨테이너 안)가 다시 보낸다. 반영이 확인된(`done`) 뒤 콘솔에서 생긴 어긋남은 그 CLI가 고치지 않는다 — 콘솔 → `kin` →
+  Users → 그 사용자 → Role mapping에서 `admin`을 다시 주고, OTP가 없으면 위의 OTP 복구 절차를 따른다. 그 뒤 OTP로 로그인한다.
+- 이 규칙이 배포되기 전에 만든 관리자 세션(토큰에 `otp` 표시가 없음)은 배포 뒤 첫 요청에서 끝난 세션으로 답하고, 다시
+  로그인하면 들어간다. 판독의·방사선사·임상의는 바뀌지 않는다.
+
 **기존 설치(import가 적용되지 않는다):** 관리 콘솔 → `kin` 렐름 → Authentication에서:
 
 1. `browser` 흐름을 Duplicate 하여 이름을 `kin browser`로 한다.
@@ -79,6 +98,13 @@ Users → 그 사용자 → Credentials에서 OTP를 Delete 하면 다음 로그
 5. `kin browser`를 Browser flow로, `kin reset credentials`를 Reset credentials flow로 Bind 한다.
 6. Required actions에서 `Configure OTP`가 Enabled인지 본다(기본 On). 어느 client에도 Authentication flow overrides의
    Browser Flow를 두지 않는다.
+7. 3·4에서 더한 두 `OTP Form`(⚙ 설정)에 인증 참조를 단다: alias `kin browser administrator otp reference` /
+   `kin reset administrator otp reference`, Authentication Reference `otp`, Authentication Max Age `43200`.
+8. Clients → `kin-bff` → Client scopes → `kin-bff-dedicated` → Add mapper → By configuration → `Authentication Method Reference
+   (AMR)`: 이름 `kin-authentication-methods`, Add to access token On, Add to ID token Off, Add to token introspection On.
+
+이미 1~6을 적용한 설치(이 절의 앞 판)는 7·8만 더한다. 적용 전에는 관리자가 아무도 PACS에 들어가지 못하므로(토큰에 `otp`
+표시가 없다) 배포 전에 한다 — 배포 전 읽기가 적용 전에는 멈춘다.
 
 Admin REST(`kin` 렐름 관리자 토큰, 경로의 공백은 `%20`, `P=/admin/realms/kin/authentication`)는 같은 순서다:
 
@@ -91,12 +117,21 @@ Admin REST(`kin` 렐름 관리자 토큰, 경로의 공백은 `%20`, `P=/admin/r
 - 하위 흐름 더하기(위 3·4): `POST $P/flows/{부모}/executions/flow` `{"alias":"kin browser administrator otp","type":"basic-flow","description":""}`
   → 부모의 마지막 행을 `"requirement":"CONDITIONAL"`로 `PUT` → 그 안에 조건(`negate` `"false"`)과 `OTP Form`을 차례로 더한다.
 - 묶기: `PUT /admin/realms/kin` `{"browserFlow":"kin browser","resetCredentialsFlow":"kin reset credentials"}`.
+- 인증 참조(위 7): 각 하위 흐름의 `OTP Form` 행 id를 `GET $P/flows/{하위 흐름}/executions`에서 읽어
+  `POST $P/executions/{그 id}/config` `{"alias":"kin browser administrator otp reference","config":{"default.reference.value":"otp","default.reference.maxAge":"43200"}}`
+  (재설정 쪽은 alias `kin reset administrator otp reference`).
+- AMR 매퍼(위 8): `GET /admin/realms/kin/clients?clientId=kin-bff`의 id로 `POST /admin/realms/kin/clients/{id}/protocol-mappers/models`
+  `{"name":"kin-authentication-methods","protocol":"openid-connect","protocolMapper":"oidc-amr-mapper","consentRequired":false,
+  "config":{"id.token.claim":"false","access.token.claim":"true","introspection.token.claim":"true"}}`.
 
 렐름 재import·사용자 변경은 필요 없다. 다음 운영 배포의 fence 전 읽기(`scripts/ops_emr_introduction.py`,
 `check_admin_mfa`)가 live browser·reset 흐름을 이 파일의 흐름과 모양(단계·요구·조건 설정·순서, 이름과 id는 보지 않는다)으로
-대조하고 `Configure OTP`·client override를 확인해, 적용 전에는 첫 변경 전에 멈춘다. 적용 뒤 관리자 계정으로 로그인하면
-비밀번호 다음에 OTP(없으면 등록) 화면이 나오고, 판독의 계정은 바로 들어간다. 이미 있는 관리자 계정은 적용 뒤 첫 로그인에서
-OTP를 등록하므로 OTP 앱(Google Authenticator·Microsoft Authenticator·FreeOTP)을 미리 알린다.
+대조하고 `Configure OTP`·client override·kin-bff의 AMR 매퍼(access token)를 확인해, 적용 전에는 첫 변경 전에 멈춘다. **그 읽기가
+못 보는 것:** Admin REST는 인증 참조의 두 값을 `**********`로 가려 돌려주므로 검사는 두 칸이 있다는 것만 본다(가리지 않고
+읽히는 값은 이 파일의 값과 비교한다). 실제 로그인 토큰에 `otp`가 실리는지는 보지 않는다 — 적용 뒤 관리자 계정으로 한 번
+로그인해 들어가는지로 확인한다. 적용 뒤 관리자 계정으로 로그인하면 비밀번호 다음에 OTP(없으면 등록) 화면이 나오고, 판독의
+계정은 바로 들어간다. 이미 있는 관리자 계정은 적용 뒤 첫 로그인에서 OTP를 등록하고(그 로그인은 위와 같이 한 번 거절된다)
+한 번 더 로그인하므로 OTP 앱(Google Authenticator·Microsoft Authenticator·FreeOTP)을 미리 알린다.
 
 ## 관리 접근 변경 이력 — 3년 보존
 
