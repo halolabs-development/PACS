@@ -1299,53 +1299,58 @@ class RelatedLayoutDOMTest(Base):
             name = f"{size[0]}x{size[1]}"
             with self.subTest(size=name):
                 w, parts = self.open_report_row(size)
-                page, tag = w.page, f"RL-13 {name}"
-                buttons, (findings, conclusion), title = parts
-                at = self.assert_report_row(w, f"{tag} opened", parts)
-                # The wheel over Findings moves the report text and nothing that holds the head or the row.
-                handles = [[f.element_handle() for f in (findings, conclusion)], title.element_handle(),
-                           [b.element_handle() for b in buttons]]
-                before = findings.bounding_box()["y"]
-                js(page, self.SCROLLS)
-                cut = self.report_row(page, parts)["fields"][0]
-                page.mouse.move((cut[0] + cut[2]) / 2, (cut[1] + cut[3]) / 2)
-                page.mouse.wheel(0, 400)
-                page.wait_for_timeout(200)
-                moved = js(page, self.MOVED, handles)
-                measure(f"{tag} wheel", moved=moved, findings_moved=before - findings.bounding_box()["y"])
-                self.assertTrue(moved, f"{tag}: the wheel over Findings scrolled nothing")
-                self.assertGreater(before - findings.bounding_box()["y"], 100, f"{tag}: the report text moved under the wheel")
-                for box in moved:
-                    self.assertEqual({"text": True, "head": False, "row": False}, box,
-                                     f"{tag}: a box that scrolled under the wheel is not the report text alone")
-                self.assert_report_row(w, f"{tag} wheel", parts, at)
-                # Typing at the end of Findings: its caret line is never under the row, which stays put.
-                findings.focus()
-                page.keyboard.press("Control+End")
-                page.keyboard.type("SYN tail line")
-                page.wait_for_timeout(80)
-                self.assert_caret(w, f"{tag} Findings end", findings, parts)
-                ref = self.assert_report_row(w, f"{tag} Findings end", parts, at, fixed=("row",))
-                for i in range(12):
-                    page.keyboard.press("Enter")
-                    page.keyboard.type(f"SYN next line {i}")
-                    page.wait_for_timeout(60)
-                    self.assert_caret(w, f"{tag} Findings new line {i}", findings, parts)
-                    ref = self.assert_report_row(w, f"{tag} Findings new line {i}", parts, ref, fixed=("row",))
-                page.keyboard.press("Control+Home")
-                page.keyboard.type("X")
-                page.wait_for_timeout(80)
-                self.assert_caret(w, f"{tag} Findings start", findings, parts)
-                ref = self.assert_report_row(w, f"{tag} Findings start", parts, ref, fixed=("row",))
-                conclusion.focus()
-                page.keyboard.press("Control+End")
-                for i in range(3):
-                    page.keyboard.press("Enter")
-                    page.keyboard.type(f"SYN conclusion tail {i}")
-                    page.wait_for_timeout(60)
-                    self.assert_caret(w, f"{tag} Conclusion end {i}", conclusion, parts)
-                    ref = self.assert_report_row(w, f"{tag} Conclusion end {i}", parts, ref, fixed=("row",))
+                self.walk_report_row(w, parts, f"RL-13 {name}")
                 w.screen.finish()
+
+    def walk_report_row(self, w, parts, tag):
+        """Opened, the wheel over Findings, typing at its end, at its start and at the end of Conclusion: the row and
+        the head stay whole, and only the report text scrolls."""
+        page = w.page
+        buttons, (findings, conclusion), title = parts
+        at = self.assert_report_row(w, f"{tag} opened", parts)
+        # The wheel over Findings moves the report text and nothing that holds the head or the row.
+        handles = [[f.element_handle() for f in (findings, conclusion)], title.element_handle(),
+                   [b.element_handle() for b in buttons]]
+        before = findings.bounding_box()["y"]
+        js(page, self.SCROLLS)
+        cut = self.report_row(page, parts)["fields"][0]
+        page.mouse.move((cut[0] + cut[2]) / 2, (cut[1] + cut[3]) / 2)
+        page.mouse.wheel(0, 400)
+        page.wait_for_timeout(200)
+        moved = js(page, self.MOVED, handles)
+        measure(f"{tag} wheel", moved=moved, findings_moved=before - findings.bounding_box()["y"])
+        self.assertTrue(moved, f"{tag}: the wheel over Findings scrolled nothing")
+        self.assertGreater(before - findings.bounding_box()["y"], 100, f"{tag}: the report text moved under the wheel")
+        for box in moved:
+            self.assertEqual({"text": True, "head": False, "row": False}, box,
+                             f"{tag}: a box that scrolled under the wheel is not the report text alone")
+        self.assert_report_row(w, f"{tag} wheel", parts, at)
+        # Typing at the end of Findings: its caret line is never under the row, which stays put.
+        findings.focus()
+        page.keyboard.press("Control+End")
+        page.keyboard.type("SYN tail line")
+        page.wait_for_timeout(80)
+        self.assert_caret(w, f"{tag} Findings end", findings, parts)
+        ref = self.assert_report_row(w, f"{tag} Findings end", parts, at, fixed=("row",))
+        for i in range(12):
+            page.keyboard.press("Enter")
+            page.keyboard.type(f"SYN next line {i}")
+            page.wait_for_timeout(60)
+            self.assert_caret(w, f"{tag} Findings new line {i}", findings, parts)
+            ref = self.assert_report_row(w, f"{tag} Findings new line {i}", parts, ref, fixed=("row",))
+        page.keyboard.press("Control+Home")
+        page.keyboard.type("X")
+        page.wait_for_timeout(80)
+        self.assert_caret(w, f"{tag} Findings start", findings, parts)
+        ref = self.assert_report_row(w, f"{tag} Findings start", parts, ref, fixed=("row",))
+        conclusion.focus()
+        page.keyboard.press("Control+End")
+        for i in range(3):
+            page.keyboard.press("Enter")
+            page.keyboard.type(f"SYN conclusion tail {i}")
+            page.wait_for_timeout(60)
+            self.assert_caret(w, f"{tag} Conclusion end {i}", conclusion, parts)
+            ref = self.assert_report_row(w, f"{tag} Conclusion end {i}", parts, ref, fixed=("row",))
 
     def test_rl13b_report_buttons_across_window_widths(self):
         """The same row at every landscape width from 1024 to 1920 (heights 720-1080), on one long report: opened, and
@@ -1535,6 +1540,55 @@ class RelatedLayoutDOMTest(Base):
         w, parts = self.open_row_case(questions_failed=True)
         self.sweep_row_case(w, parts, "Reading, questions opened (read failed)", questions=True)
         w.screen.finish()
+
+    # ── RL-13d: the worklist layout ───────────────────────────────────────────────────────────────────────────────
+    # Minhoon's 2026-11-04 words name no layout, and until 2026-11-15 only the Reading Workspace kept them: in the worklist
+    # layout the report card scrolled as a whole and 80 Findings lines put the row at y 2355 of a 768px window. RL-13's walk
+    # on the worklist layout's card (the field region scrolls the report between the editor's head and the row: main.html,
+    # the rule under #conclusion), as the card opens and dragged smaller (the Related Report / Report Editor handle at End,
+    # then back up until the card is 246px), in the windows where the rows around the field region and its floor - both
+    # fields whole at their own minimum heights - fit the card with the Unsaved Draft notice that typing brings. Where they
+    # do not (the card at its 186px smallest, 720px high windows once the notice joins) the card scrolls as before. In the
+    # portrait layout the page scrolls and the card grows to hold its rows (its work row leaves it some 180px beside the
+    # Related panel's 286px floor): the text scrolls in the field region there too, but a notice that grows (Save Failed,
+    # three lines at 768px wide) moves the card's end and the row with it, so the window is not claimed.
+    NORMAL_ROW_SIZES = [(1366, 768), (1920, 1080), (1600, 1050), (1280, 800)]
+    NORMAL_DRAGGED_SIZES = [(1366, 768), (1920, 1080)]
+
+    def open_normal_report_row(self, size):
+        w = self.boot(harness.Server(rows=self.report_row_rows()), viewport=size, prepare=self.answer_empty_reads)
+        page = w.page
+        page.route("**/ohif/**", lambda route: route.fulfill(status=200, content_type="text/html", body="<!doctype html><title>SYN</title>"))
+        w.worklist_row(CURRENT_DESC).click()
+        harness.until(lambda: PID in w.target_label.inner_text(), 10, "reading target chosen")
+        parts = self.report_row_parts(page)
+        harness.expect(parts[1][0]).to_have_value(self.LONG_FINDINGS)
+        inbox = page.get_by_role("region", name="Critical Results", exact=True, include_hidden=True)
+        harness.expect(inbox).to_be_visible(timeout=10000)
+        harness.expect(inbox.get_by_role("status")).not_to_have_text("Loading")
+        self.bring_report_into_view(page, parts)
+        return w, parts
+
+    def test_rl13d_worklist_layout_keeps_the_report_buttons_in_the_card(self):
+        cases = [(size, "as opened") for size in self.NORMAL_ROW_SIZES] + [(size, "dragged") for size in self.NORMAL_DRAGGED_SIZES]
+        for size, card in cases:
+            name = f"{size[0]}x{size[1]} {card}"
+            with self.subTest(size=name):
+                w, parts = self.open_normal_report_row(size)
+                if card == "dragged":
+                    w.page.locator("#resize-related").focus()
+                    w.page.keyboard.press("End")
+                    # Each step moves the handle with the panel it sizes (a few px, not 10): step until the card is 246px.
+                    card = w.page.locator(".workrow > .report-p")
+                    for _ in range(60):
+                        if card.bounding_box()["height"] >= 246:
+                            break
+                        w.page.keyboard.press("ArrowUp")
+                    w.page.locator("#resize-related").evaluate("e => e.blur()")
+                    w.page.wait_for_timeout(150)
+                    self.bring_report_into_view(w.page, parts)
+                self.walk_report_row(w, parts, f"RL-13d {name}")
+                w.screen.finish()
 
 
 # ── RelatedLayoutEquivalence (R-EQ; local record, not in CI) ────────────────────────────────────────────────────────
