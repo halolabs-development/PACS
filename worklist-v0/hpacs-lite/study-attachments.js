@@ -71,6 +71,7 @@ window.KinStudyAttachments = function (app) {
   const title = node('h2', null, 'Attach Document');
   title.id = 'attach-document-title';
   const head = node('p', 'attach-study');
+  head.translate = false;   // the study's own data (patient name, ID, date, description), never words of the screen
   const sourceLabel = node('label', null, 'Original exam '), sourceChoice = node('select');
   sourceChoice.setAttribute('aria-label','Original exam');sourceLabel.append(sourceChoice);
   sourceLabel.hidden=true;

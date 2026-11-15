@@ -1090,6 +1090,21 @@ class TransferPanelPage(rf.ReportFlowPage):
         dialog.locator("#attach-cancel").click()
         expect(dialog).to_be_hidden()
 
+    def test_fc076_the_study_line_keeps_the_patient_data_in_either_screen_language(self):
+        # A patient name that reads like a glossary template ("Base {0}") is still data, before and after a language change.
+        self.attach_site()
+        self.site.flow = tuple((uid, "Base Nora" if uid == UID_B else name, patient) for uid, name, patient in self.site.flow)
+        self.open_as(TECH, "Technician")
+        self.attach_files([{"name": "referral.pdf", "mimeType": "application/pdf", "buffer": self.PDF}], via="Base Nora")
+        dialog = self.attach_dialog()
+        head = dialog.locator(".attach-study")
+        expect(head).to_have_text(re.compile(r"^Base Nora · "))
+        for lang in ("ko", "en"):
+            self.assertTrue(self.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", lang))
+            expect(dialog.locator("#attach-document-title")).to_have_text("문서 붙이기" if lang == "ko" else "Attach Document")
+            expect(head).to_have_text(re.compile(r"^Base Nora · "))
+        dialog.locator("#attach-cancel").click()
+
     def test_fc076_a_late_answer_is_not_drawn_into_another_study_and_withdraw_needs_a_reason(self):
         self.attach_site()
         self.open_as(TECH, "Technician")
@@ -1656,7 +1671,8 @@ class TransferPanelPage(rf.ReportFlowPage):
               const original=Storage.prototype[m]; window.synStorage[m]=original;
               Storage.prototype[m]=function(k,...rest){if(String(k).startsWith(prefix))throw new Error('synthetic storage'); return original.call(this,k,...rest);};}}""",[methods, HISTORY])
             before=len(self.site.imports); self.site.import_answers=["abort"]; self.choose(self.files(1))
-            self.settle(250)
+            # Waits for the send itself (then settles), as the loop below does; a fixed 250 ms was sometimes too short in CI.
+            self.observed(lambda:len(self.site.imports)>before, "the import is sent")
             self.assertEqual(before + 1, len(self.site.imports), 'R5-A05: storage never governs fresh dispatch authority')
             self.assert_policy(row="R5-A05")
             if "setItem" in methods: self.assertIn("보존하지 못했습니다",self.panel().inner_text(),"R5-A05: persistence failure disclosed")
