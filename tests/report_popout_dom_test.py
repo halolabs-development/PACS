@@ -131,7 +131,8 @@ class ReportPopoutPage(unittest.TestCase):
           const editor = document.getElementById('report-editor'), save = document.getElementById('b-save');
           return !!editor && editor.parentElement.classList.contains('report-compose')
             && !!save && save.parentElement.classList.contains('rfoot2') && !save.closest('.report-window-foot')
-            && !!document.getElementById('draftbar')?.closest('.report-p')
+            && ['draftbar', 'holdbar', 'deferbar'].every(id => document.getElementById(id)?.parentElement?.id === 'report-notices')
+            && !!document.getElementById('report-notices')?.closest('.report-p')
             && !document.querySelector('.report-window-hold > *');
         }""")
 
@@ -261,6 +262,27 @@ class PopOutWindow(ReportPopoutPage):
         expect(self.page.locator("#report-window-behind")).to_be_hidden()
         self.page.locator("#findings").fill("SYN typed after the dock")
         self.autosave(lambda: "SYN typed after the dock" in self.drafts_of(h.UID))
+
+    def test_the_notice_rows_in_the_window_sit_in_a_band_that_the_draft_row_does_not_move(self):
+        """In the window the draft, hold and on-hold rows are in a notice band of fixed height above the editor, as on the
+        page: the claim answer that draws the draft row after typing leaves Findings and Conclusion where they were."""
+        self.open()
+        self.open_study(h.PATIENT)
+        pip = self.pop_out()
+        self.assertTrue(pip.evaluate("""() => ['draftbar', 'holdbar', 'deferbar'].every(id =>
+          document.getElementById(id).parentElement.matches('.report-window-body > .report-notices'))"""))
+        expect(pip.locator("#draftbar")).to_be_hidden()
+        places = "() => ['.report-notices', '#findings', '#conclusion'].map(s => document.querySelector(s).getBoundingClientRect().top)"
+        before = pip.evaluate(places)
+        band = pip.locator(".report-notices").bounding_box()["height"]
+        pip.locator("#findings").press_sequentially("SYN")
+        expect(pip.locator("#draftbar")).to_be_visible()
+        self.settle()
+        self.assertEqual(before, pip.evaluate(places))
+        self.assertEqual(band, pip.locator(".report-notices").bounding_box()["height"])
+        pip.locator("#report-window-dock").click()
+        self.window_gone()
+        self.assertTrue(self.editor_in_place())
 
     def test_choosing_another_study_asks_in_the_worklist_and_the_window_points_there(self):
         self.open()

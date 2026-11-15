@@ -14,6 +14,8 @@
 
   // Moved in this order; each leaves a marker behind so Dock restores the exact place.
   const PARTS = ['draftbar', 'holdbar', 'deferbar', 'recnote', 'report-editor'];
+  // The parts that are notice rows: in the window they go into its notice band, as on the page.
+  const NOTICES = ['draftbar', 'holdbar', 'deferbar'];
   const SAVE = 'b-save';
   const STYLE = `
 .report-window-place { flex: 1 1 0; min-width: 160px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
@@ -195,6 +197,10 @@ body.report-window-doc { height: 100vh; margin: 0; display: flex; flex-direction
       bar.append(note, spacer, pin, dockButton);
       const body = d.createElement('div');
       body.className = 'report-window-body';
+      // The notice rows that come along go into the same fixed-height band as on the page (main.html .report-notices).
+      const notices = d.createElement('div');
+      notices.className = 'report-notices';
+      body.append(notices);
       const foot = d.createElement('div');
       foot.className = 'rfoot2 rbtns report-window-foot';
       const approve = d.createElement('button');
@@ -206,7 +212,7 @@ body.report-window-doc { height: 100vh; margin: 0; display: flex; flex-direction
       dockButton.addEventListener('click', () => dock());
       approve.addEventListener('click', () => approveInWindow());
       if (kind === 'box') drag(shell, bar);
-      return { kind, win, doc: d, shell, bar, body, note, pin, approve, foot, closing: null, dialogs: new Set(), unlisten: () => {} };
+      return { kind, win, doc: d, shell, bar, body, notices, note, pin, approve, foot, closing: null, dialogs: new Set(), unlisten: () => {} };
     }
 
     function drag(box, handle) {
@@ -232,7 +238,7 @@ body.report-window-doc { height: 100vh; margin: 0; display: flex; flex-direction
     }
     function moveInto(s) {
       const had = focused();
-      for (const el of parts) s.body.append(el);
+      for (const el of parts) (NOTICES.includes(el.id) ? s.notices : s.body).append(el);
       if (save) s.approve.after(save);
       if (had?.isConnected) had.focus({ preventScroll: true });
     }

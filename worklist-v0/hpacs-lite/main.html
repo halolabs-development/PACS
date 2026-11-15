@@ -457,8 +457,8 @@
           the reader's text size if that is more: 1.5 times it plus the fields' 12px padding and 2px border) under their
           labels, so an empty report shows both whole and a long one its first Findings lines. A label line is counted
           as one line of the region's 13px text (1lh), at least the label's own 11px line.
-       2. Then every other row before the button row (the notices: report, draft, hold, on-hold, citations and their
-          list, Recommendation; the questions under the editor; not the dictation pane, which keeps its own rule) gives
+       2. Then every other row before the button row (the citation list, Recommendation; the questions under the editor;
+          not the dictation pane, which keeps its own rule, nor the notice band, whose height is fixed: .report-notices) gives
           up height and scrolls its own words, each down to the floor of the same row in the Reading Workspace: one line
           of its text; a notice row one control line, its buttons kept on one line each and moved to lines of their
           own; the questions their bar, or opened four lines of their list. Opened with two threads that list was 338px
@@ -474,11 +474,9 @@
       min-height: calc(2 * 4px + 2 * (1lh + 2 * 2px) + 3 * 2px + var(--kin-findings-floor) + var(--kin-conclusion-floor)); }
     body:not(.reading) .workrow > .report-p .redit > #findings { min-height: var(--kin-findings-floor); }
     body:not(.reading) .workrow > .report-p .redit > #conclusion { min-height: var(--kin-conclusion-floor); }
-    body:not(.reading) .workrow > .report-p > :not(.report-compose, #dictation-pane, .rfoot2, .rfoot2 ~ *) { flex-shrink: 1;
+    body:not(.reading) .workrow > .report-p > :not(.report-compose, #report-notices, #dictation-pane, .rfoot2, .rfoot2 ~ *) { flex-shrink: 1;
       box-sizing: content-box; min-height: var(--kin-row-floor, 1lh); overflow-y: auto;
       min-height: calc-size(max-content, min(size, var(--kin-row-floor, 1lh))); }
-    body:not(.reading) .workrow > .report-p > .draftbar { flex-wrap: wrap; --kin-row-floor: calc(1lh + 6px); align-items: safe center; }
-    body:not(.reading) .workrow > .report-p > .draftbar button { white-space: nowrap; }
     body:not(.reading) .workrow > .report-p > #question-p:not([hidden]) { display: flex; flex-direction: column; --kin-row-floor: calc(24px + 2 * 3px); }
     body:not(.reading) .workrow > .report-p > #question-p:has(> #question-pane:not([hidden])) { --kin-row-floor: calc(24px + 2 * 3px + 1px + 4px + 4lh + 8px); }
     body:not(.reading) .workrow > .report-p > #question-p > #question-pane { flex: 0 1 auto; min-height: 0; }
@@ -524,6 +522,16 @@
     .draftbar button { background: #232936; border: 1px solid #5c5124; color: #d8b24a;
                        padding: 2px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; }
     .draftbar b { color: #f0c95a; }
+    /* The notice band (markup above the editor; report-popout.js builds the same band in the Report window). Server
+       answers show, change and hide the report, draft, hold, on-hold and citation rows - a claim answer drew the draft
+       row between a reader's aim at Conclusion and the click, 31px lower at 900x768. Here an answer changes only what
+       is inside one box of fixed height, so the fields and the buttons below it stay where the reader aimed. The box is
+       a notice row's floor high in every layout and window (one line of its 11px text and a button's 6px, the row's 4px
+       padding and 1px border: 31px in the page font) and scrolls its rows; a row keeps its buttons on one line each,
+       moves those that do not fit to lines of their own, and shows its first line, not its middle (`safe`). */
+    .report-notices { flex: none; box-sizing: border-box; font-size: 11px; height: calc(1lh + 6px + 2 * 4px + 1px); overflow-y: auto; }
+    .report-notices > .draftbar { flex-wrap: wrap; align-items: safe center; }
+    .report-notices > .draftbar button { white-space: nowrap; }
     /* W4 숨긴 Recommendation의 읽기 전용 띠 — 안내줄과 같은 등급, 펼쳐도 판독문 칸을 밀어내지 않게 글은 짧게 스크롤한다. */
     .recnote { flex: none; padding: 3px 10px; background: #1f2530; border-top: 1px solid #3a4356; color: #c3cad6; font-size: 11px; }
     #recnote { white-space: nowrap; overflow-x: auto; }
@@ -1781,6 +1789,9 @@
              늘고, 받아쓰기 창까지 열면 판독문 칸이 최소 높이에 닿으므로 받아쓰기를 위해 More를 열게 하지 않는다. 역할별 disabled는
              스크립트가 지금처럼 정하고, More 안에 넣은 것을 권한 통제로 쓰지 않는다. 서식 입력 단추(Structured)는 스크립트가
              Print 바로 앞에 붙이므로 Print와 같은 구획에 나타난다. -->
+        <!-- The notice band: the rows that server answers show, change and hide (report, draft, hold, on-hold, citations).
+             Its height is fixed (the .report-notices rule), so an answer never moves the fields or the buttons below it. -->
+        <div class="report-notices" id="report-notices">
         <!-- W4: 검사를 옮기지 않았을 때만 보인다(쓰던 글의 저장 거절·결과 모름·충돌·글자 조합). 무엇을 누르면 되는지 함께 말한다. -->
         <div class="draftbar" id="report-notice" role="status" aria-live="polite" style="display:none">
           <span id="report-notice-msg"></span>
@@ -1817,6 +1828,7 @@
           <button id="b-cite-list" aria-expanded="false" aria-controls="citelist"
                   title="이 판독문에 남은 인용과 본문 존재 상태를 봅니다">Show Citations</button>
           <button id="b-cite-reload" title="서버에서 인용 건수와 상태를 다시 확인합니다">Reload Citations</button>
+        </div>
         </div>
         <div id="citelist" hidden aria-label="Report Citations"></div>
         <!-- 받아쓰기 검토 창. 받은 글은 여기까지만 온다 — 판독문에는 Insert를 누른 순간에만 들어간다. -->

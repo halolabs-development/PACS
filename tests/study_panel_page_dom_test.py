@@ -1948,6 +1948,120 @@ class StudyPanelPageDOM(unittest.TestCase):
                     finally:
                         context.close()
 
+    # The places a reader aims at in the report column: Findings, Conclusion and the button row, as [x, y, width, height].
+    REPORT_PLACES = '''() => ['#findings', '#conclusion', '.report-p .rbtns'].map(s => {
+      const r = document.querySelector(s).getBoundingClientRect(); return [s, r.x, r.y, r.width, r.height]; })'''
+    # Every painted frame from now until the next STOP_PLACES: the late answer may change the page for one frame only.
+    WATCH_PLACES = '''(read) => { const seen = window.__kinPlaces = []; const once = new Function('return (' + read + ')()');
+      (function frame() { if (window.__kinPlaces !== seen) return; const now = JSON.stringify(once());
+        if (seen[seen.length - 1] !== now) seen.push(now); requestAnimationFrame(frame); })(); }'''
+    STOP_PLACES = '() => { const seen = window.__kinPlaces; window.__kinPlaces = null; return seen.map(s => JSON.parse(s)); }'
+
+    def gate(self, page, pattern, method):
+        """Holds the page's `method` requests to `pattern` until release() lets them through to the synthetic server."""
+        held, open_ = [], [False]
+        page.route(pattern, lambda route, request: route.fallback() if open_[0] or request.method != method else held.append(route))
+
+        def release():
+            open_[0] = True
+            for route in held:
+                route.fallback()
+        return held, release
+
+    def answer_keeps_places(self, page, what, held, release, answered):
+        """From the frame before a held answer arrives until the page has settled on it, Findings, Conclusion and the
+        button row stay where they were."""
+        wait_until(page, lambda: len(held) > 0, f'{what}: the request')
+        settle(page)
+        page.evaluate(self.WATCH_PLACES, self.REPORT_PLACES)
+        release()
+        answered()
+        settle(page)
+        frames = page.evaluate(self.STOP_PLACES)
+        self.assertEqual(1, len(frames), f'{what}: the answer moved the report places {frames}')
+
+    def test_late_answers_keep_the_report_fields_and_buttons_in_place(self):
+        """The notice band: the claim answer that draws the draft row, the Save answer, and the Discard answer that
+        takes the draft row away and reads the citations again change only what is inside the band above the editor.
+        Findings, Conclusion and the button row stay put in every frame, in the worklist card and the Reading Workspace,
+        in landscape, short and portrait windows."""
+        windows = [('card', w, h) for w, h in ((1920, 1080), (1366, 768), (1024, 768), (900, 768), (768, 1024), (900, 1200))]
+        windows += [('reading', w, h) for w, h in ((1920, 1080), (1366, 768), (1024, 768), (900, 1200))]
+        for layout, width, height in windows:
+            with self.subTest(layout=layout, width=width, height=height):
+                page, site, _ = self.page_at(width, height, dictation=DICTATION)
+                page.on('dialog', lambda dialog: dialog.accept())
+                if layout == 'reading':
+                    page.route('**/ohif/**', lambda route: route.fulfill(content_type='text/html', body='<!doctype html><title>SYN viewer</title>'))
+                self.click_row(page, 0, 'select')
+                if layout == 'reading':
+                    page.get_by_role('button', name='Reading Workspace', exact=True).click()
+                    expect(page.get_by_role('button', name='Study Info & Templates', exact=True)).to_be_visible()
+                settle(page)
+                band = page.locator('.report-p > #report-notices')
+                height = band.bounding_box()['height'] if band.count() else None
+                # The claim answer (two letters in Findings) draws the draft row.
+                held, release = self.gate(page, '**/api/studies/*/hold', 'POST')
+                page.locator('#findings').click()
+                page.keyboard.type('SYN findings')
+                claims = len(site.holds)
+                self.answer_keeps_places(page, 'claim', held, release, lambda: (
+                    wait_until(page, lambda: len(site.holds) > claims, 'claim answered'),
+                    expect(page.locator('#draftbar')).to_be_visible()))
+                # The Save answer.
+                page.locator('#conclusion').click()
+                page.keyboard.type('SYN conclusion')
+                held, release = self.gate(page, '**/api/studies/*/report/commit', 'POST')
+                page.locator('#b-save').click()
+                self.answer_keeps_places(page, 'save', held, release, lambda: (
+                    wait_until(page, lambda: len(site.commits) == 1, 'save answered'),
+                    expect(page.locator('#b-approve')).to_be_enabled()))
+                # The Discard answer: the draft row goes and the citations are read again.
+                page.locator('#findings').click()
+                page.keyboard.type(' more')
+                expect(page.locator('#b-draft-discard')).to_be_visible()
+                held, release = self.gate(page, '**/api/studies/*/draft', 'DELETE')
+                page.locator('#b-draft-discard').click()
+                self.answer_keeps_places(page, 'discard', held, release, lambda: (
+                    wait_until(page, lambda: len(site.discards) == 1, 'discard answered'),
+                    expect(page.locator('#draftbar')).to_be_hidden()))
+                self.assertEqual({'draftbar', 'holdbar', 'deferbar', 'citebar', 'report-notice'},
+                                 set(page.evaluate("() => [...document.querySelectorAll('#report-notices > *')].map(e => e.id)")))
+                self.assertEqual(height, band.bounding_box()['height'], 'the band kept its height')
+                self.doCleanups()
+
+    def test_a_claim_answer_between_aim_and_click_does_not_move_conclusion(self):
+        """The reader types in Findings and goes straight to Conclusion. The claim answer that draws the draft row arrives
+        after they aimed and before they click: the click still lands in Conclusion (900x768 drew the row 31px above
+        Conclusion's place before the notice band)."""
+        for width, height in ((900, 768), (1024, 768), (1366, 768)):
+            with self.subTest(width=width, height=height):
+                page, site, _ = self.page_at(width, height, dictation=DICTATION)
+                self.click_row(page, 0, 'select')
+                page.keyboard.press('Control+Alt+5')
+                expect(page.get_by_role('complementary', name='Study Panel', exact=True)).to_be_visible()
+                settle(page)
+                held, release = self.gate(page, '**/api/studies/*/hold', 'POST')
+                state, why = wheel_into_view(page, '#findings')
+                self.assertIsNone(why, f'Findings {state}')
+                click_center(page, state)
+                page.keyboard.type('SYN findings')
+                wait_until(page, lambda: len(held) > 0, 'the claim request')
+                state, why = wheel_into_view(page, '#conclusion')
+                self.assertIsNone(why, f'Conclusion {state}')
+                box = state['entry']
+                aim = ((box['left'] + box['right']) / 2, (box['top'] + box['bottom']) / 2)
+                claims = len(site.holds)
+                release()
+                wait_until(page, lambda: len(site.holds) > claims, 'claim answered')
+                expect(page.locator('#draftbar')).to_be_visible()
+                settle(page)
+                self.assertEqual('conclusion', page.evaluate('([x, y]) => document.elementFromPoint(x, y)?.id', list(aim)),
+                                 'the aimed point is no longer Conclusion')
+                page.mouse.click(*aim)
+                expect(page.locator('#conclusion')).to_be_focused()
+                self.doCleanups()
+
 
 if __name__ == '__main__':
     unittest.main()
