@@ -8,6 +8,7 @@
 window.KinReadingFindings = function (app) {
   'use strict';
   const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
   const work = window.KinWorkContext, transport = window.KinSessionTransport.page();
   const effect = (fn, scope = 'document') => { const at = work.capture(scope); return (...args) => { work.commit(at, () => { fn(...args); }); }; };
   const command = window.kinFindingCommand, links = window.kinFindingLinkModel, citation = window.KinReportCitation;
@@ -420,7 +421,7 @@ window.KinReadingFindings = function (app) {
         const item = node('li', '', sources); item.dataset.linkState = s.linkState;
         if (job) { item.dataset.jobId = s.jobId; item.dataset.sourceKind = s.mark ? 'point' : 'view'; } else item.dataset.itemId = s.itemId;
         const label = node('span', '', item); label.id = 'reading-findings-label-' + (++labels);
-        label.append(i === row.primary ? '★ ' : '', kinWrite(document.createTextNode(''), s.description), ' · ');
+        kinWrite(label, kinSay('{t0}{t1} · ', { t: i === row.primary ? '★ ' : '' }, { t: s.description }));
         const badge = node('strong', s.linkLabel, item); badge.dataset.kinLinkState = s.linkState;
         if ((s.linkState === 'revised' || s.linkState === 'metadata-changed') && s.headRevision) node('span', ' (현재 r' + s.headRevision + ')', item);
         if (s.linkState !== 'current') node('span', ' · ' + s.linkText, item);
