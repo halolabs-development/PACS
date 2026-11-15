@@ -10,7 +10,8 @@ import { clinicianFinal } from './clinician-policy';
 import type { Caller } from './pacs.service';
 import type { ClinicalWorkflow, RecordedTransaction, WorkflowRecord } from './emr-clinical/routes';
 import { lockFixedRecords } from './emr-runtime/fixed-record-lock';
-import { prepareRecordExamRead, resolveExamScope, readableExamRecord, examParentAccess, storedExamScope, reportExamReference, withGroupedExam } from './exam-merge.service';
+import { prepareRecordExamRead, resolveExamScope, readableExamRecord, examParentAccess, storedExamScope, reportExamReference, withGroupedExam,
+  groupedRecordUids } from './exam-merge.service';
 import {
   CRITICAL_RESULT_CODES as CODE, CRITICAL_RESULT_PAGE, CRITICAL_RESULT_PINNABLE_ACTIONS, CRITICAL_RESULT_STATE_FILTERS, Head,
   RADIOLOGIST, RecipientClass, Refusal, ackFingerprint, ackRefusal, appliedResult, auditDetail, cancelFingerprint, clip,
@@ -178,7 +179,11 @@ export class CriticalResultService {
 
   private async readableIds(tx:any,c:Caller) {
     const rows=await this.recordsFor(tx,c),ids:string[]=[];
-    for(const row of rows)if(await this.readableBy(c,row.studyUid,tx,row.sourceVersion))ids.push(row.id);
+    // Records of never-grouped studies keep one policy decision for all of them; a grouped one is read through its saved exam.
+    const grouped=await groupedRecordUids(tx,rows.map((row:any)=>row.studyUid));
+    const allowed=await this.studyAccess.allowed(c,rows.filter((row:any)=>!grouped.has(row.studyUid)).map((row:any)=>row.studyUid),tx);
+    for(const row of rows)
+      if(grouped.has(row.studyUid)?await this.readableBy(c,row.studyUid,tx,row.sourceVersion):allowed.has(row.studyUid))ids.push(row.id);
     return ids;
   }
 
@@ -188,12 +193,11 @@ export class CriticalResultService {
   }
 
   private async reportScopes(tx: any, c: Caller, rows: any[]) {
-    for (const row of rows) {
-      await withGroupedExam(tx, row.studyUid, async () => {}, async () => {
-        const record = await reportExamReference(tx, row.studyUid, row.sourceVersion);
-        if (!record) throw recordMissing();
-        row.examScope = storedExamScope(await resolveExamScope(tx, this.studyAccess, c, { uid: row.studyUid, purpose: 'stored', record }));
-      });
+    const grouped = await groupedRecordUids(tx, rows.map(row => row.studyUid));
+    for (const row of rows) if (grouped.has(row.studyUid)) {
+      const record = await reportExamReference(tx, row.studyUid, row.sourceVersion);
+      if (!record) throw recordMissing();
+      row.examScope = storedExamScope(await resolveExamScope(tx, this.studyAccess, c, { uid: row.studyUid, purpose: 'stored', record }));
     }
     return rows;
   }
@@ -224,8 +228,12 @@ export class CriticalResultService {
    */
   private async run<T>(c: Caller, subjects: Caller[], fn: (tx: any, workflow?: ClinicalWorkflow) => Promise<T>, read = false,
     recorded?: RecordedTransaction): Promise<T> {
-    for(const uid of new Set<string>((await this.recordsFor(this.prisma,c)).map(row=>row.studyUid)))
-      await prepareRecordExamRead(this.prisma,this.studyAccess,c,uid);
+    // The caller's own records are judged inside the transaction: their sources are observed here, before it. Records of
+    // never-grouped studies share one preparation; a grouped one prepares every original of its saved exam.
+    const kept=[...new Set<string>((await this.recordsFor(this.prisma,c)).map((row:any)=>row.studyUid))],grouped=await groupedRecordUids(this.prisma,kept);
+    const plain=kept.filter(uid=>!grouped.has(uid));
+    if(plain.length)await this.studyAccess.prepare(c,plain);
+    for(const uid of kept)if(grouped.has(uid))await prepareRecordExamRead(this.prisma,this.studyAccess,c,uid);
     try {
       const body = async (tx: any, workflow?: ClinicalWorkflow) => {
         await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
@@ -714,7 +722,10 @@ export class CriticalResultService {
         if (!cls) { for (const x of items) out.set(x.row.id, 'not_eligible'); continue; }
         const subject=this.subject(c,institution,sub),allowed=new Set<string>();
         try {
+          const grouped=await groupedRecordUids(this.prisma,items.map(x=>x.row.studyUid));
+          const plain=await this.studyAccess.allowed(subject,[...new Set(items.filter(x=>!grouped.has(x.row.studyUid)).map(x=>x.row.studyUid))]);
           for(const x of items) {
+            if(!grouped.has(x.row.studyUid)){if(plain.has(x.row.studyUid))allowed.add(x.row.id);continue;}
             await prepareRecordExamRead(this.prisma,this.studyAccess,subject,x.row.studyUid);
             if(await this.readableBy(subject,x.row.studyUid,this.prisma,x.row.sourceVersion))allowed.add(x.row.id);
           }

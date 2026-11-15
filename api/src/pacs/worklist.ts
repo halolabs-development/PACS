@@ -23,7 +23,7 @@ import type { PacsInstitutions } from './institutions';
 import type { PacsPreferences } from './preferences';
 import type { PacsAudit } from './audit';
 import { worklistRead } from '../emr-viewing/consumer-read';
-import { currentExams, prepareExamRead, readableExamRecord, scopeIncludesSeries, examLookupSources, examParentAccess, examScopeView,
+import { currentExams, prepareExamRead, readableExamRecords, scopeIncludesSeries, examLookupSources, examParentAccess, examScopeView,
   examTargets, relatedExamReports, resolveExamScope, storedExamScope } from '../exam-merge.service';
 import type { ResolvedExamScope } from '../exam-merge.service';
 
@@ -314,11 +314,7 @@ export class PacsWorklist {
     const repByUid = new Map(reports.map(r => [r.uid, r]));
     // Merge Exam: a report written on an exam group is about every study of it. Its text goes only to a caller who may read
     // every one of them now (the row stays; the text is withheld), and the row says which studies it was written on.
-    const recordScopes = new Map<string, ResolvedExamScope | null>();
-    for (const report of reports) {
-      await prepareExamRead(this.prisma, this.studyAccess, c, report.uid);
-      recordScopes.set(report.uid, await readableExamRecord(this.prisma, this.studyAccess, c, report.uid, report));
-    }
+    const recordScopes = await readableExamRecords(this.prisma, this.studyAccess, c, reports);
     const reportOf = (uid: string) => {
       const report = repByUid.get(uid);
       return report && !recordScopes.get(uid) ? { ...report, findings: '', conclusion: '', recommendation: '' } : report;
@@ -333,10 +329,8 @@ export class PacsWorklist {
     // 클라이언트 병합이 쓰고 있던 초안을 지운다.
     const drafts = await this.prisma.reportDraft.findMany({ where: { author: c.actor, uid: { in: pageUids } } });
     const draftByUid = new Map(drafts.map(d => [d.uid, d]));
-    for (const draft of drafts) if (draft.present) {
-      await prepareExamRead(this.prisma, this.studyAccess, c, draft.uid);
-      if (!await readableExamRecord(this.prisma, this.studyAccess, c, draft.uid, draft)) draftByUid.delete(draft.uid);
-    }
+    for (const [uid, scope] of await readableExamRecords(this.prisma, this.studyAccess, c, drafts.filter(draft => draft.present)))
+      if (!scope) draftByUid.delete(uid);
 
     // Only presence/version leaves this query, never the note body or author.
     const metadataUids = [...new Set([...pageUids, ...pageSources, ...memberUids])];
@@ -663,9 +657,9 @@ export class PacsWorklist {
     // Merge Exam: the same rule as the list — a report written on an exam group goes only to a caller who may read all of it.
     const byUid: Record<string, any> = {};
     const reportScopes: Record<string,any> = {};
+    const readable = await readableExamRecords(this.prisma, this.studyAccess, c, reports);
     for (const report of reports) {
-      await prepareExamRead(this.prisma, this.studyAccess, c, report.uid);
-      const scope = await readableExamRecord(this.prisma, this.studyAccess, c, report.uid, report);
+      const scope = readable.get(report.uid);
       reportScopes[report.uid] = scope ? examScopeView(scope) : null;
       byUid[report.uid] = scope
         ? report : { ...report, findings: '', conclusion: '', recommendation: '' };
@@ -676,10 +670,8 @@ export class PacsWorklist {
     const drafts = omitStates ? [] : await this.prisma.reportDraft.findMany({
       where: { author: c.actor, uid: { in: states.map(s => s.uid) } } });
     const draftByUid = Object.fromEntries(drafts.map(d => [d.uid, d]));
-    for (const draft of drafts) if (draft.present) {
-      await prepareExamRead(this.prisma, this.studyAccess, c, draft.uid);
-      if (!await readableExamRecord(this.prisma, this.studyAccess, c, draft.uid, draft)) delete draftByUid[draft.uid];
-    }
+    for (const [uid, scope] of await readableExamRecords(this.prisma, this.studyAccess, c, drafts.filter(draft => draft.present)))
+      if (!scope) delete draftByUid[uid];
     await this.studyAccess.unchanged(c,access);
     const prefs = await this.preferences.prefs(c);   // 필터·상용구도 첫 요청에 함께 (왕복을 늘리지 않는다)
     return {

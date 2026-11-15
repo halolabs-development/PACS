@@ -17,7 +17,8 @@ import type { Caller, PacsAccess } from './access';
 import type { PacsWorklist } from './worklist';
 import { LocalReadResponse } from '../emr-viewing/local-read';
 import { consumerSource, viewerSources } from '../emr-viewing/consumer-read';
-import { resolveExamScope, prepareExamRead, relatedExamRecord, relatedExamReports, readableExamRecord, examScopeView, scopeIncludesSeries, ResolvedExamScope } from '../exam-merge.service';
+import { resolveExamScope, prepareExamRead, relatedExamRecord, relatedExamReports, readableExamRecord, examScopeView, scopeIncludesSeries, ResolvedExamScope,
+  groupedExamUids, ordinaryExamRecord } from '../exam-merge.service';
 import { versionDrawings, drawingEntries } from '../image-report';
 
 export class PacsClinician {
@@ -134,7 +135,14 @@ export class PacsClinician {
    */
   private async examOf(c: Caller, rows: any[]) {
     const out = new Map<string, any>();
+    const grouped = await groupedExamUids(this.prisma, rows.map(row => row.uid));
     for (const row of rows) {
+      if (!row.groupId && !grouped.has(row.uid)) {
+        // Never grouped: the list's own selection admitted the study and its report, as before grouping existed.
+        row.reportReadable = row.version > 0;
+        row.reportScope = row.version > 0 ? examScopeView(ordinaryExamRecord(row.uid)) : null;
+        continue;
+      }
       const scope = await relatedExamRecord(this.prisma, this.studyAccess, c, row);
       const stored = row.version > 0 ? await readableExamRecord(this.prisma, this.studyAccess, c, row.uid, row) : null;
       row.reportReadable = !!stored;

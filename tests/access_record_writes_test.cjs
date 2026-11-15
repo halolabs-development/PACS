@@ -293,7 +293,8 @@ function criticalDatabase({ groups = [], members = [], extraUids = [] } = {}) {
     $queryRaw: async (strings, ...values) => {
       const sql = strings.join('?');
       // The fixed-record key is the EMR record contract's text, JSON ['emr-fixed-record', <Study UID>].
-      if (sql.includes('FROM "StudyGroupMember"')) return members.filter(row => row.logicalUid === values[0] || row.studyUid === values[0]);
+      // One UID (a single record) or a list of them (the caller's record list), as the statement binds it.
+      if (sql.includes('FROM "StudyGroupMember"')) return members.filter(row => [].concat(values[0]).some(uid => row.logicalUid === uid || row.studyUid === uid));
       if (sql.includes('pg_advisory_xact_lock')) {
         const [kind, recordId] = JSON.parse(values[0]);
         assert.equal(kind, 'emr-fixed-record');

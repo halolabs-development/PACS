@@ -191,7 +191,7 @@ test('(1) a metadata rule reads source tags before $transaction and never inside
   const start = w.events.indexOf('tx:start');
   assert.ok(start > 0);
   const reads = w.events.map((event, index) => [event, index]).filter(([event]) => event.startsWith('orthanc:'));
-  assert.ok(reads.length>0&&reads.every(([event])=>event==='orthanc:studyIdentityResources'), 'the UID route observes only original identity');
+  assert.deepEqual(reads.map(([event]) => event), ['orthanc:studyIdentityResources'], 'the UID route prepares one study');
   assert.ok(reads.every(([, index]) => index < start), 'the source read ends before the transaction');
   assert.deepEqual(orthancAfterStart(w), []);
   const receipts = w.model.reads.filter(r => r.table === 'receipt');
@@ -201,7 +201,7 @@ test('(1) a metadata rule reads source tags before $transaction and never inside
   const answered = await reply(w, id(1), { ...radiologist }, id(2), 1);
   const later = w.events.slice(before), second = later.indexOf('tx:start');
   assert.equal(answered.applied.action, 'answer');
-  assert.ok(later.filter(e=>e.startsWith('orthanc:')).every(e=>['orthanc:studyIdentities','orthanc:studyIdentityResources'].includes(e)));
+  assert.deepEqual(later.filter(e => e.startsWith('orthanc:')), ['orthanc:studyIdentities']);
   assert.ok(later.indexOf('orthanc:studyIdentities') < second);
   assert.deepEqual(later.slice(second).filter(e => e.startsWith('orthanc:')), []);
   // the batch read asks for the access tags and not the accession (an optional deadline signal is not part of the request)

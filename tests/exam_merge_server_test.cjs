@@ -43,7 +43,9 @@ function fixture({states=[A,B,C,D,E,F].map(uid=>state(uid)),groups=[],members=[]
         if(onLock)await onLock(db,uids);
         return [...uids].sort().flatMap(uid=>db.states.has(uid)?[clone(db.states.get(uid))]:[]);
       }
-      if(sql.includes('FROM "StudyGroupMember"'))return db.members.filter(m=>m.logicalUid===values[0]||m.studyUid===values[1]).map(m=>({groupId:m.groupId}));
+      // One UID (a single record) or a list of them (a record list), as the statement binds it.
+      if(sql.includes('FROM "StudyGroupMember"'))return db.members.filter(m=>[].concat(values[0]).includes(m.logicalUid)||[].concat(values[1]).includes(m.studyUid))
+        .map(m=>({groupId:m.groupId,logicalUid:m.logicalUid,studyUid:m.studyUid}));
       throw new Error('unexpected raw query: '+sql);
     },
     institution:{findMany:async()=>[{id:'hallym',name:'hallym',dicomNames:''}]},
@@ -65,6 +67,7 @@ function fixture({states=[A,B,C,D,E,F].map(uid=>state(uid)),groups=[],members=[]
     try{return await work(prisma);}catch(e){db.groups=before.groups;db.members=before.members;db.audits=before.audits;db.states=new Map(before.states);throw e;}};
   const access={prepared:[],prepare:async(_c,uids=[])=>{access.prepared.push([...uids]);},prepareSourceIdentity:async(_c,uids)=>{access.prepared.push([...uids]);},
     require:async(_c,uids)=>{if(uids.some(uid=>denied.includes(uid)))throw Object.assign(new Error('검사를 찾을 수 없습니다'),{getStatus:()=>404});},
+    allowed:async(_c,uids)=>new Set(uids.filter(uid=>!denied.includes(uid))),
     assertUnsplitSource:(_c,uid)=>({sourcePatientId:PATIENT[uid]??null,sourceInstitution:'hallym'}),
     assertIdentifiedSource:(_c,uid)=>({sourcePatientId:PATIENT[uid]??null,sourceInstitution:'hallym'}),
     requireSourceOwner:async()=>{},sourceSeries:async()=>[{uid:'2.25.701',count:3,images:true},{uid:'2.25.702',count:5,images:true}]};
@@ -863,6 +866,55 @@ test('worklist: a merged study whose Count is unknown makes the exam\'s Count un
   // Ended groups are not read as merged.
   const ended=await listFixture({group:merged(G1,B,[B,A,C],{dissolvedAt:new Date()})});
   assert.deepEqual((await ended.listStudies(reader)).studies.map(s=>s.uid).sort(),[A,B,C,D]);
+});
+
+test('worklist and bootstrap: reports and drafts of never-grouped studies cost one membership read, and each gets the answer one record gets',async()=>{
+  const {resolveExamScope,examScopeView}=require('/app/dist/exam-merge.service');
+  const reports=[A,B,C,D].map(uid=>({uid,version:1,findings:'SYN '+uid,conclusion:'',recommendation:'',groupId:null}));
+  const drafts=[A,B].map(uid=>({uid,author:reader.actor,present:true,revision:1,findings:'SYN DRAFT '+uid,groupId:null}));
+  // What one request reads: membership rows, single states and raw statements (the access policy among them).
+  const counted=async(svc,work)=>{
+    const seen={members:0,states:0,raw:0},undo=[];
+    for(const [owner,key,name] of [[svc.prisma.studyGroupMember,'findMany','members'],[svc.prisma.studyState,'findUnique','states'],[svc.prisma,'$queryRaw','raw']]){
+      const original=owner[key];owner[key]=async(...args)=>{seen[name]++;return original(...args);};undo.push(()=>{owner[key]=original;});
+    }
+    try{return {out:await work(),seen};}finally{undo.forEach(restore=>restore());}
+  };
+  const one=await listFixture({group:null,reports:reports.slice(0,1),drafts:drafts.slice(0,1)});
+  const all=await listFixture({group:null,reports,drafts});
+  const single=async uid=>examScopeView(await resolveExamScope(all.prisma,all.studyAccess,{...reader},{uid,purpose:'stored',record:{groupId:null}}));
+  for(const read of ['listStudies','bootstrap']){
+    const few=await counted(one,()=>one[read]({...reader})),many=await counted(all,()=>all[read]({...reader}));
+    assert.deepEqual(many.seen,few.seen,read+': four reports and two drafts read what one of each reads');
+    assert.equal(many.seen.states,0,read+': no state is read again for a record');
+    const states=read==='bootstrap'?many.out.states:Object.fromEntries(many.out.studies.map(row=>[row.uid,row.state]));
+    for(const uid of [A,B,C,D]){
+      assert.equal(states[uid].findings,'SYN '+uid);
+      assert.deepEqual(states[uid].reportScope,await single(uid));
+      assert.equal(states[uid].draft?.findings??null,[A,B].includes(uid)?'SYN DRAFT '+uid:null);
+    }
+    if(read==='listStudies')for(const row of many.out.studies){
+      assert.equal(row.reportReadable,true);assert.deepEqual(row.reportScope,await single(row.uid));
+      assert.equal('reportGroup' in row,false);assert.equal('group' in row,false);
+    }
+  }
+});
+
+test('links of never-grouped studies are decided together and equal the scope each study resolves to alone',async()=>{
+  const {examLinks,resolveExamScope,examScopeView}=require('/app/dist/exam-merge.service');
+  const f=fixture({denied:[C]});
+  f.db.states.get(D).institutionId='other';
+  let members=0;
+  const find=f.prisma.studyGroupMember.findMany;
+  f.prisma.studyGroupMember.findMany=async arg=>{members++;return find(arg);};
+  const together=await examLinks(f.prisma,f.access,reader,[A,B,C,D]);
+  assert.equal(members,1,'one membership read for the whole collection');
+  assert.deepEqual(together.map(link=>link.uid),[A,B,C,D]);
+  for(const link of together){
+    const alone=await resolveExamScope(f.prisma,f.access,reader,{uid:link.uid,purpose:'source'}).then(examScopeView,()=>null);
+    assert.deepEqual(link.exams,alone?[alone]:[]);
+  }
+  assert.deepEqual(together.map(link=>link.exams.length),[1,1,0,0],'a study the policy denies or another institution owns has no link');
 });
 
 test('worklist: a caller who cannot see every study of a merged exam gets the original rows',async()=>{

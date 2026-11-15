@@ -17,7 +17,7 @@ import {
 } from './clinical-context-policy';
 import type { ContextMember, ContextPins, ContextSourceStudy } from './clinical-context-policy';
 import { clinicalContextRead } from './emr-viewing/consumer-read';
-import { prepareExamRead, readableExamRecord, examParentAccess, examScopeView } from './exam-merge.service';
+import { prepareExamRead, readableExamRecords, groupedExamUids, examParentAccess, examScopeView } from './exam-merge.service';
 
 /**
  * S7-U4a — Clinical Context 읽기(계약 S7-U4p §6.1 R1~R9). 무엇을 싣고 어떻게 판정하는지는 clinical-context-policy.ts의
@@ -93,11 +93,16 @@ export class ClinicalContextService {
     if (!contextAccess(entry, me)) throw notFound();
     const entered = { institutionId: entry.institutionId ?? null, teleInstitutionId: entry.teleInstitutionId ?? null };
     await prepareExamRead(this.prisma,this.studyAccess,c,uid);
-    const parent=await examParentAccess(this.prisma,this.studyAccess,c,uid);
+    // The entry row read above is the state the exam is judged on: this read never selects a whole StudyState row.
+    const parent=await examParentAccess(this.prisma,this.studyAccess,c,uid,false,'reading',{uid,...entered});
 
     // R5 Orthanc: 어떤 DB 트랜잭션도 열지 않은 상태에서 읽는다. 원본 열거와 요청 태그 헤더는 서로 독립이고 실패는 구역에만 남는다.
     const [studies, requestTags] = await Promise.all([this.readStudies(uid,parent.sources[0].studyUid), this.readRequestTags(parent.sources[0].studyUid)]);
-    if(studies.kind==='read')for(const source of studies.candidates)await prepareExamRead(this.prisma,this.studyAccess,c,source.uid);
+    // Only a prior with a grouping history needs its exam's originals observed before the transaction.
+    if(studies.kind==='read') {
+      const grouped=await groupedExamUids(this.prisma,studies.candidates.map(source=>source.uid));
+      for(const source of studies.candidates)if(grouped.has(source.uid))await prepareExamRead(this.prisma,this.studyAccess,c,source.uid);
+    }
 
     // R6 DB 한 번(RepeatableRead). 여기서 읽은 값이 §6.2 고정값이다.
     const read = await this.snapshot(uid, c, access, entered, studies, cursor).catch(busyOr);
@@ -197,7 +202,7 @@ export class ClinicalContextService {
       const anchorAccess = contextAccess(anchor, me);
       if (!anchorAccess) throw notFound();
       if ((anchor.institutionId ?? null) !== entered.institutionId || (anchor.teleInstitutionId ?? null) !== entered.teleInstitutionId) throw changed();
-      await examParentAccess(tx,this.studyAccess,c,uid);
+      await examParentAccess(tx,this.studyAccess,c,uid,false,'reading',anchor);
 
       const patientKey = studies.kind === 'read' ? contextPatientKey(anchor.institutionId, studies.anchor.patientId) : null;
       // StudyState가 없는 후보(Orthanc에만 있고 KIN 미등록)는 보이지 않는 것으로 뺀다. 이 읽기는 등록하지 않는다.
@@ -217,11 +222,10 @@ export class ClinicalContextService {
         head: headOf.get(member.source.uid)?.version === versionOf.get(member.source.uid) ? headOf.get(member.source.uid) : null }));
       members.sort((a, b) => contextOrder(a.source, b.source));
       const scopes=new Map<string,any>();
-      for(const member of members.filter(contextSigned)) {
-        const record=headOf.get(member.source.uid);
-        const scope=record&&await readableExamRecord(tx,this.studyAccess,c,member.source.uid,record);
-        if(scope)scopes.set(member.source.uid,examScopeView(scope));
-      }
+      // The members were selected under the caller's visibility and policy above; only a head written on a group is resolved.
+      const signedHeads=members.filter(contextSigned).map(member=>headOf.get(member.source.uid)).filter(Boolean);
+      for(const [member,scope] of await readableExamRecords(tx,this.studyAccess,c,signedHeads,false))
+        if(scope)scopes.set(member,examScopeView(scope));
       const signed = members.filter(member=>contextSigned(member)&&scopes.has(member.source.uid));
       const shown = signed.slice(cursor * CONTEXT_PRIOR_LIMIT, (cursor + 1) * CONTEXT_PRIOR_LIMIT);
       const bodies = shown.length ? await tx.reportVersion.findMany({ where: { id: { in: shown.map(member => member.head.id) } },

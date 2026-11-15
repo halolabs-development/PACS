@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { PrismaService } from './prisma.service';
 import { ViewerJobService } from './viewer-job.service';
 import type { Caller } from './pacs.service';
-import { examLinks, examParentAccess, prepareExamRead } from './exam-merge.service';
+import { examLinks, examParentAccess, groupedExamUids, prepareExamRead } from './exam-merge.service';
 
 type Folder = { id: string; name: string; uids: string[]; views?: Record<string,string> };
 const uuid = (v: any) => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
@@ -25,9 +25,12 @@ export class FavoriteService {
     if (!uids.length) return new Set();
     const rows = await tx.$queryRaw(Prisma.sql`SELECT uid FROM "StudyState" WHERE uid IN (${Prisma.join([...new Set(uids)].sort())})
       AND ("institutionId"=${c.institution} OR "teleInstitutionId"=${c.institution}) ORDER BY uid ${lock ? Prisma.sql`FOR SHARE` : Prisma.empty}`);
-    const visible = new Set<string>();
-    for (const row of rows) {
-      try { await examParentAccess(tx,this.studyAccess,c,row.uid); visible.add(row.uid); }
+    // Never-grouped studies keep the one policy decision for the whole collection; a study with a grouping history is
+    // admitted through its exam.
+    const found: string[] = rows.map((x:any)=>x.uid), grouped = await groupedExamUids(tx, found);
+    const visible = await this.studyAccess.allowed(c,found.filter(uid=>!grouped.has(uid)),tx);
+    for (const uid of found.filter(uid=>grouped.has(uid))) {
+      try { await examParentAccess(tx,this.studyAccess,c,uid); visible.add(uid); }
       catch (error) { if (!(error instanceof NotFoundException || error instanceof ConflictException)) throw error; }
     }
     return visible;
@@ -46,8 +49,9 @@ export class FavoriteService {
   }
   private async run<T>(c:Caller,fn: (tx: any) => Promise<T>): Promise<T> {
     const row=await this.prisma.favoriteWorkspace.findUnique({where:{institution_subject:{institution:c.institution!,subject:c.sub}}});
-    for(const uid of new Set<string>((row?JSON.parse(row.value):[]).flatMap((f:Folder)=>f.uids)))
-      await prepareExamRead(this.prisma,this.studyAccess,c,uid);
+    // Only a favorite with a grouping history needs its exam's originals observed before the transaction.
+    const kept=[...new Set<string>((row?JSON.parse(row.value):[]).flatMap((f:Folder)=>f.uids))],grouped=await groupedExamUids(this.prisma,kept);
+    for(const uid of kept)if(grouped.has(uid))await prepareExamRead(this.prisma,this.studyAccess,c,uid);
     try { return await this.prisma.$transaction(async tx => {
       await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`; await this.studyAccess.snapshot(c,tx); return fn(tx);
     }, { maxWait:4000, timeout:8000 }); }

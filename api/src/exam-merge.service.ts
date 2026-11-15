@@ -77,6 +77,80 @@ export async function withGroupedExam<T>(db: any, uid: string, original: () => P
   return members.length ? grouped() : original();
 }
 
+/**
+ * The same membership fact for a record-only reader's whole list, in one raw read: the UIDs with a grouping history.
+ * Records of every other study keep that reader's established statements, one decision for all of them.
+ */
+export async function groupedRecordUids(db: any, uids: string[]): Promise<Set<string>> {
+  const all = unique(uids);
+  if (!all.length) return new Set();
+  const members: any[] = await db.$queryRaw`SELECT "logicalUid","studyUid" FROM "StudyGroupMember"
+    WHERE "logicalUid"=ANY(${all}::text[]) OR "studyUid"=ANY(${all}::text[])`;
+  return new Set(members.flatMap(member => [member.logicalUid, member.studyUid]));
+}
+
+/** Two UID lists share one statement's bind variables; a whole archive is read in parts. */
+const MEMBER_LOOKUP = 10000;
+async function membersTouching(db: any, uids: string[], select?: Record<string, boolean>): Promise<ExamGroupMember[]> {
+  const out: ExamGroupMember[] = [], seen = new Set<string>();
+  for (let at = 0; at < uids.length; at += MEMBER_LOOKUP) {
+    const part = uids.slice(at, at + MEMBER_LOOKUP);
+    const rows: ExamGroupMember[] = await db.studyGroupMember.findMany({
+      where: { OR: [{ studyUid: { in: part } }, { logicalUid: { in: part } }] }, ...(select ? { select } : {}) });
+    for (const row of rows) {
+      const key = row.groupId + '\n' + row.logicalUid;
+      if (!seen.has(key)) { seen.add(key); out.push(row); }
+    }
+  }
+  return out;
+}
+
+/**
+ * The UIDs of a whole list (original studies or report parents) that have a grouping history, in one read. A list reader
+ * keeps its established statements for every other UID, so a study that was never grouped costs it nothing more than
+ * before grouping existed, and only these are resolved one by one.
+ */
+export async function groupedExamUids(db: any, uids: string[]): Promise<Set<string>> {
+  const all = unique(uids);
+  if (!all.length) return new Set();
+  return new Set((await membersTouching(db, all, { groupId: true, logicalUid: true, studyUid: true }))
+    .flatMap(member => [member.logicalUid, member.studyUid]));
+}
+
+/** A study that was never grouped, with a record that names no group: itself, whole. */
+function ordinaryScope(uid: string, purpose: ExamScopeRequest['purpose'], state: any): ResolvedExamScope {
+  const sources: ResolvedExamScope['sources'] = [{ studyUid: uid, series: { mode: 'all', uids: [] } }];
+  const scopeRevision = createHash('sha256').update(JSON.stringify([uid, null, null, sources, []])).digest('hex');
+  return { hasMembership: false, groupId: null, kind: null, baseUid: uid, reportUid: uid, part: null, active: true,
+    sources, studies: [uid], lockUids: [uid], state, scopeRevision,
+    generation: createHash('sha256').update(JSON.stringify([scopeRevision, purpose !== 'stored' ? state?.draftEpoch ?? null : null])).digest('hex') };
+}
+
+/**
+ * The stored scope of a record on a study the caller's own list selection already admitted and that
+ * groupedExamUids did not name: the study alone. Nothing is read; it is the answer readableExamRecord gives for it.
+ */
+export function ordinaryExamRecord(uid: string, state: any = null): ResolvedExamScope {
+  return ordinaryScope(uid, 'stored', state);
+}
+
+/**
+ * Stored records of a whole list the caller already selected under its own visibility and policy rules. Records of
+ * never-grouped studies are described without a read; a record with a grouping history is resolved as one record is.
+ * `prepare` is false inside a transaction: its caller observed the grouped originals before opening it.
+ */
+export async function readableExamRecords(db: any, access: StudyAccessService, c: Caller,
+    records: { uid: string; groupId?: string | null }[], prepare = true) {
+  const grouped = await groupedExamUids(db, records.map(record => record.uid));
+  const out = new Map<string, ResolvedExamScope | null>();
+  for (const record of records) {
+    if (record.groupId == null && !grouped.has(record.uid)) { out.set(record.uid, ordinaryExamRecord(record.uid)); continue; }
+    if (prepare) await prepareExamRead(db, access, c, record.uid);
+    out.set(record.uid, await readableExamRecord(db, access, c, record.uid, record));
+  }
+  return out;
+}
+
 /** Critical records already carry their own source testimony. Do not observe Orthanc again for an ordinary record. */
 export async function prepareRecordExamRead(db: any, access: StudyAccessService, c: Caller, uid: string) {
   return withGroupedExam(db, uid, () => access.prepare(c, [uid]), async () => { await prepareExamRead(db, access, c, uid); });
@@ -93,12 +167,7 @@ async function describeScope(db: any, request: ExamScopeRequest): Promise<Resolv
   const parts: ExamGroupMember[] = await db.studyGroupMember.findMany({ where: { OR: [{ logicalUid: uid }, { studyUid: uid }] } });
   if (!parts.length && request.record?.groupId == null) {
     if (purpose === 'stored' && !request.record) throw examScopeChanged();
-    const state = request.state !== undefined ? request.state : await db.studyState.findUnique({ where: { uid } });
-    const sources: ResolvedExamScope['sources'] = [{ studyUid: uid, series: { mode: 'all', uids: [] } }];
-    const scopeRevision = createHash('sha256').update(JSON.stringify([uid, null, null, sources, []])).digest('hex');
-    return { hasMembership: false, groupId: null, kind: null, baseUid: uid, reportUid: uid, part: null, active: true,
-      sources, studies: [uid], lockUids: [uid], state, scopeRevision,
-      generation: createHash('sha256').update(JSON.stringify([scopeRevision, purpose !== 'stored' ? state?.draftEpoch ?? null : null])).digest('hex') };
+    return ordinaryScope(uid, purpose, request.state !== undefined ? request.state : await db.studyState.findUnique({ where: { uid } }));
   }
   let group: ExamGroup | undefined;
   let history: string[] = [];
@@ -355,30 +424,44 @@ export function reportExamReference(db: any, uid: string, version?: number) {
     : db.reportVersion.findUnique({ where: { uid_version: { uid, version } }, select: { groupId: true } });
 }
 
-/** Every report target associated with a source, including ended groups. This enumerates references, not access. */
-export async function examTargets(db: any, uids: string[]) {
-  if(!uids.length)return [];
-  const touched = await db.studyGroupMember.findMany({ where: { OR: [
-    { studyUid: { in: unique(uids) } }, { logicalUid: { in: unique(uids) } }] } });
+/** The targets of each UID, and which of the UIDs have a grouping history at all. */
+async function targetsOf(db: any, uids: string[]) {
+  const touched = uids.length ? await membersTouching(db, unique(uids)) : [];
   const groups: ExamGroup[] = touched.length ? await db.studyGroup.findMany({ where: { id: { in: unique(touched.map(m => m.groupId)) } } }) : [];
   const members: ExamGroupMember[] = groups.length
     ? await db.studyGroupMember.findMany({ where: { groupId: { in: groups.map(g => g.id) } } }) : [];
-  return unique(uids).map(uid => ({ uid, targets: [
+  return { grouped: new Set(touched.flatMap(m => [m.logicalUid, m.studyUid])), targets: unique(uids).map(uid => ({ uid, targets: [
     ...(!touched.some(m => m.logicalUid === uid && m.studyUid !== uid) ? [{ reportUid: uid, groupId: null, part: null, active: true }] : []),
     ...groups
     .filter(g => touched.some(m => m.groupId === g.id && (m.studyUid === uid || m.logicalUid === uid)))
     .flatMap(group => (group.kind === 'merge' ? [{ logicalUid: group.baseUid, part: null }]
       : members.filter(m => m.groupId === group.id)).map(parent => ({ reportUid: parent.logicalUid,
-        groupId: group.id, part: parent.part, active: group.dissolvedAt == null }))) ] }));
+        groupId: group.id, part: parent.part, active: group.dissolvedAt == null }))) ] })) };
+}
+
+/** Every report target associated with a source, including ended groups. This enumerates references, not access. */
+export async function examTargets(db: any, uids: string[]) {
+  return (await targetsOf(db, uids)).targets;
 }
 
 /** Original-keyed collections keep their keys. Links are a projection, so merging never rewrites saved references. */
 export async function examLinks(db: any, access: StudyAccessService, c: Caller, uids: string[]) {
   const links: { uid: string; exams: ReturnType<typeof examScopeView>[] }[] = [];
-  const targets = await examTargets(db, uids);
-  for (const uid of unique(uids)) {
+  const { grouped, targets } = await targetsOf(db, uids);
+  // Never-grouped studies of the collection: one state read and one policy decision for all of them, the same
+  // visibility and policy answer a single source resolution gives each.
+  const plain = targets.filter(link => !grouped.has(link.uid)).map(link => link.uid);
+  const states = new Map<string, any>(!plain.length ? []
+    : (await db.studyState.findMany({ where: { uid: { in: plain } } })).map((state: any) => [state.uid, state]));
+  const seen = plain.filter(uid => visible(states.get(uid), c));
+  const allowed = seen.length ? await access.allowed(c, seen, db) : new Set<string>();
+  for (const { uid, targets: found } of targets) {
+    if (!grouped.has(uid)) {
+      links.push({ uid, exams: allowed.has(uid) ? [examScopeView(ordinaryScope(uid, 'source', states.get(uid)))] : [] });
+      continue;
+    }
     const requests: ExamScopeRequest[] = [];
-    for (const target of targets.find(link => link.uid === uid)!.targets)
+    for (const target of found)
       requests.push({ uid: target.reportUid, purpose: target.groupId === null ? 'source' : target.active ? 'current' : 'stored',
         record: { groupId: target.groupId } });
     const scopes = new Map<string, ReturnType<typeof examScopeView>>();
@@ -449,9 +532,7 @@ export async function examLookupSources(db: any, uids: string[]) {
 export async function activeGroups(db: any, uids: string[]): Promise<ExamGroup[]> {
   const unique = [...new Set(uids)];
   if (!unique.length) return [];
-  const touched: ExamGroupMember[] = await db.studyGroupMember.findMany({
-    where: { OR: [{ studyUid: { in: unique } }, { logicalUid: { in: unique } }] },
-    select: { groupId: true, logicalUid: true, studyUid: true, part: true, seriesUids: true } });
+  const touched = await membersTouching(db, unique, { groupId: true, logicalUid: true, studyUid: true, part: true, seriesUids: true });
   if (!touched.length) return [];
   const groups = await db.studyGroup.findMany({ where: { id: { in: [...new Set(touched.map(m => m.groupId))] }, dissolvedAt: null },
     select: { id: true, kind: true, baseUid: true, institutionId: true, dissolvedAt: true } });

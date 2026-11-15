@@ -4,7 +4,7 @@ import { Prisma } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { PrismaService } from './prisma.service';
 import type { Caller } from './pacs.service';
-import { examLinks, examParentAccess, prepareExamRead } from './exam-merge.service';
+import { examLinks, examParentAccess, groupedExamUids, prepareExamRead } from './exam-merge.service';
 type Tag = { id:string; name:string; uids:string[] };
 const uuid=(v:any)=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 const uid=(v:any)=>typeof v==='string'&&v.length<=64&&/^\d+(?:\.\d+)+$/.test(v);
@@ -17,8 +17,9 @@ export class StudyTagsService {
   }
   private async run<T>(c:Caller,fn:(tx:any)=>Promise<T>):Promise<T>{
     const catalogs=await this.prisma.studyTagCatalog.findMany({where:{institution:c.institution,ownerSub:{in:[c.sub,'']}}});
-    for(const uid of new Set<string>(catalogs.flatMap(row=>JSON.parse(row.value).flatMap((t:Tag)=>t.uids))))
-      await prepareExamRead(this.prisma,this.studyAccess,c,uid);
+    // Only a tagged study with a grouping history needs its exam's originals observed before the transaction.
+    const kept=[...new Set<string>(catalogs.flatMap(row=>JSON.parse(row.value).flatMap((t:Tag)=>t.uids)))],grouped=await groupedExamUids(this.prisma,kept);
+    for(const uid of kept)if(grouped.has(uid))await prepareExamRead(this.prisma,this.studyAccess,c,uid);
     try{return await this.prisma.$transaction(async tx=>{await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`; await this.studyAccess.snapshot(c,tx);return fn(tx);},{maxWait:4000,timeout:8000});}
     catch(e:any){if(['P2028','P2034'].includes(e?.code)||e?.code==='P2010'&&['55P03','57014','40P01'].includes(e?.meta?.code))throw new ServiceUnavailableException('태그 처리 중입니다. 같은 요청으로 다시 시도하세요');throw e;}
   }
@@ -27,8 +28,11 @@ export class StudyTagsService {
     const rows=await tx.$queryRaw(Prisma.sql`SELECT uid FROM "StudyState" WHERE uid IN (${Prisma.join([...new Set(uids)].sort())})
       AND ("institutionId"=${c.institution} OR "teleInstitutionId"=${c.institution})
       AND (rs<>'P' OR (CASE WHEN "preDocSub" IS NOT NULL THEN "preDocSub"=${c.sub} ELSE "preDoc"=${c.actor} END) OR (CASE WHEN "preReviewerSub" IS NOT NULL THEN "preReviewerSub"=${c.sub} ELSE "preReviewer"=${c.actor} END)) ORDER BY uid ${lock?Prisma.sql`FOR SHARE`:Prisma.empty}`);
-    const seen=new Set<string>();
-    for(const row of rows){try{await examParentAccess(tx,this.studyAccess,c,row.uid);seen.add(row.uid);}
+    // Never-grouped studies keep the one policy decision for the whole catalog; a study with a grouping history is
+    // admitted through its exam.
+    const found:string[]=rows.map((x:any)=>x.uid),grouped=await groupedExamUids(tx,found);
+    const seen=await this.studyAccess.allowed(c,found.filter(uid=>!grouped.has(uid)),tx);
+    for(const uid of found.filter(uid=>grouped.has(uid))){try{await examParentAccess(tx,this.studyAccess,c,uid);seen.add(uid);}
       catch(error){if(!(error instanceof NotFoundException||error instanceof ConflictException))throw error;}}
     return seen;
   }
