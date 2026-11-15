@@ -265,7 +265,14 @@ class ExamMergeE2E(WorklistE2E):
         self.seed_report(target)
         before = self.listed()
         self.add_series(patient, a.uid)
-        reader.wait_for_function("async uid => { const r=await fetch('/api/studies?uids='+uid); const b=await r.json(); return b.studies[0]?.series===2; }", arg=a.uid, timeout=30000)
+        # The late series is counted through the signed-in list request (a bare page fetch carries no session header).
+        late = None
+        for _ in range(120):
+            late = self.listed().get(a.uid)
+            if late and late['series'] == 2:
+                break
+            reader.wait_for_timeout(250)
+        self.assertEqual(late['series'], 2)
         after = self.listed()
         self.assertEqual(after[second_uid]['count'], before[second_uid]['count'])
         self.assertEqual(after[a.uid]['count'], before[a.uid]['count'] + 1)
