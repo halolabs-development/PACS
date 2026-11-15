@@ -85,7 +85,10 @@ test('Image Report drawings ride the draft boundary, are bound and signed with t
     await runtime.start(); ready = true;
     const clinical = await require('./clinical_fixture.cjs').clinicalFixture(witness, runtime.port, issuer,
       [sub, second.sub].map(member => ({ sub: member, institution, roles: ['radiologist'] })));
-    const orthanc = { studyIdentityResources: async uid => [{ '0020000D': { Value: [uid] } }], studyIdentities: async () => [] };
+    // The studies of the Merge Exam part below answer with their original patient (a merged exam needs one identified).
+    const patients = new Map();
+    const orthanc = { studyIdentityResources: async uid => [{ '0020000D': { Value: [uid] },
+      ...(patients.has(uid) ? { '00100020': { Value: [patients.get(uid)] } } : {}) }], studyIdentities: async () => [] };
     class HttpFixture {}
     const { createRequestContext, REQUEST_CONTEXT_CAPTURE, REQUEST_CONTEXT_SOURCE } = product('emr-runtime/request-context');
     const { createRequestIngress } = product('emr-runtime/request-ingress');
@@ -518,6 +521,117 @@ test('Image Report drawings ride the draft boundary, are bound and signed with t
     await purpose.drained();
     assert.deepEqual(await drawingIds(pair.uid), []);
     assert.equal(await witness.reportDraftPurposeEnd.count({ where: { uid: pair.uid } }), 0);
+
+    // ── Merge Exam: a drawing belongs to the work it was attached in, and a work to the one exam it was written on ──
+    // Merge and Unmerge label the rows of the base study (groupId) and move none, so one study holds the drawings of
+    // several exams over time. A work's destruction takes that work's own drawings - whatever the grouping is when it
+    // runs - and never one of another exam, and no regrouping leaves a destroyed work's drawing behind.
+    const { ExamMergeService } = product('exam-merge.service');
+    const grouping = new ExamMergeService(app.get(PrismaService), app.get(StudyAccessService));
+    const technician = { sub: 'synthetic-drawing-technician', actor: 'drawing-technician@example.test', roles: ['technician'], institution, kind: 'member' };
+    const exam = await witness.studyState.create({ data: { uid: '1.2.840.9999.144', institutionId: institution, ss: 'Verified' } });
+    const part = await witness.studyState.create({ data: { uid: '1.2.840.9999.145', institutionId: institution, ss: 'Verified' } });
+    for (const study of [exam, part]) patients.set(study.uid, 'SYN-DRAWING-PATIENT');
+    const examDraft = () => witness.reportDraft.findUnique({ where: { uid_author: { uid: exam.uid, author } } });
+    // A request of the screen as it is now: the study's epoch (every Merge and Unmerge draws a new one) and my row's revision.
+    const now = async (extra = {}, uid = exam.uid) => ({ ...base(0, extra), expectedRevision:
+      (await witness.studyState.findUnique({ where: { uid } })).draftEpoch + ':' + (uid === exam.uid ? (await examDraft())?.revision ?? 0 : 0) });
+    const drawing = id => witness.reportDrawing.findUnique({ where: { id }, select: { studyUid: true, groupId: true, workUnit: true } });
+    const ends = async () => (await witness.reportDraftPurposeEnd.findMany({ where: { uid: exam.uid }, select: { disposalUnitId: true } }))
+      .map(r => r.disposalUnitId).sort();
+    // An end whose destruction is still to come (a server that stopped after the end committed leaves it to a later run).
+    const endedOnly = async send => {
+      purpose.scheduleDestruction = () => {};
+      try { return await send(); } finally { delete purpose.scheduleDestruction; }
+    };
+    const destroyNow = async unit => { purpose.scheduleDestruction(unit, author); await purpose.drained(); };
+    const attach = async (background, extra = {}) => {
+      const answer = await put(exam.uid, await now({ drawingIds: null, drawing: { ...breast, background }, ...extra }));
+      assert.equal(answer.status, 200, JSON.stringify(answer.body));
+      return answer.body.drawn.added;
+    };
+
+    // The study alone: a work with one drawing, ended by Discard; its destruction is still to come.
+    const alone = await attach('breast');
+    const aloneWork = (await examDraft()).workUnit;
+    assert.deepEqual(await drawing(alone), { studyUid: exam.uid, groupId: null, workUnit: aloneWork });
+    assert.equal((await endedOnly(async () => discard(exam.uid, { ...await now(), drawingIds: [alone] }))).status, 200);
+    assert.deepEqual(await ends(), [aloneWork]);
+
+    // Merged (the first group): the member takes no report write; on the base a new work, its drawing of this exam.
+    const groupOne = (await grouping.merge(technician, { baseUid: exam.uid, uids: [exam.uid, part.uid] })).group.id;
+    const onMember = await put(part.uid, await now({ drawingIds: null, drawing: breast }, part.uid));
+    assert.equal(onMember.status, 409, JSON.stringify(onMember.body)); assert.equal(onMember.body.code, 'STUDY_MERGED');
+    assert.deepEqual(await drawingIds(part.uid), []);
+    const merged = await attach('breast');
+    const mergedWork = (await examDraft()).workUnit;
+    assert.notEqual(mergedWork, aloneWork);
+    assert.equal((await examDraft()).groupId, groupOne);
+    assert.deepEqual(await drawing(merged), { studyUid: exam.uid, groupId: groupOne, workUnit: mergedWork });
+    assert.equal((await endedOnly(async () => discard(exam.uid, { ...await now(), drawingIds: [merged] }))).status, 200);
+    assert.deepEqual(await ends(), [aloneWork, mergedWork].sort());
+    assert.equal((await examDraft()).groupId, null, 'an emptied draft carries no exam');
+
+    // Unmerged and merged again (a second group): two more works. One saves a version with its drawing; the next
+    // attaches, replaces and is discarded - destroyed at once.
+    await grouping.dissolve(technician, groupOne);
+    const groupTwo = (await grouping.merge(technician, { baseUid: exam.uid, uids: [exam.uid, part.uid] })).group.id;
+    assert.notEqual(groupTwo, groupOne);
+    const versioned = await attach('thyroid');
+    const versionedWork = (await examDraft()).workUnit;
+    const savedMerged = await commit(exam.uid, { ...await now(texts), drawingIds: [versioned], expectedEffectiveDrawingIds: [versioned], action: 'save' });
+    assert.equal(savedMerged.status, 201, JSON.stringify(savedMerged.body));
+    const examHead = savedMerged.body.state.version;
+    assert.equal((await witness.reportVersion.findUnique({ where: { uid_version: { uid: exam.uid, version: examHead } } })).groupId, groupTwo);
+    const swapped = await attach('breast', { baseVersion: examHead });
+    const lastWork = (await examDraft()).workUnit;
+    const latest = (await put(exam.uid, { ...await now({ drawingIds: [versioned, swapped], drawing: { ...breast, replaces: swapped } }), baseVersion: examHead })).body.drawn.added;
+    assert.deepEqual([await drawing(versioned), await drawing(swapped), await drawing(latest)], [versionedWork, lastWork, lastWork]
+      .map(workUnit => ({ studyUid: exam.uid, groupId: groupTwo, workUnit })));
+    assert.equal(new Set([aloneWork, mergedWork, versionedWork, lastWork]).size, 4, 'a work of its own each time');
+    const latestRow = await witness.reportDrawing.findUnique({ where: { id: latest } });
+    const lastDraft = await examDraft();
+    assert.equal((await discard(exam.uid, { ...await now(), drawingIds: [versioned, latest] })).status, 200);
+    await purpose.drained();
+    // That destruction took its own two. The version's drawing stays with the report; the drawings of the two works
+    // still to be destroyed - written on the study alone and on the first group - were not its to take.
+    assert.deepEqual(await drawingIds(exam.uid), [alone, merged, versioned].sort());
+    assert.deepEqual(await ends(), [aloneWork, mergedWork].sort());
+
+    // The earlier works are destroyed now, under a grouping that is neither's: each takes exactly its own drawing.
+    await destroyNow(mergedWork);
+    assert.deepEqual(await drawingIds(exam.uid), [alone, versioned].sort());
+    assert.deepEqual(await ends(), [aloneWork]);
+    await destroyNow(aloneWork);
+    assert.deepEqual(await drawingIds(exam.uid), [versioned]);
+    assert.deepEqual(await ends(), []);
+
+    // A restored older copy in which the last work is still live (its row, of the second group, and its drawing): the
+    // re-application empties that row - no text, no drawing list, no work, no exam - and takes the drawing; the version's
+    // stays, and the ledger is not written.
+    const mergedLedger = require('node:fs').readFileSync(purpose.ledger.file);
+    const { source: _mergedSource, ...latestCopy } = latestRow;
+    await witness.reportDrawing.create({ data: latestCopy });
+    await witness.reportDraft.update({ where: { uid_author: { uid: exam.uid, author } }, data: { present: true, findings: 'copy',
+      baseVersion: examHead, groupId: groupTwo, workUnit: lastWork, workSince: lastDraft.workSince, workIntent: 'approve', drawings: lastDraft.drawings } });
+    const copyRevision = (await examDraft()).revision;
+    assert.equal((await purpose.destroy(lastWork)).outcome, 'reapplied');
+    const emptied = await examDraft();
+    assert.deepEqual([emptied.present, emptied.workUnit, emptied.drawings, emptied.groupId, emptied.revision], [false, null, null, null, copyRevision + 1]);
+    assert.deepEqual(await drawingIds(exam.uid), [versioned]);
+    assert.equal((await purpose.destroy(lastWork)).outcome, 'absent');
+    assert.deepEqual(require('node:fs').readFileSync(purpose.ledger.file), mergedLedger);
+
+    // Unmerged for good: the version's drawing is still the report's (read by the exam it was saved on), and a draft of
+    // the study alone cannot take a drawing of that exam into its list - refused, nothing written.
+    assert.equal((await read(exam.uid, '/' + versioned)).status, 200);
+    await grouping.dissolve(technician, groupTwo);
+    assert.equal((await read(exam.uid, '/' + versioned)).status, 200);
+    const untouched = await facts(exam.uid);
+    const across = await put(exam.uid, { ...await now({ drawingIds: null, drawing: breast }), baseVersion: examHead });
+    assert.equal(across.status, 409, JSON.stringify(across.body)); assert.equal(across.body.code, 'EXAM_SCOPE_CHANGED');
+    assert.equal(await facts(exam.uid), untouched);
+    assert.deepEqual(await drawingIds(exam.uid), [versioned]);
   } finally {
     await purpose.drained();
     await purposeDb.$disconnect();

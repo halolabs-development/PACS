@@ -89,6 +89,7 @@ function drawingStore(f, uid, head = null, draft = null) {
     findMany: async ({where}) => rows.filter(r => match(r,where)),
     findFirst: async ({where}) => rows.find(r => match(r,where)) ?? null,
     create: async ({data}) => { const row = {groupId:null,createdAt:new Date(),...data}; rows.push(row); return row; },
+    update: async ({where,data}) => Object.assign(rows.find(r => r.id === where.id), data),
   };
   const raw = f.prisma.$queryRaw;
   f.prisma.$queryRaw = async (sql,...values) => sql.join('').includes('FROM "ReportVersion"')
@@ -124,6 +125,8 @@ test('a saved image drawing on another merged original belongs to the report sco
   const answer=await d.writer.putReport(A,drawingBody(f,A,key),reader,null,{});
   assert.equal(answer.present,true);assert.equal(d.draft().groupId,G1);
   assert.equal(d.rows[0].groupId,G1);assert.equal(d.rows[0].source.studyUid,B);
+  // The drawing is of the work that attached it: the draft on the base, written on this exam.
+  assert.match(d.draft().workUnit,/^disposal:/);assert.equal(d.rows[0].workUnit,d.draft().workUnit);
   d.versions.push({uid:A,version:1,groupId:G1,drawings:[{id:d.rows[0].id}]});
   f.db.groups[0].dissolvedAt=new Date();
   const picture=JSON.parse((await d.evidence.reportDrawing(A,d.rows[0].id,reader)).json);
@@ -142,6 +145,7 @@ test('a Split drawing refuses a key outside its series and stays on the saved pa
   assert.equal(d.rows.length,0);assert.equal(d.draft(),null);
   key.snapshot.seriesUid=A+'.2';key.snapshot.sopUid=A+'.2.1';
   await d.writer.putReport(B,drawingBody(f,B,key),reader,null,{});
+  assert.match(d.draft().workUnit,/^disposal:/);assert.equal(d.rows[0].workUnit,d.draft().workUnit);
   f.db.groups[0].dissolvedAt=new Date();
   const picture=JSON.parse((await d.evidence.reportDrawing(B,d.rows[0].id,reader)).json);
   assert.equal(picture.source.seriesUid,A+'.2');
