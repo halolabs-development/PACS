@@ -70,6 +70,7 @@ import measurement_ci  # noqa: E402
 # The module, never its classes: a TestCase name imported here would join a class-less run (scripts/run-tests.py refuses
 # that plan as "Discovery included an imported TestCase").
 import test_worklist as base  # noqa: E402
+import admin_otp  # noqa: E402
 from playwright.sync_api import Error as PlaywrightError, TimeoutError as PlaywrightTimeout, expect  # noqa: E402
 from document_session import document_request
 
@@ -1846,6 +1847,7 @@ class CriticalResultScreensE2E(KeycloakGroups, CriticalResultHarness, base.Workl
         except Exception:
             # Playwright's call log can include fill() values; never print credentials.
             raise AssertionError("harness: the real BFF login form could not be submitted") from None
+        admin_otp.answer_page(page, self.stack.username(logical))
 
     def landed(self, sess: Session, since: int) -> None:
         page = sess.page

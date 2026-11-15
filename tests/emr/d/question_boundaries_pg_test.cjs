@@ -51,7 +51,7 @@ test('CD-09 W-Q question writes: report anchor, lock order against native, Tech 
   process.env.KC_JWKS_URL = 'http://127.0.0.1:' + provider.address().port + '/certs';
   const tokens = {};
   for (const [name, m] of Object.entries(members)) tokens[name] = await new jose.SignJWT({ email: m.email,
-    realm_access: { roles: m.roles }, groups: ['/' + institution] }).setProtectedHeader({ alg: 'RS256', kid: jwk.kid })
+    realm_access: { roles: m.roles }, amr: m.roles.includes('admin') ? ['otp'] : [], groups: ['/' + institution] }).setProtectedHeader({ alg: 'RS256', kid: jwk.kid })
     .setIssuer(issuer).setSubject(m.sub).setAudience('kin-api').setIssuedAt().setExpirationTime('30m').sign(privateKey);
   const witness = new PrismaClient({ datasources: { db: { url: process.env.KIN_D_WITNESS_URL } } });
   const runtime = new EmrRuntime(process.env.DATABASE_URL, process.env.KIN_D_SPOOL);

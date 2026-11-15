@@ -13,6 +13,7 @@ from urllib.request import HTTPHandler, HTTPSHandler, build_opener
 from urllib.response import addinfourl
 from unittest.mock import MagicMock, patch
 
+import admin_otp
 import live_admin_credential as credential
 
 
@@ -39,6 +40,7 @@ class Transport:
         self.realm = {"realm": "kin", "displayName": "HALO PACS"}
         self.users = [{"id": "fixture-admin", "username": "jmryu"}]
         self.reset_error = None
+        self.credentials = [{"id": "fixture-password", "type": "password"}]
 
     def open(self, request, **kwargs):
         self.calls.append(request)
@@ -51,6 +53,12 @@ class Transport:
         if request.full_url.endswith("/users/fixture-admin/reset-password"):
             if self.reset_error:
                 raise self.reset_error
+            return Response(None, 204)
+        if request.full_url.endswith("/users/fixture-admin/credentials") and request.method == "GET":
+            return Response(self.credentials)
+        if "/users/fixture-admin/credentials/" in request.full_url and request.method == "DELETE":
+            return Response(None, 204)
+        if request.full_url.endswith("/users/fixture-admin") and request.method == "PUT":
             return Response(None, 204)
         raise AssertionError("Unexpected transport operation")
 
@@ -78,7 +86,7 @@ class ImportedAdminCredentialTests(unittest.TestCase):
         self.assertGreaterEqual(len(first), 32)
         self.assertEqual(stdout.getvalue() + stderr.getvalue(), "")
         calls = self.transport.calls
-        self.assertEqual([r.method for r in calls], ["POST", "GET", "GET", "PUT"])
+        self.assertEqual([r.method for r in calls], ["POST", "GET", "GET", "PUT", "GET", "PUT"])
         self.assertEqual(calls[0].full_url,
                          "http://synthetic.invalid/auth/realms/master/protocol/openid-connect/token")
         self.assertEqual(parse_qs(calls[0].data.decode()), {
@@ -86,6 +94,9 @@ class ImportedAdminCredentialTests(unittest.TestCase):
             "username": ["admin"], "password": ["stub-master-password"]})
         self.assertEqual(calls[2].full_url, URL + "/users?username=jmryu&exact=true")
         self.assertEqual(json.loads(calls[3].data), {"type": "password", "value": first, "temporary": False})
+        # jmryu holds admin: the synthetic OTP (admin_otp) is given beside the password.
+        self.assertEqual(calls[4].full_url, URL + "/users/fixture-admin/credentials")
+        self.assertEqual(json.loads(calls[5].data), {"credentials": [credential.admin_otp.credential()]})
         self.assertTrue(all(r.get_header("Authorization") == "Bearer stub-master-token" for r in calls[1:]))
 
     def test_missing_or_false_synthetic_attestation_refuses_before_transport(self):
@@ -103,7 +114,7 @@ class ImportedAdminCredentialTests(unittest.TestCase):
         os.environ.pop("KIN_SYNTHETIC_REALM")
         with self.assertRaises(RuntimeError):
             self.ensure()
-        self.assertEqual(len(self.transport.calls), 4)
+        self.assertEqual(len(self.transport.calls), 6)
 
     def test_other_realm_or_ambiguous_endpoint_refuses_before_transport(self):
         for url in (URL.replace("/kin", "/production"), URL + "?realm=other", URL + "#other",
@@ -145,13 +156,20 @@ class ImportedAdminCredentialTests(unittest.TestCase):
         self.transport.reset_error = None
         password = self.ensure()
         self.assertNotEqual(password, sentinel)
-        self.assertEqual(sum(r.method == "PUT" for r in self.transport.calls), 2)
+        self.assertEqual(sum(r.full_url.endswith("/reset-password") for r in self.transport.calls), 2)
 
     def test_concurrent_callers_share_one_reset(self):
         with ThreadPoolExecutor(max_workers=4) as executor:
             results = list(executor.map(lambda _: self.ensure(), range(8)))
         self.assertEqual(len(set(results)), 1)
-        self.assertEqual(sum(r.method == "PUT" for r in self.transport.calls), 1)
+        self.assertEqual(sum(r.full_url.endswith("/reset-password") for r in self.transport.calls), 1)
+
+    def test_a_foreign_otp_is_replaced_by_the_synthetic_one(self):
+        self.transport.credentials.append({"id": "foreign-otp", "type": "otp", "userLabel": "phone"})
+        self.ensure()
+        tail = [(r.method, r.full_url.removeprefix(URL)) for r in self.transport.calls[4:]]
+        self.assertEqual(tail, [("GET", "/users/fixture-admin/credentials"), ("DELETE", "/users/fixture-admin/credentials/foreign-otp"),
+                                ("PUT", "/users/fixture-admin")])
 
     def test_redirects_cannot_forward_admin_credentials(self):
         headers = Message()
@@ -166,6 +184,47 @@ class ImportedAdminCredentialTests(unittest.TestCase):
         self.assertEqual(transport.call_count, 1)
         self.assertEqual(transport.call_args.args[0].full_url,
                          'http://synthetic.invalid/auth/realms/master/protocol/openid-connect/token')
+
+
+class AdminOtpHelperTests(unittest.TestCase):
+    """tests/admin_otp.py: RFC 6238 codes, no code reused for one account, and the one OTP-form loop."""
+
+    def setUp(self):
+        admin_otp._used.clear()
+        self.addCleanup(admin_otp._used.clear)
+
+    def test_codes_are_rfc6238_totp(self):
+        with patch.object(admin_otp, "SECRET", "12345678901234567890"):
+            self.assertEqual(admin_otp.code_at(59 // 30), "287082")
+            self.assertEqual(admin_otp.code_at(1111111109 // 30), "081804")
+
+    def test_an_account_never_gets_the_same_code_twice(self):
+        clock = [1000 * 30 + 5.0]
+        slept = []
+        with patch.object(admin_otp.time, "time", side_effect=lambda: clock[0]), \
+                patch.object(admin_otp.time, "sleep", side_effect=lambda s: (slept.append(s), clock.__setitem__(0, clock[0] + s))):
+            codes = [admin_otp.code("syn-admin") for _ in range(3)]
+            other = admin_otp.code("syn-other")
+        self.assertEqual(codes[:2], [admin_otp.code_at(1000), admin_otp.code_at(1001)])
+        self.assertEqual(codes[2], admin_otp.code_at(1002))
+        self.assertEqual(len(slept), 1, "the third waits for the next step, inside Keycloak's look-around window")
+        self.assertEqual(other, admin_otp.code_at(int(clock[0] // 30)))
+
+    def test_the_loop_answers_the_otp_form_and_retries_a_refused_code(self):
+        clock = [2000 * 30 + 1.0]
+        for name, fake in (("time", lambda: clock[0]), ("sleep", lambda s: clock.__setitem__(0, clock[0] + s))):
+            patcher = patch.object(admin_otp.time, name, side_effect=fake)
+            patcher.start(); self.addCleanup(patcher.stop)
+        form = '<form id="kc-otp-login-form" class="x" action="https://kc.invalid/login-actions/authenticate?a=1&amp;b=2">'
+        posts, answers = [], [(form, "refused"), ("", "callback")]
+        result = admin_otp.answer(lambda action, body: (posts.append((action, parse_qs(body.decode())["otp"][0])), answers.pop(0))[1],
+                                  form, "syn-admin")
+        self.assertEqual(result, "callback")
+        self.assertEqual([action for action, _ in posts], ["https://kc.invalid/login-actions/authenticate?a=1&b=2"] * 2)
+        self.assertNotEqual(posts[0][1], posts[1][1])
+        self.assertIsNone(admin_otp.answer(lambda *a: self.fail("no OTP form, no post"), "<form id=\"kc-form-login\">", "syn-doctor"))
+        with self.assertRaisesRegex(RuntimeError, "refused the synthetic OTP"):
+            admin_otp.answer(lambda action, body: (form, None), form, "syn-admin")
 
 
 if __name__ == "__main__":

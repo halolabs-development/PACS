@@ -550,7 +550,7 @@ function guardAuth(s) {
       // A Gateway client-credentials token as Keycloak issues it (azp gw-*, the gateway role, one group).
       if (payload.sub.startsWith('gw-')) return { ...payload, azp: 'gw-synthetic', realm_access: { roles: ['gateway'] }, groups: ['/inst-a'] };
       const r = s.rights.get(payload.sub);
-      return { ...payload, email: payload.sub.replace(/-sub$/, '') + '@synthetic.test', realm_access: { roles: r?.roles ?? [] }, groups: r ? ['/' + r.institution] : [] };
+      return { ...payload, email: payload.sub.replace(/-sub$/, '') + '@synthetic.test', realm_access: { roles: r?.roles ?? [] }, amr: r?.roles?.includes('admin') ? ['otp'] : [], groups: r ? ['/' + r.institution] : [] };
     },
     sessionRights: async session => { count('sessionRights'); return s.rights.get(session.sub) ?? null; },
     bindCurrentAuthorization: payload => async () => {

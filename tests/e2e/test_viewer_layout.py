@@ -10,6 +10,7 @@ from test_thumbnail_series import ThumbnailSeriesE2E
 from test_prior_selection import canvas_ready
 from document_session import document_request
 from viewer_session import observe_viewer
+import admin_otp
 
 
 class ViewerLayoutE2E(ThumbnailSeriesE2E):
@@ -81,6 +82,7 @@ class ViewerLayoutE2E(ThumbnailSeriesE2E):
         try:
             page.locator('#username').fill(self.stack.username(actor));page.locator('#password').fill(self.stack.passwords[actor]);page.locator('#kc-login').click()
         except Exception:raise RuntimeError('Temporary BFF login failed') from None
+        admin_otp.answer_page(page, self.stack.username(actor))
         page.wait_for_url('**/worklist/hpacs-lite/main.html')
 
     def test_layout_01_native_placement_and_recent_save(self):
