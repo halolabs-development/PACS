@@ -418,8 +418,8 @@ class ExamMerge(unittest.TestCase):
         self.page.locator("#t-merge-exam").click()
         win = self.window("merge")
         expect(win.locator("h3")).to_have_text("검사 합치기")
-        self.assertEqual(["합치기", "기준", "ID", "이름", "검사일", "검사명", "접수 번호", "시리즈 / 영상", "판독문"],
-                         self.texts(win.locator("thead th")))
+        expect(win.locator("thead th")).to_have_text(["합치기", "기준", "ID", "이름", "검사일", "검사명", "접수 번호", "시리즈 / 영상", "판독문"])
+        expect(self.row_of(win, h.UID_B).locator("td")).to_have_count(9)
         cells = self.texts(self.row_of(win, h.UID_B).locator("td"))
         self.assertEqual("Split Chest CT", cells[5])
         self.assertEqual("SYNACC-A2", cells[6])
@@ -434,7 +434,9 @@ class ExamMerge(unittest.TestCase):
         self.pick(h.UID)
         self.page.locator("#t-split-unmerge").click()
         win = self.window("unmerge")
-        self.assertEqual(["Original exam", "StudyDate", "StudyDesc", "Series / Images back"], self.texts(win.locator("thead th")))
+        # The window reads the group before it draws the table; the table is read once it is there.
+        expect(win.locator("tbody tr")).to_have_count(2)
+        expect(win.locator("thead th")).to_have_text(["Original exam", "StudyDate", "StudyDesc", "Series / Images back"])
         expect(win.locator(".exam-merge-checks li")).to_have_text([
             "✓ The merged exam has no approved report now.", "✓ No transfer or export of these studies is in progress.",
             "✓ No one is writing the report of the merged exam."])
@@ -458,7 +460,8 @@ class ExamMerge(unittest.TestCase):
         self.pick(h.UID)
         self.page.locator("#t-split-unmerge").click()
         win = self.window("unmerge")
-        self.assertEqual(["원본 검사", "검사일", "검사명", "되돌아갈 시리즈 / 영상"], self.texts(win.locator("thead th")))
+        expect(win.locator("tbody tr")).to_have_count(2)
+        expect(win.locator("thead th")).to_have_text(["원본 검사", "검사일", "검사명", "되돌아갈 시리즈 / 영상"])
         self.assertEqual(["SYNACC-A2", "2026-10-03", "Split Chest CT", "1 / 12"], self.texts(win.locator("tbody tr").nth(1).locator("td")))
         win.locator("button", has_text="닫기").click()
         self.site.groups.clear()
@@ -469,7 +472,7 @@ class ExamMerge(unittest.TestCase):
         self.page.locator("#t-split-unmerge").click()
         win = self.window("unmerge")
         expect(win.locator("tbody tr")).to_have_count(2)
-        self.assertEqual(["검사 2", "시리즈", "시리즈 설명", "장비", "영상"], self.texts(win.locator("thead th")))
+        expect(win.locator("thead th")).to_have_text(["검사 2", "시리즈", "시리즈 설명", "장비", "영상"])
         self.assertEqual(["", "2", "Split Chest CT", "CT", "4"], self.texts(win.locator("tbody tr").nth(1).locator("td")))
         win.get_by_role("checkbox", name="Split Chest CT 나누기").check()
         expect(win).to_contain_text("검사 1: 시리즈 1 · 영상 4 / 검사 2: 시리즈 1 · 영상 4")
