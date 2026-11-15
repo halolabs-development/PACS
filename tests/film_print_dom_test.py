@@ -56,6 +56,8 @@ class FilmSite(rf.FlowSite):
         self.post_answers = []              # "lost": the job is created and the answer dropped
         self.held_job_reads = []
         self.plan_changed = False           # the next print is refused: the series changed since its preview
+        self.hold_destinations = False      # the destination list is not answered until the test releases it
+        self.held_destinations = []
         self.source_uids = {}
         self.exam_scopes = {}
 
@@ -98,6 +100,8 @@ class FilmSite(rf.FlowSite):
         if refused:
             return self.refuse(route, *refused)
         if method == "GET" and path == "/api/film-print/destinations":
+            if self.hold_destinations:
+                return self.held_destinations.append(route)
             return route.fulfill(json={"printers": [PRINTER_A, PRINTER_B], "devices": [DEVICE]})
         if method == "POST" and path == "/api/film-print/layout":
             body = request.post_data_json
@@ -293,6 +297,32 @@ class FilmPrintWindow(unittest.TestCase):
         self.assertEqual(SERIES[1]["uid"], self.site.posts[0]["seriesUid"])
         for body in [*self.site.layouts, *self.site.posts]:
             self.assertNotIn("sourceUid", body)
+
+    def test_a_format_chosen_before_the_destinations_arrive_still_lists_them(self):
+        site = FilmSite()
+        site.hold_destinations = True
+        self.start(site)
+        self.open_study()
+        self.page.locator("#report-more > summary").click()
+        self.page.locator("#b-film-print").click()
+        expect(self.page.locator("#film-print")).to_be_visible()
+        for _ in range(100):
+            if site.held_destinations:
+                break
+            self.page.wait_for_timeout(50)
+        self.assertEqual(1, len(site.held_destinations), "the window asked for its destinations")
+        # The reader picks a Format while the destination list is still on its way: that layout is drawn.
+        self.page.locator("#film-print-format").select_option("3x4")
+        expect(self.page.locator("#film-print-film .fp-cell canvas")).to_have_count(7)
+        expect(self.page.locator("#film-print-target option")).to_have_count(0)
+        site.held_destinations.pop().fulfill(json={"printers": [PRINTER_A, PRINTER_B], "devices": [DEVICE]})
+        expect(self.page.locator("#film-print-target option")).to_have_text(["SYN Film Printer A · AE SYNPRA", "SYN Film Printer B · AE SYNPRB"])
+        expect(self.page.locator("#film-print-go")).to_be_enabled()
+        expect(self.page.locator("#film-print-film .fp-cell canvas")).to_have_count(7)
+        self.assertEqual(["3x4"], [body["format"] for body in site.layouts], "the reader's layout is the only one asked for")
+        self.page.locator("#film-print-go").click()
+        self.wait_status("Printed")
+        self.assertEqual((PRINTER_A["id"], "3x4"), (site.posts[0]["destination"]["peerId"], site.posts[0]["format"]))
 
     def test_destination_decides_the_list_and_the_main_button(self):
         self.start()

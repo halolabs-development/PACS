@@ -155,16 +155,20 @@
       paintFilm();
       label_();
       if (!dialog.open) dialog.showModal();
+      // The destinations belong to this opening of the window, not to the layout it shows: a Format, Film size or
+      // Orientation chosen before they arrive starts a newer layout and must not leave the list empty.
+      const opening = session, opened = () => session === opening && current(session.seq);
       try {
         const destinations = await ctx.api('GET', '/film-print/destinations', undefined, undefined, doc());
-        if (!current(mine)) return;
+        if (!opened()) return;
         session.destinations = { printers: Array.isArray(destinations?.printers) ? destinations.printers : [],
           devices: Array.isArray(destinations?.devices) ? destinations.devices : [] };
         paintTargets(last);
       } catch (error) {
-        if (current(mine)) say([['err', 'Failed — ' + reason(error, '프린터 목록을 불러오지 못했습니다')]]);
+        if (opened()) say([['err', 'Failed — ' + reason(error, '프린터 목록을 불러오지 못했습니다')]]);
       }
-      await loadLayout(1, true);
+      // A layout the reader already asked for meanwhile is the one to show; otherwise the first one.
+      if (session === opening && session.seq === mine) await loadLayout(1, true);
     }
 
     function current(mine) { return !!session && session.seq === mine && dialog.open && ctx.admits(session.at) && window.KinExamScope.screenStamp(ctx.study(session.uid)) === session.scopeStamp; }
