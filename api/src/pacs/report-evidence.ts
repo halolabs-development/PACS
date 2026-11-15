@@ -343,9 +343,12 @@ export class PacsReportEvidence {
         recommendation: true, reason: true, author: true, at: true, drawings: true, groupId: true } });
     // Merge Exam: a version written on an exam group says which studies it was written on; its text is shown only to a caller
     // who may read every one of them now. A version of the study alone keeps its shape (no group key).
-    const scoped = [];
+    // Versions written on the same exam share one answer in this snapshot: it is resolved once, not once per version.
+    const scoped = [], scopes = new Map<string | null, Awaited<ReturnType<typeof readableExamRecord>>>();
     for (const { groupId, drawings, ...row } of rows) {
-      const scope = await readableExamRecord(tx, this.studyAccess, c, uid, { groupId });
+      const key = groupId ?? null;
+      if (!scopes.has(key)) scopes.set(key, await readableExamRecord(tx, this.studyAccess, c, uid, { groupId }));
+      const scope = scopes.get(key);
       scoped.push({ ...row, ...(scope && versionDrawings(drawings).length ? { drawings: versionDrawings(drawings).map(d => ({ id: d.id, background: d.background, source: d.source ?? null })) } : {}), ...(scope ? {} : { findings: '', conclusion: '', recommendation: '' }),
         ...(groupId ? { group: { id: groupId, active: scope?.active ?? false, readable: !!scope, studies: scope?.studies ?? [],
           ...(scope ? { part: scope.part, sources: scope.sources, generation: scope.generation } : {}) } } : {}) });
