@@ -13,6 +13,8 @@ size, line height and colour itself.
   02  keyboard: Tab follows the screen (password -> Login -> forgot-password -> registration); Enter on the link
       opens the reset page.
   03  the link stays where it was drawn: under the Login button, left of the TLS note, above the registration line.
+  04  the administrator's OTP code page (keycloak/README.md 관리자 OTP 필수) shows its button's own "로그인"; only the
+      password form draws the label beside a transparent button.
 
 Synthetic data only; no server, no credentials.
 """
@@ -88,6 +90,26 @@ LOGIN = f"""<!doctype html><html class="login-pf" lang="ko" dir="ltr"><head><met
   </div></div>
  </div>
 </div></body></html>"""
+# keycloak/README.md 관리자 OTP 필수: the administrator's one-time code page (26.7.3 login-otp.ftl as served with this theme).
+OTP_PATH = "/auth/realms/kin/login-actions/authenticate"
+OTP = f"""<!doctype html><html class="login-pf" lang="ko" dir="ltr"><head><meta charset="utf-8">
+<title>{MSG["loginTitle"]}</title>{HEAD}</head>
+<body class="" data-page-id="login-login-otp">
+<div class="login-pf-page">
+ <div id="kc-header" class="login-pf-page-header"><div id="kc-header-wrapper" class="">KIN</div></div>
+ <div class="card-pf"><header class="login-pf-header"><h1 id="kc-page-title">{MSG["loginAccountTitle"]}</h1></header>
+  <div id="kc-content"><div id="kc-content-wrapper">
+   <form id="kc-otp-login-form" class="form-horizontal" onsubmit="login.disabled = true; return true;" action="{OTP_PATH}" method="post">
+    <div class="form-group"><div class="col-xs-12 col-sm-12 col-md-12 col-lg-12">
+     <label for="otp" class="pf-c-form__label pf-c-form__label-text">일회용 코드</label></div>
+     <div class="col-xs-12 col-sm-12 col-md-12 col-lg-12">
+      <input id="otp" name="otp" autocomplete="one-time-code" type="text" class="pf-c-form-control" autofocus="" aria-invalid="" dir="ltr"></div></div>
+    <div class="form-group"><div id="kc-form-options" class="col-xs-12 col-sm-12 col-md-12 col-lg-12"><div class=""></div></div>
+     <div id="kc-form-buttons" class="col-xs-12 col-sm-12 col-md-12 col-lg-12">
+      <input class="pf-c-button pf-m-primary pf-m-block btn-lg" name="login" id="kc-login" type="submit" value="{MSG["doLogIn"]}"></div></div>
+   </form></div></div>
+ </div>
+</div></body></html>"""
 # Which element has focus, by the name a person would use.
 FOCUSED = """() => { const e = document.activeElement;
   return e.id === 'kc-login' ? 'Login' : e.id || e.textContent.trim(); }"""
@@ -126,6 +148,8 @@ class LoginThemeDomTest(unittest.TestCase):
             return route.abort()
         if url.path == "/auth/realms/kin/protocol/openid-connect/auth":
             return route.fulfill(body=LOGIN, content_type="text/html; charset=utf-8")
+        if url.path == OTP_PATH:
+            return route.fulfill(body=OTP, content_type="text/html; charset=utf-8")
         if url.path == RESET:
             return route.fulfill(body="<!doctype html><title>SYN 비밀번호 재설정</title>", content_type="text/html; charset=utf-8")
         if url.path.startswith(RESOURCES):
@@ -137,6 +161,20 @@ class LoginThemeDomTest(unittest.TestCase):
             return route.fulfill(status=404, body="")
         self.unexpected.append(f"{route.request.method} {url.path}")
         return route.abort()
+
+    def test_04_the_otp_code_page_button_shows_its_own_label(self):
+        """The password form draws "로그인" beside a transparent button; the OTP page reuses #kc-login with no drawn label,
+        so its button must show its own text (it was blank)."""
+        drawn = "(e) => [getComputedStyle(e).color, getComputedStyle(e.parentElement, '::after').content]"
+        color, label = self.page.locator("#kc-login").evaluate(drawn)
+        self.assertEqual((color, label), ("rgba(0, 0, 0, 0)", '"로그인"'), "the password form: one drawn label")
+        self.page.goto(ORIGIN + OTP_PATH)
+        button = self.page.locator("#kc-otp-login-form #kc-login")
+        expect(button).to_be_visible()
+        color, label = button.evaluate(drawn)
+        self.assertNotEqual(color, "rgba(0, 0, 0, 0)", "the OTP button's own text is drawn")
+        self.assertEqual(label, "none", "and nothing is drawn beside it")
+        expect(self.page.get_by_role("button", name=MSG["doLogIn"], exact=True)).to_be_visible()
 
     def test_01_link_is_drawn_as_its_own_text_and_opens_reset(self):
         box = self.link.bounding_box()

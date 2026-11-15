@@ -456,7 +456,7 @@ h1#kc-page-title {
   height: 50px;
   margin: 0;
   padding: 0 15px;
-  color: transparent;
+  color: var(--kin-btn-text);
   background: var(--kin-btn);
   border: 1px solid var(--kin-btn-line);
   border-radius: var(--kin-input-radius);
@@ -467,6 +467,12 @@ h1#kc-page-title {
   line-height: 50px;
   letter-spacing: .16em;
   cursor: pointer;
+}
+
+/* Only the password form draws its label beside the button (#kc-form-buttons::after above). Other forms that reuse
+   #kc-login - the administrator's OTP code - keep the button's own text. */
+#kc-form-login #kc-login.pf-c-button {
+  color: transparent;
 }
 
 /* Hover, press and disabled as the worklist's buttons: brighten, press down, fade. */
