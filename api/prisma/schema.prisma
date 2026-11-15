@@ -226,6 +226,10 @@ model StudyAttachment {
 /// version (`ReportVersion.drawings`); a row no readable version and no live draft of its author refers to is not served.
 /// `source` pins the key image (item id and revision, series, SOP, frame) of an `image` background. `sha256` is the
 /// server's hash of background, source, strokes and PNG; a signed version names it in the signature's attachments.
+/// `workUnit` is the private draft work (`ReportDraft.workUnit`) it was attached in: when that work's purpose ends and
+/// CD-09-P destroys it, the drawings of that work no version, no live draft and no other ended work names go with it.
+/// A drawing of a work that ended without a purpose end (Save, Preliminary, Defer, a forced release) stays until the
+/// report's own retention ends (CD-09-D). NULL: attached before the column existed and not named by any work then.
 model ReportDrawing {
   id          String   @id @db.Uuid
   studyUid    String
@@ -239,8 +243,10 @@ model ReportDrawing {
   height      Int
   sha256      String   @db.Char(64)
   createdAt   DateTime @default(now())
+  workUnit    String?
 
   @@index([studyUid])
+  @@index([workUnit])
 }
 
 /// 검사 하나에 대한 사람의 결정. Orthanc의 검사와 1:1.

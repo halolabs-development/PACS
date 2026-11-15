@@ -139,7 +139,8 @@ MIGRATIONS = ['api/prisma/migrations/0_init/migration.sql',
               'api/prisma/migrations/20261114120000_film_print/migration.sql',
               'api/prisma/migrations/20261114120000_order_removal/migration.sql',
               'api/prisma/migrations/20261114180000_report_drawing/migration.sql',
-              'api/prisma/migrations/20261114180000_viewer_auto_view/migration.sql']
+              'api/prisma/migrations/20261114180000_viewer_auto_view/migration.sql',
+              'api/prisma/migrations/20261115120000_report_drawing_work/migration.sql']
 # S9-U4b (52 tables, 47 migrations): ImportOperation, its twelve synthetic rows (one import with every attempt phase over four
 # studies, a prepared, a Sent and a still-sending download, four Study and four SOP reservations with their holders), one
 # primary key, two checks and three indexes. Not measured on a stack when written: estimated at about 16 KB of catalog and
@@ -344,7 +345,7 @@ def expected_rows(uid):
     # Image Report: the drawing the addendum holds (immutable content: the PNG bytes, the strokes, the server hash).
     rows['ReportDrawing'] = [dict(id=DRAWING_ID, studyUid=uid, authorSub='SYNTHETIC-sub', authorActor='SYNTHETIC-reader',
         background='breast', source=None, strokes=[dict(tool='ellipse', color='#e0242b', points=[[0.1, 0.2], [0.3, 0.4]])],
-        png='\\x' + '89504e470d0a1a0a' + '00' * 24, width=640, height=440, sha256='d' * 64, createdAt=STAMP)]
+        png='\\x' + '89504e470d0a1a0a' + '00' * 24, width=640, height=440, sha256='d' * 64, createdAt=STAMP, workUnit=None)]
     # The anchor of a database that has its ledger (initialized) and whose last committed destruction it names: a restore
     # that lost either would open a copy without its ledger or rewrite a completion with a new time.
     rows['PurposeLedgerAnchor'] = [dict(id=1, ledgerId='00000000-0000-4000-8000-0000000000e5', seq=3, initialized=True,
