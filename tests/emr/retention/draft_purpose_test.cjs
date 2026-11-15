@@ -363,6 +363,14 @@ function database(state) {
     }
     if (/^UPDATE "ReportDraftPurposeEnd" SET "deliverySettled" = true WHERE NOT/.test(text)) { writes.push(s => s.ended.forEach(r => { r.deliverySettled = true; })); return 0; }
     if (/^UPDATE "ReportDraftPurposeEnd" SET attempts/.test(text)) { writes.push(s => { const r = s.ended.get(values[2] ?? values[1]); if (r) r.attempts++; }); return 1; }
+    // Image Report: the drawing rows of this state (`drawings`: id -> { unit, named }), `named` standing for a version, a
+    // live draft or another ended work that still names it. The destruction deletes its work's unnamed ones.
+    if (/^DELETE FROM "ReportDrawing" r WHERE r."workUnit" = \? AND \?$/.test(text)) {
+      const gone = [...(state.drawings ?? new Map())].filter(([, d]) => d.unit === values[0] && !d.named).map(([id]) => id);
+      writes.push(s => gone.forEach(id => s.drawings.delete(id))); return gone.length;
+    }
+    if (/^SELECT r.id FROM "ReportDrawing" r WHERE r."workUnit" = ANY\(\?::text\[\]\) AND \? FOR UPDATE OF r$/.test(text))
+      return [...(state.drawings ?? new Map())].filter(([, d]) => values[0].includes(d.unit) && !d.named).map(([id]) => ({ id }));
     if (/^UPDATE "ReportDraft" SET present = false/.test(text)) {
       // A live copy's row of that work (state.live): emptied by the re-application.
       const n = state.live.has(values[0]) ? 1 : 0; writes.push(s => s.live.delete(values[0])); return n;
@@ -505,6 +513,39 @@ test('P17 F5: the sweep run reports a work whose delivery is not settled and is 
   assert.ok(!state.ended.has(row.disposalUnitId), errors.join('\n'));
   assert.ok(errors.some(e => /retry 1/.test(e)), errors.join('\n'));
   assert.deepEqual(ledger.read().entries.map(e => e.record.phase), ['started', 'completed']);
+});
+
+test('P18 Image Report: a work\'s destruction deletes the drawings of that work nothing names, in its own commit, and no other', async () => {
+  const row = ended(), state = stateWith([row]), recordId = P.draftRecordId(row.uid, row.author);
+  const ledger = ledgerFor(state.anchor.ledgerId);
+  const work = row.disposalUnitId, otherWork = unit();
+  const all = () => [...state.drawings.keys()].sort();
+  // Removed in this work / held by a version / another work's / attached before works were recorded on drawings.
+  state.drawings = new Map([['removed', { unit: work, named: false }], ['in-version', { unit: work, named: true }],
+    ['other-work', { unit: otherWork, named: false }], ['unattributed', { unit: null, named: false }]]);
+  const service = new P.DraftPurposeDisposal(database(state), ledger, null, NOW);
+  // A deletion that does not commit leaves the drawings with the payload.
+  state.commitFails = 1;
+  await assert.rejects(service.destroy(work), /SYN COMMIT FAILURE/);
+  assert.deepEqual(all(), ['in-version', 'other-work', 'removed', 'unattributed']);
+  // A live hold on that work's record: no destruction, no drawing deleted.
+  state.holds = hold(recordId, '2026-11-01T00:30:00.000Z');
+  assert.notEqual((await quiet(() => service.destroy(work))).outcome, 'destroyed');
+  assert.ok(state.ended.has(work)); assert.deepEqual(all(), ['in-version', 'other-work', 'removed', 'unattributed']);
+  // Released: the work and its unnamed drawing go in one commit; a named one, another work's and an unattributed one stay.
+  state.holds = hold(recordId, '2026-11-01T00:30:00.000Z', '2026-11-01T01:30:00.000Z');
+  assert.equal((await service.destroy(work)).outcome, 'destroyed');
+  assert.ok(!state.ended.has(work)); assert.deepEqual(all(), ['in-version', 'other-work', 'unattributed']);
+  const phases = phasesOf(ledger, work);
+  // A restored copy that holds that drawing again and nothing else of the work: re-applied (no new ledger record), judged
+  // committed from the drawings too, and idempotent.
+  state.drawings.set('removed', { unit: work, named: false });
+  assert.equal(await P.judgeCommit(database(state), { kind: 'reapplied', units: [work] }, null), 'not-committed');
+  assert.equal((await service.destroy(work)).outcome, 'reapplied');
+  assert.deepEqual(all(), ['in-version', 'other-work', 'unattributed']);
+  assert.equal(await P.judgeCommit(database(state), { kind: 'reapplied', units: [work] }, null), 'committed');
+  assert.equal((await service.destroy(work)).outcome, 'absent');
+  assert.deepEqual(phasesOf(ledger, work), phases);
 });
 
 // ── r3: one commit judgement (committed / not committed / unknown) for every path ──
