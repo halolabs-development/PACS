@@ -7,6 +7,7 @@ superseded command only asserts what holds (no success text, same URL study set,
 viewer display may already have moved. Finding draft guards stay in FindingNavigationE2E 05/06."""
 import io, json, re, sys, unittest, uuid
 from urllib.parse import parse_qs, urlsplit
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from pydicom import dcmread
 import test_worklist as base
 import test_finding_navigation as navigation
@@ -62,26 +63,15 @@ ENTRY_GEOMETRY = """()=>{
              controls:{}};
   for(const id of ['b-structured','reading-findings-open','struct-value-text','struct-apply','struct-cancel'])
     out.controls[id]=Object.assign({rect:box(q('#'+id))},seen(q('#'+id)));
-  const rf=q('#reading-findings');
-  out.diag={t:performance.now(),reportColumn:box(q('.report-p')),
-    vars:rf?[rf.style.getPropertyValue('--reading-findings-top'),rf.style.getPropertyValue('--reading-findings-bottom')]:null,
-    work:window.KinWorkContext?window.KinWorkContext.state():null,
-    rows:[...(q('.report-p')?.children||[])].map(e=>({id:e.id||e.className,shown:e.getBoundingClientRect().height>0,
-      state:e.dataset.state||null,box:box(e)})).filter(e=>e.shown),
-    timeline:window.__layoutLog||null};
   return out;}"""
-# Records, with the page clock, every visibility change of the report column's rows and every bound
-# the drawer writes, so a failing pass shows which row moved the control row and whether the bound followed.
-LAYOUT_LOG = """()=>{if(window.__layoutLog)return;const log=window.__layoutLog=[];
-  const col=document.querySelector('.report-p'),rf=document.querySelector('#reading-findings');
-  const note=(what)=>log.push([Math.round(performance.now()),what]);
-  new MutationObserver(ms=>{for(const m of ms){const e=m.target;
-    if(e===rf)note('bound '+rf.style.getPropertyValue('--reading-findings-top')+' '+rf.style.getPropertyValue('--reading-findings-bottom')+(rf.hidden?' hidden':''));
-    else if(e.parentElement===col)note((e.id||e.className)+(e.getBoundingClientRect().height>0?' shown':' gone'));}})
-    .observe(document.body,{subtree:true,attributes:true,attributeFilter:['hidden','style']});
-  const ctl=document.querySelector('.report-p .rbtns');let last=null;
-  (function tick(){const y=Math.round(ctl.getBoundingClientRect().top);if(y!==last){note('controls '+y);last=y;}
-    if(log.length<400)requestAnimationFrame(tick);})();}"""
+# The drawer's bound follows the report column one rendering update later (a ResizeObserver), and a
+# row under the report controls can appear at any moment of a pass: the Critical Results row shows
+# when its first read answers and lifts the controls by its own height. Read between that change and
+# the next frame, the rectangles describe a layout that is never painted - the drawer still bounded
+# by where the controls were. So the geometry is read in animation frames until the bound holds; a
+# bound that never follows still fails, with its rectangles.
+SETTLED_GEOMETRY = """()=>{const g=(%s)();
+  return g.drawer&&g.reportControls&&g.reportFields&&(g.drawer.b<=g.reportControls.y||g.drawer.y>=g.reportControls.b)?g:false;}""" % ENTRY_GEOMETRY
 REACH_TARGET = ['.report-p .rbtns', '#b-structured']
 # S2-V: the frozen copies read with names and units; the ellipse numbers are API-seeded, never recomputed.
 ELLIPSE_VALUES = [400.26, 45.0, -20.0, 80.0, 1234]
@@ -736,6 +726,16 @@ class FindingWorklistE2E(navigation.FindingNavigationE2E):
             'the Image Findings drawer %s overlaps the report control row %s %s (fields %s) - '
             'the runtime bound did not apply' % (drawer, controls, when, fields))
 
+    def settled_geometry(self, w, when):
+        """The geometry of a frame in which the bound holds (SETTLED_GEOMETRY). If none comes, the
+        last rectangles go to `bound_holds`, which names them."""
+        try:
+            return w.wait_for_function(SETTLED_GEOMETRY, timeout=5000).json_value()
+        except PlaywrightTimeoutError:
+            seen = w.evaluate(ENTRY_GEOMETRY)
+            self.bound_holds(seen, when)
+            return seen
+
     def entry_pass(self, w, f, width, height):
         """One viewport, and it prints its numbers whatever happens.
 
@@ -755,9 +755,8 @@ class FindingWorklistE2E(navigation.FindingNavigationE2E):
         expect(w.locator('#structmodal')).to_be_hidden()
         initial, measured, before_scroll, reach, reached = None, None, None, {}, []
         try:
-            before_scroll = w.evaluate(ENTRY_GEOMETRY)
+            before_scroll = self.settled_geometry(w, 'before scrolling at %dx%d' % (width, height))
             reach['arrival'] = w.evaluate(column_reach.READ, REACH_TARGET)
-            self.bound_holds(before_scroll, 'before scrolling at %dx%d' % (width, height))
             button = before_scroll['controls']['b-structured']['rect']
             if button['b'] > height or button['y'] < 30:
                 # Provisional until Minhoon confirms (11-03 commander): at 1366x768 Reading Workspace the
@@ -772,11 +771,10 @@ class FindingWorklistE2E(navigation.FindingNavigationE2E):
             reach['revealed'] = w.evaluate(column_reach.READ, REACH_TARGET)
             self.assertEqual([], column_reach.reach_problems(reach['arrival'], reach['revealed']),
                              'the Structured entry at %dx%d is not reached by scrolling the report column' % (width, height))
-            initial = w.evaluate(ENTRY_GEOMETRY)
             # The bound, from rendered rectangles rather than from the stylesheet's text. The drawer
             # is opened once, before the first viewport, so on the second pass this is also the
             # answer to "does an ALREADY OPEN drawer follow a resize" - nothing reopens it.
-            self.bound_holds(initial, 'before opening at %dx%d' % (width, height))
+            initial = self.settled_geometry(w, 'before opening at %dx%d' % (width, height))
             # Reachability of the entry itself, asserted BEFORE the click. The click would find the
             # same thing, but only after burning 20 s on retries and without naming what covered it.
             entry = initial['controls']['b-structured']
@@ -789,11 +787,10 @@ class FindingWorklistE2E(navigation.FindingNavigationE2E):
             expect(w.locator('#reading-findings')).to_be_visible(); reached.append('both-visible')
             w.locator('#struct-item').select_option(label='Technique')
             expect(w.locator('#struct-value-text')).to_be_visible()
-            measured = w.evaluate(ENTRY_GEOMETRY)
             # Only the dialog's own controls are asserted here. `b-structured` and the drawer toggle
             # are recorded but NOT asserted once the dialog is open: the modal's backdrop covers the
             # whole viewport by design, so they are supposed to be unreachable at this moment.
-            self.bound_holds(measured, 'with the dialog open at %dx%d' % (width, height))
+            measured = self.settled_geometry(w, 'with the dialog open at %dx%d' % (width, height))
             for name in ('struct-value-text', 'struct-apply', 'struct-cancel'):
                 seen = measured['controls'][name]
                 self.assertTrue(seen['own'], '%s at %s is covered by %s' % (name, seen['rect'], seen['topId']))
@@ -873,7 +870,6 @@ class FindingWorklistE2E(navigation.FindingNavigationE2E):
         f = self.specimen(slices=2); self.seed_report(f)
         self.seed(f)
         w = self.login(); self.observe(w); w.on('dialog', lambda d: d.accept())
-        w.evaluate(LAYOUT_LOG)
         self.select(w, f)
         expect(w.locator('#findings')).to_have_value(f.secret)
         self.open_findings(w, f)
