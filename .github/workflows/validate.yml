@@ -1749,6 +1749,9 @@ jobs:
     - name: Merge Exam · Split / Unmerge (window, refusals, badge, Accession search, merged viewer scope) on the delivered split page
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/exam-merge-page --cwd . --tree worklist-v0/hpacs-lite --tree tests --file scripts/main-split-order.json --file scripts/build-main-split-bundle.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/exam_merge_dom_test.py
+    - name: Merge Exam Base is the selected study however the list is drawn again (rows pushed down by a new study, the selected study leaving) on the delivered split page
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/exam-merge-base-row-page --cwd . --tree worklist-v0/hpacs-lite --tree tests --file scripts/main-split-order.json --file scripts/build-main-split-bundle.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/exam_merge_base_row_dom_test.py
     - name: A3 unit 10 viewer patient tab leave gate and Previous Report History on the delivered split page
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/report-viewer-leave-page --cwd . --tree worklist-v0/hpacs-lite --tree tests --file scripts/main-split-order.json --file scripts/build-main-split-bundle.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/report_viewer_leave_dom_test.py
