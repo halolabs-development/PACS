@@ -409,11 +409,6 @@
       if (why) { pane.status = why; renderCitePreview(); return; }
       // 측정 줄을 읽는 중에는 무엇이 들어갈지 아직 정해지지 않았다.
       if (pane.measure.state === "loading") return;
-      // 준비한 뒤 최신 읽기가 측정 줄 기록을 더는 말하지 않으면, 그 줄은 기록되지 않은 채 본문에만 남게 된다 — 내리고 멈춘다.
-      if (pane.measure.state === "ready" && !citations.measurementLines()) {
-        setMeasure(pane, { state: "off", seq: pane.measure.seq + 1 });
-        return;
-      }
       // 이 누름이 보낼 글과 측정 줄. 아래 어디서도 다시 만들지 않는다.
       const text = citeText(pane), measurement = pane.measure.state === "ready"
         ? { measurementLine: pane.measure.line, measurementSources: [...pane.measure.sources] } : null;
@@ -444,6 +439,15 @@
         }
         const why2 = citationInsertBlock();
         if (why2) { pane.status = why2; renderCitePreview(); return; }
+        /**
+         * 측정 줄은 서버가 그 줄을 기록한다고 **최신 읽기가 말할 때만** 나간다. 이 자리 — 모든 기다림이 끝나고
+         * 요청이 떠나기 바로 앞 — 하나에서만 본다: 앞선 저장을 기다리는 동안 다른 읽기가 그 사실을 바꿀 수 있다.
+         * 아니면 줄을 내리고 아무것도 보내지 않는다(기록되지 않은 줄이 본문에만 남지 않게). 다음 누름은 블록만 넣는다.
+         */
+        if (measurement && !citations.measurementLines()) {
+          setMeasure(pane, { state: "off", seq: pane.measure.seq + 1 });
+          return;
+        }
         /**
          * **보여준 자리로만 보낸다**(D-9). 미리보기를 연 뒤 이 칸이 갈렸거나 보호할 인용이
          * 달라졌으면 지금 넣을 자리는 사람이 읽은 그 자리가 아니다. 그때는 **아무것도 보내지 않고**

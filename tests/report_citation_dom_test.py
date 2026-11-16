@@ -1301,6 +1301,30 @@ class ReportCitationDOMTest(unittest.TestCase):
         self.assertEqual(BLOCK, put["body"]["insert"]["insertedText"])
         self.assertNotIn("measurementLine", put["body"]["insert"])
 
+    def test_support_lost_while_the_insertion_waits_for_an_earlier_draft_write_sends_nothing(self):
+        self.open(citations={"version": 1, "head": [], "draft": [], "measurementLines": True})
+        # A draft write is out; the insertion pressed now must wait for it.
+        self.page.evaluate(type_js([EXISTING + "\n사용자가 방금 친 줄", "", ""]))
+        self.page.evaluate("hold()")
+        self.page.evaluate("()=>{ window.stashing = stash(); }")
+        self.page.wait_for_function("()=>outstanding()===1")
+        self.open_pane(measurements=MEASUREMENTS)
+        self.reply_numbers(NUMBERS, NUMBERS)
+        self.turn_measure(True)
+        self.page.wait_for_function("()=>!$('#cite-preview-measure-line').hidden")
+        self.page.evaluate("reply({status: 200, body: {inserted: {cid: 'c-late', field: 'findings', insertedAt: '2026-09-20T02:00:00.000Z'}}})")
+        self.press_insert()
+        self.page.wait_for_function("()=>$('#cite-preview-insert').disabled===true")
+        # While it waits, a successful read (another study's) no longer says the server records the line.
+        self.page.evaluate("()=>{ citations.confirm('%s', {version: 1, head: [], draft: []}); }" % OTHER)
+        self.page.evaluate("release()")
+        self.page.wait_for_function("()=>!$('#cite-preview-measure').checked && !$('#cite-preview-insert').disabled")
+        self.page.wait_for_timeout(200)
+        value = self.page.evaluate("snapshot()")
+        self.assertEqual(1, len(value["calls"]), "only the earlier draft write went out; the line was not sent unrecorded")
+        self.assertIsNone(value["measure"]["line"])
+        self.assertIn("서버가 측정 줄 기록을 지원하는지", value["measure"]["note"])
+
     def test_a_server_refusal_of_a_changed_source_set_leaves_the_report_as_it_was(self):
         self.open_measured()
         self.reply_numbers(NUMBERS, NUMBERS)
