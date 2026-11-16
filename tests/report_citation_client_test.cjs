@@ -351,3 +351,32 @@ test('TEST-S3-U2b-BYTES: neither the module nor this file carries a control byte
                   C.entryKey({ field: 'findings", "', insertedText: 'conclusion' }));
   assert.equal(C.entryKey({ cid: 'r', state: C.SOURCE_UNAVAILABLE }), null, 'a reduced entry has no key');
 });
+
+// Include Measurements: the screen's half of the one rule the server checks too (api/src/report-citation.ts).
+test('TEST-B23-MEASUREMENT-VECTORS: the measurement line is composed and judged as the shared vectors say', () => {
+  const M = vectors.measurement;
+  assert.ok(M.parts.length >= 8 && M.lines.length >= 4 && M.problems.length >= 9 && M.eligible.length >= 6, 'the oracle was thinned');
+  for (const c of M.parts) assert.equal(C.measurementPart(c.part), c.text, c.name);
+  for (const c of M.lines) assert.equal(C.measurementLine(c.parts), c.line, c.name);
+  for (const c of M.problems) assert.equal(C.measurementLineProblem(c.line, c.insertedText), c.problem, c.name);
+  for (const c of M.eligible) assert.equal(C.measurementEligible({ ...c.source, linkState: c.linkState }, c.uid), c.eligible, c.name);
+  // Off is today's bytes; on is the block, one LF, the line - and that whole text passes the server's suffix rule.
+  const block = 'T\nX', line = C.measurementLine(M.lines[0].parts);
+  assert.equal(C.withMeasurements(block, null), block);
+  assert.equal(C.withMeasurements(block, line), block + '\n' + line);
+  assert.equal(C.measurementLineProblem(line, C.withMeasurements(block, line)), null);
+});
+
+test('TEST-B23-MEASUREMENT-NOTE: an entry says when it carried a machine-added line, and the page learns the server records it', () => {
+  assert.equal(C.measurementNote({ measurementLine: '측정: A (Series 1 / Image 1)' }), ' · 측정 줄 포함');
+  assert.equal(C.measurementNote({ measurement: true }), ' · 측정 줄 포함', 'a past version answers with the flag only');
+  assert.equal(C.measurementNote({ insertedText: 'A' }), '');
+  const state = C.createState();
+  assert.equal(state.measurementLines(), false, 'unknown until a read says so');
+  state.confirm('1.2.3', { version: 1, head: [], draft: [] });
+  assert.equal(state.measurementLines(), false, 'an older server does not say it');
+  state.confirm('1.2.3', { version: 1, head: [], draft: [], measurementLines: true });
+  assert.equal(state.measurementLines(), true);
+  state.unconfirm('1.2.3');
+  assert.equal(state.measurementLines(), true, 'a fact about the server, not about one study row');
+});

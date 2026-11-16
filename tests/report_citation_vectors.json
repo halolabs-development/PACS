@@ -135,5 +135,45 @@
       "characteristics": null, "block": "  결절  \n우상엽  결절" },
     { "name": "every field blank is refused, no invented fallback sentence", "title": "", "text": "   ",
       "characteristics": null, "refused": true }
-  ]
+  ],
+
+  "measurement": {
+    "note": "Include Measurements (opt-in): the one line the screen adds under a cited finding block, and what the server checks of it. The screen composes it from text it already shows (the tool name, the saved value text of the source line, unverified warning included) and the DICOM SeriesNumber / InstanceNumber / NumberOfFrames read for that SOP; the server never recomputes a number. `parts` and `lines` are the screen's template; `problems` and `eligible` are answered by both halves (report-citation.js and api/src/report-citation.ts).",
+    "parts": [
+      {"name": "a length with its numbers", "part": {"name": "Length", "value": "31.7 mm", "series": "2", "image": "41", "frame": 1}, "text": "Length 31.7 mm (Series 2 / Image 41)"},
+      {"name": "DICOM JSON may give IS values as numbers; they are written as given", "part": {"name": "Length", "value": "31.7 mm", "series": 2, "image": 41, "frame": 1}, "text": "Length 31.7 mm (Series 2 / Image 41)"},
+      {"name": "a mark without a value keeps its name and place", "part": {"name": "Key Image", "value": "", "series": "2", "image": "41", "frame": 1}, "text": "Key Image (Series 2 / Image 41)"},
+      {"name": "a number DICOM does not give is a dash, never a position", "part": {"name": "Length", "value": "31.7 mm", "series": null, "image": "", "frame": 1}, "text": "Length 31.7 mm (Series — / Image —)"},
+      {"name": "a multi-frame object names the frame", "part": {"name": "Length", "value": "5.0 mm", "series": "3", "image": "1", "frames": "20", "frame": 7}, "text": "Length 5.0 mm (Series 3 / Image 1 / Frame 7)"},
+      {"name": "a known frame beyond 1 is never dropped, even without NumberOfFrames", "part": {"name": "Length", "value": "5.0 mm", "series": "3", "image": "1", "frame": 4}, "text": "Length 5.0 mm (Series 3 / Image 1 / Frame 4)"},
+      {"name": "frame 1 of a multi-frame object is still named", "part": {"name": "Angle", "value": "12.0°", "series": "3", "image": "1", "frames": 2, "frame": 1}, "text": "Angle 12.0° (Series 3 / Image 1 / Frame 1)"},
+      {"name": "an unverified value is copied with its own warning", "part": {"name": "Length", "value": "수치(단위 미확인): 1.0", "series": "2", "image": "9", "frame": 1}, "text": "Length 수치(단위 미확인): 1.0 (Series 2 / Image 9)"},
+      {"name": "surrounding spaces of a DICOM IS value are not part of it", "part": {"name": "Length", "value": "31.7 mm", "series": " 2 ", "image": "41 ", "frame": 1}, "text": "Length 31.7 mm (Series 2 / Image 41)"}
+    ],
+    "lines": [
+      {"name": "one source", "parts": [{"name": "Length", "value": "31.7 mm", "series": "2", "image": "41", "frame": 1}], "line": "측정: Length 31.7 mm (Series 2 / Image 41)"},
+      {"name": "sources in their order, joined by '; '", "parts": [{"name": "Length", "value": "31.7 mm", "series": "2", "image": "41", "frame": 1}, {"name": "Key Image", "value": "", "series": "2", "image": "41", "frame": 1}], "line": "측정: Length 31.7 mm (Series 2 / Image 41); Key Image (Series 2 / Image 41)"},
+      {"name": "the same text from two marks stays twice (no deduplication)", "parts": [{"name": "Length", "value": "31.7 mm", "series": "2", "image": "41", "frame": 1}, {"name": "Length", "value": "31.7 mm", "series": "2", "image": "41", "frame": 1}], "line": "측정: Length 31.7 mm (Series 2 / Image 41); Length 31.7 mm (Series 2 / Image 41)"},
+      {"name": "no source, no line", "parts": [], "line": null}
+    ],
+    "problems": [
+      {"name": "the line ends the inserted text after one LF", "line": "측정: Length 31.7 mm (Series 2 / Image 41)", "insertedText": "결절\n측정: Length 31.7 mm (Series 2 / Image 41)", "problem": null},
+      {"name": "no prefix", "line": "Length 31.7 mm (Series 2 / Image 41)", "insertedText": "결절\nLength 31.7 mm (Series 2 / Image 41)", "problem": "shape"},
+      {"name": "two lines", "line": "측정: A\nB", "insertedText": "결절\n측정: A\nB", "problem": "shape"},
+      {"name": "a CR is a line break too", "line": "측정: A\rB", "insertedText": "결절\n측정: A\rB", "problem": "shape"},
+      {"name": "the prefix alone", "line": "측정:   ", "insertedText": "결절\n측정:   ", "problem": "shape"},
+      {"name": "not a string", "line": 7, "insertedText": "결절\n7", "problem": "shape"},
+      {"name": "not at the end", "line": "측정: A", "insertedText": "측정: A\n결절", "problem": "suffix"},
+      {"name": "glued to the block without its LF", "line": "측정: A", "insertedText": "결절측정: A", "problem": "suffix"},
+      {"name": "nothing of the finding before it", "line": "측정: A", "insertedText": " \n측정: A", "problem": "suffix"}
+    ],
+    "eligible": [
+      {"name": "a current image mark of this study", "source": {"kind": "length", "studyUid": "1.2.3"}, "linkState": "current", "uid": "1.2.3", "eligible": true},
+      {"name": "a revised one still is (the copy is the finding revision's)", "source": {"kind": "key", "studyUid": "1.2.3"}, "linkState": "revised", "uid": "1.2.3", "eligible": true},
+      {"name": "a hidden mark is not", "source": {"kind": "length", "studyUid": "1.2.3"}, "linkState": "hidden", "uid": "1.2.3", "eligible": false},
+      {"name": "a missing mark is not", "source": {"kind": "length", "studyUid": "1.2.3"}, "linkState": "missing", "uid": "1.2.3", "eligible": false},
+      {"name": "a comparison study's mark is not (its numbers are another exam's)", "source": {"kind": "length", "studyUid": "1.2.4"}, "linkState": "current", "uid": "1.2.3", "eligible": false},
+      {"name": "a saved view or 3D point is not (no Series/Image)", "source": {"kind": "job", "studyUid": "1.2.3"}, "linkState": "current", "uid": "1.2.3", "eligible": false}
+    ]
+  }
 }

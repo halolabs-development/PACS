@@ -38,6 +38,28 @@ interface ReportCitationInsert {
   insertedText: string;
   expectedLinkState: string;
   expectedHeadRevision: number | null;
+  /** Include Measurements: 화면이 기계로 붙였다고 밝힌 마지막 한 줄과 그 줄을 만든 출처 번호들. 둘이 함께 오거나 함께 없다. */
+  measurement?: { line: string; sources: number[] };
+}
+
+/**
+ * Include Measurements — 화면 `report-citation.js`의 같은 이름 규칙과 짝이고 같은 벡터(`measurement`)가
+ * 신탁이다. 서버는 수치·번호를 **다시 계산하지 않는다**(화면 글은 화면 언어·반올림을 따른다). 서버가
+ * 증언하는 것은 "이 마지막 한 줄은 화면이 기계로 붙였다고 밝힌 줄이고, 그 줄은 이 출처들에서 왔다"뿐이며,
+ * 출처들이 넣을 수 있는 것인지는 삽입 시점의 소견 판으로 다시 본다.
+ */
+export const MEASUREMENT_PREFIX = '측정: ';
+export function measurementLineProblem(line: unknown, insertedText: unknown): 'shape' | 'suffix' | null {
+  if (typeof line !== 'string' || !line.startsWith(MEASUREMENT_PREFIX) || /[\r\n]/.test(line) ||
+      !line.slice(MEASUREMENT_PREFIX.length).trim()) return 'shape';
+  const text = typeof insertedText === 'string' ? insertedText : '';
+  if (!text.endsWith('\n' + line) || blockIsBlank(text.slice(0, text.length - line.length - 1))) return 'suffix';
+  return null;
+}
+/** 줄에 들어갈 수 있는 출처: 이 검사의 영상 표식(저장 작업·비교 검사 아님), 링크가 숨김·사라짐이 아님. */
+export function measurementEligible(source: any, linkState: unknown, studyUid: string): boolean {
+  return !!source && source.kind !== 'job' && typeof source.studyUid === 'string' && source.studyUid === studyUid &&
+    linkState !== 'hidden' && linkState !== 'missing';
 }
 
 /**
@@ -246,10 +268,27 @@ export function citationInsertInput(value: any): ReportCitationInsert {
     throw new CitationInputError('insert.expectedLinkState가 필요합니다');
   if (value.expectedHeadRevision !== null && !isIndex(value.expectedHeadRevision))
     throw new CitationInputError('insert.expectedHeadRevision이 필요합니다');
+  // 측정 줄은 선택이다. 키가 없으면 지금까지와 같은 일곱 칸이고, 기록도 지금과 같은 바이트다.
+  const hasLine = value.measurementLine !== undefined, hasSources = value.measurementSources !== undefined;
+  if (hasLine !== hasSources)
+    throw new CitationInputError('insert.measurementLine과 measurementSources는 함께 보냅니다');
+  let measurement: ReportCitationInsert['measurement'];
+  if (hasLine) {
+    if (measurementLineProblem(value.measurementLine, value.insertedText) === 'shape' || !storable(value.measurementLine))
+      throw new CitationInputError('insert.measurementLine은 「측정: 」으로 시작하는 한 줄이어야 합니다');
+    if (measurementLineProblem(value.measurementLine, value.insertedText) === 'suffix')
+      throw new CitationInputError('insert.insertedText는 소견 글 다음 줄에 measurementLine으로 끝나야 합니다');
+    const sources = value.measurementSources;
+    if (!Array.isArray(sources) || !sources.length || sources.length > REPORT_CITATION_LIMITS.entries ||
+        !sources.every(isIndex) || new Set(sources).size !== sources.length || sources.some((n: number, i: number) => i && n <= sources[i - 1]))
+      throw new CitationInputError('insert.measurementSources는 겹치지 않는 출처 번호를 오름차순으로 담아야 합니다');
+    measurement = { line: value.measurementLine, sources: [...sources] };
+  }
   return {
     field, findingId: value.findingId, findingRevision: value.findingRevision,
     sourceIndex: value.sourceIndex, insertedText: value.insertedText,
     expectedLinkState: value.expectedLinkState, expectedHeadRevision: value.expectedHeadRevision,
+    ...(measurement ? { measurement } : {}),
   };
 }
 

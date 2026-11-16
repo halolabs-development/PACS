@@ -360,9 +360,13 @@ window.KinReadingFindings = function (app) {
     const block = citation.assembleBlock(row);
     const refusal = citation.refuseBlock(block);
     if (refusal) { setResult(refusal, 'refused', false); return; }
+    // Include Measurements (opt-in in the preview): every source of this revision the report rule admits, in source order, with
+    // the name and value text this list already shows. The image numbers are read only if the person turns the box on.
+    const measurements = row.sources.flatMap((s, i) => citation.measurementEligible(s, st.uid)
+      ? [{ sourceIndex: i, ...command.measurementOf(s), studyUid: s.studyUid, seriesUid: s.seriesUid, sopUid: s.sopUid, frame: s.frame }] : []);
     const opened = app.cite({ uid: st.uid, findingId: row.id, findingRevision: row.revision,
       sourceIndex: index, sourceLabel: source.description, linkState: source.linkState,
-      headRevision: source.headRevision === undefined ? null : source.headRevision, block,
+      headRevision: source.headRevision === undefined ? null : source.headRevision, block, measurements,
       // This panel is fixed over the report column: it never moves the report, it covers it. Once
       // the server has recorded one insertion, everything the person must read next - the changed
       // field and the citation bar that now counts it - is underneath, and so are that bar's

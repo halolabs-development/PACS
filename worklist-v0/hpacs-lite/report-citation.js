@@ -154,6 +154,65 @@ window.KinReportCitation = (function () {
   }
 
   /**
+   * Include Measurements — 사람이 체크를 켰을 때만 소견 블록 아래에 붙는 **한 줄**.
+   *
+   * 서버 `api/src/report-citation.ts`의 같은 이름 규칙과 짝이고 같은 벡터(`measurement`)가 신탁이다.
+   * 줄에 들어가는 것은 화면이 이미 보이는 글 그대로다: 표식 이름, 저장된 측정의 수치 글(출처 줄과
+   * 같은 글 — 단위 미확인이면 그 경고까지), DICOM이 적은 Series/Image 번호. 기계는 판단·환산·요약·
+   * 중복 제거를 하지 않는다(같은 글이라도 다른 표식이면 따로 남는다). 모르는 번호는 `—`로 쓰고
+   * 배열 순서 같은 것으로 대신하지 않는다.
+   */
+  const MEASUREMENT_PREFIX = '측정: ';
+  const MISSING_NUMBER = '—';
+  const dicomNumber = value => {
+    const textValue = value === null || value === undefined ? '' : String(value).trim();
+    return textValue && !/[\r\n]/.test(textValue) ? textValue : MISSING_NUMBER;
+  };
+  /** 출처 하나의 글. `frames`가 없으면 DICOM 규칙대로 한 장짜리이고, 알려진 프레임(>1)은 언제나 쓴다. */
+  function measurementPart(part) {
+    const name = oneLine(part && part.name) || '?';
+    const value = oneLine(part && part.value);
+    const frame = Number.isSafeInteger(part && part.frame) ? part.frame : 1;
+    const frames = Number.isSafeInteger(Number(part && part.frames)) && Number(part.frames) > 0 ? Number(part.frames) : 1;
+    const where = `Series ${dicomNumber(part && part.series)} / Image ${dicomNumber(part && part.image)}` +
+      (frames > 1 || frame > 1 ? ` / Frame ${frame}` : '');
+    return `${name}${value ? ' ' + value : ''} (${where})`;
+  }
+  /** 줄바꿈은 한 줄 규칙을 깨므로 공백으로만 바꾼다(다른 글자는 그대로). */
+  function oneLine(value) {
+    return value === null || value === undefined ? '' : String(value).replace(/\r\n?|\n/g, ' ').trim();
+  }
+  /** 출처 순서 그대로 `; `로 잇는다. 넣을 출처가 없으면 `null`(줄 없음). */
+  function measurementLine(parts) {
+    const list = Array.isArray(parts) ? parts.map(measurementPart) : [];
+    return list.length ? MEASUREMENT_PREFIX + list.join('; ') : null;
+  }
+  /** 꺼져 있거나 줄이 없으면 **블록 바이트 그대로**. 켜져 있으면 LF 하나 뒤에 그 줄. */
+  function withMeasurements(block, line) {
+    return line ? String(block) + '\n' + line : block;
+  }
+  /**
+   * 줄에 들어갈 수 있는 출처 — 서버 `measurementEligible`과 같은 규칙. 이 검사의 영상 표식(저장 작업·
+   * 비교 검사 출처가 아님)이고, 링크가 숨김·사라짐이 아닌 것.
+   */
+  function measurementEligible(source, studyUid) {
+    return !!source && source.kind !== 'job' && typeof source.studyUid === 'string' && source.studyUid === studyUid &&
+      source.linkState !== 'hidden' && source.linkState !== 'missing';
+  }
+  /** 서버가 받는 줄의 모양. 맞으면 `null`, 아니면 이유. 서버 `measurementLineProblem`과 같은 규칙. */
+  function measurementLineProblem(line, insertedText) {
+    if (typeof line !== 'string' || !line.startsWith(MEASUREMENT_PREFIX) || /[\r\n]/.test(line) ||
+        !line.slice(MEASUREMENT_PREFIX.length).trim()) return 'shape';
+    const textValue = typeof insertedText === 'string' ? insertedText : '';
+    if (!textValue.endsWith('\n' + line) || blockIsBlank(textValue.slice(0, textValue.length - line.length - 1))) return 'suffix';
+    return null;
+  }
+  /** 인용 목록·종이에 붙는 표시. 그 건에 기계가 붙인 측정 줄이 있었는가(머리·초안 건은 줄, 과거 판은 표시만). */
+  function measurementNote(entry) {
+    return entry && (typeof entry.measurementLine === 'string' || entry.measurement === true) ? ' · 측정 줄 포함' : '';
+  }
+
+  /**
    * 기존 판독문을 보존하고 그 아래에 붙인다. 칸이 비어 있지 않으면 LF 하나를 먼저 넣는다.
    * **구분자는 `insertedText` 바깥**이다 — 증언이 가리키는 바이트는 미리보기가 보인 그 블록뿐이다.
    */
@@ -286,6 +345,7 @@ window.KinReportCitation = (function () {
    */
   function createState() {
     const rows = new Map();
+    let measurementLines = false;
 
     const state = {
       /**
@@ -306,8 +366,12 @@ window.KinReportCitation = (function () {
         const remove = new Set([...((previous && previous.remove) || [])].filter(cid => alive.has(cid)));
         rows.set(uid, { confirmed: true, version: Number.isSafeInteger(answer.version) ? answer.version : 0,
                         head, draft, remove });
+        // The server said it records the Include Measurements line. It is a fact about the server, kept for the page.
+        if (answer.measurementLines === true) measurementLines = true;
         return true;
       },
+      /** Include Measurements opens only after a read from a server that records its line (else the line would go in unattested). */
+      measurementLines() { return measurementLines; },
 
       /**
        * 초안 쪽을 **모르는 상태로 되돌린다.**
@@ -419,5 +483,6 @@ window.KinReportCitation = (function () {
     normalizeForCompare, toLf, blockLines, blockIsBlank, lineBlockOccurrences, blockSpans, comparisonKey,
     presenceState, presenceOf, isReduced, entryKey, assembleBlock, appendBlock, placeBlock, utf8Bytes, refuseBlock,
     createState,
+    MEASUREMENT_PREFIX, measurementPart, measurementLine, withMeasurements, measurementEligible, measurementLineProblem, measurementNote,
   });
 })();

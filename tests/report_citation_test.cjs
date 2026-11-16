@@ -822,3 +822,79 @@ test('presence is counted against that row\'s own body, over the whole row, and 
   assert.equal((await historyRead(strangeField, '2')).entries[0].presence, null,
     'an unknown field must not index some other column of the row');
 });
+
+// ── Include Measurements: the server half of the shared rule ──
+// Sources 0 and 1 are this study's image marks (revised and current); 2 is the comparison study's, 3 a saved view.
+const MLINE = '측정: Length 31.7 mm (Series 2 / Image 41); Key Image (Series 2 / Image 41)';
+const MTEXT = LINE + '\n' + MLINE;
+const MEASURED = [{ id: FINDING, revision: 2, hidden: false,
+  sources: [{ kind: 'length', itemId: 'i-0', revision: 1, studyUid: UID }, { kind: 'key', itemId: 'i-1', revision: 7, studyUid: UID },
+    { kind: 'length', itemId: 'i-2', revision: 1, studyUid: OTHER }, { kind: 'job', jobId: 'j-1', revision: 3, studyUid: UID }],
+  links: [{ itemId: 'i-0', linkState: 'revised', headRevision: 2, headHidden: false },
+    { itemId: 'i-1', linkState: 'current', headRevision: 7, headHidden: false },
+    { itemId: 'i-2', linkState: 'current', headRevision: 1, headHidden: false },
+    { jobId: 'j-1', linkState: 'current', headRevision: 3, headHidden: false }] }];
+const MINSERT = { ...INSERT, insertedText: MTEXT, measurementLine: MLINE, measurementSources: [0, 1] };
+
+test('TEST-B23-MEASUREMENT-VECTORS: the compiled rule answers the shared measurement vectors', () => {
+  const M = vectors.measurement;
+  assert.ok(M.problems.length >= 9 && M.eligible.length >= 6, 'the oracle was thinned');
+  for (const c of M.problems) assert.equal(citation.measurementLineProblem(c.line, c.insertedText), c.problem, c.name);
+  for (const c of M.eligible) assert.equal(citation.measurementEligible(c.source, c.linkState, c.uid), c.eligible, c.name);
+});
+
+test('TEST-B23-MEASUREMENT-SHAPE: the line and its sources come together, in shape, or the request is refused', () => {
+  const ok = citation.citationInsertInput(MINSERT);
+  assert.deepEqual(ok.measurement, { line: MLINE, sources: [0, 1] });
+  assert.equal(ok.insertedText, MTEXT);
+  assert.equal(Object.hasOwn(citation.citationInsertInput(INSERT), 'measurement'), false, 'no keys, the shipped seven');
+  for (const bad of [{ measurementSources: undefined }, { measurementLine: undefined }, { measurementSources: [] },
+    { measurementSources: [1, 0] }, { measurementSources: [0, 0] }, { measurementSources: [-1] }, { measurementSources: '0' },
+    { measurementLine: 'Length 31.7 mm' }, { measurementLine: MLINE + '\nX', insertedText: MTEXT + '\nX' },
+    { insertedText: MLINE + '\n' + LINE }, { insertedText: LINE + MLINE },
+    { measurementLine: MLINE + String.fromCharCode(0), insertedText: MTEXT + String.fromCharCode(0) }])
+    assert.throws(() => citation.citationInsertInput({ ...MINSERT, ...bad }), citation.CitationInputError, JSON.stringify(bad));
+});
+
+test('TEST-B23-MEASUREMENT-ATTEST: the line is recorded with its sources, beside the sentence, in the same write', async () => {
+  const f = fixture({ draft: { baseVersion: 4, citations: [] }, readable: MEASURED });
+  await put(f, { findings: MTEXT, insert: MINSERT });
+  const [entry] = stored(f);
+  assert.equal(entry.insertedText, MTEXT, 'the whole block, line included, is the attested text');
+  assert.equal(entry.measurementLine, MLINE);
+  assert.deepEqual(entry.measurementSources, [0, 1]);
+  assert.deepEqual(f.writes, ['reportDraft.upsert']);
+  // Without the keys the entry is exactly the shipped one.
+  const plain = fixture({ draft: { baseVersion: 4, citations: [] } });
+  await put(plain, { insert: INSERT });
+  const [old] = stored(plain);
+  for (const key of ['measurementLine', 'measurementSources']) assert.equal(Object.hasOwn(old, key), false, key);
+});
+
+test('TEST-B23-MEASUREMENT-STALE: a source set other than every source the rule admits now is refused before any write', async () => {
+  for (const sources of [[1], [0, 1, 2], [0, 1, 3]]) {
+    const f = fixture({ draft: { baseVersion: 4, citations: [] }, readable: MEASURED });
+    const body = await refusal(put(f, { findings: MTEXT, insert: { ...MINSERT, measurementSources: sources } }), 409);
+    assert.equal(body.code, 'REPORT_CITATION_STALE', JSON.stringify(sources));
+    assert.deepEqual(f.writes, [], JSON.stringify(sources));
+  }
+  // A mark hidden since the screen read the list: the set the person saw is no longer the set.
+  const hidden = [{ ...MEASURED[0], links: MEASURED[0].links.map((l, i) => i === 0 ? { ...l, linkState: 'hidden', headHidden: true } : l) }];
+  const f = fixture({ draft: { baseVersion: 4, citations: [] }, readable: hidden });
+  assert.equal((await refusal(put(f, { findings: MTEXT, insert: MINSERT }), 409)).code, 'REPORT_CITATION_STALE');
+  assert.deepEqual(f.writes, []);
+});
+
+test('TEST-B23-MEASUREMENT-HISTORY: a past version says only that an entry carried a measurement line', async () => {
+  const withLine = { ...carried('a'), findingId: FINDING, insertedText: MTEXT, measurementLine: MLINE, measurementSources: [0, 1] };
+  const f = fixture({ versions: new Map([[2, preserved([withLine, { ...carried('b'), findingId: FINDING, insertedText: LINE }], MTEXT)]]) });
+  const answer = await historyRead(f, '2');
+  assert.equal(answer.entries[0].measurement, true);
+  assert.equal(Object.hasOwn(answer.entries[1], 'measurement'), false);
+  assert.equal(JSON.stringify(answer).includes(MLINE), false, 'the line itself does not leave the server for a past version');
+  // The head read is the editing surface: it carries the entry (and its line) as stored, and says it records the line.
+  const head = fixture({ versions: new Map([[4, { citations: [withLine] }]]), draft: null, readable: MEASURED });
+  const read = readBody(await head.svc.reportCitations(UID, CALLER));
+  assert.equal(read.measurementLines, true);
+  assert.equal(read.head[0].measurementLine, MLINE);
+});

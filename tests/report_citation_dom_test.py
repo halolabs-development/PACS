@@ -45,6 +45,15 @@ OTHER = "1.2.4"
 ASSEMBLY = next(case for case in VECTORS["assembly"] if case["name"] == "all three fields")
 BLOCK = ASSEMBLY["block"]
 EXISTING = "기존 판독문 첫 줄\n둘째 줄"
+# Include Measurements: a Length and a Key Image on the same CT image of this study (as reading-findings.js hands them over),
+# that image's QIDO answer, and the line the shared template makes of them (tests/report_citation_vectors.json, measurement).
+SERIES, SOP = "1.2.3.2", "1.2.3.2.41"
+MEASUREMENTS = [{"sourceIndex": 0, "name": "Length", "value": "31.7 mm", "studyUid": UID, "seriesUid": SERIES, "sopUid": SOP, "frame": 1},
+                {"sourceIndex": 1, "name": "Key Image", "value": "", "studyUid": UID, "seriesUid": SERIES, "sopUid": SOP, "frame": 1}]
+NUMBERS = {"status": 200, "body": [{"0020000D": {"vr": "UI", "Value": [UID]}, "0020000E": {"vr": "UI", "Value": [SERIES]},
+                                     "00080018": {"vr": "UI", "Value": [SOP]}, "00200011": {"vr": "IS", "Value": [2]},
+                                     "00200013": {"vr": "IS", "Value": [41]}}]}
+MLINE = next(case for case in VECTORS["measurement"]["lines"] if case["name"] == "sources in their order, joined by '; '")["line"]
 
 
 def slice_between(source, start_marker, end_marker):
@@ -231,7 +240,19 @@ Object.defineProperty(navigator, "clipboard", {
 // the request is still out. The call is recorded when it is SENT, which is what the ordering
 // assertions are about.
 let holdCount = 0; const heldAnswers = [];
+/* Include Measurements reads each source's DICOM numbers with one QIDO through the page's session transport. A queued
+   reply is {status, body}; nothing queued is a 404 (no answer); `qidoHold` keeps the answers until qidoRelease(). */
+let qidoCalls = [], qidoReplies = [], qidoHeld = [], qidoHold = false;
+window.qidoReply = value => { qidoReplies.push(value); };
+window.qidoRelease = () => { const all = qidoHeld.splice(0); all.forEach(fn => fn()); return all.length; };
 window.fetch = async (url, options = {}) => {
+  if (String(url).startsWith("/dicom-web/")) {
+    qidoCalls.push({ path: String(url), accept: new Headers(options.headers).get("Accept") });
+    const reply = qidoReplies.shift() ?? { status: 404, body: {} };
+    const answer = () => ({ ok: reply.status < 400, status: reply.status, json: async () => reply.body });
+    if (qidoHold) return new Promise(resolve => { qidoHeld.push(() => resolve(answer())); });
+    return answer();
+  }
   const path = String(url).slice(API.length);
   const record = { method: options.method ?? "GET", path, keepalive: !!options.keepalive,
                    body: options.body ? JSON.parse(options.body) : null,
@@ -327,6 +348,10 @@ window.snapshot = () => ({
   shown: $("#cite-preview").classList.contains("show"),
   busy: { insert: $("#cite-preview-insert").disabled, close: $("#cite-preview-close").disabled,
           field: $("#cite-preview-field").disabled },
+  qido: structuredClone(qidoCalls),
+  measure: { checked: $("#cite-preview-measure").checked, disabled: $("#cite-preview-measure").disabled,
+             line: $("#cite-preview-measure-line").hidden ? null : $("#cite-preview-measure-line").textContent,
+             note: $("#cite-preview-measure-note").textContent },
   pane: { block: $("#cite-preview-block").textContent, status: $("#cite-preview-status").textContent,
           source: $("#cite-preview-source").textContent, target: $("#cite-preview-target").textContent,
           field: $("#cite-preview-field").value },
@@ -1127,6 +1152,142 @@ class ReportCitationDOMTest(unittest.TestCase):
         self.assertEqual("현재 판독문은 편집할 수 없습니다", self.page.evaluate("snapshot().toasts")[-1]["message"])
         self.assertEqual(0, len(self.page.evaluate("snapshot().calls")))
 
+    # ── Include Measurements: the opt-in line of measured values and DICOM Series/Image numbers ──
+
+    def open_measured(self, supported=True, measurements=None):
+        citations = {"version": 1, "head": [], "draft": []}
+        if supported:
+            citations["measurementLines"] = True
+        self.open(citations=citations)
+        self.open_pane(measurements=MEASUREMENTS if measurements is None else measurements)
+
+    def reply_numbers(self, *rows):
+        for row in rows:
+            self.page.evaluate("qidoReply(%s)" % json.dumps(row, ensure_ascii=False))
+
+    def turn_measure(self, on):
+        box = self.page.locator("#cite-preview-measure")
+        box.check() if on else box.uncheck()
+
+    def test_include_measurements_starts_off_and_off_sends_todays_seven_keys_and_bytes(self):
+        self.open_measured()
+        value = self.page.evaluate("snapshot()")
+        self.assertEqual((False, False, None), (value["measure"]["checked"], value["measure"]["disabled"], value["measure"]["line"]))
+        self.assertIn("Series/Image", value["measure"]["note"])
+        self.assertEqual([], value["qido"], "nothing is read until the person turns the box on")
+        self.page.evaluate("reply({status: 200, body: {inserted: {cid: 'cid-off', field: 'findings', insertedAt: '2026-09-20T02:00:00.000Z'}}})")
+        self.press_insert()
+        self.page.wait_for_function("()=>!$('#cite-preview').classList.contains('show')")
+        put = self.page.evaluate("snapshot()")["calls"][0]
+        self.assertEqual(EXISTING + "\n" + BLOCK, put["body"]["findings"])
+        self.assertEqual(["expectedHeadRevision", "expectedLinkState", "field", "findingId", "findingRevision", "insertedText",
+                          "sourceIndex"], sorted(put["body"]["insert"]), "off is exactly the shipped request")
+
+    def test_on_reads_each_sop_and_inserts_the_block_with_one_machine_line_the_server_records(self):
+        self.open_measured()
+        self.reply_numbers(NUMBERS, NUMBERS)
+        self.turn_measure(True)
+        self.page.wait_for_function("()=>!$('#cite-preview-measure-line').hidden")
+        value = self.page.evaluate("snapshot()")
+        self.assertEqual(MLINE, value["measure"]["line"], "the machine line is shown on its own, under the person's block")
+        self.assertEqual(BLOCK, value["pane"]["block"], "the person's block is unchanged")
+        self.assertIn("화면이 붙인 글", value["measure"]["note"])
+        self.assertEqual(2, len(value["qido"]))
+        for call in value["qido"]:
+            self.assertEqual("/dicom-web/studies/%s/series/%s/instances?SOPInstanceUID=%s&includefield=00200011,00200013,00280008"
+                             % (UID, SERIES, SOP), call["path"])
+            self.assertEqual("application/dicom+json", call["accept"])
+        self.assertEqual([EXISTING, "", ""], value["text"], "turning the box on does not touch the report")
+        self.page.evaluate("reply({status: 200, body: {inserted: {cid: 'cid-m', field: 'findings', insertedAt: '2026-09-20T02:00:00.000Z'}}})")
+        self.press_insert()
+        self.page.wait_for_function("()=>!$('#cite-preview').classList.contains('show')")
+        value = self.page.evaluate("snapshot()")
+        put = value["calls"][0]
+        self.assertEqual(EXISTING + "\n" + BLOCK + "\n" + MLINE, put["body"]["findings"])
+        self.assertEqual(BLOCK + "\n" + MLINE, put["body"]["insert"]["insertedText"], "one text: shown, sent, inserted, attested")
+        self.assertEqual(MLINE, put["body"]["insert"]["measurementLine"])
+        self.assertEqual([0, 1], put["body"]["insert"]["measurementSources"])
+        self.assertEqual(EXISTING + "\n" + BLOCK + "\n" + MLINE, value["text"][0])
+        info = self.page.evaluate("citeInfo('%s')" % UID)
+        self.assertEqual(MLINE, info["draft"][-1]["measurementLine"])
+        # The citation list says this entry carried the machine-added line.
+        self.page.click("#b-cite-list")
+        self.page.wait_for_function("()=>!$('#citelist').hidden")
+        self.assertIn("측정 줄 포함", self.page.evaluate("snapshot().bar.list"))
+
+    def test_the_box_stays_closed_without_a_source_or_a_server_that_records_the_line(self):
+        self.open_measured(supported=False)
+        value = self.page.evaluate("snapshot()")
+        self.assertTrue(value["measure"]["disabled"])
+        self.assertIn("서버가 측정 줄 기록을 지원하는지", value["measure"]["note"])
+        self.page.click("#cite-preview-close")
+        self.page.evaluate("()=>{ citations.confirm('%s', {version: 1, head: [], draft: [], measurementLines: true}); }" % UID)
+        self.open_pane(measurements=[])
+        value = self.page.evaluate("snapshot()")
+        self.assertTrue(value["measure"]["disabled"])
+        self.assertIn("넣을 수 있는 영상 표식이 없습니다", value["measure"]["note"])
+
+    def test_a_failed_or_mismatched_number_read_adds_nothing_and_says_why(self):
+        for name, rows in (("HTTP refusal", [{"status": 403, "body": {}}]),
+                           ("another SOP answered", [{"status": 200, "body": [{**NUMBERS["body"][0], "00080018": {"vr": "UI", "Value": ["9.9.9"]}}]}]),
+                           ("two answers for one SOP", [{"status": 200, "body": NUMBERS["body"] * 2}]),
+                           ("no answer", [{"status": 200, "body": []}])):
+            with self.subTest(name):
+                self.open_measured()
+                self.reply_numbers(*rows)
+                self.turn_measure(True)
+                self.page.wait_for_function("()=>!$('#cite-preview-measure').checked && !$('#cite-preview-insert').disabled")
+                value = self.page.evaluate("snapshot()")
+                self.assertIsNone(value["measure"]["line"], name)
+                self.assertIn("측정값을 넣지 않았습니다", value["measure"]["note"], name)
+                self.page.evaluate("reply({status: 200, body: {inserted: {cid: 'cid-f', field: 'findings', insertedAt: '2026-09-20T02:00:00.000Z'}}})")
+                self.press_insert()
+                self.page.wait_for_function("()=>!$('#cite-preview').classList.contains('show')")
+                put = self.page.evaluate("snapshot()")["calls"][0]
+                self.assertEqual(BLOCK, put["body"]["insert"]["insertedText"], name)
+                self.assertNotIn("measurementLine", put["body"]["insert"], name)
+                self.assertEqual([], self.errors)
+                self.page.close()
+
+    def test_a_read_still_out_holds_the_insert_and_its_answer_is_dropped_when_the_box_is_turned_off_or_the_pane_closed(self):
+        self.open_measured()
+        self.page.evaluate("()=>{ qidoHold = true; }")
+        self.reply_numbers(NUMBERS, NUMBERS)
+        self.turn_measure(True)
+        self.page.wait_for_function("()=>qidoCalls.length === 1")
+        value = self.page.evaluate("snapshot()")
+        self.assertTrue(value["busy"]["insert"], "nothing is inserted while what goes in is not settled")
+        self.assertIn("읽는 중", value["measure"]["note"])
+        self.turn_measure(False)
+        self.page.evaluate("()=>{ qidoHold = false; qidoRelease(); }")
+        self.page.wait_for_timeout(200)
+        value = self.page.evaluate("snapshot()")
+        self.assertIsNone(value["measure"]["line"], "the answer of a read the person turned off never becomes the line")
+        self.assertFalse(value["measure"]["checked"])
+        self.assertFalse(value["busy"]["insert"])
+        # Closing the pane drops a read that is still out the same way.
+        self.page.evaluate("()=>{ qidoHold = true; }")
+        self.reply_numbers(NUMBERS, NUMBERS)
+        self.turn_measure(True)
+        self.page.wait_for_function("()=>qidoCalls.length >= 2")
+        self.page.click("#cite-preview-close")
+        self.page.evaluate("()=>{ qidoHold = false; qidoRelease(); }")
+        self.page.wait_for_timeout(200)
+        self.open_pane(measurements=MEASUREMENTS)
+        value = self.page.evaluate("snapshot()")
+        self.assertEqual((False, None), (value["measure"]["checked"], value["measure"]["line"]), "a new pane starts off")
+
+    def test_a_server_refusal_of_a_changed_source_set_leaves_the_report_as_it_was(self):
+        self.open_measured()
+        self.reply_numbers(NUMBERS, NUMBERS)
+        self.turn_measure(True)
+        self.page.wait_for_function("()=>!$('#cite-preview-measure-line').hidden")
+        self.page.evaluate("reply({status: 409, body: {code: 'REPORT_CITATION_STALE', message: '측정값을 넣을 출처가 그 사이 바뀌었습니다 — 미리보기를 다시 열어 확인한 뒤 인용하세요'}})")
+        self.press_insert()
+        self.page.wait_for_function("()=>$('#cite-preview-status').textContent.includes('인용하지 못했습니다')")
+        value = self.page.evaluate("snapshot()")
+        self.assertEqual([EXISTING, "", ""], value["text"])
+        self.assertIn("Reload Findings", value["toasts"][-1]["message"])
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import type { PrismaService } from '../prisma.service';
 import type { FindingService } from '../finding.service';
 import { canonical } from '../viewer-input';
-import { applyKeepList, blockIsBlank, citationArray, citationIdList, citationInsertInput, citationSourceRef,
+import { applyKeepList, blockIsBlank, citationArray, citationIdList, citationInsertInput, citationSourceRef, measurementEligible,
   CitationInputError, lineBlockOccurrences, presenceState, projectCitation, sameTextCounts, REPORT_CITATION_FIELDS,
   REPORT_CITATION_LIMITS, REPORT_CITATION_SCHEMA, SOURCE_UNAVAILABLE } from '../report-citation';
 import { applyStructureKeepList, isStructureEntry, projectStructure, structureApplyInput, structureArray,
@@ -259,6 +259,18 @@ export class PacsReportEvidence {
      * `insertedText`는 출처의 사본이 아니라 작성자가 자기 판독문에 넣은 글 그 자체이며,
      * 그것이 출처를 재현한다고는 어떤 표면도 말하지 않는다.
      */
+    /**
+     * Include Measurements: 줄을 만든 출처들은 **이 판에서 지금 넣을 수 있는 출처 전부**여야 한다(화면과
+     * 같은 규칙 `measurementEligible`, 삽입 시점의 링크 상태로). 그 사이 숨겨지거나 되살아난 표식이 있으면
+     * 사람이 본 줄이 지금의 출처 집합과 다르므로 다시 보게 한다. 수치·번호는 다시 계산하지 않는다.
+     */
+    if (insert.measurement) {
+      const sources = citationArray(row.sources), links = citationArray(row.links);
+      const eligible = sources.map((s: any, i: number) => measurementEligible(s, links[i]?.linkState, uid) ? i : -1).filter(i => i >= 0);
+      if (eligible.length !== insert.measurement.sources.length || eligible.some((n, i) => n !== insert.measurement!.sources[i]))
+        throw new ConflictException({ code: 'REPORT_CITATION_STALE',
+          message: '측정값을 넣을 출처가 그 사이 바뀌었습니다 — 미리보기를 다시 열어 확인한 뒤 인용하세요' });
+    }
     if (blockIsBlank(insert.insertedText) || !lineBlockOccurrences(content[insert.field], insert.insertedText))
       throw new ConflictException({ code: 'REPORT_CITATION_TEXT',
         message: '삽입한 문구가 그 칸의 본문에 줄 단위로 그대로 있지 않습니다' });
@@ -266,6 +278,7 @@ export class PacsReportEvidence {
       findingId: insert.findingId, findingRevision: insert.findingRevision, sourceIndex: insert.sourceIndex,
       sourceRef: citationSourceRef(source), linkStateAtInsert: link.linkState,
       headRevisionAtInsert: link.headRevision ?? null, insertedText: insert.insertedText,
+      ...(insert.measurement ? { measurementLine: insert.measurement.line, measurementSources: insert.measurement.sources } : {}),
       insertedAt: new Date().toISOString(), insertedBy: c.actor };
   }
 
@@ -433,8 +446,10 @@ export class PacsReportEvidence {
         const counts = sameTextCounts(entries);
         return entries.map((entry, i) => projectCitation(entry, readable.has(String(entry?.findingId ?? '')), counts[i]));
       };
+      // `measurementLines`: 이 서버는 Include Measurements 줄을 읽고 기록한다. 화면은 이 표시가 있는 답을 받은
+      // 뒤에만 그 체크를 연다 — 모르는 키를 버리는 옛 서버에 보내면 글은 들어가고 기록만 빠지기 때문이다.
       const body = { version: report?.version ?? 0, head: project(head), draft: project(mine),
-        draftRevision: draftToken(epoch.draftEpoch, draft?.revision ?? 0) };
+        draftRevision: draftToken(epoch.draftEpoch, draft?.revision ?? 0), measurementLines: true };
       return new LocalReadResponse(body, [
         ...(report ? [consumerSource('report-evidence', uid, prev.institutionId, uid, report.version, ['head'], sourceIdentity)] : []),
         ...(draft?.present ? [consumerSource('private-draft', uid, prev.institutionId, JSON.stringify([uid, c.actor]), body.draftRevision, ['draft'], sourceIdentity)] : []),
@@ -678,6 +693,8 @@ export class PacsReportEvidence {
         return { field: entry?.field ?? null, findingRevision: entry?.findingRevision ?? null,
           sourceIndex: entry?.sourceIndex ?? null, linkStateAtInsert: entry?.linkStateAtInsert ?? null,
           insertedAt: entry?.insertedAt ?? null, insertedBy,
+          // 그 건에 화면이 기계로 붙인 측정 줄이 있었는지만(글은 서버를 떠나지 않는다 — 위 설명).
+          ...(typeof entry?.measurementLine === 'string' ? { measurement: true } : {}),
           presence: countable
             ? presenceState(lineBlockOccurrences(String((row as any)[entry.field] ?? ''), entry.insertedText), counts[index])
             : null };
