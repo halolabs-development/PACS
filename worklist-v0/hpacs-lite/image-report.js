@@ -208,6 +208,14 @@
     strip.append(node('small', { textContent: 'Image Report' }), stripList);
     const conclusion = $('#conclusion');
     conclusion?.after(strip);
+    // The Image Report panel of the report window band (main.html .s-imgreport, shown or hidden in Panel Settings): the
+    // same attached drawings as the strip, from the strip's own read, view only, and Draw - the same open() as the button.
+    const panelOpen = $('#image-report-panel-open'), panelStatus = $('#image-report-panel-status'), panelList = $('#image-report-panel-list');
+    const panelSay = (message, clear = true) => {
+      if (panelStatus) panelStatus.textContent = message;
+      if (clear) panelList?.replaceChildren();
+    };
+    let opener = null;   // the control the window was opened from; focus goes back there on close
 
     // ── state ──
     let session = null;   // { uid, seq, at, owner, marks, background, images, image, list, editable } of the open window
@@ -215,6 +223,9 @@
     let stripSeq = 0;
     let stripUid = null;
     let stripMark = null;  // the selected study's draft revision and version when the strip was read
+    let stripAccess = null;  // whether this sign-in could read drawings (radiologist, server-connected) at that read
+    let panelScope = null;   // the study and exam scope whose drawings the band's panel shows
+    const access = () => can() && ctx.allowed();
     const examStamp = uid => root.KinExamScope.screenStamp(ctx.study(uid));
     const memoryUid = uid => root.KinExamScope.screenScope(ctx.study(uid)) ? root.KinExamScope.key(ctx.study(uid)) : uid;
     const markOf = uid => { const s = uid ? ctx.study(uid) : null; return s ? JSON.stringify([examStamp(uid), s.state?.draftRevision ?? null, s.state?.version ?? null, s.state?.rs ?? null]) : null; };
@@ -233,9 +244,11 @@
     const reason = (error, fallback) => (error && (error.body?.message || error.message)) || fallback;
 
     function sync() {
-      if (!button) return;
-      button.hidden = !can();
-      button.disabled = !can() || !ctx.allowed() || !ctx.selectedUid();
+      for (const control of [button, panelOpen]) {
+        if (!control) continue;
+        control.hidden = !can();
+        control.disabled = !can() || !ctx.allowed() || !ctx.selectedUid();
+      }
     }
 
     // ── drawing ──
@@ -519,20 +532,39 @@
         strokes, png, ...(replaces ? { replaces } : {}) } });
     });
     close.addEventListener('click', () => dialog.close());
-    dialog.addEventListener('close', () => { drawing = null; session = null; void refreshStrip(); button?.focus(); });
+    dialog.addEventListener('close', () => {
+      drawing = null; session = null; void refreshStrip();
+      const back = [opener, button].find(c => c?.isConnected && !c.hidden && !c.disabled && c.getClientRects().length);
+      opener = null; back?.focus();
+    });
 
     // ── the editor strip ──
     async function refreshStrip() {
       const uid = ctx.selectedUid(), mine = ++stripSeq;
       // Another study: the last one's drawings go at once, before its own are read.
       if (uid !== stripUid) { strip.hidden = true; stripList.replaceChildren(); }
+      // The panel lets go of another study's, or another exam scope's, drawings at once too.
+      const scope = uid ? JSON.stringify([uid, examStamp(uid)]) : null;
+      if (scope !== panelScope) { panelScope = scope; panelSay(uid ? '붙인 그림을 읽는 중입니다…' : '검사를 선택하세요'); }
       stripUid = uid;
       stripMark = markOf(uid);
-      if (!uid || !can() || !ctx.allowed()) { strip.hidden = true; stripList.replaceChildren(); return; }
+      stripAccess = access();
+      if (!uid || !access()) {
+        strip.hidden = true; stripList.replaceChildren();
+        panelSay(!uid ? '검사를 선택하세요' : !can() ? '판독의 계정에서만 Image Report를 쓸 수 있습니다.' : '서버에 연결된 계정에서만 Image Report를 쓸 수 있습니다.');
+        return;
+      }
       const at = ctx.work('study'), scopeStamp = examStamp(uid);
       let list;
-      // A list that could not be read is shown as none - and told as not shown, which is not "no drawings".
-      try { list = await readList(uid, at); } catch (_) { if (mine === stripSeq) { strip.hidden = true; tellShown(uid, null); } return; }
+      // A list that could not be read is shown as none - and told as not shown, which is not "no drawings". The next
+      // redraw of the list reads it again (the mark is forgotten), so a passing failure does not stay on the screen.
+      try { list = await readList(uid, at); } catch (_) {
+        if (mine === stripSeq && ctx.selectedUid() === uid) {
+          strip.hidden = true; tellShown(uid, null); stripMark = null;
+          panelSay('붙인 그림 목록을 읽지 못했습니다');
+        }
+        return;
+      }
       if (mine !== stripSeq || !ctx.admits(at) || ctx.selectedUid() !== uid || scopeStamp !== examStamp(uid)) return;
       tellChanged(uid, list);
       const shown = shownList(list);
@@ -543,15 +575,24 @@
         if (result.status !== 'applied') ctx.toast(result.reason || '그림을 빼지 못했습니다', 'err');
         void refreshStrip();
       } });
-      tellDrawn(uid, list, drawn, () => mine === stripSeq && ctx.selectedUid() === uid && ctx.admits(at) && scopeStamp === examStamp(uid));
+      const still = () => mine === stripSeq && ctx.selectedUid() === uid && ctx.admits(at) && scopeStamp === examStamp(uid);
+      tellDrawn(uid, list, drawn, still);
+      // The band's panel draws the same list once the strip's pictures are read (so each is read once), view only. It is
+      // never told as shown: only the strip under the report is.
+      void drawn.then(() => {
+        if (!still()) return;
+        panelSay('Attached to this report: ' + shown.length);
+        if (panelList) void renderAttached(panelList, uid, shown, { editable: false, at, onRemove: () => {} });
+      });
     }
 
-    const openFromButton = event => { event.preventDefault(); void open(ctx.selectedUid()); };
+    const openFromButton = event => { event.preventDefault(); opener = event.currentTarget; void open(ctx.selectedUid()); };
     button?.addEventListener('click', openFromButton);
+    panelOpen?.addEventListener('click', openFromButton);
     sync();
     // After the list is drawn: read the strip again when the study changed or its draft or version moved (a discard, Clear,
     // commit or reset, here or in another window), not on every redraw.
-    const offRender = ctx.onRender(() => { if (session && session.scopeStamp !== examStamp(session.uid)) { session = null; dialog.close(); } sync(); if (ctx.selectedUid() !== stripUid || markOf(stripUid) !== stripMark) void refreshStrip(); });
+    const offRender = ctx.onRender(() => { if (session && session.scopeStamp !== examStamp(session.uid)) { session = null; dialog.close(); } sync(); if (ctx.selectedUid() !== stripUid || markOf(stripUid) !== stripMark || access() !== stripAccess) void refreshStrip(); });
     const offSelect = ctx.onSelect(() => { sync(); void refreshStrip(); });
     // The editor drew this study's report again (a discard, Clear, commit or reset changed what the draft holds): read again.
     const offReport = ctx.onReport ? ctx.onReport(uid => { if (uid === ctx.selectedUid()) void refreshStrip(); }) : () => {};
@@ -562,14 +603,19 @@
       for (const url of pictures.values()) URL.revokeObjectURL(url);
       pictures.clear(); frames.clear();
       session = null;
+      // The pictures are gone with their URLs; the panel shows none until a study is read again.
+      stripSeq++; stripUid = null; panelScope = null; panelSay('검사를 선택하세요');
+      if (panelOpen) panelOpen.disabled = true;
     };
     const offEnd = ctx.onEnd(() => { if (dialog.open) dialog.close(); end(); });
 
     return () => {
       offRender(); offSelect(); offReport(); offDraftEnd(); offEnd();
       button?.removeEventListener('click', openFromButton);
+      panelOpen?.removeEventListener('click', openFromButton);
       if (dialog.open) dialog.close();
       end();
+      if (panelOpen) { panelOpen.disabled = true; panelOpen.hidden = false; }
       dialog.remove(); strip.remove(); style.remove();
     };
   }

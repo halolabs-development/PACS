@@ -284,6 +284,10 @@
       const shares = band.content.reduce((sum, p) => sum + p.share, 0);
       top.style.setProperty('--kin-rw-columns', band.content.map((p, i) => i === band.content.length - 1 ? 'minmax(0, 1fr)'
         : `${100 * p.share / shares}%`).join(' ') || 'minmax(0, 1fr)');
+      for (const [key, selector] of [['thumbnail', '.s-thumb'], ['imageReport', '.s-imgreport'], ['clinical', '.s-clinical'], ['template', '.s-template']]) {
+        const section = $(selector);
+        if (section) section.style.gridColumn = band.columns[key] ? String(band.columns[key]) : '';
+      }
       left.style[portrait ? "height" : "width"] = "";
       related.style.height = "";
       top.style.height = "";
