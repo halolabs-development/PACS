@@ -20,6 +20,7 @@ from playwright.sync_api import expect
 
 from document_session import document_request, session_headers
 from test_study_access import StudyAccessE2E, policy
+import admin_otp
 
 
 class S9RoleSweepE2E(StudyAccessE2E):
@@ -53,6 +54,7 @@ class S9RoleSweepE2E(StudyAccessE2E):
         except Exception:
             # Playwright fill diagnostics can contain the temporary credential.
             raise RuntimeError('Real BFF clinician login could not be submitted') from None
+        admin_otp.answer_page(page, self.stack.username(actor))
         page.wait_for_url('**/worklist/hpacs-lite/clinician.html', timeout=30000)
         expect(page.get_by_role('heading', name='Clinician Home', exact=True)).to_be_visible()
         # The heading is static; the signed-in actor appears after this document

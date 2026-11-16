@@ -44,11 +44,12 @@
         if (typeof text !== 'string' || text.length > MAX) return refusal('invalid');
         editor[key] = text;
       }
-      return { ok: true, editor, session: message.session };
+      if(expected.examStamp!==undefined && message.examStamp!==expected.examStamp)return refusal('context');
+      return { ok: true, editor, session: message.session, ...(message.examStamp!==undefined?{examStamp:message.examStamp}:{}) };
     } catch (_) { return refusal('invalid'); }
   }
   const shape = value => value && typeof value === 'object' && !Array.isArray(value)
-    ? [value.owner, value.uid, value.session, FIELDS.map(key => value.editor ? value.editor[key] : undefined)] : null;
+    ? [value.owner, value.uid, value.session, value.examStamp??null, FIELDS.map(key => value.editor ? value.editor[key] : undefined)] : null;
   function sameEditor(a, b) {
     const left = shape(a), right = shape(b);
     if (!left || !right) return false;
@@ -81,6 +82,8 @@ globalThis.kinViewerEditorLink = function (options) {
   const studies = Array.isArray(settings.studies) ? settings.studies.slice() : [];
   const owner = typeof settings.owner === 'function' ? settings.owner : () => null;
   const live = typeof settings.live === 'function' ? settings.live : () => false;
+  const examStamp = settings.examScope ? globalThis.KinExamScope.readingStamp(settings.examScope,studies[0]) : undefined;
+  const examMessage = examStamp === undefined ? {} : {examStamp};
   const target = 'target' in settings ? settings.target
     : (view.opener || (view.parent !== view ? view.parent : null));
   const origin = settings.origin || view.location?.origin;
@@ -118,7 +121,7 @@ globalThis.kinViewerEditorLink = function (options) {
       if (!available() || !bound) { resolve({ ok: false, reason: 'missing' }); return; }
       const work = view.KinWorkContext, context = work?.capture('document');
       const request = view.crypto.randomUUID();
-      const expected = { request, owner: bound, studies: studies.slice(), activeUid: studies[0] };
+      const expected = { request, owner: bound, studies: studies.slice(), activeUid: studies[0], ...examMessage };
       const entry = { cancel: null };
       // The window-group channel (a same-origin BroadcastChannel) when there is no bound window; closed with the request.
       // A relink of this window while the request waits cancels it, and the answer is read only under the same link.
@@ -151,7 +154,7 @@ globalThis.kinViewerEditorLink = function (options) {
         if (currentOwner !== bound) { finish({ ok: false, reason: 'session' }); return; }
         const checked = pure.validReply(data, expected);
         if (!checked.ok) { finish({ ok: false, reason: checked.reason }); return; }
-        finish({ owner: expected.owner, uid: expected.activeUid, session: checked.session, editor: checked.editor });
+        finish({ owner: expected.owner, uid: expected.activeUid, session: checked.session, editor: checked.editor, ...(checked.examStamp!==undefined?{examStamp:checked.examStamp}:{}) });
       }
       entry.cancel = () => finish({ ok: false, reason: 'missing' });
       pending.add(entry);
@@ -164,7 +167,7 @@ globalThis.kinViewerEditorLink = function (options) {
       if (signal?.aborted) { onAbort(); return; }
       timer = setTimeout(() => finish({ ok: false, reason: 'timeout' }), timeoutMs);
       try {
-        const message = { type: 'kin-editor-request', request, owner: bound, studies: studies.slice(), activeUid: studies[0] };
+        const message = { type: 'kin-editor-request', request, owner: bound, studies: studies.slice(), activeUid: studies[0], ...examMessage };
         if (name) link.postMessage({ ...message, list: name.list }); else target.postMessage(message, origin);
       } catch (_) { finish({ ok: false, reason: 'missing' }); }
     });
@@ -212,7 +215,8 @@ globalThis.kinViewerEditorLink = function (options) {
       catch (_) { finish({ ok: false, reason: 'missing' }); return; }
       for (const type of ['hashchange', 'kin-window-link-changed']) view.addEventListener(type, onRelink);
       timer = setTimeout(() => { withdraw(); finish({ ok: false, reason: 'timeout' }); }, openTimeoutMs);
-      try { link.postMessage({ type: 'kin-editor-open', request, owner: bound, uid, list: name.list }); }
+      try { link.postMessage({ type: 'kin-editor-open', request, owner: bound, uid, list: name.list,
+        ...examMessage }); }
       catch (_) { finish({ ok: false, reason: 'missing' }); }
     });
   }

@@ -6,9 +6,10 @@ import { StudyAccessService } from './study-access.service';
 import { canReadPreliminary } from './preliminary-reader';
 import { Caller } from './pacs.service';
 import { canonical, viewerJson, viewerUid } from './viewer-input';
-import { validateCellCamera, validateCellProperties } from './viewer-job-input';
+import { validateCellCamera, validateCellProperties, validateViewerExam } from './viewer-job-input';
 import { snapshotText } from './viewer-job-snapshot';
 import { displayRule } from './hanging-protocol';
+import { prepareExamRead, resolveExamScope, resolveViewerSnapshot, examScopeChanged } from './exam-merge.service';
 
 /**
  * Auto Save View: the reader's own last view of a study, kept automatically while the account setting is on and put back
@@ -36,9 +37,9 @@ const noted = (writers: any, writer: string, seq: number) =>
   [...(Array.isArray(writers) ? writers.filter(w => Array.isArray(w) && w[0] !== writer) : []), [writer, seq]].slice(-WRITERS);
 
 /** The saved view of a study, checked the same way when it is written and when it is read back. */
-export function autoViewSnapshot(s: any, uid: string): any {
+export function autoViewSnapshot(s: any, uid: string, exam?: any): any {
   if (!exact(s, ['version', 'studies', 'rows', 'cols', 'active', 'cells']) || s.version !== 1) invalid();
-  if (!Array.isArray(s.studies) || s.studies.length < 1 || s.studies.length > 8 || new Set(s.studies).size !== s.studies.length || s.studies[0] !== uid) invalid();
+  if (!Array.isArray(s.studies) || s.studies.length < 1 || s.studies.length > (exam ? 20 : 8) || new Set(s.studies).size !== s.studies.length || (exam?.current.reportUid ?? s.studies[0]) !== uid) invalid();
   s.studies.forEach(viewerUid);
   if (!count(s.rows, 1, 4) || !count(s.cols, 1, 4) || !Array.isArray(s.cells) || s.cells.length !== s.rows * s.cols ||
       s.cells.every(c => c === null) || !count(s.active, 0, s.cells.length - 1)) invalid();
@@ -83,18 +84,58 @@ export class ViewerAutoViewService {
     if (rows.length !== uids.length || rows.some(s => !allowed(s, c))) deny();
     await this.studyAccess.require(c, uids, tx);
   }
-  private where(uid: string, c: Caller) { return { authorSub_studyUid: { authorSub: c.sub, studyUid: uid } }; }
+  private where(uid: string, c: Caller, scopeKey: string) {
+    return { authorSub_studyUid_scopeKey: { authorSub: c.sub, studyUid: uid, scopeKey } };
+  }
+  private reference(uid: string, value?: unknown) {
+    if (value === undefined) return null;
+    if (typeof value !== 'string' || value.length > 2048) invalid();
+    let exam: any; try { exam = JSON.parse(value as string); } catch { invalid(); }
+    validateViewerExam(exam);
+    if (exam.current.reportUid !== uid) invalid();
+    return exam;
+  }
+  private scopeKey(exam: any) {
+    const ref = exam?.current;
+    return ref?.groupId ? JSON.stringify([ref.reportUid, ref.groupId, ref.part]) : '';
+  }
+  private async prepare(c: Caller, exam: any) {
+    await this.studyAccess.prepare(c);
+    if (exam) for (const ref of [exam.current, exam.prior].filter(Boolean))
+      await prepareExamRead(this.prisma, this.studyAccess, c, ref.reportUid, true);
+  }
+  private async target(tx: any, uid: string, c: Caller, exam: any) {
+    if (!exam) { await this.studies(tx, [uid], c); return; }
+    const ref = exam.current;
+    const scope = await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: ref });
+    if (scope.groupId !== ref.groupId || scope.part !== ref.part) throw examScopeChanged();
+    await this.studies(tx, scope.studies, c);
+  }
 
-  async read(uid: string, c: Caller) {
-    this.member(c); viewerUid(uid); await this.studyAccess.prepare(c);
+  async read(uid: string, c: Caller, reference?: unknown) {
+    this.member(c); viewerUid(uid);
+    const exam = this.reference(uid, reference), scopeKey = this.scopeKey(exam);
+    await this.prepare(c, exam);
+    if (exam) {
+      const saved = await this.prisma.viewerAutoView.findUnique({ where: this.where(uid, c, scopeKey) });
+      if (saved?.snapshot && saved.studies?.length) await this.studyAccess.prepareSourceIdentity(c, saved.studies);
+    }
     return this.transaction(async tx => {
-      await this.studies(tx, [uid], c);
-      const row = await tx.viewerAutoView.findUnique({ where: this.where(uid, c) });
+      await this.target(tx, uid, c, exam);
+      const row = await tx.viewerAutoView.findUnique({ where: this.where(uid, c, scopeKey) });
       const empty = { view: null, generation: generation(row) };
       if (!row || row.snapshot === null) return empty;
       // A stored view that no longer reads as one, or that names a study this caller no longer reads, is not given out.
       let snapshot: any;
-      try { snapshot = autoViewSnapshot(JSON.parse(row.snapshot), uid); } catch { return empty; }
+      try {
+        const { exam: storedExam, ...view } = JSON.parse(row.snapshot);
+        if (this.scopeKey(storedExam) !== scopeKey) return empty;
+        snapshot = autoViewSnapshot(view, uid, storedExam);
+        if (storedExam) {
+          validateViewerExam(storedExam);
+          await resolveViewerSnapshot(tx, this.studyAccess, c, { ...snapshot, exam: { ...storedExam, purpose: 'stored' } });
+        }
+      } catch { return empty; }
       const others = snapshot.studies.filter(s => s !== uid);
       if (others.length) {
         const rows = await tx.studyState.findMany({ where: { uid: { in: others } } });
@@ -111,17 +152,22 @@ export class ViewerAutoViewService {
    * count or a later one was written already (whatever other viewers wrote meanwhile: each viewer's last count is kept,
    * the 32 latest viewers), or its captured generation differs from the study's current Discard generation.
    */
-  async save(uid: string, raw: Buffer, c: Caller) {
+  async save(uid: string, raw: Buffer, c: Caller, reference?: unknown) {
     this.member(c); viewerUid(uid);
+    const exam = this.reference(uid, reference), scopeKey = this.scopeKey(exam);
     const body = viewerJson(raw);
     if (!exact(body, ['snapshot', 'writer', 'seq', 'at', 'generation']) ||
         typeof body.generation !== 'string' || !/^(0|[1-9][0-9]{0,18})$/.test(body.generation)) invalid();
     const { writer, seq } = order(body);
-    const snapshot = autoViewSnapshot(body.snapshot, uid), text = snapshotText(snapshot);
-    await this.studyAccess.prepare(c);
+    const snapshot = autoViewSnapshot(body.snapshot, uid, exam);
+    await this.prepare(c, exam);
+    const requested = { ...snapshot, ...(exam ? { exam } : {}) };
+    const prepared = exam ? await resolveViewerSnapshot(this.prisma, this.studyAccess, c, requested) : null;
     return this.transaction(async tx => {
       await this.studies(tx, snapshot.studies, c);
-      return this.write(tx, uid, c, row => {
+      const resolved = prepared ? await resolveViewerSnapshot(tx, this.studyAccess, c, requested, prepared.scopes) : null;
+      const text = snapshotText(resolved?.snapshot ?? snapshot);
+      return this.write(tx, uid, c, scopeKey, row => {
         if (body.generation !== generation(row) || seen(row?.writers, writer) >= seq) return null;
         return { studies: snapshot.studies, snapshot: text, writers: noted(row?.writers, writer, seq) };
       });
@@ -133,16 +179,17 @@ export class ViewerAutoViewService {
    * before the Discard that arrives after it is refused. Advancing the generation and clearing the snapshot are one
    * conditional write; a retry must read and advance the winning generation, not reuse the loser's value.
    */
-  async discard(uid: string, raw: Buffer, c: Caller) {
+  async discard(uid: string, raw: Buffer, c: Caller, reference?: unknown) {
     this.member(c); viewerUid(uid);
+    const exam = this.reference(uid, reference), scopeKey = this.scopeKey(exam);
     const body = viewerJson(raw);
     if (!exact(body, ['writer', 'seq', 'at'])) invalid();
     const { writer, seq } = order(body);
-    await this.studyAccess.prepare(c);
+    await this.prepare(c, exam);
     return this.transaction(async tx => {
-      await this.studies(tx, [uid], c);
+      await this.target(tx, uid, c, exam);
       let had = false;
-      const result = await this.write(tx, uid, c, row => {
+      const result = await this.write(tx, uid, c, scopeKey, row => {
         had = !!row && row.snapshot !== null;
         return { studies: [uid], snapshot: null, discardedAt: BigInt(generation(row)) + 1n, writers: noted(row?.writers, writer, Math.max(seq, seen(row?.writers, writer))) };
       });
@@ -151,9 +198,9 @@ export class ViewerAutoViewService {
   }
 
   /** Reads the row, asks `next` for what to write (null: nothing), and writes it if the row is still the one read. */
-  private async write(tx: any, uid: string, c: Caller, next: (row: any) => any) {
+  private async write(tx: any, uid: string, c: Caller, scopeKey: string, next: (row: any) => any) {
     for (let attempt = 0; attempt < 4; attempt++) {
-      const row = await tx.viewerAutoView.findUnique({ where: this.where(uid, c) });
+      const row = await tx.viewerAutoView.findUnique({ where: this.where(uid, c, scopeKey) });
       const data = next(row);
       if (!data) return { saved: false, ...summary(row) };
       const updatedAt = new Date();
@@ -162,7 +209,7 @@ export class ViewerAutoViewService {
         if (count) return { saved: true, ...summary({ ...row, ...data, revision: row.revision + 1, updatedAt }) };
       } else {
         const { count } = await tx.viewerAutoView.createMany({ skipDuplicates: true,
-          data: [{ id: randomUUID(), studyUid: uid, authorSub: c.sub, institutionId: c.institution as string, discardedAt: null, ...data, revision: 1, updatedAt }] });
+          data: [{ id: randomUUID(), studyUid: uid, scopeKey, authorSub: c.sub, institutionId: c.institution as string, discardedAt: null, ...data, revision: 1, updatedAt }] });
         if (count) return { saved: true, ...summary({ ...data, revision: 1, updatedAt }) };
       }
     }

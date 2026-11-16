@@ -1,11 +1,16 @@
 (function(root){
   'use strict';
+  const examScopes=root.KinExamScope||(typeof module==='object'&&module.exports?require('./exam-scope.js'):null);
   function create(){
     // generation: the number of changes of the selected set. A selection-scoped action (W9 Open Selected Studies) binds the
     // generation it was offered at, so A -> B -> A between offer and click is a different selection.
-    let selected=new Set(),anchor=null,generation=0;
+    let selected=new Set(),anchor=null,generation=0,scopes=new Map();
     const changed=run=>{const before=[...selected].join('\n');run();if([...selected].join('\n')!==before)generation++;};
-    const reconcile=rows=>changed(()=>{const known=new Set(rows.map(s=>s.uid));selected=new Set([...selected].filter(uid=>known.has(uid)));if(!known.has(anchor))anchor=null;});
+    const reconcile=rows=>changed(()=>{
+      const known=new Set(rows.map(s=>s.uid)),next=new Map(rows.map(s=>[s.uid,examScopes.screenStamp(s)]));
+      if([...selected].some(uid=>known.has(uid)&&scopes.has(uid)&&scopes.get(uid)!==next.get(uid)))generation++;
+      scopes=next;selected=new Set([...selected].filter(uid=>known.has(uid)));if(!known.has(anchor))anchor=null;
+    });
     return {
       reconcile,
       toggle(uid,rows,range=false){
@@ -45,7 +50,7 @@
     const preloadQueue=root.KinPreloadQueue?.available()?root.KinPreloadQueue:null;
     const preload=preloadQueue?element('button','Preload',host):null;
     if(preload){preload.type='button';preload.id='multi-selection-preload';preload.title='선택한 검사의 영상을 암호화해 72시간 보관합니다. 열 때 서버의 권한 확인과 열람 기록을 거칩니다.';
-      preload.onclick=()=>{const list=rows();if(!live()||!list.length)return;preloadQueue.add(list.map(s=>({uid:s.uid,label:[s.id,s.name,s.date,s.modality].filter(Boolean).join(' · ')})),root.KinWorkContext?.session?.());};}
+      preload.onclick=()=>{const list=rows();if(!live()||!list.length)return;preloadQueue.add(list.map(s=>({uid:s.uid,...(s.examScope?{examScope:s.examScope}:{}),label:[s.id,s.name,s.date,s.modality].filter(Boolean).join(' · ')})),root.KinWorkContext?.session?.());};}
     // FC-028 Batch Reading (options.batchRead): one of my Reading Templates saved to the selected studies. Shown only where the
     // page offers it (Radiology, a radiologist, the server); it moves no Reading Target either.
     const batchRead=options.batchRead?element('button','Batch Reading',host):null;
@@ -68,11 +73,12 @@
     /** The selected UIDs in the order the reader sees them, bound to this owner and selection generation. */
     function snapshot(){const list=rows();return live()?{owner:initial,generation:model.generation(),studyUids:list.map(s=>s.uid)}:null;}
     // A count outside the API's bound disables the action with the reason; the server still decides everything else.
-    function setBlock(count){
+    function setBlock(list){
+      const count=examScopes.viewingSelection({studyUids:list.map(row=>row.uid)},list)?.studyUids.length||0;
       if(count<SET_LIMITS.min)return '여러 검사 열기는 2개 이상 선택해야 합니다.';
       return options.openBlocked?.()||null;
     }
-    function runOpenSet(){const s=snapshot();if(!s||setBlock(s.studyUids.length))return;dialog?.open&&dialog.close();options.openSet(s);}
+    function runOpenSet(){const s=snapshot();if(!s||setBlock(rows()))return;dialog?.open&&dialog.close();options.openSet(s);}
     if(openSet)openSet.onclick=runOpenSet;
     let lastGeneration=model.generation();
     function renderDialog(){
@@ -83,7 +89,7 @@
       dialog.querySelector('[data-summary]').textContent=`Selected: ${list.length}`;
       dialog.querySelector('[data-compare]').disabled=!comparison(list);
       const set=dialog.querySelector('[data-open-set]');
-      if(set){const why=setBlock(list.length);set.disabled=!!why;set.title=why||'';}
+      if(set){const why=setBlock(list);set.disabled=!!why;set.title=why||'';}
       for(const s of list){
         const tr=element('tr','',body);
         for(const value of [s.id,s.name,s.date,s.modality,s.desc])element('td',String(value??''),tr);
@@ -96,7 +102,7 @@
       const selected=rows();count.textContent=`Selected: ${selected.length}`;
       selectedCount=selected.length;host.hidden=!selected.length&&!queueShown;
       clear.disabled=inspect.disabled=!selected.length;if(preload)preload.disabled=!selected.length;page.disabled=!tbody.querySelector('tr[data-uid]');
-      if(openSet){const why=setBlock(selected.length);openSet.disabled=!!why;openSet.title=why||'';}
+      if(openSet){const why=setBlock(selected);openSet.disabled=!!why;openSet.title=why||'';}
       if(batchRead){const offered=!!options.batchRead.shown?.(),why=offered&&selected.length?options.batchRead.blocked?.()||null:null;
         batchRead.hidden=!offered;batchRead.disabled=!offered||!selected.length||!!why;batchRead.title=why||'';}
       if(batchApprove){const offered=!!options.batchApprove.shown?.(),why=offered&&selected.length?options.batchApprove.blocked?.()||null:null;

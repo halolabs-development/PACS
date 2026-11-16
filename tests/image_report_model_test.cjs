@@ -24,6 +24,19 @@ const label = { tool: 'text', color: RED, points: [[0.32, 0.3]], text: 'Mass 1.5
 const attach = (extra = {}) => ({ background: 'breast', strokes: [ellipse, label], png: png(640, 440).toString('base64'), ...extra });
 const UUID = '0b7e1f7a-1c2d-4e3f-8a9b-0c1d2e3f4a5b';
 
+test('native signatures retain legacy bytes and bind both drawings and their saved exam', () => {
+  const native = require('/app/dist/emr-report/native-snapshot');
+  const original = {id:1,uid:'2.25.1',version:1,action:'approve',findings:'SYN',citations:null};
+  const upgraded = {...original,groupId:null,snapshotFormat:1,drawings:null};
+  assert.equal(native.nativeReportSnapshot(upgraded),JSON.stringify(original));
+  assert.equal(native.nativeReportMatches(upgraded,JSON.stringify(original)),true);
+  const row = {...original,groupId:UUID,snapshotFormat:2,drawings:[{id:UUID,sha256:'a'.repeat(64)}]};
+  const bytes=native.nativeReportSnapshot(row);
+  assert.equal(native.nativeReportMatches(row,bytes),true);
+  assert.equal(native.nativeReportMatches({...row,groupId:null},bytes),false);
+  assert.equal(native.nativeReportMatches({...row,drawings:null},bytes),false);
+});
+
 test('server: a drawing request keeps strokes as 0..1 fractions and reads the PNG size', () => {
   const r = server.drawingRequest(attach());
   assert.equal(r.background, 'breast');

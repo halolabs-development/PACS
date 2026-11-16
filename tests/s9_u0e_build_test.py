@@ -60,6 +60,20 @@ class OHIFBuildTests(unittest.TestCase):
         self.assertNotEqual(self.run_builder("--check").returncode, 0)
         self.assertEqual(self.output.read_bytes(), b"previous artifact")
 
+    def test_shared_scope_is_available_before_viewer_sources_without_a_runtime_load(self):
+        relative = "worklist-v0/hpacs-lite/exam-scope.js"
+        source = self.root / relative
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"globalThis.KinExamScope = {};\n")
+        (self.directory / "source-order.json").write_text(json.dumps({
+            "shared": [relative], "sources": ["first.js", "second.js"]}), encoding="utf-8")
+        self.success(self.run_builder())
+        self.assertEqual(self.output.read_bytes(), source.read_bytes() + self.first + self.second)
+        source.write_bytes(b"globalThis.KinExamScope = {read(){}};\n")
+        self.assertNotEqual(self.run_builder("--check").returncode, 0)
+        self.success(self.run_builder())
+        self.success(self.run_builder("--check"))
+
     def test_check_missing_output_does_not_create_it(self):
         self.assertNotEqual(self.run_builder("--check").returncode, 0)
         self.assertFalse(self.output.exists())

@@ -51,7 +51,7 @@ test('CD-09 W-Q question writes: report anchor, lock order against native, Tech 
   process.env.KC_JWKS_URL = 'http://127.0.0.1:' + provider.address().port + '/certs';
   const tokens = {};
   for (const [name, m] of Object.entries(members)) tokens[name] = await new jose.SignJWT({ email: m.email,
-    realm_access: { roles: m.roles }, groups: ['/' + institution] }).setProtectedHeader({ alg: 'RS256', kid: jwk.kid })
+    realm_access: { roles: m.roles }, amr: m.roles.includes('admin') ? ['otp'] : [], groups: ['/' + institution] }).setProtectedHeader({ alg: 'RS256', kid: jwk.kid })
     .setIssuer(issuer).setSubject(m.sub).setAudience('kin-api').setIssuedAt().setExpirationTime('30m').sign(privateKey);
   const witness = new PrismaClient({ datasources: { db: { url: process.env.KIN_D_WITNESS_URL } } });
   const runtime = new EmrRuntime(process.env.DATABASE_URL, process.env.KIN_D_SPOOL);
@@ -63,7 +63,7 @@ test('CD-09 W-Q question writes: report anchor, lock order against native, Tech 
     await runtime.start(); ready = true;
     const clinical = await require('./clinical_fixture.cjs').clinicalFixture(witness, runtime.port, issuer,
       Object.values(members).map(m => ({ sub: m.sub, institution, roles: m.roles })));
-    const orthanc = { studyIdentityResources: async uid => [{ '0020000D': { Value: [uid] } }], studyIdentities: async () => [] };
+    const orthanc = { studyIdentityResources: async uid => [{ '0020000D': { Value: [uid] }, '00100020': { Value: ['SYN-PATIENT-' + uid] } }], studyIdentities: async () => [] };
     class HttpFixture {}
     const { createRequestContext, REQUEST_CONTEXT_CAPTURE, REQUEST_CONTEXT_SOURCE } = product('emr-runtime/request-context');
     const { createRequestIngress } = product('emr-runtime/request-ingress');

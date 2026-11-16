@@ -121,6 +121,9 @@ function harness(t) {
   const jobs = [], audits = [], listCalls = [];
   const match = (row, where) => Object.entries(where).every(([k, v]) => v && typeof v === 'object' && Array.isArray(v.in) ? v.in.includes(row[k]) : row[k] === v);
   const prisma = {
+    studyGroupMember:{findMany:async()=>[]},
+    studyState:{findUnique:async({where})=>where.uid===STUDY?{uid:STUDY,institutionId:'inst-a'}:null},
+    $queryRaw:async()=>[{uid:STUDY,institutionId:'inst-a'}],
     dicomPeer: {
       findMany: async ({ where }) => peers.filter(p => match(p, where)).sort((a, b) => a.name.localeCompare(b.name)).map(p => ({ ...p })),
       findFirst: async ({ where }) => { const p = peers.find(x => match(x, where)); return p ? { ...p } : null; },
@@ -145,7 +148,9 @@ function harness(t) {
     listCalls.push(c.sub);
     return { studies: c.institution === 'inst-a' && c.sub !== 'sub-blind' ? query.uids.split(',').map(uid => ({ uid })) : [] };
   } };
-  const service = new FilmPrintService(prisma, new OrthancService(), pacs);
+  const access={prepare:async()=>{},prepareSourceIdentity:async()=>{},require:async()=>{},
+    assertIdentifiedSource:()=>({sourcePatientId:'SYN-81',sourceInstitution:'inst-a'})};
+  const service = new FilmPrintService(prisma, new OrthancService(), pacs,access);
   return { service, peers, jobs, audits, lines, requests, prisma };
 }
 
@@ -276,7 +281,7 @@ test('a print: the helper gets the cells as rendered for the preview; Sending, S
   assert.deepEqual([row.printJobUid, row.institutionId, row.createdBy, row.destination, row.peerAet], ['1.2.3.4', 'inst-a', 'SYN-rad', 'printer', 'SYNPRA']);
   const audit = h.audits.find(a => a.action === 'film-print.job');
   assert.equal(audit.target, STUDY);
-  assert.deepEqual(JSON.parse(audit.detail), { institution: 'inst-a', job: job.id, destination: 'printer', peer: h.peers[0].id, series: SERIES.ct.uid, film: 3, films: 3, cells: 1 });
+  assert.deepEqual(JSON.parse(audit.detail), { institution: 'inst-a', job: job.id, destination: 'printer', peer: h.peers[0].id, series: SERIES.ct.uid, film: 3, films: 3, cells: 1, scope: preview.scope, sourceUid: STUDY });
   assert.ok(!/SYN\^FILM|SYN-81/.test(audit.detail), 'no patient value in the audit');
 });
 

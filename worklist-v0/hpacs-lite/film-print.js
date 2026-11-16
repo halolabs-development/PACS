@@ -65,7 +65,7 @@
     const dialog = node('dialog', { id: 'film-print' });
     dialog.setAttribute('aria-labelledby', 'film-print-title');
     const title = node('h2', { id: 'film-print-title', textContent: 'Print Images' });
-    const head = node('p', { className: 'fp-study' });
+    const head = node('p', { className: 'fp-study', translate: false });   // the study's own data, not words of the screen
     const series = node('select', { id: 'film-print-series' });
     const format = node('select', { id: 'film-print-format' }, ...FORMATS.map(option));
     const size = node('select', { id: 'film-print-size' }, ...SIZES.map(option));
@@ -125,6 +125,10 @@
     function sync() {
       if (techButton) techButton.hidden = !can();
       if (radiologyButton) radiologyButton.disabled = !can();
+      if(session && dialog.open && !current(session.seq)) {
+        go.disabled=true;stopWatching();
+        steps.textContent='검사 범위가 바뀌었습니다. 창을 다시 열어 인쇄할 영상을 확인하세요.';
+      }
     }
     const openFromMenu = event => { event.preventDefault(); const more = $('#report-more'); if (more) more.open = false; open(ctx.selectedUid()); };
     const openFromBar = event => { event.preventDefault(); open(ctx.selectedUid()); };
@@ -140,7 +144,7 @@
       if (!uid) { ctx.toast('인쇄할 검사를 먼저 고르세요.', 'err'); return; }
       stopWatching();
       const mine = ++seq;
-      session = { uid, seq: mine, destinations: { printers: [], devices: [] }, layout: null, film: 1 };
+      session = { uid, seq: mine, scopeStamp:window.KinExamScope.screenStamp(ctx.study(uid)), at:ctx.work("document"), destinations: { printers: [], devices: [] }, layout: null, film: 1 };
       const s = ctx.study(uid) || {};
       head.textContent = [s.name, s.id, s.date, s.modality, s.desc].filter(v => v != null && String(v).trim() !== '').join(' · ');
       head.dataset.uid = uid;
@@ -156,19 +160,23 @@
       paintFilm();
       label_();
       if (!dialog.open) dialog.showModal();
+      // The destinations belong to this opening of the window, not to the layout it shows: a Format, Film size or
+      // Orientation chosen before they arrive starts a newer layout and must not leave the list empty.
+      const opening = session, opened = () => session === opening && current(session.seq);
       try {
         const destinations = await ctx.api('GET', '/film-print/destinations', undefined, undefined, doc());
-        if (!current(mine)) return;
+        if (!opened()) return;
         session.destinations = { printers: Array.isArray(destinations?.printers) ? destinations.printers : [],
           devices: Array.isArray(destinations?.devices) ? destinations.devices : [] };
         paintTargets(last);
       } catch (error) {
-        if (current(mine)) say([['err', 'Failed — ' + reason(error, '프린터 목록을 불러오지 못했습니다')]]);
+        if (opened()) say([['err', 'Failed — ' + reason(error, '프린터 목록을 불러오지 못했습니다')]]);
       }
-      await loadLayout(1, true);
+      // A layout the reader already asked for meanwhile is the one to show; otherwise the first one.
+      if (session === opening && session.seq === mine) await loadLayout(1, true);
     }
 
-    function current(mine) { return !!session && session.seq === mine && dialog.open; }
+    function current(mine) { return !!session && session.seq === mine && dialog.open && ctx.admits(session.at) && window.KinExamScope.screenStamp(ctx.study(session.uid)) === session.scopeStamp; }
 
     function paintTargets(last = remembered()) {
       const list = kind() === 'device' ? session.destinations.devices : session.destinations.printers;
@@ -176,23 +184,29 @@
       if (!list.length) target.append(node('option', { value: '', textContent: kind() === 'device' ? 'No DICOM device is registered' : 'No film printer is registered' }));
       const keep = last[kind()];
       if (list.some(p => p.id === keep)) target.value = keep;
-      const before = size.value;
       fitSizes();
-      if (size.value !== before && session.layout) void loadLayout(1);
       label_();
     }
 
-    /** A printer registered for some film sizes only offers those. */
+    /**
+     * A printer registered for some film sizes only offers those. When that changes the film size, the layout is asked
+     * for again, whether one is shown or still on its way: a layout made for another film size is not the film this
+     * window would print, and its late answer is dropped. Returns whether the film size changed.
+     */
     function fitSizes() {
+      const before = size.value;
       const printer = kind() === 'printer' ? session?.destinations.printers.find(p => p.id === target.value) : null;
       const allowed = printer && Array.isArray(printer.filmSizes) ? new Set(printer.filmSizes) : null;
       for (const o of size.options) o.disabled = !!allowed && !allowed.has(o.value);
       if (size.selectedOptions[0]?.disabled) size.value = [...size.options].find(o => !o.disabled)?.value ?? size.value;
+      if (size.value === before) return false;
+      void loadLayout(1);
+      return true;
     }
 
     function label_() {
       go.textContent = kind() === 'device' ? 'Send' : 'Print';
-      const ready = !!session?.layout && !!target.value && !(watching && OPEN.has(watching.state));
+      const ready = !!session?.layout && current(session.seq) && !!target.value && !(watching && OPEN.has(watching.state));
       go.disabled = !ready;
     }
 
@@ -204,18 +218,23 @@
       label_();
       try {
         const body = { studyUid: session.uid, format: format.value, filmSize: size.value, orientation: orientation.value, film: filmNumber,
-          ...(firstSeries || !series.value ? {} : { seriesUid: series.value }) };
+          ...(firstSeries || !series.value ? {} : window.KinExamScope.seriesRequest(ctx.study(session.uid),series.value)) };
         const layout = await ctx.api('POST', '/film-print/layout', body, undefined, doc());
         if (!current(mine)) return;
         session.layout = layout;
         session.film = layout.film;
-        if (firstSeries || series.options.length !== layout.series.length) {
-          // The series values lead (data); the image count closes the line as one template the screen language reads.
-          series.replaceChildren(...layout.series.map(s => { const lead = [s.number != null ? `#${s.number}` : '', s.modality, s.description].filter(Boolean).join(' · ');
-            return node('option', { value: s.uid, textContent: lead ? kinSay('{0} · {n1} image{t2}', lead, s.images, { t: s.images === 1 ? '' : 's' })
+        {
+          const study = ctx.study(session.uid);
+          // The series values lead (data), after the original exam when this exam was merged or split; the image
+          // count closes the line as one template the screen language reads.
+          series.replaceChildren(...layout.series.map(s => { const own = [s.number != null ? `#${s.number}` : '', s.modality, s.description].filter(Boolean).join(' · ');
+            const lead = own && window.KinExamScope.originalLabel(study,s.sourceUid,own,true);
+            return node('option', { value: window.KinExamScope.seriesValue(study,s.sourceUid,s.uid), textContent: lead ? kinSay('{0} · {n1} image{t2}', lead, s.images, { t: s.images === 1 ? '' : 's' })
+              // Without a lead, the original exam (data) stays before the count, and the count stays a sentence.
+              : window.KinExamScope.screenScope(study) && s.sourceUid ? kinSay('{0} · {t1}', s.sourceUid, { t: kinSay('{n0} image{t1}', s.images, { t: s.images === 1 ? '' : 's' }) })
               : kinSay('{n0} image{t1}', s.images, { t: s.images === 1 ? '' : 's' }) }); }));
         }
-        series.value = layout.seriesUid;
+        series.value = window.KinExamScope.seriesValue(ctx.study(session.uid),layout.sourceUid,layout.seriesUid);
         paintFilm();
         label_();
       } catch (error) {
@@ -321,7 +340,7 @@
     const lost = error => error?.name !== 'AbortError' && !(error?.status >= 400 && error.status < 500) && !error?.auth;
 
     async function print() {
-      if (!session?.layout || !target.value) return;
+      if (!session?.layout || !target.value || !current(session.seq)) return;
       remember();
       stopWatching();
       const mine = ++seq;
@@ -330,7 +349,7 @@
       label_();
       const n = Math.min(5, Math.max(1, Math.round(Number(copies.value) || 1)));
       copies.value = n;
-      const body = { requestId: crypto.randomUUID(), studyUid: session.uid, seriesUid: session.layout.seriesUid, format: format.value,
+      const body = { requestId: crypto.randomUUID(), studyUid: session.uid, ...window.KinExamScope.sourceRequest(ctx.study(session.uid),session.layout.sourceUid,{}), seriesUid: session.layout.seriesUid, format: format.value,
         filmSize: size.value, orientation: orientation.value, film: session.layout.film, copies: n, plan: session.layout.plan,
         destination: { kind: kind(), peerId: target.value } };
       say([['', `Sending — film ${body.film} of ${session.layout.films} to ${where}`]]);
@@ -385,10 +404,9 @@
     target.addEventListener('change', () => {
       stopWatching();
       steps.replaceChildren();
-      const before = size.value;
-      fitSizes();
+      const resized = fitSizes();
       remember();
-      if (size.value !== before) void loadLayout(1); else label_();
+      if (!resized) label_();
     });
     prev.addEventListener('click', () => { if (session?.layout) void loadLayout(session.layout.film - 1); });
     next.addEventListener('click', () => { if (session?.layout) void loadLayout(session.layout.film + 1); });

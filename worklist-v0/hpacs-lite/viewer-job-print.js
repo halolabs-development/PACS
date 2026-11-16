@@ -294,14 +294,15 @@ globalThis.kinViewerJobPrint = function ({ api, authenticate, live, editor }) {
     };
     const job = await readJob(), identities = [], reports = [];
     const studies = job.snapshot.studies;
-    if (!Array.isArray(studies) || ![1, 2].includes(studies.length) || studies[0] !== item.uid || new Set(studies).size !== studies.length)
+    const exam=job.snapshot.exam,parents=exam?[exam.current.reportUid,...(exam.prior?[exam.prior.reportUid]:[])]:studies;
+    if (!Array.isArray(studies) || studies.length<1 || studies.length>(exam?20:2) || parents[0] !== item.uid || new Set(studies).size !== studies.length)
       throw new Error('출력 비교 검사 정보를 확인할 수 없습니다.');
     if (!['none', 'saved', 'prior', 'both', 'editor', 'editor-prior'].includes(reportChoice) ||
-        ['prior', 'both', 'editor-prior'].includes(reportChoice) && studies.length !== 2)
+        ['prior', 'both', 'editor-prior'].includes(reportChoice) && parents.length !== 2)
       throw new Error('선택한 판독문의 비교 검사를 확인할 수 없습니다.');
     const draftWanted = editorChoice(reportChoice);
     const reportUids = ['none', 'editor'].includes(reportChoice) ? [] : reportChoice === 'saved' ? [item.uid] :
-      ['prior', 'editor-prior'].includes(reportChoice) ? [studies[1]] : studies;
+      ['prior', 'editor-prior'].includes(reportChoice) ? [parents[1]] : parents;
     let currentPreview = null;
     // S3-U5: whose read permission each study's answer was produced under. The
     // citation section says so on the page, and a reduced line ('this reader
@@ -310,9 +311,13 @@ globalThis.kinViewerJobPrint = function ({ api, authenticate, live, editor }) {
     // and never from the session - so the sentence is about the read that
     // actually happened.
     const previewActors = new Map();
-    for (const uid of job.snapshot.studies) {
+    for (const uid of parents) {
       const data = await api('/studies/' + uid + '/report-preview', { signal });
       if (data.study?.uid !== uid) throw new Error('출력 검사 정보를 확인할 수 없습니다.');
+      if(exam && (reportUids.includes(uid) || draftWanted && uid===item.uid)) {
+        const ref=uid===exam.current.reportUid?exam.current:exam.prior;
+        if(data.scope?.groupId!==ref.groupId||data.scope?.part!==ref.part)throw Error('판독문과 저장한 영상의 검사 범위가 다릅니다. 판독 이력에서 해당 판을 여세요.');
+      }
       identities.push(data.study);
       previewActors.set(uid, typeof data.actor === 'string' ? data.actor : null);
       if (uid === item.uid) currentPreview = data;
@@ -330,6 +335,14 @@ globalThis.kinViewerJobPrint = function ({ api, authenticate, live, editor }) {
           throw new Error('출력 판독문 정보를 확인할 수 없습니다.');
         reports.push({ uid, report });
       }
+    }
+    if(exam)for(const uid of studies)if(!identities.some(row=>row.uid===uid)) {
+      const rows=await api('/dicom-web/studies?'+new URLSearchParams({StudyInstanceUID:uid}),{signal});
+      if(!Array.isArray(rows)||rows.length!==1)throw Error('출력 원본 검사 정보를 확인할 수 없습니다.');
+      const tag=key=>rows[0][key]?.Value?.[0]??'';
+      if(tag('0020000D')!==uid)throw Error('출력 원본 검사 식별이 다릅니다.');
+      identities.push({uid,id:tag('00100020'),name:typeof tag('00100010')==='object'?tag('00100010').Alphabetic||'':tag('00100010'),
+        birth:tag('00100030'),sex:tag('00100040'),date:tag('00080020'),acc:tag('00080050'),desc:tag('00081030'),modality:tag('00080061')});
     }
     // The unsaved body is asked for only after this study's own institution/P
     // boundary answered; it is never taken from a server draft or from the DOM.

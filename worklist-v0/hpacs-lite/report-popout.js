@@ -13,9 +13,9 @@
   'use strict';
 
   // Moved in this order; each leaves a marker behind so Dock restores the exact place.
-  const PARTS = ['draftbar', 'holdbar', 'deferbar', 'recnote', 'report-editor'];
+  const PARTS = ['exam-report-scope', 'draftbar', 'holdbar', 'deferbar', 'recnote', 'report-editor'];
   // The parts that are notice rows: in the window they go into its notice band, as on the page.
-  const NOTICES = ['draftbar', 'holdbar', 'deferbar', 'recnote'];
+  const NOTICES = ['exam-report-scope', 'draftbar', 'holdbar', 'deferbar', 'recnote'];
   const SAVE = 'b-save';
   const STYLE = `
 .report-window-place { flex: 1 1 0; min-width: 160px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;

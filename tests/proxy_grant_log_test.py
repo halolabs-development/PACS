@@ -67,10 +67,17 @@ def tool(name, variable):
     return found
 
 
-def free_port():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+def free_ports(n):
+    """n different free ports. They are held open together while chosen: a port closed before the next bind can be
+    handed out again, and two equal listen ports made nginx -t refuse "a duplicate default server"."""
+    sockets = [socket.socket() for _ in range(n)]
+    try:
+        for s in sockets:
+            s.bind(("127.0.0.1", 0))
+        return [s.getsockname()[1] for s in sockets]
+    finally:
+        for s in sockets:
+            s.close()
 
 
 def marker(n):
@@ -110,7 +117,7 @@ class Proxy:
         for sub in ("conf", "snippets", "workflow", "logs", "temp", "webroot/.well-known/acme-challenge"):
             (self.dir / sub).mkdir(parents=True)
         (self.dir / "webroot/.well-known/acme-challenge" / ACME_TOKEN).write_text(ACME_TOKEN + ".syn", encoding="utf-8")
-        self.p80, self.p443 = free_port(), free_port()
+        self.p80, self.p443 = free_ports(2)
         try:
             exported = self.run_envsh()
         except AssertionError:

@@ -80,6 +80,7 @@ SERVED_FILES = (
     "worklist-v0/hpacs-lite/kin-emblem-j1.svg",
     "worklist-v0/hpacs-lite/auth.js",
     "worklist-v0/hpacs-lite/work-context.js",
+    "worklist-v0/hpacs-lite/exam-scope.js",
     "worklist-v0/hpacs-lite/session-transport.js",
     "worklist-v0/hpacs-lite/report-draft-client.js",
     "worklist-v0/hpacs-lite/main.html",
@@ -642,8 +643,25 @@ class Site:
                 return self.answer(route, status, body, {"X-KIN-Auth-Code": body["code"]}
                                    if str(body.get("code", "")).startswith("AUTH_") else None)
             return route.fulfill(json=self.list_body(account))
+        if method == "GET" and path == "/api/studies" and parse_qs(query).get("uids"):
+            wanted = parse_qs(query)["uids"][0].split(",")
+            data = self.list_body(account)
+            return route.fulfill(json={**data, "studies": [row for row in data["studies"] if row["uid"] in wanted]})
         if method == "GET" and path == "/api/colleagues":
             return route.fulfill(json=[])
+        scope_path = re.fullmatch(r"/api/studies/([^/]+)/exam-scope", path)
+        if method == "GET" and scope_path:
+            uid = scope_path.group(1)
+            visible = next((row for row in self.list_body(account)["studies"] if row["uid"] == uid), None)
+            if not visible:
+                return route.fulfill(status=404, json={"message": "검사가 없습니다"})
+            scope = visible.get("examScope") or {
+                "reportUid": uid, "groupId": None, "part": None, "kind": None, "active": True,
+                "generation": "synthetic-scope", "sources": [{"studyUid": uid, "series": {"mode": "all", "uids": []}}]}
+            reference = json.loads(parse_qs(query).get("reference", ["null"])[0])
+            if reference != {key: scope[key] for key in ("reportUid", "groupId", "part")}:
+                return route.fulfill(status=409, json={"code": "EXAM_SCOPE_CHANGED"})
+            return route.fulfill(json=scope)
         if method == "GET" and path == "/api/prefs":
             return route.fulfill(json={"filters": [], "templates": []})
         if method == "GET" and path == "/api/worklist-columns":

@@ -106,7 +106,7 @@ function storeDouble() {
   const same = (a, b) => (a instanceof Date || b instanceof Date ? +a === +b : (a ?? null) === (b ?? null));
   const plain = v => v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date);
   const matches = (row, where) => Object.entries(where ?? {}).every(([key, value]) =>
-    key.includes('_') && plain(value) ? matches(row, value) : same(row[key], value));
+    key==='OR' ? value.some(w=>matches(row,w)) : plain(value)&&'in' in value ? value.in.includes(row[key]) : key.includes('_') && plain(value) ? matches(row, value) : same(row[key], value));
   const read = (name, row, select) => {
     const out = {};
     for (const [key, value] of Object.entries(row)) {
@@ -137,7 +137,9 @@ function storeDouble() {
     const check = row => { if (name === 'reportDraftInsertReceipt') receiptChecks(row); if (name === 'reportDraft') draftChecks(row); };
     return {
       async findUnique({ where, select } = {}) {
-        fault(name, 'findUnique', where); event(label, `read ${name} ${JSON.stringify(where)}`);
+          fault(name, 'findUnique', where);
+          const scopeOnly = name === 'reportVersion' && select && Object.keys(select).every(key => key === 'groupId');
+          event(label, `read ${scopeOnly ? 'reportScope' : name} ${JSON.stringify(where)}`);
         const row = rows().find(r => matches(r, where)), out = row ? read(name, row, select) : null;
         if (store.hooks.afterRead?.model === name) { const { fn } = store.hooks.afterRead; store.hooks.afterRead = null; await fn(); }
         return out;
@@ -196,6 +198,11 @@ function storeDouble() {
     }
     if (/FROM "AuthSession" WHERE sid = \? FOR KEY SHARE$/.test(sql)) {
       event(label, 'lock session'); return (t.authSession ?? []).filter(r => r.sid === values[0]).map(() => ({ held: 1 }));
+    }
+    if (sql === 'SELECT * FROM "StudyState" WHERE uid IN (?) ORDER BY uid FOR UPDATE') {
+      const uids=values[0].values;
+      for(const uid of uids){event(label, 'lock StudyState '+uid+' UPDATE');if(store.lockedRows.has(uid))throw sqlError('55P03','lock timeout');}
+      return (t.studyState??[]).filter(r=>uids.includes(r.uid)).sort((a,b)=>a.uid.localeCompare(b.uid)).map(copy);
     }
     let m;
     if ((m = /^SELECT (\*|uid) FROM "StudyState" WHERE uid = \? FOR (UPDATE|SHARE)$/.exec(sql))) {
@@ -289,6 +296,7 @@ function world({ source = SOURCE_LOW } = {}) {
     async prepareSourceIdentity(c, uids) { store.events.push('root identity ' + JSON.stringify(uids));
       const seen = sa.observed.get(c) ?? new Map(); sa.observed.set(c, seen);
       for (const uid of uids) if (!seen.has(uid)) seen.set(uid, sa.unobservable.has(uid) ? null : sa.split.has(uid) ? 2 : 1); },
+    assertIdentifiedSource(c, uid) { return { ...sa.assertUnsplitSource(c,uid), sourcePatientId:'SYN-P',sourceInstitution:INST }; },
     assertUnsplitSource(c, uid) { store.events.push('assert unsplit ' + uid);
       const count = sa.observed.get(c)?.get(uid);
       if (typeof count !== 'number') throw new ServiceUnavailableException({ code: 'STUDY_SOURCE_UNAVAILABLE', message: 'SYN source unobserved' });
@@ -964,10 +972,12 @@ test('W5API-25 lock order: session -> policy -> fixed records -> Source/Target r
     assert.ok(check > 0 && check < from, 'a read-only replay check commits before the write transaction takes the session lock');
     assert.equal(seen.slice(0, check).some(e => /^tx lock/.test(e) || e.includes(source)), false, 'the replay check locks nothing and reads no Source');
     const locks = seen.slice(from).filter(e => /^tx (lock|require)/.test(e));
-    const rows = [TARGET, source].sort().map(uid => `tx lock StudyState ${uid} ${uid === TARGET ? 'UPDATE' : 'SHARE'}`);
+    const rows = [TARGET, source].sort().map(uid => `tx lock StudyState ${uid} UPDATE`);
     const fixed = [TARGET, source].sort().map(uid => `tx lock fixed ${JSON.stringify(['emr-fixed-record', uid])}`);
-    assert.deepEqual(locks.slice(0, 2 + fixed.length + rows.length + 2), ['tx lock session', `tx require ${JSON.stringify([TARGET])}`, ...fixed, ...rows,
-      'tx lock ReportDraft', 'tx lock ReportDraftInsertReceipt'], source);
+    assert.equal(locks[0], 'tx lock session');
+    assert.ok(locks.indexOf(`tx require ${JSON.stringify([TARGET])}`) < locks.indexOf(fixed[0]));
+    const acquired = locks.filter(event => event.startsWith('tx lock'));
+    assert.deepEqual(acquired, ['tx lock session', ...fixed, ...rows, 'tx lock ReportDraft', 'tx lock ReportDraftInsertReceipt'], source);
     const w2 = world({ source }), held = insertBody(w2);
     hold(w2);
     await w2.send('put', { body: held });
@@ -1172,7 +1182,7 @@ test('W5API-32 WORKLIST-SPLIT-UID: a split Source refuses a new apply and a refu
     const sourceGate = observed.findIndex(e => e === `tx require ${JSON.stringify([w.source])}`);
     assert.ok(sourceGate >= 0 && unsplitAt > sourceGate, blocker + ': the Source scope gate decides before the identity refusal');
     assert.equal(observed.slice(unsplitAt).some(e => /read (reportVersion|report) .*/.test(e) && e.includes(w.source)), false,
-      blocker + ': no Source version or head is read');
+      blocker + ': no Source version body or head is read; scope metadata may prepare the ordered locks');
     // the finished answers are unchanged and never touch the Source
     const quiet = w.store.events.length;
     const replay = await w.send('put', { body: applied });

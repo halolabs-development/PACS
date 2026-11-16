@@ -20,7 +20,13 @@
         .sort((a, b) => b.date.localeCompare(a.date) || b.uid.localeCompare(a.uid))[0]?.uid ?? null;
     }
 
-    function openFilmbox(uid, priorUid = autoPrior(uid), initialSeriesUid = null) {
+    function viewerOpening(uid, priorUid = null, supplied = null) {
+      if (supplied) return supplied;
+      const current = studies.find(row => row.uid === uid) || {uid};
+      const prior = priorUid && priorUid !== uid ? studies.find(row => row.uid === priorUid) || {uid:priorUid} : null;
+      return KinExamScope.viewerInput(current, prior);
+    }
+    function openFilmbox(uid, priorUid = autoPrior(uid), initialSeriesUid = null, openingOptions = null) {
       // WORKLIST-SPLIT-UID: a study (or comparison) the last list excluded as unresolved replaces no window or workspace
       // pane. A stale button or a direct URL still meets the image gate's 403 on the server.
       if ([uid, priorUid].some(value => value && appState[value]?.identityUnresolved)) {
@@ -28,21 +34,23 @@
         return false;
       }
       if (readingWorkspace.active() || imageOpening?.snapshot().listTarget === 'workspace')
-        return readingWorkspace.open(uid, priorUid, initialSeriesUid);
-      return openOhifWindow(uid, priorUid, initialSeriesUid);
+        return openingOptions?.exam ? openOhifWindow(uid, priorUid, initialSeriesUid, null, openingOptions) : readingWorkspace.open(uid, priorUid, initialSeriesUid);
+      return openOhifWindow(uid, priorUid, initialSeriesUid, null, openingOptions);
     }
     function ohifScope(value) {
       try {
         const location = new URL(value, window.location.origin);
         if (location.origin !== window.location.origin || location.pathname !== "/ohif/viewer") return null;
         const studies = (location.searchParams.get("StudyInstanceUIDs") || "").split(",");
-        if (studies.length < 1 || studies.length > 2 || studies.some(uid => !/^\d+(?:\.\d+)+$/.test(uid))) return null;
-        return { studies, series: location.searchParams.get("initialSeriesInstanceUID") || null };
+        // Current and prior each retain their independently resolved original sets.
+        if (studies.length < 1 || studies.length > (location.searchParams.has("kinExamScopes") ? 20 : 2) || studies.some(uid => !/^\d+(?:\.\d+)+$/.test(uid))) return null;
+        return { studies, series: location.searchParams.get("initialSeriesInstanceUID") || null,
+          exam:location.searchParams.get('kinExamScopes') };
       } catch (_) { return null; }
     }
     function sameOhifScope(left, right) {
       const a = ohifScope(left), b = ohifScope(right);
-      return !!a && !!b && a.series === b.series && JSON.stringify(a.studies) === JSON.stringify(b.studies);
+      return !!a && !!b && a.series === b.series && a.exam === b.exam && JSON.stringify(a.studies) === JSON.stringify(b.studies);
     }
     function ohifPopupState(popup) {
       try {
@@ -122,9 +130,10 @@
       const UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
       const returnHash=typeof readingReturn==='string'&&UUID4.test(readingReturn)?'#kin-reading-return='+readingReturn:'';
       const viewingSet = typeof openingOptions?.viewingSet === 'string' && UUID4.test(openingOptions.viewingSet) ? openingOptions.viewingSet : null;
-      let url = `/ohif/viewer?StudyInstanceUIDs=${encodeURIComponent(uid)}` +
-        (priorUid && priorUid !== uid ? `,${encodeURIComponent(priorUid)}&hangingProtocolId=@ohif/hpCompare` : "") +
-        (initialSeriesUid === null ? "" : `&initialSeriesInstanceUID=${encodeURIComponent(initialSeriesUid)}`)+returnHash+
+      let input;
+      try { input = viewerOpening(uid, priorUid, openingOptions?.exam); }
+      catch (error) { notify(error.message, 'err'); return outcome('failed', error.message); }
+      let url = KinExamScope.viewerUrl(input, initialSeriesUid)+returnHash+
         (viewingSet ? (returnHash ? '&' : '#') + 'kin-w9=' + viewingSet : '');
       const seq = ++ohifOpenSeq;
       if (!viewerWindows) { notify('영상 창 연결을 확인하지 못했습니다. 통합 판독 화면을 사용하거나 목록을 새로고침하세요.', 'err'); return outcome('refused', '영상 창 연결을 확인하지 못했습니다. 통합 판독 화면을 사용하거나 목록을 새로고침하세요.'); }
@@ -364,7 +373,7 @@
       if (viewingSetToWorkspace() && !preservePartner) return { status: 'reserved', kind: 'workspace' };
       if (demoMode) return { status: 'refused', message: '데모 모드에서는 뷰어를 열 수 없습니다.' };
       if (!viewerWindows) return { status: 'refused', message: '영상 창 연결을 확인하지 못했습니다. 통합 판독 화면을 사용하거나 목록을 새로고침하세요.' };
-      const url = `/ohif/viewer?StudyInstanceUIDs=${uids.map(encodeURIComponent).join(',')}` + (uids.length === 2 ? '&hangingProtocolId=@ohif/hpCompare' : '');
+      const url = KinExamScope.viewerUrl(KinExamScope.originalInput(uids));
       // A previous composition may leave this retry document open. Reuse its slot through the normal launch guards.
       const ownRetryWindow = preservePartner && viewingSetRetryWindow?.isOpen() && viewerWindows.rows().some(row => row.popup === viewingSetRetryWindow.popup);
       const choice = viewerWindows.choose(url, 1, preservePartner && !ownRetryWindow ? { freshDocument: true } : { singleWindow: true });
@@ -392,7 +401,7 @@
         return readingWorkspace.openViewingSet(plan.uid, plan.priorUid, { opening, metadata });
       }
       if (reservation?.kind !== 'window') return { status: 'refused', message: '영상 창을 확인하지 못했습니다. 다시 여세요.' };
-      return Promise.resolve(openOhifWindow(plan.uid, plan.priorUid, null, null, { reservation, viewingSet: opening, signal })).then(result => {
+      return Promise.resolve(openOhifWindow(plan.uid, plan.priorUid, null, null, { reservation, viewingSet: opening, signal, exam:KinExamScope.originalInput(uids) })).then(result => {
         if (result.status === 'accepted') {
           const sequence = ohifPopupSequences.get(reservation.popup);
           result.isOpen = () => !reservation.popup.closed && ohifPopupSequences.get(reservation.popup) === sequence;
@@ -580,7 +589,9 @@
           if (!target) { status.textContent = '기존 영상 창의 검사와 계정을 확인한 뒤 다시 여세요.'; return; }
           status.textContent = '';
           const readingReturn = new URLSearchParams(new URL(state.href, location.origin).hash.slice(1)).get('kin-reading-return');
-          openOhifWindow(target.studies[0], target.studies[1] || null, target.series, readingReturn, { freshDocument: true, notice: message => { status.textContent = message; } });
+          const input = target.exam ? popup.KinViewerExamScope?.snapshot() : null;
+          if (target.exam && !input) { status.textContent = "검사 범위를 확인한 뒤 목록에서 다시 여세요."; return; }
+          openOhifWindow(input?.reportUid || target.studies[0], input?.prior?.reportUid || (!input && target.studies[1]) || null, target.series, readingReturn, { ...(input ? {exam:input} : {}), freshDocument: true, notice: message => { status.textContent = message; } });
           render(); return;
         }
         if (action === 'close') {

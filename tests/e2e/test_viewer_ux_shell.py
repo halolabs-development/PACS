@@ -22,6 +22,7 @@ from test_cine import CineE2E
 from test_display_controls import DisplayControlsE2E
 from document_session import document_request
 from network_faults import route_first
+import admin_otp
 
 
 class ViewerUXShellE2E(ViewerLayoutE2E):
@@ -396,6 +397,7 @@ class ViewerUXShellE2E(ViewerLayoutE2E):
         home = context.new_page(); home.goto(self.stack.proxy + '/')
         home.locator('#username').fill(self.stack.username(actor))
         home.locator('#password').fill(self.stack.passwords[actor]); home.locator('#kc-login').click()
+        admin_otp.answer_page(home, self.stack.username(actor))
         home.wait_for_url('**/worklist/hpacs-lite/clinician.html', timeout=30000)
         expect(home.locator('#actor')).to_contain_text(actor)
         page = context.new_page(); requests = []

@@ -176,7 +176,7 @@ before(async () => {
   const adminSub = 'synthetic-consumer-admin';
   await witness.memberRights.create({ data: { sub: adminSub, username: adminSub, email: adminSub + '@example.test',
     name: 'Synthetic Admin', emailVerified: true, approved: true, suspended: false, institution, roles: ['admin'] } });
-  const adminToken = await new jose.SignJWT({ email: adminSub + '@example.test', realm_access: { roles: ['admin'] }, groups: ['/' + institution] })
+  const adminToken = await new jose.SignJWT({ email: adminSub + '@example.test', realm_access: { roles: ['admin'] }, amr: ['otp'], groups: ['/' + institution] })
     .setProtectedHeader({ alg: 'RS256', kid: jwk.kid }).setIssuer(issuer).setSubject(adminSub).setAudience('kin-api')
     .setIssuedAt().setExpirationTime('30m').sign(privateKey);
   ctx = { witness, runtime, app, provider, relay, split, sourceRows, origin, token, clinicianToken, adminSub, adminToken, instances };

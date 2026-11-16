@@ -10,11 +10,11 @@ const caller = (r: any): Caller => {
 export class ViewerAutoViewController {
   constructor(private svc: ViewerAutoViewService) {}
   @Get('studies/:uid/viewer-auto-view')
-  read(@Param('uid') uid: string, @Req() r: any) { return this.svc.read(uid, caller(r)); }
+  read(@Param('uid') uid: string, @Req() r: any) { return this.svc.read(uid, caller(r), r.query?.exam); }
   @Post('studies/:uid/viewer-auto-view')
   @HttpCode(200)
-  save(@Param('uid') uid: string, @Req() r: any) { return this.svc.save(uid, r.rawBody, caller(r)); }
+  save(@Param('uid') uid: string, @Req() r: any) { return this.svc.save(uid, r.rawBody, caller(r), r.query?.exam); }
   @Post('studies/:uid/viewer-auto-view/discard')
   @HttpCode(200)
-  discard(@Param('uid') uid: string, @Req() r: any) { return this.svc.discard(uid, r.rawBody, caller(r)); }
+  discard(@Param('uid') uid: string, @Req() r: any) { return this.svc.discard(uid, r.rawBody, caller(r), r.query?.exam); }
 }

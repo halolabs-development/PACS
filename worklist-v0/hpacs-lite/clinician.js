@@ -173,6 +173,7 @@
   // S7-U2a 받은 중요 결과 영역(critical-result-inbox.js mount의 반환값). 승인된 세션에서만 붙는다.
   let criticalInbox = null;
   // 사용자가 Show Timeline을 누른 뒤에만 참이다. 그 뒤 고르는 검사는 타임라인을 이어서 읽는다(이 문서 안에서만).
+  let displayedExam = null, displayedReport = null, selectedReportTarget = null, viewerSequence = 0;
   let timelineOpen = false;
   let timelineSeq = 0;
   // S5-U4b. Questions를 연 뒤에는 이어서 고르는 검사도 연 채로 읽는다(이 문서 안에서만, 타임라인과 같다).
@@ -674,26 +675,35 @@
       note.textContent = TEXT.compareGone;
       return;
     }
-    const uids = other ? [row.uid, other.uid] : [row.uid];
-    if (!uids.every(uid => typeof uid === 'string' && uid.length <= 64 && STUDY_UID.test(uid))) {
-      note.textContent = TEXT.viewerUid;
-      return;
-    }
-    // main.html openOhifWindow와 같은 주소 모양: 첫 검사가 현재 검사, 둘째가 비교 검사이고 비교 배치로 연다.
-    const url = `/ohif/viewer?StudyInstanceUIDs=${uids.join(',')}${other ? '&hangingProtocolId=@ohif/hpCompare' : ''}`;
-    const expectedSession = KinAuth.sessionId();
-    if (!expectedSession) { note.textContent = '세션을 확인할 수 없습니다. 목록을 다시 열어 주세요.'; return; }
-    let popup = null;
-    try { popup = root.open(url, VIEWER_WINDOW); } catch (_) {}
-    if (!popup) {
-      note.textContent = TEXT.viewerBlocked;
-      return;
-    }
-    // name은 서버/URL 이력에 남지 않는다. 새 뷰어의 첫 설정 스크립트가 읽고 원래 창 이름으로 돌린다.
-    try { popup.name = 'kin-viewer-entry:' + JSON.stringify({ session: expectedSession, name: VIEWER_WINDOW }); popup.opener = null; }
-    catch (_) { try { popup.close(); } catch (_) {} note.textContent = TEXT.viewerBlocked; return; }
-    try { popup.focus(); } catch (_) {}
-    note.textContent = other ? TEXT.compareAsked : TEXT.viewerAsked;
+    const at=++viewerSequence,mine=reportSeq,scope=displayedExam,target=displayedReport;
+    if(![target?.uid||row.uid,...(other?[other.uid]:[])].every(uid=>typeof uid==='string'&&uid.length<=64&&STUDY_UID.test(uid))){note.textContent=TEXT.viewerUid;return;}
+    const expectedSession=KinAuth.sessionId();
+    if(!expectedSession){note.textContent='세션을 확인할 수 없습니다. 목록을 다시 열어 주세요.';return;}
+    let input;
+    try {
+      if(!scope&&row.exam&&!row.exam.scope||other?.exam&&!other.exam.scope)throw Error('검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.');
+      input=root.KinExamScope.viewerInput(scope||row.report?.scope||row.exam?.scope||row,
+        other&&(other.report?.scope||other.exam?.scope||other),target?.version??null,other?.report?.final?other.report.version:null);
+    } catch(error) { note.textContent=describe(error);return; }
+    let popup=null;try{popup=root.open(input.scoped?'':root.KinExamScope.viewerUrl(input),VIEWER_WINDOW);}catch(_){}
+    if(!popup){note.textContent=TEXT.viewerBlocked;return;}
+    const fresh=()=>!leaving&&selected===row.uid&&mine===reportSeq&&at===viewerSequence&&KinAuth.sessionId()===expectedSession;
+    const apiRead=(_method,path)=>request(path);
+    (async()=>{
+      try {
+        const priorVersion=other?.report?.final?other.report.version:null;
+        if(input.scoped){
+          const current=await root.KinExamScope.fetch(apiRead,target?.uid||row.uid,{purpose:target?'stored':'current',version:target?.version});
+          const prior=other?await root.KinExamScope.fetch(apiRead,other.uid,{purpose:priorVersion?'stored':'current',version:priorVersion}):null;
+          if(scope&&root.KinExamScope.stamp(scope)!==root.KinExamScope.stamp(current))throw Error('판독 영상 범위가 바뀌었습니다. 판독문을 다시 여세요.');
+          input=root.KinExamScope.viewerInput({examScope:current},prior,target?.version??null,priorVersion);
+        }
+        if(!fresh())return;
+        popup.name='kin-viewer-entry:'+JSON.stringify({session:expectedSession,name:VIEWER_WINDOW});popup.opener=null;
+        if(input.scoped)popup.location.replace(root.KinExamScope.viewerUrl(input));popup.focus();
+        note.textContent=other?TEXT.compareAsked:TEXT.viewerAsked;
+      }catch(error){if(fresh())note.textContent=describe(error);}
+    })();
   }
 
   function setReport(state, text, detail) {
@@ -712,6 +722,7 @@
   }
 
   function clearReport() {
+    displayedExam=null;displayedReport=null;viewerSequence++;
     const report = $('#report');
     delete report.dataset.uid;
     $('#report-status').replaceChildren();
@@ -759,7 +770,7 @@
     if (!Number.isSafeInteger(report.version) || report.version < 1 || !FINAL_TYPE[report.action]
         || text.some(key => typeof report[key] !== 'string') || !Array.isArray(body.keys))
       throw new Error('판독 응답 형식을 확인할 수 없습니다.');
-    return { uid, final: true, action: report.action, version: report.version,
+    return { uid, final: true, scope: body.scope || report.scope || null, action: report.action, version: report.version,
       repDoc: typeof report.repDoc === 'string' ? report.repDoc : null,
       confirm: typeof report.confirm === 'string' ? report.confirm : null,
       // FC-034: 승인 후 24시간 안에 승인한 판독의가 고친 판이 머리일 때만 시각이 온다.
@@ -811,12 +822,14 @@
     entry.append(node('p', 'key-title', typeof item.title === 'string' && item.title.trim() ? item.title : TEXT.untitled));
     if (typeof item.description === 'string' && item.description.trim()) entry.append(node('p', 'key-description', item.description));
     const frame = Number.isSafeInteger(item.frame) ? String(item.frame) : '—';
-    entry.append(node('p', 'key-ref', `Series ${dash(item.seriesUid)} · Instance ${dash(item.sopUid)} · Frame ${frame}`));
+    entry.append(node('p', 'key-ref', root.KinExamScope.originalLabel(displayedExam, key?.sourceUid ? 'Study '+key.sourceUid : null, `Series ${dash(item.seriesUid)} · Instance ${dash(item.sopUid)} · Frame ${frame}`, true)));
     return entry;
   }
 
   function paintReport(view) {
     clearReport();
+    displayedExam = view.scope ? root.KinExamScope.read(view.scope) : null;
+    displayedReport = view.final ? {uid:view.uid,version:view.version} : null;
     $('#report').dataset.uid = view.uid;
     const status = view.final ? { final: true, action: view.action } : { final: false, rs: view.rs };
     $('#report-status').replaceChildren(statusBadge(status));
@@ -849,14 +862,47 @@
     return !leaving && mine === reportSeq && selected === uid;
   }
 
-  function select(uid) {
+  /**
+   * Merge Exam: which exam this study was reported as — one merged with other studies now, or one whose report was written on
+   * such an exam before it was unmerged. Images then open as that exam; a merged study's report is on the base study's row.
+   */
+  function paintExam(row) {
+    let box = $('#exam-note');
+    if (!box) {
+      box = node('p', 'exam-note');
+      box.id = 'exam-note';
+      $('#viewer-note')?.before(box);
+    }
+    const reports=row.exam?.reports||[];
+    const current=root.KinExamScope.read(row.exam?.scope);
+    box.hidden=!row.exam&&!reports.length;
+    box.replaceChildren(node('b','',current?.kind==='merge'?'Merged exam':current?.kind==='split'?'Split exam':'Exam Reports'));
+    if(row.exam?.readable===false)box.append(' — 저장된 검사 범위 일부를 볼 수 없어 해당 판독문을 열 수 없습니다.');
+    if(current?.kind==='merge'&&current.active&&current.reportUid!==row.uid){
+      const base=node('button','','Open Base Study');base.type='button';
+      base.onclick=()=>byUid.has(current.reportUid)?select(current.reportUid):select(row.uid,reports.find(r=>r.uid===current.reportUid)||{uid:current.reportUid});
+      box.append(' — 이 검사는 다른 검사와 합쳐 하나로 판독합니다. ',base);
+    }
+    for(const report of reports){
+      const scope=root.KinExamScope.read(report.scope);
+      if(!scope)continue;
+      const open=node('button','',`${scope.kind==='split'?'Split '+(scope.part+1)+'/2':scope.kind==='merge'?'Merged exam':'Original exam'} · v${report.version}`);
+      open.type='button';open.title='이 판의 저장된 판독문과 영상 범위를 엽니다.';
+      open.onclick=()=>select(row.uid,report);
+      box.append(' ',open);
+    }
+  }
+
+  function select(uid, reportTarget = null) {
     if (leaving) return;
     const row = byUid.get(uid);
     if (!row) return;
+    selectedReportTarget=reportTarget;
     selected = uid;
     const mine = ++reportSeq;
     markSelected(uid);
     paintIdentity(row);
+    paintExam(row);
     paintTimelineShell(row);
     paintQuestionsShell(row);
     clearReport();
@@ -864,11 +910,13 @@
     setReport('loading', TEXT.reportLoading);
     setKeys(TEXT.keysLoading, null);
     paintRequestsShell(row);
-    request(`/clinician/studies/${encodeURIComponent(uid)}/report`).then(body => {
+    const reportUid=reportTarget?.uid||uid,version=reportTarget?.version;
+    request(`/clinician/studies/${encodeURIComponent(reportUid)}/report`+(version?`?version=${version}`:'')).then(body => {
       if (!reportFresh(mine, uid)) return;
       let view;
       try {
-        view = readReport(uid, body);
+        view = readReport(reportUid, body);
+        if(version && view.version !== version)throw new Error("요청한 판독 버전과 다릅니다.");
       } catch (error) {
         setReport('failed', TEXT.reportFailed, describe(error));
         setKeys(TEXT.keysFailed, null);
@@ -1966,6 +2014,10 @@
       view.title = TIMELINE.notListed;
     } else view.addEventListener('click', () => viewFromTimeline(row.uid));
     item.append(view);
+    for(const report of row.exam?.reports||[]){
+      const button=node('button',null,'Report · v'+report.version);button.type='button';
+      button.onclick=()=>{if(!byUid.has(row.uid))byUid.set(row.uid,row);select(row.uid,report);};item.append(' ',button);
+    }
     return item;
   }
 
@@ -2856,7 +2908,7 @@
     $('#membership-logout').addEventListener('click', () => logout());
     $('#refresh').addEventListener('click', () => loadList());
     $('#list-retry').addEventListener('click', () => loadList());
-    $('#report-retry').addEventListener('click', () => { if (selected !== null) select(selected); });
+    $('#report-retry').addEventListener('click', () => { if (selected !== null) select(selected,selectedReportTarget); });
     $('#open-viewer').addEventListener('click', () => openViewer(null));
     $('#detail-close').addEventListener('click', () => closeDetail());
     // Open Viewer와 Compare의 결과(창 차단·다시 확인 실패)를 읽어 준다.

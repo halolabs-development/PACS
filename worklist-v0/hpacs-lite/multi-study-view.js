@@ -264,6 +264,9 @@
     const work = o.work, host = o.host, $ = selector => host.querySelector(selector);
     const summary = $('#multi-study-summary'), status = $('#multi-study-status'), identity = $('#multi-study-identity');
     const candidateStatus = $('#multi-study-candidate');
+    const originalsNote=document.createElement('p');
+    originalsNote.textContent='Viewing Set은 원본 검사 단위로 엽니다. Split의 다른 부분도 표시됩니다.';
+    identity.after(originalsNote);
     const list = $('#multi-study-members'), title = $('#multi-study-title');
     const previous = $('#multi-study-prev'), next = $('#multi-study-next'), compare = $('#multi-study-compare');
     const pages = $('#multi-study-pages'), retry = $('#multi-study-retry'), close = $('#multi-study-close');

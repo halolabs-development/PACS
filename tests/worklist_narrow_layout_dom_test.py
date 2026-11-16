@@ -36,6 +36,7 @@ class WorklistNarrowLayoutDOMTest(unittest.TestCase):
               document.querySelector('#rows').addEventListener('click',event=>{if(event.target.closest('[data-tech-note]')){window.techNoteOpened=true;return}window.rowClicked=true});
               document.querySelector('#findings').value='Unchanged editor text';
             }""")
+            page.add_script_tag(content=(ASSETS / 'exam-scope.js').read_text(encoding='utf-8'))
             page.add_script_tag(content=(ASSETS / 'worklist-selection.js').read_text(encoding='utf-8'))
             page.evaluate("""()=>window.selection=KinWorklistSelection.mount({host:document.querySelector('#worklist-selection'),
               tbody:document.querySelector('#rows'),owner:()=> 'synthetic-owner',rows:()=>[{uid:'2.25.10'}],current:()=>null})""")

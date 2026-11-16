@@ -233,7 +233,7 @@ class ViewerMgDOMTest(unittest.TestCase):
         page.goto(URL_A)
         page.add_style_tag(path=str(HPACS / "viewer-ux-theme.css"))
         for name in ["viewer-ux-shortcuts.js", "viewer-features.js", "viewer-ux-toolbar.js", "mammography-model.js",
-                     "viewer-patient-tabs.js", "viewer-editor-link.js"]:
+                     "exam-scope.js", "viewer-exam-scope.js", "viewer-patient-tabs.js", "viewer-editor-link.js"]:
             page.add_script_tag(path=str(HPACS / name))
         page.evaluate(SETUP, OWNER)
         page.evaluate(CELLS)

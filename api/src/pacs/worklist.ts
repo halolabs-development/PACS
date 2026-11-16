@@ -5,7 +5,7 @@
  */
 import type { StudyAccessService } from '../study-access.service';
 import type { AccessSnapshot } from '../study-access.service';
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { PrismaService } from '../prisma.service';
 import { OrthancService } from '../orthanc.service';
@@ -23,6 +23,9 @@ import type { PacsInstitutions } from './institutions';
 import type { PacsPreferences } from './preferences';
 import type { PacsAudit } from './audit';
 import { worklistRead } from '../emr-viewing/consumer-read';
+import { currentExams, prepareExamRead, readableExamRecords, scopeIncludesSeries, examLookupSources, examParentAccess, examScopeView,
+  examTargets, relatedExamReports, resolveExamScope, storedExamScope } from '../exam-merge.service';
+import type { ResolvedExamScope } from '../exam-merge.service';
 
 /** An order's accession as stored (trimmed); null when it has none. */
 const orderAccessionOf = (order: { accession?: unknown } | null | undefined): string | null =>
@@ -48,12 +51,14 @@ export class PacsWorklist {
    * Orthanc에 기관을 물어보는 것이다. 기관은 영상에 찍혀 오는 사실이고
    * 한 번 판정하면 변하지 않으므로, 처음 보는 순간 DB에 확정한다.
    */
-  async listStudies(c: Caller, query?: any) {
-    return (await this.selectStudies(c, query)).body;
+  async listStudies(c: Caller, query?: any, purpose: 'current' | 'source' = 'current') {
+    // The worklist's own list is of exams: a merged exam is one row (Merge Exam). EMR and clinician reads keep the studies.
+    return (await this.selectStudies(c, query, purpose)).body;
   }
 
   async readStudies(c: Caller, query?: any) {
-    const { body, institutions, identities } = await this.selectStudies(c, query);
+    // The worklist's own read (GET studies): a list of exams, like listStudies; every study a row returns is recorded.
+    const { body, institutions, identities } = await this.selectStudies(c, query, 'current');
     return worklistRead(body, c.actor, inst(c), institutions, identities);
   }
 
@@ -213,7 +218,8 @@ export class PacsWorklist {
   }
 
   // The clinician projections reuse this selection and its observed source identity.
-  async selectStudies(c: Caller, query?: any) {
+  async selectStudies(c: Caller, query?: any, purpose: 'current' | 'source' = 'source') {
+    const exams = purpose === 'current';
     const me = inst(c);
     const access=await this.studyAccess.snapshot(c);
     const requested = query?.uids;
@@ -222,21 +228,23 @@ export class PacsWorklist {
     const uids = requested === undefined ? null : requested.split(',');
     const owner = [me, c.sub, c.actor, String(access.revision), String(access.windowOpen)], page = studyPageQuery(uids ? undefined : query, owner);
     // S4-U2 asks the paged enumeration for the indexed AccessionNumber too; the full QIDO carries it already.
-    const qido = uids ? await this.orthanc.studiesByUid(uids) : page ? await this.orthanc.studyIdentities(true, true) : await this.orthanc.studies();
+    const lookup = uids && exams ? await examLookupSources(this.prisma, uids) : null;
+    const qido = uids ? await this.orthanc.studiesByUid(lookup?.sources ?? uids) : page ? await this.orthanc.studyIdentities(true, true) : await this.orthanc.studies();
     // S4-U1b: the server time at which this successful enumeration returned. A failed QIDO throws
     // before this line, so no response ever carries an observation time it did not make.
     const observedAt = new Date().toISOString();
+    this.studyAccess.observeSourceIdentities(c, qido);
     // WORKLIST-SPLIT-UID: every original resource of a UID, grouped. A UID that two patient resources answer is
     // registered once, never projected as a normal row, and announced (identityIssues) only inside the caller's scope.
     const sources = groupSources(qido, st => OrthancService.tag(st, '0020000D'));
     const resolvedOf = (st: any) => this.institutions.resolveInstitution(OrthancService.tag(st, '00080080'));
     // The fields that decide who may see a row and read its report. The paged enumeration reads them too, so a change
     // made before the page's details are read is still a change.
-    const accessFields = ['institutionId', 'teleInstitutionId', 'rs', 'preDoc', 'preReviewer', 'preDocSub', 'preReviewerSub'];
-    const enumerated = { uid:true, institutionId:true, teleInstitutionId:true, origin:true, createdAt:true,
+    const accessFields = ['institutionId', 'teleInstitutionId', 'rs', 'preDoc', 'preReviewer', 'preDocSub', 'preReviewerSub', 'draftEpoch'];
+    const enumerated = { uid:true, draftEpoch:true, institutionId:true, teleInstitutionId:true, origin:true, createdAt:true,
       rs:true, preDoc:true, preReviewer:true, preDocSub:true, preReviewerSub:true };
 
-    const states = uids ? await this.prisma.studyState.findMany({ where: { uid: { in: uids } } }) : page ? await this.prisma.studyState.findMany({ select: enumerated }) : await this.prisma.studyState.findMany();
+    const states = uids ? await this.prisma.studyState.findMany({ where: { uid: { in: lookup?.parents ?? uids } } }) : page ? await this.prisma.studyState.findMany({ select: enumerated }) : await this.prisma.studyState.findMany();
     const byUid = new Map(states.map(s => [s.uid, s as any]));
 
     // Both source paths carry indexed InstitutionName. Cold/held rows
@@ -255,12 +263,33 @@ export class PacsWorklist {
       else if (state.institutionId != null && (resources.every(st => resolvedOf(st) === state.institutionId)
         || this.institutions.resolveDevice(await this.sendingDevice(uid)) === state.institutionId)) issues.push(uid);
     }
-    const window = studyPageSlice(normal, st => OrthancService.tag(st, '0020000D'), page, owner);
-    const pageUids = window.rows.map(st => OrthancService.tag(st, '0020000D'));
+    /**
+     * Merge Exam: the worklist lists exams. A merged exam whose studies are all in this caller's list is its base
+     * row only; the other studies leave the list before paging, so pages, the cursor and Total count exams. A caller who
+     * cannot see every study of a merged exam sees the original rows; the shared scope gate refuses its report writes.
+     */
+    const uidOf = (st: any) => st.examUid ?? OrthancService.tag(st, '0020000D');
+    const examByUid = new Map<string, ResolvedExamScope>(), mergedAway = new Set<string>();
+    const added: any[] = [];
+    if (exams) {
+      for (const scope of await currentExams(this.prisma, this.studyAccess, c, normal.map(uidOf))) {
+        examByUid.set(scope.reportUid, scope);
+        if (scope.kind === 'merge') for (const uid of scope.studies) if (uid !== scope.reportUid) mergedAway.add(uid);
+        if (scope.kind === 'split' && scope.reportUid !== scope.sources[0].studyUid)
+          added.push({ ...normal.find(st => uidOf(st) === scope.sources[0].studyUid), examUid: scope.reportUid });
+      }
+    }
+    const listed = [...normal.filter(st => !mergedAway.has(uidOf(st))), ...added].filter(st => !uids || uids.includes(uidOf(st))
+      || examByUid.get(uidOf(st))?.studies.some(uid => uids.includes(uid)));
+    const window = studyPageSlice(listed, uidOf, page, owner,
+      st => examByUid.get(uidOf(st))?.generation ?? uidOf(st));
+    const pageUids = window.rows.map(uidOf);
+    const pageSources = [...new Set(window.rows.map(st => OrthancService.tag(st, '0020000D')))];
+    const memberUids = [...new Set(pageUids.flatMap(uid => examByUid.get(uid)?.studies ?? [uid]))].filter(uid => !pageSources.includes(uid));
     // The list is complete with this answer: issues travel with it, like notObserved and orderReconciliation.
     // A targeted viewer lookup is not an archive enumeration; it cannot declare absence or reconcile orders.
     const completes = !uids && (!page || window.pagination?.next === null);
-    const watched = completes ? [...pageUids, ...issues] : pageUids;
+    const watched = [...new Set([...pageUids, ...pageSources, ...memberUids, ...completes ? issues : []])];
     // Compared with the enumeration's own rows (byUid is never replaced by later reads): the exact UID set, then
     // every access field of every row.
     const changedAccess = (rows: any[], expected: string[]) => !sameUidSet(rows.map(state => state.uid), expected)
@@ -274,19 +303,42 @@ export class PacsWorklist {
       if (changedAccess(details, pageUids)) throw accessConflict();
       for (const state of details) shown.set(state.uid, state);
     }
+    const sourceStates = new Map(byUid);
+    if (page && memberUids.length) {
+      const details = await this.prisma.studyState.findMany({ where: { uid: { in: memberUids } } });
+      if (changedAccess(details, memberUids)) throw accessConflict();
+      for (const state of details) sourceStates.set(state.uid, state);
+    }
+    for (const [uid, state] of shown) sourceStates.set(uid, state);
     const reports = await this.prisma.report.findMany({ where: { uid: { in: pageUids } } });
     const repByUid = new Map(reports.map(r => [r.uid, r]));
+    // Merge Exam: a report written on an exam group is about every study of it. Its text goes only to a caller who may read
+    // every one of them now (the row stays; the text is withheld), and the row says which studies it was written on.
+    const recordScopes = await readableExamRecords(this.prisma, this.studyAccess, c, reports);
+    const reportOf = (uid: string) => {
+      const report = repByUid.get(uid);
+      return report && !recordScopes.get(uid) ? { ...report, findings: '', conclusion: '', recommendation: '' } : report;
+    };
+    const reportGroupOf = (uid: string) => {
+      const report = repByUid.get(uid), scope = recordScopes.get(uid);
+      if (!report?.groupId) return {};
+      return { reportGroup: { id: report.groupId, active: scope?.active ?? false, readable: !!scope, studies: scope?.studies ?? [],
+        ...(scope?.kind === 'split' ? { part: scope.part, sources: scope.sources, generation: scope.generation } : {}) } };
+    };
     // 목록에도 내 초안을 함께 싣는다. 30초 폴링 응답이 초안 없이 오면
     // 클라이언트 병합이 쓰고 있던 초안을 지운다.
     const drafts = await this.prisma.reportDraft.findMany({ where: { author: c.actor, uid: { in: pageUids } } });
     const draftByUid = new Map(drafts.map(d => [d.uid, d]));
+    for (const [uid, scope] of await readableExamRecords(this.prisma, this.studyAccess, c, drafts.filter(draft => draft.present)))
+      if (!scope) draftByUid.delete(uid);
 
     // Only presence/version leaves this query, never the note body or author.
-    const noteRows = !pageUids.length ? [] : await this.prisma.$queryRaw<{ studyUid: string; version: number; present: boolean }[]>`
+    const metadataUids = [...new Set([...pageUids, ...pageSources, ...memberUids])];
+    const noteRows = !metadataUids.length ? [] : await this.prisma.$queryRaw<{ studyUid: string; version: number; present: boolean }[]>`
       SELECT DISTINCT ON (n."studyUid") n."studyUid", n.version, (n.text <> '') AS present
       FROM "TechNoteRevision" n JOIN "StudyState" s ON s.uid = n."studyUid"
       WHERE (s."institutionId" = ${me} OR s."teleInstitutionId" = ${me})
-        AND n."studyUid" IN (${Prisma.join(pageUids)})
+        AND n."studyUid" IN (${Prisma.join(metadataUids)})
       ORDER BY n."studyUid", n.version DESC`;
     const noteByUid = new Map(noteRows.map(n => [n.studyUid, { version: n.version, present: n.present }]));
 
@@ -294,18 +346,20 @@ export class PacsWorklist {
     const assignments = await this.prisma.readerAssignment.findMany({where:{studyUid:{in:pageUids},institutionId:me}});
     const assignmentByUid=new Map(assignments.map(a=>[a.studyUid,a]));
     // S4-U3 axis C: only receipts this institution's own Gateway credentials wrote, and below only on its own rows.
-    const receipts = await this.prisma.gatewayReceipt.findMany({ where: { studyUid: { in: pageUids }, institutionId: me } });
+    const receiptUids = [...new Set(pageUids.flatMap(uid => examByUid.get(uid)?.sources.map(source => source.studyUid) ?? [uid]))];
+    const receipts = await this.prisma.gatewayReceipt.findMany({ where: { studyUid: { in: receiptUids }, institutionId: me } });
     const receiptByUid = new Map(receipts.map(r => [r.studyUid, r]));
     // FC-076: attachments the archive holds (seen there) but nobody is served - pending, failed or withdrawn - are not
     // counted, under the study Orthanc actually holds each in. Each is one series of one instance.
-    const unserved = pageUids.length ? await this.prisma.studyAttachment.findMany({ where: { state: { not: 'stored' }, objectAt: { not: null },
-      OR: [{ uid: { in: pageUids }, objectStudyUid: null }, { objectStudyUid: { in: pageUids } }] }, select: { uid: true, objectStudyUid: true } }) : [];
+    const counted = [...pageSources, ...memberUids];
+    const unserved = counted.length ? await this.prisma.studyAttachment.findMany({ where: { state: { not: 'stored' }, objectAt: { not: null },
+      OR: [{ uid: { in: counted }, objectStudyUid: null }, { objectStudyUid: { in: counted } }] }, select: { uid: true, objectStudyUid: true, objectSeriesUid: true } }) : [];
     const unservedByUid = new Map<string, number>();
     for (const row of unserved) { const held = row.objectStudyUid ?? row.uid; unservedByUid.set(held, (unservedByUid.get(held) ?? 0) + 1); }
     const served = (count: number | null, uid: string) => count === null ? null : Math.max(0, count - (unservedByUid.get(uid) ?? 0));
     // S4-U5: the orders this page's own linked rows point to, one read pinned to the caller's institution and
     // taken before the access re-check below. study-identity.ts judges each pair; no Order value is sent.
-    const linked = [...new Set(pageUids.map(uid => shown.get(uid))
+    const linked = [...new Set(metadataUids.map(uid => sourceStates.get(uid))
       .filter(s => s?.institutionId === me && s.matched === 'M' && s.orderOid).map(s => s.orderOid))];
     const identityOrders = linked.length ? await this.prisma.order.findMany({
       where: { oid: { in: linked }, institutionId: me }, select: ORDER_IDENTITY_SELECT }) : [];
@@ -319,36 +373,101 @@ export class PacsWorklist {
       // The page's details must still be one resource per UID with the same access answer as the enumeration. A UID
       // that became a second resource since is a real change (the next first page excludes it); a stable split was
       // never on this page.
-      const detail = groupSources(await this.orthanc.studiesByUid(pageUids), st => OrthancService.tag(st, '0020000D'));
+      const detail = groupSources(await this.orthanc.studiesByUid(pageSources), st => OrthancService.tag(st, '0020000D'));
       // spec §3.2: each selected UID still has its one resource with the access tags the enumeration saw (the
       // enumeration's row is the immutable reference); a changed source tag is a changed list even when both values
       // would pass the policy and the stored rows are unchanged.
       const withMetadata = this.studyAccess.needsMetadata(access);
-      if (pageUids.some(uid => detail.byUid.get(uid)?.length !== 1 || !this.studyAccess.matches(access, uid, detail.byUid.get(uid)![0])
+      if (pageSources.some(uid => detail.byUid.get(uid)?.length !== 1 || !this.studyAccess.matches(access, uid, detail.byUid.get(uid)![0])
         || !this.patientIdentified(detail.byUid.get(uid)!)
         || !sameAccessTags(sources.byUid.get(uid)?.[0], detail.byUid.get(uid)![0], withMetadata)))
         throw accessConflict();
-      sourceRows = pageUids.map(uid => detail.byUid.get(uid)![0]);
+      sourceRows = window.rows.map(st => ({ ...detail.byUid.get(OrthancService.tag(st, '0020000D'))![0], ...(st.examUid ? { examUid: st.examUid } : {}) }));
+    }
+    // Merge Exam: each merged study's own row (Count, Series, Accession No, date, description), read like the page's rows
+    // and held to the same rules: one resource, an identified patient, the caller's access, the enumeration's access tags.
+    const memberRow = new Map<string, any>();
+    if (memberUids.length) {
+      const read = page ? [] as any[] : null;
+      if (read) for (let at = 0; at < memberUids.length; at += 100) read.push(...await this.orthanc.studiesByUid(memberUids.slice(at, at + 100)));
+      const members = read ? groupSources(read, uidOf) : sources;
+      const withMetadata = this.studyAccess.needsMetadata(access);
+      for (const uid of memberUids) {
+        const rows = members.byUid.get(uid);
+        if (rows?.length !== 1 || !this.studyAccess.matches(access, uid, rows[0]) || !this.patientIdentified(rows)
+          || (read && !sameAccessTags(sources.byUid.get(uid)?.[0], rows[0], withMetadata)))
+          throw accessConflict();
+        memberRow.set(uid, rows[0]);
+      }
+    }
+    const studyTotal = (rows: any[], key: string) => {
+      const values = rows.map(row => served(qidoCount(row, key), uidOf(row)));
+      return values.some(value => value === null) ? null : values.reduce((sum: number, value) => sum + (value as number), 0);
+    };
+    const seriesBySource = new Map<string, {uid:string;count:number|null}[]>();
+    for (const uid of pageUids) {
+      const scope = examByUid.get(uid);
+      if(scope?.kind==='split')for(const source of scope.sources)if(!seriesBySource.has(source.studyUid))
+        seriesBySource.set(source.studyUid,await this.studyAccess.sourceSeries(source.studyUid));
+    }
+    // DICOM PN representations retain their original separators in every source row.
+    const physician = (st: any, key: string): string | null => {
+      const pn = st?.[key]?.Value?.[0];
+      if (typeof pn === 'string') return pn || null;
+      if (!pn || typeof pn !== 'object') return null;
+      const parts = ['Alphabetic', 'Ideographic', 'Phonetic'];
+      const last = parts.reduce((index, part, i) => Object.prototype.hasOwnProperty.call(pn, part) ? i : index, -1);
+      return parts.slice(0, last + 1).map(part => typeof pn[part] === 'string' ? pn[part] : '').join('=') || null;
+    };
+    const mergedView = (uid: string, st: any) => {
+      const scope = examByUid.get(uid);
+      if (!scope) return null;
+      const rows = scope.studies.map(source => source === OrthancService.tag(st, '0020000D') ? st : memberRow.get(source));
+      const series = scope.kind === 'split' ? scope.sources.flatMap(source=>seriesBySource.get(source.studyUid)!.filter(s => scopeIncludesSeries(scope, source.studyUid, s.uid)
+        && !unserved.some(a => (a.objectStudyUid ?? a.uid) === source.studyUid && a.objectSeriesUid === s.uid))) : null;
+      const sourceMetadata = rows.map(row => {
+        const sourceUid = OrthancService.tag(row, '0020000D'), state = sourceStates.get(sourceUid);
+        const order = state?.institutionId === me && state.matched === 'M' ? requestByOid.get(state.orderOid) : null;
+        const referringPhysician = physician(row, '00080090'), requestingPhysician = physician(row, '00321032');
+        return { uid: sourceUid, acc: OrthancService.tag(row, '00080050'), date: OrthancService.tag(row, '00080020'),
+          time: OrthancService.tag(row, '00080030'), desc: OrthancService.tag(row, '00081030'), modality: row['00080061']?.Value?.join(',') ?? '',
+          count: served(qidoCount(row, '00201208'), sourceUid), series: served(qidoCount(row, '00201206'), sourceUid),
+          orderAccession: orderAccessionOf(order), ...requestColumns(order, { referringPhysician, requestingPhysician }),
+          referringPhysician, requestingPhysician, techNote: noteByUid.get(sourceUid) ?? { version: 0, present: false },
+          metadataTarget: sourceUid, assignmentTarget: scope.reportUid,
+          gatewayReceipt: state?.institutionId === me ? projectGatewayReceipt(receiptByUid.get(sourceUid)) : null,
+          ss: state?.ss ?? null, em: state?.em ?? null, matched: state?.matched ?? null, orderOid: state?.orderOid ?? null };
+      });
+      return {
+        count: series ? series.some(s => s.count === null) ? null : series.reduce((sum, s) => sum + s.count!, 0) : studyTotal(rows, '00201208'),
+        series: series ? series.length : studyTotal(rows, '00201206'),
+        examScope: examScopeView(scope), sourceMetadata,
+        group: { id: scope.groupId, kind: scope.kind, baseUid: scope.baseUid, ...(scope.part !== null ? { part: scope.part } : {}),
+          members: sourceMetadata },
+      };
+    };
+    const retained = new Map<string, any>();
+    if (exams) for (const link of await examTargets(this.prisma, pageUids)) {
+      if (!link.targets.some(target => target.groupId !== null)) continue;
+      try {
+        await prepareExamRead(this.prisma, this.studyAccess, c, link.uid);
+        const scope = examByUid.get(link.uid) ?? await resolveExamScope(this.prisma, this.studyAccess, c, { uid: link.uid, purpose: 'current' });
+        retained.set(link.uid, { examScope: storedExamScope(scope), relatedExamReports: await relatedExamReports(this.prisma, this.studyAccess, c, link.uid) });
+      } catch (error) {
+        if (!(error instanceof NotFoundException || error instanceof ConflictException)) throw error;
+        retained.set(link.uid, { examUnavailable: true, relatedExamReports: [] });
+      }
     }
     const out: any[] = [];
     for (const st of sourceRows) {
-      const uid = OrthancService.tag(st, '0020000D');
+      const uid = uidOf(st);
       const s = shown.get(uid);
       if (!s || !this.access.visible(s, me)) continue;   // ← 기관 경계. 여기가 전부다.
 
       const birth = OrthancService.tag(st, '00100030');
       const date = OrthancService.tag(st, '00080020');
       const patientId = OrthancService.tag(st, '00100020');
-      // DICOM JSON PN has up to three representations; preserve their separators, without display-name translation.
-      const physician = (key: string): string | null => {
-        const pn = st?.[key]?.Value?.[0];
-        if (typeof pn === 'string') return pn || null;
-        if (!pn || typeof pn !== 'object') return null;
-        const parts = ['Alphabetic', 'Ideographic', 'Phonetic'];
-        const last = parts.reduce((index, part, i) => Object.prototype.hasOwnProperty.call(pn, part) ? i : index, -1);
-        return parts.slice(0, last + 1).map(part => typeof pn[part] === 'string' ? pn[part] : '').join('=') || null;
-      };
-      const referringPhysician = physician('00080090'), requestingPhysician = physician('00321032');
+      const referringPhysician = physician(st, '00080090'), requestingPhysician = physician(st, '00321032');
       out.push({
         uid,
         techNote: noteByUid.get(uid) ?? { version: 0, present: false },
@@ -386,13 +505,20 @@ export class PacsWorklist {
         institutionNameTag: OrthancService.tag(st, '00080080'),
         // 이 검사가 우리에게 원격판독으로 넘어온 것인가 (화면에서 구분해 보여준다)
         tele: s.teleInstitutionId === me && s.institutionId !== me,
-        state: toClient(s, repByUid.get(uid), c, draftByUid.get(uid)),
+        state: { ...toClient(s, reportOf(uid), c, draftByUid.get(uid)),
+          reportScope: recordScopes.get(uid) ? examScopeView(recordScopes.get(uid)!) : null },
+        reportScope: recordScopes.get(uid) ? examScopeView(recordScopes.get(uid)!) : null,
+        reportReadable: !repByUid.has(uid) || !!recordScopes.get(uid),
+        ...reportGroupOf(uid),
+        ...retained.get(uid),
+        // Merge Exam: a merged exam's Count and Series are of all its studies, and `group` lists them (the base first).
+        ...(mergedView(uid, st) ?? {}),
       });
     }
     // A concurrent Preliminary transition can change who may read the report too. The page rows and the announced
     // UIDs are held to the enumeration's own rows.
     const current = () => this.prisma.studyState.findMany({ where: { uid: { in: watched } },
-      select: { uid:true, institutionId:true, teleInstitutionId:true, rs:true, preDoc:true, preReviewer:true, preDocSub:true, preReviewerSub:true } });
+      select: { uid:true, institutionId:true, teleInstitutionId:true, rs:true, preDoc:true, preReviewer:true, preDocSub:true, preReviewerSub:true, draftEpoch:true } });
     if (changedAccess(await current(), watched)) throw accessConflict();
     // S4-U2: the order side is read with the page that completes the list and BEFORE the access
     // re-check below, so a policy change during this request refuses the whole answer.
@@ -416,7 +542,7 @@ export class PacsWorklist {
       ...(notObserved === undefined ? {} : { notObserved }),
       ...(orderReconciliation === undefined ? {} : { orderReconciliation }),
       ...(completes ? { identityIssues: identityIssueList(issues) } : {}), ...(page ? { pagination: window.pagination } : {}) };
-    const identities = new Map(sourceRows.map(st => [OrthancService.tag(st, '0020000D'), {
+    const identities = new Map([...sourceRows, ...memberRow.values()].map(st => [OrthancService.tag(st, '0020000D'), {
       sourcePatientId: OrthancService.tag(st, '00100020') || null, sourceInstitution: OrthancService.tag(st, '00080080') || null }]));
     return { body, identities, institutions: new Map([...byUid].map(([uid, state]) => [uid, state.institutionId])) };
   }
@@ -439,7 +565,7 @@ export class PacsWorklist {
     }
     const out: { uid: string; origin: string; createdAt: string }[] = [];
     for (const s of states) {
-      if (s.institutionId !== me || present.has(s.uid) || !this.studyAccess.matches(access, s.uid)) continue;
+      if (s.origin === 'logical' || s.institutionId !== me || present.has(s.uid) || !this.studyAccess.matches(access, s.uid)) continue;
       if (!(s.createdAt instanceof Date) || typeof s.origin !== 'string') return null;
       const createdAt = s.createdAt.toISOString();
       if (createdAt > observedAt) continue;
@@ -512,18 +638,40 @@ export class PacsWorklist {
     }
     // A tele assignment without its owning institution is held residue, not a
     // publishable study. Exclude it before reading reports/drafts or recording delivery.
-    const states=stateRows.filter(s=>this.access.visible(s,me)&&permitted.has(s.uid)&&!unresolved.has(s.uid));
+    const states = [];
+    for (const state of stateRows) {
+      if (!this.access.visible(state, me) || unresolved.has(state.uid)) continue;
+      if (state.origin !== 'logical') { if (permitted.has(state.uid)) states.push(state); continue; }
+      await prepareExamRead(this.prisma, this.studyAccess, c, state.uid);
+      try {
+        const scope = await examParentAccess(this.prisma, this.studyAccess, c, state.uid);
+        if (!scope.studies.some(uid => unresolved.has(uid))) states.push(state);
+      } catch (error) {
+        if (!(error instanceof NotFoundException || error instanceof ConflictException)) throw error;
+      }
+    }
     const orders=orderRows.filter(o=>o.studyUid?permitted.has(o.studyUid):!access.policy.restricted);
     const reports = omitStates ? [] : await this.prisma.report.findMany({
       where: { uid: { in: states.map(s => s.uid) } },
     });
-    const byUid = Object.fromEntries(reports.map(r => [r.uid, r]));
+    // Merge Exam: the same rule as the list — a report written on an exam group goes only to a caller who may read all of it.
+    const byUid: Record<string, any> = {};
+    const reportScopes: Record<string,any> = {};
+    const readable = await readableExamRecords(this.prisma, this.studyAccess, c, reports);
+    for (const report of reports) {
+      const scope = readable.get(report.uid);
+      reportScopes[report.uid] = scope ? examScopeView(scope) : null;
+      byUid[report.uid] = scope
+        ? report : { ...report, findings: '', conclusion: '', recommendation: '' };
+    }
     // 켤 때 내 초안도 함께 — "어제 쓰다 만 것"이 PC를 바꿔도 따라온다.
     // 필터·상용구를 계정에 붙인 것과 같은 이유다 (§6-A-4).
     // 보이는 검사의 것만 읽는다: 비운 자리(present=false)도 행으로 남으므로 작성자 전체를 읽으면 끝없이 늘어난다.
     const drafts = omitStates ? [] : await this.prisma.reportDraft.findMany({
       where: { author: c.actor, uid: { in: states.map(s => s.uid) } } });
     const draftByUid = Object.fromEntries(drafts.map(d => [d.uid, d]));
+    for (const [uid, scope] of await readableExamRecords(this.prisma, this.studyAccess, c, drafts.filter(draft => draft.present)))
+      if (!scope) delete draftByUid[uid];
     await this.studyAccess.unchanged(c,access);
     const prefs = await this.preferences.prefs(c);   // 필터·상용구도 첫 요청에 함께 (왕복을 늘리지 않는다)
     return {
@@ -533,7 +681,8 @@ export class PacsWorklist {
       filters: prefs.filters,
       templates: prefs.templates,
       institutions: this.institutions.institutions.map(i => ({ id: i.id, name: i.name, type: i.type })),
-      states: Object.fromEntries(states.map(s => [s.uid, toClient(s, byUid[s.uid], c, draftByUid[s.uid])])),
+      states: Object.fromEntries(states.map(s => [s.uid, { ...toClient(s, byUid[s.uid], c, draftByUid[s.uid]),
+        reportScope:reportScopes[s.uid]??null, reportReadable:!byUid[s.uid]||!!reportScopes[s.uid] }])),
       orders: orders.map(o => ({
         oid: o.oid, id: o.patientId, name: o.name, sex: o.sex, birth: o.birth,
         sched: o.sched, modality: o.modality, desc: o.descr, ward: o.ward,

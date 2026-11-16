@@ -12,6 +12,72 @@ const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const all = (recordKind) => [{ recordId: UID, versions: 'all', ...(recordKind ? { recordKind } : {}) }];
 const versionsOf = issuance => issuance.manifest.records[0].versions.map(v => [v.versionId, v.act, v.signature !== null]);
 
+test('legacy signed bytes and predecessor hashes survive nullable scope columns; a new format binds the exam reference',async()=>{
+  const f=fixture();const first=f.commit(UID,'approve','SYN OLD');
+  const original=JSON.stringify(first.row),signature=JSON.stringify(first.signature),oldHash=sha(original);
+  Object.assign(first.row,{groupId:null,snapshotFormat:1});
+  const oldCopy=await f.controller.prepare({},copyIntake('SYN-LEGACY-SCOPE',all()));
+  assert.equal(oldCopy.manifest.records[0].head.sha256,oldHash);
+  const issued=await f.controller.issue({},oldCopy.issuanceId);
+  const doc=JSON.parse(Buffer.from(issued.artifact,'base64'));
+  assert.deepEqual(JSON.parse(doc.originals[0].original),JSON.parse(signature));
+  const next=f.commit(UID,'save','SYN NEW').row;
+  next.action='addendum';Object.assign(next,{groupId:'00000000-0000-4000-8000-000000000001',snapshotFormat:2});
+  const {snapshotFormat,...record}=next;
+  const body=JSON.stringify({formatVersion:'native-report/2',report:record,exam:{reportUid:UID,groupId:next.groupId}});
+  f.sign(next,first.row,'addendum',{body,previousSha:oldHash});
+  const copy=await f.controller.prepare({},copyIntake('SYN-MIXED-SCOPE',all()));
+  assert.deepEqual(copy.manifest.records[0].versions.map(v=>v.predecessor?.sha256??null),[null,oldHash]);
+  assert.equal(copy.manifest.records[0].head.sha256,sha(body));
+  assert.equal(JSON.stringify(first.signature),signature);
+  next.groupId=null;
+  await assert.rejects(f.controller.prepare({},copyIntake('SYN-ALTERED-SCOPE',all())));
+});
+
+test('legacy explicit-null scope bytes survive as signed and unsigned predecessors', async () => {
+  for (const signed of [true, false]) {
+    const f = fixture(), first = f.commit(UID, 'save', 'SYN LEGACY NULL').row;
+    first.groupId = null;
+    if (signed) first.action = 'approve';
+    const original = JSON.stringify(first), oldHash = sha(original);
+    if (signed) f.sign(first, null, 'approve-sign', { body: original });
+    first.snapshotFormat = 1;
+    const next = f.commit(UID, 'save', 'SYN NEW FORMAT').row;
+    Object.assign(next, { action: 'addendum', groupId: null, snapshotFormat: 2 });
+    const { snapshotFormat, ...record } = next;
+    const body = JSON.stringify({ formatVersion: 'native-report/2', report: record, exam: { reportUid: UID, groupId: null } });
+    f.sign(next, first, 'addendum', { body, previousSha: oldHash });
+    const prepared = await f.controller.prepare({}, copyIntake('SYN-NULL-' + signed, all()));
+    assert.equal(prepared.manifest.records[0].versions[0].sha256, oldHash);
+    assert.equal(prepared.manifest.records[0].versions[1].predecessor.sha256, oldHash);
+  }
+});
+
+test('paper copies render both unsigned and signed grouped native reports without changing the stored original', async () => {
+  for (const signed of [false, true]) {
+    const f = fixture(), row = f.commit(UID, 'save', 'SYN GROUPED FINDINGS').row;
+    Object.assign(row, { groupId: '00000000-0000-4000-8000-000000000001', snapshotFormat: 2 });
+    if (signed) row.action = 'approve';
+    const { snapshotFormat, ...record } = row;
+    const body = JSON.stringify({ formatVersion: 'native-report/2', report: record, exam: { reportUid: UID, groupId: row.groupId } });
+    if (signed) f.sign(row, null, 'approve-sign', { body });
+    else {
+      const approved = f.commit(UID, 'save', 'SYN APPROVED GROUP').row;
+      Object.assign(approved, { action: 'approve', groupId: row.groupId, snapshotFormat: 2 });
+      const { snapshotFormat, ...report } = approved;
+      f.sign(approved, row, 'approve-sign', { previousSha: sha(body),
+        body: JSON.stringify({ formatVersion: 'native-report/2', report, exam: { reportUid: UID, groupId: row.groupId } }) });
+    }
+    const prepared = await f.controller.prepare({}, copyIntake('SYN-GROUPED-PAPER-' + signed, all(), 'paper-print'));
+    const issued = await f.controller.issue({}, prepared.issuanceId);
+    const html = Buffer.from(issued.artifact, 'base64').toString('utf8');
+    assert.ok(html.includes('SYN GROUPED FINDINGS'));
+    assert.ok(html.includes('<dd>' + UID + '</dd>'));
+    assert.ok(html.includes(signed ? '<dd>Signed</dd>' : '<dd>Not Signed</dd>'));
+    assert.equal((await f.controller.issue({}, prepared.issuanceId)).artifact, issued.artifact);
+  }
+});
+
 test('a native report is copied as its head chain: unsigned saves, signed approvals and a content reset', async () => {
   const f = fixture();
   f.commit(UID, 'save', '저장한 소견'); const approved = f.commit(UID, 'approve', '확정 소견');

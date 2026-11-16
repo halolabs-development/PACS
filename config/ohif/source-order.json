@@ -1,4 +1,5 @@
 {
+  "shared": ["worklist-v0/hpacs-lite/exam-scope.js"],
   "sources": [
     "branding-defaults.js",
     "session.js",

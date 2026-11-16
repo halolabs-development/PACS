@@ -50,11 +50,14 @@ function harness() {
     [FOREIGN, { uid: FOREIGN, institutionId: 'inst-b', teleInstitutionId: null, rs: 'W' }],
   ]);
   const rows = [];
-  const key = where => where.authorSub_studyUid;
+  const groups = [], members = [];
+  const key = where => where.authorSub_studyUid_scopeKey;
   const prisma = {
-    studyState: { findMany: async ({ where }) => where.uid.in.map(uid => studies.get(uid)).filter(Boolean).map(s => ({ ...s })) },
+    studyGroup: { findMany: async ({where}) => groups.filter(g => (!where.id || where.id.in.includes(g.id)) && (!Object.hasOwn(where,'dissolvedAt') || g.dissolvedAt === where.dissolvedAt)) },
+    studyGroupMember: { findMany: async ({where}) => members.filter(m => where.groupId ? typeof where.groupId === 'object' ? where.groupId.in.includes(m.groupId) : m.groupId === where.groupId : where.logicalUid ? m.logicalUid === where.logicalUid : where.OR.some(w => Object.entries(w).every(([k,v]) => typeof v === 'object' ? v.in.includes(m[k]) : m[k] === v))) },
+    studyState: { findUnique: async ({where}) => structuredClone(studies.get(where.uid)), findMany: async ({ where }) => where.uid.in.map(uid => studies.get(uid)).filter(Boolean).map(s => ({ ...s })) },
     viewerAutoView: {
-      findUnique: async ({ where }) => { const k = key(where); const row = rows.find(r => r.authorSub === k.authorSub && r.studyUid === k.studyUid); return row ? { ...row } : null; },
+      findUnique: async ({ where }) => { const k = key(where); const row = rows.find(r => r.authorSub === k.authorSub && r.studyUid === k.studyUid && (r.scopeKey ?? '') === k.scopeKey); return row ? { ...row } : null; },
       // updateMany over { id, revision } (the row as it was read), createMany with skipDuplicates. Values as Prisma gives
       // them back (a JSON copy of writers, BigInt discardedAt).
       updateMany: async ({ where, data }) => {
@@ -65,22 +68,65 @@ function harness() {
       createMany: async ({ data, skipDuplicates }) => {
         assert.equal(skipDuplicates, true);
         let count = 0;
-        for (const create of data) if (!rows.some(r => r.authorSub === create.authorSub && r.studyUid === create.studyUid)) { rows.push({ createdAt: new Date(), ...structuredClone(create) }); count++; }
+        for (const create of data) if (!rows.some(r => r.authorSub === create.authorSub && r.studyUid === create.studyUid && (r.scopeKey ?? '') === create.scopeKey)) { rows.push({ createdAt: new Date(), ...structuredClone(create) }); count++; }
         return { count };
       },
     },
     // The Jobs table is not this feature's: any use of it fails the test.
     get viewerJob() { throw new Error('the Jobs table was used'); },
     $executeRaw: async () => 0,
+    $queryRaw: async (_sql, ...values) => {
+      const ids = values[0]?.values ?? values;
+      return ids.map(uid => structuredClone(studies.get(uid))).filter(Boolean);
+    },
   };
   prisma.$transaction = async work => work(prisma);
   const access = { revoked: new Set(),
-    snapshot: async () => ({}), prepare: async () => {},
+    snapshot: async () => ({}), prepare: async () => {}, prepareSourceIdentity: async () => {},
+    assertIdentifiedSource: () => ({sourcePatientId:'SYN',sourceInstitution:'inst-a'}), assertUnsplitSource: () => ({}),
     require: async (c, uids) => { if (uids.some(uid => access.revoked.has(uid))) throw Object.assign(new Error('outside'), { getStatus: () => 403 }); },
     allowed: async (c, uids) => new Set(uids.filter(uid => !access.revoked.has(uid))) };
-  return { service: new ViewerAutoViewService(prisma, access), rows, studies, access };
+  return { service: new ViewerAutoViewService(prisma, access), rows, studies, access, groups, members, prisma };
 }
 const status = code => error => { assert.equal(error.getStatus?.(), code, error.message); return true; };
+
+const GROUP = '00000000-0000-4000-8000-000000000011';
+function grouped(h, kind = 'merge') {
+  h.groups.push({ id: GROUP, kind, baseUid: UID, institutionId: 'inst-a', dissolvedAt: null });
+  h.members.push(...[UID, PRIOR].map((logicalUid, part) => ({ groupId: GROUP, logicalUid,
+    studyUid: kind === 'merge' ? logicalUid : UID, part, seriesUids: part ? [UID + '.2'] : [] })));
+  return JSON.stringify({ version: 1, purpose: 'current', current: { reportUid: UID, groupId: GROUP, part: kind === 'merge' ? null : 0 }, prior: null });
+}
+test('Merge save and Discard preserve the original view and its independent Discard generation after Unmerge', async () => {
+  const h = harness();
+  await h.service.save(UID, post(view({ cells: [cell({ zoom: 2 })] })), RAD);
+  const exam = grouped(h), merged = view({ studies: [UID, PRIOR], cells: [cell({ zoom: 7 })] });
+  await h.service.save(UID, post(merged), RAD, exam);
+  assert.equal((await h.service.read(UID, RAD, exam)).view.snapshot.cells[0].zoom, 7);
+  await h.service.discard(UID, drop(), RAD, exam);
+  assert.equal((await h.service.read(UID, RAD, exam)).generation, '1');
+  assert.equal((await h.service.read(UID, RAD)).generation, '0');
+  h.groups[0].dissolvedAt = new Date();
+  assert.equal((await h.service.read(UID, RAD)).view.snapshot.cells[0].zoom, 2);
+  assert.equal(h.rows.length, 2);
+  await assert.rejects(h.service.save(UID, post(merged), RAD, exam), status(409));
+});
+test('Split first part shares the source UID but keeps its own view; another part and reader cannot discard it', async () => {
+  const h = harness();
+  await h.service.save(UID, post(view()), RAD);
+  const exam = grouped(h, 'split');
+  const first = view({ cells: [cell({ series: UID + '.1', sop: UID + '.1.1', zoom: 3 })] });
+  await h.service.save(UID, post(first), RAD, exam);
+  const second = JSON.stringify({ ...JSON.parse(exam), current: { reportUid: PRIOR, groupId: GROUP, part: 1 } });
+  await h.service.save(PRIOR, post(view({ cells: [cell({ zoom: 6 })] })), RAD, second);
+  await h.service.discard(PRIOR, drop(), RAD, second);
+  await h.service.discard(UID, drop(), RAD2, exam);
+  assert.equal((await h.service.read(UID, RAD, exam)).view.snapshot.cells[0].zoom, 3);
+  assert.equal((await h.service.read(UID, RAD)).view.snapshot.cells[0].zoom, 3.77);
+  await assert.rejects(h.service.save(UID, post(view()), RAD, exam), status(409));
+  h.groups[0].dissolvedAt = new Date();
+  assert.equal((await h.service.read(UID, RAD, exam)).view.snapshot.cells[0].zoom, 3);
+});
 
 test('one saved view per reader and study: written over, given back exactly, never another reader\'s', async () => {
   const h = harness();
@@ -225,6 +271,15 @@ test('an existing timestamp boundary is preserved as a generation and failed con
   assert.equal((await h.service.save(UID, post(view(), WRITER, ++seq, 1, result.generation), RAD)).saved, true);
   // Both operations read the same row before either conditionally writes it. A losing save must retry against Discard.
   const captured = result.generation;
+  const update = h.prisma.viewerAutoView.updateMany;
+  let discarded;
+  const discardWritten = new Promise(resolve => { discarded = resolve; });
+  h.prisma.viewerAutoView.updateMany = async args => {
+    if (args.data.snapshot !== null) await discardWritten;
+    const result = await update(args);
+    if (args.data.snapshot === null) discarded();
+    return result;
+  };
   const [discard, save] = await Promise.all([
     h.service.discard(UID, drop(WRITER2, 2), RAD),
     h.service.save(UID, post(view(), WRITER, ++seq, Date.now() + 60000, captured), RAD),

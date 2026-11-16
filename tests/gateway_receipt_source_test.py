@@ -413,7 +413,7 @@ class ServerPins(unittest.TestCase):
 class ClientPins(unittest.TestCase):
     def test_main_wires_the_server_receipt_through_the_readable_observation_only(self):
         # fromApi (2), applyObservation (2), renderObservation (2: the row and, since S4-F01V, the Not Observed item)
-        self.assertEqual(MAIN.count("gatewayReceipt"), 6)
+        self.assertEqual(MAIN.count("gatewayReceipt"), 8)
         # The row built from the server keeps the server's receipt as is (later fields of that row do not matter here).
         self.assertIn("        gatewayReceipt: s.gatewayReceipt ?? null,\n", js_function(MAIN, "fromApi"))
         apply = js_function(MAIN, "applyObservation")
@@ -543,7 +543,8 @@ class MigrationPins(unittest.TestCase):
         # 58 -> 59: Film / DICOM Print added 20261114120000_film_print (FilmPrintJob).
         # 59 -> 60: Image Report added 20261114180000_report_drawing (ReportDrawing).
         # 60 -> 61: Auto Save View added 20261114180000_viewer_auto_view (ViewerAutoView).
-        self.assertEqual(len(restore_fixture.TABLES), 61)
+        # 61 -> 63: Merge Exam / Split added 20261114180000_exam_group (StudyGroup, StudyGroupMember).
+        self.assertEqual(len(restore_fixture.TABLES), 63)
         self.assertEqual(len(restore_fixture.expected_rows("2.25.1")["GatewayReceipt"]), 1)
 
 

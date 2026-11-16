@@ -215,7 +215,9 @@
     let stripSeq = 0;
     let stripUid = null;
     let stripMark = null;  // the selected study's draft revision and version when the strip was read
-    const markOf = uid => { const s = uid ? ctx.study(uid) : null; return s ? JSON.stringify([s.state?.draftRevision ?? null, s.state?.version ?? null, s.state?.rs ?? null]) : null; };
+    const examStamp = uid => root.KinExamScope.screenStamp(ctx.study(uid));
+    const memoryUid = uid => root.KinExamScope.screenScope(ctx.study(uid)) ? root.KinExamScope.key(ctx.study(uid)) : uid;
+    const markOf = uid => { const s = uid ? ctx.study(uid) : null; return s ? JSON.stringify([examStamp(uid), s.state?.draftRevision ?? null, s.state?.version ?? null, s.state?.rs ?? null]) : null; };
     let drawing = null;   // the stroke being drawn
     const pictures = new Map();   // drawing id → object URL (a drawing's content never changes)
     const frames = new Map();     // key image id:revision → { image, w, h } loaded this sign-in
@@ -267,7 +269,7 @@
     }
     function remember() {
       if (!session) return;
-      memory.put(session.owner, session.uid, { version: session.list.version, draftSince: session.list.draft?.since ?? null,
+      memory.put(session.owner, session.memoryUid, { version: session.list.version, draftSince: session.list.draft?.since ?? null,
         background: background(), image: imageSelect.value, marks: session.marks.snapshot() });
     }
     const point = event => {
@@ -308,22 +310,29 @@
 
     // ── saved images ──
     async function keyImages(uid, at) {
-      const items = []; let cursor = null;
-      do {
-        const page = await ctx.api('GET', '/studies/' + encodeURIComponent(uid) + '/viewer-items?limit=100' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''), undefined, undefined, at);
-        if (!page || !Array.isArray(page.items) || (cursor && page.nextCursor === cursor)) throw new Error('저장한 영상 목록을 읽지 못했습니다');
-        items.push(...page.items); cursor = page.nextCursor || null;
-      } while (cursor);
+      const scope = root.KinExamScope.read(ctx.study(uid) || { uid });
+      const items = [];
+      for (const source of scope.sources) {
+        let cursor = null;
+        do {
+          const page = await ctx.api('GET', '/studies/' + encodeURIComponent(source.studyUid) + '/viewer-items?limit=100' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''), undefined, undefined, at);
+          if (!page || !Array.isArray(page.items) || (cursor && page.nextCursor === cursor)) throw new Error('저장한 영상 목록을 읽지 못했습니다');
+          items.push(...page.items.filter(item => root.KinExamScope.allows(source, item.item?.seriesUid))
+            .map(item => ({ ...item, sourceUid: source.studyUid })));
+          cursor = page.nextCursor || null;
+        } while (cursor);
+      }
       return items.filter(item => item && !item.hidden && item.item && item.item.kind === 'key'
         && typeof item.item.sopUid === 'string' && typeof item.item.seriesUid === 'string' && Number.isSafeInteger(item.item.frame))
-        .map((item, index) => ({ id: item.id, revision: item.revision, seriesUid: item.item.seriesUid, sopUid: item.item.sopUid,
+        .map((item, index) => ({ id: item.id, revision: item.revision, sourceUid: item.sourceUid, seriesUid: item.item.seriesUid, sopUid: item.item.sopUid,
           frame: item.item.frame, label: (item.item.title || 'Key image ' + (index + 1)) + ' · frame ' + item.item.frame }));
     }
+
     async function loadFrame(uid, picked, mine) {
       const cacheKey = picked.id + ':' + picked.revision;
       if (frames.has(cacheKey)) return;
       const at = session.at;
-      const located = await ctx.api('POST', '/dicom/lookup', { studyUid: uid, sopUid: picked.sopUid }, undefined, at);
+      const located = await ctx.api('POST', '/dicom/lookup', { studyUid: picked.sourceUid, sopUid: picked.sopUid }, undefined, at);
       if (!located || !/^[a-f0-9]{8}(?:-[a-f0-9]{8}){4}$/.test(located.id)) throw new Error('저장한 영상을 찾지 못했습니다');
       const response = await root.KinSessionTransport.page().request('/instances/' + located.id + '/frames/' + (picked.frame - 1) + '/preview',
         { context: at, read: 'response', cache: 'no-store', headers: { Accept: 'image/png' } });
@@ -417,7 +426,7 @@
       if (!list || !Array.isArray(list.head)) throw new Error('붙인 그림 목록을 읽지 못했습니다');
       return list;
     }
-    function current(mine) { return !!session && session.seq === mine && dialog.open && ctx.admits(session.at); }
+    function current(mine) { return !!session && session.seq === mine && dialog.open && ctx.admits(session.at) && session.scopeStamp === examStamp(session.uid); }
 
     /** Draws the window's list; resolves to whether every attached drawing is on the screen as a picture (renderAttached). */
     function renderWindow() {
@@ -441,7 +450,7 @@
       head.textContent = [s.name, s.id].filter(v => v != null && String(v).trim() !== '').join(' · ');
       head.dataset.uid = uid;
       say('');
-      session = { uid, seq: mine, at, owner: owner(), marks: createMarks(), images: [], list: { version: 0, head: [], draft: null }, editable: false, why: '' };
+      session = { uid, scopeStamp: examStamp(uid), memoryUid: memoryUid(uid), seq: mine, at, owner: owner(), marks: createMarks(), images: [], list: { version: 0, head: [], draft: null }, editable: false, why: '' };
       imageSelect.replaceChildren(); imageNote.textContent = '';
       if (!dialog.open) dialog.showModal();
       paint();
@@ -456,7 +465,7 @@
         imageNote.textContent = images === null ? '저장한 영상 목록을 읽지 못했습니다' : session.images.length ? '' : '이 검사에 저장된 영상이 없습니다';
         const why = ctx.report.editBlock(uid);
         session.editable = !why; session.why = why || '';
-        const kept = memory.take(session.owner, uid, { version: list.version, draftSince: list.draft?.since ?? null });
+        const kept = memory.take(session.owner, session.memoryUid, { version: list.version, draftSince: list.draft?.since ?? null });
         if (kept) {
           session.marks = createMarks(kept.marks);
           if (kept.image && session.images.some(i => i.id === kept.image)) imageSelect.value = kept.image;
@@ -520,11 +529,11 @@
       stripUid = uid;
       stripMark = markOf(uid);
       if (!uid || !can() || !ctx.allowed()) { strip.hidden = true; stripList.replaceChildren(); return; }
-      const at = ctx.work('study');
+      const at = ctx.work('study'), scopeStamp = examStamp(uid);
       let list;
       // A list that could not be read is shown as none - and told as not shown, which is not "no drawings".
       try { list = await readList(uid, at); } catch (_) { if (mine === stripSeq) { strip.hidden = true; tellShown(uid, null); } return; }
-      if (mine !== stripSeq || !ctx.admits(at) || ctx.selectedUid() !== uid) return;
+      if (mine !== stripSeq || !ctx.admits(at) || ctx.selectedUid() !== uid || scopeStamp !== examStamp(uid)) return;
       tellChanged(uid, list);
       const shown = shownList(list);
       strip.hidden = !shown.length;
@@ -534,7 +543,7 @@
         if (result.status !== 'applied') ctx.toast(result.reason || '그림을 빼지 못했습니다', 'err');
         void refreshStrip();
       } });
-      tellDrawn(uid, list, drawn, () => mine === stripSeq && ctx.selectedUid() === uid && ctx.admits(at));
+      tellDrawn(uid, list, drawn, () => mine === stripSeq && ctx.selectedUid() === uid && ctx.admits(at) && scopeStamp === examStamp(uid));
     }
 
     const openFromButton = event => { event.preventDefault(); void open(ctx.selectedUid()); };
@@ -542,12 +551,12 @@
     sync();
     // After the list is drawn: read the strip again when the study changed or its draft or version moved (a discard, Clear,
     // commit or reset, here or in another window), not on every redraw.
-    const offRender = ctx.onRender(() => { sync(); if (ctx.selectedUid() !== stripUid || markOf(stripUid) !== stripMark) void refreshStrip(); });
+    const offRender = ctx.onRender(() => { if (session && session.scopeStamp !== examStamp(session.uid)) { session = null; dialog.close(); } sync(); if (ctx.selectedUid() !== stripUid || markOf(stripUid) !== stripMark) void refreshStrip(); });
     const offSelect = ctx.onSelect(() => { sync(); void refreshStrip(); });
     // The editor drew this study's report again (a discard, Clear, commit or reset changed what the draft holds): read again.
     const offReport = ctx.onReport ? ctx.onReport(uid => { if (uid === ctx.selectedUid()) void refreshStrip(); }) : () => {};
     // The person ended that study's draft (Discard Draft, Clear): the marks not yet attached go with it.
-    const offDraftEnd = ctx.onDraftEnd ? ctx.onDraftEnd(uid => { memory.drop(owner(), uid); if (session?.uid === uid) { session.marks = createMarks(); paint(); } }) : () => {};
+    const offDraftEnd = ctx.onDraftEnd ? ctx.onDraftEnd(uid => { memory.drop(owner(), memoryUid(uid)); if (session?.uid === uid) { session.marks = createMarks(); paint(); } }) : () => {};
     const end = () => {
       memory.clear();
       for (const url of pictures.values()) URL.revokeObjectURL(url);

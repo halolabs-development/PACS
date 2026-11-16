@@ -1557,6 +1557,8 @@
           <button id="t-modify">Modify Exam</button>
           <button id="t-verify">Verify</button>
           <button id="t-unverify">Unverify</button>
+          <button id="t-merge-exam" type="button" title="Merge studies of the same patient into one base study.">Merge Exam</button>
+          <button id="t-split-unmerge" type="button" title="Restore a merged exam to its original studies.">Split / Unmerge</button>
           <button hidden disabled title="③ 의도적 생략 (DICOM 조작 필요)">Split Exam</button>
           <button id="t-import" type="button" hidden title="이 기관의 DICOM 파일을 골라 반입합니다(파일마다 결과를 보입니다).">Import DICOM</button>
           <button id="t-attach" type="button" hidden title="고른 검사에 스캔 문서·그림 파일(JPG·PNG·PDF)을 붙입니다.">Attach Document</button>
@@ -1821,6 +1823,7 @@
         </div>
         <!-- 쓰다 만 초안이 있을 때만 보인다. 확정본과 다른 것을 보고 있다는 사실을
              화면이 말해주지 않으면, 사용자는 저장된 것을 보고 있다고 믿는다. -->
+        <div id="exam-report-scope" class="exam-report-scope" role="status" hidden></div>
         <div class="draftbar" id="draftbar" style="display:none">
           <span id="draftmsg"></span>
           <span class="spacer"></span>
@@ -2377,6 +2380,7 @@
   <script src="worklist-language.js"></script>
   <script src="auth.js"></script>
   <script src="work-context.js"></script>
+  <script src="exam-scope.js"></script>
   <script src="session-transport.js"></script>
   <script src="report-draft-client.js"></script>
   <script src="reading-panel-layout.js"></script>
@@ -2453,6 +2457,7 @@
   <link rel="stylesheet" href="reader-assignment.css">
   <script src="reader-assignment.js"></script>
 <script src="study-transfer-local.js"></script>
+<script src="exam-merge.js"></script>
   <script src="consultations.js"></script>
   <script src="critical-result-send.js"></script>
   <script src="critical-result-inbox.js"></script>

@@ -192,6 +192,7 @@ class ViewerWindowManagerDOMTest(unittest.TestCase):
         self.page.route("**/*", lambda route: route.fulfill(status=200, content_type="text/html", body=HARNESS)
                         if route.request.url == "https://example.test/harness" else route.abort())
         self.page.goto("https://example.test/harness")
+        self.page.add_script_tag(path=str(WINDOWS.with_name('exam-scope.js')))
         self.page.add_script_tag(content=self.windows_source)
         self.page.add_script_tag(content=self.open_source + "\n" + self.manager_source + "\nmountViewerWindows();")
 

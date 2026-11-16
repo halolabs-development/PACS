@@ -54,7 +54,7 @@ test('CD-09 W-G signed records and their references: fixed-record set, source ve
   process.env.KC_JWKS_URL = 'http://127.0.0.1:' + provider.address().port + '/certs';
   const tokens = {};
   for (const [name, m] of Object.entries(members)) tokens[name] = await new jose.SignJWT({ email: m.email,
-    realm_access: { roles: m.roles }, groups: ['/' + institution] }).setProtectedHeader({ alg: 'RS256', kid: jwk.kid })
+    realm_access: { roles: m.roles }, amr: m.roles.includes('admin') ? ['otp'] : [], groups: ['/' + institution] }).setProtectedHeader({ alg: 'RS256', kid: jwk.kid })
     .setIssuer(issuer).setSubject(m.sub).setAudience('kin-api').setIssuedAt().setExpirationTime('30m').sign(privateKey);
   const witness = new PrismaClient({ datasources: { db: { url: process.env.KIN_D_WITNESS_URL } } });
   const runtimeDb = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
@@ -82,7 +82,7 @@ test('CD-09 W-G signed records and their references: fixed-record set, source ve
       ImagePositionPatient: [0, 0, 0], ImageOrientationPatient: [1, 0, 0, 0, 1, 0], PixelSpacing: [1, 1],
       _kinSourceDigest: 'a'.repeat(64) });
     // Every synthetic study is one patient's, so a comparison source passes the same-patient check.
-    const orthanc = { studyIdentityResources: async uid => [{ '0020000D': { Value: [uid] } }], studyIdentities: async () => [],
+    const orthanc = { studyIdentityResources: async uid => [{ '0020000D': { Value: [uid] }, '00100020': { Value: ['SYN-PATIENT-' + uid] } }], studyIdentities: async () => [],
       studyPatientIdentity: async () => 'synthetic:wg', connectStudyIdentity: async () => ({ patientId: 'synthetic:wg' }),
       viewerReference: async sop => tagsFor(sop.split('.').slice(0, -2).join('.')),
       manualSrLocation: async () => null,

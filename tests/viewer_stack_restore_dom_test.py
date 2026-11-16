@@ -290,6 +290,7 @@ class NativeStackRestore(unittest.TestCase):
         self.page.add_script_tag(path=str(ROOT / 'worklist-v0/hpacs-lite/session-transport.js'))
         self.page.add_script_tag(path=str(ADAPTER))
         self.page.add_script_tag(path=str(ROOT / "worklist-v0/hpacs-lite/viewer-volume-job.js"))
+        self.page.add_script_tag(path=str(ROOT / "worklist-v0/hpacs-lite/exam-scope.js"))
         self.page.add_script_tag(path=str(JOBS))
         self.page.evaluate('window.panel=kinViewerJobs(services,{scope:()=>({})},null,()=>source);panel.mount()')
 

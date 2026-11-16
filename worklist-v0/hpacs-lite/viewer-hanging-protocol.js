@@ -421,6 +421,12 @@
     async function session(signal){const response=await fetcher('/api/me',{credentials:'same-origin',cache:'no-store',signal});if(!response.ok)throw Error('계정 세션을 확인할 수 없습니다.');const me=await json(response);if(!boundOwner||me.kind!=='member'||me.institution!==boundOwner.institution||me.sub!==boundOwner.subject)throw Error('계정이 변경되어 작업을 적용하지 않았습니다.');return me;}
     async function verifiedContext(signal){
       if(typeof options.access==='function')return options.access({signal,owner:boundOwner});
+      if(root.KinViewerExamScope?.snapshot()) {
+        await session(signal);const exam=await root.KinViewerExamScope.ensure(true);
+        const response=await fetcher('/api/studies?'+new URLSearchParams({uids:exam.studyUids.join(',')}),{credentials:'same-origin',signal});
+        if(!response.ok)throw Error('검사 접근 권한을 확인할 수 없습니다.');
+        const sets=displaySets.getActiveDisplaySets();return {studies:root.KinExamScope.roleRows(exam,(await json(response)).studies,sets),displaySets:sets};
+      }
       await session(signal);const response=await fetcher('/api/studies',{credentials:'same-origin',cache:'no-store',signal});if(!response.ok)throw Error('검사 접근 권한을 확인할 수 없습니다.');
       const data=await json(response),uids=urlStudies();if(!uids||!Array.isArray(data.studies))throw Error('현재 검사 범위를 확인할 수 없습니다.');const studies=uids.map(uid=>data.studies.find(s=>s.uid===uid));if(studies.some(v=>!v))throw Error('현재 검사 접근 권한을 확인할 수 없습니다.');return {studies,displaySets:displaySets.getActiveDisplaySets()};
     }

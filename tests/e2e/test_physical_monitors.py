@@ -5,6 +5,7 @@ from pathlib import Path
 from playwright.sync_api import expect
 from test_thumbnail_series import ThumbnailSeriesE2E
 from test_prior_selection import canvas_ready
+import admin_otp
 
 class PhysicalMonitorsE2E(ThumbnailSeriesE2E):
     @classmethod
@@ -21,6 +22,7 @@ class PhysicalMonitorsE2E(ThumbnailSeriesE2E):
             p.locator('#username').fill(self.stack.username(actor));p.locator('#password').fill(self.stack.passwords[actor]);p.locator('#kc-login').click()
         except Exception:
             raise RuntimeError('Real BFF login form could not be submitted') from None
+        admin_otp.answer_page(p, self.stack.username(actor))
         p.wait_for_url('**/worklist/hpacs-lite/main.html',timeout=30000)
         expect(p.locator('#dbstat')).to_contain_text('DB Connected');return p
 

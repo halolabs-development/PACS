@@ -10,6 +10,7 @@ from playwright.sync_api import expect
 import test_worklist as base
 from document_session import document_request
 from viewer_session import end_document
+import admin_otp
 
 
 class WorklistColumnsE2E(base.WorklistE2E):
@@ -43,6 +44,7 @@ class WorklistColumnsE2E(base.WorklistE2E):
             page.locator('#password').fill(self.stack.passwords[actor])
             page.locator('#kc-login').click()
         except Exception: raise RuntimeError('Same-browser login form failed') from None
+        admin_otp.answer_page(page, self.stack.username(actor))
         page.wait_for_url('**/worklist/hpacs-lite/main.html',timeout=30000)
         expect(page.locator('#dbstat')).to_contain_text('DB Connected')
         self.assertNotEqual(next(c['value'] for c in page.context.cookies() if c['name']=='kin_sid'),old_sid)

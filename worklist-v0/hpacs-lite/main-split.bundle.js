@@ -310,6 +310,7 @@
     });
     const RELATED_BASE = Object.freeze({ base: true });
     function reportWriteBlock(admission = null) {
+      if (appState[selectedUid]?.examScopeChanged) return "검사 범위가 바뀌었습니다. 입력한 글은 보존했습니다. 초안을 버리거나 서버 판독을 다시 확인한 뒤 작성하세요.";
       if (!selectedUid) return "검사를 선택하세요";
       if (!KinAuth.has("radiologist")) return "판독문 편집은 판독의 권한이 필요합니다";
       if (appState[selectedUid]?.prelimHidden) return "다른 판독의의 예비 판독(RS: P)입니다";
@@ -1357,8 +1358,19 @@
           }).join("") || `<tr><td class="empty" colspan="7">${relatedModality || relatedBodyPart ? "조건에 맞는 관련 검사 없음" : "관련 검사 없음"}</td></tr>`)
         : `<tr><td class="empty" colspan="7">검사를 선택하세요</td></tr>`;
       columnPrefs?.decorateRelated(mode);
+      for (const report of s?.relatedExamReports || []) {
+        if (report.uid === s.uid) continue;
+        const row=document.createElement('tr'),cell=document.createElement('td'),link=document.createElement('button');
+        // "Exam" here names the exam scope the report was written on (not the Exam column): each line is one template.
+        cell.colSpan=7;link.type='button';link.className='chip';
+        kinWrite(link,kinSay(report.scope?.part===1?'Related Report · Exam 2 · v{n0}':'Related Report · Exam · v{n0}',report.version));
+        link.title='묶음을 되돌리기 전 저장한 판독문과 당시 영상 범위를 엽니다.';
+        const selected=s.uid;link.onclick=()=>{if(selectedUid===selected)showHistory(report.uid);};
+        cell.append(link);row.append(cell);$('#relrows').append(row);
+      }
       relatedRowNavigation?.sync();
     }
+
     const relatedParts = KinRelatedParts.create({
       owner:()=>{const key=KinViewerOpening.key(KinAuth.session());return key||null;},
       changed:()=>renderRelated()
@@ -1484,7 +1496,25 @@
       const previous=readerAssignments.get(uid);if(value&&previous&&value.revision<previous.revision)return;
       readerAssignments.set(uid,value);const study=studies.find(s=>s.uid===uid);if(study)study.assignedReader=value?.reader?[value.reader.name,value.reader.actor].filter(Boolean).join(' · '):'';
     }
+    const observedExamScopes = new Map();
+    function observeExamList(rows) {
+      const present=new Set(rows.map(s=>s.uid));
+      for(const uid of observedExamScopes.keys()) if(!present.has(uid)) observeExamScope({uid,origin:"logical"});
+    }
+    function observeExamScope(s) {
+      const next = KinExamScope.screenStamp(s), previous = observedExamScopes.get(s.uid);
+      observedExamScopes.set(s.uid, next);
+      if (previous === undefined || previous === next) return;
+      if (reportConverge.has(s.uid)) {
+        appState[s.uid].examScopeChanged = true;
+        reportSaveFailures.set(s.uid, "stop");
+      }
+      if (selectedUid === s.uid) markSelectionChanged(s.uid);
+      cancelThumbs();
+      window.dispatchEvent(new CustomEvent("kin-exam-scope-changed", { detail: { uid: s.uid, previous, next } }));
+    }
     function fromApi(s) {
+      observeExamScope(s);
       updateReaderAssignment(s.uid,s.readerAssignment);
       updateNoteSummary(s.uid, s.techNote);
       /**
@@ -1516,6 +1546,15 @@
         gatewayReceipt: s.gatewayReceipt ?? null,
         // Request columns as the server decided them (matched order first); a value it did not send stays blank.
         reqDate: localStamp(s.reqDate), reqDept: requestText(s.reqDept), reqDoc: requestText(s.reqDoc), ptClass: requestText(s.ptClass),
+        // Merge Exam: the studies of a merged exam (the base first); Count and Series above are already of all of them.
+        examScope: s.examScope ?? null, reportScope: s.reportScope ?? null,
+        relatedExamReports: s.relatedExamReports ?? [], examUnavailable: s.examUnavailable === true,
+        draftEpoch: s.state?.draftEpoch ?? null,
+        sourceMetadata: (s.sourceMetadata || []).map(m => ({ ...m, sourceAcc: m.acc,
+          acc: m.orderAccession || m.acc, date: fmtD(m.date), reqDate: localStamp(m.reqDate) })),
+        ...(s.group ? { group: s.group } : {}),
+        // A report written on a merged exam (now or before Unmerge): which studies, and whether this account may read them all.
+        ...(s.reportGroup && typeof s.reportGroup === 'object' ? { reportGroup: s.reportGroup } : {}),
       });
     }
 
@@ -1623,7 +1662,7 @@
       const matchQuick = KinCompoundFilter.compileQuick(filter?.quick, values[KinCompoundFilter.KEY], COLS[filterMode]);
       return s => {
         if (!matchQuick(s)) return false;
-        if (!withinDays(s.date, days)) return false;
+        if (!KinExamScope.projections(s).some(source=>withinDays(source.date, days))) return false;
         // A compound rule on Confirm compares the same Confirmed / Not Confirmed word the header filter uses (RS based).
         return cols.every(c => testCol(s, c, values))
           && matchCompound({ ...s, confirm: confirmedRow(s) ? "Confirmed" : "Not Confirmed",
@@ -2321,7 +2360,8 @@
          */
         // 편집 중인 검사의 판 번호·초안을 되돌려 놓던 블록은 없앴다 — `fromApi`가 그 규칙을
         // 모든 검사에 대해 먼저 적용하므로, 여기서 한 검사만 다시 손보면 규칙이 둘로 갈린다.
-          studies = r.studies.map(fromApi);
+          observeExamList(r.studies);
+        studies = r.studies.map(fromApi);
           folderLoadState = 'complete';
           applyIdentityIssues(r.identityIssues, r.studies);
           applyObservation(r);
@@ -2446,6 +2486,9 @@
     }
 
     function testCol(s, c, values = fval) {
+      return KinExamScope.projections(s).some(row => testSourceCol(row, c, values));
+    }
+    function testSourceCol(s, c, values = fval) {
       const v = values?.[c.k] ?? "";
       if (v === "") return true;
       if (c.k === 'modality') return KinCompoundFilter.matchesModality(s.modality, v);
@@ -3059,7 +3102,11 @@
       const s = viewed(), receipt = $("#study-receipt");
       if (!receipt) return;
       receipt.hidden = !s;
-      if (!s) return;
+      if (!s) {
+        const originals=receipt.querySelector('.exam-original-receipts');
+        for(const control of originals?.querySelectorAll('button')||[])control.dataset.request='';
+        originals?.replaceChildren();return;
+      }
       // Every worklist row passed the visible() boundary on the server, so axis A is `assigned` here;
       // a study whose sending hospital is unknown is held and reaches no list (D1882).
       const labels = KinStudyArrivals.receiptLabels({ assignment: "assigned",
@@ -3077,6 +3124,41 @@
       $("#receipt-observation").title = labels.observation.title;
       drawRetry(s, labels.retry, $("#receipt-retry"), $("#receipt-retry-note"));
       $("#receipt-gateway").textContent = labels.gateway.text; $("#receipt-gateway").title = labels.gateway.title;
+      let originals=receipt.querySelector('.exam-original-receipts');
+      if(!originals){originals=document.createElement('div');originals.className='exam-original-receipts';receipt.append(originals);}
+      const scope=KinExamScope.read(s);
+      const receiptScope=scope?.groupId?KinExamScope.stamp(s):'';
+      if(originals.dataset.scope!==receiptScope){
+        for(const control of originals.querySelectorAll('button'))control.dataset.request='';
+        originals.replaceChildren();originals.dataset.scope=receiptScope;
+      }
+      originals.hidden=!scope?.groupId;
+      if(scope?.groupId){
+        $("#receipt-observation").textContent='Original exams';
+        $("#receipt-observation").title='보유 수와 도착 변화는 원본 검사별 관측입니다.';
+        $("#receipt-gateway").textContent='';$("#receipt-gateway").title='';
+        $("#receipt-retry").hidden=true;$("#receipt-retry-note").textContent='';
+        const kept=new Map([...originals.children].map(line=>[line.dataset.uid,line]));
+        const lines=KinExamScope.metadata(s).map(source=>{
+          const own=KinStudyArrivals.receiptLabels({assignment:'assigned',observation:KinStudyArrivals.studyObservation(studyObservationModel,source.uid),gateway:source.gatewayReceipt??null});
+          let line=kept.get(source.uid);kept.delete(source.uid);
+          if(!line){
+            line=document.createElement('div');line.dataset.uid=source.uid;
+            const control=document.createElement('button');control.type='button';control.className='chip';
+            control.textContent=KinStudyArrivals.RETRY_TEXT.button;control.addEventListener('click',requestGatewayRetry);
+            line.append(document.createElement('span'),' ',control,' ',document.createElement('span'));
+          }
+          const [text,control,note]=line.children;
+          // The Accession No is data; each label after it is its own text so the screen language reads it.
+          const accession=document.createElement('span');accession.translate=false;accession.textContent=source.acc||source.uid;
+          text.replaceChildren(accession,...[own.observation.text,own.change?.text,
+            source.gatewayReceipt===undefined?'Gateway 영수증 정보가 이 목록에 제공되지 않았습니다.':own.gateway.text].filter(Boolean)
+            .flatMap(words=>[' · ',kinWrite(document.createElement('span'),words)]));
+          drawRetry(source,own.retry,control,note);return line;
+        });
+        for(const line of kept.values())line.querySelector('button').dataset.request='';
+        if(lines.length!==originals.children.length||lines.some((line,i)=>line!==originals.children[i]))originals.replaceChildren(...lines);
+      }
     }
 
     /**
@@ -3147,6 +3229,7 @@
       if (studyIdentityModel) studyIdentityModel = KinStudyIdentity.correction(studyIdentityModel, uid, ok);
       renderStudyIdentity();
     }
+
 
     function relatedDateLabel(target) {
       const current = cur();
@@ -3251,13 +3334,13 @@
       if (imageThumbnails?.sync()) return;
       cancelThumbs();
       if (!uid) { wrap.innerHTML = ""; return; }
-      const seq = thumbSeq;
+      const seq = thumbSeq, scope = KinExamScope.read(viewed()), scopeStamp = KinExamScope.screenStamp(viewed());
       const controller = thumbController = new AbortController();
       const signal = controller.signal;
       // 이 그리기를 시작한 문맥. 받은 목록·영상·실패가 화면에 닿는 자리는 모두 이 문맥(세션·작업 세대)과 아래 stale()
       // (요청 세대·보는 검사)을 함께 지난다. 받은 blob으로 만든 URL은 이 그리기의 것이라 통과한 뒤에만 만든다.
       const at = work.capture("document");
-      const stale = () => signal.aborted || seq !== thumbSeq || uid !== viewingUid();
+      const stale = () => signal.aborted || seq !== thumbSeq || uid !== viewingUid() || scopeStamp !== KinExamScope.screenStamp(viewed());
       const apply = effect => work.commit(at, () => { if (!stale()) effect(); });
       if (demoMode) {
         wrap.innerHTML = `<div class="thumbs" style="grid-template-columns:repeat(2,1fr)"><img src="${DEMO_IMG}"></div>`;
@@ -3268,22 +3351,24 @@
       thumbDone = thumbDone.then(async () => {
         if (stale() || !work.admits(at)) return;
         try {
-          let reps = cached?.uid === uid ? cached.reps : null;
+          let reps = cached?.uid === uid && cached.scopeStamp === scopeStamp ? cached.reps : null;
           if (!reps) {
-            const res = await transport.request(`/dicom-web/studies/${uid}/instances`, { context: at, signal, cache: "no-store", deadlineMs: 30000 });
-            if (!res.ok || !Array.isArray(res.body)) throw new Error(`HTTP ${res.status}`);
-            const inst = res.body;
+            const inst = await KinExamScope.dicom(scope, "instances", async path => {
+              const res = await transport.request(path, { context: at, signal, cache: "no-store", deadlineMs: 30000 });
+              if (!res.ok) throw new Error(`HTTP ${res.status}`);
+              return res.body;
+            });
             const bySeries = new Map();
-            for (const i of inst) {
-              const series = tagv(i, "0020000E");
+            for (const {sourceUid,row} of inst) {
+              const series = sourceUid + ":" + tagv(row, "0020000E");
               if (!bySeries.has(series)) bySeries.set(series, []);
-              bySeries.get(series).push(i);
+              bySeries.get(series).push({ ...row, sourceUid });
             }
             reps = [...bySeries.values()].map(arr => {
               arr.sort((a, b) => (+tagv(a, "00200013") || 0) - (+tagv(b, "00200013") || 0));
               const representative = arr[Math.floor(arr.length / 2)];
               // 순번은 DICOM 번호가 아니며, 표시 정보도 실제 preview의 대표 SOP와 함께 캐시해야 한다.
-              return { sopUid: tagv(representative, "00080018"), seriesUid: tagv(representative, "0020000E"),
+              return { sourceUid: representative.sourceUid, sopUid: tagv(representative, "00080018"), seriesUid: tagv(representative, "0020000E"),
                 number: tagv(representative, "00200011").trim(), description: tagv(representative, "0008103E").trim() };
             });
           }
@@ -3304,10 +3389,10 @@
           sort.onchange = () => {
             if (stale() || !["source", "number-asc", "number-desc"].includes(sort.value)) return;
             thumbSort = sort.value;
-            renderThumbs(0, { uid, reps });
+            renderThumbs(0, { uid, reps, scopeStamp });
           };
-          wrap.querySelector("#thumb-prev").onclick = () => { if (!stale()) renderThumbs(page - 1, { uid, reps }); };
-          wrap.querySelector("#thumb-next").onclick = () => { if (!stale()) renderThumbs(page + 1, { uid, reps }); };
+          wrap.querySelector("#thumb-prev").onclick = () => { if (!stale()) renderThumbs(page - 1, { uid, reps, scopeStamp }); };
+          wrap.querySelector("#thumb-next").onclick = () => { if (!stale()) renderThumbs(page + 1, { uid, reps, scopeStamp }); };
           const grid = wrap.querySelector(".thumbs");
           cells = batch.map((rep, index) => {
             const cell = document.createElement("div");
@@ -3334,10 +3419,10 @@
             open.setAttribute("aria-label", `시리즈 열기 · ${heading} · ${description} · Series UID: ${rep.seriesUid || "없음"}`);
             open.onclick = () => { if (!stale() && !open.disabled) openFilmbox(uid, null, rep.seriesUid); };
             const inspect=document.createElement('button');inspect.type='button';inspect.className='chip thumb-preview-open';inspect.textContent='Image Preview';inspect.disabled=true;
-            inspect.onclick=()=>{if(!stale()&&!inspect.disabled){const study=viewed();if(study?.uid===uid)imagePreview?.open({...study,series:rep.seriesUid,sop:rep.sopUid});}};
+            inspect.onclick=()=>{if(!stale()&&!inspect.disabled){const study=viewed();if(study?.uid===uid)imagePreview?.open({...study,sourceUid:rep.sourceUid,series:rep.seriesUid,sop:rep.sopUid});}};
             const images=document.createElement('button');images.type='button';images.className='chip thumb-images-open';images.textContent='Images';images.disabled=true;
             if(!imageThumbnails)images.title='Images 모듈을 불러오지 못했습니다. 페이지를 다시 열어 주세요.';
-            images.onclick=()=>{if(!stale()&&!images.disabled){const study=viewed();if(study?.uid!==uid)return;cancelThumbs(true);if(!imageThumbnails?.open({...study,series:rep.seriesUid}))renderThumbs();}};
+            images.onclick=()=>{if(!stale()&&!images.disabled){const study=viewed();if(study?.uid!==uid)return;cancelThumbs(true);if(!imageThumbnails?.open({...study,sourceUid:rep.sourceUid,series:rep.seriesUid}))renderThumbs();}};
             cell.append(label, disclosure, preview, open, inspect, images);
             grid.appendChild(cell);
             return { preview, open, inspect, images, alt: `${heading} · ${description}` };
@@ -3349,7 +3434,7 @@
               const index = next++;
               try {
                 // 한 항목의 조회 실패가 다른 영상과 실패한 항목의 식별 정보까지 지우면 대조할 수 없다.
-                const lk = await api("POST", "/dicom/lookup", { studyUid: uid, sopUid: batch[index].sopUid }, signal, at);
+                const lk = await api("POST", "/dicom/lookup", { studyUid: batch[index].sourceUid, sopUid: batch[index].sopUid }, signal, at);
                 const res = await transport.request(`/instances/${encodeURIComponent(lk.id)}/preview`,
                   { context: at, signal, cache: "no-store", read: "blob", deadlineMs: 30000 });
                 if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status });
@@ -6283,7 +6368,7 @@
       recordReportOrigin(uid, renderedOrigin(st));
       citations.forget(uid); citationNotes.delete(uid);
       structureState.forget(uid); structureNotes.delete(uid);
-      return { ...appState[uid], ...st, draft: st.draft ?? null };
+      return { ...appState[uid], ...st, draft: st.draft ?? null, examScopeChanged: false };
     }
 
     /** 삽입이 나가 있는 동안의 비-keepalive 초안 저장을 **전부** 비켜세운다(B1). */
@@ -6643,6 +6728,7 @@
      * 전체 원문)가 보낸 것과 전부 같을 때뿐이다.
      */
     const draftClient = KinReportDraftClient.create({ transport, base: API,
+      writeBlocked: uid => appState[uid]?.examScopeChanged ? "검사 범위가 바뀌어 입력한 글을 새 범위에 저장하지 않았습니다. 초안을 버리거나 서버 판독을 다시 확인하세요." : null,
       // 이 문서의 글을 싣고 나간 쓰기는 답이 확인할 때까지 표시로 남는다. 버리기·확정은 표시를 세우지 않는다(U5CLI-F10).
       onWrite: uid => reportConverge.add(uid) });
 
@@ -8418,6 +8504,7 @@
         version: Number.isSafeInteger(a.version) ? a.version : 0,
         draftRevision: typeof a.draftRevision === "string" ? a.draftRevision : null,
         draftEpoch: a.draftEpoch ?? null,
+        examGeneration: KinExamScope.screenStamp(studies.find(s => s.uid === uid)),
       };
     }
     /** 묶음 실행이 한 건 확정의 잠금을 쥔다. 확정·삽입이 나가 있으면 시작하지 않는다(false). */
@@ -9603,7 +9690,8 @@
     }
     function syncViewingRows() {
       const scope = serverMode && !demoMode && !offline && shownColumns().some(c => c.k === 'viewing')
-        ? JSON.stringify([...$('#rows').querySelectorAll('tr[data-uid]')].map(row => row.dataset.uid)) : '';
+        ? JSON.stringify([...$('#rows').querySelectorAll('tr[data-uid]')].map(row => {
+          const study=studies.find(s=>s.uid===row.dataset.uid);return {uid:row.dataset.uid,scope:KinExamScope.read(study)}; })) : '';
       if (scope === viewingScope) return;
       clearViewing(); viewingScope = scope;
       if (scope) void refreshViewing();
@@ -9612,7 +9700,7 @@
       if (!serverMode || demoMode || offline || document.hidden || !viewingScope || viewingRequest) return;
       const at = work.capture('document');
       if (!work.admits(at)) { clearViewing(); return; }
-      const sequence = ++viewingSequence, scope = viewingScope, uids = JSON.parse(scope);
+      const sequence = ++viewingSequence, scope = viewingScope, rows = JSON.parse(scope), uids = [...new Set(rows.flatMap(row=>row.scope.sources.map(s=>s.studyUid)))];
       if (!uids.length) return;
       const controller = new AbortController(); viewingRequest = controller;
       // Allow a read to outlast one poll, but bound stale names to a stalled read's timeout.
@@ -9634,6 +9722,9 @@
           const names = people.filter(person => typeof person?.name === 'string' && person.name).map(person => person.name);
           if (names.length) viewingNames.set(uid, 'Viewing: ' + names.join(', '));
         }
+        const sourceNames=new Map(viewingNames);viewingNames.clear();
+        for(const row of rows){const names=[...new Set(row.scope.sources.map(s=>sourceNames.get(s.studyUid)).filter(Boolean))];
+          if(names.length)viewingNames.set(row.uid,names.join(' · '));}
         paintViewing();
       } catch (_) {
         if (live()) { viewingNames.clear(); paintViewing(); }
@@ -9736,17 +9827,19 @@
           folderLoadState = 'complete';
           const arrivals = window.KinStudyArrivals?.diff(studies, r.studies);
           // The notice names what came (patient · study · EM E), not only how many: the rows of the answer already carry them.
-          const answered = new Map(r.studies.map(s => [s.uid, s]));
-          const arrivalChanged = arrivals?.ok ? arrivals.changes.map(change => answered.get(change.uid)).filter(Boolean) : [];
+          const arrivalChanged = arrivals?.ok ? [...new Set(arrivals.changes.flatMap(change => r.studies.filter(s=>KinExamScope.read(s)?.sources.some(source=>source.studyUid===change.uid))))] : [];
           const arrivalNotice = arrivalChanged.length
             ? `기존 검사 ${arrivalChanged.length}건에 영상 또는 시리즈가 추가됐습니다(${arrivalNames(arrivalChanged)}). 현재 영상 화면은 자동 교체하지 않습니다.` : '';
           const known = new Map(studies.map(x => [x.uid, x]));
-          const fresh = r.studies.filter(s => !known.has(s.uid));
+          const knownOriginals=new Set(KinExamScope.originals(studies).map(s=>s.uid));
+          const fresh = KinExamScope.originals(r.studies).filter(s=>!knownOriginals.has(s.uid));
+          const scopeChanged = r.studies.some(s=>KinExamScope.screenStamp(s)!==KinExamScope.screenStamp(known.get(s.uid)));
 
           // 목록이 달라졌으면(도착·삭제) 통째로 다시 그린다.
-          if (fresh.length || r.studies.length !== studies.length) {
+          if (scopeChanged || fresh.length || r.studies.length !== studies.length) {
             // 지키는 칸은 `fromApi`가 지나는 `mergeObservedReportState` 한 곳이 정한다 — 목록을 통째로
             // 다시 그리는 이 길도 결국 그 함수를 지나므로 여기서 따로 되돌릴 것이 없다.
+            observeExamList(r.studies);
             studies = r.studies.map(fromApi);
             // 썸네일 등 오른쪽 전체를 다시 그릴 필요는 없지만, 판독문 잠금은 반영해야 한다.
             // loadReport가 값만 보호하므로 새 검사 도착과 Prelim 전환이 겹쳐도 입력은 유지된다.
@@ -9755,7 +9848,7 @@
             autoPreload?.afterList();   // FC-073: a study that just arrived is queued without a manual Refresh
             if (fresh.length || arrivalNotice) {
               const arrived = [fresh.length ? kinSay("새 검사 {n0}건이 도착했습니다: {1}{t2}", fresh.length, arrivalNames(fresh),
-                { t: fresh.some(s => s.state.ss === "Unverified") ? " — Technician 탭에서 확인(Verify)하세요" : "" }) : '', arrivalNotice].filter(Boolean);
+                { t: fresh.some(s => (s.state?.ss??s.ss) === "Unverified") ? " — Technician 탭에서 확인(Verify)하세요" : "" }) : '', arrivalNotice].filter(Boolean);
               announceArrivals(arrived.length > 1 ? kinSay("{t0} · {t1}", { t: arrived[0] }, { t: arrived[1] }) : arrived[0] || '');
             }
             return;
@@ -9763,8 +9856,10 @@
 
           for (const s of r.studies) {
             const uid = s.uid, st = s.state, existing = known.get(uid);
+            if (existing) Object.assign(existing, {examScope:s.examScope??null, reportScope:s.reportScope??null,
+              draftEpoch:s.state?.draftEpoch??null, sourceMetadata:(s.sourceMetadata||[]).map(m=>({...m,sourceAcc:m.acc,acc:m.orderAccession||m.acc,date:fmtD(m.date),reqDate:localStamp(m.reqDate)}))});
             if (existing) for (const field of ['count', 'series'])
-              if (Number.isSafeInteger(s[field]) && s[field] >= 0) existing[field] = s[field];
+              if (s[field] === null || Number.isSafeInteger(s[field]) && s[field] >= 0) existing[field] = s[field];
             updateNoteSummary(uid, s.techNote);
             updateReaderAssignment(uid, s.readerAssignment);
             if (uid === selectedUid) {
@@ -9938,8 +10033,8 @@
     const historyDrawingUrls = [];
     const historyDrawingName = d => d.background === "breast" ? "Breast diagram" : d.background === "thyroid" ? "Thyroid diagram"
       : "Saved image" + (d.source?.frame ? " · frame " + d.source.frame : "");
-    async function showHistory() {
-      const uid = selectedUid;
+    async function showHistory(requestedUid = null) {
+      const uid = typeof requestedUid === "string" ? requestedUid : selectedUid;
       if (!uid) { alert("검사를 선택하세요."); return; }
       const box = $("#hist-body");
       const epoch = ++historyEpoch;
@@ -9972,6 +10067,7 @@
               <span style="color:#b4b4b4">${esc(String(v.at).replace("T", " ").slice(0, 19))}</span>
             </div>
 ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</span></div>` : ""}
+            ${v.group ? `<div class="vr" data-exam-group="${esc(v.group.id)}"><b>Exam scope</b> — <span data-exam-scope-text></span></div>` : ""}
             ${v.findings || v.conclusion || v.recommendation
               ? `<pre translate="no">${esc([v.findings, v.conclusion, v.recommendation].filter(Boolean).join("\n---\n"))}</pre>`
               : `<div style="color:#556;padding:4px 0">(내용 없음)</div>`}
@@ -9980,11 +10076,29 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
               <figure style="margin:0;display:grid;justify-items:center;font-size:11px"><img data-drawing="${esc(d.id)}"
                 alt="${esc(historyDrawingName(d))}" style="width:120px;height:83px;object-fit:contain;background:#fff">
                 <figcaption>${esc(historyDrawingName(d))}</figcaption></figure>`).join("")}</div>` : ""}
-            <div class="vcite-row"><button class="vcite-btn" data-version="${esc(v.version)}"
+            <div class="vcite-row">${v.group ? `<button class="chip" data-history-images="${esc(v.version)}" ${!v.group.readable ? "disabled" : ""}>Open Images</button> ` : ""}<button class="vcite-btn" data-version="${esc(v.version)}"
                  title="이 판의 인용 증적을 서버에서 확인합니다">Show Citations</button></div>
             <div class="vcite-host" data-version="${esc(v.version)}"></div>
           </div>`).join("")
           : "<div style='color:#667;padding:10px'>아직 확정된 판이 없습니다. Save 또는 Approve를 누르면 여기 쌓입니다.</div>";
+        // The Exam scope sentence is written whole, its Accession Nos as data, so the screen language reads it.
+        const scopeLines = box.querySelectorAll("[data-exam-scope-text]");
+        list.filter(v => v.group).forEach((v, i) => {
+          kinWrite(scopeLines[i], v.group.readable
+            ? kinSay("원본 검사({0})의 영상으로 쓴 판입니다{t1}", (KinExamScope.storedReport(v, uid)?.sources || [])
+                .map(source => studies.find(s => s.uid === source.studyUid)?.acc || source.studyUid).join(" + "), { t: v.group.active ? "" : " · 지금은 되돌린 범위" })
+            : "저장된 범위의 일부 영상을 볼 수 없어 이 판의 본문을 보이지 않습니다");
+        });
+        for (const button of box.querySelectorAll("[data-history-images]")) button.onclick = async () => {
+          const version = Number(button.dataset.historyImages);
+          button.disabled = true;
+          try {
+            const scope = await KinExamScope.fetch(api, uid, {purpose:"stored",version,at});
+            if (!work.admits(at) || !historyLive(epoch,uid)) return;
+            openFilmbox(uid, null, null, {exam:KinExamScope.viewerInput(scope,null,version)});
+          } catch(error) { if(work.admits(at)&&historyLive(epoch,uid)) toast(error.message,"err"); }
+          finally { if(work.admits(at)&&historyLive(epoch,uid))button.disabled=false; }
+        };
         // 증적은 **사람이 고른 판만** 읽는다. 이력이 길어도 한 번 열람의 비용이 늘지 않는다.
         for (const button of box.querySelectorAll(".vcite-btn")) {
           const version = Number(button.dataset.version);
@@ -10015,6 +10129,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     }
     $("#b-history").addEventListener("click", showHistory);
     $("#hist-close").addEventListener("click", closeHistory);
+
 
     /**
      * Clear — 세 칸을 한 번에 비운다.
@@ -10424,7 +10539,13 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         .sort((a, b) => b.date.localeCompare(a.date) || b.uid.localeCompare(a.uid))[0]?.uid ?? null;
     }
 
-    function openFilmbox(uid, priorUid = autoPrior(uid), initialSeriesUid = null) {
+    function viewerOpening(uid, priorUid = null, supplied = null) {
+      if (supplied) return supplied;
+      const current = studies.find(row => row.uid === uid) || {uid};
+      const prior = priorUid && priorUid !== uid ? studies.find(row => row.uid === priorUid) || {uid:priorUid} : null;
+      return KinExamScope.viewerInput(current, prior);
+    }
+    function openFilmbox(uid, priorUid = autoPrior(uid), initialSeriesUid = null, openingOptions = null) {
       // WORKLIST-SPLIT-UID: a study (or comparison) the last list excluded as unresolved replaces no window or workspace
       // pane. A stale button or a direct URL still meets the image gate's 403 on the server.
       if ([uid, priorUid].some(value => value && appState[value]?.identityUnresolved)) {
@@ -10432,21 +10553,23 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         return false;
       }
       if (readingWorkspace.active() || imageOpening?.snapshot().listTarget === 'workspace')
-        return readingWorkspace.open(uid, priorUid, initialSeriesUid);
-      return openOhifWindow(uid, priorUid, initialSeriesUid);
+        return openingOptions?.exam ? openOhifWindow(uid, priorUid, initialSeriesUid, null, openingOptions) : readingWorkspace.open(uid, priorUid, initialSeriesUid);
+      return openOhifWindow(uid, priorUid, initialSeriesUid, null, openingOptions);
     }
     function ohifScope(value) {
       try {
         const location = new URL(value, window.location.origin);
         if (location.origin !== window.location.origin || location.pathname !== "/ohif/viewer") return null;
         const studies = (location.searchParams.get("StudyInstanceUIDs") || "").split(",");
-        if (studies.length < 1 || studies.length > 2 || studies.some(uid => !/^\d+(?:\.\d+)+$/.test(uid))) return null;
-        return { studies, series: location.searchParams.get("initialSeriesInstanceUID") || null };
+        // Current and prior each retain their independently resolved original sets.
+        if (studies.length < 1 || studies.length > (location.searchParams.has("kinExamScopes") ? 20 : 2) || studies.some(uid => !/^\d+(?:\.\d+)+$/.test(uid))) return null;
+        return { studies, series: location.searchParams.get("initialSeriesInstanceUID") || null,
+          exam:location.searchParams.get('kinExamScopes') };
       } catch (_) { return null; }
     }
     function sameOhifScope(left, right) {
       const a = ohifScope(left), b = ohifScope(right);
-      return !!a && !!b && a.series === b.series && JSON.stringify(a.studies) === JSON.stringify(b.studies);
+      return !!a && !!b && a.series === b.series && a.exam === b.exam && JSON.stringify(a.studies) === JSON.stringify(b.studies);
     }
     function ohifPopupState(popup) {
       try {
@@ -10526,9 +10649,10 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
       const returnHash=typeof readingReturn==='string'&&UUID4.test(readingReturn)?'#kin-reading-return='+readingReturn:'';
       const viewingSet = typeof openingOptions?.viewingSet === 'string' && UUID4.test(openingOptions.viewingSet) ? openingOptions.viewingSet : null;
-      let url = `/ohif/viewer?StudyInstanceUIDs=${encodeURIComponent(uid)}` +
-        (priorUid && priorUid !== uid ? `,${encodeURIComponent(priorUid)}&hangingProtocolId=@ohif/hpCompare` : "") +
-        (initialSeriesUid === null ? "" : `&initialSeriesInstanceUID=${encodeURIComponent(initialSeriesUid)}`)+returnHash+
+      let input;
+      try { input = viewerOpening(uid, priorUid, openingOptions?.exam); }
+      catch (error) { notify(error.message, 'err'); return outcome('failed', error.message); }
+      let url = KinExamScope.viewerUrl(input, initialSeriesUid)+returnHash+
         (viewingSet ? (returnHash ? '&' : '#') + 'kin-w9=' + viewingSet : '');
       const seq = ++ohifOpenSeq;
       if (!viewerWindows) { notify('영상 창 연결을 확인하지 못했습니다. 통합 판독 화면을 사용하거나 목록을 새로고침하세요.', 'err'); return outcome('refused', '영상 창 연결을 확인하지 못했습니다. 통합 판독 화면을 사용하거나 목록을 새로고침하세요.'); }
@@ -10768,7 +10892,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       if (viewingSetToWorkspace() && !preservePartner) return { status: 'reserved', kind: 'workspace' };
       if (demoMode) return { status: 'refused', message: '데모 모드에서는 뷰어를 열 수 없습니다.' };
       if (!viewerWindows) return { status: 'refused', message: '영상 창 연결을 확인하지 못했습니다. 통합 판독 화면을 사용하거나 목록을 새로고침하세요.' };
-      const url = `/ohif/viewer?StudyInstanceUIDs=${uids.map(encodeURIComponent).join(',')}` + (uids.length === 2 ? '&hangingProtocolId=@ohif/hpCompare' : '');
+      const url = KinExamScope.viewerUrl(KinExamScope.originalInput(uids));
       // A previous composition may leave this retry document open. Reuse its slot through the normal launch guards.
       const ownRetryWindow = preservePartner && viewingSetRetryWindow?.isOpen() && viewerWindows.rows().some(row => row.popup === viewingSetRetryWindow.popup);
       const choice = viewerWindows.choose(url, 1, preservePartner && !ownRetryWindow ? { freshDocument: true } : { singleWindow: true });
@@ -10796,7 +10920,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         return readingWorkspace.openViewingSet(plan.uid, plan.priorUid, { opening, metadata });
       }
       if (reservation?.kind !== 'window') return { status: 'refused', message: '영상 창을 확인하지 못했습니다. 다시 여세요.' };
-      return Promise.resolve(openOhifWindow(plan.uid, plan.priorUid, null, null, { reservation, viewingSet: opening, signal })).then(result => {
+      return Promise.resolve(openOhifWindow(plan.uid, plan.priorUid, null, null, { reservation, viewingSet: opening, signal, exam:KinExamScope.originalInput(uids) })).then(result => {
         if (result.status === 'accepted') {
           const sequence = ohifPopupSequences.get(reservation.popup);
           result.isOpen = () => !reservation.popup.closed && ohifPopupSequences.get(reservation.popup) === sequence;
@@ -10984,7 +11108,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           if (!target) { status.textContent = '기존 영상 창의 검사와 계정을 확인한 뒤 다시 여세요.'; return; }
           status.textContent = '';
           const readingReturn = new URLSearchParams(new URL(state.href, location.origin).hash.slice(1)).get('kin-reading-return');
-          openOhifWindow(target.studies[0], target.studies[1] || null, target.series, readingReturn, { freshDocument: true, notice: message => { status.textContent = message; } });
+          const input = target.exam ? popup.KinViewerExamScope?.snapshot() : null;
+          if (target.exam && !input) { status.textContent = "검사 범위를 확인한 뒤 목록에서 다시 여세요."; return; }
+          openOhifWindow(input?.reportUid || target.studies[0], input?.prior?.reportUid || (!input && target.studies[1]) || null, target.series, readingReturn, { ...(input ? {exam:input} : {}), freshDocument: true, notice: message => { status.textContent = message; } });
           render(); return;
         }
         if (action === 'close') {
@@ -11573,6 +11699,19 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     const readingWorkspace = KinReadingWorkspace({
       current: () => selectedUid, study: uid => studies.find(s => s.uid === uid),
       formatDate: fmtD,
+      viewerInput: viewerOpening,
+      verifyExam: async (uid,stamp) => {
+        const at=work.capture('document'),row=studies.find(s=>s.uid===uid);
+        if(KinExamScope.readingStamp(row)!==stamp)return false;
+        try {
+          // An ordinary viewer keeps the existing study read; a changed row cannot bind its old editor link.
+          const scope=stamp===undefined
+            ? (await api('GET','/studies?uids='+encodeURIComponent(uid),undefined,undefined,at))?.studies?.find(s=>s.uid===uid)
+            : await KinExamScope.fetch(api,uid,{reference:KinExamScope.reference(KinExamScope.read(row)),at});
+          if(!scope)return false;
+          return work.admits(at)&&KinExamScope.readingStamp(scope)===stamp&&KinExamScope.readingStamp(studies.find(s=>s.uid===uid))===stamp;
+        } catch (_) {return false;}
+      },
       prior: autoPrior, move, select, queue: orderedStudies, layout: () => applyLayout(), popup: openOhifWindow,
       // A viewer's withdrawn Open in Reading Screen: a move to this study still waiting for the save gate is dropped.
       cancelMove: uid => { if (pendingLeave?.target?.uid !== uid) return false; pendingLeave.target = null; return true; },
@@ -11653,6 +11792,16 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       if (value === undefined || value === null) return value ?? null;
       try { return structuredClone(value); } catch (_) { return JSON.parse(JSON.stringify(value)); }
     }
+    function invalidateExamLists(){commitEpoch++;listLoadSequence++;studyPageClient.clear();}
+    const examChanges=KinExamScope.changes(()=>work.session(),uids=>{
+      invalidateExamLists();
+      for(const row of studies)if(KinExamScope.read(row)?.sources.some(source=>uids.includes(source.studyUid))){
+        if(reportConverge.has(row.uid)){appState[row.uid].examScopeChanged=true;reportSaveFailures.set(row.uid,"stop");}
+        if(selectedUid===row.uid)markSelectionChanged(row.uid);
+      }
+      cancelThumbs();void load();
+    });
+    onSessionEnd(()=>examChanges.close());window.addEventListener("pagehide",()=>examChanges.close());
     const addOnRecords = [];
     let addOnsEnded = false;
     function addOnCall(record, what, fn) {
@@ -11702,6 +11851,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         session: () => copyOf(KinAuth.session()),
         allowed: () => !!sess && serverMode && !demoMode && !offline && work.state() === 'active',
         reload: () => load(),
+        examChanged: uids => {invalidateExamLists();examChanges.send(uids);},
         onRender: fn => listen('render', fn),
         onSelect: fn => listen('select', fn),
         onReport: fn => listen('report', fn),
@@ -11714,6 +11864,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           return () => { const at = record.ends.indexOf(end); if (at >= 0) record.ends.splice(at, 1); };
         },
         report: Object.freeze({
+          history: uid => showHistory(uid),
           insertAtTop: (field, text, { sourceUid } = {}) => insertReportTop(field, text, sourceUid),
           undoInsert: () => undoReportTopInsert(),
           read: uid => {
@@ -14578,7 +14729,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       KinStudyAccessStatus.mount({button:$('#study-access-open'),session:()=>KinAuth.session(),refresh:async()=>(await load())===true});
       multiSelection = KinWorklistSelection.mount({host:$('#worklist-selection'),tbody:$('#rows'),owner:()=>KinViewerOpening.key(KinAuth.session()),rows:orderedStudies,current:()=>selectedUid,open:uid=>select(uid,{openSelected:true}),compare:(uid,prior)=>openFilmbox(uid,prior),
         // W9: Open Selected Studies (toolbar, Selection Details); a changed selection closes its row menu.
-        openSet:set=>multiStudyView?.open({...set,session:work.session()}),changed:generation=>closeSelectionMenu(generation),
+        openSet:set=>multiStudyView?.open(KinExamScope.viewingSelection({...set,session:work.session()},studies)),changed:generation=>closeSelectionMenu(generation),
         openBlocked:()=>!serverMode||offline||demoMode?'서버 연결과 로그인 상태를 확인한 뒤 다시 여세요.':!KinAuth.has('radiologist')?'여러 검사 열기는 판독의 권한이 필요합니다.':null,
         // FC-028 Batch Reading (worklist-batch-report.js, mounted below).
         batchRead:{shown:()=>!!batchReport?.shown(),blocked:()=>batchReport?.blocked()??null,open:set=>batchReport?.open(set)},
@@ -14605,8 +14756,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         allowed:()=>!!sess&&serverMode&&!demoMode&&!offline,can:role=>KinAuth.has(role),refresh:()=>load()})||null;
       // FC-071: the PF column follows the Preload queue the selection bar's panel shows.
       window.KinPreloadQueue?.watch?.(paintPreload);
-      imagePreview = KinWorklistImagePreview.mount({owner:()=>KinViewerOpening.key(KinAuth.session()),currentUid:viewingUid,api});
-      imageThumbnails = window.KinWorklistImageThumbnails?.mount?.({host:$('#thumbwrap'),owner:()=>KinViewerOpening.key(KinAuth.session()),currentUid:viewingUid,api,
+      imagePreview = KinWorklistImagePreview.mount({owner:()=>KinViewerOpening.key(KinAuth.session()),currentUid:viewingUid,currentStudy:viewed,api});
+      imageThumbnails = window.KinWorklistImageThumbnails?.mount?.({host:$('#thumbwrap'),owner:()=>KinViewerOpening.key(KinAuth.session()),currentUid:viewingUid,currentStudy:viewed,api,
         onPreview:value=>imagePreview?.open(value),onBack:()=>renderThumbs()}) || null;
       worklistSearch = KinWorklistSearch.mount({host:document.querySelector('#toolbar-filters .toolbar-menu-panel'),owner:()=>KinViewerOpening.key(KinAuth.session()),snapshot:searchCriteria,render});
       rowNavigation = KinWorklistRowNavigation.mount({tbody:$('#rows'),owner:()=>KinViewerOpening.key(KinAuth.session()),rows:orderedStudies,
@@ -14622,7 +14773,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       // exist. It reads the page's own gate, transport, Reading Target, W4 select and launcher; it ends with the session.
       multiStudyView = KinMultiStudyView.mount({ host: $('#multi-study'), work,
         context: () => ({ owner: KinViewerOpening.key(KinAuth.session()), session: work.session() }),
-        selection: () => { const set = multiSelection?.snapshot(); return set && { ...set, session: work.session() }; },
+        selection: () => { const set = multiSelection?.snapshot(); return KinExamScope.viewingSelection(set && { ...set, session: work.session() },studies); },
         allowed: () => !!sess && serverMode && !demoMode && !offline,
         target: () => selectedUid,
         targetLabel: uid => { const s = studies.find(x => x.uid === uid); return s ? [s.name, s.id, s.date, s.modality, shownStudyDesc(s)].filter(Boolean).join(' · ') : null; },

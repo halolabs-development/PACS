@@ -943,6 +943,7 @@ class StudyPanelPageDOM(unittest.TestCase):
         settle(page)
         self.assertEqual(arrival, page.evaluate(column_reach.READ, SAVE_ROW), f'{what}: the arrival state is back')
         typed = {'#findings': f'SYN findings {what}', '#conclusion': f'SYN conclusion {what}'}
+        holds = len(site.holds)
         for field, text in typed.items():
             state, why = wheel_into_view(page, field)
             self.assertIsNone(why, f'{what}: {field} {state}')
@@ -950,6 +951,13 @@ class StudyPanelPageDOM(unittest.TestCase):
             expect(page.locator(field)).to_be_focused()
             page.keyboard.type(text)
             expect(page.locator(field)).to_have_value(text)
+            if field == '#findings':
+                # Typing claims the report hold, and its answer shows the draft notice above the editor, which moves
+                # Conclusion down by the notice's height. Conclusion is found once that answer is on screen: found
+                # before it and clicked after it, the click landed on what was above Conclusion.
+                wait_until(page, lambda: len(site.holds) > holds, f'{what}: the hold typing claims')
+                expect(page.locator('#draftbar')).to_be_visible()
+                settle(page)
         # Tab is judged from where the reader pressed it, in Conclusion: typing has added the draft notice above the
         # editor since arrival, so Save may have been whole at arrival and below the card's edge now (the card scrolls
         # once its rows' floors are more than its height). Whole before Tab: nothing may scroll; out of view: only the
@@ -2034,7 +2042,7 @@ class StudyPanelPageDOM(unittest.TestCase):
                 self.answer_keeps_places(page, 'approve', held, release, lambda: (
                     wait_until(page, lambda: len(site.commits) == 2, 'approve answered'),
                     page.wait_for_function("() => appState[selectedUid]?.rs === 'A'")))
-                self.assertEqual({'draftbar', 'holdbar', 'deferbar', 'citebar', 'report-notice', 'recnote'},
+                self.assertEqual({'exam-report-scope', 'draftbar', 'holdbar', 'deferbar', 'citebar', 'report-notice', 'recnote'},
                                  set(page.evaluate("() => [...document.querySelectorAll('#report-notices > *')].map(e => e.id)")))
                 self.assertEqual(height, band.bounding_box()['height'], 'the band kept its height')
                 self.doCleanups()

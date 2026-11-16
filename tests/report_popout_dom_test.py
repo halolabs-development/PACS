@@ -131,7 +131,7 @@ class ReportPopoutPage(unittest.TestCase):
           const editor = document.getElementById('report-editor'), save = document.getElementById('b-save');
           return !!editor && editor.parentElement.classList.contains('report-compose')
             && !!save && save.parentElement.classList.contains('rfoot2') && !save.closest('.report-window-foot')
-            && ['draftbar', 'holdbar', 'deferbar'].every(id => document.getElementById(id)?.parentElement?.id === 'report-notices')
+            && ['exam-report-scope', 'draftbar', 'holdbar', 'deferbar', 'recnote'].every(id => document.getElementById(id)?.parentElement?.id === 'report-notices')
             && !!document.getElementById('report-notices')?.closest('.report-p')
             && !document.querySelector('.report-window-hold > *');
         }""")
@@ -269,7 +269,7 @@ class PopOutWindow(ReportPopoutPage):
         self.open()
         self.open_study(h.PATIENT)
         pip = self.pop_out()
-        self.assertTrue(pip.evaluate("""() => ['draftbar', 'holdbar', 'deferbar'].every(id =>
+        self.assertTrue(pip.evaluate("""() => ['exam-report-scope', 'draftbar', 'holdbar', 'deferbar', 'recnote'].every(id =>
           document.getElementById(id).parentElement.matches('.report-window-body > .report-notices'))"""))
         expect(pip.locator("#draftbar")).to_be_hidden()
         places = "() => ['.report-notices', '#findings', '#conclusion'].map(s => document.querySelector(s).getBoundingClientRect().top)"

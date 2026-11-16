@@ -42,7 +42,7 @@ test('admin creates, rotates and retires a doctor key over HTTP; the doctor appr
   process.env.KC_JWKS_URL = 'http://127.0.0.1:' + idp.address().port + '/certs';
   const tokens = {};
   for (const [name, m] of Object.entries(members)) tokens[name] = await new jose.SignJWT({ email: m.email,
-    realm_access: { roles: m.roles }, groups: ['/' + m.institution] }).setProtectedHeader({ alg: 'RS256', kid: jwk.kid })
+    realm_access: { roles: m.roles }, amr: m.roles.includes('admin') ? ['otp'] : [], groups: ['/' + m.institution] }).setProtectedHeader({ alg: 'RS256', kid: jwk.kid })
     .setIssuer(issuer).setSubject(m.sub).setAudience('kin-api').setIssuedAt().setExpirationTime('10m').sign(pair.privateKey);
   const db = new PrismaClient({ datasources: { db: { url: process.env.KIN_D_WITNESS_URL } } });
   const runtime = new (product('emr-runtime/application').EmrRuntime)(process.env.DATABASE_URL, process.env.KIN_D_SPOOL);

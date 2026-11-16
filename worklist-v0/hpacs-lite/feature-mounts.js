@@ -534,6 +534,19 @@
     const readingWorkspace = KinReadingWorkspace({
       current: () => selectedUid, study: uid => studies.find(s => s.uid === uid),
       formatDate: fmtD,
+      viewerInput: viewerOpening,
+      verifyExam: async (uid,stamp) => {
+        const at=work.capture('document'),row=studies.find(s=>s.uid===uid);
+        if(KinExamScope.readingStamp(row)!==stamp)return false;
+        try {
+          // An ordinary viewer keeps the existing study read; a changed row cannot bind its old editor link.
+          const scope=stamp===undefined
+            ? (await api('GET','/studies?uids='+encodeURIComponent(uid),undefined,undefined,at))?.studies?.find(s=>s.uid===uid)
+            : await KinExamScope.fetch(api,uid,{reference:KinExamScope.reference(KinExamScope.read(row)),at});
+          if(!scope)return false;
+          return work.admits(at)&&KinExamScope.readingStamp(scope)===stamp&&KinExamScope.readingStamp(studies.find(s=>s.uid===uid))===stamp;
+        } catch (_) {return false;}
+      },
       prior: autoPrior, move, select, queue: orderedStudies, layout: () => applyLayout(), popup: openOhifWindow,
       // A viewer's withdrawn Open in Reading Screen: a move to this study still waiting for the save gate is dropped.
       cancelMove: uid => { if (pendingLeave?.target?.uid !== uid) return false; pendingLeave.target = null; return true; },
@@ -614,6 +627,16 @@
       if (value === undefined || value === null) return value ?? null;
       try { return structuredClone(value); } catch (_) { return JSON.parse(JSON.stringify(value)); }
     }
+    function invalidateExamLists(){commitEpoch++;listLoadSequence++;studyPageClient.clear();}
+    const examChanges=KinExamScope.changes(()=>work.session(),uids=>{
+      invalidateExamLists();
+      for(const row of studies)if(KinExamScope.read(row)?.sources.some(source=>uids.includes(source.studyUid))){
+        if(reportConverge.has(row.uid)){appState[row.uid].examScopeChanged=true;reportSaveFailures.set(row.uid,"stop");}
+        if(selectedUid===row.uid)markSelectionChanged(row.uid);
+      }
+      cancelThumbs();void load();
+    });
+    onSessionEnd(()=>examChanges.close());window.addEventListener("pagehide",()=>examChanges.close());
     const addOnRecords = [];
     let addOnsEnded = false;
     function addOnCall(record, what, fn) {
@@ -663,6 +686,7 @@
         session: () => copyOf(KinAuth.session()),
         allowed: () => !!sess && serverMode && !demoMode && !offline && work.state() === 'active',
         reload: () => load(),
+        examChanged: uids => {invalidateExamLists();examChanges.send(uids);},
         onRender: fn => listen('render', fn),
         onSelect: fn => listen('select', fn),
         onReport: fn => listen('report', fn),
@@ -675,6 +699,7 @@
           return () => { const at = record.ends.indexOf(end); if (at >= 0) record.ends.splice(at, 1); };
         },
         report: Object.freeze({
+          history: uid => showHistory(uid),
           insertAtTop: (field, text, { sourceUid } = {}) => insertReportTop(field, text, sourceUid),
           undoInsert: () => undoReportTopInsert(),
           read: uid => {

@@ -124,7 +124,25 @@
       const previous=readerAssignments.get(uid);if(value&&previous&&value.revision<previous.revision)return;
       readerAssignments.set(uid,value);const study=studies.find(s=>s.uid===uid);if(study)study.assignedReader=value?.reader?[value.reader.name,value.reader.actor].filter(Boolean).join(' · '):'';
     }
+    const observedExamScopes = new Map();
+    function observeExamList(rows) {
+      const present=new Set(rows.map(s=>s.uid));
+      for(const uid of observedExamScopes.keys()) if(!present.has(uid)) observeExamScope({uid,origin:"logical"});
+    }
+    function observeExamScope(s) {
+      const next = KinExamScope.screenStamp(s), previous = observedExamScopes.get(s.uid);
+      observedExamScopes.set(s.uid, next);
+      if (previous === undefined || previous === next) return;
+      if (reportConverge.has(s.uid)) {
+        appState[s.uid].examScopeChanged = true;
+        reportSaveFailures.set(s.uid, "stop");
+      }
+      if (selectedUid === s.uid) markSelectionChanged(s.uid);
+      cancelThumbs();
+      window.dispatchEvent(new CustomEvent("kin-exam-scope-changed", { detail: { uid: s.uid, previous, next } }));
+    }
     function fromApi(s) {
+      observeExamScope(s);
       updateReaderAssignment(s.uid,s.readerAssignment);
       updateNoteSummary(s.uid, s.techNote);
       /**
@@ -156,6 +174,15 @@
         gatewayReceipt: s.gatewayReceipt ?? null,
         // Request columns as the server decided them (matched order first); a value it did not send stays blank.
         reqDate: localStamp(s.reqDate), reqDept: requestText(s.reqDept), reqDoc: requestText(s.reqDoc), ptClass: requestText(s.ptClass),
+        // Merge Exam: the studies of a merged exam (the base first); Count and Series above are already of all of them.
+        examScope: s.examScope ?? null, reportScope: s.reportScope ?? null,
+        relatedExamReports: s.relatedExamReports ?? [], examUnavailable: s.examUnavailable === true,
+        draftEpoch: s.state?.draftEpoch ?? null,
+        sourceMetadata: (s.sourceMetadata || []).map(m => ({ ...m, sourceAcc: m.acc,
+          acc: m.orderAccession || m.acc, date: fmtD(m.date), reqDate: localStamp(m.reqDate) })),
+        ...(s.group ? { group: s.group } : {}),
+        // A report written on a merged exam (now or before Unmerge): which studies, and whether this account may read them all.
+        ...(s.reportGroup && typeof s.reportGroup === 'object' ? { reportGroup: s.reportGroup } : {}),
       });
     }
 
@@ -263,7 +290,7 @@
       const matchQuick = KinCompoundFilter.compileQuick(filter?.quick, values[KinCompoundFilter.KEY], COLS[filterMode]);
       return s => {
         if (!matchQuick(s)) return false;
-        if (!withinDays(s.date, days)) return false;
+        if (!KinExamScope.projections(s).some(source=>withinDays(source.date, days))) return false;
         // A compound rule on Confirm compares the same Confirmed / Not Confirmed word the header filter uses (RS based).
         return cols.every(c => testCol(s, c, values))
           && matchCompound({ ...s, confirm: confirmedRow(s) ? "Confirmed" : "Not Confirmed",
@@ -961,7 +988,8 @@
          */
         // 편집 중인 검사의 판 번호·초안을 되돌려 놓던 블록은 없앴다 — `fromApi`가 그 규칙을
         // 모든 검사에 대해 먼저 적용하므로, 여기서 한 검사만 다시 손보면 규칙이 둘로 갈린다.
-          studies = r.studies.map(fromApi);
+          observeExamList(r.studies);
+        studies = r.studies.map(fromApi);
           folderLoadState = 'complete';
           applyIdentityIssues(r.identityIssues, r.studies);
           applyObservation(r);

@@ -1,0 +1,823 @@
+/*
+ * Merge Exam / Unmerge: a record makes one logical exam out of a patient's studies (a base study and its members).
+ * No DICOM object, UID or Orthanc resource is changed — the worklist shows the base row only (with every study's images),
+ * the viewer opens all of them as the current study, and the report is written on the base. Q/R, export and the hospital's
+ * EMR keep the original studies. Unmerge ends the record: each study's images belong to it again (images that arrived
+ * while merged included, since they were always stored under their own study). A report written while merged keeps the
+ * group it was written on (Report / ReportVersion / ReportDraft.groupId), so its source stays readable after Unmerge.
+ *
+ * Every change is judged and written in one transaction that locks the studies' StudyState rows in UID order (the same row
+ * lock the report commit, the hold and the transfer start take), so a concurrent approval, hold or transfer either commits
+ * first and is seen here, or waits and sees the new group. Both changes also give the studies a new draft epoch: a screen
+ * that still shows the old grouping cannot save or approve on it (the existing draft-conflict answer).
+ */
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { createHash, randomUUID } from 'node:crypto';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from './prisma.service';
+import { StudyAccessService } from './study-access.service';
+import { need, inst } from './pacs/access';
+import type { Caller } from './pacs/access';
+import { dump, holdAlive, draftConflict } from './pacs/values';
+import { canReadPreliminary } from './preliminary-reader';
+
+export const STUDY_MERGED = 'STUDY_MERGED';
+export const EXAM_GROUP_REFUSED = 'EXAM_GROUP_REFUSED';
+export const EXAM_SCOPE_CHANGED = 'EXAM_SCOPE_CHANGED';
+/** At most this many studies in one merged exam (the viewer opens all of them in one window). */
+export const MERGE_LIMIT = 10;
+const GROUP_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const studyUidOf = (value: unknown): value is string => typeof value === 'string' && value.length <= 64 && /^\d+(?:\.\d+)+$/.test(value);
+/** A transfer to another institution that is still open (requested or accepted, not yet imported or ended). */
+const OPEN_TRANSFER = ['OPEN', 'ACCEPTED'];
+/** A local download (export to this PC) that is being prepared or sent. */
+const OPEN_DOWNLOAD = ['prepared', 'sending'];
+
+export interface ExamGroupMember { groupId: string; logicalUid: string; studyUid: string; part: number; seriesUids: string[];
+  sourcePatientId?: string | null; sourceInstitution?: string | null }
+export interface ExamGroup { id: string; kind: string; baseUid: string; institutionId: string; dissolvedAt?: Date | null; members: ExamGroupMember[] }
+/** The exam a report on `uid` is written for: its active group (null = the study alone) and the original studies it covers. */
+export interface ExamScope { groupId: string | null; kind: 'merge' | 'split' | null; baseUid: string; studies: string[] }
+
+export interface ResolvedExamScope extends ExamScope {
+  hasMembership: boolean;
+  reportUid: string;
+  part: number | null;
+  active: boolean;
+  sources: { studyUid: string; series: { mode: 'all' | 'include' | 'exclude'; uids: string[] } }[];
+  generation: string;
+  scopeRevision: string;
+  lockUids: string[];
+  state: any;
+  redirectUid?: string;
+}
+export interface ExamScopeRequest {
+  uid: string;
+  purpose: 'current' | 'stored' | 'source';
+  record?: { groupId?: string | null };
+  /** Cleanup preserves records or ends membership; it cannot create new reporting content. */
+  intent?: 'reading' | 'cleanup';
+  phase?: 'prepare' | 'write';
+  prepared?: ResolvedExamScope;
+  /** Other report parents needed by a compound operation, locked in the same order. */
+  related?: string[];
+  /** Reuse the state already selected by the owning route. */
+  state?: any;
+  /** Ordinary report operations retain their existing ambiguous-source check. */
+  identity?: boolean;
+}
+
+const unique = (uids: string[]) => [...new Set(uids)];
+const absent = () => new NotFoundException('검사를 찾을 수 없습니다');
+const visible = (s: any, c: Caller) => s?.institutionId != null && (s.institutionId === inst(c) || s.teleInstitutionId === inst(c));
+
+/** Record-only readers use SQL membership facts without opening clinical model delegates or reading report text. */
+export async function withGroupedExam<T>(db: any, uid: string, original: () => Promise<T>, grouped: () => Promise<T>): Promise<T> {
+  const members: any[] = await db.$queryRaw`SELECT "groupId" FROM "StudyGroupMember" WHERE "logicalUid"=${uid} OR "studyUid"=${uid}`;
+  return members.length ? grouped() : original();
+}
+
+/**
+ * The same membership fact for a record-only reader's whole list, in one raw read: the UIDs with a grouping history.
+ * Records of every other study keep that reader's established statements, one decision for all of them.
+ */
+export async function groupedRecordUids(db: any, uids: string[]): Promise<Set<string>> {
+  const all = unique(uids);
+  if (!all.length) return new Set();
+  const members: any[] = await db.$queryRaw`SELECT "logicalUid","studyUid" FROM "StudyGroupMember"
+    WHERE "logicalUid"=ANY(${all}::text[]) OR "studyUid"=ANY(${all}::text[])`;
+  return new Set(members.flatMap(member => [member.logicalUid, member.studyUid]));
+}
+
+/** Two UID lists share one statement's bind variables; a whole archive is read in parts. */
+const MEMBER_LOOKUP = 10000;
+async function membersTouching(db: any, uids: string[], select?: Record<string, boolean>): Promise<ExamGroupMember[]> {
+  const out: ExamGroupMember[] = [], seen = new Set<string>();
+  for (let at = 0; at < uids.length; at += MEMBER_LOOKUP) {
+    const part = uids.slice(at, at + MEMBER_LOOKUP);
+    const rows: ExamGroupMember[] = await db.studyGroupMember.findMany({
+      where: { OR: [{ studyUid: { in: part } }, { logicalUid: { in: part } }] }, ...(select ? { select } : {}) });
+    for (const row of rows) {
+      const key = row.groupId + '\n' + row.logicalUid;
+      if (!seen.has(key)) { seen.add(key); out.push(row); }
+    }
+  }
+  return out;
+}
+
+/**
+ * The UIDs of a whole list (original studies or report parents) that have a grouping history, in one read. A list reader
+ * keeps its established statements for every other UID, so a study that was never grouped costs it nothing more than
+ * before grouping existed, and only these are resolved one by one.
+ */
+export async function groupedExamUids(db: any, uids: string[]): Promise<Set<string>> {
+  const all = unique(uids);
+  if (!all.length) return new Set();
+  return new Set((await membersTouching(db, all, { groupId: true, logicalUid: true, studyUid: true }))
+    .flatMap(member => [member.logicalUid, member.studyUid]));
+}
+
+/** A study that was never grouped, with a record that names no group: itself, whole. */
+function ordinaryScope(uid: string, purpose: ExamScopeRequest['purpose'], state: any): ResolvedExamScope {
+  const sources: ResolvedExamScope['sources'] = [{ studyUid: uid, series: { mode: 'all', uids: [] } }];
+  const scopeRevision = createHash('sha256').update(JSON.stringify([uid, null, null, sources, []])).digest('hex');
+  return { hasMembership: false, groupId: null, kind: null, baseUid: uid, reportUid: uid, part: null, active: true,
+    sources, studies: [uid], lockUids: [uid], state, scopeRevision,
+    generation: createHash('sha256').update(JSON.stringify([scopeRevision, purpose !== 'stored' ? state?.draftEpoch ?? null : null])).digest('hex') };
+}
+
+/**
+ * The stored scope of a record on a study the caller's own list selection already admitted and that
+ * groupedExamUids did not name: the study alone. Nothing is read; it is the answer readableExamRecord gives for it.
+ */
+export function ordinaryExamRecord(uid: string, state: any = null): ResolvedExamScope {
+  return ordinaryScope(uid, 'stored', state);
+}
+
+/**
+ * Stored records of a whole list the caller already selected under its own visibility and policy rules. Records of
+ * never-grouped studies are described without a read; a record with a grouping history is resolved as one record is.
+ * `prepare` is false inside a transaction: its caller observed the grouped originals before opening it.
+ */
+export async function readableExamRecords(db: any, access: StudyAccessService, c: Caller,
+    records: { uid: string; groupId?: string | null }[], prepare = true) {
+  const grouped = await groupedExamUids(db, records.map(record => record.uid));
+  const out = new Map<string, ResolvedExamScope | null>();
+  for (const record of records) {
+    if (record.groupId == null && !grouped.has(record.uid)) { out.set(record.uid, ordinaryExamRecord(record.uid)); continue; }
+    if (prepare) await prepareExamRead(db, access, c, record.uid);
+    out.set(record.uid, await readableExamRecord(db, access, c, record.uid, record));
+  }
+  return out;
+}
+
+/** Critical records already carry their own source testimony. Do not observe Orthanc again for an ordinary record. */
+export async function prepareRecordExamRead(db: any, access: StudyAccessService, c: Caller, uid: string) {
+  return withGroupedExam(db, uid, () => access.prepare(c, [uid]), async () => { await prepareExamRead(db, access, c, uid); });
+}
+
+/** Ordinary sources keep the established ambiguity rule; only logical exams require complete source identities. */
+export function assertExamSource(access: StudyAccessService, c: Caller, scope: ResolvedExamScope) {
+  return scope.studies.map(uid => scope.hasMembership ? access.assertIdentifiedSource(c, uid) : access.assertUnsplitSource(c, uid));
+}
+
+/** All membership interpretation lives here. A stored null is explicitly the original study, never today's group. */
+async function describeScope(db: any, request: ExamScopeRequest): Promise<ResolvedExamScope> {
+  const { uid, purpose } = request;
+  const parts: ExamGroupMember[] = await db.studyGroupMember.findMany({ where: { OR: [{ logicalUid: uid }, { studyUid: uid }] } });
+  if (!parts.length && request.record?.groupId == null) {
+    if (purpose === 'stored' && !request.record) throw examScopeChanged();
+    return ordinaryScope(uid, purpose, request.state !== undefined ? request.state : await db.studyState.findUnique({ where: { uid } }));
+  }
+  let group: ExamGroup | undefined;
+  let history: string[] = [];
+  if (purpose === 'stored') {
+    if (!request.record) throw examScopeChanged();
+    const id = request.record.groupId;
+    if (id != null) {
+      if (!GROUP_ID.test(id)) throw examScopeChanged();
+      const [row] = await db.studyGroup.findMany({ where: { id: { in: [id] } } });
+      if (!row) throw examScopeChanged();
+      group = { ...row, members: await db.studyGroupMember.findMany({ where: { groupId: id } }) };
+    }
+  } else if (purpose === 'current') {
+    const groups = await activeGroups(db, [uid]);
+    if (groups.length > 1) throw examScopeChanged();
+    group = groups[0];
+  }
+  // A retired logical part must never turn into an original DICOM study.
+  if (!group) {
+    history = purpose === 'stored' ? [] : unique(parts.map(p => p.groupId)).sort();
+    const retired = parts.find(p => p.studyUid !== uid);
+    if (retired) {
+      if (request.intent !== 'cleanup' || purpose !== 'current') throw examScopeChanged();
+      const [row] = await db.studyGroup.findMany({ where: { id: { in: [retired.groupId] } } });
+      if (!row) throw examScopeChanged();
+      group = { ...row, members: await db.studyGroupMember.findMany({ where: { groupId: row.id } }) };
+    }
+  }
+  const members = group?.members ?? [];
+  let sources: ResolvedExamScope['sources'], part: number | null = null;
+  if (group?.kind === 'merge') {
+    if (!members.length || !members.some(m => m.studyUid === group!.baseUid) || members.some(m => m.studyUid !== m.logicalUid)) throw examScopeChanged();
+    if (group.baseUid !== uid && purpose === 'stored') throw examScopeChanged();
+    sources = unique(members.sort((a, b) => a.part - b.part).map(m => m.studyUid))
+      .map(studyUid => ({ studyUid, series: { mode: 'all', uids: [] } }));
+  } else if (group?.kind === 'split') {
+    const selected = members.find(m => m.logicalUid === uid), second = members.find(m => m.part === 1);
+    if (members.length !== 2 || !selected || !second?.seriesUids.length || !members.some(m => m.part === 0)
+      || members.some(m => m.studyUid !== group!.baseUid)) throw examScopeChanged();
+    part = selected.part;
+    sources = [{ studyUid: selected.studyUid, series: { mode: part === 0 ? 'exclude' : 'include', uids: [...second.seriesUids].sort() } }];
+  } else if (group) throw examScopeChanged();
+  else sources = [{ studyUid: uid, series: { mode: 'all', uids: [] } }];
+  const state = request.state !== undefined ? request.state : await db.studyState.findUnique({ where: { uid } });
+  const scope = { hasMembership: !!group || parts.length > 0, groupId: group?.id ?? null, kind: (group?.kind ?? null) as ExamScope['kind'], baseUid: group?.baseUid ?? uid,
+    reportUid: uid, part, active: group ? group.dissolvedAt == null : true, sources,
+    ...(group?.kind === 'merge' && group.baseUid !== uid ? { redirectUid: group.baseUid } : {}),
+    studies: sources.map(s => s.studyUid), lockUids: unique([uid, ...members.flatMap(m => [m.logicalUid, m.studyUid])]).sort(), state };
+  const scopeRevision = createHash('sha256').update(JSON.stringify([uid, scope.groupId, part, sources, history])).digest('hex');
+  return { ...scope, scopeRevision, generation: createHash('sha256').update(JSON.stringify([scopeRevision,
+    purpose !== 'stored' ? state?.draftEpoch ?? null : null])).digest('hex') };
+}
+
+/**
+ * One interpretation for current work, preserved text and explicitly selected originals. Preparation observes Orthanc
+ * before locks. A write locks the prepared parents in UID order, then resolves again on that connection; it never
+ * widens the lock set in response to a concurrent group change. Reads supplied a transaction stay on that transaction.
+ */
+export async function resolveExamScope(db: any, access: StudyAccessService, c: Caller, request: ExamScopeRequest): Promise<ResolvedExamScope> {
+  let state = request.state;
+  if (request.phase === 'write') {
+    if (!request.prepared) throw examScopeChanged();
+    await access.require(c, request.prepared.studies, db);
+    const rows = await lockExamStates(db, unique([...request.prepared.lockUids, ...request.related ?? []]).sort());
+    state = rows.find(row => row.uid === request.uid) ?? null;
+  }
+  const scope = await describeScope(db, { ...request, state });
+  if (request.prepared && scope.generation !== request.prepared.generation) {
+    const before = request.prepared;
+    if (scope.scopeRevision === before.scopeRevision) throw draftConflict();
+    throw examScopeChanged();
+  }
+  if (!visible(scope.state, c)) throw absent();
+  if (!scope.hasMembership) {
+    if (request.phase === 'prepare') {
+      await access.prepare(c, scope.studies);
+      if (request.identity) await access.prepareSourceIdentity(c, scope.studies);
+    }
+    await access.require(c, scope.studies, db);
+    // A never-grouped study keeps the established rule for every operation, cleanup included: a UID two patient
+    // resources answer is refused. The cleanup allowance belongs to a logical exam whose original is gone.
+    if (request.phase !== 'prepare' && request.identity) assertExamSource(access, c, scope);
+    return scope;
+  }
+  if (request.phase === 'prepare') {
+    await access.prepare(c, scope.studies);
+    if (request.intent !== 'cleanup') await access.prepareSourceIdentity(c, scope.studies);
+  }
+  const rows = scope.studies.length === 1 && scope.studies[0] === request.uid
+    ? [scope.state] : await db.studyState.findMany({ where: { uid: { in: scope.studies } } });
+  if (rows.length !== scope.studies.length || rows.some(s => !visible(s, c))) throw absent();
+  await access.require(c, scope.studies, db);
+  requireCurrentTarget(scope);
+  if (request.phase === 'prepare') return scope;
+  // Only observed original identities may qualify a logical exam. This is distinct from policy matching, which permits
+  // missing metadata for UID-only policies. A missing source must not masquerade as an ordinary ungrouped study.
+  if (scope.groupId) {
+    const [group] = await db.studyGroup.findMany({ where: { id: { in: [scope.groupId] } } });
+    if (!group || rows.some(s => s.institutionId !== group.institutionId)) throw examScopeChanged();
+  }
+  if (request.intent !== 'cleanup' && (request.phase === 'write' || request.purpose !== 'source' || scope.groupId)) {
+    const observed = scope.studies.map(uid => access.assertIdentifiedSource(c, uid));
+    if (new Set(observed.map(s => s.sourcePatientId)).size !== 1 || new Set(rows.map(s => s.institutionId)).size !== 1)
+      throw examScopeChanged();
+    if (scope.groupId) {
+      const members: ExamGroupMember[] = await db.studyGroupMember.findMany({ where: { groupId: scope.groupId } });
+      for (const member of members) {
+        const source = access.assertIdentifiedSource(c, member.studyUid);
+        if (member.sourcePatientId != null && member.sourcePatientId !== source.sourcePatientId
+          || member.sourcePatientId != null && (member.sourceInstitution ?? null) !== (source.sourceInstitution ?? null)) throw examScopeChanged();
+      }
+    }
+  }
+  return scope;
+}
+
+/** `share`: a read that only needs the rows to stay as they are until its transaction ends; other readers are not held up. */
+export async function lockExamStates(tx: any, uids: string[], mode: 'update' | 'share' = 'update'): Promise<any[]> {
+  const sorted = unique(uids).sort();
+  return mode === 'share'
+    ? tx.$queryRaw`SELECT * FROM "StudyState" WHERE uid IN (${Prisma.join(sorted)}) ORDER BY uid FOR SHARE`
+    : tx.$queryRaw`SELECT * FROM "StudyState" WHERE uid IN (${Prisma.join(sorted)}) ORDER BY uid FOR UPDATE`;
+}
+
+function requireCurrentTarget(scope: ResolvedExamScope) {
+  if (scope.redirectUid) throw new ConflictException({ code: STUDY_MERGED, baseUid: scope.redirectUid,
+    message: '이 검사는 다른 검사에 합쳐져 있습니다(Merge Exam). 목록에서 합친 검사를 열어 판독하세요.' });
+}
+
+/** Prepare all historical originals once, outside a read transaction. The record itself is selected inside it. */
+export async function prepareExamRead(db: any, access: StudyAccessService, c: Caller, uid: string, identity = false) {
+  const touched: ExamGroupMember[] = await db.studyGroupMember.findMany({ where: { logicalUid: uid } });
+  const members: ExamGroupMember[] = touched.length
+    ? await db.studyGroupMember.findMany({ where: { groupId: { in: unique(touched.map(m => m.groupId)) } } }) : [];
+  const studies = unique(members.length ? members.map(m => m.studyUid) : [uid]);
+  await access.prepare(c, studies);
+  if (touched.length || identity) await access.prepareSourceIdentity(c, studies);
+  return studies;
+}
+
+/** Authorization of a report parent, including a retired split part. It does not relabel any stored body. */
+export async function examParentAccess(db: any, access: StudyAccessService, c: Caller, uid: string, prepare = false,
+    intent: ExamScopeRequest['intent'] = 'reading', state?: any) {
+  const parts: ExamGroupMember[] = await db.studyGroupMember.findMany({ where: { logicalUid: uid } });
+  const part = parts.find(p => p.studyUid !== uid);
+  if (part && prepare) await prepareExamRead(db, access, c, uid);
+  return resolveExamScope(db, access, c, part
+    ? { uid, purpose: 'stored', record: { groupId: part.groupId }, intent, state }
+    : { uid, purpose: 'source', intent, state });
+}
+
+export async function prepareExamParent(db: any, access: StudyAccessService, c: Caller, uid: string) {
+  const parts: ExamGroupMember[] = await db.studyGroupMember.findMany({ where: { logicalUid: uid } });
+  const part = parts.find(p => p.studyUid !== uid);
+  if (part) return prepareExamRead(db, access, c, uid);
+  await access.prepare(c, [uid]);
+  return [uid];
+}
+
+/**
+ * The studies of a saved collection (favorites, tags) the caller may open now. Each gets the answer examParentAccess
+ * gives it alone: a never-grouped study by the institution boundary and one policy decision for all of them, a study
+ * with a grouping history through its exam. `states` are the collection's StudyState rows with their two institution
+ * columns; a row without an owning institution is nobody's, whatever its tele column says.
+ */
+export async function examParentsAdmitted(db: any, access: StudyAccessService, c: Caller,
+    states: { uid: string; institutionId?: string | null; teleInstitutionId?: string | null }[]): Promise<Set<string>> {
+  const grouped = await groupedExamUids(db, states.map(state => state.uid));
+  const admitted = await access.allowed(c, states.filter(state => !grouped.has(state.uid) && visible(state, c)).map(state => state.uid), db);
+  for (const { uid } of states) if (grouped.has(uid)) {
+    try { await examParentAccess(db, access, c, uid); admitted.add(uid); }
+    catch (error) { if (!(error instanceof NotFoundException || error instanceof ConflictException)) throw error; }
+  }
+  return admitted;
+}
+
+/** A body projection may withhold inaccessible preserved text, but never substitute the current scope for it. */
+export async function readableExamRecord(db: any, access: StudyAccessService, c: Caller, uid: string, record: { groupId?: string | null }) {
+  try { return await resolveExamScope(db, access, c, { uid, purpose: 'stored', record }); }
+  catch (error) {
+    if (error instanceof NotFoundException || error instanceof ConflictException) return null;
+    throw error;
+  }
+}
+
+/** Existing source lists can link to the current merged report without pretending it was written on that source alone. */
+export async function relatedExamRecord(db: any, access: StudyAccessService, c: Caller, row: { uid: string; groupId?: string; mergedInto?: string }) {
+  const [current] = row.groupId ? [] : await activeGroups(db, [row.uid]);
+  const uid = current?.kind === 'merge' ? current.baseUid : row.uid;
+  await prepareExamRead(db, access, c, uid);
+  return readableExamRecord(db, access, c, uid, { groupId: row.groupId ?? current?.id ?? null });
+}
+
+/** List projections consume these resolved exams; only this module enumerates merge members and split parts. */
+export async function currentExams(db: any, access: StudyAccessService, c: Caller, originalUids: string[]): Promise<ResolvedExamScope[]> {
+  const result: ResolvedExamScope[] = [];
+  for (const group of await activeGroups(db, originalUids)) {
+    const uids = group.kind === 'merge' ? [group.baseUid] : group.members.map(m => m.logicalUid);
+    for (const uid of uids) {
+      try {
+        const described = await describeScope(db, { uid, purpose: 'current' });
+        if (!described.studies.every(s => originalUids.includes(s))) continue;
+        await prepareExamRead(db, access, c, uid);
+        const scope = await resolveExamScope(db, access, c, { uid, purpose: 'current' });
+        if (scope.studies.every(s => originalUids.includes(s))) result.push(scope);
+      } catch (error) {
+        if (!(error instanceof NotFoundException || error instanceof ConflictException)) throw error;
+      }
+    }
+  }
+  return result;
+}
+
+/** Workload counts use report parents; source registrations and archive bytes keep their original meaning. */
+export async function currentExamStates(db:any,access:StudyAccessService,c:Caller,states:any[]) {
+  const parts:ExamGroupMember[]=await db.studyGroupMember.findMany({where:{logicalUid:{in:states.map(s=>s.uid)}}});
+  const logicalOnly=new Set(parts.filter(p=>p.logicalUid!==p.studyUid).map(p=>p.logicalUid));
+  const originals=states.filter(s=>!logicalOnly.has(s.uid));
+  const scopes=await currentExams(db,access,c,originals.map(s=>s.uid));
+  const covered=new Set((await activeGroups(db,originals.map(s=>s.uid))).flatMap(group=>group.members.map(member=>member.studyUid)));
+  return {originals,states:[...originals.filter(s=>!covered.has(s.uid)),...scopes.map(scope=>scope.state)],
+    generations:scopes.map(scope=>scope.generation).sort()};
+}
+
+export function scopeIncludesSeries(scope: ResolvedExamScope, studyUid: string, seriesUid: string) {
+  const series = scope.sources.find(s => s.studyUid === studyUid)?.series;
+  return !!series && (series.mode === 'all' || (series.mode === 'include' ? series.uids.includes(seriesUid) : !series.uids.includes(seriesUid)));
+}
+
+/** Public scope facts, shared by read responses and stored output records. No state or lock implementation escapes. */
+export function examScopeView(scope: ResolvedExamScope) {
+  return { reportUid: scope.reportUid, groupId: scope.groupId, kind: scope.kind, part: scope.part, active: scope.active,
+    sources: scope.sources, generation: scope.generation, ...(scope.hasMembership ? {hasMembership:true} : {}) };
+}
+
+/** Existing wire bodies gain scope fields only when there is a grouping history to describe. */
+export function storedExamScope(scope: ResolvedExamScope) {
+  return scope.hasMembership ? examScopeView(scope) : undefined;
+}
+
+export function examScopeReference(scope: ResolvedExamScope) {
+  return {reportUid:scope.reportUid,groupId:scope.groupId,part:scope.part};
+}
+
+/** A new unscoped viewer must still belong to ordinary studies. Stored Jobs keep their original testimony. */
+export async function requireUnscopedViewer(db:any, snapshot:any) {
+  if (snapshot.exam) return;
+  for (const uid of snapshot.studies)
+    await withGroupedExam(db, uid, async () => {}, async () => { throw examScopeChanged(); });
+}
+
+export async function resolveViewerSnapshot(db:any,access:StudyAccessService,c:Caller,snapshot:any,
+    prepared?:ResolvedExamScope[]) {
+  if(!snapshot.exam)return {snapshot,scopes:[] as ResolvedExamScope[]};
+  const refs=[snapshot.exam.current,snapshot.exam.prior].filter(Boolean),scopes:ResolvedExamScope[]=[];
+  const locks=prepared?.flatMap(scope=>scope.lockUids)??[];
+  for(const [index,ref] of refs.entries()) {
+    const purpose=snapshot.exam.purpose;
+    const scope=await resolveExamScope(db,access,c,{uid:ref.reportUid,purpose,
+      ...(purpose==='stored'?{record:{groupId:ref.groupId}}:{}),
+      ...(prepared?{phase:'write' as const,prepared:prepared[index],related:locks}:{}),identity:true});
+    if(scope.groupId!==ref.groupId||scope.part!==ref.part)throw examScopeChanged();
+    scopes.push(scope);
+  }
+  if(JSON.stringify(unique(scopes.flatMap(scope=>scope.studies)))!==JSON.stringify(snapshot.studies))throw examScopeChanged();
+  for(const cell of [...snapshot.cells,snapshot.volume,snapshot.batch?.cell].filter(cell=>cell?.study && cell?.series))
+    if(!scopes.some(scope=>scopeIncludesSeries(scope,cell.study,cell.series)))throw examScopeChanged();
+  const stored=[];
+  for(const scope of scopes)stored.push(await resolveExamScope(db,access,c,{uid:scope.reportUid,purpose:'stored',record:{groupId:scope.groupId},identity:true}));
+  return {scopes,snapshot:{...snapshot,exam:{version:1,purpose:'stored',current:examScopeReference(stored[0]),prior:stored[1]?examScopeReference(stored[1]):null}}};
+}
+
+/** A fixed record needs its saved membership reference, never the current report text. */
+export function reportExamReference(db: any, uid: string, version?: number) {
+  return version === undefined ? db.report.findUnique({ where: { uid }, select: { groupId: true } })
+    : db.reportVersion.findUnique({ where: { uid_version: { uid, version } }, select: { groupId: true } });
+}
+
+/** The targets of each UID, and which of the UIDs have a grouping history at all. */
+async function targetsOf(db: any, uids: string[]) {
+  const touched = uids.length ? await membersTouching(db, unique(uids)) : [];
+  const groups: ExamGroup[] = touched.length ? await db.studyGroup.findMany({ where: { id: { in: unique(touched.map(m => m.groupId)) } } }) : [];
+  const members: ExamGroupMember[] = groups.length
+    ? await db.studyGroupMember.findMany({ where: { groupId: { in: groups.map(g => g.id) } } }) : [];
+  return { grouped: new Set(touched.flatMap(m => [m.logicalUid, m.studyUid])), targets: unique(uids).map(uid => ({ uid, targets: [
+    ...(!touched.some(m => m.logicalUid === uid && m.studyUid !== uid) ? [{ reportUid: uid, groupId: null, part: null, active: true }] : []),
+    ...groups
+    .filter(g => touched.some(m => m.groupId === g.id && (m.studyUid === uid || m.logicalUid === uid)))
+    .flatMap(group => (group.kind === 'merge' ? [{ logicalUid: group.baseUid, part: null }]
+      : members.filter(m => m.groupId === group.id)).map(parent => ({ reportUid: parent.logicalUid,
+        groupId: group.id, part: parent.part, active: group.dissolvedAt == null }))) ] })) };
+}
+
+/** Every report target associated with a source, including ended groups. This enumerates references, not access. */
+export async function examTargets(db: any, uids: string[]) {
+  return (await targetsOf(db, uids)).targets;
+}
+
+/** Original-keyed collections keep their keys. Links are a projection, so merging never rewrites saved references. */
+export async function examLinks(db: any, access: StudyAccessService, c: Caller, uids: string[]) {
+  const links: { uid: string; exams: ReturnType<typeof examScopeView>[] }[] = [];
+  const { grouped, targets } = await targetsOf(db, uids);
+  // Never-grouped studies of the collection: one state read and one policy decision for all of them, the same
+  // visibility and policy answer a single source resolution gives each.
+  const plain = targets.filter(link => !grouped.has(link.uid)).map(link => link.uid);
+  const states = new Map<string, any>(!plain.length ? []
+    : (await db.studyState.findMany({ where: { uid: { in: plain } } })).map((state: any) => [state.uid, state]));
+  const seen = plain.filter(uid => visible(states.get(uid), c));
+  const allowed = seen.length ? await access.allowed(c, seen, db) : new Set<string>();
+  for (const { uid, targets: found } of targets) {
+    if (!grouped.has(uid)) {
+      links.push({ uid, exams: allowed.has(uid) ? [examScopeView(ordinaryScope(uid, 'source', states.get(uid)))] : [] });
+      continue;
+    }
+    const requests: ExamScopeRequest[] = [];
+    for (const target of found)
+      requests.push({ uid: target.reportUid, purpose: target.groupId === null ? 'source' : target.active ? 'current' : 'stored',
+        record: { groupId: target.groupId } });
+    const scopes = new Map<string, ReturnType<typeof examScopeView>>();
+    for (const request of requests) {
+      try {
+        const scope = await resolveExamScope(db, access, c, request);
+        scopes.set(scope.generation, examScopeView(scope));
+      } catch (error) {
+        if (!(error instanceof NotFoundException || error instanceof ConflictException)) throw error;
+      }
+    }
+    links.push({ uid, exams: [...scopes.values()] });
+  }
+  return links;
+}
+
+/** A source can lead to both split reports and to reports retained after dissolution. Never relabel their head. */
+export async function relatedExamReports(db:any,access:StudyAccessService,c:Caller,uid:string) {
+  const [link]=await examLinks(db,access,c,[uid]);
+  const reports:any[]=[];
+  for(const exam of link.exams) {
+    const row=await db.reportVersion.findFirst({where:{uid:exam.reportUid,groupId:exam.groupId,action:{not:'discarded'}},orderBy:{version:'desc'}});
+    if(!row)continue;
+    const scope=await readableExamRecord(db,access,c,exam.reportUid,row);
+    if(!scope||!canReadPreliminary(scope.state,c))continue;
+    if(!reports.some(r=>r.uid===row.uid&&r.version===row.version))reports.push({uid:row.uid,version:row.version,action:row.action,scope:examScopeView(scope)});
+  }
+  return reports;
+}
+
+/** Source corrections must not change the identity on which any active or preserved logical report depends. */
+export async function requireUngroupedSource(db: any, access: StudyAccessService, c: Caller, uid: string) {
+  const scope = await resolveExamScope(db, access, c, { uid, purpose: 'source' });
+  const members: ExamGroupMember[] = await db.studyGroupMember.findMany({ where: { OR: [{ studyUid: uid }, { logicalUid: uid }] } });
+  if (!members.length) return scope;
+  const where = { groupId: { in: unique(members.map(m => m.groupId)) } };
+  const groups = await db.studyGroup.findMany({ where: { id: where.groupId } });
+  if (groups.some(group => group.dissolvedAt == null)
+    || await db.reportVersion.findFirst({ where }) || await db.reportDraft.findFirst({ where: { ...where, present: true } })
+    || await db.reportDraftPurposeEnd.findFirst({ where }))
+    throw new ConflictException('검사 묶음이나 보존 판독의 원본 정보는 변경할 수 없습니다');
+  return scope;
+}
+
+export async function hasExamReference(db: any, uid: string) {
+  return !!await db.studyGroupMember.findFirst({ where: { OR: [{ studyUid: uid }, { logicalUid: uid }] } });
+}
+
+/** Kept in the retention reader's single SQL snapshot, under its existing report-parent lock. */
+export function examRetentionReference(uid: string) {
+  return Prisma.sql`EXISTS (SELECT 1 FROM "StudyGroupMember" m JOIN "StudyGroup" g ON g.id=m."groupId" WHERE m."studyUid"=${uid}
+    AND (g."dissolvedAt" IS NULL
+      OR EXISTS (SELECT 1 FROM "ReportVersion" v WHERE v."groupId"=g.id AND v.uid<>${uid})
+      OR EXISTS (SELECT 1 FROM "ReportDraft" d WHERE d."groupId"=g.id AND d.present)
+      OR EXISTS (SELECT 1 FROM "ReportDraftPurposeEnd" e WHERE e."groupId"=g.id)))`;
+}
+
+export async function examLookupSources(db: any, uids: string[]) {
+  const groups = await activeGroups(db, uids);
+  const parts = groups.flatMap(g => g.members);
+  return { sources: unique(uids.flatMap(uid => {
+    const group = groups.find(g => g.members.some(m => m.logicalUid === uid || m.studyUid === uid));
+    return group ? group.members.map(m => m.studyUid) : [uid];
+  })), parents: unique([...uids, ...parts.flatMap(p => [p.logicalUid, p.studyUid])]) };
+}
+
+/** The active groups any of these UIDs (a study UID or a logical exam UID) belongs to, each with all its members. */
+export async function activeGroups(db: any, uids: string[]): Promise<ExamGroup[]> {
+  const unique = [...new Set(uids)];
+  if (!unique.length) return [];
+  const touched = await membersTouching(db, unique, { groupId: true, logicalUid: true, studyUid: true, part: true, seriesUids: true });
+  if (!touched.length) return [];
+  const groups = await db.studyGroup.findMany({ where: { id: { in: [...new Set(touched.map(m => m.groupId))] }, dissolvedAt: null },
+    select: { id: true, kind: true, baseUid: true, institutionId: true, dissolvedAt: true } });
+  if (!groups.length) return [];
+  const members: ExamGroupMember[] = await db.studyGroupMember.findMany({ where: { groupId: { in: groups.map((g: any) => g.id) } },
+    select: { groupId: true, logicalUid: true, studyUid: true, part: true, seriesUids: true } });
+  return groups.map((g: any) => ({ ...g, members: members.filter(m => m.groupId === g.id)
+    .sort((a, b) => a.part - b.part || (a.logicalUid < b.logicalUid ? -1 : a.logicalUid > b.logicalUid ? 1 : 0)) }));
+}
+
+/** 409 EXAM_SCOPE_CHANGED: a report or draft written on another exam (before a Merge or an Unmerge) than the study's current one. */
+export const examScopeChanged = () => new ConflictException({ code: EXAM_SCOPE_CHANGED,
+  message: '이 판독문은 검사를 합치거나 되돌리기 전의 영상으로 쓴 것입니다. 판독 취소(Reset)나 초안 버리기로 이력에 남긴 뒤 다시 판독하세요.' });
+
+/** One refusal of a group change, for the window's Checks list: which study, which rule, and a sentence. */
+export interface GroupRefusal { uid: string | null; rule: string; message: string }
+
+@Injectable()
+export class ExamMergeService {
+  constructor(private readonly prisma: PrismaService, private readonly studyAccess: StudyAccessService) {}
+
+  /** The active group of a worklist exam UID, with the checks Unmerge would apply now (nothing is changed). */
+  async group(c: Caller, uid: string) {
+    need(c.roles, 'technician', '검사 묶음 조회');
+    const me = inst(c);
+    if (!studyUidOf(uid)) throw new NotFoundException('검사를 찾을 수 없습니다');
+    await prepareExamRead(this.prisma, this.studyAccess, c, uid);
+    await examParentAccess(this.prisma, this.studyAccess, c, uid, false, 'cleanup');
+    const state = await this.prisma.studyState.findUnique({ where: { uid } });
+    if (!state) throw new NotFoundException('검사를 찾을 수 없습니다');
+    const [group] = await activeGroups(this.prisma, [uid]);
+    if (!group) return { group: null };
+    await resolveExamScope(this.prisma, this.studyAccess, c, { uid: group.kind === 'merge' ? group.baseUid : uid, purpose: 'current', intent: 'cleanup' });
+    const uids = this.lockUids(group);
+    await this.studyAccess.require(c, unique(group.members.map(m => m.studyUid)));
+    const rows = await this.prisma.studyState.findMany({ where: { uid: { in: uids } } });
+    const refusals = await this.dissolveRefusals(this.prisma, c, group, rows);
+    return { group: this.view(group), checks: [...(group.institutionId === me ? [] : [
+      { rule: 'owner', ok: false, message: '검사 묶음은 원본 소유 기관에서만 되돌릴 수 있습니다.', uids: [] }]), ...this.checks(refusals)] };
+  }
+
+  /**
+   * Merge: `uids` (2..MERGE_LIMIT studies, the base among them) become one exam on `baseUid`. Refused (409 EXAM_GROUP_REFUSED
+   * with every reason) unless every study is this institution's own, readable by the caller, of one identified patient (the
+   * original PatientID of each study, never an empty one), in no active group, with no report written or approved (RS W),
+   * no draft, no one else reading it (a live hold) and no transfer or export in progress.
+   */
+  async merge(c: Caller, body: any) {
+    need(c.roles, 'technician', '검사 합치기');
+    const me = inst(c);
+    const baseUid = body?.baseUid, uids = body?.uids;
+    if (!studyUidOf(baseUid) || !Array.isArray(uids) || uids.length < 2 || uids.length > MERGE_LIMIT || !uids.every(studyUidOf)
+      || new Set(uids).size !== uids.length || !uids.includes(baseUid) || Object.keys(body).some(k => k !== 'baseUid' && k !== 'uids'))
+      throw new BadRequestException(`합칠 검사 2~${MERGE_LIMIT}개와 그중 기준 검사(baseUid)를 보내세요`);
+    const sorted = [...uids].sort();
+    // Source reads happen before any lock: the policy's original tags and each study's original patient.
+    await this.studyAccess.prepare(c, sorted);
+    await this.studyAccess.prepareSourceIdentity(c, sorted);
+    const prepared = await Promise.all(sorted.map(uid => describeScope(this.prisma, { uid, purpose: 'source' })));
+    return this.prisma.$transaction(async tx => {
+      await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
+      await this.studyAccess.require(c, sorted, tx);
+      const rows = await this.lock(tx, sorted);
+      for (const scope of prepared) {
+        const current = await resolveExamScope(tx, this.studyAccess, c, { uid: scope.reportUid, purpose: 'source', prepared: scope });
+        if (current.generation !== scope.generation) throw examScopeChanged();
+      }
+      const refusals = await this.mergeRefusals(tx, c, me, sorted, rows);
+      if (refusals.length) throw this.refused('합칠 수 없습니다', refusals);
+      const id = randomUUID(), at = new Date();
+      await tx.studyGroup.create({ data: { id, institutionId: me, kind: 'merge', baseUid, createdBy: c.actor, createdBySub: c.sub, createdAt: at } });
+      const order = [baseUid, ...uids.filter(uid => uid !== baseUid)];
+      await tx.studyGroupMember.createMany({ data: order.map((uid, part) => ({ groupId: id, logicalUid: uid, studyUid: uid, part, seriesUids: [],
+        ...this.studyAccess.assertIdentifiedSource(c, uid) })) });
+      await this.newEpochs(tx, sorted);
+      await tx.auditLog.create({ data: { actor: c.actor || 'unknown', action: 'study.merge', target: baseUid,
+        detail: dump({ by: me, group: id, base: baseUid, studies: order }) } });
+      return { group: { id, kind: 'merge', baseUid, members: order.map((uid, part) => ({ logicalUid: uid, studyUid: uid, part, seriesUids: [] })) } };
+    }, { maxWait: 4000, timeout: 8000 });
+  }
+
+  /** The selected series become a second report target; the complement (including later series) stays on the first. */
+  async split(c: Caller, body: any) {
+    need(c.roles, 'technician', '검사 나누기');
+    const uid = body?.uid, selected = body?.seriesUids;
+    if (!studyUidOf(uid) || !Array.isArray(selected) || !selected.length || !selected.every(studyUidOf)
+      || new Set(selected).size !== selected.length || Object.keys(body).some(k => !['uid', 'seriesUids'].includes(k)))
+      throw new BadRequestException('둘째 검사로 옮길 시리즈를 선택하세요');
+    const prepared = await resolveExamScope(this.prisma, this.studyAccess, c, { uid, purpose: 'source', phase: 'prepare', identity: true });
+    const series = await this.studyAccess.sourceSeries(uid);
+    if (selected.some(s => !series.some(row => row.uid === s)) || !series.some(row => row.images && !selected.includes(row.uid)))
+      throw new BadRequestException('존재하는 시리즈 중 일부를 선택하세요. 전체 시리즈를 옮길 수 없습니다');
+    return this.prisma.$transaction(async tx => {
+      await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
+      const scope = await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'source', phase: 'write', prepared });
+      const refusals = await this.mergeRefusals(tx, c, inst(c), [uid], [scope.state]);
+      if (refusals.length) throw this.refused('나눌 수 없습니다', refusals);
+      const id = randomUUID(), second = '2.25.' + BigInt('0x' + randomUUID().replace(/-/g, '')).toString();
+      await tx.studyState.create({ data: { uid: second, institutionId: scope.state.institutionId,
+        teleInstitutionId: scope.state.teleInstitutionId, origin: 'logical', ss: scope.state.ss, em: scope.state.em } });
+      await tx.studyGroup.create({ data: { id, institutionId: inst(c), kind: 'split', baseUid: uid, createdBy: c.actor, createdBySub: c.sub } });
+      const members = [{ groupId: id, logicalUid: uid, studyUid: uid, part: 0, seriesUids: [] },
+        { groupId: id, logicalUid: second, studyUid: uid, part: 1, seriesUids: [...selected].sort() }];
+      await tx.studyGroupMember.createMany({ data: members.map(m => ({ ...m, ...this.studyAccess.assertIdentifiedSource(c, uid) })) });
+      await this.newEpochs(tx, [uid, second]);
+      await tx.auditLog.create({ data: { actor: c.actor, action: 'study.split', target: uid,
+        detail: dump({ by: inst(c), group: id, studies: [uid], parts: members.map(m => ({ uid: m.logicalUid, part: m.part, seriesUids: m.seriesUids })) }) } });
+      return { group: { id, kind: 'split', baseUid: uid, members } };
+    }, { maxWait: 4000, timeout: 8000 });
+  }
+
+  async scope(c: Caller, uid: string, query: any = {}) {
+    if(Object.keys(query).some(k=>!['purpose','version','reference'].includes(k))||query.purpose!==undefined&&!['current','source','stored'].includes(query.purpose)
+      ||query.version!==undefined&&(!/^[1-9]\d*$/.test(String(query.version))||!Number.isSafeInteger(Number(query.version))))
+      throw new BadRequestException('검사 범위 조회 형식을 확인하세요');
+    let reference: any;
+    if (query.reference !== undefined) {
+      try { reference = JSON.parse(query.reference); } catch (_) { throw new BadRequestException('검사 범위 참조를 확인하세요'); }
+      if (!reference || Array.isArray(reference) || Object.keys(reference).sort().join(',') !== 'groupId,part,reportUid'
+        || reference.reportUid !== uid || reference.groupId !== null && !GROUP_ID.test(reference.groupId)
+        || reference.part !== null && ![0, 1].includes(reference.part))
+        throw new BadRequestException('검사 범위 참조를 확인하세요');
+    }
+    await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
+    return this.prisma.$transaction(async tx=>{
+      const purpose=query.purpose??(query.version===undefined?'current':'stored');
+      if(query.version!==undefined&&purpose!=='stored')throw new BadRequestException('저장 판의 범위를 선택하세요');
+      const record=purpose==='stored'?(query.version===undefined?(reference ? {groupId:reference.groupId} : await tx.report.findUnique({where:{uid}}))
+        :await tx.reportVersion.findUnique({where:{uid_version:{uid,version:Number(query.version)}}})):undefined;
+      if(purpose==='stored'&&!record)throw absent();
+      const {state,lockUids,scopeRevision,hasMembership,...scope}=await resolveExamScope(tx,this.studyAccess,c,{uid,purpose,record,identity:true});
+      if(!canReadPreliminary(state,c))throw absent();
+      if(reference && (reference.groupId !== scope.groupId || reference.part !== scope.part))
+        throw examScopeChanged();
+      return { ...scope, ...(hasMembership ? {hasMembership:true} : {}) };
+    },{isolationLevel:'RepeatableRead'});
+  }
+
+  /**
+   * Unmerge: the group ends (dissolvedAt) and every study is an exam of its own again. Refused while the merged exam has an
+   * approved report now (Reset it to Unread first — a report saved but not approved may stay: it keeps the group it was written
+   * on), a draft, someone else reading it, or a transfer or export in progress.
+   */
+  async dissolve(c: Caller, id: string) {
+    need(c.roles, 'technician', '검사 묶음 되돌리기');
+    const me = inst(c);
+    if (typeof id !== 'string' || !GROUP_ID.test(id)) throw new NotFoundException('검사 묶음을 찾을 수 없습니다');
+    const found = await this.prisma.studyGroup.findUnique({ where: { id } });
+    if (!found || found.institutionId !== me) throw new NotFoundException('검사 묶음을 찾을 수 없습니다');
+    const before = (await activeGroups(this.prisma, [found.baseUid])).find(g => g.id === id);
+    if (!before) throw new ConflictException({ code: EXAM_GROUP_REFUSED, message: '이미 되돌린 검사입니다. 목록을 새로고침하세요.', refusals: [] });
+    const uids = this.lockUids(before);
+    const originals = unique(before.members.map(m => m.studyUid));
+    await this.studyAccess.prepare(c, originals);
+    await this.studyAccess.prepareSourceIdentity(c, originals);
+    const prepared = await resolveExamScope(this.prisma, this.studyAccess, c,
+      { uid: before.baseUid, purpose: 'current', phase: 'prepare', intent: 'cleanup' });
+    return this.prisma.$transaction(async tx => {
+      await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
+      await this.studyAccess.require(c, originals, tx);
+      await resolveExamScope(tx, this.studyAccess, c,
+        { uid: before.baseUid, purpose: 'current', phase: 'write', prepared, intent: 'cleanup' });
+      const rows = await tx.studyState.findMany({ where: { uid: { in: uids } } });
+      // Judged on the group as it is under the lock (a concurrent Unmerge already ended it).
+      const group = (await activeGroups(tx, [before.baseUid])).find(g => g.id === id);
+      if (!group || JSON.stringify(this.lockUids(group)) !== JSON.stringify(uids))
+        throw new ConflictException({ code: EXAM_GROUP_REFUSED, message: '검사 묶음이 바뀌었습니다. 목록을 새로고침하세요.', refusals: [] });
+      if (rows.length !== uids.length || rows.some(row => row.institutionId !== me)) throw new NotFoundException('검사 묶음을 찾을 수 없습니다');
+      const refusals = await this.dissolveRefusals(tx, c, group, rows);
+      if (refusals.length) throw this.refused('되돌릴 수 없습니다', refusals);
+      const at = new Date();
+      const ended = await tx.studyGroup.updateMany({ where: { id, dissolvedAt: null }, data: { dissolvedAt: at, dissolvedBy: c.actor, dissolvedBySub: c.sub } });
+      if (ended.count !== 1) throw new ConflictException({ code: EXAM_GROUP_REFUSED, message: '이미 되돌린 검사입니다. 목록을 새로고침하세요.', refusals: [] });
+      await this.newEpochs(tx, uids);
+      await tx.auditLog.create({ data: { actor: c.actor || 'unknown', action: group.kind === 'split' ? 'study.unsplit' : 'study.unmerge',
+        target: group.baseUid, detail: dump({ by: me, group: id, base: group.baseUid, studies: group.members.map(m => m.logicalUid) }) } });
+      return { group: { ...this.view(group), dissolvedAt: at.toISOString() } };
+    }, { maxWait: 4000, timeout: 8000 });
+  }
+
+  // ── rules ──
+
+  private async mergeRefusals(tx: any, c: Caller, me: string, uids: string[], rows: any[]): Promise<GroupRefusal[]> {
+    const out: GroupRefusal[] = [];
+    // A study the caller's institution does not own (a tele study, another hospital's, or none) is "not found", like elsewhere.
+    if (rows.length !== uids.length || rows.some(row => row.institutionId !== me)) throw new NotFoundException('검사를 찾을 수 없습니다');
+    const patients = new Map<string, string>();
+    for (const uid of uids) {
+      const source = this.studyAccess.assertUnsplitSource(c, uid);
+      if (source.sourcePatientId?.trim()) {
+        this.studyAccess.assertIdentifiedSource(c, uid);
+      }
+      const patient = source.sourcePatientId?.trim() ?? '';
+      if (!patient) out.push({ uid, rule: 'patient-unidentified', message: '이 검사의 원본 환자 ID가 비어 있습니다.' });
+      else patients.set(uid, patient);
+    }
+    const distinct = [...new Set(patients.values())];
+    if (distinct.length > 1) out.push({ uid: null, rule: 'different-patients', message: `다른 환자의 검사는 합칠 수 없습니다 (${distinct.join(', ')}).` });
+    out.push(...await this.commonRefusals(tx, c, rows, uids, rows));
+    for (const group of await activeGroups(tx, uids))
+      for (const uid of uids.filter(u => group.members.some(m => m.studyUid === u || m.logicalUid === u)))
+        out.push({ uid, rule: 'grouped', message: group.kind === 'merge' ? '이미 합친 검사에 들어 있는 검사입니다.' : '두 검사로 나뉜 검사입니다.' });
+    return out;
+  }
+
+  private async dissolveRefusals(tx: any, c: Caller, group: ExamGroup, rows: any[]): Promise<GroupRefusal[]> {
+    const studies = [...new Set(group.members.map(m => m.studyUid))];
+    return this.commonRefusals(tx, c, rows, studies, rows, true);
+  }
+
+  /**
+   * Report, draft, hold and transfer rules. `dissolving`: only an approved report (now) refuses — a saved report keeps the group
+   * it was written on; merging refuses any written report (RS other than W), since the merged exam would show it as its own.
+   */
+  private async commonRefusals(tx: any, c: Caller, rows: any[], studies: string[], states: any[], dissolving = false): Promise<GroupRefusal[]> {
+    const out: GroupRefusal[] = [];
+    for (const row of states) {
+      if (row.rs === 'D') out.push({ uid: row.uid, rule: 'destroyed', message: '보존 기간이 끝나 판독문을 파기한 검사입니다.' });
+      else if (row.rs === 'A') out.push({ uid: row.uid, rule: 'approved', message: '승인된 판독문이 있습니다. 먼저 판독 취소(Reset)를 하세요.' });
+      else if (!dissolving && row.rs !== 'W') out.push({ uid: row.uid, rule: 'reported', message: `판독문이 있습니다(RS ${row.rs}). 먼저 판독 취소(Reset)를 하세요.` });
+      if (holdAlive(row) && row.holder !== c.actor) out.push({ uid: row.uid, rule: 'held', message: '판독의가 지금 이 검사의 판독문을 쓰고 있습니다.' });
+    }
+    const uids = states.map(row => row.uid);
+    const drafts = await tx.reportDraft.findMany({ where: { uid: { in: uids }, present: true }, select: { uid: true } });
+    for (const uid of new Set<string>(drafts.map((d: any) => d.uid)))
+      out.push({ uid, rule: 'draft', message: '이 검사에 열린 판독 초안이 있습니다. 먼저 저장하거나 버려야 합니다.' });
+    const transfers = await tx.transfer.findMany({ where: { studyUid: { in: studies }, status: { in: OPEN_TRANSFER } }, select: { studyUid: true } });
+    const downloads = await tx.importOperation.findMany({ where: { studyUid: { in: studies }, kind: 'download', status: { in: OPEN_DOWNLOAD } }, select: { studyUid: true } });
+    for (const uid of new Set<string>([...transfers, ...downloads].map((t: any) => t.studyUid)))
+      out.push({ uid, rule: 'transfer', message: '이 검사의 전송 또는 내보내기가 진행 중입니다.' });
+    return out;
+  }
+
+  /** The Checks the Split / Unmerge window lists: each rule with ✓ (passes) or the refusals that apply. */
+  private checks(refusals: GroupRefusal[]) {
+    const rule = (key: string[], ok: string) => {
+      const hit = refusals.filter(r => key.includes(r.rule));
+      return { rule: key[0], ok: !hit.length, message: hit.length ? hit.map(r => r.message).join(' ') : ok, uids: hit.map(r => r.uid) };
+    };
+    return [rule(['approved', 'destroyed'], '합친 검사에 지금 승인된 판독문이 없습니다.'),
+      rule(['transfer'], '이 검사들의 전송·내보내기가 진행 중이지 않습니다.'),
+      rule(['held', 'draft'], '합친 검사의 판독문을 쓰는 사람이 없습니다.')];
+  }
+
+  private refused(prefix: string, refusals: GroupRefusal[]) {
+    return new ConflictException({ code: EXAM_GROUP_REFUSED, message: prefix + ': ' + [...new Set(refusals.map(r => r.message))].join(' '), refusals });
+  }
+
+  private lockUids(group: ExamGroup) {
+    return [...new Set(group.members.flatMap(m => [m.studyUid, m.logicalUid]))].sort();
+  }
+
+  private async lock(tx: any, uids: string[]): Promise<any[]> {
+    return lockExamStates(tx, uids);
+  }
+
+  /** A new draft epoch: every write a screen sends with the old one is refused (it still shows the old grouping). */
+  private async newEpochs(tx: any, uids: string[]) {
+    for (const uid of uids) await tx.studyState.update({ where: { uid }, data: { draftEpoch: randomUUID() } });
+  }
+
+  private view(group: ExamGroup) {
+    return { id: group.id, kind: group.kind, baseUid: group.baseUid,
+      members: group.members.map(m => ({ logicalUid: m.logicalUid, studyUid: m.studyUid, part: m.part, seriesUids: m.seriesUids })) };
+  }
+}

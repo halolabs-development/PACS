@@ -300,7 +300,7 @@ async function clinicalHttp() {
     .setProtectedHeader({alg:'RS256',kid:jwk.kid}).setIssuer(issuer).setSubject(sub).setAudience('kin-api')
     .setIssuedAt().setExpirationTime('10m').sign(privateKey);
   const adminSub='synthetic-http-admin';
-  const adminToken=await new jose.SignJWT({email:adminSub+'@example.test',realm_access:{roles:['admin']},groups:['/'+institution]})
+  const adminToken=await new jose.SignJWT({email:adminSub+'@example.test',realm_access:{roles:['admin']},amr:['otp'],groups:['/'+institution]})
     .setProtectedHeader({alg:'RS256',kid:jwk.kid}).setIssuer(issuer).setSubject(adminSub).setAudience('kin-api')
     .setIssuedAt().setExpirationTime('10m').sign(privateKey);
   const witness=new PrismaClient({datasources:{db:{url:process.env.KIN_B2R_WITNESS_URL}}});
@@ -315,7 +315,7 @@ async function clinicalHttp() {
     await witness.memberRights.create({data:{sub:adminSub,username:adminSub,email:adminSub+'@example.test',name:'Synthetic',
       emailVerified:true,approved:true,suspended:false,institution,roles:['admin']}});
     await runtime.start();
-    const orthanc={studyIdentityResources:async uid=>[{'0020000D':{Value:[uid]}}],studyIdentities:async()=>[]};
+    const orthanc={studyIdentityResources: async uid => [{ '0020000D': { Value: [uid] }, '00100020': { Value: ['SYN-PATIENT-' + uid] } }],studyIdentities:async()=>[]};
     // Only external collaborators are synthetic. Both routes, the draft/CAS
     // implementation, auth/rights checks and PostgreSQL are the actual product.
     const ClinicalFixture=productFixture([PacsController,AdminController],[...requestProviders(runtime.port),

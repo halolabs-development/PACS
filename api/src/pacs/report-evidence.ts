@@ -20,7 +20,8 @@ import type { Caller, PacsAccess } from './access';
 import { reportVersionCitationsRead, reportVersionsRead } from '../emr-viewing/report-read';
 import { LocalReadResponse } from '../emr-viewing/local-read';
 import { consumerSource } from '../emr-viewing/consumer-read';
-import { draftDrawings, effectiveDrawingIds, versionDrawings } from '../image-report';
+import { resolveExamScope, readableExamRecord, prepareExamRead, examParentAccess } from '../exam-merge.service';
+import { draftDrawings, effectiveDrawingIds, versionDrawings, drawingEntries, assertDrawingScope } from '../image-report';
 
 /**
  * **서명 순간에 새로 생기는 유일한 거절이다.**
@@ -316,15 +317,17 @@ export class PacsReportEvidence {
   async versions(uid: string, c: Caller) {
     // WORKLIST-SPLIT-UID: each read below observes the source for its own request and, inside the existing scope,
     // refuses a UID two patient resources answer instead of putting either patient's header on the stored text.
-    await this.studyAccess.prepareSourceIdentity(c, [uid]);
-    const prev = await this.access.gate(uid, c);
+    await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
+    return this.prisma.$transaction(async tx => {
+    const prev = await this.access.gate(uid, c, tx);
     /**
      * 행이 없는 uid는 없는 검사다. gate()는 "안 보이는 검사"만 404로 바꾸고 "없는 검사"는 null로
      * 흘려보내는데, 그러면 삭제된 검사에 남은 discarded 이력이 **모든 기관**에 읽혔다(v0.6.3 회귀 확충에서
      * 발견). 이력의 조회 관문은 StudyState 행이다 — 행이 없으면 기관을 가를 수 없고, 가를 수 없으면 거절한다.
      */
     if (!prev) throw new NotFoundException('검사를 찾을 수 없습니다');
-    const sourceIdentity = this.studyAccess.assertUnsplitSource(c, uid);
+    const parentScope = await examParentAccess(tx, this.studyAccess, c, uid);
+    const sourceIdentity = this.studyAccess.assertUnsplitSource(c, parentScope.studies[0]);
     // 본문을 가려놓고 이력에서 읽히면 가린 게 아니다. 같은 규칙을 여기에도 건다.
     if (!canReadPreliminary(prev, c))
       throw new ForbiddenException(
@@ -335,19 +338,28 @@ export class PacsReportEvidence {
      * 그대로 나간다 — 관문을 하나도 새로 만들지 않았는데 노출면만 넓어지는 것이다.
      * 인용은 전용 읽기 하나에서만, 소견 가독을 다시 건 뒤에 나간다.
      */
-    const rows = await this.prisma.reportVersion.findMany({ where: { uid }, orderBy: { version: 'desc' },
+    const rows = await tx.reportVersion.findMany({ where: { uid }, orderBy: { version: 'desc' },
       select: { id: true, uid: true, version: true, action: true, findings: true, conclusion: true,
-        recommendation: true, reason: true, author: true, at: true, drawings: true } })
-      // Image Report: a version that holds drawings names them (id, what it was drawn on); the rest read as before.
-      .then(found => found.map(({ drawings, ...row }) => versionDrawings(drawings).length
-        ? { ...row, drawings: versionDrawings(drawings).map(d => ({ id: d.id, background: d.background, source: d.source ?? null })) } : row));
+        recommendation: true, reason: true, author: true, at: true, drawings: true, groupId: true } });
+    // Merge Exam: a version written on an exam group says which studies it was written on; its text is shown only to a caller
+    // who may read every one of them now. A version of the study alone keeps its shape (no group key).
+    // Versions written on the same exam share one answer in this snapshot: it is resolved once, not once per version.
+    const scoped = [], scopes = new Map<string | null, Awaited<ReturnType<typeof readableExamRecord>>>();
+    for (const { groupId, drawings, ...row } of rows) {
+      const key = groupId ?? null;
+      if (!scopes.has(key)) scopes.set(key, await readableExamRecord(tx, this.studyAccess, c, uid, { groupId }));
+      const scope = scopes.get(key);
+      scoped.push({ ...row, ...(scope && versionDrawings(drawings).length ? { drawings: versionDrawings(drawings).map(d => ({ id: d.id, background: d.background, source: d.source ?? null })) } : {}), ...(scope ? {} : { findings: '', conclusion: '', recommendation: '' }),
+        ...(groupId ? { group: { id: groupId, active: scope?.active ?? false, readable: !!scope, studies: scope?.studies ?? [],
+          ...(scope ? { part: scope.part, sources: scope.sources, generation: scope.generation } : {}) } } : {}) });
+    }
     // MODULE_A A2: 이 읽기가 고정한 행 전부가 열람 기록의 대상이다. 화면이 나중에 고르는 판만 기록하면 내보낸 다른 판의
     // 열람이 기록에서 빠진다. 응답은 기록이 COMMIT된 뒤 이 행 그대로 나간다(A1 응답 경계).
     // A signer already disclosed in this list is shared report provenance. A
     // discarded draft alone cannot establish that its author belongs to a side.
-    const signers = new Set(rows.filter(row => row.action !== 'discarded').map(row => row.author));
-    const resets = new Map(rows.filter(row => row.action === 'reset').map(row => [row.version, row.author]));
-    const shown = rows.map(row => {
+    const signers = new Set(scoped.filter(row => row.action !== 'discarded').map(row => row.author));
+    const resets = new Map(scoped.filter(row => row.action === 'reset').map(row => [row.version, row.author]));
+    const shown = scoped.map(row => {
       if (row.action !== 'discarded') return row;
       // Historical copies share action=discarded. Reset writes this reason and
       // its following reset row atomically; adjacency alone could be an admin
@@ -359,6 +371,7 @@ export class PacsReportEvidence {
         reason: resetCopy ? row.reason : '관리자 강제 초안 해제' };
     });
     return reportVersionsRead(uid, prev.institutionId, shown, sourceIdentity);
+    }, { isolationLevel: 'RepeatableRead', maxWait: 2000, timeout: 5000 });
   }
 
   /**
@@ -372,10 +385,11 @@ export class PacsReportEvidence {
    * 그 사이 확정이 끼어들어 "머리에는 없고 초안에는 있는" 없는 상태를 그릴 수 있다.
    */
   async reportCitations(uid: string, c: Caller) {
-    await this.studyAccess.prepareSourceIdentity(c, [uid]);
+    await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
     const prev = await this.access.gate(uid, c);
     if (!prev) throw new NotFoundException('검사를 찾을 수 없습니다');
-    const sourceIdentity = this.studyAccess.assertUnsplitSource(c, uid);
+    const parentScope = await examParentAccess(this.prisma, this.studyAccess, c, uid);
+    const sourceIdentity = this.studyAccess.assertUnsplitSource(c, parentScope.studies[0]);
     // 본문을 가려놓고 그 증언이 읽히면 가린 게 아니다. `versions()`와 같은 규칙을 건다.
     if (!canReadPreliminary(prev, c))
       throw new ForbiddenException(
@@ -384,11 +398,16 @@ export class PacsReportEvidence {
     // 소견 계보의 접근 정책은 트랜잭션 밖에서 준비한다(`putReport`와 같은 이유).
     await this.studyAccess.prepare(c);
     return this.prisma.$transaction(async tx => {
-      await this.studyAccess.require(c,[uid],tx);
-      const report = await tx.report.findUnique({ where: { uid }, select: { version: true } });
+      const state = await this.access.gate(uid, c, tx);
+      if (!state) throw new NotFoundException('검사를 찾을 수 없습니다');
+      if (!canReadPreliminary(state, c)) throw new ForbiddenException('예비 판독(RS: P) 중입니다. 지정된 판독의만 볼 수 있습니다.');
+      refuseDestroyed(state);
+      const report = await tx.report.findUnique({ where: { uid }, select: { version: true, groupId: true } });
+      if (report) await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: report });
       const head = await this.versionCitations(tx, uid, report?.version ?? 0);
       const draft = await tx.reportDraft.findUnique({
-        where: { uid_author: { uid, author: c.actor } }, select: { citations: true, revision: true, present: true } });
+        where: { uid_author: { uid, author: c.actor } }, select: { citations: true, revision: true, present: true, groupId: true } });
+      if (draft?.present) await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: draft });
       // 같은 스냅숏의 세대 — 이 목록이 어느 경계의 것인지 화면이 알아야 유지 목록을 그 경계에 묶어 보낼 수 있다.
       const epoch = await tx.studyState.findUnique({ where: { uid }, select: { draftEpoch: true } });
       if (!epoch) throw new NotFoundException('검사를 찾을 수 없습니다');
@@ -429,27 +448,35 @@ export class PacsReportEvidence {
    * part is the list the next version would hold if I committed now (my additions and removals over the head).
    */
   async reportDrawings(uid: string, c: Caller) {
-    await this.studyAccess.prepareSourceIdentity(c, [uid]);
+    await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
     const prev = await this.access.gate(uid, c);
     if (!prev) throw new NotFoundException('검사를 찾을 수 없습니다');
-    const sourceIdentity = this.studyAccess.assertUnsplitSource(c, uid);
+    const parentScope = await examParentAccess(this.prisma, this.studyAccess, c, uid);
+    const sourceIdentity = this.studyAccess.assertUnsplitSource(c, parentScope.studies[0]);
     if (!canReadPreliminary(prev, c))
       throw new ForbiddenException(
         `예비 판독(RS: P) 중입니다. ${prev?.preReviewer ?? '지정된 판독의'}만 볼 수 있습니다.`);
     refuseDestroyed(prev);
-    await this.studyAccess.prepare(c, [uid]);
     return this.prisma.$transaction(async tx => {
-      await this.studyAccess.require(c, [uid], tx);
-      const report = await tx.report.findUnique({ where: { uid }, select: { version: true } });
+      const state = await this.access.gate(uid, c, tx);
+      if (!state) throw new NotFoundException('검사를 찾을 수 없습니다');
+      if (!canReadPreliminary(state, c)) throw new ForbiddenException('예비 판독 중입니다');
+      refuseDestroyed(state);
+      const report = await tx.report.findUnique({ where: { uid }, select: { version: true, groupId: true } });
       const headRow = report?.version ? await tx.reportVersion.findUnique({
-        where: { uid_version: { uid, version: report.version } }, select: { drawings: true } }) : null;
+        where: { uid_version: { uid, version: report.version } }, select: { drawings: true, groupId: true } }) : null;
+      const headScope = headRow ? await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: headRow }) : null;
       const head = versionDrawings(headRow?.drawings);
+      if (headScope) await drawingEntries(tx, uid, head.map(d => d.id), headScope);
       const draft = await tx.reportDraft.findUnique({
-        where: { uid_author: { uid, author: c.actor } }, select: { drawings: true, revision: true, present: true, workSince: true } });
+        where: { uid_author: { uid, author: c.actor } }, select: { drawings: true, revision: true, present: true, workSince: true, groupId: true } });
       const epoch = await tx.studyState.findUnique({ where: { uid }, select: { draftEpoch: true } });
       if (!epoch) throw new NotFoundException('검사를 찾을 수 없습니다');
       const mine = draftDrawings(draft?.present ? draft.drawings : null);
-      const effective = effectiveDrawingIds(mine, head.map(d => d.id));
+      const draftScope = draft?.present ? await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: draft }) : null;
+      const draftHead = draftScope && headScope && draftScope.groupId !== headScope.groupId ? [] : head.map(d => d.id);
+      const effective = effectiveDrawingIds(mine, draftHead);
+      if (draftScope) await drawingEntries(tx, uid, effective, draftScope);
       const ids = [...new Set([...head.map(d => d.id), ...effective])];
       const rows = ids.length ? await tx.reportDrawing.findMany({ where: { studyUid: uid, id: { in: ids } },
         select: { id: true, background: true, source: true, width: true, height: true, sha256: true, authorActor: true, createdAt: true } }) : [];
@@ -479,25 +506,30 @@ export class PacsReportEvidence {
    */
   async reportDrawing(uid: string, id: string, c: Caller) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) throw new NotFoundException('그림을 찾을 수 없습니다');
-    await this.studyAccess.prepareSourceIdentity(c, [uid]);
+    await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
     const prev = await this.access.gate(uid, c);
     if (!prev) throw new NotFoundException('검사를 찾을 수 없습니다');
-    const sourceIdentity = this.studyAccess.assertUnsplitSource(c, uid);
+    const parentScope = await examParentAccess(this.prisma, this.studyAccess, c, uid);
+    const sourceIdentity = this.studyAccess.assertUnsplitSource(c, parentScope.studies[0]);
     if (!canReadPreliminary(prev, c))
       throw new ForbiddenException(
         `예비 판독(RS: P) 중입니다. ${prev?.preReviewer ?? '지정된 판독의'}만 볼 수 있습니다.`);
     refuseDestroyed(prev);
-    await this.studyAccess.prepare(c, [uid]);
     return this.prisma.$transaction(async tx => {
-      await this.studyAccess.require(c, [uid], tx);
-      const held = await tx.$queryRaw<any[]>`SELECT version FROM "ReportVersion" WHERE uid = ${uid}
+      const state = await this.access.gate(uid, c, tx);
+      if (!state) throw new NotFoundException('검사를 찾을 수 없습니다');
+      if (!canReadPreliminary(state, c)) throw new ForbiddenException('예비 판독 중입니다');
+      refuseDestroyed(state);
+      const held = await tx.$queryRaw<any[]>`SELECT version, "groupId" FROM "ReportVersion" WHERE uid = ${uid}
         AND drawings @> jsonb_build_array(jsonb_build_object('id', ${id}::text)) ORDER BY version DESC LIMIT 1`;
       const draft = held.length ? null : await tx.reportDraft.findUnique({
-        where: { uid_author: { uid, author: c.actor } }, select: { drawings: true, present: true, revision: true } });
+        where: { uid_author: { uid, author: c.actor } }, select: { drawings: true, present: true, revision: true, groupId: true } });
       if (!held.length && !(draft?.present && draftDrawings(draft.drawings)?.ids.includes(id)))
         throw new NotFoundException('그림을 찾을 수 없습니다');
+      const scope = await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: held[0] ?? draft! });
       const row = await tx.reportDrawing.findFirst({ where: { id, studyUid: uid } });
       if (!row) throw new NotFoundException('그림을 찾을 수 없습니다');
+      assertDrawingScope(row, scope);
       const body = { id, background: row.background, source: row.source ?? null, width: row.width, height: row.height,
         sha256: row.sha256, png: Buffer.from(row.png).toString('base64') };
       // The record this picture is read from: the version that holds it, or my draft at its revision (as reportCitations names it).
@@ -523,21 +555,28 @@ export class PacsReportEvidence {
    * 확정이 끼어들어 "머리에는 없고 초안에는 있는" 없는 상태를 그릴 수 있다.
    */
   async reportStructure(uid: string, c: Caller) {
-    await this.studyAccess.prepareSourceIdentity(c, [uid]);
+    await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
     const prev = await this.access.gate(uid, c);
     if (!prev) throw new NotFoundException('검사를 찾을 수 없습니다');
-    const sourceIdentity = this.studyAccess.assertUnsplitSource(c, uid);
+    const parentScope = await examParentAccess(this.prisma, this.studyAccess, c, uid);
+    const sourceIdentity = this.studyAccess.assertUnsplitSource(c, parentScope.studies[0]);
     if (!canReadPreliminary(prev, c))
       throw new ForbiddenException(
         `예비 판독(RS: P) 중입니다. ${prev?.preReviewer ?? '지정된 판독의'}만 볼 수 있습니다.`);
     refuseDestroyed(prev);
     return this.prisma.$transaction(async tx => {
+      const state = await this.access.gate(uid, c, tx);
+      if (!state) throw new NotFoundException('검사를 찾을 수 없습니다');
+      if (!canReadPreliminary(state, c)) throw new ForbiddenException('예비 판독(RS: P) 중입니다. 지정된 판독의만 볼 수 있습니다.');
+      refuseDestroyed(state);
       const report = await tx.report.findUnique({ where: { uid },
-        select: { version: true, findings: true, conclusion: true, recommendation: true } });
+        select: { version: true, findings: true, conclusion: true, recommendation: true, groupId: true } });
+      if (report) await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: report });
       const head = await this.versionStructured(tx, uid, report?.version ?? 0);
       const stored = await tx.reportDraft.findUnique({
         where: { uid_author: { uid, author: c.actor } },
-        select: { findings: true, conclusion: true, recommendation: true, structured: true, revision: true, present: true } });
+        select: { findings: true, conclusion: true, recommendation: true, structured: true, revision: true, present: true, groupId: true } });
+      if (stored?.present) await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: stored });
       const epoch = await tx.studyState.findUnique({ where: { uid }, select: { draftEpoch: true } });
       if (!epoch) throw new NotFoundException('검사를 찾을 수 없습니다');
       const draftRevision = draftToken(epoch.draftEpoch, stored?.revision ?? 0);
@@ -594,7 +633,7 @@ export class PacsReportEvidence {
      * `require`도 없으므로, 아래 트랜잭션 안의 재검사는 이 호출이 채운 캐시에만 기댈 수 있다.
      */
     await this.studyAccess.prepare(c);
-    await this.studyAccess.prepareSourceIdentity(c, [uid]);
+    await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
     const read = await this.prisma.$transaction(async tx => {
       /**
        * 관문과 판 읽기가 **한 스냅샷** 안에 있다. 밖에서 읽으면 그 사이에 예비 판독이 끼어들어
@@ -602,7 +641,8 @@ export class PacsReportEvidence {
        */
       const prev = await this.access.gate(uid, c, tx);
       if (!prev) throw new NotFoundException('검사를 찾을 수 없습니다');
-      const sourceIdentity = this.studyAccess.assertUnsplitSource(c, uid);
+      const parentScope = await examParentAccess(tx, this.studyAccess, c, uid);
+    const sourceIdentity = this.studyAccess.assertUnsplitSource(c, parentScope.studies[0]);
       if (!canReadPreliminary(prev, c))
         throw new ForbiddenException(
           `예비 판독(RS: P) 중입니다. ${prev?.preReviewer ?? '지정된 판독의'}만 볼 수 있습니다.`);
@@ -611,10 +651,11 @@ export class PacsReportEvidence {
         where: { uid_version: { uid, version: want } },
         // action separates safety copies from committed provenance; it is not
         // returned. id likewise stays internal to the access record.
-        select: { id: true, action: true, citations: true, findings: true, conclusion: true, recommendation: true },
+        select: { id: true, action: true, citations: true, findings: true, conclusion: true, recommendation: true, groupId: true },
       });
       // 없는 판을 「인용 없음」으로 답하면 그 자체가 거짓말이다.
       if (!row) throw new NotFoundException('그 판을 찾을 수 없습니다');
+      await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: row });
       const entries = citationArray(row.citations);
       // `n`은 **행 전체**에서 센다. 축약된 건이 빠지면 `ambiguous`여야 할 것이 `present`가 된다.
       const counts = sameTextCounts(entries);

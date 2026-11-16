@@ -161,7 +161,7 @@ before(async () => {
     await witness.memberRights.upsert({ where: { sub: member.sub }, update: {}, create: { sub: member.sub, username: member.sub,
       email: member.email, name: 'Synthetic ' + member.sub, emailVerified: true, approved: true, suspended: false,
       institution: site, roles: member.roles } });
-    member.token = await new jose.SignJWT({ email: member.email, realm_access: { roles: member.roles }, groups: ['/' + site] })
+    member.token = await new jose.SignJWT({ email: member.email, realm_access: { roles: member.roles }, amr: member.roles.includes('admin') ? ['otp'] : [], groups: ['/' + site] })
       .setProtectedHeader({ alg: 'RS256', kid: jwk.kid }).setIssuer(issuer).setSubject(member.sub).setAudience('kin-api')
       .setIssuedAt().setExpirationTime('30m').sign(privateKey);
   }

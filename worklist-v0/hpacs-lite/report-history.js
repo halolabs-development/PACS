@@ -109,8 +109,8 @@
     const historyDrawingUrls = [];
     const historyDrawingName = d => d.background === "breast" ? "Breast diagram" : d.background === "thyroid" ? "Thyroid diagram"
       : "Saved image" + (d.source?.frame ? " · frame " + d.source.frame : "");
-    async function showHistory() {
-      const uid = selectedUid;
+    async function showHistory(requestedUid = null) {
+      const uid = typeof requestedUid === "string" ? requestedUid : selectedUid;
       if (!uid) { alert("검사를 선택하세요."); return; }
       const box = $("#hist-body");
       const epoch = ++historyEpoch;
@@ -143,6 +143,7 @@
               <span style="color:#b4b4b4">${esc(String(v.at).replace("T", " ").slice(0, 19))}</span>
             </div>
 ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</span></div>` : ""}
+            ${v.group ? `<div class="vr" data-exam-group="${esc(v.group.id)}"><b>Exam scope</b> — <span data-exam-scope-text></span></div>` : ""}
             ${v.findings || v.conclusion || v.recommendation
               ? `<pre translate="no">${esc([v.findings, v.conclusion, v.recommendation].filter(Boolean).join("\n---\n"))}</pre>`
               : `<div style="color:#556;padding:4px 0">(내용 없음)</div>`}
@@ -151,11 +152,29 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
               <figure style="margin:0;display:grid;justify-items:center;font-size:11px"><img data-drawing="${esc(d.id)}"
                 alt="${esc(historyDrawingName(d))}" style="width:120px;height:83px;object-fit:contain;background:#fff">
                 <figcaption>${esc(historyDrawingName(d))}</figcaption></figure>`).join("")}</div>` : ""}
-            <div class="vcite-row"><button class="vcite-btn" data-version="${esc(v.version)}"
+            <div class="vcite-row">${v.group ? `<button class="chip" data-history-images="${esc(v.version)}" ${!v.group.readable ? "disabled" : ""}>Open Images</button> ` : ""}<button class="vcite-btn" data-version="${esc(v.version)}"
                  title="이 판의 인용 증적을 서버에서 확인합니다">Show Citations</button></div>
             <div class="vcite-host" data-version="${esc(v.version)}"></div>
           </div>`).join("")
           : "<div style='color:#667;padding:10px'>아직 확정된 판이 없습니다. Save 또는 Approve를 누르면 여기 쌓입니다.</div>";
+        // The Exam scope sentence is written whole, its Accession Nos as data, so the screen language reads it.
+        const scopeLines = box.querySelectorAll("[data-exam-scope-text]");
+        list.filter(v => v.group).forEach((v, i) => {
+          kinWrite(scopeLines[i], v.group.readable
+            ? kinSay("원본 검사({0})의 영상으로 쓴 판입니다{t1}", (KinExamScope.storedReport(v, uid)?.sources || [])
+                .map(source => studies.find(s => s.uid === source.studyUid)?.acc || source.studyUid).join(" + "), { t: v.group.active ? "" : " · 지금은 되돌린 범위" })
+            : "저장된 범위의 일부 영상을 볼 수 없어 이 판의 본문을 보이지 않습니다");
+        });
+        for (const button of box.querySelectorAll("[data-history-images]")) button.onclick = async () => {
+          const version = Number(button.dataset.historyImages);
+          button.disabled = true;
+          try {
+            const scope = await KinExamScope.fetch(api, uid, {purpose:"stored",version,at});
+            if (!work.admits(at) || !historyLive(epoch,uid)) return;
+            openFilmbox(uid, null, null, {exam:KinExamScope.viewerInput(scope,null,version)});
+          } catch(error) { if(work.admits(at)&&historyLive(epoch,uid)) toast(error.message,"err"); }
+          finally { if(work.admits(at)&&historyLive(epoch,uid))button.disabled=false; }
+        };
         // 증적은 **사람이 고른 판만** 읽는다. 이력이 길어도 한 번 열람의 비용이 늘지 않는다.
         for (const button of box.querySelectorAll(".vcite-btn")) {
           const version = Number(button.dataset.version);

@@ -67,7 +67,7 @@ if(process.argv.includes('--serve')){
     const institution=subject==='other'?'synthetic-other':'synthetic-hospital';
     await witness.memberRights.create({data:{sub:subject,username:subject,email:subject+'@example.test',name:'Synthetic '+subject,
       emailVerified:true,approved:true,suspended:false,institution,roles}});
-    tokens[subject]=await new jose.SignJWT({email:subject+'@example.test',realm_access:{roles},groups:['/'+institution]})
+    tokens[subject]=await new jose.SignJWT({email:subject+'@example.test',realm_access:{roles},amr:roles.includes('admin')?['otp']:[],groups:['/'+institution]})
       .setProtectedHeader({alg:'RS256',kid:jwk.kid}).setIssuer(issuer).setSubject(subject).setAudience('kin-api')
       .setIssuedAt().setExpirationTime('10m').sign(privateKey);
   }

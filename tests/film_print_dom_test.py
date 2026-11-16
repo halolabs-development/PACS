@@ -55,7 +55,24 @@ class FilmSite(rf.FlowSite):
         self.script = ["sent", "printed"]   # the states a job reaches, one per read after its creation
         self.post_answers = []              # "lost": the job is created and the answer dropped
         self.held_job_reads = []
+        self.hold_destinations = False      # the printer list is answered only when the test releases it
+        self.held_destinations = []
+        self.hold_layouts = False           # likewise every layout read: (route, body) in the order asked
+        self.held_layouts = []
         self.plan_changed = False           # the next print is refused: the series changed since its preview
+        self.hold_destinations = False      # the destination list is not answered until the test releases it
+        self.held_destinations = []
+        self.hold_layouts = False           # a layout is not answered until the test releases it
+        self.held_layouts = []
+        self.source_uids = {}
+        self.exam_scopes = {}
+
+    def list_body(self, account, rename=None):
+        body = super().list_body(account, rename)
+        for row in body["studies"]:
+            if row["uid"] in self.exam_scopes:
+                row["examScope"] = self.exam_scopes[row["uid"]]
+        return body
 
     def handle(self, route, request):
         url = urlparse(request.url)
@@ -76,7 +93,8 @@ class FilmSite(rf.FlowSite):
             cells.append({"position": index + 1, "instance": instance, "sop": f"{series['uid']}.{order}", "frame": 1, "order": order,
                           "window": None, "width": 100, "height": 100, "src": f"/instances/{instance}/frames/0/rendered?width=100&height=100"})
         plan = hashlib.sha256(json.dumps([series["uid"], body["format"], film, body["filmSize"], body["orientation"]]).encode()).hexdigest()
-        return {"studyUid": body["studyUid"], "seriesUid": series["uid"], "film": film, "films": films, "plan": plan, "series": SERIES, "cells": cells}
+        return {"studyUid": body["studyUid"], "sourceUid": self.source_uids.get(series["uid"],body["studyUid"]), "seriesUid": series["uid"], "film": film, "films": films,
+                "plan": plan, "series": [{**s, "sourceUid": self.source_uids.get(s["uid"],body["studyUid"])} for s in SERIES], "cells": cells}
 
     def view(self, job):
         return {"job": {**job, "events": [{"state": s, "at": "2026-11-14T00:00:00Z"} for s in job["states"]]}}
@@ -88,10 +106,14 @@ class FilmSite(rf.FlowSite):
         if refused:
             return self.refuse(route, *refused)
         if method == "GET" and path == "/api/film-print/destinations":
+            if self.hold_destinations:
+                return self.held_destinations.append(route)
             return route.fulfill(json={"printers": [PRINTER_A, PRINTER_B], "devices": [DEVICE]})
         if method == "POST" and path == "/api/film-print/layout":
             body = request.post_data_json
             self.layouts.append(body)
+            if self.hold_layouts:
+                return self.held_layouts.append((route, body))
             return route.fulfill(json=self.layout_of(body))
         if method == "POST" and path == "/api/film-print/jobs":
             body = request.post_data_json
@@ -218,6 +240,21 @@ class FilmPrintWindow(unittest.TestCase):
         self.page.locator("#film-print-close").click()
         expect(self.page.locator("#film-print")).to_be_hidden()
 
+    def test_the_study_line_keeps_the_patient_data_in_either_screen_language(self):
+        # A patient name that reads like a glossary template ("Base {0}") is still data, before and after a language change.
+        site = FilmSite()
+        uid, _, patient_id = site.flow[1]
+        site.flow = (site.flow[0], (uid, "Base Nora", patient_id), *site.flow[2:])
+        self.start(site)
+        self.open_study("Base Nora")
+        self.open_from_more()
+        head = self.page.locator("#film-print .fp-study")
+        expect(head).to_have_text(re.compile(r"^Base Nora · "))
+        for lang in ("ko", "en"):
+            self.assertTrue(self.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", lang))
+            expect(self.page.locator("#film-print-title")).to_have_text("영상 인쇄" if lang == "ko" else "Print Images")
+            expect(head).to_have_text(re.compile(r"^Base Nora · "))
+
     def test_format_series_and_films(self):
         self.start()
         self.open_study()
@@ -231,9 +268,127 @@ class FilmPrintWindow(unittest.TestCase):
         self.page.get_by_title("Next film").click()
         expect(self.page.locator("#film-print-film-of")).to_have_text("Film 2 of 4")
         self.assertEqual((2, SERIES[0]["uid"]), (self.site.layouts[-1]["film"], self.site.layouts[-1]["seriesUid"]))
-        self.page.locator("#film-print-series").select_option(SERIES[1]["uid"])
+        self.page.locator("#film-print-series").select_option(index=1)
         expect(self.page.locator("#film-print-film-of")).to_have_text("Film 1 of 1")
         self.assertEqual(SERIES[1]["uid"], self.site.layouts[-1]["seriesUid"])
+
+    def test_scope_generation_change_disables_the_old_film_plan(self):
+        self.start(self.merged_site())
+        self.open_study()
+        self.open_from_more()
+        expect(self.page.locator("#film-print-go")).to_be_enabled()
+        self.site.exam_scopes[h.UID]["generation"] = "scope-2"
+        self.page.evaluate("() => load()")
+        expect(self.page.locator("#film-print-go")).to_be_disabled()
+        expect(self.page.locator("#film-print-status")).to_contain_text("검사 범위가 바뀌었습니다")
+        self.assertEqual([],self.site.posts)
+
+    def merged_site(self):
+        site = FilmSite()
+        site.exam_scopes[h.UID] = {"reportUid": h.UID, "groupId": "syn-group", "kind": "merge", "part": None,
+                                  "active": True, "generation": "scope-1",
+                                  "sources": [{"studyUid": uid, "series": {"mode": "all", "uids": []}}
+                                              for uid in (h.UID, h.UID_B)]}
+        site.source_uids[SERIES[1]["uid"]] = h.UID_B
+        return site
+
+    def test_film_series_choice_keeps_the_server_original_uid(self):
+        self.start(self.merged_site())
+        self.open_study()
+        self.open_from_more()
+        self.page.locator('#film-print-series').select_option(index=1)
+        expect(self.page.locator('#film-print-film-of')).to_have_text('Film 1 of 1')
+        self.page.locator('#film-print-go').click()
+        self.wait_status('Printed')
+        self.assertEqual(h.UID_B,self.site.posts[0]['sourceUid'])
+        self.assertEqual(h.UID,self.site.posts[0]['studyUid'])
+        self.assertEqual(h.UID_B, self.site.layouts[-1]['sourceUid'])
+
+    def test_plain_study_draft_epoch_keeps_the_film_plan_and_plain_requests(self):
+        self.start()
+        self.open_study()
+        self.open_from_more()
+        self.page.evaluate("""() => { const row=studies.find(s=>s.uid===selectedUid); row.draftEpoch='changed'; render(); }""")
+        expect(self.page.locator("#film-print-go")).to_be_enabled()
+        expect(self.page.locator("#film-print-status")).to_be_empty()
+        expect(self.page.locator("#film-print-series option")).to_have_text([
+            "#1 · CT · SYN AXIAL · 7 images", "#2 · CT · SYN CORONAL · 2 images"])
+        self.page.locator("#film-print-series").select_option(SERIES[1]["uid"])
+        expect(self.page.locator("#film-print-film-of")).to_have_text("Film 1 of 1")
+        self.page.locator("#film-print-go").click()
+        self.wait_status("Printed")
+        self.assertEqual(SERIES[1]["uid"], self.site.posts[0]["seriesUid"])
+        for body in [*self.site.layouts, *self.site.posts]:
+            self.assertNotIn("sourceUid", body)
+
+    def test_a_format_chosen_before_the_destinations_arrive_still_lists_them(self):
+        site = FilmSite()
+        site.hold_destinations = True
+        self.start(site)
+        self.open_study()
+        self.page.locator("#report-more > summary").click()
+        self.page.locator("#b-film-print").click()
+        expect(self.page.locator("#film-print")).to_be_visible()
+        for _ in range(100):
+            if site.held_destinations:
+                break
+            self.page.wait_for_timeout(50)
+        self.assertEqual(1, len(site.held_destinations), "the window asked for its destinations")
+        # The reader picks a Format while the destination list is still on its way: that layout is drawn.
+        self.page.locator("#film-print-format").select_option("3x4")
+        expect(self.page.locator("#film-print-film .fp-cell canvas")).to_have_count(7)
+        expect(self.page.locator("#film-print-target option")).to_have_count(0)
+        site.held_destinations.pop().fulfill(json={"printers": [PRINTER_A, PRINTER_B], "devices": [DEVICE]})
+        expect(self.page.locator("#film-print-target option")).to_have_text(["SYN Film Printer A · AE SYNPRA", "SYN Film Printer B · AE SYNPRB"])
+        expect(self.page.locator("#film-print-go")).to_be_enabled()
+        expect(self.page.locator("#film-print-film .fp-cell canvas")).to_have_count(7)
+        self.assertEqual(["3x4"], [body["format"] for body in site.layouts], "the reader's layout is the only one asked for")
+        self.page.locator("#film-print-go").click()
+        self.wait_status("Printed")
+        self.assertEqual((PRINTER_A["id"], "3x4"), (site.posts[0]["destination"]["peerId"], site.posts[0]["format"]))
+
+    def test_a_film_size_the_printer_changes_asks_for_the_layout_again_while_one_is_on_its_way(self):
+        small = {**PRINTER_A, "filmSizes": ["8INX10IN"]}
+
+        def until(ready, what):
+            for _ in range(100):
+                if ready():
+                    return
+                self.page.wait_for_timeout(50)
+            self.fail(what)
+
+        # Each control that asks for a layout before the destinations arrive.
+        for control, value in (("format", "3x4"), ("size", "11INX14IN"), ("orientation", "LANDSCAPE")):
+            with self.subTest(control=control):
+                site = FilmSite()
+                site.hold_destinations = site.hold_layouts = True
+                self.start(site)
+                self.open_study()
+                self.page.locator("#report-more > summary").click()
+                self.page.locator("#b-film-print").click()
+                expect(self.page.locator("#film-print")).to_be_visible()
+                until(lambda: site.held_destinations, "the window asked for its destinations")
+                self.page.locator(f"#film-print-{control}").select_option(value)
+                until(lambda: len(site.held_layouts) == 1, "the reader's layout was asked for")
+                self.assertNotEqual("8INX10IN", site.layouts[0]["filmSize"])
+                # The only printer offers 8 x 10 in: the film size changes under the layout that is still on its way.
+                site.held_destinations.pop().fulfill(json={"printers": [small], "devices": [DEVICE]})
+                expect(self.page.locator("#film-print-size")).to_have_value("8INX10IN")
+                until(lambda: len(site.layouts) == 2, "the changed film size asks for its own layout: " + json.dumps(site.layouts))
+                self.assertEqual("8INX10IN", site.layouts[1]["filmSize"])
+                # The earlier layout answers now. It is not the film that would be printed: nothing is drawn, Print stays off.
+                route, body = site.held_layouts.pop(0)
+                route.fulfill(json=site.layout_of(body))
+                self.page.wait_for_timeout(300)
+                expect(self.page.locator("#film-print-go")).to_be_disabled()
+                expect(self.page.locator("#film-print-film-of")).to_have_text("")
+                route, body = site.held_layouts.pop(0)
+                route.fulfill(json=site.layout_of(body))
+                expect(self.page.locator("#film-print-go")).to_be_enabled()
+                self.page.locator("#film-print-go").click()
+                self.wait_status("Printed")
+                self.assertEqual(("8INX10IN", site.layout_of(site.layouts[1])["plan"]), (site.posts[0]["filmSize"], site.posts[0]["plan"]),
+                                 "the print names the layout of the film size it asks for")
 
     def test_destination_decides_the_list_and_the_main_button(self):
         self.start()
@@ -247,6 +402,61 @@ class FilmPrintWindow(unittest.TestCase):
         expect(self.page.locator("#film-print-go")).to_have_text("Send")
         self.page.locator("#film-print-to-printer").check()
         expect(self.page.locator("#film-print-go")).to_have_text("Print")
+
+    def test_a_format_chosen_while_the_printer_list_is_read_keeps_the_list(self):
+        # The layout a changed Format asks for is newer than the window's own first layout, but not newer than the
+        # printer list: that list still belongs to this window and is shown when it arrives.
+        site = FilmSite()
+        site.hold_destinations = True
+        self.start(site)
+        self.open_study()
+        self.page.locator("#report-more > summary").click()
+        self.page.locator("#b-film-print").click()
+        expect(self.page.locator("#film-print")).to_be_visible()
+        self.wait_held(site.held_destinations, 1, "the printer list is being read")
+        self.page.locator("#film-print-format").select_option("3x4")
+        expect(self.page.locator("#film-print-film .fp-cell")).to_have_count(12)
+        site.held_destinations.pop(0).fulfill(json={"printers": [PRINTER_A, PRINTER_B], "devices": [DEVICE]})
+        expect(self.page.locator("#film-print-target option")).to_have_text(["SYN Film Printer A · AE SYNPRA", "SYN Film Printer B · AE SYNPRB"])
+        expect(self.page.locator("#film-print-film-of")).to_have_text("Film 1 of 1")
+        expect(self.page.locator("#film-print-go")).to_be_enabled()
+
+    def test_a_list_that_changes_the_film_size_asks_again_for_a_layout_still_on_its_way(self):
+        # Format is changed before the list arrives, so a 14INX17IN layout is on its way; the list's only printer takes
+        # 8INX10IN. The size changes, the late 14INX17IN layout is not the film, and Print sends the 8INX10IN plan.
+        small = {**PRINTER_A, "filmSizes": ["8INX10IN"]}
+        site = FilmSite()
+        site.hold_destinations = site.hold_layouts = True
+        self.start(site)
+        self.open_study()
+        self.page.locator("#report-more > summary").click()
+        self.page.locator("#b-film-print").click()
+        expect(self.page.locator("#film-print")).to_be_visible()
+        self.wait_held(site.held_destinations, 1, "the printer list is being read")
+        self.page.locator("#film-print-format").select_option("3x4")
+        self.wait_held(site.held_layouts, 1, "the 3x4 layout is being read")
+        self.assertEqual("14INX17IN", site.held_layouts[0][1]["filmSize"])
+        site.held_destinations.pop(0).fulfill(json={"printers": [small], "devices": [DEVICE]})
+        expect(self.page.locator("#film-print-size")).to_have_value("8INX10IN")
+        self.wait_held(site.held_layouts, 2, "the layout is asked for again at the new size")
+        self.assertEqual("8INX10IN", site.held_layouts[1][1]["filmSize"])
+        expect(self.page.locator("#film-print-go")).to_be_disabled()
+        late, late_body = site.held_layouts.pop(0)
+        late.fulfill(json=site.layout_of(late_body))
+        self.page.wait_for_timeout(300)
+        expect(self.page.locator("#film-print-go")).to_be_disabled()
+        route, body = site.held_layouts.pop(0)
+        route.fulfill(json=site.layout_of(body))
+        expect(self.page.locator("#film-print-go")).to_be_enabled()
+        self.page.locator("#film-print-go").click()
+        self.wait_status("Printed")
+        self.assertEqual(("8INX10IN", site.layout_of(body)["plan"]), (site.posts[0]["filmSize"], site.posts[0]["plan"]))
+
+    def wait_held(self, held, count, what):
+        for _ in range(100):   # route callbacks are delivered while the page is waited on
+            if len(held) >= count: break
+            self.page.wait_for_timeout(50)
+        self.assertEqual(count, len(held), what)
 
     # ── the result line ──
     def test_printed_follows_sending_and_sent(self):
