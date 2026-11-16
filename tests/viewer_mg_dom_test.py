@@ -462,13 +462,19 @@ class ViewerMgDOMTest(unittest.TestCase):
         display.get_by_role('button', name='1:1').evaluate('b => b.click()')
         expect(page.locator('#pane-lcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: 1:1')
         expect(page.locator('#pane-lcc [data-mg-badge=quadrant]')).to_have_count(0)
+        # A size change then leaves the cells given to 1:1 as they are.
+        one = self.camera(page, 'lcc')['zoom']
+        page.evaluate("() => { for (const v of synViews.values()) v.element.style.width = '120px'; }")
+        page.wait_for_timeout(400)
+        self.assertAlmostEqual(one, self.camera(page, 'lcc')['zoom'], places=9)
+        expect(page.locator('#pane-lcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: 1:1')
         # The next step takes every cell again.
         panel.get_by_role('button', name='Next Quadrant').click()
         expect(page.locator('#pane-rcc [data-mg-badge=quadrant]')).to_have_text('Q2 Upper-Inner · 4× · edges outside')
         expect(page.locator('#pane-lcc [data-mg-badge=zoom]')).to_have_count(0)
         self.assertAlmostEqual(4, self.camera(page, 'lcc')['zoom'], places=9)
 
-    def test_05d_a_cell_showing_another_stack_loses_its_quadrant_badge_and_a_window_resize_shows_the_step_again(self):
+    def test_05d_a_cell_leaves_the_step_with_another_stack_and_a_held_cell_of_another_size_is_drawn_again_for_it(self):
         page = self.open()
         self.menu(page, 'Quadrant Zoom')
         panel = page.get_by_role('dialog', name='Quadrant Zoom')
@@ -479,15 +485,30 @@ class ViewerMgDOMTest(unittest.TestCase):
         expect(page.locator('#pane-dbt [data-mg-badge=quadrant]')).to_have_text('Q1 Upper-Outer · Fill Quadrant')
         page.evaluate("() => { const v = synViews.get('dbt'); v.ids = v.ids.slice(0, 6); synEmit('cells', 'data', { viewportId: 'dbt' }); }")
         expect(page.locator('#pane-dbt [data-mg-badge=quadrant]')).to_have_count(0)
-        # The cells become narrower: Fill Quadrant is worked out again for the new size.
+        # The reader zooms L CC (it leaves the step); then every cell becomes narrower by a layout change alone (no window
+        # resize event).
+        page.evaluate("() => synViews.get('lcc').setZoom(2)")
+        expect(page.locator('#pane-lcc [data-mg-badge=quadrant]')).to_have_count(0)
         before = self.camera(page, 'rcc')['zoom']
-        page.evaluate("() => { for (const v of synViews.values()) v.element.style.width = '100px'; dispatchEvent(new Event('resize')); }")
+        page.evaluate("() => { for (const v of synViews.values()) v.element.style.width = '100px'; }")
         page.wait_for_function("z => Math.abs(synViews.get('rcc').getZoom() - z) > 1e-3", arg=before)
+        # Fill Quadrant worked out again for the held cell's new width …
         rcc = page.evaluate("() => KinMgBreastModel.detect(synViews.get('rcc').imageDataObject.getPointData().getScalars().getData(), 400, 300).box")
-        side = (rcc['x1'] - rcc['x0']) / 2
         width = page.evaluate("() => synViews.get('rcc').element.clientWidth")
-        self.assertAlmostEqual(min(width / side, 150 / ((rcc['y1'] - rcc['y0']) / 2)) * 0.98 / 0.5, self.camera(page, 'rcc')['zoom'], places=6)
-
+        self.assertEqual(100, width)
+        self.assertAlmostEqual(min(width / ((rcc['x1'] - rcc['x0']) / 2), 150 / ((rcc['y1'] - rcc['y0']) / 2)) * 0.98 / 0.5, self.camera(page, 'rcc')['zoom'], places=6)
+        expect(page.locator('#pane-rcc [data-mg-badge=quadrant]')).to_have_text('Q1 Upper-Outer · Fill Quadrant')
+        # … and not for the cell the reader zoomed, nor the one showing another stack.
+        page.wait_for_timeout(300)
+        self.assertAlmostEqual(2, self.camera(page, 'lcc')['zoom'], places=9)
+        expect(page.locator('#pane-lcc [data-mg-badge=quadrant]')).to_have_count(0)
+        expect(page.locator('#pane-dbt [data-mg-badge=quadrant]')).to_have_count(0)
+        # Close while a size change waits: nothing is drawn after it and nothing fails (the page's errors are checked).
+        page.evaluate("() => { for (const v of synViews.values()) v.element.style.width = '150px'; }")
+        panel.get_by_role('button', name='Close').click()
+        page.wait_for_timeout(400)
+        self.assertAlmostEqual(1, self.camera(page, 'rcc')['zoom'], places=9)
+        expect(page.locator('[data-mg-badge=quadrant]')).to_have_count(0)
     def test_06_tomo_steps_by_the_interval_plays_and_gives_way_to_cine(self):
         page = self.open()
         page.evaluate("() => { synActive = 'dbt'; }")
