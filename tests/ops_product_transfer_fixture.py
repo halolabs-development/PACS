@@ -377,7 +377,9 @@ def expected_rows(uid):
         # Worklist request columns: the request time, department and patient class carry real (synthetic) values.
         reqAt=STAMP, reqDept='SYNTHETIC dept', ptClass='O',
         # Delete Order: the order is taken off the list with who and why (a mark, never a row delete).
-        removedAt=STAMP, removedBySub='SYNTHETIC-sub', removedBy='SYNTHETIC-actor', removeReason='SYNTHETIC reason')]
+        removedAt=STAMP, removedBySub='SYNTHETIC-sub', removedBy='SYNTHETIC-actor', removeReason='SYNTHETIC reason',
+        # Order List RIS Status: a real value of the CHECK set, so a dump that lost the column or its CHECK would differ.
+        risStatus='acquired')]
     # S4-U3: one synthetic receipt in a retry state, so BIGINT counts, the UUID epoch and a non-null
     # errorCode all carry real values through the dump (an empty table would pass on nothing).
     rows['GatewayReceipt'] = [dict(studyUid=uid, institutionId='SYNTHETIC-hospital',
