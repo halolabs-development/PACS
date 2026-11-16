@@ -180,11 +180,12 @@ window.KinViewerFeatures?.module('view', async ({ services, commands, store, ui 
     v.setViewPresentation({ ...v.getViewPresentation(), rotation });
     v.setCamera({ flipHorizontal: !!flipHorizontal, flipVertical: !!flipVertical });
   }
-  // A window by the viewer's own command. After a stored table was drawn on the cell (a presentation state's VOI LUT),
-  // the same window would not replace the table, so the linear window is drawn anew instead (as the Display module
-  // does for a reader's window); the Display module hears it as the reader's window either way.
+  // A window by the viewer's own command. Where a table may be drawn on the cell — a presentation state's VOI LUT, or an
+  // MG image's stored grayscale (a table or a non-linear function the mammography hanging draws on each image) — the
+  // command would only move the table's range, so the linear window is drawn anew instead (as the Display module does
+  // for a reader's window); the Display module hears it as the reader's window either way.
   function windowTo(v, w, l, record) {
-    if (record?.table) {
+    if (record?.table || mgDisplay(v)) {
       record.table = false;
       const convert = window.cornerstone?.utilities?.windowLevel?.toLowHighRange;
       const range = typeof convert === 'function' ? convert(w, l) : { lower: l - 0.5 - (w - 1) / 2, upper: l - 0.5 + (w - 1) / 2 };
@@ -221,16 +222,20 @@ window.KinViewerFeatures?.module('view', async ({ services, commands, store, ui 
     turnAndFlip(v, rule.rotate, mg ? mg.flipH : rule.flip === 'horizontal', mg ? mg.flipV : rule.flip === 'vertical');
     magnify(v, rule.magnification, rule.rotate);
   }
-  // `redraw`: the table on the cell is drawn anew even for the same range — a presentation state's table (or a stored one
-  // put over it) would otherwise stay under the new range.
+  // The row's own window: its preset, else (Stock) an MG image's stored grayscale (a window with its own inversion, or a
+  // table with it drawn in) or the image's stored window. `record.table` says afterwards whether a table is drawn.
+  function rowWindow(v, record) {
+    if (record.rule.windowing) { windowTo(v, record.rule.windowing.w, record.rule.windowing.l, record); return; }
+    const drawn = mgDisplay(v)?.grayscale();
+    if (drawn) record.table = drawn === 'table'; else stockWindow(v, record);
+  }
+  // The inversion from before a presentation state goes back first: turning the inversion flips whatever is drawn, so the
+  // window or table drawn next is drawn as it stands. `redraw`: the table on the cell is drawn anew even for the same
+  // range — a presentation state's table (or a stored one put over it) would otherwise stay under the new range.
   function plainWindow(v, record, redraw = false) {
-    if (redraw) record.table = true;
-    const drawn = record.rule.windowing ? null : mgDisplay(v)?.grayscale();
-    if (record.rule.windowing) windowTo(v, record.rule.windowing.w, record.rule.windowing.l, record);
-    else if (drawn) record.table = false; else stockWindow(v, record);
-    // A stored window of an MG image carries its own inversion; a stored table has it drawn in.
-    if (drawn === 'window') record.invertBefore = null;
     if (record.invertBefore !== null) { v.setProperties({ invert: record.invertBefore }); record.invertBefore = null; }
+    if (redraw) record.table = true;
+    rowWindow(v, record);
   }
   function plain(v, record, redraw = false) { plainSpace(v, record); plainWindow(v, record, redraw); }
   // The presentation state for the image now shown. Its turn, flip and displayed area go on when they differ from what
@@ -269,8 +274,7 @@ window.KinViewerFeatures?.module('view', async ({ services, commands, store, ui 
       else { notes.push('GSPS VOI LUT could not be drawn: the row\'s window is used'); plainWindow(v, record); }
     } else {
       if (shown.voi?.unreadable) notes.push('GSPS VOI LUT could not be read: the row\'s window is used');
-      if (shown.voi && !shown.voi.unreadable) windowTo(v, shown.voi.width, shown.voi.center, record);
-      else if (record.rule.windowing) windowTo(v, record.rule.windowing.w, record.rule.windowing.l, record); else stockWindow(v, record);
+      if (shown.voi && !shown.voi.unreadable) windowTo(v, shown.voi.width, shown.voi.center, record); else rowWindow(v, record);
       if (shown.invert !== null) v.setProperties({ invert: shown.invert });
       else if (record.invertBefore !== null) { v.setProperties({ invert: record.invertBefore }); record.invertBefore = null; }
     }
@@ -342,22 +346,25 @@ window.KinViewerFeatures?.module('view', async ({ services, commands, store, ui 
     if (!current(target) || run !== pass) return null;
     if (!record || record.viewport !== v || record.key !== target.key) return false;
     const presented = !!record.presentation;
-    record.busy = true;
+    record.busy = true;  // no image the cell moves to meanwhile gets a presentation state
     enter(v.id);
     try {
-      clearMarks(record);
-      // From here no image the cell moves to gets a presentation state.
-      record.presentations = null; record.presentation = null; record.shown = null; record.signature = '';
-      if (presented) record.rule = rule;
-      else {
-        record.rule = null;
+      if (!presented) {
+        clearMarks(record);
+        record.rule = null; record.presentations = null; record.presentation = null; record.shown = null; record.signature = '';
         if (record.table) stockWindow(v, record);
         if (record.invertBefore !== null) { v.setProperties({ invert: record.invertBefore }); record.invertBefore = null; }
       }
+      // A presentation state stays on the cell, and its record with it, until the stock order is back: a failure or a
+      // change of the cell meanwhile leaves the cell as it was, to be taken off again.
       const now = imageId(v), stock = record.stock;
       if (!sameList(v.getImageIds?.() || [], stock)) await changeImage(v, () => v.setStack(stock, Math.max(0, stock.indexOf(now))));
       if (!current(target) || run !== pass) return null;
-      if (presented) plain(v, record, true);
+      if (presented) {
+        clearMarks(record);
+        record.rule = rule; record.presentations = null; record.presentation = null; record.shown = null; record.signature = '';
+        plain(v, record, true);
+      }
       clearMarks(record);
       records.delete(target.id);
       v.render();

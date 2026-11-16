@@ -593,7 +593,9 @@ class ViewerDisplaySetPresetsDOMTest(unittest.TestCase):
         # Back at the defaults: the hanging's orientation (mirrored) and stored grayscale, not no flip and a linear stock window.
         self.assertEqual((0, True, False, 1, [0, 0, 0]), (back['rotation'], back['flipH'], back['flipV'], back['zoom'], back['focal']))
         self.assertEqual(({'lower': 10, 'upper': 20}, True, [[10, 0], [20, 1]]), (back['voi'], back['invert'], back['tf']))
-        self.assertEqual(([], []), (after, page.evaluate('synVoi')))
+        # On an MG cell every window is drawn anew (the row's Lung, then the GSPS window); back at the defaults no stock
+        # window is drawn, the hanging's grayscale is.
+        self.assertEqual(([], [{'lower': -1350, 'upper': 149}, {'lower': -125, 'upper': 224}]), (after, [e[1] for e in page.evaluate('synVoi')]))
         self.assertEqual(['orientation', 'grayscale'], page.evaluate('synMg.slice(-2)'))
         # A row with a flip of its own keeps it on an MG cell; a row with no flip and Stock gets the hanging's display.
         page2 = self.open()
@@ -638,6 +640,65 @@ class ViewerDisplaySetPresetsDOMTest(unittest.TestCase):
         seen = page.evaluate('synSeen')
         self.assertTrue(seen and all(s[1] is True for s in seen), seen)
         self.assertTrue(page.evaluate("m => KinViewerCellRules.setting('right', m)", later))
+
+    def test_21_a_gsps_cell_whose_stock_order_failed_to_come_back_keeps_its_gsps_until_taken_off_again(self):
+        page = self.open()
+        panel = self.presets(page)
+        panel.get_by_label('Set 1 Sort').select_option(label='Instance number')
+        panel.get_by_label('Set 1 First image').select_option(label='Last')
+        panel.get_by_label('Set 1 GSPS auto').select_option(label='On')
+        panel.get_by_role('button', name='Apply to This Study').click()
+        expect(panel.get_by_role('status')).to_have_text('Applied to 1 cell.')
+        self.assertEqual(('syn:left:2', 90), (self.state(page, 'left')['image'], self.state(page, 'left')['rotation']))
+        # The stock order fails to come back once: the cell is left as it was (the GSPS on), and that is said.
+        page.evaluate("""() => { const v = synViewports.get('left'), inner = v.setStack; let fail = true;
+          v.setStack = async (...a) => { if (fail) { fail = false; throw new Error('synthetic image load failure'); } return inner(...a); }; }""")
+        for label, value in [('Set 1 Sort', 'Stock'), ('Set 1 First image', 'First'), ('Set 1 GSPS auto', 'Off')]:
+            panel.get_by_label(label).select_option(label=value)
+        panel.get_by_role('button', name='Apply to This Study').click()
+        expect(panel.get_by_role('status')).to_have_text('No cell has a rule to apply. Set 1: synthetic image load failure.')
+        failed = self.state(page, 'left')
+        self.assertEqual((90, ['GSPS: KEYIMAGE']), (failed['rotation'], failed['marks']))
+        # Again: now it is taken off, in full.
+        panel.get_by_role('button', name='Apply to This Study').click()
+        expect(panel.get_by_role('status')).to_have_text('Rule removed from 1 cell.')
+        back = self.state(page, 'left')
+        self.assertEqual(('syn:left:2', 0, [], {'lower': -1000, 'upper': -1}), (back['image'], back['rotation'], back['marks'], back['voi']))
+        self.assertEqual(['syn:left:1', 'syn:left:2', 'syn:left:3'], back['ids'])
+
+    def test_22_an_mg_stored_table_gives_way_to_a_gsps_window_and_comes_back_as_it_was(self):
+        page = self.open()
+        # As the viewer draws (measured on the pinned renderer): turning the inversion flips whatever is drawn, a window
+        # drawn anew follows the inversion, and the window command only moves a table's range.
+        page.evaluate("""() => { synGsps['20500020'] = { vr: 'CS', Value: ['INVERSE'] };
+          const v = synViewports.get('left'), set = v.setProperties, voi = v.setVOI, flip = () => { v.tf = v.tf.map(([x, y]) => [x, 1 - y]); };
+          v.setProperties = next => { const was = !!v.properties.invert; set(next); if ('invert' in next && !!next.invert !== was) flip(); };
+          v.setVOI = (range, options) => { voi(range, options); if (v.properties.invert) flip(); };
+          const run = synCommands.runCommand.bind(synCommands);
+          synCommands.runCommand = (name, props, context) => { const w = synViewports.get(props.viewportId), table = w && w.tf.length > 2 ? w.tf : null;
+            run(name, props, context);
+            if (table) { const { lower, upper } = w.properties.voiRange, a = table[0][0], b = table.at(-1)[0];
+              w.tf = table.map(([x, y]) => [lower + (x - a) * (upper - lower) / (b - a), y]); } };
+          // The mammography hanging's stored grayscale of this image: a table with MONOCHROME1 drawn in.
+          window.kinMammographyDisplay = { standard: w => w.id !== 'left' ? null : {
+            orientation: () => ({ flipH: false, flipV: false }), grayscale() { w.tf = [[100, 1], [101, 0.75], [107, 0]]; return 'table'; } } };
+          kinMammographyDisplay.standard(v).grayscale(); }""")
+        baseline = self.state(page, 'left')
+        panel = self.presets(page)
+        panel.get_by_label('Set 1 First image').select_option(label='Middle')
+        panel.get_by_label('Set 1 GSPS auto').select_option(label='On')
+        panel.get_by_role('button', name='Apply to This Study').click()
+        expect(panel.get_by_role('status')).to_have_text('Applied to 1 cell.')
+        on = self.state(page, 'left')
+        # The GSPS window replaces the table (drawn anew, not the table moved to its range), inverted as the GSPS asks.
+        self.assertEqual(([[-125, 1], [224, 0]], True), (on['tf'], on['invert']))
+        for label, value in [('Set 1 First image', 'First'), ('Set 1 GSPS auto', 'Off')]:
+            panel.get_by_label(label).select_option(label=value)
+        panel.get_by_role('button', name='Apply to This Study').click()
+        expect(panel.get_by_role('status')).to_have_text('Rule removed from 1 cell.')
+        back = self.state(page, 'left')
+        # The stored table as it was, not flipped by putting the inversion back after it.
+        self.assertEqual((baseline['tf'], False, 0), (back['tf'], back['invert'], back['rotation']))
 
     def test_11_hanging_protocol_cells_are_pinned_when_they_first_show_their_images(self):
         page = self.open()
