@@ -1690,15 +1690,24 @@
     function folderSelectionIds(filter) {
       // Folder counts describe replacement searches. Once another predicate narrows
       // the list, no folder may claim that its replacement count is the applied list.
-      if (favoriteList?.key() || studyTagList?.key() || consultationFilter) return [];
+      // [] is "no Modality chosen" (the list is empty whatever else is set, and the tree asks for one); null is
+      // "narrowed by another condition" (no folder describes the list, and the tree does not ask for a Modality).
+      const value = filter.cols?.modality;
+      if (Array.isArray(value) && !value.length) return [];
+      if (favoriteList?.key() || studyTagList?.key() || consultationFilter) return null;
       const stored = folderSearches().find(f => f.name === activeFilterName
         && f.treeId.startsWith('own:') && filterCriteriaKey(f) === filterCriteriaKey(filter));
       if (stored) return [stored.treeId];
       if (filter.quick || savedFilterDays(filter.days) !== -1
-        || Object.entries(filter.cols || {}).some(([key, value]) => key !== 'modality' && value !== '' && value != null)) return [];
-      const value = filter.cols?.modality;
+        || Object.entries(filter.cols || {}).some(([key, value]) => key !== 'modality' && value !== '' && value != null)) return null;
       return Array.isArray(value) || value
         ? [...new Set(KinCompoundFilter.modalityTokens(value))].map(v => 'modality:' + v) : ['all'];
+    }
+    // The one place the tree is told what the list is: folder ids, [] (no Modality chosen) or null (narrowed otherwise).
+    function alignFolders(ids) {
+      const now = worklistFolders.snapshot();
+      if (ids === null) { if (!now.narrowed || now.selectedIds.length) worklistFolders.narrow(); }
+      else if (now.narrowed || JSON.stringify(now.selectedIds) !== JSON.stringify(ids)) worklistFolders.setApplied(ids);
     }
     function updateWorklistFolders() {
       if (!worklistFolders) return;
@@ -1723,18 +1732,18 @@
       }
       if (!folderAppliedSearch) {
         const search = worklistSearch?.read(searchCriteria());
-        const ids = search?.empty ? [] : folderSelectionIds(search?.criteria || searchCriteria());
-        if (JSON.stringify(worklistFolders.snapshot().selectedIds) !== JSON.stringify(ids)) worklistFolders.setApplied(ids);
+        // Results emptied by Clear: the search line says so, and no folder describes the empty list.
+        alignFolders(search?.empty ? null : folderSelectionIds(search?.criteria || searchCriteria()));
       } else if (folderAppliedSearch.criteria !== filterCriteriaKey(worklistSearch?.read(searchCriteria()).criteria || searchCriteria())
         || favoriteList?.key() || studyTagList?.key() || consultationFilter) {
-        if (worklistFolders.snapshot().selectedIds.length) worklistFolders.setApplied([]);
+        alignFolders(null);
       }
     }
     function alignWorklistFolder(filter, id) {
       if (!worklistFolders) return;
       updateWorklistFolders();
       if (id) { worklistFolders.setApplied(id); return; }
-      worklistFolders.setApplied(folderSelectionIds(filter || searchCriteria()));
+      alignFolders(folderSelectionIds(filter || searchCriteria()));
     }
     // My Shortcuts → popup that sets the same column filters as the filter row (fval), so the
     // list, the active-filter summary and Saved Searches all see them. No separate filter state.

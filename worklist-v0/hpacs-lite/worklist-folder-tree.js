@@ -24,7 +24,9 @@
   // page adapter must namespace search IDs (own:<id>/shared:<id>), never use names.
   // Invalid searches are omitted individually; the first duplicate ID owns the slot.
   // Adapters capture immutable criteria. Updates never reapply a selection.
-  // select(id | ids) replaces it; setApplied(id | ids) aligns it without a callback.
+  // select(id | ids) replaces it; setApplied(id | ids) aligns it without a callback. narrow() aligns it to say that another
+  // condition narrows the caller's list, so no folder describes it: nothing is selected and, unlike setApplied([]) (no
+  // Modality chosen), the tree does not ask for a Modality; snapshot().narrowed tells the two apart.
   // Only modalities compose (OR); filter() is applied to the caller's other criteria
   // (AND). [] matches nothing; only explicit 'all' clears the folder constraint.
   // onSelect receives an item for one selection, or {kind:'modality', modalities,
@@ -42,7 +44,7 @@
     }
     const doc = host.ownerDocument;
     const sectionPrefix = 'worklist-folders-' + ++nextMountId;
-    let state, selected = ['all'], applied = [{ id: 'all', name: 'All Studies', kind: 'all' }], appliedSearch, ended = false;
+    let state, selected = ['all'], applied = [{ id: 'all', name: 'All Studies', kind: 'all' }], appliedSearch, ended = false, narrowed = false;
     const nav = doc.createElement('nav');
     nav.className = 'worklist-folder-tree'; nav.setAttribute('aria-label', 'Folders');
     const controls = new Map(), collapsed = new Set(), counts = new Map();
@@ -114,12 +116,12 @@
     }
     function snapshot() {
       active();
-      return { selectedId: selected.length === 1 ? selected[0] : null, selectedIds: [...selected],
+      return { selectedId: selected.length === 1 ? selected[0] : null, selectedIds: [...selected], narrowed,
         loadState: state.loadState, shortcuts: state.shortcuts.map(item => ({ ...item })),
         items: items().map(item => ({ ...item, count: count(item), selected: selected.includes(item.id) })) };
     }
     function active() { if (ended) throw new Error('종료된 폴더 목록입니다.'); }
-    function choose(value, reason) {
+    function choose(value, reason, narrowing = false) {
       active();
       const ids = (Array.isArray(value) ? [...value] : [value]).map(id => {
         if (typeof id !== 'string' || !id.startsWith('modality:')) return id;
@@ -143,7 +145,7 @@
         throw new Error('Modality만 함께 선택할 수 있습니다.');
       }
       counts.clear();
-      selected = ids; applied = next.map(item => ({ ...item }));
+      selected = ids; applied = next.map(item => ({ ...item })); narrowed = narrowing;
       appliedSearch = state.searches.find(search => search.id === next[0]?.searchId);
       render();
       if (reason) {
@@ -161,6 +163,7 @@
     }
     function select(id) { choose(id, 'programmatic'); }
     function setApplied(id) { choose(id, null); }
+    function narrow() { choose([], null, true); }
     function update(patch) {
       active();
       counts.clear();
@@ -267,7 +270,8 @@
           li.append(editor);
         }
       }
-      const guidance = selected.length ? '' : '선택된 Modality가 없습니다. All Studies 또는 Modality를 선택해 주세요.';
+      // Asked only when no Modality is chosen, not when the page's other conditions leave no folder describing the list.
+      const guidance = selected.length || narrowed ? '' : '선택된 Modality가 없습니다. All Studies 또는 Modality를 선택해 주세요.';
       if (selectionStatus.textContent !== guidance) selectionStatus.textContent = guidance;
       content.replaceChildren(list);
       for (const [key, value] of drafts) {
@@ -278,7 +282,7 @@
     }
     state = validate({ rows, loadState, searches, shortcuts });
     host.append(nav); render();
-    return { update, snapshot, select, setApplied, add, rename, remove, reorder,
+    return { update, snapshot, select, setApplied, narrow, add, rename, remove, reorder,
       filter(list) {
         active(); const chosen = items().filter(item => selected.includes(item.id));
         return list.filter(row => chosen.some(item => matches(item, row) === true));
@@ -287,7 +291,7 @@
         if (!ended) {
           ended = true; nav.remove(); controls.clear(); counts.clear();
           state = { rows: [], searches: [], shortcuts: [], loadState: 'unknown' };
-          selected = []; applied = []; appliedSearch = undefined;
+          selected = []; applied = []; appliedSearch = undefined; narrowed = false;
         }
       },
     };
