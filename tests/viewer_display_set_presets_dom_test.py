@@ -56,7 +56,8 @@ SETUP = """owner => {
     document.getElementById('grid').append(pane);
     const element = pane.querySelector('.viewport-element');
     const v = { id, type: 'stack', element, ids: [1, 2, 3].map(n => 'syn:' + id + ':' + n), index: 0, renders: 0, zoom: 1,
-      presentation: { rotation: 0 }, properties: { invert: false }, camera: { focalPoint: [0, 0, 0], position: [0, 0, 100], parallelScale: 100, viewUp: [0, -1, 0], flipHorizontal: false, flipVertical: false } };
+      presentation: { rotation: 0 }, properties: { invert: false }, camera: { focalPoint: [0, 0, 0], position: [0, 0, 100], parallelScale: 100, viewUp: [0, -1, 0], viewPlaneNormal: [0, 0, 1], flipHorizontal: false, flipVertical: false },
+      tf: [[0, 0], [1, 1]] };
     Object.assign(v, {
       getImageIds: () => [...v.ids], getCurrentImageId: () => v.ids[v.index], getCurrentImageIdIndex: () => v.index,
       async setStack(ids, index = 0) { synStacks.push([id, [...ids], index]); v.ids = [...ids]; v.index = index; v.properties = { invert: false }; },
@@ -67,7 +68,11 @@ SETUP = """owner => {
       getViewPresentation: () => ({ ...v.presentation }), setViewPresentation(next) { v.presentation = { rotation: next.rotation };
         const r = next.rotation * Math.PI / 180; v.camera.viewUp = [Math.round(Math.sin(r) * 1e6) / 1e6, Math.round(-Math.cos(r) * 1e6) / 1e6, 0]; },
       getProperties: () => structuredClone(v.properties), setProperties(next) { v.properties = { ...v.properties, ...structuredClone(next) }; },
-      setVOI(range, options) { synVoi.push([id, structuredClone(range), structuredClone(options || {}), v.properties.VOILUTFunction || null]); v.properties.voiRange = structuredClone(range); },
+      setVOI(range, options) { synVoi.push([id, structuredClone(range), structuredClone(options || {}), v.properties.VOILUTFunction || null]); v.properties.voiRange = structuredClone(range);
+        v.tf = [[range.lower, 0], [range.upper, 1]]; },
+      // The drawn table (transfer function): a linear window draws two points; a stored table draws its own.
+      getDefaultActor: () => ({ actor: { getProperty: () => ({ getRGBTransferFunction: () => ({ getSize: () => v.tf.length,
+        getNodeValue(i, out) { out.length = 0; out.push(v.tf[i][0], v.tf[i][1], v.tf[i][1], v.tf[i][1], 0.5, 0); return 1; } }) }) } }),
       render() { v.renders++; },
       // 0.5 mm pixels; the world origin is the centre of the first pixel. One world mm is one canvas pixel.
       getImageData: () => ({ spacing: [0.5, 0.5, 1], imageData: { indexToWorld: ([i, j]) => [i * 0.5, j * 0.5, 0] } }),
@@ -78,7 +83,8 @@ SETUP = """owner => {
   // The viewer's window command sets the cell's VOI range, as cornerstone's does (lower/upper of a linear window).
   window.synCommands = { calls: [], runCommand(name, props, context) { this.calls.push([name, structuredClone(props), context]);
     const v = name === 'setViewportWindowLevel' && synViewports.get(props.viewportId);
-    if (v) v.properties.voiRange = { lower: props.level - 0.5 - (props.window - 1) / 2, upper: props.level - 0.5 + (props.window - 1) / 2 }; } };
+    if (v) { v.properties.voiRange = { lower: props.level - 0.5 - (props.window - 1) / 2, upper: props.level - 0.5 + (props.window - 1) / 2 };
+      v.tf = [[v.properties.voiRange.lower, 0], [v.properties.voiRange.upper, 1]]; } } };
   const listeners = new Map();
   const events = name => ({ subscribe(event, fn) { const key = name + event; listeners.set(key, [...(listeners.get(key) || []), fn]);
     return { unsubscribe() { listeners.set(key, (listeners.get(key) || []).filter(f => f !== fn)); } }; } });
@@ -517,6 +523,29 @@ class ViewerDisplaySetPresetsDOMTest(unittest.TestCase):
         on, back, after = self.gsps_then_defaults(page, turn_and_scroll)
         self.assertEqual(180, back['rotation'])
         self.assertEqual([{'viewportId': 'left', 'window': 1500, 'level': -600}], after, 'the window the GSPS wrote on the third image goes')
+
+    def test_16_a_stored_table_the_reader_put_on_after_the_gsps_stays(self):
+        # The reader puts a stored table on from the Display menu: the drawn table changes, the VOI range does not. That
+        # window is the reader's: no window goes on when the row goes back; the GSPS turn still goes.
+        page = self.open()
+        on, back, after = self.gsps_then_defaults(page, "synViewports.get('left').tf = [[0, 0], [100, 0.5], [200, 1]]")
+        self.assertEqual(([], 0), (after, back['rotation']))
+        self.assertEqual(on['voi'], back['voi'])
+
+    def test_17_the_displayed_area_goes_back_on_the_slice_shown_after_a_scroll(self):
+        # The GSPS (with a displayed area) names the second and third images. Moving to the third moves the camera along
+        # the slice normal (as the viewer does), which is not a pan: the area's zoom and pan still go, on that slice.
+        page = self.open()
+        page.evaluate("""() => { synGsps['00081115'].Value[0]['00081140'].Value.push({ '00081155': { vr: 'UI', Value: ['1.2.826.0.1.1.3'] } });
+          synGsps['0070005A'] = { vr: 'SQ', Value: [{ '00700052': { vr: 'SL', Value: [101, 101] }, '00700053': { vr: 'SL', Value: [300, 200] },
+            '00700100': { vr: 'CS', Value: ['SCALE TO FIT'] } }] }; }""")
+        def scroll_to_the_next_slice():
+            self.scroll(page, 'left', 2)
+            page.wait_for_function("synCommands.calls.length === 3")
+            page.evaluate("() => { const c = synViewports.get('left').camera; c.focalPoint[2] -= 10; c.position[2] -= 10; }")
+        on, back, after = self.gsps_then_defaults(page, scroll_to_the_next_slice)
+        self.assertNotEqual(100, on['scale'])
+        self.assertEqual((0, 100, [0, 0, -10]), (back['rotation'], back['scale'], back['focal']))
 
     def test_11_hanging_protocol_cells_are_pinned_when_they_first_show_their_images(self):
         page = self.open()

@@ -221,14 +221,36 @@ window.KinViewerFeatures?.module('view', async ({ services, commands, store, ui 
   const clone = value => value === undefined ? null : JSON.parse(JSON.stringify(value));
   const cameraOf = v => { try { return v.getCamera() || {}; } catch (_) { return {}; } };
   const turnOf = v => { const c = cameraOf(v); return clone({ viewUp: c.viewUp, normal: c.viewPlaneNormal, flipH: !!c.flipHorizontal, flipV: !!c.flipVertical }); };
-  const viewOf = v => { const c = cameraOf(v); return clone({ focalPoint: c.focalPoint, parallelScale: c.parallelScale }); };
-  const windowOf = v => { try { const p = v.getProperties() || {}; return clone({ voi: p.voiRange, fn: p.VOILUTFunction }); } catch (_) { return null; } };
+  const viewOf = v => { const c = cameraOf(v); return clone({ focalPoint: c.focalPoint, parallelScale: c.parallelScale, normal: c.viewPlaneNormal }); };
+  // The table actually drawn (its transfer function), as a few sums: a stored table the reader puts on from the Display
+  // menu changes it without changing the VOI range.
+  function drawnOf(v) {
+    try {
+      const table = v.getDefaultActor?.()?.actor?.getProperty?.()?.getRGBTransferFunction?.(0);
+      if (typeof table?.getSize !== 'function' || typeof table.getNodeValue !== 'function') return null;
+      const size = table.getSize(), node = [], sums = [size, 0, 0, 0];
+      for (let i = 0; i < size; i++) { table.getNodeValue(i, node); sums[1] += node[0]; sums[2] += node[1]; sums[3] += node[0] * node[1]; }
+      return sums;
+    } catch (_) { return null; }
+  }
+  const windowOf = v => { try { const p = v.getProperties() || {}; return clone({ voi: p.voiRange, fn: p.VOILUTFunction, drawn: drawnOf(v) }); } catch (_) { return null; } };
   // Numbers within a millionth (relative) are the same; everything else must match exactly.
   function near(a, b) {
     if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(a), Math.abs(b));
     if (a && b && typeof a === 'object' && typeof b === 'object') return [...new Set([...Object.keys(a), ...Object.keys(b)])].every(key => near(a[key], b[key]));
     return a === b;
   }
+  // The part of a camera move that lies in the image plane: moving to another slice moves the camera along the plane's
+  // normal, which is not a pan.
+  function inPlane(to, from, normal) {
+    const d = to.map((value, i) => value - from[i]);
+    if (!Array.isArray(normal) || normal.length !== 3) return d;
+    const along = d[0] * normal[0] + d[1] * normal[1] + d[2] * normal[2];
+    return d.map((value, i) => value - along * normal[i]);
+  }
+  // The same zoom and pan: the scale, and no move in the image plane (in world mm).
+  const sameView = (now, then) => Array.isArray(now.focalPoint) && Array.isArray(then.focalPoint) && near(now.parallelScale, then.parallelScale)
+    && inPlane(now.focalPoint, then.focalPoint, then.normal).every(value => Math.abs(value) <= 1e-4);
   // The row was put back to the defaults: each part the presentation state wrote, and the reader has not changed since,
   // goes back to what the cell has without a presentation state — the row's own turn and window (as present() does for an
   // image without one) and the zoom and pan from just before its displayed area. All is decided before anything is set.
@@ -236,11 +258,18 @@ window.KinViewerFeatures?.module('view', async ({ services, commands, store, ui 
     const put = record.gsps;
     record.gsps = null;
     if (!put) { if (record.table) stockWindow(v, record); return; }
-    const turn = put.turn && near(turnOf(v), put.turn), view = put.view && near(viewOf(v), put.view.after);
+    const turn = put.turn && near(turnOf(v), put.turn), view = put.view && sameView(viewOf(v), put.view.after);
     const windowed = put.window && near(windowOf(v), put.window);
     if (turn) turnAndFlip(v, record.rule.rotate, record.rule.flip);
-    // The pan moves the camera with its focal point, so its direction (any turn or flip it has now) stays.
-    if (view && put.view.before?.focalPoint) centreOn(v, put.view.before.focalPoint, put.view.before.parallelScale);
+    // The pan the displayed area made is taken back in the image plane, on the slice shown now, and the camera keeps its
+    // direction (any turn or flip it has now).
+    if (view && Array.isArray(put.view.before.focalPoint)) {
+      const camera = cameraOf(v), shift = inPlane(put.view.before.focalPoint, put.view.after.focalPoint, put.view.after.normal);
+      if (Array.isArray(camera.focalPoint) && Array.isArray(camera.position)) {
+        v.setCamera({ focalPoint: camera.focalPoint.map((value, i) => value + shift[i]), position: camera.position.map((value, i) => value + shift[i]),
+          parallelScale: put.view.before.parallelScale });
+      }
+    }
     if (windowed) baseWindow(v, record);
   }
   // The presentation state for the image now shown. Its turn, flip and displayed area go on when they differ from what
