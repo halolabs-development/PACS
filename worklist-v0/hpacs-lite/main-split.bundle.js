@@ -846,7 +846,8 @@
     // f: 없으면 필터 없음 / 'text' = 입력칸 / 배열 = 드롭다운
     const COLS = {
       Radiology: [
-        { k: "pf", t: "PF" },
+        // PF (prefetch): this session's Preload queue state; the filter compares the word preloadWord gives (filterPredicate).
+        { k: "pf", t: "PF", f: ["Queued", "Downloading", "Ready", "Failed", "Evicted", "None"] },
         { k: "assignedReader", t: "Assigned Reader", f: "text" },
         { k: "techNote", t: "Tech Note", f: ["Yes", "None", "Cleared", "Unknown"] },
         { k: "no", t: "No", num: 1 },
@@ -1030,6 +1031,14 @@
         return s.tele === true ? `${name} <span class="tele-tag" title="원격판독으로 의뢰받은 검사입니다.">Tele</span>` : name;
       },
     };
+    /**
+     * The PF word a filter compares: the status CELL.pf shows (Queued / Downloading / Ready / Failed / Evicted, without
+     * the percent), or "None" when this session's Preload queue does not hold the study (the cell's "·").
+     */
+    function preloadWord(s) {
+      const entry = window.KinPreloadQueue?.study?.(s?.uid);
+      return typeof entry?.status === "string" && entry.status ? entry.status : "None";
+    }
 
     let mode = "Radiology";
     const fval = {};   // 컬럼필터 값 (컬럼 key → 문자열)
@@ -1098,6 +1107,7 @@
       rs: "RS (Report Status, 판독 상태)\nW: Unread — 판독 전\nT: In Progress — 저장했지만 승인 전\nP: Preliminary — 상급 판독의 승인 대기\nH: On Hold — 보류\nA: Approved — 승인됨\nA: Finalized — 승인 후 24시간이 지남, Addendum으로만 덧붙임\nD: Destroyed — 보존 기간 만료로 파기됨",
       em: "EM (Emergency)\nE: 응급\nN: 일반",
       ss: "SS (촬영 확인 상태)\nVerified: 촬영 확인됨\nUnverified: 촬영 미확인",
+      pf: "PF (Prefetch, 미리 받기): 이 브라우저에 영상을 미리 받아 두는 상태입니다. 자세한 내용은 선택 막대의 Preload 패널에 있습니다.\nQueued: 받을 차례나 저장 공간을 기다림\nDownloading: 받는 중 (진행률 %)\nReady: 받아 둠 — 받기 시작한 때부터 72시간이 지나면 자동으로 정리됨\nFailed: 받지 못함 — Preload 패널의 Retry로 다시 받음\nEvicted: 미리 받은 사본이 지워짐 (저장 공간·기한·Clear All 등) — Retry로 다시 받음\n· (None): 이 로그인의 미리 받기 상태가 없거나 아직 확인되지 않음",
     };
     function renderHeads() {
       // The first header also holds the "+" button; its own label keeps the column named by its title, not "Choose columns <title>".
@@ -1660,9 +1670,11 @@
       const needsParts = KinCompoundFilter.usesField(values[KinCompoundFilter.KEY], 'bodyPart', COLS[filterMode]);
       const matchCompound = KinCompoundFilter.compile(values[KinCompoundFilter.KEY], COLS[filterMode]);
       const matchQuick = KinCompoundFilter.compileQuick(filter?.quick, values[KinCompoundFilter.KEY], COLS[filterMode]);
-      return s => {
-        if (!matchQuick(s)) return false;
-        if (!KinExamScope.projections(s).some(source=>withinDays(source.date, days))) return false;
+      return row => {
+        if (!matchQuick(row)) return false;
+        if (!KinExamScope.projections(row).some(source=>withinDays(source.date, days))) return false;
+        // PF is the Preload queue word the cell shows now, not the row's stored "·": every filter, count and search reads it here.
+        const s = { ...row, pf: preloadWord(row) };
         // A compound rule on Confirm compares the same Confirmed / Not Confirmed word the header filter uses (RS based).
         return cols.every(c => testCol(s, c, values))
           && matchCompound({ ...s, confirm: confirmedRow(s) ? "Confirmed" : "Not Confirmed",
@@ -1685,7 +1697,14 @@
     // Include those values and the local date, while excluding the quick-search draft.
     function folderInputsKey() {
       return JSON.stringify([studies, userFilters, sharedSearches, mode, new Date().toDateString(),
-        studies.map(s => worklistBodyParts.get(s.uid))]);
+        studies.map(s => worklistBodyParts.get(s.uid)), studies.map(preloadWord)]);
+    }
+    /** Whether the list's search (applied or being typed), a saved or shared search, or the Saved Search editor's draft has a PF condition. */
+    function preloadFilterUsed() {
+      const applied = worklistSearch?.read(searchCriteria())?.criteria;
+      const editing = savedFilterManager.draft();
+      return [applied, searchCriteria(), ...userFilters, ...sharedSearches, editing].some(f => !!f?.cols && (!!f.cols.pf
+        || KinCompoundFilter.usesField(f.cols[KinCompoundFilter.KEY], 'pf', COLS[f.mode] || COLS[mode])));
     }
     function folderSelectionIds(filter) {
       // Folder counts describe replacement searches. Once another predicate narrows
@@ -1738,7 +1757,7 @@
     }
     // My Shortcuts → popup that sets the same column filters as the filter row (fval), so the
     // list, the active-filter summary and Saved Searches all see them. No separate filter state.
-    const EXAM_FILTER_KEYS = ['date', 'id', 'name', 'age', 'sex', 'modality', 'desc', 'acc', 'institutionName', 'assignedReader', 'techNote',
+    const EXAM_FILTER_KEYS = ['date', 'id', 'name', 'age', 'sex', 'modality', 'desc', 'acc', 'institutionName', 'assignedReader', 'techNote', 'pf',
       'rs', 'em', 'ss', 'matched', 'preDoc', 'preReviewer', 'ward'];
     let examFilterDialog = null;
     function openExamFilterPopup(opener) {
@@ -1764,6 +1783,8 @@
       const inputs = new Map();
       for (const c of cols) {
         const label = document.createElement('label'); label.append(document.createTextNode(c.t + ' '));
+        // A short code (PF, RS, EM, SS) carries the same explanation as its list header.
+        if (HEAD_HELP[c.k]) label.title = HEAD_HELP[c.k];
         const current = Array.isArray(fval[c.k]) ? fval[c.k].join(',') : String(fval[c.k] ?? '');
         let control;
         if (c.k === 'date') {
@@ -9667,7 +9688,21 @@
       }
     }
     // FC-071: the Preload worker reports its queue; only the visible PF cells are rewritten, in place like Viewing.
+    // A PF search matches the queue's status words: when a word changes (not the download percent) and a search uses PF,
+    // the list, the folder and saved-search counts are drawn again, once per frame, like a Body Part answer.
+    let preloadWords = '', preloadFrame = null;
     function paintPreload() {
+      const words = studies.map(preloadWord).join('\n'), changed = words !== preloadWords;
+      preloadWords = words;
+      if (changed && preloadFilterUsed()) {
+        if (preloadFrame !== null) return;
+        const at = work.capture('document');
+        preloadFrame = requestAnimationFrame(() => {
+          preloadFrame = null;
+          work.commit(at, () => { render(); savedFilterManager.refreshCounts(); });
+        });
+        return;
+      }
       const index = shownColumns().findIndex(c => c.k === 'pf');
       if (index < 0) return;
       const byUid = new Map(studies.map(study => [study.uid, study]));

@@ -288,9 +288,11 @@
       const needsParts = KinCompoundFilter.usesField(values[KinCompoundFilter.KEY], 'bodyPart', COLS[filterMode]);
       const matchCompound = KinCompoundFilter.compile(values[KinCompoundFilter.KEY], COLS[filterMode]);
       const matchQuick = KinCompoundFilter.compileQuick(filter?.quick, values[KinCompoundFilter.KEY], COLS[filterMode]);
-      return s => {
-        if (!matchQuick(s)) return false;
-        if (!KinExamScope.projections(s).some(source=>withinDays(source.date, days))) return false;
+      return row => {
+        if (!matchQuick(row)) return false;
+        if (!KinExamScope.projections(row).some(source=>withinDays(source.date, days))) return false;
+        // PF is the Preload queue word the cell shows now, not the row's stored "·": every filter, count and search reads it here.
+        const s = { ...row, pf: preloadWord(row) };
         // A compound rule on Confirm compares the same Confirmed / Not Confirmed word the header filter uses (RS based).
         return cols.every(c => testCol(s, c, values))
           && matchCompound({ ...s, confirm: confirmedRow(s) ? "Confirmed" : "Not Confirmed",
@@ -313,7 +315,14 @@
     // Include those values and the local date, while excluding the quick-search draft.
     function folderInputsKey() {
       return JSON.stringify([studies, userFilters, sharedSearches, mode, new Date().toDateString(),
-        studies.map(s => worklistBodyParts.get(s.uid))]);
+        studies.map(s => worklistBodyParts.get(s.uid)), studies.map(preloadWord)]);
+    }
+    /** Whether the list's search (applied or being typed), a saved or shared search, or the Saved Search editor's draft has a PF condition. */
+    function preloadFilterUsed() {
+      const applied = worklistSearch?.read(searchCriteria())?.criteria;
+      const editing = savedFilterManager.draft();
+      return [applied, searchCriteria(), ...userFilters, ...sharedSearches, editing].some(f => !!f?.cols && (!!f.cols.pf
+        || KinCompoundFilter.usesField(f.cols[KinCompoundFilter.KEY], 'pf', COLS[f.mode] || COLS[mode])));
     }
     function folderSelectionIds(filter) {
       // Folder counts describe replacement searches. Once another predicate narrows
@@ -366,7 +375,7 @@
     }
     // My Shortcuts → popup that sets the same column filters as the filter row (fval), so the
     // list, the active-filter summary and Saved Searches all see them. No separate filter state.
-    const EXAM_FILTER_KEYS = ['date', 'id', 'name', 'age', 'sex', 'modality', 'desc', 'acc', 'institutionName', 'assignedReader', 'techNote',
+    const EXAM_FILTER_KEYS = ['date', 'id', 'name', 'age', 'sex', 'modality', 'desc', 'acc', 'institutionName', 'assignedReader', 'techNote', 'pf',
       'rs', 'em', 'ss', 'matched', 'preDoc', 'preReviewer', 'ward'];
     let examFilterDialog = null;
     function openExamFilterPopup(opener) {
@@ -392,6 +401,8 @@
       const inputs = new Map();
       for (const c of cols) {
         const label = document.createElement('label'); label.append(document.createTextNode(c.t + ' '));
+        // A short code (PF, RS, EM, SS) carries the same explanation as its list header.
+        if (HEAD_HELP[c.k]) label.title = HEAD_HELP[c.k];
         const current = Array.isArray(fval[c.k]) ? fval[c.k].join(',') : String(fval[c.k] ?? '');
         let control;
         if (c.k === 'date') {

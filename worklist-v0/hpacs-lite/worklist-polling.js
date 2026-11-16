@@ -13,7 +13,21 @@
       }
     }
     // FC-071: the Preload worker reports its queue; only the visible PF cells are rewritten, in place like Viewing.
+    // A PF search matches the queue's status words: when a word changes (not the download percent) and a search uses PF,
+    // the list, the folder and saved-search counts are drawn again, once per frame, like a Body Part answer.
+    let preloadWords = '', preloadFrame = null;
     function paintPreload() {
+      const words = studies.map(preloadWord).join('\n'), changed = words !== preloadWords;
+      preloadWords = words;
+      if (changed && preloadFilterUsed()) {
+        if (preloadFrame !== null) return;
+        const at = work.capture('document');
+        preloadFrame = requestAnimationFrame(() => {
+          preloadFrame = null;
+          work.commit(at, () => { render(); savedFilterManager.refreshCounts(); });
+        });
+        return;
+      }
       const index = shownColumns().findIndex(c => c.k === 'pf');
       if (index < 0) return;
       const byUid = new Map(studies.map(study => [study.uid, study]));
