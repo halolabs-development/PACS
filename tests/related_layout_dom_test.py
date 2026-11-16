@@ -1466,6 +1466,9 @@ class RelatedLayoutDOMTest(Base):
     '이 화면의 글을 남기려면 Keep This Text, 서버의 초안으로 바꾸려면 Load Server Draft · ' +
     'Keep This Text는 글만 남깁니다 — 붙은 그림은 서버의 초안 것(Conclusion 아래에 다시 불러온 그림)을 따릅니다'; }""")
             harness.expect(page.get_by_role("button", name="Keep This Text", exact=True)).to_be_visible()
+            # The list poll (every 30 s) draws the report again from the draft client, which knows no conflict, and the
+            # sweep below outlasts it (some 33 s): the bar drawn by hand is held by stopping the poll for this case.
+            page.evaluate("() => { clearInterval(poll); poll = null; }")
         if questions_failed:
             # The failed read is told in the band above the editor (an answer never stands the bar up); the reader opens
             # the bar and its pane there.
