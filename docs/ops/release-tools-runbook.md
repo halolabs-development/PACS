@@ -701,7 +701,11 @@ remains running.
    API. Wait for listening and the current start's retention recovery. Run both retention sweeps to
    completion. Perform the candidate's first backup/rehearsal now, again with the writers stopped first:
    `ops_backup.py` restarts the writers it stopped and then waits for readiness through the entry, which is
-   closed here. Start the same containers again afterwards; that start precedes step 5.
+   closed here. Stop a running writer only after it finished starting (the API answers, the sign-in server
+   serves the realm, the image server answers): the sign-in server writes its application image during the
+   first start of a newly created container, and one stopped in the middle of that start does not start
+   again. Start the same containers again afterwards; that start precedes step 5. The same holds for the
+   first backup of a rollback project.
 5. After the last start, wait until every writer finished starting (the API answers after its recovery,
    the sign-in server serves the realm, the image server answers), then run the sweeps and pause every
    target writer container. A service paused in the middle of its start-up would be judged, resumed and
