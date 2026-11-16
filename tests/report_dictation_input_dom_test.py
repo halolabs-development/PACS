@@ -163,8 +163,8 @@ MODAL_CSS = slice_between(MAIN, *MARKERS["MODAL_CSS"])
 RBTNS_HTML = ""  # The merged action row is included once as RFOOT_HTML below.
 BARS_HTML = (slice_between(MAIN, *MARKERS["BARS_HTML"])
              + '<div id="citelist" hidden aria-label="Report Citations"></div>')
-# W4: the read-only Recommendation notice right above the report fields belongs to the fields' region.
-REDIT_HTML = (slice_between(MAIN, '<div class="recnote" id="recnote"', '<div class="redit">')
+# The editor and its head up to the fields (the read-only Recommendation notice is in the notice band, BARS_HTML).
+REDIT_HTML = (slice_between(MAIN, '<div class="report-compose">', '<div class="redit">')
               + slice_between(MAIN, *MARKERS["REDIT_HTML"]) + "\n        </div>")
 RFOOT_HTML = slice_between(MAIN, *MARKERS["RFOOT_HTML"]) + "\n        </div>"
 PANE_HTML = slice_between(MAIN, *MARKERS["PANE_HTML"]) + "\n  </div>"
@@ -186,8 +186,8 @@ EDITOR_BLOCK_FN = extract_function(MAIN, "reportEditorBlock")
 LITE = ROOT / "worklist-v0" / "hpacs-lite"
 DICTATION_JS = [(LITE / name).read_text(encoding="utf-8")
                 for name in ("dictation-session.js", "dictation-capture.js", "dictation.js")]
-# The pane ends where the next element of the column starts (W4: the read-only Recommendation notice), not at a comment.
-DICTATION_PANE_HTML = (slice_between(MAIN, '<div id="dictation-pane"', '<div class="recnote" id="recnote"')
+# The pane ends where the next element of the column starts (the editor), not at a comment.
+DICTATION_PANE_HTML = (slice_between(MAIN, '<div id="dictation-pane"', '<div class="report-compose">')
                        if '<div id="dictation-pane"' in MAIN else "")
 DICTATION_WIRING = (slice_between(MAIN, "    // ══════════ 받아쓰기 (S3-ASR-U4) ══════════",
                                   '    $("#t-mod").addEventListener("change", renderTemplates);')

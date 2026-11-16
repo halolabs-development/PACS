@@ -434,6 +434,12 @@
     .report-editor-state { flex: none; padding: 0 6px; border: 1px solid; border-radius: 3px; font-weight: 600; white-space: nowrap; }
     /* Zero basis and width: the reason is cut to the room left and never widens the report column (its min-content). */
     #report-editor-why { flex: 1 1 0; width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* The approved report's status words (FC-034) come with the answer that approves, amends or resets the report. Like
+       the reason beside them they never decide where the head wraps (rule "An answer never resizes"): they take the free
+       room of their line, up to their own width, and end in an ellipsis; the tooltip carries the whole line. Sized by
+       its words, Approved wrapped Image Report onto a third head line and the approve answer moved Findings and
+       Conclusion 28px (900x768, Reading 1920x1080); a width held for them in every head cost narrow columns a line. */
+    #report-editor-rs { flex: 1 1 0; width: 0; min-width: 0; max-width: max-content; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     /* The same for the status sentence of the bars under the editor: a long one (a failed read) made the report column
        wider than a 1366px window and cut off Clinical Context at its right edge. It is cut to the room left instead. */
     #question-summary, #image-request-summary, #cvr-sent-summary { width: 0; }
@@ -457,14 +463,12 @@
           the reader's text size if that is more: 1.5 times it plus the fields' 12px padding and 2px border) under their
           labels, so an empty report shows both whole and a long one its first Findings lines. A label line is counted
           as one line of the region's 13px text (1lh), at least the label's own 11px line.
-       2. Then every other row before the button row (the citation list, Recommendation; the questions under the editor;
+       2. Then every other row before the button row (the citation list; the questions under the editor;
           not the dictation pane, which keeps its own rule, nor the notice band, whose height is fixed: .report-notices) gives
           up height and scrolls its own words, each down to the floor of the same row in the Reading Workspace: one line
-          of its text; a notice row one control line, its buttons kept on one line each and moved to lines of their
-          own; the questions their bar, or opened four lines of their list. Opened with two threads that list was 338px
-          and carried the row out of the card in 39 of 44 windows. A floor never makes a row taller than it is: one
-          line of the row's own text (16px in the page font) and the padding came to 31px, where a notice's one control
-          line (its 11px buttons) is 27px, so a roomy card moved the editor 4px down; the floor is the smaller of the two.
+          of its text; the questions their bar, or opened four lines of their list. Opened with two threads that list
+          was 338px and carried the row out of the card in 39 of 44 windows. A floor is the row's, not its content's: an
+          answer that empties an opened list does not let it yield further (rule "An answer never resizes", below).
        3. Only when those floors are more than the card does the card scroll as before, and then the rows under the
           button row (Critical Results) leave it before the row does. */
     body:not(.reading) .workrow > .report-p > .report-compose { flex: 1 1 0; }
@@ -475,15 +479,14 @@
     body:not(.reading) .workrow > .report-p .redit > #findings { min-height: var(--kin-findings-floor); }
     body:not(.reading) .workrow > .report-p .redit > #conclusion { min-height: var(--kin-conclusion-floor); }
     body:not(.reading) .workrow > .report-p > :not(.report-compose, #report-notices, #dictation-pane, .rfoot2, .rfoot2 ~ *) { flex-shrink: 1;
-      box-sizing: content-box; min-height: var(--kin-row-floor, 1lh); overflow-y: auto;
-      min-height: calc-size(max-content, min(size, var(--kin-row-floor, 1lh))); }
+      box-sizing: content-box; min-height: var(--kin-row-floor, 1lh); overflow-y: auto; }
     body:not(.reading) .workrow > .report-p > #question-p:not([hidden]) { display: flex; flex-direction: column; --kin-row-floor: calc(24px + 2 * 3px); }
     body:not(.reading) .workrow > .report-p > #question-p:has(> #question-pane:not([hidden])) { --kin-row-floor: calc(24px + 2 * 3px + 1px + 4px + 4lh + 8px); }
     body:not(.reading) .workrow > .report-p > #question-p > #question-pane { flex: 0 1 auto; min-height: 0; }
     /* The Recommendation line keeps its words on one line and scrolls them sideways (#recnote below). Its width did not
        count as its own: the card keeps the width its content needs (min-content, above), so a long recommendation
        widened the card past its column - 684px in a 518px one at 1024x900 - and Prev and Next left the window. */
-    body:not(.reading) .workrow > .report-p > #recnote { contain: inline-size; }
+    #recnote { contain: inline-size; }
     /* Recommendation remains part of the document and native edit history, outside the two-section view. */
     .redit #recommendation { position: absolute; left: -10000px; width: 1px; height: 1px; min-height: 0; }
     .rfoot2 { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 8px; background: #1b212c; flex: none; justify-content: flex-end; }
@@ -522,13 +525,12 @@
     .draftbar button { background: #232936; border: 1px solid #5c5124; color: #d8b24a;
                        padding: 2px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; }
     .draftbar b { color: #f0c95a; }
-    /* The notice band (markup above the editor; report-popout.js builds the same band in the Report window). Server
-       answers show, change and hide the report, draft, hold, on-hold and citation rows - a claim answer drew the draft
-       row between a reader's aim at Conclusion and the click, 31px lower at 900x768. Here an answer changes only what
-       is inside one box of fixed height, so the fields and the buttons below it stay where the reader aimed. The box is
-       a notice row's floor high in every layout and window (one line of its 11px text and a button's 6px, the row's 4px
-       padding and 1px border: 31px in the page font) and scrolls its rows; a row keeps its buttons on one line each,
-       moves those that do not fit to lines of their own, and shows its first line, not its middle (`safe`). */
+    /* The notice band (markup above the editor; report-popout.js builds the same band in the Report window): the report,
+       draft, hold, on-hold, citation and Recommendation rows, which server answers show, change and hide. One box of
+       fixed height (rule "An answer never resizes", after the questions' rules): a notice row's floor in every layout
+       and window (one line of its 11px text and a button's 6px, the row's 4px padding and 1px border: 31px in the page
+       font), scrolling its rows; a row keeps its buttons on one line each, moves those that do not fit to lines of their
+       own, and shows its first line, not its middle (`safe`). */
     .report-notices { flex: none; box-sizing: border-box; font-size: 11px; height: calc(1lh + 6px + 2 * 4px + 1px); overflow-y: auto; }
     .report-notices > .draftbar { flex-wrap: wrap; align-items: safe center; }
     .report-notices > .draftbar button { white-space: nowrap; }
@@ -596,6 +598,21 @@
     #question-pane [data-state="failed"] > .question-text, #question-pane [data-state="unknown"] > .question-text { color: #ffb4b4; font-weight: 700; }
     #question-pane .question-detail { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--kin-muted); }
     #question-pane .question-detail:empty { display: none; }
+    /* An answer never resizes. Server answers (the claim, Save, Discard and autosave answers, the citation, question and
+       recognition reads, polling) change what the report column says, and an answer can land between a reader's aim and
+       the click: a region that grew or shrank with it moved Findings, Conclusion or the button row under the pointer.
+       So every region before the button row whose content an answer changes has the size the window and the reader's
+       own actions give it, and its content scrolls inside:
+       - the notice band above the editor (.report-notices, above): fixed;
+       - a list or pane the reader opened - the citation list, the dictation review pane, the questions' pane - takes
+         its cap from the moment it opens (each yields from there as the layout rules say, never by its content);
+       - the report status words in the editor's head (#report-editor-rs, above).
+       Not the questions bar: a study without questions has no bar (S5-U4b), and a line held for it in every study left
+       Approve & Next half out of 720px high windows (RL-13b), which Minhoon's bottom row rules out. Its read is sent
+       when the study opens, so its answer normally lands before the reader writes. */
+    #citelist { height: 30vh; }
+    #dictation-pane { height: min(30vh, 168px); }
+    #question-pane { height: min(40vh, 360px); }
 
     /* 패널 경계는 세션 안에서만 움직인다. 판독 PC마다 화면 구성이 달라 계정 설정으로
        저장하면 다른 모니터에서 오히려 화면을 망가뜨리기 때문이다. */
@@ -1789,7 +1806,8 @@
              늘고, 받아쓰기 창까지 열면 판독문 칸이 최소 높이에 닿으므로 받아쓰기를 위해 More를 열게 하지 않는다. 역할별 disabled는
              스크립트가 지금처럼 정하고, More 안에 넣은 것을 권한 통제로 쓰지 않는다. 서식 입력 단추(Structured)는 스크립트가
              Print 바로 앞에 붙이므로 Print와 같은 구획에 나타난다. -->
-        <!-- The notice band: the rows that server answers show, change and hide (report, draft, hold, on-hold, citations).
+        <!-- The notice band: the rows that server answers show, change and hide (report, draft, hold, on-hold, citations,
+             Recommendation).
              Its height is fixed (the .report-notices rule), so an answer never moves the fields or the buttons below it. -->
         <div class="report-notices" id="report-notices">
         <!-- W4: 검사를 옮기지 않았을 때만 보인다(쓰던 글의 저장 거절·결과 모름·충돌·글자 조합). 무엇을 누르면 되는지 함께 말한다. -->
@@ -1829,6 +1847,8 @@
                   title="이 판독문에 남은 인용과 본문 존재 상태를 봅니다">Show Citations</button>
           <button id="b-cite-reload" title="서버에서 인용 건수와 상태를 다시 확인합니다">Reload Citations</button>
         </div>
+        <!-- W4 (설계 v4 §3): 숨긴 Recommendation에 값이 있을 때만 보이는 읽기 전용 띠. 편집기가 아니다 — 숨긴 칸은 그대로다. -->
+        <div class="recnote" id="recnote" hidden>Recommendation: <span id="recnote-text"></span></div>
         </div>
         <div id="citelist" hidden aria-label="Report Citations"></div>
         <!-- 받아쓰기 검토 창. 받은 글은 여기까지만 온다 — 판독문에는 Insert를 누른 순간에만 들어간다. -->
@@ -1848,8 +1868,6 @@
             </div>
           </div>
         </div>
-        <!-- W4 (설계 v4 §3): 숨긴 Recommendation에 값이 있을 때만 보이는 읽기 전용 띠. 편집기가 아니다 — 숨긴 칸은 그대로다. -->
-        <div class="recnote" id="recnote" hidden>Recommendation: <span id="recnote-text"></span></div>
         <!-- 민훈 피드백 8(2026-10-27): 판독문 편집기 옆에 Clinical Context를 둔다. 편집기 머리줄은 지금 이 칸에 쓸 수 있는지를
              서버 쓰기와 같은 관문(reportEditorBlock)으로 말한다(report-editor.js renderEditorState). 머리줄은 .redit 밖에 있어
              Related Report 모드가 편집기를 잠근 동안에도 Resume Editing을 누를 수 있다. -->
@@ -1860,7 +1878,7 @@
               <span id="report-editor-target" translate="no" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
               <span id="report-editor-state" class="report-editor-state">Read Only</span>
               <span id="report-editor-why" lang="ko"></span>
-              <span id="report-editor-rs" lang="ko" style="flex:none;white-space:nowrap"></span>
+              <span id="report-editor-rs" lang="ko"></span>
               <!-- Reserve room for the reader's own presence words plus an ellipsis when other viewers join.
                    Text updates cannot rewrap the head and move the typing region; longer names share the remaining width. -->
               <span id="report-editor-presence" role="status" style="flex:1 1 9em;width:0;min-width:0;max-width:40%;line-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>

@@ -5314,9 +5314,12 @@
       // Each part is its own text (the line reads the same), so the screen language reaches every part.
       const parts = typeof reportStatusParts === "function" ? reportStatusParts(a) : [reportStatusLine(a)].filter(Boolean);
       line.replaceChildren(...parts.flatMap((part, i) => i ? [" · ", part] : [part]));
-      line.title = !line.textContent ? ""
+      // The line has a fixed place in the head and may end in an ellipsis there (main.html #report-editor-rs): the tooltip
+      // carries it whole.
+      const why = !line.textContent ? ""
         : reportFinalized(a) ? "승인 후 24시간이 지나 확정된 판독문입니다 — Addendum으로만 덧붙일 수 있습니다"
         : a.amendUntil && !a.addendumAt ? "승인한 판독의가 이 시각까지 본문을 고쳐 다시 승인할 수 있습니다" : "";
+      line.title = [line.textContent, why].filter(Boolean).join(" — ");
     }
 
     /** Image Report: per study, whether my draft's drawings differ from the head version's (context.report.drawingsChanged). */

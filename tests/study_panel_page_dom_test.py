@@ -2025,10 +2025,77 @@ class StudyPanelPageDOM(unittest.TestCase):
                 self.answer_keeps_places(page, 'discard', held, release, lambda: (
                     wait_until(page, lambda: len(site.discards) == 1, 'discard answered'),
                     expect(page.locator('#draftbar')).to_be_hidden()))
-                self.assertEqual({'draftbar', 'holdbar', 'deferbar', 'citebar', 'report-notice'},
+                # The Approve answer: the editor turns read-only and its head says so.
+                page.locator('#findings').click()
+                page.keyboard.type('SYN approved')
+                held, release = self.gate(page, '**/api/studies/*/report/commit', 'POST')
+                expect(page.locator('#b-approve')).to_be_enabled()
+                page.locator('#b-approve').click()
+                self.answer_keeps_places(page, 'approve', held, release, lambda: (
+                    wait_until(page, lambda: len(site.commits) == 2, 'approve answered'),
+                    page.wait_for_function("() => appState[selectedUid]?.rs === 'A'")))
+                self.assertEqual({'draftbar', 'holdbar', 'deferbar', 'citebar', 'report-notice', 'recnote'},
                                  set(page.evaluate("() => [...document.querySelectorAll('#report-notices > *')].map(e => e.id)")))
                 self.assertEqual(height, band.bounding_box()['height'], 'the band kept its height')
                 self.doCleanups()
+
+    # What an answer does to each region whose content it changes, done here to the page's own elements as the page's
+    # scripts do it: rows shown and hidden in the notice band (Recommendation among them) and their words lengthened;
+    # an opened citation list emptied and filled; an opened dictation pane receiving its transcript; an opened questions
+    # pane emptied and filled. (Not the questions bar's own appearance: main.html says why.)
+    ANSWERS = {
+        'band rows': '''() => { const $ = id => document.getElementById(id);
+          for (const id of ['report-notice', 'draftbar', 'holdbar', 'deferbar', 'citebar']) $(id).style.display = 'flex';
+          $('draftmsg').textContent = 'SYN unsaved draft words '.repeat(20); $('recnote').hidden = false;
+          $('recnote-text').textContent = 'SYN recommendation '.repeat(30); }''',
+        'band empty': '''() => { const $ = id => document.getElementById(id);
+          for (const id of ['report-notice', 'draftbar', 'holdbar', 'deferbar', 'citebar']) $(id).style.display = 'none';
+          $('recnote').hidden = true; }''',
+        'citation list filled': '''() => { const list = document.getElementById('citelist');
+          list.replaceChildren(...Array.from({length: 40}, (_, i) => Object.assign(document.createElement('p'), {textContent: 'SYN citation ' + i}))); }''',
+        'citation list emptied': "() => document.getElementById('citelist').replaceChildren()",
+        'transcript': '''() => { const t = document.getElementById('dictation-text'); t.hidden = false;
+          t.textContent = Array.from({length: 12}, (_, i) => 'SYN transcript line ' + i).join('\\n');
+          for (const id of ['dictation-insert', 'dictation-cancel']) document.getElementById(id).hidden = false; }''',
+        'questions pane filled': '''() => { const pane = document.getElementById('question-pane');
+          pane.replaceChildren(...Array.from({length: 40}, (_, i) => Object.assign(document.createElement('p'), {textContent: 'SYN question ' + i}))); }''',
+        'questions pane emptied': "() => document.getElementById('question-pane').replaceChildren()",
+    }
+    # The reader's own openings, after which those answers come.
+    OPENINGS = {
+        'citation list': "() => { const list = document.getElementById('citelist'); list.hidden = false; list.replaceChildren('SYN'); }",
+        'dictation pane': "() => { document.getElementById('dictation-pane').hidden = false; document.getElementById('dictation-status').textContent = 'SYN recording'; }",
+        'questions pane': "() => { document.getElementById('question-p').hidden = false; document.getElementById('question-pane').hidden = false; }",
+    }
+
+    def test_an_answer_never_resizes_a_region_of_the_report_column(self):
+        """The rule in one place (main.html, "An answer never resizes"): after the reader opened what they opened, no
+        change an answer makes inside the notice band or an opened list or pane moves Findings,
+        Conclusion or the button row, in the worklist card and the Reading Workspace."""
+        windows = [('card', w, h) for w, h in ((1920, 1080), (1366, 768), (900, 768), (768, 1024))]
+        windows += [('reading', w, h) for w, h in ((1920, 1080), (1366, 768), (900, 1200))]
+        steps = [('band rows', 'band empty')]
+        for layout, width, height in windows:
+            for opened, answers in ((None, steps), ('citation list', ('citation list filled', 'citation list emptied')),
+                                    ('dictation pane', ('transcript',)), ('questions pane', ('questions pane filled', 'questions pane emptied'))):
+                with self.subTest(layout=layout, width=width, height=height, opened=opened):
+                    page, _, _ = self.page_at(width, height, dictation=DICTATION)
+                    if layout == 'reading':
+                        page.route('**/ohif/**', lambda route: route.fulfill(content_type='text/html', body='<!doctype html><title>SYN viewer</title>'))
+                    self.click_row(page, 0, 'select')
+                    if layout == 'reading':
+                        page.get_by_role('button', name='Reading Workspace', exact=True).click()
+                        expect(page.get_by_role('button', name='Study Info & Templates', exact=True)).to_be_visible()
+                    settle(page)
+                    if opened:
+                        page.evaluate(self.OPENINGS[opened])
+                        settle(page)
+                    before = page.evaluate(self.REPORT_PLACES)
+                    for step in (answers if opened else [s for pair in answers for s in pair]):
+                        page.evaluate(self.ANSWERS[step])
+                        settle(page)
+                        self.assertEqual(before, page.evaluate(self.REPORT_PLACES), f'{layout} {width}x{height} {opened}: {step} moved the report places')
+                    self.doCleanups()
 
     def test_a_claim_answer_between_aim_and_click_does_not_move_conclusion(self):
         """The reader types in Findings and goes straight to Conclusion. The claim answer that draws the draft row arrives
