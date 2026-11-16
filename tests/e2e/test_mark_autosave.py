@@ -111,9 +111,19 @@ class MarkAutoSaveE2E(MeasurementReadbackE2E):
         p.route(ME, lambda route: held.append(route))
         return held
 
+    def why(self, p, row, before):
+        # What a mark's gate sees, for a failure message: the setting, focus, a tool still moving, the row and the mark.
+        return p.evaluate('''([row,before])=>({marks:window.KinViewerAutoSave?.marks?.(),
+            focus:document.activeElement?.outerHTML?.slice(0,160), interacting:cornerstoneTools.state.isInteractingWithTool,
+            row:document.querySelector(row)?.innerText, before, now:cornerstoneTools.annotation.state.getAllAnnotations()
+              .filter(a=>a.metadata.toolName==='EllipticalROI').map(a=>({points:a.data.handles.points,locked:cornerstoneTools.annotation.locking.isAnnotationLocked(a.annotationUID),
+                unverified:a.data.kinUnverified,invalidated:a.invalidated}))})''', [PANEL + ' section[data-kind=ellipse]', before])
+
     def release(self, p, held):
+        # Answered before the route goes (an unroute with handlers still waiting cancels them), and any that came meanwhile.
+        while held: held.pop(0).continue_()
         p.unroute(ME)
-        while held: held.pop().continue_()
+        while held: held.pop(0).continue_()
 
     def test_mark_autosave_01_drawn_marks_are_saved_without_save_and_drawn_on_reopen(self):
         f = self.specimen(); w, p = self.observed(f)
@@ -315,10 +325,13 @@ class MarkAutoSaveE2E(MeasurementReadbackE2E):
         # Moved again with /me held, then the window really closes: this later request is sent by the closing too.
         held = self.hold_me(p)
         row.get_by_role('button', name='Edit', exact=True).click()
+        before = p.evaluate(MARKS)
         outline = p.evaluate(WHERE, 'EllipticalROI')['outline']
         p.mouse.move(*outline); p.mouse.down(); p.mouse.move(outline[0]+15, outline[1]-10, steps=10); p.mouse.up()
-        p.wait_for_timeout(1500)
-        self.assertTrue(held)
+        for _ in range(10):
+            if held: break
+            p.wait_for_timeout(500)
+        self.assertTrue(held, self.why(p, row, before))
         self.assertEqual(self.revisions(f, item), ['create', 'edit'])
         p.close(); w.close()
         self.assertTrue(self.until(lambda: self.revisions(f, item) == ['create', 'edit', 'edit']), self.revisions(f, item))
