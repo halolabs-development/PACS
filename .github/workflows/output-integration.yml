@@ -45,6 +45,7 @@ on:
           - monitor-hanging
           - image-report
           - auto-save-view
+          - mark-autosave
           - screen-language
 
 permissions:
@@ -136,6 +137,7 @@ jobs:
             tests/e2e/artifacts/monitor-hanging-ci/
             tests/e2e/artifacts/image-report-ci/
             tests/e2e/artifacts/auto-save-view-ci/
+            tests/e2e/artifacts/mark-autosave-ci/
             tests/e2e/artifacts/screen-language-ci/
             tests/e2e/artifacts/film-print-ci/
             tests/e2e/artifacts/viewer-mg-ci/

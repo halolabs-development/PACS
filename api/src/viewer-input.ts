@@ -190,13 +190,14 @@ function orthoBaseline(kind: string, baseline: any) {
   return { calculator: baseline.calculator as string, values: v as (number | null)[] };
 }
 interface ViewerCommand {
-  requestId: string; expectedRevision?: number; action: 'create' | 'edit' | 'hide' | 'restore'; reason: string; item: ViewerItemInput;
+  requestId: string; expectedRevision?: number; action: 'create' | 'edit' | 'hide' | 'restore' | 'delete'; reason: string; item: ViewerItemInput;
 }
 export function viewerCommand(raw: Buffer, create: boolean): ViewerCommand {
   const body = viewerJson(raw);
   object(body, create ? ['requestId', 'item'] : ['requestId', 'expectedRevision', 'action', 'item'], create ? [] : ['reason']);
   const action = create ? 'create' : body.action;
-  if (!['create', 'edit', 'hide', 'restore'].includes(action) || (!create && action === 'create')) invalid();
+  // 'delete' takes a saved item off every list for good; its revisions stay (viewer.service.ts write).
+  if (!['create', 'edit', 'hide', 'restore', 'delete'].includes(action) || (!create && action === 'create')) invalid();
   const reason = text(body.reason === undefined ? '' : body.reason, 1000);
   const item = body.item;
   const common = ['schemaVersion', 'kind', 'seriesUid', 'sopUid', 'frame'];

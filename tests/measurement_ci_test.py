@@ -1901,6 +1901,34 @@ class MeasurementCiTests(unittest.TestCase):
         self.assertIn('- auto-save-view', dispatch)
         self.assertIn('tests/e2e/artifacts/auto-save-view-ci/', dispatch)
 
+    def test_mark_autosave_profile_is_exact_and_dispatch_only(self):
+        # Marks saved on their own and deleted: the declared cases of one class in one unit, reached only through the
+        # Focused integration dispatch.
+        import ast
+        profile = ci.PROFILES['mark-autosave']
+        suite, class_name, unit = 'e2e/test_mark_autosave.py', 'MarkAutoSaveE2E', 'ci-mark-autosave'
+        self.assertEqual(profile['suites'], ((suite, class_name, unit),))
+        self.assertEqual(profile['out'].name, 'mark-autosave-ci')
+        self.assertEqual(profile['project_prefix'], 'kin-mark-autosave-ci-')
+        command, outer = ci.guarded_profile_run(profile, *profile['suites'][0], 2000)
+        self.assertEqual(command[command.index('--class')+1], class_name)
+        self.assertEqual(outer, 935)
+        for name, other in ci.PROFILES.items():
+            if name != 'mark-autosave':
+                self.assertNotEqual(profile['out'], other['out'], name)
+                self.assertNotEqual(profile['project_prefix'], other['project_prefix'], name)
+                self.assertNotIn(suite, [row[0] for row in other['suites']], name)
+        tree = ast.parse((ci.ROOT/'tests'/suite).read_text(encoding='utf-8'))
+        cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
+        self.assertEqual([node.name for node in cls.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')],
+                         ['test_mark_autosave_01_drawn_marks_are_saved_without_save_and_drawn_on_reopen',
+                          'test_mark_autosave_02_an_ellipse_resized_and_moved_under_edit_is_saved_on_its_own',
+                          'test_mark_autosave_03_a_saved_mark_is_deleted_from_its_row_the_image_menu_and_the_panel'])
+        self.assertNotIn('mark-autosave', self.catalog.text(automatic_only=True))
+        dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
+        self.assertIn('- mark-autosave', dispatch)
+        self.assertIn('tests/e2e/artifacts/mark-autosave-ci/', dispatch)
+
     def test_screen_language_profile_is_exact_and_dispatch_only(self):
         # Screen language: the declared cases of one class in one unit, reached only through the Focused integration dispatch.
         import ast
@@ -1968,6 +1996,8 @@ class MeasurementCiTests(unittest.TestCase):
                           'image-report',
                           # Auto Save View on a real stack, Focused integration dispatch only.
                           'auto-save-view',
+                          # Marks saved without the Save button and saved marks deleted, Focused integration dispatch only.
+                          'mark-autosave',
                           # Screen language on a real stack, Focused integration dispatch only.
                           'screen-language',
                           # S7-U5: the session contract job's eight profiles (validate.yml s7-u5-session-contracts matrix);

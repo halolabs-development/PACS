@@ -4,7 +4,8 @@
 // patient tab is switched and when the window is closed. When the study is opened again in a new viewer, the saved view
 // is put back over the viewer's own first layout and a badge says what was put back. A Job chosen to open wins. One
 // saved view per reader and study, kept apart from the Jobs; Display ▾ › Auto Save View… shows it and discards it.
-// Pure rules: viewer-auto-view-model.js. Marks are not part of it (they are saved on their own).
+// Pure rules: viewer-auto-view-model.js. Marks are not part of the saved view (they are saved items of their own), but the
+// same setting saves them too without their Save button: config/ohif/history.js asks window.KinViewerAutoSave.marks().
 (() => {
   // Studies this document has shown before: a patient tab brought back keeps the view the tab held (viewer-patient-tabs.js),
   // so only the first opening of a study in a document puts the saved view back.
@@ -426,6 +427,11 @@
       else if (!was && phase === 'ready') { if (generation === null) read(); changed(); }
       painter?.();
     });
+    // The marks' side of the setting (the History panel saves each mark as it is drawn or changed): on, for a writer, while
+    // this viewer is up. It does not wait for the view's own start or a restore landing, which concern the view only, nor
+    // for the address (a patient tab changes it before this viewer ends). A later viewer's own answer is not taken away.
+    const marks = { marks: () => on && !ended && writer() };
+    window.KinViewerAutoSave = marks;
     (async () => {
       await Promise.race([settingsRead, wait(SETTINGS_MS)]);
       if (!live() || !study) return;
@@ -493,7 +499,8 @@
       if (!handle) return;
       const body = handle.body; body.replaceChildren();
       element('p', 'Saves the view of this study as you change it — zoom and pan, window, rotation and flip, the image each cell shows, each cell\'s '
-        + 'display set rule and the layout — and applies it when the study is opened again. Marks are saved on their own. Opening a Job shows the Job instead.', body, 'kin-auto-view-note');
+        + 'display set rule and the layout — and applies it when the study is opened again. Opening a Job shows the Job instead. '
+        + 'Marks (measurements, arrows, text, key images) are saved too as soon as they are drawn or changed, without their Save button.', body, 'kin-auto-view-note');
       const label = element('label', '', body, 'kin-auto-view-row');
       const input = element('input', '', label); input.type = 'checkbox';
       element('span', 'Save view changes automatically and apply on reopen', label);
@@ -542,6 +549,7 @@
       // A save that was waiting (for the quiet moment or in the queue) goes now, while the cells are still this study's.
       if (timer || waiting) { clearTimeout(timer); timer = null; save('now'); }
       ended = true; abort.abort(); classes.disconnect(); channel?.close(); painter = null;
+      if (window.KinViewerAutoSave === marks) delete window.KinViewerAutoSave;
       for (const subscription of subscriptions) try { subscription.unsubscribe?.(); } catch (_) {}
       clearTimeout(badgeTimer); badge?.remove(); style.remove();
     };

@@ -1439,7 +1439,7 @@ function kinCreateViewerHistory() {
     const actions = document.createElement('div'), list = document.createElement('div'); panel.append(actions, list);
     document.body.append(panel);
     const clone = value => JSON.parse(JSON.stringify(value));
-    const itemOnly = head => { const item = clone(head.item); delete item.hidden; delete item.sourceDigest; return item; };
+    const itemOnly = head => { const item = clone(head.item); delete item.hidden; delete item.sourceDigest; delete item.deleted; return item; };
     const manual = kind => ['length', 'angle', 'ellipse'].includes(kind);
     // A saved measurement's value in the words of finding-link-model.js valueText (loaded by the Findings extension for every mode).
     // The value has its own node; one drawn before that module arrived is filled in place by scan() once it is there,
@@ -1579,6 +1579,10 @@ function kinCreateViewerHistory() {
     }
     const measurementService = services.measurementService;
     const originalMeasurements = measurementService.getMeasurements;
+    // This panel's own clean-up of a drawing's OHIF row goes round the guard below that takes the Measurements panel's
+    // delete for the reader's (readerDelete).
+    const nativeRemove = measurementService.remove;
+    const ownRemove = uid => nativeRemove.call(measurementService, uid);
     const numericMeasurement = m => manual(kinds[m?.toolName]);
     const unverifiedReport = () => ({ columns: ['Verification'], values: ['재확인 필요'] });
     function checkedMeasurement(m) {
@@ -1927,7 +1931,7 @@ function kinCreateViewerHistory() {
       for (const a of ct.annotation.state.getAllAnnotations()) {
         if (!NATIVE_MARKS.has(a?.metadata?.toolName) || annotations.has(a.annotationUID) || String(a.annotationUID).startsWith('kin-sr:')) continue;
         ct.annotation.state.removeAnnotation(a.annotationUID);
-        if (measurementService.getMeasurement(a.annotationUID)) measurementService.remove(a.annotationUID);
+        if (measurementService.getMeasurement(a.annotationUID)) ownRemove(a.annotationUID);
         dropped = true;
       }
       if (dropped) render();
@@ -1944,6 +1948,9 @@ function kinCreateViewerHistory() {
       const original = commands?.getCommand(name, 'CORNERSTONE');
       if (typeof original?.commandFn !== 'function') continue;
       const guarded = { ...original, commandFn: options => {
+        // The image's "Delete measurement" on a saved mark deletes it as the row's Delete does; on a drawing not saved yet
+        // the pinned command removes the drawing as before.
+        if (name === 'deleteMeasurement' && readerDelete(options?.uid)) return;
         if (!nativeAuthoringClosed()) return original.commandFn(options);
         status.textContent = closedText('edit');
         if (name === 'arrowTextCallback' && !options?.data) options?.callback?.();
@@ -1952,7 +1959,18 @@ function kinCreateViewerHistory() {
       policyRestores.push(() => { if (commands.getCommand(name, 'CORNERSTONE') === guarded) commands.registerCommand('CORNERSTONE', name, original); });
     }
     // 측정 목록 패널의 이름 바꾸기·잠금 풀기도 표식 편집이다. 사용자 편집(notYetUpdatedAtSource true)만 거절하고, 도구와의
-    // 동기화(false)와 이 패널의 표시 갱신은 그대로 둔다. 목록의 Delete는 이 창의 그림만 지우며 저장 항목은 다음 관찰에서 다시 그린다.
+    // 동기화(false)와 이 패널의 표시 갱신은 그대로 둔다. 목록의 Delete는 저장 항목이면 행의 Delete와 같이 지우고(readerDelete),
+    // 아직 저장하지 않은 그림이면 그 그림만 지운다.
+    // The Measurements panel's delete calls remove(uid) alone; the pinned tools' removal passes its source, and this panel's
+    // own clean-ups call the original (ownRemove).
+    {
+      const guardedRemove = function (uid, ...rest) {
+        if (!rest.length && readerDelete(uid)) return;
+        return nativeRemove.call(this, uid, ...rest);
+      };
+      measurementService.remove = guardedRemove;
+      policyRestores.push(() => { if (measurementService.remove === guardedRemove) measurementService.remove = nativeRemove; });
+    }
     for (const [name, edits] of [['update', args => args[2] === true], ['toggleLockMeasurement', () => true]]) {
       const original = measurementService[name];
       if (typeof original !== 'function') continue;
@@ -2007,7 +2025,7 @@ function kinCreateViewerHistory() {
       ct.annotation.state.removeAnnotation(entry.annotationUID);
       // Measurements can be created by later handle edits; remove the paired
       // transient OHIF row too, without treating its removal as a server delete.
-      if (services.measurementService.getMeasurement(entry.annotationUID)) services.measurementService.remove(entry.annotationUID);
+      if (services.measurementService.getMeasurement(entry.annotationUID)) ownRemove(entry.annotationUID);
       entry.annotationUID = null;
     }
     function reset(message) {
@@ -2034,8 +2052,9 @@ function kinCreateViewerHistory() {
         }
         // Copy only session data. Detached handlers and late responses must not
         // mutate a parked draft or attach its annotation to another study.
+        // auto: what the marks saved on their own already sent or refused, and a draft brought back to be checked first.
         saved.push(clone({ id: e.id, head: e.head, draft: e.draft, editing: e.editing,
-          pending: e.pending, heldDraft: e.heldDraft, latest: e.latest, message: e.message }));
+          pending: e.pending, heldDraft: e.heldDraft, latest: e.latest, message: e.message, ...(e.auto ? { auto: { ...e.auto, sent: 0 } } : {}) }));
       }
       if (saved.length) recovery.set(scope, { subject, entries: saved });
     }
@@ -2049,7 +2068,7 @@ function kinCreateViewerHistory() {
         const study = reference(a.metadata.referencedImageId)?.study;
         if (!kinds[a.metadata.toolName] || study && study !== scope) continue;
         ct.annotation.state.removeAnnotation(a.annotationUID);
-        if (measurementService.getMeasurement(a.annotationUID)) measurementService.remove(a.annotationUID);
+        if (measurementService.getMeasurement(a.annotationUID)) ownRemove(a.annotationUID);
       }
       reset(readOnly() ? READ_ONLY.denied : '이 검사에 접근할 수 없습니다. 보관 작업은 접근 확인 후 재개할 수 있습니다.'); me = null;
       if (readOnly()) { panel.dataset.readOnly = 'denied'; panel.dataset.studyUid = scope; }
@@ -2064,19 +2083,21 @@ function kinCreateViewerHistory() {
       // A shared workstation must not retain unsaved labels after logout either.
       for (const a of ct.annotation.state.getAllAnnotations()) if (kinds[a.metadata.toolName]) {
         ct.annotation.state.removeAnnotation(a.annotationUID);
-        if (services.measurementService.getMeasurement(a.annotationUID)) services.measurementService.remove(a.annotationUID);
+        if (services.measurementService.getMeasurement(a.annotationUID)) ownRemove(a.annotationUID);
       }
       render();
     }
     // Session termination is owned by the page transport and gate.
     function sessionEnded(reason) { kinViewerSession.refuse(reason); end(); }
-    async function api(path, options = {}, ticket = generation) {
+    // detached: a save sent as the window closes or the study changes (autosave closing) is not cut by that reset; its late
+    // answer is still dropped as any other of a generation given up.
+    async function api(path, options = {}, ticket = generation, detached = false) {
       // A request of a generation already given up (another study, the clinician-only boundary) is not sent at all: a save that
       // was waiting for its /me when that answer said clinician-only never reaches the server. Nor is any request of a document
       // whose login ended (X4-R-001 F02), whether or not this panel has heard of it yet.
       if (kinViewerSession.ended() || !valid(ticket)) throw { stale: true };
       const parentSignal = controller.signal, request = new AbortController();
-      const abort = () => request.abort(); parentSignal.addEventListener('abort', abort, { once: true });
+      const abort = () => request.abort(); if (!detached) parentSignal.addEventListener('abort', abort, { once: true });
       const timeout = setTimeout(abort, 30000);
       try {
       const res = await fetch('/api' + path, { ...options, cache: 'no-store', credentials: 'same-origin', signal: request.signal,
@@ -2133,7 +2154,9 @@ function kinCreateViewerHistory() {
         if (!asked(ticket, seq, 'author')) return;
         suspended = false;
         const parked = recovery.get(scope);
-        if (resume === true && parked && parked.subject === subject) {
+        // With marks saved on their own (autoMarks) the held work of this study is taken up again at once, as Resume Held Work
+        // does, and is then saved as any other.
+        if ((resume === true || autoMarks()) && parked && parked.subject === subject) {
           for (const e of entries.values()) removeAnnotation(e);
           entries.clear(); list.replaceChildren();
           for (const e of clone(parked.entries)) { e.rehydrate = !e.head; entries.set(e.id, e); row(e); }
@@ -2158,6 +2181,12 @@ function kinCreateViewerHistory() {
           if (e) removeAnnotation(e);
           else { e = { id: head.id }; entries.set(e.id, e); }
           Object.assign(e, { head, draft: itemOnly(head), editing: false, latest: null, message: '' }); restoreHeldDraft(e); row(e);
+        }
+        // The whole author list leaves out only deleted items: a saved row it no longer has was deleted (in another window).
+        // Work on such a row is kept and told; it can no longer be saved (any revision of a deleted item is refused).
+        if (!recheck) for (const e of [...entries.values()]) if (e.head && !heads.some(h => h.id === e.head.id)) {
+          if (hasWork(e) || e.busy) { e.message = '다른 창에서 지운 항목입니다. 이 창의 작성 내용은 저장되지 않습니다.'; continue; }
+          removeAnnotation(e); entries.delete(e.id); e.element?.remove();
         }
         for (const e of entries.values()) row(e);
         status.textContent = recheck ? (heads.some(h => h.id === recheck) ? '선택한 항목의 원본 확인을 마쳤습니다. 항목의 확인 상태를 보세요. 저장 이력은 바뀌지 않습니다.' : '선택한 저장 항목을 찾지 못했습니다. 목록을 새로고침하세요.') : heads.length + '개 저장 항목 · 저장은 판독 확정과 별개입니다.';
@@ -2302,6 +2331,8 @@ function kinCreateViewerHistory() {
         const r = current(); if (!r || r.study !== scope) return;
         const e = { id: crypto.randomUUID(), editing: true, draft: { schemaVersion: 1, kind: 'key', seriesUid: r.seriesUid, sopUid: r.sopUid, frame: r.frame, title: '', description: '' } };
         entries.set(e.id, e); row(e);
+        // Saved on its own once its fields are left (autoReady): the title is where the reader goes first.
+        if (autoMarks()) e.element.querySelector('input')?.focus();
       }, !writable({}));
     }
     function srSelection() {
@@ -2332,7 +2363,7 @@ function kinCreateViewerHistory() {
       if (e) { removeAnnotation(e); entries.delete(e.id); e.element?.remove(); }
       else {
         if (ct.annotation.state.getAnnotation(uid)) ct.annotation.state.removeAnnotation(uid);
-        if (services.measurementService.getMeasurement(uid)) services.measurementService.remove(uid);
+        if (services.measurementService.getMeasurement(uid)) ownRemove(uid);
       }
       render();
     }
@@ -2473,6 +2504,8 @@ function kinCreateViewerHistory() {
         // points. Rehydrate the held geometry instead of copying those back.
         removeAnnotation(e);
         e.draft = e.heldDraft; e.heldDraft = null; e.editing = true;
+        // Its place is to be checked first: not saved on its own as it comes back, only once the reader changes it.
+        autoSeen(e, true);
         e.message = '복원 완료. 보관한 수정은 아직 미저장 상태입니다.' +
           (matches(current(), e.draft) ? ' 위치를 확인한 후 저장하세요.' : ' 영상으로 이동해 위치를 확인한 후 저장하세요.');
       }
@@ -2559,7 +2592,8 @@ function kinCreateViewerHistory() {
             e.editing = false; e.draft = itemOnly(e.head); e.message = '서버에서 숨겨졌습니다.';
           }
           else if (e.heldDraft) { e.draft = itemOnly(e.head); restoreHeldDraft(e); }
-          else if (e.editing) e.message = '최신판을 확인했습니다. 저장을 눌러야 내 수정이 반영됩니다.';
+          // Keeping the reader's changes over the latest revision is the decision to save them: saved on their own from here (autoReady).
+          else if (e.editing) { e.message = autoMarks() ? '최신판을 확인했습니다. 내 수정을 곧 저장합니다.' : '최신판을 확인했습니다. 저장을 눌러야 내 수정이 반영됩니다.'; autoSeen(e, false); }
           else { e.draft = itemOnly(e.head); e.message = '최신 서버판을 반영했습니다.'; }
           row(e); hydrate(); render();
         }, !!e.busy);
@@ -2583,7 +2617,7 @@ function kinCreateViewerHistory() {
             if (!valid(ticket) || !el.isConnected || !list.isConnected) return;
             // Each revision with its own saved value (C-R01-011#15), so r1 and r2 can be compared.
             for (const r of data.revisions) {
-              const line = text(list, 'p', 'r' + r.revision + ' · ' + ({ create: '생성', edit: '수정', hide: '숨김', restore: '복원' }[r.action] || r.action) + ' · ' + r.actor + ' · ' + r.at + ' · ' + r.reason + ' · ' + (r.item.label ?? r.item.title));
+              const line = text(list, 'p', 'r' + r.revision + ' · ' + ({ create: '생성', edit: '수정', hide: '숨김', restore: '복원', delete: '삭제' }[r.action] || r.action) + ' · ' + r.actor + ' · ' + r.at + ' · ' + r.reason + ' · ' + (r.item.label ?? r.item.title));
               if (manual(r.item.kind)) valueNode(line, 'span', r.item, ' · ');
             }
             count += data.revisions.length; cursor = data.nextCursor;
@@ -2593,8 +2627,13 @@ function kinCreateViewerHistory() {
         });
         toggle.setAttribute('aria-expanded', 'false');
       }
+      // Delete, after the row's other controls: a saved item is deleted on the server (its revisions kept there), one not
+      // saved yet just goes. Not while its save is on its way or its answer is not known.
+      if (writable(e) && !e.pending) button(el, 'Delete', () => deleteEntry(e), !!e.busy);
     }
-    async function save(e, action, reason) {
+    // closing: sent as the window closes or the study changes (autosave): at once, with keepalive, without this panel's /me
+    // first (the page gate and the session watcher end the panel on another account or a logout; the server checks the caller).
+    async function save(e, action, reason, closing = false) {
       if (!valid(generation) || entries.get(e.id) !== e || !writable(e) || e.busy || ended) return;
       // A verdict can change without a revision. A retained draft must never
       // bind itself to different source bytes by repeatedly retrying an edit.
@@ -2628,9 +2667,14 @@ function kinCreateViewerHistory() {
       }
       row(e);
       try {
-        await authenticate(ticket);
-        const head = await api(e.pending.url, { method: 'POST', body: e.pending.body }, ticket);
+        if (!closing) await authenticate(ticket);
+        const head = await api(e.pending.url, { method: 'POST', body: e.pending.body, ...(closing ? { keepalive: true } : {}) }, ticket, closing);
         if (!valid(ticket) || !entries.has(e.id)) return;
+        // Deleted: off the image and the list. The server keeps the item and its revisions; no list shows it again.
+        if (head.item?.deleted === true) {
+          removeAnnotation(e); entries.delete(e.id); e.element?.remove();
+          status.textContent = names[e.draft.kind] + ' 항목을 지웠습니다. 저장 이력은 서버에 남습니다.'; render(); return;
+        }
         const duplicate = entries.get(head.id);
         if (duplicate && duplicate !== e && hasWork(duplicate)) {
           // A lost create receipt can be listed before its retry resolves.
@@ -2654,6 +2698,111 @@ function kinCreateViewerHistory() {
         if (error.status >= 400 && error.status < 500) { e.pending = null; lock(e, !e.editing); }
         if (error.status === 409) await load();
       } finally { if (valid(ticket) && entries.has(e.id)) { e.busy = false; row(e); } }
+    }
+    // ── Marks saved without the Save button ──
+    // With Auto Save View's account setting on (viewer-features-autosave.js, window.KinViewerAutoSave) a mark is saved on its
+    // own: a new one once it is drawn, a saved one once it is changed under Edit (moved, resized, its text). Every way a mark is
+    // drawn, changed or left passes this one gate (autoReady); the sending is save() as the Save button's, with its checks,
+    // its request id and its answers. What is not ready (a value not checked yet, the source to be checked again, another
+    // revision on the server, held work brought back) keeps its row's message and buttons as without the setting.
+    const AUTO_QUIET = 500, AUTO_RETRY = 5000;
+    const autoMarks = () => { try { return window.KinViewerAutoSave?.marks?.() === true; } catch (_) { return false; } };
+    // What a save would change: its place, its words, a value mark's values.
+    const content = item => JSON.stringify([item?.points ?? null, item?.label ?? null, item?.title ?? null, item?.description ?? null,
+      valueMark(item?.kind) ? item?.baseline ?? null : null]);
+    // A press held down (a drag of a handle or of a Measure menu mark) and words being typed into this row or a dialog.
+    let pressing = false;
+    const typing = e => {
+      const f = document.activeElement;
+      return !!f?.matches?.('input, textarea, [contenteditable=""], [contenteditable="true"]') && !!(e.element?.contains(f) || f.closest?.('[role=dialog], .kin-ux-feature-panel'));
+    };
+    // seen: this content counts as already sent (or refused) once, so it is sent again only after it changes.
+    function autoSeen(e, seen) {
+      const text = content(e.draft);
+      e.auto = { text, at: Date.now(), tried: seen ? text : null, sent: 0 };
+    }
+    function autoReady(e, now, closing) {
+      if (!autoMarks() || ended || suspended || held() || !valid(generation) || entries.get(e.id) !== e || !writable(e) || e.busy) return false;
+      const auto = e.auto ??= { text: null, at: now, tried: null, sent: 0 };
+      // A request whose answer is not known goes again with the same body (the server answers a repeated request id once),
+      // before anything else about the row: another revision listed meanwhile may be that request's own.
+      if (e.pending) return closing || now - auto.sent >= AUTO_RETRY;
+      if (e.heldDraft || e.latest || !e.editing) return false;
+      const text = content(e.draft);
+      if (text !== auto.text) { auto.text = text; auto.at = now; }
+      if (auto.tried === text || e.head && text === content(e.head.item)) return false;
+      if (!closing && (now - auto.at < AUTO_QUIET || pressing || ct.state?.isInteractingWithTool === true || typing(e))) return false;
+      if (manual(e.draft.kind) && e.head && e.head.referenceStatus !== 'verified') return false;
+      // A key image has its fields only.
+      if (!tools[e.draft.kind]) return true;
+      const a = e.annotationUID && ct.annotation.state.getAnnotation(e.annotationUID);
+      if (!a || unfinished(a)) return false;
+      // scan() has just judged it against the original (kinUnverified): a value that differs from its saved one waits.
+      if (manual(e.draft.kind)) return !a.data.kinUnverified && !!sample(a);
+      if (valueMark(e.draft.kind)) return !!e.draft.baseline && !window.KinMeasureFrame?.verify?.(a, true);
+      return true;
+    }
+    // closing: the window closes or the study changes — what is ready goes now, a request already on its way is sent once
+    // more with keepalive (the same body). Answers the entries that were sent.
+    function autosave(closing = false) {
+      if (!autoMarks()) return [];
+      const now = Date.now(), sent = [];
+      for (const e of [...entries.values()]) {
+        if (closing && e.busy && e.pending && writable(e)) {
+          if (!e.closing) { e.closing = true; beacon(e.pending); }
+          sent.push(e); continue;
+        }
+        if (!autoReady(e, now, closing)) continue;
+        e.auto.sent = now;
+        if (!e.pending) e.auto.tried = content(e.draft);
+        if (closing) e.closing = true;
+        sent.push(e);
+        save(e, e.pending ? undefined : e.head ? 'edit' : 'create', undefined, closing).catch(() => {});
+      }
+      return sent;
+    }
+    function beacon(pending) {
+      try {
+        fetch('/api' + pending.url, { method: 'POST', body: pending.body, keepalive: true, cache: 'no-store', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' } }).catch(() => {});
+        return true;
+      } catch (_) { return false; }
+    }
+    // The window closing with the setting on: this study's marks as above, and held work of another study (a comparison
+    // study's cell was pressed) whose request was prepared goes to that study. A request sent is not yet a saved mark: the
+    // leave warning still counts it until its answer, and a window kept open takes that answer as usual.
+    function closeSend() {
+      if (!autoMarks() || ended || kinViewerSession.ended()) return;
+      // A mark finished since the last observation tick has its row first.
+      try { captureAnnotations(); } catch (_) {}
+      autosave(true);
+      for (const r of recovery.values()) if (r.subject === subject)
+        for (const x of r.entries) if (x.pending && !x.closing) { x.closing = true; beacon(x.pending); }
+    }
+    // Delete: the row's Delete, the image's "Delete measurement" and the Measurements panel's delete all come here.
+    async function deleteEntry(e) {
+      if (!valid(generation) || entries.get(e.id) !== e || !writable(e) || e.busy || e.pending) return;
+      if (!e.head) {
+        // Nothing saved: the drawing (or the key image row) goes.
+        if (e.annotationUID) removeMark(e.annotationUID); else { entries.delete(e.id); e.element?.remove(); }
+        return;
+      }
+      if (!window.confirm(names[e.draft.kind] + ' 저장 항목(r' + e.head.revision + ')을 지우시겠습니까? 영상과 목록에서 사라지고 되돌릴 수 없습니다. 저장 이력은 서버에 남습니다.')) return;
+      if (!valid(generation) || entries.get(e.id) !== e || !writable(e) || e.busy || e.pending) return;
+      // The saved revision is what is deleted; edits not saved yet go with it.
+      if (e.editing) { e.editing = false; e.draft = itemOnly(e.head); e.message = ''; }
+      return save(e, 'delete');
+    }
+    // A delete asked of the pinned viewer (its context menu or its Measurements panel) for a uid this panel drew from a saved
+    // item: true when taken here (deleted, or refused with the reason), false for a drawing not saved yet.
+    function readerDelete(uid) {
+      const e = uid && annotations.get(uid);
+      if (!e?.head) return false;
+      if (nativeAuthoringClosed()) status.textContent = closedText('edit');
+      else if (!writable(e)) status.textContent = '내가 저장한 항목만 지울 수 있습니다. 지우지 않았습니다.';
+      else if (e.busy || e.pending) status.textContent = '저장 결과를 확인한 뒤 지우세요. 지우지 않았습니다.';
+      else void deleteEntry(e).catch(() => {});
+      return true;
     }
     // Selection and highlight of the hydrated annotation behind a finding source; a hidden,
     // unverified or key-image source navigates just the same and reports why nothing is drawn.
@@ -2746,6 +2895,8 @@ function kinCreateViewerHistory() {
       kinViewerToolbarLabels.outputScope(document);
       const r = current();
       if (r && r.study !== scope) {
+        // Rows not saved yet are held with the study (park) and, with marks saved on their own, taken up and saved when its
+        // image is active again (load); a request of theirs already prepared goes as the window closes (closeSend).
         park(); reset('검사 확인 중…'); scope = r.study; me = null;
         load(); return;
       }
@@ -2797,6 +2948,7 @@ function kinCreateViewerHistory() {
       }
       hydrate();
       captureAnnotations();
+      autosave();
       // The writer's access probe (a 403 parks the drafts in deny()); a clinician-only document is checked above.
       if (!readOnly() && Date.now() - lastAuth > 15000 && !checking) {
         checking = true; const ticket = generation;
@@ -2844,7 +2996,10 @@ function kinCreateViewerHistory() {
       catch (_) { return { dirty: true, busy: true }; }
     };
     // Native marks exist before the next history scan; warn during that gap too.
-    const beforeUnload = e => { if (jobGuard() || findingsWork().dirty) { e.preventDefault(); e.returnValue = ''; } };
+    // With marks saved on their own the marks that are ready go first (closeSend); what is not answered yet still warns.
+    const beforeUnload = e => { closeSend(); if (jobGuard() || findingsWork().dirty) { e.preventDefault(); e.returnValue = ''; } };
+    // A closing that asks nothing first (a tab closed by the browser or the test runner) still sends them.
+    const pageHide = () => { closeSend(); };
     window.kinViewerHistoryHasUnsaved = jobGuard;
     const workspaceState = () => {
       const findings = findingsWork();
@@ -2867,7 +3022,7 @@ function kinCreateViewerHistory() {
     window.kinViewerHistoryState = historyState;
     let channel;
     try { channel = kinViewerOnEnd(() => sessionEnded('logout')); } catch (_) {}
-     window.addEventListener('focus', onFocus); window.addEventListener('beforeunload', beforeUnload);
+     window.addEventListener('focus', onFocus); window.addEventListener('beforeunload', beforeUnload); window.addEventListener('pagehide', pageHide);
     // The pinned viewer changes active viewports through several services. A
     // bounded observation timer also covers stack frame changes without patching them.
     const timer = setInterval(() => { try { scan(); } catch (_) { status.textContent = '현재 영상 연결을 확인할 수 없습니다.'; } }, 250);
@@ -2882,9 +3037,13 @@ function kinCreateViewerHistory() {
     const toolEvents = ct.Enums?.Events || {};
     const drawingEvents = cs.eventTarget ? [[toolEvents.ANNOTATION_COMPLETED, drawingCompleted], [toolEvents.TOOL_MODE_CHANGED, checkDrawings]].filter(([name]) => name) : [];
     for (const [name, listener] of drawingEvents) cs.eventTarget.addEventListener(name, listener);
-    const drawingInputs = [['pointerdown', leaveByPress], ['wheel', leaveByWheel], ['keydown', leaveByKey]];
+    // A held press is not saved under (autoReady); it ends with its release wherever that is, or with the window losing it.
+    const pressed = () => { pressing = true; }, released = () => { pressing = false; };
+    const lost = event => { if (event.target === window) pressing = false; };
+    const drawingInputs = [['pointerdown', leaveByPress], ['wheel', leaveByWheel], ['keydown', leaveByKey],
+      ['pointerdown', pressed], ['pointerup', released], ['pointercancel', released], ['blur', lost]];
     for (const [name, listener] of drawingInputs) window.addEventListener(name, listener, { capture: true, passive: true });
-    stop = () => { end(true); clearInterval(timer); channel?.close(); document.removeEventListener(stackEvent, onImage, true); subscriptions.forEach(s => s.unsubscribe());  window.removeEventListener('focus', onFocus); window.removeEventListener('beforeunload', beforeUnload); for (const [name, listener] of drawingEvents) cs.eventTarget.removeEventListener(name, listener); for (const [name, listener] of drawingInputs) window.removeEventListener(name, listener, true); for (const restores of configured.values()) restores.reverse().forEach(restore => restore()); configured.clear(); panel.remove(); };
+    stop = () => { end(true); clearInterval(timer); channel?.close(); document.removeEventListener(stackEvent, onImage, true); subscriptions.forEach(s => s.unsubscribe());  window.removeEventListener('focus', onFocus); window.removeEventListener('beforeunload', beforeUnload); window.removeEventListener('pagehide', pageHide); for (const [name, listener] of drawingEvents) cs.eventTarget.removeEventListener(name, listener); for (const [name, listener] of drawingInputs) window.removeEventListener(name, listener, true); for (const restores of configured.values()) restores.reverse().forEach(restore => restore()); configured.clear(); panel.remove(); };
     // 판정이 바뀌는 순간(이 패널의 /me가 아니어도): writer면 막는 동안 적어 둔 도구 모드·도구막대를 되돌리고, 그 밖이면 작성
     // 경로를 닫고 이 패널이 그리지 않은 표식을 지운다. read-only는 clinicianBoundary를 지난다. 다른 판정은 그려 둔 행의 컨트롤만
     // 다시 그린다. (Astra S5-U2b-X2-R-001 F01) 어느 확장의 /me든 refused가 되면 이 패널도 끝나고, 끝난 패널은 그 뒤 공유 판정이
