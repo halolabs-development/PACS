@@ -1924,7 +1924,8 @@ class MeasurementCiTests(unittest.TestCase):
                          ['test_mark_autosave_01_drawn_marks_are_saved_without_save_and_drawn_on_reopen',
                           'test_mark_autosave_02_an_ellipse_resized_and_moved_under_edit_is_saved_on_its_own',
                           'test_mark_autosave_03_a_saved_mark_is_deleted_from_its_row_the_image_menu_and_the_panel',
-                          'test_mark_autosave_04_closing_typing_and_a_lost_answer'])
+                          'test_mark_autosave_04_closing_typing_and_a_lost_answer',
+                          'test_mark_autosave_05_a_mark_left_on_another_study_is_saved_to_its_own'])
         self.assertNotIn('mark-autosave', self.catalog.text(automatic_only=True))
         dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
         self.assertIn('- mark-autosave', dispatch)

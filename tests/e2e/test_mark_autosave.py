@@ -45,14 +45,22 @@ class MarkAutoSaveE2E(MeasurementReadbackE2E):
         # The check is an account setting: put back as it was for the suites after this one.
         self.addCleanup(cleanup_workspace, self.stack, 'WorkspaceShortcuts')
 
-    def observed(self, f):
+    def observed(self, f, extra=None):
         hook = history.hook.replace('preRegistration({servicesManager})', 'preRegistration({servicesManager, commandsManager})').replace(
             'window.__d05c1.services=servicesManager.services;', 'window.__d05c1.services=servicesManager.services; window.__d05c1.commands=commandsManager;')
         from unittest.mock import patch
         with patch.object(history, 'hook', hook):
-            w, p = self.open_viewer(f, observer=True)
+            w, p = self.open_viewer(f, observer=True, extra=extra)
         self.addCleanup(w.close); self.addCleanup(p.close)
         return w, p
+
+    def show(self, p, uid):
+        # The active cell shows that study's images (as a comparison study's cell pressed): the panel follows that study.
+        p.evaluate('''uid=>{const s=__d05c1.services;const d=s.displaySetService.getActiveDisplaySets().find(d=>d.StudyInstanceUID===uid);
+            if(!d)throw Error('missing display set');
+            s.viewportGridService.setDisplaySetsForViewport({viewportId:s.viewportGridService.getActiveViewportId(),displaySetInstanceUIDs:[d.displaySetInstanceUID]});}''', uid)
+        p.wait_for_function('''uid=>{const s=__d05c1.services;
+            return s.cornerstoneViewportService.getCornerstoneViewport(s.viewportGridService.getActiveViewportId())?.getCurrentImageId?.().includes('/studies/'+uid+'/')}''', arg=uid)
 
     def switch(self, p, on):
         p.get_by_role('button', name='Display ▾').click()
@@ -315,6 +323,41 @@ class MarkAutoSaveE2E(MeasurementReadbackE2E):
         p.close(); w.close()
         self.assertTrue(self.until(lambda: self.revisions(f, item) == ['create', 'edit', 'edit']), self.revisions(f, item))
 
+    def test_mark_autosave_05_a_mark_left_on_another_study_is_saved_to_its_own(self):
+        f = self.specimen()
+        b = history.synthetic_ct(self.stack, f.patient_id, 'readback-b-'+f.uid[-6:], '20260909', [0, 0, 0], [1, 0, 0, 0, 1, 0], [.7, 1.3], slices=1)
+        w, p = self.observed(f, extra=b)
+        self.show(p, f.uid)
+        expect(p.locator(PANEL)).to_have_attribute('data-study-uid', f.uid)
+        self.switch(p, True)
+        lengths = lambda study: [x for x in self.saved(study) if x['item']['kind'] == 'length']
+        # A: a Length drawn while this panel's /me is held, so its save is on its way when the other study is shown.
+        held = self.hold_me(p)
+        first = self.length(p, .35, .3)
+        expect(first).to_contain_text('Length · Saving', timeout=10000)
+        self.show(p, b.uid)
+        self.release(p, held)
+        expect(p.locator(PANEL)).to_have_attribute('data-study-uid', b.uid)
+        expect(p.locator(PANEL + ' [role=status]')).to_contain_text('0개 저장 항목')
+        p.wait_for_timeout(1500)
+        self.assertEqual((lengths(f), self.saved(b)), ([], []), 'nothing sent while the other study is shown')
+        # A again: the held work is taken up and saved to A on its own, once.
+        self.show(p, f.uid)
+        expect(p.locator(PANEL)).to_have_attribute('data-study-uid', f.uid)
+        expect(self.row(p, 'length')).to_contain_text('Saved r1', timeout=15000)
+        self.assertEqual(len(lengths(f)), 1); self.assertEqual(self.saved(b), [])
+        # A second Length on A on its way, B shown, and the window closed from B: A's request goes to A, once.
+        held = self.hold_me(p)
+        self.length(p, .35, .7)
+        expect(p.locator(PANEL + ' section[data-kind=length]').last).to_contain_text('Length · Saving', timeout=10000)
+        self.show(p, b.uid)
+        p.wait_for_timeout(500)
+        self.assertEqual(len(lengths(f)), 1)
+        p.close(); w.close()
+        self.assertTrue(self.until(lambda: len(lengths(f)) == 2), lengths(f))
+        time.sleep(2)
+        self.assertEqual(len(lengths(f)), 2); self.assertEqual(self.saved(b), [])
+
 
 if __name__ == '__main__':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -322,5 +365,6 @@ if __name__ == '__main__':
         'test_mark_autosave_01_drawn_marks_are_saved_without_save_and_drawn_on_reopen',
         'test_mark_autosave_02_an_ellipse_resized_and_moved_under_edit_is_saved_on_its_own',
         'test_mark_autosave_03_a_saved_mark_is_deleted_from_its_row_the_image_menu_and_the_panel',
-        'test_mark_autosave_04_closing_typing_and_a_lost_answer'])
+        'test_mark_autosave_04_closing_typing_and_a_lost_answer',
+        'test_mark_autosave_05_a_mark_left_on_another_study_is_saved_to_its_own'])
     sys.exit(not unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful())
