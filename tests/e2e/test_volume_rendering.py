@@ -403,6 +403,10 @@ class VolumeRenderingE2E(VolumeCurrentPrintE2E):
  def removal_hits(self,v):
   v.evaluate('()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
   return v.evaluate("()=>({spine:vrHit([48,58,40]),aorta:vrHit([62,42,40]),table:vrHit([48,70.5,40])})")
+ def same_hits(self,hits,expected):
+  # Back on the source after a swap the actor is new; its frame may differ by a grey level or two, never by the removal.
+  self.assertEqual(set(hits),set(expected))
+  for part in expected:self.assertLessEqual(abs(hits[part]-expected[part]),3,(part,hits,expected))
  def remove(self,dialog,name,done):
   dialog.get_by_role('button',name=name,exact=True).click();expect(dialog.locator('[role=status]')).to_contain_text(done,timeout=60000)
 
@@ -433,7 +437,7 @@ class VolumeRenderingE2E(VolumeCurrentPrintE2E):
   self.remove(dialog,'Restore Removed','되돌렸습니다');self.assertEqual(v.evaluate('()=>vrRemovalCopies()'),{'volumes':0,'images':0,'bound':v.evaluate('()=>projectionVP.getVolumeId()')})
   self.assertEqual([n[:2] for n in self.vr_state(v)['nodes']],[[-1000,1],[2000,1]]);expect(dialog.locator('.kin-vr-removal-state')).to_have_text('Removed from display: none')
   dialog.get_by_role('button',name='Reset VR',exact=True).click();self.assertEqual(self.vr_state(v),initial)
-  dialog.get_by_label('View From',exact=True).select_option('Left');self.assertEqual(self.removal_hits(v),full)
+  dialog.get_by_label('View From',exact=True).select_option('Left');self.same_hits(self.removal_hits(v),full)
   self.preserved_volume(source,self.volume_state(v));self.assertEqual(self.native_pixels(v),native);self.assertEqual(self.originals(),original);self.unchanged_rows(rows)
   if os.environ.get('KIN_EVIDENCE_DIR'):
    self.remove(dialog,'Remove Bone','뼈를 지웠습니다');v.screenshot(path=str(Path(os.environ['KIN_EVIDENCE_DIR'])/'vr-bone-removed.png'))
@@ -456,7 +460,7 @@ class VolumeRenderingE2E(VolumeCurrentPrintE2E):
   v.wait_for_timeout(500);expect(dialog).to_be_visible();self.assertTrue(v.evaluate("()=>{const node=vrView().getRenderingEngine().offscreenMultiRenderWindow.getOpenGLRenderWindow().getViewNodeFor(vrView().getActors()[0].actor.getMapper());return node.get('tris').tris.getProgram().getFragmentShader().getSource().includes('kinSculptPoint0')}"))
   dialog.get_by_role('button',name='Undo Sculpt',exact=True).click();self.assertEqual(v.evaluate(state.replace(',mapper:m',''))['shader'],'null')
   dialog.get_by_role('button',name='Reset VR',exact=True).click();expect(dialog.locator('[role=status]')).to_contain_text('처음 VR 표시로');self.assertEqual(self.vr_state(v),initial);self.assertEqual(v.evaluate('()=>vrRemovalCopies().volumes'),0)
-  dialog.get_by_label('View From',exact=True).select_option('Left');self.assertEqual(self.removal_hits(v),full)
+  dialog.get_by_label('View From',exact=True).select_option('Left');self.same_hits(self.removal_hits(v),full)
 
  def test_vr_27_removal_busy_close_failure_and_memory(self):
   a,p,v=self.opened_removal();native=self.native_pixels(v);source=self.volume_state(v);dialog=self.vr(v)

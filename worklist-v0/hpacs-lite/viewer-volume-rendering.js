@@ -316,8 +316,10 @@ window.kinCreateVolumeRendering=function({target,permitted,alive,owner,notice=()
       const boneOn=kind==='bone'||r.boneOn,tableOn=kind==='table'||r.tableOn,old=r.bound,fresh=!old||!intact(old),resource=fresh?removalResource(op,r):old;
       await drive(model.paint(scalars,resource.buffer,r.plan,{bone:boneOn?bone:null,table:tableOn?table:null},r.floor),op);scalars=null;
       changed=true;
+      // Painted pixels have no streaming loader to mark texture slices: upload every slice before the copy is drawn.
+      resource.volume.invalidate();
       if(fresh){r.bound=resource;await bindVolume(op,resource.id);if(old){releaseResource(old);r.resources.delete(old);}}
-      else{resource.volume.invalidate();render(op);}
+      else render(op);
       r.bone=bone;r.boneOn=boneOn;r.tableOn=tableOn;showRemoval(op);
       status.textContent=(kind==='bone'?'VR 표시에서 뼈를 지웠습니다(Bone Threshold '+threshold+' HU 이상).':'VR 표시에서 몸과 떨어진 촬영대·시트를 지웠습니다.')+' 원본과 MPR은 그대로입니다.';
     }catch(error){if(operation!==op)return;if(changed||!current(op))fail(op,error);else status.textContent=error instanceof RangeError?removalMemory:error.message;}
