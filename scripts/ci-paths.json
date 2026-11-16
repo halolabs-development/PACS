@@ -1658,7 +1658,10 @@
       "worklist-v0/hpacs-lite/workspace-layout.js",
       "worklist-v0/hpacs-lite/workspace-panels.js",
       "worklist-v0/hpacs-lite/workspace-roaming.js",
-      "worklist-v0/hpacs-lite/workspace-shortcuts.js"
+      "worklist-v0/hpacs-lite/workspace-shortcuts.js",
+      "tests/unavailable_controls_dom_test.py",
+      "config/ohif.js",
+      "config/ohif/configuration.js"
     ],
     "report-dom": [
       "worklist-v0/hpacs-lite/product-info.js",
