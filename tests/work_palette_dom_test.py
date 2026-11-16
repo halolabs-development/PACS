@@ -75,7 +75,8 @@ DIALOGS = [('#reading-appearance-dialog', '#reading-appearance-open', '#reading-
 # Not opened by this module; their computed colours are swept with the dialog closed.
 CLOSED_ONLY = ['#reader-assignment-dialog', '#report-preview']
 # Report column panes whose toggles had a focus colour of their own.
-TOGGLES = ['#question-toggle', '#image-request-toggle', '#cvr-sent-toggle', '#cvr-inbox-toggle']
+# The band's notices first: the questions' row stands when its notice is clicked (main.html "An answer never resizes").
+TOGGLES = ['#question-notice', '#image-request-notice', '#question-toggle', '#image-request-toggle', '#cvr-sent-toggle', '#cvr-inbox-toggle']
 SFM_ERROR = 'rgb(255, 183, 169)'   # saved-filter-manager.css .sfm-error: a meaning colour that stays
 
 
@@ -171,6 +172,8 @@ class WorkPaletteDOM(unittest.TestCase):
         self.assertEqual([], self.sweep(page, ['#rows']), 'keyboard focus in the list')
         for toggle in TOGGLES:
             with self.subTest(toggle=toggle):
+                if toggle == '#question-toggle' and page.locator('#question-p').is_hidden():
+                    page.locator('#question-notice').click()
                 self.keyboard_focus(page, page.locator(toggle))
                 self.assertEqual([], self.sweep(page, [toggle]), 'keyboard focus on a report column toggle')
         page.locator('#m-reading').click()
