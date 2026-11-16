@@ -180,6 +180,38 @@ class ViewerCompareE2E(CTSyncE2E):
         p.screenshot(path=str(self.artifacts() / 'COMPARE-match-ratio.png'))
         self.assertEqual(self.originals(), originals)
 
+    def test_compare_04_related_studies_lists_a_later_study_series_before_it_opens(self):
+        # One patient: an earlier, the current and a later study; the later one has a second series. Only the current opens.
+        f = self.ct('CMP-' + uuid.uuid4().hex[:12], 'current', '20260801')
+        past = self.ct(f.patient_id, 'past', '20260701'); later = self.ct(f.patient_id, 'later', '20260901')
+        thin = self.copy_series(later, 'LATER thin', 2, lambda d: None); originals = self.originals()
+        p = self.launch(self.login(), [f]); canvas_ready(p, 1)
+        self.compare(p, 'Related Studies')
+        panel = p.get_by_role('dialog', name='Related Studies')
+        rows = lambda: panel.locator('table tr').evaluate_all('rows => rows.map(r => [...r.children].map(c => c.textContent))')
+        expect(panel.locator('tr[data-study]')).to_have_count(2)
+        self.assertEqual([['P1', '', '2026-07-01'], ['N1', '', '2026-09-01']], sorted([r[:3] for r in rows()[1:]]))
+        # Choose the later study and see its series, read from the archive though it is not open.
+        panel.locator('tr[data-study="' + later.uid + '"]').click()
+        panel.get_by_label('View').select_option('series')
+        expect(panel.locator('tr[data-series]')).to_have_count(2)
+        self.assertEqual([['Mark', 'Viewing', 'Study', 'Series No', 'Description', 'Instances'],
+                          ['N1', '', '2026-09-01', '1', 'D03A later', '16'], ['N1', '', '2026-09-01', '2', 'LATER thin', '16']], rows())
+        p.screenshot(path=str(self.artifacts() / 'COMPARE-related-series.png'))
+        # Its second series opens beside the current images, and the list then names it as open.
+        panel.locator('tr[data-series="' + thin + '"]').dblclick()
+        p.wait_for_function('''series=>[...services.viewportGridService.getState().viewports.values()].some(g=>(g.displaySetInstanceUIDs||[])
+          .some(uid=>services.displaySetService.getDisplaySetByUID(uid)?.SeriesInstanceUID===series))''', arg=thin, timeout=30000)
+        expect(panel.locator('tr[data-series="' + thin + '"] td').nth(1)).to_have_text('Open')
+        # The later study's mark on its images.
+        panel.get_by_label('Show Exam Mark on images (prior in a different font)').check()
+        expect(p.locator('.kin-viewer-identity[data-exam-mark="N1"]')).to_have_count(1, timeout=20000)
+        expect(p.locator('.kin-viewer-identity[data-exam-mark="*"]')).to_have_count(1)
+        p.screenshot(path=str(self.artifacts() / 'COMPARE-related-series-open.png'))
+        panel.get_by_label('Show Exam Mark on images (prior in a different font)').uncheck()
+        expect(p.locator('.kin-viewer-identity[data-exam-mark="N1"]')).to_have_count(0, timeout=20000)
+        self.assertEqual(self.originals(), originals)
+
     def artifacts(self):
         from pathlib import Path
         folder = Path(__file__).parent / 'artifacts'; folder.mkdir(exist_ok=True)
