@@ -213,7 +213,12 @@ class ServedClinicalPages(unittest.TestCase):
     def open_questions(self, page):
         if page == 'main':
             if not self.page.locator('#question-pane').is_visible():
-                self.page.locator('#question-toggle').click()
+                # The Questions row does not stand up for the read's answer (main.html "An answer never resizes"):
+                # the band's notice tells what it learned and opens the row; folded, that is the reader's way in.
+                self.page.wait_for_function("() => !document.getElementById('question-notice').hidden"
+                                            " || !document.getElementById('question-p').hidden")
+                notice = self.page.locator('#question-notice')
+                (notice if notice.is_visible() else self.page.locator('#question-toggle')).click()
         elif self.page.locator('#questions').get_attribute('open') is None:
             self.page.locator('#questions-summary').click()
         self.page.locator('[data-open-thread]').first.click()

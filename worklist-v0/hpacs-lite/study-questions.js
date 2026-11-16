@@ -5,7 +5,11 @@
     // 판독 대상 검사(selectedUid)의 임상의 질문을 서버 S5-U4a route로 읽고(#3 검사별·#2 스레드·#1 view=inbox) 답변(#5)과
     // 사유 있는 닫기(#6)를 쓴다. consultation 창·요청과 섞지 않는다. 판독문 칸·버튼 줄 밖의 줄이며 판독문을 읽거나 쓰지 않는다.
     // 역할로 쓰기 컨트롤을 숨기지 않는다 — 관리자 답변 403처럼 서버 거절을 그대로 보인다. 읽기는 판독의·관리자 세션에서만 시작한다.
-    // 줄은 질문이 있거나 읽기가 실패했거나 사용자가 창을 연 동안만 보인다: 질문 없는 검사의 판독 화면 배치를 바꾸지 않는다.
+    // 답은 이 줄을 세우지 않는다(main.html "An answer never resizes"): 판독 칸은 목록 자료로 그 자리에서 그려지고 질문 읽기의
+    // 답은 늘 그 뒤에 오므로, 답으로 서는 줄은 편집기와 단추 줄 사이에 끼어 단추 줄을 민다. 그래서 질문이 있거나·읽기가
+    // 실패했거나·잠긴 것은 판독 칸 위 안내 띠의 알림(#question-notice)이 개수·상태로 말하고, 줄과 창은 읽는 사람이 그 알림을
+    // 누를 때(또는 Inbox에서 질문을 열 때) 제자리에 선다. 창을 닫으면 줄도 접고 알림으로 돌아간다. 읽는 중에는 아직 모르는
+    // 것이라 알림을 바꾸지 않고(이미 말한 것은 그대로), 성공한 빈 답만 "질문 없음"이다 — 그때 알림은 내린다.
     // 원격판독으로 받은 검사는 읽지 않는다 — 질문은 소유 기관 안에서만 오가고(OQ-1 a) 수신 기관의 읽기는 늘 404다.
     // 검사를 바꾸면 이전 검사의 스레드를 내린다. 쓰던 글은 검사·스레드별로 이 문서의 메모리에만 두어 그 스레드에서만 다시 보인다.
     // 요청은 api()가 아니라 이 절의 call()로 보낸다 — 401에서 이 줄을 로그아웃 POST보다 먼저 끝내야 한다(call·expire).
@@ -13,10 +17,16 @@
     // api()의 401, 확정한 Log out, 받아쓰기의 401, 목록의 계정 변경, 이 절의 401(expire) — 은 로그아웃 POST·초안 저장 같은
     // 네트워크 대기 전에 그 목록을 동기로 부른다. auth.js의 session-ended 방송은 그 POST가 끝난 뒤라 기다리지 않는다.
     // 한 영역이 알아챈 계정 변경(다른 계정의 봉투·OWNER_CHANGED)은 같은 목록에 사유 'account-changed'로 알려 두 영역을 함께 잠근다.
-    function mountStudyQuestions({ apiBase, work, transport, current, study, openStudy, allowed, owner }) {
+    function mountStudyQuestions({ apiBase, work, transport, current, study, openStudy, allowed, owner, online = () => true }) {
       const root = $('#question-p'), summary = $('#question-summary'), toggle = $('#question-toggle');
-      const inboxButton = $('#question-inbox'), pane = $('#question-pane');
+      const inboxButton = $('#question-inbox'), pane = $('#question-pane'), notice = $('#question-notice');
       const TEXT = {
+        unread: '이 검사의 질문은 읽지 않습니다(원격판독 검사·권한).',
+        // 끊김은 상태를 말한다: 이 화면의 연결 판단일 뿐 통신을 막는 것은 아니다(답변·닫기는 그대로 보낼 수 있다).
+        offline: '서버 연결이 끊겼습니다. 표시된 질문은 최신이 아닐 수 있습니다.',
+        // 안내 띠의 알림은 짧게(띠의 다른 줄을 좁혀 줄을 바꾸지 않게): 개수와 0이 아닌 상태, 전문은 툴팁.
+        notice: { counts: (n, parts) => `질문 ${n}건${parts ? ` · ${parts}` : ''}`, failed: '질문 읽기 실패', refused: '질문 읽기 거절',
+          account: '질문: 계정 바뀜' },
         loading: '이 검사의 질문을 불러오는 중입니다…',
         failed: '이 검사의 질문을 불러오지 못했습니다.',
         empty: '이 검사에는 질문이 없습니다.',
@@ -90,6 +100,11 @@
       const inflight = new Set();
       // uid는 지금 읽는 판독 대상. epoch는 대상이 바뀌거나 잠길 때마다 오르고, 읽기마다 자기 번호와 함께 들고 떠난다.
       let uid = null, epoch = 0, listSeq = 0, threadSeq = 0, inboxSeq = 0;
+      // 판독 칸이 보이는 검사(shownFor: 판독 대상이 아니어도 — 원격판독 검사·연결 끊김). 그것이 바뀌면 줄과 창을 접는다.
+      let shownFor;
+      // 안내 띠의 알림이 마지막으로 말한 것({text, title} 또는 null). 읽는 중(아직 모름)에는 이것을 그대로 보인다 — 줄을 연 사이에
+      // 다시 읽기가 나가 있어도 줄을 닫으면 알림과 그 입구가 돌아온다.
+      let told = null;
       let items = null, listFailure = null, listLoading = false;
       let mode = null, threadId = null, thread = null, threadFailure = null, threadLoading = false, pendingThread = null;
       let inboxState = 'open', inboxItems = [], inboxCursor = null, inboxFailure = null, inboxLoading = false;
@@ -298,17 +313,35 @@
       inboxView.append(make('p', 'question-muted', TEXT.inboxHint), inboxHead, inboxLine, inboxList, inboxMore);
       pane.append(lockBox, studyView, inboxView);
 
-      /** 줄과 창의 겉모습. 줄은 질문이 있거나·읽기가 실패했거나·잠겼거나·창을 연 동안만 보인다. */
+      /**
+       * 줄과 창의 겉모습. 줄은 읽는 사람이 연 동안(mode)만 선다 — 답이 줄을 만들거나 없애지 않는다. 질문·실패·잠금은 줄이 접혀
+       * 있는 동안 안내 띠의 알림이 말한다. 읽는 중(아직 모름)에는 알림을 그대로 두고, 성공한 빈 답이면 내린다.
+       */
       function paint() {
-        const visible = !ended && allowed() && (lock !== null || mode !== null || listFailure !== null || (items !== null && items.length > 0));
+        const visible = !ended && mode !== null;
         root.hidden = !visible;
         root.dataset.state = ended ? 'ended' : lock ? 'locked' : listFailure ? 'failed' : listLoading ? 'loading'
           : items === null ? 'idle' : items.length ? 'ready' : 'empty';
         const counts = state => (items || []).filter(item => item.state === state).length;
-        const line = lock ? lock.text : uid === null ? TEXT.none : listFailure ? TEXT.failed : items === null ? TEXT.loading
+        const line = lock ? lock.text : shownFor && !online() ? TEXT.offline : uid === null || !allowed() ? (shownFor ? TEXT.unread : TEXT.none)
+          : listFailure ? TEXT.failed
+          : items === null ? TEXT.loading
           : items.length ? TEXT.counts(items.length, counts('Open'), counts('Answered'), counts('Closed')) : TEXT.empty;
         summary.textContent = line;
         summary.title = line;
+        if (notice) {
+          // 알 때만 말한다: 잠김·실패·질문 있음은 그 글, 성공한 빈 답·읽지 않는 검사는 알림 없음, 읽는 중은 그대로.
+          const parts = ['Open', 'Answered', 'Closed'].filter(state => counts(state)).map(state => `${state} ${counts(state)}`).join(' · ');
+          // 끊긴 동안은 새로 아는 것이 없다: 마지막으로 말한 것을 그대로 둔다.
+          const now = !lock && uid !== null && !allowed() ? null : lock ? (lock.account ? TEXT.notice.account : TEXT.notice.refused) : listFailure ? TEXT.notice.failed
+            : items && items.length ? TEXT.notice.counts(items.length, parts) : uid === null || items !== null ? '' : null;
+          if (now !== null) told = now ? { text: now, title: `${line} — Show Questions` } : null;
+          notice.hidden = ended || visible || !told;
+          if (told) {
+            notice.textContent = told.text;
+            notice.title = told.title;
+          }
+        }
         toggle.textContent = mode === 'study' ? 'Hide Questions' : 'Show Questions';
         toggle.setAttribute('aria-expanded', String(mode === 'study'));
         inboxButton.setAttribute('aria-expanded', String(mode === 'inbox'));
@@ -659,7 +692,8 @@
         inboxCursor = null;
         inboxFailure = null;
         inboxLoading = false;
-        if (mode === null) mode = 'study';
+        // 잠금도 답이다: 창을 열지 않는다(열면 창이 판독 칸을 민다). 줄이 있으면 그 글이, 없으면 안내 띠의 알림이 까닭을 말하고,
+        // 상세(#question-lock)는 읽는 사람이 창을 열 때 보인다.
         clearThreadBox();
         list.replaceChildren();
         inboxList.replaceChildren();
@@ -869,9 +903,22 @@
        */
       function sync() {
         if (ended) return;
-        const selectedUid = allowed() ? current() : null;
+        const shown = current(), selectedUid = allowed() ? shown : null;
         const row = selectedUid ? study(selectedUid) : null;
         const next = row && row.tele !== true ? selectedUid : null;
+        // 판독 칸이 다른 검사를 보이면 줄·창·알림을 그 검사 기준으로 접는다(같은 그리기 안 — 읽는 사람의 이동이다). Inbox에서
+        // 그 검사의 질문을 연 것(pendingThread)만 창을 연 채 둔다. 같은 검사를 다시 그리는 것(폴링·저장·관련 검사 보기)과
+        // 연결이 끊기고 돌아오는 것은 이동이 아니다 — 연 줄은 그대로다.
+        if (shown !== shownFor) {
+          shownFor = shown;
+          if (!(pendingThread && pendingThread.uid === next)) {
+            if (mode !== null) inboxSeq++;
+            mode = null;
+          }
+          told = null;
+          if (notice) notice.hidden = true;
+          if (next === uid) paint();
+        }
         if (next === uid) return;
         uid = next;
         epoch++;
@@ -945,6 +992,14 @@
         if (uid !== null) loadList();
         if (mode === 'inbox') loadInbox(false);
       }
+      /**
+       * 목록 폴링이 부른다(worklist-polling.js): 같은 판독 대상의 질문을 다시 읽는다 — 판독 칸을 연 뒤에 온 질문도 알게 된다.
+       * 답은 글(줄이 접혀 있으면 안내 띠의 알림)만 바꾼다. 읽는 중이면 그 답을 기다린다.
+       */
+      function refresh() {
+        if (ended || lock !== null || uid === null || listLoading) return;
+        loadList();
+      }
       work.onInvalidate(event => { if (event.reason === 'prepare') suspend(); });
 
       toggle.addEventListener('click', () => {
@@ -967,11 +1022,29 @@
         paint();
         if (lock === null) loadInbox(false);
       });
+      // 안내 띠의 알림: 읽는 사람이 누르면 이 검사의 줄과 창을 제자리에 연다(Show Questions와 같다). 알림은 줄이 서면
+      // 내려가므로 초점은 그 줄의 Hide Questions로 옮긴다.
+      notice?.addEventListener('click', () => {
+        if (ended) return;
+        inboxSeq++;
+        mode = 'study';
+        paint();
+        renderList();
+        renderThread();
+        toggle.focus();
+      });
+      // 연결이 끊기거나 돌아왔다(page-boot.js goOffline·goOnline). 판독 대상은 바뀌지 않았다 — 읽은 것·연 스레드·쓰던 칸은
+      // 그대로 두고(끊김을 대상 바뀜으로 다루면 쓰던 답변 칸이 내려갔다) 줄의 글만 바꾼다. 돌아오면 같은 대상을 다시 읽는다.
+      (window.kinOnConnection = window.kinOnConnection || []).push(() => {
+        if (ended) return;
+        if (allowed()) { sync(); refresh(); }
+        paint();
+      });
       window.addEventListener('pagehide', end);
       // 이 문서의 세션이 끝나면 세션 종료 조정이 이 목록을 동기로 부른다. 어느 로그인의 종료인지는 auth.js가 대조한다.
       onCommonEnd(end);
       paint();
-      return { sync, end, resume };
+      return { sync, end, resume, refresh };
     }
     let studyQuestions = null;
     try {
@@ -979,5 +1052,6 @@
         study: uid => studies.find(s => s.uid === uid),
         openStudy: uid => select(uid),
         allowed: () => !!sess && serverMode && !demoMode && !offline && (KinAuth.has('radiologist') || KinAuth.has('admin')),
+        online: () => !offline,
         owner: () => { const s = KinAuth.session(); return s?.state === 'approved' ? [s.institution ?? null, s.sub ?? null] : null; } });
     } catch (_) { toast('임상의 질문 줄을 준비하지 못했습니다. 판독 작업은 계속할 수 있습니다.', 'err'); }

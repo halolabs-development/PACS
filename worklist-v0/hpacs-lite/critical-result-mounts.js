@@ -14,6 +14,9 @@
         blocked: () => relatedMode.active() ? relatedMode.reason() : null,
         eligible: () => { const s = KinAuth.session(); return !!sess && serverMode && !demoMode && !offline && s?.state === 'approved'
           && Array.isArray(s.roles) && (s.roles.includes('clinician') || s.roles.includes('radiologist')); },
+        // The panel stands for the session whether or not the server answers now (main.html "An answer never resizes").
+        standing: () => { const s = KinAuth.session(); return !!sess && !demoMode && s?.state === 'approved'
+          && Array.isArray(s.roles) && (s.roles.includes('clinician') || s.roles.includes('radiologist')); },
         owner: () => { const s = KinAuth.session(); return s?.state === 'approved' ? [s.institution ?? null, s.sub ?? null] : null; } });
       accountChangeHooks.push((reason, detail) => criticalInbox.lock(detail));
     } catch (_) { toast('중요 결과 수신 화면을 준비하지 못했습니다. 판독 작업은 계속할 수 있습니다.', 'err'); }
@@ -30,6 +33,7 @@
         study: uid => studies.find(s => s.uid === uid),
         report: uid => { const a = appState[uid]; return a ? { version: a.version ?? 0, rs: a.rs ?? null } : null; },
         online: () => !!sess && serverMode && !demoMode && !offline,
+        standing: () => !!sess && !demoMode,
         radiologist: () => { const s = KinAuth.session(); return s?.state === 'approved' && Array.isArray(s.roles) && s.roles.includes('radiologist'); },
         owner: () => { const s = KinAuth.session(); return s?.state === 'approved' ? [s.institution ?? null, s.sub ?? null] : null; },
         actorName: value => displayActor(value),

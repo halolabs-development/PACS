@@ -2138,8 +2138,38 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
                 self.assertTrue(v["entry"]["disabled"])
                 self.assertTrue(has_hangul(v["entry"]["title"]))
                 self.assertEqual((True, "Status"), (v["entry"]["present"], v["entry"]["section"]))
-                self.assertFalse(v["panel"]["shown"])
+                # Offline, a radiologist's Sent panel stands and says it reads nothing now: hidden, it gave its height back to
+                # the report column and moved the button row (main.html "An answer never resizes").
+                if name == "offline radiologist":
+                    self.assertEqual((True, "서버 연결이 끊겼습니다. 표시된 보낸 중요 결과는 최신이 아닐 수 있습니다."), (v["panel"]["shown"], v["panel"]["summary"]))
+                else:
+                    self.assertFalse(v["panel"]["shown"])
 
+    # ── SD10b ──
+    def test_sd10b_going_offline_keeps_the_open_dialog_and_tells_the_panel(self):
+        """The page going offline or back (page-boot.js goOffline / goOnline call window.kinOnConnection) is not a move to
+        another study: the open Mark CVR window keeps its recipient and message (it was closed and cleared), and the
+        Sent panel stands and says it reads nothing now, then reads again."""
+        self.server.add(A, P)
+        self.ready_reader()
+        self.show_sent()
+        self.mark()
+        self.compose(text="SYN kept through the outage")
+        connection = "online => { serverMode = online; offline = !online; (window.kinOnConnection || []).forEach(change => change()); }"
+        reads = len([r for r in self.log if r["kind"] == "list"])
+        self.page.evaluate(connection, False)
+        self.settle()
+        expect(self.page.locator("#cvr-send")).to_be_visible()
+        self.assertEqual((P["sub"], "SYN kept through the outage"),
+                         (self.page.locator("#cvr-send-recipient").input_value(), self.page.locator("#cvr-send-message").input_value()))
+        expect(self.page.locator("#cvr-sent-summary")).to_have_text("서버 연결이 끊겼습니다. 표시된 보낸 중요 결과는 최신이 아닐 수 있습니다.")
+        expect(self.page.locator("#cvr-sent-refresh")).to_be_disabled()
+        expect(self.page.locator("#cvr-sent-pane")).to_be_visible()
+        self.page.evaluate(connection, True)
+        self.wait_until(lambda: len([r for r in self.log if r["kind"] == "list"]) > reads, "the Sent list read again once back")
+        self.settle()
+        expect(self.page.locator("#cvr-sent-summary")).to_have_text("Pending ACK 1")
+        self.assertEqual("SYN kept through the outage", self.page.locator("#cvr-send-message").input_value())
     # ── SD11 ──
     def test_sd11_the_periodic_re_read_only_reads_and_an_acknowledged_record_stays_reachable(self):
         r1 = self.server.add(A, P)

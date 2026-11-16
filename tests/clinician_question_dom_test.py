@@ -160,6 +160,13 @@ C_PENDING = ("결과를 모르는 요청이나 보내지 않은 글이 남은 �
 C_PENDING_STATES = {"Unconfirmed": "저장되었는지 알 수 없는 요청이 있습니다. 스레드를 열면 Retry·Discard가 있습니다.",
                     "Sending": "보내는 중인 요청이 있습니다.", "Draft": "보내지 않은 글이 있습니다."}
 R_EMPTY = "이 검사에는 질문이 없습니다."
+R_LOADING = "이 검사의 질문을 불러오는 중입니다…"
+# The report column's boxes a reader aims at (and the band above the editor), in the worklist card and the Reading
+# Workspace: an answer of the questions' reads leaves them where the paint that showed the study put them.
+BOXES = """() => [false, true].map(reading => { document.body.classList.toggle('reading', reading);
+  const box = s => { const r = document.querySelector(s).getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; };
+  const out = ['#report-notices', '.report-p .redit', '#findings', '#conclusion', '.report-p .rbtns', '.report-p .rfoot2'].map(box);
+  document.body.classList.remove('reading'); return out; })"""
 R_FAILED = "이 검사의 질문을 불러오지 못했습니다."
 R_COUNTS = "이 검사의 질문 {n}건 · Open {o} · Answered {a} · Closed {c}"
 R_READY = "이 검사의 질문 {n}건을 최신순으로 표시합니다."
@@ -1090,11 +1097,28 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
     def reader(self):
         return self.page.evaluate(READER_VIEW)
 
+    def press_questions(self):
+        """Show / Hide Questions. While the row is folded the reader's way in is the band's notice (main.html "An answer
+        never resizes": an answer tells there and does not stand the row up), which opens the row and its pane."""
+        if self.page.locator("#question-p").is_hidden():
+            expect(self.page.locator("#question-notice")).to_be_visible()
+            self.page.locator("#question-notice").click()
+        else:
+            self.page.locator("#question-toggle").click()
+
+    def press_inbox(self):
+        """Inbox, in the row: the band's notice opens the row first when it is folded."""
+        if self.page.locator("#question-p").is_hidden():
+            self.press_questions()
+        self.page.locator("#question-inbox").click()
+
     def reader_state(self, state):
         expect(self.page.locator("#question-p")).to_have_attribute("data-state", state)
         return self.reader()
 
     def reader_thread(self, qid, state):
+        if self.page.locator("#question-p").is_hidden():   # folded (a move folds it): the reader opens it first
+            self.press_questions()
         self.page.locator(f'#question-list > li[data-id="{qid}"] button[data-open-thread]').click()
         expect(self.page.locator("#question-thread")).to_have_attribute("data-state", state)
         expect(self.page.locator("#question-thread")).to_have_attribute("data-id", qid)
@@ -2065,7 +2089,7 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         self.open_reader(me(RADIOLOGIST, ["radiologist"]))
         self.target(A)
         self.reader_state("ready")
-        self.page.locator("#question-toggle").click()
+        self.press_questions()
         self.reader_thread(opened["id"], "Open")
         # Reply (a radiologist's answer: Open -> Answered, then Answered -> Answered).
         for index, (name, fault, detail) in enumerate(REPLY_ENVELOPES):
@@ -2132,36 +2156,47 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         self.assertEqual([True, True, True, True], place)
         self.assertEqual((False, "idle"), (self.reader()["shown"], self.reader()["state"]))
 
-        # A target without threads: read once, hidden, the report column's boxes are those of a page without the row.
+        # A target without threads: read once; nothing stands up and nothing is told - the answer changes no box of the
+        # report column (main.html "An answer never resizes").
+        self.holding = {"list"}
         self.target(B)
+        seen = self.reader()
+        self.assertEqual((False, "loading"), (seen["shown"], seen["state"]))
+        before = self.page.evaluate(BOXES)
+        pending, = self.take("list")
+        self.holding = set()
+        self.release(pending)
         seen = self.reader_state("empty")
-        self.assertEqual((False, R_EMPTY), (seen["shown"], seen["summary"]))
+        self.assertEqual((False, None), (seen["shown"], self.page.evaluate(self.NOTICE)))
+        self.assertEqual(before, self.page.evaluate(BOXES), "the empty answer moved the report column")
         self.assertEqual([("list", f"/api/studies/{B}/questions")], [(r["kind"], r["path"]) for r in self.requests()])
-        for reading in (False, True):
-            with self.subTest(reading=reading):
-                boxes = self.page.evaluate("""(reading) => { document.body.classList.toggle('reading', reading);
-                  const box = s => { const r = document.querySelector(s).getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; };
-                  const measure = () => ['.report-p .rbtns', '.report-p .redit', '#findings', '#recommendation', '.report-p .rfoot2'].map(box);
-                  const before = measure(), row = document.querySelector('#question-p'), next = row.nextElementSibling;
-                  row.remove(); const after = measure(); next.before(row); document.body.classList.remove('reading');
-                  return [before, after]; }""", reading)
-                self.assertEqual(boxes[1], boxes[0])
         # The same target again: nothing is read.
         self.target(B)
         self.assertEqual(1, len(self.requests()))
-        # A tele study: not read (questions stay in the owning institution), hidden.
+        # A tele study: not read (questions stay in the owning institution), nothing shown or told.
         self.target(T)
         seen = self.reader()
-        self.assertEqual((False, 1), (seen["shown"], len(self.requests())))
-        # A target with threads: visible, one line, counts in words; the pane stays closed until asked.
+        self.assertEqual((False, 1, None), (seen["shown"], len(self.requests()), self.page.evaluate(self.NOTICE)))
+        # A target with threads: the band's notice says how many in words; the row stays folded until the reader opens
+        # it there, and then shows the same words on one line with the pane open.
         self.target(A)
         seen = self.reader_state("ready")
-        self.assertEqual((True, R_COUNTS.format(n=3, o=1, a=1, c=1), ["Show Questions", "false"], "false", None),
+        # The notice is short (the band's other rows keep their width): the count and the states that have any; the whole
+        # sentence is its tooltip.
+        self.assertEqual((False, {"text": "질문 3건 · Open 1 · Answered 1 · Closed 1", "title": R_COUNTS.format(n=3, o=1, a=1, c=1)
+                                  + " — Show Questions", "inBand": True}), (seen["shown"], self.page.evaluate(self.NOTICE)))
+        self.press_questions()
+        seen = self.reader()
+        self.assertEqual((True, R_COUNTS.format(n=3, o=1, a=1, c=1), ["Hide Questions", "true"], "false", "study"),
                          (seen["shown"], seen["summary"], seen["toggle"], seen["inbox"], seen["mode"]))
         bar = self.page.evaluate("""() => { const r = document.querySelector('#question-p .question-bar').getBoundingClientRect();
           const s = getComputedStyle(document.querySelector('#question-summary')); return [r.height, s.whiteSpace, s.textOverflow]; }""")
         self.assertLessEqual(bar[0], 32)
         self.assertEqual(["nowrap", "ellipsis"], bar[1:])
+        # Hide Questions folds the row and the notice is back.
+        self.press_questions()
+        self.assertEqual((False, None), (self.reader()["shown"], self.reader()["mode"]))
+        self.assertIsNotNone(self.page.evaluate(self.NOTICE))
         self.assertEqual(["list", "list"], [r["kind"] for r in self.requests()])
 
         # A session that is neither radiologist nor admin reads nothing and shows nothing.
@@ -2169,14 +2204,169 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         self.open_reader(me(ADMIN, ["technician"]))
         for u in (A, B):
             self.target(u)
-        self.assertEqual(([], False), (self.requests(), self.reader()["shown"]))
+        self.assertEqual(([], False, None), (self.requests(), self.reader()["shown"], self.page.evaluate(self.NOTICE)))
+
+    NOTICE = """() => { const n = document.querySelector('#question-notice'), band = document.querySelector('#report-notices');
+      return n.hidden ? null : {text: n.textContent, title: n.title, inBand: band.contains(n)}; }"""
+
+    def test_11b_reader_answers_tell_in_the_band_and_never_stand_the_row_up(self):
+        """Answers of the questions' reads never stand the row up or fold it (it would push the button row): what they
+        learn - threads and their counts, a failed read, a refusal - the band's notice says, and while a read is on its
+        way the notice keeps what it said. The reader opens the row there; closing its pane folds it again; moving to
+        another study folds it, except an Inbox question opened for that study. Late answers of an earlier study paint
+        nothing, and no answer moves the report column's boxes."""
+        opened, answered, _ = self.seed_threads()
+        self.open_reader(me(RADIOLOGIST, ["radiologist"]))
+        refresh = "() => studyQuestions.refresh()"
+        counts = R_COUNTS.format(n=3, o=1, a=1, c=1)
+        # What the notice says in full (its tooltip; its own words are the short form).
+        told = lambda: ((self.page.evaluate(self.NOTICE) or {}).get("title") or "").split(" — ")[0] or None
+        self.target(B)
+        self.reader_state("empty")
+        before = self.page.evaluate(BOXES)
+        # None -> some: a question asked after the study opened, learned by the next refresh.
+        self.server.seed(B, CLINICIAN, "SYN asked later")
+        self.page.evaluate(refresh)
+        self.reader_state("ready")
+        self.assertEqual((False, R_COUNTS.format(n=1, o=1, a=0, c=0)), (self.reader()["shown"], told()))
+        # Some -> none (the server's list empties): the notice goes.
+        self.faults.append({"kind": "list", "apply": True, "patch": lambda p: p.update(items=[])})
+        self.page.evaluate(refresh)
+        self.reader_state("empty")
+        self.assertIsNone(told())
+        # Failed -> retried -> empty: the failure is told and kept while the retry is on its way.
+        self.faults.append({"kind": "list", "status": 503, "body": {"message": "SYN down"}})
+        self.page.evaluate(refresh)
+        self.reader_state("failed")
+        self.assertEqual(R_FAILED, told())
+        self.holding = {"list"}
+        self.faults.append({"kind": "list", "apply": True, "patch": lambda p: p.update(items=[])})
+        self.page.evaluate(refresh)
+        pending, = self.take("list")
+        self.holding = set()
+        self.assertEqual(("loading", R_FAILED), (self.reader()["state"], told()))
+        self.release(pending)
+        self.reader_state("empty")
+        self.assertIsNone(told())
+        self.assertFalse(self.reader()["shown"])
+        self.assertEqual(before, self.page.evaluate(BOXES), "answers on B moved the report column")
+
+        # A -> B -> A with the reads held: the late answers of the earlier openings paint nothing.
+        self.target(A)
+        self.reader_state("ready")
+        self.press_questions()
+        self.assertEqual((True, "study"), (self.reader()["shown"], self.reader()["mode"]))
+        self.holding = {"list"}
+        self.target(B)
+        self.assertEqual((False, None, None), (self.reader()["shown"], self.reader()["mode"], told()), "moving folds the row")
+        self.target(A)
+        b1, a1 = self.take("list", 2)
+        self.holding = set()
+        self.release(a1)
+        self.release(b1)
+        self.reader_state("ready")
+        self.assertEqual((False, counts), (self.reader()["shown"], told()))
+        self.assertEqual(before, self.page.evaluate(BOXES), "A -> B -> A moved the report column")
+
+        # A refusal (403) is told in the band; the pane is not opened for it. Opened by the reader, it shows the lock.
+        self.faults.append({"kind": "list", "status": 403, "body": {"code": "QUESTION_ROLE_REQUIRED", "message": "SYN refused"}})
+        self.page.evaluate(refresh)
+        self.reader_state("locked")
+        self.assertEqual((False, REFUSED), (self.reader()["shown"], told()))
+        self.assertEqual(before, self.page.evaluate(BOXES), "the refusal moved the report column")
+        self.press_questions()
+        seen = self.reader()
+        self.assertEqual((True, ["failed", REFUSED, "SYN refused (HTTP 403 · QUESTION_ROLE_REQUIRED)"]), (seen["shown"], seen["lock"]))
+
+        # The notice opens the row and a thread takes a reply from there; the Inbox's Open Study keeps the pane open on
+        # the study it moves to.
+        self.q_requests = []
+        self.open_reader(me(RADIOLOGIST, ["radiologist"]))
+        self.target(A)
+        self.reader_state("ready")
+        self.press_questions()
+        self.reader_thread(opened["id"], "Open")
+        self.reader_write("reply", "SYN reply after the notice")
+        expect(self.page.locator("#question-thread [data-note-key]:not([hidden])").first).to_have_attribute("data-state", "saved")
+        expect(self.page.locator("#question-entries > li")).to_have_count(2)   # the thread read again
+        other = self.server.seed(C, CLINICIAN, "SYN on C")
+        self.target(B)
+        self.reader_state("ready")   # B's question asked above
+        self.target(A)
+        self.reader_state("ready")
+        self.press_inbox()
+        expect(self.page.locator(f'#question-inbox-list > li[data-id="{other["id"]}"]')).to_be_visible()
+        self.page.locator(f'#question-inbox-list > li[data-id="{other["id"]}"] button[data-open-study]').click()
+        expect(self.page.locator("#question-thread")).to_have_attribute("data-id", other["id"])
+        seen = self.reader()
+        self.assertEqual((True, "study"), (seen["shown"], seen["mode"]), "Open Study keeps the pane open on the study it opens")
+
+        # Opened offline (nothing read), then back online: the read's answer is told in the band, nothing stands up.
+        self.q_requests = []
+        self.open_reader(me(RADIOLOGIST, ["radiologist"]))
+        self.page.evaluate("() => { offline = true; }")
+        self.target(A)
+        self.assertEqual((False, [], None), (self.reader()["shown"], self.requests(), told()))
+        self.page.evaluate("() => { offline = false; renderClinical(); }")
+        self.wait_until(lambda: len(self.requests("list")) == 1, "the read once back online")
+        expect(self.page.locator("#question-notice")).to_be_visible()
+        self.assertEqual((False, self.reader()["summary"]), (self.reader()["shown"], told()))
+        self.assertTrue(told().startswith("이 검사의 질문 3건 · "), told())
+
+        # A retry on its way while the reader closes the pane: the notice and its way in come back with what it last said.
+        self.q_requests = []
+        self.open_reader(me(RADIOLOGIST, ["radiologist"]))
+        self.target(A)
+        self.reader_state("ready")
+        self.faults.append({"kind": "list", "status": 503, "body": {"message": "SYN down"}})
+        self.page.evaluate(refresh)
+        self.reader_state("failed")
+        self.press_questions()
+        self.holding = {"list"}
+        self.page.locator("#question-list-retry").click()
+        pending, = self.take("list")
+        self.holding = set()
+        self.press_questions()   # Hide Questions while the retry is held
+        seen = self.reader()
+        self.assertEqual((False, "loading", R_FAILED), (seen["shown"], seen["state"], told()))
+        expect(self.page.locator("#question-notice")).to_be_visible()
+        self.release(pending)
+        self.reader_state("ready")
+        self.assertTrue(told().startswith("이 검사의 질문 3건 · "), told())
+
+        # The page going offline and back (page-boot.js calls window.kinOnConnection) is not a move: the open thread and the reply being written
+        # stay; the row says it reads nothing now, and reads the same study again once back.
+        self.q_requests = []
+        self.open_reader(me(RADIOLOGIST, ["radiologist"]))
+        self.target(A)
+        self.reader_state("ready")
+        self.reader_thread(answered["id"], "Answered")
+        self.reader_write("reply", "SYN reply kept through the outage", press=False)
+        connection = "online => { offline = !online; (window.kinOnConnection || []).forEach(change => change()); }"
+        self.page.evaluate(connection, False)
+        seen = self.reader()
+        self.assertEqual((True, "서버 연결이 끊겼습니다. 표시된 질문은 최신이 아닐 수 있습니다.", answered["id"]),
+                         (seen["shown"], seen["summary"], seen["thread"]["id"]))
+        self.assertEqual("SYN reply kept through the outage", self.page.locator("#question-reply-text").input_value())
+        reads = len(self.requests("list"))
+        self.page.evaluate(connection, True)
+        self.wait_until(lambda: len(self.requests("list")) > reads, "the same study read again once back")
+        self.reader_state("ready")
+        self.assertEqual("SYN reply kept through the outage", self.page.locator("#question-reply-text").input_value())
+        # A tele study is never read: no row and no notice, whatever a refresh asks.
+        self.q_requests = []
+        self.open_reader(me(RADIOLOGIST, ["radiologist"]))
+        self.target(T)
+        self.page.evaluate(refresh)
+        self.settle()
+        self.assertEqual((False, None, []), (self.reader()["shown"], told(), self.requests()))
 
     def test_12_reader_reply_close_oq11_anchor_and_admin_refusal(self):
         opened, answered, _ = self.seed_threads()
         self.open_reader(me(RADIOLOGIST, ["radiologist"]))
         self.target(A)
         self.reader_state("ready")
-        self.page.locator("#question-toggle").click()
+        self.press_questions()
         seen = self.reader()
         self.assertEqual(("study", ["Hide Questions", "true"], ["ready", R_READY.format(n=3), ""]),
                          (seen["mode"], seen["toggle"], seen["list"]))
@@ -2219,7 +2409,7 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         self.open_reader(me(ADMIN, ["admin"]))
         self.target(A)
         self.reader_state("ready")
-        self.page.locator("#question-toggle").click()
+        self.press_questions()
         self.reader_thread(answered["id"], "Answered")
         self.reader_write("reply", "SYN admin answer")
         seen = self.reader_note("failed")
@@ -2237,8 +2427,9 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         self.faults.append({"kind": "list", "status": 500, "body": {"message": "SYN list failure"}})
         self.target(A)
         seen = self.reader_state("failed")
-        self.assertEqual((True, R_FAILED), (seen["shown"], seen["summary"]))
-        self.page.locator("#question-toggle").click()
+        self.assertEqual((False, "질문 읽기 실패", R_FAILED + " — Show Questions"), (seen["shown"], self.page.locator("#question-notice").text_content(),
+                                                                    self.page.locator("#question-notice").get_attribute("title")))
+        self.press_questions()
         self.assertEqual(["failed", R_FAILED, "SYN list failure (HTTP 500)"], self.reader()["list"])
         self.page.locator("#question-list-retry").click()
         seen = self.reader_state("ready")
@@ -2306,7 +2497,7 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         self.open_reader(me(RADIOLOGIST, ["radiologist"]))
         self.target(A)
         self.reader_state("ready")
-        self.page.locator("#question-toggle").click()
+        self.press_questions()
         self.reader_thread(opened["id"], "Open")
         entries = 1
         for code, message, applied in B2_ANSWERS:
@@ -2338,7 +2529,7 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
                            " event => window.synAccess.push(event.detail.notice)); }")
         self.target(A)
         self.reader_state("ready")
-        self.page.locator("#question-toggle").click()
+        self.press_questions()
         self.reader_thread(opened["id"], "Open")
         entries = 1
         for status, notice in ACCESS_RECORD.items():
@@ -2384,13 +2575,16 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         self.open_reader(me(RADIOLOGIST, ["radiologist"]))
         self.target(A)
         self.reader_state("ready")
-        self.page.locator("#question-toggle").click()
+        self.press_questions()
         self.reader_thread(thread_a["id"], "Open")
         self.reader_write("reply", "SYN draft for A", press=False)
         self.page.locator("#question-close-text").fill("SYN reason for A")
         self.target(B)
         seen = self.reader_state("ready")
-        self.assertEqual((None, "study"), (seen["thread"], seen["mode"]), "A's thread is taken down, the pane follows the target")
+        # Moving to another study folds the row and the pane (an answer of B's read does not open them); the reader
+        # opens B's from the band's notice.
+        self.assertEqual((None, None, False), (seen["thread"], seen["mode"], seen["shown"]), "A's thread is taken down and the row folded")
+        self.press_questions()
         seen = self.reader_thread(thread_b["id"], "Open")
         self.assertEqual(["", ""], [c["value"] for c in seen["composers"]], "B's fields start empty")
         self.target(A)
@@ -2425,7 +2619,7 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         self.open_reader(me(RADIOLOGIST, ["radiologist"]))
         self.target(A)
         self.reader_state("ready")
-        self.page.locator("#question-inbox").click()
+        self.press_inbox()
         expect(self.page.locator("#question-inbox-state")).to_have_attribute("data-state", "ready")
         seen = self.reader()
         inbox = self.requests("inbox")
@@ -2460,7 +2654,7 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
                          (self.page.evaluate("() => window.synSelects.at(-1)"), seen["mode"], seen["summary"]))
         # Empty and failed.
         self.server.threads.clear()
-        self.page.locator("#question-inbox").click()
+        self.press_inbox()
         expect(self.page.locator("#question-inbox-state")).to_have_attribute("data-state", "empty")
         self.assertEqual(["empty", R_INBOX_EMPTY, ""], self.reader()["inboxLine"])
         self.faults.append({"kind": "inbox", "status": 500, "body": {"message": "SYN inbox failure"}})
@@ -2494,17 +2688,21 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         seen = self.reader()
         self.assertEqual((False, "ended", count), (seen["shown"], seen["state"], len(self.q_requests)))
 
-        # A 403 read locks the row with an explicit text; nothing more is read.
+        # A 403 read locks the row with an explicit text; nothing more is read. The lock is an answer too: it does not
+        # open the pane (that would push the report column); the row's words say it, and the pane shows the detail when
+        # the reader opens it.
         self.q_requests = []
         self.open_reader(me(RADIOLOGIST, ["radiologist"]))
         self.faults.append({"kind": "list", "status": 403, "body": {"code": "QUESTION_ROLE_REQUIRED", "message": "SYN refused"}})
         self.target(A)
         seen = self.reader_state("locked")
-        self.assertEqual((True, REFUSED, "study", ["failed", REFUSED, "SYN refused (HTTP 403 · QUESTION_ROLE_REQUIRED)"]),
-                         (seen["shown"], seen["summary"], seen["mode"], seen["lock"]))
+        self.assertEqual((False, REFUSED, None), (seen["shown"], seen["summary"], seen["mode"]))
+        self.press_questions()
+        seen = self.reader()
+        self.assertEqual(("study", ["failed", REFUSED, "SYN refused (HTTP 403 · QUESTION_ROLE_REQUIRED)"]), (seen["mode"], seen["lock"]))
         self.assertEqual("alert", self.page.locator("#question-lock").get_attribute("role"))
         self.target(B)
-        self.page.locator("#question-inbox").click()
+        self.press_inbox()
         self.settle()
         self.assertEqual(1, len(self.q_requests), "a locked row reads nothing more")
 
@@ -2513,7 +2711,7 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         self.open_reader(me(RADIOLOGIST, ["radiologist"]))
         self.target(A)
         self.reader_state("ready")
-        self.page.locator("#question-toggle").click()
+        self.press_questions()
         self.faults.append({"kind": "thread", "apply": True, "patch": lambda p: p.update(owner=[INSTITUTION, "SYN-OTHER-SUB"])})
         self.page.locator(f'#question-list > li[data-id="{answered["id"]}"] button[data-open-thread]').click()
         seen = self.reader_state("locked")
@@ -2525,7 +2723,7 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         self.open_reader(me(RADIOLOGIST, ["radiologist"]))
         self.target(A)
         self.reader_state("ready")
-        self.page.locator("#question-toggle").click()
+        self.press_questions()
         self.reader_thread(opened["id"], "Open")
         self.faults.append({"kind":"reply", "status":401, "body":{"message":"SYN refused"}})
         self.reader_write("reply", "SYN reply refused")
@@ -2538,9 +2736,11 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         self.open_reader(me(RADIOLOGIST, ["radiologist"]))
         self.target(A)
         self.reader_state("ready")
-        self.page.locator("#question-toggle").focus()
+        # The reader's way in is the band's notice; Enter on it opens the row and moves the focus to Hide Questions.
+        self.page.locator("#question-notice").focus()
         self.page.keyboard.press("Enter")
         expect(self.page.locator("#question-pane")).to_be_visible()
+        self.assertEqual("question-toggle", self.page.evaluate(ACTIVE)["id"])
         self.page.keyboard.press("Tab")
         self.assertEqual("question-inbox", self.page.evaluate(ACTIVE)["id"])
         self.page.keyboard.press("Tab")
@@ -2602,7 +2802,7 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         self.page.evaluate(OTHER_PANEL)
         self.target(A)
         self.reader_state("ready")
-        self.page.locator("#question-toggle").click()
+        self.press_questions()
         self.reader_thread(opened["id"], "Open")
         self.page.locator("#question-close-text").fill("SYN unsent reason")
         self.holding = {"reply"}
@@ -2646,7 +2846,7 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         self.page.evaluate(OTHER_PANEL)
         self.target(A)
         self.reader_state("ready")
-        self.page.locator("#question-toggle").click()
+        self.press_questions()
         self.reader_thread(opened["id"], "Open")
         self.page.locator("#question-close-text").fill("SYN reason typed before the session end")
         self.holding = {"reply"}
@@ -2746,7 +2946,7 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         self.open_reader(me(RADIOLOGIST, ["radiologist"]))
 
         def open_from_inbox(qid):
-            self.page.locator("#question-inbox").click()
+            self.press_inbox()
             expect(self.page.locator("#question-inbox-state")).to_have_attribute("data-state", "ready")
             self.page.locator(f'#question-inbox-list > li[data-id="{qid}"] button[data-open-study]').click()
 
