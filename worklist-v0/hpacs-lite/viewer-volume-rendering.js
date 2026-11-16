@@ -325,9 +325,10 @@ window.kinCreateVolumeRendering=function({target,permitted,alive,owner,notice=()
       // Repainting the shown copy changes what the actor reads: a failure from here on closes VR rather than leave half a paint.
       if(!fresh)changed=true;
       await drive(model.paint(scalars,resource.buffer,r.plan,{bone:boneOn?bone:null,table:tableOn?table:null},r.floor),op);scalars=null;
-      changed=true;
       // Painted pixels have no streaming loader to mark texture slices: upload every slice before the copy is drawn.
       resource.volume.invalidate();
+      // A new copy changes the display only from the actor swap on; before it a failure releases the copy and keeps the view.
+      changed=true;
       if(fresh){r.bound=resource;pending=null;await bindVolume(op,resource.id);if(old)discardResource(r,old);}
       else render(op);
       r.bone=bone;r.boneOn=boneOn;r.tableOn=tableOn;showRemoval(op);
