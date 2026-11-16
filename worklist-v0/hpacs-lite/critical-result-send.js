@@ -1218,8 +1218,8 @@
     if (work.state() === 'active') startTimers();
     // 연결이 끊기거나 돌아왔다(page-boot.js goOffline·goOnline): 줄은 그대로 서고 글과 Refresh가 바뀐다. 돌아오면 연 목록을 다시 읽는다.
     window.addEventListener('kin-connection', () => {
+      // 대상을 다시 고르지 않는다(sync): 끊김을 대상 바뀜으로 다루면 쓰던 Mark CVR 창이 닫히고 수신자·메시지가 지워졌다.
       if (ended) return;
-      sync();
       paintPanel();
       if (paneOpen && lock === null && online()) loadList(false);
     });

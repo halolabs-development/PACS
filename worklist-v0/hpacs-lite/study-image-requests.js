@@ -829,7 +829,7 @@
         readRoot.hidden = !visible;
         readRoot.dataset.state = ended ? 'ended' : lock ? 'locked' : readFailure ? 'failed' : readLoading ? 'loading'
           : readItems === null ? 'idle' : readItems.length ? 'ready' : 'empty';
-        const text = lock ? lock.text : readUid === null ? TEXT.readUnread : readFailure ? TEXT.readFailed : readItems === null
+        const text = lock ? lock.text : readUid === null || !allowed() ? TEXT.readUnread : readFailure ? TEXT.readFailed : readItems === null
           ? TEXT.readLoading : readItems.length ? TEXT.readCounts(readItems.length, readCounts(readItems)) : TEXT.readEmpty;
         readSummary.textContent = text;
         readSummary.title = lock ? `${lock.text}\n${lock.detail}`.trim() : readFailure ? readDetail(readFailure) : text;
@@ -840,7 +840,8 @@
         readPane.hidden = !readOpen;
         if (readNotice) {
           // 알 때만 말한다: 요청 있음·실패·잠금은 그 글, 성공한 빈 답·읽지 않는 검사는 알림 없음, 읽는 중은 그대로.
-          const told = lock ? (lock.account ? TEXT.notice.account : TEXT.notice.refused) : readFailure ? TEXT.notice.failed
+          // 끊긴 동안은 새로 아는 것이 없다: 마지막으로 말한 것을 그대로 둔다.
+          const told = !lock && readUid !== null && !allowed() ? null : lock ? (lock.account ? TEXT.notice.account : TEXT.notice.refused) : readFailure ? TEXT.notice.failed
             : readItems && readItems.length ? TEXT.notice.counts(readItems.length, readCounts(readItems))
             : readUid === null || readItems !== null ? '' : null;
           if (ended) readNotice.hidden = true;
@@ -1061,8 +1062,13 @@
         readRoot.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         readToggle.focus({ preventScroll: true });
       });
-      // 연결이 끊기거나 돌아왔다(page-boot.js goOffline·goOnline): 줄은 제자리이고 글(읽지 않음·다시 읽기)만 바뀐다.
-      window.addEventListener('kin-connection', () => { if (ended) return; sync(); renderReading(); });
+      // 연결이 끊기거나 돌아왔다(page-boot.js goOffline·goOnline). 판독 대상은 바뀌지 않았다 — 줄은 제자리이고 글만 바뀐다(끊기면
+      // 읽지 않음, 돌아오면 같은 대상을 다시 읽음).
+      window.addEventListener('kin-connection', () => {
+        if (ended) return;
+        if (allowed()) { sync(); refresh(); }
+        renderReading();
+      });
       window.addEventListener('pagehide', end);
       // 이 문서의 세션이 끝나면(Log out, 요청의 401, 다른 문서의 종료) 세션 종료 조정이 네트워크를 기다리기 전에 동기로 부르는
       // 목록이다. 칸마다 자기 end()를 넣는다(S5-U4b 등도 같은 목록). 한 영역이 알아챈 계정 변경도 이 목록으로 사유

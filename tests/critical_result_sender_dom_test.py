@@ -2145,6 +2145,31 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
                 else:
                     self.assertFalse(v["panel"]["shown"])
 
+    # ── SD10b ──
+    def test_sd10b_going_offline_keeps_the_open_dialog_and_tells_the_panel(self):
+        """The page going offline or back (page-boot.js goOffline / goOnline send 'kin-connection') is not a move to
+        another study: the open Mark CVR window keeps its recipient and message (it was closed and cleared), and the
+        Sent panel stands and says it reads nothing now, then reads again."""
+        self.server.add(A, P)
+        self.ready_reader()
+        self.show_sent()
+        self.mark()
+        self.compose(text="SYN kept through the outage")
+        connection = "online => { serverMode = online; offline = !online; window.dispatchEvent(new Event('kin-connection')); }"
+        reads = len([r for r in self.log if r["kind"] == "list"])
+        self.page.evaluate(connection, False)
+        self.settle()
+        expect(self.page.locator("#cvr-send")).to_be_visible()
+        self.assertEqual((P["sub"], "SYN kept through the outage"),
+                         (self.page.locator("#cvr-send-recipient").input_value(), self.page.locator("#cvr-send-message").input_value()))
+        expect(self.page.locator("#cvr-sent-summary")).to_have_text("서버에 연결된 동안에만 보낸 중요 결과를 읽습니다.")
+        expect(self.page.locator("#cvr-sent-refresh")).to_be_disabled()
+        expect(self.page.locator("#cvr-sent-pane")).to_be_visible()
+        self.page.evaluate(connection, True)
+        self.wait_until(lambda: len([r for r in self.log if r["kind"] == "list"]) > reads, "the Sent list read again once back")
+        self.settle()
+        expect(self.page.locator("#cvr-sent-summary")).to_have_text("Pending ACK 1")
+        self.assertEqual("SYN kept through the outage", self.page.locator("#cvr-send-message").input_value())
     # ── SD11 ──
     def test_sd11_the_periodic_re_read_only_reads_and_an_acknowledged_record_stays_reachable(self):
         r1 = self.server.add(A, P)

@@ -321,7 +321,7 @@
         root.dataset.state = ended ? 'ended' : lock ? 'locked' : listFailure ? 'failed' : listLoading ? 'loading'
           : items === null ? 'idle' : items.length ? 'ready' : 'empty';
         const counts = state => (items || []).filter(item => item.state === state).length;
-        const line = lock ? lock.text : uid === null ? (shownFor ? TEXT.unread : TEXT.none) : listFailure ? TEXT.failed
+        const line = lock ? lock.text : uid === null || !allowed() ? (shownFor ? TEXT.unread : TEXT.none) : listFailure ? TEXT.failed
           : items === null ? TEXT.loading
           : items.length ? TEXT.counts(items.length, counts('Open'), counts('Answered'), counts('Closed')) : TEXT.empty;
         summary.textContent = line;
@@ -329,7 +329,8 @@
         if (notice) {
           // 알 때만 말한다: 잠김·실패·질문 있음은 그 글, 성공한 빈 답·읽지 않는 검사는 알림 없음, 읽는 중은 그대로.
           const parts = ['Open', 'Answered', 'Closed'].filter(state => counts(state)).map(state => `${state} ${counts(state)}`).join(' · ');
-          const now = lock ? (lock.account ? TEXT.notice.account : TEXT.notice.refused) : listFailure ? TEXT.notice.failed
+          // 끊긴 동안은 새로 아는 것이 없다: 마지막으로 말한 것을 그대로 둔다.
+          const now = !lock && uid !== null && !allowed() ? null : lock ? (lock.account ? TEXT.notice.account : TEXT.notice.refused) : listFailure ? TEXT.notice.failed
             : items && items.length ? TEXT.notice.counts(items.length, parts) : uid === null || items !== null ? '' : null;
           if (now !== null) told = now ? { text: now, title: `${line} — Show Questions` } : null;
           notice.hidden = ended || visible || !told;
@@ -1029,8 +1030,13 @@
         renderThread();
         toggle.focus();
       });
-      // 연결이 끊기거나 돌아왔다(page-boot.js goOffline·goOnline): 읽을 수 있는지가 바뀌었으니 다시 맞춘다 — 줄의 글과 알림만 바뀐다.
-      window.addEventListener('kin-connection', () => { if (ended) return; sync(); paint(); });
+      // 연결이 끊기거나 돌아왔다(page-boot.js goOffline·goOnline). 판독 대상은 바뀌지 않았다 — 읽은 것·연 스레드·쓰던 칸은
+      // 그대로 두고(끊김을 대상 바뀜으로 다루면 쓰던 답변 칸이 내려갔다) 줄의 글만 바꾼다. 돌아오면 같은 대상을 다시 읽는다.
+      window.addEventListener('kin-connection', () => {
+        if (ended) return;
+        if (allowed()) { sync(); refresh(); }
+        paint();
+      });
       window.addEventListener('pagehide', end);
       // 이 문서의 세션이 끝나면 세션 종료 조정이 이 목록을 동기로 부른다. 어느 로그인의 종료인지는 auth.js가 대조한다.
       onCommonEnd(end);

@@ -2334,6 +2334,25 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         self.reader_state("ready")
         self.assertTrue(told().startswith("이 검사의 질문 3건 · "), told())
 
+        # The page going offline and back ('kin-connection') is not a move: the open thread and the reply being written
+        # stay; the row says it reads nothing now, and reads the same study again once back.
+        self.q_requests = []
+        self.open_reader(me(RADIOLOGIST, ["radiologist"]))
+        self.target(A)
+        self.reader_state("ready")
+        self.reader_thread(answered["id"], "Answered")
+        self.reader_write("reply", "SYN reply kept through the outage", press=False)
+        connection = "online => { offline = !online; window.dispatchEvent(new Event('kin-connection')); }"
+        self.page.evaluate(connection, False)
+        seen = self.reader()
+        self.assertEqual((True, "이 검사의 질문은 지금 읽지 않습니다(원격판독 검사·연결 끊김·권한).", answered["id"]),
+                         (seen["shown"], seen["summary"], seen["thread"]["id"]))
+        self.assertEqual("SYN reply kept through the outage", self.page.locator("#question-reply-text").input_value())
+        reads = len(self.requests("list"))
+        self.page.evaluate(connection, True)
+        self.wait_until(lambda: len(self.requests("list")) > reads, "the same study read again once back")
+        self.reader_state("ready")
+        self.assertEqual("SYN reply kept through the outage", self.page.locator("#question-reply-text").input_value())
         # A tele study is never read: no row and no notice, whatever a refresh asks.
         self.q_requests = []
         self.open_reader(me(RADIOLOGIST, ["radiologist"]))
