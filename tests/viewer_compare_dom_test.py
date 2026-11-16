@@ -313,6 +313,29 @@ class ViewerCompareDOMTest(unittest.TestCase):
         page.evaluate("() => { synArchive.hold = false; synArchiveRelease(); }")
         page.wait_for_timeout(50)
 
+    def test_02d_while_the_list_is_read_again_nothing_from_the_old_list_is_chosen_or_read(self):
+        page = self.open()
+        self.menu(page, 'Related Studies')
+        panel = page.get_by_role('dialog', name='Related Studies')
+        panel.get_by_label('View').select_option('series')
+        panel.get_by_label('Study', exact=True).select_option('later')
+        expect(panel.locator('tr[data-series]')).to_have_count(2)
+        # The exam scope changes in another window and the new list is slow: the old rows go and the Study choice waits.
+        page.evaluate("() => { synRelated.holdList = 1; synArchive.calls.length = 0; dispatchEvent(new Event('kin-exam-scope-invalidated')); }")
+        page.wait_for_function("() => synRelated.listPending.length === 1")
+        expect(panel.locator('tr[data-series]')).to_have_count(0)
+        expect(panel.get_by_label('Study', exact=True)).to_be_disabled()
+        # A choice made meanwhile (even by a script) reads nothing from the old list.
+        page.evaluate("""() => { const select = document.querySelector('.kin-compare-study'); select.value = 'aug';
+          select.dispatchEvent(new Event('change')); }""")
+        page.wait_for_timeout(100)
+        self.assertEqual([], page.evaluate("synArchive.calls"))
+        # The new list arrives: the choice is read from it.
+        page.evaluate("() => { for (const resolve of synRelated.listPending.splice(0)) resolve(); }")
+        expect(panel.get_by_label('Study', exact=True)).to_be_enabled()
+        expect(panel.locator('tr[data-series="2.25.603"]')).to_have_count(1)
+        self.assertEqual(['aug'], page.evaluate("synArchive.calls.map(c => c[0])"))
+
     def test_03b_exam_marks_follow_a_merged_exam_and_its_series(self):
         page = self.open()
         page.evaluate("""() => {
@@ -362,6 +385,23 @@ class ViewerCompareDOMTest(unittest.TestCase):
         page.get_by_role('button', name='Prior ›').click()
         page.wait_for_function("() => synNotes.some(n => n.type === 'error')")
         self.assertFalse(page.evaluate("synNotes.some(n => n.message.includes('Next Prior Exam'))"))
+
+    def test_04d_prior_buttons_step_from_a_merged_prior_by_its_listed_exam(self):
+        page = self.open()
+        # The August prior is a merged exam listed under its own UID; its cells show the original August images.
+        page.evaluate("""() => {
+          const aug = synRelated.rows.find(r => r.uid === 'aug'); aug.uid = 'aug-exam';
+          aug.examScope = { reportUid: 'aug-exam', groupId: 'g-2', kind: 'merge', part: null, active: true, generation: 'g',
+            sources: [{ studyUid: 'aug', series: { mode: 'all', uids: [] } }, { studyUid: 'aug2', series: { mode: 'all', uids: [] } }] };
+        }""")
+        # Prior › from P1 (the merged exam on screen) goes on to P2, not back to P1.
+        page.get_by_role('button', name='Prior ›').click()
+        page.wait_for_function("() => synRelated.calls.some(c => c[0] === 'replace')")
+        self.assertEqual(['replace', [['right', 'may'], ['third', 'may']]], page.evaluate("synRelated.calls.find(c => c[0] === 'replace')"))
+        # ‹ Prior from P1: there is no later prior.
+        page.get_by_role('button', name='‹ Prior').click()
+        page.wait_for_function("() => synNotes.some(n => n.message === '더 이후 검사가 없습니다.')")
+        self.assertEqual(1, page.evaluate("synRelated.calls.filter(c => c[0] === 'replace').length"))
 
     def test_04b_a_newer_opening_or_a_changed_target_cell_drops_the_older_one(self):
         page = self.open()

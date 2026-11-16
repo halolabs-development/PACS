@@ -190,7 +190,7 @@ class ViewerCompareE2E(CTSyncE2E):
         panel = p.get_by_role('dialog', name='Related Studies')
         rows = lambda: panel.locator('table tr').evaluate_all('rows => rows.map(r => [...r.children].map(c => c.textContent))')
         expect(panel.locator('tr[data-study]')).to_have_count(2)
-        self.assertEqual([['P1', '', '2026-07-01'], ['N1', '', '2026-09-01']], sorted([r[:3] for r in rows()[1:]]))
+        self.assertEqual([['P1', '', '2026-07-01'], ['N1', '', '2026-09-01']], [r[:3] for r in rows()[1:]])
         # Choose the later study and see its series, read from the archive though it is not open.
         panel.locator('tr[data-study="' + later.uid + '"]').click()
         panel.get_by_label('View').select_option('series')

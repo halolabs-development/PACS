@@ -9,7 +9,7 @@ const source=(studyUid,mode='all',uids=[])=>({studyUid,series:{mode,uids}});
 const row=(study,series)=>({'0020000D':{Value:[study]},'0020000E':{Value:[series]}});
 function viewer(input,lookup){
  const calls=[],events=[],classes=new Set();const location=new URL(model.viewerUrl(input),'https://pacs.test');
- const root={location,URL,URLSearchParams,Response,Headers,Event,AbortController,console,KinExamScope:model,
+ const root={location,URL,URLSearchParams,Request,Response,Headers,Event,AbortController,console,KinExamScope:model,
   fetch:async url=>{calls.push(String(url));const q=new URL(url,location);const ref=JSON.parse(q.searchParams.get('reference'));const value=await lookup(ref,q);return value instanceof Response?value:new Response(JSON.stringify(value));},
   dispatchEvent:e=>events.push(e.type),setInterval:()=>1,clearInterval(){},addEventListener(){},
   document:{documentElement:{classList:{add:v=>classes.add(v),remove:v=>classes.delete(v)}},head:{append(){}},body:{prepend(){}},createElement:()=>({setAttribute(){},remove(){}})}};
@@ -201,10 +201,19 @@ test('a related study series list outside the scope passes only as a named serie
  await assert.rejects(v.api.send(native,`/dicom-web/studies/${P}/series/${S}/metadata`,named));
  await assert.rejects(v.api.send(native,`/dicom-web/studies/${P}/series/${S}/instances`,named));
  await assert.rejects(v.api.send(native,`/dicom-web/studies/${P}/series`,{headers:{'X-KIN-Series-List':'other'}}));
+ // Exactly a GET of the series level: not a write, not a metadata path that ends in "series".
+ await assert.rejects(v.api.send(native,`/dicom-web/studies/${P}/series`,{...named,method:'POST'}));
+ await assert.rejects(v.api.send(native,`/dicom-web/studies/${P}/metadata/series`,named));
+ await assert.rejects(v.api.send(native,new Request(`https://pacs.test/dicom-web/studies/${P}/series`,{method:'POST',headers:named.headers})));
  assert.deepEqual(asked,[[`/dicom-web/studies/${P}/series?includefield=0020000E`,'related']]);
- // A study inside the scope keeps its own filtering under the name too.
+ // A study inside the scope is answered as the archive lists it too: the window is the first part of a split original
+ // (S) and the related exam asked for is its second part (T), so the panel keeps T with that exam's own scope.
  const split=scope(B,[source(A,'include',[S])],1),w=viewer(model.viewerInput(split),()=>split);await w.api.ensure();
- const inside=await w.api.send(async()=>new Response(JSON.stringify([row(A,S),row(A,T)])),`/dicom-web/studies/${A}/series`,named);assert.deepEqual(await inside.json(),[row(A,S)]);
+ const inside=await w.api.send(async()=>new Response(JSON.stringify([row(A,S),row(A,T)])),`/dicom-web/studies/${A}/series`,named);
+ const second=scope(C,[source(A,'exclude',[S])],2);
+ assert.deepEqual(await model.dicom(second,'series',async()=>inside.json()),[{sourceUid:A,row:row(A,T)}]);
+ // Unnamed, OHIF's own series read inside the scope is filtered as before.
+ const own=await w.api.send(async()=>new Response(JSON.stringify([row(A,S),row(A,T)])),`/dicom-web/studies/${A}/series`);assert.deepEqual(await own.json(),[row(A,S)]);
  // A scope change while the list is read discards it.
  let complete,started;const waiting=new Promise(r=>started=r);
  const pending=v.api.send(()=>{started();return new Promise(r=>complete=r);},`/dicom-web/studies/${P}/series`,named);await waiting;v.api.invalidate();complete(new Response('[]'));

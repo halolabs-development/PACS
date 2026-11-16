@@ -41,7 +41,6 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
   const shownSets = id => grid.getState().viewports.get(id)?.displaySetInstanceUIDs || [];
   const viewport = id => { try { return cellService.getCornerstoneViewport(id) || null; } catch (_) { return null; } };
   const context = id => { try { return seam()?.viewport?.(id) || null; } catch (_) { return null; } };
-  const currentStudy = () => seam()?.snapshot?.()?.studyUIDs?.[0] || null;
   const tagsOf = imageId => { try { return imageId ? core().metaData.get('instance', imageId) || null : null; } catch (_) { return null; } };
   const tags = id => tagsOf(viewport(id)?.getCurrentImageId?.());
   const date = value => typeof value === 'string' && /^\d{8}$/.test(value) ? value.slice(0, 4) + '-' + value.slice(4, 6) + '-' + value.slice(6) : (value || '');
@@ -304,9 +303,12 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
       }
       paint();
     }
+    // While the list is read again nothing from the old list can be chosen, opened or read: its rows go and the Study
+    // choice waits, so no series read starts from an exam scope that may have changed.
     async function load() {
       request?.abort(); const mine = request = new AbortController();
       seriesRequest?.abort(); seriesRequest = null; series = null;
+      data = null; studySelect.disabled = true; paint();
       status.textContent = '불러오는 중…';
       try {
         const found = await marked(viewportId, mine.signal);
@@ -316,7 +318,7 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
       if (mine !== request || !panel.element.isConnected) return;
       // A chosen study the new list no longer holds (another patient tab, a changed exam) goes back to the open studies.
       if (!data?.list.some(item => item.uid === chosen)) chosen = '';
-      paintStudies();
+      studySelect.disabled = false; paintStudies();
       if (mode === 'series' && chosen && data) loadSeries(); else paint();
     }
     select.onchange = () => { mode = select.value; if (mode === 'series' && chosen) loadSeries(); else { seriesRequest?.abort(); paint(); } };
@@ -344,14 +346,18 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
     await ready;
     // The press takes its place among openings at once, before anything is read: a later opening drops it, and it
     // never drops a later one. Every cell is watched until the change applies.
-    const now = currentStudy(), compare = cellIds().map(context).filter(value => value && value.studyUid !== now);
+    const shown = cellIds().map(context).filter(Boolean);
     const watch = watchCells(cellIds(), signal);
     let ok, row, next;
     try {
       const found = await marked(viewportId, watch.signal);
       if (watch.signal.aborted) return;
       if (!found) { ui.toast('이 칸의 검사를 관련 검사 목록에서 확인할 수 없습니다.'); return; }
-      next = model.step(model.priorUids(found.list), compare[0]?.studyUid ?? null, direction);
+      // A cell's images are named by their listed exam (a merged or split exam's own row), as the marks are; a
+      // comparison cell shows an exam other than the one the marks count from.
+      const now = referenceUid(), examOf = value => rowOf(found.list, value.studyUid, value.seriesUid)?.uid ?? value.studyUid;
+      const compare = shown.filter(value => examOf(value) !== now);
+      next = model.step(model.priorUids(found.list), compare[0] ? examOf(compare[0]) : null, direction);
       if (next.end) { ui.toast(next.end === 'none' ? '과거 검사가 없습니다.' : next.end === 'older' ? '더 이전 검사가 없습니다.' : '더 이후 검사가 없습니다.'); return; }
       row = found.list.find(item => item.uid === next.uid);
       const api = related();

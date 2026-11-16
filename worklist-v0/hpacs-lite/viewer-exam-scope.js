@@ -85,27 +85,29 @@
     epoch++;pending=null;admitted=null;
     block(Error('검사 묶음이 바뀌었습니다. 쓰던 내용은 유지됩니다. 목록에서 영상을 다시 여세요.'));
   }
-  // Compare › Related Studies › Series lists the series of a related study before it is opened. That one read names
-  // itself with this header; it is a study's series list only (QIDO-RS series level), never metadata or images, so
-  // nothing outside the scope reaches the image sets. The server still checks the reader's access to the study, and the
-  // list keeps only the series of the related exam it was asked for (KinExamScope.dicom).
+  // Compare › Related Studies › Series lists the series of a related exam before it is opened. That one read names
+  // itself with this header and is exactly a GET of one study's series list (QIDO-RS series level) — never metadata or
+  // images — so nothing outside the scope reaches the image sets. It is answered as the archive lists it, in the scope
+  // or not: the caller keeps the series of the exam it asked for (KinExamScope.dicom with that exam's scope), which may
+  // differ from this window's scope on the same original (a split exam). The server still checks the reader's access.
   const SERIES_LIST = 'X-KIN-Series-List';
-  const listOnly = (target, match, init) => !match[2] && /\/series$/.test(target.pathname) &&
-    new root.Headers(init?.headers || {}).get(SERIES_LIST) === 'related';
+  const SERIES_LIST_PATH = /^(?:\/api(?:\/(?:image-relay|images))?)?\/dicom-web\/studies\/[^/]+\/series$/;
+  function listOnly(url, init, target) {
+    const request = typeof root.Request === 'function' && url instanceof root.Request ? url : null;
+    const method = String(init?.method || request?.method || 'GET').toUpperCase();
+    const headers = new root.Headers(init?.headers || request?.headers || {});
+    return method === 'GET' && SERIES_LIST_PATH.test(target.pathname) && headers.get(SERIES_LIST) === 'related';
+  }
   async function send(native,url,init={}) {
     const target=new URL(typeof url==='string'||url instanceof URL?url:url.url,root.location.href);
     const match=target.origin===root.location.origin && /^(?:\/api(?:\/(?:image-relay|images))?)?\/dicom-web\/studies\/([^/]+)(?:\/series\/([^/]+))?/.exec(target.pathname);
     if (!match || !active()) return native(url,init);
-    const key=active().key,ticket=epoch,input=await ensure();
-    if(!allows(input,decodeURIComponent(match[1]),match[2]&&decodeURIComponent(match[2]))){
-      if(!listOnly(target,match,init))throw Error('이 검사 범위에 없는 영상입니다.');
-      const response=await native(url,init);
-      if(ticket!==epoch||key!==active()?.key) { response.body?.cancel().catch(()=>{}); throw Error('영상 범위가 바뀌었습니다.'); }
-      return response;
-    }
+    const key=active().key,ticket=epoch,input=await ensure(),list=listOnly(url,init,target);
+    if(!list&&!allows(input,decodeURIComponent(match[1]),match[2]&&decodeURIComponent(match[2])))
+      throw Error('이 검사 범위에 없는 영상입니다.');
     const response=await native(url,init);
     if(ticket!==epoch||key!==active()?.key) { response.body?.cancel().catch(()=>{}); throw Error('영상 범위가 바뀌었습니다.'); }
-    if(!response.ok||!/(?:\/metadata|\/series|\/instances)$/.test(target.pathname))return response;
+    if(list||!response.ok||!/(?:\/metadata|\/series|\/instances)$/.test(target.pathname))return response;
     const rows=await response.json();
     if(ticket!==epoch||key!==active()?.key)throw Error('영상 범위가 바뀌었습니다.');
     if(!Array.isArray(rows))throw Error('원본 영상 목록을 확인할 수 없습니다.');
