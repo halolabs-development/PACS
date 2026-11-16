@@ -19,7 +19,9 @@ class WorklistNarrowLayoutDOMTest(unittest.TestCase):
         html = html.replace('</head>', '<style>' + '\n'.join(
             (ASSETS / name).read_text(encoding='utf-8') for name in
             ['saved-filter-manager.css', 'consultations.css', 'worklist-columns.css', 'reading-workspace.css']) + '</style></head>')
-        html = html.replace('<body>', '<body class="portrait">')
+        # Portrait, beside the classes the page's body starts with (the band's first-paint panel classes).
+        html, bodies = re.subn(r'<body(?: class="([^"]*)")?>', lambda m: '<body class="portrait%s">' % (' ' + m.group(1) if m.group(1) else ''), html, count=1)
+        self.assertEqual(1, bodies, 'the page body tag was not found')
         with sync_playwright() as pw:
             browser = pw.chromium.launch()
             page = browser.new_page(viewport={'width': 390, 'height': 700})
