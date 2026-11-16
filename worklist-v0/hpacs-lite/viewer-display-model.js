@@ -117,15 +117,18 @@
     ? { w: Math.round(range.upper - range.lower + 1), l: Math.round((range.upper + range.lower + 1) / 2) } : null;
 
   // ── Overlay Items ──
-  const OVERLAY_DEFAULTS = Object.freeze({ wl: true, zoom: true, ruler: false, dicom: true, border: false, colour: '#E8C547', width: 2 });
+  // selected: the border only on the selected (active) cell; off keeps a border on every cell, as values saved before it.
+  const OVERLAY_DEFAULTS = Object.freeze({ wl: true, zoom: true, ruler: false, dicom: true, border: false, selected: false, colour: '#E8C547', width: 2 });
   function overlay(value) {
     const out = { ...OVERLAY_DEFAULTS };
     if (!plain(value)) return out;
-    for (const key of ['wl', 'zoom', 'ruler', 'dicom', 'border']) if (typeof value[key] === 'boolean') out[key] = value[key];
+    for (const key of ['wl', 'zoom', 'ruler', 'dicom', 'border', 'selected']) if (typeof value[key] === 'boolean') out[key] = value[key];
     if (typeof value.colour === 'string' && /^#[0-9A-Fa-f]{6}$/.test(value.colour)) out.colour = value.colour.toUpperCase();
     if (Number.isInteger(value.width) && value.width >= 1 && value.width <= 4) out.width = value.width;
     return out;
   }
+  // Whether a cell gets the Cell Border: every cell, or only the selected one when Selected Cell Only is on.
+  const borderOn = (overlayValue, cellId, activeId) => !!overlayValue?.border && (!overlayValue.selected || (cellId != null && cellId === activeId));
 
   // ── Corner Information: { CT: { TL: [k, k, k], TR, BL, BR }, … } ──
   const CORNERS = ['TL', 'TR', 'BL', 'BR'], LINES = 3;
@@ -233,7 +236,7 @@
     ZOOM_PRESETS: Object.freeze(ZOOM_PRESETS.slice()), ZOOM_MIN, ZOOM_MAX, zoomPercent, zoomFromPercent, anchoredZoom,
     TOLERANCE, parseIOP, orientation,
     PRESET_NAME, PRESETS_PER_MODALITY, preset, presets, savePreset, deletePreset, toRange, fromRange,
-    OVERLAY_DEFAULTS, overlay,
+    OVERLAY_DEFAULTS, overlay, borderOn,
     CORNERS, LINES, TAGS: Object.freeze(TAGS.slice()), field, fieldLabel, corners, cornerDefaults, text, lookup, line, needsRaw,
     rulerPixels, voiKind, modality: value => typeof value === 'string' && MODALITY.test(value),
   });

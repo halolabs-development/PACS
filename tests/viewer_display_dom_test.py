@@ -224,7 +224,7 @@ class ViewerDisplayDOMTest(unittest.TestCase):
         expect(page.locator('#pane-left .kin-display-zoom')).to_have_text('Zoom 100%')
         self.menu(page, 'Overlay Items…')
         panel = self.window(page, 'Overlay Items')
-        self.assertEqual(['W/L Value', 'Zoom', 'Ruler', 'DICOM Information', 'Cell Border'],
+        self.assertEqual(['W/L Value', 'Zoom', 'Ruler', 'DICOM Information', 'Cell Border', 'Selected Cell Only'],
                          panel.locator('input[type=checkbox]').evaluate_all('n => n.map(i => i.getAttribute("aria-label"))'))
         expect(panel.get_by_label('Border Colour')).to_be_visible(); expect(panel.get_by_label('Border Width')).to_be_visible()
         panel.get_by_role('checkbox', name='W/L Value').uncheck()
@@ -254,7 +254,7 @@ class ViewerDisplayDOMTest(unittest.TestCase):
         expect(panel).to_have_count(0)
         expect(page.locator('#pane-left .kin-display-ruler')).to_be_visible()
         page.wait_for_function("synServer.viewerSettings?.features?.overlayItems?.width === 3 && synServer.viewerSettings.features.overlayItems.dicom === true")
-        self.assertEqual({'wl': False, 'zoom': False, 'ruler': True, 'dicom': True, 'border': True, 'colour': '#E8C547', 'width': 3},
+        self.assertEqual({'wl': False, 'zoom': False, 'ruler': True, 'dicom': True, 'border': True, 'selected': False, 'colour': '#E8C547', 'width': 3},
                          self.features(page)['overlayItems'])
         # Image Text hides this module's text with OHIF's; showing it again brings back each chosen item.
         page.evaluate("document.getElementById('pane-left').setAttribute('data-kin-image-text-hidden', 'kit-1')")
@@ -272,6 +272,51 @@ class ViewerDisplayDOMTest(unittest.TestCase):
         page = self.open({'overlayItems': {'wl': False, 'zoom': True, 'ruler': False, 'dicom': True, 'border': True, 'colour': '#00FF00', 'width': 4}})
         expect(page.locator('#pane-left .kin-display-border')).to_have_css('border-top-color', 'rgb(0, 255, 0)')
         self.assertEqual(['none'], self.visibility(page, 'left', '.syn-wl'))
+
+    def test_03b_cell_border_on_the_selected_cell_only(self):
+        page = self.open()
+        self.menu(page, 'Overlay Items…')
+        panel = self.window(page, 'Overlay Items')
+        panel.get_by_role('checkbox', name='Cell Border').check()
+        panel.get_by_label('Border Colour').fill('#ff0000')
+        panel.get_by_label('Border Width').select_option('4')
+        # Off by default: the border is on every cell, as before.
+        expect(page.locator('#pane-left .kin-display-border')).to_have_count(1)
+        expect(page.locator('#pane-right .kin-display-border')).to_have_count(1)
+        panel.get_by_role('checkbox', name='Selected Cell Only').check()
+        border = page.locator('#pane-left .kin-display-border')
+        expect(border).to_have_css('border-top-width', '4px'); expect(border).to_have_css('border-top-color', 'rgb(255, 0, 0)')
+        expect(page.locator('#pane-right .kin-display-border')).to_have_count(0)
+        # Another cell selected: the border moves with the selection.
+        page.evaluate("synActive = 'right'; synEmit('grid', 'active', { viewportId: 'right' })")
+        expect(page.locator('#pane-right .kin-display-border')).to_have_css('border-top-width', '4px')
+        expect(page.locator('#pane-right .kin-display-border')).to_have_css('border-top-color', 'rgb(255, 0, 0)')
+        expect(page.locator('#pane-left .kin-display-border')).to_have_count(0)
+        page.wait_for_function("synServer.viewerSettings?.features?.overlayItems?.selected === true && synServer.viewerSettings.features.overlayItems.width === 4")
+        self.assertEqual({'wl': True, 'zoom': True, 'ruler': False, 'dicom': True, 'border': True, 'selected': True, 'colour': '#FF0000', 'width': 4},
+                         self.features(page)['overlayItems'])
+        # A new layout keeps the rule: only the selected cell of the cells left.
+        page.evaluate("synActive = 'left'; synEmit('grid', 'gridState', {})")
+        expect(page.locator('#pane-left .kin-display-border')).to_have_count(1)
+        expect(page.locator('#pane-right .kin-display-border')).to_have_count(0)
+        # Off again: every cell.
+        page.evaluate("synActive = 'right'")
+        self.menu(page, 'Overlay Items…', cell='right')
+        panel = self.window(page, 'Overlay Items')
+        expect(panel.get_by_role('checkbox', name='Selected Cell Only')).to_be_checked()
+        panel.get_by_role('checkbox', name='Selected Cell Only').uncheck()
+        expect(page.locator('#pane-left .kin-display-border')).to_have_count(1)
+        expect(page.locator('#pane-right .kin-display-border')).to_have_count(1)
+        page.wait_for_function("synServer.viewerSettings?.features?.overlayItems?.selected === false")
+
+    def test_03c_saved_selected_cell_border_applies_on_open(self):
+        page = self.open({'overlayItems': {'border': True, 'selected': True, 'colour': '#00FF00', 'width': 4}})
+        expect(page.locator('#pane-left .kin-display-border')).to_have_css('border-top-color', 'rgb(0, 255, 0)')
+        expect(page.locator('#pane-right .kin-display-border')).to_have_count(0)
+        # Selected from the viewer itself (OHIF's own grid event), not from a window of this module.
+        page.evaluate("synActive = 'right'; synEmit('grid', 'active', { viewportId: 'right' })")
+        expect(page.locator('#pane-right .kin-display-border')).to_have_css('border-top-width', '4px')
+        expect(page.locator('#pane-left .kin-display-border')).to_have_count(0)
 
     # ── 03-2 Corner Information ──
     def test_04_corner_information_per_modality_other_tag_and_restore(self):
@@ -735,7 +780,7 @@ class ViewerDisplayDOMTest(unittest.TestCase):
         self.assertEqual(['Slice Thickness', 'Patient ID', 'kVp', '(0019,1001)'], result['labels'])
         self.assertEqual(['KVP: 120 kV', '(0018,0050): 5 mm', '(0019,1001): X', '(0019,1001): …', '(0019,1001): —', '(0010,0010): SYN^TWO', 'PatientName: —'], result['lines'])
         self.assertEqual([200, None, None], result['ruler'])
-        self.assertEqual({'wl': False, 'zoom': True, 'ruler': False, 'dicom': True, 'border': False, 'colour': '#E8C547', 'width': 2}, result['overlay'])
+        self.assertEqual({'wl': False, 'zoom': True, 'ruler': False, 'dicom': True, 'border': False, 'selected': False, 'colour': '#E8C547', 'width': 2}, result['overlay'])
         self.assertEqual({'CT': {'TL': ['PatientName', '', '(0018,0050)'], 'TR': ['', '', ''], 'BL': ['', '', ''], 'BR': ['', '', '']}}, result['corners'])
         self.assertEqual('space', result['space']['reason'])
         self.assertLessEqual(result['space']['bytes'], 12000)

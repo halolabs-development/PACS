@@ -74,7 +74,8 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
   const keyOf = v => { try { return v.id + '|' + (grid.getState().viewports.get(v.id)?.displaySetInstanceUIDs?.[0] || ''); } catch (_) { return v.id + '|'; } };
   const frameOf = (v, instance) => Number(instance?.NumberOfFrames) > 1 ? (v.getCurrentImageIdIndex?.() ?? 0) + 1 : 1;
   const zoomOf = v => { try { return v.getZoom(); } catch (_) { return null; } };
-  const activeStack = () => viewportOf(grid.getActiveViewportId?.()) || null;
+  const activeId = () => { try { return grid.getActiveViewportId?.() ?? null; } catch (_) { return null; } };
+  const activeStack = () => viewportOf(activeId()) || null;
   // The cell an action is for (the one it was started in); no other cell stands in for it.
   const need = viewportId => {
     const v = viewportOf(viewportId);
@@ -176,7 +177,7 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
       }
     } else for (const corner of model.CORNERS) drop(entry, 'corner' + corner);
     drawRuler(v, entry, instance);
-    if (overlay.border) {
+    if (model.borderOn(overlay, v.id, activeId())) {
       const node = part(entry, 'border', 'kin-display-border');
       node.style.border = overlay.width + 'px solid ' + overlay.colour;
     } else drop(entry, 'border');
@@ -407,6 +408,9 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
     if (!name || typeof service?.subscribe !== 'function') continue;
     try { subscriptions.push(service.subscribe(name, event => { if (ended) return; moved(ids(event)); refresh(); })); } catch (error) { console.error(error); }
   }
+  // Another cell selected: a border on the selected cell only moves with it (the cells keep their images).
+  if (grid?.EVENTS?.ACTIVE_VIEWPORT_ID_CHANGED && typeof grid.subscribe === 'function')
+    try { subscriptions.push(grid.subscribe(grid.EVENTS.ACTIVE_VIEWPORT_ID_CHANGED, () => { if (!ended) refresh(); })); } catch (error) { console.error(error); }
   addEventListener('resize', refresh, { signal });
   const examineAll = () => { for (const v of stacks()) if (imageId(v)) examine(v); };
 
@@ -439,7 +443,7 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
   const savedText = ok => ok ? (store.writable() ? 'Saved to your account.' : 'Applied in this window (not saved to your account).') : 'Not saved to your account. The reason is shown beside Viewer Settings.';
 
   function openOverlay() {
-    const handle = panel('overlay-items', 'Overlay Items', 'Turn individual image overlays on or off. Changes appear on the image immediately.');
+    const handle = panel('overlay-items', 'Overlay Items', 'Turn individual image overlays on or off. Changes appear on the image immediately. With Selected Cell Only, the Cell Border marks the selected cell alone.');
     if (!handle) return;
     const body = handle.body, line = status(body);
     const change = (key, value) => {
@@ -453,7 +457,7 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
       });
     };
     const inputs = {};
-    for (const [key, label] of [['wl', 'W/L Value'], ['zoom', 'Zoom'], ['ruler', 'Ruler'], ['dicom', 'DICOM Information'], ['border', 'Cell Border']])
+    for (const [key, label] of [['wl', 'W/L Value'], ['zoom', 'Zoom'], ['ruler', 'Ruler'], ['dicom', 'DICOM Information'], ['border', 'Cell Border'], ['selected', 'Selected Cell Only']])
       inputs[key] = checkbox(label, state.overlay[key], body, value => change(key, value));
     const colourRow = element('label', 'Border Colour ', body, 'kin-display-row'), colour = element('input', '', colourRow);
     colour.type = 'color'; colour.value = state.overlay.colour.toLowerCase(); colour.setAttribute('aria-label', 'Border Colour');

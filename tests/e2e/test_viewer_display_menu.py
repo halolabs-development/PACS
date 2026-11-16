@@ -40,6 +40,13 @@ SAMPLES = """()=>{const g=[...services.viewportGridService.getState().viewports.
   return [[64,128],[192,128]].map(([x,y])=>{const p=v.worldToCanvas(data.indexToWorld([x,y,0]));
     return ctx.getImageData(Math.round(p[0]*scale),Math.round(p[1]*scale),1,1).data[0];});}"""
 
+# Each cell in grid order: whether it is the selected cell, and the width and colour of this module's border (null: none).
+BORDERS = """()=>{const s=services.viewportGridService.getState();
+  return [...s.viewports.values()].sort((a,b)=>a.y-b.y||a.x-b.x).map(g=>{
+    const v=services.cornerstoneViewportService.getCornerstoneViewport(g.viewportId),pane=v.element.closest('[data-cy=viewport-pane]')||v.element.parentElement;
+    const b=pane.querySelector('.kin-display-border'),cs=b&&getComputedStyle(b);
+    return {active:g.viewportId===s.activeViewportId,border:cs&&b.getClientRects().length?[Math.round(parseFloat(cs.borderTopWidth)),cs.borderTopColor]:null};});}"""
+
 
 class ViewerDisplayMenuE2E(DisplayControlsE2E):
     def put(self, ds):
@@ -300,6 +307,35 @@ class ViewerDisplayMenuE2E(DisplayControlsE2E):
         self.assertAlmostEqual(12, on[0], delta=6); self.assertAlmostEqual(230, on[1], delta=6)
         self.assertLessEqual(off[0], 3); self.assertGreaterEqual(off[1], 252)
         self.assertEqual(on, again)
+
+    def test_menu_04_selected_cell_border_moves_with_the_selection(self):
+        f, p = self.open_pair()
+        self.settle(p)
+        panel = self.menu(p, 'Overlay Items…')
+        panel.get_by_role('checkbox', name='Cell Border').check()
+        panel.get_by_label('Border Colour').fill('#ff0000'); panel.get_by_label('Border Width').select_option('4')
+        self.settle(p)
+        self.assertEqual([[4, 'rgb(255, 0, 0)'], [4, 'rgb(255, 0, 0)']], [b['border'] for b in p.evaluate(BORDERS)], 'every cell before Selected Cell Only')
+        panel.get_by_role('checkbox', name='Selected Cell Only').check()
+        panel.get_by_role('button', name='Close').click(); self.settle(p)
+        first = p.evaluate(BORDERS)
+        print('DISPLAY MENU border first ' + json.dumps(first), flush=True)
+        self.assertEqual([[True, [4, 'rgb(255, 0, 0)']], [False, None]], [[b['active'], b['border']] for b in first])
+        # Selecting the other cell by clicking it moves the border there.
+        self.choose(p, 1); self.settle(p)
+        second = p.evaluate(BORDERS)
+        print('DISPLAY MENU border second ' + json.dumps(second), flush=True)
+        self.assertEqual([[False, None], [True, [4, 'rgb(255, 0, 0)']]], [[b['active'], b['border']] for b in second])
+        self.choose(p, 0); self.settle(p)
+        self.assertEqual([[True, [4, 'rgb(255, 0, 0)']], [False, None]], [[b['active'], b['border']] for b in p.evaluate(BORDERS)])
+        # The account keeps it: the viewer opened again draws it on the selected cell only.
+        p.close()
+        p = self.launch(self.login(), [f]); self.grid(p, 2); self.drag(p, 'D03A current', 0); self.drag(p, 'D02E second series', 1)
+        canvas_ready(p, 2); self.choose(p, 0); self.settle(p)
+        self.assertEqual([[True, [4, 'rgb(255, 0, 0)']], [False, None]], [[b['active'], b['border']] for b in p.evaluate(BORDERS)])
+        panel = self.menu(p, 'Overlay Items…')
+        panel.get_by_role('checkbox', name='Selected Cell Only').uncheck(); panel.get_by_role('checkbox', name='Cell Border').uncheck()
+        expect(panel.get_by_role('status')).to_have_text('Saved to your account.')
 
 
 def load_tests(loader, tests, pattern):
