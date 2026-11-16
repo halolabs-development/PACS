@@ -130,7 +130,9 @@ WEEK = {"from": "2026-09-19T00:00:00.000Z", "to": NOW}
 SRC = {"disk": "Orthanc GET /statistics TotalDiskSize", "studies": "HALO PACS DB StudyState",
        "registered": "HALO PACS DB StudyState.createdAt",
        "tat": "HALO PACS DB StudyState.createdAt, ReportVersion(action=approve).at, StudyState.em",
-       "waiting": "HALO PACS DB StudyState.createdAt, StudyState.rs, StudyState.em"}
+       "waiting": "HALO PACS DB StudyState.createdAt, StudyState.rs, StudyState.em",
+       "uptime": "HALO PACS API process (process.uptime)", "started": "HALO PACS API process (performance.timeOrigin)"}
+UPTIME, STARTED = 3 * 86400 + 4 * 3600 + 5 * 60, "2026-09-22T19:55:00.000Z"
 
 
 def generated(second):
@@ -167,6 +169,9 @@ ROWS = [
     count("studies.registered_24h", 7, excluded=0, window=DAY), count("studies.registered_7d", 9, excluded=0, window=WEEK),
     duration("tat.emergency", 14400, 86400, 3, 0, window=WEEK), duration("tat.normal", 86400, 86400, 1, 1, window=WEEK),
     duration("waiting.emergency", 3600, 3600, 1, 0), duration("waiting.normal", 12600, 18000, 2, 1),
+    # The API process: started 3 d 04 h 05 min before NOW.
+    row("server.api_uptime", "duration_seconds", scope="server", source=SRC["uptime"], observedAt=NOW, value=UPTIME),
+    row("server.api_started", "timestamp", scope="server", source=SRC["started"], observedAt=NOW, value=STARTED),
 ]
 
 
@@ -195,6 +200,8 @@ EXPECTED = [
     ("Report TAT (Normal)", "Observed", "Median 24 h 00 min · Max 24 h 00 min", ELAPSED, "1 Study · 1 Excluded", SCOPE, SRC["tat"], T0),
     ("Waiting (Emergency)", "Observed", "Median 1 h 00 min · Max 1 h 00 min", ELAPSED, "1 Study", SCOPE, SRC["waiting"], T0),
     ("Waiting (Normal)", "Observed", "Median 3 h 30 min · Max 5 h 00 min", ELAPSED, "2 Studies · 1 Excluded", SCOPE, SRC["waiting"], T0),
+    ("API Uptime (since start)", "Observed", "3 d 04 h 05 min", "Elapsed Time", "Not a Ratio", "Server-wide", SRC["uptime"], T0),
+    ("Last Restart", "Observed", "2026-09-22 19:55:00", "Date and Time", "Not a Ratio", "Server-wide", SRC["started"], T0),
 ]
 KEYS = [r["key"] for r in ROWS]
 
@@ -541,7 +548,7 @@ class AdminMetricsDOMTest(unittest.TestCase):
         rows = self.table()
         self.assertEqual(KEYS, [r["key"] for r in rows])
         self.assertEqual([list(e) for e in EXPECTED], [r["cells"] for r in rows])
-        self.assertEqual(["observed", "unobservable"] + ["observed"] * 9, [r["state"] for r in rows])
+        self.assertEqual(["observed", "unobservable"] + ["observed"] * 11, [r["state"] for r in rows])
         self.assertEqual(["mstate row-" + r["state"] for r in rows], [r["chipClass"] for r in rows])
         for r in rows:
             with self.subTest(key=r["key"]):
@@ -551,6 +558,13 @@ class AdminMetricsDOMTest(unittest.TestCase):
         self.assertIn("모든 기관", titles["storage.server"][5])
         self.assertEqual("원천 값 13421772800바이트", titles["storage.server"][2])
         self.assertEqual("중앙값 12600초 · 최댓값 18000초", titles["waiting.normal"][2])
+        # The API process rows say whose value they are: the API process, not the Orthanc server or the whole system.
+        for key in ("server.api_uptime", "server.api_started"):
+            self.assertIn("API 프로세스", titles[key][5])
+            self.assertNotIn("Orthanc", titles[key][5])
+        self.assertEqual(f"원천 값 {UPTIME}초", titles["server.api_uptime"][2])
+        self.assertEqual(f"서버 시각 {STARTED}", titles["server.api_started"][2])
+        self.assertIn("가용률(%)은 재지 않습니다", titles["server.api_uptime"][0])
         gets = [c for c in self.calls if c["path"] == METRICS_PATH]
         self.assertEqual([("GET", "", None)], [(c["method"], c["query"], c["csrf"]) for c in gets])
 

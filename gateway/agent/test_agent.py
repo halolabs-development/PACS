@@ -889,5 +889,205 @@ class OrthancConnectionTests(unittest.TestCase):
         self.assertEqual(len(connections), 3)
 
 
+HEARTBEAT_KEYS = {"epoch", "bootId", "version", "uptimeSeconds", "queue", "lastStowAgeSeconds", "localOrthanc"}
+
+
+class BeatCloud:
+    """Records each heartbeat body; answers from a list (default 200), raising when the answer is an exception."""
+
+    def __init__(self, answers=None, gate: threading.Event | None = None):
+        self.bodies, self.answers, self.gate = [], list(answers or []), gate
+
+    def heartbeat(self, body):
+        self.bodies.append(json.loads(json.dumps(body)))   # what would go over the wire
+        if self.gate is not None:
+            self.gate.wait(5)
+        answer = self.answers.pop(0) if self.answers else FakeResponse(200, {"result": "stored"})
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+
+class HeartbeatTests(unittest.TestCase):
+    """Operational status: the beat KIN shows in the admin console's Gateway Status."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.path = str(Path(directory.name) / "queue.db")
+        self.events = []
+        logging = patch.object(agent_module, "log", side_effect=lambda event, **fields: self.events.append((event, fields)))
+        logging.start()
+        self.addCleanup(logging.stop)
+
+    def agent(self) -> Agent:
+        agent = Agent(config(self.path))
+        self.addCleanup(agent.queue.close)
+        return agent
+
+    def heartbeat(self, agent: Agent, cloud: BeatCloud, started: float | None = None):
+        beat = agent_module.Heartbeat(agent.config, agent.queue.epoch, agent.orthanc, agent.cloud,
+                                      time.monotonic() if started is None else started)
+        self.addCleanup(beat.cloud.session.close)
+        self.addCleanup(beat.stop)
+        beat.cloud = cloud
+        return beat
+
+    def phases(self, queue: Queue, phases: dict[str, str]) -> None:
+        for uid, phase in phases.items():
+            queue.record_changes([(uid, "orthanc-id")], 1)
+            if phase == "complete":
+                queue.complete(uid, 1)
+            elif phase == "failed":
+                queue.fail(uid, "single DICOM instance exceeds byte budget", "instance_exceeds_budget")
+            elif phase == "retry":
+                queue.retry(uid, "STOW HTTP 503", 60, 600, "stow_http")
+            elif phase != "pending":
+                queue.phase(uid, phase)
+
+    def test_body_is_closed_counts_by_phase_and_carries_no_time_uid_or_text(self):
+        agent = self.agent()
+        self.phases(agent.queue, {"1.2.1": "pending", "1.2.2": "announcing", "1.2.3": "sending", "1.2.4": "retry",
+                                  "1.2.5": "retry", "1.2.6": "failed", "1.2.7": "complete", "1.2.8": "complete"})
+        body = self.heartbeat(agent, BeatCloud(), started=time.monotonic() - 125).body()
+        self.assertEqual(set(body), HEARTBEAT_KEYS)
+        self.assertEqual(body["epoch"], agent.queue.epoch)
+        self.assertTrue(EPOCH.fullmatch(body["bootId"]))
+        self.assertEqual(body["version"], agent_module.AGENT_VERSION)
+        self.assertIn(body["uptimeSeconds"], (125, 126))
+        self.assertEqual(body["queue"], {"waiting": 3, "retry": 2, "failed": 1}, "complete is never reported")
+        self.assertIsNone(body["lastStowAgeSeconds"], "no STOW yet")
+        self.assertIsNone(body["localOrthanc"], "no local request yet")
+        wire = json.dumps(body)
+        for absent in ("1.2.", "SYNTHETIC", "byte budget", "STOW HTTP", "Z\""):
+            self.assertNotIn(absent, wire)
+
+    def test_observations_are_ages_of_the_last_stow_and_the_last_local_request(self):
+        agent = self.agent()
+        beat = self.heartbeat(agent, BeatCloud())
+        agent.cloud.last_stow_at = time.monotonic() - 40
+        agent.orthanc.observed = (False, time.monotonic() - 3)
+        body = beat.body()
+        self.assertIn(body["lastStowAgeSeconds"], (40, 41))
+        self.assertEqual(body["localOrthanc"]["answered"], False)
+        self.assertIn(body["localOrthanc"]["ageSeconds"], (3, 4))
+        agent.orthanc.observed = (True, time.monotonic())
+        self.assertEqual(beat.body()["localOrthanc"], {"answered": True, "ageSeconds": 0})
+
+    def test_local_requests_record_answered_or_no_answer_and_stow_success_records_its_time(self):
+        agent = self.agent()
+        with patch.object(agent.orthanc.session, "request", side_effect=agent_module.requests.ConnectionError()):
+            with self.assertRaises(GatewayError):
+                agent.orthanc.request("GET", "/changes")
+        self.assertFalse(agent.orthanc.observed[0])
+        with patch.object(agent.orthanc.session, "request", return_value=FakeResponse(404)):
+            with self.assertRaises(GatewayError):
+                agent.orthanc.request("GET", "/studies/x")
+        self.assertTrue(agent.orthanc.observed[0], "any HTTP answer is an answer, also a 404 lookup")
+        self.assertIsNone(agent.cloud.last_stow_at)
+        with patch.object(agent.cloud, "request", return_value=FakeResponse(503)):
+            with self.assertRaises(GatewayError):
+                agent.cloud.stow("1.2.3", b"", "multipart/related", "")
+        self.assertIsNone(agent.cloud.last_stow_at, "a refused STOW is not a STOW")
+        ok = FakeResponse(200, {})
+        ok.content = b""
+        with patch.object(agent.cloud, "request", return_value=ok):
+            agent.cloud.stow("1.2.3", b"", "multipart/related", "")
+        self.assertIsNotNone(agent.cloud.last_stow_at)
+
+    def test_unreadable_queue_is_null_never_zero_and_the_beat_still_goes_out(self):
+        agent = self.agent()
+        cloud = BeatCloud()
+        beat = self.heartbeat(agent, cloud)
+        with patch.object(agent_module, "queue_counts", side_effect=sqlite3.OperationalError("database is locked")):
+            self.assertTrue(beat.beat())
+        self.assertIsNone(cloud.bodies[0]["queue"])
+        self.assertIn("heartbeat.queue_unreadable", [event for event, _fields in self.events])
+
+    def test_the_beat_never_writes_the_queue(self):
+        agent = self.agent()
+        self.phases(agent.queue, {"1.2.1": "retry", "1.2.2": "pending"})
+        before = [tuple(row) for row in agent.queue.db.execute("SELECT * FROM studies ORDER BY uid")]
+        meta = [tuple(row) for row in agent.queue.db.execute("SELECT * FROM meta ORDER BY key")]
+        changes = agent.queue.db.total_changes
+        beat = self.heartbeat(agent, BeatCloud())
+        for _ in range(3):
+            self.assertTrue(beat.beat())
+        self.assertEqual([tuple(row) for row in agent.queue.db.execute("SELECT * FROM studies ORDER BY uid")], before)
+        self.assertEqual([tuple(row) for row in agent.queue.db.execute("SELECT * FROM meta ORDER BY key")], meta)
+        self.assertEqual(agent.queue.db.total_changes, changes)
+        reader = sqlite3.connect(Path(self.path).resolve().as_uri() + "?mode=ro", uri=True)
+        self.addCleanup(reader.close)
+        with self.assertRaises(sqlite3.OperationalError):
+            reader.execute("DELETE FROM studies")
+
+    def test_a_failed_beat_is_logged_never_raised_and_the_next_one_tries_again(self):
+        agent = self.agent()
+        cloud = BeatCloud([FakeResponse(503), GatewayError("cloud request ConnectionError"), RuntimeError("boom")])
+        beat = self.heartbeat(agent, cloud)
+        self.assertEqual([beat.beat(), beat.beat(), beat.beat(), beat.beat()], [False, False, False, True])
+        deferred = [fields for event, fields in self.events if event == "heartbeat.deferred"]
+        self.assertEqual(deferred, [{"status": 503}, {"error": "cloud_unreachable"}, {"error": "other"}])
+
+    def test_first_beat_goes_out_at_once_on_its_own_thread_and_a_blocked_main_loop_does_not_hold_it(self):
+        agent = self.agent()
+        cloud = BeatCloud()
+        beat = self.heartbeat(agent, cloud)
+        with patch.object(agent_module, "HEARTBEAT_SECONDS", 0.05):
+            beat.start()
+            # The main thread is busy here (a long STOW in production); beats keep going out meanwhile.
+            deadline = time.monotonic() + 5
+            while len(cloud.bodies) < 3 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            beat.stop()
+        self.assertGreaterEqual(len(cloud.bodies), 3)
+        self.assertNotEqual(beat.thread.ident, threading.get_ident())
+        self.assertFalse(beat.thread.is_alive(), "stop ends the thread")
+        self.assertEqual(len({body["bootId"] for body in cloud.bodies}), 1, "one boot id per process run")
+
+    def test_stop_waits_for_a_beat_in_flight_then_no_new_beat_starts(self):
+        agent = self.agent()
+        gate = threading.Event()
+        cloud = BeatCloud(gate=gate)
+        beat = self.heartbeat(agent, cloud)
+        beat.start()
+        deadline = time.monotonic() + 5
+        while not cloud.bodies and time.monotonic() < deadline:
+            time.sleep(0.01)
+        threading.Timer(0.2, gate.set).start()
+        beat.stop()
+        self.assertFalse(beat.thread.is_alive())
+        self.assertEqual(len(cloud.bodies), 1)
+
+    def test_run_starts_the_beat_and_stops_it_when_the_loop_ends(self):
+        agent = Agent(config(self.path))
+        started = []
+        real = agent_module.Heartbeat
+
+        class Recording(real):
+            def start(self):
+                started.append("start")
+
+            def stop(self, wait=5.0):
+                started.append("stop")
+
+        agent.queue.record_changes([("1.2.3", "orthanc-id")], 10)
+        agent.poll_changes = lambda: None
+
+        def permanent(_row):
+            agent.stopping = True
+            raise PermanentGatewayError("single DICOM instance exceeds byte budget")
+
+        agent.process = permanent
+        with patch.object(agent_module, "Heartbeat", Recording):
+            agent.run()
+        self.assertEqual(started, ["start", "stop"])
+
+    def test_two_runs_have_different_boot_ids(self):
+        agent = self.agent()
+        first, second = self.heartbeat(agent, BeatCloud()), self.heartbeat(agent, BeatCloud())
+        self.assertNotEqual(first.body()["bootId"], second.body()["bootId"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -37,6 +37,12 @@ const groups: readonly (RouteContract & { routes: readonly string[] })[] = [
     routes: ['GET health', 'GET version'] },
   { kinds: ['system-operation'], operation: 'read', causes: ['user-view', 'background-fetch'],
     routes: ['GET admin/metrics', 'GET admin/held-sources'] },
+  // Gateway operational status: a Gateway's heartbeat (version, uptime, queue counts, ages; no study, patient or free text)
+  // kept in the API's memory, and the admin's read of this institution's Gateways. Not a delivery or audit record.
+  { kinds: ['system-operation'], operation: 'write', causes: ['service-job'],
+    routes: ['POST gateway/heartbeat'] },
+  { kinds: ['system-operation'], operation: 'read', causes: ['user-view', 'background-fetch'],
+    routes: ['GET admin/gateway-status'] },
   // Transient staff viewing presence is operational state, not a patient record or proof of record delivery.
   { kinds: ['system-operation'], operation: 'read', causes: ['user-view', 'background-fetch'],
     routes: ['GET presence', 'GET preload/cache-key'] },
