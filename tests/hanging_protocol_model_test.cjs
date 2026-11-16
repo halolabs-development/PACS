@@ -254,3 +254,18 @@ test('previous and next traverse only ordered enabled fully matched rules withou
   assert.equal(model.navigate(value,changed,IDS[0],'previous').rule.id,ids[2]);
   assert.deepEqual(value,before);assert.throws(()=>model.navigate(value,context,null,'sideways'),/방향/);
 });
+
+test('an attached picture without a Series Number is not the first series: the panel order in either direction',()=>{
+  const value=library(),s=value.rules[0].selectors[0];
+  // As the pinned stack handler builds a display set: SeriesNumber is instance.SeriesNumber || 0; the instance keeps its own.
+  const own=(uid,number,date,time,patch={})=>display(uid,'1.2.1',number||0,{instances:[{SeriesNumber:number,SeriesDate:date,SeriesTime:time}],...patch});
+  const picture=own('1.2.1.90',undefined,'','',{Modality:'OT',SeriesDescription:'Attached Document'});
+  const sets=[picture,own('1.2.1.3',3,'20260912','120000'),own('1.2.1.2',2,'20260912','130000'),own('1.2.1.1',2,'20260912','110000')];
+  const chosen=()=>model.resolve(value,{studies:studies().slice(0,1),displaySets:sets}).cells[0].SeriesInstanceUID;
+  assert.equal(chosen(),'1.2.1.1','number, then series date and time');
+  s.order='descending';assert.equal(chosen(),'1.2.1.3');
+  s.occurrence=4;assert.equal(chosen(),'1.2.1.90','a missing number is last when descending too');
+  s.order='ascending';assert.equal(chosen(),'1.2.1.90');
+  assert.equal(model.displayMetadata(picture).seriesNumber,null);
+  assert.equal(model.displayMetadata(own('1.2.1.0',0,'','')).seriesNumber,0,'a real Series Number 0 is a number');
+});

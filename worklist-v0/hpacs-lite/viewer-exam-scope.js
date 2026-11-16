@@ -112,9 +112,11 @@
   }
   const installed=new WeakSet();
   function comparisonProtocol(input,displaySets) {
-    const selectors={},roles=[input.current,input.prior];
+    // Each side opens on its first image series in the Studies panel order (root.kinSeriesOrder, the viewer's app config),
+    // whatever order the display sets arrived in: a series without a number (an attached document) is not first.
+    const selectors={},roles=[input.current,input.prior],ordered=[...displaySets].sort((a,b)=>root.kinSeriesOrder(a,b));
     roles.forEach((scope,i)=>{
-      const selected=displaySets.find(set=>!['SR','SEG','PR','KO','DOC','RTSTRUCT'].includes(set.Modality)&&
+      const selected=ordered.find(set=>!['SR','SEG','PR','KO','DOC','RTSTRUCT'].includes(set.Modality)&&
         scope.sources.some(source=>source.studyUid===set.StudyInstanceUID&&model.allows(source,set.SeriesInstanceUID)));
       selectors['exam-'+i]={seriesMatchingRules:[{attribute:'displaySetInstanceUID',required:true,
         constraint:{equals:{value:selected?.displaySetInstanceUID||''}}}]};

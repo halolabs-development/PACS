@@ -12,9 +12,12 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import re
 import unittest
 import uuid
+from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pydicom
 from playwright.sync_api import expect
@@ -138,6 +141,104 @@ class AttachDocumentE2E(DicomPdfE2E):
         for name in rows:
             lookup = self.stack.request("POST", "/dicom/lookup", "doctor", {"studyUid": fixture.uid, "sopUid": rows[name]["sop"]})
             self.assertEqual(403, lookup.status, f"a withdrawn {name} is not looked up for the viewer")
+
+
+    def attach_files(self, work, fixture, files):
+        """Attach `files` ([name, type, bytes]) to `fixture` from the Radiology row menu, as a reader does; returns its rows."""
+        row = self.select(work, fixture)
+        box = row.evaluate("tr => { const r = tr.getBoundingClientRect(); return { x: r.x, y: r.y }; }")
+        row.dispatch_event("contextmenu", {"clientX": box["x"] + 5, "clientY": box["y"] + 5, "button": 2})
+        with work.expect_file_chooser() as chooser:
+            work.locator("#ctx [data-i]").filter(has_text=re.compile("^Attach Document$")).click()
+        chooser.value.set_files([{"name": n, "mimeType": t, "buffer": b} for n, t, b in files])
+        dialog = work.locator("#attach-document")
+        dialog.locator("#attach-send").click()
+        expect(dialog.locator(".attach-files .attach-result")).to_have_text(["Attached"] * len(files), timeout=60000)
+        dialog.locator("#attach-cancel").click()
+        expect(dialog).to_be_hidden()
+        return self.attached_rows(fixture.uid)
+
+    # What each viewport shows once every one of them has an image: its display set's study, modality and description.
+    # (An expression written into each page function: the viewer's CSP refuses eval.)
+    CELLS = """[...services.viewportGridService.getState().viewports.values()].sort((a,b)=>a.y-b.y||a.x-b.x).map(cell=>{
+      const id=services.cornerstoneViewportService.getCornerstoneViewport(cell.viewportId)?.getCurrentImageId?.();
+      const set=services.displaySetService.getDisplaySetByUID((cell.displaySetInstanceUIDs||[])[0]);
+      return {image:!!id,study:set?.StudyInstanceUID,modality:set?.Modality,description:set?.SeriesDescription,series:set?.SeriesInstanceUID};})"""
+
+    def shown(self, page, count):
+        """At least `count` viewports, each with an image (the protocol may make more). Until the viewer has made its
+        services and grid, reading them throws; that is "not yet"."""
+        try:
+            page.wait_for_function("n=>{try{const cells=" + self.CELLS + ";return cells.length>=n&&cells.every(c=>c.image);}catch(_){return false;}}",
+                                   arg=count, timeout=60000)
+        except Exception:
+            seen = page.evaluate("()=>{try{return " + self.CELLS + ";}catch(e){return String(e);}}")
+            print("FIRST DISPLAY not shown " + json.dumps(dict(url=page.url, want=count, cells=seen)), flush=True)
+            folder = Path(__file__).parent / "artifacts" / "attach-document-ci"; folder.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(folder / f"first-display-not-shown-{count}.png"))
+            raise
+        return page.evaluate("()=>" + self.CELLS)
+
+    def test_attach_02_the_viewer_opens_on_the_images_not_on_an_attached_picture(self):
+        """An attached picture is a Secondary Capture series with no Series Number of its own. Opening the study puts the
+        study's images in its first viewport, with a prior (worklist double-click, hpCompare) and alone (by address, the
+        default protocol); the attachment stays one more series of the study. The reader's own choices are kept: a
+        layout saved with the attachment restores it, and a series named in the address is shown first."""
+        patient = "ATTFIRST-" + uuid.uuid4().hex[:10]
+        prior, current = self.ct(patient, "past", "20260701"), self.ct(patient, "current", "20260801")
+        def cleanup():
+            for uid in (prior.uid, current.uid):
+                if not re.fullmatch(r"[0-9.]+", uid): raise RuntimeError("Refusing an unexpected synthetic value in SQL")
+                psql(f"""BEGIN; DELETE FROM "StudyAttachment" WHERE uid='{uid}'; {AUDIT_GUARD_OFF}
+                  DELETE FROM "AuditLog" WHERE target='{uid}' AND action LIKE 'study.attachment.%'; {AUDIT_GUARD_ON} COMMIT;""")
+        self.addCleanup(cleanup)
+        known, _ = self.known_png()
+        work = self.login()
+        attached, sops = {}, {}
+        for fixture in (prior, current):
+            rows = self.attach_files(work, fixture, [("consent.png", "image/png", known)])
+            self.assertEqual({"stored"}, {r["state"] for r in rows.values()})
+            attached[fixture.uid], sops[fixture.uid] = rows["consent.png"]["series"], rows["consent.png"]["sop"]
+            stored = pydicom.dcmread(io.BytesIO(self.stack.orthanc_bytes(f"/instances/{rows['consent.png']['orthanc']}/file")))
+            print("ATTACHED picture Series Number", repr(stored.get("SeriesNumber")), flush=True)
+        # The worklist's own opening: the current study with its prior (hpCompare; the pinned protocol makes a 2x2 of two
+        # series each). Each study's first viewport shows its CT; the attachments may follow.
+        row = self.select(work, current)
+        with work.context.expect_page(timeout=20000) as opened:
+            row.dblclick()
+        viewer = opened.value
+        viewer.wait_for_url("**/ohif/viewer?**", timeout=30000)
+        self.assertEqual(parse_qs(urlsplit(viewer.url).query).get("hangingProtocolId"), ["@ohif/hpCompare"])
+        cells = self.shown(viewer, 2)
+        print("FIRST DISPLAY worklist opening " + json.dumps(cells), flush=True)
+        first = {}
+        for cell in cells: first.setdefault(cell["study"], cell)
+        self.assertEqual({current.uid, prior.uid}, set(first))
+        for study, cell in first.items():
+            self.assertEqual(("CT", False), (cell["modality"], cell["series"] == attached[study]), cells)
+        offered = viewer.evaluate("()=>services.displaySetService.getActiveDisplaySets().map(d=>d.SeriesInstanceUID)")
+        self.assertTrue(set(attached.values()) <= set(offered), "the attachments stay series of their studies")
+        viewer.close()
+        # By address, the current study alone (the default protocol).
+        page = work.context.new_page()
+        page.goto(self.stack.proxy + "/ohif/viewer?StudyInstanceUIDs=" + current.uid)
+        cells = self.shown(page, 1)
+        print("FIRST DISPLAY address opening " + json.dumps(cells), flush=True)
+        self.assertEqual((current.uid, "CT"), (cells[0]["study"], cells[0]["modality"]), cells)
+        # The reader's own choices stay: a layout saved with the attachment in the cell restores it.
+        self.place(page, {"sop": sops[current.uid]})
+        page.wait_for_function("()=>JSON.stringify(" + self.CELLS + ").includes('Attached Document')", timeout=60000)
+        self.action(page, '저장', '저장했습니다')
+        page.reload(); self.shown(page, 1)
+        self.action(page, '복원', '적용했습니다')
+        page.wait_for_function("series=>(" + self.CELLS + ")[0]?.series===series", arg=attached[current.uid], timeout=60000)
+        page.close()
+        # A series named in the address is the first display even when it is the attached picture.
+        page = work.context.new_page()
+        page.goto(self.stack.proxy + "/ohif/viewer?StudyInstanceUIDs=" + current.uid + "&initialSeriesInstanceUID=" + attached[current.uid])
+        cells = self.shown(page, 1)
+        self.assertEqual((current.uid, attached[current.uid]), (cells[0]["study"], cells[0]["series"]), cells)
+        page.close()
 
 
 def load_tests(loader, tests, pattern):
