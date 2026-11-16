@@ -214,6 +214,35 @@ window.KinViewerFeatures?.module('view', async ({ services, commands, store, ui 
     if (record.invertBefore !== null) { v.setProperties({ invert: record.invertBefore }); record.invertBefore = null; }
   }
   function base(v, record) { baseSpace(v, record); baseWindow(v, record); }
+  // ── What a presentation state put on the cell, so it can be taken off again ──
+  // `record.gsps` holds, for each part the presentation state itself wrote — its turn and flips, its displayed area (zoom
+  // and pan), its window — the cell as that write left it (null for a part it did not write). present() keeps it; a part
+  // the reader has changed since its last write no longer matches and is the reader's.
+  const clone = value => value === undefined ? null : JSON.parse(JSON.stringify(value));
+  const cameraOf = v => { try { return v.getCamera() || {}; } catch (_) { return {}; } };
+  const turnOf = v => { const c = cameraOf(v); return clone({ viewUp: c.viewUp, normal: c.viewPlaneNormal, flipH: !!c.flipHorizontal, flipV: !!c.flipVertical }); };
+  const viewOf = v => { const c = cameraOf(v); return clone({ focalPoint: c.focalPoint, parallelScale: c.parallelScale }); };
+  const windowOf = v => { try { const p = v.getProperties() || {}; return clone({ voi: p.voiRange, fn: p.VOILUTFunction }); } catch (_) { return null; } };
+  // Numbers within a millionth (relative) are the same; everything else must match exactly.
+  function near(a, b) {
+    if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(a), Math.abs(b));
+    if (a && b && typeof a === 'object' && typeof b === 'object') return [...new Set([...Object.keys(a), ...Object.keys(b)])].every(key => near(a[key], b[key]));
+    return a === b;
+  }
+  // The row was put back to the defaults: each part the presentation state wrote, and the reader has not changed since,
+  // goes back to what the cell has without a presentation state — the row's own turn and window (as present() does for an
+  // image without one) and the zoom and pan from just before its displayed area. All is decided before anything is set.
+  function undoPresentation(v, record) {
+    const put = record.gsps;
+    record.gsps = null;
+    if (!put) { if (record.table) stockWindow(v, record); return; }
+    const turn = put.turn && near(turnOf(v), put.turn), view = put.view && near(viewOf(v), put.view.after);
+    const windowed = put.window && near(windowOf(v), put.window);
+    if (turn) turnAndFlip(v, record.rule.rotate, record.rule.flip);
+    // The pan moves the camera with its focal point, so its direction (any turn or flip it has now) stays.
+    if (view && put.view.before?.focalPoint) centreOn(v, put.view.before.focalPoint, put.view.before.parallelScale);
+    if (windowed) baseWindow(v, record);
+  }
   // The presentation state for the image now shown. Its turn, flip and displayed area go on when they differ from what
   // was put there last (the row's own come back when there is none); its window (or the row's) is put on for every image,
   // once that image's own display is in place. Returns what could not be done, for the cell's line.
@@ -222,15 +251,20 @@ window.KinViewerFeatures?.module('view', async ({ services, commands, store, ui 
     const p = gsps.latest(record.presentations, sop, frame), shown = p && gsps.forImage(p, sop, frame);
     const space = shown && (shown.rotation !== null || shown.horizontalFlip !== null || shown.area) ? p.sop + '|' + JSON.stringify([shown.rotation, shown.horizontalFlip, shown.area]) : '';
     record.presentation = shown ? p : null; record.shown = shown;
+    // What this presentation state writes (see undoPresentation); none without one.
+    const put = shown ? (record.gsps ||= { turn: null, view: null, window: null }) : (record.gsps = null);
     const notes = [];
     if (!record.presented || space !== record.signature) {
       if (record.signature) baseSpace(v, record);
       record.presented = true; record.signature = space;
+      if (put) put.turn = put.view = null;
       if (space) {
         const spatial = shown.rotation !== null || shown.horizontalFlip !== null;
         const rotation = spatial ? shown.rotation ?? 0 : record.rule.rotate;
-        if (spatial) turnAndFlip(v, rotation, shown.horizontalFlip ? 'horizontal' : 'none');
-        if (shown.area && !displayArea(v, shown.area, rotation)) record.areaNote = 'GSPS displayed area not shown'; else record.areaNote = '';
+        if (spatial) { turnAndFlip(v, rotation, shown.horizontalFlip ? 'horizontal' : 'none'); put.turn = turnOf(v); }
+        const before = viewOf(v);
+        if (shown.area && !displayArea(v, shown.area, rotation)) record.areaNote = 'GSPS displayed area not shown';
+        else { record.areaNote = ''; if (shown.area) put.view = { before, after: viewOf(v) }; }
       } else record.areaNote = '';
     }
     if (record.areaNote) notes.push(record.areaNote);
@@ -244,17 +278,19 @@ window.KinViewerFeatures?.module('view', async ({ services, commands, store, ui 
     try { invertNow = !!v.getProperties().invert; } catch (_) {}
     if (shown.invert !== null && record.invertBefore === null) record.invertBefore = invertNow;
     const invert = shown.invert ?? (record.invertBefore ?? invertNow);
+    let own = false;  // the presentation state's own window (or table) is on, not the row's
     if (shown.voi?.lut) {
       const drawn = window.kinStoredVoi?.apply?.(v, { voi: { status: 'verified', fn: 'TABLE', source: 'GSPS Softcopy VOI LUT', lut: shown.voi.lut }, invert }) === true;
-      if (drawn) record.table = true;
+      if (drawn) record.table = own = true;
       else { notes.push('GSPS VOI LUT could not be drawn: the row\'s window is used'); baseWindow(v, record); }
     } else {
       if (shown.voi?.unreadable) notes.push('GSPS VOI LUT could not be read: the row\'s window is used');
-      if (shown.voi && !shown.voi.unreadable) windowTo(v, shown.voi.width, shown.voi.center, record);
+      if (shown.voi && !shown.voi.unreadable) { windowTo(v, shown.voi.width, shown.voi.center, record); own = true; }
       else if (record.rule.windowing) windowTo(v, record.rule.windowing.w, record.rule.windowing.l, record); else stockWindow(v, record);
       if (shown.invert !== null) v.setProperties({ invert: shown.invert });
       else if (record.invertBefore !== null) { v.setProperties({ invert: record.invertBefore }); record.invertBefore = null; }
     }
+    put.window = own ? windowOf(v) : null;
     return (record.notes = notes);
   }
   let pass = 0;
@@ -283,7 +319,9 @@ window.KinViewerFeatures?.module('view', async ({ services, commands, store, ui 
       else if ((v.getCurrentImageIdIndex?.() ?? 0) !== index) await changeImage(v, () => jump(v, index));
       if (!live()) return null;
       clearMarks(record);
+      // The row's own values replace all of the cell's display, an earlier presentation state's included.
       record.rule = rule; record.presentations = null; record.presentation = null; record.shown = null; record.signature = ''; record.presented = false; record.notes = [];
+      record.gsps = null;
       base(v, record);
       filters.apply(canvasOf(v), rule.filter);
       if (rule.overlay === 'none') record.pane.dataset.kinCellOverlay = 'none';
@@ -305,19 +343,21 @@ window.KinViewerFeatures?.module('view', async ({ services, commands, store, ui 
     }
   }
   // A row left at the defaults: the cell goes back to its stock order and loses this module's filter, overlay setting
-  // and presentation state; its camera and window stay as the reader has them.
+  // and presentation state (what that turned, moved or windowed goes back: undoPresentation); the rest of its camera
+  // and window stays as the reader has them. Resolves true when it took a cell back.
   async function clearCell(target, run) {
     const v = target.v, record = records.get(target.id);
-    if (!current(target) || run !== pass || !record || record.viewport !== v || record.key !== target.key) return;
+    if (!current(target) || run !== pass || !record || record.viewport !== v || record.key !== target.key) return false;
     clearMarks(record);
-    if (record.table) stockWindow(v, record);
-    record.rule = null; record.presentations = null;
+    undoPresentation(v, record);
+    record.rule = null; record.presentations = null; record.presentation = null; record.shown = null; record.signature = '';
     if (record.invertBefore !== null) { v.setProperties({ invert: record.invertBefore }); record.invertBefore = null; }
     const now = imageId(v), stock = record.stock;
     if (!sameList(v.getImageIds?.() || [], stock)) await changeImage(v, () => v.setStack(stock, Math.max(0, stock.indexOf(now))));
-    if (!current(target) || run !== pass) return;
+    if (!current(target) || run !== pass) return false;
     records.delete(target.id);
     v.render();
+    return true;
   }
 
   // ── Drawing: the cell's marks and its presentation state's annotations (read-only), over the image ──
@@ -408,13 +448,13 @@ window.KinViewerFeatures?.module('view', async ({ services, commands, store, ui 
   }
   async function applyList(list, run) {
     const notes = [];
-    let applied = 0;
+    let applied = 0, cleared = 0;
     for (const { index, target, rule, alive } of list) {
       if (ended || run !== pass) return null;
       const name = 'Set ' + (index + 1);
       if (!current(target)) { notes.push(name + ': its images changed, not applied'); continue; }
       try {
-        if (!rule || model.isDefaultDisplay(rule)) { await clearCell(target, run); continue; }
+        if (!rule || model.isDefaultDisplay(rule)) { if (await clearCell(target, run)) cleared++; continue; }
         const result = await applyCell(target, rule, run, alive);
         if (result === null) { if (run === pass) notes.push(name + ': its images changed, not applied'); continue; }
         applied++;
@@ -422,7 +462,10 @@ window.KinViewerFeatures?.module('view', async ({ services, commands, store, ui 
       } catch (error) { console.error(error); notes.push(name + ': ' + (error?.message || 'not applied')); }
     }
     if (run !== pass) return null;
-    return (applied ? 'Applied to ' + applied + (applied === 1 ? ' cell.' : ' cells.') : 'No cell has a rule to apply.') + (notes.length ? ' ' + notes.join('; ') + '.' : '');
+    const plural = n => n + (n === 1 ? ' cell.' : ' cells.');
+    // Only rows at the defaults: the line says their cells lost the rule, not that nothing happened.
+    return (applied ? 'Applied to ' + plural(applied) : cleared ? 'Rule removed from ' + plural(cleared) : 'No cell has a rule to apply.')
+      + (notes.length ? ' ' + notes.join('; ') + '.' : '');
   }
   // A Hanging Protocol was applied: once each of its cells shows an image, its display rule is put on it.
   const rendered = () => window.cornerstone?.Enums?.ViewportStatus?.RENDERED || 'rendered';

@@ -152,6 +152,19 @@ class DisplaySetPresetsE2E(HangingProtocolE2E):
         self.assertEqual(['GSPS: SYNGSPS'], cell['marks'])
         self.assertEqual(1, cell['lines'])
         expect(p.locator('.kin-view-gsps text')).to_have_text(['SYN NOTE'])
+        # The row back at all the defaults: the presentation state's turn and window go — the cell is turned back and
+        # shows the row's Lung it had before the GSPS — and the line says the rule left the cell.
+        lung = p.evaluate(PRESET, 'Lung')
+        panel = self.presets(p)
+        panel.get_by_label('Set 1 Windowing').select_option(label='Stock')
+        panel.get_by_label('Set 1 GSPS auto').select_option(label='Off')
+        panel.get_by_role('button', name='Apply to This Study').click()
+        expect(panel.get_by_role('status')).to_have_text('Rule removed from 1 cell.', timeout=30000)
+        self.close(p, panel); self.settle(p)
+        cell = self.cells_now(p)[0]
+        print('DISPLAY-SET-PRESETS gsps taken off ' + repr(cell), flush=True)
+        self.assertEqual((0, [], 0), (cell['rotation'], cell['marks'], cell['lines']))
+        self.assertAlmostEqual(lung['w'], cell['w'], delta=1); self.assertAlmostEqual(lung['l'], cell['l'], delta=1)
 
     def test_presets_03_a_filter_changes_the_picture_not_the_measurement(self):
         f = self.ct('DSP-FILTER-' + uuid.uuid4().hex[:12], 'current', '20260801')

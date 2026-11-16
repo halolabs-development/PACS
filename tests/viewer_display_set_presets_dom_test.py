@@ -56,16 +56,18 @@ SETUP = """owner => {
     document.getElementById('grid').append(pane);
     const element = pane.querySelector('.viewport-element');
     const v = { id, type: 'stack', element, ids: [1, 2, 3].map(n => 'syn:' + id + ':' + n), index: 0, renders: 0, zoom: 1,
-      presentation: { rotation: 0 }, properties: { invert: false }, camera: { focalPoint: [0, 0, 0], position: [0, 0, 100], parallelScale: 100, flipHorizontal: false, flipVertical: false } };
+      presentation: { rotation: 0 }, properties: { invert: false }, camera: { focalPoint: [0, 0, 0], position: [0, 0, 100], parallelScale: 100, viewUp: [0, -1, 0], flipHorizontal: false, flipVertical: false } };
     Object.assign(v, {
       getImageIds: () => [...v.ids], getCurrentImageId: () => v.ids[v.index], getCurrentImageIdIndex: () => v.index,
       async setStack(ids, index = 0) { synStacks.push([id, [...ids], index]); v.ids = [...ids]; v.index = index; v.properties = { invert: false }; },
       getZoom: () => v.zoom, setZoom(zoom) { v.zoom = zoom; v.camera.parallelScale = 100 / zoom; fire(v, 'CAMERA_MODIFIED'); },
       setPan() { v.camera.focalPoint = [0, 0, 0]; v.camera.position = [0, 0, 100]; },
       getCamera: () => structuredClone(v.camera), setCamera(next) { v.camera = { ...v.camera, ...structuredClone(next) }; fire(v, 'CAMERA_MODIFIED'); },
-      getViewPresentation: () => ({ ...v.presentation }), setViewPresentation(next) { v.presentation = { rotation: next.rotation }; },
+      // A turn turns the camera's up direction, as in the viewer (so a camera compare sees it).
+      getViewPresentation: () => ({ ...v.presentation }), setViewPresentation(next) { v.presentation = { rotation: next.rotation };
+        const r = next.rotation * Math.PI / 180; v.camera.viewUp = [Math.round(Math.sin(r) * 1e6) / 1e6, Math.round(-Math.cos(r) * 1e6) / 1e6, 0]; },
       getProperties: () => structuredClone(v.properties), setProperties(next) { v.properties = { ...v.properties, ...structuredClone(next) }; },
-      setVOI(range, options) { synVoi.push([id, structuredClone(range), structuredClone(options || {}), v.properties.VOILUTFunction || null]); },
+      setVOI(range, options) { synVoi.push([id, structuredClone(range), structuredClone(options || {}), v.properties.VOILUTFunction || null]); v.properties.voiRange = structuredClone(range); },
       render() { v.renders++; },
       // 0.5 mm pixels; the world origin is the centre of the first pixel. One world mm is one canvas pixel.
       getImageData: () => ({ spacing: [0.5, 0.5, 1], imageData: { indexToWorld: ([i, j]) => [i * 0.5, j * 0.5, 0] } }),
@@ -73,7 +75,10 @@ SETUP = """owner => {
     });
     synViewports.set(id, v);
   }
-  window.synCommands = { calls: [], runCommand(name, props, context) { this.calls.push([name, structuredClone(props), context]); } };
+  // The viewer's window command sets the cell's VOI range, as cornerstone's does (lower/upper of a linear window).
+  window.synCommands = { calls: [], runCommand(name, props, context) { this.calls.push([name, structuredClone(props), context]);
+    const v = name === 'setViewportWindowLevel' && synViewports.get(props.viewportId);
+    if (v) v.properties.voiRange = { lower: props.level - 0.5 - (props.window - 1) / 2, upper: props.level - 0.5 + (props.window - 1) / 2 }; } };
   const listeners = new Map();
   const events = name => ({ subscribe(event, fn) { const key = name + event; listeners.set(key, [...(listeners.get(key) || []), fn]);
     return { unsubscribe() { listeners.set(key, (listeners.get(key) || []).filter(f => f !== fn)); } }; } });
@@ -132,6 +137,7 @@ STATE = """id => { const v = synViewports.get(id), pane = document.getElementByI
   const shown = n => getComputedStyle(n).visibility;
   return { ids: v.getImageIds(), index: v.index, image: v.getCurrentImageId(), zoom: v.zoom, rotation: v.presentation.rotation,
     flipH: v.camera.flipHorizontal, flipV: v.camera.flipVertical, scale: v.camera.parallelScale, invert: v.properties.invert, focal: v.camera.focalPoint,
+    voi: v.properties.voiRange || null,
     filter: canvas.style.filter || '', overlay: pane.dataset.kinCellOverlay || null,
     stockText: shown(pane.querySelector('[data-cy=viewport-overlay-top-left]')), displayText: shown(pane.querySelector('.kin-display-text')),
     marks: [...pane.querySelectorAll('.kin-view-marks>span')].map(n => n.textContent),
@@ -437,6 +443,81 @@ class ViewerDisplaySetPresetsDOMTest(unittest.TestCase):
         page.wait_for_function("synVoi.length === 1")
         self.assertEqual([['left', {'lower': -1350, 'upper': 149}, {'forceRecreateLUTFunction': True}, 'LINEAR']], page.evaluate('synVoi'))
         self.assertEqual(before, len(self.commands(page)))
+    def gsps_then_defaults(self, page, before_defaults=None):
+        """Middle + Lung + GSPS auto On on the left cell, then the row back to all defaults. Returns (the cell with the GSPS,
+        the cell after, the window commands after the defaults)."""
+        panel = self.presets(page)
+        panel.get_by_label('Set 1 First image').select_option(label='Middle')
+        panel.get_by_label('Set 1 Windowing').select_option(label='Lung')
+        panel.get_by_label('Set 1 GSPS auto').select_option(label='On')
+        panel.get_by_role('button', name='Apply to This Study').click()
+        expect(panel.get_by_role('status')).to_have_text('Applied to 1 cell.')
+        on = self.state(page, 'left', settle=300)
+        if before_defaults:
+            before_defaults() if callable(before_defaults) else page.evaluate(before_defaults)
+        n = len(self.commands(page))
+        for label, value in [('Set 1 First image', 'First'), ('Set 1 Windowing', 'Stock'), ('Set 1 GSPS auto', 'Off')]:
+            panel.get_by_label(label).select_option(label=value)
+        panel.get_by_role('button', name='Apply to This Study').click()
+        expect(panel.get_by_role('status')).to_have_text('Rule removed from 1 cell.')
+        back = self.state(page, 'left', settle=300)
+        return on, back, [c[1] for c in self.commands(page)[n:]]
+
+    def test_12_a_row_put_back_to_the_defaults_takes_the_gsps_turn_and_window_off(self):
+        # The GSPS turned the image 90° and put W 350 / L 50 over the row's Lung: with the row at the defaults the cell is
+        # as it was before that GSPS (no turn, the Lung window), and no GSPS mark stays.
+        page = self.open()
+        on, back, after = self.gsps_then_defaults(page)
+        self.assertEqual((90, ['GSPS: KEYIMAGE'], {'lower': -125, 'upper': 224}), (on['rotation'], on['marks'], on['voi']))
+        self.assertEqual((0, False, False, []), (back['rotation'], back['flipH'], back['flipV'], back['marks']))
+        self.assertEqual([{'viewportId': 'left', 'window': 1500, 'level': -600}], after)
+        self.assertEqual({'lower': -1350, 'upper': 149}, back['voi'])
+        # A window the reader set after the GSPS is the reader's: it stays; the turn still goes.
+        page2 = self.open()
+        on, back, after = self.gsps_then_defaults(page2, "synViewports.get('left').properties.voiRange = { lower: 0, upper: 80 }")
+        self.assertEqual(([], {'lower': 0, 'upper': 80}, 0), (after, back['voi'], back['rotation']))
+
+    def test_13_the_gsps_displayed_area_and_flip_go_back_but_a_reader_zoom_stays(self):
+        page = self.open()
+        # The GSPS also shows a displayed area (pixels 101..300 × 101..200, scale to fit) and mirrors the image.
+        page.evaluate("""() => { synGsps['00700041'] = { vr: 'CS', Value: ['Y'] };
+          synGsps['0070005A'] = { vr: 'SQ', Value: [{ '00700052': { vr: 'SL', Value: [101, 101] }, '00700053': { vr: 'SL', Value: [300, 200] },
+            '00700100': { vr: 'CS', Value: ['SCALE TO FIT'] } }] }; }""")
+        on, back, after = self.gsps_then_defaults(page)
+        self.assertEqual((90, True), (on['rotation'], on['flipH']))
+        self.assertNotEqual(([0, 0, 0], 100), (on['focal'], on['scale']), 'the displayed area moved the camera')
+        self.assertEqual((0, False, [0, 0, 0], 100), (back['rotation'], back['flipH'], back['focal'], back['scale']))
+        # The reader zoomed after the GSPS: that zoom stays; the turn and the flip go.
+        page2 = self.open()
+        page2.evaluate("""() => { synGsps['00700041'] = { vr: 'CS', Value: ['Y'] };
+          synGsps['0070005A'] = { vr: 'SQ', Value: [{ '00700052': { vr: 'SL', Value: [101, 101] }, '00700053': { vr: 'SL', Value: [300, 200] },
+            '00700100': { vr: 'CS', Value: ['SCALE TO FIT'] } }] }; }""")
+        on, back, after = self.gsps_then_defaults(page2, "synViewports.get('left').setCamera({ parallelScale: 33 })")
+        self.assertEqual((0, False, 33), (back['rotation'], back['flipH'], back['scale']))
+
+    def test_14_a_gsps_table_goes_back_to_the_window_before_it(self):
+        page = self.open()
+        page.evaluate("""() => { synGsps['00283110'].Value[0] = { '00283010': { vr: 'SQ', Value: [{ '00283002': { vr: 'US', Value: [3, 0, 8] },
+          '00283006': { vr: 'US', Value: [0, 128, 255] } }] } }; }""")
+        on, back, after = self.gsps_then_defaults(page)
+        self.assertEqual(1, len(page.evaluate('synTables')))
+        # The table is taken off by a newly made linear window: the Lung the cell had before the GSPS.
+        self.assertEqual([['left', {'lower': -1350, 'upper': 149}, {'forceRecreateLUTFunction': True}, 'LINEAR']], page.evaluate('synVoi'))
+        self.assertEqual((0, [], []), (back['rotation'], back['marks'], after))
+
+    def test_15_a_turn_the_reader_made_stays_when_the_next_image_has_the_same_gsps(self):
+        # The GSPS names the second and third images. On the second the reader turns the image; the third has the same
+        # GSPS, so its turn is not written again: the reader's turn is not the GSPS's and stays when the row goes back.
+        page = self.open()
+        page.evaluate("synGsps['00081115'].Value[0]['00081140'].Value.push({ '00081155': { vr: 'UI', Value: ['1.2.826.0.1.1.3'] } })")
+        def turn_and_scroll():
+            page.evaluate("synViewports.get('left').setViewPresentation({ rotation: 180 })")
+            self.scroll(page, 'left', 2)
+            page.wait_for_function("synCommands.calls.length === 3")
+        on, back, after = self.gsps_then_defaults(page, turn_and_scroll)
+        self.assertEqual(180, back['rotation'])
+        self.assertEqual([{'viewportId': 'left', 'window': 1500, 'level': -600}], after, 'the window the GSPS wrote on the third image goes')
+
     def test_11_hanging_protocol_cells_are_pinned_when_they_first_show_their_images(self):
         page = self.open()
         soft = {'magnification': 'fit', 'windowing': {'name': 'Soft tissue', 'w': 400, 'l': 40}, 'filter': 'none', 'sort': 'stock', 'rotate': 0,
