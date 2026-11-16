@@ -10,8 +10,8 @@ import { decideGatewayHeartbeat, GATEWAY_HEARTBEAT_INSTITUTION_CONFLICT, GATEWAY
  * Gateway 운영 상태(관리자 콘솔 Gateway Status의 Gateway 줄). 규칙은 `gateway-heartbeat.ts` 한 곳에 있다.
  *
  * 행은 이 API 프로세스의 메모리에만 있다(`presence.service.ts`의 보기 표시와 같은 운영 상태). 하트비트마다 감사 행을 쓰지
- * 않는다 — 사람의 행위도, 임상·전달 기록도 아니다. API가 다시 시작하면 표는 비고, 각 Gateway의 다음 하트비트(30초 이내)가
- * 다시 채운다. 화면은 그 사실을 서버 시작 시각과 함께 말한다. 한 프로세스 안에서 한 요청의 판정과 쓰기는 await 없이 끝나
+ * 않는다 — 사람의 행위도, 임상·전달 기록도 아니다. API가 다시 시작하면 표는 비고, 각 Gateway의 다음 하트비트가 정상
+ * 수락되면 다시 채워진다(agent는 약 30초마다 보내지만 그 도착 기한은 보장하지 않는다). 화면은 그 사실을 서버 시작 시각과 함께 말한다. 한 프로세스 안에서 한 요청의 판정과 쓰기는 await 없이 끝나
  * 서로 끼어들지 않는다. API가 여러 프로세스가 되면 공유 저장소를 다시 정한다.
  */
 @Injectable()

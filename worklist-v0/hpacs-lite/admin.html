@@ -1197,7 +1197,7 @@
 
       function empty(serverStartedAt, format = localTime) {
         return { text: `No Gateway of this institution has contacted this server since it started (${format(serverStartedAt)}).`,
-          title: "이 기관 Gateway의 연락만 셉니다. 연락 기록은 서버 메모리에만 있어 서버가 다시 시작하면 비고, 실행 중인 Gateway는 30초 안에 다시 알립니다. 장비가 직접 보내는 기관(Gateway 미설치)에는 줄이 없는 것이 정상입니다." };
+          title: "이 기관 Gateway의 연락만 셉니다. 연락 기록은 서버 메모리에만 있어 서버가 다시 시작하면 비고, 실행 중인 Gateway가 다음에 알리면(보통 30초마다) 다시 채워집니다. 장비가 직접 보내는 기관(Gateway 미설치)에는 줄이 없는 것이 정상입니다." };
       }
 
       /** The state line: before a read, after a read, after a failed read (the last reading stays, marked). */
