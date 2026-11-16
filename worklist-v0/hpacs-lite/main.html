@@ -669,7 +669,10 @@
     body.portrait .menubar .tabs { height: auto; }
     body.portrait .split { flex-direction: column; }
     body.portrait .left { width: 100%; min-width: 0; height: 32%; min-height: 180px; max-height: calc(100% - 420px); flex: none; }
-    body.portrait .right { min-height: 0; overflow: auto; }
+    /* A focused control is brought 1px clear of the column's lower edge: the rows below the band sit at a fraction of
+       a pixel in some fonts, and the browser's own focus scroll, in whole pixels, left Save 0.39px under that edge -
+       neither whole nor scrolled to by Tab (900x1200 in Verdana, 768x1024 on the CI's fonts). */
+    body.portrait .right { min-height: 0; overflow: auto; scroll-padding-block-end: 1px; }
     body.portrait .rw section { min-height: 0; }
     /* Wrapped controls can exceed a short panel; scroll the column without
        collapsing clinical content beneath the next panel's hit target. The column scrolls in landscape too
