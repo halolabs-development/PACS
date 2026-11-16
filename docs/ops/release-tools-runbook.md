@@ -681,6 +681,78 @@ N's volumes are kept, never removed:
    `api/src/emr-retention/ledger-file.ts`, `destruction-record.ts` and
    `retention-gate.ts`; P1 requires them unchanged between N-1 and N. A release
    that changes them needs its own rollback decision before its upgrade.
+5. **What this rollback covers, read before every switch.** Rule 4 re-applies
+   closed draft-purpose destructions, and nothing else. A rollback is therefore
+   refused, not attempted, when the ledgers hold anything else. The judgement
+   reads, never repairs: the ledger code's own `read()` and decoders over both
+   ledger files and both mirror files, `purpose-adoption.json`, and the two
+   anchor rows. It never calls `readForGate()` or `openGate()`, which restore,
+   bind and re-apply. It refuses when any of these holds:
+   - the report retention ledger has any entry (`started`, `completed` or
+     `failed`), or its anchor is not `initialized` with `seq` 0 and no last
+     completion. A site whose report ledger has records is outside this
+     rollback; dates are not used to tell "before B" from "after B";
+   - in either ledger, a unit's last record is `started` (an attempt not closed);
+   - an anchor is ahead of its ledger: `seq` beyond the entries (a destruction
+     the database committed without its completed record), or the entry at
+     `seq` is not the completed record of `lastCompletedUnit`. An anchor behind
+     the ledger is the re-application of rule 4 and is allowed for the draft
+     ledger;
+   - an anchor names another ledger, or its row is missing or not initialized;
+   - a ledger or mirror file is missing, does not read (a cut last line, an
+     unknown format, a read error), or the mirror's bytes differ from the file's;
+   - `purpose-adoption.json` exists and is not the `consumed` record that names
+     the draft ledger;
+   - a one-off container of the project runs (a sweep in flight), or a crontab
+     line or `/etc/cron.d` file runs `draft-purpose-sweep` or
+     `report-retention-sweep`;
+   - the read itself fails. A read that fails is a refusal, never "none".
+
+   The judgement runs in a stable state: with the entry closed and no request,
+   start or sweep able to end a work, and again whenever a start or sweep has
+   run, just before the entry opens. The points are: before B and at the switch
+   of the upgrade (step 1 and step 3, the second must equal the first), P0 before
+   the rollback's preflight, R2 with N's API stopped, R6 before R's entry opens,
+   and the same three on the way back to N. "Nothing changed" after a refusal
+   means the business database, both ledger volumes and both mirrors are as
+   they were; a refusal record, the retained lock and a closed entry are the
+   only allowed changes. Before B: the upgrade does not start (`NOT_STARTED`).
+   Before a rollback or way back changed anything: it does not start
+   (`ROLLBACK_REFUSED_DESTRUCTION_STATE`), and the serving stack keeps serving.
+   After a switch began (N or R stopped): keep the entry closed, the lock and
+   `NEEDS_ATTENTION` with the same refusal, and fix forward. No automatic way
+   back is taken around a refusal. The reading, as one helper container of the
+   running API's image with both ledger volumes mounted read only:
+
+   ```python
+   LEDGER_READ_JS = r"""
+   const fs=require('node:fs'),crypto=require('node:crypto');
+   const {AppendOnlyLedger}=require('/app/dist/emr-retention/ledger-file');
+   const {destructionRecordDecoder}=require('/app/dist/emr-retention/destruction-record');
+   const code=e=>String((e&&(e.code||e.name))||'Error');
+   const one=(p,codes)=>{try{if(!fs.existsSync(p))return {missing:true};const b=fs.readFileSync(p);
+    const v=new AppendOnlyLedger(p,codes,destructionRecordDecoder(codes)).read();
+    if(!v)return {missing:true};
+    return {sha256:crypto.createHash('sha256').update(b).digest('hex'),bytes:b.length,ledgerId:v.ledgerId,
+     entries:v.entries.map(e=>({seq:e.seq,unit:e.record.disposalUnitId,phase:e.record.phase}))};}
+    catch(e){return {error:code(e)};}};
+   const out={};
+   for(const [u,f,c] of [['draft','purpose-ledger.jsonl','PurposeLedger'],['report','report-retention-ledger.jsonl','ReportLedger']])
+    out[u]={file:one('/l/'+f,c),mirror:one('/m/'+f,c)};
+   // purpose-adoption.json: absent, or its kind, formatVersion, state, ledgerId, keys and sha256; unparsable is an error
+   process.stdout.write(JSON.stringify(out));
+   """
+   state = json.loads(ops.temporary_run(['--network', 'none', '--read-only',
+       '--mount', f"type=volume,source={volumes['purpose-ledger']},target=/l,readonly",
+       '--mount', f"type=volume,source={volumes['ledger-mirror']},target=/m,readonly",
+       '--entrypoint', 'node', api_image, '-e', LEDGER_READ_JS]))
+   anchors = ops.psql_json('kin-db', 'kin', """SELECT json_build_object(
+     'draft', (SELECT row_to_json(a) FROM "PurposeLedgerAnchor" a WHERE id = 1),
+     'report', (SELECT row_to_json(a) FROM "ReportLedgerAnchor" a WHERE id = 1))""")
+   ```
+
+   Then apply the list above to `state` and `anchors`, and record what was read
+   (entry counts, digests, anchors) with the refusals.
 
 The restored-copy expiry sweep runs after the running API has finished its own
 recovery, while the proxy is still not started (R6).
@@ -808,6 +880,10 @@ components belong to the account that runs it.
      names, the administrative event settings of "관리 접근 변경 이력") are read
      the same way (`kc('')`, `kc('/events/config')`)
      and applied with the README's commands when they differ.
+   - **The destruction state the rollback covers.** The judgement of rule 5,
+     with the volumes and image of the running `kin-api`. A refusal stops the
+     upgrade here: do not enter a window that could not be rolled back. Keep
+     what it read; step 3 compares with it.
 2. **Take and hold B.** Run `B = ops.backup('<backup-directory>')`, then
    `ops.rehearse(B)`. Record B's directory and its manifest's `git_sha` (N-1) and
    `running_images`. Then protect B from the nightly rotation for the rollback
@@ -859,7 +935,17 @@ components belong to the account that runs it.
    build = []   # up -d uses the loaded names; a missing name would make up build on the host
    ```
 
-   Then upgrade:
+   Then close the entry and judge again (rule 5). B was taken between the two
+   judgements, so the second must also equal the first. On a refusal, start the
+   proxy again (`ops.run(compose + ['start', 'proxy'])`) and record
+   `NOT_STARTED`; B stays held:
+
+   ```python
+   ops.run(compose + ['stop', 'proxy'])
+   # rule 5's judgement here; refuse also when what it read differs from step 1's
+   ```
+
+   Then upgrade, N's API first with the entry still closed:
 
    ```python
    lease.retain()   # as in step 2: the hold persists before the checkout or the stack changes
@@ -867,12 +953,15 @@ components belong to the account that runs it.
    ops.write_json(record_path, record)
    ops.run(['git', 'checkout', '--detach', '<N SHA>'])
    assert all(ops.digest(Path(name)) == sha for name, sha in record['outside_files'].items())
-   ops.run(compose + ['up', '-d', *build], timeout=install_timeout)
+   ops.run(compose + ['up', '-d', *build, 'api'], timeout=install_timeout)
+   # wait until it listens and run retention_opened(compose) (R6 step 3), then rule 5's judgement
+   ops.run(compose + ['up', '-d', *build], timeout=install_timeout)   # the entry opens
    ```
 
-   Every recorded compose file inside the checkout must exist at N. Then
-   continue with steps 3–4, including check 3 (signing path). `migrate deploy`
-   applies only N's new migrations.
+   Every recorded compose file inside the checkout must exist at N. If N's API
+   does not open, or the judgement refuses, keep the entry closed, the lock and
+   `NEEDS_ATTENTION`. Then continue with steps 3–4, including check 3 (signing
+   path). `migrate deploy` applies only N's new migrations.
 
    `up -d` recreates a container only when its image or its Compose
    configuration changed. `kin-orthanc` and `kin-keycloak` run pinned images and
@@ -934,6 +1023,10 @@ R_custody = Path('<new file>')       # R's custody configuration, beside the pri
 backup_root = '<backup-directory>'   # the daily backup root (B's parent)
 ```
 
+- **P0. The destruction state this rollback covers.** Rule 5's judgement, with
+  the volumes and image of N's running `kin-api`, before anything below. A
+  refusal records `ROLLBACK_REFUSED_DESTRUCTION_STATE`; N keeps serving and
+  nothing was made. This release pair has no other rollback: fix forward.
 - **P1. Validate B and the upgrade's evidence.**
 
   ```python
@@ -1210,7 +1303,11 @@ with R′, cannot replace N's configuration with R's or lose the flag.
   lock. N keeps its containers; `backup()` resumes the writers it stopped. The
   saved custody copy stays with the record. Before a repeat with the same R,
   delete it together with what preflight created.
-- **R2. Stop N.** Run `ops.run(compose_n + ['down'])`. Do not pass `-v`: N's named
+- **R2. Stop N.** First close N's entry and stop its API:
+  `ops.run(compose_n + ['stop', 'proxy', 'api'])`, and judge again (rule 5) with
+  N's database still up. A refusal here keeps N stopped with the entry closed,
+  the lock and `NEEDS_ATTENTION`; it does not go on, and it does not go back
+  by itself. Then run `ops.run(compose_n + ['down'])`. Do not pass `-v`: N's named
   volumes stay under N's Compose project. Record
   `ops.text(['docker', 'volume', 'ls', '--filter', f'label=com.docker.compose.project={n_project}'])`.
   N's checkout, `.env`, signing file and custody configuration are unchanged.
@@ -1354,7 +1451,9 @@ with R′, cannot replace N's configuration with R's or lose the flag.
      ending evidence and counts them (Recovery and rehearsal). The API's own
      startup does not run it. Nothing replays after it, because the replay ran
      once, before `listen`.
-  5. Open the entry: `ops.run(compose_r + ['up', '-d'], timeout=install_timeout)`.
+  5. Judge again (rule 5): R's start and both sweeps may have written. A
+     refusal keeps the entry closed, the lock and `NEEDS_ATTENTION`. Then open
+     the entry: `ops.run(compose_r + ['up', '-d'], timeout=install_timeout)`.
 - **R7. Activate R's custody configuration, verify, and hand over.**
   1. Install R's custody configuration. N's was saved before R1. After R2,
      nothing reads the configuration: N's nightly job is held out by this
@@ -1437,7 +1536,11 @@ Then take one of two ways:
   lease.retain()
   ```
 
-  1. Run `ops.run(compose_r + ['down'])` without `-v`.
+  0. Judge (rule 5) while R serves. A refusal changes nothing: R keeps serving,
+     and the record keeps its status with the refusal.
+  1. Close R's entry and stop its API (`ops.run(compose_r + ['stop', 'proxy', 'api'])`),
+     judge again (a refusal: entry closed, lock, `NEEDS_ATTENTION`), then run
+     `ops.run(compose_r + ['down'])` without `-v`.
   2. Put N's custody configuration back from the copy saved before R1. Do this
      whether or not R7 ran: it is idempotent, and it also covers an R7 that
      changed the configuration but did not record it.
@@ -1462,7 +1565,7 @@ Then take one of two ways:
      N's checkout, `.env`, compose files and signing file were never changed, and
      P3 proved that `compose_n` renders N's configuration. R2 kept N's volumes;
      the ledger may be longer than N's database saw (what R completed), and N's
-     gate re-applies it (rule 4). Only then open the entry:
+     gate re-applies it (rule 4). Judge again (rule 5); only then open the entry:
      `ops.run(compose_n + ['up', '-d'], timeout=install_timeout)`.
      If N's API does not listen or the check fails, keep the entry closed, keep
      the lock and `NEEDS_ATTENTION`, and inspect: nothing here truncates a
@@ -1504,11 +1607,14 @@ Then take one of two ways:
   with `sudo -n`, only when B or N has custody. P7 checks non-interactive sudo in
   exactly that case, before anything changes.
 - No tool brings data written on N after B into the rolled-back N-1 site.
-- A destruction attempt that a stop interrupted after its started record (R2's
-  `down` of N, or of R on the way back) can leave the next start closed with
-  `PurposeIntentIncomplete` or `ReportIntentIncomplete`, on either release: the
-  database that would settle it may be the other one. No tool settles it. Keep
-  the entry closed, the lock and `NEEDS_ATTENTION`, and keep every volume.
+- This rollback does not recover a site with report-ledger records, an open
+  destruction attempt, an anchor ahead of its ledger, or a damaged or diverged
+  ledger or mirror: rule 5 refuses it, before the upgrade (no window is opened)
+  or before the switch. No procedure here settles such a state, and none is
+  promised for this release pair; fix forward on the release that holds it.
+  An attempt interrupted between a judgement and the stop is the reason R2 and
+  the way back judge again with the API stopped, and R6 and the way back judge
+  once more before the entry opens.
 - A daily set without `role_catalog` (made before D23) has no live restore path.
   `restore_snapshot` needs that catalog. The older sets' `pg_dumpall` role replay
   is refused by PostgreSQL 16 for a `GRANTED BY kin` membership
