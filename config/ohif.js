@@ -50,6 +50,21 @@
   }
   const allows = (source, seriesUid) => source.series.mode === 'all' ||
     (source.series.mode === 'include' ? source.series.uids.includes(seriesUid) : !source.series.uids.includes(seriesUid));
+  // The listed exam (a related-study row) an image belongs to: the row whose scope holds that original study (and
+  // series). A merged or split exam comes before a plain row of the same original, as the exam a reader opened; a row
+  // whose scope cannot be read or opened is matched only by its own UID.
+  function listedExam(rows, studyUid, seriesUid) {
+    let plain=null;
+    for(const row of Array.isArray(rows)?rows:[]) {
+      let scope=null;
+      if(row&&!row.examUnavailable)try{scope=read(row);}catch(_){scope=null;}
+      const holds=scope?scope.sources.some(source=>source.studyUid===studyUid&&(!seriesUid||allows(source,seriesUid))):row?.uid===studyUid;
+      if(!holds)continue;
+      if(scope?.groupId)return row;
+      plain=plain||row;
+    }
+    return plain;
+  }
   function metadata(row) {
     const scope=read(row);
     if (!scope) return [];
@@ -191,7 +206,7 @@
       dialog.addEventListener('close',()=>{dialog.remove();resolve(result);},{once:true});dialog.append(go,close);document.body.append(dialog);dialog.showModal();
     });
   }
-  const api={read,key,stamp,screenScope,screenStamp,originalLabel,sourceRequest,seriesValue,seriesRequest,attachmentTarget,attachmentHeaders,storedReport,allows,metadata,projections,values,originals,viewingSelection,originalInput,readingScope,readingStamp,fetch:fetchScope,dicom,viewerInput,viewerUrl,viewerReference,reference,roleRows,snapshotReference,jobSnapshot,snapshotUrl,preload,chooseOriginals,changes};
+  const api={read,key,stamp,screenScope,screenStamp,originalLabel,sourceRequest,seriesValue,seriesRequest,attachmentTarget,attachmentHeaders,storedReport,allows,listedExam,metadata,projections,values,originals,viewingSelection,originalInput,readingScope,readingStamp,fetch:fetchScope,dicom,viewerInput,viewerUrl,viewerReference,reference,roleRows,snapshotReference,jobSnapshot,snapshotUrl,preload,chooseOriginals,changes};
   root.KinExamScope=api;
   if(typeof module==='object'&&module.exports)module.exports=api;
 })(globalThis);
