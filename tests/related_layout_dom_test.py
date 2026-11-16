@@ -1467,8 +1467,11 @@ class RelatedLayoutDOMTest(Base):
     'Keep This Text는 글만 남깁니다 — 붙은 그림은 서버의 초안 것(Conclusion 아래에 다시 불러온 그림)을 따릅니다'; }""")
             harness.expect(page.get_by_role("button", name="Keep This Text", exact=True)).to_be_visible()
         if questions_failed:
-            harness.expect(page.locator("#question-p")).to_be_visible(timeout=10000)
-            page.locator("#question-toggle").click()
+            # The failed read is told in the band above the editor (an answer never stands the bar up); the reader opens
+            # the bar and its pane there.
+            harness.expect(page.locator("#question-notice")).to_be_visible(timeout=10000)
+            page.locator("#question-notice").click()
+            harness.expect(page.locator("#question-p")).to_be_visible()
             harness.expect(page.locator("#question-pane")).to_be_visible()
         if save_failed:
             # Typing: the draft's baseline read is not answered here, so after some 19s the notice above the editor

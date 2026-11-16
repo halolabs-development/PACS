@@ -531,7 +531,10 @@
        and window (one line of its 11px text and a button's 6px, the row's 4px padding and 1px border: 31px in the page
        font), scrolling its rows; a row keeps its buttons on one line each, moves those that do not fit to lines of their
        own, and shows its first line, not its middle (`safe`). */
-    .report-notices { flex: none; box-sizing: border-box; font-size: 11px; height: calc(1lh + 6px + 2 * 4px + 1px); overflow-y: auto; }
+    .report-notices { flex: none; box-sizing: border-box; font-size: 11px; height: calc(1lh + 6px + 2 * 4px + 1px); overflow-y: auto;
+      /* Nor its width: what an answer writes in it never widens the card (the notices' words widened a 900px card's
+         column 357 -> 456px, as a long Recommendation did - #recnote below). */
+      contain: inline-size; }
     .report-notices > .draftbar { flex-wrap: wrap; align-items: safe center; }
     .report-notices > .draftbar button { white-space: nowrap; }
     /* W4 숨긴 Recommendation의 읽기 전용 띠 — 안내줄과 같은 등급, 펼쳐도 판독문 칸을 밀어내지 않게 글은 짧게 스크롤한다. */
@@ -606,13 +609,39 @@
        - the notice band above the editor (.report-notices, above): fixed;
        - a list or pane the reader opened - the citation list, the dictation review pane, the questions' pane - takes
          its cap from the moment it opens (each yields from there as the layout rules say, never by its content);
-       - the report status words in the editor's head (#report-editor-rs, above).
-       Not the questions bar: a study without questions has no bar (S5-U4b), and a line held for it in every study left
-       Approve & Next half out of 720px high windows (RL-13b), which Minhoon's bottom row rules out. Its read is sent
-       when the study opens, so its answer normally lands before the reader writes. */
+       - the report status words in the editor's head (#report-editor-rs, above);
+       - the rows that the reading target's reads fill. The report column is drawn from the list in the paint that shows
+         the study, so their answers always come after it:
+         . the questions bar (#question-p, between the editor and the button row) is never stood up or folded by an answer:
+           in the narrowest columns (Reading, 1024-1250px wide, 720px high) every row is at its floor and the bar would
+           carry Approve & Next half out of the window (RL-13). What the read learns - how many questions and in which
+           states, a failed read, a refusal - the band's notice says (#question-notice), and the bar and its pane stand in
+           their place when the reader opens them there; closing the pane folds the bar again;
+         . the rows under the button row - the image requests (#image-request-p), sent and received Critical Results
+           (#cvr-sent-p, #cvr-inbox-p) - stand from the paint that shows the study (the requests for a study the page
+           can read; Critical Results for the session) and stay while it is open, online or not: answers and the
+           connection change their words and what an opened pane holds. Under the button row they leave a short window
+           before the row does; where there is room they take it from the field region once, not when an answer comes.
+           The requests' Closed line keeps its place whether or not there is a Closed request, and what they learn is
+           told in the band as well (#image-request-notice): the row may be below the window;
+       - moving to another study folds every pane and notice of the one left (the Inbox's Open Study keeps the
+         questions' pane open on the study it opens). */
+    /* The notices stand at the band's top right whatever the band's rows (sticky, beside them): a draft row does not
+       scroll them out of sight, and they do not take the rows away. Each is cut to its share (its words in its tooltip). */
+    .report-notices > #report-alerts { float: right; position: sticky; top: 0; display: flex; gap: 4px; max-width: 60%;
+      margin: 3px 6px 0 4px; }
+    .report-notices > #report-alerts:not(:has(> :not([hidden]))) { display: none; }
+    #report-alerts > button { flex: 0 1 auto; min-width: 4em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      background: #232936; border: 1px solid #3b6ea5; color: #cfe0ff; padding: 2px 8px; border-radius: 3px; cursor: pointer;
+      font-size: 11px; }
+    #report-alerts > button[hidden] { display: none; }
+    #report-alerts > button:focus-visible { outline: 2px solid #93c5fd; outline-offset: 1px; }
+    #image-request-p .image-request-closed-line[data-shown="false"] { visibility: hidden; }
     #citelist { height: 30vh; }
     #dictation-pane { height: min(30vh, 168px); }
     #question-pane { height: min(40vh, 360px); }
+    #image-request-pane { height: min(40vh, 320px); }
+    #cvr-sent-pane { height: min(40vh, 360px); }
 
     /* 패널 경계는 세션 안에서만 움직인다. 판독 PC마다 화면 구성이 달라 계정 설정으로
        저장하면 다른 모니터에서 오히려 화면을 망가뜨리기 때문이다. */
@@ -1812,6 +1841,13 @@
              Recommendation).
              Its height is fixed (the .report-notices rule), so an answer never moves the fields or the buttons below it. -->
         <div class="report-notices" id="report-notices">
+        <!-- What the reading target's questions (S5-U4b) and image requests (S5-U4c) reads learned: a question, a request,
+             a failed read, a refusal (study-questions.js, study-image-requests.js). A click opens that row and its pane in
+             their place (the questions under the editor, the requests under the button row). -->
+        <div id="report-alerts">
+          <button type="button" id="question-notice" aria-controls="question-pane" hidden></button>
+          <button type="button" id="image-request-notice" aria-controls="image-request-pane" hidden></button>
+        </div>
         <!-- W4: 검사를 옮기지 않았을 때만 보인다(쓰던 글의 저장 거절·결과 모름·충돌·글자 조합). 무엇을 누르면 되는지 함께 말한다. -->
         <div class="draftbar" id="report-notice" role="status" aria-live="polite" style="display:none">
           <span id="report-notice-msg"></span>

@@ -123,6 +123,9 @@ let studyIdentityModel=null;
 let clinicalContext=null;
 // Auto Preload (FC-073) is outside this list-poll fixture: the poll calls it only when the page mounted it.
 let autoPreload=null;
+// The reading target's questions (S5-U4b) and image requests (S5-U4c) are outside it too: the poll asks them to read
+// again only when mounted.
+let studyQuestions=null, imageRequests=null;
 OBSERVESTATE
 ORDERSTATE
 IDENTITYSTATE

@@ -2138,7 +2138,12 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
                 self.assertTrue(v["entry"]["disabled"])
                 self.assertTrue(has_hangul(v["entry"]["title"]))
                 self.assertEqual((True, "Status"), (v["entry"]["present"], v["entry"]["section"]))
-                self.assertFalse(v["panel"]["shown"])
+                # Offline, a radiologist's Sent panel stands and says it reads nothing now: hidden, it gave its height back to
+                # the report column and moved the button row (main.html "An answer never resizes").
+                if name == "offline radiologist":
+                    self.assertEqual((True, "서버에 연결된 동안에만 보낸 중요 결과를 읽습니다."), (v["panel"]["shown"], v["panel"]["summary"]))
+                else:
+                    self.assertFalse(v["panel"]["shown"])
 
     # ── SD11 ──
     def test_sd11_the_periodic_re_read_only_reads_and_an_acknowledged_record_stays_reachable(self):
