@@ -127,23 +127,38 @@ window.KinViewerPatientTabs = (() => {
     Object.assign(notice, { busy: null, reason, shown: true }); renderLeave();
     return false;
   }
-  // `go(gen)` continues the move the message holds, without passing the gate again (the answer just given is its gate), in the
-  // generation of the choice it carries out: a choice made while the gate waited ends it.
+  // The gate (leave: save, or Check on the notice) is answered once for every choice that waited on it. `waiting` is the latest
+  // of them - a tab click, a close, Retry or Check - with its generation; `carry` is the only place that answer is applied: passed,
+  // the latest choice is carried out (`go(gen)`, without passing the gate again - the answer just given is its gate); not passed,
+  // the notice keeps it for Retry / Check. Only while that choice's generation holds: a newer choice that did not wait on the
+  // gate (a direct open, Patient ▶, end ...) ends it.
+  let waiting = null;
+  function carry(passed) {
+    const latest = waiting; waiting = null;
+    if (!latest || !turn.holds(latest.gen)) return false;
+    if (passed) return latest.go(latest.gen);
+    if (leaving) leaving.go = latest.go;
+    return false;
+  }
   async function gated(go, gen) {
-    if (!await leave()) { if (leaving && turn.holds(gen)) leaving.go = go; return false; }
-    return turn.holds(gen) ? go(gen) : false;
+    waiting = { go, gen };
+    const passed = await leave();
+    // The gate was already being answered for an earlier choice: that answer carries this one out.
+    if (!passed && leaving?.busy) return false;
+    return carry(passed);
   }
   // Retry / Check on the leave notice is the reader choosing that move again: a new generation.
   async function resume(kind) {
     const notice = leaving;
     if (!notice || notice.busy || current !== notice.tab || !notice.go) return;
     const gen = turn.take();
-    if (kind === 'save') { if (await leave() && turn.holds(gen)) notice.go(gen); return; }
+    if (kind === 'save') { await gated(notice.go, gen); return; }
+    waiting = { go: notice.go, gen };
     notice.busy = 'check'; renderLeave();
     const reason = await settled(notice.tab, await ask('check', notice.tab.studies, CHECK_WAIT_MS));
     if (leaving !== notice || current !== notice.tab) return;
-    if (reason === null) { endLeave(); if (turn.holds(gen)) notice.go(gen); return; }
-    Object.assign(notice, { busy: null, reason }); renderLeave();
+    if (reason === null) { endLeave(); carry(true); return; }
+    Object.assign(notice, { busy: null, reason }); renderLeave(); carry(false);
   }
   function endLeave() { leaving = null; renderLeave(); }
   function renderLeave() {

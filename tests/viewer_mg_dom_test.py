@@ -992,5 +992,40 @@ class ViewerMgDOMTest(unittest.TestCase):
         self.assertEqual('PK-A', page.evaluate("KinViewerPatientTabs.snapshot().key"))
         self.assertEqual(2, page.evaluate("synRemounts"))
 
+    def test_17n_tab_clicked_twice_while_the_gate_answers_is_carried_out_once(self):
+        # The gate is answered once for both clicks: the latest choice (B) is carried out, and only once.
+        page = self.open(tabs=True)
+        self.tabs_shown(page)
+        page.evaluate("() => { synReader.answerLag = 800; }")
+        tab_b = page.locator('.kin-patient-tabs [role=tab]').nth(1)
+        tab_b.click()
+        page.wait_for_function("() => synReader.calls.some(c => c[0] === 'save')")
+        tab_b.click()
+        page.wait_for_function("() => KinViewerPatientTabs.snapshot()?.key === 'PK-B'", timeout=10000)
+        page.wait_for_timeout(2000)
+        self.assertEqual('PK-B', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+        self.assertEqual(3, page.evaluate("synRemounts"))
+        expect(page.locator('.kin-patient-leave')).to_be_hidden()
+
+    def test_17o_tab_clicked_while_check_answers_is_carried_out_by_that_answer(self):
+        # A switch kept by unconfirmed text; the text is then saved on the reading screen and Check is pressed; while Check
+        # waits for its answer the reader clicks B's tab again: the Check answer carries out that latest choice.
+        page = self.open(tabs=True)
+        self.tabs_shown(page)
+        page.evaluate("() => { synReader.held = ['1.2.1']; synReader.save = 'refused'; }")
+        page.locator('.kin-patient-tabs [role=tab]').nth(1).click()
+        notice = page.locator('.kin-patient-leave')
+        expect(notice).to_contain_text('Save Not Confirmed')
+        page.evaluate("() => { synReader.held = []; synReader.answerLag = 800; }")
+        calls = page.evaluate("synReader.calls.length")
+        notice.get_by_role('button', name='Check').click()
+        page.wait_for_function("n => synReader.calls.length > n", arg=calls)
+        page.locator('.kin-patient-tabs [role=tab]').nth(1).click()
+        page.wait_for_function("() => KinViewerPatientTabs.snapshot()?.key === 'PK-B'", timeout=10000)
+        page.wait_for_timeout(2000)
+        self.assertEqual('PK-B', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+        self.assertEqual(3, page.evaluate("synRemounts"))
+        expect(notice).to_be_hidden()
+
 if __name__ == '__main__':
     unittest.main()
