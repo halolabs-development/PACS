@@ -18,7 +18,7 @@ import tempfile
 import threading
 from contextlib import contextmanager
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -113,6 +113,9 @@ RETRY_POLL_UID = re.compile(r"[0-9.]+")
 # its own thread so a long STOW (up to STOW_TIMEOUT_SECONDS) never reads as a lost Gateway. Fixed cadence, not in Config.
 AGENT_VERSION = "2026.11.1"
 HEARTBEAT_SECONDS = 30.0
+# Every request of a beat (token and POST) ends within this, so a beat reaches KIN well inside the 180 s contact rule or not
+# at all: KIN can take a lower run number after that much silence without mistaking a late beat of an earlier run.
+HEARTBEAT_TIMEOUT_SECONDS = 20.0
 
 
 def log(event: str, *, uid: str | None = None, **fields: Any) -> None:
@@ -221,6 +224,17 @@ class Queue:
     def changes_since(self) -> int:
         row = self.db.execute("SELECT value FROM meta WHERE key='changes_since'").fetchone()
         return int(row["value"]) if row else 0
+
+    def next_boot(self) -> int:
+        """This run's number in this queue (1, 2, …), kept in the queue's meta so it lives exactly as long as the epoch.
+        The heartbeat carries it and KIN orders runs of one queue by it, not by any clock or by arrival. Called once by
+        the main thread at start, before the heartbeat thread exists."""
+        with self.db:
+            self.db.execute("""
+              INSERT INTO meta(key, value) VALUES ('boot_seq', '1')
+              ON CONFLICT(key) DO UPDATE SET value=CAST(CAST(value AS INTEGER) + 1 AS TEXT)
+            """)
+        return int(self.db.execute("SELECT value FROM meta WHERE key='boot_seq'").fetchone()["value"])
 
     def record_changes(self, studies: Iterable[tuple[str, str]], last: int) -> None:
         now = time.time()
@@ -670,14 +684,14 @@ class Heartbeat:
     elapsed seconds), no UID, no institution and no free text.
     """
 
-    def __init__(self, config: Config, epoch: str, orthanc: "Orthanc", stow: "Cloud", started: float):
+    def __init__(self, config: Config, epoch: str, boot_seq: int, orthanc: "Orthanc", stow: "Cloud", started: float):
         self.config = config
         self.epoch = epoch
-        # One per process start: KIN keeps a beat of this run from being overwritten by a late beat of an earlier run.
-        self.boot_id = str(uuid.uuid4())
+        # This run's number in the queue (Queue.next_boot): KIN never lets a late beat of an earlier run cover a later one.
+        self.boot_seq = boot_seq
         self.orthanc = orthanc   # .observed is read, nothing else
         self.stow = stow         # .last_stow_at is read, nothing else
-        self.cloud = Cloud(config)
+        self.cloud = Cloud(replace(config, http_timeout=min(config.http_timeout, HEARTBEAT_TIMEOUT_SECONDS)))
         self.started = started
         self.stopped = threading.Event()
         self.thread: threading.Thread | None = None
@@ -693,7 +707,7 @@ class Heartbeat:
             queue = None   # KIN shows the queue as unreadable, never as zero; the beat itself still goes out
         return {
             "epoch": self.epoch,
-            "bootId": self.boot_id,
+            "bootSeq": self.boot_seq,
             "version": AGENT_VERSION,
             "uptimeSeconds": max(0, int(now - self.started)),
             "queue": queue,
@@ -914,7 +928,7 @@ class Agent:
         signal.signal(signal.SIGTERM, self.stop)
         signal.signal(signal.SIGINT, self.stop)
         log("agent.started", byteBudget=self.config.byte_budget, version=AGENT_VERSION)
-        heartbeat = Heartbeat(self.config, self.queue.epoch, self.orthanc, self.cloud, time.monotonic())
+        heartbeat = Heartbeat(self.config, self.queue.epoch, self.queue.next_boot(), self.orthanc, self.cloud, time.monotonic())
         heartbeat.start()
         try:
             self.loop()

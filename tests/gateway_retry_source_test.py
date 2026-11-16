@@ -286,37 +286,6 @@ def single_writer_problems(source):
                 for alias in (n.names if isinstance(n, ast.Import) else [ast.alias(n.module or "")])}
     if imported & {"multiprocessing", "asyncio", "concurrent"}:
         problems.append("concurrency import")
-    problems += heartbeat_thread_problems(source, tree)
-    return problems
-
-
-QUEUE_WRITERS = {"record_changes", "complete", "fail", "retry", "phase", "pending_now", "retry_now", "reported", "close",
-                 "execute", "executemany", "commit"}
-
-
-def heartbeat_thread_problems(source, tree):
-    """The only thread the agent starts is Heartbeat.run, and Heartbeat never reaches the queue except through
-    queue_counts, which opens the database read-only and only selects."""
-    problems = []
-    threads = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-               and n.func.attr == "Thread"]
-    beat = next((n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Heartbeat"), None)
-    if beat is None:
-        return ["no heartbeat class"] if threads else []
-    inside = {id(n) for n in ast.walk(beat)}
-    targets = [ast.get_source_segment(source, k.value) for n in threads for k in n.keywords if k.arg == "target"]
-    if len(threads) != 1 or id(threads[0]) not in inside or targets != ["self.run"]:
-        problems.append("a thread other than the heartbeat")
-    names = {n.id for n in ast.walk(beat) if isinstance(n, ast.Name)}
-    attrs = {n.attr for n in ast.walk(beat) if isinstance(n, ast.Attribute)}
-    if "Queue" in names or attrs & ({"queue", "db"} | QUEUE_WRITERS):
-        problems.append("the heartbeat reaches the queue")
-    counts = next((n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "queue_counts"), None)
-    text = ast.get_source_segment(source, counts) if counts else ""
-    statements = [n.value for n in ast.walk(counts) if isinstance(n, ast.Constant) and isinstance(n.value, str)
-                  and re.match(r"\s*(SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|PRAGMA|REPLACE|ALTER)\b", n.value, re.I)] if counts else []
-    if not counts or '"?mode=ro"' not in text or not statements or any(not s.lstrip().upper().startswith("SELECT") for s in statements):
-        problems.append("the heartbeat's queue read is not read-only")
     return problems
 
 
@@ -383,14 +352,6 @@ def cadence_problems(source):
             problems.append("run order")
     except ValueError:
         problems.append("run order")
-    # run() starts the heartbeat, runs the loop and stops the heartbeat however the loop ends.
-    run = ast.get_source_segment(source, method(tree, "Agent", "run"))
-    try:
-        if not (run.index("heartbeat.start()") < run.index("try:\n            self.loop()")
-                < run.index("finally:\n            heartbeat.stop()")):
-            problems.append("heartbeat around the loop")
-    except ValueError:
-        problems.append("heartbeat around the loop")
     return problems
 
 
@@ -407,15 +368,7 @@ class AgentPins(unittest.TestCase):
             "reports through report()": AGENT.replace(call, call + "            self.report(\"1.2.3\")\n"),
             "resets through pending_now": AGENT.replace(call, call + "            self.queue.pending_now(\"1.2.3\", 1, 0)\n"),
             "retries through retry()": AGENT.replace(call, call + "            self.queue.retry(\"1.2.3\", \"x\", 1, 2)\n"),
-            "a worker thread": AGENT.replace(call, call + "            threading.Thread(target=self.flush_receipts).start()\n"),
             "an asyncio loop": AGENT.replace("import time\n", "import time\nimport asyncio\n"),
-            "the heartbeat holds a Queue": AGENT.replace("= queue_counts(self.config.queue_db)",
-                                                         "= Queue(self.config.queue_db).counts()"),
-            "the heartbeat writes": AGENT.replace("            self.beat()\n",
-                                                  "            self.beat()\n            self.stow.queue.retry_now(\"1.2.3\", 1, 0)\n"),
-            "the counts read writable": AGENT.replace('"?mode=ro"', '"?mode=rw"'),
-            "the counts read deletes": AGENT.replace('"SELECT phase, count(*) FROM studies GROUP BY phase"',
-                                                     '"DELETE FROM studies WHERE phase=\'complete\'"'),
             "reported moves seq": AGENT.replace("UPDATE studies SET reported_seq=? WHERE", "UPDATE studies SET reported_seq=?, seq=seq+1 WHERE"),
         }
         for wrong, source in mutants.items():
@@ -450,8 +403,7 @@ class AgentPins(unittest.TestCase):
                                                        "        try:\n            response"),
                    "applies on any 2xx": AGENT.replace("if answer != {\"studyUid\": uid, \"result\": \"duplicate\"}:", "if not confirm.ok:"),
                    "polls before the flush": AGENT.replace("            self.flush_receipts()\n", "").replace(
-                       "            self.retry_requests()\n", "            self.retry_requests()\n            self.flush_receipts()\n"),
-                   "heartbeat left running": AGENT.replace("        finally:\n            heartbeat.stop()\n", "        finally:\n            pass\n")}
+                       "            self.retry_requests()\n", "            self.retry_requests()\n            self.flush_receipts()\n")}
         for wrong, source in mutants.items():
             with self.subTest(wrong=wrong):
                 self.assertNotEqual(source, AGENT)
@@ -476,6 +428,16 @@ class AgentPins(unittest.TestCase):
         names = [item.name for item in cls.body if isinstance(item, ast.FunctionDef) and item.name.startswith("test")]
         self.assertEqual([name[:8] for name in names], ["test_t1_", "test_t2_", "test_t3_", "test_t4_", "test_t4_", "test_t5_", "test_t6_"])
         # The retry cases run in test_agent.py; another test's assertion text and total are not this contract.
+
+    def test_the_one_other_thread_is_proved_by_behaviour_in_the_agent_suite(self):
+        # R1 holds with the heartbeat thread because test_agent.py proves, by running the agent, that the heartbeat never
+        # writes the queue, opens it read-only, builds no Queue, is the only extra thread and stops however the loop ends.
+        cls = next(n for n in ast.parse(AGENT_TESTS).body if isinstance(n, ast.ClassDef) and n.name == "HeartbeatTests")
+        names = {item.name for item in cls.body if isinstance(item, ast.FunctionDef)}
+        for name in ("test_the_beat_never_writes_the_queue", "test_the_counts_connection_refuses_writes",
+                     "test_a_running_agent_has_one_thread_more_the_heartbeat_and_the_beat_builds_no_queue",
+                     "test_a_loop_that_raises_still_stops_the_heartbeat", "test_run_starts_the_beat_and_stops_it_when_the_loop_ends"):
+            self.assertIn(name, names)
 
 
 # ── the server ──

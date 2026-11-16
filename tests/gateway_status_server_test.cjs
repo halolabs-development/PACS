@@ -13,12 +13,12 @@ const H = require('/app/dist/gateway-heartbeat');
 const { GatewayStatusService } = require('/app/dist/gateway-status.service');
 
 const EPOCH = '0f4b2c1a-1111-4222-8333-944455556666', EPOCH2 = '1f4b2c1a-1111-4222-8333-944455556666';
-const BOOT = 'aa4b2c1a-1111-4222-8333-944455556666', BOOT2 = 'bb4b2c1a-1111-4222-8333-944455556666';
+const BOOT = 4, BOOT2 = 5;
 const GW = { sub: 'sub-gw-a', actor: 'service-account-gw-inst-a', roles: ['gateway'], institution: 'inst-a', kind: 'gateway' };
 const GW_B = { sub: 'sub-gw-b', actor: 'service-account-gw-inst-b', roles: ['gateway'], institution: 'inst-b', kind: 'gateway' };
 const ADMIN = { sub: 'sub-admin', actor: 'SYN-admin', roles: ['admin'], institution: 'inst-a', kind: 'member' };
 const TECH = { sub: 'sub-tech', actor: 'SYN-tech', roles: ['technician'], institution: 'inst-a', kind: 'member' };
-const beat = (extra = {}) => ({ epoch: EPOCH, bootId: BOOT, version: '2026.11.1', uptimeSeconds: 600,
+const beat = (extra = {}) => ({ epoch: EPOCH, bootSeq: BOOT, version: '2026.11.1', uptimeSeconds: 600,
   queue: { waiting: 3, retry: 1, failed: 0 }, lastStowAgeSeconds: 12, localOrthanc: { answered: true, ageSeconds: 1 }, ...extra });
 
 function harness({ restricted = false, changed = false } = {}) {
@@ -39,7 +39,8 @@ test('the body is closed: every key, type and bound; ages never exceed the uptim
   assert.deepEqual(H.parseGatewayHeartbeat(beat()), beat());
   assert.deepEqual(H.parseGatewayHeartbeat(beat({ queue: null, lastStowAgeSeconds: null, localOrthanc: null })).queue, null);
   const bad = [undefined, null, [], 'x', {}, { ...beat(), extra: 1 }, (() => { const b = beat(); delete b.version; return b; })(),
-    beat({ epoch: EPOCH.toUpperCase() }), beat({ epoch: 'not-a-uuid' }), beat({ bootId: '' }), beat({ version: '' }),
+    beat({ epoch: EPOCH.toUpperCase() }), beat({ epoch: 'not-a-uuid' }), beat({ bootSeq: 0 }), beat({ bootSeq: 1.5 }), beat({ bootSeq: '4' }), beat({ bootSeq: -1 }),
+    beat({ bootSeq: 2 ** 31 }), beat({ bootSeq: null }), beat({ version: '' }),
     beat({ version: 'v 1' }), beat({ version: 'x'.repeat(33) }), beat({ version: 7 }), beat({ uptimeSeconds: -1 }),
     beat({ uptimeSeconds: 1.5 }), beat({ uptimeSeconds: '600' }), beat({ uptimeSeconds: 10 * 366 * 24 * 3600 + 1 }),
     beat({ queue: { waiting: 1, retry: 0 } }), beat({ queue: { waiting: 1, retry: 0, failed: 0, complete: 4 } }),
@@ -67,13 +68,50 @@ test('late writes: same run only forward by uptime, another run only if it start
   assert.equal(H.decideGatewayHeartbeat(stored, row({ uptimeSeconds: 630 }, R + 30000)), 'stored');
   assert.equal(H.decideGatewayHeartbeat(stored, row({ uptimeSeconds: 600 }, R + 1000)), 'stored', 'equal uptime is not older');
   assert.equal(H.decideGatewayHeartbeat(stored, row({ uptimeSeconds: 570, lastStowAgeSeconds: 0 }, R + 5000)), 'stale');
-  // A restart: a new boot whose derived start is later than the stored one.
-  assert.equal(H.decideGatewayHeartbeat(stored, row({ bootId: BOOT2, uptimeSeconds: 2, lastStowAgeSeconds: null }, R + 60000)), 'stored');
+  // A restart: the next run number wins whatever its uptime.
+  assert.equal(H.decideGatewayHeartbeat(stored, row({ bootSeq: BOOT2, uptimeSeconds: 2, lastStowAgeSeconds: null }, R + 60000)), 'stored');
   // A beat of the earlier run arriving after the restart's first beat.
-  const restarted = row({ bootId: BOOT2, uptimeSeconds: 2, lastStowAgeSeconds: null }, R + 60000);
+  const restarted = row({ bootSeq: BOOT2, uptimeSeconds: 2, lastStowAgeSeconds: null }, R + 60000);
   assert.equal(H.decideGatewayHeartbeat(restarted, row({ uptimeSeconds: 640 }, R + 61000)), 'stale');
   const moved = { ...row({ uptimeSeconds: 640 }, R + 40000), institutionId: 'inst-b' };
   assert.equal(H.decideGatewayHeartbeat(stored, moved), 'conflict');
+});
+
+test('run order is the run number, never the derived start: a delayed beat of an earlier run, a clock set back', async () => {
+  const h = harness();
+  const at = ms => { h.at('2026-11-16T12:00:00.000Z'); h.tick(ms); };
+  const shown = async () => (await h.service.status(ADMIN)).gateways.map(g => [g.contact, g.startedAt, g.lastContactAt]);
+  // Run A has run 2 s at 0 s. Run B (the next run) starts and is heard at 5 s. A's beat sent at 2 s of its uptime,
+  // delayed in transit, arrives at 8 s: its derived start (6 s) is later than B's (5 s), and still it is refused.
+  at(0); assert.deepEqual(h.service.heartbeat(beat({ bootSeq: 1, uptimeSeconds: 2, lastStowAgeSeconds: null }), GW), { result: 'stored' });
+  at(5000); assert.deepEqual(h.service.heartbeat(beat({ bootSeq: 2, uptimeSeconds: 0, lastStowAgeSeconds: null,
+    localOrthanc: null }), GW), { result: 'stored' });
+  at(8000); assert.deepEqual(h.service.heartbeat(beat({ bootSeq: 1, uptimeSeconds: 2, lastStowAgeSeconds: null }), GW), { result: 'stale' });
+  // B's own beats go on being stored.
+  at(35000); assert.deepEqual(h.service.heartbeat(beat({ bootSeq: 2, uptimeSeconds: 30, lastStowAgeSeconds: null,
+    localOrthanc: null }), GW), { result: 'stored' });
+  assert.deepEqual(await shown(), [['recent', '2026-11-16T12:00:05.000Z', '2026-11-16T12:00:35.000Z']]);
+  // The server clock is set back an hour, then the Gateway restarts (run 3): it is stored though every derived time is
+  // earlier than the stored ones, and the old run's late beat after it is still refused.
+  at(-3600000); assert.deepEqual(h.service.heartbeat(beat({ bootSeq: 3, uptimeSeconds: 1, lastStowAgeSeconds: null,
+    localOrthanc: null }), GW), { result: 'stored' });
+  at(-3590000); assert.deepEqual(h.service.heartbeat(beat({ bootSeq: 2, uptimeSeconds: 40, lastStowAgeSeconds: null,
+    localOrthanc: null }), GW), { result: 'stale' });
+  at(-3570000); assert.deepEqual(h.service.heartbeat(beat({ bootSeq: 3, uptimeSeconds: 31, lastStowAgeSeconds: null,
+    localOrthanc: null }), GW), { result: 'stored' });
+});
+
+test('a lower run number is taken only after the stored run has been silent past the contact rule (a restored queue file)', () => {
+  const h = harness();
+  assert.deepEqual(h.service.heartbeat(beat({ bootSeq: 9 }), GW), { result: 'stored' });
+  h.tick(180000);
+  assert.deepEqual(h.service.heartbeat(beat({ bootSeq: 3, uptimeSeconds: 5, lastStowAgeSeconds: null }), GW), { result: 'stale' },
+    'exactly 180 s of silence is not yet past the rule');
+  h.tick(1);
+  assert.deepEqual(h.service.heartbeat(beat({ bootSeq: 3, uptimeSeconds: 5, lastStowAgeSeconds: null }), GW), { result: 'stored' });
+  h.tick(30000);
+  assert.deepEqual(h.service.heartbeat(beat({ bootSeq: 9, uptimeSeconds: 700 }), GW), { result: 'stored' },
+    'the higher number still wins when it speaks again');
 });
 
 test('heartbeat: gateway credentials only; identity and institution from the caller; answers stored or stale', () => {
@@ -93,7 +131,7 @@ test('admin read: this institution only, newest contact first, No Contact after 
   h.service.heartbeat(beat(), GW);
   h.service.heartbeat(beat({ epoch: EPOCH2 }), GW_B);
   h.tick(10000);
-  h.service.heartbeat(beat({ epoch: EPOCH2, bootId: BOOT2, uptimeSeconds: 20, queue: null, lastStowAgeSeconds: null,
+  h.service.heartbeat(beat({ epoch: EPOCH2, bootSeq: BOOT2, uptimeSeconds: 20, queue: null, lastStowAgeSeconds: null,
     localOrthanc: { answered: false, ageSeconds: 4 } }), GW);
   const first = await h.service.status(ADMIN);
   assert.equal(first.institutionId, 'inst-a');

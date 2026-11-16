@@ -4399,7 +4399,7 @@ class LiveInvariantTests(unittest.TestCase):
         # 25 -> 26: S4-EG1 added OrthancConnectionTests (local reads never reuse a pooled connection).
         # The number is the suite as authored; tests/gateway_receipt_source_test.py pins it to an AST
         # count of test_agent.py, so neither can move without the other.
-        self.assertIn("Ran 39 tests", completed.stderr + completed.stdout)
+        self.assertIn("Ran 43 tests", completed.stderr + completed.stdout)
 
     def test_production_gateway_contract_is_declared(self) -> None:
         completed = subprocess.run(

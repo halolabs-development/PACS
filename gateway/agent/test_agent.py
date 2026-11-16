@@ -889,7 +889,7 @@ class OrthancConnectionTests(unittest.TestCase):
         self.assertEqual(len(connections), 3)
 
 
-HEARTBEAT_KEYS = {"epoch", "bootId", "version", "uptimeSeconds", "queue", "lastStowAgeSeconds", "localOrthanc"}
+HEARTBEAT_KEYS = {"epoch", "bootSeq", "version", "uptimeSeconds", "queue", "lastStowAgeSeconds", "localOrthanc"}
 
 
 class BeatCloud:
@@ -926,7 +926,7 @@ class HeartbeatTests(unittest.TestCase):
         return agent
 
     def heartbeat(self, agent: Agent, cloud: BeatCloud, started: float | None = None):
-        beat = agent_module.Heartbeat(agent.config, agent.queue.epoch, agent.orthanc, agent.cloud,
+        beat = agent_module.Heartbeat(agent.config, agent.queue.epoch, 7, agent.orthanc, agent.cloud,
                                       time.monotonic() if started is None else started)
         self.addCleanup(beat.cloud.session.close)
         self.addCleanup(beat.stop)
@@ -952,7 +952,7 @@ class HeartbeatTests(unittest.TestCase):
         body = self.heartbeat(agent, BeatCloud(), started=time.monotonic() - 125).body()
         self.assertEqual(set(body), HEARTBEAT_KEYS)
         self.assertEqual(body["epoch"], agent.queue.epoch)
-        self.assertTrue(EPOCH.fullmatch(body["bootId"]))
+        self.assertEqual(body["bootSeq"], 7)
         self.assertEqual(body["version"], agent_module.AGENT_VERSION)
         self.assertIn(body["uptimeSeconds"], (125, 126))
         self.assertEqual(body["queue"], {"waiting": 3, "retry": 2, "failed": 1}, "complete is never reported")
@@ -1043,7 +1043,7 @@ class HeartbeatTests(unittest.TestCase):
         self.assertGreaterEqual(len(cloud.bodies), 3)
         self.assertNotEqual(beat.thread.ident, threading.get_ident())
         self.assertFalse(beat.thread.is_alive(), "stop ends the thread")
-        self.assertEqual(len({body["bootId"] for body in cloud.bodies}), 1, "one boot id per process run")
+        self.assertEqual({body["bootSeq"] for body in cloud.bodies}, {7}, "one run number per process run")
 
     def test_stop_waits_for_a_beat_in_flight_then_no_new_beat_starts(self):
         agent = self.agent()
@@ -1083,10 +1083,113 @@ class HeartbeatTests(unittest.TestCase):
             agent.run()
         self.assertEqual(started, ["start", "stop"])
 
-    def test_two_runs_have_different_boot_ids(self):
+    def run_once(self, loop=None):
+        """One Agent.run over this queue with the heartbeat recorded (not started) and the loop replaced; returns what
+        the heartbeat was given and what happened to it."""
+        agent = Agent(config(self.path))
+        self.addCleanup(agent.queue.close)
+        seen = {}
+        real = agent_module.Heartbeat
+
+        class Recording(real):
+            def __init__(self, cfg, epoch, boot_seq, *rest):
+                super().__init__(cfg, epoch, boot_seq, *rest)
+                seen.update(epoch=epoch, boot_seq=boot_seq, timeout=self.cloud.http_timeout, events=[])
+
+            def start(self):
+                seen["events"].append("start")
+
+            def stop(self, wait=5.0):
+                seen["events"].append("stop")
+
+        def default_loop():
+            agent.stopping = True
+
+        agent.loop = loop or default_loop
+        with patch.object(agent_module, "Heartbeat", Recording):
+            try:
+                agent.run()
+            except RuntimeError as error:
+                seen["raised"] = str(error)
+        return seen
+
+    def test_each_run_of_a_queue_has_the_next_run_number_and_a_new_queue_starts_again(self):
+        runs = [self.run_once() for _ in range(3)]
+        self.assertEqual([run["boot_seq"] for run in runs], [1, 2, 3])
+        self.assertEqual(len({run["epoch"] for run in runs}), 1, "the same queue file keeps its epoch")
+        other = str(Path(self.path).with_name("other.db"))
+        agent = Agent(config(other))
+        self.addCleanup(agent.queue.close)
+        self.assertEqual(agent.queue.next_boot(), 1, "a recreated queue (a new epoch) counts from 1")
+        self.assertNotEqual(agent.queue.epoch, runs[0]["epoch"])
+
+    def test_a_loop_that_raises_still_stops_the_heartbeat(self):
+        def broken():
+            raise RuntimeError("SYN loop failure")
+
+        run = self.run_once(broken)
+        self.assertEqual((run["events"], run["raised"]), (["start", "stop"], "SYN loop failure"))
+
+    def test_the_beat_requests_end_within_the_heartbeat_timeout(self):
+        run = self.run_once()
+        self.assertLessEqual(run["timeout"], agent_module.HEARTBEAT_TIMEOUT_SECONDS)
+        # Three requests at most (token, POST, token and POST again after a 401) end well inside the 180 s contact rule.
+        self.assertLess(4 * agent_module.HEARTBEAT_TIMEOUT_SECONDS, 180)
+
+    def test_the_counts_connection_refuses_writes(self):
         agent = self.agent()
-        first, second = self.heartbeat(agent, BeatCloud()), self.heartbeat(agent, BeatCloud())
-        self.assertNotEqual(first.body()["bootId"], second.body()["bootId"])
+        self.phases(agent.queue, {"1.2.1": "retry"})
+        opened = []
+        connect = sqlite3.connect
+
+        def recording(*args, **kwargs):
+            db = connect(*args, **kwargs)
+            opened.append(db)
+            try:
+                db.execute("UPDATE studies SET next_at=0")
+                opened.append("wrote")
+            except sqlite3.OperationalError as error:
+                opened.append(str(error))
+            return db
+
+        with patch.object(agent_module.sqlite3, "connect", side_effect=recording):
+            counts = agent_module.queue_counts(self.path)
+        self.assertEqual(counts, {"waiting": 0, "retry": 1, "failed": 0})
+        self.assertEqual(len(opened), 2)
+        self.assertIn("readonly", opened[1])
+
+    def test_a_running_agent_has_one_thread_more_the_heartbeat_and_the_beat_builds_no_queue(self):
+        agent = Agent(config(self.path))
+        cloud = BeatCloud()
+        before = set(threading.enumerate())
+        extra = []
+        real_init = agent_module.Heartbeat.__init__
+
+        def init(beat, *args):
+            real_init(beat, *args)
+            beat.cloud = cloud
+
+        def loop():
+            deadline = time.monotonic() + 5
+            while not cloud.bodies and time.monotonic() < deadline:
+                time.sleep(0.01)
+            extra.extend(t.name for t in set(threading.enumerate()) - before)
+            agent.stopping = True
+
+        agent.loop = loop
+
+        def no_queue(*_args, **_kwargs):
+            raise AssertionError("the heartbeat built a Queue")
+
+        with patch.object(agent_module.Heartbeat, "__init__", init):
+            agent_module_queue = agent_module.Queue
+            with patch.object(agent_module, "Queue", side_effect=no_queue):
+                agent.run()
+        self.assertIs(agent_module.Queue, agent_module_queue)
+        self.assertEqual(extra, ["heartbeat"])
+        self.assertTrue(cloud.bodies, "the beat went out with Queue unavailable")
+        self.assertEqual(cloud.bodies[0]["queue"], {"waiting": 0, "retry": 0, "failed": 0})
+        self.assertEqual(set(threading.enumerate()) - before, set(), "nothing is left running after run()")
 
 
 if __name__ == "__main__":

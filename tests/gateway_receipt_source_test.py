@@ -366,8 +366,8 @@ class AgentPins(unittest.TestCase):
         # 18 -> 25: S4-U4 RetryNowTests (seven cases); tests/gateway_retry_source_test.py pins that class by name.
         # 25 -> 26: S4-EG1 OrthancConnectionTests (one case).
         # CD-10 adds source-AE association, forwarded provenance and mixed-device batch coverage.
-        # 29 -> 39: HeartbeatTests (ten cases), the operational heartbeat thread.
-        self.assertEqual(count, 39)
+        # 29 -> 43: HeartbeatTests (14 cases), the operational heartbeat thread.
+        self.assertEqual(count, 43)
 
 
 class ServerPins(unittest.TestCase):
