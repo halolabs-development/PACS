@@ -180,19 +180,43 @@ READER = """([group, urlB]) => {
     setTimeout(() => channel.postMessage({ type: 'answer', id: 'syn-doc', session: 'syn-session', request: m.request, result,
       held: m.uids.filter(uid => synReader.held.includes(uid)) }), 20);
   };
-  // The list document's window-group channel: the reading screen makes a study its report target (or refuses, or is busy
-  // with an earlier opening for synReader.busy ms after a silent one), and records the openings the viewer withdrew.
+  // The list document's window-group channel, as viewer-windows.js and reading-workspace.js answer it: the reading screen
+  // makes a study its report target (or refuses, or is busy with an earlier opening for synReader.busy ms after a silent
+  // one); every answer but busy says whether the report target is that study now (`at`). A withdrawn opening
+  // (kin-editor-open-cancel) is recorded, its move dropped if it has not happened, and answered with `at` - unless
+  // synReader.withdrawSilent. synReader.open: 'silent' never answers B; 'late' moves to B lateMs after the request and
+  // answers then, while the withdraw is handled only cancelLag ms after it arrives (a busy page); 'slow' would move to B
+  // slowMs after the request; 'refuse' refuses B (modal) before moving; 'refuse-after' moves to B and then refuses (modal).
   const windows = new BroadcastChannel('kin-viewer-windows:' + group);
-  let busyUntil = 0;
+  let busyUntil = 0, inflight = null;
+  const post = message => setTimeout(() => windows.postMessage(message), 20);
   windows.onmessage = event => {
     const m = event.data;
-    if (m?.type === 'kin-editor-open-cancel') { synReader.cancels.push(m.uid); return; }
+    if (m?.type === 'kin-editor-open-cancel') {
+      synReader.cancels.push(m.uid);
+      setTimeout(() => {
+        if (inflight?.request === m.request) { clearTimeout(inflight.timer); inflight = null; }
+        if (!synReader.withdrawSilent)
+          post({ type: 'kin-editor-open-withdrawn', request: m.request, owner: m.owner, uid: m.uid, at: synReader.target === m.uid });
+      }, synReader.cancelLag || 0);
+      return;
+    }
     if (m?.type !== 'kin-editor-open') return;
     synReader.opens.push(m.uid); synReader.openAt.push(performance.now());
-    const reply = (result, reason) => setTimeout(() => windows.postMessage({ type: 'kin-editor-opened', request: m.request, owner: m.owner, uid: m.uid, result, reason }), 20);
+    const answer = (result, reason) => ({ type: 'kin-editor-opened', request: m.request, owner: m.owner, uid: m.uid, result, reason,
+      ...(reason === 'busy' ? {} : { at: synReader.target === m.uid }) });
+    const reply = (result, reason) => post(answer(result, reason));
     if (performance.now() < busyUntil) { reply('refused', 'busy'); return; }
     if (synReader.open === 'silent' && m.uid === '1.2.9') { busyUntil = performance.now() + 6000 + (synReader.busy || 0); return; }
     if (synReader.open === 'refuse' && m.uid === '1.2.9') { reply('refused', 'modal'); return; }
+    if (synReader.open === 'refuse-after' && m.uid === '1.2.9') { synReader.target = m.uid; reply('refused', 'modal'); return; }
+    if (['late', 'slow'].includes(synReader.open) && m.uid === '1.2.9') {
+      const wait = synReader.open === 'late' ? synReader.lateMs : synReader.slowMs;
+      busyUntil = performance.now() + wait;
+      inflight = { request: m.request, timer: setTimeout(() => { inflight = null; synReader.target = m.uid; synReader.movedAt = performance.now();
+        windows.postMessage(answer('ok', null)); }, wait) };
+      return;
+    }
     synReader.target = m.uid; reply('ok', null);
   };
   // As the stock router: a patient switch tears the mode down and mounts it again (the toolbar, its features and the tabs);
@@ -707,7 +731,7 @@ class ViewerMgDOMTest(unittest.TestCase):
         page.evaluate("() => { synReader.open = 'refuse'; }")
         panel = self.keypad(page)
         panel.get_by_role('button', name='Patient ▶').click()
-        panel = self.moved_to(page, '판독 화면이 SYN^BRAVO의 검사를 열지 못해(판독 화면에 대화상자가 열려 있습니다) 영상도 SYN^ALPHA에게 되돌렸습니다.', 4)
+        panel = self.moved_to(page, '판독 화면의 대상이 SYN^BRAVO의 검사로 바뀌지 않아(판독 화면에 대화상자가 열려 있습니다) 영상도 SYN^ALPHA에게 되돌렸습니다.', 4)
         self.assertEqual('PK-A', page.evaluate("KinViewerPatientTabs.snapshot().key"))
         self.assertEqual(['1.2.9', '1.2.1'], page.evaluate("synReader.opens"))
         self.assertEqual('1.2.1', page.evaluate("synReader.target"))
@@ -756,16 +780,63 @@ class ViewerMgDOMTest(unittest.TestCase):
         self.assertEqual([], page.evaluate("synReader.opens"))
         self.assertEqual('1.2.1', page.evaluate("synReader.target"))
 
-    def test_17_keypad_report_target_without_answer_is_withdrawn_and_both_go_back_once_the_reading_screen_is_free(self):
+    def test_14c_keypad_report_target_moved_before_a_refusal_is_a_move_not_a_failure(self):
+        # The reading screen made B its report target and then refused (a dialog opened before the caret went to Findings):
+        # images and report target are both B, so the keypad says so and moves nothing back.
         page = self.open(tabs=True)
-        page.evaluate("() => { synReader.open = 'silent'; synReader.busy = 1500; }")
+        page.evaluate("() => { synReader.open = 'refuse-after'; }")
         panel = self.keypad(page)
         panel.get_by_role('button', name='Patient ▶').click()
-        self.moved_to(page, '판독 화면이 SYN^BRAVO의 검사를 열지 못해(판독 화면의 응답이 없습니다) 영상도 SYN^ALPHA에게 되돌렸습니다.', 4, timeout=40000)
+        panel = self.moved_to(page, 'SYN^BRAVO의 영상과 판독 대상으로 옮겼습니다.', 3)
+        page.wait_for_timeout(500)
+        self.assertEqual(3, page.evaluate("synRemounts"))
+        self.assertEqual('PK-B', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+        self.assertEqual(['1.2.9'], page.evaluate("synReader.opens"))
+        self.assertEqual('1.2.9', page.evaluate("synReader.target"))
+        expect(panel.locator('ol li')).to_have_text(['SYN^ALPHA | SYN-A', 'SYN^BRAVO | SYN-B  ← images · report target'])
+
+    def test_17_keypad_report_target_without_answer_is_withdrawn_and_both_go_back_once_the_reading_screen_is_free(self):
+        # The reading screen answers neither the opening nor its withdrawal: the keypad does not know whether B was opened,
+        # says so, and brings images and report target back to A (each confirmed).
+        page = self.open(tabs=True)
+        page.evaluate("() => { synReader.open = 'silent'; synReader.busy = 6000; synReader.withdrawSilent = true; }")
+        panel = self.keypad(page)
+        panel.get_by_role('button', name='Patient ▶').click()
+        self.moved_to(page, '판독 화면이 SYN^BRAVO의 검사를 열었는지 확인하지 못해(판독 화면의 응답이 없습니다) 영상과 판독 대상을 SYN^ALPHA에게 되돌렸습니다.', 4, timeout=40000)
         # The opening that got no answer was withdrawn; the way back was asked again while the reading screen was busy.
         self.assertEqual(['1.2.9'], page.evaluate("synReader.cancels"))
         opens = page.evaluate("synReader.opens")
         self.assertEqual('1.2.9', opens[0]); self.assertEqual('1.2.1', opens[-1]); self.assertGreater(len(opens), 2)
+        self.assertEqual('1.2.1', page.evaluate("synReader.target"))
+        self.assertEqual('PK-A', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+
+    def test_17b_keypad_report_target_moved_after_the_wait_is_taken_as_moved_not_said_to_have_failed(self):
+        # A loaded reading screen moves to B 6.3 s after the request (past the 6 s wait) and handles the withdrawal only
+        # after that: the report target IS B. The keypad asks where it is before saying anything - both are B, nothing goes back.
+        page = self.open(tabs=True)
+        page.evaluate("() => { synReader.open = 'late'; synReader.lateMs = 6300; synReader.cancelLag = 600; }")
+        panel = self.keypad(page)
+        panel.get_by_role('button', name='Patient ▶').click()
+        panel = self.moved_to(page, 'SYN^BRAVO의 영상과 판독 대상으로 옮겼습니다.', 3, timeout=40000)
+        page.wait_for_timeout(1500)
+        self.assertEqual(3, page.evaluate("synRemounts"))
+        self.assertEqual('PK-B', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+        self.assertEqual('1.2.9', page.evaluate("synReader.target"))
+        self.assertEqual(['1.2.9'], page.evaluate("synReader.opens"))
+        expect(panel.locator('[role=status]')).to_have_text('SYN^BRAVO의 영상과 판독 대상으로 옮겼습니다.')
+        expect(panel.locator('ol li')).to_have_text(['SYN^ALPHA | SYN-A', 'SYN^BRAVO | SYN-B  ← images · report target'])
+
+    def test_17c_keypad_withdrawn_opening_that_had_not_moved_never_moves_later_and_both_go_back(self):
+        # The reading screen would move to B 7.5 s after the request; the withdrawal at 6 s drops that move and says the
+        # report target is not B: the keypad says it was not opened, brings both back to A, and B never follows later.
+        page = self.open(tabs=True)
+        page.evaluate("() => { synReader.open = 'slow'; synReader.slowMs = 7500; }")
+        panel = self.keypad(page)
+        panel.get_by_role('button', name='Patient ▶').click()
+        self.moved_to(page, '판독 화면의 대상이 SYN^BRAVO의 검사로 바뀌지 않아(판독 화면의 응답이 없습니다) 영상도 SYN^ALPHA에게 되돌렸습니다.', 4, timeout=40000)
+        page.wait_for_timeout(2000)
+        self.assertEqual(['1.2.9'], page.evaluate("synReader.cancels"))
+        self.assertIsNone(page.evaluate("synReader.movedAt ?? null"))
         self.assertEqual('1.2.1', page.evaluate("synReader.target"))
         self.assertEqual('PK-A', page.evaluate("KinViewerPatientTabs.snapshot().key"))
 

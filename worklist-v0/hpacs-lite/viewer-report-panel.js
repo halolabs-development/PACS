@@ -69,14 +69,19 @@
       .filter(Boolean).join(' · ');
   }
   function word(row) { return row ? WORDS[row.state?.rs] || '' : ''; }
+  // Where the reading screen says its report target is (viewer-editor-link.js open: `at`) decides: this study (also when it
+  // answered late or refused only after moving), not this study, or not known.
+  const reached = result => !!result && (result.ok === true || result.at === true);
   function openText(result, name) {
-    if (result && result.ok === true) return '판독 화면이 ' + (name || '이 환자') + ' 검사로 옮겨졌습니다 — 판독 화면 창에서 입력하세요.';
+    if (reached(result)) return '판독 화면이 ' + (name || '이 환자') + ' 검사로 옮겨졌습니다 — 판독 화면 창에서 입력하세요.';
     const reason = result?.reason;
     if (reason === 'missing') return TEXT.missing;
+    const why = ' (' + (OPEN_REASONS[reason] || (reason === 'timeout' ? '응답 없음' : '확인할 수 없는 답')) + '). 판독 화면에서 확인하세요.';
+    if (result?.at === false) return '판독 화면의 대상이 이 검사로 바뀌지 않았습니다' + why;
     if (reason === 'timeout') return TEXT.timeout;
-    return '판독 화면이 검사를 옮기지 못했습니다 (' + (OPEN_REASONS[reason] || '확인할 수 없는 답') + '). 판독 화면에서 확인하세요.';
+    return '판독 화면이 검사를 옮겼는지 확인하지 못했습니다' + why;
   }
-  const api = { FIELDS, WORDS, SOURCES, TEXT, OPEN_REASONS, scopedRow, choose, current, heading, word, clock, openText };
+  const api = { FIELDS, WORDS, SOURCES, TEXT, OPEN_REASONS, scopedRow, choose, current, heading, word, clock, openText, reached };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.KinViewerReportPanelApi = api;
 })(globalThis);
@@ -214,7 +219,7 @@ globalThis.KinViewerReportPanel = (() => {
       status.textContent = still ? pure.openText(result, s.patient?.name) : '';
       paint();
       // The reading screen's target is this study now: its text being typed is the Live source.
-      if (still && result?.ok === true && visible()) readLive();
+      if (still && pure.reached(result) && visible()) readLive();
     }
     openButton.onclick = () => { openInReading(); };
     refreshButton.onclick = () => { status.textContent = ''; refresh(); };

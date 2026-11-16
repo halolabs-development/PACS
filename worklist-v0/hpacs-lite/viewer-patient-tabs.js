@@ -209,6 +209,9 @@ window.KinViewerPatientTabs = (() => {
     if (!link) return { ok: false, reason: 'missing' };
     try { return await link.open(uid); } catch (_) { return { ok: false, reason: 'unavailable' }; } finally { link.dispose(); }
   }
+  // Where the reading screen's report target is after a request (viewer-editor-link.js open): that study (moved, even when
+  // the caret could not be put in Findings), not that study, or unknown (null).
+  const reached = result => result?.ok === true || result?.at === true ? true : result?.at === false ? false : null;
   // Back to a study: a reading screen still finishing the opening it was asked for (and told to drop) answers busy for a
   // while; it is asked again, a few times, before the result is taken.
   async function targetBack(uid) {
@@ -229,10 +232,11 @@ window.KinViewerPatientTabs = (() => {
   // Patient ▶: the reading screens save ('save') or discard ('discard', the study's whole draft) the text of the current
   // tab's studies and answer; only when every live one answered, none refused and none still holds such text, the next tab
   // (after the last, the first) opens, and once its images are shown the linked reading screen is asked to make its first
-  // study the report target. When that is refused or not answered, the images go back to the tab left and the reading
-  // screen is asked back to that study, so the images and the report are of one patient again; when even that is not
-  // confirmed, the result says so. A window with no linked reading screen moves only its images. A press while a move is
-  // under way does nothing. Resolves { ok, message }.
+  // study the report target. The outcome is where the reading screen says its report target is (`reached`): there - the move
+  // is done, also when the answer came late; not there, or not known (no answer to the request nor to its withdrawal) - the
+  // images go back to the tab left and the reading screen is asked back to that study, so the images and the report are of
+  // one patient again, and the message says only what was told; when even that is not confirmed, the result says so. A window
+  // with no linked reading screen moves only its images. A press while a move is under way does nothing. Resolves { ok, message }.
   async function next(intent) {
     if (moving) return { ok: false, busy: true, message: '환자를 옮기는 중입니다.' };
     const from = current, at = tabs.indexOf(from), to = at < 0 || tabs.length < 2 ? null : tabs[(at + 1) % tabs.length];
@@ -258,16 +262,27 @@ window.KinViewerPatientTabs = (() => {
           : `${to.patient.name}의 영상이 표시되지 않았고 되돌리기도 확인되지 않았습니다. 영상은 ${current?.patient.name || '없음'}입니다.`) };
       }
       if (!linked) return { ok: true, imagesOnly: true, message: say(`${to.patient.name}의 영상으로 옮겼습니다. 연결된 판독 화면이 없어 영상만 옮겼습니다.`) };
-      const moved = await target((to.exam?.reportUid || to.studies[0]));
-      if (moved?.ok === true && current === to) return { ok: true, reportTarget: (to.exam?.reportUid || to.studies[0]), message: say(`${to.patient.name}의 영상과 판독 대상으로 옮겼습니다.`) };
-      // The report target did not follow (a timed-out opening was told to drop its move): back to the patient left,
-      // images and report target both, each confirmed.
+      // The images of the next patient as opened by this move: another tab opened meanwhile (even the same one again) is
+      // the reader's newer choice, which this move neither claims nor undoes.
+      const shownAt = sequence, still = () => current === to && sequence === shownAt;
+      const toUid = to.exam?.reportUid || to.studies[0], fromUid = from.exam?.reportUid || from.studies[0];
+      const moved = await target(toUid), there = reached(moved);
+      if (!still()) return { ok: false, message: say(`영상 탭이 그 사이 바뀌어 더 옮기지 않았습니다. ` +
+        (there === true ? `판독 화면의 대상은 ${to.patient.name}의 검사입니다.` : '판독 화면의 대상을 확인하세요.')) };
+      // The reading screen's report target is the next patient's study (also when it answered late, or refused only after
+      // moving): images and report target are together.
+      if (there === true) return { ok: true, reportTarget: toUid, message: say(`${to.patient.name}의 영상과 판독 대상으로 옮겼습니다.`) };
+      // Not there (told), or not known: back to the patient left, images and report target both, each confirmed. Only what
+      // the reading screen told is said; an unknown outcome is said to be unknown.
       const why = notOpened(moved);
-      const imagesBack = current === to && await open(from.href) && await shown(from);
-      const reportBack = imagesBack ? await targetBack((from.exam?.reportUid || from.studies[0])) : null;
-      if (imagesBack && reportBack?.ok === true)
-        return { ok: false, reportTarget: (from.exam?.reportUid || from.studies[0]), message: say(`판독 화면이 ${to.patient.name}의 검사를 열지 못해(${why}) 영상도 ${from.patient.name}에게 되돌렸습니다.`) };
-      return { ok: false, mismatch: true, message: say(`판독 화면이 ${to.patient.name}의 검사를 열지 못했고(${why}) 되돌리기도 확인되지 않았습니다. ` +
+      const imagesBack = await open(from.href) && await shown(from);
+      const reportBack = imagesBack ? reached(await targetBack(fromUid)) : null;
+      const what = there === false ? `판독 화면의 대상이 ${to.patient.name}의 검사로 바뀌지 않아(${why})`
+        : `판독 화면이 ${to.patient.name}의 검사를 열었는지 확인하지 못해(${why})`;
+      if (imagesBack && reportBack === true)
+        return { ok: false, reportTarget: fromUid, message: say(`${what} ${there === false ? '영상도' : '영상과 판독 대상을'} ${from.patient.name}에게 되돌렸습니다.`) };
+      return { ok: false, mismatch: true, message: say((there === false ? `판독 화면의 대상이 ${to.patient.name}의 검사로 바뀌지 않았고(${why})`
+        : `판독 화면이 ${to.patient.name}의 검사를 열었는지 확인하지 못했고(${why})`) + ' 되돌리기도 확인되지 않았습니다. ' +
         `영상은 ${current?.patient.name || '없음'}입니다. 판독 화면의 대상을 확인하세요.`) };
     } finally { if (moving === ticket) moving = null; }
   }
