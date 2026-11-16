@@ -71,6 +71,11 @@ window.KinStudyAttachments = function (app) {
   const title = node('h2', null, 'Attach Document');
   title.id = 'attach-document-title';
   const head = node('p', 'attach-study');
+  head.translate = false;   // the study's own data (patient name, ID, date, description), never words of the screen
+  const sourceLabel = node('label', null, 'Original exam '), sourceChoice = node('select');
+  sourceChoice.setAttribute('aria-label','Original exam');sourceLabel.append(sourceChoice);
+  sourceLabel.hidden=true;
+  sourceChoice.onchange=()=>{if(session){session.sourceUid=sourceChoice.value;render();}};
   const fileList = node('ul', 'attach-files');
   const status = node('p', 'attach-status');
   status.setAttribute('role', 'status');
@@ -84,7 +89,7 @@ window.KinStudyAttachments = function (app) {
   const attachedHead = node('h3', null, TEXT.attachedHeading);
   attachedHead.lang = 'ko';
   const attachedList = node('ul', 'attach-attached');
-  dialog.append(title, head, fileList, actions, status, attachedHead, attachedList);
+  dialog.append(title, head, sourceLabel, fileList, actions, status, attachedHead, attachedList);
   dialog.addEventListener('close', () => { if (session) end(); });
   const picker = document.createElement('input');
   picker.type = 'file';
@@ -113,6 +118,9 @@ window.KinStudyAttachments = function (app) {
   function toast(text) { app.notice?.(text); }
 
   /** The toolbar button follows the role; a click without a server, a selection or on a received study says why. */
+  window.addEventListener('kin-exam-scope-changed', event=>{
+    if(session?.uid===event.detail?.uid){session.canAttach=false;status.textContent='검사 범위가 바뀌었습니다. 선택한 파일은 보존했습니다. 창을 다시 열어 대상을 확인하세요.';render();}
+  });
   function sync() {
     if (app.button) app.button.hidden = !canAttach();
   }
@@ -124,7 +132,8 @@ window.KinStudyAttachments = function (app) {
     if (!uid) { toast(TEXT.noStudy); return; }
     const row = app.study(uid);
     if (row?.tele) { toast(TEXT.received); return; }
-    pickFor = { uid, seq: ++seq };
+    // The dialog keeps its chosen exam when the background list selection moves.
+    pickFor = { uid, seq: ++seq, scopeStamp:window.KinExamScope.screenStamp(row), at:work.capture("document") };
     picker.value = '';
     picker.click();
   }
@@ -146,10 +155,12 @@ window.KinStudyAttachments = function (app) {
     if (!target || target.seq !== seq) return;
     if (session) end();
     seq++;
-    session = { uid: target.uid, seq, sending: false, canWithdraw: false, listSeq: 0,
+    session = { uid: target.uid, seq, scopeStamp:target.scopeStamp, at:target.at, ...window.KinExamScope.attachmentTarget(app.study(target.uid)), sending: false, canWithdraw: false, listSeq: 0,
       entries: files.map((file, index) => ({ index, file, type: typeOf(file), rotation: 0, state: 'ready', reason: '',
         requestId: crypto.randomUUID(), url: null, sent: null })) };
     for (const entry of session.entries) if (entry.type && entry.type !== 'application/pdf') entry.url = URL.createObjectURL(entry.file);
+    sourceChoice.replaceChildren();
+    sourceLabel.hidden=!window.KinExamScope.screenScope(session.scope);
     renderHead();
     render();
     attachedList.replaceChildren();
@@ -206,7 +217,8 @@ window.KinStudyAttachments = function (app) {
     }
     const n = pending().length;
       kinWrite(send, kinSay('Attach {n0} File{t1}', n, { t: n === 1 ? '' : 's' }));
-    send.disabled = session.sending || n === 0 || !app.allowed();
+    send.disabled = session.sending || n === 0 || !app.allowed() || !session.canAttach || !session.sourceUid || !current(session,session.at);
+    sourceChoice.disabled=session.sending||session.entries.some(e=>e.sent||e.uncertain);
   }
 
   /** A picture as the browser shows it (EXIF orientation applied), turned by `degrees`, redrawn and encoded as PNG. */
@@ -226,7 +238,7 @@ window.KinStudyAttachments = function (app) {
 
   async function attachAll() {
     const mine = session;
-    if (!mine || mine.sending || !app.allowed()) return;
+    if (!mine || mine.sending || !app.allowed() || !mine.canAttach || !mine.sourceUid || !current(mine,mine.at)) return;
     mine.sending = true;
     status.textContent = '';
     render();
@@ -242,7 +254,7 @@ window.KinStudyAttachments = function (app) {
   }
 
   /** Still the dialog, study and choice this work began in, under the same admitted session. */
-  const current = (mine, context) => session === mine && mine.seq === seq && work.admits(context);
+  const current = (mine, context) => session === mine && mine.seq === seq && work.admits(context) && work.admits(mine.at) && window.KinExamScope.screenStamp(app.study(mine.uid))===mine.scopeStamp;
 
   async function attachOne(mine, entry) {
     if (!entry.type) { entry.state = 'failed'; entry.reason = TEXT.type; return; }
@@ -261,7 +273,7 @@ window.KinStudyAttachments = function (app) {
       }
       if (!current(mine, context)) return;
       if (body.size > PNG_MAX_BYTES) { entry.state = 'failed'; entry.reason = TEXT.imageTooLarge; return; }
-      entry.sent = { body, type, name, requestId: entry.requestId };
+      entry.sent = { body, type, name, requestId: entry.requestId, headers:window.KinExamScope.attachmentHeaders(mine.scope,mine.sourceUid,mine.scope?.generation) };
     }
     if (!current(mine, context)) return;
     entry.state = 'sending';
@@ -271,7 +283,7 @@ window.KinStudyAttachments = function (app) {
     try {
       answer = await app.transport.request(app.api + '/studies/' + encodeURIComponent(mine.uid) + '/attachments', {
         method: 'POST', body: sent.body, context, deadlineMs: 120000,
-        headers: { 'Content-Type': sent.type, 'X-KIN-File-Name': encodeURIComponent(sent.name), 'X-KIN-Request-Id': sent.requestId } });
+        headers: { 'Content-Type': sent.type, 'X-KIN-File-Name': encodeURIComponent(sent.name), 'X-KIN-Request-Id': sent.requestId, ...sent.headers } });
     } catch (_) { answer = null; }
     // Drawn only for the dialog, study and choice this request left from, and while the session still admits it.
     if (!current(mine, context)) return;
@@ -308,6 +320,17 @@ window.KinStudyAttachments = function (app) {
       return;
     }
     mine.canWithdraw = !!answer.body.canWithdraw;
+    mine.scope=window.KinExamScope.read(answer.body.scope);
+    mine.canAttach=answer.body.canAttach===true;
+    const sources=mine.scope?.sources||[],metadata=window.KinExamScope.metadata(app.study(mine.uid));
+    sourceChoice.replaceChildren();
+    if(sources.length>1){const empty=node('option',null,'Select original exam');empty.value='';sourceChoice.append(empty);}
+    for(const source of sources){const item=metadata.find(s=>s.uid===source.studyUid);const option=node('option',null,item?.acc||source.studyUid);option.value=source.studyUid;option.translate=false;sourceChoice.append(option);}
+    mine.sourceUid=sources.some(s=>s.studyUid===mine.sourceUid)?mine.sourceUid:sources.length===1?sources[0].studyUid:'';
+    sourceChoice.value=mine.sourceUid;
+    sourceLabel.hidden=!window.KinExamScope.screenScope(mine.scope);
+    if(!mine.canAttach)status.textContent='이 범위에는 새 문서를 붙일 수 없습니다. 원본 검사의 첫째 범위에서 붙이세요.';
+    render();
     renderAttached(mine, answer.body.attachments);
   }
 
@@ -325,7 +348,8 @@ window.KinStudyAttachments = function (app) {
       const li = node('li', 'attach-done');
       li.dataset.id = row.id;
       li.dataset.state = row.state;
-      li.append(node('span', 'attach-name', row.fileName), node('span', 'attach-kind', row.kind === 'pdf' ? 'PDF' : 'Image'),
+      const fileName = node('span', 'attach-name', row.fileName+(mine.scope?.groupId?' · '+(row.sourceUid||row.uid||''):'')); fileName.translate = false;
+      li.append(fileName,node('span', 'attach-kind', row.kind === 'pdf' ? 'PDF' : 'Image'),
         node('span', 'attach-by', row.createdBy || ''), node('span', 'attach-at', when(row.createdAt)),
         node('span', 'attach-state', row.state === 'stored' ? '' : STATE_NAMES[row.state] || row.state));
       if (row.state === 'withdrawn' && row.withdrawReason) {
@@ -363,7 +387,7 @@ window.KinStudyAttachments = function (app) {
         answer = await app.transport.request(app.api + '/studies/' + encodeURIComponent(mine.uid) + '/attachments/'
           + encodeURIComponent(row.id) + '/withdraw', { method: 'POST', json: { reason }, context });
       } catch (_) { answer = null; }
-      if (session !== mine || mine.seq !== seq || !work.admits(context)) return;
+      if (!current(mine,context)) return;
       confirm.disabled = false;
       if (answer?.ok && !answer.incomplete) { void loadAttached(mine); return; }
       note.textContent = typeof answer?.body?.message === 'string' ? answer.body.message : TEXT.lost;

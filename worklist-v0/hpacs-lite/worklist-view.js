@@ -30,6 +30,9 @@
     }
 
     function testCol(s, c, values = fval) {
+      return KinExamScope.projections(s).some(row => testSourceCol(row, c, values));
+    }
+    function testSourceCol(s, c, values = fval) {
       const v = values?.[c.k] ?? "";
       if (v === "") return true;
       if (c.k === 'modality') return KinCompoundFilter.matchesModality(s.modality, v);

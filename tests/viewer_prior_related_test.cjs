@@ -100,3 +100,10 @@ test('open: a chosen series opens itself (not the first ranked); the cell\'s own
   assert.equal(await w.controller.related.open(w.value('left'), 'aug', { studies: rows }), true);
   assert.deepEqual(w.compared.at(-1), ['left', ['aug-for-left']]);
 });
+
+test('a logical current exam keeps the patient key and lists related studies for an original hidden by its merge',async()=>{
+ const w=world();w.patient={...w.patient,studyUIDs:['hidden-original'],examScope:{reportUid:'cur',sources:[{studyUid:'hidden-original'}]}};
+ w.cells.get('left').studyUid='hidden-original';
+ const rows=await w.controller.related.studies(w.value('left'));
+ assert.deepEqual(rows.map(row=>[row.uid,row.relation]),[['cur','Current'],['aug','Prior'],['may','Prior']]);
+});

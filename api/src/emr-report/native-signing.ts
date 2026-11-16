@@ -9,6 +9,7 @@ import { clinicalIdentity, ServerKeys } from '../emr-signature/server-keys';
 import { ServerSigning } from '../emr-signature/server-signing';
 import { verifyRegisteredServerEnvelope } from '../emr-signature/server-verification';
 import { OnlineSigningStore, StoredApproval } from './online-store';
+import { nativeReportSnapshot, nativeReportDigest } from './native-snapshot';
 import { drawingAttachments, signedReportRow as signedRow } from '../image-report';
 
 export const EMR_NATIVE_REPORT_SIGNING = Symbol('EMR_NATIVE_REPORT_SIGNING');
@@ -40,19 +41,30 @@ export class NativeReportSigning {
     if (existing) return existing;
     const before = signedRow(previous ? await tx.reportVersion.findUnique({ where: { uid_version: { uid: version.uid, version: previous } } }) : null);
     if (previous && !before) refuse('PreviousVersionRequired');
+    let previousDigest = before ? nativeReportDigest(before) : null;
+    if (before) {
+      const saved = await tx.$queryRaw<{ outcome: StoredApproval }[]>`SELECT outcome FROM emr_signing.signed_version
+        WHERE record_id=${recordId} AND version_id=${String(previous)}`;
+      if (saved.length) {
+        const signature = saved[0].outcome, verified = verifyRegisteredServerEnvelope(signature.envelope, signature.keyAtSigning);
+        const payload = verified.payload;
+        if (saved.length !== 1 || payload.recordKind !== 'report-version' || payload.recordId !== recordId
+          || payload.versionId !== String(previous) || payload.text.kind !== 'clinical-entry') refuse('SignatureEvidenceMismatch');
+        previousDigest = nativeReportDigest(before, payload.text.body);
+      }
+    }
     const key = await this.keys.forApproval(tx, current);
     // Include the entire native snapshot (citations/structured data/reason too),
     // so the signature cannot describe a different preserved report version.
     const signed = await this.signing.sign(tx, current, key, {
-      formatVersion: 'emr-signature/1', text: { kind: 'clinical-entry', body: JSON.stringify(version) },
+      formatVersion: 'emr-signature/1', text: { kind: 'clinical-entry', body: nativeReportSnapshot(version) },
       patient: study.patient, studyId: study.studyId, managingInstitutionId: study.managingInstitutionId,
       actingInstitutionId: current.actor.institutionId, recordKind: 'report-version', recordId, versionId,
       author: current.actor.identity, signer: current.actor.identity,
       identityRegistrationId: current.actor.identityRegistrationId,
       action: version.action === 'approve' ? 'approve-sign' : version.action === 'reset' ? 'cancel' : version.action === 'amend' ? 'amend' : 'addendum',
       previousVersion: before ? { recordId: before.uid,
-        versionId: String(before.version), sha256: digest(before) } : null,
-      // Image Report: each drawing this version holds, by the server's hash (the body above carries the same list).
+        versionId: String(before.version), sha256: previousDigest } : null,
       attachments: drawingAttachments(version.drawings), reason: typeof version.reason === 'string' ? version.reason : null,
     });
     verifyRegisteredServerEnvelope(signed.envelope, key);

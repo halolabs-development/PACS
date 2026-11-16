@@ -2,26 +2,13 @@
 /*
  * FC-034 receiving side: a signed amendment (ReportVersion.action 'amend', made by the approving reader within 24 hours of
  * the first approval) is a final head for every reader of report versions, and the study answer carries the window.
- * Pure readers only, loaded from the TypeScript sources (Node >= 22.18 strips types; @nestjs/common is a stub here, so no
- * api/node_modules is needed). The PostgreSQL route cases are in tests/emr/d/report_commit_pg_test.cjs.
+ * Pure readers use the installed TypeScript compiler and API dependencies, as the other source service suites do.
+ * The PostgreSQL route cases are in tests/emr/d/report_commit_pg_test.cjs.
  */
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const path = require('node:path');
-const { registerHooks } = require('node:module');
-
-class HttpError extends Error { constructor(body) { super(typeof body === 'string' ? body : body?.message); this.body = body; } getResponse() { return this.body; } }
-const nest = ['BadRequestException', 'ConflictException', 'ForbiddenException', 'NotFoundException', 'GoneException',
-  'HttpException', 'ServiceUnavailableException'].map(name => `export class ${name} extends (${HttpError.toString()}) {}`).join('\n');
-const stub = 'data:text/javascript,' + encodeURIComponent(nest + '\nexport const RequestMethod = { GET: 0, POST: 1, PUT: 2, DELETE: 3, PATCH: 4, 0: "GET", 1: "POST", 2: "PUT", 3: "DELETE", 4: "PATCH" };');
-registerHooks({ resolve(specifier, context, next) {
-  if (specifier === '@nestjs/common') return { url: stub, format: 'module', shortCircuit: true };
-  // The sources import their neighbours without an extension (the compiled image resolves .js).
-  if (specifier.startsWith('.') && !path.extname(specifier)) {
-    try { return next(specifier + '.ts', context); } catch { /* not a TypeScript neighbour */ }
-  }
-  return next(specifier, context);
-} });
+require('./service_test_loader.cjs');
 const src = name => require(path.resolve(__dirname, '..', 'api', 'src', name));
 const clinician = src('clinician-policy.ts');
 const critical = src('critical-result-policy.ts');

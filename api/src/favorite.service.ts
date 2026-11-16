@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { PrismaService } from './prisma.service';
 import { ViewerJobService } from './viewer-job.service';
 import type { Caller } from './pacs.service';
+import { examLinks, examParentsAdmitted, groupedExamUids, prepareExamRead } from './exam-merge.service';
 
 type Folder = { id: string; name: string; uids: string[]; views?: Record<string,string> };
 const uuid = (v: any) => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
@@ -22,18 +23,29 @@ export class FavoriteService {
   }
   private async visible(tx: any, uids: string[], c: Caller, lock = false): Promise<Set<string>> {
     if (!uids.length) return new Set();
-    const rows = await tx.$queryRaw(Prisma.sql`SELECT uid FROM "StudyState" WHERE uid IN (${Prisma.join([...new Set(uids)].sort())})
-      AND ("institutionId"=${c.institution} OR "teleInstitutionId"=${c.institution}) ORDER BY uid ${lock ? Prisma.sql`FOR SHARE` : Prisma.empty}`);
-    return this.studyAccess.allowed(c,rows.map((x:any)=>x.uid),tx);
+    // A study without an owning institution is nobody's, even with this institution in its tele column.
+    const rows = await tx.$queryRaw(Prisma.sql`SELECT uid,"institutionId","teleInstitutionId" FROM "StudyState" WHERE uid IN (${Prisma.join([...new Set(uids)].sort())})
+      AND "institutionId" IS NOT NULL AND ("institutionId"=${c.institution} OR "teleInstitutionId"=${c.institution}) ORDER BY uid ${lock ? Prisma.sql`FOR SHARE` : Prisma.empty}`);
+    // One gate decides every study of the collection as a single study is decided.
+    return examParentsAdmitted(tx, this.studyAccess, c, rows);
   }
   private async result(tx: any, owner: any, row: any, c: Caller) {
     const folders: Folder[] = row ? JSON.parse(row.value) : [];
     const restricted=(await this.studyAccess.snapshot(c,tx)).policy.restricted;
     const visible = await this.visible(tx, folders.flatMap(f => f.uids), c);
+    const links = await examLinks(tx,this.studyAccess,c,[...visible]);
     return { owner:[owner.institution,owner.subject], revision:row?.revision ?? 0,
-      folders:folders.map(f => ({ id:f.id, name:f.name, uids:f.uids.filter(x => visible.has(x)), unavailable:restricted?0:f.uids.filter(x => !visible.has(x)).length, views:Object.fromEntries(Object.entries(f.views ?? {}).filter(([uid]) => f.uids.includes(uid) && visible.has(uid))) })) };
+      folders:folders.map(f => ({ id:f.id, name:f.name, uids:f.uids.filter(x => visible.has(x)),
+        links:links.filter(link=>f.uids.includes(link.uid)),
+        examUids:[...new Set(links.filter(link=>f.uids.includes(link.uid)).flatMap(link=>{
+          const current=link.exams.filter(exam=>exam.active&&exam.groupId); return (current.length?current:link.exams.filter(exam=>exam.active)).map(exam=>exam.reportUid);
+        }))], unavailable:restricted?0:f.uids.filter(x => !visible.has(x)).length, views:Object.fromEntries(Object.entries(f.views ?? {}).filter(([uid]) => f.uids.includes(uid) && visible.has(uid))) })) };
   }
   private async run<T>(c:Caller,fn: (tx: any) => Promise<T>): Promise<T> {
+    const row=await this.prisma.favoriteWorkspace.findUnique({where:{institution_subject:{institution:c.institution!,subject:c.sub}}});
+    // Only a favorite with a grouping history needs its exam's originals observed before the transaction.
+    const kept=[...new Set<string>((row?JSON.parse(row.value):[]).flatMap((f:Folder)=>f.uids))],grouped=await groupedExamUids(this.prisma,kept);
+    for(const uid of kept)if(grouped.has(uid))await prepareExamRead(this.prisma,this.studyAccess,c,uid);
     try { return await this.prisma.$transaction(async tx => {
       await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`; await this.studyAccess.snapshot(c,tx); return fn(tx);
     }, { maxWait:4000, timeout:8000 }); }
@@ -65,6 +77,7 @@ export class FavoriteService {
     const command = { action,folderId:body.folderId.toLowerCase(),revision:body.revision,
       ...(extras.includes('name') ? { name:body.name.trim() } : {}), ...(extras.includes('uid') ? { uid:body.uid } : {}), ...(extras.includes('jobId') ? {jobId:body.jobId?.toLowerCase() ?? null} : {}) };
     const requestId = body.requestId.toLowerCase(), fingerprint = createHash('sha256').update(JSON.stringify(command)).digest('hex');
+    if(command.uid)await prepareExamRead(this.prisma,this.studyAccess,c,command.uid);
     // Persist only a pointer. Restoring always revalidates through ViewerJobService.
     if (action === 'view' && command.jobId) {
       const previous = await this.prisma.favoriteWorkspace.findUnique({where:{institution_subject:owner}});

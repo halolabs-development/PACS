@@ -1,5 +1,6 @@
 import type { DisclosureManifest } from './contract';
 import { storedClinicalPlan } from './fixed-listing';
+import { nativeReportContent } from '../emr-report/native-snapshot';
 
 type Original = { recordId: string; versionId: string; original: string };
 const esc = (value: string) => value.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -26,7 +27,7 @@ export function fixedDocument(manifest: DisclosureManifest, originals: Original[
   if (manifest.delivery.format === 'signed-electronic') return Buffer.from(JSON.stringify(document), 'utf8');
   const sections = originals.map(item => {
     const source = JSON.parse(item.original);
-    if (source.reportVersion !== undefined) return reportSection(item, JSON.parse(source.reportVersion), null);
+    if (source.reportVersion !== undefined) return reportSection(item, nativeReportContent(source.reportVersion), null);
     const plan = source.plan ? storedClinicalPlan(source.plan) : null;
     const content = plan ? plan.version :
       JSON.parse(Buffer.from(source.envelope.payload, 'base64url').toString('utf8'));
@@ -35,7 +36,7 @@ export function fixedDocument(manifest: DisclosureManifest, originals: Original[
     const author = signing?.identityRegistrationId ?? (plan ? plan.signing?.identityRegistrationId : content.identityRegistrationId);
     // A signed native report version carries its stored row as the signed body (native-signing.ts).
     if (content.recordKind === 'report-version' && content.text?.kind === 'clinical-entry')
-      return reportSection(item, JSON.parse(content.text.body), { at: content.serverTime, author: author ?? content.author.subject });
+      return reportSection(item, nativeReportContent(content.text.body), { at: content.serverTime, author: author ?? content.author.subject });
     const authorLabel = author ?? `${content.author.issuer} / ${content.author.subject}`;
     const action = { 'approve-sign': 'Approved Report', addendum: 'Addendum', amend: 'Amendment',
       cancel: 'Cancellation', entry: 'Original Entry', 'additional-entry': 'Additional Entry', correction: 'Correction' }[content.action ?? content.act] ?? 'Record Version';

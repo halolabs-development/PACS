@@ -16,11 +16,12 @@
       const values = url.searchParams.getAll('StudyInstanceUIDs');
       if (values.length !== 1) return null;
       const studies = values[0].split(',');
-      if (studies.length < 1 || studies.length > 2 || new Set(studies).size !== studies.length ||
+      // A study and its prior, or a merged exam's studies (Merge Exam, at most 10, the base first).
+      if (studies.length < 1 || studies.length > (url.searchParams.has("kinExamScopes") ? 20 : 2) || new Set(studies).size !== studies.length ||
           studies.some(v => v.length > 64 || !/^\d+(?:\.\d+)+$/.test(v))) return null;
       const series = url.searchParams.get('initialSeriesInstanceUID');
       if (series !== null && (series.length > 64 || !/^\d+(?:\.\d+)+$/.test(series))) return null;
-      return { studies, series };
+      return { studies, series, ...(url.searchParams.has('kinExamScopes') ? {exam:url.searchParams.get('kinExamScopes')} : {}) };
     } catch (_) { return null; }
   }
   // A viewer reports its outer geometry only; the receiving list validates it.
@@ -42,19 +43,19 @@
       if (!m || typeof m !== 'object' || m.type !== 'kin-editor-request' || !uuid(m.request) || typeof m.owner !== 'string' ||
           !Array.isArray(m.studies) || m.studies.length < 1 || m.studies.length > 2 || m.studies.some(v => typeof v !== 'string') ||
           typeof m.activeUid !== 'string' || m.activeUid !== m.studies[0]) return null;
-      m = { request: m.request, owner: m.owner, studies: [...m.studies], activeUid: m.activeUid };
+      m = { request: m.request, owner: m.owner, studies: [...m.studies], activeUid: m.activeUid, examStamp:m.examStamp };
     } catch (_) { return null; }
     const reply = result => ({ type: 'kin-editor-reply', request: m.request, owner: m.owner, studies: m.studies, activeUid: m.activeUid, result });
     try {
       const owner = reader.owner();
       if (typeof owner !== 'string' || !owner || owner !== m.owner) return reply('session');
-      if (reader.target() !== m.activeUid) return reply('context');
+      if (reader.target() !== m.activeUid || reader.examStamp?.(m.activeUid)!==m.examStamp) return reply('context');
       if (reader.modal()) return reply('modal');
       const fields = EDITOR_FIELDS.map(id => reader.field(id));
       if (!fields[0] || !reader.usable(fields[0]) || fields.some(field => !field || typeof field.value !== 'string')) return reply('unavailable');
       const session = reader.session(m.owner, m.activeUid);
       if (typeof session !== 'string' || !session) return reply('unavailable');
-      return { ...reply('ok'), session, editor: Object.fromEntries(EDITOR_FIELDS.map((key, i) => [key, fields[i].value])) };
+      return { ...reply('ok'), session, ...(m.examStamp!==undefined?{examStamp:m.examStamp}:{}), editor: Object.fromEntries(EDITOR_FIELDS.map((key, i) => [key, fields[i].value])) };
     } catch (_) { return reply('unavailable'); }
   }
   /* The reading screen's answer to a viewer's kin-editor-open (viewer-editor-link.js open()): make the viewer's study the
@@ -70,20 +71,25 @@
       m = message;
       if (!m || typeof m !== 'object' || m.type !== 'kin-editor-open' || !uuid(m.request) || typeof m.owner !== 'string' || !m.owner ||
           typeof m.uid !== 'string' || m.uid.length > 64 || !/^\d+(?:\.\d+)+$/.test(m.uid)) return null;
-      m = { request: m.request, owner: m.owner, uid: m.uid };
+      m = { request: m.request, owner: m.owner, uid: m.uid, examStamp:m.examStamp };
     } catch (_) { return null; }
     const reply = (result, reason = null) => ({ type: 'kin-editor-opened', request: m.request, owner: m.owner, uid: m.uid, result, reason });
     try {
       if (reader.owner() !== m.owner) return reply('refused', 'session');
       if (reader.busy?.()) return reply('refused', 'busy');
       if (!reader.listed(m.uid)) return reply('refused', 'unlisted');
+      if(reader.examStamp?.(m.uid)!==m.examStamp)return reply('refused','stale');
       if (reader.modal()) return reply('refused', 'modal');
+      if (reader.verifyExam && !await reader.verifyExam(m.uid,m.examStamp)) return reply('refused','stale');
+      if (reader.admitted && !reader.admitted(m.request)) return reply('refused','stale');
+      if (reader.owner()!==m.owner || reader.examStamp?.(m.uid)!==m.examStamp) return reply('refused','stale');
       let outcome;
       try { outcome = await reader.select(m.uid); } catch (_) { return reply('refused', 'unavailable'); }
       if (reader.owner() !== m.owner) return reply('refused', 'session');
       const status = outcome && typeof outcome === 'object' ? outcome.status : null;
       if (!['same', 'clear', 'saved'].includes(status)) return reply('refused', OPEN_STATUS[status] || 'unavailable');
       if (reader.target() !== m.uid) return reply('refused', 'stale');
+      if(reader.examStamp?.(m.uid)!==m.examStamp)return reply('refused','stale');
       if (reader.modal()) return reply('refused', 'modal');
       const field = reader.field('findings');
       if (!field || !reader.usable(field)) return reply('refused', 'unavailable');

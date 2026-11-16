@@ -341,6 +341,7 @@ class TransferSite(rf.FlowSite):
 
     def __init__(self, count=3):
         super().__init__(count)
+        self.exam_scopes = {}
         self.imports = []               # each POST /api/dicom-import as the server received it
         self.held_imports = []          # (route, record) answered by the case
         self.import_answers = []        # per POST: a result dict | (status, body) | "hold" | "abort"
@@ -363,6 +364,8 @@ class TransferSite(rf.FlowSite):
         body = super().list_body(account, rename)
         for row in body["studies"]:
             row["tele"] = row["uid"] in self.tele
+            if row["uid"] in self.exam_scopes:
+                row["examScope"] = self.exam_scopes[row["uid"]]
         return body
 
     def api(self, route, request, method, path, query):
@@ -876,6 +879,9 @@ class TransferPanelPage(rf.ReportFlowPage):
     def attach_site(self, refuse_names=()):
         """The three attachment routes, answered as study-attachment.service.ts does (behind the same guard)."""
         self.attach_posts, self.attach_rows, self.attach_held, self.withdraw_posts = [], {}, None, []
+        self.attach_scope = lambda uid: {"reportUid": uid, "groupId": None, "part": None, "kind": "single", "generation": "source-1",
+                                        "sources": [{"studyUid": uid, "series": {"mode": "all", "uids": []}}]}
+        self.attach_allowed = True
         self.attach_list_held, self.attach_unconfirmed, self.attach_refusals = None, 0, []
         own = self.site.api
         def view(row):
@@ -893,7 +899,8 @@ class TransferPanelPage(rf.ReportFlowPage):
                 body = request.post_data_buffer or b""
                 name = unquote(request.headers.get("x-kin-file-name", ""))
                 self.attach_posts.append({"uid": uid, "type": request.headers.get("content-type"), "name": name, "body": body,
-                                          "request": request.headers.get("x-kin-request-id")})
+                                          "request": request.headers.get("x-kin-request-id"),
+                                          "sourceUid": request.headers.get("x-kin-source-uid"), "generation": request.headers.get("x-kin-exam-generation")})
                 if self.attach_held is not None:
                     self.attach_held.append(route)
                     return None
@@ -915,7 +922,7 @@ class TransferPanelPage(rf.ReportFlowPage):
                     self.attach_list_held.append((route, [dict(r) for r in self.attach_rows.get(uid, [])], uid, account))
                     return None
                 rows = self.attach_rows.get(uid, [])
-                return self.site.answer(route, 200, {"uid": uid, "attachments": [view(r) for r in rows], "canAttach": True,
+                return self.site.answer(route, 200, {"uid": uid, "scope": self.attach_scope(uid), "attachments": [view(r) for r in rows], "canAttach": self.attach_allowed,
                                                      "canWithdraw": "technician" in account["roles"] or "admin" in account["roles"]})
             if method == "POST" and attachment:
                 reason = (request.post_data_json or {}).get("reason", "").strip()
@@ -931,7 +938,7 @@ class TransferPanelPage(rf.ReportFlowPage):
 
     def release_list(self, held):
         route, rows, uid, account = held
-        self.site.answer(route, 200, {"uid": uid, "attachments": [self.attach_view(r) for r in rows], "canAttach": True,
+        self.site.answer(route, 200, {"uid": uid, "scope": self.attach_scope(uid), "attachments": [self.attach_view(r) for r in rows], "canAttach": self.attach_allowed,
                                       "canWithdraw": "technician" in account["roles"] or "admin" in account["roles"]})
 
     def attach_dialog(self):
@@ -947,6 +954,61 @@ class TransferPanelPage(rf.ReportFlowPage):
                 self.menu_item("Attach Document").click()
         chooser.value.set_files(files)
         expect(self.attach_dialog()).to_be_visible()
+
+    def test_attachment_requires_an_original_choice_and_sends_the_exam_generation(self):
+        self.attach_site()
+        self.attach_scope = lambda uid: {"reportUid": uid, "groupId": "syn-group", "kind": "merge", "part": None, "generation": "scope-2",
+            "sources": [{"studyUid": source, "series": {"mode": "all", "uids": []}} for source in (UID_A, h.UID_B)]}
+        self.site.exam_scopes[UID_A] = self.attach_scope(UID_A)
+        self.open_as(TECH, "Technician")
+        self.attach_files([{"name": "referral.pdf", "mimeType": "application/pdf", "buffer": self.PDF}], via=h.PATIENT)
+        dialog=self.attach_dialog()
+        expect(dialog.locator("#attach-send")).to_be_disabled()
+        dialog.get_by_role("combobox", name="Original exam").select_option(h.UID_B)
+        expect(dialog.locator("#attach-send")).to_be_enabled()
+        dialog.locator("#attach-send").click()
+        expect(dialog.locator(".attach-files li")).to_contain_text("Attached")
+        self.assertEqual((h.UID_B, "scope-2"), (self.attach_posts[0]["sourceUid"], self.attach_posts[0]["generation"]))
+
+    def test_split_second_part_keeps_selected_files_and_does_not_attach(self):
+        self.attach_site()
+        self.attach_allowed=False
+        self.attach_scope = lambda uid: {"reportUid": uid, "groupId": "syn-group", "kind": "split", "part": 1, "generation": "scope-3",
+            "sources": [{"studyUid": UID_A, "series": {"mode": "include", "uids": [UID_A + ".1"]}}]}
+        self.site.exam_scopes[UID_A] = self.attach_scope(UID_A)
+        self.open_as(TECH, "Technician")
+        self.attach_files([{"name": "referral.pdf", "mimeType": "application/pdf", "buffer": self.PDF}], via=h.PATIENT)
+        dialog=self.attach_dialog()
+        expect(dialog.locator("#attach-send")).to_be_disabled()
+        expect(dialog).to_contain_text("새 문서를 붙일 수 없습니다")
+        expect(dialog.locator(".attach-files li")).to_have_count(1)
+        self.assertEqual([],self.attach_posts)
+
+    def test_plain_study_attaches_without_an_original_choice_or_scope_headers(self):
+        self.attach_site()
+        self.attach_list_held = []
+        self.open_as(TECH, "Technician")
+        self.attach_files([{"name": "referral.pdf", "mimeType": "application/pdf", "buffer": self.PDF}], via=h.PATIENT)
+        dialog = self.attach_dialog()
+        self.wait(lambda: len(self.attach_list_held) == 1, "the opening list read")
+        opening = self.attach_list_held.pop()
+        # Plain studies can send before the attachment list arrives, as on main.
+        expect(dialog.locator("#attach-send")).to_be_enabled()
+        expect(dialog.get_by_role("combobox", name="Original exam")).to_be_hidden()
+        dialog.locator("#attach-send").click()
+        expect(dialog.locator(".attach-files li")).to_contain_text("Attached")
+        self.assertEqual(1, len(self.attach_posts))
+        post = self.attach_posts[0]
+        self.assertEqual((UID_A, "application/pdf", "referral.pdf", self.PDF),
+                         (post["uid"], post["type"], post["name"], post["body"]))
+        self.assertIsNone(post["sourceUid"])
+        self.assertIsNone(post["generation"])
+        self.wait(lambda: len(self.attach_list_held) == 1, "the post-upload list read")
+        self.release_list(self.attach_list_held.pop())
+        expect(dialog.locator(".attach-attached li")).to_have_count(1)
+        self.release_list(opening)
+        expect(dialog.get_by_role("combobox", name="Original exam")).to_be_hidden()
+        expect(dialog.locator(".attach-status")).to_be_empty()
 
     def test_fc076_attach_document_menu_places_bar_button_and_received_study(self):
         self.attach_site()
@@ -1027,6 +1089,21 @@ class TransferPanelPage(rf.ReportFlowPage):
         expect(dialog.locator(".attach-attached li button", has_text="Withdraw")).to_have_count(2)
         dialog.locator("#attach-cancel").click()
         expect(dialog).to_be_hidden()
+
+    def test_fc076_the_study_line_keeps_the_patient_data_in_either_screen_language(self):
+        # A patient name that reads like a glossary template ("Base {0}") is still data, before and after a language change.
+        self.attach_site()
+        self.site.flow = tuple((uid, "Base Nora" if uid == UID_B else name, patient) for uid, name, patient in self.site.flow)
+        self.open_as(TECH, "Technician")
+        self.attach_files([{"name": "referral.pdf", "mimeType": "application/pdf", "buffer": self.PDF}], via="Base Nora")
+        dialog = self.attach_dialog()
+        head = dialog.locator(".attach-study")
+        expect(head).to_have_text(re.compile(r"^Base Nora · "))
+        for lang in ("ko", "en"):
+            self.assertTrue(self.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", lang))
+            expect(dialog.locator("#attach-document-title")).to_have_text("문서 붙이기" if lang == "ko" else "Attach Document")
+            expect(head).to_have_text(re.compile(r"^Base Nora · "))
+        dialog.locator("#attach-cancel").click()
 
     def test_fc076_a_late_answer_is_not_drawn_into_another_study_and_withdraw_needs_a_reason(self):
         self.attach_site()
@@ -1916,7 +1993,7 @@ class TransferPanelPage(rf.ReportFlowPage):
                 try:
                     context.route('**/*', lambda r: r.fulfill(content_type='text/html', body='<button id="t-import">Import DICOM</button><div id="study-transfer"></div>'))
                     page.goto('http://localhost/fixture')
-                    for name in ('work-context.js', 'session-transport.js', 'study-transfer-local.js'):
+                    for name in ('work-context.js', 'session-transport.js', 'exam-scope.js', 'study-transfer-local.js'):
                         source = (Path(__file__).resolve().parents[1]/'worklist-v0/hpacs-lite'/name).read_text(encoding='utf-8')
                         if self.asset_source and self.asset_source[0] == name: source = self.asset_source[1]
                         page.add_script_tag(content=source)
@@ -2580,7 +2657,7 @@ class TransferPanelPage(rf.ReportFlowPage):
         """A new document of the same tab (sessionStorage stays) mounted for `owner`. fault (method, key): that storage
         call throws for that key while window.synFault is true (cleared to model recovery in the same document)."""
         page.goto('http://localhost/fixture')
-        for name in ('work-context.js', 'session-transport.js', 'study-transfer-local.js'):
+        for name in ('work-context.js', 'session-transport.js', 'exam-scope.js', 'study-transfer-local.js'):
             source = (Path(__file__).resolve().parents[1] / 'worklist-v0/hpacs-lite' / name).read_text(encoding='utf-8')
             if self.asset_source and self.asset_source[0] == name:
                 source = self.asset_source[1]
@@ -3200,7 +3277,7 @@ def main():
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     names = sys.argv[1:] or own_cases()
     suite = unittest.TestSuite(TransferPanelPage(n) for n in names)
-    result = unittest.TextTestRunner(verbosity=2, failfast=True).run(suite)
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
     return 0 if result.wasSuccessful() and not result.skipped else 1
 
 

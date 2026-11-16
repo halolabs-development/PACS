@@ -601,7 +601,7 @@
     const patients=new Map(),dates=new Set(),sops=new Set();
     for(const item of list){
       const c=classify(item);
-      if(c.study!==out.uid)c.issues.push('wrong-study');
+      if(Array.isArray(input.sourceUids) ? !input.sourceUids.every(uid)||!input.sourceUids.includes(c.study) : c.study!==out.uid)c.issues.push('wrong-study');
       if(sops.has(c.sop))c.issues.push('duplicate-object');
       sops.add(c.sop);
       if(c.issues.includes('wrong-study')||c.issues.includes('duplicate-object')){c.status='unverified';c.standard=false;}

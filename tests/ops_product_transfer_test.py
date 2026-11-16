@@ -477,7 +477,8 @@ class Pure(unittest.TestCase):
         # FC-076 added StudyAttachment (one stored synthetic attachment): 58 tables. Film / DICOM Print added FilmPrintJob: 59.
         # Image Report added ReportDrawing (one drawing a version and a draft hold): 60.
         # Auto Save View added ViewerAutoView (one reader's saved view): 61.
-        self.assertEqual(len(transfer.TABLES), 61)
+        # Merge Exam added StudyGroup and StudyGroupMember (one ended merged exam, two members): 63.
+        self.assertEqual(len(transfer.TABLES), 63)
         self.assertEqual((len(rows['ReportDraftPurposeEnd']), len(rows['PurposeLedgerAnchor']), len(rows['ReportLedgerAnchor'])), (1, 1, 1))
         self.assertEqual(set(rows), set(transfer.TABLES))
         emr = transfer.expected_emr_rows()
@@ -520,6 +521,7 @@ class Pure(unittest.TestCase):
                          + 1    # FC-070: the hospital's one registered peer PACS
                          + 1    # FC-076: one stored attached document
                          + 1    # Film / DICOM Print: one printed film
+                         + 3    # Merge Exam: one ended merged exam and its two members
                          + 1    # Image Report: one drawing a version and a draft hold
                          + 1)   # Auto Save View: one reader's saved view
         self.assert_import_operation_rows(rows['ImportOperation'])
@@ -757,10 +759,11 @@ class Pure(unittest.TestCase):
             # Every expected nonempty table must actually be seeded. A receipt
             # assembled from expectations alone missed new tables in hosted CI.
             for table, rows in transfer.expected_rows(UID).items():
-                inserted=[text for text in sql if text.startswith('INSERT INTO "'+table+'" ')]
+                inserted=[text for block in sql for text in block.splitlines() if text.startswith('INSERT INTO "'+table+'" ')]
                 self.assertEqual(len(inserted),len(rows),table)
                 for statement,row in zip(inserted,rows):
-                    self.assertIn(transfer.sql_literal(json.dumps(row)),statement)
+                    seeded = dict(row, dissolvedAt=None, dissolvedBy=None, dissolvedBySub=None) if table == 'StudyGroup' else row
+                    self.assertIn(transfer.sql_literal(json.dumps(seeded)),statement)
             state = next(i for i, text in enumerate(sql) if 'INSERT INTO "StudyState"' in text)
             report = next(i for i, text in enumerate(sql) if 'INSERT INTO "Report" ' in text)
             self.assertLess(state, report)

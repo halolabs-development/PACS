@@ -12,6 +12,7 @@
 import { createHash } from 'node:crypto';
 import { inflateSync } from 'node:zlib';
 import { Prisma } from '@prisma/client';
+import { examScopeChanged, scopeIncludesSeries, ResolvedExamScope } from './exam-merge.service';
 
 export const DRAWING_LIMITS = Object.freeze({
   perReport: 3, strokes: 500, points: 2000, text: 80, strokesBytes: 262144, pngBytes: 1200000, width: 1200, height: 900,
@@ -203,13 +204,19 @@ export function drawingAttachments(value: unknown) {
 }
 
 /** The version entries of these drawings of the study, in this order. A missing row is a broken invariant, never skipped. */
-export async function drawingEntries(tx: any, uid: string, ids: readonly string[]) {
+export function assertDrawingScope(row: any, scope: ResolvedExamScope) {
+  if ((row.groupId ?? null) !== scope.groupId || row.background === 'image' &&
+      !scopeIncludesSeries(scope, row.source?.studyUid ?? scope.reportUid, row.source?.seriesUid)) throw examScopeChanged();
+}
+
+export async function drawingEntries(tx: any, uid: string, ids: readonly string[], scope?: ResolvedExamScope) {
   if (!ids.length) return [] as { id: string; background: string; source: any; sha256: string }[];
   const rows: any[] = await tx.reportDrawing.findMany({ where: { studyUid: uid, id: { in: [...ids] } },
-    select: { id: true, background: true, source: true, sha256: true } });
+    select: { id: true, background: true, source: true, sha256: true, groupId: true } });
   return ids.map(id => {
     const row = rows.find(r => r.id === id);
     if (!row) throw new Error('ReportDrawing row missing for ' + id);
+    if (scope) assertDrawingScope(row, scope);
     return { id: row.id, background: row.background, source: row.source ?? null, sha256: row.sha256 };
   });
 }

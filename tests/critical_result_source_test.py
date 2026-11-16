@@ -31,9 +31,11 @@ DATABASE = "kin_critical_result_source"
 # service's own transaction body and appends an access event; it supplies no report content.
 # ./emr-runtime/fixed-record-lock: the study's fixed-record advisory key a pinning write takes first (CD-09 W-V); a lock,
 # no rows.
+# ./exam-merge.service: grouping access uses saved group references only; the record-only read boundary and fixed
+# bodies are exercised by access_record_writes_test.cjs and critical_result_service_test.cjs.
 IMPORTS = {"@nestjs/common", "node:crypto", "crypto", "./member-rights", "./prisma.service", "./study-access.service", "./keycloak.service",
            "./emr-viewing/consumer-read", "./orthanc.service", "./clinician-policy", "./critical-result-policy", "./critical-result.service", "./preliminary-reader",
-           "./emr-clinical/routes", "./emr-runtime/fixed-record-lock"}
+           "./emr-clinical/routes", "./emr-runtime/fixed-record-lock", "./exam-merge.service"}
 REPORT_COLUMNS = {"uid", "version"}
 FORBIDDEN_MEMBERS = {"report", "reportDraft", "reportPreview", "$queryRawUnsafe", "$executeRawUnsafe"}
 FORBIDDEN_TEXT = ("ReportDraft", "reportDraft", "report-preview", "reportPreview")

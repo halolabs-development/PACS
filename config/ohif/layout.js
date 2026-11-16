@@ -44,7 +44,8 @@ function kinCreateViewerLayout() {
       if (kinViewerSession.sameAccount(me) !== true) throw new Error('계정 응답이 일치하지 않습니다.');
       kinViewerSession.note(me);
       if (!live() || !next) { end(); throw new Error('계정이 변경되어 배치를 적용하지 않았습니다.'); }
-      key = next;
+      const exam=window.KinViewerExamScope?.snapshot();
+      key = next+(exam?'|'+JSON.stringify([exam.key,exam.prior&&window.KinExamScope.key(exam.prior)]):'');
       hpOwner = { institution: me.institution, subject: me.sub };
     }
     // S5-U2b: 배치 저장·복원과 Hanging Protocol은 작성자 목록을 읽고 계정에 쓰므로, 문서가 clinician-only로 확인되면(이 패널의
@@ -75,7 +76,8 @@ function kinCreateViewerLayout() {
           const data = await get('/api/studies', signal);
           // Current/Related follows the opening order, unlike Recent Layout's canonical scope.
           const uids = new URLSearchParams(search).get('StudyInstanceUIDs').split(',');
-          const rows = uids.map(uid => data.studies?.find(row => row.uid === uid));
+          const exam=await window.KinViewerExamScope?.ensure(true);
+          const rows = exam?window.KinExamScope.roleRows(exam,data.studies||[],ds.getActiveDisplaySets()):uids.map(uid => data.studies?.find(row => row.uid === uid));
           if (rows.some(row => !row)) throw new Error('현재 검사 접근 권한을 확인할 수 없습니다.');
           await authenticate(signal);
           if (signal.aborted) throw new Error('Hanging Protocol 확인이 중단되었습니다.');
@@ -121,8 +123,10 @@ function kinCreateViewerLayout() {
       busy = true; refresh(); status.textContent = '계정과 검사 접근 확인 중…'; const before = signature();
       try {
         await authenticate();
+        const exam=window.KinViewerExamScope?.snapshot();
+        if(exam)await window.KinViewerExamScope.ensure(true);
         const data = await get('/api/studies');
-        const rows = studies.map(uid => data.studies?.find(s => s.uid === uid));
+        const rows = exam ? window.KinExamScope.roleRows(exam,data.studies||[]) : studies.map(uid => data.studies?.find(s => s.uid === uid));
         if (rows.some(s => !s) || (rows.length > 1 && (!rows[0].sourcePatientKey || rows.some(s => s.sourcePatientKey !== rows[0].sourcePatientKey)))) throw new Error('현재 검사의 접근 권한과 같은 환자 여부를 확인할 수 없습니다.');
         // A delayed permission response must not overwrite a newer manual layout or selection.
         if (!live() || before !== signature()) throw new Error('화면 배치가 변경되어 작업을 적용하지 않았습니다. 다시 시도하세요.');

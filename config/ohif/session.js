@@ -20,7 +20,8 @@ const KIN_VIEWER_EXPECTED_SESSION = (() => {
 
 // The first extension sets the page defaults before shared modules and data sources start work.
 function kinCreateSessionBoundary() {
-  return { id: 'kin.session-boundary', async preRegistration() {
+  return { id: 'kin.session-boundary', async preRegistration({servicesManager} = {}) {
+    kinExamViewerServices=servicesManager?.services;
     for (const name of ['work-context.js', 'session-transport.js', 'viewer-resources.js', 'viewer-preload.js', 'viewer-session.js']) {
       await new Promise((resolve, reject) => {
         const script = document.createElement('script');
@@ -63,8 +64,28 @@ function kinCreateSessionBoundary() {
     await boundary.ready;
     window.dispatchEvent(new Event('kin-viewer-session-ready'));
     await boundary.wait();
+    await kinPrepareExamViewer(location.href);
   } };
 }
+
+// Ordinary routes load no extra asset and make no scope request.
+let kinExamViewerLoading,kinExamViewerServices;
+async function kinPrepareExamViewer(href) {
+  if (!new URL(href,location.origin).searchParams.has('kinExamScopes')) return null;
+  if (!window.KinViewerExamScope) await (kinExamViewerLoading ||= (async () => {
+    for (const [name,global] of [['exam-scope.js','KinExamScope'],['viewer-exam-scope.js','KinViewerExamScope']]) {
+      if (window[global]) continue;
+      await new Promise((resolve,reject)=>{
+        const script=document.createElement('script');script.src='/worklist/hpacs-lite/'+name;
+        script.onload=resolve;script.onerror=()=>reject(Error('검사 범위 도구를 불러오지 못했습니다.'));document.head.append(script);
+      });
+    }
+  })().catch(error=>{kinExamViewerLoading=null;throw error;}));
+  window.KinViewerExamScope.watch();
+  window.KinViewerExamScope.install(kinExamViewerServices);
+  return href===location.href ? window.KinViewerExamScope.ensure() : window.KinViewerExamScope.resolve(href);
+}
+window.kinPrepareExamViewer=kinPrepareExamViewer;
 
 // A subscription follows the document gate, never a raw cross-document notice.
 function kinViewerOnEnd(run) {

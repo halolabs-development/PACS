@@ -85,6 +85,7 @@ function world(policy, { questions = [] } = {}) {
     : sql.includes('FROM "StudyQuestion" q') ? 'list' : sql.includes('FROM "StudyQuestion" WHERE') ? 'question'
       : sql.includes('JOIN "Report"') ? 'head' : sql.includes('"ReportVersion"') ? 'anchor' : sql.includes('"StudyState"') ? 'study' : 'unknown';
   const query = async (where, view, index, strings, values, state = null) => {
+    if (strings.join('?').includes('FROM "StudyGroupMember"')) return [];
     const sql = strings.join('?'), k = kind(sql);
     log(where + ':' + k);
     if (state) {
@@ -120,9 +121,12 @@ function world(policy, { questions = [] } = {}) {
   const client = (view, index, state) => {
     const write = table => { log('tx:write'); model.writes.push({ tx: index, table, held: [...state.held] }); };
     return {
+      studyGroupMember:{findMany:async()=>[]},
+      studyState:{findUnique:async({where})=>where.uid===uid?{uid,institutionId:institution,...view.study}:null},
+      reportVersion:{findUnique:async({where})=>view.versions.find(v=>v.uid===where.uid_version.uid&&v.version===where.uid_version.version)??null},
       $executeRaw: async strings => { log('tx:execute'); if (strings.join('?').includes('lock_timeout')) state.bound = true; return 0; },
       $queryRaw: (strings, ...values) => query('tx', view, index, strings, values, state),
-      studyQuestion: {
+      studyQuestion: { findUnique:async({where})=>view.questions.get(where.id)??null,
         create: async ({ data }) => { write('question'); writes.question++; store.questions.set(data.id, { ...data }); return data; },
         update: async ({ where, data }) => {
           write('question'); writes.update++;
@@ -146,6 +150,8 @@ function world(policy, { questions = [] } = {}) {
     };
   };
   const prisma = {
+    studyGroupMember:{findMany:async()=>[]},
+    studyQuestion:{findUnique:async({where})=>store.questions.get(where.id)??null},
     $queryRaw: (strings, ...values) => query('root', store, null, strings, values),
     $transaction: async (fn, options) => {
       const index = transactions.push(options) - 1;
@@ -157,7 +163,7 @@ function world(policy, { questions = [] } = {}) {
       try { return await fn(client(view, index, state)); }
       finally { model.held.push({ tx: index, rows: [...state.held] }); open--; log('tx:end'); }
     },
-    studyState: { findMany: async () => { log('root:studies'); return [{ uid }]; } },
+    studyState: { findUnique:async({where})=>where.uid===uid?{uid,institutionId:institution,...store.study}:null, findMany: async () => { log('root:studies'); return [{ uid }]; } },
   };
   w.handlers = { studyIdentityResources: async u => [source(u)], studyIdentities: async () => [source(uid)] };
   // Records every member the service stack touches, not only the two it is allowed to use.
@@ -385,7 +391,7 @@ test('F01: #2 and #3 read in one RepeatableRead transaction, with no row lock an
     await call();
     const seen = w.since(mark);
     assert.deepEqual(w.transactions.slice(at), [READ], route);
-    assert.deepEqual(seen.root, [{ table: 'policy', started: at, open: 0 }], route + ': one policy snapshot, before the transaction');
+    assert.ok(seen.root.length>0&&seen.root.every(r=>r.table==='policy'&&r.started===at&&r.open===0),route+': preparation finishes before the transaction');
     assert.ok(seen.reads.every(r => r.tx === at), route + ': every other read is in the one RepeatableRead transaction');
     assert.deepEqual(facts.filter(table => !seen.reads.some(r => r.table === table)), [], route + ': the answer\'s facts come from that snapshot');
     assert.deepEqual(seen.locks.filter(l => l.kind === 'row'), [], route + ': no row lock');

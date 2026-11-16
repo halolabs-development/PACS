@@ -79,7 +79,7 @@ window.KinReadingWorkspace = function (app) {
     catch (_) { app.notice('자동 열기 설정을 저장하지 못했습니다. 현재 화면에서만 적용됩니다.'); }
     maybeAutoNote();
   };
-  const separate = button('Open Viewer Window', () => { if (shown && sameTarget()) app.popup(shown.uid, shown.prior, shown.series, returnLink()); });
+  const separate = button('Open Viewer Window', () => { if (shown && sameTarget()) app.popup(shown.uid, shown.prior, shown.series, returnLink(), shown.viewingSet ? {exam:window.KinExamScope.originalInput([shown.uid,shown.prior].filter(Boolean)),viewingSet:shown.viewingSet} : shown.exam ? {exam:shown.exam} : null); });
   button('Exit Workspace', leave);
   const target = node('div', '', bar); target.id = 'reading-target';
   const shortcutHelp = node('details', '', bar); shortcutHelp.id = 'reading-shortcut-help';
@@ -335,6 +335,7 @@ window.KinReadingWorkspace = function (app) {
   const editorReader={
     owner:()=>!ended&&app.allowed()?app.noteOwner?.():null,
     target:()=>app.current(),
+    examStamp:(uid=app.current())=>window.KinExamScope.readingStamp(app.study(uid),uid),
     modal:()=>modalOpen(document),
     field:id=>$('#'+id),
     usable:field=>field.isConnected&&!!field.getClientRects().length&&!field.disabled&&!field.closest('[inert]'),
@@ -348,6 +349,8 @@ window.KinReadingWorkspace = function (app) {
   const openReader={...editorReader,
     busy:()=>editorOpening,
     listed:uid=>!!app.study(uid),
+    verifyExam:(uid,stamp)=>app.verifyExam(uid,stamp),
+    admitted:request=>opening?.request===request&&!opening.cancelled,
     select:uid=>app.select(uid),
     focus:()=>{if(active&&!ended)focusPane('report');else app.focusReport?.();},
   };
@@ -361,7 +364,7 @@ window.KinReadingWorkspace = function (app) {
   // The viewer withdrew the opening it is waiting for no more (viewer-editor-link.js): a move still waiting for this page's
   // study-move gate does not happen; the page stays on the study it is on.
   window.kinReadingEditorCancel=message=>{
-    if(opening&&message&&message.request===opening.request&&message.uid===opening.uid)app.cancelMove?.(opening.uid);
+    if(opening&&message&&message.request===opening.request&&message.uid===opening.uid){opening.cancelled=true;app.cancelMove?.(opening.uid);}
   };
   // Read on every message rather than captured once: the frame and the document state are current values.
   window.addEventListener('message',e=>{
@@ -489,7 +492,7 @@ window.KinReadingWorkspace = function (app) {
     try {
       const w = frame?.contentWindow, url = new URL(w.location.href);
       if (url.origin !== window.location.origin || url.pathname !== '/ohif/viewer' ||
-          url.searchParams.get('StudyInstanceUIDs') !== [shown.uid, shown.prior].filter(Boolean).join(',')) return null;
+          url.searchParams.get('StudyInstanceUIDs') !== (shown.exam?.studyUids || [shown.uid, shown.prior].filter(Boolean)).join(',')) return null;
       return w;
     } catch (_) { return null; }
   }
@@ -500,7 +503,8 @@ window.KinReadingWorkspace = function (app) {
       const w = frame.contentWindow, doc = w.document, url = new URL(w.location.href);
       if (url.origin !== window.location.origin || url.pathname !== '/ohif/viewer') return null;
       const studies = (url.searchParams.get('StudyInstanceUIDs') || '').split(',');
-      const scoped = studies.join(',') === [shown.uid, shown.prior].filter(Boolean).join(',');
+      const scoped = studies.join(',') === (shown.exam?.studyUids || [shown.uid, shown.prior].filter(Boolean)).join(',') &&
+        (!shown.exam || !!w.KinViewerExamScope?.snapshot());
       return { frame, window: w, document: doc, href: url.href, studies, active, sameTarget: sameTarget(), loaded: loaded && scoped && !failed,
         inert: !!frame.inert, hidden: !!frame.hidden };
     } catch (_) { return null; }
@@ -508,7 +512,7 @@ window.KinReadingWorkspace = function (app) {
   function noteTarget() {
     try {
       const selected = noteWindow()?.kinViewerSelectedNoteTarget?.();
-      return selected && [shown.uid, shown.prior].includes(selected.uid) && app.study(selected.uid) ? selected : null;
+      return selected && (shown.exam?.studyUids || [shown.uid, shown.prior]).includes(selected.uid) && (shown.exam || app.study(selected.uid)) ? selected : null;
     } catch (_) { return null; }
   }
   function updateNote() {
@@ -652,9 +656,14 @@ window.KinReadingWorkspace = function (app) {
     if (!app.study(uid) || prior && prior !== uid && !app.study(prior)) {
       app.notice('현재 목록에 없는 검사(환자 식별 불일치로 제외된 검사 포함)는 영상 작업공간에서 열지 않았습니다.'); return null;
     }
-    return { uid, prior: prior && prior !== uid ? prior : null, series, reportUid: app.current() };
+    let exam;
+    try { const input=app.viewerInput?.(uid,prior); if(input?.scoped)exam=input; }
+    catch(error) { app.notice(error.message); return null; }
+    return { uid, prior: prior && prior !== uid ? prior : null, series, reportUid: app.current(), ...(exam?{exam}:{}) };
   }
   function url(r) {
+    if (app.viewerInput) return window.KinExamScope.viewerUrl(r.viewingSet ? window.KinExamScope.originalInput([r.uid,r.prior].filter(Boolean)) : app.viewerInput(r.uid, r.prior, r.exam), r.series) +
+      (r.job ? '&kinJob=' + encodeURIComponent(r.job) : '') + (r.viewingSet ? '#kin-w9=' + r.viewingSet : '');
     return '/ohif/viewer?StudyInstanceUIDs=' + encodeURIComponent(r.uid) + (r.prior ? ',' + encodeURIComponent(r.prior) + '&hangingProtocolId=@ohif/hpCompare' : '') +
       (r.series ? '&initialSeriesInstanceUID=' + encodeURIComponent(r.series) : '') + (r.job ? '&kinJob=' + encodeURIComponent(r.job) : '') +
       (r.viewingSet ? '#kin-w9=' + r.viewingSet : '');
@@ -725,9 +734,11 @@ window.KinReadingWorkspace = function (app) {
             (doc !== observedDocument || location.href !== observedHref)) {
           loaded = false; frame.inert = true;
           const values = (location.searchParams.get('StudyInstanceUIDs') || '').split(',');
-          if (values.length < 1 || values.length > 2 || values.some(x => !/^\d+(?:\.\d+)+$/.test(x) || x.length > 64) || new Set(values).size !== values.length) throw new Error('Invalid viewer scope');
+          const exam=location.searchParams.has('kinExamScopes')?w.KinViewerExamScope?.snapshot():null;
+          if(location.searchParams.has('kinExamScopes')&&!exam)throw new Error('Unverified viewer scope');
+          if (values.length < 1 || values.length > (exam?20:2) || values.some(x => !/^\d+(?:\.\d+)+$/.test(x) || x.length > 64) || new Set(values).size !== values.length) throw new Error('Invalid viewer scope');
           observedDocument = doc; observedHref = location.href; failed = false; deadline = Date.now() + 45000;
-          shown = { uid: values[0], prior: values[1] || null, series: location.searchParams.get('initialSeriesInstanceUID'), reportUid: r.reportUid };
+          shown = { uid: exam?.reportUid || values[0], prior: exam?.prior?.reportUid || (!exam&&values[1]) || null, series: location.searchParams.get('initialSeriesInstanceUID'), reportUid: r.reportUid, ...(exam?{exam}:{}) };
           const opening = new URLSearchParams(location.hash.slice(1)).get('kin-w9');
           if (opening) shown.viewingSet = opening;
           const job = location.searchParams.get('kinJob'); if (job) shown.job = job;

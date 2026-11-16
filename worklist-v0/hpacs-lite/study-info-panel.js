@@ -120,7 +120,11 @@
       const s = viewed(), receipt = $("#study-receipt");
       if (!receipt) return;
       receipt.hidden = !s;
-      if (!s) return;
+      if (!s) {
+        const originals=receipt.querySelector('.exam-original-receipts');
+        for(const control of originals?.querySelectorAll('button')||[])control.dataset.request='';
+        originals?.replaceChildren();return;
+      }
       // Every worklist row passed the visible() boundary on the server, so axis A is `assigned` here;
       // a study whose sending hospital is unknown is held and reaches no list (D1882).
       const labels = KinStudyArrivals.receiptLabels({ assignment: "assigned",
@@ -138,6 +142,41 @@
       $("#receipt-observation").title = labels.observation.title;
       drawRetry(s, labels.retry, $("#receipt-retry"), $("#receipt-retry-note"));
       $("#receipt-gateway").textContent = labels.gateway.text; $("#receipt-gateway").title = labels.gateway.title;
+      let originals=receipt.querySelector('.exam-original-receipts');
+      if(!originals){originals=document.createElement('div');originals.className='exam-original-receipts';receipt.append(originals);}
+      const scope=KinExamScope.read(s);
+      const receiptScope=scope?.groupId?KinExamScope.stamp(s):'';
+      if(originals.dataset.scope!==receiptScope){
+        for(const control of originals.querySelectorAll('button'))control.dataset.request='';
+        originals.replaceChildren();originals.dataset.scope=receiptScope;
+      }
+      originals.hidden=!scope?.groupId;
+      if(scope?.groupId){
+        $("#receipt-observation").textContent='Original exams';
+        $("#receipt-observation").title='보유 수와 도착 변화는 원본 검사별 관측입니다.';
+        $("#receipt-gateway").textContent='';$("#receipt-gateway").title='';
+        $("#receipt-retry").hidden=true;$("#receipt-retry-note").textContent='';
+        const kept=new Map([...originals.children].map(line=>[line.dataset.uid,line]));
+        const lines=KinExamScope.metadata(s).map(source=>{
+          const own=KinStudyArrivals.receiptLabels({assignment:'assigned',observation:KinStudyArrivals.studyObservation(studyObservationModel,source.uid),gateway:source.gatewayReceipt??null});
+          let line=kept.get(source.uid);kept.delete(source.uid);
+          if(!line){
+            line=document.createElement('div');line.dataset.uid=source.uid;
+            const control=document.createElement('button');control.type='button';control.className='chip';
+            control.textContent=KinStudyArrivals.RETRY_TEXT.button;control.addEventListener('click',requestGatewayRetry);
+            line.append(document.createElement('span'),' ',control,' ',document.createElement('span'));
+          }
+          const [text,control,note]=line.children;
+          // The Accession No is data; each label after it is its own text so the screen language reads it.
+          const accession=document.createElement('span');accession.translate=false;accession.textContent=source.acc||source.uid;
+          text.replaceChildren(accession,...[own.observation.text,own.change?.text,
+            source.gatewayReceipt===undefined?'Gateway 영수증 정보가 이 목록에 제공되지 않았습니다.':own.gateway.text].filter(Boolean)
+            .flatMap(words=>[' · ',kinWrite(document.createElement('span'),words)]));
+          drawRetry(source,own.retry,control,note);return line;
+        });
+        for(const line of kept.values())line.querySelector('button').dataset.request='';
+        if(lines.length!==originals.children.length||lines.some((line,i)=>line!==originals.children[i]))originals.replaceChildren(...lines);
+      }
     }
 
     /**

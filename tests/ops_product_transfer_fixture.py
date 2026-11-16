@@ -138,8 +138,12 @@ MIGRATIONS = ['api/prisma/migrations/0_init/migration.sql',
               'api/prisma/migrations/20261113120000_order_request_columns/migration.sql',
               'api/prisma/migrations/20261114120000_film_print/migration.sql',
               'api/prisma/migrations/20261114120000_order_removal/migration.sql',
+              'api/prisma/migrations/20261114180000_exam_group/migration.sql',
               'api/prisma/migrations/20261114180000_report_drawing/migration.sql',
               'api/prisma/migrations/20261114180000_viewer_auto_view/migration.sql',
+              'api/prisma/migrations/20261114210000_exam_scope/migration.sql',
+              'api/prisma/migrations/20261114220000_report_snapshot_format/migration.sql',
+              'api/prisma/migrations/20261115010000_exam_view_drawing_scope/migration.sql',
               'api/prisma/migrations/20261115120000_report_drawing_work/migration.sql']
 # S9-U4b (52 tables, 47 migrations): ImportOperation, its twelve synthetic rows (one import with every attempt phase over four
 # studies, a prepared, a Sent and a still-sending download, four Study and four SOP reservations with their holders), one
@@ -159,7 +163,7 @@ MIGRATIONS = ['api/prisma/migrations/0_init/migration.sql',
 # stack when written: estimated at about 2 KB of catalog and rows.
 # Image Report (60 tables): ReportDrawing with one drawing the addendum version and one private draft hold.
 DRAWING_ID = '00000000-0000-4000-8000-000000000d01'
-TABLES = sorted(['PreloadCacheKey', 'ImportOperation', 'AuthSession', 'MemberIsolation', 'ProviderChange', 'MemberRights', 'MemberRightsImport', 'Institution', 'DicomPeer', 'FilmPrintJob', 'StudyState', 'StudyAttachment', 'Report', 'ReportVersion', 'ReportDrawing',
+TABLES = sorted(['PreloadCacheKey', 'ImportOperation', 'AuthSession', 'MemberIsolation', 'ProviderChange', 'MemberRights', 'MemberRightsImport', 'Institution', 'DicomPeer', 'FilmPrintJob', 'StudyState', 'StudyGroup', 'StudyGroupMember', 'StudyAttachment', 'Report', 'ReportVersion', 'ReportDrawing',
                  'ReportDraft', 'ReportDraftInsertReceipt', 'ReportDraftPurposeEnd', 'PurposeLedgerAnchor', 'ReportLedgerAnchor', 'Order', 'UserFilter', 'ReadingTemplate', 'AuditLog',
                  'ViewerItem', 'ViewerRevision', 'ViewerStorageBudget', 'ViewerRequest', 'Finding', 'FindingRevision', 'WorkspaceLayout', 'WorklistColumns',
                  'TransferBasis', 'ProcessingAgreement', 'Transfer', 'ViewerJob', 'ViewerJobRevision', 'ViewerAutoView', 'ManualSr', 'TechNoteRevision',
@@ -169,6 +173,7 @@ TABLES = sorted(['PreloadCacheKey', 'ImportOperation', 'AuthSession', 'MemberIso
                  'GatewayReceipt', 'GatewayRetryRequest'])
 SEQUENCES = ['AuditLog_id_seq', 'ProviderChange_id_seq', 'ReadingTemplate_id_seq', 'ReportVersion_id_seq', 'UserFilter_id_seq']
 STAMP = '2026-09-06T00:00:00.123'
+EXAM_GROUP = '00000000-0000-4000-8000-000000000e21'
 PRODUCT_FIELDS = {'migrations', 'study_uid', 'catalog', 'rows', 'sequences', 'emr'}
 # EMR-B1: schema emr_access, observed schema-qualified (the public catalog above never sees it).
 EMR_TABLES = sorted(['access_entry', 'access_target', 'audit_projection', 'clause_version', 'duty_request_event',
@@ -295,8 +300,19 @@ def expected_rows(uid):
         fileName='SYNTHETIC 동의서.pdf', bytes=1024, sha256='f' * 64, state='stored', failReason=None,
         access=dict(requestId='00000000-0000-4000-8000-000000000f03', roles=['technician'], institution='SYNTHETIC-hospital'),
         createdBy='SYNTHETIC-tech', createdAt=STAMP, storedAt=STAMP, withdrawnAt=None, withdrawnBy=None, withdrawReason=None)]
+    # Merge Exam: one ended merged exam (base and one more study, kept with who grouped and ungrouped them) and one split
+    # part with its series, so the TEXT[] column and both kinds round-trip.
+    rows['StudyGroup'] = [dict(id=EXAM_GROUP, institutionId='SYNTHETIC-hospital', kind='merge', baseUid=uid,
+        createdBy='SYNTHETIC-tech', createdBySub='SYNTHETIC-tech-sub', createdAt=STAMP, dissolvedAt=STAMP,
+        dissolvedBy='SYNTHETIC-tech', dissolvedBySub='SYNTHETIC-tech-sub')]
+    rows['StudyGroupMember'] = [dict(groupId=EXAM_GROUP, logicalUid=uid, studyUid=uid, part=0, seriesUids=[],
+        sourcePatientId='SYNTHETIC-patient', sourceInstitution='SYNTHETIC-hospital'),
+        dict(groupId=EXAM_GROUP, logicalUid=uid + '.9', studyUid=uid + '.9', part=1, seriesUids=[uid + '.9.1', uid + '.9.2'],
+        sourcePatientId='SYNTHETIC-patient', sourceInstitution='SYNTHETIC-hospital')]
     rows['Report'] = [dict(uid=uid, findings='SYNTHETIC findings\n합성', conclusion='SYNTHETIC conclusion',
-        recommendation='', version=2, updatedBy='SYNTHETIC-reader', updatedAt=STAMP)]
+        recommendation='', version=2, updatedBy='SYNTHETIC-reader', updatedAt=STAMP,
+        # Merge Exam: the report's current version was written on the merged exam below.
+        groupId=EXAM_GROUP)]
     # 한 행은 인용을 들고, 한 행은 NULL이다. 둘 다 실제로 왕복해야 "추가 전용"이 말이 된다 —
     # NULL만 있으면 JSONB 칸이 dump/restore를 건너뛰어도 아무도 모른다.
     citation = [dict(v=2, cid='00000000-0000-4000-8000-0000000000c1', field='findings',
@@ -316,9 +332,8 @@ def expected_rows(uid):
         findings='SYNTHETIC history '+str(number), conclusion='', recommendation='', reason=None,
         author='SYNTHETIC-reader', citations=citation if number == 2 else None,
         structured=structured if number == 2 else None,
-        # Image Report: the addendum holds one drawing (its entry: id, background, source, server hash).
-        drawings=[dict(id=DRAWING_ID, background='breast', source=None, sha256='d' * 64)] if number == 2 else None,
-        at=STAMP) for number in (1, 2)]
+        drawings=[dict(id=DRAWING_ID, background='breast', source=None, sha256='d' * 64)] if number == 2 else None, at=STAMP,
+        groupId=EXAM_GROUP if number == 2 else None, snapshotFormat=number) for number in (1, 2)]
     rows['ReportDraft'] = [dict(uid=uid, author='SYNTHETIC-reader'+str(number),
         findings='SYNTHETIC private '+str(number), conclusion='', recommendation='', baseVersion=2,
         citations=citation if number == 1 else None,
@@ -330,10 +345,10 @@ def expected_rows(uid):
         revision=4 - number, present=True, updatedAt=STAMP,
         # CD-09-P: each present row holds its own work (an opaque unit, its server start and intent); the emptied row none.
         workUnit='disposal:00000000-0000-4000-8000-0000000000e'+str(number), workSince=STAMP,
-        workIntent='addendum' if number == 1 else 'approve') for number in (1, 2)]
+        workIntent='addendum' if number == 1 else 'approve', groupId=EXAM_GROUP if number == 1 else None) for number in (1, 2)]
     rows['ReportDraft'].append(dict(uid=uid, author='SYNTHETIC-reader3', findings='', conclusion='', recommendation='',
         baseVersion=0, citations=None, structured=None, drawings=None, revision=5, present=False, updatedAt=STAMP,
-        workUnit=None, workSince=None, workIntent=None))
+        workUnit=None, workSince=None, workIntent=None, groupId=None))
     rows['ReportDraftInsertReceipt'] = insert_receipt_rows(uid)
     # CD-09-P: one ended work whose destruction a legal hold keeps waiting - its exact payload must survive a restore
     # unchanged (the restored copy is re-matched against the external ledger by its unit, never by a re-drawn one).
@@ -341,9 +356,9 @@ def expected_rows(uid):
         author='SYNTHETIC-reader4', workSince=STAMP, workIntent='approve', trigger='explicit-discard',
         eventId='00000000-0000-4000-8000-0000000000e4', actorId='SYNTHETIC-reader4', endedAt='2026-09-06T00:00:01.123',
         signedRecordId=None, signedVersionId=None, findings='SYNTHETIC held private', conclusion='', recommendation='',
-        baseVersion=2, citations=citation, structured=None, drawings=None, deliverySettled=True, attempts=1, lastRefusal='LegalHoldActive')]
+        baseVersion=2, citations=citation, structured=None, drawings=None, groupId=EXAM_GROUP, deliverySettled=True, attempts=1, lastRefusal='LegalHoldActive')]
     # Image Report: the drawing the addendum holds (immutable content: the PNG bytes, the strokes, the server hash).
-    rows['ReportDrawing'] = [dict(id=DRAWING_ID, studyUid=uid, authorSub='SYNTHETIC-sub', authorActor='SYNTHETIC-reader',
+    rows['ReportDrawing'] = [dict(id=DRAWING_ID, studyUid=uid, groupId=EXAM_GROUP, authorSub='SYNTHETIC-sub', authorActor='SYNTHETIC-reader',
         background='breast', source=None, strokes=[dict(tool='ellipse', color='#e0242b', points=[[0.1, 0.2], [0.3, 0.4]])],
         png='\\x' + '89504e470d0a1a0a' + '00' * 24, width=640, height=440, sha256='d' * 64, createdAt=STAMP, workUnit=None)]
     # The anchor of a database that has its ledger (initialized) and whose last committed destruction it names: a restore
@@ -433,7 +448,7 @@ def expected_rows(uid):
     rows['ViewerJobRevision']=[dict(jobId=job_id,revision=n,title='SYNTHETIC job',description='SYNTHETIC description',hidden=n==2,
         reason='' if n==1 else 'SYNTHETIC hide',actor='SYNTHETIC-reader',at=STAMP) for n in (1,2)]
     # Auto Save View: one reader's saved view of the study (JSON text: one stack cell, its camera, window and no cell rule).
-    rows['ViewerAutoView']=[dict(id='00000000-0000-4000-8000-000000000e21',studyUid=uid,authorSub='SYNTHETIC-sub',institutionId='SYNTHETIC-hospital',
+    rows['ViewerAutoView']=[dict(scopeKey='',id='00000000-0000-4000-8000-000000000e21',studyUid=uid,authorSub='SYNTHETIC-sub',institutionId='SYNTHETIC-hospital',
         studies=[uid],snapshot=json.dumps({'version':1,'studies':[uid],'rows':1,'cols':1,'active':0,'cells':[{'study':uid,'series':uid+'.1',
             'sop':uid+'.1.1','frame':1,'index':0,'zoom':1.5,'camera':{'focalPoint':[0,0,0],'position':[0,0,100],'viewUp':[0,-1,0],
             'viewPlaneNormal':[0,0,1],'parallelScale':120.5,'rotation':0,'flipHorizontal':False,'flipVertical':False},
@@ -917,7 +932,8 @@ def create_product(name, db, uid):
     data = expected_rows(uid)
     # CD-09-P: the migration draws its own ledger ID; the synthetic product names a fixed one.
     execute(name, db, 'DELETE FROM "PurposeLedgerAnchor"; DELETE FROM "ReportLedgerAnchor"; COMMIT')
-    for table in ('PreloadCacheKey', 'Institution', 'DicomPeer', 'FilmPrintJob', 'StudyState', 'StudyAttachment', 'Report', 'ReportVersion', 'ReportDrawing', 'ReportDraft', 'Order', 'UserFilter',
+    statements = []
+    for table in ('PreloadCacheKey', 'Institution', 'DicomPeer', 'FilmPrintJob', 'StudyState', 'StudyGroup', 'StudyGroupMember', 'StudyAttachment', 'Report', 'ReportVersion', 'ReportDrawing', 'ReportDraft', 'Order', 'UserFilter',
                   'ViewerItem', 'ViewerRevision', 'ViewerStorageBudget', 'ViewerRequest', 'Finding', 'FindingRevision', 'WorkspaceLayout', 'WorklistColumns',
                   'TransferBasis', 'ProcessingAgreement', 'Transfer', 'ViewerJob', 'ViewerJobRevision', 'ViewerAutoView', 'ManualSr', 'TechNoteRevision',
                   'FavoriteWorkspace', 'StudyTagCatalog', 'ReaderAssignment', 'ReadingPreferences', 'ReadingAppearance', 'WorkspaceShortcuts', 'HangingProtocolPreference', 'UserFilterCollection', 'SharedFilterLibrary', 'StudyConsultation', 'StudyAccessPolicy', 'StudyAccessRevision',
@@ -926,11 +942,23 @@ def create_product(name, db, uid):
                   'ImportOperation', 'GatewayReceipt', 'GatewayRetryRequest'):
         rows = data[table]
         for row in rows:
+            if table == 'StudyGroup':
+                row = dict(row, dissolvedAt=None, dissolvedBy=None, dissolvedBySub=None)
             # SERIAL must actually run; explicit values would hide setval loss.
             fields = [key for key in row if not (table in ('ReportVersion', 'UserFilter', 'ProviderChange') and key == 'id')]
             quoted = ','.join('"'+key+'"' for key in fields)
-            execute(name, db, 'INSERT INTO "'+table+'" ('+quoted+') SELECT '+quoted+
-                ' FROM json_populate_record(NULL::"'+table+'", '+sql_literal(json.dumps(row))+'); COMMIT')
+            statement = ('INSERT INTO "'+table+'" ('+quoted+') SELECT '+quoted+
+                ' FROM json_populate_record(NULL::"'+table+'", '+sql_literal(json.dumps(row))+');')
+            if table in ('StudyGroup', 'StudyGroupMember'):
+                statements.append(statement)
+            else:
+                execute(name, db, statement)
+    # Immutable members are created with their active group, then the preserved fixture ends it.
+    for group in data['StudyGroup']:
+        if group['dissolvedAt'] is not None:
+            statements.append('UPDATE "StudyGroup" SET '+','.join('"'+key+'"='+sql_literal(group[key])
+                for key in ('dissolvedAt', 'dissolvedBy', 'dissolvedBySub'))+' WHERE id='+sql_literal(group['id'])+';')
+    execute(name, db, 'BEGIN;\n'+'\n'.join(statements)+'\nCOMMIT;')
 
 
 # A dropped column leaves a hole in the migrated table's column numbers that pg_dump/pg_restore closes; like

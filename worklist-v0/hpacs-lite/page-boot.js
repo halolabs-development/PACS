@@ -322,7 +322,7 @@
       KinStudyAccessStatus.mount({button:$('#study-access-open'),session:()=>KinAuth.session(),refresh:async()=>(await load())===true});
       multiSelection = KinWorklistSelection.mount({host:$('#worklist-selection'),tbody:$('#rows'),owner:()=>KinViewerOpening.key(KinAuth.session()),rows:orderedStudies,current:()=>selectedUid,open:uid=>select(uid,{openSelected:true}),compare:(uid,prior)=>openFilmbox(uid,prior),
         // W9: Open Selected Studies (toolbar, Selection Details); a changed selection closes its row menu.
-        openSet:set=>multiStudyView?.open({...set,session:work.session()}),changed:generation=>closeSelectionMenu(generation),
+        openSet:set=>multiStudyView?.open(KinExamScope.viewingSelection({...set,session:work.session()},studies)),changed:generation=>closeSelectionMenu(generation),
         openBlocked:()=>!serverMode||offline||demoMode?'서버 연결과 로그인 상태를 확인한 뒤 다시 여세요.':!KinAuth.has('radiologist')?'여러 검사 열기는 판독의 권한이 필요합니다.':null,
         // FC-028 Batch Reading (worklist-batch-report.js, mounted below).
         batchRead:{shown:()=>!!batchReport?.shown(),blocked:()=>batchReport?.blocked()??null,open:set=>batchReport?.open(set)},
@@ -349,8 +349,8 @@
         allowed:()=>!!sess&&serverMode&&!demoMode&&!offline,can:role=>KinAuth.has(role),refresh:()=>load()})||null;
       // FC-071: the PF column follows the Preload queue the selection bar's panel shows.
       window.KinPreloadQueue?.watch?.(paintPreload);
-      imagePreview = KinWorklistImagePreview.mount({owner:()=>KinViewerOpening.key(KinAuth.session()),currentUid:viewingUid,api});
-      imageThumbnails = window.KinWorklistImageThumbnails?.mount?.({host:$('#thumbwrap'),owner:()=>KinViewerOpening.key(KinAuth.session()),currentUid:viewingUid,api,
+      imagePreview = KinWorklistImagePreview.mount({owner:()=>KinViewerOpening.key(KinAuth.session()),currentUid:viewingUid,currentStudy:viewed,api});
+      imageThumbnails = window.KinWorklistImageThumbnails?.mount?.({host:$('#thumbwrap'),owner:()=>KinViewerOpening.key(KinAuth.session()),currentUid:viewingUid,currentStudy:viewed,api,
         onPreview:value=>imagePreview?.open(value),onBack:()=>renderThumbs()}) || null;
       worklistSearch = KinWorklistSearch.mount({host:document.querySelector('#toolbar-filters .toolbar-menu-panel'),owner:()=>KinViewerOpening.key(KinAuth.session()),snapshot:searchCriteria,render});
       rowNavigation = KinWorklistRowNavigation.mount({tbody:$('#rows'),owner:()=>KinViewerOpening.key(KinAuth.session()),rows:orderedStudies,
@@ -366,7 +366,7 @@
       // exist. It reads the page's own gate, transport, Reading Target, W4 select and launcher; it ends with the session.
       multiStudyView = KinMultiStudyView.mount({ host: $('#multi-study'), work,
         context: () => ({ owner: KinViewerOpening.key(KinAuth.session()), session: work.session() }),
-        selection: () => { const set = multiSelection?.snapshot(); return set && { ...set, session: work.session() }; },
+        selection: () => { const set = multiSelection?.snapshot(); return KinExamScope.viewingSelection(set && { ...set, session: work.session() },studies); },
         allowed: () => !!sess && serverMode && !demoMode && !offline,
         target: () => selectedUid,
         targetLabel: uid => { const s = studies.find(x => x.uid === uid); return s ? [s.name, s.id, s.date, s.modality, shownStudyDesc(s)].filter(Boolean).join(' · ') : null; },

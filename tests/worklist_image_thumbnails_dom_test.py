@@ -50,8 +50,9 @@ window.fetch=async(url,init={})=>{url=String(url);fetchCalls.push(url);
    if(renderMode==='held'||(renderMode==='partial'&&!/\/frames\/(0|1)\//.test(url)))window.heldBodies=(window.heldBodies||[]).concat(finish);else setTimeout(finish,delayMs);
  }}),{headers:{'content-type':'image/png'}});
 };
-window.sourceValue=series=>({uid:'2.25.10',series:series||'2.25.20',name:'Literal <patient>',id:'P&1'});
-window.start=()=>{window.browser=KinWorklistImageThumbnails.mount({host:document.querySelector('#host'),owner:()=>ownerValue,currentUid:()=>currentValue,api,
+window.scopeValue=null;
+window.sourceValue=series=>({uid:currentValue,sourceUid:'2.25.10',examScope:scopeValue,series:series||'2.25.20',name:'Literal <patient>',id:'P&1'});
+window.start=()=>{window.browser=KinWorklistImageThumbnails.mount({host:document.querySelector('#host'),owner:()=>ownerValue,currentUid:()=>currentValue,currentStudy:()=>sourceValue(),api,
  onPreview:value=>previewCalls.push(value),onBack:()=>backCalls++});return browser.open(sourceValue());};
 </script>
 """
@@ -81,6 +82,17 @@ class WorklistImageThumbnailsDOMTest(unittest.TestCase):
         self.assertTrue(self.page.evaluate("start()"))
         expect(self.page.locator("#thumb-images-status")).to_have_text("12 / 12 images ready")
 
+    def test_split_thumbnails_read_original_uid_and_reject_series_outside_the_scope(self):
+        self.page.evaluate("""() => { currentValue='2.25.99';KinWorkContext.select(currentValue);
+          scopeValue={reportUid:currentValue,groupId:'g',kind:'split',part:1,generation:'one',
+            sources:[{studyUid:'2.25.10',series:{mode:'include',uids:['2.25.20']}}]}; }""")
+        self.open()
+        calls=self.page.evaluate("apiCalls")
+        self.assertTrue(calls)
+        self.assertTrue(all(call['body']['studyUid']==STUDY for call in calls))
+        self.assertFalse(self.page.evaluate("browser.open(sourceValue('2.25.21'))"))
+        self.assertTrue(all('/studies/2.25.10/' in path for path in self.page.evaluate("fetchCalls.filter(p=>p.includes('/dicom-web/'))")))
+
     def test_main_mount_is_optional_and_enables_images_only_after_existing_preview_succeeds(self):
         self.assertLess(MAIN.index('<script src="worklist-image-preview.js"></script>'), MAIN.index('<script src="worklist-image-thumbnails.js"></script>'))
         self.assertIn("imageThumbnails = window.KinWorklistImageThumbnails?.mount?.(", MAIN)
@@ -102,7 +114,8 @@ class WorklistImageThumbnailsDOMTest(unittest.TestCase):
         rendered = self.page.evaluate("fetchCalls.filter(x=>x.includes('/frames/'))")
         self.assertEqual(12, len(rendered)); self.assertTrue(all("?width=256&height=256" in x for x in rendered))
         cards.nth(7).get_by_role("button", name="Preview Image", exact=False).click()
-        self.assertEqual({"uid": STUDY, "series": SERIES, "name": "Literal <patient>", "id": "P&1", "sop": SOP1, "frame": 1}, self.page.evaluate("previewCalls[0]"))
+        # An exam with no grouping history carries no scope stamp: its preview request is the plain one.
+        self.assertEqual({"uid": STUDY, "sourceUid": STUDY, "examScope": None, "scopeStamp": None, "series": SERIES, "name": "Literal <patient>", "id": "P&1", "sop": SOP1, "frame": 1}, self.page.evaluate("previewCalls[0]"))
         detached = cards.first.locator(".thumb-image-open").element_handle()
         self.page.get_by_role("button", name="Next Page", exact=True).click()
         expect(self.page.locator("#thumb-images-status")).to_have_text("2 / 2 images ready")

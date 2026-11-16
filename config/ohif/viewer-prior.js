@@ -25,15 +25,37 @@ function kinCreateViewerPrior() {
     const closeList = () => { controller.close(); if (anchor?.isConnected) anchor.focus(); };
     const report = (uid, opener) => { reportUid = uid; reportOpener = opener; controller.openReport(uid); };
     const controller = window.KinViewerPriorController.create({ viewer,
-      async loadStudy(uid, origin) {
+      async loadStudy(uid, origin, row, options = {}) {
+        const input=window.KinViewerExamScope?.snapshot();
+        let scope=null;
+        if(input||row?.examScope){
+          if(input)await window.KinViewerExamScope.ensure(true);
+          if(options.valid && !options.valid())return [];
+          scope=input&&[input.current,input.prior].find(value=>value?.reportUid===uid);
+          if(!scope){
+            const before=viewer.snapshot(),model=window.KinExamScope;
+            const current=input?.current||model.read({uid:before.studyUIDs[0]});
+            const prior=model.read(row);
+            const next=model.viewerInput(current,prior,input?.version??null);
+            if(input?.purpose)next.purpose=input.purpose;
+            // Reopening admits both roles through the existing window and unsaved-work gate.
+            next.scoped=true;
+            const url=new URL(model.viewerUrl(next,options.seriesUid),location.origin);
+            url.hash=location.hash;
+            const opened=await window.kinViewerOpenPatient?.(url.href,{signal:options.signal});
+            if(!opened)throw Error('저장·편집 또는 배치를 확인한 뒤 다시 시도하세요. 현재 영상은 유지합니다.');
+            return {reopened:true};
+          }
+        }
         const source = extensions.getActiveDataSource()[0];
-        try { await source.retrieve.series.metadata({ StudyInstanceUID: uid, madeInClient: true }); }
+        const originals=scope?scope.sources.map(value=>value.studyUid):[uid];
+        try { for(const original of originals)await source.retrieve.series.metadata({ StudyInstanceUID: original, madeInClient: true }); }
         catch (error) {
           // The pinned loader caches failed metadata promises. A user's Retry
           // must reach the data source again rather than replay that failure.
-          source.deleteStudyMetadataPromise(uid); throw error;
+          for(const original of originals)source.deleteStudyMetadataPromise(original); throw error;
         }
-        const sets = services.displaySetService.getActiveDisplaySets().filter(set => set.StudyInstanceUID === uid && set.images?.length)
+        const sets = services.displaySetService.getActiveDisplaySets().filter(set => (scope?scope.sources.some(original=>original.studyUid===set.StudyInstanceUID&&window.KinExamScope.allows(original,set.SeriesInstanceUID)):set.StudyInstanceUID === uid) && set.images?.length)
           .sort((a, b) => Number(a.SeriesNumber || 0) - Number(b.SeriesNumber || 0) || a.SeriesInstanceUID.localeCompare(b.SeriesInstanceUID));
         // Priors are ranked against the display set in the cell that asked, which for a split series is one of its parts.
         const own = origin.displaySetUid && services.displaySetService.getDisplaySetByUID(origin.displaySetUid);

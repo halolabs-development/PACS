@@ -81,9 +81,19 @@ function splitRects(s: any) {
 }
 const PLANE_ORIENTATIONS = ['axial', 'sagittal', 'coronal'];
 const CELL_KINDS = ['plane', 'stack'];
+export function validateViewerExam(exam: any) {
+    keys(exam,['version','purpose','current','prior']);
+    if(exam.version!==1||!['current','stored'].includes(exam.purpose)||!exam.current||exam.prior!==null&&!exam.prior)invalid();
+    for(const ref of [exam.current,exam.prior].filter(Boolean)) {
+      keys(ref,['reportUid','groupId','part']);viewerUid(ref.reportUid);
+      if(ref.groupId!==null)viewerUuid(ref.groupId);
+      if(ref.part!==null&&![0,1].includes(ref.part))invalid();
+    }
+  }
 function validateJobSnapshot(s: any) {
-  keys(s, ['version', 'studies', 'rows', 'cols', 'active', 'cells', ...([4,5,6,7,8,9,10,11,12,13,14,15,16].includes(s?.version) ? ['volume'] : []), ...(s?.version===9||s?.version===16?['rects']:[]), ...(s?.version===5?['batch']:s?.version===6?['batch','marks']:s?.version===10?['curved']:s?.version===11?['path']:s?.version===12||s?.version===14?['mip']:s?.version===13||s?.version===15?['mip','mipBatch']:[])]);
-  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].includes(s.version) || !Array.isArray(s.studies) || ![1, 2].includes(s.studies.length) || new Set(s.studies).size !== s.studies.length) invalid();
+  keys(s, ['version', 'studies', 'rows', 'cols', 'active', 'cells', ...(s?.exam?['exam']:[]), ...([4,5,6,7,8,9,10,11,12,13,14,15,16].includes(s?.version) ? ['volume'] : []), ...(s?.version===9||s?.version===16?['rects']:[]), ...(s?.version===5?['batch']:s?.version===6?['batch','marks']:s?.version===10?['curved']:s?.version===11?['path']:s?.version===12||s?.version===14?['mip']:s?.version===13||s?.version===15?['mip','mipBatch']:[])]);
+  if (s.exam) validateViewerExam(s.exam);
+  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].includes(s.version) || !Array.isArray(s.studies) || s.studies.length<1 || s.studies.length>(s.exam?20:2) || new Set(s.studies).size !== s.studies.length) invalid();
   s.studies.forEach(viewerUid);
   const planes = s.version === 7, mixed = s.version === 8, split = s.version === 16, merged = s.version === 9 || split;
   // A merged layout of ordinary frame cells alone has no volume to reference, so its

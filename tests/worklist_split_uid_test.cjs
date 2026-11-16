@@ -123,7 +123,8 @@ function world({ resources = [], states = [], policy = null, institutions = INST
       if (sql.includes('pg_advisory')) return [{ locked: 1 }];
       if (sql.includes('AuthSession')) return [{ held: 1 }];
       if (sql.includes('TechNoteRevision')) return [];
-      if (sql.includes('FROM "StudyState" WHERE uid')) { const row = store.states.get(values[0]); return row ? [clone(row)] : []; }
+      if (sql.includes('FROM "StudyState" WHERE uid')) return [...store.states.values()]
+        .filter(row => values.flatMap(value => value?.values ?? [value]).includes(row.uid)).map(clone);
       if (sql.includes('FROM "ReportDraft"')) { const row = store.drafts.get(values[0] + '|' + values[1]); return row ? [clone(row)] : []; }
       if (sql.includes('LEFT JOIN "Report"')) return [...store.states.values()].filter(s => values.flatMap(v => v?.values ?? [v]).includes(s.uid))
         .map(s => ({ uid: s.uid, institutionId: s.institutionId, teleInstitutionId: s.teleInstitutionId, rs: s.rs, repDoc: s.repDoc,
@@ -135,9 +136,12 @@ function world({ resources = [], states = [], policy = null, institutions = INST
       auditLog: { create: async ({ data }) => {
         if (w.failAudit && data.target === w.failAudit && data.action === 'study.arrived') throw new Error('synthetic audit store failure');
         store.audits.push(data); write('auditLog', 'create', { action: data.action, target: data.target }); return data; } },
-      report: { findMany: async () => [], findUnique: async () => null },
+      report: { findMany: async () => [], findUnique: async () => null,
+        upsert: async ({ create }) => { write('report', 'upsert', clone(create)); return clone(create); } },
       reportVersion: { findMany: async () => [], findUnique: async () => null, findFirst: async () => null,
+        create: async ({ data }) => { write('reportVersion', 'create', clone(data)); return clone(data); },
         createMany: async x => { write('reportVersion', 'createMany', {}); return { count: x.data.length }; } },
+      studyGroup: { findMany: async () => [] }, studyGroupMember: { findMany: async () => [] },
       reportDraft: {
         findMany: async ({ where }) => [...store.drafts.values()].filter(d => d.author === where.author && where.uid.in.includes(d.uid)).map(clone),
         findUnique: async ({ where }) => clone(store.drafts.get(where.uid_author.uid + '|' + where.uid_author.author)) ?? null,

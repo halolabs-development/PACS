@@ -1,3 +1,200 @@
+/* Consume the server scope without deriving membership from worklist rows. */
+(function(root) {
+  'use strict';
+  const sourceFields = new Set(['id','name','acc','sourceAcc','date','time','desc','modality','birth','sex','age',
+    'institutionName','reqHosp','reqDate','reqDept','reqDoc','ptClass']);
+  const copy = value => JSON.parse(JSON.stringify(value));
+  function read(value, purpose = 'current') {
+    const scope = value?.sources ? value : purpose === 'stored' ? value?.reportScope : value?.examScope;
+    if (scope) {
+      if (typeof scope.reportUid !== 'string' || !Array.isArray(scope.sources) || !scope.sources.length ||
+          scope.sources.some(s => typeof s.studyUid !== 'string' || !['all','include','exclude'].includes(s.series?.mode) || !Array.isArray(s.series.uids)))
+        throw new Error('검사 범위를 확인할 수 없습니다. 목록을 새로고침하세요.');
+      return copy(scope);
+    }
+    // Ungrouped list rows omit examScope. They describe only their own source, never an inferred group.
+    if (purpose === 'stored' || !value?.uid || value.group || value.origin === 'logical') return null;
+    return {reportUid:value.uid,groupId:null,kind:'single',part:null,active:true,
+      sources:[{studyUid:value.uid,series:{mode:'all',uids:[]}}],
+      generation:JSON.stringify(['single',value.state?.draftEpoch ?? value.draftEpoch ?? null])};
+  }
+  const key = value => { const s=read(value);return s ? JSON.stringify([s.reportUid,s.groupId??null,s.part??null]) : null; };
+  const stamp = value => { const s=read(value);return s ? JSON.stringify([key(s),s.generation??null]) : null; };
+  // A draft epoch is not a change of the images in an ordinary study.
+  function screenScope(value) {
+    const scope=read(value);
+    return scope && (scope.groupId || scope.hasMembership || scope.kind==='merge' || scope.kind==='split') ? scope : null;
+  }
+  const screenStamp = value => { const scope=screenScope(value);return scope ? stamp(scope) : null; };
+  function originalLabel(value, original, label, before=false) {
+    return screenScope(value) && original ? (before ? original+' · '+label : label+' · '+original) : label;
+  }
+  function sourceRequest(value, sourceUid, body) {
+    return screenScope(value) ? {...body,sourceUid} : body;
+  }
+  const seriesValue = (value, sourceUid, seriesUid) => screenScope(value) ? JSON.stringify({sourceUid,seriesUid}) : seriesUid;
+  const seriesRequest = (value, selected) => screenScope(value) ? JSON.parse(selected) : {seriesUid:selected};
+  function attachmentTarget(value) {
+    const scope=read(value),plain=!!scope&&!screenScope(scope);
+    return {scope,sourceUid:plain?scope.reportUid:null,canAttach:plain};
+  }
+  function attachmentHeaders(value, sourceUid, generation) {
+    return screenScope(value) ? {'X-KIN-Source-Uid':sourceUid,'X-KIN-Exam-Generation':generation} : {};
+  }
+  function storedReport(value,reportUid) {
+    const group=value?.group;
+    if(!group?.readable)return null;
+    const sources=group.sources || (group.part==null&&group.studies?.map(studyUid=>({studyUid,series:{mode:'all',uids:[]}})));
+    return sources?read({reportUid,groupId:group.id,kind:group.part==null?'merge':'split',part:group.part??null,
+      generation:group.generation,active:group.active,sources}):null;
+  }
+  const allows = (source, seriesUid) => source.series.mode === 'all' ||
+    (source.series.mode === 'include' ? source.series.uids.includes(seriesUid) : !source.series.uids.includes(seriesUid));
+  function metadata(row) {
+    const scope=read(row);
+    if (!scope) return [];
+    const sent=Array.isArray(row?.sourceMetadata)?row.sourceMetadata:[];
+    return scope.sources.map(source=>sent.find(s=>(s.uid??s.studyUid)===source.studyUid) ||
+      (source.studyUid===row?.uid&&!scope.groupId?row:{uid:source.studyUid}));
+  }
+  function projections(row) {
+    const rows=metadata(row);
+    return (rows.length?rows:[row||{}]).map(source=>({...row,...Object.fromEntries([...sourceFields].filter(k=>Object.hasOwn(source,k)).map(k=>[k,source[k]]))}));
+  }
+  function values(row, field) {
+    return (sourceFields.has(field) ? projections(row) : [row]).map(s=>Object.hasOwn(s||{},field)?s[field]:undefined);
+  }
+  function originals(rows) {
+    if(!Array.isArray(rows))return rows;
+    const out=[],grouped=new Set();
+    for(const row of rows){
+      if(!row?.examScope?.groupId){out.push(row);continue;}
+      for(const source of metadata(row))if(!grouped.has(source.uid)){grouped.add(source.uid);out.push(source);}
+    }
+    return out;
+  }
+  function viewingSelection(selection, rows) {
+    if(!selection || !Array.isArray(selection.studyUids))return null;
+    const studyUids=[];
+    for(const uid of selection.studyUids) {
+      const row=rows.find(row=>row.uid===uid),scope=read(row);
+      if(!scope || row.examUnavailable)return null;
+      for(const source of scope.sources)if(!studyUids.includes(source.studyUid))studyUids.push(source.studyUid);
+    }
+    return {...selection,studyUids};
+  }
+  function originalInput(studyUids) {
+    const input=viewerInput({uid:studyUids[0]},studyUids[1]?{uid:studyUids[1]}:null);
+    return {...input,purpose:'stored'};
+  }
+  function readingScope(value, uid) { return screenScope(value || {uid}); }
+  const readingStamp = (value, uid) => { const scope=readingScope(value,uid); return scope ? key(scope) : undefined; };
+  async function fetchScope(api, uid, {purpose='current',version,reference,signal,at}={}) {
+    const query=new URLSearchParams({purpose});if(version!=null)query.set('version',String(version));
+    if(reference)query.set('reference',JSON.stringify(reference));
+    const answer=await api('GET','/studies/'+encodeURIComponent(uid)+'/exam-scope?'+query,undefined,signal,at);
+    const scope=read(answer?.scope||answer);
+    if(!scope)throw new Error('검사 범위를 확인할 수 없습니다.');
+    return scope;
+  }
+  async function dicom(scope, resource, request) {
+    const out=[];
+    for(const source of read(scope).sources) {
+      const rows=await request('/dicom-web/studies/'+encodeURIComponent(source.studyUid)+'/'+resource,source);
+      if(!Array.isArray(rows))throw new Error('원본 영상 목록을 확인할 수 없습니다.');
+      for(const row of rows) if(allows(source,row?.['0020000E']?.Value?.[0])) out.push({sourceUid:source.studyUid,row});
+    }
+    return out;
+  }
+  function viewerInput(current, prior = null, version = null, priorVersion = null) {
+    if(current?.examUnavailable||prior?.examUnavailable)throw Error('검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.');
+    const scope=read(current),comparison=prior?read(prior):null;
+    if(!scope || prior&&!comparison)throw new Error('검사 범위를 확인할 수 없습니다.');
+    if([...scope.sources,...(comparison?.sources||[])].some(s=>s.studyUid.length>64||!/^\d+(?:\.\d+)+$/.test(s.studyUid)))throw new Error('원본 검사 UID를 확인할 수 없습니다.');
+    return {reportUid:scope.reportUid,key:key(scope),generation:scope.generation,current:scope,prior:comparison,version,priorVersion,
+      scoped:!!(screenScope(scope)||screenScope(comparison)),
+      studyUids:[...new Set([...scope.sources,...(comparison?.sources||[])].map(s=>s.studyUid))]};
+  }
+  const reference = s => s ? {reportUid:s.reportUid,groupId:s.groupId??null,part:s.part??null} : null;
+  function viewerReference(input) {
+    return {current:reference(input.current),prior:reference(input.prior),version:input.version??null,priorVersion:input.priorVersion??null,
+      ...(input.purpose ? {purpose:input.purpose} : {})};
+  }
+  function viewerUrl(input, initialSeries = null) {
+    // The viewer re-reads these exact scope references. A long Split series list must not overflow the URL.
+    return '/ohif/viewer?StudyInstanceUIDs='+input.studyUids.map(encodeURIComponent).join(',')+
+      (input.prior?'&hangingProtocolId=@ohif/hpCompare':'')+
+      (input.scoped?'&kinReportUid='+encodeURIComponent(input.reportUid)+'&kinExamScopes='+encodeURIComponent(JSON.stringify(viewerReference(input)))+
+        (input.current.kind==='merge'?'&kinExam=merged':''):'')+
+      (initialSeries?'&initialSeriesInstanceUID='+encodeURIComponent(initialSeries):'');
+  }
+  function roleRows(input, rows, sets = []) {
+    return [input.current,input.prior].filter(Boolean).map(scope=>{
+      const row=rows.find(row=>row.uid===scope.reportUid)||rows.find(row=>scope.sources.some(source=>source.studyUid===row.uid || row.examScope?.sources?.some(s=>s.studyUid===source.studyUid)));
+      if(!row)throw Error('현재 검사 정보를 확인할 수 없습니다.');
+      return {...row,uid:scope.reportUid,examScope:scope,displaySetIds:sets.filter(set=>scope.sources.some(source=>source.studyUid===set.StudyInstanceUID&&allows(source,set.SeriesInstanceUID))).map(set=>set.displaySetInstanceUID)};
+    });
+  }
+  function snapshotReference(input) {
+    return {version:1,purpose:input.purpose==='stored'||input.version!=null?'stored':'current',current:reference(input.current),prior:reference(input.prior)};
+  }
+  function jobSnapshot(value,input,studyUids,originals=false) {
+    if (!input?.scoped) return value;
+    return {...value,exam:snapshotReference({...input,purpose:originals?'stored':input.purpose||'current'})};
+  }
+  function snapshotUrl(snapshot) {
+    const exam=snapshot.exam;
+    if(!exam)return '/ohif/viewer?StudyInstanceUIDs='+snapshot.studies.map(encodeURIComponent).join(',');
+    return '/ohif/viewer?StudyInstanceUIDs='+snapshot.studies.map(encodeURIComponent).join(',')+
+      '&kinReportUid='+encodeURIComponent(exam.current.reportUid)+'&kinExamScopes='+encodeURIComponent(JSON.stringify({
+        current:exam.current,prior:exam.prior,version:null,priorVersion:null,purpose:'stored'}))+(exam.prior?'&hangingProtocolId=@ohif/hpCompare':'');
+  }
+  function preload(rows) {
+    const sources=new Map();
+    for(const row of rows) {
+      const scope=read(row);
+      if(!scope)throw Error('미리 받을 검사 범위를 확인할 수 없습니다.');
+      for(const source of scope.sources) {
+        const entry=sources.get(source.studyUid)||{uid:source.studyUid,label:row.label??null,urgent:row.urgent===true};
+        if(row.examScope)entry.examRefs=[...entry.examRefs||[],reference(scope)].filter((ref,index,list)=>list.findIndex(r=>JSON.stringify(r)===JSON.stringify(ref))===index);
+        else entry.whole=true;
+        sources.set(source.studyUid,entry);
+      }
+    }
+    return [...sources.values()].map(({whole,...entry})=>{if(whole)delete entry.examRefs;return entry;});
+  }
+  function changes(owner, receive) {
+    if(typeof root.BroadcastChannel!=='function')return {send(){},close(){}};
+    const channel=new root.BroadcastChannel('kin-exam-changes');
+    channel.onmessage=event=>{
+      const message=event.data;
+      if(message?.owner && message.owner===owner() && Array.isArray(message.uids) && message.uids.every(u=>typeof u==='string'))receive(message.uids);
+    };
+    return {send(uids){const identity=owner();if(identity)channel.postMessage({owner:identity,uids:[...new Set(uids)]});},close(){channel.close();}};
+  }
+  function chooseOriginals(row,scope,{title='Download Originals',multiple=true,live=()=>true}={}) {
+    return new Promise(resolve=>{
+      const dialog=document.createElement('dialog'),heading=document.createElement('h3'),note=document.createElement('p');
+      dialog.className='order-dialog';heading.textContent=title;
+      note.textContent=scope.kind==='split'?'나눈 시리즈만이 아니라 원본 검사 전체를 내보냅니다. 원본 UID와 영상은 바뀌지 않습니다.':'내보낼 원본 검사를 고르세요. 원본 UID와 영상은 바뀌지 않습니다.';
+      dialog.append(heading,note);const choices=[];
+      for(const source of scope.sources){
+        const original=metadata(row).find(s=>s.uid===source.studyUid),label=document.createElement('label'),input=document.createElement('input');
+        input.type=multiple?'checkbox':'radio';input.name='exam-source';input.value=source.studyUid;input.checked=scope.sources.length===1;
+        // Accession No, description and UID of the original are data.
+        const words=document.createElement('span');words.translate=false;words.textContent=[original?.acc,original?.desc,source.studyUid].filter(Boolean).join(' · ');
+        label.append(input,' ',words);dialog.append(label,document.createElement('br'));choices.push(input);
+      }
+      const go=document.createElement('button'),close=document.createElement('button');go.type=close.type='button';go.textContent='Continue';close.textContent='Cancel';
+      const update=()=>{go.disabled=!choices.some(c=>c.checked);};dialog.onchange=update;update();
+      let result=[];go.onclick=()=>{if(live())result=choices.filter(c=>c.checked).map(c=>c.value);dialog.close();};close.onclick=()=>dialog.close();
+      dialog.addEventListener('close',()=>{dialog.remove();resolve(result);},{once:true});dialog.append(go,close);document.body.append(dialog);dialog.showModal();
+    });
+  }
+  const api={read,key,stamp,screenScope,screenStamp,originalLabel,sourceRequest,seriesValue,seriesRequest,attachmentTarget,attachmentHeaders,storedReport,allows,metadata,projections,values,originals,viewingSelection,originalInput,readingScope,readingStamp,fetch:fetchScope,dicom,viewerInput,viewerUrl,viewerReference,reference,roleRows,snapshotReference,jobSnapshot,snapshotUrl,preload,chooseOriginals,changes};
+  root.KinExamScope=api;
+  if(typeof module==='object'&&module.exports)module.exports=api;
+})(globalThis);
 /**
  * OHIF 사용자 설정 — Orthanc OHIF 플러그인이 뷰어에 주입
  * (orthanc.json의 "OHIF" > "UserConfiguration"에서 참조)
@@ -34,7 +231,8 @@ const KIN_VIEWER_EXPECTED_SESSION = (() => {
 
 // The first extension sets the page defaults before shared modules and data sources start work.
 function kinCreateSessionBoundary() {
-  return { id: 'kin.session-boundary', async preRegistration() {
+  return { id: 'kin.session-boundary', async preRegistration({servicesManager} = {}) {
+    kinExamViewerServices=servicesManager?.services;
     for (const name of ['work-context.js', 'session-transport.js', 'viewer-resources.js', 'viewer-preload.js', 'viewer-session.js']) {
       await new Promise((resolve, reject) => {
         const script = document.createElement('script');
@@ -77,8 +275,28 @@ function kinCreateSessionBoundary() {
     await boundary.ready;
     window.dispatchEvent(new Event('kin-viewer-session-ready'));
     await boundary.wait();
+    await kinPrepareExamViewer(location.href);
   } };
 }
+
+// Ordinary routes load no extra asset and make no scope request.
+let kinExamViewerLoading,kinExamViewerServices;
+async function kinPrepareExamViewer(href) {
+  if (!new URL(href,location.origin).searchParams.has('kinExamScopes')) return null;
+  if (!window.KinViewerExamScope) await (kinExamViewerLoading ||= (async () => {
+    for (const [name,global] of [['exam-scope.js','KinExamScope'],['viewer-exam-scope.js','KinViewerExamScope']]) {
+      if (window[global]) continue;
+      await new Promise((resolve,reject)=>{
+        const script=document.createElement('script');script.src='/worklist/hpacs-lite/'+name;
+        script.onload=resolve;script.onerror=()=>reject(Error('검사 범위 도구를 불러오지 못했습니다.'));document.head.append(script);
+      });
+    }
+  })().catch(error=>{kinExamViewerLoading=null;throw error;}));
+  window.KinViewerExamScope.watch();
+  window.KinViewerExamScope.install(kinExamViewerServices);
+  return href===location.href ? window.KinViewerExamScope.ensure() : window.KinViewerExamScope.resolve(href);
+}
+window.kinPrepareExamViewer=kinPrepareExamViewer;
 
 // A subscription follows the document gate, never a raw cross-document notice.
 function kinViewerOnEnd(run) {
@@ -2952,7 +3170,8 @@ function kinCreateViewerLayout() {
       if (kinViewerSession.sameAccount(me) !== true) throw new Error('계정 응답이 일치하지 않습니다.');
       kinViewerSession.note(me);
       if (!live() || !next) { end(); throw new Error('계정이 변경되어 배치를 적용하지 않았습니다.'); }
-      key = next;
+      const exam=window.KinViewerExamScope?.snapshot();
+      key = next+(exam?'|'+JSON.stringify([exam.key,exam.prior&&window.KinExamScope.key(exam.prior)]):'');
       hpOwner = { institution: me.institution, subject: me.sub };
     }
     // S5-U2b: 배치 저장·복원과 Hanging Protocol은 작성자 목록을 읽고 계정에 쓰므로, 문서가 clinician-only로 확인되면(이 패널의
@@ -2983,7 +3202,8 @@ function kinCreateViewerLayout() {
           const data = await get('/api/studies', signal);
           // Current/Related follows the opening order, unlike Recent Layout's canonical scope.
           const uids = new URLSearchParams(search).get('StudyInstanceUIDs').split(',');
-          const rows = uids.map(uid => data.studies?.find(row => row.uid === uid));
+          const exam=await window.KinViewerExamScope?.ensure(true);
+          const rows = exam?window.KinExamScope.roleRows(exam,data.studies||[],ds.getActiveDisplaySets()):uids.map(uid => data.studies?.find(row => row.uid === uid));
           if (rows.some(row => !row)) throw new Error('현재 검사 접근 권한을 확인할 수 없습니다.');
           await authenticate(signal);
           if (signal.aborted) throw new Error('Hanging Protocol 확인이 중단되었습니다.');
@@ -3029,8 +3249,10 @@ function kinCreateViewerLayout() {
       busy = true; refresh(); status.textContent = '계정과 검사 접근 확인 중…'; const before = signature();
       try {
         await authenticate();
+        const exam=window.KinViewerExamScope?.snapshot();
+        if(exam)await window.KinViewerExamScope.ensure(true);
         const data = await get('/api/studies');
-        const rows = studies.map(uid => data.studies?.find(s => s.uid === uid));
+        const rows = exam ? window.KinExamScope.roleRows(exam,data.studies||[]) : studies.map(uid => data.studies?.find(s => s.uid === uid));
         if (rows.some(s => !s) || (rows.length > 1 && (!rows[0].sourcePatientKey || rows.some(s => s.sourcePatientKey !== rows[0].sourcePatientKey)))) throw new Error('현재 검사의 접근 권한과 같은 환자 여부를 확인할 수 없습니다.');
         // A delayed permission response must not overwrite a newer manual layout or selection.
         if (!live() || before !== signature()) throw new Error('화면 배치가 변경되어 작업을 적용하지 않았습니다. 다시 시도하세요.');
@@ -5031,8 +5253,11 @@ function kinCreateMammographyHanging() {
     const source = extensions.getActiveDataSource()[0], series = source.retrieve.series;
     const hp = services.hangingProtocolService, raw = new Map(), search = location.search;
     const opened = new URLSearchParams(search).get('StudyInstanceUIDs')?.split(',') || [];
+    // Merge Exam: a merged exam's studies are one current exam (kinExam=merged) — never a current study and its prior.
+    const merged = new URLSearchParams(search).get('kinExam') === 'merged';
+    const exam = window.KinViewerExamScope?.snapshot();
     requestedLayout = null;
-    preference = { layout: opened.length > 1 ? 'compare' : 'current', kind: null };
+    preference = { layout: exam ? (exam.prior?'compare':'current') : opened.length > 1 && !merged ? 'compare' : 'current', kind: null };
     try { preferences.set(preferenceProvider?.({ studyInstanceUIDs: opened.slice() }), { accountDefault: true }); } catch (_) { /* Use the study-aware default. */ }
     const retrieve = series.metadata, run = hp.run;
     let ended = false, last = null, cells = [], stageCells = [], panel = null, missing = null;
@@ -5296,8 +5521,11 @@ function kinCreateMammographyHanging() {
     function protocol(data) {
       const model = window.KinMammographyModel;
       const displaySets = data.displaySets;
-      const studies = opened.slice(0, 2).map((uid, i) => ({ uid, role: i ? 'prior' : 'current', institution,
-        instances: [...raw.values()].filter(item => item['0020000D']?.Value?.[0] === uid) }));
+      const studies = exam ? [exam.current,exam.prior].filter(Boolean).map((scope,i)=>({uid:scope.reportUid,role:i?'prior':'current',institution,
+        sourceUids:scope.sources.map(source=>source.studyUid), instances:[...raw.values()].filter(item=>scope.sources.some(source=>
+          source.studyUid===item['0020000D']?.Value?.[0]&&window.KinExamScope.allows(source,item['0020000E']?.Value?.[0])))}))
+        : opened.slice(0, merged ? 1 : 2).map((uid, i) => ({ uid, role: i ? 'prior' : 'current', institution,
+          instances: [...raw.values()].filter(item => item['0020000D']?.Value?.[0] === uid) }));
       // The institution here is the viewing session's scope. The DICOMweb server has already
       // authorized these objects; this client classification does not grant access to a study.
       const plan = model.plan({ institution, studies });
@@ -5390,7 +5618,7 @@ function kinCreateMammographyHanging() {
       document.querySelector('#kin-viewer-layout')?.append(panel);
     }
     const wrappedRun = function (data, requested, options) {
-      if (!live() || !data.displaySets.some(d => d.StudyInstanceUID === opened[0] && (d.Modality === 'MG' ||
+      if (!live() || !data.displaySets.some(d => (exam ? exam.current.sources.some(s=>s.studyUid===d.StudyInstanceUID&&window.KinExamScope.allows(s,d.SeriesInstanceUID)) : d.StudyInstanceUID === opened[0]) && (d.Modality === 'MG' ||
           d.images?.some(i => raw.has(i.SOPInstanceUID) && window.KinMammographyModel.classify(raw.get(i.SOPInstanceUID)).basis === 'ct-breast-tomosynthesis'))) ||
           (requested && !['@ohif/hpCompare', 'default'].includes(requested) && !requested.startsWith('kin.mammography'))) {
         last = null; return run.call(this, data, requested, options);
@@ -6131,15 +6359,37 @@ function kinCreateViewerPrior() {
     const closeList = () => { controller.close(); if (anchor?.isConnected) anchor.focus(); };
     const report = (uid, opener) => { reportUid = uid; reportOpener = opener; controller.openReport(uid); };
     const controller = window.KinViewerPriorController.create({ viewer,
-      async loadStudy(uid, origin) {
+      async loadStudy(uid, origin, row, options = {}) {
+        const input=window.KinViewerExamScope?.snapshot();
+        let scope=null;
+        if(input||row?.examScope){
+          if(input)await window.KinViewerExamScope.ensure(true);
+          if(options.valid && !options.valid())return [];
+          scope=input&&[input.current,input.prior].find(value=>value?.reportUid===uid);
+          if(!scope){
+            const before=viewer.snapshot(),model=window.KinExamScope;
+            const current=input?.current||model.read({uid:before.studyUIDs[0]});
+            const prior=model.read(row);
+            const next=model.viewerInput(current,prior,input?.version??null);
+            if(input?.purpose)next.purpose=input.purpose;
+            // Reopening admits both roles through the existing window and unsaved-work gate.
+            next.scoped=true;
+            const url=new URL(model.viewerUrl(next,options.seriesUid),location.origin);
+            url.hash=location.hash;
+            const opened=await window.kinViewerOpenPatient?.(url.href,{signal:options.signal});
+            if(!opened)throw Error('저장·편집 또는 배치를 확인한 뒤 다시 시도하세요. 현재 영상은 유지합니다.');
+            return {reopened:true};
+          }
+        }
         const source = extensions.getActiveDataSource()[0];
-        try { await source.retrieve.series.metadata({ StudyInstanceUID: uid, madeInClient: true }); }
+        const originals=scope?scope.sources.map(value=>value.studyUid):[uid];
+        try { for(const original of originals)await source.retrieve.series.metadata({ StudyInstanceUID: original, madeInClient: true }); }
         catch (error) {
           // The pinned loader caches failed metadata promises. A user's Retry
           // must reach the data source again rather than replay that failure.
-          source.deleteStudyMetadataPromise(uid); throw error;
+          for(const original of originals)source.deleteStudyMetadataPromise(original); throw error;
         }
-        const sets = services.displaySetService.getActiveDisplaySets().filter(set => set.StudyInstanceUID === uid && set.images?.length)
+        const sets = services.displaySetService.getActiveDisplaySets().filter(set => (scope?scope.sources.some(original=>original.studyUid===set.StudyInstanceUID&&window.KinExamScope.allows(original,set.SeriesInstanceUID)):set.StudyInstanceUID === uid) && set.images?.length)
           .sort((a, b) => Number(a.SeriesNumber || 0) - Number(b.SeriesNumber || 0) || a.SeriesInstanceUID.localeCompare(b.SeriesInstanceUID));
         // Priors are ranked against the display set in the cell that asked, which for a split series is one of its parts.
         const own = origin.displaySetUid && services.displaySetService.getDisplaySetByUID(origin.displaySetUid);
@@ -6206,7 +6456,7 @@ function kinCreateViewerPrior() {
 // (its Report Editor is already beside the images) and not in a read-only session.
 function kinCreateViewerReportPanel() {
   let ready, panel = null, frame, generation = 0;
-  const assets = [['viewer-editor-link.js', () => typeof window.kinViewerEditorLink === 'function'],
+  const assets = [['exam-scope.js', () => !!window.KinExamScope], ['viewer-editor-link.js', () => typeof window.kinViewerEditorLink === 'function'],
     ['viewer-report-panel.js', () => !!window.KinViewerReportPanel]];
   function load() {
     return ready ||= assets.reduce((previous, [name, loaded]) => previous.then(() => loaded() ? undefined : new Promise((resolve, reject) => {

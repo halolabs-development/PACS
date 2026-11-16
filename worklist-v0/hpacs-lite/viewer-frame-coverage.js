@@ -5,7 +5,7 @@
   const value=(row,tag)=>row?.[tag]?.Value?.[0];
   const nonImage=new Set(['1.2.840.10008.5.1.4.1.1.104.1','1.2.840.10008.5.1.4.1.1.88.11','1.2.840.10008.5.1.4.1.1.88.22','1.2.840.10008.5.1.4.1.1.88.33']);
   function catalog(studies,responses){
-    if(!Array.isArray(studies)||studies.length<1||studies.length>2||!studies.every(uid)||new Set(studies).size!==studies.length||!Array.isArray(responses)||responses.length!==studies.length)throw Error('검사 범위를 확인하지 못했습니다.');
+    if(!Array.isArray(studies)||studies.length<1||studies.length>20||!studies.every(uid)||new Set(studies).size!==studies.length||!Array.isArray(responses)||responses.length!==studies.length)throw Error('검사 범위를 확인하지 못했습니다.');
     const records=new Map();let total=0,documents=0,instances=0;
     responses.forEach((rows,index)=>{
       if(!Array.isArray(rows)||!rows.length)throw Error('원본 목록이 비어 있습니다.');
@@ -116,7 +116,7 @@
           preferenceKnown=true;
         }
         if(!enabled){phase='disabled';render();return;}
-        if(!studies.length||studies.length>2||!studies.every(uid)||new Set(studies).size!==studies.length)throw Error('검사 범위를 확인하지 못했습니다.');
+        if(!studies.length||studies.length>(root.KinViewerExamScope?.snapshot()?20:2)||!studies.every(uid)||new Set(studies).size!==studies.length)throw Error('검사 범위를 확인하지 못했습니다.');
         const lists=[];for(const study of studies)lists.push(await json('/dicom-web/studies/'+encodeURIComponent(study)+'/metadata',ticket,8*1024*1024));
         if(!live()||ticket!==epoch)return;
         tracking=tracker(catalog(studies,lists));phase='ready';render();

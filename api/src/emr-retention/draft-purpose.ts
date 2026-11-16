@@ -369,10 +369,11 @@ async function anyWork(tx: Tx): Promise<boolean> {
 async function reapply(tx: Tx, unit: string): Promise<boolean> {
   const ended = await tx.$executeRaw`DELETE FROM "ReportDraftPurposeEnd" WHERE "disposalUnitId" = ${unit}`;
   // A copy taken while the work was still live holds the content in the author's row. Empty exactly that work: the row
-  // keeps its revision boundary (and moves past it), so no request of the old work can write it back.
+  // keeps its revision boundary (and moves past it), so no request of the old work can write it back. An emptied row
+  // names no exam group either (Merge Exam), as the draft write leaves it.
   const live = await tx.$executeRaw`UPDATE "ReportDraft" SET present = false, findings = '', conclusion = '', recommendation = '',
-    "baseVersion" = 0, citations = NULL, structured = NULL, drawings = NULL, revision = revision + 1, "workUnit" = NULL, "workSince" = NULL,
-    "workIntent" = NULL, "updatedAt" = now() AT TIME ZONE 'UTC' WHERE "workUnit" = ${unit}`;
+    "baseVersion" = 0, citations = NULL, structured = NULL, drawings = NULL, "groupId" = NULL, revision = revision + 1, "workUnit" = NULL,
+    "workSince" = NULL, "workIntent" = NULL, "updatedAt" = now() AT TIME ZONE 'UTC' WHERE "workUnit" = ${unit}`;
   // Image Report: that work's drawings nothing else names (a copy may hold them with or without its ended or live row).
   const drawings = await destroyWorkDrawings(tx, unit);
   return ended + live + drawings > 0;

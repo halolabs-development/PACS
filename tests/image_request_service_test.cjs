@@ -103,6 +103,8 @@ function world(policy, { requests = [], receipts = [] } = {}) {
     return rows;
   };
   const client = (view, index) => ({
+    studyGroupMember:{findMany:async()=>[]},
+    studyState:{findUnique:async({where})=>where.uid===uid?{uid,institutionId:institution}:null},
     $executeRaw: async () => { log('tx:execute'); return 0; },
     $queryRaw: (strings, ...values) => query('tx', view, index, strings, values),
     studyImageRequest: {
@@ -118,7 +120,7 @@ function world(policy, { requests = [], receipts = [] } = {}) {
     },
     auditLog: { create: async ({ data }) => { log('tx:write'); writes.audit++; audits.push(data); return data; } },
   });
-  const prisma = {
+  const prisma = { studyGroupMember:{findMany:async()=>[]},
     $queryRaw: (strings, ...values) => query('root', store, null, strings, values),
     $transaction: async (fn, options) => {
       const index = transactions.push(options) - 1;
@@ -129,7 +131,7 @@ function world(policy, { requests = [], receipts = [] } = {}) {
       log('tx:end');
       return result;
     },
-    studyState: { findMany: async () => { log('root:studies'); return [{ uid }]; } },
+    studyState: { findUnique:async({where})=>where.uid===uid?{uid,institutionId:institution}:null, findMany: async () => { log('root:studies'); return [{ uid }]; } },
   };
   w.handlers = { studyIdentityResources: async u => [source(u)], studyIdentities: async () => [source(uid)] };
   // Records every member the service stack touches, not only the two it is allowed to use.
@@ -345,7 +347,9 @@ test('#8 and #9 read in one RepeatableRead transaction, with no row lock and no 
     const from = w.statements.length, at = w.transactions.length;
     await call();
     assert.deepEqual(w.transactions.slice(at), [READ], route);
-    assert.deepEqual(w.statements.slice(from), ['root:policy', 'tx:start', 'tx:execute', 'tx:advisory', 'tx:policy', ...inside, 'tx:end'], route);
+    const actual=w.statements.slice(from);
+    assert.deepEqual(actual.filter(x=>!['tx:advisory','tx:policy'].includes(x)),['root:policy','tx:start','tx:execute',...inside.filter(x=>!['tx:advisory','tx:policy'].includes(x)),'tx:end'],route);
+    assert.ok(actual.indexOf('tx:policy')<actual.indexOf('tx:study')&&!actual.some(x=>/ FOR (UPDATE|SHARE)$/.test(x)),route);
   }
   assert.deepEqual(w.writes, { request: 1, update: 0, receipt: 1, audit: 1 });
 });

@@ -50,6 +50,7 @@ function pageDefaults(sandbox, send = sandbox.fetch, source = config) {
   window.KinSessionTransport = { ...transports, page: () => transport };
   sandbox.document ||= {};
   sandbox.location ||= {};
+  sandbox.location.hash ??= '';
   const context = vm.createContext(sandbox);
   vm.runInContext(source, context, { filename: 'ohif.js' });
   const session = vm.runInContext('kinViewerSession', context);

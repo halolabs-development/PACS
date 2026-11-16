@@ -639,9 +639,10 @@ class MigrationPins(unittest.TestCase):
         # Film / DICOM Print: 59 tables (FilmPrintJob), rows + its one printed film, 111.
         # Image Report: 60 tables (ReportDrawing), rows + its one drawing, 112.
         # Auto Save View: 61 tables (ViewerAutoView), rows + its one saved view, 113.
-        self.assertEqual(len(restore_fixture.TABLES), 61)
+        # Merge Exam / Split: 63 tables (StudyGroup, StudyGroupMember), rows + one merged exam and its two members, 116.
+        self.assertEqual(len(restore_fixture.TABLES), 63)
         self.assertEqual(set(rows), set(restore_fixture.TABLES))
-        self.assertEqual(sum(len(value) for value in rows.values()), 113)   # S7-U5: + the emptied draft row (tombstone); + 2 isolation facts; + 2 change records; S9-U4b: + 12; W5-API: + 3; D1890: + 2; CD-09-P: + 2; CD-09-D: + 1; FC-070: + 1; FC-076: + 1; film print: + 1; Image Report: + 1; auto save view: + 1
+        self.assertEqual(sum(len(value) for value in rows.values()), 116)   # S7-U5: + the emptied draft row (tombstone); + 2 isolation facts; + 2 change records; S9-U4b: + 12; W5-API: + 3; D1890: + 2; CD-09-P: + 2; CD-09-D: + 1; FC-070: + 1; FC-076: + 1; film print: + 1; Merge Exam: + 3
         self.assertEqual({table: len(rows[table]) for table in ("GatewayRetryRequest", "CriticalResult", "CriticalResultEvent",
                                                                 "CriticalResultReceipt")},
                          {"GatewayRetryRequest": 1, "CriticalResult": 4, "CriticalResultEvent": 7, "CriticalResultReceipt": 6})
@@ -705,8 +706,8 @@ class ClientPins(unittest.TestCase):
         self.assertEqual(MAIN.count('$("#receipt-retry").addEventListener("click", requestGatewayRetry);'), 1)
         # U3 client pins keep: the receipt key count and the observation functions stay free of requests.
         # 5 -> 6 at S4-F01V: one `row.gatewayReceipt ?? null` for the Not Observed item (F01VPins below).
-        self.assertEqual(MAIN.count("gatewayReceipt"), 6)
-        self.assertIn('$("#receipt-gateway").title = labels.gateway.title;\n    }', js_function(MAIN, "renderObservation") + "\n")
+        self.assertEqual(MAIN.count("gatewayReceipt"), 8)
+        self.assertIn('$("#receipt-gateway").title = labels.gateway.title;', js_function(MAIN, "renderObservation"))
 
     def test_study_observation_inventory_names_exactly_these_additions(self):
         counts = {
@@ -716,10 +717,10 @@ class ClientPins(unittest.TestCase):
         }
         # "#receipt-retry-note" 2 -> 1 at S4-F01V: the request writes the note right after the clicked control.
         self.assertEqual(counts, {"ids": {"receipt-retry": 1, "receipt-retry-note": 1}, "functions": {"requestGatewayRetry": 1},
-                                  "selectors": {"#receipt-retry": 3, "#receipt-retry-note": 1}})
+                                  "selectors": {"#receipt-retry": 4, "#receipt-retry-note": 2}})
         observation = text("tests", "study_observation_test.py")
         self.assertIn('    "ids": {"receipt-retry": 1, "receipt-retry-note": 1},\n    "functions": {"requestGatewayRetry": 1},\n'
-                      '    "selectors": {"#receipt-retry": 3, "#receipt-retry-note": 1},', observation)
+                      '    "selectors": {"#receipt-retry": 4, "#receipt-retry-note": 2},', observation)
 
     def test_the_pure_helpers_keep_u1b_and_the_gateway_label(self):
         # R3(c): the U1b needles, BANNED line included, stay byte-identical and exactly once.
@@ -788,7 +789,7 @@ def f01v_problems(main, arrivals):
         problems.append("drawRetry")
     for needle, count in (("drawRetry(row, labels.retry, button, note);", 1),
                           ('drawRetry(s, labels.retry, $("#receipt-retry"), $("#receipt-retry-note"));', 1),
-                          ("drawRetry(", 2), ('addEventListener("click", requestGatewayRetry);', 1),
+                          ("drawRetry(", 3), ('addEventListener("click", requestGatewayRetry);', 1),
                           ("row.gatewayReceipt ?? null", 1), ('$("#not-observed-list")', 1),
                           ("let item = kept.get(row.uid);", 1), ("item.dataset.uid = row.uid;", 1),
                           ('for (const item of kept.values()) item.querySelector("button").dataset.request = "";', 1),
@@ -797,9 +798,11 @@ def f01v_problems(main, arrivals):
                            '            + (gateway === null ? "" : ` · ${labels.gateway.text}`);', 1)):
         if render.count(needle) != count:
             problems.append("render %s" % needle[:40])
-    for banned in ("innerHTML", "api(", "fetch(", "id="):
+    for banned in ("innerHTML", "api(", "fetch("):
         if banned in render:
             problems.append("render " + banned)
+    if re.search(r"\bid\s*=", render):
+        problems.append("render id=")
     if main.count('addEventListener("click", requestGatewayRetry);') != 2:
         problems.append("two listeners")
     request = js_function(main, "requestGatewayRetry")

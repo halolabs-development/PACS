@@ -27,11 +27,11 @@
       ['LINEAR', 'LINEAR_EXACT', 'SIGMOID'].includes(value.VOILUTFunction) && typeof value.invert === 'boolean' && [0, 1, 2].includes(value.interpolationType);
   }
   // The saved view of `study` (the first study it names), as the server checks it; null when it is not one.
-  function validate(value, study) {
+  function validate(value, study, maxStudies = 8) {
     try {
       if (!exact(value, ['version', 'studies', 'rows', 'cols', 'active', 'cells']) || value.version !== 1) return null;
       const studies = value.studies;
-      if (!Array.isArray(studies) || studies.length < 1 || studies.length > 8 || !studies.every(uid) || new Set(studies).size !== studies.length ||
+      if (!Array.isArray(studies) || studies.length < 1 || studies.length > maxStudies || !studies.every(uid) || new Set(studies).size !== studies.length ||
           (study !== undefined && studies[0] !== study)) return null;
       if (!count(value.rows, 1, 4) || !count(value.cols, 1, 4) || !Array.isArray(value.cells) || value.cells.length !== value.rows * value.cols ||
           value.cells.every(cell => cell === null) || !count(value.active, 0, value.cells.length - 1)) return null;
