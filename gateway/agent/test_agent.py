@@ -889,7 +889,7 @@ class OrthancConnectionTests(unittest.TestCase):
         self.assertEqual(len(connections), 3)
 
 
-HEARTBEAT_KEYS = {"epoch", "bootSeq", "version", "uptimeSeconds", "queue", "lastStowAgeSeconds", "localOrthanc"}
+HEARTBEAT_KEYS = {"epoch", "bootId", "seq", "version", "uptimeSeconds", "queue", "lastStowAgeSeconds", "localOrthanc"}
 
 
 class BeatCloud:
@@ -926,7 +926,7 @@ class HeartbeatTests(unittest.TestCase):
         return agent
 
     def heartbeat(self, agent: Agent, cloud: BeatCloud, started: float | None = None):
-        beat = agent_module.Heartbeat(agent.config, agent.queue.epoch, 7, agent.orthanc, agent.cloud,
+        beat = agent_module.Heartbeat(agent.config, agent.queue.epoch, agent.orthanc, agent.cloud,
                                       time.monotonic() if started is None else started)
         self.addCleanup(beat.cloud.session.close)
         self.addCleanup(beat.stop)
@@ -952,7 +952,8 @@ class HeartbeatTests(unittest.TestCase):
         body = self.heartbeat(agent, BeatCloud(), started=time.monotonic() - 125).body()
         self.assertEqual(set(body), HEARTBEAT_KEYS)
         self.assertEqual(body["epoch"], agent.queue.epoch)
-        self.assertEqual(body["bootSeq"], 7)
+        self.assertTrue(EPOCH.fullmatch(body["bootId"]))
+        self.assertEqual(body["seq"], 1)
         self.assertEqual(body["version"], agent_module.AGENT_VERSION)
         self.assertIn(body["uptimeSeconds"], (125, 126))
         self.assertEqual(body["queue"], {"waiting": 3, "retry": 2, "failed": 1}, "complete is never reported")
@@ -1043,7 +1044,8 @@ class HeartbeatTests(unittest.TestCase):
         self.assertGreaterEqual(len(cloud.bodies), 3)
         self.assertNotEqual(beat.thread.ident, threading.get_ident())
         self.assertFalse(beat.thread.is_alive(), "stop ends the thread")
-        self.assertEqual({body["bootSeq"] for body in cloud.bodies}, {7}, "one run number per process run")
+        self.assertEqual(len({body["bootId"] for body in cloud.bodies}), 1, "one run id per process run")
+        self.assertEqual([body["seq"] for body in cloud.bodies], list(range(1, len(cloud.bodies) + 1)))
 
     def test_stop_waits_for_a_beat_in_flight_then_no_new_beat_starts(self):
         agent = self.agent()
@@ -1092,9 +1094,9 @@ class HeartbeatTests(unittest.TestCase):
         real = agent_module.Heartbeat
 
         class Recording(real):
-            def __init__(self, cfg, epoch, boot_seq, *rest):
-                super().__init__(cfg, epoch, boot_seq, *rest)
-                seen.update(epoch=epoch, boot_seq=boot_seq, timeout=self.cloud.http_timeout, events=[])
+            def __init__(self, cfg, epoch, *rest):
+                super().__init__(cfg, epoch, *rest)
+                seen.update(epoch=epoch, boot_id=self.boot_id, events=[])
 
             def start(self):
                 seen["events"].append("start")
@@ -1113,15 +1115,20 @@ class HeartbeatTests(unittest.TestCase):
                 seen["raised"] = str(error)
         return seen
 
-    def test_each_run_of_a_queue_has_the_next_run_number_and_a_new_queue_starts_again(self):
+    def test_each_run_has_a_new_run_id_and_the_queue_file_is_not_written(self):
+        self.agent()   # the queue file exists before the first run
+        def meta():
+            db = sqlite3.connect(self.path)
+            try:
+                return [tuple(row) for row in db.execute("SELECT * FROM meta ORDER BY key")]
+            finally:
+                db.close()
+        before = meta()
         runs = [self.run_once() for _ in range(3)]
-        self.assertEqual([run["boot_seq"] for run in runs], [1, 2, 3])
+        self.assertEqual(len({run["boot_id"] for run in runs}), 3, "a new random id for every run")
+        self.assertTrue(all(EPOCH.fullmatch(run["boot_id"]) for run in runs))
         self.assertEqual(len({run["epoch"] for run in runs}), 1, "the same queue file keeps its epoch")
-        other = str(Path(self.path).with_name("other.db"))
-        agent = Agent(config(other))
-        self.addCleanup(agent.queue.close)
-        self.assertEqual(agent.queue.next_boot(), 1, "a recreated queue (a new epoch) counts from 1")
-        self.assertNotEqual(agent.queue.epoch, runs[0]["epoch"])
+        self.assertEqual(meta(), before, "nothing about runs is kept in the queue")
 
     def test_a_loop_that_raises_still_stops_the_heartbeat(self):
         def broken():
@@ -1130,11 +1137,31 @@ class HeartbeatTests(unittest.TestCase):
         run = self.run_once(broken)
         self.assertEqual((run["events"], run["raised"]), (["start", "stop"], "SYN loop failure"))
 
-    def test_the_beat_requests_end_within_the_heartbeat_timeout(self):
-        run = self.run_once()
-        self.assertLessEqual(run["timeout"], agent_module.HEARTBEAT_TIMEOUT_SECONDS)
-        # Three requests at most (token, POST, token and POST again after a 401) end well inside the 180 s contact rule.
-        self.assertLess(4 * agent_module.HEARTBEAT_TIMEOUT_SECONDS, 180)
+    def test_seq_goes_up_with_every_new_body_also_after_a_failed_beat(self):
+        agent = self.agent()
+        cloud = BeatCloud([FakeResponse(503), GatewayError("cloud request ConnectionError")])
+        beat = self.heartbeat(agent, cloud)
+        self.assertEqual([beat.beat(), beat.beat(), beat.beat()], [False, False, True])
+        self.assertEqual([body["seq"] for body in cloud.bodies], [1, 2, 3], "a failed beat does not give its number back")
+        self.assertEqual(len({body["bootId"] for body in cloud.bodies}), 1)
+
+    def test_the_authentication_retry_sends_the_same_body(self):
+        agent = self.agent()
+        beat = agent_module.Heartbeat(agent.config, agent.queue.epoch, agent.orthanc, agent.cloud, time.monotonic())
+        self.addCleanup(beat.cloud.session.close)
+        sent = []
+
+        def answer(method, url, **kwargs):
+            sent.append(json.loads(json.dumps(kwargs["json"])))
+            return FakeResponse(401 if len(sent) == 1 else 200, {"result": "stored"})
+
+        with patch.object(beat.cloud, "token", return_value="SYN-TOKEN"), \
+                patch.object(beat.cloud.session, "request", side_effect=answer):
+            self.assertTrue(beat.beat())
+            self.assertTrue(beat.beat())
+        self.assertEqual(len(sent), 3)
+        self.assertEqual(sent[0], sent[1], "the 401 retry carries the same run id, seq and body")
+        self.assertEqual([body["seq"] for body in sent], [1, 1, 2])
 
     def test_the_counts_connection_refuses_writes(self):
         agent = self.agent()
