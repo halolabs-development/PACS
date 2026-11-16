@@ -186,22 +186,69 @@
     if (!plain(element) || element.vr === 'SQ' || !Array.isArray(element.Value)) return '';
     return element.Value.map(value => plain(value) ? (typeof value.Alphabetic === 'string' ? value.Alphabetic : '') : text(value)).join('\\');
   }
-  // A field's value: a keyword from the instance's metadata; a tag number through its keyword there, or from the
-  // image's DICOM JSON (raw; undefined while it is being read, shown as '\u2026'). '\u2014' when the image has no value.
+  // ── The DICOM dictionary (dicom-dictionary.js, PS3.6), once the display module has loaded it ──
+  // Entries: { tag: '00101030', keyword: 'PatientWeight', name: "Patient's Weight", vr, retired, label }.
+  let dictionary = null;
+  const COMMON = new Set(Object.values(KEYWORDS));
+  const folded = value => value.toLowerCase().replace(/['\u2019]/g, '');
+  function useDictionary(source) {
+    const rows = plain(source) && Array.isArray(source.entries) ? source.entries : null;
+    if (!rows) return 0;
+    const list = [], byKeyword = new Map(), byTag = new Map();
+    for (const row of rows) {
+      if (!Array.isArray(row)) continue;
+      const [tag, keyword, name, vr, retired] = row;
+      if (typeof tag !== 'string' || !/^[0-9A-F]{8}$/.test(tag) || typeof keyword !== 'string' || !/^[A-Za-z][A-Za-z0-9]{0,63}$/.test(keyword)
+        || typeof name !== 'string' || !name || byKeyword.has(keyword) || byTag.has(tag)) continue;
+      const entry = Object.freeze({ tag, keyword, name, vr: typeof vr === 'string' ? vr : '', retired: retired === 1,
+        label: '(' + tag.slice(0, 4) + ',' + tag.slice(4) + ') ' + name + (retired === 1 ? ' (Retired)' : ''),
+        search: folded(keyword + ' ' + name + ' ' + tag) });
+      list.push(entry); byKeyword.set(keyword, entry); byTag.set(tag, entry);
+    }
+    dictionary = list.length ? { list, byKeyword, byTag } : null;
+    return list.length;
+  }
+  const dictionarySize = () => dictionary ? dictionary.list.length : 0;
+  // Dictionary entries for a search: every word in the keyword or the name (case and apostrophes ignored), or a tag
+  // number in any of the forms field() takes. An empty search is the whole dictionary, in tag order.
+  function searchDictionary(query) {
+    if (!dictionary) return [];
+    const typed = typeof query === 'string' ? query.trim() : '';
+    if (!typed) return dictionary.list.slice();
+    const tag = /^\(?\s*([0-9A-Fa-f]{4})\s*,?\s*([0-9A-Fa-f]{4})\s*\)?$/.exec(typed);
+    if (tag) { const entry = dictionary.byTag.get((tag[1] + tag[2]).toUpperCase()); if (entry) return [entry]; }
+    const words = folded(typed).split(/\s+/).filter(Boolean);
+    return dictionary.list.filter(entry => words.every(word => entry.search.includes(word)));
+  }
+  // The one place a field becomes what to read: the keyword in the image's metadata, and the tag number to read from
+  // the image's DICOM JSON when the metadata has no value. A tag number: its keyword from the common list or the
+  // dictionary. A keyword: the common items always come with the metadata (no tag); others take their tag from the
+  // dictionary, so an item whose keyword the viewer's metadata does not carry is still read.
+  function resolve(fieldName) {
+    if (!fieldName) return { keyword: null, tag: null };
+    if (fieldName[0] === '(') {
+      const tag = fieldName.slice(1, 5) + fieldName.slice(6, 10);
+      return { keyword: KEYWORDS[tag] || dictionary?.byTag.get(tag)?.keyword || null, tag };
+    }
+    return { keyword: fieldName, tag: COMMON.has(fieldName) ? null : dictionary?.byKeyword.get(fieldName)?.tag || null };
+  }
+  const metadataValue = (keyword, instance) => keyword && instance && own(instance, keyword) ? text(instance[keyword]) : '';
+  // A field's value: the image's metadata by keyword, or else its DICOM JSON by tag number (raw; undefined while it is
+  // being read, shown as '\u2026'). '\u2014' when the image has no value.
   function lookup(fieldName, instance, raw) {
     if (!fieldName || !instance) return fieldName ? '\u2014' : null;
-    if (fieldName[0] === '(') {
-      const hex = fieldName.slice(1, 5) + fieldName.slice(6, 10), keyword = KEYWORDS[hex];
-      if (keyword && own(instance, keyword) && text(instance[keyword]) !== '') return text(instance[keyword]);
-      if (raw === undefined) return '\u2026';
-      const shown = raw ? jsonText(raw[hex]) : '';
-      return shown === '' ? '\u2014' : shown;
-    }
-    const shown = own(instance, fieldName) ? text(instance[fieldName]) : '';
+    const { keyword, tag } = resolve(fieldName), known = metadataValue(keyword, instance);
+    if (known !== '') return known;
+    if (!tag) return '\u2014';
+    if (raw === undefined) return '\u2026';
+    const shown = raw ? jsonText(raw[tag]) : '';
     return shown === '' ? '\u2014' : shown;
   }
-  // Whether a choice of corner items needs the image's DICOM JSON (a tag number without a known keyword).
-  const needsRaw = fields => fields.some(field => field && field[0] === '(');
+  // Whether a choice of corner items needs the image's DICOM JSON: an item the metadata has no value for that has a tag.
+  const needsRaw = (fields, instance) => fields.some(field => { if (!field) return false; const { keyword, tag } = resolve(field); return !!tag && metadataValue(keyword, instance) === ''; });
+  // Whether a choice needs the dictionary before it can be read: a keyword outside the common items that the metadata
+  // has no value for, while the dictionary is not loaded.
+  const needsDictionary = (fields, instance) => !dictionary && fields.some(field => !!field && field[0] !== '(' && !COMMON.has(field) && metadataValue(field, instance) === '');
   // The name in the choice lists: "Slice Thickness", "Patient ID", "kVp"; a tag number as typed.
   const LABELS = { KVP: 'kVp' };
   function fieldLabel(fieldName) {
@@ -214,7 +261,7 @@
   function line(fieldName, instance, raw) {
     const value = lookup(fieldName, instance, raw);
     if (value === null) return null;
-    const keyword = fieldName[0] === '(' ? KEYWORDS[fieldName.slice(1, 5) + fieldName.slice(6, 10)] : fieldName;
+    const { keyword } = resolve(fieldName);
     return fieldName + ': ' + value + (!['\u2014', '\u2026'].includes(value) && UNITS[keyword] ? ' ' + UNITS[keyword] : '');
   }
 
@@ -238,6 +285,7 @@
     PRESET_NAME, PRESETS_PER_MODALITY, preset, presets, savePreset, deletePreset, toRange, fromRange,
     OVERLAY_DEFAULTS, overlay, borderOn,
     CORNERS, LINES, TAGS: Object.freeze(TAGS.slice()), field, fieldLabel, corners, cornerDefaults, text, lookup, line, needsRaw,
+    useDictionary, dictionarySize, searchDictionary, resolve, needsDictionary,
     rulerPixels, voiKind, modality: value => typeof value === 'string' && MODALITY.test(value),
   });
   root.KinViewerDisplayModel = api;
