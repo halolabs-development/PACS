@@ -3,8 +3,8 @@
 // (Images), whether the worklist belongs there, and where the thumbnail (series) strip and the toolbar stand on it.
 // There is one viewer window; it covers one display or two side by side. When the rule is applied, the window is moved
 // over its image monitors (only with the display permission the reader already gave), and its image area is split at
-// the display edge: each monitor's part gets its own cells and its own rows. The worklist window is never moved (a
-// browser does not move a window it did not open); the viewer reports whether it stands on its monitor.
+// the display edge: each monitor's part gets its own cells and its own rows. The worklist window is asked to come to its
+// monitor (viewer-windows.js placeWorklist: a popup or app window moves; a tab offers to open the worklist window there).
 // The pure part below (KinViewerMonitorPlan) turns a rule, the displays and the window into that split.
 (function (root) {
   const THICKNESS = { toolbar: { across: 36, upright: 108 }, thumbs: { across: 66, upright: 156 } };
@@ -332,7 +332,8 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
   // Both act only while these rows are still the ones shown: an aborted, older or cleared prepare changes nothing more.
   async function prepare(rule, { signal } = {}) {
     const mine = ++epoch, before = active, notes = [];
-    let placed = null;
+    // worklist: undefined (nothing to do), null (no Worklist Show: take back an offered bar), or { monitor, rect }.
+    let placed = null, worklist = undefined;
     const owns = () => epoch === mine;
     const undo = () => { if (placed && active === placed) show(before); };
     // An abort puts the rows back at once; every later step checks that this prepare still owns them.
@@ -344,6 +345,7 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
         if (!owns()) return;
         if (!split) { if (active) show(null); return; }
         if (active === placed) { placed.at = placedAt(); placed.watching = true; startWatch(placed); }
+        if (worklist !== undefined) settleWorklist(worklist, owns);
       } });
     preparing++;
     // A newer prepare() pauses the check of rows already applied; once none runs, they are measured again.
@@ -394,20 +396,45 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
       place({ chrome: { toolbar: toolbar.original?.side || 'top', toolbarAutoHide: true, thumbs: thumbs.original?.side || 'top', thumbsAutoHide: true },
         css, noThumbs: !thumbs.original, copies: { 'Image Tools': copy(toolbar.copy), Series: copy(thumbs.copy) } });
       notes.unshift('적용 ' + split.applied.map(name).join('·') + '.');
-      // The worklist window is not moved: where it stands is read from it now.
+      // The worklist window: where it stands is read from it now; once the rule stands (commit) it is asked to come to its
+      // monitor when it is elsewhere (settleWorklist). A rule with no Worklist Show takes back a bar offered before.
       const listed = monitors.list.findIndex(m => m.worklist === 'show');
-      if (listed >= 0) {
+      if (listed < 0) worklist = null;
+      else {
         let rect = null;
         try { rect = await window.kinViewerListPlace?.(); } catch (_) { rect = null; }
         check();
         const at = rect ? plan.monitorOf(info.screens, rect) : -1;
+        if (at >= 0 && at !== listed && info.screens[listed]) { const s = info.screens[listed]; worklist = { monitor: listed, rect: { left: s.left, top: s.top, width: s.width, height: s.height } }; }
         notes.push(!rect || at < 0 ? 'Worklist: 목록 창 위치를 확인할 수 없습니다.' : at === listed ? 'Worklist: 목록 창이 ' + name(listed) + '에 있습니다.'
-          : 'Worklist: 목록 창이 ' + name(listed) + '에 있지 않습니다(' + name(at) + '). 브라우저는 목록 창을 옮기지 않습니다. 목록 창을 직접 옮기세요.');
+          : !info.screens[listed] ? 'Worklist: ' + name(listed) + '이(가) 이 화면 구성에 없어 목록 창을 옮기지 않았습니다(' + name(at) + ').'
+          : 'Worklist: 목록 창이 ' + name(listed) + '에 있지 않아(' + name(at) + ') ' + name(listed) + '(으)로 옮깁니다.');
       }
       return answer(split, moved);
     }
   }
-  window.KinViewerMonitors = { prepare, clear: () => { epoch++; if (active) show(null); } };
+  // The worklist on the monitor of an applied rule (Worklist: Show), after the rule stands: the list document that linked
+  // this window moves its worklist window there or, a tab it cannot move, offers on its own screen to open the worklist
+  // window there (viewer-windows.js placeWorklist). Its measured answer is told while this rule is still the one applied
+  // (owns). want null: a bar offered for an earlier rule is taken back.
+  let offered = false;
+  function settleWorklist(want, owns) {
+    const ask = window.kinViewerListPlaceOn;
+    if (typeof ask !== 'function') return;
+    if (want === null) { if (offered) { offered = false; Promise.resolve(ask(null)).catch(() => {}); } return; }
+    const n = name(want.monitor);
+    Promise.resolve(ask(want)).then(answer => {
+      if (!owns()) return;
+      const result = answer?.result;
+      if (result === 'offered') offered = true; else if (result === 'moved' || result === 'here') offered = false;
+      const text = !answer ? 'Worklist: 목록 창이 답하지 않아 ' + n + '(으)로 옮기지 못했습니다.'
+        : result === 'moved' ? 'Worklist: 목록 창을 ' + n + '(으)로 옮겼습니다.'
+        : result === 'offered' ? 'Worklist: 목록 창은 브라우저 탭이라 옮길 수 없어, 목록 화면에 "Open Worklist on ' + n + '" 단추를 띄웠습니다.'
+        : result === 'here' ? null : 'Worklist: 목록 창을 ' + n + '(으)로 옮기지 못했습니다.';
+      if (text) ui.toast(text);
+    }, () => {});
+  }
+  window.KinViewerMonitors = { prepare, clear: () => { epoch++; if (active) show(null); settleWorklist(null, () => false); } };
 
   // ── The window: Viewer Settings › Monitors in Hanging Protocol… ──
   const element = (tag, attributes = {}, parent) => {
@@ -468,7 +495,7 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
     const hp = window.KinViewerHangingProtocol?.current?.(), model = window.KinHangingProtocolModel;
     element('p', { text: 'Hanging Protocol의 모니터마다 영상 배치, 목록 창 자리, 썸네일·도구 줄 위치를 정합니다. Monitor 1은 가장 왼쪽 화면입니다. '
       + 'Save는 그 Hanging Protocol에 저장만 하고, Hanging Protocols에서 Apply 할 때마다 적용됩니다. '
-      + '목록 창은 옮기지 않고, 그 모니터에 있는지만 알려 드립니다.' }, handle.body);
+      + 'Apply 때 목록 창(Worklist Show)이 다른 모니터에 있으면 그 모니터로 옮기고, 브라우저가 옮기지 않는 탭이면 목록 화면에 그 모니터에 목록 창을 여는 단추를 띄웁니다.' }, handle.body);
     const status = element('p', { role: 'status' });
     if (!hp || !model) { handle.body.append(status); status.textContent = '이 뷰어에서 Hanging Protocols를 사용할 수 없습니다.'; return handle; }
     const top = element('div', { className: 'kin-chrome-row' }, handle.body);

@@ -254,16 +254,63 @@ class MonitorHangingDOMTest(unittest.TestCase):
         page.evaluate('synAnswer.undo()'); page.evaluate(FRAME); page.evaluate(FRAME)
         expect(page.locator('.kin-span-fixed')).to_have_count(0)
 
-    def test_08_the_worklist_window_is_read_not_moved(self):
+    def test_08_the_worklist_window_is_read_and_asked_to_its_monitor_once_the_rule_stands(self):
         page = self.open(displays=TWO_DISPLAYS)
+        page.evaluate("""() => { window.synPlaceCalls = []; window.synPlaceAnswer = { result: 'moved', rect: null };
+          window.kinViewerListPlaceOn = async target => { synPlaceCalls.push(target && structuredClone(target)); return synPlaceAnswer; }; }""")
         rules = [monitor('none', worklist='show', toolbar='none', thumbs='none'), monitor('2x2')]
         here = page.evaluate("() => ({ left: synScreens[0].left + 10, top: 10, width: 400, height: 300 })")
         there = page.evaluate("() => ({ left: synScreens[1].left + 10, top: 10, width: 400, height: 300 })")
         self.assertIn('Worklist: 목록 창이 Monitor 1에 있습니다.', self.prepare(page, rules, here)['note'])
+        page.evaluate('synAnswer.commit()')
+        self.assertEqual([], page.evaluate('synPlaceCalls'), 'a worklist already on its monitor is left alone')
+        self.assertIn('Worklist: 목록 창이 Monitor 1에 있지 않아(Monitor 2) Monitor 1(으)로 옮깁니다.', self.prepare(page, rules, there)['note'])
+        self.assertEqual([], page.evaluate('synPlaceCalls'), 'nothing is asked before the rule stands')
         page.evaluate('synAnswer.undo()')
-        self.assertIn('Worklist: 목록 창이 Monitor 1에 있지 않습니다(Monitor 2). 브라우저는 목록 창을 옮기지 않습니다.', self.prepare(page, rules, there)['note'])
-        page.evaluate('synAnswer.undo()')
+        self.assertEqual([], page.evaluate('synPlaceCalls'), 'an apply that does not stand asks nothing')
+        self.prepare(page, rules, there)
+        page.evaluate('synAnswer.commit()')
+        page.wait_for_function('synPlaceCalls.length === 1')
+        self.assertEqual({'monitor': 0, 'rect': page.evaluate('synScreens[0]')}, page.evaluate('synPlaceCalls[0]'))
+        page.wait_for_function("synNotes.some(n => n.message === 'Worklist: 목록 창을 Monitor 1(으)로 옮겼습니다.')")
         self.assertIn('Worklist: 목록 창 위치를 확인할 수 없습니다.', self.prepare(page, rules, None)['note'])
+
+    def test_08b_a_tab_is_offered_the_worklist_window_and_a_later_rule_without_show_takes_the_offer_back(self):
+        page = self.open(displays=TWO_DISPLAYS)
+        page.evaluate("""() => { window.synPlaceCalls = []; window.synPlaceAnswer = { result: 'offered', rect: null };
+          window.kinViewerListPlaceOn = async target => { synPlaceCalls.push(target && structuredClone(target)); return synPlaceAnswer; }; }""")
+        there = page.evaluate("() => ({ left: synScreens[1].left + 10, top: 10, width: 400, height: 300 })")
+        self.prepare(page, [monitor('none', worklist='show', toolbar='none', thumbs='none'), monitor('2x2')], there)
+        page.evaluate('synAnswer.commit()')
+        page.wait_for_function("""synNotes.some(n => n.message === 'Worklist: 목록 창은 브라우저 탭이라 옮길 수 없어, 목록 화면에 "Open Worklist on Monitor 1" 단추를 띄웠습니다.')""")
+        # The next rule shows no worklist: the bar offered on the worklist screen is taken back, once.
+        self.prepare(page, [monitor('2x2'), monitor('2x2')])
+        page.evaluate('synAnswer.commit()')
+        page.wait_for_function('synPlaceCalls.length === 2')
+        self.assertIsNone(page.evaluate('synPlaceCalls[1]'))
+        self.prepare(page, [monitor('2x2'), monitor('2x2')])
+        page.evaluate('synAnswer.commit()'); page.evaluate(FRAME)
+        self.assertEqual(2, page.evaluate('synPlaceCalls.length'), 'nothing is taken back twice')
+
+    def test_08c_no_answer_is_said_and_an_answer_for_a_rule_no_longer_applied_is_not(self):
+        page = self.open(displays=TWO_DISPLAYS)
+        page.evaluate("""() => { window.synPlaceCalls = [];
+          window.kinViewerListPlaceOn = target => new Promise(resolve => { synPlaceCalls.push(target); window.synPlaceRelease = resolve; }); }""")
+        there = page.evaluate("() => ({ left: synScreens[1].left + 10, top: 10, width: 400, height: 300 })")
+        rules = [monitor('none', worklist='show', toolbar='none', thumbs='none'), monitor('2x2')]
+        self.prepare(page, rules, there)
+        page.evaluate('synAnswer.commit()')
+        page.wait_for_function("typeof synPlaceRelease === 'function'")
+        page.evaluate('synPlaceRelease(null)')
+        page.wait_for_function("synNotes.some(n => n.message === 'Worklist: 목록 창이 답하지 않아 Monitor 1(으)로 옮기지 못했습니다.')")
+        count = page.evaluate('synNotes.length')
+        self.prepare(page, rules, there)
+        page.evaluate('synAnswer.commit()')
+        page.wait_for_function('synPlaceCalls.length === 2')
+        # A newer rule is applied before the answer comes: the late answer says nothing.
+        self.prepare(page, [monitor('2x2'), monitor('2x2')])
+        page.evaluate("synPlaceRelease({ result: 'moved', rect: null })"); page.evaluate(FRAME)
+        self.assertFalse(page.evaluate("synNotes.slice(%d).some(n => n.message.startsWith('Worklist:'))" % count))
 
     def test_09_without_display_information_nothing_is_claimed(self):
         page = self.open(displays="() => { Object.defineProperty(screen, 'isExtended', { configurable: true, get: () => true }); }")
