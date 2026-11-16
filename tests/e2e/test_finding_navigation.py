@@ -223,8 +223,8 @@ class FindingNavigationE2E(ViewerHistoryE2E):
         # Two-window conflict: the other window's edit wins, this window keeps its text and adopts the latest head.
         panel = self.panel(p); saved_row = self.saved_row(p, saved[0]['id'])
         saved_row.get_by_role('button', name='Edit', exact=True).click(); saved_row.get_by_label('Finding Text').fill('내 수정 보존')
-        # S2-L version rule: the viewer saved a version 2 record, so the other window's edit is version 2 as well.
-        other = dict(requestId=str(uuid.uuid4()), expectedRevision=1, action='edit', item=dict(schemaVersion=2, title='다른 창', text='', characteristics='', sources=[dict(itemId=head['id'], revision=1)]))
+        # S2-L version rule: the viewer saved a version 3 record, so the other window's edit is version 3 as well.
+        other = dict(requestId=str(uuid.uuid4()), expectedRevision=1, action='edit', item=dict(schemaVersion=3, title='다른 창', text='', characteristics='', lesionLocation='', sources=[dict(itemId=head['id'], revision=1)]))
         self.assertEqual(self.stack.request('POST', '/studies/'+f.uid+'/findings/'+saved[0]['id']+'/revisions', 'doctor', other).status, 200)
         saved_row.get_by_role('button', name='Save', exact=True).click(); expect(saved_row).to_contain_text('서버에 다른 판')
         expect(saved_row.get_by_label('Finding Text')).to_have_value('내 수정 보존'); expect(saved_row.get_by_role('button', name='Save', exact=True)).to_be_disabled()
@@ -265,7 +265,7 @@ class FindingNavigationE2E(ViewerHistoryE2E):
             if delayed: break
             p.wait_for_timeout(20)
         self.assertEqual(len(delayed), 1)
-        edit = dict(requestId=str(uuid.uuid4()), expectedRevision=1, action='edit', item=dict(schemaVersion=2, title='new A', text='', characteristics='', sources=[dict(itemId=s['itemId'], revision=s['revision']) for s in saved['item']['sources']]))
+        edit = dict(requestId=str(uuid.uuid4()), expectedRevision=1, action='edit', item=dict(schemaVersion=3, title='new A', text='', characteristics='', lesionLocation='', sources=[dict(itemId=s['itemId'], revision=s['revision']) for s in saved['item']['sources']]))
         self.assertEqual(self.stack.request('POST', '/studies/'+f.uid+'/findings/'+saved['id']+'/revisions', 'doctor', edit).status, 200)
         # S2-B2: activating the other study of this comparison viewer keeps the first study's list as it is,
         # with its reload still unanswered (held above): the old rows stay and the status says it is reading.
@@ -660,7 +660,7 @@ class FindingNavigationE2E(ViewerHistoryE2E):
         saved_row.get_by_role('button', name='History', exact=True).click()
         expect(saved_row).to_contain_text('r1 · 생성 · ')
         expect(saved_row.locator('[data-kin-revision="1"]')).to_contain_text('Characteristics (병변 특성): '+traits)
-        expect(saved_row.locator('[data-kin-revision="1"]')).to_contain_text('연결: 2D 표식 1개 · Saved View 0개 · 3D Point 0개 · v2')
+        expect(saved_row.locator('[data-kin-revision="1"]')).to_contain_text('연결: 2D 표식 1개 · Saved View 0개 · 3D Point 0개 · v3')
         # An API answer without the schema header: saved records stay visible, nothing can be written.
         def older(route):
             response = route.fetch()
