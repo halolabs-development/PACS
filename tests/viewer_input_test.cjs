@@ -120,6 +120,15 @@ const stats = d => [d, area(d), 40, 2, 35, 45, 69];
 const command = itemValue => v.viewerCommand(raw({ ...body, item: itemValue }), true);
 test('Measure marks: kinds, point counts, texts and the circle values are checked', () => {
   for (const kind of ['text', 'memo', 'spine']) assert.equal(command(mark(kind)).item.kind, kind);
+  // A Spine Label names a vertebra or a disc; the server takes the names of the viewer's rule (measure-tools-model.js), no other.
+  for (const label of ['L4-5', 'C2-3', 'C7-T1', 'C7-8', 'C8-T1', 'T12-L1', 'L5-S1', 'L5-6', 'L6-S1', 'C8', 'L6', 'S1'])
+    assert.equal(command(mark('spine', { label })).item.label, label);
+  const viewerModel = path => { try { return require(path); } catch (_) { return null; } };
+  const tools = viewerModel('/worklist-v0/hpacs-lite/measure-tools-model.js') || viewerModel(require('node:path').join(__dirname, '..', 'worklist-v0', 'hpacs-lite', 'measure-tools-model.js'));
+  assert.ok(tools, 'the viewer rule (measure-tools-model.js) is readable');
+  assert.deepEqual([...v.SPINE_LABELS].sort(), [...tools.ALL_NAMES].sort());
+  for (const label of ['C1-2', 'L4-6', 'l4-5', 'L4–5', 'S1-2', 'L5-L6', 'L4-L5', ' L4-5', 'L4-5 ', 'L45', 'T13'])
+    reject(() => command(mark('spine', { label })));
   assert.equal(command(mark('memo', { label: '' })).item.title, 'F/U');
   assert.equal(command(mark('text', { frameOfReferenceUid: null })).item.frameOfReferenceUid, null);
   assert.deepEqual(command(circle(stats(10))).item.baseline, { calculator: 'kin-circle-v1:pixel:hu', values: stats(10) });

@@ -14,15 +14,55 @@
     return [...Array.from({ length: includeC8 ? 8 : 7 }, (_, i) => 'C' + (i + 1)), ...Array.from({ length: 12 }, (_, i) => 'T' + (i + 1)),
       ...Array.from({ length: includeL6 ? 6 : 5 }, (_, i) => 'L' + (i + 1)), 'S1'];
   }
+  // What the labels name: the vertebrae (C1 … S1), the discs between them, or both in their order down the spine.
+  const LABELS = Object.freeze(['Vertebrae', 'Discs', 'Vertebrae and Discs']);
+  // The disc between two neighbouring vertebrae: L4-5 within a region, C7-T1 / T12-L1 / L5-S1 across one. There is no
+  // disc between C1 and C2, so the first disc is C2-3.
+  const discName = (upper, lower) => upper[0] === lower[0] ? upper + '-' + lower.slice(1) : upper + '-' + lower;
+  function spineNames(includeC8, includeL6, labels = LABELS[0]) {
+    const levels = spineLevels(!!includeC8, !!includeL6);
+    if (!LABELS.includes(labels)) return [];
+    if (labels === LABELS[0]) return levels;
+    return levels.flatMap((level, i) => [...(labels === LABELS[2] ? [level] : []),
+      ...(i + 1 < levels.length && level !== 'C1' ? [discName(level, levels[i + 1])] : [])]);
+  }
+  // Every name a label may carry (any choice of C8 and L6) and its place down the spine: a vertebra at twice its index
+  // among C1 … C8 … L6 S1, a disc halfway between its two vertebrae.
+  const PLACES = (() => {
+    const full = spineLevels(true, true), places = new Map();
+    for (const c8 of [false, true]) for (const l6 of [false, true]) {
+      const levels = spineLevels(c8, l6);
+      levels.forEach((level, i) => {
+        places.set(level, 2 * full.indexOf(level));
+        if (i + 1 < levels.length && level !== 'C1') places.set(discName(level, levels[i + 1]), full.indexOf(level) + full.indexOf(levels[i + 1]));
+      });
+    }
+    return places;
+  })();
+  const ALL_NAMES = Object.freeze([...PLACES.keys()].sort((a, b) => PLACES.get(a) - PLACES.get(b)));
+  // The start in a list drawn again (another choice of labels, C8 or L6): the same name, or the nearest one down the spine,
+  // the lower one of two as near (a vertebra → the disc under it, a disc → the vertebra under it, a dropped C8 → T1,
+  // C8-T1 → C7-T1).
+  function spineStart(names, start) {
+    if (names.includes(start)) return start;
+    const place = PLACES.get(start);
+    if (place === undefined) return names[0] ?? null;
+    let best = null;
+    for (const name of names) {
+      const d = PLACES.get(name) - place;
+      if (!best || Math.abs(d) < Math.abs(best.d) || Math.abs(d) === Math.abs(best.d) && d > best.d) best = { name, d };
+    }
+    return best ? best.name : null;
+  }
   // The levels to stamp from the start level on, one per press. null when the start is not one of the levels.
-  function spineOrder({ start, includeC8, includeL6, direction }) {
-    const levels = spineLevels(!!includeC8, !!includeL6), at = levels.indexOf(start);
+  function spineOrder({ start, includeC8, includeL6, direction, labels = LABELS[0] }) {
+    const levels = spineNames(!!includeC8, !!includeL6, labels), at = levels.indexOf(start);
     if (at < 0 || !DIRECTIONS.includes(direction)) return null;
     return { levels, order: direction === DIRECTIONS[0] ? levels.slice(at) : levels.slice(0, at + 1).reverse() };
   }
   // The preview line: every level, the start level in brackets.
   const spinePreview = (levels, start) => levels.map(level => level === start ? '[' + level + ']' : level).join(' ');
-  const spineLevel = value => typeof value === 'string' && ALL_LEVELS.includes(value);
+  const spineLevel = value => typeof value === 'string' && PLACES.has(value);
 
   // ── Circle by Diameter ──
   // A circle of the given diameter on the patient: on pixels that are not square it is an ellipse of pixels.
@@ -105,7 +145,7 @@
     return { list: [...list, text], error: '' };
   }
 
-  return Object.freeze({ DIRECTIONS, ALL_LEVELS, spineLevels, spineOrder, spinePreview, spineLevel,
+  return Object.freeze({ DIRECTIONS, ALL_LEVELS, LABELS, ALL_NAMES, spineLevels, spineNames, spineStart, discName, spineOrder, spinePreview, spineLevel,
     circleShape, circlePixels, circleStats, circleValues, circleLines, MAX_PIXELS,
     TEXT_LIMIT, TITLE_LIMIT, MARKING_LIMIT, MARKINGS, cleanText, markingList, addMarking });
 });

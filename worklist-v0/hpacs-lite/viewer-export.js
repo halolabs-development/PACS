@@ -131,7 +131,8 @@ window.KinViewerExport = (() => {
     // Everything is read from the page before the first await, so one call draws one moment of the cells.
     const layers = cells.map((cell, index) => ({ pane: rects[index], cell,
       canvases: [...cell.pane.querySelectorAll('canvas')].filter(visible).map(canvas => [canvas, canvas.getBoundingClientRect()]),
-      svgs: [...cell.pane.querySelectorAll('svg.svg-layer')].filter(visible).map(svg => [svgImage(svg, svg.getBoundingClientRect()), svg.getBoundingClientRect()]) }));
+      // The annotation layer and the Measure menu's own layer (Spine Label, Text, Memo, circles; viewer-features-measure.js).
+      svgs: [...cell.pane.querySelectorAll('svg.svg-layer, svg[data-kin-measure-layer]')].filter(visible).map(svg => [svgImage(svg, svg.getBoundingClientRect()), svg.getBoundingClientRect()]) }));
     const frozen = layers.map(layer => layer.canvases.map(([canvas, r]) => {
       const copy = document.createElement('canvas'); copy.width = canvas.width; copy.height = canvas.height;
       copy.getContext('2d').drawImage(canvas, 0, 0); return [copy, r];

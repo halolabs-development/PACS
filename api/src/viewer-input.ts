@@ -163,8 +163,17 @@ function lineBaseline(kind: string, baseline: any) {
       !baseline.values.every((n: any) => n === null || typeof n === 'number' && Number.isFinite(n))) bad();
   return { calculator: baseline.calculator as string, values: baseline.values as (number | null)[] };
 }
-const SPINE_LEVELS = [...Array.from({ length: 8 }, (_, i) => 'C' + (i + 1)), ...Array.from({ length: 12 }, (_, i) => 'T' + (i + 1)),
-  ...Array.from({ length: 6 }, (_, i) => 'L' + (i + 1)), 'S1'];
+// The names a Spine Label may carry: the vertebrae C1 … S1 and the discs between neighbours (L4-5 within a region, C7-T1 /
+// T12-L1 / L5-S1 across one, none between C1 and C2), with and without C8 and L6 — the rule of the viewer's
+// measure-tools-model.js (tests/viewer_input_test.cjs holds both to the same set).
+export const SPINE_LABELS: readonly string[] = Object.freeze([...new Set([false, true].flatMap(c8 => [false, true].flatMap(l6 => {
+  const levels = [...Array.from({ length: c8 ? 8 : 7 }, (_, i) => 'C' + (i + 1)), ...Array.from({ length: 12 }, (_, i) => 'T' + (i + 1)),
+    ...Array.from({ length: l6 ? 6 : 5 }, (_, i) => 'L' + (i + 1)), 'S1'];
+  return levels.flatMap((level, i) => {
+    const lower = levels[i + 1];
+    return [level, ...(lower && level !== 'C1' ? [level[0] === lower[0] ? level + '-' + lower.slice(1) : level + '-' + lower] : [])];
+  });
+})))]);
 // kin-circle-v1:<spacing basis>:<hu | value>: [diameter mm, area mm²] or, with statistics, [.., mean, SD, min, max, pixel count];
 // 'hu' when the statistics are CT values in HU, 'value' for pixel values without a unit (and for a circle without statistics).
 function circleBaseline(baseline: any) {
@@ -220,7 +229,7 @@ export function viewerCommand(raw: Buffer, create: boolean): ViewerCommand {
     if (item.kind === 'memo') {
       normalized.title = text(item.title, 200);
       if (!normalized.title.trim() && !normalized.label.trim()) invalid('메모의 제목이나 글이 필요합니다');
-    } else if (item.kind === 'spine') { if (!SPINE_LEVELS.includes(normalized.label)) invalid('척추 레벨 이름이 올바르지 않습니다'); }
+    } else if (item.kind === 'spine') { if (!SPINE_LABELS.includes(normalized.label)) invalid('척추 레벨 이름이 올바르지 않습니다'); }
     else if (item.kind === 'text' && !normalized.label.trim()) invalid('표식 글이 필요합니다');
     if (item.kind === 'circle') normalized.baseline = circleBaseline(item.baseline);
     if (ORTHO_KINDS.includes(item.kind)) normalized.baseline = orthoBaseline(item.kind, item.baseline);
