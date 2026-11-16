@@ -1166,8 +1166,10 @@ class ReportCitationDOMTest(unittest.TestCase):
             self.page.evaluate("qidoReply(%s)" % json.dumps(row, ensure_ascii=False))
 
     def turn_measure(self, on):
+        # A plain click, not check(): a refused read unticks the box again at once, which check() would report as a failed click.
         box = self.page.locator("#cite-preview-measure")
-        box.check() if on else box.uncheck()
+        self.assertNotEqual(on, box.is_checked(), "the box is not already in the state asked for")
+        box.click()
 
     def test_include_measurements_starts_off_and_off_sends_todays_seven_keys_and_bytes(self):
         self.open_measured()
