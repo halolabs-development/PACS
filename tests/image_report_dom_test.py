@@ -50,6 +50,8 @@ class DrawingSite(rf.FlowSite):
         self.drawing_writes = []                # bodies of draft writes that carried an attach or a remove
         self.drawings_down = False              # the attached-drawings list read fails (503) while set
         self.pictures_down = False              # the read of one drawing's picture fails (503) while set
+        self.picture_failures = 0               # this many next reads of a drawing's picture fail (503), then they work
+        self.picture_reads = 0                  # reads of a drawing's picture
         self.frame_reads = []
 
     @staticmethod
@@ -176,6 +178,10 @@ class DrawingSite(rf.FlowSite):
                                                  "drawings": [self.meta(i) for i in self.effective(draw, head)]} if st["row"] else None,
                                        "draftRevision": self.revision_of(uid)})
         drawing_id = what.rsplit("/", 1)[-1]
+        self.picture_reads += 1
+        if self.picture_failures > 0:
+            self.picture_failures -= 1
+            return route.fulfill(status=503, json={"code": "SYN_DOWN", "message": "SYN drawing picture down once"})
         if self.pictures_down:
             return route.fulfill(status=503, json={"code": "SYN_DOWN", "message": "SYN drawing picture down"})
         if drawing_id not in self.pictures:

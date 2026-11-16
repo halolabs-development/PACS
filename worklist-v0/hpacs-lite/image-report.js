@@ -244,10 +244,13 @@
     const reason = (error, fallback) => (error && (error.body?.message || error.message)) || fallback;
 
     function sync() {
+      const uid = ctx.selectedUid();
       for (const control of [button, panelOpen]) {
         if (!control) continue;
         control.hidden = !can();
-        control.disabled = !can() || !ctx.allowed() || !ctx.selectedUid();
+        // The panel's Draw takes the report's edit gate too: where the report takes no edits it would only open a view-only
+        // window (the panel already shows the attached drawings; the editor's Image Report button still opens it to view).
+        control.disabled = !can() || !ctx.allowed() || !uid || (control === panelOpen && !!ctx.report.editBlock(uid));
       }
     }
 
@@ -388,11 +391,15 @@
      * Resolves to whether every drawing of the list is on the screen as a picture - read and decoded. A figure whose
      * picture could not be read is on the screen, but that drawing was not shown.
      */
-    function renderAttached(target, uid, list, { editable, at, onRemove }) {
+    function renderAttached(target, uid, list, { editable, at, onRemove, readOnlyCache = false }) {
       const drawn = [];
       target.replaceChildren(...list.map(d => {
         const img = node('img', { alt: nameOf(d) });
-        drawn.push(picture(uid, d.id, at).then(url => new Promise(resolve => {
+        // readOnlyCache: show only pictures another rendering already read (the band's panel after the strip), so a picture
+        // the strip could not read is not read again here and the two never disagree; the strip's next read retries both.
+        const read = !readOnlyCache ? picture(uid, d.id, at)
+          : pictures.has(d.id) ? Promise.resolve(pictures.get(d.id)) : Promise.reject(new Error('not read'));
+        drawn.push(read.then(url => new Promise(resolve => {
           img.addEventListener('load', () => resolve(true), { once: true });
           img.addEventListener('error', () => resolve(false), { once: true });
           img.src = url;
@@ -577,12 +584,12 @@
       } });
       const still = () => mine === stripSeq && ctx.selectedUid() === uid && ctx.admits(at) && scopeStamp === examStamp(uid);
       tellDrawn(uid, list, drawn, still);
-      // The band's panel draws the same list once the strip's pictures are read (so each is read once), view only. It is
-      // never told as shown: only the strip under the report is.
+      // The band's panel draws the same list once the strip's pictures are read, from those reads only (never a read of its
+      // own), view only. It is never told as shown: only the strip under the report is.
       void drawn.then(() => {
         if (!still()) return;
         panelSay('Attached to this report: ' + shown.length);
-        if (panelList) void renderAttached(panelList, uid, shown, { editable: false, at, onRemove: () => {} });
+        if (panelList) void renderAttached(panelList, uid, shown, { editable: false, at, onRemove: () => {}, readOnlyCache: true });
       });
     }
 
@@ -595,7 +602,7 @@
     const offRender = ctx.onRender(() => { if (session && session.scopeStamp !== examStamp(session.uid)) { session = null; dialog.close(); } sync(); if (ctx.selectedUid() !== stripUid || markOf(stripUid) !== stripMark || access() !== stripAccess) void refreshStrip(); });
     const offSelect = ctx.onSelect(() => { sync(); void refreshStrip(); });
     // The editor drew this study's report again (a discard, Clear, commit or reset changed what the draft holds): read again.
-    const offReport = ctx.onReport ? ctx.onReport(uid => { if (uid === ctx.selectedUid()) void refreshStrip(); }) : () => {};
+    const offReport = ctx.onReport ? ctx.onReport(uid => { sync(); if (uid === ctx.selectedUid()) void refreshStrip(); }) : () => {};
     // The person ended that study's draft (Discard Draft, Clear): the marks not yet attached go with it.
     const offDraftEnd = ctx.onDraftEnd ? ctx.onDraftEnd(uid => { memory.drop(owner(), memoryUid(uid)); if (session?.uid === uid) { session.marks = createMarks(); paint(); } }) : () => {};
     const end = () => {

@@ -13,7 +13,10 @@ automatically." -> TEST-IRPANEL-01..05:
   04 the panel shows the drawings attached to the selected study's report (the same list as the strip under
      Conclusion), follows another study, follows an attach made in the drawing window, and says when the list could not
      be read (and reads it again on the next redraw);
-  05 Draw in the panel opens the drawing window for the selected study; closing it returns focus to Draw.
+  05 Draw in the panel opens the drawing window for the selected study; closing it returns focus to Draw;
+  06 a picture the strip could not read is shown as not read in the panel too (the panel never reads one again on its
+     own, so the two never differ), and the next read draws it in both;
+  07 where the report takes no edits Draw is off, while the panel still shows the drawings.
 The real main.html, its bundle and assets are served; only HTTP is synthetic (image_report_dom_test.DrawingSite).
 """
 import json
@@ -196,6 +199,53 @@ class ImageReportPanel(unittest.TestCase):
         self.page.locator('#image-report-close').click()
         expect(dialog).to_be_hidden()
         expect(draw).to_be_focused()
+
+    def test_irpanel_06_a_picture_the_strip_could_not_read_is_not_read_again_by_the_panel(self):
+        held = self.drawing()
+        self.stored(text='SYN text with a drawing', ids=[held])
+        self.site.picture_failures = 1   # the first read of the picture fails, a second one would work
+        self.open()
+        self.set_panels({'Image Report': True})
+        self.open_study(h.PATIENT)
+        status = self.page.locator('#image-report-panel-status')
+        expect(status).to_have_text('Attached to this report: 1')
+        expect(self.page.locator('#image-report-panel-list figure')).to_have_count(1)
+        self.settle(400)
+        width = "() => document.querySelector('%s img')?.naturalWidth ?? -1"
+        # The strip could not read it, and the panel shows the same: no second read of its own that would make the two differ.
+        self.assertEqual(self.page.evaluate(width % '#report-image-attached'), 0)
+        self.assertEqual(self.page.evaluate(width % '#image-report-panel-list'), 0)
+        expect(self.page.locator('#image-report-panel-list img')).to_have_attribute('alt', re.compile(r'\(could not be read\)$'))
+        self.assertEqual(self.site.picture_reads, 1)
+        # The next read (the window opened from the panel, then closed) draws it in both.
+        self.page.locator('#image-report-panel-open').click()
+        dialog = self.page.locator('#image-report')
+        expect(dialog).to_be_visible()
+        self.wait(lambda: self.page.evaluate(width % '#image-report-attached') > 0, 'the window draws the picture')
+        self.page.locator('#image-report-close').click()
+        expect(dialog).to_be_hidden()
+        self.wait(lambda: self.page.evaluate(width % '#report-image-attached') > 0, 'the strip draws it')
+        self.wait(lambda: self.page.evaluate(width % '#image-report-panel-list') > 0, 'the panel draws it')
+
+    def test_irpanel_07_draw_follows_the_reports_edit_gate(self):
+        held = self.drawing()
+        self.stored(head=[held], rs='A')
+        self.site.unverified.add(h.UID)
+        self.open()
+        self.set_panels({'Image Report': True})
+        self.pick(h.PATIENT)
+        self.wait(lambda: self.selected() == h.PATIENT, 'the study opens')
+        status = self.page.locator('#image-report-panel-status')
+        expect(status).to_have_text('Attached to this report: 1')
+        # The report takes no edits: Draw is off, the drawings stay on view, and the editor's Image Report still opens
+        # the window to view.
+        header = self.page.locator('#report-image-report')
+        expect(header).to_be_enabled()
+        self.settle(300)
+        expect(self.page.locator('#image-report-panel-open')).to_be_disabled()
+        expect(self.page.locator('#image-report-panel-list figure')).to_have_count(1)
+        header.click()
+        expect(self.page.locator('#image-report-readonly')).to_contain_text('View only')
 
 
 if __name__ == '__main__':
