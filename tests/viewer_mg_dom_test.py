@@ -143,7 +143,8 @@ CELLS = """() => {
 }"""
 
 # The patient tabs and a reading screen of the same session: two patients (A: studies 1.2.1 and 1.2.2, B: 1.2.9); the
-# reading screen holds unconfirmed text of the studies in synReader.held and answers save / discard / check as told.
+# reading screen holds unconfirmed text of the studies in synReader.held and answers save / discard / check as told,
+# synReader.answerLag ms later; its answers to an opening come synReader.openLag ms later.
 READER = """([group, urlB]) => {
   window.KinWorkContext = { state: () => 'active', session: () => 'syn-session', capture: () => null, admits: () => true };
   window.KinViewerInfoBar = { identity: () => ({ instance: null }) };
@@ -178,7 +179,7 @@ READER = """([group, urlB]) => {
       if (mine && ['saved', 'discarded'].includes(result.status)) synReader.held = synReader.held.filter(uid => uid !== synReader.target);
     }
     setTimeout(() => channel.postMessage({ type: 'answer', id: 'syn-doc', session: 'syn-session', request: m.request, result,
-      held: m.uids.filter(uid => synReader.held.includes(uid)) }), 20);
+      held: m.uids.filter(uid => synReader.held.includes(uid)) }), synReader.answerLag ?? 20);
   };
   // The list document's window-group channel, as viewer-windows.js and reading-workspace.js answer it: the reading screen
   // makes a study its report target (or refuses, or is busy with an earlier opening for synReader.busy ms after a silent
@@ -205,7 +206,7 @@ READER = """([group, urlB]) => {
     synReader.opens.push(m.uid); synReader.openAt.push(performance.now());
     const answer = (result, reason) => ({ type: 'kin-editor-opened', request: m.request, owner: m.owner, uid: m.uid, result, reason,
       ...(reason === 'busy' ? {} : { at: synReader.target === m.uid }) });
-    const reply = (result, reason) => post(answer(result, reason));
+    const reply = (result, reason) => setTimeout(() => windows.postMessage(answer(result, reason)), synReader.openLag ?? 20);
     if (performance.now() < busyUntil) { reply('refused', 'busy'); return; }
     if (synReader.open === 'silent' && m.uid === '1.2.9') { busyUntil = performance.now() + 6000 + (synReader.busy || 0); return; }
     if (synReader.open === 'refuse' && m.uid === '1.2.9') { reply('refused', 'modal'); return; }
@@ -877,6 +878,119 @@ class ViewerMgDOMTest(unittest.TestCase):
         self.assertEqual(['1.2.9'], page.evaluate("synReader.opens"))
         self.assertEqual('1.2.1', page.evaluate("synReader.target"))
         self.assertEqual('PK-A', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+
+    # A newer choice made while a Patient ▶ move is under way is kept as made: the move's request to the reading screen is
+    # withdrawn, nothing more opens or goes back, and no success is claimed. Each entry and each wait of the move.
+    def tabs_shown(self, page):
+        # The viewer header the tabs sit under (viewer-patient-tabs.js refresh), so its tabs and × can be pressed.
+        page.evaluate("""() => { const bar = document.createElement('div'), header = document.createElement('div'), brand = document.createElement('span');
+          header.className = 'bg-secondary-dark z-20'; brand.id = 'kin-viewer-brand'; header.append(brand); bar.append(header);
+          document.body.prepend(bar); KinViewerPatientTabs.refresh(); }""")
+
+    def start_move(self, page, setup=''):
+        page.evaluate("() => { " + setup + " window.moveDone = false; KinViewerPatientTabs.next('save').then(result => { window.moveResult = result; moveDone = true; }); }")
+
+    def test_17f_keypad_a_to_b_to_a_while_the_save_is_answered_keeps_a_and_asks_nothing(self):
+        page = self.open(tabs=True)
+        self.start_move(page, "synReader.answerLag = 800;")
+        page.wait_for_function("() => synReader.calls.some(c => c[0] === 'save')")
+        page.evaluate("() => synOpenB()")
+        page.wait_for_function("() => KinViewerPatientTabs.snapshot()?.key === 'PK-B'")
+        page.evaluate("() => KinViewerPatientTabs.open(" + repr(URL_A) + ")")
+        page.wait_for_function("() => KinViewerPatientTabs.snapshot()?.key === 'PK-A'")
+        page.wait_for_function("() => moveDone", timeout=10000)
+        remounts = page.evaluate("synRemounts")
+        page.wait_for_timeout(2000)
+        self.assertEqual({'ok': False, 'message': '환자가 그 사이 바뀌었습니다.'}, page.evaluate("moveResult"))
+        self.assertEqual('PK-A', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+        self.assertEqual(remounts, page.evaluate("synRemounts"))
+        self.assertEqual([], page.evaluate("synReader.opens"))
+        self.assertEqual('1.2.1', page.evaluate("synReader.target"))
+
+    def test_17g_keypad_the_tab_shown_chosen_again_while_the_opening_is_answered_withdraws_it_and_goes_back_nowhere(self):
+        page = self.open(tabs=True)
+        self.start_move(page, "synReader.open = 'refuse'; synReader.openLag = 1500;")
+        page.wait_for_function("() => synReader.opens.includes('1.2.9')")
+        page.evaluate("() => KinViewerPatientTabs.open(" + repr(URL_B) + ")")
+        page.wait_for_function("() => moveDone", timeout=1500)
+        page.wait_for_timeout(2500)
+        self.assertEqual('영상 탭이 그 사이 바뀌어 더 옮기지 않았습니다. 판독 화면의 대상을 확인하세요.', page.evaluate("moveResult.message"))
+        self.assertFalse(page.evaluate("moveResult.ok"))
+        self.assertEqual(['1.2.9'], page.evaluate("synReader.cancels"))
+        self.assertEqual(['1.2.9'], page.evaluate("synReader.opens"))
+        self.assertEqual('PK-B', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+        self.assertEqual(3, page.evaluate("synRemounts"))
+
+    def test_17h_keypad_tab_clicked_while_the_save_is_answered_is_the_choice_kept(self):
+        page = self.open(tabs=True)
+        self.tabs_shown(page)
+        self.start_move(page, "synReader.answerLag = 800;")
+        page.wait_for_function("() => synReader.calls.some(c => c[0] === 'save')")
+        page.locator('.kin-patient-tabs [role=tab]').nth(1).click()
+        page.wait_for_function("() => moveDone", timeout=10000)
+        page.wait_for_function("() => KinViewerPatientTabs.snapshot()?.key === 'PK-B'", timeout=10000)
+        page.wait_for_timeout(2000)
+        self.assertEqual({'ok': False, 'message': '환자가 그 사이 바뀌었습니다.'}, page.evaluate("moveResult"))
+        self.assertEqual('PK-B', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+        self.assertEqual(3, page.evaluate("synRemounts"))
+        self.assertEqual([], page.evaluate("synReader.opens"))
+
+    def test_17i_keypad_tab_chosen_while_the_next_images_are_awaited_is_kept_and_nothing_is_asked(self):
+        page = self.open(tabs=True)
+        self.start_move(page, "synImageDelay = 2000;")
+        page.wait_for_function("() => synRemounts === 3 && KinViewerPatientTabs.snapshot()?.key === 'PK-B'")
+        page.evaluate("() => { synImageDelay = 0; return KinViewerPatientTabs.open(" + repr(URL_A) + "); }")
+        page.wait_for_function("() => KinViewerPatientTabs.snapshot()?.key === 'PK-A'")
+        page.wait_for_function("() => moveDone", timeout=5000)
+        page.wait_for_timeout(2500)
+        self.assertEqual({'ok': False, 'message': '환자가 그 사이 바뀌었습니다.'}, page.evaluate("moveResult"))
+        self.assertEqual('PK-A', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+        self.assertEqual(4, page.evaluate("synRemounts"))
+        self.assertEqual([], page.evaluate("synReader.opens"))
+
+    def test_17j_keypad_a_tab_closed_while_the_opening_is_awaited_withdraws_it(self):
+        page = self.open(tabs=True)
+        self.start_move(page, "synReader.open = 'slow'; synReader.slowMs = 7500;")
+        page.wait_for_function("() => synReader.opens.includes('1.2.9')")
+        # The tab left (A, not shown now) is closed by its ×.
+        self.tabs_shown(page)
+        page.get_by_role('button', name='Close SYN^ALPHA SYN-A').click()
+        page.wait_for_function("() => moveDone", timeout=1500)
+        self.assertEqual(['1.2.9'], page.evaluate("synReader.cancels"))
+        self.assertEqual('영상 탭이 그 사이 바뀌어 더 옮기지 않았습니다. 판독 화면의 대상을 확인하세요.', page.evaluate("moveResult.message"))
+        page.wait_for_timeout(7500)
+        self.assertIsNone(page.evaluate("synReader.movedAt ?? null"))
+        self.assertEqual(['1.2.9'], page.evaluate("synReader.opens"))
+        self.assertEqual(['PK-B'], page.evaluate("KinViewerPatientTabs.list().map(tab => tab.key)"))
+        self.assertEqual(3, page.evaluate("synRemounts"))
+
+    def test_17k_keypad_end_and_an_invalid_exam_scope_end_the_move_under_way(self):
+        for stop in ["KinViewerPatientTabs.end()", "window.dispatchEvent(new Event('kin-exam-scope-invalidated'))"]:
+            with self.subTest(stop=stop):
+                page = self.open(tabs=True)
+                self.start_move(page, "synReader.open = 'slow'; synReader.slowMs = 7500;")
+                page.wait_for_function("() => synReader.opens.includes('1.2.9')")
+                page.evaluate("() => { " + stop + "; }")
+                page.wait_for_function("() => moveDone", timeout=1500)
+                self.assertEqual(['1.2.9'], page.evaluate("synReader.cancels"))
+                self.assertFalse(page.evaluate("moveResult.ok"))
+                self.assertNotIn('reportTarget', page.evaluate("moveResult"))
+                page.wait_for_timeout(7500)
+                self.assertIsNone(page.evaluate("synReader.movedAt ?? null"))
+                self.assertEqual(['1.2.9'], page.evaluate("synReader.opens"))
+                self.assertEqual(3, page.evaluate("synRemounts"))
+
+    def test_17m_tab_clicked_and_then_the_tab_shown_opened_again_keeps_the_newer_choice(self):
+        # A tab click waits at the save gate; the tab shown is opened again meanwhile: the click's switch never happens.
+        page = self.open(tabs=True)
+        self.tabs_shown(page)
+        page.evaluate("() => { synReader.answerLag = 800; }")
+        page.locator('.kin-patient-tabs [role=tab]').nth(1).click()
+        page.wait_for_function("() => synReader.calls.some(c => c[0] === 'save')")
+        page.evaluate("() => KinViewerPatientTabs.open(" + repr(URL_A) + ")")
+        page.wait_for_timeout(3000)
+        self.assertEqual('PK-A', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+        self.assertEqual(2, page.evaluate("synRemounts"))
 
 if __name__ == '__main__':
     unittest.main()
