@@ -1196,9 +1196,9 @@
       region.dataset.state = phase;
       const active = document.activeElement;
       // 배지: 서버 pending. 읽기가 실패하면 수가 없다(0으로 보이지 않는다).
-      setText(badge, lock !== null ? 'Locked' : pending !== null ? `Pending ACK ${pending}` : phase === 'failed' ? 'Load Failed' : 'Loading');
-      badge.dataset.state = lock !== null ? 'locked' : pending !== null ? 'ready' : phase;
-      setTitle(badge, lock !== null ? TEXT.locked : pending === null && phase === 'failed' ? TEXT.badgeFailed : TEXT.badge);
+      setText(badge, lock !== null ? 'Locked' : !reading ? 'Offline' : pending !== null ? `Pending ACK ${pending}` : phase === 'failed' ? 'Load Failed' : 'Loading');
+      badge.dataset.state = lock !== null ? 'locked' : !reading ? 'offline' : pending !== null ? 'ready' : phase;
+      setTitle(badge, lock !== null ? TEXT.locked : !reading ? TEXT.offline : pending === null && phase === 'failed' ? TEXT.badgeFailed : TEXT.badge);
       let line, detail = '';
       if (lock !== null) { line = lock.text; detail = lock.detail; }
       else if (!reading) line = TEXT.offline;
@@ -1211,7 +1211,8 @@
       setText(statusDetail, detail);
       statusDetail.hidden = !detail;
       allButton.setAttribute('aria-pressed', String(filter === 'all'));
-      allButton.disabled = refreshButton.disabled = lock !== null;
+      allButton.disabled = lock !== null;
+      refreshButton.disabled = lock !== null || !reading;
       if (fold) {
         setText(toggle, bodyOpen ? 'Hide Received' : 'Show Received');
         setTitle(toggle, bodyOpen ? '받은 목록을 닫습니다. Esc로도 닫을 수 있습니다.' : '받은 중요 결과 목록을 펼칩니다.');

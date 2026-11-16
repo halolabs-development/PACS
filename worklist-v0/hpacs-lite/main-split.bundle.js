@@ -9867,8 +9867,8 @@
           await Promise.all([favoriteList?.refresh(),studyTagList?.refresh()]);
           if (!live() || commitInFlight || epoch !== commitEpoch) return;
           pollFails = 0;
-          // The reading target's questions and image requests are read again with the list: one that came after the study
-          // opened is learned too.
+          // The questions and image requests of the reading target are read again with the list: one that came after the
+          // study opened is learned too.
           studyQuestions?.refresh();
           imageRequests?.refresh();
           worklistAlerts?.observe(r.studies.map(s=>({uid:s.uid,em:s.state.em})));
