@@ -127,6 +127,8 @@ class ViewerCompareDOMTest(unittest.TestCase):
         page.evaluate(SETUP, OWNER)
         page.evaluate("settings => { synServer.viewerSettings = settings; }", settings)
         page.evaluate(COMPARE)
+        # The viewer's app config defines the Studies panel order (kinSeriesOrder) the series list follows.
+        page.add_script_tag(path=str(HPACS.parents[1] / "config/ohif/series-order.js"))
         page.add_script_tag(path=str(HPACS / "viewer-features-compare.js"))
         page.evaluate("() => synMount()")
         expect(page.locator('.kin-ux-toolbar-settings [role=status]')).to_have_text('계정 설정 · 다른 PC에서도 적용됩니다.')

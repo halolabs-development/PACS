@@ -15,6 +15,8 @@ const slice = (from, to) => shipped.slice(shipped.indexOf(from), shipped.indexOf
 const splitModel = vm.runInNewContext(slice('function kinSeriesSplitModel(', 'function kinCreateSeriesSplit(') + ';kinSeriesSplitModel');
 const priorSource = slice('function kinCreateViewerPrior(', 'function kinCreateMultiStudyStrip(');
 const read = name => fs.readFileSync('worklist-v0/hpacs-lite/' + name, 'utf8');
+// The viewer's app config defines the Studies panel order (kinSeriesOrder) the prior and personal layout code orders by.
+const seriesOrderSource = fs.readFileSync('config/ohif/series-order.js', 'utf8');
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
 class Element extends EventTarget {
@@ -239,7 +241,7 @@ async function priorWorld(currentSets) {
     KinViewerSeriesStrip: { mount: chrome }, cornerstone: { Enums: { Events: {} } },
   });
   const context = vm.createContext(sandbox);
-  vm.runInContext(read('viewer-hanging-settings.js'), context);
+  vm.runInContext(seriesOrderSource, context); vm.runInContext(read('viewer-hanging-settings.js'), context);
   vm.runInContext(read('viewer-ux-shell.js'), context);
   const shell = sandbox.KinViewerUXShell.mount({ services, session: { owner: () => null, readOnly: () => false } });
   const extension = vm.runInContext(priorSource + ';kinCreateViewerPrior()', context);
@@ -298,7 +300,7 @@ test('a series that is one display set opens the same prior as before', async ()
 
 test('prior ranking: the part decides between the prior b0 and b1000 series', () => {
   const context = vm.createContext({ window: {} });
-  vm.runInContext(read('viewer-hanging-settings.js'), context);
+  vm.runInContext(seriesOrderSource, context); vm.runInContext(read('viewer-hanging-settings.js'), context);
   const { rank } = context.window.KinViewerHangingSettings, [b0, b1000] = splitSeries(), priors = priorSeries();
   assert.equal(rank(priors, b0)[0].SeriesDescription, 'AX DWI b0');
   assert.equal(rank(priors, b1000)[0].SeriesDescription, 'AX DWI b1000');
@@ -309,7 +311,7 @@ test('prior ranking: the part decides between the prior b0 and b1000 series', ()
 function personalLayout(displaySets, opened, priorPosition) {
   const protocols = [], hp = { run(_data, id) { return id; }, addProtocol(id, protocol) { protocols.push(protocol); } };
   const context = vm.createContext({ window: {}, location: { search: '?StudyInstanceUIDs=' + opened.join(',') }, URLSearchParams });
-  vm.runInContext(read('viewer-hanging-settings.js'), context);
+  vm.runInContext(seriesOrderSource, context); vm.runInContext(read('viewer-hanging-settings.js'), context);
   const settings = { hanging: { MR: { layout: '1x2', priorPosition, seriesMatch: 'similar' } } };
   context.window.KinViewerHangingSettings.mount({ hangingProtocolService: hp }, () => settings);
   hp.run({ displaySets }, 'default', {});
@@ -326,4 +328,24 @@ test('personal MR 1×2 with a prior: the first part and its prior follow the pri
   const [b0, b1000] = splitSeries(), priors = priorSeries();
   assert.deepEqual(personalLayout([b0, b1000, ...priors], ['2.25.7000', '2.25.8000'], 'right'), [b0.displaySetInstanceUID, priors[0].displaySetInstanceUID]);
   assert.deepEqual(personalLayout([b0, b1000, ...priors], ['2.25.7000', '2.25.8000'], 'left'), [priors[0].displaySetInstanceUID, b0.displaySetInstanceUID]);
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// An attached picture (a series without a Series Number; the display set writes 0) in the personal layout and the prior.
+test('personal layout: an attached picture without a Series Number does not take the first cell', () => {
+  const [b0, b1000] = splitSeries(), picture = singleSeries('Attached Document', '2.25.7401', undefined);
+  assert.equal(picture.SeriesNumber, 0, 'the pinned handler writes the missing number as 0');
+  assert.deepEqual(personalLayout([picture, b0, b1000], ['2.25.7000'], 'right'), [b0.displaySetInstanceUID, b1000.displaySetInstanceUID]);
+  assert.deepEqual(personalLayout([picture], ['2.25.7000'], 'right'), [picture.displaySetInstanceUID, ''], 'alone, it is shown');
+});
+
+test('prior by series number: a series without a number matches no prior number, not a real 0', () => {
+  const context = vm.createContext({ window: {} });
+  vm.runInContext(seriesOrderSource, context); vm.runInContext(read('viewer-hanging-settings.js'), context);
+  const { rank } = context.window.KinViewerHangingSettings;
+  const origin = singleSeries('AX T2', '2.25.7402', undefined);
+  const zero = singleSeries('Scout', '2.25.8101', 0, '2.25.8000'), same = singleSeries('AX T2', '2.25.8102', 3, '2.25.8000');
+  assert.equal(rank([zero, same], origin, 'number')[0].SeriesInstanceUID, '2.25.8102');
+  const numbered = singleSeries('Scout', '2.25.7403', 0);
+  assert.equal(rank([same, zero], numbered, 'number')[0].SeriesInstanceUID, '2.25.8101', 'a real 0 matches a real 0');
 });

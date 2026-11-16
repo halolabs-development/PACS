@@ -4,8 +4,9 @@ window.KinViewerHangingSettings = (() => {
   const get = (settings, modality) => ({ ...defaults, ...settings?.hanging?.[modalities.includes(modality) ? modality : 'Other'] });
   const metadata = set => ({ ...set?.images?.[0], ...set });
   const text = value => String(value || '').toLowerCase().trim().replace(/[^\p{L}\p{N}]+/gu, ' ');
-  const seriesOrder = (a, b) => Number(a.SeriesNumber || 0) - Number(b.SeriesNumber || 0) ||
-    String(a.SeriesInstanceUID).localeCompare(String(b.SeriesInstanceUID));
+  // The Studies panel order and the series' own number (config/ohif/series-order.js, the viewer's app config): a
+  // series without a number (an attached document) is not read as number 0, so it does not go before the images.
+  const seriesOrder = (a, b) => kinSeriesOrder(a, b);
   function rank(sets, origin, method = 'similar') {
     const source = metadata(origin);
     const plane = image => {
@@ -23,7 +24,7 @@ window.KinViewerHangingSettings = (() => {
         text(source.ConvolutionKernel) && text(source.ConvolutionKernel) === text(m.ConvolutionKernel) ? 1 : 0,
         thickness > 0 && candidate > 0 ? -Math.abs(thickness - candidate) : -Infinity];
       return [source.Modality === m.Modality ? 1 : 0,
-        ...(method === 'number' ? [Number(source.SeriesNumber) === Number(m.SeriesNumber) ? 1 : 0] : []),
+        ...(method === 'number' ? [kinSeriesNumber(origin) !== null && kinSeriesNumber(origin) === kinSeriesNumber(set) ? 1 : 0] : []),
         ...(method === 'largest' ? [] : similar), set.numImageFrames || set.images?.length || 0];
     }
     return sets.slice().sort((a, b) => {
