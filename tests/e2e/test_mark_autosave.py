@@ -108,7 +108,7 @@ class MarkAutoSaveE2E(MeasurementReadbackE2E):
     def hold_me(self, p):
         # This page's /me requests wait until released (each route is kept): a save that asks /me first stays on its way.
         held = []
-        p.route(ME, held.append)
+        p.route(ME, lambda route: held.append(route))
         return held
 
     def release(self, p, held):
