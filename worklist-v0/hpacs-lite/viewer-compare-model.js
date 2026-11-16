@@ -1,4 +1,4 @@
-// Pure calculations for the viewer's Compare menu: exam marks, the prior order, manual sync steps, the physical
+// Pure calculations for the viewer's Compare menu: exam marks, the prior and later order, manual sync steps, the physical
 // scale of a cell and where a slice crosses a scout image. Nothing here reads the screen.
 (function (root) {
   const validDate = value => {
@@ -19,9 +19,14 @@
   const newerFirst = (a, b) => b.date.localeCompare(a.date) || time(b.time).localeCompare(time(a.time))
     || text(a.acc).localeCompare(text(b.acc)) || text(a.uid).localeCompare(text(b.uid));
 
+  // Earlier first, with the same ties in the same order.
+  const olderFirst = (a, b) => a.date.localeCompare(b.date) || time(a.time).localeCompare(time(b.time))
+    || text(a.acc).localeCompare(text(b.acc)) || text(a.uid).localeCompare(text(b.uid));
+
   // rows: the patient's related studies ({ uid, date 'YYYY-MM-DD', time, acc }); currentUid: the current study.
-  // Returns the rows in list order with a mark: '*' for the current study, P1, P2, … for studies dated before it
-  // (nearest first), '' for the others (same day, later, or without a date). Rows without a date go last.
+  // Returns the rows in list order with a mark: '*' for the current study, P1, P2, … for studies dated before it and
+  // N1, N2, … for studies dated after it (both nearest first), '' for the others (the same day, or without a date, or
+  // every study when the current one has no date). Rows without a date go last.
   function marks(rows, currentUid) {
     const list = Array.isArray(rows) ? rows.filter(row => row && typeof row.uid === 'string') : [];
     const current = list.find(row => row.uid === currentUid) || null;
@@ -29,10 +34,12 @@
     const undated = list.filter(row => row !== current && !validDate(row.date)).sort((a, b) => text(a.uid).localeCompare(text(b.uid)));
     const known = current && validDate(current.date);
     const priors = known ? dated.filter(row => row.date < current.date).sort(newerFirst) : [];
-    const others = dated.filter(row => !priors.includes(row)).sort(newerFirst);
+    const laters = known ? dated.filter(row => row.date > current.date).sort(olderFirst) : [];
+    const others = dated.filter(row => !priors.includes(row) && !laters.includes(row)).sort(newerFirst);
     return [
       ...(current ? [{ ...current, mark: '*' }] : []),
       ...priors.map((row, index) => ({ ...row, mark: 'P' + (index + 1) })),
+      ...laters.map((row, index) => ({ ...row, mark: 'N' + (index + 1) })),
       ...others.map(row => ({ ...row, mark: '' })),
       ...undated.map(row => ({ ...row, mark: '' })),
     ];

@@ -1,4 +1,4 @@
-# coding: utf-8
+﻿# coding: utf-8
 """Compare menu on the shipped image toolbar: Related Studies' three views, Exam Marks, Prev / Next Prior on every
 comparison cell, Manual Sync with Lock, Match Zoom and Match Ratio.
 
@@ -156,13 +156,14 @@ class ViewerCompareDOMTest(unittest.TestCase):
         self.menu(page, 'Related Studies')
         panel = page.get_by_role('dialog', name='Related Studies')
         expect(panel.locator('tr[data-study]')).to_have_count(4)
-        # Related Studies: every related study but the current one; P only for studies dated before today's.
+        # Related Studies: every related study but the current one; P for studies dated before today's, N after.
         self.assertEqual([['Mark', 'Viewing', 'Study Date', 'Modality', 'Description'],
                           ['P1', 'Open', '2025-08-12', 'CT', 'Chest CT August'],
                           ['P2', '', '2025-05-02', 'CT', 'Chest CT May'],
-                          ['', '', '2026-09-01', 'CT', 'Chest CT later'],
+                          ['N1', '', '2026-09-01', 'CT', 'Chest CT later'],
                           ['', '', '', 'CR', 'Chest X-ray']], self.rows(panel))
         self.assertEqual('italic', panel.locator('tr[data-study=aug] td').first.evaluate('n => getComputedStyle(n).fontStyle'))
+        self.assertEqual('italic', panel.locator('tr[data-study=later] td').first.evaluate('n => getComputedStyle(n).fontStyle'))
         panel.get_by_label('View').select_option('with-current')
         expect(panel.locator('tr[data-study]')).to_have_count(5)
         self.assertEqual(['*', 'Open', '2026-08-12', 'CT', 'Chest CT today'], self.rows(panel)[1])
@@ -190,7 +191,7 @@ class ViewerCompareDOMTest(unittest.TestCase):
         page.wait_for_function("() => synServer.puts.length === 1")
         self.assertEqual({'examMarks': True}, page.evaluate("synServer.puts[0].viewerSettings.features"))
         page.wait_for_function("() => window.kinViewerExamMark?.('aug') === 'P1'")
-        self.assertEqual(['*', 'P1', 'P2', '', ''], page.evaluate("['cur', 'aug', 'may', 'later', 'nodate'].map(uid => kinViewerExamMark(uid))"))
+        self.assertEqual(['*', 'P1', 'P2', 'N1', ''], page.evaluate("['cur', 'aug', 'may', 'later', 'nodate'].map(uid => kinViewerExamMark(uid))"))
         # The menu item turns it off again.
         self.menu(page, 'Exam Marks on Images')
         page.wait_for_function("() => synServer.puts.length === 2 && typeof window.kinViewerExamMark !== 'function'")
