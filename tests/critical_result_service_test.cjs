@@ -2123,26 +2123,30 @@ test('WV5 a policy write queued behind a create that waits on the fixed-record k
   const policy = await policyLock(w, S());
   const held = await holdFixed(w, UID);
   let exclusive = null;
-  const order = [];
   let pending = null;
   await withCleanup(async () => {
     pending = w.svc.create(UID, S(), createBody(S(), id(4501), 'P', 1));
     const waiter = await waiterBehind(w, held.pid, pending);
     assert.ok(waiter, 'the create waits on the study fixed-record key');
     const cvr = waiter.pid;
-    // the caller's policy write: an exclusive lock on the key the create holds shared
+    // the caller's policy write: an exclusive lock on the key the create holds shared. What it sees the moment it holds
+    // the lock is the database's order: the create's record and receipt are already committed (read committed, a fresh
+    // statement after the grant). The order the two JavaScript promises resolve in is not the database's order.
     exclusive = w.base.$transaction(async tx => {
       await tx.$queryRaw`SELECT 1 AS locked FROM pg_advisory_xact_lock(${policy}::bigint)`;
-      order.push('policy write');
+      const [seen] = await tx.$queryRaw`SELECT
+        EXISTS (SELECT 1 FROM "CriticalResult" WHERE id = ${id(4501)}::uuid) AS record,
+        EXISTS (SELECT 1 FROM "CriticalResultReceipt" WHERE "requestId" = ${id(4501)}::uuid) AS receipt`;
+      return seen;
     }, { maxWait: 4000, timeout: 20000 });
     const queued = await waiterBehind(w, cvr, exclusive);
     assert.ok(queued, 'the policy write waits behind the create');
     assert.deepEqual([queued.locktype, queued.mode], ['advisory', 'ExclusiveLock']);
-    pending.then(() => order.push('create'), () => order.push('create refused'));
     await held.release();
     assert.equal((await pending).replayed, false);
-    await exclusive;
-    assert.deepEqual(order, ['create', 'policy write']);
+    const seen = await exclusive;
+    witness('WV5 policy write saw', seen);
+    assert.deepEqual(seen, { record: true, receipt: true }, 'the create committed before the policy write held its lock');
   }, () => held.release(), () => pending?.catch(() => {}), () => exclusive?.catch(() => {}));
 });
 
