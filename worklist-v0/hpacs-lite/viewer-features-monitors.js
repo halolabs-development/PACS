@@ -15,8 +15,9 @@
   // Displays (left to right, as KinViewerDisplayLayout.screens lists them) that this window covers, in its client px.
   // win: screenX/screenY/outerWidth/outerHeight/innerWidth/innerHeight; zoom: CSS px -> screen px, or null when unknown
   // (then only a plain window frame is accepted, as KinViewerDisplayLayout.seams does). Column: the image column's left
-  // and right in client px. A part narrower than MIN_REGION (a window barely over the edge) is not a monitor's region.
-  function regions(screens, win, zoom, column) {
+  // and right in client px. A part narrower than `least` (MIN_REGION: a window barely over the edge) is not a monitor's
+  // region; the display edges of a maximize count a narrower part too (EDGE_SLACK).
+  function regions(screens, win, zoom, column, least = MIN_REGION) {
     if (!win || !finite(win.screenX, win.screenY, win.outerWidth, win.outerHeight, win.innerWidth, win.innerHeight) || win.innerWidth <= 0) return [];
     let z = zoom;
     if (!(Number.isFinite(z) && z > 0)) { const plain = win.outerWidth - win.innerWidth; if (plain < 0 || plain > 40) return []; z = 1; }
@@ -29,7 +30,7 @@
       if (!s || !finite(s.left, s.top, s.width, s.height) || s.top >= bottom || s.top + s.height <= top) return;
       const a = Math.max(from, (s.left - left) / z), b = Math.min(to, (s.left + s.width - left) / z);
       const tall = Math.min(bottom, s.top + s.height) - Math.max(top, s.top);
-      if (b - a >= MIN_REGION) list.push({ monitor, left: Math.round(a * 100) / 100, right: Math.round(b * 100) / 100, tall });
+      if (b - a >= least) list.push({ monitor, left: Math.round(a * 100) / 100, right: Math.round(b * 100) / 100, tall });
     });
     // Only displays side by side split the window: of two displays one above the other (the same columns of the
     // window), the one holding more of its height is the monitor there. The parts kept must meet edge to edge.
@@ -165,17 +166,19 @@
 
   // Where the displays meet inside the viewport grid, as fractions of the grid's width (left to right): the edges between
   // the monitors' parts of the window (regions over the grid's columns). A part of the grid on no listed display (only
-  // the window's own display is known without the window-management access) is another monitor when it is as wide as a
-  // region. One display, or a window over an edge by less than a region, has none: []. Nothing known about the window
-  // (an unreadable frame or no listed display under it) is null. The double click's maximize fills one monitor's part
+  // the window's own display is known without the window-management access) is another monitor. Any part of the grid on
+  // another display counts, however narrow: the maximize must not reach over it. Only a part within EDGE_SLACK (the
+  // error of reading a window frame) is not an edge. One display has none: []. Nothing known about the window (an
+  // unreadable frame or no listed display under it) is null. The double click's maximize fills one monitor's part
   // (viewer-cell-merge.js).
+  const EDGE_SLACK = 16;
   function edges(screens, win, zoom, grid) {
     if (!grid || !finite(grid.left, grid.width) || !(grid.width > 0)) return null;
-    const from = grid.left, to = grid.left + grid.width, list = regions(screens, win, zoom, { left: from, right: to });
+    const from = grid.left, to = grid.left + grid.width, list = regions(screens, win, zoom, { left: from, right: to }, EDGE_SLACK);
     if (!list.length) return null;
     const cuts = list.slice(1).map(region => region.left), last = list[list.length - 1].right;
-    if (list[0].left - from >= MIN_REGION) cuts.unshift(list[0].left);
-    if (to - last >= MIN_REGION) cuts.push(last);
+    if (list[0].left - from >= EDGE_SLACK) cuts.unshift(list[0].left);
+    if (to - last >= EDGE_SLACK) cuts.push(last);
     return cuts.map(x => Math.round((x - from) / grid.width * 1e6) / 1e6).filter(edge => edge > 0 && edge < 1);
   }
 
@@ -332,8 +335,9 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
   // Both act only while these rows are still the ones shown: an aborted, older or cleared prepare changes nothing more.
   async function prepare(rule, { signal } = {}) {
     const mine = ++epoch, before = active, notes = [];
-    // worklist: undefined (nothing to do), null (no Worklist Show: take back an offered bar), or { monitor, rect }.
-    let placed = null, worklist = undefined;
+    // What this rule wants of the worklist once it stands: { monitor, rect } (Worklist Show on a display there is) or null
+    // (nothing: an offer made for an earlier rule is taken back).
+    let placed = null, worklist = null;
     const owns = () => epoch === mine;
     const undo = () => { if (placed && active === placed) show(before); };
     // An abort puts the rows back at once; every later step checks that this prepare still owns them.
@@ -343,9 +347,10 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
     const answer = (split, moved = false) => ({ split, moved, note: notes.length ? ' · Monitors: ' + notes.join(' ') : '', undo,
       commit: () => {
         if (!owns()) return;
+        // Every rule that stands says once what it wants of the worklist (settleWorklist), applied or not.
+        settleWorklist(split ? worklist : null, owns);
         if (!split) { if (active) show(null); return; }
         if (active === placed) { placed.at = placedAt(); placed.watching = true; startWatch(placed); }
-        if (worklist !== undefined) settleWorklist(worklist, owns);
       } });
     preparing++;
     // A newer prepare() pauses the check of rows already applied; once none runs, they are measured again.
@@ -396,16 +401,16 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
       place({ chrome: { toolbar: toolbar.original?.side || 'top', toolbarAutoHide: true, thumbs: thumbs.original?.side || 'top', thumbsAutoHide: true },
         css, noThumbs: !thumbs.original, copies: { 'Image Tools': copy(toolbar.copy), Series: copy(thumbs.copy) } });
       notes.unshift('적용 ' + split.applied.map(name).join('·') + '.');
-      // The worklist window: where it stands is read from it now; once the rule stands (commit) it is asked to come to its
-      // monitor when it is elsewhere (settleWorklist). A rule with no Worklist Show takes back a bar offered before.
+      // The worklist window: where it stands is read from it now for the note; once the rule stands (commit) the list
+      // document is told the worklist's monitor (settleWorklist) - also when it is there already, so that an offer made
+      // for an earlier rule does not stay. A rule with no Worklist Show (or its monitor not here) takes that offer back.
       const listed = monitors.list.findIndex(m => m.worklist === 'show');
-      if (listed < 0) worklist = null;
-      else {
+      if (listed >= 0) {
         let rect = null;
         try { rect = await window.kinViewerListPlace?.(); } catch (_) { rect = null; }
         check();
         const at = rect ? plan.monitorOf(info.screens, rect) : -1;
-        if (at >= 0 && at !== listed && info.screens[listed]) { const s = info.screens[listed]; worklist = { monitor: listed, rect: { left: s.left, top: s.top, width: s.width, height: s.height } }; }
+        if (info.screens[listed]) { const s = info.screens[listed]; worklist = { monitor: listed, rect: { left: s.left, top: s.top, width: s.width, height: s.height } }; }
         notes.push(!rect || at < 0 ? 'Worklist: 목록 창 위치를 확인할 수 없습니다.' : at === listed ? 'Worklist: 목록 창이 ' + name(listed) + '에 있습니다.'
           : !info.screens[listed] ? 'Worklist: ' + name(listed) + '이(가) 이 화면 구성에 없어 목록 창을 옮기지 않았습니다(' + name(at) + ').'
           : 'Worklist: 목록 창이 ' + name(listed) + '에 있지 않아(' + name(at) + ') ' + name(listed) + '(으)로 옮깁니다.');
@@ -416,21 +421,20 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
   // The worklist on the monitor of an applied rule (Worklist: Show), after the rule stands: the list document that linked
   // this window moves its worklist window there or, a tab it cannot move, offers on its own screen to open the worklist
   // window there (viewer-windows.js placeWorklist). Its measured answer is told while this rule is still the one applied
-  // (owns). want null: a bar offered for an earlier rule is taken back.
-  let offered = false;
+  // (owns). want null: a bar offered for an earlier rule is taken back. The list document follows the latest request
+  // only (viewer-windows.js placeWorklist), so the order of the answers does not matter.
   function settleWorklist(want, owns) {
     const ask = window.kinViewerListPlaceOn;
     if (typeof ask !== 'function') return;
-    if (want === null) { if (offered) { offered = false; Promise.resolve(ask(null)).catch(() => {}); } return; }
+    if (want === null) { Promise.resolve(ask(null)).catch(() => {}); return; }
     const n = name(want.monitor);
     Promise.resolve(ask(want)).then(answer => {
       if (!owns()) return;
       const result = answer?.result;
-      if (result === 'offered') offered = true; else if (result === 'moved' || result === 'here') offered = false;
       const text = !answer ? 'Worklist: 목록 창이 답하지 않아 ' + n + '(으)로 옮기지 못했습니다.'
         : result === 'moved' ? 'Worklist: 목록 창을 ' + n + '(으)로 옮겼습니다.'
         : result === 'offered' ? 'Worklist: 목록 창은 브라우저 탭이라 옮길 수 없어, 목록 화면에 "Open Worklist on ' + n + '" 단추를 띄웠습니다.'
-        : result === 'here' ? null : 'Worklist: 목록 창을 ' + n + '(으)로 옮기지 못했습니다.';
+        : result === 'here' || result === 'superseded' ? null : 'Worklist: 목록 창을 ' + n + '(으)로 옮기지 못했습니다.';
       if (text) ui.toast(text);
     }, () => {});
   }

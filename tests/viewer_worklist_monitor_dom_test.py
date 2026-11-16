@@ -128,6 +128,26 @@ class WorklistMonitorDOMTest(unittest.TestCase):
         self.assertEqual('invalid', self.place({'monitor': 9, 'rect': self.display()})['result'])
         expect(self.list.locator('#kin-worklist-monitor-bar')).to_have_count(0)
 
+    def test_06_only_the_latest_request_decides_a_clear_while_an_earlier_one_measures(self):
+        # An earlier request is still measuring a move it cannot make (1.5 s) when a later rule takes the worklist back:
+        # the earlier one ends without offering anything.
+        self.viewer.evaluate("target => { window.synEarlier = kinViewerListPlaceOn(target); }", {'monitor': 1, 'rect': self.display()})
+        self.assertEqual('cleared', self.viewer.evaluate("kinViewerListPlaceOn(null)")['result'])
+        self.assertEqual('superseded', self.viewer.evaluate("synEarlier")['result'])
+        expect(self.list.locator('#kin-worklist-monitor-bar')).to_have_count(0)
+
+    def test_07_a_worklist_already_on_the_later_monitor_takes_down_an_earlier_offer(self):
+        bar = self.list.locator('#kin-worklist-monitor-bar')
+        self.assertEqual('offered', self.place({'monitor': 1, 'rect': self.display()})['result'])
+        expect(bar).to_be_visible()
+        # Another earlier request still measuring, then a later rule whose worklist monitor is where the worklist is.
+        self.viewer.evaluate("target => { window.synEarlier = kinViewerListPlaceOn(target); }", {'monitor': 2, 'rect': self.display(left=5000)})
+        here = self.list.evaluate("({ left: screenX, top: screenY, width: outerWidth, height: outerHeight })")
+        self.assertEqual('here', self.place({'monitor': 0, 'rect': here})['result'])
+        expect(bar).to_have_count(0)
+        self.assertEqual('superseded', self.viewer.evaluate("synEarlier")['result'])
+        expect(bar).to_have_count(0)
+
 
 if __name__ == '__main__':
     unittest.main()

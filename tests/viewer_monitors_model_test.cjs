@@ -138,9 +138,14 @@ test('edges: where the displays meet inside the viewport grid, as fractions of i
   // One display under the grid: none.
   const one={screenX:100,screenY:0,outerWidth:1216,outerHeight:900,innerWidth:1200,innerHeight:862};
   assert.deepEqual(plan.edges(screens,one,1,{left:0,width:1200}),[]);
-  // Over an edge by less than a monitor region: none (the cells stay on the display that holds the window).
+  // Over an edge by less than a monitor region (188px) is still over it: the maximize must not reach across.
   const barely={screenX:1700,screenY:0,outerWidth:416,outerHeight:600,innerWidth:400,innerHeight:562};
-  assert.deepEqual(plan.edges(screens,barely,1,{left:0,width:400}),[]);
+  assert.deepEqual(plan.edges(screens,barely,1,{left:0,width:400}),[Math.round((1920-1708)/400*1e6)/1e6]);
+  // Over it by no more than the error of reading a frame (10px): none.
+  const within={screenX:1522,screenY:0,outerWidth:416,outerHeight:600,innerWidth:400,innerHeight:562};
+  assert.deepEqual(plan.edges(screens,within,1,{left:0,width:400}),[]);
+  // And the same without the access: only the own display is known, 188px past it is another monitor.
+  assert.deepEqual(plan.edges([screens[0]],barely,null,{left:0,width:400}),[Math.round((1920-1708)/400*1e6)/1e6]);
   // Only the window's own display is known (no window-management access): the grid past it is another monitor.
   assert.deepEqual(plan.edges([screens[0]],win,null,grid),[Math.round((1920-40)/3800*1e6)/1e6]);
   assert.deepEqual(plan.edges([screens[1]],win,null,grid),[Math.round((1920-40)/3800*1e6)/1e6]);

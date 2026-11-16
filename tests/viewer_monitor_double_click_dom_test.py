@@ -113,6 +113,15 @@ class MonitorDoubleClickDOMTest(unittest.TestCase):
         page.wait_for_function("geometry().length === 5")
         self.assertEqual(['A', 0, 0, 0.5, 1], self.boxes(page)[0])
 
+    def test_05_a_window_over_the_next_display_by_100px_is_refused_not_maximized_across(self):
+        # The second display begins 100px before the grid's right end: narrower than a monitor region, still another
+        # monitor under the grid. The maximize would reach over it, so it is refused and the eight cells stay.
+        page = self.open(TWO_DISPLAYS.replace('seam = screenX + frame + grid.left + grid.width / 2', 'seam = screenX + frame + grid.left + grid.width - 100'))
+        self.assertEqual([0.875], page.evaluate('kinViewerMonitorEdges()'))
+        self.dblclick(page, 'A')
+        expect(page.locator('#kin-cell-merge [role=status]')).to_contain_text('모니터 경계에 걸쳐')
+        self.assertEqual(8, len(self.boxes(page)))
+
     def test_04_one_display_keeps_the_whole_grid_rule(self):
         page = self.open(ONE_DISPLAY)
         self.assertEqual([], page.evaluate('kinViewerMonitorEdges()'))

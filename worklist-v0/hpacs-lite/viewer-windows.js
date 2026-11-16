@@ -242,18 +242,28 @@
         listWindow = w;
       }
       try { w.focus(); } catch (_) {}
+      const shown = bar;
       moveWindow(w, display).then(arrived => {
+        // A later request may have put up its own bar meanwhile: only this bar is this click's.
+        if (bar !== shown) return;
         if (arrived) { hideBar(); return; }
         note.textContent = '목록 창을 열었지만 Monitor ' + (monitor + 1) + '에 두지 못했습니다. 창을 직접 옮기거나 Viewer Windows › Detect Displays로 창 관리 권한을 허용하세요.';
       });
     }
+    // Only the latest request decides (from whichever viewer, in the order they arrive): a new one takes down the bar an
+    // earlier one offered at once, and an earlier one still measuring a move ends as 'superseded' and offers nothing.
+    let placing = 0;
     async function placeWorklist(m) {
-      if (m.clear === true) { hideBar(); return 'cleared'; }
+      const mine = ++placing, latest = () => mine === placing;
+      hideBar();
+      if (m.clear === true) return 'cleared';
       const display = geometry(m.rect);
       if (!display || !Number.isInteger(m.monitor) || m.monitor < 0 || m.monitor > 3) return 'invalid';
       const w = liveListWindow() || root;
-      if (onDisplay(outer(w), display)) { hideBar(); return 'here'; }
-      if (await moveWindow(w, display)) { hideBar(); return 'moved'; }
+      if (onDisplay(outer(w), display)) return 'here';
+      const moved = await moveWindow(w, display);
+      if (!latest()) return 'superseded';
+      if (moved) return 'moved';
       if (!current()) return 'invalid';
       return showBar(m.monitor, display) ? 'offered' : 'invalid';
     }
