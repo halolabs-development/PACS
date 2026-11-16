@@ -226,3 +226,32 @@ test('S2-L1 R7 envelope: 8 worst item sources with 1000 astral characteristics f
   const jobs = JSON.parse(canonical({ schemaVersion: 2, title: emoji(200), text: emoji(4000), characteristics: emoji(1000), hidden: false, primary: 7, sources: Array(8).fill(point) }));
   assert.ok(Buffer.byteLength(jsonb(jobs)) < Buffer.byteLength(jsonb(snapshot(1000))), 'a job copy is smaller than the worst item copy');
 });
+
+// TEST-B23-INPUT: version 3 adds the required free-text lesion location; versions 1-2 keep their exact shapes.
+test('version 3: a required lesion location beside the characteristics, counted in code points, refused on older versions', () => {
+  const v3 = extra => Object.assign({ schemaVersion: 3, title: '소견', text: '본문', characteristics: '경계 불명확', lesionLocation: '우하엽 S6', sources: [{ itemId: ID, revision: 2 }] }, extra);
+  assert.equal(f.FINDING_LESION_LOCATION, 200);
+  const parsed = f.findingCommand(raw({ requestId: REQ, item: v3() }), true);
+  assert.deepEqual(parsed.item, { schemaVersion: 3, title: '소견', text: '본문', characteristics: '경계 불명확', lesionLocation: '우하엽 S6',
+    sources: [{ itemId: ID, revision: 2 }], primary: 0 });
+  assert.equal(f.findingCommand(raw({ requestId: REQ, item: v3({ lesionLocation: '' }) }), true).item.lesionLocation, '', 'empty is a value');
+  const astral = '\u{1F600}'.repeat(200);
+  assert.equal(f.findingCommand(raw({ requestId: REQ, item: v3({ lesionLocation: astral }) }), true).item.lesionLocation, astral);
+  for (const bad of [v3({ lesionLocation: astral + '\u{1F600}' }), v3({ lesionLocation: 7 }), v3({ lesionLocation: 'a\u0000' }),
+    (({ lesionLocation, ...rest }) => rest)(v3()), (({ characteristics, ...rest }) => rest)(v3()),
+    v2({ lesionLocation: '우하엽' }), { ...item, lesionLocation: '우하엽' }, v3({ schemaVersion: 4 })])
+    reject(() => f.findingCommand(raw({ requestId: REQ, item: bad }), true), 400);
+  // Job references are version 2 and later.
+  assert.equal(f.findingCommand(raw({ requestId: REQ, item: v3({ sources: [{ jobId: JOB, revision: 1, markId: MARK }] }) }), true).item.sources[0].markId, MARK);
+});
+
+test('version 3 envelope: the worst version 2 snapshot plus 200 astral lesion location still fits the 64 KiB cap', () => {
+  const jsonb = v => Array.isArray(v) ? '[' + v.map(jsonb).join(', ') + ']' : v && typeof v === 'object'
+    ? '{' + Object.keys(v).map(k => JSON.stringify(k) + ': ' + jsonb(v[k])).join(', ') + '}' : JSON.stringify(v);
+  const uid64 = '1.' + '2'.repeat(62), actor = 'a'.repeat(254), dbl = -0.33113281957650276, emoji = n => '\u{1F600}'.repeat(n);
+  const worst = f.copySource({ id: ID, revision: 2147483647, studyUid: uid64, authorActor: actor, snapshot: { kind: 'ellipse', seriesUid: uid64, sopUid: uid64,
+    frame: 2147483647, frameOfReferenceUid: uid64, label: emoji(1000), baseline: { calculator: 'kin-native-manual-v1', values: [dbl, dbl, dbl, dbl, 2147483647] }, sourceDigest: 'f'.repeat(64) } });
+  const snapshot = JSON.parse(canonical({ schemaVersion: 3, title: emoji(200), text: emoji(4000), characteristics: emoji(1000), lesionLocation: emoji(200),
+    hidden: false, primary: 7, sources: Array(8).fill(worst) }));
+  assert.ok(Buffer.byteLength(jsonb(snapshot)) <= f.FINDING_LIMITS.snapshot, String(Buffer.byteLength(jsonb(snapshot))));
+});

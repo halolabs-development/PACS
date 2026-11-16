@@ -134,7 +134,11 @@
     { "name": "internal and edge whitespace is preserved", "title": "  결절  ", "text": "우상엽  결절",
       "characteristics": null, "block": "  결절  \n우상엽  결절" },
     { "name": "every field blank is refused, no invented fallback sentence", "title": "", "text": "   ",
-      "characteristics": null, "refused": true }
+      "characteristics": null, "refused": true },
+    { "name": "version 3: the lesion location comes after the text and before the characteristics", "title": "결절", "text": "우상엽 결절",
+      "lesionLocation": "우하엽 S6", "characteristics": "경계 불명확", "block": "결절\n우상엽 결절\n위치: 우하엽 S6\n특성: 경계 불명확" },
+    { "name": "version 3: an empty location is the same as none (the version 2 bytes)", "title": "결절", "text": "우상엽 결절",
+      "lesionLocation": "", "characteristics": "경계 불명확", "block": "결절\n우상엽 결절\n특성: 경계 불명확" }
   ],
 
   "measurement": {

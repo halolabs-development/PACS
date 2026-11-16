@@ -119,9 +119,9 @@ test('TEST-S3-U2b-PRESENCE: a reduced entry claims nothing about the report text
 });
 
 test('TEST-S3-U2b-R5: one deterministic template, exact bytes, no invented sentence', () => {
-  assert.equal(vectors.assembly.length, 8, 'the assembly section was thinned');
+  assert.equal(vectors.assembly.length, 10, 'the assembly section was thinned');
   for (const vector of vectors.assembly) {
-    const built = C.assembleBlock({ title: vector.title, text: vector.text, characteristics: vector.characteristics });
+    const built = C.assembleBlock({ title: vector.title, text: vector.text, lesionLocation: vector.lesionLocation, characteristics: vector.characteristics });
     if (vector.refused) assert.equal(built, null, `${vector.name}: no fallback sentence may be invented`);
     else assert.equal(built, vector.block, vector.name);
   }
@@ -142,7 +142,7 @@ test('TEST-S3-U2b-R5: one deterministic template, exact bytes, no invented sente
 
 test('TEST-S3-U2b-R5: preview = request = attested block, and the separator stays outside it', () => {
   for (const vector of vectors.assembly.filter(v => !v.refused)) {
-    const block = C.assembleBlock({ title: vector.title, text: vector.text, characteristics: vector.characteristics });
+    const block = C.assembleBlock({ title: vector.title, text: vector.text, lesionLocation: vector.lesionLocation, characteristics: vector.characteristics });
     assert.equal(block, vector.block, vector.name);
     // The empty field takes the block alone; a non-empty one takes exactly one LF first.
     assert.equal(C.appendBlock('', block), block);

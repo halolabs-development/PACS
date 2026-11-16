@@ -74,7 +74,7 @@ class FindingNavigationE2E(ViewerHistoryE2E):
     def findings(self, f):
         # S2-L R5: a findings page holding a version 2 record is served only to a client that names that record format;
         # the viewer writes version 2 on every create and edit.
-        r = self.stack.bearer_request('GET', '/studies/'+f.uid+'/findings?includeHidden=true', self.stack.token('doctor'), headers={'X-KIN-Finding-Schema': '2'})
+        r = self.stack.bearer_request('GET', '/studies/'+f.uid+'/findings?includeHidden=true', self.stack.token('doctor'), headers={'X-KIN-Finding-Schema': '3'})
         self.assertEqual(r.status, 200, r.text); return r.body['items']
 
     def panel(self, p, reading=False):
@@ -624,7 +624,8 @@ class FindingNavigationE2E(ViewerHistoryE2E):
         self.assertEqual(field.get_attribute('maxlength'), '1000')
         composed.get_by_role('button', name='Save', exact=True).click(); expect(composed).to_contain_text('저장 완료')
         saved = self.findings(f)[0]
-        self.assertEqual((saved['item']['schemaVersion'], saved['item']['characteristics']), (2, traits))
+        # The viewer writes version 3 (the lesion location is empty until written).
+        self.assertEqual((saved['item']['schemaVersion'], saved['item']['characteristics'], saved['item']['lesionLocation']), (3, traits, ''))
         stored = base.psql(f'''SELECT snapshot->>'characteristics' FROM "FindingRevision" WHERE "findingId"={literal(saved['id'])}::uuid''')
         self.assertEqual(stored, [traits])
         saved_row = self.saved_row(p, saved['id'])

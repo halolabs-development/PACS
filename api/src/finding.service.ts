@@ -109,8 +109,12 @@ function comparable(anchor: any, rows: any[], allowed: Set<string>, c: Caller) {
 function timestamp(value: Date | string) {
   return typeof value === 'string' ? new Date(value + 'Z') : value;
 }
-// A shipped (version 1) client reads only version 1 rows; anything else would be dropped by it silently.
-const legacyOnly = (items: any[]) => items.every(item => item?.schemaVersion === 1);
+// A client reads only the record versions it names with X-KIN-Finding-Schema: none (a shipped client) reads version 1,
+// '2' reads 1-2, '3' reads 1-3. A page holding a newer row is refused whole: a client would drop the fields it does not know.
+const readable = (items: any[], schema?: string) => {
+  const newest = schema === '3' ? 3 : schema === '2' ? 2 : 1;
+  return items.every(item => Number.isSafeInteger(item?.schemaVersion) && item.schemaVersion >= 1 && item.schemaVersion <= newest);
+};
 function result(head: any, revision?: any) {
   return { id: head.id, studyUid: head.studyUid, authorSub: head.authorSub, authorActor: head.authorActor,
     revision: revision?.revision ?? head.revision, createdAt: timestamp(head.createdAt), hidden: (revision?.snapshot ?? head.snapshot).hidden,
@@ -180,7 +184,7 @@ export class FindingService {
       finding: { id: row.id, studyUid: row.studyUid, authorSub: row.authorSub, authorActor: row.authorActor, createdAt: row.createdAt } };
   }
 
-  // `schema` is the X-KIN-Finding-Schema request header: without '2' a page holding any other version is refused whole.
+  // `schema` is the X-KIN-Finding-Schema request header: a page holding a version newer than it names is refused whole.
   async list(uid: string, query: any, c: Caller, id?: string, schema?: string, transaction?: Prisma.TransactionClient) {
     member(c); viewerUid(uid); visible(await this.prisma.studyState.findUnique({ where: { uid } }), c);
     // Comparison studies are found only inside the read transaction, which cannot fetch access
@@ -225,7 +229,7 @@ export class FindingService {
         const rows: any[] = parsed(pageRow.rows);
         const revisions = rows.slice(0, page.limit).map(row => ({ revision: row.revision, action: row.action,
           reason: row.reason, actor: row.actor, at: timestamp(row.at), payloadBytes: row.payloadBytes, item: row.snapshot }));
-        if (schema !== '2' && !legacyOnly(revisions.map(r => r.item))) clientOutdated();
+        if (!readable(revisions.map(r => r.item), schema)) clientOutdated();
         return { revisions, nextCursor: rows.length > page.limit ? revisions[revisions.length - 1].revision : null };
       }
       // Item links are the shipped entries byte for byte; a job entry reports the job head of this anchor.
@@ -241,7 +245,7 @@ export class FindingService {
       if (!pageRow.allowed) { visible(await tx.studyState.findUnique({ where: { uid } }), c); denied(); }
       const rows: any[] = parsed(pageRow.rows);
       const items = rows.slice(0, page.limit).map(row => ({ ...result(row), links: row.links }));
-      if (schema !== '2' && !legacyOnly(items.map(i => i.item))) clientOutdated();
+      if (!readable(items.map(i => i.item), schema)) clientOutdated();
       return { items, nextCursor: rows.length > page.limit ? items[items.length - 1].id : null };
     }, true, transaction);
   }
@@ -448,13 +452,14 @@ export class FindingService {
         if (head.authorSub !== c.sub) denied();
         if (head.revision !== command.expectedRevision) conflict();
         if ((command.action === 'hide' && head.hidden) || (command.action === 'restore' && !head.hidden)) conflict();
-        // Version rule: an edit may promote version 1 to 2 but never write version 1 over version 2, whose
-        // characteristics and job copies a shipped client cannot carry. Hide and restore keep the head's
-        // version; on version 2 they also keep its content exactly.
+        // Version rule: an edit may promote (1 to 2 or 3, 2 to 3) but never write an older version over a newer one, whose
+        // characteristics, job copies or lesion location an older client cannot carry. Hide and restore keep the head's
+        // version; from version 2 on they also keep its content exactly.
         const from = head.snapshot?.schemaVersion, to = command.item.schemaVersion, item = command.item;
-        if (![1, 2].includes(from) || (command.action === 'edit' ? from === 2 && to !== 2 : to !== from)) schemaVersion();
-        if (command.action !== 'edit' && from === 2 && (item.title !== head.snapshot.title || item.text !== head.snapshot.text ||
-            item.characteristics !== head.snapshot.characteristics || item.primary !== head.snapshot.primary)) schemaVersion();
+        if (![1, 2, 3].includes(from) || (command.action === 'edit' ? to < from : to !== from)) schemaVersion();
+        if (command.action !== 'edit' && from >= 2 && (item.title !== head.snapshot.title || item.text !== head.snapshot.text ||
+            item.characteristics !== head.snapshot.characteristics || item.primary !== head.snapshot.primary ||
+            (from === 3 && item.lesionLocation !== head.snapshot.lesionLocation))) schemaVersion();
       }
       // An unchanged {itemId, revision} pair (or job key) keeps its frozen copy byte for byte, even when that
       // item or job was edited, hidden or lost since. Only a new pair or an explicitly refreshed one is
@@ -509,7 +514,10 @@ export class FindingService {
       }
       if (comparisonStudies(uid, [...lineage, ...sources.flatMap(sourceStudies)]).length > 1) oneComparison();
       const hidden = command.action === 'hide' || (command.action === 'edit' && head?.hidden === true);
-      const snapshot = command.item.schemaVersion === 2
+      const snapshot = command.item.schemaVersion === 3
+        ? { schemaVersion: 3, title: command.item.title, text: command.item.text, characteristics: command.item.characteristics,
+          lesionLocation: command.item.lesionLocation, hidden, primary: command.item.primary, sources }
+        : command.item.schemaVersion === 2
         ? { schemaVersion: 2, title: command.item.title, text: command.item.text, characteristics: command.item.characteristics, hidden, primary: command.item.primary, sources }
         : { schemaVersion: 1, title: command.item.title, text: command.item.text, hidden, primary: command.item.primary, sources };
       const serialized = canonical(snapshot);

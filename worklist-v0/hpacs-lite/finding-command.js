@@ -90,24 +90,24 @@
     if (!item || typeof item !== 'object' || !uuid(item.id) || item.studyUid !== study || !count(item.revision) ||
         typeof item.hidden !== 'boolean' || !item.item || typeof item.item !== 'object') throw INVALID;
     const body = item.item, sources = body.sources, primary = body.primary === undefined ? 0 : body.primary;
-    // Version 1 is the shipped shape; version 2 adds the free-text characteristics and saved locations.
+    // Version 1 is the shipped shape; version 2 adds the free-text characteristics and saved locations; version 3 the lesion location.
     const version = body.schemaVersion === undefined ? 1 : body.schemaVersion;
-    if (![1, 2].includes(version) || (version === 2 && !text(body.characteristics))) throw INVALID;
+    if (![1, 2, 3].includes(version) || (version >= 2 && !text(body.characteristics)) || (version === 3 && !text(body.lesionLocation))) throw INVALID;
     if (!text(body.title) || !text(body.text) || !Array.isArray(sources) || sources.length < 1 ||
         !Number.isSafeInteger(primary) || primary < 0 || primary >= sources.length) throw INVALID;
     const serverLinks = Array.isArray(item.links) ? item.links : [];
     // The server admits at most one comparison study per finding, a saved location's whole study set included.
-    const named = sources.flatMap(s => s && s.kind === 'job' ? (version === 2 && Array.isArray(s.studies) ? s.studies : [null]) : [s && s.studyUid]);
+    const named = sources.flatMap(s => s && s.kind === 'job' ? (version >= 2 && Array.isArray(s.studies) ? s.studies : [null]) : [s && s.studyUid]);
     const comparisons = new Set(named.filter(value => value !== study));
     if (comparisons.size > 1) throw INVALID;
     return {
       id: item.id, revision: item.revision, hidden: item.hidden, title: body.title, text: body.text, primary,
-      schemaVersion: version, characteristics: version === 2 ? body.characteristics : null,
+      schemaVersion: version, characteristics: version >= 2 ? body.characteristics : null, lesionLocation: version === 3 ? body.lesionLocation : null,
       author: text(item.authorActor) ? item.authorActor : '', updated: timeText(item.updatedAt),
       comparison: comparisons.size ? [...comparisons][0] : null,
       sources: sources.map((s, index) => {
         if (s && s.kind === 'job') {
-          const copy = version === 2 ? links.jobCopy(s, study) : null;
+          const copy = version >= 2 ? links.jobCopy(s, study) : null;
           if (!copy) throw INVALID;
           const link = serverLinks[index] && serverLinks[index].jobId === copy.jobId ? serverLinks[index]
             : serverLinks.find(l => l && l.jobId === copy.jobId && (l.markId || null) === (copy.mark ? copy.mark.id : null)) || null;
@@ -450,7 +450,7 @@
 
   const api = { reasonText, resultText, retryable, openable, arrivalText, readinessText, describeSource, measurementOf, timeText, rowOf, listPath, createListStore,
     chooseTarget, precheck, sameIdentity, validResult, crossResult, targetOf, pinSource, samePin, createNavigator, LOCAL_REASONS: Object.freeze(Object.keys(TEXT)),
-    SCHEMA: 2, locationOf, locationText, locationResult: links.locationResult };
+    SCHEMA: 3, locationOf, locationText, locationResult: links.locationResult };
   if (typeof module === 'object' && module.exports) module.exports = api;
   root.kinFindingCommand = api;
 })(globalThis);

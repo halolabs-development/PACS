@@ -1295,7 +1295,7 @@ class ViewerSessionDOMTest(unittest.TestCase):
     def test_held_finding_real_store_entry_points_refuse_during_pause_and_restore_exact_text(self):
         view=self.open_viewer()
         view.route(BASE+'/api/me',lambda route:route.fulfill(json={'kind':'member','institution':'I1','sub':'u1','roles':['radiologist'],'sessionId':'S1'}))
-        view.route(BASE+'/api/studies/**/findings?*',lambda route:route.fulfill(json={'items':[],'nextCursor':None},headers={'X-KIN-Finding-Schema':'2'}))
+        view.route(BASE+'/api/studies/**/findings?*',lambda route:route.fulfill(json={'items':[],'nextCursor':None},headers={'X-KIN-Finding-Schema':'3'}))
         for name in ['finding-link-model.js','viewer-findings.js']:
             view.add_script_tag(path=str(HPACS/name))
         view.evaluate("""() => {

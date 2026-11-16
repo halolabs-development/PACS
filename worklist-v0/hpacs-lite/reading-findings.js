@@ -17,7 +17,9 @@ window.KinReadingFindings = function (app) {
   // S2-L: this panel, its command module and the link model must be the same record-format version.
   // S3-U2b: the citation module joins that check, so a half-updated tab cannot build a block the
   // server would refuse - or, worse, one it would accept under a different rule.
-  if (links.SCHEMA !== 2 || command.SCHEMA !== 2 || citation.SCHEMA !== 2)
+  // Record version 3 adds the lesion location; the citation module must also carry the Include Measurements rule.
+  if (links.SCHEMA !== 3 || command.SCHEMA !== 3 || citation.SCHEMA !== 2 || typeof citation.measurementEligible !== 'function' ||
+      typeof command.measurementOf !== 'function')
     throw new Error(links.MODULE_MISMATCH_TEXT || '화면 구성 요소 판이 다릅니다. 새로고침하세요.');
   const node = (tag, value, parent) => { const el = document.createElement(tag); if (value) kinWrite(el, value); if (parent) parent.append(el); return el; };
   const button = (label, run, parent) => { const b = node('button', label, parent); b.type = 'button'; b.addEventListener('click', run); return b; };
@@ -413,6 +415,11 @@ window.KinReadingFindings = function (app) {
       const heading = node('p', '', article); heading.className = 'reading-findings-title'; heading.id = 'reading-findings-label-' + (++labels);
       node('strong', row.title || '(제목 없음)', heading);
       if (row.text) node('p', row.text, article).className = 'reading-findings-text';
+      // Version 3: the user's own lesion location, labelled the same way (free text, never interpreted).
+      if (row.lesionLocation) {
+        const line = node('p', 'Location (병변 위치): ' + row.lesionLocation, article);
+        line.className = 'reading-findings-characteristics'; line.dataset.kinLesionLocation = '';
+      }
       // Version 2: the user's own lesion characteristics, labelled; never interpreted or mapped to a vocabulary.
       if (row.characteristics) {
         const line = node('p', 'Characteristics (병변 특성): ' + row.characteristics, article);

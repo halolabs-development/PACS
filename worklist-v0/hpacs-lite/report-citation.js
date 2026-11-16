@@ -132,10 +132,10 @@ window.KinReportCitation = (function () {
   }
 
   /**
-   * R5의 **단 하나의 결정적 서식**: 고른 소견 판의 제목·본문·특성을 그 순서로.
+   * R5의 **단 하나의 결정적 서식**: 고른 소견 판의 제목·본문·위치·특성을 그 순서로.
    *
-   * 줄 끝만 LF로 모으고 나머지 글자는 전부 보존한다. 길이가 0인 칸만 빼고, 특성이 있으면
-   * 정확히 `특성: `를 앞에 붙이며, 포함된 블록은 LF 하나로 잇는다. 문장 끝맺음·수치 해석·
+   * 줄 끝만 LF로 모으고 나머지 글자는 전부 보존한다. 길이가 0인 칸만 빼고, 위치(판 3)가 있으면
+   * 정확히 `위치: `를, 특성이 있으면 정확히 `특성: `를 앞에 붙이며, 포함된 블록은 LF 하나로 잇는다. 문장 끝맺음·수치 해석·
    * 진단·출처 설명·작성자·시각·소견 식별자를 **더하지 않는다** — 판독문에 들어가는 글은
    * 사람이 쓴 소견 그대로여야 하고, 기계가 덧붙인 한 문장이 임상 주장이 된다.
    * 공백만 남으면 `null`이다. 꾸며낸 대체 문장은 없다.
@@ -143,7 +143,7 @@ window.KinReportCitation = (function () {
   function assembleBlock(source) {
     const blocks = [];
     for (const [value, prefix] of [[source && source.title, ''], [source && source.text, ''],
-                                   [source && source.characteristics, '특성: ']]) {
+                                   [source && source.lesionLocation, '위치: '], [source && source.characteristics, '특성: ']]) {
       if (value === null || value === undefined) continue;
       const normalized = toLf(value);
       if (!normalized.length) continue;
