@@ -37,7 +37,7 @@ const ADMIN_METRIC_DB_KEYS = ADMIN_METRIC_KEYS.slice(2, 11);
  */
 export interface AdminMetricProcess { uptimeSeconds: number; startedAt: number; observedAt: number }
 const ADMIN_METRIC_PROCESS_SOURCE = {
-  uptime: 'HALO PACS API process (process.uptime)', started: 'HALO PACS API process (performance.timeOrigin)',
+  uptime: 'HALO PACS API process (performance.now)', started: 'HALO PACS API process (performance.timeOrigin)',
 };
 export const ADMIN_METRIC_DAY_MS = 24 * 3600 * 1000;
 export const ADMIN_METRIC_WEEK_MS = 7 * ADMIN_METRIC_DAY_MS;
@@ -77,7 +77,7 @@ function metricDurations(seconds: number[]) {
  * 한 번 더 걸러, 다른 기관 행이 섞여 들어와도 어느 합계에도 들어가지 않게 한다.
  */
 export function adminMetricRows(institution: string, storage: AdminMetricStorage, studies: AdminMetricStudies | null,
-  process?: AdminMetricProcess) {
+  apiProcess?: AdminMetricProcess) {
   const row = (key: string, scope: 'server' | 'institution', unit: 'byte' | 'study' | 'second' | 'duration_seconds' | 'timestamp',
     rest: any) => ({
     key, state: 'observed', reason: null, scope, source: null, observedAt: null, unit, value: null, max: null,
@@ -109,7 +109,7 @@ export function adminMetricRows(institution: string, storage: AdminMetricStorage
         state: 'unobservable', reason: 'source_failed', source: sources[family],
         denominator: durationKeys.includes(key) ? { unit: 'study', value: null } : null }));
     }
-    return [...rows, ...processRows(row, process)];
+    return [...rows, ...processRows(row, apiProcess)];
   }
 
   const observedAt = new Date(now).toISOString();
@@ -167,23 +167,23 @@ export function adminMetricRows(institution: string, storage: AdminMetricStorage
         window: family === 'tat' ? windowOf(ADMIN_METRIC_WEEK_MS) : null }));
     }
   }
-  return [...rows, ...processRows(row, process)];
+  return [...rows, ...processRows(row, apiProcess)];
 }
 
 /** API Uptime (since start)·Last Restart. 값이 증명되지 않으면(누락·형식 오류) 관측 불가이고 0으로 두지 않는다. */
 function processRows(row: (key: string, scope: 'server', unit: 'duration_seconds' | 'timestamp', rest: any) => any,
-  process: AdminMetricProcess | undefined) {
-  const valid = !!process && Number.isSafeInteger(process.uptimeSeconds) && process.uptimeSeconds >= 0
-    && Number.isSafeInteger(process.startedAt) && process.startedAt > 0 && Number.isFinite(process.observedAt);
+  facts: AdminMetricProcess | undefined) {
+  const valid = !!facts && Number.isSafeInteger(facts.uptimeSeconds) && facts.uptimeSeconds >= 0
+    && Number.isSafeInteger(facts.startedAt) && facts.startedAt > 0 && Number.isFinite(facts.observedAt);
   if (!valid) return [
     row('server.api_uptime', 'server', 'duration_seconds', { state: 'unobservable', reason: 'invalid_answer', source: ADMIN_METRIC_PROCESS_SOURCE.uptime }),
     row('server.api_started', 'server', 'timestamp', { state: 'unobservable', reason: 'invalid_answer', source: ADMIN_METRIC_PROCESS_SOURCE.started }),
   ];
-  const observedAt = new Date(process!.observedAt).toISOString();
+  const observedAt = new Date(facts!.observedAt).toISOString();
   return [
-    row('server.api_uptime', 'server', 'duration_seconds', { source: ADMIN_METRIC_PROCESS_SOURCE.uptime, observedAt, value: process!.uptimeSeconds }),
+    row('server.api_uptime', 'server', 'duration_seconds', { source: ADMIN_METRIC_PROCESS_SOURCE.uptime, observedAt, value: facts!.uptimeSeconds }),
     row('server.api_started', 'server', 'timestamp', { source: ADMIN_METRIC_PROCESS_SOURCE.started, observedAt,
-      value: new Date(process!.startedAt).toISOString() }),
+      value: new Date(facts!.startedAt).toISOString() }),
   ];
 }
 

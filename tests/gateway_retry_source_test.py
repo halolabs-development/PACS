@@ -264,8 +264,10 @@ def attributes_of(node, owner):
 
 
 def single_writer_problems(source):
-    """R1: between KIN's poll and the compare-and-set nothing may write the confirmed row. The loop is single
-    threaded, and Agent.retry_requests may use only these queue methods (reported writes reported_seq only)."""
+    """R1: between KIN's poll and the compare-and-set nothing may write the confirmed row. The main loop is the queue's
+    only writer: the one other thread is the operational heartbeat, which reads queue counts on a read-only connection
+    of its own and holds no Queue, and Agent.retry_requests may use only these queue methods (reported writes
+    reported_seq only)."""
     tree, problems = ast.parse(source), []
     retry = method(tree, "Agent", "retry_requests")
     used = attributes_of(retry, "queue")
@@ -282,8 +284,39 @@ def single_writer_problems(source):
         problems.append("reported writes more than reported_seq")
     imported = {alias.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))
                 for alias in (n.names if isinstance(n, ast.Import) else [ast.alias(n.module or "")])}
-    if imported & {"threading", "multiprocessing", "asyncio", "concurrent"}:
+    if imported & {"multiprocessing", "asyncio", "concurrent"}:
         problems.append("concurrency import")
+    problems += heartbeat_thread_problems(source, tree)
+    return problems
+
+
+QUEUE_WRITERS = {"record_changes", "complete", "fail", "retry", "phase", "pending_now", "retry_now", "reported", "close",
+                 "execute", "executemany", "commit"}
+
+
+def heartbeat_thread_problems(source, tree):
+    """The only thread the agent starts is Heartbeat.run, and Heartbeat never reaches the queue except through
+    queue_counts, which opens the database read-only and only selects."""
+    problems = []
+    threads = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+               and n.func.attr == "Thread"]
+    beat = next((n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Heartbeat"), None)
+    if beat is None:
+        return ["no heartbeat class"] if threads else []
+    inside = {id(n) for n in ast.walk(beat)}
+    targets = [ast.get_source_segment(source, k.value) for n in threads for k in n.keywords if k.arg == "target"]
+    if len(threads) != 1 or id(threads[0]) not in inside or targets != ["self.run"]:
+        problems.append("a thread other than the heartbeat")
+    names = {n.id for n in ast.walk(beat) if isinstance(n, ast.Name)}
+    attrs = {n.attr for n in ast.walk(beat) if isinstance(n, ast.Attribute)}
+    if "Queue" in names or attrs & ({"queue", "db"} | QUEUE_WRITERS):
+        problems.append("the heartbeat reaches the queue")
+    counts = next((n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "queue_counts"), None)
+    text = ast.get_source_segment(source, counts) if counts else ""
+    statements = [n.value for n in ast.walk(counts) if isinstance(n, ast.Constant) and isinstance(n.value, str)
+                  and re.match(r"\s*(SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|PRAGMA|REPLACE|ALTER)\b", n.value, re.I)] if counts else []
+    if not counts or '"?mode=ro"' not in text or not statements or any(not s.lstrip().upper().startswith("SELECT") for s in statements):
+        problems.append("the heartbeat's queue read is not read-only")
     return problems
 
 
@@ -344,12 +377,20 @@ def cadence_problems(source):
             problems.append("order")
     except ValueError as error:
         problems.append("missing " + str(error))
-    run = ast.get_source_segment(source, method(tree, "Agent", "run"))
+    loop = ast.get_source_segment(source, method(tree, "Agent", "loop"))
     try:
-        if not run.index("self.flush_receipts()") < run.index("self.retry_requests()") < run.index("self.poll_changes()"):
+        if not loop.index("self.flush_receipts()") < loop.index("self.retry_requests()") < loop.index("self.poll_changes()"):
             problems.append("run order")
     except ValueError:
         problems.append("run order")
+    # run() starts the heartbeat, runs the loop and stops the heartbeat however the loop ends.
+    run = ast.get_source_segment(source, method(tree, "Agent", "run"))
+    try:
+        if not (run.index("heartbeat.start()") < run.index("try:\n            self.loop()")
+                < run.index("finally:\n            heartbeat.stop()")):
+            problems.append("heartbeat around the loop")
+    except ValueError:
+        problems.append("heartbeat around the loop")
     return problems
 
 
@@ -366,7 +407,15 @@ class AgentPins(unittest.TestCase):
             "reports through report()": AGENT.replace(call, call + "            self.report(\"1.2.3\")\n"),
             "resets through pending_now": AGENT.replace(call, call + "            self.queue.pending_now(\"1.2.3\", 1, 0)\n"),
             "retries through retry()": AGENT.replace(call, call + "            self.queue.retry(\"1.2.3\", \"x\", 1, 2)\n"),
-            "a worker thread": AGENT.replace("import time\n", "import time\nimport threading\n"),
+            "a worker thread": AGENT.replace(call, call + "            threading.Thread(target=self.flush_receipts).start()\n"),
+            "an asyncio loop": AGENT.replace("import time\n", "import time\nimport asyncio\n"),
+            "the heartbeat holds a Queue": AGENT.replace("= queue_counts(self.config.queue_db)",
+                                                         "= Queue(self.config.queue_db).counts()"),
+            "the heartbeat writes": AGENT.replace("            self.beat()\n",
+                                                  "            self.beat()\n            self.stow.queue.retry_now(\"1.2.3\", 1, 0)\n"),
+            "the counts read writable": AGENT.replace('"?mode=ro"', '"?mode=rw"'),
+            "the counts read deletes": AGENT.replace('"SELECT phase, count(*) FROM studies GROUP BY phase"',
+                                                     '"DELETE FROM studies WHERE phase=\'complete\'"'),
             "reported moves seq": AGENT.replace("UPDATE studies SET reported_seq=? WHERE", "UPDATE studies SET reported_seq=?, seq=seq+1 WHERE"),
         }
         for wrong, source in mutants.items():
@@ -401,7 +450,8 @@ class AgentPins(unittest.TestCase):
                                                        "        try:\n            response"),
                    "applies on any 2xx": AGENT.replace("if answer != {\"studyUid\": uid, \"result\": \"duplicate\"}:", "if not confirm.ok:"),
                    "polls before the flush": AGENT.replace("            self.flush_receipts()\n", "").replace(
-                       "            self.retry_requests()\n", "            self.retry_requests()\n            self.flush_receipts()\n")}
+                       "            self.retry_requests()\n", "            self.retry_requests()\n            self.flush_receipts()\n"),
+                   "heartbeat left running": AGENT.replace("        finally:\n            heartbeat.stop()\n", "        finally:\n            pass\n")}
         for wrong, source in mutants.items():
             with self.subTest(wrong=wrong):
                 self.assertNotEqual(source, AGENT)

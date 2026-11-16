@@ -131,7 +131,7 @@ SRC = {"disk": "Orthanc GET /statistics TotalDiskSize", "studies": "HALO PACS DB
        "registered": "HALO PACS DB StudyState.createdAt",
        "tat": "HALO PACS DB StudyState.createdAt, ReportVersion(action=approve).at, StudyState.em",
        "waiting": "HALO PACS DB StudyState.createdAt, StudyState.rs, StudyState.em",
-       "uptime": "HALO PACS API process (process.uptime)", "started": "HALO PACS API process (performance.timeOrigin)"}
+       "uptime": "HALO PACS API process (performance.now)", "started": "HALO PACS API process (performance.timeOrigin)"}
 UPTIME, STARTED = 3 * 86400 + 4 * 3600 + 5 * 60, "2026-09-22T19:55:00.000Z"
 
 

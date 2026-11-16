@@ -1175,8 +1175,8 @@
             ? "Gateway 큐의 검사 수입니다. Waiting은 아직 보내지 않은 검사, Retry는 다시 시도를 기다리는 검사, Failed는 같은 파일로는 보낼 수 없는 검사입니다."
             : "Gateway가 자기 큐를 읽지 못했다고 알렸습니다. 0건이 아닙니다." },
           { key: "stow", data: false, text: row.lastStowAt ? `Last STOW ${format(row.lastStowAt)}` : "No STOW Since Gateway Start",
-            title: row.lastStowAt ? `KIN이 이 Gateway의 영상 묶음을 마지막으로 받아들인 때입니다. ${derived}`
-              : "이 Gateway가 시작한 뒤 KIN이 받아들인 영상 묶음이 없습니다." },
+            title: row.lastStowAt ? `HALO PACS 서버가 이 Gateway의 영상 묶음을 마지막으로 받아들인 때입니다. ${derived}`
+              : "이 Gateway가 시작한 뒤 HALO PACS 서버가 받아들인 영상 묶음이 없습니다." },
           { key: "orthanc", data: false, text: !row.localOrthanc ? "Local Orthanc API Not Yet Checked"
             : `Local Orthanc API ${row.localOrthanc.answered ? "Answered" : "No Answer"} ${format(row.localOrthanc.observedAt)}`,
             title: "Gateway 안의 Orthanc REST API가 마지막 요청에 응답했는지입니다. 장비가 보내는 DICOM 포트를 직접 시험한 값은 아닙니다." +
@@ -1189,8 +1189,8 @@
         return {
           name: row.gateway, contact: row.contact,
           contactText: recent ? `Last Contact ${format(row.lastContactAt)}` : `No Contact since ${format(row.lastContactAt)}`,
-          contactTitle: recent ? "KIN이 이 Gateway의 소식을 마지막으로 받은 서버 시각입니다."
-            : `${noContactAfterSeconds}초 넘게 소식이 없습니다. 이 시각 이후 KIN이 이 Gateway의 소식을 받지 못했습니다. 이 기준은 정해진 사이트 기준이 아니라 30초 주기의 여러 번을 놓친 것을 뜻합니다.`,
+          contactTitle: recent ? "HALO PACS 서버가 이 Gateway의 소식을 마지막으로 받은 서버 시각입니다."
+            : `${noContactAfterSeconds}초 넘게 소식이 없습니다. 이 시각 이후 HALO PACS 서버가 이 Gateway의 소식을 받지 못했습니다. 이 기준은 정해진 사이트 기준이 아니라 30초 주기의 여러 번을 놓친 것을 뜻합니다.`,
           facts,
         };
       }

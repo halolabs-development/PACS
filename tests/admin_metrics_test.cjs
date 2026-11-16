@@ -58,7 +58,7 @@ const SRC = {
   disk: 'Orthanc GET /statistics TotalDiskSize', studies: 'HALO PACS DB StudyState', registered: 'HALO PACS DB StudyState.createdAt',
   tat: 'HALO PACS DB StudyState.createdAt, ReportVersion(action=approve).at, StudyState.em',
   waiting: 'HALO PACS DB StudyState.createdAt, StudyState.rs, StudyState.em',
-  uptime: 'HALO PACS API process (process.uptime)', started: 'HALO PACS API process (performance.timeOrigin)',
+  uptime: 'HALO PACS API process (performance.now)', started: 'HALO PACS API process (performance.timeOrigin)',
 };
 const base = { reason: null, max: null, denominator: null, excluded: null, window: null };
 const ROWS = [
