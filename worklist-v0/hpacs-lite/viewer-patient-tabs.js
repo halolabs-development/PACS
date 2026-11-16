@@ -203,21 +203,33 @@ window.KinViewerPatientTabs = (() => {
   const OPEN_WAIT_MS = 6000;
   const reading = () => { try { return !!session && !session.ended() && !session.readOnly?.() && !!session.owner(); } catch (_) { return false; } };
   const editorLink = uid => window.kinViewerEditorLink?.({ studies: [uid], examScope:[current?.exam?.current,current?.exam?.prior].find(scope=>scope?.reportUid===uid), owner: () => session.owner(), live: reading, openTimeoutMs: OPEN_WAIT_MS }) || null;
-  // Makes the linked reading screen's report target this study (its own move: viewer-windows.js editorOpen → select).
-  async function target(uid) {
+  // The tab a step of a move acts for: this tab, as opened now. Another tab opened meanwhile (even the same one again) is
+  // the reader's newer choice; every step of the move (the request, each ask again, the result) holds only while this does.
+  const opened = tab => { const seq = sequence; return () => current === tab && sequence === seq; };
+  const STALE = { ok: false, reason: 'stale', tabChanged: true };
+  // Makes the linked reading screen's report target this study (its own move: viewer-windows.js editorOpen → select), for
+  // the tab `holds` names: when that tab stops being the one shown, the request is withdrawn (the reading screen drops the move
+  // if it has not happened) and the result is `tabChanged`, with where the target is only if that was already told.
+  async function target(uid, holds) {
+    if (!holds()) return STALE;
     const link = editorLink(uid);
     if (!link) return { ok: false, reason: 'missing' };
-    try { return await link.open(uid); } catch (_) { return { ok: false, reason: 'unavailable' }; } finally { link.dispose(); }
+    const watch = setInterval(() => { if (!holds()) link.dispose(); }, 100);
+    try {
+      const result = await link.open(uid);
+      return holds() ? result : { ...STALE, ...(result?.ok === true ? { at: true } : typeof result?.at === 'boolean' ? { at: result.at } : {}) };
+    } catch (_) { return holds() ? { ok: false, reason: 'unavailable' } : STALE; }
+    finally { clearInterval(watch); link.dispose(); }
   }
   // Where the reading screen's report target is after a request (viewer-editor-link.js open): that study (moved, even when
   // the caret could not be put in Findings), not that study, or unknown (null).
   const reached = result => result?.ok === true || result?.at === true ? true : result?.at === false ? false : null;
   // Back to a study: a reading screen still finishing the opening it was asked for (and told to drop) answers busy for a
-  // while; it is asked again, a few times, before the result is taken.
-  async function targetBack(uid) {
+  // while; it is asked again, a few times, before the result is taken - never once the tab `holds` names is no longer shown.
+  async function targetBack(uid, holds) {
     let result = null;
     for (let attempt = 0; attempt < 6; attempt++) {
-      result = await target(uid);
+      result = await target(uid, holds);
       if (result?.reason !== 'busy') return result;
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
@@ -263,11 +275,10 @@ window.KinViewerPatientTabs = (() => {
       }
       if (!linked) return { ok: true, imagesOnly: true, message: say(`${to.patient.name}의 영상으로 옮겼습니다. 연결된 판독 화면이 없어 영상만 옮겼습니다.`) };
       // The images of the next patient as opened by this move: another tab opened meanwhile (even the same one again) is
-      // the reader's newer choice, which this move neither claims nor undoes.
-      const shownAt = sequence, still = () => current === to && sequence === shownAt;
+      // the reader's newer choice, which this move neither claims nor undoes (`opened`: the request is withdrawn, nothing goes back).
       const toUid = to.exam?.reportUid || to.studies[0], fromUid = from.exam?.reportUid || from.studies[0];
-      const moved = await target(toUid), there = reached(moved);
-      if (!still()) return { ok: false, message: say(`영상 탭이 그 사이 바뀌어 더 옮기지 않았습니다. ` +
+      const moved = await target(toUid, opened(to)), there = reached(moved);
+      if (moved?.tabChanged) return { ok: false, message: say(`영상 탭이 그 사이 바뀌어 더 옮기지 않았습니다. ` +
         (there === true ? `판독 화면의 대상은 ${to.patient.name}의 검사입니다.` : '판독 화면의 대상을 확인하세요.')) };
       // The reading screen's report target is the next patient's study (also when it answered late, or refused only after
       // moving): images and report target are together.
@@ -276,7 +287,10 @@ window.KinViewerPatientTabs = (() => {
       // the reading screen told is said; an unknown outcome is said to be unknown.
       const why = notOpened(moved);
       const imagesBack = await open(from.href) && await shown(from);
-      const reportBack = imagesBack ? reached(await targetBack(fromUid)) : null;
+      const back = imagesBack ? await targetBack(fromUid, opened(from)) : null, reportBack = reached(back);
+      // The way back is the same kind of step: a tab opened while the reading screen was asked back stops it, and is not undone.
+      if (back?.tabChanged) return { ok: false, mismatch: true, message: say(`영상 탭이 그 사이 바뀌어 더 되돌리지 않았습니다. ` +
+        (reportBack === true ? `판독 화면의 대상은 ${from.patient.name}의 검사입니다.` : '판독 화면의 대상을 확인하세요.')) };
       const what = there === false ? `판독 화면의 대상이 ${to.patient.name}의 검사로 바뀌지 않아(${why})`
         : `판독 화면이 ${to.patient.name}의 검사를 열었는지 확인하지 못해(${why})`;
       if (imagesBack && reportBack === true)

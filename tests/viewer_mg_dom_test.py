@@ -840,5 +840,43 @@ class ViewerMgDOMTest(unittest.TestCase):
         self.assertEqual('1.2.1', page.evaluate("synReader.target"))
         self.assertEqual('PK-A', page.evaluate("KinViewerPatientTabs.snapshot().key"))
 
+    def test_17d_keypad_tab_chosen_while_the_reading_screen_is_asked_back_stops_the_way_back(self):
+        # The opening of B got no answer; while the reading screen (busy) is asked back to A, the reader opens B's tab:
+        # that newer choice is not undone - no more requests for A, and the result says the tabs changed, not "back to A".
+        page = self.open(tabs=True)
+        page.evaluate("""() => { synReader.open = 'silent'; synReader.busy = 6000; synReader.withdrawSilent = true;
+          window.moveDone = false; KinViewerPatientTabs.next('save').then(result => { window.moveResult = result; moveDone = true; }); }""")
+        page.wait_for_function("() => synReader.opens.includes('1.2.1')", timeout=30000)
+        page.evaluate("() => { window.opensAtChoice = synReader.opens.length; return synOpenB(); }")
+        page.wait_for_function("() => KinViewerPatientTabs.snapshot()?.key === 'PK-B'")
+        page.wait_for_function("() => moveDone", timeout=15000)
+        page.wait_for_timeout(2500)
+        self.assertEqual([], page.evaluate("synReader.opens.slice(opensAtChoice)"))
+        result = page.evaluate("moveResult")
+        self.assertFalse(result['ok'])
+        self.assertEqual('영상 탭이 그 사이 바뀌어 더 되돌리지 않았습니다. 판독 화면의 대상을 확인하세요.', result['message'])
+        self.assertNotIn('reportTarget', result)
+        self.assertEqual('PK-B', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+
+    def test_17e_keypad_tab_chosen_while_the_opening_is_awaited_withdraws_it_and_moves_nothing_back(self):
+        # The reading screen would move to B 7.5 s after the request; at 1 s the reader opens A's tab again: the opening is
+        # withdrawn at once (B never follows), nothing is rolled back, and the result says the tabs changed.
+        page = self.open(tabs=True)
+        page.evaluate("""() => { synReader.open = 'slow'; synReader.slowMs = 7500;
+          window.moveDone = false; KinViewerPatientTabs.next('save').then(result => { window.moveResult = result; moveDone = true; }); }""")
+        page.wait_for_function("() => synReader.opens.includes('1.2.9')", timeout=30000)
+        page.wait_for_timeout(1000)
+        page.evaluate("() => KinViewerPatientTabs.open(" + repr(URL_A) + ")")
+        page.wait_for_function("() => KinViewerPatientTabs.snapshot()?.key === 'PK-A'")
+        # Withdrawn when the tab changed, not when the 6 s wait ran out.
+        page.wait_for_function("() => moveDone", timeout=1500)
+        self.assertEqual(['1.2.9'], page.evaluate("synReader.cancels"))
+        self.assertEqual('영상 탭이 그 사이 바뀌어 더 옮기지 않았습니다. 판독 화면의 대상을 확인하세요.', page.evaluate("moveResult.message"))
+        page.wait_for_timeout(7500)
+        self.assertIsNone(page.evaluate("synReader.movedAt ?? null"))
+        self.assertEqual(['1.2.9'], page.evaluate("synReader.opens"))
+        self.assertEqual('1.2.1', page.evaluate("synReader.target"))
+        self.assertEqual('PK-A', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+
 if __name__ == '__main__':
     unittest.main()
