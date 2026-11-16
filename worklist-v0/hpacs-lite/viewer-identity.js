@@ -129,7 +129,7 @@ window.KinViewerIdentity=(()=>{
           for(const field of fields)if(p[field]&&shown[field]){const at=p.fieldPositions[field];if(!groups.has(at))groups.set(at,[]);groups.get(at).push(shown[field]);}
           // Compare › Exam Marks on Images: the study's exam mark (* current, P1… earlier and N1… later studies) goes before
           // the role, in this label's own place and settings; a related study's mark is in an italic serif face.
-          let exam='';try{exam=window.kinViewerExamMark?.(current.uid)||'';}catch(_){exam='';}
+          let exam='';try{exam=window.kinViewerExamMark?.(current.uid,current.series)||'';}catch(_){exam='';}
           exam=typeof exam==='string'&&/^(\*|[PN]\d{1,3})$/.test(exam)?exam:'';e.dataset.examMark=exam;
           const marked=()=>{if(!exam)return;const mark=document.createElement('span');mark.className='kin-viewer-exam-mark';mark.textContent=exam+' ';if(exam!=='*'){mark.style.fontStyle='italic';mark.style.fontFamily=fonts.serif;}primary.prepend(mark);};
           e.replaceChildren();const primary=document.createElement('span');primary.className='kin-viewer-identity-content';primary.textContent=groups.get(p.position).join(' · ');primary.style.cssText='display:block;box-sizing:border-box;overflow:hidden;overflow-wrap:anywhere;background:#0b182bcc;padding:3px 6px;border-radius:3px';marked();e.append(primary);

@@ -46,6 +46,30 @@
   }
   const priorUids = marked => marked.filter(row => /^P\d+$/.test(row.mark)).map(row => row.uid);
 
+  // Series that are not images (reports, presentation states, key objects, segmentations, documents, structures):
+  // the viewer's comparison opening never places them in a cell either.
+  const NOT_IMAGES = ['SR', 'SEG', 'PR', 'KO', 'DOC', 'RTSTRUCT'];
+  const UID = /^\d+(?:\.\d+)+$/;
+  const value = (row, tag) => row?.[tag]?.Value?.[0];
+  // A study's series as the archive lists them (DICOM JSON, QIDO-RS series level), each with the original study it
+  // belongs to: [{ sourceUid, row }]. Returns the image series in Series Number order (then UID), one per Series
+  // Instance UID: { sourceUid, seriesUid, number, description, modality, instances }. A row without a valid Series
+  // Instance UID is left out; a number or count that is not a number is null.
+  function seriesRows(entries) {
+    const out = [], seen = new Set();
+    for (const { sourceUid, row } of Array.isArray(entries) ? entries : []) {
+      const seriesUid = value(row, '0020000E'), modality = text(value(row, '00080060')).trim().toUpperCase();
+      if (typeof seriesUid !== 'string' || !UID.test(seriesUid) || typeof sourceUid !== 'string' || NOT_IMAGES.includes(modality)) continue;
+      const key = sourceUid + '\u0000' + seriesUid;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const number = Number(value(row, '00200011')), instances = Number(value(row, '00201209'));
+      out.push({ sourceUid, seriesUid, number: Number.isFinite(number) && value(row, '00200011') !== '' ? number : null,
+        description: text(value(row, '0008103E')), modality, instances: Number.isInteger(instances) && instances >= 0 ? instances : null });
+    }
+    return out.sort((a, b) => (a.number ?? Infinity) - (b.number ?? Infinity) || a.sourceUid.localeCompare(b.sourceUid) || a.seriesUid.localeCompare(b.seriesUid));
+  }
+
   // The prior to show after Prev (direction -1, toward the current study) or Next (+1, further back), from the prior
   // now shown. With no prior shown, either goes to the nearest prior. At an end: { end: 'newer' | 'older' | 'none' }.
   function step(priors, shownUid, direction) {
@@ -160,7 +184,7 @@
     return best;
   }
 
-  const api = { validDate, marks, priorUids, step, follow, spacing, pxPerMm, ratioZoom, plane, crossLine, scoutPoint, nearestSlice };
+  const api = { validDate, marks, priorUids, seriesRows, NOT_IMAGES, step, follow, spacing, pxPerMm, ratioZoom, plane, crossLine, scoutPoint, nearestSlice };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.KinCompareModel = api;
 })(typeof window === 'object' ? window : globalThis);

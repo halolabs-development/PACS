@@ -1,4 +1,4 @@
-﻿# coding: utf-8
+# coding: utf-8
 """Compare menu on the shipped image toolbar: Related Studies' three views, Exam Marks, Prev / Next Prior on every
 comparison cell, Manual Sync with Lock, Match Zoom and Match Ratio.
 
@@ -95,6 +95,27 @@ COMPARE = """() => {
     async open(value, uid, options) { this.calls.push(['open', value.viewportId, uid, options.seriesUid || null]); return this.wait(options); },
     async replace(entries, options) { this.calls.push(['replace', entries.map(entry => [entry.value.viewportId, entry.uid])]); return this.wait(options); },
     subscribe: () => () => {} };
+  // The archive's series lists (QIDO-RS series level, DICOM JSON) for studies not opened yet, and what was asked of it.
+  // With hold, an answer waits until synArchiveRelease(); status gives a study's answer status.
+  const qido = (series, number, description, modality, count) => ({ '0020000D': { Value: ['?'] }, '0020000E': { Value: [series] }, '00200011': { Value: [number] },
+    '0008103E': { Value: [description] }, '00080060': { Value: [modality] }, '00201209': { Value: [count] } });
+  window.synArchive = { calls: [], hold: false, pending: [], status: {}, series: {
+    later: [qido('2.25.502', 2, 'Axial later', 'CT', 240), qido('2.25.501', 1, 'Scout later', 'CT', 1), qido('2.25.509', 99, 'Dose report', 'SR', 1)],
+    aug: [qido('2.25.602', 2, 'Axial August', 'CT', 20), qido('2.25.603', 3, 'Coronal August', 'CT', 20)],
+    may: [qido('2.25.701', 1, 'Chest May', 'CT', 80)], may2: [qido('2.25.901', 5, 'Added May', 'CT', 40), qido('2.25.902', 6, 'Left out May', 'CT', 40)],
+    nodate: [qido('2.25.801', 1, 'PA', 'CR', 1)] } };
+  window.synArchiveRelease = () => { for (const resolve of synArchive.pending.splice(0)) resolve(); };
+  const accountFetch = window.fetch;
+  window.fetch = async (url, init = {}) => {
+    const match = /^\\/dicom-web\\/studies\\/([^/?]+)\\/series(\\?.*)?$/.exec(String(url));
+    if (!match) return accountFetch(url, init);
+    const study = decodeURIComponent(match[1]);
+    synArchive.calls.push([study, new Headers(init.headers || {}).get('X-KIN-Series-List'), match[2] || '']);
+    if (synArchive.hold) await new Promise(resolve => synArchive.pending.push(resolve));
+    if (init.signal?.aborted) throw new DOMException('aborted', 'AbortError');
+    const status = synArchive.status[study] || 200;
+    return new Response(status === 200 ? JSON.stringify(synArchive.series[study] || []) : '{}', { status, headers: { 'Content-Type': 'application/dicom+json' } });
+  };
   window.KinViewerUX = { related: () => synRelated, snapshot: () => ({ key: 'PK', sequence: 1, studyUIDs: ['cur'] }),
     viewport(id) {
       const sets = synShown[id]; if (!sets?.length) return null; const set = synSets[sets[0]];
@@ -127,6 +148,8 @@ class ViewerCompareDOMTest(unittest.TestCase):
         page.evaluate(SETUP, OWNER)
         page.evaluate("settings => { synServer.viewerSettings = settings; }", settings)
         page.evaluate(COMPARE)
+        # The shared exam scope model, as the viewer session loads it before any feature module.
+        page.add_script_tag(path=str(HPACS / "exam-scope.js"))
         page.add_script_tag(path=str(HPACS / "viewer-features-compare.js"))
         page.evaluate("() => synMount()")
         expect(page.locator('.kin-ux-toolbar-settings [role=status]')).to_have_text('계정 설정 · 다른 PC에서도 적용됩니다.')
@@ -181,6 +204,126 @@ class ViewerCompareDOMTest(unittest.TestCase):
         panel.locator('tr[data-study=may]').dblclick()
         page.wait_for_function("() => synRelated.calls.filter(c => c[0] === 'open').length === 2")
         self.assertEqual(['open', 'left', 'may', None], page.evaluate("synRelated.calls.filter(c => c[0] === 'open')[1]"))
+
+    SERIES_HEAD = ['Mark', 'Viewing', 'Study', 'Series No', 'Description', 'Instances']
+
+    def test_02b_series_of_a_chosen_study_not_opened_read_from_the_archive_and_opened(self):
+        page = self.open()
+        self.menu(page, 'Related Studies')
+        panel = page.get_by_role('dialog', name='Related Studies')
+        expect(panel.locator('tr[data-study]')).to_have_count(4)
+        expect(panel.get_by_label('Study', exact=True)).to_be_hidden()
+        # One click chooses the later study (nothing opens, nothing is read yet).
+        panel.locator('tr[data-study=later]').click()
+        self.assertEqual('true', panel.locator('tr[data-study=later]').get_attribute('aria-selected'))
+        self.assertEqual('false', panel.locator('tr[data-study=aug]').get_attribute('aria-selected'))
+        self.assertEqual([], page.evaluate("synArchive.calls"))
+        self.assertFalse(page.evaluate("synRelated.calls.some(c => c[0] === 'open')"))
+        panel.get_by_label('View').select_option('series')
+        expect(panel.get_by_label('Study', exact=True)).to_be_visible()
+        expect(panel.locator('tr[data-series]')).to_have_count(2)
+        self.assertEqual('later', panel.get_by_label('Study', exact=True).input_value())
+        # Its image series from the archive, in Series Number order (the dose report is not an image series).
+        self.assertEqual([self.SERIES_HEAD, ['N1', '', '2026-09-01', '1', 'Scout later', '1'], ['N1', '', '2026-09-01', '2', 'Axial later', '240']],
+                         self.rows(panel))
+        self.assertEqual('italic', panel.locator('tr[data-series] td').first.evaluate('n => getComputedStyle(n).fontStyle'))
+        self.assertEqual([['later', 'related', '?includefield=0020000E,00200011,0008103E,00080060,00201209']], page.evaluate("synArchive.calls"))
+        self.assertEqual(['no', 'yes', 'no'], panel.locator('tr[data-series] td').evaluate_all('cells => cells.slice(0, 3).map(c => c.translate ? "yes" : "no")'))
+        # A series row opens that series of that study.
+        panel.locator('tr[data-series="2.25.502"]').dblclick()
+        page.wait_for_function("() => synRelated.calls.some(c => c[0] === 'open')")
+        self.assertEqual(['open', 'left', 'later', '2.25.502'], page.evaluate("synRelated.calls.find(c => c[0] === 'open')"))
+        page.locator('tr[data-series="2.25.501"]').focus(); page.keyboard.press('Enter')
+        page.wait_for_function("() => synRelated.calls.filter(c => c[0] === 'open').length === 2")
+        self.assertEqual(['open', 'left', 'later', '2.25.501'], page.evaluate("synRelated.calls.filter(c => c[0] === 'open')[1]"))
+        # An open prior: Viewing names the series a cell shows now.
+        page.evaluate("() => { synSets['syn-set-5'] = { ...synSets['syn-set-2'], displaySetInstanceUID: 'syn-set-5', SeriesInstanceUID: '2.25.602' }; synShown.right = ['syn-set-5']; synEmit('grid', 'gridState', {}); }")
+        panel.get_by_label('Study', exact=True).select_option('aug')
+        expect(panel.locator('tr[data-series="2.25.603"]')).to_have_count(1)
+        self.assertEqual([self.SERIES_HEAD, ['P1', 'Open', '2025-08-12', '2', 'Axial August', '20'], ['P1', '', '2025-08-12', '3', 'Coronal August', '20']], self.rows(panel))
+        # Open Studies: the series of the open studies, exactly as before.
+        panel.get_by_label('Study', exact=True).select_option('')
+        self.assertEqual(['Mark', 'Viewing', 'Study', 'Series No', 'Description', 'Images'], self.rows(panel)[0])
+        self.assertEqual(2, page.evaluate("synArchive.calls.length"))
+        # Back to Related Studies, the chosen study stays chosen and a double click still opens it.
+        panel.get_by_label('View').select_option('related')
+        expect(panel.get_by_label('Study', exact=True)).to_be_hidden()
+        panel.locator('tr[data-study=nodate]').dblclick()
+        page.wait_for_function("() => synRelated.calls.filter(c => c[0] === 'open').length === 3")
+        self.assertEqual(['open', 'left', 'nodate', None], page.evaluate("synRelated.calls.filter(c => c[0] === 'open')[2]"))
+        self.assertEqual('true', panel.locator('tr[data-study=nodate]').get_attribute('aria-selected'))
+
+    def test_02c_series_of_a_merged_exam_refusals_and_late_answers(self):
+        page = self.open()
+        # The May study is a merged exam of two originals; the second leaves one series out. A second exam cannot be opened.
+        page.evaluate("""() => {
+          const may = synRelated.rows.find(r => r.uid === 'may');
+          may.examScope = { reportUid: 'may', groupId: 'g-1', kind: 'merge', part: null, active: true, generation: 'g',
+            sources: [{ studyUid: 'may', series: { mode: 'all', uids: [] } }, { studyUid: 'may2', series: { mode: 'exclude', uids: ['2.25.902'] } }] };
+          synRelated.rows.push({ uid: 'gone', date: '2024-01-01', time: '', acc: 'G1', modality: 'CT', desc: 'Merged elsewhere', sourcePatientKey: 'PK', examUnavailable: true });
+        }""")
+        self.menu(page, 'Related Studies')
+        panel = page.get_by_role('dialog', name='Related Studies')
+        expect(panel.locator('tr[data-study]')).to_have_count(5)
+        panel.get_by_label('View').select_option('series')
+        panel.get_by_label('Study', exact=True).select_option('may')
+        expect(panel.locator('tr[data-series]')).to_have_count(2)
+        self.assertEqual([self.SERIES_HEAD, ['P2', '', '2025-05-02', '1', 'Chest May', '80'], ['P2', '', '2025-05-02', '5', 'Added May', '40']], self.rows(panel))
+        self.assertEqual(['may', 'may2'], page.evaluate("synArchive.calls.map(c => c[0])"))
+        self.assertEqual('may2', panel.locator('tr[data-series="2.25.901"]').get_attribute('data-source'))
+        panel.locator('tr[data-series="2.25.901"]').dblclick()
+        page.wait_for_function("() => synRelated.calls.some(c => c[0] === 'open')")
+        self.assertEqual(['open', 'left', 'may', '2.25.901'], page.evaluate("synRelated.calls.find(c => c[0] === 'open')"))
+        # An exam whose originals cannot be reached is not read; a refused study shows why; neither shows rows.
+        panel.get_by_label('Study', exact=True).select_option('gone')
+        expect(panel.get_by_role('status')).to_have_text('검사 묶음의 원본에 접근할 수 없습니다. 목록을 새로 고치세요.')
+        self.assertEqual([self.SERIES_HEAD], self.rows(panel))
+        self.assertEqual(2, page.evaluate("synArchive.calls.length"))
+        page.evaluate("() => { synArchive.status.nodate = 403; }")
+        panel.get_by_label('Study', exact=True).select_option('nodate')
+        expect(panel.get_by_role('status')).to_have_text('이 검사의 시리즈를 조회할 수 없습니다.')
+        self.assertEqual([self.SERIES_HEAD], self.rows(panel))
+        # A merged exam whose second original fails is not shown as a partial list.
+        page.evaluate("() => { synArchive.status.may2 = 500; }")
+        panel.get_by_label('Study', exact=True).select_option('may')
+        expect(panel.get_by_role('status')).to_have_text('연결을 확인한 뒤 다시 시도하세요.')
+        self.assertEqual([self.SERIES_HEAD], self.rows(panel))
+        # Late answers: the study chosen last wins even when the first answer arrives after it.
+        page.evaluate("() => { synArchive.hold = true; synArchive.calls.length = 0; }")
+        panel.get_by_label('Study', exact=True).select_option('later')
+        page.wait_for_function("() => synArchive.calls.length === 1")
+        panel.get_by_label('Study', exact=True).select_option('aug')
+        page.wait_for_function("() => synArchive.calls.length === 2")
+        page.evaluate("() => { synArchive.hold = false; synArchiveRelease(); }")
+        expect(panel.locator('tr[data-series="2.25.603"]')).to_have_count(1)
+        page.wait_for_timeout(100)
+        expect(panel.locator('tr[data-series="2.25.501"]')).to_have_count(0)
+        # The exam scope changes in another window: the list is read again, and a chosen exam it no longer holds goes
+        # back to the open studies.
+        page.evaluate("() => { synRelated.rows = synRelated.rows.filter(r => r.uid !== 'aug'); dispatchEvent(new Event('kin-exam-scope-invalidated')); }")
+        expect(panel.get_by_label('Study', exact=True)).to_have_value('')
+        expect(panel.locator('tr[data-series="2.25.603"]')).to_have_count(0)
+        self.assertEqual(['Mark', 'Viewing', 'Study', 'Series No', 'Description', 'Images'], self.rows(panel)[0])
+        self.assertNotIn('aug', panel.get_by_label('Study', exact=True).locator('option').evaluate_all('o => o.map(n => n.value)'))
+        # Closing the window drops a read still on its way.
+        page.evaluate("() => { synArchive.hold = true; }")
+        panel.get_by_label('Study', exact=True).select_option('later')
+        page.wait_for_function("() => synArchive.pending.length === 1")
+        panel.get_by_role('button', name='Close').click()
+        page.evaluate("() => { synArchive.hold = false; synArchiveRelease(); }")
+        page.wait_for_timeout(50)
+
+    def test_03b_exam_marks_follow_a_merged_exam_and_its_series(self):
+        page = self.open()
+        page.evaluate("""() => {
+          const may = synRelated.rows.find(r => r.uid === 'may');
+          may.examScope = { reportUid: 'may', groupId: 'g-1', kind: 'merge', part: null, active: true, generation: 'g',
+            sources: [{ studyUid: 'may', series: { mode: 'all', uids: [] } }, { studyUid: 'may2', series: { mode: 'exclude', uids: ['2.25.902'] } }] };
+        }""")
+        self.menu(page, 'Exam Marks on Images')
+        page.wait_for_function("() => window.kinViewerExamMark?.('aug') === 'P1'")
+        self.assertEqual(['P2', 'P2', '', 'N1', '*'], page.evaluate(
+            "[['may'], ['may2', '2.25.901'], ['may2', '2.25.902'], ['later'], ['cur', 'x']].map(a => kinViewerExamMark(...a))"))
 
     def test_03_exam_marks_saved_in_the_account_and_given_to_the_image_labels(self):
         page = self.open()

@@ -44,6 +44,28 @@ test('marks: no P or N when the current study has no valid date or is missing', 
   assert.deepEqual(M.marks([row('a', '2020-01-01')], 'missing').map(r => r.mark), ['']);
 });
 
+test('seriesRows: image series of an exam in Series Number order, each once, with its original study and instance count', () => {
+  const qido = (series, number, description, modality, count) => ({ '0020000E': { Value: [series] }, ...(number === undefined ? {} : { '00200011': { Value: [number] } }),
+    ...(description === undefined ? {} : { '0008103E': { Value: [description] } }), '00080060': { Value: [modality] }, ...(count === undefined ? {} : { '00201209': { Value: [count] } }) });
+  const rows = M.seriesRows([
+    { sourceUid: '2.25.1', row: qido('2.25.13', 3, 'Coronal', 'CT', 120) },
+    { sourceUid: '2.25.1', row: qido('2.25.11', 1, 'Scout', 'CT', 1) },
+    { sourceUid: '2.25.1', row: qido('2.25.12', '2', undefined, 'CT', '240') },
+    { sourceUid: '2.25.1', row: qido('2.25.12', 2, 'Again', 'CT', 240) },
+    { sourceUid: '2.25.2', row: qido('2.25.21', 1, 'R CC', 'mg', 1) },
+    { sourceUid: '2.25.1', row: qido('2.25.14', 900, 'Dose report', 'SR', 1) },
+    { sourceUid: '2.25.1', row: qido('2.25.15', 901, 'GSPS', 'PR', 1) },
+    { sourceUid: '2.25.1', row: qido('2.25.16', 902, 'Key images', 'KO', 1) },
+    { sourceUid: '2.25.1', row: qido('2.25.17', 903, 'Seg', 'SEG', 1) },
+    { sourceUid: '2.25.1', row: qido('not-a-uid', 4, 'Broken', 'CT', 1) },
+    { sourceUid: '2.25.1', row: qido('2.25.18', undefined, 'No number', 'MR', undefined) },
+  ]);
+  assert.deepEqual(rows.map(r => [r.sourceUid, r.seriesUid, r.number, r.description, r.modality, r.instances]), [
+    ['2.25.1', '2.25.11', 1, 'Scout', 'CT', 1], ['2.25.2', '2.25.21', 1, 'R CC', 'MG', 1], ['2.25.1', '2.25.12', 2, '', 'CT', 240],
+    ['2.25.1', '2.25.13', 3, 'Coronal', 'CT', 120], ['2.25.1', '2.25.18', null, 'No number', 'MR', null]]);
+  assert.deepEqual(M.seriesRows(null), []);
+});
+
 test('step: Next goes further back, Prev toward the current study, both stop at the ends; no prior shown opens the nearest', () => {
   const priors = ['p1', 'p2', 'p3'];
   assert.deepEqual(M.step(priors, 'p1', 1), { uid: 'p2' });

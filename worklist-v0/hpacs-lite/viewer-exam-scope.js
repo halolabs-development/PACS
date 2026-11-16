@@ -85,13 +85,24 @@
     epoch++;pending=null;admitted=null;
     block(Error('검사 묶음이 바뀌었습니다. 쓰던 내용은 유지됩니다. 목록에서 영상을 다시 여세요.'));
   }
+  // Compare › Related Studies › Series lists the series of a related study before it is opened. That one read names
+  // itself with this header; it is a study's series list only (QIDO-RS series level), never metadata or images, so
+  // nothing outside the scope reaches the image sets. The server still checks the reader's access to the study, and the
+  // list keeps only the series of the related exam it was asked for (KinExamScope.dicom).
+  const SERIES_LIST = 'X-KIN-Series-List';
+  const listOnly = (target, match, init) => !match[2] && /\/series$/.test(target.pathname) &&
+    new root.Headers(init?.headers || {}).get(SERIES_LIST) === 'related';
   async function send(native,url,init={}) {
     const target=new URL(typeof url==='string'||url instanceof URL?url:url.url,root.location.href);
     const match=target.origin===root.location.origin && /^(?:\/api(?:\/(?:image-relay|images))?)?\/dicom-web\/studies\/([^/]+)(?:\/series\/([^/]+))?/.exec(target.pathname);
     if (!match || !active()) return native(url,init);
     const key=active().key,ticket=epoch,input=await ensure();
-    if(!allows(input,decodeURIComponent(match[1]),match[2]&&decodeURIComponent(match[2])))
-      throw Error('이 검사 범위에 없는 영상입니다.');
+    if(!allows(input,decodeURIComponent(match[1]),match[2]&&decodeURIComponent(match[2]))){
+      if(!listOnly(target,match,init))throw Error('이 검사 범위에 없는 영상입니다.');
+      const response=await native(url,init);
+      if(ticket!==epoch||key!==active()?.key) { response.body?.cancel().catch(()=>{}); throw Error('영상 범위가 바뀌었습니다.'); }
+      return response;
+    }
     const response=await native(url,init);
     if(ticket!==epoch||key!==active()?.key) { response.body?.cancel().catch(()=>{}); throw Error('영상 범위가 바뀌었습니다.'); }
     if(!response.ok||!/(?:\/metadata|\/series|\/instances)$/.test(target.pathname))return response;
@@ -113,9 +124,12 @@
   const installed=new WeakSet();
   function comparisonProtocol(input,displaySets) {
     const selectors={},roles=[input.current,input.prior];
+    // A series asked for in the address (a Related Studies › Series row) is its role's image when that role holds it.
+    let wanted=null;try{wanted=new URL(root.location.href).searchParams.get('initialSeriesInstanceUID');}catch(_){}
     roles.forEach((scope,i)=>{
-      const selected=displaySets.find(set=>!['SR','SEG','PR','KO','DOC','RTSTRUCT'].includes(set.Modality)&&
-        scope.sources.some(source=>source.studyUid===set.StudyInstanceUID&&model.allows(source,set.SeriesInstanceUID)));
+      const image=set=>!['SR','SEG','PR','KO','DOC','RTSTRUCT'].includes(set.Modality)&&
+        scope.sources.some(source=>source.studyUid===set.StudyInstanceUID&&model.allows(source,set.SeriesInstanceUID));
+      const selected=(wanted&&displaySets.find(set=>set.SeriesInstanceUID===wanted&&image(set)))||displaySets.find(image);
       selectors['exam-'+i]={seriesMatchingRules:[{attribute:'displaySetInstanceUID',required:true,
         constraint:{equals:{value:selected?.displaySetInstanceUID||''}}}]};
     });

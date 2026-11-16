@@ -1,4 +1,4 @@
-﻿# coding: utf-8
+# coding: utf-8
 """REQ-D02-IDENTITY-FIELDS isolated DOM coverage for viewer v3 and appearance v10."""
 from pathlib import Path
 import unittest
