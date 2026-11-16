@@ -482,7 +482,17 @@ class VolumeRenderingE2E(VolumeCurrentPrintE2E):
    dialog.get_by_role('button',name='Remove Table',exact=True).click();expect(dialog.locator('[role=status]')).to_contain_text('메모리');expect(dialog).to_be_visible()
    self.assertEqual(v.evaluate('()=>vrRemovalCopies()'),{'volumes':0,'images':0,'bound':v.evaluate('()=>projectionVP.getVolumeId()')});expect(dialog.get_by_role('button',name='Remove Table',exact=True)).to_be_enabled()
   finally:v.evaluate('()=>cornerstone.cache.getBytesAvailable=vrBytes')
-  self.remove(dialog,'Remove Table','촬영대·시트를 지웠습니다');dialog.get_by_role('button',name='Close VR',exact=True).click()
+  # A copy that fails while it is made (the cache refuses its second image): a message, the source display, nothing left.
+  v.evaluate("()=>{window.vrPut=cornerstone.cache.putImageSync;let n=0;cornerstone.cache.putImageSync=function(id,...rest){if(String(id).startsWith('kin-vr-removal-')&&++n===2)throw Error('INJECTED COPY FAILURE');return vrPut.call(this,id,...rest)}}")
+  try:
+   for _ in range(2):
+    dialog.get_by_role('button',name='Remove Table',exact=True).click();expect(dialog.locator('[role=status]')).to_contain_text('INJECTED COPY FAILURE');expect(dialog).to_be_visible()
+    self.assertEqual(v.evaluate('()=>vrRemovalCopies()'),{'volumes':0,'images':0,'bound':v.evaluate('()=>projectionVP.getVolumeId()')});expect(dialog.get_by_role('button',name='Remove Table',exact=True)).to_be_enabled()
+    v.evaluate("()=>{let n=0;cornerstone.cache.putImageSync=function(id,...rest){if(String(id).startsWith('kin-vr-removal-')&&++n===2)throw Error('INJECTED COPY FAILURE');return vrPut.call(this,id,...rest)}}")
+  finally:v.evaluate('()=>cornerstone.cache.putImageSync=vrPut')
+  expect(dialog.locator('.kin-vr-removal-state')).to_have_text('Removed from display: none')
+  self.remove(dialog,'Remove Table','촬영대·시트를 지웠습니다');self.assertEqual(v.evaluate('()=>{const c=vrRemovalCopies();return [c.volumes,c.images]}'),[1,40])
+  dialog.get_by_role('button',name='Close VR',exact=True).click()
   self.assertEqual(v.evaluate('()=>vrRemovalCopies()'),{'volumes':0,'images':0,'bound':None});self.preserved_volume(source,self.volume_state(v));self.assertEqual(self.native_pixels(v),native)
 
  def mpr_live_after_mask_failure(self,v,native):

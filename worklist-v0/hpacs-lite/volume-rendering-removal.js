@@ -166,7 +166,9 @@
   function* tableCells(pooled,p){
     const v=pooled.values,body=new Uint8Array(p.count);
     for(let i=0;i<p.count;i++)body[i]=v[i]>=LIMITS.bodyHu?1:0;
-    const radii=p.spacing.map(n=>Math.max(1,Math.floor(LIMITS.tableErodeMm/(n*p.factor))));
+    // Cells within 3 mm of the outside air along each axis; an axis whose cells are thicker than 3 mm adds none (a thick
+    // slice or a coarse grid never makes a 10 mm piece look thin).
+    const radii=p.spacing.map(n=>Math.floor(LIMITS.tableErodeMm/(n*p.factor)));
     // Depth is measured from the outside air only: a lung or bowel cavity does not make the wall around it thin.
     const air=yield* box(yield* outside(body,p),p,radii,true);
     const plates=yield* regions(body,p,(queue,length)=>{for(let k=0;k<length;k++)if(!air[queue[k]])return false;return true;});

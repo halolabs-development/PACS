@@ -264,7 +264,14 @@ window.kinCreateVolumeRendering=function({target,permitted,alive,owner,notice=()
     if(typeof core.cache.getBytesAvailable!=='function'||core.cache.getBytesAvailable()<bytes*2)throw Error(removalMemory);
     let buffer;try{buffer=new Float32Array(r.plan.voxels);}catch(_){throw Error(removalMemory);}
     const id='kin-vr-removal-'+crypto.randomUUID(),imageIds=Array.from({length:nz},(_,z)=>id+'-slice-'+z),entries=new Map(),provider=(type,imageId)=>entries.get(imageId)?.[type];
-    const resource={id,imageIds,entries,provider,buffer,volume:null};r.resources.add(resource);core.metaData.addProvider(provider,10000);
+    const resource={id,imageIds,entries,provider,buffer,volume:null};r.resources.add(resource);
+    // A copy that fails while it is being made leaves nothing behind: its provider, images and volume go at once.
+    try{core.metaData.addProvider(provider,10000);fillResource(core,source,op,r,resource);}catch(error){discardResource(r,resource);throw error;}
+    return resource;
+  }
+  function discardResource(r,resource){releaseResource(resource);r.resources.delete(resource);}
+  function fillResource(core,source,op,r,resource){
+    const {id,imageIds,entries,buffer}=resource,[nx,ny,nz]=r.plan.dims,length=nx*ny;
     const spacing=Array.from(source.spacing||op.imageData.getSpacing()),origin=Array.from(source.origin||op.imageData.getOrigin()),direction=Array.from(source.direction||op.imageData.getDirection()),frame=source.metadata?.FrameOfReferenceUID;
     const row=direction.slice(0,3),column=direction.slice(3,6),normal=direction.slice(6,9);
     for(const [z,imageId] of imageIds.entries()){
@@ -301,7 +308,8 @@ window.kinCreateVolumeRendering=function({target,permitted,alive,owner,notice=()
       if(kind==='bone'&&r?.boneOn&&r.bone.threshold===threshold)throw Error('이미 이 Bone Threshold로 뼈를 지웠습니다.');
       if(kind==='table'&&r?.tableOn)throw Error('이미 침대를 지웠습니다.');
     }catch(error){if(operation===op&&!current(op))fail(op,error);else status.textContent=error.message;return;}
-    op.removalBusy=true;refreshControls(op);let changed=false;
+    // pending: a new copy not yet shown; any failure before the actor reads it releases it here (an applied copy is kept).
+    op.removalBusy=true;refreshControls(op);let changed=false,pending=null;
     status.textContent=kind==='bone'?'VR에서 지울 뼈를 찾는 중입니다…':kind==='table'?'VR에서 지울 침대를 찾는 중입니다…':'지운 뼈·침대를 되돌리는 중입니다…';
     try{
       if(kind==='restore'){changed=true;await bindVolume(op,op.sourceVolumeId);releaseRemoval(op);showRemoval(op);status.textContent='지운 뼈·침대를 되돌렸습니다.';return;}
@@ -313,16 +321,18 @@ window.kinCreateVolumeRendering=function({target,permitted,alive,owner,notice=()
       let bone=r.bone,table=r.table;
       if(kind==='bone'){bone=await drive(model.boneCells(r.pooled,r.plan,threshold),op);if(!bone.cells){status.textContent='Bone Threshold '+threshold+' HU에서 지울 뼈를 찾지 못했습니다. 표시는 그대로입니다.';return;}}
       if(kind==='table'){table=r.table||await drive(model.tableCells(r.pooled,r.plan),op);r.table=table;if(!table.cells){status.textContent='몸과 떨어진 얇은 촬영대·시트를 찾지 못했습니다. 표시는 그대로입니다.';return;}}
-      const boneOn=kind==='bone'||r.boneOn,tableOn=kind==='table'||r.tableOn,old=r.bound,fresh=!old||!intact(old),resource=fresh?removalResource(op,r):old;
+      const boneOn=kind==='bone'||r.boneOn,tableOn=kind==='table'||r.tableOn,old=r.bound,fresh=!old||!intact(old),resource=fresh?(pending=removalResource(op,r)):old;
+      // Repainting the shown copy changes what the actor reads: a failure from here on closes VR rather than leave half a paint.
+      if(!fresh)changed=true;
       await drive(model.paint(scalars,resource.buffer,r.plan,{bone:boneOn?bone:null,table:tableOn?table:null},r.floor),op);scalars=null;
       changed=true;
       // Painted pixels have no streaming loader to mark texture slices: upload every slice before the copy is drawn.
       resource.volume.invalidate();
-      if(fresh){r.bound=resource;await bindVolume(op,resource.id);if(old){releaseResource(old);r.resources.delete(old);}}
+      if(fresh){r.bound=resource;pending=null;await bindVolume(op,resource.id);if(old)discardResource(r,old);}
       else render(op);
       r.bone=bone;r.boneOn=boneOn;r.tableOn=tableOn;showRemoval(op);
       status.textContent=(kind==='bone'?'VR 표시에서 뼈를 지웠습니다(Bone Threshold '+threshold+' HU 이상).':'VR 표시에서 몸과 떨어진 촬영대·시트를 지웠습니다.')+' 원본과 MPR은 그대로입니다.';
-    }catch(error){if(operation!==op)return;if(changed||!current(op))fail(op,error);else status.textContent=error instanceof RangeError?removalMemory:error.message;}
+    }catch(error){if(pending&&op.removal?.resources.has(pending))discardResource(op.removal,pending);if(operation!==op)return;if(changed||!current(op))fail(op,error);else status.textContent=error instanceof RangeError?removalMemory:error.message;}
     finally{op.removalBusy=false;if(operation===op)refreshControls(op);}
   }
   async function open(){

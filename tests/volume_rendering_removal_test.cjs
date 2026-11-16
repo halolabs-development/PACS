@@ -81,6 +81,22 @@ test('a table touching the body is not removed (conservative)',()=>{
   assert.equal(parts.table.cells,null);assert.equal(share(out,label,5,floor),0);
 });
 
+test('thick slices: a piece thicker than 3 mm along the slice axis stays, a plate thin in the slice plane goes',()=>{
+  const dims=[48,48,8],spacing=[1,1,10],hu=new Float32Array(dims[0]*dims[1]*dims[2]).fill(-1000),label=new Uint8Array(hu.length);
+  for(let z=0;z<dims[2];z++)for(let y=0;y<dims[1];y++)for(let x=0;x<dims[0];x++){
+    const i=x+dims[0]*(y+dims[1]*z);
+    if(z===3&&x>=4&&x<=23&&y>=4&&y<=23){hu[i]=40;label[i]=1;}
+    if(y>=40&&y<=41&&x>=4&&x<=43){hu[i]=300;label[i]=2;}
+  }
+  for(const maxCells of [undefined,4000,300]){
+    const p=removal.plan(dims,spacing,maxCells),pooled=removal.run(removal.pool(hu,p)),table=removal.run(removal.tableCells(pooled,p));
+    const out=new Float32Array(hu.length),floor=removal.floorFor(pooled.min);removal.run(removal.paint(hu,out,p,{table},floor));
+    assert.equal(share(out,label,1,floor),0,'10 mm piece, factor '+p.factor);
+    if(p.factor<4)assert.equal(share(out,label,2,floor),1,'2 mm plate, factor '+p.factor);
+    else assert.equal(table.cells,null,'cells thicker than 3 mm on every axis remove nothing');
+  }
+});
+
 test('bone and table together',()=>{
   const {hu,label}=phantom(),{out,floor}=apply(hu,{bone:250,table:true});
   assert.equal(share(out,label,3,floor),1);assert.equal(share(out,label,5,floor),1);
