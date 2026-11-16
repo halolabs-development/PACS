@@ -56,7 +56,7 @@ function kinCreateViewerPrior() {
           for(const original of originals)source.deleteStudyMetadataPromise(original); throw error;
         }
         const sets = services.displaySetService.getActiveDisplaySets().filter(set => (scope?scope.sources.some(original=>original.studyUid===set.StudyInstanceUID&&window.KinExamScope.allows(original,set.SeriesInstanceUID)):set.StudyInstanceUID === uid) && set.images?.length)
-          .sort((a, b) => Number(a.SeriesNumber || 0) - Number(b.SeriesNumber || 0) || a.SeriesInstanceUID.localeCompare(b.SeriesInstanceUID));
+          .sort(kinSeriesOrder);
         // Priors are ranked against the display set in the cell that asked, which for a split series is one of its parts.
         const own = origin.displaySetUid && services.displaySetService.getDisplaySetByUID(origin.displaySetUid);
         const sourceSet = own?.StudyInstanceUID === origin.studyUid && own.SeriesInstanceUID === origin.seriesUid ? own

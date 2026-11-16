@@ -104,3 +104,71 @@ test('a service without sortDisplaySets is left as it is', () => {
   assert.deepEqual(ids(s), ['b', 'a']);
   assert.equal(s.listeners(), 0);
 });
+
+// ---------------------------------------------------------------------------------------------------------------
+// The first display. The pinned HangingProtocolService._matchImages scores every display set against a selector and
+// sorts the candidates by score (descending), study (descending), then this._getSeriesSortInfoForDisplaySetSort(set)
+// (ascending), whose pinned body is { series: parseInt(displaySet.SeriesNumber) } - a missing number reads 0.
+class PinnedHangingProtocols {
+  _getSeriesSortInfoForDisplaySetSort(displaySet) {
+    return { [this._getSeriesFieldForDisplaySetSort().name]: displaySet.SeriesNumber != null ? parseInt(displaySet.SeriesNumber) : parseInt(displaySet.seriesNumber) };
+  }
+  _getSeriesFieldForDisplaySetSort() { return { name: 'series' }; }
+  /** The stock default selector: images score 10, a series named in the address another 10. */
+  first(displaySets) {
+    this.displaySets = displaySets;
+    const scored = displaySets.map(set => ({ set, info: { score: (set.numImageFrames > 0 ? 10 : 0) + (set.isDisplaySetFromUrl ? 10 : 0),
+      study: set.StudyInstanceUID, ...this._getSeriesSortInfoForDisplaySetSort(set) } }));
+    const compare = (x, y) => x < y ? -1 : x > y ? 1 : 0;
+    scored.sort((a, b) => compare(b.info.score, a.info.score) || compare(b.info.study, a.info.study) || compare(a.info.series, b.info.series));
+    return scored[0].set.displaySetInstanceUID;
+  }
+}
+// As the pinned stack handler builds a display set: SeriesNumber: instance.SeriesNumber || 0, the instances kept.
+const stack = (id, instance, extra = {}) => ({ displaySetInstanceUID: id, StudyInstanceUID: '2.25.1', SeriesInstanceUID: 'S-' + id,
+  SeriesNumber: instance.SeriesNumber || 0, numImageFrames: 1, instances: [{ SeriesDate: '20261111', SeriesTime: '081500', ...instance }], ...extra });
+const attached = id => stack(id, { SeriesDate: '', SeriesTime: '' }, { Modality: 'OT', SeriesDescription: 'Attached Document' });
+function entered(hp) {
+  const { kinCreateSeriesOrder } = load(), s = service(), extension = kinCreateSeriesOrder();
+  extension.onModeEnter({ servicesManager: { services: { displaySetService: s, hangingProtocolService: hp } } });
+  return extension;
+}
+
+test('the pinned tie-break opened an attached picture before the images; the panel order now breaks the tie', () => {
+  const sets = () => [stack('ct', { SeriesNumber: 1 }, { numImageFrames: 8 }), attached('picture')];
+  assert.equal(new PinnedHangingProtocols().first(sets()), 'picture', 'the defect: the attachment reads as number 0');
+  const hp = new PinnedHangingProtocols(), extension = entered(hp);
+  assert.equal(hp.first(sets()), 'ct');
+  assert.equal(hp.first(sets().reverse()), 'ct', 'whatever the arrival order');
+  // Several attachments, a numbered Secondary Capture, a real number 0, equal numbers by date: the panel order.
+  assert.equal(hp.first([attached('a'), attached('b'), stack('sc', { SeriesNumber: 5 }, { Modality: 'OT' }), stack('ct', { SeriesNumber: 3 })]), 'ct');
+  assert.equal(hp.first([stack('ct', { SeriesNumber: 1 }), stack('zero', { SeriesNumber: 0 }), attached('a')]), 'zero');
+  assert.equal(hp.first([stack('late', { SeriesNumber: 2, SeriesTime: '090000' }), stack('early', { SeriesNumber: 2, SeriesTime: '080000' })]), 'early');
+  // A study with nothing but the attached picture opens on it; a series named in the address still wins on score.
+  assert.equal(hp.first([attached('only')]), 'only');
+  assert.equal(hp.first([stack('ct', { SeriesNumber: 1 }), attached('asked', ), { ...attached('named'), isDisplaySetFromUrl: true }]), 'named');
+  // A non-image set (a PDF or SR: no image frames) loses on score as before.
+  assert.equal(hp.first([{ ...attached('pdf'), numImageFrames: 0, Modality: 'DOC' }, attached('picture')]), 'picture');
+  extension.onModeExit();
+});
+
+test('the tie-break is installed once per mode and taken back on exit', () => {
+  const hp = new PinnedHangingProtocols(), { kinCreateSeriesOrder } = load(), s = service(), extension = kinCreateSeriesOrder();
+  const services = { displaySetService: s, hangingProtocolService: hp };
+  extension.onModeEnter({ servicesManager: { services } });
+  const installed = hp._getSeriesSortInfoForDisplaySetSort;
+  assert.ok(Object.prototype.hasOwnProperty.call(hp, '_getSeriesSortInfoForDisplaySetSort'));
+  extension.onModeEnter({ servicesManager: { services } });
+  assert.notEqual(hp._getSeriesSortInfoForDisplaySetSort, installed, 're-entry replaces its own wrapper');
+  hp.first([stack('ct', { SeriesNumber: 1 }), attached('a')]);
+  assert.equal(hp.first([stack('ct', { SeriesNumber: 1 }), attached('a')]), 'ct', 'not wrapped twice');
+  extension.onModeExit();
+  assert.ok(!Object.prototype.hasOwnProperty.call(hp, '_getSeriesSortInfoForDisplaySetSort'), 'the pinned method is back');
+  assert.equal(hp.first([stack('ct', { SeriesNumber: 1 }), attached('a')]), 'a');
+  // Someone else's later wrapper is not undone.
+  extension.onModeEnter({ servicesManager: { services } });
+  const other = function (set) { return { series: 0 }; };
+  hp._getSeriesSortInfoForDisplaySetSort = other;
+  extension.onModeExit();
+  assert.equal(hp._getSeriesSortInfoForDisplaySetSort, other);
+});
