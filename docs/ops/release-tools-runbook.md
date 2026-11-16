@@ -1316,7 +1316,11 @@ with R′, cannot replace N's configuration with R's or lose the flag.
 
      ```python
      def retention_opened(compose):
-         logs = ops.run(['docker', 'logs', 'kin-api'])
+         # Only the current start counts: an earlier start's lines (a restart loop, a warning since settled) are not read.
+         start = lambda: (lambda c: (c['Id'], c['State']['StartedAt'], c['RestartCount']))(
+             json.loads(ops.text(['docker', 'inspect', 'kin-api']))[0])
+         current = start()
+         logs = ops.run(['docker', 'logs', '--since', current[1], 'kin-api'])
          lines = (logs.stdout + logs.stderr).decode('utf-8', 'replace').splitlines()
          last = lambda unit: [line for line in lines if line.startswith(f'[KIN API] Retention {unit}: ')][-1]
          opened = {'draft': last('draft-purpose'), 'report': last('report-retention')}
@@ -1326,6 +1330,7 @@ with R′, cannot replace N's configuration with R's or lose the flag.
          for script in ('draft-purpose-sweep.js', 'report-retention-sweep.js'):
              swept = ops.run(compose + ['run', '--rm', '--no-deps', 'api', 'node', f'dist/emr-retention/{script}'], check=False)
              assert swept.returncode == 0, (script, swept.stdout.decode('utf-8', 'replace')[-400:])
+         assert start() == current   # the same start ran through the sweeps
          return opened
      record['r_retention'] = retention_opened(compose_r)
      ```
@@ -1421,7 +1426,8 @@ Then take one of two ways:
   refuses while it exists. Remove it only after inspecting what that session
   left, and record the removal. Then open a new session in N's checkout as for
   the rollback session (lock, observed values, the three definitions,
-  `install_timeout`) and rebuild both commands from the record:
+  `install_timeout`, and `retention_opened` of R6 step 3 with `import re`) and
+  rebuild both commands from the record:
 
   ```python
   record = json.loads(record_path.read_text(encoding='utf-8'))
