@@ -608,6 +608,8 @@ The historical one-time upgrade below is not the entry point for a current relea
 Do not judge destruction state while the application is serving, compare two moving fingerprints, infer
 quiescence from two equal samples, or infer a moved host job from its filename. Do not restart the full
 stack after the final judgement. Do not change the application's destruction retries or recovery code.
+Do not search the host for the jobs that are "related" to the site (by path, by container name, by reading
+a job's text, a hook or a wrapper): a search has no way to know what it missed.
 
 ## Inputs and read-only preparation
 
@@ -628,24 +630,65 @@ realm/client/SMTP display names and all three administrative-event retention val
 container recreation do not update an existing realm. Record the actual values, without credentials.
 
 The `prep` stage is read-only. It does not certify a live ledger as safe for rollback. It does preview
-what would refuse the maintenance interval after the entry closed (the marks of a retained maintenance
-boundary, a database scheduler, a running container outside the site's services that reaches its volumes
-or networks), so that a window that is going to be refused is refused before it costs a closed entry.
+what would refuse the maintenance interval after the entry closed (a host that does not equal its
+declaration, the marks of a retained maintenance boundary, a database scheduler, an undeclared process or
+health check in the database container, an unclassified running executor), so that a window that is going
+to be refused is refused before it costs a closed entry.
+
+### The host declaration
+
+Nothing on the host is searched for. Every entry point of scheduled or event-driven execution is
+enumerated, and the enumeration must equal a reviewed host declaration:
+
+- every account's crontab, the system table and the cron directories; the whole `at`/`batch` queue; anacron;
+- systemd, for the system manager and for each account's own manager: installed units and loaded units
+  (services, timers, path and socket units, transient units), with their unit files and drop-ins. A
+  manager that cannot be listed is a refusal, never "no units";
+- the configuration and hook directories of executors that choose their work by directory (certificate
+  renewal, log rotation, network and device events, package hooks). Their bodies are not interpreted: the
+  set of entries and their bytes are fixed, and the scheduler that would call them is suspended;
+- services that a message on the system bus would start;
+- every running container outside the site's own project, and inside the database container (it keeps
+  running through the interval) its health check, its restart policy and its processes;
+- automation that reaches the host from outside (a job on another machine that runs commands here): it is
+  named in the declaration, and one that must not run is stated as suspended by the operator for this
+  window, or the stage refuses.
+
+The declaration binds identity and input: the host, the account, the manager and the unit name; a
+fingerprint of each entry's text, its drop-ins, and the mode, owner and link target of the executables its
+job lines name. An entry the declaration does not know, a declared entry that is gone, and a changed
+fingerprint all refuse. Each entry that names the site directory is declared either to move with the site
+(its fingerprint is then taken with the site directory replaced by a placeholder, so one declaration holds
+before and after a rollback) or to stay as it is.
+
+Make the declaration with the operator tool's read-only enumeration, review it entry by entry, and enumerate
+again with the reviewed file right before the window. Make it and use it in the same login state: an
+account whose own manager only runs while it is logged in appears and disappears with the session (enable
+lingering for the operating account, or keep the session). The declaration file itself is fixed when the
+interval closes; a recovery stage that is given a different one is refused.
+
+For the closed interval the schedulers are suspended whole: cron, anacron and `at` are stopped, every
+timer and path unit is stopped, and the services they or the bus would start are blocked from starting.
+No single line is edited and none is judged "relevant". Every other running executor is classified in the
+declaration: `suspend` (stopped or, for a container, paused, and put back afterwards) or `keep` with a
+reason. `keep` is a narrow exception: a scheduler is never kept, and an entry that names the site
+directory, or a container that reaches the site's writable mounts, its network, the host network or the
+container runtime's control socket, cannot be kept.
 
 ## One maintenance interval
 
 All writers of the target DB, ledgers and mirror are in scope: application containers, one-offs and other
-Compose projects sharing those resources, host cron/systemd jobs and their surviving children, DB
-schedulers, and external DB clients. A separate stack that cannot reach these resources remains running.
-Before changing the host, capture its managed file set and complete contents: root/service-account
-crontabs, cron files, systemd units/drop-ins and referenced configuration, and renewal configuration.
-Re-enumerate that same management scope later so added/deleted files and accounts are detected.
-Include wrapper scripts and their configuration inputs. Supply dynamically chosen or generated configuration
-paths explicitly to the operator tool; a literal-path scan cannot establish those inputs.
+Compose projects sharing those resources, every scheduler of the host and the jobs it already started, DB
+schedulers, and external DB clients. A separate stack that is declared and cannot reach these resources
+remains running.
 
-1. Take the site operation lock and close the proxy. Suspend the relevant scheduled activations and block
-   external/debug-port ingress. Prevent new execution before waiting for already-started jobs and their
-   children to finish. Refuse unlisted writers; do not kill an unrelated process to obtain a passing check.
+1. Take the site operation lock. Compare the host with its declaration again, now under the lock; a
+   difference refuses before anything is closed. Close the proxy and block external/debug-port ingress.
+   Block new execution first (the start blocks), then wait for the jobs that were already running and
+   their children to finish, then stop the schedulers; a job that does not finish in time refuses, it is
+   not killed. Compare the suspended state again: the entries are the fixed ones, nothing suspended runs,
+   every start block is loaded. Refuse unlisted writers; do not kill an unrelated process to obtain a
+   passing check.
 2. Stop application writers before taking the pre-upgrade backup B. Keep PostgreSQL running for local
    reads/backups, reject new writer connections and drain existing work. An `idle in transaction` backend
    is unfinished. Refuse a DB scheduler that this procedure cannot hold. At this stopped boundary read
@@ -673,13 +716,19 @@ paths explicitly to the operator tool; a literal-path scan cannot establish thos
    between the last judgement and opening the entry, and compare the container events of the whole project
    over that interval: the proxy's start is the only one.
 7. Verify HTTPS, the actual served worklist/viewer files and sign-in theme, image labels, migrations,
-   signing-key access and the realm issuer. Compare the fixed host inventory and expected contents, apply
-   changed service configuration, and only then resume scheduled activation. Release the lock only after
-   all checks succeed.
+   signing-key access and the realm issuer. Only after these checks: write what the declaration says moves
+   with the site, compare the whole host with the fixed entries once more, and let scheduled work go again,
+   the schedulers first and the timers last (a timer that catches up on a missed run fires then). The
+   interval is finished, and the lock released, only when all of it succeeded. If anything fails on the
+   way, close the entry again and suspend again what had been let go, and record what is actually true:
+   never "closed" about a host where that second suspension did not succeed.
 
 The file bind mounts for viewer configuration and the realm/theme deserve explicit verification.
 `kin.release` labels on Orthanc and Keycloak cause recreation when the revision changes; read the actual
-mounted/served bytes as well. Running containers and HTTP 200 alone do not establish the delivered version.
+mounted/served bytes as well. The served viewer configuration must contain the release's own file byte for
+byte (the image server wraps the configured file; a few expected lines being present is not enough: the
+previous release's file passes such a check). Running containers and HTTP 200 alone do not establish the
+delivered version.
 
 The host maintenance lock coordinates the authorized operator. It is not an OS sandbox against another
 administrator running arbitrary commands. There must be one operator for the target resources throughout
@@ -702,23 +751,32 @@ A failed query, failed inventory enumeration or unreadable input must preserve i
   entry closed, the lock retained, and all source data preserved. Service is **not** described as unchanged.
 - Failure/refusal after switching: `NEEDS_ATTENTION`, entry closed, lock and all data retained. No automatic
   restart or automatic back-to-N bypass.
-- Host inventory mismatch or read failure: incomplete operation; never `ROLLED_BACK`.
+- A host that does not equal its declaration, or an enumeration that fails: refused before the entry is
+  closed. The same found while the interval is closed: incomplete operation; never `ROLLED_BACK`.
+- Every recovery stage (reopening, rollback after a failed upgrade, return to N) holds the lock from its
+  first moment and keeps it through any failure, also one before it changed anything.
 
 An operator must inspect the ended command, any outstanding child commands, container state and retained
 lock token before manually releasing a stale lock for recovery. The retained token alone does not prove
 that its owner finished. Preserve the refused attempt and reason. Never delete or invent ledger records.
 
-There is one maintenance boundary per closed interval. While a refused or failed operation's boundary is
-retained, the host is not in its original state: scheduled jobs are suspended, starts are blocked, ingress
-rules and the database admission fence are in place. A later stage of the same release record continues
-that boundary with the original contents it preserved (a rollback after a failed upgrade, a return to N
-after a failed rollback). No stage captures the host a second time: that would record the suspension as the
-original and "restore" to it. A new operation is refused before it closes anything while such marks exist.
+There is one maintenance boundary per closed interval, and it belongs to one release record and one
+attempt: both are written into the boundary when it is created. While a refused or failed operation's
+boundary is retained, the host is not in its original state: the schedulers are suspended, starts are
+blocked, ingress rules and the database admission fence are in place. A later stage continues that boundary
+with what it fixed (a rollback after a failed upgrade, a return to N after a failed rollback) only with
+that same record and attempt, checked before the stage changes anything: a copy of the record, or another
+attempt's record, is refused. No stage captures the host a second time: that would record the suspension
+as the original and "restore" to it. A new operation is refused before it closes anything while such marks
+exist.
 
 After a refusal that switched nothing, the operator may put the same release back in service: start the
-containers the refusal left (no creation, no recreation), then the proxy, restore the suspended host jobs
-from the preserved contents and release the boundary. This is a deliberate step after inspection, never an
-automatic reaction to a refusal, and it does not apply after a switch.
+containers the refusal left (no creation, no recreation), wait until they finished starting, then the
+proxy, the readiness checks, and only then scheduled work, as in step 7. The lock is held from the start
+of this step, and it is released, and the boundary finished, only after all of it succeeded; after a
+failure the same step is run again once the operator has inspected and released the lock by hand. This is
+a deliberate step after inspection, never an automatic reaction to a refusal, and it does not apply after
+a switch.
 
 ## Restore B into a separate rollback project R
 
@@ -727,10 +785,20 @@ an unused R project. The two retention-ledger volumes are shared current history
 the backup. Do not restore, truncate or replace them with B-era copies. Completed destructions after B
 remain effective when either version starts.
 
-Before closing N's entry, validate and rehearse B; confirm the prior configuration/images are available,
-the R name/paths/volumes are unused, and B's credential/catalog inputs match the rendered R configuration.
-Capture the full host-job bytes as N's original. Stop/suspend/drain N as above, judge, and take a held
-N preservation backup with no service resumption. Never have N and R write the shared ledgers concurrently.
+Before closing N's entry: validate and rehearse B, check that the ledger code of the release pair is the
+same, and read N's address, its ledger volumes and that the anchors name the ledgers beside them. Then
+close the entry, suspend and drain N as above and judge it at its stopped boundary. With the entry closed
+and before anything of N is switched: confirm that the R name, paths and volumes are unused and that the
+prior configuration and held images are available, stage R's checkout and signing custody, and check that
+B's credential/catalog inputs match the rendered R configuration. A failure in any of these is a refusal
+with the entry closed and nothing switched (`NOT_STARTED`), from which the same release is put back in
+service as described above. What the declaration says moves with the site is preserved as N's original
+bytes. Take a held N preservation backup with no service resumption. Never have N and R write the shared
+ledgers concurrently.
+
+Before N goes down, the release record holds what of N is preserved (its containers, volumes, images and
+checkout) and what R is to become, and every step of the switch writes its intent before it runs and its
+completion after. A failure in the middle is then read from the record together with what actually exists.
 
 Create R's checkout from the exact prior SHA, restore B's environment/signing custody in private paths,
 and render a separate overlay marking both ledger volumes external with their captured names. Record
@@ -745,24 +813,42 @@ completed draft destructions and complete both sweeps and the restored EMR expir
 current container ID/start time and the current start's logs; historic warnings are not this start's
 result. Perform R's first backup/rehearsal and all restarts before the final pause/judgement.
 
-After acceptance, resume the same containers and start the prepared proxy. For host tasks, the expected
-bytes are **the preserved N originals with N's path replaced by R's path**, with the same complete file
-set. A deleted backup line, another line pointing to R, a missing file, an added file, or a leftover N path
-does not pass. Apply changed service configuration before scheduled execution resumes. Only the exact
-comparison and readiness/signing checks permit `ROLLED_BACK`.
+After acceptance, resume the same containers and start the prepared proxy. For what the declaration says
+moves with the site, the expected bytes are **the preserved N originals with N's path replaced by R's
+path**, and every other entry of the host is unchanged: the whole host is compared with the fixed entries,
+so a deleted line, another line pointing to R, a missing file, an added file, or a leftover N path does
+not pass. Scheduled work is let go only after the readiness and signing checks. Only the exact comparison
+and those checks permit `ROLLED_BACK`.
 
 ## Return from R to N
 
-Back-to-N is a recovery attempt, not an unconditional escape from a rejected destruction state. Suspend
-and drain R, judge with its entry closed, and keep the shared ledger volumes. Stop R without `-v`.
+Back-to-N is a recovery attempt, not an unconditional escape from a rejected destruction state. Its first
+condition is that it continues its own record's interval (the same record, the same attempt) and that the
+preserved N is whole: N's volumes, the ledger volumes and the checkout at N.
+
+The same step also recovers a rollback that failed after N went down, including one that failed before
+R's API existed (while creating R's cluster, restoring its database or creating its containers); there is
+no separate command for that. Whether R's application ever ran is read from the record's step intents and
+from the containers that exist, not from R's API being present:
+
+- R never ran: nothing of R is fenced, drained or judged (its database may be empty or half restored).
+  Remove only the R resources this attempt made (its containers and its own volumes, never a ledger volume),
+  then bring N back as below. The shared ledgers and the mirror are not rewound.
+- R ran: judge the ledgers beside R's database with its entry closed, using a ledger reader image fixed
+  before the switch (it does not depend on R's API existing). If R's database is no longer there to judge
+  against, refuse with the entry closed.
+
+Suspend and drain R, judge with its entry closed, and keep the shared ledger volumes. Stop R without `-v`.
 Restore N's preserved signing custody and create/start N while its proxy stays closed. Read this start's
 recovery, complete sweeps, pause writers, drain DB transactions and judge again. A completed destruction
 on R must remain absent on N; an unfinished attempt may refuse startup in both directions.
 
-Resume the identical judged containers and start only N's prepared proxy. Restore host tasks to the
-**preserved original N bytes**, not a guessed inverse substitution of R's current contents. Require the
-fixed managed set, reload affected services, resume scheduled activation, then check HTTPS/signing.
-Only then record `ROLLBACK_ABANDONED`. Failure leaves `NEEDS_ATTENTION` with entry closed.
+Resume the identical judged containers and start only N's prepared proxy. Check HTTPS/signing. Then put
+what moves with the site back to the **preserved original N bytes**, not a guessed inverse substitution
+of R's current contents, compare the whole host with the fixed entries, and let scheduled work go again.
+Only then record `ROLLBACK_ABANDONED`. Failure leaves `NEEDS_ATTENTION` with entry closed. The checkout
+and the staged files of an abandoned R stay where they are for inspection; a later rollback uses a new R
+name.
 
 Never run `down -v`, volume prune, or remove either ledger volume. A volume still bearing N's project
 name can be in use by R. Keep B, N preservation sets, held images and the R overlay through the rollback
