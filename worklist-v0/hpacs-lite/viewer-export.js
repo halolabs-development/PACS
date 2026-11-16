@@ -49,6 +49,9 @@ window.KinViewerExport = (() => {
   }
   function svgImage(svg, rect) {
     const copy = svg.cloneNode(true);
+    // The Measure menu's editing aids are not part of a mark: the handles of a mark that may be moved and the points or
+    // lines of a mark still being made.
+    copy.querySelectorAll('[data-kin-handle],[data-kin-pending]').forEach(node => node.remove());
     copy.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
     copy.setAttribute('width', rect.width); copy.setAttribute('height', rect.height);
     const image = new Image();
