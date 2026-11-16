@@ -52,6 +52,7 @@ class MergeSite(rf.FlowSite):
         self.desc = {}                  # uid -> StudyDesc of the row and of its original in a merged exam
         self.series_names = ["SYN Series 1", "SYN Series 2"]
         self.related_reports = {}       # uid -> relatedExamReports of the row
+        self.acc = dict(ACC)            # uid -> Accession No of the row and of its original in a merged exam
 
     def scope(self, uid):
         if self.split and uid in (self.split["uid"], SPLIT_UID):
@@ -79,7 +80,7 @@ class MergeSite(rf.FlowSite):
         body = super().list_body(account, rename)
         rows = {row["uid"]: row for row in body["studies"]}
         for uid, row in rows.items():
-            row.update(acc=ACC[uid], count=COUNT[uid], series=1)
+            row.update(acc=self.acc[uid], count=COUNT[uid], series=1)
             if uid in self.desc:
                 row["desc"] = self.desc[uid]
             if uid in self.related_reports:
@@ -88,7 +89,7 @@ class MergeSite(rf.FlowSite):
         for base, members in self.groups.items():
             row = rows[base]
             row["group"] = {"id": GROUP_ID, "kind": "merge", "baseUid": base, "members": [
-                {"uid": uid, "acc": ACC[uid], "date": "20261003", "time": "", "desc": self.desc.get(uid, "SYN CT CHEST"), "modality": "CT",
+                {"uid": uid, "acc": self.acc[uid], "date": "20261003", "time": "", "desc": self.desc.get(uid, "SYN CT CHEST"), "modality": "CT",
                  "count": COUNT[uid], "series": 1} for uid in members]}
             row["count"] = sum(COUNT[uid] for uid in members)
             row["series"] = len(members)
@@ -556,6 +557,47 @@ class ExamMerge(unittest.TestCase):
         self.assertEqual("SYNACC-A1", line.locator("[translate=no]").first.text_content())
         self.language("ko")
         expect(line).to_contain_text("Gateway 영수증 정보가 이 목록에 제공되지 않았습니다.")
+
+    def test_accession_numbers_that_are_glossary_words_stay_data_in_either_language(self):
+        # An Accession No is data wherever it stands alone, also when it is a glossary word itself ("Continue") or reads
+        # like a template ("Split {0}"): the study information, each original receipt line of a merged exam, and the
+        # report scope line of a split part with its Report History button. The study information's Study is data too.
+        self.site.acc[h.UID], self.site.acc[h.UID_B] = "Continue", "Split Chest CT"
+        self.site.desc[h.UID] = "Split Chest CT"
+        self.site.groups[h.UID] = [h.UID, h.UID_B]
+        self.language("en")
+        self.page.evaluate("() => load()")
+        expect(self.page.locator("#rows tr[data-uid]")).to_have_count(2)
+        self.pick(h.UID)
+        lines = self.page.locator("#study-receipt .exam-original-receipts > div")
+        expect(lines).to_have_count(2)
+        study, accession = (self.page.locator("#clinical table tr").nth(n).locator("td").nth(1) for n in (3, 5))
+        for lang in ("ko", "en", "ko"):
+            with self.subTest(view="merged", lang=lang):
+                self.language(lang)
+                expect(lines.first).to_contain_text("Gateway 영수증 정보가 이 목록에 제공되지 않았습니다." if lang == "ko"
+                                                    else "Gateway receipt information was not provided in this list.")
+                self.assertEqual(["Continue", "Split Chest CT"],
+                                 lines.evaluate_all("ls => ls.map(l => l.firstElementChild.firstElementChild.textContent)"))
+                expect(accession).to_have_text("Continue")
+                expect(study).to_have_text("Split Chest CT")
+        self.site.groups.clear()
+        self.site.split = {"uid": h.UID, "seriesUids": [SERIES[1]]}
+        self.language("en")
+        self.page.evaluate("() => load()")
+        expect(self.page.locator("#rows .exam-merged")).to_have_text(["Split 1/2", "Split 2/2"])
+        self.page.evaluate("() => setMode('Radiology')")
+        self.pick(SPLIT_UID)
+        scope = self.page.locator(".exam-report-scope")
+        expect(scope).to_contain_text("Split 2/2 — Continue")
+        for lang in ("ko", "en", "ko"):
+            with self.subTest(view="split", lang=lang):
+                self.language(lang)
+                history = "판독문 이력 · Continue" if lang == "ko" else "Report History · Continue"
+                expect(scope.get_by_role("button", name=history, exact=True)).to_be_visible()
+                expect(scope.locator("[translate=no]")).to_have_text("Continue")
+                expect(accession).to_have_text("Continue")
+                expect(study).to_have_text("Split Chest CT")
 
     def test_original_choices_keep_their_data_untranslated(self):
         self.site.groups[h.UID] = [h.UID, h.UID_B]

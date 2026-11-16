@@ -342,7 +342,8 @@ class TransferSite(rf.FlowSite):
     def __init__(self, count=3):
         super().__init__(count)
         self.exam_scopes = {}
-        self.imports = []               # each POST /api/dicom-import as the server received it
+        self.source_acc = {}            # uid of a merged row -> {original uid: its Accession No} (the row's sourceMetadata)
+        self.imports = []             # each POST /api/dicom-import as the server received it
         self.held_imports = []          # (route, record) answered by the case
         self.import_answers = []        # per POST: a result dict | (status, body) | "hold" | "abort"
         self.import_state = {}          # operationId -> {index: result} (what the status GET answers)
@@ -362,10 +363,13 @@ class TransferSite(rf.FlowSite):
 
     def list_body(self, account, rename=None):
         body = super().list_body(account, rename)
+        listed = {row["uid"]: dict(row) for row in body["studies"]}
         for row in body["studies"]:
             row["tele"] = row["uid"] in self.tele
             if row["uid"] in self.exam_scopes:
                 row["examScope"] = self.exam_scopes[row["uid"]]
+            if row["uid"] in self.source_acc:
+                row["sourceMetadata"] = [{**listed[uid], "acc": acc} for uid, acc in self.source_acc[row["uid"]].items()]
         return body
 
     def api(self, route, request, method, path, query):
@@ -1118,6 +1122,42 @@ class TransferPanelPage(rf.ReportFlowPage):
                     expect(head).to_have_text(line)
                 dialog.locator("#attach-cancel").click()
                 expect(dialog).to_be_hidden()
+
+    def test_fc076_original_choices_and_file_names_that_are_glossary_words_stay_data(self):
+        # An Accession No or a file name is data, also when it is a glossary word itself ("Continue") or reads like a
+        # template ("Split {0}"): the original-exam choices of a merged exam, a chosen file and an attached document.
+        self.attach_site()
+        single = self.attach_scope
+        self.attach_scope = lambda uid: single(uid) if uid != UID_A else {
+            "reportUid": uid, "groupId": "syn-group", "kind": "merge", "part": None, "generation": "scope-2",
+            "sources": [{"studyUid": source, "series": {"mode": "all", "uids": []}} for source in (UID_A, UID_B)]}
+        self.site.exam_scopes[UID_A] = self.attach_scope(UID_A)
+        self.site.source_acc[UID_A] = {UID_A: "Continue", UID_B: "Split Chest CT"}
+        self.attach_rows[UID_B] = [{"id": str(uuid.uuid4()), "uid": UID_B, "kind": "pdf", "fileName": "Continue", "bytes": 10,
+                                    "state": "stored", "createdBy": TECH["actor"], "createdAt": "2026-11-11T08:00:00.000Z",
+                                    "failReason": None, "withdrawnAt": None, "withdrawnBy": None, "withdrawReason": None}]
+        self.open_as(TECH, "Technician")
+        language = lambda lang: self.assertTrue(self.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", lang))
+        dialog = self.attach_dialog()
+        title = dialog.locator("#attach-document-title")
+        chosen = dialog.locator(".attach-files li .attach-name")
+        cases = ((h.PATIENT, "Continue", lambda: expect(dialog.locator("select option:not([value=''])"))
+                  .to_have_text(["Continue", "Split Chest CT"])),
+                 (h.PATIENT_B, "Split Chest CT", lambda: expect(dialog.locator(".attach-attached li .attach-name")).to_have_text(["Continue"])))
+        for via, file_name, data in cases:
+            with self.subTest(study=via):
+                language("en")
+                self.attach_files([{"name": file_name, "mimeType": "application/pdf", "buffer": self.PDF}], via=via)
+                expect(chosen).to_have_text([file_name])
+                data()
+                for lang in ("ko", "en", "ko"):
+                    language(lang)
+                    expect(title).to_have_text("문서 붙이기" if lang == "ko" else "Attach Document")
+                    expect(chosen).to_have_text([file_name])
+                    data()
+                dialog.locator("#attach-cancel").click()
+                expect(dialog).to_be_hidden()
+        self.assertEqual([], self.attach_posts)
 
     def test_fc076_a_late_answer_is_not_drawn_into_another_study_and_withdraw_needs_a_reason(self):
         self.attach_site()
@@ -2088,7 +2128,8 @@ class TransferPanelPage(rf.ReportFlowPage):
             with self.page.expect_popup() as opened:self.page.evaluate('u=>window.open(u,"_blank")',h.MAIN_URL)
             copied=opened.value
             try:
-                expect(copied.locator('#rows')).to_contain_text(h.PATIENT)
+                # The copied tab loads the whole page cold; under a loaded machine that alone can pass five seconds.
+                expect(copied.locator('#rows')).to_contain_text(h.PATIENT,timeout=15000)
                 box=copied.locator('#study-transfer section[data-operation]').first
                 expect(box).to_be_visible(); self.settle(250)
                 self.assertEqual(old,box.get_attribute('data-operation'),'R5-A04-copy: same copied operation')
@@ -2251,7 +2292,7 @@ class TransferPanelPage(rf.ReportFlowPage):
         with self.page.expect_popup() as opened:self.page.evaluate('u=>window.open(u,"_blank")',h.MAIN_URL)
         copied=opened.value
         try:
-            expect(copied.locator('#rows')).to_contain_text(h.PATIENT); self.settle(250)
+            expect(copied.locator('#rows')).to_contain_text(h.PATIENT,timeout=15000); self.settle(250)
             box=copied.locator('#study-transfer section[data-operation]').first
             self.assertEqual(ready,box.get_attribute('data-operation'),'R5-A11-copy: original Ready copied')
             self.assertEqual(0,box.get_by_role('button',name='Download',exact=True).count(),'R5-A11-copy: copied Ready read-only')
@@ -2590,7 +2631,7 @@ class TransferPanelPage(rf.ReportFlowPage):
             with self.page.expect_popup() as opened:
                 self.page.evaluate("url => window.open(url, '_blank')", h.MAIN_URL)
             copied = opened.value
-            expect(copied.locator('#rows')).to_contain_text(h.PATIENT)
+            expect(copied.locator('#rows')).to_contain_text(h.PATIENT,timeout=15000)
             copied.locator('[data-tab=Technician]').click()
             box = copied.locator(f'#study-transfer section[data-operation="{op}"]')
             until(lambda: held and box.count() == 1 and box.locator('li[data-index]').count() == rows,
