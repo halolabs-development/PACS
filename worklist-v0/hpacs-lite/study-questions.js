@@ -100,6 +100,9 @@
       let uid = null, epoch = 0, listSeq = 0, threadSeq = 0, inboxSeq = 0;
       // 판독 칸이 보이는 검사(shownFor: 판독 대상이 아니어도 — 원격판독 검사·연결 끊김). 그것이 바뀌면 줄과 창을 접는다.
       let shownFor;
+      // 안내 띠의 알림이 마지막으로 말한 것({text, title} 또는 null). 읽는 중(아직 모름)에는 이것을 그대로 보인다 — 줄을 연 사이에
+      // 다시 읽기가 나가 있어도 줄을 닫으면 알림과 그 입구가 돌아온다.
+      let told = null;
       let items = null, listFailure = null, listLoading = false;
       let mode = null, threadId = null, thread = null, threadFailure = null, threadLoading = false, pendingThread = null;
       let inboxState = 'open', inboxItems = [], inboxCursor = null, inboxFailure = null, inboxLoading = false;
@@ -326,13 +329,13 @@
         if (notice) {
           // 알 때만 말한다: 잠김·실패·질문 있음은 그 글, 성공한 빈 답·읽지 않는 검사는 알림 없음, 읽는 중은 그대로.
           const parts = ['Open', 'Answered', 'Closed'].filter(state => counts(state)).map(state => `${state} ${counts(state)}`).join(' · ');
-          const told = lock ? (lock.account ? TEXT.notice.account : TEXT.notice.refused) : listFailure ? TEXT.notice.failed
+          const now = lock ? (lock.account ? TEXT.notice.account : TEXT.notice.refused) : listFailure ? TEXT.notice.failed
             : items && items.length ? TEXT.notice.counts(items.length, parts) : uid === null || items !== null ? '' : null;
-          if (ended || visible) notice.hidden = true;
-          else if (told !== null) {
-            notice.hidden = !told;
-            notice.textContent = told;
-            notice.title = told ? `${line} — Show Questions` : '';
+          if (now !== null) told = now ? { text: now, title: `${line} — Show Questions` } : null;
+          notice.hidden = ended || visible || !told;
+          if (told) {
+            notice.textContent = told.text;
+            notice.title = told.title;
           }
         }
         toggle.textContent = mode === 'study' ? 'Hide Questions' : 'Show Questions';
@@ -908,6 +911,7 @@
             if (mode !== null) inboxSeq++;
             mode = null;
           }
+          told = null;
           if (notice) notice.hidden = true;
           if (next === uid) paint();
         }
@@ -1025,6 +1029,8 @@
         renderThread();
         toggle.focus();
       });
+      // 연결이 끊기거나 돌아왔다(page-boot.js goOffline·goOnline): 읽을 수 있는지가 바뀌었으니 다시 맞춘다 — 줄의 글과 알림만 바뀐다.
+      window.addEventListener('kin-connection', () => { if (ended) return; sync(); paint(); });
       window.addEventListener('pagehide', end);
       // 이 문서의 세션이 끝나면 세션 종료 조정이 이 목록을 동기로 부른다. 어느 로그인의 종료인지는 auth.js가 대조한다.
       onCommonEnd(end);

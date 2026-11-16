@@ -1061,6 +1061,8 @@
         readRoot.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         readToggle.focus({ preventScroll: true });
       });
+      // 연결이 끊기거나 돌아왔다(page-boot.js goOffline·goOnline): 줄은 제자리이고 글(읽지 않음·다시 읽기)만 바뀐다.
+      window.addEventListener('kin-connection', () => { if (ended) return; sync(); renderReading(); });
       window.addEventListener('pagehide', end);
       // 이 문서의 세션이 끝나면(Log out, 요청의 401, 다른 문서의 종료) 세션 종료 조정이 네트워크를 기다리기 전에 동기로 부르는
       // 목록이다. 칸마다 자기 end()를 넣는다(S5-U4b 등도 같은 목록). 한 영역이 알아챈 계정 변경도 이 목록으로 사유

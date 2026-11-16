@@ -2223,14 +2223,20 @@ class StudyPanelPageDOM(unittest.TestCase):
                 # The notices never lie over a row's button, the band scrolled to its top or its end (stuck over the
                 # scrolled rows, a notice took the click meant for Keep This Text).
                 self.assertEqual([], page.evaluate(self.COVERED))
-                # Offline and back: nothing moves, the rows stand.
+                # The page's own offline and back (goOffline, goOnline): nothing moves, the rows stand and say at once that
+                # they read nothing now; back online they read again.
                 page.evaluate(self.WATCH_PLACES, self.REPORT_PLACES)
-                page.evaluate('() => { offline = true; renderClinical(); }')
-                page.wait_for_timeout(1200)
+                page.evaluate("() => { goOffline(new Error('SYN disconnected')); stopReconnect(); }")
                 for row in ('#image-request-p', '#cvr-sent-p', '#cvr-inbox-p'):
                     expect(page.locator(row)).to_be_visible()
-                page.evaluate('() => { offline = false; renderClinical(); }')
-                page.wait_for_timeout(1200)
+                expect(page.locator('#image-request-summary')).to_have_text('지금은 이 검사의 영상 요청을 읽지 않습니다(원격판독 검사·연결 끊김).')
+                expect(page.locator('#cvr-sent-summary')).to_have_text('서버에 연결된 동안에만 보낸 중요 결과를 읽습니다.')
+                expect(page.locator('#cvr-sent-refresh')).to_be_disabled()
+                expect(page.locator('#cvr-inbox-badge')).to_have_text('Offline')
+                page.evaluate('async () => { goOnline(await fetchBootstrap()); }')
+                expect(page.locator('#image-request-summary')).to_have_text(self.TOLD['some'][1])
+                expect(page.locator('#cvr-inbox-badge')).not_to_have_text('Offline')
+                page.wait_for_timeout(300)
                 settle(page)
                 frames = page.evaluate(self.STOP_PLACES)
                 self.assertEqual(1, len(frames), f'offline and back moved the report places {frames}')

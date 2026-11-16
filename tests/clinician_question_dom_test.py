@@ -2313,6 +2313,27 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         self.assertEqual((False, self.reader()["summary"]), (self.reader()["shown"], told()))
         self.assertTrue(told().startswith("이 검사의 질문 3건 · "), told())
 
+        # A retry on its way while the reader closes the pane: the notice and its way in come back with what it last said.
+        self.q_requests = []
+        self.open_reader(me(RADIOLOGIST, ["radiologist"]))
+        self.target(A)
+        self.reader_state("ready")
+        self.faults.append({"kind": "list", "status": 503, "body": {"message": "SYN down"}})
+        self.page.evaluate(refresh)
+        self.reader_state("failed")
+        self.press_questions()
+        self.holding = {"list"}
+        self.page.locator("#question-list-retry").click()
+        pending, = self.take("list")
+        self.holding = set()
+        self.press_questions()   # Hide Questions while the retry is held
+        seen = self.reader()
+        self.assertEqual((False, "loading", R_FAILED), (seen["shown"], seen["state"], told()))
+        expect(self.page.locator("#question-notice")).to_be_visible()
+        self.release(pending)
+        self.reader_state("ready")
+        self.assertTrue(told().startswith("이 검사의 질문 3건 · "), told())
+
         # A tele study is never read: no row and no notice, whatever a refresh asks.
         self.q_requests = []
         self.open_reader(me(RADIOLOGIST, ["radiologist"]))

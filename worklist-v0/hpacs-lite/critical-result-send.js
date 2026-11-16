@@ -1216,6 +1216,13 @@
       } else if (event.reason === 'lifecycle' && event.state === 'active') startTimers();
     });
     if (work.state() === 'active') startTimers();
+    // 연결이 끊기거나 돌아왔다(page-boot.js goOffline·goOnline): 줄은 그대로 서고 글과 Refresh가 바뀐다. 돌아오면 연 목록을 다시 읽는다.
+    window.addEventListener('kin-connection', () => {
+      if (ended) return;
+      sync();
+      paintPanel();
+      if (paneOpen && lock === null && online()) loadList(false);
+    });
     window.addEventListener('pagehide', () => end());
     filterField.value = filter;
     paintEntry();
