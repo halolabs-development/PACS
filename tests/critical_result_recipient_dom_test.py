@@ -2592,7 +2592,7 @@ class CriticalResultRecipientDOMTest(unittest.TestCase):
                 if name == "offline":
                     self.assertTrue(self.view()["shown"])
                     self.assertIn("Offline", self.view()["text"])
-                    self.assertEqual("서버에 연결된 동안에만 받은 중요 결과를 읽습니다.", self.page.locator("#cvr-inbox-badge").get_attribute("title"))
+                    self.assertEqual("서버 연결이 끊겼습니다. 표시된 받은 중요 결과는 최신이 아닐 수 있습니다.", self.page.locator("#cvr-inbox-badge").get_attribute("title"))
                 else:
                     self.assertFalse(self.view()["shown"])
         # The pair: the same technician with radiologist added reads once.

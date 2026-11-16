@@ -2141,7 +2141,7 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
                 # Offline, a radiologist's Sent panel stands and says it reads nothing now: hidden, it gave its height back to
                 # the report column and moved the button row (main.html "An answer never resizes").
                 if name == "offline radiologist":
-                    self.assertEqual((True, "서버에 연결된 동안에만 보낸 중요 결과를 읽습니다."), (v["panel"]["shown"], v["panel"]["summary"]))
+                    self.assertEqual((True, "서버 연결이 끊겼습니다. 표시된 보낸 중요 결과는 최신이 아닐 수 있습니다."), (v["panel"]["shown"], v["panel"]["summary"]))
                 else:
                     self.assertFalse(v["panel"]["shown"])
 
@@ -2162,7 +2162,7 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
         expect(self.page.locator("#cvr-send")).to_be_visible()
         self.assertEqual((P["sub"], "SYN kept through the outage"),
                          (self.page.locator("#cvr-send-recipient").input_value(), self.page.locator("#cvr-send-message").input_value()))
-        expect(self.page.locator("#cvr-sent-summary")).to_have_text("서버에 연결된 동안에만 보낸 중요 결과를 읽습니다.")
+        expect(self.page.locator("#cvr-sent-summary")).to_have_text("서버 연결이 끊겼습니다. 표시된 보낸 중요 결과는 최신이 아닐 수 있습니다.")
         expect(self.page.locator("#cvr-sent-refresh")).to_be_disabled()
         expect(self.page.locator("#cvr-sent-pane")).to_be_visible()
         self.page.evaluate(connection, True)

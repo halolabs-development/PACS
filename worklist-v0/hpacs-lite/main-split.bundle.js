@@ -3630,7 +3630,9 @@
         // 안내 띠의 알림은 짧게(띠의 다른 줄을 좁혀 줄을 바꾸지 않게), 전문은 툴팁.
         notice: { counts: (n, parts) => `영상 요청 ${n}건 · ${parts}`, failed: '영상 요청 읽기 실패', refused: '영상 요청 읽기 거절',
           account: '영상 요청: 계정 바뀜' },
-        readUnread: '지금은 이 검사의 영상 요청을 읽지 않습니다(원격판독 검사·연결 끊김).',
+        readUnread: '이 검사의 영상 요청은 읽지 않습니다(원격판독 검사).',
+        // 끊김은 상태를 말한다: 이 화면의 연결 판단일 뿐 통신을 막는 것은 아니다.
+        readOffline: '서버 연결이 끊겼습니다. 표시된 영상 요청은 최신이 아닐 수 있습니다.',
         codes: {
           IMAGE_REQUEST_CHANGED: '그사이 이 요청이 바뀌었습니다. 요청을 다시 불러왔으니 상태를 확인한 뒤 다시 보내세요.',
           IMAGE_REQUEST_STATE: '지금 요청 상태에서는 할 수 없는 동작입니다. 이미 처리가 끝났을 수 있어 요청을 다시 불러왔습니다.',
@@ -4393,7 +4395,7 @@
         readRoot.hidden = !visible;
         readRoot.dataset.state = ended ? 'ended' : lock ? 'locked' : readFailure ? 'failed' : readLoading ? 'loading'
           : readItems === null ? 'idle' : readItems.length ? 'ready' : 'empty';
-        const text = lock ? lock.text : readUid === null || !allowed() ? TEXT.readUnread : readFailure ? TEXT.readFailed : readItems === null
+        const text = lock ? lock.text : !allowed() ? TEXT.readOffline : readUid === null ? TEXT.readUnread : readFailure ? TEXT.readFailed : readItems === null
           ? TEXT.readLoading : readItems.length ? TEXT.readCounts(readItems.length, readCounts(readItems)) : TEXT.readEmpty;
         readSummary.textContent = text;
         readSummary.title = lock ? `${lock.text}\n${lock.detail}`.trim() : readFailure ? readDetail(readFailure) : text;
@@ -12328,11 +12330,13 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     // api()의 401, 확정한 Log out, 받아쓰기의 401, 목록의 계정 변경, 이 절의 401(expire) — 은 로그아웃 POST·초안 저장 같은
     // 네트워크 대기 전에 그 목록을 동기로 부른다. auth.js의 session-ended 방송은 그 POST가 끝난 뒤라 기다리지 않는다.
     // 한 영역이 알아챈 계정 변경(다른 계정의 봉투·OWNER_CHANGED)은 같은 목록에 사유 'account-changed'로 알려 두 영역을 함께 잠근다.
-    function mountStudyQuestions({ apiBase, work, transport, current, study, openStudy, allowed, owner }) {
+    function mountStudyQuestions({ apiBase, work, transport, current, study, openStudy, allowed, owner, online = () => true }) {
       const root = $('#question-p'), summary = $('#question-summary'), toggle = $('#question-toggle');
       const inboxButton = $('#question-inbox'), pane = $('#question-pane'), notice = $('#question-notice');
       const TEXT = {
-        unread: '이 검사의 질문은 지금 읽지 않습니다(원격판독 검사·연결 끊김·권한).',
+        unread: '이 검사의 질문은 읽지 않습니다(원격판독 검사·권한).',
+        // 끊김은 상태를 말한다: 이 화면의 연결 판단일 뿐 통신을 막는 것은 아니다(답변·닫기는 그대로 보낼 수 있다).
+        offline: '서버 연결이 끊겼습니다. 표시된 질문은 최신이 아닐 수 있습니다.',
         // 안내 띠의 알림은 짧게(띠의 다른 줄을 좁혀 줄을 바꾸지 않게): 개수와 0이 아닌 상태, 전문은 툴팁.
         notice: { counts: (n, parts) => `질문 ${n}건${parts ? ` · ${parts}` : ''}`, failed: '질문 읽기 실패', refused: '질문 읽기 거절',
           account: '질문: 계정 바뀜' },
@@ -12632,7 +12636,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         root.dataset.state = ended ? 'ended' : lock ? 'locked' : listFailure ? 'failed' : listLoading ? 'loading'
           : items === null ? 'idle' : items.length ? 'ready' : 'empty';
         const counts = state => (items || []).filter(item => item.state === state).length;
-        const line = lock ? lock.text : uid === null || !allowed() ? (shownFor ? TEXT.unread : TEXT.none) : listFailure ? TEXT.failed
+        const line = lock ? lock.text : shownFor && !online() ? TEXT.offline : uid === null || !allowed() ? (shownFor ? TEXT.unread : TEXT.none)
+          : listFailure ? TEXT.failed
           : items === null ? TEXT.loading
           : items.length ? TEXT.counts(items.length, counts('Open'), counts('Answered'), counts('Closed')) : TEXT.empty;
         summary.textContent = line;
@@ -13360,6 +13365,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         study: uid => studies.find(s => s.uid === uid),
         openStudy: uid => select(uid),
         allowed: () => !!sess && serverMode && !demoMode && !offline && (KinAuth.has('radiologist') || KinAuth.has('admin')),
+        online: () => !offline,
         owner: () => { const s = KinAuth.session(); return s?.state === 'approved' ? [s.institution ?? null, s.sub ?? null] : null; } });
     } catch (_) { toast('임상의 질문 줄을 준비하지 못했습니다. 판독 작업은 계속할 수 있습니다.', 'err'); }
 

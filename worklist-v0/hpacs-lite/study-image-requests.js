@@ -66,7 +66,9 @@
         // 안내 띠의 알림은 짧게(띠의 다른 줄을 좁혀 줄을 바꾸지 않게), 전문은 툴팁.
         notice: { counts: (n, parts) => `영상 요청 ${n}건 · ${parts}`, failed: '영상 요청 읽기 실패', refused: '영상 요청 읽기 거절',
           account: '영상 요청: 계정 바뀜' },
-        readUnread: '지금은 이 검사의 영상 요청을 읽지 않습니다(원격판독 검사·연결 끊김).',
+        readUnread: '이 검사의 영상 요청은 읽지 않습니다(원격판독 검사).',
+        // 끊김은 상태를 말한다: 이 화면의 연결 판단일 뿐 통신을 막는 것은 아니다.
+        readOffline: '서버 연결이 끊겼습니다. 표시된 영상 요청은 최신이 아닐 수 있습니다.',
         codes: {
           IMAGE_REQUEST_CHANGED: '그사이 이 요청이 바뀌었습니다. 요청을 다시 불러왔으니 상태를 확인한 뒤 다시 보내세요.',
           IMAGE_REQUEST_STATE: '지금 요청 상태에서는 할 수 없는 동작입니다. 이미 처리가 끝났을 수 있어 요청을 다시 불러왔습니다.',
@@ -829,7 +831,7 @@
         readRoot.hidden = !visible;
         readRoot.dataset.state = ended ? 'ended' : lock ? 'locked' : readFailure ? 'failed' : readLoading ? 'loading'
           : readItems === null ? 'idle' : readItems.length ? 'ready' : 'empty';
-        const text = lock ? lock.text : readUid === null || !allowed() ? TEXT.readUnread : readFailure ? TEXT.readFailed : readItems === null
+        const text = lock ? lock.text : !allowed() ? TEXT.readOffline : readUid === null ? TEXT.readUnread : readFailure ? TEXT.readFailed : readItems === null
           ? TEXT.readLoading : readItems.length ? TEXT.readCounts(readItems.length, readCounts(readItems)) : TEXT.readEmpty;
         readSummary.textContent = text;
         readSummary.title = lock ? `${lock.text}\n${lock.detail}`.trim() : readFailure ? readDetail(readFailure) : text;

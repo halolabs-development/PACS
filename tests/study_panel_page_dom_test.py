@@ -2229,8 +2229,8 @@ class StudyPanelPageDOM(unittest.TestCase):
                 page.evaluate("() => { goOffline(new Error('SYN disconnected')); stopReconnect(); }")
                 for row in ('#image-request-p', '#cvr-sent-p', '#cvr-inbox-p'):
                     expect(page.locator(row)).to_be_visible()
-                expect(page.locator('#image-request-summary')).to_have_text('지금은 이 검사의 영상 요청을 읽지 않습니다(원격판독 검사·연결 끊김).')
-                expect(page.locator('#cvr-sent-summary')).to_have_text('서버에 연결된 동안에만 보낸 중요 결과를 읽습니다.')
+                expect(page.locator('#image-request-summary')).to_have_text('서버 연결이 끊겼습니다. 표시된 영상 요청은 최신이 아닐 수 있습니다.')
+                expect(page.locator('#cvr-sent-summary')).to_have_text('서버 연결이 끊겼습니다. 표시된 보낸 중요 결과는 최신이 아닐 수 있습니다.')
                 expect(page.locator('#cvr-sent-refresh')).to_be_disabled()
                 expect(page.locator('#cvr-inbox-badge')).to_have_text('Offline')
                 page.evaluate('async () => { goOnline(await fetchBootstrap()); }')

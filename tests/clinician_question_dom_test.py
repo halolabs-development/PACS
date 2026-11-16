@@ -2345,7 +2345,7 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         connection = "online => { offline = !online; window.dispatchEvent(new Event('kin-connection')); }"
         self.page.evaluate(connection, False)
         seen = self.reader()
-        self.assertEqual((True, "이 검사의 질문은 지금 읽지 않습니다(원격판독 검사·연결 끊김·권한).", answered["id"]),
+        self.assertEqual((True, "서버 연결이 끊겼습니다. 표시된 질문은 최신이 아닐 수 있습니다.", answered["id"]),
                          (seen["shown"], seen["summary"], seen["thread"]["id"]))
         self.assertEqual("SYN reply kept through the outage", self.page.locator("#question-reply-text").input_value())
         reads = len(self.requests("list"))
