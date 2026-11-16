@@ -208,13 +208,24 @@
     strip.append(node('small', { textContent: 'Image Report' }), stripList);
     const conclusion = $('#conclusion');
     conclusion?.after(strip);
-    // The Image Report panel of the report window band (main.html .s-imgreport, shown or hidden in Panel Settings): the
-    // same attached drawings as the strip, from the strip's own read, view only, and Draw - the same open() as the button.
+    // The Image Report panel of the report window band (main.html .s-imgreport, shown or hidden in Panel Settings): a mirror
+    // of the strip's rendering, view only, and Draw - the same open() as the button. Only refreshStrip() writes it, at the
+    // strip's own moments; hidden or shown, it is the same (hiding is display only, showing again reads nothing).
     const panelOpen = $('#image-report-panel-open'), panelStatus = $('#image-report-panel-status'), panelList = $('#image-report-panel-list');
-    const panelSay = (message, clear = true) => {
+    const panelSay = message => {
       if (panelStatus) panelStatus.textContent = message;
-      if (clear) panelList?.replaceChildren();
+      panelList?.replaceChildren();
     };
+    /** The panel shows one strip rendering's results: its drawings in its order, each picture the strip loaded or none. */
+    function mirrorPanel(list, results) {
+      panelSay('Attached to this report: ' + list.length);
+      panelList?.replaceChildren(...list.map((d, i) => {
+        const url = results[i]?.id === d.id ? results[i].url : null;
+        const img = node('img', { alt: url ? nameOf(d) : nameOf(d) + ' (could not be read)' });
+        if (url) img.src = url;
+        return node('figure', {}, img, node('figcaption', { textContent: nameOf(d) }));
+      }));
+    }
     let opener = null;   // the control the window was opened from; focus goes back there on close
 
     // ── state ──
@@ -224,7 +235,7 @@
     let stripUid = null;
     let stripMark = null;  // the selected study's draft revision and version when the strip was read
     let stripAccess = null;  // whether this sign-in could read drawings (radiologist, server-connected) at that read
-    let panelScope = null;   // the study and exam scope whose drawings the band's panel shows
+    let stripScope = null;   // the study and exam scope whose drawings the strip and the band's panel show
     const access = () => can() && ctx.allowed();
     const examStamp = uid => root.KinExamScope.screenStamp(ctx.study(uid));
     const memoryUid = uid => root.KinExamScope.screenScope(ctx.study(uid)) ? root.KinExamScope.key(ctx.study(uid)) : uid;
@@ -388,29 +399,31 @@
       : (BACKGROUNDS.find(([v]) => v === d.background) || [, d.background])[1];
     /**
      * One list of attached drawings (window or editor strip): a thumbnail each, and Remove where the report takes edits.
-     * Resolves to whether every drawing of the list is on the screen as a picture - read and decoded. A figure whose
-     * picture could not be read is on the screen, but that drawing was not shown.
+     * Resolves, in the list's order, to `{ id, url }` per drawing: `url` is the picture this rendering put on the screen
+     * (read and loaded here), `null` when it could not - a figure whose picture could not be read is on the screen, but
+     * that drawing was not shown. A result is fixed once its picture loaded or failed; a later read elsewhere changes none.
      */
-    function renderAttached(target, uid, list, { editable, at, onRemove, readOnlyCache = false }) {
+    function renderAttached(target, uid, list, { editable, at, onRemove }) {
       const drawn = [];
       target.replaceChildren(...list.map(d => {
         const img = node('img', { alt: nameOf(d) });
-        // readOnlyCache: show only pictures another rendering already read (the band's panel after the strip), so a picture
-        // the strip could not read is not read again here and the two never disagree; the strip's next read retries both.
-        const read = !readOnlyCache ? picture(uid, d.id, at)
-          : pictures.has(d.id) ? Promise.resolve(pictures.get(d.id)) : Promise.reject(new Error('not read'));
-        drawn.push(read.then(url => new Promise(resolve => {
-          img.addEventListener('load', () => resolve(true), { once: true });
-          img.addEventListener('error', () => resolve(false), { once: true });
+        drawn.push(picture(uid, d.id, at).then(url => new Promise(resolve => {
+          img.addEventListener('load', () => resolve(url), { once: true });
+          img.addEventListener('error', () => resolve(null), { once: true });
           img.src = url;
-        })).catch(() => false).then(ok => { if (!ok) img.alt = nameOf(d) + ' (could not be read)'; return ok; }));
+        })).catch(() => null).then(url => {
+          if (!url) img.alt = nameOf(d) + ' (could not be read)';
+          return { id: d.id, url: url || null };
+        }));
         const remove = node('button', { type: 'button', textContent: 'Remove', hidden: !editable });
         remove.dataset.drawing = d.id;
         remove.addEventListener('click', () => onRemove(d));
         return node('figure', {}, img, node('figcaption', { textContent: nameOf(d) }), remove);
       }));
-      return Promise.all(drawn).then(all => all.every(Boolean));
+      return Promise.all(drawn);
     }
+    /** Whether every drawing of a rendering is on the screen as a picture (an empty list that was read is). */
+    const allDrawn = results => results.every(result => result.url !== null);
     /** What the report would hold now: my draft's list when I have a draft, otherwise the head version's. */
     const shownList = list => (list.draft ? list.draft.drawings : list.head) || [];
     /** The page learns whether my draft's drawings differ from the head version's (an amendment of an approved report). */
@@ -438,7 +451,7 @@
      */
     function tellDrawn(uid, list, drawn, still) {
       if (told.get(uid) !== toldKey(list)) tellShown(uid, null);
-      void drawn.then(ok => { if (still()) tellShown(uid, ok ? list : null); });
+      void drawn.then(results => { if (still()) tellShown(uid, allDrawn(results) ? list : null); });
     }
 
     async function readList(uid, at) {
@@ -448,7 +461,7 @@
     }
     function current(mine) { return !!session && session.seq === mine && dialog.open && ctx.admits(session.at) && session.scopeStamp === examStamp(session.uid); }
 
-    /** Draws the window's list; resolves to whether every attached drawing is on the screen as a picture (renderAttached). */
+    /** Draws the window's list; resolves to renderAttached's result per drawing (tellDrawn reads it as all drawn or not). */
     function renderWindow() {
       if (!session) return Promise.resolve(false);
       const list = shownList(session.list);
@@ -546,13 +559,18 @@
     });
 
     // ── the editor strip ──
+    // The one place that writes the strip and the band's panel. Each read is a rendering (stripSeq); what it read or drew
+    // reaches the screen only while it is still the current one for the same study, exam scope and sign-in (`still`), so
+    // an older rendering - another study's, A then B then A, or an earlier one of the same study - never covers a newer.
     async function refreshStrip() {
       const uid = ctx.selectedUid(), mine = ++stripSeq;
-      // Another study: the last one's drawings go at once, before its own are read.
-      if (uid !== stripUid) { strip.hidden = true; stripList.replaceChildren(); }
-      // The panel lets go of another study's, or another exam scope's, drawings at once too.
+      // Another study or exam scope: both let the last one's drawings go at once, before its own are read.
       const scope = uid ? JSON.stringify([uid, examStamp(uid)]) : null;
-      if (scope !== panelScope) { panelScope = scope; panelSay(uid ? '붙인 그림을 읽는 중입니다…' : '검사를 선택하세요'); }
+      if (scope !== stripScope) {
+        stripScope = scope;
+        strip.hidden = true; stripList.replaceChildren();
+        panelSay(uid ? '붙인 그림을 읽는 중입니다…' : '검사를 선택하세요');
+      }
       stripUid = uid;
       stripMark = markOf(uid);
       stripAccess = access();
@@ -562,17 +580,18 @@
         return;
       }
       const at = ctx.work('study'), scopeStamp = examStamp(uid);
+      const still = () => mine === stripSeq && ctx.selectedUid() === uid && ctx.admits(at) && scopeStamp === examStamp(uid);
       let list;
-      // A list that could not be read is shown as none - and told as not shown, which is not "no drawings". The next
-      // redraw of the list reads it again (the mark is forgotten), so a passing failure does not stay on the screen.
+      // A list that could not be read is shown as none in both - and told as not shown, which is not "no drawings". The
+      // next redraw of the list reads it again (the mark is forgotten), so a passing failure does not stay on the screen.
       try { list = await readList(uid, at); } catch (_) {
-        if (mine === stripSeq && ctx.selectedUid() === uid) {
-          strip.hidden = true; tellShown(uid, null); stripMark = null;
+        if (still()) {
+          strip.hidden = true; stripList.replaceChildren(); tellShown(uid, null); stripMark = null;
           panelSay('붙인 그림 목록을 읽지 못했습니다');
         }
         return;
       }
-      if (mine !== stripSeq || !ctx.admits(at) || ctx.selectedUid() !== uid || scopeStamp !== examStamp(uid)) return;
+      if (!still()) return;
       tellChanged(uid, list);
       const shown = shownList(list);
       strip.hidden = !shown.length;
@@ -582,15 +601,11 @@
         if (result.status !== 'applied') ctx.toast(result.reason || '그림을 빼지 못했습니다', 'err');
         void refreshStrip();
       } });
-      const still = () => mine === stripSeq && ctx.selectedUid() === uid && ctx.admits(at) && scopeStamp === examStamp(uid);
+      // The strip changed its drawings: the panel lets the earlier ones go at the same moment, and shows this rendering's
+      // results when they are in - never a read of its own. It is never told as shown: only the strip under the report is.
+      panelSay('붙인 그림을 읽는 중입니다…');
       tellDrawn(uid, list, drawn, still);
-      // The band's panel draws the same list once the strip's pictures are read, from those reads only (never a read of its
-      // own), view only. It is never told as shown: only the strip under the report is.
-      void drawn.then(() => {
-        if (!still()) return;
-        panelSay('Attached to this report: ' + shown.length);
-        if (panelList) void renderAttached(panelList, uid, shown, { editable: false, at, onRemove: () => {}, readOnlyCache: true });
-      });
+      void drawn.then(results => { if (still()) mirrorPanel(shown, results); });
     }
 
     const openFromButton = event => { event.preventDefault(); opener = event.currentTarget; void open(ctx.selectedUid()); };
@@ -610,8 +625,10 @@
       for (const url of pictures.values()) URL.revokeObjectURL(url);
       pictures.clear(); frames.clear();
       session = null;
-      // The pictures are gone with their URLs; the panel shows none until a study is read again.
-      stripSeq++; stripUid = null; panelScope = null; panelSay('검사를 선택하세요');
+      // The pictures are gone with their URLs: any rendering still reading is void, and the strip and the panel show none
+      // until a study is read again.
+      stripSeq++; stripUid = null; stripScope = null;
+      strip.hidden = true; stripList.replaceChildren(); panelSay('검사를 선택하세요');
       if (panelOpen) panelOpen.disabled = true;
     };
     const offEnd = ctx.onEnd(() => { if (dialog.open) dialog.close(); end(); });

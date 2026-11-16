@@ -52,7 +52,17 @@ class DrawingSite(rf.FlowSite):
         self.pictures_down = False              # the read of one drawing's picture fails (503) while set
         self.picture_failures = 0               # this many next reads of a drawing's picture fail (503), then they work
         self.picture_reads = 0                  # reads of a drawing's picture
+        self.hold = set()                       # drawing ids whose picture reads get no answer until release()
+        self.held = []                          # (route, drawing id) of the reads held
+        self.hold_new = False                   # while set, a drawing an attach makes is held too
         self.frame_reads = []
+
+    def release(self):
+        """Stops holding and answers every held picture read, in the order they came."""
+        self.hold.clear(); self.hold_new = False
+        held, self.held = self.held, []
+        for route, drawing_id in held:
+            route.fulfill(json={**self.meta(drawing_id), "png": self.pictures[drawing_id]["png"]})
 
     @staticmethod
     def effective(draw, head):
@@ -109,6 +119,8 @@ class DrawingSite(rf.FlowSite):
                 new = str(uuid.uuid4())
                 self.pictures[new] = {"background": attach["background"], "source": attach.get("source"),
                                       "png": attach["png"]}
+                if self.hold_new:
+                    self.hold.add(new)
                 draw["ids"].append(new)
                 drawn = {"added": new, "ids": draw["ids"], **({"replaced": attach["replaces"]} if attach.get("replaces") else {})}
         empty = all(not body[k] for k in FIELDS)
@@ -182,6 +194,9 @@ class DrawingSite(rf.FlowSite):
         if self.picture_failures > 0:
             self.picture_failures -= 1
             return route.fulfill(status=503, json={"code": "SYN_DOWN", "message": "SYN drawing picture down once"})
+        if drawing_id in self.hold and drawing_id in self.pictures:
+            self.held.append((route, drawing_id))
+            return None
         if self.pictures_down:
             return route.fulfill(status=503, json={"code": "SYN_DOWN", "message": "SYN drawing picture down"})
         if drawing_id not in self.pictures:

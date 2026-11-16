@@ -14,8 +14,10 @@ automatically." -> TEST-IRPANEL-01..05:
      Conclusion), follows another study, follows an attach made in the drawing window, and says when the list could not
      be read (and reads it again on the next redraw);
   05 Draw in the panel opens the drawing window for the selected study; closing it returns focus to Draw;
-  06 a picture the strip could not read is shown as not read in the panel too (the panel never reads one again on its
-     own, so the two never differ), and the next read draws it in both;
+  06-11 the panel is a mirror of the strip's rendering (the same drawings, order and pictures drawn or not), never a read
+     of its own: two pictures with the window reading one meanwhile (06), a newer rendering of the same study ending
+     first (08), A then B then A (09), attach and remove while hidden and then shown without a read (10), and a picture
+     not drawn refusing the save until the next read draws it (11);
   07 where the report takes no edits Draw is off, while the panel still shows the drawings.
 The real main.html, its bundle and assets are served; only HTTP is synthetic (image_report_dom_test.DrawingSite).
 """
@@ -200,32 +202,47 @@ class ImageReportPanel(unittest.TestCase):
         expect(dialog).to_be_hidden()
         expect(draw).to_be_focused()
 
-    def test_irpanel_06_a_picture_the_strip_could_not_read_is_not_read_again_by_the_panel(self):
-        held = self.drawing()
-        self.stored(text='SYN text with a drawing', ids=[held])
-        self.site.picture_failures = 1   # the first read of the picture fails, a second one would work
+    # Each figure of a list as [caption, picture on the screen]: the strip under Conclusion, the panel, or the window.
+    FIGURES = '''s => [...document.querySelectorAll(s + ' figure')].map(f => { const i = f.querySelector('img');
+      return [f.querySelector('figcaption')?.textContent || '', !!i && i.complete && i.naturalWidth > 0]; })'''
+    STRIP, PANEL, WINDOW = '#report-image-attached', '#image-report-panel-list', '#image-report-attached'
+
+    def figures(self, where):
+        return self.page.evaluate(self.FIGURES, where)
+
+    def same_in_strip_and_panel(self, expected, why):
+        """The strip and the panel show the same drawings, in the same order, with the same pictures drawn or not."""
+        self.wait(lambda: self.figures(self.STRIP) == expected and self.figures(self.PANEL) == expected,
+                  why + ' - strip %r, panel %r' % (self.figures(self.STRIP), self.figures(self.PANEL)))
+
+    def thyroid(self):
+        new = self.drawing()
+        self.site.pictures[new]['background'] = 'thyroid'
+        return new
+
+    def test_irpanel_06_the_panel_is_the_strips_rendering_even_when_the_window_reads_a_picture_meanwhile(self):
+        first, second = self.drawing(), self.thyroid()
+        self.stored(text='SYN text with two drawings', ids=[first, second])
+        self.site.picture_failures = 1   # the strip's read of the first picture fails; a later read works
+        self.site.hold = {second}        # the second picture's reads wait
         self.open()
         self.set_panels({'Image Report': True})
         self.open_study(h.PATIENT)
-        status = self.page.locator('#image-report-panel-status')
-        expect(status).to_have_text('Attached to this report: 1')
-        expect(self.page.locator('#image-report-panel-list figure')).to_have_count(1)
-        self.settle(400)
-        width = "() => document.querySelector('%s img')?.naturalWidth ?? -1"
-        # The strip could not read it, and the panel shows the same: no second read of its own that would make the two differ.
-        self.assertEqual(self.page.evaluate(width % '#report-image-attached'), 0)
-        self.assertEqual(self.page.evaluate(width % '#image-report-panel-list'), 0)
-        expect(self.page.locator('#image-report-panel-list img')).to_have_attribute('alt', re.compile(r'\(could not be read\)$'))
-        self.assertEqual(self.site.picture_reads, 1)
-        # The next read (the window opened from the panel, then closed) draws it in both.
-        self.page.locator('#image-report-panel-open').click()
-        dialog = self.page.locator('#image-report')
-        expect(dialog).to_be_visible()
-        self.wait(lambda: self.page.evaluate(width % '#image-report-attached') > 0, 'the window draws the picture')
+        self.wait(lambda: len(self.site.held) == 1, "the strip's read of the second picture waits")
+        expect(self.page.locator('#image-report-panel-status')).to_have_text('붙인 그림을 읽는 중입니다…')
+        # Meanwhile the window reads the first picture (and the second, which waits too).
+        self.page.locator('#report-image-report').click()
+        expect(self.page.locator('#image-report')).to_be_visible()
+        self.wait(lambda: len(self.site.held) == 2, "the window's read of the second picture waits")
+        self.wait(lambda: self.figures(self.WINDOW)[0] == ['Breast diagram', True], 'the window draws the first picture')
+        self.site.release()
+        # The strip's rendering could not draw the first picture: the panel says the same, though the window has it now.
+        self.same_in_strip_and_panel([['Breast diagram', False], ['Thyroid diagram', True]], 'the strip rendering, mirrored')
+        expect(self.page.locator(self.PANEL + ' img').first).to_have_attribute('alt', re.compile(r'\(could not be read\)$'))
+        expect(self.page.locator('#image-report-panel-status')).to_have_text('Attached to this report: 2')
+        # The next strip read (on closing the window) draws both, in both.
         self.page.locator('#image-report-close').click()
-        expect(dialog).to_be_hidden()
-        self.wait(lambda: self.page.evaluate(width % '#report-image-attached') > 0, 'the strip draws it')
-        self.wait(lambda: self.page.evaluate(width % '#image-report-panel-list') > 0, 'the panel draws it')
+        self.same_in_strip_and_panel([['Breast diagram', True], ['Thyroid diagram', True]], 'the next read draws both')
 
     def test_irpanel_07_draw_follows_the_reports_edit_gate(self):
         held = self.drawing()
@@ -246,6 +263,107 @@ class ImageReportPanel(unittest.TestCase):
         expect(self.page.locator('#image-report-panel-list figure')).to_have_count(1)
         header.click()
         expect(self.page.locator('#image-report-readonly')).to_contain_text('View only')
+
+    def draw_and_attach(self, background):
+        self.choose(background)
+        self.choose('Ellipse')
+        self.drag(0.2, 0.3, 0.4, 0.5)
+        self.attach()
+
+    def list_reads(self):
+        return sum(1 for _, p in self.site.calls if p.endswith('/report/drawings'))
+
+    def test_irpanel_08_a_newer_rendering_of_the_same_study_that_ends_first_is_not_covered_by_an_older_one(self):
+        kept = self.drawing()
+        self.stored(text='SYN text with a drawing', ids=[kept])
+        self.open()
+        self.set_panels({'Image Report': True})
+        self.open_study(h.PATIENT)
+        self.same_in_strip_and_panel([['Breast diagram', True]], 'the first rendering')
+        # An attach whose picture's reads wait: the strip renders [kept, new] (and again when the window closes) ...
+        self.site.hold_new = True
+        self.page.locator('#report-image-report').click()
+        expect(self.page.locator('#image-report')).to_be_visible()
+        self.settle()
+        self.draw_and_attach('Thyroid diagram')
+        self.page.locator('#image-report-close').click()
+        expect(self.page.locator('#image-report')).to_be_hidden()
+        new = next(i for i in self.site.draw[h.UID]['ids'] if i != kept)
+        self.wait(lambda: self.figures(self.STRIP) == [['Breast diagram', True], ['Thyroid diagram', False]], 'the older renderings wait')
+        expect(self.page.locator('#image-report-panel-status')).to_have_text('붙인 그림을 읽는 중입니다…')
+        # ... and a newer one (Remove on the strip) lists only [kept] and ends first.
+        self.page.locator(self.STRIP + ' button[data-drawing="%s"]' % new).click()
+        self.same_in_strip_and_panel([['Breast diagram', True]], 'the newer rendering')
+        # The older renderings end later and cover nothing.
+        self.site.release()
+        self.settle(500)
+        self.same_in_strip_and_panel([['Breast diagram', True]], 'after the older renderings ended')
+        expect(self.page.locator('#image-report-panel-status')).to_have_text('Attached to this report: 1')
+
+    def test_irpanel_09_a_then_b_then_a(self):
+        first = self.drawing()
+        self.stored(head=[first], rs='A')
+        self.site.hold = {first}
+        self.open()
+        self.set_panels({'Image Report': True})
+        self.pick(h.PATIENT)
+        self.wait(lambda: len(self.site.held) == 1, "the first study's picture read waits")
+        self.pick(h.PATIENT_B)
+        self.wait(lambda: self.selected() == h.PATIENT_B, 'the other study opens')
+        expect(self.page.locator('#image-report-panel-status')).to_have_text('Attached to this report: 0')
+        # The first study's picture comes in while the other study is selected: it reaches neither list.
+        self.site.release()
+        self.settle(500)
+        self.same_in_strip_and_panel([], "the other study's (none)")
+        expect(self.page.locator('#image-report-panel-status')).to_have_text('Attached to this report: 0')
+        self.pick(h.PATIENT)
+        self.wait(lambda: self.selected() == h.PATIENT, 'back to the first study')
+        self.same_in_strip_and_panel([['Breast diagram', True]], "the first study's again")
+
+    def test_irpanel_10_hidden_it_follows_attach_and_remove_and_showing_it_reads_nothing(self):
+        self.open()
+        self.open_study(h.PATIENT)
+        expect(self.panel()).to_be_hidden()   # first use: hidden
+        self.page.locator('#report-image-report').click()
+        expect(self.page.locator('#image-report')).to_be_visible()
+        self.settle()
+        self.draw_and_attach('Breast diagram')
+        self.draw_and_attach('Thyroid diagram')
+        self.page.locator('#image-report-close').click()
+        self.wait(lambda: len(self.figures(self.STRIP)) == 2, 'the strip shows both')
+        self.page.locator(self.STRIP + ' figure').first.get_by_role('button', name='Remove').click()
+        self.same_in_strip_and_panel([['Thyroid diagram', True]], 'the hidden panel follows the remove')
+        lists, pictures = self.list_reads(), self.site.picture_reads
+        self.set_panels({'Image Report': True})
+        expect(self.panel()).to_be_visible()
+        self.assertEqual(self.figures(self.PANEL), [['Thyroid diagram', True]])
+        expect(self.page.locator('#image-report-panel-status')).to_have_text('Attached to this report: 1')
+        self.assertEqual((self.list_reads(), self.site.picture_reads), (lists, pictures), 'showing the panel read something')
+
+    def test_irpanel_11_a_picture_not_drawn_refuses_the_save_and_the_next_read_lets_it(self):
+        held = self.drawing()
+        st = self.stored(text='SYN text with a drawing', ids=[held])
+        self.site.picture_failures = 1
+        self.open()
+        self.set_panels({'Image Report': True})
+        self.open_study(h.PATIENT)
+        self.same_in_strip_and_panel([['Breast diagram', False]], 'drawn in neither')
+        self.page.locator('#b-save').click()
+        self.wait(lambda: len(self.site.flow_commits) == 1, 'the save is sent')
+        self.assertNotIn('expectedEffectiveDrawingIds', self.site.flow_commits[0][1], 'a drawing not drawn was named as shown')
+        expect(self.page.locator('#draftmsg')).to_contain_text('판독문에 붙은 그림이 이 화면이 본 것과 다릅니다')
+        self.assertEqual(st['report']['version'], 0)
+        # The next strip read (the window opened and closed) draws it in both, and the save goes through.
+        self.page.locator('#report-image-report').click()
+        expect(self.page.locator('#image-report')).to_be_visible()
+        self.wait(lambda: self.figures(self.WINDOW) == [['Breast diagram', True]], 'the window draws it')
+        self.page.locator('#image-report-close').click()
+        self.same_in_strip_and_panel([['Breast diagram', True]], 'drawn in both')
+        self.page.locator('#b-draft-keep').click()
+        self.settle(300)
+        self.page.locator('#b-save').click()
+        self.wait(lambda: st['report']['version'] == 1, 'the save goes through once the picture was drawn')
+        self.assertEqual(self.site.flow_commits[-1][1].get('expectedEffectiveDrawingIds'), [held])
 
 
 if __name__ == '__main__':
