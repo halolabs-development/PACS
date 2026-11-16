@@ -858,17 +858,20 @@ test('TEST-B23-MEASUREMENT-SHAPE: the line and its sources come together, in sha
 
 test('TEST-B23-MEASUREMENT-ATTEST: the line is recorded with its sources, beside the sentence, in the same write', async () => {
   const f = fixture({ draft: { baseVersion: 4, citations: [] }, readable: MEASURED });
-  await put(f, { findings: MTEXT, insert: MINSERT });
+  const answer = await put(f, { findings: MTEXT, insert: MINSERT });
   const [entry] = stored(f);
   assert.equal(entry.insertedText, MTEXT, 'the whole block, line included, is the attested text');
   assert.equal(entry.measurementLine, MLINE);
   assert.deepEqual(entry.measurementSources, [0, 1]);
   assert.deepEqual(f.writes, ['reportDraft.upsert']);
-  // Without the keys the entry is exactly the shipped one.
+  // The answer says the measurement line was stored — the screen marks the entry only on this word.
+  assert.deepEqual(answer.inserted, { cid: entry.cid, field: 'findings', insertedAt: entry.insertedAt, measurementRecorded: true });
+  // Without the keys the entry is exactly the shipped one, and so is the answer.
   const plain = fixture({ draft: { baseVersion: 4, citations: [] } });
-  await put(plain, { insert: INSERT });
+  const plainAnswer = await put(plain, { insert: INSERT });
   const [old] = stored(plain);
   for (const key of ['measurementLine', 'measurementSources']) assert.equal(Object.hasOwn(old, key), false, key);
+  assert.equal(Object.hasOwn(plainAnswer.inserted, 'measurementRecorded'), false);
 });
 
 test('TEST-B23-MEASUREMENT-STALE: a source set other than every source the rule admits now is refused before any write', async () => {

@@ -95,11 +95,14 @@ export class PacsReportEvidence {
     const keep = this.citationKeys(body.citationIds, 'citationIds');
     const wantsInsert = body.insert !== undefined;
     const { kept, ignored } = applyKeepList(citationArray(locked?.citations), keep);
-    let inserted: { cid: string; field: string; insertedAt: string } | null = null;
+    let inserted: { cid: string; field: string; insertedAt: string; measurementRecorded?: true } | null = null;
     if (wantsInsert) {
       const entry = await this.verifiedInsertion(tx, uid, body.insert, content, c);
       kept.push(entry);
-      inserted = { cid: entry.cid, field: entry.field, insertedAt: entry.insertedAt };
+      // `measurementRecorded`: 이 기록에 측정 줄과 그 출처 번호를 **실제로 저장했을 때만**. 화면은 이 답이 있을 때만
+      // 그 건을 측정 줄 포함으로 붙인다 — 모르는 키를 버리는 옛 서버의 200을 측정 기록으로 읽지 않게.
+      inserted = { cid: entry.cid, field: entry.field, insertedAt: entry.insertedAt,
+                   ...(typeof entry.measurementLine === 'string' ? { measurementRecorded: true as const } : {}) };
       /**
        * 예방적 검사다. 머리 판을 **잠그지 않고** 읽으므로 두 방향 모두 틀릴 수 있다 —
        * 넘치는데 통과하거나, 여유가 있는데 거절할 수 있다. 실제 상한은 확정 시의

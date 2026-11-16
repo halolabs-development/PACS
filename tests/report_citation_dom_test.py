@@ -1200,7 +1200,8 @@ class ReportCitationDOMTest(unittest.TestCase):
                              % (UID, SERIES, SOP), call["path"])
             self.assertEqual("application/dicom+json", call["accept"])
         self.assertEqual([EXISTING, "", ""], value["text"], "turning the box on does not touch the report")
-        self.page.evaluate("reply({status: 200, body: {inserted: {cid: 'cid-m', field: 'findings', insertedAt: '2026-09-20T02:00:00.000Z'}}})")
+        self.page.evaluate("reply({status: 200, body: {inserted: {cid: 'cid-m', field: 'findings', insertedAt: '2026-09-20T02:00:00.000Z',"
+                           " measurementRecorded: true}}})")
         self.press_insert()
         self.page.wait_for_function("()=>!$('#cite-preview').classList.contains('show')")
         value = self.page.evaluate("snapshot()")
@@ -1324,6 +1325,47 @@ class ReportCitationDOMTest(unittest.TestCase):
         self.assertEqual(1, len(value["calls"]), "only the earlier draft write went out; the line was not sent unrecorded")
         self.assertIsNone(value["measure"]["line"])
         self.assertIn("서버가 측정 줄 기록을 지원하는지", value["measure"]["note"])
+
+    def test_an_older_server_answer_keeps_the_whole_text_and_its_citation_but_never_marks_the_line_recorded(self):
+        # The server is rolled back while the insertion is out: the line has already left (the support check ran before the
+        # write), and the older server's 200 does not say it stored the measurement line. Once while the write waits, and
+        # once more across a draft conflict and the write's own resend.
+        old_answer = "reply({status: 200, body: {inserted: {cid: 'cid-old', field: 'findings', insertedAt: '2026-09-20T02:00:00.000Z'}}})"
+        for name, conflict in (("support lost while the write waits", False), ("support lost before a 409 and its resend", True)):
+            with self.subTest(name):
+                self.open_measured()
+                self.reply_numbers(NUMBERS, NUMBERS)
+                self.turn_measure(True)
+                self.page.wait_for_function("()=>!$('#cite-preview-measure-line').hidden")
+                if conflict:
+                    self.page.evaluate("reply({status: 409, body: {code: 'REPORT_DRAFT_CONFLICT', message: 'conflict'}})")
+                self.page.evaluate(old_answer)
+                # What the older server's citation read then says: the whole text is cited, nothing marks a measurement line.
+                self.page.evaluate("citeReply(%s)" % json.dumps(
+                    {"version": 1, "head": [], "draft": [entry("cid-old", text=BLOCK + "\n" + MLINE, findingId="f-1",
+                                                                findingRevision=2, insertedBy=None)]}, ensure_ascii=False))
+                self.page.evaluate("hold()")
+                self.press_insert()
+                self.page.wait_for_function("()=>outstanding()===1")
+                self.page.evaluate("()=>{ citations.confirm('%s', {version: 1, head: [], draft: []}); }" % OTHER)
+                self.page.evaluate("release()")
+                self.page.wait_for_function("()=>!$('#cite-preview').classList.contains('show')")
+                self.page.wait_for_function("()=>citeInfo('%s').known===true" % UID)
+                value = self.page.evaluate("snapshot()")
+                puts = [c for c in value["calls"] if c["method"] == "PUT"]
+                self.assertEqual(2 if conflict else 1, len(puts), name)
+                for put in puts:
+                    self.assertEqual(MLINE, put["body"]["insert"]["measurementLine"], "the line left before the server changed")
+                self.assertEqual(EXISTING + "\n" + BLOCK + "\n" + MLINE, value["text"][0], "the whole text is in the report")
+                info = self.page.evaluate("citeInfo('%s')" % UID)
+                self.assertEqual(["cid-old"], [e["cid"] for e in info["draft"]], "the citation of the whole text stands")
+                self.assertEqual(BLOCK + "\n" + MLINE, info["draft"][-1]["insertedText"])
+                self.assertNotIn("measurementLine", info["draft"][-1], "no measurement record the server did not confirm")
+                self.page.click("#b-cite-list")
+                self.page.wait_for_function("()=>!$('#citelist').hidden")
+                self.assertNotIn("측정 줄 포함", self.page.evaluate("snapshot().bar.list"))
+                self.assertEqual([], self.errors)
+                self.page.close()
 
     def test_a_server_refusal_of_a_changed_source_set_leaves_the_report_as_it_was(self):
         self.open_measured()

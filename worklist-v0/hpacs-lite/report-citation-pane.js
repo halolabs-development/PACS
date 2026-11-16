@@ -440,9 +440,10 @@
         const why2 = citationInsertBlock();
         if (why2) { pane.status = why2; renderCitePreview(); return; }
         /**
-         * 측정 줄은 서버가 그 줄을 기록한다고 **최신 읽기가 말할 때만** 나간다. 이 자리 — 모든 기다림이 끝나고
-         * 요청이 떠나기 바로 앞 — 하나에서만 본다: 앞선 저장을 기다리는 동안 다른 읽기가 그 사실을 바꿀 수 있다.
-         * 아니면 줄을 내리고 아무것도 보내지 않는다(기록되지 않은 줄이 본문에만 남지 않게). 다음 누름은 블록만 넣는다.
+         * 초안 쓰기 호출 전, 마지막으로 읽은 지원 상태 확인: 측정 줄은 최신 인용 읽기가 서버가 그 줄을 기록한다고
+         * 말할 때만 싣는다. 아니면 줄을 내리고 아무것도 보내지 않는다 — 다음 누름은 블록만 넣는다.
+         * 쓰기 안의 기다림·충돌 뒤 다시 보내기에는 인용 전용 검사를 두지 않는다. 그 사이 서버가 옛 판으로 돌아가도
+         * 글 전체는 인용 기록에 남고, 측정 기록 여부는 아래 200 답의 `measurementRecorded`만 믿는다.
          */
         if (measurement && !citations.measurementLines()) {
           setMeasure(pane, { state: "off", seq: pane.measure.seq + 1 });
@@ -541,13 +542,16 @@
          * 유지 목록이 방금 기록된 증언을 지우지 않도록 초안 쪽을 모르는 상태로 되돌린다.
          * 다음 전용 읽기 한 번이 서버의 바이트로 그것을 채운다.
          */
+        // 측정 줄 기록은 화면이 보낸 것으로 추정하지 않는다 — 서버가 실제로 저장했다고 답할 때만 붙인다.
+        // 옛 서버의 200은 그 키를 버렸을 수 있다: 글 전체의 인용은 그대로 넓히고, 측정 기록 여부는 다음 인용 읽기가 말한다.
+        const recorded = !!measurement && answer?.inserted?.measurementRecorded === true;
         const extended = !!answer?.inserted?.cid &&
           citations.extend(pane.uid, { v: KinReportCitation.SCHEMA, cid: answer.inserted.cid, field,
             findingId: pane.findingId, findingRevision: pane.findingRevision, sourceIndex: pane.sourceIndex,
             linkStateAtInsert: pane.linkState, headRevisionAtInsert: pane.headRevision,
-            insertedText: text, ...(measurement || {}), insertedAt: answer.inserted.insertedAt, insertedBy: null,
+            insertedText: text, ...(recorded ? measurement : {}), insertedAt: answer.inserted.insertedAt, insertedBy: null,
             mine: true, sameTextCount: 1 });
-        if (!extended) invalidateCitations(pane.uid);
+        if (!extended || (measurement && !recorded)) invalidateCitations(pane.uid);
         /**
          * 인용 삽입은 **본문을 바꿨다.** 구조화 건의 존재 상태는 그 본문에 대해 계산되므로
          * 지금 화면이 들고 있는 상태는 옛 것이다. 값이 바뀐 것은 없지만 "그 문장이 아직
