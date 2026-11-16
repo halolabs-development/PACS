@@ -632,6 +632,77 @@ test('Image Report drawings ride the draft boundary, are bound and signed with t
     assert.equal(across.status, 409, JSON.stringify(across.body)); assert.equal(across.body.code, 'EXAM_SCOPE_CHANGED');
     assert.equal(await facts(exam.uid), untouched);
     assert.deepEqual(await drawingIds(exam.uid), [versioned]);
+
+    // ── Split Exam: the two parts are two report uids (the study's own, a new logical one) of one group ──
+    // A work written on the study before the split, and one on each part after it. Each work also holds a drawing it
+    // replaced, which no draft, end or version names any more - only its work keeps it. Each destruction takes its own
+    // drawings and none of the other part's or of the study before the split, whichever order the destructions run in.
+    const whole = await witness.studyState.create({ data: { uid: '1.2.840.9999.146', institutionId: institution, ss: 'Verified' } });
+    patients.set(whole.uid, 'SYN-DRAWING-PATIENT');
+    const draftOn = uid => witness.reportDraft.findUnique({ where: { uid_author: { uid, author } } });
+    const nowOn = async (uid, extra = {}) => ({ ...base(0, extra), expectedRevision:
+      (await witness.studyState.findUnique({ where: { uid } })).draftEpoch + ':' + ((await draftOn(uid))?.revision ?? 0) });
+    const endsOn = async uid => (await witness.reportDraftPurposeEnd.findMany({ where: { uid }, select: { disposalUnitId: true } }))
+      .map(r => r.disposalUnitId).sort();
+    /** Attach a drawing on `uid` (to a new list, or replacing `replaces` in `list`); its id. */
+    const attachOn = async (uid, list = null, replaces = undefined) => {
+      const answer = await put(uid, await nowOn(uid, { drawingIds: list, drawing: { ...breast, ...(replaces ? { replaces } : {}) } }));
+      assert.equal(answer.status, 200, JSON.stringify(answer.body));
+      return answer.body.drawn.added;
+    };
+    const discardOn = async (uid, ids) => {
+      const answer = await discard(uid, { ...await nowOn(uid), drawingIds: ids });
+      assert.equal(answer.status, 200, JSON.stringify(answer.body));
+    };
+    const listed = async uid => (await draftOn(uid))?.drawings?.ids ?? [];
+    // The study before the split: a work that attached a drawing and replaced it, ended by Discard; its destruction is
+    // still to come. The replaced drawing is named by nothing but its work.
+    const unsplitOld = await attachOn(whole.uid);
+    const unsplitWork = (await draftOn(whole.uid)).workUnit;
+    const unsplit = await attachOn(whole.uid, [unsplitOld], unsplitOld);
+    assert.deepEqual(await listed(whole.uid), [unsplit]);
+    assert.deepEqual([await drawing(unsplitOld), await drawing(unsplit)],
+      [unsplitWork, unsplitWork].map(workUnit => ({ studyUid: whole.uid, groupId: null, workUnit })));
+    await endedOnly(() => discardOn(whole.uid, [unsplit]));
+    assert.deepEqual(await endsOn(whole.uid), [unsplitWork]);
+    // Split: the second part takes one of the two series and is a new logical report uid.
+    orthanc.filmStudy = async uid => ({ series: ['2.25.14601', '2.25.14602'].map((seriesUid, i) => ({ id: uid + '.' + i,
+      uid: seriesUid, number: i + 1, description: 'SYN', modality: 'CT', instances: ['SYN-instance-' + i] })) });
+    const made = (await grouping.split(technician, { uid: whole.uid, seriesUids: ['2.25.14602'] })).group;
+    const [partOne, partTwo] = [0, 1].map(n => made.members.find(m => m.part === n).logicalUid);
+    assert.equal(partOne, whole.uid);
+    assert.notEqual(partTwo, whole.uid);
+    // Each part: a new work of its own, its drawings on that part's uid in the split's group. The first part's work
+    // replaces its first drawing; the replaced one stays its work's until that work is destroyed.
+    const oneOld = await attachOn(partOne);
+    const oneWork = (await draftOn(partOne)).workUnit;
+    const onOne = await attachOn(partOne, [oneOld], oneOld);
+    const onTwo = await attachOn(partTwo);
+    const twoWork = (await draftOn(partTwo)).workUnit;
+    assert.equal(new Set([unsplitWork, oneWork, twoWork]).size, 3, 'a work of its own on each part');
+    assert.deepEqual([await drawing(oneOld), await drawing(onOne), await drawing(onTwo)],
+      [{ studyUid: partOne, groupId: made.id, workUnit: oneWork }, { studyUid: partOne, groupId: made.id, workUnit: oneWork },
+        { studyUid: partTwo, groupId: made.id, workUnit: twoWork }]);
+    // The second part's work is discarded and destroyed at once: its drawing only. The first part's work (live, with a
+    // drawing only it holds) and the work from before the split (still to be destroyed) keep theirs.
+    await discardOn(partTwo, [onTwo]);
+    await purpose.drained();
+    assert.deepEqual(await drawingIds(partTwo), []);
+    assert.deepEqual(await drawingIds(partOne), [unsplitOld, unsplit, oneOld, onOne].sort());
+    assert.deepEqual(await endsOn(partTwo), []);
+    // The work from before the split is destroyed now, under the split: its two drawings only.
+    await destroyNow(unsplitWork);
+    assert.deepEqual(await drawingIds(partOne), [oneOld, onOne].sort());
+    assert.deepEqual(await endsOn(whole.uid), []);
+    // A new work on the second part while the first part's work ends: the first part's destruction takes its own two.
+    const againTwo = await attachOn(partTwo);
+    await discardOn(partOne, [onOne]);
+    await purpose.drained();
+    assert.deepEqual(await drawingIds(partOne), []);
+    assert.deepEqual(await drawingIds(partTwo), [againTwo]);
+    await discardOn(partTwo, [againTwo]);
+    await purpose.drained();
+    assert.deepEqual(await drawingIds(partTwo), []);
   } finally {
     await purpose.drained();
     await purposeDb.$disconnect();
