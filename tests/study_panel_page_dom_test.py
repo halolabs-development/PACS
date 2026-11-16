@@ -119,6 +119,13 @@ HIDE_PRELOAD = """() => [...document.querySelectorAll('#worklist-selection butto
 HIDE_CENSUS = """() => { document.querySelector('#t-desc')?.closest('label')?.setAttribute('hidden', '');
   document.querySelector('#b-except')?.setAttribute('hidden', '');
   [...document.querySelectorAll('button')].find(b => b.textContent === 'Split Exam')?.setAttribute('hidden', ''); }"""
+# The header's Prefetch checkbox (status group, shown from 1920 px) changed nothing and no script read it. It keeps its
+# place and label but is unchecked and disabled, and its holder's title says prefetching is set in Auto Preload. A decided
+# difference: the first-paint comparisons give the baseline tree the same state before measuring (on the current page it
+# already has it); its box is still compared and its raster stays masked (W3S-03). Its behaviour is
+# unavailable_controls_dom_test's case.
+DECIDE_PREFETCH = """() => { const box = document.querySelector('.menubar-status input[aria-label="Prefetch"]');
+  if (box) { box.checked = false; box.disabled = true; } }"""
 SCROLLER = '''() => { const r = document.querySelector('.redit').getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; }'''
 # Minhoon item 8 (PR #286, 2026-10-27 feedback 8): two decided differences in the report column, from every baseline.
 # - The Report Editor group (role group, named Report Editor) puts its head row (title, Read Only/Editable, why, Resume
@@ -588,7 +595,8 @@ def first_paint_pixels(page, path, clip=None):
     # fixed pixel range. Geometry/checked state remain independently compared.
     checkbox = page.get_by_role('group', name='Status', exact=True).get_by_role('checkbox')
     expect(checkbox).to_have_count(1)
-    expect(checkbox).to_be_checked()
+    expect(checkbox).not_to_be_checked()
+    expect(checkbox).to_be_disabled()
     assert checkbox.bounding_box() is not None
     settle(page)
     return page.screenshot(animations='disabled', caret='hide', clip=clip,
@@ -1857,6 +1865,7 @@ class StudyPanelPageDOM(unittest.TestCase):
             page.evaluate(HIDE_W9)   # W9-UI decided difference, see HIDE_W9
             page.evaluate(HIDE_PRELOAD)   # D1880 preload decided difference, see HIDE_PRELOAD
             page.evaluate(HIDE_CENSUS)   # #259 caution census decided difference, see HIDE_CENSUS
+            page.evaluate(DECIDE_PREFETCH)   # the header Prefetch checkbox decided difference, see DECIDE_PREFETCH
             settle(page)
             facts = page.evaluate("""(names) => ({focus:document.activeElement.id || document.activeElement.tagName,
               panels:names.map(s=>{

@@ -14203,7 +14203,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       ctxTarget = target;
       ctx.setAttribute('role', 'menu');
       ctx.innerHTML = items.map((it, i) =>
-        it.sep ? '<hr role="separator">' : `<div data-i="${i}" role="menuitem" tabindex="-1" aria-disabled="${!!it.dis}" class="${it.dis ? "dis" : ""}">${esc(it.label)}</div>`).join("");
+        it.sep ? '<hr role="separator">' : `<div data-i="${i}" role="menuitem" tabindex="-1" aria-disabled="${!!it.dis}" class="${it.dis ? "dis" : ""}"${it.title ? ` title="${esc(it.title)}"` : ""}>${esc(it.label)}</div>`).join("");
       ctx.style.left = Math.max(0, Math.min(keyboard?.x ?? e.clientX, innerWidth - 200)) + "px";
       ctx.style.top = Math.max(0, Math.min(keyboard?.y ?? e.clientY, innerHeight - (items.length * 28 + 20))) + "px";
       ctx.style.display = "block";
@@ -14406,7 +14406,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
             doUnmatch();
           } },
         { sep: 1 },
-        { label: "New Exam (SC 생성)", dis: 1, act: () => {} },
+        { label: "New Exam (SC 생성)", dis: 1, title: "새 검사(SC 생성)는 현재 연결되어 있지 않습니다.", act: () => {} },
       ], null, { uid: selectedUid, seq: selectionSeq, oid: selectedOid });
     });
 
