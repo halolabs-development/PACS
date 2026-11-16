@@ -267,11 +267,22 @@
       if(!value||result&&result!==value)return null;result=value;}
     return result||null;
   }
+  // The series' own Series Number and date, as the viewer's Studies panel reads them (config/ohif/series-order.js): the
+  // display set writes a missing number as 0, the instance keeps what the object carries (an attached document has none).
+  function seriesSource(displaySet){return displaySet?.instances?.[0]||displaySet?.instance||displaySet||{};}
+  function seriesNumber(displaySet){const text=String(seriesSource(displaySet).SeriesNumber??'').trim(),n=Number(text);return text&&Number.isFinite(n)?n:null;}
+  function seriesStamp(displaySet){const source=seriesSource(displaySet),date=String(source.SeriesDate??'').trim();return date?date+String(source.SeriesTime??'').trim():null;}
   function displayMetadata(displaySet){
     const sources=displaySet?.images;
     return {modality:exactToken(displaySet?.Modality,16),retrieveAE:uniform(sources,['RetrieveAETitle'],16),bodyPart:uniform(sources,['BodyPartExamined'],64),
       description:typeof displaySet?.SeriesDescription==='string'?displaySet.SeriesDescription.trim().slice(0,128):'',
-      laterality:uniform(sources,['Laterality','ImageLaterality'],1),seriesNumber:Number.isFinite(Number(displaySet?.SeriesNumber))?Number(displaySet.SeriesNumber):null};
+      laterality:uniform(sources,['Laterality','ImageLaterality'],1),seriesNumber:seriesNumber(displaySet)};
+  }
+  /** The panel order (number, then series date and time, then UID) in the selector's direction; a missing number or date is last either way. */
+  function seriesOrder(a,b,descending){
+    const sign=descending?-1:1,keys=[[seriesNumber(a),seriesNumber(b)],[seriesStamp(a),seriesStamp(b)]];
+    for(const [x,y] of keys){if(x===y)continue;if(x===null||y===null)return x===null?1:-1;return (x<y?-1:1)*sign;}
+    return a.SeriesInstanceUID.localeCompare(b.SeriesInstanceUID)*sign;
   }
   function descriptionMatches(actual,rule){if(rule===null)return true;if(typeof actual!=='string')return false;const a=folded(actual.trim()),b=folded(rule.value);return rule.operator==='equals'?a===b:a.includes(b);}
   function fieldsMatch(actual,rule){return ['modality','retrieveAE','bodyPart','laterality'].every(k=>!(k in rule)||rule[k]===null||actual[k]===rule[k])&&descriptionMatches(actual.description,rule.description);}
@@ -305,9 +316,7 @@
         const pool=sets.filter(ds=>belongs(study,ds)&&uid(ds.SeriesInstanceUID)&&typeof ds.displaySetInstanceUID==='string'&&ds.displaySetInstanceUID&&Array.isArray(ds.images)&&ds.images.length>0&&fieldsMatch(displayMetadata(ds),selector));
         const seriesCounts=new Map();for(const ds of pool)seriesCounts.set(ds.SeriesInstanceUID,(seriesCounts.get(ds.SeriesInstanceUID)||0)+1);
         if([...seriesCounts.values()].some(n=>n!==1)){failed=true;break;}
-        pool.sort((a,b)=>{const am=displayMetadata(a),bm=displayMetadata(b),an=am.seriesNumber,bn=bm.seriesNumber;
-          if(an===null||bn===null){if(an===null&&bn===null){const tied=a.SeriesInstanceUID.localeCompare(b.SeriesInstanceUID);return selector.order==='ascending'?tied:-tied;}return an===null?1:-1;}
-          const ordered=an-bn||a.SeriesInstanceUID.localeCompare(b.SeriesInstanceUID);return selector.order==='ascending'?ordered:-ordered;});
+        pool.sort((a,b)=>seriesOrder(a,b,selector.order!=='ascending'));
         const selected=pool[selector.occurrence-1];if(!selected){failed=true;break;}
         // A plane cell must fail here, before any layout change, not after the screen is gone.
         if(reconstructed.has(alias)&&!volumeEligible(selected)){failed=true;break;}
