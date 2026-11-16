@@ -100,20 +100,10 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
     if (!row || row.examUnavailable || !window.KinExamScope) return null;
     try { return window.KinExamScope.read(row) || null; } catch (_) { return null; }
   };
-  // The listed exam an image belongs to: the one whose scope holds that original study (and series). A merged or split
-  // exam comes before a plain study with the same original, as the exam a reader opened.
-  function rowOf(list, studyUid, seriesUid) {
-    let plain = null;
-    for (const row of list || []) {
-      const scope = scopeOf(row);
-      const holds = scope ? scope.sources.some(source => source.studyUid === studyUid && (!seriesUid || window.KinExamScope.allows(source, seriesUid)))
-        : row.uid === studyUid;
-      if (!holds) continue;
-      if (scope?.groupId) return row;
-      plain ||= row;
-    }
-    return plain;
-  }
+  // The listed exam an image belongs to (KinExamScope.listedExam — the same rule the Prior Studies controller uses to
+  // find a cell's exam): a merged or split exam comes before a plain study with the same original.
+  const rowOf = (list, studyUid, seriesUid) => window.KinExamScope?.listedExam
+    ? window.KinExamScope.listedExam(list, studyUid, seriesUid) : (list || []).find(row => row.uid === studyUid) || null;
   // The patient's related studies for a cell, marked (* current, P1… earlier, N1… later); null when the list cannot be read for it.
   async function marked(viewportId, signal) {
     await ready;
