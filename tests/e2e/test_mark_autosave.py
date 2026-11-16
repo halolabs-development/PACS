@@ -105,11 +105,15 @@ class MarkAutoSaveE2E(MeasurementReadbackE2E):
             if value or time.monotonic() > end: return value
             time.sleep(.25)
 
-    def hold_me(self, p):
-        # This page's /me requests wait until released (each route is kept): a save that asks /me first stays on its way.
-        held = []
-        p.route(ME, lambda route: held.append(route))
-        return held
+    def hold_me(self, p, gate=None):
+        # This page's /me requests wait while the gate holds (each route kept in gate['held']) and go on once it is released:
+        # a save that asks /me first stays on its way. One route for the page's life, opened and closed by the gate —
+        # routing the address again after an unroute left a later /me waiting on neither handler.
+        if gate is None:
+            gate = {'hold': True, 'held': []}
+            p.route(ME, lambda route: gate['held'].append(route) if gate['hold'] else route.continue_())
+        gate['hold'] = True
+        return gate
 
     def why(self, p, row, before):
         # What a mark's gate sees, for a failure message: the setting, focus, a tool still moving, the row and the mark.
@@ -119,11 +123,9 @@ class MarkAutoSaveE2E(MeasurementReadbackE2E):
               .filter(a=>a.metadata.toolName==='EllipticalROI').map(a=>({points:a.data.handles.points,locked:cornerstoneTools.annotation.locking.isAnnotationLocked(a.annotationUID),
                 unverified:a.data.kinUnverified,invalidated:a.invalidated}))})''', [PANEL + ' section[data-kind=ellipse]', before])
 
-    def release(self, p, held):
-        # Answered before the route goes (an unroute with handlers still waiting cancels them), and any that came meanwhile.
-        while held: held.pop(0).continue_()
-        p.unroute(ME)
-        while held: held.pop(0).continue_()
+    def release(self, p, gate):
+        gate['hold'] = False
+        while gate['held']: gate['held'].pop(0).continue_()
 
     def test_mark_autosave_01_drawn_marks_are_saved_without_save_and_drawn_on_reopen(self):
         f = self.specimen(); w, p = self.observed(f)
@@ -143,7 +145,7 @@ class MarkAutoSaveE2E(MeasurementReadbackE2E):
         self.assertEqual(len(saved[0]['item']['baseline']['values']), 5)
         # A Length drawn and the window closed: only the closing window can send it. This panel's /me is held, so an
         # ordinary save that starts before the closing waits there and never reaches the server; the closing does not ask /me.
-        held = self.hold_me(p)
+        self.hold_me(p)
         second = self.length(p)
         expect(second).to_contain_text('Length · ')
         drawn = p.evaluate(MARKS)
@@ -310,7 +312,7 @@ class MarkAutoSaveE2E(MeasurementReadbackE2E):
         outline = p.evaluate(WHERE, 'EllipticalROI')['outline']
         p.mouse.move(*outline); p.mouse.down(); p.mouse.move(outline[0]+20, outline[1]+10, steps=10); p.mouse.up()
         p.wait_for_timeout(1500)
-        self.assertTrue(held, 'the save is waiting for its /me')
+        self.assertTrue(held['held'], 'the save is waiting for its /me')
         self.assertEqual(self.revisions(f, item), ['create'])
         # A closing the reader cancels: the leave question is asked, the request on its way is sent at that moment.
         asked = []
@@ -323,15 +325,15 @@ class MarkAutoSaveE2E(MeasurementReadbackE2E):
         self.release(p, held)
         expect(row).to_contain_text('Saved r2', timeout=10000)
         # Moved again with /me held, then the window really closes: this later request is sent by the closing too.
-        held = self.hold_me(p)
+        self.hold_me(p, held)
         row.get_by_role('button', name='Edit', exact=True).click()
         before = p.evaluate(MARKS)
         outline = p.evaluate(WHERE, 'EllipticalROI')['outline']
         p.mouse.move(*outline); p.mouse.down(); p.mouse.move(outline[0]+15, outline[1]-10, steps=10); p.mouse.up()
         for _ in range(10):
-            if held: break
+            if held['held']: break
             p.wait_for_timeout(500)
-        self.assertTrue(held, self.why(p, row, before))
+        self.assertTrue(held['held'], self.why(p, row, before))
         self.assertEqual(self.revisions(f, item), ['create', 'edit'])
         p.close(); w.close()
         self.assertTrue(self.until(lambda: self.revisions(f, item) == ['create', 'edit', 'edit']), self.revisions(f, item))
@@ -360,7 +362,7 @@ class MarkAutoSaveE2E(MeasurementReadbackE2E):
         expect(self.row(p, 'length')).to_contain_text('Saved r1', timeout=15000)
         self.assertEqual(len(lengths(f)), 1); self.assertEqual(self.saved(b), [])
         # A second Length on A on its way, B shown, and the window closed from B: A's request goes to A, once.
-        held = self.hold_me(p)
+        self.hold_me(p, held)
         self.length(p, .35, .7)
         expect(p.locator(PANEL + ' section[data-kind=length]').last).to_contain_text('Length · Saving', timeout=10000)
         self.show(p, b.uid)
