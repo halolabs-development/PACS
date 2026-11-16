@@ -2147,7 +2147,7 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
 
     # ── SD10b ──
     def test_sd10b_going_offline_keeps_the_open_dialog_and_tells_the_panel(self):
-        """The page going offline or back (page-boot.js goOffline / goOnline send 'kin-connection') is not a move to
+        """The page going offline or back (page-boot.js goOffline / goOnline call window.kinOnConnection) is not a move to
         another study: the open Mark CVR window keeps its recipient and message (it was closed and cleared), and the
         Sent panel stands and says it reads nothing now, then reads again."""
         self.server.add(A, P)
@@ -2155,7 +2155,7 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
         self.show_sent()
         self.mark()
         self.compose(text="SYN kept through the outage")
-        connection = "online => { serverMode = online; offline = !online; window.dispatchEvent(new Event('kin-connection')); }"
+        connection = "online => { serverMode = online; offline = !online; (window.kinOnConnection || []).forEach(change => change()); }"
         reads = len([r for r in self.log if r["kind"] == "list"])
         self.page.evaluate(connection, False)
         self.settle()

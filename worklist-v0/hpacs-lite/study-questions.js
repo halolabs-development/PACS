@@ -1035,7 +1035,7 @@
       });
       // 연결이 끊기거나 돌아왔다(page-boot.js goOffline·goOnline). 판독 대상은 바뀌지 않았다 — 읽은 것·연 스레드·쓰던 칸은
       // 그대로 두고(끊김을 대상 바뀜으로 다루면 쓰던 답변 칸이 내려갔다) 줄의 글만 바꾼다. 돌아오면 같은 대상을 다시 읽는다.
-      window.addEventListener('kin-connection', () => {
+      (window.kinOnConnection = window.kinOnConnection || []).push(() => {
         if (ended) return;
         if (allowed()) { sync(); refresh(); }
         paint();

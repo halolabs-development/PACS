@@ -4630,7 +4630,7 @@
       });
       // 연결이 끊기거나 돌아왔다(page-boot.js goOffline·goOnline). 판독 대상은 바뀌지 않았다 — 줄은 제자리이고 글만 바뀐다(끊기면
       // 읽지 않음, 돌아오면 같은 대상을 다시 읽음).
-      window.addEventListener('kin-connection', () => {
+      (window.kinOnConnection = window.kinOnConnection || []).push(() => {
         if (ended) return;
         if (allowed()) { sync(); refresh(); }
         renderReading();
@@ -13348,7 +13348,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       });
       // 연결이 끊기거나 돌아왔다(page-boot.js goOffline·goOnline). 판독 대상은 바뀌지 않았다 — 읽은 것·연 스레드·쓰던 칸은
       // 그대로 두고(끊김을 대상 바뀜으로 다루면 쓰던 답변 칸이 내려갔다) 줄의 글만 바꾼다. 돌아오면 같은 대상을 다시 읽는다.
-      window.addEventListener('kin-connection', () => {
+      (window.kinOnConnection = window.kinOnConnection || []).push(() => {
         if (ended) return;
         if (allowed()) { sync(); refresh(); }
         paint();
@@ -14649,7 +14649,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       reportSaveFailures.clear();
       reconcileReportDrafts();
       // The rows that stand whether or not the server answers (questions, image requests, sent results) say so again.
-      window.dispatchEvent(new Event('kin-connection'));
+      (window.kinOnConnection || []).forEach(change => { try { change(); } catch (_) {} });
     }
 
     /**
@@ -14660,7 +14660,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       reportPreview.close();
       serverMode = false; offline = true;
       // The rows that stand whether or not the server answers say they read nothing now (study-questions.js and others).
-      window.dispatchEvent(new Event('kin-connection'));
+      (window.kinOnConnection || []).forEach(change => { try { change(); } catch (_) {} });
       stopViewing();
       folderLoadState = 'unknown'; filterCollection = null; ++filterReadSequence; ++sharedFilterReadSequence;
       updateWorklistFolders(); shortcutStatus('서버에 연결한 뒤 바로가기를 불러오세요.');

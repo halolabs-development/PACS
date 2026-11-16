@@ -1066,7 +1066,7 @@
       });
       // 연결이 끊기거나 돌아왔다(page-boot.js goOffline·goOnline). 판독 대상은 바뀌지 않았다 — 줄은 제자리이고 글만 바뀐다(끊기면
       // 읽지 않음, 돌아오면 같은 대상을 다시 읽음).
-      window.addEventListener('kin-connection', () => {
+      (window.kinOnConnection = window.kinOnConnection || []).push(() => {
         if (ended) return;
         if (allowed()) { sync(); refresh(); }
         renderReading();

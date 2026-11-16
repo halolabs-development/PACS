@@ -102,7 +102,7 @@
       reportSaveFailures.clear();
       reconcileReportDrafts();
       // The rows that stand whether or not the server answers (questions, image requests, sent results) say so again.
-      window.dispatchEvent(new Event('kin-connection'));
+      (window.kinOnConnection || []).forEach(change => { try { change(); } catch (_) {} });
     }
 
     /**
@@ -113,7 +113,7 @@
       reportPreview.close();
       serverMode = false; offline = true;
       // The rows that stand whether or not the server answers say they read nothing now (study-questions.js and others).
-      window.dispatchEvent(new Event('kin-connection'));
+      (window.kinOnConnection || []).forEach(change => { try { change(); } catch (_) {} });
       stopViewing();
       folderLoadState = 'unknown'; filterCollection = null; ++filterReadSequence; ++sharedFilterReadSequence;
       updateWorklistFolders(); shortcutStatus('서버에 연결한 뒤 바로가기를 불러오세요.');

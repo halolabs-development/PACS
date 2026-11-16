@@ -2334,7 +2334,7 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         self.reader_state("ready")
         self.assertTrue(told().startswith("이 검사의 질문 3건 · "), told())
 
-        # The page going offline and back ('kin-connection') is not a move: the open thread and the reply being written
+        # The page going offline and back (page-boot.js calls window.kinOnConnection) is not a move: the open thread and the reply being written
         # stay; the row says it reads nothing now, and reads the same study again once back.
         self.q_requests = []
         self.open_reader(me(RADIOLOGIST, ["radiologist"]))
@@ -2342,7 +2342,7 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         self.reader_state("ready")
         self.reader_thread(answered["id"], "Answered")
         self.reader_write("reply", "SYN reply kept through the outage", press=False)
-        connection = "online => { offline = !online; window.dispatchEvent(new Event('kin-connection')); }"
+        connection = "online => { offline = !online; (window.kinOnConnection || []).forEach(change => change()); }"
         self.page.evaluate(connection, False)
         seen = self.reader()
         self.assertEqual((True, "서버 연결이 끊겼습니다. 표시된 질문은 최신이 아닐 수 있습니다.", answered["id"]),
