@@ -666,11 +666,11 @@ class ViewerDisplaySetPresetsDOMTest(unittest.TestCase):
         self.assertEqual(('syn:left:2', 0, [], {'lower': -1000, 'upper': -1}), (back['image'], back['rotation'], back['marks'], back['voi']))
         self.assertEqual(['syn:left:1', 'syn:left:2', 'syn:left:3'], back['ids'])
 
-    def test_22_an_mg_stored_table_gives_way_to_a_gsps_window_and_comes_back_as_it_was(self):
-        page = self.open()
-        # As the viewer draws (measured on the pinned renderer): turning the inversion flips whatever is drawn, a window
-        # drawn anew follows the inversion, and the window command only moves a table's range.
-        page.evaluate("""() => { synGsps['20500020'] = { vr: 'CS', Value: ['INVERSE'] };
+    # The left cell as the viewer draws it (measured on the pinned renderer): turning the inversion flips whatever is drawn,
+    # a window drawn anew follows the inversion, the window command only moves a table's range, and the mammography
+    # hanging draws its stored table point by point (MONOCHROME1 drawn in) whatever the inversion. A GSPS of the study is
+    # INVERSE.
+    MG_TABLE = """() => { synGsps['20500020'] = { vr: 'CS', Value: ['INVERSE'] };
           const v = synViewports.get('left'), set = v.setProperties, voi = v.setVOI, flip = () => { v.tf = v.tf.map(([x, y]) => [x, 1 - y]); };
           v.setProperties = next => { const was = !!v.properties.invert; set(next); if ('invert' in next && !!next.invert !== was) flip(); };
           v.setVOI = (range, options) => { voi(range, options); if (v.properties.invert) flip(); };
@@ -682,7 +682,11 @@ class ViewerDisplaySetPresetsDOMTest(unittest.TestCase):
           // The mammography hanging's stored grayscale of this image: a table with MONOCHROME1 drawn in.
           window.kinMammographyDisplay = { standard: w => w.id !== 'left' ? null : {
             orientation: () => ({ flipH: false, flipV: false }), grayscale() { w.tf = [[100, 1], [101, 0.75], [107, 0]]; return 'table'; } } };
-          kinMammographyDisplay.standard(v).grayscale(); }""")
+          kinMammographyDisplay.standard(v).grayscale(); }"""
+
+    def test_22_an_mg_stored_table_gives_way_to_a_gsps_window_and_comes_back_as_it_was(self):
+        page = self.open()
+        page.evaluate(self.MG_TABLE)
         baseline = self.state(page, 'left')
         panel = self.presets(page)
         panel.get_by_label('Set 1 First image').select_option(label='Middle')
@@ -699,6 +703,25 @@ class ViewerDisplaySetPresetsDOMTest(unittest.TestCase):
         back = self.state(page, 'left')
         # The stored table as it was, not flipped by putting the inversion back after it.
         self.assertEqual((baseline['tf'], False, 0), (back['tf'], back['invert'], back['rotation']))
+
+    def test_23_an_inverse_gsps_without_a_window_shows_every_mg_image_it_names_the_same_way(self):
+        # The INVERSE GSPS has no window of its own and names the second and third images, which have the same stored
+        # table: moving from one to the other keeps black and white the same way round.
+        page = self.open()
+        page.evaluate(self.MG_TABLE)
+        page.evaluate("""() => { delete synGsps['00283110'];
+          synGsps['00081115'].Value[0]['00081140'].Value.push({ '00081155': { vr: 'UI', Value: ['1.2.826.0.1.1.3'] } }); }""")
+        panel = self.presets(page)
+        panel.get_by_label('Set 1 First image').select_option(label='Middle')
+        panel.get_by_label('Set 1 GSPS auto').select_option(label='On')
+        panel.get_by_role('button', name='Apply to This Study').click()
+        expect(panel.get_by_role('status')).to_have_text('Applied to 1 cell.')
+        second = self.state(page, 'left')
+        self.scroll(page, 'left', 2)
+        third = self.state(page, 'left', settle=300)
+        self.assertEqual(('syn:left:2', 'syn:left:3'), (second['image'], third['image']))
+        self.assertEqual((second['tf'], True), (third['tf'], third['invert']))
+        self.assertGreater(second['tf'][0][1], second['tf'][-1][1], 'inverted: the lowest value is drawn white')
 
     def test_11_hanging_protocol_cells_are_pinned_when_they_first_show_their_images(self):
         page = self.open()

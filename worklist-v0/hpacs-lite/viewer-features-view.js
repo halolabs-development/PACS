@@ -274,7 +274,8 @@ window.KinViewerFeatures?.module('view', async ({ services, commands, store, ui 
       else { notes.push('GSPS VOI LUT could not be drawn: the row\'s window is used'); plainWindow(v, record); }
     } else {
       if (shown.voi?.unreadable) notes.push('GSPS VOI LUT could not be read: the row\'s window is used');
-      if (shown.voi && !shown.voi.unreadable) windowTo(v, shown.voi.width, shown.voi.center, record); else rowWindow(v, record);
+      if (shown.voi && !shown.voi.unreadable) windowTo(v, shown.voi.width, shown.voi.center, record);
+      else if (record.rule.windowing) windowTo(v, record.rule.windowing.w, record.rule.windowing.l, record); else stockWindow(v, record);
       if (shown.invert !== null) v.setProperties({ invert: shown.invert });
       else if (record.invertBefore !== null) { v.setProperties({ invert: record.invertBefore }); record.invertBefore = null; }
     }
