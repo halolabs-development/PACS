@@ -144,20 +144,31 @@ class UnavailableControlsDOM(unittest.TestCase):
         self.assertEqual([], self.errors)
 
     def test_viewer_root_is_not_the_ohif_study_list(self):
-        source = (ROOT / 'config/ohif/configuration.js').read_text(encoding='utf-8')
-        self.assertRegex(source, r'\n  showStudyList: false,\n')
-        self.assertNotIn('showStudyList: true', source)
-        self.assertRegex(source, r"customizationService: \{ customRoutes: \{ routes: \[\{ path: '/', children: kinViewerRootToWorklist \}\] \} \},")
-        built = (ROOT / 'config/ohif.js').read_text(encoding='utf-8')
-        self.assertIn(source, built, 'config/ohif.js is not rebuilt from config/ohif/configuration.js')
-        function = re.search(r'function kinViewerRootToWorklist\(\) \{.*?\n\}', source, re.S).group(0)
+        # The committed config/ohif.js runs as the viewer page's app-config.js; what OHIF reads is window.config.
+        built = (ROOT / 'config/ohif.js').read_bytes()
         page = self.browser.new_page()
         self.addCleanup(page.close)
-        page.route('**/*', lambda route, request: route.fulfill(body='<title>entry</title>', content_type='text/html'))
-        page.goto('https://syn.test/ohif/')
+        errors = []
+        page.on('pageerror', lambda e: errors.append(str(e)))
+
+        def serve(route, request):
+            if request.url.endswith('/ohif/app-config.js'):
+                return route.fulfill(body=built, content_type='application/javascript')
+            route.fulfill(body='<title>entry</title><script src="/ohif/app-config.js"></script>', content_type='text/html')
+        page.route('**/*', serve)
+        page.goto('https://syn.test/ohif/viewer?StudyInstanceUIDs=1.2.3')
+        self.assertEqual([], errors)
+        config = page.evaluate("""() => { const c = window.config, routes = c.customizationService?.customRoutes?.routes || [];
+          return {showStudyList: c.showStudyList, roots: routes.filter(r => r.path === '/').length,
+                  callable: routes.filter(r => r.path === '/').every(r => typeof r.children === 'function')}; }""")
+        # OHIF 3.9.1: showStudyList off -> the header logo is not a Back button and its own WorkList route `/` is not added;
+        # the customRoutes route then owns `/`.
+        self.assertEqual({'showStudyList': False, 'roots': 1, 'callable': True}, config)
+        # React renders a route's children as a component; rendering this one leaves for the sign-in entry.
         with page.expect_navigation():
-            page.evaluate('void (() => {\n' + function + '\nkinViewerRootToWorklist();\n})()')
+            page.evaluate("() => { window.config.customizationService.customRoutes.routes.find(r => r.path === '/').children({}); }")
         self.assertEqual('https://syn.test/worklist/hpacs-lite/index.html', page.url)
+        self.assertEqual([], errors)
 
 
 if __name__ == '__main__':
