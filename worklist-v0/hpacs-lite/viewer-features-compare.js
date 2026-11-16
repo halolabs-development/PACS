@@ -250,8 +250,7 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
         const order = data.list.map(item => item.uid), open = viewingSets();
         const list = (setService.getActiveDisplaySets?.() || []).filter(set => set.images?.length)
           .map(set => ({ set, study: rowOf(data.list, set.StudyInstanceUID, set.SeriesInstanceUID) })).filter(entry => entry.study)
-          .sort((a, b) => order.indexOf(a.study.uid) - order.indexOf(b.study.uid)
-            || Number(a.set.SeriesNumber || 0) - Number(b.set.SeriesNumber || 0) || String(a.set.SeriesInstanceUID).localeCompare(String(b.set.SeriesInstanceUID)));
+          .sort((a, b) => order.indexOf(a.study.uid) - order.indexOf(b.study.uid) || kinSeriesOrder(a.set, b.set));
         for (const { set, study } of list) {
           const tr = row([[study.mark, markClass(study.mark)], [open.has(set.displaySetInstanceUID) ? 'Open' : ''],
             [study.date || ''], [String(set.SeriesNumber ?? '')], [set.SeriesDescription || set.Modality || ''], [String(set.numImageFrames ?? set.images.length)]],

@@ -118,6 +118,7 @@ jobs:
             tests/e2e/artifacts/series-split-ci/
             tests/e2e/artifacts/SERIES-SPLIT-*.png
             tests/e2e/artifacts/preload-clear-ci/
+            tests/e2e/artifacts/attach-document-ci/
             tests/e2e/artifacts/worklist-request-columns-ci/
             tests/e2e/artifacts/technician-orders-ci/
             tests/e2e/artifacts/exam-merge-ci/

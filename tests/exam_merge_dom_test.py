@@ -52,6 +52,7 @@ class MergeSite(rf.FlowSite):
         self.desc = {}                  # uid -> StudyDesc of the row and of its original in a merged exam
         self.series_names = ["SYN Series 1", "SYN Series 2"]
         self.related_reports = {}       # uid -> relatedExamReports of the row
+        self.acc = dict(ACC)            # uid -> Accession No of the row and of its original in a merged exam
 
     def scope(self, uid):
         if self.split and uid in (self.split["uid"], SPLIT_UID):
@@ -79,7 +80,7 @@ class MergeSite(rf.FlowSite):
         body = super().list_body(account, rename)
         rows = {row["uid"]: row for row in body["studies"]}
         for uid, row in rows.items():
-            row.update(acc=ACC[uid], count=COUNT[uid], series=1)
+            row.update(acc=self.acc[uid], count=COUNT[uid], series=1)
             if uid in self.desc:
                 row["desc"] = self.desc[uid]
             if uid in self.related_reports:
@@ -88,7 +89,7 @@ class MergeSite(rf.FlowSite):
         for base, members in self.groups.items():
             row = rows[base]
             row["group"] = {"id": GROUP_ID, "kind": "merge", "baseUid": base, "members": [
-                {"uid": uid, "acc": ACC[uid], "date": "20261003", "time": "", "desc": self.desc.get(uid, "SYN CT CHEST"), "modality": "CT",
+                {"uid": uid, "acc": self.acc[uid], "date": "20261003", "time": "", "desc": self.desc.get(uid, "SYN CT CHEST"), "modality": "CT",
                  "count": COUNT[uid], "series": 1} for uid in members]}
             row["count"] = sum(COUNT[uid] for uid in members)
             row["series"] = len(members)
@@ -410,30 +411,41 @@ class ExamMerge(unittest.TestCase):
         return locator.evaluate_all("nodes => nodes.map(n => n.textContent.trim())")
 
     def test_korean_merge_window_translates_its_words_and_keeps_its_data(self):
-        # A study description and a patient name that read like glossary templates ("Split {0}", "Base {0}") are still data.
+        # A study description and patient names that read like the glossary are still data: templates ("Split {0}",
+        # "Base {0}") and a glossary word itself ("Continue").
         self.site.desc[h.UID_B] = "Split Chest CT"
-        self.site.flow = tuple((uid, "Base Nora" if patient == "SYN-P-001" else name, patient) for uid, name, patient in self.site.flow)
-        self.page.evaluate("() => load()")
-        self.language("ko")
-        self.pick(h.UID)
-        self.page.locator("#t-merge-exam").click()
-        win = self.window("merge")
-        expect(win.locator("h3")).to_have_text("검사 합치기")
-        expect(win.locator("thead th")).to_have_text(["합치기", "기준", "ID", "이름", "검사일", "검사명", "접수 번호", "시리즈 / 영상", "판독문"])
-        expect(self.row_of(win, h.UID_B).locator("td")).to_have_count(9)
-        cells = self.texts(self.row_of(win, h.UID_B).locator("td"))
-        self.assertEqual("Base Nora", cells[3])
-        self.assertEqual("Split Chest CT", cells[5])
-        self.assertEqual("SYNACC-A2", cells[6])
-        self.assertEqual("1 / 12", cells[7])
-        self.assertEqual("미판독", cells[8], "the report status is a word of the screen")
-        expect(self.result(win)).to_contain_text("결과: 검사 1건 (기준 SYNACC-A1, 2026-10-03)")
-        # The screen language changes while the window is open: the words follow, the data stays.
-        self.language("en")
-        expect(win.locator("thead th").nth(1)).to_have_text("Base")
-        expect(self.row_of(win, h.UID_B).locator("td").nth(8)).to_have_text("Unread")
-        cells = self.texts(self.row_of(win, h.UID_B).locator("td"))
-        self.assertEqual(("Base Nora", "Split Chest CT"), (cells[3], cells[5]))
+        flow = self.site.flow
+        for patient_name in ("Base Nora", "Continue"):
+            with self.subTest(name=patient_name):
+                self.site.flow = tuple((uid, patient_name if patient == "SYN-P-001" else name, patient) for uid, name, patient in flow)
+                self.language("en")
+                self.page.evaluate("() => load()")
+                expect(self.page.locator("#rows tr[data-uid]", has_text=patient_name).first).to_be_visible()
+                self.language("ko")
+                self.pick(h.UID)
+                self.page.locator("#t-merge-exam").click()
+                win = self.window("merge")
+                expect(win.locator("h3")).to_have_text("검사 합치기")
+                expect(win.locator("thead th")).to_have_text(["합치기", "기준", "ID", "이름", "검사일", "검사명", "접수 번호", "시리즈 / 영상", "판독문"])
+                expect(self.row_of(win, h.UID_B).locator("td")).to_have_count(9)
+                cells = self.texts(self.row_of(win, h.UID_B).locator("td"))
+                self.assertEqual(patient_name, cells[3])
+                self.assertEqual("Split Chest CT", cells[5])
+                self.assertEqual("SYNACC-A2", cells[6])
+                self.assertEqual("1 / 12", cells[7])
+                self.assertEqual("미판독", cells[8], "the report status is a word of the screen")
+                expect(self.result(win)).to_contain_text("결과: 검사 1건 (기준 SYNACC-A1, 2026-10-03)")
+                # The screen language changes while the window is open: the words follow, the data stays.
+                self.language("en")
+                expect(win.locator("thead th").nth(1)).to_have_text("Base")
+                expect(self.row_of(win, h.UID_B).locator("td").nth(8)).to_have_text("Unread")
+                cells = self.texts(self.row_of(win, h.UID_B).locator("td"))
+                self.assertEqual((patient_name, "Split Chest CT"), (cells[3], cells[5]))
+                self.language("ko")
+                cells = self.texts(self.row_of(win, h.UID_B).locator("td"))
+                self.assertEqual((patient_name, "Split Chest CT"), (cells[3], cells[5]))
+                win.locator("button", has_text="닫기").click()
+                expect(win).to_have_count(0)
 
     def test_english_screen_shows_the_server_checks_and_refusals_in_english(self):
         self.site.groups[h.UID] = [h.UID, h.UID_B]
@@ -473,7 +485,8 @@ class ExamMerge(unittest.TestCase):
         self.assertEqual(["SYNACC-A2", "2026-10-03", "Split Chest CT", "1 / 12"], self.texts(win.locator("tbody tr").nth(1).locator("td")))
         win.locator("button", has_text="닫기").click()
         self.site.groups.clear()
-        self.site.series_names = ["SYN Series 1", "Split Chest CT"]
+        # Series descriptions that are a glossary word itself ("Continue") and a template ("Split {0}") stay data.
+        self.site.series_names = ["Continue", "Split Chest CT"]
         self.page.evaluate("() => load()")
         expect(self.page.locator("#rows tr[data-uid]")).to_have_count(3)
         self.pick(h.UID)
@@ -481,9 +494,14 @@ class ExamMerge(unittest.TestCase):
         win = self.window("unmerge")
         expect(win.locator("tbody tr")).to_have_count(2)
         expect(win.locator("thead th")).to_have_text(["검사 2", "시리즈", "시리즈 설명", "장비", "영상"])
+        self.assertEqual(["", "1", "Continue", "CT", "4"], self.texts(win.locator("tbody tr").nth(0).locator("td")))
         self.assertEqual(["", "2", "Split Chest CT", "CT", "4"], self.texts(win.locator("tbody tr").nth(1).locator("td")))
         win.get_by_role("checkbox", name="Split Chest CT 나누기").check()
         expect(win).to_contain_text("검사 1: 시리즈 1 · 영상 4 / 검사 2: 시리즈 1 · 영상 4")
+        for lang in ("en", "ko"):
+            self.language(lang)
+            expect(win.locator("thead th").nth(2)).to_have_text("Series Description" if lang == "en" else "시리즈 설명")
+            self.assertEqual(["Continue", "Split Chest CT"], self.texts(win.locator("tbody tr td:nth-child(3)")))
 
     def test_report_scope_lines_follow_the_language_and_keep_the_accession_numbers(self):
         self.site.groups[h.UID] = [h.UID, h.UID_B]
@@ -539,6 +557,47 @@ class ExamMerge(unittest.TestCase):
         self.assertEqual("SYNACC-A1", line.locator("[translate=no]").first.text_content())
         self.language("ko")
         expect(line).to_contain_text("Gateway 영수증 정보가 이 목록에 제공되지 않았습니다.")
+
+    def test_accession_numbers_that_are_glossary_words_stay_data_in_either_language(self):
+        # An Accession No is data wherever it stands alone, also when it is a glossary word itself ("Continue") or reads
+        # like a template ("Split {0}"): the study information, each original receipt line of a merged exam, and the
+        # report scope line of a split part with its Report History button. The study information's Study is data too.
+        self.site.acc[h.UID], self.site.acc[h.UID_B] = "Continue", "Split Chest CT"
+        self.site.desc[h.UID] = "Split Chest CT"
+        self.site.groups[h.UID] = [h.UID, h.UID_B]
+        self.language("en")
+        self.page.evaluate("() => load()")
+        expect(self.page.locator("#rows tr[data-uid]")).to_have_count(2)
+        self.pick(h.UID)
+        lines = self.page.locator("#study-receipt .exam-original-receipts > div")
+        expect(lines).to_have_count(2)
+        study, accession = (self.page.locator("#clinical table tr").nth(n).locator("td").nth(1) for n in (3, 5))
+        for lang in ("ko", "en", "ko"):
+            with self.subTest(view="merged", lang=lang):
+                self.language(lang)
+                expect(lines.first).to_contain_text("Gateway 영수증 정보가 이 목록에 제공되지 않았습니다." if lang == "ko"
+                                                    else "Gateway receipt information was not provided in this list.")
+                self.assertEqual(["Continue", "Split Chest CT"],
+                                 lines.evaluate_all("ls => ls.map(l => l.firstElementChild.firstElementChild.textContent)"))
+                expect(accession).to_have_text("Continue")
+                expect(study).to_have_text("Split Chest CT")
+        self.site.groups.clear()
+        self.site.split = {"uid": h.UID, "seriesUids": [SERIES[1]]}
+        self.language("en")
+        self.page.evaluate("() => load()")
+        expect(self.page.locator("#rows .exam-merged")).to_have_text(["Split 1/2", "Split 2/2"])
+        self.page.evaluate("() => setMode('Radiology')")
+        self.pick(SPLIT_UID)
+        scope = self.page.locator(".exam-report-scope")
+        expect(scope).to_contain_text("Split 2/2 — Continue")
+        for lang in ("ko", "en", "ko"):
+            with self.subTest(view="split", lang=lang):
+                self.language(lang)
+                history = "판독문 이력 · Continue" if lang == "ko" else "Report History · Continue"
+                expect(scope.get_by_role("button", name=history, exact=True)).to_be_visible()
+                expect(scope.locator("[translate=no]")).to_have_text("Continue")
+                expect(accession).to_have_text("Continue")
+                expect(study).to_have_text("Split Chest CT")
 
     def test_original_choices_keep_their_data_untranslated(self):
         self.site.groups[h.UID] = [h.UID, h.UID_B]

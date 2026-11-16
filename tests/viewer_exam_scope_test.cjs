@@ -13,7 +13,9 @@ function viewer(input,lookup){
   fetch:async url=>{calls.push(String(url));const q=new URL(url,location);const ref=JSON.parse(q.searchParams.get('reference'));const value=await lookup(ref,q);return value instanceof Response?value:new Response(JSON.stringify(value));},
   dispatchEvent:e=>events.push(e.type),setInterval:()=>1,clearInterval(){},addEventListener(){},
   document:{documentElement:{classList:{add:v=>classes.add(v),remove:v=>classes.delete(v)}},head:{append(){}},body:{prepend(){}},createElement:()=>({setAttribute(){},remove(){}})}};
- vm.runInNewContext(fs.readFileSync('worklist-v0/hpacs-lite/viewer-exam-scope.js','utf8'),root);
+ // The viewer's app config defines the Studies panel order (kinSeriesOrder) before the scope module runs.
+ vm.createContext(root);vm.runInContext(fs.readFileSync('config/ohif/series-order.js','utf8'),root);
+ vm.runInContext(fs.readFileSync('worklist-v0/hpacs-lite/viewer-exam-scope.js','utf8'),root);
  return {api:root.KinViewerExamScope,root,calls,events,classes};
 }
 test('ordinary opening retains the URL, one study and compare protocol without scope data',()=>{
@@ -85,7 +87,8 @@ test('adding a logical comparison reopens current and prior through the existing
  const root={KinExamScope:model,KinViewerExamScope:{snapshot:()=>opening,ensure:async()=>opening},
   KinViewerHangingSettings:{rank:sets=>sets},
   kinViewerOpenPatient:async(href,options)=>{gates.push({href,options});return allowed;}};
- const sandbox={window:root,URL,location:new URL('https://pacs.test/ohif/viewer#kin-window-group=keep'),
+ const kinSeriesOrder=vm.runInNewContext(fs.readFileSync('config/ohif/series-order.js','utf8')+';kinSeriesOrder');
+ const sandbox={window:root,URL,location:new URL('https://pacs.test/ohif/viewer#kin-window-group=keep'),kinSeriesOrder,
   viewer:{snapshot:()=>({studyUIDs:[A]})},
   extensions:{getActiveDataSource:()=>[{retrieve:{series:{metadata:async value=>retrieved.push(value)}},deleteStudyMetadataPromise(){}}]},
   services:{displaySetService:{getActiveDisplaySets:()=>[{StudyInstanceUID:P,SeriesInstanceUID:T,images:[{}]}]}}};
@@ -186,6 +189,26 @@ test('native comparison selects current and prior by logical scope even when bot
  assert.equal(protocol.displaySetSelectors['exam-0'].seriesMatchingRules[0].constraint.equals.value,'first');
  assert.equal(protocol.displaySetSelectors['exam-1'].seriesMatchingRules[0].constraint.equals.value,'second');
  services.hangingProtocolService.run({displaySets:sets},'personal');assert.equal(called,'personal');
+});
+
+test('native comparison opens each side on its first image series in panel order, not on an attached document',async()=>{
+ const current=scope(A,[source(A)]),prior=scope(B,[source(B)]);
+ const v=viewer(model.viewerInput(current,prior),ref=>ref.reportUid===A?current:prior);await v.api.ensure();
+ // An attached picture: a Secondary Capture series without a Series Number (the display set writes 0); arrival order reversed.
+ const set=(study,series,id,number,extra={})=>({StudyInstanceUID:study,SeriesInstanceUID:series,displaySetInstanceUID:id,Modality:'CT',SeriesNumber:number??0,
+  instances:[{SeriesNumber:number,SeriesDate:'20261101',SeriesTime:'120000'}],...extra});
+ const sets=[set(B,'2.25.23','prior-ct',2),set(B,'2.25.22','prior-attached',undefined,{Modality:'OT'}),set(A,'2.25.21','current-ct',1),
+  set(A,'2.25.20','current-attached',undefined,{Modality:'OT'}),set(A,'2.25.19','current-zero',0,{Modality:'CT'})];
+ let protocol;const services={displaySetService:{createDisplaySets:values=>values},hangingProtocolService:{addProtocol:(_id,value)=>protocol=value,run(){}}};
+ v.api.install(services);
+ const chosen=input=>{services.hangingProtocolService.run({displaySets:input},'@ohif/hpCompare');
+  return ['exam-0','exam-1'].map(key=>protocol.displaySetSelectors[key].seriesMatchingRules[0].constraint.equals.value);};
+ // A real Series Number 0 is a number and goes first; a missing one goes after every numbered series.
+ assert.deepEqual(chosen(sets),['current-zero','prior-ct']);
+ assert.deepEqual(chosen(sets.filter(s=>s.displaySetInstanceUID!=='current-zero')),['current-ct','prior-ct']);
+ assert.deepEqual(chosen(sets.filter(s=>s.displaySetInstanceUID!=='current-zero').reverse()),['current-ct','prior-ct']);
+ // A study with nothing but the attached picture opens on it.
+ assert.deepEqual(chosen([sets[1],set(A,'2.25.20','current-attached',undefined,{Modality:'OT'})]),['current-attached','prior-attached']);
 });
 
 // Byte identity is the ordinary Job persistence contract, including every volume recipe version.

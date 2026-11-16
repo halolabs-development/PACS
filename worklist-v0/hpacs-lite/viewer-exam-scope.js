@@ -125,13 +125,15 @@
   }
   const installed=new WeakSet();
   function comparisonProtocol(input,displaySets) {
-    const selectors={},roles=[input.current,input.prior];
-    // A series asked for in the address (a Related Studies › Series row) is its role's image when that role holds it.
+    // Each side opens on its first image series in the Studies panel order (root.kinSeriesOrder, the viewer's app config),
+    // whatever order the display sets arrived in: a series without a number (an attached document) is not first. A series
+    // asked for in the address (a Related Studies › Series row) is its role's image instead when that role holds it.
+    const selectors={},roles=[input.current,input.prior],ordered=[...displaySets].sort((a,b)=>root.kinSeriesOrder(a,b));
     let wanted=null;try{wanted=new URL(root.location.href).searchParams.get('initialSeriesInstanceUID');}catch(_){}
     roles.forEach((scope,i)=>{
       const image=set=>!['SR','SEG','PR','KO','DOC','RTSTRUCT'].includes(set.Modality)&&
         scope.sources.some(source=>source.studyUid===set.StudyInstanceUID&&model.allows(source,set.SeriesInstanceUID));
-      const selected=(wanted&&displaySets.find(set=>set.SeriesInstanceUID===wanted&&image(set)))||displaySets.find(image);
+      const selected=(wanted&&ordered.find(set=>set.SeriesInstanceUID===wanted&&image(set)))||ordered.find(image);
       selectors['exam-'+i]={seriesMatchingRules:[{attribute:'displaySetInstanceUID',required:true,
         constraint:{equals:{value:selected?.displaySetInstanceUID||''}}}]};
     });
