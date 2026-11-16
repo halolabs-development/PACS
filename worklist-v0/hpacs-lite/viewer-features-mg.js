@@ -123,6 +123,10 @@
       finally { lastSet.set(v.id, signature(v)); applying.delete(v.id); }
     }
     const fit = v => steer(v, () => { v.setZoom(1); v.setPan([0, 0]); });
+    // A cell Display Set Presets is putting a rule on (viewer-features-view.js): its changes are the rule's, not the
+    // reader's, and are not followed; given the mark taken when a change was heard, also a cell a rule began on since.
+    const ruled = (id, since) => { try { return !!window.KinViewerCellRules?.setting?.(id, since); } catch (_) { return false; } };
+    const ruleMark = () => { try { return window.KinViewerCellRules?.mark?.(); } catch (_) { return undefined; } };
 
     // ── This module's layer over each cell: badges, the outline, the press layer and the lens ──
     const layers = new Map();
@@ -224,33 +228,37 @@
       }
     }
     // A reader's zoom or pan in one MG cell: the same zoom (relative to Fit) and the counterpart centre in the others.
-    const pendingCamera = new Set();
+    const pendingCamera = new Map();  // source cell → the rule mark when its change was heard
     let cameraFrame = 0;
     function cameraChanged(event) {
       const id = event.detail?.viewportId;
-      if (!mirror.on || !id || applying.has(id)) return;
+      if (!mirror.on || !id || applying.has(id) || ruled(id)) return;
       const v = viewportOf(id);
       if (!v || lastSet.get(id) === signature(v)) return;
-      pendingCamera.add(id);
-      if (!cameraFrame) cameraFrame = requestAnimationFrame(() => { cameraFrame = 0; const ids = [...pendingCamera]; pendingCamera.clear(); ids.forEach(id => followCamera(id)); });
+      pendingCamera.set(id, ruleMark());
+      if (!cameraFrame) cameraFrame = requestAnimationFrame(() => { cameraFrame = 0; const ids = [...pendingCamera]; pendingCamera.clear(); ids.forEach(([id, mark]) => followCamera(id, mark)); });
     }
-    async function followCamera(sourceId) {
+    // A change heard before a rule began on a cell is not carried onto it (nor carried from it).
+    async function followCamera(sourceId, mark) {
       const list = await mgCells(), t = M.targets(sourceId, list);
-      if (!mirror.on || t.reason) return;
+      if (!mirror.on || t.reason || ruled(sourceId, mark)) return;
       const source = t.source, zoom = zoomOf(source.v), focal = toImage(source.v, source.v.getCamera().focalPoint);
       if (!zoom || !focal) return;
       for (const id of t.linked) {
+        if (ruled(id, mark)) continue;
         const cell = list.find(c => c.id === id), at = M.counterpart(focal, source, cell), world = at && toWorld(cell.v, at);
         if (world) steer(cell.v, () => { cell.v.setZoom(zoom); centerOn(cell.v, world); });
       }
     }
     async function voiChanged(event) {
       const id = event.detail?.viewportId;
-      if (!mirror.on || !mirror.invert || !id || applying.has(id)) return;
+      if (!mirror.on || !mirror.invert || !id || applying.has(id) || ruled(id)) return;
+      const mark = ruleMark();
       const list = await mgCells(), t = M.targets(id, list);
-      if (!mirror.on || t.reason) return;
+      if (!mirror.on || t.reason || ruled(id, mark)) return;
       let invert; try { invert = !!t.source.v.getProperties().invert; } catch (_) { return; }
       for (const target of t.linked) {
+        if (ruled(target, mark)) continue;
         const v = list.find(c => c.id === target)?.v;
         try { if (v && !!v.getProperties().invert !== invert) steer(v, () => v.setProperties({ invert })); } catch (error) { console.error(error); }
       }

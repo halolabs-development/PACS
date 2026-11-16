@@ -5367,6 +5367,36 @@ function kinCreateMammographyHanging() {
       }
       renderLabels();
     }
+    // For a display rule put on a cell again (Display Set Presets, viewer-features-view.js): this hanging's own display of
+    // the image the cell shows now. null for an image that is neither MG nor a breast tomosynthesis slice. orientation():
+    // the flips this hanging's orientation rule gives that image while this hanging is on the screen (null otherwise),
+    // recorded as this hanging's as orient() does, for the caller to put on. grayscale(): draws the image's stored
+    // grayscale again — 'window' (with its inversion) or 'table' when drawn, false when none is verified.
+    const display = window.kinMammographyDisplay = {
+      standard(viewport) {
+        const imageId = live() && viewport?.type === 'stack' ? viewport.getCurrentImageId?.() : null;
+        const instance = imageId ? window.cornerstone.metaData.get('instance', imageId) : null, item = instance && raw.get(instance.SOPInstanceUID);
+        if (!item) return null;
+        const frame = item['00280008']?.Value?.[0] > 1 ? viewport.getCurrentImageIdIndex() + 1 : 1;
+        const ctTomo = window.KinMammographyModel.classify(item).basis === 'ct-breast-tomosynthesis';
+        if (item['00080060']?.Value?.[0] !== 'MG' && !ctTomo) return null;
+        return {
+          orientation() {
+            if (!live() || hp.getState()?.protocolId !== protocolId) return null;
+            const orientation = window.KinMammographyModel.displaySpec(item, frame).orientation;
+            orientations.set(viewport, { imageId, sop: instance.SOPInstanceUID, series: instance.SeriesInstanceUID, ...orientation });
+            return { flipH: !!orientation.flipH, flipV: !!orientation.flipV };
+          },
+          grayscale() {
+            if (!live()) return false;
+            const spec = window.KinMammographyModel.displaySpec(item, frame, { bulk: uri => lutBytes.get(uri) || null });
+            presentations.set(viewport, { sourceKey: ctTomo ? instance.SeriesInstanceUID : instance.SOPInstanceUID });
+            if (spec.voi.status !== 'verified' || !applyVOI(viewport, spec)) return false;
+            return spec.voi.lut ? 'table' : 'window';
+          },
+        };
+      },
+    };
     function applyHeaderVOI(viewport, item, frame) {
       const spec = window.KinMammographyModel.displaySpec(item, frame, { bulk: uri => lutBytes.get(uri) || null }), voi = spec.voi;
       const element = viewport.element;
@@ -5671,6 +5701,7 @@ function kinCreateMammographyHanging() {
     stop = () => {
       ended = true; raw.clear(); voiRaw.clear(); lutBytes.clear(); last = null; applyPreference = () => {};
       if (window.kinStoredVoi === storedVoi) delete window.kinStoredVoi;
+      if (window.kinMammographyDisplay === display) delete window.kinMammographyDisplay;
       if (series.metadata === metadata) series.metadata = retrieve;
       if (handler.getDisplaySetsFromSeries === createDisplaySets) handler.getDisplaySetsFromSeries = nativeDisplaySets;
       if (hp.run === wrappedRun) hp.run = run;

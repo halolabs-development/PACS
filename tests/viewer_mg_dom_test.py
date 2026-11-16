@@ -337,6 +337,30 @@ class ViewerMgDOMTest(unittest.TestCase):
         self.assertAlmostEqual(1, self.camera(page, 'rcc')['zoom'])
         expect(page.locator('[data-mg-badge=mirrored]')).to_have_count(0)
 
+    def test_03b_mirrored_follows_no_change_a_display_rule_makes_and_carries_none_onto_a_cell_a_rule_began_on(self):
+        page = self.open()
+        # Display Set Presets' rule handle (viewer-features-view.js cellRules.setting / mark): the cells a rule is being put
+        # on now, and when a rule began on each.
+        page.evaluate("""() => { window.synRuled = { now: new Set(), began: {}, mark: 0 };
+          window.KinViewerCellRules = { setting: (id, since) => synRuled.now.has(id) || (since !== undefined && (synRuled.began[id] ?? 0) > since),
+            mark: () => synRuled.mark }; }""")
+        self.menu(page, 'Mirrored')
+        page.wait_for_function("() => document.querySelector('#pane-plcc [data-mg-badge=mirrored]')")
+        start = {cell: self.camera(page, cell) for cell in ['rcc', 'prcc']}
+        # A rule puts its own zoom, pan and inversion on today's L CC: no other cell follows.
+        page.evaluate("""() => { synRuled.now.add('lcc'); synRuled.began.lcc = ++synRuled.mark; const v = synViews.get('lcc');
+          v.setCamera({ parallelScale: 50, focalPoint: [320, 100, 0] }); v.setProperties({ invert: true }); synRuled.now.delete('lcc'); }""")
+        page.wait_for_timeout(300)
+        self.assertEqual(start, {cell: self.camera(page, cell) for cell in ['rcc', 'prcc']})
+        # The reader zooms L CC; before that is carried (the next frame), a rule begins on today's R CC: R CC is left to the
+        # rule, the prior R CC follows.
+        page.evaluate("() => { synViews.get('lcc').setCamera({ parallelScale: 25, focalPoint: [320, 100, 0] }); synRuled.began.rcc = ++synRuled.mark; }")
+        page.wait_for_function("() => Math.abs(synViews.get('prcc').getZoom() - 6) < 1e-9")
+        self.assertEqual(start['rcc'], self.camera(page, 'rcc'))
+        # The reader's own change afterwards is followed again.
+        page.evaluate("() => synViews.get('lcc').setCamera({ parallelScale: 50, focalPoint: [320, 100, 0] })")
+        page.wait_for_function("() => Math.abs(synViews.get('rcc').getZoom() - 3) < 1e-9")
+
     def test_04_magnifier_shows_lenses_while_pressed_and_at_the_counterparts_with_mirrored(self):
         page = self.open()
         self.menu(page, 'Mirrored')

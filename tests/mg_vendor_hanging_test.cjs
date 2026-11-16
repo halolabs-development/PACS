@@ -161,7 +161,9 @@ async function mount(items, { routes = {}, opened = null } = {}) {
   extension.onModeEnter();
   const loads = await source.retrieve.series.metadata();
   await Promise.all(loads.map(p => p.start()));
-  return { hp, study, items, extension, points, properties, ranges, element, displaySets, requests, body,
+  return { hp, study, items, extension, points, properties, ranges, element, displaySets, requests, body, viewport,
+    // The entry Display Set Presets puts a rule's defaults on an MG cell with (viewer-features-view.js).
+    display: () => window.kinMammographyDisplay,
     protocol: () => protocol, state: () => state, renderCount: () => renderCount,
     // The layout and image type controls write through the preference interface the extension publishes.
     preferences: () => window.kinMammographyHanging,
@@ -449,6 +451,39 @@ test('stored VOI table reaches the actor and switching to a windowed image repla
   assert.deepEqual(h.ranges.at(-1), { lower: 83, upper: 1382 });
   assert.equal(h.properties.at(-1).invert, false);
   h.extension.onModeExit();
+});
+
+test('a display rule put back on an MG cell gets the hanging orientation and the stored grayscale again', async () => {
+  const a = fixture('siemens-lut-12-1'), b = fixture('siemens-2d-12-2'), c = structuredClone(b);
+  b['0020000D'] = structuredClone(a['0020000D']); c['0020000D'] = structuredClone(a['0020000D']);
+  c['00080060'].Value = ['CR']; c['00080018'].Value = [c['00080018'].Value[0] + '.9'];
+  a['00200020'].Value = ['A', 'L'];  // stored mirrored: its hanging flips it back
+  const h = await mount([a, b, c]);
+  h.run();
+  h.show(0);
+  // The stored table image: the orientation its hanging gives, and the table drawn again (MONOCHROME1 drawn in).
+  const lut = h.display().standard(h.viewport);
+  assert.deepEqual(plain(lut.orientation()), { flipH: true, flipV: false });
+  h.points.length = 0;
+  assert.equal(lut.grayscale(), 'table');
+  assert.equal(h.points.length, 8);
+  assert.deepEqual(h.points[0].slice(0, 4), [100, 1, 1, 1]);
+  // The windowed image: its stored window with its inversion, drawn anew.
+  h.show(1, 'stack');
+  const ranges = h.ranges.length;
+  assert.equal(h.display().standard(h.viewport).grayscale(), 'window');
+  assert.equal(h.ranges.length, ranges + 1);
+  assert.deepEqual(h.ranges.at(-1), { lower: 83, upper: 1382 });
+  assert.equal(h.properties.at(-1).invert, false);
+  // Another layout than the mammography hanging: no orientation of its own, the grayscale still.
+  h.hp.run({ displaySets: h.displaySets }, 'other', {});
+  assert.equal(h.display().standard(h.viewport).orientation(), null);
+  assert.equal(h.display().standard(h.viewport).grayscale(), 'window');
+  // An image that is neither MG nor a breast tomosynthesis slice is not this hanging's.
+  h.show(2, 'stack');
+  assert.equal(h.display().standard(h.viewport), null);
+  h.extension.onModeExit();
+  assert.equal(h.display(), undefined, 'the entry goes with the mode');
 });
 
 // Implicit VR: LUT Data (US or OW) reaches DICOMweb JSON as binary, inline or as a bulk data URI.

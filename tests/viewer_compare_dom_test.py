@@ -330,6 +330,30 @@ class ViewerCompareDOMTest(unittest.TestCase):
         self.assertEqual([False, False, False], page.evaluate("['left', 'right', 'third'].map(id => kinManualSync.has(id))"))
         expect(page.locator('.kin-compare-badge[data-compare-badge=sync]')).to_have_count(0)
 
+    def test_05b_manual_sync_follows_no_move_a_display_rule_makes(self):
+        page = self.open()
+        page.evaluate("() => { synAt('left', 9); synAt('right', 2); }")
+        self.menu(page, 'Manual Sync…')
+        panel = page.get_by_role('dialog', name='Manual Sync')
+        panel.get_by_label('Sync cell 1').check(); panel.get_by_label('Sync cell 2').check()
+        panel.get_by_role('button', name='Lock Selection').click()
+        expect(panel.get_by_role('button', name='Unlock')).to_be_visible()
+        # Display Set Presets puts a rule on the left cell (viewer-features-view.js cellRules.setting): its sort shows the
+        # same image at another place in the stack. That is not a move for the group: the right cell stays.
+        page.evaluate("""() => { window.synRuled = new Set(['left']); window.KinViewerCellRules = { setting: id => synRuled.has(id), mark: () => 0 };
+          synMove('left', 3); }""")
+        page.wait_for_timeout(150)
+        self.assertEqual([], page.evaluate('synIndexCalls'))
+        self.assertEqual(2, page.evaluate("synViews.get('right').index"))
+        # A move in the other cell does not move the cell the rule is on either.
+        page.evaluate("synMove('right', 4)")
+        page.wait_for_timeout(150)
+        self.assertEqual([], page.evaluate('synIndexCalls'))
+        # The rule done, the reader's own moves lead again.
+        page.evaluate("() => { synRuled.clear(); synMove('left', 5); }")
+        page.wait_for_function("() => synIndexCalls.length === 1")
+        self.assertEqual([['right', 0]], page.evaluate('synIndexCalls'))
+
     def test_06_unlocked_group_drops_a_cell_given_other_images(self):
         page = self.open()
         self.menu(page, 'Manual Sync…')
