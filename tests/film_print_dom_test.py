@@ -241,19 +241,29 @@ class FilmPrintWindow(unittest.TestCase):
         expect(self.page.locator("#film-print")).to_be_hidden()
 
     def test_the_study_line_keeps_the_patient_data_in_either_screen_language(self):
-        # A patient name that reads like a glossary template ("Base {0}") is still data, before and after a language change.
-        site = FilmSite()
-        uid, _, patient_id = site.flow[1]
-        site.flow = (site.flow[0], (uid, "Base Nora", patient_id), *site.flow[2:])
+        # Data that reads like the glossary is still data, before and after a language change: a patient name like a
+        # template ("Base {0}"), a patient name that is a glossary word itself ("Continue") and a study description like
+        # a template ("Split {0}").
+        site = FilmSite(3)
+        (uid_b, _, patient_b), (uid_c, _, patient_c) = site.flow[1], site.flow[2]
+        site.flow = (site.flow[0], (uid_b, "Base Nora", patient_b), (uid_c, "Continue", patient_c), *site.flow[3:])
+        row = site.study_row
+        site.study_row = lambda *a, **k: {**row(*a, **k), "desc": "Split Chest CT"}
         self.start(site)
-        self.open_study("Base Nora")
-        self.open_from_more()
-        head = self.page.locator("#film-print .fp-study")
-        expect(head).to_have_text(re.compile(r"^Base Nora · "))
-        for lang in ("ko", "en"):
-            self.assertTrue(self.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", lang))
-            expect(self.page.locator("#film-print-title")).to_have_text("영상 인쇄" if lang == "ko" else "Print Images")
-            expect(head).to_have_text(re.compile(r"^Base Nora · "))
+        for name in ("Base Nora", "Continue"):
+            with self.subTest(name=name):
+                self.assertTrue(self.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", "en"))
+                self.open_study(name)
+                self.open_from_more()
+                head = self.page.locator("#film-print .fp-study")
+                line = re.compile("^" + re.escape(name) + r" · .* · Split Chest CT$")
+                expect(head).to_have_text(line)
+                for lang in ("ko", "en"):
+                    self.assertTrue(self.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", lang))
+                    expect(self.page.locator("#film-print-title")).to_have_text("영상 인쇄" if lang == "ko" else "Print Images")
+                    expect(head).to_have_text(line)
+                self.page.locator("#film-print-close").click()
+                expect(self.page.locator("#film-print")).to_be_hidden()
 
     def test_format_series_and_films(self):
         self.start()
