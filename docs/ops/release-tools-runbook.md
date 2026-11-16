@@ -636,6 +636,8 @@ Everything written after B is **not** in the rolled-back site:
 - Keycloak account and password changes;
 - signing keys created on N, and the approvals they signed.
 
+Destructions completed on N after B are the exception: they stay done (rule 4).
+
 All of that stays in N's preserved volumes, plus the N backup taken in step R1
 (held, never rotated). No tool merges it into N-1 (see Gaps).
 N's volumes are kept, never removed:
@@ -643,13 +645,13 @@ N's volumes are kept, never removed:
   제8조제1항, Recovery and rehearsal);
 - record retention follows 의료법 시행규칙 제15조제1항.
 
-**How the rollback is built.** Three rules apply to every step below.
+**How the rollback is built.** Four rules apply to every step below.
 1. **N is only stopped, never reconfigured.** N's checkout directory (its HEAD,
    `.env` and compose files), its project, volumes and signing file are left as
    they are. Preflight P3 proves that the recorded command `compose_n` renders
    N's running configuration exactly. `compose_n down` therefore stops N as it
    runs, and on the way back `compose_n up -d` restarts it unchanged.
-2. **R is built only from B.** The rolled-back release runs as a new Compose
+2. **R is built only from B**, except the retention ledgers (rule 4). The rolled-back release runs as a new Compose
    project R from **its own new checkout directory** at N-1 (a `git worktree`
    named R). Its `.env` is B's checksummed copy. Its signing files are restored
    from B's custody into a new directory, and its custody configuration is
@@ -659,6 +661,26 @@ N's volumes are kept, never removed:
 3. **No inherited environment.** Every Compose command is `compose_for`
    ([Site Compose command](#site-compose-command)). R's backups run with R's
    own `scripts/ops_backup.py` under `clean_env`.
+4. **One ledger per host, kept by both.** The retention ledgers are the record
+   of destructions the site owes and has done; no backup holds them and none
+   restores them (Draft purpose ledger, Report retention ledger). R therefore
+   does not get ledger volumes of its own: it mounts N's `purpose-ledger` and
+   `ledger-mirror` volumes, by name, through one generated overlay file outside
+   both checkouts (P8). R6 is then the supported case "a database restored alone
+   beside the same ledger": the gate re-applies what the ledger completed after
+   B. These two volumes are the exception to rule 1: what R completes is
+   completed for N too, and the way back to N restores N's state except for the
+   destructions completed meanwhile, which N's start re-applies. Only one stack
+   writes them at a time: the fixed container names already keep N and R from
+   running together; never run the other project's `api` (`compose run`, a
+   sweep) while one runs. Neither project's volumes are removed (`down -v`,
+   `docker volume rm`, `docker volume prune`) while the site exists: N's
+   project still declares the ledger volumes as its own.
+
+   This rests on N-1 reading N's ledger. The record format lives in
+   `api/src/emr-retention/ledger-file.ts`, `destruction-record.ts` and
+   `retention-gate.ts`; P1 requires them unchanged between N-1 and N. A release
+   that changes them needs its own rollback decision before its upgrade.
 
 The restored-copy expiry sweep runs after the running API has finished its own
 recovery, while the proxy is still not started (R6).
@@ -705,6 +727,87 @@ components belong to the account that runs it.
    `/etc/kin-deploy/overlays/…`) stays absolute; `compose_for` takes it as it is.
    Neither git nor B holds it, so its sha256 is recorded here, and step 3, P3 and
    P5 compare it.
+
+   **Then, still before B, check N against what runs.** Nothing changes here; any
+   failure stops the upgrade before B. Every value is read, none is written into
+   this page, so the same checks serve every release:
+   - **Where N comes from.** After `git fetch origin`, N must be on the release line:
+     `git merge-base --is-ancestor <N SHA> origin/main` exits 0. The running
+     checkout's commits that N does not contain, `git rev-list <N SHA>..HEAD`,
+     must each be named in the release record with the place N carries their
+     change (an earlier release built from another branch). An unnamed one stops
+     the upgrade: N would silently drop it.
+   - **Migrations only append.** N must carry every migration the database
+     applied, byte for byte (Prisma's checksum is the sha256 of `migration.sql`),
+     and add new ones only after the last applied one:
+
+     ```python
+     import hashlib
+     applied = ops.migration_rows('kin-db')   # [name, checksum, finished, rolled_back]
+     assert applied and all(row[2] and not row[3] for row in applied)
+     n_names = [name for name in ops.text(['git', 'ls-tree', '--name-only', '<N SHA>:api/prisma/migrations']).splitlines()
+                if name[:1].isdigit()]
+     for name, checksum, _, _ in applied:
+         sql = ops.run(['git', 'show', f'<N SHA>:api/prisma/migrations/{name}/migration.sql']).stdout
+         assert hashlib.sha256(sql).hexdigest() == checksum, name
+     new = [name for name in n_names if name not in {row[0] for row in applied}]
+     assert all(name > applied[-1][0] for name in new)
+     record.update(migrations_applied=len(applied), migrations_new=new)
+     ```
+
+   - **The realm N expects.** An existing realm never takes the realm file again
+     (`keycloak/README.md`), so what `git diff <N-1 SHA> <N SHA> -- keycloak/kin-realm.json`
+     adds is applied by hand before the window, as the README's "기존 설치"
+     paragraphs say. The administrator OTP is the one a missed step makes fatal:
+     with N's rule and the realm without it, no administrator can sign in. Read the
+     live realm with N's own check (the running checkout may predate it), through
+     Admin REST on the host (`docker-compose.prod.yml` publishes Keycloak's 8080 on
+     127.0.0.1 only), as the master `admin` with `KC_ADMIN_PASSWORD` of `.env`
+     (the bootstrap administrator), never printed:
+
+     ```python
+     import subprocess, tempfile, urllib.parse, urllib.request
+     n_tree = Path(tempfile.mkdtemp())
+     archive = ops.run(['git', 'archive', '<N SHA>', 'scripts/ops_deploy_preflight.py', 'scripts/ops_backup.py',
+                        'keycloak/kin-realm.json']).stdout
+     subprocess.run(['tar', '-x', '-C', str(n_tree)], input=archive, check=True)
+     sys.path.insert(0, str(n_tree / 'scripts'))
+     import ops_deploy_preflight as n_preflight          # N's check_admin_mfa and N's realm file
+     KC = 'http://127.0.0.1:8080/auth'
+     password = next(line.split('=', 1)[1].strip().strip('"\'') for line in
+                     (ops.ROOT / '.env').read_text(encoding='utf-8').splitlines() if line.startswith('KC_ADMIN_PASSWORD='))
+     form = urllib.parse.urlencode({'client_id': 'admin-cli', 'grant_type': 'password', 'username': 'admin',
+                                    'password': password}).encode()
+     with urllib.request.urlopen(KC + '/realms/master/protocol/openid-connect/token', form, timeout=30) as answer:
+         token = json.load(answer)['access_token']
+     del password, form
+     def kc(path):
+         request = urllib.request.Request(KC + '/admin/realms/kin' + path, headers={'Authorization': 'Bearer ' + token})
+         with urllib.request.urlopen(request, timeout=30) as answer:
+             return json.load(answer)
+     realm = kc('')
+     def flow(alias):
+         rows = kc(f'/authentication/flows/{urllib.parse.quote(alias, safe="")}/executions')
+         for row in rows:
+             if row.get('authenticationConfig'):
+                 row['config'] = kc(f"/authentication/config/{row['authenticationConfig']}").get('config') or {}
+         return rows
+     clients = kc('/clients?max=1000')
+     bff = next(c for c in clients if c['clientId'] == 'kin-bff')
+     policy = {'requiredActions': kc('/authentication/required-actions'),
+               'executions': flow(realm['browserFlow']), 'resetExecutions': flow(realm['resetCredentialsFlow']),
+               'browserOverrides': [c['clientId'] for c in clients
+                                    if (c.get('authenticationFlowBindingOverrides') or {}).get('browser')],
+               'bffMappers': [{'protocolMapper': m.get('protocolMapper'), 'config': m.get('config') or {}}
+                              for m in kc(f"/clients/{bff['id']}/protocol-mappers/models")]}
+     n_preflight.check_admin_mfa(policy)                 # raises until the README's steps 1-8 are applied
+     ```
+
+     A refusal names the missing part. Apply the README's steps, read again, and
+     record the passing read. The other values the realm file changed (display
+     names, the administrative event settings of "관리 접근 변경 이력") are read
+     the same way (`kc('')`, `kc('/events/config')`)
+     and applied with the README's commands when they differ.
 2. **Take and hold B.** Run `B = ops.backup('<backup-directory>')`, then
    `ops.rehearse(B)`. Record B's directory and its manifest's `git_sha` (N-1) and
    `running_images`. Then protect B from the nightly rotation for the rollback
@@ -722,9 +825,12 @@ components belong to the account that runs it.
    ```python
    b_manifest = json.loads((B / 'manifest.json').read_text(encoding='utf-8'))
    hold_tags = []
-   for container, image in b_manifest['running_images'].items():
+   images = {container: image['id'] for container, image in b_manifest['running_images'].items()}
+   # B records the running containers; the exited migrate container's image is N-1's too, and R needs it (R5).
+   images['kin-api-migrate'] = json.loads(ops.text(['docker', 'inspect', 'kin-api-migrate']))[0]['Image']
+   for container, image in images.items():
        tag = f"kin-rollback-hold/{container}:{b_manifest['git_sha'][:12]}"
-       ops.run(['docker', 'tag', image['id'], tag])
+       ops.run(['docker', 'tag', image, tag])
        hold_tags.append(tag)
    record.update(backup_set=str(B), rollback_hold_tags=hold_tags)
    ops.write_json(record_path, record)
@@ -768,6 +874,26 @@ components belong to the account that runs it.
    continue with steps 3–4, including check 3 (signing path). `migrate deploy`
    applies only N's new migrations.
 
+   `up -d` recreates a container only when its image or its Compose
+   configuration changed. `kin-orthanc` and `kin-keycloak` run pinned images and
+   read checkout files at start: Orthanc's `config/orthanc.json` and the viewer
+   configuration `config/ohif.js` (each bind-mounted as a single file, which keeps
+   showing the old file after the checkout replaces it), Keycloak's themes. Both
+   carry the release (`kin.release: ${KIN_REVISION}`, `docker-compose.yml`), so
+   the new `KIN_REVISION` recreates them. Check it before readiness, and that
+   the viewer serves N's configuration:
+
+   ```python
+   for name in ('kin-orthanc', 'kin-keycloak'):
+       labels = json.loads(ops.text(['docker', 'inspect', name]))[0]['Config']['Labels']
+       assert labels.get('kin.release') == '<N SHA>', name   # created from N's configuration
+   served = ops.text(['docker', 'exec', 'kin-orthanc', 'sha256sum', '/etc/orthanc/ohif.js']).split()[0]
+   assert served == ops.digest(ops.ROOT / 'config' / 'ohif.js')
+   ```
+
+   If either check fails (`KIN_REVISION` was not N's when `up` ran), correct
+   `.env`, run `ops.run(compose + ['up', '-d'])` again and repeat both checks.
+
 Keep the image IDs that B records until the rollback window ends; step 2's tags
 do this, and no image is pruned in the window. `validate_backup` runs
 `docker image inspect` on them, so without them B can no longer be restored or
@@ -793,7 +919,8 @@ out until R7 points it at R. Load the upgrade's release record with
 reconfigured. Preflight writes only new paths:
 - the private record;
 - R's checkout directory (P6);
-- R's staged signing directory and custody configuration (P7).
+- R's staged signing directory and custody configuration (P7);
+- R's ledger volume overlay (P8).
 
 ```python
 import contextlib, hashlib, io, re, shutil, subprocess, sys, time
@@ -814,6 +941,8 @@ backup_root = '<backup-directory>'   # the daily backup root (B's parent)
   assert manifest['git_sha'] == previous_sha and manifest['git_dirty'] is False
   assert manifest.get('emr') and manifest.get('role_catalog') is not None   # otherwise: Gaps, no live restore path
   assert record.get('config_matched') is True and record['compose_files']   # precondition step 1
+  ledger_code = [f'api/src/emr-retention/{name}' for name in ('ledger-file.ts', 'destruction-record.ts', 'retention-gate.ts')]
+  assert ops.run(['git', 'diff', '--quiet', previous_sha, n_sha, '--', *ledger_code], check=False).returncode == 0   # rule 4
   ```
 
 - **P2. Rehearse B.** Run `ops.rehearse(directory)`. Expected: `success: true`, as
@@ -835,7 +964,24 @@ backup_root = '<backup-directory>'   # the daily backup root (B's parent)
   n_secret_file = mount[0] if mount else None
   compose_n = compose_for(n_project, ops.ROOT, n_files, n_secret_file)
   assert config_matches(compose_n, n_project)
+  # Rule 4: N's two ledger volumes, as kin-api mounts them, and the ledger each anchor of N's database names.
+  ledger_mounts = {m['Destination']: m for m in api['Mounts']
+                   if m['Destination'] in ('/var/lib/kin-purpose', '/var/lib/kin-ledger-mirror')}
+  assert all(m['Type'] == 'volume' and m['RW'] for m in ledger_mounts.values()) and len(ledger_mounts) == 2
+  ledger_volumes = {'purpose-ledger': ledger_mounts['/var/lib/kin-purpose']['Name'],
+                    'ledger-mirror': ledger_mounts['/var/lib/kin-ledger-mirror']['Name']}
+  anchors = ops.psql_json('kin-db', 'kin', """SELECT json_build_object(
+    'draft', (SELECT "ledgerId" FROM "PurposeLedgerAnchor" WHERE id = 1 AND initialized),
+    'report', (SELECT "ledgerId" FROM "ReportLedgerAnchor" WHERE id = 1 AND initialized))""")
+  headers = json.loads(ops.temporary_run(['--network', 'none', '--read-only', '--mount',
+      f"type=volume,source={ledger_volumes['purpose-ledger']},target=/l,readonly", '--entrypoint', 'sh',
+      manifest['postgres_image'], '-c', 'printf "{\\"draft\\":%s,\\"report\\":%s}" '
+      '"$(head -n1 /l/purpose-ledger.jsonl)" "$(head -n1 /l/report-retention-ledger.jsonl)"']))
+  assert anchors == {unit: headers[unit]['ledgerId'] for unit in ('draft', 'report')}
   ```
+
+  B's database carries the same anchor IDs (a migration does not change them),
+  so R4's restore will sit beside the ledger its anchors name.
 
   N's signing file is N's own mount source. It is taken from N, never from N-1's
   record or R's files. The hash comparison covers every N container, including
@@ -941,8 +1087,17 @@ backup_root = '<backup-directory>'   # the daily backup root (B's parent)
 - **P8. R's command renders.**
 
   ```python
-  compose_r = compose_for(R, R_dir, record['compose_files'], r_secret_file)
+  # Rule 4: R mounts N's ledger volumes. The overlay is a new file beside R_custody, outside both checkouts.
+  R_ledgers = R_custody.parent / f'{R}-ledger-volumes.yml'
+  descriptor = os.open(R_ledgers, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)   # never replaced
+  with os.fdopen(descriptor, 'w', encoding='utf-8') as overlay:
+      overlay.write('volumes:\n' + ''.join(f'  {key}:\n    external: true\n    name: {name}\n'
+                                           for key, name in ledger_volumes.items()))
+  r_files = record['compose_files'] + [str(R_ledgers)]
+  compose_r = compose_for(R, R_dir, r_files, r_secret_file)
   ops.run(compose_r + ['config', '--quiet'])
+  rendered = json.loads(ops.text(compose_r + ['config', '--format', 'json']))['volumes']
+  assert all(rendered[key].get('external') is True and rendered[key]['name'] == name for key, name in ledger_volumes.items())
   # R4 sets the role passwords from snapshot_credentials; R6's services get Compose's own reading. Never printed.
   services = json.loads(ops.text(compose_r + ['config', '--format', 'json']))['services']
   delivered = {'kin': services['db']['environment']['POSTGRES_PASSWORD'],
@@ -956,10 +1111,17 @@ backup_root = '<backup-directory>'   # the daily backup root (B's parent)
   r_tool = [sys.executable, str(R_dir / 'scripts' / 'ops_backup.py')]
   assert '--no-rotate' in ops.text(clean_env() + r_tool + ['backup', '--help'])   # R7 runs N-1's own tool
   record.update(n_project=n_project, n_files=n_files, n_secret_file=n_secret_file, rollback_project=R,
-                rollback_dir=str(R_dir), rollback_files=record['compose_files'], rollback_secret_file=r_secret_file,
-                rollback_custody=str(R_custody) if r_secret_file else None, rollback_signing=str(R_signing))
+                rollback_dir=str(R_dir), rollback_files=r_files, rollback_secret_file=r_secret_file,
+                rollback_custody=str(R_custody) if r_secret_file else None, rollback_signing=str(R_signing),
+                ledger_volumes=ledger_volumes, ledger_anchors=anchors,
+                rollback_ledger_overlay={str(R_ledgers): ops.digest(R_ledgers)})
   ops.write_json(record_path, record)
   ```
+
+  The overlay is part of R from now on: never delete or edit it. After
+  `ROLLED_BACK`, R's labels list it as a file outside the checkout, so a later
+  upgrade from R records and compares its sha256 like any host overlay
+  (precondition step 1). N's own `outside_files` do not include it.
 
   `config --quiet` fails on a missing variable or file and prints nothing. The
   help check confirms, before N stops, that N-1's own backup tool takes the
@@ -984,7 +1146,8 @@ with the cause and the paths that P6 and P7 created, then release the lock
 normally (not retained); N keeps serving. Before a repeat with the same R, inspect
 and remove only what this preflight created: run
 `git worktree remove --force <R_dir>`, delete the staged signing directory (B's
-custody keeps the original) and delete `R_custody`. Otherwise choose a new R.
+custody keeps the original), `R_custody` and R's ledger overlay. Otherwise
+choose a new R.
 Only after the preflight passes, save N's custody configuration once, and only
 then switch the record:
 
@@ -1069,16 +1232,30 @@ with R′, cannot replace N's configuration with R's or lose the flag.
   `restore_snapshot` refuses a cluster that is not fresh or has a non-empty
   database. Expected: `{"roles_created": [...], "memberships_granted": n, "catalog": "equal"}`,
   `outside` = `[]`, and the last migration equal to the last folder of
-  `git ls-tree --name-only <N-1> api/prisma/migrations/`.
+  `git ls-tree --name-only <N-1> api/prisma/migrations/`. The restored anchors
+  name N's ledgers: the query of P3 on `kin-db` now returns
+  `record['ledger_anchors']`.
 - **R5. Restore Orthanc and the EMR state into R's new volumes.** First build
   N-1 from R's directory and create R's containers without starting them:
   `ops.run(compose_r + ['up', '--no-start', '--build'], timeout=install_timeout)`.
+  A host that must not build (upgrade step 3) gives R B's own images instead,
+  from the hold tags of step 2, under R's image names, and does not build:
+
+  ```python
+  sha12 = previous_sha[:12]
+  for container, service in (('kin-api', 'api'), ('kin-api-migrate', 'api-migrate'), ('kin-proxy', 'proxy')):
+      ops.run(['docker', 'tag', f'kin-rollback-hold/{container}:{sha12}', f'{R}-{service}'])
+  ops.run(compose_r + ['up', '--no-start', '--no-build', '--pull', 'never'], timeout=install_timeout)
+  ```
+
   Read the volume names from the mounts, as `backup()` does:
   - `orthanc_volume` is the `kin-orthanc` mount at `/var/lib/orthanc/db`;
   - `state_volume` is the `kin-api` mount at `/var/lib/kin-emr`.
 
   Read them with `json.loads(ops.text(['docker', 'inspect', name]))[0]['Mounts']`.
-  They must be `f'{R}_orthanc-db'` and `f'{R}_emr-state'`. Then extract with
+  They must be `f'{R}_orthanc-db'` and `f'{R}_emr-state'`. R's `kin-api` mounts
+  at `/var/lib/kin-purpose` and `/var/lib/kin-ledger-mirror` must be N's
+  `record['ledger_volumes']` (rule 4), as writable volumes. Then extract with
   `rehearse`'s own helper:
 
   ```python
@@ -1132,6 +1309,31 @@ with R′, cannot replace N's configuration with R's or lose the flag.
      never answers and the bound decides. Record the elapsed time. Recheck the
      bound for a larger restored failure spool; it is not a clinical performance
      requirement.
+
+     Then check what the retention gate did with B's database beside N's ledger
+     (rule 4), and run both dedicated sweeps once. The same check serves the way
+     back to N:
+
+     ```python
+     def retention_opened(compose):
+         logs = ops.run(['docker', 'logs', 'kin-api'])
+         lines = (logs.stdout + logs.stderr).decode('utf-8', 'replace').splitlines()
+         last = lambda unit: [line for line in lines if line.startswith(f'[KIN API] Retention {unit}: ')][-1]
+         opened = {'draft': last('draft-purpose'), 'report': last('report-retention')}
+         assert re.fullmatch(r'\[KIN API\] Retention draft-purpose: \d+ re-applied, \d+ unfinished attempts closed', opened['draft'])
+         assert re.fullmatch(r'\[KIN API\] Retention report-retention: \d+ re-applied', opened['report'])
+         assert not any('not destroyed or not confirmed' in line for line in lines)
+         for script in ('draft-purpose-sweep.js', 'report-retention-sweep.js'):
+             swept = ops.run(compose + ['run', '--rm', '--no-deps', 'api', 'node', f'dist/emr-retention/{script}'], check=False)
+             assert swept.returncode == 0, (script, swept.stdout.decode('utf-8', 'replace')[-400:])
+         return opened
+     record['r_retention'] = retention_opened(compose_r)
+     ```
+
+     The patterns refuse a ledger bound anew (`ledger bound at first start`) and
+     one restored from its mirror: either means R did not open beside N's
+     ledger. The re-applied counts are the destructions N completed after B that
+     B's copy held again; they are deleted again before any request.
   4. Only then run the restored-copy expiry sweep, as `rehearse_held` runs it
      after its own recovery check:
 
@@ -1248,9 +1450,17 @@ Then take one of two ways:
      configuration, so there is nothing to remove and no sudo is used.
 
      If R7 had repointed the host's jobs, point them back at N's checkout.
-  3. Run `ops.run(compose_n + ['up', '-d'], timeout=install_timeout)`. N's
-     checkout, `.env`, compose files and signing file were never changed, and P3
-     proved that `compose_n` renders N's configuration. R2 kept N's volumes.
+  3. Start N's API without the entry, as R6 does for R:
+     `ops.run(compose_n + ['up', '-d', 'api'], timeout=install_timeout)`, wait
+     until it listens (R6 step 3), then `record['n_retention'] = retention_opened(compose_n)`.
+     N's checkout, `.env`, compose files and signing file were never changed, and
+     P3 proved that `compose_n` renders N's configuration. R2 kept N's volumes;
+     the ledger may be longer than N's database saw (what R completed), and N's
+     gate re-applies it (rule 4). Only then open the entry:
+     `ops.run(compose_n + ['up', '-d'], timeout=install_timeout)`.
+     If N's API does not listen or the check fails, keep the entry closed, keep
+     the lock and `NEEDS_ATTENTION`, and inspect: nothing here truncates a
+     ledger or writes a record by hand.
   4. Run step 3's readiness check and check 3 with
      `secret_file = record['n_secret_file']`, then record
      `ROLLBACK_ABANDONED` and release the lock.
@@ -1288,6 +1498,11 @@ Then take one of two ways:
   with `sudo -n`, only when B or N has custody. P7 checks non-interactive sudo in
   exactly that case, before anything changes.
 - No tool brings data written on N after B into the rolled-back N-1 site.
+- A destruction attempt that a stop interrupted after its started record (R2's
+  `down` of N, or of R on the way back) can leave the next start closed with
+  `PurposeIntentIncomplete` or `ReportIntentIncomplete`, on either release: the
+  database that would settle it may be the other one. No tool settles it. Keep
+  the entry closed, the lock and `NEEDS_ATTENTION`, and keep every volume.
 - A daily set without `role_catalog` (made before D23) has no live restore path.
   `restore_snapshot` needs that catalog. The older sets' `pg_dumpall` role replay
   is refused by PostgreSQL 16 for a `GRANTED BY kin` membership
