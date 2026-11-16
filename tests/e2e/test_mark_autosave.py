@@ -25,6 +25,11 @@ import test_viewer_history as history
 CHECK = 'Save view changes automatically and apply on reopen'
 PANEL = '#kin-viewer-history'
 ME = re.compile(r'/api/me(\?|$)')
+# The page's own fetch keeps every /me it is asked for (counted in __kinMeHeld) and never answers it.
+IN_PAGE_HOLD = '''()=>{const real=window.fetch;window.__kinMeHeld=0;
+  window.fetch=function(input,init){const url=typeof input==='string'?input:(input&&input.url)||'';
+    if(/\\/api\\/me(\\?|$)/.test(url)){window.__kinMeHeld++;return new Promise(()=>{});}
+    return real.apply(this,arguments);};}'''
 # The marks drawn now: [tool, points] per mark of the measuring tools.
 MARKS = '''()=>cornerstoneTools.annotation.state.getAllAnnotations().filter(a=>['Length','EllipticalROI'].includes(a.metadata.toolName))
   .map(a=>[a.metadata.toolName,a.data.handles.points])'''
@@ -324,16 +329,16 @@ class MarkAutoSaveE2E(MeasurementReadbackE2E):
         # The window stays; its own request answers the same revision.
         self.release(p, held)
         expect(row).to_contain_text('Saved r2', timeout=10000)
-        # Moved again with /me held, then the window really closes: this later request is sent by the closing too.
-        self.hold_me(p, held)
+        # Moved again with /me held, then the window really closes: this later request is sent by the closing too. Once
+        # p.close() has been called on a page, even a cancelled one, Playwright stalls every request its routes catch there,
+        # so from here the /me requests are held inside the page instead (the page's fetch keeps them until the page goes).
+        p.evaluate(IN_PAGE_HOLD)
         row.get_by_role('button', name='Edit', exact=True).click()
         before = p.evaluate(MARKS)
         outline = p.evaluate(WHERE, 'EllipticalROI')['outline']
         p.mouse.move(*outline); p.mouse.down(); p.mouse.move(outline[0]+15, outline[1]-10, steps=10); p.mouse.up()
-        for _ in range(10):
-            if held['held']: break
-            p.wait_for_timeout(500)
-        self.assertTrue(held['held'], self.why(p, row, before))
+        expect(row).to_contain_text('Ellipse ROI · Saving', timeout=5000)
+        self.assertGreater(p.evaluate('()=>window.__kinMeHeld'), 0, self.why(p, row, before))
         self.assertEqual(self.revisions(f, item), ['create', 'edit'])
         p.close(); w.close()
         self.assertTrue(self.until(lambda: self.revisions(f, item) == ['create', 'edit', 'edit']), self.revisions(f, item))
