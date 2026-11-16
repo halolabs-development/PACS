@@ -3627,6 +3627,9 @@
         readFailed: '이 검사의 영상 요청을 불러오지 못했습니다.',
         readCounts: (n, parts) => `이 검사의 영상 요청 ${n}건 · ${parts}`,
         readEmpty: '이 검사에는 영상 요청이 없습니다.',
+        // 안내 띠의 알림은 짧게(띠의 다른 줄을 좁혀 줄을 바꾸지 않게), 전문은 툴팁.
+        notice: { counts: (n, parts) => `영상 요청 ${n}건 · ${parts}`, failed: '영상 요청 읽기 실패', refused: '영상 요청 읽기 거절',
+          account: '영상 요청: 계정 바뀜' },
         readUnread: '지금은 이 검사의 영상 요청을 읽지 않습니다(원격판독 검사·연결 끊김).',
         codes: {
           IMAGE_REQUEST_CHANGED: '그사이 이 요청이 바뀌었습니다. 요청을 다시 불러왔으니 상태를 확인한 뒤 다시 보내세요.',
@@ -4401,12 +4404,14 @@
         readPane.hidden = !readOpen;
         if (readNotice) {
           // 알 때만 말한다: 요청 있음·실패·잠금은 그 글, 성공한 빈 답·읽지 않는 검사는 알림 없음, 읽는 중은 그대로.
-          const told = lock || readFailure || (readItems && readItems.length) ? text : readUid === null || readItems !== null ? '' : null;
+          const told = lock ? (lock.account ? TEXT.notice.account : TEXT.notice.refused) : readFailure ? TEXT.notice.failed
+            : readItems && readItems.length ? TEXT.notice.counts(readItems.length, readCounts(readItems))
+            : readUid === null || readItems !== null ? '' : null;
           if (ended) readNotice.hidden = true;
           else if (told !== null) {
             readNotice.hidden = !told;
             readNotice.textContent = told;
-            readNotice.title = told ? `${told} — Show Requests` : '';
+            readNotice.title = told ? `${text} — Show Requests` : '';
           }
         }
         const state = lock || readFailure ? 'failed' : readLoading ? 'loading' : 'ready';
@@ -12320,6 +12325,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const inboxButton = $('#question-inbox'), pane = $('#question-pane'), notice = $('#question-notice');
       const TEXT = {
         unread: '이 검사의 질문은 지금 읽지 않습니다(원격판독 검사·연결 끊김·권한).',
+        // 안내 띠의 알림은 짧게(띠의 다른 줄을 좁혀 줄을 바꾸지 않게): 개수와 0이 아닌 상태, 전문은 툴팁.
+        notice: { counts: (n, parts) => `질문 ${n}건${parts ? ` · ${parts}` : ''}`, failed: '질문 읽기 실패', refused: '질문 읽기 거절',
+          account: '질문: 계정 바뀜' },
         loading: '이 검사의 질문을 불러오는 중입니다…',
         failed: '이 검사의 질문을 불러오지 못했습니다.',
         empty: '이 검사에는 질문이 없습니다.',
@@ -12620,12 +12628,14 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         summary.title = line;
         if (notice) {
           // 알 때만 말한다: 잠김·실패·질문 있음은 그 글, 성공한 빈 답·읽지 않는 검사는 알림 없음, 읽는 중은 그대로.
-          const told = lock || listFailure || (items && items.length) ? line : uid === null || items !== null ? '' : null;
+          const parts = ['Open', 'Answered', 'Closed'].filter(state => counts(state)).map(state => `${state} ${counts(state)}`).join(' · ');
+          const told = lock ? (lock.account ? TEXT.notice.account : TEXT.notice.refused) : listFailure ? TEXT.notice.failed
+            : items && items.length ? TEXT.notice.counts(items.length, parts) : uid === null || items !== null ? '' : null;
           if (ended || visible) notice.hidden = true;
           else if (told !== null) {
             notice.hidden = !told;
             notice.textContent = told;
-            notice.title = told ? `${told} — Show Questions` : '';
+            notice.title = told ? `${line} — Show Questions` : '';
           }
         }
         toggle.textContent = mode === 'study' ? 'Hide Questions' : 'Show Questions';

@@ -63,6 +63,9 @@
         readFailed: '이 검사의 영상 요청을 불러오지 못했습니다.',
         readCounts: (n, parts) => `이 검사의 영상 요청 ${n}건 · ${parts}`,
         readEmpty: '이 검사에는 영상 요청이 없습니다.',
+        // 안내 띠의 알림은 짧게(띠의 다른 줄을 좁혀 줄을 바꾸지 않게), 전문은 툴팁.
+        notice: { counts: (n, parts) => `영상 요청 ${n}건 · ${parts}`, failed: '영상 요청 읽기 실패', refused: '영상 요청 읽기 거절',
+          account: '영상 요청: 계정 바뀜' },
         readUnread: '지금은 이 검사의 영상 요청을 읽지 않습니다(원격판독 검사·연결 끊김).',
         codes: {
           IMAGE_REQUEST_CHANGED: '그사이 이 요청이 바뀌었습니다. 요청을 다시 불러왔으니 상태를 확인한 뒤 다시 보내세요.',
@@ -837,12 +840,14 @@
         readPane.hidden = !readOpen;
         if (readNotice) {
           // 알 때만 말한다: 요청 있음·실패·잠금은 그 글, 성공한 빈 답·읽지 않는 검사는 알림 없음, 읽는 중은 그대로.
-          const told = lock || readFailure || (readItems && readItems.length) ? text : readUid === null || readItems !== null ? '' : null;
+          const told = lock ? (lock.account ? TEXT.notice.account : TEXT.notice.refused) : readFailure ? TEXT.notice.failed
+            : readItems && readItems.length ? TEXT.notice.counts(readItems.length, readCounts(readItems))
+            : readUid === null || readItems !== null ? '' : null;
           if (ended) readNotice.hidden = true;
           else if (told !== null) {
             readNotice.hidden = !told;
             readNotice.textContent = told;
-            readNotice.title = told ? `${told} — Show Requests` : '';
+            readNotice.title = told ? `${text} — Show Requests` : '';
           }
         }
         const state = lock || readFailure ? 'failed' : readLoading ? 'loading' : 'ready';

@@ -627,8 +627,11 @@
        - moving to another study folds every pane and notice of the one left (the Inbox's Open Study keeps the
          questions' pane open on the study it opens). */
     /* The notices stand at the band's top right whatever the band's rows (sticky, beside them): a draft row does not
-       scroll them out of sight, and they do not take the rows away. Each is cut to its share (its words in its tooltip). */
-    .report-notices > #report-alerts { float: right; position: sticky; top: 0; display: flex; gap: 4px; max-width: 60%;
+       scroll them out of sight, and they do not take the rows away. Their words are short (the count and the states, or
+       what failed; the whole sentence in the tooltip) and they take at most 40% of the band: beside them a row that
+       wrapped made the band scroll, and a wheel over the band (all a portrait card shows of itself on arrival) then
+       moved the band, not the column to Save (Minhoon's single scroll). */
+    .report-notices > #report-alerts { float: right; position: sticky; top: 0; display: flex; gap: 4px; max-width: 40%;
       margin: 3px 6px 0 4px; }
     .report-notices > #report-alerts:not(:has(> :not([hidden]))) { display: none; }
     #report-alerts > button { flex: 0 1 auto; min-width: 4em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

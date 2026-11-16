@@ -2181,7 +2181,9 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         # it there, and then shows the same words on one line with the pane open.
         self.target(A)
         seen = self.reader_state("ready")
-        self.assertEqual((False, {"text": R_COUNTS.format(n=3, o=1, a=1, c=1), "title": R_COUNTS.format(n=3, o=1, a=1, c=1)
+        # The notice is short (the band's other rows keep their width): the count and the states that have any; the whole
+        # sentence is its tooltip.
+        self.assertEqual((False, {"text": "질문 3건 · Open 1 · Answered 1 · Closed 1", "title": R_COUNTS.format(n=3, o=1, a=1, c=1)
                                   + " — Show Questions", "inBand": True}), (seen["shown"], self.page.evaluate(self.NOTICE)))
         self.press_questions()
         seen = self.reader()
@@ -2217,7 +2219,8 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         self.open_reader(me(RADIOLOGIST, ["radiologist"]))
         refresh = "() => studyQuestions.refresh()"
         counts = R_COUNTS.format(n=3, o=1, a=1, c=1)
-        told = lambda: (self.page.evaluate(self.NOTICE) or {}).get("text")
+        # What the notice says in full (its tooltip; its own words are the short form).
+        told = lambda: ((self.page.evaluate(self.NOTICE) or {}).get("title") or "").split(" — ")[0] or None
         self.target(B)
         self.reader_state("empty")
         before = self.page.evaluate(BOXES)
@@ -2384,7 +2387,8 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         self.faults.append({"kind": "list", "status": 500, "body": {"message": "SYN list failure"}})
         self.target(A)
         seen = self.reader_state("failed")
-        self.assertEqual((False, R_FAILED), (seen["shown"], self.page.locator("#question-notice").text_content()))
+        self.assertEqual((False, "질문 읽기 실패", R_FAILED + " — Show Questions"), (seen["shown"], self.page.locator("#question-notice").text_content(),
+                                                                    self.page.locator("#question-notice").get_attribute("title")))
         self.press_questions()
         self.assertEqual(["failed", R_FAILED, "SYN list failure (HTTP 500)"], self.reader()["list"])
         self.page.locator("#question-list-retry").click()
