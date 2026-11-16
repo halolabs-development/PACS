@@ -558,6 +558,50 @@ class RelatedModePage(unittest.TestCase):
         self.assertEqual([], self.site.related_puts)
         self.assertEqual("", self.value(), "the Source never reaches the Target's editor")
 
+    def cards_off_screen(self):
+        """The mode on screen without its two identity cards: the report text, Back and Insert stay."""
+        for selector in ("#related-mode-target", "#related-mode-source", "#related-mode .related-mode-cards"):
+            expect(self.page.locator(selector)).to_be_hidden()
+        expect(self.page.locator('[data-related-source="findings"]')).to_have_text(PRIOR_B["findings"])
+        expect(self.page.locator("#related-mode-back")).to_be_visible()
+        expect(self.page.locator("#related-mode-insert")).to_be_enabled()
+        shown = self.js("() => document.getElementById('related-mode').innerText")
+        for word in ("Reading Target", "Source Study", "판독 대상", "READ ONLY", "SYNACCB002", "SYN Hospital A", "Accession"):
+            self.assertNotIn(word, shown)
+
+    def test_related_report_mode_hides_the_reading_target_and_source_study_cards_everywhere_it_opens(self):
+        """Hide the two identity cards of the Related Report mode, in the Workspace and the reading layout, in English and
+        Korean, at the usual and the smallest window."""
+        self.open()
+        self.open_target()
+        self.enter()
+        self.cards_off_screen()
+        for lang in ("en", "ko"):
+            self.assertTrue(self.js("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", lang))
+            self.settle()
+            self.cards_off_screen()
+        # Korean screen, a failed read: the state line says it and its Retry (다시 시도) reads the Source again.
+        self.site.version_answers[UID_C] = [(503, {"code": "SYN_DOWN", "message": "SYN down"})]
+        self.related_row(UID_C).locator("td").first.click()
+        state = self.page.locator("#related-mode .related-mode-state")
+        expect(state).to_contain_text("불러오지 못했습니다")
+        retry = state.locator("button.related-mode-retry")
+        expect(retry).to_have_text("다시 시도")
+        retry.click()
+        self.wait(lambda: self.source_text("findings") == PRIOR_C["findings"], "C's text after Retry")
+        expect(state).to_be_hidden()
+        expect(self.page.locator(".related-mode-cards")).to_be_hidden()
+        self.back()
+        self.page.set_viewport_size({"width": 1366, "height": 768})
+        self.enter_reading()
+        self.enter()
+        self.cards_off_screen()
+        self.back()
+        self.page.set_viewport_size({"width": 900, "height": 600})
+        self.enter()
+        expect(self.page.locator(".related-mode-cards")).to_be_hidden()
+        expect(self.page.locator("#related-mode-back")).to_be_visible()
+
     def test_minhoon8_the_held_editor_keeps_the_draft_in_view_and_resume_editing_is_the_modes_back(self):
         """Minhoon item 8 (2026-10-27): the editable editor is marked; a selected related report opens inside the Related
         panel while the editor keeps the current draft on screen (held, marked Read Only); Resume Editing beside the editor
@@ -709,8 +753,13 @@ class RelatedModePage(unittest.TestCase):
         self.site.version_answers[UID_B] = [(503, {"code": "SYN_DOWN", "message": "SYN down"})]
         self.enter(ready=False)
         expect(self.page.locator("#related-mode-source")).to_contain_text("Load Failed")
+        # With the identity cards off screen the state line carries the failure and its Retry.
+        state = self.page.locator("#related-mode .related-mode-state")
+        expect(state).to_be_visible()
+        expect(state).to_contain_text("Load Failed")
         expect(self.page.locator("#related-mode-insert")).to_be_disabled()
-        self.page.locator("#related-mode-source button", has_text="Retry").click()
+        state.locator("button", has_text="Retry").click()
+        expect(state).to_be_hidden()
         self.wait(lambda: self.source_text("findings") == PRIOR_B["findings"], "the Source after Retry")
         # Access Restricted (403) is not a load failure; a late answer of an earlier read never replaces a newer one.
         self.site.version_answers[UID_C] = ["hold"]
