@@ -1482,7 +1482,7 @@
        title="보낸 병원을 확인하지 못해 보류된 검사가 있습니다. 관리 화면 Held Studies에서 병원과 확인한 장비·기관명 표기를 등록하세요.">⚠ Held Studies</a>
     <div class="spacer"></div>
     <div class="menubar-status" role="group" aria-label="Status">
-      <div class="mright">Prefetch <input type="checkbox" aria-label="Prefetch" checked></div>
+      <div class="mright" title="이 체크박스는 설정에 연결되어 있지 않습니다. 자동 미리 받기는 Auto Preload에서 설정하고 진행 상태는 PF 열에서 확인하세요.">Prefetch <input type="checkbox" aria-label="Prefetch" disabled></div>
       <div class="mright" id="storage" data-state="not_loaded" title="서버 전체 저장량을 아직 관측하지 않았습니다. 관측 전에는 값을 보이지 않으며 0으로 두지 않습니다.">Storage Unobservable</div>
       <div class="mright" id="dbstat" title="앱 상태(판독문·RS·매칭)가 어디에 저장되는지">● Checking…</div>
     </div>
@@ -1887,7 +1887,7 @@
           <button id="b-prelim" title="상급 판독의를 지정해 최종 판독을 맡깁니다 (RS: P)">Prelim</button>
           <button id="b-dictate" disabled title="음성 인식기가 연결되지 않았습니다.">Dictate</button>
           <details class="toolbar-menu" id="report-more">
-            <summary aria-label="More Report Actions" title="판독(추가기재·전사 요청), 상태(보류·판독 제외·CVR 표시·미판독으로 되돌리기), 편집(복사·붙여넣기·지우기·상용구 저장), 인쇄·개정 이력 단추를 펼칩니다. 서식 입력(Structured)은 서식이 있을 때 Print and History 구획의 Print 앞에 나타납니다">More<span class="toolbar-caret" aria-hidden="true">▾</span></summary>
+            <summary aria-label="More Report Actions" title="판독(추가기재), 상태(보류·CVR 표시·미판독으로 되돌리기), 편집(복사·붙여넣기·지우기·상용구 저장), 인쇄·개정 이력 단추를 펼칩니다. 서식 입력(Structured)은 서식이 있을 때 Print and History 구획의 Print 앞에 나타납니다">More<span class="toolbar-caret" aria-hidden="true">▾</span></summary>
             <div class="toolbar-menu-panel" role="group" aria-label="More Report Actions">
               <div class="toolbar-section" id="report-more-reading" role="group" aria-label="Reading">
                 <button id="b-addendum" disabled title="승인된 판독문에 덧붙입니다 (이전 승인본은 그대로 남습니다)">Addendum</button>

@@ -66,6 +66,8 @@ def display_transform(viewer, action):
 
 
 def native_back(viewer):
-    # OHIF's unlabelled Back icon moved down when the patient strip was added.
-    header = viewer.locator('#kin-viewer-brand').locator('xpath=ancestor::div[contains(@class,"bg-secondary-dark")][1]')
-    header.locator('svg').first.click()
+    # Leave the viewer mode inside the single-page app, without reloading the page (a marker set on window survives).
+    # The header logo is no longer OHIF's Back button (config/ohif/configuration.js turns showStudyList off), so this
+    # navigates the app's router the way OHIF's own links do, to its built-in /notfoundstudy route.
+    viewer.evaluate("() => { history.pushState(null, '', '/ohif/notfoundstudy');"
+                    " dispatchEvent(new PopStateEvent('popstate', {state: null})); }")
