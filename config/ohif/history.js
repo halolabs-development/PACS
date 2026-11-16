@@ -1338,7 +1338,10 @@ function kinCreateViewerHistory() {
       const text = content(e.draft);
       if (text !== auto.text) { auto.text = text; auto.at = now; }
       if (auto.tried === text || e.head && text === content(e.head.item)) return false;
-      if (!closing && (now - auto.at < AUTO_QUIET || pressing || ct.state?.isInteractingWithTool === true || typing(e))) return false;
+      // Closing skips only the quiet wait: a press or a tool still moving a mark is never saved midway, closing or not (a closing
+      // that goes on leaves it to the leave warning). Words typed into the row are as the reader left them when the window closes.
+      if (pressing || ct.state?.isInteractingWithTool === true) return false;
+      if (!closing && (now - auto.at < AUTO_QUIET || typing(e))) return false;
       if (manual(e.draft.kind) && e.head && e.head.referenceStatus !== 'verified') return false;
       // A key image has its fields only.
       if (!tools[e.draft.kind]) return true;
@@ -1349,20 +1352,18 @@ function kinCreateViewerHistory() {
       if (valueMark(e.draft.kind)) return !!e.draft.baseline && !window.KinMeasureFrame?.verify?.(a, true);
       return true;
     }
-    // closing: the window closes or the study changes — what is ready goes now, a request already on its way is sent once
-    // more with keepalive (the same body). Answers the entries that were sent.
+    // closing: the window closes or the study changes — what is ready goes now, a request already on its way is sent again
+    // with keepalive (the same body). Answers the entries that were sent.
     function autosave(closing = false) {
       if (!autoMarks()) return [];
       const now = Date.now(), sent = [];
       for (const e of [...entries.values()]) {
-        if (closing && e.busy && e.pending && writable(e)) {
-          if (!e.closing) { e.closing = true; beacon(e.pending); }
-          sent.push(e); continue;
-        }
+        // A request on its way may be cut by the closing: every closing event sends it again with keepalive, the same body and
+        // request id (the server answers a repeated request id once, under the study's lock), whatever earlier closings did.
+        if (closing && e.busy && e.pending && writable(e)) { beacon(e.pending); sent.push(e); continue; }
         if (!autoReady(e, now, closing)) continue;
         e.auto.sent = now;
         if (!e.pending) e.auto.tried = content(e.draft);
-        if (closing) e.closing = true;
         sent.push(e);
         save(e, e.pending ? undefined : e.head ? 'edit' : 'create', undefined, closing).catch(() => {});
       }
@@ -1384,7 +1385,7 @@ function kinCreateViewerHistory() {
       try { captureAnnotations(); } catch (_) {}
       autosave(true);
       for (const r of recovery.values()) if (r.subject === subject)
-        for (const x of r.entries) if (x.pending && !x.closing) { x.closing = true; beacon(x.pending); }
+        for (const x of r.entries) if (x.pending) beacon(x.pending);
     }
     // Delete: the row's Delete, the image's "Delete measurement" and the Measurements panel's delete all come here.
     async function deleteEntry(e) {

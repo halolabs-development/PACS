@@ -385,5 +385,16 @@ class ViewerAPI(unittest.TestCase):
         for action in ('edit','hide','restore','delete'):
             self.revise({**deleted,'item':item},action,reason='',status=409)
         self.assertEqual(self.snapshot(),before)
+        # The referring physician's reads of the signed report: the final item list and the report's key images have the
+        # kept item only.
+        self.stack.create_test_identity('viewer-delete-clinician',['clinician'],'hallym')
+        signed=self.stack.request('POST','/studies/'+self.uid+'/report/commit','doctor',
+            dict(action='approve',baseVersion=0,findings='합성 승인',conclusion='',recommendation=''))
+        self.assertEqual(signed.status,201,signed.text)
+        final=self.call(method='GET',user='viewer-delete-clinician')
+        self.assertEqual([x['id'] for x in final['items']],[kept['id']])
+        keys=self.call(method='GET',user='viewer-delete-clinician',path='/clinician/studies/'+self.uid+'/report')['keys']
+        self.assertEqual(len(keys),1,keys)
+        self.assertNotIn('지울 항목',json.dumps(keys,ensure_ascii=False))
 
 if __name__=='__main__': unittest.main(verbosity=2)

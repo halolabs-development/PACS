@@ -1923,7 +1923,8 @@ class MeasurementCiTests(unittest.TestCase):
         self.assertEqual([node.name for node in cls.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')],
                          ['test_mark_autosave_01_drawn_marks_are_saved_without_save_and_drawn_on_reopen',
                           'test_mark_autosave_02_an_ellipse_resized_and_moved_under_edit_is_saved_on_its_own',
-                          'test_mark_autosave_03_a_saved_mark_is_deleted_from_its_row_the_image_menu_and_the_panel'])
+                          'test_mark_autosave_03_a_saved_mark_is_deleted_from_its_row_the_image_menu_and_the_panel',
+                          'test_mark_autosave_04_closing_typing_and_a_lost_answer'])
         self.assertNotIn('mark-autosave', self.catalog.text(automatic_only=True))
         dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
         self.assertIn('- mark-autosave', dispatch)

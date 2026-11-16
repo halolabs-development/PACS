@@ -1556,6 +1556,21 @@ class FindingAPI(unittest.TestCase):
         self.assertEqual(self.citations()['draft'], held, 'the refused signer keeps every byte of their attestation')
         self.assertEqual(self.call(method='GET', path=report+'/versions', user='xauthor')[0]['findings'], '다른 판독의의 승인본')
 
+    def test_14_a_deleted_source_reads_as_hidden_and_is_not_cited_again(self):
+        # A measurement deleted in the viewer (its head hidden and marked deleted): the finding citing it keeps its frozen
+        # copy and reads the link as hidden, as for a hidden source; refreshing the citation to the delete revision is refused.
+        length = self.item(self.length_item())
+        head, _ = self.create([length])
+        deleted = self.revise_item(length, 'delete')
+        self.assertEqual((deleted['revision'], deleted['hidden'], deleted['item']['deleted']), (2, True, True))
+        listed = self.call(method='GET')['items'][0]
+        self.assertEqual(listed['links'], [dict(itemId=length['id'], linkState='hidden', headRevision=2, headHidden=True)])
+        self.assertEqual(listed['item']['sources'][0]['revision'], 1)
+        self.assertEqual(listed['item']['sources'][0]['values'], [20.0])
+        before = self.snapshot(FINDING_TABLES)
+        self.revise(head, sources=[dict(itemId=length['id'], revision=2)], status=409)
+        self.assertEqual(self.snapshot(FINDING_TABLES), before)
+
 if __name__ == '__main__':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     unittest.main(defaultTest=[f'FindingAPI.{n}' for n in FindingAPI.__dict__ if n.startswith('test_')], verbosity=2)
