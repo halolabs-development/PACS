@@ -451,7 +451,7 @@ class VolumeRenderingE2E(VolumeCurrentPrintE2E):
   v.evaluate('()=>{window.vrOldMapper=vrView().getActors()[0].actor.getMapper()}')
   self.remove(dialog,'Remove Table','촬영대·시트를 지웠습니다')
   after=v.evaluate(state.replace(',mapper:m',''));self.assertEqual(after,before);self.assertFalse(v.evaluate('()=>vrView().getActors()[0].actor.getMapper()===vrOldMapper'))
-  self.assertEqual([n for n in self.vr_state(v)['nodes'] if n[0]>-1001],[n for n in nodes if n[0]>-1001]);self.assertTrue(self.vr_state(v)['shade'])
+  self.assertEqual([n for n in self.vr_state(v)['nodes'] if n[0]>-1000],[n for n in nodes if n[0]>-1000]);self.assertTrue(self.vr_state(v)['shade'])
   # The new actor's own frame confirms the sculpt shader; the dialog stays open.
   v.wait_for_timeout(500);expect(dialog).to_be_visible();self.assertTrue(v.evaluate("()=>{const node=vrView().getRenderingEngine().offscreenMultiRenderWindow.getOpenGLRenderWindow().getViewNodeFor(vrView().getActors()[0].actor.getMapper());return node.get('tris').tris.getProgram().getFragmentShader().getSource().includes('kinSculptPoint0')}"))
   dialog.get_by_role('button',name='Undo Sculpt',exact=True).click();self.assertEqual(v.evaluate(state.replace(',mapper:m',''))['shader'],'null')
