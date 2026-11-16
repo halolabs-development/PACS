@@ -1927,6 +1927,7 @@
       "tests/page_source.py",
       "tests/viewer_api_test.py",
       "tests/viewer_cell_merge_dom_test.py",
+      "tests/viewer_monitor_double_click_dom_test.py",
       "tests/viewer_clinician_entry_dom_test.py",
       "tests/viewer_context_loss_dom_test.py",
       "tests/viewer_context_loss_fixture.js",

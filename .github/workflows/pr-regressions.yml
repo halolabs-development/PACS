@@ -445,7 +445,7 @@ jobs:
     needs: select
     if: ${{ !cancelled() && (needs.select.result != 'success' || fromJSON(needs.select.outputs.jobs)['viewer-dom']) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 156
+    timeout-minutes: 159
     steps:
     - name: Path selection completed
       if: ${{ needs.select.result != 'success' }}
@@ -509,6 +509,11 @@ jobs:
       timeout-minutes: 3
       run: |
         python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/cell-merge --cwd . --file config/ohif.js --file worklist-v0/hpacs-lite/viewer-cell-merge.js --file tests/viewer_cell_merge_dom_test.py --file tests/viewer_session_fixture.py --file worklist-v0/hpacs-lite/work-context.js --file worklist-v0/hpacs-lite/exam-scope.js --file worklist-v0/hpacs-lite/session-transport.js --file worklist-v0/hpacs-lite/viewer-session.js --file worklist-v0/hpacs-lite/viewer-resources.js --file worklist-v0/hpacs-lite/viewer-stack-restore.js -- "$RUNNER_TEMP/measurement-python/bin/python" -B tests/viewer_cell_merge_dom_test.py
+    - name: Double click over two monitors fills the cell's monitor only
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      timeout-minutes: 3
+      run: |
+        python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/monitor-double-click --cwd . --file worklist-v0/hpacs-lite/viewer-cell-merge.js --file worklist-v0/hpacs-lite/viewer-features-monitors.js --file worklist-v0/hpacs-lite/viewer-display-layout.js --file tests/viewer_cell_merge_dom_test.py --file tests/viewer_monitor_double_click_dom_test.py -- "$RUNNER_TEMP/measurement-python/bin/python" -B tests/viewer_monitor_double_click_dom_test.py
     - name: Images Only fullscreen lifecycle and source preservation
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       timeout-minutes: 3

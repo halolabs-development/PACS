@@ -163,10 +163,67 @@
           top: band.side === 'top' ? px(band.inset.top) : 'auto', bottom: band.side === 'bottom' ? px(band.inset.bottom) : 'auto' };
   }
 
-  const plan = { THICKNESS, MIN_REGION, regions, target, bands, split, monitorOf, validRects, place };
+  // Where the displays meet inside the viewport grid, as fractions of the grid's width (left to right): the edges between
+  // the monitors' parts of the window (regions over the grid's columns). A part of the grid on no listed display (only
+  // the window's own display is known without the window-management access) is another monitor when it is as wide as a
+  // region. One display, or a window over an edge by less than a region, has none: []. Nothing known about the window
+  // (an unreadable frame or no listed display under it) is null. The double click's maximize fills one monitor's part
+  // (viewer-cell-merge.js).
+  function edges(screens, win, zoom, grid) {
+    if (!grid || !finite(grid.left, grid.width) || !(grid.width > 0)) return null;
+    const from = grid.left, to = grid.left + grid.width, list = regions(screens, win, zoom, { left: from, right: to });
+    if (!list.length) return null;
+    const cuts = list.slice(1).map(region => region.left), last = list[list.length - 1].right;
+    if (list[0].left - from >= MIN_REGION) cuts.unshift(list[0].left);
+    if (to - last >= MIN_REGION) cuts.push(last);
+    return cuts.map(x => Math.round((x - from) / grid.width * 1e6) / 1e6).filter(edge => edge > 0 && edge < 1);
+  }
+
+  const plan = { THICKNESS, MIN_REGION, regions, target, bands, split, monitorOf, validRects, place, edges };
   if (typeof module === 'object' && module.exports) module.exports = plan;
   if (root) root.KinViewerMonitorPlan = plan;
 })(typeof window === 'object' ? window : null);
+
+// The displays this browser reports, with only the window-management access the reader already gave (never asked here):
+// { screens (left to right), granted, zoom } or null. One display the browser says it has is monitor 1.
+async function kinViewerScreensInfo() {
+  let details = null;
+  try {
+    const permission = await navigator.permissions?.query({ name: 'window-management' });
+    if (permission?.state === 'granted') details = await window.getScreenDetails?.();
+  } catch (_) { details = null; }
+  const layout = window.KinViewerDisplayLayout;
+  if (details?.screens?.length && layout) {
+    const os = details.currentScreen?.devicePixelRatio;
+    return { screens: layout.screens(details), granted: true, zoom: Number.isFinite(os) && os > 0 ? window.devicePixelRatio / os : null };
+  }
+  const s = window.screen;
+  if (s?.isExtended === false && [s.availLeft ?? 0, s.availTop ?? 0, s.availWidth, s.availHeight].every(Number.isFinite))
+    return { screens: [{ left: s.availLeft ?? 0, top: s.availTop ?? 0, width: s.availWidth, height: s.availHeight, primary: true }], granted: false, zoom: null };
+  return null;
+}
+if (typeof window === 'object') {
+  // The display edges inside the viewport grid now (KinViewerMonitorPlan.edges), for the double click's maximize.
+  // Without the access, the display this window is on (window.screen) is the one known; a part of the grid past it is
+  // another monitor. null: unknown.
+  window.kinViewerMonitorEdges = async () => {
+    const s = window.screen;
+    // One display, as the browser says: no edge.
+    if (s?.isExtended === false) return [];
+    const info = await kinViewerScreensInfo();
+    const box = document.querySelector('[data-cy="viewport-grid"]')?.getBoundingClientRect();
+    if (!box) return null;
+    const own = [s?.availLeft, s?.availTop, s?.availWidth, s?.availHeight].every(Number.isFinite)
+      ? { left: s.availLeft, top: s.availTop, width: s.availWidth, height: s.availHeight } : null;
+    const win = { screenX: window.screenX, screenY: window.screenY, outerWidth: window.outerWidth, outerHeight: window.outerHeight,
+      innerWidth: window.innerWidth, innerHeight: window.innerHeight };
+    const screens = info?.granted ? info.screens : own ? [own] : null;
+    const found = screens && window.KinViewerMonitorPlan.edges(screens, win, info?.granted ? info.zoom : null, { left: box.left, width: box.width });
+    if (found) return found;
+    // The frame cannot be read (a browser zoom without the access): a window inside its own display has no edge.
+    return own && win.screenX >= own.left - 16 && win.screenX + win.outerWidth <= own.left + own.width + 16 ? [] : null;
+  };
+}
 
 if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ store, ui }) => {
   const plan = window.KinViewerMonitorPlan;
@@ -253,24 +310,8 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
   }
   const declare = (selector, box) => selector + ' { ' + Object.entries(box).map(([k, v]) => k + ': ' + v + ' !important').join('; ') + '; }';
 
-  async function screensInfo() {
-    let details = null;
-    try {
-      const permission = await navigator.permissions?.query({ name: 'window-management' });
-      // Reuse access the reader already gave; never ask here.
-      if (permission?.state === 'granted') details = await window.getScreenDetails?.();
-    } catch (_) { details = null; }
-    const layout = window.KinViewerDisplayLayout;
-    if (details?.screens?.length && layout) {
-      const os = details.currentScreen?.devicePixelRatio;
-      return { screens: layout.screens(details), granted: true, zoom: Number.isFinite(os) && os > 0 ? window.devicePixelRatio / os : null };
-    }
-    // One display and the browser says so: monitor 1 is the one this window is on.
-    const s = window.screen;
-    if (s?.isExtended === false && [s.availLeft ?? 0, s.availTop ?? 0, s.availWidth, s.availHeight].every(Number.isFinite))
-      return { screens: [{ left: s.availLeft ?? 0, top: s.availTop ?? 0, width: s.availWidth, height: s.availHeight, primary: true }], granted: false, zoom: null };
-    return null;
-  }
+  // Reuse access the reader already gave; never ask here (kinViewerScreensInfo, the same reading as the double click's).
+  const screensInfo = () => kinViewerScreensInfo();
   // Moves this window over the target and reads where it actually stands (a browser may refuse or clamp the move).
   async function move(rect, signal) {
     const now = () => ({ left: window.screenX, top: window.screenY, width: window.outerWidth, height: window.outerHeight });

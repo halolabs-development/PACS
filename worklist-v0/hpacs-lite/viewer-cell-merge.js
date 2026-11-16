@@ -36,7 +36,80 @@
   // source. Anything else - a VR 3D volume, an SR, a PDF, a cell still loading, a plane
   // whose volume or orientation cannot be established - refuses the whole operation.
   const SHOWS_IMAGE = ['stack', 'plane'];
+
+  // A viewer window over two monitors: a maximize fills the anchor's monitor, not the whole window ("한 모니터 2×2,
+  // 모니터 2개면 2×2 두 개. 더블클릭하면 그 칸이 모니터 전체 1분할"). `edges` are the display edges inside the grid as
+  // fractions of its width (KinViewerMonitorPlan.edges); a cell belongs to the monitor its centre is on, and the
+  // monitor's area is the outline of its cells, which must fill it exactly, hold no other cell and cross no edge.
+  // Answers null when the maximize is the whole grid as before (no edge inside the grid, a uniform base), { reason }
+  // when it would have to reach over a display edge, and { area, group } otherwise. The base is a uniform grid, or the
+  // split an applied Hanging Protocol (or a saved Job) registered as its geometry (`split`, window.kinViewerSplitRects);
+  // such a split on one monitor maximizes over its own image area. A uniform grid's monitor part must be a grid the
+  // viewer builds (BASES).
+  const finiteBox = cell => !!cell && [cell.x, cell.y, cell.width, cell.height].every(Number.isFinite) && cell.width > 0 && cell.height > 0;
+  const sameBox = (a, b) => near(a.x, b.x) && near(a.y, b.y) && near(a.width, b.width) && near(a.height, b.height);
+  const byPlace = (a, b) => (near(a.y, b.y) ? a.x - b.x : a.y - b.y);
+  const meets = (a, b) => Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x) > 1e-4 && Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y) > 1e-4;
+  function uniformGrid(rows, cols, cells) {
+    return Number.isInteger(rows) && Number.isInteger(cols) && rows > 0 && cols > 0 && Array.isArray(cells) && cells.length === rows * cols &&
+      cells.every((cell, index) => finiteBox(cell) && sameBox(cell, rect((index % cols) / cols, Math.floor(index / cols) / rows, 1 / cols, 1 / rows)));
+  }
+  // The split registered for this screen, as the native grid shows it: the same rectangles, inside the grid, none over
+  // another, on a base grid with room for them all.
+  function registeredSplit(rows, cols, cells, split) {
+    if (!Array.isArray(split) || !Array.isArray(cells) || cells.length < 1 || cells.length > 16 || split.length !== cells.length ||
+        !Number.isInteger(rows) || !Number.isInteger(cols) || rows * cols < cells.length || !split.every(finiteBox) || !cells.every(finiteBox)) return false;
+    if (cells.some(c => c.x < -1e-6 || c.y < -1e-6 || c.x + c.width > 1 + 1e-6 || c.y + c.height > 1 + 1e-6)) return false;
+    if (cells.some((a, i) => cells.some((b, j) => j > i && meets(a, b)))) return false;
+    const mine = cells.slice().sort(byPlace), theirs = split.slice().sort(byPlace);
+    return mine.every((cell, index) => sameBox(cell, theirs[index]));
+  }
+  const CROSSES = '칸이 모니터 경계에 걸쳐 있어 그 모니터만 확대할 수 없습니다. 경계에 맞춘 배치(Span Displays 또는 Monitors in Hanging Protocol)에서 사용하세요.';
+  const ALONE = '이 칸은 이미 그 모니터의 한 화면입니다.';
+  function monitorArea(request) {
+    const { rows, cols, cells, anchorId, edges, split } = request || {};
+    if (!Array.isArray(cells) || !cells.every(finiteBox)) return null;
+    const anchor = cells.find(cell => cell.viewportId === anchorId);
+    if (!anchor) return null;
+    const uniform = uniformGrid(rows, cols, cells), registered = !uniform && registeredSplit(rows, cols, cells, split);
+    if (!uniform && !registered) return null;
+    const lines = (Array.isArray(edges) ? edges : []).filter(edge => Number.isFinite(edge) && edge > 1e-3 && edge < 1 - 1e-3).sort((a, b) => a - b);
+    if (uniform && !lines.length) return null;
+    const monitor = cell => lines.filter(edge => cell.x + cell.width / 2 > edge).length;
+    const group = cells.filter(cell => monitor(cell) === monitor(anchor));
+    const left = Math.min(...group.map(c => c.x)), top = Math.min(...group.map(c => c.y));
+    const area = rect(left, top, Math.max(...group.map(c => c.x + c.width)) - left, Math.max(...group.map(c => c.y + c.height)) - top);
+    if (lines.some(edge => edge > area.x + 1e-3 && edge < area.x + area.width - 1e-3)) return { reason: CROSSES };
+    if (group.length < 2) return lines.length ? { reason: ALONE } : null;
+    const inside = cell => cell.x >= area.x - 1e-6 && cell.y >= area.y - 1e-6 && cell.x + cell.width <= area.x + area.width + 1e-6 && cell.y + cell.height <= area.y + area.height + 1e-6;
+    const filled = group.reduce((sum, cell) => sum + cell.width * cell.height, 0);
+    if (!group.every(inside) || Math.abs(filled - area.width * area.height) > 1e-6 || cells.some(cell => !group.includes(cell) && meets(cell, area))) return { reason: CROSSES };
+    if (uniform) {
+      const partRows = new Set(group.map(cell => Math.round(cell.y * 1e6))).size, partCols = new Set(group.map(cell => Math.round(cell.x * 1e6))).size;
+      if (!BASES.some(([r, c]) => r === partRows && c === partCols)) return { reason: '1·2·4화면의 일반 CT 격자 또는 3평면 MPR 배치에서만 칸을 확대·병합할 수 있습니다.' };
+    }
+    return { area, group: group.map(cell => cell.viewportId) };
+  }
+  // The maximize of one monitor's area: the anchor takes the area, every other monitor's cell keeps its rectangle.
+  function planArea(request, found) {
+    const { rows, cols, cells, anchorId } = request;
+    if (cells.some(cell => !cell || typeof cell.viewportId !== 'string' || !cell.viewportId) || new Set(cells.map(cell => cell.viewportId)).size !== cells.length)
+      return { ok: false, reason: '화면 구성을 확인할 수 없습니다.' };
+    if (cells.some(cell => !['stack', 'empty', 'plane'].includes(cell?.kind)))
+      return { ok: false, reason: '3D·SR·PDF 화면이나 아직 불러오지 못한 칸이 있어 병합하지 않았습니다. 일반 CT 격자나 MPR 평면 배치에서 사용하세요.' };
+    const anchor = cells.find(cell => cell.viewportId === anchorId);
+    if (!SHOWS_IMAGE.includes(anchor.kind)) return { ok: false, reason: '영상이 표시된 칸을 선택한 뒤 확대·병합하세요.' };
+    const entries = cells.filter(cell => !found.group.includes(cell.viewportId)).map(cell => ({ cell, box: rect(cell.x, cell.y, cell.width, cell.height) }))
+      .concat([{ cell: anchor, box: copy(found.area) }]).sort((a, b) => byPlace(a.box, b.box));
+    return { ok: true, op: 'maximize', rows, cols, anchorId, merged: entries.findIndex(entry => entry.cell === anchor),
+      layoutOptions: entries.map(entry => entry.box), slots: entries.map(entry => entry.cell), area: copy(found.area),
+      displaced: found.group.filter(id => id !== anchorId) };
+  }
+
   function plan(request) {
+    const found = request?.op === 'maximize' ? monitorArea(request) : null;
+    if (found?.reason) return { ok: false, reason: found.reason };
+    if (found) return planArea(request, found);
     const { rows, cols, cells, anchorId, op } = request || {};
     if (!BASES.some(([r, c]) => r === rows && c === cols) || !Array.isArray(cells) || cells.length !== rows * cols)
       return { ok: false, reason: '1·2·4화면의 일반 CT 격자 또는 3평면 MPR 배치에서만 칸을 확대·병합할 수 있습니다.' };
@@ -232,8 +305,22 @@
     function snapshot() {
       const state = grid?.getState?.(), layout = state?.layout || {}, views = ordered();
       const rows = layout.numRows, cols = layout.numCols;
-      if (layout.layoutType !== 'grid' || !Number.isInteger(rows) || !Number.isInteger(cols) || views.length !== rows * cols) return null;
-      return { rows, cols, active: state.activeViewportId, cells: views.map(cellOf), signature: layoutSignature() };
+      if (layout.layoutType !== 'grid' || !Number.isInteger(rows) || !Number.isInteger(cols)) return null;
+      // A split a Hanging Protocol or a saved Job registered (window.kinViewerSplitRects) has its own rectangles, which
+      // the restore asks for again; any other grid is the uniform one of its rows and columns.
+      const split = !uniformGrid(rows, cols, views) && registeredSplit(rows, cols, views, splitRects()) ? views.map(view => rect(view.x, view.y, view.width, view.height)) : null;
+      if (!split && views.length !== rows * cols) return null;
+      return { rows, cols, active: state.activeViewportId, cells: views.map(cellOf), signature: layoutSignature(), options: split };
+    }
+    function splitRects() { try { return Array.isArray(win.kinViewerSplitRects) ? copy(win.kinViewerSplitRects) : null; } catch (_) { return null; } }
+    // Where the displays meet inside the grid (fractions of its width), from the monitors module, which reads only access
+    // the reader already gave: [] is one display under the grid. No answer within 1 s, or a failure, is null (unknown).
+    function displayEdges() {
+      return new Promise(resolve => {
+        const timer = win.setTimeout(() => resolve(null), 1000);
+        const done = value => { win.clearTimeout(timer); resolve(Array.isArray(value) ? value : null); };
+        try { Promise.resolve(win.kinViewerMonitorEdges()).then(done, () => done(null)); } catch (_) { done(null); }
+      });
     }
 
     // One cell stays one viewport, rebuilt as the kind it was. The plane branch is the
@@ -366,6 +453,8 @@
       }
     }
 
+    // A base grid back: a uniform grid by its rows and columns, a registered split by its own rectangles.
+    const dispatchBack = target => dispatch(target.rows, target.cols, target.options || null, target.cells, target.active);
     const dispatch = (rows, cols, layoutOptions, cells, active) => grid.setLayout({
       numRows: rows, numCols: cols, activeViewportId: active, isHangingProtocolLayout: false,
       ...(layoutOptions ? { layoutOptions: layoutOptions.map(copy) } : {}),
@@ -479,7 +568,7 @@
           blend: field('blend'), thickness: field('thickness', sameNumber),
           imageId: image.imageId, imageIndex: image.imageIndex };
       });
-      return { rows: base.rows, cols: base.cols, active: base.active, cells, ambiguous };
+      return { rows: base.rows, cols: base.cols, active: base.active, cells, ambiguous, options: base.options || null };
     }
 
     // A screen this module is still allowed to rebuild. Its own dispatch can only ever
@@ -507,7 +596,7 @@
     // overwritten by our restore.
     async function rebuild(target, owned) {
       if (!owned()) return false;
-      try { await boundedNative(dispatch(target.rows, target.cols, null, target.cells, target.active), 2000); } catch (_) { }
+      try { await boundedNative(dispatchBack(target), 2000); } catch (_) { }
       const deadline = Date.now() + 5000;
       let confirmed = 0;
       while (Date.now() < deadline) {
@@ -598,13 +687,26 @@
 
     async function run(op, anchorId) {
       const reason = blocked(); if (reason) return { ok: false, message: note(reason) };
+      // The display edges are asked before the screen is read; meanwhile this operation is busy, so a second double
+      // click is remembered as usual (onDoubleClick) and a button press is refused.
+      let edges = null;
+      if (op === 'maximize' && typeof win.kinViewerMonitorEdges === 'function') {
+        const asked = layoutSignature();
+        busy = true; refresh();
+        try { edges = await displayEdges(); } finally { busy = false; refresh(); }
+        // Unknown displays are not taken as one: the maximize could reach over a display edge.
+        const later = ended || !live() ? '' : blocked() ?? (layoutSignature() !== asked ? '모니터를 확인하는 사이 화면이 바뀌어 칸을 확대하지 않았습니다.'
+          : edges === null ? '모니터 정보를 확인하지 못해 칸을 확대하지 않았습니다. 다시 더블클릭하세요.' : null);
+        if (later !== null) { pendingToggle = false; return { ok: false, message: later && note(later) }; }
+      }
       const base = snapshot();
       if (!base) return { ok: false, message: note(record
         ? '이미 병합된 화면입니다. 먼저 Restore Grid로 격자를 되돌리세요.'
         : refusal('1·2·4화면의 일반 CT 격자 또는 3평면 MPR 배치에서만 칸을 확대·병합할 수 있습니다.')) };
       const anchor = anchorId || base.active;
-      const result = plan({ rows: base.rows, cols: base.cols, cells: base.cells, anchorId: anchor, op });
-      if (!result.ok) return { ok: false, message: note(refusal(result.reason)) };
+      const result = plan({ rows: base.rows, cols: base.cols, cells: base.cells, anchorId: anchor, op, edges, split: base.options });
+      // A registered split is no saved merged layout: its refusal is said as it is.
+      if (!result.ok) return { ok: false, message: note(base.options ? result.reason : refusal(result.reason)) };
       // A merge destroys and rebuilds planes, and an Average plane can only be rebuilt with
       // the preparation above. Without that tool the operation is refused here - before a
       // single rectangle is dispatched - so the user keeps the screen they have instead of
@@ -651,10 +753,11 @@
           // requested geometry is confirmed once more, on the same synchronous reading
           // the signature is taken from, so a record only ever describes this merge.
           if (geometryIs(expected)) {
-            record = { base, op, anchorId: anchor, after, input: watch.input(), marks, planes, signature: layoutSignature() };
+            record = { base, op, anchorId: anchor, after, input: watch.input(), marks, planes, signature: layoutSignature(), area: result.area || null };
             crosshair.center();
-            return { ok: true, op, message: note(op === 'maximize'
-              ? '선택한 칸을 한 화면으로 확대했습니다. 다시 더블클릭하거나 Restore Grid로 이전 배치로 돌아갑니다.'
+            return { ok: true, op, ...(result.area ? { area: copy(result.area) } : {}), message: note(op === 'maximize'
+              ? (result.area ? '선택한 칸을 그 모니터의 한 화면으로 확대했습니다. 다른 모니터의 칸은 그대로입니다. ' : '선택한 칸을 한 화면으로 확대했습니다. ') +
+                '다시 더블클릭하거나 Restore Grid로 이전 배치로 돌아갑니다.'
               : '선택한 칸을 병합했습니다. Restore Grid로 이전 배치로 돌아가며, 이 병합 배치는 Save New Job으로 저장할 수 있습니다.') };
           }
         }
@@ -754,9 +857,11 @@
         button.disabled = !!reason || (restore ? !record : !!record);
         button.title = reason || (restore ? '병합 전 격자와 영상 상태로 되돌립니다.' : '선택한 칸을 확대하거나 인접한 칸과 병합합니다.');
       });
-      if (hint) hint.textContent = record
+      if (hint) hint.textContent = record?.area
+        ? '현재 그 모니터만 확대한 상태입니다. 다시 더블클릭하거나 Restore Grid로 이전 배치와 영상 상태로 돌아갑니다. 한 모니터만 확대한 배치는 Job으로 저장되지 않습니다.'
+        : record
         ? '현재 병합 상태입니다. Save New Job으로 이 배치를 저장할 수 있고, Restore Grid로 병합 전 배치와 영상 상태로 돌아갑니다.'
-        : '영상 칸을 더블클릭하면 그 칸이 한 화면이 되고, 다시 더블클릭하면 이전 배치로 돌아갑니다.';
+        : '영상 칸을 더블클릭하면 그 칸이 한 화면이 되고, 다시 더블클릭하면 이전 배치로 돌아갑니다. 두 모니터에 걸친 창에서는 그 칸이 있는 모니터만 채웁니다.';
     }
 
     // Any layout or source change this module did not make invalidates the record, so a
