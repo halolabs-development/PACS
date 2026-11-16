@@ -2131,6 +2131,18 @@ class StudyPanelPageDOM(unittest.TestCase):
       }
       return {question: seen('question-notice'), request: seen('image-request-notice'), draft}; }'''
 
+    # Each button of the band's rows seen inside the band, the band scrolled to its top and to its end: what a click at
+    # the middle of its seen part reaches when it is not the button.
+    COVERED = '''() => { const band = document.getElementById('report-notices'), out = [];
+      for (const to of [0, band.scrollHeight]) { band.scrollTop = to; const br = band.getBoundingClientRect();
+        for (const b of band.querySelectorAll(':scope > :not(#report-alerts) button')) {
+          if (!b.getClientRects().length) continue;
+          const r = b.getBoundingClientRect(), top = Math.max(r.top, br.top), bottom = Math.min(r.bottom, br.bottom);
+          if (bottom - top < 2) continue;
+          const hit = document.elementFromPoint(r.left + r.width / 2, (top + bottom) / 2);
+          if (!b.contains(hit)) out.push([b.id || b.textContent.trim(), to, hit && (hit.id || hit.tagName)]); } }
+      band.scrollTop = 0; return out; }'''
+
     def hold_reads(self, page, answer):
         """Holds the page's reads of the reading target's questions and image requests until release(); then answers them
         `answer[0]`: 'none', 'some' (an open question, a Closed request) or 'failed' (503)."""
@@ -2208,6 +2220,9 @@ class StudyPanelPageDOM(unittest.TestCase):
                     expect(page.locator('#image-request-notice')).to_be_visible()))
                 self.assertEqual({'question': [self.TOLD['some'][0], True], 'request': [self.TOLD['some'][1], True], 'draft': True},
                                  page.evaluate(self.BAND))
+                # The notices never lie over a row's button, the band scrolled to its top or its end (stuck over the
+                # scrolled rows, a notice took the click meant for Keep This Text).
+                self.assertEqual([], page.evaluate(self.COVERED))
                 # Offline and back: nothing moves, the rows stand.
                 page.evaluate(self.WATCH_PLACES, self.REPORT_PLACES)
                 page.evaluate('() => { offline = true; renderClinical(); }')
