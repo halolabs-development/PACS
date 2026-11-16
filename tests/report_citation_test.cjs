@@ -885,6 +885,22 @@ test('TEST-B23-MEASUREMENT-STALE: a source set other than every source the rule 
   assert.deepEqual(f.writes, []);
 });
 
+test('TEST-B23-MEASUREMENT-MANY: more image marks than the citation-entry count is not a limit on the source set', async () => {
+  const n = 65, key = 'Key Image (Series 2 / Image 41)';
+  const many = [{ id: FINDING, revision: 2, hidden: false,
+    sources: Array.from({ length: n }, (_, i) => ({ kind: 'key', itemId: 'k-' + i, revision: 1, studyUid: UID })),
+    links: Array.from({ length: n }, (_, i) => ({ itemId: 'k-' + i, linkState: 'current', headRevision: 1, headHidden: false })) }];
+  const line = '측정: ' + Array(n).fill(key).join('; '), text = LINE + '\n' + line;
+  assert.ok(Buffer.byteLength(text) <= citation.REPORT_CITATION_LIMITS.insertedText, 'the text itself fits');
+  const f = fixture({ draft: { baseVersion: 4, citations: [] }, readable: many });
+  await put(f, { findings: text, insert: { ...MINSERT, sourceIndex: 0, expectedLinkState: 'current', expectedHeadRevision: 1,
+    insertedText: text, measurementLine: line,
+    measurementSources: Array.from({ length: n }, (_, i) => i) } });
+  const [entry] = stored(f);
+  assert.equal(entry.measurementSources.length, n);
+  assert.equal(entry.measurementLine, line);
+});
+
 test('TEST-B23-MEASUREMENT-HISTORY: a past version says only that an entry carried a measurement line', async () => {
   const withLine = { ...carried('a'), findingId: FINDING, insertedText: MTEXT, measurementLine: MLINE, measurementSources: [0, 1] };
   const f = fixture({ versions: new Map([[2, preserved([withLine, { ...carried('b'), findingId: FINDING, insertedText: LINE }], MTEXT)]]) });

@@ -379,4 +379,7 @@ test('TEST-B23-MEASUREMENT-NOTE: an entry says when it carried a machine-added l
   assert.equal(state.measurementLines(), true);
   state.unconfirm('1.2.3');
   assert.equal(state.measurementLines(), true, 'a fact about the server, not about one study row');
+  // A server rolled back to an older build stops saying it; the latest read is what counts.
+  state.confirm('1.2.3', { version: 1, head: [], draft: [] });
+  assert.equal(state.measurementLines(), false, 'the latest read no longer says it');
 });

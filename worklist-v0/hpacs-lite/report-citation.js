@@ -366,8 +366,9 @@ window.KinReportCitation = (function () {
         const remove = new Set([...((previous && previous.remove) || [])].filter(cid => alive.has(cid)));
         rows.set(uid, { confirmed: true, version: Number.isSafeInteger(answer.version) ? answer.version : 0,
                         head, draft, remove });
-        // The server said it records the Include Measurements line. It is a fact about the server, kept for the page.
-        if (answer.measurementLines === true) measurementLines = true;
+        // Whether the server records the Include Measurements line is what its latest answer says — a server
+        // rolled back to an older build stops saying it, and the line must then stop going out.
+        measurementLines = answer.measurementLines === true;
         return true;
       },
       /** Include Measurements opens only after a read from a server that records its line (else the line would go in unattested). */

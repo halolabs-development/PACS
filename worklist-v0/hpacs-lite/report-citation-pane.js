@@ -409,6 +409,11 @@
       if (why) { pane.status = why; renderCitePreview(); return; }
       // 측정 줄을 읽는 중에는 무엇이 들어갈지 아직 정해지지 않았다.
       if (pane.measure.state === "loading") return;
+      // 준비한 뒤 최신 읽기가 측정 줄 기록을 더는 말하지 않으면, 그 줄은 기록되지 않은 채 본문에만 남게 된다 — 내리고 멈춘다.
+      if (pane.measure.state === "ready" && !citations.measurementLines()) {
+        setMeasure(pane, { state: "off", seq: pane.measure.seq + 1 });
+        return;
+      }
       // 이 누름이 보낼 글과 측정 줄. 아래 어디서도 다시 만들지 않는다.
       const text = citeText(pane), measurement = pane.measure.state === "ready"
         ? { measurementLine: pane.measure.line, measurementSources: [...pane.measure.sources] } : null;

@@ -279,7 +279,9 @@ export function citationInsertInput(value: any): ReportCitationInsert {
     if (measurementLineProblem(value.measurementLine, value.insertedText) === 'suffix')
       throw new CitationInputError('insert.insertedText는 소견 글 다음 줄에 measurementLine으로 끝나야 합니다');
     const sources = value.measurementSources;
-    if (!Array.isArray(sources) || !sources.length || sources.length > REPORT_CITATION_LIMITS.entries ||
+    // 출처 수에는 따로 한도를 두지 않는다 — 인용 건수 한도와 다른 것이고, 집합은 삽입 때 규칙의 출처 전부와 대조되며
+    // 크기는 insertedText·기록 바이트 한도가 막는다.
+    if (!Array.isArray(sources) || !sources.length ||
         !sources.every(isIndex) || new Set(sources).size !== sources.length || sources.some((n: number, i: number) => i && n <= sources[i - 1]))
       throw new CitationInputError('insert.measurementSources는 겹치지 않는 출처 번호를 오름차순으로 담아야 합니다');
     measurement = { line: value.measurementLine, sources: [...sources] };

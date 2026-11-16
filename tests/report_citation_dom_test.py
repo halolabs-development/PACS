@@ -1279,6 +1279,28 @@ class ReportCitationDOMTest(unittest.TestCase):
         value = self.page.evaluate("snapshot()")
         self.assertEqual((False, None), (value["measure"]["checked"], value["measure"]["line"]), "a new pane starts off")
 
+    def test_a_newer_read_that_no_longer_says_the_server_records_the_line_takes_the_prepared_line_down(self):
+        self.open_measured()
+        self.reply_numbers(NUMBERS, NUMBERS)
+        self.turn_measure(True)
+        self.page.wait_for_function("()=>!$('#cite-preview-measure-line').hidden")
+        # The server went back to a build that does not record the line; the next citations read says so by omission.
+        self.page.evaluate("()=>{ citations.confirm('%s', {version: 1, head: [], draft: []}); }" % UID)
+        self.press_insert()
+        self.page.wait_for_function("()=>!$('#cite-preview-measure').checked")
+        value = self.page.evaluate("snapshot()")
+        self.assertEqual([], value["calls"], "the prepared line does not go out unrecorded")
+        self.assertEqual((True, None), (value["measure"]["disabled"], value["measure"]["line"]))
+        self.assertIn("서버가 측정 줄 기록을 지원하는지", value["measure"]["note"])
+        self.assertEqual([EXISTING, "", ""], value["text"])
+        # The next press inserts the person's block alone, exactly as with the box off.
+        self.page.evaluate("reply({status: 200, body: {inserted: {cid: 'cid-r', field: 'findings', insertedAt: '2026-09-20T02:00:00.000Z'}}})")
+        self.press_insert()
+        self.page.wait_for_function("()=>!$('#cite-preview').classList.contains('show')")
+        put = self.page.evaluate("snapshot()")["calls"][0]
+        self.assertEqual(BLOCK, put["body"]["insert"]["insertedText"])
+        self.assertNotIn("measurementLine", put["body"]["insert"])
+
     def test_a_server_refusal_of_a_changed_source_set_leaves_the_report_as_it_was(self):
         self.open_measured()
         self.reply_numbers(NUMBERS, NUMBERS)
