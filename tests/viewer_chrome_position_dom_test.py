@@ -591,6 +591,27 @@ class ChromePositionDOMTest(unittest.TestCase):
             wrong = [r['length'] for r in result['lengths'] if r['shown'] != r['needed']]
             self.assertEqual([], wrong, name + ': arrows shown exactly when the row does not fit without them')
         expect(page.get_by_role('button', name='Reload Settings', exact=True)).to_be_visible()
+
+    def test_15_a_new_measure_keeps_the_focused_arrow_and_where_the_row_was_paged_to(self):
+        # The arrows are hidden for a moment while the row is measured: the keyboard stays on the arrow it was on, and
+        # a row paged to its end stays there — for the tools on the top edge and on a side.
+        page = self.open(size=(900, 520), tools=MANY_TOOLS, settings=dict(version=2, bar=[t[0] for t in MANY_TOOLS], shortcuts={}))
+        for side, thumbs, size, scroll in (('top', 'bottom', 'width', 'scrollLeft'), ('left', 'right', 'height', 'scrollTop')):
+            self.chrome(page, toolbar=side, thumbs=thumbs)
+            nxt = page.get_by_role('button', name='Next Tools')
+            expect(nxt).to_be_visible()
+            page.evaluate("""s => { const bar = document.querySelector('.kin-ux-tools-bar'); bar[s] = 1e6; }""", scroll)
+            nxt.focus()
+            before = page.evaluate("s => document.querySelector('.kin-ux-tools-bar')[s]", scroll)
+            self.assertGreater(before, 0, side)
+            for change in (1, 2, 0):  # the page narrowed (or shortened) a little: the toolbar is measured again
+                page.evaluate("([size, change]) => { document.querySelector('#root > div').style[size] = `calc(100v${size[0]} - ${change}px)`; }",
+                              [size, change])
+                page.evaluate(FRAME); page.evaluate(FRAME)
+                expect(nxt).to_be_visible()
+                self.assertTrue(page.evaluate("() => document.activeElement?.getAttribute('aria-label') === 'Next Tools'"), '%s -%dpx' % (side, change))
+                bar = page.evaluate("s => { const b = document.querySelector('.kin-ux-tools-bar'); return [b[s], b.scrollWidth - b.clientWidth, b.scrollHeight - b.clientHeight]; }", scroll)
+                self.assertGreaterEqual(bar[0], min(before, bar[1] if scroll == 'scrollLeft' else bar[2]) - 1, '%s -%dpx' % (side, change))
     # ── A window across two displays ──
     def test_10_a_window_across_two_displays_copies_rows_on_top_or_bottom_only(self):
         page = self.open(span=683, series=20)

@@ -17,14 +17,19 @@ window.KinViewerUXToolbar = (() => {
     ...Object.fromEntries(turns.filter(id => value.shortcuts[id] == null).map(id => [id, window.KinViewerUXShortcuts.defaults[id]])) } };
   let cached = null, preparedFailure = null;
   // The paging arrows of a one-line row (the frequent tools here, the Feature Menus in viewer-features.js): shown only
-  // where the row's content does not fit the room the row has with the arrows hidden. That room is read with the arrows
-  // hidden, in the same task, so the answer never depends on whether the arrows are showing: the arrows' room comes partly
-  // from the row's neighbours (the status line next to Reload Settings), and a guess of "the row's length plus the
-  // arrows" hid them again just under the length where the row stops fitting — the toolbar then moved every frame.
+  // where the row's content does not fit the room the row has without the arrows. That room is read with the arrows
+  // taken out of the row's line, in the same task, so the answer never depends on whether the arrows are showing: the
+  // arrows' room comes partly from the row's neighbours (the status line next to Reload Settings), and a guess of "the
+  // row's length plus the arrows" hid them again just under the length where the row stops fitting — the toolbar then
+  // moved every frame. The arrows are taken out of the line (not hidden) so an arrow with the keyboard on it keeps it,
+  // and the row is put back where it was paged to (a wider row for a moment can only page less far).
   function pageArrows(row, pagers, vertical) {
-    if (pagers.some(node => !node.hidden)) pagers.forEach(node => { node.hidden = true; });
+    const scroll = vertical ? 'scrollTop' : 'scrollLeft', paged = row[scroll];
+    const positions = pagers.map(node => node.style.position);
+    pagers.forEach(node => { node.style.position = 'absolute'; });
     const fits = vertical ? row.scrollHeight <= row.clientHeight + 1 : row.scrollWidth <= row.clientWidth + 1;
-    if (!fits) pagers.forEach(node => { node.hidden = false; });
+    pagers.forEach((node, index) => { node.style.position = positions[index]; if (node.hidden !== fits) node.hidden = fits; });
+    if (row[scroll] !== paged) row[scroll] = paged;
     return !fits;
   }
   async function prepare(session) {
