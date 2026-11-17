@@ -458,7 +458,7 @@ class ClinicalContextLive(unittest.TestCase):
             insert(sentinel["oid"] + suffix)
             matched = self.stack.request("POST", "/match", "tech", {"uid": fixture.uid, "oid": sentinel["oid"] + suffix, "patient": {}})
             self.assertEqual(matched.status, 201, matched.text[:300])
-            self.assertEqual((matched.body["matched"], matched.body["ward"]), ("M", sentinel["ward"]), "the Match copies exist")
+            self.assertEqual((matched.body["matched"], matched.body["ov"]["ward"]), ("M", sentinel["ward"]), "the Match copies exist")
         note = self.stack.request("POST", f"/studies/{quote(anchor.uid)}/tech-note", "tech",
                                   {"baseVersion": 0, "text": "SYN L06 note", "reason": ""})
         self.assertIn(note.status, (200, 201), note.text[:300])

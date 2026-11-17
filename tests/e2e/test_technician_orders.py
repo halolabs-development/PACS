@@ -85,20 +85,28 @@ class TechnicianOrdersE2E(WorklistE2E):
         result = self.window_rows(w)
         self.assertEqual([source_acc, accession], result["Accession"])
         self.assertEqual(["U", "M"], result["Mt"])
+        # The order's ward is shown over the study's own (empty) one; the study's own ward column is not written.
+        self.assertEqual(["—", "SYNWARD"], result["Ward"])
         w.get_by_role("button", name="Close").click()
         self.assertEqual("M", self.state(fixture)["matched"])
-        self.assertEqual([accession, source_acc, "SYNTHETIC ORDER DOC"], page.evaluate(
-            f"() => {{ const s = studies.find(x => x.uid === {json.dumps(fixture.uid)}); return [s.acc, s.sourceAcc, s.reqDoc]; }}"))
+        self.assertEqual([accession, source_acc, "SYNTHETIC ORDER DOC", "SYNWARD"], page.evaluate(
+            f"() => {{ const s = studies.find(x => x.uid === {json.dumps(fixture.uid)}); return [s.acc, s.sourceAcc, s.reqDoc, s.ward]; }}"))
+        self.assertEqual(["t"], psql('SELECT ward = \'\' FROM "StudyState" WHERE uid=' + lit(fixture.uid)))
 
         # Unmatch… with a reason: the archive's accession again, the reason in the audit row.
         page.locator("#order-actions").get_by_role("button", name="Unmatch…", exact=True).click()
         w = page.locator("dialog[data-order-window='order-unmatch']")
+        self.assertEqual(["SYNWARD", "—"], self.window_rows(w)["Ward"], "the window shows the ward the Unmatch gives back")
         w.get_by_label("Reason").fill("SYNTHETIC linked to the wrong order")
         w.get_by_role("button", name="Unmatch", exact=True).click()
         expect(w).to_contain_text("Restored (read back)", timeout=30000)
         self.assertEqual([accession, source_acc], self.window_rows(w)["Accession"])
+        # No value of the wrongly matched order stays: the ward is the study's own (empty) again.
+        self.assertEqual(["SYNWARD", "—"], self.window_rows(w)["Ward"])
         w.get_by_role("button", name="Close").click()
         self.assertEqual("U", self.state(fixture)["matched"])
+        self.assertEqual("", page.evaluate(f"() => studies.find(x => x.uid === {json.dumps(fixture.uid)}).ward"))
+        self.assertEqual("", self.state(fixture)["ward"])
         [detail] = psql('SELECT detail FROM "AuditLog" WHERE action=\'unmatch\' AND target=' + lit(fixture.uid) + " ORDER BY id DESC LIMIT 1")
         self.assertEqual("SYNTHETIC linked to the wrong order", json.loads(detail)["reason"])
 

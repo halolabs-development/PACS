@@ -631,6 +631,8 @@
      *   orders.unmatch(uid, reason)             and alert): { ok, message?, reloaded } where reloaded resolves true only
      *                                           when the list and the Order List were both read again
      *   orders.identity(uid)                    a copy of the study's last server-read DICOM tags (a preview), or null
+     *   orders.ownWard(uid)                     the own ward of the study as the server last sent it (a Match shows the
+     *                                           ward of the order over it and an Unmatch shows it again), or null
      */
     function copyOf(value) {
       if (value === undefined || value === null) return value ?? null;
@@ -770,6 +772,7 @@
             return { ok: r.ok, message: r.message ?? null, reloaded: r.reloaded ?? Promise.resolve(false) };
           },
           identity: uid => studyIdentityModel ? copyOf(KinStudyIdentity.tags(studyIdentityModel, uid)) : null,
+          ownWard: uid => { const a = appState[uid]; return typeof a?.ward === 'string' ? a.ward : null; },
         }),
         // The DICOM request tags the Clinical Context panel shows now ({ uid, tags: [{ keyword, value }] } or null).
         clinicalTags: () => { try { return clinicalContext?.tags?.() ?? null; } catch (_) { return null; } },

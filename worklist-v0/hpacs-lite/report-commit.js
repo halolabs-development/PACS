@@ -876,6 +876,9 @@
       if (a.holder === null || a.holder === undefined) s.holder = a.holder;
       // The row Confirm value is the shown approval time (the stored a.confirm is a date only), as in applyState.
       s.confirm = confirmText({ ...a, rs: s.rs });
-      if (a.ward) s.ward = a.ward;
+      // The ward as applyState draws a row: the own value of the study (an empty one included), with the overlay value
+      // (the ward of a matched order, a Modify) over it.
+      if (typeof a.ward === "string") s.ward = a.ward;
+      if (overlayValue("ward", a.ov?.ward)) s.ward = a.ov.ward;
       if (a.reqHosp && !s.institutionName) s.reqHosp = a.reqHosp;
     }
