@@ -367,6 +367,16 @@ function classify2d(h: DicomJson, sop: string): Base {
   return fail('image-type-unsupported');
 }
 
+// The volumetric summaries (Volumetric Properties / Volume Based Calculation Technique) a device is known to write on its
+// one-frame synthetic 2D view; the viewer's mammography-model.js keeps the same list. Any other pair stays unverified.
+//   SAMPLED/TOMOSYNTHESIS  GE Pristina 10.x A.2 and Fuji 897N201838B §8.1.1.36 conformance statements.
+//   SAMPLED/NONE           GE SenoIris V-Preview objects of the public TCIA EA1141 collection (DOI 10.7937/2BAS-HR33).
+//   VOLUME/MAX_IP          Hologic RD-04751 across AWS versions; Hologic Selenia Dimensions / 3Dimensions only.
+function generated2dSummary(h: DicomJson, vp: string | null, technique: string | null): boolean {
+  if (vp === 'SAMPLED') return technique === 'TOMOSYNTHESIS' || technique === 'NONE';
+  return vp === 'VOLUME' && technique === 'MAX_IP' && hologic(h);
+}
+
 function classifyBto(h: DicomJson): Base {
   const nf = valuesOf(h, '00280008');
   if (!nf || !nf.length) fail('frame-count-absent');
@@ -399,9 +409,8 @@ function classifyBto(h: DicomJson): Base {
   if (!['VOLUME', 'SAMPLED'].includes(vp)) fail('volumetric-unsupported');
   if (v4 === 'GENERATED_2D') {
     // D1892: vendor-universal support supersedes D735's sample-device/software restriction.
-    const standard = vp === 'SAMPLED' && technique === 'TOMOSYNTHESIS';
     const hologicShape = hologic(h) && vp === 'VOLUME' && technique === 'MAX_IP';
-    if (n === 1 && key === 'DERIVED\\PRIMARY\\TOMOSYNTHESIS\\GENERATED_2D' && (standard || hologicShape))
+    if (n === 1 && key === 'DERIVED\\PRIMARY\\TOMOSYNTHESIS\\GENERATED_2D' && generated2dSummary(h, vp, technique))
       return { base: 'device-synthetic-2d', basis: hologicShape && first(h, '00081090')?.toUpperCase() === 'SELENIA DIMENSIONS' && software(h, ['AWS:1.9.1.8'])
         ? 'hologic-selenia-dimensions-bto-generated-2d' : 'breast-tomosynthesis-generated-2d', representation: null, biopsy: null };
     return fail('unsupported-device-profile');
