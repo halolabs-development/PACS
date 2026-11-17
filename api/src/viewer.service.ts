@@ -166,7 +166,7 @@ export class ViewerService {
         SELECT (SELECT "institutionId" FROM parent) AS institution, EXISTS(SELECT 1 FROM parent) AS allowed, ${signedColumn}
           COALESCE((SELECT jsonb_agg(to_jsonb(page) ORDER BY page.id) FROM (
             SELECT i.* FROM "ViewerItem" i JOIN parent p ON p.uid = i."studyUid"
-            WHERE (${page.includeHidden} OR NOT i.hidden) ${signedItems}
+            WHERE (${page.includeHidden} OR NOT i.hidden) AND i.snapshot->'deleted' IS DISTINCT FROM 'true'::jsonb ${signedItems}
               AND (${page.recheck}::uuid IS NULL OR i.id = ${page.recheck}::uuid)
               AND (${page.cursor}::uuid IS NULL OR i.id > ${page.cursor}::uuid)
             ORDER BY i.id LIMIT ${page.limit + 1}) page), '[]'::jsonb) AS rows`;
@@ -241,13 +241,18 @@ export class ViewerService {
       if (head) {
         if (head.revision !== command.expectedRevision) conflict();
         const old = head.snapshot as any;
+        // A deleted item takes no further revision of any kind.
+        if (old.deleted === true) conflict();
         if (manual && old.sourceDigest !== sourceDigest) conflict();
         for (const field of ['schemaVersion', 'kind', 'seriesUid', 'sopUid', 'frame', 'frameOfReferenceUid'])
           if (old[field] !== command.item[field]) conflict();
         if ((command.action === 'hide' && head.hidden) || (command.action === 'restore' && !head.hidden)) conflict();
       }
-      const hidden = command.action === 'hide' || (command.action === 'edit' && head.hidden);
-      const snapshot = { ...command.item, ...(manual ? { sourceDigest } : {}), hidden }, serialized = canonical(snapshot);
+      const hidden = command.action === 'hide' || command.action === 'delete' || (command.action === 'edit' && head.hidden);
+      // Delete keeps the saved content as it was (not the request's copy) and marks it deleted: the item and every earlier
+      // revision stay in the database, but no item list shows it again (read). Its revisions are still read by id.
+      const snapshot = command.action === 'delete' ? { ...(head.snapshot as any), hidden: true, deleted: true }
+        : { ...command.item, ...(manual ? { sourceDigest } : {}), hidden }, serialized = canonical(snapshot);
       const sizes = await tx.$queryRaw<{ bytes: number }[]>`SELECT octet_length(convert_to(${serialized}::jsonb::text, 'UTF8')) AS bytes`;
       const bytes = sizes[0].bytes;
       if (bytes > VIEWER_LIMITS.snapshot) storageLimit();

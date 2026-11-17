@@ -26,6 +26,9 @@ test('strict DTO and Unicode code point limits', () => {
     { ...body, item: { ...item, frame: 0 } }, { ...body, item: { ...item, frame: 1.1 } },
     { ...body, item: { ...item, frame: true } }, { ...body, item: { ...item, schemaVersion: 2 } }]) reject(() => v.viewerCommand(raw(bad), true));
   assert.equal(v.viewerCommand(raw({ ...body, expectedRevision: 1, action: 'hide' }), false).reason, '');
+  // A saved item may be deleted (a revision of its own); a new one cannot be created deleted.
+  assert.equal(v.viewerCommand(raw({ ...body, expectedRevision: 1, action: 'delete' }), false).action, 'delete');
+  reject(() => v.viewerCommand(raw({ ...body, expectedRevision: 1, action: 'erase' }), false));
   assert.equal(v.viewerCommand(raw({ ...body, expectedRevision: 1, action: 'hide', reason: '사유' }), false).action, 'hide');
 });
 test('canonical command semantic equality and significant text/array order', () => {

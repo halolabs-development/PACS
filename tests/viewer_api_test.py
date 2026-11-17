@@ -364,4 +364,37 @@ class ViewerAPI(unittest.TestCase):
         self.assertEqual(self.snapshot(),before)
         self.assertEqual(self.call(body=command),head)
 
+    def test_10_delete_leaves_every_list_keeps_its_revisions_and_takes_no_more(self):
+        # A saved item deleted (the viewer's Delete): no list shows it again, hidden or not, author or final; its revisions,
+        # its row and its receipts stay, the same request answers the same, and no revision of any kind follows it.
+        kept,_=self.create()
+        head,_=self.create(item={**self.key,'title':'지울 항목'})
+        hidden,_=self.revise(head,'hide',reason='숨김')
+        deleted,remove=self.revise(hidden,'delete',item={**self.key,'title':'요청에서 바꾼 제목'})
+        self.assertEqual((deleted['revision'],deleted['hidden'],deleted['item']['deleted'],deleted['item']['title']),(3,True,True,'지울 항목'))
+        for query in ('','?includeHidden=true','?includeHidden=true&recheck='+head['id']):
+            self.assertEqual([x['id'] for x in self.call(method='GET',path=self.path+query)['items']],[] if 'recheck' in query else [kept['id']],query)
+        history=self.call(method='GET',path=self.path+'/'+head['id']+'/revisions')['revisions']
+        self.assertEqual([r['action'] for r in history],['create','hide','delete'])
+        self.assertEqual(history[0]['item']['title'],'지울 항목')
+        before=self.snapshot()
+        self.assertEqual(len([r for r in before['ViewerItem'] if json.loads(r)['id']==head['id']]),1)
+        self.assertIn('viewer.delete',' '.join(before['AuditLog']))
+        self.assertEqual(self.call(body=remove,path=self.path+'/'+head['id']+'/revisions'),deleted)
+        item={k:v for k,v in deleted['item'].items() if k not in ('hidden','deleted')}
+        for action in ('edit','hide','restore','delete'):
+            self.revise({**deleted,'item':item},action,reason='',status=409)
+        self.assertEqual(self.snapshot(),before)
+        # The referring physician's reads of the signed report: the final item list and the report's key images have the
+        # kept item only.
+        self.stack.create_test_identity('viewer-delete-clinician',['clinician'],'hallym')
+        signed=self.stack.request('POST','/studies/'+self.uid+'/report/commit','doctor',
+            dict(action='approve',baseVersion=0,findings='합성 승인',conclusion='',recommendation=''))
+        self.assertEqual(signed.status,201,signed.text)
+        final=self.call(method='GET',user='viewer-delete-clinician')
+        self.assertEqual([x['id'] for x in final['items']],[kept['id']])
+        keys=self.call(method='GET',user='viewer-delete-clinician',path='/clinician/studies/'+self.uid+'/report')['keys']
+        self.assertEqual(len(keys),1,keys)
+        self.assertNotIn('지울 항목',json.dumps(keys,ensure_ascii=False))
+
 if __name__=='__main__': unittest.main(verbosity=2)
