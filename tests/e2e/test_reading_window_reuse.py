@@ -83,7 +83,9 @@ class ReadingWindowReuseE2E(ReadingWorkspaceE2E):
         result = page.evaluate("""uid => {
           localStorage.setItem('kin.ohif.current.rect', JSON.stringify({left:123, top:145, width:900, height:700}));
           const calls = [];
-          window.open = () => {
+          window.open = (url, name, features) => {
+            // Looking the open window up to raise it (noopener) opens none in a browser; it answers null.
+            if (url === '' && features === 'noopener') { calls.push(['raise']); return null; }
             let openerValue = 'initial';
             const popup = {
               closed: false, location: { href: 'about:blank' },

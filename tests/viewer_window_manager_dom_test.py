@@ -116,7 +116,13 @@ window.__blankPopup=()=>{
     focusCalls:0,closeCalls:0,resizeCalls:0,moveCalls:0,focus(){this.focusCalls++},
     close(){this.closeCalls++;this.closed=true},resizeTo(){this.resizeCalls++},moveTo(){this.moveCalls++}};
 };
-window.open=(...args)=>{__openCalls.push(args);if(__blockNextOpen){__blockNextOpen=false;return null}
+// A browser answers window.open(anything, name) with the live window of that name instead of opening one (no popup
+// blocker either); those lookups are recorded apart so a case can still count the windows it asked to open.
+window.__lookups=[];
+window.open=(...args)=>{const named=args[1]&&[...(window.__popups||[]),...__opened].find(p=>!p.closed&&p.name===args[1]);
+  if(named){__lookups.push({url:args[0],name:args[1],features:args[2],active:navigator.userActivation.isActive});
+    return args[2]==='noopener'?null:named}
+  __openCalls.push(args);if(__blockNextOpen){__blockNextOpen=false;return null}
   const popup=__nextOpenPopup||__blankPopup();__nextOpenPopup=null;popup.openArgs=args;__opened.push(popup);return popup};
 window.getScreenDetails = undefined;
 window.BroadcastChannel = undefined;
@@ -358,6 +364,123 @@ class ViewerWindowManagerDOMTest(unittest.TestCase):
                 self.page.locator(f'[data-window-index="{index}"][data-window-action="focus"]').click()
                 self.assertEqual(self.page.evaluate("__popups[0].focusCalls"), 2)
 
+    # A viewer window is detached from its opener, and Chrome ignores popup.focus() from a page that is not the opener: the
+    # reused window changed its study behind the list. The list now looks the window up by a name only that window carries
+    # for the call (noopener), inside the click - which is what raises an existing window (measured on Chrome 157 with real
+    # input and the OS foreground window; this harness can only see the call).
+    def click_to_run(self, body):
+        """Run `body` from a real click, so it has the browser's user activation as a row double-click would."""
+        self.page.evaluate("""body => {const b=document.createElement('button');b.id='syn-trigger';b.textContent='Trigger';
+          b.onclick=new Function(body);document.body.append(b);}""", body)
+        self.page.locator('#syn-trigger').click()
+
+    def named_popup(self, **state):
+        return self.page.evaluate("""state => {const made=__makePopup(state);made.popup.opener=null;
+          made.popup.name=viewerWindows.rows().find(r=>r.index===made.index).name;return made.popup.name}""", state)
+
+    def assert_one_raise(self, lookups):
+        self.assertEqual(1, len(lookups), lookups)
+        self.assertEqual(("", "noopener", True), (lookups[0]["url"], lookups[0]["features"], lookups[0]["active"]))
+        self.assertTrue(lookups[0]["name"].startswith("kin-raise:"), lookups[0]["name"])
+
+    def test_reused_window_comes_to_front_inside_the_click(self):
+        name = self.named_popup()
+        self.click_to_run("window.__result=openOhifWindow('1.2.2')")
+        result = self.page.evaluate("""() => ({status:__result.status,lookups:__lookups,openCalls:__openCalls.length,
+          opened:__opened.length,href:__popups[0].location.href,name:__popups[0].name,opener:__popups[0].opener,
+          focusCalls:__popups[0].focusCalls})""")
+        self.assertEqual("accepted", result["status"])
+        self.assertIn("StudyInstanceUIDs=1.2.2", result["href"])
+        self.assert_one_raise(result["lookups"])
+        # The session hand-over name the next document reads is back in place after the lookup.
+        self.assertEqual("kin-viewer-entry:", result["name"][:17])
+        self.assertIn(name, result["name"])
+        self.assertEqual((0, 0), (result["openCalls"], result["opened"]))
+        self.assertIsNone(result["opener"])
+        self.assertGreaterEqual(result["focusCalls"], 1)
+
+    def test_kept_loading_and_same_study_windows_come_to_front_too(self):
+        cases = {
+            "unsaved": ({"dirty": True}, "'1.2.2'", "저장하지 않은"),
+            "busy": ({"busy": True}, "'1.2.2'", "저장·복원"),
+            "loading": ({"pending": "https://example.test/ohif/viewer?StudyInstanceUIDs=1.2.2"}, "'1.2.2'", "불러오는 중"),
+            "same_study": ({}, "'1.2.1'", None),
+            "coverage_refused": ({"coverage": False}, "'1.2.2'", "Frame Coverage"),
+        }
+        for label, (state, uid, notice) in cases.items():
+            with self.subTest(case=label):
+                self.reset_harness()
+                name = self.named_popup(**state)
+                href = self.page.evaluate("__popups[0].location.href")
+                self.click_to_run(f"window.__result=openOhifWindow({uid})")
+                result = self.page.evaluate("""() => ({lookups:__lookups,openCalls:__openCalls.length,opened:__opened.length,
+                  href:__popups[0].location.href,name:__popups[0].name,toasts:__toasts.map(t=>t.message)})""")
+                self.assert_one_raise(result["lookups"])
+                self.assertEqual((0, 0, href.split("#")[0], name),
+                                 (result["openCalls"], result["opened"], result["href"].split("#")[0], result["name"]))
+                if notice:
+                    self.assertTrue(any(notice in message for message in result["toasts"]), result["toasts"])
+
+    def test_viewer_windows_focus_and_next_bring_the_window_to_front(self):
+        name = self.named_popup()
+        for action in ("focus", "next"):
+            with self.subTest(action=action):
+                self.page.evaluate("__lookups.length=0")
+                self.page.locator("#viewer-windows-open").click()
+                if action == "focus":
+                    self.focus_button(0).click()
+                else:
+                    self.page.locator("#viewer-windows-next").click()
+                self.assert_one_raise(self.page.evaluate("__lookups"))
+                self.assertEqual(name, self.page.evaluate("__popups[0].name"))
+                self.assertFalse(self.page.locator("#viewer-windows-dialog").evaluate("dialog=>dialog.open"))
+                self.assertEqual(0, self.page.evaluate("__openCalls.length"))
+
+    def test_without_user_activation_only_focus_is_tried(self):
+        self.named_popup()
+        self.page.evaluate("Object.defineProperty(navigator,'userActivation',{configurable:true,value:{isActive:false}})")
+        self.click_to_run("window.__result=openOhifWindow('1.2.2')")
+        result = self.page.evaluate("({lookups:__lookups,openCalls:__openCalls.length,focusCalls:__popups[0].focusCalls})")
+        self.assertEqual([], result["lookups"])
+        self.assertEqual(0, result["openCalls"])
+        self.assertGreaterEqual(result["focusCalls"], 1)
+
+    def test_raise_rule_looks_up_only_that_window_and_restores_its_name(self):
+        result = self.page.evaluate("""() => {
+          const out={};
+          const make=(extra={})=>({name:'kin-ohif-current',closed:false,opener:null,focusCalls:0,focus(){this.focusCalls++},...extra});
+          const from=(p,active=true)=>{const f={calls:[],navigator:{userActivation:{isActive:active}},crypto};
+            f.open=(url,name,features)=>{f.calls.push([url,name,features,p?.name]);return null};return f};
+          let p=make(),f=from(p);out.same=[KinExamScope.raiseWindow(p,f),f.calls,p.name,p.focusCalls,p.opener];
+          p=make();f=from(p,false);out.inactive=[KinExamScope.raiseWindow(p,f),f.calls.length,p.focusCalls];
+          p=make();f=from(p);f.navigator={};out.noActivationApi=[KinExamScope.raiseWindow(p,f),f.calls.length];
+          p=make({name:''});f=from(p);out.unnamed=[KinExamScope.raiseWindow(p,f),f.calls.length,p.name];
+          p=make({name:undefined});f=from(p);out.nameless=[KinExamScope.raiseWindow(p,f),f.calls.length];
+          p=make({closed:true});f=from(p);out.closed=[KinExamScope.raiseWindow(p,f),f.calls.length];
+          p=make();Object.defineProperty(p,'name',{get(){throw Error('cross-origin')}});f=from(null);out.crossOrigin=[KinExamScope.raiseWindow(p,f),f.calls.length];
+          let held='kin-ohif-current';p=make();Object.defineProperty(p,'name',{get(){return held},set(){throw Error('denied')}});f=from(null);
+          out.renameRefused=[KinExamScope.raiseWindow(p,f),f.calls.length];
+          p=make({focus(){throw Error('focus failed')}});f=from(p);out.focusThrows=KinExamScope.raiseWindow(p,f);
+          p=make();f=from(p);f.open=()=>{throw Error('blocked')};out.openThrows=[KinExamScope.raiseWindow(p,f),p.name];
+          return out;}""")
+        same = result["same"]
+        self.assertTrue(same[0])
+        self.assertEqual(1, len(same[1]))
+        url, probe, features, name_at_call = same[1][0]
+        self.assertEqual(("", "noopener"), (url, features))
+        self.assertTrue(probe.startswith("kin-raise:") and len(probe) > 20, probe)
+        self.assertEqual(probe, name_at_call)
+        self.assertEqual(["kin-ohif-current", 1, None], same[2:])
+        self.assertEqual([False, 0, 1], result["inactive"])
+        self.assertEqual([False, 0], result["noActivationApi"])
+        self.assertEqual([True, 1, ""], result["unnamed"])
+        self.assertEqual([False, 0], result["nameless"])
+        self.assertEqual([False, 0], result["closed"])
+        self.assertEqual([False, 0], result["crossOrigin"])
+        self.assertEqual([False, 0], result["renameRefused"])
+        self.assertTrue(result["focusThrows"])
+        self.assertEqual([False, "kin-ohif-current"], result["openThrows"])
+
     def test_second_study_is_neutral_comparison_with_date_and_uid(self):
         self.page.evaluate("""() => {__makePopup({href:'https://example.test/ohif/viewer?StudyInstanceUIDs=1.2.1,1.2.2'});
           document.querySelector('#viewer-windows-open').click()}""")
@@ -511,6 +634,80 @@ class ViewerWindowManagerDOMTest(unittest.TestCase):
                 expected = {"dirty": "저장하지 않은", "busy": "검사와 계정을 확인", "coverage": "Frame Coverage"}
                 self.assertIn(expected[name], result["status"])
                 self.assertEqual(result["rows"], 1)
+
+
+REAL_LIST = r"""<!doctype html><meta charset="utf-8"><title>SYN LIST</title>
+<button id="open">Open</button><button id="again">Again</button><button id="move">Move</button>
+<script src="/exam-scope.js"></script>
+<script>
+let popup=null;window.results=[];
+document.querySelector('#open').onclick=()=>{popup=window.open('/viewer?s=A','kin-ohif-current','popup=yes,width=400,height=300');popup.opener=null;};
+document.querySelector('#again').onclick=()=>{const marker=popup.marker;
+  results.push({raised:KinExamScope.raiseWindow(popup),same:popup.marker===marker,opener:popup.opener,name:popup.name});};
+document.querySelector('#move').onclick=()=>{popup.name='kin-viewer-entry:'+JSON.stringify({session:'SYN',name:'kin-ohif-current'});
+  popup.location.href='/viewer?s=B';results.push({raised:KinExamScope.raiseWindow(popup),opener:popup.opener});};
+</script>"""
+REAL_VIEWER = r"""<!doctype html><meta charset="utf-8"><title>SYN VIEWER</title><script>
+window.marker=Math.random();
+if(window.name.startsWith('kin-viewer-entry:'))window.name=JSON.parse(window.name.slice(17)).name;
+document.title='SYN VIEWER '+new URLSearchParams(location.search).get('s');
+</script>"""
+
+
+class ViewerWindowRaiseRealPopupTest(unittest.TestCase):
+    """The raise rule on real browser windows: the name lookup finds the open viewer window itself - no new window, no
+    reload, the detachment kept - also while the window carries the session hand-over name and is navigating."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.pw = sync_playwright().start()
+        cls.browser = cls.pw.chromium.launch(headless=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def test_lookup_by_own_name_keeps_the_window_its_document_and_navigation(self):
+        context = self.browser.new_context()
+        scope = WINDOWS.with_name("exam-scope.js").read_text(encoding="utf-8")
+        def serve(route):
+            path = urlparse_path(route.request.url)
+            body = {"/list": REAL_LIST, "/viewer": REAL_VIEWER, "/exam-scope.js": scope}.get(path)
+            if body is None:
+                route.abort()
+            else:
+                route.fulfill(status=200, body=body,
+                              content_type="text/javascript" if path.endswith(".js") else "text/html")
+        context.route("**/*", serve)
+        try:
+            page = context.new_page()
+            errors = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.goto("https://example.test/list")
+            with context.expect_page() as opened:
+                page.locator("#open").click()
+            viewer = opened.value
+            viewer.wait_for_load_state()
+            self.assertEqual("SYN VIEWER A", viewer.title())
+            page.locator("#again").click()
+            self.assertEqual([{"raised": True, "same": True, "opener": None, "name": "kin-ohif-current"}],
+                             page.evaluate("results"))
+            self.assertEqual(2, len(context.pages))
+            page.locator("#move").click()
+            viewer.wait_for_function("document.title === 'SYN VIEWER B'")
+            self.assertEqual({"raised": True, "opener": None}, page.evaluate("results[1]"))
+            self.assertEqual("kin-ohif-current", viewer.evaluate("window.name"))
+            self.assertIsNone(viewer.evaluate("window.opener"))
+            self.assertEqual(2, len(context.pages))
+            self.assertEqual([], errors)
+        finally:
+            context.close()
+
+
+def urlparse_path(url):
+    from urllib.parse import urlparse
+    return urlparse(url).path
 
 
 if __name__ == "__main__":
