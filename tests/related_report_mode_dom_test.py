@@ -91,8 +91,8 @@ def request_hash(body):
     # A whole-report Insert (`also`) is its own contract: its marker, and its second field right after the first one's text.
     also = r.get("also")
     second = [[also["section"], also["offset"], also["text"]]] if also else []
-    return sha(["related-insert-v2" if also else "related-insert-v1", r["insertRequestId"], owner["institution"], owner["sub"],
-                owner["author"], r["targetUid"], epoch, int(revision), s["uid"], s["version"], s["action"],
+    return sha(["related-insert-v2" if also else "related-insert-v1", r["insertRequestId"],
+                owner["institution"], owner["sub"], owner["author"], r["targetUid"], epoch, int(revision), s["uid"], s["version"], s["action"],
                 [[p["field"], p["start"], p["end"]] for p in s["parts"]],
                 r["targetBaseVersion"], r["seedKind"], r["section"], r["position"], r["offset"], r["text"], *second,
                 r["selectionSeq"], r["contentRevision"], r["sourceGeneration"], proposal_tuple(body)])
@@ -1094,6 +1094,24 @@ class RelatedModePage(unittest.TestCase):
         self.assertEqual(("", ""), (self.value(), self.value("conclusion")))
         self.assertIsNone(self.op_state())
         self.assertFalse(self.js("reportConverge.has(selectedUid)"), "the editor holds the saved draft again")
+
+    def test_whole_insert_refused_undo_still_leaves_no_unsent_findings_for_an_ordinary_save(self):
+        """The Conclusion edit and the native undo of Findings are both refused: the editor is reset to the saved draft, so
+        Back and the autosave never carry Findings alone as ordinary text."""
+        self.open(); self.open_target(); self.enter()
+        self.js("""() => { const native = document.execCommand.bind(document);
+          document.execCommand = (...args) => document.activeElement?.id === 'conclusion' || args[2] === '' ? false : native(...args); }""")
+        self.page.locator("#related-mode-insert").click()
+        expect(self.page.locator("#related-mode-status")).to_contain_text("현재 초안에 넣지 못했습니다")
+        self.assertEqual(("", ""), (self.value(), self.value("conclusion")))
+        self.assertFalse(self.js("reportConverge.has(selectedUid)"))
+        self.back()
+        writes = len(self.site.flow_puts)
+        self.page.clock.run_for(20001)
+        self.settle(300)
+        self.assertEqual(writes, len(self.site.flow_puts), "no ordinary write")
+        self.assertEqual([], self.site.related_puts)
+        self.assertIsNone(self.stored())
 
     def test_w5_lost_answer_is_unknown_and_check_promotes_only_with_the_receipt_and_the_whole_draft(self):
         self.open()

@@ -6672,6 +6672,14 @@
         const at = reportFrame.capture(f.field, { start: f.offset, end: f.offset + f.text.length });
         undone = !!relatedMode.admit({ field: f.field, at, text: "", op }, admission => editReport([{ field: f.field, at, text: "" }], { admission })) || undone;
       }
+      // A field whose inverse edit was refused too is reset by the frame's own authoritative write (as the frame resets a
+      // partial multi-field native failure): unsent Insert text must never stay for an ordinary save to carry.
+      const left = reportFrame ? op.fields.filter(f => reportFrame.read(f.field) === f.after) : [];
+      if (left.length) {
+        const texts = reportFrame.read();
+        for (const f of left) texts[f.field] = f.before;
+        if (reportFrame.replaceAuthoritative(texts)?.status !== "refused") { keepReportEditor(); undone = true; }
+      }
       relatedInserts.delete(op.uid);
       // The editor holds the stored seed again: it is saved text, not a write to send.
       if (undone) relatedInsertSeedKept(op.uid);
