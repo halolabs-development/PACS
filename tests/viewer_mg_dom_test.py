@@ -364,7 +364,11 @@ class ViewerMgDOMTest(unittest.TestCase):
         panel = page.get_by_role('dialog', name='Quadrant Zoom')
         expect(panel.get_by_label('Order')).to_have_value('symmetric')
         expect(panel.locator('b')).to_have_text('Quadrant 1/4: Upper-Outer (R/L matched)')
-        page.wait_for_function("() => synViews.get('lcc').getZoom() > 1.5")
+        # 4× is the first choice; Fill Quadrant fills each cell with the quadrant.
+        expect(panel.get_by_label('Zoom')).to_have_value('4x')
+        panel.get_by_label('Zoom').select_option('fill')
+        expect(page.locator('#pane-rcc [data-mg-badge=quadrant]')).to_have_text('Q1 Upper-Outer · Fill Quadrant')
+        page.wait_for_function("() => synViews.get('lcc').getZoom() > 2.1 && synViews.get('lcc').getZoom() < 3")
         # The breast box of R CC is x 160 … 400, y 32 … 272 (grid of 4 px); its chest-wall upper quarter is x 280 … 400, y 32 … 152.
         rcc = page.evaluate("() => KinMgBreastModel.detect(synViews.get('rcc').imageDataObject.getPointData().getScalars().getData(), 400, 300).box")
         quarter = {'x0': (rcc['x0'] + rcc['x1']) / 2, 'x1': rcc['x1'], 'y0': rcc['y0'], 'y1': (rcc['y0'] + rcc['y1']) / 2}
@@ -387,6 +391,124 @@ class ViewerMgDOMTest(unittest.TestCase):
         page.wait_for_function("() => Math.abs(synViews.get('rcc').getZoom() - 1) < 1e-9")
         self.assertNear(self.camera(page, 'lcc')['focal'], [199.5, 149.5])
 
+    # The centre of step `step`'s quarter of each cell's breast box, as the model names it for the cell's side and view.
+    QUARTER = """([id, step]) => { const v = synViews.get(id), side = v.info.side, view = v.info.view === '399162004' ? 'CC' : 'MLO';
+      const box = KinMgBreastModel.detect(v.imageDataObject.getPointData().getScalars().getData(), 400, 300).box;
+      const q = KinMgBreastModel.quadrant(step, { side, view, verified: true, flipH: false, flipV: false, columns: 400, rows: 300 }, box);
+      return { center: [(q.box.x0 + q.box.x1) / 2 - 0.5, (q.box.y0 + q.box.y1) / 2 - 0.5], name: q.name }; }"""
+
+    def test_05b_quadrant_zoom_4x_is_four_times_fit_in_every_cell_through_the_four_steps_in_mirrored_order(self):
+        page = self.open()
+        self.menu(page, 'Quadrant Zoom')
+        panel = page.get_by_role('dialog', name='Quadrant Zoom')
+        expect(panel.get_by_label('Zoom')).to_have_value('4x')
+        expect(panel.get_by_label('Zoom').locator('option')).to_have_text(['4×', 'Fill Quadrant'])
+        # The buttons and their order are as before.
+        expect(panel.get_by_role('button')).to_have_text(['Previous Quadrant', 'Next Quadrant', 'Close'])
+        expect(panel).to_contain_text('Fit(100 %)의 4배(400 %)')
+        names = ['Upper-Outer', 'Upper-Inner', 'Lower-Inner', 'Lower-Outer']
+        cells = ['rcc', 'lcc', 'rmlo', 'prcc']
+        for step in range(4):
+            if step:
+                panel.get_by_role('button', name='Next Quadrant').click()
+            expect(panel.locator('b')).to_have_text(f'Quadrant {step + 1}/4: {names[step]} (R/L matched)')
+            want = {cell: page.evaluate(self.QUARTER, [cell, step]) for cell in cells}
+            page.wait_for_function("([ids, want]) => ids.every(id => { const f = synViews.get(id).camera.focalPoint; return Math.abs(f[0] - want[id][0]) < 1e-6 && Math.abs(f[1] - want[id][1]) < 1e-6; })",
+                                   arg=[cells, {c: want[c]['center'] for c in cells}])
+            with self.subTest(step=step):
+                for cell in cells:
+                    # Four times Fit (400 %), the same in every cell whatever its quadrant's size.
+                    self.assertAlmostEqual(4, self.camera(page, cell)['zoom'], places=9)
+                # R/L mirrored: the left breast's quadrant is on the other side of its image (chest wall at the left).
+                # (the two boxes differ by a grid sample at most)
+                self.assertLessEqual(abs((399 - self.camera(page, 'rcc')['focal'][0]) - self.camera(page, 'lcc')['focal'][0]), 1.5)
+                self.assertLessEqual(abs(self.camera(page, 'rcc')['focal'][1] - self.camera(page, 'lcc')['focal'][1]), 1.5)
+                # The quadrant here (120 × 120 image px at 2 CSS px each) is larger than the 200 × 150 cell: said so.
+                expect(page.locator('#pane-rcc [data-mg-badge=quadrant]')).to_have_text(f'Q{step + 1} {names[step]} · 4× · edges outside')
+                expect(panel.locator('[role=status]')).to_contain_text('4×에서 사분면의 가장자리가 칸 밖에 있는 칸 — Current · R CC')
+        # Previous from step 1 goes round to step 4; the unverified prior is not zoomed.
+        panel.get_by_role('button', name='Next Quadrant').click()
+        panel.get_by_role('button', name='Previous Quadrant').click()
+        expect(panel.locator('b')).to_have_text('Quadrant 4/4: Lower-Outer (R/L matched)')
+        self.assertAlmostEqual(1, self.camera(page, 'plcc')['zoom'])
+        expect(page.locator('#pane-plcc [data-mg-badge=quadrant]')).to_have_text('Quadrant: orientation unverified')
+        # Close: every MG cell back to Fit; the choice stays for the next opening in this window.
+        panel.get_by_label('Zoom').select_option('fill')
+        panel.get_by_role('button', name='Close').click()
+        page.wait_for_function("() => Math.abs(synViews.get('rcc').getZoom() - 1) < 1e-9")
+        expect(page.locator('[data-mg-badge=quadrant]')).to_have_count(0)
+        self.menu(page, 'Quadrant Zoom')
+        expect(page.get_by_role('dialog', name='Quadrant Zoom').get_by_label('Zoom')).to_have_value('fill')
+
+    def test_05c_a_quadrant_badge_goes_when_the_cells_zoom_is_changed_and_a_breast_display_mode_goes_when_a_quadrant_is_shown(self):
+        page = self.open()
+        self.menu(page, 'Breast Display')
+        display = page.get_by_role('dialog', name='Breast Display')
+        display.get_by_role('button', name='Fit Breast').click()
+        expect(page.locator('#pane-rcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: Fit Breast')
+        self.menu(page, 'Quadrant Zoom')
+        panel = page.get_by_role('dialog', name='Quadrant Zoom')
+        expect(page.locator('#pane-rcc [data-mg-badge=quadrant]')).to_have_text('Q1 Upper-Outer · 4× · edges outside')
+        # The cell's zoom is the quadrant's now, not Fit Breast.
+        expect(page.locator('#pane-rcc [data-mg-badge=zoom]')).to_have_count(0)
+        # A pan keeps the step (the edges outside the cell are reached that way) …
+        page.evaluate("() => { const v = synViews.get('rcc'); const f = v.camera.focalPoint; v.setCamera({ focalPoint: [f[0] + 20, f[1], 0] }); }")
+        expect(page.locator('#pane-rcc [data-mg-badge=quadrant]')).to_have_text('Q1 Upper-Outer · 4× · edges outside')
+        # … the reader's own zoom ends it in that cell, and a Breast Display mode ends it in every cell it sets.
+        page.evaluate("() => synViews.get('rcc').setZoom(6)")
+        expect(page.locator('#pane-rcc [data-mg-badge=quadrant]')).to_have_count(0)
+        expect(page.locator('#pane-lcc [data-mg-badge=quadrant]')).to_have_text('Q1 Upper-Outer · 4× · edges outside')
+        # (the two windows stand in the same place: the press goes to the button itself)
+        display.get_by_role('button', name='1:1').evaluate('b => b.click()')
+        expect(page.locator('#pane-lcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: 1:1')
+        expect(page.locator('#pane-lcc [data-mg-badge=quadrant]')).to_have_count(0)
+        # A size change then leaves the cells given to 1:1 as they are.
+        one = self.camera(page, 'lcc')['zoom']
+        page.evaluate("() => { for (const v of synViews.values()) v.element.style.width = '120px'; }")
+        page.wait_for_timeout(400)
+        self.assertAlmostEqual(one, self.camera(page, 'lcc')['zoom'], places=9)
+        expect(page.locator('#pane-lcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: 1:1')
+        # The next step takes every cell again.
+        panel.get_by_role('button', name='Next Quadrant').click()
+        expect(page.locator('#pane-rcc [data-mg-badge=quadrant]')).to_have_text('Q2 Upper-Inner · 4× · edges outside')
+        expect(page.locator('#pane-lcc [data-mg-badge=zoom]')).to_have_count(0)
+        self.assertAlmostEqual(4, self.camera(page, 'lcc')['zoom'], places=9)
+
+    def test_05d_a_cell_leaves_the_step_with_another_stack_and_a_held_cell_of_another_size_is_drawn_again_for_it(self):
+        page = self.open()
+        self.menu(page, 'Quadrant Zoom')
+        panel = page.get_by_role('dialog', name='Quadrant Zoom')
+        panel.get_by_label('Zoom').select_option('fill')
+        expect(page.locator('#pane-dbt [data-mg-badge=quadrant]')).to_have_text('Q1 Upper-Outer · Fill Quadrant')
+        # Another slice of the same DBT keeps it; another stack in the cell does not.
+        page.evaluate("() => synViews.get('dbt').show(3)")
+        expect(page.locator('#pane-dbt [data-mg-badge=quadrant]')).to_have_text('Q1 Upper-Outer · Fill Quadrant')
+        page.evaluate("() => { const v = synViews.get('dbt'); v.ids = v.ids.slice(0, 6); synEmit('cells', 'data', { viewportId: 'dbt' }); }")
+        expect(page.locator('#pane-dbt [data-mg-badge=quadrant]')).to_have_count(0)
+        # The reader zooms L CC (it leaves the step); then every cell becomes narrower by a layout change alone (no window
+        # resize event).
+        page.evaluate("() => synViews.get('lcc').setZoom(2)")
+        expect(page.locator('#pane-lcc [data-mg-badge=quadrant]')).to_have_count(0)
+        before = self.camera(page, 'rcc')['zoom']
+        page.evaluate("() => { for (const v of synViews.values()) v.element.style.width = '100px'; }")
+        page.wait_for_function("z => Math.abs(synViews.get('rcc').getZoom() - z) > 1e-3", arg=before)
+        # Fill Quadrant worked out again for the held cell's new width …
+        rcc = page.evaluate("() => KinMgBreastModel.detect(synViews.get('rcc').imageDataObject.getPointData().getScalars().getData(), 400, 300).box")
+        width = page.evaluate("() => synViews.get('rcc').element.clientWidth")
+        self.assertEqual(100, width)
+        self.assertAlmostEqual(min(width / ((rcc['x1'] - rcc['x0']) / 2), 150 / ((rcc['y1'] - rcc['y0']) / 2)) * 0.98 / 0.5, self.camera(page, 'rcc')['zoom'], places=6)
+        expect(page.locator('#pane-rcc [data-mg-badge=quadrant]')).to_have_text('Q1 Upper-Outer · Fill Quadrant')
+        # … and not for the cell the reader zoomed, nor the one showing another stack.
+        page.wait_for_timeout(300)
+        self.assertAlmostEqual(2, self.camera(page, 'lcc')['zoom'], places=9)
+        expect(page.locator('#pane-lcc [data-mg-badge=quadrant]')).to_have_count(0)
+        expect(page.locator('#pane-dbt [data-mg-badge=quadrant]')).to_have_count(0)
+        # Close while a size change waits: nothing is drawn after it and nothing fails (the page's errors are checked).
+        page.evaluate("() => { for (const v of synViews.values()) v.element.style.width = '150px'; }")
+        panel.get_by_role('button', name='Close').click()
+        page.wait_for_timeout(400)
+        self.assertAlmostEqual(1, self.camera(page, 'rcc')['zoom'], places=9)
+        expect(page.locator('[data-mg-badge=quadrant]')).to_have_count(0)
     def test_06_tomo_steps_by_the_interval_plays_and_gives_way_to_cine(self):
         page = self.open()
         page.evaluate("() => { synActive = 'dbt'; }")
