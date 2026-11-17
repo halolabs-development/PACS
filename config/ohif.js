@@ -1523,9 +1523,74 @@ function kinCreateViewerHistory() {
       if (image?.Modality === 'MG' && kind === 'length' || image?.Modality === 'CT' && image.SOPClassUID === '1.2.840.10008.5.1.4.1.1.2' && Number(image.NumberOfFrames || 1) === 1) return null;
       return kinPlanarGeometry(image, reference(imageId)?.frame);
     }
+    // ── Screen calibration (the Calibration tool) ──
+    // An image whose original gives no pixel spacing at all (a scanned film, an outside CR) has no mm of its own. The reader may
+    // set one on this screen with the Calibration tool; a Length is then measured with it and shown as such ('화면 보정 · 저장 안
+    // 됨'). It is not the original's spacing, so such a mark never becomes a saved measurement: no row, no save, no automatic
+    // save, no SR or export value, no unsaved work. Its mark carries kinScreenCalibration from the press that made it, so it stays
+    // out of all of those even when the calibration is no longer found. This is the one place that answers "may a Length be
+    // measured here with a screen calibration"; an image with spacing of its own keeps its rules (a calibration over it is refused
+    // as before), and so do Angle and Ellipse.
+    const SCREEN_LABEL = '화면 보정 · 저장 안 됨';
+    const NO_SPACING = '원본에 픽셀 간격이 없습니다 · Calibration으로 화면 보정 후 잴 수 있습니다';
+    const SCREEN_SR = '화면 보정 측정은 저장되지 않아 SR에 넣지 않습니다.';
+    // Any tag that gives the original a spacing of its own, valid or not (a spacing tag that cannot be read is refused by the
+    // original's own rules, never measured with a screen calibration): the image is not one for a screen calibration.
+    const given = v => v !== undefined && v !== null && v !== '' && !(Array.isArray(v) && !v.length);
+    const groupSpacing = groups => Array.isArray(groups) && groups.some(group =>
+      given(group?.PixelMeasuresSequence) || given(group?.FramePixelDataPropertiesSequence));
+    const noSpacing = (imageId, kind) => {
+      if (kind !== 'length' || !imageId) return false;
+      const image = cs.metaData.get('instance', imageId);
+      return !!image && !['PixelSpacing', 'ImagerPixelSpacing', 'SequenceOfUltrasoundRegions'].some(key => given(image[key])) &&
+        !groupSpacing(image.SharedFunctionalGroupsSequence) && !groupSpacing(image.PerFrameFunctionalGroupsSequence);
+    };
+    // The calibration the reader set on this image: the calibrated-spacing metadata the Calibration tool writes (kept for the
+    // image id while the viewer is open); the cached image's only when there is no such metadata. A region (ultrasound), an
+    // "uncalibrated" answer or a scale that is not a positive number is no screen calibration.
+    function screenCalibration(imageId, kind) {
+      if (!noSpacing(imageId, kind)) return null;
+      let found;
+      try { found = cs.metaData.get('calibratedPixelSpacing', imageId); } catch (_) { found = undefined; }
+      if (found === undefined || found === null) found = cs.cache.getImage(imageId)?.calibration;
+      const scale = Number(found?.scale);
+      const usable = !!found && typeof found === 'object' && !!found.type && !['Region', 'Uncalibrated'].includes(found.type) &&
+        !found.sequenceOfUltrasoundRegions && Number.isFinite(scale) && scale > 0;
+      return usable ? { label: SCREEN_LABEL } : null;
+    }
+    const screenData = data => data?.kinScreenCalibration === true;
+    // A screen-calibrated Length's words: its value in the calibrated unit the tool computed for its current points, or why not.
+    function screenText(data, target) {
+      const id = target.startsWith('imageId:') && target.slice(8);
+      if (!id) return ['지원하지 않는 측정 평면입니다'];
+      if (!screenCalibration(id, 'length')) return [NO_SPACING];
+      if (!freshStats(data, target)) return ['재확인 필요: 현재 좌표로 계산되지 않았습니다'];
+      const s = data.cachedStats[target], value = s?.length;
+      if (!Number.isFinite(value) || value <= 0 || typeof s.unit === 'string' && /^px/i.test(s.unit)) return ['측정을 완료하세요'];
+      return [(Math.round(value * 10) / 10).toFixed(1) + ' mm', SCREEN_LABEL];
+    }
+    // A reason the reader must see where the press was: over the cell, for a few seconds (the panel may be folded away).
+    const cellNotes = new Set();
+    function cellNote(element, text) {
+      if (!text || typeof element?.getBoundingClientRect !== 'function') return;
+      const box = element.getBoundingClientRect();
+      let note = [...cellNotes].find(n => n.kinCell === element);
+      if (!note) {
+        note = document.createElement('div'); note.dataset.kinCellNote = ''; note.setAttribute('role', 'status'); note.kinCell = element;
+        cellNotes.add(note);
+      }
+      note.textContent = text;
+      note.style.cssText = 'position:fixed;z-index:41;left:' + Math.round(box.left + box.width / 2) + 'px;top:' + Math.round(box.top + 8) +
+        'px;transform:translateX(-50%);max-width:' + Math.max(160, Math.round(box.width - 16)) + 'px;background:#3a1d1d;color:#ffd7d7;' +
+        'border:1px solid #ff6b6b;border-radius:6px;padding:4px 8px;font:13px sans-serif;pointer-events:none';
+      document.body.append(note);
+      clearTimeout(note.kinTimer);
+      note.kinTimer = setTimeout(() => { note.remove(); cellNotes.delete(note); }, 4000);
+    }
     function measurementReason(imageId, kind, points) {
       const image = cs.metaData.get('instance', imageId);
       const finite = n => (typeof n === 'number' || typeof n === 'string' && n.trim() !== '') && Number.isFinite(Number(n));
+      if (noSpacing(imageId, kind)) return screenCalibration(imageId, kind) ? '' : NO_SPACING;
       try {
         const geometry = planar(imageId, kind);
         if (geometry) {
@@ -1596,6 +1661,8 @@ function kinCreateViewerHistory() {
     }
     function sample(a) {
       if (!a || a.invalidated) return null;
+      // A screen calibration is no value to save, send or export (the one rule above).
+      if (screenData(a.data) || screenCalibration(a.metadata.referencedImageId, kinds[a.metadata.toolName])) return null;
       const kind = kinds[a.metadata.toolName], target = 'imageId:' + a.metadata.referencedImageId, s = a.data.cachedStats?.[target];
       if (!freshStats(a.data, target) || measurementReason(a.metadata.referencedImageId, kind, a.data.handles.points)) return null;
       const geometry = planar(a.metadata.referencedImageId, kind);
@@ -1645,6 +1712,11 @@ function kinCreateViewerHistory() {
     }
     function projectMeasurement(m) {
       if (!numericMeasurement(m)) return m;
+      const mark = ct.annotation.state.getAnnotation(m.uid);
+      // The measurement list and its CSV show a screen-calibrated Length as the cell does, and export no number for it.
+      if (screenData(mark?.data)) return { ...m, data: null,
+        displayText: { primary: screenText(mark.data, 'imageId:' + mark.metadata.referencedImageId), secondary: [] },
+        getReport: () => ({ columns: ['Verification'], values: [SCREEN_LABEL] }) };
       const checked = checkedMeasurement(m);
       return { ...m, ...(checked || { data: null,
         displayText: { primary: ['재확인 필요'], secondary: [] } }),
@@ -1694,6 +1766,7 @@ function kinCreateViewerHistory() {
       const reason = e?.head && e.head.referenceStatus !== 'verified' ? '원본 다시 확인을 누르세요.' :
         !a ? '현재 영상의 측정 표식을 찾을 수 없습니다.' :
         !a.data?.handles?.points ? '측정 위치가 완성되지 않았습니다. 측정을 마치세요.' :
+        screenData(a.data) ? SCREEN_SR :
         measurementReason(a.metadata.referencedImageId, kinds[a.metadata.toolName], a.data.handles.points) ||
         (a.data.kinUnverified ? '저장 당시 측정과 다릅니다. 편집 후 다시 측정하세요.' :
           !sample(a) ? '현재 위치의 계산이 완료되지 않았습니다. 측정을 마치고 다시 시도하세요.' : '현재 영상의 측정 변환을 확인할 수 없습니다.');
@@ -2482,9 +2555,11 @@ function kinCreateViewerHistory() {
           let reason = id ? measurementReason(id, kind) : '원본 프레임을 선택하세요';
           if (!reason && kind === 'ellipse' && !planar(id, kind) && v.getCamera().viewUp.filter(n => Math.abs(n) > 1e-6).length !== 1)
             reason = '사선·회전 ROI는 아직 지원하지 않습니다';
-          if (reason) { status.textContent = reason; return refused; }
+          if (reason) { status.textContent = reason; cellNote(event.detail.element, reason); return refused; }
+          const screen = !!screenCalibration(id, kind);
           const annotation = add.call(this, event);
           if (!annotation || annotation === refused) return refused;
+          if (screen) annotation.data.kinScreenCalibration = true;
           trackMeasurement(annotation);
           drawing.set(annotation.annotationUID, { tool: this, element: event.detail.element, annotation, kind });
           return annotation;
@@ -2492,6 +2567,7 @@ function kinCreateViewerHistory() {
         tool.configuration = { ...config, getTextLines(data, target) {
           // Only its first point so far: nothing to measure, and no reason to give for a shape that is not there yet.
           if (samePoint(data.handles?.points)) return ['측정을 완료하세요'];
+          if (screenData(data)) return screenText(data, target);
           const id = target.startsWith('imageId:') && target.slice(8);
           const reason = data.kinUnverified ? '재확인 필요: 저장 당시 측정과 다릅니다' :
             id ? measurementReason(id, kind, data.handles.points) : '지원하지 않는 측정 평면입니다';
@@ -2992,6 +3068,8 @@ function kinCreateViewerHistory() {
       if (suspended || recovery.has(scope) || !writer()) return;
       for (const a of ct.annotation.state.getAllAnnotations()) {
         const kind = kinds[a.metadata.toolName];
+        // A screen-calibrated Length is no saved measurement: no row, so no Save, automatic save or closing send.
+        if (screenData(a.data)) continue;
         const count = kind === 'angle' ? 3 : kind === 'ellipse' ? 4 : ['text', 'memo', 'spine', 'volume'].includes(kind) ? 1 : lineMark(kind) ? linePoints(a.data?.kinBaseline) : ORTHO[kind] || 2;
         if (!kind || !matches(reference(a.metadata.referencedImageId), { ...reference(a.metadata.referencedImageId) }) || !Array.isArray(a.data.handles?.points) || a.data.handles.points.length !== count || (kind === 'arrow' || measureMark(kind)) && typeof a.data.text !== 'string') continue;
         let e = annotations.get(a.annotationUID);
@@ -3016,7 +3094,7 @@ function kinCreateViewerHistory() {
     const onFocus = () => { lastAuth = 0; tried = 0; };
     // A document that is not a confirmed writer has no mark to save, so an unlocked native mark is not unsaved work there.
     const jobGuard = () => recovery.size > 0 || [...entries.values()].some(x => hasWork(x) || x.busy) || writer() &&
-      ct.annotation.state.getAllAnnotations().some(a => kinds[a.metadata.toolName] && !unfinished(a) && !ct.annotation.locking.isAnnotationLocked(a.annotationUID));
+      ct.annotation.state.getAllAnnotations().some(a => kinds[a.metadata.toolName] && !unfinished(a) && !screenData(a.data) && !ct.annotation.locking.isAnnotationLocked(a.annotationUID));
     // Finding drafts (including ones held for another study) count for the whole-viewer guards:
     // worklist Next Study, window reuse/close, cell merge/hanging protocol and page unload. They are
     // deliberately not part of the mark-only kinViewerHistoryHasUnsaved used by Job save/restore,
@@ -3073,7 +3151,7 @@ function kinCreateViewerHistory() {
     const drawingInputs = [['pointerdown', leaveByPress], ['wheel', leaveByWheel], ['keydown', leaveByKey],
       ['pointerdown', pressed], ['pointerup', released], ['pointercancel', released], ['blur', lost]];
     for (const [name, listener] of drawingInputs) window.addEventListener(name, listener, { capture: true, passive: true });
-    stop = () => { end(true); clearInterval(timer); channel?.close(); document.removeEventListener(stackEvent, onImage, true); subscriptions.forEach(s => s.unsubscribe());  window.removeEventListener('focus', onFocus); window.removeEventListener('beforeunload', beforeUnload); window.removeEventListener('pagehide', pageHide); for (const [name, listener] of drawingEvents) cs.eventTarget.removeEventListener(name, listener); for (const [name, listener] of drawingInputs) window.removeEventListener(name, listener, true); for (const restores of configured.values()) restores.reverse().forEach(restore => restore()); configured.clear(); panel.remove(); };
+    stop = () => { end(true); clearInterval(timer); channel?.close(); document.removeEventListener(stackEvent, onImage, true); subscriptions.forEach(s => s.unsubscribe());  window.removeEventListener('focus', onFocus); window.removeEventListener('beforeunload', beforeUnload); window.removeEventListener('pagehide', pageHide); for (const [name, listener] of drawingEvents) cs.eventTarget.removeEventListener(name, listener); for (const [name, listener] of drawingInputs) window.removeEventListener(name, listener, true); for (const restores of configured.values()) restores.reverse().forEach(restore => restore()); configured.clear(); for (const note of cellNotes) { clearTimeout(note.kinTimer); note.remove(); } cellNotes.clear(); panel.remove(); };
     // 판정이 바뀌는 순간(이 패널의 /me가 아니어도): writer면 막는 동안 적어 둔 도구 모드·도구막대를 되돌리고, 그 밖이면 작성
     // 경로를 닫고 이 패널이 그리지 않은 표식을 지운다. read-only는 clinicianBoundary를 지난다. 다른 판정은 그려 둔 행의 컨트롤만
     // 다시 그린다. (Astra S5-U2b-X2-R-001 F01) 어느 확장의 /me든 refused가 되면 이 패널도 끝나고, 끝난 패널은 그 뒤 공유 판정이
