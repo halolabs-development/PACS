@@ -445,6 +445,18 @@ class ViewerWindowManagerDOMTest(unittest.TestCase):
         self.assertEqual(0, result["openCalls"])
         self.assertGreaterEqual(result["focusCalls"], 1)
 
+    def test_viewer_window_focus_sites_go_through_the_shared_rule(self):
+        # The pages that hold a viewer window (list launcher, Image Findings' Go to Image / Open Saved View, clinician
+        # viewer button) raise it through KinExamScope.raiseWindow; a bare popup.focus() there leaves it behind the list.
+        hpacs = ROOT / "worklist-v0" / "hpacs-lite"
+        for name, minimum in (("viewer-launch.js", 12), ("reading-findings.js", 1), ("clinician.js", 1)):
+            with self.subTest(file=name):
+                source = (hpacs / name).read_text(encoding="utf-8")
+                self.assertGreaterEqual(source.count("KinExamScope.raiseWindow(popup)"), minimum)
+                bare = [line.strip() for line in source.splitlines()
+                        if re.search(r"\bpopup\.focus\(\)", line) and "raiseWindow(popup) : popup.focus()" not in line]
+                self.assertEqual([], bare)
+
     def test_raise_rule_looks_up_only_that_window_and_restores_its_name(self):
         result = self.page.evaluate("""() => {
           const out={};
