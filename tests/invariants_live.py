@@ -1897,10 +1897,14 @@ class BffInvariantTests(unittest.TestCase):
 
     def test_registration_success_page_has_safe_return_path(self) -> None:
         theme = ROOT / "keycloak" / "themes" / "kin-login" / "login"
-        source = (theme / "info.ftl").read_text(encoding="utf-8")
-        # The return button is the theme's one way back into the product (kin-home.ftl, shared with error.ftl).
+        # FreeMarker comments are not drawn: a commented-out button does not count.
+        def drawn(name: str) -> str:
+            return re.sub(r"<#--.*?-->", "", (theme / name).read_text(encoding="utf-8"), flags=re.S)
+        source = drawn("info.ftl")
+        # The return button is the theme's one way back into the product (kin-home.ftl, shared with error.ftl); the
+        # rendered page is tests/e2e/test_login_error_page.py test 05.
         self.assertIn('<@kin.homeButton id="kin-continue" label="continueToKin"/>', source)
-        home = (theme / "kin-home.ftl").read_text(encoding="utf-8")
+        home = drawn("kin-home.ftl")
         self.assertEqual(home.count('href="/api/auth/login"'), 1)
         self.assertIn('${msg(label)}', home)
 

@@ -181,8 +181,8 @@ class LoginErrorPageE2E(base.WorklistE2E):
 
 
 def load_tests(loader, tests, pattern):
-    # Only this class: the base module's own cases are not part of this profile.
-    return loader.loadTestsFromTestCase(LoginErrorPageE2E)
+    # Only the cases declared here: the worklist cases this class inherits are not part of this profile.
+    return unittest.TestSuite(LoginErrorPageE2E(name) for name in sorted(vars(LoginErrorPageE2E)) if name.startswith("test_"))
 
 
 if __name__ == "__main__":
