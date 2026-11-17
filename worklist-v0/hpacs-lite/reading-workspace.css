@@ -101,7 +101,7 @@ body.reading .userfilter { max-height: 92px; overflow-y: auto; }
 /* Dictation review in this layout. `body.reading .report-compose` (the editor with its head row and Clinical Context;
    until Minhoon item 8 the editor scroller .redit alone) kept a 180px minimum (until the 2026-11-04 rules at the end
    of this file), so the review pane at its plain cap pushed .rfoot2 57px below a 1680x1100 column (U4L attempt 1).
-   While the transcript is shown the
+   Open (main.html: an answer never resizes it) the
    pane gives way instead: it prefers the plain cap (the same expression as main.html's #dictation-pane
    max-height), shrinks when the column is short, and never goes below its own rows. That floor is the pane's
    automatic minimum, which a flex item only has when it is not a scroll container: so the pane stops
@@ -111,7 +111,7 @@ body.reading .userfilter { max-height: 92px; overflow-y: auto; }
    not the border box - is held to it. That line is paid for inside the pane: meta and the buttons share
    one row when they fit and wrap back to today's two rows when they do not. The plain layout and every
    other pane state keep main.html's rules. Kept below the rules above so their cited line numbers stay put. */
-body.reading #dictation-pane:has(> #dictation-text:not([hidden])) { flex: 0 1 min(30vh, 168px); overflow: visible; }
+body.reading #dictation-pane:not([hidden]) { flex: 0 1 min(30vh, 168px); overflow: visible; }
 body.reading #dictation-pane:has(> #dictation-text:not([hidden])) > #dictation-text { flex: 1 1 0; box-sizing: content-box; line-height: 1.5; min-height: 1lh; }
 body.reading #dictation-pane:has(> #dictation-text:not([hidden])) > .dictation-foot { display: flex; flex-wrap: wrap; align-items: center; gap: inherit; }
 body.reading #dictation-pane:has(> #dictation-text:not([hidden])) > .dictation-foot > #dictation-meta { flex: 1 1 auto; min-width: 0; }
@@ -139,9 +139,9 @@ body.reading #dictation-pane:has(> #dictation-text:not([hidden])) > .dictation-f
    1. The region gives up height first, down to one text line (its 32px minimum, line 69: the caret's line still shows
       while typing, the label scrolled away). The editor's head keeps every one of its lines.
    2. Then every other row before the button row yields, each down to one line of its own, and scrolls its own words
-      (the rules after .redit's below): the target line first, the notices (report, draft, hold, on-hold, citations,
-      Recommendation), and the questions under the editor down to their bar, or, opened, to four lines of their list
-      (a message and its controls stay usable). The dictation pane keeps its own rule above (its transcript yields).
+      (the rules after .redit's below): the target line first, the citation list, and the questions
+      under the editor down to their bar, or, opened, to four lines of their list (a message and its controls stay
+      usable). The dictation pane keeps its own rule above (its transcript yields), and the notice band its fixed height.
    3. Only below those floors does the column itself scroll, and the rows under the button row (image requests,
       Critical Results) leave the window before the row does.
    Until 2026-11-15 step 2 did not exist: the editor's head takes two lines below 1251px since Image Report, and at
@@ -159,17 +159,14 @@ body.reading .redit { flex: 1 1 0; overflow-y: auto; scroll-padding-block: 4px; 
 /* Step 2 above. The floor is one line of the row's text inside its own padding: content-box, as the page is border-box,
    where 1lh held the padding and left a 12px sliver of an 11px line. Each row yields in proportion to its height (the
    target line twenty times as much), so an opened list gives the most. */
-body.reading .report-p > :not(.report-compose, #dictation-pane, .rfoot2, .rfoot2 ~ *) { flex-shrink: 1;
+body.reading .report-p > :not(.report-compose, #report-notices, #dictation-pane, .rfoot2, .rfoot2 ~ *) { flex-shrink: 1;
   box-sizing: content-box; min-height: var(--kin-row-floor, 1lh); overflow-y: auto; }
 body.reading .report-p > #reading-report-target { flex-shrink: 20; }
-/* A notice row (words and buttons on a flex line) keeps each button's words on one line and moves the buttons that do not
-   fit onto lines of their own: squeezed into a 340px column, Keep This Text and Load Server Draft wrapped to three lines
-   (42px), taller than the row's floor, and could not be scrolled whole into view. So every control is one line high -
-   main.html .draftbar button: an 11px line, 2px padding and a 1px border above and below - and that is the row's floor:
-   yielded, it scrolls each of them whole into view. It shows its first line, not its middle (`safe`: centred, its wrapped
-   message lost its top lines out of reach above the box). */
-body.reading .report-p > .draftbar { flex-wrap: wrap; --kin-row-floor: calc(1lh + 6px); align-items: safe center; }
-body.reading .report-p > .draftbar button { white-space: nowrap; }
+/* The notice rows (report, draft, hold, on-hold, citations) are in the notice band (main.html .report-notices): one box of
+   fixed height, a notice row's floor, that scrolls them. A row keeps each button's words on one line and moves the buttons
+   that do not fit onto lines of their own: squeezed into a 340px column, Keep This Text and Load Server Draft wrapped to
+   three lines (42px) and could not be scrolled whole into view. So every control is one line high - main.html .draftbar
+   button: an 11px line, 2px padding and a 1px border above and below - and the band scrolls each of them whole into view. */
 /* The questions keep their bar whole (main.html: 24px buttons, 3px padding); opened, their list keeps four lines inside
    its own border and padding (1px, 4px and 8px) - a message and its 24px controls - and scrolls the rest. */
 body.reading .report-p > #question-p:not([hidden]) { display: flex; flex-direction: column; min-height: calc(24px + 2 * 3px); }

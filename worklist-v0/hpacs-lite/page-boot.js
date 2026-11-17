@@ -101,6 +101,8 @@
       // 연결이 되살아났다: 앞서 실패해 멈춘 검사도 한 번 다시 보낸다(같은 거절이면 한 번 알리고 다시 멈춘다).
       reportSaveFailures.clear();
       reconcileReportDrafts();
+      // The rows that stand whether or not the server answers (questions, image requests, sent results) say so again.
+      (window.kinOnConnection || []).forEach(change => { try { change(); } catch (_) {} });
     }
 
     /**
@@ -110,6 +112,8 @@
     function goOffline(e) {
       reportPreview.close();
       serverMode = false; offline = true;
+      // The rows that stand whether or not the server answers say they read nothing now (study-questions.js and others).
+      (window.kinOnConnection || []).forEach(change => { try { change(); } catch (_) {} });
       stopViewing();
       folderLoadState = 'unknown'; filterCollection = null; ++filterReadSequence; ++sharedFilterReadSequence;
       updateWorklistFolders(); shortcutStatus('서버에 연결한 뒤 바로가기를 불러오세요.');

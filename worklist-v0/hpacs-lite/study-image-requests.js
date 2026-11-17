@@ -62,6 +62,13 @@
         readLoading: '이 검사의 영상 요청을 불러오는 중입니다…',
         readFailed: '이 검사의 영상 요청을 불러오지 못했습니다.',
         readCounts: (n, parts) => `이 검사의 영상 요청 ${n}건 · ${parts}`,
+        readEmpty: '이 검사에는 영상 요청이 없습니다.',
+        // 안내 띠의 알림은 짧게(띠의 다른 줄을 좁혀 줄을 바꾸지 않게), 전문은 툴팁.
+        notice: { counts: (n, parts) => `영상 요청 ${n}건 · ${parts}`, failed: '영상 요청 읽기 실패', refused: '영상 요청 읽기 거절',
+          account: '영상 요청: 계정 바뀜' },
+        readUnread: '이 검사의 영상 요청은 읽지 않습니다(원격판독 검사).',
+        // 끊김은 상태를 말한다: 이 화면의 연결 판단일 뿐 통신을 막는 것은 아니다.
+        readOffline: '서버 연결이 끊겼습니다. 표시된 영상 요청은 최신이 아닐 수 있습니다.',
         codes: {
           IMAGE_REQUEST_CHANGED: '그사이 이 요청이 바뀌었습니다. 요청을 다시 불러왔으니 상태를 확인한 뒤 다시 보내세요.',
           IMAGE_REQUEST_STATE: '지금 요청 상태에서는 할 수 없는 동작입니다. 이미 처리가 끝났을 수 있어 요청을 다시 불러왔습니다.',
@@ -95,12 +102,15 @@
       const readSummary = document.getElementById('image-request-summary');
       const readToggle = document.getElementById('image-request-toggle');
       const readPane = document.getElementById('image-request-pane');
+      const readNotice = document.getElementById('image-request-notice');
       let ended = false, lock = null;
       // queueLoaded: 지금 조건의 첫 쪽을 읽은 적이 있는가. 읽기 전의 빈 목록을 "조회 성공, 요청 없음"으로 쓰지 않기 위해서다.
       let queueState = 'active', queueKind = '', queueItems = [], queueCursor = null, queueFailure = null, queueLoading = false;
       let queueLoaded = false;
       let queueSeq = 0, detailId = null, detailItem = null, detailFailure = null, detailLoading = false, detailSeq = 0;
       let readUid = null, readItems = null, readFailure = null, readLoading = false, readSeq = 0, readOpen = false;
+      // 판독 칸이 보이는 검사(readShown)와 그때 정한 판독 쪽 줄의 유무(readPresent) — main.html "An answer never resizes".
+      let readShown, readPresent = false;
       // 요청 id별로 쓰던 note, 결과를 모르는 쓰기(같은 requestId로 다시 보낼 것), 마지막 결과 문구.
       const drafts = new Map(), attempts = new Map(), notes = new Map();
       // 요청 id별로 이 계정이 남긴 요청인지(true·false, 서버 목록이 정한 값)와, 확인 중('checking')·확인 실패(오류)인 것.
@@ -799,7 +809,8 @@
       readList.id = 'image-request-read-list';
       readPane.append(make('p', 'image-request-muted', TEXT.readHint), readLine, readList);
       // 접힌 줄에도 Closed 옆 문구가 보여야 한다(U4p §3.3). 요약은 말줄임으로 잘리므로 그 안에 두지 않고 바로 아래에 줄을 넘기는
-      // 한 줄로 둔다 — Closed가 있을 때만 서므로 Closed 없는 검사의 판독 화면 배치는 그대로다.
+      // 한 줄로 둔다. 그 자리는 줄이 서 있는 동안 늘 잡혀 있고(Closed가 없으면 보이지 않게) 답은 보임만 바꾼다 — 늦게 온 답이
+      // 그 줄을 끼우면 판독 칸이 줄어 단추 줄이 움직였다(main.html "An answer never resizes").
       const readClosed = make('p', 'image-request-closed-line');
       readClosed.dataset.part = 'closed';
       readClosed.append(badge('Closed'));
@@ -810,24 +821,41 @@
           .map(([state, n]) => `${state} ${n}`).join(' · ');
       }
 
-      /** 줄은 요청이 있거나 읽기가 실패했거나 잠긴 동안만 보인다 — 요청 없는 검사의 판독 화면 배치를 바꾸지 않는다. */
+      /**
+       * 판독 쪽 줄(단추 줄 아래). 줄이 있는지는 판독 칸이 그 검사를 보일 때(sync) 정하고 그 검사를 여는 동안 바꾸지 않는다:
+       * 읽을 수 있는 검사면 늘 선다 — 단추 줄 아래라 좁은 창에서는 창 밖으로 나가고 단추 줄을 밀지 않는다. 답(요청 있음·없음·
+       * 실패·잠금)은 줄의 글과 연 창의 안만 바꾼다. 요청·실패·잠금은 줄이 창 밖일 수 있어 판독 칸 위 안내 띠의 알림도 말한다.
+       */
       function renderReading() {
-        const visible = !ended && (lock !== null || readFailure !== null || (readItems !== null && readItems.length > 0));
+        const visible = !ended && readPresent;
         readRoot.hidden = !visible;
         readRoot.dataset.state = ended ? 'ended' : lock ? 'locked' : readFailure ? 'failed' : readLoading ? 'loading'
           : readItems === null ? 'idle' : readItems.length ? 'ready' : 'empty';
-        const text = lock ? lock.text : readFailure ? TEXT.readFailed : readItems && readItems.length
-          ? TEXT.readCounts(readItems.length, readCounts(readItems)) : TEXT.readLoading;
+        const text = lock ? lock.text : !allowed() ? TEXT.readOffline : readUid === null ? TEXT.readUnread : readFailure ? TEXT.readFailed : readItems === null
+          ? TEXT.readLoading : readItems.length ? TEXT.readCounts(readItems.length, readCounts(readItems)) : TEXT.readEmpty;
         readSummary.textContent = text;
         readSummary.title = lock ? `${lock.text}\n${lock.detail}`.trim() : readFailure ? readDetail(readFailure) : text;
-        readClosed.hidden = !!lock || !!readFailure || !readItems || !readItems.some(item => item.state === 'Closed');
-        readToggle.hidden = lock !== null;
+        readClosed.dataset.shown = String(!lock && !readFailure && !!readItems && readItems.some(item => item.state === 'Closed'));
         readToggle.textContent = readOpen ? 'Hide Requests' : 'Show Requests';
-        readToggle.setAttribute('aria-expanded', String(readOpen && lock === null));
-        readPane.hidden = !readOpen || lock !== null;
-        const state = readFailure ? 'failed' : readLoading ? 'loading' : 'ready';
-        setState(readLine, state, { failed: TEXT.readFailed, loading: TEXT.readLoading }[state] || '',
-          readFailure ? readDetail(readFailure) : '');
+        readToggle.setAttribute('aria-expanded', String(readOpen));
+        // 연 창은 잠겨도 연 채로 두고 안에 잠금을 쓴다(닫으면 판독 칸이 다시 커진다).
+        readPane.hidden = !readOpen;
+        if (readNotice) {
+          // 알 때만 말한다: 요청 있음·실패·잠금은 그 글, 성공한 빈 답·읽지 않는 검사는 알림 없음, 읽는 중은 그대로.
+          // 끊긴 동안은 새로 아는 것이 없다: 마지막으로 말한 것을 그대로 둔다.
+          const told = !lock && readUid !== null && !allowed() ? null : lock ? (lock.account ? TEXT.notice.account : TEXT.notice.refused) : readFailure ? TEXT.notice.failed
+            : readItems && readItems.length ? TEXT.notice.counts(readItems.length, readCounts(readItems))
+            : readUid === null || readItems !== null ? '' : null;
+          if (ended) readNotice.hidden = true;
+          else if (told !== null) {
+            readNotice.hidden = !told;
+            readNotice.textContent = told;
+            readNotice.title = told ? `${text} — Show Requests` : '';
+          }
+        }
+        const state = lock || readFailure ? 'failed' : readLoading ? 'loading' : 'ready';
+        setState(readLine, state, lock ? lock.text : { failed: TEXT.readFailed, loading: TEXT.readLoading }[state] || '',
+          lock ? lock.detail : readFailure ? readDetail(readFailure) : '');
         readLine.hidden = state === 'ready';
         readRetry.hidden = !readFailure;
         readList.replaceChildren(...(readFailure || !readItems ? [] : readItems).map(item => {
@@ -889,9 +917,18 @@
        */
       function sync() {
         if (ended) return;
-        const target = allowed() ? current() : null;
+        const shown = current(), target = allowed() ? shown : null;
         const row = target ? study(target) : null;
         const next = row && row.tele !== true ? target : null;
+        // 판독 칸이 다른 검사를 보이는 이 순간(같은 그리기 안)에 줄의 유무를 정하고 연 창·알림을 접는다. 같은 검사에서
+        // 연결이 끊기고 돌아오는 것은 이동이 아니다 — 줄은 그 자리를 지킨다(읽지 못한다고 말한다).
+        if (shown !== readShown) {
+          readShown = shown;
+          readPresent = next !== null;
+          readOpen = false;
+          if (readNotice) readNotice.hidden = true;
+          if (next === readUid) renderReading();
+        }
         if (next === readUid) return;
         readUid = next;
         readSeq++;
@@ -1014,8 +1051,24 @@
       stateFilter.addEventListener('change', () => { queueState = stateFilter.value; loadQueue(false); });
       kindFilter.addEventListener('change', () => { queueKind = kindFilter.value; loadQueue(false); });
       readToggle.addEventListener('click', () => {
-        if (ended || lock !== null) return;
+        if (ended) return;
         readOpen = !readOpen;
+        renderReading();
+      });
+      // 안내 띠의 알림: 읽는 사람이 누르면 판독 쪽 줄의 창을 열고(줄이 없던 검사면 그 자리에 세우고) 그 줄을 보이게 한다.
+      readNotice?.addEventListener('click', () => {
+        if (ended) return;
+        readPresent = true;
+        readOpen = true;
+        renderReading();
+        readRoot.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        readToggle.focus({ preventScroll: true });
+      });
+      // 연결이 끊기거나 돌아왔다(page-boot.js goOffline·goOnline). 판독 대상은 바뀌지 않았다 — 줄은 제자리이고 글만 바뀐다(끊기면
+      // 읽지 않음, 돌아오면 같은 대상을 다시 읽음).
+      (window.kinOnConnection = window.kinOnConnection || []).push(() => {
+        if (ended) return;
+        if (allowed()) { sync(); refresh(); }
         renderReading();
       });
       window.addEventListener('pagehide', end);
@@ -1028,7 +1081,12 @@
       renderQueue();
       renderDetail();
       renderReading();
-      return { sync, end, resume };
+      /** 목록 폴링이 부른다(worklist-polling.js): 판독 대상의 요청을 다시 읽는다. 답은 글·연 창의 안·띠 알림만 바꾼다. */
+      function refresh() {
+        if (ended || lock !== null || readUid === null || readLoading) return;
+        loadReading();
+      }
+      return { sync, end, resume, refresh };
     }
     let imageRequests = null;
     try {

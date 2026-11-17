@@ -1767,8 +1767,11 @@ class ReportEditorFramePageDOM(unittest.TestCase):
                   covered: !!panel && edit.left < panel.right && edit.right > panel.left
                     && Math.max(edit.top, 0) < panel.bottom && Math.min(edit.bottom, innerHeight) > panel.top,
                   findings: seen('findings'), conclusion: seen('conclusion')}; }""".replace('SCROLL_HOST', SCROLL_HOST)
-        notices = self.page.evaluate("() => ['#question-p', '#image-request-p', '#cvr-sent-p'].filter(s => document.querySelector(s).getClientRects().length).length")
-        self.assertEqual(notices, 3)
+        # The questions' failed read is told in the band above the editor (an answer never stands that row up: main.html
+        # "An answer never resizes"); the image requests' and sent Critical Results' rows stand below the report fields.
+        notices = self.page.evaluate("() => [['#question-p', '#image-request-p', '#cvr-sent-p'].filter(s => document.querySelector(s).getClientRects().length).length,"
+                                     " !document.getElementById('question-notice').hidden]")
+        self.assertEqual([2, True], notices)
         for width, height in dict.fromkeys([tuple(size) for size in BOUND_SIZES] + [(1366, 768), (1280, 540)]):
             self.page.set_viewport_size({'width': width, 'height': height})
             for opened in (False, True):

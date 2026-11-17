@@ -137,7 +137,7 @@ MARKERS = {
     "MODAL_CSS": (".modal { display: none;", "/* ══ 클릭 피드백"),
     "RBTNS_HTML": ('<div class="rfoot2 rbtns">', "\n        </div>"),
     # W4: the Notice row that says why a study move did not happen sits right above the draft bar.
-    "BARS_HTML": ('<div class="draftbar" id="report-notice"', '<div id="citelist"'),
+    "BARS_HTML": ('<div class="report-notices"', '<div id="citelist"'),
     # The citation list and the dictation pane, up to the report fields.
     "DICTATION_HTML": ('<div id="citelist"', '<div class="redit">'),
     "REDIT_HTML": ('<div class="redit">', "\n        </div>"),
@@ -1246,7 +1246,7 @@ class ReportDictationHostDOMTest(unittest.TestCase):
                paneContentRight: pane.getBoundingClientRect().right - parseFloat(cs.paddingRight) - parseFloat(cs.borderRightWidth),
                status: box($('#dictation-status')), meta: box(meta), actions: box(actions),
                text: { ...box(text), client: text.clientHeight, scroll: text.scrollHeight, line },
-               note: box($('#recnote')), redit: box($('.redit')),
+               note: box($('#recnote')), band: box($('#report-notices')), redit: box($('.redit')),
                // Minhoon 2026-11-04: in the reading layout the field region is the report column's scroller and carries the
                // layout's minimum itself (until then the editor row - the scroller, its head row and Clinical Context - did).
                editorRow: box($('.redit')), editorRowMin: parseFloat(getComputedStyle($('.redit')).minHeight) || 0,
@@ -1292,13 +1292,13 @@ class ReportDictationHostDOMTest(unittest.TestCase):
             self.assertIn("Recommendation:", notice.inner_text())
 
     def assert_stacked(self, value, where, footer="column"):
-        """Top to bottom: review pane, notice (when shown), report fields, then the merged action row:
+        """Top to bottom: notice (when shown; in the notice band above the pane), review pane, report fields, then the merged action row:
         "column" - inside the column; "scroll" - inside the column or in the report panel's own scroll range (the W3/W6
         rule for short windows: on screen or in a container the reader scrolls with the wheel); None - not checked."""
         self.assertLessEqual(value["redit"]["bottom"], value["rbtns"]["top"] + 0.5, where)
-        below_pane = value["note"] if value["note"]["height"] else value["redit"]
-        self.assertLessEqual(value["pane"]["bottom"], below_pane["top"] + 0.5, where)
-        self.assertLessEqual(value["note"]["bottom"] if value["note"]["height"] else 0, value["redit"]["top"] + 0.5, where)
+        # The notice scrolls in the band with the other notice rows (a stored draft's line comes first): the band is above.
+        self.assertLessEqual(value["band"]["bottom"] if value["note"]["height"] else 0, value["pane"]["top"] + 0.5, where)
+        self.assertLessEqual(value["pane"]["bottom"], value["redit"]["top"] + 0.5, where)
         if footer:
             self.assert_footer_reachable(where)
         for name, height, minimum in value["fields"]:
@@ -1313,9 +1313,10 @@ class ReportDictationHostDOMTest(unittest.TestCase):
         self.assertGreaterEqual(value["text"]["client"] + 0.5, value["text"]["line"], "at least one whole line: " + where)
         self.assertGreater(value["text"]["scroll"], value["text"]["client"], "a long transcript scrolls inside: " + where)
 
-    def test_hd17_the_read_only_recommendation_notice_sits_between_the_review_pane_and_the_fields(self):
-        """W4-PAGE-12 placed the read-only Recommendation notice right below the dictation pane. With the notice shown and
-        the review open, the pane stays bounded and above the notice, the notice keeps its height above the fields, the
+    def test_hd17_the_read_only_recommendation_notice_stays_in_the_notice_band_above_the_review_pane(self):
+        """W4-PAGE-12 placed the read-only Recommendation notice right below the dictation pane; it is now in the notice
+        band (main.html, "An answer never resizes": an answer that shows it moved the fields). With the notice shown and
+        the review open, the notice keeps its height in the band above the pane, the pane stays bounded above the fields, the
         fields keep their minimum heights and the footer stays in the column at both viewports (in a small frame: in the
         column or in the report panel's scroll range); closing the pane restores the exact layout."""
         for viewport, frame in (((1680, 1100), None), ((1366, 768), None), ((1366, 768), (460, 420))):

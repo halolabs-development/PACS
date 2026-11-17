@@ -2577,7 +2577,9 @@ class CriticalResultRecipientDOMTest(unittest.TestCase):
         self.open_home()
         self.assertEqual(1, len(self.requests("list")))
         self.row("SYN-PT-161")
-        # The reading panel: technician only, admin only, a demo session, offline - no read, no panel.
+        # The reading panel: technician only, admin only, a demo session - no read, no panel. Offline it reads nothing but
+        # stands and says so: hidden, it gave its height back to the report column and moved the button row (main.html
+        # "An answer never resizes").
         cases = [("technician", CLIN, ["technician"], None), ("admin", CLIN, ["admin"], None),
                  ("demo", RAD, ["radiologist"], {"serverMode": False, "offline": False, "demoMode": True}),
                  ("offline", RAD, ["radiologist"], {"serverMode": False, "offline": True, "demoMode": False})]
@@ -2587,7 +2589,12 @@ class CriticalResultRecipientDOMTest(unittest.TestCase):
                 self.open_panel(person, roles, mode=mode)
                 self.tick(60000)
                 self.assertEqual([], self.log)
-                self.assertFalse(self.view()["shown"])
+                if name == "offline":
+                    self.assertTrue(self.view()["shown"])
+                    self.assertIn("Offline", self.view()["text"])
+                    self.assertEqual("서버 연결이 끊겼습니다. 표시된 받은 중요 결과는 최신이 아닐 수 있습니다.", self.page.locator("#cvr-inbox-badge").get_attribute("title"))
+                else:
+                    self.assertFalse(self.view()["shown"])
         # The pair: the same technician with radiologist added reads once.
         self.server = RecipientServer([INSTITUTION, CLIN["sub"]])
         self.servers.append(self.server)

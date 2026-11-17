@@ -115,6 +115,7 @@
       loading: '보낸 목록을 불러오는 중입니다…',
       failed: '보낸 목록을 불러오지 못했습니다.',
       empty: '이 조건의 보낸 전달이 없습니다.',
+      offline: '서버 연결이 끊겼습니다. 표시된 보낸 중요 결과는 최신이 아닐 수 있습니다.',
       ready: (n, more) => `보낸 전달 ${n}건을 최신순으로 표시합니다.${more ? ' More로 이어서 읽습니다.' : ''}`,
       unknownCount: n => `적용 여부를 확인하지 못한 요청 ${n}건`,
       cancelReason: reason => `취소 사유: ${reason}`,
@@ -255,12 +256,14 @@
    *   study(uid) 워크리스트 행(이름·ID·날짜 표시용)
    *   report(uid) 화면이 아는 판독 상태 {version, rs} — 바뀌면 #1을 다시 읽는다
    *   online()   서버 모드이고 연결된 로그인 세션인가
+   *   standing() 보낸 목록 줄이 서는 세션인가(선택; 없으면 online()). 연결이 끊겨도 줄은 서서 읽지 못한다고 말한다 —
+   *              줄이 숨으면 판독 칸이 커져 단추 줄이 움직인다(main.html "An answer never resizes").
    *   radiologist() 이 세션의 역할에 radiologist가 있는가(admin만으로는 보내지 않는다, D-S7-02 a)
    *   owner()    [institution, sub]
    *   actorName(actor) 표시 이름
    */
   // `blocked()` (optional, W5): the page's reason the entry waits now (Related Report mode), or null.
-  function mount({ apiBase, current, study, report, online, radiologist, owner, actorName, onAccountChanged, blocked = () => null }) {
+  function mount({ apiBase, current, study, report, online, standing = online, radiologist, owner, actorName, onAccountChanged, blocked = () => null }) {
     const work = window.KinWorkContext, transport = window.KinSessionTransport.page();
     // Capture at registration, not when a delayed callback runs.
     const guarded = (effect, scope = 'document') => {
@@ -953,12 +956,13 @@
       // 보낼 수 있는 세션에는 이 줄이 늘 선다. 확인 대기가 0이어도 Show Sent로 종결된 전달(Acknowledged·Cancelled·Superseded)의
       // 기록과 서버 시각을 다시 열 수 있어야 한다 — 확인 대기 항목의 표시 조건을 이력 입구의 조건으로 쓰지 않는다. 목록 칸은
       // 사용자가 열 때만 펼친다.
-      const show = !ended && online() && radiologist();
+      const show = !ended && standing() && radiologist();
       panel.hidden = !show;
       if (!show) return;
       const unknownCount = lined().filter(attempt => unsettled(attempt)).length;
       let line;
       if (lock !== null) line = lock.text;
+      else if (!online()) line = TEXT.list.offline;
       else if (listPhase === 'failed') line = TEXT.list.failed;
       else if (pending === null) line = listPhase === 'loading' ? TEXT.list.loading : '';
       else line = `Pending ACK ${pending}${unknownCount ? ` · ${TEXT.list.unknownCount(unknownCount)}` : ''}`;
@@ -966,16 +970,17 @@
       summary.textContent = line;
       summary.title = line;
       toggle.textContent = paneOpen ? 'Hide Sent' : 'Show Sent';
-      toggle.setAttribute('aria-expanded', String(paneOpen && lock === null));
-      toggle.disabled = refreshButton.disabled = lock !== null;
+      // 연 목록 칸은 잠겨도·연결이 끊겨도 연 채로 둔다(닫히면 판독 칸이 커져 단추 줄이 움직인다). 안에 그 까닭을 쓴다.
+      toggle.setAttribute('aria-expanded', String(paneOpen));
+      refreshButton.disabled = lock !== null || !online();
       filterField.disabled = lock !== null;
-      pane.hidden = !paneOpen || lock !== null;
+      pane.hidden = !paneOpen;
       paintLines();
       if (lock !== null) attemptList.hidden = true;
       if (staleRows) paintRows();
       paintWriteControls();
       listStatus.dataset.state = listPhase;
-      listStatus.textContent = listPhase === 'loading' ? TEXT.list.loading
+      listStatus.textContent = lock !== null ? lock.text : !online() ? TEXT.list.offline : listPhase === 'loading' ? TEXT.list.loading
         : listPhase === 'failed' ? `${TEXT.list.failed}\n${listError}`
           : items.length ? TEXT.list.ready(items.length, !!nextCursor) : loadedOnce ? TEXT.list.empty : '';
       moreButton.hidden = !nextCursor || lock !== null;
@@ -1159,11 +1164,11 @@
       closeDialog();
     });
     toggle.addEventListener('click', () => {
-      if (ended || lock !== null) return;
+      if (ended) return;
       paneOpen = !paneOpen;
       staleRows = true;
       paintPanel();
-      if (paneOpen && !loadedOnce) loadList(false);
+      if (paneOpen && !loadedOnce && lock === null && online()) loadList(false);
     });
     refreshButton.addEventListener('click', () => {
       if (ended || lock !== null) return;
@@ -1211,6 +1216,13 @@
       } else if (event.reason === 'lifecycle' && event.state === 'active') startTimers();
     });
     if (work.state() === 'active') startTimers();
+    // 연결이 끊기거나 돌아왔다(page-boot.js goOffline·goOnline): 줄은 그대로 서고 글과 Refresh가 바뀐다. 돌아오면 연 목록을 다시 읽는다.
+    (window.kinOnConnection = window.kinOnConnection || []).push(() => {
+      // 대상을 다시 고르지 않는다(sync): 끊김을 대상 바뀜으로 다루면 쓰던 Mark CVR 창이 닫히고 수신자·메시지가 지워졌다.
+      if (ended) return;
+      paintPanel();
+      if (paneOpen && lock === null && online()) loadList(false);
+    });
     window.addEventListener('pagehide', () => end());
     filterField.value = filter;
     paintEntry();

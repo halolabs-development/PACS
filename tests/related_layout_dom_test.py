@@ -1395,19 +1395,21 @@ class RelatedLayoutDOMTest(Base):
                          (900, 600), (768, 1024)]
     ROW_FONTS = ("", "Arial, sans-serif", "Verdana, sans-serif")
     OTHER_HOLDER = "syn-other-reader@synthetic.test"
-    # Every row before the button row but the editor: its first text line against every box that clips it, the words
-    # squeezed to no width, and how much it could still give up (height over its floor: min-height plus, content-box, its
-    # padding and borders; the editor's field region over its 32px).
+    # Every row before the button row but the editor: its first shown text line against every box that clips it, the
+    # words squeezed to no width, and how much it could still give up (height over its floor: min-height plus,
+    # content-box, its padding and borders; the editor's field region over its 32px; nothing for a row that does not
+    # shrink - the notice band, whose height is fixed and whose rows it scrolls).
     ABOVE_PROBE = r"""
       const row = document.querySelector('.rfoot2'), compose = document.querySelector('.report-compose');
       const px = v => parseFloat(v) || 0;
       const slack = e => { if (e === compose) return document.querySelector('.redit').getBoundingClientRect().height - 32;
         const s = getComputedStyle(e), extra = s.boxSizing === 'content-box' ? px(s.paddingTop) + px(s.paddingBottom) + px(s.borderTopWidth) + px(s.borderBottomWidth) : 0;
+        if (s.flexShrink === '0') return 0;
         return e.getBoundingClientRect().height - (px(s.minHeight) + extra); };
       return [...row.parentElement.children].filter(e => (e.compareDocumentPosition(row) & 4) && e.getBoundingClientRect().height)
         .map(e => { const out = {row: e.id || e.className, slack: +slack(e).toFixed(1)};
           if (e === compose || e.id === 'reading-report-target') return out;
-          const t = texts(e)[0];
+          const t = texts(e).find(n => firstRect(n));
           if (t) { const line = firstRect(t), cut = clip(t.parentElement, line);
             Object.assign(out, {text: t.nodeValue.trim().slice(0, 40), line, cut, whole: cut[1] <= line[1] + 0.5 && cut[3] >= line[3] - 0.5}); }
           out.no_width = texts(e).map(n => n.parentElement).filter(p => p.getClientRects().length && p.getBoundingClientRect().width < 1)
@@ -1464,9 +1466,15 @@ class RelatedLayoutDOMTest(Base):
     '이 화면의 글을 남기려면 Keep This Text, 서버의 초안으로 바꾸려면 Load Server Draft · ' +
     'Keep This Text는 글만 남깁니다 — 붙은 그림은 서버의 초안 것(Conclusion 아래에 다시 불러온 그림)을 따릅니다'; }""")
             harness.expect(page.get_by_role("button", name="Keep This Text", exact=True)).to_be_visible()
+            # The list poll (every 30 s) draws the report again from the draft client, which knows no conflict, and the
+            # sweep below outlasts it (some 33 s): the bar drawn by hand is held by stopping the poll for this case.
+            page.evaluate("() => { clearInterval(poll); poll = null; }")
         if questions_failed:
-            harness.expect(page.locator("#question-p")).to_be_visible(timeout=10000)
-            page.locator("#question-toggle").click()
+            # The failed read is told in the band above the editor (an answer never stands the bar up); the reader opens
+            # the bar and its pane there.
+            harness.expect(page.locator("#question-notice")).to_be_visible(timeout=10000)
+            page.locator("#question-notice").click()
+            harness.expect(page.locator("#question-p")).to_be_visible()
             harness.expect(page.locator("#question-pane")).to_be_visible()
         if save_failed:
             # Typing: the draft's baseline read is not answered here, so after some 19s the notice above the editor
