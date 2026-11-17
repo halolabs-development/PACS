@@ -36,6 +36,63 @@ test('Spine Label: the order from the start level, both directions, and a start 
   assert.ok(M.spineLevel('C8') && M.spineLevel('L6') && M.spineLevel('S1') && !M.spineLevel('L7') && !M.spineLevel('S2'));
 });
 
+test('Spine Label: the discs between the vertebrae, in order, with and without C8 and L6', () => {
+  assert.deepEqual(M.LABELS, ['Vertebrae', 'Discs', 'Vertebrae and Discs']);
+  // Vertebrae is today's list; the default when no choice is given.
+  assert.deepEqual(M.spineNames(false, false), M.spineLevels(false, false));
+  assert.deepEqual(M.spineNames(true, true, 'Vertebrae'), M.spineLevels(true, true));
+  const discs = M.spineNames(false, false, 'Discs');
+  // No disc between C1 and C2: the first is C2-3; a region boundary names both vertebrae.
+  assert.deepEqual(discs.slice(0, 6), ['C2-3', 'C3-4', 'C4-5', 'C5-6', 'C6-7', 'C7-T1']);
+  assert.deepEqual(discs.slice(16, 18), ['T11-12', 'T12-L1']);
+  assert.deepEqual(discs.slice(-5), ['L1-2', 'L2-3', 'L3-4', 'L4-5', 'L5-S1']);
+  assert.equal(discs.length, 23);
+  assert.deepEqual(M.spineNames(true, false, 'Discs').slice(4, 7), ['C6-7', 'C7-8', 'C8-T1']);
+  assert.deepEqual(M.spineNames(false, true, 'Discs').slice(-3), ['L4-5', 'L5-6', 'L6-S1']);
+  // Both: every vertebra followed by the disc under it.
+  const both = M.spineNames(false, false, 'Vertebrae and Discs');
+  assert.deepEqual(both.slice(0, 6), ['C1', 'C2', 'C2-3', 'C3', 'C3-4', 'C4']);
+  assert.deepEqual(both.slice(-5), ['L4', 'L4-5', 'L5', 'L5-S1', 'S1']);
+  assert.equal(both.length, 25 + 23);
+  assert.deepEqual(M.spineNames(false, false, 'Sideways'), []);
+  // The order from a disc, both directions, and a disc that is not in the chosen list.
+  assert.deepEqual(M.spineOrder({ start: 'L3-4', includeC8: false, includeL6: false, direction: 'Top to bottom', labels: 'Discs' }).order, ['L3-4', 'L4-5', 'L5-S1']);
+  assert.deepEqual(M.spineOrder({ start: 'L4', includeC8: false, includeL6: false, direction: 'Top to bottom', labels: 'Vertebrae and Discs' }).order, ['L4', 'L4-5', 'L5', 'L5-S1', 'S1']);
+  assert.deepEqual(M.spineOrder({ start: 'C8-T1', includeC8: true, includeL6: false, direction: 'Bottom to top', labels: 'Discs' }).order, ['C8-T1', 'C7-8', 'C6-7', 'C5-6', 'C4-5', 'C3-4', 'C2-3']);
+  assert.equal(M.spineOrder({ start: 'C7-T1', includeC8: true, includeL6: false, direction: 'Top to bottom', labels: 'Discs' }), null);
+  assert.equal(M.spineOrder({ start: 'L4-5', includeC8: false, includeL6: false, direction: 'Top to bottom' }), null);
+  assert.equal(M.spineOrder({ start: 'L4', includeC8: false, includeL6: false, direction: 'Top to bottom', labels: 'Discs' }), null);
+  // Every name of every choice, and nothing else.
+  assert.ok(['L4-5', 'C7-T1', 'C7-8', 'C8-T1', 'L5-S1', 'L5-6', 'L6-S1', 'T12-L1', 'C2-3'].every(M.spineLevel));
+  assert.ok(!['C1-2', 'L4-6', 'l4-5', 'L4–5', 'S1-2', 'L5-L6', 'L4-L5', 'L4 -5', 'L45'].some(M.spineLevel));
+  const every = new Set([false, true].flatMap(c8 => [false, true].flatMap(l6 => M.spineNames(c8, l6, 'Vertebrae and Discs'))));
+  assert.deepEqual([...M.ALL_NAMES].sort(), [...every].sort());
+  assert.equal(M.ALL_NAMES.length, 27 + 23 + 4);
+  assert.ok(M.ALL_NAMES.indexOf('L4') < M.ALL_NAMES.indexOf('L4-5') && M.ALL_NAMES.indexOf('L4-5') < M.ALL_NAMES.indexOf('L5'));
+});
+
+test('Spine Label: the start kept or moved to its place when the list is drawn again', () => {
+  const discs = M.spineNames(false, false, 'Discs'), vertebrae = M.spineNames(false, false), both = M.spineNames(false, false, 'Vertebrae and Discs');
+  assert.equal(M.spineStart(both, 'L4'), 'L4');
+  // A vertebra → the disc under it; C1 has none, so C2-3; S1 has none under it, so the last disc.
+  assert.equal(M.spineStart(discs, 'L4'), 'L4-5');
+  assert.equal(M.spineStart(discs, 'C1'), 'C2-3');
+  assert.equal(M.spineStart(discs, 'S1'), 'L5-S1');
+  // A disc → the vertebra under it.
+  assert.equal(M.spineStart(vertebrae, 'L4-5'), 'L5');
+  // C8 or L6 dropped: the next one down.
+  assert.equal(M.spineStart(vertebrae, 'C8'), 'T1');
+  assert.equal(M.spineStart(vertebrae, 'L6'), 'S1');
+  assert.equal(M.spineStart(discs, 'C7-8'), 'C7-T1');
+  assert.equal(M.spineStart(discs, 'L6-S1'), 'L5-S1');
+  assert.equal(M.spineStart(M.spineNames(true, true, 'Discs'), 'C7-T1'), 'C8-T1');
+  assert.equal(M.spineStart(discs, 'C8-T1'), 'C7-T1');
+  assert.equal(M.spineStart(discs, 'L5-6'), 'L5-S1');
+  assert.equal(M.spineStart(vertebrae, 'C7-T1'), 'T1');
+  assert.equal(M.spineStart(discs, 'nonsense'), 'C2-3');
+  assert.equal(M.spineStart([], 'L4'), null);
+});
+
 test('Circle by Diameter: a circle on the patient is an ellipse of pixels where the pixels are not square', () => {
   const square = M.circleShape([10, 10], 10, [1, 1]);
   assert.deepEqual([square.rx, square.ry, square.edge], [5, 5, [15, 10]]);

@@ -416,22 +416,30 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
     result: tool => tool.state.last ? 'Result: ' + tool.state.last : '',
   };
 
+  // The names to stamp, in order, for the panel's choices (measure-tools-model.js spineOrder: vertebrae, discs or both).
+  const spineOrderOf = s => model?.spineOrder({ start: s.start, includeC8: s.c8, includeL6: s.l6, direction: s.direction, labels: s.labels })?.order || [];
+  const SPINE_STEPS = { Vertebrae: '척추체를 차례로 누르세요', Discs: '디스크를 차례로 누르세요', 'Vertebrae and Discs': '척추체와 디스크를 차례로 누르세요' };
   const spine = {
     id: 'measure-spine-label', title: 'Spine Label',
-    note: '시작 레벨을 고르고 척추체를 차례로 누르면 누를 때마다 다음 레벨 이름이 붙습니다. C8·L6은 이행 척추를 넣을 때 고릅니다.',
-    steps: [{ text: '척추체를 차례로 누르세요', points: 1 }],
+    note: '시작 레벨을 고르고 척추체를 차례로 누르면 누를 때마다 다음 레벨 이름이 붙습니다. C8·L6은 이행 척추를 넣을 때 고릅니다. ' +
+      'Labels에서 Discs를 고르면 디스크 이름(C2-3 … L4-5, L5-S1)이, Vertebrae and Discs를 고르면 척추체와 그 아래 디스크가 번갈아 붙습니다.',
+    // The step names what the chosen labels mark (the panel open is the one asking).
+    get steps() { return [{ text: SPINE_STEPS[active?.spec === spine && active.state.labels] || SPINE_STEPS.Vertebrae, points: 1 }]; },
     fields(body, tool) {
       const s = tool.state;
-      Object.assign(s, { start: 'C1', c8: false, l6: false, direction: model?.DIRECTIONS[0] || 'Top to bottom', next: 0 });
+      Object.assign(s, { start: 'C1', c8: false, l6: false, direction: model?.DIRECTIONS[0] || 'Top to bottom', labels: 'Vertebrae', next: 0 });
       const start = field(body, 'Start Level', el('select', '', null, { 'aria-label': 'Start Level' }));
       const c8 = field(body, 'Include C8', el('input', '', null, { type: 'checkbox', 'aria-label': 'Include C8' }));
       const l6 = field(body, 'Include L6', el('input', '', null, { type: 'checkbox', 'aria-label': 'Include L6' }));
       const direction = field(body, 'Direction', el('select', '', null, { 'aria-label': 'Direction' }));
       for (const name of model?.DIRECTIONS || ['Top to bottom', 'Bottom to top']) el('option', name, direction, { value: name });
+      const labels = field(body, 'Labels', el('select', '', null, { 'aria-label': 'Labels' }));
+      for (const name of Object.keys(SPINE_STEPS)) el('option', name, labels, { value: name });
       const preview = el('p', '', body, { 'data-spine-preview': '' }); preview.style.fontFamily = 'monospace';
+      // The start stays where it was on the spine when the list changes (a vertebra → the disc under it; C8 dropped → T1).
       s.paint = () => {
-        const levels = model ? model.spineLevels(s.c8, s.l6) : [];
-        if (!levels.includes(s.start)) s.start = levels[Math.min(levels.length - 1, Math.max(0, start.selectedIndex))] || 'C1';
+        const levels = model ? model.spineNames(s.c8, s.l6, s.labels) : [];
+        s.start = model?.spineStart(levels, s.start) || 'C1';
         start.replaceChildren(...levels.map(level => { const o = el('option', level, null, { value: level }); o.selected = level === s.start; return o; }));
         preview.textContent = model ? model.spinePreview(levels, s.start) : '';
       };
@@ -440,17 +448,18 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
       c8.onchange = () => { s.c8 = c8.checked; changed(); };
       l6.onchange = () => { s.l6 = l6.checked; changed(); };
       direction.onchange = () => { s.direction = direction.value; changed(); };
+      labels.onchange = () => { s.labels = labels.value; changed(); };
       if (model) s.paint(); else loaded.then(() => { if (!ended) { s.paint(); tool.refresh(); } });
     },
     complete(tool, [press]) {
-      const s = tool.state, order = model.spineOrder({ start: s.start, includeC8: s.c8, includeL6: s.l6, direction: s.direction })?.order || [];
+      const s = tool.state, order = spineOrderOf(s);
       if (s.next >= order.length) return '마지막 레벨까지 붙였습니다. Restart로 다시 시작하거나 시작 레벨을 바꾸세요';
       stamp(tool, press, TOOLS.spine, [press.world], { text: order[s.next] });
       s.next++;
       return '';
     },
     result(tool) {
-      const s = tool.state, order = model?.spineOrder({ start: s.start, includeC8: s.c8, includeL6: s.l6, direction: s.direction })?.order || [];
+      const s = tool.state, order = spineOrderOf(s);
       return order.length ? (s.next < order.length ? 'Next level: ' + order[s.next] : 'All levels placed (' + order[order.length - 1] + ')') : '';
     },
     restart: tool => { tool.state.next = 0; },
