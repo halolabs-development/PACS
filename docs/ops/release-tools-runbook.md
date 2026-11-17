@@ -632,8 +632,10 @@ container recreation do not update an existing realm. Record the actual values, 
 The `prep` stage is read-only. It does not certify a live ledger as safe for rollback. It does preview
 what would refuse the maintenance interval after the entry closed (a host that does not equal its
 declaration, the marks of a retained maintenance boundary, a database scheduler, an undeclared process or
-health check in the database container, an unclassified running executor), so that a window that is going
-to be refused is refused before it costs a closed entry.
+health check in the database container, an unclassified running executor, a unit whose loaded
+configuration is not what is on disk, a paused site container, a site that does not answer on its own
+ports, a candidate whose Compose file would not recreate the services that read mounted files), so that a
+window that is going to be refused is refused before it costs a closed entry.
 
 ### The host declaration
 
@@ -642,14 +644,18 @@ enumerated, and the enumeration must equal a reviewed host declaration:
 
 - every account's crontab, the system table and the cron directories; the whole `at`/`batch` queue; anacron;
 - systemd, for the system manager and for each account's own manager: installed units and loaded units
-  (services, timers, path and socket units, transient units), with their unit files and drop-ins. A
-  manager that cannot be listed is a refusal, never "no units";
+  (services, timers, path and socket units, transient units, and templates: an instance started later
+  runs the template's file), with their unit files and drop-ins, the starts the manager holds in its
+  queue, and whether what the manager has loaded is what is on disk. A manager that cannot be listed is a
+  refusal, never "no units";
 - the configuration and hook directories of executors that choose their work by directory (certificate
   renewal, log rotation, network and device events, package hooks). Their bodies are not interpreted: the
   set of entries and their bytes are fixed, and the scheduler that would call them is suspended;
 - services that a message on the system bus would start;
 - every running container outside the site's own project, and inside the database container (it keeps
-  running through the interval) its health check, its restart policy and its processes;
+  running through the interval) its health check, its restart policy and its processes. What the database
+  container may run is written into the declaration by the reviewer: the enumeration shows what runs now
+  and never fills the declared value in;
 - automation that reaches the host from outside (a job on another machine that runs commands here): it is
   named in the declaration, and one that must not run is stated as suspended by the operator for this
   window, or the stage refuses.
@@ -667,13 +673,35 @@ account whose own manager only runs while it is logged in appears and disappears
 lingering for the operating account, or keep the session). The declaration file itself is fixed when the
 interval closes; a recovery stage that is given a different one is refused.
 
-For the closed interval the schedulers are suspended whole: cron, anacron and `at` are stopped, every
-timer and path unit is stopped, and the services they or the bus would start are blocked from starting.
-No single line is edited and none is judged "relevant". Every other running executor is classified in the
-declaration: `suspend` (stopped or, for a container, paused, and put back afterwards) or `keep` with a
-reason. `keep` is a narrow exception: a scheduler is never kept, and an entry that names the site
+For the closed interval the schedulers are suspended whole: cron, anacron and `at` are stopped and every
+timer and path unit is stopped. No single line is edited and none is judged "relevant". Every other
+running executor is classified in the declaration: `suspend` (stopped or, for a container, paused, and put
+back afterwards in the state it was found in: one that was already paused is not unpaused) or `keep` with
+a reason. `keep` is a narrow exception: a scheduler is never kept, and an entry that names the site
 directory, or a container that reaches the site's writable mounts, its network, the host network or the
 container runtime's control socket, cannot be kept.
+
+Blocking a start is not a choice. Every unit the declaration does not keep is blocked from starting for
+the interval, whether it runs now or not, templates included (a kept template keeps its instances, and
+what a kept timer, path or socket starts is kept with it - unless that unit names the site directory). So
+`keep` also means "may be started during the interval": what must be able to start then (for example the
+units a second operator's login needs) is kept by name, with a reason; a start that meets a block is
+skipped without an error. Two kinds of unit get no block. A masked unit cannot be started at all. A unit
+the host starts on its way down (ordered after its shutdown targets: reboot, power-off, halt, exit) is
+never blocked, because a block there would hang the reboot itself: such a unit must not run in the
+interval (if it does, the next comparison refuses), and the declaration says in one sentence that these
+units are not blocked, or the stage refuses. Between the moment every block is loaded and the moment the
+marker they refer to exists, a start still passes; what starts then is a job that ran before the interval
+closed, and it is waited for like any other.
+
+Whether the host's execution is as it may be is decided in one place, from a whole new enumeration each
+time: before anything is closed (the host equals its declaration and can be suspended), right after the
+interval closed, before and after every judgement, and by every stage that continues the interval (every
+entry is the fixed one or holds bytes this interval itself wrote; no unit that is not kept runs or has a
+start queued; every block is loaded, not merely written; the declared containers are paused). What is seen
+is never taken as the new baseline. A unit, a container or an account's manager that appears inside the
+interval was in no plan and is refused as an added entry. This comparison sees end points: an
+administrator who creates a transient unit, runs it and removes it between two comparisons is outside it.
 
 ## One maintenance interval
 
@@ -683,12 +711,28 @@ schedulers, and external DB clients. A separate stack that is declared and canno
 remains running.
 
 1. Take the site operation lock. Compare the host with its declaration again, now under the lock; a
-   difference refuses before anything is closed. Close the proxy and block external/debug-port ingress.
-   Block new execution first (the start blocks), then wait for the jobs that were already running and
-   their children to finish, then stop the schedulers; a job that does not finish in time refuses, it is
-   not killed. Compare the suspended state again: the entries are the fixed ones, nothing suspended runs,
-   every start block is loaded. Refuse unlisted writers; do not kill an unrelated process to obtain a
-   passing check.
+   difference refuses before anything is closed. Before the first change, write down what is there and
+   whose interval this is: each container and whether it runs, is paused or is stopped, the activity of
+   each unit, the bytes of what moves with the site, the database's access rules, the release record and
+   the attempt. That first state is never written again: a state the interval itself left half-way is
+   never taken for an original. Then close the proxy (the first change) and block external/debug-port
+   ingress. Block new execution first (every start block written and loaded, then the one marker they
+   refer to), then wait for the jobs that were already running, their children, and the starts the manager
+   held in its queue, then stop the schedulers; a job that does not finish in time refuses, it is not
+   killed. Compare the suspended state again as a whole. Refuse unlisted writers; do not kill an unrelated
+   process to obtain a passing check.
+
+   Every change of the interval is one unit - one file, one packet-filter rule, one unit's activity, one
+   container's state - and goes one way: read the actual value; if it is the wanted one, do nothing; if it
+   is a value this interval may start from (the preserved original, or one it made itself), record the
+   change, make it, and read the value again; any other value, or one that cannot be read, refuses. The
+   record is replaced whole, so a death leaves the earlier record or the new one, never half of one; a file
+   that is rewritten is replaced whole as well. A file's bytes and their load by the service that reads
+   them (a start block and its manager, the database's access rules and the server) are two things, each
+   verified. Nothing says "done": whether a close or an opening is complete is the wanted values set
+   against what is read now, so a stage that failed, was refused or was killed anywhere is continued, or
+   taken back, by asking for the same goal again. What already ran is not taken back: the effect of a
+   scheduled job that ran, a migration, a retention destruction, a database restore.
 2. Stop application writers before taking the pre-upgrade backup B. Keep PostgreSQL running for local
    reads/backups, reject new writer connections and drain existing work. An `idle in transaction` backend
    is unfinished. Refuse a DB scheduler that this procedure cannot hold. At this stopped boundary read
@@ -701,11 +745,16 @@ remains running.
    API. Wait for listening and the current start's retention recovery. Run both retention sweeps to
    completion. Perform the candidate's first backup/rehearsal now, again with the writers stopped first:
    `ops_backup.py` restarts the writers it stopped and then waits for readiness through the entry, which is
-   closed here. Stop a running writer only after it finished starting (the API answers, the sign-in server
-   serves the realm, the image server answers): the sign-in server writes its application image during the
-   first start of a newly created container, and one stopped in the middle of that start does not start
-   again. Start the same containers again afterwards; that start precedes step 5. The same holds for the
-   first backup of a rollback project.
+   closed here. Start the same containers again afterwards; that start precedes step 5.
+
+   One rule covers every stop of a writer in the interval, not only this backup: a container that will be
+   started again is stopped only after it finished starting (the API answers, the sign-in server serves
+   the realm, the image server answers), and a start-up that cannot be confirmed stops nothing. The
+   sign-in server writes its application image during the first start of a newly created container, and
+   one stopped in the middle of that start does not start again. A container the stage is going to remove
+   (the candidate when rolling back, what is left of N or R when returning) is stopped without waiting for
+   it to become healthy, so a broken candidate does not hold up the recovery; if its start-up was not
+   confirmed at that moment it is never started again. What is removed is the container, never a volume.
 5. After the last start, wait until every writer finished starting (the API answers after its recovery,
    the sign-in server serves the realm, the image server answers), then run the sweeps and pause every
    target writer container. A service paused in the middle of its start-up would be judged, resumed and
@@ -714,6 +763,10 @@ remains running.
    count. Judge the destruction state once at this boundary. A stopped container and a paused running
    container are different states; record which is being judged.
 6. On acceptance, unpause those same IDs. Require their start times and restart counts to remain unchanged.
+   The same ID with another start is another container for the judgement: if a judged container started
+   again (the runtime restarts a container that exits), that pause and that judgement are void. Keep the
+   entry closed (close it again if it had opened) and take the three again - start-up complete, pause,
+   judge - on what runs now; after repeated restarts, refuse.
    Start only the already-created proxy container itself (`docker start <its ID>`). `docker compose start
    proxy` also starts the finished one-shot dependencies again (the migration and role-provisioning jobs,
    which write to the database). Do not run a full `up -d`, recreate a container or perform another backup
@@ -722,10 +775,14 @@ remains running.
 7. Verify HTTPS, the actual served worklist/viewer files and sign-in theme, image labels, migrations,
    signing-key access and the realm issuer. Only after these checks: write what the declaration says moves
    with the site, compare the whole host with the fixed entries once more, and let scheduled work go again,
-   the schedulers first and the timers last (a timer that catches up on a missed run fires then). The
-   interval is finished, and the lock released, only when all of it succeeded. If anything fails on the
-   way, close the entry again and suspend again what had been let go, and record what is actually true:
-   never "closed" about a host where that second suspension did not succeed.
+   the schedulers first and, in a later request, the timers (a timer that catches up on a missed run fires
+   then). The interval is finished, and the lock released, only when every target is read at its opened
+   value and the final record is written; a final record that cannot be written is a failure, not a
+   success. If anything fails on the way, ask for the closed state again - the entry, the blocks and the
+   schedulers, the ingress rules, each on its own so that one that fails does not keep the others open -
+   and record what is then measured on the host: never an assumed "closed" or "suspended", and nothing
+   about a host that could not be measured. That failure handling does not wait for a job that scheduled
+   work started in between; the stage that continues the interval does.
 
 The file bind mounts for viewer configuration and the realm/theme deserve explicit verification.
 `kin.release` labels on Orthanc and Keycloak cause recreation when the revision changes; read the actual
@@ -759,6 +816,13 @@ A failed query, failed inventory enumeration or unreadable input must preserve i
   closed. The same found while the interval is closed: incomplete operation; never `ROLLED_BACK`.
 - Every recovery stage (reopening, rollback after a failed upgrade, return to N) holds the lock from its
   first moment and keeps it through any failure, also one before it changed anything.
+- "Entry closed" and "scheduled work suspended" in a failure's row and record are what the failure handling
+  measured on the host after it asked for the closed state again. Where one of them is false the row names
+  what is open or runs; where nothing could be measured it says so and the record keeps what it said.
+- An operator process that died (a kill, a power loss) leaves a record without an end state. The interval's
+  own file is intact (it is always replaced whole) and holds the first state and every recorded change, so
+  the same record continues: before any switch, the reopening below; after a switch, the rollback or the
+  return to N.
 
 An operator must inspect the ended command, any outstanding child commands, container state and retained
 lock token before manually releasing a stale lock for recovery. The retained token alone does not prove
@@ -772,15 +836,19 @@ with what it fixed (a rollback after a failed upgrade, a return to N after a fai
 that same record and attempt, checked before the stage changes anything: a copy of the record, or another
 attempt's record, is refused. No stage captures the host a second time: that would record the suspension
 as the original and "restore" to it. A new operation is refused before it closes anything while such marks
-exist.
+exist. How far the earlier stage got is not a word in a file: the stage that continues asks for the closed
+state again from whatever the host is, and admits only what the interval itself changed.
 
-After a refusal that switched nothing, the operator may put the same release back in service: start the
-containers the refusal left (no creation, no recreation), wait until they finished starting, then the
-proxy, the readiness checks, and only then scheduled work, as in step 7. The lock is held from the start
-of this step, and it is released, and the boundary finished, only after all of it succeeded; after a
-failure the same step is run again once the operator has inspected and released the lock by hand. This is
-a deliberate step after inspection, never an automatic reaction to a refusal, and it does not apply after
-a switch.
+After a refusal, a failure or a death that switched nothing, the operator may put the same release back in
+service - also when the close itself never completed. The containers the interval found are put back in
+the state it found them in (the same containers: no creation, no recreation; a finished one-shot job is
+not run again; a container that was stopped before its start-up was confirmed is not reused, and that
+state goes to the rollback instead), the database's access rules as they were; wait until the writers
+finished starting, then the proxy, the readiness checks, and only then scheduled work, as in step 7. The
+lock is held from the start of this step, and it is released, and the boundary finished, only after all
+of it succeeded; after a failure the same step is run again - as often as needed - once the operator has
+inspected and released the lock by hand. This is a deliberate step after inspection, never an automatic
+reaction to a refusal, and it does not apply after a switch.
 
 ## Restore B into a separate rollback project R
 
@@ -796,7 +864,10 @@ and before anything of N is switched: confirm that the R name, paths and volumes
 prior configuration and held images are available, stage R's checkout and signing custody, and check that
 B's credential/catalog inputs match the rendered R configuration. A failure in any of these is a refusal
 with the entry closed and nothing switched (`NOT_STARTED`), from which the same release is put back in
-service as described above. What the declaration says moves with the site is preserved as N's original
+service as described above; when this rollback follows an upgrade that had already started the candidate,
+the record stays `NEEDS_ATTENTION` instead and the rollback is run again once the cause is removed. The
+candidate's containers are going to be removed, so they are stopped without waiting for their start-up.
+What the declaration says moves with the site is preserved as N's original
 bytes. Take a held N preservation backup with no service resumption. Never have N and R write the shared
 ledgers concurrently.
 
@@ -843,9 +914,12 @@ from the containers that exist, not from R's API being present:
   against, refuse with the entry closed.
 
 Suspend and drain R, judge with its entry closed, and keep the shared ledger volumes. Stop R without `-v`.
-Restore N's preserved signing custody and create/start N while its proxy stays closed. Read this start's
-recovery, complete sweeps, pause writers, drain DB transactions and judge again. A completed destruction
-on R must remain absent on N; an unfinished attempt may refuse startup in both directions.
+Restore N's preserved signing custody and create and start N while its proxy stays closed. N's containers
+are always created anew for this: whatever is left of them (N never went down, or an earlier return
+started them and failed) is removed first, without `-v`, so that no container stopped before its start-up
+was confirmed is used again and the return can be run again after a failure. Read this start's recovery,
+complete sweeps, pause writers, drain DB transactions and judge again. A completed destruction on R must
+remain absent on N; an unfinished attempt may refuse startup in both directions.
 
 Resume the identical judged containers and start only N's prepared proxy. Check HTTPS/signing. Then put
 what moves with the site back to the **preserved original N bytes**, not a guessed inverse substitution
