@@ -42,8 +42,8 @@ test('normalizeStudyDate accepts only real calendar dates', () => {
     assert.equal(identity.normalizeStudyDate(bad), null, String(bad));
 });
 
-test('dateText keeps the stored original and names a missing date', () => {
-  assert.equal(identity.dateText({ date: '20260801' }), '20260801');
+test('dateText prints a DICOM date as YYYY-MM-DD, keeps any other stored text and names a missing date', () => {
+  assert.equal(identity.dateText({ date: '20260801' }), '2026-08-01');
   assert.equal(identity.dateText({ date: '2026-08-01' }), '2026-08-01');
   assert.equal(identity.dateText({ date: 'BADDATE1' }), 'BADDATE1');
   assert.equal(identity.dateText({ date: '' }), '날짜 없음');
@@ -88,7 +88,7 @@ test('optionLabel describes the comparison by its own date', () => {
   assert.equal(identity.optionLabel('saved'), 'Current study report');
   assert.equal(identity.optionLabel('both', comparison), 'Current + comparison study reports');
   assert.equal(identity.optionLabel('prior', comparison),
-    'Comparison study report (20260901 · CHEST CT · Acc ACC-uid-compare)');
+    'Comparison study report (2026-09-01 · CHEST CT · Acc ACC-uid-compare)');
   assert.equal(identity.optionLabel('prior', study(COMPARE, '', { desc: '', acc: '' })),
     'Comparison study report (날짜 없음 · CT · Acc -)');
   assert.equal(identity.optionLabel('prior', study(COMPARE, 'BADDATE1')),
@@ -122,10 +122,10 @@ test('studyLine and dateLine identify the study without its date order', () => {
   const { entries } = pair('20260901');
   assert.equal(identity.studyLine(entries[1].identity), '홍 길동 (PID-uid-compare) · CHEST CT · Acc ACC-uid-compare');
   assert.equal(identity.studyLine(study(COMPARE, '20260901', { desc: '', acc: '' })), '홍 길동 (PID-uid-compare) · CT · Acc -');
-  assert.equal(identity.dateLine(entries[0]), '검사일 20260801 · 현재 검사');
-  assert.equal(identity.dateLine(entries[1]), '검사일 20260901 · 현재 검사보다 이후');
-  assert.equal(identity.dateLine(pair('20260701').entries[1]), '검사일 20260701 · 현재 검사보다 이전');
-  assert.equal(identity.dateLine(pair('20260801').entries[1]), '검사일 20260801 · 현재 검사와 같은 날짜 · 선후 미확인');
+  assert.equal(identity.dateLine(entries[0]), '검사일 2026-08-01 · 현재 검사');
+  assert.equal(identity.dateLine(entries[1]), '검사일 2026-09-01 · 현재 검사보다 이후');
+  assert.equal(identity.dateLine(pair('20260701').entries[1]), '검사일 2026-07-01 · 현재 검사보다 이전');
+  assert.equal(identity.dateLine(pair('20260801').entries[1]), '검사일 2026-08-01 · 현재 검사와 같은 날짜 · 선후 미확인');
   assert.equal(identity.dateLine(pair('').entries[1]), '검사일 날짜 없음 · 검사일 확인 불가 · 선후 미확인');
   assert.equal(identity.dateLine(pair('BADDATE1').entries[1]), '검사일 BADDATE1 · 검사일 확인 불가 · 선후 미확인');
   for (const date of ['20260901', '20260801', '20260701', '', 'BADDATE1'])
@@ -135,17 +135,17 @@ test('studyLine and dateLine identify the study without its date order', () => {
 test('summaryText lists patient identity and both reports by date relation', () => {
   const { identities, entries } = pair('20260901');
   assert.equal(identity.summaryText(identities, entries), [
-    '환자 홍 길동 (PID-uid-current) · 검사 20260801 · Acc ACC-uid-current',
-    '환자 홍 길동 (PID-uid-compare) · 검사 20260901 · Acc ACC-uid-compare',
-    'Current Study Report: 20260801 · 승인된 저장본 · v1 · RS A',
-    'Comparison Study Report: 20260901 · 현재 검사보다 이후 · 미승인 저장본 · v2 · RS W',
+    '환자 홍 길동 (PID-uid-current) · 검사 2026-08-01 · Acc ACC-uid-current',
+    '환자 홍 길동 (PID-uid-compare) · 검사 2026-09-01 · Acc ACC-uid-compare',
+    'Current Study Report: 2026-08-01 · 승인된 저장본 · v1 · RS A',
+    'Comparison Study Report: 2026-09-01 · 현재 검사보다 이후 · 미승인 저장본 · v2 · RS W',
   ].join('\n'));
   const empty = pair('');
   const text = identity.summaryText(empty.identities, empty.entries);
   assert.ok(text.includes('환자 홍 길동 (PID-uid-compare) · 검사 날짜 없음 · Acc ACC-uid-compare'), text);
   assert.ok(text.includes('Comparison Study Report: 날짜 없음 · 검사일 확인 불가 · 선후 미확인 · 미승인 저장본 · v2 · RS W'), text);
   assert.equal(identity.summaryText(identities, []),
-    '환자 홍 길동 (PID-uid-current) · 검사 20260801 · Acc ACC-uid-current\n환자 홍 길동 (PID-uid-compare) · 검사 20260901 · Acc ACC-uid-compare');
+    '환자 홍 길동 (PID-uid-current) · 검사 2026-08-01 · Acc ACC-uid-current\n환자 홍 길동 (PID-uid-compare) · 검사 2026-09-01 · Acc ACC-uid-compare');
   for (const date of ['20260901', '20260801', '20260701', '', 'BADDATE1']) {
     const set = pair(date);
     const summary = identity.summaryText(set.identities, set.entries);
@@ -157,13 +157,13 @@ test('summaryText lists patient identity and both reports by date relation', () 
 test('pageIdentity carries the whole study identity of that page alone', () => {
   const { entries } = pair('20260901');
   assert.equal(identity.pageIdentity(entries[0]), [
-    'Current Study Report · 20260801',
+    'Current Study Report · 2026-08-01',
     '홍 길동 (PID-uid-current) · CHEST CT · Acc ACC-uid-current',
     'Study uid-current',
     '승인된 저장본 · v1 · RS A',
   ].join('\n'));
   assert.equal(identity.pageIdentity(entries[1]), [
-    'Comparison Study Report · 20260901 · 현재 검사보다 이후',
+    'Comparison Study Report · 2026-09-01 · 현재 검사보다 이후',
     '홍 길동 (PID-uid-compare) · CHEST CT · Acc ACC-uid-compare',
     'Study uid-compare',
     '미승인 저장본 · v2 · RS W',
@@ -255,7 +255,7 @@ test('optionLabel names the unsaved draft choices without renaming the saved one
   const comparison = study(COMPARE, '20260901');
   assert.equal(identity.optionLabel('editor'), 'Current study draft (unsaved)');
   assert.equal(identity.optionLabel('editor-prior', comparison),
-    'Current study draft (unsaved) + comparison study report (20260901 · CHEST CT · Acc ACC-uid-compare)');
+    'Current study draft (unsaved) + comparison study report (2026-09-01 · CHEST CT · Acc ACC-uid-compare)');
   assert.equal(identity.optionLabel('editor-prior', study(COMPARE, '', { desc: '', acc: '' })),
     'Current study draft (unsaved) + comparison study report (날짜 없음 · CT · Acc -)');
   // The first pull request's four choices keep their exact wording.
@@ -263,7 +263,7 @@ test('optionLabel names the unsaved draft choices without renaming the saved one
   assert.equal(identity.optionLabel('saved'), 'Current study report');
   assert.equal(identity.optionLabel('both', comparison), 'Current + comparison study reports');
   assert.equal(identity.optionLabel('prior', comparison),
-    'Comparison study report (20260901 · CHEST CT · Acc ACC-uid-compare)');
+    'Comparison study report (2026-09-01 · CHEST CT · Acc ACC-uid-compare)');
   for (const date of ['20260901', '20260801', '20260701', '', 'BADDATE1'])
     assert.ok(!identity.optionLabel('editor-prior', study(COMPARE, date)).includes('과거'), date);
 });
@@ -274,17 +274,17 @@ test('a draft entry keeps the current role and carries the unsaved footer', () =
   assert.equal(entry.role, 'current');
   assert.equal(entry.title, 'Current Study Report');
   assert.equal(entry.relation, null);
-  assert.equal(identity.dateLine(entry), '검사일 20260801 · 현재 검사');
+  assert.equal(identity.dateLine(entry), '검사일 2026-08-01 · 현재 검사');
   assert.equal(identity.pageIdentity(entry), [
-    'Current Study Report · 20260801',
+    'Current Study Report · 2026-08-01',
     '홍 길동 (PID-uid-current) · CHEST CT · Acc ACC-uid-current',
     'Study uid-current',
     '미확정 편집문 · 저장·승인되지 않음',
   ].join('\n'));
   const compare = identity.reportEntry(COMPARE, unapproved, identities, CURRENT);
   const summary = identity.summaryText(identities, [entry, compare]);
-  assert.ok(summary.includes('Current Study Report: 20260801 · 미확정 편집문 · 저장·승인되지 않음'), summary);
-  assert.ok(summary.includes('Comparison Study Report: 20260901 · 현재 검사보다 이후 · 미승인 저장본 · v2 · RS W'), summary);
+  assert.ok(summary.includes('Current Study Report: 2026-08-01 · 미확정 편집문 · 저장·승인되지 않음'), summary);
+  assert.ok(summary.includes('Comparison Study Report: 2026-09-01 · 현재 검사보다 이후 · 미승인 저장본 · v2 · RS W'), summary);
   assert.ok(!summary.includes('과거'));
   // The draft page owns its own named page, exactly like a saved report page.
   const rules = identity.pageRules([entry, compare], summary);
@@ -327,15 +327,15 @@ test('the repeated page identity and the summary say addendum for that study alo
   const head = identity.reportEntry(CURRENT, addendum, identities, CURRENT);
   const compare = identity.reportEntry(COMPARE, unapproved, identities, CURRENT);
   assert.equal(identity.pageIdentity(head), [
-    'Current Study Report · 20260801',
+    'Current Study Report · 2026-08-01',
     '홍 길동 (PID-uid-current) · CHEST CT · Acc ACC-uid-current',
     'Study uid-current',
     '승인된 추가기재 · v3 · RS A',
   ].join('\n'));
   const summary = identity.summaryText(identities, [head, compare]);
-  assert.ok(summary.includes('Current Study Report: 20260801 · 승인된 추가기재 · v3 · RS A'), summary);
+  assert.ok(summary.includes('Current Study Report: 2026-08-01 · 승인된 추가기재 · v3 · RS A'), summary);
   // The comparison study keeps its own label: one addendum does not rename the other page.
-  assert.ok(summary.includes('Comparison Study Report: 20260901 · 현재 검사보다 이후 · 미승인 저장본 · v2 · RS W'), summary);
+  assert.ok(summary.includes('Comparison Study Report: 2026-09-01 · 현재 검사보다 이후 · 미승인 저장본 · v2 · RS W'), summary);
   assert.equal(summary.match(/추가기재/g).length, 1);
   const rules = identity.pageRules([head, compare], summary);
   assert.ok(rules.includes(`@page report-0{@bottom-left{content:${identity.cssContent(identity.pageIdentity(head))};`), rules.slice(0, 160));
