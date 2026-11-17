@@ -1181,6 +1181,11 @@
     .left .grid th.num { text-align: right; font-variant-numeric: tabular-nums; }
     .left .grid td.dim { color: var(--kin-dim); }
     .left .grid td.acc { color: var(--kin-link); }
+    /* A button in a list cell (Assigned Reader, Tech Note) sits on the row's own text line at the row's text size: the
+       toolbar's 26px .chip height made every row 31px for 11px text, about a third fewer rows on a screen. In a column
+       narrowed to a saved width it ends in an ellipsis inside its cell, as the text cells there do. */
+    #rows td .chip { box-sizing: border-box; max-width: 100%; height: auto; padding: 0 6px; overflow-x: clip; text-overflow: ellipsis;
+      font-size: inherit; line-height: 1; }
 
     .rs { min-width: 0; padding: 0; color: var(--kin-text); background: transparent; border-radius: 0; font-weight: 700; }
     .rs.W, .rs.A, .rs.H, .rs.O, .rs.P, .rs.T { background: transparent; }
@@ -1424,6 +1429,13 @@
     #study-panel-host [role="tab"][aria-selected="true"] { background: var(--kin-row-sel); border-color: var(--kin-accent); text-decoration: none; }
     #study-panel-host :is(.s-thumb, .s-clinical, .s-template) { width: 100%; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
     #study-panel-host .clinical { flex: none; overflow: visible; }
+    /* Where the Clinical Info box does not scroll (the Study Panel, the Reading Workspace), its identity table wraps
+       inside its own half: the page-wide `th, td { white-space: nowrap }` drew the Study UID and patient lines under
+       Clinical Context. Elsewhere the box scrolls and the table keeps one line per cell. */
+    :is(body.reading, #study-panel-host) #clinical { overflow-wrap: anywhere; }
+    :is(body.reading, #study-panel-host) #clinical table { table-layout: fixed; }
+    :is(body.reading, #study-panel-host) #clinical td { white-space: normal; overflow-wrap: anywhere; }
+    :is(body.reading, #study-panel-host) #clinical td:first-child { width: 72px; }
     #study-panel-host .s-thumb { min-height: 260px; }
     #study-panel-host .tpl-list { min-height: 180px; overflow: auto; }
     #study-panel-status:empty { display: none; }
