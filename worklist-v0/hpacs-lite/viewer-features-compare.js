@@ -13,6 +13,7 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
   const style = document.createElement('style');
   style.textContent = `.kin-compare-table{border-collapse:collapse;width:100%;margin:6px 0}.kin-compare-table th,.kin-compare-table td{padding:3px 6px;text-align:left;border-bottom:1px solid #555;white-space:nowrap}
     .kin-compare-table tr[tabindex]{cursor:pointer}.kin-compare-table tr[tabindex]:hover,.kin-compare-table tr[tabindex]:focus{background:#3b4c54;outline:none}
+    .kin-compare-table tr[aria-selected=true]{background:#2c4450;box-shadow:inset 3px 0 #8ab4c8}.kin-compare-study{max-width:360px}.kin-compare-row[hidden]{display:none}
     .kin-compare-prior{font-style:italic;font-family:"Batang",serif}.kin-compare-row{display:flex;gap:6px;align-items:center;margin:4px 0}
     .kin-compare-actions{display:flex;gap:6px;margin:6px 0}.kin-compare-status{min-height:1.2em;margin:4px 0}.kin-compare-wide{min-width:420px}
     .kin-compare-scout-frame{position:relative;width:220px;height:300px;margin:6px auto;background:#000;border:1px solid #555}
@@ -40,7 +41,6 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
   const shownSets = id => grid.getState().viewports.get(id)?.displaySetInstanceUIDs || [];
   const viewport = id => { try { return cellService.getCornerstoneViewport(id) || null; } catch (_) { return null; } };
   const context = id => { try { return seam()?.viewport?.(id) || null; } catch (_) { return null; } };
-  const currentStudy = () => seam()?.snapshot?.()?.studyUIDs?.[0] || null;
   const tagsOf = imageId => { try { return imageId ? core().metaData.get('instance', imageId) || null : null; } catch (_) { return null; } };
   const tags = id => tagsOf(viewport(id)?.getCurrentImageId?.());
   const date = value => typeof value === 'string' && /^\d{8}$/.test(value) ? value.slice(0, 4) + '-' + value.slice(4, 6) + '-' + value.slice(6) : (value || '');
@@ -92,7 +92,19 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
   const touched = ids => { for (const entry of [...watchers]) if (!ids || ids.some(id => entry.ids.has(id))) entry.controller.abort(); };
 
   // ── Related studies (05-1) and exam marks (05-2) ──
-  // The patient's related studies for a cell, marked (* current, P1… earlier); null when the list cannot be read for it.
+  // The listed exam the marks are counted from: the tab's reporting exam (a merged or split exam's own row), as the Prior
+  // Studies controller ranks its list.
+  const referenceUid = () => { const snapshot = seam()?.snapshot?.(); return snapshot?.examScope?.reportUid || snapshot?.studyUIDs?.[0] || null; };
+  // A listed exam's scope (its original studies and series); null for one that cannot be read or opened.
+  const scopeOf = row => {
+    if (!row || row.examUnavailable || !window.KinExamScope) return null;
+    try { return window.KinExamScope.read(row) || null; } catch (_) { return null; }
+  };
+  // The listed exam an image belongs to (KinExamScope.listedExam — the same rule the Prior Studies controller uses to
+  // find a cell's exam): a merged or split exam comes before a plain study with the same original.
+  const rowOf = (list, studyUid, seriesUid) => window.KinExamScope?.listedExam
+    ? window.KinExamScope.listedExam(list, studyUid, seriesUid) : (list || []).find(row => row.uid === studyUid) || null;
+  // The patient's related studies for a cell, marked (* current, P1… earlier, N1… later); null when the list cannot be read for it.
   async function marked(viewportId, signal) {
     await ready;
     const api = related(), value = context(viewportId) || cellIds().map(context).find(Boolean);
@@ -100,15 +112,15 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
     if (!value) throw new Error('영상이 열린 칸이 없습니다.');
     const rows = await api.studies(value, signal);
     if (!rows) return null;
-    return { value, rows, list: model.marks(rows, currentStudy()) };
+    return { value, rows, list: model.marks(rows, referenceUid()) };
   }
 
-  let examMarks = false, markMap = new Map(), markPatient = null, markSignature = '', markRequest = null;
-  // Marks are read for one patient tab and given only while that tab is shown.
-  const examMark = uid => markPatient !== null && markPatient === seam()?.snapshot?.()?.key ? markMap.get(uid) || '' : '';
+  let examMarks = false, markList = [], markPatient = null, markSignature = '', markRequest = null;
+  // Marks are read for one patient tab and given only while that tab is shown. seriesUid tells the parts of a split exam apart.
+  const examMark = (uid, seriesUid) => markPatient !== null && markPatient === seam()?.snapshot?.()?.key ? rowOf(markList, uid, seriesUid)?.mark || '' : '';
   async function refreshMarks(force) {
     if (ended) return;
-    if (!examMarks) { markRequest?.abort(); markMap = new Map(); markSignature = ''; if (window.kinViewerExamMark === examMark) delete window.kinViewerExamMark; return; }
+    if (!examMarks) { markRequest?.abort(); markList = []; markSignature = ''; if (window.kinViewerExamMark === examMark) delete window.kinViewerExamMark; return; }
     window.kinViewerExamMark = examMark;
     const signature = JSON.stringify([seam()?.snapshot?.()?.key, cellIds().map(id => context(id)?.studyUid || '')]);
     if (!force && signature === markSignature) return;
@@ -118,9 +130,9 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
       const patient = seam()?.snapshot?.()?.key ?? null;
       const found = await marked(grid.getActiveViewportId?.(), request.signal);
       if (ended || request !== markRequest || request.signal.aborted || !examMarks) return;
-      markMap = new Map((found?.list || []).filter(row => row.mark).map(row => [row.uid, row.mark]));
+      markList = (found?.list || []).filter(row => row.mark);
       markPatient = found && found.value.patientKey === patient ? patient : null;
-    } catch (_) { if (request === markRequest) { markMap = new Map(); markSignature = ''; } }
+    } catch (_) { if (request === markRequest) { markList = []; markSignature = ''; } }
   }
   let marksTimer = 0;
   const scheduleMarks = () => { if (!examMarks || ended) return; clearTimeout(marksTimer); marksTimer = setTimeout(() => refreshMarks(false), 250); };
@@ -129,16 +141,36 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
   store.subscribe('examMarks', value => { examMarks = value === true; for (const fn of examListeners) fn(); refreshMarks(true); });
   const setExamMarks = value => store.set('examMarks', !!value);
 
+  // The series of one listed exam as the archive lists them (QIDO-RS series level for each of its original studies),
+  // before it is opened; image series only, in Series Number order. Every original must answer: a partial list is never
+  // shown as the exam's series.
+  async function seriesOf(row, signal) {
+    const scope = scopeOf(row);
+    if (!scope) throw new Error(row?.examUnavailable ? '검사 묶음의 원본에 접근할 수 없습니다. 목록을 새로 고치세요.' : '이 검사의 시리즈를 확인할 수 없습니다.');
+    const read = async path => {
+      const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', signal,
+        headers: { Accept: 'application/dicom+json', 'X-KIN-Series-List': 'related' } });
+      if (window.KinSessionTransport?.refusal?.(response)) throw window.KinSessionTransport.responseError(response);
+      if (response.status === 204) return [];
+      if (!response.ok) throw new Error(response.status === 403 || response.status === 404 ? '이 검사의 시리즈를 조회할 수 없습니다.' : '연결을 확인한 뒤 다시 시도하세요.');
+      return response.json();
+    };
+    return model.seriesRows(await window.KinExamScope.dicom(scope, 'series?includefield=0020000E,00200011,0008103E,00080060,00201209', read));
+  }
+
   function openRelated({ viewportId }) {
     const panel = ui.panel({ id: 'related', title: 'Related Studies' });
     if (!panel || panel.element.dataset.ready) return;
     panel.element.dataset.ready = '1'; panel.element.classList.add('kin-compare-panel', 'kin-compare-wide');
-    let mode = 'related', data = null, request = null;
+    // chosen: the listed exam whose series the Series view shows ('' = the series of the open studies, as before).
+    let mode = 'related', data = null, request = null, chosen = '', series = null, seriesRequest = null;
     const top = element('label', '', panel.body, 'kin-compare-row'); element('span', 'View', top);
     const select = element('select', '', top); select.setAttribute('aria-label', 'View');
     for (const [value, label] of [['related', 'Related Studies'], ['with-current', 'Related Studies with Current Study'], ['series', 'Series']]) {
       const option = element('option', label, select); option.value = value;
     }
+    const studyRow = element('label', '', panel.body, 'kin-compare-row'); studyRow.hidden = true; element('span', 'Study', studyRow);
+    const studySelect = element('select', '', studyRow, 'kin-compare-study'); studySelect.setAttribute('aria-label', 'Study'); studySelect.translate = false;
     const table = element('table', '', panel.body, 'kin-compare-table');
     const checkRow = element('label', '', panel.body, 'kin-compare-row');
     const check = element('input', '', checkRow); check.type = 'checkbox'; check.checked = examMarks;
@@ -146,8 +178,13 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
     check.onchange = async () => { const want = check.checked; if (!await setExamMarks(want)) check.checked = examMarks; };
     const examChanged = () => { check.checked = examMarks; }; examListeners.add(examChanged);
     const status = element('p', '', panel.body, 'kin-compare-status'); status.setAttribute('role', 'status');
-    const viewing = () => new Set(cellIds().map(id => context(id)?.studyUid).filter(Boolean));
+    const shownValues = () => cellIds().map(context).filter(Boolean);
+    // The listed exams some cell shows now.
+    const viewing = () => new Set(shownValues().map(value => rowOf(data?.list, value.studyUid, value.seriesUid)?.uid).filter(Boolean));
     const viewingSets = () => new Set(cellIds().flatMap(shownSets));
+    // The original series some cell shows now (study + series).
+    const viewingSeries = () => new Set(cellIds().flatMap(shownSets).map(uid => setService.getDisplaySetByUID?.(uid)).filter(Boolean)
+      .map(set => set.StudyInstanceUID + '\u0000' + set.SeriesInstanceUID));
     async function openRow(uid, seriesUid) {
       const api = related();
       if (!api || !data) return;
@@ -167,52 +204,114 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
     }
     let rowOpening = null;
     panel.onClose(() => rowOpening?.abort());
+    const markClass = mark => mark && mark !== '*' ? 'kin-compare-prior' : '';
     function row(cells, onOpen) {
       const tr = element('tr', '', table); tr.tabIndex = 0;
-      cells.forEach(([text, className]) => element('td', text, tr, className));
+      // Cells are the archive's words (dates, descriptions, numbers); only Viewing is the screen's own word.
+      cells.forEach(([text, className], index) => { const td = element('td', text, tr, className); if (index !== 1) td.translate = false; });
       tr.ondblclick = onOpen; tr.onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); onOpen(); } };
       return tr;
     }
+    // One click (or Space) on a study makes it the chosen study, without redrawing the rows, so a double click still opens.
+    function choose(uid) {
+      chosen = uid;
+      for (const tr of table.querySelectorAll('tr[data-study]')) tr.setAttribute('aria-selected', String(tr.dataset.study === uid));
+      studySelect.value = uid;
+    }
+    const label = item => [item.mark, item.date, item.modality, item.desc].filter(Boolean).join(' ').slice(0, 80) || item.uid;
+    function paintStudies() {
+      const wanted = chosen;
+      studySelect.replaceChildren();
+      const all = element('option', 'Open Studies', studySelect); all.value = ''; all.translate = true;
+      for (const item of data?.list || []) { const option = element('option', label(item), studySelect); option.value = item.uid; }
+      studySelect.value = wanted;
+    }
     function paint() {
       table.replaceChildren();
+      studyRow.hidden = mode !== 'series';
       if (!data) return;
-      const marks = new Map(data.list.map(item => [item.uid, item]));
+      if (mode === 'series' && chosen) {
+        const study = data.list.find(item => item.uid === chosen);
+        const head = element('tr', '', table);
+        for (const text of ['Mark', 'Viewing', 'Study', 'Series No', 'Description', 'Instances']) element('th', text, head);
+        if (!study || series?.uid !== chosen) return;
+        const open = viewingSeries();
+        for (const item of series.rows) {
+          const tr = row([[study.mark, markClass(study.mark)], [open.has(item.sourceUid + '\u0000' + item.seriesUid) ? 'Open' : ''], [study.date || ''],
+            [item.number === null ? '' : String(item.number)], [item.description || item.modality || ''], [item.instances === null ? '' : String(item.instances)]],
+            () => openRow(study.uid, item.seriesUid));
+          tr.dataset.series = item.seriesUid; tr.dataset.source = item.sourceUid;
+        }
+        return;
+      }
       if (mode === 'series') {
         const head = element('tr', '', table);
         for (const text of ['Mark', 'Viewing', 'Study', 'Series No', 'Description', 'Images']) element('th', text, head);
         const order = data.list.map(item => item.uid), open = viewingSets();
-        const list = (setService.getActiveDisplaySets?.() || []).filter(set => marks.has(set.StudyInstanceUID) && set.images?.length)
-          .sort((a, b) => order.indexOf(a.StudyInstanceUID) - order.indexOf(b.StudyInstanceUID)
-            || kinSeriesOrder(a, b));
-        for (const set of list) {
-          const study = marks.get(set.StudyInstanceUID);
-          const tr = row([[study.mark, study.mark && study.mark !== '*' ? 'kin-compare-prior' : ''], [open.has(set.displaySetInstanceUID) ? 'Open' : ''],
+        const list = (setService.getActiveDisplaySets?.() || []).filter(set => set.images?.length)
+          .map(set => ({ set, study: rowOf(data.list, set.StudyInstanceUID, set.SeriesInstanceUID) })).filter(entry => entry.study)
+          .sort((a, b) => order.indexOf(a.study.uid) - order.indexOf(b.study.uid) || kinSeriesOrder(a.set, b.set));
+        for (const { set, study } of list) {
+          const tr = row([[study.mark, markClass(study.mark)], [open.has(set.displaySetInstanceUID) ? 'Open' : ''],
             [study.date || ''], [String(set.SeriesNumber ?? '')], [set.SeriesDescription || set.Modality || ''], [String(set.numImageFrames ?? set.images.length)]],
-            () => openRow(set.StudyInstanceUID, set.SeriesInstanceUID));
+            () => openRow(study.uid, set.SeriesInstanceUID));
           tr.dataset.series = set.SeriesInstanceUID;
         }
         return;
       }
       const head = element('tr', '', table);
       for (const text of ['Mark', 'Viewing', 'Study Date', 'Modality', 'Description']) element('th', text, head);
-      const open = viewing(), now = currentStudy();
+      const open = viewing(), now = referenceUid();
       for (const item of data.list.filter(item => mode === 'with-current' || item.uid !== now)) {
-        const tr = row([[item.mark, item.mark && item.mark !== '*' ? 'kin-compare-prior' : ''], [open.has(item.uid) ? 'Open' : ''], [item.date || ''],
+        const tr = row([[item.mark, markClass(item.mark)], [open.has(item.uid) ? 'Open' : ''], [item.date || ''],
           [item.modality || ''], [item.desc || '']], () => openRow(item.uid));
-        tr.dataset.study = item.uid;
+        tr.dataset.study = item.uid; tr.setAttribute('aria-selected', String(item.uid === chosen));
+        tr.onclick = () => choose(item.uid);
+        tr.addEventListener('keydown', event => { if (event.key === ' ') { event.preventDefault(); choose(item.uid); } });
       }
     }
+    // Reads the chosen study's series for the Series view. An answer applies only while it is the latest read, for the
+    // same list, the same chosen study and the Series view of this open window.
+    async function loadSeries() {
+      seriesRequest?.abort(); seriesRequest = null; series = null;
+      if (mode !== 'series' || !chosen || !data) { paint(); return; }
+      const study = data.list.find(item => item.uid === chosen), at = data;
+      const mine = seriesRequest = new AbortController();
+      const still = () => mine === seriesRequest && !mine.signal.aborted && data === at && chosen === study?.uid && mode === 'series' && panel.element.isConnected;
+      status.textContent = '시리즈를 불러오는 중…';
+      paint();
+      try {
+        const rows = await seriesOf(study, mine.signal);
+        if (!still()) return;
+        series = { uid: study.uid, rows };
+        status.textContent = rows.length ? '' : '이 검사에 표시할 영상 시리즈가 없습니다.';
+      } catch (error) {
+        if (!still()) return;
+        series = { uid: study.uid, rows: [] };
+        status.textContent = error?.message || '시리즈를 불러오지 못했습니다.';
+      }
+      paint();
+    }
+    // While the list is read again nothing from the old list can be chosen, opened or read: its rows go and the Study
+    // choice waits, so no series read starts from an exam scope that may have changed.
     async function load() {
       request?.abort(); const mine = request = new AbortController();
+      seriesRequest?.abort(); seriesRequest = null; series = null;
+      data = null; studySelect.disabled = true; paint();
       status.textContent = '불러오는 중…';
       try {
         const found = await marked(viewportId, mine.signal);
         if (mine !== request || !panel.element.isConnected) return;
         data = found; status.textContent = found ? '' : '이 칸의 검사를 목록에서 확인할 수 없습니다.';
       } catch (error) { if (mine === request && panel.element.isConnected) { data = null; status.textContent = error?.message || '목록을 불러오지 못했습니다.'; } }
-      paint();
+      if (mine !== request || !panel.element.isConnected) return;
+      // A chosen study the new list no longer holds (another patient tab, a changed exam) goes back to the open studies.
+      if (!data?.list.some(item => item.uid === chosen)) chosen = '';
+      studySelect.disabled = false; paintStudies();
+      if (mode === 'series' && chosen && data) loadSeries(); else paint();
     }
-    select.onchange = () => { mode = select.value; paint(); };
+    select.onchange = () => { mode = select.value; if (mode === 'series' && chosen) loadSeries(); else { seriesRequest?.abort(); paint(); } };
+    studySelect.onchange = () => { choose(studySelect.value); loadSeries(); };
     const repaint = () => { if (panel.element.isConnected) paint(); };
     const relisten = [];
     const api = related();
@@ -221,7 +320,11 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
       if (!event || typeof service?.subscribe !== 'function') continue;
       try { relisten.push(service.subscribe(event, repaint)); } catch (_) {}
     }
-    panel.onClose(() => { request?.abort(); examListeners.delete(examChanged); for (const stop of relisten) try { typeof stop === 'function' ? stop() : stop?.unsubscribe?.(); } catch (_) {} });
+    // The tab's exam scope changed (another window merged or split it): the list and any series read from it are read again.
+    const invalidated = () => { if (panel.element.isConnected) load(); };
+    window.addEventListener('kin-exam-scope-invalidated', invalidated);
+    panel.onClose(() => { request?.abort(); seriesRequest?.abort(); window.removeEventListener('kin-exam-scope-invalidated', invalidated); examListeners.delete(examChanged);
+      for (const stop of relisten) try { typeof stop === 'function' ? stop() : stop?.unsubscribe?.(); } catch (_) {} });
     load();
   }
 
@@ -232,14 +335,18 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
     await ready;
     // The press takes its place among openings at once, before anything is read: a later opening drops it, and it
     // never drops a later one. Every cell is watched until the change applies.
-    const now = currentStudy(), compare = cellIds().map(context).filter(value => value && value.studyUid !== now);
+    const shown = cellIds().map(context).filter(Boolean);
     const watch = watchCells(cellIds(), signal);
     let ok, row, next;
     try {
       const found = await marked(viewportId, watch.signal);
       if (watch.signal.aborted) return;
       if (!found) { ui.toast('이 칸의 검사를 관련 검사 목록에서 확인할 수 없습니다.'); return; }
-      next = model.step(model.priorUids(found.list), compare[0]?.studyUid ?? null, direction);
+      // A cell's images are named by their listed exam (a merged or split exam's own row), as the marks are; a
+      // comparison cell shows an exam other than the one the marks count from.
+      const now = referenceUid(), examOf = value => rowOf(found.list, value.studyUid, value.seriesUid)?.uid ?? value.studyUid;
+      const compare = shown.filter(value => examOf(value) !== now);
+      next = model.step(model.priorUids(found.list), compare[0] ? examOf(compare[0]) : null, direction);
       if (next.end) { ui.toast(next.end === 'none' ? '과거 검사가 없습니다.' : next.end === 'older' ? '더 이전 검사가 없습니다.' : '더 이후 검사가 없습니다.'); return; }
       row = found.list.find(item => item.uid === next.uid);
       const api = related();

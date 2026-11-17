@@ -186,6 +186,27 @@ class ViewerIdentityFieldsDOMTest(unittest.TestCase):
         self.assertEqual((12, "default", "warm"), (general_reset["size"], general_reset["font"], general_reset["color"]))
         self.assertEqual(result["priorCt"], general_reset["overrides"]["CT"], "general reset preserves the complete modality override")
 
+    def test_exam_marks_current_prior_and_later_with_the_related_font(self):
+        # Compare › Exam Marks on Images gives each study's mark (* current, P1… earlier, N1… later); anything else shows none.
+        result = self.page.evaluate("""async () => {
+          const out={};
+          for(const [name,marks] of [['later',{'study-current':'*','study-prior':'N1'}],['prior',{'study-current':'*','study-prior':'P2'}],
+              ['other',{'study-current':'X1','study-prior':'N'}]]){
+            window.kinViewerExamMark=uid=>marks[uid]||'';
+            window.identityMount?.dispose();window.identityMount=__mount();__grid();await new Promise(r=>setTimeout(r,0));
+            out[name]=['vp1','vp2'].map(id=>{const root=document.querySelector('#'+id+'>.kin-viewer-identity'),mark=root?.querySelector('.kin-viewer-exam-mark');
+              return {data:root?.dataset.examMark,text:mark?.textContent||'',style:mark?mark.style.fontStyle:'',content:root?.querySelector('.kin-viewer-identity-content')?.textContent||''};});
+          }
+          return out;
+        }""")
+        self.assertEqual(['*', 'N1'], [cell['data'] for cell in result['later']])
+        self.assertEqual('N1 ', result['later'][1]['text'])
+        self.assertTrue(result['later'][1]['content'].startswith('N1 비교 검사'))
+        self.assertEqual(['', 'italic'], [cell['style'] for cell in result['later']], "the current mark keeps the label's face; a related one is italic")
+        self.assertEqual(['*', 'P2'], [cell['data'] for cell in result['prior']])
+        self.assertEqual(['', ''], [cell['data'] for cell in result['other']])
+        self.assertEqual(['', ''], [cell['text'] for cell in result['other']])
+
     def test_empty_optional_metadata_creates_no_empty_group_or_token(self):
         result = self.page.evaluate("""() => {
           metadata['image-current'].PatientName='';metadata['image-current'].StudyDate='';metadata['image-current'].StudyDescription='';metadata['image-current'].SeriesDescription='';
