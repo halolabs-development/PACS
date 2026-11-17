@@ -106,7 +106,8 @@ class PreloadPfCellDOM(unittest.TestCase):
         # has its own UID). Preload queues each original once; the PF cell of a row reads the queue entries of the
         # originals its scope holds, and only an entry fetched for this exam (or for the whole original) counts.
         base, other, source = MERGE_BASE, MERGE_OTHER, SPLIT_SOURCE
-        server = Server(rows=[merged_row(), *split_rows(), row(STUDY, 'SYN-PF-01')])
+        server = Server(rows=[merged_row(), *split_rows(), row(STUDY, 'SYN-PF-01'),
+                              {**row(CLOSED, 'SYN-PF-41'), 'examUnavailable': True}])
         original = mi.STORAGE_RECORDER
         mi.STORAGE_RECORDER = original + '\n' + WORKER_DOUBLE
         try:
@@ -131,20 +132,35 @@ class PreloadPfCellDOM(unittest.TestCase):
 
         # One original of the merged exam failed: the exam is not ready, and the cell says why.
         send(at('Ready', base, [MERGE_REF], 3, 3), at('Failed', other, [MERGE_REF], reason='SYN second original failed'),
-             at('Ready', source, [SPLIT_REF0], 3, 3))
+             at('Ready', source, [SPLIT_REF0], 3, 3), at('Ready', CLOSED, None, 3, 3))
         expect(merged).to_have_text('Failed')
         expect(merged.get_by_title('SYN second original failed')).to_have_count(1)
         # Only the first part of the split exam was fetched (not the moved series): the second row has no state.
         expect(first).to_have_text('Ready')
         expect(second).to_have_text('·')
+        # A row whose exam this reader cannot read whole cannot be opened: no state, whatever the queue holds for its UID.
+        expect(self.row_pf(screen, CLOSED)).to_have_text('·')
+        # Sorting by PF orders the rows by the same state (Failed, None, Ready), not the rows' stored '·'.
+        screen.header('PF').click()
+        until(lambda: (lambda u: u[0] == MERGE_BASE and u[-1] == SPLIT_SOURCE)(self.uids(page)), 10, 'PF sort')
+        # The queue moves on while the list is sorted by PF: the order follows without a click.
+        send(at('Ready', base, [MERGE_REF], 3, 3), at('Ready', other, [MERGE_REF], 3, 3),
+             at('Failed', source, [SPLIT_REF0], reason='SYN first part failed'), at('Ready', CLOSED, None, 3, 3))
+        until(lambda: (lambda u: u[0] == SPLIT_SOURCE and u[-1] == MERGE_BASE)(self.uids(page)), 10, 'PF sort follows the queue')
+        send(at('Ready', base, [MERGE_REF], 3, 3), at('Failed', other, [MERGE_REF], reason='SYN second original failed'),
+             at('Ready', source, [SPLIT_REF0], 3, 3), at('Ready', CLOSED, None, 3, 3))
+        until(lambda: (lambda u: u[0] == MERGE_BASE and u[-1] == SPLIT_SOURCE)(self.uids(page)), 10, 'PF sort back')
+        screen.header('PF').click()
+        until(lambda: (lambda u: u[0] == SPLIT_SOURCE and u[-1] == MERGE_BASE)(self.uids(page)), 10, 'PF sort descending')
+        screen.header('PF').click()
         # A PF filter compares the same state.
         box = screen.filter_box('PF')
         box.select_option('Failed')
         self.wait_uids(page, [MERGE_BASE])
         box.select_option('None')
-        self.wait_uids(page, [STUDY, SPLIT_SECOND])
+        self.wait_uids(page, [STUDY, SPLIT_SECOND, CLOSED])
         box.select_option('')
-        self.wait_uids(page, [STUDY, MERGE_BASE, SPLIT_SOURCE, SPLIT_SECOND])
+        self.wait_uids(page, [STUDY, MERGE_BASE, SPLIT_SOURCE, SPLIT_SECOND, CLOSED])
         # Progress of a merged exam counts both originals; Ready only when both are.
         send(at('Downloading', base, [MERGE_REF], 1, 2), at('Queued', other, [MERGE_REF]))
         expect(merged).to_have_text('Downloading 25%')
@@ -171,14 +187,17 @@ class PreloadPfCellDOM(unittest.TestCase):
     def row_pf(self, screen, uid):
         return screen.page.locator(f'#rows tr[data-uid="{uid}"]').get_by_role('cell').nth(screen.heads().index('PF'))
 
+    def uids(self, page):
+        return page.locator('#rows tr[data-uid]').evaluate_all('rs => rs.map(r => r.dataset.uid)')
+
     def wait_uids(self, page, uids):
-        until(lambda: sorted(page.locator('#rows tr[data-uid]').evaluate_all('rs => rs.map(r => r.dataset.uid)')) == sorted(uids),
+        until(lambda: sorted(self.uids(page)) == sorted(uids),
               10, f'rows {uids}')
 
 
 # A merged exam (base row over two originals) and a split exam (two rows over parts of one original), in the list
 # server's shape: the merged row keeps the base UID, the second part of a split has a new UID.
-MERGE_BASE, MERGE_OTHER, SPLIT_SOURCE, SPLIT_SECOND = '2.25.611', '2.25.612', '2.25.621', '2.25.6219'
+MERGE_BASE, MERGE_OTHER, SPLIT_SOURCE, SPLIT_SECOND, CLOSED = '2.25.611', '2.25.612', '2.25.621', '2.25.6219', '2.25.641'
 MERGE_GROUP, SPLIT_GROUP, MOVED_SERIES = '00000000-0000-4000-8000-0000000f1401', '00000000-0000-4000-8000-0000000f1402', '2.25.62102'
 MERGE_REF = {'reportUid': MERGE_BASE, 'groupId': MERGE_GROUP, 'part': None}
 SPLIT_REF0 = {'reportUid': SPLIT_SOURCE, 'groupId': SPLIT_GROUP, 'part': 0}

@@ -1917,8 +1917,10 @@
     let queueSeen = null;
     function orderedStudies() {
       const list = filtered();
+      // PF sorts by the queue word the cell and the filter read now (preloadWord), not the row's stored "·".
+      const sortValue = s => sortKey === "pf" ? preloadWord(s) : s[sortKey];
       if (sortDir !== 0 && sortKey)
-        list.sort((a, b) => (a[sortKey] > b[sortKey] ? 1 : a[sortKey] < b[sortKey] ? -1 : 0) * sortDir);
+        list.sort((a, b) => { const x = sortValue(a), y = sortValue(b); return (x > y ? 1 : x < y ? -1 : 0) * sortDir; });
       if (selectedUid && list.some(s => s.uid === selectedUid)) queueSeen = { uid: selectedUid, order: list.map(s => s.uid) };
       return list;
     }
@@ -9873,12 +9875,13 @@
     }
     // FC-071: the Preload worker reports its queue; only the visible PF cells are rewritten, in place like Viewing.
     // A PF search matches the queue's status words: when a word changes (not the download percent) and a search uses PF,
-    // the list, the folder and saved-search counts are drawn again, once per frame, like a Body Part answer.
+    // the list, the folder and saved-search counts are drawn again, once per frame, like a Body Part answer. A list sorted
+    // by PF is drawn again the same way, so its order follows the words.
     let preloadWords = '', preloadFrame = null;
     function paintPreload() {
       const words = studies.map(preloadWord).join('\n'), changed = words !== preloadWords;
       preloadWords = words;
-      if (changed && preloadFilterUsed()) {
+      if (changed && (preloadFilterUsed() || (sortKey === 'pf' && sortDir !== 0))) {
         if (preloadFrame !== null) return;
         const at = work.capture('document');
         preloadFrame = requestAnimationFrame(() => {

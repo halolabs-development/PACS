@@ -534,8 +534,10 @@
     let queueSeen = null;
     function orderedStudies() {
       const list = filtered();
+      // PF sorts by the queue word the cell and the filter read now (preloadWord), not the row's stored "·".
+      const sortValue = s => sortKey === "pf" ? preloadWord(s) : s[sortKey];
       if (sortDir !== 0 && sortKey)
-        list.sort((a, b) => (a[sortKey] > b[sortKey] ? 1 : a[sortKey] < b[sortKey] ? -1 : 0) * sortDir);
+        list.sort((a, b) => { const x = sortValue(a), y = sortValue(b); return (x > y ? 1 : x < y ? -1 : 0) * sortDir; });
       if (selectedUid && list.some(s => s.uid === selectedUid)) queueSeen = { uid: selectedUid, order: list.map(s => s.uid) };
       return list;
     }

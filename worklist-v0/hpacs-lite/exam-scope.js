@@ -186,6 +186,8 @@
   const preloadRank = ['Failed','Evicted',null,'Downloading','Queued','Ready'];
   const sameReference = (a, b) => a?.reportUid===b.reportUid && (a.groupId??null)===(b.groupId??null) && (a.part??null)===(b.part??null);
   function preloadState(row, entryOf) {
+    // A row whose exam the reader cannot read whole (examUnavailable) cannot be opened: no state, like viewerInput refuses it.
+    if(row?.examUnavailable)return null;
     let scope=null;
     try{scope=read(row);}catch(_){return null;}
     if(!scope)return null;
