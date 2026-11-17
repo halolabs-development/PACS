@@ -129,7 +129,8 @@ function kinSeriesSplitModel(sets, rebuild, frameImageId) {
     } catch (_) {
       return sets;
     }
-    if (new Set(groups.flat().map(e => e.imageId)).size !== instance.NumberOfFrames) return sets;
+    // Number of Frames is an IS value: a string such as "8" counts as 8.
+    if (new Set(groups.flat().map(e => e.imageId)).size !== Number(instance.NumberOfFrames)) return sets;
   } else {
     const info = set.dynamicVolumeInfo, timePoints = info?.timePoints;
     if (set.isDynamicVolume !== true || !Array.isArray(timePoints) || timePoints.length < 2) return sets;

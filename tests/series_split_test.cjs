@@ -159,6 +159,8 @@ test('an enhanced MR file with two time points opens as two sets, one per time p
   const sets = splitEnhanced(instances);
   assert.deepEqual(describe(sets), [['DYN T1 ENH · 1/2 Phase 1', 4], ['DYN T1 ENH · 2/2 Phase 2', 4]]);
   assert.deepEqual(Array.from(sets, frames), [[1, 2, 3, 4], [5, 6, 7, 8]]);
+  // Number of Frames as the IS string the metadata may carry splits the same way.
+  assert.deepEqual(describe(splitEnhanced(enhancedSeries({ patch: i => { i.NumberOfFrames = '8'; } }))), [['DYN T1 ENH · 1/2 Phase 1', 4], ['DYN T1 ENH · 2/2 Phase 2', 4]]);
   for (const set of sets) {
     // Each part names the original image and the frame, and is an ordinary stack the viewer shows frame by frame.
     assert.ok(set.images.every(i => i.SOPInstanceUID === '2.25.8001.1' && i.NumberOfFrames === 1));
