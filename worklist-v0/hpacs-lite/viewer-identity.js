@@ -131,7 +131,8 @@ window.KinViewerIdentity=(()=>{
           // Each label part is the page's words ({w}) or data ({d}: its own span, shown as written in any screen language).
           const groups=new Map([[p.position,[{w:roleWords},{d:m.PatientID}]]]);
           for(const field of fields)if(p[field]&&shown[field]){const at=p.fieldPositions[field];if(!groups.has(at))groups.set(at,[]);groups.get(at).push({d:shown[field]});}
-          const fill=(node,parts)=>node.replaceChildren(...parts.flatMap((part,index)=>[...(index?[' · ']:[]),part.d===undefined?part.w:Object.assign(document.createElement('span'),{textContent:part.d,translate:false})]));
+          // The separator goes with the data after it (no text of the label is a separator alone - image output draws each text).
+          const fill=(node,parts)=>node.replaceChildren(...parts.map((part,index)=>part.d===undefined?part.w:Object.assign(document.createElement('span'),{textContent:(index?' · ':'')+part.d,translate:false})));
           // Compare › Exam Marks on Images: the study's exam mark (* current, P1… earlier and N1… later studies) goes before
           // the role, in this label's own place and settings; a related study's mark is in an italic serif face.
           let exam='';try{exam=window.kinViewerExamMark?.(current.uid,current.series)||'';}catch(_){exam='';}
