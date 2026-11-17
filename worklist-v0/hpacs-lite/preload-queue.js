@@ -163,6 +163,13 @@
     if (broken || !current || state?.session !== current) return null;
     return (state.studies || []).find(s => s.uid === uid) || null;
   }
+  /**
+   * The queue state of a listed exam (a worklist row): a merged exam reads every original it holds, a split part only the
+   * entry fetched for it (KinExamScope.preloadState); a page without exam scopes looks the row's own UID up.
+   */
+  function exam(row) {
+    return root.KinExamScope ? root.KinExamScope.preloadState(row, study) : study(row?.uid);
+  }
   /** The PF cell words for a queue entry: 'Downloading NN%' while fetching, otherwise the panel's status; null when not queued. */
   function cell(entry) {
     if (!entry || typeof entry.status !== 'string') return null;
@@ -250,7 +257,7 @@
     return { end() { views.delete(render); panel.remove(); } };
   }
 
-  const api = Object.freeze({ available, add, mount, connect, study, cell, watch, pick, normalizeAuto, mountAuto });
+  const api = Object.freeze({ available, add, mount, connect, study, exam, cell, watch, pick, normalizeAuto, mountAuto });
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.KinPreloadQueue = api;
 })(globalThis);

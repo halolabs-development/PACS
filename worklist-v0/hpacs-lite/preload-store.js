@@ -22,7 +22,9 @@
     const released = [];
 
     const view = study => Object.freeze({ uid: study.uid, label: study.label, status: study.status, reason: study.reason,
-      waiting: study.waiting, done: study.frames.size, total: study.total, bytes: study.bytes, open: study.opens > 0, expiresAt: study.expiresAt });
+      waiting: study.waiting, done: study.frames.size, total: study.total, bytes: study.bytes, open: study.opens > 0, expiresAt: study.expiresAt,
+      // The exams the entry was fetched for (none: the whole original): a list row's PF reads only its own exam's entry.
+      ...(study.examRefs ? { examRefs: study.examRefs } : {}) });
 
     function release(study) {
       const ids = [...study.frames.values()].map(f => f.entryId);

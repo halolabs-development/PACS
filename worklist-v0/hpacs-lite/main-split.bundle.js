@@ -1027,9 +1027,10 @@
       },
       // S7-U3b Hospital: 서버가 준 소유 기관 이름만 쓴다. Tele는 행의 tele만 따른다 — 이름을 내 기관 이름과 비교하면
       // 등록 이름이 같은 두 기관에서 틀리고, reqHosp는 Technician에서 손으로 바꿀 수 있는 값이다.
-      // FC-071: the study's Preload queue state (Downloading NN% / Queued / Ready / Failed / Evicted), else the row's "·".
+      // FC-071: the exam's Preload queue state (Downloading NN% / Queued / Ready / Failed / Evicted), else the row's "·".
+      // A merged or split exam reads the originals its scope holds (KinPreloadQueue.exam), not the row's UID alone.
       pf: s => {
-        const queue = window.KinPreloadQueue, entry = queue?.study?.(s.uid), text = queue?.cell?.(entry);
+        const queue = window.KinPreloadQueue, entry = queue?.exam?.(s), text = queue?.cell?.(entry);
         return text ? `<span class="pf" title="${esc(entry.reason || '미리 받기 상태입니다. 자세한 내용은 선택 막대의 Preload 패널에 있습니다.')}">${esc(text)}</span>` : esc(s.pf ?? "");
       },
       institutionName: s => {
@@ -1042,7 +1043,7 @@
      * the percent), or "None" when this session's Preload queue does not hold the study (the cell's "·").
      */
     function preloadWord(s) {
-      const entry = window.KinPreloadQueue?.study?.(s?.uid);
+      const entry = s ? window.KinPreloadQueue?.exam?.(s) : null;
       return typeof entry?.status === "string" && entry.status ? entry.status : "None";
     }
 
@@ -1922,8 +1923,10 @@
     let queueSeen = null;
     function orderedStudies() {
       const list = filtered();
+      // PF sorts by the queue word the cell and the filter read now (preloadWord), not the row's stored "·".
+      const sortValue = s => sortKey === "pf" ? preloadWord(s) : s[sortKey];
       if (sortDir !== 0 && sortKey)
-        list.sort((a, b) => (a[sortKey] > b[sortKey] ? 1 : a[sortKey] < b[sortKey] ? -1 : 0) * sortDir);
+        list.sort((a, b) => { const x = sortValue(a), y = sortValue(b); return (x > y ? 1 : x < y ? -1 : 0) * sortDir; });
       if (selectedUid && list.some(s => s.uid === selectedUid)) queueSeen = { uid: selectedUid, order: list.map(s => s.uid) };
       return list;
     }
@@ -9882,12 +9885,13 @@
     }
     // FC-071: the Preload worker reports its queue; only the visible PF cells are rewritten, in place like Viewing.
     // A PF search matches the queue's status words: when a word changes (not the download percent) and a search uses PF,
-    // the list, the folder and saved-search counts are drawn again, once per frame, like a Body Part answer.
+    // the list, the folder and saved-search counts are drawn again, once per frame, like a Body Part answer. A list sorted
+    // by PF is drawn again the same way, so its order follows the words.
     let preloadWords = '', preloadFrame = null;
     function paintPreload() {
       const words = studies.map(preloadWord).join('\n'), changed = words !== preloadWords;
       preloadWords = words;
-      if (changed && preloadFilterUsed()) {
+      if (changed && (preloadFilterUsed() || (sortKey === 'pf' && sortDir !== 0))) {
         if (preloadFrame !== null) return;
         const at = work.capture('document');
         preloadFrame = requestAnimationFrame(() => {
