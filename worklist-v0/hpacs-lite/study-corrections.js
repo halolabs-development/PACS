@@ -43,7 +43,8 @@
         let reloaded = Promise.resolve(false);
         work.commit(at, () => {
           appState[s.uid] = mergeObservedReportState(s.uid, st);
-          Object.assign(s, st.ov ?? {}, { matched: "M", ward: st.ward });
+          // The study keeps its own ward; the order's values are the overlay drawn over it (as applyState draws a row).
+          Object.assign(s, { ward: st.ward ?? "" }, st.ov ?? {}, { matched: "M" });
           o.matched = "M"; o.studyUid = s.uid;
           // S4-U5: a list answer requested before this match would re-install the unmatched row; drop it and read again.
           commitEpoch++; listLoadSequence++;
@@ -94,6 +95,8 @@
           const read = studyIdentityModel ? KinStudyIdentity.tags(studyIdentityModel, s.uid) : null;
           if (read) Object.assign(s, { id: read.id, name: read.name, sex: read.sex, birth: fmtD(read.birth),
             age: ageOf(fmtD(read.birth), s.date), desc: read.desc });
+          // The ward the study had before the Match: its own value, which the Match never wrote over.
+          s.ward = st.ward ?? "";
           s.matched = "U";
           const o = orders.find(x => x.studyUid === s.uid);
           if (o) { o.matched = "U"; o.studyUid = null; }

@@ -270,7 +270,12 @@ export class PacsStudyState {
         if (claimedOrder.count !== 1)
           throw new BadRequestException('이미 매칭된 오더입니다. 목록을 새로고침한 뒤 다시 선택하세요.');
 
-        const data = { matched: 'M', orderOid: oid, ov: dump(ov), orig: dump(orig), ward: order.ward };
+        /**
+         * Every value taken from the order is the overlay `ov` (and what a read joins through `orderOid`); the study's own
+         * columns (ward among them) are not written over. Unmatch clears `ov` and `orderOid`, so it takes away all of them
+         * at once and the study shows again what it had before the Match.
+         */
+        const data = { matched: 'M', orderOid: oid, ov: dump(ov), orig: dump(orig) };
         let saved;
         if (!prev) {
           saved = await tx.studyState.create({
@@ -329,6 +334,7 @@ export class PacsStudyState {
     if (prev.institutionId !== me)
       throw new ForbiddenException('원격판독으로 받은 검사는 매칭을 풀 수 없습니다 (보유 기관의 일입니다)');
 
+    // Match wrote the order's values only into `ov` (and the link): clearing both is the whole undo.
     const state = await tx.studyState.update({
       where: { uid }, data: { matched: 'U', orderOid: null, ov: null },
     });

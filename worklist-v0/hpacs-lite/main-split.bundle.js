@@ -4734,7 +4734,8 @@
         let reloaded = Promise.resolve(false);
         work.commit(at, () => {
           appState[s.uid] = mergeObservedReportState(s.uid, st);
-          Object.assign(s, st.ov ?? {}, { matched: "M", ward: st.ward });
+          // The study keeps its own ward; the order's values are the overlay drawn over it (as applyState draws a row).
+          Object.assign(s, { ward: st.ward ?? "" }, st.ov ?? {}, { matched: "M" });
           o.matched = "M"; o.studyUid = s.uid;
           // S4-U5: a list answer requested before this match would re-install the unmatched row; drop it and read again.
           commitEpoch++; listLoadSequence++;
@@ -4785,6 +4786,8 @@
           const read = studyIdentityModel ? KinStudyIdentity.tags(studyIdentityModel, s.uid) : null;
           if (read) Object.assign(s, { id: read.id, name: read.name, sex: read.sex, birth: fmtD(read.birth),
             age: ageOf(fmtD(read.birth), s.date), desc: read.desc });
+          // The ward the study had before the Match: its own value, which the Match never wrote over.
+          s.ward = st.ward ?? "";
           s.matched = "U";
           const o = orders.find(x => x.studyUid === s.uid);
           if (o) { o.matched = "U"; o.studyUid = null; }
@@ -9004,7 +9007,10 @@
       if (a.holder === null || a.holder === undefined) s.holder = a.holder;
       // The row Confirm value is the shown approval time (the stored a.confirm is a date only), as in applyState.
       s.confirm = confirmText({ ...a, rs: s.rs });
-      if (a.ward) s.ward = a.ward;
+      // The ward as applyState draws a row: the study's own (an empty one included), with the overlay's (a Match's
+      // order ward, a Modify) over it.
+      if (typeof a.ward === "string") s.ward = a.ward;
+      if (overlayValue("ward", a.ov?.ward)) s.ward = a.ov.ward;
       if (a.reqHosp && !s.institutionName) s.reqHosp = a.reqHosp;
     }
 
@@ -12010,6 +12016,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
      *   orders.unmatch(uid, reason)             and alert): { ok, message?, reloaded } where reloaded resolves true only
      *                                           when the list and the Order List were both read again
      *   orders.identity(uid)                    a copy of the study's last server-read DICOM tags (a preview), or null
+     *   orders.ownWard(uid)                     the study's own ward as the server last sent it (a Match shows the
+     *                                           order's ward over it and an Unmatch shows it again), or null
      */
     function copyOf(value) {
       if (value === undefined || value === null) return value ?? null;
@@ -12149,6 +12157,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
             return { ok: r.ok, message: r.message ?? null, reloaded: r.reloaded ?? Promise.resolve(false) };
           },
           identity: uid => studyIdentityModel ? copyOf(KinStudyIdentity.tags(studyIdentityModel, uid)) : null,
+          ownWard: uid => { const a = appState[uid]; return typeof a?.ward === 'string' ? a.ward : null; },
         }),
         // The DICOM request tags the Clinical Context panel shows now ({ uid, tags: [{ keyword, value }] } or null).
         clinicalTags: () => { try { return clinicalContext?.tags?.() ?? null; } catch (_) { return null; } },

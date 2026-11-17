@@ -117,7 +117,9 @@ function fixture(options = {}) {
         findUniqueOrThrow: async () => ({ ...state }),
         update: async ({ data }) => { writes.push(['state', data]); state = { ...state, ...data }; return { ...state }; },
         updateMany: async ({ data }) => { writes.push(['state', data]); state = { ...state, ...data }; return { count: 1 }; },
-        create: failWrite('state.create') },
+        // `noRow`: the study has no state row yet, so Match creates it (the row then has the column defaults).
+        create: options.noRow ? async ({ data }) => { writes.push(['create', data]); options.noRow = false;
+          state = { ...state, ward: '', ...data }; return { ...state }; } : failWrite('state.create') },
       order: { findMany: async () => [], findUnique: async () => options.noOrder ? null : order,
         updateMany: async args => { options.onOrderWrite?.(args); writes.push(['order', args.data]); return { count: 1 }; },
         update: async ({ data }) => { writes.push(['order', data]); return { ...order, ...data }; } },
@@ -132,6 +134,7 @@ function fixture(options = {}) {
       $executeRaw: async () => 0,
       $queryRaw: async (_sql, ...values) => {
         calls.push([`${label}:sql`, values]);
+        if (options.noRow && /StudyState" WHERE uid = .*FOR UPDATE/.test(String(_sql?.join?.('') ?? ''))) return [];
         return states().map(row => ({ ...row, version: report.version, action: head.action, findings: report.findings, conclusion: report.conclusion, recommendation: report.recommendation, ...options.snapshot }));
       },
     };
@@ -349,4 +352,41 @@ test('TO-UNMATCH the window reason is kept in the unmatch audit row; the right-c
     await refused(h.service.unmatch(UID, caller(), undefined, bad), 400, /사유/);
     assert.deepEqual(h.writes, []);
   }
+});
+
+test('TO-UNMATCH-RESTORES every value Match takes from the order is shown through the overlay only, so Unmatch leaves the study as it was before the Match', async () => {
+  for (const own of ['', 'OWN-WARD']) {
+    const f = fixture({ state: { ward: own } });
+    const matched = await f.service.match(UID, 'syn-order', { age: '', orig: {} }, caller());
+    // The order's values are the overlay; the study's own ward is not written over.
+    assert.deepEqual(JSON.parse(f.state().ov), { id: 'ORDER-ID', name: 'ORDER-NAME', sex: 'F', birth: '20000101', age: '', desc: 'ORDER-DESC', ward: 'WARD' }, own);
+    assert.deepEqual([matched.matched, matched.ward, matched.ov.ward], ['M', own, 'WARD'], own);
+    assert.equal(f.writes.filter(w => w[0] === 'state').some(([, data]) => 'ward' in data), false, own);
+    const undone = await f.service.unmatch(UID, caller());
+    assert.deepEqual([undone.matched, undone.ward, undone.ov, undone.oid], ['U', own, null, null], own);
+    assert.deepEqual([f.state().ward, f.state().ov, f.state().orderOid], [own, null, null], own);
+    // A second Match (another try) and its Unmatch end on the same values the study had before the first Match.
+    await f.service.match(UID, 'syn-order', { age: '', orig: {} }, caller());
+    const again = await f.service.unmatch(UID, caller());
+    assert.deepEqual([again.matched, again.ward, again.ov], ['U', own, null], own);
+  }
+  // An order without a ward over a study with one: the overlay carries the order's empty ward; the own ward stays.
+  const empty = fixture({ state: { ward: 'OWN-WARD' }, order: { ward: '' } });
+  const shown = await empty.service.match(UID, 'syn-order', { age: '', orig: {} }, caller());
+  assert.deepEqual([shown.ward, shown.ov.ward], ['OWN-WARD', '']);
+  assert.equal((await empty.service.unmatch(UID, caller())).ward, 'OWN-WARD');
+  // A Modify while matched replaces the overlay only; the Unmatch still ends on the own ward (and no overlay).
+  const modified = fixture({ state: { ward: 'OWN-WARD' } });
+  await modified.service.match(UID, 'syn-order', { age: '', orig: {} }, caller());
+  await modified.service.patchState(UID, { ov: { name: 'SYN TYPED', ward: 'TYPED-WARD' } }, caller());
+  assert.deepEqual([modified.state().ward, JSON.parse(modified.state().ov).ward], ['OWN-WARD', 'TYPED-WARD']);
+  const afterModify = await modified.service.unmatch(UID, caller());
+  assert.deepEqual([afterModify.ward, afterModify.ov], ['OWN-WARD', null]);
+  // A study without a state row yet: Match creates it without a ward of the order's; Unmatch shows the empty default.
+  const fresh = fixture({ noRow: true });
+  const created = await fresh.service.match(UID, 'syn-order', { age: '', orig: {} }, caller());
+  const [, createdData] = fresh.writes.find(w => w[0] === 'create');
+  assert.equal('ward' in createdData, false);
+  assert.deepEqual([created.matched, created.ward, created.ov.ward], ['M', '', 'WARD']);
+  assert.deepEqual([(await fresh.service.unmatch(UID, caller())).ward, fresh.state().ward], ['', '']);
 });

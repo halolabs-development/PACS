@@ -1851,7 +1851,7 @@ window.KinLanguageTerms = {
     ["Unconfirmed — 결과 미확인 (다시 보내지 않습니다)", "Unconfirmed — result not confirmed (will not be sent again)", "m", "확인 안 됨 — 결과 미확인 (다시 보내지 않습니다)"],
     ["Undo failed: {e0}", "되돌리기 실패: {e0}", "m"],
     ["Unlink the selected study from its order and go back to the values read from its images.", "선택한 검사를 오더에서 연결 해제하고 영상에서 읽은 값으로 되돌립니다.", "m"],
-    ["Unlink the study from its order. The study goes back to the values the server read from its images (DICOM), and the order returns to Unmatched.", "검사와 오더의 연결을 해제합니다. 검사는 서버가 영상(DICOM)에서 읽은 값으로 돌아가고, 오더는 미매칭으로 돌아갑니다.", "m"],
+    ["Unlink the study from its order. The study goes back to the values the server read from its images (DICOM) and to its own ward, and the order returns to Unmatched.", "검사와 오더의 연결을 해제합니다. 검사는 서버가 영상(DICOM)에서 읽은 값과 검사 자신의 병동으로 돌아가고, 오더는 미매칭으로 돌아갑니다.", "m"],
     ["Unmatched: {0} ({1}).", "매칭 해제됨: {0} ({1}).", "m"],
     ["Unmatched: {0} ({1}). Reading the result back…", "매칭 해제됨: {0} ({1}). 결과를 다시 읽는 중…", "m"],
     ["Unmatching…", "매칭 해제하는 중…", "m"],
