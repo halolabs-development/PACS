@@ -55,6 +55,11 @@ services:
       # orthanc.json에 계정을 남기면 운영 비밀번호와 프록시 헤더가 쉽게 어긋난다.
       # 이미지가 JSON을 읽은 뒤 같은 설정 경로를 이 값으로 덮게 해 한 출처만 둔다.
       ORTHANC__REGISTERED_USERS: '{"admin":"${ORTHANC_PASS:?ORTHANC_PASS를 .env에 설정하세요}"}'
+    # 아래 두 설정 파일(orthanc.json, ohif.js)은 기동할 때 읽고, 파일 하나 bind mount는 checkout이 새 파일로 바꿔도 옛 파일을
+    # 계속 본다. 이미지가 같으면 `compose up -d`는 이 컨테이너를 다시 만들지 않으므로 업그레이드 뒤에도 옛 뷰어 설정을 낸다.
+    # 판(.env의 KIN_REVISION)을 설정에 넣어 판이 바뀌면 `up -d`가 이 컨테이너를 다시 만들게 한다.
+    labels:
+      kin.release: ${KIN_REVISION:-unknown}
     ports:
       - "8042:8042"   # HTTP: 웹 UI, REST API, DICOMweb, OHIF
       - "4242:4242"   # DICOM 프로토콜 (C-STORE/C-FIND 실습용)
@@ -197,6 +202,10 @@ services:
     # 인증을 돌려줄 수 있다(keycloak#51127). 캐시 없이 DB만 읽으면 그 부활 경로가 없다. 이유·확인 방법: keycloak/README.md.
     # 운영 command는 docker-compose.prod.yml이 덮어쓰므로 그쪽에도 같은 옵션을 둔다.
     command: start-dev --import-realm --spi-user-sessions--infinispan--use-caches=false
+    # 로그인·메일 테마(아래 두 폴더)는 운영 모드(`start`)에서 기동 때 읽어 캐시하고 정적 파일 주소의 판 표지도 기동 때 정한다.
+    # 이미지가 같으면 `compose up -d`가 이 컨테이너를 다시 만들지 않으므로, 판(KIN_REVISION)을 넣어 판이 바뀌면 다시 만들게 한다.
+    labels:
+      kin.release: ${KIN_REVISION:-unknown}
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:?KC_ADMIN_PASSWORD를 .env에 설정하세요}
