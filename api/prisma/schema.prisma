@@ -692,7 +692,7 @@ model StudyGroupMember {
   @@index([logicalUid])
 }
 
-/// RIS(HRIS)에서 넘어온 오더. 지금은 시드 데이터, 4~5단계에서 HL7 v2로 교체된다.
+/// RIS(HRIS)에서 넘어온 오더. 지금은 시드 데이터다. 병원이 오더를 주는 방식(HL7·DB·파일 등)은 병원 IT 확인 전이라 정해지지 않았다.
 model Order {
   oid       String  @id
   /// 오더를 낸 기관. RIS는 기관마다 따로 돌아간다 — 오더가 기관을 넘는 일은 없다.
@@ -724,6 +724,10 @@ model Order {
   removedBySub  String?
   removedBy     String?
   removeReason  String?
+  /// The order's state as the hospital RIS gives it: confirmed, scheduled or acquired (the migration's CHECK). Nullable with
+  /// no default: until an authoritative order source is connected only test orders carry it, and the PACS never derives it
+  /// (a matched order is not thereby acquired; Mt stays its own column). A missing value stays blank on the Order List.
+  risStatus     String?
 
   @@index([institutionId])
 }

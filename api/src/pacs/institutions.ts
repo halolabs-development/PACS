@@ -50,6 +50,8 @@ export class PacsInstitutions {
           where: { oid: o.oid, reqAt: null, reqDept: null, ptClass: null },
           data: { reqAt: o.reqAt, reqDept: o.reqDept, ptClass: o.ptClass },
         });
+        // A seed order made before the RIS Status column existed gets the seed's status once (never over a value).
+        await this.prisma.order.updateMany({ where: { oid: o.oid, risStatus: null }, data: { risStatus: o.risStatus } });
       }
     }
     console.log(`[KIN API] 기관 ${this.institutions.length}개: ${this.institutions.map(i => `${i.id}(${i.name})`).join(', ')}`);
