@@ -404,11 +404,12 @@ class VolumeRenderingE2E(VolumeCurrentPrintE2E):
   v.evaluate('()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
   return v.evaluate("()=>({spine:vrHit([48,58,40]),aorta:vrHit([62,42,40]),table:vrHit([48,70.5,40])})")
  def same_hits(self,hits,expected):
-  # Back on the source after a swap the actor is new; its frame may differ by a grey level or two, never by the removal.
+  # A point near an edge varies by a few grey levels from frame to frame and actor to actor: on the CI software renderer
+  # the spine point of one unchanged view read 225 to 229. A removed part reads 5 or less, a present one over 200.
   self.assertEqual(set(hits),set(expected))
-  for part in expected:self.assertLessEqual(abs(hits[part]-expected[part]),3,(part,hits,expected))
- def remove(self,dialog,name,done):
-  dialog.get_by_role('button',name=name,exact=True).click();expect(dialog.locator('[role=status]')).to_contain_text(done,timeout=60000)
+  for part in expected:self.assertLessEqual(abs(hits[part]-expected[part]),8,(part,hits,expected))
+ def remove(self,dialog,name,done,timeout=60000):
+  dialog.get_by_role('button',name=name,exact=True).click();expect(dialog.locator('[role=status]')).to_contain_text(done,timeout=timeout)
 
  def test_vr_25_remove_bone_and_table_only_in_the_display(self):
   a,p,v=self.opened_removal();native=self.native_pixels(v);source=self.volume_state(v);original=self.originals();rows=self.rows();dialog=self.vr(v);initial=self.vr_state(v)
@@ -446,24 +447,29 @@ class VolumeRenderingE2E(VolumeCurrentPrintE2E):
   self.assertEqual(self.native_pixels(v),native)
 
  def test_vr_26_removal_keeps_crop_sculpt_display_and_camera(self):
-  a,p,v=self.opened_removal();dialog=self.vr(v);initial=self.vr_state(v);dialog.get_by_label('View From',exact=True).select_option('Left');full=self.removal_hits(v)
-  # Shading is turned on only at the end (below): a shaded frame of this phantom has held the CI software renderer long
-  # enough for the access check to cover VR while the sculpt was being drawn.
+  # While a crop is applied, every frame of this phantom takes about 25 s on the CI software renderer (about 2 s without
+  # one), and the page does nothing else while it draws; the access check may cover VR meanwhile. So every wait here
+  # allows several frames. A control that never comes back, or a check that is never true, still fails.
+  a,p,v=self.opened_removal();slow=180000;v.set_default_timeout(slow);expect.set_options(timeout=slow)
+  try:self.removal_keeps_edits(v,slow)
+  finally:expect.set_options(timeout=5000)
+ def removal_keeps_edits(self,v,slow):
+  dialog=self.vr(v);initial=self.vr_state(v);dialog.get_by_label('View From',exact=True).select_option('Left');full=self.removal_hits(v)
   dialog.get_by_label('VR Opacity',exact=True).fill('80');dialog.get_by_role('button',name='Apply Display',exact=True).click()
   dialog.get_by_label('K Max',exact=True).fill('29');dialog.get_by_role('button',name='Apply Crop',exact=True).click()
   self.sculpt_region(v,dialog,points=[(.02,.02),(.2,.2)]);dialog.get_by_role('button',name='Apply Sculpt',exact=True).click()
   state="()=>{const view=vrView(),m=view.getActors()[0].actor.getMapper();return {camera:view.getCamera(),planes:m.getClippingPlanes().map(p=>({origin:Array.from(p.getOrigin()),normal:Array.from(p.getNormal())})),shader:JSON.stringify(m.getViewSpecificProperties().OpenGL?.ShaderReplacements||null),mapper:m}}"
   before=v.evaluate(state.replace(',mapper:m',''));self.assertEqual(len(before['planes']),6);self.assertNotEqual(before['shader'],'null');nodes=self.vr_state(v)['nodes']
   v.evaluate('()=>{window.vrOldMapper=vrView().getActors()[0].actor.getMapper()}')
-  self.remove(dialog,'Remove Table','촬영대·시트를 지웠습니다')
+  self.remove(dialog,'Remove Table','촬영대·시트를 지웠습니다',slow)
   after=v.evaluate(state.replace(',mapper:m',''));self.assertEqual(after,before);self.assertFalse(v.evaluate('()=>vrView().getActors()[0].actor.getMapper()===vrOldMapper'))
   self.assertEqual([n for n in self.vr_state(v)['nodes'] if n[0]>-1000],[n for n in nodes if n[0]>-1000]);self.assertFalse(self.vr_state(v)['shade'])
-  # The new actor's own frame confirms the sculpt shader; the dialog stays open.
-  v.wait_for_timeout(500);expect(dialog).to_be_visible();self.assertTrue(v.evaluate("()=>{const node=vrView().getRenderingEngine().offscreenMultiRenderWindow.getOpenGLRenderWindow().getViewNodeFor(vrView().getActors()[0].actor.getMapper());return node.get('tris').tris.getProgram().getFragmentShader().getSource().includes('kinSculptPoint0')}"))
+  # The new actor's own frame confirms the sculpt shader: wait for that frame's program, then read it; the dialog stays open.
+  v.wait_for_function("()=>!!vrView().getRenderingEngine().offscreenMultiRenderWindow.getOpenGLRenderWindow().getViewNodeFor(vrView().getActors()[0].actor.getMapper())?.get('tris')?.tris?.getProgram()?.getCompiled()",timeout=slow)
+  expect(dialog).to_be_visible();self.assertTrue(v.evaluate("()=>{const node=vrView().getRenderingEngine().offscreenMultiRenderWindow.getOpenGLRenderWindow().getViewNodeFor(vrView().getActors()[0].actor.getMapper());return node.get('tris').tris.getProgram().getFragmentShader().getSource().includes('kinSculptPoint0')}"))
   dialog.get_by_role('button',name='Undo Sculpt',exact=True).click();self.assertEqual(v.evaluate(state.replace(',mapper:m',''))['shader'],'null')
-  # Shading last: the swap back to the source and to a new copy both keep it. A shaded frame of this phantom has held the
-  # CI software renderer long enough to cover VR for a while, so these steps wait long for the controls to come back.
-  slow=180000;dialog.get_by_label('VR Shading',exact=True).check(timeout=slow);dialog.get_by_role('button',name='Apply Display',exact=True).click(timeout=slow);expect(dialog.locator('[role=status]')).to_contain_text('VR 표시 조건을 적용했습니다',timeout=slow)
+  # Shading last: the swap back to the source and to a new copy both keep it.
+  dialog.get_by_label('VR Shading',exact=True).check(timeout=slow);dialog.get_by_role('button',name='Apply Display',exact=True).click(timeout=slow);expect(dialog.locator('[role=status]')).to_contain_text('VR 표시 조건을 적용했습니다',timeout=slow)
   for name,done in [('Restore Removed','되돌렸습니다'),('Remove Table','촬영대·시트를 지웠습니다')]:
    v.evaluate('()=>{window.vrOldMapper=vrView().getActors()[0].actor.getMapper()}');dialog.get_by_role('button',name=name,exact=True).click(timeout=slow);expect(dialog.locator('[role=status]')).to_contain_text(done,timeout=slow)
    self.assertFalse(v.evaluate('()=>vrView().getActors()[0].actor.getMapper()===vrOldMapper'),name);self.assertTrue(self.vr_state(v)['shade'],name)
