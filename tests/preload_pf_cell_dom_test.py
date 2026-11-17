@@ -101,6 +101,114 @@ class PreloadPfCellDOM(unittest.TestCase):
         expect(self.pf(screen, 'SYN-PF-01')).to_have_text('·')
         screen.finish()
 
+    def test_pf_cell_of_merged_and_split_exams_reads_every_original_of_the_row(self):
+        # A merged exam is one row over two originals; a split exam is two rows over parts of one original (the second row
+        # has its own UID). Preload queues each original once; the PF cell of a row reads the queue entries of the
+        # originals its scope holds, and only an entry fetched for this exam (or for the whole original) counts.
+        base, other, source = MERGE_BASE, MERGE_OTHER, SPLIT_SOURCE
+        server = Server(rows=[merged_row(), *split_rows(), row(STUDY, 'SYN-PF-01')])
+        original = mi.STORAGE_RECORDER
+        mi.STORAGE_RECORDER = original + '\n' + WORKER_DOUBLE
+        try:
+            screen = self.boot(server)
+        finally:
+            mi.STORAGE_RECORDER = original
+        page = screen.page
+        screen.show_column('PF')
+        merged, first, second = (self.row_pf(screen, MERGE_BASE), self.row_pf(screen, SPLIT_SOURCE), self.row_pf(screen, SPLIT_SECOND))
+        screen.data_row('SYN-PF-11').get_by_role('cell', name='SYN-PF-11', exact=True).click(modifiers=['Control'])
+        page.locator(f'#rows tr[data-uid="{SPLIT_SOURCE}"]').get_by_role('cell', name='SYN-PF-21', exact=True).click(modifiers=['Control'])
+        page.get_by_role('button', name='Preload', exact=True).click()
+        added = until(lambda: [m for m in page.evaluate('() => window.__synPreload.posted') if m['type'] == 'add'], 5, 'add')
+        refs = {s['uid']: s.get('examRefs') for s in added[0]['studies']}
+        self.assertEqual({base: [MERGE_REF], other: [MERGE_REF], source: [SPLIT_REF0]}, refs)
+        session = added[0]['session']
+        send = lambda *studies, to=session: page.evaluate('([studies, to]) => window.__synPreload.state(studies, to)',
+                                                         [list(studies), to])
+
+        def at(status, uid, refs_, done=0, total=0, reason=None):
+            return {**entry(status, done, total, reason), 'uid': uid, **({'examRefs': refs_} if refs_ else {})}
+
+        # One original of the merged exam failed: the exam is not ready, and the cell says why.
+        send(at('Ready', base, [MERGE_REF], 3, 3), at('Failed', other, [MERGE_REF], reason='SYN second original failed'),
+             at('Ready', source, [SPLIT_REF0], 3, 3))
+        expect(merged).to_have_text('Failed')
+        expect(merged.get_by_title('SYN second original failed')).to_have_count(1)
+        # Only the first part of the split exam was fetched (not the moved series): the second row has no state.
+        expect(first).to_have_text('Ready')
+        expect(second).to_have_text('·')
+        # A PF filter compares the same state.
+        box = screen.filter_box('PF')
+        box.select_option('Failed')
+        self.wait_uids(page, [MERGE_BASE])
+        box.select_option('None')
+        self.wait_uids(page, [STUDY, SPLIT_SECOND])
+        box.select_option('')
+        self.wait_uids(page, [STUDY, MERGE_BASE, SPLIT_SOURCE, SPLIT_SECOND])
+        # Progress of a merged exam counts both originals; Ready only when both are.
+        send(at('Downloading', base, [MERGE_REF], 1, 2), at('Queued', other, [MERGE_REF]))
+        expect(merged).to_have_text('Downloading 25%')
+        send(at('Ready', base, [MERGE_REF], 2, 2), at('Downloading', other, [MERGE_REF], 2, 2))
+        expect(merged).to_have_text('Downloading 100%')
+        send(at('Ready', base, [MERGE_REF], 2, 2), at('Ready', other, [MERGE_REF], 2, 2))
+        expect(merged).to_have_text('Ready')
+        # The queue holds one original of the merged exam only (the other cleared): the exam is not preloaded.
+        send(at('Ready', base, [MERGE_REF], 2, 2))
+        expect(merged).to_have_text('·')
+        # Both parts fetched together, then the whole original (a plain Preload): both split rows read it.
+        send(at('Queued', source, [SPLIT_REF0, SPLIT_REF1]))
+        expect(first).to_have_text('Queued')
+        expect(second).to_have_text('Queued')
+        send(at('Ready', source, None, 3, 3))
+        expect(first).to_have_text('Ready')
+        expect(second).to_have_text('Ready')
+        # Another session's queue still shows nothing on any row.
+        send(at('Ready', source, None, 3, 3), to='SYN-OTHER-SESSION')
+        expect(first).to_have_text('·')
+        expect(second).to_have_text('·')
+        screen.finish()
+
+    def row_pf(self, screen, uid):
+        return screen.page.locator(f'#rows tr[data-uid="{uid}"]').get_by_role('cell').nth(screen.heads().index('PF'))
+
+    def wait_uids(self, page, uids):
+        until(lambda: sorted(page.locator('#rows tr[data-uid]').evaluate_all('rs => rs.map(r => r.dataset.uid)')) == sorted(uids),
+              10, f'rows {uids}')
+
+
+# A merged exam (base row over two originals) and a split exam (two rows over parts of one original), in the list
+# server's shape: the merged row keeps the base UID, the second part of a split has a new UID.
+MERGE_BASE, MERGE_OTHER, SPLIT_SOURCE, SPLIT_SECOND = '2.25.611', '2.25.612', '2.25.621', '2.25.6219'
+MERGE_GROUP, SPLIT_GROUP, MOVED_SERIES = '00000000-0000-4000-8000-0000000f1401', '00000000-0000-4000-8000-0000000f1402', '2.25.62102'
+MERGE_REF = {'reportUid': MERGE_BASE, 'groupId': MERGE_GROUP, 'part': None}
+SPLIT_REF0 = {'reportUid': SPLIT_SOURCE, 'groupId': SPLIT_GROUP, 'part': 0}
+SPLIT_REF1 = {'reportUid': SPLIT_SECOND, 'groupId': SPLIT_GROUP, 'part': 1}
+
+
+def merged_row():
+    body = row(MERGE_BASE, 'SYN-PF-11')
+    members = [{'uid': uid, 'acc': 'SYNACC' + uid[-3:], 'date': '20261005', 'time': '', 'desc': 'SYN CT', 'modality': 'CT',
+                'count': 10, 'series': 1} for uid in (MERGE_BASE, MERGE_OTHER)]
+    body['group'] = {'id': MERGE_GROUP, 'kind': 'merge', 'baseUid': MERGE_BASE, 'members': members}
+    body['examScope'] = {'reportUid': MERGE_BASE, 'groupId': MERGE_GROUP, 'kind': 'merge', 'part': None, 'active': True,
+                         'generation': '1', 'sources': [{'studyUid': uid, 'series': {'mode': 'all', 'uids': []}}
+                                                        for uid in (MERGE_BASE, MERGE_OTHER)]}
+    body['sourceMetadata'] = members
+    return body
+
+
+def split_rows():
+    source = row(SPLIT_SOURCE, 'SYN-PF-21')
+    out = []
+    for part, uid in ((0, SPLIT_SOURCE), (1, SPLIT_SECOND)):
+        body = {**json.loads(json.dumps(source)), 'uid': uid}
+        body['examScope'] = {'reportUid': uid, 'groupId': SPLIT_GROUP, 'kind': 'split', 'part': part, 'active': True,
+                             'generation': '1', 'sources': [{'studyUid': SPLIT_SOURCE, 'series': {
+                                 'mode': 'include' if part else 'exclude', 'uids': [MOVED_SERIES]}}]}
+        body['sourceMetadata'] = [json.loads(json.dumps(source))]
+        out.append(body)
+    return out
+
 
 # FC-073 (A1 unit 15): More > Auto Preload sends one saved search's studies to the worker after every list read.
 AU_CT, AU_EM, AU_PRIOR, AU_MR = '2.25.701', '2.25.702', '2.25.703', '2.25.704'
