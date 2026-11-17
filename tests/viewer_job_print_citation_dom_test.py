@@ -198,7 +198,8 @@ class ViewerJobPrintCitationDOM(unittest.TestCase):
         cls.playwright.stop()
 
     def setUp(self):
-        self.context = self.browser.new_context()
+        # Paper times are the reader's local time; a fixed zone keeps the expected text machine-independent.
+        self.context = self.browser.new_context(timezone_id="UTC")
         self.addCleanup(self.context.close)
 
     # ── fixtures ──
@@ -309,7 +310,7 @@ class ViewerJobPrintCitationDOM(unittest.TestCase):
         self.assertEqual(lines[0], "인용 증적 확인: doctor의 열람 권한 기준")
         self.assertEqual(lines[1], LIMITATION)
         self.assertIn("Findings · 소견 r11 · 출처 1번 · 인용 당시 연결 현재 판과 일치 · doctor"
-                      " · 2026-09-01 03:04(UTC) — " + PRESENT, lines[2])
+                      " · 2026-09-01 03:04 — " + PRESENT, lines[2])
         self.assertNotIn(NONE, "\n".join(lines))
         self.assertEqual(len(self.requests_for(page, UID_A)), 2)
         self.assertEqual(self.requests_for(page, UID_B), [])
@@ -325,7 +326,7 @@ class ViewerJobPrintCitationDOM(unittest.TestCase):
         lines = sections[0]["lines"]
         self.assertEqual(lines[0], "인용 증적 확인: doctor2의 열람 권한 기준")
         self.assertIn("Conclusion · 소견 r22 · 출처 7번 · 인용 당시 연결 이후 개정됨 · doctor2"
-                      " · 2026-09-01 03:04(UTC) — " + ABSENT, lines[2])
+                      " · 2026-09-01 03:04 — " + ABSENT, lines[2])
         # J1: the current study is previewed but never asked for citations.
         self.assertEqual(self.requests_for(page, UID_A), [])
         self.assertEqual(len(self.requests_for(page, UID_B)), 2)

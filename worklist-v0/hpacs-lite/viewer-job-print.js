@@ -715,7 +715,7 @@ globalThis.kinViewerJobPrint = function ({ api, authenticate, live, editor }) {
         el('p', `작성자(편집 중): ${report.author || '-'}`, section);
       } else {
         el('p', '출력 확인 시점의 서버 저장본입니다. 비교 작업 저장 당시 판독문이나 미저장 편집문이 아닙니다.', section);
-        el('p', `작성자: ${report.author || '-'} · 승인 판독의: ${report.repDoc || '-'} · 승인일(UTC): ${report.confirm || '-'}`, section);
+        el('p', `작성자: ${report.author || '-'} · 승인 판독의: ${report.repDoc || '-'} · 승인일시: ${paper.approvalText(report) || '-'}`, section);
       }
       for (const [key, label] of [['findings', '소견'], ['conclusion', '결론'], ['recommendation', '권고']]) {
         el('h3', label, section); el('p', report[key] || '(내용 없음)', section).dataset.reportField = key;

@@ -26,6 +26,36 @@
     return `${report.rs === 'A' ? '승인된' : '미승인'} ${report.action === 'addendum' ? '추가기재' : '저장본'} · v${report.version}` +
       (withRs ? ` · RS ${report.rs}` : '');
   }
+  // ── Dates and times on paper ──
+  //
+  // One rule for every date a report paper prints: the time the reading screen
+  // shows, in one human form. A server instant (ISO, UTC) is printed as this
+  // browser's local "YYYY-MM-DD HH:mm" - the same rule as the worklist's
+  // Confirm column (worklist-columns-view.js localStamp/confirmText), so the
+  // paper and the screen show one approval time. Stored values and audit
+  // records stay UTC; only the printed text changes.
+  const pad2 = n => String(n).padStart(2, '0');
+  /** A server instant as local "YYYY-MM-DD HH:mm"; anything unreadable is ''. */
+  function paperStamp(iso) {
+    const d = typeof iso === 'string' && iso ? new Date(iso) : null;
+    if (!d || !Number.isFinite(d.getTime())) return '';
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  }
+  /**
+   * The approval time of an Approved report, as the worklist Confirm cell shows it: the approval
+   * instant when the server kept one, else the stored approval date (YYYY-MM-DD, no time added);
+   * '' when the report is not approved or neither is readable.
+   */
+  function approvalText(report) {
+    if (report?.rs !== 'A') return '';
+    return paperStamp(report.approvedAt) ||
+      (typeof report.confirm === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(report.confirm) ? report.confirm : '');
+  }
+  /** A DICOM date (YYYYMMDD) as YYYY-MM-DD; any other text as it came; nothing as ''. */
+  function paperDate(value) {
+    const text = typeof value === 'string' ? value.trim() : '';
+    return /^\d{8}$/.test(text) ? `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6, 8)}` : text;
+  }
   // ── S3-U4: the citation section on the paper ──
   //
   // What the paper carries is the server's attestation ABOUT an insertion, never
@@ -68,9 +98,9 @@
   }
   function citationLine(entry, texts, name, citation) {
     const label = citation.FIELD_LABEL[entry.field] ?? '알 수 없는 칸';
-    // insertedAt is the server's UTC instant; the paper says so the way the
-    // header already does. A client clock is never printed as a witness.
-    const when = entry.insertedAt ? `${String(entry.insertedAt).replace('T', ' ').slice(0, 16)}(UTC)` : '시각 미확인';
+    // insertedAt is the server's instant, printed by the paper's one date rule
+    // (paperStamp). A client clock is never printed as a witness.
+    const when = paperStamp(entry.insertedAt) || '시각 미확인';
     const who = name(entry.insertedBy);
     if (citation.isReduced(entry)) return `${label} · ${who} · ${when} — ${citation.UNAVAILABLE_TEXT}`;
     const link = LINK_STATE_TEXT[entry.linkStateAtInsert] ?? LINK_STATE_UNKNOWN;
@@ -249,12 +279,13 @@
     function documentBody(s, images, windowing, citations, drawings = []) {
       const root = el('main'), head = el('header', undefined, root), d = s.data, st = d.study;
       el('h1', 'HALO PACS 판독문', head);
-      el('p', `환자: ${st.name} (${st.id}) · ${st.sex} · 생년월일 ${st.birth || '미확인'}`, head);
-      el('p', `검사: ${st.desc || st.modality || '(설명 없음)'} · ${st.date || '날짜 미확인'} · Acc: ${st.acc || '-'}`, head);
+      const studyDate = paperDate(st.date);
+      el('p', `환자: ${st.name} (${st.id}) · ${st.sex} · 생년월일 ${paperDate(st.birth) || '미확인'}`, head);
+      el('p', `검사: ${st.desc || st.modality || '(설명 없음)'} · ${studyDate || '날짜 미확인'} · Acc: ${st.acc || '-'}`, head);
       const editing = source.value === 'editor', report = editing ? s.editor : d.report;
       el('p', editing ? '현재 편집문 · 미확정 (출력으로 저장되거나 승인되지 않음)' : savedLabel(d.report, true), head).className = 'source';
-      el('p', `작성자: ${actorName(editing ? d.actor : d.report.author) || '-'} · 승인 판독의: ${editing ? '-' : actorName(d.report.repDoc) || '-'} · 승인일(UTC): ${editing ? '-' : d.report.confirm || '-'}`, head);
-      const identity = `환자 ${st.name} (${st.id}) · 검사 ${st.date || '-'} · Acc ${st.acc || '-'}\n${editing ? '현재 편집문 · 미확정' : savedLabel(d.report, false)}`;
+      el('p', `작성자: ${actorName(editing ? d.actor : d.report.author) || '-'} · 승인 판독의: ${editing ? '-' : actorName(d.report.repDoc) || '-'} · 승인일시: ${editing ? '-' : approvalText(d.report) || '-'}`, head);
+      const identity = `환자 ${st.name} (${st.id}) · 검사 ${studyDate || '-'} · Acc ${st.acc || '-'}\n${editing ? '현재 편집문 · 미확정' : savedLabel(d.report, false)}`;
       el('p', '모든 출력 페이지에 반복되는 식별정보\n' + identity, root).className = 'identity-example';
       for (const [index, name] of fields.entries()) {
         el('h2', ['Findings', 'Conclusion', 'Recommendation'][index], root); el('pre', report[name] || '(내용 없음)', root);
@@ -291,7 +322,7 @@
           el('p', key.item.description || '', figure);
           const img = el('img', undefined, figure); img.src = url; img.alt = key.item.title || '저장한 키 이미지';
           if (edit.zoom !== 100 || edit.x || edit.y) el('p', `출력 확대 ${edit.zoom}% · 가로 ${edit.x}% · 세로 ${edit.y}% · 최근접 화소 · 범위 밖 잘림/검정 · 실제 크기 아님`, figure).className = 'key-adjustment note';
-          el('p', `환자 ${st.name} (${st.id}) · ${st.date} · 프레임 ${key.item.frame} · r${key.revision}`, figure);
+          el('p', `환자 ${st.name} (${st.id}) · ${studyDate || '-'} · 프레임 ${key.item.frame} · r${key.revision}`, figure);
           el('p', `Study ${st.uid}\nSeries ${key.item.seriesUid}\nSOP ${key.item.sopUid}`, figure).className = 'reference';
         }
       }
@@ -591,7 +622,7 @@
   // how two papers start disagreeing about one citation - so the pure record is
   // published under its own global too. The object is the same one the node
   // tests already receive, so its contents do not change.
-  const paper = { savedLabel, citationSection, citationAnswerOk };
+  const paper = { savedLabel, citationSection, citationAnswerOk, paperStamp, approvalText, paperDate };
   globalThis.KinReportPaper = paper;
   if (typeof module === 'object' && module.exports) module.exports = paper;
 })();

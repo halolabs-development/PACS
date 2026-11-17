@@ -87,6 +87,7 @@ REGRESSION_SUITES = {
         tests/report_dictation_host_dom_test.py
         tests/report_dictation_input_dom_test.py
         tests/report_preview_citation_dom_test.py
+        tests/report_preview_dates_dom_test.py
         tests/report_rebase_dom_test.py
         tests/report_structure_dom_test.py
         tests/report_text_boundaries_dom_test.py
