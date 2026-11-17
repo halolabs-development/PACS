@@ -62,18 +62,31 @@
    * report target and put the caret in Findings. The study must be a row of this list, the login the viewer's, and no
    * dialog open. The move is the page's own select(uid) - its study-move gate saves or refuses the text it holds - and
    * only its result is reported: ok only when that result is same, clear or saved and the target is that study now.
-   * Nothing is saved, written or relayed here. eader supplies the live page state; the reply is a Promise. */
+   * Nothing is saved, written or relayed here. eader supplies the live page state; the reply is a Promise.
+   * Every answer but busy also says where the report target is as it is sent (`at`, see targetIs): a refusal can come after
+   * the move (a dialog opened, the field cannot be used), and the viewer judges by where the target is, not by the refusal. */
   const OPEN_STATUS = { composing: 'composing', refused: 'saving', unknown: 'saving', conflict: 'saving', owner: 'saving',
     stale: 'stale', stayed: 'stale', unresolved: 'unresolved', gone: 'gone' };
-  async function editorOpen(message, reader) {
-    let m;
+  // Whether the report target is this study for this login and exam scope now: true, false, or null when it cannot be read.
+  function targetIs(m, reader) {
+    try { return reader.owner() === m.owner && reader.target() === m.uid && reader.examStamp?.(m.uid) === m.examStamp; }
+    catch (_) { return null; }
+  }
+  const where = value => typeof value === 'boolean' ? { at: value } : {};
+  function openMessage(message, type) {
     try {
-      m = message;
-      if (!m || typeof m !== 'object' || m.type !== 'kin-editor-open' || !uuid(m.request) || typeof m.owner !== 'string' || !m.owner ||
+      const m = message;
+      if (!m || typeof m !== 'object' || m.type !== type || !uuid(m.request) || typeof m.owner !== 'string' || !m.owner ||
           typeof m.uid !== 'string' || m.uid.length > 64 || !/^\d+(?:\.\d+)+$/.test(m.uid)) return null;
-      m = { request: m.request, owner: m.owner, uid: m.uid, examStamp:m.examStamp };
+      return { request: m.request, owner: m.owner, uid: m.uid, examStamp: m.examStamp };
     } catch (_) { return null; }
-    const reply = (result, reason = null) => ({ type: 'kin-editor-opened', request: m.request, owner: m.owner, uid: m.uid, result, reason });
+  }
+  async function editorOpen(message, reader) {
+    const m = openMessage(message, 'kin-editor-open');
+    if (!m) return null;
+    // A busy page has another opening under way, which can still move the target: where it is now is not told.
+    const reply = (result, reason = null) => ({ type: 'kin-editor-opened', request: m.request, owner: m.owner, uid: m.uid, result, reason,
+      ...(reason === 'busy' ? {} : where(targetIs(m, reader))) });
     try {
       if (reader.owner() !== m.owner) return reply('refused', 'session');
       if (reader.busy?.()) return reply('refused', 'busy');
@@ -96,6 +109,17 @@
       reader.focus();
       return reply('ok');
     } catch (_) { return reply('refused', 'unavailable'); }
+  }
+  /* The reading screen's answer to a viewer that stopped waiting for its opening (kin-editor-open-cancel): the page has
+   * already dropped that opening's move if it had not happened (reading-workspace.js), so where the report target is now is
+   * that request's outcome (`at`). While another opening is still under way (`reader.settled(request)` false) the target can
+   * still move, and the answer carries no `at`. No answer for another login or a malformed message. */
+  function editorWithdrawn(message, reader) {
+    const m = openMessage(message, 'kin-editor-open-cancel');
+    if (!m) return null;
+    try { if (reader.owner() !== m.owner) return null; } catch (_) { return null; }
+    let settled = false; try { settled = reader.settled?.(m.request) === true; } catch (_) { settled = false; }
+    return { type: 'kin-editor-open-withdrawn', request: m.request, owner: m.owner, uid: m.uid, ...(settled ? where(targetIs(m, reader)) : {}) };
   }
   function create({ storage, owner, newId, origin, describe, changed = () => {}, placed = () => {} }) {
     const work=root.KinWorkContext;
@@ -215,10 +239,12 @@
           Promise.resolve(pending).then(answer => { if (answer && asked === channel && current()) asked.postMessage(answer); }, () => {});
           return;
         }
-        // The same viewer stopped waiting for that opening: the reading screen drops the move if it is still waiting.
+        // The same viewer stopped waiting for that opening: the reading screen drops the move if it is still waiting and
+        // answers where its report target is now (editorWithdrawn).
         if (m?.type === 'kin-editor-open-cancel') {
           if (!current() || !documentLink || m.list !== documentLink) return;
-          try { root.kinReadingEditorCancel?.(m); } catch (_) {}
+          let answer = null; try { answer = root.kinReadingEditorCancel?.(m) ?? null; } catch (_) { answer = null; }
+          if (answer) channel.postMessage(answer);
           return;
         }
         // A viewer this list document linked asks where the list window stands (Monitors in Hanging Protocol: the worklist
@@ -311,7 +337,7 @@
     listen();
     return { dispose() { ended = true; if (root.kinViewerWindowOwner === identity) root.kinViewerWindowOwner = () => null; if (root.kinViewerListPlace === listPlace) root.kinViewerListPlace = () => Promise.resolve(null); channel?.close(); clearInterval(poll); root.removeEventListener('hashchange', changed); root.removeEventListener('kin-window-link-changed', changed); } };
   }
-  const api = { normalize, scope, create, connect, editorReply, editorOpen };
+  const api = { normalize, scope, create, connect, editorReply, editorOpen, editorWithdrawn };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.KinViewerWindows = api;
 })(globalThis);

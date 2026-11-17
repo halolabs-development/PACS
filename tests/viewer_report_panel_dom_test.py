@@ -102,6 +102,8 @@ LIST_SETUP = """args => {
       window.__selects.push(uid);
       const how = window.__how;
       if (how === 'never') return new Promise(() => {});
+      // Moved at once, but its answer is not sent until long after the viewer stopped waiting.
+      if (how === 'lost') { window.__target = uid; return new Promise(resolve => setTimeout(() => { window.__lostDone = true; resolve({ status: 'saved', uid }); }, 7000)); }
       if (how === 'slow') return new Promise(resolve => setTimeout(() => { window.__target = uid; resolve({ status: 'saved', uid }); }, 1500));
       if (how === 'elsewhere') return { status: 'clear', uid };
       if (how === 'clear' || how === 'saved' || how === 'same') { window.__target = uid; return { status: how, uid }; }
@@ -110,6 +112,9 @@ LIST_SETUP = """args => {
     focus: () => document.getElementById('findings').focus() };
   window.kinReadingEditorOpen = m => { const answer = KinViewerWindows.editorOpen(m, openReader); if (opening) return answer;
     opening = true; return Promise.resolve(answer).finally(() => { opening = false; }); };
+  // A withdrawn opening is answered with where the target is (KinViewerWindows.editorWithdrawn), only while __settled.
+  window.__settled = true;
+  window.kinReadingEditorCancel = m => KinViewerWindows.editorWithdrawn(m, { ...openReader, settled: () => window.__settled });
   return window.__registry.linked('/ohif/viewer?StudyInstanceUIDs=' + args.studies.join(','), 0);
 }"""
 
@@ -400,22 +405,22 @@ class ViewerReportPanel(unittest.TestCase):
         # The page's gate refused: the text it holds is not confirmed saved.
         listing.evaluate("uid => { window.__target = uid; window.__how = 'refused'; }", UID_B)
         self.open_click(page)
-        expect(status).to_have_text("판독 화면이 검사를 옮기지 못했습니다 (쓰던 글 저장 대기·거절). 판독 화면에서 확인하세요.")
+        expect(status).to_have_text("판독 화면의 대상이 이 검사로 바뀌지 않았습니다 (쓰던 글 저장 대기·거절). 판독 화면에서 확인하세요.")
         # Composing (IME) and another selection.
         listing.evaluate("() => { window.__how = 'composing'; }")
         self.open_click(page)
-        expect(status).to_have_text("판독 화면이 검사를 옮기지 못했습니다 (글자 조합 중). 판독 화면에서 확인하세요.")
+        expect(status).to_have_text("판독 화면의 대상이 이 검사로 바뀌지 않았습니다 (글자 조합 중). 판독 화면에서 확인하세요.")
         listing.evaluate("() => { window.__how = 'elsewhere'; }")
         self.open_click(page)
-        expect(status).to_have_text("판독 화면이 검사를 옮기지 못했습니다 (다른 검사가 선택됨). 판독 화면에서 확인하세요.")
+        expect(status).to_have_text("판독 화면의 대상이 이 검사로 바뀌지 않았습니다 (다른 검사가 선택됨). 판독 화면에서 확인하세요.")
         listing.evaluate("() => { const d = document.createElement('dialog'); document.body.append(d); d.showModal(); }")
         self.open_click(page)
-        expect(status).to_have_text("판독 화면이 검사를 옮기지 못했습니다 (대화상자가 열려 있음). 판독 화면에서 확인하세요.")
+        expect(status).to_have_text("판독 화면의 대상이 이 검사로 바뀌지 않았습니다 (대화상자가 열려 있음). 판독 화면에서 확인하세요.")
         listing.evaluate("() => document.querySelector('dialog').remove()")
         # A study that is not a row of the list.
         listing.evaluate("uid => { window.__listed = [uid]; window.__how = 'clear'; }", UID_B)
         self.open_click(page)
-        expect(status).to_have_text("판독 화면이 검사를 옮기지 못했습니다 (목록에 없는 검사). 판독 화면에서 확인하세요.")
+        expect(status).to_have_text("판독 화면의 대상이 이 검사로 바뀌지 않았습니다 (목록에 없는 검사). 판독 화면에서 확인하세요.")
         listing.evaluate("uids => { window.__listed = uids; }", [UID_A, UID_B, UID_C])
         # A slow save: the button stays locked until the answer; a second request meanwhile is refused as busy.
         listing.evaluate("() => { window.__how = 'slow'; window.__selects = []; }")
@@ -428,13 +433,21 @@ class ViewerReportPanel(unittest.TestCase):
         expect(status).to_contain_text("검사로 옮겨졌습니다", timeout=5000)
         expect(button).to_be_enabled()
         self.assertEqual([UID_A], listing.evaluate("() => window.__selects"))
-        # No answer in 6 s: unknown, never called a move.
-        listing.evaluate("() => { window.__how = 'never'; }")
+        # Moved, but the answer comes only after the viewer stopped waiting: the withdrawal is answered with the target
+        # where it is - this study - and that is what the viewer says.
+        listing.evaluate("uid => { window.__target = uid; window.__how = 'lost'; window.__lostDone = false; }", UID_B)
+        self.open_click(page)
+        expect(status).to_have_text("판독 화면이 SYN PATIENT ALPHA 검사로 옮겨졌습니다 — 판독 화면 창에서 입력하세요.", timeout=12000)
+        self.assertEqual(UID_A, listing.evaluate("() => window.__target"))
+        listing.wait_for_function("() => window.__lostDone", timeout=5000)
+        # No answer in 6 s, and the reading screen cannot tell where its target ends up (another opening under way): unknown,
+        # never called a move.
+        listing.evaluate("() => { window.__how = 'never'; window.__settled = false; }")
         self.open_click(page)
         expect(button).to_be_disabled()
         page.wait_for_timeout(4500)
         expect(status).to_have_text("판독 화면에 요청하는 중입니다.")
-        expect(status).to_have_text("판독 화면의 응답이 없습니다. 옮겨졌는지 판독 화면에서 확인하세요.", timeout=4000)
+        expect(status).to_have_text("판독 화면의 응답이 없습니다. 옮겨졌는지 판독 화면에서 확인하세요.", timeout=8000)
         expect(button).to_be_enabled()
         self.assertNotIn("kin-editor-opened", json.dumps(other.evaluate("() => window.__posts")))
 
@@ -658,6 +671,43 @@ class ReadingScreenOpen(h.LogoutDOMTest):
         expect(self.page.locator("#clinical")).to_contain_text(h.PATIENT)
         expect(self.page.locator("#findings")).to_have_value(h.FIELDS["findings"])
         self.assertEqual(h.FIELDS, self.site.stored())
+
+    def withdraw(self, request, uid, owner=None):
+        return self.page.evaluate("m => window.kinReadingEditorCancel(m)", {"type": "kin-editor-open-cancel", "request": request,
+                                  "owner": owner or self.owner(), "uid": uid, "list": "L"})
+
+    def test_a_withdrawn_opening_is_answered_with_where_the_report_target_is(self):
+        """The viewer that withdrew an opening is told where the report target is once that opening can move nothing more:
+        dropped while it waited for the save (not there), or already moved before the withdrawal arrived (there)."""
+        self.open_main()
+        self.site.put_answers = ["hold"]
+        self.select_and_type()
+        request = str(uuid.uuid4())
+        self.page.evaluate("""args => { window.__opening = Promise.resolve(window.kinReadingEditorOpen({ type: 'kin-editor-open',
+            request: args.request, owner: args.owner, uid: args.uid, list: 'L' })); }""",
+                           {"request": request, "owner": self.owner(), "uid": h.UID_B})
+        self.wait_until(lambda: self.site.held_puts, "the page's save on the wire")
+        answer = self.withdraw(request, h.UID_B)
+        self.assertEqual({"type": "kin-editor-open-withdrawn", "request": request, "owner": self.owner(), "uid": h.UID_B, "at": False}, answer)
+        # Another opening asked meanwhile is still busy; a withdrawal of it cannot say where the target ends up.
+        other = str(uuid.uuid4())
+        self.assertEqual("busy", self.ask(h.UID_B)["reason"])
+        self.assertNotIn("at", self.withdraw(other, h.UID_B))
+        self.site.finish_put()
+        self.assertEqual(("refused", False), (lambda a: (a["result"], a["at"]))(self.page.evaluate("() => window.__opening")))
+        expect(self.page.locator("#clinical")).to_contain_text(h.PATIENT)
+        # A move that completed before its withdrawal arrived: the target is that study, and the answer says so.
+        moved = str(uuid.uuid4())
+        answer = self.page.evaluate("""args => Promise.resolve(window.kinReadingEditorOpen({ type: 'kin-editor-open',
+            request: args.request, owner: args.owner, uid: args.uid, list: 'L' }))""", {"request": moved, "owner": self.owner(), "uid": h.UID_B})
+        self.assertEqual(("ok", True), (answer["result"], answer["at"]), answer)
+        expect(self.page.locator("#clinical")).to_contain_text(h.PATIENT_B)
+        self.assertTrue(self.withdraw(moved, h.UID_B)["at"])
+        self.assertFalse(self.withdraw(moved, h.UID)["at"])
+        # Another login is not answered.
+        self.assertIsNone(self.withdraw(moved, h.UID_B, owner='["X","Y"]'))
+        expect(self.page.locator("#clinical")).to_contain_text(h.PATIENT_B)
+
     def test_appearance_shows_what_the_reading_frame_dock_applied_for_report_editor(self):
         """The reading screen's frame has no Report Editor tab: choosing it there applies Collapsed, and Appearance says so."""
         self.open_main()
