@@ -10476,15 +10476,18 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const at = work.capture("editor");
       const frame = mountReportFrame();
       if (!frame) return;
-      const end = frame.read("findings").length;
-      const insertion = frame.capture("findings", { start: end, end });
+      // 붙는 칸은 판독의가 이 검사에서 마지막으로 쓰던 판독 칸이다(메뉴를 누르면 포커스가 칸을 떠나므로 편집기 틀이 기억한다).
+      // 아직 아무 칸도 쓰지 않았으면 Findings. 자리는 그 칸의 끝.
+      const field = frame.lastUsed() ?? "findings";
+      const end = frame.read(field).length;
+      const insertion = frame.capture(field, { start: end, end });
       let text;
       try { text = await navigator.clipboard.readText(); } catch (e) { return; }
       work.commit(at, () => {
         if (reportWriteBlock()) return;
-        // Findings 끝에 붙인다. 붙여 넣은 글은 타이핑한 글과 같은 이 문서의 편집이다 — 표시 없이 대입만 하면 자동 저장도
+        // 붙여 넣은 글은 타이핑한 글과 같은 이 문서의 편집이다 — 표시 없이 대입만 하면 자동 저장도
         // 로그아웃도 그 글을 모르고 다음 폴링이 서버 글로 덮는다(U5CLI-F09).
-        editReport([{ field: "findings", at: insertion, text }]);
+        editReport([{ field, at: insertion, text }]);
       });
     });
     const reportPreview = KinReportPreview({ api, actorName: displayActor, toast,

@@ -5374,22 +5374,67 @@ function kinCreateImageLoadStatus() {
       return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
     };
     window.fetch = observedFetch;
+    // The cells that show this image now. A cell can read its image again where it is a stack of the pinned viewer:
+    // its public setImageIdIndex does nothing for the index already shown, the internal one loads that index again.
+    const showing = imageId => {
+      const views = [];
+      for (const engine of core.getRenderingEngines()) for (const view of engine.getViewports())
+        if (view.element?.isConnected && view.getCurrentImageId?.() === imageId) views.push(view);
+      return views;
+    };
+    // Not on the CPU fallback: its pinned completion check compares only the index, so a stack replaced while the read is
+    // out could show the old image. The GPU path checks the image itself.
+    // A series placed in the cell from the series strip has that load's own notice and Retry (viewer-series-strip.js), which
+    // reloads the stack: while that notice is in the cell, it is the cell's one Retry.
+    const rereads = view => typeof view._setImageIdIndex === 'function' && typeof view.getCurrentImageIdIndex === 'function' &&
+      !view.useCPURendering && !(view.element.closest('[data-cy="viewport-pane"]') || view.element).querySelector('.kin-series-load');
+    // Retry reads the failed image again, once per press, in every cell that shows it at the press. The pinned cache
+    // drops a failed load, so this is a new request; its own failure or load event decides what the cell shows next.
+    function retry(imageId) {
+      if (!active) return;
+      const text = failures.get(imageId), views = showing(imageId).filter(rereads);
+      if (!text || !views.length) { refresh(); return; }
+      failures.delete(imageId); announced.delete(imageId); responses.delete(imageUrl(imageId));
+      refresh();
+      // A read that ends without a failure or load event (it threw) shows the reason again rather than an empty cell.
+      const back = () => {
+        if (active && !failures.has(imageId) && !core.cache.getImage(imageId)) { failures.set(imageId, text); refresh(); }
+      };
+      for (const view of views) {
+        try { Promise.resolve(view._setImageIdIndex(view.getCurrentImageIdIndex())).catch(back); } catch (_) { back(); }
+      }
+    }
     function refresh() {
       if (!failures.size && !notices.size) return;
       const current = new Map();
       for (const engine of core.getRenderingEngines()) for (const view of engine.getViewports()) {
-        const text = failures.get(view.getCurrentImageId?.());
-        if (text && view.element?.isConnected) current.set(view.element, text);
+        const imageId = view.getCurrentImageId?.(), text = failures.get(imageId);
+        if (text && view.element?.isConnected) current.set(view.element, { imageId, text, retry: rereads(view) });
       }
       for (const [element, notice] of notices) if (!current.has(element)) { notice.remove(); notices.delete(element); }
-      for (const [element, text] of current) {
+      for (const [element, { imageId, text, retry: canRetry }] of current) {
         let notice = notices.get(element);
         if (!notice) {
           notice = document.createElement('p'); notice.setAttribute('role', 'alert');
           notice.style.cssText = 'position:absolute;inset:12px 12px auto;margin:0;padding:12px;background:#161c25;color:#ffb4a8;z-index:10;pointer-events:none;white-space:normal';
+          notice.append(document.createElement('span'));
           notices.set(element, notice); element.append(notice);
         }
-        if (notice.textContent !== text) notice.textContent = text;
+        const [line] = notice.children;
+        if (line.textContent !== text) line.textContent = text;
+        let button = notice.querySelector('button');
+        if (canRetry && button?.dataset.imageId !== imageId) {
+          button?.remove();
+          // The notice lets presses through to the image; only its button takes them, and they stop there: the cell's
+          // own tools listen on the cell and must not start a mark or a drag from a press on Retry.
+          button = document.createElement('button'); button.type = 'button'; button.textContent = 'Retry';
+          button.dataset.imageId = imageId;
+          button.style.cssText = 'pointer-events:auto;margin-left:8px';
+          for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick', 'contextmenu', 'touchstart', 'touchend'])
+            button.addEventListener(type, event => event.stopPropagation());
+          button.addEventListener('click', () => retry(imageId));
+          notice.append(button);
+        } else if (!canRetry) button?.remove();
       }
     }
     const failed = event => {

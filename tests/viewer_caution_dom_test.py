@@ -267,6 +267,88 @@ class ViewerCautionDOM(unittest.TestCase):
         expect(self.page.get_by_role('alert')).to_have_count(0)
         self.page.evaluate('extension.onModeExit()')
 
+    def test_failed_image_in_a_cell_is_read_again_by_its_retry(self):
+        self.script('sof3-decode'); self.script('image-load-status')
+        self.page.evaluate("""() => {
+          const events = {IMAGE_LOAD_FAILED:'failed', IMAGE_LOADED:'loaded', STACK_NEW_IMAGE:'stack', VIEWPORT_NEW_IMAGE_SET:'set'};
+          window.loadedImages = new Set(); window.reads = []; window.answers = [];
+          // A stack viewport as the pinned viewer has it: the public setImageIdIndex does nothing for the index already
+          // shown, the internal one reads that image again (a failed read is not kept in the cache).
+          const cell = (id, image) => {
+            const element = document.createElement('div'); element.id = id; element.style.cssText = 'position:relative;width:300px;height:200px';
+            document.body.append(element);
+            return {element, image, getCurrentImageId() { return this.image; }, getCurrentImageIdIndex: () => 0,
+              setImageIdIndex() { return Promise.resolve(this.image); },
+              _setImageIdIndex(index) { const imageId = this.image; reads.push([id, imageId, index]);
+                const answer = answers.shift() || 'fail';
+                setTimeout(() => answer === 'ok' ? (loadedImages.add(imageId), pixelEvent('loaded', imageId))
+                  : pixelEvent('failed', imageId, {status: 503}));
+                return Promise.resolve(imageId); }};
+          };
+          window.cells = [cell('a', 'image-a'), cell('b', 'image-a'), cell('c', 'image-c')];
+          // The cell's tools listen on the cell: a press on Retry must not reach them.
+          window.cellPresses = 0;
+          for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click'])
+            cells[0].element.addEventListener(type, () => cellPresses++);
+          window.cornerstone = {cache:{getImage:id => loadedImages.has(id) ? {imageId:id} : undefined},
+            Enums:{Events:events}, eventTarget:new EventTarget(), getRenderingEngines:() => [{getViewports:() => cells}]};
+          window.extension = kinCreateImageLoadStatus();
+          extension.preRegistration({servicesManager:{services:{viewportGridService:{EVENTS:{GRID_STATE_CHANGED:'grid'},
+            subscribe:(name, refresh) => {window.refreshGrid=refresh; return {unsubscribe(){}};}}}}});
+          extension.onModeEnter();
+          window.pixelEvent = (type, imageId, error) => cornerstone.eventTarget.dispatchEvent(new CustomEvent(type,{detail:{imageId,error}}));
+        }""")
+        a, b = self.page.locator('#a'), self.page.locator('#b')
+        self.page.evaluate("pixelEvent('failed','image-a',{status:503})")
+        expect(a.get_by_role('alert')).to_contain_text('HTTP 503')
+        retry = a.get_by_role('button', name='Retry', exact=True)
+        expect(retry).to_be_visible()
+        expect(b.get_by_role('button', name='Retry', exact=True)).to_be_visible()
+        # The server still fails: the image is read again (both cells showing it), and the failure is shown again.
+        retry.click()
+        self.page.wait_for_function('reads.length === 2')
+        self.assertEqual(self.page.evaluate('reads'), [['a', 'image-a', 0], ['b', 'image-a', 0]])
+        self.assertEqual(self.page.evaluate('cellPresses'), 0, 'the press stays on Retry')
+        expect(a.get_by_role('alert')).to_contain_text('HTTP 503')
+        expect(retry).to_be_visible()
+        self.page.wait_for_timeout(300)
+        self.assertEqual(self.page.evaluate('reads.length'), 2, 'no read is made without a press')
+        # A second press while the first read is out reads once: the button leaves with the failure.
+        self.page.evaluate("answers.push('ok','ok')")
+        retry.click()
+        expect(retry).to_have_count(0)
+        self.page.wait_for_function('reads.length === 4')
+        expect(self.page.get_by_role('alert')).to_have_count(0)
+        self.page.wait_for_timeout(300)
+        self.assertEqual(self.page.evaluate('reads.length'), 4)
+        # A cell that has moved on to another image before the press is not read again for the old one.
+        self.page.evaluate("pixelEvent('failed','image-c',{status:404})")
+        c_retry = self.page.locator('#c').get_by_role('button', name='Retry', exact=True)
+        expect(c_retry).to_be_visible()
+        self.page.evaluate("cells[2].image = 'image-d'")
+        c_retry.click()
+        self.page.wait_for_timeout(300)
+        self.assertEqual(self.page.evaluate('reads.length'), 4, 'only the image the cell shows is read again')
+        # A series the series strip placed has that load's own notice and Retry in the cell: one Retry per cell. When that
+        # notice leaves, the image's Retry comes back.
+        self.page.evaluate("""() => { const pane = document.createElement('div'); pane.dataset.cy = 'viewport-pane';
+          cells[2].element.replaceWith(pane); pane.append(cells[2].element); cells[2].image = 'image-g';
+          const load = document.createElement('section'); load.className = 'kin-series-load'; load.id = 'series-load';
+          pane.append(load); pixelEvent('failed','image-g',{status:503}); }""")
+        expect(self.page.locator('#c').get_by_role('alert')).to_contain_text('HTTP 503')
+        expect(self.page.locator('#c').get_by_role('button')).to_have_count(0)
+        self.page.evaluate("document.getElementById('series-load').remove()")
+        expect(self.page.locator('#c').get_by_role('button', name='Retry', exact=True)).to_be_visible()
+        # A cell on the CPU fallback, and one the viewer cannot read again (no stack index), keep the explanation only.
+        self.page.evaluate("cells[2].image = 'image-e'; cells[2].useCPURendering = true; pixelEvent('failed','image-e',{status:503})")
+        expect(self.page.locator('#c').get_by_role('alert')).to_contain_text('HTTP 503')
+        expect(self.page.locator('#c').get_by_role('button')).to_have_count(0)
+        self.page.evaluate("cells[2].image = 'image-f'; cells[2].useCPURendering = false; delete cells[2]._setImageIdIndex; pixelEvent('failed','image-f',{status:503})")
+        expect(self.page.locator('#c').get_by_role('alert')).to_contain_text('HTTP 503')
+        expect(self.page.locator('#c').get_by_role('button')).to_have_count(0)
+        self.page.evaluate('extension.onModeExit()')
+        expect(self.page.get_by_role('alert')).to_have_count(0)
+
     def test_failed_module_can_retry_without_reopening_study(self):
         self.script('tool-retry')
         for source, factory, asset, global_name, member in [

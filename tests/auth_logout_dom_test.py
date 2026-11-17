@@ -2622,7 +2622,9 @@ class LogoutDOMTest(unittest.TestCase):
             if not page.locator("#b-paste").is_visible():
                 page.locator("#report-more > summary").click()
             page.locator("#b-paste").click()
-        # Control: with nothing in between, the paste lands.
+        # Control: with nothing in between, the paste lands. Paste goes into the field the reader last worked in; the setup
+        # typed Conclusion last, so the reader places the cursor in Findings first.
+        page.locator("#findings").click()
         press()
         paste(" SYN-PASTED")
         expect(page.locator("#findings")).to_have_value(FIELDS["findings"] + " SYN-PASTED")
