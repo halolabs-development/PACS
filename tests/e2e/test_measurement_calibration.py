@@ -177,7 +177,8 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
         self.drag(p, x, y + 120, 120, 0)
         p.wait_for_function("()=>cornerstoneTools.annotation.state.getAllAnnotations().some(a=>a.metadata.toolName==='Length')")
         expect(p.locator('svg.svg-layer')).to_contain_text(SCREEN)
-        text = p.locator('svg.svg-layer').inner_text()
+        # The Length's own text box (the calibration line keeps its own text beside it).
+        text = p.evaluate("label=>[...document.querySelectorAll('svg.svg-layer text')].map(t=>t.textContent).find(t=>t.includes(label))", SCREEN)
         value = float(re.search(r'(\d+(?:\.\d+)?) mm', text).group(1))
         self.assertTrue(27 <= value <= 33, text)
         state = self.settled(p)
