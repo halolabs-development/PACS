@@ -209,6 +209,11 @@ class WorkPaletteDOM(unittest.TestCase):
         expect(page.locator('#findings')).to_be_editable()
         fields = page.evaluate("() => ['#findings', '#conclusion', '#recommendation'].map(s => getComputedStyle(document.querySelector(s)).backgroundColor)")
         self.assertEqual([rgb('#2d2d2d')] * 3, fields)
+        # Their placeholders read at 4.5:1 or more on the panel.
+        hints = page.evaluate("() => ['#findings', '#conclusion', '#recommendation'].map(s => getComputedStyle(document.querySelector(s), '::placeholder').color)")
+        for hint in hints:
+            a, b = sorted((lum(hint), lum('rgb(45, 45, 45)')), reverse=True)
+            self.assertGreaterEqual((a + 0.05) / (b + 0.05), 4.5, hint)
         self.reveal(page, '#favorite-open')
         page.locator('#favorite-open').click()
         expect(page.locator('#favorite-dialog')).to_be_visible()

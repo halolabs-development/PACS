@@ -36,7 +36,7 @@
     Object.freeze({key:'acc',tag:'(0008,0050)',label:'Accession Number',field:'accession',absent:'Absent',title:''}),
     Object.freeze({key:'id',tag:'(0010,0020)',label:'Patient ID',field:'patientId',absent:'Absent',title:''}),
     Object.freeze({key:'name',tag:'(0010,0010)',label:'Patient Name · Alphabetic',field:'patientName',absent:'Alphabetic Absent',
-      title:NAME_SCOPE+' ^는 공백으로 보입니다.'}),
+      title:kinSay('{t0} {t1}',{t:NAME_SCOPE},{t:'^는 공백으로 보입니다.'})}),
     Object.freeze({key:'birth',tag:'(0010,0030)',label:'Patient Birth Date',field:'birth',absent:'Absent',title:''}),
     Object.freeze({key:'sex',tag:'(0010,0040)',label:'Patient Sex',field:'sex',absent:'Absent',title:''}),
     Object.freeze({key:'desc',tag:'(0008,1030)',label:'Study Description',field:'not_compared',absent:'Absent',title:''}),
@@ -133,7 +133,7 @@
       if(identity&&tag.field==='not_compared'){relation=RELATION_TEXT.not_compared;title=RELATION_TITLE.not_compared;}
       else if(identity&&tag.field){
         relation=RELATION_TEXT[identity[tag.field]];
-        title=RELATION_TITLE[identity[tag.field]]+(tag.key==='name'?' '+NAME_SCOPE:'');
+        title=tag.key==='name'?kinSay('{t0} {t1}',{t:RELATION_TITLE[identity[tag.field]]},{t:NAME_SCOPE}):RELATION_TITLE[identity[tag.field]];
       }
       return {key:tag.key,tag:tag.tag,label:tag.label,value:value===''?tag.absent:value,valueTitle:tag.title,relation,title};
     });

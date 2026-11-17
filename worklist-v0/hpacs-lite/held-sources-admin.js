@@ -56,7 +56,8 @@
     const rows = groups.map(group => {
       const tr = document.createElement('tr');
       cell(tr, group.device ?? 'Not Recorded').title = group.device ? '' : '수신 장비(AE Title)가 기록되지 않았습니다(REST 업로드 등). 기관명 표기로만 연결할 수 있습니다.';
-      cell(tr, group.institutionText || '(empty)');
+      if (group.institutionText) cell(tr, group.institutionText).translate = false; // the sending institution's own words: data
+    else cell(tr, '(empty)');
       cell(tr, group.reason === 'patient_not_identified' ? 'Patient Not Identified' : 'Unknown Source');
       cell(tr, group.firstArrival);
       cell(tr, group.lastArrival);

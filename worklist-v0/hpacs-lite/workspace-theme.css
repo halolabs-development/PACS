@@ -216,6 +216,9 @@ body .left, body .right, body .workrow, body .rw { background: var(--kin-bg); }
   #viewer-windows-dialog, #image-opening-dialog, #reading-appearance-dialog)
   :is(button, select, textarea, input:not([type=checkbox], [type=radio], [type=range])) {
   background: var(--kin-bg); color: var(--kin-text); border-color: var(--kin-line2); }
+/* A field's placeholder is secondary text (4.5:1 or more on the panel), not the browser's grey; a field that styles its
+   own placeholder keeps it. */
+:where(input, textarea)::placeholder { color: var(--kin-muted); opacity: 1; }
 /* Inputs are panels (the colour table: panels and inputs #2D2D2D); buttons stay on the background. */
 :root :is(#favorite-dialog, #study-tag-dialog, #saved-filter-manager, #consultations-dialog, #reader-assignment-dialog,
   #tech-note-dialog, #sr-dialog, #worklist-alerts-dialog, #workspace-shortcuts-dialog, #report-preview,

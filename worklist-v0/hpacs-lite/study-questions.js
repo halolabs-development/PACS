@@ -18,6 +18,9 @@
     // 네트워크 대기 전에 그 목록을 동기로 부른다. auth.js의 session-ended 방송은 그 POST가 끝난 뒤라 기다리지 않는다.
     // 한 영역이 알아챈 계정 변경(다른 계정의 봉투·OWNER_CHANGED)은 같은 목록에 사유 'account-changed'로 알려 두 영역을 함께 잠근다.
     function mountStudyQuestions({ apiBase, work, transport, current, study, openStudy, allowed, owner, online = () => true }) {
+      // The page's sentences and the words it writes go through the screen language (this part also runs on its own).
+      const kinSay = (t, ...p) => window.KinLanguage ? window.KinLanguage.say(t, ...p) : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+      const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
       const root = $('#question-p'), summary = $('#question-summary'), toggle = $('#question-toggle');
       const inboxButton = $('#question-inbox'), pane = $('#question-pane'), notice = $('#question-notice');
       const TEXT = {
@@ -335,11 +338,11 @@
           // 끊긴 동안은 새로 아는 것이 없다: 마지막으로 말한 것을 그대로 둔다.
           const now = !lock && uid !== null && !allowed() ? null : lock ? (lock.account ? TEXT.notice.account : TEXT.notice.refused) : listFailure ? TEXT.notice.failed
             : items && items.length ? TEXT.notice.counts(items.length, parts) : uid === null || items !== null ? '' : null;
-          if (now !== null) told = now ? { text: now, title: `${line} — Show Questions` } : null;
+          if (now !== null) told = now ? { text: now, title: kinSay('{t0} — Show Questions', { t: line }) } : null;
           notice.hidden = ended || visible || !told;
           if (told) {
             notice.textContent = told.text;
-            notice.title = told.title;
+            kinWrite(notice, told.title, 'title');
           }
         }
         toggle.textContent = mode === 'study' ? 'Hide Questions' : 'Show Questions';

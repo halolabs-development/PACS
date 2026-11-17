@@ -1,6 +1,8 @@
 /* S4-U2 order-side reconciliation display model. Engineering only; pure (no storage, network or DOM). */
 (function(root){
   'use strict';
+  // A sentence of the page built from its template and its parts ({t: words}); written so the screen language reads it.
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
   /*
    * The only source the server may name while no authoritative site order source is connected. Any
    * other value is not an answer this build knows how to show, so it is treated as unreadable.
@@ -80,9 +82,9 @@
     const rows=(m.orders||[]).map(rowLabel),missing=rows.filter(row=>WITHOUT_IMAGES.has(row.key)).length;
     if(m.available===false)return {key:'observation_unavailable',hidden:false,
       text:head+' · '+OBSERVATION_UNAVAILABLE+(m.observedAt?' · 마지막 관측 '+format(m.observedAt)+' 기준':''),
-      title:TITLE+' HALO PACS 관측 요청이 실패했습니다.'+(m.observedAt?' 아래 목록은 마지막으로 성공한 관측의 답입니다.':''),rows};
+      title:m.observedAt?kinSay('{t0} {t1} {t2}',{t:TITLE},{t:'HALO PACS 관측 요청이 실패했습니다.'},{t:'아래 목록은 마지막으로 성공한 관측의 답입니다.'}):kinSay('{t0} {t1}',{t:TITLE},{t:'HALO PACS 관측 요청이 실패했습니다.'}),rows};
     if(m.orders===null)return {key:'unknown',hidden:false,text:head+' · Unknown · Observed '+format(m.observedAt),
-      title:TITLE+' 이번 관측으로는 오더 대사를 판정하지 못했습니다.',rows:[]};
+      title:kinSay('{t0} {t1}',{t:TITLE},{t:'이번 관측으로는 오더 대사를 판정하지 못했습니다.'}),rows:[]};
     return {key:'observed',hidden:false,
       text:head+' · Orders '+rows.length+(missing?' · '+ORDER_WITHOUT_IMAGES+' '+missing:'')+' · Observed '+format(m.observedAt),
       title:TITLE,rows};

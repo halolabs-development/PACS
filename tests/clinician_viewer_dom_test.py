@@ -1062,6 +1062,10 @@ class ClinicianViewerDOMTest(unittest.TestCase):
             self.inbox_reads.append(request.url)
             route.fulfill(json={'owner': [account.get('institution'), account.get('sub')], 'view': 'received', 'items': [], 'nextCursor': None, 'pending': 0})
             return
+        # The page reads the account's screen language once it knows the session (no saved appearance here).
+        if method == 'GET' and path == '/api/reading-appearance':
+            route.fulfill(json={'owner': None, 'revision': 0, 'sizes': None})
+            return
         self.unexpected.append(f'{method} {request.url}')
         route.abort()
 

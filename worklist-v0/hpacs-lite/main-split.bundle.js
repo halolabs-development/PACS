@@ -2048,8 +2048,8 @@
         line.setAttribute("role", "listitem"); line.dataset.tag = row.key;
         // The DICOM value is data; the attribute name is a label (each its own text, the line reads the same).
         const shown = document.createElement("span"); shown.translate = false; shown.textContent = row.value;
-        value.replaceChildren(row.tag + " ", Object.assign(document.createElement("span"), { textContent: row.label }), ": ", shown); value.title = row.valueTitle;
-        relation.textContent = row.relation ? ` · ${row.relation}` : ""; relation.title = row.title;
+        value.replaceChildren(row.tag + " ", Object.assign(document.createElement("span"), { textContent: row.label }), ": ", shown); kinWrite(value, row.valueTitle || '', 'title');
+        relation.textContent = row.relation ? ` · ${row.relation}` : ""; kinWrite(relation, row.title || '', 'title');
         line.append(value, relation);
         return line;
       }));
@@ -3235,10 +3235,10 @@
       const summary = KinOrderReconciliation.summary(orderReconciliationModel);
       box.hidden = summary.hidden;
       $("#order-reconciliation-summary").textContent = summary.text;
-      $("#order-reconciliation-summary").title = summary.title;
+      kinWrite($("#order-reconciliation-summary"), summary.title || "", "title");
       $("#order-reconciliation-list").replaceChildren(...summary.rows.map(row => {
         const item = document.createElement("div");
-        item.textContent = row.text; item.title = row.title;
+        item.textContent = row.text; kinWrite(item, row.title || "", "title");
         return item;
       }));
     }
@@ -3609,6 +3609,9 @@
     // 그려진다. 계정 변경은 같은 목록에 사유 'account-changed'로 알려 이 페이지의 다른 영역(S5-U4b 질문 줄)도 같은 자리에서 잠근다.
     // 쓰던 note는 요청별로 이 문서의 메모리에만 두고, 잠그거나 끝나면 이전 계정의 글이라 버린다.
     function mountImageRequests({ api, apiBase, work, transport, owner, allowed, current, study, institution, can }) {
+      // The page's sentences and the words it writes go through the screen language (this part also runs on its own).
+      const kinSay = (t, ...p) => window.KinLanguage ? window.KinLanguage.say(t, ...p) : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+      const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
       const TEXT = {
         queueHint: '소속 기관 검사에 임상의가 남긴 외부영상(External Images)·영상전송(Send Images) 요청입니다. 요청은 처리 상태의 '
           + '기록이며 이 칸은 영상을 옮기지 않습니다. 영상은 기존 경로에서 따로 옮기고, 처리를 마치면 Close에 처리 기록을 남기세요.',
@@ -3731,7 +3734,7 @@
       const setState = (box, state, text, detail) => {
         box.dataset.state = state;
         box.querySelector('.image-request-line').textContent = text;
-        box.querySelector('.image-request-detail').textContent = detail || '';
+        kinWrite(box.querySelector('.image-request-detail'), detail || '');
       };
       const dash = value => typeof value === 'string' && value.trim() ? value : '—';
       const person = value => dash(value && (value.name || value.actor));
@@ -3748,7 +3751,8 @@
         const message = error && error.message ? error.message : TEXT.rejected;
         return parts.length ? `${message} (${parts.join(' · ')})` : message;
       };
-      const readDetail = error => `${error && error.status === 404 ? `${TEXT.notFound}\n` : ''}${describe(error)}`;
+      // The page's sentence, and under it what failed (its own words or the server's message).
+      const readDetail = error => error && error.status === 404 ? kinSay('{t0}\n{e1}', { t: TEXT.notFound }, { e: describe(error) }) : describe(error);
       // 상태명은 색과 함께 늘 글자로 쓰고(UXR-G-12), Closed에는 기록일 뿐이라는 문구를 바로 옆에 붙인다.
       const badge = state => {
         const wrap = make('span');
@@ -4428,7 +4432,7 @@
         const text = lock ? lock.text : !allowed() ? TEXT.readOffline : readUid === null ? TEXT.readUnread : readFailure ? TEXT.readFailed : readItems === null
           ? TEXT.readLoading : readItems.length ? TEXT.readCounts(readItems.length, readCounts(readItems)) : TEXT.readEmpty;
         readSummary.textContent = text;
-        readSummary.title = lock ? `${lock.text}\n${lock.detail}`.trim() : readFailure ? readDetail(readFailure) : text;
+        kinWrite(readSummary, lock ? (lock.detail ? kinSay('{t0}\n{e1}', { t: lock.text }, { e: lock.detail }) : lock.text) : readFailure ? readDetail(readFailure) : text, 'title');
         readClosed.dataset.shown = String(!lock && !readFailure && !!readItems && readItems.some(item => item.state === 'Closed'));
         readToggle.textContent = readOpen ? 'Hide Requests' : 'Show Requests';
         readToggle.setAttribute('aria-expanded', String(readOpen));
@@ -4444,7 +4448,7 @@
           else if (told !== null) {
             readNotice.hidden = !told;
             readNotice.textContent = told;
-            readNotice.title = told ? `${text} — Show Requests` : '';
+            kinWrite(readNotice, told ? kinSay('{t0} — Show Requests', { t: text }) : '', 'title');
           }
         }
         const state = lock || readFailure ? 'failed' : readLoading ? 'loading' : 'ready';
@@ -12492,6 +12496,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     // 네트워크 대기 전에 그 목록을 동기로 부른다. auth.js의 session-ended 방송은 그 POST가 끝난 뒤라 기다리지 않는다.
     // 한 영역이 알아챈 계정 변경(다른 계정의 봉투·OWNER_CHANGED)은 같은 목록에 사유 'account-changed'로 알려 두 영역을 함께 잠근다.
     function mountStudyQuestions({ apiBase, work, transport, current, study, openStudy, allowed, owner, online = () => true }) {
+      // The page's sentences and the words it writes go through the screen language (this part also runs on its own).
+      const kinSay = (t, ...p) => window.KinLanguage ? window.KinLanguage.say(t, ...p) : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+      const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
       const root = $('#question-p'), summary = $('#question-summary'), toggle = $('#question-toggle');
       const inboxButton = $('#question-inbox'), pane = $('#question-pane'), notice = $('#question-notice');
       const TEXT = {
@@ -12809,11 +12816,11 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           // 끊긴 동안은 새로 아는 것이 없다: 마지막으로 말한 것을 그대로 둔다.
           const now = !lock && uid !== null && !allowed() ? null : lock ? (lock.account ? TEXT.notice.account : TEXT.notice.refused) : listFailure ? TEXT.notice.failed
             : items && items.length ? TEXT.notice.counts(items.length, parts) : uid === null || items !== null ? '' : null;
-          if (now !== null) told = now ? { text: now, title: `${line} — Show Questions` } : null;
+          if (now !== null) told = now ? { text: now, title: kinSay('{t0} — Show Questions', { t: line }) } : null;
           notice.hidden = ended || visible || !told;
           if (told) {
             notice.textContent = told.text;
-            notice.title = told.title;
+            kinWrite(notice, told.title, 'title');
           }
         }
         toggle.textContent = mode === 'study' ? 'Hide Questions' : 'Show Questions';

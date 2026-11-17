@@ -352,20 +352,22 @@ class WorklistLanguageDOM(unittest.TestCase):
         twice = "단축어: a · Modality: b · Modality: c · Bodypart: d"
         self.assertEqual(twice, tr(twice, "en"))
 
-    def test_english_reads_the_page_words_the_page_joined_with_other_words(self):
-        """Tooltips the page builds by joining its own messages: in English the joined Korean message is the page's."""
+    def test_words_the_page_joins_are_its_sentences_and_data_in_them_stays(self):
+        """Where the page joins its own words (a label and "단축키", a message and the server's detail) it writes a
+        sentence with say(); text that only looks like page words - a reason, a report line, a name - is data."""
         self.boot()
         tr = lambda text, lang: self.page.evaluate("([t, l]) => KinLanguage.tr(t, l)", [text, lang])
-        # A template that would change nothing ("Study {0}") is not the reading; "{0} 단축키" is.
-        self.assertEqual("Study Info & Templates Shortcut", tr("Study Info & Templates 단축키", "en"))
-        # A whole Korean sentence of the glossary filling a part is the page's own message.
+        said = lambda args: self.page.evaluate("([t, ...p]) => KinLanguage.tr(KinLanguage.say(t, ...p), 'en')", args)
+        self.assertEqual("Study Info & Templates Shortcut", said(["{t0} 단축키", {"t": "Study Info & Templates"}]))
         self.assertEqual("Could not load questions for this study. — Show Questions",
-                         tr("이 검사의 질문을 불러오지 못했습니다. — Show Questions", "en"))
-        # A message with the server's detail on the next line: each line read as its own words, the detail as is.
-        self.assertEqual("Cannot check right now\nSYN detail (HTTP 503)", tr("지금 확인할 수 없습니다\nSYN detail (HTTP 503)", "en"))
-        # Data stays data: a short Korean word in a part, and anything on the Korean screen.
-        self.assertEqual("Cancellation reason: 승인", tr("취소 사유: 승인", "en"))
-        self.assertNotIn("Could not", tr("이 검사의 질문을 불러오지 못했습니다. — Show Questions", "ko"))
+                         said(["{t0} — Show Questions", {"t": "이 검사의 질문을 불러오지 못했습니다."}]))
+        self.assertEqual("Cannot check right now\nSYN detail (HTTP 503)",
+                         said(["{t0}\n{e1}", {"t": "지금 확인할 수 없습니다"}, {"e": "SYN detail (HTTP 503)"}]))
+        # Data: a reason a person wrote that equals a page message, a report or detail line that equals a glossary word,
+        # a data part beside a label.
+        self.assertEqual("Cancellation reason: 이 검사의 질문을 불러오지 못했습니다.", tr("취소 사유: 이 검사의 질문을 불러오지 못했습니다.", "en"))
+        for text in ("Patient SYN\n승인", "SYN detail\n승인", "Study 검사 단축키"):
+            self.assertEqual(text, tr(text, "en"))
 
     def test_sentences_built_with_their_parts_translate_the_words_and_keep_the_data(self):
         self.boot()

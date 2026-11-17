@@ -15,6 +15,9 @@
  */
 (function () {
   'use strict';
+  // A sentence of the page built from its template and its parts ({t: words}, {e: message}); written so the screen language reads it.
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
 
   // 요청 하나의 제한 시간. 넘으면 멈추고, 쓰기라면 결과를 모르는 답이다.
   const TIMEOUT_MS = 60000;
@@ -391,7 +394,7 @@
       else if (!online()) title = TEXT.entry.offline;
       else if (!radiologist()) title = TEXT.entry.role;
       else if (target === null) title = TEXT.entry.none;
-      else if (entryView.phase === 'failed') title = `${TEXT.entry.unknown}\n${entryView.detail}`;
+      else if (entryView.phase === 'failed') title = entryView.detail ? kinSay('{t0}\n{e1}', { t: TEXT.entry.unknown }, { e: entryView.detail }) : TEXT.entry.unknown;
       else if (entryView.phase !== 'ready') title = TEXT.entry.loading;
       else if (!entryView.data.sendable) title = TEXT.reasons[entryView.data.reason];
       else {
@@ -399,7 +402,7 @@
         title = TEXT.entry.ready(entryView.data.source.version);
       }
       entry.disabled = !enabled;
-      entry.title = title;
+      kinWrite(entry, title, 'title');
     }
 
     /** #1을 읽어 단추를 정한다. 답을 받기 전·거절·오류에는 꺼 두고 그 이유를 툴팁에 쓴다. */

@@ -1,97 +1,830 @@
 {
- "config/ohif/branding.js": 2,
- "config/ohif/cine.js": 4,
- "config/ohif/ct-sync.js": 5,
- "config/ohif/history.js": 8,
- "config/ohif/image-load-status.js": 4,
- "config/ohif/layout.js": 4,
- "config/ohif/mammography-hanging.js": 11,
- "config/ohif/series-recovery.js": 1,
- "config/ohif/sr-provenance.js": 3,
- "config/ohif/viewer-prior.js": 2,
- "worklist-v0/hpacs-lite/admin.html": 54,
- "worklist-v0/hpacs-lite/audit.html": 1,
- "worklist-v0/hpacs-lite/clinician.html": 28,
- "worklist-v0/hpacs-lite/clinician.js": 4,
- "worklist-v0/hpacs-lite/consultations.css": 11,
- "worklist-v0/hpacs-lite/exam-merge.js": 2,
- "worklist-v0/hpacs-lite/favorites.css": 14,
- "worklist-v0/hpacs-lite/film-print.js": 21,
- "worklist-v0/hpacs-lite/image-report-diagrams.js": 3,
- "worklist-v0/hpacs-lite/image-report.js": 28,
- "worklist-v0/hpacs-lite/index.html": 6,
- "worklist-v0/hpacs-lite/main.html": 378,
- "worklist-v0/hpacs-lite/marker-style.js": 4,
- "worklist-v0/hpacs-lite/page-boot.js": 5,
- "worklist-v0/hpacs-lite/product-info.js": 22,
- "worklist-v0/hpacs-lite/reader-assignment.css": 8,
- "worklist-v0/hpacs-lite/reading-appearance.js": 11,
- "worklist-v0/hpacs-lite/reading-workspace.css": 45,
- "worklist-v0/hpacs-lite/related-report-mode.css": 28,
- "worklist-v0/hpacs-lite/report-history.js": 6,
- "worklist-v0/hpacs-lite/report-popout.js": 10,
- "worklist-v0/hpacs-lite/report-preview.js": 12,
- "worklist-v0/hpacs-lite/saved-filter-manager.css": 35,
- "worklist-v0/hpacs-lite/sr-reader.js": 8,
- "worklist-v0/hpacs-lite/study-access-admin.js": 3,
- "worklist-v0/hpacs-lite/study-access-status.js": 2,
- "worklist-v0/hpacs-lite/study-attachments.js": 13,
- "worklist-v0/hpacs-lite/study-tags.css": 15,
- "worklist-v0/hpacs-lite/study-thumbnails.js": 5,
- "worklist-v0/hpacs-lite/tech-note.css": 9,
- "worklist-v0/hpacs-lite/viewer-cell-merge.js": 2,
- "worklist-v0/hpacs-lite/viewer-context-loss.js": 1,
- "worklist-v0/hpacs-lite/viewer-dicom-pdf.js": 3,
- "worklist-v0/hpacs-lite/viewer-display-model.js": 1,
- "worklist-v0/hpacs-lite/viewer-display-scope.js": 1,
- "worklist-v0/hpacs-lite/viewer-export.js": 5,
- "worklist-v0/hpacs-lite/viewer-features-autosave.js": 3,
- "worklist-v0/hpacs-lite/viewer-features-compare.js": 8,
- "worklist-v0/hpacs-lite/viewer-features-display.js": 9,
- "worklist-v0/hpacs-lite/viewer-features-input.js": 11,
- "worklist-v0/hpacs-lite/viewer-features-measure-lines.js": 2,
- "worklist-v0/hpacs-lite/viewer-features-measure-ortho.js": 2,
- "worklist-v0/hpacs-lite/viewer-features-measure.js": 10,
- "worklist-v0/hpacs-lite/viewer-features-mg.js": 7,
- "worklist-v0/hpacs-lite/viewer-features-monitors.js": 3,
- "worklist-v0/hpacs-lite/viewer-features-navigate.js": 18,
- "worklist-v0/hpacs-lite/viewer-features-view.js": 8,
- "worklist-v0/hpacs-lite/viewer-findings.js": 10,
- "worklist-v0/hpacs-lite/viewer-hanging-protocol.js": 8,
- "worklist-v0/hpacs-lite/viewer-identity.js": 6,
- "worklist-v0/hpacs-lite/viewer-images-only.js": 4,
- "worklist-v0/hpacs-lite/viewer-job-print.js": 14,
- "worklist-v0/hpacs-lite/viewer-jobs.js": 8,
- "worklist-v0/hpacs-lite/viewer-mammography.js": 7,
- "worklist-v0/hpacs-lite/viewer-preload.js": 1,
- "worklist-v0/hpacs-lite/viewer-session.js": 1,
- "worklist-v0/hpacs-lite/viewer-tech-note.js": 11,
- "worklist-v0/hpacs-lite/viewer-three-d-cursor.js": 2,
- "worklist-v0/hpacs-lite/viewer-ux-theme.css": 12,
- "worklist-v0/hpacs-lite/viewer-volume-batch.js": 3,
- "worklist-v0/hpacs-lite/viewer-volume-crosshair.js": 1,
- "worklist-v0/hpacs-lite/viewer-volume-curved.js": 9,
- "worklist-v0/hpacs-lite/viewer-volume-display.js": 1,
- "worklist-v0/hpacs-lite/viewer-volume-job-print.js": 4,
- "worklist-v0/hpacs-lite/viewer-volume-marks.js": 3,
- "worklist-v0/hpacs-lite/viewer-volume-mip.js": 21,
- "worklist-v0/hpacs-lite/viewer-volume-orientation.js": 1,
- "worklist-v0/hpacs-lite/viewer-volume-path.js": 12,
- "worklist-v0/hpacs-lite/viewer-volume-preferences.js": 9,
- "worklist-v0/hpacs-lite/viewer-volume-progressive.js": 2,
- "worklist-v0/hpacs-lite/viewer-volume-rendering.js": 16,
- "worklist-v0/hpacs-lite/viewer-volume-sculpt.js": 5,
- "worklist-v0/hpacs-lite/viewer-volume-sync.js": 1,
- "worklist-v0/hpacs-lite/viewer-windows.js": 5,
- "worklist-v0/hpacs-lite/viewer-workspace-dock.js": 23,
- "worklist-v0/hpacs-lite/worklist-alerts.js": 3,
- "worklist-v0/hpacs-lite/worklist-columns.css": 5,
- "worklist-v0/hpacs-lite/worklist-columns.js": 2,
- "worklist-v0/hpacs-lite/worklist-export.js": 2,
- "worklist-v0/hpacs-lite/worklist-folder-tree.css": 1,
- "worklist-v0/hpacs-lite/worklist-image-preview.js": 3,
- "worklist-v0/hpacs-lite/worklist-language.js": 14,
- "worklist-v0/hpacs-lite/worklist-selection.js": 2,
- "worklist-v0/hpacs-lite/workspace-shortcuts.js": 5,
- "worklist-v0/hpacs-lite/workspace-theme.css": 5
+ "config/ohif/branding.js": {
+  "e8f1ff": 1,
+  "facc15": 1
+ },
+ "config/ohif/cine.js": {
+  "101e32": 1,
+  "263c57": 1,
+  "6884a6": 1,
+  "e1ecfc": 1
+ },
+ "config/ohif/ct-sync.js": {
+  "101e32": 1,
+  "1b3252": 1,
+  "657c9f": 1,
+  "e1ecfc": 2
+ },
+ "config/ohif/history.js": {
+  "0c1423": 1,
+  "101e32": 1,
+  "405777": 1,
+  "657c9f": 3,
+  "e1ecfc": 1,
+  "ffffff": 1
+ },
+ "config/ohif/image-load-status.js": {
+  "161c25": 2,
+  "ffb4a8": 2
+ },
+ "config/ohif/layout.js": {
+  "101e32": 1,
+  "657c9f": 2,
+  "e1ecfc": 1
+ },
+ "config/ohif/mammography-hanging.js": {
+  "101e32": 4,
+  "657c9f": 2,
+  "713f12": 1,
+  "ffffff": 4
+ },
+ "config/ohif/series-recovery.js": {
+  "ffb4a8": 1
+ },
+ "config/ohif/sr-provenance.js": {
+  "101e32": 1,
+  "657c9f": 1,
+  "e1ecfc": 1
+ },
+ "config/ohif/viewer-prior.js": {
+  "3b4c54": 1,
+  "555555": 1
+ },
+ "worklist-v0/hpacs-lite/admin.html": {
+  "000000": 2,
+  "16442d": 1,
+  "1b3552": 2,
+  "2a2418": 1,
+  "2c2940": 1,
+  "383838": 2,
+  "393d48": 3,
+  "3c1b23": 4,
+  "4ac47a": 1,
+  "4f252c": 1,
+  "592631": 2,
+  "5c4215": 3,
+  "6c5731": 1,
+  "6d6394": 1,
+  "7c343e": 4,
+  "7e3b44": 1,
+  "858585": 1,
+  "8ce2af": 1,
+  "a9d2fa": 2,
+  "d1d5dd": 3,
+  "ddd6f7": 2,
+  "e0646c": 1,
+  "e3b34b": 1,
+  "ffadb7": 2,
+  "ffb8c1": 1,
+  "ffd37a": 1,
+  "ffd9dd": 5,
+  "ffe09b": 3,
+  "ffe4a9": 1
+ },
+ "worklist-v0/hpacs-lite/audit.html": {
+  "858585": 1
+ },
+ "worklist-v0/hpacs-lite/clinician.html": {
+  "000000": 1,
+  "16442d": 2,
+  "2b313c": 1,
+  "383838": 2,
+  "3a3218": 3,
+  "3c1b23": 1,
+  "3f8a5f": 2,
+  "56607a": 3,
+  "7a6a33": 3,
+  "7c343e": 1,
+  "b8f0cf": 2,
+  "dde3ee": 3,
+  "ffd9dd": 1,
+  "ffe7a8": 3
+ },
+ "worklist-v0/hpacs-lite/clinician.js": {
+  "7a6a33": 1,
+  "c7ced6": 1,
+  "ffe7a8": 1,
+  "ffffff": 1
+ },
+ "worklist-v0/hpacs-lite/consultations.css": {
+  "000000": 1,
+  "0b1322": 1,
+  "101a2b": 1,
+  "192c49": 1,
+  "264567": 1,
+  "526b91": 3,
+  "68b2ff": 1,
+  "84c1ff": 1,
+  "dce7fa": 1
+ },
+ "worklist-v0/hpacs-lite/exam-merge.js": {
+  "ffcf7a": 2
+ },
+ "worklist-v0/hpacs-lite/favorites.css": {
+  "030911": 1,
+  "091524": 1,
+  "132034": 1,
+  "225c87": 1,
+  "263c55": 1,
+  "47617b": 3,
+  "6481a0": 2,
+  "65809a": 1,
+  "8cdbff": 1,
+  "aedaff": 1,
+  "e4eef8": 1
+ },
+ "worklist-v0/hpacs-lite/film-print.js": {
+  "000000": 2,
+  "0b0d11": 1,
+  "11151c": 1,
+  "1b2029": 1,
+  "232936": 1,
+  "2d5a8a": 1,
+  "3a4356": 5,
+  "4b7fb5": 1,
+  "8bd49c": 1,
+  "aab2c0": 2,
+  "d7dce4": 3,
+  "ff8a80": 1,
+  "ffcf70": 1
+ },
+ "worklist-v0/hpacs-lite/image-report-diagrams.js": {
+  "333333": 2,
+  "ffffff": 1
+ },
+ "worklist-v0/hpacs-lite/image-report.js": {
+  "000000": 3,
+  "11151c": 1,
+  "1565c0": 1,
+  "1b2029": 1,
+  "232936": 1,
+  "2d5a8a": 1,
+  "2e7d32": 1,
+  "3a4356": 6,
+  "4b7fb5": 1,
+  "8bd49c": 1,
+  "aab2c0": 2,
+  "d7dce4": 3,
+  "e0242b": 2,
+  "f9a825": 1,
+  "ff8a80": 1,
+  "ffffff": 2
+ },
+ "worklist-v0/hpacs-lite/index.html": {
+  "000000": 2,
+  "9b9b9b": 1,
+  "f5d5d5": 1,
+  "ffffff": 2
+ },
+ "worklist-v0/hpacs-lite/main.html": {
+  "000000": 16,
+  "07101d": 1,
+  "0b1220": 1,
+  "0e1116": 1,
+  "0e1728": 2,
+  "101a28": 1,
+  "111c31": 1,
+  "111d2d": 1,
+  "131d31": 1,
+  "141414": 2,
+  "14181f": 12,
+  "142237": 3,
+  "171c25": 4,
+  "1b212c": 8,
+  "1b2b42": 1,
+  "1d2330": 1,
+  "1d4794": 1,
+  "1f2530": 1,
+  "20242e": 1,
+  "2196f3": 1,
+  "232936": 16,
+  "262e3c": 2,
+  "26405f": 1,
+  "29405d": 1,
+  "2a2617": 1,
+  "2a3040": 2,
+  "2b3547": 1,
+  "2c3444": 2,
+  "2e63c8": 1,
+  "2f3849": 1,
+  "2f5f8a": 2,
+  "2fc4ce": 1,
+  "333c4d": 8,
+  "344258": 1,
+  "34455f": 1,
+  "355272": 3,
+  "3a4356": 26,
+  "3b5474": 1,
+  "3b6ea5": 9,
+  "3f7a4a": 2,
+  "3f8a5f": 3,
+  "3fbf8f": 1,
+  "4a4a52": 1,
+  "4ac06a": 4,
+  "4da3ff": 13,
+  "4f7fb8": 1,
+  "4f8ef7": 9,
+  "555566": 4,
+  "56607a": 3,
+  "5c5124": 2,
+  "5e7396": 1,
+  "666677": 4,
+  "6683aa": 1,
+  "68baff": 2,
+  "6a4a8a": 2,
+  "77c9ff": 1,
+  "7a3a3a": 2,
+  "7a6a33": 5,
+  "7f8899": 7,
+  "7fd88f": 2,
+  "82a0d2": 7,
+  "86bdf2": 2,
+  "8892a4": 13,
+  "8a4a4a": 2,
+  "8a6a33": 1,
+  "8a7a3a": 2,
+  "8bc8ff": 1,
+  "93a6c4": 1,
+  "93c5fd": 4,
+  "9aa6b8": 1,
+  "9cc3ff": 1,
+  "a5b9d3": 1,
+  "aab2c0": 12,
+  "afc3e2": 1,
+  "b06ee5": 2,
+  "b2dcff": 1,
+  "b58cf7": 1,
+  "b8f0cf": 5,
+  "c1d3e9": 3,
+  "c3cad6": 3,
+  "c7e4ff": 2,
+  "c8c8d4": 1,
+  "c8d5e6": 1,
+  "cdd3dc": 16,
+  "cfe2ff": 3,
+  "d29a3a": 2,
+  "d3dce8": 3,
+  "d8b24a": 8,
+  "d9ecff": 1,
+  "d9ffe0": 2,
+  "dbeaff": 1,
+  "dde3ee": 4,
+  "dfe5ee": 12,
+  "e8b65b": 1,
+  "e9f0fa": 1,
+  "ecd9ff": 2,
+  "eef4ff": 2,
+  "f0c27a": 1,
+  "f0c95a": 1,
+  "ff6b6b": 3,
+  "ff8080": 2,
+  "ff8a80": 1,
+  "ff9a4a": 1,
+  "ffb0b0": 1,
+  "ffb454": 3,
+  "ffb4b4": 7,
+  "ffc978": 4,
+  "ffcf7a": 3,
+  "ffd9d9": 3,
+  "ffe7a8": 5,
+  "fff6cf": 2,
+  "ffffff": 5
+ },
+ "worklist-v0/hpacs-lite/marker-style.js": {
+  "00ffff": 1,
+  "ff00ff": 1,
+  "ff4040": 1,
+  "ffffff": 1
+ },
+ "worklist-v0/hpacs-lite/page-boot.js": {
+  "000000": 1,
+  "4ac06a": 1,
+  "7f8899": 1,
+  "858585": 1,
+  "ff6b6b": 1
+ },
+ "worklist-v0/hpacs-lite/product-info.js": {
+  "000000": 2,
+  "101b2a": 1,
+  "142237": 1,
+  "16442d": 1,
+  "19304b": 1,
+  "22364f": 1,
+  "29405d": 2,
+  "3c5b80": 1,
+  "3f8a5f": 1,
+  "56607a": 1,
+  "9cc3ff": 2,
+  "a9b9cc": 2,
+  "b8f0cf": 1,
+  "b9c9dc": 1,
+  "c8d5e6": 1,
+  "dde3ee": 1,
+  "eef4ff": 2
+ },
+ "worklist-v0/hpacs-lite/reader-assignment.css": {
+  "000000": 1,
+  "142136": 1,
+  "243e56": 1,
+  "7190aa": 1,
+  "728eaa": 1,
+  "afcfea": 1,
+  "e4ecf6": 1,
+  "edf4ff": 1
+ },
+ "worklist-v0/hpacs-lite/reading-appearance.js": {
+  "000000": 1,
+  "172333": 1,
+  "263b53": 1,
+  "819bb7": 2,
+  "849bb4": 1,
+  "d7f3ff": 1,
+  "dce7f5": 1,
+  "e1ebf7": 1,
+  "fff1d6": 1,
+  "ffffff": 1
+ },
+ "worklist-v0/hpacs-lite/reading-workspace.css": {
+  "000000": 3,
+  "060d18": 1,
+  "101a2b": 2,
+  "15243b": 1,
+  "16273c": 1,
+  "172b47": 2,
+  "1b2c45": 1,
+  "244c80": 1,
+  "302b20": 1,
+  "45658b": 6,
+  "6384aa": 1,
+  "657c9f": 1,
+  "668dbd": 1,
+  "6fcf97": 1,
+  "7893b8": 2,
+  "93c5fd": 5,
+  "9fb9dc": 4,
+  "bbd4f7": 1,
+  "bd944c": 1,
+  "bdd3f4": 3,
+  "bfdbfe": 2,
+  "dceaff": 1,
+  "e5efff": 3
+ },
+ "worklist-v0/hpacs-lite/related-report-mode.css": {
+  "000000": 1,
+  "10151d": 2,
+  "161b24": 2,
+  "232936": 1,
+  "2c3442": 1,
+  "3a4356": 4,
+  "3b6ea5": 1,
+  "7893b8": 1,
+  "93c5fd": 1,
+  "9fb0c8": 2,
+  "bdd3f4": 1,
+  "c3cad6": 2,
+  "c98a2b": 1,
+  "d29a3a": 2,
+  "dfe5ee": 4,
+  "f0c27a": 1,
+  "ff9a9a": 1
+ },
+ "worklist-v0/hpacs-lite/report-history.js": {
+  "555566": 1,
+  "666677": 2,
+  "d8b24a": 1,
+  "ff8080": 1,
+  "ffffff": 1
+ },
+ "worklist-v0/hpacs-lite/report-popout.js": {
+  "000000": 1,
+  "1b2130": 2,
+  "333c4d": 3,
+  "4c8dff": 1,
+  "8892a4": 2,
+  "e6e9ef": 1
+ },
+ "worklist-v0/hpacs-lite/report-preview.js": {
+  "18212b": 2,
+  "34495c": 1,
+  "465362": 1,
+  "526171": 2,
+  "61748c": 1,
+  "b4bdc5": 3,
+  "edf2f8": 1,
+  "ffffff": 1
+ },
+ "worklist-v0/hpacs-lite/saved-filter-manager.css": {
+  "050b16": 2,
+  "101a29": 1,
+  "172131": 3,
+  "202d3f": 1,
+  "235984": 1,
+  "236795": 1,
+  "283b53": 1,
+  "295746": 1,
+  "344862": 5,
+  "425773": 1,
+  "496079": 6,
+  "526b89": 1,
+  "54718e": 1,
+  "6fc5ff": 1,
+  "77b7d8": 1,
+  "77c9ff": 1,
+  "a6c5e2": 2,
+  "aabacf": 1,
+  "acbdd2": 1,
+  "dce5ef": 1,
+  "ffb7a9": 2
+ },
+ "worklist-v0/hpacs-lite/sr-reader.js": {
+  "000000": 1,
+  "141c29": 1,
+  "1b2b42": 1,
+  "6683aa": 2,
+  "9fceff": 1,
+  "dae6f6": 2
+ },
+ "worklist-v0/hpacs-lite/study-access-admin.js": {
+  "0b1625": 1,
+  "355272": 2
+ },
+ "worklist-v0/hpacs-lite/study-access-status.js": {
+  "142237": 1,
+  "355272": 1
+ },
+ "worklist-v0/hpacs-lite/study-attachments.js": {
+  "000000": 1,
+  "11151c": 1,
+  "1b2029": 1,
+  "232936": 1,
+  "2c3444": 1,
+  "3a4356": 2,
+  "8bd49c": 1,
+  "aab2c0": 2,
+  "d7dce4": 2,
+  "ff8a80": 1
+ },
+ "worklist-v0/hpacs-lite/study-tags.css": {
+  "030911": 1,
+  "091524": 2,
+  "132034": 1,
+  "225c87": 1,
+  "263c55": 1,
+  "47617b": 2,
+  "6481a0": 3,
+  "65809a": 1,
+  "8cdbff": 1,
+  "aedaff": 1,
+  "e4eef8": 1
+ },
+ "worklist-v0/hpacs-lite/study-thumbnails.js": {
+  "14181f": 1,
+  "3a4356": 1,
+  "555566": 1,
+  "cdd3dc": 1,
+  "ff8080": 1
+ },
+ "worklist-v0/hpacs-lite/tech-note.css": {
+  "000000": 1,
+  "091321": 1,
+  "111e32": 1,
+  "526782": 2,
+  "6586ac": 1,
+  "a8bfda": 1,
+  "dbeafe": 1,
+  "e5efff": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-cell-merge.js": {
+  "657c9f": 2
+ },
+ "worklist-v0/hpacs-lite/viewer-context-loss.js": {
+  "13202b": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-dicom-pdf.js": {
+  "18212b": 1,
+  "355272": 1,
+  "657c9f": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-display-model.js": {
+  "e8c547": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-display-scope.js": {
+  "657c9f": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-export.js": {
+  "000000": 1,
+  "0b1730": 1,
+  "657c9f": 2,
+  "ffffff": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-features-autosave.js": {
+  "0b182b": 1,
+  "6de6ff": 1,
+  "ffffff": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-features-compare.js": {
+  "000000": 1,
+  "0b182b": 1,
+  "2c4450": 1,
+  "3b4c54": 1,
+  "555555": 2,
+  "e8c547": 2
+ },
+ "worklist-v0/hpacs-lite/viewer-features-display.js": {
+  "000000": 2,
+  "0b182b": 2,
+  "e8c547": 3,
+  "ffffff": 2
+ },
+ "worklist-v0/hpacs-lite/viewer-features-input.js": {
+  "000000": 2,
+  "1b2230": 2,
+  "555566": 1,
+  "66ccff": 2,
+  "888888": 1,
+  "aaaaaa": 1,
+  "eeeeee": 2
+ },
+ "worklist-v0/hpacs-lite/viewer-features-measure-lines.js": {
+  "9fd4ff": 1,
+  "ff6b6b": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-features-measure-ortho.js": {
+  "000000": 1,
+  "ff6b6b": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-features-measure.js": {
+  "000000": 1,
+  "222222": 2,
+  "b9a640": 2,
+  "e2cf5d": 1,
+  "f3e58a": 1,
+  "ff6b6b": 1,
+  "ffff00": 2
+ },
+ "worklist-v0/hpacs-lite/viewer-features-mg.js": {
+  "000000": 1,
+  "0b182b": 1,
+  "e8c547": 4,
+  "ffffff": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-features-monitors.js": {
+  "000000": 1,
+  "333333": 1,
+  "9fb3c8": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-features-navigate.js": {
+  "000000": 5,
+  "111111": 1,
+  "333333": 1,
+  "444444": 1,
+  "777777": 2,
+  "dddddd": 3,
+  "e8c547": 5
+ },
+ "worklist-v0/hpacs-lite/viewer-features-view.js": {
+  "000000": 1,
+  "0b182b": 1,
+  "e8c547": 5,
+  "ffffff": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-findings.js": {
+  "0c1423": 1,
+  "405777": 4,
+  "657c9f": 2,
+  "b08a3c": 2,
+  "ffffff": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-hanging-protocol.js": {
+  "17283e": 1,
+  "243d5c": 1,
+  "536984": 2,
+  "657c9f": 2,
+  "eef4ff": 2
+ },
+ "worklist-v0/hpacs-lite/viewer-identity.js": {
+  "0b182b": 2,
+  "d7f3ff": 2,
+  "fff1d6": 1,
+  "ffffff": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-images-only.js": {
+  "0b182b": 1,
+  "431414": 1,
+  "9cc3ff": 1,
+  "ffffff": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-job-print.js": {
+  "000000": 2,
+  "111111": 1,
+  "18212b": 2,
+  "263c57": 1,
+  "6884a6": 1,
+  "aaaaaa": 1,
+  "cccccc": 1,
+  "ffd700": 4,
+  "ffdb55": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-jobs.js": {
+  "111111": 2,
+  "263c57": 1,
+  "657c9f": 2,
+  "6de6ff": 1,
+  "ffffff": 2
+ },
+ "worklist-v0/hpacs-lite/viewer-mammography.js": {
+  "000000": 2,
+  "111111": 1,
+  "333333": 2,
+  "4a90d9": 1,
+  "dddddd": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-preload.js": {
+  "18212b": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-session.js": {
+  "18212b": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-tech-note.js": {
+  "00131d": 1,
+  "101e32": 1,
+  "657c9f": 1,
+  "6de6ff": 1,
+  "718eaa": 5,
+  "e1ecfc": 1,
+  "facc15": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-three-d-cursor.js": {
+  "000000": 1,
+  "ffd400": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-ux-theme.css": {
+  "000000": 4,
+  "111111": 1,
+  "333333": 1,
+  "555555": 1,
+  "5acce6": 1,
+  "5c6f7a": 1,
+  "d8b24a": 2,
+  "ffffff": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-volume-batch.js": {
+  "58d8f2": 1,
+  "657c9f": 1,
+  "ffdb55": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-volume-crosshair.js": {
+  "657c9f": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-volume-curved.js": {
+  "000000": 1,
+  "10202c": 1,
+  "182030": 1,
+  "5fd0ff": 4,
+  "657c9f": 1,
+  "ffdc7c": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-volume-display.js": {
+  "657c9f": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-volume-job-print.js": {
+  "000000": 2,
+  "ffdb55": 2
+ },
+ "worklist-v0/hpacs-lite/viewer-volume-marks.js": {
+  "182030": 1,
+  "657c9f": 1,
+  "ffdc7c": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-volume-mip.js": {
+  "000000": 3,
+  "00131d": 2,
+  "17202a": 3,
+  "18212b": 1,
+  "263c57": 1,
+  "3b5577": 1,
+  "52657e": 1,
+  "657c9f": 3,
+  "6884a6": 2,
+  "6de6ff": 3,
+  "c6d3e1": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-volume-orientation.js": {
+  "657c9f": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-volume-path.js": {
+  "000000": 1,
+  "10202c": 1,
+  "182030": 1,
+  "657c9f": 1,
+  "ffa94d": 5,
+  "ffdc7c": 3
+ },
+ "worklist-v0/hpacs-lite/viewer-volume-preferences.js": {
+  "00131d": 2,
+  "657c9f": 1,
+  "6de6ff": 5,
+  "e1ecfc": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-volume-progressive.js": {
+  "102036": 1,
+  "fff1d6": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-volume-rendering.js": {
+  "000000": 4,
+  "17202a": 1,
+  "18212b": 2,
+  "263c57": 1,
+  "3b5577": 1,
+  "52657e": 1,
+  "657c9f": 1,
+  "6884a6": 2,
+  "c6d3e1": 1,
+  "ffffff": 2
+ },
+ "worklist-v0/hpacs-lite/viewer-volume-sculpt.js": {
+  "4196ff": 1,
+  "70b7ff": 1,
+  "ff4646": 1,
+  "ff7777": 1,
+  "ffdb55": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-volume-sync.js": {
+  "657c9f": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-windows.js": {
+  "000000": 1,
+  "0b1820": 1,
+  "10202a": 1,
+  "657c9f": 1,
+  "e8f1f5": 1
+ },
+ "worklist-v0/hpacs-lite/viewer-workspace-dock.js": {
+  "0d1726": 2,
+  "101e32": 2,
+  "193b5e": 1,
+  "223b59": 1,
+  "2b3c52": 2,
+  "315681": 1,
+  "34465f": 1,
+  "405875": 1,
+  "657c9f": 2,
+  "68b8ff": 2,
+  "9caec4": 2,
+  "aabbd0": 1,
+  "dce6f3": 2,
+  "e1ecfc": 2,
+  "ffffff": 1
+ },
+ "worklist-v0/hpacs-lite/worklist-alerts.js": {
+  "101e32": 1,
+  "657c9f": 1,
+  "e1ecfc": 1
+ },
+ "worklist-v0/hpacs-lite/worklist-columns.css": {
+  "000000": 3,
+  "333c4d": 2
+ },
+ "worklist-v0/hpacs-lite/worklist-columns.js": {
+  "d9ecff": 1,
+  "ffe6c4": 1
+ },
+ "worklist-v0/hpacs-lite/worklist-export.js": {
+  "142237": 1,
+  "355272": 1
+ },
+ "worklist-v0/hpacs-lite/worklist-folder-tree.css": {
+  "000000": 1
+ },
+ "worklist-v0/hpacs-lite/worklist-image-preview.js": {
+  "000000": 1,
+  "142237": 1,
+  "355272": 1
+ },
+ "worklist-v0/hpacs-lite/worklist-language.js": {
+  "000000": 2,
+  "172333": 2,
+  "263b53": 2,
+  "333c4d": 1,
+  "819bb7": 3,
+  "849bb4": 2,
+  "dce7f5": 2
+ },
+ "worklist-v0/hpacs-lite/worklist-selection.js": {
+  "142237": 1,
+  "355272": 1
+ },
+ "worklist-v0/hpacs-lite/workspace-shortcuts.js": {
+  "0b1320": 1,
+  "111c2f": 1,
+  "718eaa": 2,
+  "d6e6ff": 1
+ },
+ "worklist-v0/hpacs-lite/workspace-theme.css": {
+  "000000": 1,
+  "3bc8d1": 1,
+  "60caa2": 1,
+  "90b8fa": 1,
+  "c7a8f9": 1
+ }
 }

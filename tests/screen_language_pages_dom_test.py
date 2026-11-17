@@ -3,7 +3,8 @@
 Requirement: a reader who chose English sees the whole product in English - explanations, tooltips and messages too -
 and data (patient and study data, reports, names people give) stays as written. These pages cannot read the account's
 appearance (administration and audit accounts, a browser before sign-in), so they show the choice this browser last
-showed for the account (worklist-language.js, `kin-language:v1`); an account that never chose keeps each page as it is.
+showed for the account (worklist-language.js, `kin-language:v1`); the clinician home reads the account's appearance. An
+account that never chose keeps each page as it is.
 
 RISK: a page that does not load the language module, or a word it shows without a glossary entry, stays Korean on an
 English screen (the static check, tests/worklist_language_source_test.py, names the file and line of a missing word;
@@ -37,16 +38,17 @@ PAGES = {
     "index.html?auth_error=login_failed": (None, "#msg"),
 }
 
-# Korean left where a reader reads: visible text, and the tooltip, label, placeholder and alt of every element.
-# Data is left out where the page marks it (translate="no", form values, editable text).
+# Korean left where a reader reads: visible text, and the tooltip, label, placeholder, alt and description of every
+# element (a text field's own placeholder and title too). Data is left out where the page marks it (translate="no",
+# editable text); a field's value is data.
 LEFT = r"""() => { const H = /[가-힣]/, out = new Set();
-  const DATA = 'script,style,textarea,[translate="no"],[contenteditable="true"],[contenteditable=""]';
+  const DATA = 'script,style,[translate="no"],[contenteditable="true"],[contenteditable=""]';
   const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   for (let n = walk.nextNode(); n; n = walk.nextNode()) { const el = n.parentElement, t = n.nodeValue.trim();
-    if (!t || !el || el.closest(DATA) || !H.test(t)) continue; const b = el.getBoundingClientRect();
+    if (!t || !el || el.closest(DATA + ',textarea') || !H.test(t)) continue; const b = el.getBoundingClientRect();
     if (!b.width || !b.height || getComputedStyle(el).visibility === 'hidden') continue; out.add('text: ' + t.slice(0, 120)); }
-  for (const el of document.querySelectorAll('[title],[aria-label],[placeholder],[alt]')) { if (el.closest(DATA)) continue;
-    for (const a of ['title', 'aria-label', 'placeholder', 'alt']) { const v = el.getAttribute(a); if (v && H.test(v)) out.add(a + ': ' + v.slice(0, 120)); } }
+  for (const el of document.querySelectorAll('[title],[aria-label],[placeholder],[alt],[aria-description]')) { if (el.closest(DATA)) continue;
+    for (const a of ['title', 'aria-label', 'placeholder', 'alt', 'aria-description']) { const v = el.getAttribute(a); if (v && H.test(v)) out.add(a + ': ' + v.slice(0, 120)); } }
   if (H.test(document.title)) out.add('document title: ' + document.title);
   return [...out].sort(); }"""
 
@@ -66,7 +68,8 @@ class ScreenLanguagePages(unittest.TestCase):
     def tearDownClass(cls):
         cls.browser.close(); cls.pw.stop(); cls.server.shutdown(); cls.server.server_close(); cls.thread.join()
 
-    def open(self, name, kept):
+    def open(self, name, kept, answers=None):
+        """The page with the account's choice kept in this browser and, for the clinician home, in the account."""
         roles, drawn = PAGES[name]
         context = self.browser.new_context(viewport={"width": 1366, "height": 768})
         self.addCleanup(context.close)
@@ -76,7 +79,7 @@ class ScreenLanguagePages(unittest.TestCase):
         context.route("**/*", lambda route: route.continue_() if urlparse(route.request.url).hostname == "127.0.0.1"
                       else route.abort())
         page = context.new_page()
-        page.route("**/api/**", lambda route: self.api(route, roles))
+        page.route("**/api/**", lambda route: self.api(route, roles, kept, answers or {}))
         page.goto(f"http://127.0.0.1:{self.server.server_port}{BASE}{name}")
         expect(page.locator(drawn).first).to_be_attached()
         page.wait_for_load_state("networkidle")
@@ -84,10 +87,16 @@ class ScreenLanguagePages(unittest.TestCase):
         return page
 
     @staticmethod
-    def api(route, roles):
+    def api(route, roles, kept, answers):
         path = urlparse(route.request.url).path
         if path == "/api/me" and roles is not None:
             return route.fulfill(json={**ACCOUNT, "roles": roles})
+        if path == "/api/reading-appearance" and roles is not None:
+            sizes = None if kept is None else {"version": 12, "language": kept}
+            return route.fulfill(json={"owner": [ACCOUNT["institution"], ACCOUNT["sub"]], "revision": 0 if kept is None else 1,
+                                       "sizes": sizes})
+        if path in answers:
+            return route.fulfill(json=answers[path])
         if path == "/api/me":
             return route.fulfill(status=401, json={"statusCode": 401, "message": "SYN no session"})
         return route.fulfill(status=503, json={"statusCode": 503, "message": "SYN unavailable"})
@@ -98,6 +107,19 @@ class ScreenLanguagePages(unittest.TestCase):
                 page = self.open(name, ENGLISH)
                 self.assertEqual("en", page.evaluate("document.documentElement.getAttribute('data-kin-lang-worklist')"))
                 self.assertEqual([], page.evaluate(LEFT))
+
+    def test_english_keeps_member_data_as_written(self):
+        """A member's name and institution stay as written even when they equal a glossary word (성 Last Name, 승인
+        Approval); the words around them are English."""
+        member = {"id": "SYN-U", "username": "syn", "name": "성", "email": "syn@example.test", "institution": "승인",
+                  "roles": ["clinician"], "approvalState": "APPROVED", "enabled": True, "version": 1}
+        page = self.open("admin.html", ENGLISH, {"/api/admin/users": {"page": 1, "pageSize": 25, "total": 1, "pendingCount": 0,
+                                                                      "users": [member]}})
+        row = page.locator("#users tr")
+        expect(row).to_have_count(1)
+        self.assertEqual(["syn", "성\nsyn@example.test", "승인"], [c.strip() for c in row.locator("td").all_inner_texts()[:3]])
+        self.assertEqual(["All Institutions", "승인"], page.locator("#institution-filter option").all_text_contents())
+        self.assertEqual([], page.evaluate(LEFT))
 
     def test_a_browser_with_no_choice_or_korean_keeps_each_page_as_it_is(self):
         for name in PAGES:

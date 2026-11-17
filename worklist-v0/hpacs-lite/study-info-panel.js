@@ -223,10 +223,10 @@
       const summary = KinOrderReconciliation.summary(orderReconciliationModel);
       box.hidden = summary.hidden;
       $("#order-reconciliation-summary").textContent = summary.text;
-      $("#order-reconciliation-summary").title = summary.title;
+      kinWrite($("#order-reconciliation-summary"), summary.title || "", "title");
       $("#order-reconciliation-list").replaceChildren(...summary.rows.map(row => {
         const item = document.createElement("div");
-        item.textContent = row.text; item.title = row.title;
+        item.textContent = row.text; kinWrite(item, row.title || "", "title");
         return item;
       }));
     }

@@ -2,7 +2,9 @@
  * Resolving a chord never cancels a browser command: the caller must actually run it. */
 (function (root) {
   'use strict';
-  const defaults = Object.freeze({list:'Digit1',image:'Digit2',prior:'Digit3',report:'Digit4',context:'Digit5',note:'Digit6',tools:'Digit7',nativeTools:'Digit9',previous:'ArrowLeft',next:'ArrowRight'});
+  // A sentence of the page built from its template and its parts ({t: words}); written so the screen language reads it.
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };  const defaults = Object.freeze({list:'Digit1',image:'Digit2',prior:'Digit3',report:'Digit4',context:'Digit5',note:'Digit6',tools:'Digit7',nativeTools:'Digit9',previous:'ArrowLeft',next:'ArrowRight'});
   const labels = {list:'Worklist',image:'Image',prior:'Related Report',report:'Report Editor',context:'Study Info & Templates',note:'Image Tech Note',tools:'Tool Panels',nativeTools:'Viewer Toolbar',previous:'Previous Study',next:'Next Study',finalize:'Finalize (Approve)'};
   const defaultsV2 = Object.freeze({version:2,...Object.fromEntries(Object.entries(defaults).map(([id,key])=>[id,'Control+Alt+'+key])),finalize:'Control+KeyS'});
   const ids = Object.keys(labels);
@@ -74,7 +76,7 @@
     const fields = {};
     for (const id of ids) {
       const row=el('label',labels[id],panels[scope(id)]); row.style.cssText='display:grid;grid-template-columns:minmax(100px,1fr) minmax(130px,1fr);align-items:center;gap:12px;margin:8px 0';
-      const field=el('input','',row);field.readOnly=true;field.id='workspace-shortcut-'+id;field.setAttribute('aria-label',labels[id]+' 단축키');field.style.cssText='box-sizing:border-box;width:100%;padding:6px;background:#0b1320;color:inherit;border:1px solid #718eaa;border-radius:4px';fields[id]=field;
+      const field=el('input','',row);field.readOnly=true;field.id='workspace-shortcut-'+id;kinWrite(field,kinSay('{t0} 단축키',{t:labels[id]}),'aria-label');field.style.cssText='box-sizing:border-box;width:100%;padding:6px;background:#0b1320;color:inherit;border:1px solid #718eaa;border-radius:4px';fields[id]=field;
       field.onkeydown=e=>{
         if (e.key==='Tab'||e.key==='Escape') return;
         e.preventDefault();e.stopPropagation();

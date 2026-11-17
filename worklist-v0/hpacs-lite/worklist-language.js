@@ -5,8 +5,7 @@
  * Every word on the screen passes one place: tr() reads the glossary (worklist-language-terms.js) and paint() writes the
  * result into a text node or a title-like attribute, keeping the words the page wrote so they come back unchanged.
  * Only whole glossary entries are translated: a sentence that carries data is a glossary template written where the
- * code builds it ({0} data shown as is, {t0} words the code chose, {e0} an error message; in English a {0} that is a
- * whole Korean sentence of the glossary is the page's own message and is read as one). Data is never translated:
+ * code builds it ({0} data shown as is, {t0} words the code chose, {e0} an error message). Data is never translated:
  * nothing inside translate=no, form fields, contenteditable text, an option whose text is its value, or an attribute
  * named in data-kin-keep. Words the page writes later (lists drawn again, dialogs, toasts, the Pop Out window) are
  * painted by one MutationObserver per document; alert, confirm, prompt and setCustomValidity are translated before
@@ -38,8 +37,6 @@
       if (!Array.isArray(term) || typeof term[0] !== 'string' || typeof term[1] !== 'string') continue;
       const source = space(term[0]), korean = HANGUL.test(source.replace(new RegExp(SLOT.source, 'g'), ''));
       const entry = korean ? { en: term[1], ko: term[3] || source } : { en: term[3] || source, ko: term[1] };
-      // A Korean sentence of the page (kind m, or s from the server): the words that may fill a part in English.
-      if (korean && /^[ms]/.test(term[2] || '')) entry.sentence = true;
       if (!SLOT.test(source)) { exact.set(source, entry); continue; }
       bySource.set(source, entry);
       const slots = [], parts = source.split(SLOTS), isSlot = part => SLOTS.test(part) && part.match(SLOTS)[0] === part;
@@ -104,18 +101,10 @@
       });
     } finally { visiting.delete(sentence); }
   }
-  /** One text as the page wrote it (ends trimmed): the glossary entry, or a template whose parts are filled in once
-   *  (fill); in English, lines with no reading as a whole are read one by one. */
+  /** One text as the page wrote it (ends trimmed): the glossary entry, or a template whose parts are filled in once. */
   function translate(text, lang, depth) {
     const flat = space(text), hit = exact.get(flat);
     if (hit) return hit[lang];
-    const whole = fill(text, lang, depth);
-    if (whole !== text || depth > 0 || lang !== 'en' || !/\n/.test(text)) return whole;
-    // English: lines joined by the page (a message and the server's detail under it) — a Korean line is its own words.
-    return text.split('\n').map(line => HANGUL.test(line) ? line.match(/^\s*/)[0] + translate(line.trim(), lang, 1) + line.match(/\s*$/)[0] : line).join('\n');
-  }
-  function fill(text, lang, depth) {
-    const flat = space(text);
     for (const t of templates) {
       if (t.anchor && !flat.includes(t.anchor)) continue;
       const m = t.lazy.exec(text);
@@ -133,20 +122,11 @@
           const inner = translate(value.trim(), lang, depth + 1);
           if (inner !== value.trim()) out = value.match(/^\s*/)[0] + inner + value.match(/\s*$/)[0];
           else if (kind === 'e' && foreign(value, lang)) out = unknownError(value.trim(), lang);
-        } else if (!kind && lang === 'en' && HANGUL.test(value)) {
-          // English: a data part that is a whole Korean sentence of the page (a message joined with words around it) is
-          // the page's own words, not data a person wrote.
-          const own = exact.get(space(value));
-          if (own?.sentence) out = value.match(/^\s*/)[0] + own.en + value.match(/\s*$/)[0];
         }
         filled[slot] = out;
       });
       // Each part goes in once, as it is: a part that reads like a slot is never filled again.
-      const result = t.entry[lang].replace(new RegExp(SLOTS.source, 'g'), slot => Object.hasOwn(filled, slot) ? filled[slot] : slot);
-      // English: a template that changes nothing ("Study {0}" over "Study Info & Templates 단축키") is not the reading;
-      // a template further down may know the words.
-      if (lang === 'en' && result === text && HANGUL.test(text)) continue;
-      return result;
+      return t.entry[lang].replace(new RegExp(SLOTS.source, 'g'), slot => Object.hasOwn(filled, slot) ? filled[slot] : slot);
     }
     return text;
   }

@@ -354,6 +354,7 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.me = me(["clinician", *KEYCLOAK_DEFAULTS])
         self.me_queue = []
         self.rows = copy.deepcopy(ROWS)
+        self.language = None  # the account's screen language (None: no saved appearance)
         self.reports = copy.deepcopy(REPORTS)
         self.files = dict(SHIPPED)
         self.index_stand_in = False
@@ -506,6 +507,11 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         if method == "GET" and path == "/api/version" and not url.query:
             self.version_reads.append(request.url)
             route.fulfill(json=VERSION)
+            return
+        # The page reads the account's screen language once it knows the session (no saved appearance here).
+        if method == "GET" and path == "/api/reading-appearance":
+            route.fulfill(json={"owner": None, "revision": 0 if self.language is None else 1,
+                                "sizes": None if self.language is None else {"version": 12, "language": self.language}})
             return
         self.unexpected.append(f"{method} {request.url}")
         route.abort()
@@ -1484,6 +1490,26 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.assertIn(f"report {uid(7)}", first["calls"])
         for named, other in seen.items():
             self.assertEqual(first, other, named)
+
+    def test_18_english_shows_the_page_in_english_and_data_as_written(self):
+        """The account's screen language (its appearance) puts this page in English; patient fields and report text stay as
+        written even when they equal a word of the glossary (성 Last Name, 승인 Approval, 검사 Study)."""
+        self.language = {"version": 1, "worklist": "en", "reading": "en"}
+        self.rows[0].update(name="성", id="승인", desc="검사")
+        self.reports[uid(1)]["report"]["findings"] = "SYN findings\n승인"
+        self.open_home()
+        expect(self.page.locator("html")).to_have_attribute("data-kin-lang-worklist", "en")
+        report = self.pick(1)
+        shown = self.identity()
+        self.assertEqual(("성", "승인", "검사"), (shown["Name"], shown["Patient ID"], shown["Description"]))
+        self.assertEqual(["성", "승인"], self.row(1).locator("td").all_text_contents()[1:3])
+        self.assertIn(["Findings", "SYN findings\n승인"], report["sections"])
+        self.assertNotIn("Approval", self.page.locator("#detail").inner_text())
+
+    def test_19_no_saved_language_keeps_the_page_as_it_is(self):
+        self.open_home()
+        self.pick(1)
+        self.assertIsNone(self.page.evaluate("document.documentElement.getAttribute('data-kin-lang-worklist')"))
 
 
 if __name__ == "__main__":

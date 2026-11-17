@@ -151,9 +151,14 @@ def parse(*args) -> list[dict]:
     return json.loads(out.stdout.decode("utf-8"))
 
 
+# A stylesheet a script writes (rules with a selector and declarations): code, not words (its comments are the author's).
+STYLESHEET = re.compile(r"[^{};]+\{\s*[\w-]+\s*:[^{}]*\}")
+
+
 def collect_js(names=None) -> list[Piece]:
     found = []
     for lit in parse(*[n if isinstance(n, Path) else PAGE_DIR / n for n in (names or page_scripts())]):
+        if STYLESHEET.search(lit["value"]): continue
         has_tags = bool(TAG.search(lit["value"]))
         for text in pieces_of(lit["value"], lit["kinds"]):
             if not meaningful(text): continue
