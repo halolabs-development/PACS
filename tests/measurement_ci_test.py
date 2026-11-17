@@ -98,6 +98,8 @@ REGRESSION_SUITES = {
         tests/context_loss_harness_test.py
         tests/viewer_auto_save_view_dom_test.py
         tests/viewer_cell_merge_dom_test.py
+        tests/viewer_monitor_double_click_dom_test.py
+        tests/viewer_worklist_monitor_dom_test.py
         tests/viewer_chrome_position_dom_test.py
         tests/viewer_hanging_protocol_monitors_dom_test.py
         tests/viewer_monitor_hanging_dom_test.py
