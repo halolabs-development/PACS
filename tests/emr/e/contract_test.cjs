@@ -1338,6 +1338,19 @@ def('TEST-E-02 manifest_sources R25', () => {
   twoFrames.input.dicom['00280008'] = dj('IS', 2);
   twoFrames.input.dicom['52009230'].Value.push(structuredClone(twoFrames.input.dicom['52009230'].Value[0]));
   assert.equal(allowed(() => ruleCaseResult(twoFrames)).class, 'unverified', 'a multi-frame object is never a synthetic 2D view');
+  // No manufacturer named: still the stated synthetic view; partial, magnified, spot-compressed or side-conflicting
+  // objects never fill a full-view slot, with or without a manufacturer.
+  const noVendor = () => { const c = senoIris('SAMPLED', 'NONE'); for (const tag of ['00080070', '00081090', '00181020']) delete c.input.dicom[tag]; return c; };
+  assert.deepEqual((r => [r.class, r.fullViewAutoMatch])(allowed(() => ruleCaseResult(noVendor()))), ['device-synthetic-2d', true]);
+  const modifier = code => hd => { hd['00540220'].Value[0]['00540222'] = { vr: 'SQ', Value: [{ '00080102': dj('SH', 'SCT'), '00080100': dj('SH', code) }] }; };
+  for (const [name, change] of [
+    ['partial view', hd => { hd['00281350'] = dj('CS', 'YES'); hd['00281352'] = { vr: 'SQ', Value: [{ '00080102': dj('SH', 'SCT'), '00080100': dj('SH', '255561001') }] }; }],
+    ['magnification', modifier('399163009')], ['spot compression', modifier('399055006')],
+    ['laterality conflict', hd => { hd['00200062'] = dj('CS', 'L'); }],
+  ]) for (const c of [senoIris('SAMPLED', 'NONE'), noVendor()]) {
+    change(c.input.dicom);
+    assert.equal(allowed(() => ruleCaseResult(c)).fullViewAutoMatch, false, name);
+  }
 });
 
 // ── TEST-D735-* / TEST-D744-* shared mammography table, through the manifest path ────────────────────────────────────
