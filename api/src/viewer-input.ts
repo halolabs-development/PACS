@@ -1,4 +1,4 @@
-import { planarGeometry, usRegionGeometry } from './planar-geometry';
+import { planarGeometry, usRegionGeometry, viewerPlaneDefault } from './planar-geometry';
 import { BadRequestException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { mgGeometry } from './mg-geometry';
@@ -420,8 +420,9 @@ function measureFrame(tags: any, frame: number, frameOfReferenceUid: string | nu
   const shown = (points: number[][], spacings: number[][]): number[][] => {
     if (oriented && planar) return points.map(point => planar.imagePoint(point));
     if (tags.SharedFunctionalGroupsSequence !== undefined || tags.PerFrameFunctionalGroupsSequence !== undefined) return invalid('측정 원본의 좌표를 확인할 수 없습니다');
-    const origin = tags.ImagePositionPatient === undefined ? [0, 0, 0] : metadataNumbers(tags.ImagePositionPatient, 3);
-    const orientation = tags.ImageOrientationPatient === undefined ? [0, 1, 0, 0, 0, -1] : metadataNumbers(tags.ImageOrientationPatient, 6);
+    const plane = viewerPlaneDefault(tags, frame);
+    const origin = tags.ImagePositionPatient === undefined ? plane.origin : metadataNumbers(tags.ImagePositionPatient, 3);
+    const orientation = tags.ImageOrientationPatient === undefined ? plane.orientation : metadataNumbers(tags.ImageOrientationPatient, 6);
     const u = orientation.slice(0, 3), v = orientation.slice(3), cross = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
     const size = Math.sqrt(dot(cross, cross)); if (!(size > 0)) invalid();
     const n = cross.map(x => x / size);

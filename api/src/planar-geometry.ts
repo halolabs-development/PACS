@@ -1,6 +1,14 @@
 import { BadRequestException } from '@nestjs/common';
 import { mgGeometry } from './mg-geometry';
 
+// The plane the pinned viewer places an image in when the image gives no position or orientation (most projection X-rays):
+// rows along [0,1,0], columns along [0,0,-1], origin [0,0,0] — or [0,0,frame] for a multi-frame or functional-group image,
+// frame by frame (OHIF combineFrameInstance). Points of marks drawn on such an image lie in this plane.
+export function viewerPlaneDefault(tags: any, frame: number) {
+  const frames = Number(tags?.NumberOfFrames ?? 1);
+  return { origin: tags?.PerFrameFunctionalGroupsSequence !== undefined || frames > 1 ? [0, 0, frame] : [0, 0, 0], orientation: [0, 1, 0, 0, 0, -1] };
+}
+
 export function planarGeometry(tags: any, frame: number) {
   const fail = () => { throw new BadRequestException('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다'); };
   const numbers = (v, n) => {
@@ -27,8 +35,11 @@ export function planarGeometry(tags: any, frame: number) {
         spacing = spacing.map(x => x / k); basis = 'ermf';
       }
     }
-    origin = numbers(value('PlanePositionSequence', 'ImagePositionPatient') ?? [0, 0, 0], 3);
-    orientation = numbers(value('PlaneOrientationSequence', 'ImageOrientationPatient') ?? [1, 0, 0, 0, 1, 0], 6);
+    // As config/ohif/planar-geometry.js: an image without a position or an orientation (most projection X-rays) is measured
+    // in the plane the viewer places it in (viewerPlaneDefault).
+    const plane = viewerPlaneDefault(tags, frame);
+    origin = numbers(value('PlanePositionSequence', 'ImagePositionPatient') ?? plane.origin, 3);
+    orientation = numbers(value('PlaneOrientationSequence', 'ImageOrientationPatient') ?? plane.orientation, 6);
   }
   if (spacing.some(n => n <= 0)) return fail();
   const rows = Number(tags.Rows), columns = Number(tags.Columns);

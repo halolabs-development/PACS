@@ -40,7 +40,8 @@ export function mgGeometry(tags: any, frame: number) {
   if (spacing.some(n => !Number.isFinite(n) || n <= 0)) return fail();
   const ipp = value('PlanePositionSequence', 'ImagePositionPatient');
   const iop = value('PlaneOrientationSequence', 'ImageOrientationPatient');
-  const origin = numbers(ipp === undefined && !tomographic ? [0, 0, 0] : ipp, 3);
+  // No position: the viewer's origin, [0,0,frame] for a multi-frame or functional-group image (planar-geometry).
+  const origin = numbers(ipp === undefined && !tomographic ? (tags.PerFrameFunctionalGroupsSequence !== undefined || Number(tags.NumberOfFrames ?? 1) > 1 ? [0, 0, frame] : [0, 0, 0]) : ipp, 3);
   const orientation = numbers(iop === undefined && !tomographic ? [0, 1, 0, 0, 0, -1] : iop, 6);
   if (tomographic && !tags.FrameOfReferenceUID) return fail();
   const rows = Number(tags.Rows), columns = Number(tags.Columns);

@@ -1349,7 +1349,8 @@ function kinMgGeometry(tags, frame) {
   if (spacing.some(n => !Number.isFinite(n) || n <= 0)) return fail();
   const ipp = value('PlanePositionSequence', 'ImagePositionPatient');
   const iop = value('PlaneOrientationSequence', 'ImageOrientationPatient');
-  const origin = numbers(ipp === undefined && !tomographic ? [0, 0, 0] : ipp, 3);
+  // No position: the viewer's origin, [0,0,frame] for a multi-frame or functional-group image (planar-geometry).
+  const origin = numbers(ipp === undefined && !tomographic ? (tags.PerFrameFunctionalGroupsSequence !== undefined || Number(tags.NumberOfFrames ?? 1) > 1 ? [0, 0, frame] : [0, 0, 0]) : ipp, 3);
   const orientation = numbers(iop === undefined && !tomographic ? [0, 1, 0, 0, 0, -1] : iop, 6);
   if (tomographic && !tags.FrameOfReferenceUID) return fail();
   const rows = Number(tags.Rows), columns = Number(tags.Columns);
@@ -1404,8 +1405,13 @@ function kinPlanarGeometry(tags, frame) {
         spacing = spacing.map(x => x / k); basis = 'ermf';
       }
     }
-    origin = numbers(value('PlanePositionSequence', 'ImagePositionPatient') ?? [0, 0, 0], 3);
-    orientation = numbers(value('PlaneOrientationSequence', 'ImageOrientationPatient') ?? [1, 0, 0, 0, 1, 0], 6);
+    // An image without a position or an orientation (most projection X-rays: CR, DX, RF, XA) is measured in the plane the
+    // viewer itself places it in, where the points of its marks lie: rows along [0,1,0], columns along [0,0,-1], origin
+    // [0,0,0] — or [0,0,frame] for a multi-frame or functional-group image, frame by frame (the pinned OHIF
+    // combineFrameInstance). Any other default puts the points off the plane or shifts them on the image.
+    const frameOrigin = per !== undefined || frames > 1 ? [0, 0, frame] : [0, 0, 0];
+    origin = numbers(value('PlanePositionSequence', 'ImagePositionPatient') ?? frameOrigin, 3);
+    orientation = numbers(value('PlaneOrientationSequence', 'ImageOrientationPatient') ?? [0, 1, 0, 0, 0, -1], 6);
   }
   if (spacing.some(n => n <= 0)) return fail();
   const rows = Number(tags.Rows), columns = Number(tags.Columns);
