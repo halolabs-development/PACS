@@ -1,10 +1,11 @@
 # coding: utf-8
 """D-MEASURE2 A5: observe natural pinned classic CT calibration, no event injection."""
-import json, re, sys, time, unittest, uuid
+import json, math, re, sys, time, unittest, uuid
 from pathlib import Path
 import numpy as np
 from pydicom.dataset import FileDataset, FileMetaDataset
-from pydicom.uid import ComputedRadiographyImageStorage, ExplicitVRLittleEndian, generate_uid
+from pydicom.uid import (ComputedRadiographyImageStorage, DigitalXRayImageStorageForPresentation, ExplicitVRLittleEndian,
+                         XRayAngiographicImageStorage, XRayRadiofluoroscopicImageStorage, generate_uid)
 from pynetdicom import AE
 from invariants_live import Fixture
 from test_measurement_panel import MeasurementPanelE2E, expect
@@ -68,6 +69,82 @@ def synthetic_cr_without_spacing(stack, patient, label, date):
     if stack.request("PATCH", "/studies/" + uid, "jmryu", {"ss": "Verified"}).status != 200:
         raise RuntimeError("Synthetic CR verification failed")
     return fixture
+
+def synthetic_projection(stack, patient, label, date, modality, sop_class, tags, frames=1):
+    """A projection X-ray as most devices send it: a pixel size, but no ImagePositionPatient / ImageOrientationPatient.
+    The tag sets follow DICOM PS3.3 (Imager Pixel Spacing is required in the DX family; a Pixel Spacing that differs from
+    it has been corrected or calibrated, 10.7.1.1). The CR mirrors the public pydicom test CR (MIT licence: Imager Pixel
+    Spacing 0.1\\0.1, no position or orientation); DX, RF and XA are synthetic tag sets, not copies of a device file."""
+    uid, series, sop = generate_uid(), generate_uid(), generate_uid()
+    fixture = Fixture(uid, patient, "한림병원", "jmryu", "PROJ-SYNTHETIC-" + label)
+    stack.active[uid] = fixture
+    ae = AE(ae_title="HALLYM_CT")
+    ae.add_requested_context(sop_class, ExplicitVRLittleEndian)
+    assoc = ae.associate("127.0.0.1", 4242, ae_title="KINLAB")
+    if not assoc.is_established:
+        raise RuntimeError("Local synthetic projection association failed")
+    try:
+        meta = FileMetaDataset()
+        meta.TransferSyntaxUID = ExplicitVRLittleEndian
+        meta.MediaStorageSOPClassUID = sop_class
+        meta.MediaStorageSOPInstanceUID = sop
+        meta.ImplementationClassUID = generate_uid()
+        ds = FileDataset(None, {}, file_meta=meta, preamble=b"\0" * 128)
+        ds.is_little_endian, ds.is_implicit_VR = True, False
+        ds.SOPClassUID, ds.SOPInstanceUID = sop_class, sop
+        ds.SpecificCharacterSet = "ISO_IR 192"
+        ds.PatientName, ds.PatientID = "PROJ^SYNTHETIC", patient
+        ds.PatientBirthDate, ds.PatientSex, ds.InstitutionName = "", "O", "한림병원"
+        ds.StudyInstanceUID, ds.SeriesInstanceUID = uid, series
+        ds.StudyDate = ds.SeriesDate = date
+        ds.StudyTime = ds.SeriesTime = "120000"
+        ds.AccessionNumber, ds.StudyID = "PROJ" + label[:12], "PROJ"
+        ds.StudyDescription = ds.SeriesDescription = "PROJ " + label
+        ds.Modality, ds.BodyPartExamined, ds.SeriesNumber, ds.InstanceNumber = modality, "CHEST", 1, 1
+        ds.ImageType = ["ORIGINAL", "PRIMARY"]
+        ds.Rows, ds.Columns = 256, 320
+        ds.SamplesPerPixel, ds.PhotometricInterpretation = 1, "MONOCHROME2"
+        ds.BitsAllocated = ds.BitsStored = 16
+        ds.HighBit, ds.PixelRepresentation = 15, 0
+        ds.WindowCenter, ds.WindowWidth = 500, 1000
+        for key, value in tags.items():
+            setattr(ds, key, value)
+        pixels = np.full((frames, 256, 320), 200, dtype=np.uint16)
+        pixels[:, 40:216, 60:260] = 600
+        if frames > 1:
+            ds.NumberOfFrames, ds.FrameIncrementPointer = frames, (0x0018, 0x1063)
+            ds.FrameTime = 100
+        ds.PixelData = pixels.astype("<u2").tobytes()
+        status = assoc.send_c_store(ds)
+        if status is None or status.Status != 0:
+            raise RuntimeError("Synthetic projection C-STORE failed")
+    finally:
+        assoc.release()
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        result = stack.request("GET", "/studies", "jmryu")
+        if result.status == 200 and any(s.get("uid") == uid for s in result.body.get("studies", [])):
+            break
+        time.sleep(.25)
+    else:
+        raise RuntimeError("Synthetic projection did not reach the real API")
+    if stack.request("PATCH", "/studies/" + uid, "jmryu", {"ss": "Verified"}).status != 200:
+        raise RuntimeError("Synthetic projection verification failed")
+    return fixture
+
+# Each: modality, SOP class, tags (no position or orientation), [row, column] spacing the measurement must use, basis words.
+PROJECTIONS = [
+    ('CR', ComputedRadiographyImageStorage, dict(ImagerPixelSpacing=[.1, .1]), [.1, .1], 'ImagerPixelSpacing · 검출기 기준'),
+    ('DX', DigitalXRayImageStorageForPresentation, dict(PixelSpacing=[.15, .15], ImagerPixelSpacing=[.168, .168]), [.15, .15], 'PixelSpacing · 원본 기준면'),
+    ('RF', XRayRadiofluoroscopicImageStorage, dict(ImagerPixelSpacing=[.3, .3], EstimatedRadiographicMagnificationFactor=1.2), [.25, .25], 'ImagerPixelSpacing / ERMF · 추정 보정'),
+    ('XA', XRayAngiographicImageStorage, dict(ImagerPixelSpacing=[.2, .4]), [.2, .4], 'ImagerPixelSpacing · 검출기 기준'),
+]
+# What the viewer itself holds for the last mark of a tool: the plane it placed the image in, the mark's points, and the
+# viewer's own native value (world distance / angle) for those points.
+NATIVE = '''tool=>{const a=cornerstoneTools.annotation.state.getAllAnnotations().filter(a=>a.metadata.toolName===tool).at(-1);
+  const plane=cornerstone.metaData.get('imagePlaneModule',a.metadata.referencedImageId), s=Object.values(a.data.cachedStats||{})[0]||{};
+  return {row:plane.rowCosines,column:plane.columnCosines,origin:plane.imagePositionPatient,points:a.data.handles.points,
+    value:tool==='Length'?s.length:s.angle,image:a.metadata.referencedImageId};}'''
 
 OBSERVER = '''(()=>{
   const objects=new WeakMap(); let serial=0;
@@ -185,6 +262,66 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
         self.assertEqual([], state['rows'])
         self.assertFalse(state['unsaved'])
         self.assertEqual([], self.saved(f))
+
+    def test_calibration_projection_without_orientation_measures_with_original_spacing(self):
+        """Projection X-rays (CR, DX, RF, XA) without ImagePositionPatient / ImageOrientationPatient but with a pixel size:
+        Length and Angle give mm and degrees with the original's spacing and basis words — the viewer's own value for the
+        same points — and the Length is saved as a verified measurement. No screen calibration is involved or offered."""
+        for modality, sop_class, tags, spacing, basis in PROJECTIONS:
+            with self.subTest(modality=modality):
+                frames = 2 if modality == 'XA' else 1
+                f = synthetic_projection(self.stack, 'PROJ-' + uuid.uuid4().hex[:12], modality.lower() + uuid.uuid4().hex[:6],
+                                         '20260908', modality, sop_class, tags, frames)
+                w = self.login('doctor'); self.addCleanup(w.close)
+                p = w.context.new_page(); self.addCleanup(p.close)
+                p.goto(self.stack.proxy + '/ohif/viewer?StudyInstanceUIDs=' + f.uid); canvas_ready(p, 1)
+                expect(p.locator('#kin-viewer-history [role=status]')).to_contain_text('개 저장 항목')
+                row = self.draw_length(p)
+                p.wait_for_timeout(350)  # the pinned native calculator's trailing throttle
+                native = p.evaluate(NATIVE, 'Length')
+                # The viewer places an image without a position or orientation at [0,0,0], rows along [0,1,0], columns along
+                # [0,0,-1]; the mark lies in that plane.
+                self.assertEqual([native['row'], native['column'], native['origin']], [[0, 1, 0], [0, 0, -1], [0, 0, 0]], native)
+                text = ' '.join(p.locator('svg.svg-layer').all_inner_texts())
+                self.assertNotIn('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다', text)
+                self.assertIn(basis, text)
+                self.assertNotIn(SCREEN, text)
+                shown = float(re.search(r'(\d+(?:\.\d+)?) mm', text).group(1))
+                # The image pixel offsets of the two points in that plane (columns along y, rows along -z), times the
+                # original's spacing — computed here, not by the product's geometry.
+                (a, b) = native['points']
+                dx, dy = (b[1] - a[1]) / spacing[1], -(b[2] - a[2]) / spacing[0]
+                expected = math.hypot(dx * spacing[1], dy * spacing[0])
+                self.assertGreater(expected, 1)
+                self.assertLess(abs(shown - expected), .051, (text, expected, native))
+                self.assertLess(abs(native['value'] - expected), 1e-3, (expected, native))
+                row.get_by_role('button', name='Save', exact=True).click()
+                expect(row).to_contain_text('저장 완료')
+                saved = self.saved(f)
+                self.assertEqual(1, len(saved))
+                self.assertEqual('verified', saved[0]['referenceStatus'])
+                self.assertTrue(saved[0]['item']['baseline']['calculator'].startswith('kin-planar-manual-v1:'), saved[0])
+                self.assertLess(abs(saved[0]['item']['baseline']['values'][0] - expected), 1e-6)
+                # Angle on the same image: degrees, the viewer's own value.
+                self.choose(p, 'Angle')
+                box = p.locator('.cornerstone-canvas').bounding_box()
+                x, y = box['x'] + box['width'] * .35, box['y'] + box['height'] * .62
+                p.mouse.move(x, y); p.mouse.down(); p.mouse.move(x + 70, y + 30, steps=10); p.mouse.up()
+                p.mouse.move(x + 90, y - 20, steps=8); p.mouse.click(x + 90, y - 20)
+                p.wait_for_timeout(350)
+                p.wait_for_function('''()=>cornerstoneTools.annotation.state.getAllAnnotations().some(a=>a.metadata.toolName==='Angle' &&
+                    !a.invalidated && Object.values(a.data.cachedStats||{}).some(s=>Number.isFinite(s.angle)))''')
+                angle = p.evaluate(NATIVE, 'Angle')
+                vertex = angle['points'][1]
+                u, v = ([q[1] - vertex[1], -(q[2] - vertex[2])] for q in (angle['points'][0], angle['points'][2]))
+                expected = math.degrees(math.acos(max(-1, min(1, (u[0] * v[0] + u[1] * v[1]) / math.hypot(*u) / math.hypot(*v)))))
+                expect(p.locator('#kin-viewer-history section[data-kind=angle]')).to_contain_text('°')
+                text = ' '.join(p.locator('svg.svg-layer').all_inner_texts())
+                self.assertNotIn('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다', text)
+                shown = float(re.search(r'(\d+(?:\.\d+)?) ?°', text).group(1))
+                self.assertLess(abs(shown - expected), .051, (text, expected, angle))
+                self.assertLess(abs(angle['value'] - expected), 1e-3, (expected, angle))
+                p.close(); w.close()
 
 
 if __name__ == '__main__':
