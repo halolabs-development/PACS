@@ -803,12 +803,22 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.assertEqual((None, "View"), (self.row(2).get_attribute("aria-current"), self.row(2).locator("button").text_content()))
         # S5-U2b opens the read-only viewer; a page-side window.open stub records it so no viewer document is requested
         # from this harness (tests/clinician_viewer_dom_test.py loads the real window).
-        self.page.evaluate("""() => { window.synOpened = [];
-          window.open = (url, name) => { const popup = {opener: window, focused: false, focus() { this.focused = true; }};
+        # A lookup of an open window by its own name (noopener) raises that window as a browser would and opens none.
+        self.page.evaluate("""() => { window.synOpened = []; window.synRaised = [];
+          window.open = (url, name, features) => {
+            const live = window.synOpened.find(o => o.popup.name === name);
+            if (live && features === 'noopener') { window.synRaised.push({url, name, active: navigator.userActivation.isActive}); return null; }
+            const popup = {opener: window, focused: false, focus() { this.focused = true; }};
             window.synOpened.push({url, name, popup}); return popup; }; }""")
         self.page.locator("#open-viewer").click()
         self.assertEqual([[f"/ohif/viewer?StudyInstanceUIDs={uid(1)}", "kin-clinician-viewer", True, True]], self.page.evaluate(
             "() => window.synOpened.map(o => [o.url, o.name, o.popup.opener === null, o.popup.focused])"))
+        raised = self.page.evaluate("window.synRaised")
+        self.assertEqual(1, len(raised))
+        self.assertEqual(("", True), (raised[0]["url"], raised[0]["active"]))
+        self.assertTrue(raised[0]["name"].startswith("kin-raise:"))
+        # The window keeps the session hand-over name its viewer document reads.
+        self.assertTrue(self.page.evaluate("window.synOpened[0].popup.name").startswith("kin-viewer-entry:"))
         self.assertTrue(has_hangul(self.page.locator("#viewer-note").text_content()))
 
         seen = self.pick(2)

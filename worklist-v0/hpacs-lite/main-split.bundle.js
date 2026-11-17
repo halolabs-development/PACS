@@ -10914,7 +10914,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         // Reopening a named window can restore its opener even without navigation.
         try{popup.opener=null;}catch(_){notify('영상 창 연결을 분리하지 못했습니다. 기존 창에서 작업을 저장한 뒤 닫고 다시 여세요.','err',8000);return outcome('refused','영상 창 연결을 분리하지 못했습니다. 기존 창에서 작업을 저장한 뒤 닫고 다시 여세요.');}
         if (choice.pending) {
-          popup.focus(); watchOhifRect(popup);
+          KinExamScope.raiseWindow(popup); watchOhifRect(popup);
           notify('기존 영상 창을 불러오는 중입니다. 계속되지 않으면 그 창을 닫은 뒤 다시 여세요.', 'info');
           return outcome('refused', '기존 영상 창을 불러오는 중입니다. 계속되지 않으면 그 창을 닫은 뒤 다시 여세요.');
         }
@@ -10942,12 +10942,12 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
             // A selected tab can also cancel an in-flight open, or reopen the
             // last closed patient while retaining the same document URL.
             popup.kinViewerOpenPatient?.(url);
-            popup.focus();
+            KinExamScope.raiseWindow(popup);
             watchOhifRect(popup);
             return outcome('accepted');
           }
           if (previous.busy || previous.dirty || !previous.ready) {
-            try { popup.focus(); } catch (_) {}
+            KinExamScope.raiseWindow(popup);
             watchOhifRect(popup);
             const kept = !previous.ready
               ? "기존 영상 창의 보호 상태를 확인할 수 없습니다. 로딩을 확인하고 계속되지 않으면 그 창을 닫은 뒤 다시 여세요."
@@ -10961,7 +10961,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           if (!freshDocument && !stopped && typeof popup.kinViewerOpenPatient === 'function') {
             const at = work.capture('document'), previousSequence = ohifPopupSequences.get(popup);
             const pending = popup.kinViewerOpenPatient(url, { signal: openingOptions?.signal });
-            popup.focus(); watchOhifRect(popup);
+            KinExamScope.raiseWindow(popup); watchOhifRect(popup);
             // Patient tabs admit a route asynchronously. W9 must bind its renderer channel only after that admission,
             // while a refusal keeps the previous opening's sequence and displayed state.
             // That promise belongs to the viewer document: closing or reloading the window discards its tasks and the
@@ -10994,7 +10994,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
             });
           }
           if (typeof popup.kinViewerFrameCoverageConfirm !== 'function' || !popup.kinViewerFrameCoverageConfirm(message => confirm(message))) {
-            popup.focus(); notify('기존 영상 창을 유지했습니다. Frame Coverage와 원본 영상을 확인하세요.', 'info');
+            KinExamScope.raiseWindow(popup); notify('기존 영상 창을 유지했습니다. Frame Coverage와 원본 영상을 확인하세요.', 'info');
             return outcome('refused', '기존 영상 창을 유지했습니다. Frame Coverage와 원본 영상을 확인하세요.');
           }
           const rechecked = ohifPopupState(popup);
@@ -11002,7 +11002,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
             return outcome('refused', '기존 영상 창의 상태가 바뀌어 열지 않았습니다. 다시 여세요.');
           rememberOhifRect(popup);
         } else if (previous.kind !== "blank" && !stopped) {
-          popup.focus();
+          KinExamScope.raiseWindow(popup);
           notify("기존 영상 창의 상태를 확인할 수 없습니다. 그 창을 닫은 뒤 다시 여세요.", "err", 8000);
           return outcome('refused', "기존 영상 창의 상태를 확인할 수 없습니다. 그 창을 닫은 뒤 다시 여세요.");
         }
@@ -11027,7 +11027,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           popup.location.reload();
         } else popup.location.href = url;
         viewerWindows.navigating(choice, url, previousDocument);
-        popup.focus();
+        KinExamScope.raiseWindow(popup);
         watchOhifRect(popup);
         if (!monitorHintShown && monitorPermission?.state === "prompt" && screen.isExtended === true) {
           monitorHintShown = true;
@@ -11135,6 +11135,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       if (!popup) { viewerWindows.blocked(choice); return { status: 'blocked' }; }
       viewerWindows.attach(choice, popup); ohifPopupSlots.set(popup, choice.index);
       try { popup.opener = null; } catch (_) { return { status: 'refused', message: '영상 창 연결을 분리하지 못했습니다. 기존 창에서 작업을 저장한 뒤 닫고 다시 여세요.' }; }
+      // The click is still active here; the launch after the resolve may come too late for the browser to raise it.
+      if (known) KinExamScope.raiseWindow(popup);
       let own = false;
       try { own = !known && popup.location.href === 'about:blank'; } catch (_) {}
       return { status: 'reserved', kind: 'window', choice, popup, own, preservePartner, compositionId };
@@ -11272,7 +11274,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
               const actual=popupRect(popup);
               if(actual&&Object.keys(rect).every(k=>Math.abs(actual[k]-rect[k])<=16))finish(true);else setTimeout(check,100);
             };
-            try{popup.focus();popup.moveTo(rect.left,rect.top);popup.resizeTo(rect.width,rect.height);popup.moveTo(rect.left,rect.top);setTimeout(check,100);}
+            try{KinExamScope.raiseWindow(popup);popup.moveTo(rect.left,rect.top);popup.resizeTo(rect.width,rect.height);popup.moveTo(rect.left,rect.top);setTimeout(check,100);}
             catch(_){finish(false);}
           });
           if(shown())status.textContent=moved.saved?'지정 화면으로 이동하고 창 위치를 저장했습니다.':moved.moved?'창을 이동했지만 위치를 저장하지 못했습니다. 현재 창 상태와 브라우저 저장소를 확인하세요.':'창 이동을 확인하지 못해 이전 저장 위치를 유지했습니다. 창을 직접 이동하거나 다시 시도하세요.';
@@ -11345,18 +11347,18 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         if (action === 'close') {
           if (row.pending) {
             status.textContent = '창을 닫지 않았습니다. 영상 창을 불러오는 중입니다. 완료 후 다시 확인하세요.';
-            popup.focus(); return;
+            KinExamScope.raiseWindow(popup); return;
           }
           if (movingWindows.has(popup) || ohifPlacementWrites.get(popup)?.pending) {
             status.textContent = '창을 닫지 않았습니다. 화면 이동과 위치 저장이 끝난 뒤 다시 확인하세요.';
-            popup.focus(); return;
+            KinExamScope.raiseWindow(popup); return;
           }
           const owner = KinViewerOpening.key(KinAuth.session()), sequence = ohifPopupSequences.get(popup);
           let viewerDocument; try { viewerDocument = popup.document; } catch (_) {}
           const state = ohifPopupState(popup);
           if (state.kind !== 'viewer' || !state.ready || state.busy || state.dirty) {
             status.textContent = '창을 닫지 않았습니다. 해당 창의 저장·복원 또는 미저장 작업을 확인하고 열린 대화상자를 닫은 뒤 다시 시도하세요.';
-            popup.focus(); return;
+            KinExamScope.raiseWindow(popup); return;
           }
           if (typeof popup.kinViewerFrameCoverageConfirm !== 'function' || !popup.kinViewerFrameCoverageConfirm(message => confirm(message))) {
             status.textContent = '창을 닫지 않았습니다. Frame Coverage와 원본 영상을 확인하세요.'; return;
@@ -11371,7 +11373,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           }
           rememberOhifRect(popup); popup.close(); render();
           status.textContent = popup.closed ? '영상 창을 닫았습니다.' : '브라우저에서 창을 닫지 못했습니다. 해당 창에서 닫으세요.';
-        } else { viewerWindowCursor = index; dialog.close(); popup.focus(); watchOhifRect(popup, index); }
+        } else { viewerWindowCursor = index; dialog.close(); KinExamScope.raiseWindow(popup); watchOhifRect(popup, index); }
       }
       let storage; try { storage = sessionStorage; } catch (_) {}
       viewerWindows = KinViewerWindows.create({ storage, owner: () => { const key = KinViewerOpening.key(KinAuth.session()); return key ? key.slice(KinViewerOpening.PREFIX.length) : null; },

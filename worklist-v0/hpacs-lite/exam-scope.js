@@ -206,7 +206,32 @@
       dialog.addEventListener('close',()=>{dialog.remove();resolve(result);},{once:true});dialog.append(go,close);document.body.append(dialog);dialog.showModal();
     });
   }
-  const api={read,key,stamp,screenScope,screenStamp,originalLabel,sourceRequest,seriesValue,seriesRequest,attachmentTarget,attachmentHeaders,storedReport,allows,listedExam,metadata,projections,values,originals,viewingSelection,originalInput,readingScope,readingStamp,fetch:fetchScope,dicom,viewerInput,viewerUrl,viewerReference,reference,roleRows,snapshotReference,jobSnapshot,snapshotUrl,preload,chooseOriginals,changes};
+  /**
+   * Bring a viewer window this page already holds to the front. Every page that opens a viewer loads this module, so
+   * the list and the clinician page share this one rule. Chrome honours popup.focus() only when it comes from the
+   * window's opener, and a viewer window is detached from its opener (opener = null) on purpose, so focus() alone leaves
+   * the viewer behind the list. Looking the window up again by its own current name raises it without loading anything
+   * (an empty address is not a navigation, and a navigation already under way continues) - but only while the click or
+   * key press that asked for it is still active; outside one the browser raises nothing and focus() stays the only try.
+   * The lookup carries noopener: a plain lookup gives the window this page as its opener again in the browser, and the
+   * window's next document would start with it (setting opener = null afterwards does not undo that). With noopener the
+   * browser answers null, so the window is looked up by a name only it carries for that one call - another window of
+   * the same name (slot names repeat per list) is never raised - and its own name, which may be the session hand-over
+   * name of a document still loading, is put back before anything else runs. Answers whether the browser was asked.
+   */
+  function raiseWindow(popup,from=root){
+    try{popup.focus();}catch(_){}
+    let name;
+    try{if(popup.closed)return false;name=popup.name;}catch(_){return false;}
+    if(typeof name!=='string')return false;
+    if(from.navigator?.userActivation?.isActive!==true)return false;
+    const probe='kin-raise:'+(from.crypto?.randomUUID?.()||String(Math.random()).slice(2));
+    try{popup.name=probe;}catch(_){return false;}
+    try{from.open('',probe,'noopener');}catch(_){return false;}
+    finally{try{popup.name=name;}catch(_){}}
+    return true;
+  }
+  const api={raiseWindow,read,key,stamp,screenScope,screenStamp,originalLabel,sourceRequest,seriesValue,seriesRequest,attachmentTarget,attachmentHeaders,storedReport,allows,listedExam,metadata,projections,values,originals,viewingSelection,originalInput,readingScope,readingStamp,fetch:fetchScope,dicom,viewerInput,viewerUrl,viewerReference,reference,roleRows,snapshotReference,jobSnapshot,snapshotUrl,preload,chooseOriginals,changes};
   root.KinExamScope=api;
   if(typeof module==='object'&&module.exports)module.exports=api;
 })(globalThis);
