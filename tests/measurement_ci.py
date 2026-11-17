@@ -754,9 +754,10 @@ def profile_environment(profile_name, out, values, evidence_stage=None):
     return env
 
 
-# The VR suite's declared evidence: the rendered VR (vr_01) and the covered VR under a failed access refresh (vr_22).
+# The VR suite's declared evidence: the rendered VR (vr_01), the covered VR under a failed access refresh (vr_22) and
+# the synthetic CT with its bone removed from the display (vr_25).
 # Exactly these files, each a PNG; anything else in private staging is refused so no raw text leaves the runner.
-VR_EVIDENCE = ['volume-rendering.png', 'vr-access-covered.png']
+VR_EVIDENCE = ['volume-rendering.png', 'vr-access-covered.png', 'vr-bone-removed.png']
 
 
 def publish_vr_evidence(stage, out):

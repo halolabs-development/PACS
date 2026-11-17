@@ -6,6 +6,39 @@ from pathlib import Path
 from playwright.sync_api import expect
 from test_volume_current_print import VolumeCurrentPrintE2E
 
+def removal_phantom(stack):
+ """Synthetic bone and table CT for the removal tests; the same geometry as tests/volume_rendering_removal_test.cjs."""
+ import time,uuid
+ import numpy as np
+ import test_prior_selection as ct
+ uid,series,frame=ct.generate_uid(),ct.generate_uid(),ct.generate_uid();patient='REMOVAL-'+uuid.uuid4().hex[:10]
+ f=ct.Fixture(uid,patient,'한림병원','jmryu','REMOVAL-SYNTHETIC');stack.active[uid]=f
+ y,x=np.mgrid[0:96,0:96];hu=np.full((96,96),-1000,dtype='int16')
+ hu[((x-48)/34)**2+((y-40)/24)**2<=1]=-100;hu[((x-30)/8)**2+((y-36)/10)**2<=1]=-850
+ spine=np.hypot(x-48,y-54);hu[spine<=7]=300;hu[(spine>5)&(spine<=7)]=1000;hu[np.hypot(x-62,y-42)<=4]=350
+ hu[(y>=70)&(y<=71)&(x>=6)&(x<=89)]=300
+ ae=ct.AE(ae_title='HALLYM_CT');ae.add_requested_context(ct.CTImageStorage,ct.ExplicitVRLittleEndian);assoc=ae.associate('127.0.0.1',4242,ae_title='KINLAB')
+ if not assoc.is_established:raise RuntimeError('Local CT association failed')
+ try:
+  for z in range(40):
+   sop=ct.generate_uid();meta=ct.FileMetaDataset();meta.TransferSyntaxUID=ct.ExplicitVRLittleEndian;meta.MediaStorageSOPClassUID=ct.CTImageStorage;meta.MediaStorageSOPInstanceUID=sop;meta.ImplementationClassUID=ct.generate_uid()
+   d=ct.FileDataset(None,{},file_meta=meta,preamble=b'\0'*128);d.SOPClassUID=ct.CTImageStorage;d.SOPInstanceUID=sop;d.SpecificCharacterSet='ISO_IR 192';d.PatientName='REMOVAL^SYNTHETIC';d.PatientID=patient;d.PatientBirthDate='';d.PatientSex='O';d.InstitutionName='한림병원'
+   d.StudyInstanceUID=uid;d.SeriesInstanceUID=series;d.FrameOfReferenceUID=frame;d.StudyDate=d.SeriesDate='20260901';d.StudyTime=d.SeriesTime='120000';d.AccessionNumber='REMOVAL';d.StudyID='REMOVAL';d.StudyDescription=d.SeriesDescription='Synthetic bone and table';d.Modality='CT';d.SeriesNumber=1;d.InstanceNumber=z+1;d.ImageType=['ORIGINAL','PRIMARY','AXIAL'];d.ImageOrientationPatient=[1,0,0,0,1,0];d.ImagePositionPatient=[0,0,z*2];d.SliceLocation=z*2;d.PixelSpacing=[1,1];d.SliceThickness=d.SpacingBetweenSlices=2
+   d.Rows=d.Columns=96;d.SamplesPerPixel=1;d.PhotometricInterpretation='MONOCHROME2';d.BitsAllocated=d.BitsStored=16;d.HighBit=15;d.PixelRepresentation=1;d.WindowCenter=300;d.WindowWidth=1500;d.RescaleIntercept=0;d.RescaleSlope=1;d.RescaleType='HU'
+   pixels=hu.copy()
+   if z==20:pixels[40:42,64:66]=900
+   d.PixelData=pixels.astype('<i2').tobytes();status=assoc.send_c_store(d)
+   if status is None or status.Status!=0:raise RuntimeError('Synthetic CT C-STORE failed')
+ finally:assoc.release()
+ deadline=time.monotonic()+30
+ while time.monotonic()<deadline:
+  result=stack.request('GET','/studies','jmryu')
+  if result.status==200 and any(s['uid']==uid for s in result.body['studies']):
+   if stack.request('PATCH','/studies/'+uid,'jmryu',{'ss':'Verified'}).status!=200:raise RuntimeError('Synthetic CT verification failed')
+   return f
+  time.sleep(.25)
+ raise RuntimeError('Removal CT did not reach local API')
+
 class VolumeRenderingE2E(VolumeCurrentPrintE2E):
  def vr(self,v):
   v.get_by_role('button',name='Open Volume Rendering',exact=True).click();expect(v.locator('#kin-volume-rendering [role=status]')).to_contain_text('VR 원본을 표시했습니다',timeout=45000)
@@ -352,6 +385,135 @@ class VolumeRenderingE2E(VolumeCurrentPrintE2E):
    self.assertEqual(v.evaluate("()=>projectionVP.getRenderingEngine().getViewports().filter(v=>v.id.startsWith('kin-vr-')).length"),0)
   finally:v.evaluate('restoreVRGate()')
   self.assertEqual(before,self.native_pixels(v));self.mpr_live_after_mask_failure(v,before);self.vr(v)
+
+ # Bone and table removal: a synthetic CT (no patient data) with a fat-density body, an enclosed air pocket, a vertebra
+ # (cortex 1000 HU, core 300 HU), a contrast aorta (350 HU) with a small 900 HU calcification and a thin 300 HU table
+ # plate under the body. 96 x 96 pixels of 1 mm, 40 slices 2 mm apart; rows grow towards the back.
+ def opened_removal(self):
+  import numpy as np
+  import test_prior_selection as ct
+  a=removal_phantom(self.stack);self.seed_report(a);p=self.login();self.choose(p,a)
+  with p.context.expect_page() as opened:p.locator('#m-filmbox').click()
+  v=opened.value;ct.canvas_ready(v,1);self.ready(v);self.mpr(v);self.choose_volume(v,v,0)
+  v.evaluate("""()=>{window.projectionVP=services.cornerstoneViewportService.getCornerstoneViewport(services.viewportGridService.getState().activeViewportId);projectionVP.setProperties({voiRange:{lower:-200,upper:800},VOILUTFunction:'LINEAR',interpolationType:0,invert:false});projectionVP.render();
+   window.vrView=()=>cornerstone.getEnabledElement(document.querySelector('[data-kin-vr-render]')).viewport;
+   window.vrHit=p=>{const view=vrView(),c=view.getCanvas(),xy=view.worldToCanvas(p),x=Math.floor(xy[0]*c.width/c.clientWidth),y=Math.floor(xy[1]*c.height/c.clientHeight),b=c.getContext('2d').getImageData(x-1,y-1,3,3).data;let m=0;for(let i=0;i<b.length;i+=4)m=Math.max(m,b[i],b[i+1],b[i+2]);return m};
+   window.vrRemovalCopies=()=>({volumes:[...cornerstone.cache._volumeCache.keys()].filter(id=>id.startsWith('kin-vr-removal-')).length,images:[...cornerstone.cache._imageCache.keys()].filter(id=>id.startsWith('kin-vr-removal-')).length,bound:document.querySelector('[data-kin-vr-render]')&&cornerstone.getEnabledElement(document.querySelector('[data-kin-vr-render]'))?vrView().getVolumeId():null});}""")
+  v.evaluate('()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');return a,p,v
+ def removal_hits(self,v):
+  v.evaluate('()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+  return v.evaluate("()=>({spine:vrHit([48,58,40]),aorta:vrHit([62,42,40]),table:vrHit([48,70.5,40])})")
+ def same_hits(self,hits,expected):
+  # A point near an edge varies by a few grey levels from frame to frame and actor to actor: on the CI software renderer
+  # the spine point of one unchanged view read 225 to 229. A removed part reads 5 or less, a present one over 200.
+  self.assertEqual(set(hits),set(expected))
+  for part in expected:self.assertLessEqual(abs(hits[part]-expected[part]),8,(part,hits,expected))
+ def remove(self,dialog,name,done,timeout=60000):
+  dialog.get_by_role('button',name=name,exact=True).click();expect(dialog.locator('[role=status]')).to_contain_text(done,timeout=timeout)
+
+ def test_vr_25_remove_bone_and_table_only_in_the_display(self):
+  a,p,v=self.opened_removal();native=self.native_pixels(v);source=self.volume_state(v);original=self.originals();rows=self.rows();dialog=self.vr(v);initial=self.vr_state(v)
+  expect(dialog.get_by_label('Bone Threshold (HU)',exact=True)).to_have_value('250');expect(dialog.locator('.kin-vr-removal-state')).to_have_text('Removed from display: none')
+  dialog.get_by_label('View From',exact=True).select_option('Left');full=self.removal_hits(v);print('VR_REMOVAL_FULL',full,flush=True)
+  for part in ['spine','aorta','table']:self.assertGreater(full[part],20,part)
+  self.remove(dialog,'Remove Bone','뼈를 지웠습니다');bone=self.removal_hits(v);print('VR_REMOVAL_BONE',bone,flush=True)
+  self.assertLessEqual(bone['spine'],5);self.assertGreater(bone['aorta'],20);self.assertGreater(bone['table'],20)
+  expect(dialog.locator('.kin-vr-removal-state')).to_have_text('Removed from display: Bone (250 HU or more)')
+  copy=v.evaluate("()=>{const id=vrView().getVolumeId(),c=cornerstone.cache.getVolume(id).voxelManager,s=cornerstone.cache.getVolume(projectionVP.getVolumeId()).voxelManager;return {id,spine:c.getAtIJK(48,54,20),aorta:c.getAtIJK(62,42,20),source:s.getAtIJK(48,54,20),copies:vrRemovalCopies()}}")
+  self.assertTrue(copy['id'].startswith('kin-vr-removal-'));self.assertEqual(copy['spine'],-1002);self.assertEqual(copy['aorta'],350);self.assertEqual(copy['source'],300);self.assertEqual(copy['copies']['volumes'],1);self.assertEqual(copy['copies']['images'],40)
+  self.preserved_volume(source,self.volume_state(v));self.assertEqual(self.native_pixels(v),native)
+  self.remove(dialog,'Remove Table','촬영대·시트를 지웠습니다');both=self.removal_hits(v);print('VR_REMOVAL_BOTH',both,flush=True)
+  self.assertLessEqual(both['spine'],5);self.assertLessEqual(both['table'],5);self.assertGreater(both['aorta'],20)
+  expect(dialog.locator('.kin-vr-removal-state')).to_have_text('Removed from display: Bone (250 HU or more), Table');self.assertEqual(v.evaluate('()=>vrRemovalCopies().volumes'),1)
+  # A higher threshold is a new bone choice: 1500 HU finds no bone and leaves the display as it is.
+  dialog.get_by_label('Bone Threshold (HU)',exact=True).fill('1500');dialog.get_by_role('button',name='Remove Bone',exact=True).click();expect(dialog.locator('[role=status]')).to_contain_text('찾지 못했습니다');self.assertEqual(self.removal_hits(v),both)
+  for bad in ['99','3001','']:
+   dialog.get_by_label('Bone Threshold (HU)',exact=True).fill(bad);dialog.get_by_role('button',name='Remove Bone',exact=True).click();expect(dialog.locator('[role=status]')).to_contain_text('Bone Threshold');self.assertEqual(self.removal_hits(v),both)
+  # Removed voxels stay hidden under a curve that makes air opaque.
+  dialog.get_by_label('Transfer Mode',exact=True).select_option('Custom')
+  for i,hu in [(1,'-1000'),(2,'2000')]:
+   dialog.get_by_label('Knot '+str(i)+' HU',exact=True).fill(hu);dialog.get_by_label('Knot '+str(i)+' Color',exact=True).fill('#ff0000');dialog.get_by_label('Knot '+str(i)+' Opacity',exact=True).fill('1')
+  dialog.get_by_role('button',name='Apply Display',exact=True).click();nodes=self.vr_state(v)['nodes']
+  self.assertIn([-1002,0],[n[:2] for n in nodes]);self.assertIn([-1001,0],[n[:2] for n in nodes]);self.assertIn([-1000,1],[n[:2] for n in nodes])
+  self.remove(dialog,'Restore Removed','되돌렸습니다');self.assertEqual(v.evaluate('()=>vrRemovalCopies()'),{'volumes':0,'images':0,'bound':v.evaluate('()=>projectionVP.getVolumeId()')})
+  self.assertEqual([n[:2] for n in self.vr_state(v)['nodes']],[[-1000,1],[2000,1]]);expect(dialog.locator('.kin-vr-removal-state')).to_have_text('Removed from display: none')
+  dialog.get_by_role('button',name='Reset VR',exact=True).click();self.assertEqual(self.vr_state(v),initial)
+  dialog.get_by_label('View From',exact=True).select_option('Left');self.same_hits(self.removal_hits(v),full)
+  self.preserved_volume(source,self.volume_state(v));self.assertEqual(self.native_pixels(v),native);self.assertEqual(self.originals(),original);self.unchanged_rows(rows)
+  if os.environ.get('KIN_EVIDENCE_DIR'):
+   self.remove(dialog,'Remove Bone','뼈를 지웠습니다');v.screenshot(path=str(Path(os.environ['KIN_EVIDENCE_DIR'])/'vr-bone-removed.png'))
+  dialog.get_by_role('button',name='Close VR',exact=True).click();expect(dialog).not_to_be_visible()
+  self.assertEqual(v.evaluate("()=>({views:cornerstone.getRenderingEngines().flatMap(e=>e.getViewports()).filter(v=>v.id.startsWith('kin-vr-')).length,...vrRemovalCopies()})"),{'views':0,'volumes':0,'images':0,'bound':None})
+  self.assertEqual(self.native_pixels(v),native)
+
+ def test_vr_26_removal_keeps_crop_sculpt_display_and_camera(self):
+  # While a crop is applied, every frame of this phantom takes about 25 s on the CI software renderer (about 2 s without
+  # one), and the page does nothing else while it draws; the access check may cover VR meanwhile. So every wait here
+  # allows several frames. A control that never comes back, or a check that is never true, still fails.
+  a,p,v=self.opened_removal();slow=180000;v.set_default_timeout(slow);expect.set_options(timeout=slow)
+  try:self.removal_keeps_edits(v,slow)
+  finally:expect.set_options(timeout=5000)
+ def removal_keeps_edits(self,v,slow):
+  dialog=self.vr(v);initial=self.vr_state(v);dialog.get_by_label('View From',exact=True).select_option('Left');full=self.removal_hits(v)
+  dialog.get_by_label('VR Opacity',exact=True).fill('80');dialog.get_by_role('button',name='Apply Display',exact=True).click()
+  dialog.get_by_label('K Max',exact=True).fill('29');dialog.get_by_role('button',name='Apply Crop',exact=True).click()
+  self.sculpt_region(v,dialog,points=[(.02,.02),(.2,.2)]);dialog.get_by_role('button',name='Apply Sculpt',exact=True).click()
+  state="()=>{const view=vrView(),m=view.getActors()[0].actor.getMapper();return {camera:view.getCamera(),planes:m.getClippingPlanes().map(p=>({origin:Array.from(p.getOrigin()),normal:Array.from(p.getNormal())})),shader:JSON.stringify(m.getViewSpecificProperties().OpenGL?.ShaderReplacements||null),mapper:m}}"
+  before=v.evaluate(state.replace(',mapper:m',''));self.assertEqual(len(before['planes']),6);self.assertNotEqual(before['shader'],'null');nodes=self.vr_state(v)['nodes']
+  v.evaluate('()=>{window.vrOldMapper=vrView().getActors()[0].actor.getMapper()}')
+  self.remove(dialog,'Remove Table','촬영대·시트를 지웠습니다',slow)
+  after=v.evaluate(state.replace(',mapper:m',''));self.assertEqual(after,before);self.assertFalse(v.evaluate('()=>vrView().getActors()[0].actor.getMapper()===vrOldMapper'))
+  self.assertEqual([n for n in self.vr_state(v)['nodes'] if n[0]>-1000],[n for n in nodes if n[0]>-1000]);self.assertFalse(self.vr_state(v)['shade'])
+  # The new actor's own frame confirms the sculpt shader: wait for that frame's program, then read it; the dialog stays open.
+  v.wait_for_function("()=>!!vrView().getRenderingEngine().offscreenMultiRenderWindow.getOpenGLRenderWindow().getViewNodeFor(vrView().getActors()[0].actor.getMapper())?.get('tris')?.tris?.getProgram()?.getCompiled()",timeout=slow)
+  expect(dialog).to_be_visible();self.assertTrue(v.evaluate("()=>{const node=vrView().getRenderingEngine().offscreenMultiRenderWindow.getOpenGLRenderWindow().getViewNodeFor(vrView().getActors()[0].actor.getMapper());return node.get('tris').tris.getProgram().getFragmentShader().getSource().includes('kinSculptPoint0')}"))
+  dialog.get_by_role('button',name='Undo Sculpt',exact=True).click();self.assertEqual(v.evaluate(state.replace(',mapper:m',''))['shader'],'null')
+  # Shading last: the swap back to the source and to a new copy both keep it.
+  dialog.get_by_label('VR Shading',exact=True).check(timeout=slow);dialog.get_by_role('button',name='Apply Display',exact=True).click(timeout=slow);expect(dialog.locator('[role=status]')).to_contain_text('VR 표시 조건을 적용했습니다',timeout=slow)
+  for name,done in [('Restore Removed','되돌렸습니다'),('Remove Table','촬영대·시트를 지웠습니다')]:
+   v.evaluate('()=>{window.vrOldMapper=vrView().getActors()[0].actor.getMapper()}');dialog.get_by_role('button',name=name,exact=True).click(timeout=slow);expect(dialog.locator('[role=status]')).to_contain_text(done,timeout=slow)
+   self.assertFalse(v.evaluate('()=>vrView().getActors()[0].actor.getMapper()===vrOldMapper'),name);self.assertTrue(self.vr_state(v)['shade'],name)
+  dialog.get_by_role('button',name='Reset VR',exact=True).click(timeout=slow);expect(dialog.locator('[role=status]')).to_contain_text('처음 VR 표시로',timeout=slow);self.assertEqual(self.vr_state(v),initial);self.assertEqual(v.evaluate('()=>vrRemovalCopies().volumes'),0)
+  dialog.get_by_label('View From',exact=True).select_option('Left',timeout=slow);self.same_hits(self.removal_hits(v),full)
+
+ def test_vr_27_removal_busy_close_failure_and_memory(self):
+  a,p,v=self.opened_removal();native=self.native_pixels(v);source=self.volume_state(v);dialog=self.vr(v)
+  # Hold the computation open: edits stay locked, a resize does not unlock them, closing drops the work and its copy.
+  v.evaluate("()=>{const real=window.KinVolumeRemoval;window.vrRestoreRemoval=()=>window.KinVolumeRemoval=real;window.vrHold=true;window.KinVolumeRemoval={...real,*boneCells(...args){window.vrHolding=true;while(window.vrHold)yield;return yield* real.boneCells(...args);}}}")
+  dialog.get_by_role('button',name='Remove Bone',exact=True).click();v.wait_for_function('()=>window.vrHolding===true')
+  for name in ['Apply Display','Remove Table','Restore Removed','Apply Crop','Draw Region','Reset VR']:expect(dialog.get_by_role('button',name=name,exact=True)).to_be_disabled()
+  size=v.viewport_size;v.set_viewport_size({'width':size['width']-30,'height':size['height']});v.wait_for_timeout(300);v.set_viewport_size(size)
+  for name in ['Apply Display','Remove Table','Draw Region']:expect(dialog.get_by_role('button',name=name,exact=True)).to_be_disabled()
+  dialog.get_by_role('button',name='Close VR',exact=True).click();expect(dialog).not_to_be_visible();v.evaluate('()=>{window.vrHold=false;vrRestoreRemoval()}');v.wait_for_timeout(300)
+  self.assertEqual(v.evaluate("()=>({views:cornerstone.getRenderingEngines().flatMap(e=>e.getViewports()).filter(v=>v.id.startsWith('kin-vr-')).length,...vrRemovalCopies()})"),{'views':0,'volumes':0,'images':0,'bound':None});self.assertEqual(self.native_pixels(v),native)
+  # A swap that fails after the copy is made closes only VR and leaves no copy.
+  dialog=self.vr(v);v.evaluate("()=>{const view=vrView(),set=view.setVolumes;view.setVolumes=async function(inputs,...rest){if(inputs[0].volumeId.startsWith('kin-vr-removal-'))throw Error('INJECTED REMOVAL SWAP FAILURE');return set.call(this,inputs,...rest)}}")
+  dialog.get_by_role('button',name='Remove Bone',exact=True).click();expect(dialog).not_to_be_visible(timeout=60000);expect(v.locator('#kin-volume-orientation [role=status]')).to_contain_text('INJECTED REMOVAL SWAP FAILURE')
+  self.assertEqual(v.evaluate('()=>vrRemovalCopies()'),{'volumes':0,'images':0,'bound':None});self.preserved_volume(source,self.volume_state(v));self.assertEqual(self.native_pixels(v),native);self.mpr_live_after_mask_failure(v,native)
+  # Not enough cache: a message, the source display, no copy.
+  dialog=self.vr(v);v.evaluate('()=>{window.vrBytes=cornerstone.cache.getBytesAvailable;cornerstone.cache.getBytesAvailable=()=>0}')
+  try:
+   dialog.get_by_role('button',name='Remove Table',exact=True).click();expect(dialog.locator('[role=status]')).to_contain_text('메모리');expect(dialog).to_be_visible()
+   self.assertEqual(v.evaluate('()=>vrRemovalCopies()'),{'volumes':0,'images':0,'bound':v.evaluate('()=>projectionVP.getVolumeId()')});expect(dialog.get_by_role('button',name='Remove Table',exact=True)).to_be_enabled()
+  finally:v.evaluate('()=>cornerstone.cache.getBytesAvailable=vrBytes')
+  # A copy that fails while it is made (the cache refuses its second image): a message, the source display, nothing left.
+  v.evaluate("()=>{window.vrPut=cornerstone.cache.putImageSync;let n=0;cornerstone.cache.putImageSync=function(id,...rest){if(String(id).startsWith('kin-vr-removal-')&&++n===2)throw Error('INJECTED COPY FAILURE');return vrPut.call(this,id,...rest)}}")
+  try:
+   for _ in range(2):
+    dialog.get_by_role('button',name='Remove Table',exact=True).click();expect(dialog.locator('[role=status]')).to_contain_text('INJECTED COPY FAILURE');expect(dialog).to_be_visible()
+    self.assertEqual(v.evaluate('()=>vrRemovalCopies()'),{'volumes':0,'images':0,'bound':v.evaluate('()=>projectionVP.getVolumeId()')});expect(dialog.get_by_role('button',name='Remove Table',exact=True)).to_be_enabled()
+    v.evaluate("()=>{let n=0;cornerstone.cache.putImageSync=function(id,...rest){if(String(id).startsWith('kin-vr-removal-')&&++n===2)throw Error('INJECTED COPY FAILURE');return vrPut.call(this,id,...rest)}}")
+  finally:v.evaluate('()=>cornerstone.cache.putImageSync=vrPut')
+  # A new copy that fails to upload, before the actor reads it: VR stays on the source, the copy is released.
+  v.evaluate("()=>{const proto=cornerstone.ImageVolume.prototype;window.vrInvalidate=proto.invalidate;proto.invalidate=function(...args){if(String(this.volumeId).startsWith('kin-vr-removal-'))throw Error('INJECTED UPLOAD FAILURE');return vrInvalidate.apply(this,args)}}")
+  try:
+   dialog.get_by_role('button',name='Remove Table',exact=True).click();expect(dialog.locator('[role=status]')).to_contain_text('INJECTED UPLOAD FAILURE');expect(dialog).to_be_visible()
+   self.assertEqual(v.evaluate('()=>vrRemovalCopies()'),{'volumes':0,'images':0,'bound':v.evaluate('()=>projectionVP.getVolumeId()')})
+  finally:v.evaluate('()=>cornerstone.ImageVolume.prototype.invalidate=vrInvalidate')
+  expect(dialog.locator('.kin-vr-removal-state')).to_have_text('Removed from display: none')
+  self.remove(dialog,'Remove Table','촬영대·시트를 지웠습니다');self.assertEqual(v.evaluate('()=>{const c=vrRemovalCopies();return [c.volumes,c.images]}'),[1,40])
+  dialog.get_by_role('button',name='Close VR',exact=True).click()
+  self.assertEqual(v.evaluate('()=>vrRemovalCopies()'),{'volumes':0,'images':0,'bound':None});self.preserved_volume(source,self.volume_state(v));self.assertEqual(self.native_pixels(v),native)
 
  def mpr_live_after_mask_failure(self,v,native):
   v.evaluate("()=>{window.vrSourceProperties=structuredClone(projectionVP.getProperties());window.vrSourceFrames=0;window.vrFrameListener=()=>vrSourceFrames++;projectionVP.element.addEventListener(cornerstone.Enums.Events.IMAGE_RENDERED,vrFrameListener);projectionVP.setProperties({voiRange:{lower:65535,upper:65536}});projectionVP.render()}")
