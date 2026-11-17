@@ -1538,7 +1538,8 @@ function kinCreateViewerHistory() {
     // original's own rules, never measured with a screen calibration): the image is not one for a screen calibration.
     const given = v => v !== undefined && v !== null && v !== '' && !(Array.isArray(v) && !v.length);
     const groupSpacing = groups => Array.isArray(groups) && groups.some(group =>
-      given(group?.PixelMeasuresSequence) || given(group?.FramePixelDataPropertiesSequence));
+      (Array.isArray(group?.PixelMeasuresSequence) ? group.PixelMeasuresSequence : []).some(item => given(item?.PixelSpacing)) ||
+      (Array.isArray(group?.FramePixelDataPropertiesSequence) ? group.FramePixelDataPropertiesSequence : []).some(item => given(item?.ImagerPixelSpacing)));
     const noSpacing = (imageId, kind) => {
       if (kind !== 'length' || !imageId) return false;
       const image = cs.metaData.get('instance', imageId);

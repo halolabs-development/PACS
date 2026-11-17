@@ -2801,8 +2801,11 @@ class ClinicianViewerDOMTest(unittest.TestCase):
             ("() => { synCalibration = {type: 'Region', scale: 2}; }", 'refused'),
             # Functional groups without a pixel measure: no spacing of its own, so the screen calibration counts.
             ("() => { synMeta = {...synMeta, SharedFunctionalGroupsSequence: [{PlaneOrientationSequence: [{}]}]}; synCalibration = {type: 'User', scale: 2}; }", 'mark'),
-            # A pixel measure in the functional groups (even one that cannot be read): the original's rules, not the screen's.
-            ("() => { synMeta = {...synMeta, SharedFunctionalGroupsSequence: [{PixelMeasuresSequence: [{}]}]}; }", 'refused'),
+            # A pixel measure without a pixel spacing in it (a slice thickness only): still no spacing of its own.
+            ("() => { synMeta = {...synMeta, SharedFunctionalGroupsSequence: [{PixelMeasuresSequence: [{SliceThickness: 1}]}]}; }", 'mark'),
+            # A pixel spacing in the functional groups (even one that cannot be read): the original's rules, not the screen's.
+            ("() => { synMeta = {...synMeta, SharedFunctionalGroupsSequence: [{PixelMeasuresSequence: [{PixelSpacing: 'x'}]}]}; }", 'refused'),
+            ("() => { synMeta = {...synMeta, SharedFunctionalGroupsSequence: undefined, PerFrameFunctionalGroupsSequence: [{FramePixelDataPropertiesSequence: [{ImagerPixelSpacing: [0.2, 0.2]}]}]}; }", 'refused'),
         ]
         for setup, want in cases:
             self.page.evaluate(setup)
