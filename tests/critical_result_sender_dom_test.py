@@ -211,6 +211,8 @@ def has_hangul(text):
 # block out of its tagged page with BLOCK_MARKS.
 BLOCK_MARKS = ("    // ── 중요 결과 발신(S7-U1b) ──", "    // ── 임상의 질문 답변(S5-U4b) ──")
 BLOCK = slice_between(MAIN, *BLOCK_MARKS)
+# The page's one connection rule (page-core.js), as shipped: the block's online() is that function.
+SERVER_RULE = re.search(r"^ *function serverReachable\(\) \{[^\n]*\}$", MAIN, re.M).group(0)
 # main.html's inline page script (the <script> elements without a src), handed to the browser as text for TAIL.
 PAGE_SCRIPT = "\n".join(re.findall(r"<script>(.*?)</script>", MAIN, flags=re.S))
 # tests/report_actions_dom_test.py runs PRELUDE + BLOCK + TAIL.replace('HOOK', '\n'.join(HOOK_LINES)). TAIL now runs the
@@ -227,6 +229,7 @@ const accountChangeHooks = [(reason) => window.synOtherEnds.push(reason)];
 
 let sess = window.synSession;
 let serverMode = window.synMode.serverMode, demoMode = false, offline = window.synMode.offline;
+""" + SERVER_RULE + """
 let selectedUid = null;
 """ + RELATED_MODE + """
 let studies = window.synStudies;
@@ -2170,6 +2173,91 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
         self.settle()
         expect(self.page.locator("#cvr-sent-summary")).to_have_text("Pending ACK 1")
         self.assertEqual("SYN kept through the outage", self.page.locator("#cvr-send-message").input_value())
+
+    CONNECTION = "online => { serverMode = online; offline = !online; (window.kinOnConnection || []).forEach(change => change()); }"
+    # worklist-data.js updateReportButtons() runs this list each time it paints the report buttons (commit answers, polls).
+    REPORT_BUTTONS = "() => (window.kinOnReportButtons || []).forEach(change => change())"
+
+    def entry_title(self):
+        return self.page.locator("#b-mark-cvr").get_attribute("title")
+
+    # ── SD10c ──
+    def test_sd10c_mark_cvr_follows_the_report_buttons_and_reads_again_once_back(self):
+        """The report state the page knows changes and only the report buttons are painted again (a commit's answer or a
+        poll, More left open, no renderClinical): Mark CVR reads the server again and follows it; painted again with the
+        same state, it reads nothing. A read that fails while the connection is lost is read again once it is back."""
+        self.server.reasons[A] = "NO_PINNABLE_SOURCE"
+        self.ready_reader()
+        self.open_more()
+        expect(self.page.locator("#b-mark-cvr")).to_be_disabled()
+        self.assertEqual(REASONS["NO_PINNABLE_SOURCE"], self.entry_title())
+        reads = len(self.requests("recipients"))
+        del self.server.reasons[A]
+        self.page.evaluate("([u, v]) => window.synReport(u, v, 'A', false)", [A, 4])
+        self.page.evaluate(self.REPORT_BUTTONS)
+        self.entry_settled()
+        expect(self.page.locator("#b-mark-cvr")).to_be_enabled()
+        self.assertEqual(reads + 1, len(self.requests("recipients")))
+        self.page.evaluate(self.REPORT_BUTTONS)
+        self.entry_settled()
+        self.assertEqual(reads + 1, len(self.requests("recipients")), "the same state reads nothing")
+        # The state moves again; its read is lost with the connection. Offline Mark CVR says so; back, it reads again.
+        self.fault("recipients", hold=True, abort=True)
+        self.page.evaluate("([u, v]) => window.synReport(u, v, 'A', false)", [A, 5])
+        self.page.evaluate(self.REPORT_BUTTONS)
+        held = self.take("recipients")
+        self.page.evaluate(self.CONNECTION, False)
+        self.release(held)
+        expect(self.page.locator("#b-mark-cvr")).to_be_disabled()
+        self.assertEqual("서버에 연결된 판독 세션에서만 중요 결과(CVR)를 보낼 수 있는지 확인합니다.", self.entry_title())
+        before = len(self.requests("recipients"))
+        self.page.evaluate(self.CONNECTION, True)
+        self.entry_settled()
+        expect(self.page.locator("#b-mark-cvr")).to_be_enabled()
+        self.assertEqual(before + 1, len(self.requests("recipients")))
+        # Painted again while offline (renderClinical for the same study): the target stays and nothing is read.
+        self.page.evaluate(self.CONNECTION, False)
+        before = len(self.requests("recipients"))
+        self.page.evaluate("u => window.synReport(u, 6, 'A', true)", A)
+        self.settle()
+        self.assertEqual(before, len(self.requests("recipients")), "nothing is read while the connection is lost")
+        self.page.evaluate(self.CONNECTION, True)
+        self.entry_settled()
+        self.assertEqual(before + 1, len(self.requests("recipients")), "the state that moved meanwhile is read once back")
+
+    def test_sd10d_a_window_read_never_stands_for_a_newer_report_state_and_a_failed_one_is_read_again(self):
+        """The window's read left before the report state moved: its late answer fills the window but does not stand for
+        Mark CVR (whose own read of the newer state does). A window read that fails while the connection is lost is read
+        again once it is back; the window stays open."""
+        self.ready_reader()
+        self.fault("recipients", hold=True, apply=True)
+        self.open_more()
+        self.page.locator("#b-mark-cvr").click()
+        expect(self.page.locator("#cvr-send")).to_be_visible()
+        window_read = self.take("recipients")
+        self.server.heads[A] = {**HEADS[A], "version": 4, "action": "addendum"}
+        self.fault("recipients", hold=True, apply=True)
+        self.page.evaluate("([u, v]) => window.synReport(u, v, 'A', false)", [A, 4])
+        self.page.evaluate(self.REPORT_BUTTONS)
+        entry_read = self.take("recipients")
+        self.release(window_read)
+        self.release(entry_read)
+        self.assertIn("판독 판 v4", self.entry_title())
+        self.assertIn("v3", self.page.locator("#cvr-send-source").text_content())
+        self.close_dialog()
+        # The window's read fails during an outage: once back it is read again and the window can be used.
+        self.fault("recipients", hold=True, abort=True)
+        self.mark(ready=False)
+        failed = self.take("recipients")
+        self.page.evaluate(self.CONNECTION, False)
+        self.release(failed)
+        expect(self.page.locator("#cvr-send-recipient")).to_be_disabled()
+        self.page.evaluate(self.CONNECTION, True)
+        self.entry_settled()
+        expect(self.page.locator("#cvr-send")).to_be_visible()
+        expect(self.page.locator("#cvr-send-recipient")).to_be_enabled()
+        self.compose()
+        expect(self.page.locator("#cvr-send-submit")).to_be_enabled()
     # ── SD11 ──
     def test_sd11_the_periodic_re_read_only_reads_and_an_acknowledged_record_stays_reachable(self):
         r1 = self.server.add(A, P)
