@@ -1750,11 +1750,17 @@ class StudyPanelPageDOM(unittest.TestCase):
         everything as compact as possible'). A button in a list cell now takes the row's own line: the row is no taller
         with it than without it, at the default list size and at the largest, and the button stays whole and clickable.
         In a column the reader narrowed (its header edge dragged to 90 px) at the largest size, the button stays inside
-        its cell and ends in an ellipsis, as the text cells of that column do."""
-        for width, height, list_size, narrow in ((1920, 1080, None, False), (1920, 1080, 20, False), (1366, 640, None, False),
-                                                  (1366, 640, 20, False), (1920, 1080, 20, True)):
-            with self.subTest(width=width, height=height, list_size=list_size, narrow=narrow):
+        its cell and ends in an ellipsis, as the text cells of that column do. The fonts differ by platform (a Linux
+        runner's 11px line is 12px, Windows' is 16px): with a row font whose line is tighter than a button font's, the
+        button still adds nothing, because it takes the row's font and line."""
+        for width, height, list_size, narrow, font in (
+                (1920, 1080, None, False, None), (1920, 1080, 20, False, None), (1366, 640, None, False, None),
+                (1366, 640, 20, False, None), (1920, 1080, 20, True, None), (1920, 1080, None, False, '"Courier New", monospace')):
+            with self.subTest(width=width, height=height, list_size=list_size, narrow=narrow, font=font):
                 page, _, _ = self.page_at(width, height)
+                if font:
+                    page.evaluate("(f) => { document.querySelector('#rows').style.fontFamily = f; }", font)
+                    settle(page)
                 if narrow:
                     head = page.locator('#heads th', has_text='Assigned Reader')
                     grip, box = head.locator('.col-grip').bounding_box(), head.bounding_box()

@@ -1183,9 +1183,11 @@
     .left .grid td.acc { color: var(--kin-link); }
     /* A button in a list cell (Assigned Reader, Tech Note) sits on the row's own text line at the row's text size: the
        toolbar's 26px .chip height made every row 31px for 11px text, about a third fewer rows on a screen. In a column
-       narrowed to a saved width it ends in an ellipsis inside its cell, as the text cells there do. */
-    #rows td .chip { box-sizing: border-box; max-width: 100%; height: auto; padding: 0 6px; overflow-x: clip; text-overflow: ellipsis;
-      font-size: inherit; line-height: 1; }
+       narrowed to a saved width it ends in an ellipsis inside its cell, as the text cells there do. Its line is the
+       row's own (same font and line height) and its 1px border is paid back by -1px margins, so with any platform's
+       fonts the button adds nothing to the row's line: a 13px button on a 12px line made rows 1px taller on Linux. */
+    #rows td .chip { box-sizing: border-box; max-width: 100%; height: auto; margin-block: -1px; padding: 0 6px; overflow-x: clip;
+      text-overflow: ellipsis; font-family: inherit; font-size: inherit; line-height: inherit; }
 
     .rs { min-width: 0; padding: 0; color: var(--kin-text); background: transparent; border-radius: 0; font-weight: 700; }
     .rs.W, .rs.A, .rs.H, .rs.O, .rs.P, .rs.T { background: transparent; }
