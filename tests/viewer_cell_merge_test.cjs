@@ -163,7 +163,7 @@ const presentationOf = viewport => ({ camera: clone(viewport.camera), properties
 // `planes[i]` gives cell i an orientation and makes it an MPR plane instead of a stack.
 function fixture({ rows = 2, cols = 2, restoresPresentation = false, breakLayout = false, empty = [], refitOnResize = false, deviate = null, slow = 0, planes = [], volumes = {}, resetsLinkedPlanes = false } = {}) {
   let deviated = false;
-  const names = ['A', 'B', 'C', 'D'].slice(0, rows * cols);
+  const names = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].slice(0, rows * cols);
   const viewports = new Map(), sets = new Map(), cells = new Map();
   const orientationOf = name => planes[names.indexOf(name)] || null;
   const volumeOf = name => volumes[name] || 'vol-1';
@@ -1128,4 +1128,197 @@ test('a double click remembered during a maximize that fails is forgotten with i
   assert.deepEqual(layoutOf(x.state), before);
   assert.equal(x.calls.length, 2);
   assert.deepEqual(x.controller.state(), { merged: false, op: null, busy: false, quarantined: false, ended: false });
+});
+
+// ── A viewer window over two monitors: the maximize fills the anchor's monitor only ("한 모니터 2×2, 모니터 2개면
+// 2×2 두 개. 더블클릭하면 그 칸이 모니터 전체 1분할"). The display edges come from the monitors module
+// (KinViewerMonitorPlan.edges) as fractions of the grid's width.
+const box = (x, y, width, height) => ({ x, y, width, height });
+const named = (cells, from = 0) => cells.map((cell, index) => ({ ...cell, viewportId: String.fromCharCode(65 + from + index) }));
+
+test('two monitors of 2 x 2 in one 2 x 4 grid: the anchor fills its own monitor and the other monitor keeps its four cells', () => {
+  const cells = planCells(2, 4, Array(8).fill('stack'));
+  // Without an edge the 2 x 4 grid is not one this module enlarges, as before.
+  assert.match(CellMerge.plan({ rows: 2, cols: 4, cells, anchorId: 'A', op: 'maximize' }).reason, /1·2·4화면/);
+  const left = CellMerge.plan({ rows: 2, cols: 4, cells, anchorId: 'A', op: 'maximize', edges: [.5] });
+  assert.equal(left.ok, true, left.reason);
+  assert.deepEqual(left.layoutOptions, [box(0, 0, .5, 1), box(.5, 0, .25, .5), box(.75, 0, .25, .5), box(.5, .5, .25, .5), box(.75, .5, .25, .5)]);
+  assert.deepEqual(left.slots.map(cell => cell.viewportId), ['A', 'C', 'D', 'G', 'H']);
+  assert.deepEqual(left.displaced, ['B', 'E', 'F']);
+  assert.deepEqual(left.area, box(0, 0, .5, 1));
+  const right = CellMerge.plan({ rows: 2, cols: 4, cells, anchorId: 'H', op: 'maximize', edges: [.5] });
+  assert.deepEqual(right.layoutOptions, [box(0, 0, .25, .5), box(.25, 0, .25, .5), box(.5, 0, .5, 1), box(0, .5, .25, .5), box(.25, .5, .25, .5)]);
+  assert.deepEqual(right.slots.map(cell => cell.viewportId), ['A', 'B', 'H', 'E', 'F']);
+  for (const result of [left, right]) assert.equal(result.layoutOptions.reduce((sum, b) => sum + b.width * b.height, 0), 1);
+});
+
+test('a 2 x 2 grid over two monitors maximizes into its own half; one display is the whole grid as before; nothing reaches over an edge', () => {
+  const four = planCells(2, 2, Array(4).fill('stack'));
+  const half = CellMerge.plan({ rows: 2, cols: 2, cells: four, anchorId: 'D', op: 'maximize', edges: [.5] });
+  assert.deepEqual(half.layoutOptions, [box(0, 0, .5, .5), box(.5, 0, .5, 1), box(0, .5, .5, .5)]);
+  assert.deepEqual(half.slots.map(cell => cell.viewportId), ['A', 'D', 'C']);
+  assert.deepEqual(half.displaced, ['B']);
+  // No display edge inside the grid: the window is on one display and the maximize is the whole grid as before.
+  for (const edges of [[], undefined, [NaN, 2, 0, 1]])
+    assert.deepEqual(CellMerge.plan({ rows: 2, cols: 2, cells: four, anchorId: 'D', op: 'maximize', edges }).layoutOptions, [box(0, 0, 1, 1)]);
+  // An edge the anchor's monitor part would reach over (all cells on one side of an edge at .9) is refused, never the
+  // whole window over two monitors; a cell alone on its monitor already is that monitor's one cell.
+  assert.match(CellMerge.plan({ rows: 2, cols: 2, cells: four, anchorId: 'D', op: 'maximize', edges: [.9] }).reason, /경계에 걸쳐/);
+  assert.match(CellMerge.plan({ rows: 1, cols: 2, cells: planCells(1, 2, ['stack', 'stack']), anchorId: 'A', op: 'maximize', edges: [.5] }).reason, /이미 그 모니터의 한 화면/);
+  // Row and column merges are untouched by the edges.
+  assert.deepEqual(CellMerge.plan({ rows: 2, cols: 2, cells: four, anchorId: 'A', op: 'merge-row', edges: [.5] }).layoutOptions,
+    [box(0, 0, 1, .5), box(0, .5, .5, .5), box(.5, .5, .5, .5)]);
+});
+
+test('a monitor part that is not a grid the viewer builds, an edge that cuts cells, and unknown cells refuse as before', () => {
+  // 3 x 3 with the edge through the middle column: its cells lie on both monitors.
+  assert.match(CellMerge.plan({ rows: 3, cols: 3, cells: planCells(3, 3, Array(9).fill('stack')), anchorId: 'A', op: 'maximize', edges: [.5] }).reason, /경계에 걸쳐/);
+  // 3 x 6 split 3 + 3: each part is 3 x 3, which is no base.
+  assert.match(CellMerge.plan({ rows: 3, cols: 6, cells: planCells(3, 6, Array(18).fill('stack')), anchorId: 'A', op: 'maximize', edges: [.5] }).reason, /1·2·4화면/);
+  // 1 x 4 split 1 + 3: the right part is 1 x 3, a base; the left cell already is its monitor's one cell.
+  const strip = planCells(1, 4, Array(4).fill('stack'));
+  assert.deepEqual(CellMerge.plan({ rows: 1, cols: 4, cells: strip, anchorId: 'D', op: 'maximize', edges: [.25] }).layoutOptions, [box(0, 0, .25, 1), box(.25, 0, .75, 1)]);
+  assert.match(CellMerge.plan({ rows: 1, cols: 4, cells: strip, anchorId: 'A', op: 'maximize', edges: [.25] }).reason, /이미 그 모니터의 한 화면/);
+  const unknown = planCells(2, 4, ['stack', 'stack', 'stack', 'stack', 'stack', 'stack', 'unreadable', 'stack']);
+  assert.match(CellMerge.plan({ rows: 2, cols: 4, cells: unknown, anchorId: 'A', op: 'maximize', edges: [.5] }).reason, /3D·SR·PDF/);
+  const empty = planCells(2, 4, ['empty', 'stack', 'stack', 'stack', 'stack', 'stack', 'stack', 'stack']);
+  assert.match(CellMerge.plan({ rows: 2, cols: 4, cells: empty, anchorId: 'A', op: 'maximize', edges: [.5] }).reason, /영상이 표시된/);
+  assert.equal(CellMerge.plan({ rows: 2, cols: 4, cells: empty, anchorId: 'B', op: 'maximize', edges: [.5] }).ok, true);
+});
+
+// The split an applied Hanging Protocol with monitors makes: monitor 1 (left half) and monitor 2 (right half), each a
+// 2 x 2 image area below a toolbar band of 10 % - so the rectangles do not cover the grid.
+const SPLIT = [box(0, .1, .25, .45), box(.25, .1, .25, .45), box(.5, .1, .25, .45), box(.75, .1, .25, .45),
+  box(0, .55, .25, .45), box(.25, .55, .25, .45), box(.5, .55, .25, .45), box(.75, .55, .25, .45)];
+const splitCells = () => named(SPLIT.map(b => ({ ...b, kind: 'stack', sets: ['ds'] })));
+
+test('a registered Hanging Protocol split maximizes into its monitor image area, and an unregistered one still refuses', () => {
+  const cells = splitCells();
+  const result = CellMerge.plan({ rows: 2, cols: 4, cells, anchorId: 'G', op: 'maximize', edges: [.5], split: SPLIT });
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(result.area, box(.5, .1, .5, .9));
+  assert.deepEqual(result.layoutOptions, [box(0, .1, .25, .45), box(.25, .1, .25, .45), box(.5, .1, .5, .9), box(0, .55, .25, .45), box(.25, .55, .25, .45)]);
+  assert.deepEqual(result.slots.map(cell => cell.viewportId), ['A', 'B', 'G', 'E', 'F']);
+  // The same split shown on one monitor: its own image area (not over the band).
+  const oneRects = [box(0, .1, .5, .45), box(.5, .1, .5, .45), box(0, .55, .5, .45), box(.5, .55, .5, .45)];
+  const one = named(oneRects.map(b => ({ ...b, kind: 'stack', sets: ['ds'] })));
+  assert.deepEqual(CellMerge.plan({ rows: 2, cols: 2, cells: one, anchorId: 'B', op: 'maximize', split: oneRects }).layoutOptions, [box(0, .1, 1, .9)]);
+  // Not the registered geometry (a saved merged layout): refused as before.
+  assert.match(CellMerge.plan({ rows: 2, cols: 4, cells, anchorId: 'G', op: 'maximize', edges: [.5] }).reason, /이미 병합|1·2·4화면/);
+  assert.match(CellMerge.plan({ rows: 2, cols: 4, cells, anchorId: 'G', op: 'maximize', edges: [.5], split: SPLIT.slice(1) }).reason, /이미 병합|1·2·4화면/);
+});
+
+function monitorFixture(edges, options = {}) {
+  const x = fixture({ rows: 2, cols: 4, ...options });
+  x.win.kinViewerMonitorEdges = async () => { x.asked = (x.asked || 0) + 1; return typeof edges === 'function' ? edges() : edges; };
+  return x;
+}
+
+test('the maximize over two monitors is put back to the 2 x 4 grid with the displaced cells as they were', async () => {
+  const x = monitorFixture([.5]);
+  // The other monitor's cell C was scrolled and windowed by the reader: it is never rebuilt, so it keeps both.
+  x.viewports.get('C').index = 4; x.viewports.get('C').current = 'wadors:C:4'; x.viewports.get('C').properties.voiRange = { lower: -100, upper: 300 };
+  const cCamera = clone(x.viewports.get('C').camera), cViewport = x.viewports.get('C');
+  const before = layoutOf(x.state), camera = clone(x.viewports.get('B').camera);
+  const merged = await x.controller.merge('maximize', 'F');
+  assert.equal(merged.ok, true, merged.message);
+  assert.equal(x.asked, 1);
+  assert.deepEqual(merged.area, box(0, 0, .5, 1));
+  assert.match(merged.message, /그 모니터의 한 화면/);
+  assert.deepEqual(layoutOf(x.state), [['F', 0, 0, .5, 1], ['C', .5, 0, .25, .5], ['D', .75, 0, .25, .5], ['G', .5, .5, .25, .5], ['H', .75, .5, .25, .5]]);
+  assert.equal(x.viewports.get('C'), cViewport, 'the other monitor keeps its own viewport');
+  assert.equal(x.viewports.get('C').current, 'wadors:C:4');
+  assert.deepEqual(x.viewports.get('C').camera, cCamera);
+  const back = await x.controller.unmerge();
+  assert.equal(back.ok, true, back.message);
+  assert.deepEqual(layoutOf(x.state), before);
+  assert.deepEqual(x.viewports.get('B').camera, camera);
+  assert.equal(x.calls.at(-1).layoutOptions, null, 'a uniform base comes back as its rows and columns');
+  assert.equal(x.viewports.get('C').current, 'wadors:C:4');
+  assert.deepEqual(x.viewports.get('C').properties.voiRange, { lower: -100, upper: 300 });
+});
+
+test('a registered split is maximized on one monitor and put back with its own rectangles', async () => {
+  const x = monitorFixture([.5]);
+  await x.services.viewportGridService.setLayout({ numRows: 2, numCols: 4, layoutOptions: SPLIT, activeViewportId: 'A',
+    findOrCreateViewport: index => ({ displaySetInstanceUIDs: ['ds-' + 'ABCDEFGH'[index]], viewportOptions: x.cells.get('ABCDEFGH'[index]).viewportOptions }) });
+  x.win.kinViewerSplitRects = clone(SPLIT);
+  const before = layoutOf(x.state);
+  const merged = await x.controller.merge('maximize', 'C');
+  assert.equal(merged.ok, true, merged.message);
+  assert.deepEqual(layoutOf(x.state).map(row => row[0]), ['A', 'B', 'C', 'E', 'F']);
+  assert.deepEqual(layoutOf(x.state)[2], ['C', .5, .1, .5, .9]);
+  const back = await x.controller.unmerge();
+  assert.equal(back.ok, true, back.message);
+  assert.deepEqual(layoutOf(x.state), before);
+  assert.deepEqual(x.calls.at(-1).layoutOptions, SPLIT);
+});
+
+test('displays that do not answer in time, or fail, are not taken as one: nothing is dispatched', async () => {
+  const late = fixture({ rows: 2, cols: 2 });
+  late.win.kinViewerMonitorEdges = () => new Promise(resolve => setTimeout(() => resolve([.5]), 1500));
+  const merged = await late.controller.merge('maximize', 'A');
+  assert.equal(merged.ok, false);
+  assert.match(merged.message, /모니터 정보를 확인하지 못해/);
+  const broken = fixture({ rows: 2, cols: 2 });
+  broken.win.kinViewerMonitorEdges = () => { throw Error('no screens'); };
+  assert.equal((await broken.controller.merge('maximize', 'A')).ok, false);
+  assert.equal(late.calls.length + broken.calls.length, 0);
+  // One display under the grid answers no edge: the whole grid, as before.
+  const one = fixture({ rows: 2, cols: 2 });
+  one.win.kinViewerMonitorEdges = async () => [];
+  assert.equal((await one.controller.merge('maximize', 'A')).ok, true);
+  assert.deepEqual(one.calls[0].layoutOptions, [box(0, 0, 1, 1)]);
+});
+
+test('a screen that changes while the displays are asked is not maximized', async () => {
+  let release;
+  const x = monitorFixture(() => new Promise(resolve => { release = () => resolve([.5]); }));
+  const operation = x.controller.merge('maximize', 'A');
+  x.state.viewports.get('B').displaySetInstanceUIDs = ['ds-C'];
+  release();
+  const result = await operation;
+  assert.equal(result.ok, false);
+  assert.match(result.message, /화면이 바뀌어/);
+  assert.equal(x.calls.length, 0);
+});
+
+test('while the displays are asked a second double click is remembered once and the screen comes back', async () => {
+  let release;
+  const x = monitorFixture(() => new Promise(resolve => { release = () => resolve([.5]); })), status = mountForGestures(x);
+  const before = layoutOf(x.state);
+  doubleClick(x, 'A');
+  assert.equal(x.controller.state().busy, true);
+  doubleClick(x, 'A'); doubleClick(x, 'A');
+  release();
+  await until('a restore after the maximize', () => x.calls.length >= 2 && !x.controller.state().busy);
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.equal(x.calls.length, 2);
+  assert.deepEqual(x.calls[0].layoutOptions[0], box(0, 0, .5, 1));
+  assert.deepEqual(layoutOf(x.state), before);
+  assert.match(status.textContent, /되돌렸습니다/);
+});
+
+test('a session that ends while the displays are asked dispatches nothing', async () => {
+  let release;
+  const x = monitorFixture(() => new Promise(resolve => { release = () => resolve([.5]); }));
+  const operation = x.controller.merge('maximize', 'A');
+  x.controller.stop();
+  release();
+  assert.equal((await operation).ok, false);
+  assert.equal(x.calls.length, 0);
+});
+
+test('a split of 2 x 2 on one monitor and 1 x 1 on the other (five cells on a 2 x 3 base) maximizes only on the 2 x 2 side', () => {
+  const rects = [box(0, 0, .25, .5), box(.25, 0, .25, .5), box(.5, 0, .5, 1), box(0, .5, .25, .5), box(.25, .5, .25, .5)];
+  const cells = named(rects.map(b => ({ ...b, kind: 'stack', sets: ['ds'] })));
+  const left = CellMerge.plan({ rows: 2, cols: 3, cells, anchorId: 'D', op: 'maximize', edges: [.5], split: rects });
+  assert.equal(left.ok, true, left.reason);
+  assert.deepEqual(left.layoutOptions, [box(0, 0, .5, 1), box(.5, 0, .5, 1)]);
+  assert.deepEqual(left.slots.map(cell => cell.viewportId), ['D', 'C']);
+  assert.match(CellMerge.plan({ rows: 2, cols: 3, cells, anchorId: 'C', op: 'maximize', edges: [.5], split: rects }).reason, /이미 그 모니터의 한 화면/);
+  // A split that does not fit its base grid, overlaps or leaves the grid is no registered split.
+  assert.match(CellMerge.plan({ rows: 2, cols: 2, cells, anchorId: 'D', op: 'maximize', edges: [.5], split: rects }).reason, /1·2·4화면|이미 병합/);
+  const over = rects.map((b, i) => (i === 2 ? box(.4, 0, .6, 1) : b));
+  assert.match(CellMerge.plan({ rows: 2, cols: 3, cells: named(over.map(b => ({ ...b, kind: 'stack', sets: ['ds'] }))), anchorId: 'D', op: 'maximize', edges: [.5], split: over }).reason, /1·2·4화면|이미 병합/);
 });

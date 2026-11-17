@@ -3,9 +3,11 @@
  *   - the tab row: Order List (RIS) · Scheduled · Report (the panes come from technician-scheduled.js and
  *     technician-report.js through KinTechnicianPanes; this file draws the tabs and switches between them);
  *   - the action row under the tabs: Search Orders · Delete Order · Match… · Unmatch…;
- *   - Search Orders: a bar of conditions on the order rows (Scheduled from / to, State, Ward, ReqDoc) applied at once,
- *     together with the panel's own ID / Name / Modality / StudyDesc boxes. Reset clears them; Close only closes the bar
- *     and, while a condition is set, says so on the action row;
+ *   - RIS Status: a last column of the order table with each order's state as the hospital RIS gives it (RIS_STATUS
+ *     below; blank when the order has none). The existing columns keep their places;
+ *   - Search Orders: a bar of conditions on the order rows (Scheduled from / to, State, RIS Status, Ward, ReqDoc) applied
+ *     at once, together with the panel's own ID / Name / Modality / StudyDesc boxes. Reset clears them; Close only closes
+ *     the bar and, while a condition is set, says so on the action row;
  *   - Delete Order: takes an unmatched order off this list with a reason (the server keeps who, when and why); Undo
  *     brings it back. No hospital RIS order is cancelled, and no image, study or report is deleted;
  *   - Match… / Unmatch…: the page's own Match / Unmatch (the right-click body) in a window that compares the study with
@@ -45,6 +47,14 @@
     el('thead', {}, el('tr', {}, heads.map(h => el('th', { text: h })))),
     el('tbody', {}, rows.map(r => r instanceof HTMLElement ? r : el('tr', {}, r.map(v => el('td', { text: text(v) }))))));
   const note = (message, kind = '') => el('p', { className: 'order-note ' + kind, text: message });
+  /**
+   * The order states the hospital RIS gives (server Order.risStatus) and their words: the column, the search and the
+   * condition line all read this one table. The PACS never derives a state (a matched order is not thereby acquired). A
+   * value not in the table is shown blank, never as a state. "Order Confirmed": the order's own word ("Confirmed" alone
+   * is the report's approval on these screens).
+   */
+  const RIS_STATUS = Object.freeze({ confirmed: 'Order Confirmed', scheduled: 'Scheduled', acquired: 'Acquired' });
+  const risStatusLabel = code => Object.hasOwn(RIS_STATUS, code ?? '') ? RIS_STATUS[code] : '—';
 
   /** A modal window (Esc and Close close it; it is removed when closed). */
   function openWindow(title, name) {
@@ -116,8 +126,29 @@
       if (undo) status.append(' ', button('Undo', undo));
     }
 
+    // ── RIS Status column ──
+    // The page draws the order rows (order-list.js) and tells add-ons after each drawing; the cell is added then, once per
+    // row (a row drawn again is a new row), from the same order list the page drew.
+    const headRow = grid.querySelector('thead tr:not(.filters)'), filterRow = grid.querySelector('thead tr.filters');
+    const orderRows = grid.querySelector('#orderrows');
+    if (!headRow || !filterRow || !orderRows) throw new Error('The Order List table is missing');
+    const statusHead = el('th', { 'data-ris-status': '', text: 'RIS Status' }), statusFilter = el('th', { 'data-ris-status': '' });
+    headRow.append(statusHead); filterRow.append(statusFilter);
+    added.push(statusHead, statusFilter);
+    let emptyColspan = null;
+    function drawStatus() {
+      const byOid = new Map(ctx.orders.list().map(o => [o.oid, o]));
+      for (const row of orderRows.rows) {
+        const empty = row.querySelector(':scope > td.empty');
+        if (empty) { emptyColspan ??= empty.colSpan; empty.colSpan = headRow.cells.length; continue; }
+        if (!row.dataset.oid) continue;
+        row.querySelector(':scope > td[data-ris-status]')?.remove();
+        row.append(el('td', { 'data-ris-status': byOid.get(row.dataset.oid)?.risStatus ?? '', text: risStatusLabel(byOid.get(row.dataset.oid)?.risStatus) }));
+      }
+    }
+
     // ── Search Orders ──
-    const crit = { from: '', to: '', state: '', ward: '', doc: '' };
+    const crit = { from: '', to: '', state: '', ris: '', ward: '', doc: '' };
     let searchOpen = false;
     const active = () => Object.values(crit).some(Boolean);
     const removeFilter = ctx.orders.filter(o => {
@@ -125,12 +156,15 @@
       if (crit.from && day < crit.from) return false;
       if (crit.to && day > crit.to) return false;
       if (crit.state && o.matched !== crit.state) return false;
+      if (crit.ris && o.risStatus !== crit.ris) return false;
       if (crit.ward && !String(o.ward ?? '').toUpperCase().includes(crit.ward.toUpperCase())) return false;
       if (crit.doc && !String(o.reqDoc ?? '').toUpperCase().includes(crit.doc.toUpperCase())) return false;
       return true;
     });
     const count = el('span', { className: 'order-count', role: 'status' });
-    const offOrders = ctx.orders.onRender(n => { count.textContent = n + ' orders'; showCondition(); });
+    const offOrders = ctx.orders.onRender(n => { drawStatus(); count.textContent = n + ' orders'; showCondition(); });
+    // The filter above drew the rows before this listener was there.
+    drawStatus();
     const inputs = {};
     const field = (key, label, type) => {
       const input = el('input', { type, 'aria-label': label, size: type === 'text' ? 8 : undefined });
@@ -142,8 +176,12 @@
       el('option', { value: '', text: 'All' }), el('option', { value: 'U', text: 'Unmatched' }), el('option', { value: 'M', text: 'Matched' }));
     state.addEventListener('change', () => { crit.state = state.value; ctx.orders.render(); });
     inputs.state = state;
+    const ris = el('select', { 'aria-label': 'RIS Status' }, el('option', { value: '', text: 'All' }),
+      Object.entries(RIS_STATUS).map(([value, label]) => el('option', { value, text: label })));
+    ris.addEventListener('change', () => { crit.ris = ris.value; ctx.orders.render(); });
+    inputs.ris = ris;
     search.replaceChildren(field('from', 'Scheduled from', 'date'), field('to', 'to', 'date'), el('label', {}, 'State ', state),
-      field('ward', 'Ward', 'text'), field('doc', 'ReqDoc', 'text'),
+      el('label', {}, 'RIS Status ', ris), field('ward', 'Ward', 'text'), field('doc', 'ReqDoc', 'text'),
       button('Reset', () => resetSearch()), button('Close', () => toggleSearch(false)), count);
     function resetSearch() {
       for (const key of Object.keys(crit)) { crit[key] = ''; inputs[key].value = ''; }
@@ -157,8 +195,12 @@
     function showCondition() {
       const words = [crit.from && 'from ' + crit.from, crit.to && 'to ' + crit.to, crit.state && (crit.state === 'M' ? 'Matched' : 'Unmatched'),
         crit.ward && 'Ward ' + crit.ward, crit.doc && 'ReqDoc ' + crit.doc].filter(Boolean);
-      condition.hidden = searchOpen || !words.length;
-      condition.replaceChildren(...(words.length ? ['Order search: ' + words.join(' · ') + ' ', button('Reset', () => resetSearch())] : []));
+      // The RIS Status word is its own node so the screen language translates it; the other parts are data or as before.
+      const risWord = crit.ris ? el('span', { text: risStatusLabel(crit.ris) }) : null;
+      condition.hidden = searchOpen || !(words.length || risWord);
+      condition.replaceChildren(...(words.length || risWord
+        ? ['Order search: ' + words.join(' · ') + ' ', words.length && risWord ? '· ' : null, risWord, ' ', button('Reset', () => resetSearch())].filter(Boolean)
+        : []));
     }
 
     // ── Delete Order ──
@@ -311,6 +353,9 @@
       for (const node of added) node.remove();
       listTab.removeEventListener('click', backToList);
       offSelect(); offRender(); offOrders(); removeFilter();
+      // Rows the page did not draw again (not in Technician mode) lose the cell here.
+      for (const cell of orderRows.querySelectorAll(':scope > tr > td[data-ris-status]')) cell.remove();
+      if (emptyColspan !== null) for (const cell of orderRows.querySelectorAll(':scope > tr > td.empty')) cell.colSpan = emptyColspan;
       actions.replaceChildren(); actions.hidden = true; search.replaceChildren(); search.hidden = true;
       for (const dialog of document.querySelectorAll('dialog[data-order-window]')) dialog.close();
     };

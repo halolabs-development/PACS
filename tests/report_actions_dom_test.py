@@ -646,7 +646,11 @@ class ReportActionsDOMTest(unittest.TestCase):
             self.assertGreaterEqual(b['y'], panel['y'] - 0.5, b['key'])
             self.assertLessEqual(b['b'], panel['b'] + 0.5, b['key'])
             for field in m['fields']:
-                self.assertFalse(overlap(b, field), f'{b["key"]} covers #{field["id"]} {where}')
+                # The field region clips its fields (it scrolls the report text): only the part of a field shown in it
+                # can be covered.
+                shown = {'x': max(field['x'], redit['x']), 'r': min(field['r'], redit['r']),
+                         'y': max(field['y'], redit['y']), 'b': min(field['b'], redit['b'])}
+                self.assertFalse(overlap(b, shown), f'{b["key"]} covers #{field["id"]} {where} {field} {redit}')
             if m['pane']:
                 self.assertFalse(overlap(b, m['pane']), f'{b["key"]} covers the dictation pane {where}')
 

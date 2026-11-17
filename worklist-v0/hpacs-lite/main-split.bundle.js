@@ -846,7 +846,8 @@
     // f: 없으면 필터 없음 / 'text' = 입력칸 / 배열 = 드롭다운
     const COLS = {
       Radiology: [
-        { k: "pf", t: "PF" },
+        // PF (prefetch): this session's Preload queue state; the filter compares the word preloadWord gives (filterPredicate).
+        { k: "pf", t: "PF", f: ["Queued", "Downloading", "Ready", "Failed", "Evicted", "None"] },
         { k: "assignedReader", t: "Assigned Reader", f: "text" },
         { k: "techNote", t: "Tech Note", f: ["Yes", "None", "Cleared", "Unknown"] },
         { k: "no", t: "No", num: 1 },
@@ -1030,6 +1031,14 @@
         return s.tele === true ? `${name} <span class="tele-tag" title="원격판독으로 의뢰받은 검사입니다.">Tele</span>` : name;
       },
     };
+    /**
+     * The PF word a filter compares: the status CELL.pf shows (Queued / Downloading / Ready / Failed / Evicted, without
+     * the percent), or "None" when this session's Preload queue does not hold the study (the cell's "·").
+     */
+    function preloadWord(s) {
+      const entry = window.KinPreloadQueue?.study?.(s?.uid);
+      return typeof entry?.status === "string" && entry.status ? entry.status : "None";
+    }
 
     let mode = "Radiology";
     const fval = {};   // 컬럼필터 값 (컬럼 key → 문자열)
@@ -1098,6 +1107,7 @@
       rs: "RS (Report Status, 판독 상태)\nW: Unread — 판독 전\nT: In Progress — 저장했지만 승인 전\nP: Preliminary — 상급 판독의 승인 대기\nH: On Hold — 보류\nA: Approved — 승인됨\nA: Finalized — 승인 후 24시간이 지남, Addendum으로만 덧붙임\nD: Destroyed — 보존 기간 만료로 파기됨",
       em: "EM (Emergency)\nE: 응급\nN: 일반",
       ss: "SS (촬영 확인 상태)\nVerified: 촬영 확인됨\nUnverified: 촬영 미확인",
+      pf: "PF (Prefetch, 미리 받기): 이 브라우저에 영상을 미리 받아 두는 상태입니다. 자세한 내용은 선택 막대의 Preload 패널에 있습니다.\nQueued: 받을 차례나 저장 공간을 기다림\nDownloading: 받는 중 (진행률 %)\nReady: 받아 둠 — 받기 시작한 때부터 72시간이 지나면 자동으로 정리됨\nFailed: 받지 못함 — Preload 패널의 Retry로 다시 받음\nEvicted: 미리 받은 사본이 지워짐 (저장 공간·기한·Clear All 등) — Retry로 다시 받음\n· (None): 이 로그인의 미리 받기 상태가 없거나 아직 확인되지 않음",
     };
     function renderHeads() {
       // The first header also holds the "+" button; its own label keeps the column named by its title, not "Choose columns <title>".
@@ -1660,9 +1670,11 @@
       const needsParts = KinCompoundFilter.usesField(values[KinCompoundFilter.KEY], 'bodyPart', COLS[filterMode]);
       const matchCompound = KinCompoundFilter.compile(values[KinCompoundFilter.KEY], COLS[filterMode]);
       const matchQuick = KinCompoundFilter.compileQuick(filter?.quick, values[KinCompoundFilter.KEY], COLS[filterMode]);
-      return s => {
-        if (!matchQuick(s)) return false;
-        if (!KinExamScope.projections(s).some(source=>withinDays(source.date, days))) return false;
+      return row => {
+        if (!matchQuick(row)) return false;
+        if (!KinExamScope.projections(row).some(source=>withinDays(source.date, days))) return false;
+        // PF is the Preload queue word the cell shows now, not the row's stored "·": every filter, count and search reads it here.
+        const s = { ...row, pf: preloadWord(row) };
         // A compound rule on Confirm compares the same Confirmed / Not Confirmed word the header filter uses (RS based).
         return cols.every(c => testCol(s, c, values))
           && matchCompound({ ...s, confirm: confirmedRow(s) ? "Confirmed" : "Not Confirmed",
@@ -1685,20 +1697,36 @@
     // Include those values and the local date, while excluding the quick-search draft.
     function folderInputsKey() {
       return JSON.stringify([studies, userFilters, sharedSearches, mode, new Date().toDateString(),
-        studies.map(s => worklistBodyParts.get(s.uid))]);
+        studies.map(s => worklistBodyParts.get(s.uid)), studies.map(preloadWord)]);
+    }
+    /** Whether the list's search (applied or being typed), a saved or shared search, or the Saved Search editor's draft has a PF condition. */
+    function preloadFilterUsed() {
+      const applied = worklistSearch?.read(searchCriteria())?.criteria;
+      const editing = savedFilterManager.draft();
+      return [applied, searchCriteria(), ...userFilters, ...sharedSearches, editing].some(f => !!f?.cols && (!!f.cols.pf
+        || KinCompoundFilter.usesField(f.cols[KinCompoundFilter.KEY], 'pf', COLS[f.mode] || COLS[mode])));
     }
     function folderSelectionIds(filter) {
       // Folder counts describe replacement searches. Once another predicate narrows
       // the list, no folder may claim that its replacement count is the applied list.
-      if (favoriteList?.key() || studyTagList?.key() || consultationFilter) return [];
+      // [] is "no Modality chosen" (the list is empty whatever else is set, and the tree asks for one); null is
+      // "narrowed by another condition" (no folder describes the list, and the tree does not ask for a Modality).
+      const value = filter.cols?.modality;
+      if (Array.isArray(value) && !value.length) return [];
+      if (favoriteList?.key() || studyTagList?.key() || consultationFilter) return null;
       const stored = folderSearches().find(f => f.name === activeFilterName
         && f.treeId.startsWith('own:') && filterCriteriaKey(f) === filterCriteriaKey(filter));
       if (stored) return [stored.treeId];
       if (filter.quick || savedFilterDays(filter.days) !== -1
-        || Object.entries(filter.cols || {}).some(([key, value]) => key !== 'modality' && value !== '' && value != null)) return [];
-      const value = filter.cols?.modality;
+        || Object.entries(filter.cols || {}).some(([key, value]) => key !== 'modality' && value !== '' && value != null)) return null;
       return Array.isArray(value) || value
         ? [...new Set(KinCompoundFilter.modalityTokens(value))].map(v => 'modality:' + v) : ['all'];
+    }
+    // The one place the tree is told what the list is: folder ids, [] (no Modality chosen) or null (narrowed otherwise).
+    function alignFolders(ids) {
+      const now = worklistFolders.snapshot();
+      if (ids === null) { if (!now.narrowed || now.selectedIds.length) worklistFolders.narrow(); }
+      else if (now.narrowed || JSON.stringify(now.selectedIds) !== JSON.stringify(ids)) worklistFolders.setApplied(ids);
     }
     function updateWorklistFolders() {
       if (!worklistFolders) return;
@@ -1723,22 +1751,22 @@
       }
       if (!folderAppliedSearch) {
         const search = worklistSearch?.read(searchCriteria());
-        const ids = search?.empty ? [] : folderSelectionIds(search?.criteria || searchCriteria());
-        if (JSON.stringify(worklistFolders.snapshot().selectedIds) !== JSON.stringify(ids)) worklistFolders.setApplied(ids);
+        // Results emptied by Clear: the search line says so, and no folder describes the empty list.
+        alignFolders(search?.empty ? null : folderSelectionIds(search?.criteria || searchCriteria()));
       } else if (folderAppliedSearch.criteria !== filterCriteriaKey(worklistSearch?.read(searchCriteria()).criteria || searchCriteria())
         || favoriteList?.key() || studyTagList?.key() || consultationFilter) {
-        if (worklistFolders.snapshot().selectedIds.length) worklistFolders.setApplied([]);
+        alignFolders(null);
       }
     }
     function alignWorklistFolder(filter, id) {
       if (!worklistFolders) return;
       updateWorklistFolders();
       if (id) { worklistFolders.setApplied(id); return; }
-      worklistFolders.setApplied(folderSelectionIds(filter || searchCriteria()));
+      alignFolders(folderSelectionIds(filter || searchCriteria()));
     }
     // My Shortcuts → popup that sets the same column filters as the filter row (fval), so the
     // list, the active-filter summary and Saved Searches all see them. No separate filter state.
-    const EXAM_FILTER_KEYS = ['date', 'id', 'name', 'age', 'sex', 'modality', 'desc', 'acc', 'institutionName', 'assignedReader', 'techNote',
+    const EXAM_FILTER_KEYS = ['date', 'id', 'name', 'age', 'sex', 'modality', 'desc', 'acc', 'institutionName', 'assignedReader', 'techNote', 'pf',
       'rs', 'em', 'ss', 'matched', 'preDoc', 'preReviewer', 'ward'];
     let examFilterDialog = null;
     function openExamFilterPopup(opener) {
@@ -1764,6 +1792,8 @@
       const inputs = new Map();
       for (const c of cols) {
         const label = document.createElement('label'); label.append(document.createTextNode(c.t + ' '));
+        // A short code (PF, RS, EM, SS) carries the same explanation as its list header.
+        if (HEAD_HELP[c.k]) label.title = HEAD_HELP[c.k];
         const current = Array.isArray(fval[c.k]) ? fval[c.k].join(',') : String(fval[c.k] ?? '');
         let control;
         if (c.k === 'date') {
@@ -3626,6 +3656,13 @@
         readLoading: '이 검사의 영상 요청을 불러오는 중입니다…',
         readFailed: '이 검사의 영상 요청을 불러오지 못했습니다.',
         readCounts: (n, parts) => `이 검사의 영상 요청 ${n}건 · ${parts}`,
+        readEmpty: '이 검사에는 영상 요청이 없습니다.',
+        // 안내 띠의 알림은 짧게(띠의 다른 줄을 좁혀 줄을 바꾸지 않게), 전문은 툴팁.
+        notice: { counts: (n, parts) => `영상 요청 ${n}건 · ${parts}`, failed: '영상 요청 읽기 실패', refused: '영상 요청 읽기 거절',
+          account: '영상 요청: 계정 바뀜' },
+        readUnread: '이 검사의 영상 요청은 읽지 않습니다(원격판독 검사).',
+        // 끊김은 상태를 말한다: 이 화면의 연결 판단일 뿐 통신을 막는 것은 아니다.
+        readOffline: '서버 연결이 끊겼습니다. 표시된 영상 요청은 최신이 아닐 수 있습니다.',
         codes: {
           IMAGE_REQUEST_CHANGED: '그사이 이 요청이 바뀌었습니다. 요청을 다시 불러왔으니 상태를 확인한 뒤 다시 보내세요.',
           IMAGE_REQUEST_STATE: '지금 요청 상태에서는 할 수 없는 동작입니다. 이미 처리가 끝났을 수 있어 요청을 다시 불러왔습니다.',
@@ -3659,12 +3696,15 @@
       const readSummary = document.getElementById('image-request-summary');
       const readToggle = document.getElementById('image-request-toggle');
       const readPane = document.getElementById('image-request-pane');
+      const readNotice = document.getElementById('image-request-notice');
       let ended = false, lock = null;
       // queueLoaded: 지금 조건의 첫 쪽을 읽은 적이 있는가. 읽기 전의 빈 목록을 "조회 성공, 요청 없음"으로 쓰지 않기 위해서다.
       let queueState = 'active', queueKind = '', queueItems = [], queueCursor = null, queueFailure = null, queueLoading = false;
       let queueLoaded = false;
       let queueSeq = 0, detailId = null, detailItem = null, detailFailure = null, detailLoading = false, detailSeq = 0;
       let readUid = null, readItems = null, readFailure = null, readLoading = false, readSeq = 0, readOpen = false;
+      // 판독 칸이 보이는 검사(readShown)와 그때 정한 판독 쪽 줄의 유무(readPresent) — main.html "An answer never resizes".
+      let readShown, readPresent = false;
       // 요청 id별로 쓰던 note, 결과를 모르는 쓰기(같은 requestId로 다시 보낼 것), 마지막 결과 문구.
       const drafts = new Map(), attempts = new Map(), notes = new Map();
       // 요청 id별로 이 계정이 남긴 요청인지(true·false, 서버 목록이 정한 값)와, 확인 중('checking')·확인 실패(오류)인 것.
@@ -4363,7 +4403,8 @@
       readList.id = 'image-request-read-list';
       readPane.append(make('p', 'image-request-muted', TEXT.readHint), readLine, readList);
       // 접힌 줄에도 Closed 옆 문구가 보여야 한다(U4p §3.3). 요약은 말줄임으로 잘리므로 그 안에 두지 않고 바로 아래에 줄을 넘기는
-      // 한 줄로 둔다 — Closed가 있을 때만 서므로 Closed 없는 검사의 판독 화면 배치는 그대로다.
+      // 한 줄로 둔다. 그 자리는 줄이 서 있는 동안 늘 잡혀 있고(Closed가 없으면 보이지 않게) 답은 보임만 바꾼다 — 늦게 온 답이
+      // 그 줄을 끼우면 판독 칸이 줄어 단추 줄이 움직였다(main.html "An answer never resizes").
       const readClosed = make('p', 'image-request-closed-line');
       readClosed.dataset.part = 'closed';
       readClosed.append(badge('Closed'));
@@ -4374,24 +4415,41 @@
           .map(([state, n]) => `${state} ${n}`).join(' · ');
       }
 
-      /** 줄은 요청이 있거나 읽기가 실패했거나 잠긴 동안만 보인다 — 요청 없는 검사의 판독 화면 배치를 바꾸지 않는다. */
+      /**
+       * 판독 쪽 줄(단추 줄 아래). 줄이 있는지는 판독 칸이 그 검사를 보일 때(sync) 정하고 그 검사를 여는 동안 바꾸지 않는다:
+       * 읽을 수 있는 검사면 늘 선다 — 단추 줄 아래라 좁은 창에서는 창 밖으로 나가고 단추 줄을 밀지 않는다. 답(요청 있음·없음·
+       * 실패·잠금)은 줄의 글과 연 창의 안만 바꾼다. 요청·실패·잠금은 줄이 창 밖일 수 있어 판독 칸 위 안내 띠의 알림도 말한다.
+       */
       function renderReading() {
-        const visible = !ended && (lock !== null || readFailure !== null || (readItems !== null && readItems.length > 0));
+        const visible = !ended && readPresent;
         readRoot.hidden = !visible;
         readRoot.dataset.state = ended ? 'ended' : lock ? 'locked' : readFailure ? 'failed' : readLoading ? 'loading'
           : readItems === null ? 'idle' : readItems.length ? 'ready' : 'empty';
-        const text = lock ? lock.text : readFailure ? TEXT.readFailed : readItems && readItems.length
-          ? TEXT.readCounts(readItems.length, readCounts(readItems)) : TEXT.readLoading;
+        const text = lock ? lock.text : !allowed() ? TEXT.readOffline : readUid === null ? TEXT.readUnread : readFailure ? TEXT.readFailed : readItems === null
+          ? TEXT.readLoading : readItems.length ? TEXT.readCounts(readItems.length, readCounts(readItems)) : TEXT.readEmpty;
         readSummary.textContent = text;
         readSummary.title = lock ? `${lock.text}\n${lock.detail}`.trim() : readFailure ? readDetail(readFailure) : text;
-        readClosed.hidden = !!lock || !!readFailure || !readItems || !readItems.some(item => item.state === 'Closed');
-        readToggle.hidden = lock !== null;
+        readClosed.dataset.shown = String(!lock && !readFailure && !!readItems && readItems.some(item => item.state === 'Closed'));
         readToggle.textContent = readOpen ? 'Hide Requests' : 'Show Requests';
-        readToggle.setAttribute('aria-expanded', String(readOpen && lock === null));
-        readPane.hidden = !readOpen || lock !== null;
-        const state = readFailure ? 'failed' : readLoading ? 'loading' : 'ready';
-        setState(readLine, state, { failed: TEXT.readFailed, loading: TEXT.readLoading }[state] || '',
-          readFailure ? readDetail(readFailure) : '');
+        readToggle.setAttribute('aria-expanded', String(readOpen));
+        // 연 창은 잠겨도 연 채로 두고 안에 잠금을 쓴다(닫으면 판독 칸이 다시 커진다).
+        readPane.hidden = !readOpen;
+        if (readNotice) {
+          // 알 때만 말한다: 요청 있음·실패·잠금은 그 글, 성공한 빈 답·읽지 않는 검사는 알림 없음, 읽는 중은 그대로.
+          // 끊긴 동안은 새로 아는 것이 없다: 마지막으로 말한 것을 그대로 둔다.
+          const told = !lock && readUid !== null && !allowed() ? null : lock ? (lock.account ? TEXT.notice.account : TEXT.notice.refused) : readFailure ? TEXT.notice.failed
+            : readItems && readItems.length ? TEXT.notice.counts(readItems.length, readCounts(readItems))
+            : readUid === null || readItems !== null ? '' : null;
+          if (ended) readNotice.hidden = true;
+          else if (told !== null) {
+            readNotice.hidden = !told;
+            readNotice.textContent = told;
+            readNotice.title = told ? `${text} — Show Requests` : '';
+          }
+        }
+        const state = lock || readFailure ? 'failed' : readLoading ? 'loading' : 'ready';
+        setState(readLine, state, lock ? lock.text : { failed: TEXT.readFailed, loading: TEXT.readLoading }[state] || '',
+          lock ? lock.detail : readFailure ? readDetail(readFailure) : '');
         readLine.hidden = state === 'ready';
         readRetry.hidden = !readFailure;
         readList.replaceChildren(...(readFailure || !readItems ? [] : readItems).map(item => {
@@ -4453,9 +4511,18 @@
        */
       function sync() {
         if (ended) return;
-        const target = allowed() ? current() : null;
+        const shown = current(), target = allowed() ? shown : null;
         const row = target ? study(target) : null;
         const next = row && row.tele !== true ? target : null;
+        // 판독 칸이 다른 검사를 보이는 이 순간(같은 그리기 안)에 줄의 유무를 정하고 연 창·알림을 접는다. 같은 검사에서
+        // 연결이 끊기고 돌아오는 것은 이동이 아니다 — 줄은 그 자리를 지킨다(읽지 못한다고 말한다).
+        if (shown !== readShown) {
+          readShown = shown;
+          readPresent = next !== null;
+          readOpen = false;
+          if (readNotice) readNotice.hidden = true;
+          if (next === readUid) renderReading();
+        }
         if (next === readUid) return;
         readUid = next;
         readSeq++;
@@ -4578,8 +4645,24 @@
       stateFilter.addEventListener('change', () => { queueState = stateFilter.value; loadQueue(false); });
       kindFilter.addEventListener('change', () => { queueKind = kindFilter.value; loadQueue(false); });
       readToggle.addEventListener('click', () => {
-        if (ended || lock !== null) return;
+        if (ended) return;
         readOpen = !readOpen;
+        renderReading();
+      });
+      // 안내 띠의 알림: 읽는 사람이 누르면 판독 쪽 줄의 창을 열고(줄이 없던 검사면 그 자리에 세우고) 그 줄을 보이게 한다.
+      readNotice?.addEventListener('click', () => {
+        if (ended) return;
+        readPresent = true;
+        readOpen = true;
+        renderReading();
+        readRoot.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        readToggle.focus({ preventScroll: true });
+      });
+      // 연결이 끊기거나 돌아왔다(page-boot.js goOffline·goOnline). 판독 대상은 바뀌지 않았다 — 줄은 제자리이고 글만 바뀐다(끊기면
+      // 읽지 않음, 돌아오면 같은 대상을 다시 읽음).
+      (window.kinOnConnection = window.kinOnConnection || []).push(() => {
+        if (ended) return;
+        if (allowed()) { sync(); refresh(); }
         renderReading();
       });
       window.addEventListener('pagehide', end);
@@ -4592,7 +4675,12 @@
       renderQueue();
       renderDetail();
       renderReading();
-      return { sync, end, resume };
+      /** 목록 폴링이 부른다(worklist-polling.js): 판독 대상의 요청을 다시 읽는다. 답은 글·연 창의 안·띠 알림만 바꾼다. */
+      function refresh() {
+        if (ended || lock !== null || readUid === null || readLoading) return;
+        loadReading();
+      }
+      return { sync, end, resume, refresh };
     }
     let imageRequests = null;
     try {
@@ -5399,9 +5487,12 @@
       // Each part is its own text (the line reads the same), so the screen language reaches every part.
       const parts = typeof reportStatusParts === "function" ? reportStatusParts(a) : [reportStatusLine(a)].filter(Boolean);
       line.replaceChildren(...parts.flatMap((part, i) => i ? [" · ", part] : [part]));
-      line.title = !line.textContent ? ""
+      // The line has a fixed place in the head and may end in an ellipsis there (main.html #report-editor-rs): the tooltip
+      // carries it whole.
+      const why = !line.textContent ? ""
         : reportFinalized(a) ? "승인 후 24시간이 지나 확정된 판독문입니다 — Addendum으로만 덧붙일 수 있습니다"
         : a.amendUntil && !a.addendumAt ? "승인한 판독의가 이 시각까지 본문을 고쳐 다시 승인할 수 있습니다" : "";
+      line.title = [line.textContent, why].filter(Boolean).join(" — ");
     }
 
     /** Image Report: per study, whether my draft's drawings differ from the head version's (context.report.drawingsChanged). */
@@ -7176,7 +7267,7 @@
       if (C.isReduced(entry)) return `${field} · ${who} · ${when} — ${C.UNAVAILABLE_TEXT}`;
       const state = C.presenceOf(entry, citationBody(scope, entry.field));
       const source = `소견 r${entry.findingRevision} · 출처 ${Number(entry.sourceIndex) + 1}번` +
-        (entry.linkStateAtInsert ? ` · 인용 당시 연결 ${entry.linkStateAtInsert}` : "");
+        (entry.linkStateAtInsert ? ` · 인용 당시 연결 ${entry.linkStateAtInsert}` : "") + C.measurementNote(entry);
       return `${field} · ${source} · ${who} · ${when} — ${C.STATE_TEXT[state] ?? ""}`;
     }
 
@@ -7307,6 +7398,13 @@
       return KinReportCitation.placeBlock($("#" + field).value, block, caretAt(field), citationGuards(field));
     }
     /**
+     * 이 창이 넣을 글 — 소견 블록, 또는 Include Measurements가 준비됐으면 그 아래 측정 줄까지.
+     * 자리 계획·요청·화면 삽입·증언이 모두 **이 한 값**에서 나온다.
+     */
+    function citeText(pane) {
+      return pane.measure.state === "ready" ? KinReportCitation.withMeasurements(pane.block, pane.measure.line) : pane.block;
+    }
+    /**
      * 삽입 자리를 사람이 읽는 한 줄로. 숫자는 **줄바꿈 기준** 줄 번호다 — 화면에서 접혀 보이는
      * 줄이 아니라 저장되는 글의 줄이다. 소견 패널이 판독문 칸을 덮고 있어 사람은 자리를 눈으로
      * 확인할 수 없으므로, 이 줄이 유일한 고지이며 낡으면 안 된다.
@@ -7362,11 +7460,16 @@
     let citePane = null, citeSeq = 0, citeBusy = false, citeReturn = null;
     function closeCitePreview(returnFocus = true) {
       if (!citePane) return;
+      // 나가 있는 영상 번호 읽기는 이 창의 것이다 — 창과 함께 끊는다.
+      citePane.measure?.abort?.();
       // 순번을 올린다. 닫힌 창에 묶여 있던 응답은 더는 이 화면에 쓸 수 없다.
       citePane = null; citeSeq += 1;
       $("#cite-preview").classList.remove("show");
-      for (const id of ["target", "source", "place", "status"]) $("#cite-preview-" + id).textContent = "";
+      for (const id of ["target", "source", "place", "status", "measure-note"]) $("#cite-preview-" + id).textContent = "";
       $("#cite-preview-block").textContent = "";
+      $("#cite-preview-measure-line").textContent = "";
+      $("#cite-preview-measure-line").hidden = true;
+      $("#cite-preview-measure").checked = false;
       if (returnFocus) (citeReturn?.isConnected ? citeReturn : $("#findings")).focus();
       citeReturn = null;
     }
@@ -7375,6 +7478,21 @@
       $("#cite-preview-insert").disabled = busy;
       $("#cite-preview-close").disabled = busy;
       $("#cite-preview-field").disabled = busy;
+      $("#cite-preview-measure").disabled = busy || !measureAvailable(citePane);
+    }
+    /** Include Measurements를 켤 수 있는가 — 넣을 출처가 있고, 이 서버가 그 줄을 기록한다고 말했을 때만. */
+    function measureAvailable(pane) {
+      return !!pane && pane.measurements.length > 0 && citations.measurementLines();
+    }
+    function measureNote(pane) {
+      if (!pane) return "";
+      if (!pane.measurements.length) return "이 소견에는 이 검사에서 넣을 수 있는 영상 표식이 없습니다.";
+      if (!citations.measurementLines()) return "서버가 측정 줄 기록을 지원하는지 아직 확인하지 못해 켤 수 없습니다 — 인용 목록을 다시 확인한 뒤 여세요.";
+      const m = pane.measure;
+      if (m.state === "loading") return "영상의 Series/Image 번호를 읽는 중입니다…";
+      if (m.state === "ready") return kinSay("아래 줄은 화면이 붙인 글입니다 — 표식 {n0}개의 저장된 수치와 DICOM의 Series/Image 번호를 그대로 옮겼습니다.", m.sources.length);
+      if (m.state === "failed") return m.note;
+      return "켜면 이 소견에 연결된 이 검사의 영상 표식 전부의 수치와 Series/Image 번호를 한 줄로 덧붙입니다.";
     }
     function renderCitePreview() {
       if (!citePane) return;
@@ -7387,13 +7505,20 @@
         { t: citePane.sourceLabel }, citePane.findingRevision, citePane.linkState));
       // 미리보기는 **조립된 그 유니코드 문자열 그대로**를 보인다. 공백도 줄바꿈도 보존된다.
       $("#cite-preview-block").textContent = citePane.block;
+      // 측정 줄은 블록 바로 아래, 따로 표시된 칸에 — 사람 글과 기계가 붙인 글을 눈으로 가를 수 있게.
+      const m = citePane.measure, ready = m.state === "ready";
+      $("#cite-preview-measure").checked = m.state !== "off" && m.state !== "failed";
+      $("#cite-preview-measure").disabled = citeBusy || !measureAvailable(citePane);
+      $("#cite-preview-measure-line").textContent = ready ? m.line : "";
+      $("#cite-preview-measure-line").hidden = !ready;
+      kinWrite($("#cite-preview-measure-note"), measureNote(citePane));
       // 여기서 계획을 **다시 세우지 않는다.** 이 함수는 누름 자체에서도 여러 번 불리므로,
       // 여기서 갱신하면 열고 나서 바뀐 것을 조용히 흡수해 "확인한 자리"가 사라진다.
       kinWrite($("#cite-preview-place"), placementLine($("#cite-preview-field").value, citePane.plan));
       $("#cite-preview-status").textContent = why ?? citePane.status ??
         (`확인을 누르면 서버가 이 문장과 증언을 함께 기록한 뒤 ${KinReportCitation.FIELD_LABEL[$("#cite-preview-field").value]} 칸에 붙입니다.` +
          " 기존 내용은 한 글자도 지우지 않고 위 위치에 줄 단위로 넣습니다.");
-      $("#cite-preview-insert").disabled = !!why || citeBusy;
+      $("#cite-preview-insert").disabled = !!why || citeBusy || m.state === "loading";
     }
     /**
      * `reading-findings.js`가 부르는 유일한 입구. 요청은 그 패널이 **지금 읽고 있는**
@@ -7409,11 +7534,13 @@
       const why = citationInsertBlock();
       if (why) { toast(why, "err"); return false; }
       citeSeq += 1;
-      citePane = { ...request, seq: citeSeq, selSeq: selectionSeq, warned: false, status: null };
+      // Include Measurements는 언제나 꺼진 채로 연다. 출처 목록은 소견 패널이 지금 보이는 판에서 만든 그대로다.
+      const measurements = Array.isArray(request.measurements) ? request.measurements.filter(m => m && Number.isSafeInteger(m.sourceIndex)) : [];
+      citePane = { ...request, measurements, measure: { state: "off", seq: 0 }, seq: citeSeq, selSeq: selectionSeq, warned: false, status: null };
       citeReturn = origin?.isConnected ? origin : null;
       // 대상 칸은 언제나 명시적이고, 기본은 Findings다. 커서는 **자리**만 정하고 **칸**은 이 선택이 정한다.
       $("#cite-preview-field").value = "findings";
-      citePane.plan = citationPlan("findings", citePane.block);
+      citePane.plan = citationPlan("findings", citeText(citePane));
       setCiteBusy(false);
       renderCitePreview();
       $("#cite-preview").classList.add("show");
@@ -7425,8 +7552,67 @@
       // 대상을 바꾸면 앞서 읽고 누른 확인은 이 대상에 대한 것이 아니다.
       // 중복 경고도 새 칸 기준으로 다시 받고, 삽입 자리도 그 칸의 커서로 다시 잡는다.
       citePane.warned = false; citePane.status = null;
-      citePane.plan = citationPlan($("#cite-preview-field").value, citePane.block);
+      citePane.plan = citationPlan($("#cite-preview-field").value, citeText(citePane));
       renderCitePreview();
+    });
+    /**
+     * Include Measurements. 켜면 넣을 출처들의 SOP마다 SeriesNumber·InstanceNumber·NumberOfFrames를 같은 세션의
+     * DICOMweb으로 읽어 한 줄을 만든다. 값은 DICOM이 적은 그대로이고, 신원(검사·시리즈·SOP)과 답의 건수가 맞지
+     * 않으면 그 읽기 전체를 실패로 본다 — 일부만 맞춘 줄을 만들지 않는다. 읽는 동안에는 넣을 수 없고, 끄거나 창을
+     * 닫거나 검사가 바뀌면 그 읽기의 답은 버려진다(이 창·이 읽기의 순번). 줄이 바뀌면 넣을 글이 바뀌므로 자리 계획과
+     * 중복 경고를 다시 받는다.
+     */
+    function setMeasure(pane, next) {
+      pane.measure = next;
+      pane.warned = false; pane.status = null;
+      pane.plan = citationPlan($("#cite-preview-field").value, citeText(pane));
+      renderCitePreview();
+    }
+    async function dicomNumbers(m, at, signal) {
+      const path = "/dicom-web/studies/" + encodeURIComponent(m.studyUid) + "/series/" + encodeURIComponent(m.seriesUid) +
+        "/instances?SOPInstanceUID=" + encodeURIComponent(m.sopUid) + "&includefield=00200011,00200013,00280008";
+      const res = await transport.request(path, { context: at, signal, cache: "no-store", headers: { Accept: "application/dicom+json" } });
+      if (!res.ok) throw new Error(kinSay("영상 번호를 읽지 못했습니다 (HTTP {0})", res.status));
+      const rows = Array.isArray(res.body) ? res.body : null;
+      const tag = (row, key) => row?.[key]?.Value?.[0];
+      if (!rows || rows.length !== 1 || tag(rows[0], "00080018") !== m.sopUid ||
+          (tag(rows[0], "0020000E") !== undefined && tag(rows[0], "0020000E") !== m.seriesUid) ||
+          (tag(rows[0], "0020000D") !== undefined && tag(rows[0], "0020000D") !== m.studyUid))
+        throw new Error("영상 목록의 답이 이 표식의 영상과 맞지 않습니다");
+      return { series: tag(rows[0], "00200011"), image: tag(rows[0], "00200013"), frames: tag(rows[0], "00280008") };
+    }
+    $("#cite-preview-measure").addEventListener("change", async () => {
+      const pane = citePane;
+      if (!pane || citeBusy) return;
+      pane.measure.abort?.();
+      const seq = pane.measure.seq + 1;
+      if (!$("#cite-preview-measure").checked || !measureAvailable(pane)) { setMeasure(pane, { state: "off", seq }); return; }
+      setMeasure(pane, { state: "loading", seq });
+      const at = work.capture("study");
+      const live = () => citePane === pane && pane.measure.seq === seq && pane.uid === selectedUid && pane.selSeq === selectionSeq && work.admits(at);
+      const controller = new AbortController();
+      pane.measure.abort = () => controller.abort();
+      try {
+        const parts = [];
+        for (const m of pane.measurements) {
+          const numbers = await dicomNumbers(m, at, controller.signal);
+          if (!live()) return;
+          parts.push({ name: m.name, value: m.value, frame: m.frame, ...numbers });
+        }
+        const line = KinReportCitation.measurementLine(parts);
+        const refusal = line ? KinReportCitation.refuseBlock(KinReportCitation.withMeasurements(pane.block, line)) : "넣을 출처가 없습니다";
+        work.commit(at, () => {
+          if (!live()) return;
+          setMeasure(pane, refusal ? { state: "failed", seq, note: refusal }
+            : { state: "ready", seq, line, sources: pane.measurements.map(m => m.sourceIndex) });
+        });
+      } catch (e) {
+        work.commit(at, () => {
+          if (!live()) return;
+          setMeasure(pane, { state: "failed", seq,
+            note: kinSay("측정값을 넣지 않았습니다 — {e0}. 체크를 다시 켜면 다시 읽습니다.", { e: e?.transport === "timeout" ? "요청 시간이 초과되었습니다" : e?.message || String(e) }) });
+        });
+      }
     });
     $("#cite-preview-close").addEventListener("click", () => { if (!citeBusy) closeCitePreview(); });
     $("#cite-preview").addEventListener("click", e => {
@@ -7442,7 +7628,7 @@
       }
       if (e.key === "Tab") {
         e.preventDefault();
-        const controls = [$("#cite-preview-field"), $("#cite-preview .tpl-preview-body"),
+        const controls = [$("#cite-preview-field"), $("#cite-preview .tpl-preview-body"), $("#cite-preview-measure"),
                           $("#cite-preview-close"), $("#cite-preview-insert")].filter(b => !b.disabled);
         if (!controls.length) return;
         const index = controls.indexOf(document.activeElement);
@@ -7472,6 +7658,11 @@
       }
       const why = citationInsertBlock();
       if (why) { pane.status = why; renderCitePreview(); return; }
+      // 측정 줄을 읽는 중에는 무엇이 들어갈지 아직 정해지지 않았다.
+      if (pane.measure.state === "loading") return;
+      // 이 누름이 보낼 글과 측정 줄. 아래 어디서도 다시 만들지 않는다.
+      const text = citeText(pane), measurement = pane.measure.state === "ready"
+        ? { measurementLine: pane.measure.line, measurementSources: [...pane.measure.sources] } : null;
       const field = $("#cite-preview-field").value;
       if (!RFIELDS.includes(field)) return;
       // 같은 칸에 같은 출처를 또 넣는 것은 거절이 아니라 **한 번의 경고**다.
@@ -7500,11 +7691,21 @@
         const why2 = citationInsertBlock();
         if (why2) { pane.status = why2; renderCitePreview(); return; }
         /**
+         * 초안 쓰기 호출 전, 마지막으로 읽은 지원 상태 확인: 측정 줄은 최신 인용 읽기가 서버가 그 줄을 기록한다고
+         * 말할 때만 싣는다. 아니면 줄을 내리고 아무것도 보내지 않는다 — 다음 누름은 블록만 넣는다.
+         * 쓰기 안의 기다림·충돌 뒤 다시 보내기에는 인용 전용 검사를 두지 않는다. 그 사이 서버가 옛 판으로 돌아가도
+         * 글 전체는 인용 기록에 남고, 측정 기록 여부는 아래 200 답의 `measurementRecorded`만 믿는다.
+         */
+        if (measurement && !citations.measurementLines()) {
+          setMeasure(pane, { state: "off", seq: pane.measure.seq + 1 });
+          return;
+        }
+        /**
          * **보여준 자리로만 보낸다**(D-9). 미리보기를 연 뒤 이 칸이 갈렸거나 보호할 인용이
          * 달라졌으면 지금 넣을 자리는 사람이 읽은 그 자리가 아니다. 그때는 **아무것도 보내지 않고**
          * 새 자리를 보여준 뒤 한 번 더 누르게 한다 — 판독문은 한 글자도 움직이지 않는다.
          */
-        const plan2 = citationPlan(field, pane.block);
+        const plan2 = citationPlan(field, text);
         if (!pane.plan || plan2.text !== pane.plan.text) {
           pane.plan = plan2;
           pane.status = "판독문이나 삽입 위치가 그 사이 바뀌었습니다 — 위의 삽입 위치를 다시 확인하고 한 번 더 누르세요.";
@@ -7529,8 +7730,8 @@
         // 쓰기는 초안의 명령 경로로 간다: 작성자·초안 revision·전체 원문에 이 삽입을 실어 한 번에 기록한다.
         const result = await draftClient.write(pane.uid, { ...content, baseVersion }, { owner: draftOwner, context: at,
           operation: { insert: { field, findingId: pane.findingId, findingRevision: pane.findingRevision,
-            sourceIndex: pane.sourceIndex, insertedText: pane.block,
-            expectedLinkState: pane.linkState, expectedHeadRevision: pane.headRevision } } });
+            sourceIndex: pane.sourceIndex, insertedText: text,
+            expectedLinkState: pane.linkState, expectedHeadRevision: pane.headRevision, ...(measurement || {}) } } });
         // 이 삽입이 세운 표시는 이 삽입이 내린다(자기 것만).
         insertInFlight = false;
         wakeIdle();
@@ -7572,7 +7773,7 @@
         // 기존 삽입 기전 그대로다 — 목록 삽입도 타이핑처럼 점유를 시작해야 한다.
         // 달라진 것은 자리뿐이고, 들어가는 문자열은 방금 서버에 보낸 그 문자열이다.
         const el = $("#" + field);
-        const shown = screenPlan(field, pane.block, before, plan2);
+        const shown = screenPlan(field, text, before, plan2);
         // 커서는 넣은 글 끝에 선다. 가운데에 넣고 화면 끝으로 튀면 사람이 자기 글을 다시 찾아야 한다.
         const applied = editReport([reportEditOf(field, shown.text, shown.end)]);
         if (!applied && $("#" + field).value !== shown.text) {
@@ -7592,13 +7793,16 @@
          * 유지 목록이 방금 기록된 증언을 지우지 않도록 초안 쪽을 모르는 상태로 되돌린다.
          * 다음 전용 읽기 한 번이 서버의 바이트로 그것을 채운다.
          */
+        // 측정 줄 기록은 화면이 보낸 것으로 추정하지 않는다 — 서버가 실제로 저장했다고 답할 때만 붙인다.
+        // 옛 서버의 200은 그 키를 버렸을 수 있다: 글 전체의 인용은 그대로 넓히고, 측정 기록 여부는 다음 인용 읽기가 말한다.
+        const recorded = !!measurement && answer?.inserted?.measurementRecorded === true;
         const extended = !!answer?.inserted?.cid &&
           citations.extend(pane.uid, { v: KinReportCitation.SCHEMA, cid: answer.inserted.cid, field,
             findingId: pane.findingId, findingRevision: pane.findingRevision, sourceIndex: pane.sourceIndex,
             linkStateAtInsert: pane.linkState, headRevisionAtInsert: pane.headRevision,
-            insertedText: pane.block, insertedAt: answer.inserted.insertedAt, insertedBy: null,
+            insertedText: text, ...(recorded ? measurement : {}), insertedAt: answer.inserted.insertedAt, insertedBy: null,
             mine: true, sameTextCount: 1 });
-        if (!extended) invalidateCitations(pane.uid);
+        if (!extended || (measurement && !recorded)) invalidateCitations(pane.uid);
         /**
          * 인용 삽입은 **본문을 바꿨다.** 구조화 건의 존재 상태는 그 본문에 대해 계산되므로
          * 지금 화면이 들고 있는 상태는 옛 것이다. 값이 바뀐 것은 없지만 "그 문장이 아직
@@ -9667,7 +9871,21 @@
       }
     }
     // FC-071: the Preload worker reports its queue; only the visible PF cells are rewritten, in place like Viewing.
+    // A PF search matches the queue's status words: when a word changes (not the download percent) and a search uses PF,
+    // the list, the folder and saved-search counts are drawn again, once per frame, like a Body Part answer.
+    let preloadWords = '', preloadFrame = null;
     function paintPreload() {
+      const words = studies.map(preloadWord).join('\n'), changed = words !== preloadWords;
+      preloadWords = words;
+      if (changed && preloadFilterUsed()) {
+        if (preloadFrame !== null) return;
+        const at = work.capture('document');
+        preloadFrame = requestAnimationFrame(() => {
+          preloadFrame = null;
+          work.commit(at, () => { render(); savedFilterManager.refreshCounts(); });
+        });
+        return;
+      }
       const index = shownColumns().findIndex(c => c.k === 'pf');
       if (index < 0) return;
       const byUid = new Map(studies.map(study => [study.uid, study]));
@@ -9816,6 +10034,10 @@
           await Promise.all([favoriteList?.refresh(),studyTagList?.refresh()]);
           if (!live() || commitInFlight || epoch !== commitEpoch) return;
           pollFails = 0;
+          // The questions and image requests of the reading target are read again with the list: one that came after the
+          // study opened is learned too.
+          studyQuestions?.refresh();
+          imageRequests?.refresh();
           worklistAlerts?.observe(r.studies.map(s=>({uid:s.uid,em:s.state.em})));
           applyIdentityIssues(r.identityIssues, r.studies);
           applyObservation(r);
@@ -11446,6 +11668,10 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const shares = band.content.reduce((sum, p) => sum + p.share, 0);
       top.style.setProperty('--kin-rw-columns', band.content.map((p, i) => i === band.content.length - 1 ? 'minmax(0, 1fr)'
         : `${100 * p.share / shares}%`).join(' ') || 'minmax(0, 1fr)');
+      for (const [key, selector] of [['thumbnail', '.s-thumb'], ['imageReport', '.s-imgreport'], ['clinical', '.s-clinical'], ['template', '.s-template']]) {
+        const section = $(selector);
+        if (section) section.style.gridColumn = band.columns[key] ? String(band.columns[key]) : '';
+      }
       left.style[portrait ? "height" : "width"] = "";
       related.style.height = "";
       top.style.height = "";
@@ -12220,6 +12446,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         blocked: () => relatedMode.active() ? relatedMode.reason() : null,
         eligible: () => { const s = KinAuth.session(); return !!sess && serverMode && !demoMode && !offline && s?.state === 'approved'
           && Array.isArray(s.roles) && (s.roles.includes('clinician') || s.roles.includes('radiologist')); },
+        // The panel stands for the session whether or not the server answers now (main.html "An answer never resizes").
+        standing: () => { const s = KinAuth.session(); return !!sess && !demoMode && s?.state === 'approved'
+          && Array.isArray(s.roles) && (s.roles.includes('clinician') || s.roles.includes('radiologist')); },
         owner: () => { const s = KinAuth.session(); return s?.state === 'approved' ? [s.institution ?? null, s.sub ?? null] : null; } });
       accountChangeHooks.push((reason, detail) => criticalInbox.lock(detail));
     } catch (_) { toast('중요 결과 수신 화면을 준비하지 못했습니다. 판독 작업은 계속할 수 있습니다.', 'err'); }
@@ -12236,6 +12465,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         study: uid => studies.find(s => s.uid === uid),
         report: uid => { const a = appState[uid]; return a ? { version: a.version ?? 0, rs: a.rs ?? null } : null; },
         online: () => !!sess && serverMode && !demoMode && !offline,
+        standing: () => !!sess && !demoMode,
         radiologist: () => { const s = KinAuth.session(); return s?.state === 'approved' && Array.isArray(s.roles) && s.roles.includes('radiologist'); },
         owner: () => { const s = KinAuth.session(); return s?.state === 'approved' ? [s.institution ?? null, s.sub ?? null] : null; },
         actorName: value => displayActor(value),
@@ -12249,7 +12479,11 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     // 판독 대상 검사(selectedUid)의 임상의 질문을 서버 S5-U4a route로 읽고(#3 검사별·#2 스레드·#1 view=inbox) 답변(#5)과
     // 사유 있는 닫기(#6)를 쓴다. consultation 창·요청과 섞지 않는다. 판독문 칸·버튼 줄 밖의 줄이며 판독문을 읽거나 쓰지 않는다.
     // 역할로 쓰기 컨트롤을 숨기지 않는다 — 관리자 답변 403처럼 서버 거절을 그대로 보인다. 읽기는 판독의·관리자 세션에서만 시작한다.
-    // 줄은 질문이 있거나 읽기가 실패했거나 사용자가 창을 연 동안만 보인다: 질문 없는 검사의 판독 화면 배치를 바꾸지 않는다.
+    // 답은 이 줄을 세우지 않는다(main.html "An answer never resizes"): 판독 칸은 목록 자료로 그 자리에서 그려지고 질문 읽기의
+    // 답은 늘 그 뒤에 오므로, 답으로 서는 줄은 편집기와 단추 줄 사이에 끼어 단추 줄을 민다. 그래서 질문이 있거나·읽기가
+    // 실패했거나·잠긴 것은 판독 칸 위 안내 띠의 알림(#question-notice)이 개수·상태로 말하고, 줄과 창은 읽는 사람이 그 알림을
+    // 누를 때(또는 Inbox에서 질문을 열 때) 제자리에 선다. 창을 닫으면 줄도 접고 알림으로 돌아간다. 읽는 중에는 아직 모르는
+    // 것이라 알림을 바꾸지 않고(이미 말한 것은 그대로), 성공한 빈 답만 "질문 없음"이다 — 그때 알림은 내린다.
     // 원격판독으로 받은 검사는 읽지 않는다 — 질문은 소유 기관 안에서만 오가고(OQ-1 a) 수신 기관의 읽기는 늘 404다.
     // 검사를 바꾸면 이전 검사의 스레드를 내린다. 쓰던 글은 검사·스레드별로 이 문서의 메모리에만 두어 그 스레드에서만 다시 보인다.
     // 요청은 api()가 아니라 이 절의 call()로 보낸다 — 401에서 이 줄을 로그아웃 POST보다 먼저 끝내야 한다(call·expire).
@@ -12257,10 +12491,16 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     // api()의 401, 확정한 Log out, 받아쓰기의 401, 목록의 계정 변경, 이 절의 401(expire) — 은 로그아웃 POST·초안 저장 같은
     // 네트워크 대기 전에 그 목록을 동기로 부른다. auth.js의 session-ended 방송은 그 POST가 끝난 뒤라 기다리지 않는다.
     // 한 영역이 알아챈 계정 변경(다른 계정의 봉투·OWNER_CHANGED)은 같은 목록에 사유 'account-changed'로 알려 두 영역을 함께 잠근다.
-    function mountStudyQuestions({ apiBase, work, transport, current, study, openStudy, allowed, owner }) {
+    function mountStudyQuestions({ apiBase, work, transport, current, study, openStudy, allowed, owner, online = () => true }) {
       const root = $('#question-p'), summary = $('#question-summary'), toggle = $('#question-toggle');
-      const inboxButton = $('#question-inbox'), pane = $('#question-pane');
+      const inboxButton = $('#question-inbox'), pane = $('#question-pane'), notice = $('#question-notice');
       const TEXT = {
+        unread: '이 검사의 질문은 읽지 않습니다(원격판독 검사·권한).',
+        // 끊김은 상태를 말한다: 이 화면의 연결 판단일 뿐 통신을 막는 것은 아니다(답변·닫기는 그대로 보낼 수 있다).
+        offline: '서버 연결이 끊겼습니다. 표시된 질문은 최신이 아닐 수 있습니다.',
+        // 안내 띠의 알림은 짧게(띠의 다른 줄을 좁혀 줄을 바꾸지 않게): 개수와 0이 아닌 상태, 전문은 툴팁.
+        notice: { counts: (n, parts) => `질문 ${n}건${parts ? ` · ${parts}` : ''}`, failed: '질문 읽기 실패', refused: '질문 읽기 거절',
+          account: '질문: 계정 바뀜' },
         loading: '이 검사의 질문을 불러오는 중입니다…',
         failed: '이 검사의 질문을 불러오지 못했습니다.',
         empty: '이 검사에는 질문이 없습니다.',
@@ -12334,6 +12574,11 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const inflight = new Set();
       // uid는 지금 읽는 판독 대상. epoch는 대상이 바뀌거나 잠길 때마다 오르고, 읽기마다 자기 번호와 함께 들고 떠난다.
       let uid = null, epoch = 0, listSeq = 0, threadSeq = 0, inboxSeq = 0;
+      // 판독 칸이 보이는 검사(shownFor: 판독 대상이 아니어도 — 원격판독 검사·연결 끊김). 그것이 바뀌면 줄과 창을 접는다.
+      let shownFor;
+      // 안내 띠의 알림이 마지막으로 말한 것({text, title} 또는 null). 읽는 중(아직 모름)에는 이것을 그대로 보인다 — 줄을 연 사이에
+      // 다시 읽기가 나가 있어도 줄을 닫으면 알림과 그 입구가 돌아온다.
+      let told = null;
       let items = null, listFailure = null, listLoading = false;
       let mode = null, threadId = null, thread = null, threadFailure = null, threadLoading = false, pendingThread = null;
       let inboxState = 'open', inboxItems = [], inboxCursor = null, inboxFailure = null, inboxLoading = false;
@@ -12542,17 +12787,35 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       inboxView.append(make('p', 'question-muted', TEXT.inboxHint), inboxHead, inboxLine, inboxList, inboxMore);
       pane.append(lockBox, studyView, inboxView);
 
-      /** 줄과 창의 겉모습. 줄은 질문이 있거나·읽기가 실패했거나·잠겼거나·창을 연 동안만 보인다. */
+      /**
+       * 줄과 창의 겉모습. 줄은 읽는 사람이 연 동안(mode)만 선다 — 답이 줄을 만들거나 없애지 않는다. 질문·실패·잠금은 줄이 접혀
+       * 있는 동안 안내 띠의 알림이 말한다. 읽는 중(아직 모름)에는 알림을 그대로 두고, 성공한 빈 답이면 내린다.
+       */
       function paint() {
-        const visible = !ended && allowed() && (lock !== null || mode !== null || listFailure !== null || (items !== null && items.length > 0));
+        const visible = !ended && mode !== null;
         root.hidden = !visible;
         root.dataset.state = ended ? 'ended' : lock ? 'locked' : listFailure ? 'failed' : listLoading ? 'loading'
           : items === null ? 'idle' : items.length ? 'ready' : 'empty';
         const counts = state => (items || []).filter(item => item.state === state).length;
-        const line = lock ? lock.text : uid === null ? TEXT.none : listFailure ? TEXT.failed : items === null ? TEXT.loading
+        const line = lock ? lock.text : shownFor && !online() ? TEXT.offline : uid === null || !allowed() ? (shownFor ? TEXT.unread : TEXT.none)
+          : listFailure ? TEXT.failed
+          : items === null ? TEXT.loading
           : items.length ? TEXT.counts(items.length, counts('Open'), counts('Answered'), counts('Closed')) : TEXT.empty;
         summary.textContent = line;
         summary.title = line;
+        if (notice) {
+          // 알 때만 말한다: 잠김·실패·질문 있음은 그 글, 성공한 빈 답·읽지 않는 검사는 알림 없음, 읽는 중은 그대로.
+          const parts = ['Open', 'Answered', 'Closed'].filter(state => counts(state)).map(state => `${state} ${counts(state)}`).join(' · ');
+          // 끊긴 동안은 새로 아는 것이 없다: 마지막으로 말한 것을 그대로 둔다.
+          const now = !lock && uid !== null && !allowed() ? null : lock ? (lock.account ? TEXT.notice.account : TEXT.notice.refused) : listFailure ? TEXT.notice.failed
+            : items && items.length ? TEXT.notice.counts(items.length, parts) : uid === null || items !== null ? '' : null;
+          if (now !== null) told = now ? { text: now, title: `${line} — Show Questions` } : null;
+          notice.hidden = ended || visible || !told;
+          if (told) {
+            notice.textContent = told.text;
+            notice.title = told.title;
+          }
+        }
         toggle.textContent = mode === 'study' ? 'Hide Questions' : 'Show Questions';
         toggle.setAttribute('aria-expanded', String(mode === 'study'));
         inboxButton.setAttribute('aria-expanded', String(mode === 'inbox'));
@@ -12903,7 +13166,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         inboxCursor = null;
         inboxFailure = null;
         inboxLoading = false;
-        if (mode === null) mode = 'study';
+        // 잠금도 답이다: 창을 열지 않는다(열면 창이 판독 칸을 민다). 줄이 있으면 그 글이, 없으면 안내 띠의 알림이 까닭을 말하고,
+        // 상세(#question-lock)는 읽는 사람이 창을 열 때 보인다.
         clearThreadBox();
         list.replaceChildren();
         inboxList.replaceChildren();
@@ -13113,9 +13377,22 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
        */
       function sync() {
         if (ended) return;
-        const selectedUid = allowed() ? current() : null;
+        const shown = current(), selectedUid = allowed() ? shown : null;
         const row = selectedUid ? study(selectedUid) : null;
         const next = row && row.tele !== true ? selectedUid : null;
+        // 판독 칸이 다른 검사를 보이면 줄·창·알림을 그 검사 기준으로 접는다(같은 그리기 안 — 읽는 사람의 이동이다). Inbox에서
+        // 그 검사의 질문을 연 것(pendingThread)만 창을 연 채 둔다. 같은 검사를 다시 그리는 것(폴링·저장·관련 검사 보기)과
+        // 연결이 끊기고 돌아오는 것은 이동이 아니다 — 연 줄은 그대로다.
+        if (shown !== shownFor) {
+          shownFor = shown;
+          if (!(pendingThread && pendingThread.uid === next)) {
+            if (mode !== null) inboxSeq++;
+            mode = null;
+          }
+          told = null;
+          if (notice) notice.hidden = true;
+          if (next === uid) paint();
+        }
         if (next === uid) return;
         uid = next;
         epoch++;
@@ -13189,6 +13466,14 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         if (uid !== null) loadList();
         if (mode === 'inbox') loadInbox(false);
       }
+      /**
+       * 목록 폴링이 부른다(worklist-polling.js): 같은 판독 대상의 질문을 다시 읽는다 — 판독 칸을 연 뒤에 온 질문도 알게 된다.
+       * 답은 글(줄이 접혀 있으면 안내 띠의 알림)만 바꾼다. 읽는 중이면 그 답을 기다린다.
+       */
+      function refresh() {
+        if (ended || lock !== null || uid === null || listLoading) return;
+        loadList();
+      }
       work.onInvalidate(event => { if (event.reason === 'prepare') suspend(); });
 
       toggle.addEventListener('click', () => {
@@ -13211,11 +13496,29 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         paint();
         if (lock === null) loadInbox(false);
       });
+      // 안내 띠의 알림: 읽는 사람이 누르면 이 검사의 줄과 창을 제자리에 연다(Show Questions와 같다). 알림은 줄이 서면
+      // 내려가므로 초점은 그 줄의 Hide Questions로 옮긴다.
+      notice?.addEventListener('click', () => {
+        if (ended) return;
+        inboxSeq++;
+        mode = 'study';
+        paint();
+        renderList();
+        renderThread();
+        toggle.focus();
+      });
+      // 연결이 끊기거나 돌아왔다(page-boot.js goOffline·goOnline). 판독 대상은 바뀌지 않았다 — 읽은 것·연 스레드·쓰던 칸은
+      // 그대로 두고(끊김을 대상 바뀜으로 다루면 쓰던 답변 칸이 내려갔다) 줄의 글만 바꾼다. 돌아오면 같은 대상을 다시 읽는다.
+      (window.kinOnConnection = window.kinOnConnection || []).push(() => {
+        if (ended) return;
+        if (allowed()) { sync(); refresh(); }
+        paint();
+      });
       window.addEventListener('pagehide', end);
       // 이 문서의 세션이 끝나면 세션 종료 조정이 이 목록을 동기로 부른다. 어느 로그인의 종료인지는 auth.js가 대조한다.
       onCommonEnd(end);
       paint();
-      return { sync, end, resume };
+      return { sync, end, resume, refresh };
     }
     let studyQuestions = null;
     try {
@@ -13223,6 +13526,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         study: uid => studies.find(s => s.uid === uid),
         openStudy: uid => select(uid),
         allowed: () => !!sess && serverMode && !demoMode && !offline && (KinAuth.has('radiologist') || KinAuth.has('admin')),
+        online: () => !offline,
         owner: () => { const s = KinAuth.session(); return s?.state === 'approved' ? [s.institution ?? null, s.sub ?? null] : null; } });
     } catch (_) { toast('임상의 질문 줄을 준비하지 못했습니다. 판독 작업은 계속할 수 있습니다.', 'err'); }
 
@@ -13337,8 +13641,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       // Restore legacy display state as it was saved. Adopt v3 only on an
       // explicit edit/open/save, so new geometry cannot affect the first paint.
       workspaceState = result.state;
-      // First use (nothing saved yet): start with Clinical Information only. Thumbnail, AI Report and Reading
-      // Template stay one click away in Panels; a saved choice always wins and nothing is saved by this line.
+      // First use (nothing saved yet): start with Clinical Information only. Thumbnail, AI Report, Image Report and
+      // Reading Template stay one click away in Panels; a saved choice always wins and nothing is saved by this line.
       // A layout saved before this default existed is switched once per browser (flag below); after that the reader's own
       // Panels choice, including Show All Panels, is kept.
       let applyOnce = false;
@@ -13423,13 +13727,14 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     // ── Panel Settings (Minhoon 2026-10-27 item 9) ──
     // Which report window panels stay on screen. Kept in the same layout record as the rail and panel sizes, so
     // Account Layout carries it to another browser and Reset Layout shows every panel again. Display only: the panels
-    // and their content stay in the document. AI Report remains a placeholder; imageReport is reserved but never rendered.
+    // and their content stay in the document. AI Report remains a placeholder; Image Report shows the drawings attached
+    // to the selected study's report (image-report.js) and is a Radiology column only.
     const panelDialog = document.createElement('dialog');
     panelDialog.id = 'panel-settings-dialog'; panelDialog.setAttribute('aria-labelledby', 'panel-settings-title');
     panelDialog.innerHTML = `<h2 id="panel-settings-title">Panel Settings</h2>
       <p>판독 창 위쪽 패널을 보이거나 숨깁니다. 숨긴 패널의 자리는 옆 패널과 관련 검사·판독문 영역이 씁니다.
       Study Panel과 판독 화면의 검사 정보 열기에서는 모든 패널을 볼 수 있습니다.</p>
-      <fieldset><legend>Show Panels</legend>${[['thumbnail', 'Thumbnail'], ['aiReport', 'AI Report'],
+      <fieldset><legend>Show Panels</legend>${[['thumbnail', 'Thumbnail'], ['aiReport', 'AI Report'], ['imageReport', 'Image Report'],
         ['clinical', 'Clinical Information'], ['template', 'Reading Template']].map(([key, label]) =>
         `<label${key === 'aiReport' ? ' title="추후 구현 탭입니다. 표시 여부만 정합니다."' : ''}><input type="checkbox" data-panel="${key}"> ${label}</label>`).join('')}</fieldset>
       <p>이 브라우저에 계정별로 기억합니다. 다른 기기에서는 View &gt; Account Layout으로 계정에 저장하고 불러오세요.</p>
@@ -14060,7 +14365,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       ctxTarget = target;
       ctx.setAttribute('role', 'menu');
       ctx.innerHTML = items.map((it, i) =>
-        it.sep ? '<hr role="separator">' : `<div data-i="${i}" role="menuitem" tabindex="-1" aria-disabled="${!!it.dis}" class="${it.dis ? "dis" : ""}">${esc(it.label)}</div>`).join("");
+        it.sep ? '<hr role="separator">' : `<div data-i="${i}" role="menuitem" tabindex="-1" aria-disabled="${!!it.dis}" class="${it.dis ? "dis" : ""}"${it.title ? ` title="${esc(it.title)}"` : ""}>${esc(it.label)}</div>`).join("");
       ctx.style.left = Math.max(0, Math.min(keyboard?.x ?? e.clientX, innerWidth - 200)) + "px";
       ctx.style.top = Math.max(0, Math.min(keyboard?.y ?? e.clientY, innerHeight - (items.length * 28 + 20))) + "px";
       ctx.style.display = "block";
@@ -14263,7 +14568,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
             doUnmatch();
           } },
         { sep: 1 },
-        { label: "New Exam (SC 생성)", dis: 1, act: () => {} },
+        { label: "New Exam (SC 생성)", dis: 1, title: "새 검사(SC 생성)는 현재 연결되어 있지 않습니다.", act: () => {} },
       ], null, { uid: selectedUid, seq: selectionSeq, oid: selectedOid });
     });
 
@@ -14505,6 +14810,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       // 연결이 되살아났다: 앞서 실패해 멈춘 검사도 한 번 다시 보낸다(같은 거절이면 한 번 알리고 다시 멈춘다).
       reportSaveFailures.clear();
       reconcileReportDrafts();
+      // The rows that stand whether or not the server answers (questions, image requests, sent results) say so again.
+      (window.kinOnConnection || []).forEach(change => { try { change(); } catch (_) {} });
     }
 
     /**
@@ -14514,6 +14821,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     function goOffline(e) {
       reportPreview.close();
       serverMode = false; offline = true;
+      // The rows that stand whether or not the server answers say they read nothing now (study-questions.js and others).
+      (window.kinOnConnection || []).forEach(change => { try { change(); } catch (_) {} });
       stopViewing();
       folderLoadState = 'unknown'; filterCollection = null; ++filterReadSequence; ++sharedFilterReadSequence;
       updateWorklistFolders(); shortcutStatus('서버에 연결한 뒤 바로가기를 불러오세요.');

@@ -254,6 +254,22 @@ test('TEST-WS7-SECTION-STATUS: named lists, modality toggle semantics and empty-
   assert.match(guidance(), /선택된 Modality가 없습니다/);
   button(host,'All Studies (—)').click();
   assert.equal(guidance(), '');
+  // The page's other conditions (a date, a name, Quick, a favourite list…) leave no folder describing the list: nothing
+  // is selected, but no Modality is missing, so the tree does not ask for one; [] (no Modality chosen) still does.
+  api.narrow();
+  assert.deepEqual([api.snapshot().selectedIds, api.snapshot().narrowed], [[], true]);
+  assert.equal(guidance(), '');
+  for (const item of api.snapshot().items) assert.equal(item.selected, false);
+  api.update({rows:[{modality:'CT'}],loadState:'complete'});
+  assert.equal(guidance(), '', 'a background count update keeps the narrowed state');
+  api.setApplied([]);
+  assert.equal(api.snapshot().narrowed, false);
+  assert.match(guidance(), /선택된 Modality가 없습니다/);
+  api.narrow();
+  button(host,'CT (1)').click();
+  assert.deepEqual([api.snapshot().selectedIds, api.snapshot().narrowed, guidance()], [['modality:CT'], false, '']);
+  button(host,'CT (1)').click();
+  assert.match(guidance(), /선택된 Modality가 없습니다/, 'the reader turning every Modality off is asked again');
 });
 
 test('TEST-WS3-SAVE-CONTRACT: edits emit whole detached arrays and an authoritative read restores them silently', () => {

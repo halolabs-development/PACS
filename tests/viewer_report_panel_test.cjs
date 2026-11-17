@@ -91,8 +91,13 @@ test('heading, state word and the Open in Reading Screen sentences', () => {
   assert.equal(panel.openText({ ok: true }, 'PARK JIYOUNG'), '판독 화면이 PARK JIYOUNG 검사로 옮겨졌습니다 — 판독 화면 창에서 입력하세요.');
   assert.equal(panel.openText({ ok: false, reason: 'missing' }), '연결된 판독 화면이 없습니다. 목록 창에서 이 검사를 고르면 판독문을 쓸 수 있습니다.');
   assert.match(panel.openText({ ok: false, reason: 'timeout' }), /^판독 화면의 응답이 없습니다\./);
-  assert.equal(panel.openText({ ok: false, reason: 'saving' }), '판독 화면이 검사를 옮기지 못했습니다 (쓰던 글 저장 대기·거절). 판독 화면에서 확인하세요.');
-  assert.equal(panel.openText({ ok: false, reason: 'invalid' }), '판독 화면이 검사를 옮기지 못했습니다 (확인할 수 없는 답). 판독 화면에서 확인하세요.');
+  // Where the reading screen says its report target is decides (at): this study, not this study, or not known.
+  assert.equal(panel.openText({ ok: false, reason: 'saving', at: false }), '판독 화면의 대상이 이 검사로 바뀌지 않았습니다 (쓰던 글 저장 대기·거절). 판독 화면에서 확인하세요.');
+  assert.equal(panel.openText({ ok: false, reason: 'modal', at: true }, 'PARK JIYOUNG'), '판독 화면이 PARK JIYOUNG 검사로 옮겨졌습니다 — 판독 화면 창에서 입력하세요.');
+  assert.equal(panel.openText({ ok: false, reason: 'timeout', at: true }, 'PARK JIYOUNG'), '판독 화면이 PARK JIYOUNG 검사로 옮겨졌습니다 — 판독 화면 창에서 입력하세요.');
+  assert.equal(panel.openText({ ok: false, reason: 'timeout', at: false }), '판독 화면의 대상이 이 검사로 바뀌지 않았습니다 (응답 없음). 판독 화면에서 확인하세요.');
+  assert.equal(panel.openText({ ok: false, reason: 'saving' }), '판독 화면이 검사를 옮겼는지 확인하지 못했습니다 (쓰던 글 저장 대기·거절). 판독 화면에서 확인하세요.');
+  assert.equal(panel.openText({ ok: false, reason: 'invalid' }), '판독 화면이 검사를 옮겼는지 확인하지 못했습니다 (확인할 수 없는 답). 판독 화면에서 확인하세요.');
   for (const reason of link.OPEN_REFUSALS) assert.ok(panel.OPEN_REASONS[reason], reason);
 });
 
@@ -101,6 +106,11 @@ test('validOpened reads only the answer to this request, owner and study', () =>
   const answer = extra => Object.assign({ type: 'kin-editor-opened', request: REQUEST, owner: OWNER, uid: UID, result: 'ok', reason: null }, extra);
   assert.deepEqual(link.validOpened(answer(), expected), { ok: true });
   assert.deepEqual(link.validOpened(answer({ result: 'refused', reason: 'saving' }), expected), { ok: false, reason: 'saving' });
+  // A refusal carries where the reading screen's report target is when it told it (a literal boolean only).
+  assert.deepEqual(link.validOpened(answer({ result: 'refused', reason: 'modal', at: true }), expected), { ok: false, reason: 'modal', at: true });
+  assert.deepEqual(link.validOpened(answer({ result: 'refused', reason: 'saving', at: false }), expected), { ok: false, reason: 'saving', at: false });
+  assert.deepEqual(link.validOpened(answer({ result: 'refused', reason: 'saving', at: 'yes' }), expected), { ok: false, reason: 'saving' });
+  assert.deepEqual(link.validOpened(answer({ result: 'refused', reason: 'nonsense', at: true }), expected), { ok: false, reason: 'invalid' });
   assert.deepEqual(link.validOpened(answer({ result: 'refused', reason: 'nonsense' }), expected), { ok: false, reason: 'invalid' });
   for (const extra of [{ type: 'kin-editor-reply' }, { request: 'x' }, { owner: '["A","B"]' }, { uid: OTHER }, { result: 'maybe' }, { uid: undefined }])
     assert.deepEqual(link.validOpened(answer(extra), expected), { ok: false, reason: 'invalid' }, JSON.stringify(extra));
@@ -136,7 +146,7 @@ test('an ordinary viewer cannot first connect Reading after the server groups it
 
 test('editorOpen moves through the page select and focuses Findings only after a real move', async () => {
   const r = reader();
-  assert.deepEqual(await windows.editorOpen(open(), r), { type: 'kin-editor-opened', request: REQUEST, owner: OWNER, uid: UID, result: 'ok', reason: null });
+  assert.deepEqual(await windows.editorOpen(open(), r), { type: 'kin-editor-opened', request: REQUEST, owner: OWNER, uid: UID, result: 'ok', reason: null, at: true });
   assert.deepEqual(r.calls, [['select', UID], ['focus']]);
   // A select that waits for the save and then moves (saved), or a study already selected (same).
   for (const status of ['saved', 'same']) {
@@ -154,7 +164,9 @@ test('editorOpen refuses with the reason and never focuses', async () => {
   ];
   for (const [reason, change] of cases) {
     const r = reader(); change(r);
-    assert.deepEqual(await windows.editorOpen(open(), r), { type: 'kin-editor-opened', request: REQUEST, owner: OWNER, uid: UID, result: 'refused', reason });
+    // Refused before any move: the target is not this study; a busy page tells no place (another opening can still move it).
+    assert.deepEqual(await windows.editorOpen(open(), r), { type: 'kin-editor-opened', request: REQUEST, owner: OWNER, uid: UID, result: 'refused', reason,
+      ...(reason === 'busy' ? {} : { at: false }) });
     assert.deepEqual(r.calls, [], reason + ' asks nothing of the page');
   }
   const statuses = { composing: 'composing', refused: 'saving', unknown: 'saving', conflict: 'saving', owner: 'saving', stale: 'stale',
@@ -171,7 +183,12 @@ test('editorOpen refuses with the reason and never focuses', async () => {
   const loggedOut = reader({ select: uid => { loggedOut.state.target = uid; loggedOut.state.owner = '["X","Y"]'; return { status: 'clear' }; } });
   assert.equal((await windows.editorOpen(open(), loggedOut)).reason, 'session');
   const unusable = reader(); unusable.state.usable = false;
-  assert.equal((await windows.editorOpen(open(), unusable)).reason, 'unavailable');
+  assert.deepEqual(await windows.editorOpen(open(), unusable).then(a => [a.reason, a.at]), ['unavailable', true], 'moved, then the field cannot be used: at');
+  const dialog = reader({ select: uid => { dialog.state.target = uid; dialog.state.modal = true; return { status: 'clear' }; } });
+  assert.deepEqual(await windows.editorOpen(open(), dialog).then(a => [a.reason, a.at]), ['modal', true], 'moved, then a dialog opened: at');
+  assert.equal((await windows.editorOpen(open(), loggedOut)).at, false, 'another login: not the target of this login');
+  const unreadable = reader({ modal: () => true, target: () => { throw new Error('x'); } });
+  assert.equal('at' in await windows.editorOpen(open(), unreadable), false, 'a target that cannot be read tells no place');
   const throws = reader({ select: () => { throw new Error('x'); } });
   assert.equal((await windows.editorOpen(open(), throws)).reason, 'unavailable');
   assert.equal(throws.calls.length, 0);
@@ -190,6 +207,36 @@ test('an opening withdrawn while its scope is checked never selects or focuses R
   const answer=windows.editorOpen(open(),r);current=false;finish(true);
   assert.equal((await answer).reason,'stale');assert.deepEqual(r.calls,[]);
 });
+test('a withdrawn opening is answered with where the report target is, only once no opening can still move it', () => {
+  const cancel = extra => Object.assign({ type: 'kin-editor-open-cancel', request: REQUEST, owner: OWNER, uid: UID, list: 'L', examStamp: scopeModel.readingStamp(null, UID) }, extra);
+  const answer = extra => Object.assign({ type: 'kin-editor-open-withdrawn', request: REQUEST, owner: OWNER, uid: UID }, extra);
+  const r = reader({ settled: () => true });
+  assert.deepEqual(windows.editorWithdrawn(cancel(), r), answer({ at: false }));
+  r.state.target = UID;
+  assert.deepEqual(windows.editorWithdrawn(cancel(), r), answer({ at: true }));
+  // Another exam scope of the same study is not this target.
+  assert.deepEqual(windows.editorWithdrawn(cancel({ examStamp: 'other' }), r), answer({ at: false }));
+  // Another opening still under way there: no place is told.
+  assert.deepEqual(windows.editorWithdrawn(cancel(), reader({ settled: () => false })), answer());
+  assert.deepEqual(windows.editorWithdrawn(cancel(), reader()), answer());
+  assert.deepEqual(windows.editorWithdrawn(cancel(), reader({ settled: () => true, target: () => { throw new Error('x'); } })), answer());
+  // Another login, a reading screen that cannot tell its login, or a malformed message: no answer.
+  const other = reader({ settled: () => true }); other.state.owner = '[\"X\",\"Y\"]';
+  assert.equal(windows.editorWithdrawn(cancel(), other), null);
+  assert.equal(windows.editorWithdrawn(cancel(), reader({ owner: () => { throw new Error('x'); } })), null);
+  for (const extra of [{ type: 'kin-editor-open' }, { request: 'x' }, { owner: '' }, { uid: 'abc' }])
+    assert.equal(windows.editorWithdrawn(cancel(extra), r), null, JSON.stringify(extra));
+  assert.equal(windows.editorWithdrawn(null, r), null);
+  // The viewer reads only that answer to its own request.
+  const expected = { request: REQUEST, owner: OWNER, uid: UID };
+  assert.deepEqual(link.validWithdrawn(answer({ at: true }), expected), { at: true });
+  assert.deepEqual(link.validWithdrawn(answer({ at: 'no' }), expected), {});
+  assert.deepEqual(link.validWithdrawn(answer(), expected), {});
+  for (const extra of [{ type: 'kin-editor-opened' }, { request: 'x' }, { owner: '[\"A\",\"B\"]' }, { uid: OTHER }])
+    assert.equal(link.validWithdrawn(answer(extra), expected), null, JSON.stringify(extra));
+  assert.equal(link.validWithdrawn(null, expected), null);
+});
+
 test('editorOpen ignores a malformed request', async () => {
   for (const extra of [{ type: 'kin-editor-request' }, { request: 'not-a-uuid' }, { owner: '' }, { owner: 3 }, { uid: 'abc' }, { uid: '1.' + '2'.repeat(70) }]) {
     const r = reader();

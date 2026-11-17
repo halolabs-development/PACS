@@ -119,6 +119,13 @@ HIDE_PRELOAD = """() => [...document.querySelectorAll('#worklist-selection butto
 HIDE_CENSUS = """() => { document.querySelector('#t-desc')?.closest('label')?.setAttribute('hidden', '');
   document.querySelector('#b-except')?.setAttribute('hidden', '');
   [...document.querySelectorAll('button')].find(b => b.textContent === 'Split Exam')?.setAttribute('hidden', ''); }"""
+# The header's Prefetch checkbox (status group, shown from 1920 px) changed nothing and no script read it. It keeps its
+# place and label but is unchecked and disabled, and its holder's title says prefetching is set in Auto Preload. A decided
+# difference: the first-paint comparisons give the baseline tree the same state before measuring (on the current page it
+# already has it); its box is still compared and its raster stays masked (W3S-03). Its behaviour is
+# unavailable_controls_dom_test's case.
+DECIDE_PREFETCH = """() => { const box = document.querySelector('.menubar-status input[aria-label="Prefetch"]');
+  if (box) { box.checked = false; box.disabled = true; } }"""
 SCROLLER = '''() => { const r = document.querySelector('.redit').getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; }'''
 # Minhoon item 8 (PR #286, 2026-10-27 feedback 8): two decided differences in the report column, from every baseline.
 # - The Report Editor group (role group, named Report Editor) puts its head row (title, Read Only/Editable, why, Resume
@@ -588,7 +595,8 @@ def first_paint_pixels(page, path, clip=None):
     # fixed pixel range. Geometry/checked state remain independently compared.
     checkbox = page.get_by_role('group', name='Status', exact=True).get_by_role('checkbox')
     expect(checkbox).to_have_count(1)
-    expect(checkbox).to_be_checked()
+    expect(checkbox).not_to_be_checked()
+    expect(checkbox).to_be_disabled()
     assert checkbox.bounding_box() is not None
     settle(page)
     return page.screenshot(animations='disabled', caret='hide', clip=clip,
@@ -1857,6 +1865,7 @@ class StudyPanelPageDOM(unittest.TestCase):
             page.evaluate(HIDE_W9)   # W9-UI decided difference, see HIDE_W9
             page.evaluate(HIDE_PRELOAD)   # D1880 preload decided difference, see HIDE_PRELOAD
             page.evaluate(HIDE_CENSUS)   # #259 caution census decided difference, see HIDE_CENSUS
+            page.evaluate(DECIDE_PREFETCH)   # the header Prefetch checkbox decided difference, see DECIDE_PREFETCH
             settle(page)
             facts = page.evaluate("""(names) => ({focus:document.activeElement.id || document.activeElement.tagName,
               panels:names.map(s=>{
@@ -1955,6 +1964,342 @@ class StudyPanelPageDOM(unittest.TestCase):
                         self.assertEqual([], site.violations)
                     finally:
                         context.close()
+
+    # The places a reader aims at in the report column: Findings, Conclusion and the button row, as [x, y, width, height].
+    REPORT_PLACES = '''() => ['#findings', '#conclusion', '.report-p .rbtns'].map(s => {
+      const r = document.querySelector(s).getBoundingClientRect(); return [s, r.x, r.y, r.width, r.height]; })'''
+    # Every painted frame from now until the next STOP_PLACES: the late answer may change the page for one frame only.
+    WATCH_PLACES = '''(read) => { const seen = window.__kinPlaces = []; const once = new Function('return (' + read + ')()');
+      (function frame() { if (window.__kinPlaces !== seen) return; const now = JSON.stringify(once());
+        if (seen[seen.length - 1] !== now) seen.push(now); requestAnimationFrame(frame); })(); }'''
+    STOP_PLACES = '() => { const seen = window.__kinPlaces; window.__kinPlaces = null; return seen.map(s => JSON.parse(s)); }'
+
+    def gate(self, page, pattern, method):
+        """Holds the page's `method` requests to `pattern` until release() lets them through to the synthetic server."""
+        held, open_ = [], [False]
+        page.route(pattern, lambda route, request: route.fallback() if open_[0] or request.method != method else held.append(route))
+
+        def release():
+            open_[0] = True
+            for route in held:
+                route.fallback()
+        return held, release
+
+    def answer_keeps_places(self, page, what, held, release, answered):
+        """From the frame before a held answer arrives until the page has settled on it, Findings, Conclusion and the
+        button row stay where they were."""
+        wait_until(page, lambda: len(held) > 0, f'{what}: the request')
+        settle(page)
+        page.evaluate(self.WATCH_PLACES, self.REPORT_PLACES)
+        release()
+        answered()
+        settle(page)
+        frames = page.evaluate(self.STOP_PLACES)
+        self.assertEqual(1, len(frames), f'{what}: the answer moved the report places {frames}')
+
+    def test_late_answers_keep_the_report_fields_and_buttons_in_place(self):
+        """The notice band: the claim answer that draws the draft row, the Save answer, and the Discard answer that
+        takes the draft row away and reads the citations again change only what is inside the band above the editor.
+        Findings, Conclusion and the button row stay put in every frame, in the worklist card and the Reading Workspace,
+        in landscape, short and portrait windows."""
+        windows = [('card', w, h) for w, h in ((1920, 1080), (1366, 768), (1024, 768), (900, 768), (768, 1024), (900, 1200))]
+        windows += [('reading', w, h) for w, h in ((1920, 1080), (1366, 768), (1024, 768), (900, 1200))]
+        for layout, width, height in windows:
+            with self.subTest(layout=layout, width=width, height=height):
+                page, site, _ = self.page_at(width, height, dictation=DICTATION)
+                page.on('dialog', lambda dialog: dialog.accept())
+                if layout == 'reading':
+                    page.route('**/ohif/**', lambda route: route.fulfill(content_type='text/html', body='<!doctype html><title>SYN viewer</title>'))
+                self.click_row(page, 0, 'select')
+                if layout == 'reading':
+                    page.get_by_role('button', name='Reading Workspace', exact=True).click()
+                    expect(page.get_by_role('button', name='Study Info & Templates', exact=True)).to_be_visible()
+                settle(page)
+                band = page.locator('.report-p > #report-notices')
+                height = band.bounding_box()['height'] if band.count() else None
+                # The claim answer (two letters in Findings) draws the draft row.
+                held, release = self.gate(page, '**/api/studies/*/hold', 'POST')
+                page.locator('#findings').click()
+                page.keyboard.type('SYN findings')
+                claims = len(site.holds)
+                self.answer_keeps_places(page, 'claim', held, release, lambda: (
+                    wait_until(page, lambda: len(site.holds) > claims, 'claim answered'),
+                    expect(page.locator('#draftbar')).to_be_visible()))
+                # The Save answer.
+                page.locator('#conclusion').click()
+                page.keyboard.type('SYN conclusion')
+                held, release = self.gate(page, '**/api/studies/*/report/commit', 'POST')
+                page.locator('#b-save').click()
+                self.answer_keeps_places(page, 'save', held, release, lambda: (
+                    wait_until(page, lambda: len(site.commits) == 1, 'save answered'),
+                    expect(page.locator('#b-approve')).to_be_enabled()))
+                # The Discard answer: the draft row goes and the citations are read again.
+                page.locator('#findings').click()
+                page.keyboard.type(' more')
+                expect(page.locator('#b-draft-discard')).to_be_visible()
+                held, release = self.gate(page, '**/api/studies/*/draft', 'DELETE')
+                page.locator('#b-draft-discard').click()
+                self.answer_keeps_places(page, 'discard', held, release, lambda: (
+                    wait_until(page, lambda: len(site.discards) == 1, 'discard answered'),
+                    expect(page.locator('#draftbar')).to_be_hidden()))
+                # The Approve answer: the editor turns read-only and its head says so.
+                page.locator('#findings').click()
+                page.keyboard.type('SYN approved')
+                held, release = self.gate(page, '**/api/studies/*/report/commit', 'POST')
+                expect(page.locator('#b-approve')).to_be_enabled()
+                page.locator('#b-approve').click()
+                self.answer_keeps_places(page, 'approve', held, release, lambda: (
+                    wait_until(page, lambda: len(site.commits) == 2, 'approve answered'),
+                    page.wait_for_function("() => appState[selectedUid]?.rs === 'A'")))
+                self.assertEqual({'report-alerts', 'exam-report-scope', 'draftbar', 'holdbar', 'deferbar', 'citebar', 'report-notice', 'recnote'},
+                                 set(page.evaluate("() => [...document.querySelectorAll('#report-notices > *')].map(e => e.id)")))
+                self.assertEqual(height, band.bounding_box()['height'], 'the band kept its height')
+                self.doCleanups()
+
+    # What an answer does to each region whose content it changes, done here to the page's own elements as the page's
+    # scripts do it: rows shown and hidden in the notice band (Recommendation among them) and their words lengthened;
+    # an opened citation list emptied and filled; an opened dictation pane receiving its transcript; an opened questions
+    # pane emptied and filled. (Not the questions bar's own appearance: main.html says why.)
+    ANSWERS = {
+        'band rows': '''() => { const $ = id => document.getElementById(id);
+          for (const id of ['report-notice', 'draftbar', 'holdbar', 'deferbar', 'citebar']) $(id).style.display = 'flex';
+          $('draftmsg').textContent = 'SYN unsaved draft words '.repeat(20); $('recnote').hidden = false;
+          $('recnote-text').textContent = 'SYN recommendation '.repeat(30); }''',
+        'band empty': '''() => { const $ = id => document.getElementById(id);
+          for (const id of ['report-notice', 'draftbar', 'holdbar', 'deferbar', 'citebar']) $(id).style.display = 'none';
+          $('recnote').hidden = true; }''',
+        'citation list filled': '''() => { const list = document.getElementById('citelist');
+          list.replaceChildren(...Array.from({length: 40}, (_, i) => Object.assign(document.createElement('p'), {textContent: 'SYN citation ' + i}))); }''',
+        'citation list emptied': "() => document.getElementById('citelist').replaceChildren()",
+        'transcript': '''() => { const t = document.getElementById('dictation-text'); t.hidden = false;
+          t.textContent = Array.from({length: 12}, (_, i) => 'SYN transcript line ' + i).join('\\n');
+          for (const id of ['dictation-insert', 'dictation-cancel']) document.getElementById(id).hidden = false; }''',
+        'questions pane filled': '''() => { const pane = document.getElementById('question-pane');
+          pane.replaceChildren(...Array.from({length: 40}, (_, i) => Object.assign(document.createElement('p'), {textContent: 'SYN question ' + i}))); }''',
+        'questions pane emptied': "() => document.getElementById('question-pane').replaceChildren()",
+    }
+    # The reader's own openings, after which those answers come.
+    OPENINGS = {
+        'citation list': "() => { const list = document.getElementById('citelist'); list.hidden = false; list.replaceChildren('SYN'); }",
+        'dictation pane': "() => { document.getElementById('dictation-pane').hidden = false; document.getElementById('dictation-status').textContent = 'SYN recording'; }",
+        'questions pane': "() => { document.getElementById('question-p').hidden = false; document.getElementById('question-pane').hidden = false; }",
+    }
+
+    def test_an_answer_never_resizes_a_region_of_the_report_column(self):
+        """The rule in one place (main.html, "An answer never resizes"): after the reader opened what they opened, no
+        change an answer makes inside the notice band or an opened list or pane moves Findings,
+        Conclusion or the button row, in the worklist card and the Reading Workspace."""
+        windows = [('card', w, h) for w, h in ((1920, 1080), (1366, 768), (900, 768), (768, 1024))]
+        windows += [('reading', w, h) for w, h in ((1920, 1080), (1366, 768), (900, 1200))]
+        steps = [('band rows', 'band empty')]
+        for layout, width, height in windows:
+            for opened, answers in ((None, steps), ('citation list', ('citation list filled', 'citation list emptied')),
+                                    ('dictation pane', ('transcript',)), ('questions pane', ('questions pane filled', 'questions pane emptied'))):
+                with self.subTest(layout=layout, width=width, height=height, opened=opened):
+                    page, _, _ = self.page_at(width, height, dictation=DICTATION)
+                    if layout == 'reading':
+                        page.route('**/ohif/**', lambda route: route.fulfill(content_type='text/html', body='<!doctype html><title>SYN viewer</title>'))
+                    self.click_row(page, 0, 'select')
+                    if layout == 'reading':
+                        page.get_by_role('button', name='Reading Workspace', exact=True).click()
+                        expect(page.get_by_role('button', name='Study Info & Templates', exact=True)).to_be_visible()
+                    settle(page)
+                    if opened:
+                        page.evaluate(self.OPENINGS[opened])
+                        settle(page)
+                    before = page.evaluate(self.REPORT_PLACES)
+                    for step in (answers if opened else [s for pair in answers for s in pair]):
+                        page.evaluate(self.ANSWERS[step])
+                        settle(page)
+                        self.assertEqual(before, page.evaluate(self.REPORT_PLACES), f'{layout} {width}x{height} {opened}: {step} moved the report places')
+                    self.doCleanups()
+
+    QUESTION = {"id": "0f0e0d0c-0b0a-4908-8706-050403020100", "studyUid": auth.UID, "state": "Open", "revision": 1,
+                "entryCount": 1, "author": {"actor": "syn-clin@synthetic.test", "name": "SYN Clinician Choi"},
+                "createdAt": "2026-11-16T01:00:00Z", "lastEntryAt": "2026-11-16T01:00:00Z"}
+    REQUEST = {"id": "0f0e0d0c-0b0a-4908-8706-050403020101", "studyUid": auth.UID, "kind": "external-image", "state": "Closed",
+               "revision": 2, "requester": {"actor": "syn-clin@synthetic.test", "name": "SYN Clinician Choi"},
+               "counterparty": {"text": "SYN Other Hospital", "institutionId": None}, "reason": "SYN prior CT",
+               "handler": {"actor": "syn-tech@synthetic.test", "name": "SYN Tech Han"}, "note": "SYN handled",
+               "createdAt": "2026-11-16T01:00:00Z", "updatedAt": "2026-11-16T02:00:00Z"}
+    TOLD = {'none': (None, None),
+            'some': ('이 검사의 질문 1건 · Open 1 · Answered 0 · Closed 0', '이 검사의 영상 요청 1건 · Closed 1'),
+            'failed': ('이 검사의 질문을 불러오지 못했습니다.', '이 검사의 영상 요청을 불러오지 못했습니다.')}
+    # What the band's notices say and whether each is on top inside the band; the draft row's first line likewise.
+    BAND = '''() => { const band = document.getElementById('report-notices').getBoundingClientRect();
+      const inside = r => r.top >= band.top - .5 && r.bottom <= band.bottom + .5 && r.left >= band.left - .5 && r.right <= band.right + .5;
+      const seen = id => { const n = document.getElementById(id); if (n.hidden) return null; const r = n.getBoundingClientRect();
+        return [n.title.split(' — ')[0], inside(r) && document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === n]; };
+      const msg = document.getElementById('draftmsg'), bar = document.getElementById('draftbar');
+      let draft = null;
+      if (bar.getClientRects().length) {
+        const walk = document.createTreeWalker(msg, NodeFilter.SHOW_TEXT);
+        let t = walk.nextNode(); while (t && !t.nodeValue.trim()) t = walk.nextNode();
+        const range = document.createRange(); range.setStart(t, 0); range.setEnd(t, 1); const m = range.getClientRects()[0];
+        draft = !!m && inside(m) && !!document.elementFromPoint(m.left + m.width / 2, m.top + m.height / 2)?.closest('#draftbar');
+      }
+      return {question: seen('question-notice'), request: seen('image-request-notice'), draft}; }'''
+
+    # Each button of the band's rows seen inside the band, the band scrolled to its top and to its end: what a click at
+    # the middle of its seen part reaches when it is not the button.
+    COVERED = '''() => { const band = document.getElementById('report-notices'), out = [];
+      for (const to of [0, band.scrollHeight]) { band.scrollTop = to; const br = band.getBoundingClientRect();
+        for (const b of band.querySelectorAll(':scope > :not(#report-alerts) button')) {
+          if (!b.getClientRects().length) continue;
+          const r = b.getBoundingClientRect(), top = Math.max(r.top, br.top), bottom = Math.min(r.bottom, br.bottom);
+          if (bottom - top < 2) continue;
+          const hit = document.elementFromPoint(r.left + r.width / 2, (top + bottom) / 2);
+          if (!b.contains(hit)) out.push([b.id || b.textContent.trim(), to, hit && (hit.id || hit.tagName)]); } }
+      band.scrollTop = 0; return out; }'''
+
+    def hold_reads(self, page, answer):
+        """Holds the page's reads of the reading target's questions and image requests until release(); then answers them
+        `answer[0]`: 'none', 'some' (an open question, a Closed request) or 'failed' (503)."""
+        held, open_ = [], [False]
+
+        def reply(route, request):
+            if request.method != 'GET':
+                return route.fallback()
+            if not open_[0]:
+                return held.append(route)
+            if answer[0] == 'failed':
+                return route.fulfill(status=503, json={"message": "SYN unavailable"})
+            some = answer[0] == 'some'
+            item = self.QUESTION if '/questions' in request.url else self.REQUEST
+            return route.fulfill(json={"owner": [auth.INSTITUTION, auth.RAD['sub']], "items": [item] if some else [], "nextCursor": None})
+
+        def release():
+            open_[0] = True
+            for route in held:
+                reply(route, route.request)
+            held.clear()
+        page.route('**/api/studies/*/questions', reply)
+        page.route('**/api/studies/*/image-requests', reply)
+        return held, release
+
+    def open_held(self, layout, width, height, answer):
+        page, site, _ = self.page_at(width, height, dictation=DICTATION)
+        held, release = self.hold_reads(page, answer)
+        if layout == 'reading':
+            page.route('**/ohif/**', lambda route: route.fulfill(content_type='text/html', body='<!doctype html><title>SYN viewer</title>'))
+        self.click_row(page, 0, 'select')
+        if layout == 'reading':
+            page.get_by_role('button', name='Reading Workspace', exact=True).click()
+            expect(page.get_by_role('button', name='Study Info & Templates', exact=True)).to_be_visible()
+        wait_until(page, lambda: len(held) >= 2, 'both reads of the reading target')
+        return page, site, held, release
+
+    def test_the_reading_targets_answers_never_move_the_report(self):
+        """The reading target's questions and image requests are read when the report column shows the study, and their
+        answers - none, some, a failure - come after that paint. They change words only: Findings, Conclusion and the
+        button row stay where it put them, in every frame, in the worklist card and the Reading Workspace. The questions
+        bar under the editor never stands up for an answer (the 1366x768 card moved the button row 31px when it did, and
+        1280x720 put it out of the window); what the reads learned the band's notices say. The image requests' row under
+        the button row stands from that paint, its Closed line held in place."""
+        windows = [('card', w, h) for w, h in ((1920, 1080), (1366, 768), (1280, 720), (1024, 768), (900, 768), (768, 1024))]
+        windows += [('reading', w, h) for w, h in ((1920, 1080), (1366, 768), (1280, 720), (900, 1200))]
+        for layout, width, height in windows:
+            for answer in ('none', 'some', 'failed'):
+                with self.subTest(layout=layout, width=width, height=height, answer=answer):
+                    page, _, held, release = self.open_held(layout, width, height, [answer])
+                    self.answer_keeps_places(page, f'reads {answer}', held, release, lambda: (
+                        expect(page.locator('#question-p')).not_to_have_attribute('data-state', 'loading'),
+                        expect(page.locator('#image-request-p')).not_to_have_attribute('data-state', 'loading')))
+                    told = page.evaluate(self.BAND)
+                    self.assertEqual(self.TOLD[answer], (told['question'] and told['question'][0], told['request'] and told['request'][0]))
+                    self.assertTrue(page.locator('#question-p').is_hidden(), 'an answer stood the questions bar up')
+                    self.assertTrue(page.locator('#image-request-p').is_visible())
+                    self.doCleanups()
+
+    def test_answers_are_told_in_the_band_beside_the_draft_row(self):
+        """Both notices and the draft row the reader's typing brought are seen at once inside the band, each on top. A
+        click on the questions' notice opens the bar and its pane in place and moves the focus there; Hide Questions
+        folds them and the notice is back. A click on the requests' notice opens their pane and brings their row into
+        view. Going offline and back moves nothing: the rows under the button row stand and say they cannot read."""
+        for layout, width, height in (('card', 1366, 768), ('card', 900, 768), ('reading', 1366, 768), ('reading', 1920, 1080)):
+            with self.subTest(layout=layout, width=width, height=height):
+                page, site, held, release = self.open_held(layout, width, height, ['some'])
+                page.locator('#findings').click()
+                page.keyboard.type('SYN findings')
+                wait_until(page, lambda: len(site.holds) > 0, 'claim answered')
+                expect(page.locator('#draftbar')).to_be_visible()
+                settle(page)
+                self.answer_keeps_places(page, 'reads beside the draft row', held, release, lambda: (
+                    expect(page.locator('#question-notice')).to_be_visible(),
+                    expect(page.locator('#image-request-notice')).to_be_visible()))
+                self.assertEqual({'question': [self.TOLD['some'][0], True], 'request': [self.TOLD['some'][1], True], 'draft': True},
+                                 page.evaluate(self.BAND))
+                # The notices never lie over a row's button, the band scrolled to its top or its end (stuck over the
+                # scrolled rows, a notice took the click meant for Keep This Text).
+                self.assertEqual([], page.evaluate(self.COVERED))
+                # The page's own offline and back (goOffline, goOnline): nothing moves, the rows stand and say at once that
+                # they read nothing now; back online they read again.
+                page.evaluate(self.WATCH_PLACES, self.REPORT_PLACES)
+                page.evaluate("() => { goOffline(new Error('SYN disconnected')); stopReconnect(); }")
+                for row in ('#image-request-p', '#cvr-sent-p', '#cvr-inbox-p'):
+                    expect(page.locator(row)).to_be_visible()
+                expect(page.locator('#image-request-summary')).to_have_text('서버 연결이 끊겼습니다. 표시된 영상 요청은 최신이 아닐 수 있습니다.')
+                expect(page.locator('#cvr-sent-summary')).to_have_text('서버 연결이 끊겼습니다. 표시된 보낸 중요 결과는 최신이 아닐 수 있습니다.')
+                expect(page.locator('#cvr-sent-refresh')).to_be_disabled()
+                expect(page.locator('#cvr-inbox-badge')).to_have_text('Offline')
+                page.evaluate('async () => { goOnline(await fetchBootstrap()); }')
+                expect(page.locator('#image-request-summary')).to_have_text(self.TOLD['some'][1])
+                expect(page.locator('#cvr-inbox-badge')).not_to_have_text('Offline')
+                page.wait_for_timeout(300)
+                settle(page)
+                frames = page.evaluate(self.STOP_PLACES)
+                self.assertEqual(1, len(frames), f'offline and back moved the report places {frames}')
+                # The reader opens the questions from the band.
+                page.locator('#question-notice').click()
+                expect(page.locator('#question-p')).to_be_visible()
+                expect(page.locator('#question-pane')).to_be_visible()
+                expect(page.locator('#question-list > li')).to_have_count(1)
+                expect(page.locator('#question-toggle')).to_be_focused()
+                self.assertTrue(page.locator('#question-notice').is_hidden())
+                page.locator('#question-toggle').click()
+                expect(page.locator('#question-p')).to_be_hidden()
+                expect(page.locator('#question-notice')).to_be_visible()
+                # And the requests.
+                page.locator('#image-request-notice').click()
+                expect(page.locator('#image-request-pane')).to_be_visible()
+                expect(page.locator('#image-request-toggle')).to_be_focused()
+                expect(page.locator('#image-request-read-list > li')).to_have_count(1)
+                self.assertGreater(page.evaluate('''() => { const r = document.getElementById('image-request-toggle').getBoundingClientRect();
+                  return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === document.getElementById('image-request-toggle') ? 1 : 0; }'''), 0,
+                    'the requests row was brought into view')
+                self.doCleanups()
+
+    def test_a_claim_answer_between_aim_and_click_does_not_move_conclusion(self):
+        """The reader types in Findings and goes straight to Conclusion. The claim answer that draws the draft row arrives
+        after they aimed and before they click: the click still lands in Conclusion (900x768 drew the row 31px above
+        Conclusion's place before the notice band)."""
+        for width, height in ((900, 768), (1024, 768), (1366, 768)):
+            with self.subTest(width=width, height=height):
+                page, site, _ = self.page_at(width, height, dictation=DICTATION)
+                self.click_row(page, 0, 'select')
+                page.keyboard.press('Control+Alt+5')
+                expect(page.get_by_role('complementary', name='Study Panel', exact=True)).to_be_visible()
+                settle(page)
+                held, release = self.gate(page, '**/api/studies/*/hold', 'POST')
+                state, why = wheel_into_view(page, '#findings')
+                self.assertIsNone(why, f'Findings {state}')
+                click_center(page, state)
+                page.keyboard.type('SYN findings')
+                wait_until(page, lambda: len(held) > 0, 'the claim request')
+                state, why = wheel_into_view(page, '#conclusion')
+                self.assertIsNone(why, f'Conclusion {state}')
+                box = state['entry']
+                aim = ((box['left'] + box['right']) / 2, (box['top'] + box['bottom']) / 2)
+                claims = len(site.holds)
+                release()
+                wait_until(page, lambda: len(site.holds) > claims, 'claim answered')
+                expect(page.locator('#draftbar')).to_be_visible()
+                settle(page)
+                self.assertEqual('conclusion', page.evaluate('([x, y]) => document.elementFromPoint(x, y)?.id', list(aim)),
+                                 'the aimed point is no longer Conclusion')
+                page.mouse.click(*aim)
+                expect(page.locator('#conclusion')).to_be_focused()
+                self.doCleanups()
 
 
 if __name__ == '__main__':

@@ -56,10 +56,12 @@
   /* ---------- S2-L: record version 2, saved locations and live disclosure ---------- */
   // The record format this module writes and reads. The Findings section, the worklist command and its panel refuse to run
   // beside another version of this file, and the API names its own with the X-KIN-Finding-Schema response header.
-  const SCHEMA = 2, SCHEMA_HEADER = 'X-KIN-Finding-Schema';
+  const SCHEMA = 3, SCHEMA_HEADER = 'X-KIN-Finding-Schema';
   // Free-text lesion characteristics, counted in code points like the title and text (the server's rule). A native maxlength
   // counts UTF-16 units, so typing stops earlier for astral characters; a longer value is refused, never cut.
   const CHARACTERISTICS = 1000;
+  // Version 3: the free-text lesion location (the reader's own words, e.g. an anatomic segment), the same code-point rule.
+  const LESION_LOCATION = 200;
   // Saved Comparison Job versions a finding may link; each has a validator, a restorer and a hosted suite.
   const JOB_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
   const JOB_LINK_STATES = ['current', 'metadata-changed', 'hidden', 'missing'];
@@ -445,7 +447,10 @@
   function commandBody(draft, head, action, reason, requestId, version) {
     const sources = Array.isArray(draft.sources) ? draft.sources.map(sentPair) : [];
     const primary = Number.isSafeInteger(draft.primary) && draft.primary >= 0 && draft.primary < sources.length ? draft.primary : 0;
-    const item = version === 2
+    const item = version === 3
+      ? { schemaVersion: 3, title: String(draft.title ?? ''), text: String(draft.text ?? ''), characteristics: String(draft.characteristics ?? ''),
+        lesionLocation: String(draft.lesionLocation ?? ''), sources, primary }
+      : version === 2
       ? { schemaVersion: 2, title: String(draft.title ?? ''), text: String(draft.text ?? ''), characteristics: String(draft.characteristics ?? ''), sources, primary }
       : { schemaVersion: 1, title: String(draft.title ?? ''), text: String(draft.text ?? ''), sources, primary };
     const body = { requestId, item };
@@ -465,6 +470,7 @@
       if (typeof draft.characteristics !== 'string' || [...draft.characteristics].length > CHARACTERISTICS) return '병변 특성은 ' + CHARACTERISTICS + '자 이하여야 합니다.';
       if (!String(draft.title ?? '').trim() && !String(draft.text ?? '').trim() && !draft.characteristics.trim()) return '제목, 본문 또는 병변 특성을 입력하세요.';
     }
+    if (draft.lesionLocation !== undefined && (typeof draft.lesionLocation !== 'string' || [...draft.lesionLocation].length > LESION_LOCATION)) return '병변 위치는 ' + LESION_LOCATION + '자 이하여야 합니다.';
     if (!String(draft.title ?? '').trim() && !String(draft.text ?? '').trim() && !String(draft.characteristics ?? '').trim()) return '제목 또는 본문을 입력하세요.';
     return null;
   }
@@ -481,7 +487,8 @@
       ? { itemId: s.itemId, revision: s.revision, studyUid: s.studyUid } : { itemId: s.itemId, revision: s.revision };
   };
   const itemOnly = head => Object.assign({ title: head.item.title, text: head.item.text },
-    head.item.schemaVersion === 2 ? { characteristics: typeof head.item.characteristics === 'string' ? head.item.characteristics : '' } : {},
+    head.item.schemaVersion >= 2 ? { characteristics: typeof head.item.characteristics === 'string' ? head.item.characteristics : '' } : {},
+    head.item.schemaVersion === 3 ? { lesionLocation: typeof head.item.lesionLocation === 'string' ? head.item.lesionLocation : '' } : {},
     { primary: head.item.primary ?? 0, sources: head.item.sources.map(s => draftPair(s, head)) });
   // `context.comparison`: the command named a comparison study, so 400/403/404 may be about that study.
   function errorMessage(error, context) {
@@ -795,7 +802,8 @@
       const own = e.draft.sources.filter(p => studyOf(e, p) === s.scope).map(sentPair);
       Object.assign(e, { id: makeId(), head: null, links: [], latest: null, pending: null, staleSource: null, editing: true, busy: false,
         draft: Object.assign({ title: e.draft.title, text: e.draft.text },
-          typeof e.draft.characteristics === 'string' ? { characteristics: e.draft.characteristics } : {}, { sources: own, primary: 0 }),
+          typeof e.draft.characteristics === 'string' ? { characteristics: e.draft.characteristics } : {},
+          typeof e.draft.lesionLocation === 'string' ? { lesionLocation: e.draft.lesionLocation } : {}, { sources: own, primary: 0 }),
         message: '이 소견을 더 이상 볼 수 없어 저장하지 않았습니다. 작성한 제목과 본문만 이 검사의 새 소견 초안으로 남겼고 비교 검사 연결은 뺐습니다. 저장 전 내용과 연결 표식을 확인하세요.' });
       s.entries.set(e.id, e);
       return true;
@@ -834,7 +842,7 @@
     }
     function newDraft() {
       if (s.ended || s.suspended || !writable()) return null;
-      const e = { id: makeId(), head: null, draft: { title: '', text: '', characteristics: '', sources: [], primary: 0 }, links: [], editing: true, latest: null, pending: null, busy: false, message: '', staleSource: null };
+      const e = { id: makeId(), head: null, draft: { title: '', text: '', characteristics: '', lesionLocation: '', sources: [], primary: 0 }, links: [], editing: true, latest: null, pending: null, busy: false, message: '', staleSource: null };
       s.entries.set(e.id, e); notify(); return e;
     }
     function updateDraft(e, patch) {
@@ -842,6 +850,7 @@
       if (typeof patch.title === 'string') e.draft.title = patch.title;
       if (typeof patch.text === 'string') e.draft.text = patch.text;
       if (typeof patch.characteristics === 'string') e.draft.characteristics = patch.characteristics;
+      if (typeof patch.lesionLocation === 'string') e.draft.lesionLocation = patch.lesionLocation;
     }
     /* S2-L2b: this anchor's Saved Comparison Jobs, for linking a saved view. The list is the viewer-jobs summary (no study set):
      * the server checks the anchor, the study set and N2 when the finding is saved. */
@@ -985,9 +994,10 @@
         if (e.head && action !== 'edit' && action !== 'hide' && action !== 'restore') return false;
         if (!e.head && action && action !== 'create') return false;
         if (pairBlocked(e)) { e.message = COMPARISON_DENIED; notify(); return false; }
-        // A create or an edit is version 2 (a version 1 head is promoted); hide and restore keep the head's version and content.
-        const version = e.head && (action === 'hide' || action === 'restore') ? (e.head.item.schemaVersion === 2 ? 2 : 1) : 2;
-        const draft = version === 2 && typeof e.draft.characteristics !== 'string' ? { ...e.draft, characteristics: '' } : e.draft;
+        // A create or an edit is version 3 (an older head is promoted); hide and restore keep the head's version and content.
+        const version = e.head && (action === 'hide' || action === 'restore') ? ([2, 3].includes(e.head.item.schemaVersion) ? e.head.item.schemaVersion : 1) : 3;
+        const draft = { ...e.draft, ...(version >= 2 && typeof e.draft.characteristics !== 'string' ? { characteristics: '' } : {}),
+          ...(version === 3 && typeof e.draft.lesionLocation !== 'string' ? { lesionLocation: '' } : {}) };
         const problem = draftProblem(draft);
         if (problem) { e.message = problem; notify(); return false; }
         const body = commandBody(draft, e.head, action, reason, makeId(), version);
@@ -1167,7 +1177,7 @@
   const api = { LINK_STATES, LINK_LABELS, NAVIGATION_REASONS, ACTIVATION_REASONS, CROSS_REASONS, LIMITS, linkState, sourceStatus, valueText, reasonText, annotationText,
     phaseText, validReply, validTarget, plainState, viewerResult, activationResult, crossNavigate, comparisonHead,
     commandBody, draftProblem, itemOnly, errorMessage, createStore,
-    SCHEMA, SCHEMA_HEADER, CHARACTERISTICS, JOB_VERSIONS, JOB_LINK_STATES, JOB_LINK_LABELS, RESTORE_STATES, RESTORE_REASONS, POINTS,
+    SCHEMA, SCHEMA_HEADER, CHARACTERISTICS, LESION_LOCATION, JOB_VERSIONS, JOB_LINK_STATES, JOB_LINK_LABELS, RESTORE_STATES, RESTORE_REASONS, POINTS,
     OLD_API_TEXT, MODULE_MISMATCH_TEXT, CONTINUE_REFUSED_TEXT, LOCATION_TEXT, LIVE_TEXT,
     isJob, isJobPair, jobCopy, jobLinkState, jobStatus, jobName, liveOf, liveText, locationOutcome, locationResult, locationText, schemaOf };
   if (typeof module === 'object' && module.exports) module.exports = api;

@@ -9,7 +9,7 @@ const source=(studyUid,mode='all',uids=[])=>({studyUid,series:{mode,uids}});
 const row=(study,series)=>({'0020000D':{Value:[study]},'0020000E':{Value:[series]}});
 function viewer(input,lookup){
  const calls=[],events=[],classes=new Set();const location=new URL(model.viewerUrl(input),'https://pacs.test');
- const root={location,URL,URLSearchParams,Response,Headers,Event,AbortController,console,KinExamScope:model,
+ const root={location,URL,URLSearchParams,Request,Response,Headers,Event,AbortController,console,KinExamScope:model,
   fetch:async url=>{calls.push(String(url));const q=new URL(url,location);const ref=JSON.parse(q.searchParams.get('reference'));const value=await lookup(ref,q);return value instanceof Response?value:new Response(JSON.stringify(value));},
   dispatchEvent:e=>events.push(e.type),setInterval:()=>1,clearInterval(){},addEventListener(){},
   document:{documentElement:{classList:{add:v=>classes.add(v),remove:v=>classes.delete(v)}},head:{append(){}},body:{prepend(){}},createElement:()=>({setAttribute(){},remove(){}})}};
@@ -212,6 +212,49 @@ test('native comparison opens each side on its first image series in panel order
 });
 
 // Byte identity is the ordinary Job persistence contract, including every volume recipe version.
+test('a related study series list outside the scope passes only as a named series list; metadata and images stay refused',async()=>{
+ const current=scope(A,[source(A),source(B)]),v=viewer(model.viewerInput(current),()=>current);await v.api.ensure();
+ const asked=[];const native=async(url,init)=>{asked.push([String(url),new Headers(init?.headers||{}).get('X-KIN-Series-List')]);return new Response(JSON.stringify([row(P,S),row(P,T)]));};
+ const named={headers:{'X-KIN-Series-List':'related',Accept:'application/dicom+json'}};
+ // Without the name, as before: a study outside the scope is refused before anything is sent.
+ await assert.rejects(v.api.send(native,`/dicom-web/studies/${P}/series`));
+ // Named: the series level of that study only, answered as the archive answered (the panel keeps the exam's own series).
+ const listed=await v.api.send(native,`/dicom-web/studies/${P}/series?includefield=0020000E`,named);assert.deepEqual(await listed.json(),[row(P,S),row(P,T)]);
+ await assert.rejects(v.api.send(native,`/dicom-web/studies/${P}/metadata`,named));
+ await assert.rejects(v.api.send(native,`/dicom-web/studies/${P}/series/${S}/metadata`,named));
+ await assert.rejects(v.api.send(native,`/dicom-web/studies/${P}/series/${S}/instances`,named));
+ await assert.rejects(v.api.send(native,`/dicom-web/studies/${P}/series`,{headers:{'X-KIN-Series-List':'other'}}));
+ // Exactly a GET of the series level: not a write, not a metadata path that ends in "series".
+ await assert.rejects(v.api.send(native,`/dicom-web/studies/${P}/series`,{...named,method:'POST'}));
+ await assert.rejects(v.api.send(native,`/dicom-web/studies/${P}/metadata/series`,named));
+ await assert.rejects(v.api.send(native,new Request(`https://pacs.test/dicom-web/studies/${P}/series`,{method:'POST',headers:named.headers})));
+ assert.deepEqual(asked,[[`/dicom-web/studies/${P}/series?includefield=0020000E`,'related']]);
+ // A study inside the scope is answered as the archive lists it too: the window is the first part of a split original
+ // (S) and the related exam asked for is its second part (T), so the panel keeps T with that exam's own scope.
+ const split=scope(B,[source(A,'include',[S])],1),w=viewer(model.viewerInput(split),()=>split);await w.api.ensure();
+ const inside=await w.api.send(async()=>new Response(JSON.stringify([row(A,S),row(A,T)])),`/dicom-web/studies/${A}/series`,named);
+ const second=scope(C,[source(A,'exclude',[S])],2);
+ assert.deepEqual(await model.dicom(second,'series',async()=>inside.json()),[{sourceUid:A,row:row(A,T)}]);
+ // Unnamed, OHIF's own series read inside the scope is filtered as before.
+ const own=await w.api.send(async()=>new Response(JSON.stringify([row(A,S),row(A,T)])),`/dicom-web/studies/${A}/series`);assert.deepEqual(await own.json(),[row(A,S)]);
+ // A scope change while the list is read discards it.
+ let complete,started;const waiting=new Promise(r=>started=r);
+ const pending=v.api.send(()=>{started();return new Promise(r=>complete=r);},`/dicom-web/studies/${P}/series`,named);await waiting;v.api.invalidate();complete(new Response('[]'));
+ await assert.rejects(pending);
+});
+test('a comparison opened for one series of a scoped prior shows that series in its role',async()=>{
+ const current=scope(A,[source(A)]),prior=scope(B,[source(B),source(C)]);
+ const v=viewer(model.viewerInput(current,prior),ref=>ref.reportUid===A?current:prior);await v.api.ensure();
+ const sets=[{StudyInstanceUID:A,SeriesInstanceUID:S,displaySetInstanceUID:'cur',Modality:'CT'},{StudyInstanceUID:B,SeriesInstanceUID:'2.25.20',displaySetInstanceUID:'b-first',Modality:'CT'},
+  {StudyInstanceUID:C,SeriesInstanceUID:'2.25.30',displaySetInstanceUID:'c-second',Modality:'CT'},{StudyInstanceUID:C,SeriesInstanceUID:'2.25.31',displaySetInstanceUID:'c-sr',Modality:'SR'}];
+ let protocol;const services={displaySetService:{createDisplaySets:values=>values},hangingProtocolService:{addProtocol:(_id,value)=>protocol=value,run(){}}};v.api.install(services);
+ const chosen=()=>[0,1].map(i=>protocol.displaySetSelectors['exam-'+i].seriesMatchingRules[0].constraint.equals.value);
+ services.hangingProtocolService.run({displaySets:sets},'@ohif/hpCompare');assert.deepEqual(chosen(),['cur','b-first']);
+ v.root.location.searchParams.set('initialSeriesInstanceUID','2.25.30');await v.api.ensure();services.hangingProtocolService.run({displaySets:sets},'@ohif/hpCompare');assert.deepEqual(chosen(),['cur','c-second']);
+ // A series the role does not hold as an image keeps the role's first image.
+ v.root.location.searchParams.set('initialSeriesInstanceUID','2.25.31');await v.api.ensure();services.hangingProtocolService.run({displaySets:sets},'@ohif/hpCompare');assert.deepEqual(chosen(),['cur','b-first']);
+});
+
 test('ordinary Job capture and stored-original capture preserve the original JSON bytes and omit scope',()=>{
  for(const version of [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) {
   const value={version,studies:[A,P],rows:1,cols:2,active:0,cells:[null,null]};

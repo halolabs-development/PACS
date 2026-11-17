@@ -70,6 +70,7 @@ REGRESSION_SUITES = {
         tests/preload_pf_cell_dom_test.py
         tests/report_actions_dom_test.py
         tests/study_identity_dom_test.py
+        tests/unavailable_controls_dom_test.py
         tests/worklist_arrivals_dom_test.py
         tests/worklist_body_parts_dom_test.py
         tests/worklist_header_dom_test.py
@@ -97,6 +98,8 @@ REGRESSION_SUITES = {
         tests/context_loss_harness_test.py
         tests/viewer_auto_save_view_dom_test.py
         tests/viewer_cell_merge_dom_test.py
+        tests/viewer_monitor_double_click_dom_test.py
+        tests/viewer_worklist_monitor_dom_test.py
         tests/viewer_chrome_position_dom_test.py
         tests/viewer_hanging_protocol_monitors_dom_test.py
         tests/viewer_monitor_hanging_dom_test.py
@@ -1901,6 +1904,36 @@ class MeasurementCiTests(unittest.TestCase):
         self.assertIn('- auto-save-view', dispatch)
         self.assertIn('tests/e2e/artifacts/auto-save-view-ci/', dispatch)
 
+    def test_mark_autosave_profile_is_exact_and_dispatch_only(self):
+        # Marks saved on their own and deleted: the declared cases of one class in one unit, reached only through the
+        # Focused integration dispatch.
+        import ast
+        profile = ci.PROFILES['mark-autosave']
+        suite, class_name, unit = 'e2e/test_mark_autosave.py', 'MarkAutoSaveE2E', 'ci-mark-autosave'
+        self.assertEqual(profile['suites'], ((suite, class_name, unit),))
+        self.assertEqual(profile['out'].name, 'mark-autosave-ci')
+        self.assertEqual(profile['project_prefix'], 'kin-mark-autosave-ci-')
+        command, outer = ci.guarded_profile_run(profile, *profile['suites'][0], 2000)
+        self.assertEqual(command[command.index('--class')+1], class_name)
+        self.assertEqual(outer, 935)
+        for name, other in ci.PROFILES.items():
+            if name != 'mark-autosave':
+                self.assertNotEqual(profile['out'], other['out'], name)
+                self.assertNotEqual(profile['project_prefix'], other['project_prefix'], name)
+                self.assertNotIn(suite, [row[0] for row in other['suites']], name)
+        tree = ast.parse((ci.ROOT/'tests'/suite).read_text(encoding='utf-8'))
+        cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
+        self.assertEqual([node.name for node in cls.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')],
+                         ['test_mark_autosave_01_drawn_marks_are_saved_without_save_and_drawn_on_reopen',
+                          'test_mark_autosave_02_an_ellipse_resized_and_moved_under_edit_is_saved_on_its_own',
+                          'test_mark_autosave_03_a_saved_mark_is_deleted_from_its_row_the_image_menu_and_the_panel',
+                          'test_mark_autosave_04_closing_typing_and_a_lost_answer',
+                          'test_mark_autosave_05_a_mark_left_on_another_study_is_saved_to_its_own'])
+        self.assertNotIn('mark-autosave', self.catalog.text(automatic_only=True))
+        dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
+        self.assertIn('- mark-autosave', dispatch)
+        self.assertIn('tests/e2e/artifacts/mark-autosave-ci/', dispatch)
+
     def test_screen_language_profile_is_exact_and_dispatch_only(self):
         # Screen language: the declared cases of one class in one unit, reached only through the Focused integration dispatch.
         import ast
@@ -1968,6 +2001,8 @@ class MeasurementCiTests(unittest.TestCase):
                           'image-report',
                           # Auto Save View on a real stack, Focused integration dispatch only.
                           'auto-save-view',
+                          # Marks saved without the Save button and saved marks deleted, Focused integration dispatch only.
+                          'mark-autosave',
                           # Screen language on a real stack, Focused integration dispatch only.
                           'screen-language',
                           # S7-U5: the session contract job's eight profiles (validate.yml s7-u5-session-contracts matrix);
@@ -3146,11 +3181,15 @@ class MeasurementCiTests(unittest.TestCase):
             root=Path(folder);stage=root/'private';out=root/'public'
             stage.mkdir();out.mkdir()
             (stage/'volume-rendering.png').write_bytes(b'\x89PNG\r\n\x1a\nsynthetic')
-            # The declared set is both PNGs: one alone is missing evidence, not a pass.
+            # The declared set is all three PNGs: one alone is missing evidence, not a pass.
             with self.assertRaisesRegex(RuntimeError,'Unexpected or missing'):
                 ci.publish_vr_evidence(stage,out)
             self.assertEqual(list(out.iterdir()),[])
             (stage/'vr-access-covered.png').write_bytes(b'\x89PNG\r\n\x1a\ncovered')
+            with self.assertRaisesRegex(RuntimeError,'Unexpected or missing'):
+                ci.publish_vr_evidence(stage,out)
+            self.assertEqual(list(out.iterdir()),[])
+            (stage/'vr-bone-removed.png').write_bytes(b'\x89PNG\r\n\x1a\nremoved')
             (stage/'raw.txt').write_text('Authorization: Bearer raw-secret',encoding='utf-8')
             with self.assertRaisesRegex(RuntimeError,'Unexpected or missing'):
                 ci.publish_vr_evidence(stage,out)
@@ -3166,6 +3205,8 @@ class MeasurementCiTests(unittest.TestCase):
                              b'\x89PNG\r\n\x1a\nsynthetic')
             self.assertEqual((out/'vr-access-covered.png').read_bytes(),
                              b'\x89PNG\r\n\x1a\ncovered')
+            self.assertEqual((out/'vr-bone-removed.png').read_bytes(),
+                             b'\x89PNG\r\n\x1a\nremoved')
 
     def test_inner_deadline_leaves_time_to_terminate_descendants(self):
         for remaining, expected in [(1000,540), (100,65), (36,1)]:

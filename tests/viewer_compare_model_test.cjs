@@ -16,13 +16,21 @@ const M = win.KinCompareModel;
 
 const row = (uid, date, extra = {}) => ({ uid, date, time: '120000', acc: 'A-' + uid, ...extra });
 
-test('marks: current *, only earlier dates get P (nearest first); same day, later and undated have none and undated go last', () => {
+test('marks: current *, earlier dates P and later dates N (both nearest first); same day and undated have none and undated go last', () => {
   const rows = [row('later', '2026-09-01'), row('undated', null), row('old', '2024-01-08'), row('cur', '2026-08-12'),
-    row('same', '2026-08-12', { time: '080000' }), row('near', '2026-05-02'), row('bad', '2026-02-30')];
+    row('same', '2026-08-12', { time: '080000' }), row('near', '2026-05-02'), row('bad', '2026-02-30'), row('latest', '2027-01-03'),
+    row('soon', '2026-08-13')];
   const marked = M.marks(rows, 'cur');
   assert.deepEqual(marked.map(r => [r.uid, r.mark]),
-    [['cur', '*'], ['near', 'P1'], ['old', 'P2'], ['later', ''], ['same', ''], ['bad', ''], ['undated', '']]);
+    [['cur', '*'], ['near', 'P1'], ['old', 'P2'], ['soon', 'N1'], ['later', 'N2'], ['latest', 'N3'], ['same', ''], ['bad', ''], ['undated', '']]);
+  // Prev / Next Prior walk the P studies only.
   assert.deepEqual(M.priorUids(marked), ['near', 'old']);
+});
+
+test('marks: later studies on the same date order by time, then Accession Number, then Study Instance UID', () => {
+  const rows = [row('cur', '2026-08-12'), row('b', '2026-09-01', { time: '150000', acc: 'A' }), row('a', '2026-09-01', { time: '090000', acc: 'Z' }),
+    row('c', '2026-09-01', { time: '150000', acc: 'B' })];
+  assert.deepEqual(M.marks(rows, 'cur').map(r => r.uid + ':' + r.mark), ['cur:*', 'a:N1', 'b:N2', 'c:N3']);
 });
 
 test('marks: the same date and time order by Accession Number, then Study Instance UID; time breaks a same-day tie', () => {
@@ -31,9 +39,31 @@ test('marks: the same date and time order by Accession Number, then Study Instan
   assert.deepEqual(M.marks(rows, 'cur').map(r => r.uid + ':' + r.mark), ['cur:*', 't:P1', 'x2:P2', 'y:P3', 'z:P4', 'n:P5']);
 });
 
-test('marks: no P when the current study has no valid date or is missing', () => {
-  assert.deepEqual(M.marks([row('cur', ''), row('a', '2020-01-01')], 'cur').map(r => r.mark), ['*', '']);
+test('marks: no P or N when the current study has no valid date or is missing', () => {
+  assert.deepEqual(M.marks([row('cur', ''), row('a', '2020-01-01'), row('b', '2030-01-01')], 'cur').map(r => r.mark), ['*', '', '']);
   assert.deepEqual(M.marks([row('a', '2020-01-01')], 'missing').map(r => r.mark), ['']);
+});
+
+test('seriesRows: image series of an exam in Series Number order, each once, with its original study and instance count', () => {
+  const qido = (series, number, description, modality, count) => ({ '0020000E': { Value: [series] }, ...(number === undefined ? {} : { '00200011': { Value: [number] } }),
+    ...(description === undefined ? {} : { '0008103E': { Value: [description] } }), '00080060': { Value: [modality] }, ...(count === undefined ? {} : { '00201209': { Value: [count] } }) });
+  const rows = M.seriesRows([
+    { sourceUid: '2.25.1', row: qido('2.25.13', 3, 'Coronal', 'CT', 120) },
+    { sourceUid: '2.25.1', row: qido('2.25.11', 1, 'Scout', 'CT', 1) },
+    { sourceUid: '2.25.1', row: qido('2.25.12', '2', undefined, 'CT', '240') },
+    { sourceUid: '2.25.1', row: qido('2.25.12', 2, 'Again', 'CT', 240) },
+    { sourceUid: '2.25.2', row: qido('2.25.21', 1, 'R CC', 'mg', 1) },
+    { sourceUid: '2.25.1', row: qido('2.25.14', 900, 'Dose report', 'SR', 1) },
+    { sourceUid: '2.25.1', row: qido('2.25.15', 901, 'GSPS', 'PR', 1) },
+    { sourceUid: '2.25.1', row: qido('2.25.16', 902, 'Key images', 'KO', 1) },
+    { sourceUid: '2.25.1', row: qido('2.25.17', 903, 'Seg', 'SEG', 1) },
+    { sourceUid: '2.25.1', row: qido('not-a-uid', 4, 'Broken', 'CT', 1) },
+    { sourceUid: '2.25.1', row: qido('2.25.18', undefined, 'No number', 'MR', undefined) },
+  ]);
+  assert.deepEqual(rows.map(r => [r.sourceUid, r.seriesUid, r.number, r.description, r.modality, r.instances]), [
+    ['2.25.1', '2.25.11', 1, 'Scout', 'CT', 1], ['2.25.2', '2.25.21', 1, 'R CC', 'MG', 1], ['2.25.1', '2.25.12', 2, '', 'CT', 240],
+    ['2.25.1', '2.25.13', 3, 'Coronal', 'CT', 120], ['2.25.1', '2.25.18', null, 'No number', 'MR', null]]);
+  assert.deepEqual(M.seriesRows(null), []);
 });
 
 test('step: Next goes further back, Prev toward the current study, both stop at the ends; no prior shown opens the nearest', () => {

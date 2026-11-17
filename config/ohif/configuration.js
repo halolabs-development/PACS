@@ -24,14 +24,26 @@ function kinCreateMultiStudyStrip() {
   onModeExit() { epoch++; active = false; current?.stop(); current = null; } };
 }
 
+// The viewer's route `/` (see customizationService below): leave the viewer app for the sign-in entry, which sends a signed-in
+// account to its home screen (KinAuth.home: the worklist, or the clinician screen) and anyone else to sign in.
+function kinViewerRootToWorklist() {
+  location.replace('/worklist/hpacs-lite/index.html');
+  return null;
+}
+
 window.config = {
   extensions: [kinCreateSessionBoundary(), kinStackPrecision, kinCreateFrameMetadata(), kinCreateSRProvenance(), kinCreateViewerHistory(), kinCreateViewerFindings(), kinCreateViewerLayout(), kinCreateViewerJobs(), kinCreateViewerTechNote(), kinCreateFrameCoverage(), '@ohif/extension-dicom-pdf', kinCreateDicomPdf(), kinCreateCTSync(), kinCreateCine(), kinCreateDisplayScope(), kinCreateCellMerge(), kinCreateImagesOnly(), kinCreateImageText(), kinCreateCTPresets(), kinCreateThreeDCursor(), kinCreateSeriesMetadataRecovery(), kinCreateImageLoadStatus(), kinCreateContextLoss(), kinCreateMammographyHanging(), kinCreateSeriesSplit(), kinCreateSeriesOrder(), kinCreateMGReferenceLines(), kinCreateStudyPrefetch(), kinCreateStudySearch(), kinCreateViewerUX(), kinCreateViewerPrior(), kinCreateViewerReportPanel(), kinCreateMultiStudyStrip(), kinCreateMarkerStyle()],
   // REQ-D-3D-CURSOR. 3D Cursor(대응점 표시)는 뷰어에 켜져 있다. 판독자는 도구 영역의 3D Cursor
   // 버튼으로 모드에 들어간다. === true 하나만 ON이고, 끄는 길도 이 리터럴 하나뿐이다.
   kinThreeDCursor: { enabled: true },
   modes: [],
-  customizationService: {},
-  showStudyList: true,
+  // The study list is the worklist's, not the viewer's. OHIF's own list (route `/`) cannot list anything here — the
+  // gateway refuses a QIDO search without one study UID (api/src/pacs/dicom-gateway.ts) — so it only ever showed
+  // "Data Source Connection Error", and the header logo sent the open viewer there. With showStudyList off the logo is
+  // not a return button; every remaining way into `/` (a typed /ohif/, the not-found-study link, the local-file reader)
+  // goes to the sign-in entry, which opens the account's home screen.
+  customizationService: { customRoutes: { routes: [{ path: '/', children: kinViewerRootToWorklist }] } },
+  showStudyList: false,
   autoPlayCine: false,
 
   // [KIN 추가] 업스트림 소스를 건드리지 않고 헤더·검사 탭 수명주기를 교체한다.

@@ -264,8 +264,10 @@ def attributes_of(node, owner):
 
 
 def single_writer_problems(source):
-    """R1: between KIN's poll and the compare-and-set nothing may write the confirmed row. The loop is single
-    threaded, and Agent.retry_requests may use only these queue methods (reported writes reported_seq only)."""
+    """R1: between KIN's poll and the compare-and-set nothing may write the confirmed row. The main loop is the queue's
+    only writer: the one other thread is the operational heartbeat, which reads queue counts on a read-only connection
+    of its own and holds no Queue, and Agent.retry_requests may use only these queue methods (reported writes
+    reported_seq only)."""
     tree, problems = ast.parse(source), []
     retry = method(tree, "Agent", "retry_requests")
     used = attributes_of(retry, "queue")
@@ -282,7 +284,7 @@ def single_writer_problems(source):
         problems.append("reported writes more than reported_seq")
     imported = {alias.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))
                 for alias in (n.names if isinstance(n, ast.Import) else [ast.alias(n.module or "")])}
-    if imported & {"threading", "multiprocessing", "asyncio", "concurrent"}:
+    if imported & {"multiprocessing", "asyncio", "concurrent"}:
         problems.append("concurrency import")
     return problems
 
@@ -344,9 +346,9 @@ def cadence_problems(source):
             problems.append("order")
     except ValueError as error:
         problems.append("missing " + str(error))
-    run = ast.get_source_segment(source, method(tree, "Agent", "run"))
+    loop = ast.get_source_segment(source, method(tree, "Agent", "loop"))
     try:
-        if not run.index("self.flush_receipts()") < run.index("self.retry_requests()") < run.index("self.poll_changes()"):
+        if not loop.index("self.flush_receipts()") < loop.index("self.retry_requests()") < loop.index("self.poll_changes()"):
             problems.append("run order")
     except ValueError:
         problems.append("run order")
@@ -366,7 +368,7 @@ class AgentPins(unittest.TestCase):
             "reports through report()": AGENT.replace(call, call + "            self.report(\"1.2.3\")\n"),
             "resets through pending_now": AGENT.replace(call, call + "            self.queue.pending_now(\"1.2.3\", 1, 0)\n"),
             "retries through retry()": AGENT.replace(call, call + "            self.queue.retry(\"1.2.3\", \"x\", 1, 2)\n"),
-            "a worker thread": AGENT.replace("import time\n", "import time\nimport threading\n"),
+            "an asyncio loop": AGENT.replace("import time\n", "import time\nimport asyncio\n"),
             "reported moves seq": AGENT.replace("UPDATE studies SET reported_seq=? WHERE", "UPDATE studies SET reported_seq=?, seq=seq+1 WHERE"),
         }
         for wrong, source in mutants.items():
@@ -426,6 +428,16 @@ class AgentPins(unittest.TestCase):
         names = [item.name for item in cls.body if isinstance(item, ast.FunctionDef) and item.name.startswith("test")]
         self.assertEqual([name[:8] for name in names], ["test_t1_", "test_t2_", "test_t3_", "test_t4_", "test_t4_", "test_t5_", "test_t6_"])
         # The retry cases run in test_agent.py; another test's assertion text and total are not this contract.
+
+    def test_the_one_other_thread_is_proved_by_behaviour_in_the_agent_suite(self):
+        # R1 holds with the heartbeat thread because test_agent.py proves, by running the agent, that the heartbeat never
+        # writes the queue, opens it read-only, builds no Queue, is the only extra thread and stops however the loop ends.
+        cls = next(n for n in ast.parse(AGENT_TESTS).body if isinstance(n, ast.ClassDef) and n.name == "HeartbeatTests")
+        names = {item.name for item in cls.body if isinstance(item, ast.FunctionDef)}
+        for name in ("test_the_beat_never_writes_the_queue", "test_the_counts_connection_refuses_writes",
+                     "test_a_running_agent_has_one_thread_more_the_heartbeat_and_the_beat_builds_no_queue",
+                     "test_a_loop_that_raises_still_stops_the_heartbeat", "test_run_starts_the_beat_and_stops_it_when_the_loop_ends"):
+            self.assertIn(name, names)
 
 
 # ── the server ──

@@ -44,17 +44,21 @@ const { PacsAccess } = SERVER ? require(path.join(path.dirname(SERVER), 'pacs', 
 const hosted = S ? false : 'KIN_ADMIN_METRICS_SERVER is not set: the compiled PacsService runs in kin-api:ci only (/app/dist)';
 
 const KEYS = ['storage.server', 'storage.institution', 'studies.own', 'studies.tele', 'studies.flag_unreadable',
-  'studies.registered_24h', 'studies.registered_7d', 'tat.emergency', 'tat.normal', 'waiting.emergency', 'waiting.normal'];
+  'studies.registered_24h', 'studies.registered_7d', 'tat.emergency', 'tat.normal', 'waiting.emergency', 'waiting.normal',
+  'server.api_uptime', 'server.api_started'];
 const NOW = '2026-09-26T00:00:00.000Z';
 const DAY_FROM = '2026-09-25T00:00:00.000Z';
 const WEEK_FROM = '2026-09-19T00:00:00.000Z';
 const DISK_AT = '2026-09-25T23:59:59.500Z';
 const GENERATED = '2026-09-26T00:00:01.000Z';
 const BYTES = 13421772800;   // 12.5 GiB
+// The API process: started 3 d 04 h 05 min before NOW.
+const UPTIME = 3 * 86400 + 4 * 3600 + 5 * 60, STARTED = '2026-09-22T19:55:00.000Z';
 const SRC = {
   disk: 'Orthanc GET /statistics TotalDiskSize', studies: 'HALO PACS DB StudyState', registered: 'HALO PACS DB StudyState.createdAt',
   tat: 'HALO PACS DB StudyState.createdAt, ReportVersion(action=approve).at, StudyState.em',
   waiting: 'HALO PACS DB StudyState.createdAt, StudyState.rs, StudyState.em',
+  uptime: 'HALO PACS API process (performance.now)', started: 'HALO PACS API process (performance.timeOrigin)',
 };
 const base = { reason: null, max: null, denominator: null, excluded: null, window: null };
 const ROWS = [
@@ -78,7 +82,12 @@ const ROWS = [
     unit: 'second', value: 3600, max: 3600, denominator: { unit: 'study', value: 1 }, excluded: 0 },
   { ...base, key: 'waiting.normal', state: 'observed', scope: 'institution', source: SRC.waiting, observedAt: NOW,
     unit: 'second', value: 12600, max: 18000, denominator: { unit: 'study', value: 2 }, excluded: 1 },
+  { ...base, key: 'server.api_uptime', state: 'observed', scope: 'server', source: SRC.uptime, observedAt: NOW,
+    unit: 'duration_seconds', value: UPTIME },
+  { ...base, key: 'server.api_started', state: 'observed', scope: 'server', source: SRC.started, observedAt: NOW,
+    unit: 'timestamp', value: STARTED },
 ];
+const PROCESS = { uptimeSeconds: UPTIME, startedAt: Date.parse(STARTED), observedAt: Date.parse(NOW) };
 const ANSWER = { institutionId: 'hallym', generatedAt: GENERATED, metrics: ROWS };
 const clone = value => JSON.parse(JSON.stringify(value));
 const withRow = (key, change) => {
@@ -91,7 +100,7 @@ const rowOf = (answer, key) => read(answer).rows.find(row => row.key === key);
 
 // ── page model ──
 
-test('the page table is the fixed eleven rows in the server order, frozen', () => {
+test('the page table is the fixed thirteen rows in the server order, frozen', () => {
   assert.deepEqual(json(M.METRICS.map(item => item.key)), KEYS);
   assert.ok(Object.isFrozen(M.METRICS) && M.METRICS.every(Object.isFrozen));
   assert.ok(Object.isFrozen(M.ROW_STATES) && Object.values(M.ROW_STATES).every(Object.isFrozen));
@@ -115,6 +124,8 @@ test('a server answer is read row by row and every row keeps its source, time, u
     ['tat.normal', 'observed', 86400, 86400, 1, 1],
     ['waiting.emergency', 'observed', 3600, 3600, 1, 0],
     ['waiting.normal', 'observed', 12600, 18000, 2, 1],
+    ['server.api_uptime', 'observed', UPTIME, null, null, null],
+    ['server.api_started', 'observed', STARTED, null, null, null],
   ]);
   const shown = result.rows.map(row => json(M.display(row, result.institutionId, F)));
   assert.deepEqual(shown.map(s => [s.label, s.stateText, s.value, s.unit, s.denominator, s.scope, s.source, s.observed]), [
@@ -129,7 +140,17 @@ test('a server answer is read row by row and every row keeps its source, time, u
     ['Report TAT (Normal)', 'Observed', 'Median 24 h 00 min · Max 24 h 00 min', 'Elapsed Time (Median · Max)', '1 Study · 1 Excluded', 'Institution hallym', SRC.tat, `<${NOW}>`],
     ['Waiting (Emergency)', 'Observed', 'Median 1 h 00 min · Max 1 h 00 min', 'Elapsed Time (Median · Max)', '1 Study', 'Institution hallym', SRC.waiting, `<${NOW}>`],
     ['Waiting (Normal)', 'Observed', 'Median 3 h 30 min · Max 5 h 00 min', 'Elapsed Time (Median · Max)', '2 Studies · 1 Excluded', 'Institution hallym', SRC.waiting, `<${NOW}>`],
+    ['API Uptime (since start)', 'Observed', '3 d 04 h 05 min', 'Elapsed Time', 'Not a Ratio', 'Server-wide', SRC.uptime, `<${NOW}>`],
+    ['Last Restart', 'Observed', `<${STARTED}>`, 'Date and Time', 'Not a Ratio', 'Server-wide', SRC.started, `<${NOW}>`],
   ]);
+  // A server-wide row says whose value it is: storage is the Orthanc server, the process rows are the API process.
+  assert.match(shown[0].scopeTitle, /Orthanc/);
+  for (const index of [11, 12]) {
+    assert.match(shown[index].scopeTitle, /API 프로세스/);
+    assert.doesNotMatch(shown[index].scopeTitle, /Orthanc/);
+  }
+  assert.equal(shown[11].valueTitle, `원천 값 ${UPTIME}초`);
+  assert.equal(shown[12].valueTitle, `서버 시각 ${STARTED}`);
   assert.equal(shown[0].valueTitle, `원천 값 ${BYTES}바이트`);
   assert.equal(shown[7].valueTitle, '중앙값 14400초 · 최댓값 86400초');
   assert.ok(shown[5].labelTitle.endsWith(` 기간: <${DAY_FROM}> ~ <${NOW}>.`), shown[5].labelTitle);
@@ -205,6 +226,22 @@ test('rows that do not prove their value read Unobservable (invalid_answer), inc
     ['waiting.normal', { denominator: { unit: 'byte', value: 2 } }, 'a denominator in another unit'],
     ['waiting.normal', { state: 'unobservable', reason: 'source_failed', value: 0 }, 'unobservable carrying 0'],
     ['waiting.normal', { state: 'unobservable', reason: 'SYN', value: null, max: null }, 'an unknown reason'],
+    ['server.api_uptime', { value: -1 }, 'a negative uptime'],
+    ['server.api_uptime', { value: 1.5 }, 'a fractional uptime'],
+    ['server.api_uptime', { value: '600' }, 'an uptime as text'],
+    ['server.api_uptime', { value: null }, 'an observed uptime without a value'],
+    ['server.api_uptime', { max: 5 }, 'a max on the uptime'],
+    ['server.api_uptime', { denominator: { unit: 'study', value: 1 } }, 'a denominator on the uptime'],
+    ['server.api_uptime', { excluded: 0 }, 'an excluded count on the uptime'],
+    ['server.api_uptime', { window: { from: DAY_FROM, to: NOW } }, 'a window on the uptime'],
+    ['server.api_uptime', { state: 'empty' }, 'empty on the uptime'],
+    ['server.api_uptime', { scope: 'institution' }, 'the uptime as an institution value'],
+    ['server.api_uptime', { unit: 'second' }, 'the uptime as a median'],
+    ['server.api_started', { value: 'yesterday' }, 'a start that is not a time'],
+    ['server.api_started', { value: Date.parse(STARTED) }, 'a start as milliseconds'],
+    ['server.api_started', { value: '2026-09-22 19:55:00' }, 'a start that is not ISO UTC'],
+    ['server.api_started', { observedAt: null }, 'no observation time on the start'],
+    ['server.api_started', { source: '' }, 'no source on the start'],
   ];
   for (const [key, change, what] of cases) {
     const row = rowOf(withRow(key, change), key);
@@ -219,7 +256,7 @@ test('rows that do not prove their value read Unobservable (invalid_answer), inc
   missing.metrics = missing.metrics.filter(row => row.key !== 'tat.normal');
   const rows = read(missing).rows;
   assert.deepEqual([rows[8].key, rows[8].state, rows[8].reason], ['tat.normal', 'unobservable', 'invalid_answer']);
-  assert.equal(rows.filter(row => row.state === 'observed').length, 9);
+  assert.equal(rows.filter(row => row.state === 'observed').length, 11);
   // An extra, unknown row is not shown.
   const extra = clone(ANSWER);
   extra.metrics.push({ ...ROWS[2], key: 'studies.unknown', value: 5 });
@@ -241,7 +278,11 @@ test('units are stated and formatted without rounding a nonzero value to 0', () 
   assert.deepEqual([0, 1, 59, 60, 119, 3599, 3600, 3660, 12600, 100 * 3600 + 7 * 60].map(M.formatDuration),
     ['0 s', '1 s', '59 s', '1 min', '1 min', '59 min', '1 h 00 min', '1 h 01 min', '3 h 30 min', '100 h 07 min']);
   assert.deepEqual(json(Object.fromEntries(Object.entries(M.UNITS).map(([key, [text]]) => [key, text]))),
-    { byte: 'Bytes (1 GiB = 1024³ B)', study: 'Studies', second: 'Elapsed Time (Median · Max)' });
+    { byte: 'Bytes (1 GiB = 1024³ B)', study: 'Studies', second: 'Elapsed Time (Median · Max)', duration_seconds: 'Elapsed Time',
+      timestamp: 'Date and Time' });
+  // A process uptime: as the durations below a day, then days, hours and minutes.
+  assert.deepEqual([0, 59, 3600, 86399, 86400, 86400 + 3660, UPTIME, 400 * 86400 + 59].map(M.formatUptime),
+    ['0 s', '59 s', '1 h 00 min', '23 h 59 min', '1 d 00 h 00 min', '1 d 01 h 01 min', '3 d 04 h 05 min', '400 d 00 h 00 min']);
 });
 
 test('no threshold: a long wait and a short one differ only in their numbers', () => {
@@ -347,6 +388,8 @@ function store({ policies = [[], []], statistics = STATISTICS, orthanc = null, o
   const service = new PacsMetrics(prisma, source, access, new PacsAccess(prisma, access));
   // The instance clock is the fixture's NOW, so windows and durations are the fixture's to the second.
   service.metricsClock = () => now;
+  // The API process facts are the fixture's too (started 3 d 04 h 05 min before NOW).
+  service.metricsProcess = () => ({ ...PROCESS });
   // The public facade over the same store: what the admin controller calls.
   const facade = new S.PacsService(prisma, source, {}, access, {});
   return { service, facade, calls };
@@ -499,29 +542,41 @@ test('ORTHANC-04: an unanswered real source cannot become a success or outlive t
 test('server: the compiled rows are exactly the page fixture (tenant filter, windows, median, exclusions)', { skip: hosted }, () => {
   assert.deepEqual([...S.ADMIN_METRIC_KEYS], KEYS);
   const approvals = new Map(APPROVED.map(([uid, at]) => [uid, ago(at)]));
-  const rows = S.adminMetricRows('hallym', { bytes: BYTES, observedAt: DISK_AT }, { observedAt: NOW, states: STATES, firstApproved: approvals });
+  const rows = S.adminMetricRows('hallym', { bytes: BYTES, observedAt: DISK_AT }, { observedAt: NOW, states: STATES, firstApproved: approvals }, PROCESS);
   assert.deepEqual(clone(rows), ROWS);
   // Rows of another institution never count, whoever passes them in.
   const foreign = STATES.map(s => ({ ...s, institutionId: 'kin-center', teleInstitutionId: null }));
-  const none = clone(S.adminMetricRows('hallym', { bytes: 0, observedAt: DISK_AT }, { observedAt: NOW, states: foreign, firstApproved: approvals }));
-  assert.deepEqual(none.slice(2).map(row => [row.key, row.state, row.value]), [
+  const none = clone(S.adminMetricRows('hallym', { bytes: 0, observedAt: DISK_AT }, { observedAt: NOW, states: foreign, firstApproved: approvals }, PROCESS));
+  assert.deepEqual(none.slice(2, 11).map(row => [row.key, row.state, row.value]), [
     ['studies.own', 'observed', 0], ['studies.tele', 'observed', 0], ['studies.flag_unreadable', 'observed', 0],
     ['studies.registered_24h', 'observed', 0], ['studies.registered_7d', 'observed', 0],
     ['tat.emergency', 'empty', null], ['tat.normal', 'empty', null], ['waiting.emergency', 'empty', null], ['waiting.normal', 'empty', null]]);
   assert.deepEqual([none[0].state, none[0].value], ['observed', 0], 'a disk the source reports as 0 bytes is a known 0');
   // DB facts missing: every DB row is unknown, and storage still reads.
-  const failed = clone(S.adminMetricRows('hallym', { bytes: BYTES, observedAt: DISK_AT }, null));
+  // DB facts missing: every DB row is unknown, and storage and the API process rows still read.
+  const failed = clone(S.adminMetricRows('hallym', { bytes: BYTES, observedAt: DISK_AT }, null, PROCESS));
   assert.deepEqual(failed.map(row => [row.key, row.state, row.reason, row.value, row.observedAt]), [
     ['storage.server', 'observed', null, BYTES, DISK_AT], ['storage.institution', 'unobservable', 'no_source', null, null],
-    ...KEYS.slice(2).map(key => [key, 'unobservable', 'source_failed', null, null])]);
-  assert.deepEqual(failed.slice(7).map(row => row.denominator), Array(4).fill({ unit: 'study', value: null }));
+    ...KEYS.slice(2, 11).map(key => [key, 'unobservable', 'source_failed', null, null]),
+    ['server.api_uptime', 'observed', null, UPTIME, NOW], ['server.api_started', 'observed', null, STARTED, NOW]]);
+  assert.deepEqual(failed.slice(7, 11).map(row => row.denominator), Array(4).fill({ unit: 'study', value: null }));
   assert.deepEqual(failed.slice(2, 7).map(row => row.denominator), Array(5).fill(null));
   for (const failure of ['source_failed', 'invalid_answer', 'timeout']) {
-    const disk = clone(S.adminMetricRows('hallym', { failure }, null))[0];
+    const disk = clone(S.adminMetricRows('hallym', { failure }, null, PROCESS))[0];
     assert.deepEqual([disk.state, disk.reason, disk.value, disk.observedAt], ['unobservable', failure, null, null]);
   }
-  assert.deepEqual(read({ ...ANSWER, metrics: failed }).rows.map(row => row.reason === 'invalid_answer'), Array(11).fill(false),
+  assert.deepEqual(read({ ...ANSWER, metrics: failed }).rows.map(row => row.reason === 'invalid_answer'), Array(13).fill(false),
     'the page reads every compiled failure row as its own reason');
+  // Process facts that do not prove themselves are unknown, never 0 s or a made-up time; the other rows are untouched.
+  for (const bad of [undefined, null, { ...PROCESS, uptimeSeconds: -1 }, { ...PROCESS, uptimeSeconds: 1.5 },
+    { ...PROCESS, startedAt: NaN }, { ...PROCESS, startedAt: 0 }, { ...PROCESS, observedAt: NaN }]) {
+    const unknown = clone(S.adminMetricRows('hallym', { bytes: BYTES, observedAt: DISK_AT }, null, bad));
+    assert.deepEqual(unknown.slice(11).map(row => [row.key, row.state, row.reason, row.value, row.observedAt, row.source]), [
+      ['server.api_uptime', 'unobservable', 'invalid_answer', null, null, SRC.uptime],
+      ['server.api_started', 'unobservable', 'invalid_answer', null, null, SRC.started]], JSON.stringify(bad));
+    assert.deepEqual(read({ ...ANSWER, metrics: unknown }).rows.slice(11).map(row => [row.state, row.reason]),
+      [['unobservable', 'invalid_answer'], ['unobservable', 'invalid_answer']]);
+  }
 });
 
 test('server: TotalDiskSize is the only value read from /statistics; anything else is unknown', { skip: hosted }, () => {
@@ -648,7 +703,8 @@ test('server: Orthanc down, malformed or late is Unobservable storage; the DB ro
     const answer = clone(await service.adminMetrics(ADMIN));
     assert.deepEqual([answer.metrics[0].state, answer.metrics[0].reason, answer.metrics[0].value, answer.metrics[0].observedAt],
       ['unobservable', reason, null, null], reason);
-    assert.deepEqual(answer.metrics.slice(2).map(row => row.state), [...Array(5).fill('observed'), ...Array(4).fill('observed')]);
+    assert.deepEqual(answer.metrics.slice(2).map(row => row.state), [...Array(5).fill('observed'), ...Array(4).fill('observed'),
+      'observed', 'observed'], 'the DB rows and the API process rows still read');
     assert.ok(!JSON.stringify(answer).includes('SYN-ORTHANC') && !JSON.stringify(answer).includes('987654'), 'no source wording or count');
   }
 });
@@ -662,8 +718,11 @@ test('server: a failed DB read is Unobservable on every DB row, never 0, and log
       const { service } = store({ [option]: Object.assign(new Error('SYN-SECRET-DATABASE-URL'), { code: 'P1001' }) });
       const answer = clone(await service.adminMetrics(ADMIN));
       assert.deepEqual([answer.metrics[0].state, answer.metrics[0].value], ['observed', BYTES], option);
-      assert.deepEqual(answer.metrics.slice(2).map(row => [row.state, row.reason, row.value]),
+      assert.deepEqual(answer.metrics.slice(2, 11).map(row => [row.state, row.reason, row.value]),
         Array(9).fill(['unobservable', 'source_failed', null]), option);
+      // The API process rows are their own source: a failed DB read leaves them observed.
+      assert.deepEqual(answer.metrics.slice(11).map(row => [row.key, row.state, row.value]),
+        [['server.api_uptime', 'observed', UPTIME], ['server.api_started', 'observed', STARTED]], option);
     }
   } finally { console.warn = warn; }
   assert.equal(warned.length, 3);

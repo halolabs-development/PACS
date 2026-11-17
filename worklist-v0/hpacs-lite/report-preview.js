@@ -75,7 +75,7 @@
     if (citation.isReduced(entry)) return `${label} · ${who} · ${when} — ${citation.UNAVAILABLE_TEXT}`;
     const link = LINK_STATE_TEXT[entry.linkStateAtInsert] ?? LINK_STATE_UNKNOWN;
     return `${label} · 소견 r${entry.findingRevision} · 출처 ${Number(entry.sourceIndex) + 1}번 · ` +
-      `인용 당시 연결 ${link} · ${who} · ${when} — ` +
+      `인용 당시 연결 ${link}${typeof citation.measurementNote === 'function' ? citation.measurementNote(entry) : ''} · ${who} · ${when} — ` +
       `${citation.STATE_TEXT[citation.presenceOf(entry, texts[entry.field] ?? '')] ?? ''}`;
   }
   /**

@@ -199,6 +199,17 @@
     if (![zoom, perPixel, cellWidth, cellHeight, width, height, margin].every(positive)) return null;
     return zoom * Math.min(cellWidth / width, cellHeight / height) * margin / perPixel;
   }
+  // The zoom of a Quadrant Zoom step (quadrant: its box's width × height in image pixels): '4x' is four times Fit (the
+  // same scale as Display › Zoom 400 %), whatever the cell; 'fill' fills the cell with the quadrant. clipped: at 4× the
+  // quadrant is larger than the cell, so its edges are outside it. Null for another mode or a missing measure.
+  const QUADRANT_ZOOMS = ['4x', 'fill'];
+  function quadrantZoom({ mode, ...measures }) {
+    const fill = fitRect(measures);
+    if (mode === 'fill') return fill ? { zoom: fill, clipped: false } : null;
+    if (mode !== '4x') return null;
+    const whole = fitRect({ ...measures, margin: 1 });
+    return { zoom: 4, clipped: !!whole && whole < 4 - 1e-9 };
+  }
   // One image pixel on one device pixel of the screen.
   function onePixel({ zoom, perPixel, dpr }) {
     if (![zoom, perPixel, dpr].every(positive)) return null;
@@ -284,7 +295,7 @@
   }
 
   const api = { QUADRANTS: QUADRANTS.slice(), family, unlinkable, toStandard, fromStandard, counterpart, targets, quadrant,
-    detect, regionWindow, fitRect, onePixel, trueSize, matchSize, trueSizeLabel, monitorKey, validPitch,
+    detect, regionWindow, fitRect, QUADRANT_ZOOMS: QUADRANT_ZOOMS.slice(), quadrantZoom, onePixel, trueSize, matchSize, trueSizeLabel, monitorKey, validPitch,
     slabRange, slabCompatible, slabAverage, slabLabel, nextTab };
   if (typeof module === 'object' && module.exports) module.exports = api; else root.KinMgBreastModel = api;
 })(globalThis);

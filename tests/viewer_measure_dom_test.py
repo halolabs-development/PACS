@@ -255,6 +255,68 @@ class ViewerMeasureDOMTest(unittest.TestCase):
         self.press(page, 'left', [50, 20]); self.press(page, 'left', [50, 10])
         self.assertEqual(['L4', 'L4', 'L3'], [m['text'] for m in self.marks(page)])
 
+    def test_06b_spine_label_numbers_the_discs_or_the_vertebrae_and_discs_in_order(self):
+        page = self.open(size=(1024, 700))
+        panel = self.tool(page, 'Spine Label')
+        options = "sel => [...document.querySelector(`[aria-label=\"${sel}\"]`).options].map(o => o.value)"
+        # Added after the existing fields; the default is today's vertebrae.
+        self.assertEqual(['Vertebrae', 'Discs', 'Vertebrae and Discs'], page.evaluate(options, 'Labels'))
+        expect(panel.get_by_label('Labels')).to_have_value('Vertebrae')
+        self.assertEqual(['Start Level', 'Include C8', 'Include L6', 'Direction', 'Labels'],
+                         page.evaluate("() => [...document.querySelectorAll('[data-measure-fields=measure-spine-label] label')].map(l => l.firstChild.textContent)"))
+        expect(panel.locator('[data-measure-steps] li')).to_have_text(['척추체를 차례로 누르세요'])
+        # Discs: the vertebra chosen as the start becomes the disc under it.
+        panel.get_by_label('Start Level').select_option('L4')
+        panel.get_by_label('Labels').select_option('Discs')
+        expect(panel.get_by_label('Start Level')).to_have_value('L4-5')
+        self.assertEqual('C2-3', page.evaluate(options, 'Start Level')[0])
+        self.assertNotIn('L4', page.evaluate(options, 'Start Level'))
+        expect(panel.locator('[data-spine-preview]')).to_contain_text('L3-4 [L4-5] L5-S1')
+        expect(panel.locator('[data-measure-steps] li')).to_have_text(['디스크를 차례로 누르세요'])
+        expect(panel.locator('[data-measure-result]')).to_have_text('Next level: L4-5')
+        self.press(page, 'left', [50, 40]); self.press(page, 'left', [50, 60])
+        self.assertEqual([('KinSpineLabel', 'L4-5'), ('KinSpineLabel', 'L5-S1')], [(m['tool'], m['text']) for m in self.marks(page)])
+        expect(page.locator('[data-kin-measure-layer=left] [data-kin-mark=KinSpineLabel]').filter(has_text='L4-5')).to_have_count(1)
+        self.press(page, 'left', [50, 80])
+        expect(panel.get_by_role('status')).to_contain_text('마지막 레벨까지')
+        self.assertEqual(2, len(self.marks(page)))
+        # Vertebrae and Discs: each vertebra, then the disc under it.
+        panel.get_by_role('button', name='Restart').click()
+        self.assertEqual([], self.marks(page))
+        panel.get_by_label('Labels').select_option('Vertebrae and Discs')
+        expect(panel.get_by_label('Start Level')).to_have_value('L4-5')
+        panel.get_by_label('Start Level').select_option('L4')
+        expect(panel.locator('[data-spine-preview]')).to_contain_text('[L4] L4-5 L5 L5-S1 S1')
+        expect(panel.locator('[data-measure-steps] li')).to_have_text(['척추체와 디스크를 차례로 누르세요'])
+        for row in (20, 30, 40, 50, 60):
+            self.press(page, 'left', [50, row])
+        self.assertEqual(['L4', 'L4-5', 'L5', 'L5-S1', 'S1'], [m['text'] for m in self.marks(page)])
+        # The long line of 48 names wraps inside the panel instead of running past it.
+        self.assertTrue(page.evaluate("() => { const p = document.querySelector('[data-spine-preview]'); return p.scrollWidth <= p.clientWidth + 1 && p.getBoundingClientRect().height > 40; }"))
+        # C8 and the discs around it, upwards.
+        panel.get_by_role('button', name='Restart').click()
+        panel.get_by_label('Labels').select_option('Discs')
+        panel.get_by_label('Include C8').check()
+        panel.get_by_label('Start Level').select_option('C8-T1')
+        panel.get_by_label('Direction').select_option('Bottom to top')
+        self.press(page, 'left', [50, 60]); self.press(page, 'left', [50, 40])
+        self.assertEqual(['C8-T1', 'C7-8'], [m['text'] for m in self.marks(page)])
+        # C8 dropped: the start moves to the disc below where it was.
+        panel.get_by_label('Include C8').uncheck()
+        expect(panel.get_by_label('Start Level')).to_have_value('C7-T1')
+        # Back to Vertebrae: the disc start becomes the vertebra under it; the step and the list are today's again.
+        panel.get_by_label('Labels').select_option('Vertebrae')
+        expect(panel.get_by_label('Start Level')).to_have_value('T1')
+        self.assertEqual(25, len(page.evaluate(options, 'Start Level')))
+        expect(panel.locator('[data-measure-steps] li')).to_have_text(['척추체를 차례로 누르세요'])
+        # A disc label can be dragged like a vertebra label.
+        panel.get_by_role('button', name='Close').click()
+        before = [m for m in self.marks(page) if m['text'] == 'C7-8'][0]['points']
+        uid = [m for m in self.marks(page) if m['text'] == 'C7-8'][0]['uid']
+        x, y = page.evaluate("uid => { const r = document.querySelector(`[data-kin-handle=\"${uid}\"]`).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }", uid)
+        page.mouse.move(x, y); page.mouse.down(); page.mouse.move(x + 20, y + 10, steps=4); page.mouse.up()
+        self.assertNotEqual(before, [m for m in self.marks(page) if m['uid'] == uid][0]['points'])
+
     def test_07_marking_list_is_the_accounts_and_stamps_the_chosen_text(self):
         page = self.open()
         panel = self.tool(page, 'Marking')

@@ -113,6 +113,7 @@
     ],
     loading: '받은 중요 결과를 불러오는 중입니다…',
     failed: '받은 중요 결과를 불러오지 못했습니다.',
+    offline: '서버 연결이 끊겼습니다. 표시된 받은 중요 결과는 최신이 아닐 수 있습니다.',
     emptyPending: '확인 대기 중인 받은 중요 결과가 없습니다. 목록 조회는 성공했습니다.',
     emptyAll: '받은 중요 결과가 없습니다. 목록 조회는 성공했습니다.',
     ready: (n, more) => `받은 중요 결과 ${n}건을 최신순으로 표시합니다.${more ? ' More로 이어서 읽습니다.' : ''}`,
@@ -288,9 +289,11 @@
    *   fold       참이면 요약 줄(Show Received/Hide Received)과 접히는 본문이 있는 판독 화면 패널이다
    *   owner()    [institution, sub] — 모든 응답 봉투의 owner와 대조한다
    *   eligible() 지금 이 세션이 받은 목록을 읽는가(호스트가 세션 종류·서버 연결·역할로 정한다)
+   *   standing() 영역이 서는 세션인가(선택; 없으면 eligible()). 연결이 끊겨도 영역은 서서 읽지 못한다고 말한다 — 판독 화면에서
+   *              숨으면 판독 칸이 커져 단추 줄이 움직인다(main.html "An answer never resizes").
    * 반환값의 end()는 세션 종료, lock(detail)은 다른 영역이 알아챈 계정 변경이다.
    */
-  function mount({ apiBase, root, prefix, fold, owner, eligible, onAccountChanged, blocked = () => null }) {
+  function mount({ apiBase, root, prefix, fold, owner, eligible, standing = eligible, onAccountChanged, blocked = () => null }) {
     const work = window.KinWorkContext, transport = window.KinSessionTransport.page();
     // Capture at registration, not when a delayed callback runs.
     const guarded = (effect, scope = 'document') => {
@@ -1183,20 +1186,22 @@
 
     function paint() {
       if (ended) return;
-      const show = !!eligible();
+      const show = !!standing();
       region.hidden = !show;
       if (!show) return;
+      const reading = !!eligible();
       // 받아들인 결과와 나가 있는 요청으로 정한 영역의 상태. 실패 뒤 다시 읽는 동안은 불러오는 중이다.
       const phase = lock !== null ? 'locked' : listPhase === 'failed' && !listing.size ? 'failed' : listing.size ? 'loading'
         : listPhase === 'ready' ? 'ready' : 'idle';
       region.dataset.state = phase;
       const active = document.activeElement;
       // 배지: 서버 pending. 읽기가 실패하면 수가 없다(0으로 보이지 않는다).
-      setText(badge, lock !== null ? 'Locked' : pending !== null ? `Pending ACK ${pending}` : phase === 'failed' ? 'Load Failed' : 'Loading');
-      badge.dataset.state = lock !== null ? 'locked' : pending !== null ? 'ready' : phase;
-      setTitle(badge, lock !== null ? TEXT.locked : pending === null && phase === 'failed' ? TEXT.badgeFailed : TEXT.badge);
+      setText(badge, lock !== null ? 'Locked' : !reading ? 'Offline' : pending !== null ? `Pending ACK ${pending}` : phase === 'failed' ? 'Load Failed' : 'Loading');
+      badge.dataset.state = lock !== null ? 'locked' : !reading ? 'offline' : pending !== null ? 'ready' : phase;
+      setTitle(badge, lock !== null ? TEXT.locked : !reading ? TEXT.offline : pending === null && phase === 'failed' ? TEXT.badgeFailed : TEXT.badge);
       let line, detail = '';
       if (lock !== null) { line = lock.text; detail = lock.detail; }
+      else if (!reading) line = TEXT.offline;
       else if (phase === 'failed') { line = TEXT.failed; detail = listError; }
       else if (!ready) line = TEXT.loading;
       else if (!listIds.length) line = filter === 'pending' ? TEXT.emptyPending : TEXT.emptyAll;
@@ -1206,7 +1211,8 @@
       setText(statusDetail, detail);
       statusDetail.hidden = !detail;
       allButton.setAttribute('aria-pressed', String(filter === 'all'));
-      allButton.disabled = refreshButton.disabled = lock !== null;
+      allButton.disabled = lock !== null;
+      refreshButton.disabled = lock !== null || !reading;
       if (fold) {
         setText(toggle, bodyOpen ? 'Hide Received' : 'Show Received');
         setTitle(toggle, bodyOpen ? '받은 목록을 닫습니다. Esc로도 닫을 수 있습니다.' : '받은 중요 결과 목록을 펼칩니다.');

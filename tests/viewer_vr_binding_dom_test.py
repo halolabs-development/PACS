@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ORIENTATION = Path(os.environ.get("KIN_VR_ORIENTATION_SOURCE", ROOT / "worklist-v0" / "hpacs-lite" / "viewer-volume-orientation.js"))
 RENDERING = Path(os.environ.get("KIN_VR_RENDERING_SOURCE", ROOT / "worklist-v0" / "hpacs-lite" / "viewer-volume-rendering.js"))
 MODEL = ROOT / "worklist-v0" / "hpacs-lite" / "volume-rendering.js"
+REMOVAL = ROOT / "worklist-v0" / "hpacs-lite" / "volume-rendering-removal.js"
 
 # PacsController.me()/caller() and AuthGuard's cookie-session branch. Keep the
 # complete public response here; sessionId is present for a cookie login (null
@@ -69,7 +70,7 @@ window.cornerstone={cache:{getVolume:id=>id==='volume-1'?volume:id==='volume-2'?
 const services={viewportGridService:{getState:()=>grid,setViewportIsReady:(id,value)=>repairs.push([id,value])},cornerstoneViewportService:{getCornerstoneViewport:id=>views.get(id),resizeQueue:[],gridResizeTimeOut:null},displaySetService:{getDisplaySetByUID:()=>({StudyInstanceUID:'study-1',SeriesInstanceUID:'series-1',Modality:'CT'})}};
 window.KinVolumeOrientation={intersection:()=>[0,0,0],rotate:c=>c};
 window.KinVolumeSculpt={};window.KinVolumeMaskRenderer={preflight(){} };let sculptCancels=0;
-window.kinCreateVolumeSculpt=({controlsPane,getOperation,render})=>{const fieldset=document.createElement('fieldset');controlsPane.append(fieldset);const apply=document.createElement('button');apply.textContent='Apply Sculpt';fieldset.append(apply);apply.onclick=()=>{const op=getOperation();op.sculptOperations=[{}];shader.pending=true;shader.compiled=false;render(op)};return {fieldset,pause(){},cancel(){sculptCancels++},reset(){},dispose(){}}};
+window.kinCreateVolumeSculpt=({controlsPane,getOperation,render})=>{const fieldset=document.createElement('fieldset');controlsPane.append(fieldset);const apply=document.createElement('button');apply.textContent='Apply Sculpt';fieldset.append(apply);apply.onclick=()=>{const op=getOperation();op.sculptOperations=[{}];shader.pending=true;shader.compiled=false;render(op)};return {fieldset,pause(){},cancel(){sculptCancels++},reset(){},rebind(){},dispose(){}}};
 window.kinViewerJobWorkspaceState=()=>({busy:false});window.kinVolumeBatchState={busy:()=>false};window.kinMprRenderingState={busy:()=>false};
 
 const intervalCallbacks=new Map(),nativeSetInterval=window.setInterval;window.setInterval=(fn,ms)=>{const list=intervalCallbacks.get(ms)||[];list.push(fn);intervalCallbacks.set(ms,list);return {ms,fn}};window.clearInterval=()=>{};window.tick=ms=>(intervalCallbacks.get(ms)||[]).forEach(fn=>fn());
@@ -206,7 +207,7 @@ class ViewerVrBindingDOMTest(unittest.TestCase):
         if real_sculpt:
             for name in ('volume-sculpt.js', 'viewer-volume-sculpt.js'):
                 page.add_script_tag(content=(MODEL.parent/name).read_text(encoding='utf-8'))
-        for path in (MODEL, ORIENTATION, RENDERING):
+        for path in (MODEL, REMOVAL, ORIENTATION, RENDERING):
             page.add_script_tag(content=path.read_text(encoding='utf-8'))
         page.evaluate("""()=>{
           const create=window.kinCreateVolumeRendering;
@@ -1531,7 +1532,7 @@ class ViewerVrBindingDOMTest(unittest.TestCase):
         }""")
         self.assertEqual(250,page.evaluate("performance.getEntriesByType('resource').length"))
         self.install_session(page)
-        for path in (MODEL,ORIENTATION,RENDERING):page.add_script_tag(content=path.read_text(encoding='utf-8'))
+        for path in (MODEL,REMOVAL,ORIENTATION,RENDERING):page.add_script_tag(content=path.read_text(encoding='utf-8'))
         page.evaluate("""()=>{
           window.orientation=mountOrientation();window.nativeObserved=[];
           window.testTimingObserver=new PerformanceObserver(list=>nativeObserved.push(...list.getEntries().filter(e=>new URL(e.name).pathname.startsWith('/api/'))));

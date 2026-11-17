@@ -23,6 +23,7 @@ CELLS = """() => [...services.viewportGridService.getState().viewports.values()]
   const range = v.getProperties().voiRange, wl = range && cornerstone.utilities.windowLevel.toWindowLevel(range.lower, range.upper);
   return { id: g.viewportId, w: wl ? wl.windowWidth : null, l: wl ? wl.windowCenter : null,
     rotation: Math.round(((v.getViewPresentation().rotation % 360) + 360) % 360), image: v.getCurrentImageId(),
+    scale: v.getCamera().parallelScale, focal: v.getCamera().focalPoint,
     filter: v.element.querySelector('canvas')?.style.filter || '',
     marks: [...pane.querySelectorAll('.kin-view-marks>span')].map(n => n.textContent),
     lines: pane.querySelectorAll('.kin-view-gsps polyline').length }; })"""
@@ -138,6 +139,9 @@ class DisplaySetPresetsE2E(HangingProtocolE2E):
         note = Dataset(); note.GraphicLayer = 'SYN'; note.GraphicObjectSequence = [graphic]; note.TextObjectSequence = [text]
         ds.GraphicAnnotationSequence = [note]
         self.put(ds)
+        # The cell as it opened: no rule, the image's own window, fit with no pan.
+        self.settle(p)
+        stock = self.cells_now(p)[0]
         panel = self.presets(p)
         panel.get_by_label('Set 1 Windowing').select_option(label='Lung')
         panel.get_by_label('Set 1 GSPS auto').select_option(label='On')
@@ -152,6 +156,22 @@ class DisplaySetPresetsE2E(HangingProtocolE2E):
         self.assertEqual(['GSPS: SYNGSPS'], cell['marks'])
         self.assertEqual(1, cell['lines'])
         expect(p.locator('.kin-view-gsps text')).to_have_text(['SYN NOTE'])
+        # The row back at all the defaults: the defaults go on the cell in full, as on a cell without a GSPS — not the
+        # row's earlier Lung: no turn, the image's own window, fit with no pan, the same image — and the line says the
+        # rule left the cell.
+        panel = self.presets(p)
+        panel.get_by_label('Set 1 Windowing').select_option(label='Stock')
+        panel.get_by_label('Set 1 GSPS auto').select_option(label='Off')
+        panel.get_by_role('button', name='Apply to This Study').click()
+        expect(panel.get_by_role('status')).to_have_text('Rule removed from 1 cell.', timeout=30000)
+        self.close(p, panel); self.settle(p)
+        cell = self.cells_now(p)[0]
+        print('DISPLAY-SET-PRESETS gsps taken off ' + repr(cell), flush=True)
+        self.assertEqual((0, [], 0, stock['image']), (cell['rotation'], cell['marks'], cell['lines'], cell['image']))
+        self.assertAlmostEqual(stock['w'], cell['w'], delta=1); self.assertAlmostEqual(stock['l'], cell['l'], delta=1)
+        self.assertAlmostEqual(stock['scale'], cell['scale'], delta=0.01)
+        for a, b in zip(stock['focal'], cell['focal']):
+            self.assertAlmostEqual(a, b, delta=0.01)
 
     def test_presets_03_a_filter_changes_the_picture_not_the_measurement(self):
         f = self.ct('DSP-FILTER-' + uuid.uuid4().hex[:12], 'current', '20260801')

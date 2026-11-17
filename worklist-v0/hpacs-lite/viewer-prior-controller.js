@@ -38,8 +38,11 @@ window.KinViewerPriorController = (() => {
       const patient = viewer.snapshot();
       const studies = data.studies.map(study => ({ ...study, date: date(study.date) }));
       const reference = studies.find(study => study.uid === (patient.examScope?.reportUid || patient.studyUIDs[0]) && study.sourcePatientKey === value.patientKey);
+      // The cell's own exam: its study listed by UID, a part of the tab's current exam, or a listed merged or split exam
+      // that holds the cell's original (and series) — e.g. the second original of a merged prior.
       const source = studies.find(study => study.uid === value.studyUid && study.sourcePatientKey === value.patientKey) ||
-        (patient.examScope?.sources.some(source=>source.studyUid===value.studyUid)?reference:null);
+        (patient.examScope?.sources.some(source=>source.studyUid===value.studyUid)?reference:null) ||
+        window.KinExamScope?.listedExam?.(studies.filter(study => study.sourcePatientKey === value.patientKey), value.studyUid, value.seriesUid) || null;
       if (!reference || !source) return null;
       return studies.filter(study => study.sourcePatientKey === value.patientKey && !study.state?.identityUnresolved)
         .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || b.uid.localeCompare(a.uid))

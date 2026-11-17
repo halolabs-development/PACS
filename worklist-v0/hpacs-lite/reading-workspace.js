@@ -351,6 +351,8 @@ window.KinReadingWorkspace = function (app) {
     listed:uid=>!!app.study(uid),
     verifyExam:(uid,stamp)=>app.verifyExam(uid,stamp),
     admitted:request=>opening?.request===request&&!opening.cancelled,
+    // No opening can still move the target: none under way, or the one under way is this request's, already dropped.
+    settled:request=>!opening||opening.request===request&&!!opening.cancelled,
     select:uid=>app.select(uid),
     focus:()=>{if(active&&!ended)focusPane('report');else app.focusReport?.();},
   };
@@ -362,9 +364,11 @@ window.KinReadingWorkspace = function (app) {
     return Promise.resolve(answer).finally(()=>{editorOpening=false;opening=null;});
   };
   // The viewer withdrew the opening it is waiting for no more (viewer-editor-link.js): a move still waiting for this page's
-  // study-move gate does not happen; the page stays on the study it is on.
+  // study-move gate does not happen; the page stays on the study it is on. Then it is told where the report target is
+  // (KinViewerWindows.editorWithdrawn): with the move dropped first, that is the request's outcome.
   window.kinReadingEditorCancel=message=>{
     if(opening&&message&&message.request===opening.request&&message.uid===opening.uid){opening.cancelled=true;app.cancelMove?.(opening.uid);}
+    return window.KinViewerWindows?.editorWithdrawn?.(message,openReader)??null;
   };
   // Read on every message rather than captured once: the frame and the document state are current values.
   window.addEventListener('message',e=>{

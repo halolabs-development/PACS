@@ -687,6 +687,7 @@ export class PacsWorklist {
         oid: o.oid, id: o.patientId, name: o.name, sex: o.sex, birth: o.birth,
         sched: o.sched, modality: o.modality, desc: o.descr, ward: o.ward,
         reqDoc: o.reqDoc, matched: o.matched, studyUid: o.studyUid, accession: orderAccessionOf(o),
+        risStatus: o.risStatus ?? null,
       })),
       serverTime: new Date().toISOString(),
     };

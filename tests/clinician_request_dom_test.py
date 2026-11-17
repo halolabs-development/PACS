@@ -633,7 +633,7 @@ QUEUE_VIEW = """() => { const q = s => document.querySelector(s), text = e => e 
 READ_VIEW = """() => { const q = s => document.querySelector(s), text = e => e ? e.textContent : null, seen = e => !!e && e.checkVisibility();
   const r = q('#image-request-p'), line = q('#image-request-read-status'), closed = r.querySelector(':scope > [data-part="closed"]');
   return {shown: seen(r), state: r.dataset.state, summary: text(q('#image-request-summary')),
-    closedLine: seen(closed) ? text(closed) : null,
+    closedLine: seen(closed) && closed.dataset.shown !== 'false' ? text(closed) : null,
     toggle: [text(q('#image-request-toggle')), q('#image-request-toggle').getAttribute('aria-expanded'), seen(q('#image-request-toggle'))],
     pane: seen(q('#image-request-pane')),
     line: [line.dataset.state, text(line.querySelector('.image-request-line')), text(line.querySelector('.image-request-detail')), seen(line)],
@@ -2266,7 +2266,7 @@ class MainRequestDOMTest(Harness):
         self.mode("Radiology")
         self.pick(11)
         seen = self.reading()
-        self.assertEqual((True, "locked", C_REFUSED, False, False, []), (seen["shown"], seen["state"], seen["summary"],
+        self.assertEqual((True, "locked", C_REFUSED, True, False, []), (seen["shown"], seen["state"], seen["summary"],
                                                                         seen["toggle"][2], seen["pane"], self.reads))
 
     def test_m05_a_b_a_for_the_request_and_the_page(self):
@@ -2363,8 +2363,10 @@ class MainRequestDOMTest(Harness):
         self.release(self.held_reads[2][1], {"owner": owner, "items": [item(33, a, "Declined", revision=2, handler=STAFF,
                                                                              note="SYN declined", reason="SYN-FRESH-A")]})
         self.held_reads = None
+        # The line stands from the paint that shows the study (main.html "An answer never resizes"); a late answer of an
+        # earlier pick paints nothing in it.
         for seen in (first, second):
-            self.assertEqual((False, "loading", []), (seen["shown"], seen["state"], seen["items"]))
+            self.assertEqual((True, "loading", []), (seen["shown"], seen["state"], seen["items"]))
         expect(self.page.locator("#image-request-p")).to_have_attribute("data-state", "ready")
         self.assertEqual([rid(33)], [entry["id"] for entry in self.reading()["items"]])
 
@@ -2373,7 +2375,9 @@ class MainRequestDOMTest(Harness):
         self.pick(12)
         expect(self.page.locator("#image-request-p")).to_have_attribute("data-state", "failed")
         seen = self.reading()
-        self.assertEqual((True, M_READ_FAILED), (seen["shown"], seen["summary"]))
+        self.assertEqual((True, M_READ_FAILED, False), (seen["shown"], seen["summary"], seen["pane"]), "the move folded the pane")
+        self.page.locator("#image-request-toggle").click()
+        seen = self.reading()
         self.assertEqual(["failed", M_READ_FAILED, f"{M_NOT_FOUND}\n검사를 찾을 수 없습니다 (HTTP 404 · STUDY_NOT_FOUND)", True], seen["line"])
         self.page.locator("#image-request-read-status button").click()
         expect(self.page.locator("#image-request-p")).to_have_attribute("data-state", "ready")
@@ -2381,7 +2385,7 @@ class MainRequestDOMTest(Harness):
         self.pick(11)
         expect(self.page.locator("#image-request-p")).to_have_attribute("data-state", "locked")
         seen = self.reading()
-        self.assertEqual((True, C_REFUSED, False, False), (seen["shown"], seen["summary"], seen["toggle"][2], seen["pane"]))
+        self.assertEqual((True, C_REFUSED, True, False), (seen["shown"], seen["summary"], seen["toggle"][2], seen["pane"]))
 
     def test_m07_nothing_is_drawn_after_session_end_or_another_account(self):
         self.open_main()
@@ -2783,7 +2787,8 @@ class MainRequestDOMTest(Harness):
         self.pick(11)
         expect(self.page.locator("#question-p")).to_have_attribute("data-state", "ready")
         expect(self.page.locator("#image-request-p")).to_have_attribute("data-state", "ready")
-        self.page.locator("#question-toggle").click()
+        # The questions row stands only when the reader opens it; folded, the band's notice is the way in.
+        (self.page.locator("#question-notice") if self.page.locator("#question-p").is_hidden() else self.page.locator("#question-toggle")).click()
         self.page.locator(f'#question-list > li[data-id="{thread["id"]}"] button[data-open-thread]').click()
         expect(self.page.locator("#question-thread")).to_have_attribute("data-state", "Open")
 
@@ -2873,7 +2878,8 @@ class MainRequestDOMTest(Harness):
         expect(self.page.locator("#image-request-p")).to_have_attribute("data-state", "locked")
         expect(self.page.locator("#question-p")).to_have_attribute("data-state", "ready")
         self.assertEqual(C_REFUSED, self.reading()["summary"])
-        self.page.locator("#question-toggle").click()
+        # The questions row stands only when the reader opens it; folded, the band's notice is the way in.
+        (self.page.locator("#question-notice") if self.page.locator("#question-p").is_hidden() else self.page.locator("#question-toggle")).click()
         self.page.locator(f'#question-list > li[data-id="{thread["id"]}"] button[data-open-thread]').click()
         expect(self.page.locator("#question-thread")).to_have_attribute("data-state", "Open")
         self.send_answer("SYN answer after the refusal")

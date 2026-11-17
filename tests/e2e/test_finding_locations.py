@@ -18,7 +18,7 @@ from test_viewer_history import ViewerHistoryE2E, literal
 from test_worklist import psql
 from finding_api_test import BOUNDARY_COLUMNS
 
-SCHEMA = {'X-KIN-Finding-Schema': '2'}
+SCHEMA = {'X-KIN-Finding-Schema': '3'}
 FINDINGS = '#kin-viewer-findings'
 ACTIVE_VOLUME = """()=>{const v=services.cornerstoneViewportService.getCornerstoneViewport(services.viewportGridService.getState().activeViewportId);
  const m=cornerstone.metaData.get('instance',cornerstone.cache.getVolume(v.getVolumeId()).imageIds[0]);return {study:m.StudyInstanceUID,series:m.SeriesInstanceUID,frame:m.FrameOfReferenceUID}}"""
@@ -162,7 +162,8 @@ class FindingLocationsE2E(VolumeMarksE2E):
         [finding] = self.api_findings(a)
         source = finding['item']['sources'][0]
         frame = v.evaluate(ACTIVE_VOLUME)['frame']
-        self.assertEqual((finding['item']['schemaVersion'], finding['item']['characteristics']), (2, traits))
+        # The viewer writes version 3 (the lesion location is empty until written).
+        self.assertEqual((finding['item']['schemaVersion'], finding['item']['characteristics'], finding['item']['lesionLocation']), (3, traits, ''))
         self.assertEqual({k: source[k] for k in ('kind', 'jobId', 'revision', 'jobStudyUid', 'studyUid', 'studies', 'snapshotVersion')},
                          dict(kind='job', jobId=job['id'], revision=1, jobStudyUid=a.uid, studyUid=b.uid, studies=[a.uid, b.uid], snapshotVersion=6))
         saved_mark = job['snapshot']['marks']['marks'][0]
