@@ -22,7 +22,7 @@ pinned Chromium belong to S3-ASR-U4b, and the live refusal battery to U5.
 
 The browser assertions replace the former source and harness-shape pins.
 """
-from page_source import read_page_source
+from page_source import read_page_source, settle
 from main_split_harness import REPORT_FIXTURE, fixture_block
 import json
 import os
@@ -545,7 +545,7 @@ class ReportDictationHostDOMTest(unittest.TestCase):
         self.opened = True
         self.page.wait_for_function("()=>typeof window.snapshot === 'function'")
         self.page.evaluate("m => { media.mode = m; }", media)
-        self.page.evaluate("load({force:true})")
+        settle(self.page, "load({force:true})")
         self.page.wait_for_function("()=>citeCalls.length>=1 && structCalls.length>=1")
         self.page.evaluate("()=>{ calls.length = 0; holdCalls.length = 0; toasts.length = 0; }")
         if capability is not None:

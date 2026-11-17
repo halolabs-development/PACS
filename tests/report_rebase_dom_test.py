@@ -6,7 +6,7 @@ the stale-rebase pane run on a blank page with a synthetic fetch, so there is no
 LiveStack, no Orthanc, no database and no original DICOM. Only the refusal body
 the test hands back can become the approved report shown to the user.
 """
-from page_source import read_page_source
+from page_source import read_page_source, settle
 from main_split_harness import REPORT_FIXTURE, fixture_block
 import json
 import os
@@ -295,7 +295,7 @@ class ReportRebaseDOMTest(unittest.TestCase):
         # call that is allowed to replace the editor, and it is how a reader arrives
         # here. A non-forced load would find the empty harness fields "dirty" and
         # preserve them, so nothing would be drawn and no origin recorded.
-        self.page.evaluate("load({force: true})")
+        settle(self.page, "load({force: true})")
         return base
 
     def test_a_version_that_arrived_without_a_redraw_never_becomes_the_commit_base(self):
@@ -322,7 +322,7 @@ class ReportRebaseDOMTest(unittest.TestCase):
         # Reload Report is the one call that is allowed to replace the editor, so
         # afterwards the screen really is standing on v5. The base follows the text.
         self.page.evaluate("()=>{appState['%s'] = {...appState['%s'], version: 5, findings: 'NEW HEAD'};}" % (UID, UID))
-        self.page.evaluate("load({force: true})")
+        settle(self.page, "load({force: true})")
         self.assertEqual(5, self.page.evaluate("snapshot().base"))
         self.assertEqual(["NEW HEAD", "", ""], self.page.evaluate("snapshot().text"))
         self.page.evaluate("reply({status: 200, body: {rs: 'A', version: 6}})")

@@ -36,6 +36,7 @@ from urllib.parse import unquote, urlparse
 
 import auth_logout_dom_test as h
 import report_flow_dom_test as rf
+from page_source import settle
 from playwright.sync_api import expect
 
 TECH = {**h.RAD, "sub": "SYN-TECH-SUB", "actor": "syn-tech@synthetic.test", "user": "syn-tech@synthetic.test",
@@ -1108,7 +1109,7 @@ class TransferPanelPage(rf.ReportFlowPage):
             with self.subTest(name=patient_name):
                 if patient_name != "Base Nora":
                     self.site.flow = named(patient_name)
-                    self.page.evaluate("() => load()")
+                    settle(self.page, "load()")
                     expect(self.page.locator("#rows tr", has_text=patient_name)).to_have_count(1)
                 self.assertTrue(self.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", "en"))
                 self.attach_files([{"name": "referral.pdf", "mimeType": "application/pdf", "buffer": self.PDF}], via=patient_name)

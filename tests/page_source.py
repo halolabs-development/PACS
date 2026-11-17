@@ -28,6 +28,17 @@ def moved_files(path):
         ['node', str(_HELPER), 'files', str(path)], text=True, encoding='utf-8')))
 
 
+def settle(page, call):
+    """Run `call`, a page expression that returns a promise (for example "load()"), and wait until it settles.
+
+    The page keeps the promise the test waits for (window.synSettled). Through the browser protocol an awaited promise is
+    held only weakly: a garbage collection between the promise settling and the protocol's answer ends the wait with
+    'Promise was collected', which Playwright reports as "Execution context was destroyed, most likely because of a
+    navigation" although nothing navigated and the call had finished. Kept by the page, the promise is not collected.
+    """
+    return page.evaluate(f"() => window.synSettled = ({call})")
+
+
 def include_moved_files(files, root):
     """Extend an existing served-input allowlist; keep every existing entry and its order."""
     root = Path(root).resolve()
