@@ -225,7 +225,12 @@ WHEEL_SPOT = r'''(selector) => {
   // it outwards). With the report card mostly below the window (768x1024, panel open) the card would scroll in its
   // sliver while the column around it never moves, so the reader turns the outermost container that can still move.
   const side = document.querySelector('.right');
-  const movable = a => way > 0 ? a.scrollTop < a.scrollHeight - a.clientHeight - 0.5 : a.scrollTop > 0.5;
+  // scrollHeight and clientHeight are whole numbers rounded separately: a box of fractional height (the report column,
+  // 761.45 px at 900x1200 with compact list rows) stops the wheel up to 1 px short of their difference, so there less
+  // than 1 px left is its end. A box of whole height scrolls its last pixel (a 1 px textarea still takes the wheel).
+  const fractional = a => { const cs = getComputedStyle(a), h = a.getBoundingClientRect().height - n(cs.borderTopWidth) - n(cs.borderBottomWidth);
+    return Math.abs(h - Math.round(h)) > 0.01; };
+  const movable = a => way > 0 ? a.scrollTop < a.scrollHeight - a.clientHeight - (fractional(a) ? 1 : 0.5) : a.scrollTop > 0.5;
   for (const target of own.slice().reverse()) {
     if (!side || !side.contains(target) || !movable(target)) continue;
     const box = target.getBoundingClientRect(), tc = clipOf(target);
@@ -567,6 +572,37 @@ RELATED = '''() => { const {clip, seen} = ''' + VISIBLE + ''';
   let text = walker.nextNode(); while (text && !text.nodeValue.trim()) text = walker.nextNode();
   const range = document.createRange(); range.selectNodeContents(text); const line = range.getClientRects()[0], v = clip(text, line);
   return {head: seen(document.querySelector('.related-list-pane thead')), line: text.nodeValue.trim().slice(0, 40), line_visible: v.bottom - v.top}; }'''
+# Study Panel ▸ Info: where the painted text of the Clinical Info table ends, against its own half of the panel and the
+# Clinical Context half beside it. The text is measured, not the table box: a cell that does not wrap paints past both.
+INFO_TEXT = '''() => { const host = document.querySelector('#study-panel-host');
+  const info = host.querySelector('.clin-pair > .clinical'), context = host.querySelector('.clin-pair > .clinical-context');
+  const cells = [...info.querySelectorAll('td')];
+  let right = 0;
+  for (const cell of cells) { const range = document.createRange(); range.selectNodeContents(cell);
+    for (const box of range.getClientRects()) right = Math.max(right, box.right); }
+  const shown = context && !context.hidden && getComputedStyle(context).display !== 'none';
+  return {cells: cells.length, text: info.innerText, textRight: right, infoRight: info.getBoundingClientRect().right,
+          contextLeft: shown ? context.getBoundingClientRect().left : null, drawerRight: host.getBoundingClientRect().right}; }'''
+# The worklist rows: each first row's height, and the same row measured again with its cell buttons taken out of the
+# layout, so the difference is what the buttons add to a text row. Each button's painted box must be whole and on top.
+ROW_BUTTONS = '''() => { const rows = [...document.querySelectorAll('#rows tr[data-uid]')];
+  const heights = () => rows.map(r => r.getBoundingClientRect().height);
+  const buttons = rows.flatMap(r => [...r.querySelectorAll('td .chip')]);
+  const facts = buttons.map(b => { const box = b.getBoundingClientRect(), cell = b.closest('td').getBoundingClientRect();
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    const style = getComputedStyle(b);
+    return {text: b.textContent.trim(), height: box.height, width: box.width,
+            inCell: box.top >= cell.top - 0.5 && box.bottom <= cell.bottom + 0.5 && box.left >= cell.left - 0.5 && box.right <= cell.right + 0.5,
+            // Cut without a mark: taller than its box, or wider without the ellipsis the column's text cells use.
+            clipped: b.scrollHeight > b.clientHeight + 1 || (b.scrollWidth > b.clientWidth + 1 && style.textOverflow !== 'ellipsis'),
+            ellipsis: b.scrollWidth > b.clientWidth + 1,
+            onTop: !!hit && (hit === b || b.contains(hit)), font: getComputedStyle(b).fontSize,
+            cellFont: getComputedStyle(b.closest('td')).fontSize}; });
+  const withButtons = heights();
+  for (const b of buttons) b.style.display = 'none';
+  const withoutButtons = heights();
+  for (const b of buttons) b.style.display = '';
+  return {withButtons, withoutButtons, buttons: facts}; }'''
 
 
 def settle(page):
@@ -1453,9 +1489,9 @@ class StudyPanelPageDOM(unittest.TestCase):
                 finally:
                     context.close()
 
-    def page_at(self, width, height, studies=2, dictation=None):
+    def page_at(self, width, height, studies=2, dictation=None, site=None):
         """A fresh login at one window size serving one or two studies; returns (page, site, context)."""
-        site = WorkspaceSite()
+        site = site or WorkspaceSite()
         site.second_study = studies > 1
         site.study_count = studies
         site.dictation = dictation
@@ -1644,6 +1680,112 @@ class StudyPanelPageDOM(unittest.TestCase):
                 self.assertGreaterEqual(area['row'], 99.5)
                 self.assertGreaterEqual(area['grid'][1] - area['grid'][0] + 0.5, area['head'] + area['row'] + area['scrollbar'])
                 self.click_row(page, 0, 'taller row')
+                self.doCleanups()
+
+    def assert_info_inside(self, page, what):
+        """Every Text Size step: the Clinical Info text stays in its own half and never runs under Clinical Context."""
+        # By place, not by name: the same check runs with Korean screen words.
+        drawer = page.locator('#study-panel-host .study-panel')
+        drawer.locator('[role="tab"][id$="-tab-info"]').click()
+        size = drawer.locator('.study-panel-tools select')
+        for step, label in enumerate(('Normal', 'Large', 'Larger')):
+            size.select_option(str(step))
+            settle(page)
+            facts = page.evaluate(INFO_TEXT)
+            with self.subTest(what=what, size=label):
+                self.assertGreater(facts['cells'], 0, facts)
+                # The whole identity is there (wrapped, never cut).
+                self.assertIn(auth.UID, facts['text'].replace('\n', ''), facts)
+                self.assertIsNotNone(facts['contextLeft'], f'{what} {label}: Clinical Context beside the table {facts}')
+                self.assertLessEqual(facts['textRight'], facts['infoRight'] + 0.5, f'{what} {label}: text past its half {facts}')
+                self.assertLessEqual(facts['textRight'], facts['contextLeft'] + 0.5, f'{what} {label}: text under Clinical Context {facts}')
+                self.assertLessEqual(facts['textRight'], facts['drawerRight'] + 0.5, f'{what} {label}: text past the panel {facts}')
+        size.select_option('0')
+        settle(page)
+
+    def test_info_table_wraps_inside_its_half_of_the_study_panel(self):
+        """Study Panel ▸ Info on the worklist screen drew the Clinical Info table on one line per cell (the page-wide
+        `th, td { white-space: nowrap }`), so the Study UID and patient lines ran under the Clinical Context half - at
+        Normal and more at Larger. Its cells wrap there as they already did in the Reading Workspace: worklist screen and
+        Reading Workspace, a wide window, the narrow 1366x640 window and a window where the panel spans the width, both
+        screen languages."""
+        drawer = '#study-panel-host .study-panel'
+        for width, height, languages in ((1920, 1080, ('en', 'ko')), (1366, 640, ('en',)), (1024, 768, ('en',))):
+            for language in languages:
+                with self.subTest(width=width, height=height, language=language):
+                    # The Korean screen is stored with the account's appearance (the language test's site answers it).
+                    from worklist_language_dom_test import LanguageSite
+                    page, _, _ = self.page_at(width, height, site=LanguageSite() if language != 'en' else None)
+                    page.route('**/ohif/**', lambda route: route.fulfill(content_type='text/html', body='<!doctype html><title>SYN viewer</title>'))
+                    if language != 'en':
+                        page.locator('#language-open').click()
+                        dialog = page.locator('#language-dialog')
+                        dialog.locator('#language-' + language).check()
+                        for scope in ('worklist', 'reading'):
+                            dialog.locator('#language-scope-' + scope).check()
+                        dialog.locator('#language-apply').click()
+                        expect(dialog).to_be_hidden()
+                        settle(page)
+                    self.click_row(page, 0, 'select')
+                    page.keyboard.press('Control+Alt+5')
+                    expect(page.locator(drawer)).to_be_visible()
+                    settle(page)
+                    self.assert_info_inside(page, f'worklist {width}x{height} {language}')
+                    page.keyboard.press('Escape')
+                    expect(page.locator(drawer)).to_have_count(0)
+                    page.locator('#m-reading').click()
+                    opener = page.locator('button[aria-controls="study-panel-host"][aria-keyshortcuts="Control+Alt+5"]')
+                    expect(opener).to_be_visible()
+                    settle(page)
+                    opener.click()
+                    expect(page.locator(drawer)).to_be_visible()
+                    settle(page)
+                    self.assert_info_inside(page, f'reading {width}x{height} {language}')
+                    page.keyboard.press('Escape')
+                    self.doCleanups()
+
+    def test_list_rows_stay_compact_with_their_buttons(self):
+        """The Assigned Reader ('Unassigned') and Tech Note buttons in a row took the toolbar's 26px button height, so a
+        row of 11px text was 31px instead of 21px and a screen showed about two thirds of the rows it could ('make
+        everything as compact as possible'). A button in a list cell now takes the row's own line: the row is no taller
+        with it than without it, at the default list size and at the largest, and the button stays whole and clickable.
+        In a column the reader narrowed (its header edge dragged to 90 px) at the largest size, the button stays inside
+        its cell and ends in an ellipsis, as the text cells of that column do. The fonts differ by platform (a Linux
+        runner's 11px line is 12px, Windows' is 16px): with a row font whose line is tighter than a button font's, the
+        button still adds nothing, because it takes the row's font and line."""
+        for width, height, list_size, narrow, font in (
+                (1920, 1080, None, False, None), (1920, 1080, 20, False, None), (1366, 640, None, False, None),
+                (1366, 640, 20, False, None), (1920, 1080, 20, True, None), (1920, 1080, None, False, '"Courier New", monospace')):
+            with self.subTest(width=width, height=height, list_size=list_size, narrow=narrow, font=font):
+                page, _, _ = self.page_at(width, height)
+                if font:
+                    page.evaluate("(f) => { document.querySelector('#rows').style.fontFamily = f; }", font)
+                    settle(page)
+                if narrow:
+                    head = page.locator('#heads th', has_text='Assigned Reader')
+                    grip, box = head.locator('.col-grip').bounding_box(), head.bounding_box()
+                    x, y = grip['x'] + grip['width'] / 2, grip['y'] + grip['height'] / 2
+                    page.mouse.move(x, y)
+                    page.mouse.down()
+                    page.mouse.move(x - (box['width'] - 90), y, steps=5)
+                    page.mouse.up()
+                    settle(page)
+                    self.assertLess(head.bounding_box()['width'], 110, head.bounding_box())
+                if list_size:
+                    # The variable the list's text size setting writes (reading-appearance.js).
+                    page.evaluate("(px) => document.querySelector('#rows').style.setProperty('--kin-list-text', px + 'px')", list_size)
+                    settle(page)
+                facts = page.evaluate(ROW_BUTTONS)
+                self.assertTrue(facts['buttons'], facts)
+                self.assertIn('Unassigned', [b['text'] for b in facts['buttons']], facts)
+                for got, text_only in zip(facts['withButtons'], facts['withoutButtons'], strict=True):
+                    self.assertLessEqual(got, text_only + 0.5, f'a row is taller with its buttons {facts}')
+                for button in facts['buttons']:
+                    self.assertTrue(button['inCell'] and button['onTop'] and not button['clipped'], button)
+                    # The button's words are the row's size, not a fixed toolbar size.
+                    self.assertEqual(button['cellFont'], button['font'], button)
+                if list_size is None:
+                    self.assertLessEqual(max(facts['withButtons']), 22, facts)
                 self.doCleanups()
 
     def test_sizes_stay_with_their_orientation(self):
