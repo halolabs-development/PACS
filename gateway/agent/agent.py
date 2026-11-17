@@ -15,6 +15,7 @@ import sqlite3
 import time
 import math
 import tempfile
+import threading
 from contextlib import contextmanager
 import uuid
 from dataclasses import dataclass
@@ -107,6 +108,11 @@ RECEIPT_REFUSAL_CODES = ("GATEWAY_EPOCH_UNRECOGNISED", "GATEWAY_RECEIPT_CONFLICT
 RETRY_POLL_SECONDS = 30.0
 RETRY_POLL_LIMIT = 100
 RETRY_POLL_UID = re.compile(r"[0-9.]+")
+# Operational status (heartbeat). The admin console shows, per Gateway credential, when KIN last heard from it, its queue,
+# its version, how long it has run, its last accepted STOW and whether the local DICOM listener answers. The beat runs on
+# its own thread so a long STOW (up to STOW_TIMEOUT_SECONDS) never reads as a lost Gateway. Fixed cadence, not in Config.
+AGENT_VERSION = "2026.11.1"
+HEARTBEAT_SECONDS = 30.0
 
 
 def log(event: str, *, uid: str | None = None, **fields: Any) -> None:
@@ -396,6 +402,21 @@ class Queue:
         }
 
 
+def queue_counts(path: str) -> dict[str, int]:
+    """The heartbeat's queue numbers, read on a connection of its own that never writes (the main loop stays the only
+    writer of the queue). waiting = not yet sent and not backing off; complete is not reported."""
+    db = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+    try:
+        counts = {str(phase): int(n) for phase, n in db.execute("SELECT phase, count(*) FROM studies GROUP BY phase")}
+    finally:
+        db.close()
+    return {
+        "waiting": sum(counts.get(phase, 0) for phase in ("pending", "announcing", "sending")),
+        "retry": counts.get("retry", 0),
+        "failed": counts.get("failed", 0),
+    }
+
+
 class Orthanc:
     def __init__(self, config: Config):
         self.base = config.orthanc_url
@@ -405,6 +426,10 @@ class Orthanc:
         # Orthanc may close an idle keep-alive socket just as the next read reuses it, and requests does not
         # retry that, so every local read asks for its own connection. Cloud keeps its pool (S4-EG1 X-2).
         self.session.headers["Connection"] = "close"
+        # What the last local REST request found, as (answered, monotonic time), or None before the first one. Only the
+        # Orthanc REST API is observed: an HTTP answer of any status is "answered", a transport error is "no answer". It
+        # says nothing about the DICOM port itself. The heartbeat thread only reads it (one tuple assignment).
+        self.observed: tuple[bool, float] | None = None
 
     def request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
         try:
@@ -412,7 +437,9 @@ class Orthanc:
                 method, self.base + path, auth=self.auth, timeout=self.timeout, **kwargs,
             )
         except requests.RequestException as error:
+            self.observed = (False, time.monotonic())
             raise GatewayError(f"local Orthanc {type(error).__name__}") from None
+        self.observed = (True, time.monotonic())
         if not response.ok:
             raise GatewayError(f"local Orthanc HTTP {response.status_code}")
         return response
@@ -478,6 +505,8 @@ class Cloud:
         self.session = requests.Session()
         self.access_token = ""
         self.token_until = 0.0
+        # monotonic time of the last STOW KIN answered 2xx for; the heartbeat thread only reads it.
+        self.last_stow_at: float | None = None
         if not self.verify:
             requests.packages.urllib3.disable_warnings(  # type: ignore[attr-defined]
                 requests.packages.urllib3.exceptions.InsecureRequestWarning,  # type: ignore[attr-defined]
@@ -540,6 +569,9 @@ class Cloud:
         # Only this queue's epoch goes out: KIN answers with this institution's UIDs for this epoch and nothing else.
         return self.request("GET", "/api/gateway/retry-requests", params={"epoch": epoch})
 
+    def heartbeat(self, body: dict[str, Any]) -> requests.Response:
+        return self.request("POST", "/api/gateway/heartbeat", json=body)
+
     def stow(self, uid: str, body: bytes, content_type: str, source_ae: str) -> set[str]:
         response = self.request(
             "POST", f"/dicom-web/studies/{uid}", data=body,
@@ -550,6 +582,7 @@ class Cloud:
         )
         if not response.ok:
             raise GatewayError(f"STOW HTTP {response.status_code}")
+        self.last_stow_at = time.monotonic()
         try:
             payload = response.json() if response.content else {}
         except requests.JSONDecodeError:
@@ -625,6 +658,79 @@ def retry_request_uids(response: requests.Response) -> list[str] | None:
     if not all(isinstance(uid, str) and RETRY_POLL_UID.fullmatch(uid) for uid in uids) or len(set(uids)) != len(uids):
         return None
     return uids
+
+
+class Heartbeat:
+    """Operational status for the admin console: tells KIN every HEARTBEAT_SECONDS (the first at once) that this Gateway runs.
+
+    Own thread, own Cloud (requests.Session and token are not shared across threads), own read-only queue connection: it
+    never writes the queue and never touches a study, so the main loop stays the single writer of its epoch. It never
+    raises: a failed beat is logged and the next one tries again; transfers and receipts never wait for it. The body
+    carries no time of this host (KIN stamps its own reception time and derives the start and last-STOW times from the
+    elapsed seconds), no UID, no institution and no free text.
+    """
+
+    def __init__(self, config: Config, epoch: str, orthanc: "Orthanc", stow: "Cloud", started: float):
+        self.config = config
+        self.epoch = epoch
+        # In memory only: one random id per run, and a number per new status body (1, 2, ...; a failed beat does not give
+        # its number back; the authentication retry of one body sends the same id and number). KIN keeps an older body of
+        # the run its row holds from covering a newer one; it does not order different runs.
+        self.boot_id = str(uuid.uuid4())
+        self.seq = 0
+        self.orthanc = orthanc   # .observed is read, nothing else
+        self.stow = stow         # .last_stow_at is read, nothing else
+        self.cloud = Cloud(config)
+        self.started = started
+        self.stopped = threading.Event()
+        self.thread: threading.Thread | None = None
+
+    def body(self) -> dict[str, Any]:
+        self.seq += 1
+        now = time.monotonic()
+        last = self.stow.last_stow_at
+        observed = self.orthanc.observed
+        try:
+            queue: dict[str, int] | None = queue_counts(self.config.queue_db)
+        except Exception as error:
+            log("heartbeat.queue_unreadable", error=type(error).__name__)
+            queue = None   # KIN shows the queue as unreadable, never as zero; the beat itself still goes out
+        return {
+            "epoch": self.epoch,
+            "bootId": self.boot_id,
+            "seq": self.seq,
+            "version": AGENT_VERSION,
+            "uptimeSeconds": max(0, int(now - self.started)),
+            "queue": queue,
+            "lastStowAgeSeconds": None if last is None else max(0, int(now - last)),
+            "localOrthanc": None if observed is None
+            else {"answered": bool(observed[0]), "ageSeconds": max(0, int(now - observed[1]))},
+        }
+
+    def beat(self) -> bool:
+        try:
+            response = self.cloud.heartbeat(self.body())
+            if response.ok:
+                return True
+            log("heartbeat.deferred", status=response.status_code)
+        except Exception as error:
+            log("heartbeat.deferred", error=error_code(error))
+        return False
+
+    def run(self) -> None:
+        while not self.stopped.is_set():
+            self.beat()
+            self.stopped.wait(HEARTBEAT_SECONDS)
+
+    def start(self) -> None:
+        self.thread = threading.Thread(target=self.run, name="heartbeat", daemon=True)
+        self.thread.start()
+
+    def stop(self, wait: float = 5.0) -> None:
+        """No new beat starts; a beat in flight gets a short while to end so the queue file is not held after stop."""
+        self.stopped.set()
+        if self.thread is not None and self.thread is not threading.current_thread():
+            self.thread.join(wait)
 
 
 class Agent:
@@ -812,7 +918,17 @@ class Agent:
     def run(self) -> None:
         signal.signal(signal.SIGTERM, self.stop)
         signal.signal(signal.SIGINT, self.stop)
-        log("agent.started", byteBudget=self.config.byte_budget)
+        log("agent.started", byteBudget=self.config.byte_budget, version=AGENT_VERSION)
+        heartbeat = Heartbeat(self.config, self.queue.epoch, self.orthanc, self.cloud, time.monotonic())
+        heartbeat.start()
+        try:
+            self.loop()
+        finally:
+            heartbeat.stop()
+        self.queue.close()
+        log("agent.stopped")
+
+    def loop(self) -> None:
         while not self.stopping:
             # Final states (complete/pending/retry/failed) and anything an outage held back go out here.
             self.flush_receipts()
@@ -842,8 +958,6 @@ class Agent:
                 reason = str(error) if isinstance(error, GatewayError) else type(error).__name__
                 log("agent.retry", error=reason)
             time.sleep(self.config.poll_seconds)
-        self.queue.close()
-        log("agent.stopped")
 
 
 def status(path: str) -> int:

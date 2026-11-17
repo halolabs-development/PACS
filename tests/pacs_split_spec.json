@@ -10827,6 +10827,76 @@
       }
     }
   },
+  "di_additions_gateway_status": {
+    "unit": "gateway-ops-status",
+    "decision": "Gateway operational status",
+    "note": "Gateway operational status: the Gateway's heartbeat (kept in the API's memory) and the admin's read of this institution's Gateways, on a feature controller of its own with its service. U0B-DI compares the snapshot minus exactly these.",
+    "middleware_routes": [],
+    "controllers": [
+      "GatewayStatusController"
+    ],
+    "providers": [
+      "GatewayStatusService"
+    ],
+    "routes": [
+      {
+        "controller": "GatewayStatusController",
+        "handler": "heartbeat",
+        "method": "POST",
+        "paths": [
+          "/|gateway/heartbeat"
+        ],
+        "public": null,
+        "status": 200,
+        "headers": [],
+        "guards": [],
+        "interceptors": [],
+        "args": [
+          "0:1@1:null:0",
+          "3:0@0:null:0"
+        ]
+      },
+      {
+        "controller": "GatewayStatusController",
+        "handler": "status",
+        "method": "GET",
+        "paths": [
+          "/|admin/gateway-status"
+        ],
+        "public": null,
+        "status": null,
+        "headers": [
+          {
+            "name": "Cache-Control",
+            "value": "no-store"
+          }
+        ],
+        "guards": [],
+        "interceptors": [],
+        "args": [
+          "0:0@0:null:0"
+        ]
+      }
+    ],
+    "injectables": {
+      "GatewayStatusController": {
+        "params": [
+          "GatewayStatusService"
+        ],
+        "scope": null,
+        "declared": [],
+        "optional": []
+      },
+      "GatewayStatusService": {
+        "params": [
+          "StudyAccessService"
+        ],
+        "scope": null,
+        "declared": [],
+        "optional": []
+      }
+    }
+  },
   "di_additions_auto_view": {
     "unit": "auto-save-view",
     "decision": "A1 06-5",

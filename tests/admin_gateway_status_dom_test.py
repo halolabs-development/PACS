@@ -238,6 +238,46 @@ ENDED = "세션이 종료되었습니다"
 # S5-U6a-F03/F04: the members console's writes and Study Access, on the one member of MEMBERS.
 MEMBER = MEMBERS["users"][0]
 LIST_PATH = "/api/admin/users"
+# Gateway contact lines (operational status): the same Refresh press reads them too; this suite answers an empty table.
+HOSTS_PATH = "/api/admin/gateway-status"
+HOSTS_EMPTY = {"institutionId": INSTITUTION, "generatedAt": "2026-09-24T01:00:00.000Z",
+               "serverStartedAt": "2026-09-24T00:00:00.000Z", "noContactAfterSeconds": 180, "gateways": []}
+HOST_EPOCH = "1b2c3d4e-0000-4000-8000-00000000000b"
+# Two queues of one Gateway credential: the current one heard from a minute ago, and an older one silent for five minutes.
+HOSTS = {"institutionId": INSTITUTION, "generatedAt": at(6), "serverStartedAt": "2026-09-24T00:00:00.000Z",
+         "noContactAfterSeconds": 180, "gateways": [
+             {"gateway": "gw-syn-a", "queueInstance": EPOCH, "contact": "recent", "lastContactAt": at(5),
+              "startedAt": "2026-09-23T22:00:00.000Z", "version": "2026.11.1", "queue": {"waiting": 3, "retry": 1, "failed": 0},
+              "lastStowAt": at(4), "localOrthanc": {"answered": True, "observedAt": at(5)}},
+             {"gateway": "gw-syn-a", "queueInstance": HOST_EPOCH, "contact": "no_contact", "lastContactAt": at(1),
+              "startedAt": "2026-09-23T20:00:00.000Z", "version": "2026.10.2", "queue": None, "lastStowAt": None,
+              "localOrthanc": {"answered": False, "observedAt": at(1)}}]}
+# (name, contact, facts) per line, in the server's order.
+EXPECTED_HOSTS = [
+    ("gw-syn-a", "Last Contact " + shown(5),
+     ["Queue 3 Waiting · 1 Retry · 0 Failed", "Last STOW " + shown(4), "Local Orthanc API Answered " + shown(5),
+      "Version 2026.11.1", "Running Since 2026-09-23 22:00:00", "Queue Instance 0a1b2c3d"]),
+    ("gw-syn-a", "No Contact since " + shown(1),
+     ["Queue Unreadable", "No STOW Since Gateway Start", "Local Orthanc API No Answer " + shown(1),
+      "Version 2026.10.2", "Running Since 2026-09-23 20:00:00", "Queue Instance 1b2c3d4e"]),
+]
+HOST_LINES = """() => [...document.querySelectorAll('#gateway-hosts-rows > li')].map(li => {
+  const name = li.querySelector('.gw-host-name'), contact = li.querySelector('.gw-host-contact');
+  const facts = [...li.querySelectorAll('.gw-host-fact')];
+  return {contactKey: li.dataset.contact, name: name.textContent, contact: contact.textContent, contactTitle: contact.title,
+    facts: facts.map(f => f.textContent), factTitles: facts.map(f => f.title), keys: facts.map(f => f.dataset.fact),
+    untranslated: [...li.querySelectorAll('[translate="no"]')].map(e => e.textContent),
+    contactColour: getComputedStyle(contact).color, nameColour: getComputedStyle(name).color,
+    overflow: li.scrollWidth > li.clientWidth + 1}; })"""
+HOST_STATE = """() => { const q = s => document.querySelector(s), state = q('#gateway-hosts-state'), none = q('#gateway-hosts-empty');
+  return {state: state.textContent, key: state.dataset.state ?? null, title: state.title,
+    message: q('#gateway-hosts-message').textContent, messageShown: q('#gateway-hosts-message').classList.contains('show'),
+    empty: none.hidden ? null : none.textContent, emptyTitle: none.title, stale: q('#gateway-hosts-rows').classList.contains('stale'),
+    lines: document.querySelectorAll('#gateway-hosts-rows > li').length}; }"""
+HOST_FIXED = {"failed": "Gateway 연락 상태를 불러오지 못했습니다.", "malformed": "조회 응답 형식을 확인할 수 없습니다.",
+              "restricted": "검사 접근 범위가 제한된 계정은 Gateway 연락 상태를 볼 수 없습니다.",
+              "forbidden": "이 계정으로는 Gateway 연락 상태를 조회할 수 없습니다.",
+              "changed": "검사 접근 조건이 바뀌었습니다. 다시 조회하세요.", "busy": "서버가 바쁩니다. 잠시 후 다시 조회하세요."}
 MEMBER_PATH = LIST_PATH + "/" + MEMBER["id"]
 RESET_PATH = MEMBER_PATH + "/reset-password"
 ACCESS_PATH = MEMBER_PATH + "/study-access"
@@ -417,6 +457,7 @@ class AdminGatewayStatusDOMTest(unittest.TestCase):
         self.study_replies, self.retry_replies = [], []
         self.held_studies, self.held_retries = [], []
         self.retry_posts = []
+        self.hosts_replies, self.held_hosts = [], []
         self.logouts, self.held_logouts = 0, None
         self.member_replies, self.held_members = [], []
         self.admin_replies, self.access_replies, self.held_access, self.access_calls = [], [], [], []
@@ -500,6 +541,15 @@ class AdminGatewayStatusDOMTest(unittest.TestCase):
             return
         if method == "GET" and path == "/api/studies" and url.query == "":
             self.answer(route, self.study_replies, self.held_studies)
+            return
+        if method == "GET" and path == HOSTS_PATH and url.query == "":
+            # Cases that do not look at the Gateway contact lines get an empty table without queueing one.
+            reply = self.hosts_replies.pop(0) if self.hosts_replies else (200, HOSTS_EMPTY)
+            if reply == "hold":
+                self.held_hosts.append(route)
+                return
+            status, body = reply
+            route.fulfill(status=status, json=body)
             return
         found = re.fullmatch(r"/api/studies/([0-9.]+)/gateway-retry", path)
         if method == "POST" and found:
@@ -1121,13 +1171,174 @@ class AdminGatewayStatusDOMTest(unittest.TestCase):
         ], result["summaries"])
         self.assertTrue(result["frozen"])
 
+    # ── Gateway contact lines (operational status: last contact, queue, version, running time) ──
+    def host_lines(self):
+        return self.page.evaluate(HOST_LINES)
 
+    def host_state(self):
+        return self.page.evaluate(HOST_STATE)
 
+    def refresh_hosts(self, hosts, study=(200, FIVE)):
+        """Queue one contact answer (and the study list the same press reads), press Refresh Gateway Status once and wait
+        until the page has read both."""
+        before = self.json_done(HOSTS_PATH)
+        self.hosts_replies.append(hosts)
+        self.refresh(study)
+        self.wait_until(lambda: self.json_done(HOSTS_PATH) > before, "the Gateway contact answer read")
 
+    def assert_hosts_drawn(self, generated=shown(6)):
+        lines = self.host_lines()
+        self.assertEqual(EXPECTED_HOSTS, [(line["name"], line["contact"], line["facts"]) for line in lines])
+        state = self.host_state()
+        self.assertEqual(("Gateway Contact: Observed " + generated, "observed", False, False),
+                         (state["state"], state["key"], state["stale"], state["messageShown"]))
+        return lines
 
+    def test_10_gateway_contact_lines_from_the_same_refresh(self):
+        self.open()
+        self.page.wait_for_timeout(200)
+        state = self.host_state()
+        self.assertEqual(("Gateway Contact: Not Loaded", 0, None), (state["state"], state["lines"], state["empty"]))
+        self.assertNotIn(HOSTS_PATH, [c["path"] for c in self.calls], "nothing is read before the press")
+        self.refresh_hosts((200, HOSTS))
+        lines = self.assert_hosts_drawn()
+        self.assertEqual(["recent", "no_contact"], [line["contactKey"] for line in lines])
+        self.assertEqual(["queue", "stow", "orthanc", "version", "started", "instance"], lines[0]["keys"])
+        # No Contact is a word, never a warning colour: both contact words have one colour.
+        self.assertEqual(lines[0]["contactColour"], lines[1]["contactColour"])
+        for line in lines:
+            with self.subTest(contact=line["contactKey"]):
+                # Names and words in English; every title explains itself in Korean.
+                self.assertEqual([], [t for t in [line["name"], line["contact"], *line["facts"]] if has_hangul(t)])
+                self.assertEqual([], [t for t in [line["contactTitle"], *line["factTitles"]] if not has_hangul(t)])
+                # The data (Gateway name, version, queue instance) is never machine-translated.
+                self.assertEqual([line["name"], line["facts"][3], line["facts"][5]], line["untranslated"])
+                self.assertFalse(line["overflow"])
+        self.assertIn("180초", lines[1]["contactTitle"])
+        self.assertIn("사이트 기준이 아니라", lines[1]["contactTitle"])
+        self.assertIn("DICOM 포트를 직접 시험한 값은 아닙니다", lines[0]["factTitles"][2])
+        self.assertIn("추정 시각", lines[0]["factTitles"][1])
+        self.assertIn("0건이 아닙니다", lines[1]["factTitles"][0])
+        self.assertIn("0a1b2c3d-0000-4000-8000-00000000000a", lines[0]["factTitles"][5])
+        # The same press read the study list too, once each, with no query; the study rows are drawn as before.
+        self.assertEqual([("GET", HOSTS_PATH, ""), ("GET", "/api/studies", "")],
+                         sorted(c for c in self.api_calls() if c[1] in ("/api/studies", HOSTS_PATH)))
+        self.assertEqual([expected[0] for expected in EXPECTED_FIVE], [row["uid"] for row in self.rows()])
+        texts = self.section_texts()
+        self.assertEqual([], [text for text in texts if AVOIDED.search(text) or DELIVERY.search(text)])
+        sizes = self.page.evaluate("""() => [...document.querySelectorAll('#gateway-hosts *')]
+          .filter(e => [...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim()) && e.getClientRects().length)
+          .map(e => parseFloat(getComputedStyle(e).fontSize))""")
+        self.assertTrue(sizes)
+        self.assertEqual([], [size for size in sizes if size < 12])
+        # A narrow window wraps the facts; nothing runs out of the line.
+        self.page.set_viewport_size({"width": 420, "height": 900})
+        self.assertEqual([False, False], [line["overflow"] for line in self.host_lines()])
 
+    def test_11_no_gateway_heard_since_the_server_started(self):
+        self.open()
+        self.refresh_hosts((200, HOSTS_EMPTY))
+        state = self.host_state()
+        self.assertEqual((0, "No Gateway of this institution has contacted this server since it started (2026-09-24 00:00:00).",
+                          "Gateway Contact: Observed 2026-09-24 01:00:00"), (state["lines"], state["empty"], state["state"]))
+        self.assertIn("서버가 다시 시작하면", state["emptyTitle"])
+        self.assertIn("Gateway 미설치", state["emptyTitle"])
+        # A later answer with lines replaces the empty sentence.
+        self.refresh_hosts((200, HOSTS))
+        self.assert_hosts_drawn()
+        self.assertIsNone(self.host_state()["empty"])
 
+    def test_12_a_failed_read_keeps_the_last_lines_and_a_refusal_withdraws_them(self):
+        self.open()
+        self.refresh_hosts((500, {"message": SERVER_WORDING}))
+        state = self.host_state()
+        self.assertEqual(("Gateway Contact: Query Failed · 아직 성공한 조회가 없습니다", 0, HOST_FIXED["failed"]),
+                         (state["state"], state["lines"], state["message"]))
+        self.refresh_hosts((200, HOSTS))
+        self.assert_hosts_drawn()
+        malformed = dict(HOSTS, gateways=[dict(HOSTS["gateways"][0], queue={"waiting": -1, "retry": 0, "failed": 0})])
+        for reply, sentence in (((500, {"message": SERVER_WORDING}), HOST_FIXED["failed"]),
+                                ((200, malformed), HOST_FIXED["malformed"]),
+                                ((200, dict(HOSTS, extra="SYN")), HOST_FIXED["malformed"]),
+                                ((409, {"code": "STUDY_ACCESS_CHANGED", "message": SERVER_WORDING}), HOST_FIXED["changed"]),
+                                ((503, {"message": SERVER_WORDING}), HOST_FIXED["busy"])):
+            with self.subTest(status=reply[0], sentence=sentence):
+                self.refresh_hosts(reply)
+                state = self.host_state()
+                self.assertEqual(("Gateway Contact: Query Failed · 마지막 관측 기준 " + shown(6), "query_failed", sentence, True, True),
+                                 (state["state"], state["key"], state["message"], state["messageShown"], state["stale"]))
+                self.assertEqual(EXPECTED_HOSTS, [(l["name"], l["contact"], l["facts"]) for l in self.host_lines()])
+                self.assertLess(float(self.page.evaluate(
+                    "() => getComputedStyle(document.querySelector('#gateway-hosts-rows li')).opacity")), 1.0)
+                # The study list beside it read and drew as usual.
+                self.assertEqual("Observed " + shown(6), self.summary()["state"])
+        self.refresh_hosts((200, HOSTS))
+        self.assert_hosts_drawn()
+        # A refusal withdraws the lines and names it in a fixed sentence; the study list is not touched.
+        for code, sentence in (("GATEWAY_STATUS_RESTRICTED", HOST_FIXED["restricted"]), (None, HOST_FIXED["forbidden"])):
+            with self.subTest(refused=code):
+                self.refresh_hosts((403, {"code": code, "message": SERVER_WORDING} if code else {"message": SERVER_WORDING}))
+                state = self.host_state()
+                self.assertEqual((0, sentence, True, "Gateway Contact: Not Loaded"),
+                                 (state["lines"], state["message"], state["messageShown"], state["state"]))
+                self.assertEqual([expected[0] for expected in EXPECTED_FIVE], [row["uid"] for row in self.rows()])
+                expect(self.page.locator("#gateway-refresh")).to_be_enabled()
+                self.assertEqual(ORIGIN + PAGE_PATH, self.page.url, "a refusal never leaves the page")
+        # A failed study list does not hold back the contact lines.
+        self.refresh_hosts((200, HOSTS), study=(500, {"message": SERVER_WORDING}))
+        self.assert_hosts_drawn()
+        self.assertTrue(self.summary()["state"].startswith("Query Failed"))
+        self.assertFalse(any(SERVER_WORDING in text for text in self.section_texts()))
 
+    def test_13_a_late_contact_answer_never_paints_over_a_newer_one(self):
+        self.open()
+        self.hosts_replies.append("hold")
+        self.refresh((200, FIVE))
+        self.wait_until(lambda: len(self.held_hosts) == 1, "the first contact read held")
+        self.refresh_hosts((200, dict(HOSTS, generatedAt=at(8))))
+        self.assert_hosts_drawn(generated=shown(8))
+        before = self.json_done(HOSTS_PATH)
+        self.held_hosts.pop().fulfill(json=dict(HOSTS_EMPTY, generatedAt=at(7)))
+        self.wait_until(lambda: self.json_done(HOSTS_PATH) > before, "the late contact answer read")
+        self.assert_hosts_drawn(generated=shown(8))
+        self.assertIsNone(self.host_state()["empty"], "the late empty answer drew nothing")
+
+    def test_14_pure_contact_rules_in_the_page(self):
+        self.open()
+        result = self.page.evaluate("""answer => { const G = window.KinGatewayHealth, same = v => v;
+          const row = answer.gateways[0], change = extra => ({...answer, gateways: [{...row, ...extra}]});
+          const malformed = [null, [], {}, {...answer, gateways: 'SYN'}, {...answer, extra: 1}, {...answer, generatedAt: 'soon'},
+            {...answer, serverStartedAt: null}, {...answer, noContactAfterSeconds: -1}, {...answer, institutionId: ' '},
+            change({contact: 'lost'}), change({queueInstance: 'SYN'}), change({version: 'v 1'}), change({gateway: ''}),
+            change({lastContactAt: '2026-09-24 01:05'}), change({lastStowAt: 5}), change({queue: {waiting: 1, retry: 0}}),
+            change({queue: {waiting: 1.5, retry: 0, failed: 0}}), change({queue: {waiting: 1, retry: 0, failed: 0, complete: 3}}),
+            change({localOrthanc: {answered: 'yes', observedAt: row.lastContactAt}}), change({localOrthanc: {answered: true}}),
+            change({extra: 'SYN'})].map(x => G.readAnswer(x));
+          const read = G.readAnswer(answer);
+          const shown = read.gateways.map(r => { const d = G.display(r, read.noContactAfterSeconds, same);
+            return [d.contact, d.contactText, d.facts.map(f => f.text)]; });
+          const summaries = [G.summary(null, same), G.summary({failed: true}, same), G.summary({observedAt: 'T1'}, same),
+            G.summary({observedAt: 'T1', failed: true}, same)].map(s => [s.key, s.text]);
+          return {malformed, count: read.gateways.length, shown, summaries, empty: G.empty('T0', same).text,
+            frozen: Object.isFrozen(G)}; }""", HOSTS)
+        self.assertEqual([None] * 21, result["malformed"], "an answer that does not prove itself is not drawn")
+        self.assertEqual(2, result["count"])
+        self.assertEqual([
+            ["recent", "Last Contact " + at(5), ["Queue 3 Waiting · 1 Retry · 0 Failed", "Last STOW " + at(4),
+                                                  "Local Orthanc API Answered " + at(5), "Version 2026.11.1",
+                                                  "Running Since 2026-09-23T22:00:00.000Z", "Queue Instance 0a1b2c3d"]],
+            ["no_contact", "No Contact since " + at(1), ["Queue Unreadable", "No STOW Since Gateway Start",
+                                                          "Local Orthanc API No Answer " + at(1), "Version 2026.10.2",
+                                                          "Running Since 2026-09-23T20:00:00.000Z", "Queue Instance 1b2c3d4e"]],
+        ], result["shown"])
+        self.assertEqual([
+            ["not_loaded", "Gateway Contact: Not Loaded"],
+            ["query_failed", "Gateway Contact: Query Failed · 아직 성공한 조회가 없습니다"],
+            ["observed", "Gateway Contact: Observed T1"],
+            ["query_failed", "Gateway Contact: Query Failed · 마지막 관측 기준 T1"],
+        ], result["summaries"])
+        self.assertEqual("No Gateway of this institution has contacted this server since it started (T0).", result["empty"])
+        self.assertTrue(result["frozen"])
 
 
 if __name__ == "__main__":

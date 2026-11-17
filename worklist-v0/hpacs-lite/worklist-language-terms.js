@@ -4100,6 +4100,8 @@ window.KinLanguageTerms = {
     ["검사 접근 범위가 바뀌었습니다. 새로고침하세요.", "Study access scope has changed. Refresh the page.", "s"],
     ["검사 접근 범위가 제한된 계정은 감사 기록을 볼 수 없습니다", "Accounts with restricted study access cannot view the audit log", "s"],
     ["검사 접근 범위가 제한된 계정은 기관 운영 지표를 볼 수 없습니다", "Accounts with restricted study access cannot view institution operating metrics", "s"],
+    ["검사 접근 범위가 제한된 계정은 Gateway 운영 상태를 볼 수 없습니다", "Accounts with restricted study access cannot view Gateway operational status", "s"],
+    ["Gateway 신원이 없습니다", "No Gateway identity", "s"],
     ["검사 접근 범위가 제한된 계정은 접속기록을 조회할 수 없습니다.", "Accounts with restricted study access cannot view access logs.", "s"],
     ["검사 접근 조건 형식을 확인하세요", "Check the study access condition format", "s"],
     ["검사 접근 조건을 확인하지 못했습니다. 잠시 후 다시 시도하세요", "Could not verify study access conditions. Try again shortly", "s"],
