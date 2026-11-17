@@ -86,6 +86,12 @@
      * 부트스트랩까지 넓힌 것이다.
      */
     let offline = false;
+    /**
+     * 이 화면이 지금 서버에 보낼 수 있는가 — 한 규칙. 로그인한 세션이고(데모가 아니고) 서버가 지금 답한다. 화면에 선 채로
+     * 쓰는 줄(Mark CVR과 그 창, 임상의 질문의 Reply·Close·Retry)이 모두 이것으로 단추를 정하고, 연결이 바뀌면
+     * (page-boot.js goOffline·goOnline → window.kinOnConnection) 다시 그린다. "연결 끊김"을 보이는 동안 나가는 쓰기는 없다.
+     */
+    function serverReachable() { return !!sess && serverMode && !demoMode && !offline; }
     // 내 소속 기관. 서버가 토큰의 그룹에서 뽑아 bootstrap으로 알려준다.
     // 화면이 정하는 값이 아니다 — 여기 있는 건 표시용이고, 진짜 필터는 서버에 있다.
     let myInstitution = null, myInstitutionName = "", institutions = [];
@@ -1021,9 +1027,10 @@
       },
       // S7-U3b Hospital: 서버가 준 소유 기관 이름만 쓴다. Tele는 행의 tele만 따른다 — 이름을 내 기관 이름과 비교하면
       // 등록 이름이 같은 두 기관에서 틀리고, reqHosp는 Technician에서 손으로 바꿀 수 있는 값이다.
-      // FC-071: the study's Preload queue state (Downloading NN% / Queued / Ready / Failed / Evicted), else the row's "·".
+      // FC-071: the exam's Preload queue state (Downloading NN% / Queued / Ready / Failed / Evicted), else the row's "·".
+      // A merged or split exam reads the originals its scope holds (KinPreloadQueue.exam), not the row's UID alone.
       pf: s => {
-        const queue = window.KinPreloadQueue, entry = queue?.study?.(s.uid), text = queue?.cell?.(entry);
+        const queue = window.KinPreloadQueue, entry = queue?.exam?.(s), text = queue?.cell?.(entry);
         return text ? `<span class="pf" title="${esc(entry.reason || '미리 받기 상태입니다. 자세한 내용은 선택 막대의 Preload 패널에 있습니다.')}">${esc(text)}</span>` : esc(s.pf ?? "");
       },
       institutionName: s => {
@@ -1036,7 +1043,7 @@
      * the percent), or "None" when this session's Preload queue does not hold the study (the cell's "·").
      */
     function preloadWord(s) {
-      const entry = window.KinPreloadQueue?.study?.(s?.uid);
+      const entry = s ? window.KinPreloadQueue?.exam?.(s) : null;
       return typeof entry?.status === "string" && entry.status ? entry.status : "None";
     }
 
@@ -1916,8 +1923,10 @@
     let queueSeen = null;
     function orderedStudies() {
       const list = filtered();
+      // PF sorts by the queue word the cell and the filter read now (preloadWord), not the row's stored "·".
+      const sortValue = s => sortKey === "pf" ? preloadWord(s) : s[sortKey];
       if (sortDir !== 0 && sortKey)
-        list.sort((a, b) => (a[sortKey] > b[sortKey] ? 1 : a[sortKey] < b[sortKey] ? -1 : 0) * sortDir);
+        list.sort((a, b) => { const x = sortValue(a), y = sortValue(b); return (x > y ? 1 : x < y ? -1 : 0) * sortDir; });
       if (selectedUid && list.some(s => s.uid === selectedUid)) queueSeen = { uid: selectedUid, order: list.map(s => s.uid) };
       return list;
     }
@@ -2168,6 +2177,10 @@
           const el = $(id);
           if (el) { el.disabled = true; el.title = relatedWhy; }
         }
+      // The controls painted by their own areas from the report state (Mark CVR: critical-result-send.js) follow it here too:
+      // the answer of a commit, a poll or a draft sync that changed it reaches them with More left open. Before the identity rule
+      // below, which then has the last word.
+      (window.kinOnReportButtons || []).forEach(change => { try { change(); } catch (_) {} });
       // WORKLIST-SPLIT-UID: the selected UID was excluded as unresolved. Its text stays (loadReport keeps it) and is read-only;
       // every write and the paste/clear editors are off. The server refuses the same actions on its own.
       const unresolved = !!appState[selectedUid]?.identityUnresolved;
@@ -9872,12 +9885,13 @@
     }
     // FC-071: the Preload worker reports its queue; only the visible PF cells are rewritten, in place like Viewing.
     // A PF search matches the queue's status words: when a word changes (not the download percent) and a search uses PF,
-    // the list, the folder and saved-search counts are drawn again, once per frame, like a Body Part answer.
+    // the list, the folder and saved-search counts are drawn again, once per frame, like a Body Part answer. A list sorted
+    // by PF is drawn again the same way, so its order follows the words.
     let preloadWords = '', preloadFrame = null;
     function paintPreload() {
       const words = studies.map(preloadWord).join('\n'), changed = words !== preloadWords;
       preloadWords = words;
-      if (changed && preloadFilterUsed()) {
+      if (changed && (preloadFilterUsed() || (sortKey === 'pf' && sortDir !== 0))) {
         if (preloadFrame !== null) return;
         const at = work.capture('document');
         preloadFrame = requestAnimationFrame(() => {
@@ -10904,7 +10918,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         // Reopening a named window can restore its opener even without navigation.
         try{popup.opener=null;}catch(_){notify('영상 창 연결을 분리하지 못했습니다. 기존 창에서 작업을 저장한 뒤 닫고 다시 여세요.','err',8000);return outcome('refused','영상 창 연결을 분리하지 못했습니다. 기존 창에서 작업을 저장한 뒤 닫고 다시 여세요.');}
         if (choice.pending) {
-          popup.focus(); watchOhifRect(popup);
+          KinExamScope.raiseWindow(popup); watchOhifRect(popup);
           notify('기존 영상 창을 불러오는 중입니다. 계속되지 않으면 그 창을 닫은 뒤 다시 여세요.', 'info');
           return outcome('refused', '기존 영상 창을 불러오는 중입니다. 계속되지 않으면 그 창을 닫은 뒤 다시 여세요.');
         }
@@ -10932,12 +10946,12 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
             // A selected tab can also cancel an in-flight open, or reopen the
             // last closed patient while retaining the same document URL.
             popup.kinViewerOpenPatient?.(url);
-            popup.focus();
+            KinExamScope.raiseWindow(popup);
             watchOhifRect(popup);
             return outcome('accepted');
           }
           if (previous.busy || previous.dirty || !previous.ready) {
-            try { popup.focus(); } catch (_) {}
+            KinExamScope.raiseWindow(popup);
             watchOhifRect(popup);
             const kept = !previous.ready
               ? "기존 영상 창의 보호 상태를 확인할 수 없습니다. 로딩을 확인하고 계속되지 않으면 그 창을 닫은 뒤 다시 여세요."
@@ -10951,7 +10965,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           if (!freshDocument && !stopped && typeof popup.kinViewerOpenPatient === 'function') {
             const at = work.capture('document'), previousSequence = ohifPopupSequences.get(popup);
             const pending = popup.kinViewerOpenPatient(url, { signal: openingOptions?.signal });
-            popup.focus(); watchOhifRect(popup);
+            KinExamScope.raiseWindow(popup); watchOhifRect(popup);
             // Patient tabs admit a route asynchronously. W9 must bind its renderer channel only after that admission,
             // while a refusal keeps the previous opening's sequence and displayed state.
             // That promise belongs to the viewer document: closing or reloading the window discards its tasks and the
@@ -10984,7 +10998,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
             });
           }
           if (typeof popup.kinViewerFrameCoverageConfirm !== 'function' || !popup.kinViewerFrameCoverageConfirm(message => confirm(message))) {
-            popup.focus(); notify('기존 영상 창을 유지했습니다. Frame Coverage와 원본 영상을 확인하세요.', 'info');
+            KinExamScope.raiseWindow(popup); notify('기존 영상 창을 유지했습니다. Frame Coverage와 원본 영상을 확인하세요.', 'info');
             return outcome('refused', '기존 영상 창을 유지했습니다. Frame Coverage와 원본 영상을 확인하세요.');
           }
           const rechecked = ohifPopupState(popup);
@@ -10992,7 +11006,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
             return outcome('refused', '기존 영상 창의 상태가 바뀌어 열지 않았습니다. 다시 여세요.');
           rememberOhifRect(popup);
         } else if (previous.kind !== "blank" && !stopped) {
-          popup.focus();
+          KinExamScope.raiseWindow(popup);
           notify("기존 영상 창의 상태를 확인할 수 없습니다. 그 창을 닫은 뒤 다시 여세요.", "err", 8000);
           return outcome('refused', "기존 영상 창의 상태를 확인할 수 없습니다. 그 창을 닫은 뒤 다시 여세요.");
         }
@@ -11017,7 +11031,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           popup.location.reload();
         } else popup.location.href = url;
         viewerWindows.navigating(choice, url, previousDocument);
-        popup.focus();
+        KinExamScope.raiseWindow(popup);
         watchOhifRect(popup);
         if (!monitorHintShown && monitorPermission?.state === "prompt" && screen.isExtended === true) {
           monitorHintShown = true;
@@ -11125,6 +11139,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       if (!popup) { viewerWindows.blocked(choice); return { status: 'blocked' }; }
       viewerWindows.attach(choice, popup); ohifPopupSlots.set(popup, choice.index);
       try { popup.opener = null; } catch (_) { return { status: 'refused', message: '영상 창 연결을 분리하지 못했습니다. 기존 창에서 작업을 저장한 뒤 닫고 다시 여세요.' }; }
+      // The click is still active here; the launch after the resolve may come too late for the browser to raise it.
+      if (known) KinExamScope.raiseWindow(popup);
       let own = false;
       try { own = !known && popup.location.href === 'about:blank'; } catch (_) {}
       return { status: 'reserved', kind: 'window', choice, popup, own, preservePartner, compositionId };
@@ -11262,7 +11278,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
               const actual=popupRect(popup);
               if(actual&&Object.keys(rect).every(k=>Math.abs(actual[k]-rect[k])<=16))finish(true);else setTimeout(check,100);
             };
-            try{popup.focus();popup.moveTo(rect.left,rect.top);popup.resizeTo(rect.width,rect.height);popup.moveTo(rect.left,rect.top);setTimeout(check,100);}
+            try{KinExamScope.raiseWindow(popup);popup.moveTo(rect.left,rect.top);popup.resizeTo(rect.width,rect.height);popup.moveTo(rect.left,rect.top);setTimeout(check,100);}
             catch(_){finish(false);}
           });
           if(shown())status.textContent=moved.saved?'지정 화면으로 이동하고 창 위치를 저장했습니다.':moved.moved?'창을 이동했지만 위치를 저장하지 못했습니다. 현재 창 상태와 브라우저 저장소를 확인하세요.':'창 이동을 확인하지 못해 이전 저장 위치를 유지했습니다. 창을 직접 이동하거나 다시 시도하세요.';
@@ -11335,18 +11351,18 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         if (action === 'close') {
           if (row.pending) {
             status.textContent = '창을 닫지 않았습니다. 영상 창을 불러오는 중입니다. 완료 후 다시 확인하세요.';
-            popup.focus(); return;
+            KinExamScope.raiseWindow(popup); return;
           }
           if (movingWindows.has(popup) || ohifPlacementWrites.get(popup)?.pending) {
             status.textContent = '창을 닫지 않았습니다. 화면 이동과 위치 저장이 끝난 뒤 다시 확인하세요.';
-            popup.focus(); return;
+            KinExamScope.raiseWindow(popup); return;
           }
           const owner = KinViewerOpening.key(KinAuth.session()), sequence = ohifPopupSequences.get(popup);
           let viewerDocument; try { viewerDocument = popup.document; } catch (_) {}
           const state = ohifPopupState(popup);
           if (state.kind !== 'viewer' || !state.ready || state.busy || state.dirty) {
             status.textContent = '창을 닫지 않았습니다. 해당 창의 저장·복원 또는 미저장 작업을 확인하고 열린 대화상자를 닫은 뒤 다시 시도하세요.';
-            popup.focus(); return;
+            KinExamScope.raiseWindow(popup); return;
           }
           if (typeof popup.kinViewerFrameCoverageConfirm !== 'function' || !popup.kinViewerFrameCoverageConfirm(message => confirm(message))) {
             status.textContent = '창을 닫지 않았습니다. Frame Coverage와 원본 영상을 확인하세요.'; return;
@@ -11361,7 +11377,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           }
           rememberOhifRect(popup); popup.close(); render();
           status.textContent = popup.closed ? '영상 창을 닫았습니다.' : '브라우저에서 창을 닫지 못했습니다. 해당 창에서 닫으세요.';
-        } else { viewerWindowCursor = index; dialog.close(); popup.focus(); watchOhifRect(popup, index); }
+        } else { viewerWindowCursor = index; dialog.close(); KinExamScope.raiseWindow(popup); watchOhifRect(popup, index); }
       }
       let storage; try { storage = sessionStorage; } catch (_) {}
       viewerWindows = KinViewerWindows.create({ storage, owner: () => { const key = KinViewerOpening.key(KinAuth.session()); return key ? key.slice(KinViewerOpening.PREFIX.length) : null; },
@@ -11718,9 +11734,14 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           // Controls that wrap to more lines than the column holds overflow it with
           // the list already at 0 px; part of that first grow goes to the overflow, so
           // grow again by what the list still misses (row 0 was cut at 768x1024 once
-          // the Selected toolbar wrapped to a third line).
-          const still = need - grid.getBoundingClientRect().height;
-          if (short > 0 && still > 0.5) left.style.minHeight = left.getBoundingClientRect().height + Math.ceil(still) + "px";
+          // the Selected toolbar wrapped to a third line). An overflow larger than the
+          // first grow takes all of it and part of the second, so grow until the list
+          // has its row (a few passes at most: each one after the overflow is filled
+          // goes to the list whole).
+          for (let pass = 0, still = need - grid.getBoundingClientRect().height; short > 0 && still > 0.5 && pass < 4;
+            pass++, still = need - grid.getBoundingClientRect().height) {
+            left.style.minHeight = left.getBoundingClientRect().height + Math.ceil(still) + "px";
+          }
         } else {
           listFloor = need + (narrow && rows.length > 1 ? rowHeight(1) : 0);
           keepListFloor();
@@ -12464,7 +12485,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         onAccountChanged: notifyAccountChanged,
         study: uid => studies.find(s => s.uid === uid),
         report: uid => { const a = appState[uid]; return a ? { version: a.version ?? 0, rs: a.rs ?? null } : null; },
-        online: () => !!sess && serverMode && !demoMode && !offline,
+        // The one connection rule (page-core.js); the question row's writes use the same one.
+        online: serverReachable,
         standing: () => !!sess && !demoMode,
         radiologist: () => { const s = KinAuth.session(); return s?.state === 'approved' && Array.isArray(s.roles) && s.roles.includes('radiologist'); },
         owner: () => { const s = KinAuth.session(); return s?.state === 'approved' ? [s.institution ?? null, s.sub ?? null] : null; },
@@ -12496,8 +12518,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const inboxButton = $('#question-inbox'), pane = $('#question-pane'), notice = $('#question-notice');
       const TEXT = {
         unread: '이 검사의 질문은 읽지 않습니다(원격판독 검사·권한).',
-        // 끊김은 상태를 말한다: 이 화면의 연결 판단일 뿐 통신을 막는 것은 아니다(답변·닫기는 그대로 보낼 수 있다).
+        // 끊긴 동안(online() — 화면의 한 연결 규칙)은 읽은 것을 그대로 보이고, 답변·닫기·Retry는 보내지 않는다(쓰던 글은 남는다).
         offline: '서버 연결이 끊겼습니다. 표시된 질문은 최신이 아닐 수 있습니다.',
+        writeOffline: '서버 연결이 끊겨 지금은 보낼 수 없습니다. 쓴 내용은 그대로 있습니다.',
         // 안내 띠의 알림은 짧게(띠의 다른 줄을 좁혀 줄을 바꾸지 않게): 개수와 0이 아닌 상태, 전문은 툴팁.
         notice: { counts: (n, parts) => `질문 ${n}건${parts ? ` · ${parts}` : ''}`, failed: '질문 읽기 실패', refused: '질문 읽기 거절',
           account: '질문: 계정 바뀜' },
@@ -12982,8 +13005,18 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         if (field.value !== value) field.value = value;
         // 기준 revision은 마지막으로 읽힌 그 스레드에서만 온다. 한 번도 읽히지 않았거나 읽기에 실패했으면 보내지 않는다.
         const ready = !threadFailure && thread !== null && thread.id === id;
-        wrap.querySelector('[data-send]').disabled = attempt !== null || !ready;
+        // 끊긴 동안은 보내는 단추(Reply·Close·Retry)만 잠그고 까닭을 말한다. Discard는 이 화면 안의 일이라 그대로다.
+        const reach = online(), why = reach ? '' : TEXT.writeOffline;
+        const send = wrap.querySelector('[data-send]'), retry = wrap.querySelector('[data-retry]');
+        send.disabled = attempt !== null || !ready || !reach;
+        send.title = attempt === null && ready ? why : '';
+        retry.disabled = !reach;
+        retry.title = why;
         for (const name of ['retry', 'discard']) wrap.querySelector(`[data-${name}]`).hidden = !attempt || attempt.busy;
+      }
+
+      function repaintComposers() {
+        for (const wrap of threadBox.querySelectorAll('.question-compose')) paintComposer(wrap);
       }
 
       function repaintComposer(key) {
@@ -13019,7 +13052,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         const key = keyOf(target, id, action), noteKey = noteOf(target, id);
         const loaded = !threadFailure && thread !== null && thread.id === id ? thread : null;
         const who = owner();
-        if (ended || lock !== null || target !== uid || attempts.has(key) || !loaded || !who) return;
+        if (ended || lock !== null || !online() || target !== uid || attempts.has(key) || !loaded || !who) return;
         const value = field.value;
         if (!(action === 'close' && value === '') && (!value.trim())) {
           setNote(noteKey, 'failed', TEXT.noText);
@@ -13044,7 +13077,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       /** 결과를 모르는 요청만 같은 requestId·같은 본문으로 다시 보낸다. 이미 적용되었으면 서버가 저장한 결과를 돌려준다. */
       function resend(key) {
         const attempt = attempts.get(key);
-        if (ended || lock !== null || !attempt || attempt.busy || !attempt.unknown) return;
+        if (ended || lock !== null || !online() || !attempt || attempt.busy || !attempt.unknown) return;
         transmit(key, attempt);
       }
 
@@ -13056,7 +13089,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         drafts.set(key, attempt.text);
         setNote(attempt.noteKey, 'discarded', TEXT.discarded);
         repaintComposer(key);
-        if (lock === null && attempt.uid === uid) loadList();
+        // 끊긴 동안 버렸으면 다시 읽기는 연결이 돌아올 때(kinOnConnection → refresh) — 실패한 읽기가 연 스레드를 내리지 않게.
+        if (lock === null && attempt.uid === uid && online()) loadList();
       }
 
       async function transmit(key, attempt) {
@@ -13393,7 +13427,11 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           if (notice) notice.hidden = true;
           if (next === uid) paint();
         }
-        if (next === uid) return;
+        // 같은 대상: 끊긴 동안 고른 뒤 아직 한 번도 읽지 못했으면 연결이 돌아온 지금 읽는다(끊긴 동안은 읽지 않는다).
+        if (next === uid) {
+          if (uid !== null && lock === null && online() && items === null && !listLoading && !listFailure) loadList();
+          return;
+        }
         uid = next;
         epoch++;
         listSeq++;
@@ -13410,7 +13448,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         clearThreadBox();
         paint();
         renderList();
-        if (uid !== null && lock === null) loadList();
+        if (uid !== null && lock === null && online()) loadList();
       }
 
       /**
@@ -13463,7 +13501,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       function resume() {
         if (ended || lock !== null) return;
         paint();
-        if (uid !== null) loadList();
+        if (uid !== null && online()) loadList();
         if (mode === 'inbox') loadInbox(false);
       }
       /**
@@ -13471,7 +13509,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
        * 답은 글(줄이 접혀 있으면 안내 띠의 알림)만 바꾼다. 읽는 중이면 그 답을 기다린다.
        */
       function refresh() {
-        if (ended || lock !== null || uid === null || listLoading) return;
+        if (ended || lock !== null || uid === null || listLoading || !online()) return;
         loadList();
       }
       work.onInvalidate(event => { if (event.reason === 'prepare') suspend(); });
@@ -13508,11 +13546,13 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         toggle.focus();
       });
       // 연결이 끊기거나 돌아왔다(page-boot.js goOffline·goOnline). 판독 대상은 바뀌지 않았다 — 읽은 것·연 스레드·쓰던 칸은
-      // 그대로 두고(끊김을 대상 바뀜으로 다루면 쓰던 답변 칸이 내려갔다) 줄의 글만 바꾼다. 돌아오면 같은 대상을 다시 읽는다.
+      // 그대로 두고(끊김을 대상 바뀜으로 다루면 쓰던 답변 칸이 내려갔다) 줄의 글과 보내는 단추만 바꾼다. 돌아오면 같은 대상을
+      // 다시 읽고 단추를 연다.
       (window.kinOnConnection = window.kinOnConnection || []).push(() => {
         if (ended) return;
         if (allowed()) { sync(); refresh(); }
         paint();
+        repaintComposers();
       });
       window.addEventListener('pagehide', end);
       // 이 문서의 세션이 끝나면 세션 종료 조정이 이 목록을 동기로 부른다. 어느 로그인의 종료인지는 auth.js가 대조한다.
@@ -13525,8 +13565,11 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       studyQuestions = mountStudyQuestions({ apiBase: API, work, transport, current: () => selectedUid,
         study: uid => studies.find(s => s.uid === uid),
         openStudy: uid => select(uid),
-        allowed: () => !!sess && serverMode && !demoMode && !offline && (KinAuth.has('radiologist') || KinAuth.has('admin')),
-        online: () => !offline,
+        // Who may read this row (a signed-in reader or admin); whether the server answers now is online(). A lost connection
+        // is not a move: the open thread and what is being written stay, and the reads wait for it.
+        allowed: () => !!sess && !demoMode && (KinAuth.has('radiologist') || KinAuth.has('admin')),
+        // The one connection rule (page-core.js), the same the Mark CVR window uses: Reply, Close and Retry wait for it.
+        online: serverReachable,
         owner: () => { const s = KinAuth.session(); return s?.state === 'approved' ? [s.institution ?? null, s.sub ?? null] : null; } });
     } catch (_) { toast('임상의 질문 줄을 준비하지 못했습니다. 판독 작업은 계속할 수 있습니다.', 'err'); }
 

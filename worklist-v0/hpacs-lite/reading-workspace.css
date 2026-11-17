@@ -34,10 +34,8 @@ body.reading #reading-context > section { width: 100% !important; flex: none; mi
 body.reading #reading-context .s-clinical { order: -1; }
 body.reading #reading-context .s-thumb { height: 180px; }
 body.reading #reading-context .s-template { min-height: 230px; }
-body.reading #clinical { overflow: visible; overflow-wrap: anywhere; }
-body.reading #clinical table { table-layout: fixed; }
-body.reading #clinical td { white-space: normal; overflow-wrap: anywhere; }
-body.reading #clinical td:first-child { width: 72px; }
+/* The identity table's wrapping is one rule with the Study Panel's (main.html, `#study-panel-host .clinical`). */
+body.reading #clinical { overflow: visible; }
 body.reading #clinical:focus-visible { outline: 2px solid #93c5fd; outline-offset: -2px; }
 .clinical-scope { padding: 5px 0; font-weight: 600; color: #bdd3f4; }
 #reading-context-return { display: none; }

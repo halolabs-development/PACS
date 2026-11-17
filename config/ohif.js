@@ -178,6 +178,33 @@
     }
     return [...sources.values()].map(({whole,...entry})=>{if(whole)delete entry.examRefs;return entry;});
   }
+  // The Preload state of one listed exam, from the queue entry of every original its scope holds (`entryOf(studyUid)`).
+  // An entry counts for this exam only when it was fetched for this exam or for the whole original (no exam reference):
+  // the second part of a split exam is not ready because the first part's series are. One original failed or evicted
+  // decides the exam; an original the queue does not hold for it leaves the exam without a state (null), never Ready;
+  // otherwise the least advanced original decides and Downloading shows the mean progress of all originals.
+  const preloadRank = ['Failed','Evicted',null,'Downloading','Queued','Ready'];
+  const sameReference = (a, b) => a?.reportUid===b.reportUid && (a.groupId??null)===(b.groupId??null) && (a.part??null)===(b.part??null);
+  function preloadState(row, entryOf) {
+    // A row whose exam the reader cannot read whole (examUnavailable) cannot be opened: no state, like viewerInput refuses it.
+    if(row?.examUnavailable)return null;
+    let scope=null;
+    try{scope=read(row);}catch(_){return null;}
+    if(!scope)return null;
+    const own=row?.examScope?reference(scope):null;
+    const entries=scope.sources.map(source=>{
+      const entry=entryOf(source.studyUid);
+      if(!entry||typeof entry.status!=='string'||!entry.status)return null;
+      const refs=Array.isArray(entry.examRefs)&&entry.examRefs.length?entry.examRefs:null;
+      return !refs||own&&refs.some(ref=>sameReference(ref,own))?entry:null;
+    });
+    const rank=entry=>{const at=preloadRank.indexOf(entry?entry.status:null);return at<0?0:at;};
+    const decides=entries.reduce((worst,entry)=>rank(entry)<rank(worst)?entry:worst,entries[0]);
+    if(!decides)return null;
+    if(entries.length===1||decides.status!=='Downloading')return decides;
+    const part=entry=>entry.status==='Ready'?1:entry.status==='Downloading'&&entry.total>0?Math.min(1,entry.done/entry.total):0;
+    return {...decides,done:entries.reduce((sum,entry)=>sum+part(entry),0),total:entries.length};
+  }
   function changes(owner, receive) {
     if(typeof root.BroadcastChannel!=='function')return {send(){},close(){}};
     const channel=new root.BroadcastChannel('kin-exam-changes');
@@ -206,7 +233,32 @@
       dialog.addEventListener('close',()=>{dialog.remove();resolve(result);},{once:true});dialog.append(go,close);document.body.append(dialog);dialog.showModal();
     });
   }
-  const api={read,key,stamp,screenScope,screenStamp,originalLabel,sourceRequest,seriesValue,seriesRequest,attachmentTarget,attachmentHeaders,storedReport,allows,listedExam,metadata,projections,values,originals,viewingSelection,originalInput,readingScope,readingStamp,fetch:fetchScope,dicom,viewerInput,viewerUrl,viewerReference,reference,roleRows,snapshotReference,jobSnapshot,snapshotUrl,preload,chooseOriginals,changes};
+  /**
+   * Bring a viewer window this page already holds to the front. Every page that opens a viewer loads this module, so
+   * the list and the clinician page share this one rule. Chrome honours popup.focus() only when it comes from the
+   * window's opener, and a viewer window is detached from its opener (opener = null) on purpose, so focus() alone leaves
+   * the viewer behind the list. Looking the window up again by its own current name raises it without loading anything
+   * (an empty address is not a navigation, and a navigation already under way continues) - but only while the click or
+   * key press that asked for it is still active; outside one the browser raises nothing and focus() stays the only try.
+   * The lookup carries noopener: a plain lookup gives the window this page as its opener again in the browser, and the
+   * window's next document would start with it (setting opener = null afterwards does not undo that). With noopener the
+   * browser answers null, so the window is looked up by a name only it carries for that one call - another window of
+   * the same name (slot names repeat per list) is never raised - and its own name, which may be the session hand-over
+   * name of a document still loading, is put back before anything else runs. Answers whether the browser was asked.
+   */
+  function raiseWindow(popup,from=root){
+    try{popup.focus();}catch(_){}
+    let name;
+    try{if(popup.closed)return false;name=popup.name;}catch(_){return false;}
+    if(typeof name!=='string')return false;
+    if(from.navigator?.userActivation?.isActive!==true)return false;
+    const probe='kin-raise:'+(from.crypto?.randomUUID?.()||String(Math.random()).slice(2));
+    try{popup.name=probe;}catch(_){return false;}
+    try{from.open('',probe,'noopener');}catch(_){return false;}
+    finally{try{popup.name=name;}catch(_){}}
+    return true;
+  }
+  const api={raiseWindow,read,key,stamp,screenScope,screenStamp,originalLabel,sourceRequest,seriesValue,seriesRequest,attachmentTarget,attachmentHeaders,storedReport,allows,listedExam,metadata,projections,values,originals,viewingSelection,originalInput,readingScope,readingStamp,fetch:fetchScope,dicom,viewerInput,viewerUrl,viewerReference,reference,roleRows,snapshotReference,jobSnapshot,snapshotUrl,preload,preloadState,chooseOriginals,changes};
   root.KinExamScope=api;
   if(typeof module==='object'&&module.exports)module.exports=api;
 })(globalThis);

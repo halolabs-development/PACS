@@ -289,7 +289,9 @@ async function pump() {
       catch (error) {
         if (mine !== epoch) continue;
         if (error.reason === 'ended') { changeSession(null); return; }
-        await locked(async () => { if (mine === epoch && study.status === 'Downloading') await erase(study.uid, error.reason || MESSAGES.unavailable, true); });
+        // Only the entry this download was for: a Preload for another exam of the same original replaces the entry, and
+        // the old download's late failure must not mark the new one Failed.
+        await locked(async () => { if (mine === epoch && store.get(study.uid) === study && study.status === 'Downloading') await erase(study.uid, error.reason || MESSAGES.unavailable, true); });
       } finally { if (mine === epoch) controller = null; broadcast(); }
     }
   } finally { running = false; }

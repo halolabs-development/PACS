@@ -62,7 +62,7 @@ function boot({ diskGb = 0.25, respond, disk = memoryDisk(), skew = 0, keyRespon
     ? keyResponse ? keyResponse(init) : new Response(JSON.stringify({keyId:'key-A', key:KEY.toString('base64'),serverTime:new Date(clock).toISOString()})) : images(url, init);
   let gate = null;
   const context = {
-    navigator: {storage:{estimate:()=>disk.estimate()}}, Blob, Response, DecompressionStream, AbortController, URL, Headers, setTimeout, console,
+    navigator: {storage:{estimate:()=>disk.estimate()}}, Blob, Response, DecompressionStream, AbortController, URL, URLSearchParams, Headers, setTimeout, console,
     TextEncoder, TextDecoder, atob, Uint8Array, Date: class extends Date { static now(){return clock+skew;} },
     crypto: { randomUUID:()=>webcrypto.randomUUID(), getRandomValues:b=>webcrypto.getRandomValues(b),
       subtle: { encrypt:(...a)=>webcrypto.subtle.encrypt(...a),
@@ -804,4 +804,26 @@ test('FC-072 Clear All: emptied, taken off the queue, or left as it was; every r
   await until(() => statusOf(list, OTHER)?.status === 'Ready', 'Retry of the Failed study after Clear All');
   list.send({ type: 'retry', uid: SECOND });
   await until(() => statusOf(list, SECOND)?.status === 'Ready', 'Retry of a study taken off the queue');
+});
+test('a Preload for another exam of the same original replaces its entry; the old download failing late leaves the new one alone', async () => {
+  // The first part of a split exam is being fetched when the second part is preloaded: the entry is queued again for the
+  // second part. The first download then fails (its metadata refused); the second part's entry must still load.
+  let metadataReads = 0;
+  const part = n => ({ reportUid: STUDY, groupId: 'g-split', part: n });
+  const { reads, connect, hold } = boot({ respond: async url => {
+    if (url.startsWith('/api/studies/')) return new Response(JSON.stringify({ reportUid: STUDY, sources: [{ studyUid: STUDY, series: { mode: 'all', uids: [] } }] }));
+    if (url.endsWith('/metadata')) return ++metadataReads === 1 ? new Response('{}', { status: 403 }) : new Response(JSON.stringify(metadata(STUDY)));
+    return new Response(zlib.gzipSync(multipart('x')), { headers: { 'Content-Type': 'application/gzip', 'X-KIN-Part-Type': PART, 'X-KIN-Study-Revision': 'r1' } });
+  } });
+  const list = connect();
+  list.send({ type: 'hello', role: 'list' });
+  const release = hold();
+  list.send({ type: 'add', session: 'sess-1', studies: [{ uid: STUDY, examRefs: [part(0)] }] });
+  await until(() => reads().length === 1, 'first part metadata read started');
+  list.send({ type: 'add', session: 'sess-1', studies: [{ uid: STUDY, examRefs: [part(1)] }] });
+  await until(() => statusOf(list, STUDY)?.examRefs?.[0]?.part === 1, 'entry queued again for the second part');
+  release();
+  await until(() => statusOf(list, STUDY)?.status === 'Ready', 'second part Ready');
+  assert.deepEqual(statusOf(list, STUDY).examRefs, [part(1)]);
+  assert.equal(metadataReads, 2);
 });

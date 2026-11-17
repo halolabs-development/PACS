@@ -3,7 +3,8 @@
     "hologic": "RD-04751 Rev.001 Tables 3.2.4-5, 7.1-13, 7.3-3 and 7.3-17; AWS 1.12 / 3Dimensions 2.3",
     "siemens": "MAMMOMAT Revelation VC20G Tables 5, 75, 87, 91-94, 164",
     "ge": "https://www.gehealthcare.com/-/jssmedia/documents/us-global/products/interoperability/dicom/xray/2025/gehcdicomconformancesenographepristina10xdoc3218435rev1.pdf",
-    "fuji": "https://healthcaresolutions-us.fujifilm.com/wp-content/uploads/2025/06/AWS-DICOM-Statement-2020.pdf"
+    "fuji": "https://healthcaresolutions-us.fujifilm.com/wp-content/uploads/2025/06/AWS-DICOM-Statement-2020.pdf",
+    "ge-public": "TCIA EA1141 (The Cancer Imaging Archive, DOI 10.7937/2BAS-HR33, CC BY 4.0): GE SenoIris_1SP2(440) V-Preview, Breast Tomosynthesis Image Storage, Volumetric Properties SAMPLED, Volume Based Calculation Technique NONE"
   },
   "note": "Synthetic headers and 64x64 phantoms. Declared ranges are representative choices, not evidence of a device output. Siemens baseline 8-bit forwarding reuses #295; no native 8-bit MG output is invented. No signed output declared.",
   "cases": [
@@ -6433,6 +6434,439 @@
         }
       },
       "instances": 1
+    },
+    {
+      "id": "ge-senoiris-vpreview12",
+      "vendor": "ge",
+      "kind": "generated2d",
+      "processing": false,
+      "syntaxes": [
+        "explicit-le"
+      ],
+      "dicom": {
+        "00080016": {
+          "vr": "UI",
+          "Value": [
+            "1.2.840.10008.5.1.4.1.1.13.1.3"
+          ]
+        },
+        "00080018": {
+          "vr": "UI",
+          "Value": [
+            "2.25.2026111715.1.1"
+          ]
+        },
+        "0020000D": {
+          "vr": "UI",
+          "Value": [
+            "2.25.2026111715"
+          ]
+        },
+        "0020000E": {
+          "vr": "UI",
+          "Value": [
+            "2.25.2026111715.1"
+          ]
+        },
+        "00080060": {
+          "vr": "CS",
+          "Value": [
+            "MG"
+          ]
+        },
+        "00080008": {
+          "vr": "CS",
+          "Value": [
+            "DERIVED",
+            "PRIMARY",
+            "TOMOSYNTHESIS",
+            "GENERATED_2D"
+          ]
+        },
+        "00080070": {
+          "vr": "LO",
+          "Value": [
+            "GE MEDICAL SYSTEMS"
+          ]
+        },
+        "00081090": {
+          "vr": "LO",
+          "Value": [
+            "SenoIris_1SP2(440)"
+          ]
+        },
+        "00181020": {
+          "vr": "LO",
+          "Value": [
+            "1SP2(440)"
+          ]
+        },
+        "00100020": {
+          "vr": "LO",
+          "Value": [
+            "SYNTHETIC-MG-VENDOR"
+          ]
+        },
+        "00100010": {
+          "vr": "PN",
+          "Value": [
+            {
+              "Alphabetic": "VENDOR^PHANTOM"
+            }
+          ]
+        },
+        "00100030": {
+          "vr": "DA",
+          "Value": [
+            "19700101"
+          ]
+        },
+        "00080020": {
+          "vr": "DA",
+          "Value": [
+            "20261030"
+          ]
+        },
+        "00080030": {
+          "vr": "TM",
+          "Value": [
+            "120000"
+          ]
+        },
+        "00200013": {
+          "vr": "IS",
+          "Value": [
+            1
+          ]
+        },
+        "00200011": {
+          "vr": "IS",
+          "Value": [
+            1
+          ]
+        },
+        "00200052": {
+          "vr": "UI",
+          "Value": [
+            "2.25.2026111715.9"
+          ]
+        },
+        "00281350": {
+          "vr": "CS",
+          "Value": [
+            "NO"
+          ]
+        },
+        "00540220": {
+          "vr": "SQ",
+          "Value": [
+            {
+              "00080102": {
+                "vr": "SH",
+                "Value": [
+                  "SCT"
+                ]
+              },
+              "00080100": {
+                "vr": "SH",
+                "Value": [
+                  "399162004"
+                ]
+              },
+              "00080104": {
+                "vr": "LO",
+                "Value": [
+                  "cranio-caudal"
+                ]
+              }
+            }
+          ]
+        },
+        "00280010": {
+          "vr": "US",
+          "Value": [
+            64
+          ]
+        },
+        "00280011": {
+          "vr": "US",
+          "Value": [
+            64
+          ]
+        },
+        "00280002": {
+          "vr": "US",
+          "Value": [
+            1
+          ]
+        },
+        "00280100": {
+          "vr": "US",
+          "Value": [
+            16
+          ]
+        },
+        "00280101": {
+          "vr": "US",
+          "Value": [
+            12
+          ]
+        },
+        "00280102": {
+          "vr": "US",
+          "Value": [
+            11
+          ]
+        },
+        "00280103": {
+          "vr": "US",
+          "Value": [
+            0
+          ]
+        },
+        "00280004": {
+          "vr": "CS",
+          "Value": [
+            "MONOCHROME2"
+          ]
+        },
+        "20500020": {
+          "vr": "CS",
+          "Value": [
+            "IDENTITY"
+          ]
+        },
+        "00200020": {
+          "vr": "CS",
+          "Value": [
+            "P",
+            "L"
+          ]
+        },
+        "00280030": {
+          "vr": "DS",
+          "Value": [
+            0.085,
+            0.085
+          ]
+        },
+        "00181164": {
+          "vr": "DS",
+          "Value": [
+            0.085,
+            0.085
+          ]
+        },
+        "00280008": {
+          "vr": "IS",
+          "Value": [
+            1
+          ]
+        },
+        "00089206": {
+          "vr": "CS",
+          "Value": [
+            "SAMPLED"
+          ]
+        },
+        "00089207": {
+          "vr": "CS",
+          "Value": [
+            "NONE"
+          ]
+        },
+        "52009229": {
+          "vr": "SQ",
+          "Value": [
+            {
+              "00289110": {
+                "vr": "SQ",
+                "Value": [
+                  {
+                    "00280030": {
+                      "vr": "DS",
+                      "Value": [
+                        0.085,
+                        0.085
+                      ]
+                    },
+                    "00180050": {
+                      "vr": "DS",
+                      "Value": [
+                        1
+                      ]
+                    }
+                  }
+                ]
+              },
+              "00209116": {
+                "vr": "SQ",
+                "Value": [
+                  {
+                    "00200037": {
+                      "vr": "DS",
+                      "Value": [
+                        0,
+                        1,
+                        0,
+                        1,
+                        0,
+                        0
+                      ]
+                    }
+                  }
+                ]
+              },
+              "00289132": {
+                "vr": "SQ",
+                "Value": [
+                  {
+                    "00281050": {
+                      "vr": "DS",
+                      "Value": [
+                        733
+                      ]
+                    },
+                    "00281051": {
+                      "vr": "DS",
+                      "Value": [
+                        1300
+                      ]
+                    }
+                  }
+                ]
+              },
+              "00209071": {
+                "vr": "SQ",
+                "Value": [
+                  {
+                    "00209072": {
+                      "vr": "CS",
+                      "Value": [
+                        "R"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "00289145": {
+                "vr": "SQ",
+                "Value": [
+                  {
+                    "00281052": {
+                      "vr": "DS",
+                      "Value": [
+                        0
+                      ]
+                    },
+                    "00281053": {
+                      "vr": "DS",
+                      "Value": [
+                        1
+                      ]
+                    },
+                    "00281054": {
+                      "vr": "LO",
+                      "Value": [
+                        "US"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "52009230": {
+          "vr": "SQ",
+          "Value": [
+            {
+              "00209113": {
+                "vr": "SQ",
+                "Value": [
+                  {
+                    "00200032": {
+                      "vr": "DS",
+                      "Value": [
+                        0,
+                        0,
+                        0
+                      ]
+                    }
+                  }
+                ]
+              },
+              "00189504": {
+                "vr": "SQ",
+                "Value": [
+                  {
+                    "00089007": {
+                      "vr": "CS",
+                      "Value": [
+                        "DERIVED",
+                        "PRIMARY",
+                        "TOMOSYNTHESIS",
+                        "GENERATED_2D"
+                      ]
+                    },
+                    "00089206": {
+                      "vr": "CS",
+                      "Value": [
+                        "SAMPLED"
+                      ]
+                    },
+                    "00089207": {
+                      "vr": "CS",
+                      "Value": [
+                        "NONE"
+                      ]
+                    },
+                    "00089205": {
+                      "vr": "CS",
+                      "Value": [
+                        "MONOCHROME"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "00209111": {
+                "vr": "SQ",
+                "Value": [
+                  {
+                    "00209057": {
+                      "vr": "UL",
+                      "Value": [
+                        1
+                      ]
+                    },
+                    "00209056": {
+                      "vr": "SH",
+                      "Value": [
+                        "1"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "00089205": {
+          "vr": "CS",
+          "Value": [
+            "MONOCHROME"
+          ]
+        },
+        "0008103E": {
+          "vr": "LO",
+          "Value": [
+            "V-Preview"
+          ]
+        }
+      },
+      "instances": 1,
+      "source": "ge-public: header shape of the GE SenoIris V-Preview objects in TCIA EA1141 (DOI 10.7937/2BAS-HR33, CC BY 4.0); values re-entered by hand, no pixel or patient data copied"
     },
     {
       "id": "ge-dbt12",

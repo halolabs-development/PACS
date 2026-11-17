@@ -288,3 +288,18 @@ test('FC-073 the stored Auto Preload setting is exactly { version 1, search, pri
     { version: 1, search: null, priors: 'yes' }, { version: 1, search: null, priors: false, extra: 1 }, { version: 1, search: 'x'.repeat(201), priors: false }])
     assert.equal(normalizeAuto(bad), null, JSON.stringify(bad));
 });
+test('the state a list page reads names the exams an entry was fetched for (none for a whole original), across a restore', () => {
+  const merged = { reportUid: '2.25.611', groupId: 'g-merge', part: null }, part1 = { reportUid: '2.25.6219', groupId: 'g-split', part: 1 };
+  const store = create(100);
+  store.add([{ uid: '2.25.611', examRefs: [merged] }, { uid: '2.25.621', examRefs: [part1] }, { uid: '2.25.631' }]);
+  assert.deepEqual(status(store, '2.25.611').examRefs, [merged]);
+  assert.deepEqual(status(store, '2.25.621').examRefs, [part1]);
+  assert.equal(Object.hasOwn(status(store, '2.25.631'), 'examRefs'), false);
+  // Queued again for the whole original (a plain row's Preload): the exam references go with the old frames.
+  store.add([{ uid: '2.25.621' }]);
+  assert.equal(Object.hasOwn(status(store, '2.25.621'), 'examRefs'), false);
+  // After a reload the worker restores the entry from its manifest; the page reads the same references.
+  const again = create(100);
+  again.restore(store.manifest('2.25.611'), new Map());
+  assert.deepEqual(status(again, '2.25.611').examRefs, [merged]);
+});

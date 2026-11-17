@@ -106,11 +106,33 @@ test('implicit-VR LUT Data is read from inline or fetched bulk bytes, never gues
   assert.equal(model.displaySpec(withData({ vr: 'OW', InlineBinary: '%%%' })).voi.status, 'unverified');
 });
 test('a partial or contradictory synthetic view cannot fill a full-view slot', () => {
-  for (const vendor of ['hologic-generated-bto10', 'ge-generated-bto12', 'fuji-sview12']) {
+  for (const vendor of ['hologic-generated-bto10', 'ge-generated-bto12', 'ge-senoiris-vpreview12', 'fuji-sview12']) {
     const d = row(vendor); d['00281350'] = value('CS', 'YES');
     assert.notEqual(plan([d]).slots['current|R|CC|generated2d'].status, 'ready');
     const conflict = row(vendor); conflict['52009230'].Value[0]['00189504'].Value[0]['00089007'].Value[3] = 'NONE';
     assert.equal(model.classify(conflict).status, 'unverified');
+  }
+});
+// The SAMPLED/NONE summary is read from the header, not from a manufacturer name; it does not loosen any other check.
+test('a SAMPLED/NONE synthetic view fills a full-view slot only when the rest of its header allows it', () => {
+  const ready = d => plan([d]).slots['current|R|CC|generated2d'].status === 'ready';
+  const noVendor = row('ge-senoiris-vpreview12');
+  for (const tag of ['00080070', '00081090', '00181020']) delete noVendor[tag];
+  assert.equal(model.classify(noVendor).kind, 'generated2d', 'no manufacturer named: still the stated synthetic view');
+  assert.ok(ready(noVendor));
+  const variants = {
+    'partial view': d => { d['00281350'] = value('CS', 'YES'); d['00281352'] = { vr: 'SQ', Value: [{ '00080102': value('SH', 'SCT'), '00080100': value('SH', '255561001') }] }; },
+    'magnification': d => { d['00540220'].Value[0]['00540222'] = { vr: 'SQ', Value: [{ '00080102': value('SH', 'SCT'), '00080100': value('SH', '399163009') }] }; },
+    'spot compression': d => { d['00540220'].Value[0]['00540222'] = { vr: 'SQ', Value: [{ '00080102': value('SH', 'SCT'), '00080100': value('SH', '399055006') }] }; },
+    'laterality conflict': d => { d['00200062'] = value('CS', 'L'); },
+    'frame type disagrees': d => { d['52009230'].Value[0]['00189504'].Value[0]['00089007'].Value[3] = 'NONE'; },
+    'frame technique disagrees': d => { d['52009230'].Value[0]['00189504'].Value[0]['00089207'] = value('CS', 'TOMOSYNTHESIS'); },
+    'unlisted VOLUME/NONE': d => { d['00089206'] = value('CS', 'VOLUME'); d['52009230'].Value[0]['00189504'].Value[0]['00089206'] = value('CS', 'VOLUME'); },
+  };
+  for (const [name, change] of Object.entries(variants)) for (const base of [row('ge-senoiris-vpreview12'), clone(noVendor)]) {
+    change(base);
+    assert.equal(ready(base), false, name);
+    assert.equal(model.classify(base).fullViewAutoMatch, false, name);
   }
 });
 test('synthetic 2D comparison matches the same breast/view across manufacturers', () => {

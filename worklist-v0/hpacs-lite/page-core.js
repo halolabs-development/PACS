@@ -86,6 +86,12 @@
      * 부트스트랩까지 넓힌 것이다.
      */
     let offline = false;
+    /**
+     * 이 화면이 지금 서버에 보낼 수 있는가 — 한 규칙. 로그인한 세션이고(데모가 아니고) 서버가 지금 답한다. 화면에 선 채로
+     * 쓰는 줄(Mark CVR과 그 창, 임상의 질문의 Reply·Close·Retry)이 모두 이것으로 단추를 정하고, 연결이 바뀌면
+     * (page-boot.js goOffline·goOnline → window.kinOnConnection) 다시 그린다. "연결 끊김"을 보이는 동안 나가는 쓰기는 없다.
+     */
+    function serverReachable() { return !!sess && serverMode && !demoMode && !offline; }
     // 내 소속 기관. 서버가 토큰의 그룹에서 뽑아 bootstrap으로 알려준다.
     // 화면이 정하는 값이 아니다 — 여기 있는 건 표시용이고, 진짜 필터는 서버에 있다.
     let myInstitution = null, myInstitutionName = "", institutions = [];
