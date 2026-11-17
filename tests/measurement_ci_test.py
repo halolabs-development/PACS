@@ -182,6 +182,7 @@ REGRESSION_SUITES = {
         tests/viewer_stack_restore_dom_test.py
     """.split(),
     'proxy-contracts': """
+        tests/proxy_app_cache_test.py
         tests/proxy_grant_log_test.py
     """.split(),
     'measurements': """
