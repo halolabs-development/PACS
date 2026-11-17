@@ -786,6 +786,10 @@
           const el = $(id);
           if (el) { el.disabled = true; el.title = relatedWhy; }
         }
+      // The controls painted by their own areas from the report state (Mark CVR: critical-result-send.js) follow it here too:
+      // the answer of a commit, a poll or a draft sync that changed it reaches them with More left open. Before the identity rule
+      // below, which then has the last word.
+      (window.kinOnReportButtons || []).forEach(change => { try { change(); } catch (_) {} });
       // WORKLIST-SPLIT-UID: the selected UID was excluded as unresolved. Its text stays (loadReport keeps it) and is read-only;
       // every write and the paste/clear editors are off. The server refuses the same actions on its own.
       const unresolved = !!appState[selectedUid]?.identityUnresolved;

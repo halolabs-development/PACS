@@ -2737,6 +2737,7 @@ window.KinLanguageTerms = {
     ["서버 연결이 끊겨 인용할 수 없습니다 — 연결된 뒤 다시 시도하세요", "Disconnected from the server, so citing is unavailable — try again once connected", "m"],
     ["서버 연결이 끊겨 저장할 수 없습니다", "Cannot save: the server connection was lost", "m"],
     ["서버 연결이 끊겨 저장할 수 없습니다. 쓰던 내용을 복사해 두고 연결을 기다리세요.", "Disconnected from the server, so it cannot be saved. Copy your text and wait for the connection.", "m"],
+    ["서버 연결이 끊겨 지금은 보낼 수 없습니다. 쓴 내용은 그대로 있습니다.", "Disconnected from the server, so this cannot be sent now. What you wrote stays.", "m"],
     ["서버 연결이 끊겼습니다 — 지금부터 저장되지 않습니다. 쓰던 판독문은 복사해 두세요.", "Server connection lost — nothing will be saved from now on. Copy the report you are writing.", "m"],
     ["서버 응답 형식을 확인할 수 없습니다.", "Cannot verify the server response format.", "m"],
     ["서버 저장 실패: {0}", "Server save failed: {0}", "m"],

@@ -106,6 +106,7 @@ from clinician_question_dom_test import CLINICIAN_VIEW as QUESTION_HOME_VIEW
 from clinician_question_dom_test import HOOK as QUESTION_HOOK
 from clinician_question_dom_test import OWNER_CHANGED as QUESTION_OWNER_CHANGED
 from clinician_question_dom_test import READER_BLOCK as QUESTION_BLOCK
+from clinician_question_dom_test import SERVER_RULE
 from clinician_question_dom_test import READER_VIEW as QUESTION_READER_VIEW
 from clinician_question_dom_test import REFUSED as QUESTION_REFUSED
 from clinician_question_dom_test import QuestionServer, kind_of
@@ -303,6 +304,7 @@ const $ = s => document.querySelector(s);
 const API = location.origin + '/api';
 let sess = window.synSession;
 let serverMode = true, demoMode = false, offline = false;
+""" + SERVER_RULE + """
 let selectedUid = null, appState = {}, warnedFor = null;
 let studies = window.synStudies;
 let institutions = window.synInstitutions;

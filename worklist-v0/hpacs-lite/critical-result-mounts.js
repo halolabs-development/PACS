@@ -32,7 +32,8 @@
         onAccountChanged: notifyAccountChanged,
         study: uid => studies.find(s => s.uid === uid),
         report: uid => { const a = appState[uid]; return a ? { version: a.version ?? 0, rs: a.rs ?? null } : null; },
-        online: () => !!sess && serverMode && !demoMode && !offline,
+        // The one connection rule (page-core.js); the question row's writes use the same one.
+        online: serverReachable,
         standing: () => !!sess && !demoMode,
         radiologist: () => { const s = KinAuth.session(); return s?.state === 'approved' && Array.isArray(s.roles) && s.roles.includes('radiologist'); },
         owner: () => { const s = KinAuth.session(); return s?.state === 'approved' ? [s.institution ?? null, s.sub ?? null] : null; },

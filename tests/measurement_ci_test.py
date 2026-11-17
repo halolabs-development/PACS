@@ -146,6 +146,7 @@ REGRESSION_SUITES = {
         tests/clinical_context_dom_test.py
         tests/critical_result_recipient_dom_test.py
         tests/critical_result_sender_dom_test.py
+        tests/critical_result_connection_dom_test.py
     """.split(),
     'admin-session-dom': """
         tests/audit_page_dom_test.py
