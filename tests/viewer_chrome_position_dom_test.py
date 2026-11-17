@@ -106,6 +106,13 @@ MENU_MODULE = """() => KinViewerFeatures.module('synMenu', ({ ui }) => {
   ui.menuItem('Display', { id: 'synZoom', label: 'Zoom Presets', run: () => {} });
 })"""
 
+# Every Feature Menu and a few buttons, so the Feature Menus row has to page in a narrow window (as on the viewer).
+FEATURE_MODULE = """() => KinViewerFeatures.module('synFeatureRow', ({ ui }) => {
+  for (const menu of ['MG', 'Navigate', 'Display', 'Compare', 'Measure']) ui.menuItem(menu, { id: 'syn' + menu, label: menu + ' Item', run: () => {} });
+  for (const [id, label] of [['synPrior', '‹ Prior'], ['synNext', 'Prior ›'], ['synLink', 'Finding Link'], ['synSync', 'Sync Scroll']])
+    ui.toolbarButton({ id, label, title: label, run: () => {} });
+})"""
+
 BOXES = """() => {
   const box = selector => { const node = document.querySelector(selector); if (!node) return null; const r = node.getBoundingClientRect();
     return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height }; };
@@ -113,6 +120,38 @@ BOXES = """() => {
     grid: box('[data-cy=viewport-grid]'), bar: box('.kin-ux-tools-bar') };
 }"""
 FRAME = "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))"
+# The page narrowed (or shortened) a pixel at a time from the length where a row stops fitting: whether the row needs
+# its arrows is read with the arrows hidden; then the arrows are watched for five frames.
+SETTLE = """async ({ row, arrows, size }) => {
+  const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
+  const host = document.querySelector('#root > div'), line = document.querySelector(row);
+  const pagers = [...document.querySelectorAll(arrows)].filter(node => node.parentElement === line.parentElement);
+  const vertical = size === 'height', was = host.style[size];
+  const needs = length => {
+    host.style[size] = length + 'px';
+    const before = pagers.map(node => node.hidden); pagers.forEach(node => { node.hidden = true; });
+    const over = vertical ? line.scrollHeight > line.clientHeight + 1 : line.scrollWidth > line.clientWidth + 1;
+    pagers.forEach((node, i) => { node.hidden = before[i]; });
+    return over;
+  };
+  let short = 120, long = 4000;
+  if (pagers.length !== 2 || !needs(short) || needs(long)) return { error: 'no length where the row stops fitting' };
+  while (long - short > 1) { const middle = (short + long) >> 1; if (needs(middle)) short = middle; else long = middle; }
+  const lengths = [];
+  for (let length = long + 2; length > short - 48; length--) {
+    host.style[size] = length + 'px';
+    for (let i = 0; i < 3; i++) await frame();
+    let flips = 0;
+    const watch = new MutationObserver(records => { flips += records.length; });
+    pagers.forEach(node => watch.observe(node, { attributes: true, attributeFilter: ['hidden'] }));
+    for (let i = 0; i < 5; i++) await frame();
+    watch.disconnect();
+    const shown = pagers.every(node => !node.hidden);
+    lengths.push({ length, flips, shown, needed: needs(length) });
+  }
+  host.style[size] = was;
+  return { lengths };
+}"""
 TOOLS = [['WindowLevel', 'Window / Level'], ['Pan', 'Pan'], ['Zoom', 'Zoom'], ['StackScroll', 'Stack Scroll'], ['Length', 'Length'],
          ['Angle', 'Angle'], ['EllipticalROI', 'Ellipse'], ['Capture', 'Capture']]
 MANY_TOOLS = TOOLS + [['RectangleROI', 'Rectangle'], ['ArrowAnnotate', 'Arrow'], ['invert', 'Invert'], ['Cine', 'Cine'],
@@ -524,6 +563,34 @@ class ChromePositionDOMTest(unittest.TestCase):
         expect(strip).not_to_have_attribute('data-kin-shown', '')
         # One line marks the shared edge.
         self.assertEqual(['""', 'none'], page.evaluate("() => ['::before', '::after'].map(p => { const s = getComputedStyle(document.getElementById('column'), p); return s.content === 'none' || s.height === 'auto' || s.height === '0px' ? 'none' : s.content; })"))
+
+    # ── The paging arrows settle ──
+    def test_14_paging_arrows_settle_at_every_width_near_the_edge(self):
+        # A long status line next to Reload Settings (a save that failed), as on the viewer: when the arrows come, the
+        # settings section gives up room too, so the row gets back less than the arrows' width. Just under the width
+        # where the row stops fitting, the arrows used to flip every frame and the toolbar never stood still.
+        page = self.open(size=(1600, 900), tools=MANY_TOOLS, modules=(FEATURE_MODULE,),
+                         settings=dict(version=2, bar=[t[0] for t in MANY_TOOLS], shortcuts={}))
+        page.evaluate("""() => { const fetched = window.fetch; window.fetch = (url, init = {}) => (init.method || 'GET') === 'PUT'
+          ? Promise.resolve(new Response('Unavailable', { status: 503 })) : fetched(url, init); }""")
+        page.get_by_role('button', name='Viewer Settings', exact=True).click()
+        dialog = page.get_by_role('dialog', name='Viewer Settings')
+        dialog.get_by_role('button', name='Save', exact=True).click()
+        expect(dialog).to_contain_text('계정 설정 응답을 읽지 못했습니다')
+        dialog.get_by_role('button', name='Cancel', exact=True).click()
+        expect(page.get_by_role('button', name='Reload Settings', exact=True)).to_be_visible()
+        cases = [('Frequent Tools', '.kin-ux-tools-bar', '.kin-ux-tools-scroll', 'top', 'width'),
+                 ('Feature Menus', '.kin-ux-features-row', '.kin-ux-features-scroll', 'top', 'width'),
+                 ('Frequent Tools on a side', '.kin-ux-tools-bar', '.kin-ux-tools-scroll', 'left', 'height')]
+        for name, row, arrows, side, size in cases:
+            self.chrome(page, toolbar=side, thumbs='bottom' if side == 'top' else 'right')
+            result = page.evaluate(SETTLE, dict(row=row, arrows=arrows, size=size))
+            self.assertNotIn('error', result, name)
+            moving = [(r['length'], r['flips']) for r in result['lengths'] if r['flips']]
+            self.assertEqual([], moving, name + ': arrows that keep flipping (length, flips in 5 frames)')
+            wrong = [r['length'] for r in result['lengths'] if r['shown'] != r['needed']]
+            self.assertEqual([], wrong, name + ': arrows shown exactly when the row does not fit without them')
+        expect(page.get_by_role('button', name='Reload Settings', exact=True)).to_be_visible()
     # ── A window across two displays ──
     def test_10_a_window_across_two_displays_copies_rows_on_top_or_bottom_only(self):
         page = self.open(span=683, series=20)
