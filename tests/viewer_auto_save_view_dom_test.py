@@ -287,7 +287,7 @@ COMBINED = """config => {
     }
     if (path === '/api/studies/' + STUDY + '/findings' && method === 'GET') {
       synFindingServer.lists++;
-      return synFindingServer.status === 200 ? reply(200, { items: structuredClone(synFindingServer.items), nextCursor: null }, { 'X-KIN-Finding-Schema': '2' })
+      return synFindingServer.status === 200 ? reply(200, { items: structuredClone(synFindingServer.items), nextCursor: null }, { 'X-KIN-Finding-Schema': '3' })
         : reply(synFindingServer.status, { message: 'SYN findings unavailable' });
     }
     return base(url, init);

@@ -7,6 +7,8 @@ const invalid = (message = '소견 입력이 올바르지 않습니다'): never 
 // Bound individual snapshots, never the number of retained versions or linked sources.
 export const FINDING_LIMITS = Object.freeze({ snapshot: 65536, title: 200, text: 4000 });
 export const FINDING_CHARACTERISTICS = 1000;
+// Version 3: the free-text lesion location (anatomy as the reader writes it), counted in code points like the title.
+export const FINDING_LESION_LOCATION = 200;
 // Saved Comparison Job snapshot versions a finding may link, each with its validator, restorer and hosted
 // suite. A later version stays unlinkable until it is added here and to the viewer's allowlist.
 export const FINDING_JOB_VERSIONS: readonly number[] = Object.freeze([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
@@ -33,8 +35,8 @@ type FindingRef = FindingSourceRef | FindingJobRef;
 /// Client-supplied part of a finding. Every copied field (kind, identity, values, digest, study set,
 /// point, volume) is rejected here so a client can never present a forged number as provenance.
 /// Version 1 is exactly the shipped shape (item pairs only); version 2 adds the required free-text
-/// `characteristics` and job references.
-interface FindingItemInput { schemaVersion: 1 | 2; title: string; text: string; characteristics?: string; sources: FindingRef[]; primary: number }
+/// `characteristics` and job references; version 3 adds the required free-text `lesionLocation`.
+interface FindingItemInput { schemaVersion: 1 | 2 | 3; title: string; text: string; characteristics?: string; lesionLocation?: string; sources: FindingRef[]; primary: number }
 export interface FindingCommand {
   requestId: string; expectedRevision?: number; action: 'create' | 'edit' | 'hide' | 'restore'; reason: string; item: FindingItemInput;
 }
@@ -48,7 +50,7 @@ export function sourceRef(source: any): FindingRef {
   if (source?.kind !== 'job') return { itemId: source?.itemId, revision: source?.revision };
   return { jobId: source.jobId, revision: source.revision, ...(source.mark ? { markId: source.mark.id } : {}) };
 }
-function reference(source: any, version: 1 | 2, seen: Set<string>): FindingRef {
+function reference(source: any, version: 1 | 2 | 3, seen: Set<string>): FindingRef {
   if (version === 1 || !source || typeof source !== 'object' || Array.isArray(source) || !Object.prototype.hasOwnProperty.call(source, 'jobId')) {
     object(source, ['itemId', 'revision']);
     const itemId = viewerUuid(source.itemId);
@@ -70,8 +72,10 @@ export function findingCommand(raw: Buffer, create: boolean): FindingCommand {
   if (!['create', 'edit', 'hide', 'restore'].includes(action) || (!create && action === 'create')) invalid();
   const reason = text(body.reason === undefined ? '' : body.reason, 1000);
   const item = body.item;
-  const version: 1 | 2 = item && typeof item === 'object' && !Array.isArray(item) && item.schemaVersion === 2 ? 2 : 1;
-  if (version === 2) object(item, ['schemaVersion', 'title', 'text', 'characteristics', 'sources'], ['primary']);
+  const version: 1 | 2 | 3 = item && typeof item === 'object' && !Array.isArray(item) && (item.schemaVersion === 2 || item.schemaVersion === 3)
+    ? item.schemaVersion : 1;
+  if (version === 3) object(item, ['schemaVersion', 'title', 'text', 'characteristics', 'lesionLocation', 'sources'], ['primary']);
+  else if (version === 2) object(item, ['schemaVersion', 'title', 'text', 'characteristics', 'sources'], ['primary']);
   else {
     object(item, ['schemaVersion', 'title', 'text', 'sources'], ['primary']);
     if (item.schemaVersion !== 1) invalid();
@@ -83,8 +87,10 @@ export function findingCommand(raw: Buffer, create: boolean): FindingCommand {
   if (!Number.isSafeInteger(primary) || primary < 0 || primary >= sources.length) invalid();
   const normalized: FindingItemInput = version === 1
     ? { schemaVersion: 1, title: text(item.title, FINDING_LIMITS.title), text: text(item.text, FINDING_LIMITS.text), sources, primary }
-    : { schemaVersion: 2, title: text(item.title, FINDING_LIMITS.title), text: text(item.text, FINDING_LIMITS.text),
-      characteristics: text(item.characteristics, FINDING_CHARACTERISTICS), sources, primary };
+    : version === 2 ? { schemaVersion: 2, title: text(item.title, FINDING_LIMITS.title), text: text(item.text, FINDING_LIMITS.text),
+      characteristics: text(item.characteristics, FINDING_CHARACTERISTICS), sources, primary }
+    : { schemaVersion: 3, title: text(item.title, FINDING_LIMITS.title), text: text(item.text, FINDING_LIMITS.text),
+      characteristics: text(item.characteristics, FINDING_CHARACTERISTICS), lesionLocation: text(item.lesionLocation, FINDING_LESION_LOCATION), sources, primary };
   return { requestId: viewerUuid(body.requestId), ...(create ? {} : { expectedRevision: positive(body.expectedRevision) }), action, reason, item: normalized };
 }
 

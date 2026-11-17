@@ -48,7 +48,7 @@ window.kinViewerFindings = function (services, model) {
     const host = document.querySelector('#kin-viewer-history');
     if (!host) return false;
     // A section of another record-format version than its model is never mounted beside it.
-    if (model.SCHEMA !== 2) {
+    if (model.SCHEMA !== 3) {
       const refused = document.createElement('p'); refused.id = 'kin-viewer-findings'; refused.textContent = model.MODULE_MISMATCH_TEXT || '화면 구성 요소 판이 다릅니다. 새로고침하세요.';
       host.append(refused); stop = () => { refused.remove(); stop = () => {}; }; return false;
     }
@@ -106,6 +106,7 @@ window.kinViewerFindings = function (services, model) {
     };
     const rows = new Map();
     const CHARACTERISTICS_HELP = '사용자가 직접 입력하는 병변 특성입니다. 정해진 용어나 항목은 없으며 판독문에 자동 반영하지 않습니다.';
+    const LESION_LOCATION_HELP = '사용자가 직접 입력하는 병변 위치입니다(예: 우하엽 S6). 영상의 Series/Image 번호는 연결한 표식이 가집니다.';
     const LOCATION_HELP = '저장 화면(Saved View)은 저장 작업의 영상 상태 전체를, 3D 표식(3D Point)은 MPR 3D Annotations 작업에 저장한 점 하나를 연결합니다. ' +
       '3D 표식은 그 작업을 복원하거나 저장해 지금 화면에 표시한 뒤 고르세요. 표식을 바꾸면 Save New Job으로 새 작업을 저장해야 하며, 검사별 저장 작업은 200개까지입니다. ' +
       '비교 검사를 판독 대상으로 연 화면에서 저장한 작업은 연결할 수 없으니, 현재 검사를 판독 대상으로 연 화면에서 같은 위치를 새 작업으로 저장해 연결하세요.';
@@ -239,6 +240,12 @@ window.kinViewerFindings = function (services, model) {
       if (!box) {
         const host = document.createElement('div');
         const title = field(host, 'Finding Title', 'input', e.draft.title, model.LIMITS.title, v => store.updateDraft(e, { title: v }), false);
+        // Location (version 3): the reader's own words for where the lesion is, the same code-point limit rule as Characteristics.
+        const where = field(host, 'Location (병변 위치)', 'input', typeof e.draft.lesionLocation === 'string' ? e.draft.lesionLocation : '',
+          model.LESION_LOCATION, v => store.updateDraft(e, { lesionLocation: v }), false);
+        where.setAttribute('aria-label', 'Finding Location'); where.translate = false;
+        const whereHelp = text(host, 'p', LESION_LOCATION_HELP); whereHelp.id = 'kin-finding-location-help-' + crypto.randomUUID();
+        where.setAttribute('aria-describedby', whereHelp.id);
         // Characteristics: native maxLength counts UTF-16 units (astral characters stop earlier); the saved limit is code points.
         const traits = field(host, 'Characteristics (병변 특성)', 'textarea', typeof e.draft.characteristics === 'string' ? e.draft.characteristics : '',
           model.CHARACTERISTICS, v => store.updateDraft(e, { characteristics: v }), false);
@@ -246,7 +253,7 @@ window.kinViewerFindings = function (services, model) {
         const help = text(host, 'p', CHARACTERISTICS_HELP); help.id = 'kin-finding-characteristics-help-' + crypto.randomUUID();
         traits.setAttribute('aria-describedby', help.id);
         const body = field(host, 'Finding Text', 'textarea', e.draft.text, model.LIMITS.text, v => store.updateDraft(e, { text: v }), false);
-        box = { host, fields: [[title, 'title'], [traits, 'characteristics'], [body, 'text']] };
+        box = { host, fields: [[title, 'title'], [where, 'lesionLocation'], [traits, 'characteristics'], [body, 'text']] };
         editors.set(e, box);
       }
       let active = null; try { active = document.activeElement; } catch (_) { active = null; }
@@ -281,8 +288,10 @@ window.kinViewerFindings = function (services, model) {
         box.slot.replaceChildren(); editors.delete(e);
         text(el, 'p', e.head ? e.head.item.title : e.draft.title).style.fontWeight = '600';
         const body = text(el, 'p', e.head ? e.head.item.text : e.draft.text); body.style.whiteSpace = 'pre-wrap';
-        // Version 1 records show no characteristics line; old prose is never relabelled.
-        const traits = e.head && e.head.item.schemaVersion === 2 ? e.head.item.characteristics : '';
+        // Version 1 records show no characteristics line (nor version 1-2 a location line); old prose is never relabelled.
+        const where = e.head && e.head.item.schemaVersion === 3 ? e.head.item.lesionLocation : '';
+        if (where) { const line = text(el, 'p', 'Location (병변 위치): ' + where); line.style.whiteSpace = 'pre-wrap'; line.dataset.kinLesionLocation = ''; }
+        const traits = e.head && e.head.item.schemaVersion >= 2 ? e.head.item.characteristics : '';
         if (traits) { const line = text(el, 'p', 'Characteristics (병변 특성): ' + traits); line.style.whiteSpace = 'pre-wrap'; line.dataset.kinCharacteristics = ''; }
       }
       const same = (s, pair) => (model.isJob(s) ? 'job:' + s.jobId + ':' + (s.mark ? s.mark.id : '') : s.itemId) ===
@@ -333,7 +342,8 @@ window.kinViewerFindings = function (services, model) {
             // Each revision's own text, characteristics (version 2) and the kinds it linked, counted only.
             const detail = text(history, 'div', ''); detail.dataset.kinRevision = String(r.revision); detail.style.marginLeft = '8px';
             if (r.item.text) text(detail, 'p', '본문: ' + r.item.text).style.whiteSpace = 'pre-wrap';
-            if (r.item.schemaVersion === 2) text(detail, 'p', r.item.characteristics ? 'Characteristics (병변 특성): ' + r.item.characteristics : 'Characteristics (병변 특성): 없음').style.whiteSpace = 'pre-wrap';
+            if (r.item.schemaVersion === 3) text(detail, 'p', r.item.lesionLocation ? 'Location (병변 위치): ' + r.item.lesionLocation : 'Location (병변 위치): 없음').style.whiteSpace = 'pre-wrap';
+            if (r.item.schemaVersion >= 2) text(detail, 'p', r.item.characteristics ? 'Characteristics (병변 특성): ' + r.item.characteristics : 'Characteristics (병변 특성): 없음').style.whiteSpace = 'pre-wrap';
             const count = kind => r.item.sources.filter(kind).length;
             text(detail, 'p', '연결: 2D 표식 ' + count(x => !model.isJob(x)) + '개 · Saved View ' + count(x => model.isJob(x) && !x.mark) + '개 · 3D Point ' + count(x => model.isJob(x) && !!x.mark) + '개 · v' + (r.item.schemaVersion || 1));
           }

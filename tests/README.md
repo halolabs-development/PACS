@@ -430,6 +430,7 @@ schemaVersion 2 요청에서만 받는다. 서버는 작업 판·검사 조합(1
 판 협상: 새 화면은 `X-KIN-Finding-Schema: 2`를 보내고 서버는 모든 소견 응답에 같은 헤더를 붙인다. 헤더 없는 옛 화면은 v2 행이 있는 페이지에서
 409 `FINDING_CLIENT_OUTDATED`, 헤더 없는 성공 응답(옛 API)을 받은 새 화면은 저장하지 않고 읽기만 한다. v1 요청의 v2 head 수정·숨김은 409
 `FINDING_SCHEMA_VERSION`, v2 수정은 v1 소견을 v2로 올리고 숨김·복원은 head 판과 내용을 유지한다. 기존 v1 재요청·이력 바이트는 그대로다.
+v3(병변 위치): v2에 자유 문자열 `lesionLocation`(200 code point)을 더한 판이다. 새 화면은 `X-KIN-Finding-Schema: 3`을 보내고 서버도 3을 붙인다. 읽기는 헤더가 말한 판까지만(없음=v1, `2`=v1–v2, `3`=v1–v3) 내주고 그보다 새 행이 있는 페이지는 통째로 409 `FINDING_CLIENT_OUTDATED`, 수정은 판을 올리기만 하고(낮추면 409 `FINDING_SCHEMA_VERSION`) 숨김·복원은 위치까지 그대로 둔다. 인용 블록은 제목·본문·`위치: `·`특성: ` 순서다(`tests/report_citation_vectors.json` assembly). Include Measurements의 측정 줄 규칙은 같은 파일의 `measurement`가 화면·서버 양쪽의 신탁이다.
 모양이 틀린 작업 계보 행(배열 길이·문자열·중복·첫 검사·투영 불일치)은 읽을 수 없는 검사로 취급한다(합성 행 시험, 운영 행 수정 없음).
 화면: 뷰어 Findings의 `Link 3D Point`·`Link Saved View`, `Go to 3D Point`·`Open Saved View`는 저장 작업 버튼과 같은 복원·이동 함수를 쓴다.
 복원 전 작업을 다시 읽고(GET 409는 거절) 적용 뒤 읽기 확인과 동결된 점·FoR 비교가 맞을 때만 복원으로 알린다. 결과는 거절·되돌림·화면

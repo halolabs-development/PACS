@@ -16,7 +16,7 @@
       if (C.isReduced(entry)) return `${field} · ${who} · ${when} — ${C.UNAVAILABLE_TEXT}`;
       const state = C.presenceOf(entry, citationBody(scope, entry.field));
       const source = `소견 r${entry.findingRevision} · 출처 ${Number(entry.sourceIndex) + 1}번` +
-        (entry.linkStateAtInsert ? ` · 인용 당시 연결 ${entry.linkStateAtInsert}` : "");
+        (entry.linkStateAtInsert ? ` · 인용 당시 연결 ${entry.linkStateAtInsert}` : "") + C.measurementNote(entry);
       return `${field} · ${source} · ${who} · ${when} — ${C.STATE_TEXT[state] ?? ""}`;
     }
 
@@ -147,6 +147,13 @@
       return KinReportCitation.placeBlock($("#" + field).value, block, caretAt(field), citationGuards(field));
     }
     /**
+     * 이 창이 넣을 글 — 소견 블록, 또는 Include Measurements가 준비됐으면 그 아래 측정 줄까지.
+     * 자리 계획·요청·화면 삽입·증언이 모두 **이 한 값**에서 나온다.
+     */
+    function citeText(pane) {
+      return pane.measure.state === "ready" ? KinReportCitation.withMeasurements(pane.block, pane.measure.line) : pane.block;
+    }
+    /**
      * 삽입 자리를 사람이 읽는 한 줄로. 숫자는 **줄바꿈 기준** 줄 번호다 — 화면에서 접혀 보이는
      * 줄이 아니라 저장되는 글의 줄이다. 소견 패널이 판독문 칸을 덮고 있어 사람은 자리를 눈으로
      * 확인할 수 없으므로, 이 줄이 유일한 고지이며 낡으면 안 된다.
@@ -202,11 +209,16 @@
     let citePane = null, citeSeq = 0, citeBusy = false, citeReturn = null;
     function closeCitePreview(returnFocus = true) {
       if (!citePane) return;
+      // 나가 있는 영상 번호 읽기는 이 창의 것이다 — 창과 함께 끊는다.
+      citePane.measure?.abort?.();
       // 순번을 올린다. 닫힌 창에 묶여 있던 응답은 더는 이 화면에 쓸 수 없다.
       citePane = null; citeSeq += 1;
       $("#cite-preview").classList.remove("show");
-      for (const id of ["target", "source", "place", "status"]) $("#cite-preview-" + id).textContent = "";
+      for (const id of ["target", "source", "place", "status", "measure-note"]) $("#cite-preview-" + id).textContent = "";
       $("#cite-preview-block").textContent = "";
+      $("#cite-preview-measure-line").textContent = "";
+      $("#cite-preview-measure-line").hidden = true;
+      $("#cite-preview-measure").checked = false;
       if (returnFocus) (citeReturn?.isConnected ? citeReturn : $("#findings")).focus();
       citeReturn = null;
     }
@@ -215,6 +227,21 @@
       $("#cite-preview-insert").disabled = busy;
       $("#cite-preview-close").disabled = busy;
       $("#cite-preview-field").disabled = busy;
+      $("#cite-preview-measure").disabled = busy || !measureAvailable(citePane);
+    }
+    /** Include Measurements를 켤 수 있는가 — 넣을 출처가 있고, 이 서버가 그 줄을 기록한다고 말했을 때만. */
+    function measureAvailable(pane) {
+      return !!pane && pane.measurements.length > 0 && citations.measurementLines();
+    }
+    function measureNote(pane) {
+      if (!pane) return "";
+      if (!pane.measurements.length) return "이 소견에는 이 검사에서 넣을 수 있는 영상 표식이 없습니다.";
+      if (!citations.measurementLines()) return "서버가 측정 줄 기록을 지원하는지 아직 확인하지 못해 켤 수 없습니다 — 인용 목록을 다시 확인한 뒤 여세요.";
+      const m = pane.measure;
+      if (m.state === "loading") return "영상의 Series/Image 번호를 읽는 중입니다…";
+      if (m.state === "ready") return kinSay("아래 줄은 화면이 붙인 글입니다 — 표식 {n0}개의 저장된 수치와 DICOM의 Series/Image 번호를 그대로 옮겼습니다.", m.sources.length);
+      if (m.state === "failed") return m.note;
+      return "켜면 이 소견에 연결된 이 검사의 영상 표식 전부의 수치와 Series/Image 번호를 한 줄로 덧붙입니다.";
     }
     function renderCitePreview() {
       if (!citePane) return;
@@ -227,13 +254,20 @@
         { t: citePane.sourceLabel }, citePane.findingRevision, citePane.linkState));
       // 미리보기는 **조립된 그 유니코드 문자열 그대로**를 보인다. 공백도 줄바꿈도 보존된다.
       $("#cite-preview-block").textContent = citePane.block;
+      // 측정 줄은 블록 바로 아래, 따로 표시된 칸에 — 사람 글과 기계가 붙인 글을 눈으로 가를 수 있게.
+      const m = citePane.measure, ready = m.state === "ready";
+      $("#cite-preview-measure").checked = m.state !== "off" && m.state !== "failed";
+      $("#cite-preview-measure").disabled = citeBusy || !measureAvailable(citePane);
+      $("#cite-preview-measure-line").textContent = ready ? m.line : "";
+      $("#cite-preview-measure-line").hidden = !ready;
+      kinWrite($("#cite-preview-measure-note"), measureNote(citePane));
       // 여기서 계획을 **다시 세우지 않는다.** 이 함수는 누름 자체에서도 여러 번 불리므로,
       // 여기서 갱신하면 열고 나서 바뀐 것을 조용히 흡수해 "확인한 자리"가 사라진다.
       kinWrite($("#cite-preview-place"), placementLine($("#cite-preview-field").value, citePane.plan));
       $("#cite-preview-status").textContent = why ?? citePane.status ??
         (`확인을 누르면 서버가 이 문장과 증언을 함께 기록한 뒤 ${KinReportCitation.FIELD_LABEL[$("#cite-preview-field").value]} 칸에 붙입니다.` +
          " 기존 내용은 한 글자도 지우지 않고 위 위치에 줄 단위로 넣습니다.");
-      $("#cite-preview-insert").disabled = !!why || citeBusy;
+      $("#cite-preview-insert").disabled = !!why || citeBusy || m.state === "loading";
     }
     /**
      * `reading-findings.js`가 부르는 유일한 입구. 요청은 그 패널이 **지금 읽고 있는**
@@ -249,11 +283,13 @@
       const why = citationInsertBlock();
       if (why) { toast(why, "err"); return false; }
       citeSeq += 1;
-      citePane = { ...request, seq: citeSeq, selSeq: selectionSeq, warned: false, status: null };
+      // Include Measurements는 언제나 꺼진 채로 연다. 출처 목록은 소견 패널이 지금 보이는 판에서 만든 그대로다.
+      const measurements = Array.isArray(request.measurements) ? request.measurements.filter(m => m && Number.isSafeInteger(m.sourceIndex)) : [];
+      citePane = { ...request, measurements, measure: { state: "off", seq: 0 }, seq: citeSeq, selSeq: selectionSeq, warned: false, status: null };
       citeReturn = origin?.isConnected ? origin : null;
       // 대상 칸은 언제나 명시적이고, 기본은 Findings다. 커서는 **자리**만 정하고 **칸**은 이 선택이 정한다.
       $("#cite-preview-field").value = "findings";
-      citePane.plan = citationPlan("findings", citePane.block);
+      citePane.plan = citationPlan("findings", citeText(citePane));
       setCiteBusy(false);
       renderCitePreview();
       $("#cite-preview").classList.add("show");
@@ -265,8 +301,67 @@
       // 대상을 바꾸면 앞서 읽고 누른 확인은 이 대상에 대한 것이 아니다.
       // 중복 경고도 새 칸 기준으로 다시 받고, 삽입 자리도 그 칸의 커서로 다시 잡는다.
       citePane.warned = false; citePane.status = null;
-      citePane.plan = citationPlan($("#cite-preview-field").value, citePane.block);
+      citePane.plan = citationPlan($("#cite-preview-field").value, citeText(citePane));
       renderCitePreview();
+    });
+    /**
+     * Include Measurements. 켜면 넣을 출처들의 SOP마다 SeriesNumber·InstanceNumber·NumberOfFrames를 같은 세션의
+     * DICOMweb으로 읽어 한 줄을 만든다. 값은 DICOM이 적은 그대로이고, 신원(검사·시리즈·SOP)과 답의 건수가 맞지
+     * 않으면 그 읽기 전체를 실패로 본다 — 일부만 맞춘 줄을 만들지 않는다. 읽는 동안에는 넣을 수 없고, 끄거나 창을
+     * 닫거나 검사가 바뀌면 그 읽기의 답은 버려진다(이 창·이 읽기의 순번). 줄이 바뀌면 넣을 글이 바뀌므로 자리 계획과
+     * 중복 경고를 다시 받는다.
+     */
+    function setMeasure(pane, next) {
+      pane.measure = next;
+      pane.warned = false; pane.status = null;
+      pane.plan = citationPlan($("#cite-preview-field").value, citeText(pane));
+      renderCitePreview();
+    }
+    async function dicomNumbers(m, at, signal) {
+      const path = "/dicom-web/studies/" + encodeURIComponent(m.studyUid) + "/series/" + encodeURIComponent(m.seriesUid) +
+        "/instances?SOPInstanceUID=" + encodeURIComponent(m.sopUid) + "&includefield=00200011,00200013,00280008";
+      const res = await transport.request(path, { context: at, signal, cache: "no-store", headers: { Accept: "application/dicom+json" } });
+      if (!res.ok) throw new Error(kinSay("영상 번호를 읽지 못했습니다 (HTTP {0})", res.status));
+      const rows = Array.isArray(res.body) ? res.body : null;
+      const tag = (row, key) => row?.[key]?.Value?.[0];
+      if (!rows || rows.length !== 1 || tag(rows[0], "00080018") !== m.sopUid ||
+          (tag(rows[0], "0020000E") !== undefined && tag(rows[0], "0020000E") !== m.seriesUid) ||
+          (tag(rows[0], "0020000D") !== undefined && tag(rows[0], "0020000D") !== m.studyUid))
+        throw new Error("영상 목록의 답이 이 표식의 영상과 맞지 않습니다");
+      return { series: tag(rows[0], "00200011"), image: tag(rows[0], "00200013"), frames: tag(rows[0], "00280008") };
+    }
+    $("#cite-preview-measure").addEventListener("change", async () => {
+      const pane = citePane;
+      if (!pane || citeBusy) return;
+      pane.measure.abort?.();
+      const seq = pane.measure.seq + 1;
+      if (!$("#cite-preview-measure").checked || !measureAvailable(pane)) { setMeasure(pane, { state: "off", seq }); return; }
+      setMeasure(pane, { state: "loading", seq });
+      const at = work.capture("study");
+      const live = () => citePane === pane && pane.measure.seq === seq && pane.uid === selectedUid && pane.selSeq === selectionSeq && work.admits(at);
+      const controller = new AbortController();
+      pane.measure.abort = () => controller.abort();
+      try {
+        const parts = [];
+        for (const m of pane.measurements) {
+          const numbers = await dicomNumbers(m, at, controller.signal);
+          if (!live()) return;
+          parts.push({ name: m.name, value: m.value, frame: m.frame, ...numbers });
+        }
+        const line = KinReportCitation.measurementLine(parts);
+        const refusal = line ? KinReportCitation.refuseBlock(KinReportCitation.withMeasurements(pane.block, line)) : "넣을 출처가 없습니다";
+        work.commit(at, () => {
+          if (!live()) return;
+          setMeasure(pane, refusal ? { state: "failed", seq, note: refusal }
+            : { state: "ready", seq, line, sources: pane.measurements.map(m => m.sourceIndex) });
+        });
+      } catch (e) {
+        work.commit(at, () => {
+          if (!live()) return;
+          setMeasure(pane, { state: "failed", seq,
+            note: kinSay("측정값을 넣지 않았습니다 — {e0}. 체크를 다시 켜면 다시 읽습니다.", { e: e?.transport === "timeout" ? "요청 시간이 초과되었습니다" : e?.message || String(e) }) });
+        });
+      }
     });
     $("#cite-preview-close").addEventListener("click", () => { if (!citeBusy) closeCitePreview(); });
     $("#cite-preview").addEventListener("click", e => {
@@ -282,7 +377,7 @@
       }
       if (e.key === "Tab") {
         e.preventDefault();
-        const controls = [$("#cite-preview-field"), $("#cite-preview .tpl-preview-body"),
+        const controls = [$("#cite-preview-field"), $("#cite-preview .tpl-preview-body"), $("#cite-preview-measure"),
                           $("#cite-preview-close"), $("#cite-preview-insert")].filter(b => !b.disabled);
         if (!controls.length) return;
         const index = controls.indexOf(document.activeElement);
@@ -312,6 +407,11 @@
       }
       const why = citationInsertBlock();
       if (why) { pane.status = why; renderCitePreview(); return; }
+      // 측정 줄을 읽는 중에는 무엇이 들어갈지 아직 정해지지 않았다.
+      if (pane.measure.state === "loading") return;
+      // 이 누름이 보낼 글과 측정 줄. 아래 어디서도 다시 만들지 않는다.
+      const text = citeText(pane), measurement = pane.measure.state === "ready"
+        ? { measurementLine: pane.measure.line, measurementSources: [...pane.measure.sources] } : null;
       const field = $("#cite-preview-field").value;
       if (!RFIELDS.includes(field)) return;
       // 같은 칸에 같은 출처를 또 넣는 것은 거절이 아니라 **한 번의 경고**다.
@@ -340,11 +440,21 @@
         const why2 = citationInsertBlock();
         if (why2) { pane.status = why2; renderCitePreview(); return; }
         /**
+         * 초안 쓰기 호출 전, 마지막으로 읽은 지원 상태 확인: 측정 줄은 최신 인용 읽기가 서버가 그 줄을 기록한다고
+         * 말할 때만 싣는다. 아니면 줄을 내리고 아무것도 보내지 않는다 — 다음 누름은 블록만 넣는다.
+         * 쓰기 안의 기다림·충돌 뒤 다시 보내기에는 인용 전용 검사를 두지 않는다. 그 사이 서버가 옛 판으로 돌아가도
+         * 글 전체는 인용 기록에 남고, 측정 기록 여부는 아래 200 답의 `measurementRecorded`만 믿는다.
+         */
+        if (measurement && !citations.measurementLines()) {
+          setMeasure(pane, { state: "off", seq: pane.measure.seq + 1 });
+          return;
+        }
+        /**
          * **보여준 자리로만 보낸다**(D-9). 미리보기를 연 뒤 이 칸이 갈렸거나 보호할 인용이
          * 달라졌으면 지금 넣을 자리는 사람이 읽은 그 자리가 아니다. 그때는 **아무것도 보내지 않고**
          * 새 자리를 보여준 뒤 한 번 더 누르게 한다 — 판독문은 한 글자도 움직이지 않는다.
          */
-        const plan2 = citationPlan(field, pane.block);
+        const plan2 = citationPlan(field, text);
         if (!pane.plan || plan2.text !== pane.plan.text) {
           pane.plan = plan2;
           pane.status = "판독문이나 삽입 위치가 그 사이 바뀌었습니다 — 위의 삽입 위치를 다시 확인하고 한 번 더 누르세요.";
@@ -369,8 +479,8 @@
         // 쓰기는 초안의 명령 경로로 간다: 작성자·초안 revision·전체 원문에 이 삽입을 실어 한 번에 기록한다.
         const result = await draftClient.write(pane.uid, { ...content, baseVersion }, { owner: draftOwner, context: at,
           operation: { insert: { field, findingId: pane.findingId, findingRevision: pane.findingRevision,
-            sourceIndex: pane.sourceIndex, insertedText: pane.block,
-            expectedLinkState: pane.linkState, expectedHeadRevision: pane.headRevision } } });
+            sourceIndex: pane.sourceIndex, insertedText: text,
+            expectedLinkState: pane.linkState, expectedHeadRevision: pane.headRevision, ...(measurement || {}) } } });
         // 이 삽입이 세운 표시는 이 삽입이 내린다(자기 것만).
         insertInFlight = false;
         wakeIdle();
@@ -412,7 +522,7 @@
         // 기존 삽입 기전 그대로다 — 목록 삽입도 타이핑처럼 점유를 시작해야 한다.
         // 달라진 것은 자리뿐이고, 들어가는 문자열은 방금 서버에 보낸 그 문자열이다.
         const el = $("#" + field);
-        const shown = screenPlan(field, pane.block, before, plan2);
+        const shown = screenPlan(field, text, before, plan2);
         // 커서는 넣은 글 끝에 선다. 가운데에 넣고 화면 끝으로 튀면 사람이 자기 글을 다시 찾아야 한다.
         const applied = editReport([reportEditOf(field, shown.text, shown.end)]);
         if (!applied && $("#" + field).value !== shown.text) {
@@ -432,13 +542,16 @@
          * 유지 목록이 방금 기록된 증언을 지우지 않도록 초안 쪽을 모르는 상태로 되돌린다.
          * 다음 전용 읽기 한 번이 서버의 바이트로 그것을 채운다.
          */
+        // 측정 줄 기록은 화면이 보낸 것으로 추정하지 않는다 — 서버가 실제로 저장했다고 답할 때만 붙인다.
+        // 옛 서버의 200은 그 키를 버렸을 수 있다: 글 전체의 인용은 그대로 넓히고, 측정 기록 여부는 다음 인용 읽기가 말한다.
+        const recorded = !!measurement && answer?.inserted?.measurementRecorded === true;
         const extended = !!answer?.inserted?.cid &&
           citations.extend(pane.uid, { v: KinReportCitation.SCHEMA, cid: answer.inserted.cid, field,
             findingId: pane.findingId, findingRevision: pane.findingRevision, sourceIndex: pane.sourceIndex,
             linkStateAtInsert: pane.linkState, headRevisionAtInsert: pane.headRevision,
-            insertedText: pane.block, insertedAt: answer.inserted.insertedAt, insertedBy: null,
+            insertedText: text, ...(recorded ? measurement : {}), insertedAt: answer.inserted.insertedAt, insertedBy: null,
             mine: true, sameTextCount: 1 });
-        if (!extended) invalidateCitations(pane.uid);
+        if (!extended || (measurement && !recorded)) invalidateCitations(pane.uid);
         /**
          * 인용 삽입은 **본문을 바꿨다.** 구조화 건의 존재 상태는 그 본문에 대해 계산되므로
          * 지금 화면이 들고 있는 상태는 옛 것이다. 값이 바뀐 것은 없지만 "그 문장이 아직
