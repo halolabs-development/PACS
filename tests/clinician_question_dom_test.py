@@ -894,6 +894,8 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
             self.unexpected.append(f"{method} {request.url}")
             route.abort()
             return
+        if getattr(self, "planter", None) is not None and path.startswith("/api/") and path != "/api/reading-appearance":
+            route = self.planter.wrap(route)  # language_data_probe: answers carry planted data
         if method == "GET" and path.startswith(BASE):
             name = path[len(BASE):]
             if name == "index.html":
@@ -954,7 +956,9 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
             return
         # The page reads the account's screen language once it knows the session (no saved appearance here).
         if method == "GET" and path == "/api/reading-appearance":
-            route.fulfill(json={"owner": None, "revision": 0, "sizes": None})
+            language = getattr(self, "language", None)  # the account's screen language (None: no saved appearance)
+            route.fulfill(json={"owner": None, "revision": 0 if language is None else 1,
+                                "sizes": None if language is None else {"version": 12, "language": language}})
             return
         kind = kind_of(method, path)
         if kind is None:
@@ -1136,6 +1140,26 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
     def reader_note(self, state):
         expect(self.page.locator("#question-thread [data-note-key]:not([hidden])").first).to_have_attribute("data-state", state)
         return self.reader()
+
+    def test_40_question_data_is_shown_as_written_in_english(self):
+        """Question threads (bodies, answers, authors) replaced with glossary words, sentences and filled templates: none
+        shows as its English (language_data_probe)."""
+        import language_data_probe as probe
+        opened, answered, _ = self.seed_threads()
+        self.language = probe.ENGLISH
+
+        def draw(planter):
+            self.planter = planter
+            self.fresh_context()
+            self.open_home()
+            self.pick(A)
+            self.open_questions("ready")
+            self.open_thread(answered["id"])
+            return probe.snapshot(self.page), self.page
+
+        found, reached = probe.compare(draw)
+        self.assertEqual([], found)
+        self.assertGreater(len(reached), 2)
 
     def seed_threads(self):
         """A: an Open thread, an Answered thread whose answer was written at Preliminary v1 (now Approved v2), a Closed one."""

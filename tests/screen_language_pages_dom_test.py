@@ -16,12 +16,18 @@ page's account, every other request fails (so the failure messages are on screen
 import functools
 import http.server
 import json
+import sys
 import threading
 import unittest
 from pathlib import Path
 from urllib.parse import urlparse
 
 from playwright.sync_api import expect, sync_playwright
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import admin_audit_dom_test as admin_audit  # noqa: E402
+import audit_page_dom_test as audit_page  # noqa: E402
+import language_data_probe as probe  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = "/worklist-v0/hpacs-lite/"
@@ -34,6 +40,7 @@ PAGES = {
     "clinician.html": (["clinician"], "#list-state[data-state]"),
     "admin.html": (["admin"], "#users"),
     "audit.html": (["radiologist"], "#audit-search"),
+    "audit.html?": (["radiologist"], "#audit-search"),
     # The sign-in page after a failed sign-in: it stays (no automatic sign-in) and says why.
     "index.html?auth_error=login_failed": (None, "#msg"),
 }
@@ -68,7 +75,7 @@ class ScreenLanguagePages(unittest.TestCase):
     def tearDownClass(cls):
         cls.browser.close(); cls.pw.stop(); cls.server.shutdown(); cls.server.server_close(); cls.thread.join()
 
-    def open(self, name, kept, answers=None):
+    def open(self, name, kept, answers=None, planter=None):
         """The page with the account's choice kept in this browser and, for the clinician home, in the account."""
         roles, drawn = PAGES[name]
         context = self.browser.new_context(viewport={"width": 1366, "height": 768})
@@ -79,7 +86,9 @@ class ScreenLanguagePages(unittest.TestCase):
         context.route("**/*", lambda route: route.continue_() if urlparse(route.request.url).hostname == "127.0.0.1"
                       else route.abort())
         page = context.new_page()
-        page.route("**/api/**", lambda route: self.api(route, roles, kept, answers or {}))
+        self.dialogs = []
+        page.on("dialog", lambda d: (self.dialogs.append(d.message), d.dismiss()))
+        page.route("**/api/**", lambda route: self.api(planter.wrap(route) if planter else route, roles, kept, answers or {}))
         page.goto(f"http://127.0.0.1:{self.server.server_port}{BASE}{name}")
         expect(page.locator(drawn).first).to_be_attached()
         page.wait_for_load_state("networkidle")
@@ -120,6 +129,49 @@ class ScreenLanguagePages(unittest.TestCase):
         self.assertEqual(["syn", "성\nsyn@example.test", "승인"], [c.strip() for c in row.locator("td").all_inner_texts()[:3]])
         self.assertEqual(["All Institutions", "승인"], page.locator("#institution-filter option").all_text_contents())
         self.assertEqual([], page.evaluate(LEFT))
+
+    def probed(self, name, answers, steps):
+        """The page drawn from valid answers and from the same answers with planted data (English), through steps."""
+        runs = []
+        for planter in (None, probe.Planter(probe.pools()[0], codes=True)):
+            page = self.open(name, ENGLISH, answers, planter)
+            seen = []
+            for step in steps:
+                step(page)
+                page.wait_for_timeout(200)
+                seen += probe.snapshot(page)
+            values = planter.planted() if planter else []
+            runs.append((seen + self.dialogs, values, probe.translations(page, values, "en"), planter))
+        (plain, _, _, _), (planted, values, shown, planter) = runs
+        return probe.check(plain, planted, values, shown, planter)
+
+    def test_english_shows_member_role_and_audit_data_as_written(self):
+        """Members (names, institution, roles - a site may name its own), the audit rows and the membership dialog: the
+        displayed values replaced with glossary words, sentences and filled templates stay as written."""
+        def audit(page):
+            page.locator("#audit-refresh").click()
+            expect(page.locator("#audit-rows tr").first).to_be_attached()
+
+        def membership(page):
+            page.locator("#users tr button").first.click()
+            expect(page.locator("#membership-dialog")).to_be_visible()
+
+        found, reached = self.probed("admin.html", {"/api/admin/users": admin_audit.MEMBERS, "/api/admin/audit": admin_audit.PAGE1},
+                                     [lambda page: expect(page.locator("#users tr")).to_have_count(1), audit, membership])
+        self.assertEqual([], found)
+        self.assertGreater(len(reached), 2, "planted data reaches the page")
+
+    def test_english_shows_audit_page_data_as_written(self):
+        body = audit_page.answer([audit_page.event("CHANGE-1")], [audit_page.event("VIEW-1", "열람")])
+
+        def search(page):
+            page.locator("input[name=patientId]").first.fill("SYN-PATIENT")
+            page.locator("input[name=assigningAuthority]").first.fill("SYN-AUTHORITY")
+            page.get_by_role("button", name="Search", exact=True).click()
+            page.wait_for_timeout(500)
+
+        found, reached = self.probed("audit.html?", {"/api/emr-audit/investigations": body}, [search])
+        self.assertEqual([], found)
 
     def test_a_browser_with_no_choice_or_korean_keeps_each_page_as_it_is(self):
         for name in PAGES:

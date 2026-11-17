@@ -53,7 +53,10 @@
   function cell(lines) {
     const td = document.createElement('td');
     for (const [label, text] of lines) {
-      const line = document.createElement('div'); line.textContent = `${label}: ${value(text)}`; td.append(line);
+      // The recorded value is data (shown as written); "Not Recorded" is the page's word.
+      const line = document.createElement('div'), part = document.createElement('span'), shown = value(text);
+      part.textContent = shown; if (shown !== 'Not Recorded') part.translate = false;
+      line.append(`${label}: `, part); td.append(line);
     }
     return td;
   }
@@ -363,17 +366,22 @@
     disclosureEl('detail').hidden = false;
     const labels = { pending: 'Pending', 'pending-overdue': 'Pending Overdue', 'release-required': 'Release Required',
       'hold-out-of-sync': 'Hold Out of Sync', released: 'Released' };
-    disclosureEl('state').textContent = `Request ID: ${facts.requestId}\nPatient: ${request.patient.patientId} / ${request.patient.assigningAuthority}\n` +
-      `Requester: ${request.requester.name}\nRecipient: ${request.delivery.recipient}\nMethod: ${request.delivery.method}\n` +
-      `Request: ${facts.resolution ? 'Resolved' : 'Pending'}\nIssuance ID: ${snapshot.issuanceId ?? 'null'}\n` +
-      `Issuance: ${copy?.status.state ?? (snapshot.issuanceId ? 'Unavailable' : 'Not Prepared')}\n` +
-      snapshot.states.map(h => `Hold: ${labels[h.state] || h.state} / Due At: ${h.dueAt}`).join('\n') +
-      (snapshot.issuanceId === null ? '\n발급 준비가 아직 완료되지 않았습니다. 원본 누락 또는 준비 실패 상태에서도 연장·종결할 수 있습니다.' : '') +
-      `\nResolution: ${facts.resolution ? JSON.stringify(facts.resolution) : 'Not Recorded'}`;
+    // The request's facts are data (each its own span, shown as written); the labels and the notice are the page's words,
+    // each its own text so the screen language reads it alone. The text is the same as one joined string.
+    const data = value => Object.assign(document.createElement('span'), { textContent: String(value), translate: false });
+    const state = disclosureEl('state');
+    state.replaceChildren('Request ID: ', data(facts.requestId), '\nPatient: ',
+      data(`${request.patient.patientId} / ${request.patient.assigningAuthority}`), '\nRequester: ', data(request.requester.name),
+      '\nRecipient: ', data(request.delivery.recipient), '\nMethod: ', data(request.delivery.method),
+      `\nRequest: ${facts.resolution ? 'Resolved' : 'Pending'}\nIssuance ID: `, data(snapshot.issuanceId ?? 'null'),
+      `\nIssuance: ${copy?.status.state ?? (snapshot.issuanceId ? 'Unavailable' : 'Not Prepared')}\n`,
+      ...snapshot.states.flatMap((h, i) => [`${i ? '\n' : ''}Hold: ${labels[h.state] || h.state} / Due At: `, data(h.dueAt)]),
+      ...(snapshot.issuanceId === null ? ['\n', '발급 준비가 아직 완료되지 않았습니다. 원본 누락 또는 준비 실패 상태에서도 연장·종결할 수 있습니다.'] : []),
+      '\nResolution: ', facts.resolution ? data(JSON.stringify(facts.resolution)) : 'Not Recorded');
     if (copy) {
       const history = copy.issuance.events.filter(e => e.kind === 'delivery');
-      for (const event of history) disclosureEl('state').textContent +=
-        `\nDelivery: ${event.outcome} / Recorded At: ${event.at}\nEvidence: ${event.evidence?.evidenceId ?? 'Not Recorded'}\n${event.note || ''}`;
+      for (const event of history) state.append(`\nDelivery: ${event.outcome} / Recorded At: `, data(event.at), '\nEvidence: ',
+        event.evidence?.evidenceId != null ? data(event.evidence.evidenceId) : 'Not Recorded', '\n', data(event.note || ''));
     }
     disclosureEl('versions').replaceChildren();
     for (const record of copy?.issuance.manifest.records || []) for (const version of record.versions) {

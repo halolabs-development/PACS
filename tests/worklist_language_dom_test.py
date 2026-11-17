@@ -15,6 +15,7 @@ from pathlib import Path
 from playwright.sync_api import expect, sync_playwright
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import language_data_probe as probe  # noqa: E402
 import study_panel_page_dom_test as dom  # noqa: E402
 from study_panel_page_dom_test import RASTER, WorkspaceSite, auth, wait_startup  # noqa: E402
 
@@ -66,8 +67,11 @@ class LanguageSite(WorkspaceSite):
         self.fail_write = None
         self.filters = []
         self.clinical_fixture = None
+        self.planter = None  # language_data_probe.Planter: answers carry planted data
 
     def api(self, route, request, method, path, query):
+        if self.planter is not None and path != "/api/reading-appearance":
+            route = self.planter.wrap(route)
         if method == "GET" and path in ("/api/bootstrap", "/api/filter-folders") and self.filters:
             route = WithFilters(route, self.filters)
         if method == 'GET' and path.endswith('/clinical-context') and self.clinical_fixture:
@@ -352,6 +356,73 @@ class WorklistLanguageDOM(unittest.TestCase):
         twice = "단축어: a · Modality: b · Modality: c · Bodypart: d"
         self.assertEqual(twice, tr(twice, "en"))
 
+    def drawn(self, planter, lang):
+        """The work page drawn from the harness answers (planted or not) in lang: the worklist, a study on the reading
+        screen, a refresh, the Pop Out window, the language chosen again. Every word met, and the glossary readings of
+        the planted values."""
+        site, context, kept = LanguageSite(), self.browser.new_context(viewport={"width": 1920, "height": 1080}), self.page
+        site.planter, dialogs, seen = planter, [], []
+        try:
+            context.route("**/*", lambda route, request: site.handle(route, request))
+            page = self.page = context.new_page()
+            page.on("pageerror", lambda e: self.errors.append(str(e)))
+            page.on("dialog", lambda d: (dialogs.append(d.message), d.dismiss()))
+            page.goto(auth.MAIN_URL)
+            expect(page.locator("#rows tr").first).to_be_visible()
+            wait_startup(page, site)
+            self.apply(lang)
+            seen += probe.snapshot(page)
+            page.locator("#rows tr").first.click()
+            expect(page.locator("#b-approve")).to_be_visible()
+            page.wait_for_timeout(300)
+            seen += probe.snapshot(page)
+            page.locator("#m-refresh").click()
+            page.wait_for_timeout(500)
+            seen += probe.snapshot(page)
+            page.locator("#report-popout").click()
+            for _ in range(250):
+                if len(context.pages) == 2:
+                    break
+                page.wait_for_timeout(20)
+            self.assertEqual(2, len(context.pages), "the Pop Out window opens")
+            if len(context.pages) == 2:
+                pip = context.pages[1]
+                pip.wait_for_load_state()
+                pip.wait_for_timeout(300)
+                seen += probe.snapshot(pip)
+                pip.close()
+            self.apply("ko" if lang == "en" else "en")
+            self.apply(lang)
+            page.wait_for_timeout(300)
+            seen += probe.snapshot(page, dialogs)
+            values = planter.planted() if planter else []
+            return seen, values, probe.translations(page, values, lang)
+        finally:
+            self.page = kept
+            context.close()
+
+    def test_data_is_shown_as_written_on_both_screens_in_english_and_in_korean(self):
+        """Displayed values of the synthetic answers replaced with glossary words, sentences and filled templates (English
+        screen) or English page words (Korean screen): no planted value shows as its translation anywhere."""
+        korean, english = probe.pools()
+        for lang, pool in (("en", korean), ("ko", english)):
+            with self.subTest(lang=lang):
+                plain, _, _ = self.drawn(None, lang)
+                planter = probe.Planter(pool)
+                planted, values, shown = self.drawn(planter, lang)
+                found, reached = probe.check(plain, planted, values, shown, planter)
+                self.assertEqual([], found)
+                self.assertGreater(len(reached), 2, "planted data reaches the screens")
+
+    def test_dicom_identity_notes_joined_by_the_page_read_in_english(self):
+        """The DICOM Identity line's note after a failed observation is the page's sentences joined: in English each is
+        read (the reading screen's tooltip shows no Korean)."""
+        self.boot()
+        self.apply("en")
+        title = self.page.evaluate("""() => { const M = KinStudyIdentity, v = M.view(M.failed(M.start()), 'SYN-UID', {});
+          return KinLanguage.tr(v.summary.title, 'en'); }""")
+        self.assertIn("HALO PACS", title)
+        self.assertIsNone(re.search("[가-힣]", title), title)
     def test_words_the_page_joins_are_its_sentences_and_data_in_them_stays(self):
         """Where the page joins its own words (a label and "단축키", a message and the server's detail) it writes a
         sentence with say(); text that only looks like page words - a reason, a report line, a name - is data."""

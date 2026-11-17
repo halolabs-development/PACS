@@ -658,7 +658,7 @@
       box.hidden = view.hidden;
       if (view.hidden) return;
       kinWrite($("#study-identity-summary"), view.summary.text);
-      $("#study-identity-summary").title = view.summary.title;
+      kinWrite($("#study-identity-summary"), view.summary.title || "", "title");
       const order = $("#study-identity-order");
       order.textContent = view.order?.text ?? ""; order.title = view.order?.title ?? "";
       $("#study-identity-tags").replaceChildren(...view.rows.map(row => {

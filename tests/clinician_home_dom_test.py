@@ -355,6 +355,7 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.me_queue = []
         self.rows = copy.deepcopy(ROWS)
         self.language = None  # the account's screen language (None: no saved appearance)
+        self.planter = None  # language_data_probe.Planter: API answers carry planted data
         self.reports = copy.deepcopy(REPORTS)
         self.files = dict(SHIPPED)
         self.index_stand_in = False
@@ -422,6 +423,8 @@ class ClinicianHomeDOMTest(unittest.TestCase):
             self.unexpected.append(f"{method} {request.url}")
             route.abort()
             return
+        if self.planter is not None and path.startswith("/api/") and path != "/api/reading-appearance":
+            route = self.planter.wrap(route)
         if method == "GET" and path.startswith(BASE):
             name = path[len(BASE):]
             if name == "index.html" and self.index_stand_in:
@@ -1510,6 +1513,35 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.open_home()
         self.pick(1)
         self.assertIsNone(self.page.evaluate("document.documentElement.getAttribute('data-kin-lang-worklist')"))
+
+    def test_20_data_is_shown_as_written_in_english(self):
+        """The displayed values of the synthetic answers replaced with glossary words, sentences and filled templates: no
+        planted value shows as its English anywhere on the home (list, selected study, report, key images, the signed-in
+        account), before and after a reload."""
+        import language_data_probe as probe
+        self.language = {"version": 1, "worklist": "en", "reading": "en"}
+
+        def drawn(planter):
+            self.planter = planter
+            self.fresh_context()
+            seen = []
+            self.open_home()
+            self.pick(1)
+            seen += probe.snapshot(self.page)
+            self.page.reload()
+            expect(self.page.locator("#list-state")).to_have_attribute("data-state", "ready")
+            expect(self.page.locator("html")).to_have_attribute("data-kin-lang-worklist", "en")
+            self.pick(1)
+            seen += probe.snapshot(self.page)
+            values = planter.planted() if planter else []
+            return seen, values, probe.translations(self.page, values, "en")
+
+        plain, _, _ = drawn(None)
+        planter = probe.Planter(probe.pools()[0])
+        planted, values, shown = drawn(planter)
+        found, reached = probe.check(plain, planted, values, shown, planter)
+        self.assertEqual([], found)
+        self.assertGreater(len(reached), 2, "planted data reaches the screen")
 
 
 if __name__ == "__main__":

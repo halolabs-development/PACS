@@ -111,12 +111,13 @@
     const m=usable(model);
     if(m.available===null)return {hidden:true};
     const tail=m.available===false?' · '+OBSERVATION_UNAVAILABLE+(m.observedAt?' · 마지막 관측 '+format(m.observedAt)+' 기준':''):'';
-    const unavailableTitle=m.available===false?UNAVAILABLE_TITLE+(m.observedAt?' 아래 값은 마지막으로 성공한 관측의 것입니다.':''):'';
+    // The page's sentences joined: each part is read in the screen language (none of them is data).
+    const unavailableTitle=m.available===false?kinSay('{t0}{t1}',{t:UNAVAILABLE_TITLE},{t:m.observedAt?' 아래 값은 마지막으로 성공한 관측의 것입니다.':''}):'';
     const row=m.rows?.get(uid)??null;
     if(!row){
       // A cold failure or a study the last observation did not carry: nothing is invented.
       if(m.available!==false)return {hidden:true};
-      return {hidden:false,key:'unavailable',summary:{text:'DICOM Identity'+tail,title:SUMMARY_TITLE+unavailableTitle},
+      return {hidden:false,key:'unavailable',summary:{text:'DICOM Identity'+tail,title:kinSay('{t0}{t1}',{t:SUMMARY_TITLE},{t:unavailableTitle})},
         order:null,rows:[],guidance:'',patientMismatch:false,accessionMismatch:false};
     }
     const own=state&&typeof state==='object'?state:{};
@@ -145,7 +146,7 @@
       :{text:'Unknown',title:ORDER_TITLE.unknown};
     const summary={
     text:kinSay('DICOM Identity{t0}{t1}{t2}',{t:patientMismatch?' · Patient Mismatch':''},{t:accessionMismatch?' · Accession Mismatch':''},{t:tail}),
-      title:SUMMARY_TITLE+(patientMismatch?PATIENT_MISMATCH_TITLE:'')+(accessionMismatch?ACCESSION_MISMATCH_TITLE:'')+unavailableTitle};
+      title:kinSay('{t0}{t1}{t2}{t3}',{t:SUMMARY_TITLE},{t:patientMismatch?PATIENT_MISMATCH_TITLE:''},{t:accessionMismatch?ACCESSION_MISMATCH_TITLE:''},{t:unavailableTitle})};
     const show=patientMismatch||accessionMismatch||m.refused===uid;
     return {hidden:false,key,summary,order,rows,guidance:guidance(own.rs,show,key==='tele'),patientMismatch,accessionMismatch};
   }

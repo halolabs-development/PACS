@@ -912,6 +912,8 @@ class ClinicianRequestDOMTest(Harness):
         method, path = request.method, url.path
         if not self.origin_ok(route, url):
             return
+        if getattr(self, "planter", None) is not None and path.startswith("/api/") and path != "/api/reading-appearance":
+            route = self.planter.wrap(route)  # language_data_probe: answers carry planted data
         if method == "GET" and path.startswith(BASE):
             name = path[len(BASE):]
             if name == "index.html":
@@ -978,7 +980,9 @@ class ClinicianRequestDOMTest(Harness):
             return
         # The page reads the account's screen language once it knows the session (no saved appearance here).
         if method == "GET" and path == "/api/reading-appearance":
-            route.fulfill(json={"owner": None, "revision": 0, "sizes": None})
+            language = getattr(self, "language", None)  # the account's screen language (None: no saved appearance)
+            route.fulfill(json={"owner": None, "revision": 0 if language is None else 1,
+                                "sizes": None if language is None else {"version": 12, "language": language}})
             return
         self.unexpected.append(f"{method} {request.url}")
         route.abort()
@@ -1013,6 +1017,27 @@ class ClinicianRequestDOMTest(Harness):
 
     def note_state(self, locator, state):
         expect(locator.locator("[data-request-note]")).to_have_attribute("data-state", state)
+
+    def test_c20_request_data_is_shown_as_written_in_english(self):
+        """The requests' displayed values (counterparty, reason, handler, note) replaced with glossary words, sentences and
+        filled templates: none shows as its English (language_data_probe)."""
+        import language_data_probe as probe
+        a = uid(1)
+        self.server.add(item(1, a, "Requested", counterparty="SYN Counterparty", reason="SYN reason 1\nline 2", at=5))
+        self.server.add(item(3, a, "Closed", revision=3, handler=STAFF, note="SYN handled", at=3))
+        self.language = probe.ENGLISH
+
+        def draw(planter):
+            self.planter = planter
+            self.fresh_context()
+            self.open_home()
+            self.pick(1)
+            self.open_requests("ready")
+            return probe.snapshot(self.page), self.page
+
+        found, reached = probe.compare(draw)
+        self.assertEqual([], found)
+        self.assertGreater(len(reached), 2)
 
     def test_c01_closed_until_opened_states_and_read_failures(self):
         a, b = uid(1), uid(2)

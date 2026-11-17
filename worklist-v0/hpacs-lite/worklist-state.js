@@ -36,10 +36,12 @@
       $('#related-load-parts').disabled=!s||!serverMode||offline||demoMode||relatedParts.busy();
       $('#related-cancel-parts').hidden=!relatedParts.busy();
       $("#related-return").disabled = !s || !relatedUid;
-      $("#related-current").textContent = s
-        ? `판독 대상 · ${s.date || "날짜 없음"} · ${s.modality} · ${s.name} (${s.id}) · ${shownStudyDesc(s)}`
+      // The study's own data in one sentence of the page: no other glossary template reads its parts as page words.
+      const currentLine = s
+        ? kinSay("판독 대상 · {t0} · {1} · {2} ({3}) · {4}", { t: s.date || "날짜 없음" }, s.modality, s.name, s.id, shownStudyDesc(s))
         : "판독 대상을 선택하세요";
-      $("#related-current").title = $("#related-current").textContent;
+      kinWrite($("#related-current"), currentLine);
+      kinWrite($("#related-current"), currentLine, "title");
       let rel = [];
       if (s) {
         rel = relatedCandidates().filter(x => relatedIncludeCurrent || x.uid !== s.uid);

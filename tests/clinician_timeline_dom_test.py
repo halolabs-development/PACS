@@ -233,6 +233,29 @@ class ClinicianTimelineDOMTest(unittest.TestCase):
         self.dialogs.append(f"{dialog.type}: {dialog.message}")
         dialog.dismiss()
 
+    def test_20_timeline_data_is_shown_as_written_in_english(self):
+        """The timeline's studies (description, institution, names) replaced with glossary words, sentences and filled
+        templates: none shows as its English (language_data_probe)."""
+        import language_data_probe as probe
+        self.language = probe.ENGLISH
+
+        def draw(planter):
+            self.planter = planter
+            self.context.close()
+            self.context = self.browser.new_context(viewport={"width": 1400, "height": 1000})
+            self.context.route("**/*", self.route)
+            self.page = self.context.new_page()
+            self.page.on("pageerror", lambda error: self.errors.append(str(error)))
+            self.page.on("dialog", self.on_dialog)
+            self.open_home()
+            self.pick(A)
+            self.show()
+            return probe.snapshot(self.page), self.page
+
+        found, reached = probe.compare(draw)
+        self.assertEqual([], found)
+        self.assertGreater(len(reached), 2)
+
     # ── synthetic origin ──
     def route(self, route):
         request = route.request
@@ -242,6 +265,8 @@ class ClinicianTimelineDOMTest(unittest.TestCase):
             self.unexpected.append(f"{method} {request.url}")
             route.abort()
             return
+        if getattr(self, "planter", None) is not None and path.startswith("/api/") and path != "/api/reading-appearance":
+            route = self.planter.wrap(route)  # language_data_probe: answers carry planted data
         if method == "GET" and path.startswith(BASE):
             name = path[len(BASE):]
             if name == "index.html":
@@ -309,7 +334,9 @@ class ClinicianTimelineDOMTest(unittest.TestCase):
             return
         # The page reads the account's screen language once it knows the session (no saved appearance here).
         if method == "GET" and path == "/api/reading-appearance":
-            route.fulfill(json={"owner": None, "revision": 0, "sizes": None})
+            language = getattr(self, "language", None)  # the account's screen language (None: no saved appearance)
+            route.fulfill(json={"owner": None, "revision": 0 if language is None else 1,
+                                "sizes": None if language is None else {"version": 12, "language": language}})
             return
         self.unexpected.append(f"{method} {request.url}")
         route.abort()

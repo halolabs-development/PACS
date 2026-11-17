@@ -626,7 +626,11 @@
           input.type = "checkbox";
           input.checked = true;
           input.disabled = true;
-          label.append(input, document.createTextNode(role));
+          // The role's name is data (a site may name its own roles); the label's title is the page's words.
+          const name = document.createElement("span");
+          name.textContent = role;
+          name.translate = false;
+          label.append(input, name);
           fieldset.append(label);
         });
         $("#membership-dialog").showModal();
@@ -685,7 +689,7 @@
           identity.append(name, email);
           row.append(identity);
           appendCell(row, user.institution).translate = false;
-          appendCell(row, user.roles.join(", "));
+          appendCell(row, user.roles.join(", ")).translate = false; // role names: data
           statusCell(row, user);
 
           const actions = document.createElement("td");
