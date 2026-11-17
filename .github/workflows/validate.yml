@@ -1782,6 +1782,9 @@ jobs:
     - name: Screen language on the clinician, administration, audit and sign-in pages (English leaves no Korean word; no choice or Korean keeps each page)
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/pages-language-dom --cwd . --tree worklist-v0/hpacs-lite --tree tests -- $RUNNER_TEMP/measurement-python/bin/python -B tests/screen_language_pages_dom_test.py
+    - name: Viewer saved marks list on an English screen (a mark's own words stay as written)
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/viewer-history-language --cwd . --file config/ohif/history.js --file worklist-v0/hpacs-lite/worklist-language.js --file worklist-v0/hpacs-lite/worklist-language-terms.js --file tests/language_data_probe.py --file tests/viewer_history_language_dom_test.py --file api/package-lock.json -- $RUNNER_TEMP/measurement-python/bin/python -B tests/viewer_history_language_dom_test.py
     - name: Viewer exam scope admission and series boundaries
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/viewer-exam-scope --cwd . --file tests/viewer_exam_scope_test.cjs --file tests/gateway_exam_receipt_test.cjs --file worklist-v0/hpacs-lite/page-core.js --file worklist-v0/hpacs-lite/study-info-panel.js --file worklist-v0/hpacs-lite/study-arrivals.js --file worklist-v0/hpacs-lite/clinician.js --file worklist-v0/hpacs-lite/exam-scope.js --file worklist-v0/hpacs-lite/viewer-exam-scope.js -- node --test tests/viewer_exam_scope_test.cjs tests/gateway_exam_receipt_test.cjs
