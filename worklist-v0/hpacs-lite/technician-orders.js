@@ -314,7 +314,7 @@
       const order = ctx.orders.list().find(o => o.studyUid === s.uid) ?? null;
       const read = ctx.orders.identity(s.uid);
       const before = shown(s);
-      // Ward is not in the images: the study's own ward, which the Match showed the order's ward over, comes back.
+      // Ward is not in the images: the own ward of the study, which the Match showed the order ward over, comes back.
       const ward = typeof ctx.orders.ownWard === 'function' ? ctx.orders.ownWard(s.uid) : null;
       w.body.append(note('Unlink the study from its order. The study goes back to the values the server read from its images (DICOM) and to its own ward, and the order returns to Unmatched.'),
         table(['Field', 'Now', 'Restored (from the images)'], [['Order', order?.oid, null], ...resultRows(before,

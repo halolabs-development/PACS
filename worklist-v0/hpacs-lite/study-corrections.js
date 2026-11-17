@@ -43,7 +43,7 @@
         let reloaded = Promise.resolve(false);
         work.commit(at, () => {
           appState[s.uid] = mergeObservedReportState(s.uid, st);
-          // The study keeps its own ward; the order's values are the overlay drawn over it (as applyState draws a row).
+          // The study keeps its own ward; the values of the order are the overlay drawn over it (as applyState draws a row).
           Object.assign(s, { ward: st.ward ?? "" }, st.ov ?? {}, { matched: "M" });
           o.matched = "M"; o.studyUid = s.uid;
           // S4-U5: a list answer requested before this match would re-install the unmatched row; drop it and read again.
