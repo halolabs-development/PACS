@@ -95,7 +95,8 @@ function kinCreateViewerLayout() {
         sops: [...new Set(images.map(i => i.SOPInstanceUID).filter(Boolean))].sort() };
       // A set made of some frames of one multi-frame file (series-split.js) is told apart from its sibling sets by those
       // frames; every other set keeps the reference it always had.
-      const frames = images.map(i => kinSeriesSplitFrame(i));
+      // Without the split-series rule loaded no set is split, and no reference names frames.
+      const frames = images.map(i => typeof kinSeriesSplitFrame === 'function' ? kinSeriesSplitFrame(i) : null);
       if (frames.some(f => f !== null)) ref.frames = images.map((i, k) => i.SOPInstanceUID + ':' + frames[k]).sort();
       return ref;
     }

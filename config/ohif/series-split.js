@@ -69,7 +69,8 @@ function kinEnhancedTimePoints(instance) {
   const positions = new Map();
   for (const f of frames) {
     const key = f.position.join(',');
-    positions.set(key, [...(positions.get(key) || []), f]);
+    if (!positions.has(key)) positions.set(key, []);
+    positions.get(key).push(f);
   }
   const atPosition = [...positions.values()], size = atPosition[0].length;
   if (size < 2 || !atPosition.every(list => list.length === size)) return null;
@@ -85,7 +86,8 @@ function kinEnhancedTimePoints(instance) {
     const groups = new Map();
     for (const f of frames) {
       const { raw, n } = of(f);
-      groups.set(n, [...(groups.get(n) || []), { ...f, tag, value: raw }]);
+      if (!groups.has(n)) groups.set(n, []);
+      groups.get(n).push({ ...f, tag, value: raw });
     }
     return { splittingTag: tag, timePoints: [...groups.keys()].sort((a, b) => a - b).map(n => groups.get(n)) };
   }
