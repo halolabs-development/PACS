@@ -15,8 +15,8 @@
 .related-mode-foot { padding: 4px 0 6px; }
 .related-mode-scroll { flex: 1 1 auto; min-height: 20px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
 .related-mode-head .spacer, .related-mode-foot .spacer { flex: 1; }
-/* One line each in a short pane: the role sentence stays for assistive technology (the Source card's READ ONLY badge and
-   note say it on screen), and the status line is cut with its whole text in its tooltip. */
+/* One line each in a short pane: the role sentence stays for assistive technology (the text is never an input on screen),
+   and the status line is cut with its whole text in its tooltip. */
 .related-mode-head, .related-mode-foot { flex-wrap: nowrap; }
 .related-mode-role { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 #related-mode-status { flex: 1 1 0; width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -30,17 +30,14 @@
   background: var(--kin-panel2, #232936); color: var(--kin-text, #dfe5ee); cursor: pointer; font-size: 11px; }
 #related-mode button:disabled, #related-insert-dialog button:disabled { opacity: .55; cursor: default; }
 #related-mode-insert, #related-insert-confirm { border-color: var(--kin-accent, #3b6ea5); }
-/* Two cards side by side where they fit; one above the other in a narrow column. */
-.related-mode-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 6px; flex: none; }
 .related-mode-card { min-width: 0; padding: 5px 8px; border: 1px solid var(--kin-line2, #3a4356); border-radius: 4px;
   font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
 .related-mode-card h4 { margin: 0 0 3px; font-size: 11px; }
 .related-mode-card.related-mode-source { border: 2px solid #d29a3a; }
-/* 현재 판독 대상은 작업공간에 있으므로 중복 카드는 접는다. 비교 원본의 환자·기관·접수번호는
-   짧은 줄로 함께 표시해 다른 기관이나 접수 건의 판독문을 같은 원본으로 오인하지 않게 한다. */
-#related-mode-target { display: none; }
-#related-mode-source { display: flex; flex-wrap: wrap; gap: 0 12px; padding: 2px 8px; }
-#related-mode-source > h4, #related-mode-source .related-mode-label { display: none; }
+/* The two identity cards (Reading Target, Source Study) are not shown: the mode shows the related report's text, its state
+   line (with Retry after a failed read), Back and Insert. The cards are still written for the page's own checks, and the
+   Related Exam list marks the study being viewed. Hidden by this one rule wherever the mode opens. */
+.related-mode-cards { display: none; }
 .related-mode-line { display: flex; gap: 6px; }
 .related-mode-label { flex: none; min-width: 6.5em; color: #9fb0c8; }
 .related-mode-badge { display: inline-block; margin-top: 4px; padding: 1px 6px; border: 1px solid #d29a3a; border-radius: 3px;
@@ -48,6 +45,7 @@
 .related-mode-note { margin-top: 3px; color: #c3cad6; }
 .related-mode-body { flex: none; }
 .related-mode-state { margin: 4px 0; color: var(--kin-text, #dfe5ee); overflow-wrap: anywhere; }
+#related-mode .related-mode-retry { margin-left: 8px; }
 .related-mode-section h4 { margin: 4px 0 2px; color: var(--kin-muted, #9fb0c8); font-size: 11px; font-weight: normal; }
 /* Read-only text that can be selected and copied: never an input, never focusable for editing. */
 .related-mode-text { min-height: 20px; padding: 5px 7px; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text;
