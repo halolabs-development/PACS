@@ -225,7 +225,7 @@ test('S4-U5 failures (f,g): no relation without a successful enumeration; a poli
 test('S4-U5 bootstrap (h): no relation, the order keys plus the order\'s own accession; the list never wrote (i)',async()=>{
   const {svc}=await setup();
   const b=await svc.bootstrap(caller,{states:'omit'});
-  for(const o of b.orders)assert.deepEqual(Object.keys(o).sort(),['accession','birth','desc','id','matched','modality','name','oid','reqDoc','sched','sex','studyUid','ward']);
+  for(const o of b.orders)assert.deepEqual(Object.keys(o).sort(),['accession','birth','desc','id','matched','modality','name','oid','reqDoc','risStatus','sched','sex','studyUid','ward']);
   assert.ok(!JSON.stringify(b).includes('orderIdentity'));
   // Every write method of the fake store throws, so the lists above, which completed, called none of them. The trap is live:
   const {prisma}=await setup();

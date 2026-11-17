@@ -692,7 +692,8 @@
         },true);
       }
     });
-    return { reset, refreshCounts() { if (dialog.open) count(); }, open({ name } = {}) {
+    // draft(): the criteria being edited (saved or not), so a list-wide rule can tell whether the open editor uses a field.
+    return { reset, refreshCounts() { if (dialog.open) count(); }, draft() { return dialog.open && editable ? value() : null; }, open({ name } = {}) {
       if (dialog.open || !['active', 'preparing'].includes(work.state())) return;
       opener = document.activeElement; $('search').value = ''; status('');
       collection = null; checked.clear();

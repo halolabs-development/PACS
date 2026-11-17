@@ -122,6 +122,24 @@ test('regionWindow: 1–99 percentiles of the region pixels only (the background
   assert.equal(M.regionWindow(values, columns, rows, { found: false }), null);
 });
 
+test('Quadrant Zoom: 4x is four times Fit in any cell and says when the quadrant is larger than the cell; fill fills it', () => {
+  assert.deepEqual(M.QUADRANT_ZOOMS, ['4x', 'fill']);
+  // At Fit one image pixel is 0.125 CSS px: a 1000 × 800 quadrant fills a 500 × 400 cell at zoom 4.
+  const cell = { zoom: 1, perPixel: 0.125, cellWidth: 500, cellHeight: 400 };
+  assert.deepEqual(M.quadrantZoom({ mode: '4x', ...cell, width: 1000, height: 800 }), { zoom: 4, clipped: false });
+  // A larger quadrant does not fit at 4×: its edges are outside the cell; the zoom stays 4.
+  assert.deepEqual(M.quadrantZoom({ mode: '4x', ...cell, width: 1200, height: 800 }), { zoom: 4, clipped: true });
+  // A smaller one: 4× all the same (not the zoom that fills the cell).
+  assert.deepEqual(M.quadrantZoom({ mode: '4x', ...cell, width: 500, height: 400 }), { zoom: 4, clipped: false });
+  // 4× needs no measure of the cell; without one nothing can be said about the edges.
+  assert.deepEqual(M.quadrantZoom({ mode: '4x', zoom: 1 }), { zoom: 4, clipped: false });
+  // fill: the zoom that fills the cell with a little margin (as before).
+  const fill = M.quadrantZoom({ mode: 'fill', ...cell, width: 500, height: 400 });
+  assert.ok(Math.abs(fill.zoom - 8 * 0.98) < 1e-12 && fill.clipped === false, JSON.stringify(fill));
+  assert.equal(M.quadrantZoom({ mode: 'fill', zoom: 1 }), null);
+  assert.equal(M.quadrantZoom({ mode: '2x', ...cell, width: 500, height: 400 }), null);
+});
+
 test('zoom modes: Fit Breast, 1:1, True Size and Match Size as numbers', () => {
   // Fit now shows one image pixel as 0.25 CSS px; the breast box is 400 × 300 image px in a 500 × 300 cell.
   assert.equal(M.fitRect({ zoom: 1, perPixel: 0.25, cellWidth: 500, cellHeight: 300, width: 400, height: 300, margin: 1 }), 4);

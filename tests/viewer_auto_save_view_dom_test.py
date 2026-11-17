@@ -287,7 +287,7 @@ COMBINED = """config => {
     }
     if (path === '/api/studies/' + STUDY + '/findings' && method === 'GET') {
       synFindingServer.lists++;
-      return synFindingServer.status === 200 ? reply(200, { items: structuredClone(synFindingServer.items), nextCursor: null }, { 'X-KIN-Finding-Schema': '2' })
+      return synFindingServer.status === 200 ? reply(200, { items: structuredClone(synFindingServer.items), nextCursor: null }, { 'X-KIN-Finding-Schema': '3' })
         : reply(synFindingServer.status, { message: 'SYN findings unavailable' });
     }
     return base(url, init);
@@ -1797,6 +1797,43 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         page.wait_for_function('synServer.posts.length === 2', timeout=3000)
         self.assertEqual(SA + '.2', page.evaluate('synServer.saved.cells[0].sop'))
 
+
+    def test_35_a_gsps_taken_off_by_the_defaults_is_saved_off_and_comes_back_off(self):
+        # One GSPS of this study names the right cell's first image: a 90° turn and W 350 / L 50.
+        gsps = """() => { const inner = window.fetch, cs = v => ({ vr: 'CS', Value: [v] });
+          const pr = { '00080016': { vr: 'UI', Value: ['1.2.840.10008.5.1.4.1.1.11.1'] }, '00080018': { vr: 'UI', Value: ['%(study)s.900.1'] },
+            '00080060': cs('PR'), '00700080': cs('SYN'), '00700082': { vr: 'DA', Value: ['20260801'] }, '00700083': { vr: 'TM', Value: ['101500'] },
+            '00081115': { vr: 'SQ', Value: [{ '00081140': { vr: 'SQ', Value: [{ '00081155': { vr: 'UI', Value: ['%(sb)s.1'] } }] } }] },
+            '00283110': { vr: 'SQ', Value: [{ '00281050': { vr: 'DS', Value: [50] }, '00281051': { vr: 'DS', Value: [350] } }] },
+            '00700042': { vr: 'US', Value: [90] }, '00700041': cs('N') };
+          window.synGspsReads = 0;
+          window.fetch = async (url, init = {}) => {
+            const path = String(url);
+            if (path.startsWith('/dicom-web/studies/%(study)s/series?Modality=PR')) { synGspsReads++; return new Response(JSON.stringify([{ '0020000E': { vr: 'UI', Value: ['%(study)s.900'] } }]), { status: 200 }); }
+            if (path === '/dicom-web/studies/%(study)s/series/%(study)s.900/metadata') return new Response(JSON.stringify([pr]), { status: 200 });
+            return inner(url, init); }; }""" % {'study': STUDY, 'sb': SB}
+        default = {**SORT_DOWN, 'sort': 'stock', 'overlay': 'full'}
+        page = self.open(setup=gsps)
+        self.started(page)
+        page.evaluate("void KinViewerCellRules.apply('right', %s)" % json.dumps({**default, 'gspsAuto': True}))
+        page.wait_for_function('synServer.posts.length === 1', timeout=8000)
+        on = self.posts(page)[0]['cells'][1]
+        self.assertEqual((True, 90, {'lower': -125, 'upper': 224}), (on['display']['gspsAuto'], on['camera']['rotation'], on['properties']['voiRange']))
+        # The row back to the defaults: the rule is off, the cell has the defaults (no turn, the stored W 400 / L 40), and
+        # that is what is saved, with no rule.
+        page.evaluate("void KinViewerCellRules.apply('right', %s)" % json.dumps(default))
+        page.wait_for_function('synServer.posts.length === 2', timeout=8000)
+        off = self.posts(page)[1]['cells'][1]
+        self.assertEqual((None, 0, {'lower': -160, 'upper': 239}, SB + '.1'), (off['display'], off['camera']['rotation'], off['properties']['voiRange'], off['sop']))
+        # Opened again: the saved view comes back as it was saved — no GSPS is read or put on, the turn stays off.
+        saved = page.evaluate('synServer.saved')
+        again = self.open(saved=saved, setup=gsps)
+        again.wait_for_function("document.querySelector('[data-auto-view-badge]')", timeout=8000)
+        ids = again.evaluate('[...synViewports.keys()]')
+        right = again.evaluate("id => { const v = synViewports.get(id); return { rotation: v.presentation.rotation, voi: v.properties.voiRange, image: v.getCurrentImageId() }; }", ids[1])
+        self.assertEqual({'rotation': 0, 'voi': {'lower': -160, 'upper': 239}, 'image': 'syn:set-B:1'}, right)
+        self.assertIsNone(again.evaluate("id => KinViewerCellRules.rule(id)", ids[1]))
+        self.assertEqual(0, again.evaluate('synGspsReads'))
 
 if __name__ == "__main__":
     unittest.main()

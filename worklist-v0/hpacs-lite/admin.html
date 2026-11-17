@@ -107,6 +107,19 @@
     .gw-action button { padding: 5px 9px; font-size: 12px; }
     .gw-note { color: var(--muted); font-size: 12px; }
     .gateway-empty { margin: 0; color: var(--muted); padding: 14px 0; }
+    /* Gateway contact lines: one per Gateway queue. No Contact is a word, never a warning colour (no sourced threshold). */
+    .gw-hosts { margin: 0 0 12px; }
+    .gw-hosts-state { margin: 0 0 6px; color: var(--muted); font-size: 13px; }
+    .gw-hosts-rows { list-style: none; margin: 0 0 8px; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+    .gw-hosts-rows:empty { display: none; }
+    .gw-hosts-rows li { display: flex; flex-wrap: wrap; gap: 4px 14px; border-bottom: 1px solid #b4b4b426; padding: 8px 12px; font-size: 13px; overflow-wrap: anywhere; }
+    .gw-hosts-rows li:last-child { border-bottom: 0; }
+    .gw-hosts-rows.stale li { opacity: .72; }
+    .gw-host-name { font-weight: 650; color: var(--accent); }
+    .gw-host-contact { font-weight: 650; }
+    .gw-hosts-rows li[data-contact="no_contact"] .gw-host-contact { text-decoration: underline dotted; }
+    .gw-host-fact { color: var(--muted); }
+    .gw-hosts-empty { margin: 0 0 8px; color: var(--muted); font-size: 13px; }
     /* S5-U6b Operations: every state is a word as well as a colour; no value is coloured by its size (no sourced threshold). */
     .ops { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 18px; }
     .ops-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
@@ -200,6 +213,12 @@
         <button type="button" id="gateway-refresh" disabled>Refresh Gateway Status</button>
       </div>
       <p class="gateway-hint">이 기관 Gateway가 보고한 검사별 전송 상태입니다. 검사 목록은 이 버튼을 누를 때만 읽습니다. Gateway 보고가 없는 검사(장비 직송·Gateway 미설치)는 정상이며 여기에 나오지 않습니다.</p>
+      <div class="gw-hosts" id="gateway-hosts">
+        <p class="gw-hosts-state" id="gateway-hosts-state" title="아직 조회하지 않았습니다. 같은 버튼이 이 기관 Gateway의 연락 상태도 읽습니다.">Gateway Contact: Not Loaded</p>
+        <ul class="gw-hosts-rows" id="gateway-hosts-rows"></ul>
+        <p class="gw-hosts-empty" id="gateway-hosts-empty" hidden></p>
+        <p class="message" id="gateway-hosts-message" role="alert"></p>
+      </div>
       <p class="message" id="gateway-message" role="alert"></p>
       <ol class="gateway-rows" id="gateway-rows"></ol>
       <p class="gateway-empty" id="gateway-empty" hidden></p>
@@ -274,7 +293,7 @@
         <div class="spacer"></div>
         <button type="button" id="metrics-refresh" disabled>Refresh Operations</button>
       </div>
-      <p class="ops-hint">저장 사용량·검사량·판독 TAT입니다. 값마다 출처·관측 시각·단위·분모·범위를 함께 보이고, 읽지 못한 값은 0이 아니라 Unobservable로 보입니다. 출처 있는 사이트 기준이 없어 기준선·경고 색은 두지 않습니다. 지표는 이 버튼을 누를 때만 읽습니다.</p>
+      <p class="ops-hint">저장 사용량·검사량·판독 TAT와 API 가동 시간입니다. 값마다 출처·관측 시각·단위·분모·범위를 함께 보이고, 읽지 못한 값은 0이 아니라 Unobservable로 보입니다. 출처 있는 사이트 기준이 없어 기준선·경고 색은 두지 않습니다. 지표는 이 버튼을 누를 때만 읽습니다.</p>
       <p class="message" id="metrics-message" role="alert"></p>
       <div class="ops-table" id="metrics-wrap" hidden>
         <table id="metrics-table">
@@ -1095,6 +1114,220 @@
       }).catch(() => {});
     })();
   </script>
+  <script id="admin-gateway-health-model">
+    /*
+     * Gateway contact model (operational status). Pure: no DOM and no request, so tests/admin_gateway_status_dom_test.py
+     * runs this block as shipped (its pure contact rules case). The server answer (api/src/gateway-heartbeat.ts gatewayStatusAnswer) is checked field by field;
+     * an answer that does not prove itself is not drawn (the page keeps its last reading as stale). Every time is the
+     * server's: when KIN received the last beat, and the start, last STOW and local Orthanc answer it derived from the
+     * Gateway's elapsed seconds. No Contact is the server's word after its fixed freshness rule; nothing is coloured by it.
+     */
+    (function (root) {
+      "use strict";
+      const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+      const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+      const VERSION = /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,31}$/;
+      const ROW_KEYS = ["contact", "gateway", "lastContactAt", "lastStowAt", "localOrthanc", "queue", "queueInstance", "startedAt", "version"];
+      const ANSWER_KEYS = ["gateways", "generatedAt", "institutionId", "noContactAfterSeconds", "serverStartedAt"];
+      const plain = value => !!value && typeof value === "object" && !Array.isArray(value);
+      const closed = (value, keys) => { const own = Object.keys(value).sort(); return own.length === keys.length && own.every((key, i) => key === keys[i]); };
+      const time = value => typeof value === "string" && TIME.test(value) && Number.isFinite(Date.parse(value));
+      const count = value => Number.isSafeInteger(value) && value >= 0;
+      const pad = value => String(value).padStart(2, "0");
+      const localTime = iso => { const d = new Date(iso);
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+
+      function readGateway(raw) {
+        if (!plain(raw) || !closed(raw, ROW_KEYS)) return null;
+        if (typeof raw.gateway !== "string" || !raw.gateway.trim() || raw.gateway.length > 128) return null;
+        if (typeof raw.queueInstance !== "string" || !UUID.test(raw.queueInstance)) return null;
+        if (raw.contact !== "recent" && raw.contact !== "no_contact") return null;
+        if (!time(raw.lastContactAt) || !time(raw.startedAt) || typeof raw.version !== "string" || !VERSION.test(raw.version)) return null;
+        if (raw.lastStowAt !== null && !time(raw.lastStowAt)) return null;
+        if (raw.queue !== null && (!plain(raw.queue) || !closed(raw.queue, ["failed", "retry", "waiting"])
+          || ![raw.queue.waiting, raw.queue.retry, raw.queue.failed].every(count))) return null;
+        const local = raw.localOrthanc;
+        if (local !== null && (!plain(local) || !closed(local, ["answered", "observedAt"]) || typeof local.answered !== "boolean"
+          || !time(local.observedAt))) return null;
+        return { gateway: raw.gateway, queueInstance: raw.queueInstance, contact: raw.contact, lastContactAt: raw.lastContactAt,
+          startedAt: raw.startedAt, version: raw.version, lastStowAt: raw.lastStowAt,
+          queue: raw.queue && { waiting: raw.queue.waiting, retry: raw.queue.retry, failed: raw.queue.failed },
+          localOrthanc: local && { answered: local.answered, observedAt: local.observedAt } };
+      }
+
+      /** The whole answer, or null when any part of it cannot be read. */
+      function readAnswer(answer) {
+        if (!plain(answer) || !closed(answer, ANSWER_KEYS) || typeof answer.institutionId !== "string" || !answer.institutionId.trim()
+          || !time(answer.generatedAt) || !time(answer.serverStartedAt) || !count(answer.noContactAfterSeconds)
+          || !Array.isArray(answer.gateways)) return null;
+        const gateways = answer.gateways.map(readGateway);
+        if (gateways.some(row => row === null)) return null;
+        return { institutionId: answer.institutionId, generatedAt: answer.generatedAt, serverStartedAt: answer.serverStartedAt,
+          noContactAfterSeconds: answer.noContactAfterSeconds, gateways };
+      }
+
+      /** Words for one Gateway line: its contact first, then each fact with what it is and where its time comes from. */
+      function display(row, noContactAfterSeconds, format = localTime) {
+        const recent = row.contact === "recent", derived = "Gateway가 보고한 경과 초를 서버가 받은 시각에서 빼서 만든 추정 시각입니다.";
+        const facts = [
+          { key: "queue", data: false, text: row.queue ? `Queue ${row.queue.waiting} Waiting · ${row.queue.retry} Retry · ${row.queue.failed} Failed`
+            : "Queue Unreadable", title: row.queue
+            ? "Gateway 큐의 검사 수입니다. Waiting은 아직 보내지 않은 검사, Retry는 다시 시도를 기다리는 검사, Failed는 같은 파일로는 보낼 수 없는 검사입니다."
+            : "Gateway가 자기 큐를 읽지 못했다고 알렸습니다. 0건이 아닙니다." },
+          { key: "stow", data: false, text: row.lastStowAt ? `Last STOW ${format(row.lastStowAt)}` : "No STOW Since Gateway Start",
+            title: row.lastStowAt ? `HALO PACS 서버가 이 Gateway의 영상 묶음을 마지막으로 받아들인 때입니다. ${derived}`
+              : "이 Gateway가 시작한 뒤 HALO PACS 서버가 받아들인 영상 묶음이 없습니다." },
+          { key: "orthanc", data: false, text: !row.localOrthanc ? "Local Orthanc API Not Yet Checked"
+            : `Local Orthanc API ${row.localOrthanc.answered ? "Answered" : "No Answer"} ${format(row.localOrthanc.observedAt)}`,
+            title: "Gateway 안의 Orthanc REST API가 마지막 요청에 응답했는지입니다. 장비가 보내는 DICOM 포트를 직접 시험한 값은 아닙니다." +
+              (row.localOrthanc ? ` ${derived}` : "") },
+          { key: "version", data: true, text: `Version ${row.version}`, title: "Gateway 프로그램의 버전입니다." },
+          { key: "started", data: false, text: `Running Since ${format(row.startedAt)}`, title: `Gateway 프로그램이 이번에 시작한 때입니다. ${derived}` },
+          { key: "instance", data: true, text: `Queue Instance ${row.queueInstance.slice(0, 8)}`,
+            title: `Gateway 큐를 가리키는 값(${row.queueInstance})입니다. 같은 Gateway의 큐를 새로 만들면 새 줄이 생기고 옛 줄은 No Contact로 남습니다.` },
+        ];
+        return {
+          name: row.gateway, contact: row.contact,
+          contactText: recent ? `Last Contact ${format(row.lastContactAt)}` : `No Contact since ${format(row.lastContactAt)}`,
+          contactTitle: recent ? "HALO PACS 서버가 이 Gateway의 소식을 마지막으로 받은 서버 시각입니다."
+            : `${noContactAfterSeconds}초 넘게 소식이 없습니다. 이 시각 이후 HALO PACS 서버가 이 Gateway의 소식을 받지 못했습니다. 이 기준은 정해진 사이트 기준이 아니라 30초 주기의 여러 번을 놓친 것을 뜻합니다.`,
+          facts,
+        };
+      }
+
+      function empty(serverStartedAt, format = localTime) {
+        return { text: `No Gateway of this institution has contacted this server since it started (${format(serverStartedAt)}).`,
+          title: "이 기관 Gateway의 연락만 셉니다. 연락 기록은 서버 메모리에만 있어 서버가 다시 시작하면 비고, 실행 중인 Gateway가 다음에 알리면(보통 30초마다) 다시 채워집니다. 장비가 직접 보내는 기관(Gateway 미설치)에는 줄이 없는 것이 정상입니다." };
+      }
+
+      /** The state line: before a read, after a read, after a failed read (the last reading stays, marked). */
+      function summary(view, format = localTime) {
+        const observedAt = view?.observedAt ?? null;
+        if (view?.failed) return observedAt
+          ? { key: "query_failed", text: `Gateway Contact: Query Failed · 마지막 관측 기준 ${format(observedAt)}`,
+              title: "마지막으로 성공한 조회 기준의 줄을 흐리게 두었습니다. 지금 상태가 아닐 수 있습니다." }
+          : { key: "query_failed", text: "Gateway Contact: Query Failed · 아직 성공한 조회가 없습니다", title: "성공한 조회가 없어 줄을 보이지 않습니다." };
+        if (!observedAt) return { key: "not_loaded", text: "Gateway Contact: Not Loaded",
+          title: "아직 조회하지 않았습니다. 같은 버튼이 이 기관 Gateway의 연락 상태도 읽습니다." };
+        return { key: "observed", text: `Gateway Contact: Observed ${format(observedAt)}`,
+          title: "서버가 이 응답을 만든 시각의 상태입니다. 버튼을 누를 때만 읽으므로 지금 이 순간의 상태가 아닐 수 있습니다." };
+      }
+
+      root.KinGatewayHealth = Object.freeze({ readAnswer, display, empty, summary, formatTime: localTime });
+    })(typeof globalThis === "object" ? globalThis : this);
+  </script>
+  <script>
+    /*
+     * Gateway contact panel. The same "Refresh Gateway Status" press that reads the study list also reads
+     * GET /api/admin/gateway-status once; neither read waits for or empties the other. Nothing is read at page boot. Only
+     * the newest read paints; the page session's end (KinConsoleSession) empties the lines before anything is awaited. A
+     * failed read keeps the last lines dimmed; a refused one (403, restricted study access) shows a fixed sentence and no
+     * lines. The server's own wording is never shown.
+     */
+    (() => {
+      const API = `${location.origin}/api`;
+      const $ = selector => document.querySelector(selector);
+      const hosts = { seq: 0, failed: false, read: null };
+      const opening = (state => ({ text: state.textContent, title: state.title }))($("#gateway-hosts-state"));
+
+      function setHostsMessage(value) {
+        const box = $("#gateway-hosts-message");
+        box.textContent = value || "";
+        box.classList.toggle("show", !!value);
+      }
+
+      async function hostsRequest() {
+        if (KinConsoleSession.ended()) throw new Error("세션이 종료되었습니다");
+        const context = KinWorkContext.capture("document");
+        const response = await KinSessionTransport.page().request(API + "/admin/gateway-status", { context });
+        if (!KinWorkContext.admits(context)) throw new Error("세션이 종료되었습니다");
+        if (!response.ok || response.incomplete) throw Object.assign(new Error(`HTTP ${response.status}`),
+          { status: response.status, code: response.code });
+        return response.body;
+      }
+
+      // Fixed sentences only: server wording is never shown here.
+      function failureText(error) {
+        if (error?.status === 403) return error.code === "GATEWAY_STATUS_RESTRICTED"
+          ? "검사 접근 범위가 제한된 계정은 Gateway 연락 상태를 볼 수 없습니다." : "이 계정으로는 Gateway 연락 상태를 조회할 수 없습니다.";
+        if (error?.status === 409) return "검사 접근 조건이 바뀌었습니다. 다시 조회하세요.";
+        if (error?.status === 503) return "서버가 바쁩니다. 잠시 후 다시 조회하세요.";
+        if (error) return "Gateway 연락 상태를 불러오지 못했습니다.";
+        return "조회 응답 형식을 확인할 수 없습니다.";
+      }
+
+      function drawHosts() {
+        const G = window.KinGatewayHealth, read = hosts.read;
+        const items = (read ? read.gateways : []).map(row => {
+          const shown = G.display(row, read.noContactAfterSeconds), item = document.createElement("li");
+          item.dataset.contact = shown.contact;
+          const name = document.createElement("span");
+          name.className = "gw-host-name";
+          name.translate = false;
+          name.textContent = shown.name;
+          const contact = document.createElement("span");
+          contact.className = "gw-host-contact";
+          contact.textContent = shown.contactText;
+          contact.title = shown.contactTitle;
+          item.append(name, contact);
+          for (const fact of shown.facts) {
+            const span = document.createElement("span");
+            span.className = "gw-host-fact";
+            span.dataset.fact = fact.key;
+            if (fact.data) span.translate = false;
+            span.textContent = fact.text;
+            span.title = fact.title;
+            item.append(span);
+          }
+          return item;
+        });
+        const list = $("#gateway-hosts-rows");
+        list.replaceChildren(...items);
+        list.classList.toggle("stale", hosts.failed && !!read);
+        const none = $("#gateway-hosts-empty");
+        none.hidden = !read || read.gateways.length > 0;
+        const said = read && !read.gateways.length ? G.empty(read.serverStartedAt) : { text: "", title: "" };
+        Object.assign(none, { textContent: said.text, title: said.title });
+        const line = G.summary({ observedAt: read ? read.generatedAt : null, failed: hosts.failed });
+        const state = $("#gateway-hosts-state");
+        state.dataset.state = line.key;
+        state.textContent = line.text;
+        state.title = line.title;
+      }
+
+      function closeHosts() {
+        hosts.seq++;
+        Object.assign(hosts, { read: null, failed: false });
+        setHostsMessage("");
+        drawHosts();
+        Object.assign($("#gateway-hosts-state"), { textContent: opening.text, title: opening.title });
+      }
+      KinConsoleSession.onEnd(closeHosts);
+
+      async function refreshHosts() {
+        if (KinConsoleSession.ended()) return;
+        const seq = ++hosts.seq;
+        let answer = null, error = null;
+        try { answer = await hostsRequest(); }
+        catch (e) { error = e ?? new Error("request failed"); }
+        // Only the newest read paints; a session end moves seq, so nothing paints after it.
+        if (seq !== hosts.seq) return;
+        if (error?.status === 403) { closeHosts(); setHostsMessage(failureText(error)); return; }
+        const read = error ? null : window.KinGatewayHealth.readAnswer(answer);
+        if (read) {
+          Object.assign(hosts, { read, failed: false });
+          setHostsMessage("");
+        } else {
+          // Nothing is emptied: the last successful lines stay, marked as the last observation.
+          hosts.failed = true;
+          setHostsMessage(failureText(error));
+        }
+        drawHosts();
+      }
+
+      $("#gateway-refresh").addEventListener("click", refreshHosts);
+    })();
+  </script>
   <script id="admin-metrics-model">
     /*
      * S5-U6b Operations model (REQ-S5-U6b-OPS-METRICS). Pure: no DOM and no request, so tests/admin_metrics_test.cjs runs
@@ -1127,7 +1360,17 @@
         ["tat.normal", "Report TAT (Normal)", "second", "institution", 7 * 24 * HOUR, TAT],
         ["waiting.emergency", "Waiting (Emergency)", "second", "institution", null, WAIT],
         ["waiting.normal", "Waiting (Normal)", "second", "institution", null, WAIT],
+        ["server.api_uptime", "API Uptime (since start)", "duration_seconds", "server", null,
+          "이 응답을 만든 HALO PACS API 프로세스가 시작된 뒤 지난 시간입니다. 서버 전체(영상 저장소·DB·로그인 서버)의 가동 시간이 아니며 가용률(%)은 재지 않습니다."],
+        ["server.api_started", "Last Restart", "timestamp", "server", null,
+          "이 응답을 만든 HALO PACS API 프로세스가 시작된 시각입니다. 배포나 재시작 때마다 바뀝니다."],
       ].map(([key, label, unit, scope, span, title]) => Object.freeze({ key, label, unit, scope, span, title })));
+      // Whose value a server-wide row is: storage is the whole Orthanc server, the process rows are the API process itself.
+      const SERVER_SCOPE = Object.freeze({
+        byte: "Orthanc 서버 전체(모든 기관)의 값입니다.",
+        duration_seconds: "이 응답을 만든 HALO PACS API 프로세스의 값입니다(모든 기관 공통).",
+        timestamp: "이 응답을 만든 HALO PACS API 프로세스의 값입니다(모든 기관 공통).",
+      });
       const ROW_STATES = Object.freeze({
         observed: Object.freeze({ text: "Observed", title: "원천이 답한 값입니다." }),
         empty: Object.freeze({ text: "No Studies", title: "원천은 답했지만 해당 검사가 없어 시간 값이 없습니다. 0분이 아닙니다." }),
@@ -1143,6 +1386,8 @@
         byte: ["Bytes (1 GiB = 1024³ B)", "원천 값은 바이트입니다. 화면은 2의 거듭제곱 단위(KiB·MiB·GiB·TiB)로 줄여 보입니다."],
         study: ["Studies", "검사 건수입니다."],
         second: ["Elapsed Time (Median · Max)", "원천 값은 초입니다. 화면은 초·분·시간으로 줄여 보이며 중앙값은 짝수 건이면 가운데 두 값의 평균입니다."],
+        duration_seconds: ["Elapsed Time", "원천 값은 초입니다. 화면은 일·시간·분으로 줄여 보입니다."],
+        timestamp: ["Date and Time", "원천 값은 서버의 UTC 시각이며 화면은 이 브라우저의 지역 시각으로 보입니다."],
       });
       const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
       const plain = value => !!value && typeof value === "object" && !Array.isArray(value);
@@ -1170,6 +1415,14 @@
           const w = raw.window;
           if (!plain(w) || !time(w.from) || !time(w.to) || Date.parse(w.to) - Date.parse(w.from) !== spec.span) return unread;
           window = { from: w.from, to: w.to };
+        }
+        // The API process rows: one value (whole seconds since start, or the start's UTC time) and nothing else.
+        if (spec.unit === "duration_seconds" || spec.unit === "timestamp") {
+          const proved = spec.unit === "timestamp" ? time(raw.value) : count(raw.value);
+          if (raw.state !== "observed" || !proved || raw.max !== null || raw.denominator !== null || raw.excluded !== null
+            || raw.window !== null) return unread;
+          return { key: spec.key, state: "observed", reason: null, value: raw.value, max: null, source, observedAt: raw.observedAt,
+            denominator: null, excluded: null, window: null };
         }
         const denominator = raw.denominator;
         if (spec.unit === "second") {
@@ -1215,6 +1468,12 @@
         return `${Math.floor(seconds / 3600)} h ${pad(Math.floor(seconds % 3600 / 60))} min`;
       }
 
+      /** A process uptime may run for days: days, hours and minutes, never a growing hour count. */
+      function formatUptime(seconds) {
+        if (seconds < 86400) return formatDuration(seconds);
+        return `${Math.floor(seconds / 86400)} d ${pad(Math.floor(seconds % 86400 / 3600))} h ${pad(Math.floor(seconds % 3600 / 60))} min`;
+      }
+
       /** Words for one read row. Every cell says what it is even when the value is unknown. */
       function display(row, institutionId, format = localTime) {
         const spec = METRICS.find(item => item.key === row.key), state = ROW_STATES[row.state];
@@ -1225,6 +1484,10 @@
         else if (row.state === "observed" && spec.unit === "second") {
           value = `Median ${formatDuration(row.value)} · Max ${formatDuration(row.max)}`;
           valueTitle = `중앙값 ${row.value}초 · 최댓값 ${row.max}초`;
+        } else if (row.state === "observed" && spec.unit === "duration_seconds") {
+          value = formatUptime(row.value); valueTitle = `원천 값 ${row.value}초`;
+        } else if (row.state === "observed" && spec.unit === "timestamp") {
+          value = format(row.value); valueTitle = `서버 시각 ${row.value}`;
         } else if (row.state === "observed") { value = String(row.value); valueTitle = `${row.value}건`; }
         const excluded = row.excluded ? ` · ${row.excluded} Excluded` : "";
         let denominator, denominatorTitle;
@@ -1235,6 +1498,8 @@
           denominatorTitle = "분모는 시간을 잰 검사 수입니다. 제외: 시각을 읽을 수 없거나 순서가 맞지 않거나 상태를 알 수 없는 검사.";
         } else if (spec.unit === "byte") {
           denominator = "Capacity Unobservable"; denominatorTitle = "전체 용량의 원천이 없어 사용률(%)을 보이지 않습니다.";
+        } else if (spec.unit === "duration_seconds" || spec.unit === "timestamp") {
+          denominator = "Not a Ratio"; denominatorTitle = "시각·경과 시간이라 분모가 없습니다.";
         } else {
           denominator = "Not a Ratio" + excluded;
           denominatorTitle = "건수라 분모가 없습니다." + (row.excluded ? " 제외: 등록 시각을 읽을 수 없는 검사." : "");
@@ -1244,7 +1509,7 @@
           stateText: state.text, stateTitle: reason ? `${state.title} ${reason}` : state.title,
           value, valueTitle, unit: UNITS[spec.unit][0], unitTitle: UNITS[spec.unit][1], denominator, denominatorTitle,
           scope: spec.scope === "server" ? "Server-wide" : `Institution ${institutionId}`,
-          scopeTitle: spec.scope === "server" ? "Orthanc 서버 전체(모든 기관)의 값입니다."
+          scopeTitle: spec.scope === "server" ? SERVER_SCOPE[spec.unit]
             : "이 기관이 소유한 검사와 원격판독으로 받은 검사(워크리스트와 같은 범위)입니다.",
           source: row.source ?? (row.reason === "no_source" ? "No Source" : "Unknown"),
           sourceTitle: !row.source ? reason : row.state === "unobservable" ? `값을 읽으려 한 원천입니다. ${reason}` : "값을 읽은 원천입니다.",
@@ -1266,7 +1531,7 @@
       }
 
       root.KinAdminMetrics = Object.freeze({ METRICS, ROW_STATES, REASONS, UNITS, readAnswer, display, summary,
-        formatBytes, formatDuration, formatTime: localTime });
+        formatBytes, formatDuration, formatUptime, formatTime: localTime });
     })(typeof globalThis === "object" ? globalThis : this);
   </script>
   <script>

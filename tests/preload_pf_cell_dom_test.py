@@ -14,6 +14,7 @@ arrival, and never when Off or when the chosen search is gone; the existing Prel
 selected. Synthetic data only.
 """
 import json
+import re
 import unittest
 from datetime import datetime, timezone
 
@@ -247,6 +248,160 @@ class AutoPreloadDOM(unittest.TestCase):
 
     def owner_key(self):
         return json.dumps([mi.SESSION_A['institution'], mi.SESSION_A['sub']], separators=(',', ':'))
+
+
+# The PF column's meaning on its header, and PF as a filter (filter row, My Shortcuts > Filter Exams, saved searches).
+PF_READY = {'id': 9, 'name': 'SYN PF Ready', 'mode': 'Radiology', 'quick': '', 'days': -1, 'cols': {'pf': 'Ready'}}
+PF_WORDS = ['Queued', 'Downloading', 'Ready', 'Failed', 'Evicted', 'None']
+
+
+class PfFilterDOM(unittest.TestCase):
+    setUpClass = mi.MultiInstitutionWorklist.__dict__['setUpClass']
+    tearDownClass = mi.MultiInstitutionWorklist.__dict__['tearDownClass']
+    boot = mi.MultiInstitutionWorklist.boot
+    boot_pf = AutoPreloadDOM.boot_auto
+
+    def server(self, filters=()):
+        return Server(rows=[row(STUDY, 'SYN-PF-01'), row(OTHER, 'SYN-PF-02'), row('2.25.603', 'SYN-PF-03')],
+                      filters=list(filters))
+
+    def send(self, page, *studies, to=None):
+        # The worker's 'state' report for this page's session (or another login's, `to`).
+        session = to or page.evaluate('() => window.KinWorkContext.session()')
+        self.assertTrue(session)
+        page.evaluate('([studies, to]) => window.__synPreload.state(studies, to)', [list(studies), session])
+
+    def at(self, status, uid, done=0, total=0):
+        return {**entry(status, done, total), 'uid': uid}
+
+    def test_pf_header_explains_the_column_and_each_word(self):
+        screen = self.boot_pf(self.server())
+        screen.show_column('PF')
+        help_ = screen.header('PF').get_attribute('title')
+        self.assertTrue(help_.startswith('PF (Prefetch, 미리 받기)'), help_)
+        self.assertIn('Preload 패널', help_)
+        for word in ['Queued', 'Downloading', 'Ready', 'Failed', 'Evicted', '· (None)']:
+            self.assertIn('\n' + word + ':', help_)
+        self.assertIn('72시간', help_)
+        # The other code headers keep their help; a plain column has none.
+        self.assertTrue(screen.header('RS').get_attribute('title').startswith('RS (Report Status'))
+        self.assertIsNone(screen.header('Name').get_attribute('title'))
+        screen.finish()
+
+    def test_pf_filter_row_follows_the_queue(self):
+        screen = self.boot_pf(self.server())
+        page = screen.page
+        screen.show_column('PF')
+        box = screen.filter_box('PF')
+        self.assertEqual(['', *PF_WORDS], box.locator('option').evaluate_all('os => os.map(o => o.value)'))
+        self.send(page, self.at('Ready', STUDY, 3, 3), self.at('Downloading', OTHER, 1, 3))
+        expect(self.pf(screen, 'SYN-PF-02')).to_have_text('Downloading 33%')
+        box.select_option('Ready')
+        screen.wait_rows(['SYN-PF-01'])
+        box.select_option('Downloading')
+        screen.wait_rows(['SYN-PF-02'])
+        # A percent step keeps the row; the study turning Ready leaves Downloading without any click.
+        self.send(page, self.at('Ready', STUDY, 3, 3), self.at('Downloading', OTHER, 2, 3))
+        expect(self.pf(screen, 'SYN-PF-02')).to_have_text('Downloading 66%')
+        screen.wait_rows(['SYN-PF-02'])
+        self.send(page, self.at('Ready', STUDY, 3, 3), self.at('Ready', OTHER, 3, 3))
+        expect(page.get_by_role('cell', name='No records found', exact=True)).to_be_visible()
+        box.select_option('Ready')
+        screen.wait_rows(['SYN-PF-01', 'SYN-PF-02'])
+        # None = no queue state for this login: the study never queued, and every study under another login's report.
+        box.select_option('None')
+        screen.wait_rows(['SYN-PF-03'])
+        self.send(page, self.at('Ready', STUDY, 3, 3), to='SYN-OTHER-SESSION')
+        screen.wait_rows(['SYN-PF-01', 'SYN-PF-02', 'SYN-PF-03'])
+        self.assertIn('PF(None)', screen.filter_line())
+        screen.finish()
+
+    def test_filter_exams_popup_filters_by_pf_with_the_column_hidden(self):
+        screen = self.boot_pf(self.server())
+        page = screen.page
+        self.assertNotIn('PF', screen.heads())   # PF opens hidden
+        self.send(page, self.at('Failed', STUDY), self.at('Queued', OTHER))
+        page.get_by_role('button', name='My Shortcuts', exact=True).click()
+        popup = page.get_by_role('dialog', name='Filter Exams', exact=True)
+        expect(popup).to_be_visible()
+        label = popup.locator('label').filter(has_text=re.compile(r'^PF\s'))
+        self.assertTrue(label.get_attribute('title').startswith('PF (Prefetch, 미리 받기)'))
+        choice = label.get_by_role('combobox')
+        self.assertEqual(['Any', *PF_WORDS], choice.locator('option').all_inner_texts())
+        # Asked together with the assigned reader and the tech note: they sit beside them.
+        names = popup.locator('label').evaluate_all('ls => ls.map(l => l.firstChild.textContent.trim())')
+        self.assertEqual(names.index('Tech Note') + 1, names.index('PF'))
+        choice.select_option('Failed')
+        popup.get_by_role('button', name='Apply', exact=True).click()
+        expect(popup).to_be_hidden()
+        screen.wait_rows(['SYN-PF-01'])
+        self.assertIn('PF(Failed) [숨긴 열]', screen.filter_line())
+        # Retry made it Queued: it leaves the Failed list by itself.
+        self.send(page, self.at('Queued', STUDY), self.at('Queued', OTHER))
+        expect(page.get_by_role('cell', name='No records found', exact=True)).to_be_visible()
+        # The popup reopens with the condition; Clear takes PF off with the rest.
+        page.get_by_role('button', name='My Shortcuts', exact=True).click()
+        expect(choice).to_have_value('Failed')
+        popup.get_by_role('button', name='Clear', exact=True).click()
+        screen.wait_rows(['SYN-PF-01', 'SYN-PF-02', 'SYN-PF-03'])
+        self.assertNotIn('PF(', screen.filter_line())
+        popup.get_by_role('button', name='Close', exact=True).click()
+        screen.finish()
+
+    def test_saved_search_on_pf_counts_and_applies_the_live_state(self):
+        screen = self.boot_pf(self.server([PF_READY]))
+        page = screen.page
+        chip = page.locator('#chips button.chip').filter(has_text='SYN PF Ready')
+        expect(chip).to_have_attribute('aria-label', re.compile(r'로드된 목록 기준 0건'))
+        # The list itself has no PF condition: a study turning Ready changes only the saved search's count.
+        self.send(page, self.at('Ready', STUDY, 3, 3))
+        expect(chip).to_have_attribute('aria-label', re.compile(r'로드된 목록 기준 1건'))
+        self.assertEqual(['SYN-PF-01', 'SYN-PF-02', 'SYN-PF-03'], screen.column('ID'))
+        screen.menu('Filters').get_by_role('button', name=re.compile(r'^SYN PF Ready, ')).click()
+        screen.wait_rows(['SYN-PF-01'])
+        self.send(page, self.at('Ready', STUDY, 3, 3), self.at('Ready', OTHER, 3, 3))
+        screen.wait_rows(['SYN-PF-01', 'SYN-PF-02'])
+        expect(chip).to_have_attribute('aria-label', re.compile(r'로드된 목록 기준 2건'))
+        screen.finish()
+
+    def test_saved_search_editor_counts_a_pf_draft_and_saves_it(self):
+        server = self.server()
+        screen = self.boot_pf(server)
+        page = screen.page
+        screen.menu('Filters')
+        page.locator('#managefilters').click()
+        editor = page.locator('#saved-filter-manager')
+        expect(editor).to_be_visible()
+        page.locator('#sfm-name').fill('SYN PF Ready draft')
+        choice = page.locator('#sfm-col-pf')
+        self.assertEqual(['', *PF_WORDS], choice.locator('option').evaluate_all('os => os.map(o => o.value)'))
+        choice.select_option('Ready')
+        count = page.locator('#sfm-count')
+        expect(count).to_contain_text('로드된 목록 기준 0건')
+        # Nothing else uses PF: the unsaved draft alone follows the queue, without touching the editor.
+        self.send(page, self.at('Ready', STUDY, 3, 3))
+        expect(count).to_contain_text('로드된 목록 기준 1건')
+        self.send(page, self.at('Ready', STUDY, 3, 3), self.at('Ready', OTHER, 3, 3))
+        expect(count).to_contain_text('로드된 목록 기준 2건')
+        page.locator('#sfm-save-apply').click()
+        expect(editor).to_be_hidden()
+        screen.wait_rows(['SYN-PF-01', 'SYN-PF-02'])
+        saved = server.filter_posts[-1]
+        self.assertEqual('SYN PF Ready draft', saved['name'])
+        self.assertEqual('Ready', saved['cols']['pf'])
+        screen.finish()
+        # Opened again (a new page with the stored search): it filters by the state this page's queue reports.
+        again = self.boot_pf(server)
+        chip = again.page.locator('#chips button.chip').filter(has_text='SYN PF Ready draft')
+        expect(chip).to_have_attribute('aria-label', re.compile(r'로드된 목록 기준 0건'))
+        self.send(again.page, self.at('Ready', OTHER, 3, 3))
+        expect(chip).to_have_attribute('aria-label', re.compile(r'로드된 목록 기준 1건'))
+        again.menu('Filters').get_by_role('button', name=re.compile(r'^SYN PF Ready draft, ')).click()
+        again.wait_rows(['SYN-PF-02'])
+        again.finish()
+
+    pf = PreloadPfCellDOM.pf
+
 
 if __name__ == '__main__':
     unittest.main()

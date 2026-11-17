@@ -17,10 +17,20 @@ function KinViewerBrand({ React }) {
     // 메뉴 경계는 이 로고(#kin-viewer-brand)를 품은 머리글이다. 아래 CSS가 865f064부터 같은 선택자로 머리글과 그 안의
     // 오른쪽 드롭다운(.absolute.right-0)을 칠하므로 그 기준을 따른다. 머리글 밖(판독문·검사 설명·영상 주석)의 About은
     // 주변에 Preferences가 있어도 순회하지 않는다. 머리글을 못 찾으면 아무것도 숨기지 않는다(About이 남는 쪽으로 실패).
-    // 설정 항목은 아래에서 Viewer Settings로 이름이 바뀌므로 두 이름 모두 설정 항목으로 읽는다.
+    // 실제 OHIF 3.9.1의 톱니 메뉴는 머리글 밖 body 포털([data-radix-popper-content-wrapper])에 role=menu로 그려지고,
+    // aria-labelledby가 머리글 드롭다운 안의 톱니 단추를 가리킨다. 그래서 톱니 메뉴 = 머리글의 오른쪽 드롭다운(.absolute.right-0)
+    // 안 + 그 드롭다운 안의 단추가 연 포털 메뉴(gearMenus)다. 다른 포털 메뉴(Layout·도구 목록·영상 메뉴)는 단추가 그 밖이라 안 본다.
+    // 설정 항목 이름 Preferences는 바꾸지 않는다: 도구막대의 Viewer Settings는 우리 설정 창을 열고, 이 항목은 뷰어의
+    // User Preferences(단축키·언어)를 연다 — 같은 이름이 다른 창을 열게 하지 않는다.
     const ABOUT_TITLES = new Set(['About', 'About OHIF Viewer']);
-    const SETTINGS_TITLES = new Set(['Preferences', 'Viewer Settings']);
+    const SETTINGS_TITLES = new Set(['Preferences']);
     const menuScope = () => document.getElementById('kin-viewer-brand')?.closest('.bg-secondary-dark.z-20') || null;
+    const DROPDOWN = '.absolute.right-0';
+    const gearMenus = header => header ? [...document.querySelectorAll('[role="menu"][aria-labelledby]')].filter(menu => {
+      const trigger = document.getElementById(menu.getAttribute('aria-labelledby'));
+      const dropdown = trigger?.closest(DROPDOWN);
+      return !!dropdown && dropdown !== header && header.contains(dropdown) && !header.contains(menu);
+    }) : [];
     // OHIF 3.9.1 exposes Layout's aria-label, but no hooks for its toolbar slot, logo row or gear group.
     // Keep React's control (including its dropdown) in its own tree. Its transformed ancestors mean viewport
     // coordinates cannot be assigned as left/top directly; correct the measured offset instead.
@@ -99,15 +109,16 @@ function KinViewerBrand({ React }) {
     // 건드리지 않는다. 로딩·CPU fallback·cross-origin 경고와 라이선스 원문도 드롭다운 밖이라 바꾸지 않는다. 드롭다운을 못 찾으면
     // 아무것도 바꾸지 않는다(원문이 남는 쪽으로 실패). 바꾼 글자는 다시 규칙에 걸리지 않으므로 메뉴를 다시 만들어도 한 번만 바뀐다.
     // 머리글 안의 About 제목은 위 판별이 맡으므로 이름을 바꾸지 않는다(바꾸면 설정 항목이 늦게 붙을 때 더는 About으로 읽히지 않는다).
-    const replaceBrandText = scope => {
+    // scope가 머리글이면 그 안의 드롭다운만, 톱니가 연 포털 메뉴(gearMenus)면 메뉴 전체가 대상이다.
+    const replaceBrandText = (scope, whole) => {
       scope.querySelectorAll('*').forEach(element => {
         if (element.childElementCount) return;
-        const menu = element.closest('.absolute.right-0');
-        if (!menu || menu === scope || !scope.contains(menu)) return;
+        if (!whole) {
+          const menu = element.closest(DROPDOWN);
+          if (!menu || menu === scope || !scope.contains(menu)) return;
+        }
         const text = element.textContent?.trim();
         if (!text || ABOUT_TITLES.has(text)) return;
-        // VUI-05: 톱니 메뉴의 Preferences는 표시 이름만 Viewer Settings로 바꾼다. 항목·모달·포커스 복귀는 뷰어의 것이다.
-        if (text === 'Preferences') { element.textContent = 'Viewer Settings'; return; }
         if (/OHIF|Open Health Imaging Foundation/i.test(text)) {
           element.textContent = text
             .replace(/Open Health Imaging Foundation/gi, '업스트림 오픈소스 프로젝트')
@@ -119,23 +130,26 @@ function KinViewerBrand({ React }) {
     // 행 이름은 형제 행과 라벨이 모두 붙어야 판별되므로, 머리글 안의 변경(행·라벨 추가, 글자 변경)이 있으면 추가된 노드만이
     // 아니라 머리글 전체를 다시 본다. 머리글이 새로 붙은 경우도 포함한다. 도구막대 버튼의 켜짐은 class로만 바뀌므로 class
     // 변경도 본다. 여기서 쓰는 속성(aria-*·title·data-kin-*)은 관찰 대상이 아니고 글자는 한 번만 바뀌므로 스스로 되풀이하지 않는다.
+    // 톱니가 연 포털 메뉴도 같다: 메뉴가 붙거나(다시 열기 포함) 그 안이 바뀌거나 role·aria-labelledby가 늦게 붙으면 다시 본다.
     const touchesScope = (scope, record) => {
       const target = record.target.nodeType === Node.ELEMENT_NODE ? record.target : record.target.parentElement;
       return !!target && scope.contains(target) || [...record.addedNodes].some(node => node.contains?.(scope));
     };
-    const refresh = scope => {
+    const refresh = (scope, menus) => {
       hideAboutRows(scope);
-      replaceBrandText(scope);
+      replaceBrandText(scope, false);
       kinViewerToolbarLabels.apply(scope);
+      for (const menu of menus) { hideAboutRows(menu); replaceBrandText(menu, true); }
     };
     const initialScope = menuScope();
-    if (initialScope) refresh(initialScope);
+    if (initialScope) refresh(initialScope, gearMenus(initialScope));
     const observer = new MutationObserver(records => {
-      const scope = menuScope();
-      if (scope && records.some(record => touchesScope(scope, record))) refresh(scope);
+      const scope = menuScope(), menus = gearMenus(scope);
+      if (scope && records.some(record => [scope, ...menus].some(root => touchesScope(root, record)))) refresh(scope, menus);
       scheduleHeader();
     });
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class'] });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true,
+      attributeFilter: ['class', 'role', 'aria-labelledby'] });
 
     document.title = KIN_VIEWER_DEFAULT_TITLE;
 

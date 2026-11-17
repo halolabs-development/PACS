@@ -31,8 +31,8 @@ const STATES=[
   {uid:'2.25.14',institutionId:'hallym',teleInstitutionId:null,origin:'gateway',createdAt:new Date('2020-01-01T00:00:00.000Z'),rs:'W',matched:'M',orderOid:'SYN-H-L'}];
 const ORDERS=[
   {oid:'O-9001',institutionId:'hallym',patientId:'P-1001',name:'KIM CHULSOO',sched:'2026-09-24 09:10',accession:null,matched:'U',studyUid:null},
-  {oid:'SYN-H-1',institutionId:'hallym',patientId:'SYN-P1',name:'SYNTHETIC PATIENT',sched:'x',accession:'SYN-ACC-1',matched:'U',studyUid:null},
-  {oid:'SYN-H-2',institutionId:'hallym',patientId:'SYN-P2',name:'SYNTHETIC PATIENT',sched:'x',accession:'SYN-ACC-2',matched:'U',studyUid:null},
+  {oid:'SYN-H-1',institutionId:'hallym',patientId:'SYN-P1',name:'SYNTHETIC PATIENT',sched:'x',accession:'SYN-ACC-1',matched:'U',studyUid:null,risStatus:'acquired'},
+  {oid:'SYN-H-2',institutionId:'hallym',patientId:'SYN-P2',name:'SYNTHETIC PATIENT',sched:'x',accession:'SYN-ACC-2',matched:'U',studyUid:null,risStatus:'scheduled'},
   {oid:'SYN-H-L',institutionId:'hallym',patientId:'SYN-P3',name:'SYNTHETIC PATIENT',sched:'x',accession:null,matched:'M',studyUid:'2.25.14'},
   {oid:'SYN-K-1',institutionId:'kin-center',patientId:'SYN-P4',name:'SYNTHETIC PATIENT',sched:'x',accession:'SYN-ACC-1',matched:'U',studyUid:null},
   // Taken off the list (Delete Order): its accession would pair with 2.25.11 if it were still read.
@@ -146,10 +146,11 @@ test('S4-U2 failures: no answer without a successful enumeration; an unidentifia
   await assert.rejects(changed.svc.listStudies(caller),e=>e.getStatus()===409);
 });
 
-test('S4-U2 bootstrap order payload carries only the order\'s own accession (null without one) and leaves removed orders out',async()=>{
+test('S4-U2 bootstrap order payload carries only the order\'s own accession and RIS status (null without one) and leaves removed orders out',async()=>{
   const {svc}=await setup();const b=await svc.bootstrap(caller,{states:'omit'});
-  for(const o of b.orders)assert.deepEqual(Object.keys(o).sort(),['accession','birth','desc','id','matched','modality','name','oid','reqDoc','sched','sex','studyUid','ward']);
+  for(const o of b.orders)assert.deepEqual(Object.keys(o).sort(),['accession','birth','desc','id','matched','modality','name','oid','reqDoc','risStatus','sched','sex','studyUid','ward']);
   assert.deepEqual(b.orders.map(o=>[o.oid,o.accession]),[['O-9001',null],['SYN-H-1','SYN-ACC-1'],['SYN-H-2','SYN-ACC-2'],['SYN-H-L',null]]);
+  assert.deepEqual(b.orders.map(o=>[o.oid,o.risStatus]),[['O-9001',null],['SYN-H-1','acquired'],['SYN-H-2','scheduled'],['SYN-H-L',null]]);
 });
 
 // ── Technician Order List: Scheduled, Delete Order and Undo over a fake store and archive ──

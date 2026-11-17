@@ -39,11 +39,12 @@ class OrdersSite(rf.FlowSite):
         super().__init__(3)
         self.orders = [
             {**ORDER, "oid": "SYN-O-1", "id": "SYN-P-001", "name": h.PATIENT, "sched": "2026-10-03 09:00", "desc": "SYN CT ABDOMEN",
-             "ward": "NR", "reqDoc": "SYN DOC PARK", "matched": "U", "accession": "SYN-ORDER-ACC-1"},
+             "ward": "NR", "reqDoc": "SYN DOC PARK", "matched": "U", "accession": "SYN-ORDER-ACC-1", "risStatus": "acquired"},
             {**ORDER, "oid": "SYN-O-2", "id": "SYN-P-009", "name": "SYN ORDER NINE", "sched": "2026-10-04 10:00", "desc": "SYN CT CHEST",
-             "ward": "ER", "reqDoc": "SYN DOC KIM", "matched": "U", "accession": None},
+             "ward": "ER", "reqDoc": "SYN DOC KIM", "matched": "U", "accession": None, "risStatus": "scheduled"},
             {**ORDER, "oid": "SYN-O-3", "id": "SYN-P-003", "name": rf.PATIENT_C, "sched": "2026-10-03 11:00", "desc": "SYN CT CHEST",
-             "ward": "NR", "reqDoc": "SYN DOC KIM", "matched": "M", "studyUid": rf.UID_C, "accession": None}]
+             "ward": "NR", "reqDoc": "SYN DOC KIM", "matched": "M", "studyUid": rf.UID_C, "accession": None,
+             "risStatus": "confirmed"}]
         self.removed = {}
         self.sent = []                  # (method, path, body) of every order write
         self.scheduled = []
@@ -227,6 +228,102 @@ class TechnicianOrders(unittest.TestCase):
         self.assertEqual([], self.order_rows())
         bar.get_by_label("Ward").fill("ER")
         self.assertEqual(["SYN-O-2"], self.order_rows())
+
+    # ── RIS Status (the order's state as the hospital RIS gives it) ──
+    def heads(self):
+        return self.page.eval_on_selector_all(".order-p .grid2 thead tr:not(.filters) > th", "t => t.map(x => x.textContent)")
+
+    def statuses(self):
+        return self.page.eval_on_selector_all("#orderrows tr[data-oid]",
+            "rows => rows.map(r => [r.dataset.oid, [...r.querySelectorAll('td[data-ris-status]')].map(td => td.textContent)])")
+
+    def test_ris_status_column_shows_each_order_state_after_the_existing_columns(self):
+        self.assertEqual(["No", "Mt", "ID", "Name", "Sex", "BirthDate", "ScheduledDate", "Modality", "StudyDesc", "Ward", "ReqDoc", "RIS Status"],
+                         self.heads(), "added last: every existing column keeps its place")
+        self.assertEqual(12, self.page.eval_on_selector_all(".order-p .grid2 thead tr.filters > th", "t => t.length"))
+        self.assertEqual([["SYN-O-1", ["Acquired"]], ["SYN-O-2", ["Scheduled"]], ["SYN-O-3", ["Order Confirmed"]]], self.statuses())
+        self.assertEqual(["Acquired"], self.page.eval_on_selector_all("#orderrows tr[data-oid='SYN-O-1'] > td:last-child", "t => t.map(x => x.textContent)"))
+        # A status the order list does not know, or none, is blank; a refresh draws one cell per row again.
+        self.site.orders[0]["risStatus"] = "SYN-UNKNOWN"
+        self.site.orders[1]["risStatus"] = None
+        for _ in range(2):
+            self.page.locator("#o-refresh").click()
+            self.page.wait_for_function("() => document.querySelector(\"#orderrows tr[data-oid='SYN-O-1'] td[data-ris-status]\")?.textContent === '—'")
+        self.assertEqual([["SYN-O-1", ["—"]], ["SYN-O-2", ["—"]], ["SYN-O-3", ["Order Confirmed"]]], self.statuses())
+
+    def test_search_orders_finds_orders_by_ris_status(self):
+        self.action("Search Orders").click()
+        bar = self.page.locator("#order-search")
+        ris = bar.get_by_label("RIS Status")
+        self.assertEqual(["All", "Order Confirmed", "Scheduled", "Acquired"], ris.locator("option").all_text_contents())
+        ris.select_option("acquired")
+        self.assertEqual(["SYN-O-1"], self.order_rows(), "filtered at once")
+        ris.select_option("confirmed")
+        self.assertEqual(["SYN-O-3"], self.order_rows())
+        ris.select_option("scheduled")
+        self.assertEqual(["SYN-O-2"], self.order_rows())
+        # Together with the other conditions and the panel's own boxes.
+        bar.get_by_label("State").select_option("M")
+        self.assertEqual([], self.order_rows())
+        expect(self.page.locator("#orderrows td.empty")).to_have_attribute("colspan", "12")
+        bar.get_by_label("State").select_option("")
+        bar.get_by_role("button", name="Close").click()
+        condition = self.page.locator("#order-actions .order-condition")
+        expect(condition).to_contain_text("Order search:")
+        expect(condition).to_contain_text("Scheduled")
+        self.assertEqual(["SYN-O-2"], self.order_rows(), "Close keeps the condition")
+        condition.get_by_role("button", name="Reset").click()
+        self.assertEqual(["SYN-O-1", "SYN-O-2", "SYN-O-3"], self.order_rows())
+        self.action("Search Orders").click()
+        expect(ris).to_have_value("")
+        # An order without a status is left out once a status is chosen.
+        self.site.orders[1]["risStatus"] = None
+        self.page.locator("#o-refresh").click()
+        self.page.wait_for_function("() => document.querySelector(\"#orderrows tr[data-oid='SYN-O-2'] td[data-ris-status]\")?.textContent === '—'")
+        ris.select_option("scheduled")
+        self.assertEqual([], self.order_rows())
+        bar.get_by_label("Ward").fill("nr")
+        ris.select_option("")
+        self.assertEqual(["SYN-O-1", "SYN-O-3"], self.order_rows())
+
+    def test_ris_status_stays_with_the_order_through_delete_and_undo(self):
+        self.pick_order("SYN-O-2")
+        self.action("Delete Order").click()
+        w = self.window("order-delete")
+        w.get_by_label("Reason").fill("SYN duplicate")
+        w.get_by_role("button", name="Delete Order").click()
+        self.page.wait_for_function("() => !document.querySelector(\"#orderrows tr[data-oid='SYN-O-2']\")")
+        self.assertEqual([["SYN-O-1", ["Acquired"]], ["SYN-O-3", ["Order Confirmed"]]], self.statuses())
+        self.page.locator("#order-actions .order-status").get_by_role("button", name="Undo").click()
+        expect(self.page.locator("#order-actions .order-status")).to_contain_text("is back on the list.")
+        self.assertEqual([["SYN-O-1", ["Acquired"]], ["SYN-O-2", ["Scheduled"]], ["SYN-O-3", ["Order Confirmed"]]], self.statuses())
+
+    def test_ris_status_in_the_korean_screen(self):
+        self.page.evaluate("() => KinLanguage.restore({ version: 1, worklist: 'ko', reading: 'ko' })")
+        self.page.wait_for_function("() => [...document.querySelectorAll('.order-p .grid2 thead th')].some(t => t.textContent === 'RIS 상태')")
+        self.assertEqual([["SYN-O-1", ["촬영 완료"]], ["SYN-O-2", ["예약"]], ["SYN-O-3", ["확정"]]], self.statuses())
+        self.page.locator("#order-actions > button").first.click()
+        bar = self.page.locator("#order-search")
+        ris = bar.get_by_label("RIS 상태")
+        self.assertEqual(["전체", "확정", "예약", "촬영 완료"], ris.locator("option").all_text_contents())
+        ris.select_option("confirmed")
+        self.assertEqual(["SYN-O-3"], self.order_rows())
+        # Drawn again while filtered: still one translated cell per row.
+        self.page.locator("#o-refresh").click()
+        self.page.wait_for_function("() => document.querySelector(\"#orderrows tr[data-oid='SYN-O-3'] td[data-ris-status]\")?.textContent === '확정'")
+        self.assertEqual([["SYN-O-3", ["확정"]]], self.statuses())
+        bar.locator("button").nth(1).click()   # Close (닫기)
+        condition = self.page.locator("#order-actions .order-condition")
+        expect(condition).to_contain_text("오더 검색:")
+        expect(condition).to_contain_text("확정")
+        # With another condition the status word is still translated (the other parts are shown as typed).
+        self.page.locator("#order-actions > button").first.click()
+        bar.locator("input[type=text]").first.fill("nr")   # Ward
+        bar.locator("button").nth(1).click()
+        expect(condition).to_contain_text("오더 검색: Ward nr · 확정")
+        self.page.evaluate("() => KinLanguage.restore({ version: 1, worklist: 'en', reading: 'en' })")
+        expect(condition).to_contain_text("Order Confirmed")
+        self.assertEqual([["SYN-O-3", ["Order Confirmed"]]], self.statuses())
 
     # ── Delete Order ──
     def test_delete_order_refuses_a_matched_order_needs_a_reason_and_undo_restores(self):

@@ -362,7 +362,7 @@ test('without an opener and without exactly one valid window group and list ther
  * was sent on (kin-editor-open-cancel, naming the request), before the channel closes, so the reading screen can drop a move
  * still waiting for its save gate. */
 test('an opening without an answer in time is withdrawn on its channel before it ends as a timeout', async () => {
-  const kit = channelHarness({ openTimeoutMs: 20 });
+  const kit = channelHarness({ openTimeoutMs: 20, withdrawTimeoutMs: 20 });
   const result = await kit.adapter.open(CURRENT);
   assert.deepEqual(result, { ok: false, reason: 'timeout' });
   assert.deepEqual(kit.channels[0].sent.map(m => m.type), ['kin-editor-open', 'kin-editor-open-cancel']);
@@ -389,4 +389,46 @@ test('an opening ended by a relink, or answered under another link, is withdrawn
   third.adapter.dispose();
   assert.deepEqual(await waiting, { ok: false, reason: 'missing' });
   assert.deepEqual(third.channels[0].sent.map(m => m.type), ['kin-editor-open', 'kin-editor-open-cancel']);
+});
+
+/* A request not answered in time is not taken as "not opened": the reading screen may have moved just before the withdrawal
+ * reached it. After withdrawing, the adapter waits a while more on the same channel for the reading screen's answer to the
+ * withdrawal (where its report target is, `at`) or a late answer to the opening, and ends with that; with neither, the
+ * outcome stays unknown (no `at`). */
+test('a withdrawn opening ends with where the reading screen says its report target is', async () => {
+  const withdrawn = extra => Object.assign({ type: 'kin-editor-open-withdrawn', request: REQUEST, owner: OWNER, uid: CURRENT }, extra);
+  const afterWithdraw = async (kit, data) => {
+    const pending = kit.adapter.open(CURRENT);
+    while (kit.channels[0].sent.length < 2) await new Promise(resolve => setTimeout(resolve, 5));
+    for (const message of [].concat(data)) kit.deliver(message);
+    return pending;
+  };
+  for (const [data, value] of [
+    [withdrawn({ at: true }), { ok: false, reason: 'timeout', at: true }],
+    [withdrawn({ at: false }), { ok: false, reason: 'timeout', at: false }],
+    [withdrawn(), { ok: false, reason: 'timeout' }],
+    // A late answer to the opening counts as much: moved, or refused (with where the target is).
+    [{ type: 'kin-editor-opened', request: REQUEST, owner: OWNER, uid: CURRENT, result: 'ok', reason: null }, { ok: true }],
+    [{ type: 'kin-editor-opened', request: REQUEST, owner: OWNER, uid: CURRENT, result: 'refused', reason: 'modal', at: true }, { ok: false, reason: 'timeout', at: true }],
+    // Answers to another request or about another study are not read; the first answer that is ends it.
+    [[withdrawn({ request: '99999999-2222-3333-4444-555555555555', at: true }), withdrawn({ uid: COMPARE, at: true }), withdrawn({ at: false })],
+      { ok: false, reason: 'timeout', at: false }]]) {
+    const kit = channelHarness({ openTimeoutMs: 10, withdrawTimeoutMs: 5000 });
+    assert.deepEqual(await afterWithdraw(kit, data), value, JSON.stringify(data));
+    assert.deepEqual(kit.channels[0].sent.map(m => m.type), ['kin-editor-open', 'kin-editor-open-cancel']);
+    assert.equal(kit.channels[0].closed, true); assert.equal(kit.listening(), 0);
+  }
+  // An answer to the withdrawal before there was one is not read (the opening is still waited for).
+  const early = channelHarness({ openTimeoutMs: 40, withdrawTimeoutMs: 20 });
+  const pending = early.adapter.open(CURRENT);
+  early.deliver(withdrawn({ at: true }));
+  assert.deepEqual(await pending, { ok: false, reason: 'timeout' });
+  // The answer reaches a window that is no longer the one that asked (another login now): not read as a place.
+  let who = ['INST-1', 'subject-1'];
+  const changed = channelHarness({ openTimeoutMs: 10, withdrawTimeoutMs: 5000, owner: () => who });
+  const asked = changed.adapter.open(CURRENT);
+  while (changed.channels[0].sent.length < 2) await new Promise(resolve => setTimeout(resolve, 5));
+  who = ['INST-1', 'subject-2'];
+  changed.deliver(withdrawn({ at: true }));
+  assert.deepEqual(await asked, { ok: false, reason: 'missing' });
 });

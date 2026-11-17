@@ -14,7 +14,7 @@ import unittest
 from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright, expect
 from clinician_home_dom_test import ROWS, REPORTS
-from admin_gateway_status_dom_test import MEMBERS, ACCESS, FIVE
+from admin_gateway_status_dom_test import MEMBERS, ACCESS, FIVE, HOSTS
 from admin_metrics_dom_test import answer as metrics_answer, ROWS as METRICS_ROWS
 from admin_audit_dom_test import answer as audit_answer, PAGE1
 
@@ -59,7 +59,7 @@ INIT = r"""(() => {
     }});
     return Promise.resolve(new Response(stream, options));
   };
-  const snapshot = () => ({html: document.body.innerHTML, protectedRows:document.querySelectorAll('#users tr,#studies tr,#metrics-rows tr,#audit-rows tr,#gateway-rows > li,#study-access-dialog,dialog[open]').length, values:[...document.querySelectorAll('input,textarea')].map(el=>el.value),
+  const snapshot = () => ({html: document.body.innerHTML, protectedRows:document.querySelectorAll('#users tr,#studies tr,#metrics-rows tr,#audit-rows tr,#gateway-rows > li,#gateway-hosts-rows > li,#study-access-dialog,dialog[open]').length, values:[...document.querySelectorAll('input,textarea')].map(el=>el.value),
     storage: [JSON.stringify({...localStorage}), JSON.stringify({...sessionStorage})],
     work: window.KinWorkContext?.state(), seen: window.synSeen});
   window.synWatch = () => {
@@ -167,6 +167,8 @@ class PageSessionDOMTest(unittest.TestCase):
             route.fulfill(json=PAGE1)
         elif path == '/api/studies':
             route.fulfill(json=FIVE)
+        elif path == '/api/admin/gateway-status':
+            route.fulfill(json=HOSTS)
         elif path == '/api/clinician/studies':
             rows = sorted(ROWS,key=lambda x:x['uid'])
             route.fulfill(json={'studies':rows,'pagination':{'limit':100,'offset':0,'total':len(rows),'next':None}})
@@ -232,7 +234,8 @@ class PageSessionDOMTest(unittest.TestCase):
         operations = [('members','/api/admin/users','#refresh',MEMBERS),
                       ('metrics','/api/admin/metrics','#metrics-refresh',metrics_answer(rows=METRICS_ROWS)),
                       ('audit','/api/admin/audit','#audit-refresh',PAGE1),
-                      ('gateway','/api/studies','#gateway-refresh',FIVE)]
+                      ('gateway','/api/studies','#gateway-refresh',FIVE),
+                      ('gateway-contact','/api/admin/gateway-status','#gateway-refresh',HOSTS)]
         for label,path,button,body in operations:
             for cut in ['headers','body','error']:
                 for mode in ['logout','notice','replace','server-ended']:
@@ -631,7 +634,7 @@ class PageSessionDOMTest(unittest.TestCase):
         for route in self.moves: self.complete_move(route)
         self.assertEqual([p for _,p,_ in self.calls if p.startswith('/api/')],['/api/me'])
         self.assertEqual(self.page.evaluate('KinAuth.session().state'),'pending')
-        self.assertEqual(self.page.locator('#users tr,#gateway-rows > li,#metrics-rows tr,#audit-rows tr').count(),0)
+        self.assertEqual(self.page.locator('#users tr,#gateway-rows > li,#gateway-hosts-rows > li,#metrics-rows tr,#audit-rows tr').count(),0)
         self.assertIsNone(self.page.evaluate("localStorage.getItem('kin-session-end')"))
 
     def test_notice_during_bootstrap_never_starts_protected_work(self):

@@ -1,4 +1,4 @@
-// Pure calculations for the viewer's Compare menu: exam marks, the prior order, manual sync steps, the physical
+// Pure calculations for the viewer's Compare menu: exam marks, the prior and later order, manual sync steps, the physical
 // scale of a cell and where a slice crosses a scout image. Nothing here reads the screen.
 (function (root) {
   const validDate = value => {
@@ -19,9 +19,14 @@
   const newerFirst = (a, b) => b.date.localeCompare(a.date) || time(b.time).localeCompare(time(a.time))
     || text(a.acc).localeCompare(text(b.acc)) || text(a.uid).localeCompare(text(b.uid));
 
+  // Earlier first, with the same ties in the same order.
+  const olderFirst = (a, b) => a.date.localeCompare(b.date) || time(a.time).localeCompare(time(b.time))
+    || text(a.acc).localeCompare(text(b.acc)) || text(a.uid).localeCompare(text(b.uid));
+
   // rows: the patient's related studies ({ uid, date 'YYYY-MM-DD', time, acc }); currentUid: the current study.
-  // Returns the rows in list order with a mark: '*' for the current study, P1, P2, … for studies dated before it
-  // (nearest first), '' for the others (same day, later, or without a date). Rows without a date go last.
+  // Returns the rows in list order with a mark: '*' for the current study, P1, P2, … for studies dated before it and
+  // N1, N2, … for studies dated after it (both nearest first), '' for the others (the same day, or without a date, or
+  // every study when the current one has no date). Rows without a date go last.
   function marks(rows, currentUid) {
     const list = Array.isArray(rows) ? rows.filter(row => row && typeof row.uid === 'string') : [];
     const current = list.find(row => row.uid === currentUid) || null;
@@ -29,15 +34,41 @@
     const undated = list.filter(row => row !== current && !validDate(row.date)).sort((a, b) => text(a.uid).localeCompare(text(b.uid)));
     const known = current && validDate(current.date);
     const priors = known ? dated.filter(row => row.date < current.date).sort(newerFirst) : [];
-    const others = dated.filter(row => !priors.includes(row)).sort(newerFirst);
+    const laters = known ? dated.filter(row => row.date > current.date).sort(olderFirst) : [];
+    const others = dated.filter(row => !priors.includes(row) && !laters.includes(row)).sort(newerFirst);
     return [
       ...(current ? [{ ...current, mark: '*' }] : []),
       ...priors.map((row, index) => ({ ...row, mark: 'P' + (index + 1) })),
+      ...laters.map((row, index) => ({ ...row, mark: 'N' + (index + 1) })),
       ...others.map(row => ({ ...row, mark: '' })),
       ...undated.map(row => ({ ...row, mark: '' })),
     ];
   }
   const priorUids = marked => marked.filter(row => /^P\d+$/.test(row.mark)).map(row => row.uid);
+
+  // Series that are not images (reports, presentation states, key objects, segmentations, documents, structures):
+  // the viewer's comparison opening never places them in a cell either.
+  const NOT_IMAGES = ['SR', 'SEG', 'PR', 'KO', 'DOC', 'RTSTRUCT'];
+  const UID = /^\d+(?:\.\d+)+$/;
+  const value = (row, tag) => row?.[tag]?.Value?.[0];
+  // A study's series as the archive lists them (DICOM JSON, QIDO-RS series level), each with the original study it
+  // belongs to: [{ sourceUid, row }]. Returns the image series in Series Number order (then UID), one per Series
+  // Instance UID: { sourceUid, seriesUid, number, description, modality, instances }. A row without a valid Series
+  // Instance UID is left out; a number or count that is not a number is null.
+  function seriesRows(entries) {
+    const out = [], seen = new Set();
+    for (const { sourceUid, row } of Array.isArray(entries) ? entries : []) {
+      const seriesUid = value(row, '0020000E'), modality = text(value(row, '00080060')).trim().toUpperCase();
+      if (typeof seriesUid !== 'string' || !UID.test(seriesUid) || typeof sourceUid !== 'string' || NOT_IMAGES.includes(modality)) continue;
+      const key = sourceUid + '\u0000' + seriesUid;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const number = Number(value(row, '00200011')), instances = Number(value(row, '00201209'));
+      out.push({ sourceUid, seriesUid, number: Number.isFinite(number) && value(row, '00200011') !== '' ? number : null,
+        description: text(value(row, '0008103E')), modality, instances: Number.isInteger(instances) && instances >= 0 ? instances : null });
+    }
+    return out.sort((a, b) => (a.number ?? Infinity) - (b.number ?? Infinity) || a.sourceUid.localeCompare(b.sourceUid) || a.seriesUid.localeCompare(b.seriesUid));
+  }
 
   // The prior to show after Prev (direction -1, toward the current study) or Next (+1, further back), from the prior
   // now shown. With no prior shown, either goes to the nearest prior. At an end: { end: 'newer' | 'older' | 'none' }.
@@ -153,7 +184,7 @@
     return best;
   }
 
-  const api = { validDate, marks, priorUids, step, follow, spacing, pxPerMm, ratioZoom, plane, crossLine, scoutPoint, nearestSlice };
+  const api = { validDate, marks, priorUids, seriesRows, NOT_IMAGES, step, follow, spacing, pxPerMm, ratioZoom, plane, crossLine, scoutPoint, nearestSlice };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.KinCompareModel = api;
 })(typeof window === 'object' ? window : globalThis);

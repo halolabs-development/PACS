@@ -9,6 +9,7 @@ import type { OrthancService } from '../orthanc.service';
 import { need, inst } from './access';
 import type { Caller, PacsAccess } from './access';
 import { currentExamStates } from '../exam-merge.service';
+import { apiProcessFacts } from '../api-process';
 
 /**
  * ── S5-U6b 관리자 운영 지표 (REQ-S5-U6b-OPS-METRICS → RISK-S5-U6b-UNKNOWN-AS-ZERO/INVENTED-THRESHOLD/TENANT-AGGREGATE) ──
@@ -26,7 +27,18 @@ import { currentExamStates } from '../exam-merge.service';
 export const ADMIN_METRIC_KEYS = Object.freeze([
   'storage.server', 'storage.institution', 'studies.own', 'studies.tele', 'studies.flag_unreadable',
   'studies.registered_24h', 'studies.registered_7d', 'tat.emergency', 'tat.normal', 'waiting.emergency', 'waiting.normal',
+  'server.api_uptime', 'server.api_started',
 ]);
+/** DB에서 읽는 줄. 이 원천이 실패하면 이 줄들만 관측 불가다. */
+const ADMIN_METRIC_DB_KEYS = ADMIN_METRIC_KEYS.slice(2, 11);
+/**
+ * 이 응답을 만든 API 프로세스의 사실(가동 시간·시작 시각). 저장량·DB 원천과 따로 관측되므로 그 원천이 실패해도 늘 있다.
+ * 서버 전체(Orthanc·DB·로그인 서버)의 가동 시간이 아니고 가용률(%)도 아니다.
+ */
+export interface AdminMetricProcess { uptimeSeconds: number; startedAt: number; observedAt: number }
+const ADMIN_METRIC_PROCESS_SOURCE = {
+  uptime: 'HALO PACS API process (performance.now)', started: 'HALO PACS API process (performance.timeOrigin)',
+};
 export const ADMIN_METRIC_DAY_MS = 24 * 3600 * 1000;
 export const ADMIN_METRIC_WEEK_MS = 7 * ADMIN_METRIC_DAY_MS;
 /** 승인 전 상태. 그 밖의 값(A가 아닌 모르는 값)은 대기로 세지 않고 제외 건수에 넣는다. */
@@ -64,8 +76,10 @@ function metricDurations(seconds: number[]) {
  * 행 거르기는 `visible()`과 같은 경계다 — 소유 기관이거나 원격판독으로 받은 기관. 호출측이 이미 걸렀어도 여기서
  * 한 번 더 걸러, 다른 기관 행이 섞여 들어와도 어느 합계에도 들어가지 않게 한다.
  */
-export function adminMetricRows(institution: string, storage: AdminMetricStorage, studies: AdminMetricStudies | null) {
-  const row = (key: string, scope: 'server' | 'institution', unit: 'byte' | 'study' | 'second', rest: any) => ({
+export function adminMetricRows(institution: string, storage: AdminMetricStorage, studies: AdminMetricStudies | null,
+  apiProcess?: AdminMetricProcess) {
+  const row = (key: string, scope: 'server' | 'institution', unit: 'byte' | 'study' | 'second' | 'duration_seconds' | 'timestamp',
+    rest: any) => ({
     key, state: 'observed', reason: null, scope, source: null, observedAt: null, unit, value: null, max: null,
     denominator: null, excluded: null, window: null, ...rest });
   const rows: any[] = [];
@@ -88,14 +102,14 @@ export function adminMetricRows(institution: string, storage: AdminMetricStorage
   };
   const durationKeys = ['tat.emergency', 'tat.normal', 'waiting.emergency', 'waiting.normal'];
   if (!studies || now === null) {
-    for (const key of ADMIN_METRIC_KEYS.slice(2)) {
+    for (const key of ADMIN_METRIC_DB_KEYS) {
       const family = key.startsWith('tat.') ? 'tat' : key.startsWith('waiting.') ? 'waiting'
         : key.startsWith('studies.registered') ? 'registered' : 'studies';
       rows.push(row(key, 'institution', durationKeys.includes(key) ? 'second' : 'study', {
         state: 'unobservable', reason: 'source_failed', source: sources[family],
         denominator: durationKeys.includes(key) ? { unit: 'study', value: null } : null }));
     }
-    return rows;
+    return [...rows, ...processRows(row, apiProcess)];
   }
 
   const observedAt = new Date(now).toISOString();
@@ -153,7 +167,24 @@ export function adminMetricRows(institution: string, storage: AdminMetricStorage
         window: family === 'tat' ? windowOf(ADMIN_METRIC_WEEK_MS) : null }));
     }
   }
-  return rows;
+  return [...rows, ...processRows(row, apiProcess)];
+}
+
+/** API Uptime (since start)·Last Restart. 값이 증명되지 않으면(누락·형식 오류) 관측 불가이고 0으로 두지 않는다. */
+function processRows(row: (key: string, scope: 'server', unit: 'duration_seconds' | 'timestamp', rest: any) => any,
+  facts: AdminMetricProcess | undefined) {
+  const valid = !!facts && Number.isSafeInteger(facts.uptimeSeconds) && facts.uptimeSeconds >= 0
+    && Number.isSafeInteger(facts.startedAt) && facts.startedAt > 0 && Number.isFinite(facts.observedAt);
+  if (!valid) return [
+    row('server.api_uptime', 'server', 'duration_seconds', { state: 'unobservable', reason: 'invalid_answer', source: ADMIN_METRIC_PROCESS_SOURCE.uptime }),
+    row('server.api_started', 'server', 'timestamp', { state: 'unobservable', reason: 'invalid_answer', source: ADMIN_METRIC_PROCESS_SOURCE.started }),
+  ];
+  const observedAt = new Date(facts!.observedAt).toISOString();
+  return [
+    row('server.api_uptime', 'server', 'duration_seconds', { source: ADMIN_METRIC_PROCESS_SOURCE.uptime, observedAt, value: facts!.uptimeSeconds }),
+    row('server.api_started', 'server', 'timestamp', { source: ADMIN_METRIC_PROCESS_SOURCE.started, observedAt,
+      value: new Date(facts!.startedAt).toISOString() }),
+  ];
 }
 
 export class PacsMetrics {
@@ -167,6 +198,8 @@ export class PacsMetrics {
   protected metricsTimeoutMs = 5000;
   /** 운영 지표의 관측 시각·기간 기준 시계. 제품은 서버 시계이고, 시험만 인스턴스 값을 고정해 기간 경계를 재현한다. */
   protected metricsClock = () => Date.now();
+  /** 이 API 프로세스의 가동 시간·시작 시각. 제품은 프로세스 값이고, 시험만 인스턴스 값을 고정한다. */
+  protected metricsProcess = () => apiProcessFacts(this.metricsClock());
 
   /**
    * S5-U6b 관리자 운영 지표(`GET /api/admin/metrics`). 줄의 모양과 규칙은 `adminMetricRows`에 있다.
@@ -188,7 +221,7 @@ export class PacsMetrics {
     // 기관 범위 재확인은 모든 원천이 답한 뒤(Orthanc 대기 포함)에 한다. 범위가 바뀐 것은 원천 실패가 아니므로
     // metricsStudies의 catch 밖에서 409로 던진다 — 관측 불가 줄로 바꿔 내보내지 않는다.
     const studies = read && await this.metricsScopeHeld(me, read,c);
-    const metrics = adminMetricRows(me, storage, studies);
+    const metrics = adminMetricRows(me, storage, studies, this.metricsProcess());
     // 읽는 동안 접근 조건이 바뀌었으면 그 전 조건으로 센 합계를 내보내지 않는다.
     await this.studyAccess.unchanged(c, access);
     return { institutionId: me, generatedAt: new Date(this.metricsClock()).toISOString(), metrics };

@@ -123,6 +123,10 @@
       finally { lastSet.set(v.id, signature(v)); applying.delete(v.id); }
     }
     const fit = v => steer(v, () => { v.setZoom(1); v.setPan([0, 0]); });
+    // A cell Display Set Presets is putting a rule on (viewer-features-view.js): its changes are the rule's, not the
+    // reader's, and are not followed; given the mark taken when a change was heard, also a cell a rule began on since.
+    const ruled = (id, since) => { try { return !!window.KinViewerCellRules?.setting?.(id, since); } catch (_) { return false; } };
+    const ruleMark = () => { try { return window.KinViewerCellRules?.mark?.(); } catch (_) { return undefined; } };
 
     // ── This module's layer over each cell: badges, the outline, the press layer and the lens ──
     const layers = new Map();
@@ -224,33 +228,37 @@
       }
     }
     // A reader's zoom or pan in one MG cell: the same zoom (relative to Fit) and the counterpart centre in the others.
-    const pendingCamera = new Set();
+    const pendingCamera = new Map();  // source cell → the rule mark when its change was heard
     let cameraFrame = 0;
     function cameraChanged(event) {
       const id = event.detail?.viewportId;
-      if (!mirror.on || !id || applying.has(id)) return;
+      if (!mirror.on || !id || applying.has(id) || ruled(id)) return;
       const v = viewportOf(id);
       if (!v || lastSet.get(id) === signature(v)) return;
-      pendingCamera.add(id);
-      if (!cameraFrame) cameraFrame = requestAnimationFrame(() => { cameraFrame = 0; const ids = [...pendingCamera]; pendingCamera.clear(); ids.forEach(id => followCamera(id)); });
+      pendingCamera.set(id, ruleMark());
+      if (!cameraFrame) cameraFrame = requestAnimationFrame(() => { cameraFrame = 0; const ids = [...pendingCamera]; pendingCamera.clear(); ids.forEach(([id, mark]) => followCamera(id, mark)); });
     }
-    async function followCamera(sourceId) {
+    // A change heard before a rule began on a cell is not carried onto it (nor carried from it).
+    async function followCamera(sourceId, mark) {
       const list = await mgCells(), t = M.targets(sourceId, list);
-      if (!mirror.on || t.reason) return;
+      if (!mirror.on || t.reason || ruled(sourceId, mark)) return;
       const source = t.source, zoom = zoomOf(source.v), focal = toImage(source.v, source.v.getCamera().focalPoint);
       if (!zoom || !focal) return;
       for (const id of t.linked) {
+        if (ruled(id, mark)) continue;
         const cell = list.find(c => c.id === id), at = M.counterpart(focal, source, cell), world = at && toWorld(cell.v, at);
         if (world) steer(cell.v, () => { cell.v.setZoom(zoom); centerOn(cell.v, world); });
       }
     }
     async function voiChanged(event) {
       const id = event.detail?.viewportId;
-      if (!mirror.on || !mirror.invert || !id || applying.has(id)) return;
+      if (!mirror.on || !mirror.invert || !id || applying.has(id) || ruled(id)) return;
+      const mark = ruleMark();
       const list = await mgCells(), t = M.targets(id, list);
-      if (!mirror.on || t.reason) return;
+      if (!mirror.on || t.reason || ruled(id, mark)) return;
       let invert; try { invert = !!t.source.v.getProperties().invert; } catch (_) { return; }
       for (const target of t.linked) {
+        if (ruled(target, mark)) continue;
         const v = list.find(c => c.id === target)?.v;
         try { if (v && !!v.getProperties().invert !== invert) steer(v, () => v.setProperties({ invert })); } catch (error) { console.error(error); }
       }
@@ -334,42 +342,125 @@
     }
 
     // ── Quadrant Zoom ──
-    const quad = { panel: null, step: 0 };
+    // Every step and every Close takes a new ticket: an earlier one still reading image headers then changes nothing.
+    // marks: the cells the step holds ({ viewport, stack, zoom, width, height, clipped, text }). A cell leaves the step when
+    // its zoom, stack or viewport is changed by anything else (Breast Display, Mirrored, the reader): its badge then no
+    // longer says what it shows, and nothing of the step is drawn there again. A pan keeps it (the way to an edge at 4×).
+    // A held cell whose size changes (window, layout) has its step worked out again for the new size.
+    const quad = { panel: null, step: 0, ticket: 0, marks: new Map(), apply: null, paint: null, resized: new Set(), timer: 0 };
+    const QUAD_ZOOM_LABELS = { '4x': '4×', fill: 'Fill Quadrant' };
+    const quadSizes = typeof ResizeObserver === 'function' ? new ResizeObserver(entries => {
+      for (const entry of entries) for (const [id, mark] of quad.marks) {
+        if (mark.viewport.element !== entry.target) continue;
+        const size = cellSize(mark.viewport);
+        if (size.cellWidth !== mark.width || size.cellHeight !== mark.height) quad.resized.add(id);
+      }
+      if (!quad.resized.size || quad.timer) return;
+      quad.timer = setTimeout(() => {
+        timers.delete(quad.timer); quad.timer = 0;
+        const ids = [...quad.resized]; quad.resized.clear(); quad.apply?.(ids);
+      }, 150);
+      timers.add(quad.timer);
+    }) : null;
+    function dropQuadrant(id) {
+      const mark = quad.marks.get(id); if (!mark) return;
+      quad.marks.delete(id); quad.resized.delete(id); badge(mark.viewport, 'quadrant', null);
+      if (![...quad.marks.values()].some(other => other.viewport.element === mark.viewport.element)) quadSizes?.unobserve(mark.viewport.element);
+      quad.paint?.();
+    }
+    function quadrantCamera(id) {
+      const mark = quad.marks.get(id), v = mark && viewportOf(id), zoom = v && zoomOf(v);
+      if (mark && (v !== mark.viewport || !zoom || Math.abs(zoom - mark.zoom) > 1e-6 * mark.zoom)) dropQuadrant(id);
+    }
+    function quadrantImage(id) {
+      const mark = quad.marks.get(id), v = viewportOf(id);
+      if (mark && (v !== mark.viewport || stackKey(v) !== mark.stack)) dropQuadrant(id);
+    }
+    function endQuadrant() {
+      clearTimeout(quad.timer); timers.delete(quad.timer); quad.timer = 0; quad.resized.clear();
+      quad.panel = null; quad.apply = quad.paint = null; quad.marks.clear(); quadSizes?.disconnect(); clearBadges('quadrant');
+    }
     function openQuadrant() {
       const panel = ui.panel({ id: 'quadrant', title: 'Quadrant Zoom' });
       if (!panel || panel === quad.panel) return;
       quad.panel = panel; quad.step = 0;
+      if (!M.QUADRANT_ZOOMS.includes(carry.quadrantZoom)) carry.quadrantZoom = '4x';
       const order = element('label', '', panel.body, 'kin-mg-row'); element('span', 'Order', order);
       const select = element('select', '', order); select.setAttribute('aria-label', 'Order');
       element('option', 'R/L symmetric', select).value = 'symmetric';
+      const scale = element('label', '', panel.body, 'kin-mg-row'); element('span', 'Zoom', scale);
+      const zoomSelect = element('select', '', scale); zoomSelect.setAttribute('aria-label', 'Zoom');
+      for (const mode of M.QUADRANT_ZOOMS) element('option', QUAD_ZOOM_LABELS[mode], zoomSelect).value = mode;
+      zoomSelect.value = carry.quadrantZoom;
+      zoomSelect.onchange = () => { carry.quadrantZoom = zoomSelect.value; explain(); show(quad.step); };
       const heading = element('b', '', panel.body);
       const row = element('div', '', panel.body, 'kin-mg-row');
       button('Previous Quadrant', row, () => show(quad.step - 1));
       button('Next Quadrant', row, () => show(quad.step + 1));
-      note('모든 MG 칸이 같은 사분면을 칸에 채워 보입니다(유방 영역의 상자를 가로·세로 반으로 나눈 것 — 영역을 찾지 못한 칸은 영상 전체). 좌우는 거울입니다. ' +
+      const how = note('', panel.body);
+      note('사분면은 유방 영역의 상자를 가로·세로 반으로 나눈 것이고(영역을 찾지 못한 칸은 영상 전체), 모든 MG 칸이 같은 사분면을 보입니다. 좌우는 거울입니다. ' +
         '한 장의 뷰는 사분면 이름의 한 축만 보입니다(CC: 가쪽/안쪽, MLO: 위/아래). 보이지 않는 축의 두 단계는 흉벽 쪽과 유두 쪽을 나누어 훑는 순서이며, 해부학적 사분면을 구분한 것이 아닙니다.', panel.body);
       const status = statusLine(panel.body);
+      function explain() {
+        how.textContent = carry.quadrantZoom === '4x'
+          ? '4×: 각 칸을 Fit(100 %)의 4배(400 %)로 확대해 사분면의 가운데를 보입니다. 사분면이 칸보다 크면 가장자리는 칸 밖에 있습니다(끌어 옮기거나 Fill Quadrant로 보세요).'
+          : 'Fill Quadrant: 사분면 하나를 칸에 꽉 채워 보입니다(배율은 영상과 칸 크기에 따라 다릅니다).';
+      }
+      explain();
+      let notes = [];
+      const paint = () => {
+        const clipped = [...quad.marks.values()].filter(mark => mark.clipped).map(mark => mark.label);
+        status.textContent = [...notes, clipped.length ? '4×에서 사분면의 가장자리가 칸 밖에 있는 칸 — ' + clipped.join(' / ') : ''].filter(Boolean).join('. ');
+      };
+      // The step on one cell: zoomed and centred, held (marked) and badged; false when it could not be drawn.
+      function place(cell, mode) {
+        const region = regionOf(cell), q = M.quadrant(quad.step, cell, region.found ? region.box : null), size = cellSize(cell.v);
+        const z = M.quadrantZoom({ mode, zoom: zoomOf(cell.v), perPixel: perPixel(cell.v), ...size, width: q.box.x1 - q.box.x0, height: q.box.y1 - q.box.y0 });
+        const world = toWorld(cell.v, [(q.box.x0 + q.box.x1) / 2, (q.box.y0 + q.box.y1) / 2]);
+        dropQuadrant(cell.id);
+        if (!z || !world || !steer(cell.v, () => { cell.v.setZoom(z.zoom); centerOn(cell.v, world); })) { badge(cell.v, 'quadrant', 'Quadrant: not zoomed'); return false; }
+        // The cell's zoom is the quadrant's now: a Breast Display zoom mode no longer holds there.
+        dropZoomMode(cell.id);
+        quad.marks.set(cell.id, { viewport: cell.v, stack: stackKey(cell.v), zoom: zoomOf(cell.v) ?? z.zoom, width: size.cellWidth, height: size.cellHeight,
+          clipped: z.clipped, label: labelOf(cell) });
+        quadSizes?.observe(cell.v.element);
+        badge(cell.v, 'quadrant', `Q${quad.step + 1} ${q.name} · ${QUAD_ZOOM_LABELS[mode]}` + (region.found ? '' : ' · whole image') + (z.clipped ? ' · edges outside' : ''));
+        return true;
+      }
       async function show(step) {
+        const ticket = ++quad.ticket, mode = carry.quadrantZoom;
         quad.step = ((step % 4) + 4) % 4;
         heading.textContent = `Quadrant ${quad.step + 1}/4: ${M.QUADRANTS[quad.step]} (R/L matched)`;
-        const skipped = [];
-        for (const cell of await mgCells()) {
-          if (quad.panel !== panel) return;
+        const skipped = [], failed = [];
+        const list = await mgCells();
+        if (quad.panel !== panel || ticket !== quad.ticket) return;
+        for (const cell of list) {
           const reason = M.unlinkable(cell);
-          if (reason) { skipped.push(labelOf(cell) + ': ' + (REASONS[reason] || reason)); badge(cell.v, 'quadrant', 'Quadrant: ' + (REASONS[reason] || reason)); continue; }
-          const region = regionOf(cell), q = M.quadrant(quad.step, cell, region.found ? region.box : null);
-          const zoom = M.fitRect({ zoom: zoomOf(cell.v), perPixel: perPixel(cell.v), ...cellSize(cell.v), width: q.box.x1 - q.box.x0, height: q.box.y1 - q.box.y0 });
-          const world = toWorld(cell.v, [(q.box.x0 + q.box.x1) / 2, (q.box.y0 + q.box.y1) / 2]);
-          if (!zoom || !world) continue;
-          steer(cell.v, () => { cell.v.setZoom(zoom); centerOn(cell.v, world); });
-          badge(cell.v, 'quadrant', `Q${quad.step + 1} ${q.name}` + (region.found ? '' : ' · whole image'));
+          if (reason) { dropQuadrant(cell.id); skipped.push(labelOf(cell) + ': ' + (REASONS[reason] || reason)); badge(cell.v, 'quadrant', 'Quadrant: ' + (REASONS[reason] || reason)); continue; }
+          if (!place(cell, mode)) failed.push(labelOf(cell));
         }
-        status.textContent = skipped.length ? '방향을 확인할 수 없어 확대하지 않은 칸 — ' + skipped.join(' / ') : '';
+        notes = [skipped.length ? '방향을 확인할 수 없어 확대하지 않은 칸 — ' + skipped.join(' / ') : '',
+          failed.length ? '배율을 계산할 수 없어 확대하지 않은 칸 — ' + failed.join(' / ') : ''];
+        paint();
       }
+      // Held cells whose size changed: the same step and zoom choice again, for those cells only (a step taken meanwhile wins).
+      quad.apply = async ids => {
+        const ticket = quad.ticket, mode = carry.quadrantZoom;
+        const list = await mgCells();
+        if (quad.panel !== panel || ticket !== quad.ticket) return;
+        for (const cell of list) if (ids.includes(cell.id) && quad.marks.get(cell.id)?.viewport === cell.v && !place(cell, mode)) {
+          notes = [...notes.filter(Boolean), '배율을 계산할 수 없어 확대하지 않은 칸 — ' + labelOf(cell)];
+        }
+        paint();
+      };
+      quad.paint = paint;
       panel.onClose(async () => {
         if (quad.panel !== panel) return;
-        quad.panel = null; clearBadges('quadrant');
-        for (const cell of await mgCells()) fit(cell.v);
+        const ticket = ++quad.ticket;
+        endQuadrant();
+        const list = await mgCells();
+        if (ticket !== quad.ticket) return;
+        for (const cell of list) fit(cell.v);
       });
       show(0);
     }
@@ -561,7 +652,9 @@
       try { localStorage.setItem(PITCH_KEY, JSON.stringify({ ...pitches(), [key]: value })); return true; } catch (_) { return false; }
     }
     const show = { panel: null, status: null, pitchRow: null, edge: false, wl: new Map(), modes: new Map(), screen: null, sessionPitch: null };
-    const setMode = (v, text) => { show.modes.set(v.id, { viewport: v, text }); badge(v, 'zoom', 'Zoom mode: ' + text); };
+    // A Breast Display zoom mode and a Quadrant Zoom step are each the cell's zoom until the other is set there.
+    const setMode = (v, text) => { dropQuadrant(v.id); show.modes.set(v.id, { viewport: v, text }); badge(v, 'zoom', 'Zoom mode: ' + text); };
+    function dropZoomMode(id) { const mode = show.modes.get(id); if (mode) { show.modes.delete(id); badge(mode.viewport, 'zoom', null); } }
     function geometryOf(v) {
       const instance = instanceOf(v);
       if (!instance || typeof window.kinPlanarGeometry !== 'function') return null;
@@ -737,6 +830,7 @@
       if (entry && (v !== entry.viewport || stackKey(v) !== entry.stack)) { show.wl.delete(id); badge(entry.viewport, 'wl', null); }
       const mode = show.modes.get(id);
       if (mode && v !== mode.viewport) { show.modes.delete(id); badge(mode.viewport, 'zoom', null); }
+      quadrantImage(id);
       if (show.edge) drawEdges();
     }
 
@@ -805,7 +899,7 @@
 
     // ── Events ──
     const listen = (type, fn) => { if (type) document.addEventListener(type, fn, { capture: true, signal }); };
-    listen(events.CAMERA_MODIFIED, event => { cameraChanged(event); if (show.edge) drawEdges(); });
+    listen(events.CAMERA_MODIFIED, event => { cameraChanged(event); if (event.detail?.viewportId) quadrantCamera(event.detail.viewportId); if (show.edge) drawEdges(); });
     listen(events.VOI_MODIFIED, event => { voiChanged(event); });
     listen(events.STACK_NEW_IMAGE, event => { tomoImage(event); const id = event.detail?.viewportId; if (id) cellImage(id); });
     window.addEventListener('resize', screenChanged, { signal });
@@ -839,7 +933,7 @@
       ended = true;
       if (carry.listener === listener) carry.listener = null;
       try { stopTabs?.(); } catch (_) {}
-      stopPlay(); restoreSlab(); wlOff();
+      stopPlay(); restoreSlab(); wlOff(); endQuadrant();
       abort.abort(); dprQuery?.removeEventListener?.('change', onDpr);
       for (const timer of timers) clearInterval(timer);
       if (cameraFrame) cancelAnimationFrame(cameraFrame);

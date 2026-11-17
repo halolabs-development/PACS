@@ -62,18 +62,31 @@
    * report target and put the caret in Findings. The study must be a row of this list, the login the viewer's, and no
    * dialog open. The move is the page's own select(uid) - its study-move gate saves or refuses the text it holds - and
    * only its result is reported: ok only when that result is same, clear or saved and the target is that study now.
-   * Nothing is saved, written or relayed here. eader supplies the live page state; the reply is a Promise. */
+   * Nothing is saved, written or relayed here. eader supplies the live page state; the reply is a Promise.
+   * Every answer but busy also says where the report target is as it is sent (`at`, see targetIs): a refusal can come after
+   * the move (a dialog opened, the field cannot be used), and the viewer judges by where the target is, not by the refusal. */
   const OPEN_STATUS = { composing: 'composing', refused: 'saving', unknown: 'saving', conflict: 'saving', owner: 'saving',
     stale: 'stale', stayed: 'stale', unresolved: 'unresolved', gone: 'gone' };
-  async function editorOpen(message, reader) {
-    let m;
+  // Whether the report target is this study for this login and exam scope now: true, false, or null when it cannot be read.
+  function targetIs(m, reader) {
+    try { return reader.owner() === m.owner && reader.target() === m.uid && reader.examStamp?.(m.uid) === m.examStamp; }
+    catch (_) { return null; }
+  }
+  const where = value => typeof value === 'boolean' ? { at: value } : {};
+  function openMessage(message, type) {
     try {
-      m = message;
-      if (!m || typeof m !== 'object' || m.type !== 'kin-editor-open' || !uuid(m.request) || typeof m.owner !== 'string' || !m.owner ||
+      const m = message;
+      if (!m || typeof m !== 'object' || m.type !== type || !uuid(m.request) || typeof m.owner !== 'string' || !m.owner ||
           typeof m.uid !== 'string' || m.uid.length > 64 || !/^\d+(?:\.\d+)+$/.test(m.uid)) return null;
-      m = { request: m.request, owner: m.owner, uid: m.uid, examStamp:m.examStamp };
+      return { request: m.request, owner: m.owner, uid: m.uid, examStamp: m.examStamp };
     } catch (_) { return null; }
-    const reply = (result, reason = null) => ({ type: 'kin-editor-opened', request: m.request, owner: m.owner, uid: m.uid, result, reason });
+  }
+  async function editorOpen(message, reader) {
+    const m = openMessage(message, 'kin-editor-open');
+    if (!m) return null;
+    // A busy page has another opening under way, which can still move the target: where it is now is not told.
+    const reply = (result, reason = null) => ({ type: 'kin-editor-opened', request: m.request, owner: m.owner, uid: m.uid, result, reason,
+      ...(reason === 'busy' ? {} : where(targetIs(m, reader))) });
     try {
       if (reader.owner() !== m.owner) return reply('refused', 'session');
       if (reader.busy?.()) return reply('refused', 'busy');
@@ -96,6 +109,17 @@
       reader.focus();
       return reply('ok');
     } catch (_) { return reply('refused', 'unavailable'); }
+  }
+  /* The reading screen's answer to a viewer that stopped waiting for its opening (kin-editor-open-cancel): the page has
+   * already dropped that opening's move if it had not happened (reading-workspace.js), so where the report target is now is
+   * that request's outcome (`at`). While another opening is still under way (`reader.settled(request)` false) the target can
+   * still move, and the answer carries no `at`. No answer for another login or a malformed message. */
+  function editorWithdrawn(message, reader) {
+    const m = openMessage(message, 'kin-editor-open-cancel');
+    if (!m) return null;
+    try { if (reader.owner() !== m.owner) return null; } catch (_) { return null; }
+    let settled = false; try { settled = reader.settled?.(m.request) === true; } catch (_) { settled = false; }
+    return { type: 'kin-editor-open-withdrawn', request: m.request, owner: m.owner, uid: m.uid, ...(settled ? where(targetIs(m, reader)) : {}) };
   }
   function create({ storage, owner, newId, origin, describe, changed = () => {}, placed = () => {} }) {
     const work=root.KinWorkContext;
@@ -188,8 +212,87 @@
       url.hash = hash.toString();
       return url.pathname + url.search + url.hash;
     }
+    // ── Monitors in Hanging Protocol: the worklist on the monitor an applied rule names (Worklist: Show) ──
+    // The worklist window is this document's own window, or the worklist window it opened on a monitor while that one is
+    // open (a browser moves a window a page opened, or a popup or app window itself, never a tab). One gate, placeWorklist:
+    // already there -> 'here'; moved there and measured there -> 'moved'; otherwise a bar on this screen offers to open
+    // the worklist window on that monitor -> 'offered'. Nothing is navigated or reloaded: a worklist window already open
+    // keeps what is typed in it.
+    let listWindow = null, bar = null;
+    const liveListWindow = () => { try { return listWindow && !listWindow.closed && listWindow !== root ? listWindow : null; } catch (_) { return null; } };
+    const outer = w => { try { return geometry({ left: w.screenX, top: w.screenY, width: w.outerWidth, height: w.outerHeight }); } catch (_) { return null; } };
+    function worklistRect() { return outer(liveListWindow() || root); }
+    const onDisplay = (rect, display) => !!rect && !!display && rect.left + rect.width / 2 >= display.left && rect.left + rect.width / 2 < display.left + display.width &&
+      rect.top + rect.height / 2 >= display.top && rect.top + rect.height / 2 < display.top + display.height;
+    const pause = ms => new Promise(resolve => root.setTimeout(resolve, ms));
+    async function moveWindow(w, display) {
+      try { w.moveTo(display.left, display.top); w.resizeTo(display.width, display.height); w.moveTo(display.left, display.top); } catch (_) { return false; }
+      for (let tries = 0; tries < 15; tries++) { if (onDisplay(outer(w), display)) return true; await pause(100); }
+      return onDisplay(outer(w), display);
+    }
+    function hideBar() { bar?.remove(); bar = null; }
+    function showBar(monitor, display) {
+      const doc = root.document;
+      if (!doc?.body) return false;
+      hideBar();
+      bar = doc.createElement('div'); bar.id = 'kin-worklist-monitor-bar'; bar.setAttribute('role', 'status');
+      bar.style.cssText = 'position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:2147483000;max-width:min(720px,94vw);display:flex;gap:8px;align-items:center;padding:8px 12px;border:1px solid #8ab4c8;border-radius:6px;background:#10202a;color:#e8f1f5;font:13px system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.45)';
+      const text = doc.createElement('span'), open = doc.createElement('button'), close = doc.createElement('button'), note = doc.createElement('span');
+      text.textContent = '이 Hanging Protocol은 목록 창을 Monitor ' + (monitor + 1) + '에 둡니다. 이 목록은 브라우저 탭이라 브라우저가 옮기지 않습니다.';
+      open.type = 'button'; open.textContent = 'Open Worklist on Monitor ' + (monitor + 1);
+      open.style.cssText = 'padding:4px 10px;border:1px solid #8ab4c8;border-radius:4px;background:#8ab4c8;color:#0b1820;font-weight:600;cursor:pointer';
+      close.type = 'button'; close.textContent = '×'; close.setAttribute('aria-label', 'Close');
+      close.style.cssText = 'padding:2px 8px;border:1px solid #657c9f;border-radius:4px;background:transparent;color:inherit;cursor:pointer';
+      open.addEventListener('click', () => { openOn(display, monitor, note); });
+      close.addEventListener('click', hideBar);
+      bar.append(text, open, close, note);
+      doc.body.append(bar);
+      return true;
+    }
+    // The reader's own click: the worklist window opens (or, already open, comes) on that monitor. A window that opens
+    // blank gets this worklist's address; one that already shows a worklist is only moved.
+    function openOn(display, monitor, note) {
+      if (!current() || !state) return;
+      let w = liveListWindow();
+      if (!w) {
+        const features = 'popup=yes,resizable=yes,scrollbars=yes,left=' + Math.round(display.left) + ',top=' + Math.round(display.top) +
+          ',width=' + Math.round(display.width) + ',height=' + Math.round(display.height);
+        try { w = root.open('', 'kin-worklist-window-' + state.id, features); } catch (_) { w = null; }
+        if (!w) { note.textContent = '브라우저가 목록 창을 열지 않았습니다. 팝업 차단을 확인하세요.'; return; }
+        if (w === root) { hideBar(); return; }
+        let blank = false;
+        try { blank = w.location.href === 'about:blank'; } catch (_) { blank = false; }
+        if (blank) { try { w.location.replace(root.location.pathname + root.location.search); } catch (_) {} }
+        listWindow = w;
+      }
+      try { w.focus(); } catch (_) {}
+      const shown = bar;
+      moveWindow(w, display).then(arrived => {
+        // A later request may have put up its own bar meanwhile: only this bar is this click's.
+        if (bar !== shown) return;
+        if (arrived) { hideBar(); return; }
+        note.textContent = '목록 창을 열었지만 Monitor ' + (monitor + 1) + '에 두지 못했습니다. 창을 직접 옮기거나 Viewer Windows › Detect Displays로 창 관리 권한을 허용하세요.';
+      });
+    }
+    // Only the latest request decides (from whichever viewer, in the order they arrive): a new one takes down the bar an
+    // earlier one offered at once, and an earlier one still measuring a move ends as 'superseded' and offers nothing.
+    let placing = 0;
+    async function placeWorklist(m) {
+      const mine = ++placing, latest = () => mine === placing;
+      hideBar();
+      if (m.clear === true) return 'cleared';
+      const display = geometry(m.rect);
+      if (!display || !Number.isInteger(m.monitor) || m.monitor < 0 || m.monitor > 3) return 'invalid';
+      const w = liveListWindow() || root;
+      if (onDisplay(outer(w), display)) return 'here';
+      const moved = await moveWindow(w, display);
+      if (!latest()) return 'superseded';
+      if (moved) return 'moved';
+      if (!current()) return 'invalid';
+      return showBar(m.monitor, display) ? 'offered' : 'invalid';
+    }
     function refresh() { prune(); try { channel?.postMessage({ type: 'discover', owner: bound }); } catch (_) {} }
-    function end() { ended = true; channel?.close(); entries.forEach(entry => { entry.popup = null; entry.href = null; entry.pending = null; entry.document = null; }); }
+    function end() { ended = true; hideBar(); channel?.close(); entries.forEach(entry => { entry.popup = null; entry.href = null; entry.pending = null; entry.document = null; }); }
     function subscribe(){
     channel?.close();
     if (state && !error && typeof root.BroadcastChannel === 'function') {
@@ -215,19 +318,28 @@
           Promise.resolve(pending).then(answer => { if (answer && asked === channel && current()) asked.postMessage(answer); }, () => {});
           return;
         }
-        // The same viewer stopped waiting for that opening: the reading screen drops the move if it is still waiting.
+        // The same viewer stopped waiting for that opening: the reading screen drops the move if it is still waiting and
+        // answers where its report target is now (editorWithdrawn).
         if (m?.type === 'kin-editor-open-cancel') {
           if (!current() || !documentLink || m.list !== documentLink) return;
-          try { root.kinReadingEditorCancel?.(m); } catch (_) {}
+          let answer = null; try { answer = root.kinReadingEditorCancel?.(m) ?? null; } catch (_) { answer = null; }
+          if (answer) channel.postMessage(answer);
           return;
         }
-        // A viewer this list document linked asks where the list window stands (Monitors in Hanging Protocol: the worklist
-        // monitor). Only this document answers, with its outer geometry now; it never moves.
+        // A viewer this list document linked asks where the worklist window stands (Monitors in Hanging Protocol: the
+        // worklist monitor). Only this document answers, with the worklist window's outer geometry now (worklistRect).
         if (m?.type === 'where') {
           if (!current() || !documentLink || m.list !== documentLink || m.owner !== bound || !uuid(m.request)) return;
-          let rect = null;
-          try { rect = geometry({ left: root.screenX, top: root.screenY, width: root.outerWidth, height: root.outerHeight }); } catch (_) { rect = null; }
-          channel.postMessage({ type: 'here', owner: bound, list: documentLink, request: m.request, rect });
+          channel.postMessage({ type: 'here', owner: bound, list: documentLink, request: m.request, rect: worklistRect() });
+          return;
+        }
+        // The same viewer asks for the worklist on the monitor its applied rule names (or, with clear, takes that back).
+        // The answer waits for the measured result of placeWorklist; it is sent only while this list and channel are asked.
+        if (m?.type === 'place') {
+          if (!current() || !documentLink || m.list !== documentLink || m.owner !== bound || !uuid(m.request)) return;
+          const asked = channel;
+          placeWorklist(m).then(result => { if (asked === channel && current()) asked.postMessage({ type: 'placed', owner: bound, list: documentLink,
+            request: m.request, result, rect: worklistRect() }); }, () => {});
           return;
         }
         if (!current() || m?.type !== 'present' || m.owner !== bound || !Number.isInteger(m.index) ||
@@ -270,6 +382,27 @@
       });
     }
     root.kinViewerListPlace = listPlace;
+    // Asks the list document that linked this window to put the worklist on a display ({ monitor, rect }: its index and
+    // available rectangle) or, with null, to take back what it offered. Resolves its answer ('here' | 'moved' | 'offered'
+    // | 'cleared' | 'invalid') with where the worklist window stands then, or null when it does not answer within 4 s.
+    function listPlaceOn(target) {
+      return new Promise(resolve => {
+        const asked = channel, list = listLink;
+        if (!asked || !list || !identity()) { resolve(null); return; }
+        let request; try { request = root.crypto.randomUUID(); } catch (_) { resolve(null); return; }
+        const done = value => { clearTimeout(timer); asked.removeEventListener('message', hear); resolve(value); };
+        const hear = e => {
+          const m = e.data;
+          if (m?.type === 'placed' && m.request === request && m.owner === bound && m.list === list && identity() && typeof m.result === 'string')
+            done({ result: m.result, rect: geometry(m.rect) });
+        };
+        const timer = setTimeout(() => done(null), 4000);
+        asked.addEventListener('message', hear);
+        const message = target ? { type: 'place', owner: bound, list, request, monitor: target.monitor, rect: target.rect } : { type: 'place', owner: bound, list, request, clear: true };
+        try { asked.postMessage(message); } catch (_) { done(null); }
+      });
+    }
+    root.kinViewerListPlaceOn = listPlaceOn;
     // The first geometry this document sees can be a fallback its list has not
     // placed yet, or one kept after a failed placement; it never replaces the
     // saved place. Any later change is the reader's move (or the placement).
@@ -309,9 +442,9 @@
     function listen(){root.removeEventListener('hashchange',changed);root.removeEventListener('kin-window-link-changed',changed);const at=work.capture('document');changed=()=>work.commit(at,bind);root.addEventListener('hashchange',changed);root.addEventListener('kin-window-link-changed',changed);bind();}
     work.onInvalidate(event=>{if(event.reason==='cancel'||event.reason==='lifecycle'&&event.state==='active')listen();else if(event.reason==='lifecycle'&&event.state!=='preparing'){ended=true;channel?.close();clearInterval(poll);}});
     listen();
-    return { dispose() { ended = true; if (root.kinViewerWindowOwner === identity) root.kinViewerWindowOwner = () => null; if (root.kinViewerListPlace === listPlace) root.kinViewerListPlace = () => Promise.resolve(null); channel?.close(); clearInterval(poll); root.removeEventListener('hashchange', changed); root.removeEventListener('kin-window-link-changed', changed); } };
+    return { dispose() { ended = true; if (root.kinViewerWindowOwner === identity) root.kinViewerWindowOwner = () => null; if (root.kinViewerListPlace === listPlace) root.kinViewerListPlace = () => Promise.resolve(null); if (root.kinViewerListPlaceOn === listPlaceOn) root.kinViewerListPlaceOn = () => Promise.resolve(null); channel?.close(); clearInterval(poll); root.removeEventListener('hashchange', changed); root.removeEventListener('kin-window-link-changed', changed); } };
   }
-  const api = { normalize, scope, create, connect, editorReply, editorOpen };
+  const api = { normalize, scope, create, connect, editorReply, editorOpen, editorWithdrawn };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.KinViewerWindows = api;
 })(globalThis);

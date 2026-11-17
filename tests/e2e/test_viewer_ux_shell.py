@@ -447,6 +447,9 @@ class ViewerUXShellE2E(ViewerLayoutE2E):
             key: value for key, value in actual['shortcuts'].items() if key not in saved['shortcuts']}})
         # The native preferences entry remains reachable through the real header.
         page.locator('.bg-secondary-dark.z-20:has(#kin-viewer-brand) button[aria-haspopup="menu"]').click()
+        # The gear menu is drawn outside the header (a portal): its About (the upstream version window) is gone there too.
+        expect(page.get_by_role('menuitem', name='Preferences')).to_be_visible()
+        expect(page.get_by_role('menuitem', name='About')).to_have_count(0)
         page.get_by_role('menu').get_by_text('Preferences', exact=True).click()
         expect(page.get_by_text('User Preferences', exact=True)).to_be_visible()
         folder = Path(os.environ.get('KIN_EVIDENCE_DIR', 'tmp/viewer-ux-u2/screens')); folder.mkdir(parents=True, exist_ok=True)

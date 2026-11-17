@@ -33,6 +33,8 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
 .kin-ux-feature-panel table.kin-display-table td,.kin-ux-feature-panel table.kin-display-table th{padding:2px 6px;text-align:left}
 .kin-display-row{display:flex;flex-wrap:wrap;align-items:center;gap:.4em;margin:6px 0}
 .kin-display-note{color:var(--kin-ux-secondary);margin:0 0 6px;max-width:34em}
+.kin-display-dictionary{display:flex;flex-direction:column;gap:4px;margin:6px 0;max-width:36em}
+.kin-display-dictionary select{width:100%;font:12px/1.4 sans-serif}
 [data-kin-display] [data-cy="viewport-overlay-bottom-left"]>div:nth-child(2){display:none!important}
 [data-kin-display-wl="off"] [data-cy="viewport-overlay-bottom-left"]>div:first-child{display:none!important}
 [data-kin-display-dicom="off"] [data-cy="viewport-overlay-top-left"],[data-kin-display-dicom="off"] [data-cy="viewport-overlay-top-right"],
@@ -66,7 +68,8 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
   // ── Cells ──
   const events = window.cornerstone?.Enums?.Events || {};
   const cellIds = () => { try { return [...grid.getState().viewports.keys()]; } catch (_) { return []; } };
-  const viewportOf = id => { try { const v = cells.getCornerstoneViewport(id); return v?.type === 'stack' && v.element?.isConnected ? v : null; } catch (_) { return null; } };
+  const cellOf = id => { try { const v = cells.getCornerstoneViewport(id); return v?.element?.isConnected ? v : null; } catch (_) { return null; } };
+  const viewportOf = id => { const v = cellOf(id); return v?.type === 'stack' ? v : null; };
   const stacks = () => cellIds().map(viewportOf).filter(Boolean);
   const imageId = v => { try { return v.getCurrentImageId?.() || null; } catch (_) { return null; } };
   const instanceOf = v => { const id = imageId(v); try { return id ? window.cornerstone.metaData.get('instance', id) || null : null; } catch (_) { return null; } };
@@ -74,7 +77,8 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
   const keyOf = v => { try { return v.id + '|' + (grid.getState().viewports.get(v.id)?.displaySetInstanceUIDs?.[0] || ''); } catch (_) { return v.id + '|'; } };
   const frameOf = (v, instance) => Number(instance?.NumberOfFrames) > 1 ? (v.getCurrentImageIdIndex?.() ?? 0) + 1 : 1;
   const zoomOf = v => { try { return v.getZoom(); } catch (_) { return null; } };
-  const activeStack = () => viewportOf(grid.getActiveViewportId?.()) || null;
+  const activeId = () => { try { return grid.getActiveViewportId?.() ?? null; } catch (_) { return null; } };
+  const activeStack = () => viewportOf(activeId()) || null;
   // The cell an action is for (the one it was started in); no other cell stands in for it.
   const need = viewportId => {
     const v = viewportOf(viewportId);
@@ -109,6 +113,23 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
     return undefined;
   }
 
+  // The DICOM dictionary (dicom-dictionary.js), loaded once: when the Corner Information window opens, or when a saved
+  // corner item needs it to be read. The loader reports a failure; the window tries again each time it opens, the cell
+  // drawing does not (it would try again on every frame). Resolves whether the dictionary is there.
+  let dictionaryLoad = null, dictionaryFailed = false;
+  function loadDictionary(fromWindow) {
+    if (model.dictionarySize()) return Promise.resolve(true);
+    if (dictionaryFailed && !fromWindow) return Promise.resolve(false);
+    if (!dictionaryLoad) {
+      dictionaryFailed = false;
+      dictionaryLoad = ui.load('dicom-dictionary.js').then(() => model.useDictionary(window.KinDicomDictionary) > 0, () => false).then(ready => {
+        if (!ready) { dictionaryFailed = true; dictionaryLoad = null; } else if (!ended) refresh();
+        return ready;
+      });
+    }
+    return dictionaryLoad;
+  }
+
   // The cell layer of this module: text, badges, ruler and border over the image (beside, not inside, OHIF's overlay).
   const layers = new Map();
   function layerOf(v) {
@@ -130,9 +151,18 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
   // ── Drawing (coalesced to one frame) ──
   let queued = false;
   const refresh = () => { if (!queued && !ended) { queued = true; requestAnimationFrame(() => { queued = false; if (!ended) draw(); }); } };
+  // The selected cell the cells were last drawn for (the border on the selected cell only follows it).
+  let drawnActive;
   function draw() {
     const live = new Set();
-    for (const v of stacks()) { live.add(v.id); drawCell(v); }
+    drawnActive = activeId();
+    for (const id of cellIds()) {
+      const v = viewportOf(id);
+      if (v) { live.add(v.id); drawCell(v); continue; }
+      // A cell that is not a stack (MPR, 3D) keeps its own display: only the Cell Border is drawn on it.
+      const other = cellOf(id);
+      if (other && model.borderOn(state.overlay, other.id, drawnActive)) { live.add(other.id); drawBorderOnly(other); }
+    }
     for (const [id, entry] of layers) if (!live.has(id)) { clearPane(entry.pane); entry.node.remove(); layers.delete(id); }
     for (const fn of painters.values()) try { fn(); } catch (error) { console.error(error); }
   }
@@ -161,7 +191,9 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
     // Corner Information: the chosen items where the usual corner text is.
     if (corners) {
       const place = { TL: '[data-cy="viewport-overlay-top-left"]', TR: '[data-cy="viewport-overlay-top-right"]', BR: '[data-cy="viewport-overlay-bottom-right"]' };
-      const raw = model.needsRaw(model.CORNERS.flatMap(corner => corners[corner])) ? rawOf(instance) : null;
+      const fields = model.CORNERS.flatMap(corner => corners[corner]);
+      if (model.needsDictionary(fields, instance)) loadDictionary(false);
+      const raw = model.needsRaw(fields, instance) ? rawOf(instance) : null;
       for (const corner of model.CORNERS) {
         const lines = corners[corner].filter(Boolean).map(field => model.line(field, instance, raw));
         if (!lines.length) { drop(entry, 'corner' + corner); continue; }
@@ -176,11 +208,21 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
       }
     } else for (const corner of model.CORNERS) drop(entry, 'corner' + corner);
     drawRuler(v, entry, instance);
-    if (overlay.border) {
-      const node = part(entry, 'border', 'kin-display-border');
-      node.style.border = overlay.width + 'px solid ' + overlay.colour;
-    } else drop(entry, 'border');
+    drawBorder(v, entry);
     drawBadges(v, entry);
+  }
+  // Cell Border: on every cell, or on the selected cell only (model.borderOn), in the chosen colour and width.
+  function drawBorder(v, entry) {
+    const overlay = state.overlay;
+    if (!model.borderOn(overlay, v.id, drawnActive)) { drop(entry, 'border'); return; }
+    const node = part(entry, 'border', 'kin-display-border');
+    node.style.border = overlay.width + 'px solid ' + overlay.colour;
+  }
+  function drawBorderOnly(v) {
+    const entry = layerOf(v); if (!entry) return;
+    clearPane(entry.pane);
+    for (const name of Object.keys(entry.parts)) if (name !== 'border') drop(entry, name);
+    drawBorder(v, entry);
   }
   // A 5 cm bar in the image's own scale; none where the image has no usable pixel spacing.
   function rulerOf(v, instance) {
@@ -364,7 +406,8 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
   on(events.CAMERA_RESET, cameraReset);
   on(events.CAMERA_MODIFIED, refresh);
   on(events.VOI_MODIFIED, voiChanged);
-  on(events.IMAGE_RENDERED, () => { if (!layers.size) refresh(); });
+  // Also a safety net for a selection change the grid did not announce (a layout restored with its own selected cell).
+  on(events.IMAGE_RENDERED, () => { if (!layers.size || activeId() !== drawnActive) refresh(); });
 
   // ── Cell lifetime for windows opened from Viewer Settings (the menu gives its own runs the same lifetime) ──
   // Each cell has a generation that only grows: it moves on when the cell is given other images (the grid names the
@@ -407,6 +450,12 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
     if (!name || typeof service?.subscribe !== 'function') continue;
     try { subscriptions.push(service.subscribe(name, event => { if (ended) return; moved(ids(event)); refresh(); })); } catch (error) { console.error(error); }
   }
+  // Another cell selected or another layout: a border on the selected cell only moves with it. Only drawn again here:
+  // the cells keep their images, so windows bound to a cell stay open.
+  for (const name of [grid?.EVENTS?.ACTIVE_VIEWPORT_ID_CHANGED, grid?.EVENTS?.LAYOUT_CHANGED]) {
+    if (!name || typeof grid?.subscribe !== 'function') continue;
+    try { subscriptions.push(grid.subscribe(name, () => { if (!ended) refresh(); })); } catch (error) { console.error(error); }
+  }
   addEventListener('resize', refresh, { signal });
   const examineAll = () => { for (const v of stacks()) if (imageId(v)) examine(v); };
 
@@ -439,7 +488,7 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
   const savedText = ok => ok ? (store.writable() ? 'Saved to your account.' : 'Applied in this window (not saved to your account).') : 'Not saved to your account. The reason is shown beside Viewer Settings.';
 
   function openOverlay() {
-    const handle = panel('overlay-items', 'Overlay Items', 'Turn individual image overlays on or off. Changes appear on the image immediately.');
+    const handle = panel('overlay-items', 'Overlay Items', 'Turn individual image overlays on or off. Changes appear on the image immediately. With Selected Cell Only, the Cell Border marks the selected cell alone.');
     if (!handle) return;
     const body = handle.body, line = status(body);
     const change = (key, value) => {
@@ -453,7 +502,7 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
       });
     };
     const inputs = {};
-    for (const [key, label] of [['wl', 'W/L Value'], ['zoom', 'Zoom'], ['ruler', 'Ruler'], ['dicom', 'DICOM Information'], ['border', 'Cell Border']])
+    for (const [key, label] of [['wl', 'W/L Value'], ['zoom', 'Zoom'], ['ruler', 'Ruler'], ['dicom', 'DICOM Information'], ['border', 'Cell Border'], ['selected', 'Selected Cell Only']])
       inputs[key] = checkbox(label, state.overlay[key], body, value => change(key, value));
     const colourRow = element('label', 'Border Colour ', body, 'kin-display-row'), colour = element('input', '', colourRow);
     colour.type = 'color'; colour.value = state.overlay.colour.toLowerCase(); colour.setAttribute('aria-label', 'Border Colour');
@@ -465,6 +514,9 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
     const note = element('p', '', body, 'kin-display-note');
     paints('overlay-items', handle, () => {
       for (const [key, input] of Object.entries(inputs)) input.checked = state.overlay[key];
+      // Values from another window or a reload show here too, except in the control being changed.
+      if (document.activeElement !== colour) colour.value = state.overlay.colour.toLowerCase();
+      if (document.activeElement !== width) width.value = String(state.overlay.width);
       const v = activeStack(); const ruler = state.overlay.ruler && v ? rulerOf(v, instanceOf(v)) : null;
       note.textContent = ruler?.text || '';
     });
@@ -475,7 +527,7 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
     const v = viewportId ? viewportOf(viewportId) : activeStack();
     let modality = v && instanceOf(v)?.Modality;
     if (!model.modality(modality)) modality = 'CT';
-    const handle = panel('corner-information', 'Corner Information', 'Choose DICOM items for the four image corners for each modality. Enter a DICOM keyword or tag number in Other Tag for items not listed. Apply to Image saves the choice and shows it on images of that modality.');
+    const handle = panel('corner-information', 'Corner Information', 'Choose DICOM items for the four image corners for each modality. For an item not listed, find it in the DICOM Dictionary or enter a DICOM keyword or tag number in Other Tag, then Use in Selected Line. Apply to Image saves the choice and shows it on images of that modality.');
     if (!handle) return;
     const body = handle.body;
     const modalities = [...new Set([modality, ...Object.keys(state.corners), 'CT', 'MR', 'CR', 'DX', 'MG', 'US', 'XA'])];
@@ -506,17 +558,44 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
     }
     pick.onchange = () => { modality = pick.value; working = null; focused = null; paint(); };
     paint();
+    // DICOM Dictionary: any item of PS3.6, found by keyword, name or tag number. Choosing one puts its keyword in
+    // Other Tag; Use in Selected Line (or a double-click or Enter on the item) sets it in the line last chosen.
+    const dictionaryBox = element('div', '', body, 'kin-display-dictionary');
+    const searchLabel = element('label', 'DICOM Dictionary ', dictionaryBox), search = element('input', '', searchLabel);
+    search.type = 'search'; search.placeholder = 'Keyword, name or tag number'; search.setAttribute('aria-label', 'Search DICOM Dictionary'); search.disabled = true;
+    const list = element('select', '', dictionaryBox);
+    list.size = 8; list.setAttribute('aria-label', 'DICOM Dictionary'); list.setAttribute('translate', 'no'); list.disabled = true;
+    const found = element('p', 'Loading the DICOM dictionary…', dictionaryBox, 'kin-display-note');
+    found.setAttribute('aria-live', 'polite');
     const otherRow = element('div', '', body, 'kin-display-row');
     const otherLabel = element('label', 'Other Tag ', otherRow), other = element('input', '', otherLabel);
-    other.placeholder = '(0018,0050)'; other.size = 14; other.setAttribute('aria-label', 'Other Tag');
+    other.placeholder = '(0018,0050)'; other.size = 14; other.setAttribute('aria-label', 'Other Tag'); other.setAttribute('translate', 'no');
     const line = status(body);
-    button('Use in Selected Line', otherRow, () => {
+    // The one way an item goes into a line, from Other Tag, the button or the dictionary.
+    function useItem() {
       const field = model.field(other.value);
       if (!field) { line.textContent = 'Enter a DICOM keyword (SliceThickness) or a tag number (0018,0050).'; return; }
       const select = focused?.isConnected ? focused : table.querySelector('select');
       working[select.dataset.corner][Number(select.dataset.line)] = field;
       const keep = select.getAttribute('aria-label'); paint(); focused = table.querySelector('select[aria-label="' + keep + '"]');
       other.value = ''; line.textContent = field + ' is set in ' + keep + '. Apply to Image to use it.';
+    }
+    button('Use in Selected Line', otherRow, useItem);
+    const fill = () => {
+      const items = model.searchDictionary(search.value), total = model.dictionarySize();
+      list.replaceChildren(...items.map(entry => { const option = document.createElement('option'); option.value = entry.keyword; option.textContent = entry.label; option.title = entry.keyword; return option; }));
+      found.textContent = !items.length ? 'No dictionary item matches.'
+        : items.length === total ? total.toLocaleString('en-US') + ' dictionary items.' : items.length.toLocaleString('en-US') + ' of ' + total.toLocaleString('en-US') + ' dictionary items match.';
+    };
+    search.oninput = fill;
+    list.onchange = () => { if (list.value) other.value = list.value; };
+    list.ondblclick = () => { if (list.value) { other.value = list.value; useItem(); } };
+    list.onkeydown = event => { if (event.key === 'Enter' && list.value) { event.preventDefault(); other.value = list.value; useItem(); } };
+    loadDictionary(true).then(ready => {
+      // A window opened again since has its own list.
+      if (ended || !list.isConnected) return;
+      if (!ready) { found.textContent = 'The DICOM dictionary could not be loaded. Enter a keyword or tag number in Other Tag.'; return; }
+      search.disabled = false; list.disabled = false; fill();
     });
     const actions = element('div', '', body, 'kin-display-row');
     button('Apply to Image', actions, async () => {

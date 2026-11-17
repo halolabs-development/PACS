@@ -209,6 +209,8 @@ window.KinViewerFeatures?.module('measure-lines', ({ ui }) => {
   cleanups.push(F.overlay({ wants: imageId => !!model && volumeLines(imageId).length > 0, draw({ root, imageId, fromWorld, look }) {
     for (const line of volumeLines(imageId)) {
       const g = F.svg('g', root); g.dataset.kinVolumeLength = line.letter;
+      // A length of a Volume still being made is an editing aid (left out of an exported image, viewer-export.js).
+      if (line.pending) g.dataset.kinPending = '';
       const editable = !line.pending && !line.saved && !F.locked(line.a);
       let color = line.pending || editable ? look.color : look.locked, letter = line.letter;
       if (line.saved) {

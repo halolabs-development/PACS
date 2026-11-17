@@ -33,7 +33,6 @@
   }
   // Report window panels the reader hid in Panel Settings (Minhoon 2026-10-27 item 9). Sparse like studyPanel: a
   // record without the field shows every panel, so records written before it need no migration.
-  // imageReport is reserved for saved-layout compatibility; it is never rendered before the drawing feature exists.
   const PANELS = Object.freeze(['thumbnail', 'aiReport', 'imageReport', 'clinical', 'template']);
   function normalizeHidden(value) {
     if (!Array.isArray(value) || new Set(value).size !== value.length || value.some(k => !PANELS.includes(k))) return null;
@@ -167,8 +166,10 @@
   // gives its width only to the others, in proportion. AI Report remains a placeholder tab: it owns no
   // column, and with Thumbnail hidden they are a full-width strip above the content row. Two separate width authorities
   // (a fixed flex share against the mode's inline 66%) let a placeholder toggle shrink Technician's Clinical (WS-05).
+  // Image Report (the drawings attached to the report, and the way into the drawing window) is a Radiology column right
+  // of Thumbnail, in the order of the item-9 list. Drawing is the radiologist's work, so Technician has no such column.
   const MODE_PANELS = Object.freeze({
-    Radiology: Object.freeze([['thumbnail', 34], ['clinical', 30], ['template', 36]]),
+    Radiology: Object.freeze([['thumbnail', 34], ['imageReport', 30], ['clinical', 30], ['template', 36]]),
     Technician: Object.freeze([['thumbnail', 34], ['clinical', 66]]),
   });
   const PLACEHOLDERS = Object.freeze(['aiReport']);
@@ -184,7 +185,10 @@
     classes['kin-report-window-strip'] = strip;
     classes['kin-report-window-tabs'] = state === 'tabs';
     classes['kin-report-window-empty'] = state === 'empty';
-    return { content, tabs, strip, state, classes };
+    // Each shown content panel's grid column, so a panel left in the band keeps its own column while the Study Panel
+    // drawer holds the others.
+    const columns = Object.fromEntries(content.map((p, i) => [p.key, i + 1]));
+    return { content, tabs, strip, state, classes, columns };
   }
   const api = { PREFIX, PANELS, defaults, normalize, withReading, workspaceDefaults, toVersion3, withStudyPanel,
     withHiddenPanels, hiddenPanels, reportWindow, mergeLoaded, key, read, write, remove };
