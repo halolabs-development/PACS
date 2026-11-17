@@ -407,9 +407,12 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
     bind();
     return group.members.length;
   }
+  // A cell Display Set Presets is putting a rule on (viewer-features-view.js): its new order or image is the rule's, not a
+  // move for the group to follow, and the group does not move it meanwhile.
+  const ruled = id => { try { return !!window.KinViewerCellRules?.setting?.(id); } catch (_) { return false; } };
   function moved(event) {
     const id = event.detail?.viewportId, member = id && bound.get(id);
-    if (!member || !model) return;
+    if (!member || !model || ruled(id)) return;
     const v = stack(id);
     if (!v || shownSets(id)[0] !== member.set) { bind(); return; }
     const index = v.getCurrentImageIdIndex();
@@ -426,7 +429,7 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
       const other = stack(cell), follower = bound.get(cell);
       // Compared with where the stack is going, not only what it shows, so a quick move back also replaces a move
       // still on its way.
-      if (!other || !follower || shownSets(cell)[0] !== follower.set || (target(other) === value && other.getCurrentImageIdIndex() === value)) continue;
+      if (!other || !follower || ruled(cell) || shownSets(cell)[0] !== follower.set || (target(other) === value && other.getCurrentImageIdIndex() === value)) continue;
       follower.expected = value;
       jump(other, value).catch(() => { follower.expected = null; });
     }

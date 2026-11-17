@@ -1,8 +1,9 @@
 // S5-UI4: the viewer settings menu loses OHIF's About entry (its upstream version/link window) and the open-source
 // notice moves to one line at the bottom of the login page. The branding block of config/ohif.js is sliced out and run
 // against a small element model; the real OHIF bundle lives only in the container, so its DOM is not judged here.
-// S5-UI5: the upstream-name rule is limited to the gear dropdown of the logo header (VUI-08) and the menu's Preferences
-// entry shows as Viewer Settings (VUI-05); the toolbar names are tests/viewer_toolbar_labels_test.cjs.
+// S5-UI5: the upstream-name rule is limited to the gear dropdown of the logo header (VUI-08); the toolbar names are
+// tests/viewer_toolbar_labels_test.cjs. The menu's Preferences keeps its name: the toolbar's own Viewer Settings opens another
+// window. The served OHIF 3.9.1 draws the gear menu in a body portal (role=menu, aria-labelledby = the gear button): "portal:" tests.
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs'),vm=require('node:vm');
@@ -42,6 +43,8 @@ function world(){
   const events=new EventTarget();
   const doc={title:'',addEventListener:events.addEventListener.bind(events),removeEventListener:events.removeEventListener.bind(events),connected:e=>{for(let n=e;n;n=n.parentElement)if(n===body)return true;return false;},
     getElementById:id=>body.querySelectorAll('*').find(e=>e.getAttribute('id')===id)||null,
+    // Only the selector the branding block uses to find menus drawn in a portal.
+    querySelectorAll:sel=>{assert.equal(sel,'[role="menu"][aria-labelledby]');return body.querySelectorAll('*').filter(e=>e.getAttribute('role')==='menu'&&e.hasAttribute('aria-labelledby'));},
     notify(record){observers.forEach(o=>{if(o.on){pending.push([o,record]);queueMicrotask(()=>{const job=pending.shift();if(job&&job[0].on)job[0].cb([job[1]]);});}});}};
   body=new El(doc,'body');doc.body=body;
   // A record reaches the callback only as a real observer with these options would send it: its kind asked for (an attribute
@@ -103,7 +106,7 @@ test('mount: About leaves the settings menu, Preferences stays, and a late menu 
   const [about,prefs]=list.children;
   assert.ok(hidden(about),'mounted About row hidden, inert and out of the accessibility tree');
   assert.ok(untouched(prefs),'Preferences row untouched');
-  assert.equal(prefs.textContent,'settingsViewer Settings','S5-UI5 VUI-05: only its shown name changes');
+  assert.equal(prefs.textContent,'settingsPreferences','its name stays');
   assert.equal(about.parentElement,list,'the React-owned row stays in place so later reconciliation cannot throw');
   assert.equal(w.observers.size,1);
 
@@ -289,7 +292,7 @@ test('VUI-08: an About OHIF Viewer row keeps its title until its settings row ar
   await tick();
   assert.ok(hidden(about),'still read as About once Preferences joins the list');
   assert.equal(about.textContent,'settingsAbout OHIF Viewer');
-  assert.equal(list.children[1].textContent,'settingsViewer Settings');
+  assert.equal(list.children[1].textContent,'settingsPreferences');
   // A dropdown-like element added outside the logo header, then a header change that runs the whole header again.
   const late=w.el('div','',w.el('span','Powered by OHIF'),w.el('span','Preferences'));late.setAttribute('class','absolute right-0');
   w.body.append(late);
@@ -301,33 +304,84 @@ test('VUI-08: an About OHIF Viewer row keeps its title until its settings row ar
   w.unmount();
 });
 
-test('VUI-05: Preferences shows as Viewer Settings in the gear menu only; About stays hidden beside it',async()=>{
+test('Preferences keeps its name in the gear menu (the toolbar Viewer Settings is another window); About stays hidden beside it',async()=>{
   const w=world();
   const list=menu(w.el,'About','Preferences');
   const h=header(w.el,list);
-  const aside=w.el('aside','',w.el('button','Preferences'));
-  w.body.append(h,w.el('main','',aside));
+  w.body.append(h);
   w.mount();
   const [about,prefs]=list.children;
-  assert.equal(prefs.textContent,'settingsViewer Settings');
-  assert.ok(untouched(prefs)&&allUntouched(prefs),'the row keeps its place, focus and accessibility; only its text changed');
+  assert.equal(prefs.textContent,'settingsPreferences');
+  assert.ok(untouched(prefs)&&allUntouched(prefs));
   assert.ok(hidden(about));
-  assert.equal(aside.textContent,'Preferences','the same word outside the gear menu keeps the original');
-  // A row that turns into About next to the renamed settings row is still the settings menu's About.
+  // A row that turns into About next to the settings row is still the settings menu's About.
   const late=menu(w.el,'Help').children[0];
   list.append(late);
   await tick();
   assert.ok(untouched(late));
   late.children[1].setText('About');
   await tick();
-  assert.ok(hidden(late),'Viewer Settings is read as the settings row');
-  // The menu built again (the dropdown closes and opens): renamed once more, no doubled text.
+  assert.ok(hidden(late));
+  // The menu built again (the dropdown closes and opens): About hidden again.
   list.remove();
   const again=menu(w.el,'About','Preferences');
   h.dropdown.append(again);
   await tick();
-  assert.equal(again.children[1].textContent,'settingsViewer Settings');
+  assert.equal(again.children[1].textContent,'settingsPreferences');
   assert.ok(hidden(again.children[0]));
+  w.unmount();
+});
+
+// The served viewer (OHIF 3.9.1): the gear is a button inside the header dropdown; its menu is drawn in a body portal
+// ([data-radix-popper-content-wrapper]), outside the header, as role=menu with aria-labelledby = the gear button's id.
+function gear(el,h,id='radix-:r0:'){const b=el('button','⚙');b.setAttribute('id',id);h.dropdown.append(b);return b;}
+function portal(el,labelledby,...titles){
+  const m=menu(el,...titles);m.setAttribute('role','menu');if(labelledby)m.setAttribute('aria-labelledby',labelledby);
+  m.children.forEach(row=>row.setAttribute('role','menuitem'));
+  const wrapper=el('div','',m);wrapper.setAttribute('data-radix-popper-content-wrapper','');return {wrapper,menu:m};
+}
+test('portal: the gear menu drawn outside the header loses About when opened, again when reopened; Preferences stays',async()=>{
+  const w=world();
+  const h=header(w.el);w.body.append(h);gear(w.el,h);
+  w.mount();
+  const open=portal(w.el,'radix-:r0:','About','Preferences',);
+  open.menu.append(w.el('div','',w.el('span','OHIF Viewer')));
+  w.body.append(open.wrapper);
+  await tick();
+  const [about,prefs]=open.menu.children;
+  assert.ok(hidden(about),'About is hidden in the opened gear menu');
+  assert.ok(untouched(prefs));
+  assert.equal(prefs.textContent,'settingsPreferences');
+  assert.equal(open.menu.children[2].textContent,'HALO PACS Viewer','upstream wording in the gear menu is neutralized');
+  // Closed (the portal goes) and opened again (a new portal).
+  open.wrapper.remove();
+  const again=portal(w.el,'radix-:r0:','About','Preferences');
+  w.body.append(again.wrapper);
+  await tick();
+  assert.ok(hidden(again.menu.children[0]));
+  assert.ok(untouched(again.menu.children[1]));
+  w.unmount();
+});
+test('portal: a menu whose role or label arrives after it is drawn is still judged; other portal menus are left alone',async()=>{
+  const w=world();
+  const h=header(w.el);w.body.append(h);gear(w.el,h);
+  // The Layout button and the image's own menus also open portals, but their buttons are outside the gear dropdown.
+  const layout=w.el('button','Layout');layout.setAttribute('id','radix-:r1:');h.append(w.el('div','',layout));
+  const loose=w.el('button','x');loose.setAttribute('id','radix-:r2:');w.body.append(loose);
+  w.mount();
+  const late=portal(w.el,null,'About','Preferences');
+  w.body.append(late.wrapper);
+  await tick();
+  assert.ok(allUntouched(late.menu),'no label yet: not known to be the gear menu (fail open)');
+  late.menu.setAttribute('aria-labelledby','radix-:r0:');
+  await tick();
+  assert.ok(hidden(late.menu.children[0]),'judged once its label names the gear');
+  const others=[portal(w.el,'radix-:r1:','About','Preferences',),portal(w.el,'radix-:r2:','About','Preferences'),portal(w.el,'radix-:r9:','About','Preferences')];
+  others[0].menu.append(w.el('span','OHIF Viewer'));
+  for(const o of others)w.body.append(o.wrapper);
+  await tick();
+  for(const o of others)assert.ok(allUntouched(o.menu),'a menu not opened by the gear keeps its rows');
+  assert.equal(others[0].menu.children[2].textContent,'OHIF Viewer','and its words');
   w.unmount();
 });
 
