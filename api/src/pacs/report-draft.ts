@@ -20,6 +20,7 @@ import { nativeReportScope } from '../emr-report/native-snapshot';
 import { examScopeChanged, assertExamSource, resolveExamScope, prepareExamRead, examParentAccess, readableExamRecord, scopeIncludesSeries, ResolvedExamScope, ExamScopeRequest } from '../exam-merge.service';
 import type { PacsReportEvidence } from './report-evidence';
 import { relatedInsertInput, relatedInsertId, relatedEvidenceIds, relatedRequestHash, relatedProposalHash, relatedInsertionText,
+  relatedInsertTargets,
   relatedOwnReceipt, relatedSameBinding, relatedResult, relatedInsertInvalid, relatedInsertRefusal, relatedInsertIdReused }
   from '../report-related-insert';
 import type { RelatedInsertRefusal } from '../report-related-insert';
@@ -650,10 +651,14 @@ export class PacsReportDraft {
         // Keep valid older private bases; only the exact selected base is proof.
         if (seed.baseVersion > 0 && !await tx.reportVersion.findUnique({
           where: { uid_version: { uid, version: seed.baseVersion } }, select: { id: true } })) return refuse('SEED_CHANGED');
-        // 제안 = 고정 seed의 그 칸 끝에 서버가 그 판에서 다시 만든 글을 더한 것. 다른 칸·Recommendation·근거 목록은 그대로다.
-        if (relatedInsertionText(version, related.source.parts, seed[related.section]) !== related.text) throw relatedInsertInvalid('text');
-        if (related.offset !== seed[related.section].length) throw relatedInsertInvalid('offset');
-        const wanted = { ...seed, [related.section]: seed[related.section] + related.text };
+        // 제안 = 고정 seed의 그 칸(두 칸 Insert면 Findings와 Conclusion 각각) 끝에 서버가 그 판에서 다시 만든 글을 더한 것.
+        // 다른 칸·Recommendation·근거 목록은 그대로다. 두 칸은 이 한 쓰기에 함께 들어간다 — 한 칸만 남는 길이 없다.
+        const wanted = { ...seed };
+        for (const target of relatedInsertTargets(related)) {
+          if (relatedInsertionText(version, target.parts, seed[target.section]) !== target.text) throw relatedInsertInvalid(target.name);
+          if (target.offset !== seed[target.section].length) throw relatedInsertInvalid(target.name === 'text' ? 'offset' : 'also.offset');
+          wanted[target.section] = seed[target.section] + target.text;
+        }
         for (const field of ['findings', 'conclusion', 'recommendation', 'baseVersion'] as const)
           if (content[field] !== wanted[field]) throw relatedInsertInvalid(field);
         const kept = present ? envelope.snapshot : { citations: [], structured: [] };

@@ -534,7 +534,7 @@
      * W5 relatedInsert (D1423 R1; W5-API wire contract with Astra's corrections). One explicit Insert is one frozen request:
      * the whole proposal (three texts, baseVersion, both evidence id sets) with its owner and its original expectedRevision,
      * plus relatedInsert {intent, insertRequestId, source, targetUid, targetBaseVersion, section, position, offset, text,
-     * selectionSeq, contentRevision, sourceGeneration, seedKind}. A Retry resends that body as it is; a Discard resends it with
+     * [also: the second field of a whole-report Insert], selectionSeq, contentRevision, sourceGeneration, seedKind}. A Retry resends that body as it is; a Discard resends it with
      * intent 'discard' and expectedReceiptRevision (both outside the request hash); the Check reads the envelope and the
      * receipt. None of them takes the ordinary settle/deliver/rebase path. No answer becomes this line's baseline unless it
      * proves the applied proposal: result and state applied, currentMatches, the envelope at appliedRevision (expectedRevision
@@ -550,10 +550,12 @@
       const r = request.relatedInsert, owner = request.expectedOwner, expected = REVISION.exec(request.expectedRevision);
       const proposal = ['related-insert-proposal-v1', request.findings, request.conclusion, request.recommendation,
         request.baseVersion, [...request.citationIds].sort(), [...request.structureIds].sort()];
-      const tuple = ['related-insert-v1', r.insertRequestId, owner.institution, owner.sub, owner.author, r.targetUid,
-        expected[1], Number(expected[2]), r.source.uid, r.source.version, r.source.action,
+      // A two-field Insert (`also`) is its own contract: another marker, and its second field right after the first one's text.
+      const second = r.also ? [[r.also.section, r.also.offset, r.also.text]] : [];
+      const tuple = [r.also ? 'related-insert-v2' : 'related-insert-v1', r.insertRequestId, owner.institution, owner.sub,
+        owner.author, r.targetUid, expected[1], Number(expected[2]), r.source.uid, r.source.version, r.source.action,
         r.source.parts.map(p => [p.field, p.start, p.end]), r.targetBaseVersion, r.seedKind, r.section, r.position,
-        r.offset, r.text, r.selectionSeq, r.contentRevision, r.sourceGeneration, proposal];
+        r.offset, r.text, ...second, r.selectionSeq, r.contentRevision, r.sourceGeneration, proposal];
       const digest = async value => Array.from(new Uint8Array(await root.crypto.subtle.digest('SHA-256',
         new TextEncoder().encode(JSON.stringify(value)))), byte => byte.toString(16).padStart(2, '0')).join('');
       const [requestHash, proposalHash] = await Promise.all([digest(tuple), digest(proposal)]);

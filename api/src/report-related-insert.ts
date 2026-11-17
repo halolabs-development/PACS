@@ -11,6 +11,8 @@ import type { DraftOwner } from './pacs/values';
 
 /** 요청 digest의 첫 칸. 직렬화 규칙을 바꾸면 이 값도 바꾼다 — 옛 영수증과 새 요청이 우연히 같은 digest가 되지 않게. */
 export const RELATED_INSERT_SCHEMA = 'related-insert-v1';
+/** The digest's first slot for a two-field Insert (`also`): its tuple carries the second field, so it is a different contract. */
+export const RELATED_INSERT_PAIR_SCHEMA = 'related-insert-v2';
 const PROPOSAL_SCHEMA = 'related-insert-proposal-v1';
 /** 영수증에 남는 업무 거절 사유. migration의 CHECK와 같은 닫힌 목록이다. */
 export const RELATED_INSERT_REFUSALS = Object.freeze(['DRAFT_CONFLICT', 'TARGET_UNVERIFIED', 'TARGET_HELD', 'SOURCE_UNAVAILABLE',
@@ -33,6 +35,12 @@ export interface RelatedInsertRequest {
   insertRequestId: string;
   source: { uid: string; version: number; action: 'approve' | 'amend' | 'addendum'; parts: RelatedInsertPart[] };
   targetUid: string; targetBaseVersion: number; section: 'findings' | 'conclusion'; position: 'end'; offset: number; text: string;
+  /**
+   * A whole-report Insert's second field (Minhoon 2026-11-01: "Insert both the Findings and Conclusion automatically"): the
+   * Source's Findings go to the end of Findings (`section`) and its Conclusion to the end of Conclusion (`also`), in this one
+   * request, receipt and draft write — both or neither, whatever the screen does before the answer. Null for one field.
+   */
+  also: { section: 'conclusion'; offset: number; text: string } | null;
   selectionSeq: number; contentRevision: number; sourceGeneration: number; seedKind: 'private-draft' | 'report-head' | 'empty';
   expectedReceiptRevision: number | null;
 }
@@ -57,7 +65,9 @@ export function relatedInsertInput(raw: unknown, uid: string, snapshot: { baseVe
     expected: { revision: number }): RelatedInsertRequest {
   if (!plain(raw)) throw relatedInsertInvalid('relatedInsert');
   if (raw.intent !== 'apply' && raw.intent !== 'discard') throw relatedInsertInvalid('intent');
-  if (!closed(raw, raw.intent === 'discard' ? [...KEYS, 'expectedReceiptRevision'] : KEYS)) throw relatedInsertInvalid('relatedInsert');
+  const keys = [...KEYS, ...(raw.intent === 'discard' ? ['expectedReceiptRevision'] : []),
+    ...(Object.prototype.hasOwnProperty.call(raw, 'also') ? ['also'] : [])];
+  if (!closed(raw, keys)) throw relatedInsertInvalid('relatedInsert');
   if (typeof raw.insertRequestId !== 'string' || !REQUEST_ID.test(raw.insertRequestId)) throw relatedInsertInvalid('insertRequestId');
   const source = raw.source;
   if (!plain(source) || !closed(source, ['uid', 'version', 'action', 'parts'])) throw relatedInsertInvalid('source');
@@ -83,6 +93,17 @@ export function relatedInsertInput(raw: unknown, uid: string, snapshot: { baseVe
   if (!count(raw.offset, 0)) throw relatedInsertInvalid('offset');
   // 빈 삽입·공백뿐인 삽입은 어떤 쓰기보다 먼저 거절한다. textarea의 줄바꿈은 LF뿐이다.
   if (typeof raw.text !== 'string' || !/\S/.test(raw.text) || raw.text.includes('\r')) throw relatedInsertInvalid('text');
+  // The two-field Insert: exactly the Source's Findings into Findings and its Conclusion into Conclusion, in that order.
+  let also: RelatedInsertRequest['also'] = null;
+  if (Object.prototype.hasOwnProperty.call(raw, 'also')) {
+    const a = raw.also;
+    if (!plain(a) || !closed(a, ['section', 'offset', 'text']) || a.section !== 'conclusion' || raw.section !== 'findings'
+        || parts.length !== 2 || parts[0].field !== 'findings' || parts[1].field !== 'conclusion')
+      throw relatedInsertInvalid('also');
+    if (!count(a.offset, 0)) throw relatedInsertInvalid('also.offset');
+    if (typeof a.text !== 'string' || !/\S/.test(a.text) || a.text.includes('\r')) throw relatedInsertInvalid('also.text');
+    also = { section: 'conclusion', offset: a.offset as number, text: a.text };
+  }
   for (const field of ['selectionSeq', 'contentRevision', 'sourceGeneration'])
     if (!Number.isSafeInteger(raw[field]) || raw[field] < 0) throw relatedInsertInvalid(field);
   if (!SEED_KINDS.includes(raw.seedKind)) throw relatedInsertInvalid('seedKind');
@@ -92,7 +113,7 @@ export function relatedInsertInput(raw: unknown, uid: string, snapshot: { baseVe
   return { intent: raw.intent, insertRequestId: raw.insertRequestId,
     source: { uid: source.uid, version: source.version as number, action: source.action, parts },
     targetUid: uid, targetBaseVersion: raw.targetBaseVersion as number, section: raw.section, position: 'end', offset: raw.offset as number,
-    text: raw.text, selectionSeq: raw.selectionSeq, contentRevision: raw.contentRevision, sourceGeneration: raw.sourceGeneration,
+    text: raw.text, also, selectionSeq: raw.selectionSeq, contentRevision: raw.contentRevision, sourceGeneration: raw.sourceGeneration,
     seedKind: raw.seedKind, expectedReceiptRevision: raw.intent === 'discard' ? raw.expectedReceiptRevision as number : null };
 }
 
@@ -123,10 +144,23 @@ export const relatedProposalHash = (p: RelatedProposal) => sha256(proposalTuple(
  */
 export function relatedRequestHash(r: RelatedInsertRequest, owner: DraftOwner, expected: { epoch: string; revision: number },
     proposal: RelatedProposal): string {
-  return sha256([RELATED_INSERT_SCHEMA, r.insertRequestId, owner.institution, owner.sub, owner.author, r.targetUid,
-    expected.epoch, expected.revision, r.source.uid, r.source.version, r.source.action, r.source.parts.map(p => [p.field, p.start, p.end]),
-    r.targetBaseVersion, r.seedKind, r.section, r.position, r.offset, r.text, r.selectionSeq, r.contentRevision, r.sourceGeneration,
-    proposalTuple(proposal)]);
+  // A two-field Insert names its second field right after the first one's text, under its own schema mark.
+  const second = r.also ? [[r.also.section, r.also.offset, r.also.text]] : [];
+  return sha256([r.also ? RELATED_INSERT_PAIR_SCHEMA : RELATED_INSERT_SCHEMA, r.insertRequestId, owner.institution, owner.sub,
+    owner.author, r.targetUid, expected.epoch, expected.revision, r.source.uid, r.source.version, r.source.action,
+    r.source.parts.map(p => [p.field, p.start, p.end]), r.targetBaseVersion, r.seedKind, r.section, r.position, r.offset, r.text,
+    ...second, r.selectionSeq, r.contentRevision, r.sourceGeneration, proposalTuple(proposal)]);
+}
+
+/**
+ * The fields one request writes and the Source parts each is rebuilt from: one field from every part, or (`also`) the
+ * Source's Findings into Findings and its Conclusion into Conclusion.
+ */
+export function relatedInsertTargets(r: RelatedInsertRequest) {
+  return r.also
+    ? [{ section: r.section, offset: r.offset, text: r.text, parts: [r.source.parts[0]], name: 'text' },
+       { section: r.also.section, offset: r.also.offset, text: r.also.text, parts: [r.source.parts[1]], name: 'also.text' }]
+    : [{ section: r.section, offset: r.offset, text: r.text, parts: r.source.parts, name: 'text' }];
 }
 
 const lf = (text: unknown) => String(text ?? '').replace(/\r\n?/g, '\n');

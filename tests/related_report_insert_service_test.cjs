@@ -862,6 +862,99 @@ test('W5API-19 shape refusals before any read: legacy insert/structure beside it
   }
 });
 
+// ── The whole-report Insert: the Source's Findings into Findings and its Conclusion into Conclusion in ONE request ──
+
+/** A two-field relatedInsert PUT (`also`): one receipt, one draft write, both fields or neither. */
+function pairBody(w, { id = randomUUID(), revision = 1, seed, operation = {}, also = {}, edit = {} } = {}) {
+  seed ??= { findings: 'SYN draft findings', conclusion: 'SYN draft conclusion\n', recommendation: 'SYN draft recommendation', baseVersion: 1 };
+  const findings = insertionText(seed.findings, [WHOLE[0]]), conclusion = insertionText(seed.conclusion, [WHOLE[1]]);
+  return { expectedOwner: ownerOf(A), expectedRevision: `${w.epoch}:${revision}`, ...seed, findings: seed.findings + findings,
+    conclusion: seed.conclusion + conclusion, citationIds: [CID], structureIds: [], ...edit,
+    relatedInsert: { intent: 'apply', insertRequestId: id, source: { uid: w.source, version: 2, action: 'addendum', parts: WHOLE },
+      targetUid: TARGET, targetBaseVersion: seed.baseVersion, section: 'findings', position: 'end', offset: seed.findings.length,
+      text: findings, also: { section: 'conclusion', offset: seed.conclusion.length, text: conclusion, ...also }, selectionSeq: 7,
+      contentRevision: 3, sourceGeneration: 2, seedKind: 'private-draft', ...operation } };
+}
+/** The two-field digest, written from the contract: its own marker, and the second field right after the first one's text. */
+function pairHash(body, uid = TARGET) {
+  const r = body.relatedInsert, [epoch, revision] = body.expectedRevision.split(':');
+  const proposal = ['related-insert-proposal-v1', body.findings, body.conclusion, body.recommendation, body.baseVersion,
+    [...body.citationIds].sort(), [...body.structureIds].sort()];
+  const sha = value => createHash('sha256').update(JSON.stringify(value), 'utf8').digest('hex');
+  return sha(['related-insert-v2', r.insertRequestId, body.expectedOwner.institution, body.expectedOwner.sub,
+    body.expectedOwner.author, uid, epoch, Number(revision), r.source.uid, r.source.version, r.source.action,
+    r.source.parts.map(p => [p.field, p.start, p.end]), r.targetBaseVersion, r.seedKind, r.section, r.position, r.offset, r.text,
+    [r.also.section, r.also.offset, r.also.text], r.selectionSeq, r.contentRevision, r.sourceGeneration, proposal]);
+}
+
+test('W5API-33 a whole-report Insert writes Findings and Conclusion in one draft write and one receipt; a replay writes nothing', async () => {
+  const w = world();
+  const body = pairBody(w);
+  const answer = await w.send('put', { body });
+  assert.equal(answer.status, 200, JSON.stringify(answer.body));
+  assertAnswer(answer.body.relatedInsert, { result: 'applied', state: 'applied', requestHash: pairHash(body), currentMatches: true,
+    appliedRevision: `${w.epoch}:2`, receiptRevision: 1 }, 'pair apply');
+  assert.deepEqual([w.draft().findings, w.draft().conclusion, w.draft().recommendation, w.draft().revision],
+    ['SYN draft findings\n' + PRIOR.findings, 'SYN draft conclusion\n' + PRIOR.conclusion, 'SYN draft recommendation', 2]);
+  assert.deepEqual(w.audits(), [`${A.actor} report.draft ${TARGET}`], 'one draft write');
+  assert.equal(w.store.rows('reportDraftInsertReceipt').length, 1, 'one receipt');
+  assert.equal(w.receipt(body.relatedInsert.insertRequestId).section, 'findings', 'the receipt names the first field');
+  const before = w.snapshot();
+  const replay = await w.send('put', { body });
+  assert.equal(replay.status, 200);
+  assert.equal(w.snapshot(), before, 'the replay writes nothing');
+  // The same ID as a one-field request is another request: ID_REUSED, nothing changed.
+  const single = { ...body, conclusion: 'SYN draft conclusion\n', relatedInsert: Object.fromEntries(
+    Object.entries({ ...body.relatedInsert, source: { ...body.relatedInsert.source, parts: [WHOLE[0]] } }).filter(([k]) => k !== 'also')) };
+  assert.equal((await w.send('put', { body: single })).code, 'ID_REUSED');
+  assert.equal(w.snapshot(), before);
+});
+
+test('W5API-34 a refused whole-report Insert writes neither field; its same-ID retry applies both at once', async () => {
+  const w = world();
+  hold(w);
+  const body = pairBody(w), before = w.draft();
+  const refused = await w.send('put', { body });
+  assert.deepEqual([refused.status, refused.code, refused.body.relatedInsert.reason], [409, 'RELATED_INSERT_REFUSED', 'TARGET_HELD']);
+  assert.deepEqual(w.draft(), before, 'neither field written');
+  release(w);
+  const applied = await w.send('put', { body });
+  assert.equal(applied.status, 200, JSON.stringify(applied.body));
+  assert.deepEqual([w.draft().findings, w.draft().conclusion], ['SYN draft findings\n' + PRIOR.findings, 'SYN draft conclusion\n' + PRIOR.conclusion]);
+  assert.equal(w.draft().revision, before.revision + 1, 'both in one revision');
+});
+
+test('W5API-35 whole-report Insert shape: also only as the Source Conclusion into Conclusion after Findings into Findings, each rebuilt on the server', async () => {
+  const shapes = [
+    ['also into Findings', w => pairBody(w, { also: { section: 'findings' } }), 'also'],
+    ['extra key in also', w => pairBody(w, { also: { extra: 1 } }), 'also'],
+    ['first field Conclusion', w => pairBody(w, { operation: { section: 'conclusion' } }), 'also'],
+    ['one part only', w => { const b = pairBody(w); b.relatedInsert.source.parts = [WHOLE[0]]; return b; }, 'also'],
+    ['Recommendation as the second part', w => { const b = pairBody(w);
+      b.relatedInsert.source.parts = [WHOLE[0], { field: 'recommendation', start: 0, end: PRIOR.recommendation.length }]; return b; }, 'also'],
+    ['blank second text', w => pairBody(w, { also: { text: ' \n' } }), 'also.text'],
+    ['negative second offset', w => pairBody(w, { also: { offset: -1 } }), 'also.offset'],
+  ];
+  for (const [label, make, field] of shapes) {
+    const w = world();
+    const answer = await w.send('put', { body: make(w) });
+    assert.deepEqual([answer.status, answer.code, answer.body.field], [400, 'RELATED_INSERT_INVALID', field], label + ' ' + JSON.stringify(answer.body));
+    assert.deepEqual(w.store.rows('reportDraftInsertReceipt'), [], label + ': no receipt');
+  }
+  const judged = [
+    ['other second text', w => { const b = pairBody(w, { also: { text: '\nSYN not the prior conclusion' } });
+      b.conclusion = 'SYN draft conclusion\n\nSYN not the prior conclusion'; return b; }, 'also.text'],
+    ['second offset not the seed end', w => pairBody(w, { also: { offset: 3 } }), 'also.offset'],
+    ['proposal Conclusion without the second text', w => pairBody(w, { edit: { conclusion: 'SYN draft conclusion\n' } }), 'conclusion'],
+  ];
+  for (const [label, make, field] of judged) {
+    const w = world(), before = w.snapshot();
+    const answer = await w.send('put', { body: make(w) });
+    assert.deepEqual([answer.status, answer.body.field], [400, field], label + ' ' + JSON.stringify(answer.body));
+    assert.equal(w.snapshot(), before, label + ': nothing written');
+  }
+});
+
 // ── A-08: atomicity, DB errors, restart, PK race, lock order ──
 
 test('W5API-20 an audit or receipt write that fails rolls back the draft, the audit and the receipt together; the same ID then applies once', async () => {

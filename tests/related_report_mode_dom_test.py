@@ -88,10 +88,22 @@ def request_hash(body):
     r, owner = body["relatedInsert"], body["expectedOwner"]
     epoch, revision = body["expectedRevision"].split(":")
     s = r["source"]
-    return sha(["related-insert-v1", r["insertRequestId"], owner["institution"], owner["sub"], owner["author"], r["targetUid"],
-                epoch, int(revision), s["uid"], s["version"], s["action"], [[p["field"], p["start"], p["end"]] for p in s["parts"]],
-                r["targetBaseVersion"], r["seedKind"], r["section"], r["position"], r["offset"], r["text"],
+    # A whole-report Insert (`also`) is its own contract: its marker, and its second field right after the first one's text.
+    also = r.get("also")
+    second = [[also["section"], also["offset"], also["text"]]] if also else []
+    return sha(["related-insert-v2" if also else "related-insert-v1", r["insertRequestId"], owner["institution"], owner["sub"],
+                owner["author"], r["targetUid"], epoch, int(revision), s["uid"], s["version"], s["action"],
+                [[p["field"], p["start"], p["end"]] for p in s["parts"]],
+                r["targetBaseVersion"], r["seedKind"], r["section"], r["position"], r["offset"], r["text"], *second,
                 r["selectionSeq"], r["contentRevision"], r["sourceGeneration"], proposal_tuple(body)])
+
+
+def insert_targets(ri):
+    """(section, offset, text, parts) of each field one relatedInsert writes."""
+    also, parts = ri.get("also"), ri["source"]["parts"]
+    if not also:
+        return [(ri["section"], ri["offset"], ri["text"], parts)]
+    return [(ri["section"], ri["offset"], ri["text"], parts[:1]), (also["section"], also["offset"], also["text"], parts[1:])]
 
 
 def wire_request(text="😀", end=2, seed=""):
@@ -214,11 +226,16 @@ class W5Site(rf.FlowSite):
             return self.invalid("target")
         if ri.get("targetBaseVersion") != body.get("baseVersion"):
             return self.invalid("targetBaseVersion")
-        text, section, offset = ri.get("text"), ri.get("section"), ri.get("offset")
-        if not isinstance(text, str) or "\r" in text or not text.strip() or type(offset) is not int or offset < 0:
-            return self.invalid("text")
-        if utf16_slice(body[section], offset) != text:
-            return self.invalid("offset")
+        also = ri.get("also")
+        if "also" in ri and (not isinstance(also, dict) or set(also) != {"section", "offset", "text"} or also["section"] != "conclusion"
+                             or ri.get("section") != "findings"
+                             or [p.get("field") for p in ri["source"].get("parts", [])] != ["findings", "conclusion"]):
+            return self.invalid("also")
+        for section, offset, text, _ in insert_targets(ri):
+            if not isinstance(text, str) or "\r" in text or not text.strip() or type(offset) is not int or offset < 0:
+                return self.invalid("text")
+            if utf16_slice(body[section], offset) != text:
+                return self.invalid("offset")
         if ri["intent"] == "discard" and (type(ri.get("expectedReceiptRevision")) is not int or ri["expectedReceiptRevision"] < 1):
             return self.invalid("expectedReceiptRevision")
         parts = ri["source"].get("parts")
@@ -267,7 +284,9 @@ class W5Site(rf.FlowSite):
             reason = "DRAFT_CONFLICT"
         if reason is None:
             row = self.store[uid]["row"]
-            seed = {**{k: body[k] for k in FIELDS}, section: utf16_slice(body[section], 0, offset)}
+            seed = {k: body[k] for k in FIELDS}
+            for section, offset, _, _ in insert_targets(ri):
+                seed[section] = utf16_slice(body[section], 0, offset)
             if row is not None:
                 same = (ri["seedKind"] == "private-draft" and all(row[k] == seed[k] for k in FIELDS)
                         and row["baseVersion"] == body["baseVersion"] and sorted(row["citations"]) == sorted(body["citationIds"])
@@ -286,8 +305,9 @@ class W5Site(rf.FlowSite):
             if not head or head["version"] != src.get("version") or head["action"] != src.get("action"):
                 reason = "SOURCE_CHANGED"
             else:
-                if insertion_text(head, parts, utf16_slice(body[section], 0, offset)) != text:
-                    return self.invalid("text")
+                for section, offset, text, field_parts in insert_targets(ri):
+                    if insertion_text(head, field_parts, utf16_slice(body[section], 0, offset)) != text:
+                        return self.invalid("text")
         if reason is not None:
             if rec is None:
                 rec = {"id": rid, "binding": binding, "requestHash": request_hash(body), "proposalHash": sha(proposal_tuple(body)),
@@ -801,9 +821,10 @@ class RelatedModePage(unittest.TestCase):
         expect(sections).to_have_text(["Findings", "Conclusion"])
         expect(pane).to_have_text(["Findings", "Conclusion"])
         self.page.locator("#related-mode-insert").click()
-        self.wait(lambda: len(self.site.related_puts) == 2 and self.op_state() == "applied", "two fields saved")
+        self.wait(lambda: self.op_state() == "applied", "two fields saved")
         self.assertEqual({"findings": PRIOR_C["findings"], "conclusion": PRIOR_C["conclusion"], "recommendation": ""}, self.stored())
-        self.assertEqual(["findings", "conclusion"], [body["relatedInsert"]["section"] for _, body in self.site.related_puts])
+        self.assertEqual([("findings", "conclusion")], [(body["relatedInsert"]["section"], body["relatedInsert"]["also"]["section"])
+                                                        for _, body in self.site.related_puts], "one request for both fields")
         self.related_row(UID_B).locator("td").first.click()
         self.wait(lambda: self.source_text("findings") == PRIOR_B["findings"], "B's text")
         expect(sections).to_have_text(["Findings", "Conclusion", "Recommendation"])
@@ -879,7 +900,7 @@ class RelatedModePage(unittest.TestCase):
                 self.assertEqual('', self.source_text('findings'))
             self.back()
 
-    def test_w5_insert_applies_two_receipts_in_order_and_back_returns_to_conclusion_end(self):
+    def test_w5_whole_insert_is_one_receipt_for_both_fields_and_back_returns_to_conclusion_end(self):
         self.open(); self.open_target()
         self.page.locator("#findings").fill("Current Findings")
         self.page.locator("#conclusion").fill("Current Conclusion")
@@ -888,26 +909,25 @@ class RelatedModePage(unittest.TestCase):
         self.enter()
         self.site.related_answers = ["hold"]
         self.page.locator("#related-mode-insert").click()
-        self.wait(lambda: len(self.site.related_puts) == 1, "Findings sent")
+        self.wait(lambda: len(self.site.related_puts) == 1, "the Insert sent")
         self.assertEqual(0, self.page.locator("dialog[open]").count())
-        self.assertEqual("findings", self.site.related_puts[0][1]["relatedInsert"]["section"])
-        self.assertEqual("Current Conclusion", self.value("conclusion"), "Conclusion waits for the first receipt")
+        self.assertEqual(("Current Findings\n" + PRIOR_B["findings"], "Current Conclusion\n" + PRIOR_B["conclusion"]),
+                         (self.value(), self.value("conclusion")), "both fields are placed at the click")
         self.site.finish_related()
-        self.wait(lambda: len(self.site.related_puts) == 2 and self.op_state() == "applied", "both receipts")
-        ids = []
-        for (uid, body), field in zip(self.site.related_puts, ("findings", "conclusion")):
-            ri = body["relatedInsert"]; ids.append(ri["insertRequestId"])
-            self.assertEqual(UID_A, uid)
-            self.assertEqual((field, "\n" + PRIOR_B[field]), (ri["section"], ri["text"]))
-            self.assertEqual(len("Current " + field.title()), ri["offset"])
-            self.assertEqual([{"field": field, "start": 0, "end": len(PRIOR_B[field])}], ri["source"]["parts"])
-            self.assertEqual("applied", self.site.receipts[ids[-1]]["state"])
-        self.assertEqual(2, len(set(ids)))
+        self.wait(lambda: self.op_state() == "applied", "the one receipt")
+        self.settle(300)
+        self.assertEqual(1, len(self.site.related_puts), "one request for both fields")
+        uid, body = self.site.related_puts[0]
+        ri = body["relatedInsert"]
+        self.assertEqual(UID_A, uid)
+        self.assertEqual(("findings", "\n" + PRIOR_B["findings"], len("Current Findings")), (ri["section"], ri["text"], ri["offset"]))
+        self.assertEqual({"section": "conclusion", "text": "\n" + PRIOR_B["conclusion"], "offset": len("Current Conclusion")}, ri["also"])
+        self.assertEqual([{"field": f, "start": 0, "end": len(PRIOR_B[f])} for f in ("findings", "conclusion")], ri["source"]["parts"])
+        self.assertEqual("applied", self.site.receipts[ri["insertRequestId"]]["state"])
         expect(self.page.locator("#related-mode-status")).to_contain_text("삽입됨")
         self.assertFalse(self.js("uid => reportConverge.has(uid)", UID_A))
         expect(self.page.locator("#related-mode-target")).to_contain_text("Draft Saved")
         expect(self.page.locator("#related-mode-title")).to_be_focused()
-        self.assertNotEqual(self.site.related_puts[0][1]["expectedRevision"], self.site.related_puts[1][1]["expectedRevision"])
         self.assertEqual({"findings": "Current Findings\n" + PRIOR_B["findings"], "conclusion": "Current Conclusion\n" + PRIOR_B["conclusion"], "recommendation": ""}, self.stored())
         self.assertEqual([], [p for p in self.site.flow_puts[writes:] if "relatedInsert" not in p[1]])
         self.back()
@@ -946,27 +966,134 @@ class RelatedModePage(unittest.TestCase):
                           "recommendation": rf.TEMPLATE["recommendation"]}, self.stored())
         self.assertEqual(rf.TEMPLATE["recommendation"], self.value("recommendation"), "the Target Recommendation is untouched")
 
-    def test_two_field_insert_stops_when_first_receipt_is_refused(self):
-        self.open(); self.open_target(); self.enter()
-        self.site.refuse_reason = "TARGET_HELD"
-        self.page.locator("#related-mode-insert").click()
-        self.wait(lambda: self.op_state() == "refused", "first refused")
-        self.assertEqual(1, len(self.site.related_puts))
-        self.assertEqual("", self.value("conclusion"))
-        expect(self.notice()).to_be_visible()
+    # ── One Insert is both fields or neither (Minhoon 2026-11-01 "Insert both the Findings and Conclusion automatically"):
+    # one request, one receipt, one draft write — whatever changes on screen before its answer ──
+    @staticmethod
+    def both_inserted():
+        return {"findings": PRIOR_B["findings"], "conclusion": PRIOR_B["conclusion"], "recommendation": ""}
 
-    def test_two_field_insert_keeps_applied_findings_when_conclusion_is_refused(self):
+    def whole_insert_held(self):
+        """A whole-report Insert (nothing selected) whose one receipt is held on the wire."""
         self.open(); self.open_target(); self.enter()
         self.site.related_answers = ["hold"]
         self.page.locator("#related-mode-insert").click()
-        self.wait(lambda: len(self.site.related_puts) == 1, "first held")
+        self.wait(lambda: len(self.site.related_puts) == 1, "the Insert sent")
+        ri = self.site.related_puts[0][1]["relatedInsert"]
+        self.assertEqual(("findings", "conclusion"), (ri["section"], ri["also"]["section"]), "both fields in the one request")
+        self.assertEqual((PRIOR_B["findings"], PRIOR_B["conclusion"]), (self.value(), self.value("conclusion")))
+
+    def assert_both_saved_once(self):
+        self.assertEqual(self.both_inserted(), self.stored())
+        self.assertEqual(1, len({b["relatedInsert"]["insertRequestId"] for _, b in self.site.related_puts}), "one operation")
+        self.assertEqual("applied", self.site.receipts[self.site.related_puts[0][1]["relatedInsert"]["insertRequestId"]]["state"])
+
+    def test_whole_insert_back_before_the_receipt_keeps_both_fields(self):
+        self.whole_insert_held()
+        self.back()
         self.site.finish_related()
+        self.wait(lambda: self.op_state() == "applied", "the receipt after Back")
+        self.settle(300)
+        self.assertEqual(1, len(self.site.related_puts))
+        self.assert_both_saved_once()
+        self.assertEqual((PRIOR_B["findings"], PRIOR_B["conclusion"]), (self.value(), self.value("conclusion")))
+        self.assertFalse(self.js("reportConverge.has(selectedUid)"))
+        expect(self.notice()).to_be_hidden()
+
+    def test_whole_insert_source_move_and_return_to_current_keep_the_confirmed_source(self):
+        """The Insert is the Source the reader confirmed at the click, not the one the panel shows later."""
+        self.whole_insert_held()
+        self.enter(UID_C)
+        self.wait(lambda: self.source_text("conclusion") == PRIOR_C["conclusion"], "the other Source on screen")
+        self.page.locator("#related-return").click()
+        expect(self.mode()).to_be_hidden()
+        self.site.finish_related()
+        self.wait(lambda: self.op_state() == "applied", "the receipt")
+        self.settle(300)
+        self.assertEqual(UID_B, self.site.related_puts[0][1]["relatedInsert"]["source"]["uid"])
+        self.assert_both_saved_once()
+
+    def test_whole_insert_move_to_another_study_waits_for_the_receipt_of_both_fields(self):
+        self.whole_insert_held()
+        self.back()
+        self.page.locator(f'#rows tr[data-uid="{UID_D}"]').click()
+        self.settle(300)
+        self.assertEqual(UID_A, self.js("selectedUid"), "the move waits for the Insert")
+        self.site.finish_related()
+        self.wait(lambda: self.js("selectedUid") == UID_D, "the move continues once both fields are saved")
+        self.assertEqual(1, len(self.site.related_puts))
+        self.assert_both_saved_once()
+
+    def test_whole_insert_lost_answer_then_back_and_check_confirms_both_fields(self):
+        self.open(); self.open_target(); self.enter()
+        self.site.related_answers = ["lost"]
+        self.page.locator("#related-mode-insert").click()
+        expect(self.notice()).to_contain_text("Result Unknown")
+        self.back()
+        self.page.locator("#report-notice-check").click()
+        self.wait(lambda: self.op_state() == "applied", "the Check")
+        self.assertEqual(1, len(self.site.related_puts), "the Check sent no write")
+        self.assert_both_saved_once()
+        expect(self.notice()).to_be_hidden()
+
+    def test_whole_insert_refused_writes_neither_field_and_discard_removes_both(self):
+        self.open(); self.open_target(); self.enter()
         self.site.refuse_reason = "TARGET_HELD"
-        self.wait(lambda: len(self.site.related_puts) == 2 and self.op_state() == "refused", "second refused")
-        self.assertEqual(PRIOR_B["findings"], self.stored()["findings"])
-        self.assertEqual("", self.stored()["conclusion"])
-        self.assertEqual(["applied", "refused"], [self.site.receipts[b["relatedInsert"]["insertRequestId"]]["state"] for _, b in self.site.related_puts])
+        self.page.locator("#related-mode-insert").click()
+        self.wait(lambda: self.op_state() == "refused", "refused")
+        self.assertEqual(1, len(self.site.related_puts))
+        self.assertIsNone(self.stored(), "neither field is stored")
+        self.assertEqual((PRIOR_B["findings"], PRIOR_B["conclusion"]), (self.value(), self.value("conclusion")),
+                         "both stay in the editor for Retry or Discard")
         expect(self.notice()).to_be_visible()
+        self.page.locator("#report-notice-discard").click()
+        self.wait(lambda: self.op_state() == "discarded", "the tombstone")
+        self.assertEqual(("", ""), (self.value(), self.value("conclusion")), "Discard Insert removes both fields")
+        self.assertIsNone(self.stored())
+
+    def test_whole_insert_refused_then_retry_applies_both_fields_at_once(self):
+        self.open(); self.open_target(); self.enter()
+        self.site.refuse_reason = "TARGET_HELD"
+        self.page.locator("#related-mode-insert").click()
+        self.wait(lambda: self.op_state() == "refused", "refused")
+        self.site.refuse_reason = None
+        self.page.locator("#report-notice-retry").click()
+        self.wait(lambda: self.op_state() == "applied", "the same-ID Retry")
+        self.assertEqual(2, len(self.site.related_puts))
+        self.assertEqual(self.site.related_puts[0][1], self.site.related_puts[1][1], "the same frozen body")
+        self.assert_both_saved_once()
+
+    def test_whole_insert_typing_after_back_keeps_both_fields_and_the_later_typing(self):
+        """The answer is lost; after Back the reader types; the late Check confirms both fields; the later typing stays this
+        document's unconfirmed text and the ordinary autosave stores it on top."""
+        self.open(); self.open_target(); self.enter()
+        self.site.related_answers = ["lost"]
+        self.page.locator("#related-mode-insert").click()
+        expect(self.notice()).to_contain_text("Result Unknown")
+        self.back()
+        self.page.locator("#findings").press("End")
+        self.page.keyboard.type(" SYN typed after Back")
+        self.page.locator("#report-notice-check").click()
+        self.wait(lambda: self.op_state() == "applied", "the late Check")
+        self.assertEqual(self.both_inserted(), self.stored(), "the receipt confirmed both fields")
+        self.assertTrue(self.js("reportConverge.has(selectedUid)"), "the later typing is still unconfirmed")
+        self.page.clock.run_for(20001)
+        self.wait(lambda: self.stored() == {"findings": PRIOR_B["findings"] + " SYN typed after Back",
+                                            "conclusion": PRIOR_B["conclusion"], "recommendation": ""}, "the autosave on top")
+        self.assertEqual(1, len(self.site.related_puts))
+
+    def test_whole_insert_second_native_edit_refused_undoes_the_first_and_sends_nothing(self):
+        """Both fields go into the editor or neither: when the Conclusion edit is refused, the Findings edit is undone."""
+        self.open(); self.open_target(); self.enter()
+        # The browser refuses the native edit in Conclusion only (the editor itself stays editable).
+        self.js("""() => { const native = document.execCommand.bind(document);
+          document.execCommand = (...args) => document.activeElement?.id === 'conclusion' ? false : native(...args); }""")
+        self.page.locator("#related-mode-insert").click()
+        expect(self.page.locator("#related-mode-status")).to_contain_text("현재 초안에 넣지 못했습니다")
+        self.settle(300)
+        self.assertEqual([], self.site.related_puts, "nothing sent")
+        self.assertEqual(("", ""), (self.value(), self.value("conclusion")))
+        self.assertIsNone(self.op_state())
+        self.assertFalse(self.js("reportConverge.has(selectedUid)"), "the editor holds the saved draft again")
 
     def test_w5_lost_answer_is_unknown_and_check_promotes_only_with_the_receipt_and_the_whole_draft(self):
         self.open()
