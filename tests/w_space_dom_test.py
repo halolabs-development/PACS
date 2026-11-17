@@ -7,8 +7,9 @@ reader's saved text colour -> TEST-WSPACE-DOM-01..04.
 REQ Minhoon-20261027/item-9 under the W-SPACE layout contract (2026-10-29) -> RISK-WSPACE-WIDTH / -PREFERENCE / -EMPTY
 -> TEST-WSPACE-G1..G5, each for Radiology and Technician at 1920x1080, 1024x768 and 768x1024, plus the 600/601 px
 stacked boundary, the 840x768 selected-study sheet and the Study Panel drawer. Expected widths come from the contract
-(each mode's shipped shares: Radiology 34 : 30 : 36, Technician 34 : 66) and the band's measured width, never from the
-product's resolver. Tolerances are the existing ones: 0.5 CSS px for widths, 1 CSS px for strip and returned heights.
+(each mode's shipped shares: Radiology 34 : 30 : 36, Technician 34 : 66; item 9's Image Report is a fourth Radiology
+column of share 30 right of Thumbnail, hidden at first use, never in Technician) and the band's measured width, never
+from the product's resolver. Tolerances are the existing ones: 0.5 CSS px for widths, 1 CSS px for strip and returned heights.
 
 Studio 2026-11-01 (judgement-20261101 §2, PR #334) changed four things these tests follow: Clinical Information is one
 of the five cards (row 18, M-183) and keeps a CARD_GAP gutter inside its share; Thumbnail, AI Report and Reading
@@ -38,28 +39,30 @@ OUT = Path(os.environ.get('KIN_WSPACE_OUT', dom.ROOT / 'tmp/w-space/dom'))
 SIZES = ((1920, 1080), (1024, 768), (768, 1024))
 BAND = '''() => { const r = s => { const n = document.querySelector(s); if (!n || !n.getClientRects().length) return null;
   const b = n.getBoundingClientRect(); return [b.x, b.y, b.width, b.height]; };
-  return { rw: r('.right > .rw'), thumb: r('.rw > .s-thumb'), clinical: r('.rw > .s-clinical'), template: r('.rw > .s-template'),
+  return { rw: r('.right > .rw'), thumb: r('.rw > .s-thumb'), imageReport: r('.rw > .s-imgreport'), clinical: r('.rw > .s-clinical'), template: r('.rw > .s-template'),
     thumbwrap: r('.rw .thumbwrap'), rtabs: r('.rw .rtabs'), separator: r('#resize-top'), workrow: r('.workrow'), related: r('.workrow > .related-p'), report: r('.report-p'), split: r('.split'), list: r('.left'), listEdge: r('#resize-main'),
     tabs: [...document.querySelectorAll('.rw .rtabs > div')].filter(n => n.getClientRects().length).map(n => n.textContent) }; }'''
 
 
 def shown(band):
     """Which parts of the band are on screen, and its tabs."""
-    return {k: band[k] is not None for k in ('rw', 'thumb', 'clinical', 'template', 'thumbwrap', 'separator')} | {'tabs': band['tabs']}
+    return {k: band[k] is not None for k in ('rw', 'thumb', 'imageReport', 'clinical', 'template', 'thumbwrap', 'separator')} | {'tabs': band['tabs']}
 
 
 MODES = ('Radiology', 'Technician')
 # The contract's per-mode content shares (main.html first paint: Thumbnail 34%, Clinical 30%, Template the rest;
-# Technician hides Template and gives Clinical 66%). AI Report is a placeholder tab and owns no column; Image Report stays unexposed until implemented.
-SHARES = {'Radiology': {'thumbnail': 34, 'clinical': 30, 'template': 36}, 'Technician': {'thumbnail': 34, 'clinical': 66}}
-LABELS = {'thumbnail': 'Thumbnail', 'aiReport': 'AI Report',
+# Technician hides Template and gives Clinical 66%). AI Report is a placeholder tab and owns no column. Image Report
+# (item 9) is a Radiology content column of share 30 between Thumbnail and Clinical; Technician has none.
+SHARES = {'Radiology': {'thumbnail': 34, 'imageReport': 30, 'clinical': 30, 'template': 36},
+          'Technician': {'thumbnail': 34, 'clinical': 66}}
+LABELS = {'thumbnail': 'Thumbnail', 'aiReport': 'AI Report', 'imageReport': 'Image Report',
           'clinical': 'Clinical Information', 'template': 'Reading Template'}
 PLACEHOLDERS = ('aiReport',)
 # The band's usable inline extent (its border box less borders and a scrollbar) next to every measured rectangle.
 GEOM = '''() => { const q = s => document.querySelector(s), r = n => { if (!n || !n.getClientRects().length) return null;
   const b = n.getBoundingClientRect(); return [b.x, b.y, b.width, b.height]; }, rw = q('.right > .rw');
   return { usable: rw && rw.getClientRects().length ? rw.getBoundingClientRect().width - (rw.offsetWidth - rw.clientWidth) : null,
-    rw: r(rw), thumb: r(q('.rw > .s-thumb')), thumbwrap: r(q('.rw .thumbwrap')), clinical: r(q('.rw > .s-clinical')),
+    rw: r(rw), thumb: r(q('.rw > .s-thumb')), thumbwrap: r(q('.rw .thumbwrap')), imageReport: r(q('.rw > .s-imgreport')), clinical: r(q('.rw > .s-clinical')),
     template: r(q('.rw > .s-template')), rtabs: r(q('.rw .rtabs')), separator: r(q('#resize-top')), workrow: r(q('.workrow')),
     related: r(q('.workrow > .related-p')), report: r(q('.report-p')), order: r(q('.order-p')), split: r(q('.split')), right: r(q('.right')), listEdge: r(q('#resize-main')),
     mode: q('.tabs > div.on')?.dataset.tab, viewport: [innerWidth, innerHeight],
@@ -89,7 +92,7 @@ def content(g):
     out = {}
     if g['thumbwrap']:
         out['thumbnail'] = slot(g, 'thumbnail')[1]
-    for key in ('clinical', 'template'):
+    for key in ('imageReport', 'clinical', 'template'):
         if g[key]:
             out[key] = slot(g, key)[1]
     return out
@@ -97,7 +100,7 @@ def content(g):
 
 def stacked_height(g):
     """A stacked band's panels end to end, the card's top gutter included."""
-    return sum(g[k][3] + (CARD_GAP if k in CARDS else 0) for k in ('thumb', 'clinical', 'template') if g[k])
+    return sum(g[k][3] + (CARD_GAP if k in CARDS else 0) for k in ('thumb', 'imageReport', 'clinical', 'template') if g[k])
 
 
 def stacked(g):
@@ -273,10 +276,10 @@ class WSpaceDOM(unittest.TestCase):
         self.assertGreaterEqual(g['related'][3], start['related'][3] - 0.5)
         self.assertGreaterEqual(self.receiver(g)[3], self.receiver(start)[3] - 0.5)
 
-    def test_image_report_is_unavailable_after_show_all_reload_and_saved_layout(self):
-        # D-A1-4: retired Image Report checkbox/toggle expectations; saved keys remain compatible.
-        # The Image Report window has its own entry in the Report Editor title row (not a panel): the retired panel tab and
-        # its toggle stay absent, so the tab strip and the panels dialog are what is checked.
+    def test_image_report_is_a_panel_saved_records_keep_their_meaning(self):
+        # Item 9 lists Image Report among the panels to show or hide. A saved record keeps its meaning: 'imageReport' in
+        # hiddenPanels (every first-use and Reset record has it) stays hidden; a record with nothing hidden shows it, as
+        # Show All Panels did. It is a column of the band, never a tab of the Thumbnail strip, and Technician has none.
         for hidden in ([], ['imageReport'], ['thumbnail', 'aiReport', 'clinical', 'template']):
             with self.subTest(hidden=hidden):
                 record = {'version': 3, 'mode': 'landscape', 'portrait': {}, 'landscape': {},
@@ -288,20 +291,32 @@ class WSpaceDOM(unittest.TestCase):
                 site = WorkspaceSite()
                 page = self.open(site, init=init, show_all=False)
                 self.assertEqual(hidden, self.stored(page)['workspace'].get('hiddenPanels', []))
+                shown_now = 'imageReport' not in hidden
                 for reload in (False, True):
                     if reload:
                         self.reload(page, site)
                     expect(page.locator('.rtabs').get_by_text('Image Report', exact=True)).to_have_count(0)
+                    self.assertEqual(shown_now, page.evaluate(GEOM)['imageReport'] is not None)
                     dialog = self.panels(page)
-                    expect(dialog.get_by_label('Image Report', exact=True)).to_have_count(0)
-                    expect(dialog.get_by_label('AI Report', exact=True)).to_be_visible()
+                    box = dialog.get_by_label('Image Report', exact=True)
+                    expect(box).to_be_visible()
+                    if shown_now:
+                        expect(box).to_be_checked()
+                    else:
+                        expect(box).not_to_be_checked()
                     dialog.get_by_role('button', name='Close', exact=True).click()
                     expect(page.locator('#toolbar-view')).to_have_js_property('open', False)
-                if hidden:
-                    self.show_all(page)
-                expect(page.locator('.rtabs').get_by_text('Image Report', exact=True)).to_have_count(0)
-                # Hiding every available control must leave no blank strip from the reserved key.
-                band = self.set_panels(page, {key: False for key in LABELS})
+                g = self.show_all(page) if hidden else page.evaluate(GEOM)
+                self.assert_allocation(g, 'Radiology', list(SHARES['Radiology']), 'Show All')
+                self.assert_allocation(self.switch(page, 'Technician'), 'Technician', list(SHARES['Technician']), 'Technician')
+                self.switch(page, 'Radiology')
+                # Image Report alone takes the band; hiding it too leaves the AI Report strip, then nothing.
+                alone = self.set_panels(page, {key: key == 'imageReport' for key in SHARES['Radiology']})
+                self.assert_allocation(alone, 'Radiology', ['imageReport'], 'Image Report alone')
+                strip = self.set_panels(page, {'imageReport': False})
+                self.assertEqual(['AI Report'], strip['tabs'])
+                self.assertIsNone(strip['separator'])
+                band = self.set_panels(page, {'aiReport': False})
                 self.assertIsNone(band['rw'])
                 self.assertIsNone(band['separator'])
 
@@ -312,7 +327,7 @@ class WSpaceDOM(unittest.TestCase):
                 page = self.open(site, width, height)
                 start = page.evaluate(BAND)
                 self.assertEqual(['Thumbnail', 'AI Report'], start['tabs'])
-                self.assertTrue(start['rw'] and start['thumb'] and start['clinical'] and start['template'])
+                self.assertTrue(start['rw'] and start['thumb'] and start['imageReport'] and start['clinical'] and start['template'])
                 portrait = height > width
                 total = lambda b: sum(content(b).values())
                 # Reading Template: its width goes to the panels beside it (the band keeps its height).
@@ -320,6 +335,12 @@ class WSpaceDOM(unittest.TestCase):
                 self.assertIsNone(band['template'])
                 self.assertAlmostEqual(band['rw'][2], total(band), delta=2)
                 self.assertGreater(band['clinical'][2], start['clinical'][2] + 10)
+                # Image Report next: the same.
+                before = band
+                band = self.set_panel(page, 'Image Report', False)
+                self.assertIsNone(band['imageReport'])
+                self.assertAlmostEqual(band['rw'][2], total(band), delta=2)
+                self.assertGreater(band['clinical'][2], before['clinical'][2] + 10)
                 # Clinical Information next: Thumbnail takes the band.
                 band = self.set_panel(page, 'Clinical Information', False)
                 self.assertIsNone(band['clinical'])
@@ -346,7 +367,7 @@ class WSpaceDOM(unittest.TestCase):
                 self.assert_row_on_top(band, portrait)
                 page.screenshot(path=str(OUT / f'panels-all-hidden-{width}x{height}.png'))
                 stored = page.evaluate('(key) => JSON.parse(localStorage.getItem(key))', KEY)
-                self.assertEqual(['thumbnail', 'aiReport', 'clinical', 'template'], stored['workspace']['hiddenPanels'])
+                self.assertEqual(['thumbnail', 'aiReport', 'imageReport', 'clinical', 'template'], stored['workspace']['hiddenPanels'])
                 # A reload keeps every choice; the dialog shows them unchecked. (After a reload the toolbar's status line
                 # says the layout was restored and can wrap in a narrow window, so heights above the band are not compared.)
                 self.reload(page, site)
@@ -354,7 +375,7 @@ class WSpaceDOM(unittest.TestCase):
                 self.assertEqual(shown(band), shown(again))
                 self.assert_row_on_top(again, portrait)
                 dialog = self.panels(page)
-                for label in ('Thumbnail', 'AI Report', 'Clinical Information', 'Reading Template'):
+                for label in ('Thumbnail', 'AI Report', 'Image Report', 'Clinical Information', 'Reading Template'):
                     expect(dialog.get_by_label(label, exact=True)).not_to_be_checked()
                 # Show All Panels returns the first paint's panels with their widths (and heights side by side).
                 dialog.get_by_role('button', name='Show All Panels', exact=True).click()
@@ -363,7 +384,7 @@ class WSpaceDOM(unittest.TestCase):
                 settle(page)
                 back = page.evaluate(BAND)
                 self.assertEqual(shown(start), shown(back))
-                for key in ('thumb', 'clinical', 'template'):
+                for key in ('thumb', 'imageReport', 'clinical', 'template'):
                     # (a stacked band also yields height to the prior report line by the toolbar's height, D383)
                     self.assertEqual([start[key][0], start[key][2]], [back[key][0], back[key][2]], key)
                     if not portrait:
@@ -513,7 +534,7 @@ class WSpaceDOM(unittest.TestCase):
                 self.switch(page, 'Radiology')
                 # A real hidden preference survives both directions and returns the same geometry.
                 r1 = self.set_panels(page, {'template': False, 'aiReport': False})
-                self.assert_allocation(r1, 'Radiology', ['thumbnail', 'clinical'], 'r1')
+                self.assert_allocation(r1, 'Radiology', ['thumbnail', 'imageReport', 'clinical'], 'r1')
                 t1 = self.switch(page, 'Technician')
                 self.assert_allocation(t1, 'Technician', ['thumbnail', 'clinical'], 't1')
                 self.assert_same_content(t0, t1, 'Technician with Template hidden')
@@ -537,7 +558,7 @@ class WSpaceDOM(unittest.TestCase):
                 self.set_panels(page, {'thumbnail': False})
                 b = self.set_panels(page, {'clinical': False})
                 self.assert_same_content(a, b, 'hide order')
-                self.assert_allocation(b, 'Radiology', ['template'], 'thumbnail and clinical hidden')
+                self.assert_allocation(b, 'Radiology', ['imageReport', 'template'], 'thumbnail and clinical hidden')
                 self.assert_same_content(only_clinical, self.set_panels(page, {'thumbnail': True}), 'Thumbnail shown again')
                 back = self.show_all(page)
                 self.assert_same_content(r0, back, 'Show All Panels')

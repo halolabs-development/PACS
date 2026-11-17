@@ -182,6 +182,11 @@
     .thumb-images-view > p { margin: 4px; color: #c1d3e9; overflow-wrap: anywhere; }
     .thumb-images-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(145px,1fr)); gap: 4px; }
     .thumb-image-preview img { display: block; width: 100%; height: auto; object-fit: contain; background: #000; }
+    .image-report-panel { flex: 1; min-height: 0; padding: 4px 8px; overflow: auto; color: #aab2c0; font-size: 11px; }
+    .image-report-panel > p { margin: 0 0 4px; overflow-wrap: anywhere; }
+    .image-report-panel .ir-attached { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; }
+    .image-report-panel figure { margin: 0; display: grid; gap: 2px; justify-items: center; }
+    .image-report-panel img { width: 120px; height: 83px; object-fit: contain; background: #fff; border: 1px solid #3a4356; }
     .clinical { flex: 1; padding: 6px 10px; overflow: auto; color: #aab2c0; }
     .clinical table td { border: none; padding: 2px 6px; }
     .clinical td:first-child { color: #667; }
@@ -202,7 +207,8 @@
     .s-template { flex: 1; }
     /* The report window band (Minhoon 2026-10-27 item 9). One allocation: workspace-layout.js reportWindow() resolves the
        workflow mode's content panels and their shares minus the panels the reader hid, and applyLayout() writes them as
-       these grid columns and body classes (the fallback is Radiology's first paint, 34 : 30 : 36). AI Report owns no
+       these grid columns and body classes (the fallback is Radiology's first paint, 34 : 30 : 36; Image Report, hidden at
+       first use, is a fourth Radiology column of share 30 right of Thumbnail). AI Report owns no
        column: with Thumbnail hidden their tabs are a full-width strip above the content row, so toggling them never
        moves a content panel (WS-05). With no content panel left the band is that strip, without the separator, or gone,
        and the Related/report row takes the height. The reading layout opens this band only on request and shows every
@@ -216,6 +222,7 @@
     body:not(.reading).kin-hide-thumbnail .rw > .s-thumb > .rtabs > [data-panel="thumbnail"],
     body:not(.reading).kin-hide-aiReport .rw > .s-thumb > .rtabs > [data-panel="aiReport"],
     body:not(.reading).kin-hide-thumbnail.kin-hide-aiReport .rw > .s-thumb,
+    body:not(.reading).kin-hide-imageReport .rw > .s-imgreport,
     body:not(.reading).kin-hide-clinical .rw > .s-clinical,
     body:not(.reading).kin-hide-template .rw > .s-template,
     body:not(.reading).kin-report-window-empty .right > .rw,
@@ -715,13 +722,15 @@
       body.portrait:not(.reading) .left { height: auto !important; min-height: 300px; max-height: none; }
       body.portrait:not(.reading) .left > .grid { flex: none; height: 220px; }
       body.portrait:not(.reading) .right { flex: none; height: 650px; }
-      /* Stacked full-width panels: the band is the sum of the panels shown (all three: 340 + 180 + 240 = 760px), so a
+      /* Stacked full-width panels: the band is the sum of the panels shown (Thumbnail 340, Image Report 180, Clinical 180,
+         Template 240), so a
          hidden panel, and Technician's Template, take no height and no column share applies. */
       body.portrait:not(.reading) .right > .rw { height: auto !important; display: flex; flex-direction: column; }
       body.portrait:not(.reading) .rw > section { width: 100%; flex: none; }
       /* The Clinical card keeps its 6px side margins (:345); a bare 100% here pushed its right border 6px past the band. */
       body.portrait:not(.reading) .rw > .s-clinical { width: calc(100% - 12px); }
       body.portrait:not(.reading) .s-thumb { height: 340px; }
+      body.portrait:not(.reading) .s-imgreport { height: 180px; }
       body.portrait:not(.reading) .s-clinical { height: 180px; }
       body.portrait:not(.reading) .s-template { height: 240px; }
       body.portrait:not(.reading).kin-hide-thumbnail .s-thumb { height: auto; }
@@ -1445,7 +1454,8 @@
   <link rel="stylesheet" href="multi-study-view.css">
   <link rel="stylesheet" href="workspace-theme.css">
 </head>
-<body>
+<!-- Until the layout is applied the band paints Radiology's first three columns; Image Report waits for applyLayout. -->
+<body class="kin-hide-imageReport">
 
   <div class="menubar">
     <div class="brand" title="HALO PACS"><img src="kin-emblem-j1.svg" alt=""><span>HALO PACS</span></div>
@@ -1474,7 +1484,7 @@
           <button class="chip" id="layout-toggle" title="자동·세로 고정·가로 고정 순서로 전환">Layout: Auto</button>
           <button class="chip" id="study-panel-open" type="button" aria-expanded="false" aria-controls="study-panel-host" title="영상·검사 정보·상용구 패널을 엽니다.">Study Panel</button>
           <span id="study-panel-status" role="status" lang="ko"></span>
-          <button class="chip" id="panel-settings-open" type="button" aria-haspopup="dialog" title="Thumbnail·AI Report·Clinical Information·Reading Template 패널을 보이거나 숨깁니다.">Panels</button>
+          <button class="chip" id="panel-settings-open" type="button" aria-haspopup="dialog" title="Thumbnail·AI Report·Image Report·Clinical Information·Reading Template 패널을 보이거나 숨깁니다.">Panels</button>
           <button class="chip" id="columnsettings" aria-haspopup="dialog">Columns</button>
           <button class="chip" id="reading-appearance-open" type="button" aria-haspopup="dialog" disabled>Appearance &amp; Tools</button>
           <button class="chip" id="layout-reset" title="이 계정의 현재 브라우저 배치를 초기화합니다">Reset Layout</button>
@@ -1707,10 +1717,18 @@
           <div class="rtabs">
             <div class="on" data-panel="thumbnail">Thumbnail</div>
             <div title="추후 구현" data-panel="aiReport">AI Report</div>
-            <!-- Image Report는 그리기 기능이 구현될 때 노출한다. 저장된 imageReport 배치 키만 보존한다. -->
           </div>
           <div class="thumbwrap" id="thumbwrap">
             <div style="color:#556;padding:20px;text-align:center">검사를 선택하세요</div>
+          </div>
+        </section>
+        <!-- Image Report panel (2026-10-27 item 9): the drawings attached to the selected study's report, and the way into the
+             drawing window. image-report.js fills it from the same read as the strip under Conclusion. -->
+        <section class="s-imgreport" aria-labelledby="image-report-panel-title">
+          <h3><span id="image-report-panel-title">Image Report</span> <button id="image-report-panel-open" class="chip" type="button" disabled title="유방·갑상선 도판이나 이 검사의 저장 영상 위에 그려 판독문에 붙입니다">Draw</button></h3>
+          <div class="image-report-panel" id="image-report-panel">
+            <p id="image-report-panel-status" role="status" aria-live="polite">검사를 선택하세요</p>
+            <div class="ir-attached" id="image-report-panel-list" aria-label="Attached drawings"></div>
           </div>
         </section>
         <section class="s-clinical">
