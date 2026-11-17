@@ -38,22 +38,27 @@ for(const modality of ['MR','DX','US','XA','MG'])test(modality+' length, angle a
 // Spacing 0.1\0.1, 16x16, no position or orientation) and pydicom-data RG1 (Philips CR, Pixel Spacing 0.000\0.000, no
 // position or orientation). The DX, RF and XA rows are synthetic tag sets, not copies of a device file.
 const projection={StudyInstanceUID:'2.25.1',SeriesInstanceUID:'2.25.2',SOPInstanceUID:'2.25.3',Rows:200,Columns:300};
-const viewerPoint=(tags,[x,y],spacing)=>[0,x*spacing[1],-y*spacing[0]];
+// A multi-frame or functional-group image's frame n has its origin at [0,0,n] in the pinned viewer (OHIF combineFrameInstance).
+const viewerPoint=(tags,[x,y],spacing,frame)=>[0,x*spacing[1],(tags.PerFrameFunctionalGroupsSequence||tags.NumberOfFrames>1?frame:0)-y*spacing[0]];
 const projections=[
  ['CR Pixel Spacing calibrated',{...projection,Modality:'CR',SOPClassUID:'1.2.840.10008.5.1.4.1.1.1',PixelSpacing:[.15,.15],ImagerPixelSpacing:[.168,.168]},[.15,.15],/원본 기준면/],
  ['CR public sample',{...projection,Modality:'CR',SOPClassUID:'1.2.840.10008.5.1.4.1.1.1',Rows:16,Columns:16,ImagerPixelSpacing:['0.1000','0.1000']},[.1,.1],/검출기/],
  ['DX detector',{...projection,Modality:'DX',SOPClassUID:'1.2.840.10008.5.1.4.1.1.1.1',ImagerPixelSpacing:[.2,.3]},[.2,.3],/검출기/],
  ['RF magnification',{...projection,Modality:'RF',SOPClassUID:'1.2.840.10008.5.1.4.1.1.12.2',ImagerPixelSpacing:[.3,.3],EstimatedRadiographicMagnificationFactor:1.2},[.25,.25],/ERMF/],
  ['XA multiframe',{...projection,Modality:'XA',SOPClassUID:'1.2.840.10008.5.1.4.1.1.12.1',NumberOfFrames:2,ImagerPixelSpacing:[.25,.5]},[.25,.5],/검출기/],
+ ['XA enhanced',{...projection,Modality:'XA',SOPClassUID:'1.2.840.10008.5.1.4.1.1.12.1.1',NumberOfFrames:1,PerFrameFunctionalGroupsSequence:[{PixelMeasuresSequence:[{PixelSpacing:[.3,.3]}]}]},[.3,.3],/원본 기준면/],
 ];
 for(const [name,tags,spacing,label] of projections)test(name+' without position or orientation measures in the viewer plane',()=>{
  const small=tags.Columns<100, at=p=>small?p.map(n=>n/20):p;
  const pixels={length:[[10,20],[40,60]],angle:[[40,20],[10,20],[10,60]],ellipse:[[50,70],[50,30],[30,50],[70,50]]};
  const expected={length:Math.hypot(30*spacing[1],40*spacing[0]),angle:90,ellipse:Math.PI*40*spacing[1]*40*spacing[0]/4};
  for(const kind of ['length','angle','ellipse']){
-  const image=pixels[kind].map(at),points=image.map(p=>viewerPoint(tags,p,spacing)),value=small&&kind!=='angle'?expected[kind]/(kind==='ellipse'?400:20):expected[kind];
-  for(const frame of tags.NumberOfFrames?[1,2]:[1]){
+  const image=pixels[kind].map(at),value=small&&kind!=='angle'?expected[kind]/(kind==='ellipse'?400:20):expected[kind];
+  for(const frame of tags.NumberOfFrames>1?[1,2]:[1]){
+   const points=image.map(p=>viewerPoint(tags,p,spacing,frame));
    const browser=context.kinPlanarGeometry(tags,frame),server=planarGeometry(tags,frame);
+   // The browser reads the viewer's combined instance, which carries that frame origin as ImagePositionPatient.
+   if(tags.NumberOfFrames>1)assert.deepEqual([...context.kinPlanarGeometry({...tags,ImagePositionPatient:[0,0,frame]},frame).origin],[...browser.origin]);
    assert.deepEqual([...browser.spacing],spacing);assert.match(browser.label,label);assert.equal(browser.label,server.label);
    for(const geometry of [browser,server]){
     assert.ok(Math.abs(geometry.measure(kind,points)-value)<1e-9,name+' '+kind);

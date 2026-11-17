@@ -145,6 +145,7 @@ NATIVE = '''tool=>{const a=cornerstoneTools.annotation.state.getAllAnnotations()
   const plane=cornerstone.metaData.get('imagePlaneModule',a.metadata.referencedImageId), s=Object.values(a.data.cachedStats||{})[0]||{};
   return {row:plane.rowCosines,column:plane.columnCosines,origin:plane.imagePositionPatient,points:a.data.handles.points,
     value:tool==='Length'?s.length:s.angle,image:a.metadata.referencedImageId};}'''
+SVG_TEXT = "()=>[...document.querySelectorAll('svg.svg-layer text')].map(t=>t.textContent).join(' ')"
 
 OBSERVER = '''(()=>{
   const objects=new WeakMap(); let serial=0;
@@ -279,10 +280,11 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
                 row = self.draw_length(p)
                 p.wait_for_timeout(350)  # the pinned native calculator's trailing throttle
                 native = p.evaluate(NATIVE, 'Length')
-                # The viewer places an image without a position or orientation at [0,0,0], rows along [0,1,0], columns along
-                # [0,0,-1]; the mark lies in that plane.
-                self.assertEqual([native['row'], native['column'], native['origin']], [[0, 1, 0], [0, 0, -1], [0, 0, 0]], native)
-                text = ' '.join(p.locator('svg.svg-layer').all_inner_texts())
+                # The viewer places an image without a position or orientation with rows along [0,1,0], columns along [0,0,-1]
+                # and its origin at [0,0,0] — [0,0,frame] for a multi-frame image (here frame 1); the mark lies in that plane.
+                origin = [0, 0, 1] if frames > 1 else [0, 0, 0]
+                self.assertEqual([native['row'], native['column'], native['origin']], [[0, 1, 0], [0, 0, -1], origin], native)
+                text = p.evaluate(SVG_TEXT)
                 self.assertNotIn('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다', text)
                 self.assertIn(basis, text)
                 self.assertNotIn(SCREEN, text)
@@ -316,7 +318,7 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
                 u, v = ([q[1] - vertex[1], -(q[2] - vertex[2])] for q in (angle['points'][0], angle['points'][2]))
                 expected = math.degrees(math.acos(max(-1, min(1, (u[0] * v[0] + u[1] * v[1]) / math.hypot(*u) / math.hypot(*v)))))
                 expect(p.locator('#kin-viewer-history section[data-kind=angle]')).to_contain_text('°')
-                text = ' '.join(p.locator('svg.svg-layer').all_inner_texts())
+                text = p.evaluate(SVG_TEXT)
                 self.assertNotIn('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다', text)
                 shown = float(re.search(r'(\d+(?:\.\d+)?) ?°', text).group(1))
                 self.assertLess(abs(shown - expected), .051, (text, expected, angle))

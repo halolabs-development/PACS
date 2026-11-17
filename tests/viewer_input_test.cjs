@@ -174,6 +174,12 @@ test('Measure marks on their original: a text point on the frame, a circle diame
   reject(() => v.verifyViewerReference('2.25.1', command(mark('spine', { frameOfReferenceUid: null, points: [[1, 5, -6]] })).item, plain));
   reject(() => v.verifyViewerReference('2.25.1', command(mark('spine')).item, plain));
   reject(() => v.verifyViewerReference('2.25.1', command(circle([10, area(10)], 'kin-circle-v1:pixel:value', { frameOfReferenceUid: null })).item, plain));
+  // A multi-frame image without position (an XA run): the pinned viewer puts frame n's origin at [0, 0, n], so pixel (5, 0)
+  // of frame 2 is [0, 5, 2] — a mark on the top row stays on it; the frame-1 origin would read it two rows above the image.
+  const run = { ...plain, SOPClassUID: '1.2.840.10008.5.1.4.1.1.12.1', NumberOfFrames: '2' };
+  v.verifyViewerReference('2.25.1', command(mark('spine', { frameOfReferenceUid: null, frame: 2, points: [[0, 5, 2]] })).item, run);
+  v.verifyViewerReference('2.25.1', command(mark('spine', { frameOfReferenceUid: null, frame: 1, points: [[0, 5, 1]] })).item, run);
+  reject(() => v.verifyViewerReference('2.25.1', command(mark('spine', { frameOfReferenceUid: null, frame: 2, points: [[0, 5, 4]] })).item, run));
 });
 test('Measure marks: a circle on ultrasound uses the Region Calibration and stays inside one region', () => {
   const us = { StudyInstanceUID: '2.25.1', SeriesInstanceUID: '2.25.2', SOPInstanceUID: '2.25.3', SOPClassUID: '1.2.840.10008.5.1.4.1.1.6.1', Modality: 'US',
