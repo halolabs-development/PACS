@@ -103,6 +103,7 @@ globalThis.KinViewerReportPanel = (() => {
     el('summary', { textContent: 'Report Editor' }, panel);
     const head = el('div', { className: 'kin-viewer-report-head' }, panel);
     const patient = el('strong', { id: 'kin-viewer-report-patient' }, head);
+    patient.translate = false; // patient data: never translated
     const stateWord = el('span', { id: 'kin-viewer-report-state', className: 'kin-viewer-report-state' }, head);
     el('span', { className: 'kin-viewer-report-readonly', textContent: 'Read Only' }, head);
     const source = el('p', { id: 'kin-viewer-report-source', className: 'kin-viewer-report-source' }, panel);
@@ -173,7 +174,8 @@ globalThis.KinViewerReportPanel = (() => {
         row = pure.scopedRow(data?.studies, ticket.uid, scope()?.key);
         if(row && view.KinExamScope.readingStamp(row)!==ticket.examStamp)throw Error('scope');
         loaded = true; failed = false;
-        if (status.textContent === pure.TEXT.failed) status.textContent = '';
+        // The words this panel wrote (the screen may show them in the reader's language).
+        if ((view.KinLanguage ? view.KinLanguage.source(status) : status.textContent) === pure.TEXT.failed) status.textContent = '';
       } catch (_) {
         if (!alive() || !admitted(context) || !pure.current(ticket, now(serverRequest))) return;
         row = null; loaded = false; failed = true; status.textContent = pure.TEXT.failed;

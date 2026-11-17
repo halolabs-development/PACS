@@ -161,10 +161,10 @@ class WorkPaletteDOM(unittest.TestCase):
         expect(page.locator('#findings')).to_be_editable()
         settle(page)
         self.assertEqual([], self.sweep(page), 'a study selected, report editor shown')
-        # The writing field stays marked apart from the panel it sits on, and focus is the accent.
+        # The writing field is a panel like every input (#2D2D2D), marked apart by its solid edge; focus is the accent.
         field = page.evaluate('''() => { const s = getComputedStyle(document.querySelector('#findings'));
           return [s.backgroundColor, s.borderTopColor, s.borderTopStyle, getComputedStyle(document.querySelector('.report-p')).backgroundColor]; }''')
-        self.assertEqual([rgb('#212121'), rgb('#b4b4b4'), 'solid', rgb('#2d2d2d')], field)
+        self.assertEqual([rgb('#2d2d2d'), rgb('#b4b4b4'), 'solid', rgb('#2d2d2d')], field)
         page.locator('#findings').focus()
         self.assertEqual(rgb('#8ab4c8'), page.locator('#findings').evaluate('e => getComputedStyle(e).borderTopColor'))
         row = page.locator('#rows tr[data-uid]').first
@@ -180,10 +180,43 @@ class WorkPaletteDOM(unittest.TestCase):
         page.wait_for_function("document.body.classList.contains('reading')")
         settle(page)
         self.assertEqual([], self.sweep(page), 'Reading Workspace')
-        # Meaning colours stay.
+        # Meaning colours stay (the RS word is its meaning colour lightened to read on a selected row).
         kept = page.evaluate('''() => [getComputedStyle(document.querySelector('.dot-w')).backgroundColor,
           getComputedStyle(document.querySelector('#rows .rs.W')).color, getComputedStyle(document.querySelector('#citemsg')).color]''')
-        self.assertEqual([rgb('#4f8ef7'), rgb('#4f8ef7'), rgb('#d8b24a')], kept)
+        self.assertEqual([rgb('#4f8ef7'), rgb('#90b8fa'), rgb('#d8b24a')], kept)
+
+    def test_status_words_read_on_a_selected_row_and_inputs_are_panels(self):
+        """Text contrast: each status word (RS) reads at 4.5:1 or more on the panel, a hovered and a selected row.
+        The colour table: panels and inputs #2D2D2D - the report fields, a dialog's fields and a modal's reason field."""
+        page = self.open()
+        words = page.evaluate('''() => { const row = document.querySelector('#rows tr[data-uid]'), rs = row.querySelector('.rs');
+          const out = {}; for (const st of ['w', 'a', 'h', 'o', 'p', 't']) {
+            row.className = 'st-' + st + ' sel'; out[st] = [getComputedStyle(rs).color, getComputedStyle(row.querySelector('td')).backgroundColor]; }
+          row.className = ''; return out; }''')
+        lin = lambda c: c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+        lum = lambda s: (lambda r, g, b: 0.2126 * lin(r / 255) + 0.7152 * lin(g / 255) + 0.0722 * lin(b / 255))(
+            *[int(x) for x in s[s.index('(') + 1:s.index(')')].split(',')[:3]])
+        panel = (45, 45, 45)  # a row fill is an alpha over the panel: composite it the way the browser does
+        for st, (word, fill) in words.items():
+            parts = [float(x) for x in fill[fill.index('(') + 1:fill.index(')')].split(',')]
+            alpha = parts[3] if len(parts) > 3 else 1
+            shown = 'rgb(%d, %d, %d)' % tuple(round(parts[i] * alpha + panel[i] * (1 - alpha)) for i in range(3))
+            for bg in (shown, 'rgb(45, 45, 45)'):
+                a, b = sorted((lum(word), lum(bg)), reverse=True)
+                with self.subTest(status=st, background=bg):
+                    self.assertGreaterEqual((a + 0.05) / (b + 0.05), 4.5, (word, bg))
+        page.locator('#rows tr[data-uid]').first.click()
+        expect(page.locator('#findings')).to_be_editable()
+        fields = page.evaluate("() => ['#findings', '#conclusion', '#recommendation'].map(s => getComputedStyle(document.querySelector(s)).backgroundColor)")
+        self.assertEqual([rgb('#2d2d2d')] * 3, fields)
+        self.reveal(page, '#favorite-open')
+        page.locator('#favorite-open').click()
+        expect(page.locator('#favorite-dialog')).to_be_visible()
+        inputs = page.evaluate('''() => [...document.querySelectorAll('#favorite-dialog :is(select, textarea, input:not([type=checkbox], [type=radio], [type=range]))')]
+          .filter(e => e.getClientRects().length).map(e => (e.id || e.name) + ' ' + getComputedStyle(e).backgroundColor)''')
+        self.assertTrue(inputs)
+        self.assertEqual([], [i for i in inputs if not i.endswith(rgb('#2d2d2d'))])
+        page.locator('#favorite-close').click()
 
     def test_dialogs_opened_from_the_page_use_the_palette(self):
         page = self.open()
@@ -238,13 +271,13 @@ class WorkPaletteDOM(unittest.TestCase):
         page.locator('#reading-color-current').select_option('warm')
         page.keyboard.press('Escape')
         colours = lambda p: p.locator('#findings').evaluate('e => [getComputedStyle(e).color, getComputedStyle(e).backgroundColor]')
-        self.assertEqual([rgb('#fff1d6'), rgb('#212121')], colours(page))
+        self.assertEqual([rgb('#fff1d6'), rgb('#2d2d2d')], colours(page))
         self.assertIn('"current":"warm"', page.evaluate('(key) => localStorage.getItem(key)', 'kin-reading-color:v1:' + OWNER))
         page.reload()
         expect(page.locator('#rows')).to_contain_text(auth.PATIENT)
         page.locator('#rows tr[data-uid]').first.click()
         expect(page.locator('#findings')).to_be_editable()
-        self.assertEqual([rgb('#fff1d6'), rgb('#212121')], colours(page))
+        self.assertEqual([rgb('#fff1d6'), rgb('#2d2d2d')], colours(page))
 
 
 if __name__ == '__main__':

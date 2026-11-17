@@ -5,7 +5,8 @@
  * Every word on the screen passes one place: tr() reads the glossary (worklist-language-terms.js) and paint() writes the
  * result into a text node or a title-like attribute, keeping the words the page wrote so they come back unchanged.
  * Only whole glossary entries are translated: a sentence that carries data is a glossary template written where the
- * code builds it ({0} data shown as is, {t0} words the code chose, {e0} an error message). Data is never translated:
+ * code builds it ({0} data shown as is, {t0} words the code chose, {e0} an error message; in English a {0} that is a
+ * whole Korean sentence of the glossary is the page's own message and is read as one). Data is never translated:
  * nothing inside translate=no, form fields, contenteditable text, an option whose text is its value, or an attribute
  * named in data-kin-keep. Words the page writes later (lists drawn again, dialogs, toasts, the Pop Out window) are
  * painted by one MutationObserver per document; alert, confirm, prompt and setCustomValidity are translated before
@@ -37,6 +38,8 @@
       if (!Array.isArray(term) || typeof term[0] !== 'string' || typeof term[1] !== 'string') continue;
       const source = space(term[0]), korean = HANGUL.test(source.replace(new RegExp(SLOT.source, 'g'), ''));
       const entry = korean ? { en: term[1], ko: term[3] || source } : { en: term[3] || source, ko: term[1] };
+      // A Korean sentence of the page (kind m, or s from the server): the words that may fill a part in English.
+      if (korean && /^[ms]/.test(term[2] || '')) entry.sentence = true;
       if (!SLOT.test(source)) { exact.set(source, entry); continue; }
       bySource.set(source, entry);
       const slots = [], parts = source.split(SLOTS), isSlot = part => SLOTS.test(part) && part.match(SLOTS)[0] === part;
@@ -101,10 +104,18 @@
       });
     } finally { visiting.delete(sentence); }
   }
-  /** One text as the page wrote it (ends trimmed): the glossary entry, or a template whose parts are filled in once. */
+  /** One text as the page wrote it (ends trimmed): the glossary entry, or a template whose parts are filled in once
+   *  (fill); in English, lines with no reading as a whole are read one by one. */
   function translate(text, lang, depth) {
     const flat = space(text), hit = exact.get(flat);
     if (hit) return hit[lang];
+    const whole = fill(text, lang, depth);
+    if (whole !== text || depth > 0 || lang !== 'en' || !/\n/.test(text)) return whole;
+    // English: lines joined by the page (a message and the server's detail under it) — a Korean line is its own words.
+    return text.split('\n').map(line => HANGUL.test(line) ? line.match(/^\s*/)[0] + translate(line.trim(), lang, 1) + line.match(/\s*$/)[0] : line).join('\n');
+  }
+  function fill(text, lang, depth) {
+    const flat = space(text);
     for (const t of templates) {
       if (t.anchor && !flat.includes(t.anchor)) continue;
       const m = t.lazy.exec(text);
@@ -122,11 +133,20 @@
           const inner = translate(value.trim(), lang, depth + 1);
           if (inner !== value.trim()) out = value.match(/^\s*/)[0] + inner + value.match(/\s*$/)[0];
           else if (kind === 'e' && foreign(value, lang)) out = unknownError(value.trim(), lang);
+        } else if (!kind && lang === 'en' && HANGUL.test(value)) {
+          // English: a data part that is a whole Korean sentence of the page (a message joined with words around it) is
+          // the page's own words, not data a person wrote.
+          const own = exact.get(space(value));
+          if (own?.sentence) out = value.match(/^\s*/)[0] + own.en + value.match(/\s*$/)[0];
         }
         filled[slot] = out;
       });
       // Each part goes in once, as it is: a part that reads like a slot is never filled again.
-      return t.entry[lang].replace(new RegExp(SLOTS.source, 'g'), slot => Object.hasOwn(filled, slot) ? filled[slot] : slot);
+      const result = t.entry[lang].replace(new RegExp(SLOTS.source, 'g'), slot => Object.hasOwn(filled, slot) ? filled[slot] : slot);
+      // English: a template that changes nothing ("Study {0}" over "Study Info & Templates 단축키") is not the reading;
+      // a template further down may know the words.
+      if (lang === 'en' && result === text && HANGUL.test(text)) continue;
+      return result;
     }
     return text;
   }
@@ -143,7 +163,8 @@
 
   // ── Where a node is and what may change ───────────────────────────────────────────────────────────────────────
   const state = { worklist: null, reading: null };
-  let lastRegion = 'worklist', generation = 0;
+  // A document that is one screen (the viewer is the reading screen) says so on its root; the work page starts at the list.
+  let lastRegion = document.documentElement.getAttribute('data-kin-lang-region') === 'reading' ? 'reading' : 'worklist', generation = 0;
   const regionOf = el => {
     const marked = el?.closest?.('[data-kin-lang-region]');
     return marked ? marked.getAttribute('data-kin-lang-region') : lastRegion;
@@ -162,7 +183,7 @@
 
   // The words the page wrote, kept per text node and per attribute so a later language (or none) starts from them.
   const texts = new WeakMap(), attrs = new WeakMap();
-  const ATTRS = ['title', 'aria-label', 'placeholder', 'alt', 'aria-valuetext'];
+  const ATTRS = ['title', 'aria-label', 'placeholder', 'alt', 'aria-valuetext', 'aria-description'];
   // Places that show an error (the page marks them): an error that has no text in the chosen language yet still says
   // what failed, in the chosen language, followed by the original words.
   const ERROR = '#toast.err, #err, [data-kin-error]';
@@ -334,14 +355,22 @@
       v.version === 1 && valid(v.worklist) && valid(v.reading) ? { version: 1, worklist: v.worklist, reading: v.reading } : null;
   }
   const value = () => ({ version: 1, worklist: state.worklist, reading: state.reading });
-  function set(next) {
+  // The account's choice as this browser last showed it. A page that cannot read the account (the administration and
+  // audit pages, the sign-in page, the viewer document) starts from it; the work page writes it whenever the account
+  // choice is restored or saved.
+  const BROWSER = 'kin-language:v1';
+  function set(next, fromAccount = true) {
     const clean = normalize(next);
     if (!clean) return false;
     generation += 1;
     const changed = REGIONS.some(r => state[r] !== clean[r]);
     state.worklist = clean.worklist; state.reading = clean.reading;
+    if (fromAccount) { try { localStorage.setItem(BROWSER, JSON.stringify(clean)); } catch (_) {} }
     if (changed) { repaint(); paintDialog(); }
     return true;
+  }
+  function fromBrowser() {
+    try { return normalize(JSON.parse(localStorage.getItem(BROWSER))); } catch (_) { return null; }
   }
 
   // The header mark: what the account chose (EN / KO, both when the screens differ); an account that never chose keeps
@@ -506,6 +535,15 @@
     styleCss(document);
     document.head.append(make('style', { id: 'language-style', textContent: css }));
     document.getElementById('language-open')?.addEventListener('click', openDialog);
+    // A page that cannot read the account says so (data-kin-language-source="browser"): it shows the choice this browser
+    // last showed, and follows a change made in another window of this browser.
+    // Its glossary covers its Korean words only, so it follows English and keeps its own page for Korean or no choice.
+    if (document.documentElement.getAttribute('data-kin-language-source') === 'browser') {
+      const follow = () => { const kept = fromBrowser(), en = r => kept?.[r] === 'en' ? 'en' : null;
+        set({ version: 1, worklist: en('worklist'), reading: en('reading') }, false); };
+      follow();
+      window.addEventListener('storage', e => { if (e.key === BROWSER) follow(); });
+    }
     // A choice restored before the page finished loading is painted now.
     if (active()) repaint(); else showLabel();
   }

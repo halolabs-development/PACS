@@ -866,6 +866,8 @@
       "tests/image_report_*",
       "api/src/image-report*",
       "tests/worklist_language_*",
+      "tests/screen_language_*",
+      "tests/theme_palette_*",
       "worklist-v0/hpacs-lite/worklist-language*",
       "tests/e2e/test_film_print.py",
       "docker-compose.film-print.yml",

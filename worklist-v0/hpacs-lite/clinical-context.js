@@ -317,7 +317,8 @@
   }
   function reasonText(reason, status, code) {
     const tail = [status === null || status === undefined ? '' : 'HTTP ' + status, code || ''].filter(Boolean).join(' · ');
-    return TEXT.reasons[reason] + (tail ? ' (' + tail + ')' : '');
+    // The reason is the page's words, the status and code are the server's: a sentence keeps them apart for the language.
+    return tail ? kinSay('{t0} ({1})', { t: TEXT.reasons[reason] }, tail) : TEXT.reasons[reason];
   }
 
   // ── stale after a later list observation (§8.1 S1-S8). The baseline is the painted answer's own DTO paths. ──
@@ -453,7 +454,7 @@
   /** The panel status line for a painted answer: the empty sentence, a kept answer after a failed re-read, or its read time. */
   function summary(answer, stale, kept, options) {
     const format = options && typeof options.format === 'function' ? options.format : localTime;
-    if (kept) return { label: TEXT.stateLabels.stale, text: TEXT.refreshFailed + ' ' + reasonText(kept.reason, kept.status, kept.code), title: '' };
+    if (kept) return { label: TEXT.stateLabels.stale, text: kinSay('{t0} {t1}', { t: TEXT.refreshFailed }, { t: reasonText(kept.reason, kept.status, kept.code) }), title: '' };
     if (noInformation(answer, stale)) return { label: '', text: TEXT.noInformation, title: '' };
     return { label: '', text: fill(TEXT.observedAnswer, { observedAt: format(answer.observedAt) }), title: answer.observedAt };
   }

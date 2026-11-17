@@ -248,6 +248,17 @@ const KIN_VIEWER_EXPECTED_SESSION = (() => {
 function kinCreateSessionBoundary() {
   return { id: 'kin.session-boundary', async preRegistration({servicesManager} = {}) {
     kinExamViewerServices=servicesManager?.services;
+    // Screen language: the viewer is the reading screen and shows the choice this browser last showed for the account
+    // (worklist-language.js). Loaded in order beside the session scripts, never in their way.
+    if (!window.KinLanguage) {
+      document.documentElement.setAttribute('data-kin-language-source', 'browser');
+      document.documentElement.setAttribute('data-kin-lang-region', 'reading');
+      for (const name of ['worklist-language-terms.js', 'worklist-language.js']) {
+        const script = document.createElement('script');
+        script.src = '/worklist/hpacs-lite/' + name; script.async = false;
+        document.head.append(script);
+      }
+    }
     for (const name of ['work-context.js', 'session-transport.js', 'viewer-resources.js', 'viewer-preload.js', 'viewer-session.js']) {
       await new Promise((resolve, reject) => {
         const script = document.createElement('script');
@@ -392,7 +403,9 @@ const kinViewerToolbarLabels = (() => {
   // 누르면 켜지고 다른 도구를 고르면 꺼지는 버튼. Capture·Layout·More Tools는 동작·목록이라 켜짐 상태가 없다.
   const TOGGLES = new Set(['MeasurementTools', 'Zoom', 'Pan', 'TrackballRotate', 'WindowLevel', 'Crosshairs']);
   const ACTIVE = 'bg-primary-light';
-  const put = (element, name, value) => { if (element.getAttribute(name) !== value) element.setAttribute(name, value); };
+  // What this file wrote is compared, not what the screen shows: the screen language may show the words translated.
+  const written = (element, name) => globalThis.KinLanguage ? globalThis.KinLanguage.source(element, name) : element.getAttribute(name);
+  const put = (element, name, value) => { if (written(element, name) !== value) element.setAttribute(name, value); };
   const shown = element => element.nodeType === 1
     ? (element.localName === 'svg' ? '' : [...element.childNodes].map(shown).join('')) : element.nodeType === 3 ? element.data : '';
   // data-cy 하나가 가리키는 것: 주 도구막대 버튼, 분할 버튼의 주/목록 부분, 또는 분할 버튼 목록의 항목.
@@ -430,7 +443,7 @@ const kinViewerToolbarLabels = (() => {
   function outputScope(scope) {
     const meaning = PRIMARY.Capture[1];
     for (const button of scope.querySelectorAll('[data-tool="Capture"]')) {
-      const title = button.getAttribute('title') || '';
+      const title = written(button, 'title') || '';
       if (!title.startsWith(meaning)) put(button, 'title', meaning + (title ? ' · ' + title : ''));
     }
   }

@@ -123,8 +123,9 @@ window.KinViewerIdentity=(()=>{
           const role=current.uid===studies[0]?'current':'prior',general=value[role],modality=typeof m.Modality==='string'&&modalities.includes(m.Modality.trim().toUpperCase())?m.Modality.trim().toUpperCase():'',p=modality&&general.overrides[modality]||general;
           e.dataset.role=role;e.dataset.study=current.uid;e.dataset.modality=modality;e.dataset.profile=modality&&general.overrides[modality]?'override':'general';
           const shown={name:text(m.PatientName).slice(0,128),date:text(m.StudyDate).slice(0,16),description:text(m.StudyDescription||m.SeriesDescription).slice(0,128)};
-          const titleParts=[(role==='current'?'기준 검사':'비교 검사')+' · '+m.PatientID];for(const field of fields)if(p[field]&&shown[field])titleParts.push(shown[field]);
-          titles.set(id,titleParts.concat(text(m.Modality).slice(0,16)).filter(Boolean).join(' · ')+' — 판독 뷰어');
+          const titleParts=[m.PatientID];for(const field of fields)if(p[field]&&shown[field])titleParts.push(shown[field]);
+          // The role words and the window name are the page's (one template the screen language reads); the rest is data.
+          titles.set(id,`${role==='current'?'기준 검사':'비교 검사'} · ${titleParts.concat(text(m.Modality).slice(0,16)).filter(Boolean).join(' · ')} — 판독 뷰어`);
           const groups=new Map([[p.position,[(role==='current'?'기준 검사':'비교 검사')+' · '+m.PatientID]]]);
           for(const field of fields)if(p[field]&&shown[field]){const at=p.fieldPositions[field];if(!groups.has(at))groups.set(at,[]);groups.get(at).push(shown[field]);}
           // Compare › Exam Marks on Images: the study's exam mark (* current, P1… earlier and N1… later studies) goes before

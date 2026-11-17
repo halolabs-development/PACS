@@ -83,6 +83,8 @@ SCRIPTS = {
     # CD-01: the shared Product Information panel and its embedded facts.
     "/worklist/hpacs-lite/product-info-data.js": lf_text(HPACS / "product-info-data.js"),
     "/worklist/hpacs-lite/product-info.js": lf_text(HPACS / "product-info.js"),
+    "/worklist/hpacs-lite/worklist-language-terms.js": lf_text(HPACS / "worklist-language-terms.js"),
+    "/worklist/hpacs-lite/worklist-language.js": lf_text(HPACS / "worklist-language.js"),
 }
 # CD-01: GET /api/version of a server built without a commit (the development stack).
 VERSION = {"schema": 1, "build": {"revision": None}}

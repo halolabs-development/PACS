@@ -32,7 +32,7 @@ SCRIPTS = {"/worklist/hpacs-lite/" + name: lf_text(HPACS / name) for name in (
     "auth.js", "work-context.js", "session-transport.js", "study-access-admin.js", "signing-key-admin.js",
     "admin-access-review.js", "held-sources-admin.js", "emr-link.js", "emr-link-admin.js", "dicom-peers-admin.js",
     # CD-01: the shared Product Information panel and its embedded facts.
-    "product-info-data.js", "product-info.js")}
+    "product-info-data.js", "product-info.js", "worklist-language-terms.js", "worklist-language.js")}
 INSTITUTION = "SYN-INST-A"
 ME = {"sub": "SYN-ADMIN-SUB", "user": "syn-admin", "displayName": "SYN Admin", "roles": ["admin"],
       "institution": INSTITUTION, "sessionId": "SYN-SESSION-ADMIN"}

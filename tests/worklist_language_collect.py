@@ -34,6 +34,14 @@ class Piece:
     file: str
     line: int
     kind: str  # html | js-ko | js-en | css | server
+    # The screen the words are on: main (worklist and reading, both directions), or one of OTHER_SCREENS (English only:
+    # a reader who chose Korean keeps those screens as they are, so only their Korean words need an English entry).
+    screen: str = "main"
+
+
+# The other pages, each loading the language module, and the viewer document (its modules come from config/ohif).
+OTHER_PAGES = ("clinician.html", "admin.html", "audit.html", "index.html")
+OTHER_SCREENS = OTHER_PAGES + ("viewer",)
 
 
 def normalize(text: str) -> str:
@@ -95,17 +103,47 @@ def english_label(text: str, ui: bool, has_tags: bool) -> bool:
     return True
 
 
-def page_scripts():
-    page = (PAGE_DIR / "main.html").read_text(encoding="utf-8")
+def page_scripts(page_name="main.html"):
+    page = (PAGE_DIR / page_name).read_text(encoding="utf-8")
     names = re.findall(r'<script[^>]*\ssrc="([^"]+)"', page)
-    manifest = json.loads((ROOT / "scripts" / "main-split-order.json").read_text(encoding="utf-8"))
-    names += [s["file"] for s in manifest["sources"]]
+    if page_name == "main.html":
+        manifest = json.loads((ROOT / "scripts" / "main-split-order.json").read_text(encoding="utf-8"))
+        names += [s["file"] for s in manifest["sources"]]
     seen, files = set(), []
     for name in names:
         if name in OWN or name in seen or not name.endswith(".js"): continue
         if (PAGE_DIR / name).exists():
             seen.add(name); files.append(name)
     return files
+
+
+OHIF = ROOT / "config" / "ohif"
+
+
+def viewer_sources():
+    """The viewer document's own scripts: the config/ohif sources (config/ohif.js is built from them) and every page
+    module they load into the viewer (named as a .js literal there and listed in config/ohif/source-map.json)."""
+    sources = sorted(OHIF.glob("*.js"))
+    named = set(re.findall(r"/worklist/hpacs-lite/([\w.-]+\.js)", (OHIF / "source-map.json").read_text(encoding="utf-8")))
+    for source in sources:
+        # 'name.js' or '/worklist/hpacs-lite/name.js' (a loader's own list or a path it builds).
+        named |= set(re.findall(r"""['"`/]([\w.-]+\.js)['"`]""", source.read_text(encoding="utf-8")))
+    modules = sorted(PAGE_DIR / n for n in named if n not in OWN and (PAGE_DIR / n).exists())
+    return sources + modules
+
+
+def inline_scripts(page_name, tmp):
+    """The page's inline <script> blocks as one file named like the page, each block at its own line, so a piece is
+    named page:line."""
+    text = (PAGE_DIR / page_name).read_text(encoding="utf-8")
+    out = [""] * (text.count("\n") + 1)
+    for m in re.finditer(r"<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)</script>", text):
+        start = text.count("\n", 0, m.start(1))
+        for k, line in enumerate(m.group(1).split("\n")):
+            out[start + k] = line
+    path = Path(tmp) / page_name
+    path.write_text("\n".join(out), encoding="utf-8")
+    return path
 
 
 def parse(*args) -> list[dict]:
@@ -115,7 +153,7 @@ def parse(*args) -> list[dict]:
 
 def collect_js(names=None) -> list[Piece]:
     found = []
-    for lit in parse(*[PAGE_DIR / n for n in (names or page_scripts())]):
+    for lit in parse(*[n if isinstance(n, Path) else PAGE_DIR / n for n in (names or page_scripts())]):
         has_tags = bool(TAG.search(lit["value"]))
         for text in pieces_of(lit["value"], lit["kinds"]):
             if not meaningful(text): continue
@@ -129,7 +167,7 @@ def collect_js(names=None) -> list[Piece]:
 VOID = {"br", "img", "input", "meta", "link", "hr", "source", "col", "area", "wbr", "param", "embed", "track"}
 
 
-def collect_html() -> list[Piece]:
+def collect_html(page_name="main.html") -> list[Piece]:
     from html.parser import HTMLParser
     found: list[Piece] = []
 
@@ -147,7 +185,7 @@ def collect_html() -> list[Piece]:
             for k in ("title", "aria-label", "placeholder", "alt", "aria-description", "aria-valuetext"):
                 v = a.get(k)
                 if v and meaningful(normalize(v)):
-                    found.append(Piece(normalize(v), "main.html", self.getpos()[0], "html"))
+                    found.append(Piece(normalize(v), page_name, self.getpos()[0], "html"))
 
         def handle_startendtag(self, tag, attrs):
             self.handle_starttag(tag, attrs)
@@ -161,18 +199,18 @@ def collect_html() -> list[Piece]:
             if self.skip or any(self.no): return
             t = normalize(data)
             if t and meaningful(t):
-                found.append(Piece(t, "main.html", self.getpos()[0], "html"))
-    P().feed((PAGE_DIR / "main.html").read_text(encoding="utf-8"))
+                found.append(Piece(t, page_name, self.getpos()[0], "html"))
+    P().feed((PAGE_DIR / page_name).read_text(encoding="utf-8"))
     return found
 
 
 CSS_CONTENT = re.compile(r"""content:\s*(["'])((?:(?!\1).)*[A-Za-z가-힣](?:(?!\1).)*)\1""")
 
 
-def collect_css() -> list[Piece]:
+def collect_css(page_name="main.html") -> list[Piece]:
     found = []
-    page = (PAGE_DIR / "main.html").read_text(encoding="utf-8")
-    sources = [("main.html", page)]
+    page = (PAGE_DIR / page_name).read_text(encoding="utf-8")
+    sources = [(page_name, page)]
     for css in re.findall(r'<link[^>]*href="([^"]+\.css)"', page):
         p = PAGE_DIR / css
         if p.exists(): sources.append((css, p.read_text(encoding="utf-8")))
@@ -194,8 +232,38 @@ def collect_server() -> list[Piece]:
     return found
 
 
-def collect() -> list[Piece]:
+def collect_main() -> list[Piece]:
     return collect_html() + collect_js() + collect_css() + collect_server()
+
+
+def collect_other() -> list[Piece]:
+    """The Korean words of the other pages and of the viewer document (OTHER_SCREENS)."""
+    import tempfile
+    found = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for page in OTHER_PAGES:
+            pieces = collect_html(page) + collect_css(page) + collect_js(page_scripts(page) + [inline_scripts(page, tmp)])
+            found += [Piece(p.text, p.file, p.line, p.kind, page) for p in pieces]
+        found += [Piece(p.text, p.file, p.line, p.kind, "viewer") for p in collect_js(viewer_sources()) + collect_css_files(VIEWER_CSS)]
+    return [p for p in found if HANGUL.search(SLOT.sub("", p.text))]
+
+
+VIEWER_CSS = ("viewer-ux-theme.css",)
+
+
+def collect_css_files(names) -> list[Piece]:
+    found = []
+    for name in names:
+        text = (PAGE_DIR / name).read_text(encoding="utf-8")
+        for m in CSS_CONTENT.finditer(text):
+            t = normalize(m.group(2))
+            if meaningful(t):
+                found.append(Piece(t, name, text.count("\n", 0, m.start()) + 1, "css"))
+    return found
+
+
+def collect() -> list[Piece]:
+    return collect_main() + collect_other()
 
 
 if __name__ == "__main__":

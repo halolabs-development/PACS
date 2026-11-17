@@ -321,6 +321,14 @@ class WorklistLanguageDOM(unittest.TestCase):
             // Korean: no English word of three letters or more is left, even beside Korean words (a mixed line counts).
             if (lang === 'ko' ? /[A-Za-z]{3,}/.test(bare) : /[\\uac00-\\ud7a3]/.test(bare)) out.add(text.slice(0, 80));
           }
+          // English: the tooltip, label, placeholder and alt of every element (shown or not) are English too.
+          if (lang === 'en') for (const el of document.querySelectorAll('[title],[aria-label],[placeholder],[alt]')) {
+            if (el.closest('script,style,textarea,[translate="no"],[contenteditable="true"],#language-dialog,#language-applied')) continue;
+            for (const name of ['title', 'aria-label', 'placeholder', 'alt']) {
+              const value = el.getAttribute(name) || '';
+              if (/[\\uac00-\\ud7a3]/.test(value.replace(keep, ''))) out.add(name + ': ' + value.slice(0, 80));
+            }
+          }
           return [...out].sort(); }""", lang)
 
     def test_no_visible_word_is_left_in_the_other_language(self):
@@ -343,6 +351,21 @@ class WorklistLanguageDOM(unittest.TestCase):
         # A part that holds the fixed words of its own template has two readings: left as the page wrote it.
         twice = "단축어: a · Modality: b · Modality: c · Bodypart: d"
         self.assertEqual(twice, tr(twice, "en"))
+
+    def test_english_reads_the_page_words_the_page_joined_with_other_words(self):
+        """Tooltips the page builds by joining its own messages: in English the joined Korean message is the page's."""
+        self.boot()
+        tr = lambda text, lang: self.page.evaluate("([t, l]) => KinLanguage.tr(t, l)", [text, lang])
+        # A template that would change nothing ("Study {0}") is not the reading; "{0} 단축키" is.
+        self.assertEqual("Study Info & Templates Shortcut", tr("Study Info & Templates 단축키", "en"))
+        # A whole Korean sentence of the glossary filling a part is the page's own message.
+        self.assertEqual("Could not load questions for this study. — Show Questions",
+                         tr("이 검사의 질문을 불러오지 못했습니다. — Show Questions", "en"))
+        # A message with the server's detail on the next line: each line read as its own words, the detail as is.
+        self.assertEqual("Cannot check right now\nSYN detail (HTTP 503)", tr("지금 확인할 수 없습니다\nSYN detail (HTTP 503)", "en"))
+        # Data stays data: a short Korean word in a part, and anything on the Korean screen.
+        self.assertEqual("Cancellation reason: 승인", tr("취소 사유: 승인", "en"))
+        self.assertNotIn("Could not", tr("이 검사의 질문을 불러오지 못했습니다. — Show Questions", "ko"))
 
     def test_sentences_built_with_their_parts_translate_the_words_and_keep_the_data(self):
         self.boot()
