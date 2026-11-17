@@ -73,6 +73,11 @@
     const values = links.valueText(s.kind, s.calculator, s.values, 'server-copy');
     return kinSay('{t0}{1} · 프레임 {n2} · r{n3}{t4}', { t: KINDS[s.kind] || s.kind }, s.label ? ' · ' + s.label : '', s.frame, s.revision, { t: values ? kinSay(' · {t0}', { t: values }) : '' });
   }
+  // Include Measurements: one image source as the report line names it — the tool's name and the value text the source line
+  // shows (an unverified value keeps its own warning), never a value of its own.
+  function measurementOf(s) {
+    return { name: KINDS[s.kind] || s.kind, value: links.valueText(s.kind, s.calculator, s.values, 'server-copy') };
+  }
   function timeText(value) {
     const d = text(value) ? new Date(value) : null;
     if (!d || Number.isNaN(d.getTime())) return '시각 미확인';
@@ -85,24 +90,24 @@
     if (!item || typeof item !== 'object' || !uuid(item.id) || item.studyUid !== study || !count(item.revision) ||
         typeof item.hidden !== 'boolean' || !item.item || typeof item.item !== 'object') throw INVALID;
     const body = item.item, sources = body.sources, primary = body.primary === undefined ? 0 : body.primary;
-    // Version 1 is the shipped shape; version 2 adds the free-text characteristics and saved locations.
+    // Version 1 is the shipped shape; version 2 adds the free-text characteristics and saved locations; version 3 the lesion location.
     const version = body.schemaVersion === undefined ? 1 : body.schemaVersion;
-    if (![1, 2].includes(version) || (version === 2 && !text(body.characteristics))) throw INVALID;
+    if (![1, 2, 3].includes(version) || (version >= 2 && !text(body.characteristics)) || (version === 3 && !text(body.lesionLocation))) throw INVALID;
     if (!text(body.title) || !text(body.text) || !Array.isArray(sources) || sources.length < 1 ||
         !Number.isSafeInteger(primary) || primary < 0 || primary >= sources.length) throw INVALID;
     const serverLinks = Array.isArray(item.links) ? item.links : [];
     // The server admits at most one comparison study per finding, a saved location's whole study set included.
-    const named = sources.flatMap(s => s && s.kind === 'job' ? (version === 2 && Array.isArray(s.studies) ? s.studies : [null]) : [s && s.studyUid]);
+    const named = sources.flatMap(s => s && s.kind === 'job' ? (version >= 2 && Array.isArray(s.studies) ? s.studies : [null]) : [s && s.studyUid]);
     const comparisons = new Set(named.filter(value => value !== study));
     if (comparisons.size > 1) throw INVALID;
     return {
       id: item.id, revision: item.revision, hidden: item.hidden, title: body.title, text: body.text, primary,
-      schemaVersion: version, characteristics: version === 2 ? body.characteristics : null,
+      schemaVersion: version, characteristics: version >= 2 ? body.characteristics : null, lesionLocation: version === 3 ? body.lesionLocation : null,
       author: text(item.authorActor) ? item.authorActor : '', updated: timeText(item.updatedAt),
       comparison: comparisons.size ? [...comparisons][0] : null,
       sources: sources.map((s, index) => {
         if (s && s.kind === 'job') {
-          const copy = version === 2 ? links.jobCopy(s, study) : null;
+          const copy = version >= 2 ? links.jobCopy(s, study) : null;
           if (!copy) throw INVALID;
           const link = serverLinks[index] && serverLinks[index].jobId === copy.jobId ? serverLinks[index]
             : serverLinks.find(l => l && l.jobId === copy.jobId && (l.markId || null) === (copy.mark ? copy.mark.id : null)) || null;
@@ -114,7 +119,8 @@
         }
         if (!s || typeof s !== 'object' || !uuid(s.itemId) || !count(s.revision) || !uid(s.studyUid) || !uid(s.seriesUid) || !uid(s.sopUid) ||
             !count(s.frame) || !text(s.kind) || !text(s.label) ||
-            !(s.values === null || s.values === undefined || (Array.isArray(s.values) && s.values.every(n => typeof n === 'number'))) ||
+            // A null component is a saved value too (a Cobb angle of two lines at the same height); valueText shows it as '—'.
+            !(s.values === null || s.values === undefined || (Array.isArray(s.values) && s.values.every(n => typeof n === 'number' || n === null))) ||
             !(s.calculator === null || s.calculator === undefined || text(s.calculator))) throw INVALID;
         const link = serverLinks[index] && serverLinks[index].itemId === s.itemId ? serverLinks[index] : serverLinks.find(l => l && l.itemId === s.itemId) || null;
         // DB link state only: no head is passed, so no Verified/Unverified label can appear here.
@@ -442,9 +448,9 @@
     return { run, cancel: () => { sequence++; }, sequence: () => sequence, restoring: () => restoring !== null };
   }
 
-  const api = { reasonText, resultText, retryable, openable, arrivalText, readinessText, describeSource, timeText, rowOf, listPath, createListStore,
+  const api = { reasonText, resultText, retryable, openable, arrivalText, readinessText, describeSource, measurementOf, timeText, rowOf, listPath, createListStore,
     chooseTarget, precheck, sameIdentity, validResult, crossResult, targetOf, pinSource, samePin, createNavigator, LOCAL_REASONS: Object.freeze(Object.keys(TEXT)),
-    SCHEMA: 2, locationOf, locationText, locationResult: links.locationResult };
+    SCHEMA: 3, locationOf, locationText, locationResult: links.locationResult };
   if (typeof module === 'object' && module.exports) module.exports = api;
   root.kinFindingCommand = api;
 })(globalThis);

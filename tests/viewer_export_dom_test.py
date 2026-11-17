@@ -236,6 +236,41 @@ class ViewerExportDOMTest(unittest.TestCase):
         self.assertTrue(any(near(tuple(map(int, rgb.split(','))), (255, 255, 0), 60) for rgb in text), 'the image text is in the copy')
         self.assertFalse(any(near(tuple(map(int, rgb.split(','))), (255, 0, 255), 60) for rgb in action), 'control text is not image text')
 
+    def test_10b_the_measure_menu_layer_is_in_the_copy(self):
+        # The Measure menu draws its marks (a Spine Label's dot and name) in its own layer over the cell, not in svg.svg-layer.
+        page = self.open()
+        page.evaluate("""() => { const pane = document.querySelector('[data-cy=viewport-pane]');
+          const layer = document.createElement('div'); layer.className = 'kin-ux-cell-layer';
+          layer.style.cssText = 'position:absolute;inset:0;pointer-events:none'; pane.append(layer);
+          const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.dataset.kinMeasureLayer = 'left';
+          svg.setAttribute('width', '100%'); svg.setAttribute('height', '100%'); svg.setAttribute('style', 'position:absolute;inset:0;overflow:visible;pointer-events:none');
+          const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          for (const [k, v] of Object.entries({ cx: 60, cy: 30, r: 8, fill: 'rgb(255, 128, 0)' })) dot.setAttribute(k, v);
+          const name = document.createElementNS('http://www.w3.org/2000/svg', 'text'); name.textContent = 'L4-5';
+          for (const [k, v] of Object.entries({ x: 72, y: 36, fill: 'rgb(255, 128, 0)', style: 'font:700 14px sans-serif' })) name.setAttribute(k, v);
+          // Editing aids: the handle of a mark that may be moved, and a point of a mark still being made.
+          const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); handle.dataset.kinHandle = 'syn';
+          for (const [k, v] of Object.entries({ cx: 130, cy: 30, r: 8, fill: 'transparent', stroke: 'rgb(255, 0, 255)', 'stroke-width': 6 })) handle.setAttribute(k, v);
+          const pending = document.createElementNS('http://www.w3.org/2000/svg', 'g'); pending.dataset.kinPending = '';
+          const cross = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+          for (const [k, v] of Object.entries({ x: 160, y: 20, width: 20, height: 20, fill: 'rgb(255, 0, 255)' })) cross.setAttribute(k, v);
+          pending.append(cross);
+          svg.append(dot, name, handle, pending); layer.append(svg); }""")
+        on_screen = page.evaluate("() => document.querySelectorAll('[data-kin-measure-layer] [data-kin-handle], [data-kin-measure-layer] [data-kin-pending]').length")
+        self.assertEqual(2, on_screen)
+        self.click(page, 'CopyImage')
+        page.wait_for_function("() => synNotes.length")
+        self.assertEqual('success', page.evaluate("() => synNotes.at(-1).type"), page.evaluate("() => synNotes"))
+        got = page.evaluate(CLIPBOARD, {'width': 200, 'samples': [[60, 30], [150, 130], [138, 30], [170, 30]], 'regions': [[72, 22, 40, 16]]})
+        dot, image, handle, pending = got['samples']
+        self.assertTrue(near(dot, (255, 128, 0)), 'the Measure menu mark is in the copy: %s' % dot)
+        self.assertTrue(near(image, (200, 0, 0)), image)
+        self.assertTrue(any(near(tuple(map(int, rgb.split(','))), (255, 128, 0), 60) for rgb in got['regions'][0]), 'the label name is in the copy')
+        self.assertTrue(near(handle, (200, 0, 0)), 'a mark handle is not in the copy: %s' % handle)
+        self.assertTrue(near(pending, (200, 0, 0)), 'a point of an unfinished mark is not in the copy: %s' % pending)
+        # The page itself keeps them.
+        self.assertEqual(2, page.evaluate("() => document.querySelectorAll('[data-kin-measure-layer] [data-kin-handle], [data-kin-measure-layer] [data-kin-pending]').length"))
+
     def test_11_hidden_image_text_is_not_copied(self):
         page = self.open()
         page.evaluate("() => document.querySelectorAll('.overlay').forEach(n => { n.style.display = 'none'; })")

@@ -919,6 +919,39 @@ class WorklistFoldersDOM(unittest.TestCase):
         expect(self.page.locator('#rows')).to_contain_text('SYN MG')
         expect(menu).to_have_value('1d')
 
+    def test_other_filters_do_not_ask_for_a_modality_but_none_chosen_still_does(self):
+        """A StudyDate quick range, another column or Quick narrows the list: no folder describes it (none is current),
+        and the Folders line does not tell the reader to pick a Modality. Turning every Modality off still does."""
+        self.open()
+        asked = self.page.get_by_role('navigation', name='Folders').get_by_role('status').filter(has_text='선택된 Modality')
+        dates = self.page.locator('#filterrow [data-date-preset]')
+        dates.select_option(label='A week ago')
+        expect(self.folder('All Studies')).not_to_have_attribute('aria-current', 'true')
+        expect(asked).to_have_count(0)
+        dates.select_option(label='All dates')
+        expect(self.folder('All Studies')).to_have_attribute('aria-current', 'true')
+        self.page.locator('#filterrow [data-f="name"]').fill('SYN CT')
+        expect(self.folder('All Studies')).not_to_have_attribute('aria-current', 'true')
+        expect(asked).to_have_count(0)
+        self.page.locator('#filterrow [data-f="name"]').fill('')
+        if not self.page.locator('#quick').is_visible():
+            self.menu('filters')
+        self.page.locator('#quick').fill('MR')
+        expect(self.page.locator('#rows tr[data-uid]')).to_have_count(1)
+        expect(asked).to_have_count(0)
+        self.page.locator('#quick').fill('')
+        self.close_menus()
+        expect(self.folder('All Studies')).to_have_attribute('aria-current', 'true')
+        # The reader turns every Modality off: the list is empty and the line asks, with a date range set or not.
+        self.folder('CT').click()
+        self.folder('CT').click()
+        expect(self.page.locator('#rows tr[data-uid]')).to_have_count(0)
+        expect(asked).to_have_count(1)
+        dates.select_option(label='A week ago')
+        expect(asked).to_have_count(1)
+        self.folder('All Studies').click()
+        expect(asked).to_have_count(0)
+
     def test_folder_replaces_saved_dates_and_complete_counts_agree(self):
         from datetime import datetime
         self.page.clock.set_fixed_time(datetime.fromisoformat('2026-10-11T10:00:00-07:00'))

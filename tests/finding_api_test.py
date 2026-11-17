@@ -1225,7 +1225,7 @@ class FindingAPI(unittest.TestCase):
         # A version 2 record with characteristics links a one-study saved view and a two-study one (projection = comparison).
         created = self.v2([x, dict(jobId=view['id'], revision=1), dict(jobId=pair['id'], revision=1)], characteristics='경계 불명확 😀'*3, primary=1)
         status, header, head = self.schema_call('POST', self.path, body=created)
-        self.assertEqual((status, header), (200, '2'), head)
+        self.assertEqual((status, header), (200, '3'), head)
         self.assertEqual(head['item']['schemaVersion'], 2); self.assertEqual(head['item']['characteristics'], '경계 불명확 😀'*3)
         self.assertEqual(head['item']['sources'][1:], [self.job_copy(view, [self.uid], self.uid), self.job_copy(pair, [self.uid, prior.uid], self.uid)])
         # E1: the 17-digit copied value is the item row's own text, in the stored revision and in every answer.
@@ -1236,10 +1236,10 @@ class FindingAPI(unittest.TestCase):
         # R5: without the request header a page or history holding version 2 is refused whole; with it both are served.
         for path in (self.path+'?includeHidden=true', self.path+'/'+head['id']+'/revisions'):
             status, header, body = self.schema_call('GET', path, schema=None)
-            self.assertEqual((status, header, body['code']), (409, '2', 'FINDING_CLIENT_OUTDATED'), path)
+            self.assertEqual((status, header, body['code']), (409, '3', 'FINDING_CLIENT_OUTDATED'), path)
             self.assertNotIn('경계', json.dumps(body, ensure_ascii=False))
         status, header, listed = self.schema_call('GET', self.path+'?includeHidden=true')
-        self.assertEqual((status, header), (200, '2'))
+        self.assertEqual((status, header), (200, '3'))
         self.assertEqual(listed['items'][0]['links'], [dict(itemId=x['id'], linkState='current', headRevision=1, headHidden=False),
             dict(jobId=view['id'], markId=None, linkState='current', headRevision=1, headHidden=False),
             dict(jobId=pair['id'], markId=None, linkState='current', headRevision=1, headHidden=False)])
@@ -1248,9 +1248,9 @@ class FindingAPI(unittest.TestCase):
         self.assertEqual((status, [r['item'] for r in history['revisions']]), (200, [head['item']]))
         # A study whose pages hold only version 1 records is unchanged for a shipped client, and a service refusal names the format too.
         status, header, empty = self.schema_call('GET', prior.path, schema=None)
-        self.assertEqual((status, header, empty['items']), (200, '2', []))
+        self.assertEqual((status, header, empty['items']), (200, '3', []))
         status, header, _ = self.schema_call('GET', self.path+'/'+str(uuid.uuid4())+'/revisions')
-        self.assertEqual((status, header), (404, '2'))
+        self.assertEqual((status, header), (404, '3'))
         # Metadata changes: the link reads metadata-changed, then hidden; a stale pair is refused with the Job named.
         renamed = self.revise_job(anchor, view, title='새 제목')
         stale = self.v2([dict(jobId=view['id'], revision=1)])
@@ -1304,6 +1304,56 @@ class FindingAPI(unittest.TestCase):
         status, _, replayed = self.schema_call('POST', self.path+'/'+items_only['id']+'/revisions', body=dict(promoted_request, expectedRevision=1, action='edit'))
         self.assertEqual(status, 200); self.assert_finding_replay(replayed, promoted)
         self.assertEqual(self.report_rows(), original)
+
+    # ---- TEST-B23-API-13 (version 3: the free-text lesion location, its handshake and version rule) -----
+    def v3(self, sources, location, characteristics='', title='위치 소견', text='', primary=0, request_id=None):
+        body = self.v2(sources, characteristics=characteristics, title=title, text=text, primary=primary, request_id=request_id)
+        body['item'] = dict(body['item'], schemaVersion=3, lesionLocation=location)
+        return body
+
+    def test_13_version_three_lesion_location_handshake_and_version_rule(self):
+        anchor = self.study(self.uid, self.slices)
+        x = self.item_in(anchor, self.length_item())
+        where = '우하엽 S6 😀'
+        created = self.v3([x], where, characteristics='분엽상')
+        status, header, head = self.schema_call('POST', self.path, body=created, schema='3')
+        self.assertEqual((status, header), (200, '3'), head)
+        self.assertEqual((head['item']['schemaVersion'], head['item']['lesionLocation'], head['item']['characteristics']), (3, where, '분엽상'))
+        stored = psql(f'''SELECT snapshot->>'lesionLocation' FROM "FindingRevision" WHERE "findingId"={literal(head['id'])}::uuid''')
+        self.assertEqual(stored, [where])
+        # A client that names version 2 (or none) cannot read a page holding version 3: it would drop the location.
+        for schema in ('2', None):
+            for path in (self.path+'?includeHidden=true', self.path+'/'+head['id']+'/revisions'):
+                status, header, body = self.schema_call('GET', path, schema=schema)
+                self.assertEqual((status, header, body['code']), (409, '3', 'FINDING_CLIENT_OUTDATED'), (schema, path))
+                self.assertNotIn('우하엽', json.dumps(body, ensure_ascii=False))
+        status, _, listed = self.schema_call('GET', self.path+'?includeHidden=true', schema='3')
+        self.assertEqual((status, listed['items'][0]['item']['lesionLocation']), (200, where))
+        # Shape: required on version 3, refused on 1-2, bounded in code points.
+        for bad in (dict(created['item'], lesionLocation=None), {k: v for k, v in created['item'].items() if k != 'lesionLocation'},
+                    dict(created['item'], lesionLocation='😀'*201), dict(created['item'], schemaVersion=2)):
+            status, _, refused = self.schema_call('POST', self.path, body=dict(requestId=str(uuid.uuid4()), item=bad), schema='3')
+            self.assertEqual(status, 400, (bad.get('schemaVersion'), refused))
+        status, _, at_limit = self.schema_call('POST', self.path, body=self.v3([x], '😀'*200), schema='3')
+        self.assertEqual(status, 200, at_limit)
+        # Version rule: an older edit or a hide of version 3 is refused; a version 3 hide keeps the location exactly.
+        before = self.state()
+        down = dict(requestId=str(uuid.uuid4()), expectedRevision=1, action='edit', item=self.v2([x], characteristics='분엽상')['item'])
+        status, _, refused = self.schema_call('POST', self.path+'/'+head['id']+'/revisions', body=down, schema='3')
+        self.assertEqual((status, refused['code']), (409, 'FINDING_SCHEMA_VERSION'))
+        moved = dict(requestId=str(uuid.uuid4()), expectedRevision=1, action='hide', reason='숨김', item=dict(created['item'], lesionLocation='다른 곳'))
+        status, _, refused = self.schema_call('POST', self.path+'/'+head['id']+'/revisions', body=moved, schema='3')
+        self.assertEqual((status, refused['code']), (409, 'FINDING_SCHEMA_VERSION'))
+        self.assertEqual(self.state(), before)
+        hide = dict(requestId=str(uuid.uuid4()), expectedRevision=1, action='hide', reason='숨김', item=created['item'])
+        status, _, hidden = self.schema_call('POST', self.path+'/'+head['id']+'/revisions', body=hide, schema='3')
+        self.assertEqual((status, hidden['hidden'], hidden['item']['lesionLocation']), (200, True, where))
+        # A version 2 record is promoted by an edit that writes its location.
+        two_status, _, two = self.schema_call('POST', self.path, body=self.v2([x], characteristics='둘'), schema='3')
+        self.assertEqual(two_status, 200, two)
+        promote = dict(requestId=str(uuid.uuid4()), expectedRevision=1, action='edit', item=self.v3([x], '좌상엽', characteristics='둘')['item'])
+        status, _, promoted = self.schema_call('POST', self.path+'/'+two['id']+'/revisions', body=promote, schema='3')
+        self.assertEqual((status, promoted['item']['schemaVersion'], promoted['item']['lesionLocation']), (200, 3, '좌상엽'))
 
     # ---- TEST-S2-API-12 (S2-L1 R6 malformed lineage rows, job-hide and revocation races) -------------
     def test_12_malformed_job_copies_are_unreadable_and_races_serialize(self):
@@ -1555,6 +1605,21 @@ class FindingAPI(unittest.TestCase):
         self.assertEqual(refusal['code'], 'REPORT_DRAFT_STALE')
         self.assertEqual(self.citations()['draft'], held, 'the refused signer keeps every byte of their attestation')
         self.assertEqual(self.call(method='GET', path=report+'/versions', user='xauthor')[0]['findings'], '다른 판독의의 승인본')
+
+    def test_14_a_deleted_source_reads_as_hidden_and_is_not_cited_again(self):
+        # A measurement deleted in the viewer (its head hidden and marked deleted): the finding citing it keeps its frozen
+        # copy and reads the link as hidden, as for a hidden source; refreshing the citation to the delete revision is refused.
+        length = self.item(self.length_item())
+        head, _ = self.create([length])
+        deleted = self.revise_item(length, 'delete')
+        self.assertEqual((deleted['revision'], deleted['hidden'], deleted['item']['deleted']), (2, True, True))
+        listed = self.call(method='GET')['items'][0]
+        self.assertEqual(listed['links'], [dict(itemId=length['id'], linkState='hidden', headRevision=2, headHidden=True)])
+        self.assertEqual(listed['item']['sources'][0]['revision'], 1)
+        self.assertEqual(listed['item']['sources'][0]['values'], [20.0])
+        before = self.snapshot(FINDING_TABLES)
+        self.revise(head, sources=[dict(itemId=length['id'], revision=2)], status=409)
+        self.assertEqual(self.snapshot(FINDING_TABLES), before)
 
 if __name__ == '__main__':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')

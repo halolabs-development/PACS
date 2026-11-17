@@ -3,8 +3,8 @@
 // (Images), whether the worklist belongs there, and where the thumbnail (series) strip and the toolbar stand on it.
 // There is one viewer window; it covers one display or two side by side. When the rule is applied, the window is moved
 // over its image monitors (only with the display permission the reader already gave), and its image area is split at
-// the display edge: each monitor's part gets its own cells and its own rows. The worklist window is never moved (a
-// browser does not move a window it did not open); the viewer reports whether it stands on its monitor.
+// the display edge: each monitor's part gets its own cells and its own rows. The worklist window is asked to come to its
+// monitor (viewer-windows.js placeWorklist: a popup or app window moves; a tab offers to open the worklist window there).
 // The pure part below (KinViewerMonitorPlan) turns a rule, the displays and the window into that split.
 (function (root) {
   const THICKNESS = { toolbar: { across: 36, upright: 108 }, thumbs: { across: 66, upright: 156 } };
@@ -15,8 +15,9 @@
   // Displays (left to right, as KinViewerDisplayLayout.screens lists them) that this window covers, in its client px.
   // win: screenX/screenY/outerWidth/outerHeight/innerWidth/innerHeight; zoom: CSS px -> screen px, or null when unknown
   // (then only a plain window frame is accepted, as KinViewerDisplayLayout.seams does). Column: the image column's left
-  // and right in client px. A part narrower than MIN_REGION (a window barely over the edge) is not a monitor's region.
-  function regions(screens, win, zoom, column) {
+  // and right in client px. A part narrower than `least` (MIN_REGION: a window barely over the edge) is not a monitor's
+  // region; the display edges of a maximize count a narrower part too (EDGE_SLACK).
+  function regions(screens, win, zoom, column, least = MIN_REGION) {
     if (!win || !finite(win.screenX, win.screenY, win.outerWidth, win.outerHeight, win.innerWidth, win.innerHeight) || win.innerWidth <= 0) return [];
     let z = zoom;
     if (!(Number.isFinite(z) && z > 0)) { const plain = win.outerWidth - win.innerWidth; if (plain < 0 || plain > 40) return []; z = 1; }
@@ -29,7 +30,7 @@
       if (!s || !finite(s.left, s.top, s.width, s.height) || s.top >= bottom || s.top + s.height <= top) return;
       const a = Math.max(from, (s.left - left) / z), b = Math.min(to, (s.left + s.width - left) / z);
       const tall = Math.min(bottom, s.top + s.height) - Math.max(top, s.top);
-      if (b - a >= MIN_REGION) list.push({ monitor, left: Math.round(a * 100) / 100, right: Math.round(b * 100) / 100, tall });
+      if (b - a >= least) list.push({ monitor, left: Math.round(a * 100) / 100, right: Math.round(b * 100) / 100, tall });
     });
     // Only displays side by side split the window: of two displays one above the other (the same columns of the
     // window), the one holding more of its height is the monitor there. The parts kept must meet edge to edge.
@@ -163,10 +164,69 @@
           top: band.side === 'top' ? px(band.inset.top) : 'auto', bottom: band.side === 'bottom' ? px(band.inset.bottom) : 'auto' };
   }
 
-  const plan = { THICKNESS, MIN_REGION, regions, target, bands, split, monitorOf, validRects, place };
+  // Where the displays meet inside the viewport grid, as fractions of the grid's width (left to right): the edges between
+  // the monitors' parts of the window (regions over the grid's columns). A part of the grid on no listed display (only
+  // the window's own display is known without the window-management access) is another monitor. Any part of the grid on
+  // another display counts, however narrow: the maximize must not reach over it. Only a part within EDGE_SLACK (the
+  // error of reading a window frame) is not an edge. One display has none: []. Nothing known about the window (an
+  // unreadable frame or no listed display under it) is null. The double click's maximize fills one monitor's part
+  // (viewer-cell-merge.js).
+  const EDGE_SLACK = 16;
+  function edges(screens, win, zoom, grid) {
+    if (!grid || !finite(grid.left, grid.width) || !(grid.width > 0)) return null;
+    const from = grid.left, to = grid.left + grid.width, list = regions(screens, win, zoom, { left: from, right: to }, EDGE_SLACK);
+    if (!list.length) return null;
+    const cuts = list.slice(1).map(region => region.left), last = list[list.length - 1].right;
+    if (list[0].left - from >= EDGE_SLACK) cuts.unshift(list[0].left);
+    if (to - last >= EDGE_SLACK) cuts.push(last);
+    return cuts.map(x => Math.round((x - from) / grid.width * 1e6) / 1e6).filter(edge => edge > 0 && edge < 1);
+  }
+
+  const plan = { THICKNESS, MIN_REGION, regions, target, bands, split, monitorOf, validRects, place, edges };
   if (typeof module === 'object' && module.exports) module.exports = plan;
   if (root) root.KinViewerMonitorPlan = plan;
 })(typeof window === 'object' ? window : null);
+
+// The displays this browser reports, with only the window-management access the reader already gave (never asked here):
+// { screens (left to right), granted, zoom } or null. One display the browser says it has is monitor 1.
+async function kinViewerScreensInfo() {
+  let details = null;
+  try {
+    const permission = await navigator.permissions?.query({ name: 'window-management' });
+    if (permission?.state === 'granted') details = await window.getScreenDetails?.();
+  } catch (_) { details = null; }
+  const layout = window.KinViewerDisplayLayout;
+  if (details?.screens?.length && layout) {
+    const os = details.currentScreen?.devicePixelRatio;
+    return { screens: layout.screens(details), granted: true, zoom: Number.isFinite(os) && os > 0 ? window.devicePixelRatio / os : null };
+  }
+  const s = window.screen;
+  if (s?.isExtended === false && [s.availLeft ?? 0, s.availTop ?? 0, s.availWidth, s.availHeight].every(Number.isFinite))
+    return { screens: [{ left: s.availLeft ?? 0, top: s.availTop ?? 0, width: s.availWidth, height: s.availHeight, primary: true }], granted: false, zoom: null };
+  return null;
+}
+if (typeof window === 'object') {
+  // The display edges inside the viewport grid now (KinViewerMonitorPlan.edges), for the double click's maximize.
+  // Without the access, the display this window is on (window.screen) is the one known; a part of the grid past it is
+  // another monitor. null: unknown.
+  window.kinViewerMonitorEdges = async () => {
+    const s = window.screen;
+    // One display, as the browser says: no edge.
+    if (s?.isExtended === false) return [];
+    const info = await kinViewerScreensInfo();
+    const box = document.querySelector('[data-cy="viewport-grid"]')?.getBoundingClientRect();
+    if (!box) return null;
+    const own = [s?.availLeft, s?.availTop, s?.availWidth, s?.availHeight].every(Number.isFinite)
+      ? { left: s.availLeft, top: s.availTop, width: s.availWidth, height: s.availHeight } : null;
+    const win = { screenX: window.screenX, screenY: window.screenY, outerWidth: window.outerWidth, outerHeight: window.outerHeight,
+      innerWidth: window.innerWidth, innerHeight: window.innerHeight };
+    const screens = info?.granted ? info.screens : own ? [own] : null;
+    const found = screens && window.KinViewerMonitorPlan.edges(screens, win, info?.granted ? info.zoom : null, { left: box.left, width: box.width });
+    if (found) return found;
+    // The frame cannot be read (a browser zoom without the access): a window inside its own display has no edge.
+    return own && win.screenX >= own.left - 16 && win.screenX + win.outerWidth <= own.left + own.width + 16 ? [] : null;
+  };
+}
 
 if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ store, ui }) => {
   const plan = window.KinViewerMonitorPlan;
@@ -253,24 +313,8 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
   }
   const declare = (selector, box) => selector + ' { ' + Object.entries(box).map(([k, v]) => k + ': ' + v + ' !important').join('; ') + '; }';
 
-  async function screensInfo() {
-    let details = null;
-    try {
-      const permission = await navigator.permissions?.query({ name: 'window-management' });
-      // Reuse access the reader already gave; never ask here.
-      if (permission?.state === 'granted') details = await window.getScreenDetails?.();
-    } catch (_) { details = null; }
-    const layout = window.KinViewerDisplayLayout;
-    if (details?.screens?.length && layout) {
-      const os = details.currentScreen?.devicePixelRatio;
-      return { screens: layout.screens(details), granted: true, zoom: Number.isFinite(os) && os > 0 ? window.devicePixelRatio / os : null };
-    }
-    // One display and the browser says so: monitor 1 is the one this window is on.
-    const s = window.screen;
-    if (s?.isExtended === false && [s.availLeft ?? 0, s.availTop ?? 0, s.availWidth, s.availHeight].every(Number.isFinite))
-      return { screens: [{ left: s.availLeft ?? 0, top: s.availTop ?? 0, width: s.availWidth, height: s.availHeight, primary: true }], granted: false, zoom: null };
-    return null;
-  }
+  // Reuse access the reader already gave; never ask here (kinViewerScreensInfo, the same reading as the double click's).
+  const screensInfo = () => kinViewerScreensInfo();
   // Moves this window over the target and reads where it actually stands (a browser may refuse or clamp the move).
   async function move(rect, signal) {
     const now = () => ({ left: window.screenX, top: window.screenY, width: window.outerWidth, height: window.outerHeight });
@@ -291,7 +335,9 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
   // Both act only while these rows are still the ones shown: an aborted, older or cleared prepare changes nothing more.
   async function prepare(rule, { signal } = {}) {
     const mine = ++epoch, before = active, notes = [];
-    let placed = null;
+    // What this rule wants of the worklist once it stands: { monitor, rect } (Worklist Show on a display there is) or null
+    // (nothing: an offer made for an earlier rule is taken back).
+    let placed = null, worklist = null;
     const owns = () => epoch === mine;
     const undo = () => { if (placed && active === placed) show(before); };
     // An abort puts the rows back at once; every later step checks that this prepare still owns them.
@@ -301,6 +347,8 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
     const answer = (split, moved = false) => ({ split, moved, note: notes.length ? ' · Monitors: ' + notes.join(' ') : '', undo,
       commit: () => {
         if (!owns()) return;
+        // Every rule that stands says once what it wants of the worklist (settleWorklist), applied or not.
+        settleWorklist(split ? worklist : null, owns);
         if (!split) { if (active) show(null); return; }
         if (active === placed) { placed.at = placedAt(); placed.watching = true; startWatch(placed); }
       } });
@@ -353,20 +401,44 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
       place({ chrome: { toolbar: toolbar.original?.side || 'top', toolbarAutoHide: true, thumbs: thumbs.original?.side || 'top', thumbsAutoHide: true },
         css, noThumbs: !thumbs.original, copies: { 'Image Tools': copy(toolbar.copy), Series: copy(thumbs.copy) } });
       notes.unshift('적용 ' + split.applied.map(name).join('·') + '.');
-      // The worklist window is not moved: where it stands is read from it now.
+      // The worklist window: where it stands is read from it now for the note; once the rule stands (commit) the list
+      // document is told the worklist's monitor (settleWorklist) - also when it is there already, so that an offer made
+      // for an earlier rule does not stay. A rule with no Worklist Show (or its monitor not here) takes that offer back.
       const listed = monitors.list.findIndex(m => m.worklist === 'show');
       if (listed >= 0) {
         let rect = null;
         try { rect = await window.kinViewerListPlace?.(); } catch (_) { rect = null; }
         check();
         const at = rect ? plan.monitorOf(info.screens, rect) : -1;
+        if (info.screens[listed]) { const s = info.screens[listed]; worklist = { monitor: listed, rect: { left: s.left, top: s.top, width: s.width, height: s.height } }; }
         notes.push(!rect || at < 0 ? 'Worklist: 목록 창 위치를 확인할 수 없습니다.' : at === listed ? 'Worklist: 목록 창이 ' + name(listed) + '에 있습니다.'
-          : 'Worklist: 목록 창이 ' + name(listed) + '에 있지 않습니다(' + name(at) + '). 브라우저는 목록 창을 옮기지 않습니다. 목록 창을 직접 옮기세요.');
+          : !info.screens[listed] ? 'Worklist: ' + name(listed) + '이(가) 이 화면 구성에 없어 목록 창을 옮기지 않았습니다(' + name(at) + ').'
+          : 'Worklist: 목록 창이 ' + name(listed) + '에 있지 않아(' + name(at) + ') ' + name(listed) + '(으)로 옮깁니다.');
       }
       return answer(split, moved);
     }
   }
-  window.KinViewerMonitors = { prepare, clear: () => { epoch++; if (active) show(null); } };
+  // The worklist on the monitor of an applied rule (Worklist: Show), after the rule stands: the list document that linked
+  // this window moves its worklist window there or, a tab it cannot move, offers on its own screen to open the worklist
+  // window there (viewer-windows.js placeWorklist). Its measured answer is told while this rule is still the one applied
+  // (owns). want null: a bar offered for an earlier rule is taken back. The list document follows the latest request
+  // only (viewer-windows.js placeWorklist), so the order of the answers does not matter.
+  function settleWorklist(want, owns) {
+    const ask = window.kinViewerListPlaceOn;
+    if (typeof ask !== 'function') return;
+    if (want === null) { Promise.resolve(ask(null)).catch(() => {}); return; }
+    const n = name(want.monitor);
+    Promise.resolve(ask(want)).then(answer => {
+      if (!owns()) return;
+      const result = answer?.result;
+      const text = !answer ? 'Worklist: 목록 창이 답하지 않아 ' + n + '(으)로 옮기지 못했습니다.'
+        : result === 'moved' ? 'Worklist: 목록 창을 ' + n + '(으)로 옮겼습니다.'
+        : result === 'offered' ? 'Worklist: 목록 창은 브라우저 탭이라 옮길 수 없어, 목록 화면에 "Open Worklist on ' + n + '" 단추를 띄웠습니다.'
+        : result === 'here' || result === 'superseded' ? null : 'Worklist: 목록 창을 ' + n + '(으)로 옮기지 못했습니다.';
+      if (text) ui.toast(text);
+    }, () => {});
+  }
+  window.KinViewerMonitors = { prepare, clear: () => { epoch++; if (active) show(null); settleWorklist(null, () => false); } };
 
   // ── The window: Viewer Settings › Monitors in Hanging Protocol… ──
   const element = (tag, attributes = {}, parent) => {
@@ -427,7 +499,7 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
     const hp = window.KinViewerHangingProtocol?.current?.(), model = window.KinHangingProtocolModel;
     element('p', { text: 'Hanging Protocol의 모니터마다 영상 배치, 목록 창 자리, 썸네일·도구 줄 위치를 정합니다. Monitor 1은 가장 왼쪽 화면입니다. '
       + 'Save는 그 Hanging Protocol에 저장만 하고, Hanging Protocols에서 Apply 할 때마다 적용됩니다. '
-      + '목록 창은 옮기지 않고, 그 모니터에 있는지만 알려 드립니다.' }, handle.body);
+      + 'Apply 때 목록 창(Worklist Show)이 다른 모니터에 있으면 그 모니터로 옮기고, 브라우저가 옮기지 않는 탭이면 목록 화면에 그 모니터에 목록 창을 여는 단추를 띄웁니다.' }, handle.body);
     const status = element('p', { role: 'status' });
     if (!hp || !model) { handle.body.append(status); status.textContent = '이 뷰어에서 Hanging Protocols를 사용할 수 없습니다.'; return handle; }
     const top = element('div', { className: 'kin-chrome-row' }, handle.body);

@@ -197,14 +197,16 @@
       extra.push(note);
       // Minhoon item 8: the mode stands in the Related panel's place for the plain view, so without a report its first
       // line says why (loading, failed, none) where the text would be, instead of empty section headings.
+      // The identity cards are not on screen, so this line also carries the Retry of a failed read.
       sourceState.hidden = ready;
       sourceState.textContent = ready ? '' : note.textContent;
       if (view.state === 'failed') {
         const retry = doc.createElement('button');
         retry.type = 'button';
+        retry.className = 'related-mode-retry';
         retry.textContent = 'Retry';
         retry.addEventListener('click', () => { if (state) app.reloadSource(); });
-        extra.push(retry);
+        sourceState.append(retry);
       }
       rows(sourceCard, 'Source Study', [
         ['Patient', identity && pair(identity.name, identity.id)], ['Institution', identity?.institution],

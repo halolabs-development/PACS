@@ -226,6 +226,8 @@ class ViewerMeasureLinesDOMTest(unittest.TestCase):
         self.press(page, 'right', (10, 10)); self.press(page, 'right', (10, 60))
         expect(value('Height')).to_have_text('15.0 mm')
         expect(value('Volume')).to_have_text('—')
+        # Lengths of a Volume still being made are marked as an editing aid (left out of an exported image).
+        expect(page.locator('[data-kin-measure-layer=right] [data-kin-volume-length][data-kin-pending]')).to_have_count(1)
         self.press(page, 'right', (20, 20)); self.press(page, 'right', (70, 20))
         expect(value('Width')).to_have_text('10.0 mm')
         expect(value('Volume')).to_have_text('1.57 mL')

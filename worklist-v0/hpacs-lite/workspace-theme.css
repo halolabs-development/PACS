@@ -49,7 +49,7 @@ tbody tr:hover td { background: var(--kin-row-hover); }
 tbody tr.sel td { background: var(--kin-row-sel); }
 .empty { color: var(--kin-muted); }
 
-/* Report window band: thumbnails, clinical information, reading templates. The image well stays black. */
+/* Report window band: thumbnails, Image Report, clinical information, reading templates. The image well stays black. */
 .rw section { border-color: var(--kin-line2); }
 .thumb-card { background: var(--kin-bg); border-color: var(--kin-line2); }
 .thumb-number, .thumb-preview, .thumb-full { color: var(--kin-text); }
@@ -57,6 +57,8 @@ tbody tr.sel td { background: var(--kin-row-sel); }
 .thumb-images-toolbar select, .tpl-opts select, .tpl-search input { background: var(--kin-bg); color: var(--kin-text); border-color: var(--kin-line2); }
 .tpl-opts { background: var(--kin-panel); color: var(--kin-muted); }
 .tpl-filter-status, .clinical, .clinical-context, .clinical-context .cc-note, .clinical-context .cc-source { color: var(--kin-muted); }
+.image-report-panel { color: var(--kin-muted); }
+.image-report-panel img { border-color: var(--kin-line2); }
 .clinical-context .cc-section-head { color: var(--kin-text); }
 .clinical-context .cc-state, .clinical-context .cc-badge { border-color: var(--kin-line2); }
 .clinical-context-head h4, #clinical-context-scope, .clinical td:first-child { color: var(--kin-muted); }

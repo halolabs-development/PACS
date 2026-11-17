@@ -129,3 +129,31 @@ test('validRects: inside the screen and not overlapping',()=>{
   assert.equal(plan.validRects([{x:.6,y:0,width:.5,height:1}]),false);
   assert.equal(plan.validRects([]),false);
 });
+
+test('edges: where the displays meet inside the viewport grid, as fractions of its width',()=>{
+  // The window over the first two displays; the grid fills its client area but for a 40px panel on the left.
+  const win={screenX:-8,screenY:0,outerWidth:3856,outerHeight:1040,innerWidth:3840,innerHeight:1002};
+  const grid={left:40,width:3800};
+  assert.deepEqual(plan.edges(screens,win,1,grid),[Math.round((1920-40)/3800*1e6)/1e6]);
+  // One display under the grid: none.
+  const one={screenX:100,screenY:0,outerWidth:1216,outerHeight:900,innerWidth:1200,innerHeight:862};
+  assert.deepEqual(plan.edges(screens,one,1,{left:0,width:1200}),[]);
+  // Over an edge by less than a monitor region (188px) is still over it: the maximize must not reach across.
+  const barely={screenX:1700,screenY:0,outerWidth:416,outerHeight:600,innerWidth:400,innerHeight:562};
+  assert.deepEqual(plan.edges(screens,barely,1,{left:0,width:400}),[Math.round((1920-1708)/400*1e6)/1e6]);
+  // Over it by no more than the error of reading a frame (10px): none.
+  const within={screenX:1522,screenY:0,outerWidth:416,outerHeight:600,innerWidth:400,innerHeight:562};
+  assert.deepEqual(plan.edges(screens,within,1,{left:0,width:400}),[]);
+  // And the same without the access: only the own display is known, 188px past it is another monitor.
+  assert.deepEqual(plan.edges([screens[0]],barely,null,{left:0,width:400}),[Math.round((1920-1708)/400*1e6)/1e6]);
+  // Only the window's own display is known (no window-management access): the grid past it is another monitor.
+  assert.deepEqual(plan.edges([screens[0]],win,null,grid),[Math.round((1920-40)/3800*1e6)/1e6]);
+  assert.deepEqual(plan.edges([screens[1]],win,null,grid),[Math.round((1920-40)/3800*1e6)/1e6]);
+  // Three displays under one window: two edges.
+  const wide={screenX:-8,screenY:0,outerWidth:4936,outerHeight:1040,innerWidth:4920,innerHeight:1002};
+  assert.deepEqual(plan.edges(screens,wide,1,{left:0,width:4920}),[Math.round(1920/4920*1e6)/1e6,Math.round(3840/4920*1e6)/1e6]);
+  // Nothing readable: unknown.
+  assert.equal(plan.edges(screens,{...win,outerWidth:3956},null,grid),null,'a frame that is not plain without a known zoom');
+  assert.equal(plan.edges([],win,1,grid),null);
+  assert.equal(plan.edges(screens,win,1,{left:0,width:0}),null);
+});

@@ -143,7 +143,8 @@ CELLS = """() => {
 }"""
 
 # The patient tabs and a reading screen of the same session: two patients (A: studies 1.2.1 and 1.2.2, B: 1.2.9); the
-# reading screen holds unconfirmed text of the studies in synReader.held and answers save / discard / check as told.
+# reading screen holds unconfirmed text of the studies in synReader.held and answers save / discard / check as told,
+# synReader.answerLag ms later; its answers to an opening come synReader.openLag ms later.
 READER = """([group, urlB]) => {
   window.KinWorkContext = { state: () => 'active', session: () => 'syn-session', capture: () => null, admits: () => true };
   window.KinViewerInfoBar = { identity: () => ({ instance: null }) };
@@ -178,21 +179,45 @@ READER = """([group, urlB]) => {
       if (mine && ['saved', 'discarded'].includes(result.status)) synReader.held = synReader.held.filter(uid => uid !== synReader.target);
     }
     setTimeout(() => channel.postMessage({ type: 'answer', id: 'syn-doc', session: 'syn-session', request: m.request, result,
-      held: m.uids.filter(uid => synReader.held.includes(uid)) }), 20);
+      held: m.uids.filter(uid => synReader.held.includes(uid)) }), synReader.answerLag ?? 20);
   };
-  // The list document's window-group channel: the reading screen makes a study its report target (or refuses, or is busy
-  // with an earlier opening for synReader.busy ms after a silent one), and records the openings the viewer withdrew.
+  // The list document's window-group channel, as viewer-windows.js and reading-workspace.js answer it: the reading screen
+  // makes a study its report target (or refuses, or is busy with an earlier opening for synReader.busy ms after a silent
+  // one); every answer but busy says whether the report target is that study now (`at`). A withdrawn opening
+  // (kin-editor-open-cancel) is recorded, its move dropped if it has not happened, and answered with `at` - unless
+  // synReader.withdrawSilent. synReader.open: 'silent' never answers B; 'late' moves to B lateMs after the request and
+  // answers then, while the withdraw is handled only cancelLag ms after it arrives (a busy page); 'slow' would move to B
+  // slowMs after the request; 'refuse' refuses B (modal) before moving; 'refuse-after' moves to B and then refuses (modal).
   const windows = new BroadcastChannel('kin-viewer-windows:' + group);
-  let busyUntil = 0;
+  let busyUntil = 0, inflight = null;
+  const post = message => setTimeout(() => windows.postMessage(message), 20);
   windows.onmessage = event => {
     const m = event.data;
-    if (m?.type === 'kin-editor-open-cancel') { synReader.cancels.push(m.uid); return; }
+    if (m?.type === 'kin-editor-open-cancel') {
+      synReader.cancels.push(m.uid);
+      setTimeout(() => {
+        if (inflight?.request === m.request) { clearTimeout(inflight.timer); inflight = null; }
+        if (!synReader.withdrawSilent)
+          post({ type: 'kin-editor-open-withdrawn', request: m.request, owner: m.owner, uid: m.uid, at: synReader.target === m.uid });
+      }, synReader.cancelLag || 0);
+      return;
+    }
     if (m?.type !== 'kin-editor-open') return;
     synReader.opens.push(m.uid); synReader.openAt.push(performance.now());
-    const reply = (result, reason) => setTimeout(() => windows.postMessage({ type: 'kin-editor-opened', request: m.request, owner: m.owner, uid: m.uid, result, reason }), 20);
+    const answer = (result, reason) => ({ type: 'kin-editor-opened', request: m.request, owner: m.owner, uid: m.uid, result, reason,
+      ...(reason === 'busy' ? {} : { at: synReader.target === m.uid }) });
+    const reply = (result, reason) => setTimeout(() => windows.postMessage(answer(result, reason)), synReader.openLag ?? 20);
     if (performance.now() < busyUntil) { reply('refused', 'busy'); return; }
     if (synReader.open === 'silent' && m.uid === '1.2.9') { busyUntil = performance.now() + 6000 + (synReader.busy || 0); return; }
     if (synReader.open === 'refuse' && m.uid === '1.2.9') { reply('refused', 'modal'); return; }
+    if (synReader.open === 'refuse-after' && m.uid === '1.2.9') { synReader.target = m.uid; reply('refused', 'modal'); return; }
+    if (['late', 'slow'].includes(synReader.open) && m.uid === '1.2.9') {
+      const wait = synReader.open === 'late' ? synReader.lateMs : synReader.slowMs;
+      busyUntil = performance.now() + wait;
+      inflight = { request: m.request, timer: setTimeout(() => { inflight = null; synReader.target = m.uid; synReader.movedAt = performance.now();
+        windows.postMessage(answer('ok', null)); }, wait) };
+      return;
+    }
     synReader.target = m.uid; reply('ok', null);
   };
   // As the stock router: a patient switch tears the mode down and mounts it again (the toolbar, its features and the tabs);
@@ -337,6 +362,30 @@ class ViewerMgDOMTest(unittest.TestCase):
         self.assertAlmostEqual(1, self.camera(page, 'rcc')['zoom'])
         expect(page.locator('[data-mg-badge=mirrored]')).to_have_count(0)
 
+    def test_03b_mirrored_follows_no_change_a_display_rule_makes_and_carries_none_onto_a_cell_a_rule_began_on(self):
+        page = self.open()
+        # Display Set Presets' rule handle (viewer-features-view.js cellRules.setting / mark): the cells a rule is being put
+        # on now, and when a rule began on each.
+        page.evaluate("""() => { window.synRuled = { now: new Set(), began: {}, mark: 0 };
+          window.KinViewerCellRules = { setting: (id, since) => synRuled.now.has(id) || (since !== undefined && (synRuled.began[id] ?? 0) > since),
+            mark: () => synRuled.mark }; }""")
+        self.menu(page, 'Mirrored')
+        page.wait_for_function("() => document.querySelector('#pane-plcc [data-mg-badge=mirrored]')")
+        start = {cell: self.camera(page, cell) for cell in ['rcc', 'prcc']}
+        # A rule puts its own zoom, pan and inversion on today's L CC: no other cell follows.
+        page.evaluate("""() => { synRuled.now.add('lcc'); synRuled.began.lcc = ++synRuled.mark; const v = synViews.get('lcc');
+          v.setCamera({ parallelScale: 50, focalPoint: [320, 100, 0] }); v.setProperties({ invert: true }); synRuled.now.delete('lcc'); }""")
+        page.wait_for_timeout(300)
+        self.assertEqual(start, {cell: self.camera(page, cell) for cell in ['rcc', 'prcc']})
+        # The reader zooms L CC; before that is carried (the next frame), a rule begins on today's R CC: R CC is left to the
+        # rule, the prior R CC follows.
+        page.evaluate("() => { synViews.get('lcc').setCamera({ parallelScale: 25, focalPoint: [320, 100, 0] }); synRuled.began.rcc = ++synRuled.mark; }")
+        page.wait_for_function("() => Math.abs(synViews.get('prcc').getZoom() - 6) < 1e-9")
+        self.assertEqual(start['rcc'], self.camera(page, 'rcc'))
+        # The reader's own change afterwards is followed again.
+        page.evaluate("() => synViews.get('lcc').setCamera({ parallelScale: 50, focalPoint: [320, 100, 0] })")
+        page.wait_for_function("() => Math.abs(synViews.get('rcc').getZoom() - 3) < 1e-9")
+
     def test_04_magnifier_shows_lenses_while_pressed_and_at_the_counterparts_with_mirrored(self):
         page = self.open()
         self.menu(page, 'Mirrored')
@@ -364,7 +413,11 @@ class ViewerMgDOMTest(unittest.TestCase):
         panel = page.get_by_role('dialog', name='Quadrant Zoom')
         expect(panel.get_by_label('Order')).to_have_value('symmetric')
         expect(panel.locator('b')).to_have_text('Quadrant 1/4: Upper-Outer (R/L matched)')
-        page.wait_for_function("() => synViews.get('lcc').getZoom() > 1.5")
+        # 4× is the first choice; Fill Quadrant fills each cell with the quadrant.
+        expect(panel.get_by_label('Zoom')).to_have_value('4x')
+        panel.get_by_label('Zoom').select_option('fill')
+        expect(page.locator('#pane-rcc [data-mg-badge=quadrant]')).to_have_text('Q1 Upper-Outer · Fill Quadrant')
+        page.wait_for_function("() => synViews.get('lcc').getZoom() > 2.1 && synViews.get('lcc').getZoom() < 3")
         # The breast box of R CC is x 160 … 400, y 32 … 272 (grid of 4 px); its chest-wall upper quarter is x 280 … 400, y 32 … 152.
         rcc = page.evaluate("() => KinMgBreastModel.detect(synViews.get('rcc').imageDataObject.getPointData().getScalars().getData(), 400, 300).box")
         quarter = {'x0': (rcc['x0'] + rcc['x1']) / 2, 'x1': rcc['x1'], 'y0': rcc['y0'], 'y1': (rcc['y0'] + rcc['y1']) / 2}
@@ -387,6 +440,124 @@ class ViewerMgDOMTest(unittest.TestCase):
         page.wait_for_function("() => Math.abs(synViews.get('rcc').getZoom() - 1) < 1e-9")
         self.assertNear(self.camera(page, 'lcc')['focal'], [199.5, 149.5])
 
+    # The centre of step `step`'s quarter of each cell's breast box, as the model names it for the cell's side and view.
+    QUARTER = """([id, step]) => { const v = synViews.get(id), side = v.info.side, view = v.info.view === '399162004' ? 'CC' : 'MLO';
+      const box = KinMgBreastModel.detect(v.imageDataObject.getPointData().getScalars().getData(), 400, 300).box;
+      const q = KinMgBreastModel.quadrant(step, { side, view, verified: true, flipH: false, flipV: false, columns: 400, rows: 300 }, box);
+      return { center: [(q.box.x0 + q.box.x1) / 2 - 0.5, (q.box.y0 + q.box.y1) / 2 - 0.5], name: q.name }; }"""
+
+    def test_05b_quadrant_zoom_4x_is_four_times_fit_in_every_cell_through_the_four_steps_in_mirrored_order(self):
+        page = self.open()
+        self.menu(page, 'Quadrant Zoom')
+        panel = page.get_by_role('dialog', name='Quadrant Zoom')
+        expect(panel.get_by_label('Zoom')).to_have_value('4x')
+        expect(panel.get_by_label('Zoom').locator('option')).to_have_text(['4×', 'Fill Quadrant'])
+        # The buttons and their order are as before.
+        expect(panel.get_by_role('button')).to_have_text(['Previous Quadrant', 'Next Quadrant', 'Close'])
+        expect(panel).to_contain_text('Fit(100 %)의 4배(400 %)')
+        names = ['Upper-Outer', 'Upper-Inner', 'Lower-Inner', 'Lower-Outer']
+        cells = ['rcc', 'lcc', 'rmlo', 'prcc']
+        for step in range(4):
+            if step:
+                panel.get_by_role('button', name='Next Quadrant').click()
+            expect(panel.locator('b')).to_have_text(f'Quadrant {step + 1}/4: {names[step]} (R/L matched)')
+            want = {cell: page.evaluate(self.QUARTER, [cell, step]) for cell in cells}
+            page.wait_for_function("([ids, want]) => ids.every(id => { const f = synViews.get(id).camera.focalPoint; return Math.abs(f[0] - want[id][0]) < 1e-6 && Math.abs(f[1] - want[id][1]) < 1e-6; })",
+                                   arg=[cells, {c: want[c]['center'] for c in cells}])
+            with self.subTest(step=step):
+                for cell in cells:
+                    # Four times Fit (400 %), the same in every cell whatever its quadrant's size.
+                    self.assertAlmostEqual(4, self.camera(page, cell)['zoom'], places=9)
+                # R/L mirrored: the left breast's quadrant is on the other side of its image (chest wall at the left).
+                # (the two boxes differ by a grid sample at most)
+                self.assertLessEqual(abs((399 - self.camera(page, 'rcc')['focal'][0]) - self.camera(page, 'lcc')['focal'][0]), 1.5)
+                self.assertLessEqual(abs(self.camera(page, 'rcc')['focal'][1] - self.camera(page, 'lcc')['focal'][1]), 1.5)
+                # The quadrant here (120 × 120 image px at 2 CSS px each) is larger than the 200 × 150 cell: said so.
+                expect(page.locator('#pane-rcc [data-mg-badge=quadrant]')).to_have_text(f'Q{step + 1} {names[step]} · 4× · edges outside')
+                expect(panel.locator('[role=status]')).to_contain_text('4×에서 사분면의 가장자리가 칸 밖에 있는 칸 — Current · R CC')
+        # Previous from step 1 goes round to step 4; the unverified prior is not zoomed.
+        panel.get_by_role('button', name='Next Quadrant').click()
+        panel.get_by_role('button', name='Previous Quadrant').click()
+        expect(panel.locator('b')).to_have_text('Quadrant 4/4: Lower-Outer (R/L matched)')
+        self.assertAlmostEqual(1, self.camera(page, 'plcc')['zoom'])
+        expect(page.locator('#pane-plcc [data-mg-badge=quadrant]')).to_have_text('Quadrant: orientation unverified')
+        # Close: every MG cell back to Fit; the choice stays for the next opening in this window.
+        panel.get_by_label('Zoom').select_option('fill')
+        panel.get_by_role('button', name='Close').click()
+        page.wait_for_function("() => Math.abs(synViews.get('rcc').getZoom() - 1) < 1e-9")
+        expect(page.locator('[data-mg-badge=quadrant]')).to_have_count(0)
+        self.menu(page, 'Quadrant Zoom')
+        expect(page.get_by_role('dialog', name='Quadrant Zoom').get_by_label('Zoom')).to_have_value('fill')
+
+    def test_05c_a_quadrant_badge_goes_when_the_cells_zoom_is_changed_and_a_breast_display_mode_goes_when_a_quadrant_is_shown(self):
+        page = self.open()
+        self.menu(page, 'Breast Display')
+        display = page.get_by_role('dialog', name='Breast Display')
+        display.get_by_role('button', name='Fit Breast').click()
+        expect(page.locator('#pane-rcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: Fit Breast')
+        self.menu(page, 'Quadrant Zoom')
+        panel = page.get_by_role('dialog', name='Quadrant Zoom')
+        expect(page.locator('#pane-rcc [data-mg-badge=quadrant]')).to_have_text('Q1 Upper-Outer · 4× · edges outside')
+        # The cell's zoom is the quadrant's now, not Fit Breast.
+        expect(page.locator('#pane-rcc [data-mg-badge=zoom]')).to_have_count(0)
+        # A pan keeps the step (the edges outside the cell are reached that way) …
+        page.evaluate("() => { const v = synViews.get('rcc'); const f = v.camera.focalPoint; v.setCamera({ focalPoint: [f[0] + 20, f[1], 0] }); }")
+        expect(page.locator('#pane-rcc [data-mg-badge=quadrant]')).to_have_text('Q1 Upper-Outer · 4× · edges outside')
+        # … the reader's own zoom ends it in that cell, and a Breast Display mode ends it in every cell it sets.
+        page.evaluate("() => synViews.get('rcc').setZoom(6)")
+        expect(page.locator('#pane-rcc [data-mg-badge=quadrant]')).to_have_count(0)
+        expect(page.locator('#pane-lcc [data-mg-badge=quadrant]')).to_have_text('Q1 Upper-Outer · 4× · edges outside')
+        # (the two windows stand in the same place: the press goes to the button itself)
+        display.get_by_role('button', name='1:1').evaluate('b => b.click()')
+        expect(page.locator('#pane-lcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: 1:1')
+        expect(page.locator('#pane-lcc [data-mg-badge=quadrant]')).to_have_count(0)
+        # A size change then leaves the cells given to 1:1 as they are.
+        one = self.camera(page, 'lcc')['zoom']
+        page.evaluate("() => { for (const v of synViews.values()) v.element.style.width = '120px'; }")
+        page.wait_for_timeout(400)
+        self.assertAlmostEqual(one, self.camera(page, 'lcc')['zoom'], places=9)
+        expect(page.locator('#pane-lcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: 1:1')
+        # The next step takes every cell again.
+        panel.get_by_role('button', name='Next Quadrant').click()
+        expect(page.locator('#pane-rcc [data-mg-badge=quadrant]')).to_have_text('Q2 Upper-Inner · 4× · edges outside')
+        expect(page.locator('#pane-lcc [data-mg-badge=zoom]')).to_have_count(0)
+        self.assertAlmostEqual(4, self.camera(page, 'lcc')['zoom'], places=9)
+
+    def test_05d_a_cell_leaves_the_step_with_another_stack_and_a_held_cell_of_another_size_is_drawn_again_for_it(self):
+        page = self.open()
+        self.menu(page, 'Quadrant Zoom')
+        panel = page.get_by_role('dialog', name='Quadrant Zoom')
+        panel.get_by_label('Zoom').select_option('fill')
+        expect(page.locator('#pane-dbt [data-mg-badge=quadrant]')).to_have_text('Q1 Upper-Outer · Fill Quadrant')
+        # Another slice of the same DBT keeps it; another stack in the cell does not.
+        page.evaluate("() => synViews.get('dbt').show(3)")
+        expect(page.locator('#pane-dbt [data-mg-badge=quadrant]')).to_have_text('Q1 Upper-Outer · Fill Quadrant')
+        page.evaluate("() => { const v = synViews.get('dbt'); v.ids = v.ids.slice(0, 6); synEmit('cells', 'data', { viewportId: 'dbt' }); }")
+        expect(page.locator('#pane-dbt [data-mg-badge=quadrant]')).to_have_count(0)
+        # The reader zooms L CC (it leaves the step); then every cell becomes narrower by a layout change alone (no window
+        # resize event).
+        page.evaluate("() => synViews.get('lcc').setZoom(2)")
+        expect(page.locator('#pane-lcc [data-mg-badge=quadrant]')).to_have_count(0)
+        before = self.camera(page, 'rcc')['zoom']
+        page.evaluate("() => { for (const v of synViews.values()) v.element.style.width = '100px'; }")
+        page.wait_for_function("z => Math.abs(synViews.get('rcc').getZoom() - z) > 1e-3", arg=before)
+        # Fill Quadrant worked out again for the held cell's new width …
+        rcc = page.evaluate("() => KinMgBreastModel.detect(synViews.get('rcc').imageDataObject.getPointData().getScalars().getData(), 400, 300).box")
+        width = page.evaluate("() => synViews.get('rcc').element.clientWidth")
+        self.assertEqual(100, width)
+        self.assertAlmostEqual(min(width / ((rcc['x1'] - rcc['x0']) / 2), 150 / ((rcc['y1'] - rcc['y0']) / 2)) * 0.98 / 0.5, self.camera(page, 'rcc')['zoom'], places=6)
+        expect(page.locator('#pane-rcc [data-mg-badge=quadrant]')).to_have_text('Q1 Upper-Outer · Fill Quadrant')
+        # … and not for the cell the reader zoomed, nor the one showing another stack.
+        page.wait_for_timeout(300)
+        self.assertAlmostEqual(2, self.camera(page, 'lcc')['zoom'], places=9)
+        expect(page.locator('#pane-lcc [data-mg-badge=quadrant]')).to_have_count(0)
+        expect(page.locator('#pane-dbt [data-mg-badge=quadrant]')).to_have_count(0)
+        # Close while a size change waits: nothing is drawn after it and nothing fails (the page's errors are checked).
+        page.evaluate("() => { for (const v of synViews.values()) v.element.style.width = '150px'; }")
+        panel.get_by_role('button', name='Close').click()
+        page.wait_for_timeout(400)
+        self.assertAlmostEqual(1, self.camera(page, 'rcc')['zoom'], places=9)
+        expect(page.locator('[data-mg-badge=quadrant]')).to_have_count(0)
     def test_06_tomo_steps_by_the_interval_plays_and_gives_way_to_cine(self):
         page = self.open()
         page.evaluate("() => { synActive = 'dbt'; }")
@@ -707,7 +878,7 @@ class ViewerMgDOMTest(unittest.TestCase):
         page.evaluate("() => { synReader.open = 'refuse'; }")
         panel = self.keypad(page)
         panel.get_by_role('button', name='Patient ▶').click()
-        panel = self.moved_to(page, '판독 화면이 SYN^BRAVO의 검사를 열지 못해(판독 화면에 대화상자가 열려 있습니다) 영상도 SYN^ALPHA에게 되돌렸습니다.', 4)
+        panel = self.moved_to(page, '판독 화면의 대상이 SYN^BRAVO의 검사로 바뀌지 않아(판독 화면에 대화상자가 열려 있습니다) 영상도 SYN^ALPHA에게 되돌렸습니다.', 4)
         self.assertEqual('PK-A', page.evaluate("KinViewerPatientTabs.snapshot().key"))
         self.assertEqual(['1.2.9', '1.2.1'], page.evaluate("synReader.opens"))
         self.assertEqual('1.2.1', page.evaluate("synReader.target"))
@@ -756,18 +927,251 @@ class ViewerMgDOMTest(unittest.TestCase):
         self.assertEqual([], page.evaluate("synReader.opens"))
         self.assertEqual('1.2.1', page.evaluate("synReader.target"))
 
-    def test_17_keypad_report_target_without_answer_is_withdrawn_and_both_go_back_once_the_reading_screen_is_free(self):
+    def test_14c_keypad_report_target_moved_before_a_refusal_is_a_move_not_a_failure(self):
+        # The reading screen made B its report target and then refused (a dialog opened before the caret went to Findings):
+        # images and report target are both B, so the keypad says so and moves nothing back.
         page = self.open(tabs=True)
-        page.evaluate("() => { synReader.open = 'silent'; synReader.busy = 1500; }")
+        page.evaluate("() => { synReader.open = 'refuse-after'; }")
         panel = self.keypad(page)
         panel.get_by_role('button', name='Patient ▶').click()
-        self.moved_to(page, '판독 화면이 SYN^BRAVO의 검사를 열지 못해(판독 화면의 응답이 없습니다) 영상도 SYN^ALPHA에게 되돌렸습니다.', 4, timeout=40000)
+        panel = self.moved_to(page, 'SYN^BRAVO의 영상과 판독 대상으로 옮겼습니다.', 3)
+        page.wait_for_timeout(500)
+        self.assertEqual(3, page.evaluate("synRemounts"))
+        self.assertEqual('PK-B', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+        self.assertEqual(['1.2.9'], page.evaluate("synReader.opens"))
+        self.assertEqual('1.2.9', page.evaluate("synReader.target"))
+        expect(panel.locator('ol li')).to_have_text(['SYN^ALPHA | SYN-A', 'SYN^BRAVO | SYN-B  ← images · report target'])
+
+    def test_17_keypad_report_target_without_answer_is_withdrawn_and_both_go_back_once_the_reading_screen_is_free(self):
+        # The reading screen answers neither the opening nor its withdrawal: the keypad does not know whether B was opened,
+        # says so, and brings images and report target back to A (each confirmed).
+        page = self.open(tabs=True)
+        page.evaluate("() => { synReader.open = 'silent'; synReader.busy = 6000; synReader.withdrawSilent = true; }")
+        panel = self.keypad(page)
+        panel.get_by_role('button', name='Patient ▶').click()
+        self.moved_to(page, '판독 화면이 SYN^BRAVO의 검사를 열었는지 확인하지 못해(판독 화면의 응답이 없습니다) 영상과 판독 대상을 SYN^ALPHA에게 되돌렸습니다.', 4, timeout=40000)
         # The opening that got no answer was withdrawn; the way back was asked again while the reading screen was busy.
         self.assertEqual(['1.2.9'], page.evaluate("synReader.cancels"))
         opens = page.evaluate("synReader.opens")
         self.assertEqual('1.2.9', opens[0]); self.assertEqual('1.2.1', opens[-1]); self.assertGreater(len(opens), 2)
         self.assertEqual('1.2.1', page.evaluate("synReader.target"))
         self.assertEqual('PK-A', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+
+    def test_17b_keypad_report_target_moved_after_the_wait_is_taken_as_moved_not_said_to_have_failed(self):
+        # A loaded reading screen moves to B 6.3 s after the request (past the 6 s wait) and handles the withdrawal only
+        # after that: the report target IS B. The keypad asks where it is before saying anything - both are B, nothing goes back.
+        page = self.open(tabs=True)
+        page.evaluate("() => { synReader.open = 'late'; synReader.lateMs = 6300; synReader.cancelLag = 600; }")
+        panel = self.keypad(page)
+        panel.get_by_role('button', name='Patient ▶').click()
+        panel = self.moved_to(page, 'SYN^BRAVO의 영상과 판독 대상으로 옮겼습니다.', 3, timeout=40000)
+        page.wait_for_timeout(1500)
+        self.assertEqual(3, page.evaluate("synRemounts"))
+        self.assertEqual('PK-B', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+        self.assertEqual('1.2.9', page.evaluate("synReader.target"))
+        self.assertEqual(['1.2.9'], page.evaluate("synReader.opens"))
+        expect(panel.locator('[role=status]')).to_have_text('SYN^BRAVO의 영상과 판독 대상으로 옮겼습니다.')
+        expect(panel.locator('ol li')).to_have_text(['SYN^ALPHA | SYN-A', 'SYN^BRAVO | SYN-B  ← images · report target'])
+
+    def test_17c_keypad_withdrawn_opening_that_had_not_moved_never_moves_later_and_both_go_back(self):
+        # The reading screen would move to B 7.5 s after the request; the withdrawal at 6 s drops that move and says the
+        # report target is not B: the keypad says it was not opened, brings both back to A, and B never follows later.
+        page = self.open(tabs=True)
+        page.evaluate("() => { synReader.open = 'slow'; synReader.slowMs = 7500; }")
+        panel = self.keypad(page)
+        panel.get_by_role('button', name='Patient ▶').click()
+        self.moved_to(page, '판독 화면의 대상이 SYN^BRAVO의 검사로 바뀌지 않아(판독 화면의 응답이 없습니다) 영상도 SYN^ALPHA에게 되돌렸습니다.', 4, timeout=40000)
+        page.wait_for_timeout(2000)
+        self.assertEqual(['1.2.9'], page.evaluate("synReader.cancels"))
+        self.assertIsNone(page.evaluate("synReader.movedAt ?? null"))
+        self.assertEqual('1.2.1', page.evaluate("synReader.target"))
+        self.assertEqual('PK-A', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+
+    def test_17d_keypad_tab_chosen_while_the_reading_screen_is_asked_back_stops_the_way_back(self):
+        # The opening of B got no answer; while the reading screen (busy) is asked back to A, the reader opens B's tab:
+        # that newer choice is not undone - no more requests for A, and the result says the tabs changed, not "back to A".
+        page = self.open(tabs=True)
+        page.evaluate("""() => { synReader.open = 'silent'; synReader.busy = 6000; synReader.withdrawSilent = true;
+          window.moveDone = false; KinViewerPatientTabs.next('save').then(result => { window.moveResult = result; moveDone = true; }); }""")
+        page.wait_for_function("() => synReader.opens.includes('1.2.1')", timeout=30000)
+        page.evaluate("() => { window.opensAtChoice = synReader.opens.length; return synOpenB(); }")
+        page.wait_for_function("() => KinViewerPatientTabs.snapshot()?.key === 'PK-B'")
+        page.wait_for_function("() => moveDone", timeout=15000)
+        page.wait_for_timeout(2500)
+        self.assertEqual([], page.evaluate("synReader.opens.slice(opensAtChoice)"))
+        result = page.evaluate("moveResult")
+        self.assertFalse(result['ok'])
+        self.assertEqual('영상 탭이 그 사이 바뀌어 더 되돌리지 않았습니다. 판독 화면의 대상을 확인하세요.', result['message'])
+        self.assertNotIn('reportTarget', result)
+        self.assertEqual('PK-B', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+
+    def test_17e_keypad_tab_chosen_while_the_opening_is_awaited_withdraws_it_and_moves_nothing_back(self):
+        # The reading screen would move to B 7.5 s after the request; at 1 s the reader opens A's tab again: the opening is
+        # withdrawn at once (B never follows), nothing is rolled back, and the result says the tabs changed.
+        page = self.open(tabs=True)
+        page.evaluate("""() => { synReader.open = 'slow'; synReader.slowMs = 7500;
+          window.moveDone = false; KinViewerPatientTabs.next('save').then(result => { window.moveResult = result; moveDone = true; }); }""")
+        page.wait_for_function("() => synReader.opens.includes('1.2.9')", timeout=30000)
+        page.wait_for_timeout(1000)
+        page.evaluate("() => KinViewerPatientTabs.open(" + repr(URL_A) + ")")
+        page.wait_for_function("() => KinViewerPatientTabs.snapshot()?.key === 'PK-A'")
+        # Withdrawn when the tab changed, not when the 6 s wait ran out.
+        page.wait_for_function("() => moveDone", timeout=1500)
+        self.assertEqual(['1.2.9'], page.evaluate("synReader.cancels"))
+        self.assertEqual('영상 탭이 그 사이 바뀌어 더 옮기지 않았습니다. 판독 화면의 대상을 확인하세요.', page.evaluate("moveResult.message"))
+        page.wait_for_timeout(7500)
+        self.assertIsNone(page.evaluate("synReader.movedAt ?? null"))
+        self.assertEqual(['1.2.9'], page.evaluate("synReader.opens"))
+        self.assertEqual('1.2.1', page.evaluate("synReader.target"))
+        self.assertEqual('PK-A', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+
+    # A newer choice made while a Patient ▶ move is under way is kept as made: the move's request to the reading screen is
+    # withdrawn, nothing more opens or goes back, and no success is claimed. Each entry and each wait of the move.
+    def tabs_shown(self, page):
+        # The viewer header the tabs sit under (viewer-patient-tabs.js refresh), so its tabs and × can be pressed.
+        page.evaluate("""() => { const bar = document.createElement('div'), header = document.createElement('div'), brand = document.createElement('span');
+          header.className = 'bg-secondary-dark z-20'; brand.id = 'kin-viewer-brand'; header.append(brand); bar.append(header);
+          document.body.prepend(bar); KinViewerPatientTabs.refresh(); }""")
+
+    def start_move(self, page, setup=''):
+        page.evaluate("() => { " + setup + " window.moveDone = false; KinViewerPatientTabs.next('save').then(result => { window.moveResult = result; moveDone = true; }); }")
+
+    def test_17f_keypad_a_to_b_to_a_while_the_save_is_answered_keeps_a_and_asks_nothing(self):
+        page = self.open(tabs=True)
+        self.start_move(page, "synReader.answerLag = 800;")
+        page.wait_for_function("() => synReader.calls.some(c => c[0] === 'save')")
+        page.evaluate("() => synOpenB()")
+        page.wait_for_function("() => KinViewerPatientTabs.snapshot()?.key === 'PK-B'")
+        page.evaluate("() => KinViewerPatientTabs.open(" + repr(URL_A) + ")")
+        page.wait_for_function("() => KinViewerPatientTabs.snapshot()?.key === 'PK-A'")
+        page.wait_for_function("() => moveDone", timeout=10000)
+        remounts = page.evaluate("synRemounts")
+        page.wait_for_timeout(2000)
+        self.assertEqual({'ok': False, 'message': '환자가 그 사이 바뀌었습니다.'}, page.evaluate("moveResult"))
+        self.assertEqual('PK-A', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+        self.assertEqual(remounts, page.evaluate("synRemounts"))
+        self.assertEqual([], page.evaluate("synReader.opens"))
+        self.assertEqual('1.2.1', page.evaluate("synReader.target"))
+
+    def test_17g_keypad_the_tab_shown_chosen_again_while_the_opening_is_answered_withdraws_it_and_goes_back_nowhere(self):
+        page = self.open(tabs=True)
+        self.start_move(page, "synReader.open = 'refuse'; synReader.openLag = 1500;")
+        page.wait_for_function("() => synReader.opens.includes('1.2.9')")
+        page.evaluate("() => KinViewerPatientTabs.open(" + repr(URL_B) + ")")
+        page.wait_for_function("() => moveDone", timeout=1500)
+        page.wait_for_timeout(2500)
+        self.assertEqual('영상 탭이 그 사이 바뀌어 더 옮기지 않았습니다. 판독 화면의 대상을 확인하세요.', page.evaluate("moveResult.message"))
+        self.assertFalse(page.evaluate("moveResult.ok"))
+        self.assertEqual(['1.2.9'], page.evaluate("synReader.cancels"))
+        self.assertEqual(['1.2.9'], page.evaluate("synReader.opens"))
+        self.assertEqual('PK-B', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+        self.assertEqual(3, page.evaluate("synRemounts"))
+
+    def test_17h_keypad_tab_clicked_while_the_save_is_answered_is_the_choice_kept(self):
+        page = self.open(tabs=True)
+        self.tabs_shown(page)
+        self.start_move(page, "synReader.answerLag = 800;")
+        page.wait_for_function("() => synReader.calls.some(c => c[0] === 'save')")
+        page.locator('.kin-patient-tabs [role=tab]').nth(1).click()
+        page.wait_for_function("() => moveDone", timeout=10000)
+        page.wait_for_function("() => KinViewerPatientTabs.snapshot()?.key === 'PK-B'", timeout=10000)
+        page.wait_for_timeout(2000)
+        self.assertEqual({'ok': False, 'message': '환자가 그 사이 바뀌었습니다.'}, page.evaluate("moveResult"))
+        self.assertEqual('PK-B', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+        self.assertEqual(3, page.evaluate("synRemounts"))
+        self.assertEqual([], page.evaluate("synReader.opens"))
+
+    def test_17i_keypad_tab_chosen_while_the_next_images_are_awaited_is_kept_and_nothing_is_asked(self):
+        page = self.open(tabs=True)
+        self.start_move(page, "synImageDelay = 2000;")
+        page.wait_for_function("() => synRemounts === 3 && KinViewerPatientTabs.snapshot()?.key === 'PK-B'")
+        page.evaluate("() => { synImageDelay = 0; return KinViewerPatientTabs.open(" + repr(URL_A) + "); }")
+        page.wait_for_function("() => KinViewerPatientTabs.snapshot()?.key === 'PK-A'")
+        page.wait_for_function("() => moveDone", timeout=5000)
+        page.wait_for_timeout(2500)
+        self.assertEqual({'ok': False, 'message': '환자가 그 사이 바뀌었습니다.'}, page.evaluate("moveResult"))
+        self.assertEqual('PK-A', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+        self.assertEqual(4, page.evaluate("synRemounts"))
+        self.assertEqual([], page.evaluate("synReader.opens"))
+
+    def test_17j_keypad_a_tab_closed_while_the_opening_is_awaited_withdraws_it(self):
+        page = self.open(tabs=True)
+        self.start_move(page, "synReader.open = 'slow'; synReader.slowMs = 7500;")
+        page.wait_for_function("() => synReader.opens.includes('1.2.9')")
+        # The tab left (A, not shown now) is closed by its ×.
+        self.tabs_shown(page)
+        page.get_by_role('button', name='Close SYN^ALPHA SYN-A').click()
+        page.wait_for_function("() => moveDone", timeout=1500)
+        self.assertEqual(['1.2.9'], page.evaluate("synReader.cancels"))
+        self.assertEqual('영상 탭이 그 사이 바뀌어 더 옮기지 않았습니다. 판독 화면의 대상을 확인하세요.', page.evaluate("moveResult.message"))
+        page.wait_for_timeout(7500)
+        self.assertIsNone(page.evaluate("synReader.movedAt ?? null"))
+        self.assertEqual(['1.2.9'], page.evaluate("synReader.opens"))
+        self.assertEqual(['PK-B'], page.evaluate("KinViewerPatientTabs.list().map(tab => tab.key)"))
+        self.assertEqual(3, page.evaluate("synRemounts"))
+
+    def test_17k_keypad_end_and_an_invalid_exam_scope_end_the_move_under_way(self):
+        for stop in ["KinViewerPatientTabs.end()", "window.dispatchEvent(new Event('kin-exam-scope-invalidated'))"]:
+            with self.subTest(stop=stop):
+                page = self.open(tabs=True)
+                self.start_move(page, "synReader.open = 'slow'; synReader.slowMs = 7500;")
+                page.wait_for_function("() => synReader.opens.includes('1.2.9')")
+                page.evaluate("() => { " + stop + "; }")
+                page.wait_for_function("() => moveDone", timeout=1500)
+                self.assertEqual(['1.2.9'], page.evaluate("synReader.cancels"))
+                self.assertFalse(page.evaluate("moveResult.ok"))
+                self.assertNotIn('reportTarget', page.evaluate("moveResult"))
+                page.wait_for_timeout(7500)
+                self.assertIsNone(page.evaluate("synReader.movedAt ?? null"))
+                self.assertEqual(['1.2.9'], page.evaluate("synReader.opens"))
+                self.assertEqual(3, page.evaluate("synRemounts"))
+
+    def test_17m_tab_clicked_and_then_the_tab_shown_opened_again_keeps_the_newer_choice(self):
+        # A tab click waits at the save gate; the tab shown is opened again meanwhile: the click's switch never happens.
+        page = self.open(tabs=True)
+        self.tabs_shown(page)
+        page.evaluate("() => { synReader.answerLag = 800; }")
+        page.locator('.kin-patient-tabs [role=tab]').nth(1).click()
+        page.wait_for_function("() => synReader.calls.some(c => c[0] === 'save')")
+        page.evaluate("() => KinViewerPatientTabs.open(" + repr(URL_A) + ")")
+        page.wait_for_timeout(3000)
+        self.assertEqual('PK-A', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+        self.assertEqual(2, page.evaluate("synRemounts"))
+
+    def test_17n_tab_clicked_twice_while_the_gate_answers_is_carried_out_once(self):
+        # The gate is answered once for both clicks: the latest choice (B) is carried out, and only once.
+        page = self.open(tabs=True)
+        self.tabs_shown(page)
+        page.evaluate("() => { synReader.answerLag = 800; }")
+        tab_b = page.locator('.kin-patient-tabs [role=tab]').nth(1)
+        tab_b.click()
+        page.wait_for_function("() => synReader.calls.some(c => c[0] === 'save')")
+        tab_b.click()
+        page.wait_for_function("() => KinViewerPatientTabs.snapshot()?.key === 'PK-B'", timeout=10000)
+        page.wait_for_timeout(2000)
+        self.assertEqual('PK-B', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+        self.assertEqual(3, page.evaluate("synRemounts"))
+        expect(page.locator('.kin-patient-leave')).to_be_hidden()
+
+    def test_17o_tab_clicked_while_check_answers_is_carried_out_by_that_answer(self):
+        # A switch kept by unconfirmed text; the text is then saved on the reading screen and Check is pressed; while Check
+        # waits for its answer the reader clicks B's tab again: the Check answer carries out that latest choice.
+        page = self.open(tabs=True)
+        self.tabs_shown(page)
+        page.evaluate("() => { synReader.held = ['1.2.1']; synReader.save = 'refused'; }")
+        page.locator('.kin-patient-tabs [role=tab]').nth(1).click()
+        notice = page.locator('.kin-patient-leave')
+        expect(notice).to_contain_text('Save Not Confirmed')
+        page.evaluate("() => { synReader.held = []; synReader.answerLag = 800; }")
+        calls = page.evaluate("synReader.calls.length")
+        notice.get_by_role('button', name='Check').click()
+        page.wait_for_function("n => synReader.calls.length > n", arg=calls)
+        page.locator('.kin-patient-tabs [role=tab]').nth(1).click()
+        page.wait_for_function("() => KinViewerPatientTabs.snapshot()?.key === 'PK-B'", timeout=10000)
+        page.wait_for_timeout(2000)
+        self.assertEqual('PK-B', page.evaluate("KinViewerPatientTabs.snapshot().key"))
+        self.assertEqual(3, page.evaluate("synRemounts"))
+        expect(notice).to_be_hidden()
 
 if __name__ == '__main__':
     unittest.main()

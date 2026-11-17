@@ -18,10 +18,10 @@ const STUDIES = [
   { uid: 'other', date: '20250101', sourcePatientKey: 'OTHER' },
 ];
 
-function world() {
+function world(options = {}) {
   const w = { cells: new Map(), patient: { key: 'PK', sequence: 1, studyUIDs: ['cur'] }, loads: [], replaced: [], compared: [], assigned: [], listed: [], fail: null, during: null };
-  const win = { KinSessionTransport: { refusal: () => null, responseError: () => new Error('ended') } };
-  const fetch = async () => ({ ok: true, status: 200, json: async () => ({ studies: STUDIES.map(row => ({ ...row })) }) });
+  const win = { KinSessionTransport: { refusal: () => null, responseError: () => new Error('ended') }, KinExamScope: options.scope ? require('../worklist-v0/hpacs-lite/exam-scope.js') : undefined };
+  const fetch = async () => ({ ok: true, status: 200, json: async () => ({ studies: (options.studies || STUDIES).map(row => structuredClone(row)) }) });
   const Controller = vm.runInThisContext('(function (window, fetch) {' + source + '\nreturn window.KinViewerPriorController; })', { filename: file })(win, fetch);
   const cell = (id, study, set) => ({ patientKey: 'PK', sequence: 1, viewportId: id, studyUid: study, seriesUid: study + '-s', displaySetUid: set, mode: 'stack' });
   w.cells.set('left', cell('left', 'cur', 'set-cur')); w.cells.set('right', cell('right', 'aug', 'set-aug')); w.cells.set('third', cell('third', 'aug', 'set-aug-2'));
@@ -106,4 +106,17 @@ test('a logical current exam keeps the patient key and lists related studies for
  w.cells.get('left').studyUid='hidden-original';
  const rows=await w.controller.related.studies(w.value('left'));
  assert.deepEqual(rows.map(row=>[row.uid,row.relation]),[['cur','Current'],['aug','Prior'],['may','Prior']]);
+});
+
+test('studies: a cell showing the second original of a merged prior finds the list through that merged exam', async () => {
+  const merged = { reportUid: 'aug', groupId: 'g-1', kind: 'merge', part: null, active: true, generation: 'g',
+    sources: [{ studyUid: 'aug', series: { mode: 'all', uids: [] } }, { studyUid: 'aug2', series: { mode: 'all', uids: [] } }] };
+  const studies = [STUDIES[0], { ...STUDIES[1], examScope: merged }, STUDIES[2]];
+  const w = world({ scope: true, studies });
+  w.cells.get('right').studyUid = 'aug2'; w.cells.get('right').seriesUid = 'aug2-s';
+  const rows = await w.controller.related.studies(w.value('right'));
+  assert.deepEqual(rows.map(row => [row.uid, row.relation]), [['cur', 'Current'], ['aug', 'Prior'], ['may', 'Prior']]);
+  // An original no listed exam holds is still no list.
+  w.cells.get('right').studyUid = 'elsewhere';
+  assert.equal(await w.controller.related.studies(w.value('right')), null);
 });

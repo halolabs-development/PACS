@@ -673,6 +673,16 @@ PROFILES = {
         'suite_timeout': 900,
         'suites': (('e2e/test_auto_save_view.py', 'AutoSaveViewE2E', 'ci-auto-save-view'),),
     },
+    'mark-autosave': {
+        'out': ROOT / 'tests/e2e/artifacts/mark-autosave-ci',
+        'project_prefix': 'kin-mark-autosave-ci-',
+        # Dispatch only (Focused integration): marks saved without their Save button while the account check is on (drawn,
+        # closed at once, resized and moved under Edit) and drawn on reopen; saved marks deleted from the row, the image's
+        # menu and the Measurements panel, gone from every list with their revisions kept; a closing never sends a mark mid-drag,
+        # a cancelled closing does not stop a later one sending, a typed key title waits, a lost answer is sent again once.
+        'suite_timeout': 900,
+        'suites': (('e2e/test_mark_autosave.py', 'MarkAutoSaveE2E', 'ci-mark-autosave'),),
+    },
     'screen-language': {
         'out': ROOT / 'tests/e2e/artifacts/screen-language-ci',
         'project_prefix': 'kin-screen-language-ci-',

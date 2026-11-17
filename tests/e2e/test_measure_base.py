@@ -179,6 +179,7 @@ class MeasureBaseE2E(ViewerJobPrintE2E):
             dict(common, kind='text', label='RLL nodule', points=[world(cols * .3, rows * .5)]),
             dict(common, kind='memo', label='Compare with prior CT', title='F/U', points=[world(cols * .3, rows * .7)]),
             dict(common, kind='spine', label='L4', points=[world(cols * .6, rows * .3)]),
+            dict(common, kind='spine', label='L4-5', points=[world(cols * .6, rows * .4)]),
             dict(common, kind='circle', label='', points=[world(cx, cy), world(cx + rx, cy)],
                  baseline=dict(calculator='kin-circle-v1:pixel:' + unit, values=[10, math.pi * 25, mean, sd, min(inside), max(inside), count])),
         ]
@@ -186,14 +187,14 @@ class MeasureBaseE2E(ViewerJobPrintE2E):
             response = self.stack.request('POST', f'/studies/{f.uid}/viewer-items', 'doctor', dict(requestId=str(uuid.uuid4()), item=item))
             self.assertEqual(response.status, 200, response.text)
         # The server refuses a circle whose diameter is not the one its points make on the original.
-        wrong = dict(items[3], baseline=dict(items[3]['baseline'], values=[11, math.pi * 30.25] + items[3]['baseline']['values'][2:]))
+        wrong = dict(items[4], baseline=dict(items[4]['baseline'], values=[11, math.pi * 30.25] + items[4]['baseline']['values'][2:]))
         self.assertEqual(400, self.stack.request('POST', f'/studies/{f.uid}/viewer-items', 'doctor', dict(requestId=str(uuid.uuid4()), item=wrong)).status)
         p = self.launch_job([f]); canvas_ready(p, 1)
         # The Job holds the marks of the frame its cell shows: show the frame they are on.
         p.evaluate('''async sop => { const g = services.viewportGridService.getState(), v = services.cornerstoneViewportService.getCornerstoneViewport(g.activeViewportId);
           const index = v.getImageIds().findIndex(id => cornerstone.metaData.get('instance', id).SOPInstanceUID === sop); if (index < 0) throw Error('fixture SOP missing');
           await v.setImageIdIndex(index); v.scroll(index - v.getTargetImageIdIndex(), false); }''', str(ds.SOPInstanceUID))
-        p.wait_for_function("() => document.querySelectorAll('[data-kin-mark]').length === 4", timeout=45000)
+        p.wait_for_function("() => document.querySelectorAll('[data-kin-mark]').length === 5", timeout=45000)
         p.get_by_label('Job Title', exact=True).fill('Measure base job')
         self.click_job(p, 'Save Job with Annotations', '저장된 주석 이력도 함께 고정했습니다')
         job = self.jobs(f)[0]
@@ -202,10 +203,11 @@ class MeasureBaseE2E(ViewerJobPrintE2E):
         self.assertEqual({'text', 'memo', 'spine', 'circle'}, {a['item']['kind'] for a in frozen.body['annotations']})
         paper = self.output(p)
         legend = paper.locator('[data-annotation-id]')
-        expect(legend).to_have_count(4)
+        expect(legend).to_have_count(5)
         expect(paper.locator('main')).to_contain_text('글 · RLL nodule')
         expect(paper.locator('main')).to_contain_text('메모 · F/U · Compare with prior CT')
         expect(paper.locator('main')).to_contain_text('척추 레벨 · L4')
+        expect(paper.locator('main')).to_contain_text('척추 레벨 · L4-5')
         expect(paper.locator('main')).to_contain_text('지름 원')
         expect(paper.locator('main')).to_contain_text(re.compile(r'지름 10(\.0+)? mm'))
         self.assertEqual(paper.locator('script').count(), 0)
@@ -237,6 +239,31 @@ class MeasureBaseE2E(ViewerJobPrintE2E):
         self.save_rows(p, 'text', 1)
         saved = [h['item'] for h in self.items(f) if h['item']['kind'] == 'text'][0]
         self.assertEqual((str(ds.SOPInstanceUID), None, 'scar'), (saved['sopUid'], saved['frameOfReferenceUid'], saved['label']))
+
+    def test_measure_05_spine_label_numbers_vertebrae_and_discs_in_order_saves_and_reopens(self):
+        f = self.ct('MEAS-' + uuid.uuid4().hex[:12], 'current', '20260801')
+        p = self.viewer(f)
+        panel = self.tool(p, 'Spine Label')
+        expect(panel.get_by_label('Labels')).to_have_value('Vertebrae')
+        panel.get_by_label('Start Level').select_option('L4')
+        panel.get_by_label('Labels').select_option('Vertebrae and Discs')
+        expect(panel.locator('[data-spine-preview]')).to_contain_text('[L4] L4-5 L5 L5-S1 S1')
+        for fy in (.25, .35, .45, .55, .65):
+            self.press(p, .45, fy)
+        self.assertEqual(['L4', 'L4-5', 'L5', 'L5-S1', 'S1'], [m['text'] for m in self.marks(p, 'spine')])
+        # Discs only, from the disc under the start.
+        panel.get_by_label('Labels').select_option('Discs')
+        panel.get_by_label('Start Level').select_option('C5-6')
+        self.press(p, .6, .3); self.press(p, .6, .4)
+        panel.get_by_role('button', name='Close', exact=True).click()
+        self.save_rows(p, 'spine', 7)
+        saved = sorted(h['item']['label'] for h in self.items(f) if h['item']['kind'] == 'spine')
+        self.assertEqual(sorted(['L4', 'L4-5', 'L5', 'L5-S1', 'S1', 'C5-6', 'C6-7']), saved)
+        p.close()
+        p = self.viewer(f)
+        p.wait_for_function("() => cornerstoneTools.annotation.state.getAllAnnotations().filter(a => a.metadata.toolName === 'KinSpineLabel').length === 7", timeout=45000)
+        self.assertEqual(saved, sorted(m['text'] for m in self.marks(p, 'spine')))
+        expect(p.locator('[data-kin-mark=KinSpineLabel]').filter(has_text='L4-5')).to_have_count(1)
 
 
 def load_tests(loader, tests, pattern):

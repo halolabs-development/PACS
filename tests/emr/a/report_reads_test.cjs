@@ -378,7 +378,8 @@ test('A-HTTP-REPORT: version citations record the filtered projection of the sto
   // The head read and the history list are separate surfaces: the head citations read is unchanged and unrecorded.
   const head = await get('/studies/' + encodeURIComponent(uid) + '/report/citations');
   assert.equal(head.status, 200, head.text);
-  assert.deepEqual(Object.keys(head.body).sort(), ['draft', 'draftRevision', 'head', 'version']);
+  // `measurementLines` says this server records the Include Measurements line; the screen opens that checkbox only then.
+  assert.deepEqual(Object.keys(head.body).sort(), ['draft', 'draftRevision', 'head', 'measurementLines', 'version']);
   const [headRecords] = await ctx.witness.$queryRaw`SELECT count(*)::int AS n FROM emr_access.access_entry
     WHERE payload::jsonb->>'surface' = 'GET studies/:uid/report/citations'`;
   assert.equal(headRecords.n, 0);

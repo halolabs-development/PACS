@@ -56,20 +56,30 @@
     return JSON.stringify(left) === JSON.stringify(right);
   }
   // The answer to a kin-editor-open (viewer-windows.js editorOpen): ok only when the reading screen selected
-  // exactly this study for this login; a refusal carries the reason it gave. Never throws.
+  // exactly this study for this login; a refusal carries the reason it gave and, when the reading screen told it, whether the
+  // report target is this study all the same (`at`: a refusal can come after the move). Never throws.
   const OPEN_REFUSALS = ['session', 'unlisted', 'modal', 'busy', 'composing', 'saving', 'stale', 'unresolved', 'gone', 'unavailable'];
+  const sameOpening = (message, expected) => !!expected && typeof expected === 'object' &&
+    ['request', 'owner', 'uid'].every(key => typeof expected[key] === 'string' && typeof message[key] === 'string' && message[key] === expected[key]);
+  const where = message => typeof message.at === 'boolean' ? { at: message.at } : {};
   function validOpened(message, expected) {
     try {
       if (!message || typeof message !== 'object' || message.type !== 'kin-editor-opened') return refusal('invalid');
-      if (!expected || typeof expected !== 'object') return refusal('invalid');
-      for (const key of ['request', 'owner', 'uid'])
-        if (typeof expected[key] !== 'string' || typeof message[key] !== 'string' || message[key] !== expected[key]) return refusal('invalid');
+      if (!sameOpening(message, expected)) return refusal('invalid');
       if (message.result === 'ok') return { ok: true };
-      if (message.result === 'refused') return refusal(OPEN_REFUSALS.includes(message.reason) ? message.reason : 'invalid');
+      if (message.result === 'refused') return OPEN_REFUSALS.includes(message.reason) ? { ...refusal(message.reason), ...where(message) } : refusal('invalid');
       return refusal('invalid');
     } catch (_) { return refusal('invalid'); }
   }
-  const api = { validReply, validOpened, sameEditor, reasonText, FIELDS, MAX, OPEN_REFUSALS };
+  // The answer to a withdrawn opening (viewer-windows.js editorWithdrawn): { at } when the reading screen told where its report
+  // target is, {} when it could not tell; null for anything that is not that answer to this request. Never throws.
+  function validWithdrawn(message, expected) {
+    try {
+      if (!message || typeof message !== 'object' || message.type !== 'kin-editor-open-withdrawn' || !sameOpening(message, expected)) return null;
+      return where(message);
+    } catch (_) { return null; }
+  }
+  const api = { validReply, validOpened, validWithdrawn, sameEditor, reasonText, FIELDS, MAX, OPEN_REFUSALS };
   if (typeof module === 'object' && module.exports) module.exports = api; else root.kinViewerEditorLinkApi = api;
 })(globalThis);
 // The adapter is read-only: it asks one bound window for the current editor and
@@ -176,7 +186,15 @@ globalThis.kinViewerEditorLink = function (options) {
   // caret in Findings (kin-editor-open). Only the window-group channel is used; a window without that link has no reading
   // screen to ask. The reading screen may first save the text it holds (its own study-move gate, up to 3 s), so this waits
   // longer than a read. No answer is never taken as a move.
+  //
+  // Where the report target ends up is told by the reading screen alone (`at`, viewer-windows.js): the answer says it, and a
+  // request not answered in time is withdrawn and then asked once more - the reading screen drops the move if it has not
+  // happened and answers where the target is (kin-editor-open-withdrawn), or a late answer to the opening arrives first. The
+  // result is { ok: true } (moved and the caret in Findings), or { ok: false, reason, at? }: `at` true - the target is this
+  // study all the same; false - it is not, and that request moves nothing any more; absent - not known (no answer, relinked,
+  // disposed, another opening still under way there).
   const openTimeoutMs = Number.isFinite(settings.openTimeoutMs) ? settings.openTimeoutMs : 6000;
+  const withdrawTimeoutMs = Number.isFinite(settings.withdrawTimeoutMs) ? settings.withdrawTimeoutMs : 4000;
   function open(uid) {
     return new Promise(resolve => {
       let bound = null;
@@ -186,10 +204,11 @@ globalThis.kinViewerEditorLink = function (options) {
       if (disposed || target || !name || typeof Channel !== 'function' || !bound || !current || typeof uid !== 'string' || !uid) {
         resolve({ ok: false, reason: 'missing' }); return;
       }
+      const work = view.KinWorkContext, context = work?.capture('document');
       const request = view.crypto.randomUUID();
       const expected = { request, owner: bound, uid };
       const entry = { cancel: null };
-      let timer = null, link = null;
+      let timer = null, link = null, withdrawn = false;
       function finish(value) {
         if (!pending.has(entry)) return;
         pending.delete(entry);
@@ -198,23 +217,45 @@ globalThis.kinViewerEditorLink = function (options) {
         for (const type of ['hashchange', 'kin-window-link-changed']) view.removeEventListener(type, onRelink);
         resolve(value);
       }
+      // An answer is read only while this window is still the one that asked: the same link, login and document generation.
+      function asking() {
+        if (windowLink()?.key !== name.key || context && !work.admits(context)) return false;
+        try { return !!live() && JSON.stringify(owner()) === bound; } catch (_) { return false; }
+      }
       // A relinked window stops waiting too: the request is withdrawn on the link it was sent on, then ended.
       function onRelink() { withdraw(); finish({ ok: false, reason: 'missing' }); }
       function onMessage(event) {
         const data = event.data;
-        if (!data || typeof data !== 'object' || data.type !== 'kin-editor-opened' || data.request !== request) return;
-        if (windowLink()?.key !== name.key) { withdraw(); finish({ ok: false, reason: 'missing' }); return; }
-        finish(pure.validOpened(data, expected));
+        if (!data || typeof data !== 'object' || data.request !== request) return;
+        const opened = data.type === 'kin-editor-opened';
+        if (!opened && !(withdrawn && data.type === 'kin-editor-open-withdrawn')) return;
+        if (!asking()) { withdraw(); finish({ ok: false, reason: 'missing' }); return; }
+        if (opened) {
+          const answer = pure.validOpened(data, expected);
+          // A late refusal of a withdrawn request: it was not answered in time; where the target is, is what counts.
+          finish(withdrawn && !answer.ok ? { ok: false, reason: 'timeout', ...('at' in answer ? { at: answer.at } : {}) } : answer);
+          return;
+        }
+        const told = pure.validWithdrawn(data, expected);
+        if (told) finish({ ok: false, reason: 'timeout', ...told });
       }
-      // A request this window stops waiting for (no answer in time, relinked, disposed) is withdrawn: the reading screen drops the
-      // move it asked for if that move has not happened yet (kin-editor-open-cancel), so a late move never follows.
-      const withdraw = () => { try { link?.postMessage({ type: 'kin-editor-open-cancel', request, owner: bound, uid, list: name.list }); } catch (_) {} };
+      // A request this window stops waiting for (no answer in time, relinked, disposed) is withdrawn, once: the reading screen
+      // drops the move it asked for if that move has not happened yet (kin-editor-open-cancel), so a late move never follows.
+      const withdraw = () => {
+        if (withdrawn) return;
+        withdrawn = true;
+        try { link?.postMessage({ type: 'kin-editor-open-cancel', request, owner: bound, uid, list: name.list, ...examMessage }); } catch (_) {}
+      };
       entry.cancel = () => { withdraw(); finish({ ok: false, reason: 'missing' }); };
       pending.add(entry);
       try { link = new Channel('kin-viewer-windows:' + name.group); link.onmessage = onMessage; }
       catch (_) { finish({ ok: false, reason: 'missing' }); return; }
       for (const type of ['hashchange', 'kin-window-link-changed']) view.addEventListener(type, onRelink);
-      timer = setTimeout(() => { withdraw(); finish({ ok: false, reason: 'timeout' }); }, openTimeoutMs);
+      // No answer in time: withdrawn, and the reading screen's answer to that (or a late answer) is waited for a while more.
+      timer = setTimeout(() => {
+        withdraw();
+        timer = setTimeout(() => finish({ ok: false, reason: 'timeout' }), withdrawTimeoutMs);
+      }, openTimeoutMs);
       try { link.postMessage({ type: 'kin-editor-open', request, owner: bound, uid, list: name.list,
         ...examMessage }); }
       catch (_) { finish({ ok: false, reason: 'missing' }); }

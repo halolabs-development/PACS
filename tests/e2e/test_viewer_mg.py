@@ -146,6 +146,8 @@ class ViewerMgE2E(ViewerUXPriorsE2E):
         self.mg(page, 'Quadrant Zoom')
         panel = page.get_by_role('dialog', name='Quadrant Zoom')
         expect(panel.locator('b')).to_have_text('Quadrant 1/4: Upper-Outer (R/L matched)')
+        # 4× is the first choice: every step shows each cell at four times its Fit (Display › Zoom… 400 %).
+        expect(panel.get_by_label('Zoom')).to_have_value('4x')
         page.wait_for_function('''id=>services.cornerstoneViewportService.getCornerstoneViewport(id).getZoom()>2.5''', arg=source['id'], timeout=15000)
         # Each step: the focus of today's R CC and L CC is the centre of that step's quarter of the breast box (as the model
         # names it for each image's side and stored orientation), the same zoom on both, larger than Fit.
@@ -167,11 +169,29 @@ class ViewerMgE2E(ViewerUXPriorsE2E):
             with self.subTest(step=step):
                 self.assertAlmostEqual(q[(current.uid, 'R', 'CC')]['zoom'], q[(current.uid, 'L', 'CC')]['zoom'], places=6)
                 self.assertGreater(q[(current.uid, 'R', 'CC')]['zoom'], 2)
+                for key in [k for k in q if k[2] in ('CC', 'MLO')]:
+                    self.assertAlmostEqual(q[key]['zoom'], 4, places=4, msg=key)
                 if step == 0:
                     # The chest-wall upper quarter first: right of the box centre for R (chest wall right), left for L.
                     self.assertGreater(q[(current.uid, 'R', 'CC')]['x'], 47.5); self.assertLess(q[(current.uid, 'L', 'CC')]['x'], 47.5)
         self.assertEqual(['Quadrant 2/4: Upper-Inner (R/L matched)', 'Quadrant 3/4: Lower-Inner (R/L matched)', 'Quadrant 4/4: Lower-Outer (R/L matched)'], heads)
         page.screenshot(path=str(folder / 'MG-quadrant-4.png'))
+        expect(page.locator('[data-cy=viewport-pane]:has([data-viewport-uid="' + source['id'] + '"]) [data-mg-badge=quadrant]')).to_have_text(re.compile(r'^Q4 Lower-Outer · 4×'))
+        # The viewer's own zoom window reads the same number for today's R CC.
+        page.evaluate('id=>services.viewportGridService.setActiveViewportId(id)', source['id'])
+        page.wait_for_function('id=>services.viewportGridService.getActiveViewportId()===id', arg=source['id'])
+        page.get_by_role('button', name='Display ▾').click()
+        page.get_by_role('menu', name='Display').get_by_role('menuitem', name='Zoom…', exact=True).click()
+        zoom = page.locator('section.kin-ux-feature-panel[role=dialog][aria-label="Zoom"]')
+        expect(zoom).to_contain_text('Current 400%')
+        zoom.get_by_role('button', name='Close').click()
+        # Fill Quadrant: the same step filling each cell (the zoom then depends on the image and the cell).
+        panel.get_by_label('Zoom').select_option('fill')
+        page.wait_for_function('''id=>Math.abs(services.cornerstoneViewportService.getCornerstoneViewport(id).getZoom()-4)>1e-3''', arg=source['id'], timeout=15000)
+        q = {(c['study'], c['side'], c['view']): c for c in self.cells(page)}
+        self.assertAlmostEqual(q[(current.uid, 'R', 'CC')]['zoom'], q[(current.uid, 'L', 'CC')]['zoom'], places=6)
+        self.assertGreater(q[(current.uid, 'R', 'CC')]['zoom'], 2)
+        expect(page.locator('[data-cy=viewport-pane]:has([data-viewport-uid="' + source['id'] + '"]) [data-mg-badge=quadrant]')).to_have_text(re.compile(r'^Q4 Lower-Outer · Fill Quadrant'))
         panel.get_by_role('button', name='Close').click()
         page.wait_for_function('''id=>Math.abs(services.cornerstoneViewportService.getCornerstoneViewport(id).getZoom()-1)<1e-6''', arg=source['id'], timeout=15000)
 

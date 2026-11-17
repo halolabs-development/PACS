@@ -36,7 +36,7 @@ SETUP = """owner => {
   window.synShown = { left: ['syn-set-1'], right: ['syn-set-2'] };
   window.synMeta = {
     'syn:left:1': { Modality: 'CT', SOPInstanceUID: '1.2.826.0.1.1', StudyDate: '20260801', SeriesDescription: 'SYN CT', SeriesNumber: 1,
-      InstanceNumber: 1, SliceThickness: 2.5, PixelSpacing: [1, 1], Rows: 256, Columns: 256, ImageOrientationPatient: [1, 0, 0, 0, 1, 0],
+      InstanceNumber: 1, SliceThickness: 2.5, PixelSpacing: [1, 1], Rows: 256, Columns: 256, ImageOrientationPatient: [1, 0, 0, 0, 1, 0], ConvolutionKernel: 'SYN30',
       ImagePositionPatient: [0, 0, 0], PatientName: { Alphabetic: 'SYN^ONE' }, PatientID: 'SYN-1', Manufacturer: 'SYNTHETIC',
       StudyInstanceUID: '1.2.826.0.1.100', SeriesInstanceUID: '1.2.826.0.1.101' },
     'syn:right:1': { Modality: 'CR', SOPInstanceUID: '1.2.826.0.1.2', StudyDate: '20260801', SeriesDescription: 'SYN CR', SeriesNumber: 2,
@@ -120,7 +120,7 @@ SETUP = """owner => {
   window.KinSessionTransport = { refusal: () => false, responseError: () => new Error('ended') };
   window.synServer = { revision: 3, viewerSettings: null, puts: [], hold: null };
   // The image's DICOM JSON, as DICOMweb answers /studies/…/instances/…/metadata.
-  window.synRaw = { '1.2.826.0.1.1': { '00101030': { vr: 'DS', Value: [70] }, '00080060': { vr: 'CS', Value: ['CT'] } } };
+  window.synRaw = { '1.2.826.0.1.1': { '00101030': { vr: 'DS', Value: [70] }, '00080060': { vr: 'CS', Value: ['CT'] }, '00281052': { vr: 'DS', Value: [-1024] } } };
   const reply = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
   window.fetch = async (url, init = {}) => {
     const s = synServer;
@@ -152,11 +152,14 @@ class ViewerDisplayDOMTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.browser.close(); cls.pw.stop()
 
-    def open(self, features=None, writer=True):
+    def open(self, features=None, writer=True, dictionary=True):
         context = self.browser.new_context(viewport={'width': 1366, 'height': 900})
         page = context.new_page(); errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.route(ORIGIN + "/", lambda route: route.fulfill(body=HARNESS, content_type="text/html"))
+        # The DICOM dictionary as the viewer serves it, or a failed answer.
+        self.dictionary_requests = []
+        page.route(ORIGIN + "/worklist/hpacs-lite/dicom-dictionary.js", lambda route: (self.dictionary_requests.append(1), route.fulfill(path=str(HPACS / "dicom-dictionary.js"), content_type="text/javascript; charset=utf-8") if dictionary else route.fulfill(status=404, body='')))
         page.route(ORIGIN + "/worklist/hpacs-lite/viewer-display-model.js",
                    lambda route: route.fulfill(path=str(HPACS / "viewer-display-model.js"), content_type="text/javascript; charset=utf-8"))
         page.goto(ORIGIN + "/")
@@ -224,7 +227,7 @@ class ViewerDisplayDOMTest(unittest.TestCase):
         expect(page.locator('#pane-left .kin-display-zoom')).to_have_text('Zoom 100%')
         self.menu(page, 'Overlay Items…')
         panel = self.window(page, 'Overlay Items')
-        self.assertEqual(['W/L Value', 'Zoom', 'Ruler', 'DICOM Information', 'Cell Border'],
+        self.assertEqual(['W/L Value', 'Zoom', 'Ruler', 'DICOM Information', 'Cell Border', 'Selected Cell Only'],
                          panel.locator('input[type=checkbox]').evaluate_all('n => n.map(i => i.getAttribute("aria-label"))'))
         expect(panel.get_by_label('Border Colour')).to_be_visible(); expect(panel.get_by_label('Border Width')).to_be_visible()
         panel.get_by_role('checkbox', name='W/L Value').uncheck()
@@ -254,7 +257,7 @@ class ViewerDisplayDOMTest(unittest.TestCase):
         expect(panel).to_have_count(0)
         expect(page.locator('#pane-left .kin-display-ruler')).to_be_visible()
         page.wait_for_function("synServer.viewerSettings?.features?.overlayItems?.width === 3 && synServer.viewerSettings.features.overlayItems.dicom === true")
-        self.assertEqual({'wl': False, 'zoom': False, 'ruler': True, 'dicom': True, 'border': True, 'colour': '#E8C547', 'width': 3},
+        self.assertEqual({'wl': False, 'zoom': False, 'ruler': True, 'dicom': True, 'border': True, 'selected': False, 'colour': '#E8C547', 'width': 3},
                          self.features(page)['overlayItems'])
         # Image Text hides this module's text with OHIF's; showing it again brings back each chosen item.
         page.evaluate("document.getElementById('pane-left').setAttribute('data-kin-image-text-hidden', 'kit-1')")
@@ -273,6 +276,74 @@ class ViewerDisplayDOMTest(unittest.TestCase):
         expect(page.locator('#pane-left .kin-display-border')).to_have_css('border-top-color', 'rgb(0, 255, 0)')
         self.assertEqual(['none'], self.visibility(page, 'left', '.syn-wl'))
 
+    def test_03b_cell_border_on_the_selected_cell_only(self):
+        page = self.open()
+        self.menu(page, 'Overlay Items…')
+        panel = self.window(page, 'Overlay Items')
+        panel.get_by_role('checkbox', name='Cell Border').check()
+        panel.get_by_label('Border Colour').fill('#ff0000')
+        panel.get_by_label('Border Width').select_option('4')
+        # Off by default: the border is on every cell, as before.
+        expect(page.locator('#pane-left .kin-display-border')).to_have_count(1)
+        expect(page.locator('#pane-right .kin-display-border')).to_have_count(1)
+        panel.get_by_role('checkbox', name='Selected Cell Only').check()
+        border = page.locator('#pane-left .kin-display-border')
+        expect(border).to_have_css('border-top-width', '4px'); expect(border).to_have_css('border-top-color', 'rgb(255, 0, 0)')
+        expect(page.locator('#pane-right .kin-display-border')).to_have_count(0)
+        # Another cell selected: the border moves with the selection.
+        page.evaluate("synActive = 'right'; synEmit('grid', 'active', { viewportId: 'right' })")
+        expect(page.locator('#pane-right .kin-display-border')).to_have_css('border-top-width', '4px')
+        expect(page.locator('#pane-right .kin-display-border')).to_have_css('border-top-color', 'rgb(255, 0, 0)')
+        expect(page.locator('#pane-left .kin-display-border')).to_have_count(0)
+        page.wait_for_function("synServer.viewerSettings?.features?.overlayItems?.selected === true && synServer.viewerSettings.features.overlayItems.width === 4")
+        self.assertEqual({'wl': True, 'zoom': True, 'ruler': False, 'dicom': True, 'border': True, 'selected': True, 'colour': '#FF0000', 'width': 4},
+                         self.features(page)['overlayItems'])
+        # A new layout keeps the rule: only the selected cell of the cells left.
+        page.evaluate("synActive = 'left'; synEmit('grid', 'gridState', {})")
+        expect(page.locator('#pane-left .kin-display-border')).to_have_count(1)
+        expect(page.locator('#pane-right .kin-display-border')).to_have_count(0)
+        # Off again: every cell.
+        page.evaluate("synActive = 'right'")
+        self.menu(page, 'Overlay Items…', cell='right')
+        panel = self.window(page, 'Overlay Items')
+        expect(panel.get_by_role('checkbox', name='Selected Cell Only')).to_be_checked()
+        panel.get_by_role('checkbox', name='Selected Cell Only').uncheck()
+        expect(page.locator('#pane-left .kin-display-border')).to_have_count(1)
+        expect(page.locator('#pane-right .kin-display-border')).to_have_count(1)
+        page.wait_for_function("synServer.viewerSettings?.features?.overlayItems?.selected === false")
+
+    def test_03c_saved_selected_cell_border_applies_on_open(self):
+        page = self.open({'overlayItems': {'border': True, 'selected': True, 'colour': '#00FF00', 'width': 4}})
+        expect(page.locator('#pane-left .kin-display-border')).to_have_css('border-top-color', 'rgb(0, 255, 0)')
+        expect(page.locator('#pane-right .kin-display-border')).to_have_count(0)
+        # Selected from the viewer itself (OHIF's own grid event), not from a window of this module.
+        page.evaluate("synActive = 'right'; synEmit('grid', 'active', { viewportId: 'right' })")
+        expect(page.locator('#pane-right .kin-display-border')).to_have_css('border-top-width', '4px')
+        expect(page.locator('#pane-left .kin-display-border')).to_have_count(0)
+
+    def test_03d_selected_cell_border_on_an_mpr_cell(self):
+        page = self.open({'overlayItems': {'border': True, 'selected': True, 'colour': '#00FF00', 'width': 3}})
+        expect(page.locator('#pane-left .kin-display-border')).to_have_count(1)
+        # A third cell that is not a stack (an MPR plane): it keeps its own display, only the border is drawn on it.
+        page.evaluate("""() => {
+          const pane = document.createElement('div'); pane.dataset.cy = 'viewport-pane'; pane.id = 'pane-mpr';
+          pane.innerHTML = '<div class="viewport-element"></div><div data-cy="viewport-overlay-top-left" style="left:4px;top:4px">MPR</div>';
+          document.getElementById('grid').append(pane);
+          synViewports.set('mpr', { id: 'mpr', type: 'orthographic', element: pane.querySelector('.viewport-element'), render() {} });
+          synShown.mpr = ['syn-volume']; synActive = 'mpr'; synEmit('grid', 'active', { viewportId: 'mpr' });
+        }""")
+        expect(page.locator('#pane-mpr .kin-display-border')).to_have_css('border-top-width', '3px')
+        expect(page.locator('#pane-left .kin-display-border')).to_have_count(0)
+        # None of a stack cell's marks on the pane (they would hide the MPR cell's own corner text).
+        self.assertEqual({'cy': 'viewport-pane'}, page.evaluate("({ ...document.getElementById('pane-mpr').dataset })"))
+        expect(page.locator('#pane-mpr .kin-display-zoom, #pane-mpr .kin-display-corner, #pane-mpr .kin-display-ruler')).to_have_count(0)
+        page.evaluate("synActive = 'left'; synEmit('grid', 'active', { viewportId: 'left' })")
+        expect(page.locator('#pane-mpr .kin-display-border')).to_have_count(0)
+        expect(page.locator('#pane-left .kin-display-border')).to_have_count(1)
+        # A layout restored with its own selected cell, without the grid's selection event: the next drawn image moves it.
+        page.evaluate("synActive = 'right'; synFire('right', 'IMAGE_RENDERED')")
+        expect(page.locator('#pane-right .kin-display-border')).to_have_count(1)
+        expect(page.locator('#pane-left .kin-display-border')).to_have_count(0)
     # ── 03-2 Corner Information ──
     def test_04_corner_information_per_modality_other_tag_and_restore(self):
         page = self.open()
@@ -338,6 +409,79 @@ class ViewerDisplayDOMTest(unittest.TestCase):
         expect(page.locator('#pane-right .kin-display-corner[data-corner=BL]')).to_have_text('Modality: CR')
         expect(page.locator('#pane-left .kin-display-corner')).to_have_count(0)
 
+    def test_05b_corner_items_picked_from_the_dicom_dictionary(self):
+        page = self.open()
+        self.menu(page, 'Corner Information…')
+        panel = self.window(page, 'Corner Information')
+        search, items = panel.get_by_label('Search DICOM Dictionary'), panel.get_by_role('listbox', name='DICOM Dictionary')
+        expect(search).to_be_enabled()
+        total = int(panel.locator('.kin-display-dictionary .kin-display-note').inner_text().split(' ')[0].replace(',', ''))
+        self.assertGreater(total, 3000, 'the whole PS3.6 dictionary, not a short list')
+        self.assertEqual(total, items.locator('option').count())
+        self.assertEqual('no', items.get_attribute('translate'))
+        # Found by its name, apostrophe and case aside; choosing it puts its keyword in Other Tag.
+        search.fill('patients weight')
+        expect(items.locator('option')).to_have_text(["(0010,1030) Patient's Weight"])
+        expect(panel.locator('.kin-display-dictionary .kin-display-note')).to_have_text('1 of %s dictionary items match.' % format(total, ','))
+        panel.get_by_label('Bottom Right line 2').focus()
+        items.select_option('PatientWeight')
+        expect(panel.get_by_label('Other Tag')).to_have_value('PatientWeight')
+        panel.get_by_role('button', name='Use in Selected Line').click()
+        expect(panel.get_by_label('Bottom Right line 2')).to_have_value('PatientWeight')
+        expect(panel.get_by_role('status')).to_have_text('PatientWeight is set in Bottom Right line 2. Apply to Image to use it.')
+        # By tag number; a double-click sets it at once in the line last chosen.
+        panel.get_by_label('Top Right line 1').focus()
+        search.fill('(0028,1052)')
+        expect(items.locator('option')).to_have_text(['(0028,1052) Rescale Intercept'])
+        items.locator('option').first.dblclick()
+        expect(panel.get_by_label('Top Right line 1')).to_have_value('RescaleIntercept')
+        # By keyword words; Enter on the item sets it.
+        panel.get_by_label('Top Right line 2').focus()
+        search.fill('convolution kernel')
+        items.select_option('ConvolutionKernel'); items.press('Enter')
+        expect(panel.get_by_label('Top Right line 2')).to_have_value('ConvolutionKernel')
+        # Retired items are marked; nothing found says so.
+        search.fill('recognition code')
+        expect(items.locator('option')).to_have_text(['(0008,0010) Recognition Code (Retired)', '(0028,005F) Compression Recognition Code (Retired)'])
+        search.fill('no such item zzz')
+        expect(items.locator('option')).to_have_count(0)
+        expect(panel.locator('.kin-display-dictionary .kin-display-note')).to_have_text('No dictionary item matches.')
+        panel.get_by_role('button', name='Apply to Image').click()
+        expect(panel.get_by_role('status')).to_have_text('Saved to your account.')
+        saved = self.features(page)['cornerInfo']['CT']
+        self.assertEqual(['RescaleIntercept', 'ConvolutionKernel', ''], saved['TR'])
+        self.assertEqual(['InstanceNumber', 'PatientWeight', ''], saved['BR'])
+        # From the image's metadata when it has the item, otherwise from its DICOM JSON by the dictionary's tag number.
+        expect(page.locator('#pane-left .kin-display-corner[data-corner=TR]')).to_have_text('RescaleIntercept: -1024\nConvolutionKernel: SYN30')
+        expect(page.locator('#pane-left .kin-display-corner[data-corner=BR]')).to_have_text('InstanceNumber: 1\nPatientWeight: 70')
+        # Opened again: the saved items are in their lines, the dictionary is not fetched again.
+        page.keyboard.press('Escape'); expect(panel).to_have_count(0)
+        self.menu(page, 'Corner Information…')
+        panel = self.window(page, 'Corner Information')
+        expect(panel.get_by_label('Top Right line 1')).to_have_value('RescaleIntercept')
+        expect(panel.get_by_label('Search DICOM Dictionary')).to_be_enabled()
+        self.assertEqual(1, len(self.dictionary_requests))
+
+    def test_05c_saved_dictionary_items_are_read_without_opening_the_window(self):
+        page = self.open({'cornerInfo': {'CT': {'TL': ['PatientWeight', 'ConvolutionKernel', ''], 'TR': ['', '', ''], 'BL': ['', '', ''], 'BR': ['', '', '']}}})
+        expect(page.locator('#pane-left .kin-display-corner[data-corner=TL]')).to_have_text('PatientWeight: 70\nConvolutionKernel: SYN30')
+        self.assertEqual(1, len(self.dictionary_requests))
+
+    def test_05d_dictionary_not_loaded_leaves_other_tag(self):
+        page = self.open(dictionary=False)
+        self.menu(page, 'Corner Information…')
+        panel = self.window(page, 'Corner Information')
+        expect(panel.locator('.kin-display-dictionary .kin-display-note')).to_have_text('The DICOM dictionary could not be loaded. Enter a keyword or tag number in Other Tag.')
+        expect(panel.get_by_label('Search DICOM Dictionary')).to_be_disabled()
+        panel.get_by_label('Top Right line 1').focus()
+        panel.get_by_label('Other Tag').fill('0010,1030')
+        panel.get_by_role('button', name='Use in Selected Line').click()
+        expect(panel.get_by_label('Top Right line 1')).to_have_value('(0010,1030)')
+        # Opened again, it tries again.
+        page.keyboard.press('Escape'); expect(panel).to_have_count(0)
+        self.menu(page, 'Corner Information…')
+        expect(self.window(page, 'Corner Information').locator('.kin-display-dictionary .kin-display-note')).to_contain_text('could not be loaded')
+        self.assertEqual(2, len(self.dictionary_requests))
     # ── 03-5 Zoom, 03-6 Smart Zoom ──
     def test_06_zoom_buttons_typed_zoom_fit_and_smart_zoom(self):
         page = self.open()
@@ -697,6 +841,15 @@ class ViewerDisplayDOMTest(unittest.TestCase):
             fields: [m.field('(0018,0050)'), m.field('00180050'), m.field('SliceThickness'), m.field('Slice Thickness'), m.field('(0018,005)')],
             labels: [m.fieldLabel('SliceThickness'), m.fieldLabel('PatientID'), m.fieldLabel('KVP'), m.fieldLabel('(0019,1001)')],
             lines: [m.line('KVP', { KVP: 120 }), m.line('(0018,0050)', { SliceThickness: 5 }), m.line('(0019,1001)', {}, { '00191001': { vr: 'LO', Value: ['X'] } }), m.line('(0019,1001)', {}, undefined), m.line('(0019,1001)', {}, null), m.line('(0010,0010)', {}, { '00100010': { vr: 'PN', Value: [{ Alphabetic: 'SYN^TWO' }] } }), m.line('PatientName', {})],
+            border: [m.borderOn({ border: true, selected: false }, 'a', 'b'), m.borderOn({ border: true, selected: true }, 'a', 'b'), m.borderOn({ border: true, selected: true }, 'b', 'b'), m.borderOn({ border: false, selected: true }, 'b', 'b'), m.borderOn({ border: true, selected: true }, null, null)],
+            dictionary: (() => {
+              const before = [m.resolve('ConvolutionKernel'), m.needsDictionary(['ConvolutionKernel'], {}), m.needsDictionary(['ConvolutionKernel'], { ConvolutionKernel: 'B' }), m.needsDictionary(['KVP'], {}), m.searchDictionary('x')];
+              const size = m.useDictionary({ entries: [['00181210', 'ConvolutionKernel', 'Convolution Kernel', 'SH'], ['00101030', 'PatientWeight', "Patient's Weight", 'DS'], ['00080010', 'RecognitionCode', 'Recognition Code', 'SH', 1], ['bad', 'X', 'Y', 'SH'], ['00101031', 'PatientWeight', 'Again', 'DS']] });
+              return { before, size, resolved: [m.resolve('ConvolutionKernel'), m.resolve('KVP'), m.resolve('(0010,1030)'), m.resolve('(0019,1001)'), m.resolve('NoSuchKeyword')],
+                search: [m.searchDictionary('patients weight').map(e => e.keyword), m.searchDictionary("PATIENT'S").map(e => e.keyword), m.searchDictionary('(0018,1210)').map(e => e.keyword), m.searchDictionary('00181210').map(e => e.keyword), m.searchDictionary('kernel conv').map(e => e.keyword), m.searchDictionary('').length, m.searchDictionary('zzz').length, m.searchDictionary('recognition')[0].label],
+                lines: [m.line('ConvolutionKernel', {}, { '00181210': { vr: 'SH', Value: ['B30f'] } }), m.line('ConvolutionKernel', {}, undefined), m.line('ConvolutionKernel', { ConvolutionKernel: 'K' }, null), m.line('(0018,1210)', { ConvolutionKernel: 'K' }, null)],
+                raw: [m.needsRaw(['ConvolutionKernel'], {}), m.needsRaw(['ConvolutionKernel'], { ConvolutionKernel: 'K' }), m.needsRaw(['KVP'], {}), m.needsRaw(['(0018,0050)'], { SliceThickness: 5 }), m.needsRaw(['(0019,1001)'], {})] };
+            })(),
             ruler: [m.rulerPixels(50, 0.5, 2), m.rulerPixels(50, 0, 2), m.rulerPixels(50, 0.2, NaN)],
             overlay: m.overlay({ wl: false, colour: 'red', width: 9, extra: 1 }),
             corners: m.corners({ CT: { TL: ['PatientName', 'bad key!', '0018,0050', 'Fourth'] }, x: {} }),
@@ -734,8 +887,17 @@ class ViewerDisplayDOMTest(unittest.TestCase):
         self.assertEqual(['(0018,0050)', '(0018,0050)', 'SliceThickness', None, None], result['fields'])
         self.assertEqual(['Slice Thickness', 'Patient ID', 'kVp', '(0019,1001)'], result['labels'])
         self.assertEqual(['KVP: 120 kV', '(0018,0050): 5 mm', '(0019,1001): X', '(0019,1001): …', '(0019,1001): —', '(0010,0010): SYN^TWO', 'PatientName: —'], result['lines'])
+        self.assertEqual([True, False, True, False, False], result['border'])
+        d = result['dictionary']
+        self.assertEqual([{'keyword': 'ConvolutionKernel', 'tag': None}, True, False, False, []], d['before'])
+        self.assertEqual(3, d['size'])
+        self.assertEqual([{'keyword': 'ConvolutionKernel', 'tag': '00181210'}, {'keyword': 'KVP', 'tag': None}, {'keyword': 'PatientWeight', 'tag': '00101030'},
+                          {'keyword': None, 'tag': '00191001'}, {'keyword': 'NoSuchKeyword', 'tag': None}], d['resolved'])
+        self.assertEqual([['PatientWeight'], ['PatientWeight'], ['ConvolutionKernel'], ['ConvolutionKernel'], ['ConvolutionKernel'], 3, 0, '(0008,0010) Recognition Code (Retired)'], d['search'])
+        self.assertEqual(['ConvolutionKernel: B30f', 'ConvolutionKernel: …', 'ConvolutionKernel: K', '(0018,1210): K'], d['lines'])
+        self.assertEqual([True, False, False, False, True], d['raw'])
         self.assertEqual([200, None, None], result['ruler'])
-        self.assertEqual({'wl': False, 'zoom': True, 'ruler': False, 'dicom': True, 'border': False, 'colour': '#E8C547', 'width': 2}, result['overlay'])
+        self.assertEqual({'wl': False, 'zoom': True, 'ruler': False, 'dicom': True, 'border': False, 'selected': False, 'colour': '#E8C547', 'width': 2}, result['overlay'])
         self.assertEqual({'CT': {'TL': ['PatientName', '', '(0018,0050)'], 'TR': ['', '', ''], 'BL': ['', '', ''], 'BR': ['', '', '']}}, result['corners'])
         self.assertEqual('space', result['space']['reason'])
         self.assertLessEqual(result['space']['bytes'], 12000)

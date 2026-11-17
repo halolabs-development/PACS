@@ -288,9 +288,11 @@
       const needsParts = KinCompoundFilter.usesField(values[KinCompoundFilter.KEY], 'bodyPart', COLS[filterMode]);
       const matchCompound = KinCompoundFilter.compile(values[KinCompoundFilter.KEY], COLS[filterMode]);
       const matchQuick = KinCompoundFilter.compileQuick(filter?.quick, values[KinCompoundFilter.KEY], COLS[filterMode]);
-      return s => {
-        if (!matchQuick(s)) return false;
-        if (!KinExamScope.projections(s).some(source=>withinDays(source.date, days))) return false;
+      return row => {
+        if (!matchQuick(row)) return false;
+        if (!KinExamScope.projections(row).some(source=>withinDays(source.date, days))) return false;
+        // PF is the Preload queue word the cell shows now, not the row's stored "·": every filter, count and search reads it here.
+        const s = { ...row, pf: preloadWord(row) };
         // A compound rule on Confirm compares the same Confirmed / Not Confirmed word the header filter uses (RS based).
         return cols.every(c => testCol(s, c, values))
           && matchCompound({ ...s, confirm: confirmedRow(s) ? "Confirmed" : "Not Confirmed",
@@ -313,20 +315,36 @@
     // Include those values and the local date, while excluding the quick-search draft.
     function folderInputsKey() {
       return JSON.stringify([studies, userFilters, sharedSearches, mode, new Date().toDateString(),
-        studies.map(s => worklistBodyParts.get(s.uid))]);
+        studies.map(s => worklistBodyParts.get(s.uid)), studies.map(preloadWord)]);
+    }
+    /** Whether the list's search (applied or being typed), a saved or shared search, or the Saved Search editor's draft has a PF condition. */
+    function preloadFilterUsed() {
+      const applied = worklistSearch?.read(searchCriteria())?.criteria;
+      const editing = savedFilterManager.draft();
+      return [applied, searchCriteria(), ...userFilters, ...sharedSearches, editing].some(f => !!f?.cols && (!!f.cols.pf
+        || KinCompoundFilter.usesField(f.cols[KinCompoundFilter.KEY], 'pf', COLS[f.mode] || COLS[mode])));
     }
     function folderSelectionIds(filter) {
       // Folder counts describe replacement searches. Once another predicate narrows
       // the list, no folder may claim that its replacement count is the applied list.
-      if (favoriteList?.key() || studyTagList?.key() || consultationFilter) return [];
+      // [] is "no Modality chosen" (the list is empty whatever else is set, and the tree asks for one); null is
+      // "narrowed by another condition" (no folder describes the list, and the tree does not ask for a Modality).
+      const value = filter.cols?.modality;
+      if (Array.isArray(value) && !value.length) return [];
+      if (favoriteList?.key() || studyTagList?.key() || consultationFilter) return null;
       const stored = folderSearches().find(f => f.name === activeFilterName
         && f.treeId.startsWith('own:') && filterCriteriaKey(f) === filterCriteriaKey(filter));
       if (stored) return [stored.treeId];
       if (filter.quick || savedFilterDays(filter.days) !== -1
-        || Object.entries(filter.cols || {}).some(([key, value]) => key !== 'modality' && value !== '' && value != null)) return [];
-      const value = filter.cols?.modality;
+        || Object.entries(filter.cols || {}).some(([key, value]) => key !== 'modality' && value !== '' && value != null)) return null;
       return Array.isArray(value) || value
         ? [...new Set(KinCompoundFilter.modalityTokens(value))].map(v => 'modality:' + v) : ['all'];
+    }
+    // The one place the tree is told what the list is: folder ids, [] (no Modality chosen) or null (narrowed otherwise).
+    function alignFolders(ids) {
+      const now = worklistFolders.snapshot();
+      if (ids === null) { if (!now.narrowed || now.selectedIds.length) worklistFolders.narrow(); }
+      else if (now.narrowed || JSON.stringify(now.selectedIds) !== JSON.stringify(ids)) worklistFolders.setApplied(ids);
     }
     function updateWorklistFolders() {
       if (!worklistFolders) return;
@@ -351,22 +369,22 @@
       }
       if (!folderAppliedSearch) {
         const search = worklistSearch?.read(searchCriteria());
-        const ids = search?.empty ? [] : folderSelectionIds(search?.criteria || searchCriteria());
-        if (JSON.stringify(worklistFolders.snapshot().selectedIds) !== JSON.stringify(ids)) worklistFolders.setApplied(ids);
+        // Results emptied by Clear: the search line says so, and no folder describes the empty list.
+        alignFolders(search?.empty ? null : folderSelectionIds(search?.criteria || searchCriteria()));
       } else if (folderAppliedSearch.criteria !== filterCriteriaKey(worklistSearch?.read(searchCriteria()).criteria || searchCriteria())
         || favoriteList?.key() || studyTagList?.key() || consultationFilter) {
-        if (worklistFolders.snapshot().selectedIds.length) worklistFolders.setApplied([]);
+        alignFolders(null);
       }
     }
     function alignWorklistFolder(filter, id) {
       if (!worklistFolders) return;
       updateWorklistFolders();
       if (id) { worklistFolders.setApplied(id); return; }
-      worklistFolders.setApplied(folderSelectionIds(filter || searchCriteria()));
+      alignFolders(folderSelectionIds(filter || searchCriteria()));
     }
     // My Shortcuts → popup that sets the same column filters as the filter row (fval), so the
     // list, the active-filter summary and Saved Searches all see them. No separate filter state.
-    const EXAM_FILTER_KEYS = ['date', 'id', 'name', 'age', 'sex', 'modality', 'desc', 'acc', 'institutionName', 'assignedReader', 'techNote',
+    const EXAM_FILTER_KEYS = ['date', 'id', 'name', 'age', 'sex', 'modality', 'desc', 'acc', 'institutionName', 'assignedReader', 'techNote', 'pf',
       'rs', 'em', 'ss', 'matched', 'preDoc', 'preReviewer', 'ward'];
     let examFilterDialog = null;
     function openExamFilterPopup(opener) {
@@ -392,6 +410,8 @@
       const inputs = new Map();
       for (const c of cols) {
         const label = document.createElement('label'); label.append(document.createTextNode(c.t + ' '));
+        // A short code (PF, RS, EM, SS) carries the same explanation as its list header.
+        if (HEAD_HELP[c.k]) label.title = HEAD_HELP[c.k];
         const current = Array.isArray(fval[c.k]) ? fval[c.k].join(',') : String(fval[c.k] ?? '');
         let control;
         if (c.k === 'date') {

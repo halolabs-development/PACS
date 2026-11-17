@@ -157,6 +157,28 @@ test('B2-02 a viewer item save is 기재 of its key image or measurement; an edi
   assert.equal(db.store.audit.length, 2);
 });
 
+test('a viewer item delete is 수정: the saved content kept as it was, every revision kept, no revision after it', async () => {
+  const db = viewerDatabase(), committed = [];
+  const svc = new ViewerService(db, { viewerReference: async () => tags }, access);
+  const created = await svc.write(UID, body({ requestId: '00000000-0000-4000-8000-0000000000d1', item: keyItem }), RAD, undefined, recorded(db, committed));
+  const remove = { requestId: '00000000-0000-4000-8000-0000000000d2', expectedRevision: 1, action: 'delete', item: { ...keyItem, title: 'SYN changed in the request' } };
+  const deleted = await svc.write(UID, body(remove), RAD, created.id, recorded(db, committed));
+  assert.deepEqual([deleted.revision, deleted.hidden, deleted.item.deleted, deleted.item.title], [2, true, true, keyItem.title]);
+  assert.deepEqual(committed.slice(1).map(summary), [['POST studies/:uid/viewer-items/:id/revisions', 'key-image', created.id, '2', INST, 'modify', '수정']]);
+  // INSERT INTO "ViewerRevision" ("itemId", revision, snapshot, action, ...): both revisions stay.
+  assert.deepEqual(db.store.revisions.map(values => [values[1], values[3]]), [[1, 'create'], [2, 'delete']]);
+  assert.equal(db.store.audit.at(-1).action, 'viewer.delete');
+  // The same delete again answers its stored result and records nothing.
+  assert.equal((await svc.write(UID, body(remove), RAD, created.id, recorded(db, committed))).revision, 2);
+  assert.equal(committed.length, 2);
+  // Any revision after it is refused and records nothing.
+  for (const [n, action] of ['edit', 'hide', 'restore', 'delete'].entries())
+    await assert.rejects(svc.write(UID, body({ requestId: '00000000-0000-4000-8000-0000000000e' + n, expectedRevision: 2, action, reason: '', item: keyItem }),
+      RAD, created.id, recorded(db, committed)), error => error.getStatus?.() === 409, action);
+  assert.equal(committed.length, 2);
+  assert.equal(db.store.revisions.length, 2);
+});
+
 // ── viewer jobs ──
 
 const JOB = '00000000-0000-4000-8000-000000000001';

@@ -11,6 +11,14 @@ window.KinViewerPatientTabs = (() => {
     ...(current.exam ? {examScope:current.exam.current,exam:current.exam} : {}) } : null;
   const openingKey = href => {const url=new URL(href,location.origin);return JSON.stringify([studies(href),url.searchParams.get('kinExamScopes')]);};
   const publish = () => { const value = snapshot(); listeners.forEach(listener => listener(value)); };
+  // The generation in which a move under way may go on (internal; `sequence` stays the opening generation its readers use).
+  // Raised, before any wait, by every new choice of a tab - a tab click or arrow key (switchTo), a direct open (also of the tab
+  // already shown, or from another window), Retry on the leave notice, Patient ▶ - and by what ends the moves under way: a
+  // close (also of a tab not shown), end, and an exam scope found invalid. Never by mount, dispose or restore (a move's own
+  // remount). Every step of a move (each wait, each opening, each request to the reading screen, the result) goes on only
+  // while the generation it took still holds; one choice's later steps (switchTo -> gate -> open) carry the generation it took.
+  const turn = { now: 0, take() { return ++this.now; }, holds(gen) { return gen === this.now; } };
+  window.addEventListener?.('kin-exam-scope-invalidated', () => turn.take());
   function refresh() {
     const header = document.getElementById('kin-viewer-brand')?.closest('.bg-secondary-dark.z-20');
     if (host && header && host.parentElement !== header.parentElement) header.parentElement.prepend(host);
@@ -119,20 +127,38 @@ window.KinViewerPatientTabs = (() => {
     Object.assign(notice, { busy: null, reason, shown: true }); renderLeave();
     return false;
   }
-  // `go` continues the move the message holds, without passing the gate again (the answer just given is its gate).
-  async function gated(go) {
-    if (!await leave()) { if (leaving) leaving.go = go; return false; }
-    return go();
+  // The gate (leave: save, or Check on the notice) is answered once for every choice that waited on it. `waiting` is the latest
+  // of them - a tab click, a close, Retry or Check - with its generation; `carry` is the only place that answer is applied: passed,
+  // the latest choice is carried out (`go(gen)`, without passing the gate again - the answer just given is its gate); not passed,
+  // the notice keeps it for Retry / Check. Only while that choice's generation holds: a newer choice that did not wait on the
+  // gate (a direct open, Patient ▶, end ...) ends it.
+  let waiting = null;
+  function carry(passed) {
+    const latest = waiting; waiting = null;
+    if (!latest || !turn.holds(latest.gen)) return false;
+    if (passed) return latest.go(latest.gen);
+    if (leaving) leaving.go = latest.go;
+    return false;
   }
+  async function gated(go, gen) {
+    waiting = { go, gen };
+    const passed = await leave();
+    // The gate was already being answered for an earlier choice: that answer carries this one out.
+    if (!passed && leaving?.busy) return false;
+    return carry(passed);
+  }
+  // Retry / Check on the leave notice is the reader choosing that move again: a new generation.
   async function resume(kind) {
     const notice = leaving;
     if (!notice || notice.busy || current !== notice.tab || !notice.go) return;
-    if (kind === 'save') { if (await leave()) notice.go(); return; }
+    const gen = turn.take();
+    if (kind === 'save') { await gated(notice.go, gen); return; }
+    waiting = { go: notice.go, gen };
     notice.busy = 'check'; renderLeave();
     const reason = await settled(notice.tab, await ask('check', notice.tab.studies, CHECK_WAIT_MS));
     if (leaving !== notice || current !== notice.tab) return;
-    if (reason === null) { endLeave(); notice.go(); return; }
-    Object.assign(notice, { busy: null, reason }); renderLeave();
+    if (reason === null) { endLeave(); carry(true); return; }
+    Object.assign(notice, { busy: null, reason }); renderLeave(); carry(false);
   }
   function endLeave() { leaving = null; renderLeave(); }
   function renderLeave() {
@@ -154,8 +180,10 @@ window.KinViewerPatientTabs = (() => {
       control.disabled = !!notice.busy && label !== 'Stay'; control.onclick = action; box.append(control);
     }
   }
+  // A tab click or arrow key is a new choice from the moment it is made, before the gate waits.
   async function switchTo(tab) {
-    return tab === current ? open(tab.href) : gated(() => open(tab.href));
+    const gen = turn.take();
+    return tab === current ? open(tab.href, { gen }) : gated(chosen => open(tab.href, { gen: chosen }), gen);
   }
 
   // ── Mammo Keypad: Patient ▶ (viewer-features-mg.js) ──
@@ -187,12 +215,12 @@ window.KinViewerPatientTabs = (() => {
     } catch (_) { return false; }
   }
   // The images of a tab are on screen: the tab is current, its mount has read the patient, no switch is under way and its
-  // images are drawn.
-  function shown(tab, ms = 20000) {
+  // images are drawn. A move's wait (`holds`, its generation) ends as soon as a newer choice is made.
+  function shown(tab, ms = 20000, holds = () => true) {
     return new Promise(resolve => {
       const started = Date.now();
       const look = () => {
-        if (current !== tab) { resolve(false); return; }
+        if (!holds() || current !== tab) { resolve(false); return; }
         if (mounted && !pending && !document.body.classList.contains('kin-patient-switching') && location.href === tab.href && imagesOf(tab)) { resolve(true); return; }
         if (Date.now() - started > ms) { resolve(false); return; }
         setTimeout(look, 50);
@@ -203,18 +231,30 @@ window.KinViewerPatientTabs = (() => {
   const OPEN_WAIT_MS = 6000;
   const reading = () => { try { return !!session && !session.ended() && !session.readOnly?.() && !!session.owner(); } catch (_) { return false; } };
   const editorLink = uid => window.kinViewerEditorLink?.({ studies: [uid], examScope:[current?.exam?.current,current?.exam?.prior].find(scope=>scope?.reportUid===uid), owner: () => session.owner(), live: reading, openTimeoutMs: OPEN_WAIT_MS }) || null;
-  // Makes the linked reading screen's report target this study (its own move: viewer-windows.js editorOpen → select).
-  async function target(uid) {
+  const STALE = { ok: false, reason: 'stale', tabChanged: true };
+  // Makes the linked reading screen's report target this study (its own move: viewer-windows.js editorOpen → select), while
+  // the move's generation `holds`: when a newer choice is made, the request is withdrawn (the reading screen drops the move if
+  // it has not happened) and the result is `tabChanged`, with where the target is only if that was already told.
+  async function target(uid, holds) {
+    if (!holds()) return STALE;
     const link = editorLink(uid);
     if (!link) return { ok: false, reason: 'missing' };
-    try { return await link.open(uid); } catch (_) { return { ok: false, reason: 'unavailable' }; } finally { link.dispose(); }
+    const watch = setInterval(() => { if (!holds()) link.dispose(); }, 100);
+    try {
+      const result = await link.open(uid);
+      return holds() ? result : { ...STALE, ...(result?.ok === true ? { at: true } : typeof result?.at === 'boolean' ? { at: result.at } : {}) };
+    } catch (_) { return holds() ? { ok: false, reason: 'unavailable' } : STALE; }
+    finally { clearInterval(watch); link.dispose(); }
   }
+  // Where the reading screen's report target is after a request (viewer-editor-link.js open): that study (moved, even when
+  // the caret could not be put in Findings), not that study, or unknown (null).
+  const reached = result => result?.ok === true || result?.at === true ? true : result?.at === false ? false : null;
   // Back to a study: a reading screen still finishing the opening it was asked for (and told to drop) answers busy for a
-  // while; it is asked again, a few times, before the result is taken.
-  async function targetBack(uid) {
+  // while; it is asked again, a few times, before the result is taken - never once the move's generation no longer `holds`.
+  async function targetBack(uid, holds) {
     let result = null;
     for (let attempt = 0; attempt < 6; attempt++) {
-      result = await target(uid);
+      result = await target(uid, holds);
       if (result?.reason !== 'busy') return result;
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
@@ -229,45 +269,66 @@ window.KinViewerPatientTabs = (() => {
   // Patient ▶: the reading screens save ('save') or discard ('discard', the study's whole draft) the text of the current
   // tab's studies and answer; only when every live one answered, none refused and none still holds such text, the next tab
   // (after the last, the first) opens, and once its images are shown the linked reading screen is asked to make its first
-  // study the report target. When that is refused or not answered, the images go back to the tab left and the reading
-  // screen is asked back to that study, so the images and the report are of one patient again; when even that is not
-  // confirmed, the result says so. A window with no linked reading screen moves only its images. A press while a move is
-  // under way does nothing. Resolves { ok, message }.
+  // study the report target. The outcome is where the reading screen says its report target is (`reached`): there - the move
+  // is done, also when the answer came late; not there, or not known (no answer to the request nor to its withdrawal) - the
+  // images go back to the tab left and the reading screen is asked back to that study, so the images and the report are of
+  // one patient again, and the message says only what was told; when even that is not confirmed, the result says so. A window
+  // with no linked reading screen moves only its images. A press while a move is under way does nothing. Resolves { ok, message }.
+  // Patient ▶ is a new choice (a generation of its own, taken at the press): every step below - after the save answers, each
+  // opening and wait for images, the request to the reading screen, each ask back, the result - goes on only while it holds.
+  // A newer choice made meanwhile (another tab, the same tab again, a close, end, an invalid exam scope) is kept as made: the
+  // request is withdrawn, nothing more opens or goes back, and no success is claimed.
   async function next(intent) {
     if (moving) return { ok: false, busy: true, message: '환자를 옮기는 중입니다.' };
     const from = current, at = tabs.indexOf(from), to = at < 0 || tabs.length < 2 ? null : tabs[(at + 1) % tabs.length];
     if (!from || !to) return { ok: false, message: '열린 다른 환자가 없습니다.' };
     if (!['save', 'discard'].includes(intent)) return { ok: false, message: '옮기는 방법을 알 수 없습니다.' };
-    const ticket = moving = {};
+    const ticket = moving = {}, gen = turn.take(), holds = () => turn.holds(gen);
     const say = message => { if (status) status.textContent = message; return message; };
+    // A newer choice before the reading screen was asked: nothing of this move is left to say about the report target.
+    const superseded = { ok: false, message: '환자가 그 사이 바뀌었습니다.' };
     try {
       if (!guard()) return { ok: false, message: status?.textContent || '지금은 환자를 옮길 수 없습니다.' };
       // A reading screen linked when the move starts is the report target to move; losing it later is not "no link".
       const probe = editorLink((to.exam?.reportUid || to.studies[0])), linked = !!probe?.available(); probe?.dispose();
       const reason = await settled(from, await ask(intent, from.studies, LEAVE_WAIT_MS));
-      if (current !== from) return { ok: false, message: '환자가 그 사이 바뀌었습니다.' };
+      if (!holds()) return superseded;
       if (reason !== null) return { ok: false, message: say(`${from.patient.name}의 판독문 ${intent === 'save' ? '저장' : '버리기'}이 확인되지 않아 환자를 옮기지 않았습니다 (${reason}).`) };
-      if (!await open(to.href)) {
+      if (!await open(to.href, { gen })) {
+        if (!holds()) return superseded;
         return { ok: false, message: say(`${to.patient.name}의 영상을 열지 못했습니다. ${current === from ? '지금 환자에 머뭅니다.' : ''}`.trim()) };
       }
       // The report target is asked to move only once the next patient's images are drawn; when they are not, the images go
       // back to the patient left (the report target was not asked).
-      if (!await shown(to)) {
-        const back = current === to ? await open(from.href) && await shown(from) : current === from && await shown(from);
+      if (!await shown(to, 20000, holds)) {
+        if (!holds()) return superseded;
+        const back = current === to ? await open(from.href, { gen }) && await shown(from, 20000, holds) : current === from && await shown(from, 20000, holds);
+        if (!holds()) return superseded;
         return { ok: false, message: say(back ? `${to.patient.name}의 영상이 표시되지 않아 ${from.patient.name}에게 되돌렸습니다.`
           : `${to.patient.name}의 영상이 표시되지 않았고 되돌리기도 확인되지 않았습니다. 영상은 ${current?.patient.name || '없음'}입니다.`) };
       }
       if (!linked) return { ok: true, imagesOnly: true, message: say(`${to.patient.name}의 영상으로 옮겼습니다. 연결된 판독 화면이 없어 영상만 옮겼습니다.`) };
-      const moved = await target((to.exam?.reportUid || to.studies[0]));
-      if (moved?.ok === true && current === to) return { ok: true, reportTarget: (to.exam?.reportUid || to.studies[0]), message: say(`${to.patient.name}의 영상과 판독 대상으로 옮겼습니다.`) };
-      // The report target did not follow (a timed-out opening was told to drop its move): back to the patient left,
-      // images and report target both, each confirmed.
+      const toUid = to.exam?.reportUid || to.studies[0], fromUid = from.exam?.reportUid || from.studies[0];
+      const moved = await target(toUid, holds), there = reached(moved);
+      if (moved?.tabChanged) return { ok: false, message: say(`영상 탭이 그 사이 바뀌어 더 옮기지 않았습니다. ` +
+        (there === true ? `판독 화면의 대상은 ${to.patient.name}의 검사입니다.` : '판독 화면의 대상을 확인하세요.')) };
+      // The reading screen's report target is the next patient's study (also when it answered late, or refused only after
+      // moving): images and report target are together.
+      if (there === true) return { ok: true, reportTarget: toUid, message: say(`${to.patient.name}의 영상과 판독 대상으로 옮겼습니다.`) };
+      // Not there (told), or not known: back to the patient left, images and report target both, each confirmed. Only what
+      // the reading screen told is said; an unknown outcome is said to be unknown. The way back is this move's own step.
       const why = notOpened(moved);
-      const imagesBack = current === to && await open(from.href) && await shown(from);
-      const reportBack = imagesBack ? await targetBack((from.exam?.reportUid || from.studies[0])) : null;
-      if (imagesBack && reportBack?.ok === true)
-        return { ok: false, reportTarget: (from.exam?.reportUid || from.studies[0]), message: say(`판독 화면이 ${to.patient.name}의 검사를 열지 못해(${why}) 영상도 ${from.patient.name}에게 되돌렸습니다.`) };
-      return { ok: false, mismatch: true, message: say(`판독 화면이 ${to.patient.name}의 검사를 열지 못했고(${why}) 되돌리기도 확인되지 않았습니다. ` +
+      const imagesBack = await open(from.href, { gen }) && await shown(from, 20000, holds);
+      const back = imagesBack && holds() ? await targetBack(fromUid, holds) : imagesBack ? STALE : null, reportBack = reached(back);
+      // A newer choice while going back stops it, and is not undone.
+      if (back?.tabChanged || !holds()) return { ok: false, mismatch: true, message: say(`영상 탭이 그 사이 바뀌어 더 되돌리지 않았습니다. ` +
+        (reportBack === true ? `판독 화면의 대상은 ${from.patient.name}의 검사입니다.` : '판독 화면의 대상을 확인하세요.')) };
+      const what = there === false ? `판독 화면의 대상이 ${to.patient.name}의 검사로 바뀌지 않아(${why})`
+        : `판독 화면이 ${to.patient.name}의 검사를 열었는지 확인하지 못해(${why})`;
+      if (imagesBack && reportBack === true)
+        return { ok: false, reportTarget: fromUid, message: say(`${what} ${there === false ? '영상도' : '영상과 판독 대상을'} ${from.patient.name}에게 되돌렸습니다.`) };
+      return { ok: false, mismatch: true, message: say((there === false ? `판독 화면의 대상이 ${to.patient.name}의 검사로 바뀌지 않았고(${why})`
+        : `판독 화면이 ${to.patient.name}의 검사를 열었는지 확인하지 못했고(${why})`) + ' 되돌리기도 확인되지 않았습니다. ' +
         `영상은 ${current?.patient.name || '없음'}입니다. 판독 화면의 대상을 확인하세요.`) };
     } finally { if (moving === ticket) moving = null; }
   }
@@ -425,12 +486,16 @@ window.KinViewerPatientTabs = (() => {
     history.replaceState(history.state, '', tab.href);
     window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }));
   }
-  async function open(href, { signal } = {}) {
+  // A direct open (another window, the worklist, the tab already shown) is a new choice; a switch, close or move passes the
+  // generation of the choice it carries out (`gen`). The screen changes only while that generation holds.
+  async function open(href, { signal, gen = turn.take() } = {}) {
+    const holds = () => turn.holds(gen);
     if (signal?.aborted) return false;
     const url = new URL(href, location.origin);
     if (url.origin !== location.origin || url.pathname !== '/ohif/viewer') return false;
     if (current && openingKey(href) === openingKey(current.href)) {
       if (current.exam) try { await window.KinViewerExamScope.resolve(href,{signal}); } catch (error) { status.textContent=error.message;return false; }
+      if (!holds()) return false;
       if (pending) { sequence++; controller?.abort(); pending = false; render(); publish(); }
       return true;
     }
@@ -445,12 +510,12 @@ window.KinViewerPatientTabs = (() => {
     signal?.addEventListener('abort', cancel, { once: true });
     try {
       const resolved = await resolve(url.href, controller.signal);
-      if (signal?.aborted || ticket !== sequence || !guard(true)) return false;
+      if (signal?.aborted || ticket !== sequence || !holds() || !guard(true)) return false;
       // Showing these studies is a new opening of each (opening contract 2026-10-29). One this document showed before is
       // read live for it first, so its 열람 is recorded before pixels still held here can show; when it cannot be, the
       // current screen stays. A same-scope Open returned above and keeps its opening.
       const opening = await (window.KinViewerSessionBoundary?.reenter(resolved.studies, controller.signal) ?? { commit() {} });
-      if (signal?.aborted || ticket !== sequence) return false;
+      if (signal?.aborted || ticket !== sequence || !holds()) return false;
       if (!opening) { status.textContent = '영상 열람 기록을 저장하지 못해 환자를 전환하지 않았습니다. 다시 시도하세요.'; return false; }
       capture();
       let tab = tabs.find(tab => tab.key === resolved.key);
@@ -469,16 +534,17 @@ window.KinViewerPatientTabs = (() => {
       if (ticket === sequence && pending) { pending = false; render(); publish(); }
     }
   }
-  async function close(tab, left = false) {
+  // A close (also of a tab not shown) ends the moves under way; its reentry after the gate carries its generation.
+  async function close(tab, left = false, gen = turn.take()) {
     // Closing a tab also cancels a lookup started by selecting that tab, so
     // its delayed response cannot reopen it after the user's close action.
     if (pending && pendingHref === tab.href) { sequence++; controller?.abort(); pending = false; }
     if (tab === current) {
       if (!guard()) return false;
-      if (!left) return gated(() => close(tab, true));
-      if (tab !== current || !tabs.includes(tab)) return false;
+      if (!left) return gated(chosen => close(tab, true, chosen), gen);
+      if (!turn.holds(gen) || tab !== current || !tabs.includes(tab)) return false;
       const next = tabs[tabs.indexOf(tab) + 1] || tabs[tabs.indexOf(tab) - 1];
-      if (next && !await open(next.href)) return false;
+      if (next && !await open(next.href, { gen })) return false;
       if (!next && !guard(true)) return false;
       if (!next) { sequence++; controller?.abort(); current = null; explicitlyClosed = true; publish(); }
     }
@@ -528,6 +594,6 @@ window.KinViewerPatientTabs = (() => {
   }
   return { mount, dispose, refresh, open, guard, snapshot, resolve, list, unsaved, next, moving: () => !!moving,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    end() { sequence++; controller?.abort(); tabs.length = 0; current = null; explicitlyClosed = false; focusAfterMount = false; publish(); dispose(); delete window.kinViewerOpenPatient;
+    end() { turn.take(); sequence++; controller?.abort(); tabs.length = 0; current = null; explicitlyClosed = false; focusAfterMount = false; publish(); dispose(); delete window.kinViewerOpenPatient;
       leaving = null; announced.clear(); for (const wait of [...waits.values()]) wait.finish(); link?.close(); link = null; } };
 })();

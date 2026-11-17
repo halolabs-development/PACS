@@ -16,7 +16,7 @@ const A = '1.2.3', B = '4.5.6', SERIES = '1.2.3.4', SOP = '1.2.3.4.5', ITEM = '0
 const REQUEST = '11111111-2222-3333-4444-555555555555';
 // S2-L R5: every synthetic API answer below models the current API, which names its record format in this response header;
 // the old-API cases build answers without it on purpose.
-const API_HEADERS = Object.freeze({ get: name => String(name).toLowerCase() === 'x-kin-finding-schema' ? '2' : null });
+const API_HEADERS = Object.freeze({ get: name => String(name).toLowerCase() === 'x-kin-finding-schema' ? '3' : null });
 
 /* ---------- navigation sliced from config/ohif.js ---------- */
 function slice() {
@@ -559,7 +559,7 @@ test('store save sends the exact pairs once, replays the same body on retry and 
   assert.ok(e.pending); assert.equal(e.message, '저장 결과를 확인하지 못했습니다. 같은 요청 재시도로 결과를 확인하세요.');
   const firstBody = t.log.filter(x => x.options.method === 'POST')[0].body;
   // S2-L DN7: a new client creates and edits version 2 records (the one expected-value change of this assertion).
-  assert.deepEqual(firstBody, { requestId: REQUEST, item: { schemaVersion: 2, title: '소견', text: '본문', characteristics: '', primary: 0, sources: [{ itemId: ITEM, revision: 2 }] } });
+  assert.deepEqual(firstBody, { requestId: REQUEST, item: { schemaVersion: 3, title: '소견', text: '본문', characteristics: '', lesionLocation: '', primary: 0, sources: [{ itemId: ITEM, revision: 2 }] } });
   t.state.items = [t.head('f0000000-0000-4000-8000-000000000001', 1)];
   assert.equal(await store.save(e), true);
   const posts = t.log.filter(x => x.options.method === 'POST');
@@ -1382,7 +1382,7 @@ test('anchored store: the comparison viewport keeps entries, drafts, pending bod
   t.state.responses.push({ status: 503, body: { message: 'delayed' } });
   assert.equal(await store.save(e, 'create'), false);
   const pendingBody = e.pending.body, generation = store.state().generation;
-  assert.deepEqual(JSON.parse(pendingBody), { requestId: 'd0000000-0000-4000-8000-000000000002', item: { schemaVersion: 2, title: '비교 소견', text: '본문', characteristics: '', primary: 0,
+  assert.deepEqual(JSON.parse(pendingBody), { requestId: 'd0000000-0000-4000-8000-000000000002', item: { schemaVersion: 3, title: '비교 소견', text: '본문', characteristics: '', lesionLocation: '', primary: 0,
     sources: [{ itemId: ITEM, revision: 2 }, { itemId: P1, revision: 1 }] } }, 'only {itemId, revision} pairs are sent');
   // The comparison viewport becomes active: nothing is parked, reset or re-keyed; its saved list is read again.
   store.syncHistory(history(B, [{ id: P1, revision: 1, hidden: false, referenceStatus: null, working: true }, { id: P2, revision: 3, hidden: false, referenceStatus: null, working: false }]));
@@ -2098,13 +2098,13 @@ test('calculators and copied values never reach a request, draft, pending or hel
   t.state.responses.push({ status: 503, body: { message: 'delayed' } });
   assert.equal(await store.save(d, 'create'), false);
   const requestId = JSON.parse(d.pending.body).requestId;
-  assert.deepEqual(d.pending, { url: '/studies/' + A + '/findings', body: '{"requestId":"' + requestId + '","item":{"schemaVersion":2,"title":"새 소견","text":"","characteristics":"",' +
+  assert.deepEqual(d.pending, { url: '/studies/' + A + '/findings', body: '{"requestId":"' + requestId + '","item":{"schemaVersion":3,"title":"새 소견","text":"","characteristics":"","lesionLocation":"",' +
     '"sources":[{"itemId":"' + ITEM + '","revision":2},{"itemId":"' + P1 + '","revision":1}],"primary":0}}' });
   store.edit(e); store.updateDraft(e, { text: '수정' });
   t.state.responses.push({ status: 503, body: { message: 'delayed' } });
   assert.equal(await store.save(e, 'edit'), false);
   const editId = JSON.parse(e.pending.body).requestId;
-  assert.equal(e.pending.body, '{"requestId":"' + editId + '","item":{"schemaVersion":2,"title":"T","text":"수정","characteristics":"","sources":[{"itemId":"' + ITEM + '","revision":2}],"primary":0},' +
+  assert.equal(e.pending.body, '{"requestId":"' + editId + '","item":{"schemaVersion":3,"title":"T","text":"수정","characteristics":"","lesionLocation":"","sources":[{"itemId":"' + ITEM + '","revision":2}],"primary":0},' +
     '"expectedRevision":1,"action":"edit"}');
   for (const post of posts(t)) assert.equal(/calculator|values|kind|label|mm|HU/.test(post.options.body), false, post.options.body);
   assert.deepEqual(plain(await store.navigate(e, 0)), { ok: true, highlighted: true, annotation: 'shown' });
@@ -2230,7 +2230,7 @@ test('mounted values: live heads show units without a calculator, comparison hea
   const post = h.server.log.filter(x => x.method === 'POST');
   assert.equal(post.length, 1);
   const body = JSON.parse(post[0].body);
-  assert.equal(post[0].body, JSON.stringify({ requestId: body.requestId, item: { schemaVersion: 2, title: '값 소견', text: '본문', characteristics: '',
+  assert.equal(post[0].body, JSON.stringify({ requestId: body.requestId, item: { schemaVersion: 3, title: '값 소견', text: '본문', characteristics: '', lesionLocation: '',
     sources: [{ itemId: VL, revision: 1 }, { itemId: VE, revision: 1 }, { itemId: PL, revision: 1 }, { itemId: VO, revision: 1 }, { itemId: VM, revision: 1 }], primary: 0 },
     expectedRevision: 1, action: 'edit' }));
   h.findings.stop();
@@ -2439,7 +2439,7 @@ test('S2-L R5: only a successful findings answer without the schema header makes
   assert.equal(await store.save(e, 'hide', '사유'), false);
   assert.equal(t.log.filter(x => x.options.method === 'POST').length, 0, 'never a version 1 fallback write');
   // The current API names itself: writable again. A refused or failed answer without the header changes nothing.
-  header = '2'; await store.load();
+  header = '3'; await store.load();
   assert.deepEqual([store.state().compat, store.writable()], ['v2', true]);
   const d = store.newDraft(); store.updateDraft(d, { title: '새 소견', characteristics: '경계 불명확' });
   assert.equal(store.toggleSource(d, ITEM), true);
@@ -2450,7 +2450,7 @@ test('S2-L R5: only a successful findings answer without the schema header makes
   t.state.responses.push({ status: 409, body: { code: 'FINDING_SOURCE_STALE', itemId: ITEM, headRevision: 3, headHidden: false } });
   assert.equal(await store.save(d), false);
   assert.equal(store.state().compat, 'v2');
-  assert.ok(t.log.every(x => new Headers(x.options.headers).get('X-KIN-Finding-Schema') === '2'), 'every request names the record format');
+  assert.ok(t.log.every(x => new Headers(x.options.headers).get('X-KIN-Finding-Schema') === '3'), 'every request names the record format');
   // A pending body kept across an older API answer is not sent while that API answers.
   const p = store.newDraft(); store.updateDraft(p, { title: '보류' }); store.toggleSource(p, ITEM);
   t.state.responses.push({ status: 503, body: { message: 'later' } });
@@ -2475,7 +2475,7 @@ test('S2-L DN7: version 2 bodies, drafts and code-point limits; version 1 heads 
   assert.equal(model.draftProblem({ ...draft, sources: [{ jobId: 'x', revision: 1 }] }), '연결한 표식의 저장 정보를 확인하세요.');
   assert.equal(model.draftProblem({ ...draft, sources: [{ jobId: LJ, revision: 1, markId: 'x' }] }), '연결한 표식의 저장 정보를 확인하세요.');
   assert.equal(model.draftProblem({ ...draft, sources: [{ jobId: LJ, revision: 1 }, { jobId: LJ, revision: 2 }] }), '같은 표식을 두 번 연결할 수 없습니다.');
-  assert.equal(model.CHARACTERISTICS, 1000); assert.equal(model.SCHEMA, 2);
+  assert.equal(model.CHARACTERISTICS, 1000); assert.equal(model.SCHEMA, 3); assert.equal(model.LESION_LOCATION, 200);
   // Draft copies: a version 2 head names its characteristics and job pairs; a version 1 head keeps the shipped draft shape.
   const v2 = { id: LF, studyUid: A, revision: 3, item: { schemaVersion: 2, title: 'T', text: '', characteristics: astral, primary: 1,
     sources: [jobCopy({ studyUid: B, studies: [A, B], mark: { ...jobCopy().mark, volume: { ...jobCopy().mark.volume, study: B } } }), viewCopy()] } };
@@ -2500,7 +2500,25 @@ test('S2-L DN7: version 2 bodies, drafts and code-point limits; version 1 heads 
   assert.equal(posts()[1], JSON.stringify({ requestId: REQUEST, item: { schemaVersion: 2, title: 'V2', text: '본문', characteristics: astral, sources: [{ itemId: ITEM, revision: 2 }], primary: 0 }, expectedRevision: 2, action: 'hide', reason: '사유' }));
   one.pending = null; store.edit(one); store.updateDraft(one, { characteristics: '승격' });
   await store.save(one, 'edit');
-  assert.equal(JSON.parse(posts()[2]).item.schemaVersion, 2); assert.equal(JSON.parse(posts()[2]).item.characteristics, '승격');
+  // Since version 3 a create or an edit writes version 3 (an older head is promoted, its location empty until written).
+  assert.equal(JSON.parse(posts()[2]).item.schemaVersion, 3); assert.equal(JSON.parse(posts()[2]).item.characteristics, '승격');
+  assert.equal(JSON.parse(posts()[2]).item.lesionLocation, '');
+  // Version 3: the lesion location rides beside the characteristics, is limited in code points and survives a hide unchanged.
+  const where = '우하엽 S6 \u{1F600}';
+  const v3 = { id: LF, studyUid: A, revision: 4, item: { schemaVersion: 3, title: 'T', text: '', characteristics: '', lesionLocation: where, primary: 0, sources: [viewCopy()] } };
+  assert.deepEqual(model.itemOnly(v3), { title: 'T', text: '', characteristics: '', lesionLocation: where, primary: 0, sources: [{ jobId: viewCopy().jobId, revision: 1 }] });
+  assert.equal(JSON.stringify(model.commandBody(model.itemOnly(v3), v3, 'hide', 'r', REQUEST, 3)), JSON.stringify({ requestId: REQUEST,
+    item: { schemaVersion: 3, title: 'T', text: '', characteristics: '', lesionLocation: where, sources: [{ jobId: viewCopy().jobId, revision: 1 }], primary: 0 },
+    expectedRevision: 4, action: 'hide', reason: 'r' }));
+  assert.equal(model.draftProblem({ ...draft, lesionLocation: '\u{1F600}'.repeat(200) }), null);
+  assert.equal(model.draftProblem({ ...draft, lesionLocation: '\u{1F600}'.repeat(201) }), '병변 위치는 200자 이하여야 합니다.');
+  const v3head = t.head('f0000000-0000-4000-8000-000000000003', 3, { item: { schemaVersion: 3, title: 'V3', text: '', characteristics: '', lesionLocation: where, hidden: false, primary: 0, sources: [v1head.item.sources[0]] } });
+  t.state.items = [v1head, v2head, v3head]; await store.load();
+  const three = store.state().entries.get(v3head.id);
+  assert.equal(three.draft.lesionLocation, where, 'a version 3 head opens its location into the draft');
+  three.pending = null; t.state.responses.push({ status: 503, body: {} });
+  await store.save(three, 'hide', '사유');
+  assert.equal(JSON.parse(posts()[3]).item.schemaVersion, 3); assert.equal(JSON.parse(posts()[3]).item.lesionLocation, where, 'a hide keeps the version and the location');
   // New error codes keep the draft with their own texts.
   assert.ok(model.errorMessage({ status: 409, code: 'FINDING_SCHEMA_VERSION' }).includes('새로고침'));
   assert.ok(model.errorMessage({ status: 400, code: 'FINDING_JOB_MARK' }).includes('3D 표식'));
@@ -2673,14 +2691,15 @@ test('S2-L2b continuation: once, after the first authorized list, only for the e
 });
 
 /* The shipped Findings section with a version 2 finding holding a characteristics line, a 3D point and a saved view. */
-async function locationViewer({ schemaHeader = '2', modelOverride } = {}) {
+async function locationViewer({ schemaHeader = '3', modelOverride, itemOverride } = {}) {
   const document = new EventTarget(); document.body = new Element('body'); document.createElement = tag => new Element(tag); document.querySelectorAll = selector => document.body.querySelectorAll(selector);
   document.querySelector = selector => document.body.all().find(e => selector === '#' + e.id) || null;
   document.createTextNode = value => { const node = new Element('#text'); node.textContent = value; return node; };
   const host = new Element('div'); host.id = 'kin-viewer-history'; document.body.append(host);
   const loc = locationDouble();
-  const item = { schemaVersion: 2, title: '위치 소견', text: '본문', characteristics: '경계 불명확한 간유리 결절', hidden: false, primary: 0, sources: [jobCopy({ studies: [VX], jobStudyUid: VX, studyUid: VX,
+  const base = { schemaVersion: 2, title: '위치 소견', text: '본문', characteristics: '경계 불명확한 간유리 결절', hidden: false, primary: 0, sources: [jobCopy({ studies: [VX], jobStudyUid: VX, studyUid: VX,
     mark: { ...jobCopy().mark, volume: { ...jobCopy().mark.volume, study: VX } } }), viewCopy({ studies: [VX], jobStudyUid: VX, studyUid: VX })] };
+  const item = itemOverride ? itemOverride(base) : base;
   const finding = { id: LF, studyUid: VX, authorSub: 'doctor', authorActor: 'Doctor', revision: 2, hidden: false, createdAt: 't', updatedAt: 't', item,
     links: [{ jobId: LJ, markId: LM, linkState: 'current', headRevision: 1, headHidden: false }, { jobId: viewCopy().jobId, markId: null, linkState: 'metadata-changed', headRevision: 3, headHidden: false }] };
   const server = { log: [] };
@@ -2788,14 +2807,55 @@ test('mounted locations: the editor names its characteristics field and helper, 
   const post = h.server.log.filter(x => x.method === 'POST');
   assert.equal(post.length, 1);
   const body = JSON.parse(post[0].body);
-  assert.equal(post[0].body, JSON.stringify({ requestId: body.requestId, item: { schemaVersion: 2, title: '위치 소견', text: '본문', characteristics: '분엽상 경계',
+  assert.equal(post[0].body, JSON.stringify({ requestId: body.requestId, item: { schemaVersion: 3, title: '위치 소견', text: '본문', characteristics: '분엽상 경계', lesionLocation: '',
     sources: [{ jobId: LJ, revision: 1, markId: LM }, { jobId: viewCopy().jobId, revision: 1 }, { jobId: LJ, revision: 1, markId: LM2 }, { jobId: LM2, revision: 1 }], primary: 0 },
     expectedRevision: 2, action: 'edit' }));
-  assert.equal(new Headers(post[0].headers).get('X-KIN-Finding-Schema'), '2');
+  assert.equal(new Headers(post[0].headers).get('X-KIN-Finding-Schema'), '3');
   assert.ok(h.server.log.some(x => x.url === '/api/studies/' + VX + '/viewer-jobs?mine=false&includeHidden=false'));
   h.findings.stop();
 });
 
+test('mounted lesion location: the editor has a Location field beside Characteristics, saves version 3, and the saved row shows it', async () => {
+  const h = await locationViewer();
+  await h.press(h.row(), 'Edit');
+  const field = h.row().all().find(e => e.attributes['aria-label'] === 'Finding Location');
+  assert.ok(field, 'the labelled location field');
+  assert.equal(field.maxLength, 200); assert.equal(field.value, '', 'a version 2 head opens with an empty location');
+  assert.equal(field.translate, false, 'what the reader writes is not translated');
+  const help = h.row().all().find(e => e.id === field.attributes['aria-describedby']);
+  assert.equal(help.textContent, '사용자가 직접 입력하는 병변 위치입니다(예: 우하엽 S6). 영상의 Series/Image 번호는 연결한 표식이 가집니다.');
+  const labels = h.row().all().filter(e => e.tagName === 'label');
+  assert.ok(labels.some(l => l.children[0] === field || l.textContent === 'Location (병변 위치)'));
+  // The existing fields keep their names; the location is added, nothing renamed.
+  for (const name of ['Finding Title', 'Finding Characteristics', 'Finding Text'])
+    assert.ok(h.row().all().some(e => e.attributes['aria-label'] === name || (e.tagName === 'label' && e.textContent === name)), name);
+  field.value = '우하엽 S6'; field.dispatchEvent(new Event('input'));
+  await h.press(h.row(), 'Save');
+  const post = h.server.log.filter(x => x.method === 'POST');
+  assert.equal(post.length, 1);
+  const item = JSON.parse(post[0].body).item;
+  assert.deepEqual([item.schemaVersion, item.lesionLocation, item.characteristics], [3, '우하엽 S6', '경계 불명확한 간유리 결절']);
+  h.findings.stop();
+});
+
+test('mounted lesion location: a saved version 3 row and its history show the location; a version 2 row shows none', async () => {
+  const two = await locationViewer();
+  assert.equal(two.row().all().some(e => e.dataset.kinLesionLocation === ''), false, 'no location line is invented for version 2');
+  two.findings.stop();
+  const h = await locationViewer({ itemOverride: base => ({ ...base, schemaVersion: 3, lesionLocation: '우하엽 S6' }) });
+  const line = h.row().all().find(e => e.dataset.kinLesionLocation === '');
+  assert.ok(line, 'the location line');
+  assert.equal(line.textContent, 'Location (병변 위치): 우하엽 S6');
+  assert.ok(h.row().all().some(e => e.dataset.kinCharacteristics === '' && e.textContent === 'Characteristics (병변 특성): 경계 불명확한 간유리 결절'),
+    'version 3 keeps the characteristics line');
+  await h.press(h.row(), 'History');
+  const revision = h.row().all().find(e => e.dataset.kinRevision === '2');
+  assert.ok(textOf(revision).includes('Location (병변 위치): 우하엽 S6'));
+  assert.ok(textOf(revision).includes('Characteristics (병변 특성): 경계 불명확한 간유리 결절'));
+  await h.press(h.row(), 'Edit');
+  assert.equal(h.row().all().find(e => e.attributes['aria-label'] === 'Finding Location').value, '우하엽 S6', 'Edit opens the saved location');
+  h.findings.stop();
+});
 test('mounted draft: composed title, characteristics and text survive every later render of the row', async () => {
   const h = await locationViewer();
   h.loc.shownValue = { jobId: LJ, revision: 1, snapshotVersion: 6, studies: [VX], marks: [{ id: LM2, label: '두번째' }] };
@@ -2859,7 +2919,7 @@ test('mounted continuation: the one-use nonce is consumed once; a missing record
       const item = { schemaVersion: 2, title: 'C', text: '', characteristics: '', hidden: false, primary: 0, sources: [jobCopy({ jobStudyUid: VX, studyUid: VX, studies: [VX],
         mark: { ...jobCopy().mark, volume: { ...jobCopy().mark.volume, study: VX } } })] };
       const window = new EventTarget(), ticks = [];
-      const json = body => ({ status: 200, ok: true, headers: { get: () => '2' }, json: async () => JSON.parse(JSON.stringify(body)) });
+      const json = body => ({ status: 200, ok: true, headers: { get: () => '3' }, json: async () => JSON.parse(JSON.stringify(body)) });
       window.fetch = async url => url === '/api/me' ? json({ sub: 'doctor', kind: 'member', roles: ['radiologist'] })
         : json({ items: [{ id: LF, studyUid: VX, authorSub: 'doctor', authorActor: 'D', revision: 4, hidden: false, createdAt: 't', updatedAt: 't', item, links: [] }], nextCursor: null });
       window.kinViewerHistoryState = () => ({ scope: VX, subject: 'doctor', ended: false, suspended: false, writable: true, heads: [] });

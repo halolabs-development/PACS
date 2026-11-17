@@ -8,7 +8,9 @@
     Undo brings it back;
   - an approved study matched to its order: Unmatch… is refused by the server and the window says so; it stays matched;
     the Report tab shows its approved text and Copy Report;
-  - Scheduled: an order of today for a patient with no study today is No images yet.
+  - Scheduled: an order of today for a patient with no study today is No images yet;
+  - RIS Status: the order's state (as the hospital RIS gives it) is the last column, stays through Match, Unmatch, Delete
+    Order and Undo, and Search Orders finds the order by it; the database refuses a state it does not know.
 
 Run in CI: `python tests/measurement_ci.py --profile technician-orders`; on a development stack:
 `python tests/e2e/test_technician_orders.py`. Synthetic only; cleanup unmatches and removes the orders (the study
@@ -29,11 +31,12 @@ def lit(value):
 
 
 class TechnicianOrdersE2E(WorklistE2E):
-    def order(self, patient_id, sched="20260910", accession=None):
+    def order(self, patient_id, sched="20260910", accession=None, ris_status=None):
         oid = "SYNTHETIC-techord-" + uuid.uuid4().hex
-        psql('INSERT INTO "Order" (oid,"institutionId","patientId",name,sex,birth,sched,modality,descr,ward,"reqDoc",accession) VALUES ('
+        psql('INSERT INTO "Order" (oid,"institutionId","patientId",name,sex,birth,sched,modality,descr,ward,"reqDoc",accession,"risStatus") VALUES ('
              + ",".join(lit(v) for v in [oid, "hallym", patient_id, "SYNTHETIC TECHNICIAN ORDER", "O", "", sched, "CT",
-                                         "SYNTHETIC ORDER CT", "SYNWARD", "SYNTHETIC ORDER DOC"]) + "," + (lit(accession) if accession else "NULL") + ")")
+                                         "SYNTHETIC ORDER CT", "SYNWARD", "SYNTHETIC ORDER DOC"]) + "," + (lit(accession) if accession else "NULL")
+             + "," + (lit(ris_status) if ris_status else "NULL") + ")")
 
         def cleanup():
             for value in psql('SELECT to_jsonb(t)::text FROM "Order" t WHERE oid=' + lit(oid)):
@@ -54,6 +57,9 @@ class TechnicianOrdersE2E(WorklistE2E):
         page.locator('.order-p .filters input[data-o="id"]').fill(fixture.patient_id)
         return page
 
+    def ris_status(self, page, oid):
+        return page.locator(f'#orderrows tr[data-oid="{oid}"] > td[data-ris-status]')
+
     def window_rows(self, window):
         return {r[0]: r[1:] for r in window.locator("table tbody tr").evaluate_all(
             "rows => rows.map(r => [...r.children].map(td => td.textContent))")}
@@ -61,8 +67,10 @@ class TechnicianOrdersE2E(WorklistE2E):
     def test_technician_orders_01_match_unmatch_delete_report_scheduled(self):
         fixture = self.fixture()
         accession = "SYNACC" + uuid.uuid4().hex[:10].upper()
-        oid = self.order(fixture.patient_id, accession=accession)
+        oid = self.order(fixture.patient_id, accession=accession, ris_status="acquired")
         page = self.technician(fixture)
+        expect(page.locator(".order-p .grid2 thead tr:not(.filters) > th").last).to_have_text("RIS Status")
+        expect(self.ris_status(page, oid)).to_have_text("Acquired")
         source_acc = page.evaluate(f"() => studies.find(s => s.uid === {json.dumps(fixture.uid)}).acc")
         page.locator(f'#orderrows tr[data-oid="{oid}"]').click()
 
@@ -106,6 +114,21 @@ class TechnicianOrdersE2E(WorklistE2E):
         page.locator("#order-actions .order-status").get_by_role("button", name="Undo").click()
         expect(page.locator(f'#orderrows tr[data-oid="{oid}"]')).to_have_count(1, timeout=30000)
         self.assertEqual(psql('SELECT oid FROM "Order" WHERE oid=' + lit(oid) + ' AND "removedAt" IS NULL'), [oid])
+
+        # RIS Status stayed through Match, Unmatch, Delete Order and Undo; Search Orders finds the order by it.
+        expect(self.ris_status(page, oid)).to_have_text("Acquired")
+        self.assertEqual(psql('SELECT "risStatus" FROM "Order" WHERE oid=' + lit(oid)), ["acquired"])
+        page.locator("#order-actions").get_by_role("button", name="Search Orders", exact=True).click()
+        ris = page.locator("#order-search").get_by_label("RIS Status")
+        ris.select_option("confirmed")
+        expect(page.locator(f'#orderrows tr[data-oid="{oid}"]')).to_have_count(0)
+        ris.select_option("acquired")
+        expect(page.locator(f'#orderrows tr[data-oid="{oid}"]')).to_have_count(1)
+        page.locator("#order-search").get_by_role("button", name="Reset").click()
+        page.locator("#order-search").get_by_role("button", name="Close").click()
+        with self.assertRaises(RuntimeError, msg="a state the order list does not know is refused"):
+            psql('UPDATE "Order" SET "risStatus"=\'cancelled\' WHERE oid=' + lit(oid))
+        self.assertEqual(psql('SELECT "risStatus" FROM "Order" WHERE oid=' + lit(oid)), ["acquired"])
 
         # Another study, matched and then approved: Unmatch… is refused by the server, in the window.
         approved = self.fixture()

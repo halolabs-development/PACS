@@ -324,12 +324,18 @@ test('TEST-WSPACE-PANELS-05 reportWindow: mode shares, placeholders own no colum
     const { content } = layout.reportWindow(mode, hidden), sum = content.reduce((s, p) => s + p.share, 0);
     return Object.fromEntries(content.map(p => [p.key, p.share / sum]));
   };
-  assert.deepEqual(fractions('Radiology', []), { thumbnail: 0.34, clinical: 0.30, template: 0.36 });
+  // With Image Report hidden (its first-use state) Radiology is the shipped 34 : 30 : 36; shown, it is a fourth column of
+  // share 30 right of Thumbnail (item 9's order). Technician has no Image Report column.
+  assert.deepEqual(fractions('Radiology', ['imageReport']), { thumbnail: 0.34, clinical: 0.30, template: 0.36 });
+  assert.deepEqual(Object.keys(fractions('Radiology', [])), ['thumbnail', 'imageReport', 'clinical', 'template']);
+  for (const [key, share] of Object.entries({ thumbnail: 34, imageReport: 30, clinical: 30, template: 36 })) {
+    assert.ok(Math.abs(fractions('Radiology', [])[key] - share / 130) < 1e-12, key);
+  }
   assert.deepEqual(fractions('Technician', []), { thumbnail: 0.34, clinical: 0.66 });
   for (const mode of ['Radiology', 'Technician']) {
-    for (const content of [[], ['thumbnail'], ['clinical'], ['template'], ['thumbnail', 'clinical']]) {
+    for (const content of [[], ['thumbnail'], ['clinical'], ['template'], ['imageReport'], ['thumbnail', 'clinical'], ['thumbnail', 'imageReport']]) {
       const base = fractions(mode, content);
-      for (const tabs of [['aiReport'], ['imageReport'], ['aiReport', 'imageReport']]) {
+      for (const tabs of [['aiReport']]) {
         assert.deepEqual(fractions(mode, [...content, ...tabs]), base, `${mode} ${content} ${tabs}`);
       }
     }
@@ -343,20 +349,23 @@ test('TEST-WSPACE-PANELS-05 reportWindow: mode shares, placeholders own no colum
       }
     }
   }
-  // Technician cannot show Template; the reader's Template choice changes nothing there and is not edited.
-  const hidden = ['template'];
-  assert.deepEqual(layout.reportWindow('Technician', hidden), layout.reportWindow('Technician', []));
-  assert.deepEqual(hidden, ['template']);
+  // Technician cannot show Template or Image Report; the reader's choice for them changes nothing there and is not edited.
+  for (const hidden of [['template'], ['imageReport'], ['imageReport', 'template']]) {
+    const kept = hidden.slice();
+    assert.deepEqual(layout.reportWindow('Technician', hidden), layout.reportWindow('Technician', []));
+    assert.deepEqual(hidden, kept);
+  }
   const cases = [
     ['Radiology', [], 'content', false],
     ['Radiology', ['thumbnail'], 'content', true],
     ['Radiology', ['thumbnail', 'aiReport', 'imageReport'], 'content', false],
-    ['Radiology', ['thumbnail', 'clinical', 'template'], 'tabs', true],
+    ['Radiology', ['thumbnail', 'clinical', 'template'], 'content', true],
     ['Radiology', ['thumbnail', 'imageReport', 'clinical', 'template'], 'tabs', true],
     ['Radiology', ['thumbnail', 'aiReport', 'imageReport', 'clinical', 'template'], 'empty', false],
-    ['Radiology', ['thumbnail', 'aiReport', 'clinical', 'template'], 'empty', false],
+    ['Radiology', ['thumbnail', 'aiReport', 'clinical', 'template'], 'content', false],
     ['Radiology', ['thumbnail', 'aiReport', 'imageReport', 'clinical'], 'content', false],
     ['Technician', ['thumbnail', 'clinical'], 'tabs', true],
+    ['Technician', ['thumbnail', 'aiReport', 'clinical'], 'empty', false],
     ['Technician', ['thumbnail', 'aiReport', 'imageReport', 'clinical'], 'empty', false],
   ];
   for (const [mode, off, state, strip] of cases) {
@@ -367,12 +376,19 @@ test('TEST-WSPACE-PANELS-05 reportWindow: mode shares, placeholders own no colum
     assert.equal(band.classes['kin-report-window-empty'], state === 'empty');
     assert.equal(band.classes['kin-report-window-strip'], strip);
   }
-  // A reserved Image Report preference survives normalization but cannot create a tab or an empty strip.
+  // Image Report is a content column, never a tab: AI Report stays the only placeholder tab.
   for (const mode of ['Radiology', 'Technician']) {
     assert.deepEqual(layout.reportWindow(mode, []).tabs, ['aiReport']);
-    assert.deepEqual(layout.reportWindow(mode, ['imageReport']), layout.reportWindow(mode, []));
-    assert.equal(layout.reportWindow(mode, []).classes['kin-hide-imageReport'], true);
+    assert.deepEqual(layout.reportWindow(mode, ['imageReport']).tabs, ['aiReport']);
   }
+  assert.equal(layout.reportWindow('Radiology', []).classes['kin-hide-imageReport'], false);
+  assert.equal(layout.reportWindow('Radiology', ['imageReport']).classes['kin-hide-imageReport'], true);
+  assert.equal(layout.reportWindow('Technician', []).classes['kin-hide-imageReport'], true);
+  // Each shown content panel names its own grid column, in the band's order.
+  assert.deepEqual(layout.reportWindow('Radiology', []).columns, { thumbnail: 1, imageReport: 2, clinical: 3, template: 4 });
+  assert.deepEqual(layout.reportWindow('Radiology', ['thumbnail', 'clinical']).columns, { imageReport: 1, template: 2 });
+  assert.deepEqual(layout.reportWindow('Radiology', ['imageReport']).columns, { thumbnail: 1, clinical: 2, template: 3 });
+  assert.deepEqual(layout.reportWindow('Technician', []).columns, { thumbnail: 1, clinical: 2 });
   assert.deepEqual(layout.hiddenPanels(layout.withHiddenPanels(v3(), ['imageReport'])), ['imageReport']);
   assert.equal(layout.reportWindow('Technician', []).classes['kin-hide-template'], true);
   assert.equal(layout.reportWindow('Radiology', []).classes['kin-hide-template'], false);

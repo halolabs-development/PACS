@@ -712,6 +712,54 @@ class FindingWorklistE2E(navigation.FindingNavigationE2E):
         self.assertEqual(signed['head'][0]['insertedAt'], stored['insertedAt'], 'carried byte for byte')
         self.assertEqual(self.versions(f)[-1]['findings'], before_text)
 
+    def test_worklist_08_lesion_location_and_include_measurements_reach_the_report_and_the_server_record(self):
+        """B23 on the real stack: a version 3 finding's lesion location is listed and cited; Include Measurements reads the
+        image numbers through the real DICOMweb and the server records the machine-added line beside the sentence."""
+        f = self.specimen(slices=3); self.seed_report(f)
+        slices = self.dicom(f); ds, key_ds = slices[0], slices[1]
+        length = self.length_at(f, ds, '길이', 20)
+        key = self.post('/studies/'+f.uid+'/viewer-items', dict(requestId=str(uuid.uuid4()), item=dict(
+            schemaVersion=1, kind='key', seriesUid=str(key_ds.SeriesInstanceUID), sopUid=str(key_ds.SOPInstanceUID), frame=1, title='키 영상', description='')))
+        r = self.stack.request('POST', '/studies/'+f.uid+'/findings', 'doctor', dict(requestId=str(uuid.uuid4()), item=dict(
+            schemaVersion=3, title='우하엽 결절', text='8 mm 결절', characteristics='분엽상', lesionLocation='우하엽 S6', primary=0,
+            sources=[dict(itemId=length['id'], revision=1), dict(itemId=key['id'], revision=1)])))
+        self.assertEqual(r.status, 200, r.text); created = r.body
+        number = lambda d, name: str(int(getattr(d, name))) if name in d else '—'
+        line = '측정: Length 20.0 mm (Series %s / Image %s); Key Image (Series %s / Image %s)' % (
+            number(ds, 'SeriesNumber'), number(ds, 'InstanceNumber'), number(key_ds, 'SeriesNumber'), number(key_ds, 'InstanceNumber'))
+        block = '우하엽 결절\n8 mm 결절\n위치: 우하엽 S6\n특성: 분엽상'
+        w = self.login(); self.observe(w); w.on('dialog', lambda d: d.accept())
+        self.select(w, f)
+        expect(w.locator('#findings')).to_have_value(f.secret)
+        self.open_findings(w, f)
+        article = self.row(w, created['id'])
+        expect(article.locator('[data-kin-lesion-location]')).to_have_text('Location (병변 위치): 우하엽 S6')
+        article.locator('[data-kin-sources] > li').nth(1).get_by_role('button', name='Insert into Report', exact=True).click()
+        pane = w.locator('#cite-preview')
+        expect(pane).to_be_visible()
+        expect(w.locator('#cite-preview-block')).to_have_text(block)
+        box = w.locator('#cite-preview-measure')
+        expect(box).to_be_enabled(); expect(box).not_to_be_checked()
+        box.check()
+        expect(w.locator('#cite-preview-measure-line')).to_be_visible(timeout=30000)
+        expect(w.locator('#cite-preview-measure-line')).to_have_text(line)
+        expect(w.locator('#cite-preview-block')).to_have_text(block)
+        with w.expect_response(lambda r: r.request.method == 'PUT' and r.url.endswith('/studies/'+f.uid+'/report')) as reply:
+            w.locator('#cite-preview-insert').click()
+        self.assertEqual(reply.value.status, 200, reply.value.text())
+        expect(pane).to_be_hidden()
+        expect(w.locator('#findings')).to_have_value(f.secret + '\n' + block + '\n' + line)
+        stored = self.citations(f)['draft'][0]
+        self.assertEqual((stored['insertedText'], stored['measurementLine'], stored['measurementSources'], stored['sourceIndex']),
+                         (block + '\n' + line, line, [0, 1], 1))
+        w.locator('#b-cite-list').click()
+        expect(w.locator('#citelist')).to_contain_text('측정 줄 포함')
+        expect(w.locator('#citelist')).to_contain_text('넣은 문자열이 이 칸에 그대로 있습니다')
+        # Signing carries the line into the version, byte for byte.
+        self.commit(w, f, '#b-save', 'T')
+        signed = self.citations(f)['head'][0]
+        self.assertEqual((signed['insertedText'], signed['measurementLine'], signed['measurementSources']), (block + '\n' + line, line, [0, 1]))
+
     # ---- O-1 / O-2: the structured entry dialog in the real workspace -------------------------
     def bound_holds(self, seen, when):
         """The drawer and the report's control row must not overlap.
