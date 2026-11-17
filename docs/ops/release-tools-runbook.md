@@ -603,6 +603,14 @@ retention-ledger format. Use the release's reviewed host-side operator tool. Tha
 credentials and execution evidence are distributed privately; they do not belong in this repository.
 The historical one-time upgrade below is not the entry point for a current release.
 
+Browsers need nothing after a release or a rollback: no cache clearing, no forced reload. The proxy lets a
+browser keep only viewer files whose name carries their content hash (`/ohif/*.<20 hex>.js`, `*.<20 hex>.wasm`);
+the viewer page, `app-config.js` and every other fixed-name file under `/ohif/` are asked for again on each use
+(`no-cache`), and the worklist and reading screens (`/worklist/`), images, metadata and API answers keep the
+policy their service answers with (images and metadata are `no-store`). The first viewer window after the switch therefore reads the new page and configuration,
+which name the new bundles. A test server with a self-signed certificate keeps nothing at all: Chrome does not
+cache answers received with a certificate error.
+
 ## What to remove from older procedures
 
 Do not judge destruction state while the application is serving, compare two moving fingerprints, infer

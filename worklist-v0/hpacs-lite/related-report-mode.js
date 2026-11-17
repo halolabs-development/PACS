@@ -320,37 +320,47 @@
         if (!state || gen !== generation || confirming !== open) return;
         if (!sameView(source, view)) { refuseInsert('이전 판독문이 그 사이 바뀌었습니다 — 다시 확인한 뒤 누르세요.'); return; }
         if (prepared) { refuseInsert(prepared); return; }
-        // Each field keeps the existing atomic receipt. A refusal/unknown first result never starts the next field.
-        for (const part of parts) {
-          if (!state || gen !== generation || confirming !== open || !sameView(source, view)) return;
-          const section = part.field;
-          const token = Object.seal({ op: null, field: section, at: null, text: null, state: 'prepared' });
+        if (!state || gen !== generation || confirming !== open || !sameView(source, view)) return;
+        // One Insert is one operation with one receipt, whatever fields it fills (Minhoon 2026-11-01: "Insert both the
+        // Findings and Conclusion automatically"): the server writes the Source's Findings into Findings and its Conclusion
+        // into Conclusion together or not at all, so Back, a Source move, a move to another study, a closed window or a lost
+        // answer before the receipt never leaves one field in without the other.
+        const token = Object.seal({ op: null, field: null, at: null, text: null, state: 'prepared' });
+        admission = token;
+        let frozen, applied = false;
+        try {
+          frozen = app.freeze({ parts, source, admission: token });
+          if (!frozen || frozen.refused) { refuseInsert(frozen?.refused || '현재 초안에 넣을 수 없습니다.'); return; }
+        } finally {
+          admission = null;
+          token.state = 'spent';
+        }
+        // One native edit per field, each under its own one-shot admission; a field that does not take its edit undoes the
+        // fields already edited (app.abandon) and nothing is sent.
+        for (const edit of frozen.edits) {
+          const token = Object.seal({ op: frozen.op, field: edit.field, at: edit.at, text: edit.text, state: 'prepared' });
           admission = token;
-          let frozen, applied = false;
           try {
-            frozen = app.freeze({ section, parts: [part], source, admission: token });
-            if (!frozen || frozen.refused) { refuseInsert(frozen?.refused || '현재 초안에 넣을 수 없습니다.'); return; }
-            token.op = frozen.op;
-            token.at = frozen.at;
-            token.text = frozen.text;
             try { applied = withEditor(() => app.edit(frozen, token)) === true; } catch (_) { applied = false; }
           } finally {
             admission = null;
             token.state = 'spent';
           }
-          if (!applied) {
-            app.abandon(frozen.op);
-            refuseInsert('현재 초안에 넣지 못했습니다. 편집기의 글을 확인한 뒤 다시 시도하세요.');
-            return;
-          }
-          if (state && gen === generation) {
-            state.inserted = Object.freeze({ field: frozen.at.field, end: frozen.at.start + frozen.text.length, after: frozen.op.after });
-            title.focus({ preventScroll: true });
-          }
-          say('현재 초안에 넣었습니다. 서버 저장을 확인하는 중입니다…');
-          const result = await app.submit(frozen.op);
-          if (result?.outcome !== 'applied' || frozen.op.state !== 'applied') return;
+          if (!applied) break;
         }
+        if (!applied) {
+          app.abandon(frozen.op);
+          refuseInsert('현재 초안에 넣지 못했습니다. 편집기의 글을 확인한 뒤 다시 시도하세요.');
+          return;
+        }
+        if (state && gen === generation) {
+          // Back returns to the end of the last field filled.
+          const last = frozen.edits[frozen.edits.length - 1];
+          state.inserted = Object.freeze({ field: last.field, end: last.at.start + last.text.length, after: last.after });
+          title.focus({ preventScroll: true });
+        }
+        say('현재 초안에 넣었습니다. 서버 저장을 확인하는 중입니다…');
+        await app.submit(frozen.op);
       } finally {
         if (confirming === open) confirming = null;
         if (state && gen === generation) renderButtons();

@@ -265,11 +265,15 @@
     }
 
     // ── Putting the saved view back ──
+    // The display set showing the saved image and frame: one multi-frame file can be split into a set per time point,
+    // so the viewer's own rule (series-split.js) decides; without it no file is split and the SOP alone names the set.
+    const holdsImage = (d, sop, frame) => typeof window.kinSeriesSplitHolds === 'function' ? window.kinSeriesSplitHolds(d, sop, frame)
+      : d.images.some(image => image?.SOPInstanceUID === sop);
     const wantedSet = cell => {
       if (!cell || exam && !window.KinViewerExamScope.allows(exam, cell.study, cell.series)) return null;
       let found = [];
       try { found = sets.getActiveDisplaySets().filter(d => d.StudyInstanceUID === cell.study && d.SeriesInstanceUID === cell.series &&
-        (!Array.isArray(d.images) || d.images.some(image => image?.SOPInstanceUID === cell.sop))); } catch (_) { found = []; }
+        (!Array.isArray(d.images) || holdsImage(d, cell.sop, cell.frame))); } catch (_) { found = []; }
       return found.length === 1 ? found[0].displaySetInstanceUID : null;
     };
     async function moveTo(v, index) {

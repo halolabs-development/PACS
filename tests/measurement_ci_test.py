@@ -182,6 +182,7 @@ REGRESSION_SUITES = {
         tests/viewer_stack_restore_dom_test.py
     """.split(),
     'proxy-contracts': """
+        tests/proxy_app_cache_test.py
         tests/proxy_grant_log_test.py
     """.split(),
     'measurements': """
@@ -1700,7 +1701,7 @@ class MeasurementCiTests(unittest.TestCase):
         self.assertIn('tests/e2e/artifacts/critical-result-screens-ci', paths)
 
     def test_series_split_profile_is_exact_and_dispatch_only(self):
-        # FB-052: three cases of one declared class in one unit, reached only through the Focused integration dispatch.
+        # FB-052: five cases of one declared class in one unit, reached only through the Focused integration dispatch.
         import ast
         profile = ci.PROFILES['series-split']
         suite, class_name, unit = 'e2e/test_series_split.py', 'SeriesSplitE2E', 'ci-series-split'
@@ -1723,7 +1724,9 @@ class MeasurementCiTests(unittest.TestCase):
         declared = [node.name for node in cls.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')]
         self.assertEqual(declared, ['test_series_split_01_b_values_in_one_series',
                                     'test_series_split_02_temporal_positions_in_one_series',
-                                    'test_series_split_03_series_that_arrived_apart_stay_as_they_are'])
+                                    'test_series_split_03_series_that_arrived_apart_stay_as_they_are',
+                                    'test_series_split_04_time_points_in_one_enhanced_multi_frame_file',
+                                    'test_series_split_05_enhanced_multi_frame_file_without_time_points_stays_one_set'])
         self.assertNotIn('series-split', self.catalog.text(automatic_only=True))
         dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
         self.assertIn('- series-split', dispatch)

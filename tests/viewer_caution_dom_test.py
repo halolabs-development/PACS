@@ -267,6 +267,88 @@ class ViewerCautionDOM(unittest.TestCase):
         expect(self.page.get_by_role('alert')).to_have_count(0)
         self.page.evaluate('extension.onModeExit()')
 
+    def test_failed_image_in_a_cell_is_read_again_by_its_retry(self):
+        self.script('sof3-decode'); self.script('image-load-status')
+        self.page.evaluate("""() => {
+          const events = {IMAGE_LOAD_FAILED:'failed', IMAGE_LOADED:'loaded', STACK_NEW_IMAGE:'stack', VIEWPORT_NEW_IMAGE_SET:'set'};
+          window.loadedImages = new Set(); window.reads = []; window.answers = [];
+          // A stack viewport as the pinned viewer has it: the public setImageIdIndex does nothing for the index already
+          // shown, the internal one reads that image again (a failed read is not kept in the cache).
+          const cell = (id, image) => {
+            const element = document.createElement('div'); element.id = id; element.style.cssText = 'position:relative;width:300px;height:200px';
+            document.body.append(element);
+            return {element, image, getCurrentImageId() { return this.image; }, getCurrentImageIdIndex: () => 0,
+              setImageIdIndex() { return Promise.resolve(this.image); },
+              _setImageIdIndex(index) { const imageId = this.image; reads.push([id, imageId, index]);
+                const answer = answers.shift() || 'fail';
+                setTimeout(() => answer === 'ok' ? (loadedImages.add(imageId), pixelEvent('loaded', imageId))
+                  : pixelEvent('failed', imageId, {status: 503}));
+                return Promise.resolve(imageId); }};
+          };
+          window.cells = [cell('a', 'image-a'), cell('b', 'image-a'), cell('c', 'image-c')];
+          // The cell's tools listen on the cell: a press on Retry must not reach them.
+          window.cellPresses = 0;
+          for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click'])
+            cells[0].element.addEventListener(type, () => cellPresses++);
+          window.cornerstone = {cache:{getImage:id => loadedImages.has(id) ? {imageId:id} : undefined},
+            Enums:{Events:events}, eventTarget:new EventTarget(), getRenderingEngines:() => [{getViewports:() => cells}]};
+          window.extension = kinCreateImageLoadStatus();
+          extension.preRegistration({servicesManager:{services:{viewportGridService:{EVENTS:{GRID_STATE_CHANGED:'grid'},
+            subscribe:(name, refresh) => {window.refreshGrid=refresh; return {unsubscribe(){}};}}}}});
+          extension.onModeEnter();
+          window.pixelEvent = (type, imageId, error) => cornerstone.eventTarget.dispatchEvent(new CustomEvent(type,{detail:{imageId,error}}));
+        }""")
+        a, b = self.page.locator('#a'), self.page.locator('#b')
+        self.page.evaluate("pixelEvent('failed','image-a',{status:503})")
+        expect(a.get_by_role('alert')).to_contain_text('HTTP 503')
+        retry = a.get_by_role('button', name='Retry', exact=True)
+        expect(retry).to_be_visible()
+        expect(b.get_by_role('button', name='Retry', exact=True)).to_be_visible()
+        # The server still fails: the image is read again (both cells showing it), and the failure is shown again.
+        retry.click()
+        self.page.wait_for_function('reads.length === 2')
+        self.assertEqual(self.page.evaluate('reads'), [['a', 'image-a', 0], ['b', 'image-a', 0]])
+        self.assertEqual(self.page.evaluate('cellPresses'), 0, 'the press stays on Retry')
+        expect(a.get_by_role('alert')).to_contain_text('HTTP 503')
+        expect(retry).to_be_visible()
+        self.page.wait_for_timeout(300)
+        self.assertEqual(self.page.evaluate('reads.length'), 2, 'no read is made without a press')
+        # A second press while the first read is out reads once: the button leaves with the failure.
+        self.page.evaluate("answers.push('ok','ok')")
+        retry.click()
+        expect(retry).to_have_count(0)
+        self.page.wait_for_function('reads.length === 4')
+        expect(self.page.get_by_role('alert')).to_have_count(0)
+        self.page.wait_for_timeout(300)
+        self.assertEqual(self.page.evaluate('reads.length'), 4)
+        # A cell that has moved on to another image before the press is not read again for the old one.
+        self.page.evaluate("pixelEvent('failed','image-c',{status:404})")
+        c_retry = self.page.locator('#c').get_by_role('button', name='Retry', exact=True)
+        expect(c_retry).to_be_visible()
+        self.page.evaluate("cells[2].image = 'image-d'")
+        c_retry.click()
+        self.page.wait_for_timeout(300)
+        self.assertEqual(self.page.evaluate('reads.length'), 4, 'only the image the cell shows is read again')
+        # A series the series strip placed has that load's own notice and Retry in the cell: one Retry per cell. When that
+        # notice leaves, the image's Retry comes back.
+        self.page.evaluate("""() => { const pane = document.createElement('div'); pane.dataset.cy = 'viewport-pane';
+          cells[2].element.replaceWith(pane); pane.append(cells[2].element); cells[2].image = 'image-g';
+          const load = document.createElement('section'); load.className = 'kin-series-load'; load.id = 'series-load';
+          pane.append(load); pixelEvent('failed','image-g',{status:503}); }""")
+        expect(self.page.locator('#c').get_by_role('alert')).to_contain_text('HTTP 503')
+        expect(self.page.locator('#c').get_by_role('button')).to_have_count(0)
+        self.page.evaluate("document.getElementById('series-load').remove()")
+        expect(self.page.locator('#c').get_by_role('button', name='Retry', exact=True)).to_be_visible()
+        # A cell on the CPU fallback, and one the viewer cannot read again (no stack index), keep the explanation only.
+        self.page.evaluate("cells[2].image = 'image-e'; cells[2].useCPURendering = true; pixelEvent('failed','image-e',{status:503})")
+        expect(self.page.locator('#c').get_by_role('alert')).to_contain_text('HTTP 503')
+        expect(self.page.locator('#c').get_by_role('button')).to_have_count(0)
+        self.page.evaluate("cells[2].image = 'image-f'; cells[2].useCPURendering = false; delete cells[2]._setImageIdIndex; pixelEvent('failed','image-f',{status:503})")
+        expect(self.page.locator('#c').get_by_role('alert')).to_contain_text('HTTP 503')
+        expect(self.page.locator('#c').get_by_role('button')).to_have_count(0)
+        self.page.evaluate('extension.onModeExit()')
+        expect(self.page.get_by_role('alert')).to_have_count(0)
+
     def test_failed_module_can_retry_without_reopening_study(self):
         self.script('tool-retry')
         for source, factory, asset, global_name, member in [
@@ -452,4 +534,127 @@ class ViewerCautionDOM(unittest.TestCase):
         native = {'native': True, 'type': 'component', 'role': None, 'text': None, 'same': True}
         self.assertEqual(state['present'], native); self.assertEqual(state['other'], native)
         self.assertEqual(state['seg'], dict(notice, text='현재 검사에서 이 SEG의 원본 시리즈를 찾을 수 없어 표시하지 않았습니다. 원본 시리즈가 있는 검사에서 여세요.'))
+
+    def test_segmentation_that_cannot_be_read_says_so_in_its_cell_and_stops_loading(self):
+        # The pinned SEG viewport shows 'Loading SEG...' until its read succeeds; a refused read (the page policy blocks the
+        # reader's generated code) was only logged, so the cell loaded for good. The failure is said in that cell.
+        self.script('sof3-decode'); self.script('image-load-status')
+        state = self.page.evaluate("""async () => {
+          window.cornerstone = {getWebWorkerManager:()=>null, cache:{getImage:()=>null},
+            Enums:{Events:{IMAGE_LOAD_FAILED:'failed',IMAGE_LOADED:'loaded',STACK_NEW_IMAGE:'stack',VIEWPORT_NEW_IMAGE_SET:'set'}},
+            eventTarget:new EventTarget(), getRenderingEngines:()=>[]};
+          const segNative = props => 'native SEG', rtNative = props => 'native RT';
+          const entries = {'@ohif/extension-cornerstone-dicom-seg.viewportModule.dicom-seg': {component:segNative},
+            '@ohif/extension-cornerstone-dicom-rt.viewportModule.dicom-rt': {component:rtNative}};
+          const segEntry = entries['@ohif/extension-cornerstone-dicom-seg.viewportModule.dicom-seg'];
+          const rtEntry = entries['@ohif/extension-cornerstone-dicom-rt.viewportModule.dicom-rt'];
+          // Each read waits for the case to settle it, like the network and the pinned reader do.
+          const pending = [], reads = [];
+          const read = id => function (options) { reads.push([id, this === sets.get(id), options]);
+            return new Promise((resolve, reject) => pending.push({id, resolve, reject})); };
+          const set = (id, modality, reference) => ({displaySetInstanceUID:id, Modality:modality, referencedDisplaySetInstanceUID:reference, load:read(id)});
+          const sets = new Map([['ct1', {displaySetInstanceUID:'ct1', Modality:'CT'}], ['seg1', set('seg1', 'SEG', 'ct1')],
+            ['seg2', set('seg2', 'SEG', 'ct1')], ['rt1', set('rt1', 'RTSTRUCT', 'ct1')], ['lost', set('lost', 'SEG', null)]]);
+          const nativeLoads = new Map([...sets].map(([id, s]) => [id, s.load]));
+          const listeners = {}, ready = [];
+          let viewports = new Map([['one', {displaySetInstanceUIDs:['seg1'], isReady:true}], ['two', {displaySetInstanceUIDs:['seg2']}],
+            ['three', {displaySetInstanceUIDs:['rt1'], isReady:true}]]);
+          window.ext = kinCreateImageLoadStatus();
+          ext.preRegistration({servicesManager:{services:{uiNotificationService:{show(){}},
+            displaySetService:{EVENTS:{DISPLAY_SETS_ADDED:'added', DISPLAY_SETS_CHANGED:'changed'},
+              getDisplaySetByUID:id=>{ if (typeof id !== 'string') throw Error('displaySetInstanceUid must be a string'); return sets.get(id); },
+              getActiveDisplaySets:()=>[...sets.values()],
+              subscribe:(name, f)=>{ (listeners[name] ||= []).push(f); return {unsubscribe(){ listeners[name] = listeners[name].filter(g => g !== f); }}; }},
+            viewportGridService:{EVENTS:{GRID_STATE_CHANGED:'grid'}, getState:()=>({viewports}),
+              setViewportIsReady:(id, value)=>ready.push([id, value]),
+              subscribe:(name, f)=>{ (listeners[name] ||= []).push(f); return {unsubscribe(){ listeners[name] = listeners[name].filter(g => g !== f); }}; }}}},
+            extensionManager:{getModuleEntry:id=>entries[id] || null, getActiveDataSource:()=>[]}});
+          ext.onModeEnter();
+          const fire = name => (listeners[name] || []).forEach(f => f({}));
+          const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+          const show = (entry, id) => { const e = entry.component({displaySets:[sets.get(id)], viewportId:'x'});
+            return typeof e.type === 'string' ? {type:e.type, role:e.props.role, text:e.props.children} : {type:'native'}; };
+          const settle = async (id, how, value) => { const p = pending.findLast(q => q.id === id); p[how](value); await tick(); await tick(); };
+          const outcome = id => sets.get(id).load({headers:{}}).then(() => ({ok:true}), error => ({message:error.message, cause:error.cause?.name ?? null}));
+          const result = {};
+          result.loading = show(segEntry, 'seg1');
+          // The page policy refuses the reader's generated code: the pinned reader rejects with an EvalError.
+          let answer = outcome('seg1');
+          await settle('seg1', 'reject', new EvalError("Refused to evaluate a string as JavaScript because 'unsafe-eval' is not an allowed source of script in the following Content Security Policy directive"));
+          result.refused = await answer; result.redrawn = ready.splice(0);
+          result.refusedCell = show(segEntry, 'seg1');
+          // The same study's other segmentation and an image cell are not touched by that failure.
+          result.otherSeg = show(segEntry, 'seg2'); result.reads = reads.map(r => [r[0], r[1], !!r[2]?.headers]);
+          // A file that does not come: the cell says so with the status; a structure set is said as a structure set.
+          answer = outcome('seg2'); await settle('seg2', 'reject', Object.assign(new Error('Request failed'), {status:503}));
+          result.unavailable = await answer; result.unavailableRedrawn = ready.splice(0);
+          result.unavailableCell = show(segEntry, 'seg2');
+          answer = outcome('rt1'); await settle('rt1', 'reject', new Error('Request failed'));
+          result.rtCell = show(rtEntry, 'rt1'); result.rtInSegGuard = show(segEntry, 'rt1'); await answer; result.rtRedrawn = ready.splice(0);
+          // One notice per cell: a segmentation without its source keeps the source sentence even when its read also failed.
+          answer = outcome('lost'); await settle('lost', 'reject', new EvalError('unsafe-eval'));
+          result.lostCell = show(segEntry, 'lost'); await answer; result.lostRedrawn = ready.splice(0);
+          // The cell takes another series: the failure is forgotten, and opening the segmentation again reads it again.
+          viewports = new Map([['one', {displaySetInstanceUIDs:['ct1'], isReady:true}], ['two', {displaySetInstanceUIDs:['seg2']}],
+            ['three', {displaySetInstanceUIDs:['rt1'], isReady:true}]]);
+          fire('grid');
+          result.reopened = show(segEntry, 'seg1'); result.keptElsewhere = show(segEntry, 'seg2');
+          answer = outcome('seg1'); await settle('seg1', 'resolve'); result.retried = await answer; result.retriedCell = show(segEntry, 'seg1');
+          // A segmentation that arrives later is watched as well.
+          sets.set('seg3', set('seg3', 'SEG', 'ct1')); nativeLoads.set('seg3', sets.get('seg3').load); fire('added');
+          viewports.set('four', {displaySetInstanceUIDs:['seg3'], isReady:false});
+          answer = outcome('seg3'); await settle('seg3', 'reject', new EvalError('unsafe-eval'));
+          result.late = show(segEntry, 'seg3'); result.lateRedrawn = ready.splice(0); await answer;
+          // A read that fails after its cell moved on does not keep the next opening from reading again.
+          viewports.set('one', {displaySetInstanceUIDs:['seg1'], isReady:true});
+          answer = outcome('seg1');
+          viewports.set('one', {displaySetInstanceUIDs:['ct1'], isReady:true}); fire('grid');
+          await settle('seg1', 'reject', new EvalError('unsafe-eval')); await answer;
+          viewports.set('one', {displaySetInstanceUIDs:['seg1'], isReady:true}); fire('grid');
+          result.hiddenThenReopened = show(segEntry, 'seg1'); result.hiddenRedrawn = ready.splice(0);
+          // Overlapping reads of one set: the latest decides; its success clears the earlier failure and draws the cell again.
+          const older = outcome('seg2'), newer = outcome('seg2');
+          const [olderRead, newerRead] = pending.filter(q => q.id === 'seg2').slice(-2);
+          newerRead.resolve(); await tick(); await tick();
+          olderRead.reject(new EvalError('unsafe-eval')); await tick(); await tick();
+          result.overlapAnswers = [await older, await newer];
+          result.overlap = show(segEntry, 'seg2'); result.overlapRedrawn = ready.splice(0);
+          // A read still running when the viewer leaves the study ends with its own error and no notice.
+          sets.get('seg2').load({headers:{}}).catch(error => { result.afterExit = error.message; });
+          ext.onModeExit();
+          await settle('seg2', 'reject', new Error('original after exit'));
+          result.restored = [...nativeLoads].every(([id, f]) => sets.get(id).load === f) && segEntry.component === segNative && rtEntry.component === rtNative;
+          result.afterExitRedrawn = ready.splice(0);
+          return result;
+        }""")
+        refused = '이 SEG를 표시하지 못했습니다. 이 뷰어는 아직 SEG 표시를 지원하지 않습니다. 원본 영상 시리즈는 그대로 열어 볼 수 있습니다.'
+        unavailable = '이 SEG를 표시하지 못했습니다. SEG 파일을 읽지 못했습니다 (HTTP 503). 시리즈를 다시 열어 보고, 계속되면 관리자에게 문의하세요.'
+        native = {'type': 'native'}
+        self.assertEqual(state['loading'], native)
+        # The viewer's own notice receives the same sentence; the original error stays attached.
+        self.assertEqual(state['refused'], {'message': refused, 'cause': 'EvalError'})
+        self.assertEqual(state['redrawn'], [['one', True]], 'only the cell showing it is drawn again, as it was')
+        self.assertEqual(state['refusedCell'], {'type': 'p', 'role': 'alert', 'text': refused})
+        self.assertEqual(state['otherSeg'], native)
+        self.assertEqual(state['reads'], [['seg1', True, True]], 'the pinned read runs once, on its own set, with its headers')
+        self.assertEqual(state['unavailable'], {'message': unavailable, 'cause': 'Error'})
+        self.assertEqual(state['unavailableRedrawn'], [['two', False]])
+        self.assertEqual(state['unavailableCell'], {'type': 'p', 'role': 'alert', 'text': unavailable})
+        self.assertEqual(state['rtCell'], {'type': 'p', 'role': 'alert', 'text':
+                         '이 RTSTRUCT를 표시하지 못했습니다. RTSTRUCT 파일을 읽지 못했습니다. 시리즈를 다시 열어 보고, 계속되면 관리자에게 문의하세요.'})
+        self.assertEqual(state['rtInSegGuard'], native); self.assertEqual(state['rtRedrawn'], [['three', True]])
+        self.assertEqual(state['lostRedrawn'], [], 'a set no cell shows draws nothing again')
+        self.assertEqual(state['lostCell'], {'type': 'p', 'role': 'alert', 'text':
+                         '현재 검사에서 이 SEG의 원본 시리즈를 찾을 수 없어 표시하지 않았습니다. 원본 시리즈가 있는 검사에서 여세요.'})
+        self.assertEqual(state['reopened'], native)
+        self.assertEqual(state['keptElsewhere'], {'type': 'p', 'role': 'alert', 'text': unavailable})
+        self.assertEqual(state['retried'], {'ok': True}); self.assertEqual(state['retriedCell'], native)
+        self.assertEqual(state['late'], {'type': 'p', 'role': 'alert', 'text': refused})
+        self.assertEqual(state['lateRedrawn'], [['four', False]])
+        self.assertEqual(state['hiddenThenReopened'], native); self.assertEqual(state['hiddenRedrawn'], [])
+        self.assertEqual(state['overlapAnswers'], [{'message': refused, 'cause': 'EvalError'}, {'ok': True}])
+        self.assertEqual(state['overlap'], native); self.assertEqual(state['overlapRedrawn'], [['two', False]])
+        self.assertEqual(state['afterExit'], 'original after exit')
+        self.assertEqual(state['afterExitRedrawn'], [])
+        self.assertTrue(state['restored'])
 if __name__=='__main__': unittest.main()

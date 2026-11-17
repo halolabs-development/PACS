@@ -51,7 +51,8 @@ class OrdersSite(rf.FlowSite):
         self.scheduled_reads = []       # query strings
         self.retry_answers = {}         # oid -> entry for the next one-order read
         self.unmatch_refusal = None
-        self.hold_scheduled = 0         # the next N scheduled reads are held until release_scheduled()
+        self.own_ward = {h.UID: "SYN OWN WARD"}
+        self.hold_scheduled = 0        # the next N scheduled reads are held until release_scheduled()
         self.held_scheduled = []        # (route, body)
         # Reports: A approved, B preliminary, C unread.
         self.store[h.UID]["report"] = {"version": 2, "rs": "A", "findings": "SYN FINDINGS ALPHA", "conclusion": "SYN CONCLUSION ALPHA", "recommendation": ""}
@@ -62,9 +63,11 @@ class OrdersSite(rf.FlowSite):
 
     def state_of(self, uid, account):
         state = super().state_of(uid, account)
+        # The study's own ward; a Match shows the order's values (ward among them) only in the overlay and never writes it.
+        state["ward"] = self.own_ward.get(uid, state["ward"])
         order = self.matched_order(uid)
         if order:
-            state.update(matched="M", oid=order["oid"], ward=order["ward"], ov={"id": order["id"], "name": order["name"], "sex": order["sex"],
+            state.update(matched="M", oid=order["oid"], ov={"id": order["id"], "name": order["name"], "sex": order["sex"],
                          "birth": order["birth"], "age": "", "desc": order["desc"], "ward": order["ward"]})
         if state["rs"] == "A":
             state["approvedAt"] = "2026-10-03T01:00:00.000Z"
@@ -387,6 +390,12 @@ class TechnicianOrders(unittest.TestCase):
         self.assertEqual({"Sex", "BirthDate", "Age"} - set(result), set(), "every field Match writes over is shown")
         self.assertEqual(["SYN-ORDER-ACC-1", "SYNACC-001"], self.page.evaluate(
             f"() => {{ const s = studies.find(x => x.uid === {json.dumps(h.UID)}); return [s.acc, s.sourceAcc]; }}"))
+        # Ward: the study's own before, the order's while matched (the overlay over the own value).
+        self.assertEqual(["SYN OWN WARD", "NR"], result["Ward"])
+        ward = f"() => studies.find(x => x.uid === {json.dumps(h.UID)}).ward"
+        self.assertEqual("NR", self.page.evaluate(ward))
+        # Another state answer for the matched study (Verify, EM …) keeps showing the order's ward, not the own one under it.
+        self.assertEqual("NR", self.page.evaluate(f"() => {{ syncStudy({json.dumps(h.UID)}); return studies.find(x => x.uid === {json.dumps(h.UID)}).ward; }}"))
 
         # Unmatch…: a reason is required and sent; the result is what the list reads back.
         self.action("Unmatch…").click()
@@ -395,6 +404,7 @@ class TechnicianOrders(unittest.TestCase):
         self.assertEqual(["SYN-ORDER-ACC-1", "SYNACC-001"], now["Accession"], "Now / Restored (from the images)")
         self.assertEqual("1980-01-01", now["BirthDate"][1])
         self.assertEqual("46", now["Age"][1])
+        self.assertEqual(["NR", "SYN OWN WARD"], now["Ward"], "the window shows the ward the Unmatch gives back")
         go = w.get_by_role("button", name="Unmatch")
         expect(go).to_be_disabled()
         w.get_by_label("Reason").fill("Wrong order of the same patient")
@@ -405,6 +415,12 @@ class TechnicianOrders(unittest.TestCase):
         self.assertEqual(["SYN-ORDER-ACC-1", "SYNACC-001"], result["Accession"])
         self.assertEqual(["M", "U"], result["Mt"])
         self.assertEqual([now["BirthDate"][1], now["Age"][1]], [result["BirthDate"][1], result["Age"][1]], "the preview is what was read back")
+        self.assertEqual(["NR", "SYN OWN WARD"], result["Ward"], "Unmatch leaves no value of the order: the ward is the study's own again")
+        self.assertEqual("SYN OWN WARD", self.page.evaluate(ward))
+        # A state answer with an empty ward (own, or an order's without a ward over a full own one) shows it empty.
+        self.assertEqual(["", ""], self.page.evaluate(f"""() => {{ const uid = {json.dumps(h.UID)}, s = studies.find(x => x.uid === uid);
+            appState[uid] = {{ ...appState[uid], ward: "", ov: null }}; syncStudy(uid); const own = s.ward;
+            appState[uid] = {{ ...appState[uid], ward: "SYN OWN WARD", ov: {{ ward: "" }} }}; syncStudy(uid); return [own, s.ward]; }}"""))
         self.assertEqual(("POST", "/api/unmatch", {"uid": h.UID, "reason": "Wrong order of the same patient"}), self.site.sent[-1])
 
     def test_unmatch_refusal_is_shown_in_the_window(self):

@@ -8,7 +8,8 @@
     if (!names.length || typeof canEdit !== 'function' || names.some(name =>
       fields[name].tagName !== 'TEXTAREA' || fields[name].ownerDocument !== home || !fields[name].isConnected)
       || new Set(Object.values(fields)).size !== names.length) throw new TypeError('Invalid report fields');
-    const states = Object.fromEntries(names.map(name => [name, { el: fields[name], revision: 0, composing: false, caret: false }]));
+    const states = Object.fromEntries(names.map(name => [name, { name, el: fields[name], revision: 0, composing: false, caret: false }]));
+    let last = null;
     // Measurement in a separate document cannot split the report's native undo typing group.
     const measure = host ? home.createElement('iframe') : null;
     let mirror = null;
@@ -105,7 +106,9 @@
       const input = () => { s.revision++; fit(writing ? null : s.el); };
       // 숫자 위치는 브라우저가 소유하고 여기서는 사람이 이 칸을 사용했는지만 기억한다. 같은 검사의
       // 경계에서 글이 같은 칸은 이 표시가 선택과 함께 옮겨 가고, 다른 검사나 바뀐 글에서는 지워진다.
-      const caret = () => { if (!writing) s.caret = true; };
+      // The same events name the field the person last worked in (focus, press, key, input) for commands that write
+      // where the reader is (Paste). A field hidden from the person is never that field; another study starts with none.
+      const caret = () => { if (!writing) { s.caret = true; if (!hidden(s.el)) last = s.name; } };
       // A field hidden from the person has no way in for the keyboard (no tab stop, off screen), but the document-wide
       // native Undo/Redo moves focus into it when it undoes or redoes a step of that field. Focus then goes back where
       // it came from (or nowhere): the next keystrokes must never change text no one sees.
@@ -211,6 +214,7 @@
           return { s, old, next, saved, same: sameStudy && old.value === next.value };
         });
         opening = Object.freeze({ uid: context.uid, selectionSeq: context.selectionSeq });
+        if (!sameStudy) last = null;
         if (mirror) mirror.value = "";
         for (const { s, old, next, saved, same } of replacements) {
           s.unbind();
@@ -381,6 +385,8 @@
 
     return Object.freeze({ switchStudy, replaceAuthoritative, capture, insert, insertMany, applyServer, read, isComposing, end,
       isCurrent,
+      // The report field the person last worked in for this study's opening, if it is still shown; otherwise null.
+      lastUsed: () => (last && !hidden(state(last).el) ? last : null),
       // True while this frame itself moves focus for a write: such focus is not the person choosing a field.
       isWriting: () => writing,
       element: name => state(name).el });

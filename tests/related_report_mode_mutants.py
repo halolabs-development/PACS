@@ -63,8 +63,17 @@ MUTANTS = [
      'return raw[start * 2:None if end is None else end * 2].decode("utf-16-le", errors="surrogatepass")',
      "return text[start:end]", "test_w5r2_wire_unicode_and_canonical_digest_vectors"),
     ("W5A-06-object-digest", "related_report_mode_dom_test.py",
-     'return sha(["related-insert-v1", r["insertRequestId"],',
-     'return sha(["wrong-object-contract", r["insertRequestId"],', "test_w5r2_wire_unicode_and_canonical_digest_vectors"),
+     'return sha(["related-insert-v2" if also else "related-insert-v1", r["insertRequestId"],',
+     'return sha(["related-insert-v2" if also else "wrong-object-contract", r["insertRequestId"],', "test_w5r2_wire_unicode_and_canonical_digest_vectors"),
+    # A whole-report Insert's digest (Findings and Conclusion in one request) is its own contract.
+    ("W5A-06-pair-digest", "related_report_mode_dom_test.py",
+     'return sha(["related-insert-v2" if also else "related-insert-v1", r["insertRequestId"],',
+     'return sha(["wrong-pair-contract" if also else "related-insert-v1", r["insertRequestId"],',
+     "test_whole_insert_back_before_the_receipt_keeps_both_fields"),
+    # An Insert whose second field is refused leaves no unsent first field for an ordinary save, even when its undo is refused.
+    ("whole-insert-unsent-findings-left", "report-draft-sync.js",
+     'if (reportFrame.replaceAuthoritative(texts)?.status !== "refused") { keepReportEditor(); undone = true; }', "",
+     "test_whole_insert_refused_undo_still_leaves_no_unsent_findings_for_an_ordinary_save"),
     ("W5A-07-historical-runtime-as-current", "report-draft-client.js", None,
      "c8e4f1b485ec05ccbb97589c74a573b3f48b70ce", "test_w5r2_runtime_assets_are_the_current_sources"),
     # PAGE-01: only clear/saved enters; an unknown save is not an entry permission.

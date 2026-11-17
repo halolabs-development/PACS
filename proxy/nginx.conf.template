@@ -46,6 +46,19 @@ map $request_method $kin_image_read_method {
     GET     1;
     HEAD    1;
 }
+# 뷰어 앱 파일(/ohif/)의 브라우저 캐시. 내장 뷰어의 응답에는 Cache-Control도 검증자(ETag·Last-Modified)도 없어 새 뷰어 창·
+# 새로고침마다 앱 전체(약 24 MB)를 다시 받았다. 이름에 내용 해시(16진 20자)가 들어간 번들·WebAssembly는 그 이름이 다른 내용을
+# 내는 일이 없으므로 1년 동안 묻지 않고 쓰게 한다. 이름이 판마다 같은 파일(뷰어 페이지, app-config.js, <id>.css, 폴리필,
+# 아이콘)은 쓸 때마다 다시 묻게(no-cache) 해서, 새 판을 올리면 새 페이지와 설정이 바로 읽히고 새 페이지가 새 번들 이름을 부른다.
+# 영상·메타데이터·판독·업무 화면(/worklist/)의 캐시 정책은 이 값과 무관하다(빈 값이면 머리글을 내지 않는다). 오래 두는 것은
+# 성공 응답뿐이고 /ohif/의 오류 응답은 no-store다 — 배포 중 아직 없는 번들의 404가 브라우저에 남지 않는다. 값은 응답 상태를
+# 보고 정하므로 add_header는 always로 둔다(상태는 머리글을 쓸 때 정해져 있다).
+map "$status:$uri" $kin_app_cache_control {
+    default                                                             "";
+    "~^20[06]:/ohif/([^/]+/)*([^/]+\.)?[0-9a-f]{20}\.(js|wasm)$"        "public, max-age=31536000, immutable";
+    "~^[23][0-9][0-9]:/ohif/"                                           "no-cache";
+    "~^[45][0-9][0-9]:/ohif/"                                           "no-store";
+}
 # 그 archive의 API 연결은 응답 뒤에도 nginx가 먼저 끊지 않는다(keepalive). 끊으면 API의 writer가 마지막 byte를 넘긴 뒤 자기
 # 응답을 끝내기 전에 연결이 닫혀, 끝까지 받은 다운로드가 Incomplete로 기록된다(S9-U4b (c) r2, hosted G3 dfca33a: nginx 200 전체
 # byte, API attempt aborted·responseFinished false).
@@ -145,6 +158,9 @@ server {
     add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; object-src 'self' blob:; frame-src 'self' blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "no-referrer" always;
+    # 뷰어 앱 파일의 캐시(위 map). 보안 헤더와 같은 수준에 두어 /ohif/ location이 보안 헤더와 함께 물려받는다 — location에
+    # add_header를 따로 두면 위 보안 헤더의 상속이 끊긴다. 값이 빈 경로(/ohif/ 밖)에는 아무 머리글도 붙지 않는다.
+    add_header Cache-Control $kin_app_cache_control always;
 
     # 직접 DICOM 요청의 인증 거절이 어느 거절인지(S7-U5): 인증 서브요청(/kin-authz)은 본문을 전달하지 못하므로 API가
     # 실은 X-KIN-Auth-Code를 보호 경로의 401/403 응답에 그대로 옮긴다. 값이 비면 nginx는 이 헤더를 내지 않는다 —
@@ -293,6 +309,9 @@ server {
         proxy_pass http://orthanc:8042;
         include /etc/nginx/snippets/orthanc-basic-auth.conf;
         proxy_hide_header Content-Security-Policy;
+        proxy_hide_header Cache-Control;
+        # 이 location은 자기 add_header를 두므로 서버 수준의 캐시 머리글도 여기서 다시 둔다(이름에 해시가 있어 오래 둔다).
+        add_header Cache-Control $kin_app_cache_control always;
         add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; object-src 'self' blob:; frame-src 'self' blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'" always;
         # location의 add_header는 상위 헤더 전체의 상속을 끊는다. CSP 외의 보안 헤더도 보존한다.
         include /etc/nginx/snippets/hsts.conf;
@@ -307,6 +326,8 @@ server {
         proxy_set_header Accept-Encoding "";
         proxy_pass http://orthanc:8042;
         include /etc/nginx/snippets/orthanc-basic-auth.conf;
+        # 캐시 정책은 서버 수준의 $kin_app_cache_control 하나다. 뷰어 서버가 언젠가 자기 값을 내도 두 값이 겹치지 않게 숨긴다.
+        proxy_hide_header Cache-Control;
         sub_filter_once off;
         sub_filter '<meta name="application-name" content="OHIF Viewer"/>' '<meta name="application-name" content="HALO PACS 판독 뷰어"/>';
         sub_filter '<meta name="apple-mobile-web-app-title" content="@ohif/app"/>' '<meta name="apple-mobile-web-app-title" content="HALO PACS 판독 뷰어"/>';

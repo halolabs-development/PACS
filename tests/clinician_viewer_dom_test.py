@@ -591,6 +591,10 @@ window.synRun = (name, options) => commandsManager.runCommand(name, options);
 window.synSR = name => { try { const result = commands.get(name).commandFn({ measurementData: [] });
   return typeof result?.then === 'function' ? result.then(() => 'ran', error => 'refused: ' + error.message) : 'ran'; }
   catch (error) { return 'refused: ' + error.message; } };
+// The same with the measurements chosen for the SR (as the measurement list hands them over).
+window.synSRWith = (name, measurementData) => { try { const result = commands.get(name).commandFn({ measurementData });
+  return typeof result?.then === 'function' ? result.then(() => 'ran', error => 'refused: ' + error.message) : 'ran'; }
+  catch (error) { return 'refused: ' + error.message; } };
 window.synAddLength = () => String(window.synTools.Length.addNewAnnotation({ detail: { element } })?.annotationUID);
 // addNewAnnotation called on a tool instance directly (no mode, no toolbar): 'true' when a mark was made (an annotationUID came back).
 window.synAdd = name => window.synTools[name] ? String(Boolean(window.synTools[name].addNewAnnotation({ detail: { element } })?.annotationUID)) : 'missing';
@@ -2689,6 +2693,145 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.wait_until(lambda: 'Recheck Access' in self.panel()['buttons'], 'the recheck offered after the refusal')
         self.assertNotIn('Length', self.panel()['buttons'])
         self.assertEqual([False, False], self.page.evaluate("() => [synInteracting, !!cornerstoneTools.annotation.state.getAnnotation('syn-drawing-Length')]"))
+
+    CALIBRATION_TOOLS = r'''() => {
+      // An image whose original gives no pixel spacing (a scanned film, an outside CR): no PixelSpacing, no ImagerPixelSpacing.
+      window.synMeta = {Modality: 'CR', SOPClassUID: '1.2.840.10008.5.1.4.1.1.1', Rows: 512, Columns: 512};
+      // The Calibration tool's answer as the pinned viewer keeps it: the calibrated-spacing metadata of that image, and the
+      // cached image's calibration while the image is in the cache (synCached false: dropped from the cache meanwhile).
+      window.synCalibration = null; window.synCached = true;
+      cornerstone.metaData.get = (type, id) => type === 'instance' ? synMeta : type === 'calibratedPixelSpacing' ? (synCalibration || undefined) :
+        type === 'imagePlaneModule' ? (synMeta.PixelSpacing ? {frameOfReferenceUID: 'SYN-FOR', rowPixelSpacing: 0.5, columnPixelSpacing: 0.5} : {frameOfReferenceUID: 'SYN-FOR'}) : undefined;
+      // synCacheCalibration: what the cached image holds when it differs from the metadata (undefined: the same).
+      window.synCacheCalibration = undefined;
+      cornerstone.cache.getImage = () => synCached ? {calibration: (synCacheCalibration === undefined ? synCalibration : synCacheCalibration) || undefined} : undefined;
+      cornerstoneTools.annotation.selection.setAnnotationSelected = (uid, on = true) => {
+        const a = cornerstoneTools.annotation.state.getAnnotation(uid);
+        if (!a) throw new TypeError("Cannot set properties of undefined (setting 'isSelected')");
+        a.isSelected = on; };
+      window.synInteracting = false; let made = 0;
+      const drawingTool = (name, count, configuration) => ({ mode: 'Active', configuration,
+        addNewAnnotation() {
+          const a = {annotationUID: 'syn-drawing-' + name + '-' + (++made), metadata: {toolName: name, referencedImageId: synImage()},
+            data: {handles: {points: Array.from({length: count}, () => [20, 20, 0])}, cachedStats: {}}};
+          cornerstoneTools.annotation.state.addAnnotation(a);
+          this.editData = {annotation: a, newAnnotation: true}; this.isDrawing = true; synInteracting = true; return a; },
+        cancel() { this.editData = null; this.isDrawing = false; synInteracting = false; } });
+      synTools.Length = drawingTool('Length', 2, {getTextLines: () => []});
+      synTools.EllipticalROI = drawingTool('EllipticalROI', 4,
+        {statsCalculator: {statsCallback() {}, getStatistics: () => ({array: []})}, getTextLines: () => []});
+      // A press of Length on the cell: 'refused' or the new mark's uid.
+      window.synPressLength = () => { const a = synTools.Length.addNewAnnotation({detail: {element: cornerstone.getEnabledElement().viewport.element}});
+        if (!a?.annotationUID) return 'refused';
+        cornerstoneTools.annotation.selection.setAnnotationSelected(a.annotationUID); return a.annotationUID; };
+      // The tool ends the drawing at the second point and computes its length (as the pinned Length does, in the calibrated unit).
+      window.synFinishLength = (uid, length) => { const a = cornerstoneTools.annotation.state.getAnnotation(uid);
+        a.data.handles.points = [[10, 20, 0], [110, 20, 0]];
+        a.data.cachedStats['imageId:' + a.metadata.referencedImageId] = {length, unit: 'mm User'};
+        synTools.Length.editData = null; synTools.Length.isDrawing = false; synInteracting = false; };
+      window.synLengthText = uid => { const a = cornerstoneTools.annotation.state.getAnnotation(uid);
+        return synTools.Length.configuration.getTextLines(a.data, 'imageId:' + a.metadata.referencedImageId); };
+      window.synCellNote = () => [...document.querySelectorAll('[data-kin-cell-note]')].map(n => n.textContent);
+    }'''
+
+    def length_rows(self):
+        return [row for row in self.panel()['rows'] if row and row[0].startswith('Length')]
+
+    def test_31_length_on_an_image_without_pixel_spacing_follows_the_screen_calibration(self):
+        """An image whose original gives no pixel spacing: Length is refused, the reason shown over the cell as well as in the
+        panel, until the reader sets a spacing with Calibration. Then Length is drawn with its value marked as a screen
+        calibration that is not saved: no row, no save, no unsaved-work warning, no number in the SR or the export. The
+        calibration lasts while the image's calibrated spacing does (a cache drop does not undo it); an image without it is
+        refused again, and an image with original spacing keeps its own rule (a calibration over it is refused as before)."""
+        self.me = RADIOLOGIST
+        self.open_viewer(before_boot=self.CALIBRATION_TOOLS)
+        self.wait_until(lambda: 'Length' in self.panel()['buttons'], 'writer controls')
+        reason = '원본에 픽셀 간격이 없습니다 · Calibration으로 화면 보정 후 잴 수 있습니다'
+        # 1. No spacing, no calibration: refused, with the reason over the cell and in the panel.
+        self.assertEqual('refused', self.page.evaluate('synPressLength()'))
+        self.assertEqual(reason, self.panel()['status'])
+        self.assertEqual([reason], self.page.evaluate('synCellNote()'))
+        # 2. Calibration (the reader's distance on this screen): Length is drawn, its value marked as not saved.
+        self.page.evaluate("() => { synCalibration = {type: 'User', scale: 2}; }")
+        uid = self.page.evaluate('synPressLength()')
+        self.assertNotEqual('refused', uid)
+        self.page.evaluate('([uid]) => synFinishLength(uid, 50)', [uid])
+        self.assertEqual(['50.0 mm', '화면 보정 · 저장 안 됨'], self.page.evaluate('([uid]) => synLengthText(uid)', [uid]))
+        self.page.evaluate('synTick(3)'); self.settle()
+        self.assertEqual([], self.length_rows(), 'a screen-calibrated Length is no saved measurement: no row, no Save')
+        self.assertEqual([False, True], self.page.evaluate('([uid]) => [window.kinViewerHistoryHasUnsaved(), !!cornerstoneTools.annotation.state.getAnnotation(uid)]', [uid]))
+        self.assertEqual([], self.writes, 'nothing of a screen-calibrated Length is sent to the server')
+        # Chosen for an SR: refused with why, nothing sent.
+        for name in ('storeMeasurements', 'downloadReport'):
+            answer = self.page.evaluate("([name, uid]) => synSRWith(name, [{uid, toolName: 'Length'}])", [name, uid])
+            self.assertTrue(answer.startswith('refused: ') and '화면 보정 측정은 저장되지 않아 SR에 넣지 않습니다.' in answer, answer)
+        self.assertNotIn('sr storeMeasurements', self.page.evaluate('synNative'))
+        self.assertEqual([], self.writes)
+        # 3. The image leaves the cache but its calibrated spacing stays (another image and back): the same.
+        self.page.evaluate('() => { synCached = false; }')
+        self.assertEqual(['50.0 mm', '화면 보정 · 저장 안 됨'], self.page.evaluate('([uid]) => synLengthText(uid)', [uid]))
+        self.page.evaluate('synTick(3)'); self.settle()
+        self.assertEqual([], self.length_rows())
+        # 4. No calibrated spacing (another image of the series, a viewer opened again): refused; a mark drawn under the
+        #    calibration says why it has no value and is still never saved.
+        self.page.evaluate('() => { synCached = true; synCalibration = null; }')
+        self.assertEqual([reason], self.page.evaluate('([uid]) => synLengthText(uid)', [uid]))
+        self.assertEqual('refused', self.page.evaluate('synPressLength()'))
+        self.page.evaluate('synTick(3)'); self.settle()
+        self.assertEqual([], self.length_rows())
+        self.assertFalse(self.page.evaluate('() => window.kinViewerHistoryHasUnsaved()'))
+        # 5. An image with original spacing and a calibration over it: refused as before (the display spacing differs).
+        self.page.evaluate("""() => { synMeta = {Modality: 'CR', SOPClassUID: '1.2.840.10008.5.1.4.1.1.1', Rows: 512, Columns: 512,
+          PixelSpacing: [0.5, 0.5]}; synCalibration = {type: 'User', scale: 2}; }""")
+        self.assertEqual('refused', self.page.evaluate('synPressLength()'))
+        self.assertEqual('표시 간격과 원본 간격이 일치하지 않습니다', self.panel()['status'])
+
+    def test_32_screen_calibration_is_read_from_the_calibrated_spacing_and_recalibration_waits_for_the_new_value(self):
+        """Which answer counts as a screen calibration, and a calibration made again over a drawn Length."""
+        self.me = RADIOLOGIST
+        self.open_viewer(before_boot=self.CALIBRATION_TOOLS)
+        self.wait_until(lambda: 'Length' in self.panel()['buttons'], 'writer controls')
+        cases = [
+            # The calibrated-spacing metadata says "uncalibrated": an older cached calibration does not count.
+            ("() => { synCalibration = {type: 'Uncalibrated'}; synCacheCalibration = {type: 'User', scale: 2}; }", 'refused'),
+            # No metadata: the cached image's calibration counts.
+            ("() => { synCalibration = null; synCacheCalibration = {type: 'User', scale: 2}; }", 'mark'),
+            # A scale that is not a positive number, an ultrasound region: no screen calibration.
+            ("() => { synCalibration = {type: 'User', scale: 0}; synCacheCalibration = undefined; }", 'refused'),
+            ("() => { synCalibration = {type: 'Region', scale: 2}; }", 'refused'),
+            # Functional groups without a pixel measure: no spacing of its own, so the screen calibration counts.
+            ("() => { synMeta = {...synMeta, SharedFunctionalGroupsSequence: [{PlaneOrientationSequence: [{}]}]}; synCalibration = {type: 'User', scale: 2}; }", 'mark'),
+            # A pixel measure without a pixel spacing in it (a slice thickness only): still no spacing of its own.
+            ("() => { synMeta = {...synMeta, SharedFunctionalGroupsSequence: [{PixelMeasuresSequence: [{SliceThickness: 1}]}]}; }", 'mark'),
+            # A pixel spacing in the functional groups (even one that cannot be read): the original's rules, not the screen's.
+            ("() => { synMeta = {...synMeta, SharedFunctionalGroupsSequence: [{PixelMeasuresSequence: [{PixelSpacing: 'x'}]}]}; }", 'refused'),
+            ("() => { synMeta = {...synMeta, SharedFunctionalGroupsSequence: undefined, PerFrameFunctionalGroupsSequence: [{FramePixelDataPropertiesSequence: [{ImagerPixelSpacing: [0.2, 0.2]}]}]}; }", 'refused'),
+        ]
+        for setup, want in cases:
+            self.page.evaluate(setup)
+            got = self.page.evaluate('synPressLength()')
+            if got != 'refused':
+                self.page.evaluate("([uid]) => { synTools.Length.cancel(); cornerstoneTools.annotation.state.removeAnnotation(uid); }", [got])
+            self.assertEqual(want, 'refused' if got == 'refused' else 'mark', setup)
+        # Calibration made again over a drawn Length: the tool replaces the mark's calculated values, which wait for the
+        # new calculation before a value is shown again.
+        self.page.evaluate("() => { synMeta = {Modality: 'CR', SOPClassUID: '1.2.840.10008.5.1.4.1.1.1', Rows: 512, Columns: 512}; synCalibration = {type: 'User', scale: 2}; }")
+        uid = self.page.evaluate('synPressLength()')
+        self.page.evaluate('([uid]) => synFinishLength(uid, 50)', [uid])
+        self.page.evaluate('synTick(2)')
+        self.assertEqual(['50.0 mm', '화면 보정 · 저장 안 됨'], self.page.evaluate('([uid]) => synLengthText(uid)', [uid]))
+        self.page.evaluate("""([uid]) => { synCalibration = {type: 'User', scale: 4}; const a = cornerstoneTools.annotation.state.getAnnotation(uid);
+          a.data.cachedStats = {['imageId:' + a.metadata.referencedImageId]: {length: 50, unit: 'mm User'}}; }""", [uid])
+        self.assertEqual(['재확인 필요: 현재 좌표로 계산되지 않았습니다'], self.page.evaluate('([uid]) => synLengthText(uid)', [uid]))
+        self.page.evaluate('synTick(2)')
+        self.page.evaluate("""([uid]) => { const a = cornerstoneTools.annotation.state.getAnnotation(uid);
+          a.data.cachedStats['imageId:' + a.metadata.referencedImageId] = {length: 25, unit: 'mm User'}; }""", [uid])
+        self.assertEqual(['25.0 mm', '화면 보정 · 저장 안 됨'], self.page.evaluate('([uid]) => synLengthText(uid)', [uid]))
+        # A value the tool gives in pixels is no mm.
+        self.page.evaluate("""([uid]) => { const a = cornerstoneTools.annotation.state.getAnnotation(uid);
+          a.data.cachedStats['imageId:' + a.metadata.referencedImageId] = {length: 100, unit: 'px'}; }""", [uid])
+        self.assertEqual(['측정을 완료하세요'], self.page.evaluate('([uid]) => synLengthText(uid)', [uid]))
+        self.assertEqual([], self.length_rows())
 
     def notice(self,session,kind='broadcast'):
         self.observer.evaluate("""([session,kind])=>{const notice={type:'session-ended',session,operation:Date.now(),status:'ending'};

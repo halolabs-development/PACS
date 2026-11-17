@@ -75,7 +75,10 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
   const instanceOf = v => { const id = imageId(v); try { return id ? window.cornerstone.metaData.get('instance', id) || null : null; } catch (_) { return null; } };
   const paneOf = v => v.element.closest('[data-cy=viewport-pane]') || v.element.parentElement;
   const keyOf = v => { try { return v.id + '|' + (grid.getState().viewports.get(v.id)?.displaySetInstanceUIDs?.[0] || ''); } catch (_) { return v.id + '|'; } };
-  const frameOf = (v, instance) => Number(instance?.NumberOfFrames) > 1 ? (v.getCurrentImageIdIndex?.() ?? 0) + 1 : 1;
+  // The frame of the shown image is the one its imageId names: a cell can show some frames of a multi-frame file (one
+  // time point of an enhanced MR), so its place in the stack is not the frame number.
+  const frameOf = (v, instance) => window.kinViewerImageReference?.(imageId(v))?.frame ??
+    (Number(instance?.NumberOfFrames) > 1 ? (v.getCurrentImageIdIndex?.() ?? 0) + 1 : 1);
   const zoomOf = v => { try { return v.getZoom(); } catch (_) { return null; } };
   const activeId = () => { try { return grid.getActiveViewportId?.() ?? null; } catch (_) { return null; } };
   const activeStack = () => viewportOf(activeId()) || null;
