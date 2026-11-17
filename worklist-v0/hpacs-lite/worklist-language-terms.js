@@ -6193,6 +6193,7 @@ window.KinLanguageTerms = {
     ["{t0} · {1} ({2}) · {3} · 검사 {4}", "{t0} · {1} ({2}) · {3} · Study {4}", "l"],
     ["선택 볼륨 원본", "Selected volume source", "l"],
     ["선택 영상", "Selected image", "l"],
+    ["· {0} ({1}) · {2} · 검사 {3}", "· {0} ({1}) · {2} · Study {3}", "l"],
     ["환자 ID가 확인되는 영상 칸을 선택하세요.", "Select a viewport whose patient ID can be confirmed.", "m"],
     ["환자 ID 복사", "Copy Patient ID", "l"],
     ["영상 선택이나 세션이 바뀌었습니다. 메뉴를 다시 열어 대상을 확인하세요.", "The image selection or session changed. Reopen the menu and check the target.", "m"],

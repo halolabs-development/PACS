@@ -223,7 +223,8 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
       const wanted = chosen;
       studySelect.replaceChildren();
       const all = element('option', 'Open Studies', studySelect); all.value = ''; all.translate = true;
-      for (const item of data?.list || []) { const option = element('option', label(item), studySelect); option.value = item.uid; }
+      // A study's mark, date, modality and description: data, shown as written in any screen language.
+      for (const item of data?.list || []) { const option = element('option', label(item), studySelect); option.value = item.uid; option.translate = false; }
       studySelect.value = wanted;
     }
     function paint() {
