@@ -49,6 +49,9 @@ CHECK = 'Save view changes automatically and apply on reopen'
 JOB = '&kinJob=00000000-0000-4000-8000-000000000001'
 READ = 'GET /api/studies/%s/viewer-auto-view' % STUDY
 
+# The viewer's split-series identity functions, as the shipped viewer configuration has them.
+SPLIT_RULE = (lambda s: s[s.index('function kinSeriesSplitFrame('):s.index('function kinEnhancedTimePoints(')])((ROOT / 'config' / 'ohif.js').read_text(encoding='utf-8'))
+
 HARNESS = """<!doctype html><html><head><style>
 body { margin: 0; background: #111; color: #eee; --kin-panel: #222; --kin-ux-text: #eee; --kin-ux-secondary: #999; --kin-accent: #6cf; }
 #grid { position: absolute; left: 0; top: 80px; width: 1240px; height: 440px; }
@@ -564,7 +567,7 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         saved = cell(se, 2)
         saved.update({'sop': sop, 'frame': 5, 'index': 1})
         def prepare(page):
-            page.add_script_tag(path=str(ROOT / 'config' / 'ohif' / 'series-split.js'))
+            page.add_script_tag(content=SPLIT_RULE)
             page.evaluate(setup, [se, sop])
         page = self.open(saved=view([saved]), cells=(('left', 'phase-1'),), prepare=prepare)
         page.wait_for_function("document.querySelector('[data-auto-view-badge]')", timeout=8000)

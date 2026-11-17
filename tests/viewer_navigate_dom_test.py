@@ -14,6 +14,9 @@ from viewer_features_dom_test import HARNESS, SETUP, OWNER
 
 ROOT = Path(__file__).resolve().parents[1]
 HPACS = ROOT / "worklist-v0" / "hpacs-lite"
+
+# The viewer's split-series identity functions, as the shipped viewer configuration has them.
+SPLIT_RULE = (lambda s: s[s.index('function kinSeriesSplitFrame('):s.index('function kinEnhancedTimePoints(')])((ROOT / 'config' / 'ohif.js').read_text(encoding='utf-8'))
 ORIGIN = "https://viewer-navigate.test"
 
 # Stack cells and a synthetic cornerstone: synStack(id, count, {frames, modality, at}) puts an image set in a cell.
@@ -417,9 +420,9 @@ class ViewerNavigateDOMTest(unittest.TestCase):
         # One enhanced MR file (12 frames, two time points) that the viewer's split-series rule shows as two display sets
         # of six frames each; both sets hold the same SOP Instance.
         page = self.open(stacks=())
-        # The viewer's split-series rule and its image reference parser (one classic script in the viewer).
-        for name in ('series-split.js', 'navigation.js'):
-            page.add_script_tag(path=str(ROOT / 'config' / 'ohif' / name))
+        # The viewer's split-series identity and its image reference parser (one classic script in the viewer).
+        page.add_script_tag(content=SPLIT_RULE)
+        page.add_script_tag(path=str(ROOT / 'config' / 'ohif' / 'navigation.js'))
         page.evaluate("""() => {
           const part = (uid, first) => { synSets[uid] = { SeriesInstanceUID: '1.2.9.90', images: Array.from({ length: 6 }, (_, n) =>
             ({ SOPInstanceUID: '1.2.9.90.1', kinSplitFrame: first + n })) }; };

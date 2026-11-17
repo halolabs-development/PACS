@@ -94,6 +94,13 @@ class SeriesSplitE2E(CTSyncE2E):
         expect(p.locator(THUMBS).filter(has_text='DYN T1')).to_have_count(3)
         self.synchronized(p, '1/3 Phase 1', '3/3 Phase 3', 'phases')
 
+    def test_series_split_03_series_that_arrived_apart_stay_as_they_are(self):
+        f, series = self.mr([0, 1000], 12, 'DiffusionBValue', 'AX DWI', series_per_group=True)
+        p = self.launch(self.login(), [f])
+        p.wait_for_function('s=>services.displaySetService.getActiveDisplaySets().filter(d=>s.includes(d.SeriesInstanceUID)).length===2', arg=series, timeout=30000)
+        self.assertEqual(sorted((s['description'], s['count']) for s in self.sets(p, series)), [('AX DWI 0', 12), ('AX DWI 1000', 12)])
+        expect(p.locator(THUMBS).filter(has_text='AX DWI')).to_have_count(2)
+
     def enhanced(self, groups, positions, description):
         """Store one Enhanced MR Image Storage instance into a fresh synthetic study: `groups` time points (Temporal
         Position Index 1..n in each frame's Frame Content Sequence) of `positions` slices, stored time point by time
@@ -180,13 +187,6 @@ class SeriesSplitE2E(CTSyncE2E):
         found = self.parts(p, series)
         self.assertEqual([(s['description'], s['count'], s['multiFrame'], s['sops']) for s in found], [('AX T2 ENH', 1, True, [sop])])
         expect(p.locator(THUMBS).filter(has_text='AX T2 ENH')).to_have_count(1)
-
-    def test_series_split_03_series_that_arrived_apart_stay_as_they_are(self):
-        f, series = self.mr([0, 1000], 12, 'DiffusionBValue', 'AX DWI', series_per_group=True)
-        p = self.launch(self.login(), [f])
-        p.wait_for_function('s=>services.displaySetService.getActiveDisplaySets().filter(d=>s.includes(d.SeriesInstanceUID)).length===2', arg=series, timeout=30000)
-        self.assertEqual(sorted((s['description'], s['count']) for s in self.sets(p, series)), [('AX DWI 0', 12), ('AX DWI 1000', 12)])
-        expect(p.locator(THUMBS).filter(has_text='AX DWI')).to_have_count(2)
 
 
 def load_tests(loader, tests, pattern):
