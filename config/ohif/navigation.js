@@ -24,7 +24,7 @@ async function kinViewerNavigateTo(env, target) {
   const identity = { seriesUid: target.seriesUid, sopUid: target.sopUid, frame: target.frame };
   let sets;
   try {
-    sets = env.services.displaySetService.getActiveDisplaySets().filter(d => d.StudyInstanceUID === scope && d.SeriesInstanceUID === target.seriesUid && (d.images || d.instances || []).some(i => i.SOPInstanceUID === target.sopUid));
+    sets = env.services.displaySetService.getActiveDisplaySets().filter(d => d.StudyInstanceUID === scope && d.SeriesInstanceUID === target.seriesUid && kinSeriesSplitHolds(d, target.sopUid, target.frame));
   } catch (_) { return refusal('tool-missing'); }
   if (sets.length !== 1) return refusal('series-missing');
   const viewportId = env.services.viewportGridService.getActiveViewportId();

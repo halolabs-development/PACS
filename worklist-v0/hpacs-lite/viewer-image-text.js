@@ -46,8 +46,10 @@
         const values = imageIds.map(metadata), patientId = values[0]?.PatientID;
         if (!patient(patientId) || values.some(value => !value || value.StudyInstanceUID !== displaySet.StudyInstanceUID || value.SeriesInstanceUID !== displaySet.SeriesInstanceUID || value.PatientID !== patientId || !uid(value.SOPInstanceUID)) || source.some(value => value?.StudyInstanceUID !== displaySet.StudyInstanceUID || value?.SeriesInstanceUID !== displaySet.SeriesInstanceUID || value?.PatientID !== patientId || !uid(value?.SOPInstanceUID))) throw Error('영상의 환자 또는 원본 식별이 일치하지 않습니다.');
         const imageSops = [...new Set(values.map(value => value.SOPInstanceUID))].sort(), rawSourceSops = source.map(value => value.SOPInstanceUID), sourceSops = [...new Set(rawSourceSops)].sort();
+        // Each entry once: by SOP, or by SOP and frame for the frames of one multi-frame file split by time point.
+        const sourceKeys = typeof win.kinSeriesSplitKey === 'function' ? source.map(value => win.kinSeriesSplitKey(value)) : rawSourceSops;
         const wrapper = viewport.element.closest?.('[data-cy="viewport-pane"]') || viewport.element.parentElement;
-        if (!same(imageSops, sourceSops) || rawSourceSops.length !== sourceSops.length || !wrapper?.isConnected || !wrapper.contains?.(viewport.element) || wrappers.has(wrapper) || !wrapper.querySelector(`.kin-viewer-identity[data-study="${displaySet.StudyInstanceUID}"]`)) throw Error('영상 식별 표시와 원본 목록을 확인하세요.');
+        if (!same(imageSops, sourceSops) || new Set(sourceKeys).size !== sourceKeys.length || !wrapper?.isConnected || !wrapper.contains?.(viewport.element) || wrappers.has(wrapper) || !wrapper.querySelector(`.kin-viewer-identity[data-study="${displaySet.StudyInstanceUID}"]`)) throw Error('영상 식별 표시와 원본 목록을 확인하세요.');
         wrappers.add(wrapper);
         panes.push({ viewportId, cell, viewport, element: viewport.element, wrapper, displaySet, displaySetId: setIds[0], imageIds: [...imageIds], identity: sourceIdentity(displaySet, imageIds, values, source) });
       }

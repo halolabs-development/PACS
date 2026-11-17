@@ -705,6 +705,20 @@ class ViewerDisplayDOMTest(unittest.TestCase):
     def shown(self, page, cell='right'):
         return page.evaluate("id => (({ VOILUTFunction, voiRange }) => ({ VOILUTFunction, voiRange }))(synViewports.get(id).getProperties())", cell)
 
+    def test_13b_the_stored_voi_of_a_split_time_point_is_read_for_the_frame_shown(self):
+        # A cell showing one time point of an enhanced MR file (split by the viewer, series-split.js): its first image is
+        # frame 5 of the file, so the stored VOI is the one of frame 5, not of the cell's first place.
+        page = self.open()
+        page.add_script_tag(path=str(ROOT / "config" / "ohif" / "navigation.js"))
+        page.wait_for_function("synVoiCalls.some(c => c[0] === 'right' && c[1] === 'TABLE')")
+        page.evaluate("""() => { const id = 'wadors:/studies/1.2.826.0.1.100/series/1.2.826.0.1.102/instances/1.2.826.0.1.2/frames/5';
+          synMeta[id] = { ...synMeta['syn:right:1'], Modality: 'MR', NumberOfFrames: 12 };
+          const original = kinStoredVoi.spec; window.synVoiFrames = [];
+          kinStoredVoi.spec = (sop, frame, options) => { synVoiFrames.push(frame); return frame === 5 ? original(sop, 1, options) : null; };
+          synVoiCalls.length = 0; synViewports.get('right').image = id;
+          synFire('right', 'PRE_STACK_NEW_IMAGE'); synFire('right', 'STACK_NEW_IMAGE'); }""")
+        page.wait_for_function("synVoiCalls.some(c => c[0] === 'right' && c[1] === 'TABLE')")
+        self.assertEqual({5}, set(page.evaluate("synVoiFrames")))
     def test_18_reader_window_kept_after_the_viewers_image_properties(self):
         page = self.open()
         page.wait_for_function("synVoiCalls.some(c => c[0] === 'right' && c[1] === 'TABLE')")
