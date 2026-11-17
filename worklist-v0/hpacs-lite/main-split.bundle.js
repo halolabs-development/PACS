@@ -2175,7 +2175,7 @@
           if (el) { el.disabled = true; el.title = relatedWhy; }
         }
       // The controls painted by their own areas from the report state (Mark CVR: critical-result-send.js) follow it here too:
-      // a commit's answer, a poll or a draft sync that changed it reaches them with More left open. Before the identity rule
+      // the answer of a commit, a poll or a draft sync that changed it reaches them with More left open. Before the identity rule
       // below, which then has the last word.
       (window.kinOnReportButtons || []).forEach(change => { try { change(); } catch (_) {} });
       // WORKLIST-SPLIT-UID: the selected UID was excluded as unresolved. Its text stays (loadReport keeps it) and is read-only;

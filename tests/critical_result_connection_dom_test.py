@@ -7,7 +7,8 @@ report state the page knows changes (worklist-data.js updateReportButtons calls 
 
 - More is open when the reader approves: Mark CVR turns on without closing and opening More again.
 - The connection is lost: Mark CVR and the window's Send are off and say why; the recipient and message stay. The answer of
-  a recipient read that arrives meanwhile is kept, and the window can be used once the connection is back.
+  a recipient read that arrives meanwhile is kept, and the window can be used once the connection is back. A read that
+  left before the outage and fails only once the connection is back is read again (the entry and the window).
 - The connection is lost: Reply, Close and the Retry of an unknown write are off (nothing is sent) and the text stays;
   Discard stays. Once back, they send as before.
 
@@ -252,6 +253,47 @@ class CriticalResultConnectionDOM(unittest.TestCase):
         self.assertEqual((CLIN["sub"], "SYN critical finding written once back"),
                          (self.page.locator("#cvr-send-recipient").input_value(),
                           self.page.locator("#cvr-send-message").input_value()))
+
+    def test_a_read_that_left_before_the_outage_and_fails_once_back_is_read_again(self):
+        """The approval's Mark CVR read is still out when the connection is lost and comes back, and fails only then: Mark
+        CVR is read again and turns on (it stayed off, closing and opening More did not help)."""
+        self.open_study()
+        self.page.locator("#findings").fill("SYN findings for approve")
+        self.page.locator("#conclusion").fill("SYN conclusion")
+        self.open_more()
+        expect(self.mark()).to_have_attribute("title", NOT_SENDABLE)
+        self.site.held_recipients = []
+        self.page.locator("#b-approve").click()
+        self.wait(lambda: len(self.site.held_recipients) == 1, "the approval's Mark CVR read")
+        held, self.site.held_recipients = self.site.held_recipients, None
+        self.disconnect()
+        self.reconnect()
+        for route, _ in held:
+            route.abort("connectionreset")
+        expect(self.mark()).to_be_enabled()
+        self.assertIn("판독 판 v1", self.mark().get_attribute("title"))
+        self.assertEqual(["W", "A", "A"], self.site.recipient_reads)
+
+    def test_a_window_read_that_left_before_the_outage_and_fails_once_back_is_read_again(self):
+        """The window's recipient read is still out when the connection is lost and comes back, and fails only then: the
+        window reads again and its recipient list and Send are usable (they stayed locked)."""
+        self.open_study(approved=True)
+        self.open_more()
+        expect(self.mark()).to_be_enabled()
+        self.site.held_recipients = []
+        self.mark().click()
+        expect(self.page.locator("#cvr-send")).to_be_visible()
+        self.wait(lambda: len(self.site.held_recipients) == 1, "the window's recipient read")
+        held, self.site.held_recipients = self.site.held_recipients, None
+        self.disconnect()
+        self.reconnect()
+        for route, _ in held:
+            route.abort("connectionreset")
+        expect(self.page.locator("#cvr-send")).to_be_visible()
+        expect(self.page.locator("#cvr-send-recipient")).to_be_enabled()
+        self.page.locator("#cvr-send-recipient").select_option(CLIN["sub"])
+        self.page.locator("#cvr-send-message").fill("SYN critical finding after the late failure")
+        expect(self.page.locator("#cvr-send-submit")).to_be_enabled()
 
     # ── study questions ──
 
