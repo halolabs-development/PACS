@@ -369,6 +369,78 @@ class ManualSrE2E(SRProvenanceE2E):
         p.wait_for_function("()=>cornerstone.getRenderingEngines().filter(e=>e.id!=='_thumbnails').some(e=>e.getViewports().some(v=>v.type==='stack'&&v.getCurrentImageId()))")
         self.assertEqual(p.evaluate('()=>segErrors'),[]);self.assertEqual(self.saved(f),[]);self.assertEqual(self.hashes(),original)
 
+    def segmentation_with_source(self,f):
+        # A one-frame binary segmentation drawn on this study's first image: its source series is in the study, so the
+        # pinned SEG viewport reads it (and the page policy refuses the reader's generated code).
+        from pydicom.dataset import Dataset, FileDataset, FileMetaDataset
+        from pydicom.sequence import Sequence
+        from pydicom.uid import ExplicitVRLittleEndian, generate_uid
+        from pynetdicom import AE
+        storage='1.2.840.10008.5.1.4.1.1.66.4'
+        original=dcmread(io.BytesIO(self.stack.orthanc_bytes('/instances/'+self.stack.first_instance_id(f.uid)+'/file')))
+        sop,series=generate_uid(),generate_uid()
+        meta=FileMetaDataset();meta.TransferSyntaxUID=ExplicitVRLittleEndian;meta.MediaStorageSOPClassUID=storage;meta.MediaStorageSOPInstanceUID=sop;meta.ImplementationClassUID=generate_uid()
+        d=FileDataset(None,{},file_meta=meta,preamble=b'\0'*128)
+        for key in ['PatientName','PatientID','PatientBirthDate','PatientSex','InstitutionName','StudyInstanceUID','StudyDate','StudyTime','AccessionNumber','StudyID','StudyDescription','FrameOfReferenceUID']:
+            setattr(d,key,getattr(original,key))
+        d.SOPClassUID=storage;d.SOPInstanceUID=sop;d.SeriesInstanceUID=series;d.SpecificCharacterSet='ISO_IR 192';d.Modality='SEG'
+        d.SeriesNumber=12;d.InstanceNumber=1;d.SeriesDescription='Nodule segmentation';d.ContentLabel='NODULE';d.SegmentationType='BINARY'
+        d.ContentDate='20260908';d.ContentTime='090000';d.ImageType=['DERIVED','PRIMARY'];d.LossyImageCompression='00'
+        d.Rows,d.Columns=original.Rows,original.Columns;d.NumberOfFrames=1;d.SamplesPerPixel=1;d.PhotometricInterpretation='MONOCHROME2'
+        d.BitsAllocated=d.BitsStored=1;d.HighBit=0;d.PixelRepresentation=0
+        image=Dataset();image.ReferencedSOPClassUID=original.SOPClassUID;image.ReferencedSOPInstanceUID=original.SOPInstanceUID
+        referenced=Dataset();referenced.SeriesInstanceUID=original.SeriesInstanceUID;referenced.ReferencedInstanceSequence=[image];d.ReferencedSeriesSequence=[referenced]
+        def code(value,scheme,meaning):
+            c=Dataset();c.CodeValue=value;c.CodingSchemeDesignator=scheme;c.CodeMeaning=meaning;return c
+        segment=Dataset();segment.SegmentNumber=1;segment.SegmentLabel='Nodule';segment.SegmentAlgorithmType='MANUAL'
+        segment.SegmentedPropertyCategoryCodeSequence=[code('49755003','SCT','Morphologically Altered Structure')]
+        segment.SegmentedPropertyTypeCodeSequence=[code('27925004','SCT','Nodule')];segment.RecommendedDisplayCIELabValue=[43803,26565,37722]
+        d.SegmentSequence=[segment]
+        orientation=Dataset();orientation.ImageOrientationPatient=list(getattr(original,'ImageOrientationPatient',[1,0,0,0,1,0]))
+        spacing=Dataset();spacing.PixelSpacing=list(getattr(original,'PixelSpacing',[1,1]));spacing.SliceThickness=getattr(original,'SliceThickness',1) or 1
+        shared=Dataset();shared.PlaneOrientationSequence=[orientation];shared.PixelMeasuresSequence=[spacing];d.SharedFunctionalGroupsSequence=[shared]
+        source=Dataset();source.ReferencedSOPClassUID=original.SOPClassUID;source.ReferencedSOPInstanceUID=original.SOPInstanceUID
+        source.PurposeOfReferenceCodeSequence=[code('121322','DCM','Source image for image processing operation')]
+        derivation=Dataset();derivation.SourceImageSequence=[source];derivation.DerivationCodeSequence=[code('113076','DCM','Segmentation')]
+        content=Dataset();content.DimensionIndexValues=[1,1]
+        position=Dataset();position.ImagePositionPatient=list(getattr(original,'ImagePositionPatient',[0,0,0]))
+        which=Dataset();which.ReferencedSegmentNumber=1
+        frame=Dataset();frame.DerivationImageSequence=[derivation];frame.FrameContentSequence=[content];frame.PlanePositionSequence=[position]
+        frame.SegmentIdentificationSequence=[which];d.PerFrameFunctionalGroupsSequence=Sequence([frame])
+        mask=np.zeros((int(original.Rows),int(original.Columns)),dtype=np.uint8);mask[original.Rows//3:original.Rows//2,original.Columns//3:original.Columns//2]=1
+        d.PixelData=np.packbits(mask.ravel(),bitorder='little').tobytes()
+        ae=AE(ae_title='HALLYM_CT');ae.add_requested_context(storage,ExplicitVRLittleEndian)
+        assoc=ae.associate('127.0.0.1',4242,ae_title='KINLAB');self.assertTrue(assoc.is_established)
+        try:self.assertEqual(assoc.send_c_store(d).Status,0)
+        finally:assoc.release()
+        return dict(series=series,sop=sop)
+
+    def test_11_segmentation_the_viewer_cannot_read_says_so_and_stops_loading(self):
+        f=self.specimen();seg=self.segmentation_with_source(f);original=self.hashes();p=self.observed(f)
+        p.wait_for_function('series=>__d05c1.services.displaySetService.getActiveDisplaySets().some(d=>d.SeriesInstanceUID===series)',arg=seg['series'])
+        p.evaluate("()=>{window.segErrors=[];addEventListener('error',e=>segErrors.push(String(e.error?.stack||e.message)),true)}")
+        state=p.evaluate('''series=>{const s=__d05c1.services,sets=s.displaySetService.getActiveDisplaySets();window.segDS=sets.find(d=>d.SeriesInstanceUID===series);
+            window.segCell=s.viewportGridService.getActiveViewportId();window.segBefore=s.viewportGridService.getState().viewports.get(segCell).displaySetInstanceUIDs.slice();
+            const source=s.displaySetService.getDisplaySetByUID(segDS.referencedDisplaySetInstanceUID);
+            s.viewportGridService.setDisplaySetsForViewport({viewportId:segCell,displaySetInstanceUIDs:[segDS.displaySetInstanceUID]});
+            return {modality:segDS.Modality,source:source?.SeriesInstanceUID??null};}''',seg['series'])
+        self.assertEqual(state['modality'],'SEG');self.assertIsNotNone(state['source'],'the segmentation has its source series in this study')
+        pane=p.locator('[data-cy="viewport-pane"]').filter(has=p.locator('[role=alert]'))
+        notice=p.locator('[data-cy="viewport-pane"] [role=alert]')
+        # The page policy refuses the pinned SEG reader's generated code: the cell says so instead of loading for good.
+        expect(notice).to_have_text('이 SEG를 표시하지 못했습니다. 이 뷰어는 아직 SEG 표시를 지원하지 않습니다. 원본 영상 시리즈는 그대로 열어 볼 수 있습니다.',timeout=60000)
+        expect(pane).to_have_count(1);expect(p.get_by_text('Loading SEG...',exact=True)).to_have_count(0)
+        expect(p.locator('#kin-viewer-history')).to_be_attached();expect(p.get_by_role('button',name='Refresh',exact=True)).to_be_visible()
+        self.assertEqual(p.evaluate('()=>segErrors'),[])
+        # The cell takes its image series back, and its images show.
+        p.evaluate('()=>__d05c1.services.viewportGridService.setDisplaySetsForViewport({viewportId:segCell,displaySetInstanceUIDs:segBefore})')
+        expect(notice).to_have_count(0)
+        p.wait_for_function("()=>cornerstone.getRenderingEngines().filter(e=>e.id!=='_thumbnails').some(e=>e.getViewports().some(v=>v.type==='stack'&&v.getCurrentImageId()))")
+        # Opening the segmentation again reads it again and says the same.
+        p.evaluate('()=>__d05c1.services.viewportGridService.setDisplaySetsForViewport({viewportId:segCell,displaySetInstanceUIDs:[segDS.displaySetInstanceUID]})')
+        expect(notice).to_have_text('이 SEG를 표시하지 못했습니다. 이 뷰어는 아직 SEG 표시를 지원하지 않습니다. 원본 영상 시리즈는 그대로 열어 볼 수 있습니다.',timeout=60000)
+        self.assertEqual(p.evaluate('()=>segErrors'),[]);self.assertEqual(self.saved(f),[]);self.assertEqual(self.hashes(),original)
+
     def structure_set_without_source(self,f):
         # An RT structure set of this study drawn on a series that is not in it, as an outside study can arrive.
         from pydicom.dataset import Dataset, FileDataset, FileMetaDataset

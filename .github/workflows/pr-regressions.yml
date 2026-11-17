@@ -1237,6 +1237,12 @@ jobs:
       run: |
         command -v nginx >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq nginx; }
         python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/proxy-grant-log --cwd . --file proxy/nginx.conf.template --file proxy/15-kin-config.envsh --file tests/proxy_grant_log_test.py -- python3 -B tests/proxy_grant_log_test.py
+    - name: Viewer application files are kept by content name and asked for again by fixed name (real nginx)
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      timeout-minutes: 5
+      run: |
+        command -v nginx >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq nginx; }
+        python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/proxy-app-cache --cwd . --file proxy/nginx.conf.template --file proxy/15-kin-config.envsh --file tests/proxy_grant_log_test.py --file tests/proxy_app_cache_test.py -- python3 -B tests/proxy_app_cache_test.py
     - name: Synthetic workspace DOM evidence
       if: ${{ always() && !github.event.pull_request.draft }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

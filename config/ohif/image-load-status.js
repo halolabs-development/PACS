@@ -113,18 +113,89 @@ function kinCreateImageLoadStatus() {
     // shows nothing. The guard uses no hooks and gives the native viewport back as a child, so it mounts and unmounts as the
     // answer changes.
     const overlayElement = (type, props) => ({ $$typeof: Symbol.for('react.element'), type, key: null, ref: null, props, _owner: null });
+    // The same viewports read their own file when the cell opens and show 'Loading SEG...' until that read succeeds. A
+    // failed read (the page policy refuses the pinned SEG reader's generated code, or the file does not come) is only
+    // logged by the pinned viewer, so the cell loaded for good. Each failure is kept per display set while a cell shows
+    // it; that cell then says it instead of the native viewport, and the viewer's own error notice gets the same sentence.
+    // Opening the series again after the cell showed something else reads it again.
+    const overlayModalities = ['SEG', 'RTSTRUCT'], overlayFailures = new Map(), overlayLoads = new Map();
+    const overlayFailure = (modality, error) => {
+      const message = String(error?.message ?? error ?? '');
+      const head = '이 ' + modality + '를 표시하지 못했습니다. ';
+      if (error?.name === 'EvalError' || /content security policy|unsafe-eval/i.test(message))
+        return head + '이 뷰어는 아직 ' + modality + ' 표시를 지원하지 않습니다. 원본 영상 시리즈는 그대로 열어 볼 수 있습니다.';
+      const status = error?.status;
+      const http = Number.isInteger(status) && status > 0 ? ' (HTTP ' + status + ')' : '';
+      return head + modality + ' 파일을 읽지 못했습니다' + http + '. 시리즈를 다시 열어 보고, 계속되면 관리자에게 문의하세요.';
+    };
+    const shownOverlays = () => {
+      const shown = new Set();
+      for (const viewport of services.viewportGridService?.getState?.()?.viewports?.values?.() || [])
+        for (const id of viewport?.displaySetInstanceUIDs || []) shown.add(id);
+      return shown;
+    };
+    // The grid draws its cells again when a cell's state is set; the ready flag is set to what it already is.
+    const redrawOverlay = id => {
+      if (!active) return;
+      const grid = services.viewportGridService;
+      for (const [viewportId, viewport] of grid?.getState?.()?.viewports || [])
+        if (viewport?.displaySetInstanceUIDs?.includes(id)) grid.setViewportIsReady?.(viewportId, Boolean(viewport.isReady));
+    };
+    // Only the latest read of a set decides (two cells can start reads that overlap), and only while a cell shows the set:
+    // a read that ends after its cell moved on must not keep the next opening from reading again.
+    // (The pinned RTSTRUCT reader does not reject on a failed read, so this reaches structure sets only when it does.)
+    const watchOverlayLoads = () => {
+      for (const set of services.displaySetService?.getActiveDisplaySets?.() || []) {
+        if (!overlayModalities.includes(set?.Modality) || typeof set.load !== 'function' || overlayLoads.has(set)) continue;
+        const original = set.load, id = set.displaySetInstanceUID;
+        const watched = { original, load: null, attempt: 0 };
+        // After the pinned caller has handled the result, so its own continuation is not cut by the redraw.
+        const redrawLater = () => setTimeout(() => redrawOverlay(id), 0);
+        watched.load = async function (...args) {
+          const attempt = ++watched.attempt;
+          const latest = () => active && attempt === watched.attempt;
+          try {
+            const result = await original.apply(this, args);
+            if (latest() && overlayFailures.delete(id)) redrawLater();
+            return result;
+          } catch (error) {
+            if (!active) throw error;
+            const text = overlayFailure(set.Modality, error);
+            if (latest() && shownOverlays().has(id)) { overlayFailures.set(id, text); redrawLater(); }
+            throw new Error(text, { cause: error });
+          }
+        };
+        overlayLoads.set(set, watched);
+        set.load = watched.load;
+      }
+    };
+    const forgetHiddenOverlays = () => {
+      if (!overlayFailures.size) return;
+      const shown = shownOverlays();
+      for (const id of [...overlayFailures.keys()]) if (!shown.has(id)) overlayFailures.delete(id);
+    };
     const overlayGuards = [['SEG', '@ohif/extension-cornerstone-dicom-seg.viewportModule.dicom-seg'],
       ['RTSTRUCT', '@ohif/extension-cornerstone-dicom-rt.viewportModule.dicom-rt']].map(([modality, id]) => {
       const entry = extensions?.getModuleEntry?.(id), native = entry?.component;
       const sourceless = set => set?.Modality === modality && !(typeof set.referencedDisplaySetInstanceUID === 'string' &&
         set.referencedDisplaySetInstanceUID && services.displaySetService?.getDisplaySetByUID(set.referencedDisplaySetInstanceUID));
-      const guarded = props => active && props?.displaySets?.some(sourceless)
-        ? overlayElement('p', { role: 'alert', style: { margin: 12, padding: 12, background: '#161c25', color: '#ffb4a8', whiteSpace: 'normal' },
-          children: '현재 검사에서 이 ' + modality + '의 원본 시리즈를 찾을 수 없어 표시하지 않았습니다. 원본 시리즈가 있는 검사에서 여세요.' })
-        : overlayElement(native, props);
+      const failed = set => set?.Modality === modality && overlayFailures.get(set.displaySetInstanceUID);
+      // One notice per cell: a segmentation without its source says that, whatever its read did.
+      const notice = props => !active ? null : props?.displaySets?.some(sourceless)
+        ? '현재 검사에서 이 ' + modality + '의 원본 시리즈를 찾을 수 없어 표시하지 않았습니다. 원본 시리즈가 있는 검사에서 여세요.'
+        : props?.displaySets?.map(failed).find(Boolean) || null;
+      const guarded = props => {
+        const text = notice(props);
+        return text ? overlayElement('p', { role: 'alert', style: { margin: 12, padding: 12, background: '#161c25', color: '#ffb4a8', whiteSpace: 'normal' },
+          children: text }) : overlayElement(native, props);
+      };
       if (typeof native === 'function') entry.component = guarded;
       return { entry, native, guarded };
     });
+    watchOverlayLoads();
+    const displaySetEvents = services.displaySetService?.EVENTS || {};
+    const displaySetSubscriptions = [displaySetEvents.DISPLAY_SETS_ADDED, displaySetEvents.DISPLAY_SETS_CHANGED].filter(Boolean)
+      .map(name => services.displaySetService.subscribe?.(name, watchOverlayLoads)).filter(Boolean);
     const imageUrl = imageId => {
       try { return new URL(imageId.replace(/^wadors:/, ''), window.location.href).href; } catch (_) { return null; }
     };
@@ -308,12 +379,16 @@ function kinCreateImageLoadStatus() {
     // React can mount the viewport after the load has already failed. Observe that mount, without a polling timer.
     const observer = new MutationObserver(refresh);
     observer.observe(document.body, { childList: true, subtree: true });
-    const subscription = services.viewportGridService.subscribe(services.viewportGridService.EVENTS.GRID_STATE_CHANGED, refresh);
+    const gridChanged = () => { forgetHiddenOverlays(); refresh(); };
+    const subscription = services.viewportGridService.subscribe(services.viewportGridService.EVENTS.GRID_STATE_CHANGED, gridChanged);
     stop = () => {
       active = false;
       if (window.fetch === observedFetch) window.fetch = originalFetch;
       if (workerManager?.executeTask === checkedDecode) workerManager.executeTask = executeTask;
       for (const { entry, native, guarded } of overlayGuards) if (entry?.component === guarded) entry.component = native;
+      for (const [set, { original, load }] of overlayLoads) if (set.load === load) set.load = original;
+      for (const displaySetSubscription of displaySetSubscriptions) displaySetSubscription.unsubscribe?.();
+      overlayLoads.clear(); overlayFailures.clear();
       sof3.stop();
       core.eventTarget.removeEventListener(events.IMAGE_LOAD_FAILED, failed);
       if (events.IMAGE_LOAD_ERROR) core.eventTarget.removeEventListener(events.IMAGE_LOAD_ERROR, failed);

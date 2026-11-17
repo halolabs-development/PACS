@@ -2996,6 +2996,7 @@
       "proxy/nginx.conf.template",
       "scripts/record-run.py",
       "tests/ci_workflows.py",
+      "tests/proxy_app_cache_test.py",
       "tests/proxy_grant_log_test.py"
     ],
     "measurements": [
