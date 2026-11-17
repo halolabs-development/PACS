@@ -68,6 +68,7 @@ const CASES = [
   'TEST-E-02 manifest_sources R22 E-R4-03 a malformed object stays unverified with unresolved sources while normal objects open and hang',
   'TEST-E-02 manifest_sources R23 E-R4-04 non-P format errors preserve Partial View facts and the actual error basis',
   'TEST-E-02 manifest_sources R24 E-R4-05 empty frame selection needs a single-frame target and source SOP class cannot be missing',
+  'TEST-E-02 manifest_sources R25 a one-frame GENERATED_2D tomosynthesis object stating SAMPLED with technique NONE (GE SenoIris V-Preview) is a device synthetic 2D view; an unlisted volumetric summary stays unverified',
   'TEST-E-02 manifest_sources A7 E-R4-01 valid numeric strings retain their raw spelling and the reference inventory must match it',
   'TEST-E-03 basis_and_bypass A1 reading inside the managing institution needs no consent, contract or extra step and delivers',
   'TEST-E-03 basis_and_bypass A2 a complete processor agreement delivers; a lawful third-party basis is recorded but sends no body in Part 1',
@@ -1307,6 +1308,48 @@ def('TEST-E-02 manifest_sources R24', () => {
     ref['00081160'] = dj('IS', ...frames); delete ref['00081150'];
     const r = allowed(() => ruleCaseResult(c));
     assert.deepEqual([r.sourceAccepted, r.sourceLinkStatus, r.links[0].sopClass], [false, 'unresolved', null]);
+  }
+});
+// The header shape of the GE SenoIris V-Preview objects in the public TCIA EA1141 collection (DOI 10.7937/2BAS-HR33,
+// CC BY 4.0), re-entered on the GE Pristina synthetic 2D case: SAMPLED with technique NONE on the object and its frame,
+// the side only in the shared Frame Anatomy (no Image Laterality, Laterality or View Position).
+def('TEST-E-02 manifest_sources R25', () => {
+  const senoIris = (vp, technique) => {
+    const c = ruleCase('VENDOR-GE-GENERATED-BTO12'), hd = c.input.dicom, frameType = hd['52009230'].Value[0]['00189504'].Value[0];
+    hd['00081090'] = dj('LO', 'SenoIris_1SP2(440)'); hd['00181020'] = dj('LO', '1SP2(440)');
+    for (const tag of ['00200062', '00200060', '00185101']) delete hd[tag];
+    hd['00089206'] = frameType['00089206'] = dj('CS', vp);
+    hd['00089207'] = frameType['00089207'] = dj('CS', technique);
+    return c;
+  };
+  const r = allowed(() => ruleCaseResult(senoIris('SAMPLED', 'NONE')));
+  assert.deepEqual([r.class, r.status, r.laterality, r.view, r.presentation, r.fullViewAutoMatch],
+    ['device-synthetic-2d', 'verified', 'R', 'CC', 'presentation', true]);
+  assert.equal(r.basis, 'breast-tomosynthesis-generated-2d');
+  // The known pairs keep their result; a pair no device is known to write is not guessed from the Image Type.
+  assert.equal(allowed(() => ruleCaseResult(senoIris('SAMPLED', 'TOMOSYNTHESIS'))).class, 'device-synthetic-2d');
+  for (const [vp, technique] of [['VOLUME', 'NONE'], ['SAMPLED', 'MAX_IP'], ['VOLUME', 'TOMOSYNTHESIS'], ['VOLUME', 'MAX_IP']])
+    assert.deepEqual([allowed(() => ruleCaseResult(senoIris(vp, technique))).class], ['unverified'], vp + '/' + technique);
+  // The frame must state what the object states.
+  const conflict = senoIris('SAMPLED', 'NONE');
+  conflict.input.dicom['52009230'].Value[0]['00189504'].Value[0]['00089207'] = dj('CS', 'TOMOSYNTHESIS');
+  assert.equal(allowed(() => ruleCaseResult(conflict)).class, 'unverified');
+  const twoFrames = senoIris('SAMPLED', 'NONE');
+  twoFrames.input.dicom['00280008'] = dj('IS', 2);
+  twoFrames.input.dicom['52009230'].Value.push(structuredClone(twoFrames.input.dicom['52009230'].Value[0]));
+  assert.equal(allowed(() => ruleCaseResult(twoFrames)).class, 'unverified', 'a multi-frame object is never a synthetic 2D view');
+  // No manufacturer named: still the stated synthetic view; partial, magnified, spot-compressed or side-conflicting
+  // objects never fill a full-view slot, with or without a manufacturer.
+  const noVendor = () => { const c = senoIris('SAMPLED', 'NONE'); for (const tag of ['00080070', '00081090', '00181020']) delete c.input.dicom[tag]; return c; };
+  assert.deepEqual((r => [r.class, r.fullViewAutoMatch])(allowed(() => ruleCaseResult(noVendor()))), ['device-synthetic-2d', true]);
+  const modifier = code => hd => { hd['00540220'].Value[0]['00540222'] = { vr: 'SQ', Value: [{ '00080102': dj('SH', 'SCT'), '00080100': dj('SH', code) }] }; };
+  for (const [name, change] of [
+    ['partial view', hd => { hd['00281350'] = dj('CS', 'YES'); hd['00281352'] = { vr: 'SQ', Value: [{ '00080102': dj('SH', 'SCT'), '00080100': dj('SH', '255561001') }] }; }],
+    ['magnification', modifier('399163009')], ['spot compression', modifier('399055006')],
+    ['laterality conflict', hd => { hd['00200062'] = dj('CS', 'L'); }],
+  ]) for (const c of [senoIris('SAMPLED', 'NONE'), noVendor()]) {
+    change(c.input.dicom);
+    assert.equal(allowed(() => ruleCaseResult(c)).fullViewAutoMatch, false, name);
   }
 });
 

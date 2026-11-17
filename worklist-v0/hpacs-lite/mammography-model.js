@@ -347,11 +347,7 @@
     // Pristina 10.x A.2.4 declares ORIGINAL planes with the TOMOSYNTHESIS technique.
     if(v1==='ORIGINAL'&&(v4!=='NONE'||technique!=='NONE'&&!gePlanes)){issue('original-requires-none');return null;}
     if(v4==='GENERATED_2D'){
-      // GE Pristina 10.x A.2 and Fuji 897N201838B §8.1.1.36 declare SAMPLED/TOMOSYNTHESIS.
-      // Hologic RD-04751 declares VOLUME/MAX_IP across AWS versions, not only the old sample's version.
-      const standard=volumetric==='SAMPLED'&&technique==='TOMOSYNTHESIS';
-      const hologicShape=volumetric==='VOLUME'&&technique==='MAX_IP'&&hologicDimensions(item);
-      if(imageType!==PROFILE_SYNTHETIC_TYPE||declared!==1||!(standard||hologicShape)){issue('unsupported-device-profile');return null;}
+      if(imageType!==PROFILE_SYNTHETIC_TYPE||declared!==1||!generated2dSummary(item,volumetric,technique)){issue('unsupported-device-profile');return null;}
       out.kind='generated2d';out.basis=hologic(item,PROFILE_SYNTHETIC)?PROFILE_SYNTHETIC.id:'breast-tomosynthesis-generated-2d';
       return 'device-synthetic-2d';
     }
@@ -379,6 +375,15 @@
     issue('slice-or-slab-evidence-missing');out.sliceKind='unspecified';return null;
   }
   const PROFILE_SYNTHETIC_TYPE='DERIVED\\PRIMARY\\TOMOSYNTHESIS\\GENERATED_2D';
+  // The volumetric summaries (Volumetric Properties / Volume Based Calculation Technique) a device is known to write on
+  // its one-frame synthetic 2D view. Any other pair stays unverified: it is not guessed from the Image Type alone.
+  //   SAMPLED/TOMOSYNTHESIS  GE Pristina 10.x A.2 and Fuji 897N201838B §8.1.1.36 conformance statements.
+  //   SAMPLED/NONE           GE SenoIris V-Preview objects of the public TCIA EA1141 collection (DOI 10.7937/2BAS-HR33).
+  //   VOLUME/MAX_IP          Hologic RD-04751 across AWS versions; Hologic Selenia Dimensions / 3Dimensions only.
+  function generated2dSummary(item,volumetric,technique){
+    if(volumetric==='SAMPLED')return technique==='TOMOSYNTHESIS'||technique==='NONE';
+    return volumetric==='VOLUME'&&technique==='MAX_IP'&&hologicDimensions(item);
+  }
 
   function classifyCTTomosynthesis(item,fg,type,out,issue){
     out.frames=1;
