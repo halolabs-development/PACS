@@ -86,7 +86,10 @@ window.KinViewerFeatures?.module('navigate', ({ services, store, ui }) => {
   const index = v => { try { const n = v.getTargetImageIdIndex?.() ?? v.getCurrentImageIdIndex?.(); return Number.isInteger(n) ? n : 0; } catch (_) { return 0; } };
   const stack = v => v?.type === 'stack' && ids(v).length > 0;
   const instance = (v, imageId) => { try { return window.cornerstone?.metaData?.get('instance', imageId || v.getCurrentImageId?.() || ids(v)[0]) || {}; } catch (_) { return {}; } };
-  const multiframe = v => Number(instance(v).NumberOfFrames) > 1;
+  // The display set a cell shows; a split part of one multi-frame file (series-split.js) is an ordinary stack.
+  const shownSet = v => { try { const uid = services.viewportGridService?.getState?.().viewports?.get(v?.id)?.displaySetInstanceUIDs?.[0]; return uid ? services.displaySetService?.getDisplaySetByUID?.(uid) || null : null; } catch (_) { return null; } };
+  const multiframe = v => Number(instance(v).NumberOfFrames) > 1 && window.kinSeriesSplitPart?.(shownSet(v)) !== true;
+  const frameOf = v => window.kinViewerImageReference?.(v?.getCurrentImageId?.())?.frame ?? 1;
   const sopOf = v => { const uid = instance(v).SOPInstanceUID; return typeof uid === 'string' ? uid : String(v?.getCurrentImageId?.() || '').match(/\/instances\/([0-9.]+)\//)?.[1] || null; };
   const seriesOf = v => { const uid = instance(v).SeriesInstanceUID; return typeof uid === 'string' ? uid : String(v?.getCurrentImageId?.() || '').match(/\/series\/([0-9.]+)\//)?.[1] || null; };
   const modality = v => String(instance(v).Modality || '').trim().toUpperCase();
@@ -286,15 +289,16 @@ window.KinViewerFeatures?.module('navigate', ({ services, store, ui }) => {
   // What the newly given display sets hold: their instances (a series can be split into several display sets, one per
   // multi-frame instance) and, where the instances are not listed, their series.
   function assign(id, uids) {
-    const sops = new Set(), series = new Set();
+    const sops = new Set(), series = new Set(), given = [];
     for (const uid of uids) {
       try {
         const set = services.displaySetService?.getDisplaySetByUID?.(uid);
         for (const item of set?.instances || set?.images || []) if (typeof item?.SOPInstanceUID === 'string') sops.add(item.SOPInstanceUID);
         if (set?.SeriesInstanceUID) series.add(set.SeriesInstanceUID);
+        if (set) given.push(set);
       } catch (_) {}
     }
-    awaiting.set(id, { sops, series, before: seen.get(id) });
+    awaiting.set(id, { sops, series, sets: given, before: seen.get(id) });
     const cell = cells.get(id);
     if (cell) { cell.kind = cell.mode = null; cell.start = null; cell.held = false; paint(id); }
     // The newly given series may already be the one shown (its images were there before the grid said so).
@@ -316,7 +320,9 @@ window.KinViewerFeatures?.module('navigate', ({ services, store, ui }) => {
     const v = viewport(id), list = ids(v), key = stack(v) ? list[0] + '|' + list.length : null;
     const wait = awaiting.get(id);
     if (wait) {
-      const given = wait.sops.size ? wait.sops.has(sopOf(v)) : wait.series.size ? wait.series.has(seriesOf(v)) : key !== wait.before;
+      // A split part of one multi-frame file shares its SOP with the other parts: the shown frame must be one it holds.
+      const holds = sop => typeof window.kinSeriesSplitHolds === 'function' ? wait.sets.some(set => window.kinSeriesSplitHolds(set, sop, frameOf(v))) : wait.sops.has(sop);
+      const given = wait.sops.size ? wait.sops.has(sopOf(v)) && holds(sopOf(v)) : wait.series.size ? wait.series.has(seriesOf(v)) : key !== wait.before;
       if (!key || !given) return true;
       awaiting.delete(id); seen.delete(id);
     }

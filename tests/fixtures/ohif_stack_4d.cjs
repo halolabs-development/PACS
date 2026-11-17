@@ -91,4 +91,32 @@ function mixedSeries({ tag = 'DiffusionBValue', values = [0, 1000], positions = 
   return instances;
 }
 
-module.exports = { STACK, ImageSet, createStackHandler, mixedSeries };
+// One enhanced (multi-frame) MR instance as the pinned DICOMweb data source stores it (naturalized): `values.length`
+// time points of `positions` axial frames in one file, the value of each frame in `group`'s per-frame functional group
+// (Frame Content Sequence's Temporal Position Index by default), the frame's position in its Plane Position Sequence and
+// the orientation shared. Frames are stored time point by time point unless `order` gives another frame order.
+function enhancedSeries({ values = [1, 2], positions = 4, group = 'FrameContentSequence', tag = 'TemporalPositionIndex',
+  shared = false, sop = '2.25.8001.1', series = '2.25.8001', description = 'DYN T1 ENH', modality = 'MR',
+  sopClass = '1.2.840.10008.5.1.4.1.1.4.1', order = null, patch = () => {} } = {}) {
+  let frames = [];
+  for (const value of values) for (let p = 0; p < positions; p++) frames.push({ value, p });
+  if (order) frames = order(frames);
+  const PerFrameFunctionalGroupsSequence = frames.map(({ value, p }) => {
+    const item = { PlanePositionSequence: [{ ImagePositionPatient: [0, 0, p * 4] }],
+      FrameContentSequence: [{ InStackPositionNumber: p + 1, StackID: '1' }] };
+    if (!shared) item[group] = [{ ...(item[group]?.[0] || {}), [tag]: value }];
+    return item;
+  });
+  const SharedFunctionalGroupsSequence = [{ PlaneOrientationSequence: [{ ImageOrientationPatient: [1, 0, 0, 0, 1, 0] }],
+    PixelMeasuresSequence: [{ PixelSpacing: [1, 1], SliceThickness: 4 }], ...(shared ? { [group]: [{ [tag]: values[0] }] } : {}) }];
+  const instance = { imageId: `wadors:/studies/2.25.7000/series/${series}/instances/${sop}/frames/1`,
+    SOPInstanceUID: sop, SeriesInstanceUID: series, StudyInstanceUID: '2.25.7000', SOPClassUID: sopClass, Modality: modality,
+    SeriesNumber: 9, SeriesDescription: description, InstanceNumber: 1, NumberOfFrames: frames.length, Rows: 64, Columns: 64,
+    FrameOfReferenceUID: '2.25.7002', PerFrameFunctionalGroupsSequence, SharedFunctionalGroupsSequence };
+  patch(instance, frames);
+  return [instance];
+}
+// The imageId the pinned DICOMweb data source gives frame `frame` of an instance (getImageIdsForInstance({ instance, frame })).
+const frameImageId = (instance, frame) => instance.imageId.replace(/\/frames\/\d+$/, '/frames/' + frame);
+
+module.exports = { STACK, ImageSet, createStackHandler, mixedSeries, enhancedSeries, frameImageId };

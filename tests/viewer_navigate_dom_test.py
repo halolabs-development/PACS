@@ -413,6 +413,43 @@ class ViewerNavigateDOMTest(unittest.TestCase):
         self.assertEqual(['Frame ' + str(n) for n in range(1, 7)], self.labels(page))
         self.assertTrue(all('/instances/1.2.9.80.2/' in d for d in page.evaluate('synDrawn')[drawn:]))
 
+    def test_12_a_time_point_of_a_split_multi_frame_file_is_an_ordinary_stack_and_waits_for_its_own_frames(self):
+        # One enhanced MR file (12 frames, two time points) that the viewer's split-series rule shows as two display sets
+        # of six frames each; both sets hold the same SOP Instance.
+        page = self.open(stacks=())
+        # The viewer's split-series rule and its image reference parser (one classic script in the viewer).
+        for name in ('series-split.js', 'navigation.js'):
+            page.add_script_tag(path=str(ROOT / 'config' / 'ohif' / name))
+        page.evaluate("""() => {
+          const part = (uid, first) => { synSets[uid] = { SeriesInstanceUID: '1.2.9.90', images: Array.from({ length: 6 }, (_, n) =>
+            ({ SOPInstanceUID: '1.2.9.90.1', kinSplitFrame: first + n })) }; };
+          part('phase-1', 1); part('phase-2', 7);
+          window.synShowPart = uid => { synShown.left = [uid];
+            synEmit('grid', 'gridState', { viewports: [{ viewportId: 'left', displaySetInstanceUIDs: [uid] }], removedViewportIds: [] }); };
+          window.synFrames = (first, count) => { synStack('left', 12, { frames: 12, modality: 'MR', series: '1.2.9.90', sop: '1.2.9.90.1' });
+            const v = synServices.cornerstoneViewportService.getCornerstoneViewport('left');
+            v.imageIds = v.imageIds.slice(first - 1, first - 1 + count); v.at = 0; synAnnounce('left'); };
+          synShowPart('phase-1'); synFrames(1, 6);
+        }""")
+        left = page.locator('#pane-left')
+        # Not a multi-frame image to unfold (MR's multi-frame default is Unfolded): one image at a time, as a classic part.
+        expect(left.locator('.kin-nav-switch, .kin-nav-tiles')).to_have_count(0)
+        page.evaluate("() => { synActive = 'left'; }")
+        self.menu(page, 'Stack / Tile')
+        expect(left.get_by_role('group', name='Stack / Tile')).to_be_visible()
+        self.menu(page, 'Stack / Tile')
+        expect(left.locator('.kin-nav-switch, .kin-nav-tiles')).to_have_count(0)
+        self.menu(page, 'Navigation Bar')
+        expect(left.locator('.kin-nav-bar small')).to_have_text('/ 6')
+        # The second time point is given: the first one's frames (same SOP) announced again are not its arrival.
+        page.evaluate("() => synShowPart('phase-2')")
+        page.evaluate("() => synAnnounce('left')")
+        expect(left.locator('.kin-ux-cell-layer')).to_be_hidden()
+        page.evaluate("() => synFrames(7, 6)")
+        expect(left.locator('.kin-ux-cell-layer')).to_be_visible()
+        expect(left.locator('.kin-nav-bar small')).to_have_text('/ 6')
+        expect(left.locator('.kin-nav-switch, .kin-nav-tiles')).to_have_count(0)
+
     # ── The viewer draws the cell anew around the same images: the bar and grid come back in the new cell ──
     def test_10_a_cell_drawn_anew_gets_its_bar_and_grid_back(self):
         page = self.open()

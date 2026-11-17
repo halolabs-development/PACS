@@ -6,7 +6,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const { STACK, createStackHandler, mixedSeries } = require('./fixtures/ohif_stack_4d.cjs');
+const { STACK, createStackHandler, mixedSeries, enhancedSeries, frameImageId } = require('./fixtures/ohif_stack_4d.cjs');
 
 const shipped = fs.readFileSync('config/ohif.js', 'utf8');
 const source = fs.readFileSync('config/ohif/series-split.js', 'utf8');
@@ -38,12 +38,15 @@ test('the shipped viewer configuration splits a mixed MR series once its mode is
   const found = sandbox.window.config.extensions.filter(e => e?.id === 'kin.series-split');
   assert.equal(found.length, 1, 'one series split extension in the viewer configuration');
   const handler = createStackHandler(), native = handler.getDisplaySetsFromSeries, instances = mixedSeries();
-  found[0].preRegistration({ extensionManager: { getModuleEntry: id => id === STACK ? handler : undefined } });
+  found[0].preRegistration({ extensionManager: { getModuleEntry: id => id === STACK ? handler : undefined,
+    getActiveDataSource: () => [{ getImageIdsForInstance: ({ instance, frame }) => frameImageId(instance, frame) }] } });
   assert.deepEqual(describe(handler.getDisplaySetsFromSeries(instances)), [['AX DWI', 24]], 'nothing changes before the mode is entered');
   found[0].onModeEnter();
   const sets = handler.getDisplaySetsFromSeries(instances);
   assert.deepEqual(describe(sets), [['AX DWI · 1/2 b0', 12], ['AX DWI · 2/2 b1000', 12]]);
   assertPartition(sets, instances);
+  // An enhanced file asks the active data source for each frame's imageId.
+  assert.deepEqual(describe(handler.getDisplaySetsFromSeries(enhancedSeries())), [['DYN T1 ENH · 1/2 Phase 1', 4], ['DYN T1 ENH · 2/2 Phase 2', 4]]);
   found[0].onModeExit();
   assert.equal(handler.getDisplaySetsFromSeries, native);
 });
@@ -144,6 +147,160 @@ test('labels name the value the viewer split by, read from the first image of ea
   assert.deepEqual(split(mixedSeries({ description: '' })), ['1/2 b0', '2/2 b1000']);
 });
 
+// ---- Enhanced (multi-frame) MR: one file holding several time points ----
+
+const frameOfImage = image => Number(/\/frames\/(\d+)$/.exec(image.imageId)?.[1]);
+const frames = set => Array.from(set.images, frameOfImage);
+const splitEnhanced = (instances, handler = createStackHandler()) =>
+  model(handler.getDisplaySetsFromSeries(instances), list => handler.getDisplaySetsFromSeries(list), frameImageId);
+
+test('an enhanced MR file with two time points opens as two sets, one per time point, in frame order', () => {
+  const instances = enhancedSeries({ values: [1, 2], positions: 4 });
+  const sets = splitEnhanced(instances);
+  assert.deepEqual(describe(sets), [['DYN T1 ENH · 1/2 Phase 1', 4], ['DYN T1 ENH · 2/2 Phase 2', 4]]);
+  assert.deepEqual(Array.from(sets, frames), [[1, 2, 3, 4], [5, 6, 7, 8]]);
+  for (const set of sets) {
+    // Each part names the original image and the frame, and is an ordinary stack the viewer shows frame by frame.
+    assert.ok(set.images.every(i => i.SOPInstanceUID === '2.25.8001.1' && i.NumberOfFrames === 1));
+    assert.deepEqual(Array.from(set.images, i => i.ImagePositionPatient[2]), [0, 4, 8, 12], 'one frame per position');
+    assert.deepEqual(Array.from(set.images, i => Array.from(i.ImageOrientationPatient)), Array(4).fill([1, 0, 0, 0, 1, 0]));
+    assert.equal(set.isMultiFrame, false);
+    assert.equal(set.SeriesInstanceUID, '2.25.8001');
+    assert.equal(set.SeriesNumber, 9);
+  }
+  // The stored instance itself is untouched.
+  assert.equal(instances[0].NumberOfFrames, 8);
+  assert.equal(instances[0].imageId, 'wadors:/studies/2.25.7000/series/2.25.8001/instances/2.25.8001.1/frames/1');
+});
+
+test('an enhanced MR splits by the same rule and labels as a classic one: b value, trigger delay and echo time', () => {
+  const split = options => descriptions(splitEnhanced(enhancedSeries(options)));
+  assert.deepEqual(split({ values: [0, 1000], group: 'MRDiffusionSequence', tag: 'DiffusionBValue', description: 'DWI ENH' }),
+    ['DWI ENH · 1/2 b0', 'DWI ENH · 2/2 b1000']);
+  assert.deepEqual(split({ values: [300.5, 150], group: 'CardiacSynchronizationSequence', tag: 'NominalCardiacTriggerDelayTime' }),
+    ['DYN T1 ENH · 1/2 TT 150', 'DYN T1 ENH · 2/2 TT 300.5']);
+  assert.deepEqual(split({ values: [90, 12], group: 'MREchoSequence', tag: 'EffectiveEchoTime' }),
+    ['DYN T1 ENH · 1/2 TE 12', 'DYN T1 ENH · 2/2 TE 90']);
+  // Time point indices stored out of order come back ascending, as the viewer orders a classic series.
+  assert.deepEqual(split({ values: [3, 1, 2] }), ['DYN T1 ENH · 1/3 Phase 1', 'DYN T1 ENH · 2/3 Phase 2', 'DYN T1 ENH · 3/3 Phase 3']);
+});
+
+test('frames stored position by position still give one frame per position in each time point', () => {
+  // Interleaved storage (position 0 time 1, position 0 time 2, ...): each part keeps its frames in frame order.
+  const instances = enhancedSeries({ values: [1, 2], positions: 3,
+    order: list => [...list].sort((a, b) => a.p - b.p || a.value - b.value) });
+  const sets = splitEnhanced(instances);
+  assert.deepEqual(describe(sets), [['DYN T1 ENH · 1/2 Phase 1', 3], ['DYN T1 ENH · 2/2 Phase 2', 3]]);
+  assert.deepEqual(Array.from(sets, frames), [[1, 3, 5], [2, 4, 6]]);
+});
+
+test('a temporal position index that is the same for every frame does not split; the b value next in order does', () => {
+  // A diffusion file whose Frame Content carries Temporal Position Index 1 on every frame: the viewer's order tries the
+  // time point first, finds one value per position and goes on to the b value.
+  const instances = enhancedSeries({ values: [0, 800], group: 'MRDiffusionSequence', tag: 'DiffusionBValue',
+    patch: inst => inst.PerFrameFunctionalGroupsSequence.forEach(f => { f.FrameContentSequence[0].TemporalPositionIndex = 1; }) });
+  assert.deepEqual(descriptions(splitEnhanced(instances)), ['DYN T1 ENH · 1/2 b0', 'DYN T1 ENH · 2/2 b800']);
+});
+
+test('a multi-frame image without time points stays one set, as it is now', () => {
+  const handler = createStackHandler();
+  const cases = {
+    'one time point, every frame its own position': () => enhancedSeries({ values: [1], positions: 6 }),
+    'time point shared by every frame': () => enhancedSeries({ values: [1, 2], shared: true }),
+    'not MR (enhanced CT)': () => enhancedSeries({ modality: 'CT', sopClass: '1.2.840.10008.5.1.4.1.1.2.1' }),
+    'XA cine without positions': () => enhancedSeries({ modality: 'XA', sopClass: '1.2.840.10008.5.1.4.1.1.12.1' }),
+    'a frame without a position': () => enhancedSeries({ patch: i => { delete i.PerFrameFunctionalGroupsSequence[2].PlanePositionSequence; } }),
+    'per-frame groups shorter than the frame count': () => enhancedSeries({ patch: i => { i.PerFrameFunctionalGroupsSequence.pop(); } }),
+    'no per-frame groups': () => enhancedSeries({ patch: i => { delete i.PerFrameFunctionalGroupsSequence; } }),
+    'a position missing one time point': () => enhancedSeries({ values: [1, 2], positions: 3,
+      patch: i => { i.PerFrameFunctionalGroupsSequence[5].PlanePositionSequence[0].ImagePositionPatient = [0, 0, 99]; } }),
+    'two frames of one time point at one position': () => enhancedSeries({ values: [1, 2], positions: 2,
+      patch: i => { i.PerFrameFunctionalGroupsSequence[2].FrameContentSequence[0].TemporalPositionIndex = 1; } }),
+    'two enhanced files in one series': () => [...enhancedSeries(), ...enhancedSeries({ sop: '2.25.8001.2' })],
+    'an enhanced file next to single-frame images': () => [...enhancedSeries(), ...mixedSeries({ series: '2.25.8001' })],
+  };
+  for (const [name, make] of Object.entries(cases)) {
+    const given = handler.getDisplaySetsFromSeries(make()), before = given.map(s => [s.SeriesDescription, sops(s), s.images.length]);
+    const result = model(given, list => handler.getDisplaySetsFromSeries(list), frameImageId);
+    assert.equal(result, given, name);
+    assert.deepEqual(result.map(s => [s.SeriesDescription, sops(s), s.images.length]), before, name);
+  }
+  // Without a way to name a frame's image (no data source), nothing is split.
+  const given = handler.getDisplaySetsFromSeries(enhancedSeries());
+  assert.equal(model(given, list => handler.getDisplaySetsFromSeries(list)), given);
+  assert.equal(model(given, list => handler.getDisplaySetsFromSeries(list), () => undefined), given);
+});
+
+test('an enhanced split that the handler does not rebuild as one stack per time point keeps the first result', () => {
+  const handler = createStackHandler(), instances = enhancedSeries();
+  for (const broken of [list => [...handler.getDisplaySetsFromSeries(list.slice(0, 2)), ...handler.getDisplaySetsFromSeries(list.slice(2))],
+    () => [], list => handler.getDisplaySetsFromSeries(list.slice(1)), () => { throw new Error('handler refused'); }]) {
+    let calls = 0;
+    const given = handler.getDisplaySetsFromSeries(instances);
+    const result = model(given, list => ++calls === 2 ? broken(list) : handler.getDisplaySetsFromSeries(list), frameImageId);
+    assert.equal(result, given);
+    assert.deepEqual(describe(result), [['DYN T1 ENH', 1]]);
+  }
+});
+
+test('a part is found by the original image and frame, never by the SOP alone', () => {
+  const holds = vm.runInNewContext(source + ';kinSeriesSplitHolds');
+  const sets = splitEnhanced(enhancedSeries({ values: [1, 2], positions: 4 }));
+  const sop = '2.25.8001.1';
+  assert.deepEqual(Array.from(sets, s => holds(s, sop, 2)), [true, false]);
+  assert.deepEqual(Array.from(sets, s => holds(s, sop, 6)), [false, true]);
+  assert.deepEqual(Array.from(sets, s => holds(s, sop, 9)), [false, false]);
+  assert.deepEqual(Array.from(sets, s => holds(s, '2.25.other', 2)), [false, false]);
+  // A whole instance (not split) holds every frame of its SOP, single-frame images their frame 1, as before.
+  const handler = createStackHandler();
+  const whole = handler.getDisplaySetsFromSeries(enhancedSeries({ values: [1], positions: 6 }))[0];
+  assert.ok([1, 4, 6].every(f => holds(whole, sop, f)));
+  const classic = handler.getDisplaySetsFromSeries(mixedSeries())[0];
+  assert.ok(holds(classic, '2.25.7001.3', 1));
+  assert.equal(holds(classic, '2.25.7001.999', 1), false);
+  // A stored instance the viewer marked with the frame it last combined is still a whole instance.
+  const marked = handler.getDisplaySetsFromSeries(enhancedSeries({ values: [1], positions: 6 }))[0];
+  marked.images[0].frameNumber = 3;
+  assert.ok(holds(marked, sop, 5));
+  assert.equal(holds(null, sop, 1), false);
+});
+
+test('Recent Layout tells the parts of one split file apart by their frames; every other set keeps its reference', () => {
+  // config/ohif/layout.js reference(): the shipped function, with the split-series identity it calls.
+  const layout = fs.readFileSync('config/ohif/layout.js', 'utf8');
+  const start = layout.indexOf('    function reference(d) {'), end = layout.indexOf('    function resolve(cell) {');
+  assert.ok(start > 0 && end > start);
+  const reference = vm.runInNewContext(source + ';' + layout.slice(start, end) + ';reference');
+  const plainRef = d => JSON.parse(JSON.stringify(reference(d)));
+  const parts = splitEnhanced(enhancedSeries({ values: [1, 2], positions: 2 }));
+  assert.deepEqual(Array.from(parts, plainRef), [
+    { study: '2.25.7000', series: '2.25.8001', handler: '@ohif/extension-default.sopClassHandlerModule.stack', sops: ['2.25.8001.1'], frames: ['2.25.8001.1:1', '2.25.8001.1:2'] },
+    { study: '2.25.7000', series: '2.25.8001', handler: '@ohif/extension-default.sopClassHandlerModule.stack', sops: ['2.25.8001.1'], frames: ['2.25.8001.1:3', '2.25.8001.1:4'] }]);
+  // A whole multi-frame image and a classic part: the reference they always had, with no frames.
+  const handler = createStackHandler();
+  const whole = handler.getDisplaySetsFromSeries(enhancedSeries({ values: [1], positions: 3 }))[0];
+  assert.deepEqual(Object.keys(plainRef(whole)), ['study', 'series', 'handler', 'sops']);
+  const classic = splitEnhanced(mixedSeries())[0];
+  assert.deepEqual(Object.keys(plainRef(classic)), ['study', 'series', 'handler', 'sops']);
+  // The saved layout format keeps the frames of a part (version 2 references are kept as given).
+  const layoutModel = vm.runInNewContext(fs.readFileSync('config/ohif/layout-model.js', 'utf8') + ';kinViewerLayoutModel', { URLSearchParams });
+  const saved = layoutModel.normalize({ version: 2, studies: ['2.25.7000'], rows: 1, cols: 1, active: 0,
+    cells: [{ x: 0, y: 0, width: 1, height: 1, sets: [plainRef(parts[1])], viewportOptions: {}, displaySetOptions: [{}] }] });
+  assert.deepEqual(JSON.parse(JSON.stringify(saved.cells[0].sets[0])), plainRef(parts[1]));
+});
+
+test('the identity key of an entry: the SOP, and the frame for an entry of a split part', () => {
+  const key = vm.runInNewContext(source + ';kinSeriesSplitKey'), part = vm.runInNewContext(source + ';kinSeriesSplitPart');
+  const parts = splitEnhanced(enhancedSeries({ values: [1, 2], positions: 2 }));
+  assert.deepEqual(Array.from(parts[1].images, key), ['2.25.8001.1:3', '2.25.8001.1:4']);
+  assert.deepEqual(Array.from(parts, part), [true, true]);
+  const handler = createStackHandler();
+  const whole = handler.getDisplaySetsFromSeries(enhancedSeries({ values: [1], positions: 3 }))[0];
+  assert.equal(key(whole.images[0]), '2.25.8001.1');
+  assert.equal(part(whole), false);
+  assert.equal(part(handler.getDisplaySetsFromSeries(mixedSeries())[0]), false);
+  assert.equal(part(null), false);
+});
 // ---- The three hooks on one stack handler ----
 
 class Element {
@@ -208,7 +365,7 @@ async function viewer() {
     hangingProtocolService: { getState: () => null, addProtocol() {}, run() {} },
   };
   const items = mgSlices(), loaded = [];
-  const dataSource = { retrieve: { series: { metadata: async () => {
+  const dataSource = { getImageIdsForInstance: ({ instance, frame }) => frameImageId(instance, frame), retrieve: { series: { metadata: async () => {
     const p = new DeferredPromise();
     p.metadata = { Modality: 'MG' };
     p.setProcessFunction(() => Promise.resolve(items));
@@ -249,6 +406,7 @@ async function assertAllAlive(v, label) {
   const mr = mixedSeries();
   assert.deepEqual(describe(v.open(mr)), [['AX DWI · 1/2 b0', 12], ['AX DWI · 2/2 b1000', 12]], label + ': split');
   assert.equal(v.open(cineInstance())[0].FrameRate, 40, label + ': cine rate');
+  assert.deepEqual(describe(v.open(enhancedSeries())), [['DYN T1 ENH · 1/2 Phase 1', 4], ['DYN T1 ENH · 2/2 Phase 2', 4]], label + ': enhanced split');
   const mg = await v.openMG();
   assert.equal(mg.length, 1, label + ': mammography slices become one stack');
   assert.deepEqual(Array.from(mg[0].images, i => i.SOPInstanceUID), mgPositionOrder(), label + ': position order');

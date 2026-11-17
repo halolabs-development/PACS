@@ -98,3 +98,15 @@ test('image text hidden while native request is pending retires late fullscreen'
   h.enter.click();h.win.kinViewerImageTextHidden=()=>true;resolve();await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.doc.fullscreenElement,null);assert.equal(h.doc.exits.length,1);h.controller.stop();
 });
+
+test('the frames of one multi-frame file split by time point enter as one image set; the same entry twice fails closed', async()=>{
+  // The viewer's split-series identity (config/ohif/series-split.js): an entry of a split part is its SOP and frame.
+  const key=require('node:vm').runInNewContext(require('node:fs').readFileSync('config/ohif/series-split.js','utf8')+';kinSeriesSplitKey');
+  const entry=n=>({StudyInstanceUID:'1.2',SeriesInstanceUID:'1.3',SOPInstanceUID:'1.4',PatientID:'PID',kinSplitFrame:n});
+  const h=setup({multiframe:true});h.win.kinSeriesSplitKey=key;h.displaySet.images=[entry(3),entry(4)];
+  h.viewport.element.requestFullscreen=()=>{h.doc.fullscreenElement=h.viewport.element;h.doc.dispatchEvent(new Event('fullscreenchange'));return Promise.resolve()};
+  h.emit();assert.equal(h.enter.disabled,false);h.enter.click();assert.equal(h.doc.fullscreenElement,h.viewport.element);
+  await new Promise(resolve=>setImmediate(resolve));h.doc.getElementById('kin-images-only-exit').click();await new Promise(resolve=>setImmediate(resolve));h.controller.stop();
+  const twice=setup({multiframe:true});twice.win.kinSeriesSplitKey=key;twice.displaySet.images=[entry(3),entry(3)];
+  twice.viewport.element.requestFullscreen=()=>Promise.resolve();twice.emit();assert.equal(twice.enter.disabled,true);twice.controller.stop();
+});

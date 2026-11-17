@@ -55,9 +55,10 @@
           !uid(value.SOPInstanceUID) || !patient(value.PatientID))) throw Error('선택 영상의 환자 또는 원본 식별이 일치하지 않습니다.');
       const patientId = values[0].PatientID;
       if (values.some(value => value.PatientID !== patientId)) throw Error('선택 영상의 환자 또는 원본 식별이 일치하지 않습니다.');
-      const sourceSops = source.map(value => value?.SOPInstanceUID);
+      // Each entry once: by SOP, or by SOP and frame for the frames of one multi-frame file split by time point.
+      const sourceSops = source.map(value => value?.SOPInstanceUID), sourceKeys = typeof win.kinSeriesSplitKey === 'function' ? source.map(value => win.kinSeriesSplitKey(value)) : sourceSops;
       if (source.some(value => value?.StudyInstanceUID !== displaySet.StudyInstanceUID || value?.SeriesInstanceUID !== displaySet.SeriesInstanceUID || value?.PatientID !== patientId || !uid(value?.SOPInstanceUID)) ||
-          new Set(sourceSops).size !== sourceSops.length || !same([...sourceSops].sort(), [...new Set(values.map(value => value.SOPInstanceUID))].sort())) throw Error('선택 영상의 원본 목록이 일치하지 않습니다.');
+          new Set(sourceKeys).size !== sourceKeys.length || !same([...new Set(sourceSops)].sort(), [...new Set(values.map(value => value.SOPInstanceUID))].sort())) throw Error('선택 영상의 원본 목록이 일치하지 않습니다.');
       const identity = [...viewport.element.querySelectorAll('.kin-viewer-identity')].find(element => element.dataset.study === displaySet.StudyInstanceUID && element.isConnected);
       if (!identity) throw Error('환자와 원본 식별 표시를 확인한 뒤 다시 시도하세요.');
       return { owner: boundOwner, viewportId, cell, viewport, element: viewport.element, displaySet, displaySetId: setIds[0],

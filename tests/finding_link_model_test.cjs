@@ -22,7 +22,10 @@ const API_HEADERS = Object.freeze({ get: name => String(name).toLowerCase() === 
 function slice() {
   const start = source.indexOf('function kinViewerImageReference'), end = source.indexOf('function kinCreateViewerHistory()');
   assert.ok(start > 0 && end > start, 'navigation anchors present once');
-  const text = source.slice(start, end);
+  // Navigation finds the display set of an image with the viewer's split-series rule (one shared function).
+  const holdsAt = source.indexOf('function kinSeriesSplitFrame('), holdsEnd = source.indexOf('function kinEnhancedTimePoints(');
+  assert.ok(holdsAt > 0 && holdsEnd > holdsAt, 'split-series identity functions present');
+  const text = source.slice(start, end) + source.slice(holdsAt, holdsEnd);
   assert.ok(text.includes('async function kinViewerNavigateTo'), 'the shipped navigation function is in the slice');
   assert.ok(text.includes('function kinViewerActivateStudy'), 'the shipped activation function is in the slice');
   const sandbox = { Number, Array, Object, Promise, JSON, RegExp, Error, console, clearTimeout };
@@ -105,6 +108,24 @@ test('refusals before any side effect: invalid target, ended session, other stud
   assert.deepEqual(await noScope.navigate(target()), { ok: false, reason: 'scope' });
 });
 
+test('one multi-frame file split into a set per time point: the cited frame picks its own set and lands on that frame', async () => {
+  // The viewer's split-series rule (series-split.js) makes entries of one SOP Instance, each standing for one frame.
+  const frame = n => Object.assign(Object.create({ SOPInstanceUID: SOP }), { kinSplitFrame: n });
+  const parts = [{ displaySetInstanceUID: 'phase-1', StudyInstanceUID: A, SeriesInstanceUID: SERIES, images: [1, 2, 3].map(frame) },
+    { displaySetInstanceUID: 'phase-2', StudyInstanceUID: A, SeriesInstanceUID: SERIES, images: [4, 5, 6].map(frame) }];
+  const ids = [4, 5, 6].map(n => imageId(A, SERIES, SOP, n));
+  const shown = [1, 2, 3].map(n => imageId(A, SERIES, SOP, n));
+  // The active cell shows the first time point; the cited frame 5 is in the second: that set (only) is loaded, then frame 5.
+  let current = shown;
+  const kit = harness({ sets: parts, viewport: { type: 'stack', index: 0, getImageIds: () => current, getCurrentImageId() { return current[this.index]; },
+    async setImageIdIndex(index) { kit.calls.push(['setImageIdIndex', index]); this.index = index; }, render() { kit.calls.push(['render']); } } });
+  const loaded = kit.env.services.viewportGridService.setDisplaySetsForViewport;
+  kit.env.services.viewportGridService.setDisplaySetsForViewport = args => { loaded(args); current = ids; };
+  assert.deepEqual(await kit.navigate(target({ frame: 5 })), { ok: true, highlighted: true, annotation: 'shown' });
+  assert.deepEqual(kit.calls, [['setDisplaySets', { viewportId: 'vp-1', displaySetInstanceUIDs: ['phase-2'] }], ['setImageIdIndex', 1], ['render']]);
+  // A frame that no set holds is not found; the SOP alone never stands for a split file.
+  assert.deepEqual(await harness({ sets: parts }).navigate(target({ frame: 9 })), { ok: false, reason: 'series-missing' });
+});
 test('series missing, missing tool service and a volume viewport are refused without reslicing', async () => {
   const missing = harness({ sets: [] });
   assert.deepEqual(await missing.navigate(target()), { ok: false, reason: 'series-missing' }); assert.deepEqual(missing.calls, []);
@@ -2362,7 +2383,10 @@ test('mounted values: a refused comparison study leaves no copied or listed numb
 test('the live head premise: config/ohif.js historyState() copies the values of the saved server head', () => {
   const start = source.indexOf('const historyState = () => ({'), end = source.indexOf('function hydrate()', start);
   assert.ok(start > 0 && end > start);
-  const text = source.slice(start, end);
+  // Navigation finds the display set of an image with the viewer's split-series rule (one shared function).
+  const holdsAt = source.indexOf('function kinSeriesSplitFrame('), holdsEnd = source.indexOf('function kinEnhancedTimePoints(');
+  assert.ok(holdsAt > 0 && holdsEnd > holdsAt, 'split-series identity functions present');
+  const text = source.slice(start, end) + source.slice(holdsAt, holdsEnd);
   assert.ok(text.includes('values: Array.isArray(e.head.item.baseline?.values) ? [...e.head.item.baseline.values] : null'));
   assert.ok(text.includes('heads: [...entries.values()].filter(e => e.head)'), 'only saved heads');
 });

@@ -76,3 +76,14 @@ test('stale detached controls and attribute ownership collisions do not mutate a
   const second=setup(),pane=second.viewports.get('vp0').element.parentElement;pane.setAttribute('data-kin-image-text-hidden','other');second.toggle.click();assert.equal(second.win.kinViewerImageTextHidden(),false);assert.equal(pane.getAttribute('data-kin-image-text-hidden'),'other');second.api.stop();
   const duplicate=setup(),set=duplicate.sets.get('ds0');set.images.push(set.images[0]);duplicate.emit();assert.equal(duplicate.toggle.disabled,true);duplicate.api.stop();
 });
+
+test('the frames of one multi-frame file split by time point hide as one image set; the same entry twice still fails closed',()=>{
+  // The viewer's split-series identity (config/ohif/series-split.js): an entry of a split part is its SOP and frame.
+  const key=require('node:vm').runInNewContext(require('node:fs').readFileSync('config/ohif/series-split.js','utf8')+';kinSeriesSplitKey');
+  const h=setup(),set=h.sets.get('ds0'),v=h.viewports.get('vp0'),base=set.images[0];h.win.kinSeriesSplitKey=key;
+  const frame=n=>({...base,kinSplitFrame:n});set.images.splice(0,1,frame(3),frame(4));
+  v.imageIds=['image:1.4.1/frames/3','image:1.4.1/frames/4'];v.current=v.imageIds[0];for(const id of v.imageIds)h.meta.set(id,base);
+  h.emit();assert.equal(h.toggle.disabled,false);h.toggle.click();assert.equal(h.win.kinViewerImageTextHidden(),true);h.toggle.click();h.api.stop();
+  const twice=setup(),again=twice.sets.get('ds0');twice.win.kinSeriesSplitKey=key;const same={...again.images[0],kinSplitFrame:3};again.images.splice(0,1,same,{...same});
+  twice.emit();assert.equal(twice.toggle.disabled,true);twice.api.stop();
+});
