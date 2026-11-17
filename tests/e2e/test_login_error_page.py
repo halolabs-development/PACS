@@ -116,9 +116,9 @@ class LoginErrorPageE2E(base.WorklistE2E):
                 page = self.fresh_page()
                 page.goto(self.stack.proxy + path)
                 self.assert_way_back(page, entry)
-        # The English screen draws the same way back.
-        page = self.fresh_page()
-        page.goto(self.stack.proxy + auth_request("kin-not-a-client", self.stack.proxy + "/api/auth/callback", kc_locale="en"))
+        # The English screen (an English browser) draws the same way back.
+        page = self.fresh_page(locale="en-US")
+        page.goto(self.stack.proxy + self.entries()["unknown-client"])
         expect(page.locator("html")).to_have_attribute("lang", "en")
         self.assert_way_back(page, "unknown-client-en")
 
