@@ -3147,16 +3147,20 @@
     }
     /**
      * Missing images, Technician tab only: the one answer (KinStudyArrivals.receiptGap) that the list's Count cell, the
-     * Info panel's Needs Check line and a Not Observed item draw. A merged or split exam has no answer here: its originals
-     * are separate studies. The count and the Gateway report it compares are both the last successful observation's, so
-     * a row replaced before its observation is judged never pairs an old count with a new report. renderObservation()
-     * draws every surface of it at once (the list's marks too); setMode() and the poll's list rebuild call it.
+     * Info panel's Needs Check line and a Not Observed item draw. A merged or split exam is answered per original
+     * (KinStudyArrivals.examGap: how many of its originals miss images, never from its summed count); each original's own
+     * numbers are its line under Original exams. The count and the Gateway report it compares are both the last
+     * successful observation's, so a row replaced before its observation is judged never pairs an old count with a new
+     * report. renderObservation() draws every surface of it at once (the list's marks too); setMode() and the poll's list
+     * rebuild call it.
      */
     function studyReceiptGap(s) {
-      // A row of a merged or split exam in force whose originals cannot all be read now has no scope, yet is that exam.
-      if (!s || !studyObservationModel || KinExamScope.read(s)?.groupId || KinExamScope.unavailable(s)?.kind) return null;
-      const seen = KinStudyArrivals.studyObservation(studyObservationModel, s.uid);
-      const gap = KinStudyArrivals.receiptGap(seen, seen.receipt ?? null);
+      // A row of a merged or split exam in force whose originals cannot all be read now has no scope, yet is that exam:
+      // it says so itself (KinExamScope.unavailable) and gets no answer here, so no number of an original it cannot read.
+      if (!s || !studyObservationModel || KinExamScope.unavailable(s)?.kind) return null;
+      const scope = KinExamScope.read(s);
+      const gap = scope?.groupId ? KinStudyArrivals.examGap(studyObservationModel, scope.sources.map(source => source.studyUid))
+        : KinStudyArrivals.originalGap(studyObservationModel, s.uid);
       return gap?.missing && mode === "Technician" ? gap : null;
     }
     /**
@@ -3285,9 +3289,13 @@
           const [text,control,note]=line.children;
           // The Accession No is data; each label after it is its own text so the screen language reads it.
           const accession=document.createElement('span');accession.translate=false;accession.textContent=source.acc||source.uid;
+          // This original's own missing-images answer (Technician tab), the one the exam's line counts.
+          const gap=KinStudyArrivals.originalGap(studyObservationModel,source.uid),short=gap?.missing&&mode==='Technician'?gap:null;
+          const gapWords=short?kinWrite(document.createElement('span'),short.text):null;
+          if(gapWords){gapWords.className='receipt-gap-line';gapWords.title=short.title;}
           text.replaceChildren(accession,...[own.observation.text,own.change?.text,
             source.gatewayReceipt===undefined?kinSay('Gateway 영수증 정보가 이 목록에 제공되지 않았습니다.'):own.gateway.text].filter(Boolean)
-            .flatMap(words=>[' · ',kinWrite(document.createElement('span'),words)]));
+            .flatMap(words=>[' · ',kinWrite(document.createElement('span'),words)]),...(gapWords?[' · ',gapWords]:[]));
           drawRetry(source,own.retry,control,note);return line;
         });
         for(const line of kept.values())line.querySelector('button').dataset.request='';

@@ -237,6 +237,28 @@
       title:'Gateway가 보냈다고 보고한 영상보다 HALO PACS가 가진 영상이 적습니다. 다음 관측에서 채워지면 이 표시는 사라집니다. 재시도 요청이나 전송 성공과는 다른 표시입니다.'};
   }
 
+  // Missing images of one original: receiptGap of what the observation model holds for that study UID (its last observed
+  // count and the Gateway report read with it). An original of a merged or split exam is answered the same way.
+  function originalGap(model,uid,format=localTime){
+    const seen=studyObservation(model,uid);
+    return receiptGap(seen,seen.receipt??null,format);
+  }
+  /*
+   * Missing images of an exam that is several originals (a merged exam) or part of one (a split exam): answered per
+   * original by originalGap, never from the exam's summed count — one original's shortfall is not filled by another's
+   * images. The answer says how many of its originals miss images; each original's own numbers are that original's line.
+   * Only originals the caller can read are given here: an exam whose originals cannot all be read is said elsewhere.
+   */
+  function examGap(model,uids,format=localTime){
+    const originals=[...new Set(uids)],short=originals.filter(uid=>originalGap(model,uid,format)?.missing===true);
+    if(!short.length)return null;
+    const stale=model?.available===false;
+    return {missing:true,stale,originals:originals.length,short:short.length,
+      text:stale?kinSay('Needs Check · 영상 누락(관측 불가 · 마지막 관측 {0} 기준): 원본 검사 {n1}건 중 {n2}건',format(model.observedAt),originals.length,short.length)
+        :kinSay('Needs Check · 영상 누락: 원본 검사 {n0}건 중 {n1}건',originals.length,short.length),
+      title:'Gateway가 보냈다고 보고한 영상보다 HALO PACS가 가진 영상이 적은 원본 검사가 있습니다. 원본마다의 수는 Study Panel ▸ Info의 원본 검사 줄에 있습니다. 다음 관측에서 채워지면 이 표시는 사라집니다. 재시도 요청이나 전송 성공과는 다른 표시입니다.'};
+  }
+
   function gatewayRetryAction(receipt){
     if(!readableReceipt(receipt))return null;
     if(receipt.phase==='failed')return {kind:'unsupported_f01',text:RETRY_TEXT.unsupported,title:RETRY_TEXT.unsupportedTitle};
@@ -366,7 +388,7 @@
   function phrase(kind){if(!Object.prototype.hasOwnProperty.call(PHRASES,kind))throw new TypeError('phrase');return PHRASES[kind];}
 
   const api={diff,observationStart,observationSucceeded,observationFailed,studyObservation,receiptLabels,observationSummary,phrase,formatTime:localTime,
-    receiptGap,gatewayRetryAction,gatewayRetryAnswer,RETRY_TEXT,PHASES:Object.freeze([...PHASES]),BANNED,PHRASES,
+    receiptGap,originalGap,examGap,gatewayRetryAction,gatewayRetryAnswer,RETRY_TEXT,PHASES:Object.freeze([...PHASES]),BANNED,PHRASES,
     gatewayStatus,gatewayStatusRows,gatewayStatusSummary,GATEWAY_STATUS};root.KinStudyArrivals=api;
   if(typeof module==='object'&&module.exports)module.exports=api;
 })(typeof globalThis==='object'?globalThis:this);

@@ -565,23 +565,60 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
         self.page.evaluate("()=>{mode='Radiology';renderObservation()}")
         self.assertEqual((True, ""), (item()["hidden"], item()["text"]))
 
-    def test_missing_images_draws_nothing_new_on_a_merged_exam_row(self):
+    def merged(self, *originals, kind="merge"):
+        first = originals[0]
+        return {**first, "count": sum(s["count"] for s in originals), "series": 6, "sourceMetadata": list(originals),
+                "examScope": {"reportUid": first["uid"], "groupId": "syn-group", "kind": kind, "part": 0 if kind == "split" else None,
+                              "generation": "merged", "sources": [{"studyUid": s["uid"], "series": {"mode": "all", "uids": []}} for s in originals]}}
+
+    def original_line(self, uid):
+        return self.page.evaluate("uid=>$('#study-receipt .exam-original-receipts')?.querySelector(`[data-uid=\"${uid}\"]`)?.textContent??null", uid)
+
+    MERGED_GAP = "Needs Check · 영상 누락: 원본 검사 2건 중 1건"
+
+    def test_missing_images_of_a_merged_exam_are_answered_per_original(self):
         self.page.evaluate("()=>{mode='Technician'}")
+        # One original misses images (its Gateway sent 15, HALO PACS holds 12); the other has no report. The exam's summed
+        # count (19) is more than the 15 sent, yet one original is short: the row says so, never "fine" from the sum.
         first = self.receipt_row(self.gap_receipt(1), 12)
         other = self.receipt_row(None, 7)
         other.update(uid="1.2.4", acc="ACC-2", id="PID-2", sourcePatientKey="hospital|patient-2")
-        merged = {**first, "count": 19, "series": 6, "sourceMetadata": [first, other],
-                  "examScope": {"reportUid": first["uid"], "groupId": "syn-group", "kind": "merge", "part": None, "generation": "merged",
-                                "sources": [{"studyUid": s["uid"], "series": {"mode": "all", "uids": []}} for s in (first, other)]}}
-        # The row is first a single original that misses images, then the answer that makes it an exam rebuilds the list:
-        # the list cell and the Info line both go with that first answer, and stay gone.
-        self.poll(reply(first, at=self.at(2)))
-        self.assertFalse(self.gap_state()["hidden"])
-        for minute in (3, 4):
-            self.poll(reply(merged, at=self.at(minute)))
-            state = self.gap_state()
-            self.assertEqual((True, "", None), (state["hidden"], state["text"], state["mark"]), minute)
-            self.assertEqual("Original exams", self.text("#receipt-observation"))
+        self.poll(reply(self.merged(first, other), at=self.at(2)))
+        state = self.gap_state()
+        self.assertEqual((False, self.MERGED_GAP, self.MERGED_GAP, "19"), (state["hidden"], state["text"], state["mark"], state["cell"]))
+        self.assertIn("원본 검사 줄", state["title"])
+        self.assertEqual("Original exams", self.text("#receipt-observation"))
+        # Each original's line says its own answer: the short one its numbers, the other nothing new.
+        self.assertIn(" · " + self.GAP, self.original_line("1.2.3"))
+        self.assertNotIn("영상 누락", self.original_line("1.2.4"))
+        # Both originals short: two of two.
+        short = {**other, "gatewayReceipt": self.gap_receipt(1, sent=9, local=9, seq=21)}
+        self.poll(reply(self.merged(first, short), at=self.at(3)))
+        self.assertEqual("Needs Check · 영상 누락: 원본 검사 2건 중 2건", self.gap_state()["mark"])
+        # A failed observation keeps the last answer, said as the last observation's.
+        self.fail_next()
+        shown_at = self.page.evaluate("t=>KinStudyArrivals.formatTime(t)", self.at(3))
+        stale = "Needs Check · 영상 누락(관측 불가 · 마지막 관측 " + shown_at + " 기준): 원본 검사 2건 중 2건"
+        self.assertEqual((False, stale, stale), (self.gap_state()["hidden"], self.gap_state()["text"], self.gap_state()["mark"]))
+        # The Radiology tab draws nothing new.
+        self.page.evaluate("()=>{mode='Radiology';renderObservation()}")
+        self.assertEqual((True, None), (self.gap_state()["hidden"], self.gap_state()["mark"]))
+        self.assertNotIn("영상 누락", self.original_line("1.2.3"))
+        self.page.evaluate("()=>{mode='Technician';renderObservation()}")
+        # The images arrive at both: the mark and every line go.
+        filled = {**first, "count": 15}
+        self.poll(reply(self.merged(filled, {**short, "count": 9}), at=self.at(5)))
+        state = self.gap_state()
+        self.assertEqual((True, "", None, "24"), (state["hidden"], state["text"], state["mark"], state["cell"]))
+        self.assertNotIn("영상 누락", self.original_line("1.2.3"))
+
+    def test_missing_images_of_a_split_exam_are_its_one_original(self):
+        # A split part is one original's series: the answer is that original's (its whole count and its Gateway report).
+        self.page.evaluate("()=>{mode='Technician'}")
+        first = self.receipt_row(self.gap_receipt(1), 12)
+        self.poll(reply(self.merged(first, kind="split"), at=self.at(2)))
+        self.assertEqual("Needs Check · 영상 누락: 원본 검사 1건 중 1건", self.gap_state()["mark"])
+        self.assertIn(" · " + self.GAP, self.original_line("1.2.3"))
 
     def test_missing_images_draws_nothing_new_on_a_merged_exam_row_that_cannot_be_read_whole(self):
         # The server's row for a merged (or split) exam in force whose originals cannot all be read now: no scope, the kind
