@@ -38,7 +38,15 @@ class AccessReviewPeriodLive(PgLedgerFixture):
             env = {**os.environ, 'DATABASE_URL': self.runtime_url, 'KIN_B2R_WITNESS_URL': self.witness_url,
                    'KIN_B2R_SPOOL': str(evidence / 'spool'), 'NODE_PATH': str(ROOT / 'api/node_modules'),
                    'KIN_ACCESS_REVIEW_BUILD': str(ROOT / 'api/dist'), 'KIN_ACCESS_REVIEW_PREVIOUS': str(PREVIOUS)}
-        output = self.run_node_case(command, evidence, env=env, timeout=1200)
+        try:
+            output = self.run_node_case(command, evidence, env=env, timeout=1200)
+        except AssertionError:
+            # A lost server connection is explained only by the server's own log (and its exit state).
+            state = self.command(['docker', 'inspect', '--format', '{{json .State}}', self.container], check=False).stdout
+            logs = self.command(['docker', 'logs', '--tail', '80', self.container], check=False)
+            (evidence / 'postgres.log').write_text(state + logs.stdout + logs.stderr, encoding='utf-8')
+            print('postgres state ' + state + '\n' + (logs.stdout + logs.stderr)[-6000:])
+            raise
         self.assertIn('PASS: Access Review over a day', output)
 
 

@@ -71,10 +71,20 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert.ok(streams.length === 2, 'templates cover both streams');
     // Bulk copies of templates[g % 4], oldest first; occurredAt in the payload follows the column. A pair's two
     // entries alternate which stream is inserted first (has the smaller sequence): viewing for even g / 4, history for odd.
+    // One transaction per 100,000 events and no parallel workers: a single 850,000-row statement lost the fixture's
+    // server connection (its container has 1 GB and Docker's 64 MB /dev/shm).
     const fill = async (first, count, start, step) => {
-      const { ms } = await elapsed(() => witness.$transaction([
+      const began = Date.now();
+      for (let done = 0; done < count; done += 100000) await fillChunk(first + done, Math.min(100000, count - done),
+        iso(Date.parse(start) + done * step), step);
+      await witness.$executeRawUnsafe('ANALYZE emr_access.access_entry');
+      const [{ n }] = await witness.$queryRawUnsafe(`SELECT count(*)::int AS n FROM emr_access.access_entry`);
+      return { ms: Date.now() - began, n };
+    };
+    const fillChunk = (first, count, start, step) => witness.$transaction([
         // The receipt and operation rows of real appends are not part of what Access Review reads.
         witness.$executeRawUnsafe(`SET LOCAL session_replication_role = replica`),
+        witness.$executeRawUnsafe(`SET LOCAL max_parallel_workers_per_gather = 0`),
         witness.$executeRawUnsafe(`
           WITH tpl AS (SELECT (u.i - 1)::int AS i, u.id AS event_id FROM unnest($1::text[]) WITH ORDINALITY AS u(id, i))
           INSERT INTO emr_access.access_entry(entry_id, operation_id, stream, event_id, payload, occurred_at, statutory_act, retention_class)
@@ -90,11 +100,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
           CROSS JOIN LATERAL (SELECT CASE WHEN g % 97 = 0 THEN jsonb_set(a.a, '{managingInstitution}', '{"status":"unresolved","reason":"not-observed"}')
             WHEN g % 50 = 0 THEN jsonb_set(a.a, '{managingInstitution,value}', '"SYN-B"') ELSE a.a END AS b) b
           CROSS JOIN LATERAL (SELECT CASE WHEN g % 7 = 0 AND e.stream = 'viewing' THEN jsonb_set(b.b, '{action}', '"pdf"') ELSE b.b END AS p) v
-          ORDER BY g, CASE WHEN (g / $6::int) % 2 = 0 THEN e.stream END DESC, e.stream`,templates.map(e => e.eventId), first, count, start, step, templates.length)]));
-      await witness.$executeRawUnsafe('ANALYZE emr_access.access_entry');
-      const [{ n }] = await witness.$queryRawUnsafe(`SELECT count(*)::int AS n FROM emr_access.access_entry`);
-      return { ms, n };
-    };
+          ORDER BY g, CASE WHEN (g / $6::int) % 2 = 0 THEN e.stream END DESC, e.stream`, templates.map(e => e.eventId), first, count, start, step, templates.length)]);
     const perEvent = streams.reduce((sum, row) => sum + row.n, 0) / templates.length;
     const events = days => Math.round(days * PER_DAY / perEvent);
     let filled = await fill(1, events(5), ago(5 * DAY), 5 * DAY / events(5));
