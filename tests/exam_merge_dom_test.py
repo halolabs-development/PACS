@@ -53,6 +53,8 @@ class MergeSite(rf.FlowSite):
         self.series_names = ["SYN Series 1", "SYN Series 2"]
         self.related_reports = {}       # uid -> relatedExamReports of the row
         self.acc = dict(ACC)            # uid -> Accession No of the row and of its original in a merged exam
+        self.lost = {}                  # uid -> kind of the exam in force whose originals the reader cannot all read now
+        self.lost_members = {}          # uid -> the originals of that exam, as the server's group read gives them
 
     def scope(self, uid):
         if self.split and uid in (self.split["uid"], SPLIT_UID):
@@ -108,6 +110,8 @@ class MergeSite(rf.FlowSite):
                 if group.get("readable"):
                     rows[uid]["reportScope"] = {**self.scope(uid), "kind": "merge", "groupId": group["id"], "active": group["active"],
                         "sources": [{"studyUid": u, "series": {"mode": "all", "uids": []}} for u in group["studies"]]}
+        for uid, kind in self.lost.items():
+            rows[uid].update(examUnavailable=True, examUnavailableKind=kind)
         body["studies"] = [row for row in body["studies"] if row["uid"] not in hidden]
         body["pagination"]["total"] = len(body["studies"])
         return body
@@ -140,6 +144,9 @@ class MergeSite(rf.FlowSite):
                 base = found.group(1)
                 if self.split and base in (self.split["uid"], SPLIT_UID):
                     return route.fulfill(json={"group": {"id": GROUP_ID, "kind": "split"}, "checks": self.checks})
+                if base in self.lost_members:
+                    return route.fulfill(json={"group": {"id": GROUP_ID, "kind": "merge", "baseUid": base, "members": [
+                        {"logicalUid": u, "studyUid": u, "part": i, "seriesUids": []} for i, u in enumerate(self.lost_members[base])]}, "checks": self.checks})
                 if base not in self.groups:
                     return route.fulfill(json={"group": None})
                 return route.fulfill(json={"group": {"id": GROUP_ID, "kind": "merge", "baseUid": base, "members": [
@@ -149,6 +156,8 @@ class MergeSite(rf.FlowSite):
                 if self.dissolve_refusal:
                     return self.answer(route, *self.dissolve_refusal)
                 self.groups.clear()
+                self.lost.clear()
+                self.lost_members.clear()
                 self.split = None
                 self.generation += 1
                 return route.fulfill(json={"group": {"id": GROUP_ID, "dissolvedAt": "2026-10-03T01:00:00.000Z"}})
@@ -189,6 +198,13 @@ class ExamMerge(unittest.TestCase):
         self.assertEqual([], self.dialogs, "no browser confirm or alert")
 
     # ── helpers ──
+    def reload_technician(self):
+        self.page.reload()
+        expect(self.page.locator("#rows tr[data-uid]").first).to_be_visible()
+        tab = self.page.locator("[data-tab=Technician]")
+        if tab.is_visible():
+            tab.click()
+
     def pick(self, uid):
         self.page.locator(f"#rows tr[data-uid='{uid}']").click()
         self.page.wait_for_function(f"() => selectedUid === {json.dumps(uid)}")
@@ -249,6 +265,31 @@ class ExamMerge(unittest.TestCase):
         self.assertIn("SYNACC-A1", badge.get_attribute("title"))
         expect(self.page.locator("#countlist")).to_contain_text("Total 2")
 
+    def test_a_merged_exam_whose_original_cannot_be_read_is_not_an_ordinary_row(self):
+        # The server's answer when one original of a merged exam in force is gone or outside the reader's access: no scope,
+        # the kind of exam, nothing of the original. The row says so instead of passing for an ordinary row.
+        self.site.lost = {h.UID_B: "merge"}
+        self.reload_technician()
+        badge = self.page.locator(f"#rows tr[data-uid='{h.UID_B}'] td.acc .exam-merged")
+        expect(badge).to_have_text("Merged · original unavailable")
+        expect(badge).to_have_attribute("title", re.compile("^합친 검사의 원본 일부를 볼 수 없어"))
+        expect(self.page.locator(f"#rows tr[data-uid='{h.UID}'] td.acc .exam-merged")).to_have_count(0)
+        self.site.lost = {h.UID_B: "split"}
+        self.reload_technician()
+        expect(badge).to_have_text("Split · original unavailable")
+        # The technician can still undo it: the window takes the server's group (the server checked access to every original).
+        self.site.lost, self.site.lost_members = {h.UID_B: "merge"}, {h.UID_B: [h.UID_B, "2.25.999"]}
+        self.reload_technician()
+        expect(badge).to_have_text("Merged · original unavailable")
+        self.pick(h.UID_B)
+        self.page.locator("#t-split-unmerge").click()
+        win = self.window("unmerge")
+        expect(win.locator(".exam-merge-checks li")).to_have_count(3)
+        win.get_by_role("button", name="Unmerge", exact=True).click()
+        expect(win).to_contain_text("되돌렸습니다.")
+        self.assertIn(("POST", f"/api/exam-groups/{GROUP_ID}/dissolve", None), self.site.sent)
+        win.get_by_role("button", name="Close").click()
+        expect(self.page.locator("#rows .exam-merged")).to_have_count(0)
     def test_server_refusal_is_shown_and_the_window_stays_open(self):
         self.site.merge_refusal = (409, {"code": "EXAM_GROUP_REFUSED", "message": "SYN refused",
                                          "refusals": [{"uid": h.UID_B, "rule": "reported", "message": "판독문이 있습니다(RS T). 먼저 판독 취소(Reset)를 하세요."}]})

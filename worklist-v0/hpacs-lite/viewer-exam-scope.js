@@ -142,17 +142,24 @@
         viewportStructure:{layoutType:'grid',properties:{rows:1,columns:2}},viewports:roles.map((_,i)=>({
           viewportOptions:{toolGroupId:'default',viewportType:'stack',allowUnmatchedView:true},displaySets:[{id:'exam-'+i}]}))}]};
   }
+  // The image sets the viewer makes (OHIF 3.9.1 DisplaySetService.makeDisplaySets, the one entry every series, late
+  // arrival and stored SR passes) hold only the originals and series of this window's scopes; each image keeps its own
+  // Study / Series / SOP UIDs.
   function install(services) {
     const sets=services?.displaySetService;
     if(!sets||installed.has(sets))return;
-    const create=sets.createDisplaySets;
-    if(typeof create!=='function')throw Error('영상 범위 공급을 연결하지 못했습니다.');
-    sets.createDisplaySets=function(instances,...args) {
-      if(!active())return create.call(this,instances,...args);
+    const make=sets.makeDisplaySets;
+    if(typeof make!=='function')throw Error('영상 범위 공급을 연결하지 못했습니다.');
+    sets.makeDisplaySets=function(instances,...args) {
+      // A set this window made from what its reader just saved (madeInClient) is shown as before.
+      const own=args[0]===true||args[0]?.madeInClient===true;
+      if(!active()||own||!Array.isArray(instances))return make.apply(this,[instances,...args]);
       const input=snapshot();
       if(!input)throw Error('검사 범위를 확인한 뒤 영상을 표시할 수 있습니다.');
-      const selected=instances.filter(instance=>allows(input,instance.StudyInstanceUID,instance.SeriesInstanceUID));
-      return selected.length?create.call(this,selected,...args):[];
+      const keep=list=>list.filter(instance=>allows(input,instance?.StudyInstanceUID,instance?.SeriesInstanceUID));
+      // {batch:true}: one list of instances per series; each list keeps only the scope's images, an emptied list goes.
+      const selected=args[0]?.batch===true?instances.map(list=>Array.isArray(list)?keep(list):[]).filter(list=>list.length):keep(instances);
+      return selected.length?make.apply(this,[selected,...args]):[];
     };
     const hp=services.hangingProtocolService,run=hp?.run;
     if(typeof run==='function')hp.run=function(data,requested,options){
@@ -164,5 +171,9 @@
     };
     installed.add(sets);
   }
-  root.KinViewerExamScope={resolve,ensure,activate,snapshot,allows,send,watch,invalidate,install,comparisonProtocol};
+  // This window's exam an image belongs to ('current' / 'prior'), or null when the window has no admitted scope: every
+  // original of a merged exam is the current exam (KinExamScope.examRole). `sources` lists that exam's originals.
+  const role=(study,series=null)=>model.examRole(snapshot(),study,series);
+  const sources=(study,series=null)=>model.examSources(snapshot(),study,series);
+  root.KinViewerExamScope={resolve,ensure,activate,snapshot,allows,role,sources,send,watch,invalidate,install,comparisonProtocol};
 })(globalThis);

@@ -44,10 +44,13 @@ function kinCreateStudySearch() {
       if (keys.size > 1) throw new Error('기관별 환자 식별이 달라 이전 검사를 하나로 묶을 수 없습니다.');
       if (keys.size === 0) throw new Error('열린 검사의 환자 식별을 확인하지 못했습니다.');
       const rows = list.studies.filter(row => row.id === params.patientId && keys.has(row.sourcePatientKey));
+      // A listed exam is searched by the original studies its scope holds: a merged exam's other originals have no row
+      // of their own but are part of the opened exam, and each keeps its own entry, UID and count in the panel.
+      const uids = [...new Set(rows.flatMap(row => row.examScope?.sources?.length ? row.examScope.sources.map(source => source.studyUid) : [row.uid]))];
       const results = [];
-      for (const row of rows) {
+      for (const uid of uids) {
         current();
-        results.push(...await original.call(this, { ...params, studyInstanceUid: row.uid, disableWildcard: true }));
+        results.push(...await original.call(this, { ...params, studyInstanceUid: uid, disableWildcard: true }));
       }
       current();
       return results;

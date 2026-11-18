@@ -455,7 +455,12 @@ export class PacsWorklist {
         retained.set(link.uid, { examScope: storedExamScope(scope), relatedExamReports: await relatedExamReports(this.prisma, this.studyAccess, c, link.uid) });
       } catch (error) {
         if (!(error instanceof NotFoundException || error instanceof ConflictException)) throw error;
-        retained.set(link.uid, { examUnavailable: true, relatedExamReports: [] });
+        // A study of a merged or split exam that is in force now, whose originals this caller cannot all read now (one gone
+        // from the archive, or outside the caller's access): the row says what kind of exam it belongs to, and nothing of
+        // the originals it cannot read. A row whose only grouping is an ended one keeps the plain answer.
+        const live = link.targets.find(target => target.groupId !== null && target.active);
+        retained.set(link.uid, { examUnavailable: true, ...(live ? { examUnavailableKind: live.part === null ? 'merge' : 'split' } : {}),
+          relatedExamReports: [] });
       }
     }
     const out: any[] = [];

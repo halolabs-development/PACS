@@ -144,6 +144,16 @@ class ExamMergeE2E(WorklistE2E):
                                  ".some(d => d.StudyInstanceUID === x))", arg=[a.uid, b.uid, c.uid], timeout=60000)
         for fixture in (a, b, c):
             self.rendered(viewer, fixture.uid)
+            # Every original is the current exam: its cell is labelled as the current exam, never as a comparison.
+            viewer.wait_for_function("u => [...document.querySelectorAll('.kin-viewer-identity')].some(e => e.dataset.study === u && e.dataset.role === 'current')",
+                                     arg=fixture.uid, timeout=30000)
+            self.assertEqual(viewer.evaluate("u => KinViewerExamScope.role(u)", fixture.uid), "current")
+        # The exam's scope was admitted: no scope error and no Retry Patient on the patient row.
+        self.assertIsNotNone(viewer.evaluate("() => KinViewerExamScope.snapshot()"))
+        expect(viewer.get_by_role("button", name="Retry Patient", exact=True)).to_be_hidden()
+        expect(viewer.get_by_text("영상 범위 공급을 연결하지 못했습니다.")).to_have_count(0)
+        # One series list for the exam: the series of all three originals.
+        expect(viewer.locator(".kin-viewer-series-strip .kin-series-card")).to_have_count(base["series"], timeout=30000)
         viewer.close()
 
         # A report saved on the merged exam carries the group; a merged study has no report of its own while merged.
@@ -168,6 +178,17 @@ class ExamMergeE2E(WorklistE2E):
             self.assertIn(f.uid, listed)
             self.assertNotIn("group", listed[f.uid])
         self.assertEqual(psql(f'SELECT count(*) FROM "StudyGroup" WHERE id={lit(group)} AND "dissolvedAt" IS NOT NULL'), ["1"])
+        # After Unmerge the base study opens on its own again (no exam scope, its own UID only).
+        reader.reload()
+        with reader.context.expect_page(timeout=20000) as opened:
+            self.select(reader, a).dblclick()
+        viewer = opened.value
+        viewer.wait_for_url("**/ohif/viewer?**", timeout=30000)
+        query = parse_qs(urlsplit(viewer.url).query)
+        self.assertEqual(query["StudyInstanceUIDs"], [a.uid])
+        self.assertIsNone(query.get("kinExamScopes"))
+        self.rendered(viewer, a.uid)
+        viewer.close()
         # The saved report keeps the exam it was written on; it is not approved as the base study's alone — Reset goes on.
         self.assertEqual(psql(f'SELECT "groupId" FROM "Report" WHERE uid={lit(a.uid)}'), [group])
         # The list row and the history say which studies the report was written on, now that they are unmerged.
@@ -309,6 +330,11 @@ class ExamMergeE2E(WorklistE2E):
         try:
             absent = self.stack.request('GET', f'/studies/{a.uid}/exam-scope', 'doctor')
             self.assertIn(absent.status, (404, 409), absent.text)
+            # The list does not pass the merged exam off as an ordinary row, and names nothing of the lost original.
+            row = self.listed()[a.uid]
+            self.assertEqual((row.get('examUnavailable'), row.get('examUnavailableKind')), (True, 'merge'))
+            self.assertNotIn('examScope', row)
+            self.assertNotIn(b.uid, json.dumps(row))
             ds.PatientID = patient + '-CHANGED'
             changed = io.BytesIO(); ds.save_as(changed, write_like_original=False)
             self.assertEqual(self.stack._orthanc_request('POST', '/instances', changed.getvalue()).status, 200)

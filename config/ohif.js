@@ -121,8 +121,38 @@
     }
     return out;
   }
+  // A listed row of a merged or split exam in force whose originals the reader cannot all read now (one gone from the
+  // archive, or outside the reader's access): the server says so (examUnavailable, and the exam kind) and names none of
+  // those originals. It is not an ordinary row: it opens no viewer, is not preloaded, and its PF says why. The list badge,
+  // Preload, PF and every viewer opening ask this one answer. A temporary archive failure is not this: the list read fails
+  // or the Preload entry fails with the server's reason and Retry.
+  const UNAVAILABLE = {
+    merge:'합친 검사의 원본 일부를 볼 수 없어 열거나 미리 받지 않습니다. 원본이 영상 저장소에 없거나 이 계정이 볼 수 없습니다. 목록을 새로고침하세요.',
+    split:'나눈 검사의 원본을 볼 수 없어 열거나 미리 받지 않습니다. 원본이 영상 저장소에 없거나 이 계정이 볼 수 없습니다. 목록을 새로고침하세요.',
+  };
+  function unavailable(row) {
+    if(row?.examUnavailable!==true)return null;
+    const kind=Object.hasOwn(UNAVAILABLE,row.examUnavailableKind??'')?row.examUnavailableKind:null;
+    return {kind,message:kind?UNAVAILABLE[kind]:'검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.'};
+  }
+  // The exam of this window (its current exam or its comparison) an image belongs to, by the scopes the server admitted:
+  // every original of a merged exam is the current exam, never a prior; the two parts of one split original are told apart
+  // by the series. null: the image is in neither, or in both and no series tells them apart (never guessed), or the
+  // window has no scope. Later features (a cell's current / prior mark, Match information) read the window's roles here.
+  function examRole(input, studyUid, seriesUid = null) {
+    if(!input||typeof studyUid!=='string')return null;
+    const holds=scope=>!!scope?.sources&&scope.sources.some(source=>source.studyUid===studyUid&&(!seriesUid||allows(source,seriesUid)));
+    const current=holds(input.current),prior=holds(input.prior);
+    return current&&prior?null:current?'current':prior?'prior':null;
+  }
+  // The originals (with their series rules) of the exam that image belongs to, base first: one list for one exam.
+  function examSources(input, studyUid, seriesUid = null) {
+    const role=examRole(input,studyUid,seriesUid);
+    return role?copy(input[role].sources):null;
+  }
   function viewerInput(current, prior = null, version = null, priorVersion = null) {
-    if(current?.examUnavailable||prior?.examUnavailable)throw Error('검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.');
+    const lost=unavailable(current)||unavailable(prior);
+    if(lost)throw Error(lost.message);
     const scope=read(current),comparison=prior?read(prior):null;
     if(!scope || prior&&!comparison)throw new Error('검사 범위를 확인할 수 없습니다.');
     if([...scope.sources,...(comparison?.sources||[])].some(s=>s.studyUid.length>64||!/^\d+(?:\.\d+)+$/.test(s.studyUid)))throw new Error('원본 검사 UID를 확인할 수 없습니다.');
@@ -167,6 +197,7 @@
   function preload(rows) {
     const sources=new Map();
     for(const row of rows) {
+      if(unavailable(row))continue;
       const scope=read(row);
       if(!scope)throw Error('미리 받을 검사 범위를 확인할 수 없습니다.');
       for(const source of scope.sources) {
@@ -186,8 +217,11 @@
   const preloadRank = ['Failed','Evicted',null,'Downloading','Queued','Ready'];
   const sameReference = (a, b) => a?.reportUid===b.reportUid && (a.groupId??null)===(b.groupId??null) && (a.part??null)===(b.part??null);
   function preloadState(row, entryOf) {
-    // A row whose exam the reader cannot read whole (examUnavailable) cannot be opened: no state, like viewerInput refuses it.
-    if(row?.examUnavailable)return null;
+    // A row whose exam the reader cannot read whole (unavailable) is never fetched. A merged or split exam in force says
+    // so at once — Failed with the reason, in every window and filter, never the state of the originals it can still
+    // read — until the list says it is whole again; any other such row has no state, like viewerInput refuses it.
+    const lost=unavailable(row);
+    if(lost)return lost.kind?{uid:row.uid,status:'Failed',reason:lost.message,unavailable:true}:null;
     let scope=null;
     try{scope=read(row);}catch(_){return null;}
     if(!scope)return null;
@@ -258,7 +292,7 @@
     finally{try{popup.name=name;}catch(_){}}
     return true;
   }
-  const api={raiseWindow,read,key,stamp,screenScope,screenStamp,originalLabel,sourceRequest,seriesValue,seriesRequest,attachmentTarget,attachmentHeaders,storedReport,allows,listedExam,metadata,projections,values,originals,viewingSelection,originalInput,readingScope,readingStamp,fetch:fetchScope,dicom,viewerInput,viewerUrl,viewerReference,reference,roleRows,snapshotReference,jobSnapshot,snapshotUrl,preload,preloadState,chooseOriginals,changes};
+  const api={raiseWindow,read,key,stamp,screenScope,screenStamp,originalLabel,sourceRequest,seriesValue,seriesRequest,attachmentTarget,attachmentHeaders,storedReport,allows,listedExam,metadata,projections,values,originals,viewingSelection,originalInput,readingScope,readingStamp,fetch:fetchScope,dicom,unavailable,examRole,examSources,viewerInput,viewerUrl,viewerReference,reference,roleRows,snapshotReference,jobSnapshot,snapshotUrl,preload,preloadState,chooseOriginals,changes};
   root.KinExamScope=api;
   if(typeof module==='object'&&module.exports)module.exports=api;
 })(globalThis);
@@ -6622,10 +6656,13 @@ function kinCreateStudySearch() {
       if (keys.size > 1) throw new Error('기관별 환자 식별이 달라 이전 검사를 하나로 묶을 수 없습니다.');
       if (keys.size === 0) throw new Error('열린 검사의 환자 식별을 확인하지 못했습니다.');
       const rows = list.studies.filter(row => row.id === params.patientId && keys.has(row.sourcePatientKey));
+      // A listed exam is searched by the original studies its scope holds: a merged exam's other originals have no row
+      // of their own but are part of the opened exam, and each keeps its own entry, UID and count in the panel.
+      const uids = [...new Set(rows.flatMap(row => row.examScope?.sources?.length ? row.examScope.sources.map(source => source.studyUid) : [row.uid]))];
       const results = [];
-      for (const row of rows) {
+      for (const uid of uids) {
         current();
-        results.push(...await original.call(this, { ...params, studyInstanceUid: row.uid, disableWildcard: true }));
+        results.push(...await original.call(this, { ...params, studyInstanceUid: uid, disableWildcard: true }));
       }
       current();
       return results;

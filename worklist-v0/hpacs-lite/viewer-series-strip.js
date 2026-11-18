@@ -185,24 +185,38 @@ window.KinViewerSeriesStrip = (() => {
       const source = dragging; finishDrag(); assign(source.series, source.study, target[0], source.patient);
     }, { capture: true, signal: events.signal });
     document.addEventListener('dragend', finishDrag, { signal: events.signal });
-    async function load(study) {
+    // The strip lists the exam the active cell shows: in a window opened on exam scopes, every original of that exam
+    // (a merged exam is one list, base original first, each original's series in order; a split part only its series);
+    // otherwise the one study. Each card keeps its own original Study UID.
+    function exam(study, series) {
+      const sources = study && window.KinViewerExamScope?.snapshot?.() ? window.KinViewerExamScope.sources(study, series) : null;
+      const list = sources?.length ? sources : study ? [{ studyUid: study, series: { mode: 'all', uids: [] } }] : [];
+      const role = sources?.length ? window.KinViewerExamScope.role(study, series) : null;
+      return { key: study ? JSON.stringify([role, list]) : null, sources: list };
+    }
+    let examKey = null, members = [];
+    async function load(study, series = null) {
       clear(); uid = study; stripPatient = patient();
+      const target = exam(study, series); examKey = target.key; members = target.sources.map(source => source.studyUid);
       if (!study) { message('현재 셀의 영상이 준비되면 시리즈를 표시합니다.'); return; }
-      controller = new AbortController(); const signal = controller.signal, ticket = sequence;
-      const live = () => !ended && !signal.aborted && ticket === sequence && uid === study;
+      controller = new AbortController(); const signal = controller.signal, ticket = sequence, key = examKey;
+      const live = () => !ended && !signal.aborted && ticket === sequence && examKey === key;
       message('시리즈를 불러오는 중…');
       try {
-        const response = await request('/dicom-web/studies/' + encodeURIComponent(study) + '/metadata', {}, signal);
-        const instances = await response.json(); if (!live()) return;
-        const found = new Map();
-        for (const instance of instances) {
-          if (value(instance, '0020000D') !== study) continue;
-          const series = value(instance, '0020000E'); if (!series) continue;
-          if (!found.has(series)) found.set(series, []); found.get(series).push(instance);
+        const groups = new Map();
+        for (const source of target.sources) {
+          const response = await request('/dicom-web/studies/' + encodeURIComponent(source.studyUid) + '/metadata', {}, signal);
+          const instances = await response.json(); if (!live()) return;
+          const found = new Map();
+          for (const instance of instances) {
+            if (value(instance, '0020000D') !== source.studyUid) continue;
+            const series = value(instance, '0020000E'); if (!series || window.KinExamScope && !window.KinExamScope.allows(source, series)) continue;
+            if (!found.has(series)) found.set(series, []); found.get(series).push(instance);
+          }
+          for (const [series, images] of [...found].sort(([, a], [, b]) => order(a[0], b[0]))) groups.set(source.studyUid + '|' + series, { study: source.studyUid, series, images });
         }
-        const groups = new Map([...found].sort(([, a], [, b]) => order(a[0], b[0])));
         list.replaceChildren();
-        for (const [series, images] of groups) {
+        for (const [cardKey, { study, series, images }] of groups) {
           const first = images[0], counts = images.map(frames);
           const count = counts.every(count => count !== null) ? counts.reduce((a, b) => a + b, 0) : null;
           const number = String(value(first, '00200011') ?? '').trim() || 'Unknown';
@@ -229,15 +243,15 @@ window.KinViewerSeriesStrip = (() => {
               pane.classList.add('kin-series-drop-target'); pane.dataset.kinSeriesDrop = 'Drop Series';
             }
           };
-          cards.set(series, card); list.append(card);
+          cards.set(cardKey, card); list.append(card);
         }
         if (!groups.size) message('시리즈가 없습니다.');
         refresh();
         // Use the existing preview API. A failed preview never removes its
         // series number/title or prevents keyboard assignment of loaded data.
-        for (const [series, images] of groups) {
+        for (const [cardKey, { study, images }] of groups) {
           if (!live()) return;
-          const image = cards.get(series).querySelector('img');
+          const image = cards.get(cardKey).querySelector('img');
           try {
             const lookup = await request('/api/dicom/lookup', { method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ studyUid: study, sopUid: value(images[0], '00080018') }) }, signal);
@@ -248,12 +262,12 @@ window.KinViewerSeriesStrip = (() => {
             image.onload = () => { if (live()) image.nextElementSibling.hidden = true; };
             image.onerror = () => { if (live()) { image.hidden = true; image.nextElementSibling.textContent = 'Preview unavailable'; image.parentElement.title += ' 썸네일 표시 실패.'; } };
             image.src = url; image.hidden = false;
-          } catch (_) { if (!live()) return; cards.get(series).querySelector('.kin-series-preview-status').textContent = 'Preview unavailable'; cards.get(series).title += ' 썸네일 표시 실패.'; }
+          } catch (_) { if (!live()) return; cards.get(cardKey).querySelector('.kin-series-preview-status').textContent = 'Preview unavailable'; cards.get(cardKey).title += ' 썸네일 표시 실패.'; }
         }
       } catch (error) {
         if (!live()) return;
         message(error.message || '시리즈 정보를 불러오지 못했습니다.');
-        const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = 'Retry'; retry.onclick = () => load(study); list.append(retry);
+        const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = 'Retry'; retry.onclick = () => load(study, series); list.append(retry);
       }
     }
     // The strip and, above it, the row the toolbar will fill. The toolbar mounts
@@ -297,10 +311,14 @@ window.KinViewerSeriesStrip = (() => {
       // otherwise every wheel/cine frame would discard and fetch all previews.
       // Selecting a vacant comparison cell must leave a source to choose from.
       // Keep the strip only for the same patient/tab generation.
-      if (current.set?.StudyInstanceUID === uid) stripPatient = patient();
-      const next = current.set?.StudyInstanceUID || (samePatient(stripPatient) ? uid : null);
-      if (uid !== next) { load(next); return; }
-      for (const [series, card] of cards) card.setAttribute('aria-pressed', String(series === current.set?.SeriesInstanceUID));
+      // A cell showing another original of the same exam keeps the strip: it already lists that original.
+      const set = current.set, shown = set?.StudyInstanceUID;
+      if (shown) {
+        const next = exam(shown, set.SeriesInstanceUID);
+        if (next.key !== examKey) { load(shown, set.SeriesInstanceUID); return; }
+        stripPatient = patient();
+      } else if (uid && !samePatient(stripPatient)) { load(null); return; }
+      for (const [cardKey, card] of cards) card.setAttribute('aria-pressed', String(!!shown && cardKey === shown + '|' + set.SeriesInstanceUID));
     }
     const stopPatient = window.KinViewerPatientTabs.subscribe(() => {
       const next = patient();

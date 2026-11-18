@@ -154,8 +154,12 @@
     }
     async function showDissolve(win,answer) {
       const scope=scopes.read(win.row),split=answer.group.kind==='split';
-      if(scope?.groupId!==answer.group.id)throw Error('검사 범위가 바뀌었습니다. 목록을 새로고침한 뒤 다시 여세요.');
-      const sources=scopes.metadata(win.row),checks=el('ul',{className:'exam-merge-checks'});
+      // A merged or split exam whose originals this list cannot all read now has no scope on its row: the server's group
+      // (which it gave only after checking this technician's access to every original) is the one undone.
+      const lost=!!scopes.unavailable(win.row)?.kind;
+      if(!lost&&scope?.groupId!==answer.group.id)throw Error('검사 범위가 바뀌었습니다. 목록을 새로고침한 뒤 다시 여세요.');
+      const originals=lost?[...new Set((answer.group.members||[]).map(m=>m.studyUid))]:scope.sources.map(s=>s.studyUid);
+      const sources=lost?originals.map(uid=>({uid})):scopes.metadata(win.row),checks=el('ul',{className:'exam-merge-checks'});
       const go=button(split?'Unsplit':'Unmerge',submit);
       let busy=false;
       // The mark, then the server's sentence for that check (in the glossary when the server writes one sentence).
@@ -168,7 +172,7 @@
         if(busy||go.disabled||!win.live())return;busy=true;paint();
         try {
           await ctx.api('POST','/exam-groups/'+encodeURIComponent(answer.group.id)+'/dissolve',undefined,undefined,win.at);
-          ctx.examChanged?.(scope.sources.map(s=>s.studyUid));
+          ctx.examChanged?.(originals);
           await changed(win,'되돌렸습니다. 원본 영상과 기존 판독 이력은 보존했습니다.');
         }catch(error){failure(win,error);
           try {const next=await ctx.api('GET','/studies/'+encodeURIComponent(win.row.uid)+'/exam-group',undefined,undefined,win.at);
@@ -232,7 +236,11 @@
       if(active&&!active.completed&&!active.live()) {active.close();ctx.toast('선택 또는 검사 범위가 바뀌어 창을 닫았습니다. 다시 여세요.','info');}
       for(const tr of document.querySelectorAll('#rows tr[data-uid]')){
         const cell=tr.querySelector('td.acc');if(!cell)continue;cell.querySelector('.exam-merged')?.remove();
-        const row=ctx.study(tr.dataset.uid),scope=scopes.read(row);if(!scope?.groupId)continue;
+        const row=ctx.study(tr.dataset.uid),lost=scopes.unavailable(row);
+        // A merged or split exam whose originals cannot all be read now is not shown as an ordinary row.
+        if(lost?.kind){cell.append(' ',el('span',{className:'exam-merged exam-merged-unavailable',text:lost.kind==='split'?'Split · original unavailable':'Merged · original unavailable',
+          title:lost.message,'data-kin-keep':'title'}));continue;}
+        const scope=scopes.read(row);if(!scope?.groupId)continue;
         const label=scope.kind==='split'?`Split ${(scope.part??0)+1}/2`:`Merged ×${scope.sources.length} · ${count(row.count)} img`;
         cell.append(' ',el('span',{className:'exam-merged',text:label,title:scopes.metadata(row).map(s=>text(s.acc??s.uid)).join(' + '),'data-kin-keep':'title'}));
       }

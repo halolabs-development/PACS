@@ -873,6 +873,31 @@ test('worklist: a merged study whose Count is unknown makes the exam\'s Count un
   assert.deepEqual((await ended.listStudies(reader)).studies.map(s=>s.uid).sort(),[A,B,C,D]);
 });
 
+test('worklist: a merged exam with an original the caller cannot read now says so on its rows, naming no hidden original',async()=>{
+  // C is gone from the archive (its registration stays), or the access policy no longer admits it.
+  const gone=await listFixture({rows:[qido(A,'ACC-A',8,1),qido(B,'ACC-B',8,1),qido(D,'ACC-D',3,1,'SYN-P2')],
+    extraStates:[{...state(C),origin:'dicom',createdAt:new Date('2020-01-01T00:00:00Z'),matched:'U',orderOid:null}]});
+  const denied=await listFixture({policy:{version:1,restricted:true,startsAt:null,endsAt:null,
+    rules:[{patientId:null,modalities:[],dateFrom:null,dateTo:null,studyUids:[A,B,D]}]}});
+  for(const [name,svc] of [['gone',gone],['denied',denied]]){
+    const rows=(await svc.listStudies(reader)).studies,byUid=new Map(rows.map(row=>[row.uid,row]));
+    // The base and the member it still holds are listed, each marked as part of a merged exam that cannot be read whole.
+    for(const uid of [B,A]){
+      const row=byUid.get(uid);
+      assert.ok(row,name+' '+uid);
+      assert.equal(row.examUnavailable,true,name+' '+uid);assert.equal(row.examUnavailableKind,'merge',name+' '+uid);
+      assert.equal('examScope' in row,false,name+' '+uid);assert.equal('group' in row,false,name+' '+uid);
+    }
+    assert.equal('examUnavailableKind' in byUid.get(D),false,name+': an ordinary row is unchanged');
+    assert.equal(byUid.has(C),false,name);
+    const text=JSON.stringify(rows);assert.equal(text.includes(C),false,name+': the hidden original is not named');assert.equal(text.includes('ACC-C'),false,name);
+  }
+  // An ended merge whose saved scope cannot be read is not a merged exam now: the row keeps the established answer.
+  const ended=await listFixture({group:merged(G1,B,[B,A,C],{dissolvedAt:new Date()}),rows:[qido(A,'ACC-A',8,1),qido(B,'ACC-B',8,1),qido(D,'ACC-D',3,1,'SYN-P2')],
+    extraStates:[{...state(C),origin:'dicom',createdAt:new Date('2020-01-01T00:00:00Z'),matched:'U',orderOid:null}]});
+  for(const row of (await ended.listStudies(reader)).studies)assert.equal('examUnavailableKind' in row,false,row.uid);
+});
+
 test('worklist and bootstrap: reports and drafts of never-grouped studies cost one membership read, and each gets the answer one record gets',async()=>{
   const {resolveExamScope,examScopeView}=require('/app/dist/exam-merge.service');
   const reports=[A,B,C,D].map(uid=>({uid,version:1,findings:'SYN '+uid,conclusion:'',recommendation:'',groupId:null}));
