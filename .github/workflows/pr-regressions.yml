@@ -215,7 +215,7 @@ jobs:
     needs: select
     if: ${{ !cancelled() && (needs.select.result != 'success' || fromJSON(needs.select.outputs.jobs)['worklist-dom']) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 85
+    timeout-minutes: 88
     steps:
     - name: Path selection completed
       if: ${{ needs.select.result != 'success' }}
