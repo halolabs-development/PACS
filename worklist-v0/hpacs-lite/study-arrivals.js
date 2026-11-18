@@ -180,12 +180,14 @@
       return {label:{key:'reported_unreadable',text:'Gateway 보고 형식을 확인할 수 없습니다',title:'보고 내용을 해석하지 못해 비교하지 않았습니다.'},reasons:['receipt_unreadable']};
     const reasons=[];
     // K<M is receiptGap's answer, the one the Technician list and the Info panel draw; null K is never read as zero.
-    // The title says "not compared" exactly when that answer is none, so it never contradicts a missing-images line.
-    const gap=receiptGap(b,receipt,format),comparable=gap!==null;
+    // The title says why it did not compare exactly when that answer did not (count unknown, or read before this report),
+    // so it never contradicts a missing-images line or a count shown beside it.
+    const gap=receiptGap(b,receipt,format),comparable=gap!==null&&!gap.pending;
     if(gap?.missing&&!gap.stale)reasons.push(b.state==='observed'?'kin_below_reported':'not_observed_with_reported_transfer');
     if(b.changedAt&&Date.parse(receipt.serverReceivedAt)<Date.parse(b.changedAt))reasons.push('receipt_older_than_change');
     return {label:{key:'reported',text:'Gateway 보고('+format(receipt.serverReceivedAt)+'): 병원 보유 '+N+'건 중 '+M+'건 전송',
-      title:'Gateway가 보고한 전송 수입니다. 검사 종료나 영상 수신 여부를 뜻하지 않습니다.'+(comparable?'':' HALO PACS 보유 개수를 알 수 없어 비교하지 않았습니다.')},reasons};
+      title:'Gateway가 보고한 전송 수입니다. 검사 종료나 영상 수신 여부를 뜻하지 않습니다.'+(comparable?'':gap?.pending
+        ?' HALO PACS 보유 개수는 이 보고가 오기 전에 센 값이라 다음 관측에서 비교합니다.':' HALO PACS 보유 개수를 알 수 없어 비교하지 않았습니다.')},reasons};
   }
 
   /*
@@ -224,9 +226,10 @@
     const stale=b.state==='observation_unavailable',seen=stale?b.last:b;
     if(!seen||typeof seen!=='object')return null;
     const held=b.state==='observed'?b.count:b.state==='not_observed'?0:stale?(seen.notObserved===true?0:seen.count):null;
-    const since=b.readSince??seen.observedAt;
-    if(!count(held)||!validTime(since)||Date.parse(receipt.serverReceivedAt)>Date.parse(since))return null;
-    const sent=receipt.successCount;
+    const since=b.readSince??seen.observedAt,sent=receipt.successCount;
+    if(!count(held)||!validTime(since))return null;
+    // A known count read before this report: not compared yet (the next observation answers), never "missing" or "fine".
+    if(Date.parse(receipt.serverReceivedAt)>Date.parse(since))return {missing:null,pending:true,held,sent,stale};
     if(held>=sent)return {missing:false,held,sent,stale};
     return {missing:true,held,sent,stale,
       text:stale?kinSay('Needs Check · 영상 누락(관측 불가 · 마지막 관측 {0} 기준): Gateway 전송 {n1}건 중 HALO PACS 보유 {n2}건',format(seen.observedAt),sent,held)

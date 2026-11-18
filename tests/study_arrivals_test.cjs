@@ -229,7 +229,7 @@ const gapObservation=name=>Object.hasOwn(V.observations,name)?V.observations[nam
 test('missing images: K below the reported sent M, only when the observation is not older than the report',()=>{
   for(const row of V.gapCases){
     const observation=gapObservation(row.observation),got=arrivals.receiptGap(observation,gapReceipt(row.receipt),same);
-    assert.deepEqual(got&&{missing:got.missing,held:got.held,sent:got.sent,stale:got.stale},row.gap,row.id);
+    assert.deepEqual(got&&{missing:got.missing,...(got.pending?{pending:true}:{}),held:got.held,sent:got.sent,stale:got.stale},row.gap,row.id);
     if(got?.missing){
       assert.equal(got.text,got.stale
         ?`Needs Check · 영상 누락(관측 불가 · 마지막 관측 ${observation.last.observedAt} 기준): Gateway 전송 ${got.sent}건 중 HALO PACS 보유 ${got.held}건`
@@ -267,8 +267,14 @@ test('missing images: a paged list bounds the comparison by when its first page 
   assert.equal(arrivals.studyObservation(read(),uid).readSince,'2026-09-24T01:02:00.000Z');
   assert.equal(arrivals.receiptGap(arrivals.studyObservation(read(),uid),report).missing,true);
   // The first page was read before the report: its counts may predate the images the report counts.
-  assert.equal(arrivals.receiptGap(arrivals.studyObservation(read('2026-09-24T01:00:30.000Z'),uid),report),null);
-  assert.equal(arrivals.receiptGap(arrivals.studyObservation(arrivals.observationFailed(read('2026-09-24T01:00:30.000Z')),uid),report),null);
+  // Not compared yet: pending, never missing; the Gateway title says why (not "count unknown").
+  for(const seen of [arrivals.studyObservation(read('2026-09-24T01:00:30.000Z'),uid),
+    arrivals.studyObservation(arrivals.observationFailed(read('2026-09-24T01:00:30.000Z')),uid)]){
+    const gap=arrivals.receiptGap(seen,report);
+    assert.deepEqual([gap.missing,gap.pending,gap.text],[null,true,undefined]);
+    const title=arrivals.receiptLabels({assignment:'assigned',observation:seen,gateway:report}).gateway.title;
+    assert.match(title,/이 보고가 오기 전에 센 값이라 다음 관측에서 비교합니다/);assert.doesNotMatch(title,/알 수 없어/);
+  }
   // A first-page time that is not a time, or later than the completing page, is not a bound.
   for(const bad of ['yesterday','2026-09-24T01:03:00.000Z',null])
     assert.equal(arrivals.studyObservation(read(bad),uid).readSince,'2026-09-24T01:02:00.000Z',String(bad));

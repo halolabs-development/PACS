@@ -97,7 +97,7 @@
     {"id": "G2 K=M: no mark", "observation": "observed_12", "receipt": "old_complete_12_of_12", "gap": {"missing": false, "held": 12, "sent": 12, "stale": false}},
     {"id": "G3 K>M (images still to send are the transfer's, not missing): no mark", "observation": "observed_12", "receipt": "early_sending_3_of_12", "gap": {"missing": false, "held": 12, "sent": 3, "stale": false}},
     {"id": "G4 a report at the observation's own time is compared", "observation": "observed_12", "receipt": "same_time_complete_13_of_13", "gap": {"missing": true, "held": 12, "sent": 13, "stale": false}},
-    {"id": "G5 a report newer than the observation waits for the next observation", "observation": "observed_12", "receipt": "complete_13_of_13", "gap": null},
+    {"id": "G5 a report newer than the observation is not compared yet (pending): the next observation answers", "observation": "observed_12", "receipt": "complete_13_of_13", "gap": {"missing": null, "pending": true, "held": 12, "sent": 13, "stale": false}},
     {"id": "G6 no report: no answer, never missing", "observation": "observed_12", "receipt": "none", "gap": null},
     {"id": "G7 unreadable report: no answer", "observation": "observed_12", "receipt": "unreadable_phase", "gap": null},
     {"id": "G8 unknown K is never read as zero", "observation": "observed_unknown", "receipt": "early_retry_15_of_20", "gap": null},
@@ -109,8 +109,8 @@
     {"id": "G14 a failed cold start has no last answer", "observation": "unavailable_cold", "receipt": "early_retry_15_of_20", "gap": null},
     {"id": "G15 a failed observation whose last answer was Not Observed holds 0", "observation": "unavailable_last_not_observed", "receipt": "old_complete_12_of_12", "gap": {"missing": true, "held": 0, "sent": 12, "stale": true}},
     {"id": "G16 a failed observation whose last count was unknown has no answer", "observation": "unavailable_last_unknown", "receipt": "early_retry_15_of_20", "gap": null},
-    {"id": "G17 a paged list compares only reports older than its first page", "observation": "observed_12_first_page_earlier", "receipt": "early_retry_15_of_20", "gap": null},
-    {"id": "G18 the same bound holds for the kept answer of a failed observation", "observation": "unavailable_last_12_first_page_earlier", "receipt": "early_retry_15_of_20", "gap": null},
+    {"id": "G17 a paged list compares only reports older than its first page", "observation": "observed_12_first_page_earlier", "receipt": "early_retry_15_of_20", "gap": {"missing": null, "pending": true, "held": 12, "sent": 15, "stale": false}},
+    {"id": "G18 the same bound holds for the kept answer of a failed observation", "observation": "unavailable_last_12_first_page_earlier", "receipt": "early_retry_15_of_20", "gap": {"missing": null, "pending": true, "held": 12, "sent": 15, "stale": true}},
     {"id": "G19 a paged list compares a report older than its first page", "observation": "observed_12_first_page_earlier", "receipt": "old_complete_12_of_12", "gap": {"missing": false, "held": 12, "sent": 12, "stale": false}}
   ],
   "sequences": [

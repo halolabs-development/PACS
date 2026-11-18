@@ -62,8 +62,8 @@ U3_RULE_SHA256 = "bff24d487a066df554c2dbe70a9ca1dbc28cf52062eebac87f9a537344d275
 # It moved again for missing images: the K<M and Not Observed reasons now come from receiptGap (the one answer the
 # Technician list and Info draw), which compares only a report the observation is not older than (7ce3a2e6…3e0e4 before).
 # Its label text and keys are unchanged; the reason rules are pinned by tests/study_observation_vectors.json. Its title
-# says "not compared" exactly when that answer is none (so it never contradicts a missing-images line).
-U1B_GATEWAY_LABEL_SHA256 = "f96f40bcb16baa65f551e079b0f74af456ec3ba9872a123e8fc11d8e5a094f7e"
+# says why it did not compare exactly when that answer did not (count unknown, or read before this report).
+U1B_GATEWAY_LABEL_SHA256 = "64f8c028a83c7303a07f5cc8d2de36b00e73e7c7bc38440def0b5e8885e852cc"
 
 
 def sha(value):

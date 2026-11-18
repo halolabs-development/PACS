@@ -515,6 +515,14 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
         drawn = self.page.evaluate("v=>{const before=renders;applyObservation(v);return renders-before}", filled)
         state = self.gap_state()
         self.assertEqual((0, True, None, "12"), (drawn, state["hidden"], state["mark"], state["cell"]))
+        # A manual Refresh replaces the rows first and applies the observation before it renders the list: the cell's
+        # number and its mark change together with the Info line (15 shown -> 12 held of 15 sent), with no render.
+        self.poll(reply(self.receipt_row(self.gap_receipt(1), 15), at=self.at(3)))
+        self.assertEqual(("15", None), (self.gap_state()["cell"], self.gap_state()["mark"]))
+        short = reply(self.receipt_row(self.gap_receipt(1), 12), at=self.at(4))
+        drawn = self.page.evaluate("v=>{const before=renders;studies=v.studies.map(s=>({...s}));applyObservation(v);return renders-before}", short)
+        state = self.gap_state()
+        self.assertEqual((0, False, self.GAP, self.GAP, "12"), (drawn, state["hidden"], state["text"], state["mark"], state["cell"]))
         # Back to missing, then the row is replaced with a newer report before an observation that cannot be read: the
         # answer stays the last observation's pair (12 held of 15 sent), said as such, never the old count with the new report.
         self.poll(reply(self.receipt_row(self.gap_receipt(1), 12), at=self.at(4)))

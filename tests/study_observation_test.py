@@ -218,8 +218,10 @@ def receipt_gap(b, receipt):
         held = None
     # A paged list's first page bounds the comparison; without it the observation's own time does.
     seen = parse_time(b["readSince"] if b.get("readSince") is not None else last.get("observedAt"))
-    if not ok_count(held) or seen is None or at > seen:
+    if not ok_count(held) or seen is None:
         return None
+    if at > seen:   # a known count read before the report: not compared yet
+        return {"missing": None, "pending": True, "held": held, "sent": m, "stale": stale}
     return {"missing": held < m, "held": held, "sent": m, "stale": stale}
 
 
@@ -361,7 +363,8 @@ class SourcePins(unittest.TestCase):
             "if(value===null||value===undefined)return {rows:null};",
             "return {...base,available:false};",
             "const held=b.state==='observed'?b.count:b.state==='not_observed'?0:stale?(seen.notObserved===true?0:seen.count):null;",
-            "if(!count(held)||!validTime(since)||Date.parse(receipt.serverReceivedAt)>Date.parse(since))return null;",
+            "if(!count(held)||!validTime(since))return null;",
+            "if(Date.parse(receipt.serverReceivedAt)>Date.parse(since))return {missing:null,pending:true,held,sent,stale};",
             "if(held>=sent)return {missing:false,held,sent,stale};",
             "if(gap?.missing&&!gap.stale)reasons.push(b.state==='observed'?'kin_below_reported':'not_observed_with_reported_transfer');",
             "if(b.changedAt&&Date.parse(receipt.serverReceivedAt)<Date.parse(b.changedAt))reasons.push('receipt_older_than_change');",

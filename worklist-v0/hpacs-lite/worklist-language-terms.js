@@ -1684,6 +1684,7 @@ window.KinLanguageTerms = {
     ["HALO PACS 관측 요청이 실패했습니다. 목록·개수·관측 시각은 마지막으로 성공한 관측값입니다.", "The HALO PACS observation request failed. The list, counts, and observation time are from the last successful observation.", "m"],
     ["HALO PACS 보유 {n0}건({1})", "HALO PACS holds {n0} ({1})", "m"],
     ["HALO PACS 보유 개수 모름({0})", "HALO PACS count unknown ({0})", "m"],
+    ["HALO PACS 보유 개수는 이 보고가 오기 전에 센 값이라 다음 관측에서 비교합니다.", "The HALO PACS count was taken before this report arrived, so it is compared at the next observation.", "m"],
     ["HALO PACS 보유 개수를 알 수 없어 비교하지 않았습니다.", "HALO PACS count is unknown, so it was not compared.", "m"],
     ["HALO PACS 서버가 성공한 관측에서 읽은 검사 수준 DICOM 태그입니다. 오더와의 비교는 엔지니어링 확인 전용입니다.", "Study-level DICOM tags read by the HALO PACS server in a successful observation. Comparison with the order is for engineering checks only.", "m"],
     ["HALO PACS가 {observedAt}에 읽은 값입니다. 출처: {sourceLabel}", "Value read by HALO PACS at {observedAt}. Source: {sourceLabel}", "m"],

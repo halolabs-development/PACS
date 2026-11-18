@@ -77,15 +77,20 @@
       const gap = KinStudyArrivals.receiptGap(seen, seen.receipt ?? null);
       return gap?.missing && mode === "Technician" ? gap : null;
     }
-    /** The list's mark for one study (CELL.count draws it on render(); this follows the answer between renders). */
-    function paintReceiptGap(mark, gap) {
+    /**
+     * One list Count cell between renders: the count (the span before the mark) and the mark, painted together from the
+     * study row and the answer, as CELL.count draws them on render() — the number never lags behind its mark.
+     */
+    function paintReceiptGap(mark, s) {
+      const gap = studyReceiptGap(s), value = mark.previousElementSibling;
+      if (s && value) value.textContent = String(s.count ?? "");
       mark.hidden = !gap; mark.title = gap?.text ?? "";
       if (gap) mark.setAttribute("aria-label", gap.text); else mark.removeAttribute("aria-label");
     }
     function renderObservation() {
       if (!studyObservationModel) return;
       for (const mark of $("#rows")?.querySelectorAll(".receipt-gap[data-gap-uid]") ?? [])
-        paintReceiptGap(mark, studyReceiptGap(studies.find(s => s.uid === mark.dataset.gapUid)));
+        paintReceiptGap(mark, studies.find(s => s.uid === mark.dataset.gapUid));
       const summary = KinStudyArrivals.observationSummary(studyObservationModel), status = $("#observation-status");
       if (status) { status.hidden = !summary.text; kinWrite(status, summary.text); status.title = summary.title; }
       // S4-U4 Now Retry, drawn only from labels.retry. Another study or a newer receipt drops the in-flight token
