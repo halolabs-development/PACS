@@ -91,7 +91,7 @@ window.KinViewerUXShell = (() => {
     const dockTab = () => document.querySelector('#kin-workspace-dock nav button[aria-controls="kin-viewer-history"]');
     openList.onclick = () => { const tab = dockTab(); if (!tab) return; if (tab.getAttribute('aria-expanded') !== 'true') tab.click(); tab.focus(); };
     hint.append(hintText, openList);
-    let bandRow = null, bandPanel = null;
+    let bandRow = null, bandPanel = null, frameTop = null;
     function apply() {
       const host = document.querySelector('.kin-patient-tabs'), any = entries.some(available);
       if (!host || !any) group.remove();
@@ -115,6 +115,10 @@ window.KinViewerUXShell = (() => {
       if (bandPanel && bandPanel !== (band ? left : null)) bandPanel.removeAttribute?.('data-kin-studies-panel');
       bandRow = row; bandPanel = band ? left : null;
       row?.setAttribute?.('data-kin-studies-band', ''); bandPanel?.setAttribute?.('data-kin-studies-panel', '');
+      // A viewer window floating over the images (Recent Layout where there is no tool area) never rises over the
+      // viewer's top rows, wherever the Studies band puts them: the theme keeps it below the image grid's top.
+      const gridTop = Math.round(document.querySelector('[data-cy="viewport-grid"]')?.getBoundingClientRect?.().top ?? NaN);
+      if (Number.isFinite(gridTop) && gridTop !== frameTop) { frameTop = gridTop; document.documentElement?.style?.setProperty?.('--kin-frame-top', gridTop + 'px'); }
       const tracked = document.querySelector(TRACKED);
       if (tracked && !tracked.querySelector('[data-cy="data-row"]')) {
         openList.hidden = !dockTab();
@@ -122,7 +126,7 @@ window.KinViewerUXShell = (() => {
       } else if (hint.isConnected) hint.remove();
     }
     return { apply, dispose() {
-      group.remove(); hint.remove(); document.body.removeAttribute?.('data-kin-panels');
+      group.remove(); hint.remove(); document.body.removeAttribute?.('data-kin-panels'); document.documentElement?.style?.removeProperty?.('--kin-frame-top');
       bandRow?.removeAttribute?.('data-kin-studies-band'); bandPanel?.removeAttribute?.('data-kin-studies-panel');
       for (const side of ['left', 'right']) sides.container(side)?.removeAttribute?.('data-kin-side-closed');
     } };

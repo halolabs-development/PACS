@@ -213,6 +213,23 @@ class ViewerPanelsDOMTest(unittest.TestCase):
         self.assertTrue(self.box(page, RIGHT)['shown'])
         self.assertIsNone(page.evaluate("document.body.getAttribute('data-kin-panels')"))
 
+    def test_06_a_floating_viewer_window_stays_below_the_top_rows(self):
+        page = self.open(size=(1600, 1050))
+        # As config/ohif/layout.js where there is no tool area: fixed at the bottom left, its height its content's.
+        page.evaluate("""() => { const panel = document.createElement('details'); panel.id = 'kin-viewer-layout'; panel.open = true;
+            panel.style.cssText = 'position:fixed;left:8px;bottom:30px;z-index:41;width:360px;max-width:calc(100vw - 16px);max-height:calc(100vh - 48px);overflow:auto;box-sizing:border-box;background:#101e32';
+            panel.innerHTML = '<summary>Recent Layout</summary><p>read-only</p><div style="height:900px"></div>'; document.body.append(panel);
+            document.getElementById('app').append(document.createElement('i')); }""")
+        page.evaluate(FRAME)
+        grid, panel = self.box(page, '[data-cy=viewport-grid]'), self.box(page, '#kin-viewer-layout')
+        self.assertGreaterEqual(panel['top'], grid['top'] - 1, (panel, grid))
+        self.assertEqual(1020, panel['bottom'])
+        # Studies closed: the grid starts higher and the window may be taller, still below the rows.
+        self.button(page, 'studies').click()
+        page.evaluate(FRAME)
+        grid, panel = self.box(page, '[data-cy=viewport-grid]'), self.box(page, '#kin-viewer-layout')
+        self.assertGreaterEqual(panel['top'], grid['top'] - 1, (panel, grid))
+
     def test_05_the_empty_tracked_list_says_what_it_lists_and_opens_the_measurements_list(self):
         page = self.open()
         self.button(page, 'measurements').click()

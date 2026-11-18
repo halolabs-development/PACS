@@ -322,6 +322,10 @@ body.kin-viewer-ux [data-kin-studies-panel] [data-cy="studyBrowser-panel"] :has(
 body.kin-viewer-ux [data-kin-studies-panel] :has(> #ohif-thumbnail-list) { min-height: 0 !important; }
 body.kin-viewer-ux [data-kin-studies-panel] #ohif-thumbnail-list { display: flex !important; flex-direction: row; flex-wrap: nowrap; gap: 4px; overflow-x: auto; overflow-y: hidden; padding-bottom: 4px; }
 body.kin-viewer-ux [data-kin-studies-panel] [data-cy^="study-browser-thumbnail"] { flex: 0 0 auto; width: 96px !important; height: 120px !important; overflow: hidden; }
+/* A window floating over the images (Recent Layout without a tool area, config/ohif/layout.js: fixed 30px above the
+   bottom) never rises above the image grid's top (--kin-frame-top, kept by the shell), so the viewer's top rows stay
+   reachable wherever the Studies band puts them. Inside a tool area the panel is not a child of the body. */
+body.kin-viewer-ux > #kin-viewer-layout { max-height: calc(100vh - var(--kin-frame-top, 48px) - 30px) !important; }
 /* The stock tracked-measurements list, while it lists none: what it lists, and where every drawn measurement is. */
 .kin-tracked-hint { display: flex; flex-wrap: wrap; align-items: center; gap: .4em; margin: .4em; padding: .4em .5em; font: 12px/1.4 sans-serif;
   color: var(--kin-ux-text); background: var(--kin-panel); border: 1px solid var(--kin-ux-secondary); border-radius: 3px; }
