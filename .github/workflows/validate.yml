@@ -1761,6 +1761,9 @@ jobs:
     - name: A3 unit 10 viewer patient tab leave gate and Previous Report History on the delivered split page
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/report-viewer-leave-page --cwd . --tree worklist-v0/hpacs-lite --tree tests --file scripts/main-split-order.json --file scripts/build-main-split-bundle.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/report_viewer_leave_dom_test.py
+    - name: List row double-click opens the viewer window only once the list has moved to that study (refused, unknown, waiting, later choice) on the delivered split page
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/viewer-open-after-move-page --cwd . --tree worklist-v0/hpacs-lite --tree tests --file scripts/main-split-order.json --file scripts/build-main-split-bundle.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/viewer_open_after_move_dom_test.py
     - name: Viewer Report Editor tab and Open in Reading Screen on the delivered split page
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/viewer-report-panel-page --cwd . --tree worklist-v0/hpacs-lite --tree tests --file config/ohif/report-panel.js --file scripts/main-split-order.json --file scripts/build-main-split-bundle.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/viewer_report_panel_dom_test.py
