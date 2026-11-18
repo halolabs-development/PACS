@@ -469,7 +469,7 @@
     const badge = node('span', `status ${kind}`, statusName(report));
     // 상태 뜻과, 확정 전에는 본문·키 이미지가 보이지 않는 이유를 툴팁으로 알린다(설명은 한국어, AGENTS §4).
     badge.title = kind === 'final' ? FINAL_ONLY
-      : kind === 'open' ? `${OPEN_NOTE[report.rs]} ${FINAL_ONLY}` : `${TEXT.unknown} ${FINAL_ONLY}`;
+      : kind === 'open' ? (report.rs === 'D' ? OPEN_NOTE.D : `${OPEN_NOTE[report.rs]} ${FINAL_ONLY}`) : `${TEXT.unknown} ${FINAL_ONLY}`;
     return badge;
   }
 
@@ -834,7 +834,8 @@
     const status = view.final ? { final: true, action: view.action } : { final: false, rs: view.rs };
     $('#report-status').replaceChildren(statusBadge(status));
     if (!view.final) {
-      setReport('status', `${view.rs ? OPEN_NOTE[view.rs] : TEXT.unknown} ${FINAL_ONLY}`);
+      // A destroyed report has no final version to wait for: its line says only what happened to it.
+      setReport('status', view.rs === 'D' ? OPEN_NOTE.D : `${view.rs ? OPEN_NOTE[view.rs] : TEXT.unknown} ${FINAL_ONLY}`);
       setKeys(TEXT.keysWithheld, null);
       return;
     }

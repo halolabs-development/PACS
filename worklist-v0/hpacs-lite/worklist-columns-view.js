@@ -150,6 +150,17 @@
       return parts;
     }
     function reportStatusLine(a, now) { return reportStatusParts(a, now).join(" · "); }
+    /**
+     * Who is on this study's report before approval (the report state table, report-visibility.ts): the live hold first (typing
+     * has started - shown as In Progress even while the stored state is still Unread), else whoever Saved or Deferred the
+     * text. `label` is what the screen names: the hold of another institution or of an unknown writer keeps its masked word.
+     */
+    function reportOnIt(s) {
+      if (!s || !["W", "T", "H"].includes(s.rs)) return { typing: false, by: null, label: "" };
+      if (s.holder) return { typing: s.rs === "W", by: s.holder, label: displayActor(s.holder) };
+      const saved = appState[s.uid]?.savedBy || null;
+      return { typing: false, by: saved, label: saved ? displayActor(saved) : "" };
+    }
 
     // 특수 렌더링이 필요한 칸만 함수로
     let studyPriority = null;
@@ -160,7 +171,14 @@
       em: s => {const phase=studyPriority?.get(s.uid)?.phase;return phase?`<span title="${phase==='saving'?'응급 상태를 저장 중입니다':'저장 결과 미확인 — 문맥 메뉴의 Refresh Status로 확인하세요'}">${phase==='saving'?'Saving':'Unverified'}</span>`:s.em === "E" ? `<span class="em-e">E</span>` : "";},
       // 판독 상태 이름은 목록과 건수 줄에서 같은 계약을 따른다. 승인(A) 뒤 24시간이 지난 판독문은 낱말만 Finalized다(값은 A).
       rs: s => { const finalized = reportFinalized({ rs: s.rs, amendUntil: appState[s.uid]?.amendUntil }), word = finalized ? "Finalized" : RS_WORD[s.rs] ?? s.rs;
-        return `<span class="rs ${esc(s.rs)}"${s.holdReason ? ' data-kin-keep="title"' : ''} title="${esc(s.holdReason || (finalized ? "승인 후 24시간이 지나 확정된 판독문 — Addendum으로만 덧붙일 수 있습니다" : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : ""))}">${esc(word)}</span>`; },
+        const on = reportOnIt(s), shown = on.typing ? "In Progress" : word;
+        const help = s.holdReason || (finalized ? "승인 후 24시간이 지나 확정된 판독문 — Addendum으로만 덧붙일 수 있습니다"
+          : on.typing ? "판독의가 판독문을 쓰기 시작했습니다(점유) — 아직 저장하지 않았습니다"
+          : s.rs === "D" ? "보존 기간이 끝나 판독문을 파기한 검사입니다"
+          : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : "");
+        // "In Progress by <name>": who is on it, for the other readers (the writer's own row needs no name). The name is data.
+        const by = on.by && on.by !== user ? ` <span class="rs-by">by <span translate="no">${esc(on.label)}</span></span>` : "";
+        return `<span class="rs ${esc(on.typing ? "T" : s.rs)}"${s.holdReason ? ' data-kin-keep="title"' : ''} title="${esc(help + (by ? (help ? " — " : "") + on.label : ""))}">${esc(shown)}${by}</span>`; },
       confirm: s => esc(confirmText({ ...appState[s.uid], rs: s.rs })),
       ts: s => `<span class="ts ts-${esc(s.ts)}">${esc(s.ts)}</span>`,
       ss: s => `<span class="ss ${esc(s.ss)}">${esc(s.ss)}</span>`,

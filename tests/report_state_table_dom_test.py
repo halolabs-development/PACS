@@ -1,0 +1,97 @@
+# coding: utf-8
+"""The report state table on the delivered split page (server rule: api/src/report-visibility.ts).
+
+Another radiologist's saved report (RS T, text withheld by the server: `prelimHidden` + `bodyLock: 'in-progress'` +
+`savedBy`) is listed as "In Progress by <writer>", opens read-only with the reason, keeps every write command off except
+Reset to Unread (the in-progress takeover), and names its writer beside the editor. A study someone started typing (RS W
+with a live hold) is listed as In Progress by that reader. A study whose report was destroyed at the end of its retention
+(RS D, `bodyLock: 'destroyed'`) is listed as Destroyed and opens read-only with that reason. Only HTTP is synthetic.
+"""
+import unittest
+
+import auth_logout_dom_test as h
+import report_flow_dom_test as flow
+from playwright.sync_api import expect
+
+WRITER = "syn-doctor2@kin"
+
+
+class StateTableSite(flow.FlowSite):
+    """Three studies: another radiologist's Save, another radiologist typing, a destroyed report."""
+
+    def state_of(self, uid, account):
+        st = super().state_of(uid, account)
+        if uid == h.UID:
+            st.update(rs="T", prelimHidden=True, bodyLock="in-progress", savedBy=WRITER, version=1, draft=None,
+                      findings="", conclusion="", recommendation="")
+        elif uid == h.UID_B:
+            st.update(rs="W", holder=WRITER, bodyLock=None)
+        elif uid == flow.UID_C:
+            st.update(rs="D", prelimHidden=True, bodyLock="destroyed", draft=None, version=0)
+        return st
+
+
+class ReportStateTablePage(unittest.TestCase):
+    # The report flow suite's page driving, borrowed without its own cases.
+    count = 3
+    bundle_source = html_source = asset_source = None
+    setUpClass = flow.ReportFlowPage.__dict__["setUpClass"]
+    tearDownClass = flow.ReportFlowPage.__dict__["tearDownClass"]
+    tearDown = flow.ReportFlowPage.tearDown
+    open, row, pick, open_study, selected, wait = (flow.ReportFlowPage.open, flow.ReportFlowPage.row, flow.ReportFlowPage.pick,
+                                                   flow.ReportFlowPage.open_study, flow.ReportFlowPage.selected, flow.ReportFlowPage.wait)
+
+    def setUp(self):
+        flow.ReportFlowPage.setUp(self)
+        self.site.__class__ = StateTableSite
+
+    def rs_cell(self, patient):
+        return self.row(patient).locator("span.rs")
+
+    def test_rs_column_names_who_is_on_a_report_and_a_destroyed_one(self):
+        self.open()
+        expect(self.rs_cell(h.PATIENT)).to_have_text(f"In Progress by {WRITER}")
+        expect(self.rs_cell(h.PATIENT_B)).to_have_text(f"In Progress by {WRITER}")
+        self.assertIn("쓰기 시작했습니다", self.rs_cell(h.PATIENT_B).get_attribute("title"))
+        expect(self.rs_cell(flow.PATIENT_C)).to_have_text("Destroyed")
+        self.assertIn("보존 기간이 끝나", self.rs_cell(flow.PATIENT_C).get_attribute("title"))
+        # the writer's name is data: never translated
+        self.assertEqual(self.rs_cell(h.PATIENT).locator("[translate=no]").inner_text(), WRITER)
+
+    def test_another_radiologists_save_opens_read_only_with_only_reset_open(self):
+        self.open()
+        self.pick(h.PATIENT)
+        self.wait(lambda: self.selected() == h.PATIENT, "the study opens")
+        expect(self.page.locator("#findings")).not_to_be_editable()
+        expect(self.page.locator("#findings")).to_have_value("")
+        self.assertIn("Save해 둔 진행 중 판독", self.page.locator("#findings").get_attribute("placeholder"))
+        expect(self.page.locator("#report-editor-state")).to_have_text("Read Only")
+        expect(self.page.locator("#report-editor-why")).to_contain_text(WRITER)
+        expect(self.page.locator("#report-editor-presence")).to_contain_text(f"In Progress by {WRITER}")
+        expect(self.page.locator("#holdmsg")).to_contain_text("Reset to Unread")
+        for button in ("#b-save", "#b-approve", "#b-defer", "#b-clear", "#b-paste", "#b-prelim", "#b-addendum"):
+            expect(self.page.locator(button)).to_be_disabled()
+        self.assertTrue(self.page.evaluate("() => !document.querySelector('#b-unread').disabled"), "Reset to Unread stays open")
+        self.assertEqual([], self.site.holds, "no hold is taken on another radiologist's Save")
+        self.assertEqual([], self.site.flow_puts)
+
+    def test_a_destroyed_report_opens_read_only_with_its_reason(self):
+        self.open()
+        self.pick(flow.PATIENT_C)
+        self.wait(lambda: self.selected() == flow.PATIENT_C, "the study opens")
+        expect(self.page.locator("#findings")).not_to_be_editable()
+        expect(self.page.locator("#report-editor-state")).to_have_text("Read Only")
+        expect(self.page.locator("#report-editor-why")).to_contain_text("보존 기간이 끝나 판독문을 파기한 검사입니다")
+        for button in ("#b-save", "#b-approve", "#b-defer", "#b-unread", "#b-clear"):
+            expect(self.page.locator(button)).to_be_disabled()
+
+    def test_my_own_unlocked_study_is_unchanged(self):
+        self.site.__class__ = flow.FlowSite
+        self.open()
+        expect(self.rs_cell(h.PATIENT)).to_have_text("Unread")
+        self.open_study(h.PATIENT)
+        expect(self.page.locator("#report-editor-state")).to_have_text("Editable")
+
+
+if __name__ == "__main__":
+    unittest.main()

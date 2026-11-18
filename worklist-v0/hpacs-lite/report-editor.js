@@ -233,9 +233,12 @@
         // 편집기의 글이 바뀐다 — 그 전에 떠난 편집기 범위의 작업(붙여넣기 등)은 이 글 위에 쓰지 않는다.
         work.edited();
       }
-      const ph = locked
-        ? `${displayActor(r.preReviewer) || "지정된 판독의"} 님이 최종 판독 중입니다 (RS: P) — 내용은 지정된 판독의만 볼 수 있습니다`
-        : "";
+      // The report state table (report-visibility.ts): the empty fields say why they are empty - a Preliminary, another
+      // physician's Save, or a report destroyed at the end of its retention.
+      const lockWhy = locked && typeof reportLockText === "function" ? reportLockText(r) : "";
+      const ph = !locked ? ""
+        : r.bodyLock === "in-progress" || r.bodyLock === "destroyed" ? lockWhy
+        : `${displayActor(r.preReviewer) || "지정된 판독의"} 님이 최종 판독 중입니다 (RS: P) — 내용은 지정된 판독의만 볼 수 있습니다`;
       for (const [sel, base] of [["#findings", "Please enter findings"],
                                  ["#conclusion", "Please enter conclusion"],
                                  ["#recommendation", "Please enter recommendation"]]) {
@@ -245,7 +248,7 @@
           || !!r.identityUnresolved;
         // C-R01-109#2: the Read Only reason for an unverified study, the same words as its buttons (updateReportButtons).
         el.dataset.lockReason = cur()?.ss === "Unverified" && cur()?.em !== "E" && !heldByOther(cur())
-          ? "촬영 중(미확인) 검사입니다 — 기사 확인(Verify) 뒤 판독할 수 있습니다" : "";
+          ? "촬영 중(미확인) 검사입니다 — 기사 확인(Verify) 뒤 판독할 수 있습니다" : !heldByOther(cur()) && lockWhy ? lockWhy : "";
       }
       renderDraftBar();
       updateReportTemplateButton();
@@ -330,14 +333,19 @@
       const holder = target?.holder || null;
       // `viewingNames` belongs to the worklist columns module; editor fixtures that load this module alone have none.
       const others = target && typeof viewingNames === "object" ? viewingNames.get(target.uid) || "" : "";
+      // The report state table: another physician's Save names its writer here too (the text stays with them).
+      const state = target ? appState[target.uid] : null;
+      const savedByOther = !holder && state?.bodyLock === "in-progress" && state.savedBy ? state.savedBy : null;
       const own = !target ? ""
         : holder && holder === user ? "✎ Held by you"
         : holder ? `✎ Held by ${displayActor(holder)}`
+        : savedByOther ? `✎ In Progress by ${displayActor(savedByOther)}`
         : "Opened by you";
       line.textContent = [own, others].filter(Boolean).join(" · ");
       // The head can wrap in a narrow column; keep presence updates within their reserved space so typing stays put.
       // Longer explanations belong in the title.
-      line.title = !target ? "" : holder && holder !== user ? "다른 판독의가 작성 중입니다"
+      line.title = !target ? "" : savedByOther ? "다른 판독의가 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다"
+        : holder && holder !== user ? "다른 판독의가 작성 중입니다"
         : holder ? "이 판독의가 작성 중입니다(점유)" + (others ? " · " + others : "")
         : "검사를 여는 것만으로는 점유하지 않습니다. 판독문에 두 글자 이상 쓰면 이 판독의가 잡습니다." + (others ? " · " + others : "");
     }
@@ -412,7 +420,9 @@
       $("#b-report-reload").style.display = pending && !r.prelimHidden ? "" : "none";
       if (pending) {
         $("#draftmsg").innerHTML = r.prelimHidden
-          ? `<b>● 다른 판독의가 이 검사를 예비 판독으로 넘겼습니다</b> — 쓰던 내용은 그대로 두었지만 저장할 수 없습니다`
+          ? (r.bodyLock === "in-progress" || r.bodyLock === "destroyed"
+            ? `<b>● ${esc(typeof reportLockText === "function" ? reportLockText(r) : "")}</b> — 쓰던 내용은 그대로 두었지만 저장할 수 없습니다`
+            : `<b>● 다른 판독의가 이 검사를 예비 판독으로 넘겼습니다</b> — 쓰던 내용은 그대로 두었지만 저장할 수 없습니다`)
           : `<b>● 서버에 새 내용이 있습니다</b> — 저장 안 된 입력은 덮지 않고 그대로 유지했습니다` +
             (d ? ` · 초안 버리기를 누르면 서버 내용으로 돌아갑니다` : ``);
         return;

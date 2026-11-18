@@ -23,7 +23,7 @@
   const LABELS={findings:'Findings',conclusion:'Conclusion',recommendation:'Recommendation'};
   const SKIP=Object.freeze({
     text:'이미 판독문이 있습니다',draft:'내 초안이 있습니다',unverified:'촬영 중(미확인) 검사입니다',
-    prelim:'다른 판독의의 예비 판독입니다',identity:'환자 식별 불일치',approved:'승인된 검사입니다',hold:'보류 중입니다',
+    prelim:'다른 판독의의 예비 판독입니다',inProgress:'다른 판독의가 Save해 둔 진행 중 판독입니다',identity:'환자 식별 불일치',approved:'승인된 검사입니다',hold:'보류 중입니다',
     destroyed:'파기된 검사입니다',unconfirmed:'저장을 확인하는 중인 글이 있습니다',priority:'응급 상태 저장을 확인하는 중입니다',
     base:'이 검사의 초안 기준을 알 수 없습니다',changed:'그 사이 초안이 바뀌었습니다',missing:'목록에서 찾을 수 없습니다',
     stopped:'작업이 끝나 보내지 않았습니다',
@@ -49,7 +49,7 @@
     const skip=reason=>({ok:false,reason});
     if(!f)return skip(SKIP.missing);
     if(f.identityUnresolved)return skip(SKIP.identity);
-    if(f.prelimHidden)return skip(SKIP.prelim);
+    if(f.prelimHidden)return skip(f.bodyLock==='in-progress'?SKIP.inProgress:f.bodyLock==='destroyed'?SKIP.destroyed:SKIP.prelim);
     if(f.rs==='A')return skip(SKIP.approved);
     if(f.rs==='H')return skip(SKIP.hold);
     if(f.rs==='D')return skip(SKIP.destroyed);
@@ -73,7 +73,7 @@
     const skip=reason=>({ok:false,reason});
     if(!f)return skip(SKIP.missing);
     if(f.identityUnresolved)return skip(SKIP.identity);
-    if(f.prelimHidden)return skip(SKIP.prelim);
+    if(f.prelimHidden)return skip(f.bodyLock==='in-progress'?SKIP.inProgress:f.bodyLock==='destroyed'?SKIP.destroyed:SKIP.prelim);
     if(f.rs==='A')return skip(SKIP.alreadyApproved);
     if(f.rs==='H')return skip(SKIP.hold);
     if(f.rs==='D')return skip(SKIP.destroyed);

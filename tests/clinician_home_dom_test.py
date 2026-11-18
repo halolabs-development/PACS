@@ -880,12 +880,12 @@ class ClinicianHomeDOMTest(unittest.TestCase):
 
     def test_d10_a_destroyed_report_shows_its_status_and_no_body(self):
         """CD-09-D D10: a report destroyed at the end of its retention (rs D) is one status, Destroyed, with its Korean
-        reason; any body a stub carries is not drawn."""
+        reason and nothing more (no "only a final report shows its body" note: there is no final report to wait for); any body a stub carries is not drawn."""
         self.open_home()
         self.reports[uid(7)] = open_report(7, "D", findings="SYN-LEAK-DESTROYED", conclusion="SYN-LEAK-DESTROYED")
         seen = self.pick(7, "status")
         self.assertEqual({"detailUid": uid(7), "reportUid": uid(7), "state": "status",
-                          "text": f"보존 기간이 끝나 판독문을 파기한 검사입니다. {FINAL_ONLY}", "detail": "", "retry": False,
+                          "text": "보존 기간이 끝나 판독문을 파기한 검사입니다.", "detail": "", "retry": False,
                           "status": "Destroyed", "metaHidden": True, "meta": {}, "bodyHidden": True, "sections": [],
                           "keysState": KEYS_WITHHELD, "keysHidden": True, "keys": []}, seen)
         self.assertNotIn("SYN-LEAK", self.page.content())
