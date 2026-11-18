@@ -291,10 +291,19 @@ def summarize(results, commit=None, now=None, bundle=()):
             sum(1 for f in r["findings"] if f["fix"] != "none"), sum(1 for f in r["findings"] if actionable(r, f)),
             r.get("identity", "")))
     if act:
-        lines += ["", "## Needs action", "", "| Target | Package | Version | Severity | Advisory | Fix |", "|---|---|---|---|---|---|"]
+        # One row per package and version: an image package can carry dozens of advisories.
+        groups = {}
         for r, f in act:
-            fix = FIX[f["fix"]] + (f" ({f['fixed']})" if f.get("fixed") else "")
-            lines.append(f"| {r['name']} | {f['package']} | {f['version']} | {f['severity']} | {', '.join(f['ids'][:3])} | {fix} |")
+            groups.setdefault((r["name"], f["package"], f["version"]), []).append(f)
+        lines += ["", "## Needs action", "", "| Target | Package | Version | Severity | Advisories | Fix |", "|---|---|---|---|---|---|"]
+        for (name, package, version), found in groups.items():
+            top = min((f["severity"] for f in found), key=SEVERITIES.index)
+            ids = sorted({i for f in found for i in f["ids"]})
+            fixed = sorted({f["fixed"] for f in found if f.get("fixed")})
+            fix = (FIX[found[0]["fix"]] if len({f["fix"] for f in found}) == 1 else "varies") + \
+                (f" ({'; '.join(fixed[:3])}{'; …' if len(fixed) > 3 else ''})" if fixed else "")
+            more = f" (+{len(ids) - 3} more)" if len(ids) > 3 else ""
+            lines.append(f"| {name} | {package} | {version} | {top} | {', '.join(ids[:3])}{more} | {fix} |")
     if unchecked:
         lines += ["", "## Not checked", ""] + [f"- {r['name']}: {r['reason']}" for r in unchecked]
     if bundle:

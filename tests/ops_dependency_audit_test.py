@@ -212,6 +212,16 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(summary["below_bar_fixable"], 2)
         self.assertIn("below the action bar that have a fixed version: 2", markdown)
 
+    def test_needs_action_is_one_row_per_package_and_version(self):
+        many = {"SchemaVersion": 2, "Results": [{"Target": "x", "Vulnerabilities": [
+            {"VulnerabilityID": f"CVE-{n}", "PkgName": "curl", "InstalledVersion": "8.1", "FixedVersion": f"8.{n}",
+             "Severity": "CRITICAL" if n == 4 else "HIGH"} for n in range(2, 7)]}]}
+        results = self.results({"npm": (0, json.dumps(EMPTY_NPM)), "pip": (0, json.dumps(CLEAN_PIP)), "image": (0, json.dumps(many))})
+        code, markdown, summary = audit.summarize(results)
+        self.assertEqual((code, summary["actionable"]), (1, 5))
+        rows = [line for line in markdown.split("## Needs action", 1)[1].splitlines() if line.startswith("| image x:1 |")]
+        self.assertEqual(rows, ["| image x:1 | curl | 8.1 | critical | CVE-2, CVE-3, CVE-4 (+2 more) | available (8.2; 8.3; 8.4; …) |"])
+
     def test_test_only_and_build_tool_findings_are_reported_but_do_not_need_action(self):
         code, markdown, summary = audit.summarize(
             self.results({"npm": (1, json.dumps(NPM)), "pip": (1, json.dumps(PIP)), "image": (0, json.dumps(TRIVY))}, shipped=False))
