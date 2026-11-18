@@ -51,9 +51,15 @@ export class AdminAccessReview {
     if (access.policy.restricted) throw new ForbiddenException('검사 접근 범위가 제한된 계정은 접속기록을 조회할 수 없습니다.');
     let rows: Row[], top: string;
     try {
-      rows = await this.db.$queryRaw<Row[]>`
+      // The ledger read ends in PostgreSQL itself after 30 s, also when the browser has already given up (its API
+      // deadline is 60 s) or the connection is gone: Prisma does not cancel a running query. A week of a first
+      // site's entries answers in a few seconds; a failure here is the existing 503 'query again'.
+      // SET LOCAL holds only inside this transaction: the pooled connection keeps no limit afterwards.
+      [, rows] = await this.db.$transaction([
+        this.db.$executeRaw`SET LOCAL statement_timeout = '30s'`,
+        this.db.$queryRaw<Row[]>`
         SELECT * FROM emr_access.review_entries(${institution}::text, ${from}::timestamptz, ${until}::timestamptz,
-          ${downloads}::boolean, ${cursor?.top ?? null}::bigint, ${cursor?.before ?? null}::bigint, ${PAGE_SIZE + 1}::integer)`;
+          ${downloads}::boolean, ${cursor?.top ?? null}::bigint, ${cursor?.before ?? null}::bigint, ${PAGE_SIZE + 1}::integer)`]);
       top = cursor?.top ?? String(rows[0]?.snapshot_top ?? 0);
     } catch {
       throw new ServiceUnavailableException('접속기록을 조회하지 못했습니다. 다시 조회하세요.');
