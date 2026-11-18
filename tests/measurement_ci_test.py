@@ -788,6 +788,9 @@ class MeasurementCiTests(unittest.TestCase):
         # needs the hosted APT guard and pip cache, including jobs without profiles.
         workflow = self.catalog.combined()
         validation_jobs = self.catalog.validation()['jobs']
+        browser_cache_jobs = {job_id for document in ('validate.yml', 'pr-regressions.yml')
+                              for job_id, job in self.catalog.documents['.github/workflows/' + document]['jobs'].items()
+                              if 'PLAYWRIGHT_BROWSERS_PATH' not in json.dumps(job)}
         checked = []
         for name, job in workflow['jobs'].items():
             for index, install in enumerate(job.get('steps', [])):
@@ -805,6 +808,22 @@ class MeasurementCiTests(unittest.TestCase):
                     self.assertEqual(guards[-1].get('if'), install.get('if'))
                     self.assertEqual(caches[-1].get('if'), install.get('if'))
                     self.assertRegex(caches[-1]['uses'], r'^actions/cache@[0-9a-f]{40}$')
+                    # The browser download is restored from a cache keyed by the pinned Playwright requirement and
+                    # runner image; a miss or a broken restore leaves the same install command to download it.
+                    # Jobs with their own browser folder (PLAYWRIGHT_BROWSERS_PATH) keep installing into it.
+                    if name in browser_cache_jobs:
+                        browsers = [s for s in preceding if s.get('uses', '').startswith('actions/cache@')
+                                    and s.get('with', {}).get('path') == '~/.cache/ms-playwright']
+                        self.assertEqual(len(browsers), 1, 'browser install requires one preceding browser cache')
+                        self.assertRegex(browsers[0]['uses'], r'^actions/cache@[0-9a-f]{40}$')
+                        self.assertEqual(browsers[0].get('if'), install.get('if'))
+                        self.assertEqual(browsers[0]['with'], {
+                            'path': '~/.cache/ms-playwright',
+                            'key': '${{ runner.os }}-${{ runner.arch }}-' + job['runs-on']
+                                   + "-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}"})
+                        self.assertIn('-r tests/e2e/requirements.txt', install['run'])
+                        self.assertIn('playwright install --with-deps chromium', install['run'])
+                        self.assertNotIn('PLAYWRIGHT_BROWSERS_PATH', json.dumps(job))
                     # Preserve the existing pinned-profile budget and cache-key contract.
                     if name not in validation_jobs:
                         continue
@@ -834,6 +853,8 @@ class MeasurementCiTests(unittest.TestCase):
         self.assertIn('measurements', checked)
         self.assertIn('s7-u5-session-contracts', checked)
         self.assertIn('worklist-ux-measurements', checked)
+        self.assertEqual(len(set(checked) & browser_cache_jobs), 24)
+        self.assertTrue({'part1-mg', 'part1-xa'} <= set(checked) - browser_cache_jobs)
 
     def exercise_profile_failures(self, exhaust_deadline=False, real_runner=False, inspection_failure=False,
                                   wrong_unit=False, default_unit=False, manual=False, evidence=None,
