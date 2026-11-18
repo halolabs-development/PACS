@@ -146,7 +146,8 @@ MIGRATIONS = ['api/prisma/migrations/0_init/migration.sql',
               'api/prisma/migrations/20261115010000_exam_view_drawing_scope/migration.sql',
               'api/prisma/migrations/20261115120000_report_drawing_work/migration.sql',
               'api/prisma/migrations/20261116120000_order_ris_status/migration.sql',
-              'api/prisma/migrations/20261116120000_viewer_item_delete/migration.sql']
+              'api/prisma/migrations/20261116120000_viewer_item_delete/migration.sql',
+              'api/prisma/migrations/20261118120000_institution_critical_result_inbox/migration.sql']
 # S9-U4b (52 tables, 47 migrations): ImportOperation, its twelve synthetic rows (one import with every attempt phase over four
 # studies, a prepared, a Sent and a still-sending download, four Study and four SOP reservations with their holders), one
 # primary key, two checks and three indexes. Not measured on a stack when written: estimated at about 16 KB of catalog and
@@ -269,7 +270,8 @@ def expected_rows(uid):
     # FA-090: the hospital has an EMR Link (a synthetic address template); the tele institution has none (NULL).
     rows['Institution'] = [dict(id='SYNTHETIC-'+kind, name='SYNTHETIC '+kind, type=kind,
         dicomNames='SYNTHETIC', dicomAets='', createdAt=STAMP,
-        emrLinkTemplate='https://emr.synthetic.test/chart?pid={patientId}' if kind == 'hospital' else None)
+        emrLinkTemplate='https://emr.synthetic.test/chart?pid={patientId}' if kind == 'hospital' else None,
+        criticalResultInbox=None)
         for kind in ('hospital', 'tele')]
     # FC-070: the hospital's one registered peer PACS (synthetic name, AE Title, host and port).
     rows['DicomPeer'] = [dict(id='00000000-0000-4000-8000-000000000e01', institutionId='SYNTHETIC-hospital', name='SYNTHETIC peer PACS',

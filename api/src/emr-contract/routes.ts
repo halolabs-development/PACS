@@ -75,6 +75,11 @@ const groups: readonly (RouteContract & { routes: readonly string[] })[] = [
   // FA-090: the administrator's own institution's EMR Link (an address template); no patient or study record.
   { kinds: ['institution'], operation: 'write', causes: ['user-view'],
     routes: ['PATCH admin/emr-link'] },
+  // The critical result hospital inbox: one member of the administrator's own institution; no patient or study record.
+  { kinds: ['institution'], operation: 'read', causes: ['user-view'],
+    routes: ['GET admin/critical-result-inbox'] },
+  { kinds: ['institution'], operation: 'write', causes: ['user-view'],
+    routes: ['PATCH admin/critical-result-inbox'] },
   // FC-070: the institution's registered peer PACS (name, AE Title, host, port); no patient or study record.
   { kinds: ['institution'], operation: 'read', causes: ['user-view'],
     routes: ['GET admin/dicom-peers', 'GET query-retrieve/peers'] },

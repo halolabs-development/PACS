@@ -328,6 +328,22 @@ def iso(minute):
     return f"2026-09-28T02:{minute:02d}:00.000Z"
 
 
+# The Recipient field is one check box per candidate (more than one may be chosen; the hospital inbox comes checked).
+# choose() leaves exactly the given candidate checked ("" unchecks every box); chosen() is the checked candidates, joined.
+CHOSEN = "() => [...document.querySelectorAll('#cvr-send-recipient input:checked')].map(i => i.value).join(',')"
+
+
+def choose(page, sub):
+    boxes = page.locator('#cvr-send-recipient input[type="checkbox"]')
+    for n in range(boxes.count()):
+        box = boxes.nth(n)
+        box.set_checked(box.input_value() == sub)
+
+
+def chosen(page):
+    return page.evaluate(CHOSEN)
+
+
 class CvrServer:
     """The S7-U1a rules the sender screen relies on, for one sender (RAD) in one institution."""
 
@@ -340,6 +356,10 @@ class CvrServer:
         self.seq = 0
         self.receipts = {}
         self.page_size = 50
+        # The hospital inbox marks of #1 (the institution's inbox member, this sender's pending recipients). Off: the
+        # answer has no marks, as before the inbox existed.
+        self.marks = False
+        self.inbox = None
 
     # #1
     def recipients(self, uid):
@@ -348,8 +368,14 @@ class CvrServer:
         head, reason = self.heads[uid], self.reasons.get(uid)
         source = None if reason in ("NO_PINNABLE_SOURCE", "SOURCE_FORBIDDEN") else {**head, "final": head["action"] in ("approve", "addendum")}
         people = [] if reason else self.candidates.get(uid, [])
-        return 200, {"owner": self.owner, "uid": uid, "sendable": reason is None and bool(people), "reason": reason or (None if people else "NO_ELIGIBLE_RECIPIENT"),
-                     "source": source, "recipients": [{k: p[k] for k in ("sub", "actor", "name", "role")} for p in people]}
+        answer = {"owner": self.owner, "uid": uid, "sendable": reason is None and bool(people), "reason": reason or (None if people else "NO_ELIGIBLE_RECIPIENT"),
+                  "source": source, "recipients": [{k: p[k] for k in ("sub", "actor", "name", "role")} for p in people]}
+        if self.marks:
+            pending = {r["recipient"]["sub"] for r in self.records.values() if r["studyUid"] == uid and r["state"] == "created"}
+            for r in answer["recipients"]:
+                r.update(inbox=r["sub"] == self.inbox, pending=r["sub"] in pending)
+            answer["inbox"] = "none" if self.inbox is None else "listed" if any(r["inbox"] for r in answer["recipients"]) else "unlisted"
+        return 200, answer
 
     def refuse(self, status, code, **extra):
         return status, {"code": code, "message": f"SYN {code} message", **extra}
@@ -510,13 +536,14 @@ VIEW = """() => {
     entry: {disabled: entry.disabled, title: entry.title, text: entry.textContent, present: document.contains(entry),
       section: entry.closest('[role="group"][aria-label]') ? entry.closest('[role="group"][aria-label]').getAttribute('aria-label') : null},
     dialog: {open: shown(dialog), title: t(q('#cvr-send-title')), help: t(q('#cvr-send-help')), study: t(q('#cvr-send-study')),
-      source: t(q('#cvr-send-source')), options: [...q('#cvr-send-recipient').options].map(o => [o.value, o.text]),
+      source: t(q('#cvr-send-source')), options: [...q('#cvr-send-recipient').querySelectorAll('label')].map(l => [l.dataset.sub, l.innerText]),
       recipientTag: q('#cvr-send-recipient').tagName, recipientDisabled: q('#cvr-send-recipient').disabled,
-      recipient: q('#cvr-send-recipient').value,
+      recipient: [...q('#cvr-send-recipient').querySelectorAll('input:checked')].map(i => i.value).join(','),
+      note: t(q('#cvr-send-recipient-note')),
       message: q('#cvr-send-message').value, messageReadOnly: q('#cvr-send-message').readOnly,
       sendDisabled: q('#cvr-send-submit').disabled, check: shown(q('#cvr-send-check')) && !q('#cvr-send-check').disabled,
       status: shown(dialog) ? q('#cvr-send-status').innerText : '',
-      inputs: [...dialog.querySelectorAll('input')].length},
+      inputs: [...dialog.querySelectorAll('input:not([type="checkbox"])')].length},
     panel: {shown: shown(panel), summary: t(q('#cvr-sent-summary')), toggle: t(q('#cvr-sent-toggle')), pane: shown(q('#cvr-sent-pane')),
       lines: [...q('#cvr-sent-attempts').children].filter(shown).map(li => ({request: li.dataset.request, text: li.innerText,
         check: shown(li.querySelector('button')) && !li.querySelector('button').disabled})),
@@ -746,7 +773,7 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
             expect(self.page.locator("#cvr-send-submit")).to_be_enabled()
 
     def compose(self, person=P, text="SYN critical finding: call the ward"):
-        self.page.locator("#cvr-send-recipient").select_option(person["sub"])
+        choose(self.page, person["sub"])
         self.page.locator("#cvr-send-message").fill(text)
 
     def send(self, person=P, text="SYN critical finding: call the ward"):
@@ -1411,7 +1438,7 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
         self.assertIn("SYN-P-01", d["study"])
         # The server's head (v3), not the page's own version (2).
         self.assertTrue(d["source"].startswith("Source: v3 · Approve · SYN Radiologist · 2026-09-28"), d["source"])
-        self.assertEqual("SELECT", d["recipientTag"])
+        self.assertEqual("FIELDSET", d["recipientTag"])
         self.assertEqual(0, d["inputs"], "no free-text recipient field")
         values = [value for value, _ in d["options"] if value]
         self.assertEqual([P["sub"], X["sub"]], values)
@@ -1425,9 +1452,9 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
         self.settle()
         self.assertEqual([], self.requests("create"))
         # Without a recipient or with an empty message nothing is sent either.
-        self.page.locator("#cvr-send-recipient").select_option("")
+        choose(self.page, "")
         self.page.locator("#cvr-send-submit").click()
-        self.page.locator("#cvr-send-recipient").select_option(P["sub"])
+        choose(self.page, P["sub"])
         self.page.locator("#cvr-send-message").fill("   ")
         self.page.locator("#cvr-send-submit").click()
         self.settle()
@@ -1624,7 +1651,7 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
         self.release(held)
         d = self.view()["dialog"]
         self.assertFalse(d["open"])
-        self.assertEqual([["", "Choose Recipient"]], d["options"])
+        self.assertEqual([], d["options"])
         # A send answered after the target moved paints nothing on the next study's dialog; its result goes to the line.
         self.entry_settled()
         self.pick(A)
@@ -2164,7 +2191,7 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
         self.settle()
         expect(self.page.locator("#cvr-send")).to_be_visible()
         self.assertEqual((P["sub"], "SYN kept through the outage"),
-                         (self.page.locator("#cvr-send-recipient").input_value(), self.page.locator("#cvr-send-message").input_value()))
+                         (chosen(self.page), self.page.locator("#cvr-send-message").input_value()))
         expect(self.page.locator("#cvr-sent-summary")).to_have_text("서버 연결이 끊겼습니다. 표시된 보낸 중요 결과는 최신이 아닐 수 있습니다.")
         expect(self.page.locator("#cvr-sent-refresh")).to_be_disabled()
         expect(self.page.locator("#cvr-sent-pane")).to_be_visible()
@@ -2258,6 +2285,147 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
         expect(self.page.locator("#cvr-send-recipient")).to_be_enabled()
         self.compose()
         expect(self.page.locator("#cvr-send-submit")).to_be_enabled()
+    # ── SD13: the hospital inbox and a Send to more than one recipient ──
+    # REQ: the critical result goes to the ordering physician and the hospital's shared inbox (in the app). The inbox
+    # (an institution setting) comes checked; the ordering physician is a name only (the worklist row's ReqDoc) and is
+    # chosen by the radiologist. One Send to n people is n requests and n records; each outcome is shown on its own.
+    def inbox_marks(self, inbox):
+        self.server.marks = True
+        self.server.inbox = inbox["sub"] if inbox else None
+
+    def boxes(self):
+        return self.page.evaluate("""() => [...document.querySelectorAll('#cvr-send-recipient label')].map(l => ({sub: l.dataset.sub,
+          checked: l.querySelector('input').checked, tags: [...l.querySelectorAll('.cvr-tag')].map(e => e.textContent),
+          person: l.querySelector('[translate="no"]').textContent}))""")
+
+    def tick(self, person, on=True):
+        self.page.locator(f'#cvr-send-recipient input[value="{person["sub"]}"]').set_checked(on)
+
+    EACH = '#cvr-send-each li[data-state="{0}"]'
+
+    def test_sd13a_the_hospital_inbox_comes_checked_and_a_send_to_two_is_two_requests_each_shown(self):
+        self.inbox_marks(P)
+        self.ready_reader()
+        self.page.evaluate("uid => { window.synStudies.find(s => s.uid === uid).reqDoc = 'SYN ORDERING DOCTOR'; }", A)
+        self.mark()
+        boxes = {b["sub"]: b for b in self.boxes()}
+        self.assertEqual({P["sub"]: True, X["sub"]: False}, {sub: b["checked"] for sub, b in boxes.items()})
+        self.assertEqual((["Hospital inbox"], []), (boxes[P["sub"]]["tags"], boxes[X["sub"]]["tags"]))
+        self.assertEqual("SYN Clinician (syn-clinician@kin)", boxes[P["sub"]]["person"])
+        note = self.view()["dialog"]["note"]
+        self.assertIn("Ordering physician (ReqDoc): SYN ORDERING DOCTOR", note)
+        self.assertIn("처방의는 이름만 있어 회원과 자동으로 잇지 않습니다", note)
+        expect(self.page.locator("#cvr-send-recipient-note [translate='no']")).to_have_text("SYN ORDERING DOCTOR")
+        # Opening, checking and typing send nothing.
+        self.tick(X)
+        self.page.locator("#cvr-send-message").fill("SYN critical finding to both")
+        self.settle()
+        self.assertEqual([], self.requests("create"))
+        self.page.locator("#cvr-send-submit").click()
+        expect(self.page.locator("#cvr-send-each li")).to_have_count(2)
+        expect(self.page.locator(self.EACH.format("delivered"))).to_have_count(2)
+        creates = self.requests("create")
+        self.assertEqual(2, len(creates))
+        self.assertEqual({P["sub"], X["sub"]}, {c["body"]["recipientSub"] for c in creates})
+        self.assertEqual(2, len({c["body"]["requestId"] for c in creates}), "one request (and record) per recipient")
+        for c in creates:
+            self.assertEqual(CREATE_KEYS, sorted(c["body"]))
+            self.assertEqual((3, "SYN critical finding to both"), (c["body"]["sourceVersion"], c["body"]["message"]))
+        d = self.view()["dialog"]
+        self.assertIn("받는 사람마다 기록 하나씩 따로 보냅니다", d["status"])
+        self.assertTrue(d["sendDisabled"] and d["recipientDisabled"] and d["messageReadOnly"])
+        self.assertFalse(d["check"])
+        expect(self.page.locator("#cvr-sent-summary")).to_have_text("Pending ACK 2")
+        # The list shows a row per recipient, each with its own state.
+        self.close_dialog()
+        self.show_sent()
+        rows = self.view()["panel"]["rows"]
+        self.assertEqual(2, len(rows))
+        self.assertEqual({"SYN Clinician · Clinician", "SYN Radiologist Two · Radiologist"}, {r["cells"][1] for r in rows})
+
+    def test_sd13b_a_pending_inbox_is_not_checked_and_one_refusal_never_reads_as_delivered_for_both(self):
+        self.inbox_marks(P)
+        self.server.add(A, P)
+        self.ready_reader()
+        self.mark()
+        boxes = {b["sub"]: b for b in self.boxes()}
+        self.assertEqual((False, ["Hospital inbox", "Pending ACK"]), (boxes[P["sub"]]["checked"], boxes[P["sub"]]["tags"]))
+        self.assertIn("이미 확인 대기 중인 전달이 있어 미리 고르지 않았습니다", self.view()["dialog"]["note"])
+        self.assertIn("오더·검사에 처방의(ReqDoc) 이름이 없습니다", self.view()["dialog"]["note"])
+        self.tick(P)
+        self.tick(X)
+        self.page.locator("#cvr-send-message").fill("SYN critical finding")
+        self.page.locator("#cvr-send-submit").click()
+        expect(self.page.locator(self.EACH.format("rejected"))).to_have_count(1)
+        expect(self.page.locator(self.EACH.format("delivered"))).to_have_count(1)
+        refused = self.page.locator(self.EACH.format("rejected")).inner_text()
+        self.assertIn("Not delivered", refused)
+        self.assertIn("SYN Clinician", refused)
+        self.assertIn("확인 대기 중인 전달이 있습니다", refused)
+        self.assertIn("SYN Radiologist Two", self.page.locator(self.EACH.format("delivered")).inner_text())
+        # No one word stands for both: the dialog's own state word stays empty, Send stays locked (one was delivered).
+        expect(self.page.locator("#cvr-send-status > p.cvr-word")).to_be_hidden()
+        d = self.view()["dialog"]
+        self.assertTrue(d["sendDisabled"])
+        self.assertFalse(d["check"])
+
+    def test_sd13c_an_unknown_answer_for_one_recipient_is_checked_again_alone_with_its_own_bytes(self):
+        self.inbox_marks(None)
+        self.ready_reader()
+        self.mark()
+        self.assertIn("병원 공용 수신(Hospital inbox)이 정해져 있지 않습니다", self.view()["dialog"]["note"])
+        self.assertEqual([False, False], [b["checked"] for b in self.boxes()])
+        # The first request is lost before the server applies it: unknown, and no list read can settle it.
+        self.fault("create", abort=True)
+        self.tick(P)
+        self.tick(X)
+        self.page.locator("#cvr-send-message").fill("SYN critical finding")
+        self.page.locator("#cvr-send-submit").click()
+        expect(self.page.locator(self.EACH.format("unknown"))).to_have_count(1)
+        expect(self.page.locator(self.EACH.format("delivered"))).to_have_count(1)
+        lost = self.requests("create")[0]
+        self.assertIn(UNKNOWN_WORD, self.page.locator(self.EACH.format("unknown")).inner_text())
+        self.assertNotIn(NOT_DELIVERED, self.view()["body"])
+        expect(self.page.locator("#cvr-send-check")).to_have_text("Check Again")
+        self.page.locator("#cvr-send-check").click()
+        expect(self.page.locator(self.EACH.format("delivered"))).to_have_count(2)
+        creates = self.requests("create")
+        self.assertEqual(3, len(creates), "only the unknown request goes again")
+        self.assertEqual(lost["raw"], creates[2]["raw"], "the same request, byte for byte")
+        # Closing keeps nothing open: both records are on the list, each pending.
+        self.close_dialog()
+        expect(self.page.locator("#cvr-sent-summary")).to_have_text("Pending ACK 2")
+
+    def test_sd13d_a_moved_head_reads_again_once_and_keeps_the_users_choice(self):
+        self.inbox_marks(P)
+        self.ready_reader()
+        self.mark()
+        # The user unchecks the inbox default and chooses X.
+        self.tick(P, False)
+        self.tick(X)
+        self.page.locator("#cvr-send-message").fill("SYN critical finding")
+        self.server.heads[A] = {**HEADS[A], "version": 4, "action": "addendum"}
+        reads = len(self.requests("recipients"))
+        self.page.locator("#cvr-send-submit").click()
+        expect(self.page.locator("#cvr-send-source")).to_contain_text("Source: v4")
+        self.entry_settled()
+        self.assertEqual(reads + 1, len(self.requests("recipients")), "read again once")
+        self.assertEqual(1, len(self.requests("create")))
+        self.assertEqual({P["sub"]: False, X["sub"]: True}, {b["sub"]: b["checked"] for b in self.boxes()},
+                         "a default the user unchecked stays unchecked")
+        self.assertEqual("SYN critical finding", self.page.locator("#cvr-send-message").input_value())
+        self.page.locator("#cvr-send-submit").click()
+        self.dialog_says(DELIVERED)
+        last = self.requests("create")[-1]["body"]
+        self.assertEqual((X["sub"], 4), (last["recipientSub"], last["sourceVersion"]))
+
+    def test_sd13e_an_inbox_member_who_cannot_read_this_version_is_said_and_nobody_is_checked(self):
+        self.inbox_marks(Y)
+        self.ready_reader()
+        self.mark()
+        self.assertIn("지금 이 판독 판을 받을 수 없어 목록에 없습니다", self.view()["dialog"]["note"])
+        self.assertEqual([], [b for b in self.boxes() if b["checked"] or b["tags"]])
+
     # ── SD11 ──
     def test_sd11_the_periodic_re_read_only_reads_and_an_acknowledged_record_stays_reachable(self):
         r1 = self.server.add(A, P)
@@ -2361,7 +2529,7 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
         self.page.locator("#cvr-send-submit").click()
         self.settle()
         self.assertEqual(1, len(self.requests("create")))
-        self.page.locator("#cvr-send-recipient").select_option(X["sub"])
+        choose(self.page, X["sub"])
         self.page.locator("#cvr-send-submit").click()
         self.dialog_says(DELIVERED)
         second = self.requests("create")[-1]["body"]

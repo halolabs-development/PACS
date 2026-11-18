@@ -118,6 +118,9 @@ model Institution {
   /// FA-090 EMR Link: the hospital EMR's web address with {patientId}, {accession} and {studyUid} placeholders, entered by
   /// the institution's administrator. NULL = not set (the worklist's Open EMR stays grey).
   emrLinkTemplate String? @db.VarChar(2000)
+  /// Critical result hospital inbox: the subject id of the member the hospital uses as its shared receiving point for
+  /// critical results, set by the institution's administrator. NULL = not set. A delivery to it is an ordinary record.
+  criticalResultInbox String? @db.VarChar(256)
   createdAt  DateTime @default(now())
   transferBases TransferBasis[]
   agreementsFrom ProcessingAgreement[] @relation("AgreementFrom")
