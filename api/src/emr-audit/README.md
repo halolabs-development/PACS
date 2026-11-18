@@ -201,7 +201,9 @@ Withdrawal does not reload originals, so an undecidable request can still be wit
 접수 뒤 원본 재검증이나 결정 계약이 거절되면 요구는 Received로 남고, 열린 응답 의무가 접속기록 만료를 계속 막는다(CD-07-Q4). 철회가 아니면 닫지 않는다.
 The page reserves Q3 guidance for failed intake and shows the separate Q4 line on a refused decision.
 Transport failures retain the recovery guidance to reopen the request; they do not assert an unconfirmed state.
-The intake forms fill the assigning authority and the patient link
+A refusal (HTTP 400/404/409 with a code) of a copy or rights write is read by one table of sentences on the page:
+the detail stays, the request is re-read and the sentence says what to fix; only an unconfirmed answer (network, 5xx,
+incomplete) sends the operator back to Open Request. The intake forms fill the assigning authority and the patient link
 (`studyPatientLink`: the patient ID under the auditor's institution — a name for the pair, not a patient check) from
 `GET intake-context`, and pre-fill the evidence verifier with the signed-in auditor, which the operator may change.
 Neither changes what the server validates or stores.
