@@ -390,19 +390,22 @@
     load.catch(() => { if (intakeLoad === load) intakeLoad = null; });
     return load;
   }
-  // A receive press first makes sure the context is there; the form is read again only after it arrives.
-  async function receiveWithIntake(show, receive) {
+  // A receive press first makes sure the context is there. Only the latest press of that section, for the request ID
+  // it was pressed with, goes on when the context arrives; a scope refusal clears that section like any other.
+  // section: { press, id(): current request ID, show(text), scopeDenied(), receive() }
+  async function receiveWithIntake(section) {
     if (!ready || denied) return;
-    const session = intakeSession;
+    const session = intakeSession, press = ++section.press, id = section.id();
+    const current = () => session === intakeSession && press === section.press && id === section.id();
     try { await loadIntake(); }
     catch (failure) {
-      if (failure.stale || session !== intakeSession) return;
+      if (failure.stale || !current()) return;
       if (failure.kind === 'denied' && failure.code === 'AuditorNotDesignated') { refuse(); return; }
-      show(failure.kind === 'denied' ? '이 계정에는 접수 권한이 없습니다.' :
-        `접수에 필요한 기관·감사자 정보를 읽지 못했습니다 (${failure.code || 'ResponseUnavailable'}). 입력은 유지했습니다. 다시 Receive Request를 누르세요.`);
+      if (failure.kind === 'denied') { section.scopeDenied(); return; }
+      section.show(`접수에 필요한 기관·감사자 정보를 읽지 못했습니다 (${failure.code || 'ResponseUnavailable'}). 입력은 유지했습니다. 다시 Receive Request를 누르세요.`);
       return;
     }
-    if (session === intakeSession) receive();
+    if (current()) section.receive();
   }
   // Each UTC time box shows, beside it, when that is on this computer's clock. The value sent stays UTC. The line sits
   // after the label (the box keeps its name) and describes the box.
@@ -461,9 +464,15 @@
     select.addEventListener('change', () => { versions.disabled = select.value === 'all'; versions.required = select.value !== 'all'; });
     disclosureEl('scope').append(row);
   }
+  function disclosureScopeDenied() {
+    clearDisclosure(); disclosureEl('workspace').hidden = true; disclosureMessage('이 계정에는 진료기록 사본 발급 권한이 없습니다.');
+  }
+  const disclosureReceive = { press: 0, id: () => disclosureEl('id').value.trim(), show: text => disclosureMessage(text),
+    scopeDenied: () => disclosureScopeDenied(), receive: () => disclosureRequest('receive') };
   function disclosureIntake(id) {
-    const v = formValues('receive'), checkedBy = { id: v.verifierId.trim(), issuer: v.verifierIssuer.trim(), subject: v.verifierSubject.trim() };
-    if (!checkedBy.id || !checkedBy.issuer || !checkedBy.subject) throw new Error('증빙을 확인한 사람의 Verifier ID·Issuer·Subject를 입력하세요.');
+    // The verifier is an identity the server keeps as given: sent exactly as typed, checked only for a blank.
+    const v = formValues('receive'), checkedBy = { id: v.verifierId, issuer: v.verifierIssuer, subject: v.verifierSubject };
+    if (Object.values(checkedBy).some(text => !text.trim())) throw new Error('증빙을 확인한 사람의 Verifier ID·Issuer·Subject를 입력하세요.');
     return { dueAt: utcInput(v.dueAt), request: { requestId: id, receivedAt: utcInput(v.receivedAt),
       patient: patientLink(v.patientId),
       basis: { clauseId: v.clauseId, purpose: v.purpose },
@@ -589,12 +598,13 @@
       }
       if (!admits()) return;
       showDisclosure(snapshot, copy);
-      disclosureMessage(failure?.code === 'RecordKindAmbiguous' ? heldAmbiguityGuidance(snapshot, mode) :
+      disclosureMessage(failure?.code === 'RecordKindAmbiguous' ? [heldAmbiguityGuidance(snapshot, mode),
+          issuanceUnread ? `발급 상태는 다시 읽지 못했습니다 (${issuanceUnread.code}).` : ''].filter(Boolean).join(' ') :
         [attempt(failure), issuanceUnread ? `발급 상태는 다시 읽지 못했습니다 (${issuanceUnread.code}).` : '',
           failure || issuanceUnread ? '아래는 다시 조회한 상태입니다. 입력은 유지했습니다.' : '저장된 요청과 발급 상태를 다시 조회했습니다.'].filter(Boolean).join(' '));
     } catch (error) {
       if (!admits() || error.stale) return;
-      if (error.scope) { clearDisclosure(); disclosureEl('workspace').hidden = true; disclosureMessage('이 계정에는 진료기록 사본 발급 권한이 없습니다.'); }
+      if (error.scope) disclosureScopeDenied();
       else if (error.intakeRefused) disclosureMessage(error.code === 'RecordKindAmbiguous' ? RECORD_KIND_GUIDANCE + ' 요청은 접수되지 않았고 입력은 유지했습니다.' :
         `${refusalText(error.code)} 이 접수 시도는 저장되지 않았습니다. 입력은 유지했습니다.`);
       else {
@@ -619,7 +629,7 @@
   disclosureEl('open').addEventListener('submit', event => { event.preventDefault(); clearDisclosure(); disclosureRequest('open'); });
   for (const mode of ['receive', 'delivery', 'extend', 'resolve']) disclosureEl(mode).addEventListener('submit', event => {
     event.preventDefault();
-    if (mode === 'receive') receiveWithIntake(disclosureMessage, () => disclosureRequest(mode)); else disclosureRequest(mode);
+    if (mode === 'receive') receiveWithIntake(disclosureReceive); else disclosureRequest(mode);
   });
   disclosureEl('workspace').addEventListener('input', event => {
     if (event.target.type === 'datetime-local') timeHints(disclosureEl('workspace'));
@@ -647,6 +657,18 @@
     }
     rightsEl('notify-button').textContent = withdrawing ? 'Record Withdrawal' : 'Record Notification';
     timeHints(rightsEl('workspace'));
+  }
+  function rightsScopeDenied() {
+    clearRights(true); rightsEl('workspace').hidden = true; rightsEl('message').textContent = '이 계정에는 정정·삭제·처리정지 요구 처리 권한이 없습니다.';
+  }
+  const rightsReceive = { press: 0, id: () => rightsEl('id').value.trim(), show: text => { rightsEl('message').textContent = text; },
+    scopeDenied: () => rightsScopeDenied(), receive: () => rightsRequest('receive') };
+  // A state is shown as confirmed only if its status agrees with the facts it names.
+  function rightsState(body) {
+    const facts = { Received: !body?.decision && !body?.notification && !body?.withdrawal, Decided: !!body?.decision && !body?.notification && !body?.withdrawal,
+      Notified: !!body?.decision && !!body?.notification && !body?.withdrawal, Withdrawn: !!body?.withdrawal && !body?.notification };
+    if (!body?.request || !facts[body.status]) throw new Error('Invalid rights request answer');
+    return body;
   }
   function clearRights(all = false) {
     rightsSequence++; rightsPending = false; rightsSnapshot = null;
@@ -741,7 +763,7 @@
       if (!admits()) throw { stale: true };
       if (answer.kind === 'denied' && answer.code === 'AuditorNotDesignated') { refuse(); throw { stale: true }; }
       if (answer.kind === 'denied' && answer.code === 'AuditScopeNotGranted') {
-        clearRights(true); rightsEl('workspace').hidden = true; say('이 계정에는 정정·삭제·처리정지 요구 처리 권한이 없습니다.'); throw { stale: true };
+        rightsScopeDenied(); throw { stale: true };
       }
       return answer.kind === 'denied' ? { kind: 'unconfirmed', code: answer.code || 'ResponseUnavailable' } : answer;
     };
@@ -749,7 +771,7 @@
     try {
       const answer = await call(path, ['list', 'open'].includes(mode) ? 'GET' : 'POST', body);
       if (answer.kind === 'ok') {
-        if (mode === 'list') showRightsList(answer.body.requests); else showRights(answer.body);
+        if (mode === 'list') showRightsList(answer.body.requests); else showRights(rightsState(answer.body));
         say(mode === 'list' ? '저장된 요구 목록입니다.' : answer.body.status === 'Withdrawn' ?
           '철회 증빙으로 요구와 응답 의무를 닫았습니다.' : '저장된 요구 상태입니다. 실제 통지는 증빙을 입력하여 기록하세요.');
         return;
@@ -765,7 +787,7 @@
           say(`${refusalText(code)} ${reread.kind === 'refused' ? refusalText(reread.code) : `요구 상태는 다시 확인하지 못했습니다 (${reread.code}). Open Request로 다시 확인하세요.`}`);
           return;
         }
-        showRights(reread.body);
+        showRights(rightsState(reread.body));
         const state = reread.body.status, open = state === 'Received' || state === 'Decided';
         say(mode === 'decide' && state === 'Received' && !['RightsRequestWithdrawn', 'RightsRequestConflict'].includes(code) ?
           `결정이 거절되어 요구는 Received로 남고, 열린 응답 의무가 접속기록 만료를 계속 막습니다(CD-07-Q4). 철회가 아니면 닫지 않습니다 (${code}).` +
@@ -781,8 +803,8 @@
           `${refusalText(code)} 이 접수 시도는 저장되지 않았습니다. 입력은 유지했습니다.`);
         return;
       }
-      if (mode === 'open') close();
-      say(refusalText(code));
+      // A refused open or list says nothing about an open detail; it is not left actionable.
+      close(); say(refusalText(code));
     } catch (error) {
       if (!admits() || error?.stale) return;
       // A malformed answer cannot present a confirmed state.
@@ -793,7 +815,7 @@
   rightsEl('load').addEventListener('click', () => rightsRequest('list'));
   for (const mode of ['open', 'receive', 'notify']) rightsEl(mode).addEventListener('submit', event => {
     event.preventDefault(); if (mode === 'open') clearRights();
-    if (mode === 'receive') receiveWithIntake(say => { rightsEl('message').textContent = say; }, () => rightsRequest(mode));
+    if (mode === 'receive') receiveWithIntake(rightsReceive);
     else rightsRequest(mode);
   });
   rightsEl('workspace').addEventListener('input', event => {

@@ -223,6 +223,66 @@ class IntakeAndRefusal(AuditPage):
         expect(self.copy.locator('#audit-disclosure-message')).to_contain_text('발급 상태는 다시 읽지 못했습니다 (Internal)')
         expect(state).to_contain_text('Issuance: Unavailable')
 
+    def test_ambiguous_issue_with_an_unread_issuance_says_both(self):
+        self.ready()
+        self.fill_copy()
+        self.copy.get_by_role('button', name='Receive Request', exact=True).click()
+        state = self.copy.locator('#audit-disclosure-state')
+        expect(state).to_contain_text('Issuance ID: null')
+        self.copy.get_by_role('button', name='Prepare Issuance', exact=True).click()
+        expect(state).to_contain_text('Issuance: Prepared')
+        self.once[('POST', 'issue')] = (409, dict(code='RecordKindAmbiguous'))
+        self.once[('GET', 'issuance')] = (503, dict(code='OutcomeUnknown'))
+        self.copy.get_by_role('button', name='Issue', exact=True).click()
+        message = self.copy.locator('#audit-disclosure-message')
+        expect(message).to_contain_text('기록 종류가 지정되지 않아 발급할 수 없습니다')
+        expect(message).to_contain_text('발급 상태는 다시 읽지 못했습니다 (OutcomeUnknown)')
+
+
+    def test_press_waiting_for_the_context_does_not_send_another_id(self):
+        self.hold_context = True
+        self.open()
+        self.receive_rights('SYN-A', expect_received=False)
+        self.rights.get_by_label('Rights Request ID', exact=True).fill('SYN-B')
+        self.hold_context = False
+        for route in self.held: self.api(route)
+        expect(self.rights.get_by_label('Rights Assigning Authority', exact=True)).to_have_value('SYN-SITE')
+        self.page.wait_for_timeout(300)
+        self.assertEqual(self.posted, [])
+
+    def test_scope_refused_while_loading_the_context_withdraws_the_open_request(self):
+        self.backend_call(method='receiveRights', body={'requestId': 'SYN-A', 'kind': 'correction',
+            'receivedAt': '2026-10-01T00:00:00.000Z', 'patient': self.link('SYN-PATIENT'), 'recordIds': ['SYN-RECORD'], 'statement': '합성'})
+        self.once[('GET', 'intakeContext')] = (503, dict(code='OutcomeUnknown'))
+        self.open()
+        self.rights.get_by_label('Rights Request ID', exact=True).fill('SYN-A')
+        self.rights.get_by_role('button', name='Open Request', exact=True).click()
+        expect(self.rights.locator('#audit-rights-state')).to_contain_text('Request: Received')
+        self.once[('GET', 'intakeContext')] = (403, dict(code='AuditScopeNotGranted'))
+        self.receive_rights('SYN-NEW', expect_received=False)
+        expect(self.rights.locator('#audit-rights-message')).to_contain_text('정정·삭제·처리정지 요구 처리 권한이 없습니다')
+        expect(self.rights.locator('#audit-rights-workspace')).to_be_hidden()
+
+    def test_refused_list_and_malformed_state_leave_no_actionable_detail(self):
+        self.ready(); self.receive_rights()
+        self.once[('GET', 'listRights')] = (409, dict(code='SynRefused'))
+        self.rights.get_by_role('button', name='Load Requests', exact=True).click()
+        expect(self.rights.locator('#audit-rights-message')).to_contain_text('SynRefused — 입력을 확인하세요.')
+        expect(self.rights.locator('#audit-rights-detail')).to_be_hidden()
+        saved = self.backend_call(method='readRights', id='SYN-A')['body']
+        self.once[('GET', 'readRights')] = (200, dict(saved, status='Withdrawn'))
+        self.rights.get_by_role('button', name='Open Request', exact=True).click()
+        expect(self.rights.locator('#audit-rights-message')).to_contain_text('요구 상태를 확인하지 못했습니다')
+        expect(self.rights.locator('#audit-rights-detail')).to_be_hidden()
+
+    def test_verifier_is_sent_exactly_as_typed(self):
+        self.ready()
+        self.copy.get_by_label('Verifier Subject', exact=True).fill(' checker ')
+        self.fill_copy()
+        self.copy.get_by_role('button', name='Receive Request', exact=True).click()
+        expect(self.copy.locator('#audit-disclosure-state')).to_contain_text('Issuance ID: null')
+        self.assertEqual(self.posted[-1][1]['request']['evidence'][0]['checkedBy']['subject'], ' checker ')
+
 
 def load_tests(loader, tests, pattern):
     return unittest.TestSuite(IntakeAndRefusal(name) for name in IntakeAndRefusal.__dict__ if name.startswith('test_'))
