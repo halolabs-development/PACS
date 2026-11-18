@@ -8,6 +8,8 @@ import { imageRead } from './image-delivery-record';
 import { bootstrapRead, studyAuditRead } from './emr-viewing/consumer-read';
 // CD-09-P: every response that can carry the caller's private draft registers before it reads (destruction waits for it).
 import { draftDeliveries } from './emr-retention/draft-purpose';
+// Site disk cap for the reading-PC preload cache; no product default (docs/ops/preload-cache.md).
+import { preloadDiskGb } from './preload-disk-setting';
 
 /**
  * URL의 `:id`를 정수로. **`+id`를 그대로 쓰면 안 된다.**
@@ -29,13 +31,6 @@ function numId(raw: string): number {
   if (!Number.isInteger(n) || n <= 0)
     throw new BadRequestException(`잘못된 id입니다: ${raw}`);
   return n;
-}
-
-/** Site disk cap; no product default until the reading PC has been measured. */
-function preloadDiskGb(): number | null {
-  const raw = String(process.env.KIN_PRELOAD_DISK_GB ?? '').trim();
-  const gb = raw ? Number(raw) : NaN;
-  return Number.isFinite(gb) && gb > 0 && Number.isSafeInteger(Math.floor(gb * 1024 ** 3)) ? gb : null;
 }
 
 /**
