@@ -2343,7 +2343,8 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
         self.show_sent()
         rows = self.view()["panel"]["rows"]
         self.assertEqual(2, len(rows))
-        self.assertEqual({"SYN Clinician · Clinician", "SYN Radiologist Two · Radiologist"}, {r["cells"][1] for r in rows})
+        self.assertEqual({"SYN Clinician · Clinician\nsyn-clinician@kin", "SYN Radiologist Two · Radiologist\nsyn-rad2@kin"},
+                         {r["cells"][1] for r in rows})
 
     def test_sd13b_a_pending_inbox_is_not_checked_and_one_refusal_never_reads_as_delivered_for_both(self):
         self.inbox_marks(P)
@@ -2427,6 +2428,74 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
         self.mark()
         self.assertIn("지금 이 판독 판을 받을 수 없어 목록에 없습니다", self.view()["dialog"]["note"])
         self.assertEqual([], [b for b in self.boxes() if b["checked"] or b["tags"]])
+
+    def test_sd13f_a_re_read_that_fails_offline_keeps_the_users_choice_once_back(self):
+        # The inbox default is unchecked and X chosen; the head moves, the re-read fails during an outage. Once back the
+        # choice is X, not the inbox default again, and the next Send goes to X only.
+        self.inbox_marks(P)
+        self.ready_reader()
+        self.mark()
+        self.tick(P, False)
+        self.tick(X)
+        self.page.locator("#cvr-send-message").fill("SYN critical finding")
+        self.server.heads[A] = {**HEADS[A], "version": 4, "action": "addendum"}
+        self.fault("recipients", hold=True, abort=True)
+        self.page.locator("#cvr-send-submit").click()
+        failed = self.take("recipients")
+        self.page.evaluate(self.CONNECTION, False)
+        self.release(failed)
+        self.page.evaluate(self.CONNECTION, True)
+        self.entry_settled()
+        expect(self.page.locator("#cvr-send-source")).to_contain_text("Source: v4")
+        self.assertEqual({P["sub"]: False, X["sub"]: True}, {b["sub"]: b["checked"] for b in self.boxes()})
+        expect(self.page.locator("#cvr-send-submit")).to_be_enabled()
+        self.page.locator("#cvr-send-submit").click()
+        self.dialog_says(DELIVERED)
+        self.assertEqual([X["sub"], X["sub"]], [c["body"]["recipientSub"] for c in self.requests("create")])
+
+    def test_sd13g_an_account_change_on_one_request_keeps_the_other_recipients_delivery_shown(self):
+        self.inbox_marks(P)
+        self.ready_reader()
+        self.mark()
+        self.tick(X)
+        self.page.locator("#cvr-send-message").fill("SYN critical finding")
+        self.fault("create", apply=True)
+        self.fault("create", status=409, body={"code": "OWNER_CHANGED", "message": "SYN OWNER_CHANGED message"})
+        self.page.locator("#cvr-send-submit").click()
+        expect(self.page.locator(self.EACH.format("delivered"))).to_have_count(1)
+        expect(self.page.locator(self.EACH.format("rejected"))).to_have_count(1)
+        first, second = self.requests("create")
+        delivered = next(p for p in (P, X) if p["sub"] == first["body"]["recipientSub"])
+        refused = next(p for p in (P, X) if p["sub"] == second["body"]["recipientSub"])
+        self.assertIn(delivered["actor"], self.page.locator(self.EACH.format("delivered")).inner_text())
+        self.assertIn(refused["actor"], self.page.locator(self.EACH.format("rejected")).inner_text())
+        # The area is locked (another account), and no one word says Not delivered for the whole Send.
+        expect(self.page.locator("#cvr-send-status > p.cvr-word")).to_be_hidden()
+        self.assertIn("로그인한 계정이 바뀌었습니다", self.view()["dialog"]["status"])
+        self.assertEqual(1, len([r for r in self.server.records.values() if r["state"] == "created"]))
+
+    def test_sd13h_two_people_with_one_name_are_told_apart_by_their_accounts(self):
+        twin = {"sub": "cccccccc-dddd-4eee-afff-000000000001", "actor": "syn-clinician-twin@kin", "name": P["name"], "role": "clinician"}
+        self.server.candidates[A] = [P, twin]
+        self.inbox_marks(None)
+        self.ready_reader()
+        self.mark()
+        self.tick(P)
+        self.tick(twin)
+        self.page.locator("#cvr-send-message").fill("SYN critical finding")
+        self.fault("create", apply=True)
+        self.fault("create", status=409, body={"code": "CRITICAL_RESULT_RECIPIENT_CANNOT_READ", "message": "SYN cannot read"})
+        self.page.locator("#cvr-send-submit").click()
+        expect(self.page.locator(self.EACH.format("delivered"))).to_have_count(1)
+        first, second = self.requests("create")
+        actor = {P["sub"]: P["actor"], twin["sub"]: twin["actor"]}
+        self.assertIn(actor[first["body"]["recipientSub"]], self.page.locator(self.EACH.format("delivered")).inner_text())
+        self.assertIn(actor[second["body"]["recipientSub"]], self.page.locator(self.EACH.format("rejected")).inner_text())
+        self.close_dialog()
+        self.show_sent()
+        cells = [r["cells"][1] for r in self.view()["panel"]["rows"]]
+        self.assertEqual(1, len(cells))
+        self.assertIn(actor[first["body"]["recipientSub"]], cells[0])
 
     # ── SD11 ──
     def test_sd11_the_periodic_re_read_only_reads_and_an_acknowledged_record_stays_reachable(self):

@@ -339,6 +339,9 @@
     // 발신 창: 열 때마다 dialogSeq가 오르고 #1을 새로 읽는다. dialogAttempts는 이 창이 보이는 요청들의 requestId다 — 고른 받는
     // 사람마다 하나(한 명이면 하나).
     let dialogSeq = 0, dialogUid = null, dialogView = null, dialogAttempts = [], dialogNote = '', dialogReturn = null, dialogOwner = null;
+    // Whether the dialog's last Send went to more than one person: its outcomes are then shown one line per person, however
+    // many of its requests are still kept (a lock drops the unsettled ones; one left never stands for the whole Send).
+    let dialogMany = false;
     // 연결이 돌아온 횟수. #1 읽기는 떠날 때의 값을 가진다 — 돌아온 뒤에 실패한 읽기가 그 전에 떠난 것이면 끊김의 실패다(recoverReads).
     let reconnects = 0;
     // 요청별 기록(§8.1 규칙 2): requestId → 요청. 결과를 모르는 요청은 창을 닫아도 보낸 목록 위 줄(lined)로 남는다.
@@ -567,7 +570,7 @@
     function paintDialog() {
       if (dialogUid === null) return;
       const waiting = blocked();
-      const view = dialogView, list = shown(), attempt = list.length === 1 ? list[0] : null;
+      const view = dialogView, list = shown(), attempt = !dialogMany && list.length === 1 ? list[0] : null;
       const row = study(dialogUid);
       studyLine.textContent = row ? `Study: ${row.name || '—'} (${row.id || '—'}) · ${row.date || '—'}` : `Study: ${dialogUid}`;
       // 보낸(보내는 중·결과를 모르는·적용된) 요청은 그 요청이 고정한 판을 보인다. 거절된 요청 뒤에는 다음 Send가 쓸 판(#1의 답)을
@@ -613,7 +616,7 @@
       statusText.textContent = line;
       statusDetail.textContent = [detail, waiting].filter(Boolean).join('\n');
       statusDetail.hidden = !detail && !waiting;
-      paintEach(list.length > 1 && !locked ? list : []);
+      paintEach(dialogMany ? list : []);
       const editable = sender() && live(dialogOwner) && view && view.phase === 'ready' && allRefused();
       recipientField.disabled = !editable;
       recipientField.setAttribute('aria-disabled', String(!editable));
@@ -650,6 +653,7 @@
       dialogUid = target;
       dialogOwner = who();
       dialogAttempts = [];
+      dialogMany = false;
       dialogNote = '';
       dialogReturn = document.activeElement;
       resetForm();
@@ -668,7 +672,11 @@
     function readDialog(moved) {
       const uid = dialogUid, sent = who(), seq = ++dialogSeq, key = keyOf(uid), epoch = reconnects;
       const before = dialogView && dialogView.data;
-      const keep = moved && before ? new Set(checkedSubs()) : null;
+      // The user's choice travels with the re-read itself: a re-read that fails and the one after it keep the same choice
+      // (never the defaults again, never nothing-was-chosen read as a default).
+      const chosen = moved ? moved.chosen || (before ? before.recipients.filter(r => checkedSubs().includes(r.sub)) : []) : null;
+      if (moved) moved = { ...moved, chosen };
+      const keep = chosen ? new Set(chosen.map(r => r.sub)) : null;
       dialogView = { phase: 'loading', data: null, detail: '', moved };
       paintDialog();
       call('GET', `/studies/${encodeURIComponent(uid)}/critical-result-recipients`, undefined, work.capture('study')).then(guarded(({ data }) => {
@@ -679,8 +687,7 @@
         if (!read) {
           dialogView = { phase: 'failed', data: null, detail: TEXT.malformed, moved };
         } else {
-          const lost = keep && read.sendable
-            ? before.recipients.filter(r => keep.has(r.sub) && !read.recipients.some(next => next.sub === r.sub)) : [];
+          const lost = keep && read.sendable ? chosen.filter(r => !read.recipients.some(next => next.sub === r.sub)) : [];
           dialogView = { phase: read.sendable ? 'ready' : 'unavailable', data: read, detail: '',
             moved: moved && { ...moved, dropped: lost.length ? lost.map(r => r.name).join(', ') : null } };
           fillRecipients(read.sendable ? read : { recipients: [], inbox: null }, keep);
@@ -715,6 +722,7 @@
       const focusInside = dialog.contains(document.activeElement);
       dialogUid = null;
       dialogAttempts = [];
+      dialogMany = false;
       dialogView = null;
       dialogNote = '';
       dialog.classList.remove('show');
@@ -741,6 +749,7 @@
       const message = messageField.value;
       for (const item of previous) attempts.delete(item.requestId);
       dialogAttempts = [];
+      dialogMany = false;
       if (!recipients.length || !textOk(message)) {
         dialogNote = TEXT.dialog.invalid;
         paintDialog();
@@ -754,12 +763,14 @@
           path: `/studies/${encodeURIComponent(uid)}/critical-results`,
           body: { requestId, expectedOwner: JSON.parse(sent), recipientSub: recipient.sub, sourceVersion: read.source.version, message },
           expect: { id: requestId, from: null, to: 'created', revision: 1, replacement: null },
-          label: `${studyLabel(uid)} · ${recipient.name} · ${ROLES[recipient.role]}`, who: `${recipient.name} · ${ROLES[recipient.role]}`,
+          label: `${studyLabel(uid)} · ${recipient.name} (${recipient.actor}) · ${ROLES[recipient.role]}`,
+          who: `${recipient.name} (${recipient.actor}) · ${ROLES[recipient.role]}`,
           state: 'sending', dispatches: 0, retried: false, reason: '', detail: '', later: '', replayed: false, code: null,
         };
       });
       for (const attempt of made) attempts.set(attempt.requestId, attempt);
       dialogAttempts = made.map(attempt => attempt.requestId);
+      dialogMany = made.length > 1;
       dialogNote = '';
       for (const attempt of made) transmit(attempt);
     }
@@ -1015,7 +1026,11 @@
       // C-R01-105: the description of the study from its worklist row (the record keeps identity only); nothing when the row is not loaded.
       const listed = study(item.studyUid), description = String(listed?.desc ?? '').trim() || String(listed?.modality ?? '').trim();
       if (description) studyCell.append(make('span', 'cvr-study-desc', description));
-      const recipientCell = make('td', null, `${item.recipient.name} · ${ROLES[item.recipient.role]}`);
+      // The account under the name: two recipients may share a name and a role, and each row is one of them.
+      const recipientCell = make('td');
+      const account = make('span', 'cvr-muted', item.recipient.actor);
+      account.setAttribute('translate', 'no');
+      recipientCell.append(make('span', null, `${item.recipient.name} · ${ROLES[item.recipient.role]}`), account);
       const sentCell = make('td', null, time(item.createdAt));
       const stateCell = make('td');
       const state = make('span', 'cvr-state', STATES[item.state]);
@@ -1217,7 +1232,7 @@
           : { requestId, expectedOwner: JSON.parse(sent), revision: item.revision, sourceVersion: form.source.version, message: value },
         expect: { id: item.id, from: 'created', to: cancel ? 'cancelled' : 'superseded', revision: 2,
           replacement: cancel ? null : { id: requestId, sourceVersion: form.source.version } },
-        label: `${studyLabel(item.studyUid, item.study)} · ${item.recipient.name} · ${ROLES[item.recipient.role]}`,
+        label: `${studyLabel(item.studyUid, item.study)} · ${item.recipient.name} (${item.recipient.actor}) · ${ROLES[item.recipient.role]}`,
         state: 'sending', dispatches: 0, retried: false, reason: '', detail: '', later: '', replayed: false,
       };
       attempts.set(requestId, attempt);
@@ -1251,7 +1266,9 @@
       entrySeq++;
       listSeq++;
       dialogSeq++;
-      for (const [id, attempt] of attempts) if (!dialogAttempts.includes(id) || attempt.state !== 'rejected') attempts.delete(id);
+      // The other account never sends this account's requests: unsettled ones go. The open dialog's settled outcomes stay
+      // as they are - a delivered one is not erased to leave a refusal standing for the whole Send.
+      for (const [id, attempt] of attempts) if (!dialogAttempts.includes(id) || unsettled(attempt)) attempts.delete(id);
       forms.clear();
       items = [];
       nextCursor = null;
@@ -1343,7 +1360,7 @@
           attempt.state = 'unknown'; attempt.detail = TEXT.noResponse; paintAttempt(attempt);
         }
         if (entryView.phase === 'loading') targetKey = null;
-        if (dialogUid !== null && dialogView?.phase === 'loading') readDialog(false);
+        if (dialogUid !== null && dialogView?.phase === 'loading') readDialog(dialogView.moved || null);
         for (const form of forms.values()) if (form.kind === 'supersede' && !form.source) readFormSource(form);
         sync(); if (listPhase === 'loading') loadList(false);
         startTimers();
