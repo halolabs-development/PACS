@@ -873,6 +873,60 @@ test('worklist: a merged study whose Count is unknown makes the exam\'s Count un
   assert.deepEqual((await ended.listStudies(reader)).studies.map(s=>s.uid).sort(),[A,B,C,D]);
 });
 
+test('worklist: a merged exam with an original the caller cannot read now says so on its rows, naming no hidden original',async()=>{
+  // C is gone from the archive (its registration stays), or the access policy no longer admits it.
+  const gone=await listFixture({rows:[qido(A,'ACC-A',8,1),qido(B,'ACC-B',8,1),qido(D,'ACC-D',3,1,'SYN-P2')],
+    extraStates:[{...state(C),origin:'dicom',createdAt:new Date('2020-01-01T00:00:00Z'),matched:'U',orderOid:null}]});
+  const denied=await listFixture({policy:{version:1,restricted:true,startsAt:null,endsAt:null,
+    rules:[{patientId:null,modalities:[],dateFrom:null,dateTo:null,studyUids:[A,B,D]}]}});
+  for(const [name,svc] of [['gone',gone],['denied',denied]]){
+    const rows=(await svc.listStudies(reader)).studies,byUid=new Map(rows.map(row=>[row.uid,row]));
+    // The base and the member it still holds are listed, each marked as part of a merged exam that cannot be read whole.
+    for(const uid of [B,A]){
+      const row=byUid.get(uid);
+      assert.ok(row,name+' '+uid);
+      assert.equal(row.examUnavailable,true,name+' '+uid);assert.equal(row.examUnavailableKind,'merge',name+' '+uid);
+      assert.equal('examScope' in row,false,name+' '+uid);assert.equal('group' in row,false,name+' '+uid);
+    }
+    assert.equal('examUnavailableKind' in byUid.get(D),false,name+': an ordinary row is unchanged');
+    assert.equal(byUid.has(C),false,name);
+    // No row names it. (An original of the caller's own institution missing from the archive is still announced by the
+    // list's own not-observed notice, as any registered study is; that notice is not a row and is unchanged.)
+    const text=JSON.stringify(rows);assert.equal(text.includes(C),false,name+': the hidden original is not named');assert.equal(text.includes('ACC-C'),false,name);
+  }
+  // The clinician list (original rows) says the same of the remaining originals; an ordinary row and a readable merged
+  // exam are unchanged.
+  const clinician={...reader,sub:'syn-clinician-sub',actor:'syn-clinician',roles:['clinician']};
+  // The clinician list's one snapshot statement (state joined with its report), as the database answers it here: no reports.
+  const answer=async(svc,reportGroup={})=>{
+    const raw=svc.prisma.$queryRaw;
+    svc.prisma.$queryRaw=async(strings,...values)=>{
+      if(!Array.isArray(strings)||!strings.join('?').includes('LEFT JOIN "Report"'))return raw(strings,...values);
+      const uids=values.flatMap(v=>v?.values??[v]);
+      return (await svc.prisma.studyState.findMany({where:{uid:{in:uids}}})).map(s=>({uid:s.uid,institutionId:s.institutionId,teleInstitutionId:s.teleInstitutionId,
+        rs:s.rs,repDoc:s.repDoc??null,confirm:s.confirm??null,version:0,action:null,findings:null,conclusion:null,recommendation:null,groupId:reportGroup[s.uid]??null}));
+    };
+    try{const out=await svc.clinicianStudies(clinician);return JSON.parse(out.json).studies;}finally{svc.prisma.$queryRaw=raw;}
+  };
+  const listed=await answer(gone);assert.deepEqual([A,B].filter(uid=>listed.some(row=>row.uid===uid)),[A,B],'the remaining originals are listed');
+  for(const row of listed){
+    if([A,B].includes(row.uid)){assert.equal(row.examUnavailable,true,row.uid);assert.equal(row.examUnavailableKind,'merge',row.uid);}
+    else assert.equal('examUnavailable' in row,false,row.uid);
+  }
+  for(const row of await answer(await listFixture()))assert.equal('examUnavailable' in row,false,'readable merged exam: '+row.uid);
+  // Merged again: the exam in force (B+A) is readable; a report row still names an ended group that cannot be read now
+  // (its C is gone). The refusal follows the exam in force, not the report's group.
+  const before=merged(G2,B,[B,A,C],{dissolvedAt:new Date()}),now=merged(G1,B,[B,A]);
+  const again=await listFixture({group:{groups:[...before.groups,...now.groups],members:[...before.members,...now.members]},
+    rows:[qido(A,'ACC-A',8,1),qido(B,'ACC-B',8,1),qido(D,'ACC-D',3,1,'SYN-P2')],
+    extraStates:[{...state(C),origin:'dicom',createdAt:new Date('2020-01-01T00:00:00Z'),matched:'U',orderOid:null}]});
+  for(const row of await answer(again,{[B]:G2}))assert.equal('examUnavailable' in row,false,'merged again: '+row.uid);
+  // An ended merge whose saved scope cannot be read is not a merged exam now: the row keeps the established answer.
+  const ended=await listFixture({group:merged(G1,B,[B,A,C],{dissolvedAt:new Date()}),rows:[qido(A,'ACC-A',8,1),qido(B,'ACC-B',8,1),qido(D,'ACC-D',3,1,'SYN-P2')],
+    extraStates:[{...state(C),origin:'dicom',createdAt:new Date('2020-01-01T00:00:00Z'),matched:'U',orderOid:null}]});
+  for(const row of (await ended.listStudies(reader)).studies)assert.equal('examUnavailableKind' in row,false,row.uid);
+});
+
 test('worklist and bootstrap: reports and drafts of never-grouped studies cost one membership read, and each gets the answer one record gets',async()=>{
   const {resolveExamScope,examScopeView}=require('/app/dist/exam-merge.service');
   const reports=[A,B,C,D].map(uid=>({uid,version:1,findings:'SYN '+uid,conclusion:'',recommendation:'',groupId:null}));

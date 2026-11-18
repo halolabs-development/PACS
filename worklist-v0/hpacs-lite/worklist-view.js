@@ -77,6 +77,8 @@
       if (sortKey && !COLS[m].some(c => c.k === sortKey)) { sortKey = null; sortDir = 0; }
       worklistSearch?.apply();
       renderHeads(); render(); renderOrders(); renderRelated();
+      // The missing-images line of the Info panel is a Technician-tab line (studyReceiptGap): drawn again with the list.
+      renderObservation();
       applyLayout();
     }
     document.querySelector(".tabs").addEventListener("click", e => {

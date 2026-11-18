@@ -66,11 +66,13 @@
     {"id": "R2 none beside unavailable stays normal", "observation": "unavailable_cold", "receipt": "none", "reasons": []},
     {"id": "R3 K>=M no check", "observation": "observed_12", "receipt": "sending_3_of_12", "reasons": []},
     {"id": "R4 complete M=N=K does not upgrade and needs nothing", "observation": "observed_12", "receipt": "complete_12_of_12", "reasons": []},
-    {"id": "R5 K<M needs check", "observation": "observed_12", "receipt": "complete_13_of_13", "reasons": ["kin_below_reported"]},
-    {"id": "R6 K unknown: no K<M comparison, null never read as zero", "observation": "observed_unknown", "receipt": "complete_13_of_13", "reasons": []},
-    {"id": "R7 real zero is compared", "observation": "observed_0", "receipt": "complete_12_of_12", "reasons": ["kin_below_reported"]},
-    {"id": "R8 unavailable: no K<M comparison", "observation": "unavailable_last_12", "receipt": "complete_13_of_13", "reasons": []},
-    {"id": "R9 not_observed with M>=1 needs check", "observation": "not_observed", "receipt": "complete_12_of_12", "reasons": ["not_observed_with_reported_transfer"]},
+    {"id": "R5 K<M needs check", "observation": "observed_12", "receipt": "early_retry_15_of_20", "reasons": ["kin_below_reported"]},
+    {"id": "R6 K unknown: no K<M comparison, null never read as zero", "observation": "observed_unknown", "receipt": "early_retry_15_of_20", "reasons": []},
+    {"id": "R7 real zero is compared", "observation": "observed_0", "receipt": "old_complete_12_of_12", "reasons": ["kin_below_reported"]},
+    {"id": "R8 unavailable: no K<M comparison", "observation": "unavailable_last_12", "receipt": "early_retry_15_of_20", "reasons": []},
+    {"id": "R9 not_observed with M>=1 needs check", "observation": "not_observed", "receipt": "old_complete_12_of_12", "reasons": ["not_observed_with_reported_transfer"]},
+    {"id": "R19 K<M with a report newer than the observation is not compared yet", "observation": "observed_12", "receipt": "complete_13_of_13", "reasons": []},
+    {"id": "R20 not_observed beside a report newer than the observation is not compared yet", "observation": "not_observed", "receipt": "complete_12_of_12", "reasons": []},
     {"id": "R10 not_observed with M=0 does not", "observation": "not_observed", "receipt": "sending_0_of_0", "reasons": []},
     {"id": "R11 receipt older than the last observed change needs check", "observation": "observed_increased", "receipt": "old_complete_12_of_12", "reasons": ["receipt_older_than_change"]},
     {"id": "R12 receipt after the change does not", "observation": "observed_increased", "receipt": "complete_12_of_12", "reasons": []},
@@ -80,6 +82,36 @@
     {"id": "R16 unreadable M>N", "observation": "observed_12", "receipt": "unreadable_m_over_n", "reasons": ["receipt_unreadable"]},
     {"id": "R17 unreadable time", "observation": "observed_12", "receipt": "unreadable_time", "reasons": ["receipt_unreadable"]},
     {"id": "R18 outside the list compares nothing", "observation": "outside_list", "receipt": "complete_13_of_13", "reasons": []}
+  ],
+  "gapReceipts": {
+    "early_retry_15_of_20": {"phase": "retry", "successCount": 15, "localCount": 20, "attempt": 2, "errorCode": "stow_http", "serverReceivedAt": "2026-09-24T01:01:00.000Z", "agentSeq": 11, "epoch": 1},
+    "early_sending_3_of_12": {"phase": "sending", "successCount": 3, "localCount": 12, "attempt": 1, "errorCode": null, "serverReceivedAt": "2026-09-24T01:01:00.000Z", "agentSeq": 12, "epoch": 1},
+    "same_time_complete_13_of_13": {"phase": "complete", "successCount": 13, "localCount": 13, "attempt": 1, "errorCode": null, "serverReceivedAt": "2026-09-24T01:02:00.000Z", "agentSeq": 13, "epoch": 1}
+  },
+  "gapObservations": {
+    "observed_12_first_page_earlier": {"state": "observed", "count": 12, "series": 3, "observedAt": "2026-09-24T01:02:00.000Z", "readSince": "2026-09-24T01:00:30.000Z", "change": null, "changedAt": null, "needsCheck": false, "decreasedAt": null},
+    "unavailable_last_12_first_page_earlier": {"state": "observation_unavailable", "last": {"count": 12, "series": 3, "observedAt": "2026-09-24T01:02:00.000Z"}, "readSince": "2026-09-24T01:00:30.000Z", "changedAt": null, "needsCheck": false, "decreasedAt": null}
+  },
+  "gapCases": [
+    {"id": "G1 reported 15 of 20 sent, HALO PACS holds 12: missing", "observation": "observed_12", "receipt": "early_retry_15_of_20", "gap": {"missing": true, "held": 12, "sent": 15, "stale": false}},
+    {"id": "G2 K=M: no mark", "observation": "observed_12", "receipt": "old_complete_12_of_12", "gap": {"missing": false, "held": 12, "sent": 12, "stale": false}},
+    {"id": "G3 K>M (images still to send are the transfer's, not missing): no mark", "observation": "observed_12", "receipt": "early_sending_3_of_12", "gap": {"missing": false, "held": 12, "sent": 3, "stale": false}},
+    {"id": "G4 a report at the observation's own time is compared", "observation": "observed_12", "receipt": "same_time_complete_13_of_13", "gap": {"missing": true, "held": 12, "sent": 13, "stale": false}},
+    {"id": "G5 a report newer than the observation is not compared yet (pending): the next observation answers", "observation": "observed_12", "receipt": "complete_13_of_13", "gap": {"missing": null, "pending": true, "held": 12, "sent": 13, "stale": false}},
+    {"id": "G6 no report: no answer, never missing", "observation": "observed_12", "receipt": "none", "gap": null},
+    {"id": "G7 unreadable report: no answer", "observation": "observed_12", "receipt": "unreadable_phase", "gap": null},
+    {"id": "G8 unknown K is never read as zero", "observation": "observed_unknown", "receipt": "early_retry_15_of_20", "gap": null},
+    {"id": "G9 a failed observation keeps the last successful answer, said as such", "observation": "unavailable_last_12", "receipt": "early_retry_15_of_20", "gap": {"missing": true, "held": 12, "sent": 15, "stale": true}},
+    {"id": "G10 an own study the observation did not see holds 0", "observation": "not_observed", "receipt": "old_complete_12_of_12", "gap": {"missing": true, "held": 0, "sent": 12, "stale": false}},
+    {"id": "G11 a real zero is compared", "observation": "observed_0", "receipt": "old_complete_12_of_12", "gap": {"missing": true, "held": 0, "sent": 12, "stale": false}},
+    {"id": "G12 outside the list compares nothing", "observation": "outside_list", "receipt": "early_retry_15_of_20", "gap": null},
+    {"id": "G13 before any observation compares nothing", "observation": "not_attempted", "receipt": "early_retry_15_of_20", "gap": null},
+    {"id": "G14 a failed cold start has no last answer", "observation": "unavailable_cold", "receipt": "early_retry_15_of_20", "gap": null},
+    {"id": "G15 a failed observation whose last answer was Not Observed holds 0", "observation": "unavailable_last_not_observed", "receipt": "old_complete_12_of_12", "gap": {"missing": true, "held": 0, "sent": 12, "stale": true}},
+    {"id": "G16 a failed observation whose last count was unknown has no answer", "observation": "unavailable_last_unknown", "receipt": "early_retry_15_of_20", "gap": null},
+    {"id": "G17 a paged list compares only reports older than its first page", "observation": "observed_12_first_page_earlier", "receipt": "early_retry_15_of_20", "gap": {"missing": null, "pending": true, "held": 12, "sent": 15, "stale": false}},
+    {"id": "G18 the same bound holds for the kept answer of a failed observation", "observation": "unavailable_last_12_first_page_earlier", "receipt": "early_retry_15_of_20", "gap": {"missing": null, "pending": true, "held": 12, "sent": 15, "stale": true}},
+    {"id": "G19 a paged list compares a report older than its first page", "observation": "observed_12_first_page_earlier", "receipt": "old_complete_12_of_12", "gap": {"missing": false, "held": 12, "sent": 12, "stale": false}}
   ],
   "sequences": [
     {"id": "Q1 increase then no change: since is when the value was first seen", "steps": [

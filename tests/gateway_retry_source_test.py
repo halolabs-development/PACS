@@ -59,7 +59,11 @@ F01 = "같은 바이트로는 성공할 수 없습니다 — 지원 범위 밖(F
 U3_RULE_SHA256 = "bff24d487a066df554c2dbe70a9ca1dbc28cf52062eebac87f9a537344d27510"
 # The Gateway label pin moved once for the product rename: its one visible "KIN 보유" now reads "HALO PACS 보유"
 # (the 9152f43 text with only that name put back hashes to 4b1b003b…aad79); logic and keys are unchanged.
-U1B_GATEWAY_LABEL_SHA256 = "7ce3a2e6003f24e5ede7d76b5c8489bbd06c52eab2dc3132ddf0f82ab183e0e4"
+# It moved again for missing images: the K<M and Not Observed reasons now come from receiptGap (the one answer the
+# Technician list and Info draw), which compares only a report the observation is not older than (7ce3a2e6…3e0e4 before).
+# Its label text and keys are unchanged; the reason rules are pinned by tests/study_observation_vectors.json. Its title
+# says why it did not compare exactly when that answer did not (count unknown, or the report arrived after the list read began).
+U1B_GATEWAY_LABEL_SHA256 = "a10685cc99c21ca24a0181dee4b34aa287f38e3039a3a0c12c1bfdd68bbfd06f"
 
 
 def sha(value):
@@ -805,7 +809,8 @@ def f01v_problems(main, arrivals):
                           ("row.gatewayReceipt ?? null", 1), ('$("#not-observed-list")', 1),
                           ("let item = kept.get(row.uid);", 1), ("item.dataset.uid = row.uid;", 1),
                           ('for (const item of kept.values()) item.querySelector("button").dataset.request = "";', 1),
-                          ('item.append(document.createElement("span"), " ", control, " ", document.createElement("span"));', 1),
+                          # The missing-images line is the item's last child, so the note stays right after the control.
+                          ('item.append(document.createElement("span"), " ", control, " ", document.createElement("span"), " ", gapText);', 1),
                           ("text.textContent = `${row.uid} · ${row.origin} · ${KinStudyArrivals.formatTime(row.createdAt)}`\n"
                            '            + (gateway === null ? "" : ` · ${labels.gateway.text}`);', 1)):
         if render.count(needle) != count:

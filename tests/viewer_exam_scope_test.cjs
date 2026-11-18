@@ -106,6 +106,8 @@ test('adding a logical comparison reopens current and prior through the existing
  assert.equal(JSON.parse(new URL(gates.at(-1).href).searchParams.get('kinExamScopes')).purpose,'stored');
  opening=null;await loader(P,{studyUid:A,seriesUid:T}, {uid:P});assert.equal(retrieved.length,1);assert.equal(retrieved[0].StudyInstanceUID,P);
  assert.equal(gates.length,count+1);
+ // A related exam whose originals cannot all be read now is not opened beside this one, not even the original it still has.
+ await assert.rejects(loader(B,{}, {uid:B,examUnavailable:true,examUnavailableKind:'merge'}),/합친 검사의 원본 일부/);assert.equal(retrieved.length,1);assert.equal(gates.length,count+1);
 });
 
 test('clinician ordinary openings keep the native URL and request count while stored split openings recheck their scope',async()=>{
@@ -154,8 +156,8 @@ test('split second part filters metadata, refuses excluded frames and filters ca
  let requests=0;const native=async()=>{requests++;return new Response(JSON.stringify([row(A,S),row(A,T)]));};
  const response=await v.api.send(native,`/dicom-web/studies/${A}/metadata`);assert.deepEqual(await response.json(),[row(A,S)]);
  await assert.rejects(v.api.send(native,`/dicom-web/studies/${A}/series/${T}/instances/2.25.90/frames/1`));assert.equal(requests,1);
- const made=[],services={displaySetService:{createDisplaySets:instances=>{made.push(instances);return instances;}}};v.api.install(services);
- services.displaySetService.createDisplaySets([{StudyInstanceUID:A,SeriesInstanceUID:S},{StudyInstanceUID:A,SeriesInstanceUID:T}]);assert.equal(made[0].length,1);assert.equal(made[0][0].SeriesInstanceUID,S);
+ const made=[],services={displaySetService:{makeDisplaySets:instances=>{made.push(instances);return instances;}}};v.api.install(services);
+ services.displaySetService.makeDisplaySets([{StudyInstanceUID:A,SeriesInstanceUID:S},{StudyInstanceUID:A,SeriesInstanceUID:T}]);assert.equal(made[0].length,1);assert.equal(made[0][0].SeriesInstanceUID,S);
 });
 test('an edited URL cannot add an original and partial permission never admits pixels',async()=>{
  const current=scope(A,[source(A),source(B)]),v=viewer(model.viewerInput(current),()=>current);
@@ -175,6 +177,63 @@ test('late series belongs to the first split part, and stored reopening keeps th
  const snapshot={studies:[A],exam:{...model.snapshotReference(input),purpose:'stored'}};
  const href=new URL(model.snapshotUrl(snapshot),'https://pacs.test');v.root.location=href;await v.api.ensure();assert.equal(new URL(v.calls.at(-1),'https://pacs.test').searchParams.get('purpose'),'stored');
 });
+test('a merged exam opens as one current exam: every original is current, a prior stays prior, split parts by series',async()=>{
+ const merged=scope(A,[source(A),source(B),source(C)]),prior={...scope(P,[source(P)]),groupId:null,kind:null};
+ const input=model.viewerInput(merged,prior);
+ for(const uid of [A,B,C])assert.equal(model.examRole(input,uid,S),'current',uid);
+ assert.equal(model.examRole(input,P,S),'prior');assert.equal(model.examRole(input,'2.25.99',S),null);assert.equal(model.examRole(null,A),null);
+ assert.deepEqual(model.examSources(input,C).map(s=>s.studyUid),[A,B,C],'one list, base original first');
+ assert.deepEqual(model.examSources(input,P).map(s=>s.studyUid),[P]);
+ const first=scope(A,[source(A,'exclude',[S])],0),second=scope(B,[source(A,'include',[S])],1),parts=model.viewerInput(first,second);
+ assert.equal(model.examRole(parts,A,T),'current');assert.equal(model.examRole(parts,A,S),'prior');
+ assert.equal(model.examRole(parts,A),null,'both parts of one original, no series: not guessed');assert.equal(model.examSources(parts,A),null);
+ // The viewer asks the admitted window scope; a window without one has no role (the opened order decides there).
+ const v=viewer(input,ref=>ref.reportUid===A?merged:prior);assert.equal(v.api.role(B,S),null);await v.api.ensure();
+ assert.equal(v.api.role(B,S),'current');assert.equal(v.api.role(P,S),'prior');assert.deepEqual(v.api.sources(B).map(s=>s.studyUid),[A,B,C]);
+});
+test('the viewer image sets are made through the archive scope on OHIF\'s own makeDisplaySets, once per service',async()=>{
+ const merged=scope(A,[source(A),source(B)]),v=viewer(model.viewerInput(merged),()=>merged);await v.api.ensure();
+ // The pinned OHIF service has makeDisplaySets and no other maker: installing must not fail on it.
+ const made=[],native=function(instances,options){made.push([instances,options]);return instances.map(i=>({StudyInstanceUID:i.StudyInstanceUID}));};
+ const services={displaySetService:{makeDisplaySets:native,getActiveDisplaySets:()=>[]}};
+ v.api.install(services);const wrapped=services.displaySetService.makeDisplaySets;v.api.install(services);
+ assert.equal(services.displaySetService.makeDisplaySets,wrapped,'installed once');
+ const sets=services.displaySetService.makeDisplaySets([{StudyInstanceUID:A,SeriesInstanceUID:S},{StudyInstanceUID:B,SeriesInstanceUID:T},{StudyInstanceUID:P,SeriesInstanceUID:S}]);
+ assert.deepEqual(sets.map(s=>s.StudyInstanceUID),[A,B],'both originals, nothing outside the exam');
+ // A batch is one list per series: each keeps the scope's images, a list left empty is not passed on.
+ made.length=0;services.displaySetService.makeDisplaySets([[{StudyInstanceUID:A,SeriesInstanceUID:S}],[{StudyInstanceUID:P,SeriesInstanceUID:S}],[{StudyInstanceUID:B,SeriesInstanceUID:T},{StudyInstanceUID:P,SeriesInstanceUID:T}]],{batch:true});
+ assert.deepEqual(JSON.parse(JSON.stringify(made[0][0])).map(list=>list.map(i=>i.StudyInstanceUID)),[[A],[B]]);assert.deepEqual(made[0][1],{batch:true});
+ assert.equal(services.displaySetService.makeDisplaySets([{StudyInstanceUID:P,SeriesInstanceUID:S}]).length,0);
+ // What this window's reader just saved is held to the scope as on reopening: inside it is made, outside it is not.
+ made.length=0;services.displaySetService.makeDisplaySets([{StudyInstanceUID:A,SeriesInstanceUID:'2.25.77'}],true);assert.equal(made.length,1);
+ assert.equal(services.displaySetService.makeDisplaySets([{StudyInstanceUID:P,SeriesInstanceUID:'2.25.77'}],true).length,0);assert.equal(made.length,1);
+ assert.throws(()=>v.api.install({displaySetService:{}}),/영상 범위 공급/);
+});
+test('an ordinary route after a scoped one has no scope and no role, without failing',async()=>{
+ const merged=scope(A,[source(A),source(B)]),v=viewer(model.viewerInput(merged),()=>merged);await v.api.ensure();
+ v.root.location=new URL(model.viewerUrl(model.viewerInput({uid:P})),'https://pacs.test');v.api.activate(v.root.location.href,null);
+ assert.equal(v.api.snapshot(),null);assert.equal(v.api.role(P),null);assert.equal(v.api.sources(P),null);
+});
+test('Auto Preload neither counts nor fetches an exam that cannot be read whole, nor its priors',()=>{
+ const queue=require('../worklist-v0/hpacs-lite/preload-queue.js');
+ const rows=[{uid:A,date:'2026-11-02',modality:'CT',sourcePatientKey:'K',examUnavailable:true,examUnavailableKind:'merge'},
+  {uid:B,date:'2026-11-01',modality:'CT',sourcePatientKey:'K'},{uid:C,date:'2026-11-03',modality:'CT',sourcePatientKey:'Q'}];
+ // The saved search matched A (unavailable) and C; B is A's prior.
+ assert.deepEqual(queue.pick([rows[0],rows[2]],rows,{priors:true}).map(s=>s.uid),[C]);
+});
+test('a row of a merged exam whose originals cannot all be read is not an ordinary row: no opening, no Preload, a PF reason',()=>{
+ const lost={uid:A,examUnavailable:true,examUnavailableKind:'merge'},split={uid:B,examUnavailable:true,examUnavailableKind:'split'},old={uid:C,examUnavailable:true};
+ assert.equal(model.unavailable({uid:A}),null);assert.equal(model.unavailable(lost).kind,'merge');assert.equal(model.unavailable(split).kind,'split');
+ assert.equal(model.unavailable(old).kind,null);assert.equal(model.unavailable({...lost,examUnavailableKind:'other'}).kind,null);
+ assert.throws(()=>model.viewerInput(lost),/합친 검사의 원본 일부/);assert.throws(()=>model.viewerInput({uid:P},split),/나눈 검사의 원본/);
+ assert.throws(()=>model.viewerInput(old),/모든 원본에 접근할 수 없습니다/);
+ assert.deepEqual(model.preload([lost,{uid:P}]).map(e=>e.uid),[P],'the readable original of a lost exam is not fetched');
+ const ready=()=>({status:'Ready'});
+ // At once, never the Ready of the originals it can still read; a row without an exam in force keeps no state.
+ const failed=model.preloadState(lost,ready);assert.equal(failed.status,'Failed');assert.match(failed.reason,/합친 검사의 원본 일부/);
+ assert.match(model.preloadState(split,ready).reason,/나눈 검사의 원본/);assert.equal(model.preloadState(old,ready),null);
+ assert.equal(model.preloadState({uid:A},ready).status,'Ready','an ordinary row is unchanged');
+});
 test('preload expands merged originals and retains split series references without changing ordinary requests',()=>{
  assert.deepEqual(model.preload([{uid:A}]),[{uid:A,label:null,urgent:false}]);
  const examScope=scope(B,[source(A,'include',[S])],1);const rows=model.preload([{uid:B,examScope}]);assert.equal(rows[0].uid,A);assert.deepEqual(rows[0].examRefs,[model.reference(examScope)]);
@@ -184,7 +243,7 @@ test('native comparison selects current and prior by logical scope even when bot
  const current=scope(A,[source(A,'exclude',[S])],0),prior=scope(B,[source(A,'include',[S])],1);
  const v=viewer(model.viewerInput(current,prior),ref=>ref.part===0?current:prior);await v.api.ensure();
  const sets=[{StudyInstanceUID:A,SeriesInstanceUID:S,displaySetInstanceUID:'second'},{StudyInstanceUID:A,SeriesInstanceUID:T,displaySetInstanceUID:'first'}];
- let protocol,called;const services={displaySetService:{createDisplaySets:values=>values},hangingProtocolService:{addProtocol:(_id,value)=>protocol=value,run:(_data,id)=>called=id}};
+ let protocol,called;const services={displaySetService:{makeDisplaySets:values=>values},hangingProtocolService:{addProtocol:(_id,value)=>protocol=value,run:(_data,id)=>called=id}};
  v.api.install(services);services.hangingProtocolService.run({displaySets:sets},'@ohif/hpCompare');assert.equal(called,'kin.exam-compare');
  assert.equal(protocol.displaySetSelectors['exam-0'].seriesMatchingRules[0].constraint.equals.value,'first');
  assert.equal(protocol.displaySetSelectors['exam-1'].seriesMatchingRules[0].constraint.equals.value,'second');
@@ -199,7 +258,7 @@ test('native comparison opens each side on its first image series in panel order
   instances:[{SeriesNumber:number,SeriesDate:'20261101',SeriesTime:'120000'}],...extra});
  const sets=[set(B,'2.25.23','prior-ct',2),set(B,'2.25.22','prior-attached',undefined,{Modality:'OT'}),set(A,'2.25.21','current-ct',1),
   set(A,'2.25.20','current-attached',undefined,{Modality:'OT'}),set(A,'2.25.19','current-zero',0,{Modality:'CT'})];
- let protocol;const services={displaySetService:{createDisplaySets:values=>values},hangingProtocolService:{addProtocol:(_id,value)=>protocol=value,run(){}}};
+ let protocol;const services={displaySetService:{makeDisplaySets:values=>values},hangingProtocolService:{addProtocol:(_id,value)=>protocol=value,run(){}}};
  v.api.install(services);
  const chosen=input=>{services.hangingProtocolService.run({displaySets:input},'@ohif/hpCompare');
   return ['exam-0','exam-1'].map(key=>protocol.displaySetSelectors[key].seriesMatchingRules[0].constraint.equals.value);};
@@ -247,7 +306,7 @@ test('a comparison opened for one series of a scoped prior shows that series in 
  const v=viewer(model.viewerInput(current,prior),ref=>ref.reportUid===A?current:prior);await v.api.ensure();
  const sets=[{StudyInstanceUID:A,SeriesInstanceUID:S,displaySetInstanceUID:'cur',Modality:'CT'},{StudyInstanceUID:B,SeriesInstanceUID:'2.25.20',displaySetInstanceUID:'b-first',Modality:'CT'},
   {StudyInstanceUID:C,SeriesInstanceUID:'2.25.30',displaySetInstanceUID:'c-second',Modality:'CT'},{StudyInstanceUID:C,SeriesInstanceUID:'2.25.31',displaySetInstanceUID:'c-sr',Modality:'SR'}];
- let protocol;const services={displaySetService:{createDisplaySets:values=>values},hangingProtocolService:{addProtocol:(_id,value)=>protocol=value,run(){}}};v.api.install(services);
+ let protocol;const services={displaySetService:{makeDisplaySets:values=>values},hangingProtocolService:{addProtocol:(_id,value)=>protocol=value,run(){}}};v.api.install(services);
  const chosen=()=>[0,1].map(i=>protocol.displaySetSelectors['exam-'+i].seriesMatchingRules[0].constraint.equals.value);
  services.hangingProtocolService.run({displaySets:sets},'@ohif/hpCompare');assert.deepEqual(chosen(),['cur','b-first']);
  v.root.location.searchParams.set('initialSeriesInstanceUID','2.25.30');await v.api.ensure();services.hangingProtocolService.run({displaySets:sets},'@ohif/hpCompare');assert.deepEqual(chosen(),['cur','c-second']);

@@ -15,7 +15,8 @@
       if (!s?.sourcePatientKey || !validPriorDate(s.date)) return null;
       // fmtD는 모양만 바꾼다. 달력 검증 없이 정렬하면 미래·불량 날짜가 prior가 된다.
       // 같은 날의 선후는 StudyTime 근거가 없으므로 자동으로 추측하지 않는다.
-      return studies.filter(x => x.sourcePatientKey === s.sourcePatientKey && x.uid !== uid && x.modality === s.modality
+      // A row whose exam cannot be read whole now (KinExamScope.unavailable) cannot be opened beside it: never the prior.
+      return studies.filter(x => x.sourcePatientKey === s.sourcePatientKey && x.uid !== uid && x.modality === s.modality && !globalThis.KinExamScope?.unavailable?.(x)
           && validPriorDate(x.date) && x.date < s.date)
         .sort((a, b) => b.date.localeCompare(a.date) || b.uid.localeCompare(a.uid))[0]?.uid ?? null;
     }
@@ -36,6 +37,60 @@
       if (readingWorkspace.active() || imageOpening?.snapshot().listTarget === 'workspace')
         return openingOptions?.exam ? openOhifWindow(uid, priorUid, initialSeriesUid, null, openingOptions) : readingWorkspace.open(uid, priorUid, initialSeriesUid);
       return openOhifWindow(uid, priorUid, initialSeriesUid, null, openingOptions);
+    }
+    /**
+     * The one place an entry that means "move to this study and show its images" (the list row's double-click) opens the
+     * viewer: only once the list has moved to that study, so a refused move never leaves the images of another study open
+     * beside the report the reader is still writing. The move itself is select()'s (the study-move gate); a double-click
+     * comes after its two clicks have already asked for it, so this only reads where that move stands:
+     * - moved (the study is the selection): opened now, inside the gesture, exactly as before;
+     * - still waiting for the text's draft save: when no viewer window is live, a blank one is opened now, inside the
+     *   gesture, so the browser does not block it later. Once the move ends on that study it is opened through
+     *   openFilmbox (every check of an ordinary open: identity, workspace target, a live window's unsaved work and scope),
+     *   into that blank window if it is still unused; if the move does not end there the blank window is closed and a live
+     *   one is left as it was. When the move's own automatic open (Open on Selection) has opened it, nothing more is done;
+     * - not moving (refused, result unknown, composing, held by another reader - the Notice says which): nothing opens.
+     * A later open overtakes one still waiting: only the last decides. The blank window is also closed when this list
+     * document goes away, and a later reservation of the same window (Open Selected Studies) takes it over.
+     */
+    let moveOpenTicket = 0, moveBlank = null;
+    function dropMoveBlank() {
+      const blank = moveBlank; moveBlank = null;
+      if (!blank) return;
+      try {
+        // Only the blank window this flow opened, and only while nothing has been opened into it since.
+        if (!blank.popup.closed && ohifPopupSequences.get(blank.popup) === blank.sequence && blank.popup.location.href === 'about:blank')
+          blank.popup.close();
+      } catch (_) {}
+      try { viewerWindows?.refresh(); } catch (_) {}
+    }
+    window.addEventListener('pagehide', () => dropMoveBlank());
+    function openStudyAfterMove(uid, priorUid = autoPrior(uid)) {
+      const ticket = ++moveOpenTicket;
+      if (selectedUid === uid) { const opened = openFilmbox(uid, priorUid); dropMoveBlank(); return opened; }
+      const leave = pendingMoveTo(uid);
+      if (!leave) { dropMoveBlank(); return false; }
+      const at = work.capture('document');
+      // Holding a window is best effort: a study the viewer cannot address (no DICOM UID) holds none, and the answer's
+      // openFilmbox says why it does not open.
+      let reserved = {};
+      try { reserved = reserveViewingSet([uid, priorUid].filter(Boolean)); } catch (_) {}
+      // Only a blank window this flow opened is kept for the answer: a live window is chosen again then, for the study's own
+      // scope and state at that moment.
+      const blank = reserved.status === 'reserved' && reserved.kind === 'window' && reserved.own ? reserved : null;
+      if (blank) moveBlank = { popup: blank.popup, sequence: ohifPopupSequences.get(blank.popup) };
+      return Promise.resolve(leave.done).then(() => {
+        if (ticket !== moveOpenTicket) return false;
+        if (!work.admits(at) || selectedUid !== uid) { dropMoveBlank(); return false; }
+        const moved = leave.target;
+        if (moved?.uid === uid && moved.options?.openSelected && !moved.options.deferViewer && !readingWorkspace.active() &&
+            imageOpening?.snapshot().autoLoad) { dropMoveBlank(); return { status: 'accepted', message: null }; }
+        const unused = !!blank && moveBlank?.popup === blank.popup && ohifPopupSequences.get(blank.popup) === moveBlank.sequence;
+        // A held blank window the reader closed meanwhile is not reopened outside the gesture (openOhifWindow refuses it).
+        const opened = openFilmbox(uid, priorUid, null, unused ? { reservation: blank } : null);
+        dropMoveBlank();
+        return opened;
+      }, () => { if (ticket === moveOpenTicket) dropMoveBlank(); return false; });
     }
     function ohifScope(value) {
       try {
@@ -391,6 +446,9 @@
       if (known) KinExamScope.raiseWindow(popup);
       let own = false;
       try { own = !known && popup.location.href === 'about:blank'; } catch (_) {}
+      // A blank window held for a list move still waiting (openStudyAfterMove) passes to this reservation, which closes it
+      // when unused (releaseViewingSet); the move's answer then chooses a window again.
+      if (!own && moveBlank?.popup === popup) { own = true; moveBlank = null; }
       return { status: 'reserved', kind: 'window', choice, popup, own, preservePartner, compositionId };
     }
     function launchViewingSet(reservation, plan, opening, metadata, signal) {
@@ -546,10 +604,15 @@
         list.replaceChildren();
         for (const row of values) {
           const section = document.createElement('section'); section.className = 'viewer-window-row';
-          const label = document.createElement('p'), study = studies.find(s => s.uid === row.scope?.studies[0]);
+          // A window opened on exam scopes names its exam and its comparison by those scopes: the originals of a merged
+          // exam are one exam, never a study and its comparison. Other windows keep the opened order.
+          let exam = null; try { exam = row.scope?.exam ? JSON.parse(row.scope.exam) : null; } catch (_) { exam = null; }
+          const opened = exam ? exam.current?.reportUid : row.scope?.studies[0];
+          const compared = exam ? exam.prior?.reportUid ?? null : row.scope?.studies.length === 2 ? row.scope.studies[1] : null;
+          const label = document.createElement('p'), study = studies.find(s => s.uid === opened);
           label.textContent = 'Window ' + (row.index + 1) + ' · ' + row.state + ' · ' +
             (study ? [study.name, study.date, study.desc, study.uid].filter(Boolean).join(' · ') : row.scope?.studies.join(' / ') || 'Unverified');
-          if (row.scope?.studies.length === 2) { const comparison = studies.find(s => s.uid === row.scope.studies[1]); label.textContent += ' · Comparison: ' + (comparison ? [comparison.date, comparison.uid].join(' · ') : row.scope.studies[1]); }
+          if (compared) { const comparison = studies.find(s => s.uid === compared); label.textContent += ' · Comparison: ' + (comparison ? [comparison.date, comparison.uid].join(' · ') : compared); }
           section.append(label);
           for (const action of ['focus', 'latest', 'close']) {
             const control = document.createElement('button'); control.type = 'button'; control.className = 'chip';

@@ -229,6 +229,9 @@ export class PacsWorklist {
     const owner = [me, c.sub, c.actor, String(access.revision), String(access.windowOpen)], page = studyPageQuery(uids ? undefined : query, owner);
     // S4-U2 asks the paged enumeration for the indexed AccessionNumber too; the full QIDO carries it already.
     const lookup = uids && exams ? await examLookupSources(this.prisma, uids) : null;
+    // The server time before this enumeration began: every count and every absence in this answer was read after it, so
+    // a Gateway report received before it is one the screen may compare with them (missing images).
+    const readFrom = new Date().toISOString();
     const qido = uids ? await this.orthanc.studiesByUid(lookup?.sources ?? uids) : page ? await this.orthanc.studyIdentities(true, true) : await this.orthanc.studies();
     // S4-U1b: the server time at which this successful enumeration returned. A failed QIDO throws
     // before this line, so no response ever carries an observation time it did not make.
@@ -455,7 +458,12 @@ export class PacsWorklist {
         retained.set(link.uid, { examScope: storedExamScope(scope), relatedExamReports: await relatedExamReports(this.prisma, this.studyAccess, c, link.uid) });
       } catch (error) {
         if (!(error instanceof NotFoundException || error instanceof ConflictException)) throw error;
-        retained.set(link.uid, { examUnavailable: true, relatedExamReports: [] });
+        // A study of a merged or split exam that is in force now, whose originals this caller cannot all read now (one gone
+        // from the archive, or outside the caller's access): the row says what kind of exam it belongs to, and nothing of
+        // the originals it cannot read. A row whose only grouping is an ended one keeps the plain answer.
+        const live = link.targets.find(target => target.groupId !== null && target.active);
+        retained.set(link.uid, { examUnavailable: true, ...(live ? { examUnavailableKind: live.part === null ? 'merge' : 'split' } : {}),
+          relatedExamReports: [] });
       }
     }
     const out: any[] = [];
@@ -538,7 +546,7 @@ export class PacsWorklist {
     const absentReceiptByUid = new Map(absentReceipts.map(r => [r.studyUid, r]));
     for (const row of notObserved ?? []) { const receipt = absentReceiptByUid.get(row.uid); if (receipt) Object.assign(row, { gatewayReceipt: projectGatewayReceipt(receipt) }); }
     const orderReconciliation = orderRows ? this.orderReconciliation(qido, orderRows, me, access) : undefined;
-    const body = { studies: out, serverTime: new Date().toISOString(), observedAt,
+    const body = { studies: out, serverTime: new Date().toISOString(), observedAt, readFrom,
       ...(notObserved === undefined ? {} : { notObserved }),
       ...(orderReconciliation === undefined ? {} : { orderReconciliation }),
       ...(completes ? { identityIssues: identityIssueList(issues) } : {}), ...(page ? { pagination: window.pagination } : {}) };
