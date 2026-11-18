@@ -3,10 +3,10 @@
  * 보낸 병원을 모르는 검사의 보류·운영자 알림·장비/표기 등록 뒤 자동 연결(D1882)도 같은 등록 자리에서 한다.
  * PacsService가 만들어 소유하는 평범한 객체다(Nest provider가 아니다). 생성자는 참조만 저장한다.
  */
-import { withHeadActions } from '../report-visibility';
+import { headVersionsUnchanged, withStoredExtras } from '../report-visibility';
 import type { StudyAccessService } from '../study-access.service';
 import type { AccessSnapshot } from '../study-access.service';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { PrismaService } from '../prisma.service';
 import { OrthancService } from '../orthanc.service';
@@ -311,8 +311,7 @@ export class PacsWorklist {
       for (const state of details) sourceStates.set(state.uid, state);
     }
     for (const [uid, state] of shown) sourceStates.set(uid, state);
-    // Each head carries its own version's action: the report state table judges the head by it, not by a state read apart.
-    const reports = await withHeadActions(this.prisma, await this.prisma.report.findMany({ where: { uid: { in: pageUids } } }), c);
+    const reports = await withStoredExtras(this.prisma, await this.prisma.report.findMany({ where: { uid: { in: pageUids } } }));
     const repByUid = new Map(reports.map(r => [r.uid, r]));
     // Merge Exam: a report written on an exam group is about every study of it. Its text goes only to a caller who may read
     // every one of them now (the row stays; the text is withheld), and the row says which studies it was written on.
@@ -522,6 +521,9 @@ export class PacsWorklist {
     const current = () => this.prisma.studyState.findMany({ where: { uid: { in: watched } },
       select: { uid:true, institutionId:true, teleInstitutionId:true, rs:true, preDoc:true, preReviewer:true, preDocSub:true, preReviewerSub:true, draftEpoch:true } });
     if (changedAccess(await current(), watched)) throw accessConflict();
+    // The report state table (report-visibility.ts): the states the answer uses equal the states read after the heads, and no
+    // report version moved since the heads were read - so each lock is judged on a state and a head of the same moment.
+    if (!await headVersionsUnchanged(this.prisma, pageUids, reports)) throw accessConflict();
     // S4-U2: the order side is read with the page that completes the list and BEFORE the access
     // re-check below, so a policy change during this request refuses the whole answer.
     const orderRows = completes ? await this.orderSide(me) : null;
@@ -653,10 +655,19 @@ export class PacsWorklist {
       }
     }
     const orders=orderRows.filter(o=>o.studyUid?permitted.has(o.studyUid):!access.policy.restricted);
-    // Each head carries its own version's action (the report state table judges the head by it, not by the states read above).
-    const reports = omitStates ? [] : await withHeadActions(this.prisma, await this.prisma.report.findMany({
-      where: { uid: { in: states.map(s => s.uid) } },
-    }), c);
+    // The report state table (report-visibility.ts): the heads are read, then the states again, and the answer is used only when
+    // no report version moved meanwhile - the states and heads it judges a lock on are of the same moment (a few tries).
+    const uids = states.map(s => s.uid);
+    let reports: any[] = [];
+    for (let attempt = 0; !omitStates; attempt++) {
+      reports = await withStoredExtras(this.prisma, await this.prisma.report.findMany({ where: { uid: { in: uids } } }));
+      const fresh = new Map((await this.prisma.studyState.findMany({ where: { uid: { in: uids } } })).map(s => [s.uid, s]));
+      if (await headVersionsUnchanged(this.prisma, uids, reports)) {
+        for (let i = 0; i < states.length; i++) states[i] = fresh.get(states[i].uid) ?? states[i];
+        break;
+      }
+      if (attempt === 2) throw new ServiceUnavailableException('판독 상태가 바뀌는 중입니다. 잠시 후 다시 불러오세요.');
+    }
     // Merge Exam: the same rule as the list — a report written on an exam group goes only to a caller who may read all of it.
     const byUid: Record<string, any> = {};
     const reportScopes: Record<string,any> = {};

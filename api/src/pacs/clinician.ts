@@ -28,7 +28,7 @@ import { reportBodyLock, storedVersionReadable } from '../report-visibility';
  */
 function withholdUnsigned(rows: any[], c: Caller) {
   for (const row of rows)
-    if (reportBodyLock(row, { ...row, headAction: row.action ?? null }, c) === 'in-progress') Object.assign(row, { findings: '', conclusion: '', recommendation: '' });
+    if (reportBodyLock(row, row, c) === 'in-progress') Object.assign(row, { findings: '', conclusion: '', recommendation: '' });
 }
 export class PacsClinician {
   constructor(

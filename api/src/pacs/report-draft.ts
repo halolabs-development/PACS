@@ -3,7 +3,7 @@
  * draftTransaction 하나를 지난다(세션 → 검사 → 초안 잠금 순서, 감사는 같은 트랜잭션).
  * PacsService가 만들어 소유하는 평범한 객체다(Nest provider가 아니다). 생성자는 참조만 저장한다.
  */
-import { assertHeadWritable, headForLock, withHeadActions } from '../report-visibility';
+import { assertHeadWritable, headForLock, withStoredExtras } from '../report-visibility';
 import { canReadPreliminary } from '../preliminary-reader';
 import type { StudyAccessService } from '../study-access.service';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
@@ -916,7 +916,7 @@ export class PacsReportDraft {
         const cleared = await this.storeDraft(tx, uid, c.actor, row, null);
         await audit(c.actor, 'report.draft.discard', uid, { institution: inst(c) });
         const stored = await tx.report.findUnique({ where: { uid } });
-        const rep = stored ? (await withHeadActions(tx, [stored], c))[0] : stored;
+        const rep = stored ? (await withStoredExtras(tx, [stored]))[0] : stored;
         const readable = rep && await readableExamRecord(tx, this.studyAccess, c, uid, rep);
         const provided = readable ? rep : rep && { ...rep, findings: '', conclusion: '', recommendation: '' };
         const answer = { ...draftEnvelope(uid, owner, state.draftEpoch, cleared),

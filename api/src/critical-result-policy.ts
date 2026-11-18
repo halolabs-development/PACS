@@ -24,7 +24,7 @@ export const CRITICAL_RESULT_TRANSITIONS: Readonly<Record<string, { from: string
 
 export type RecipientClass = 'clinician' | 'radiologist';
 export type Refusal = { status: 400 | 403 | 404 | 409 | 503; code: string; id?: string; replacedBy?: string };
-export type Head = { version: number; action: string | null; author?: string | null; at?: any } | null;
+export type Head = { version: number; action: string | null; author?: string | null; at?: any; content?: boolean } | null;
 type StudyReadState = { rs?: string | null; preDoc?: string | null; preReviewer?: string | null; preDocSub?: string | null; preReviewerSub?: string | null };
 type RecipientCase = {
   case: 'C2' | 'C3' | 'C4' | 'C5' | 'R2' | 'R3' | 'R4' | 'R5';
@@ -131,7 +131,8 @@ export function recipientSees(record: RecordSides, state: StudyScopeState | null
  * the sender chose to send.
  */
 export function senderReadsHead(state: StudyReadState | null | undefined, head: Head, actor: string): boolean {
-  if (!head || state?.rs === 'P' || !['W', 'T', 'H'].includes(state?.rs as string)) return true;
+  // An empty head (no text, structured item or drawing stored) is nobody's work: any eligible sender may send, as before.
+  if (!head || head.content === false || state?.rs === 'P' || !['W', 'T', 'H'].includes(state?.rs as string)) return true;
   return !['save', 'defer'].includes(head.action as string) || head.author === actor;
 }
 

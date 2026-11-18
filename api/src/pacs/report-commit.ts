@@ -3,7 +3,7 @@
  * PacsService가 만들어 소유하는 평범한 객체다(Nest provider가 아니다). 생성자는 참조만 저장한다.
  */
 import { canReadPreliminary, designationMatches } from '../preliminary-reader';
-import { assertHeadWritable } from '../report-visibility';
+import { assertHeadWritable, storedContent, withStoredExtras } from '../report-visibility';
 import { rightsAllow, lockMemberRights } from '../member-rights';
 import type { StudyAccessService } from '../study-access.service';
 import { BadRequestException, ConflictException, ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
@@ -95,7 +95,8 @@ export class PacsReportCommit {
      * 길 그대로다 — 점유를 우회하지 않고, 두 사람만, 사유 필수. 내 글만 있는 검사도 지금처럼 사유를 받는다.
      * 사유는 묻지 않고 **이 잠금 안에서** 서버가 만든다: 요청이 본 것이 아니라 지금 잠근 점유·저장 글이 기록된다.
      */
-    const savedByOther = early?.updatedBy && early.updatedBy !== c.actor && (early.findings || early.conclusion || early.recommendation)
+    // Someone's work is any stored content - text, a structured item or a drawing (report-visibility.ts storedContent).
+    const savedByOther = early?.updatedBy && early.updatedBy !== c.actor && storedContent(early)
       ? early.updatedBy as string : null;
     const takeover = inProgress && (heldByOther || savedByOther)
       ? { holder: heldByOther ? visibleHolder(prev, c) : null, heldAt: heldByOther ? prev.heldAt : null, savedBy: savedByOther }
@@ -417,7 +418,7 @@ export class PacsReportCommit {
         // Reset은 현재 판독문을 비우기 직전에 이력으로 보존한다. 같은 트랜잭션이라
         // 실패하면 비움도 스냅샷도 함께 취소되어 판독문을 잃을 틈이 없다.
         if (action === 'reset' && cur &&
-            (cur.findings || cur.conclusion || cur.recommendation || headDrawings.length)) {
+            (storedContent(cur) || headDrawings.length)) {
           await tx.reportVersion.create({ data: {
             uid, version, action: 'discarded',
             findings: cur.findings, conclusion: cur.conclusion,
@@ -538,6 +539,7 @@ export class PacsReportCommit {
     const [head] = await tx.$queryRaw`
       SELECT version, "updatedBy", findings, conclusion, recommendation, "groupId"
       FROM "Report" WHERE uid = ${uid} FOR UPDATE`;
-    return head;
+    // With whether its version stored a structured item or a drawing (a head without text is judged by them).
+    return head ? (await withStoredExtras(tx, [{ ...head, uid }]))[0] : head;
   }
 }

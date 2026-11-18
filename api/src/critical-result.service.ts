@@ -269,11 +269,16 @@ export class CriticalResultService {
 
   /** 머리 판 = ReportVersion(uid, Report.version) 한 행의 번호·action·작성자·시각. Report의 본문 칸은 읽지 않는다. */
   private async head(tx: any, uid: string): Promise<Head> {
-    const rows: any[] = await tx.$queryRaw`SELECT r.version AS "headVersion",v.action AS "headAction",v.author AS "headAuthor",v.at AS "headAt"
+    // headContent: the head version stored text, a structured item or a drawing (an empty head is nobody's work to keep).
+    const rows: any[] = await tx.$queryRaw`SELECT r.version AS "headVersion",v.action AS "headAction",v.author AS "headAuthor",v.at AS "headAt",
+        (COALESCE(v.findings,'')<>'' OR COALESCE(v.conclusion,'')<>'' OR COALESCE(v.recommendation,'')<>''
+          OR CASE WHEN jsonb_typeof(v.structured)='array' THEN jsonb_array_length(v.structured)>0 ELSE false END
+          OR CASE WHEN jsonb_typeof(v.drawings)='array' THEN jsonb_array_length(v.drawings)>0 ELSE false END) AS "headContent"
       FROM "Report" r LEFT JOIN "ReportVersion" v ON v.uid=r.uid AND v.version=r.version WHERE r.uid=${uid}`;
     const row = rows[0];
     if (!row || !Number.isSafeInteger(row.headVersion) || row.headVersion < 1) return null;
-    return { version: row.headVersion, action: row.headAction ?? null, author: row.headAuthor ?? null, at: row.headAt ?? null };
+    return { version: row.headVersion, action: row.headAction ?? null, author: row.headAuthor ?? null, at: row.headAt ?? null,
+      content: row.headContent !== false };
   }
 
   /**

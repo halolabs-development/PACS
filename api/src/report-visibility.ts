@@ -21,18 +21,18 @@
 import { ForbiddenException } from '@nestjs/common';
 import { canReadPreliminary } from './preliminary-reader';
 import { clinicianOnly } from './clinician-policy';
+import { structureArray } from './report-structure';
+import { versionDrawings } from './image-report';
 
 export type ReportBodyLock = 'preliminary' | 'in-progress' | 'destroyed' | null;
 
 type Reader = { actor: string; sub?: string; roles?: readonly string[] };
 /**
- * The head as stored: its writer and text, and - where the caller read it - headAction, the action of the head version
- * (ReportVersion rows never change). A list that reads the state and the head apart judges the head by its own action, so a
- * state read before a Reset and a new Save never lends the new unsigned text an older approved state, and a state read before
- * an approval never hides the approved text.
+ * The head as stored: its writer and text, and - where the caller read its version - storedExtras, whether that version
+ * stored a structured item or a drawing (a head without text is judged by them).
  */
 type Head = { updatedBy?: string | null; findings?: string | null; conclusion?: string | null; recommendation?: string | null;
-  headAction?: string | null } | null | undefined;
+  storedExtras?: boolean } | null | undefined;
 type VersionRow = { version: number; action: string; author?: string | null; reason?: string | null };
 
 /** States whose head text is a reading physician's own unsigned work. */
@@ -43,37 +43,33 @@ const SIGNED_ACTIONS: readonly string[] = Object.freeze(['approve', 'amend', 'ad
 const hasText = (head: Head) => !!head && !!(head.findings || head.conclusion || head.recommendation);
 
 /**
- * The reading physician whose unsigned text the head holds now, or null when the head holds no unsigned text. Unsigned = the
- * head version is a Save or Defer outside a Preliminary (headAction), or, where the caller did not read that action, the
- * state is W/T/H. A head with no recorded writer is not locked (every Save records its writer; an older row without one is a
- * known limit).
+ * Whether the head version stored anything - text in its three fields, a structured item or a drawing. The one judgement of
+ * "there is someone's work here" that the list, the editor, the preview, the server's writes, Reset and the critical-result
+ * source all use: a Save of drawings alone is someone's work too.
  */
-export function unsignedAuthor(state: any, head: Head): string | null {
-  if (!hasText(head)) return null;
-  const unsigned = typeof head!.headAction === 'string' ? unsignedAction(state, head) : UNSIGNED_STATES.includes(state?.rs);
-  if (!unsigned) return null;
-  return typeof head!.updatedBy === 'string' && head!.updatedBy ? head!.updatedBy : null;
+export function storedContent(head: Head): boolean {
+  return hasText(head) || head?.storedExtras === true;
+}
+
+/** Whether a stored version row (its structured and drawings columns) holds a structured item or a drawing. */
+export function versionExtras(version: { structured?: unknown; drawings?: unknown } | null | undefined): boolean {
+  return structureArray(version?.structured).length > 0 || versionDrawings(version?.drawings).length > 0;
 }
 
 /**
- * The head version's own action decides: a Save, a Defer or a Preliminary is its writer's - except inside the Preliminary the
- * state read shows (state P, the head written by its designated pair), where the Preliminary gate decides as before. A state
- * read before a new Preliminary, or before a Reset and another reader's Save, therefore never lends that text to a reader the
- * older state would have let through.
+ * The reading physician whose unsigned work the head holds now (W/T/H with stored content), or null. The state and the head
+ * must be of one moment (headVersionsUnchanged after a list read, or one transaction that locked the study row). A head with no recorded writer
+ * is not locked (every Save records its writer; an older row without one is a known limit).
  */
-function unsignedAction(state: any, head: NonNullable<Head>): boolean {
-  const action = head.headAction as string;
-  if (![...UNSIGNED_ACTIONS, 'preliminary'].includes(action)) return false;
-  const pair = [state?.preDoc, state?.preReviewer].filter(Boolean);
-  return !(state?.rs === 'P' && action !== 'defer' && !!head.updatedBy && pair.includes(head.updatedBy));
+export function unsignedAuthor(state: any, head: Head): string | null {
+  if (!UNSIGNED_STATES.includes(state?.rs) || !storedContent(head)) return null;
+  return typeof head!.updatedBy === 'string' && head!.updatedBy ? head!.updatedBy : null;
 }
 
 /** Why this reader gets no report text for this study now, or null when the text is theirs to read. */
 export function reportBodyLock(state: any, head: Head, reader: Reader): ReportBodyLock {
   if (state?.rs === 'D') return 'destroyed';
   if (!canReadPreliminary(state, reader)) return 'preliminary';
-  // A Preliminary that landed after the state was read is the Preliminary's, for every reader but its writer.
-  if (head?.headAction === 'preliminary' && state?.rs !== 'P' && hasText(head) && head.updatedBy !== reader.actor) return 'preliminary';
   // The clinician cell of the state table: left as the 2026-11-02 decision has it (clinician role alone; an admin or a
   // radiologist who also holds the clinician role reads as a radiologist).
   if (clinicianOnly(reader.roles)) return null;
@@ -97,34 +93,42 @@ export function assertHeadReadable(state: any, head: Head, reader: Reader): void
 export const assertHeadWritable = assertHeadReadable;
 
 /** The head columns this module reads, for callers that read the head only to ask. */
-export const HEAD_AUTHOR_SELECT = { updatedBy: true, findings: true, conclusion: true, recommendation: true } as const;
+export const HEAD_AUTHOR_SELECT = { uid: true, version: true, updatedBy: true, findings: true, conclusion: true, recommendation: true } as const;
+
 /**
- * Report rows with the action of their head version (headAction), for reads that take the state and the head apart. Only a
- * head that could be withheld from this reader is asked about (text written by someone else); every other row keeps the
- * state rule and costs no read.
+ * Report heads with storedExtras: a head without text is asked whether its version stored a structured item or a drawing
+ * (a head with text is someone's work already, and is not asked).
  */
-export async function withHeadActions<T extends { uid: string; version?: number | null; updatedBy?: string | null;
-  findings?: string | null; conclusion?: string | null; recommendation?: string | null }>(db: any, reports: T[], reader: Reader)
-  : Promise<(T & { headAction?: string | null })[]> {
-  const keyed = reports.filter(report => Number.isSafeInteger(report.version) && (report.version as number) > 0
-    && hasText(report) && typeof report.updatedBy === 'string' && report.updatedBy !== reader.actor);
+export async function withStoredExtras<T extends { uid: string; version?: number | null; findings?: string | null;
+  conclusion?: string | null; recommendation?: string | null }>(db: any, reports: T[]): Promise<(T & { storedExtras?: boolean })[]> {
+  const keyed = reports.filter(report => Number.isSafeInteger(report.version) && (report.version as number) > 0 && !hasText(report));
   if (!keyed.length) return reports;
-  const rows: { uid: string; version: number; action: string }[] = await db.reportVersion.findMany({
-    where: { OR: keyed.map(report => ({ uid: report.uid, version: report.version })) }, select: { uid: true, version: true, action: true } });
-  const actions = new Map(rows.map(row => [row.uid + '|' + row.version, row.action]));
-  const asked = new Set(keyed.map(report => report.uid));
-  return reports.map(report => asked.has(report.uid)
-    ? { ...report, headAction: actions.get(report.uid + '|' + report.version) ?? null } : report);
+  const rows: any[] = await db.reportVersion.findMany({ where: { OR: keyed.map(report => ({ uid: report.uid, version: report.version })) },
+    select: { uid: true, version: true, structured: true, drawings: true } });
+  const extras = new Map(rows.map(row => [row.uid + '|' + row.version, versionExtras(row)]));
+  const asked = new Set(keyed);
+  return reports.map(report => asked.has(report) ? { ...report, storedExtras: extras.get(report.uid + '|' + report.version) ?? false } : report);
 }
 
 /**
- * The head, read only where it can hold someone's unsigned text in this state: a Save (T) or a Defer (H). Write gates read the
- * state and the head in one transaction, where an Unread (W) head is always empty (Reset empties it); the list reads, which
- * read them apart, judge the head by its own version (withHeadActions).
+ * The list and the bootstrap read the states and the report heads apart. A lock is judged on a state and a head of the same
+ * moment when no report version moved between the head read and a state read made after it: every change of RS, designation
+ * or head is a commit, and every commit makes a version. So the reader reads the heads, then the states, then checks here.
+ */
+export async function headVersionsUnchanged(db: any, uids: string[], reports: { uid: string; version?: number | null }[]): Promise<boolean> {
+  if (!uids.length) return true;
+  const now: { uid: string; version: number }[] = await db.report.findMany({ where: { uid: { in: uids } }, select: { uid: true, version: true } });
+  const read = new Map(reports.map(report => [report.uid, report.version ?? 0]));
+  return now.length === reports.length && now.every(row => read.has(row.uid) && read.get(row.uid) === row.version);
+}
+/**
+ * The head, read only where it can hold someone's unsigned work in this state: a Save (T) or a Defer (H). Write gates read the
+ * state and the head in one transaction that locked the study row, where an Unread (W) head is always empty (Reset empties it).
  */
 export async function headForLock(db: any, uid: string, state: any): Promise<Head> {
   if (!['T', 'H'].includes(state?.rs)) return null;
-  return db.report.findUnique({ where: { uid }, select: HEAD_AUTHOR_SELECT });
+  const head = await db.report.findUnique({ where: { uid }, select: HEAD_AUTHOR_SELECT });
+  return head ? (await withStoredExtras(db, [head]))[0] : null;
 }
 
 /**

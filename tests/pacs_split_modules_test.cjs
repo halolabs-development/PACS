@@ -702,6 +702,54 @@ test('report state table: another radiologist sees In Progress by the writer, ne
   assert.equal(readBody(await w.evidence.versions(s.uid, RAD_A)).find(v => v.action === 'discarded').findings, 'SYN SAVED TEXT');
 });
 
+test('report state table: a Save of drawings alone belongs to its writer too - locked for others, Reset keeps the drawings with the writer', async () => {
+  const w = world();
+  await w.boot();
+  const s = w.study({ rs: 'T' });
+  w.orthanc.rows = [qido(s.uid, 'SYN A HOSPITAL')];
+  const drawings = [{ id: '00000000-0000-4000-8000-0000000000d1', background: 'blank', source: null }];
+  w.db.seed('report', { uid: s.uid, findings: '', conclusion: '', recommendation: '', version: 1, updatedBy: RAD_A.actor });
+  w.db.seed('reportVersion', { uid: s.uid, version: 1, action: 'save', findings: '', conclusion: '', recommendation: '', author: RAD_A.actor, drawings });
+  const other = (await w.worklist.bootstrap(RAD_A2)).states[s.uid];
+  assert.deepEqual([other.bodyLock, other.prelimHidden, other.savedBy], ['in-progress', true, RAD_A.actor]);
+  const mine = (await w.worklist.bootstrap(RAD_A)).states[s.uid];
+  assert.deepEqual([mine.bodyLock, mine.prelimHidden, mine.savedBy], [null, false, RAD_A.actor]);
+  await refused(() => w.commit.commitReport(s.uid, commitBody(RAD_A2, 'save', s.draftEpoch, 0, 1, { findings: 'over it' }), RAD_A2, null), 403, 'REPORT_IN_PROGRESS');
+  await refused(() => w.hold.hold(s.uid, RAD_A2), 403, 'REPORT_IN_PROGRESS');
+  const reset = await w.commit.commitReport(s.uid, commitBody(RAD_A2, 'reset', s.draftEpoch, 0, 1), RAD_A2, null);
+  assert.equal(reset.released.savedBy, RAD_A.actor);
+  const copy = w.db.rows('reportVersion').find(v => v.uid === s.uid && v.action === 'discarded');
+  assert.ok(copy, 'the Reset keeps a copy of the drawings-only Save');
+  assert.deepEqual(copy.drawings.map(d => d.id), drawings.map(d => d.id));
+  assert.equal(readBody(await w.evidence.versions(s.uid, RAD_A2)).find(v => v.action === 'discarded').bodyHidden, 'in-progress');
+  assert.equal(readBody(await w.evidence.versions(s.uid, RAD_A)).find(v => v.action === 'discarded').bodyHidden, undefined);
+});
+test('report state table: a list or bootstrap that read the heads while commits landed never pairs a state with a head of another moment', async () => {
+  // An approved study; while the heads are read, its writer resets and Saves new text (T), then approves again (A) before
+  // the answer is checked. The state read before and after is A both times; only the head version moved.
+  const setup = async () => {
+    const w = world();
+    await w.boot();
+    const s = w.study({ rs: 'A' });
+    w.orthanc.rows = [qido(s.uid, 'SYN A HOSPITAL')];
+    w.db.seed('report', { uid: s.uid, findings: 'SYN OLD', conclusion: '', recommendation: '', version: 1, updatedBy: RAD_A.actor });
+    const report = () => w.db.rows('report').find(r => r.uid === s.uid), state = () => w.db.rows('studyState').find(r => r.uid === s.uid);
+    const real = w.db.root.report.findMany;
+    let calls = 0;
+    w.db.root.report.findMany = async function (args) {
+      if (++calls === 1) { Object.assign(state(), { rs: 'T' }); Object.assign(report(), { version: 3, findings: 'SYN SECRET SAVE' }); }
+      const out = await real.call(this, args);
+      if (calls === 1) { Object.assign(state(), { rs: 'A' }); Object.assign(report(), { version: 4, findings: 'SYN FINAL' }); }
+      return out;
+    };
+    return { w, s };
+  };
+  const listed = await setup();
+  await refused(() => listed.w.worklist.listStudies(RAD_A2), 409, 'STUDY_LIST_CHANGED');
+  const booted = await setup();
+  const st = (await booted.w.worklist.bootstrap(RAD_A2)).states[booted.s.uid];
+  assert.deepEqual([st.rs, st.version, st.findings], ['A', 4, 'SYN FINAL']);
+});
 test('report state table: approved text and a preliminary reading keep their readers; a clinician-only reader keeps the 2026-11-02 reads', async () => {
   const w = world();
   await w.boot();
@@ -748,19 +796,15 @@ test('report state table: version classes - a Save inside a Preliminary stays wi
   assert.deepEqual([...classes.entries()].sort((a, b) => a[0] - b[0]).map(([, k]) => k),
     ['shared', 'shared', 'shared', 'unsigned', 'private', 'unsigned', 'shared', 'shared', 'shared', 'shared']);
   const reader = actor => ({ actor, roles: ['radiologist'] });
-  // A head read apart from its state is judged by its own version: an approved head under a stale W stays readable, an
-  // unsigned head under a stale A stays its writer's.
-  const { reportBodyLock } = require('/app/dist/report-visibility');
-  const head = (headAction, updatedBy = 'w') => ({ updatedBy, findings: 'SYN', conclusion: '', recommendation: '', headAction });
-  assert.equal(reportBodyLock({ rs: 'W' }, head('approve'), reader('o')), null);
-  assert.equal(reportBodyLock({ rs: 'A' }, head('save'), reader('o')), 'in-progress');
-  assert.equal(reportBodyLock({ rs: 'A' }, head('save'), reader('w')), null);
-  // a Preliminary or a Save landing after the state read: the older state lends it to nobody but its writer
-  assert.equal(reportBodyLock({ rs: 'W' }, head('preliminary'), reader('o')), 'preliminary');
-  assert.equal(reportBodyLock({ rs: 'W' }, head('preliminary'), { actor: 'c', roles: ['clinician'] }), 'preliminary');
-  assert.equal(reportBodyLock({ rs: 'W' }, head('preliminary'), reader('w')), null);
-  assert.equal(reportBodyLock({ rs: 'P', preDoc: 'd', preReviewer: 'r' }, head('save', 'x'), reader('r')), 'in-progress');
-  assert.equal(reportBodyLock({ rs: 'P', preDoc: 'w', preReviewer: 'r' }, head('save'), reader('r')), null);
+  // One judgement of "someone's work is here": text, a structured item or a drawing stored by the head version. A Save of
+  // drawings alone is locked like a Save of text; an empty head locks nobody.
+  const { reportBodyLock, versionExtras } = require('/app/dist/report-visibility');
+  const blank = { updatedBy: 'w', findings: '', conclusion: '', recommendation: '' };
+  assert.equal(reportBodyLock({ rs: 'T' }, { ...blank, storedExtras: true }, reader('o')), 'in-progress');
+  assert.equal(reportBodyLock({ rs: 'T' }, { ...blank, storedExtras: true }, reader('w')), null);
+  assert.equal(reportBodyLock({ rs: 'T' }, { ...blank, storedExtras: false }, reader('o')), null);
+  assert.equal(versionExtras({ drawings: [{ id: 'd1' }] }), true);
+  assert.equal(versionExtras({ structured: null, drawings: null }), false);
   assert.equal(versionBodyReadable({ action: 'save', author: 'w' }, 'unsigned', reader('o')), false);
   assert.equal(versionBodyReadable({ action: 'save', author: 'w' }, 'unsigned', reader('w')), true);
   assert.equal(versionBodyReadable({ action: 'save', author: 'w' }, 'unsigned', { actor: 'c', roles: ['clinician'] }), true);
@@ -770,6 +814,8 @@ test('report state table: version classes - a Save inside a Preliminary stays wi
   assert.equal(senderReadsHead({ rs: 'T' }, { action: 'save', author: 'w' }, 'w'), true);
   assert.equal(senderReadsHead({ rs: 'P' }, { action: 'save', author: 'w' }, 'o'), true);
   assert.equal(senderReadsHead({ rs: 'A' }, { action: 'approve', author: 'w' }, 'o'), true);
+  // a completely empty head is nobody's work: any eligible sender may send (as on main)
+  assert.equal(senderReadsHead({ rs: 'T' }, { action: 'save', author: 'w', content: false }, 'o'), true);
 });
 // ── SPLIT-09 the draft boundary: owner, epoch, revision, session, one transaction (M08, M09, M10) ──
 

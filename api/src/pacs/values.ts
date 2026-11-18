@@ -2,7 +2,7 @@
  * 검사 상태를 화면 모양으로 바꾸는 toClient, 판독문 초안 경계(작성자·세대·revision)의 요청 해석과 답 봉투, QIDO 개수,
  * hold 유효시간, 트랜잭션 오류 변환. 상태·IO가 없는 함수만 둔다 — 여러 concern이 같은 규칙을 한 곳에서 쓴다.
  */
-import { reportBodyLock, unsignedAuthor } from '../report-visibility';
+import { reportBodyLock, storedContent, unsignedAuthor } from '../report-visibility';
 import { BadRequestException, ConflictException, GoneException, HttpException, ServiceUnavailableException } from '@nestjs/common';
 import { citationArray } from '../report-citation';
 import { structureArray } from '../report-structure';
@@ -189,7 +189,7 @@ export function toClient(s: any, r: any, caller: Caller, d: any = null, head: an
     // 진행 중 판독"을 알아 되돌리기(FC-040)를 연다.
     // Another physician's unsigned text: its writer is said ("In Progress by ...") while the text stays with them.
     savedBy: bodyLock === 'in-progress' ? unsigned || null
-      : !hidden && r && (r.findings || r.conclusion || r.recommendation) ? r.updatedBy ?? null : null,
+      : !hidden && r && storedContent({ ...r, storedExtras: head?.storedExtras }) ? r.updatedBy ?? null : null,
     findings: hidden ? '' : (r?.findings ?? ''),
     conclusion: hidden ? '' : (r?.conclusion ?? ''),
     recommendation: hidden ? '' : (r?.recommendation ?? ''),
