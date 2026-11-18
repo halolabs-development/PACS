@@ -246,6 +246,10 @@ class ViewerMeasureLinesDOMTest(unittest.TestCase):
         # Each length is drawn on its own frame; the result's check from the originals passes; a changed value does not.
         expect(page.locator('[data-kin-measure-layer=left] [data-kin-volume-length]')).to_have_count(1)
         expect(page.locator('[data-kin-measure-layer=right] [data-kin-volume-length]')).to_have_count(2)
+        # A length dragged on its frame while the panel is open: the stamped line follows the volume beside the mark.
+        self.drag(page, 'left', (50, 10), (70, 10))
+        expect(panel.locator('[data-measure-result]')).to_have_text('Stamped: Prostate volume: 2.36 mL')
+        expect(page.locator('[data-kin-measure-layer=right] g[data-kin-mark=KinVolume]')).to_contain_text('Prostate volume: 2.36 mL')
         self.assertEqual('', page.evaluate("uid => KinMeasureFrame.verify(cornerstoneTools.annotation.state.getAnnotation(uid))", mark['uid']))
         self.assertIn('재확인 필요', page.evaluate("""uid => { const a = cornerstoneTools.annotation.state.getAnnotation(uid);
           a.data.kinBaseline = { ...a.data.kinBaseline, values: [21, 15, 10, Math.PI / 6 * 21 * 15 * 10 / 1000] }; return KinMeasureFrame.verify(a); }""", mark['uid']))

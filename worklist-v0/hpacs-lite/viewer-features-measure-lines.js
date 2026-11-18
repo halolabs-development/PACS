@@ -188,14 +188,17 @@ window.KinViewerFeatures?.module('measure-lines', ({ ui }) => {
     }
   }
   for (const name of LINE_TOOLS) F.renderer(name, drawLines);
+  // What a Volume's result mark shows now (its lengths may be dragged on their frames): the title and volume, the lengths.
+  function volumeShown(a) {
+    const b = a.data.kinBaseline, check = volumeCheck(a, false), parts = model.formulaParts(basisOf(b)), values = b?.values || [];
+    return check.reason ? { lines: [check.reason], reason: true } : { reason: false, lines: [String(a.data.text || 'Volume') + ': ' + model.volumeText(values[parts.length] ?? null),
+      parts.map((part, i) => part[0] + ' ' + model.one(values[i] ?? null) + ' mm').join(' · ')] };
+  }
   F.renderer(TOOLS.volume, ({ g, a, fromWorld, look, color }) => {
     if (!model) return;
-    const b = a.data.kinBaseline, check = volumeCheck(a, false), at = fromWorld(a.data.handles.points[0]);
-    const parts = model.formulaParts(basisOf(b)), values = b?.values || [];
-    const lines = check.reason ? [check.reason] : [String(a.data.text || 'Volume') + ': ' + model.volumeText(values[parts.length] ?? null),
-      parts.map((part, i) => part[0] + ' ' + model.one(values[i] ?? null) + ' mm').join(' · ')];
+    const now = volumeShown(a), at = fromWorld(a.data.handles.points[0]);
     F.svg('circle', g, { cx: at[0], cy: at[1], r: 3, fill: color });
-    words(g, at, lines, look, check.reason ? WARN : color);
+    words(g, at, now.lines, look, now.reason ? WARN : color);
   });
   // A Volume's lengths on the frames they were measured on (saved or not yet stamped), with handles while the mark is unlocked.
   function volumeLines(imageId) {
@@ -321,7 +324,7 @@ window.KinViewerFeatures?.module('measure-lines', ({ ui }) => {
     const a = model && tool.state.mark ? ct.annotation.state.getAnnotation(tool.state.mark) : null;
     if (!a) return '';
     const now = shown(a);
-    return 'Result: ' + now.lines.join(' · ') + (now.note ? ' — ' + now.note : '');
+    return 'Result: ' + [...now.lines, ...(now.label ? [now.label] : [])].join(' · ') + (now.note ? ' — ' + now.note : '');
   };
   const restart = tool => { tool.state.mark = null; };
 
@@ -362,11 +365,11 @@ window.KinViewerFeatures?.module('measure-lines', ({ ui }) => {
   // Volume Measure: a formula, two or three lengths (each on any frame of the study), a title and OK.
   const PARTS = ['Length', 'Height', 'Width'];
   function volume() {
-    const spec = { id: 'measure-volume', title: '2D Volume Measurement', noRestart: true, steps: [{ text: 'Length — 두 끝점을 누르세요', points: 2 }],
+    const spec = { id: 'measure-volume', title: '2D Volume Measurement', noRestart: true, live: true, steps: [{ text: 'Length — 두 끝점을 누르세요', points: 2 }],
       note: '공식을 고르고 길이·높이·폭을 차례로 잽니다(각 길이는 같은 검사의 다른 영상에서 재도 됩니다). 제목을 넣고 OK를 누르면 마지막으로 잰 영상에 제목과 부피가 찍힙니다.',
       fields(body, tool) {
         const s = tool.state;
-        Object.assign(s, { formula: 'ellipsoid', parts: {}, order: [], current: 'Length', study: null, stamped: '' });
+        Object.assign(s, { formula: 'ellipsoid', parts: {}, order: [], current: 'Length', study: null, stamped: null });
         const formula = field(body, 'Formula', el('select', '', null, { 'aria-label': 'Formula' }));
         el('option', 'Ellipsoid: L × H × W × 0.523', formula, { value: 'ellipsoid' }); el('option', 'Prolate spheroid: L × W² × 0.523', formula, { value: 'prolate' });
         const table = el('table', '', body), cells = {}, buttons = {};
@@ -398,7 +401,7 @@ window.KinViewerFeatures?.module('measure-lines', ({ ui }) => {
         };
         s.clear = text => { s.parts = {}; s.order = []; s.study = null; s.current = s.needed()[0]; tool.presses = []; if (text !== undefined) tool.status.textContent = text; s.paint(); };
         formula.onchange = () => { s.formula = formula.value; tool.presses = []; s.paint(); };
-        reset.onclick = () => { title.value = ''; s.stamped = ''; s.clear(''); };
+        reset.onclick = () => { title.value = ''; s.stamped = null; s.clear(''); };
         ok.onclick = () => { tool.status.textContent = place(tool, title.value); if (!tool.status.textContent) title.value = ''; };
         volumeTool = tool;
         tool.panel.onClose(() => { if (volumeTool === tool) volumeTool = null; F.schedule(); });
@@ -421,7 +424,8 @@ window.KinViewerFeatures?.module('measure-lines', ({ ui }) => {
         s.paint();
         return '';
       },
-      result: tool => tool.state.stamped ? 'Stamped: ' + tool.state.stamped : '' };
+      // The stamped mark as it is now: a length dragged on its frame changes the volume here as beside the mark.
+      result: tool => { const a = model && tool.state.stamped ? ct.annotation.state.getAnnotation(tool.state.stamped) : null; return a ? 'Stamped: ' + volumeShown(a).lines[0] : ''; } };
     return spec;
   }
   // OK: the title, the lengths and the volume stamped on the frame of the last length, beside its middle.
@@ -444,7 +448,7 @@ window.KinViewerFeatures?.module('measure-lines', ({ ui }) => {
     const a = F.addMark(v, last.imageId, TOOLS.volume, [F.toWorld(last.imageId, middle)],
       { text: title, kinBaseline: { calculator: 'kin-volume-v1:' + s.formula, values: [...needed.map(part => lengths[part]), value], sources } });
     tool.marks.push(a.annotationUID);
-    s.stamped = (title || 'Volume') + ': ' + model.volumeText(value);
+    s.stamped = a.annotationUID;
     s.clear();
     return '';
   }
