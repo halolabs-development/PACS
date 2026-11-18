@@ -64,7 +64,7 @@
     }
     // Tele-reading is a later feature (Part 2): its row menu items keep their names and places and only say so.
     const TELE_LATER = "원격판독은 나중에 생길 기능입니다 — 지금은 의뢰·취소·판독 시작을 보내지 않습니다";
-    const teleLater = () => toast(TELE_LATER, "info", 6000);
+    const teleLater = () => toast(kinSay(TELE_LATER), "info", 6000);
     ctx.addEventListener('keydown', e => {
       const items = [...ctx.querySelectorAll('[data-i]:not(.dis)')];
       const index = items.indexOf(document.activeElement);

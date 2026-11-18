@@ -465,6 +465,20 @@ class ExamMerge(unittest.TestCase):
     def texts(self, locator):
         return locator.evaluate_all("nodes => nodes.map(n => n.textContent.trim())")
 
+    def test_unavailable_badge_follows_the_screen_language(self):
+        # The badge is a product phrase: the chosen screen language names it, both ways, on a row already drawn.
+        self.site.lost = {h.UID_B: "merge"}
+        self.reload_technician()
+        badge = self.page.locator(f"#rows tr[data-uid='{h.UID_B}'] td.acc .exam-merged")
+        self.language("ko")
+        expect(badge).to_have_text("합친 검사 · 원본 일부 볼 수 없음")
+        self.language("en")
+        expect(badge).to_have_text("Merged · original unavailable")
+        self.site.lost = {h.UID_B: "split"}
+        self.reload_technician()
+        self.language("ko")
+        expect(badge).to_have_text("나눈 검사 · 원본 볼 수 없음")
+
     def test_korean_merge_window_translates_its_words_and_keeps_its_data(self):
         # A study description and patient names that read like the glossary are still data: templates ("Split {0}",
         # "Base {0}") and a glossary word itself ("Continue").
