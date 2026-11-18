@@ -57,6 +57,7 @@ class MergeSite(rf.FlowSite):
         self.lost = {}                  # uid -> kind of the exam in force whose originals the reader cannot all read now
         self.lost_members = {}          # uid -> the originals of that exam the reader can read, as the server's group read gives them
         self.lost_hidden = {}           # uid -> how many originals of that exam the server only counts (it names none of them)
+        self.gone = set()               # originals the server's group read counts but no longer names
 
     def scope(self, uid):
         if self.split and uid in (self.split["uid"], SPLIT_UID):
@@ -152,9 +153,11 @@ class MergeSite(rf.FlowSite):
                         **({"unavailable": self.lost_hidden[base]} if base in self.lost_hidden else {})}, "checks": self.checks})
                 if base not in self.groups:
                     return route.fulfill(json={"group": None})
+                # An original gone since the list was read: the server names only the others and counts it.
+                gone = [u for u in self.groups[base] if u in self.gone]
                 return route.fulfill(json={"group": {"id": GROUP_ID, "kind": "merge", "baseUid": base, "members": [
-                    {"logicalUid": u, "studyUid": u, "part": i, "seriesUids": []} for i, u in enumerate(self.groups[base])]},
-                    "checks": self.checks})
+                    {"logicalUid": u, "studyUid": u, "part": i, "seriesUids": []} for i, u in enumerate(self.groups[base]) if u not in gone],
+                    **({"unavailable": len(gone)} if gone else {})}, "checks": self.checks})
             if method == "POST" and path == f"/api/exam-groups/{GROUP_ID}/dissolve":
                 if self.dissolve_refusal:
                     return self.answer(route, *self.dissolve_refusal)
@@ -348,6 +351,27 @@ class ExamMerge(unittest.TestCase):
         self.assertIn(("POST", f"/api/exam-groups/{GROUP_ID}/dissolve", None), self.site.sent)
         expect(self.page.locator("#rows tr[data-uid]")).to_have_count(3)
         expect(self.page.locator("#rows .exam-merged")).to_have_count(0)
+
+    def test_unmerge_window_draws_no_original_the_server_no_longer_names(self):
+        # The list was read while both originals were there; the second is gone when the window asks the server.
+        self.site.groups[h.UID] = [h.UID, h.UID_B]
+        settle(self.page, "load()")
+        self.site.gone = {h.UID_B}
+        self.pick(h.UID)
+        self.page.locator("#t-split-unmerge").click()
+        win = self.window("unmerge")
+        expect(win.locator(".exam-merge-checks li")).to_have_count(3)
+        cells = win.locator("table tbody tr").evaluate_all("rows => rows.map(r => r.children[0].textContent)")
+        self.assertEqual(["SYNACC-A1"], cells)
+        expect(win.locator(".exam-merge-hidden")).to_have_text("원본 검사 1건은 지금 볼 수 없어 이 표에 없습니다.")
+        expect(win).not_to_contain_text("SYNACC-A2")
+        # A refused Unmerge reads the group again: the table and the count follow that answer.
+        self.site.dissolve_refusal = (409, {"code": "EXAM_GROUP_REFUSED", "message": "되돌릴 수 없습니다: 이 검사의 전송 또는 내보내기가 진행 중입니다.",
+                                            "refusals": [{"uid": None, "rule": "transfer", "message": "이 검사의 전송 또는 내보내기가 진행 중입니다."}]})
+        self.site.gone = set()
+        win.locator(".order-dialog-foot button", has_text="Unmerge").click()
+        expect(win.locator("table tbody tr")).to_have_count(2)
+        expect(win.locator(".exam-merge-hidden")).to_have_count(0)
 
     def test_unmerge_is_off_while_a_check_fails(self):
         self.site.groups[h.UID] = [h.UID, h.UID_B]

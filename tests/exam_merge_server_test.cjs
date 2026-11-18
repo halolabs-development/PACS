@@ -820,11 +820,27 @@ test('exam group read names no original the caller cannot read now: only how man
     // Its approval and transfer still refuse Unmerge, said without its UID.
     assert.deepEqual(out.checks.filter(c=>!c.ok).map(c=>c.rule),[...(who==='remote'?['owner']:[]),'approved','transfer'],label);
     if(who==='owner'){
+      // Unmerge refused on the gone original's approval and transfer: the rules and sentences, never its UID.
+      await assert.rejects(svc.dissolve(caller,G1),e=>{
+        assert.equal(status(e),409,label);assert.equal(JSON.stringify(body(e)).includes(gone),false,label+': refusal');
+        assert.deepEqual(rulesOf(e).map(([,rule])=>rule).sort(),['approved','transfer'],label);return true;});
       f.db.states.get(gone).rs='W';f.db.transfers=[];
       await svc.dissolve(caller,G1);
       assert.ok(f.db.groups[0].dissolvedAt,label+': the owner undoes the group');
     } else await assert.rejects(svc.dissolve(caller,G1),e=>status(e)===404,label);
   }
+  // A split original gone, its second part approved: neither the original nor the part's own UID is named.
+  const L='2.25.599',split={groups:[{id:G1,institutionId:'hallym',kind:'split',baseUid:A,createdBy:'syn-tech',createdBySub:'syn-tech-sub',dissolvedAt:null}],
+    members:[{groupId:G1,logicalUid:A,studyUid:A,part:0,seriesUids:[]},{groupId:G1,logicalUid:L,studyUid:A,part:1,seriesUids:['2.25.702']}]};
+  split.members.forEach(m=>Object.assign(m,{sourcePatientId:'SYN-P1',sourceInstitution:'hallym'}));
+  const parted=fixture({...split,states:[state(A),state(L,{rs:'A',origin:'logical'})]});
+  const raw=parted.prisma.$queryRaw;
+  parted.prisma.$queryRaw=async(strings,...values)=>strings.join('').includes('StudyAccessPolicy')?[]:raw(strings,...values);
+  const access=new StudyAccessService(parted.prisma,{studyIdentityResources:async()=>[]},{});
+  const read=await new ExamMergeService(parted.prisma,access).group({...tech},L);
+  assert.equal(JSON.stringify(read).includes(A),false,'split: the original');assert.equal(JSON.stringify(read).includes(L),false,'split: the part');
+  assert.deepEqual([read.group.members,read.group.unavailable],[[],1]);
+  assert.deepEqual(read.checks.find(c=>c.rule==='approved'),{rule:'approved',ok:false,message:'승인된 판독문이 있습니다. 먼저 판독 취소(Reset)를 하세요.',uids:[]});
   // Every original readable: the answer is as before (no count).
   const whole=fixture(merged(G1,B,[B,A]));
   const out=await whole.svc.group(tech,B);

@@ -166,21 +166,33 @@
         win.body.replaceChildren(el('p',{className:'order-note err',text:kinSay('{0}{t1}','✗ ',{t:owner.message})}));
         win.buttons(win.closeButton());return;
       }
-      const originals=lost?[...new Set((answer.group.members||[]).map(m=>m.studyUid))]:scope.sources.map(s=>s.studyUid);
-      const sources=lost?originals.map(uid=>({uid})):scopes.metadata(win.row),checks=el('ul',{className:'exam-merge-checks'});
+      // Originals this technician cannot read now (gone, even since the list was read): the server counts them and names
+      // none. The table shows only what the server's latest answer names; the window says how many it does not.
+      const hiddenOf=value=>Number.isSafeInteger(value.group.unavailable)&&value.group.unavailable>0?value.group.unavailable:0;
+      const named=value=>{
+        const uids=Array.isArray(value.group.members)?new Set(value.group.members.map(m=>m.studyUid)):null;
+        return uid=>!hiddenOf(value)||!uids||uids.has(uid);
+      };
+      const originalsOf=value=>(lost?[...new Set((value.group.members||[]).map(m=>m.studyUid))]:scope.sources.map(s=>s.studyUid)).filter(named(value));
+      const listed=el('div'),checks=el('ul',{className:'exam-merge-checks'});
       const go=button(kinSay(split?'Unsplit':'Unmerge'),submit);
       let busy=false;
+      const paintOriginals=()=>{
+        const keep=named(answer),hidden=hiddenOf(answer);
+        const sources=lost?originalsOf(answer).map(uid=>({uid})):scopes.metadata(win.row).filter(s=>keep(s.uid??s.studyUid));
+        listed.replaceChildren(table(['Original exam','StudyDate','StudyDesc','Series / Images back'],sources.map(s=>[s.acc??s.uid,s.date,s.desc,seriesImages(s.series,s.count)])),
+          ...(hidden?[note(kinSay('원본 검사 {n0}건은 지금 볼 수 없어 이 표에 없습니다.',hidden),'exam-merge-hidden')]:[]));
+      };
       // The mark, then the server's sentence for that check (in the glossary when the server writes one sentence).
-      const paint=()=>{checks.replaceChildren(...(answer.checks||[]).map(c=>el('li',{className:c.ok?'order-note ok':'order-note err',text:kinSay('{0}{t1}',c.ok?'✓ ':'✗ ',{t:c.message})})));go.disabled=busy || !Array.isArray(answer.checks) || answer.checks.some(c=>!c.ok);};
-      // Originals this technician cannot read now: the server counts them and names none, so the window says how many.
-      const hidden=Number.isSafeInteger(answer.group.unavailable)&&answer.group.unavailable>0?answer.group.unavailable:0;
+      const paint=()=>{paintOriginals();checks.replaceChildren(...(answer.checks||[]).map(c=>el('li',{className:c.ok?'order-note ok':'order-note err',text:kinSay('{0}{t1}',c.ok?'✓ ':'✗ ',{t:c.message})})));go.disabled=busy || !Array.isArray(answer.checks) || answer.checks.some(c=>!c.ok);};
       win.body.replaceChildren(note(split?'나눈 검사를 원래 영상 소속으로 되돌립니다. 양쪽의 판독 이력은 남습니다.':'합친 검사를 원래 영상 소속으로 되돌립니다. 합친 동안 쓴 판독 이력은 남습니다.'),
-        table(['Original exam','StudyDate','StudyDesc','Series / Images back'],sources.map(s=>[s.acc??s.uid,s.date,s.desc,seriesImages(s.series,s.count)])),
-        ...(hidden?[note(kinSay('원본 검사 {n0}건은 지금 볼 수 없어 이 표에 없습니다.',hidden),'exam-merge-hidden')]:[]),el('h4',{text:'Checks'}),checks,
+        listed,el('h4',{text:'Checks'}),checks,
         note(kinSay('현재 승인·점유·초안·진행 중 전송이 있으면 서버가 되돌리기를 거절합니다. 합친 뒤 도착한 영상은 자기 원본에 그대로 남습니다.'),'muted'));
       win.buttons(go,win.closeButton());paint();
       async function submit() {
         if(busy||go.disabled||!win.live())return;busy=true;paint();
+        // Every original this window knows of has changed groups (the list's too), named or not.
+        const originals=lost?[...new Set((answer.group.members||[]).map(m=>m.studyUid))]:scope.sources.map(s=>s.studyUid);
         try {
           await ctx.api('POST','/exam-groups/'+encodeURIComponent(answer.group.id)+'/dissolve',undefined,undefined,win.at);
           ctx.examChanged?.(originals);

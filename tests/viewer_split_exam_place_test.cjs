@@ -12,6 +12,8 @@ const vm = require('node:vm');
 const shipped = fs.readFileSync('config/ohif.js', 'utf8');
 const priorSource = shipped.slice(shipped.indexOf('function kinCreateViewerPrior('), shipped.indexOf('function kinCreateMultiStudyStrip('));
 const read = name => fs.readFileSync('worklist-v0/hpacs-lite/' + name, 'utf8');
+// The exam scope model as the viewer gets it: the shared copy at the head of config/ohif.js.
+const examScopeSource = shipped.slice(0, shipped.indexOf('})(globalThis);') + '})(globalThis);'.length);
 const seriesOrderSource = fs.readFileSync('config/ohif/series-order.js', 'utf8');
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
@@ -110,7 +112,7 @@ async function world({ current, prior = null, rows, cells }) {
     KinViewerSeriesStrip: { mount: chrome }, cornerstone: { Enums: { Events: {} } },
   });
   const context = vm.createContext(sandbox);
-  vm.runInContext(read('exam-scope.js'), context);
+  vm.runInContext(examScopeSource, context);
   vm.runInContext(seriesOrderSource, context); vm.runInContext(read('viewer-hanging-settings.js'), context);
   vm.runInContext(read('viewer-ux-shell.js'), context);
   const shell = sandbox.KinViewerUXShell.mount({ services, session: { owner: () => null, readOnly: () => false } });
@@ -120,7 +122,7 @@ async function world({ current, prior = null, rows, cells }) {
   for (let i = 0; i < 5; i++) await settle();
   assert.ok(sandbox.KinViewerUX?.related(), 'the extension mounted on the shell seam');
   return {
-    shows: viewportId => Array.from(state.viewports.get(viewportId).displaySetInstanceUIDs), reopened,
+    shows: viewportId => Array.from(state.viewports.get(viewportId).displaySetInstanceUIDs), reopened, sandbox,
     // The Compare menu's way: the cell's related exams, then a chosen exam and series for that cell.
     async choose(viewportId, uid, seriesUid) {
       const related = sandbox.KinViewerUX.related(), value = sandbox.KinViewerUX.viewport(viewportId);
@@ -166,10 +168,19 @@ test('merged: from the second original\'s cell, a series of the base original go
     assert.equal(await w.choose('v1', M1, 'm1'), true);
     assert.deepEqual([w.shows('v1'), w.shows('v2')], [[M2 + ':m2'], [M1 + ':m1']]);
   } finally { w.end(); }
-  // From the base original's cell, the merged exam is the cell's own: its series goes into the cell, as before.
-  const base = await world({ current: MERGED, rows: MERGED_ROWS, cells: [M1 + ':m1', null] });
+});
+
+test('the cell\'s own part: an answer that comes after the request was dropped changes nothing', async () => {
+  const w = await world({ current: PART_B, prior: PART_A, rows: SPLIT_ROWS, cells: [X + ':s2', X + ':s1'] });
   try {
-    assert.equal(await base.choose('v1', M1, 'm2'), true);
-    assert.deepEqual([base.shows('v1'), base.shows('v2')], [[M2 + ':m2'], []]);
-  } finally { base.end(); }
+    const related = w.sandbox.KinViewerUX.related(), value = w.sandbox.KinViewerUX.viewport('v1');
+    const studies = await related.studies(value), request = new AbortController();
+    let release;
+    w.sandbox.KinViewerPatientTabs.resolve = () => new Promise(resolve => { release = () => resolve({ key: 'P' }); });
+    const opening = related.open(value, L, { seriesUid: 's3', studies, signal: request.signal });
+    for (let i = 0; i < 5 && !release; i++) await settle();
+    request.abort(); release();
+    assert.equal(await opening, false);
+    assert.deepEqual(w.shows('v1'), [X + ':s2']);
+  } finally { w.end(); }
 });

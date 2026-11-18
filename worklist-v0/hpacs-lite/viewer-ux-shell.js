@@ -231,15 +231,16 @@ window.KinViewerUXShell = (() => {
           displaySetInstanceUIDs: entry.displaySetInstanceUIDs, viewportOptions: { viewportType: 'stack', toolGroupId: 'default', allowUnmatchedView: true } })));
         return true;
       },
-      async assign(value, displaySetInstanceUIDs) {
-        if (!admits(value) || !tabs.guard()) return false;
+      // `signal`: a request the caller dropped while the patient was read again changes nothing (as in compare()).
+      async assign(value, displaySetInstanceUIDs, { signal } = {}) {
+        if (!admits(value) || !tabs.guard() || signal?.aborted) return false;
         const sets = displaySetInstanceUIDs.map(id => services.displaySetService.getDisplaySetByUID(id));
         if (sets.some(set => !set)) return false;
         const url = new URL('/ohif/viewer', location.origin);
         url.searchParams.set('StudyInstanceUIDs', [...new Set(sets.map(set => set.StudyInstanceUID))].join(','));
         let patient;
         try { patient = await tabs.resolve(url.href); } catch (_) { return false; }
-        if (!admits(value) || !tabs.guard(true) || patient.key !== value.patientKey) return false;
+        if (signal?.aborted || !admits(value) || !tabs.guard(true) || patient.key !== value.patientKey) return false;
         services.viewportGridService.setDisplaySetsForViewport({ viewportId: value.viewportId, displaySetInstanceUIDs });
         return true;
       },

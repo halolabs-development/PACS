@@ -145,7 +145,7 @@ window.KinViewerPriorController = (() => {
         // The cell's own exam goes into the cell; for a split original that is the cell's own part, told by its series
         // (KinExamScope.imagePlace) - the other part of the same original is another exam and goes beside it.
         const place = window.KinExamScope?.imagePlace?.(studies, value.studyUid, value.seriesUid) ?? value.studyUid;
-        if (uid === place) return viewer.assign(value, [set.displaySetInstanceUID]);
+        if (uid === place) return viewer.assign(value, [set.displaySetInstanceUID], { signal });
         return viewer.compare(value, [set.displaySetInstanceUID], { signal, studies });
       },
       // Several cells to other studies at once ([{ value, uid }]): each takes the series the account's Compare Series
