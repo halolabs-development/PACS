@@ -2,7 +2,7 @@
  * 검사 상태를 화면 모양으로 바꾸는 toClient, 판독문 초안 경계(작성자·세대·revision)의 요청 해석과 답 봉투, QIDO 개수,
  * hold 유효시간, 트랜잭션 오류 변환. 상태·IO가 없는 함수만 둔다 — 여러 concern이 같은 규칙을 한 곳에서 쓴다.
  */
-import { canReadPreliminary } from '../preliminary-reader';
+import { reportBodyLock, unsignedAuthor } from '../report-visibility';
 import { BadRequestException, ConflictException, GoneException, HttpException, ServiceUnavailableException } from '@nestjs/common';
 import { citationArray } from '../report-citation';
 import { structureArray } from '../report-structure';
@@ -133,9 +133,16 @@ export function reportHeld(s: any, caller: Caller): ConflictException {
  * 이미 읽은 사람의 머릿속은 안 뒤집힌다 (RS=P를 가리는 것과 같은 이유).
  * 남이 쓰고 있다는 사실은 점유 표시(holder)가 이미 말해준다.
  */
-export function toClient(s: any, r: any, caller: Caller, d: any = null) {
-  const actor = caller.actor;
-  const hidden = !canReadPreliminary(s, caller);
+export function toClient(s: any, r: any, caller: Caller, d: any = null, head: any = r) {
+  /**
+   * Who may read this report's text: the state table (report-visibility.ts). `head` is the stored head before any other
+   * withholding (a merged exam's unreadable member blanks `r`), so the lock and its writer are judged on what is stored.
+   * `prelimHidden` keeps its old name and the screens' contract: "no text for you here", whatever the reason;
+   * `bodyLock` says the reason (preliminary · in-progress · destroyed).
+   */
+  const bodyLock = reportBodyLock(s, head, caller);
+  const hidden = bodyLock !== null;
+  const unsigned = unsignedAuthor(s, head);
   return {
     rs: s.rs, ss: s.ss, em: s.em, ts: s.ts,
     matched: s.matched, ward: s.ward, reqHosp: s.reqHosp,
@@ -157,6 +164,7 @@ export function toClient(s: any, r: any, caller: Caller, d: any = null) {
     preDoc: s.preDoc ?? null, preReviewer: s.preReviewer ?? null,
     // 화면이 "왜 비어 있는지" 말할 수 있어야 한다. 빈 판독문과 가려진 판독문은 다르다.
     prelimHidden: hidden,
+    bodyLock,
     repDoc: s.repDoc ?? null, confirm: s.confirm ?? null,
     /**
      * FC-034 지금 승인 회차: 승인 시각, 수정 창의 끝(승인 + 24시간), 마지막 수정·Addendum 시각, 그리고 창 안 수정이
@@ -179,7 +187,9 @@ export function toClient(s: any, r: any, caller: Caller, d: any = null) {
     version: r?.version ?? 0,
     // 머리 판의 글을 확정한 사람(본문이 있을 때만). 그 판의 작성자로 이력에 이미 보이는 사실이다 — 화면이 "남이 Save해 둔
     // 진행 중 판독"을 알아 되돌리기(FC-040)를 연다.
-    savedBy: !hidden && r && (r.findings || r.conclusion || r.recommendation) ? r.updatedBy ?? null : null,
+    // Another physician's unsigned text: its writer is said ("In Progress by ...") while the text stays with them.
+    savedBy: bodyLock === 'in-progress' ? unsigned
+      : !hidden && r && (r.findings || r.conclusion || r.recommendation) ? r.updatedBy ?? null : null,
     findings: hidden ? '' : (r?.findings ?? ''),
     conclusion: hidden ? '' : (r?.conclusion ?? ''),
     recommendation: hidden ? '' : (r?.recommendation ?? ''),
@@ -189,7 +199,8 @@ export function toClient(s: any, r: any, caller: Caller, d: any = null) {
      * 전달되지 않아 확정한 뒤에도 옛 초안이 화면에 계속 남는다. (§14 — 비움도 값이다)
      * 비운 초안의 행(present=false)은 초안이 아니다 — 경계(revision)만 남긴 자리다.
      */
-    draft: (hidden || !d || !d.present) ? null : {
+    // My own draft is mine to keep under another physician's in-progress lock (the editor keeps it on screen, read-only).
+    draft: ((hidden && bodyLock !== 'in-progress') || !d || !d.present) ? null : {
       findings: d.findings, conclusion: d.conclusion, recommendation: d.recommendation,
       baseVersion: d.baseVersion, at: d.updatedAt,
     },

@@ -505,7 +505,7 @@ export class PacsWorklist {
         institutionNameTag: OrthancService.tag(st, '00080080'),
         // 이 검사가 우리에게 원격판독으로 넘어온 것인가 (화면에서 구분해 보여준다)
         tele: s.teleInstitutionId === me && s.institutionId !== me,
-        state: { ...toClient(s, reportOf(uid), c, draftByUid.get(uid)),
+        state: { ...toClient(s, reportOf(uid), c, draftByUid.get(uid), repByUid.get(uid)),
           reportScope: recordScopes.get(uid) ? examScopeView(recordScopes.get(uid)!) : null },
         reportScope: recordScopes.get(uid) ? examScopeView(recordScopes.get(uid)!) : null,
         reportReadable: !repByUid.has(uid) || !!recordScopes.get(uid),
@@ -657,6 +657,7 @@ export class PacsWorklist {
     // Merge Exam: the same rule as the list — a report written on an exam group goes only to a caller who may read all of it.
     const byUid: Record<string, any> = {};
     const reportScopes: Record<string,any> = {};
+    const storedHead: Record<string, any> = Object.fromEntries(reports.map(report => [report.uid, report]));
     const readable = await readableExamRecords(this.prisma, this.studyAccess, c, reports);
     for (const report of reports) {
       const scope = readable.get(report.uid);
@@ -681,7 +682,7 @@ export class PacsWorklist {
       filters: prefs.filters,
       templates: prefs.templates,
       institutions: this.institutions.institutions.map(i => ({ id: i.id, name: i.name, type: i.type })),
-      states: Object.fromEntries(states.map(s => [s.uid, { ...toClient(s, byUid[s.uid], c, draftByUid[s.uid]),
+      states: Object.fromEntries(states.map(s => [s.uid, { ...toClient(s, byUid[s.uid], c, draftByUid[s.uid], storedHead[s.uid]),
         reportScope:reportScopes[s.uid]??null, reportReadable:!byUid[s.uid]||!!reportScopes[s.uid] }])),
       orders: orders.map(o => ({
         oid: o.oid, id: o.patientId, name: o.name, sex: o.sex, birth: o.birth,

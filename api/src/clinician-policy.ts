@@ -165,8 +165,13 @@ export function clinicianRouteAllowed(key: string | null): boolean {
 /** Final is a status label, not permission to read a body (owner decision 2026-11-02). */
 export const CLINICIAN_FINAL_ACTIONS: readonly string[] = Object.freeze(['approve', 'amend', 'addendum']);
 
-/** 그대로 알려도 되는 진행 상태. 모르는 값은 null로 표시한다. */
-export const CLINICIAN_OPEN_STATES: readonly string[] = Object.freeze(['W', 'T', 'P', 'H', 'A']);
+/**
+ * 그대로 알려도 되는 진행 상태. 모르는 값은 null로 표시한다. D(보존 기간이 끝나 판독문을 파기한 검사)는 상태만 —
+ * 본문이 없고, 화면은 'Destroyed'와 그 까닭을 말한다(그 전에는 null로 나가 'Unknown'이었다).
+ */
+export const CLINICIAN_OPEN_STATES: readonly string[] = Object.freeze(['W', 'T', 'P', 'H', 'A', 'D']);
+/** 상태만 알리고 본문·판 정보를 싣지 않는 상태. */
+const CLINICIAN_STATUS_ONLY: readonly string[] = Object.freeze(['P', 'D']);
 
 /** 확정본 판정. head는 Report.version 번 ReportVersion 행이다(없으면 null). */
 export function clinicianFinal(rs: unknown, head: any): boolean {
@@ -191,7 +196,7 @@ const own = (value: any, key: string): boolean =>
 export function clinicianReportStatus(state: any, head: any) {
   const final = clinicianFinal(state?.rs, head);
   const rs = CLINICIAN_OPEN_STATES.includes(state?.rs) ? state.rs as string : null;
-  if (rs === 'P' || rs === null || !Number.isSafeInteger(head?.version) || head.version < 1)
+  if (rs === null || CLINICIAN_STATUS_ONLY.includes(rs) || !Number.isSafeInteger(head?.version) || head.version < 1)
     return { final: false, rs };
   return { final, rs, action: typeof head.action === 'string' ? head.action : null, version: head.version as number,
     repDoc: typeof state.repDoc === 'string' ? state.repDoc : null,
@@ -201,7 +206,7 @@ export function clinicianReportStatus(state: any, head: any) {
 /** 판독문 읽기. 본문은 **머리 판 행 자신의** 세 칸이다 — 판정한 action과 같은 불변 행에서 읽는다. */
 export function clinicianReport(state: any, head: any) {
   const status = clinicianReportStatus(state, head);
-  if (state?.rs === 'P' || !CLINICIAN_OPEN_STATES.includes(state?.rs)) return status;
+  if (CLINICIAN_STATUS_ONLY.includes(state?.rs) || !CLINICIAN_OPEN_STATES.includes(state?.rs)) return status;
   return { ...status, findings: text(head?.findings), conclusion: text(head?.conclusion),
     recommendation: text(head?.recommendation) };
 }

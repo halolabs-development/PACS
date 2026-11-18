@@ -6,6 +6,7 @@ import { OrthancService } from './orthanc.service';
 import { Caller, PacsService } from './pacs.service';
 import { viewerUid } from './viewer-input';
 import { refuseDestroyed } from './pacs/values';
+import { assertHeadReadable, inProgressRefusal, storedVersionReadable } from './report-visibility';
 import { LocalReadResponse } from './emr-viewing/local-read';
 import { consumerSource, viewerSources } from './emr-viewing/consumer-read';
 import { prepareExamRead, resolveExamScope, scopeIncludesSeries, examScopeView, examScopeChanged, examParentAccess } from './exam-merge.service';
@@ -78,6 +79,9 @@ export class ReportPreviewController {
       allowed(state);
       const report = await selected(tx);
       if(query.draft&&!report?.present)throw examScopeChanged();
+      // The state table (report-visibility.ts): another physician's unsigned head, or one of their Save versions, is not previewed.
+      if(query.version===undefined)assertHeadReadable(state,query.draft?await tx.report.findUnique({where:{uid}}):report,caller);
+      if(query.version!==undefined&&report&&!await storedVersionReadable(tx,uid,report,caller))throw inProgressRefusal(null);
       const scope=await resolveExamScope(tx,this.studyAccess,caller,{uid,purpose:report?'stored':'current',...(report?{record:report}:{}),prepared:before});
       if(query.generation!==undefined&&query.generation!==scope.generation)throw examScopeChanged();
       const version = report?.version ? await tx.reportVersion.findUnique({ where: { uid_version: { uid, version: report.version } } }) : null;

@@ -3,6 +3,7 @@
  * PacsService가 만들어 소유하는 평범한 객체다(Nest provider가 아니다). 생성자는 참조만 저장한다.
  */
 import { canReadPreliminary, designationMatches } from '../preliminary-reader';
+import { assertHeadWritable } from '../report-visibility';
 import { rightsAllow, lockMemberRights } from '../member-rights';
 import type { StudyAccessService } from '../study-access.service';
 import { BadRequestException, ConflictException, ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
@@ -270,6 +271,9 @@ export class PacsReportCommit {
         // 잠글 수 없으므로, 항상 존재하는 그 부모 잠금이 첫 판부터 같은 uid의 확정을 직렬화한다.
         // 안정된 부모 행을 잡은 뒤 현재 Report를 잠근 채 판 번호를 읽는다(되돌리기 후보는 위에서 이미 잠가 읽었다).
         const cur = inProgress ? early : await this.lockHead(tx, uid);
+        // The state table (report-visibility.ts): another physician's saved (unsigned) report is not written over, approved,
+        // deferred or handed on by someone who cannot read it. Reset (taking an in-progress report back to Unread) stays open.
+        if (action !== 'reset') assertHeadWritable(prev, cur, c);
 
         /**
          * 내 초안 행을 **잠그고** 경계를 대조한 뒤 읽는다.

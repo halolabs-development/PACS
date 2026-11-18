@@ -3,6 +3,7 @@
  * draftTransaction 하나를 지난다(세션 → 검사 → 초안 잠금 순서, 감사는 같은 트랜잭션).
  * PacsService가 만들어 소유하는 평범한 객체다(Nest provider가 아니다). 생성자는 참조만 저장한다.
  */
+import { assertHeadWritable, headForLock } from '../report-visibility';
 import { canReadPreliminary } from '../preliminary-reader';
 import type { StudyAccessService } from '../study-access.service';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
@@ -138,6 +139,7 @@ export class PacsReportDraft {
     if (heldByOther)
       throw reportHeld(prev, c);
     if (!prev) throw new NotFoundException('검사를 찾을 수 없습니다');
+    refuseDestroyed(prev);
     if (!canReadPreliminary(prev, c))
       throw new ForbiddenException(
         `예비 판독(RS: P) 중입니다. ${prev?.preReviewer ?? '지정된 판독의'}만 이어서 판독할 수 있습니다.`);
@@ -152,7 +154,9 @@ export class PacsReportDraft {
       const scope = await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'current' });
       assertExamSource(this.studyAccess, c, scope);
     }
-    return this.reportDraftRules(prev, c);
+    const rules = this.reportDraftRules(prev, c);
+    assertHeadWritable(prev, await headForLock(tx, uid), c);
+    return rules;
   }
 
   /**
@@ -599,7 +603,7 @@ export class PacsReportDraft {
         // (namesDraftDrawings). It is judged here, after the receipt judgement above: an applied or discarded receipt is
         // answered as it is and never applied again.
         if (!namesDraftDrawings(namedDrawingIds, draftDrawings(row?.present ? row.drawings : null))) return refuse('DRAFT_CONFLICT');
-        try { this.reportDraftRules(state, c); }
+        try { this.reportDraftRules(state, c); assertHeadWritable(state, await headForLock(tx, uid), c); }
         catch (error: any) {
           if (!(error instanceof ConflictException)) throw error;
           return refuse((error.getResponse() as any)?.code === 'REPORT_HELD' ? 'TARGET_HELD' : 'TARGET_UNVERIFIED');
@@ -707,6 +711,8 @@ export class PacsReportDraft {
       if (body.insert !== undefined) await this.studyAccess.prepare(c);
     }, async (tx, state, audit) => {
     this.reportDraftRules(state, c);
+    // Writing beside another physician's saved (unsigned) report is refused like writing over it; clearing my own draft is not.
+    if (!empty) assertHeadWritable(state, await headForLock(tx, uid), c);
     const row = await this.ownDraft(tx, uid, c, expected.revision, empty ? 'cleanup' : 'reading');
     // Image Report: the drawing list the screen holds must be the one this revision holds, by presence and by ids - for an
     // attach or a remove, the list before the operation. A request that names none stands only on a draft without a list,
@@ -910,7 +916,7 @@ export class PacsReportDraft {
         const readable = rep && await readableExamRecord(tx, this.studyAccess, c, uid, rep);
         const provided = readable ? rep : rep && { ...rep, findings: '', conclusion: '', recommendation: '' };
         const answer = { ...draftEnvelope(uid, owner, state.draftEpoch, cleared),
-          state: { ...toClient(state, provided, c, cleared), reportReadable: !rep || !!readable } };
+          state: { ...toClient(state, provided, c, cleared, rep), reportReadable: !rep || !!readable } };
         await record!(state, answer, 'discard');
         // 답이 내주는 글은 비운 초안이 아니라 확정본의 그 판이다. 예비 판독으로 가려 본문을 싣지 않은 답은 그 판의 열람이 아니다.
         if (readable && !answer.state.prelimHidden) await record!(state, null, 'provide-prepared', { uid, version: rep.version });

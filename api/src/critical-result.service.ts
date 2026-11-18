@@ -1,3 +1,4 @@
+import { senderReadsHead } from './report-visibility';
 import { criticalRead } from './emr-viewing/consumer-read';
 import { rightsUser, lockMemberRights } from './member-rights';
 import { Injectable, BadRequestException, ConflictException, ForbiddenException, HttpException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
@@ -282,7 +283,8 @@ export class CriticalResultService {
    * 대신 고정하면 판독의가 고르지 않은 판이 전달된다. force-discard의 discarded 판은 머리를 옮기지 않으므로 세지 않는다.
    */
   private async pinRefusal(tx: any, uid: string, sourceVersion: number, head: Head, state: any, c: Caller): Promise<Refusal | null> {
-    const refusal = sourceRefusal({ sourceVersion, head, senderReadable: legacyReadable(state, c.actor, c.sub) });
+    // The state table (report-visibility.ts): another physician's unsigned head is not theirs to send.
+    const refusal = sourceRefusal({ sourceVersion, head, senderReadable: legacyReadable(state, c.actor, c.sub) && senderReadsHead(state, head, c) });
     if (refusal || !head) return refusal;
     if(!await this.readableBy(c,uid,tx,sourceVersion))return {status:403,code:CODE.SOURCE_FORBIDDEN};
     const rows: any[] = await tx.$queryRaw`SELECT count(*)::int AS beyond FROM "ReportVersion"
@@ -465,7 +467,7 @@ export class CriticalResultService {
       if (await this.visibleStudy(tx, uid, c, state, studyMissing) !== institution) throw unavailable();
       const head = await this.head(tx, uid);
       const pinnable = !!head && CRITICAL_RESULT_PINNABLE_ACTIONS.includes(head.action as string);
-      const readable = legacyReadable(state, c.actor, c.sub) && !!head && await this.readableBy(c,uid,tx,head.version);
+      const readable = legacyReadable(state, c.actor, c.sub) && senderReadsHead(state, head, c) && !!head && await this.readableBy(c,uid,tx,head.version);
       const recipients: any[] = [];
       if (pinnable && readable) for (const x of candidates) {
         const roster = members.map(user => ({ id: userActor(user), sub: user.id }));

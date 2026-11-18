@@ -353,7 +353,7 @@ export class PacsStudyState {
     const uid=state.uid, report=await tx.report.findUnique({where:{uid}}), draft=await this.access.myDraft(uid,c.actor,tx);
     const readable=!report||await readableExamRecord(tx,this.studyAccess,c,uid,report);
     const own=draft?.present&&await readableExamRecord(tx,this.studyAccess,c,uid,draft)?draft:null;
-    return {...toClient(state,readable?report:report&&{...report,findings:'',conclusion:'',recommendation:''},c,own),reportReadable:!!readable};
+    return {...toClient(state,readable?report:report&&{...report,findings:'',conclusion:'',recommendation:''},c,own,report),reportReadable:!!readable};
   }
 
   /** 검사 상태 행 삭제 (장비 수신 시뮬로 만든 가짜 검사 정리용) */
