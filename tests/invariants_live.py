@@ -169,6 +169,8 @@ ROUTES: dict[tuple[str, str], Route] = {
     ("GET", "gateway/retry-requests"): Route(Kind.TENANT),
     # Gateway operational status: the Gateway's own heartbeat (memory only) and the admin's read of its institution's Gateways.
     ("POST", "gateway/heartbeat"): Route(Kind.TENANT),
+    # Gateway settings: the Gateway reads its institution's routing rules, kept-copy days and compression.
+    ("GET", "gateway/settings"): Route(Kind.TENANT),
     ("POST", "studies/:uid/gateway-retry"): Route(Kind.TENANT),
     ("POST", "dicom/lookup"): Route(Kind.TENANT),
     ("GET", "colleagues"): Route(Kind.TENANT),
@@ -321,6 +323,8 @@ ROUTES: dict[tuple[str, str], Route] = {
     # S5-U6b 운영 지표: admin 전용, 기관 범위 합계(visible 경계)만 싣는 읽기다.
     ("GET", "admin/metrics"): Route(Kind.TENANT),
     ("GET", "admin/gateway-status"): Route(Kind.TENANT),
+    ("GET", "admin/gateway-settings"): Route(Kind.TENANT),
+    ("PUT", "admin/gateway-settings"): Route(Kind.TENANT),
     ("GET", "admin/held-sources"): Route(Kind.TENANT),
     ("POST", "admin/source-devices"): Route(Kind.TENANT),
     ("POST", "admin/institution-aliases"): Route(Kind.TENANT),
@@ -4517,7 +4521,7 @@ class LiveInvariantTests(unittest.TestCase):
         # 25 -> 26: S4-EG1 added OrthancConnectionTests (local reads never reuse a pooled connection).
         # The number is the suite as authored; tests/gateway_receipt_source_test.py pins it to an AST
         # count of test_agent.py, so neither can move without the other.
-        self.assertIn("Ran 44 tests", completed.stderr + completed.stdout)
+        self.assertIn("Ran 70 tests", completed.stderr + completed.stdout)
 
     def test_production_gateway_contract_is_declared(self) -> None:
         completed = subprocess.run(

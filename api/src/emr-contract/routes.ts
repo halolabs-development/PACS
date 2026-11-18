@@ -75,11 +75,12 @@ const groups: readonly (RouteContract & { routes: readonly string[] })[] = [
   // FA-090: the administrator's own institution's EMR Link (an address template); no patient or study record.
   { kinds: ['institution'], operation: 'write', causes: ['user-view'],
     routes: ['PATCH admin/emr-link'] },
-  // FC-070: the institution's registered peer PACS (name, AE Title, host, port); no patient or study record.
+  // Registered peer PACS and Gateway routing settings belong to the institution.
   { kinds: ['institution'], operation: 'read', causes: ['user-view'],
-    routes: ['GET admin/dicom-peers', 'GET query-retrieve/peers'] },
+    routes: ['GET admin/dicom-peers', 'GET query-retrieve/peers', 'GET admin/gateway-settings'] },
   { kinds: ['institution'], operation: 'write', causes: ['user-view'],
-    routes: ['POST admin/dicom-peers', 'DELETE admin/dicom-peers/:id'] },
+    routes: ['POST admin/dicom-peers', 'DELETE admin/dicom-peers/:id', 'PUT admin/gateway-settings'] },
+  { kinds: ['institution'], operation: 'read', causes: ['service-job'], routes: ['GET gateway/settings'] },
   // FC-070: a peer PACS's study-level answers (patient ID and name, date, modality, description, accession) to the
   // member's search; a retrieve asks the peer to send one study's images into this archive, where they arrive like any
   // DICOM arrival; its state is the job's progress and the arrival decision only.
