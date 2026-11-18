@@ -2,7 +2,7 @@
 """Gateway Rules on the Members console (worklist-v0/hpacs-lite/admin.html, gateway-rules-admin.js).
 
 The administrator sets the institution's Gateway settings: routing rules (Modality and/or sending AE Title -> one or more
-destinations: HALO PACS and the DICOM Peers registered as PACS / Modality), how long a sent copy stays on the Gateway, and
+destinations: HALO PACS and the DICOM Peers registered as PACS / Modality), and
 lossless compression toward HALO PACS. The rule and its checks are the server's (api/src/gateway-settings.ts, proved by
 tests/gateway_settings_server_test.cjs); this page loads, edits and saves. The shipped page and scripts are served from a
 synthetic origin; /api/admin/gateway-settings is answered from in-test queues (an answer can be held) and every request
@@ -10,10 +10,10 @@ is recorded.
 
   01  opening the page reads nothing of the rules: Not Loaded, only Load Gateway Rules enabled, no rule rows.
   02  Load Gateway Rules reads once and shows the rules, the destination choices (HALO PACS and each peer; a peer's name is
-      not translated), Keep Sent Copies and Compression as saved.
-  03  editing and saving sends exactly { revision, routes, retentionDays, compression } with empty conditions as null;
+      not translated), and Compression as saved.
+  03  editing and saving sends exactly { revision, routes, compression } with empty conditions as null;
       the answer is shown with its revision; the same settings again say nothing changed.
-  04  refusals in fixed sentences that name the rule and its field (never the server's wording); another save in between (409) reads the rules again; Days that is not a whole number is never sent.
+  04  refusals in fixed sentences that name the rule and its field (never the server's wording); another save in between (409) reads the rules again.
   05  a read answered after the page session ended paints nothing and every control stays off.
   06  wording: English headings, controls and state words with no Hangul; Korean guidance.
 
@@ -58,8 +58,8 @@ PEERS = [{"id": P1, "name": "SYN PACS A", "aet": "SYNPACSA", "host": "pacs-a.syn
          {"id": P2, "name": "SYN PACS B", "aet": "SYNPACSB", "host": "10.0.0.9", "port": 11112}]
 
 
-def settings(revision=3, routes=None, days=30, compression="lossless"):
-    return {"revision": revision, "retentionDays": days, "compression": compression,
+def settings(revision=3, routes=None, compression="lossless"):
+    return {"revision": revision, "compression": compression,
             "routes": [{"modality": "CT", "sourceAe": None, "destinations": ["kin", P1]},
                        {"modality": "US", "sourceAe": "SYN_US", "destinations": [P2]}] if routes is None else routes}
 
@@ -180,7 +180,7 @@ class AdminGatewayRulesDOMTest(unittest.TestCase):
         self.open()
         self.assertEqual(self.settings_calls(), [])
         expect(self.page.locator("#gateway-rules-state")).to_have_text("Not Loaded")
-        for control in ("#gateway-rule-add", "#gateway-keep", "#gateway-keep-days", "#gateway-compression", "#gateway-rules-save"):
+        for control in ("#gateway-rule-add", "#gateway-compression", "#gateway-rules-save"):
             expect(self.page.locator(control)).to_be_disabled()
         self.assertEqual(self.rows(), [])
         self.assertTrue(self.page.locator("#gateway-rules-empty").is_hidden())
@@ -195,14 +195,10 @@ class AdminGatewayRulesDOMTest(unittest.TestCase):
         self.assertEqual(rows[0]["choices"], ["HALO PACS", "SYN PACS A", "SYN PACS B"])
         self.assertEqual(rows[0]["untranslated"], ["SYN PACS A", "SYN PACS B"], "a peer's own name is never translated")
         expect(self.page.locator("#gateway-rules-state")).to_have_text("2 Rules")
-        expect(self.page.locator("#gateway-keep")).to_have_value("days")
-        expect(self.page.locator("#gateway-keep-days")).to_have_value("30")
         expect(self.page.locator("#gateway-compression")).to_have_value("lossless")
-        self.load(settings(revision=0, routes=[], days=None, compression="none"))
+        self.load(settings(revision=0, routes=[], compression="none"))
         self.assertEqual(self.rows(), [])
         expect(self.page.locator("#gateway-rules-empty")).to_be_visible()
-        expect(self.page.locator("#gateway-keep")).to_have_value("forever")
-        expect(self.page.locator("#gateway-keep-days")).to_be_disabled()
         expect(self.page.locator("#gateway-rules-state")).to_have_text("No Rules")
 
     def test_03_editing_and_saving_sends_the_closed_form(self):
@@ -213,21 +209,22 @@ class AdminGatewayRulesDOMTest(unittest.TestCase):
         third.locator("input[data-field=modality]").fill("MG")
         third.locator(f'.gw-rule-destinations input[value="{P2}"]').check()
         self.page.locator("#gateway-rules-rows > tr").nth(1).get_by_role("button", name="Remove Rule").click()
-        self.page.locator("#gateway-keep-days").fill("7")
         self.page.locator("#gateway-compression").select_option("none")
         saved = settings(revision=4, routes=[{"modality": "CT", "sourceAe": None, "destinations": ["kin", P1]},
                                              {"modality": "MG", "sourceAe": None, "destinations": ["kin", P2]}],
-                         days=7, compression="none")
+                         compression="none")
         sent = self.save((200, {"settings": saved, "changed": True}))
-        self.assertEqual(sent, {"revision": 3, "retentionDays": 7, "compression": "none", "routes": [
+        self.assertEqual(sent, {"revision": 3, "compression": "none", "routes": [
             {"modality": "CT", "sourceAe": None, "destinations": ["kin", P1]},
             {"modality": "MG", "sourceAe": None, "destinations": ["kin", P2]}]})
         self.assertIn("판 4", self.message())
         self.assertEqual([r["number"] for r in self.rows()], ["1", "2"])
-        self.page.locator("#gateway-keep").select_option("forever")
-        sent = self.save((200, {"settings": dict(saved, retentionDays=None, revision=5), "changed": True}))
-        self.assertEqual((sent["revision"], sent["retentionDays"]), (4, None))
-        self.save((200, {"settings": dict(saved, retentionDays=None, revision=5), "changed": False}))
+        self.page.get_by_role("button", name="Remove Rule").last.click()
+        self.assertEqual(len(self.rows()), 1)
+        self.load(dict(sent, revision=4))
+        self.assertEqual([row["checked"] for row in self.rows()], [["kin", P1], ["kin", P2]])
+        unchanged = self.save((200, {"settings": saved, "changed": False}))
+        self.assertEqual(unchanged, dict(sent, revision=4))
         self.assertEqual(self.message(), "바뀐 것이 없어 저장하지 않았습니다.")
 
     def test_04_refusals_are_fixed_sentences(self):
@@ -247,12 +244,6 @@ class AdminGatewayRulesDOMTest(unittest.TestCase):
         self.wait_until(lambda: len(self.settings_calls("GET")) > before, "the read after 409")
         expect(self.page.locator("#gateway-rules-state")).to_have_text("No Rules")
         self.assertIn("다시 불러왔습니다", self.message())
-        puts = len(self.settings_calls("PUT"))
-        self.page.locator("#gateway-keep").select_option("days")
-        self.page.locator("#gateway-keep-days").fill("")
-        self.assertIsNone(self.save(None))
-        self.assertEqual(len(self.settings_calls("PUT")), puts, "Days that is not a whole number is never sent")
-        self.assertEqual(self.message(), "Days는 0~3650의 정수여야 합니다.")
 
     def test_05_a_read_answered_after_the_session_ended_paints_nothing(self):
         self.open()
@@ -271,6 +262,7 @@ class AdminGatewayRulesDOMTest(unittest.TestCase):
         self.assertEqual(self.rows(), [])
         for control in ("#gateway-rules-refresh", "#gateway-rule-add", "#gateway-rules-save"):
             expect(self.page.locator(control)).to_be_disabled()
+
     def test_06_wording(self):
         self.open()
         self.load()
@@ -280,8 +272,6 @@ class AdminGatewayRulesDOMTest(unittest.TestCase):
         hangul = re.compile(r"[가-힣]")
         self.assertEqual([t for t in texts["heads"] if hangul.search(t)], [])
         self.assertRegex(texts["hint"], hangul)
-        self.assertIn("화소 값은 바뀌지 않습니다", texts["hint"])
-        self.assertIn("그 규칙들의 목적지 모두로 보내고", texts["hint"])
 
 
 if __name__ == "__main__":

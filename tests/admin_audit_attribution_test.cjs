@@ -966,7 +966,7 @@ test('FC-070 Query/Retrieve rows belong to the institution they were written for
     ['institution.dicom-peer.remove', { institution: 'inst-a', name: 'SYN PACS', aet: 'SYNPEER', host: 'pacs.synthetic.test', port: 104 }],
     ['query-retrieve.search', { institution: 'inst-a', peer: 'peer-1', fields: ['patientId'], count: 3, truncated: false }],
     ['query-retrieve.retrieve', { institution: 'inst-a', peer: 'peer-1', job: 'job-1' }],
-    ['institution.gateway-settings.save', { institution: 'inst-a', revision: 2, routes: 1, destinations: ['kin', 'peer-1'], retentionDays: 30, compression: 'lossless' }]]) {
+    ['institution.gateway-settings.save', { institution: 'inst-a', revision: 2, routes: 1, destinations: ['kin', 'peer-1'], compression: 'lossless' }]]) {
     const source = { ...ROWS.get(29), action, target: 'peer-1', detail: JSON.stringify(detail) };
     assert.equal(A.auditRule(action), 'field:detail.institution');
     assert.deepEqual(A.projectAuditRow(source, 'inst-a').detail, detail);

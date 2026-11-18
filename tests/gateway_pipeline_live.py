@@ -68,8 +68,7 @@ AGENT_ENV = {
     'GW_BACKOFF_BASE_SECONDS': '90', 'GW_BACKOFF_MAX_SECONDS': '90', 'GW_BYTE_BUDGET_MIB': '24',
 }
 # Contract section 5 with A1 (B 290 -> 320, R 205 -> 235); their sum plus a 45 s teardown margin is the suite cap. Block G
-# waits for the settings read (60 s), one clean-up pass while a destination is down (62 s), the forward backoff (90 s) and
-# one clean-up pass after it (60 s).
+# waits for the settings read (60 s) and the independent forward retry (90 s).
 DEADLINES = {'setup': 240, 'fixtures': 60, 'N': 90, 'B': 320, 'R': 235, 'F': 90, 'X': 180, 'G': 360}
 # Block G's hospital PACS: a second Orthanc of the same image on the Gateway's own networks, labelled into the Gateway
 # project so its residue is the project's. The Gateway reaches it by an alias on the local network only, so detaching
@@ -688,7 +687,6 @@ class GatewayPipelineLive(unittest.TestCase):
                                         for key in ('N', 'B', 'R', 'F')}}
 
     def test_eg1_6_routing_kept_copies_and_lossless_compression(self):
-        # Last, after X recorded every earlier study: the clean-up of kept copies set here takes their local copies too.
         with self.block('G') as deadline:
             study = self.new_study('G')
             uid, block = study['uid'], self.ev['G']
@@ -717,12 +715,12 @@ class GatewayPipelineLive(unittest.TestCase):
             self.assertEqual(current.status, 200, current.text[:500])
             routes = [{'modality': 'CT', 'sourceAe': None, 'destinations': ['kin', peer_id]}]
             saved = self.stack.request('PUT', '/admin/gateway-settings', admin, {
-                'revision': current.body['settings']['revision'], 'routes': routes, 'retentionDays': 0,
+                'revision': current.body['settings']['revision'], 'routes': routes,
                 'compression': 'lossless'})
             body = saved.body if isinstance(saved.body, dict) else {}
             settings = body.get('settings') or {}
             block['settings'] = {'status': saved.status, 'changed': body.get('changed'), 'revision': settings.get('revision'),
-                                 'routes': settings.get('routes'), 'retentionDays': settings.get('retentionDays'),
+                                 'routes': settings.get('routes'),
                                  'compression': settings.get('compression')}
             revision = settings.get('revision')
             self.until('G-1 settings applied', deadline, lambda: self.applied_revision() == revision)
@@ -747,23 +745,21 @@ class GatewayPipelineLive(unittest.TestCase):
                                                                         % (quote(cloud[sop]), NATIVE_SYNTAX)))
                              for sop in sorted(cloud)]
             self.wait_event('G-4 forward.retry', deadline, event='forward.retry', uid=uid, after=send['t_send'])
-            # One clean-up pass while the PACS lacks the study: the copy stays.
-            time.sleep(max(0.0, judge.stamp(kin['t_complete']) + judge.PURGE_WINDOW + 1 - time.time()))
-            block['hold'] = {'t': now(), 'local': self.local_sops(uid)}
-            # G-5: the PACS is back; its own retry delivers, then G-6: the next clean-up takes the copy.
+            block['hold'] = {'local': self.local_sops(uid), 'peer_sops': sorted(self.peer_digests(uid)), 't': now()}
+            # The peer's next attempt can start as soon as its network is reattached.
+            reconnect = now()
             self.docker('network', 'connect', '--alias', PEER_ALIAS, self.project + '-local', self.peer)
-            block['up'] = {'t': now(), 'attached': self.peer_on_local()}
+            block['up'] = {'t': reconnect, 'attached': self.peer_on_local()}
             self.wait_event('G-5 forward.complete', deadline, event='forward.complete', uid=uid, after=block['up']['t'])
             received = self.peer_digests(uid)
             block['peer_received'] = {'sops': sorted(received), 'pixels': [received[sop] for sop in sorted(received)]}
-            self.wait_event('G-6 study.purged', deadline, event='study.purged', uid=uid, after=block['up']['t'])
-            block['purge'] = {'local': self.local_sops(uid), 'cloud': self.cloud_sops(uid)}
+            block['copies'] = {'local': self.local_sops(uid), 'cloud': self.cloud_sops(uid), 't': now()}
             # G-7: the routed peer is kept until the rule goes; then the settings are emptied again.
             refused = self.stack.request('DELETE', '/admin/dicom-peers/' + quote(str(peer_id)), admin)
             block['refuse'] = {'status': refused.status,
                                'code': refused.body.get('code') if isinstance(refused.body, dict) else None}
             cleared = self.stack.request('PUT', '/admin/gateway-settings', admin, {
-                'revision': revision, 'routes': [], 'retentionDays': None, 'compression': 'none'})
+                'revision': revision, 'routes': [], 'compression': 'none'})
             block['cleared'] = {'status': cleared.status,
                                 'revision': (cleared.body.get('settings') or {}).get('revision')
                                 if isinstance(cleared.body, dict) else None}

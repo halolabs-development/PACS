@@ -53,10 +53,7 @@ OUTAGE_ERRORS = ('token request ConnectionError', 'cloud request ConnectionError
 STALL_ERROR = 'cloud request ReadTimeout'
 INSTITUTION = 'KIN 판독센터'
 RESOLVE = {'kin-cloud': True, 'kin-api': False, 'kin-db': False, 'kin-keycloak': False, 'kin-orthanc': False}
-# Block G: lossless re-compression toward KIN (JPEG Lossless SV1), and one clean-up pass of the agent (PURGE_SECONDS 60)
-# plus loop time: a copy still held this long after KIN finished was looked at by a pass and kept.
 LOSSLESS_SYNTAX = '1.2.840.10008.1.2.4.70'
-PURGE_WINDOW = 62
 OWNED_COUNTS = ('orthanc_studies', 'StudyState', 'GatewayReceipt', 'GatewayRetryRequest', 'AuditLog')
 _STAMP = re.compile(r'(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,9}))?(?:Z|\+00:00)')
 
@@ -421,7 +418,7 @@ def _g1(s, t, d, e):
             and (saved['status'], saved['changed']) == (200, True) and isinstance(saved['revision'], int)
             and saved['revision'] >= 1
             and saved['routes'] == [{'modality': 'CT', 'sourceAe': None, 'destinations': ['kin', peer['id']]}]
-            and (saved['retentionDays'], saved['compression']) == (0, 'lossless')
+            and saved['compression'] == 'lossless'
             and block['applied']['revision'] == saved['revision'])
 
 
@@ -442,7 +439,7 @@ def _g3(s, t, d, e):
     kin, original = block['kin'], block['original']
     return (len(original['sops']) == len(set(original['sops'])) == 2 and sorted(kin['cloud']) == original['sops']
             and kin['syntaxes'] == [LOSSLESS_SYNTAX] * 2
-            and all(isinstance(value, str) and value for value in original['pixels'])
+            and len(original['pixels']) == 2 and all(isinstance(value, str) and value for value in original['pixels'])
             and kin['pixels'] == original['pixels'])
 
 
@@ -451,9 +448,9 @@ def _g4(s, t, d, e):
     down, hold, up = block['down'], block['hold'], block['up']
     held = pick(e, uid=block['uid'], after=down['t'], before=up['t'])
     return (down['detached'] is True and bool(named(held, 'forward.retry'))
-            and not named(held, 'forward.complete') and not named(held, 'study.purged')
+            and not named(held, 'forward.complete') and hold['peer_sops'] == []
             and sorted(hold['local']) == block['original']['sops']
-            and stamp(hold['t']) - stamp(block['kin']['t_complete']) >= PURGE_WINDOW and stamp(hold['t']) <= stamp(up['t']))
+            and stamp(block['kin']['t_complete']) <= stamp(hold['t']) <= stamp(up['t']))
 
 
 def _g5(s, t, d, e):
@@ -467,10 +464,9 @@ def _g5(s, t, d, e):
 def _g6(s, t, d, e):
     block = s['G']
     done = pick(e, event='forward.complete', uid=block['uid'], after=block['up']['t'], before=block['t_end'])
-    purged = pick(e, event='study.purged', uid=block['uid'], after=block['up']['t'], before=block['t_end'])
-    return (len(done) == 1 and [(item['sops'], item['pending']) for item in purged] == [(2, 0)]
-            and purged[0]['_t'] >= done[0]['_t'] and block['purge']['local'] == []
-            and sorted(block['purge']['cloud']) == block['original']['sops'])
+    copies = block['copies']
+    return (len(done) == 1 and done[0]['_t'] <= stamp(copies['t']) <= stamp(block['t_end'])
+            and sorted(copies['local']) == sorted(copies['cloud']) == block['original']['sops'])
 
 
 def _g7(s, t, d, e):

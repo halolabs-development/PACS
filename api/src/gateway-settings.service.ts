@@ -8,7 +8,7 @@ import { GATEWAY_SETTINGS_INVALID, GATEWAY_SETTINGS_RESTRICTED, GATEWAY_SETTINGS
   storedGatewaySettings } from './gateway-settings';
 
 /**
- * Gateway settings of an institution (routing rules, how long sent copies are kept, lossless compression). The rule is
+ * Gateway settings of an institution (routing rules and lossless compression). The rule is
  * gateway-settings.ts; this service reads and writes the one Institution column. The administrator reads and saves the
  * own institution's settings (accounts with a restricted study scope are refused, as for Gateway Status); the
  * institution's Gateways read them on GET /api/gateway/settings with their own credential.
@@ -46,7 +46,7 @@ export class GatewaySettingsService {
   }
 
   /**
-   * `PUT /api/admin/gateway-settings` with `{ revision, routes, retentionDays, compression }`. The row lock, the check of
+   * `PUT /api/admin/gateway-settings` with `{ revision, routes, compression }`. The row lock, the check of
    * the revision the form started from, the write and the audit row are one transaction; the same settings again write
    * nothing.
    */
@@ -69,9 +69,8 @@ export class GatewaySettingsService {
         throw new ConflictException({ code: GATEWAY_SETTINGS_STALE, revision: current.revision,
           message: '다른 곳에서 Gateway 규칙이 바뀌었습니다. 다시 불러온 뒤 저장하세요.' });
       // The scope the save was admitted with still holds, checked before anything is written (a refusal writes nothing).
-      await this.studyAccess.unchanged(c, access);
-      const same = JSON.stringify({ routes: current.routes, retentionDays: current.retentionDays,
-        compression: current.compression }) === JSON.stringify(input.settings);
+      await this.studyAccess.unchanged(c, access, tx);
+      const same = JSON.stringify({ routes: current.routes, compression: current.compression }) === JSON.stringify(input.settings);
       if (same) return { settings: current, changed: false };
       const next: GatewaySettings = { revision: current.revision + 1, ...input.settings };
       await tx.institution.update({ where: { id: me }, data: { gatewaySettings: next as any } });

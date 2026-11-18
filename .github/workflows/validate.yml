@@ -1640,7 +1640,7 @@ jobs:
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/orthanc-transport --cwd . --tree api/src --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/orthanc_transport_test.cjs -- node --test tests/orthanc_transport_test.cjs
     - name: FC-070 Query/Retrieve search, retrieve and peers against a synthetic Orthanc
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
-      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/query-retrieve-service --cwd . --tree api/src --file api/prisma/schema.prisma --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/query_retrieve_service_test.cjs -- node --test tests/query_retrieve_service_test.cjs
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/query-retrieve-service --cwd . --tree api/src --file api/prisma/schema.prisma --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/transaction_locks.cjs --file tests/query_retrieve_service_test.cjs -- node --test tests/query_retrieve_service_test.cjs
     - name: FC-076 Attach Document attach, read-back, recovery, withdrawal and serving paths against a synthetic Orthanc
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/study-attachment-service --cwd . --tree api/src --file api/prisma/schema.prisma --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/study_attachment_service_test.cjs -- node --test tests/study_attachment_service_test.cjs

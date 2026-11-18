@@ -10,6 +10,7 @@ require('./service_test_loader.cjs');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const { TransactionLocks } = require('./transaction_locks.cjs');
 const { randomUUID } = require('node:crypto');
 
 process.env.ORTHANC_USER = process.env.ORTHANC_USER || 'SYN';
@@ -44,6 +45,7 @@ async function orthanc(t) {
       state.modalities.delete(decodeURIComponent(modality[1])); return send(200);
     }
     if (modality?.[3] === 'query') {
+      if (state.findGate) { state.findStarted.resolve(); await state.findGate.promise; }
       if (!state.modalities.has(decodeURIComponent(modality[1]))) return send(404, { Message: 'Inexistent modality' });
       if (state.findFailure) return send(500, state.findFailure);
       return send(200, { ID: 'q-1', Path: '/queries/q-1' });
@@ -73,6 +75,7 @@ function harness(state) {
   const { OrthancService } = require('/app/dist/orthanc.service');
   const peers = [], audits = [], studyStates = new Map(), openable = new Map(), listCalls = [];
   const gatewaySettings = new Map([['inst-a', null], ['inst-b', null]]), locks = [];
+  const rowLocks = new TransactionLocks();
   const prisma = {
     dicomPeer: {
       findMany: async ({ where, select }) => peers.filter(p => p.institutionId === where.institutionId && (where.kind === undefined || p.kind === where.kind))
@@ -87,9 +90,19 @@ function harness(state) {
     auditLog: { create: async ({ data }) => { audits.push(data); return data; } },
     studyState: { findUnique: async ({ where }) => studyStates.get(where.uid) ?? null },
     // Gateway settings of each institution (the column a peer removal checks under the institution row lock).
-    institution: { findMany: async ({ where }) => gatewaySettings.has(where.id) ? [{ gatewaySettings: gatewaySettings.get(where.id) }] : [] },
-    $queryRaw: async (strings, me) => { locks.push(me); return gatewaySettings.has(me) ? [{ gatewaySettings: gatewaySettings.get(me) }] : []; },
-    $transaction: async work => work(prisma),
+    institution: {
+      update: async ({ where, data }) => gatewaySettings.set(where.id, data.gatewaySettings),
+    },
+    $transaction: async work => {
+      const tx = { ...prisma, $queryRaw: async (strings, me) => {
+        assert.match(strings.join('?'), /FROM "Institution" WHERE id = \? FOR UPDATE/i);
+        locks.push(me);
+        state.lockRequested?.resolve();
+        await rowLocks.acquire(tx, me);
+        return gatewaySettings.has(me) ? [{ gatewaySettings: gatewaySettings.get(me) }] : [];
+      } };
+      try { return await work(tx); } finally { rowLocks.release(tx); }
+    },
   };
   const pacs = { listStudies: async (c, query, purpose) => {
     assert.equal(purpose, 'source');
@@ -98,7 +111,7 @@ function harness(state) {
     return { studies: query.uids.split(',').filter(uid => openable.get(uid)?.has(c.sub)).map(uid => ({ uid })) };
   } };
   const service = new QueryRetrieveService(prisma, new OrthancService(), pacs);
-  return { service, peers, audits, studyStates, openable, listCalls, state, gatewaySettings, locks };
+  return { service, peers, audits, studyStates, openable, listCalls, state, prisma, locks };
 }
 
 async function rejects(promise, status, message) {
@@ -281,19 +294,43 @@ test('FC-070 peers: registration checks and one AE Title per institution; remova
   assert.deepEqual([removed.target, JSON.parse(removed.detail).institution], [peer.id, 'inst-a']);
 });
 
-test('Gateway routing: a peer a Gateway route sends to is not removed until the route no longer names it', async t => {
-  const { service, peer, key, state, peers, audits, gatewaySettings, locks } = await withPeer(t);
-  state.modalities.set(key, {});
-  gatewaySettings.set('inst-a', { revision: 1, routes: [{ modality: 'CT', sourceAe: null, destinations: ['kin', peer.id] }],
-    retentionDays: null, compression: 'none' });
-  await assert.rejects(service.removePeer(peer.id, ADMIN), error => error.getStatus() === 409
+test('a rule save overlapping peer removal preserves the registration and an in-flight C-FIND', { timeout: 10000 }, async t => {
+  const { GatewaySettingsService } = require('/app/dist/gateway-settings.service');
+  const { service, peer, key, state, peers, audits, prisma, locks } = await withPeer(t);
+  state.answers = [answer(A)];
+  state.findStarted = Promise.withResolvers();
+  state.findGate = Promise.withResolvers();
+  const search = service.search({ peerId: peer.id, patientId: 'P-SYN-1' }, RAD);
+  await state.findStarted.promise;
+
+  const locked = Promise.withResolvers(), finishSave = Promise.withResolvers();
+  const settings = new GatewaySettingsService(prisma, {
+    snapshot: async () => ({ policy: { restricted: false } }),
+    unchanged: async () => { locked.resolve(); await finishSave.promise; },
+  });
+  const save = settings.adminSave({ revision: 0, routes: [{ modality: 'CT', sourceAe: null, destinations: ['kin', peer.id] }],
+    compression: 'none' }, ADMIN);
+  await locked.promise;
+  state.lockRequested = Promise.withResolvers();
+  const refusal = assert.rejects(service.removePeer(peer.id, ADMIN), error => error.getStatus() === 409
     && error.getResponse().code === 'GATEWAY_PEER_ROUTED');
+  await state.lockRequested.promise;
+  finishSave.resolve();
+  try {
+    assert.equal((await save).changed, true);
+    await refusal;
+  } finally {
+    state.findGate.resolve();
+  }
+  assert.deepEqual((await search).rows.map(row => row.studyUid), [A]);
+  assert.equal(state.requests.filter(r => r.method === 'DELETE').length, 0);
+  assert.equal(state.modalities.has(key), true);
   assert.ok(peers.some(p => p.id === peer.id));
-  assert.equal(state.modalities.has(key), true, 'refused before anything is removed');
   assert.equal(audits.filter(a => a.action === 'institution.dicom-peer.remove').length, 0);
-  gatewaySettings.set('inst-a', { revision: 2, routes: [], retentionDays: null, compression: 'none' });
+
+  await settings.adminSave({ revision: 1, routes: [], compression: 'none' }, ADMIN);
   assert.deepEqual(await service.removePeer(peer.id, ADMIN), { removed: peer.id });
-  assert.deepEqual(locks, ['inst-a'], 'the removal re-reads the settings under the institution row lock');
+  assert.deepEqual(locks, ['inst-a', 'inst-a', 'inst-a', 'inst-a']);
 });
 
 test('FC-070 the audit keeps criteria names, counts and identifiers - never a patient value', async t => {

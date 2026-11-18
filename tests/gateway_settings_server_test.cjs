@@ -1,7 +1,7 @@
 'use strict';
 /* Gateway settings on the API (api/src/gateway-settings.ts rule, api/src/gateway-settings.service.ts): the administrator's
  * form is a closed shape (routes with a Modality and/or sending AE and one to nine destinations, each this server or one of
- * the institution's store peers; no two routes that one study could match; retention days 0..3650 or null; compression
+ * the institution's store peers; overlapping routes allowed; compression
  * none or lossless); a save names the revision it started from and another save in between is 409; the same settings
  * again write nothing; every change writes one audit row with counts and choices only; restricted accounts and other
  * roles are refused; the Gateway reads its own institution's settings with every store peer (never a printer), and an
@@ -20,7 +20,7 @@ const ADMIN_B = { ...ADMIN, sub: 'sub-admin-b', institution: 'inst-b' };
 const TECH = { sub: 'sub-tech', actor: 'SYN-tech', roles: ['technician'], institution: 'inst-a', kind: 'member' };
 const GW = { sub: 'sub-gw', actor: 'service-account-gw-inst-a', roles: ['gateway'], institution: 'inst-a', kind: 'gateway' };
 const route = (modality, sourceAe, ...destinations) => ({ modality, sourceAe, destinations });
-const form = (extra = {}) => ({ revision: 0, routes: [route('CT', null, 'kin', P1)], retentionDays: 30, compression: 'lossless', ...extra });
+const form = (extra = {}) => ({ revision: 0, routes: [route('CT', null, 'kin', P1)], compression: 'lossless', ...extra });
 
 function harness({ restricted = false, changed = false } = {}) {
   const institutions = new Map([['inst-a', { gatewaySettings: null }], ['inst-b', { gatewaySettings: null }]]);
@@ -40,11 +40,12 @@ function harness({ restricted = false, changed = false } = {}) {
       .sort((x, y) => x.name.localeCompare(y.name)) },
     auditLog: { create: async ({ data }) => { audits.push(data); return data; } },
     $queryRaw: async (strings, me) => { locks.push(me); return institutions.has(me) ? [{ ...institutions.get(me) }] : []; },
-    $transaction: async work => work(prisma),
+    $transaction: async work => work(tx),
   };
+  const tx = { ...prisma };
   const studyAccess = {
     snapshot: async c => { calls.push(['snapshot', c.sub]); return { policy: { restricted } }; },
-    unchanged: async c => { calls.push(['unchanged', c.sub]); if (changed) { const e = new Error('changed'); e.status = 409; throw e; } },
+    unchanged: async (c, access, db) => { calls.push(['unchanged', c.sub, db === tx]); if (changed) { const e = new Error('changed'); e.status = 409; throw e; } },
   };
   return { service: new GatewaySettingsService(prisma, studyAccess), institutions, audits, calls, locks };
 }
@@ -52,12 +53,12 @@ const status = error => error?.getStatus?.() ?? error?.status;
 const code = error => error?.getResponse?.()?.code;
 const field = error => error?.getResponse?.()?.field;
 
-test('the form is closed: conditions, destinations, overlap, retention and compression', () => {
+test('the form is closed: conditions, destinations, overlap and compression', () => {
   const peers = new Set([P1, P2]);
   const ok = S.parseGatewaySettingsInput(form({ routes: [route(' ct ', ' SYN_CT ', 'kin', P1), route('MG', null, P2)] }), peers);
   assert.deepEqual(ok, { expectedRevision: 0, settings: { routes: [route('CT', 'SYN_CT', 'kin', P1), route('MG', null, P2)],
-    retentionDays: 30, compression: 'lossless' } });
-  assert.deepEqual(S.parseGatewaySettingsInput(form({ routes: [route('', '', 'kin')], retentionDays: null, compression: 'none' }), peers)
+    compression: 'lossless' } });
+  assert.deepEqual(S.parseGatewaySettingsInput(form({ routes: [route('', '', 'kin')], compression: 'none' }), peers)
     .settings.routes, [route(null, null, 'kin')], 'empty conditions are no condition');
   const bad = [
     [form({ extra: 1 }), 'body'], [null, 'body'], [[], 'body'], [form({ revision: -1 }), 'revision'], [form({ revision: '0' }), 'revision'],
@@ -67,7 +68,7 @@ test('the form is closed: conditions, destinations, overlap, retention and compr
     [form({ routes: [route('CT', null)] }), 'routes[0].destinations'], [form({ routes: [route('CT', null, 'kin', 'kin')] }), 'routes[0].destinations'],
     [form({ routes: [route('CT', null, PRINTER)] }), 'routes[0].destinations'], [form({ routes: [route('CT', null, OTHER)] }), 'routes[0].destinations'],
     [form({ routes: [{ ...route('CT', null, 'kin'), order: 1 }] }), 'routes[0]'],
-    [form({ retentionDays: -1 }), 'retentionDays'], [form({ retentionDays: 3651 }), 'retentionDays'], [form({ retentionDays: 1.5 }), 'retentionDays'],
+    [form({ retentionDays: 0 }), 'body'],
     [form({ compression: 'jpeg' }), 'compression'], [form({ compression: undefined }), 'compression'],
   ];
   for (const [body, name] of bad)
@@ -83,33 +84,33 @@ test('the form is closed: conditions, destinations, overlap, retention and compr
 test('nothing stored is the empty settings, for the administrator and for the Gateway', async () => {
   const h = harness();
   const read = await h.service.adminRead(ADMIN);
-  assert.deepEqual(read.settings, { revision: 0, routes: [], retentionDays: null, compression: 'none' });
+  assert.deepEqual(read.settings, { revision: 0, routes: [], compression: 'none' });
   assert.deepEqual(read.peers.map(p => p.id), [P1, P2], 'store peers of the own institution only, never a printer');
   const answer = await h.service.gatewayRead(GW);
-  assert.deepEqual(answer, { revision: 0, routes: [], retentionDays: null, compression: 'none', destinations: [
+  assert.deepEqual(answer, { revision: 0, routes: [], compression: 'none', destinations: [
     { id: P1, name: 'SYN PACS A', aet: 'SYNPACSA', host: 'pacs-a.synthetic.test', port: 104 },
     { id: P2, name: 'SYN PACS B', aet: 'SYNPACSB', host: '10.0.0.9', port: 11112 }] });
-  assert.deepEqual(Object.keys(answer).sort(), ['compression', 'destinations', 'retentionDays', 'revision', 'routes']);
+  assert.deepEqual(Object.keys(answer).sort(), ['compression', 'destinations', 'revision', 'routes']);
 });
 
 test('a save: revision check, one audit row with no address, the same settings write nothing, the Gateway sees it', async () => {
   const h = harness();
   const first = await h.service.adminSave(form(), ADMIN);
   assert.equal(first.changed, true);
-  assert.deepEqual(first.settings, { revision: 1, routes: [route('CT', null, 'kin', P1)], retentionDays: 30, compression: 'lossless' });
+  assert.deepEqual(first.settings, { revision: 1, routes: [route('CT', null, 'kin', P1)], compression: 'lossless' });
   assert.deepEqual(h.locks, ['inst-a'], 'the institution row is locked first');
   assert.deepEqual(h.audits.map(a => [a.action, a.target, JSON.parse(a.detail)]), [['institution.gateway-settings.save', 'inst-a',
-    { institution: 'inst-a', revision: 1, routes: 1, destinations: [P1, 'kin'], retentionDays: 30, compression: 'lossless' }]]);
+    { institution: 'inst-a', revision: 1, routes: 1, destinations: [P1, 'kin'], compression: 'lossless' }]]);
   assert.doesNotMatch(h.audits[0].detail, /synthetic\.test|10\.0\.0/);
   const again = await h.service.adminSave(form({ revision: 1 }), ADMIN);
   assert.deepEqual([again.changed, again.settings.revision, h.audits.length], [false, 1, 1]);
   // Another administrator saved meanwhile: the old form is refused, nothing is overwritten.
-  await assert.rejects(h.service.adminSave(form({ revision: 0, retentionDays: 1 }), ADMIN),
+  await assert.rejects(h.service.adminSave(form({ revision: 0, compression: 'none' }), ADMIN),
     error => status(error) === 409 && code(error) === S.GATEWAY_SETTINGS_STALE && error.getResponse().revision === 1);
-  assert.equal(h.institutions.get('inst-a').gatewaySettings.retentionDays, 30);
+  assert.equal(h.institutions.get('inst-a').gatewaySettings.compression, 'lossless');
   const answer = await h.service.gatewayRead(GW);
-  assert.deepEqual([answer.revision, answer.routes, answer.retentionDays, answer.compression],
-    [1, [route('CT', null, 'kin', P1)], 30, 'lossless']);
+  assert.deepEqual([answer.revision, answer.routes, answer.compression],
+    [1, [route('CT', null, 'kin', P1)], 'lossless']);
   assert.deepEqual((await h.service.gatewayRead({ ...GW, institution: 'inst-b' })).routes, [], 'another institution is untouched');
 });
 
@@ -142,13 +143,13 @@ test('a scope that changed between the admission and the write refuses the save,
   await assert.rejects(h.service.adminSave(form(), ADMIN), error => status(error) === 409);
   assert.deepEqual([h.audits.length, h.institutions.get('inst-a').gatewaySettings], [0, null]);
   assert.deepEqual(h.calls.filter(call => call[0] === 'update'), []);
-  assert.ok(h.calls.findIndex(call => call[0] === 'unchanged') > -1, 'checked inside the save');
+  assert.deepEqual(h.calls.filter(call => call[0] === 'unchanged'), [['unchanged', ADMIN.sub, true]]);
 });
 
 test('stored values are read defensively and the routed peers are the ones the routes name', () => {
   for (const odd of [null, 'x', [], { revision: 'x', routes: [] }, { revision: 1 }])
     assert.deepEqual(S.storedGatewaySettings(odd), S.NO_GATEWAY_SETTINGS);
-  const stored = { revision: 3, routes: [route('CT', null, 'kin', P1), route('MG', null, P2)], retentionDays: 0, compression: 'lossless' };
+  const stored = { revision: 3, routes: [route('CT', null, 'kin', P1), route('MG', null, P2)], compression: 'lossless' };
   assert.deepEqual(S.storedGatewaySettings(stored), stored);
   assert.deepEqual([...S.routedPeers(stored)].sort(), [P1, P2]);
 });
