@@ -3,7 +3,7 @@ window.KinViewerPatientTabs = (() => {
   // controllers still enter/exit normally for each URL; no second grid exists.
   const tabs = [], listeners = new Set();
   let current = null, explicitlyClosed = false, session, services, refreshChrome, host, status, sequence = 0, pending = false, mounted = false;
-  let controller, pendingHref, restoreSubscription, dataSubscription, dataReady, mountEpoch = 0, focusAfterMount = false;
+  let controller, pendingHref, restoreSubscription, dataSubscription, displaySubscription, dataReady, mountEpoch = 0, focusAfterMount = false;
   const text = value => typeof value === 'object' && value !== null
     ? String(value.Alphabetic || value.Ideographic || value.Phonetic || '') : String(value ?? '');
   const studies = href => (new URL(href, location.origin).searchParams.get('StudyInstanceUIDs') || '').split(',').filter(Boolean);
@@ -449,6 +449,9 @@ window.KinViewerPatientTabs = (() => {
     const wanted = exam?.studyUids || studies(href), found = new Map();
     if (session.state() === 'unconfirmed') await session.decide();
     const endpoint = session.readOnly() ? '/api/clinician/studies' : '/api/studies';
+    // These rows are also the viewer's shown values of these studies (kinViewerStudyDisplay), so the cell headings and
+    // labels of a tab opened now start from the same answer as the tab.
+    const display = window.kinViewerStudyDisplay, ticket = display?.begin(wanted);
     // Match only the open studies through the existing scoped endpoint. The
     // source UID lookup accepts at most 100 UIDs per request.
     for (let offset = 0; offset < wanted.length; offset += 100) {
@@ -456,6 +459,7 @@ window.KinViewerPatientTabs = (() => {
       const response = await fetch(endpoint + '?' + query, { credentials: 'same-origin', signal });
       if (!response.ok) throw new Error('환자 정보를 불러오지 못했습니다. 영상은 계속 볼 수 있습니다. 다시 시도하세요.');
       const result = await response.json();
+      display?.learn(result.studies, ticket);
       for (const row of result.studies || []) {
         if (wanted.includes(row.uid)) found.set(row.uid, row);
         if (exam) for (const source of row.sourceMetadata || []) if (wanted.includes(source.uid))
@@ -465,11 +469,29 @@ window.KinViewerPatientTabs = (() => {
     const rows = wanted.map(uid => found.get(uid));
     if (!rows.length || rows.some(row => !row?.sourcePatientKey) || rows.some(row => row.sourcePatientKey !== rows[0].sourcePatientKey))
       throw new Error('같은 환자의 검사인지 확인할 수 없어 현재 화면을 유지합니다.');
-    const row = rows[0], born = String(row.birth || '').replace(/-/g, ''), date = String(row.date || '').replace(/-/g, '');
-    const years = /^\d{8}$/.test(born) && /^\d{8}$/.test(date) ? Math.floor((Number(date) - Number(born)) / 10000) : -1;
+    const row = rows[0], shown = display?.peek(wanted[0]);
+    let patient;
+    if (shown) patient = patientOf(shown);
+    else {
+      const born = String(row.birth || '').replace(/-/g, ''), date = String(row.date || '').replace(/-/g, '');
+      const years = /^\d{8}$/.test(born) && /^\d{8}$/.test(date) ? Math.floor((Number(date) - Number(born)) / 10000) : -1;
+      patient = { name: text(row.name) || 'Unknown', id: text(row.id) || 'Unknown', age: years >= 0 ? years + 'Y' : 'Unknown', sex: text(row.sex) || 'Unknown' };
+    }
     return { key: row.sourcePatientKey+(exam ? '|'+JSON.stringify([exam.key,exam.prior&&window.KinExamScope.key(exam.prior)]) : ''),
-      href: new URL(href, location.origin).href, studies: wanted, ...(exam?{exam,patientKey:row.sourcePatientKey}:{}),
-      patient: { name: text(row.name) || 'Unknown', id: text(row.id) || 'Unknown', age: years >= 0 ? years + 'Y' : 'Unknown', sex: text(row.sex) || 'Unknown' } };
+      href: new URL(href, location.origin).href, studies: wanted, ...(exam?{exam,patientKey:row.sourcePatientKey}:{}), patient };
+  }
+  // A tab names its patient by its first study's shown values (the worklist's answer: a Match shows here as in the list).
+  // The tab's identity (key) stays the server's patient key from the image's own Patient ID.
+  const patientOf = shown => ({ name: shown.name || 'Unknown', id: shown.id || 'Unknown', age: shown.age || 'Unknown', sex: shown.sex || 'Unknown' });
+  function renamed() {
+    let changed = false;
+    for (const tab of tabs) {
+      const shown = window.kinViewerStudyDisplay?.peek(tab.studies[0]);
+      if (!shown) continue;
+      const next = patientOf(shown);
+      if (JSON.stringify(next) !== JSON.stringify(tab.patient)) { tab.patient = next; changed = true; }
+    }
+    if (changed) { render(); publish(); }
   }
   function navigate(tab, opening) {
     // The tab's new opening is taken before its scope is exposed, so every read it starts names that opening.
@@ -494,6 +516,8 @@ window.KinViewerPatientTabs = (() => {
     const url = new URL(href, location.origin);
     if (url.origin !== location.origin || url.pathname !== '/ohif/viewer') return false;
     if (current && openingKey(href) === openingKey(current.href)) {
+      // Opened again from the list: its shown patient is read again (a Match or Unmatch since shows; the screen stays).
+      window.kinViewerStudyDisplay?.refresh(current.studies);
       if (current.exam) try { await window.KinViewerExamScope.resolve(href,{signal}); } catch (error) { status.textContent=error.message;return false; }
       if (!holds()) return false;
       if (pending) { sequence++; controller?.abort(); pending = false; render(); publish(); }
@@ -553,6 +577,7 @@ window.KinViewerPatientTabs = (() => {
   async function mount(options) {
     services = options.services; session = options.session; refreshChrome = options.refreshChrome; mounted = true; const epoch = ++mountEpoch;
     dataReady = new Set();
+    displaySubscription?.(); displaySubscription = window.kinViewerStudyDisplay?.subscribe(renamed) || null;
     dataSubscription = services.cornerstoneViewportService.subscribe(
       services.cornerstoneViewportService.EVENTS.VIEWPORT_DATA_CHANGED, ({ viewportId }) => {
         dataReady.add(viewportId);
@@ -590,7 +615,7 @@ window.KinViewerPatientTabs = (() => {
     await loadPatient();
   }
   function dispose() {
-    mounted = false; mountEpoch++; dataSubscription?.unsubscribe(); dataSubscription = null; dataReady = null; restoreSubscription?.(); restoreSubscription = null; host?.remove(); host = null;
+    mounted = false; mountEpoch++; displaySubscription?.(); displaySubscription = null; dataSubscription?.unsubscribe(); dataSubscription = null; dataReady = null; restoreSubscription?.(); restoreSubscription = null; host?.remove(); host = null;
   }
   return { mount, dispose, refresh, open, guard, snapshot, resolve, list, unsaved, next, moving: () => !!moving,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },

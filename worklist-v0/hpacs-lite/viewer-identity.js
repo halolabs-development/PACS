@@ -1,4 +1,5 @@
-/* Account-scoped display choices; identity always comes from loaded images. */
+/* Account-scoped display choices; which study and patient a cell holds is always checked on its loaded image, and the
+   values shown for that study are the worklist's answer for it (kinViewerStudyDisplay). */
 window.KinViewerIdentity=(()=>{
   const fonts={default:'inherit',sans:'"Malgun Gothic", sans-serif',serif:'"Batang", serif',mono:'"Consolas", monospace'};
   const colors={default:'#d7f3ff',warm:'#fff1d6',cool:'#d7f3ff',white:'#ffffff'};
@@ -128,10 +129,13 @@ window.KinViewerIdentity=(()=>{
           if(!role){labels.get(id)?.remove();labels.delete(id);titles.delete(id);continue;}
           const general=value[role],modality=typeof m.Modality==='string'&&modalities.includes(m.Modality.trim().toUpperCase())?m.Modality.trim().toUpperCase():'',p=modality&&general.overrides[modality]||general;
           e.dataset.role=role;e.dataset.study=current.uid;e.dataset.modality=modality;e.dataset.profile=modality&&general.overrides[modality]?'override':'general';
-          const shown={name:text(m.PatientName).slice(0,128),date:text(m.StudyDate).slice(0,16),description:text(m.StudyDescription||m.SeriesDescription).slice(0,128)};
-          const titleParts=[(role==='current'?'기준 검사':'비교 검사')+' · '+m.PatientID];for(const field of fields)if(p[field]&&shown[field])titleParts.push(shown[field]);
+          // The patient and examination are the worklist's answer for this study (kinViewerStudyDisplay: a Match or Modify
+          // shows here as in the list); until it is known, the image's own values. The checks above stay on the image.
+          const d=window.kinViewerStudyDisplay?.of(current.uid),patientId=(d&&d.id)||m.PatientID;
+          const shown={name:(d?d.name:text(m.PatientName)).slice(0,128),date:(d?d.date:text(m.StudyDate)).slice(0,16),description:((d?d.desc:text(m.StudyDescription))||text(m.SeriesDescription)).slice(0,128)};
+          const titleParts=[(role==='current'?'기준 검사':'비교 검사')+' · '+patientId];for(const field of fields)if(p[field]&&shown[field])titleParts.push(shown[field]);
           titles.set(id,titleParts.concat(text(m.Modality).slice(0,16)).filter(Boolean).join(' · ')+' — 판독 뷰어');
-          const groups=new Map([[p.position,[(role==='current'?'기준 검사':'비교 검사')+' · '+m.PatientID]]]);
+          const groups=new Map([[p.position,[(role==='current'?'기준 검사':'비교 검사')+' · '+patientId]]]);
           for(const field of fields)if(p[field]&&shown[field]){const at=p.fieldPositions[field];if(!groups.has(at))groups.set(at,[]);groups.get(at).push(shown[field]);}
           // Compare › Exam Marks on Images: the study's exam mark (* current, P1… earlier and N1… later studies) goes before
           // the role, in this label's own place and settings; a related study's mark is in an italic serif face.
@@ -202,12 +206,14 @@ window.KinViewerIdentity=(()=>{
       timer=setInterval(guarded(refresh),500);
     }
     const unsubscribe=subscribe(bound,next=>{value=next;refresh();});
+    // A study's shown patient arrives (or changes on a new read) after its pixels: label every cell again then.
+    const stopDisplay=window.kinViewerStudyDisplay?.subscribe(()=>changed())||(()=>{});
     const stop=work.onInvalidate(event=>{
       if(event.reason==='prepare'){removeNative();clearInterval(timer);}
       if(event.reason==='cancel'||event.reason==='lifecycle'&&event.state==='active'){bind();refresh();}
       else if(event.reason==='lifecycle'&&event.state!=='preparing')dispose();
     });
-    function dispose(){ended=true;viewing.close();clearInterval(timer);unsubscribe();removeNative();stop();loading.clear();clear();}
+    function dispose(){ended=true;viewing.close();clearInterval(timer);unsubscribe();stopDisplay();removeNative();stop();loading.clear();clear();}
     bind();refresh();return {dispose};
   }
   return {positions:[...positions],modalities:[...modalities],defaults,normalize,read,publish,subscribe,mount};

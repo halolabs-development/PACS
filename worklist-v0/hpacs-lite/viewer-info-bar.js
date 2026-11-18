@@ -45,6 +45,8 @@ window.KinViewerInfoBar = (() => {
     const imageLoaded = event => { const id = event.detail?.imageId ?? event.detail?.image?.imageId; if (id && failed.delete(id)) refresh(); };
     core.eventTarget?.addEventListener(core.Enums.Events.IMAGE_LOAD_FAILED, imageFailed);
     core.eventTarget?.addEventListener(core.Enums.Events.IMAGE_LOADED, imageLoaded);
+    // A study's shown patient arrives (or changes on a new read) after its pixels: redraw the headings then.
+    const stopDisplay = window.kinViewerStudyDisplay?.subscribe(() => refresh()) || (() => {});
     // The shell assets can finish loading after the first native render.
     for (const id of services.viewportGridService.getState().viewports.keys()) {
       rememberRendered(services.cornerstoneViewportService.getCornerstoneViewport(id));
@@ -96,10 +98,15 @@ window.KinViewerInfoBar = (() => {
         // Without a rendered identity: a cell given no images, or whose viewer has no data, has no image; a cell whose
         // current image failed to load says so; otherwise its images are loading.
         const given = current.cell?.displaySetInstanceUIDs?.length && current.viewport;
-        let label = m ? [text(m.PatientName) || 'Unknown', text(m.PatientSex) || 'Unknown',
-          text(m.PatientAge) || 'Unknown', text(m.PatientID) || 'Unknown',
-          [text(m.StudyDate), text(m.StudyTime)].filter(Boolean).join(' ') || 'Unknown',
-          text(m.StudyDescription), text(m.InstitutionName)].filter(Boolean).join(' | ')
+        // The patient and examination are the worklist's answer for this study (kinViewerStudyDisplay: a Match or Modify
+        // shows here as in the list); until that answer is known, the image's own values. Age is counted from the birth
+        // date and study date; without both, the image's Patient's Age.
+        const display = window.kinViewerStudyDisplay, d = m ? display?.of(m.StudyInstanceUID) : null;
+        const age = (d ? d.age : display?.years(text(m?.PatientBirthDate), text(m?.StudyDate))) || text(m?.PatientAge);
+        let label = m ? [(d ? d.name : text(m.PatientName)) || 'Unknown', (d ? d.sex : text(m.PatientSex)) || 'Unknown',
+          age || 'Unknown', (d ? d.id : text(m.PatientID)) || 'Unknown',
+          [d ? d.date : text(m.StudyDate), text(m.StudyTime)].filter(Boolean).join(' ') || 'Unknown',
+          d ? d.desc : text(m.StudyDescription), text(m.InstitutionName)].filter(Boolean).join(' | ')
           : !given || current.viewport.viewportStatus === viewportStatus.NO_DATA ? 'No image'
           : failed.has(current.viewport.getCurrentImageId?.()) ? 'Load failed' : 'Loading';
         const pending = [viewportStatus.LOADING, viewportStatus.PRE_RENDER, viewportStatus.RESIZE].includes(current.viewport?.viewportStatus);
@@ -134,6 +141,7 @@ window.KinViewerInfoBar = (() => {
         document.removeEventListener(renderedEvent, imageRendered, true);
         core.eventTarget?.removeEventListener(core.Enums.Events.IMAGE_LOAD_FAILED, imageFailed);
         core.eventTarget?.removeEventListener(core.Enums.Events.IMAGE_LOADED, imageLoaded);
+        stopDisplay();
         for (const bar of bars.values()) bar.remove(); bars.clear(); labels.clear(); failed.clear();
       },
     };
