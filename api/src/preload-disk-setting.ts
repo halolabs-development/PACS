@@ -1,8 +1,8 @@
 /**
  * The reading-PC preload cache's disk cap, KIN_PRELOAD_DISK_GB in GiB (1024³ bytes). A site setting with no product
  * default: the site decides it from the reading PC's disk (docs/ops/preload-cache.md). Without a valid cap preload stays
- * off and each study shows Failed with that reason. /api/me, the startup log and the installation check all read the
- * setting through this one rule.
+ * off and each study shows Failed with that reason. /api/me and the startup log (which the installation check reads)
+ * both go through this one rule.
  */
 type Env = Record<string, string | undefined>;
 
