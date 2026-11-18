@@ -530,6 +530,18 @@ test('W5API-05 a business refusal is a durable refused receipt (409, discardable
   assert.deepEqual(w.audits(), [`${A.actor} report.draft ${TARGET}`]);
 });
 
+test('W5API-05b another physician\'s Save over the Target is a durable TARGET_HELD refusal (never a bare 403): the screen can leave the insert', async () => {
+  const w = world();
+  const body = insertBody(w);
+  // The report state table: the Target head is B's Save (RS T, text written by B) - not A's to write beside.
+  Object.assign(w.store.rows('studyState').find(r => r.uid === TARGET), { rs: 'T' });
+  const refused = await w.send('put', { body });
+  assert.deepEqual([refused.status, refused.code], [409, 'RELATED_INSERT_REFUSED'], JSON.stringify(refused.body));
+  assertAnswer(refused.body.relatedInsert, { result: 'refused', state: 'refused', reason: 'TARGET_HELD', receiptRevision: 1,
+    discardable: true, currentMatches: false, appliedRevision: null }, 'saved by another');
+  assert.equal(w.draft().revision, 1); assert.deepEqual(w.audits(), []);
+});
+
 test('Image Report: a new apply stands on the drawing list the request names - another list is a refused draft conflict with nothing written, and an applied receipt is replayed as it is', async () => {
   const w = world();
   // The draft this insert stands on holds a drawing list (one drawing attached in the draft).

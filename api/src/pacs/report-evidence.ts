@@ -493,8 +493,10 @@ export class PacsReportEvidence {
       refuseDestroyed(state);
       assertHeadReadable(state, await headForLock(tx, uid, state), c);
       const report = await tx.report.findUnique({ where: { uid }, select: { version: true, groupId: true } });
-      const headRow = report?.version ? await tx.reportVersion.findUnique({
-        where: { uid_version: { uid, version: report.version } }, select: { drawings: true, groupId: true } }) : null;
+      const stored = report?.version ? await tx.reportVersion.findUnique({
+        where: { uid_version: { uid, version: report.version } }, select: { version: true, action: true, author: true, reason: true, drawings: true, groupId: true } }) : null;
+      // The report state table on the head version itself: another physician's Save of drawings alone keeps them too.
+      const headRow = stored && await storedVersionReadable(tx, uid, stored, c) ? stored : null;
       const headScope = headRow ? await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: headRow }) : null;
       const head = versionDrawings(headRow?.drawings);
       if (headScope) await drawingEntries(tx, uid, head.map(d => d.id), headScope);

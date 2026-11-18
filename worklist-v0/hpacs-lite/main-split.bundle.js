@@ -2132,7 +2132,8 @@
       const lockText = typeof reportLockText === "function" ? reportLockText(appState[selectedUid]) : appState[selectedUid]?.prelimHidden ? "다른 판독의의 예비 판독(RS: P)입니다" : "";
       const inProgress = appState[selectedUid]?.bodyLock === "in-progress";
       $("#holdbar").style.display = held || inProgress ? "flex" : "none";
-      $("#holdmsg").textContent = !held && inProgress
+      // A hold over another physician's Save does not end with the hold: the bar says the Save's words either way.
+      $("#holdmsg").textContent = inProgress
         ? `✎ ${lockText}` + (rad ? ". 이어 쓰려면 More ▸ Reset to Unread로 되돌리세요 (그 글은 그 판독의의 개인 임시글로 남습니다)." : "")
         : !held ? ""
         : `✎ ${heldTitle} — 잠금이 풀리면 이어서 판독할 수 있습니다` +
@@ -5452,13 +5453,15 @@
       // they are; no render replaces it, forced or not, until a later list returns it as one resource.
       let preserveValue = !!r.identityUnresolved || !force && (reportConverge.has(selectedUid) || (locked && !!r.draft));
       reportRefreshPendingFor = preserveValue && (locked || reportDirty()) ? selectedUid : null;
-      const src = locked ? {} : reportSource();
+      // Under another physician's Save my own draft is still mine: it is shown, read-only (the server sends it for that).
+      const ownUnderLock = locked && r.bodyLock === "in-progress" && r.draft ? r.draft : null;
+      const src = ownUnderLock ?? (locked ? {} : reportSource());
       const frame = mountReportFrame();
       if (!frame) return false;
       const opening = { uid: selectedUid, selectionSeq };
       const newOpening = !reportOpening || reportOpening.uid !== selectedUid || reportOpening.selectionSeq !== selectionSeq;
       if (!preserveValue || newOpening) {
-        const texts = Object.fromEntries(RFIELDS.map(k => [k, locked ? "" : String(src[k] ?? "")]));
+        const texts = Object.fromEntries(RFIELDS.map(k => [k, locked && !ownUnderLock ? "" : String(src[k] ?? "")]));
         const result = newOpening ? frame.switchStudy(opening, texts) : frame.replaceAuthoritative(texts);
         if (result.status === "refused") {
           // A refused authoritative render cannot advance the text's origin or erase current typing.
@@ -10392,7 +10395,7 @@
             </div>
 ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</span></div>` : ""}
             ${v.group ? `<div class="vr" data-exam-group="${esc(v.group.id)}"><b>Exam scope</b> — <span data-exam-scope-text></span></div>` : ""}
-            ${v.bodyHidden ? `<div class="vr" data-body-hidden="${esc(v.bodyHidden)}">본문 비공개 — Save한 판독의만 볼 수 있는 판입니다(승인 전의 글)</div>`
+            ${v.bodyHidden ? `<div class="vr" data-body-hidden="${esc(v.bodyHidden)}">본문 비공개 — 그 판을 쓴 판독의만 볼 수 있습니다(승인 전 Save 또는 개인 초안)</div>`
               : v.findings || v.conclusion || v.recommendation
               ? `<pre translate="no">${esc([v.findings, v.conclusion, v.recommendation].filter(Boolean).join("\n---\n"))}</pre>`
               : `<div style="color:#556;padding:4px 0">(내용 없음)</div>`}

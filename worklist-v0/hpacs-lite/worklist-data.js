@@ -713,7 +713,8 @@
       const lockText = typeof reportLockText === "function" ? reportLockText(appState[selectedUid]) : appState[selectedUid]?.prelimHidden ? "다른 판독의의 예비 판독(RS: P)입니다" : "";
       const inProgress = appState[selectedUid]?.bodyLock === "in-progress";
       $("#holdbar").style.display = held || inProgress ? "flex" : "none";
-      $("#holdmsg").textContent = !held && inProgress
+      // A hold over another physician's Save does not end with the hold: the bar says the Save's words either way.
+      $("#holdmsg").textContent = inProgress
         ? `✎ ${lockText}` + (rad ? ". 이어 쓰려면 More ▸ Reset to Unread로 되돌리세요 (그 글은 그 판독의의 개인 임시글로 남습니다)." : "")
         : !held ? ""
         : `✎ ${heldTitle} — 잠금이 풀리면 이어서 판독할 수 있습니다` +

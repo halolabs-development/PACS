@@ -208,13 +208,15 @@
       // they are; no render replaces it, forced or not, until a later list returns it as one resource.
       let preserveValue = !!r.identityUnresolved || !force && (reportConverge.has(selectedUid) || (locked && !!r.draft));
       reportRefreshPendingFor = preserveValue && (locked || reportDirty()) ? selectedUid : null;
-      const src = locked ? {} : reportSource();
+      // Under another physician's Save my own draft is still mine: it is shown, read-only (the server sends it for that).
+      const ownUnderLock = locked && r.bodyLock === "in-progress" && r.draft ? r.draft : null;
+      const src = ownUnderLock ?? (locked ? {} : reportSource());
       const frame = mountReportFrame();
       if (!frame) return false;
       const opening = { uid: selectedUid, selectionSeq };
       const newOpening = !reportOpening || reportOpening.uid !== selectedUid || reportOpening.selectionSeq !== selectionSeq;
       if (!preserveValue || newOpening) {
-        const texts = Object.fromEntries(RFIELDS.map(k => [k, locked ? "" : String(src[k] ?? "")]));
+        const texts = Object.fromEntries(RFIELDS.map(k => [k, locked && !ownUnderLock ? "" : String(src[k] ?? "")]));
         const result = newOpening ? frame.switchStudy(opening, texts) : frame.replaceAuthoritative(texts);
         if (result.status === "refused") {
           // A refused authoritative render cannot advance the text's origin or erase current typing.

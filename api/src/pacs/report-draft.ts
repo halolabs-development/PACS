@@ -3,7 +3,7 @@
  * draftTransaction 하나를 지난다(세션 → 검사 → 초안 잠금 순서, 감사는 같은 트랜잭션).
  * PacsService가 만들어 소유하는 평범한 객체다(Nest provider가 아니다). 생성자는 참조만 저장한다.
  */
-import { assertHeadWritable, headForLock } from '../report-visibility';
+import { assertHeadWritable, headForLock, withHeadActions } from '../report-visibility';
 import { canReadPreliminary } from '../preliminary-reader';
 import type { StudyAccessService } from '../study-access.service';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
@@ -605,6 +605,9 @@ export class PacsReportDraft {
         if (!namesDraftDrawings(namedDrawingIds, draftDrawings(row?.present ? row.drawings : null))) return refuse('DRAFT_CONFLICT');
         try { this.reportDraftRules(state, c); assertHeadWritable(state, await headForLock(tx, uid, state), c); }
         catch (error: any) {
+          // Another physician's Save over the Target is refused like their hold: a settled receipt, so the screen can leave the
+          // insert and the Target's Reset stays open (the report state table).
+          if ((error?.getResponse?.() as any)?.code === 'REPORT_IN_PROGRESS') return refuse('TARGET_HELD');
           if (!(error instanceof ConflictException)) throw error;
           return refuse((error.getResponse() as any)?.code === 'REPORT_HELD' ? 'TARGET_HELD' : 'TARGET_UNVERIFIED');
         }
@@ -912,7 +915,8 @@ export class PacsReportDraft {
         // 초안이 없었어도 경계는 올린다 — 이 버리기보다 앞서 보낸 쓰기가 뒤늦게 닿아 초안을 만들지 못하게.
         const cleared = await this.storeDraft(tx, uid, c.actor, row, null);
         await audit(c.actor, 'report.draft.discard', uid, { institution: inst(c) });
-        const rep = await tx.report.findUnique({ where: { uid } });
+        const stored = await tx.report.findUnique({ where: { uid } });
+        const rep = stored ? (await withHeadActions(tx, [stored], c))[0] : stored;
         const readable = rep && await readableExamRecord(tx, this.studyAccess, c, uid, rep);
         const provided = readable ? rep : rep && { ...rep, findings: '', conclusion: '', recommendation: '' };
         const answer = { ...draftEnvelope(uid, owner, state.draftEpoch, cleared),

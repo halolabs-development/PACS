@@ -3,6 +3,7 @@
  * 보낸 병원을 모르는 검사의 보류·운영자 알림·장비/표기 등록 뒤 자동 연결(D1882)도 같은 등록 자리에서 한다.
  * PacsService가 만들어 소유하는 평범한 객체다(Nest provider가 아니다). 생성자는 참조만 저장한다.
  */
+import { withHeadActions } from '../report-visibility';
 import type { StudyAccessService } from '../study-access.service';
 import type { AccessSnapshot } from '../study-access.service';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
@@ -310,7 +311,8 @@ export class PacsWorklist {
       for (const state of details) sourceStates.set(state.uid, state);
     }
     for (const [uid, state] of shown) sourceStates.set(uid, state);
-    const reports = await this.prisma.report.findMany({ where: { uid: { in: pageUids } } });
+    // Each head carries its own version's action: the report state table judges the head by it, not by a state read apart.
+    const reports = await withHeadActions(this.prisma, await this.prisma.report.findMany({ where: { uid: { in: pageUids } } }), c);
     const repByUid = new Map(reports.map(r => [r.uid, r]));
     // Merge Exam: a report written on an exam group is about every study of it. Its text goes only to a caller who may read
     // every one of them now (the row stays; the text is withheld), and the row says which studies it was written on.
@@ -651,9 +653,10 @@ export class PacsWorklist {
       }
     }
     const orders=orderRows.filter(o=>o.studyUid?permitted.has(o.studyUid):!access.policy.restricted);
-    const reports = omitStates ? [] : await this.prisma.report.findMany({
+    // Each head carries its own version's action (the report state table judges the head by it, not by the states read above).
+    const reports = omitStates ? [] : await withHeadActions(this.prisma, await this.prisma.report.findMany({
       where: { uid: { in: states.map(s => s.uid) } },
-    });
+    }), c);
     // Merge Exam: the same rule as the list — a report written on an exam group goes only to a caller who may read all of it.
     const byUid: Record<string, any> = {};
     const reportScopes: Record<string,any> = {};

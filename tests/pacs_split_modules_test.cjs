@@ -748,6 +748,13 @@ test('report state table: version classes - a Save inside a Preliminary stays wi
   assert.deepEqual([...classes.entries()].sort((a, b) => a[0] - b[0]).map(([, k]) => k),
     ['shared', 'shared', 'shared', 'unsigned', 'private', 'unsigned', 'shared', 'shared', 'shared', 'shared']);
   const reader = actor => ({ actor, roles: ['radiologist'] });
+  // A head read apart from its state is judged by its own version: an approved head under a stale W stays readable, an
+  // unsigned head under a stale A stays its writer's.
+  const { reportBodyLock } = require('/app/dist/report-visibility');
+  const head = (headAction, updatedBy = 'w') => ({ updatedBy, findings: 'SYN', conclusion: '', recommendation: '', headAction });
+  assert.equal(reportBodyLock({ rs: 'W' }, head('approve'), reader('o')), null);
+  assert.equal(reportBodyLock({ rs: 'A' }, head('save'), reader('o')), 'in-progress');
+  assert.equal(reportBodyLock({ rs: 'A' }, head('save'), reader('w')), null);
   assert.equal(versionBodyReadable({ action: 'save', author: 'w' }, 'unsigned', reader('o')), false);
   assert.equal(versionBodyReadable({ action: 'save', author: 'w' }, 'unsigned', reader('w')), true);
   assert.equal(versionBodyReadable({ action: 'save', author: 'w' }, 'unsigned', { actor: 'c', roles: ['clinician'] }), true);

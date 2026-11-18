@@ -28,7 +28,7 @@ import { reportBodyLock, storedVersionReadable } from '../report-visibility';
  */
 function withholdUnsigned(rows: any[], c: Caller) {
   for (const row of rows)
-    if (reportBodyLock(row, row, c) === 'in-progress') Object.assign(row, { findings: '', conclusion: '', recommendation: '' });
+    if (reportBodyLock(row, { ...row, headAction: row.action ?? null }, c) === 'in-progress') Object.assign(row, { findings: '', conclusion: '', recommendation: '' });
 }
 export class PacsClinician {
   constructor(
@@ -201,9 +201,8 @@ export class PacsClinician {
         select: { id: true, version: true, action: true, author: true, reason: true, findings: true, conclusion: true, recommendation: true, drawings: true } }) : null;
       // The state table (report-visibility.ts): another physician's unsigned text is not read here by a caller who is not
       // clinician-only (an administrator, or a radiologist who also holds the clinician role).
-      const withheld = !!head && (version === undefined
-        ? reportBodyLock(state, { updatedBy: head.author, findings: head.findings, conclusion: head.conclusion, recommendation: head.recommendation }, c) === 'in-progress'
-        : !await storedVersionReadable(tx, uid, head, c));
+      // Judged on the version row itself (its action and writer), so a Save of drawings alone is withheld too.
+      const withheld = !!head && !await storedVersionReadable(tx, uid, head, c);
       return work(tx, state, withheld ? { ...head, findings: '', conclusion: '', recommendation: '', drawings: null } : head, scope);
     }, { isolationLevel: 'RepeatableRead', maxWait: 2000, timeout: 5000 });
   }

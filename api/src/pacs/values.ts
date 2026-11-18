@@ -188,7 +188,7 @@ export function toClient(s: any, r: any, caller: Caller, d: any = null, head: an
     // 머리 판의 글을 확정한 사람(본문이 있을 때만). 그 판의 작성자로 이력에 이미 보이는 사실이다 — 화면이 "남이 Save해 둔
     // 진행 중 판독"을 알아 되돌리기(FC-040)를 연다.
     // Another physician's unsigned text: its writer is said ("In Progress by ...") while the text stays with them.
-    savedBy: bodyLock === 'in-progress' ? unsigned
+    savedBy: bodyLock === 'in-progress' ? unsigned || null
       : !hidden && r && (r.findings || r.conclusion || r.recommendation) ? r.updatedBy ?? null : null,
     findings: hidden ? '' : (r?.findings ?? ''),
     conclusion: hidden ? '' : (r?.conclusion ?? ''),

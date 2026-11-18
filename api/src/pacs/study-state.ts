@@ -1,3 +1,4 @@
+import { withHeadActions } from '../report-visibility';
 import type { ClinicalWorkflow, RecordedTransaction, WorkflowRecord } from '../emr-clinical/routes';
 /*
  * 검사 상태 PATCH·오더 매칭/해제·검사 행 삭제와 원격판독 전이표. rs·repDoc·confirm은 여기서 바꾸지 않는다(commitReport 전용).
@@ -350,7 +351,9 @@ export class PacsStudyState {
   }
 
   private async response(tx:any,state:any,c:Caller) {
-    const uid=state.uid, report=await tx.report.findUnique({where:{uid}}), draft=await this.access.myDraft(uid,c.actor,tx);
+    const uid=state.uid, stored=await tx.report.findUnique({where:{uid}}), draft=await this.access.myDraft(uid,c.actor,tx);
+    // The head is judged by its own version's action (a match answer reads it after the state was written).
+    const report=stored?(await withHeadActions(tx,[stored],c))[0]:stored;
     const readable=!report||await readableExamRecord(tx,this.studyAccess,c,uid,report);
     const own=draft?.present&&await readableExamRecord(tx,this.studyAccess,c,uid,draft)?draft:null;
     return {...toClient(state,readable?report:report&&{...report,findings:'',conclusion:'',recommendation:''},c,own,report),reportReadable:!!readable};

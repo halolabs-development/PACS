@@ -25,7 +25,14 @@ import { clinicianOnly } from './clinician-policy';
 export type ReportBodyLock = 'preliminary' | 'in-progress' | 'destroyed' | null;
 
 type Reader = { actor: string; sub?: string; roles?: readonly string[] };
-type Head = { updatedBy?: string | null; findings?: string | null; conclusion?: string | null; recommendation?: string | null } | null | undefined;
+/**
+ * The head as stored: its writer and text, and - where the caller read it - headAction, the action of the head version
+ * (ReportVersion rows never change). A list that reads the state and the head apart judges the head by its own action, so a
+ * state read before a Reset and a new Save never lends the new unsigned text an older approved state, and a state read before
+ * an approval never hides the approved text.
+ */
+type Head = { updatedBy?: string | null; findings?: string | null; conclusion?: string | null; recommendation?: string | null;
+  headAction?: string | null } | null | undefined;
 type VersionRow = { version: number; action: string; author?: string | null; reason?: string | null };
 
 /** States whose head text is a reading physician's own unsigned work. */
@@ -35,10 +42,19 @@ const SIGNED_ACTIONS: readonly string[] = Object.freeze(['approve', 'amend', 'ad
 
 const hasText = (head: Head) => !!head && !!(head.findings || head.conclusion || head.recommendation);
 
-/** The reading physician whose unsigned text the head holds now (W/T/H with text), or null. */
+/**
+ * The reading physician whose unsigned text the head holds now, or null when the head holds no unsigned text. Unsigned = the
+ * head version is a Save or Defer outside a Preliminary (headAction), or, where the caller did not read that action, the
+ * state is W/T/H. A head with no recorded writer is not locked (every Save records its writer; an older row without one is a
+ * known limit).
+ */
 export function unsignedAuthor(state: any, head: Head): string | null {
-  return UNSIGNED_STATES.includes(state?.rs) && hasText(head) && typeof head!.updatedBy === 'string' && head!.updatedBy
-    ? head!.updatedBy : null;
+  if (!hasText(head)) return null;
+  const unsigned = typeof head!.headAction === 'string'
+    ? UNSIGNED_ACTIONS.includes(head!.headAction) && state?.rs !== 'P'
+    : UNSIGNED_STATES.includes(state?.rs);
+  if (!unsigned) return null;
+  return typeof head!.updatedBy === 'string' && head!.updatedBy ? head!.updatedBy : null;
 }
 
 /** Why this reader gets no report text for this study now, or null when the text is theirs to read. */
@@ -49,7 +65,7 @@ export function reportBodyLock(state: any, head: Head, reader: Reader): ReportBo
   // radiologist who also holds the clinician role reads as a radiologist).
   if (clinicianOnly(reader.roles)) return null;
   const author = unsignedAuthor(state, head);
-  return author && author !== reader.actor ? 'in-progress' : null;
+  return author !== null && author !== reader.actor ? 'in-progress' : null;
 }
 
 export const IN_PROGRESS_MESSAGE = '다른 판독의가 Save해 둔 진행 중 판독입니다. 그 판독의만 보고 이어 쓸 수 있습니다 — 이어 쓰려면 Reset으로 Unread로 되돌리세요';
@@ -61,7 +77,7 @@ export function inProgressRefusal(author: string | null): ForbiddenException {
 
 /** Reads of the head's text (citations, structure, drawings, preview): refused while it is another physician's. */
 export function assertHeadReadable(state: any, head: Head, reader: Reader): void {
-  if (reportBodyLock(state, head, reader) === 'in-progress') throw inProgressRefusal(unsignedAuthor(state, head));
+  if (reportBodyLock(state, head, reader) === 'in-progress') throw inProgressRefusal(unsignedAuthor(state, head) || null);
 }
 
 /** Writes over the head (draft writes, hold, commits other than Reset): refused while it is another physician's. */
@@ -70,9 +86,29 @@ export const assertHeadWritable = assertHeadReadable;
 /** The head columns this module reads, for callers that read the head only to ask. */
 export const HEAD_AUTHOR_SELECT = { updatedBy: true, findings: true, conclusion: true, recommendation: true } as const;
 /**
+ * Report rows with the action of their head version (headAction), for reads that take the state and the head apart. Only a
+ * head that could be withheld from this reader is asked about (text written by someone else, a reader who is not
+ * clinician-only); every other row keeps the state rule and costs no read.
+ */
+export async function withHeadActions<T extends { uid: string; version?: number | null; updatedBy?: string | null;
+  findings?: string | null; conclusion?: string | null; recommendation?: string | null }>(db: any, reports: T[], reader: Reader)
+  : Promise<(T & { headAction?: string | null })[]> {
+  if (clinicianOnly(reader.roles)) return reports;
+  const keyed = reports.filter(report => Number.isSafeInteger(report.version) && (report.version as number) > 0
+    && hasText(report) && typeof report.updatedBy === 'string' && report.updatedBy !== reader.actor);
+  if (!keyed.length) return reports;
+  const rows: { uid: string; version: number; action: string }[] = await db.reportVersion.findMany({
+    where: { OR: keyed.map(report => ({ uid: report.uid, version: report.version })) }, select: { uid: true, version: true, action: true } });
+  const actions = new Map(rows.map(row => [row.uid + '|' + row.version, row.action]));
+  const asked = new Set(keyed.map(report => report.uid));
+  return reports.map(report => asked.has(report.uid)
+    ? { ...report, headAction: actions.get(report.uid + '|' + report.version) ?? null } : report);
+}
+
+/**
  * The head, read only where it can hold someone's unsigned text in this state: a Save (T) or a Defer (H). Write gates read the
  * state and the head in one transaction, where an Unread (W) head is always empty (Reset empties it); the list reads, which
- * read them apart, pass their head to reportBodyLock directly and W is judged there too.
+ * read them apart, judge the head by its own version (withHeadActions).
  */
 export async function headForLock(db: any, uid: string, state: any): Promise<Head> {
   if (!['T', 'H'].includes(state?.rs)) return null;

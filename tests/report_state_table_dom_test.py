@@ -22,7 +22,9 @@ class StateTableSite(flow.FlowSite):
     def state_of(self, uid, account):
         st = super().state_of(uid, account)
         if uid == h.UID:
-            st.update(rs="T", prelimHidden=True, bodyLock="in-progress", savedBy=WRITER, version=1, draft=None,
+            own = {"findings": "SYN MY OWN DRAFT", "conclusion": "", "recommendation": "", "baseVersion": 0,
+                   "at": "2026-10-03T00:00:00.000Z"} if getattr(self, "own_draft", False) else None
+            st.update(rs="T", prelimHidden=True, bodyLock="in-progress", savedBy=WRITER, version=1, draft=own,
                       findings="", conclusion="", recommendation="")
         elif uid == h.UID_B:
             st.update(rs="W", holder=WRITER, bodyLock=None)
@@ -84,6 +86,16 @@ class ReportStateTablePage(unittest.TestCase):
         expect(self.page.locator("#report-editor-why")).to_contain_text("보존 기간이 끝나 판독문을 파기한 검사입니다")
         for button in ("#b-save", "#b-approve", "#b-defer", "#b-unread", "#b-clear"):
             expect(self.page.locator(button)).to_be_disabled()
+
+    def test_my_own_draft_stays_on_screen_read_only_under_another_save(self):
+        self.site.own_draft = True
+        self.open()
+        self.pick(h.PATIENT)
+        self.wait(lambda: self.selected() == h.PATIENT, "the study opens")
+        expect(self.page.locator("#findings")).to_have_value("SYN MY OWN DRAFT")
+        expect(self.page.locator("#findings")).not_to_be_editable()
+        expect(self.page.locator("#report-editor-state")).to_have_text("Read Only")
+        self.assertEqual([], self.site.flow_puts)
 
     def test_my_own_unlocked_study_is_unchanged(self):
         self.site.__class__ = flow.FlowSite
