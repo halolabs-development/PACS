@@ -52,8 +52,9 @@ is an admission condition for a clean install.
    `.env`: a positive number the site decides from the reading PC's free disk
    ([preload-cache.md](preload-cache.md); `.env.example` carries `change-me`).
    The product has no default. Without a valid value the stack still starts, but
-   Preload stays off, every study's Preload shows Failed with that reason and the
-   API logs one startup line naming `KIN_PRELOAD_DISK_GB`; step 3 checks for it.
+   Preload stays off, each study's Preload shows Failed with that reason (a row with a
+   refusal of its own, such as a merged exam that cannot be read whole, shows its own)
+   and the API logs one startup line naming `KIN_PRELOAD_DISK_GB`; step 3 checks for it.
 
    Decide signing before Compose starts. Online approvals are enabled at
    installation exactly when the custody configuration
