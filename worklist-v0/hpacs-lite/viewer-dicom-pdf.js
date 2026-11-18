@@ -21,7 +21,13 @@
     const currentState=()=>grid?.getState?.();
     function studies(){
       const all=new URLSearchParams(root.location.search).getAll('StudyInstanceUIDs');if(all.length!==1)return null;
-      const values=all[0].split(',');return values.length>=1&&values.length<=2&&values.every(uid)&&new Set(values).size===values.length?values:null;
+      // A window opened on exam scopes holds every original of its exams (a merged exam may have more than two).
+      const values=all[0].split(','),most=new URLSearchParams(root.location.search).has('kinExamScopes')?20:2;return values.length>=1&&values.length<=most&&values.every(uid)&&new Set(values).size===values.length?values:null;
+    }
+    // Every original of a merged exam is the current exam in a window opened on exam scopes; elsewhere the first study is.
+    function roleOf(study,series,scope){
+      if(!new URLSearchParams(root.location.search).has('kinExamScopes'))return scope.indexOf(study)===0?'Current':'Related';
+      const role=root.KinViewerExamScope?.role?.(study,series);return role==='current'?'Current':role==='prior'?'Related':'?';
     }
     function selection(){
       const state=currentState(),viewportId=state?.activeViewportId||grid?.getActiveViewportId?.(),viewport=state?.viewports?.get?.(viewportId),ids=viewport?.displaySetInstanceUIDs;
@@ -36,7 +42,7 @@
       if(instance.MIMETypeOfEncapsulatedDocument!=='application/pdf'||instance.EncapsulatedDocument?.DirectRetrieveURL||instance.EncapsulatedDocument?.InlineBinary)return {kind:'invalid'};
       const views=[...state.viewports.values()].map(v=>[v.viewportId,v.x??null,v.y??null,v.width??null,v.height??null,v.displaySetInstanceUIDs||[]]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
       const layout=state.layout||{};const gridSignature=JSON.stringify([state.activeViewportId,layout.layoutType??null,layout.numRows??null,layout.numCols??null,views]);
-      return {kind:'valid',value:{viewportId,displaySetId:ids[0],displaySet,study,series,sop,patientId,gridSignature,role:scope.indexOf(study)===0?'Current':'Related',title:typeof displaySet.SeriesDescription==='string'&&displaySet.SeriesDescription.trim()?displaySet.SeriesDescription.trim():'PDF Document',pdfUrl:displaySet.pdfUrl}};
+      return {kind:'valid',value:{viewportId,displaySetId:ids[0],displaySet,study,series,sop,patientId,gridSignature,role:roleOf(study,series,scope),title:typeof displaySet.SeriesDescription==='string'&&displaySet.SeriesDescription.trim()?displaySet.SeriesDescription.trim():'PDF Document',pdfUrl:displaySet.pdfUrl}};
     }
     const candidate=()=>{const selected=selection();return selected.kind==='valid'?selected.value:null;};
     const sameSource=(a,b)=>!!a&&!!b&&a.viewportId===b.viewportId&&a.displaySetId===b.displaySetId&&a.displaySet===b.displaySet&&a.study===b.study&&a.series===b.series&&a.sop===b.sop&&a.patientId===b.patientId&&a.gridSignature===b.gridSignature&&a.search===b.search;

@@ -68,7 +68,8 @@
         ...(s.examUnavailable?{examUnavailable:true,examUnavailableKind:s.examUnavailableKind??null}:{}) }); } };
     for (const urgent of [true, false]) {
       for (const s of matched) {
-        if ((s.em === 'E') !== urgent) continue;
+        // An exam that cannot be read whole now is not fetched (its PF says why), nor counted, nor are its priors.
+        if ((s.em === 'E') !== urgent || root.KinExamScope?.unavailable?.(s)) continue;
         put(s, urgent);
         if (priors) put(prior(s, all), urgent);
       }

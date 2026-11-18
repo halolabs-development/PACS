@@ -106,6 +106,8 @@ test('adding a logical comparison reopens current and prior through the existing
  assert.equal(JSON.parse(new URL(gates.at(-1).href).searchParams.get('kinExamScopes')).purpose,'stored');
  opening=null;await loader(P,{studyUid:A,seriesUid:T}, {uid:P});assert.equal(retrieved.length,1);assert.equal(retrieved[0].StudyInstanceUID,P);
  assert.equal(gates.length,count+1);
+ // A related exam whose originals cannot all be read now is not opened beside this one, not even the original it still has.
+ await assert.rejects(loader(B,{}, {uid:B,examUnavailable:true,examUnavailableKind:'merge'}),/합친 검사의 원본 일부/);assert.equal(retrieved.length,1);assert.equal(gates.length,count+1);
 });
 
 test('clinician ordinary openings keep the native URL and request count while stored split openings recheck their scope',async()=>{
@@ -202,9 +204,22 @@ test('the viewer image sets are made through the archive scope on OHIF\'s own ma
  made.length=0;services.displaySetService.makeDisplaySets([[{StudyInstanceUID:A,SeriesInstanceUID:S}],[{StudyInstanceUID:P,SeriesInstanceUID:S}],[{StudyInstanceUID:B,SeriesInstanceUID:T},{StudyInstanceUID:P,SeriesInstanceUID:T}]],{batch:true});
  assert.deepEqual(JSON.parse(JSON.stringify(made[0][0])).map(list=>list.map(i=>i.StudyInstanceUID)),[[A],[B]]);assert.deepEqual(made[0][1],{batch:true});
  assert.equal(services.displaySetService.makeDisplaySets([{StudyInstanceUID:P,SeriesInstanceUID:S}]).length,0);
- // What this window's reader just saved is made as before.
- services.displaySetService.makeDisplaySets([{StudyInstanceUID:A,SeriesInstanceUID:'2.25.77'}],true);assert.equal(made.at(-1)[0].length,1);
+ // What this window's reader just saved is held to the scope as on reopening: inside it is made, outside it is not.
+ made.length=0;services.displaySetService.makeDisplaySets([{StudyInstanceUID:A,SeriesInstanceUID:'2.25.77'}],true);assert.equal(made.length,1);
+ assert.equal(services.displaySetService.makeDisplaySets([{StudyInstanceUID:P,SeriesInstanceUID:'2.25.77'}],true).length,0);assert.equal(made.length,1);
  assert.throws(()=>v.api.install({displaySetService:{}}),/영상 범위 공급/);
+});
+test('an ordinary route after a scoped one has no scope and no role, without failing',async()=>{
+ const merged=scope(A,[source(A),source(B)]),v=viewer(model.viewerInput(merged),()=>merged);await v.api.ensure();
+ v.root.location=new URL(model.viewerUrl(model.viewerInput({uid:P})),'https://pacs.test');v.api.activate(v.root.location.href,null);
+ assert.equal(v.api.snapshot(),null);assert.equal(v.api.role(P),null);assert.equal(v.api.sources(P),null);
+});
+test('Auto Preload neither counts nor fetches an exam that cannot be read whole, nor its priors',()=>{
+ const queue=require('../worklist-v0/hpacs-lite/preload-queue.js');
+ const rows=[{uid:A,date:'2026-11-02',modality:'CT',sourcePatientKey:'K',examUnavailable:true,examUnavailableKind:'merge'},
+  {uid:B,date:'2026-11-01',modality:'CT',sourcePatientKey:'K'},{uid:C,date:'2026-11-03',modality:'CT',sourcePatientKey:'Q'}];
+ // The saved search matched A (unavailable) and C; B is A's prior.
+ assert.deepEqual(queue.pick([rows[0],rows[2]],rows,{priors:true}).map(s=>s.uid),[C]);
 });
 test('a row of a merged exam whose originals cannot all be read is not an ordinary row: no opening, no Preload, a PF reason',()=>{
  const lost={uid:A,examUnavailable:true,examUnavailableKind:'merge'},split={uid:B,examUnavailable:true,examUnavailableKind:'split'},old={uid:C,examUnavailable:true};

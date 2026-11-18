@@ -18,7 +18,8 @@
     try { return route(root.location.href); }
     catch (error) { return {key:root.location.pathname+root.location.search,error}; }
   };
-  function snapshot() { return admitted?.key === active()?.key ? copy(admitted.input) : null; }
+  // The admitted scope of the route shown now; null on a route without scopes (an ordinary tab after a scoped one).
+  function snapshot() { const entry=active(); return admitted&&entry&&admitted.key===entry.key ? copy(admitted.input) : null; }
   function allows(input, study, series) {
     return [input?.current,input?.prior].filter(Boolean).some(scope =>
       scope.sources.some(source => source.studyUid === study && (!series || model.allows(source,series))));
@@ -151,9 +152,8 @@
     const make=sets.makeDisplaySets;
     if(typeof make!=='function')throw Error('영상 범위 공급을 연결하지 못했습니다.');
     sets.makeDisplaySets=function(instances,...args) {
-      // A set this window made from what its reader just saved (madeInClient) is shown as before.
-      const own=args[0]===true||args[0]?.madeInClient===true;
-      if(!active()||own||!Array.isArray(instances))return make.apply(this,[instances,...args]);
+      // What this window's reader just saved (madeInClient) is held to the scope too, as it is when the window opens again.
+      if(!active()||!Array.isArray(instances))return make.apply(this,[instances,...args]);
       const input=snapshot();
       if(!input)throw Error('검사 범위를 확인한 뒤 영상을 표시할 수 있습니다.');
       const keep=list=>list.filter(instance=>allows(input,instance?.StudyInstanceUID,instance?.SeriesInstanceUID));

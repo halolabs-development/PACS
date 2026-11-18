@@ -222,6 +222,7 @@ window.KinViewerSeriesStrip = (() => {
           const number = String(value(first, '00200011') ?? '').trim() || 'Unknown';
           const title = String(value(first, '0008103E') ?? '').trim() || 'Unknown';
           const card = document.createElement('button'); card.type = 'button'; card.className = 'kin-series-card';
+          card.dataset.study = study; card.dataset.series = series;
           const preview = document.createElement('span'); preview.className = 'kin-series-preview';
           const image = document.createElement('img'); image.alt = ''; image.hidden = true;
           const previewStatus = document.createElement('span'); previewStatus.className = 'kin-series-preview-status'; previewStatus.textContent = 'Loading';

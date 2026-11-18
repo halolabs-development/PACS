@@ -154,6 +154,12 @@ class ExamMergeE2E(WorklistE2E):
         expect(viewer.get_by_text("영상 범위 공급을 연결하지 못했습니다.")).to_have_count(0)
         # One series list for the exam: the series of all three originals.
         expect(viewer.locator(".kin-viewer-series-strip .kin-series-card")).to_have_count(base["series"], timeout=30000)
+        # Each card opens its own original: the second original's card puts that original in the active cell.
+        self.rendered(viewer, a.uid)
+        viewer.locator(f".kin-viewer-series-strip .kin-series-card[data-study='{b.uid}']").first.click()
+        viewer.wait_for_function("""u => { const id = services.viewportGridService.getState().activeViewportId, v = services.cornerstoneViewportService.getCornerstoneViewport(id),
+          image = v?.getCurrentImageId?.(), meta = image && cornerstone.metaData.get('instance', image); return v?.viewportStatus === 'rendered' && meta?.StudyInstanceUID === u; }""",
+                                 arg=b.uid, timeout=60000)
         viewer.close()
 
         # A report saved on the merged exam carries the group; a merged study has no report of its own while merged.

@@ -270,11 +270,13 @@ window.KinViewerUXShell = (() => {
           patientOf(studies || [], set.StudyInstanceUID) !== value.patientKey)) return false;
         const preference = window.kinViewerHangingPreference?.(sets[0].Modality) || window.KinViewerHangingSettings.defaults;
         const currentUid = tabs.snapshot().studyUIDs[0], cells = [...grid.getState().viewports.values()];
-        // In a window opened on exam scopes every original of the current exam (a merged exam) is current; elsewhere the
-        // first opened study is.
+        // In a window opened on exam scopes every original of the current exam (a merged exam) is current and the two parts
+        // of one split original are two exams; elsewhere the first opened study is current.
         const scoped = /[?&]kinExamScopes=/.test(window.location?.search || '');
-        const isCurrent = (study, series) => scoped ? window.KinViewerExamScope?.role?.(study, series) === 'current' : study === currentUid;
-        if (sets.every(set => set.StudyInstanceUID === value.studyUid)) return true;
+        const roleOf = (study, series) => window.KinViewerExamScope?.role?.(study, series) || null;
+        const isCurrent = (study, series) => scoped ? roleOf(study, series) === 'current' : study === currentUid;
+        const origin = scoped ? roleOf(value.studyUid, value.seriesUid) : null;
+        if (sets.every(set => scoped ? !!origin && roleOf(set.StudyInstanceUID, set.SeriesInstanceUID) === origin : set.StudyInstanceUID === value.studyUid)) return true;
         // A prior cell is replaceable. From the current cell, preserve every
         // current image and reuse an assigned comparison or an empty cell.
         const originCell = cells.find(cell => cell.viewportId === value.viewportId);

@@ -78,14 +78,19 @@
       return { id: v.id, v, imageId, mg, kind: c.kind, basis: c.basis, side: c.laterality, view: c.view, verified: orientation?.status === 'verified',
         flipH: orientation?.flipH, flipV: orientation?.flipV,
         columns: Number(dimensions?.[0] ?? item['00280011']?.Value?.[0]), rows: Number(dimensions?.[1] ?? item['00280010']?.Value?.[0]),
-        monochrome1: String(item['00280004']?.Value?.[0] || '').toUpperCase() === 'MONOCHROME1', study: instance.StudyInstanceUID };
+        monochrome1: String(item['00280004']?.Value?.[0] || '').toUpperCase() === 'MONOCHROME1', study: instance.StudyInstanceUID, series: instance.SeriesInstanceUID };
     }
     async function mgCells() {
       const list = await Promise.all(cellIds().map(viewportOf).filter(Boolean).map(v => describe(v).catch(() => null)));
       // A cell whose image changed while its header was read is not described by that header.
       return list.filter(cell => cell?.mg && viewportOf(cell.id) === cell.v && imageIdOf(cell.v) === cell.imageId);
     }
-    const labelOf = cell => (cell.study === opened() ? 'Current' : 'Prior') + ' · ' + (cell.side || '?') + ' ' + (cell.view || '?');
+    // A window opened on exam scopes names the role by them (every original of a merged exam is current; an image in
+    // neither role, or not yet admitted, is '?'); elsewhere the first opened study is current.
+    const roleOf = cell => /[?&]kinExamScopes=/.test(globalThis.location?.search || '')
+      ? ({ current: 'Current', prior: 'Prior' })[globalThis.KinViewerExamScope?.role?.(cell.study, cell.series) || ''] || '?'
+      : cell.study === opened() ? 'Current' : 'Prior';
+    const labelOf = cell => roleOf(cell) + ' · ' + (cell.side || '?') + ' ' + (cell.view || '?');
     const REASONS = { 'orientation-unverified': 'orientation unverified', 'laterality-unknown': 'laterality unknown', 'view-unknown': 'view unknown',
       'size-unknown': 'image size unknown', 'no-image': 'no image' };
 

@@ -17,7 +17,7 @@ import type { Caller, PacsAccess } from './access';
 import type { PacsWorklist } from './worklist';
 import { LocalReadResponse } from '../emr-viewing/local-read';
 import { consumerSource, viewerSources } from '../emr-viewing/consumer-read';
-import { resolveExamScope, prepareExamRead, relatedExamRecord, relatedExamReports, readableExamRecord, examScopeView, scopeIncludesSeries, ResolvedExamScope,
+import { activeGroups, resolveExamScope, prepareExamRead, relatedExamRecord, relatedExamReports, readableExamRecord, examScopeView, scopeIncludesSeries, ResolvedExamScope,
   groupedExamUids, ordinaryExamRecord } from '../exam-merge.service';
 import { versionDrawings, drawingEntries } from '../image-report';
 
@@ -59,6 +59,7 @@ export class PacsClinician {
     const body = clinicianList(list, current);
     // Merge Exam: a study reported as one exam with others says so (the exam's studies and whether it is merged now).
     for (const row of body.studies as any[]) { const exam = exams.get(row.uid); if (exam) row.exam = exam; }
+    await this.markUnavailable(body.studies as any[], exams);
     return new LocalReadResponse(body, [
       ...body.studies.flatMap((row, index) => {
         const original = list.studies[index];
@@ -133,6 +134,21 @@ export class PacsClinician {
    * it is in now — with that exam's studies when the caller may read all of them. Otherwise the report text is withheld from
    * the list row (`rows` are blanked in place) and the studies are not named.
    */
+  /**
+   * Merge Exam: a listed study of a merged or split exam in force whose originals this caller cannot all read now (one gone
+   * from the archive, or outside the caller's access) says so, naming none of them; the page refuses to open it with the
+   * reason (KinExamScope.unavailable), as the worklist does.
+   */
+  private async markUnavailable(rows: any[], exams: Map<string, any>) {
+    if (!rows.length) return;
+    const groups = await activeGroups(this.prisma, rows.map(row => row.uid));
+    for (const row of rows) {
+      const group = groups.find(g => g.members.some(m => m.studyUid === row.uid || m.logicalUid === row.uid));
+      if (group && !exams.get(row.uid)?.readable)
+        Object.assign(row, { examUnavailable: true, examUnavailableKind: group.kind === 'split' ? 'split' : 'merge' });
+    }
+  }
+
   private async examOf(c: Caller, rows: any[]) {
     const out = new Map<string, any>();
     const grouped = await groupedExamUids(this.prisma, rows.map(row => row.uid));
@@ -234,6 +250,7 @@ export class PacsClinician {
     const body = clinicianTimeline(uid, anchor, members, window, current, list.serverTime,
       (row: any) => ({ birth: birthKey(row?.birth), sex: sexKey(row?.sex) }));
     for(const row of body.studies as any[]){const exam=exams.get(row.uid);if(exam)row.exam=exam;}
+    await this.markUnavailable(body.studies as any[], exams);
     return new LocalReadResponse(body, [
       consumerSource('study-metadata', uid, anchor.state.institutionId, uid, null, [],
         identities.get(uid), ['uid', 'patientKey', 'identity']),
