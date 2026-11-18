@@ -274,7 +274,11 @@ window.KinViewerUXShell = (() => {
         // first opened study is.
         const scoped = /[?&]kinExamScopes=/.test(window.location?.search || '');
         const isCurrent = (study, series) => scoped ? window.KinViewerExamScope?.role?.(study, series) === 'current' : study === currentUid;
-        if (sets.every(set => set.StudyInstanceUID === value.studyUid)) return true;
+        // Images already in the cell's own place (its study; for a split original, its own part by the series) change
+        // nothing here. A series of the other part of the same original is another exam and is placed below.
+        const place = (study, series) => window.KinExamScope?.imagePlace?.(studies || [], study, series) ?? study;
+        const own = place(value.studyUid, value.seriesUid);
+        if (sets.every(set => place(set.StudyInstanceUID, set.SeriesInstanceUID) === own)) return true;
         // A prior cell is replaceable. From the current cell, preserve every
         // current image and reuse an assigned comparison or an empty cell.
         const originCell = cells.find(cell => cell.viewportId === value.viewportId);

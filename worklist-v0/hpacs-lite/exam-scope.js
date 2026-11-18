@@ -65,6 +65,16 @@
     }
     return plain;
   }
+  // The place of an image among the listed exams when a viewer cell is chosen for it: the report UID of the listed split
+  // part whose series holds it, otherwise its original study. The two parts of one split original are two places (a
+  // series of the other part goes beside a cell, one of its own part into it); each original of a merged exam stays its
+  // own place, as before. Without a series, or rows that tell the parts apart, the original study (never guessed).
+  function imagePlace(rows, studyUid, seriesUid) {
+    const row=seriesUid?listedExam(rows,studyUid,seriesUid):null;
+    let scope=null;
+    if(row&&!row.examUnavailable)try{scope=read(row);}catch(_){scope=null;}
+    return scope?.kind==='split'&&scope.groupId?row.uid:studyUid;
+  }
   function metadata(row) {
     const scope=read(row);
     if (!scope) return [];
@@ -295,7 +305,7 @@
     finally{try{popup.name=name;}catch(_){}}
     return true;
   }
-  const api={raiseWindow,read,key,stamp,screenScope,screenStamp,originalLabel,sourceRequest,seriesValue,seriesRequest,attachmentTarget,attachmentHeaders,storedReport,allows,listedExam,metadata,projections,values,originals,viewingSelection,originalInput,readingScope,readingStamp,fetch:fetchScope,dicom,unavailable,examRole,examSources,viewerInput,viewerUrl,viewerReference,reference,roleRows,snapshotReference,jobSnapshot,snapshotUrl,preload,preloadState,chooseOriginals,changes};
+  const api={raiseWindow,read,key,stamp,screenScope,screenStamp,originalLabel,sourceRequest,seriesValue,seriesRequest,attachmentTarget,attachmentHeaders,storedReport,allows,listedExam,imagePlace,metadata,projections,values,originals,viewingSelection,originalInput,readingScope,readingStamp,fetch:fetchScope,dicom,unavailable,examRole,examSources,viewerInput,viewerUrl,viewerReference,reference,roleRows,snapshotReference,jobSnapshot,snapshotUrl,preload,preloadState,chooseOriginals,changes};
   root.KinExamScope=api;
   if(typeof module==='object'&&module.exports)module.exports=api;
 })(globalThis);
