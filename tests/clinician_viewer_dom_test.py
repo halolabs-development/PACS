@@ -2851,6 +2851,10 @@ class ClinicianViewerDOMTest(unittest.TestCase):
       // The image a target names, as the tool reads it (getTargetImageData), and the pinned unit function: mm with a pixel
       // spacing, px without, a calibration's name after it and its scale.
       window.synFreehandImage = { imageData: { syn: true }, hasPixelSpacing: true };
+      // The image's own header (synFreehandHeader): its pixel spacing, or none, or an ultrasound region.
+      window.synFreehandHeader = { Modality: 'CT', PixelSpacing: [0.7, 0.7] };
+      const plane = cornerstone.metaData.get;
+      cornerstone.metaData.get = (type, id) => type === 'instance' ? synFreehandHeader : plane(type, id);
       synTools.PlanarFreehandROI = { configuration: { getTextLines: pinned }, addNewAnnotation() { return {}; },
         getTargetImageData: () => window.synFreehandImage };
       // The cell showing that image, turned a quarter and zoomed (screen x = zoom * world y, screen y = -zoom * world x): the
@@ -2874,10 +2878,12 @@ class ClinicianViewerDOMTest(unittest.TestCase):
     }'''
 
     def test_33_freehand_roi_words_give_the_outline_length_on_the_image(self):
-        """A Freehand ROI's perimeter (closed outline) and length (open line) are the outline's length on the image, in the unit
-        the tool measures in — mm, px without a pixel spacing, a calibration's name and scale applied — the same at any zoom,
-        never a distance on the screen and never "undefined"; its other lines stay as they are, and the measurement itself
-        (what is saved or exported) is not changed by its words."""
+        """Where a Freehand ROI's length is known to be physical — the image's own header gives a pixel spacing, no ultrasound
+        region, the tool measures in mm with a positive scale — its perimeter (closed outline) and length (open line) are the
+        outline's length on the image, the same at any zoom, never a distance on the screen or "undefined"; the other lines
+        stay as they are. Anywhere else (no spacing in the header, where the viewer stands in a spacing of 1; an ultrasound
+        region; the image not shown) the tool's own words are given unchanged, as before. The measurement itself is never
+        changed by its words."""
         self.me = RADIOLOGIST
         self.open_viewer(before_boot=self.FREEHAND_TOOL)
         self.wait_until(lambda: 'Length' in self.panel()['buttons'], 'writer controls')
@@ -2889,40 +2895,44 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         line = [[10, 10, 0], [40, 10, 0], [40, 30, 0]]
         closed = "{area: 283.2, areaUnit: '%s', perimeter: 253.39, mean: -800, max: -800, stdDev: 3.2, modalityUnit: 'HU', unit: undefined}"
         opened = "{length: 208.8, modalityUnit: 'HU', getPixelValueUnitunit: undefined}"
-        spaced, unspaced = "{imageData: {syn: true}, hasPixelSpacing: true}", "{imageData: {syn: true}, hasPixelSpacing: false}"
+        spaced = "{imageData: {syn: true}, hasPixelSpacing: true}"
         user = "{imageData: {syn: true}, hasPixelSpacing: true, calibration: {type: 'User', scale: 2}}"
-        values = ['Area: 283 %s', 'Mean: -800 HU', 'Max: -800 HU', 'Std Dev: 3 HU']
+        ct, bare = "{Modality: 'CT', PixelSpacing: [0.7, 0.7]}", "{Modality: 'CR'}"
+        us = "{Modality: 'US', SequenceOfUltrasoundRegions: [{RegionDataType: 1}]}"
+        region = "{imageData: {syn: true}, hasPixelSpacing: true, calibration: {sequenceOfUltrasoundRegions: [{}]}}"
+        values = lambda unit: ['Area: 283 ' + unit, 'Mean: -800 HU', 'Max: -800 HU', 'Std Dev: 3 HU']
         cases = [
-            (closed % 'mm²', True, spaced, 1, [v % 'mm²' if '%s' in v else v for v in values] + ['Perimeter: 86 mm']),
-            (closed % 'mm²', True, spaced, 3, [v % 'mm²' if '%s' in v else v for v in values] + ['Perimeter: 86 mm']),
-            (closed % 'mm² User', True, user, 1, [v % 'mm² User' if '%s' in v else v for v in values] + ['Perimeter: 43 mm User']),
-            (closed % 'px²', True, unspaced, 1, [v % 'px²' if '%s' in v else v for v in values] + ['Perimeter: 86 px']),
-            (opened, False, spaced, 1, ['50 mm']),
-            (opened, False, spaced, 3, ['50 mm']),
-            (opened, False, unspaced, 1, ['50 px']),
-            (opened, False, user, 1, ['25 mm User']),
-            # The image cannot be read (no cell shows it now): no length line rather than a screen number.
-            (opened, False, 'undefined', 1, []),
-            (closed % 'mm²', True, 'undefined', 1, [v % 'mm²' if '%s' in v else v for v in values]),
+            (closed % 'mm²', True, ct, spaced, 1, values('mm²') + ['Perimeter: 86 mm']),
+            (closed % 'mm²', True, ct, spaced, 3, values('mm²') + ['Perimeter: 86 mm']),
+            (closed % 'mm² User', True, ct, user, 1, values('mm² User') + ['Perimeter: 43 mm User']),
+            (opened, False, ct, spaced, 1, ['50 mm']),
+            (opened, False, ct, spaced, 3, ['50 mm']),
+            (opened, False, ct, user, 1, ['25 mm User']),
+            # The header gives no spacing (the viewer stands in 1 and says it has one): the tool's own words, as before.
+            (closed % 'mm²', True, bare, spaced, 1, values('mm²') + ['Perimeter: 253 undefined']),
+            (opened, False, bare, spaced, 1, ['209 undefined']),
+            # An ultrasound region, in the header or in the image's calibration: as before.
+            (opened, False, us, spaced, 1, ['209 undefined']),
+            (opened, False, ct, region, 1, ['209 undefined']),
+            # The image cannot be read (no cell shows it now): as before.
+            (opened, False, ct, 'undefined', 1, ['209 undefined']),
             # A tool that does fill the unit (a fixed release) is left as it is.
-            ("{length: 208.8, modalityUnit: 'HU', unit: 'mm'}", False, spaced, 1, ['209 mm']),
+            ("{length: 208.8, modalityUnit: 'HU', unit: 'mm'}", False, ct, spaced, 1, ['209 mm']),
         ]
-        for stats, is_closed, image, zoom, want in cases:
-            with self.subTest(stats=stats, image=image, zoom=zoom):
-                self.page.evaluate('([zoom]) => { window.synFreehandImage = %s; window.synZoom = zoom; }' % image, [zoom])
+        for stats, is_closed, head, image, zoom, want in cases:
+            with self.subTest(stats=stats, header=head, image=image, zoom=zoom):
+                self.page.evaluate('([zoom]) => { window.synFreehandHeader = %s; window.synFreehandImage = %s; window.synZoom = zoom; }' % (head, image), [zoom])
                 got = self.page.evaluate('([line, closed]) => synFreehandText(%s, line, closed)' % stats, [line, is_closed])
                 self.assertEqual(want, got['lines'])
                 self.assertTrue(got['untouched'], 'the measurement is not changed by its words')
-                self.assertNotIn('undefined', ' '.join(got['lines']))
         # The unit's box as the tool takes it: around the outline on the screen, its corners read back on the image —
         # (10,-40)..(30,-10) on the turned screen are world (40,10) and (10,30), image (80,20) and (20,60).
         self.assertEqual([[80, 20, 0], [20, 60, 0]], self.page.evaluate('() => synUnitCalls[0]'))
         # No cell shows the image: the outline's own box on the image, lowest corner then highest.
-        self.page.evaluate("() => { synFreehandViewports = []; synUnitCalls.length = 0; synFreehandImage = {imageData: {syn: true}, hasPixelSpacing: true}; }")
+        self.page.evaluate("() => { synFreehandViewports = []; synUnitCalls.length = 0; synFreehandHeader = {Modality: 'CT', PixelSpacing: [0.7, 0.7]}; synFreehandImage = {imageData: {syn: true}, hasPixelSpacing: true}; }")
         got = self.page.evaluate("([line]) => synFreehandText({length: 208.8, modalityUnit: 'HU'}, line, false)", [line])
         self.assertEqual(['50 mm'], got['lines'])
         self.assertEqual([[20, 20, 0], [80, 60, 0]], self.page.evaluate('() => synUnitCalls[0]'))
-
     def test_34_the_saved_item_count_follows_saves_and_deletes(self):
         """The panel's "n개 저장 항목" is the study's saved items now: a save answered adds one, a delete answered takes one
         away (with the delete's own words), not only when the list is read again. A list read that began before a save or a
@@ -2974,6 +2984,44 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.release(self.held_writer.pop()[-1], {'items': [writer_head, second], 'nextCursor': None})
         self.assertNotIn('SYN SECOND KEY', str(self.panel()['rows']), 'deleted while the read was on its way: does not come back')
         self.assertEqual('1개 저장 항목 · 저장은 판독 확정과 별개입니다.', self.panel()['status'])
+    def test_35_resumed_held_work_whose_item_was_deleted_elsewhere_is_not_counted(self):
+        """Held work taken up again (Resume Held Work) on a saved item that another window deleted meanwhile: the answer lists
+        no items, so the count is 0 as the list says; the work itself is kept and told it can no longer be saved."""
+        history = self.page.locator('#kin-viewer-history')
+        self.writer_open()
+        self.wait_until(lambda: 'SYN writer key' in str(self.panel()['rows']), "A's author list")
+        row = history.locator('section').filter(has_text='SYN writer key')
+        row.get_by_role('button', name='Edit', exact=True).click()
+        history.get_by_label('Key Title', exact=True).fill('SYN EDITED KEY')
+        self.page.evaluate('study => synSwitch(study)', VP)
+        self.wait_until(lambda: self.panel()['uid'] == VP, "B's author list")
+        self.page.evaluate('study => synSwitch(study)', VA)
+        self.wait_until(lambda: (lambda p: p['uid'] == VA and 'Resume Held Work' in p['buttons'])(self.panel()), "A's work held")
+        self.hold_writer = {(VA, 'first')}
+        history.get_by_role('button', name='Resume Held Work', exact=True).click()
+        self.wait_until(lambda: self.held_writer, 'the list read of the resumed work held')
+        self.release(self.held_writer.pop()[-1], {'items': [], 'nextCursor': None})
+        self.assertEqual('0개 저장 항목 · 저장은 판독 확정과 별개입니다.', self.panel()['status'])
+        self.assertIn('다른 창에서 지운 항목입니다', str(self.panel()['rows']))
+        # The same with marks saved on their own (Auto Save View): the held work is taken up by the first read on coming back.
+        self.fresh_page()
+        self.writer_open()
+        history = self.page.locator('#kin-viewer-history')
+        self.wait_until(lambda: 'SYN writer key' in str(self.panel()['rows']), "A's author list")
+        self.accept_writes = True
+        history.locator('section').filter(has_text='SYN writer key').get_by_role('button', name='Edit', exact=True).click()
+        history.get_by_label('Key Title', exact=True).fill('SYN EDITED KEY')
+        self.page.evaluate('study => synSwitch(study)', VP)
+        self.wait_until(lambda: self.panel()['uid'] == VP, "B's author list")
+        self.page.evaluate('() => { window.KinViewerAutoSave = { marks: () => true }; }')
+        self.hold_writer = {(VA, 'first')}
+        self.page.evaluate('study => synSwitch(study)', VA)
+        self.wait_until(lambda: self.held_writer, "A's list read held")
+        self.release(self.held_writer.pop()[-1], {'items': [], 'nextCursor': None})
+        self.wait_until(lambda: 'SYN EDITED KEY' in self.page.evaluate("() => [...document.querySelectorAll('#kin-viewer-history input')].map(e => e.value).join(' ')"),
+                        'the held work taken up')
+        self.assertEqual('0개 저장 항목 · 저장은 판독 확정과 별개입니다.', self.panel()['status'])
+        self.assertIn('다른 창에서 지운 항목입니다', str(self.panel()['rows']))
     def notice(self,session,kind='broadcast'):
         self.observer.evaluate("""([session,kind])=>{const notice={type:'session-ended',session,operation:Date.now(),status:'ending'};
           if(kind==='storage')localStorage.setItem('kin-session-end',JSON.stringify(notice));

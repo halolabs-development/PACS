@@ -26,44 +26,79 @@ function kinCreateMultiStudyStrip() {
 
 // DICOM overlay planes (60xx,3000) on an image: the archive sends their bits as a bulk data address, which the pinned overlay
 // tool (Image Overlay) cannot read — it cached an empty overlay and failed on every later draw, measurements in the same cell
-// included, and turning Image Overlay off and on raised an error. Here the overlay tool reads those bits itself, as the
-// viewer reads its other bulk data (kinFetchBulk: this origin's instance bulk path), and only for overlay planes; an overlay
-// whose bits cannot be read is left out instead of cached empty. An overlay is drawn only on the image it belongs to (a slow
-// answer for an image scrolled past is not drawn on the next one) and only while Image Overlay is on.
+// included, and turning Image Overlay off and on raised an error. Only such a plane takes a new way here, and only in the
+// form the pinned tool draws in the right place: one frame of image and mask, the mask from the first pixel covering the
+// whole image, square pixels, and at the moment of drawing the image's axes on the screen neither flipped nor turned. Its bits
+// are read once (a second draw waits for the same read; no read again after a failure) from this origin's instance bulk path
+// through the viewer's one bulk read (kinFetchBulk), and must be exactly one frame of the mask. A plane outside that form, or
+// one whose bits cannot be read, is not drawn — for that draw only, the overlay list the tool shares is left as it is, so
+// the cell's measurements are still drawn. A drawn plane appears only on its own image and only while Image Overlay is on.
+// Planes the pinned tool already reads (values in the metadata) go its own way, unchanged.
 function kinCreateOverlayPlanes() {
   const MARK = Symbol.for('kin.overlay-planes');
+  const bulkOnly = o => { const d = o?.pixelData;
+    return !!d && !o.dataUrl && !d.Value && !Array.isArray(d) && !d.retrieveBulkData && !d.InlineBinary && typeof d.BulkDataURI === 'string'; };
+  const pair = v => Array.isArray(v) && v.length >= 2 ? v.slice(0, 2).map(Number) : null;
+  const header = id => { try { return window.cornerstone.metaData.get('instance', id) || null; } catch (_) { return null; } };
+  function allowed(imageId, o) {
+    const h = header(imageId);
+    if (!h || Number(h.NumberOfFrames) > 1) return false;
+    if (o.x !== 1 || o.y !== 1 || o.rows !== Number(h.Rows) || o.columns !== Number(h.Columns) || !(o.rows > 0 && o.columns > 0)) return false;
+    const spacing = pair(h.PixelSpacing) || pair(h.ImagerPixelSpacing), aspect = pair(h.PixelAspectRatio);
+    const square = s => s.every(x => Number.isFinite(x) && x > 0) && Math.abs(s[0] - s[1]) <= 1e-6 * Math.max(s[0], s[1]);
+    return spacing ? square(spacing) : !aspect || square(aspect);
+  }
+  // The image's first pixel, its last column and its last row on the screen: axes along the screen's, pointing right and down.
+  function upright(viewport, imageId) {
+    try {
+      const h = header(imageId), u = window.cornerstone.utilities;
+      const at = p => viewport.worldToCanvas(u.imageToWorldCoords(imageId, p));
+      const o = at([0, 0]), r = at([Number(h.Columns), 0]), d = at([0, Number(h.Rows)]);
+      return r[0] > o[0] && Math.abs(r[1] - o[1]) < .5 && d[1] > o[1] && Math.abs(d[0] - o[0]) < .5;
+    } catch (_) { return false; }
+  }
   function install() {
     const proto = window.cornerstoneTools?.state?.tools?.ImageOverlayViewer?.toolClass?.prototype;
     if (!proto || proto[MARK]) return;
     if (typeof proto._getCachedStat !== 'function' || typeof proto._renderOverlay !== 'function') return;
     const read = proto._getCachedStat, draw = proto._renderOverlay;
+    // The plane ready to draw, or null; one per bulk data element, kept for the page.
+    const planes = new WeakMap();
+    async function plane(tool, imageId, overlayMetadata, o, color) {
+      if (!allowed(imageId, o)) return null;
+      let bytes = null;
+      try { bytes = await kinFetchBulk(o.pixelData.BulkDataURI); } catch (_) { return null; }
+      const need = Math.ceil(o.rows * o.columns / 8);
+      // One frame of the mask: the element is padded to an even length; more than that is another frame.
+      if (!bytes || bytes.length < need || bytes.length > need + 1) return null;
+      try {
+        const answer = await read.call(tool, imageId, { ...overlayMetadata, overlays: [{ ...o, pixelData: { Value: bytes.slice(0, need).buffer } }] }, color);
+        const drawn = answer?.overlays?.[0];
+        return drawn?.dataUrl ? { ...drawn, kinImageId: imageId, kinBulk: true } : null;
+      } catch (_) { return null; }
+    }
     proto._getCachedStat = async function (imageId, overlayMetadata, color) {
-      const overlays = Array.isArray(overlayMetadata?.overlays) ? overlayMetadata.overlays : [];
-      await Promise.all(overlays.map(async overlay => {
-        const data = overlay?.pixelData;
-        if (!data || overlay.dataUrl || data.Value || Array.isArray(data) || data.retrieveBulkData || data.InlineBinary ||
-            typeof data.BulkDataURI !== 'string') return;
-        let bytes = null;
-        try { bytes = await kinFetchBulk(data.BulkDataURI); } catch (_) { bytes = null; }
-        if (bytes?.length) data.Value = bytes.slice().buffer;
+      const list = Array.isArray(overlayMetadata?.overlays) ? overlayMetadata.overlays : [];
+      if (!list.some(bulkOnly)) return read.call(this, imageId, overlayMetadata, color);
+      const drawn = await Promise.all(list.map(o => {
+        if (!bulkOnly(o)) return Promise.resolve(read.call(this, imageId, { ...overlayMetadata, overlays: [o] }, color))
+          .then(answer => answer?.overlays?.[0] || null, () => null);
+        if (!planes.has(o.pixelData)) planes.set(o.pixelData, plane(this, imageId, overlayMetadata, o, color));
+        return planes.get(o.pixelData);
       }));
-      const answer = await read.call(this, imageId, overlayMetadata, color);
-      if (Array.isArray(answer?.overlays)) {
-        answer.overlays = answer.overlays.filter(Boolean);
-        for (const overlay of answer.overlays) overlay.kinImageId = imageId;
-      }
-      return answer;
+      return { ...overlayMetadata, overlays: drawn.filter(Boolean) };
     };
     proto._renderOverlay = function (enabledElement, svgDrawingHelper, overlay) {
-      if (!overlay || this.mode === 'Disabled') return false;
-      if (overlay.kinImageId && overlay.kinImageId !== this.getReferencedImageId(enabledElement?.viewport)) return false;
+      if (overlay?.kinBulk) {
+        const viewport = enabledElement?.viewport, id = this.getReferencedImageId(viewport);
+        if (this.mode === 'Disabled' || overlay.kinImageId !== id || !upright(viewport, id)) return false;
+      }
       return draw.call(this, enabledElement, svgDrawingHelper, overlay);
     };
     proto[MARK] = true;
   }
   return { id: 'kin.overlay-planes', preRegistration() { install(); }, onModeEnter() { install(); } };
 }
-
 // The viewer's route `/` (see customizationService below): leave the viewer app for the sign-in entry, which sends a signed-in
 // account to its home screen (KinAuth.home: the worklist, or the clinician screen) and anyone else to sign in.
 function kinViewerRootToWorklist() {

@@ -891,7 +891,9 @@ function kinCreateViewerHistory() {
         if ((resume === true || autoMarks()) && parked && parked.subject === subject) {
           for (const e of entries.values()) removeAnnotation(e);
           entries.clear(); list.replaceChildren();
-          for (const e of clone(parked.entries)) { e.rehydrate = !e.head; entries.set(e.id, e); row(e); }
+          // Held work taken up: its saved items count as saved when this read began, so one deleted meanwhile in another
+          // window is judged by this answer like any other.
+          for (const e of clone(parked.entries)) { e.rehydrate = !e.head; if (e.head) savedAtStart.add(e.head.id); entries.set(e.id, e); row(e); }
           recovery.delete(scope);
         }
         for (const head of heads) {
@@ -1151,13 +1153,21 @@ function kinCreateViewerHistory() {
     // unit function gives for the outline's box (a calibration's name included, e.g. "mm User", "cm US Region"). The box is
     // taken as the tool takes it — around the outline on the screen, its corners read back on the image (an ultrasound region
     // is chosen by them) — or, with no cell showing that image, around the outline on the image. The pinned tool's own
-    // number sums distances on the screen (it changes with the zoom) and its unit is never read; null when the length cannot
-    // be told, so the words never give a screen number or "undefined".
+    // number sums distances on the screen (it changes with the zoom) and its unit is never read; null when the length is not
+    // known to be physical (below), and the tool's own words are kept.
+    // Only where the length is known to be physical: a stack image whose own header gives a pixel spacing (two positive
+    // numbers), with no ultrasound region calibration, measured by the tool in mm with a positive scale. Anything else (no
+    // spacing — the viewer then stands in a spacing of 1 —, an ultrasound region, a reformatted plane) is left to the tool's
+    // own words, as before.
+    const physical = v => Array.isArray(v) && v.length >= 2 && v.slice(0, 2).every(x => Number.isFinite(Number(x)) && Number(x) > 0);
     function freehandLength(tool, data, target) {
       try {
         const image = tool.getTargetImageData(target), points = data.contour?.polyline;
         if (!image?.imageData || !Array.isArray(points) || points.length < 2) return null;
         const u = cs.utilities, id = target.startsWith('imageId:') && target.slice(8);
+        const header = id && cs.metaData.get('instance', id);
+        if (!header || !(physical(header.PixelSpacing) || physical(header.ImagerPixelSpacing)) || given(header.SequenceOfUltrasoundRegions) ||
+            image.hasPixelSpacing !== true || image.calibration?.sequenceOfUltrasoundRegions) return null;
         let v = null;
         try {
           v = id ? (u.getViewportsWithImageURI?.(u.imageIdToURI(id)) || []).find(x => x.getCurrentImageId?.() === id)
@@ -1175,7 +1185,8 @@ function kinCreateViewerHistory() {
         for (let i = 1; i < points.length; i++) distance += along(points[i - 1], points[i]);
         if (data.contour.closed) distance += along(points[points.length - 1], points[0]);
         const value = distance / scale;
-        return typeof unit === 'string' && Number.isFinite(value) && value > 0 ? { value, unit } : null;
+        return typeof unit === 'string' && /^mm( |$)/.test(unit) && Number.isFinite(scale) && scale > 0 && Number.isFinite(value) && value > 0
+          ? { value, unit } : null;
       } catch (_) { return null; }
     }
     function configureMeasurements(group) {
@@ -1210,15 +1221,16 @@ function kinCreateViewerHistory() {
       const restores = [() => { roi.configuration = previous; }];
       // Freehand ROI's words: the pinned tool gave a closed outline's perimeter and an open line's length as a distance on the
       // screen with the unit "undefined". Its own text is made from a copy whose perimeter or length is the outline's length on
-      // the image in its unit (freehandLength), the other lines (area, values) as they are; when that length cannot be told the
-      // line is left out. The measurement itself (and so what is saved or exported) is not touched.
+      // the image in its unit (freehandLength), the other lines (area, values) as they are; where that length is not known to be
+      // physical the tool's own words are given unchanged. The measurement itself (and so what is saved or exported) is not touched.
       const freehand = group.getToolInstance('PlanarFreehandROI'), freehandConfig = freehand?.configuration;
       if (typeof freehandConfig?.getTextLines === 'function') {
         freehand.configuration = { ...freehandConfig, getTextLines(data, target) {
           const s = data?.cachedStats?.[target];
           if (!s || typeof s.unit === 'string') return freehandConfig.getTextLines(data, target);
           const found = freehandLength(freehand, data, target), key = data.contour?.closed ? 'perimeter' : 'length';
-          const words = { ...s, perimeter: undefined, length: undefined, unit: found?.unit ?? '', [key]: found?.value };
+          if (!found) return freehandConfig.getTextLines(data, target);
+          const words = { ...s, perimeter: undefined, length: undefined, unit: found.unit, [key]: found.value };
           return freehandConfig.getTextLines({ ...data, cachedStats: { ...data.cachedStats, [target]: words } }, target);
         } };
         restores.push(() => { freehand.configuration = freehandConfig; });

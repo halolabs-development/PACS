@@ -1,9 +1,12 @@
 """Overlay planes, Freehand ROI units and the saved-item count on the served viewer with owned synthetic images.
 
-A CT whose images carry a DICOM overlay plane (60xx): Image Overlay draws it, turning the button off takes it away and on
-again draws it without an error, and a Length on that image is drawn with its value. A palette colour image (its colour
-tables sent as bulk data) is drawn without an error. A Freehand ROI says its perimeter (closed outline) and its length (open line)
-in mm, never "undefined". The history panel's "n개 저장 항목" follows a Save and a Delete at once."""
+A CT with square pixels whose image carries a DICOM overlay plane (60xx): Image Overlay draws its two bars on the screen where
+they are in the image, turning the button off takes them away and on again draws them without an error, and a Length on that
+image is drawn with its value. An overlay plane on pixels that are not square, or whose bits come back short, is left out and
+the cell's Length is still drawn. A palette colour image (its colour tables sent as bulk data) is drawn without an error. A
+Freehand ROI on an image with pixel spacing says its perimeter (closed outline) and length (open line) as the outline's length
+in mm at any zoom; on an image without pixel spacing it keeps its own words. The history panel's "n개 저장 항목" follows a Save
+and a Delete at once."""
 import json
 import os
 import re
@@ -28,19 +31,17 @@ EVIDENCE = Path(os.environ.get('KIN_EVIDENCE_DIR', 'tests/e2e/artifacts/viewer-o
 CELL = '''() => services.cornerstoneViewportService.getCornerstoneViewport(services.viewportGridService.getActiveViewportId())'''
 SVG_TEXT = '''() => [...(%s)().element.querySelectorAll('svg.svg-layer text')].map(t => t.textContent).join(' | ')''' % CELL
 OVERLAY_IMAGES = '''() => (%s)().element.querySelectorAll('svg.svg-layer image').length''' % CELL
-# The drawn overlay: its bitmap sampled inside each bar (image columns 40-71 and 184-215, rows 64-191), between them and above
-# them, and its box on the screen beside the image's own box (the overlay covers the whole image from its first pixel).
-OVERLAY_BITMAP = '''async () => { const v = (%s)(), node = v.element.querySelector('svg.svg-layer image');
-  const img = new Image(); img.src = node.getAttribute('href') || node.getAttribute('xlink:href'); await img.decode();
+# Points of the image (column, row) where they are on the page, for sampling the composited screen: inside each bar of the
+# synthetic overlay (columns 40-71 and 184-215, rows 64-191), between them, and below them.
+BARS, PLAIN = [[56, 128], [200, 128]], [[128, 128], [56, 230]]
+ON_PAGE = '''points => { const v = (%s)(), id = v.getCurrentImageId(), box = v.element.querySelector('canvas').getBoundingClientRect();
+  return points.map(p => { const c = v.worldToCanvas(cornerstone.utilities.imageToWorldCoords(id, [p[0] + .5, p[1] + .5]));
+    return [c[0] + box.x, c[1] + box.y]; }); }''' % CELL
+# The page's own screenshot (what the reader sees, overlay and image together), decoded and sampled at page points.
+SAMPLE = '''async ([png, points]) => { const img = new Image(); img.src = 'data:image/png;base64,' + png; await img.decode();
   const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
-  const g = c.getContext('2d'); g.drawImage(img, 0, 0); const on = (x, y) => g.getImageData(x, y, 1, 1).data[3] > 0;
-  const id = v.getCurrentImageId(), px = cornerstone.metaData.get('imagePixelModule', id);
-  const a = v.worldToCanvas(cornerstone.utilities.imageToWorldCoords(id, [0, 0]));
-  const b = v.worldToCanvas(cornerstone.utilities.imageToWorldCoords(id, [px.columns, px.rows]));
-  const box = name => Number(node.getAttribute(name));
-  return { size: [img.naturalWidth, img.naturalHeight], bars: [on(56, 128), on(200, 128)], between: [on(128, 128), on(56, 20)],
-    svg: [box('x'), box('y'), box('width'), box('height')], image: [a[0], a[1], b[0] - a[0], b[1] - a[1]] }; }''' % CELL
-# Each Freehand ROI's outline length on the image (world distances along its points, closed back to the first point).
+  const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+  return points.map(([x, y]) => Array.from(g.getImageData(Math.round(x), Math.round(y), 1, 1).data.slice(0, 3))); }'''# Each Freehand ROI's outline length on the image (world distances along its points, closed back to the first point).
 OUTLINES = '''() => cornerstoneTools.annotation.state.getAllAnnotations().filter(a => a.metadata.toolName === 'PlanarFreehandROI').map(a => {
   const p = a.data.contour.polyline, d = (u, w) => Math.hypot(u[0] - w[0], u[1] - w[1], u[2] - w[2]); let n = 0;
   for (let i = 1; i < p.length; i++) n += d(p[i - 1], p[i]); if (a.data.contour.closed) n += d(p[p.length - 1], p[0]);
@@ -78,12 +79,13 @@ class ViewerOverlayUnitsE2E(ViewerToolsE2E):
         self.assertEqual(self.stack.request('PATCH', '/studies/' + fixture.uid, 'jmryu', {'ss': 'Verified'}).status, 200)
         return fixture
 
-    def plain_ct(self):
-        return synthetic_ct(self.stack, 'OVUNITS-' + uuid.uuid4().hex[:12], 'CT', '20261118', [0, 0, 0], [1, 0, 0, 0, 1, 0], [.7, 1.3], slices=1)
+    def plain_ct(self, spacing=(.7, 1.3)):
+        return synthetic_ct(self.stack, 'OVUNITS-' + uuid.uuid4().hex[:12], 'CT', '20261118', [0, 0, 0], [1, 0, 0, 0, 1, 0], list(spacing), slices=1)
 
-    def overlay_ct(self):
-        """The plain CT with an overlay plane in group 6000: two filled bars, one bit per pixel, sent as OverlayData."""
-        source = self.plain_ct(); ds = self.source_dicom(source)
+    def overlay_ct(self, spacing=(.7, .7)):
+        """A CT (square pixels unless asked) with an overlay plane in group 6000: two filled bars, one bit per pixel, sent as
+        OverlayData."""
+        source = self.plain_ct(spacing); ds = self.source_dicom(source)
         rows, columns = int(ds.Rows), int(ds.Columns)
         bits = np.zeros((rows, columns), dtype=np.uint8)
         bits[64:192, 40:72] = 1; bits[64:192, 184:216] = 1
@@ -130,37 +132,70 @@ class ViewerOverlayUnitsE2E(ViewerToolsE2E):
     def canvas_box(self, page):
         return page.evaluate('''() => (%s)().element.querySelector('canvas').getBoundingClientRect().toJSON()''' % CELL)
 
+    def screen(self, page, points):
+        """The composited screen's colour at image points (the page's own screenshot)."""
+        import base64
+        return page.evaluate(SAMPLE, [base64.b64encode(page.screenshot()).decode(), page.evaluate(ON_PAGE, points)])
+
+    def pink(self, rgb):
+        # The overlay's fill (255, 127, 127) over the image; the synthetic CT itself is grey.
+        return rgb[0] - rgb[1] > 60 and abs(rgb[1] - rgb[2]) < 30
+
+    def length_on(self, page):
+        select_image_tool(page, 'Length')
+        box = self.canvas_box(page)
+        x, y = box['x'] + box['width'] * .3, box['y'] + box['height'] * .8
+        self.drag_path(page, [(x, y), (x + 90, y)])
+        page.wait_for_function('() => / mm/.test((%s)())' % SVG_TEXT)
+
+    def bulk_requests(self, page):
+        return page.evaluate('''() => performance.getEntriesByType('resource').filter(e => e.name.includes('/bulk/60003000'))
+            .map(e => [e.name, e.responseStatus])''')
+
+    def open_answering(self, fixture, answer):
+        """The viewer opened with the archive's overlay bits answered by `answer` (a Playwright route handler)."""
+        work = self.login('doctor'); page = work.context.new_page()
+        page.route('**/bulk/60003000', answer)
+        page.goto(self.stack.proxy + '/ohif/viewer?StudyInstanceUIDs=' + fixture.uid)
+        page.wait_for_function('''uid => window.cornerstone?.getRenderingEngines().some(engine => engine.id !== '_thumbnails' &&
+            engine.getViewports().some(v => v.type === 'stack' && v.viewportStatus === cornerstone.Enums.ViewportStatus.RENDERED &&
+            cornerstone.metaData.get('instance', v.getCurrentImageId())?.StudyInstanceUID === uid))''', arg=fixture.uid, timeout=60000)
+        box = self.canvas_box(page)
+        page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+        self.open_measurement_tools(page)
+        expect(page.locator('#kin-viewer-history [role=status]')).to_contain_text('개 저장 항목')
+        return work, page
+
     def test_overlay_units_01_an_overlay_plane_is_drawn_turned_off_and_on_and_measured_on(self):
         fixture = self.overlay_ct()
         bulk = []
         work, page = self.open_tools_viewer(fixture)
         errors = self.watched(page)
         try:
-            # On (the viewer's default): the overlay plane is drawn, its bytes read once from this origin.
+            # On (the viewer's default): the two bars on the screen where they are in the image, its bits read from this origin.
             page.wait_for_function('n => (%s)() >= n' % OVERLAY_IMAGES, arg=1, timeout=30000)
-            bulk = page.evaluate('''() => performance.getEntriesByType('resource').filter(e => e.name.includes('/bulk/60003000'))
-                .map(e => [e.name, e.responseStatus])''')
+            page.wait_for_timeout(300)
+            bulk = self.bulk_requests(page)
             self.assertTrue(bulk and all(status == 200 for _, status in bulk), bulk)
             self.assertTrue(all(url.startswith(self.stack.proxy + '/dicom-web/studies/' + fixture.uid + '/') for url, _ in bulk), bulk)
+            seen = self.screen(page, BARS + PLAIN)
             page.screenshot(path=str(EVIDENCE / 'overlay-on.png'))
-            drawn = page.evaluate(OVERLAY_BITMAP)
-            self.assertEqual([drawn['size'], drawn['bars'], drawn['between']], [[256, 256], [True, True], [False, False]], drawn)
-            for got, want in zip(drawn['svg'], drawn['image']):
-                self.assertAlmostEqual(got, want, delta=1.5, msg=drawn)
-            # Off: gone. On again: drawn again, without a failure.
+            self.assertEqual([self.pink(rgb) for rgb in seen], [True, True, False, False], seen)
+            # Off: gone from the screen. On again: back, without a failure.
             select_image_tool(page, 'Image Overlay')
             page.wait_for_function('() => (%s)() === 0' % OVERLAY_IMAGES)
+            page.wait_for_timeout(300)
+            seen = self.screen(page, BARS)
             page.screenshot(path=str(EVIDENCE / 'overlay-off.png'))
+            self.assertEqual([self.pink(rgb) for rgb in seen], [False, False], seen)
             select_image_tool(page, 'Image Overlay')
             page.wait_for_function('n => (%s)() >= n' % OVERLAY_IMAGES, arg=1)
             page.wait_for_timeout(800)
             self.no_failure_notice(page)
+            seen = self.screen(page, BARS + PLAIN)
+            self.assertEqual([self.pink(rgb) for rgb in seen], [True, True, False, False], seen)
             # A Length on that image: drawn, with its value in mm.
-            select_image_tool(page, 'Length')
-            box = self.canvas_box(page)
-            x, y = box['x'] + box['width'] * .3, box['y'] + box['height'] * .8
-            self.drag_path(page, [(x, y), (x + 90, y)])
-            page.wait_for_function('() => / mm/.test((%s)())' % SVG_TEXT)
+            self.length_on(page)
             self.assertGreaterEqual(page.evaluate(OVERLAY_IMAGES), 1)
             page.screenshot(path=str(EVIDENCE / 'overlay-length.png'))
             self.no_failure_notice(page)
@@ -170,6 +205,53 @@ class ViewerOverlayUnitsE2E(ViewerToolsE2E):
                 'text': page.evaluate(SVG_TEXT)}, indent=2), encoding='utf-8')
             page.close(); work.close()
 
+    def test_overlay_units_01b_an_overlay_plane_on_non_square_pixels_is_left_out_and_the_length_still_drawn(self):
+        # 0.7 x 1.3 mm pixels: the pinned tool would put the mask in the wrong place, so it is not drawn (and not read); the
+        # cell is not broken by it — its Length is drawn with its value, no failure.
+        fixture = self.overlay_ct((.7, 1.3))
+        work, page = self.open_tools_viewer(fixture)
+        errors = self.watched(page)
+        try:
+            page.wait_for_timeout(2000)
+            self.assertEqual(0, page.evaluate(OVERLAY_IMAGES))
+            self.assertEqual([], self.bulk_requests(page))
+            self.length_on(page)
+            select_image_tool(page, 'Image Overlay'); select_image_tool(page, 'Image Overlay')
+            page.wait_for_timeout(800)
+            self.assertEqual(0, page.evaluate(OVERLAY_IMAGES))
+            self.assertRegex(page.evaluate(SVG_TEXT), r'[0-9.]+ mm')
+            page.screenshot(path=str(EVIDENCE / 'overlay-non-square.png'))
+            self.no_failure_notice(page)
+            self.assertEqual([], [e for e in errors if 'overlay' in e.lower() or "reading 'x'" in e], errors)
+        finally:
+            page.close(); work.close()
+
+    def test_overlay_units_01c_an_overlay_plane_whose_answer_is_short_is_left_out_and_the_length_still_drawn(self):
+        # The archive answers with fewer bytes than one frame of the mask: not drawn, read once, the Length still drawn.
+        fixture = self.overlay_ct()
+        answers = []
+        def short(route):
+            answers.append(route.request.url)
+            body = b'--B1\r\nContent-Type: application/octet-stream\r\n\r\n' + bytes(10) + b'\r\n--B1--\r\n'
+            route.fulfill(status=200, body=body, headers={'Content-Type': 'multipart/related; type="application/octet-stream"; boundary=B1'})
+        work, page = self.open_answering(fixture, short)
+        errors = self.watched(page)
+        try:
+            deadline = time.monotonic() + 20
+            while not answers and time.monotonic() < deadline:
+                page.wait_for_timeout(250)
+            self.assertTrue(answers, 'the overlay bits were asked for')
+            page.wait_for_timeout(1000)
+            self.assertEqual(0, page.evaluate(OVERLAY_IMAGES))
+            self.length_on(page)
+            page.wait_for_timeout(800)
+            self.assertEqual(len(answers), 1, 'read once, not again on later draws')
+            self.assertRegex(page.evaluate(SVG_TEXT), r'[0-9.]+ mm')
+            page.screenshot(path=str(EVIDENCE / 'overlay-short.png'))
+            self.no_failure_notice(page)
+            self.assertEqual([], [e for e in errors if 'overlay' in e.lower() or "reading 'x'" in e or 'RangeError' in e], errors)
+        finally:
+            page.close(); work.close()
     def test_overlay_units_02_a_palette_colour_image_is_drawn_without_an_error(self):
         # Its colour tables are bulk data too; only overlay planes are read by the viewer's own bulk read, so this image is read
         # as before. The pinned viewer draws such an image without its colours (its palette reader cannot use tables sent as an
@@ -242,6 +324,31 @@ class ViewerOverlayUnitsE2E(ViewerToolsE2E):
         finally:
             page.close(); work.close()
 
+    def test_overlay_units_03b_freehand_roi_on_an_image_without_pixel_spacing_keeps_its_own_words(self):
+        # No pixel spacing in the image's header (the viewer stands in a spacing of 1): a length in mm would be made up, so the
+        # tool's own words are kept as on the current viewer.
+        source = self.plain_ct(); ds = self.source_dicom(source)
+        for name in ['PixelSpacing', 'ImagerPixelSpacing']:
+            if name in ds:
+                delattr(ds, name)
+        fixture = self.store(ds, source, 'OVUNITS no spacing')
+        work, page = self.open_tools_viewer(fixture)
+        errors = self.watched(page)
+        try:
+            select_image_tool(page, 'Freehand ROI')
+            box = self.canvas_box(page)
+            sx, sy = box['x'] + box['width'] * .2, box['y'] + box['height'] * .7
+            self.drag_path(page, [(sx + i * 12, sy - (i % 2) * 6) for i in range(15)])
+            page.wait_for_function('''() => cornerstoneTools.annotation.state.getAllAnnotations().some(a => a.metadata.toolName === 'PlanarFreehandROI'
+                && a.data.contour && !a.data.contour.closed && Object.values(a.data.cachedStats || {}).some(s => Number.isFinite(s.length)))''')
+            page.wait_for_timeout(500)
+            words = [w.strip() for w in page.evaluate(SVG_TEXT).split(' | ') if w.strip()]
+            page.screenshot(path=str(EVIDENCE / 'freehand-no-spacing.png'))
+            self.assertFalse([w for w in words if re.fullmatch(r'[0-9.]+ mm.*', w)], words)
+            self.assertTrue([w for w in words if re.fullmatch(r'[0-9.]+ undefined', w)], ('the tool\'s own words, as before', words))
+            self.assertEqual([], errors)
+        finally:
+            page.close(); work.close()
     def test_overlay_units_04_the_saved_item_count_follows_save_and_delete(self):
         fixture = self.plain_ct()
         work, page = self.open_tools_viewer(fixture)
