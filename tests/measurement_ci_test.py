@@ -146,6 +146,7 @@ REGRESSION_SUITES = {
         tests/clinical_context_dom_test.py
         tests/critical_result_recipient_dom_test.py
         tests/critical_result_sender_dom_test.py
+        tests/critical_result_connection_dom_test.py
     """.split(),
     'admin-session-dom': """
         tests/audit_page_dom_test.py
@@ -181,6 +182,7 @@ REGRESSION_SUITES = {
         tests/viewer_stack_restore_dom_test.py
     """.split(),
     'proxy-contracts': """
+        tests/proxy_app_cache_test.py
         tests/proxy_grant_log_test.py
     """.split(),
     'measurements': """
@@ -1699,7 +1701,7 @@ class MeasurementCiTests(unittest.TestCase):
         self.assertIn('tests/e2e/artifacts/critical-result-screens-ci', paths)
 
     def test_series_split_profile_is_exact_and_dispatch_only(self):
-        # FB-052: three cases of one declared class in one unit, reached only through the Focused integration dispatch.
+        # FB-052: five cases of one declared class in one unit, reached only through the Focused integration dispatch.
         import ast
         profile = ci.PROFILES['series-split']
         suite, class_name, unit = 'e2e/test_series_split.py', 'SeriesSplitE2E', 'ci-series-split'
@@ -1722,7 +1724,9 @@ class MeasurementCiTests(unittest.TestCase):
         declared = [node.name for node in cls.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')]
         self.assertEqual(declared, ['test_series_split_01_b_values_in_one_series',
                                     'test_series_split_02_temporal_positions_in_one_series',
-                                    'test_series_split_03_series_that_arrived_apart_stay_as_they_are'])
+                                    'test_series_split_03_series_that_arrived_apart_stay_as_they_are',
+                                    'test_series_split_04_time_points_in_one_enhanced_multi_frame_file',
+                                    'test_series_split_05_enhanced_multi_frame_file_without_time_points_stays_one_set'])
         self.assertNotIn('series-split', self.catalog.text(automatic_only=True))
         dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
         self.assertIn('- series-split', dispatch)
@@ -3181,11 +3185,15 @@ class MeasurementCiTests(unittest.TestCase):
             root=Path(folder);stage=root/'private';out=root/'public'
             stage.mkdir();out.mkdir()
             (stage/'volume-rendering.png').write_bytes(b'\x89PNG\r\n\x1a\nsynthetic')
-            # The declared set is both PNGs: one alone is missing evidence, not a pass.
+            # The declared set is all three PNGs: one alone is missing evidence, not a pass.
             with self.assertRaisesRegex(RuntimeError,'Unexpected or missing'):
                 ci.publish_vr_evidence(stage,out)
             self.assertEqual(list(out.iterdir()),[])
             (stage/'vr-access-covered.png').write_bytes(b'\x89PNG\r\n\x1a\ncovered')
+            with self.assertRaisesRegex(RuntimeError,'Unexpected or missing'):
+                ci.publish_vr_evidence(stage,out)
+            self.assertEqual(list(out.iterdir()),[])
+            (stage/'vr-bone-removed.png').write_bytes(b'\x89PNG\r\n\x1a\nremoved')
             (stage/'raw.txt').write_text('Authorization: Bearer raw-secret',encoding='utf-8')
             with self.assertRaisesRegex(RuntimeError,'Unexpected or missing'):
                 ci.publish_vr_evidence(stage,out)
@@ -3201,6 +3209,8 @@ class MeasurementCiTests(unittest.TestCase):
                              b'\x89PNG\r\n\x1a\nsynthetic')
             self.assertEqual((out/'vr-access-covered.png').read_bytes(),
                              b'\x89PNG\r\n\x1a\ncovered')
+            self.assertEqual((out/'vr-bone-removed.png').read_bytes(),
+                             b'\x89PNG\r\n\x1a\nremoved')
 
     def test_inner_deadline_leaves_time_to_terminate_descendants(self):
         for remaining, expected in [(1000,540), (100,65), (36,1)]:

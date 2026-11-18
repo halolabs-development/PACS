@@ -334,9 +334,14 @@
           // Controls that wrap to more lines than the column holds overflow it with
           // the list already at 0 px; part of that first grow goes to the overflow, so
           // grow again by what the list still misses (row 0 was cut at 768x1024 once
-          // the Selected toolbar wrapped to a third line).
-          const still = need - grid.getBoundingClientRect().height;
-          if (short > 0 && still > 0.5) left.style.minHeight = left.getBoundingClientRect().height + Math.ceil(still) + "px";
+          // the Selected toolbar wrapped to a third line). An overflow larger than the
+          // first grow takes all of it and part of the second, so grow until the list
+          // has its row (a few passes at most: each one after the overflow is filled
+          // goes to the list whole).
+          for (let pass = 0, still = need - grid.getBoundingClientRect().height; short > 0 && still > 0.5 && pass < 4;
+            pass++, still = need - grid.getBoundingClientRect().height) {
+            left.style.minHeight = left.getBoundingClientRect().height + Math.ceil(still) + "px";
+          }
         } else {
           listFloor = need + (narrow && rows.length > 1 ? rowHeight(1) : 0);
           keepListFloor();
@@ -626,6 +631,8 @@
      *   orders.unmatch(uid, reason)             and alert): { ok, message?, reloaded } where reloaded resolves true only
      *                                           when the list and the Order List were both read again
      *   orders.identity(uid)                    a copy of the study's last server-read DICOM tags (a preview), or null
+     *   orders.ownWard(uid)                     the own ward of the study as the server last sent it (a Match shows the
+     *                                           ward of the order over it and an Unmatch shows it again), or null
      */
     function copyOf(value) {
       if (value === undefined || value === null) return value ?? null;
@@ -765,6 +772,7 @@
             return { ok: r.ok, message: r.message ?? null, reloaded: r.reloaded ?? Promise.resolve(false) };
           },
           identity: uid => studyIdentityModel ? copyOf(KinStudyIdentity.tags(studyIdentityModel, uid)) : null,
+          ownWard: uid => { const a = appState[uid]; return typeof a?.ward === 'string' ? a.ward : null; },
         }),
         // The DICOM request tags the Clinical Context panel shows now ({ uid, tags: [{ keyword, value }] } or null).
         clinicalTags: () => { try { return clinicalContext?.tags?.() ?? null; } catch (_) { return null; } },

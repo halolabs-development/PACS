@@ -295,7 +295,9 @@ window.KinReadingFindings = function (app) {
     if (choice.kind === 'window') {
       const popup = popups.get(choice.index), index = choice.index;
       return { kind: 'window', index, label: '영상 창 ' + (index + 1), probe: () => windowView(popup, index), invoke: target => invokeIn(popup, target),
-        restore: request => restoreIn(popup, request), env: () => envOf(() => popup), focus: () => guarded(() => popup.focus()) };
+        restore: request => restoreIn(popup, request), env: () => envOf(() => popup),
+        // The viewer window is detached from this list, so focus() alone leaves it behind; the shared rule raises it.
+        focus: () => guarded(() => window.KinExamScope ? window.KinExamScope.raiseWindow(popup) : popup.focus()) };
     }
     return choice.reason === 'unattached' ? { ...choice, slot: slots.get(choice.index) || null } : choice;
   }

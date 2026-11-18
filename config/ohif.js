@@ -178,6 +178,33 @@
     }
     return [...sources.values()].map(({whole,...entry})=>{if(whole)delete entry.examRefs;return entry;});
   }
+  // The Preload state of one listed exam, from the queue entry of every original its scope holds (`entryOf(studyUid)`).
+  // An entry counts for this exam only when it was fetched for this exam or for the whole original (no exam reference):
+  // the second part of a split exam is not ready because the first part's series are. One original failed or evicted
+  // decides the exam; an original the queue does not hold for it leaves the exam without a state (null), never Ready;
+  // otherwise the least advanced original decides and Downloading shows the mean progress of all originals.
+  const preloadRank = ['Failed','Evicted',null,'Downloading','Queued','Ready'];
+  const sameReference = (a, b) => a?.reportUid===b.reportUid && (a.groupId??null)===(b.groupId??null) && (a.part??null)===(b.part??null);
+  function preloadState(row, entryOf) {
+    // A row whose exam the reader cannot read whole (examUnavailable) cannot be opened: no state, like viewerInput refuses it.
+    if(row?.examUnavailable)return null;
+    let scope=null;
+    try{scope=read(row);}catch(_){return null;}
+    if(!scope)return null;
+    const own=row?.examScope?reference(scope):null;
+    const entries=scope.sources.map(source=>{
+      const entry=entryOf(source.studyUid);
+      if(!entry||typeof entry.status!=='string'||!entry.status)return null;
+      const refs=Array.isArray(entry.examRefs)&&entry.examRefs.length?entry.examRefs:null;
+      return !refs||own&&refs.some(ref=>sameReference(ref,own))?entry:null;
+    });
+    const rank=entry=>{const at=preloadRank.indexOf(entry?entry.status:null);return at<0?0:at;};
+    const decides=entries.reduce((worst,entry)=>rank(entry)<rank(worst)?entry:worst,entries[0]);
+    if(!decides)return null;
+    if(entries.length===1||decides.status!=='Downloading')return decides;
+    const part=entry=>entry.status==='Ready'?1:entry.status==='Downloading'&&entry.total>0?Math.min(1,entry.done/entry.total):0;
+    return {...decides,done:entries.reduce((sum,entry)=>sum+part(entry),0),total:entries.length};
+  }
   function changes(owner, receive) {
     if(typeof root.BroadcastChannel!=='function')return {send(){},close(){}};
     const channel=new root.BroadcastChannel('kin-exam-changes');
@@ -209,7 +236,32 @@
       dialog.addEventListener('close',()=>{dialog.remove();resolve(result);},{once:true});dialog.append(go,close);document.body.append(dialog);dialog.showModal();
     });
   }
-  const api={read,key,stamp,screenScope,screenStamp,originalLabel,sourceRequest,seriesValue,seriesRequest,attachmentTarget,attachmentHeaders,storedReport,allows,listedExam,metadata,projections,values,originals,viewingSelection,originalInput,readingScope,readingStamp,fetch:fetchScope,dicom,viewerInput,viewerUrl,viewerReference,reference,roleRows,snapshotReference,jobSnapshot,snapshotUrl,preload,chooseOriginals,changes};
+  /**
+   * Bring a viewer window this page already holds to the front. Every page that opens a viewer loads this module, so
+   * the list and the clinician page share this one rule. Chrome honours popup.focus() only when it comes from the
+   * window's opener, and a viewer window is detached from its opener (opener = null) on purpose, so focus() alone leaves
+   * the viewer behind the list. Looking the window up again by its own current name raises it without loading anything
+   * (an empty address is not a navigation, and a navigation already under way continues) - but only while the click or
+   * key press that asked for it is still active; outside one the browser raises nothing and focus() stays the only try.
+   * The lookup carries noopener: a plain lookup gives the window this page as its opener again in the browser, and the
+   * window's next document would start with it (setting opener = null afterwards does not undo that). With noopener the
+   * browser answers null, so the window is looked up by a name only it carries for that one call - another window of
+   * the same name (slot names repeat per list) is never raised - and its own name, which may be the session hand-over
+   * name of a document still loading, is put back before anything else runs. Answers whether the browser was asked.
+   */
+  function raiseWindow(popup,from=root){
+    try{popup.focus();}catch(_){}
+    let name;
+    try{if(popup.closed)return false;name=popup.name;}catch(_){return false;}
+    if(typeof name!=='string')return false;
+    if(from.navigator?.userActivation?.isActive!==true)return false;
+    const probe='kin-raise:'+(from.crypto?.randomUUID?.()||String(Math.random()).slice(2));
+    try{popup.name=probe;}catch(_){return false;}
+    try{from.open('',probe,'noopener');}catch(_){return false;}
+    finally{try{popup.name=name;}catch(_){}}
+    return true;
+  }
+  const api={raiseWindow,read,key,stamp,screenScope,screenStamp,originalLabel,sourceRequest,seriesValue,seriesRequest,attachmentTarget,attachmentHeaders,storedReport,allows,listedExam,metadata,projections,values,originals,viewingSelection,originalInput,readingScope,readingStamp,fetch:fetchScope,dicom,viewerInput,viewerUrl,viewerReference,reference,roleRows,snapshotReference,jobSnapshot,snapshotUrl,preload,preloadState,chooseOriginals,changes};
   root.KinExamScope=api;
   if(typeof module==='object'&&module.exports)module.exports=api;
 })(globalThis);
@@ -1198,7 +1250,7 @@ async function kinViewerNavigateTo(env, target) {
   const identity = { seriesUid: target.seriesUid, sopUid: target.sopUid, frame: target.frame };
   let sets;
   try {
-    sets = env.services.displaySetService.getActiveDisplaySets().filter(d => d.StudyInstanceUID === scope && d.SeriesInstanceUID === target.seriesUid && (d.images || d.instances || []).some(i => i.SOPInstanceUID === target.sopUid));
+    sets = env.services.displaySetService.getActiveDisplaySets().filter(d => d.StudyInstanceUID === scope && d.SeriesInstanceUID === target.seriesUid && kinSeriesSplitHolds(d, target.sopUid, target.frame));
   } catch (_) { return refusal('tool-missing'); }
   if (sets.length !== 1) return refusal('series-missing');
   const viewportId = env.services.viewportGridService.getActiveViewportId();
@@ -1526,9 +1578,75 @@ function kinCreateViewerHistory() {
       if (image?.Modality === 'MG' && kind === 'length' || image?.Modality === 'CT' && image.SOPClassUID === '1.2.840.10008.5.1.4.1.1.2' && Number(image.NumberOfFrames || 1) === 1) return null;
       return kinPlanarGeometry(image, reference(imageId)?.frame);
     }
+    // ── Screen calibration (the Calibration tool) ──
+    // An image whose original gives no pixel spacing at all (a scanned film, an outside CR) has no mm of its own. The reader may
+    // set one on this screen with the Calibration tool; a Length is then measured with it and shown as such ('화면 보정 · 저장 안
+    // 됨'). It is not the original's spacing, so such a mark never becomes a saved measurement: no row, no save, no automatic
+    // save, no SR or export value, no unsaved work. Its mark carries kinScreenCalibration from the press that made it, so it stays
+    // out of all of those even when the calibration is no longer found. This is the one place that answers "may a Length be
+    // measured here with a screen calibration"; an image with spacing of its own keeps its rules (a calibration over it is refused
+    // as before), and so do Angle and Ellipse.
+    const SCREEN_LABEL = '화면 보정 · 저장 안 됨';
+    const NO_SPACING = '원본에 픽셀 간격이 없습니다 · Calibration으로 화면 보정 후 잴 수 있습니다';
+    const SCREEN_SR = '화면 보정 측정은 저장되지 않아 SR에 넣지 않습니다.';
+    // Any tag that gives the original a spacing of its own, valid or not (a spacing tag that cannot be read is refused by the
+    // original's own rules, never measured with a screen calibration): the image is not one for a screen calibration.
+    const given = v => v !== undefined && v !== null && v !== '' && !(Array.isArray(v) && !v.length);
+    const groupSpacing = groups => Array.isArray(groups) && groups.some(group =>
+      (Array.isArray(group?.PixelMeasuresSequence) ? group.PixelMeasuresSequence : []).some(item => given(item?.PixelSpacing)) ||
+      (Array.isArray(group?.FramePixelDataPropertiesSequence) ? group.FramePixelDataPropertiesSequence : []).some(item => given(item?.ImagerPixelSpacing)));
+    const noSpacing = (imageId, kind) => {
+      if (kind !== 'length' || !imageId) return false;
+      const image = cs.metaData.get('instance', imageId);
+      return !!image && !['PixelSpacing', 'ImagerPixelSpacing', 'SequenceOfUltrasoundRegions'].some(key => given(image[key])) &&
+        !groupSpacing(image.SharedFunctionalGroupsSequence) && !groupSpacing(image.PerFrameFunctionalGroupsSequence);
+    };
+    // The calibration the reader set on this image: the calibrated-spacing metadata the Calibration tool writes (kept for the
+    // image id while the viewer is open); the cached image's only when there is no such metadata. A region (ultrasound), an
+    // "uncalibrated" answer or a scale that is not a positive number is no screen calibration.
+    function screenCalibration(imageId, kind) {
+      if (!noSpacing(imageId, kind)) return null;
+      let found;
+      try { found = cs.metaData.get('calibratedPixelSpacing', imageId); } catch (_) { found = undefined; }
+      if (found === undefined || found === null) found = cs.cache.getImage(imageId)?.calibration;
+      const scale = Number(found?.scale);
+      const usable = !!found && typeof found === 'object' && !!found.type && !['Region', 'Uncalibrated'].includes(found.type) &&
+        !found.sequenceOfUltrasoundRegions && Number.isFinite(scale) && scale > 0;
+      return usable ? { label: SCREEN_LABEL } : null;
+    }
+    const screenData = data => data?.kinScreenCalibration === true;
+    // A screen-calibrated Length's words: its value in the calibrated unit the tool computed for its current points, or why not.
+    function screenText(data, target) {
+      const id = target.startsWith('imageId:') && target.slice(8);
+      if (!id) return ['지원하지 않는 측정 평면입니다'];
+      if (!screenCalibration(id, 'length')) return [NO_SPACING];
+      if (!freshStats(data, target)) return ['재확인 필요: 현재 좌표로 계산되지 않았습니다'];
+      const s = data.cachedStats[target], value = s?.length;
+      if (!Number.isFinite(value) || value <= 0 || typeof s.unit === 'string' && /^px/i.test(s.unit)) return ['측정을 완료하세요'];
+      return [(Math.round(value * 10) / 10).toFixed(1) + ' mm', SCREEN_LABEL];
+    }
+    // A reason the reader must see where the press was: over the cell, for a few seconds (the panel may be folded away).
+    const cellNotes = new Set();
+    function cellNote(element, text) {
+      if (!text || typeof element?.getBoundingClientRect !== 'function') return;
+      const box = element.getBoundingClientRect();
+      let note = [...cellNotes].find(n => n.kinCell === element);
+      if (!note) {
+        note = document.createElement('div'); note.dataset.kinCellNote = ''; note.setAttribute('role', 'status'); note.kinCell = element;
+        cellNotes.add(note);
+      }
+      note.textContent = text;
+      note.style.cssText = 'position:fixed;z-index:41;left:' + Math.round(box.left + box.width / 2) + 'px;top:' + Math.round(box.top + 8) +
+        'px;transform:translateX(-50%);max-width:' + Math.max(160, Math.round(box.width - 16)) + 'px;background:#3a1d1d;color:#ffd7d7;' +
+        'border:1px solid #ff6b6b;border-radius:6px;padding:4px 8px;font:13px sans-serif;pointer-events:none';
+      document.body.append(note);
+      clearTimeout(note.kinTimer);
+      note.kinTimer = setTimeout(() => { note.remove(); cellNotes.delete(note); }, 4000);
+    }
     function measurementReason(imageId, kind, points) {
       const image = cs.metaData.get('instance', imageId);
       const finite = n => (typeof n === 'number' || typeof n === 'string' && n.trim() !== '') && Number.isFinite(Number(n));
+      if (noSpacing(imageId, kind)) return screenCalibration(imageId, kind) ? '' : NO_SPACING;
       try {
         const geometry = planar(imageId, kind);
         if (geometry) {
@@ -1599,6 +1717,8 @@ function kinCreateViewerHistory() {
     }
     function sample(a) {
       if (!a || a.invalidated) return null;
+      // A screen calibration is no value to save, send or export (the one rule above).
+      if (screenData(a.data) || screenCalibration(a.metadata.referencedImageId, kinds[a.metadata.toolName])) return null;
       const kind = kinds[a.metadata.toolName], target = 'imageId:' + a.metadata.referencedImageId, s = a.data.cachedStats?.[target];
       if (!freshStats(a.data, target) || measurementReason(a.metadata.referencedImageId, kind, a.data.handles.points)) return null;
       const geometry = planar(a.metadata.referencedImageId, kind);
@@ -1648,6 +1768,11 @@ function kinCreateViewerHistory() {
     }
     function projectMeasurement(m) {
       if (!numericMeasurement(m)) return m;
+      const mark = ct.annotation.state.getAnnotation(m.uid);
+      // The measurement list and its CSV show a screen-calibrated Length as the cell does, and export no number for it.
+      if (screenData(mark?.data)) return { ...m, data: null,
+        displayText: { primary: screenText(mark.data, 'imageId:' + mark.metadata.referencedImageId), secondary: [] },
+        getReport: () => ({ columns: ['Verification'], values: [SCREEN_LABEL] }) };
       const checked = checkedMeasurement(m);
       return { ...m, ...(checked || { data: null,
         displayText: { primary: ['재확인 필요'], secondary: [] } }),
@@ -1697,6 +1822,7 @@ function kinCreateViewerHistory() {
       const reason = e?.head && e.head.referenceStatus !== 'verified' ? '원본 다시 확인을 누르세요.' :
         !a ? '현재 영상의 측정 표식을 찾을 수 없습니다.' :
         !a.data?.handles?.points ? '측정 위치가 완성되지 않았습니다. 측정을 마치세요.' :
+        screenData(a.data) ? SCREEN_SR :
         measurementReason(a.metadata.referencedImageId, kinds[a.metadata.toolName], a.data.handles.points) ||
         (a.data.kinUnverified ? '저장 당시 측정과 다릅니다. 편집 후 다시 측정하세요.' :
           !sample(a) ? '현재 위치의 계산이 완료되지 않았습니다. 측정을 마치고 다시 시도하세요.' : '현재 영상의 측정 변환을 확인할 수 없습니다.');
@@ -2485,9 +2611,11 @@ function kinCreateViewerHistory() {
           let reason = id ? measurementReason(id, kind) : '원본 프레임을 선택하세요';
           if (!reason && kind === 'ellipse' && !planar(id, kind) && v.getCamera().viewUp.filter(n => Math.abs(n) > 1e-6).length !== 1)
             reason = '사선·회전 ROI는 아직 지원하지 않습니다';
-          if (reason) { status.textContent = reason; return refused; }
+          if (reason) { status.textContent = reason; cellNote(event.detail.element, reason); return refused; }
+          const screen = !!screenCalibration(id, kind);
           const annotation = add.call(this, event);
           if (!annotation || annotation === refused) return refused;
+          if (screen) annotation.data.kinScreenCalibration = true;
           trackMeasurement(annotation);
           drawing.set(annotation.annotationUID, { tool: this, element: event.detail.element, annotation, kind });
           return annotation;
@@ -2495,6 +2623,7 @@ function kinCreateViewerHistory() {
         tool.configuration = { ...config, getTextLines(data, target) {
           // Only its first point so far: nothing to measure, and no reason to give for a shape that is not there yet.
           if (samePoint(data.handles?.points)) return ['측정을 완료하세요'];
+          if (screenData(data)) return screenText(data, target);
           const id = target.startsWith('imageId:') && target.slice(8);
           const reason = data.kinUnverified ? '재확인 필요: 저장 당시 측정과 다릅니다' :
             id ? measurementReason(id, kind, data.handles.points) : '지원하지 않는 측정 평면입니다';
@@ -2995,6 +3124,8 @@ function kinCreateViewerHistory() {
       if (suspended || recovery.has(scope) || !writer()) return;
       for (const a of ct.annotation.state.getAllAnnotations()) {
         const kind = kinds[a.metadata.toolName];
+        // A screen-calibrated Length is no saved measurement: no row, so no Save, automatic save or closing send.
+        if (screenData(a.data)) continue;
         const count = kind === 'angle' ? 3 : kind === 'ellipse' ? 4 : ['text', 'memo', 'spine', 'volume'].includes(kind) ? 1 : lineMark(kind) ? linePoints(a.data?.kinBaseline) : ORTHO[kind] || 2;
         if (!kind || !matches(reference(a.metadata.referencedImageId), { ...reference(a.metadata.referencedImageId) }) || !Array.isArray(a.data.handles?.points) || a.data.handles.points.length !== count || (kind === 'arrow' || measureMark(kind)) && typeof a.data.text !== 'string') continue;
         let e = annotations.get(a.annotationUID);
@@ -3019,7 +3150,7 @@ function kinCreateViewerHistory() {
     const onFocus = () => { lastAuth = 0; tried = 0; };
     // A document that is not a confirmed writer has no mark to save, so an unlocked native mark is not unsaved work there.
     const jobGuard = () => recovery.size > 0 || [...entries.values()].some(x => hasWork(x) || x.busy) || writer() &&
-      ct.annotation.state.getAllAnnotations().some(a => kinds[a.metadata.toolName] && !unfinished(a) && !ct.annotation.locking.isAnnotationLocked(a.annotationUID));
+      ct.annotation.state.getAllAnnotations().some(a => kinds[a.metadata.toolName] && !unfinished(a) && !screenData(a.data) && !ct.annotation.locking.isAnnotationLocked(a.annotationUID));
     // Finding drafts (including ones held for another study) count for the whole-viewer guards:
     // worklist Next Study, window reuse/close, cell merge/hanging protocol and page unload. They are
     // deliberately not part of the mark-only kinViewerHistoryHasUnsaved used by Job save/restore,
@@ -3076,7 +3207,7 @@ function kinCreateViewerHistory() {
     const drawingInputs = [['pointerdown', leaveByPress], ['wheel', leaveByWheel], ['keydown', leaveByKey],
       ['pointerdown', pressed], ['pointerup', released], ['pointercancel', released], ['blur', lost]];
     for (const [name, listener] of drawingInputs) window.addEventListener(name, listener, { capture: true, passive: true });
-    stop = () => { end(true); clearInterval(timer); channel?.close(); document.removeEventListener(stackEvent, onImage, true); subscriptions.forEach(s => s.unsubscribe());  window.removeEventListener('focus', onFocus); window.removeEventListener('beforeunload', beforeUnload); window.removeEventListener('pagehide', pageHide); for (const [name, listener] of drawingEvents) cs.eventTarget.removeEventListener(name, listener); for (const [name, listener] of drawingInputs) window.removeEventListener(name, listener, true); for (const restores of configured.values()) restores.reverse().forEach(restore => restore()); configured.clear(); panel.remove(); };
+    stop = () => { end(true); clearInterval(timer); channel?.close(); document.removeEventListener(stackEvent, onImage, true); subscriptions.forEach(s => s.unsubscribe());  window.removeEventListener('focus', onFocus); window.removeEventListener('beforeunload', beforeUnload); window.removeEventListener('pagehide', pageHide); for (const [name, listener] of drawingEvents) cs.eventTarget.removeEventListener(name, listener); for (const [name, listener] of drawingInputs) window.removeEventListener(name, listener, true); for (const restores of configured.values()) restores.reverse().forEach(restore => restore()); configured.clear(); for (const note of cellNotes) { clearTimeout(note.kinTimer); note.remove(); } cellNotes.clear(); panel.remove(); };
     // 판정이 바뀌는 순간(이 패널의 /me가 아니어도): writer면 막는 동안 적어 둔 도구 모드·도구막대를 되돌리고, 그 밖이면 작성
     // 경로를 닫고 이 패널이 그리지 않은 표식을 지운다. read-only는 clinicianBoundary를 지난다. 다른 판정은 그려 둔 행의 컨트롤만
     // 다시 그린다. (Astra S5-U2b-X2-R-001 F01) 어느 확장의 /me든 refused가 되면 이 패널도 끝나고, 끝난 패널은 그 뒤 공유 판정이
@@ -3408,8 +3539,15 @@ function kinCreateViewerLayout() {
       return JSON.stringify([state.layout, state.activeViewportId, ordered(state).map(v => [v.viewportId, v.x, v.y, v.width, v.height, v.displaySetInstanceUIDs])]);
     };
     function reference(d) {
-      return { study: d.StudyInstanceUID, series: d.SeriesInstanceUID, handler: d.SOPClassHandlerId || '',
-        sops: [...new Set((d.images || [d.instance || d]).map(i => i.SOPInstanceUID).filter(Boolean))].sort() };
+      const images = d.images || [d.instance || d];
+      const ref = { study: d.StudyInstanceUID, series: d.SeriesInstanceUID, handler: d.SOPClassHandlerId || '',
+        sops: [...new Set(images.map(i => i.SOPInstanceUID).filter(Boolean))].sort() };
+      // A set made of some frames of one multi-frame file (series-split.js) is told apart from its sibling sets by those
+      // frames; every other set keeps the reference it always had.
+      // Without the split-series rule loaded no set is split, and no reference names frames.
+      const frames = images.map(i => typeof kinSeriesSplitFrame === 'function' ? kinSeriesSplitFrame(i) : null);
+      if (frames.some(f => f !== null)) ref.frames = images.map((i, k) => i.SOPInstanceUID + ':' + frames[k]).sort();
+      return ref;
     }
     function resolve(cell) {
       if (!cell) return null;
@@ -5168,18 +5306,89 @@ function kinCreateImageLoadStatus() {
     // shows nothing. The guard uses no hooks and gives the native viewport back as a child, so it mounts and unmounts as the
     // answer changes.
     const overlayElement = (type, props) => ({ $$typeof: Symbol.for('react.element'), type, key: null, ref: null, props, _owner: null });
+    // The same viewports read their own file when the cell opens and show 'Loading SEG...' until that read succeeds. A
+    // failed read (the page policy refuses the pinned SEG reader's generated code, or the file does not come) is only
+    // logged by the pinned viewer, so the cell loaded for good. Each failure is kept per display set while a cell shows
+    // it; that cell then says it instead of the native viewport, and the viewer's own error notice gets the same sentence.
+    // Opening the series again after the cell showed something else reads it again.
+    const overlayModalities = ['SEG', 'RTSTRUCT'], overlayFailures = new Map(), overlayLoads = new Map();
+    const overlayFailure = (modality, error) => {
+      const message = String(error?.message ?? error ?? '');
+      const head = '이 ' + modality + '를 표시하지 못했습니다. ';
+      if (error?.name === 'EvalError' || /content security policy|unsafe-eval/i.test(message))
+        return head + '이 뷰어는 아직 ' + modality + ' 표시를 지원하지 않습니다. 원본 영상 시리즈는 그대로 열어 볼 수 있습니다.';
+      const status = error?.status;
+      const http = Number.isInteger(status) && status > 0 ? ' (HTTP ' + status + ')' : '';
+      return head + modality + ' 파일을 읽지 못했습니다' + http + '. 시리즈를 다시 열어 보고, 계속되면 관리자에게 문의하세요.';
+    };
+    const shownOverlays = () => {
+      const shown = new Set();
+      for (const viewport of services.viewportGridService?.getState?.()?.viewports?.values?.() || [])
+        for (const id of viewport?.displaySetInstanceUIDs || []) shown.add(id);
+      return shown;
+    };
+    // The grid draws its cells again when a cell's state is set; the ready flag is set to what it already is.
+    const redrawOverlay = id => {
+      if (!active) return;
+      const grid = services.viewportGridService;
+      for (const [viewportId, viewport] of grid?.getState?.()?.viewports || [])
+        if (viewport?.displaySetInstanceUIDs?.includes(id)) grid.setViewportIsReady?.(viewportId, Boolean(viewport.isReady));
+    };
+    // Only the latest read of a set decides (two cells can start reads that overlap), and only while a cell shows the set:
+    // a read that ends after its cell moved on must not keep the next opening from reading again.
+    // (The pinned RTSTRUCT reader does not reject on a failed read, so this reaches structure sets only when it does.)
+    const watchOverlayLoads = () => {
+      for (const set of services.displaySetService?.getActiveDisplaySets?.() || []) {
+        if (!overlayModalities.includes(set?.Modality) || typeof set.load !== 'function' || overlayLoads.has(set)) continue;
+        const original = set.load, id = set.displaySetInstanceUID;
+        const watched = { original, load: null, attempt: 0 };
+        // After the pinned caller has handled the result, so its own continuation is not cut by the redraw.
+        const redrawLater = () => setTimeout(() => redrawOverlay(id), 0);
+        watched.load = async function (...args) {
+          const attempt = ++watched.attempt;
+          const latest = () => active && attempt === watched.attempt;
+          try {
+            const result = await original.apply(this, args);
+            if (latest() && overlayFailures.delete(id)) redrawLater();
+            return result;
+          } catch (error) {
+            if (!active) throw error;
+            const text = overlayFailure(set.Modality, error);
+            if (latest() && shownOverlays().has(id)) { overlayFailures.set(id, text); redrawLater(); }
+            throw new Error(text, { cause: error });
+          }
+        };
+        overlayLoads.set(set, watched);
+        set.load = watched.load;
+      }
+    };
+    const forgetHiddenOverlays = () => {
+      if (!overlayFailures.size) return;
+      const shown = shownOverlays();
+      for (const id of [...overlayFailures.keys()]) if (!shown.has(id)) overlayFailures.delete(id);
+    };
     const overlayGuards = [['SEG', '@ohif/extension-cornerstone-dicom-seg.viewportModule.dicom-seg'],
       ['RTSTRUCT', '@ohif/extension-cornerstone-dicom-rt.viewportModule.dicom-rt']].map(([modality, id]) => {
       const entry = extensions?.getModuleEntry?.(id), native = entry?.component;
       const sourceless = set => set?.Modality === modality && !(typeof set.referencedDisplaySetInstanceUID === 'string' &&
         set.referencedDisplaySetInstanceUID && services.displaySetService?.getDisplaySetByUID(set.referencedDisplaySetInstanceUID));
-      const guarded = props => active && props?.displaySets?.some(sourceless)
-        ? overlayElement('p', { role: 'alert', style: { margin: 12, padding: 12, background: '#161c25', color: '#ffb4a8', whiteSpace: 'normal' },
-          children: '현재 검사에서 이 ' + modality + '의 원본 시리즈를 찾을 수 없어 표시하지 않았습니다. 원본 시리즈가 있는 검사에서 여세요.' })
-        : overlayElement(native, props);
+      const failed = set => set?.Modality === modality && overlayFailures.get(set.displaySetInstanceUID);
+      // One notice per cell: a segmentation without its source says that, whatever its read did.
+      const notice = props => !active ? null : props?.displaySets?.some(sourceless)
+        ? '현재 검사에서 이 ' + modality + '의 원본 시리즈를 찾을 수 없어 표시하지 않았습니다. 원본 시리즈가 있는 검사에서 여세요.'
+        : props?.displaySets?.map(failed).find(Boolean) || null;
+      const guarded = props => {
+        const text = notice(props);
+        return text ? overlayElement('p', { role: 'alert', style: { margin: 12, padding: 12, background: '#161c25', color: '#ffb4a8', whiteSpace: 'normal' },
+          children: text }) : overlayElement(native, props);
+      };
       if (typeof native === 'function') entry.component = guarded;
       return { entry, native, guarded };
     });
+    watchOverlayLoads();
+    const displaySetEvents = services.displaySetService?.EVENTS || {};
+    const displaySetSubscriptions = [displaySetEvents.DISPLAY_SETS_ADDED, displaySetEvents.DISPLAY_SETS_CHANGED].filter(Boolean)
+      .map(name => services.displaySetService.subscribe?.(name, watchOverlayLoads)).filter(Boolean);
     const imageUrl = imageId => {
       try { return new URL(imageId.replace(/^wadors:/, ''), window.location.href).href; } catch (_) { return null; }
     };
@@ -5239,22 +5448,67 @@ function kinCreateImageLoadStatus() {
       return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
     };
     window.fetch = observedFetch;
+    // The cells that show this image now. A cell can read its image again where it is a stack of the pinned viewer:
+    // its public setImageIdIndex does nothing for the index already shown, the internal one loads that index again.
+    const showing = imageId => {
+      const views = [];
+      for (const engine of core.getRenderingEngines()) for (const view of engine.getViewports())
+        if (view.element?.isConnected && view.getCurrentImageId?.() === imageId) views.push(view);
+      return views;
+    };
+    // Not on the CPU fallback: its pinned completion check compares only the index, so a stack replaced while the read is
+    // out could show the old image. The GPU path checks the image itself.
+    // A series placed in the cell from the series strip has that load's own notice and Retry (viewer-series-strip.js), which
+    // reloads the stack: while that notice is in the cell, it is the cell's one Retry.
+    const rereads = view => typeof view._setImageIdIndex === 'function' && typeof view.getCurrentImageIdIndex === 'function' &&
+      !view.useCPURendering && !(view.element.closest('[data-cy="viewport-pane"]') || view.element).querySelector('.kin-series-load');
+    // Retry reads the failed image again, once per press, in every cell that shows it at the press. The pinned cache
+    // drops a failed load, so this is a new request; its own failure or load event decides what the cell shows next.
+    function retry(imageId) {
+      if (!active) return;
+      const text = failures.get(imageId), views = showing(imageId).filter(rereads);
+      if (!text || !views.length) { refresh(); return; }
+      failures.delete(imageId); announced.delete(imageId); responses.delete(imageUrl(imageId));
+      refresh();
+      // A read that ends without a failure or load event (it threw) shows the reason again rather than an empty cell.
+      const back = () => {
+        if (active && !failures.has(imageId) && !core.cache.getImage(imageId)) { failures.set(imageId, text); refresh(); }
+      };
+      for (const view of views) {
+        try { Promise.resolve(view._setImageIdIndex(view.getCurrentImageIdIndex())).catch(back); } catch (_) { back(); }
+      }
+    }
     function refresh() {
       if (!failures.size && !notices.size) return;
       const current = new Map();
       for (const engine of core.getRenderingEngines()) for (const view of engine.getViewports()) {
-        const text = failures.get(view.getCurrentImageId?.());
-        if (text && view.element?.isConnected) current.set(view.element, text);
+        const imageId = view.getCurrentImageId?.(), text = failures.get(imageId);
+        if (text && view.element?.isConnected) current.set(view.element, { imageId, text, retry: rereads(view) });
       }
       for (const [element, notice] of notices) if (!current.has(element)) { notice.remove(); notices.delete(element); }
-      for (const [element, text] of current) {
+      for (const [element, { imageId, text, retry: canRetry }] of current) {
         let notice = notices.get(element);
         if (!notice) {
           notice = document.createElement('p'); notice.setAttribute('role', 'alert');
           notice.style.cssText = 'position:absolute;inset:12px 12px auto;margin:0;padding:12px;background:#161c25;color:#ffb4a8;z-index:10;pointer-events:none;white-space:normal';
+          notice.append(document.createElement('span'));
           notices.set(element, notice); element.append(notice);
         }
-        if (notice.textContent !== text) notice.textContent = text;
+        const [line] = notice.children;
+        if (line.textContent !== text) line.textContent = text;
+        let button = notice.querySelector('button');
+        if (canRetry && button?.dataset.imageId !== imageId) {
+          button?.remove();
+          // The notice lets presses through to the image; only its button takes them, and they stop there: the cell's
+          // own tools listen on the cell and must not start a mark or a drag from a press on Retry.
+          button = document.createElement('button'); button.type = 'button'; button.textContent = 'Retry';
+          button.dataset.imageId = imageId;
+          button.style.cssText = 'pointer-events:auto;margin-left:8px';
+          for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick', 'contextmenu', 'touchstart', 'touchend'])
+            button.addEventListener(type, event => event.stopPropagation());
+          button.addEventListener('click', () => retry(imageId));
+          notice.append(button);
+        } else if (!canRetry) button?.remove();
       }
     }
     const failed = event => {
@@ -5318,12 +5572,16 @@ function kinCreateImageLoadStatus() {
     // React can mount the viewport after the load has already failed. Observe that mount, without a polling timer.
     const observer = new MutationObserver(refresh);
     observer.observe(document.body, { childList: true, subtree: true });
-    const subscription = services.viewportGridService.subscribe(services.viewportGridService.EVENTS.GRID_STATE_CHANGED, refresh);
+    const gridChanged = () => { forgetHiddenOverlays(); refresh(); };
+    const subscription = services.viewportGridService.subscribe(services.viewportGridService.EVENTS.GRID_STATE_CHANGED, gridChanged);
     stop = () => {
       active = false;
       if (window.fetch === observedFetch) window.fetch = originalFetch;
       if (workerManager?.executeTask === checkedDecode) workerManager.executeTask = executeTask;
       for (const { entry, native, guarded } of overlayGuards) if (entry?.component === guarded) entry.component = native;
+      for (const [set, { original, load }] of overlayLoads) if (set.load === load) set.load = original;
+      for (const displaySetSubscription of displaySetSubscriptions) displaySetSubscription.unsubscribe?.();
+      overlayLoads.clear(); overlayFailures.clear();
       sof3.stop();
       core.eventTarget.removeEventListener(events.IMAGE_LOAD_FAILED, failed);
       if (events.IMAGE_LOAD_ERROR) core.eventTarget.removeEventListener(events.IMAGE_LOAD_ERROR, failed);
@@ -5903,33 +6161,160 @@ function kinCreateMammographyHanging() {
   }, onModeEnter: mount, onModeExit() { stop?.(); stop = null; } };
 }
 
-// One single-frame MR series that the viewer itself marks as several time points (b values, temporal positions,
-// trigger/echo times or echo numbers at the same positions) opens as one display set per time point, so each can
-// sit in its own cell and Image Slice Sync can match positions. The grouping is the viewer's own 4D detection;
-// anything it does not recognise, and every other series, keeps the display sets the stack handler made.
-function kinSeriesSplitModel(sets, rebuild) {
-  const LABELS = { DiffusionBValue: 'b', TemporalPositionIdentifier: 'Phase ', EchoTime: 'TE ', EchoNumber: 'Echo ', TriggerTime: 'TT ' };
-  if (!Array.isArray(sets) || sets.length !== 1) return sets;
-  const set = sets[0], images = set?.images, info = set?.dynamicVolumeInfo, groups = info?.timePoints;
-  if (set.Modality !== 'MR' || set.isDynamicVolume !== true || set.isMultiFrame === true || !Array.isArray(images) ||
-      !Array.isArray(groups) || groups.length < 2) return sets;
-  // Every group must name images of this set, each image exactly once, and the groups must be equally long.
-  const byId = new Map(images.map(image => [image?.imageId, image])), seen = new Set();
-  if (byId.size !== images.length || byId.has(undefined)) return sets;
-  const size = Array.isArray(groups[0]) ? groups[0].length : 0;
-  const members = [];
-  for (const group of groups) {
-    if (!Array.isArray(group) || group.length !== size || size < 1) return sets;
-    const list = [];
-    for (const id of group) {
-      if (!byId.has(id) || seen.has(id)) return sets;
-      seen.add(id); list.push(byId.get(id));
+// One MR series that holds several time points at the same positions (b values, temporal positions, trigger or echo
+// times, echo numbers) opens as one display set per time point, so each can sit in its own cell and Image Slice Sync
+// can match positions. A classic series (one file per image) is grouped by the viewer's own 4D detection; an enhanced
+// series (one multi-frame file) by the same rule applied to its frames' functional groups. Anything not recognised,
+// and every other series, keeps the display sets the stack handler made.
+// The frame an entry of a split part stands for (an own property, so the stored multi-frame instance it is made from,
+// which the viewer marks with the frame it last read, never counts as one frame).
+function kinSeriesSplitFrame(image) {
+  const frame = image && Object.prototype.hasOwnProperty.call(image, 'kinSplitFrame') ? image.kinSplitFrame : null;
+  return Number.isSafeInteger(frame) && frame >= 1 ? frame : null;
+}
+// Whether a display set shows the image `sop` frame `frame`: a whole instance shows all its frames, a split part only
+// the frames it was given. Every place that looks for the display set of a saved or cited image asks this.
+function kinSeriesSplitHolds(set, sop, frame) {
+  const images = Array.isArray(set?.images) ? set.images : Array.isArray(set?.instances) ? set.instances : [];
+  return images.some(image => {
+    if (image?.SOPInstanceUID !== sop) return false;
+    const own = kinSeriesSplitFrame(image);
+    return own === null || own === frame;
+  });
+}
+// The identity of one entry of a display set: its SOP Instance UID, and for an entry of a split part also its frame
+// (several entries of one part share a SOP). Checks that an entry appears once compare these keys.
+function kinSeriesSplitKey(image) {
+  const frame = kinSeriesSplitFrame(image);
+  return frame === null ? image?.SOPInstanceUID : image?.SOPInstanceUID + ':' + frame;
+}
+// Whether a display set is a split part of one multi-frame file: an ordinary stack of single frames, not a multi-frame
+// image to fold or unfold, even though each frame's metadata still names the whole file's frame count.
+function kinSeriesSplitPart(set) {
+  const images = Array.isArray(set?.images) ? set.images : [];
+  return images.length > 0 && images.every(image => kinSeriesSplitFrame(image) !== null);
+}
+
+// The frames of one enhanced (multi-frame) MR instance grouped by time point, on the viewer's 4D rule
+// (cornerstone splitImageIdsBy4DTags): frames grouped by position, the same count (more than one) at every position,
+// then the first value, in the viewer's order, that differs between the frames of each position and forms the same
+// set at every position; a frame without the value counts as 0; groups in ascending value order. The value of a frame
+// is read from its per-frame functional group, else the shared one (DICOM PS3.3 C.7.6.16.2.2 Frame Content: Temporal
+// Position Index; C.8.13.5.9 MR Diffusion: Diffusion b-value; C.7.6.16.2.7 Cardiac Synchronization: Nominal Cardiac
+// Trigger Delay Time; C.8.13.5.4 MR Echo: Effective Echo Time; C.7.6.16.2.3/4 Plane Position/Orientation). The stored
+// instance's own top-level values are not used: the viewer overwrites them with whichever frame it read last.
+// Returns null when the frames do not form such groups.
+function kinEnhancedTimePoints(instance) {
+  const TAGS = [['FrameContentSequence', 'TemporalPositionIndex'], ['MRDiffusionSequence', 'DiffusionBValue'],
+    ['CardiacSynchronizationSequence', 'NominalCardiacTriggerDelayTime'], ['MREchoSequence', 'EffectiveEchoTime']];
+  const count = Number(instance?.NumberOfFrames), perFrame = instance?.PerFrameFunctionalGroupsSequence;
+  if (!Number.isSafeInteger(count) || count < 2 || !Array.isArray(perFrame) || perFrame.length !== count) return null;
+  const item = sequence => Array.isArray(sequence) ? sequence[0] : sequence && typeof sequence === 'object' ? sequence : undefined;
+  const shared = item(instance.SharedFunctionalGroupsSequence);
+  const read = (frame, group, key) => {
+    for (const groups of [perFrame[frame], shared]) {
+      const found = item(groups?.[group]);
+      if (found && found[key] !== undefined) return found[key];
     }
-    members.push(list);
+    return undefined;
+  };
+  const vector = (value, length) => {
+    const list = Array.isArray(value) ? value.map(Number) : [];
+    return list.length === length && list.every(Number.isFinite) ? list : null;
+  };
+  const frames = [];
+  for (let k = 0; k < count; k++) {
+    const position = vector(read(k, 'PlanePositionSequence', 'ImagePositionPatient'), 3);
+    if (!position) return null;
+    frames.push({ frame: k + 1, position, orientation: vector(read(k, 'PlaneOrientationSequence', 'ImageOrientationPatient'), 6) });
   }
-  if (seen.size !== images.length) return sets;
+  const positions = new Map();
+  for (const f of frames) {
+    const key = f.position.join(',');
+    if (!positions.has(key)) positions.set(key, []);
+    positions.get(key).push(f);
+  }
+  const atPosition = [...positions.values()], size = atPosition[0].length;
+  if (size < 2 || !atPosition.every(list => list.length === size)) return null;
+  for (const [group, tag] of TAGS) {
+    const of = f => { const raw = read(f.frame - 1, group, tag); const n = parseFloat(Array.isArray(raw) ? raw[0] : raw); return { raw, n: n || 0 }; };
+    let first = null, valid = true;
+    for (const list of atPosition) {
+      const values = new Set(list.map(f => of(f).n));
+      if (values.size !== list.length || first && (first.size !== values.size || ![...first].every(v => values.has(v)))) { valid = false; break; }
+      first = first || values;
+    }
+    if (!valid) continue;
+    const groups = new Map();
+    for (const f of frames) {
+      const { raw, n } = of(f);
+      if (!groups.has(n)) groups.set(n, []);
+      groups.get(n).push({ ...f, tag, value: raw });
+    }
+    return { splittingTag: tag, timePoints: [...groups.keys()].sort((a, b) => a - b).map(n => groups.get(n)) };
+  }
+  return null;
+}
+
+// `frameImageId(instance, frame)` is the data source's own imageId for one frame of an instance; without it an enhanced
+// series is not split.
+function kinSeriesSplitModel(sets, rebuild, frameImageId) {
+  // The label of a part names the value it was split by (a classic image's element, or an enhanced frame's).
+  const LABELS = { DiffusionBValue: 'b', TemporalPositionIdentifier: 'Phase ', TemporalPositionIndex: 'Phase ',
+    EchoTime: 'TE ', EffectiveEchoTime: 'TE ', EchoNumber: 'Echo ', TriggerTime: 'TT ', NominalCardiacTriggerDelayTime: 'TT ' };
+  if (!Array.isArray(sets) || sets.length !== 1) return sets;
+  const set = sets[0], images = set?.images;
+  if (set?.Modality !== 'MR' || !Array.isArray(images)) return sets;
+  let groups, tag;
+  if (set.isMultiFrame === true) {
+    // One enhanced file: each frame becomes an entry of its own, the instance's values with that frame's functional
+    // groups laid over them (shared, then per-frame, as the viewer's own frame metadata does), named by the data
+    // source's imageId of that frame.
+    if (images.length !== 1 || typeof frameImageId !== 'function') return sets;
+    const instance = images[0], found = kinEnhancedTimePoints(instance);
+    if (!found || found.timePoints.length < 2) return sets;
+    tag = found.splittingTag;
+    const items = groups => Object.values(groups || {}).map(v => Array.isArray(v) ? v[0] : v).filter(v => v && typeof v === 'object');
+    const sharedItems = items(Array.isArray(instance.SharedFunctionalGroupsSequence) ? instance.SharedFunctionalGroupsSequence[0] : null);
+    try {
+      groups = found.timePoints.map(list => list.map(f => {
+        const imageId = frameImageId(instance, f.frame);
+        if (typeof imageId !== 'string' || !imageId) throw new Error('no frame image');
+        const entry = Object.assign({}, instance);
+        for (const values of [...sharedItems, ...items(instance.PerFrameFunctionalGroupsSequence[f.frame - 1])]) Object.assign(entry, values);
+        Object.assign(entry, { imageId, NumberOfFrames: 1, frameNumber: f.frame, kinSplitFrame: f.frame,
+          ImagePositionPatient: f.position, ...(f.orientation ? { ImageOrientationPatient: f.orientation } : {}) });
+        // The label reads the value the frame really carries; a frame without it shows no value, as a classic image.
+        entry[tag] = f.value;
+        return entry;
+      }));
+    } catch (_) {
+      return sets;
+    }
+    // Number of Frames is an IS value: a string such as "8" counts as 8.
+    if (new Set(groups.flat().map(e => e.imageId)).size !== Number(instance.NumberOfFrames)) return sets;
+  } else {
+    const info = set.dynamicVolumeInfo, timePoints = info?.timePoints;
+    if (set.isDynamicVolume !== true || !Array.isArray(timePoints) || timePoints.length < 2) return sets;
+    // Every group must name images of this set, each image exactly once, and the groups must be equally long.
+    const byId = new Map(images.map(image => [image?.imageId, image])), seen = new Set();
+    if (byId.size !== images.length || byId.has(undefined)) return sets;
+    const size = Array.isArray(timePoints[0]) ? timePoints[0].length : 0;
+    groups = [];
+    for (const group of timePoints) {
+      if (!Array.isArray(group) || group.length !== size || size < 1) return sets;
+      const list = [];
+      for (const id of group) {
+        if (!byId.has(id) || seen.has(id)) return sets;
+        seen.add(id); list.push(byId.get(id));
+      }
+      groups.push(list);
+    }
+    if (seen.size !== images.length) return sets;
+    tag = info.splittingTag;
+  }
   const value = instance => {
-    const tag = info.splittingTag, prefix = LABELS[tag];
+    const prefix = LABELS[tag];
     if (prefix === undefined || !instance) return '';
     let raw = instance[tag];
     if (raw === undefined && tag === 'EchoNumber') raw = instance.EchoNumbers;
@@ -5940,10 +6325,12 @@ function kinSeriesSplitModel(sets, rebuild) {
   const description = String(set.SeriesDescription ?? '').trim();
   const split = [];
   try {
-    for (let k = 0; k < members.length; k++) {
-      const made = rebuild(members[k].slice());
-      if (!Array.isArray(made) || made.length !== 1 || made[0]?.images?.length !== members[k].length) return sets;
-      const part = made[0], label = `${k + 1}/${members.length}` + value(part.images[0]);
+    for (let k = 0; k < groups.length; k++) {
+      const made = rebuild(groups[k].slice());
+      if (!Array.isArray(made) || made.length !== 1 || made[0]?.images?.length !== groups[k].length) return sets;
+      // A rebuilt part shows exactly the entries it was given (an enhanced part: its frames, in frame order).
+      if (set.isMultiFrame === true && !groups[k].every((entry, i) => made[0].images[i] === entry)) return sets;
+      const part = made[0], label = `${k + 1}/${groups.length}` + value(part.images[0]);
       const text = description ? `${description} · ${label}` : label;
       if (typeof part.setAttribute === 'function') part.setAttribute('SeriesDescription', text);
       else part.SeriesDescription = text;
@@ -5964,11 +6351,16 @@ function kinCreateSeriesSplit() {
     const previous = typeof handler?.getDisplaySetsFromSeries === 'function' ? handler.getDisplaySetsFromSeries : null;
     if (!previous) return;
     let ended = false;
+    // The imageId the active data source gives one frame: the same one the unsplit file's display set uses.
+    const frameImageId = (instance, frame) => {
+      const source = extensions.getActiveDataSource?.()?.[0];
+      return typeof source?.getImageIdsForInstance === 'function' ? source.getImageIdsForInstance({ instance, frame }) : undefined;
+    };
     const createDisplaySets = function (instances, ...rest) {
       const sets = previous.call(this, instances, ...rest);
       // A hook left inside the chain after its mode ended passes the sets on unchanged.
       if (ended) return sets;
-      return kinSeriesSplitModel(sets, members => previous.call(this, members, ...rest));
+      return kinSeriesSplitModel(sets, members => previous.call(this, members, ...rest), frameImageId);
     };
     handler.getDisplaySetsFromSeries = createDisplaySets;
     dispose = () => {

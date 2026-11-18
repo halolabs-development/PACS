@@ -28,3 +28,6 @@ tests/e2e/artifacts/
 
 # Report written by tests/measurement_ci_test.py on every run.
 tmp/measurement-ci-contract/
+
+# Screenshots written by tests/viewer_hanging_protocol_mount_dom_test.py on every run.
+tmp/hp-mount-dom/

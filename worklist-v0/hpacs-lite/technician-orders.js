@@ -318,10 +318,12 @@
       const order = ctx.orders.list().find(o => o.studyUid === s.uid) ?? null;
       const read = ctx.orders.identity(s.uid);
       const before = shown(s);
-      w.body.append(note('Unlink the study from its order. The study goes back to the values the server read from its images (DICOM), and the order returns to Unmatched.'),
+      // Ward is not in the images: the own ward of the study, which the Match showed the order ward over, comes back.
+      const ward = typeof ctx.orders.ownWard === 'function' ? ctx.orders.ownWard(s.uid) : null;
+      w.body.append(note('Unlink the study from its order. The study goes back to the values the server read from its images (DICOM) and to its own ward, and the order returns to Unmatched.'),
         table(['Field', 'Now', 'Restored (from the images)'], [['Order', order?.oid, null], ...resultRows(before,
-          read ? { acc: read.acc, id: read.id, name: read.name, sex: read.sex, birth: birthText(read.birth), age: ageText(read.birth, s.date), desc: read.desc, ward: null, mt: 'U' }
-            : { mt: 'U' }).filter(r => r[0] !== 'Ward')]));
+          read ? { acc: read.acc, id: read.id, name: read.name, sex: read.sex, birth: birthText(read.birth), age: ageText(read.birth, s.date), desc: read.desc, ward, mt: 'U' }
+            : { ward, mt: 'U' })]));
       const reason = el('input', { size: 40, 'aria-label': 'Reason', required: true, placeholder: 'Example: linked to the wrong order' });
       const result = el('p', { className: 'order-note', role: 'status' });
       w.body.append(el('label', { className: 'order-reason' }, 'Reason ', reason), result);
@@ -341,7 +343,7 @@
         w.body.replaceChildren(note(after
           ? `Unmatched: the study shows accession ${text(after.acc)} and ${text(after.desc)} again.` + (freed && freed.matched === 'U' ? ` Order ${freed.oid} is Unmatched again.` : '')
           : `Unmatched: ${s.name} (${s.id}).`, 'ok'),
-          table(['Field', 'Before', 'Restored (read back)'], resultRows(before, after && shown(after)).filter(r => r[0] !== 'Ward')));
+          table(['Field', 'Before', 'Restored (read back)'], resultRows(before, after && shown(after))));
         if (!after) w.body.append(note('The unmatch was saved, but the list could not be read back. Check the row in Study List.', 'warn'));
         setStatus(`Unmatched ${s.id}.`);
         w.buttons(w.closeButton());

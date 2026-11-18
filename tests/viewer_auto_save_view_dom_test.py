@@ -49,6 +49,9 @@ CHECK = 'Save view changes automatically and apply on reopen'
 JOB = '&kinJob=00000000-0000-4000-8000-000000000001'
 READ = 'GET /api/studies/%s/viewer-auto-view' % STUDY
 
+# The viewer's split-series identity functions, as the shipped viewer configuration has them.
+SPLIT_RULE = (lambda s: s[s.index('function kinSeriesSplitFrame('):s.index('function kinEnhancedTimePoints(')])((ROOT / 'config' / 'ohif.js').read_text(encoding='utf-8'))
+
 HARNESS = """<!doctype html><html><head><style>
 body { margin: 0; background: #111; color: #eee; --kin-panel: #222; --kin-ux-text: #eee; --kin-ux-secondary: #999; --kin-accent: #6cf; }
 #grid { position: absolute; left: 0; top: 80px; width: 1240px; height: 440px; }
@@ -81,7 +84,7 @@ SETUP = """config => {
     pane.innerHTML = '<div class="viewport-element"><canvas width="300" height="200"></canvas></div>';
     document.getElementById('grid').append(pane);
     const set = synSets.find(s => s.uid === setUid), element = pane.querySelector('.viewport-element');
-    const v = { id, type: 'stack', element, ids: set ? Array.from({ length: set.n }, (_, i) => 'syn:' + set.uid + ':' + (i + 1)) : [], index: 0,
+    const v = { id, type: 'stack', element, ids: set ? set.ids ? [...set.ids] : Array.from({ length: set.n }, (_, i) => 'syn:' + set.uid + ':' + (i + 1)) : [], index: 0,
       presentation: { rotation: 0 }, properties: { invert: false, voiRange: { lower: -160, upper: 239 }, VOILUTFunction: 'LINEAR', interpolationType: 1 },
       camera: { focalPoint: [0, 0, 5], position: [0, 0, 105], viewUp: [0, -1, 0], viewPlaneNormal: [0, 0, 1], parallelScale: 100, rotation: 0, flipHorizontal: false, flipVertical: false } };
     Object.assign(v, {
@@ -127,7 +130,7 @@ SETUP = """config => {
     viewportGridService: grid,
     cornerstoneViewportService: { ...events('cells'), EVENTS: { VIEWPORT_DATA_CHANGED: 'data' }, getCornerstoneViewport: id => synViewports.get(id) },
     displaySetService: { getActiveDisplaySets: () => synSets.map(s => ({ displaySetInstanceUID: s.uid, StudyInstanceUID: STUDY, SeriesInstanceUID: s.series,
-      images: Array.from({ length: s.n }, (_, i) => ({ SOPInstanceUID: s.series + '.' + (i + 1), SOPClassUID: '1.2.840.10008.5.1.4.1.1.2' })) })) },
+      images: s.images || Array.from({ length: s.n }, (_, i) => ({ SOPInstanceUID: s.series + '.' + (i + 1), SOPClassUID: '1.2.840.10008.5.1.4.1.1.2' })) })) },
     customizationService: { get: () => undefined },
     uiNotificationService: { show: note => synNotes.push(note) },
     toolbarService: { EVENTS: { TOOL_BAR_MODIFIED: 'modified' }, getButtonSection: () => Object.keys(buttons).map(id => ({ id })), getButtons: () => buttons,
@@ -548,6 +551,30 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         self.assertEqual(('syn:set-B:1', 100), (self.state(page, 'right')['image'], self.state(page, 'right')['scale']))
         expect(page.locator('[data-auto-view-badge]')).to_have_text('Restored saved view: Zoom 250%, W 1500 / L -310, Image 4 (1 of 2 cells; 1 not restored)')
 
+    def test_05b_one_multi_frame_file_split_by_time_point_restores_the_part_holding_the_saved_frame(self):
+        # One enhanced MR file (one SOP Instance, six frames) that the viewer's split-series rule shows as two sets, one
+        # per time point; both sets hold the same SOP, so only the saved frame tells them apart.
+        se, sop = STUDY + '.7', STUDY + '.7.1'
+        setup = """([se, sop]) => {
+          const record = n => Object.assign(Object.create({ SOPInstanceUID: sop, SOPClassUID: '1.2.840.10008.5.1.4.1.1.4.1' }), { kinSplitFrame: n });
+          const id = n => 'syn:mr/frames/' + n;
+          for (let n = 1; n <= 6; n++) synMeta[id(n)] = { Modality: 'MR', StudyInstanceUID: synMeta['syn:set-A:1'].StudyInstanceUID, SeriesInstanceUID: se,
+            SOPInstanceUID: sop, InstanceNumber: 1, ImagePositionPatient: [0, 0, ((n - 1) % 3) * 5], ImageOrientationPatient: [1, 0, 0, 0, 1, 0],
+            PixelSpacing: [0.5, 0.5], Rows: 400, Columns: 600 };
+          synSets.push({ uid: 'phase-1', series: se, n: 3, ids: [1, 2, 3].map(id), images: [1, 2, 3].map(record) },
+                       { uid: 'phase-2', series: se, n: 3, ids: [4, 5, 6].map(id), images: [4, 5, 6].map(record) });
+        }"""
+        saved = cell(se, 2)
+        saved.update({'sop': sop, 'frame': 5, 'index': 1})
+        def prepare(page):
+            page.add_script_tag(content=SPLIT_RULE)
+            page.evaluate(setup, [se, sop])
+        page = self.open(saved=view([saved]), cells=(('left', 'phase-1'),), prepare=prepare)
+        page.wait_for_function("document.querySelector('[data-auto-view-badge]')", timeout=8000)
+        left = self.state(page, page.evaluate('[...synViewports.keys()]')[0])
+        self.assertEqual(['syn:mr/frames/4', 'syn:mr/frames/5', 'syn:mr/frames/6'], left['ids'], 'the second time point is shown')
+        self.assertEqual(('syn:mr/frames/5', 1), (left['image'], left['index']))
+        expect(page.locator('[data-auto-view-badge]')).to_have_text('Restored saved view: Zoom 250%, W 1500 / L -310, Image 2')
     def test_06_a_job_chosen_to_open_wins(self):
         page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), query='&kinJob=00000000-0000-4000-8000-000000000001')
         self.started(page); page.wait_for_timeout(1000)

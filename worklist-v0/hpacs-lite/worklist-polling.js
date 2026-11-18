@@ -14,12 +14,13 @@
     }
     // FC-071: the Preload worker reports its queue; only the visible PF cells are rewritten, in place like Viewing.
     // A PF search matches the queue's status words: when a word changes (not the download percent) and a search uses PF,
-    // the list, the folder and saved-search counts are drawn again, once per frame, like a Body Part answer.
+    // the list, the folder and saved-search counts are drawn again, once per frame, like a Body Part answer. A list sorted
+    // by PF is drawn again the same way, so its order follows the words.
     let preloadWords = '', preloadFrame = null;
     function paintPreload() {
       const words = studies.map(preloadWord).join('\n'), changed = words !== preloadWords;
       preloadWords = words;
-      if (changed && preloadFilterUsed()) {
+      if (changed && (preloadFilterUsed() || (sortKey === 'pf' && sortDir !== 0))) {
         if (preloadFrame !== null) return;
         const at = work.capture('document');
         preloadFrame = requestAnimationFrame(() => {

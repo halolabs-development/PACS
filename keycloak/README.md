@@ -124,8 +124,9 @@ Admin REST(`kin` 렐름 관리자 토큰, 경로의 공백은 `%20`, `P=/admin/r
   `{"name":"kin-authentication-methods","protocol":"openid-connect","protocolMapper":"oidc-amr-mapper","consentRequired":false,
   "config":{"id.token.claim":"false","access.token.claim":"true","introspection.token.claim":"true"}}`.
 
-렐름 재import·사용자 변경은 필요 없다. 다음 운영 배포의 fence 전 읽기(`scripts/ops_emr_introduction.py`,
-`check_admin_mfa`)가 live browser·reset 흐름을 이 파일의 흐름과 모양(단계·요구·조건 설정·순서, 이름과 id는 보지 않는다)으로
+렐름 재import·사용자 변경은 필요 없다. 업그레이드의 B 전 확인(`docs/ops/release-tools-runbook.md` "Precondition: the
+upgrade itself" 1 — N의 `scripts/ops_deploy_preflight.py` `check_admin_mfa`; 전환 runner의 fence 전 읽기
+`scripts/ops_emr_introduction.py`도 같은 검사)이 live browser·reset 흐름을 이 파일의 흐름과 모양(단계·요구·조건 설정·순서, 이름과 id는 보지 않는다)으로
 대조하고 `Configure OTP`·client override·kin-bff의 AMR 매퍼(access token)를 확인해, 적용 전에는 첫 변경 전에 멈춘다. **그 읽기가
 못 보는 것:** Admin REST는 인증 참조의 두 값을 `**********`로 가려 돌려주므로 검사는 두 칸이 있다는 것만 본다(가리지 않고
 읽히는 값은 이 파일의 값과 비교한다). 실제 로그인 토큰에 `otp`가 실리는지는 보지 않는다 — 적용 뒤 관리자 계정으로 한 번

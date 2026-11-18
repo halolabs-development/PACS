@@ -265,9 +265,14 @@
      * Target, the original CAS, the Source parts, the whole proposal) and the operation registered before the native edit
      * runs, so no reentrant listener can send an ordinary write of the edited text. Nothing is sent here.
      */
-    function relatedInsertFreeze({ section, parts, source, admission }) {
+    function relatedInsertFreeze({ parts, source, admission }) {
       const uid = selectedUid, owner = draftOwner, related = relatedStudy();
-      if (!["findings", "conclusion"].includes(section)) return { refused: "넣을 칸을 확인할 수 없습니다" };
+      // The fields this one request fills: a selection's one field, or (the whole report, Minhoon 2026-11-01 "Insert both the
+      // Findings and Conclusion automatically") the Source's Findings into Findings and its Conclusion into Conclusion.
+      const pair = Array.isArray(parts) && parts.length === 2 && parts[0]?.field === "findings" && parts[1]?.field === "conclusion";
+      const targets = pair ? parts.map(part => ({ field: part.field, parts: [part] }))
+        : Array.isArray(parts) && parts.length === 1 ? [{ field: parts[0]?.field, parts }] : [];
+      if (!targets.length || !targets.every(t => ["findings", "conclusion"].includes(t.field))) return { refused: "넣을 칸을 확인할 수 없습니다" };
       const why = relatedInsertBlock() || reportEditorBlock(admission);
       if (why) return { refused: why };
       if (!owner || !related || !source || related.uid !== source.uid || source.uid !== relatedUid || source.seq !== relatedReportSeq
@@ -279,10 +284,15 @@
         return { refused: "편집기의 글이 서버에 저장된 초안과 달라 넣지 않았습니다 — Back to Current Draft로 돌아가 저장을 확인하세요" };
       if (reportBaseVersion(uid, seed.baseVersion) !== seed.baseVersion)
         return { refused: "편집기가 보이는 판과 서버의 판이 달라 넣지 않았습니다 — 목록을 새로 고친 뒤 다시 시도하세요" };
-      const planned = relatedMode.insertion(seed.texts[section], parts, source.texts);
-      if (!planned.text.replace(/\n/g, "")) return { refused: "넣을 글이 없습니다" };
-      const at = reportFrame.capture(section, { start: planned.offset, end: planned.offset });
-      const proposal = { ...seed.texts, [section]: seed.texts[section] + planned.text };
+      const proposal = { ...seed.texts };
+      const fields = targets.map(t => {
+        const planned = relatedMode.insertion(seed.texts[t.field], t.parts, source.texts);
+        proposal[t.field] = seed.texts[t.field] + planned.text;
+        return { field: t.field, offset: planned.offset, text: planned.text, before: seed.texts[t.field], after: proposal[t.field],
+          at: reportFrame.capture(t.field, { start: planned.offset, end: planned.offset }) };
+      });
+      if (fields.some(f => !f.text.replace(/\n/g, ""))) return { refused: "넣을 글이 없습니다" };
+      const [first, second] = fields;
       const id = crypto.randomUUID();
       const request = relatedFreeze({
         expectedOwner: { institution: owner.institution ?? null, sub: owner.sub, author: owner.author },
@@ -295,29 +305,51 @@
           intent: "apply", insertRequestId: id,
           source: { uid: source.uid, version: source.version, action: source.action,
             parts: parts.map(part => ({ field: part.field, start: part.start, end: part.end })) },
-          targetUid: uid, targetBaseVersion: seed.baseVersion, section, position: "end", offset: planned.offset, text: planned.text,
-          selectionSeq, contentRevision: at.revision + 1, sourceGeneration: source.seq, seedKind: seed.kind,
+          targetUid: uid, targetBaseVersion: seed.baseVersion, section: first.field, position: "end", offset: first.offset, text: first.text,
+          ...(second ? { also: { section: second.field, offset: second.offset, text: second.text } } : {}),
+          selectionSeq, contentRevision: first.at.revision + 1, sourceGeneration: source.seq, seedKind: seed.kind,
         },
       });
-      const op = { id, uid, owner, opening: reportOpening, selectionSeq, field: section, offset: planned.offset, text: planned.text,
-        before: seed.texts[section], after: proposal[section], request,
+      const op = { id, uid, owner, opening: reportOpening, selectionSeq, request,
+        fields: relatedFreeze(fields.map(({ field, offset, text, before, after }) => ({ field, offset, text, before, after }))),
         proposal: relatedFreeze({ ...proposal, baseVersion: seed.baseVersion, citations: [...seed.citations], structured: [...seed.structured] }),
         source: relatedFreeze({ uid: source.uid, version: source.version, action: source.action }),
         state: "editing", turn: null, receiptRevision: null, reason: null, at: null, reverted: null };
       relatedInserts.set(uid, op);
-      return { op, at, text: planned.text };
+      return { op, edits: fields.map(({ field, at, text, after }) => ({ field, at, text, after })) };
     }
-    /** The one native edit (R2), inside the mode's synchronous admission span. */
+    /** One field's native edit (R2), inside the mode's synchronous admission span for exactly that field. */
     function relatedInsertEdit(frozen, admission) {
-      const op = frozen.op;
-      if (relatedInserts.get(op.uid) !== op || op.state !== "editing") return false;
-      return editReport([{ field: op.field, at: frozen.at, text: frozen.text }], { admission }) && reportFrame.read(op.field) === op.after;
+      const op = frozen.op, field = op.fields.find(f => f.field === admission?.field);
+      if (relatedInserts.get(op.uid) !== op || op.state !== "editing" || !field) return false;
+      return editReport([{ field: field.field, at: admission.at, text: admission.text }], { admission })
+        && reportFrame.read(field.field) === field.after;
     }
-    /** A native edit that did not happen: nothing was sent, so there is nothing to answer for; any changed text stays. */
+    /**
+     * A native edit that did not happen: nothing was sent, so there is nothing to answer for. A field this Insert already
+     * filled is emptied again by the exact inverse edit — one field never stays in without the others; text that differs
+     * from both stays (and is named).
+     */
     function relatedInsertAbandon(op) {
       if (relatedInserts.get(op.uid) !== op || op.state !== "editing") return;
+      let undone = false;
+      for (const f of [...op.fields].reverse()) {
+        if (!reportFrame || reportFrame.read(f.field) !== f.after) continue;
+        const at = reportFrame.capture(f.field, { start: f.offset, end: f.offset + f.text.length });
+        undone = !!relatedMode.admit({ field: f.field, at, text: "", op }, admission => editReport([{ field: f.field, at, text: "" }], { admission })) || undone;
+      }
+      // A field whose inverse edit was refused too is reset by the frame's own authoritative write (as the frame resets a
+      // partial multi-field native failure): unsent Insert text must never stay for an ordinary save to carry.
+      const left = reportFrame ? op.fields.filter(f => reportFrame.read(f.field) === f.after) : [];
+      if (left.length) {
+        const texts = reportFrame.read();
+        for (const f of left) texts[f.field] = f.before;
+        if (reportFrame.replaceAuthoritative(texts)?.status !== "refused") { keepReportEditor(); undone = true; }
+      }
       relatedInserts.delete(op.uid);
-      if (reportFrame && reportFrame.read(op.field) !== op.before)
+      // The editor holds the stored seed again: it is saved text, not a write to send.
+      if (undone) relatedInsertSeedKept(op.uid);
+      if (reportFrame && op.fields.some(f => reportFrame.read(f.field) !== f.before))
         toast("Related Report 글을 넣지 못했습니다 — 편집기의 글이 바뀌었을 수 있으니 확인하세요. 서버에는 보내지 않았습니다.", "err");
     }
     /** After an applied native edit only: the frozen request leaves through the Target's own draft command line. */
@@ -396,24 +428,24 @@
       const uid = op.uid;
       op.state = "discarding";
       const exact = uid === selectedUid && reportOpening?.uid === uid && reportOpening?.selectionSeq === op.selectionSeq
-        && selectionSeq === op.selectionSeq && !!reportFrame && reportFrame.read(op.field) === op.after
+        && selectionSeq === op.selectionSeq && !!reportFrame && op.fields.every(f => reportFrame.read(f.field) === f.after)
         && !reportEditedSince(uid, op.turn ?? 0) && work.state() === "active";
       let reverted = false;
       if (exact) {
-        const at = reportFrame.capture(op.field, { start: op.offset, end: op.offset + op.text.length });
-        const edit = admission => editReport([{ field: op.field, at, text: "" }], { admission });
-        const removed = relatedMode.admit({ field: op.field, at, text: "", op }, edit);
-        reverted = !!removed && reportFrame.read(op.field) === op.before;
+        // Every field the Insert filled, each by its own exact inverse edit.
+        for (const f of [...op.fields].reverse()) {
+          const at = reportFrame.capture(f.field, { start: f.offset, end: f.offset + f.text.length });
+          const edit = admission => editReport([{ field: f.field, at, text: "" }], { admission });
+          relatedMode.admit({ field: f.field, at, text: "", op }, edit);
+        }
+        reverted = op.fields.every(f => reportFrame.read(f.field) === f.before);
       }
       if (!relatedInsertIdentityResolved(op)) { op.state = "discard-unknown"; return; }
       op.state = "discarded";
       draftClient.retireInsert(uid, op.id, reverted ? undefined : { conflict: envelope ?? null });
       if (reverted) {
         op.reverted = true;
-        // The editor holds the seed again; it is saved text only when the server's draft at this line's revision is it.
-        const stored = draftClient.stored(uid), texts = reportFrame.read();
-        const kept = stored && RFIELDS.every(k => texts[k] === String((stored.snapshot ? stored.snapshot[k] : appState[uid]?.[k]) ?? ""));
-        if (kept) { reportConverge.delete(uid); reportSaveFailures.delete(uid); }
+        relatedInsertSeedKept(uid);
         return;
       }
       op.reverted = false;
@@ -422,6 +454,12 @@
         keepReportEditor();
         if (!draftClient.conflict(uid)?.latest) readDraftConflict(uid);
       }
+    }
+    /** The editor holds the seed again; it is saved text only when the server's draft at this line's revision is it. */
+    function relatedInsertSeedKept(uid) {
+      const stored = draftClient.stored(uid), texts = reportFrame?.read();
+      const kept = texts && stored && RFIELDS.every(k => texts[k] === String((stored.snapshot ? stored.snapshot[k] : appState[uid]?.[k]) ?? ""));
+      if (kept) { reportConverge.delete(uid); reportSaveFailures.delete(uid); }
     }
     /** SUPERSEDED, ID_REUSED or a refused request shape: never re-applied, never a new ID; an explicit choice decides. */
     function relatedInsertHandoff(op, got) {

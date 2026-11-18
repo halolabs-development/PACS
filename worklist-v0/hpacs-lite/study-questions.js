@@ -25,8 +25,9 @@
       const inboxButton = $('#question-inbox'), pane = $('#question-pane'), notice = $('#question-notice');
       const TEXT = {
         unread: '이 검사의 질문은 읽지 않습니다(원격판독 검사·권한).',
-        // 끊김은 상태를 말한다: 이 화면의 연결 판단일 뿐 통신을 막는 것은 아니다(답변·닫기는 그대로 보낼 수 있다).
+        // 끊긴 동안(online() — 화면의 한 연결 규칙)은 읽은 것을 그대로 보이고, 답변·닫기·Retry는 보내지 않는다(쓰던 글은 남는다).
         offline: '서버 연결이 끊겼습니다. 표시된 질문은 최신이 아닐 수 있습니다.',
+        writeOffline: '서버 연결이 끊겨 지금은 보낼 수 없습니다. 쓴 내용은 그대로 있습니다.',
         // 안내 띠의 알림은 짧게(띠의 다른 줄을 좁혀 줄을 바꾸지 않게): 개수와 0이 아닌 상태, 전문은 툴팁.
         notice: { counts: (n, parts) => `질문 ${n}건${parts ? ` · ${parts}` : ''}`, failed: '질문 읽기 실패', refused: '질문 읽기 거절',
           account: '질문: 계정 바뀜' },
@@ -511,8 +512,18 @@
         if (field.value !== value) field.value = value;
         // 기준 revision은 마지막으로 읽힌 그 스레드에서만 온다. 한 번도 읽히지 않았거나 읽기에 실패했으면 보내지 않는다.
         const ready = !threadFailure && thread !== null && thread.id === id;
-        wrap.querySelector('[data-send]').disabled = attempt !== null || !ready;
+        // 끊긴 동안은 보내는 단추(Reply·Close·Retry)만 잠그고 까닭을 말한다. Discard는 이 화면 안의 일이라 그대로다.
+        const reach = online(), why = reach ? '' : TEXT.writeOffline;
+        const send = wrap.querySelector('[data-send]'), retry = wrap.querySelector('[data-retry]');
+        send.disabled = attempt !== null || !ready || !reach;
+        send.title = attempt === null && ready ? why : '';
+        retry.disabled = !reach;
+        retry.title = why;
         for (const name of ['retry', 'discard']) wrap.querySelector(`[data-${name}]`).hidden = !attempt || attempt.busy;
+      }
+
+      function repaintComposers() {
+        for (const wrap of threadBox.querySelectorAll('.question-compose')) paintComposer(wrap);
       }
 
       function repaintComposer(key) {
@@ -548,7 +559,7 @@
         const key = keyOf(target, id, action), noteKey = noteOf(target, id);
         const loaded = !threadFailure && thread !== null && thread.id === id ? thread : null;
         const who = owner();
-        if (ended || lock !== null || target !== uid || attempts.has(key) || !loaded || !who) return;
+        if (ended || lock !== null || !online() || target !== uid || attempts.has(key) || !loaded || !who) return;
         const value = field.value;
         if (!(action === 'close' && value === '') && (!value.trim())) {
           setNote(noteKey, 'failed', TEXT.noText);
@@ -573,7 +584,7 @@
       /** 결과를 모르는 요청만 같은 requestId·같은 본문으로 다시 보낸다. 이미 적용되었으면 서버가 저장한 결과를 돌려준다. */
       function resend(key) {
         const attempt = attempts.get(key);
-        if (ended || lock !== null || !attempt || attempt.busy || !attempt.unknown) return;
+        if (ended || lock !== null || !online() || !attempt || attempt.busy || !attempt.unknown) return;
         transmit(key, attempt);
       }
 
@@ -585,7 +596,8 @@
         drafts.set(key, attempt.text);
         setNote(attempt.noteKey, 'discarded', TEXT.discarded);
         repaintComposer(key);
-        if (lock === null && attempt.uid === uid) loadList();
+        // 끊긴 동안 버렸으면 다시 읽기는 연결이 돌아올 때(kinOnConnection → refresh) — 실패한 읽기가 연 스레드를 내리지 않게.
+        if (lock === null && attempt.uid === uid && online()) loadList();
       }
 
       async function transmit(key, attempt) {
@@ -922,7 +934,11 @@
           if (notice) notice.hidden = true;
           if (next === uid) paint();
         }
-        if (next === uid) return;
+        // 같은 대상: 끊긴 동안 고른 뒤 아직 한 번도 읽지 못했으면 연결이 돌아온 지금 읽는다(끊긴 동안은 읽지 않는다).
+        if (next === uid) {
+          if (uid !== null && lock === null && online() && items === null && !listLoading && !listFailure) loadList();
+          return;
+        }
         uid = next;
         epoch++;
         listSeq++;
@@ -939,7 +955,7 @@
         clearThreadBox();
         paint();
         renderList();
-        if (uid !== null && lock === null) loadList();
+        if (uid !== null && lock === null && online()) loadList();
       }
 
       /**
@@ -992,7 +1008,7 @@
       function resume() {
         if (ended || lock !== null) return;
         paint();
-        if (uid !== null) loadList();
+        if (uid !== null && online()) loadList();
         if (mode === 'inbox') loadInbox(false);
       }
       /**
@@ -1000,7 +1016,7 @@
        * 답은 글(줄이 접혀 있으면 안내 띠의 알림)만 바꾼다. 읽는 중이면 그 답을 기다린다.
        */
       function refresh() {
-        if (ended || lock !== null || uid === null || listLoading) return;
+        if (ended || lock !== null || uid === null || listLoading || !online()) return;
         loadList();
       }
       work.onInvalidate(event => { if (event.reason === 'prepare') suspend(); });
@@ -1037,11 +1053,13 @@
         toggle.focus();
       });
       // 연결이 끊기거나 돌아왔다(page-boot.js goOffline·goOnline). 판독 대상은 바뀌지 않았다 — 읽은 것·연 스레드·쓰던 칸은
-      // 그대로 두고(끊김을 대상 바뀜으로 다루면 쓰던 답변 칸이 내려갔다) 줄의 글만 바꾼다. 돌아오면 같은 대상을 다시 읽는다.
+      // 그대로 두고(끊김을 대상 바뀜으로 다루면 쓰던 답변 칸이 내려갔다) 줄의 글과 보내는 단추만 바꾼다. 돌아오면 같은 대상을
+      // 다시 읽고 단추를 연다.
       (window.kinOnConnection = window.kinOnConnection || []).push(() => {
         if (ended) return;
         if (allowed()) { sync(); refresh(); }
         paint();
+        repaintComposers();
       });
       window.addEventListener('pagehide', end);
       // 이 문서의 세션이 끝나면 세션 종료 조정이 이 목록을 동기로 부른다. 어느 로그인의 종료인지는 auth.js가 대조한다.
@@ -1054,7 +1072,10 @@
       studyQuestions = mountStudyQuestions({ apiBase: API, work, transport, current: () => selectedUid,
         study: uid => studies.find(s => s.uid === uid),
         openStudy: uid => select(uid),
-        allowed: () => !!sess && serverMode && !demoMode && !offline && (KinAuth.has('radiologist') || KinAuth.has('admin')),
-        online: () => !offline,
+        // Who may read this row (a signed-in reader or admin); whether the server answers now is online(). A lost connection
+        // is not a move: the open thread and what is being written stay, and the reads wait for it.
+        allowed: () => !!sess && !demoMode && (KinAuth.has('radiologist') || KinAuth.has('admin')),
+        // The one connection rule (page-core.js), the same the Mark CVR window uses: Reply, Close and Retry wait for it.
+        online: serverReachable,
         owner: () => { const s = KinAuth.session(); return s?.state === 'approved' ? [s.institution ?? null, s.sub ?? null] : null; } });
     } catch (_) { toast('임상의 질문 줄을 준비하지 못했습니다. 판독 작업은 계속할 수 있습니다.', 'err'); }

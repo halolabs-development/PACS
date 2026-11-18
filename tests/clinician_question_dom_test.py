@@ -283,6 +283,8 @@ BLOCK_START = "    // ── 임상의 질문 답변(S5-U4b) ──"
 BLOCK_END = "    // ── 패널 크기 조절 ──"
 HOOK = "      studyQuestions?.sync();\n"
 READER_BLOCK = slice_between(MAIN, BLOCK_START, BLOCK_END)
+# The page's one connection rule (page-core.js), as shipped: the block's allowed() and online() read it.
+SERVER_RULE = re.search(r"^ *function serverReachable\(\) \{[^\n]*\}$", MAIN, re.M).group(0)
 CLINICIAN_BLOCK = slice_between(SHIPPED["clinician.js"], "  // ── 질문 스레드(S5-U4b) ──", "  // ── 세션 ──")
 
 # Astra S5-U4b-B-R-001 F1: the page's end list. Every place in main.html that starts the logout first calls each end()
@@ -382,6 +384,7 @@ const $ = s => document.querySelector(s);
 const API = location.origin + '/api';
 let sess = window.synSession;
 let serverMode = true, demoMode = false, offline = false;
+SERVER_RULE
 let selectedUid = null;
 let studies = window.synStudies;
 const toast = (message, kind) => { window.synToasts.push([message, kind]); };
@@ -389,7 +392,7 @@ KIN_AUTH
 function select(uid) { work.select(uid); window.synSelects.push(uid); if (uid === selectedUid) return; selectedUid = uid; renderClinical(); }
 function renderClinical() {
 HOOK}
-""".replace("HOOK", HOOK)
+""".replace("HOOK", HOOK).replace("SERVER_RULE", SERVER_RULE)
 # Its logout broadcasts at once, as auth.js does after the logout POST has returned.
 READER_STAND_IN = """const KinAuth = {
   session: () => window.synSession,

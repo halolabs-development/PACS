@@ -144,7 +144,8 @@ if '--boundary' not in sys.argv:
             opened = []
             p.context.on('page', lambda page: opened.append(page))
             p.evaluate('''() => {const native=window.open;window.__u1OpenCalls=[];
-              window.open=function(...args){__u1OpenCalls.push(args);return native.apply(this,args)};}''')
+              window.__u1Raises=0;
+              window.open=function(...args){if(args[0]===''&&args[2]==='noopener')__u1Raises++;else __u1OpenCalls.push(args);return native.apply(this,args)};}''')
             viewer = self.open_first(p, a)
             workspace = p.evaluate('({left:screenX,top:screenY,width:outerWidth,height:outerHeight})')
             p.locator('#findings').fill('U1 WORKSPACE DRAFT')
@@ -163,6 +164,8 @@ if '--boundary' not in sys.argv:
                 self.loaded(viewer, fixture)
             self.assertEqual(len(opened), 1)
             self.assertEqual(p.evaluate('__u1OpenCalls.length'), 1)
+            # Each reuse (same study, Focus, two other studies) also asked the browser to raise the viewer window.
+            self.assertGreaterEqual(p.evaluate('__u1Raises'), 4)
             self.assertEqual(p.evaluate('({left:screenX,top:screenY,width:outerWidth,height:outerHeight})'), workspace)
             expect(p.locator('#findings')).to_have_value('U1 WORKSPACE DRAFT')
             # Same-document focus and guarded latest-image refresh are distinct.

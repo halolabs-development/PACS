@@ -418,6 +418,41 @@ test('a Conventional repeat opened in the DBT stage keeps its mark and Switch', 
   h.extension.onModeExit();
 });
 
+// GE SenoIris V-Preview, the device's synthetic 2D view, in the header shape of the public TCIA EA1141 objects
+// (DOI 10.7937/2BAS-HR33, CC BY 4.0): Breast Tomosynthesis Image Storage with Volumetric Properties SAMPLED and
+// Volume Based Calculation Technique NONE, its side stated only in the shared Frame Anatomy. One object per view.
+function vPreview() {
+  return [['R', 'CC', '399162004', 'cranio-caudal', ['P', 'L']], ['L', 'CC', '399162004', 'cranio-caudal', ['A', 'R']],
+    ['R', 'MLO', '399368009', 'medio-lateral oblique', ['P', 'F']], ['L', 'MLO', '399368009', 'medio-lateral oblique', ['A', 'F']]]
+    .map(([side, , code, meaning, orientation], i) => {
+      const d = fixture('ge-senoiris-vpreview12');
+      d['0020000E'].Value = [d['0020000E'].Value[0] + '.' + (i + 1)];
+      d['00080018'].Value = [d['0020000E'].Value[0] + '.1'];
+      d['52009229'].Value[0]['00209071'].Value[0]['00209072'].Value = [side];
+      d['00540220'].Value[0]['00080100'].Value = [code];
+      d['00540220'].Value[0]['00080104'].Value = [meaning];
+      d['00200020'].Value = orientation;
+      return d;
+    });
+}
+
+test('GE SenoIris V-Preview objects fill the four Synthetic 2D cells, none of them Missing', async () => {
+  const items = vPreview();
+  const h = await mount(items);
+  h.run();
+  assert.ok(h.preferences().set({ layout: 'current', kind: 'generated2d' }));
+  const { keys, panes } = layOut(h);
+  const set = d => h.displaySets.find(s => s.images[0].SOPInstanceUID === d['00080018'].Value[0]).displaySetInstanceUID;
+  [['R', 'CC'], ['L', 'CC'], ['R', 'MLO'], ['L', 'MLO']].forEach(([side, view], i) => {
+    const key = ['current', side, view, 'generated2d'].join('|'), cell = keys.indexOf(key);
+    assert.ok(cell >= 0, 'the Synthetic 2D stage has a ' + side + ' ' + view + ' cell');
+    assert.equal(h.selected(key), set(items[i]), side + ' ' + view + ' is hung from its own object');
+    assert.equal(paneText(panes[cell]), 'Current · ' + side + ' ' + view + ' · Synthetic 2D');
+  });
+  assert.ok(panes.every(p => !/Missing/.test(paneText(p))), 'no Synthetic 2D cell says Missing');
+  h.extension.onModeExit();
+});
+
 // A retake minutes later at a site that states no UTC offset, both images numbered alike: the study's images
 // share one clock, so the later exposure is hung and marked, not left as "Select Image".
 test('a repeat exposure without any UTC offset hangs the later image of one study', async () => {

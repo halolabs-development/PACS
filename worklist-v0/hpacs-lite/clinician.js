@@ -700,7 +700,7 @@
         }
         if(!fresh())return;
         popup.name='kin-viewer-entry:'+JSON.stringify({session:expectedSession,name:VIEWER_WINDOW});popup.opener=null;
-        if(input.scoped)popup.location.replace(root.KinExamScope.viewerUrl(input));popup.focus();
+        if(input.scoped)popup.location.replace(root.KinExamScope.viewerUrl(input));root.KinExamScope.raiseWindow(popup);
         note.textContent=other?TEXT.compareAsked:TEXT.viewerAsked;
       }catch(error){if(fresh())note.textContent=describe(error);}
     })();

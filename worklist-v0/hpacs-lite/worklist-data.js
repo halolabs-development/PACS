@@ -534,8 +534,10 @@
     let queueSeen = null;
     function orderedStudies() {
       const list = filtered();
+      // PF sorts by the queue word the cell and the filter read now (preloadWord), not the row's stored "·".
+      const sortValue = s => sortKey === "pf" ? preloadWord(s) : s[sortKey];
       if (sortDir !== 0 && sortKey)
-        list.sort((a, b) => (a[sortKey] > b[sortKey] ? 1 : a[sortKey] < b[sortKey] ? -1 : 0) * sortDir);
+        list.sort((a, b) => { const x = sortValue(a), y = sortValue(b); return (x > y ? 1 : x < y ? -1 : 0) * sortDir; });
       if (selectedUid && list.some(s => s.uid === selectedUid)) queueSeen = { uid: selectedUid, order: list.map(s => s.uid) };
       return list;
     }
@@ -799,6 +801,10 @@
           const el = $(id);
           if (el) { el.disabled = true; el.title = relatedWhy; }
         }
+      // The controls painted by their own areas from the report state (Mark CVR: critical-result-send.js) follow it here too:
+      // the answer of a commit, a poll or a draft sync that changed it reaches them with More left open. Before the identity rule
+      // below, which then has the last word.
+      (window.kinOnReportButtons || []).forEach(change => { try { change(); } catch (_) {} });
       // WORKLIST-SPLIT-UID: the selected UID was excluded as unresolved. Its text stays (loadReport keeps it) and is read-only;
       // every write and the paste/clear editors are off. The server refuses the same actions on its own.
       const unresolved = !!appState[selectedUid]?.identityUnresolved;

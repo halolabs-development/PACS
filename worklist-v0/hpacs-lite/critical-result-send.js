@@ -317,6 +317,8 @@
     let target = null, targetKey = null, entrySeq = 0, entryView = { phase: 'idle' };
     // 발신 창: 열 때마다 dialogSeq가 오르고 #1을 새로 읽는다. dialogAttempt는 이 창이 보이는 요청의 requestId다.
     let dialogSeq = 0, dialogUid = null, dialogView = null, dialogAttempt = null, dialogNote = '', dialogReturn = null, dialogOwner = null;
+    // 연결이 돌아온 횟수. #1 읽기는 떠날 때의 값을 가진다 — 돌아온 뒤에 실패한 읽기가 그 전에 떠난 것이면 끊김의 실패다(recoverReads).
+    let reconnects = 0;
     // 요청별 기록(§8.1 규칙 2): requestId → 요청. 결과를 모르는 요청은 창을 닫아도 보낸 목록 위 줄(lined)로 남는다.
     const attempts = new Map();
     const lineNodes = new Map();
@@ -331,7 +333,10 @@
       const value = owner();
       return Array.isArray(value) && value.length === 2 && value.every(part => text(part) && part.length > 0) ? JSON.stringify(value) : null;
     };
-    const sender = () => work.state() === 'active' && !ended && lock === null && online() && radiologist() && who() !== null;
+    // author(): 이 화면의 판독의가 Mark CVR의 대상을 가질 수 있는가. sender(): 그리고 지금 서버에 보낼 수 있는가(online — 화면의
+    // 한 연결 규칙). 대상은 author()로 고른다 — 끊김은 대상 바뀜이 아니다(끊긴 동안 다시 그려도 쓰던 창을 닫지 않는다).
+    const author = () => work.state() === 'active' && !ended && lock === null && radiologist() && who() !== null;
+    const sender = () => author() && online();
     const live = sent => !ended && lock === null && who() === sent;
     const keyOf = uid => {
       const state = report(uid);
@@ -407,7 +412,7 @@
 
     /** #1을 읽어 단추를 정한다. 답을 받기 전·거절·오류에는 꺼 두고 그 이유를 툴팁에 쓴다. */
     function readEntry() {
-      const uid = target, sent = who(), seq = ++entrySeq;
+      const uid = target, sent = who(), seq = ++entrySeq, epoch = reconnects;
       targetKey = keyOf(uid);
       entryView = { phase: 'loading' };
       paintEntry();
@@ -422,17 +427,20 @@
         if (seq !== entrySeq || uid !== target || !live(sent)) return;
         entryView = { phase: 'failed', detail: describe(error) };
         paintEntry();
+        crossed(epoch);
       }, 'study'));
     }
 
     /**
-     * renderClinical()과 More를 열 때 부른다. 판독 대상이 바뀌었거나 화면이 아는 판독 상태(판 번호·RS)가 바뀐 때만 #1을
-     * 다시 읽는다 — 같은 상태면 요청이 없다. 다른 검사로 옮기면 열린 발신 창을 닫는다(보내는 중이던 요청은 목록 위 줄로 남는다).
+     * renderClinical()과 More를 열 때, 판독 단추 줄을 다시 정할 때(updateReportButtons — 확정 답·폴링·초안 동기화), 연결이
+     * 돌아올 때 부른다. 판독 대상이 바뀌었거나 화면이 아는 판독 상태(판 번호·RS)가 바뀐 때만 #1을 다시 읽는다 — 같은 상태면
+     * 요청이 없다. 끊긴 동안은 읽지 않고, 돌아오면 그때 읽는다. 다른 검사로 옮기면 열린 발신 창을 닫는다(보내는 중이던 요청은
+     * 목록 위 줄로 남는다).
      */
     function sync() {
       if (work.state() !== 'active') return;
       if (ended) return;
-      const next = sender() ? current() || null : null;
+      const next = author() ? current() || null : null;
       if (next !== target) {
         target = next;
         targetKey = null;
@@ -441,11 +449,32 @@
         // 잠긴 뒤에는 창을 닫지 않는다 — 창에 남은 계정 변경 안내를 사용자가 읽고 닫는다.
         if (dialogUid !== null && dialogUid !== target && lock === null) closeDialog();
       }
-      if (target !== null && keyOf(target) !== targetKey) readEntry();
+      if (target !== null && online() && keyOf(target) !== targetKey) readEntry();
       paintEntry();
       paintDialog();
       if (sender() && !loadedOnce && listPhase !== 'loading') loadList(false);
       paintPanel();
+    }
+
+    /**
+     * 끊김 때문에 실패한 #1 읽기를 다시 읽는 한 곳. 연결이 돌아올 때(kinOnConnection), 그리고 돌아오기 전에 떠난 읽기가 돌아온
+     * 뒤에 실패할 때(crossed) 부른다. 입구(대상 키를 지워 sync가 읽게), 보낸 요청이 없거나 거절된 창(쓰던 메시지는 둔다), 판을
+     * 못 읽은 Supersede 칸 — 로그아웃 준비를 취소했을 때와 같다. 다시 읽은 것은 새 값을 가져 같은 실패로 또 돌지 않는다.
+     */
+    function recoverReads() {
+      if (ended || work.state() !== 'active' || !online() || lock !== null) return;
+      if (entryView.phase === 'failed') targetKey = null;
+      const attempt = dialogAttempt ? attempts.get(dialogAttempt) : null;
+      if (dialogUid !== null && dialogView?.phase === 'failed' && (!attempt || attempt.state === 'rejected') && live(dialogOwner))
+        readDialog(dialogView.moved || null);
+      for (const form of forms.values()) if (form.kind === 'supersede' && !form.source) readFormSource(form);
+    }
+
+    /** 실패한 읽기가 연결이 돌아오기 전에 떠난 것이면(그 사이 돌아왔으면) 지금 다시 읽는다. */
+    function crossed(epoch) {
+      if (epoch === reconnects || !online()) return;
+      recoverReads();
+      sync();
     }
 
     // ── 발신 창(Send Critical Result) ──
@@ -547,7 +576,7 @@
      * requestId·body(sourceVersion 포함)는 바꾸지 않는다(§8.1 규칙 2).
      */
     function readDialog(moved) {
-      const uid = dialogUid, sent = who(), seq = ++dialogSeq;
+      const uid = dialogUid, sent = who(), seq = ++dialogSeq, key = keyOf(uid), epoch = reconnects;
       const before = dialogView && dialogView.data;
       const chosen = moved && before ? before.recipients.find(r => r.sub === recipientField.value) || null : null;
       dialogView = { phase: 'loading', data: null, detail: '', moved };
@@ -565,8 +594,9 @@
             moved: moved && { ...moved, dropped: chosen && read.sendable && !kept ? chosen.name : null } };
           fillRecipients(read.sendable ? read.recipients : []);
           if (kept) recipientField.value = chosen.sub;
-          // 같은 대상의 단추도 이 답을 따른다. 앞서 나간 #1 읽기의 늦은 답은 번호로 버린다.
-          if (uid === target) {
+          // 같은 대상의 단추도 이 답을 따른다. 앞서 나간 #1 읽기의 늦은 답은 번호로 버린다. 이 읽기가 떠난 뒤 화면이 아는 판독
+          // 상태가 바뀌었으면(승인·폴링) 이 답은 그 전 상태의 것이다 — 단추는 그 상태로 나간 읽기를 따른다.
+          if (uid === target && keyOf(uid) === key) {
             entrySeq++;
             targetKey = keyOf(uid);
             entryView = { phase: 'ready', data: read };
@@ -579,6 +609,7 @@
         if (seq !== dialogSeq || dialogUid !== uid || !live(sent)) return;
         dialogView = { phase: 'failed', data: null, detail: describe(error), moved };
         paintDialog();
+        crossed(epoch);
       }, 'study'));
     }
 
@@ -1027,7 +1058,7 @@
 
     /** Supersede는 지금 머리 판으로 보낸다. 그 판 번호는 그 검사의 #1이 답한 source다. */
     function readFormSource(form) {
-      const seq = ++form.seq, sent = who(), uid = form.item.studyUid;
+      const seq = ++form.seq, sent = who(), uid = form.item.studyUid, epoch = reconnects;
       form.confirm.disabled = true;
       kinWrite(form.sourceLine, kinSay(TEXT.form.loading));
       call('GET', `/studies/${encodeURIComponent(uid)}/critical-result-recipients`, undefined, work.capture('document')).then(guarded(({ data }) => {
@@ -1049,6 +1080,7 @@
       }), guarded(error => {
         if (forms.get(form.item.id) !== form || seq !== form.seq || !live(sent)) return;
         kinWrite(form.sourceLine, kinSay("{0}\n{1}", kinSay(TEXT.form.failed), describe(error)));
+        crossed(epoch);
       }));
     }
 
@@ -1219,13 +1251,20 @@
       } else if (event.reason === 'lifecycle' && event.state === 'active') startTimers();
     });
     if (work.state() === 'active') startTimers();
-    // 연결이 끊기거나 돌아왔다(page-boot.js goOffline·goOnline): 줄은 그대로 서고 글과 Refresh가 바뀐다. 돌아오면 연 목록을 다시 읽는다.
+    // 연결이 끊기거나 돌아왔다(page-boot.js goOffline·goOnline): 줄은 그대로 서고 Mark CVR·창의 Send·Check Again·목록의 글과
+    // 단추가 그 연결을 따른다. 끊김은 대상 바뀜이 아니다 — 쓰던 창·받는 사람·메시지는 그대로다(sync는 대상을 연결과 무관하게
+    // 고른다). 돌아오면 끊긴 사이 실패한 읽기만 다시 읽고(recoverReads — 아직 답이 없는 읽기는 돌아온 뒤 실패하면 그때
+    // crossed가 같은 곳을 부른다), 바뀐 판독 상태는 sync가 읽고, 연 목록을 다시 읽는다.
     (window.kinOnConnection = window.kinOnConnection || []).push(() => {
-      // 대상을 다시 고르지 않는다(sync): 끊김을 대상 바뀜으로 다루면 쓰던 Mark CVR 창이 닫히고 수신자·메시지가 지워졌다.
-      if (ended) return;
-      paintPanel();
+      if (ended || work.state() !== 'active') return;
+      if (online()) reconnects++;
+      recoverReads();
+      sync();
       if (paneOpen && lock === null && online()) loadList(false);
     });
+    // 판독 단추 줄을 다시 정했다(worklist-data.js updateReportButtons — 확정 답·폴링·초안 동기화·검사 이동이 모두 지난다).
+    // 화면이 아는 판독 상태가 바뀌었으면 More가 열려 있어도 Mark CVR이 그 상태의 서버 답을 따른다.
+    (window.kinOnReportButtons = window.kinOnReportButtons || []).push(() => sync());
     window.addEventListener('pagehide', () => end());
     filterField.value = filter;
     paintEntry();

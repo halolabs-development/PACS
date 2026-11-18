@@ -8,11 +8,11 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const { createStackHandler, mixedSeries } = require('./fixtures/ohif_stack_4d.cjs');
+const { createStackHandler, mixedSeries, enhancedSeries, frameImageId } = require('./fixtures/ohif_stack_4d.cjs');
 
 const shipped = fs.readFileSync('config/ohif.js', 'utf8');
 const slice = (from, to) => shipped.slice(shipped.indexOf(from), shipped.indexOf(to));
-const splitModel = vm.runInNewContext(slice('function kinSeriesSplitModel(', 'function kinCreateSeriesSplit(') + ';kinSeriesSplitModel');
+const splitModel = vm.runInNewContext(slice('function kinSeriesSplitFrame(', 'function kinCreateSeriesSplit(') + ';kinSeriesSplitModel');
 const priorSource = slice('function kinCreateViewerPrior(', 'function kinCreateMultiStudyStrip(');
 const read = name => fs.readFileSync('worklist-v0/hpacs-lite/' + name, 'utf8');
 // The viewer's app config defines the Studies panel order (kinSeriesOrder) the prior and personal layout code orders by.
@@ -50,7 +50,14 @@ function splitSeries() {
   assert.deepEqual(Array.from(sets, set => set.SeriesDescription), ['AX DWI · 1/2 b0', 'AX DWI · 2/2 b1000']);
   return Array.from(sets);
 }
-// A prior examination whose b0 and b1000 arrived as two series.
+// One enhanced MR file (one SOP Instance) with two time points, split by the same model: parts of frame entries.
+function enhancedSplit() {
+  const handler = createStackHandler();
+  const sets = splitModel(handler.getDisplaySetsFromSeries(enhancedSeries({ values: [1, 2], positions: 8 })),
+    list => handler.getDisplaySetsFromSeries(list), frameImageId);
+  assert.deepEqual(Array.from(sets, set => set.SeriesDescription), ['DYN T1 ENH · 1/2 Phase 1', 'DYN T1 ENH · 2/2 Phase 2']);
+  return Array.from(sets);
+}// A prior examination whose b0 and b1000 arrived as two series.
 function priorSeries(study = '2.25.8000') {
   const handler = createStackHandler();
   return [['AX DWI b0', '2.25.8001', 5, 0], ['AX DWI b1000', '2.25.8002', 6, 1000]].map(([description, series, number, value]) =>
@@ -149,6 +156,20 @@ test('a 1×2 of the two parts of a split series comes back part by part with its
   } finally { world.tabs.end(); }
 });
 
+test('a 1×2 of the two time points of one enhanced file comes back part by part at the frame each cell showed', async () => {
+  const [phase1, phase2] = enhancedSplit(), world = tabsWorld([phase1, phase2]);
+  world.grid(1, 2, [['left', phase1, 3], ['right', phase2, 5]]);
+  const back = await leaveAndReturn(world);
+  try {
+    await back();
+    const cells = [...world.state.viewports.values()];
+    assert.deepEqual(cells.map(cell => cell.displaySetInstanceUIDs), [[phase1.displaySetInstanceUID], [phase2.displaySetInstanceUID]],
+      'each cell holds the time point it held, though both hold the same SOP Instance');
+    const [left, right] = cells.map(cell => world.views.get(cell.viewportId));
+    assert.match(left.getCurrentImageId(), /\/frames\/4$/);
+    assert.match(right.getCurrentImageId(), /\/frames\/14$/);
+  } finally { world.tabs.end(); }
+});
 test('a split series is not restored when the image a cell showed is in none of its parts', async () => {
   const [b0, b1000] = splitSeries(), world = tabsWorld([b0, b1000]);
   world.grid(1, 2, [['left', b0, 3], ['right', b1000, 7]]);

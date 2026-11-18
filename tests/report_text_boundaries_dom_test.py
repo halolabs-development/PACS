@@ -1238,6 +1238,39 @@ class ReportTextBoundaries(h.LogoutDOMTest):
                 self.end_at(boundary, pasted, pasted)
                 self.assertEqual([], self.dialogs, "nothing is asked on the way")
 
+    def test_paste_goes_into_the_report_field_the_reader_last_worked_in(self):
+        self.open_untouched()
+        self.select_untouched()
+        findings, conclusion = self.page.locator("#findings"), self.page.locator("#conclusion")
+        # Nothing chosen yet: the end of Findings, as before.
+        self.paste("SYN-P1")
+        expect(findings).to_have_value("SYN-P1")
+        # Typing in Conclusion, then the menu: the end of Conclusion, even though the menu took the focus.
+        conclusion.click()
+        self.page.keyboard.type("SYN-C")
+        self.paste(" SYN-P2")
+        expect(conclusion).to_have_value("SYN-C SYN-P2")
+        expect(findings).to_have_value("SYN-P1")
+        # The paste's own focus is not a choice: a second paste still goes to Conclusion.
+        self.paste(" SYN-P3")
+        expect(conclusion).to_have_value("SYN-C SYN-P2 SYN-P3")
+        # Only placing the cursor in Findings chooses it.
+        findings.click()
+        self.paste(" SYN-P4")
+        expect(findings).to_have_value("SYN-P1 SYN-P4")
+        expect(conclusion).to_have_value("SYN-C SYN-P2 SYN-P3")
+        # Another study's opening keeps no choice of the study left: the end of Findings again.
+        conclusion.click()
+        self.page.clock.run_for(21000)
+        self.wait_until(lambda: self.site.stored_for(h.UID) == {**EMPTY, "findings": "SYN-P1 SYN-P4",
+                                                                 "conclusion": "SYN-C SYN-P2 SYN-P3"}, "A autosaved")
+        self.switch(h.PATIENT_B)
+        expect(findings).to_have_value("")
+        self.paste("SYN-B")
+        expect(self.page.locator("#findings")).to_have_value("SYN-B")
+        expect(self.page.locator("#conclusion")).to_have_value("")
+        self.assertEqual([], self.dialogs, "nothing is asked on the way")
+
     def test_a_cleared_draft_in_an_untouched_study_is_saved_or_asked_at_every_boundary(self):
         for boundary in self.BOUNDARIES:
             with self.subTest(boundary=boundary):

@@ -2390,6 +2390,7 @@
       "tests/clinician_home_dom_test.py",
       "tests/clinician_question_dom_test.py",
       "tests/clinician_request_dom_test.py",
+      "tests/critical_result_connection_dom_test.py",
       "tests/critical_result_recipient_dom_test.py",
       "tests/critical_result_sender_dom_test.py",
       "tests/e2e/requirements.txt",
@@ -2998,6 +2999,7 @@
       "proxy/nginx.conf.template",
       "scripts/record-run.py",
       "tests/ci_workflows.py",
+      "tests/proxy_app_cache_test.py",
       "tests/proxy_grant_log_test.py"
     ],
     "measurements": [
