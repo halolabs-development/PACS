@@ -270,7 +270,7 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
         same points — and the Length is saved as a verified measurement. No screen calibration is involved or offered."""
         for modality, sop_class, tags, spacing, basis in PROJECTIONS:
             with self.subTest(modality=modality):
-                frames = 2 if modality == 'XA' else 1
+                frames = 1
                 f = synthetic_projection(self.stack, 'PROJ-' + uuid.uuid4().hex[:12], modality.lower() + uuid.uuid4().hex[:6],
                                          '20260908', modality, sop_class, tags, frames)
                 w = self.login('doctor'); self.addCleanup(w.close)
@@ -281,9 +281,8 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
                 p.wait_for_timeout(350)  # the pinned native calculator's trailing throttle
                 native = p.evaluate(NATIVE, 'Length')
                 # The viewer places an image without a position or orientation with rows along [0,1,0], columns along [0,0,-1]
-                # and its origin at [0,0,0] — [0,0,frame] for a multi-frame image (here frame 1); the mark lies in that plane.
-                origin = [0, 0, 1] if frames > 1 else [0, 0, 0]
-                self.assertEqual([native['row'], native['column'], native['origin']], [[0, 1, 0], [0, 0, -1], origin], native)
+                # and its origin at [0,0,0]; the mark lies in that plane.
+                self.assertEqual([native['row'], native['column'], native['origin']], [[0, 1, 0], [0, 0, -1], [0, 0, 0]], native)
                 text = p.evaluate(SVG_TEXT)
                 self.assertNotIn('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다', text)
                 self.assertTrue(all(part in text for part in basis.split(' · ')), (basis, text))  # drawn as two lines
@@ -329,42 +328,40 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
                 self.assertLess(abs(angle['value'] - expected), 1e-3, (expected, angle))
                 box = p.locator('.cornerstone-canvas').bounding_box()
                 if modality == 'CR':
+                    unconfirmed = '화면에 그려진 영상을 확인할 수 없어 이 점으로 재지 않습니다'
                     # Drawn with a spacing other than its own (a stack keeps the previous image's spacing when the next one
-                    # differs by less than the viewer's tolerance): no value in the original's basis. The display data only.
+                    # differs by less than the viewer's tolerance): a press gives no value. The display data only.
                     p.evaluate('''()=>{const v=cornerstone.getEnabledElements()[0].viewport, own=v.getImageData.bind(v);
                       window.kinTestImageData=own; v.getImageData=(...a)=>{const d=own(...a); return d && {...d, spacing:[d.spacing[0]*(1+1e-6), d.spacing[1], d.spacing[2]]};};}''')
                     self.choose(p, 'Length')
                     self.drag(p, box['x'] + box['width'] * .3, box['y'] + box['height'] * .8, 120, 0)
-                    expect(p.locator('#kin-viewer-history [role=status]')).to_contain_text('표시 간격과 원본 간격이 일치하지 않습니다')
-                    p.wait_for_timeout(600)
-                    self.assertEqual(1, len(self.saved(f)))
+                    expect(p.locator('#kin-viewer-history [role=status]')).to_contain_text(unconfirmed)
                     p.evaluate("()=>{const v=cornerstone.getEnabledElements()[0].viewport; v.getImageData=window.kinTestImageData; delete window.kinTestImageData;}")
-                if frames > 1:
-                    # The second frame of the run: its own origin [0,0,2] in the viewer, measured and saved on that frame.
-                    p.evaluate("async()=>{const v=cornerstone.getEnabledElements()[0].viewport;await v.setImageIdIndex(1);}")
+                    # The cell's last finished render is not this image (its pixels still change): a press gives no value.
+                    p.evaluate('''()=>{const bar=window.KinViewerInfoBar, own=bar.identity; window.kinTestIdentity=own;
+                      bar.identity=(...a)=>({...own(...a), instance:null});}''')
                     self.choose(p, 'Length')
-                    self.drag(p, box['x'] + box['width'] * .3, box['y'] + box['height'] * .25, 80, 20)
+                    self.drag(p, box['x'] + box['width'] * .3, box['y'] + box['height'] * .8, 120, 0)
+                    expect(p.locator('#kin-viewer-history [role=status]')).to_contain_text(unconfirmed)
+                    p.evaluate("()=>{window.KinViewerInfoBar.identity=window.kinTestIdentity; delete window.kinTestIdentity;}")
+                    self.assertEqual(1, len(self.saved(f)))
+                    # A point moved while that cannot be confirmed: the moved mark gives no value and is not saved.
+                    self.choose(p, 'Length')
+                    self.drag(p, box['x'] + box['width'] * .25, box['y'] + box['height'] * .85, 100, 0)
                     p.wait_for_timeout(350)
-                    p.wait_for_function('''()=>{const v=cornerstone.getEnabledElements()[0].viewport;
-                      return cornerstoneTools.annotation.state.getAllAnnotations().some(a=>a.metadata.toolName==='Length' &&
-                        a.metadata.referencedImageId===v.getCurrentImageId() && !a.invalidated &&
-                        Object.values(a.data.cachedStats||{}).some(s=>Number.isFinite(s.length)))}''')
-                    second = p.evaluate(NATIVE, 'Length')
-                    self.assertEqual(second['origin'], [0, 0, 2], second)
-                    self.assertIn('/frames/2', second['image'])
-                    (a, b) = second['points']
-                    expected = math.hypot(b[1] - a[1], b[2] - a[2])
-                    text = p.evaluate(SVG_TEXT)
-                    self.assertTrue(all(part in text for part in basis.split(' · ')), (basis, text))  # drawn as two lines
-                    shown = float(re.search(r'(\d+(?:\.\d+)?) mm', text).group(1))
-                    self.assertLess(abs(shown - expected), .051, (text, expected, second))
+                    p.wait_for_function('''()=>cornerstoneTools.annotation.state.getAllAnnotations().filter(a=>a.metadata.toolName==='Length').length>=2''')
+                    expect(p.locator('svg.svg-layer')).not_to_contain_text(unconfirmed)
+                    end = p.evaluate('''()=>{const v=cornerstone.getEnabledElements()[0].viewport, a=cornerstoneTools.annotation.state.getAllAnnotations().filter(a=>a.metadata.toolName==='Length').at(-1);
+                      const [x,y]=v.worldToCanvas(a.data.handles.points[1]), r=v.canvas.getBoundingClientRect(); return [r.left+x, r.top+y];}''')
+                    p.evaluate('''()=>{const bar=window.KinViewerInfoBar, own=bar.identity; window.kinTestIdentity=own;
+                      bar.identity=(...a)=>({...own(...a), instance:null});}''')
+                    p.mouse.move(end[0], end[1]); p.mouse.down(); p.mouse.move(end[0] + 25, end[1] + 10, steps=8); p.mouse.up()
+                    p.evaluate("()=>{window.KinViewerInfoBar.identity=window.kinTestIdentity; delete window.kinTestIdentity;}")
+                    expect(p.locator('svg.svg-layer')).to_contain_text(unconfirmed)
                     rows = p.locator('#kin-viewer-history section[data-kind=length]')
                     rows.last.get_by_role('button', name='Save', exact=True).click()
-                    expect(rows.last).to_contain_text('저장 완료')
-                    saved = self.saved(f)
-                    self.assertEqual(2, len(saved))
-                    self.assertEqual([1, 2], sorted(s['item']['frame'] for s in saved))
-                    self.assertTrue(all(s['referenceStatus'] == 'verified' for s in saved), saved)
+                    p.wait_for_timeout(600)
+                    self.assertEqual(1, len(self.saved(f)))
                 if modality == 'DX':
                     # A screen calibration over an image with spacing of its own gives no value in the original's basis.
                     p.evaluate("()=>document.querySelector('[aria-label=Calibration]').click()")
@@ -379,6 +376,23 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
                     p.wait_for_timeout(600)
                     self.assertEqual(1, len(self.saved(f)))
                 p.close(); w.close()
+
+    def test_calibration_projection_multiframe_run_keeps_its_rules(self):
+        """A multi-frame XA run without position or orientation is outside the projection list: as before, the Length line
+        is drawn but gives no value, and nothing is saved."""
+        f = synthetic_projection(self.stack, 'PROJ-' + uuid.uuid4().hex[:12], 'xarun' + uuid.uuid4().hex[:6], '20260908', 'XA',
+                                 XRayAngiographicImageStorage, dict(ImagerPixelSpacing=[.2, .4]), 2)
+        w = self.login('doctor'); self.addCleanup(w.close)
+        p = w.context.new_page(); self.addCleanup(p.close)
+        p.goto(self.stack.proxy + '/ohif/viewer?StudyInstanceUIDs=' + f.uid); canvas_ready(p, 1)
+        expect(p.locator('#kin-viewer-history [role=status]')).to_contain_text('개 저장 항목')
+        self.open_measurement_tools(p)
+        self.choose(p, 'Length')
+        box = p.locator('.cornerstone-canvas').bounding_box()
+        self.drag(p, box['x'] + box['width'] * .4, box['y'] + box['height'] * .4, 65, 32)
+        expect(p.locator('svg.svg-layer')).to_contain_text('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다')
+        self.assertNotIn(' mm', p.evaluate(SVG_TEXT))
+        self.assertEqual([], self.saved(f))
 
 
 if __name__ == '__main__':

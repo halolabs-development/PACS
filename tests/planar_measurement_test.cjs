@@ -38,14 +38,14 @@ for(const modality of ['MR','DX','US','XA','MG'])test(modality+' length, angle a
 // Spacing 0.1\0.1, 16x16, no position or orientation) and pydicom-data RG1 (Philips CR, Pixel Spacing 0.000\0.000, no
 // position or orientation). The DX, RF and XA rows are synthetic tag sets, not copies of a device file.
 const projection={StudyInstanceUID:'2.25.1',SeriesInstanceUID:'2.25.2',SOPInstanceUID:'2.25.3',Rows:200,Columns:300};
-// Frame n of a multi-frame image has its origin at [0,0,n] in the pinned viewer (OHIF combineFrameInstance).
-const viewerPoint=(tags,[x,y],spacing,frame)=>[0,x*spacing[1],(tags.NumberOfFrames>1?frame:0)-y*spacing[0]];
+const viewerPoint=(tags,[x,y],spacing)=>[0,x*spacing[1],-y*spacing[0]];
 const projections=[
  ['CR Pixel Spacing calibrated',{...projection,Modality:'CR',SOPClassUID:'1.2.840.10008.5.1.4.1.1.1',PixelSpacing:[.15,.15],ImagerPixelSpacing:[.168,.168]},[.15,.15],/원본 기준면/],
  ['CR public sample',{...projection,Modality:'CR',SOPClassUID:'1.2.840.10008.5.1.4.1.1.1',Rows:16,Columns:16,ImagerPixelSpacing:['0.1000','0.1000']},[.1,.1],/검출기/],
  ['DX detector',{...projection,Modality:'DX',SOPClassUID:'1.2.840.10008.5.1.4.1.1.1.1',ImagerPixelSpacing:[.2,.3]},[.2,.3],/검출기/],
  ['RF magnification',{...projection,Modality:'RF',SOPClassUID:'1.2.840.10008.5.1.4.1.1.12.2',ImagerPixelSpacing:[.3,.3],EstimatedRadiographicMagnificationFactor:1.2},[.25,.25],/ERMF/],
- ['XA multiframe',{...projection,Modality:'XA',SOPClassUID:'1.2.840.10008.5.1.4.1.1.12.1',NumberOfFrames:2,ImagerPixelSpacing:[.25,.5]},[.25,.5],/검출기/],
+ ['XA single frame',{...projection,Modality:'XA',SOPClassUID:'1.2.840.10008.5.1.4.1.1.12.1',NumberOfFrames:'1',ImagerPixelSpacing:['0.25','0.5']},[.25,.5],/검출기/],
+ ['RF with a position',{...projection,Modality:'RF',SOPClassUID:'1.2.840.10008.5.1.4.1.1.12.2',ImagerPixelSpacing:[.3,.3],ImagePositionPatient:'0\\0\\0'},[.3,.3],/검출기/],
 ];
 for(const [name,tags,spacing,label] of projections)test(name+' without position or orientation measures in the viewer plane',()=>{
  const small=tags.Columns<100, at=p=>small?p.map(n=>n/20):p;
@@ -94,6 +94,12 @@ test('images outside the projection list keep the geometry they had',()=>{
   {...cr,PixelSpacing:['0.000','0.000']},
   {...cr,ImagerPixelSpacing:[.2,.2],EstimatedRadiographicMagnificationFactor:0},
   {...cr,ImagerPixelSpacing:'0.2'},
+  {...cr,PixelSpacing:[.2,.2],EstimatedRadiographicMagnificationFactor:'2.00000000000000000'},
+  {...cr,PixelSpacing:[.2,.2],EstimatedRadiographicMagnificationFactor:'\t2'},
+  {...cr,PixelSpacing:'0.2\\0.2',ImagePositionPatient:'0\\0\\0x1'},
+  {...cr,PixelSpacing:'0.2\\0.2',ImagePositionPatient:[0,0]},
+  {...projection,Modality:'XA',SOPClassUID:'1.2.840.10008.5.1.4.1.1.12.1',NumberOfFrames:2,ImagerPixelSpacing:[.25,.5]},
+  {...projection,Modality:'RF',SOPClassUID:'1.2.840.10008.5.1.4.1.1.12.2',NumberOfFrames:'3',ImagerPixelSpacing:[.3,.3]},
   {...cr,PixelSpacing:[.2,.2],EstimatedRadiographicMagnificationFactor:'0x2'},
   {...cr,ImagerPixelSpacing:'Infinity\\Infinity'},
   {...cr,PixelSpacing:'0x1\\0x1'},
@@ -108,7 +114,7 @@ test('images outside the projection list keep the geometry they had',()=>{
   assert.equal(!!built[0],!!built[1],JSON.stringify(tags));
   for(const geometry of built.filter(Boolean)){
    assert.equal(geometry.viewerPlane,false);
-   assert.deepEqual([...geometry.orientation],tags.ImageOrientationPatient||[1,0,0,0,1,0]);assert.deepEqual([...geometry.origin],tags.ImagePositionPatient||[0,0,0]);
+   assert.deepEqual([...geometry.orientation],tags.ImageOrientationPatient||[1,0,0,0,1,0]);assert.deepEqual([...geometry.origin],(typeof tags.ImagePositionPatient==='string'?tags.ImagePositionPatient.split('\\').map(Number):tags.ImagePositionPatient)||[0,0,0]);
   }
  }
 });

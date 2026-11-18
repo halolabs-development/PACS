@@ -1,17 +1,23 @@
 // The images that are measured in the viewer's own plane although they give no orientation: projection X-rays (CR, DX,
-// RF, XA) without ImageOrientationPatient, without functional groups or detector information, whose spacing tags read
-// plainly in the standard's order (each Pixel Spacing / Imager Pixel Spacing absent or two positive numbers, at least one
-// given; a magnification factor absent or positive). Every other image keeps the rules it had (as api/src/planar-geometry.ts).
+// RF, XA) without ImageOrientationPatient, without functional groups or detector information, with one frame, whose spacing
+// and position tags read plainly as Decimal Strings (each Pixel Spacing / Imager Pixel Spacing absent or two positive
+// numbers, at least one given; a magnification factor absent or positive; a position absent or three numbers). Every other image keeps the rules it had (as api/src/planar-geometry.ts).
 function kinViewerPlaneImage(tags) {
-  // A positive Decimal String (DICOM PS3.5 6.2: digits, one point, an exponent) or a positive number — not what Number() also reads (0x2, Infinity).
-  const positive = x => (typeof x === 'number' || typeof x === 'string' && /^\s*[+]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?\s*$/.test(x)) && Number(x) > 0 && Number.isFinite(Number(x));
-  const pair = v => { const a = typeof v === 'string' ? v.split('\\') : v; return Array.isArray(a) && a.length === 2 && a.every(positive); };
-  const factor = tags?.EstimatedRadiographicMagnificationFactor;
+  // A Decimal String component (DICOM PS3.5 6.2): at most 16 bytes of digits, one point, an exponent and spaces only, judged
+  // before it becomes a number; a JSON number is taken as it is. Anything else (a tab, 19 bytes, 0x2, Infinity) is not plain.
+  const decimal = (x) => typeof x === 'number' ? Number.isFinite(x) :
+    typeof x === 'string' && x.length <= 16 && /^ *[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)? *$/.test(x) && Number.isFinite(Number(x));
+  const parts = (v, n) => { const a = typeof v === 'string' ? v.split('\\') : v; return Array.isArray(a) && a.length === n && a.every(decimal) ? a.map(Number) : null; };
+  const positive = (v, n) => { const a = parts(v, n); return !!a && a.every(x => x > 0); };
+  const frames = tags?.NumberOfFrames;
   return ['CR', 'DX', 'RF', 'XA'].includes(tags?.Modality) && tags.ImageOrientationPatient === undefined &&
     tags.PerFrameFunctionalGroupsSequence === undefined && tags.SharedFunctionalGroupsSequence === undefined && tags.DetectorInformationSequence === undefined &&
-    (tags.PixelSpacing === undefined || pair(tags.PixelSpacing)) && (tags.ImagerPixelSpacing === undefined || pair(tags.ImagerPixelSpacing)) &&
+    // One frame only: a multi-frame run keeps the rules it had.
+    (frames === undefined || frames === 1 || typeof frames === 'string' && /^ *\+?0*1 *$/.test(frames)) &&
+    (tags.PixelSpacing === undefined || positive(tags.PixelSpacing, 2)) && (tags.ImagerPixelSpacing === undefined || positive(tags.ImagerPixelSpacing, 2)) &&
     (tags.PixelSpacing !== undefined || tags.ImagerPixelSpacing !== undefined) &&
-    (factor === undefined || positive(factor));
+    (tags.EstimatedRadiographicMagnificationFactor === undefined || positive([tags.EstimatedRadiographicMagnificationFactor], 1)) &&
+    (tags.ImagePositionPatient === undefined || !!parts(tags.ImagePositionPatient, 3));
 }
 
 // Physical lengths, angles and areas on a specified original frame; no non-CT HU inference.
@@ -43,9 +49,9 @@ function kinPlanarGeometry(tags, frame) {
     }
     if (viewerPlane) {
       // A projection X-ray as most devices send it (kinViewerPlaneImage): measured in the plane the viewer places it in,
-      // where the points of its marks lie — rows along [0,1,0], columns along [0,0,-1], origin [0,0,0], or [0,0,frame] for
-      // frame n of a multi-frame image (the pinned OHIF imagePlaneModule and combineFrameInstance).
-      origin = numbers(tags.ImagePositionPatient ?? (frames > 1 ? [0, 0, frame] : [0, 0, 0]), 3);
+      // where the points of its marks lie — rows along [0,1,0], columns along [0,0,-1], origin [0,0,0] (the pinned OHIF
+      // imagePlaneModule).
+      origin = numbers(tags.ImagePositionPatient ?? [0, 0, 0], 3);
       orientation = [0, 1, 0, 0, 0, -1];
     } else {
       origin = numbers(value('PlanePositionSequence', 'ImagePositionPatient') ?? [0, 0, 0], 3);
