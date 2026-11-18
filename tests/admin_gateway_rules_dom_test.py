@@ -13,8 +13,7 @@ is recorded.
       not translated), Keep Sent Copies and Compression as saved.
   03  editing and saving sends exactly { revision, routes, retentionDays, compression } with empty conditions as null;
       the answer is shown with its revision; the same settings again say nothing changed.
-  04  refusals in fixed sentences: two rules one study could match name both rule numbers; a rule without a destination
-      names its row; another save in between (409) reads the rules again; Days that is not a whole number is never sent.
+  04  refusals in fixed sentences that name the rule and its field (never the server's wording); another save in between (409) reads the rules again; Days that is not a whole number is never sent.
   05  a read answered after the page session ended paints nothing and every control stays off.
   06  wording: English headings, controls and state words with no Hangul; Korean guidance.
 
@@ -234,12 +233,12 @@ class AdminGatewayRulesDOMTest(unittest.TestCase):
     def test_04_refusals_are_fixed_sentences(self):
         self.open()
         self.load()
-        self.save((400, {"code": "GATEWAY_SETTINGS_OVERLAP", "field": "routes[0]~routes[1]", "message": "SYN-SERVER-WORDING"}))
-        self.assertIn("규칙 1과(와) 규칙 2", self.message())
+        self.save((400, {"code": "GATEWAY_SETTINGS_INVALID", "field": "routes[1].destinations", "message": "SYN-SERVER-WORDING"}))
+        self.assertIn("규칙 2의 Destinations", self.message())
         self.assertNotIn("SYN-SERVER-WORDING", self.message())
         self.assertEqual(len(self.rows()), 2, "the form stays as edited")
-        self.save((400, {"code": "GATEWAY_SETTINGS_INVALID", "field": "routes[1].destinations"}))
-        self.assertIn("규칙 2의 Destinations", self.message())
+        self.save((400, {"code": "GATEWAY_SETTINGS_INVALID", "field": "routes[0].modality"}))
+        self.assertIn("규칙 1의 Modality", self.message())
         # Another administrator saved meanwhile: the rules are read again.
         before = len(self.settings_calls("GET"))
         self.replies.append((409, {"code": "GATEWAY_SETTINGS_STALE", "revision": 4}))
@@ -282,6 +281,7 @@ class AdminGatewayRulesDOMTest(unittest.TestCase):
         self.assertEqual([t for t in texts["heads"] if hangul.search(t)], [])
         self.assertRegex(texts["hint"], hangul)
         self.assertIn("화소 값은 바뀌지 않습니다", texts["hint"])
+        self.assertIn("그 규칙들의 목적지 모두로 보내고", texts["hint"])
 
 
 if __name__ == "__main__":

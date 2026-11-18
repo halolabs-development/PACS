@@ -5,8 +5,9 @@
  *  - routes: which destinations a study goes to. A route names a Modality and/or a sending device's AE Title; a study
  *    matches when any of its series has that Modality and any of its instances came from that device (an empty
  *    condition matches every study). Destinations are this server ("kin") and the institution's DICOM Peers that are
- *    another PACS or device (kind store). Two routes that could both match one study are refused, so there is no order
- *    to decide; a study no route matches goes to this server only, as before routes existed.
+ *    another PACS or device (kind store). A study goes to every destination of every route it matches - one study can
+ *    hold a CT and an SR series, or come from two devices, so routes are never ranked against each other; a study no
+ *    route matches goes to this server only, as before routes existed.
  *  - retentionDays: how long the Gateway keeps its copy once every destination has it (null = keep, as before).
  *  - compression: 'lossless' re-compresses uncompressed pixel data before it is sent to this server ('none' = as stored).
  * No settings stored = no routes, keep, none: exactly the Gateway's behaviour before settings existed.
@@ -15,7 +16,6 @@
  * conflict (409), never a silent overwrite of another administrator's change.
  */
 export const GATEWAY_SETTINGS_INVALID = 'GATEWAY_SETTINGS_INVALID';
-export const GATEWAY_SETTINGS_OVERLAP = 'GATEWAY_SETTINGS_OVERLAP';
 export const GATEWAY_SETTINGS_STALE = 'GATEWAY_SETTINGS_STALE';
 export const GATEWAY_SETTINGS_RESTRICTED = 'GATEWAY_SETTINGS_RESTRICTED';
 export const GATEWAY_PEER_ROUTED = 'GATEWAY_PEER_ROUTED';
@@ -51,15 +51,9 @@ const optional = (value: unknown, upper: boolean) => {
   return text === '' ? null : text;
 };
 
-/** Two routes overlap when one study could match both: every condition is equal or empty on one side. */
-export function routesOverlap(a: GatewayRoute, b: GatewayRoute): boolean {
-  const meets = (x: string | null, y: string | null) => x === null || y === null || x === y;
-  return meets(a.modality, b.modality) && meets(a.sourceAe, b.sourceAe);
-}
-
 /**
  * The administrator's form → the settings to store. `peers` are the institution's store peers (ids). Throws
- * GatewaySettingsInputError naming the field; overlapping routes name both rows (1-based).
+ * GatewaySettingsInputError naming the field.
  */
 export function parseGatewaySettingsInput(body: unknown, peers: Set<string>):
   { expectedRevision: number; settings: Omit<GatewaySettings, 'revision'> } {
@@ -83,10 +77,6 @@ export function parseGatewaySettingsInput(body: unknown, peers: Set<string>):
       throw new GatewaySettingsInputError(at + '.destinations');
     return { modality, sourceAe, destinations: [...targets] as string[] };
   });
-  for (let i = 0; i < parsed.length; i++)
-    for (let j = i + 1; j < parsed.length; j++)
-      if (routesOverlap(parsed[i], parsed[j]))
-        throw new GatewaySettingsInputError(`routes[${i}]~routes[${j}]`, GATEWAY_SETTINGS_OVERLAP);
   if (retentionDays !== null && (!Number.isSafeInteger(retentionDays) || (retentionDays as number) < 0
     || (retentionDays as number) > GATEWAY_RETENTION_DAYS_MAX))
     throw new GatewaySettingsInputError('retentionDays');

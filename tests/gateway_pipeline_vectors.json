@@ -258,7 +258,7 @@
       },
       "G": {
         "uid": "2.25.500",
-        "peer": {"status": 200, "id": "7a0c5e21-3b4d-4e5f-8a6b-7c8d9e0f1a2b", "up": true},
+        "peer": {"status": 201, "id": "7a0c5e21-3b4d-4e5f-8a6b-7c8d9e0f1a2b", "up": true},
         "settings": {"status": 200, "changed": true, "revision": 1, "routes": [{"modality": "CT", "sourceAe": null, "destinations": ["kin", "7a0c5e21-3b4d-4e5f-8a6b-7c8d9e0f1a2b"]}], "retentionDays": 0, "compression": "lossless"},
         "applied": {"revision": 1, "t": "2026-09-25T00:06:15.000000Z"},
         "down": {"t": "2026-09-25T00:06:20.000000Z", "detached": true},

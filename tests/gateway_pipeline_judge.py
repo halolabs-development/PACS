@@ -417,7 +417,7 @@ def _x5(s, t, d, e):
 def _g1(s, t, d, e):
     block = s['G']
     saved, peer = block['settings'], block['peer']
-    return (peer['status'] == 200 and isinstance(peer['id'], str) and bool(peer['id'])
+    return (peer['status'] == 201 and isinstance(peer['id'], str) and bool(peer['id'])
             and (saved['status'], saved['changed']) == (200, True) and isinstance(saved['revision'], int)
             and saved['revision'] >= 1
             and saved['routes'] == [{'modality': 'CT', 'sourceAe': None, 'destinations': ['kin', peer['id']]}]

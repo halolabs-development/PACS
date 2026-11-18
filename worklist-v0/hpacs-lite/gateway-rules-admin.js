@@ -38,10 +38,6 @@
 
   // Fixed sentences for this screen; the server's wording is used only for the restricted-account refusal it words.
   function failure(error, what) {
-    if (error?.status === 400 && error.code === 'GATEWAY_SETTINGS_OVERLAP' && typeof error.field === 'string') {
-      const [a, b] = (error.field.match(/\d+/g) || []).map(n => Number(n) + 1);
-      return `규칙 ${a}과(와) 규칙 ${b}가 한 검사에 함께 맞을 수 있습니다. Modality나 Sending AE Title을 서로 다르게 하세요.`;
-    }
     if (error?.status === 400 && typeof error.field === 'string') {
       const row = error.field.match(/^routes\[(\d+)\]\.?(\w*)$/);
       if (row) return `규칙 ${Number(row[1]) + 1}의 ${FIELD[row[2]] || '값'}을(를) 확인하세요` +

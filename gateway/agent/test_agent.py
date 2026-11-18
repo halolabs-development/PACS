@@ -1393,7 +1393,7 @@ class RoutingTests(unittest.TestCase):
         self.assertIsNotNone(row)
         try:
             agent.process_forward(row)
-        except GatewayError as error:
+        except (GatewayError, agent_module.ForwardError) as error:
             agent.queue.forward_retry(str(row["uid"]), str(row["dest"]), str(error), 1, 10)
 
     def forward_row(self, agent, dest=PEER):
@@ -1442,8 +1442,10 @@ class RoutingTests(unittest.TestCase):
         # No routes: nothing about routing is read or written; the calls are the ones before routing.
         self.assertEqual(agent.orthanc.calls, ["instances", ("copy", "id-1.2.840.99.7.1"), ("copy", "id-1.2.840.99.7.2"),
                                                "instances"])
-        self.assertIsNone(self.study_row(agent)["destinations"])
+        self.assertEqual(agent.cloud.announced, [self.UID])
+        self.assertEqual(json.loads(self.study_row(agent)["destinations"]), ["kin"], "KIN, decided before the announce")
         self.assertEqual(agent.queue.db.execute("SELECT count(*) FROM forwards").fetchone()[0], 0)
+        self.assertNotIn("study.routed", [event for event, _fields in self.events])
         self.assertNotIn("compressed", json.dumps([fields for event, fields in self.events if event == "batch.stored"]))
 
     def test_the_settings_copy_belongs_to_one_gateway_credential_and_survives_a_restart(self):
@@ -1479,13 +1481,21 @@ class RoutingTests(unittest.TestCase):
 
     # ── routing ──
 
-    def test_route_for_first_matching_rule_by_modality_and_sending_device_or_kin(self):
+    def test_route_for_every_matching_rule_by_modality_and_sending_device_or_kin(self):
         routes = [rule("MG", None, PEER), rule("CT", "SYN_CT", "kin", PEER_B), rule(None, "SYN_US", PEER_B)]
         self.assertEqual(agent_module.route_for(routes, {"MG"}, {"X"}), [PEER])
         self.assertEqual(agent_module.route_for(routes, {"CT", "SR"}, {"SYN_CT"}), ["kin", PEER_B])
         self.assertEqual(agent_module.route_for(routes, {"CT"}, {"OTHER"}), ["kin"], "both conditions must hold")
         self.assertEqual(agent_module.route_for(routes, {"US"}, {"SYN_US", "SYN_CT"}), [PEER_B], "any instance's device")
         self.assertEqual(agent_module.route_for(routes, {"XA"}, set()), ["kin"], "no rule holds -> KIN")
+        # One study can hold for several rules (CT and MG series, two devices): every destination of each, none dropped,
+        # whatever the order of the rules.
+        mixed = agent_module.route_for(routes, {"CT", "MG"}, {"SYN_CT", "SYN_US"})
+        self.assertEqual(sorted(mixed), sorted(["kin", PEER, PEER_B]))
+        self.assertEqual(sorted(agent_module.route_for(list(reversed(routes)), {"CT", "MG"}, {"SYN_CT", "SYN_US"})),
+                         sorted(mixed))
+        self.assertEqual(agent_module.route_for([rule("CT", None, "kin"), rule("SR", None, PEER)], {"CT", "SR"}, set()),
+                         ["kin", PEER])
 
     def test_two_destinations_keep_their_own_success_and_a_dead_one_holds_back_nothing_else(self):
         agent = self.agent(settings_answer([rule("CT", None, "kin", PEER)], days=0))
@@ -1546,17 +1556,23 @@ class RoutingTests(unittest.TestCase):
     def test_a_row_kin_already_knows_stays_kin_when_rules_appear(self):
         agent = self.agent(settings_answer())
         self.kin(agent)
-        self.assertIsNone(self.study_row(agent)["destinations"])
+        self.assertEqual(json.loads(self.study_row(agent)["destinations"]), ["kin"])
         agent.settings.accept(settings_answer([rule("CT", None, PEER)], revision=2))
         agent.queue.record_changes([(self.UID, "orthanc-id")], 2)
         self.kin(agent)
         self.assertEqual(json.loads(self.study_row(agent)["destinations"]), ["kin"])
         self.assertEqual(self.study_row(agent)["phase"], "complete")
 
-    def test_a_destination_no_longer_listed_retries_and_keeps_the_copy(self):
+    def test_a_destination_no_longer_listed_still_gets_what_was_decided_for_it(self):
         agent = self.agent(settings_answer([rule("CT", None, "kin", PEER)], days=0))
         self.kin(agent)
+        # The peer leaves the settings (removed, or registered again under another id): its address went with the study.
         agent.settings.accept(settings_answer(peers=(PEER_B,), days=0, revision=2))
+        self.forward(agent)
+        self.assertEqual(self.forward_row(agent)["phase"], "complete")
+        # A row without a kept address (none can be made now) and no listed peer: it retries and keeps the copy.
+        agent.queue.db.execute("UPDATE forwards SET phase='pending', successful_sops='[]', peer=NULL")
+        agent.queue.db.commit()
         self.forward(agent)
         self.assertEqual((self.forward_row(agent)["phase"], self.forward_row(agent)["last_error"]),
                          ("retry", "forward destination unknown"))
@@ -1573,8 +1589,8 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual((method, path), ("PUT", "/modalities/kin-route-x"))
         body = kwargs["json"]
         self.assertEqual((body["AET"], body["Host"], body["Port"]), ("SYNPACS", "10.0.0.9", 104))
-        self.assertTrue(all(body[key] is False for key in ("AllowEcho", "AllowFind", "AllowGet", "AllowMove",
-                                                           "AllowStore", "AllowStorageCommitment")))
+        self.assertTrue(all(body[key] is False for key in ("AllowEcho", "AllowFind", "AllowFindWorklist", "AllowGet",
+                                                           "AllowMove", "AllowStore", "AllowStorageCommitment")))
 
     # ── keeping sent copies ──
 
@@ -1610,23 +1626,70 @@ class RoutingTests(unittest.TestCase):
         self.purge_now(agent)
         self.assertEqual(agent.orthanc.deleted, [], "nothing KIN did not name as stored is deleted")
 
-    def test_the_record_comes_before_the_deletion_and_a_sop_seen_again_is_sent_again(self):
+    def test_the_record_comes_before_the_deletion_and_a_failed_deletion_is_undone(self):
         agent = self.agent(settings_answer(days=0))
         self.kin(agent)
         agent.orthanc.delete_error_at = "id-1.2.840.99.7.2"
+        recorded = []
+        real = agent.queue.purged
+        agent.queue.purged = lambda uid, sops: (recorded.append((sorted(sops), list(agent.orthanc.deleted))), real(uid, sops))
         self.purge_now(agent)
+        self.assertEqual(recorded, [(["1.2.840.99.7.1"], []), (["1.2.840.99.7.2"], ["id-1.2.840.99.7.1"])],
+                         "each SOP leaves the sent sets before its instance is deleted")
         self.assertEqual(agent.orthanc.deleted, ["id-1.2.840.99.7.1"])
-        self.assertEqual(agent.queue.successes(self.UID), set(), "both left the sent set before any deletion")
-        self.assertEqual(agent.queue.purged_sops(self.UID), {"1.2.840.99.7.1", "1.2.840.99.7.2"})
-        # The kept copy and a re-sent copy of the deleted SOP are both sent again on the next StableStudy.
+        self.assertEqual(agent.queue.successes(self.UID), {"1.2.840.99.7.2"}, "the copy still here is sent again")
+        self.assertEqual(agent.queue.confirmed(self.UID), {"1.2.840.99.7.2"})
+        self.assertEqual(agent.queue.purged_sops(self.UID), {"1.2.840.99.7.1"})
+        self.assertIsNone(self.study_row(agent)["purged_at"], "looked at again on the next pass")
+        agent.orthanc.delete_error_at = None
+        self.purge_now(agent)
+        self.assertEqual(agent.orthanc.deleted, ["id-1.2.840.99.7.1", "id-1.2.840.99.7.2"])
+        self.assertIsNotNone(self.study_row(agent)["purged_at"])
+
+    def test_a_purged_sop_seen_again_is_sent_again(self):
+        agent = self.agent(settings_answer(days=0))
+        self.kin(agent)
+        self.purge_now(agent)
+        self.assertEqual(agent.queue.successes(self.UID), set(), "deleted copies leave the sent set")
         agent.orthanc.held["1.2.840.99.7.1"] = {"sop": "1.2.840.99.7.1", "id": "id-again", "size": 16,
                                                 "source_ae": "SYN_CT", "syntax": NATIVE}
         agent.queue.record_changes([(self.UID, "orthanc-id")], 2)
         self.kin(agent)
         self.assertEqual(agent.cloud.stowed, [self.UID, self.UID])
-        self.assertEqual(self.study_row(agent)["phase"], "complete")
         receipt = agent.queue.receipt(self.UID)
-        self.assertEqual((receipt["successCount"], receipt["localCount"]), (2, 2), "N and M count what is held now")
+        self.assertEqual((receipt["phase"], receipt["successCount"], receipt["localCount"]), ("complete", 1, 1))
+
+    def test_a_queue_moved_to_another_gateway_credential_is_never_cleaned_up_on_its_record(self):
+        agent = self.agent(settings_answer(days=0))
+        self.kin(agent)
+        agent.queue.close()
+        moved = Agent(config(self.path, client_id="gw-other"))
+        self.addCleanup(moved.queue.close)
+        moved.orthanc, moved.cloud = agent.orthanc, agent.cloud
+        self.assertTrue(moved.settings.accept(settings_answer(days=0)))
+        self.assertFalse(moved.own_queue)
+        self.purge_now(moved)
+        self.assertEqual(agent.orthanc.deleted, [])
+
+    def test_a_failing_kin_row_holds_back_no_other_destination(self):
+        agent = self.agent(settings_answer([rule("CT", None, "kin", PEER)]))
+        self.kin(agent)
+        agent.queue.record_changes([("1.2.840.99.8", "orthanc-id-2")], 2)   # a second study, whose KIN send fails
+        agent.queue.db.execute("UPDATE studies SET destinations='[\"kin\"]' WHERE uid='1.2.840.99.8'")
+        agent.queue.db.commit()
+        agent.poll_changes = agent.flush_receipts = agent.retry_requests = lambda: None
+        failing = agent.process
+        agent.process = lambda row: (_ for _ in ()).throw(GatewayError("cloud request ConnectionError")) \
+            if row["uid"] == "1.2.840.99.8" else failing(row)
+        passes = []
+        with patch.object(agent_module.time, "sleep", side_effect=lambda _s: setattr(agent, "stopping", True)):
+            original = agent.queue.forward_due
+            agent.queue.forward_due = lambda: (passes.append(1), original())[1]
+            agent.stopping = False
+            agent.loop()
+        self.assertEqual(self.forward_row(agent)["phase"], "complete")
+        self.assertIn(("study.retry", {"uid": "1.2.840.99.8", "attempt": 1, "afterSeconds": 1, "error": "cloud request ConnectionError"}),
+                      self.events)
 
     def test_a_late_instance_after_the_cleanup_completes_without_an_error(self):
         agent = self.agent(settings_answer(days=0))
@@ -1712,7 +1775,8 @@ class RoutingTests(unittest.TestCase):
         answer = {"00081199": {"vr": "SQ", "Value": [{"00081155": {"vr": "UI", "Value": ["1.2.3"]}}, {"bad": 1}]}}
         self.assertEqual(agent_module.stored_sops(answer), {"1.2.3"})
         self.assertEqual(agent_module.stored_sops([answer]), {"1.2.3"})
-        for odd in ({}, {"00081199": []}, None, "x", {"00081199": {"Value": "x"}}):
+        for odd in ({}, {"00081199": []}, None, "x", {"00081199": {"Value": "x"}},
+                    {"00081199": {"Value": [{"00081155": None}, {"00081155": {"Value": None}}, None]}}):
             self.assertEqual(agent_module.stored_sops(odd), set())
 
 

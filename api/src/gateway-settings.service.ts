@@ -68,6 +68,8 @@ export class GatewaySettingsService {
       if (input.expectedRevision !== current.revision)
         throw new ConflictException({ code: GATEWAY_SETTINGS_STALE, revision: current.revision,
           message: '다른 곳에서 Gateway 규칙이 바뀌었습니다. 다시 불러온 뒤 저장하세요.' });
+      // The scope the save was admitted with still holds, checked before anything is written (a refusal writes nothing).
+      await this.studyAccess.unchanged(c, access);
       const same = JSON.stringify({ routes: current.routes, retentionDays: current.retentionDays,
         compression: current.compression }) === JSON.stringify(input.settings);
       if (same) return { settings: current, changed: false };
@@ -77,7 +79,6 @@ export class GatewaySettingsService {
         target: me, detail: dump({ institution: me, ...gatewaySettingsAudit(next) }) } });
       return { settings: next, changed: true };
     }, { maxWait: 4000, timeout: 8000 });
-    await this.studyAccess.unchanged(c, access);
     return result;
   }
 

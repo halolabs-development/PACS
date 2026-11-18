@@ -22,7 +22,7 @@ const GW = { sub: 'sub-gw', actor: 'service-account-gw-inst-a', roles: ['gateway
 const route = (modality, sourceAe, ...destinations) => ({ modality, sourceAe, destinations });
 const form = (extra = {}) => ({ revision: 0, routes: [route('CT', null, 'kin', P1)], retentionDays: 30, compression: 'lossless', ...extra });
 
-function harness({ restricted = false } = {}) {
+function harness({ restricted = false, changed = false } = {}) {
   const institutions = new Map([['inst-a', { gatewaySettings: null }], ['inst-b', { gatewaySettings: null }]]);
   const peers = [
     { id: P1, institutionId: 'inst-a', name: 'SYN PACS A', aet: 'SYNPACSA', host: 'pacs-a.synthetic.test', port: 104, kind: 'store' },
@@ -44,7 +44,7 @@ function harness({ restricted = false } = {}) {
   };
   const studyAccess = {
     snapshot: async c => { calls.push(['snapshot', c.sub]); return { policy: { restricted } }; },
-    unchanged: async c => { calls.push(['unchanged', c.sub]); },
+    unchanged: async c => { calls.push(['unchanged', c.sub]); if (changed) { const e = new Error('changed'); e.status = 409; throw e; } },
   };
   return { service: new GatewaySettingsService(prisma, studyAccess), institutions, audits, calls, locks };
 }
@@ -73,13 +73,11 @@ test('the form is closed: conditions, destinations, overlap, retention and compr
   for (const [body, name] of bad)
     assert.throws(() => S.parseGatewaySettingsInput(body, peers), error => error instanceof S.GatewaySettingsInputError
       && error.field === name && error.code === S.GATEWAY_SETTINGS_INVALID, JSON.stringify(body));
-  // Two routes one study could match are refused - there is no order to decide between them.
+  // Routes are not ranked: one study can match several (a CT and an SR series), and it goes to all their destinations
+  // (the Gateway's rule), so routes that could meet one study are kept as they are.
   for (const [a, b] of [[route('CT', null, 'kin'), route('CT', 'SYN_CT', P1)], [route(null, null, 'kin'), route('MG', null, P1)],
-    [route('CT', null, 'kin'), route('CT', null, P1)], [route(null, 'SYN_CT', 'kin'), route('CT', null, P1)]])
-    assert.throws(() => S.parseGatewaySettingsInput(form({ routes: [a, b] }), peers),
-      error => error.code === S.GATEWAY_SETTINGS_OVERLAP && error.field === 'routes[0]~routes[1]');
-  for (const [a, b] of [[route('CT', null, 'kin'), route('MG', null, P1)], [route('CT', 'A', 'kin'), route('CT', 'B', P1)]])
-    assert.equal(S.parseGatewaySettingsInput(form({ routes: [a, b] }), peers).settings.routes.length, 2);
+    [route('CT', null, 'kin'), route('SR', null, P1)]])
+    assert.deepEqual(S.parseGatewaySettingsInput(form({ routes: [a, b] }), peers).settings.routes, [a, b]);
 });
 
 test('nothing stored is the empty settings, for the administrator and for the Gateway', async () => {
@@ -118,7 +116,7 @@ test('a save: revision check, one audit row with no address, the same settings w
 test('a refused form writes nothing and names its field', async () => {
   const h = harness();
   for (const [body, name, kind] of [[form({ routes: [route('CT', null, OTHER)] }), 'routes[0].destinations', S.GATEWAY_SETTINGS_INVALID],
-    [form({ routes: [route('CT', null, 'kin'), route('CT', null, P1)] }), 'routes[0]~routes[1]', S.GATEWAY_SETTINGS_OVERLAP]])
+    [form({ routes: [route('CT', null, 'kin'), route('MG', null)] }), 'routes[1].destinations', S.GATEWAY_SETTINGS_INVALID]])
     await assert.rejects(h.service.adminSave(body, ADMIN), error => status(error) === 400 && field(error) === name && code(error) === kind);
   assert.deepEqual([h.audits.length, h.institutions.get('inst-a').gatewaySettings], [0, null]);
 });
@@ -137,6 +135,14 @@ test('roles: the administrator only, not with a restricted study scope; the Gate
   assert.equal(restricted.audits.length, 0);
   assert.deepEqual((await h.service.adminSave(form(), ADMIN_B).catch(error => error)).getResponse?.().field, 'routes[0].destinations',
     'a peer of another institution is not a destination');
+});
+
+test('a scope that changed between the admission and the write refuses the save, and nothing is written', async () => {
+  const h = harness({ changed: true });
+  await assert.rejects(h.service.adminSave(form(), ADMIN), error => status(error) === 409);
+  assert.deepEqual([h.audits.length, h.institutions.get('inst-a').gatewaySettings], [0, null]);
+  assert.deepEqual(h.calls.filter(call => call[0] === 'update'), []);
+  assert.ok(h.calls.findIndex(call => call[0] === 'unchanged') > -1, 'checked inside the save');
 });
 
 test('stored values are read defensively and the routed peers are the ones the routes name', () => {

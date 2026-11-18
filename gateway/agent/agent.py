@@ -39,6 +39,11 @@ class PermanentGatewayError(GatewayError):
     """A study cannot succeed by retrying the same bytes and needs operator action."""
 
 
+class ForwardError(RuntimeError):
+    """A delivery to a destination other than KIN failed. Safe to persist and print; never part of a KIN receipt (a
+    forward row has none), so it has no receipt error code."""
+
+
 # S4-U3: the receipt's errorCode. The free reason stays in the local queue and log; it never goes to
 # KIN, because no string blacklist can prove a message is free of patient data. Keys are the message
 # templates of every GatewayError constructed in this file ({} marks an f-string field, which never
@@ -69,12 +74,6 @@ GATEWAY_ERROR_CODES = {
     "successful SOP absent locally count={}": "local_sop_missing",
     "single DICOM instance exceeds byte budget": "instance_exceeds_budget",
     "multipart body exceeds byte budget": "batch_exceeds_budget",
-    # Routing to another destination (a DICOM Peer of the institution). These never reach a KIN receipt: a forward row
-    # has no receipt. They are mapped so every GatewayError has a code.
-    "forward destination unknown": "forward_destination_unknown",
-    "forward C-STORE HTTP {}": "forward_store",
-    "forward C-STORE answer invalid": "forward_store",
-    "forward C-STORE failed count={}": "forward_store",
 }
 GATEWAY_ERROR_FALLBACK = "other"
 _ERROR_PATTERNS = tuple(
@@ -148,6 +147,7 @@ NATIVE_SYNTAXES = frozenset(("1.2.840.10008.1.2", "1.2.840.10008.1.2.1", "1.2.84
 LOSSLESS_SYNTAX = "1.2.840.10008.1.2.4.70"
 SETTINGS_ROUTES_MAX = 32
 SETTINGS_DESTINATIONS_MAX = 9
+SETTINGS_PEERS_MAX = 10000   # a bound on the answer, not on how many peers an institution registers
 RETENTION_DAYS_MAX = 3650
 _SETTINGS_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _SETTINGS_AE = re.compile(r"[ -~]{1,16}")
@@ -176,7 +176,7 @@ def parse_settings(payload: Any) -> dict[str, Any] | None:
         return None
     peers: dict[str, dict[str, Any]] = {}
     destinations = payload["destinations"]
-    if not isinstance(destinations, list) or len(destinations) > SETTINGS_ROUTES_MAX * SETTINGS_DESTINATIONS_MAX:
+    if not isinstance(destinations, list) or len(destinations) > SETTINGS_PEERS_MAX:
         return None
     for peer in destinations:
         if not _closed(peer, {"id", "name", "aet", "host", "port"}):
@@ -209,19 +209,22 @@ def parse_settings(payload: Any) -> dict[str, Any] | None:
 
 
 def route_for(routes: list[dict[str, Any]], modalities: set[str], source_aes: set[str]) -> list[str]:
-    """The one routing rule: the first route whose conditions all hold names the destinations; no route holds -> KIN.
+    """The one routing rule: the study goes to every destination of every route whose conditions all hold (in the order
+    they first appear); no route holds -> KIN. Order-free: one study (CT and SR series, two sending devices) may hold for
+    several routes, and none of them is dropped.
 
     A condition is one value the agent already has: a Modality of any series of the study, or the sending device's AE of
     any instance (the RemoteAET of its C-STORE). A route with neither condition holds for every study. The study is the
     unit: a study is never split between destinations.
     """
+    chosen: list[str] = []
     for route in routes:
         if route["modality"] is not None and route["modality"] not in modalities:
             continue
         if route["sourceAe"] is not None and route["sourceAe"] not in source_aes:
             continue
-        return list(route["destinations"])
-    return [KIN_DESTINATION]
+        chosen += [dest for dest in route["destinations"] if dest not in chosen]
+    return chosen or [KIN_DESTINATION]
 
 
 class SettingsStore:
@@ -360,6 +363,7 @@ class Queue:
             attempt INTEGER NOT NULL DEFAULT 0,
             next_at REAL NOT NULL DEFAULT 0,
             last_error TEXT,
+            peer TEXT,
             updated_at REAL NOT NULL,
             PRIMARY KEY (uid, dest)
           );
@@ -428,22 +432,25 @@ class Queue:
             return None
         return [str(item) for item in value] if isinstance(value, list) else None
 
-    def set_destinations(self, uid: str, destinations: list[str]) -> None:
-        """Record the decision and give every destination other than KIN its own row (an existing row stays as it is)."""
+    def set_destinations(self, uid: str, destinations: list[str], peers: dict[str, dict[str, Any]] | None = None) -> None:
+        """Record the decision and give every destination other than KIN its own row, with the address it had then: a
+        peer removed from the settings later still gets the studies decided for it (an existing row stays as it is)."""
         now = time.time()
         with self.db:
             self.db.execute("UPDATE studies SET destinations=? WHERE uid=?", (json.dumps(destinations), uid))
             for dest in destinations:
                 if dest != KIN_DESTINATION:
+                    address = (peers or {}).get(dest)
                     self.db.execute("""
-                      INSERT INTO forwards(uid, dest, phase, updated_at) VALUES (?, ?, 'pending', ?)
+                      INSERT INTO forwards(uid, dest, phase, peer, updated_at) VALUES (?, ?, 'pending', ?, ?)
                       ON CONFLICT(uid, dest) DO NOTHING
-                    """, (uid, dest, now))
+                    """, (uid, dest, json.dumps(address) if address else None, now))
 
     def not_routed(self, uid: str) -> None:
         with self.db:
             self.db.execute("""
-              UPDATE studies SET phase='not_routed', attempt=0, next_at=0, last_error=NULL, error_code=NULL, updated_at=?
+              UPDATE studies SET phase='not_routed', attempt=0, next_at=0, last_error=NULL, error_code=NULL, seq=seq+1,
+                updated_at=?
               WHERE uid=?
             """, (time.time(), uid))
 
@@ -519,22 +526,44 @@ class Queue:
         except (TypeError, json.JSONDecodeError):
             return set()
 
-    def purged(self, uid: str, sops: set[str]) -> None:
-        """Written BEFORE the local copies are deleted: the SOPs leave every destination's sent set (so the same SOP
-        UID arriving again is sent again, never taken as already sent) and are kept as purged. A stop between this
-        and the deletion leaves a local copy that is sent again on its next StableStudy - never a lost one."""
-        def without(column: str, table: str, where: str, args: tuple) -> None:
-            for row in self.db.execute(f"SELECT rowid, {column} FROM {table} WHERE {where}", args).fetchall():
-                kept = sorted(set(json.loads(row[column] or "[]")) - sops)
-                self.db.execute(f"UPDATE {table} SET {column}=? WHERE rowid=?", (json.dumps(kept), row["rowid"]))
+    def _move(self, uid: str, sops: set[str], sent: bool) -> None:
+        """Move SOPs between every sent set of the study and its purged set (sent=False: out of the sent sets)."""
+        def change(column: str, table: str) -> None:
+            for row in self.db.execute(f"SELECT rowid, {column} FROM {table} WHERE uid=?", (uid,)).fetchall():
+                now = set(json.loads(row[column] or "[]"))
+                now = now | sops if sent else now - sops
+                self.db.execute(f"UPDATE {table} SET {column}=? WHERE rowid=?", (json.dumps(sorted(now)), row["rowid"]))
 
-        merged = self.purged_sops(uid) | sops
+        kin = KIN_DESTINATION in (self.destinations(uid) or [KIN_DESTINATION])
         with self.db:
-            without("successful_sops", "studies", "uid=?", (uid,))
-            without("confirmed_sops", "studies", "uid=?", (uid,))
-            without("successful_sops", "forwards", "uid=?", (uid,))
-            self.db.execute("UPDATE studies SET purged_sops=?, purged_at=? WHERE uid=?",
-                            (json.dumps(sorted(merged)), time.time(), uid))
+            if kin or not sent:
+                change("successful_sops", "studies")
+                change("confirmed_sops", "studies")
+            change("successful_sops", "forwards")
+            change_purged = self.purged_sops(uid) - sops if sent else self.purged_sops(uid) | sops
+            self.db.execute("UPDATE studies SET purged_sops=? WHERE uid=?", (json.dumps(sorted(change_purged)), uid))
+
+    def purged(self, uid: str, sops: set[str]) -> None:
+        """Written BEFORE the local copy is deleted: the SOPs leave every destination's sent set (so the same SOP UID
+        arriving again is sent again, never taken as already sent) and are kept as purged. A stop between this and the
+        deletion leaves a local copy that is sent again on its next StableStudy - never a lost one."""
+        self._move(uid, sops, sent=False)
+
+    def unpurged(self, uid: str, sops: set[str]) -> None:
+        """The deletion failed: the SOPs go back to every sent set they left (each destination had them)."""
+        self._move(uid, sops, sent=True)
+
+    def purge_done(self, uid: str) -> None:
+        with self.db:
+            self.db.execute("UPDATE studies SET purged_at=? WHERE uid=?", (time.time(), uid))
+
+    def bind_client(self, client_id: str) -> bool:
+        """The Gateway credential this queue first ran with. True when it is this one: only then may the clean-up trust
+        what the queue says other systems hold (a queue file moved to another KIN is never cleaned up on its record)."""
+        with self.db:
+            self.db.execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('client', ?)", (client_id,))
+        row = self.db.execute("SELECT value FROM meta WHERE key='client'").fetchone()
+        return bool(row) and str(row["value"]) == client_id
 
     def successes(self, uid: str) -> set[str]:
         row = self.db.execute("SELECT successful_sops FROM studies WHERE uid=?", (uid,)).fetchone()
@@ -838,7 +867,8 @@ class Orthanc:
         # devices stay the ones in orthanc.json).
         self.request("PUT", f"/modalities/{name}", json={
             "AET": peer["aet"], "Host": peer["host"], "Port": peer["port"], "AllowEcho": False, "AllowFind": False,
-            "AllowGet": False, "AllowMove": False, "AllowStore": False, "AllowStorageCommitment": False})
+            "AllowGet": False, "AllowMove": False, "AllowStore": False, "AllowStorageCommitment": False,
+            "AllowFindWorklist": False})
 
     def store(self, name: str, instance_ids: list[str], timeout: float) -> dict[str, Any]:
         """One synchronous C-STORE association from this Orthanc to a registered modality. Orthanc answers with counts."""
@@ -848,14 +878,14 @@ class Orthanc:
         except GatewayError as error:
             match = re.fullmatch(r"local Orthanc HTTP (\d+)", str(error))
             if match:
-                raise GatewayError(f"forward C-STORE HTTP {match.group(1)}") from None
+                raise ForwardError(f"forward C-STORE HTTP {match.group(1)}") from None
             raise
         try:
             answer = response.json()
         except ValueError:
-            raise GatewayError("forward C-STORE answer invalid") from None
+            raise ForwardError("forward C-STORE answer invalid") from None
         if not isinstance(answer, dict):
-            raise GatewayError("forward C-STORE answer invalid")
+            raise ForwardError("forward C-STORE answer invalid")
         return answer
 
     def delete_instance(self, instance_id: str) -> None:
@@ -995,7 +1025,8 @@ def stored_sops(payload: Any) -> set[str]:
     sequence = payload["00081199"].get("Value", [])
     stored = set()
     for item in sequence if isinstance(sequence, list) else []:
-        values = item.get("00081155", {}).get("Value", []) if isinstance(item, dict) else []
+        element = item.get("00081155") if isinstance(item, dict) else None
+        values = element.get("Value") if isinstance(element, dict) else None
         if isinstance(values, list) and values and isinstance(values[0], str):
             stored.add(values[0])
     return stored
@@ -1174,6 +1205,7 @@ class Agent:
         self.retry_poll_at = time.monotonic() + RETRY_POLL_SECONDS
         self.settings = SettingsStore(config.queue_db, config.client_id)
         self.purge_at = time.monotonic() + PURGE_SECONDS
+        self.own_queue = self.queue.bind_client(config.client_id)
 
     def stop(self, *_args: Any) -> None:
         self.stopping = True
@@ -1317,15 +1349,18 @@ class Agent:
         uid = str(row["uid"])
         decided = self.queue.destinations(uid)
         if decided is None:
-            routes = self.settings.current["routes"]
-            if not routes:
+            settings = self.settings.current
+            if not settings["routes"]:
+                # KIN, decided before the first announce: a rule that appears later cannot take back a study KIN may
+                # already know (an announce that timed out may still have been processed).
+                self.queue.set_destinations(uid, [KIN_DESTINATION])
                 return True
             if row["announced"] or self.queue.successes(uid):
                 decided = [KIN_DESTINATION]
             else:
-                decided = route_for(routes, self.orthanc.series_modalities(orthanc_id),
+                decided = route_for(settings["routes"], self.orthanc.series_modalities(orthanc_id),
                                     {item.get("source_ae", "") for item in instances} - {""})
-            self.queue.set_destinations(uid, decided)
+            self.queue.set_destinations(uid, decided, settings["peers"])
             log("study.routed", uid=uid, destinations=len(decided))
         if KIN_DESTINATION in decided:
             return True
@@ -1403,8 +1438,13 @@ class Agent:
         """
         uid, dest = str(row["uid"]), str(row["dest"])
         peer = self.settings.current["peers"].get(dest)
+        if row["peer"]:
+            try:
+                peer = json.loads(row["peer"])   # the address decided with the study
+            except (TypeError, json.JSONDecodeError):
+                pass
         if peer is None:
-            raise GatewayError("forward destination unknown")
+            raise ForwardError("forward destination unknown")
         self.queue.forward_phase(uid, dest, "sending")
         modality = "kin-route-" + dest
         self.orthanc.put_modality(modality, peer)
@@ -1415,9 +1455,9 @@ class Agent:
             answer = self.orthanc.store(modality, [item["id"] for item in batch], self.config.stow_timeout)
             failed, count = answer.get("FailedInstancesCount"), answer.get("InstancesCount")
             if not isinstance(failed, int) or not isinstance(count, int):
-                raise GatewayError("forward C-STORE answer invalid")
+                raise ForwardError("forward C-STORE answer invalid")
             if failed or count != len(batch):
-                raise GatewayError(f"forward C-STORE failed count={max(failed, len(batch) - count)}")
+                raise ForwardError(f"forward C-STORE failed count={max(failed, len(batch) - count)}")
             self.queue.forward_add(uid, dest, {item["sop"] for item in batch})
             log("forward.stored", uid=uid, batch=index, sops=len(batch))
         _orthanc_id, _detail, latest = self.orthanc.instances(uid, orthanc_id)
@@ -1438,7 +1478,7 @@ class Agent:
         """
         days = self.settings.current["retentionDays"]
         now = time.monotonic()
-        if days is None or now < self.purge_at:
+        if days is None or now < self.purge_at or not self.own_queue:
             return
         self.purge_at = now + PURGE_SECONDS
         try:
@@ -1457,9 +1497,14 @@ class Agent:
                     instances = []   # the study is no longer here: nothing to delete, and it is not looked at again
                 sent = self.queue.sent_everywhere(uid)
                 deletable = [item for item in instances if item["sop"] in sent]
-                self.queue.purged(uid, {item["sop"] for item in deletable})   # the record first, then the deletion
                 for item in deletable:
-                    self.orthanc.delete_instance(item["id"])
+                    self.queue.purged(uid, {item["sop"]})   # the record first, then the deletion
+                    try:
+                        self.orthanc.delete_instance(item["id"])
+                    except Exception:
+                        self.queue.unpurged(uid, {item["sop"]})   # still here: back to sent, looked at again next pass
+                        raise
+                self.queue.purge_done(uid)
                 log("study.purged", uid=uid, sops=len(deletable), pending=len(instances) - len(deletable))
             except Exception as error:
                 log("purge.deferred", uid=uid, error=error_code(error))
@@ -1490,6 +1535,9 @@ class Agent:
                 self.poll_changes()
                 # Until the settings are known once, nothing is sent: an unknown rule is not "no rule" (SettingsStore).
                 row = self.queue.due() if self.settings.known else None
+                # A KIN row that failed goes on to the next pass at once, as before; the other destinations and the
+                # clean-up of this pass still run first, so a KIN outage holds back nothing else.
+                again = False
                 if row:
                     uid = str(row["uid"])
                     try:
@@ -1498,14 +1546,14 @@ class Agent:
                         reason = str(error)
                         self.queue.fail(uid, reason, error_code(error))
                         log("study.failed", uid=uid, error=reason)
-                        continue
+                        again = True
                     except Exception as error:
                         reason = str(error) if isinstance(error, GatewayError) else type(error).__name__
                         attempt, delay = self.queue.retry(
                             uid, reason, self.config.backoff_base, self.config.backoff_max, error_code(error),
                         )
                         log("study.retry", uid=uid, attempt=attempt, afterSeconds=round(delay, 2), error=reason)
-                        continue
+                        again = True
                 # A destination other than KIN goes after the KIN row of this pass, with its own backoff: one that
                 # is down never holds KIN or another destination back.
                 forward = self.queue.forward_due() if self.settings.known else None
@@ -1514,12 +1562,14 @@ class Agent:
                     try:
                         self.process_forward(forward)
                     except Exception as error:
-                        reason = str(error) if isinstance(error, GatewayError) else type(error).__name__
+                        reason = str(error) if isinstance(error, (GatewayError, ForwardError)) else type(error).__name__
                         attempt, delay = self.queue.forward_retry(
                             uid, str(forward["dest"]), reason, self.config.backoff_base, self.config.backoff_max,
                         )
                         log("forward.retry", uid=uid, attempt=attempt, afterSeconds=round(delay, 2), error=reason)
                 self.purge()
+                if again:
+                    continue
             except Exception as error:
                 reason = str(error) if isinstance(error, GatewayError) else type(error).__name__
                 log("agent.retry", error=reason)
