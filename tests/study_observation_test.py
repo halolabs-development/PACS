@@ -203,11 +203,24 @@ def receipt_gap(b, receipt):
     m, n, at = receipt.get("successCount"), receipt.get("localCount"), parse_time(receipt.get("serverReceivedAt"))
     if not ok_count(m) or not ok_count(n) or m > n or at is None or not isinstance(b, dict):
         return None
-    held = b.get("count") if b.get("state") == "observed" else 0 if b.get("state") == "not_observed" else None
-    seen = parse_time(b.get("observedAt"))
+    state = b.get("state")
+    stale = state == "observation_unavailable"
+    last = b.get("last") if stale else b
+    if not isinstance(last, dict):
+        return None
+    if state == "observed":
+        held = b.get("count")
+    elif state == "not_observed":
+        held = 0
+    elif stale:
+        held = 0 if last.get("notObserved") is True else last.get("count")
+    else:
+        held = None
+    # A paged list's first page bounds the comparison; without it the observation's own time does.
+    seen = parse_time(b["readSince"] if b.get("readSince") is not None else last.get("observedAt"))
     if not ok_count(held) or seen is None or at > seen:
         return None
-    return {"missing": held < m, "held": held, "sent": m}
+    return {"missing": held < m, "held": held, "sent": m, "stale": stale}
 
 
 def gateway(receipt, b):
@@ -220,7 +233,7 @@ def gateway(receipt, b):
         return "Gateway 보고 형식을 확인할 수 없습니다", ["receipt_unreadable"]
     reasons = []
     gap = receipt_gap(b, receipt)
-    if gap and gap["missing"]:
+    if gap and gap["missing"] and not gap["stale"]:
         reasons.append("kin_below_reported" if b["state"] == "observed" else "not_observed_with_reported_transfer")
     if b.get("changedAt") and parse_time(receipt["serverReceivedAt"]) < parse_time(b["changedAt"]):
         reasons.append("receipt_older_than_change")
@@ -307,7 +320,8 @@ class LabelTable(unittest.TestCase):
     def test_missing_images_answer(self):
         for case in VECTORS["gapCases"]:
             with self.subTest(case["id"]):
-                got = receipt_gap(VECTORS["observations"][case["observation"]], gap_receipt(case["receipt"]))
+                observation = VECTORS["observations"].get(case["observation"]) or VECTORS["gapObservations"][case["observation"]]
+                got = receipt_gap(observation, gap_receipt(case["receipt"]))
                 self.assertEqual(case["gap"], got)
 
     def test_if_w09_three_phrases_are_distinct(self):
@@ -346,10 +360,10 @@ class SourcePins(unittest.TestCase):
             "const prior=base.owner===owner&&(base.observedAt===null||Date.parse(at)>=Date.parse(base.observedAt))?base.rows:new Map();",
             "if(value===null||value===undefined)return {rows:null};",
             "return {...base,available:false};",
-            "const held=b.state==='observed'?b.count:b.state==='not_observed'?0:null;",
-            "if(!count(held)||!validTime(b.observedAt)||Date.parse(receipt.serverReceivedAt)>Date.parse(b.observedAt))return null;",
-            "if(held>=sent)return {missing:false,held,sent};",
-            "if(receiptGap(b,receipt)?.missing)reasons.push(b.state==='observed'?'kin_below_reported':'not_observed_with_reported_transfer');",
+            "const held=b.state==='observed'?b.count:b.state==='not_observed'?0:stale?(seen.notObserved===true?0:seen.count):null;",
+            "if(!count(held)||!validTime(since)||Date.parse(receipt.serverReceivedAt)>Date.parse(since))return null;",
+            "if(held>=sent)return {missing:false,held,sent,stale};",
+            "if(gap?.missing&&!gap.stale)reasons.push(b.state==='observed'?'kin_below_reported':'not_observed_with_reported_transfer');",
             "if(b.changedAt&&Date.parse(receipt.serverReceivedAt)<Date.parse(b.changedAt))reasons.push('receipt_older_than_change');",
             "const BANNED=/완료|수신 완료|안정|다 옴|received|complete|stable/i;",
             "const PHRASES=Object.freeze({orderWithoutImages:'영상 없는 주문',observationUnavailable:'관측 불가',viewerLoadFailed:'뷰어 로딩 실패'});",
@@ -360,6 +374,13 @@ class SourcePins(unittest.TestCase):
         self.assertNotIn("||0", self.arrivals.replace(" ", ""))
         self.assertNotIn("localStorage", self.arrivals)
         self.assertNotIn("sessionStorage", self.arrivals)
+
+    def test_missing_images_is_drawn_again_on_a_tab_switch_and_a_list_rebuild(self):
+        # The Info line is a Technician-tab line: switching tabs draws it again with the list.
+        set_mode = body(self.main, "    function setMode(m) {", "\n    }\n")
+        self.assertLess(set_mode.index("render();"), set_mode.index("renderObservation();"))
+        # The poll's list rebuild draws the receipt block again from the rebuilt rows (a scope change shows at once).
+        self.assertRegex(self.main, r"studies = r\.studies\.map\(fromApi\);\n(?:\s*//[^\n]*\n)*\s*render\(\);\n(?:\s*//[^\n]*\n)*\s*renderObservation\(\);")
 
     def test_server_absence_surface_is_decided_from_the_whole_successful_enumeration(self):
         assert_behaviour('gateway_receipt_server_test.cjs', '^S4-F01V list:')
@@ -402,12 +423,13 @@ const finals = [
         self.assertEqual(0, result.returncode, result.stderr)
         rows = [{'uid': f'1.2.{1000 + i}', 'state': {}} for i in range(101)]
         owner = ['synthetic-institution', 'synthetic-reader']
+        # firstObservedAt is the first page's time (the earliest any row was read; missing images compares with it).
         observations = [
             {'observedAt': '2026-10-02T00:00:00Z',
              'notObserved': [{'uid': '1.2.9999', 'origin': 'synthetic', 'createdAt': '2026-10-01T00:00:00Z'}],
-             'orderReconciliation': []},
-            {'observedAt': '2026-10-03T00:00:00Z', 'notObserved': []},
-            {},
+             'firstObservedAt': '2026-10-01T00:00:00Z', 'orderReconciliation': []},
+            {'observedAt': '2026-10-03T00:00:00Z', 'notObserved': [], 'firstObservedAt': '2026-10-01T00:00:00Z'},
+            {'firstObservedAt': '2026-10-01T00:00:00Z'},
         ]
         issues = [[{'uid': '1.2.8888', 'code': 'STUDY_IDENTITY_UNRESOLVED'}], [], None]
         self.assertEqual([{'studies': rows, 'owner': owner, 'observation': observation, 'identityIssues': issue}

@@ -225,15 +225,38 @@ test('S4-U1b needs_check reasons for Gateway M-of-N beside KIN K',()=>{
 // Missing images: the one answer the Technician list and the Info panel draw. The nine label-table receipts stay nine;
 // reports only these cases use are V.gapReceipts.
 const gapReceipt=name=>Object.hasOwn(V.receipts,name)?V.receipts[name]:V.gapReceipts[name];
+const gapObservation=name=>Object.hasOwn(V.observations,name)?V.observations[name]:V.gapObservations[name];
 test('missing images: K below the reported sent M, only when the observation is not older than the report',()=>{
   for(const row of V.gapCases){
-    const got=arrivals.receiptGap(V.observations[row.observation],gapReceipt(row.receipt));
-    assert.deepEqual(got&&{missing:got.missing,held:got.held,sent:got.sent},row.gap,row.id);
+    const observation=gapObservation(row.observation),got=arrivals.receiptGap(observation,gapReceipt(row.receipt),same);
+    assert.deepEqual(got&&{missing:got.missing,held:got.held,sent:got.sent,stale:got.stale},row.gap,row.id);
     if(got?.missing){
-      assert.equal(got.text,`Needs Check · 영상 누락: Gateway 전송 ${got.sent}건 중 HALO PACS 보유 ${got.held}건`,row.id);
+      assert.equal(got.text,got.stale
+        ?`Needs Check · 영상 누락(관측 불가 · 마지막 관측 ${observation.last.observedAt} 기준): Gateway 전송 ${got.sent}건 중 HALO PACS 보유 ${got.held}건`
+        :`Needs Check · 영상 누락: Gateway 전송 ${got.sent}건 중 HALO PACS 보유 ${got.held}건`,row.id);
       assert.doesNotMatch(got.text+' '+got.title,arrivals.BANNED,row.id);
     }else if(got)assert.equal(got.text,undefined,row.id);
   }
+});
+
+test('missing images: a paged list bounds the comparison by its first page, kept through a failed observation',()=>{
+  const uid='1.2.840.10',report={phase:'retry',successCount:15,localCount:20,attempt:1,errorCode:'stow_http',
+    serverReceivedAt:'2026-09-24T01:01:00.000Z',agentSeq:1,epoch:1};
+  const read=(firstObservedAt,count=12)=>arrivals.observationSucceeded(arrivals.observationStart(),{owner:['h','s'],
+    studies:[{uid,count,series:3}],observation:{observedAt:'2026-09-24T01:02:00.000Z',notObserved:[],...(firstObservedAt===undefined?{}:{firstObservedAt})}}).model;
+  // One page (no first-page time): the observation's own time bounds it.
+  assert.equal(arrivals.studyObservation(read(),uid).readSince,'2026-09-24T01:02:00.000Z');
+  assert.equal(arrivals.receiptGap(arrivals.studyObservation(read(),uid),report).missing,true);
+  // The first page was read before the report: its counts may predate the images the report counts.
+  assert.equal(arrivals.receiptGap(arrivals.studyObservation(read('2026-09-24T01:00:30.000Z'),uid),report),null);
+  assert.equal(arrivals.receiptGap(arrivals.studyObservation(arrivals.observationFailed(read('2026-09-24T01:00:30.000Z')),uid),report),null);
+  // A first-page time that is not a time, or later than the completing page, is not a bound.
+  for(const bad of ['yesterday','2026-09-24T01:03:00.000Z',null])
+    assert.equal(arrivals.studyObservation(read(bad),uid).readSince,'2026-09-24T01:02:00.000Z',String(bad));
+  // A failed observation keeps the last answer, said as such; the needs-check reasons stay those of R8 (none).
+  const failed=arrivals.studyObservation(arrivals.observationFailed(read('2026-09-24T01:01:30.000Z')),uid);
+  assert.deepEqual((({missing,held,sent,stale})=>({missing,held,sent,stale}))(arrivals.receiptGap(failed,report)),{missing:true,held:12,sent:15,stale:true});
+  assert.deepEqual(arrivals.receiptLabels({assignment:'assigned',observation:failed,gateway:report}).reasons,[]);
 });
 
 test('S4-U1b IF-W09 three phrases are distinct and only 관측 불가 comes from a failed observation',()=>{

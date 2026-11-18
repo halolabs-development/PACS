@@ -488,9 +488,12 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
         self.assertEqual((True, "", None, "12"), (state["hidden"], state["text"], state["mark"], state["cell"]))
         self.page.evaluate("()=>{mode='Technician';renderObservation()}")
         self.assertFalse(self.gap_state()["hidden"])
-        # A failed observation compares nothing (the Info says 관측 불가); the next readable one answers again.
+        # A failed observation makes no new answer: the last one stays, said as the last observation's, on both surfaces.
         self.fail_next()
-        self.assertEqual((True, None), (self.gap_state()["hidden"], self.gap_state()["mark"]))
+        state = self.gap_state()
+        shown_at = self.page.evaluate("t=>KinStudyArrivals.formatTime(t)", self.at(2))
+        stale = "Needs Check · 영상 누락(관측 불가 · 마지막 관측 " + shown_at + " 기준): Gateway 전송 15건 중 HALO PACS 보유 12건"
+        self.assertEqual((False, stale, stale), (state["hidden"], state["text"], state["mark"]))
         self.poll(reply(self.receipt_row(self.gap_receipt(1), 12), at=self.at(3)))
         self.assertEqual(self.GAP, self.gap_state()["text"])
         # A report newer than the observation may count images that observation could not see yet: no answer this time.
@@ -514,6 +517,19 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
         self.poll(reply(self.receipt_row(self.gap_receipt(1), None), at=self.at(3)))
         self.assertEqual((True, None), (self.gap_state()["hidden"], self.gap_state()["mark"]))
 
+    def test_missing_images_names_an_own_study_the_observation_did_not_see_at_all(self):
+        absent = [{"uid": "1.2.9", "origin": "gateway", "createdAt": self.at(0),
+                   "gatewayReceipt": self.gap_receipt(1, phase="complete", sent=12, local=12, seq=12)}]
+        item = lambda: self.page.evaluate("""()=>{const i=$('#not-observed-list').children[0],s=i.children[3];
+          return {hidden:s.hidden,text:s.textContent,note:i.children[1].nextElementSibling===i.children[2]}}""")
+        self.page.evaluate("()=>{mode='Technician'}")
+        self.poll(reply(self.changed(count=5, series=2), at=self.at(2), not_observed=absent))
+        self.assertEqual({"hidden": False, "text": "Needs Check · 영상 누락: Gateway 전송 12건 중 HALO PACS 보유 0건", "note": True}, item())
+        self.assertIn("1.2.9 · gateway · ", self.text("#not-observed-list"))
+        # The Radiology tab draws nothing new here either.
+        self.page.evaluate("()=>{mode='Radiology';renderObservation()}")
+        self.assertEqual((True, ""), (item()["hidden"], item()["text"]))
+
     def test_missing_images_draws_nothing_new_on_a_merged_exam_row(self):
         self.page.evaluate("()=>{mode='Technician'}")
         first = self.receipt_row(self.gap_receipt(1), 12)
@@ -522,14 +538,15 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
         merged = {**first, "count": 19, "series": 6, "sourceMetadata": [first, other],
                   "examScope": {"reportUid": first["uid"], "groupId": "syn-group", "kind": "merge", "part": None, "generation": "merged",
                                 "sources": [{"studyUid": s["uid"], "series": {"mode": "all", "uids": []}} for s in (first, other)]}}
-        # The first answer that turns the row into an exam rebuilds the list (the list cell is drawn from it at once); the
-        # Info panel is drawn by applyObservation before that rebuild, so the steady state is the next poll's.
-        self.poll(reply(merged, at=self.at(2)))
-        self.assertIsNone(self.gap_state()["mark"])
-        self.poll(reply(merged, at=self.at(3)))
-        state = self.gap_state()
-        self.assertEqual((True, "", None), (state["hidden"], state["text"], state["mark"]))
-        self.assertEqual("Original exams", self.text("#receipt-observation"))
+        # The row is first a single original that misses images, then the answer that makes it an exam rebuilds the list:
+        # the list cell and the Info line both go with that first answer, and stay gone.
+        self.poll(reply(first, at=self.at(2)))
+        self.assertFalse(self.gap_state()["hidden"])
+        for minute in (3, 4):
+            self.poll(reply(merged, at=self.at(minute)))
+            state = self.gap_state()
+            self.assertEqual((True, "", None), (state["hidden"], state["text"], state["mark"]), minute)
+            self.assertEqual("Original exams", self.text("#receipt-observation"))
 
     # ── S4-U4: Now Retry on the same receipt block, through the same real poll ──
 

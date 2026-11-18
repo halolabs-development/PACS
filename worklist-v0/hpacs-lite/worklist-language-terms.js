@@ -601,6 +601,7 @@ window.KinLanguageTerms = {
     ["Multi-Study View", "여러 검사 보기", "l"],
     ["My Shortcuts", "내 바로가기", "l"],
     ["Name", "이름", "l"],
+    ["Needs Check · 영상 누락(관측 불가 · 마지막 관측 {0} 기준): Gateway 전송 {n1}건 중 HALO PACS 보유 {n2}건", "Needs Check · Missing images (observation unavailable · as of the last observation {0}): HALO PACS holds {n2} of {n1} sent by the Gateway", "l"],
     ["Needs Check · 영상 누락: Gateway 전송 {n0}건 중 HALO PACS 보유 {n1}건", "Needs Check · Missing images: HALO PACS holds {n1} of {n0} sent by the Gateway", "l"],
     ["New Arrivals", "새로 도착한 검사", "l"],
     ["New Consultation", "새 자문", "l"],

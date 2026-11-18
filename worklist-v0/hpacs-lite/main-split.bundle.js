@@ -2579,6 +2579,8 @@
       if (sortKey && !COLS[m].some(c => c.k === sortKey)) { sortKey = null; sortDir = 0; }
       worklistSearch?.apply();
       renderHeads(); render(); renderOrders(); renderRelated();
+      // The missing-images line of the Info panel is a Technician-tab line (studyReceiptGap): drawn again with the list.
+      renderObservation();
       applyLayout();
     }
     document.querySelector(".tabs").addEventListener("click", e => {
@@ -3093,8 +3095,9 @@
       renderObservation();
     }
     /**
-     * Missing images, Technician tab only: the one answer (KinStudyArrivals.receiptGap) that the list's Count cell and the
-     * Info panel's Needs Check line both draw. A merged or split exam has no answer here: its originals are separate studies.
+     * Missing images, Technician tab only: the one answer (KinStudyArrivals.receiptGap) that the list's Count cell, the
+     * Info panel's Needs Check line and a Not Observed item draw. A merged or split exam has no answer here: its originals
+     * are separate studies. setMode() and the poll's list rebuild draw it again, so a tab or scope change shows at once.
      */
     function studyReceiptGap(s) {
       if (!s || !studyObservationModel || KinExamScope.read(s)?.groupId) return null;
@@ -3138,9 +3141,13 @@
             control.textContent = KinStudyArrivals.RETRY_TEXT.button;
             control.addEventListener("click", requestGatewayRetry);
             item = document.createElement("div"); item.dataset.uid = row.uid;
-            item.append(document.createElement("span"), " ", control, " ", document.createElement("span"));
+            const gapText = document.createElement("span"); gapText.className = "receipt-gap-line"; gapText.hidden = true;
+            item.append(document.createElement("span"), " ", control, " ", document.createElement("span"), " ", gapText);
           }
-          const gateway = row.gatewayReceipt ?? null, [text, button, note] = item.children;
+          const gateway = row.gatewayReceipt ?? null, [text, button, note, gapText] = item.children;
+          // An own study the observation did not see at all while its Gateway reported images sent: the same answer.
+          const gap = studyReceiptGap(row);
+          gapText.hidden = !gap; kinWrite(gapText, gap?.text ?? ""); gapText.title = gap?.title ?? "";
           const labels = KinStudyArrivals.receiptLabels({ assignment: "assigned",
             observation: KinStudyArrivals.studyObservation(studyObservationModel, row.uid), gateway });
           // Without a receipt the text stays the U1b item text; no No Gateway Report is added to this list.
@@ -10138,6 +10145,9 @@
             // 썸네일 등 오른쪽 전체를 다시 그릴 필요는 없지만, 판독문 잠금은 반영해야 한다.
             // loadReport가 값만 보호하므로 새 검사 도착과 Prelim 전환이 겹쳐도 입력은 유지된다.
             render();
+            // applyObservation drew the receipt block from the rows before this rebuild; a study that became a merged or
+            // split exam in this answer is drawn again from the rebuilt row (its missing-images line goes at once).
+            renderObservation();
             if (selectedUid) { loadReport(); updateReportButtons(); }
             autoPreload?.afterList();   // FC-073: a study that just arrived is queued without a manual Refresh
             if (fresh.length || arrivalNotice) {

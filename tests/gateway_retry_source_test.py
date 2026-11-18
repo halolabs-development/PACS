@@ -62,7 +62,7 @@ U3_RULE_SHA256 = "bff24d487a066df554c2dbe70a9ca1dbc28cf52062eebac87f9a537344d275
 # It moved again for missing images: the K<M and Not Observed reasons now come from receiptGap (the one answer the
 # Technician list and Info draw), which compares only a report the observation is not older than (7ce3a2e6…3e0e4 before).
 # Its label text and keys are unchanged; the reason rules are pinned by tests/study_observation_vectors.json.
-U1B_GATEWAY_LABEL_SHA256 = "530d47ecd820d299665cb097414350292f8b2bd08525bc4f989aae04be68dfe6"
+U1B_GATEWAY_LABEL_SHA256 = "463bb9c0e73e707c093fe85b74adc35d4c50d976850f6cdd8e67c63f631490b0"
 
 
 def sha(value):
@@ -809,7 +809,8 @@ def f01v_problems(main, arrivals):
                           ("row.gatewayReceipt ?? null", 1), ('$("#not-observed-list")', 1),
                           ("let item = kept.get(row.uid);", 1), ("item.dataset.uid = row.uid;", 1),
                           ('for (const item of kept.values()) item.querySelector("button").dataset.request = "";', 1),
-                          ('item.append(document.createElement("span"), " ", control, " ", document.createElement("span"));', 1),
+                          # The missing-images line is the item's last child, so the note stays right after the control.
+                          ('item.append(document.createElement("span"), " ", control, " ", document.createElement("span"), " ", gapText);', 1),
                           ("text.textContent = `${row.uid} · ${row.origin} · ${KinStudyArrivals.formatTime(row.createdAt)}`\n"
                            '            + (gateway === null ? "" : ` · ${labels.gateway.text}`);', 1)):
         if render.count(needle) != count:

@@ -65,8 +65,9 @@
       renderObservation();
     }
     /**
-     * Missing images, Technician tab only: the one answer (KinStudyArrivals.receiptGap) that the list's Count cell and the
-     * Info panel's Needs Check line both draw. A merged or split exam has no answer here: its originals are separate studies.
+     * Missing images, Technician tab only: the one answer (KinStudyArrivals.receiptGap) that the list's Count cell, the
+     * Info panel's Needs Check line and a Not Observed item draw. A merged or split exam has no answer here: its originals
+     * are separate studies. setMode() and the poll's list rebuild draw it again, so a tab or scope change shows at once.
      */
     function studyReceiptGap(s) {
       if (!s || !studyObservationModel || KinExamScope.read(s)?.groupId) return null;
@@ -110,9 +111,13 @@
             control.textContent = KinStudyArrivals.RETRY_TEXT.button;
             control.addEventListener("click", requestGatewayRetry);
             item = document.createElement("div"); item.dataset.uid = row.uid;
-            item.append(document.createElement("span"), " ", control, " ", document.createElement("span"));
+            const gapText = document.createElement("span"); gapText.className = "receipt-gap-line"; gapText.hidden = true;
+            item.append(document.createElement("span"), " ", control, " ", document.createElement("span"), " ", gapText);
           }
-          const gateway = row.gatewayReceipt ?? null, [text, button, note] = item.children;
+          const gateway = row.gatewayReceipt ?? null, [text, button, note, gapText] = item.children;
+          // An own study the observation did not see at all while its Gateway reported images sent: the same answer.
+          const gap = studyReceiptGap(row);
+          gapText.hidden = !gap; kinWrite(gapText, gap?.text ?? ""); gapText.title = gap?.title ?? "";
           const labels = KinStudyArrivals.receiptLabels({ assignment: "assigned",
             observation: KinStudyArrivals.studyObservation(studyObservationModel, row.uid), gateway });
           // Without a receipt the text stays the U1b item text; no No Gateway Report is added to this list.

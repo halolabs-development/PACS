@@ -313,6 +313,7 @@ const COLS = { Radiology: [], Technician: [] };
 const worklistSearch = null;
 const syncStudy = () => {}, updateReportButtons = () => {}, loadReport = () => {}, displayActor = value => value;
 function renderHeads() {} function render() {} function renderOrders() {} function renderRelated() {} function applyLayout() {}
+function renderObservation() {}
 const toast = (message, kind) => { window.synToasts.push([message, kind]); };
 const KinAuth = {
   session: () => window.synSession,
