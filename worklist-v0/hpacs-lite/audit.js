@@ -342,6 +342,9 @@
   // The intake forms fill what the product knows: the institution every copy/rights subject belongs to and the signed-in
   // auditor as the default verifier (GET intake-context). The auditor enters only the patient ID and the request.
   let intake = null, intakeLoad = null, intakeSession = 0;
+  // The receive press of each form waiting for the context. Changing the request ID, any intake input, or choosing
+  // another request withdraws it: even if the values are typed back, only a new press sends.
+  const intakePress = { disclosure: 0, rights: 0 };
   // The product's patient link format (server studyPatientLink): the patient ID under the managing institution. It is a
   // name for the pair, not a check that the patient exists.
   const patientLink = patientId => ({ linkId: JSON.stringify([intake.institutionId, patientId]), patientId, assigningAuthority: intake.institutionId });
@@ -369,6 +372,9 @@
     showIntake();
   }
   // Resolves with the context or rejects with the answer reading ({kind, code}); a session change drops the answer.
+  // A permission answer of the current session is applied here, for the first load and every receive press alike,
+  // whether or not the press is still waiting: not designated closes the audit page, no disclosure scope closes the
+  // copy and rights workspaces (both use that scope). A 403 without either code keeps the input and asks to retry.
   function loadIntake() {
     if (intake) return Promise.resolve(intake);
     if (intakeLoad) return intakeLoad;
@@ -378,6 +384,9 @@
       try { answer = answerOf(await KinSessionTransport.page().request(`${location.origin}/api/emr-audit/intake-context`, { method: 'GET', context })); }
       catch { answer = { kind: 'unconfirmed', code: 'ResponseUnavailable' }; }
       if (session !== intakeSession || !KinWorkContext.admits(context)) throw { stale: true };
+      if (answer.kind === 'denied' && answer.code === 'AuditorNotDesignated') { refuse(); throw { stale: true }; }
+      if (answer.kind === 'denied' && answer.code === 'AuditScopeNotGranted') { disclosureScopeDenied(); rightsScopeDenied(); throw { stale: true }; }
+      if (answer.kind === 'denied') throw { kind: 'unconfirmed', code: answer.code || 'ResponseUnavailable' };
       const v = answer.body?.verifier;
       if (answer.kind === 'ok' && typeof answer.body.institutionId === 'string' && answer.body.institutionId &&
           ['id', 'issuer', 'subject'].every(key => typeof v?.[key] === 'string' && v[key])) {
@@ -390,18 +399,20 @@
     load.catch(() => { if (intakeLoad === load) intakeLoad = null; });
     return load;
   }
-  // A receive press first makes sure the context is there. Only the latest press of that section, for the request ID
-  // it was pressed with, goes on when the context arrives; a scope refusal clears that section like any other.
-  // section: { press, id(): current request ID, show(text), scopeDenied(), receive() }
+  // Any edit of an intake form (typing, a choice, adding an evidence or record row) withdraws its waiting press.
+  function withdrawPressOnEdit(form, key) {
+    form.addEventListener('input', () => { intakePress[key]++; });
+    form.addEventListener('click', event => { if (event.target.closest('button[type="button"]')) intakePress[key]++; });
+  }
+  // A receive press first makes sure the context is there; it goes on only if it is still that form's press.
+  // section: { key, show(text), receive() }
   async function receiveWithIntake(section) {
     if (!ready || denied) return;
-    const session = intakeSession, press = ++section.press, id = section.id();
-    const current = () => session === intakeSession && press === section.press && id === section.id();
+    const session = intakeSession, press = ++intakePress[section.key];
+    const current = () => session === intakeSession && press === intakePress[section.key];
     try { await loadIntake(); }
     catch (failure) {
       if (failure.stale || !current()) return;
-      if (failure.kind === 'denied' && failure.code === 'AuditorNotDesignated') { refuse(); return; }
-      if (failure.kind === 'denied') { section.scopeDenied(); return; }
       section.show(`접수에 필요한 기관·감사자 정보를 읽지 못했습니다 (${failure.code || 'ResponseUnavailable'}). 입력은 유지했습니다. 다시 Receive Request를 누르세요.`);
       return;
     }
@@ -435,7 +446,7 @@
     timeHints(disclosureEl('workspace'));
   }
   function clearDisclosure(all = false) {
-    disclosureSequence++; disclosurePending = false; disclosureSnapshot = null; disclosureCopy = null;
+    disclosureSequence++; intakePress.disclosure++; disclosurePending = false; disclosureSnapshot = null; disclosureCopy = null;
     disclosureEl('workspace').hidden = false; disclosureEl('receive').hidden = false;
     disclosureEl('detail').hidden = true; disclosureEl('state').textContent = ''; disclosureEl('versions').replaceChildren();
     for (const name of ['json', 'html']) disclosureEl(`${name}-sha`).textContent = '';
@@ -467,8 +478,7 @@
   function disclosureScopeDenied() {
     clearDisclosure(); disclosureEl('workspace').hidden = true; disclosureMessage('이 계정에는 진료기록 사본 발급 권한이 없습니다.');
   }
-  const disclosureReceive = { press: 0, id: () => disclosureEl('id').value.trim(), show: text => disclosureMessage(text),
-    scopeDenied: () => disclosureScopeDenied(), receive: () => disclosureRequest('receive') };
+  const disclosureReceive = { key: 'disclosure', show: text => disclosureMessage(text), receive: () => disclosureRequest('receive') };
   function disclosureIntake(id) {
     // The verifier is an identity the server keeps as given: sent exactly as typed, checked only for a blank.
     const v = formValues('receive'), checkedBy = { id: v.verifierId, issuer: v.verifierIssuer, subject: v.verifierSubject };
@@ -631,6 +641,7 @@
     event.preventDefault();
     if (mode === 'receive') receiveWithIntake(disclosureReceive); else disclosureRequest(mode);
   });
+  withdrawPressOnEdit(disclosureEl('receive'), 'disclosure');
   disclosureEl('workspace').addEventListener('input', event => {
     if (event.target.type === 'datetime-local') timeHints(disclosureEl('workspace'));
     if (event.target === disclosureEl('receive').elements.patientId) showIntake();
@@ -661,17 +672,21 @@
   function rightsScopeDenied() {
     clearRights(true); rightsEl('workspace').hidden = true; rightsEl('message').textContent = '이 계정에는 정정·삭제·처리정지 요구 처리 권한이 없습니다.';
   }
-  const rightsReceive = { press: 0, id: () => rightsEl('id').value.trim(), show: text => { rightsEl('message').textContent = text; },
-    scopeDenied: () => rightsScopeDenied(), receive: () => rightsRequest('receive') };
-  // A state is shown as confirmed only if its status agrees with the facts it names.
-  function rightsState(body) {
+  const rightsReceive = { key: 'rights', show: text => { rightsEl('message').textContent = text; }, receive: () => rightsRequest('receive') };
+  // A state is shown as confirmed only if its status agrees with the facts it names; a withdrawal closes the request
+  // only with its evidence ID.
+  function rightsConfirmed(body) {
+    const withdrawn = !!body?.withdrawal && typeof body.withdrawal.evidenceId === 'string' && !!body.withdrawal.evidenceId.trim();
     const facts = { Received: !body?.decision && !body?.notification && !body?.withdrawal, Decided: !!body?.decision && !body?.notification && !body?.withdrawal,
-      Notified: !!body?.decision && !!body?.notification && !body?.withdrawal, Withdrawn: !!body?.withdrawal && !body?.notification };
-    if (!body?.request || !facts[body.status]) throw new Error('Invalid rights request answer');
+      Notified: !!body?.decision && !!body?.notification && !body?.withdrawal, Withdrawn: withdrawn && !body?.notification };
+    return !!body?.request && !!facts[body.status];
+  }
+  function rightsState(body) {
+    if (!rightsConfirmed(body)) throw new Error('Invalid rights request answer');
     return body;
   }
   function clearRights(all = false) {
-    rightsSequence++; rightsPending = false; rightsSnapshot = null;
+    rightsSequence++; intakePress.rights++; rightsPending = false; rightsSnapshot = null;
     rightsEl('detail').hidden = true; rightsEl('state').textContent = ''; rightsEl('notice').textContent = '';
     rightsEl('correction').hidden = true;
     if (all) { rightsEl('list').replaceChildren(); rightsEl('receive').reset(); rightsEl('notify').reset(); rightsEl('id').value = ''; }
@@ -781,7 +796,9 @@
       if (mode === 'decide' || mode === 'notify') {
         // The refused write changed nothing; re-read the request so the detail shows what is stored now (another
         // auditor may have decided, notified or withdrawn it). Unsaved notice input stays while the request is open.
-        const reread = await call(`rights-requests/${encodeURIComponent(id)}`, 'GET');
+        let reread = await call(`rights-requests/${encodeURIComponent(id)}`, 'GET');
+        // A re-read that does not hold together is not a confirmed state: the refusal stays said, the state unconfirmed.
+        if (reread.kind === 'ok' && !rightsConfirmed(reread.body)) reread = { kind: 'unconfirmed', code: 'ResponseUnavailable' };
         if (reread.kind !== 'ok') {
           close();
           say(`${refusalText(code)} ${reread.kind === 'refused' ? refusalText(reread.code) : `요구 상태는 다시 확인하지 못했습니다 (${reread.code}). Open Request로 다시 확인하세요.`}`);
@@ -818,6 +835,7 @@
     if (mode === 'receive') receiveWithIntake(rightsReceive);
     else rightsRequest(mode);
   });
+  withdrawPressOnEdit(rightsEl('receive'), 'rights');
   rightsEl('workspace').addEventListener('input', event => {
     if (event.target.type === 'datetime-local') timeHints(rightsEl('workspace'));
     if (event.target === rightsEl('receive').elements.patientId) showIntake();

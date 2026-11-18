@@ -275,6 +275,111 @@ class IntakeAndRefusal(AuditPage):
         expect(self.rights.locator('#audit-rights-message')).to_contain_text('요구 상태를 확인하지 못했습니다')
         expect(self.rights.locator('#audit-rights-detail')).to_be_hidden()
 
+    def release_context(self, reply=None):
+        self.hold_context = False
+        if reply: self.once[('GET', 'intakeContext')] = reply
+        held, self.held = self.held, []
+        for route in held: self.api(route)
+
+    def test_press_is_withdrawn_by_any_edit_even_typed_back(self):
+        self.hold_context = True
+        self.open()
+        self.receive_rights('SYN-A', expect_received=False)
+        self.rights.get_by_label('Rights Request ID', exact=True).fill('SYN-B')
+        self.rights.get_by_label('Rights Patient ID', exact=True).fill('SYN-OTHER')
+        self.rights.get_by_label('Rights Request ID', exact=True).fill('SYN-A')
+        self.rights.get_by_label('Rights Patient ID', exact=True).fill('SYN-PATIENT')
+        self.fill_copy()
+        self.copy.get_by_role('button', name='Receive Request', exact=True).click()
+        self.copy.get_by_label('Requester Name', exact=True).fill('합성 요청자 2')
+        self.copy.get_by_label('Requester Name', exact=True).fill('합성 요청자')
+        self.release_context()
+        expect(self.rights.get_by_label('Rights Assigning Authority', exact=True)).to_have_value('SYN-SITE')
+        self.page.wait_for_timeout(300)
+        self.assertEqual(self.posted, [])
+        self.rights.get_by_role('button', name='Receive Request', exact=True).click()
+        expect(self.rights.locator('#audit-rights-state')).to_contain_text('Request: Received')
+        self.assertEqual(self.posted[-1][1]['patient'], self.link('SYN-PATIENT'))
+
+    def test_first_context_scope_refusal_closes_copy_and_rights_even_when_a_request_is_open(self):
+        self.backend_call(method='receiveRights', body={'requestId': 'SYN-A', 'kind': 'correction',
+            'receivedAt': '2026-10-01T00:00:00.000Z', 'patient': self.link('SYN-PATIENT'), 'recordIds': ['SYN-RECORD'], 'statement': '합성'})
+        self.hold_context = True
+        self.open()
+        self.rights.get_by_label('Rights Request ID', exact=True).fill('SYN-A')
+        self.rights.get_by_role('button', name='Open Request', exact=True).click()
+        expect(self.rights.get_by_role('button', name='Decide', exact=True)).to_be_enabled()
+        self.release_context((403, dict(code='AuditScopeNotGranted')))
+        expect(self.rights.locator('#audit-rights-message')).to_contain_text('정정·삭제·처리정지 요구 처리 권한이 없습니다')
+        expect(self.rights.locator('#audit-rights-workspace')).to_be_hidden()
+        expect(self.copy.locator('#audit-disclosure-message')).to_contain_text('진료기록 사본 발급 권한이 없습니다')
+        expect(self.copy.locator('#audit-disclosure-workspace')).to_be_hidden()
+
+    def test_not_designated_while_a_press_waits_closes_the_page_even_after_an_id_change(self):
+        self.hold_context = True
+        self.open()
+        self.receive_rights('SYN-A', expect_received=False)
+        self.rights.get_by_label('Rights Request ID', exact=True).fill('SYN-B')
+        self.release_context((403, dict(code='AuditorNotDesignated')))
+        expect(self.page.locator('#audit-message')).to_contain_text('감사 기록을 조회할 권한이 없습니다')
+        expect(self.page.locator('#audit-workspace')).to_be_hidden()
+        self.assertEqual(self.posted, [])
+
+    def test_context_403_without_a_code_keeps_the_input_and_asks_to_retry(self):
+        self.once[('GET', 'intakeContext')] = (403, dict())
+        self.open()
+        self.once[('GET', 'intakeContext')] = (403, dict())
+        self.receive_rights('SYN-A', expect_received=False)
+        expect(self.rights.locator('#audit-rights-message')).to_contain_text('접수에 필요한 기관·감사자 정보를 읽지 못했습니다')
+        expect(self.rights.locator('#audit-rights-workspace')).to_be_visible()
+        expect(self.copy.locator('#audit-disclosure-workspace')).to_be_visible()
+        expect(self.rights.get_by_label('Rights Request ID', exact=True)).to_have_value('SYN-A')
+        expect(self.rights.get_by_label('Statement', exact=True)).to_have_value('합성 정정 요구')
+        self.rights.get_by_role('button', name='Receive Request', exact=True).click()
+        expect(self.rights.locator('#audit-rights-state')).to_contain_text('Request: Received')
+
+    def test_context_answer_of_an_ended_session_is_not_applied(self):
+        self.backend_call(method='receiveRights', body={'requestId': 'SYN-A', 'kind': 'correction',
+            'receivedAt': '2026-10-01T00:00:00.000Z', 'patient': self.link('SYN-PATIENT'), 'recordIds': ['SYN-RECORD'], 'statement': '합성'})
+        self.hold_context = True
+        self.open()
+        self.once[('GET', 'readRights')] = (403, dict(code='AuditorNotDesignated'))
+        self.rights.get_by_label('Rights Request ID', exact=True).fill('SYN-A')
+        self.rights.get_by_role('button', name='Open Request', exact=True).click()
+        expect(self.page.locator('#audit-message')).to_contain_text('감사 기록을 조회할 권한이 없습니다')
+        self.release_context()
+        self.page.wait_for_timeout(300)
+        # The refused page hides its regions; the fields are read by their form names.
+        expect(self.page.locator('#audit-rights-receive [name=assigningAuthority]')).to_have_value('')
+        expect(self.page.locator('#audit-disclosure-receive [name=verifierId]')).to_have_value('')
+        expect(self.page.locator('#audit-workspace')).to_be_hidden()
+
+    def withdrawn_without_evidence(self):
+        saved = self.backend_call(method='readRights', id='SYN-A')['body']
+        return dict(saved, status='Withdrawn', withdrawal=dict(recordedBy=dict(ACTOR), recordedAt='2026-10-02T00:00:00.000Z'))
+
+    def test_withdrawal_without_evidence_is_not_shown_as_closed(self):
+        self.ready(); self.receive_rights()
+        self.rights.get_by_role('button', name='Decide', exact=True).click()
+        state, message = self.rights.locator('#audit-rights-state'), self.rights.locator('#audit-rights-message')
+        expect(state).to_contain_text('Request: Decided')
+        self.once[('POST', 'notifyRights')] = (409, dict(code='RightsNoticeTimeInvalid'))
+        self.once[('GET', 'readRights')] = (200, self.withdrawn_without_evidence())
+        self.notify('2026-10-01T00:00')
+        expect(message).to_contain_text('Notified At은 결정 시각(Decided At) 이후이고')
+        expect(message).to_contain_text('요구 상태는 다시 확인하지 못했습니다')
+        expect(message).not_to_contain_text('닫았습니다')
+        expect(self.rights.locator('#audit-rights-detail')).to_be_hidden()
+        expect(self.rights.get_by_label('Notice Evidence ID', exact=True)).to_have_value('SYN-NOTICE')
+        self.once[('GET', 'readRights')] = (200, self.withdrawn_without_evidence())
+        self.rights.get_by_role('button', name='Open Request', exact=True).click()
+        expect(message).to_contain_text('요구 상태를 확인하지 못했습니다')
+        expect(self.rights.locator('#audit-rights-detail')).to_be_hidden()
+        self.backend_call(method='notifyRights', id='SYN-A', body={'outcome': 'withdrawn', 'evidenceId': 'SYN-WITHDRAWAL'})
+        self.rights.get_by_role('button', name='Open Request', exact=True).click()
+        expect(state).to_contain_text('Request: Withdrawn')
+        expect(state).to_contain_text('Evidence: SYN-WITHDRAWAL')
+
     def test_verifier_is_sent_exactly_as_typed(self):
         self.ready()
         self.copy.get_by_label('Verifier Subject', exact=True).fill(' checker ')
