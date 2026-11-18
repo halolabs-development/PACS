@@ -15,6 +15,9 @@
  */
 (function () {
   'use strict';
+  // A sentence of the page built from its template and its parts ({t: words}, {e: message}); written so the screen language reads it.
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
 
   // 요청 하나의 제한 시간. 넘으면 멈추고, 쓰기라면 결과를 모르는 답이다.
   const TIMEOUT_MS = 60000;
@@ -396,7 +399,7 @@
       else if (!online()) title = TEXT.entry.offline;
       else if (!radiologist()) title = TEXT.entry.role;
       else if (target === null) title = TEXT.entry.none;
-      else if (entryView.phase === 'failed') title = `${TEXT.entry.unknown}\n${entryView.detail}`;
+      else if (entryView.phase === 'failed') title = entryView.detail ? kinSay('{t0}\n{e1}', { t: kinSay(TEXT.entry.unknown) }, { e: entryView.detail }) : TEXT.entry.unknown;
       else if (entryView.phase !== 'ready') title = TEXT.entry.loading;
       else if (!entryView.data.sendable) title = TEXT.reasons[entryView.data.reason];
       else {
@@ -404,7 +407,7 @@
         title = TEXT.entry.ready(entryView.data.source.version);
       }
       entry.disabled = !enabled;
-      entry.title = title;
+      kinWrite(entry, title, 'title');
     }
 
     /** #1을 읽어 단추를 정한다. 답을 받기 전·거절·오류에는 꺼 두고 그 이유를 툴팁에 쓴다. */
@@ -505,7 +508,7 @@
       const waiting = blocked();
       const view = dialogView, attempt = dialogAttempt ? attempts.get(dialogAttempt) : null;
       const row = study(dialogUid);
-      studyLine.textContent = row ? `Study: ${row.name || '—'} (${row.id || '—'}) · ${row.date || '—'}` : `Study: ${dialogUid}`;
+      kinWrite(studyLine, row ? kinSay("Study: {0} ({1}) · {2}", row.name || '—', row.id || '—', row.date || '—') : kinSay("Study: {0}", dialogUid));
       // 보낸(보내는 중·결과를 모르는·적용된) 요청은 그 요청이 고정한 판을 보인다. 거절된 요청 뒤에는 다음 Send가 쓸 판(#1의 답)을
       // 보인다 — SOURCE_MOVED 뒤 다시 읽은 새 판이 여기 선다.
       const source = attempt && attempt.state !== 'rejected' ? attempt.source : view && view.data && view.data.source;
@@ -548,7 +551,7 @@
       checkButton.hidden = !attempt || lock !== null || !['unknown', 'checking', 'not-sent'].includes(attempt.state);
       checkButton.disabled = !!waiting || !sender() || (!!attempt && attempt.state === 'checking');
       checkButton.title = waiting || '';
-      checkButton.textContent = attempt?.state === 'not-sent' ? 'Send' : 'Check Again';
+      kinWrite(checkButton, attempt?.state === 'not-sent' ? kinSay('Send') : kinSay('Check Again'));
     }
 
     function openDialog() {
@@ -872,14 +875,14 @@
           element.dataset.request = attempt.requestId;
           const head = make('p', 'cvr-line-head');
           head.append(make('strong', 'cvr-word'), make('span', 'cvr-line-what'));
-          element.append(head, make('p', 'cvr-text'), make('p', 'cvr-detail'), button('Check Again', () => check(attempt)));
+          element.append(head, make('p', 'cvr-text'), make('p', 'cvr-detail'), button(kinSay('Check Again'), () => check(attempt)));
           attemptList.append(element);
           lineNodes.set(attempt.requestId, element);
         }
         const { word, line, detail } = outcomeText(attempt);
         const action = { create: 'Send', supersede: 'Supersede', cancel: 'Cancel Delivery' }[attempt.action];
         element.dataset.state = attempt.state;
-        element.querySelector('.cvr-word').textContent = word || 'Sending';
+        kinWrite(element.querySelector('.cvr-word'), word || kinSay('Sending'));
         element.querySelector('.cvr-line-what').textContent = ` · ${action} · ${attempt.label}`;
         element.querySelector('.cvr-text').textContent = line;
         const extra = element.querySelector('.cvr-detail');
@@ -889,7 +892,7 @@
         again.hidden = !['unknown', 'checking', 'not-sent'].includes(attempt.state);
         again.disabled = !!blocked() || !sender() || attempt.state === 'checking';
         again.title = blocked() || '';
-        again.textContent = attempt.state === 'not-sent' ? 'Send' : 'Check Again';
+        kinWrite(again, attempt.state === 'not-sent' ? kinSay('Send') : kinSay('Check Again'));
         again.setAttribute('aria-describedby', modeNote.id);
       }
       attemptList.hidden = shown.length === 0;
@@ -918,7 +921,7 @@
       const stateCell = make('td');
       const state = make('span', 'cvr-state', STATES[item.state]);
       state.dataset.state = item.state;
-      state.title = TEXT.states[item.state];
+      kinWrite(state, kinSay(TEXT.states[item.state]), "title");
       stateCell.append(state);
       const closedAt = { acknowledged: item.acknowledgedAt, cancelled: item.cancelledAt, superseded: item.supersededAt }[item.state];
       if (closedAt) stateCell.append(make('span', 'cvr-muted', time(closedAt)));
@@ -932,8 +935,8 @@
       if (item.state === 'created') {
         const busy = [...attempts.values()].some(attempt => attempt.recordId === item.id && attempt.action !== 'create' && unsettled(attempt));
         const actions = make('div', 'cvr-actions');
-        const supersede = button('Supersede', () => openForm(item, 'supersede'));
-        const cancel = button('Cancel Delivery', () => openForm(item, 'cancel'));
+        const supersede = button(kinSay('Supersede'), () => openForm(item, 'supersede'));
+        const cancel = button(kinSay('Cancel Delivery'), () => openForm(item, 'cancel'));
         rowActionHints.set(supersede, TEXT.form.supersedeHint(item.recipient.name));
         rowActionHints.set(cancel, TEXT.form.cancelHint);
         supersede.disabled = cancel.disabled = busy || forms.has(item.id);
@@ -994,13 +997,13 @@
       let line;
       if (lock !== null) line = lock.text;
       else if (!online()) line = TEXT.list.offline;
-      else if (listPhase === 'failed') line = TEXT.list.failed;
+      else if (listPhase === 'failed') line = kinSay(TEXT.list.failed);
       else if (pending === null) line = listPhase === 'loading' ? TEXT.list.loading : '';
       else line = `Pending ACK ${pending}${unknownCount ? ` · ${TEXT.list.unknownCount(unknownCount)}` : ''}`;
       panel.dataset.state = lock !== null ? 'locked' : listPhase;
       summary.textContent = line;
       summary.title = line;
-      toggle.textContent = paneOpen ? 'Hide Sent' : 'Show Sent';
+      kinWrite(toggle, paneOpen ? kinSay('Hide Sent') : kinSay('Show Sent'));
       // 연 목록 칸은 잠겨도·연결이 끊겨도 연 채로 둔다(닫히면 판독 칸이 커져 단추 줄이 움직인다). 안에 그 까닭을 쓴다.
       toggle.setAttribute('aria-expanded', String(paneOpen));
       refreshButton.disabled = lock !== null || !online();
@@ -1011,9 +1014,9 @@
       if (staleRows) paintRows();
       paintWriteControls();
       listStatus.dataset.state = listPhase;
-      listStatus.textContent = lock !== null ? lock.text : !online() ? TEXT.list.offline : listPhase === 'loading' ? TEXT.list.loading
-        : listPhase === 'failed' ? `${TEXT.list.failed}\n${listError}`
-          : items.length ? TEXT.list.ready(items.length, !!nextCursor) : loadedOnce ? TEXT.list.empty : '';
+      kinWrite(listStatus, lock !== null ? lock.text : !online() ? kinSay(TEXT.list.offline) : listPhase === 'loading' ? kinSay(TEXT.list.loading)
+        : listPhase === 'failed' ? kinSay("{0}\n{1}", kinSay(TEXT.list.failed), listError)
+          : items.length ? TEXT.list.ready(items.length, !!nextCursor) : loadedOnce ? kinSay(TEXT.list.empty) : '');
       moreButton.hidden = !nextCursor || lock !== null;
       moreButton.disabled = listPhase === 'loading';
     }
@@ -1030,15 +1033,15 @@
       const cell = make('td');
       cell.colSpan = 6;
       const label = make('label', null);
-      label.append(make('span', null, kind === 'cancel' ? 'Reason' : 'Message'), form.field);
+      label.append(make('span', null, kind === 'cancel' ? kinSay('Reason') : kinSay('Message')), form.field);
       form.field.maxLength = TEXT_MAX;
       form.field.rows = 3;
       form.sourceLine = make('p', 'cvr-form-source');
-      form.confirm = button(kind === 'cancel' ? 'Cancel Delivery' : 'Supersede', () => submitForm(form));
+      form.confirm = button(kind === 'cancel' ? kinSay('Cancel Delivery') : kinSay('Supersede'), () => submitForm(form));
       const actions = make('div', 'cvr-actions');
-      actions.append(form.confirm, button('Close', () => closeForm(item.id)));
-      cell.append(make('p', 'cvr-form-title', kind === 'cancel' ? 'Cancel Delivery' : 'Supersede'),
-        make('p', 'cvr-muted', kind === 'cancel' ? TEXT.form.cancelHint : TEXT.form.supersedeHint(item.recipient.name)),
+      actions.append(form.confirm, button(kinSay('Close'), () => closeForm(item.id)));
+      cell.append(make('p', 'cvr-form-title', kind === 'cancel' ? kinSay('Cancel Delivery') : kinSay('Supersede')),
+        make('p', 'cvr-muted', kind === 'cancel' ? kinSay(TEXT.form.cancelHint) : TEXT.form.supersedeHint(item.recipient.name)),
         form.sourceLine, label, form.note, form.modeNote, actions);
       form.modeNote.id = `cvr-form-mode-${item.id}`;
       form.modeNote.setAttribute('role', 'status');
@@ -1057,26 +1060,26 @@
     function readFormSource(form) {
       const seq = ++form.seq, sent = who(), uid = form.item.studyUid, epoch = reconnects;
       form.confirm.disabled = true;
-      form.sourceLine.textContent = TEXT.form.loading;
+      kinWrite(form.sourceLine, kinSay(TEXT.form.loading));
       call('GET', `/studies/${encodeURIComponent(uid)}/critical-result-recipients`, undefined, work.capture('document')).then(guarded(({ data }) => {
         if (forms.get(form.item.id) !== form || seq !== form.seq || !live(sent)) return;
         const mine = ownerOf(data && data.owner, sent);
         if (mine === 'other') { accountChanged(TEXT.otherEnvelope); return; }
         const read = mine === 'same' ? readCandidates(data, uid) : null;
-        if (!read) { form.sourceLine.textContent = `${TEXT.form.failed}\n${TEXT.malformed}`; return; }
+        if (!read) { kinWrite(form.sourceLine, kinSay("{0}\n{1}", kinSay(TEXT.form.failed), kinSay(TEXT.malformed))); return; }
         if (!read.source || read.reason === 'NO_PINNABLE_SOURCE' || read.reason === 'SOURCE_FORBIDDEN') {
-          form.sourceLine.textContent = read.reason ? TEXT.reasons[read.reason] : TEXT.form.failed;
+          kinWrite(form.sourceLine, read.reason ? kinSay(TEXT.reasons[read.reason]) : kinSay(TEXT.form.failed));
           return;
         }
         form.source = read.source;
         form.sourceLine.textContent = sourceText(read.source);
         const listed = read.recipients.some(r => r.actor === form.item.recipient.actor);
-        form.note.textContent = listed ? '' : TEXT.form.notCandidate;
+        kinWrite(form.note, listed ? '' : kinSay(TEXT.form.notCandidate));
         form.note.hidden = listed;
         paintWriteControls();
       }), guarded(error => {
         if (forms.get(form.item.id) !== form || seq !== form.seq || !live(sent)) return;
-        form.sourceLine.textContent = `${TEXT.form.failed}\n${describe(error)}`;
+        kinWrite(form.sourceLine, kinSay("{0}\n{1}", kinSay(TEXT.form.failed), describe(error)));
         crossed(epoch);
       }));
     }
@@ -1100,7 +1103,7 @@
         || current.revision !== form.item.revision) return;
       const value = form.field.value, item = form.item;
       if (!textOk(value)) {
-        form.note.textContent = TEXT.form.noText;
+        kinWrite(form.note, kinSay(TEXT.form.noText));
         form.note.hidden = false;
         return;
       }

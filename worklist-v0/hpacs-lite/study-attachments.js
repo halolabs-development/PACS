@@ -68,7 +68,7 @@ window.KinStudyAttachments = function (app) {
   const dialog = node('dialog');
   dialog.id = 'attach-document';
   dialog.setAttribute('aria-labelledby', 'attach-document-title');
-  const title = node('h2', null, 'Attach Document');
+  const title = node('h2', null, kinSay('Attach Document'));
   title.id = 'attach-document-title';
   const head = node('p', 'attach-study');
   head.translate = false;   // the study's own data (patient name, ID, date, description), never words of the screen
@@ -106,7 +106,7 @@ window.KinStudyAttachments = function (app) {
   function node(tag, cls, text) {
     const el = document.createElement(tag);
     if (cls) el.className = cls;
-    if (text !== undefined) el.textContent = text;
+    if (text !== undefined) kinWrite(el, text);
     return el;
   }
   function button(label, onClick) {

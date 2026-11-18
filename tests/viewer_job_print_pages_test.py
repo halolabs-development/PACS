@@ -210,7 +210,9 @@ def study(uid, date, name="홍 길동", desc="CHEST CT", acc="ACC-0001"):
 def report(version, rs, findings):
     return dict(version=version, rs=rs, author="doctor",
                 repDoc="doctor" if rs == "A" else None,
-                confirm="2026-08-02T00:00:00Z" if rs == "A" else None,
+                # The server's shape: the stored approval date is the UTC date, the instant is ISO UTC.
+                confirm="2026-08-01" if rs == "A" else None,
+                approvedAt="2026-08-01T18:06:00.000Z" if rs == "A" else None,
                 findings=findings, conclusion="OUTPUT CONCLUSION", recommendation="OUTPUT RECOMMENDATION")
 
 
@@ -280,7 +282,8 @@ class ViewerJobPrintPages(unittest.TestCase):
         cls.playwright.stop()
 
     def setUp(self):
-        self.context = self.browser.new_context()
+        # Paper times are the reader's local time; a fixed zone keeps the expected text machine-independent.
+        self.context = self.browser.new_context(timezone_id="Asia/Seoul")
         self.addCleanup(self.context.close)
 
     def data(self, current_date, comparison_date, current=None, comparison=None,
@@ -395,11 +398,11 @@ class ViewerJobPrintPages(unittest.TestCase):
 
     def test_pages_02_date_variants_named_by_relation(self):
         variants = [
-            ("same", "20260801", "20260801", "20260801", "현재 검사와 같은 날짜 · 선후 미확인"),
-            ("earlier", "20260801", "20260701", "20260701", "현재 검사보다 이전"),
+            ("same", "20260801", "20260801", "2026-08-01", "현재 검사와 같은 날짜 · 선후 미확인"),
+            ("earlier", "20260801", "20260701", "2026-07-01", "현재 검사보다 이전"),
             ("nodate", "20260801", "", "날짜 없음", "검사일 확인 불가 · 선후 미확인"),
             ("bad", "20260801", "BADDATE1", "BADDATE1", "검사일 확인 불가 · 선후 미확인"),
-            ("badcurrent", "BADCURRENT", "20260901", "20260901", "검사일 확인 불가 · 선후 미확인"),
+            ("badcurrent", "BADCURRENT", "20260901", "2026-09-01", "검사일 확인 불가 · 선후 미확인"),
         ]
         for name, current_date, comparison_date, shown, relation in variants:
             with self.subTest(variant=name):
@@ -504,14 +507,14 @@ class ViewerJobPrintPages(unittest.TestCase):
         self.assertIn("Current Study Report", srcdoc)
         self.assertNotIn("Comparison Study Report", srcdoc)
         self.assertNotIn("과거", srcdoc)
-        self.assertIn("검사일 20260801 · 현재 검사", srcdoc)
+        self.assertIn("검사일 2026-08-01 · 현재 검사", srcdoc)
         reader, _ = self.printed(srcdoc, "single-saved.pdf")
         flats = [flat(sheet.extract_text()) for sheet in reader.pages]
         self.assertGreaterEqual(len(flats), 2)
         current = [text for text in flats if CURRENT_MARK in text]
         self.assertGreaterEqual(len(current), 2)
         for text in current:
-            self.assertIn(flat("Current Study Report · 20260801"), text)
+            self.assertIn(flat("Current Study Report · 2026-08-01"), text)
             self.assertIn(flat("Study " + UID_A), text)
             self.assertIn(flat("승인된 저장본 · v1 · RS A"), text)
             self.assertNotIn(flat("Comparison Study Report"), text)
@@ -654,7 +657,7 @@ class ViewerJobPrintPages(unittest.TestCase):
         self.assertEqual(sum(block.count("저장본") for block in blocks), 1,
                          "the single 저장본 must be the citation notice's, not a saved label")
         self.assertNotIn("RS A", srcdoc)
-        self.assertIn("검사일 20260801 · 현재 검사", srcdoc)
+        self.assertIn("검사일 2026-08-01 · 현재 검사", srcdoc)
         # The saved server body of the same study must not be substituted.
         self.assertNotIn(CURRENT_MARK, srcdoc)
         self.assertIn(DRAFT_MARK, srcdoc)
@@ -701,8 +704,8 @@ class ViewerJobPrintPages(unittest.TestCase):
         options = dict(self.options(page))
         self.assertEqual(options["editor-prior"],
                          "Current study draft (unsaved) + comparison study report"
-                         " (20260901 · CHEST CT · Acc ACC-0001)")
-        self.assertEqual(options["prior"], "Comparison study report (20260901 · CHEST CT · Acc ACC-0001)")
+                         " (2026-09-01 · CHEST CT · Acc ACC-0001)")
+        self.assertEqual(options["prior"], "Comparison study report (2026-09-01 · CHEST CT · Acc ACC-0001)")
         reader, path = self.printed(srcdoc, "editor-prior.pdf")
         flats = [flat(sheet.extract_text()) for sheet in reader.pages]
         total = len(flats)
@@ -721,7 +724,7 @@ class ViewerJobPrintPages(unittest.TestCase):
             self.assertIn(flat("미확정 편집문 · 저장·승인되지 않음"), flats[index])
             self.assertNotIn(UID_B, flats[index])
             # The draft body itself never carries a stored version or approval.
-            self.assertNotIn(flat("Current Study Report · 20260801 · 승인"), flats[index])
+            self.assertNotIn(flat("Current Study Report · 2026-08-01 · 승인"), flats[index])
         for index in comparison:
             self.assertIn(flat("Comparison Study Report"), flats[index])
             self.assertIn(flat("Study " + UID_B), flats[index])
@@ -1037,8 +1040,8 @@ class ViewerJobPrintPages(unittest.TestCase):
         page = self.prepared(data, "both", 'data-report-uid="' + UID_B + '"')
         srcdoc = self.srcdoc(page)
         self.assertIn("승인된 추가기재 · v3 · RS A", srcdoc)
-        self.assertIn("Current Study Report: 20260801 · 승인된 추가기재 · v3 · RS A", srcdoc)
-        self.assertIn("Comparison Study Report: 20260901 · 현재 검사보다 이후 · 미승인 저장본 · v2 · RS W", srcdoc)
+        self.assertIn("Current Study Report: 2026-08-01 · 승인된 추가기재 · v3 · RS A", srcdoc)
+        self.assertIn("Comparison Study Report: 2026-09-01 · 현재 검사보다 이후 · 미승인 저장본 · v2 · RS W", srcdoc)
         # The wording an approved Addendum must never fall back to, and the
         # lineage number the append-only history cannot support.
         self.assertNotIn("승인된 저장본", srcdoc)
@@ -1108,6 +1111,19 @@ class ViewerJobPrintPages(unittest.TestCase):
     # so the page it lands on must be that study's page. Only a real print shows
     # it: the named @page footers are produced by Chromium's pagination, which a
     # DOM assertion cannot observe.
+    def test_pages_18_dates_follow_the_report_paper_rule(self):
+        # One rule with the worklist report paper (KinReportPaper): local time, one human form. An approval at
+        # 03:06 Korea time is the previous day in UTC, and the stored approval date is that UTC date.
+        page = self.prepared(self.data("20260801", "20260901"), "both", 'data-report-uid="' + UID_B + '"')
+        srcdoc = self.srcdoc(page)
+        self.assertIn("승인일시: 2026-08-02 03:06", srcdoc)
+        self.assertIn("저장 2026-09-01 09:00", srcdoc)
+        self.assertIn("검사일 2026-08-01 · 현재 검사", srcdoc)
+        for raw in ("승인일(UTC)", "2026-08-01T18:06", "2026-09-01T00:00:00Z", " · 20260801 · ", " · 20260901 · "):
+            self.assertNotIn(raw, srcdoc)
+        self.no_writes(page)
+        page.close()
+
     def test_pages_16_a_citation_line_shares_its_studys_page_footer(self):
         data = self.data("20260801", "20260901")
         for uid, actor in ((UID_A, "doctor"), (UID_B, "doctor2")):

@@ -11,8 +11,17 @@
       ctxItems = items;
       ctxTarget = target;
       ctx.setAttribute('role', 'menu');
-      ctx.innerHTML = items.map((it, i) =>
-        it.sep ? '<hr role="separator">' : `<div data-i="${i}" role="menuitem" tabindex="-1" aria-disabled="${!!it.dis}" class="${it.dis ? "dis" : ""}"${it.title ? ` title="${esc(it.title)}"` : ""}>${esc(it.label)}</div>`).join("");
+      ctx.replaceChildren(...items.map((item, index) => {
+        const el = document.createElement(item.sep ? "hr" : "div");
+        el.setAttribute("role", item.sep ? "separator" : "menuitem");
+        if (item.sep) return el;
+        el.dataset.i = index;
+        el.tabIndex = -1;
+        el.setAttribute("aria-disabled", String(!!item.dis));
+        if (item.dis) el.className = "dis";
+        if (item.title) kinWrite(el, item.title, "title");
+        return kinWrite(el, item.label);
+      }));
       ctx.style.left = Math.max(0, Math.min(keyboard?.x ?? e.clientX, innerWidth - 200)) + "px";
       ctx.style.top = Math.max(0, Math.min(keyboard?.y ?? e.clientY, innerHeight - (items.length * 28 + 20))) + "px";
       ctx.style.display = "block";
@@ -85,13 +94,13 @@
     });
     let ctxSelection = null;
     function showSelectionMenu(e, set) {
-      showCtx(e, [{ label: "Open Selected Studies",
+      showCtx(e, [{ label: kinSay("Open Selected Studies"),
         act: () => { ctxSelection = null; multiStudyView?.open(set); } },
         // FC-028: the same Batch Reading as the selection bar, for the selection as it was when this menu opened.
-        ...(batchReport?.shown() ? [{ label: "Batch Reading", dis: !!batchReport.blocked(),
+        ...(batchReport?.shown() ? [{ label: kinSay("Batch Reading"), dis: !!batchReport.blocked(),
           act: () => { ctxSelection = null; batchReport?.open(set); } }] : []),
         // FC-029: the same Batch Approve as the selection bar, after Batch Reading.
-        ...(batchApprove?.shown() ? [{ label: "Batch Approve", dis: !!batchApprove.blocked(),
+        ...(batchApprove?.shown() ? [{ label: kinSay("Batch Approve"), dis: !!batchApprove.blocked(),
           act: () => { ctxSelection = null; batchApprove?.open(set); } }] : [])], null, null);
       ctxSelection = { items: ctxItems, generation: set.generation };
     }
@@ -110,7 +119,7 @@
       // 이 메뉴가 열린 선택. 항목은 이 선택이 그대로일 때만 실행된다(위 클릭 처리).
       const opened = { uid, seq: selectionSeq, oid: selectedOid };
       const forceReleaseItems = KinAuth.has("admin") && s?.holder ? [{
-        label: "점유 강제 해제 (관리자)", dis: s.holder === user, act: async () => {
+        label: kinSay("점유 강제 해제 (관리자)"), dis: s.holder === user, act: async () => {
           if (!confirm(`${displayActor(s.holder)} 님의 점유를 강제로 해제합니다. 그쪽 화면은 다음 저장에서 거절됩니다. 계속할까요?`)) return;
           const at = work.capture("document");
           try { await api("POST", `/studies/${encodeURIComponent(uid)}/release/force`, undefined, undefined, at); }
@@ -129,7 +138,7 @@
       // patient IDs). The values are read from the list as it is at the click: a refresh while the menu was open may have
       // replaced the row (a Match changes the patient ID it shows).
       const emrLink = () => KinAuth.session()?.emrLink?.template ?? null;
-      const openEmrItem = { label: "Open EMR", dis: !emrLink() || !!s?.tele, act: () => {
+      const openEmrItem = { label: kinSay("Open EMR"), dis: !emrLink() || !!s?.tele, act: () => {
         const row = studies.find(x => x.uid === opened.uid);
         if (!row) { toast("이 검사를 목록에서 찾을 수 없습니다", "err"); return; }
         if (row.tele) { toast("원격판독으로 받은 검사는 EMR을 열 수 없습니다", "err"); return; }
@@ -143,33 +152,33 @@
         // 서버도 같은 규칙으로 막지만, 회색으로 보이는 편이 눌러보고 거절당하는 것보다 낫다.
         const mine = !s?.tele;
         showCtx(e, [
-          { label: "Film Box 열기", act: () => openFilmbox(uid) },
-          { label: "판독문 작성으로", act: () => focusReportEditor() },
+          { label: kinSay("Film Box 열기"), act: () => openFilmbox(uid) },
+          { label: kinSay("판독문 작성으로"), act: () => focusReportEditor() },
           openEmrItem,
           { sep: 1 },
-          { label: "원격판독 의뢰 (Tele Request)", dis: !mine || requested, act: () => teleRequest(uid) },
-          { label: "의뢰 취소", dis: !mine || !["wait", "sending", "sent"].includes(ts), act: () => setTs(uid, "cancelled") },
+          { label: kinSay("원격판독 의뢰 (Tele Request)"), dis: !mine || requested, act: () => teleRequest(uid) },
+          { label: kinSay("의뢰 취소"), dis: !mine || !["wait", "sending", "sent"].includes(ts), act: () => setTs(uid, "cancelled") },
           { sep: 1 },
-          { label: "판독 시작 (수신 기관)", dis: mine || ts !== "sent", act: () => setTs(uid, "inReading") },
+          { label: kinSay("판독 시작 (수신 기관)"), dis: mine || ts !== "sent", act: () => setTs(uid, "inReading") },
           // 원본 다운로드는 자기 기관 검사만이다(S9-U4p §3·§6) — 원격판독으로 받은 행은 회색, 서버도 404로 막는다.
-          ...(studyTransfer.canDownload() ? [{ sep: 1 }, { label: "Download Originals", dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) }] : []),
+          ...(studyTransfer.canDownload() ? [{ sep: 1 }, { label: kinSay("Download Originals"), dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) }] : []),
           ...forceReleaseItems,
           // FC-076: attach a scanned document or picture to this row's study, at the end of the menu.
-          ...(studyAttachments.canAttach() ? [{ sep: 1 }, { label: "Attach Document", dis: !!s?.tele, act: () => studyAttachments.open(opened.uid) }] : []),
+          ...(studyAttachments.canAttach() ? [{ sep: 1 }, { label: kinSay("Attach Document"), dis: !!s?.tele, act: () => studyAttachments.open(opened.uid) }] : []),
         ], null, opened);
       } else {
         const o = curOrder();
         showCtx(e, [
-          { label: "Match", dis: !(o && s.matched === "U" && o.matched === "U"), act: doMatch },
-          { label: "Unmatch", dis: s.matched !== "M", act: doUnmatch },
+          { label: kinSay("Match"), dis: !(o && s.matched === "U" && o.matched === "U"), act: doMatch },
+          { label: kinSay("Unmatch"), dis: s.matched !== "M", act: doUnmatch },
           { sep: 1 },
-          { label: "Verify", dis: s.ss === "Verified", act: () => setSs(uid, "Verified") },
-          { label: "Unverify", dis: s.ss === "Unverified", act: () => setSs(uid, "Unverified") },
-          { label: "Modify Exam", dis: s.rs !== "W", act: openModify },
+          { label: kinSay("Verify"), dis: s.ss === "Verified", act: () => setSs(uid, "Verified") },
+          { label: kinSay("Unverify"), dis: s.ss === "Unverified", act: () => setSs(uid, "Unverified") },
+          { label: kinSay("Modify Exam"), dis: s.rs !== "W", act: openModify },
           openEmrItem,
           { sep: 1 },
           emergencyMenu(uid),
-          { label: "Switch ReqHosp", act: () => {
+          { label: kinSay("Switch ReqHosp"), act: () => {
               // 기관명이 있는 행의 ReqHosp 칸은 서버가 정한 기관명이다(applyState·syncStudy가 같은 규칙으로 그린다). 여기서 친
               // 값을 칸에 그리면 다음 목록 읽기에서 말없이 기관명으로 돌아가고, 저장해도 어디에도 보이지 않는다 — 값을 묻지도
               // 그리지도 보내지도 않고 까닭을 말한다. 기관명이 없는 행(서버 없이 연 목록 등)은 지금처럼 바꾼다.
@@ -184,13 +193,13 @@
               saveApp(uid, { reqHosp: s.reqHosp }); render(); renderRelated();
             } },
           { sep: 1 },
-          { label: "Delete", dis: s.rs !== "W", act: () => doDelete(uid) },
+          { label: kinSay("Delete"), dis: s.rs !== "W", act: () => doDelete(uid) },
           // 이 행의 검사로 반입(X-KIN-Expect-Study)과 원본 다운로드(S9-U4p §6). 둘 다 메뉴를 연 그 선택(opened)에 묶인다.
           ...(studyTransfer.canImport() || studyTransfer.canDownload() || studyAttachments.canAttach() ? [{ sep: 1 }] : []),
-          ...(studyTransfer.canImport() ? [{ label: "Import DICOM", act: () => studyTransfer.importInto(opened.uid) }] : []),
+          ...(studyTransfer.canImport() ? [{ label: kinSay("Import DICOM"), act: () => studyTransfer.importInto(opened.uid) }] : []),
           // FC-076: right after Import DICOM; grey on a study received for tele-reading.
-          ...(studyAttachments.canAttach() ? [{ label: "Attach Document", dis: !!s?.tele, act: () => studyAttachments.open(opened.uid) }] : []),
-          ...(studyTransfer.canDownload() ? [{ label: "Download Originals", dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) }] : []),
+          ...(studyAttachments.canAttach() ? [{ label: kinSay("Attach Document"), dis: !!s?.tele, act: () => studyAttachments.open(opened.uid) }] : []),
+          ...(studyTransfer.canDownload() ? [{ label: kinSay("Download Originals"), dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) }] : []),
           ...forceReleaseItems,
         ], null, opened);
       }
@@ -202,11 +211,11 @@
       selectedOid = tr.dataset.oid; renderOrders();
       const o = curOrder(), s = cur();
       showCtx(e, [
-        { label: "Match", dis: !(s && s.matched === "U" && o.matched === "U"), act: doMatch },
+        { label: kinSay("Match"), dis: !(s && s.matched === "U" && o.matched === "U"), act: doMatch },
         // selectedUid를 직접 대입하면 안 된다. select()가 하는 일 — 쓰던 판독문 저장,
         // 점유 해제, 오른쪽 판 갱신 — 이 전부 건너뛰어진다. 그 상태로 다음 검사를 고르면
         // **앞 환자의 소견이 뒤 환자에게 저장된다.** 실제로 그렇게 되는 코드였다.
-        { label: "Unmatch", dis: o.matched !== "M", act: async () => {
+        { label: kinSay("Unmatch"), dis: o.matched !== "M", act: async () => {
             const s2 = studies.find(x => x.uid === o.studyUid);
             if (!s2) { toast("이 오더에 매칭된 검사를 목록에서 찾을 수 없습니다", "err"); return; }
             // 그 검사로 옮겨졌을 때만 한다 — 옮겨지지 않았으면(글자 조합·쓰던 글의 저장) Unmatch가 지금 선택에 닿는다.
@@ -215,6 +224,6 @@
             doUnmatch();
           } },
         { sep: 1 },
-        { label: "New Exam (SC 생성)", dis: 1, title: "새 검사(SC 생성)는 현재 연결되어 있지 않습니다.", act: () => {} },
+        { label: kinSay("New Exam (SC 생성)"), dis: 1, title: "새 검사(SC 생성)는 현재 연결되어 있지 않습니다.", act: () => {} },
       ], null, { uid: selectedUid, seq: selectionSeq, oid: selectedOid });
     });

@@ -36,10 +36,12 @@
       $('#related-load-parts').disabled=!s||!serverMode||offline||demoMode||relatedParts.busy();
       $('#related-cancel-parts').hidden=!relatedParts.busy();
       $("#related-return").disabled = !s || !relatedUid;
-      $("#related-current").textContent = s
-        ? `판독 대상 · ${s.date || "날짜 없음"} · ${s.modality} · ${s.name} (${s.id}) · ${shownStudyDesc(s)}`
-        : "판독 대상을 선택하세요";
-      $("#related-current").title = $("#related-current").textContent;
+      // The study's own data in one sentence of the page: no other glossary template reads its parts as page words.
+      const currentLine = s
+        ? kinSay("판독 대상 · {t0} · {1} · {2} ({3}) · {4}", s.date || kinSay("날짜 없음"), s.modality, s.name, s.id, shownStudyDesc(s))
+        : kinSay("판독 대상을 선택하세요");
+      kinWrite($("#related-current"), currentLine);
+      kinWrite($("#related-current"), currentLine, "title");
       let rel = [];
       if (s) {
         rel = relatedCandidates().filter(x => relatedIncludeCurrent || x.uid !== s.uid);
@@ -52,7 +54,7 @@
         ...partTokens.map(v=>Object.assign(new Option(v,JSON.stringify(v)),{translate:false}))];
       if(relatedBodyPart&&!bodyOptions.some(o=>o.value===relatedBodyPart))bodyOptions.push(Object.assign(new Option(JSON.parse(relatedBodyPart),relatedBodyPart),{translate:false}));
       body.replaceChildren(...bodyOptions);body.value=relatedBodyPart;body.disabled=!s;body.title=body.selectedOptions[0]?.textContent||'';if(body.selectedOptions[0]?.translate===false)body.setAttribute('data-kin-keep','title');else body.removeAttribute('data-kin-keep');
-      $('#related-parts-status').textContent=relatedParts.note() || (s?`${relatedParts.busy()?'조회 중 · ':''}부위 확인 ${known}/${relatedCandidates().length} · 미조회·실패는 Unverified` : '');
+      kinWrite($('#related-parts-status'), relatedParts.note() || (s?kinSay("{t0}부위 확인 {1}/{n2} · 미조회·실패는 Unverified", relatedParts.busy()?kinSay('조회 중 · '):'', known, relatedCandidates().length) : ''));
       const modality = $("#related-modality");
       const tokens = [...new Set(rel.flatMap(relatedModalities))].sort();
       const options = [new Option("All Modalities", ""), new Option("Unspecified", JSON.stringify("")),
@@ -79,7 +81,7 @@
       $('#related-pages').hidden = pages <= 1;
       $('#related-page-prev').disabled = relatedPage === 0; $('#related-page-next').disabled = relatedPage >= pages - 1;
       $('#related-page-current').disabled = viewed < 0;
-      $('#related-page-status').textContent = `${relatedPage + 1}/${pages}페이지`;
+      kinWrite($('#related-page-status'), kinSay("{0}/{n1}페이지", relatedPage + 1, pages));
       relatedRows = rel;
       $("#relrows").innerHTML = s
         ? (rel.slice(relatedPage * 50, (relatedPage + 1) * 50).map(x => {
@@ -90,8 +92,11 @@
               <td><span class="rs ${esc(x.rs)}">${esc(x.rs)}</span></td>
               <td>${({ W: "Unread", T: "In Progress", P: "Preliminary", A: "Approved", H: "On Hold", D: "Destroyed" })[x.rs] || "Unverified"} <button class="chip" type="button" data-related-open="${esc(x.uid)}">${x.uid === s.uid ? 'Open Images' : 'Compare Images'}</button></td>
             </tr>`;
-          }).join("") || `<tr><td class="empty" colspan="7">${relatedModality || relatedBodyPart ? "조건에 맞는 관련 검사 없음" : "관련 검사 없음"}</td></tr>`)
-        : `<tr><td class="empty" colspan="7">검사를 선택하세요</td></tr>`;
+          }).join("") || '<tr><td class="empty" colspan="7"></td></tr>')
+        : '<tr><td class="empty" colspan="7"></td></tr>';
+      const emptyCell = $("#relrows td.empty");
+      if (emptyCell) kinWrite(emptyCell, !s ? kinSay("검사를 선택하세요") :
+        relatedModality || relatedBodyPart ? kinSay("조건에 맞는 관련 검사 없음") : kinSay("관련 검사 없음"));
       columnPrefs?.decorateRelated(mode);
       for (const report of s?.relatedExamReports || []) {
         if (report.uid === s.uid) continue;
@@ -99,7 +104,7 @@
         // "Exam" here names the exam scope the report was written on (not the Exam column): each line is one template.
         cell.colSpan=7;link.type='button';link.className='chip';
         kinWrite(link,kinSay(report.scope?.part===1?'Related Report · Exam 2 · v{n0}':'Related Report · Exam · v{n0}',report.version));
-        link.title='묶음을 되돌리기 전 저장한 판독문과 당시 영상 범위를 엽니다.';
+        kinWrite(link, kinSay('묶음을 되돌리기 전 저장한 판독문과 당시 영상 범위를 엽니다.'), "title");
         const selected=s.uid;link.onclick=()=>{if(selectedUid===selected)showHistory(report.uid);};
         cell.append(link);row.append(cell);$('#relrows').append(row);
       }

@@ -38,6 +38,7 @@ function intake(requestId = 'SYN-RIGHTS', kind = 'correction') {
 }
 module.exports = { fixture, intake, patient, actor, F };
 if (require.main === module) {
+  const { studyPatientLink } = require('../../../api/src/emr-clinical/routes.ts');
   let f = fixture();
   const Filter = Reflect.getMetadata('__exceptionFilters__', EmrAuditController)[0];
   require('node:readline').createInterface({ input: process.stdin }).on('line', async line => {
@@ -45,6 +46,8 @@ if (require.main === module) {
       const q = JSON.parse(line);
       if (q.reset) { f = fixture(q.scopes, q.institution); process.stdout.write(JSON.stringify({ status: 200, body: {} }) + '\n'); return; }
       if (q.inspect) { process.stdout.write(JSON.stringify({ status: 200, body: { records: f.records, requests: f.requests, duties: f.duties } }) + '\n'); return; }
+      // The product's patient link for (institution, patient ID), from the server's own function.
+      if (q.link) { process.stdout.write(JSON.stringify({ status: 200, body: studyPatientLink(...q.link) }) + '\n'); return; }
       if (q.unavailable_originals) { f.originals.length = 0; process.stdout.write(JSON.stringify({ status: 200, body: {} }) + '\n'); return; }
       const body = await f.controller[q.method]({}, ...(q.id ? [q.id] : []), ...(q.body ? [q.body] : []));
       process.stdout.write(JSON.stringify({ status: 200, body }) + '\n');

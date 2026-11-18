@@ -9,6 +9,7 @@
       if (value === undefined || value === null) continue;
       if (key === 'className') node.className = value;
       else if (key === 'text') kinWrite(node, value);
+      else if (key === 'aria-label') kinWrite(node, value, key);
       else if (key in node && typeof value !== 'string') node[key] = value;
       else node.setAttribute(key, value);
     }
@@ -34,16 +35,16 @@
   function openWindow(title, name) {
     const body = el('div', { className: 'order-dialog-body' }), foot = el('div', { className: 'order-dialog-foot' });
     const dialog = el('dialog', { className: 'order-dialog exam-merge-dialog', 'aria-label': title, 'data-exam-window': name },
-      el('h3', { text: title }), body, foot);
+      el('h3', { text: kinSay(title) }), body, foot);
     dialog.addEventListener('close', () => dialog.remove());
     document.body.append(dialog);
     dialog.showModal();
     const close = () => { if (dialog.open) dialog.close(); };
     const buttons = (...list) => { foot.replaceChildren(...list); list.find(b => !b.disabled)?.focus(); };
-    return { dialog, body, foot, close, buttons, closeButton: (label = 'Close') => button(label, close) };
+    return { dialog, body, foot, close, buttons, closeButton: (label = 'Close') => button(kinSay(label), close) };
   }
   const table = (heads, rows) => el('table', { className: 'order-table' },
-    el('thead', {}, el('tr', {}, heads.map(h => el('th', { text: h })))),
+    el('thead', {}, el('tr', {}, heads.map(h => el('th', { text: kinSay(h) })))),
     el('tbody', {}, rows.map(r => r instanceof HTMLElement ? r : el('tr', {}, r.map(v => v instanceof Node ? el('td', {}, v) : data(v))))));
   // The server's refusals, each with the Accession No of the study it is about (when the page knows it).
   const reason = (error, accOf = uid => uid) => {
@@ -93,35 +94,35 @@
     async function openMerge() {
       const win=begin('merge','Merge Exam');if(!win)return;
       const sel=win.row;
-      if(scopes.read(sel)?.groupId) { win.body.append(note('이미 묶인 검사입니다. Split / Unmerge로 먼저 되돌리세요.'));win.buttons(win.closeButton());return; }
+      if(scopes.read(sel)?.groupId) { win.body.append(note(kinSay('이미 묶인 검사입니다. Split / Unmerge로 먼저 되돌리세요.')));win.buttons(win.closeButton());return; }
       const list=ctx.studies().filter(s=>!scopes.read(s)?.groupId).sort((a,b)=>(b.id===sel.id)-(a.id===sel.id));
       const checks=new Map(),bases=new Map(),captured=new Map(list.map(s=>[s.uid,scopes.stamp(s)]));
       const summary=el('div',{className:'order-status exam-merge-result',role:'status','aria-live':'polite'});
       let busy=false;
-      const go=button('Merge',submit,'체크한 검사를 기준 검사 하나로 합칩니다.');
+      const go=button(kinSay('Merge'),submit,'체크한 검사를 기준 검사 하나로 합칩니다.');
       const picked=()=>list.filter(s=>checks.get(s.uid).checked);
       function recompute() {
         const rows=picked(),base=rows.find(s=>bases.get(s.uid).checked),ids=[...new Set(rows.map(s=>s.id))];
         go.disabled=true;
-        if(rows.length<2)kinWrite(summary,'합칠 검사를 2건 이상 체크하세요.');
+        if(rows.length<2)kinWrite(summary,kinSay('합칠 검사를 2건 이상 체크하세요.'));
         else if(ids.length>1)summary.replaceChildren(note(kinSay('다른 환자의 검사는 합칠 수 없습니다 ({0}).',ids.join(', ')),'warn'));
-        else if(!base)kinWrite(summary,'기준 검사(Base)를 고르세요.');
+        else if(!base)kinWrite(summary,kinSay('기준 검사(Base)를 고르세요.'));
         else {
           go.disabled=busy;
           summary.replaceChildren(note(kinSay('결과: 검사 1건 (기준 {0}, {1}) · 시리즈 {2} · 영상 {3}. 원래 검사 {n4}건의 묶음은 기록으로 남아 되돌릴 수 있습니다.',
             text(base.acc),text(base.date),count(sum(rows,'series')),count(sum(rows,'count')),rows.length)),
-            note('판독문은 합치지 않습니다. 기준 검사에서 판독하며 판독문에 영상 범위를 남깁니다. 원본 영상·UID는 바뀌지 않습니다. Query/Retrieve와 원본 내보내기는 원래 검사 단위입니다.','muted'));
+            note(kinSay('판독문은 합치지 않습니다. 기준 검사에서 판독하며 판독문에 영상 범위를 남깁니다. 원본 영상·UID는 바뀌지 않습니다. Query/Retrieve와 원본 내보내기는 원래 검사 단위입니다.'),'muted'));
         }
       }
       const rows=list.map(s=>{
-        const c=el('input',{type:'checkbox',checked:s.uid===sel.uid || s.id===sel.id&&s.date===sel.date,'aria-label':'Merge '+text(s.acc)});
-        const b=el('input',{type:'radio',name:'exam-merge-base',checked:s.uid===sel.uid,'aria-label':'Base '+text(s.acc)});
+        const c=el('input',{type:'checkbox',checked:s.uid===sel.uid || s.id===sel.id&&s.date===sel.date,'aria-label':kinSay('Merge {0}',text(s.acc))});
+        const b=el('input',{type:'radio',name:'exam-merge-base',checked:s.uid===sel.uid,'aria-label':kinSay('Base {0}',text(s.acc))});
         checks.set(s.uid,c);bases.set(s.uid,b);c.onchange=recompute;b.onchange=()=>{c.checked=true;recompute();};
         // The report status is a word of the screen; the other cells are data.
         return el('tr',{'data-uid':s.uid},el('td',{},c),el('td',{},b),...[s.id,s.name,s.date,s.desc,s.acc,seriesImages(s.series,s.count)].map(data),
-          RS_WORD[s.rs]?el('td',{text:RS_WORD[s.rs]}):data(s.rs));
+          Object.hasOwn(RS_WORD,s.rs)?el('td',{text:kinSay(RS_WORD[s.rs])}):data(s.rs));
       });
-      win.body.append(note('같은 날의 같은 환자 검사는 미리 체크되어 있습니다. 다른 날짜의 검사도 체크할 수 있습니다.'),summary,
+      win.body.append(note(kinSay('같은 날의 같은 환자 검사는 미리 체크되어 있습니다. 다른 날짜의 검사도 체크할 수 있습니다.')),summary,
         table(['Merge','Base','ID','Name','StudyDate','StudyDesc','Accession No','Series / Images','Report'],rows));
       win.buttons(go,win.closeButton());recompute();
       async function submit() {
@@ -144,25 +145,25 @@
     }
     async function openUnmerge() {
       const win=begin('unmerge','Split / Unmerge Exam');if(!win)return;
-      win.body.append(note('검사 범위를 확인하는 중입니다.'));win.buttons(win.closeButton());
+      win.body.append(note(kinSay('검사 범위를 확인하는 중입니다.')));win.buttons(win.closeButton());
       try {
         const answer=await ctx.api('GET','/studies/'+encodeURIComponent(win.row.uid)+'/exam-group',undefined,undefined,win.at);
         if(!win.live())return;
         if(answer.group)await showDissolve(win,answer);
         else await showSplit(win);
-      }catch(error){if(win.live()){failure(win,error);win.buttons(button('Retry',()=>{win.close();openUnmerge();}),win.closeButton());}}
+      }catch(error){if(win.live()){failure(win,error);win.buttons(button(kinSay('Retry'),()=>{win.close();openUnmerge();}),win.closeButton());}}
     }
     async function showDissolve(win,answer) {
       const scope=scopes.read(win.row),split=answer.group.kind==='split';
       if(scope?.groupId!==answer.group.id)throw Error('검사 범위가 바뀌었습니다. 목록을 새로고침한 뒤 다시 여세요.');
       const sources=scopes.metadata(win.row),checks=el('ul',{className:'exam-merge-checks'});
-      const go=button(split?'Unsplit':'Unmerge',submit);
+      const go=button(kinSay(split?'Unsplit':'Unmerge'),submit);
       let busy=false;
       // The mark, then the server's sentence for that check (in the glossary when the server writes one sentence).
       const paint=()=>{checks.replaceChildren(...(answer.checks||[]).map(c=>el('li',{className:c.ok?'order-note ok':'order-note err',text:kinSay('{0}{t1}',c.ok?'✓ ':'✗ ',{t:c.message})})));go.disabled=busy || !Array.isArray(answer.checks) || answer.checks.some(c=>!c.ok);};
       win.body.replaceChildren(note(split?'나눈 검사를 원래 영상 소속으로 되돌립니다. 양쪽의 판독 이력은 남습니다.':'합친 검사를 원래 영상 소속으로 되돌립니다. 합친 동안 쓴 판독 이력은 남습니다.'),
         table(['Original exam','StudyDate','StudyDesc','Series / Images back'],sources.map(s=>[s.acc??s.uid,s.date,s.desc,seriesImages(s.series,s.count)])),el('h4',{text:'Checks'}),checks,
-        note('현재 승인·점유·초안·진행 중 전송이 있으면 서버가 되돌리기를 거절합니다. 합친 뒤 도착한 영상은 자기 원본에 그대로 남습니다.','muted'));
+        note(kinSay('현재 승인·점유·초안·진행 중 전송이 있으면 서버가 되돌리기를 거절합니다. 합친 뒤 도착한 영상은 자기 원본에 그대로 남습니다.'),'muted'));
       win.buttons(go,win.closeButton());paint();
       async function submit() {
         if(busy||go.disabled||!win.live())return;busy=true;paint();
@@ -191,18 +192,18 @@
         modality:tag(row,'00080060'),count:Number.isSafeInteger(Number(tag(row,'00201209')))&&tag(row,'00201209')!=null?Number(tag(row,'00201209')):null}));
       const boxes=new Map(),summary=el('p',{className:'exam-merge-result',role:'status'});
       let busy=false;
-      const go=button('Split',submit),picked=()=>rows.filter(s=>boxes.get(s.uid).checked);
+      const go=button(kinSay('Split'),submit),picked=()=>rows.filter(s=>boxes.get(s.uid).checked);
       const images=items=>items.filter(s=>!['SR','DOC','PR','KO','SEG'].includes(s.modality));
       function paint(){const second=picked(),first=rows.filter(s=>!boxes.get(s.uid).checked);
         go.disabled=busy||!images(first).length||!images(second).length;
         kinWrite(summary,kinSay('Exam 1: 시리즈 {n0} · 영상 {1} / Exam 2: 시리즈 {n2} · 영상 {3}',first.length,count(sum(first,'count')),second.length,count(sum(second,'count'))));
       }
-      win.body.replaceChildren(note('체크한 시리즈는 둘째 검사로 옮깁니다. 두 검사는 따로 판독합니다. 새 시리즈는 첫째 검사에, 기존 시리즈의 새 영상은 그 시리즈가 있는 쪽에 붙습니다.'),summary,
+      win.body.replaceChildren(note(kinSay('체크한 시리즈는 둘째 검사로 옮깁니다. 두 검사는 따로 판독합니다. 새 시리즈는 첫째 검사에, 기존 시리즈의 새 영상은 그 시리즈가 있는 쪽에 붙습니다.')),summary,
         table(['Exam 2','Series','Series Description','Modality','Images'],rows.map(s=>{
-          const c=el('input',{type:'checkbox','aria-label':'Split '+text(s.desc||s.uid)});boxes.set(s.uid,c);c.onchange=paint;
+          const c=el('input',{type:'checkbox','aria-label':kinSay('Split {0}',text(s.desc||s.uid))});boxes.set(s.uid,c);c.onchange=paint;
           return [c,s.number,s.desc,s.modality,count(s.count)];
         })));
-      if(images(rows).length<2)win.body.append(note('나눌 수 있는 영상 시리즈가 두 개 이상 필요합니다.','warn'));
+      if(images(rows).length<2)win.body.append(note(kinSay('나눌 수 있는 영상 시리즈가 두 개 이상 필요합니다.'),'warn'));
       win.buttons(go,win.closeButton());paint();
       async function submit(){if(busy||go.disabled||!win.live())return;const chosen=picked();busy=true;paint();
         try {
@@ -218,14 +219,14 @@
     const reportScope=document.getElementById('exam-report-scope');
     function paintScope(){
       const row=selected(),current=scopes.read(row),stored=scopes.read(row,'stored');
-      if(row?.reportGroup?.readable===false){reportScope.hidden=false;kinWrite(reportScope,'Exam scope — 저장된 판독 범위 일부를 볼 수 없어 본문을 보이지 않습니다.');return;}
+      if(row?.reportGroup?.readable===false){reportScope.hidden=false;kinWrite(reportScope,kinSay('Exam scope — 저장된 판독 범위 일부를 볼 수 없어 본문을 보이지 않습니다.'));return;}
       const scope=stored||current;
       reportScope.hidden=!scope?.groupId;
       reportScope.replaceChildren();if(reportScope.hidden)return;
       // The Accession Nos are data; the sentence after them is one glossary entry of its own.
-      reportScope.append(el('b',{text:scope.kind==='split'?`Split ${(scope.part??0)+1}/2`:'Merged exam'}),
+      reportScope.append(el('b',{text:scope.kind==='split'?kinSay('Split {0}/2',(scope.part??0)+1):kinSay('Merged exam')}),
         ' — ',el('span',{translate:'no',text:scope.sources.map(s=>accOf(s.studyUid)).join(' + ')}),
-        ...(scope.active?[]:[el('span',{text:' · 지금은 되돌린 범위의 판독입니다.'})]));
+        ...(scope.active?[]:[el('span',{text:kinSay(' · 지금은 되돌린 범위의 판독입니다.')})]));
       for(const source of scope.sources)reportScope.append(' ',button(kinSay('Report History · {0}',accOf(source.studyUid)),()=>ctx.report.history(source.studyUid)));
     }
     function paint(){roles();paintScope();

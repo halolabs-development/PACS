@@ -64,7 +64,7 @@
       #film-print .fp-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 10px; }` });
     const dialog = node('dialog', { id: 'film-print' });
     dialog.setAttribute('aria-labelledby', 'film-print-title');
-    const title = node('h2', { id: 'film-print-title', textContent: 'Print Images' });
+    const title = node('h2', { id: 'film-print-title', textContent: kinSay('Print Images') });
     const head = node('p', { className: 'fp-study', translate: false });   // the study's own data, not words of the screen
     const series = node('select', { id: 'film-print-series' });
     const format = node('select', { id: 'film-print-format' }, ...FORMATS.map(option));

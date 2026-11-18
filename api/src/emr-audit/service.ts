@@ -672,6 +672,15 @@ export class EmrAuditService {
       return rightsView(state, at);
     });
   }
+  /** What the intake forms fill for the auditor: the institution every copy/rights subject must belong to, and the
+   * signed-in auditor as the default evidence verifier. It carries no patient identifier and is recorded like the list. */
+  async intakeContext(request: IncomingMessage) {
+    return this.run(request, async (tx, ctx, record) => {
+      const authority = await this.rightsAuthority(tx, ctx);
+      await this.recorded(record, ctx, 'provide-prepared', [], 'intake-context');
+      return { institutionId: authority.institutionId, verifier: ctx.facts.actor };
+    });
+  }
   async listRights(request: IncomingMessage) {
     return this.run(request, async (tx, ctx, record) => {
       const authority = await this.rightsAuthority(tx, ctx), at = now();

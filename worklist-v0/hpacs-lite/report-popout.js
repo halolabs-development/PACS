@@ -11,6 +11,12 @@
 // the editor back in its place.
 (function (root) {
   'use strict';
+  const kinSay = globalThis.KinLanguage?.say || ((phrase, ...parts) =>
+    phrase.replace(/\{[ten]?(\d+)\}/g, (slot, i) => parts[i] ?? slot));
+  const kinWrite = globalThis.KinLanguage?.write || ((node, value, name) => {
+    if (name) node.setAttribute(name, value); else node.textContent = value;
+    return node;
+  });
 
   // Moved in this order; each leaves a marker behind so Dock restores the exact place.
   const PARTS = ['exam-report-scope', 'draftbar', 'holdbar', 'deferbar', 'recnote', 'report-editor'];
@@ -93,8 +99,8 @@ body.report-window-doc { height: 100vh; margin: 0; display: flex; flex-direction
     place.setAttribute('role', 'status');
     place.hidden = true;
     const placeText = doc.createElement('span');
-    const front = chip(doc, 'Bring to Front', TEXT.frontTitle), tab = chip(doc, TEXT.behindTab, TEXT.frontTitle);
-    const placeDock = chip(doc, 'Dock', TEXT.dockTitle);
+    const front = chip(doc, kinSay('Bring to Front'), kinSay(TEXT.frontTitle)), tab = chip(doc, kinSay(TEXT.behindTab), kinSay(TEXT.frontTitle));
+    const placeDock = chip(doc, kinSay('Dock'), kinSay(TEXT.dockTitle));
     tab.id = 'report-window-behind';
     place.append(placeText, tab, front, placeDock);
     const hold = doc.createElement('div');
@@ -111,21 +117,21 @@ body.report-window-doc { height: 100vh; margin: 0; display: flex; flex-direction
 
     function chip(d, label, title) {
       const b = d.createElement('button');
-      b.type = 'button'; b.className = 'chip'; b.textContent = label;
-      if (title) b.title = title;
+      b.type = 'button'; b.className = 'chip'; kinWrite(b, label);
+      if (title) kinWrite(b, title, "title");
       return b;
     }
     const reading = () => doc.body.classList.contains('reading');
 
     function renderPlace() {
       place.hidden = state === 'docked';
-      placeText.textContent = state === 'behind' ? TEXT.behind : TEXT.open;
+      kinWrite(placeText, state === 'behind' ? kinSay(TEXT.behind) : kinSay(TEXT.open));
       tab.hidden = state !== 'behind';
       front.hidden = state === 'behind';
       button.hidden = state !== 'docked';
       button.disabled = ended || reading();
-      button.title = ended ? TEXT.endedTitle : reading() ? TEXT.readingTitle
-        : '판독 편집기를 따로 움직이는 창으로 띄웁니다. Pin을 켜면 승인한 뒤에도 창이 남아 다음 검사를 받습니다.';
+      kinWrite(button, ended ? kinSay(TEXT.endedTitle) : reading() ? kinSay(TEXT.readingTitle)
+        : kinSay('판독 편집기를 따로 움직이는 창으로 띄웁니다. Pin을 켜면 승인한 뒤에도 창이 남아 다음 검사를 받습니다.'), "title");
     }
 
     // Mirrors of the page's state inside the window: Approve & Next's lock and reason, the identity in the title, the notice.
@@ -134,12 +140,12 @@ body.report-window-doc { height: 100vh; margin: 0; display: flex; flex-direction
       const next = nextButton();
       shown.approve.disabled = approving || !next || next.disabled;
       const nextTitle = next && (root.KinLanguage ? root.KinLanguage.source(next, 'title') : next.title);
-      shown.approve.title = next?.disabled ? (nextTitle || TEXT.approveTitle) : TEXT.approveTitle;
+      kinWrite(shown.approve, next?.disabled ? (nextTitle || kinSay(TEXT.approveTitle)) : kinSay(TEXT.approveTitle), "title");
       const n = notice();
       const asking = !!n && n.style.display !== 'none';
-      shown.note.textContent = asking ? TEXT.notice : shown.kind === 'box' ? TEXT.noWindow : '';
+      kinWrite(shown.note, asking ? kinSay(TEXT.notice) : shown.kind === 'box' ? kinSay(TEXT.noWindow) : '');
       shown.pin.setAttribute('aria-pressed', String(pinned));
-      shown.pin.textContent = pinned ? 'Pin: On' : 'Pin: Off';
+      kinWrite(shown.pin, pinned ? kinSay('Pin: On') : kinSay('Pin: Off'));
       if (shown.kind === 'window') {
         const target = editor.querySelector('#report-editor-target')?.textContent.trim();
         shown.doc.title = target ? 'Report — ' + target : 'Report';
@@ -192,7 +198,7 @@ body.report-window-doc { height: 100vh; margin: 0; display: flex; flex-direction
       bar.className = 'report-window-bar';
       note.className = 'report-window-note'; note.setAttribute('role', 'status');
       spacer.className = 'spacer';
-      const pin = chip(d, 'Pin: Off', TEXT.pinTitle), dockButton = chip(d, 'Dock', TEXT.dockTitle);
+      const pin = chip(d, kinSay('Pin: Off'), kinSay(TEXT.pinTitle)), dockButton = chip(d, kinSay('Dock'), kinSay(TEXT.dockTitle));
       pin.id = 'report-window-pin'; dockButton.id = 'report-window-dock';
       bar.append(note, spacer, pin, dockButton);
       const body = d.createElement('div');
@@ -205,7 +211,7 @@ body.report-window-doc { height: 100vh; margin: 0; display: flex; flex-direction
       foot.className = 'rfoot2 rbtns report-window-foot';
       const approve = d.createElement('button');
       approve.type = 'button'; approve.className = 'approve'; approve.id = 'report-window-approve';
-      approve.textContent = 'Approve';
+      kinWrite(approve, kinSay('Approve'));
       foot.append(approve);
       shell.append(bar, body, foot);
       pin.addEventListener('click', () => { pinned = !pinned; mirror(); });
@@ -359,8 +365,8 @@ body.report-window-doc { height: 100vh; margin: 0; display: flex; flex-direction
       return new Promise(resolve => {
         const d = s.doc, dialog = d.createElement('dialog'), text = d.createElement('p');
         dialog.className = 'report-window-confirm';
-        text.textContent = message;
-        const ok = chip(d, 'OK'), cancel = chip(d, 'Cancel');
+        kinWrite(text, message);
+        const ok = chip(d, kinSay('OK')), cancel = chip(d, kinSay('Cancel'));
         dialog.append(text, ok, ' ', cancel);
         const finish = answer => { s.dialogs.delete(finish); dialog.remove(); resolve(answer); };
         s.dialogs.add(finish);

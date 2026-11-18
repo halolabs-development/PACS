@@ -73,6 +73,13 @@
  */
 (function () {
   'use strict';
+  const kinSay = globalThis.KinLanguage?.say || ((phrase, ...parts) =>
+    phrase.replace(/\{[ten]?(\d+)\}/g, (slot, i) => parts[i] ?? slot));
+  const kinWrite = globalThis.KinLanguage?.write || ((node, value, name) => {
+    if (name) node.setAttribute(name, value); else node.textContent = value;
+    return node;
+  });
+
 
   // 요청 하나의 제한 시간. 넘으면 멈추고, 쓰기라면 결과를 모르는 답이다.
   const TIMEOUT_MS = 60000;
@@ -318,22 +325,22 @@
     const make = (tag, className, content) => {
       const element = document.createElement(tag);
       if (className) element.className = className;
-      if (content !== undefined) element.textContent = content;
+      if (content !== undefined) kinWrite(element, content);
       return element;
     };
     const button = (label, onClick, title) => {
       const element = make('button', null, label);
       element.type = 'button';
-      if (title) element.title = title;
+      if (title) kinWrite(element, title, "title");
       element.addEventListener('click', onClick);
       return element;
     };
     // 같은 글자를 다시 쓰지 않는다: 주기 읽기마다 상태 줄이 바뀐 것처럼 읽히지 않게.
-    const setText = (element, value) => { if (element.textContent !== value) element.textContent = value; };
-    const setTitle = (element, value) => { if (element.title !== value) element.title = value; };
+    const setText = (element, value) => { if (element.textContent !== value) kinWrite(element, value); };
+    const setTitle = (element, value) => { if (element.title !== value) kinWrite(element, value, "title"); };
     const statusText = make('p', 'cvr-inbox-status-text'), statusDetail = make('p', 'cvr-inbox-status-detail');
     statusBox.replaceChildren(statusText, statusDetail);
-    help.replaceChildren(...TEXT.help.map(line => make('p', null, line)));
+    help.replaceChildren(...TEXT.help.map(line => make('p', null, kinSay(line))));
     // The worklist supplies its live mode reason; the independent clinician host has no such mode.
     const modeNote = make('p', 'cvr-inbox-note');
     modeNote.id = `${prefix}-mode-reason`;
@@ -1102,13 +1109,13 @@
       for (const note of model.after) row.append(make('p', 'cvr-inbox-note', note));
       const actions = [];
       if (model.ack !== 'off') {
-        const ack = button('Acknowledge', () => acknowledge(model.key), TEXT.ackTitle);
+        const ack = button(kinSay('Acknowledge'), () => acknowledge(model.key), kinSay(TEXT.ackTitle));
         ack.disabled = model.ack === 'busy';
         writeControls.set(ack, { disabled: ack.disabled, title: TEXT.ackTitle });
         ack.setAttribute('aria-describedby', modeNote.id);
         actions.push(ack);
       }
-      if (model.replacement) actions.push(button('Open Replacement', () => openReplacement(model.key, model.replacement)));
+      if (model.replacement) actions.push(button(kinSay('Open Replacement'), () => openReplacement(model.key, model.replacement)));
       // Only the folded report panel needs compact identity/action placement; Clinician Home keeps the
       // message and pinned report before the explicit acknowledgement.
       if (fold) for (const action of actions) head.append(' ', action);
@@ -1136,13 +1143,13 @@
       if (model.detail) line.append(make('p', 'cvr-inbox-detail', model.detail));
       const actions = make('div', 'cvr-inbox-actions');
       if (model.check) {
-        const again = button(model.state === 'not-sent' ? 'Acknowledge' : 'Check Again', () => check(model.key));
+        const again = button(model.state === 'not-sent' ? kinSay('Acknowledge') : kinSay('Check Again'), () => check(model.key));
         again.disabled = model.checking;
         writeControls.set(again, { disabled: again.disabled, title: '' });
         again.setAttribute('aria-describedby', modeNote.id);
         actions.append(again);
       }
-      if (model.replacement) actions.append(button('Open Replacement', () => openReplacement(model.key, model.replacement)));
+      if (model.replacement) actions.append(button(kinSay('Open Replacement'), () => openReplacement(model.key, model.replacement)));
       if (actions.childElementCount) line.append(actions);
       return line;
     }
@@ -1196,15 +1203,15 @@
       region.dataset.state = phase;
       const active = document.activeElement;
       // 배지: 서버 pending. 읽기가 실패하면 수가 없다(0으로 보이지 않는다).
-      setText(badge, lock !== null ? 'Locked' : !reading ? 'Offline' : pending !== null ? `Pending ACK ${pending}` : phase === 'failed' ? 'Load Failed' : 'Loading');
+      setText(badge, lock !== null ? kinSay('Locked') : !reading ? kinSay('Offline') : pending !== null ? kinSay("Pending ACK {n0}", pending) : phase === 'failed' ? kinSay('Load Failed') : kinSay('Loading'));
       badge.dataset.state = lock !== null ? 'locked' : !reading ? 'offline' : pending !== null ? 'ready' : phase;
-      setTitle(badge, lock !== null ? TEXT.locked : !reading ? TEXT.offline : pending === null && phase === 'failed' ? TEXT.badgeFailed : TEXT.badge);
+      setTitle(badge, lock !== null ? kinSay(TEXT.locked) : !reading ? kinSay(TEXT.offline) : pending === null && phase === 'failed' ? kinSay(TEXT.badgeFailed) : kinSay(TEXT.badge));
       let line, detail = '';
       if (lock !== null) { line = lock.text; detail = lock.detail; }
-      else if (!reading) line = TEXT.offline;
-      else if (phase === 'failed') { line = TEXT.failed; detail = listError; }
-      else if (!ready) line = TEXT.loading;
-      else if (!listIds.length) line = filter === 'pending' ? TEXT.emptyPending : TEXT.emptyAll;
+      else if (!reading) line = kinSay(TEXT.offline);
+      else if (phase === 'failed') { line = kinSay(TEXT.failed); detail = listError; }
+      else if (!ready) line = kinSay(TEXT.loading);
+      else if (!listIds.length) line = kinSay(filter === 'pending' ? TEXT.emptyPending : TEXT.emptyAll);
       else line = TEXT.ready(listIds.length, !!nextCursor);
       statusBox.dataset.state = lock !== null ? 'locked' : phase === 'failed' ? 'failed' : !ready ? 'loading' : listIds.length ? 'ready' : 'empty';
       setText(statusText, line);
@@ -1214,8 +1221,8 @@
       allButton.disabled = lock !== null;
       refreshButton.disabled = lock !== null || !reading;
       if (fold) {
-        setText(toggle, bodyOpen ? 'Hide Received' : 'Show Received');
-        setTitle(toggle, bodyOpen ? '받은 목록을 닫습니다. Esc로도 닫을 수 있습니다.' : '받은 중요 결과 목록을 펼칩니다.');
+        setText(toggle, bodyOpen ? kinSay('Hide Received') : kinSay('Show Received'));
+        setTitle(toggle, bodyOpen ? kinSay('받은 목록을 닫습니다. Esc로도 닫을 수 있습니다.') : kinSay('받은 중요 결과 목록을 펼칩니다.'));
         toggle.setAttribute('aria-expanded', String(bodyOpen));
         body.hidden = !bodyOpen;
         if ((attention || dismissedArrival) && !bodyOpen) region.dataset.attention = 'true'; else delete region.dataset.attention;

@@ -87,9 +87,9 @@ function ui(n) {
   return false;
 }
 
-function collect(file) {
+function collect(file, typescript = false) {
   const text = fs.readFileSync(file, 'utf8');
-  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, typescript ? ts.ScriptKind.TS : ts.ScriptKind.JS);
   const out = [], inChain = new Set();
   const line = n => source.getLineAndCharacterOfPosition(n.getStart(source)).line + 1;
   function piece(parts, at) {
@@ -146,9 +146,17 @@ function server(file) {
     ts.forEachChild(n, visit);
   }
   visit(source);
+  // Words the server answers with other than an exception (a status line, a reason, a notice in a response body): every
+  // other literal or joined piece with Korean words in it, read the same way as a screen script.
+  const relative = path.relative(path.join(__dirname, '..'), file).split(path.sep).join('/');
+  const thrown = new Set(out.map(piece => piece.line + '\u0000' + piece.value));
+  for (const piece of collect(file, true)) {
+    if (!/[가-힣]/.test(piece.value) || thrown.has(piece.line + '\u0000' + piece.value)) continue;
+    out.push({ ...piece, file: relative, ui: true });
+  }
   return out;
 }
 
 const args = process.argv.slice(2), serverMode = args[0] === '--server';
 const files = serverMode ? args.slice(1) : args;
-process.stdout.write(JSON.stringify(files.flatMap(serverMode ? server : collect)));
+process.stdout.write(JSON.stringify(files.flatMap(serverMode ? server : file => collect(file))));

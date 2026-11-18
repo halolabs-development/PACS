@@ -16,6 +16,22 @@ window.KinViewerUXToolbar = (() => {
   const upgrade = value => value?.version !== 1 ? value : { ...value, version: 2, shortcuts: { ...value.shortcuts,
     ...Object.fromEntries(turns.filter(id => value.shortcuts[id] == null).map(id => [id, window.KinViewerUXShortcuts.defaults[id]])) } };
   let cached = null, preparedFailure = null;
+  // The paging arrows of a one-line row (the frequent tools here, the Feature Menus in viewer-features.js): shown only
+  // where the row's content does not fit the room the row has without the arrows. That room is read with the arrows
+  // taken out of the row's line, in the same task, so the answer never depends on whether the arrows are showing: the
+  // arrows' room comes partly from the row's neighbours (the status line next to Reload Settings), and a guess of "the
+  // row's length plus the arrows" hid them again just under the length where the row stops fitting — the toolbar then
+  // moved every frame. The arrows are taken out of the line (not hidden) so an arrow with the keyboard on it keeps it,
+  // and the row is put back where it was paged to (a wider row for a moment can only page less far).
+  function pageArrows(row, pagers, vertical) {
+    const scroll = vertical ? 'scrollTop' : 'scrollLeft', paged = row[scroll];
+    const positions = pagers.map(node => node.style.position);
+    pagers.forEach(node => { node.style.position = 'absolute'; });
+    const fits = vertical ? row.scrollHeight <= row.clientHeight + 1 : row.scrollWidth <= row.clientWidth + 1;
+    pagers.forEach((node, index) => { node.style.position = positions[index]; if (node.hidden !== fits) node.hidden = fits; });
+    if (row[scroll] !== paged) row[scroll] = paged;
+    return !fits;
+  }
   async function prepare(session) {
     if (session.state() === 'unconfirmed') await session.decide();
     if (!session.writer() || session.ended()) return;
@@ -69,12 +85,9 @@ window.KinViewerUXToolbar = (() => {
     const upright = () => getComputedStyle(bar).flexDirection.startsWith('column');
     function overflow() {
       if (ended) return;
-      // Measured against the length the bar has without the arrows, so showing them never hides them again.
-      const vertical = upright(), style = getComputedStyle(toolbar);
-      const shown = !pagers[0].hidden, gap = parseFloat(vertical ? style.rowGap : style.columnGap) || 0;
-      const room = (vertical ? bar.clientHeight : bar.clientWidth) + (shown ? pagers.reduce((sum, node) => sum + (vertical ? node.offsetHeight : node.offsetWidth) + gap, 0) : 0);
+      const vertical = upright();
+      pageArrows(bar, pagers, vertical);
       pagers.forEach((node, index) => {
-        node.hidden = (vertical ? bar.scrollHeight : bar.scrollWidth) <= room + 1;
         const glyph = vertical ? ['⌃', '⌄'][index] : ['‹', '›'][index];
         if (node.textContent !== glyph) node.textContent = glyph;
       });
@@ -240,7 +253,7 @@ window.KinViewerUXToolbar = (() => {
       return saved;
     }
     const features = window.KinViewerFeatures?.attach({
-      services, commands, session, toolbar, dialog, status: text => { status.textContent = text; },
+      services, commands, session, toolbar, dialog, status: text => { status.textContent = text; }, pageArrows,
       opened: () => dialog.open, allowed: () => usable() && idle(),
       tools: () => [...catalog].map(([id, item]) => ({ id, label: label(item) })),
       // An existing tool in a given cell; resolves true when it ran. The guards come first (nothing changes while they

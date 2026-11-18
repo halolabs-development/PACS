@@ -10897,6 +10897,32 @@
       }
     }
   },
+  "di_additions_audit_intake": {
+    "unit": "audit-intake",
+    "decision": "Audit intake context",
+    "note": "The institution and signed-in auditor that the record copy and rights request intake forms fill, read on the existing EmrAuditController. No patient identifier.",
+    "controllers": [],
+    "providers": [],
+    "injectables": {},
+    "routes": [
+      {
+        "controller": "EmrAuditController",
+        "handler": "intakeContext",
+        "method": "GET",
+        "paths": [
+          "emr-audit|intake-context"
+        ],
+        "public": null,
+        "status": null,
+        "headers": [],
+        "guards": [],
+        "interceptors": [],
+        "args": [
+          "0:0@0:null:0"
+        ]
+      }
+    ]
+  },
   "di_additions_auto_view": {
     "unit": "auto-save-view",
     "decision": "A1 06-5",
