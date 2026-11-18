@@ -314,6 +314,9 @@ class RowMenuRightsDOM(unittest.TestCase):
             page.wait_for_timeout(100)
         self.assertTrue(any(m == 'POST' and p == '/api/match' for m, p, _ in self.site.writes), self.site.writes)
         self.assertGreater(reads(), before, 'the Order List was not read again after the match')
+        # The match was accepted (not refused): the page's own success notice, and no refusal alert.
+        expect(page.locator('#toast')).to_contain_text('매칭 완료')
+        self.assertEqual([], [d for d in self.dialogs if '매칭 실패' in d])
         page.wait_for_timeout(500)
         expect(page.locator('#orderrows tr[data-oid]').first).to_be_focused()
         self.assertEqual([], self.errors)
