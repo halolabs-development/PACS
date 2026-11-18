@@ -1407,11 +1407,18 @@ function kinPlanarGeometry(tags, frame) {
     }
     // An image without a position or an orientation (most projection X-rays: CR, DX, RF, XA) is measured in the plane the
     // viewer itself places it in, where the points of its marks lie: rows along [0,1,0], columns along [0,0,-1], origin
-    // [0,0,0] — or [0,0,frame] for a multi-frame or functional-group image, frame by frame (the pinned OHIF
-    // combineFrameInstance). Any other default puts the points off the plane or shifts them on the image.
-    const frameOrigin = per !== undefined || frames > 1 ? [0, 0, frame] : [0, 0, 0];
-    origin = numbers(value('PlanePositionSequence', 'ImagePositionPatient') ?? frameOrigin, 3);
-    orientation = numbers(value('PlaneOrientationSequence', 'ImageOrientationPatient') ?? [0, 1, 0, 0, 0, -1], 6);
+    // [0,0,0]. A multi-frame or functional-group image takes, as the pinned OHIF combineFrameInstance does, the first
+    // DetectorInformationSequence item's position and orientation (NM), else origin [0,0,frame] frame by frame. Any other
+    // default puts the points off the plane or shifts them on the image.
+    const many = per !== undefined || frames > 1, detector = many ? tags.DetectorInformationSequence?.[0] : undefined;
+    const position = value('PlanePositionSequence', 'ImagePositionPatient'), direction = value('PlaneOrientationSequence', 'ImageOrientationPatient');
+    // Some frames give their own position or orientation and this one none: the viewer then carries another frame's over,
+    // so there is no plane to measure in.
+    const someFrames = (sequence, key) => Array.isArray(per) && per.some(group => group?.[sequence]?.[0]?.[key] !== undefined);
+    if (position === undefined && someFrames('PlanePositionSequence', 'ImagePositionPatient') ||
+        direction === undefined && someFrames('PlaneOrientationSequence', 'ImageOrientationPatient')) return fail();
+    origin = numbers(position ?? detector?.ImagePositionPatient ?? (many ? [0, 0, frame] : [0, 0, 0]), 3);
+    orientation = numbers(direction ?? detector?.ImageOrientationPatient ?? [0, 1, 0, 0, 0, -1], 6);
   }
   if (spacing.some(n => n <= 0)) return fail();
   const rows = Number(tags.Rows), columns = Number(tags.Columns);

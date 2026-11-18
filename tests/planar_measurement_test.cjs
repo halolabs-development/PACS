@@ -78,7 +78,24 @@ for(const [name,tags,spacing,label] of projections)test(name+' without position 
   assert.throws(()=>geometry.measure('length',[[0,0,0],[3,4,0]]));
  }
 });
-test('projection images without a usable spacing still measure nothing',()=>{
+test('multi-frame images take the viewer origin: detector information, or nothing when only some frames give one',()=>{
+ // NM: the viewer takes the first DetectorInformationSequence item's position and orientation for every frame.
+ const nm={...projection,Modality:'NM',SOPClassUID:'1.2.840.10008.5.1.4.1.1.20',NumberOfFrames:2,PixelSpacing:[1,1],
+  DetectorInformationSequence:[{ImagePositionPatient:[0,0,0],ImageOrientationPatient:[0,1,0,0,0,-1]}]};
+ const line=[[0,10,-10],[0,20,-10]];
+ for(const frame of [1,2]){
+  const browser=context.kinPlanarGeometry({...nm,ImagePositionPatient:[0,0,0],ImageOrientationPatient:[0,1,0,0,0,-1]},frame),server=planarGeometry(nm,frame);
+  for(const geometry of [browser,server]){assert.deepEqual([...geometry.origin],[0,0,0]);assert.deepEqual([...geometry.imagePoint(line[0])].map(n=>Math.round(n*1e9)/1e9),[10,10]);}
+  const item=viewerCommand(Buffer.from(JSON.stringify({requestId:'00000000-0000-4000-8000-000000000003',item:{schemaVersion:1,kind:'length',seriesUid:nm.SeriesInstanceUID,sopUid:nm.SOPInstanceUID,frame,frameOfReferenceUid:null,label:'Manual',points:line,viewPlaneNormal:[-1,0,0],viewUp:[0,0,1],baseline:{calculator:server.calculator,values:[10]}}})),true).item;
+  assert.deepEqual(srMeasurement(item,nm).graphic.map(n=>Math.round(n*1e9)/1e9),[10.5,10.5,20.5,10.5]);
+ }
+ // Enhanced XA where frame 1 gives a position and frame 2 none: the viewer carries frame 1's over; no plane to measure in.
+ const partial={...projection,Modality:'XA',SOPClassUID:'1.2.840.10008.5.1.4.1.1.12.1.1',NumberOfFrames:2,
+  SharedFunctionalGroupsSequence:[{PixelMeasuresSequence:[{PixelSpacing:[1,1]}]}],
+  PerFrameFunctionalGroupsSequence:[{PlanePositionSequence:[{ImagePositionPatient:[0,0,0]}]},{}]};
+ for(const make of [t=>context.kinPlanarGeometry(t,2),t=>planarGeometry(t,2)])assert.throws(()=>make(partial),/원본 프레임의 좌표·간격·보정을 확인할 수 없습니다/);
+ for(const geometry of [context.kinPlanarGeometry(partial,1),planarGeometry(partial,1)])assert.ok(Math.abs(geometry.measure('length',line)-10)<1e-9);
+});test('projection images without a usable spacing still measure nothing',()=>{
  const cr={...projection,Modality:'CR',SOPClassUID:'1.2.840.10008.5.1.4.1.1.1'};
  for(const tags of [cr,{...cr,PixelSpacing:['0.000','0.000']},{...cr,ImagerPixelSpacing:[.2,.2],EstimatedRadiographicMagnificationFactor:0}]){
   assert.throws(()=>context.kinPlanarGeometry(tags,1),/원본 프레임의 좌표·간격·보정을 확인할 수 없습니다/);
