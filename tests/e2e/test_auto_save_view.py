@@ -253,8 +253,10 @@ class AutoSaveViewE2E(ViewerDisplayMenuE2E):
         page.route(lambda url: '/series/' + coronal + '/' in url and '/frames/' in url,
                    lambda route: route.continue_() if held['going'] else held['routes'].append(route))
         page.goto(self.stack.proxy + '/ohif/viewer?StudyInstanceUIDs=' + f.uid)
-        page.wait_for_function("() => !!document.querySelector('[data-auto-view-badge]') || !!window.services && "
-                               "[...services.viewportGridService.getState().viewports.keys()].some(id => id.startsWith('kin-auto-view-'))", timeout=60000)
+        # (The grid answers only once the viewer has started.)
+        page.wait_for_function("() => { if (document.querySelector('[data-auto-view-badge]')) return true; try { "
+                               "return [...services.viewportGridService.getState().viewports.keys()].some(id => id.startsWith('kin-auto-view-')); } catch (_) { return false; } }",
+                               timeout=60000)
         page.wait_for_timeout(1500)
         held['going'] = True
         for route in held['routes']:
