@@ -87,11 +87,10 @@ window.KinViewerFeatures = (() => {
       node.setAttribute('aria-label', name); node.hidden = true; return node;
     });
     pagers[0].after(row);
+    // The toolbar's one rule for paging arrows (viewer-ux-toolbar.js pageArrows): read with the arrows hidden.
     function overflow() {
       if (ended || group.hidden) return;
-      const shown = !pagers[0].hidden, gap = parseFloat(getComputedStyle(group).columnGap) || 0;
-      const room = row.clientWidth + (shown ? pagers.reduce((sum, node) => sum + node.offsetWidth + gap, 0) : 0);
-      pagers.forEach(node => { node.hidden = row.scrollWidth <= room + 1; });
+      context.pageArrows(row, pagers, false);
     }
     const resized = new ResizeObserver(overflow); resized.observe(group); resized.observe(row);
     context.toolbar.querySelector(':scope > .kin-ux-toolbar-settings')?.before(group);

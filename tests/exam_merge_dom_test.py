@@ -22,6 +22,7 @@ from urllib.parse import urlparse, parse_qs
 
 import auth_logout_dom_test as h
 import report_flow_dom_test as rf
+from page_source import settle
 from playwright.sync_api import expect, sync_playwright
 
 TECH = {**h.RAD, "sub": "SYN-TECH-SUB", "actor": "syn-tech@synthetic.test", "user": "syn-tech@synthetic.test",
@@ -262,7 +263,7 @@ class ExamMerge(unittest.TestCase):
 
     def test_split_unmerge_restores_a_merged_exam_and_says_so_for_others(self):
         self.site.groups[h.UID] = [h.UID, h.UID_B]
-        self.page.evaluate("() => load()")
+        settle(self.page, "load()")
         expect(self.page.locator("#rows tr[data-uid]")).to_have_count(2)
         self.pick(rf.UID_C)
         self.page.locator("#t-split-unmerge").click()
@@ -291,7 +292,7 @@ class ExamMerge(unittest.TestCase):
         self.site.groups[h.UID] = [h.UID, h.UID_B]
         self.site.checks[0] = {"rule": "approved", "ok": False, "uids": [h.UID],
                                "message": "승인된 판독문이 있습니다. 먼저 판독 취소(Reset)를 하세요."}
-        self.page.evaluate("() => load()")
+        settle(self.page, "load()")
         expect(self.page.locator("#rows tr[data-uid]")).to_have_count(2)
         self.pick(h.UID)
         self.page.locator("#t-split-unmerge").click()
@@ -302,7 +303,7 @@ class ExamMerge(unittest.TestCase):
 
     def test_accession_filter_finds_the_merged_exam_by_either_original(self):
         self.site.groups[h.UID] = [h.UID, h.UID_B]
-        self.page.evaluate("() => load()")
+        settle(self.page, "load()")
         expect(self.page.locator("#rows tr[data-uid]")).to_have_count(2)
         self.page.evaluate("() => { fval.acc = 'SYNACC-A2'; render(); }")
         expect(self.page.locator("#rows tr[data-uid]")).to_have_count(1)
@@ -312,7 +313,7 @@ class ExamMerge(unittest.TestCase):
     def test_report_scope_line_says_which_exam_the_report_is_written_on(self):
         self.site.groups[h.UID] = [h.UID, h.UID_B]
         self.site.report_groups[rf.UID_C] = {"id": GROUP_ID, "active": False, "readable": True, "studies": [rf.UID_C, h.UID]}
-        self.page.evaluate("() => load()")
+        settle(self.page, "load()")
         expect(self.page.locator("#rows tr[data-uid]")).to_have_count(2)
         scope = self.page.locator(".exam-report-scope")
         self.pick(h.UID)
@@ -323,7 +324,7 @@ class ExamMerge(unittest.TestCase):
         self.pick(rf.UID_C)
         expect(scope).to_contain_text("지금은 되돌린 범위의 판독입니다.")
         self.site.report_groups[rf.UID_C] = {"id": GROUP_ID, "active": False, "readable": False, "studies": []}
-        self.page.evaluate("() => load()")
+        settle(self.page, "load()")
         expect(scope).to_contain_text("저장된 판독 범위 일부를 볼 수 없어 본문을 보이지 않습니다.")
 
     def test_split_selects_whole_series_and_unsplit_restores_one_original(self):
@@ -375,7 +376,7 @@ class ExamMerge(unittest.TestCase):
 
     def test_download_originals_requires_explicit_sources_for_a_merged_exam(self):
         self.site.groups[h.UID] = [h.UID, h.UID_B]
-        self.page.evaluate("() => load()")
+        settle(self.page, "load()")
         self.pick(h.UID)
         self.page.locator(f"#rows tr[data-uid='{h.UID}']").click(button="right")
         self.page.get_by_text("Download Originals", exact=True).click()
@@ -390,7 +391,7 @@ class ExamMerge(unittest.TestCase):
 
     def test_unmerge_refusal_can_be_retried_and_selection_change_closes_old_dialog(self):
         self.site.groups[h.UID] = [h.UID, h.UID_B]
-        self.page.evaluate("() => load()")
+        settle(self.page, "load()")
         self.pick(h.UID)
         self.site.dissolve_refusal = (409, {"message": "SYN draft is occupied"})
         self.page.locator("#t-split-unmerge").click()
@@ -419,7 +420,7 @@ class ExamMerge(unittest.TestCase):
             with self.subTest(name=patient_name):
                 self.site.flow = tuple((uid, patient_name if patient == "SYN-P-001" else name, patient) for uid, name, patient in flow)
                 self.language("en")
-                self.page.evaluate("() => load()")
+                settle(self.page, "load()")
                 expect(self.page.locator("#rows tr[data-uid]", has_text=patient_name).first).to_be_visible()
                 self.language("ko")
                 self.pick(h.UID)
@@ -449,7 +450,7 @@ class ExamMerge(unittest.TestCase):
 
     def test_english_screen_keeps_the_server_check_and_refusal_details(self):
         self.site.groups[h.UID] = [h.UID, h.UID_B]
-        self.page.evaluate("() => load()")
+        settle(self.page, "load()")
         self.language("en")
         self.pick(h.UID)
         self.page.locator("#t-split-unmerge").click()
@@ -462,7 +463,7 @@ class ExamMerge(unittest.TestCase):
             "✓ 합친 검사의 판독문을 쓰는 사람이 없습니다."])
         win.locator("button", has_text="Close").click()
         self.site.groups.clear()
-        self.page.evaluate("() => load()")
+        settle(self.page, "load()")
         expect(self.page.locator("#rows tr[data-uid]")).to_have_count(3)
         self.site.merge_refusal = (409, {"code": "EXAM_GROUP_REFUSED", "message": "SYN refused",
                                          "refusals": [{"uid": h.UID_B, "rule": "reported", "message": "판독문이 있습니다(RS T). 먼저 판독 취소(Reset)를 하세요."}]})
@@ -475,7 +476,7 @@ class ExamMerge(unittest.TestCase):
     def test_korean_unmerge_and_split_windows_keep_their_data(self):
         self.site.groups[h.UID] = [h.UID, h.UID_B]
         self.site.desc[h.UID_B] = "Split Chest CT"
-        self.page.evaluate("() => load()")
+        settle(self.page, "load()")
         self.language("ko")
         self.pick(h.UID)
         self.page.locator("#t-split-unmerge").click()
@@ -487,7 +488,7 @@ class ExamMerge(unittest.TestCase):
         self.site.groups.clear()
         # Series descriptions that are a glossary word itself ("Continue") and a template ("Split {0}") stay data.
         self.site.series_names = ["Continue", "Split Chest CT"]
-        self.page.evaluate("() => load()")
+        settle(self.page, "load()")
         expect(self.page.locator("#rows tr[data-uid]")).to_have_count(3)
         self.pick(h.UID)
         self.page.locator("#t-split-unmerge").click()
@@ -506,7 +507,7 @@ class ExamMerge(unittest.TestCase):
     def test_report_scope_lines_follow_the_language_and_keep_the_accession_numbers(self):
         self.site.groups[h.UID] = [h.UID, h.UID_B]
         self.site.report_groups[rf.UID_C] = {"id": GROUP_ID, "active": False, "readable": True, "studies": [rf.UID_C, h.UID]}
-        self.page.evaluate("() => load()")
+        settle(self.page, "load()")
         expect(self.page.locator("#rows tr[data-uid]")).to_have_count(2)
         scope = self.page.locator(".exam-report-scope")
         self.page.evaluate("() => setMode('Radiology')")
@@ -537,7 +538,7 @@ class ExamMerge(unittest.TestCase):
     def test_related_report_line_names_the_exam_scope_not_the_exam_column(self):
         self.site.related_reports[rf.UID_C] = [{"uid": h.UID, "version": 3, "scope": {"part": None}},
                                                {"uid": SPLIT_UID, "version": 2, "scope": {"part": 1}}]
-        self.page.evaluate("() => load()")
+        settle(self.page, "load()")
         self.pick(rf.UID_C)
         links = self.page.locator("#relrows button.chip")
         expect(links).to_have_text(["Related Report · Exam · v3", "Related Report · Exam 2 · v2"])
@@ -548,7 +549,7 @@ class ExamMerge(unittest.TestCase):
 
     def test_original_receipt_lines_translate_their_words_not_the_accession_numbers(self):
         self.site.groups[h.UID] = [h.UID, h.UID_B]
-        self.page.evaluate("() => load()")
+        settle(self.page, "load()")
         self.pick(h.UID)
         line = self.page.locator("#study-receipt .exam-original-receipts > div").first
         expect(line).to_contain_text("SYNACC-A1 · ")
@@ -566,7 +567,7 @@ class ExamMerge(unittest.TestCase):
         self.site.desc[h.UID] = "Split Chest CT"
         self.site.groups[h.UID] = [h.UID, h.UID_B]
         self.language("en")
-        self.page.evaluate("() => load()")
+        settle(self.page, "load()")
         expect(self.page.locator("#rows tr[data-uid]")).to_have_count(2)
         self.pick(h.UID)
         lines = self.page.locator("#study-receipt .exam-original-receipts > div")
@@ -584,7 +585,7 @@ class ExamMerge(unittest.TestCase):
         self.site.groups.clear()
         self.site.split = {"uid": h.UID, "seriesUids": [SERIES[1]]}
         self.language("en")
-        self.page.evaluate("() => load()")
+        settle(self.page, "load()")
         expect(self.page.locator("#rows .exam-merged")).to_have_text(["Split 1/2", "Split 2/2"])
         self.page.evaluate("() => setMode('Radiology')")
         self.pick(SPLIT_UID)
@@ -602,7 +603,7 @@ class ExamMerge(unittest.TestCase):
     def test_original_choices_keep_their_data_untranslated(self):
         self.site.groups[h.UID] = [h.UID, h.UID_B]
         self.site.desc[h.UID_B] = "Split Chest CT"
-        self.page.evaluate("() => load()")
+        settle(self.page, "load()")
         self.language("ko")
         self.pick(h.UID)
         self.page.locator(f"#rows tr[data-uid='{h.UID}']").click(button="right")
