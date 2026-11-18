@@ -428,7 +428,7 @@ export class PacsReportEvidence {
       if (!state) throw new NotFoundException('검사를 찾을 수 없습니다');
       if (!canReadPreliminary(state, c)) throw new ForbiddenException('예비 판독(RS: P) 중입니다. 지정된 판독의만 볼 수 있습니다.');
       refuseDestroyed(state);
-      assertHeadReadable(state, await headForLock(tx, uid), c);
+      assertHeadReadable(state, await headForLock(tx, uid, state), c);
       const report = await tx.report.findUnique({ where: { uid }, select: { version: true, groupId: true } });
       if (report) await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: report });
       const head = await this.versionCitations(tx, uid, report?.version ?? 0);
@@ -491,7 +491,7 @@ export class PacsReportEvidence {
       if (!state) throw new NotFoundException('검사를 찾을 수 없습니다');
       if (!canReadPreliminary(state, c)) throw new ForbiddenException('예비 판독 중입니다');
       refuseDestroyed(state);
-      assertHeadReadable(state, await headForLock(tx, uid), c);
+      assertHeadReadable(state, await headForLock(tx, uid, state), c);
       const report = await tx.report.findUnique({ where: { uid }, select: { version: true, groupId: true } });
       const headRow = report?.version ? await tx.reportVersion.findUnique({
         where: { uid_version: { uid, version: report.version } }, select: { drawings: true, groupId: true } }) : null;
@@ -556,7 +556,7 @@ export class PacsReportEvidence {
         AND drawings @> jsonb_build_array(jsonb_build_object('id', ${id}::text)) ORDER BY version DESC`;
       const held: any[] = [];
       for (const row of holding) if (await storedVersionReadable(tx, uid, row, c)) { held.push(row); break; }
-      if (!held.length) assertHeadReadable(state, await headForLock(tx, uid), c);
+      if (!held.length) assertHeadReadable(state, await headForLock(tx, uid, state), c);
       const draft = held.length ? null : await tx.reportDraft.findUnique({
         where: { uid_author: { uid, author: c.actor } }, select: { drawings: true, present: true, revision: true, groupId: true } });
       if (!held.length && !(draft?.present && draftDrawings(draft.drawings)?.ids.includes(id)))
@@ -604,7 +604,7 @@ export class PacsReportEvidence {
       if (!state) throw new NotFoundException('검사를 찾을 수 없습니다');
       if (!canReadPreliminary(state, c)) throw new ForbiddenException('예비 판독(RS: P) 중입니다. 지정된 판독의만 볼 수 있습니다.');
       refuseDestroyed(state);
-      assertHeadReadable(state, await headForLock(tx, uid), c);
+      assertHeadReadable(state, await headForLock(tx, uid, state), c);
       const report = await tx.report.findUnique({ where: { uid },
         select: { version: true, findings: true, conclusion: true, recommendation: true, groupId: true } });
       if (report) await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: report });

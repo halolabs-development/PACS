@@ -69,7 +69,13 @@ export const assertHeadWritable = assertHeadReadable;
 
 /** The head columns this module reads, for callers that read the head only to ask. */
 export const HEAD_AUTHOR_SELECT = { updatedBy: true, findings: true, conclusion: true, recommendation: true } as const;
-export async function headForLock(db: any, uid: string): Promise<Head> {
+/**
+ * The head, read only where it can hold someone's unsigned text in this state: a Save (T) or a Defer (H). Write gates read the
+ * state and the head in one transaction, where an Unread (W) head is always empty (Reset empties it); the list reads, which
+ * read them apart, pass their head to reportBodyLock directly and W is judged there too.
+ */
+export async function headForLock(db: any, uid: string, state: any): Promise<Head> {
+  if (!['T', 'H'].includes(state?.rs)) return null;
   return db.report.findUnique({ where: { uid }, select: HEAD_AUTHOR_SELECT });
 }
 

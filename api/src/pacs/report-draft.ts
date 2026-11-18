@@ -155,7 +155,7 @@ export class PacsReportDraft {
       assertExamSource(this.studyAccess, c, scope);
     }
     const rules = this.reportDraftRules(prev, c);
-    assertHeadWritable(prev, await headForLock(tx, uid), c);
+    assertHeadWritable(prev, await headForLock(tx, uid, prev), c);
     return rules;
   }
 
@@ -603,7 +603,7 @@ export class PacsReportDraft {
         // (namesDraftDrawings). It is judged here, after the receipt judgement above: an applied or discarded receipt is
         // answered as it is and never applied again.
         if (!namesDraftDrawings(namedDrawingIds, draftDrawings(row?.present ? row.drawings : null))) return refuse('DRAFT_CONFLICT');
-        try { this.reportDraftRules(state, c); assertHeadWritable(state, await headForLock(tx, uid), c); }
+        try { this.reportDraftRules(state, c); assertHeadWritable(state, await headForLock(tx, uid, state), c); }
         catch (error: any) {
           if (!(error instanceof ConflictException)) throw error;
           return refuse((error.getResponse() as any)?.code === 'REPORT_HELD' ? 'TARGET_HELD' : 'TARGET_UNVERIFIED');
@@ -712,7 +712,7 @@ export class PacsReportDraft {
     }, async (tx, state, audit) => {
     this.reportDraftRules(state, c);
     // Writing beside another physician's saved (unsigned) report is refused like writing over it; clearing my own draft is not.
-    if (!empty) assertHeadWritable(state, await headForLock(tx, uid), c);
+    if (!empty) assertHeadWritable(state, await headForLock(tx, uid, state), c);
     const row = await this.ownDraft(tx, uid, c, expected.revision, empty ? 'cleanup' : 'reading');
     // Image Report: the drawing list the screen holds must be the one this revision holds, by presence and by ids - for an
     // attach or a remove, the list before the operation. A request that names none stands only on a draft without a list,

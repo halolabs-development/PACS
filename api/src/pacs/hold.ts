@@ -50,7 +50,7 @@ export class PacsHold {
       if(renew&&prev.holder!==c.actor)
         return {holder:holdAlive(prev)?visibleHolder(prev,c):null,mine:false,conflict:!!other,lost:true};
       // Another physician's saved (unsigned) report is not taken by typing: the screen shows it read-only (report-visibility.ts).
-      assertHeadWritable(prev,await headForLock(tx,uid),c);
+      assertHeadWritable(prev,await headForLock(tx,uid,prev),c);
       if(!other){
         await tx.studyState.update({where:{uid},data:{holder:c.actor,holderInstitutionId:inst(c),heldAt:new Date()}});
         if(!holdAlive(prev))await tx.auditLog.create({data:{actor:c.actor,action:'report.hold',target:uid,detail:dump({institution:inst(c)})}});

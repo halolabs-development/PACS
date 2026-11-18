@@ -3124,7 +3124,8 @@ class LiveInvariantTests(unittest.TestCase):
             self.assertIsNone(self.state(fixture, "doctor")["holder"])
             self.assert_status(self.stack.request("POST", path + "/hold", "doctor"), 201)
             self.assertEqual(self.audit_count(fixture, "report.hold"), 2)
-            saved = self.commit(fixture, "doctor", "save", 0)
+            # An empty Save: another reader may then take the hold (a Save with text stays its writer's - the report state table).
+            saved = self.commit(fixture, "doctor", "save", 0, findings="")
             self.assert_status(saved, 201)
             self.assertIsNone(saved.body["holder"], "확정이 점유를 풀지 않았습니다")
             taken = self.stack.request("POST", path + "/hold", "doctor2")
