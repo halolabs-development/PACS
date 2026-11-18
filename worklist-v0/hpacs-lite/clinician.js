@@ -2879,7 +2879,7 @@
     $('#logout').hidden = true;
     $('#membership-title').textContent = pending ? 'Pending Approval' : 'Account Setup Required';
     $('#membership-text').textContent = pending
-      ? '가입 신청이 접수되었습니다. 관리자가 기관과 역할을 확인한 뒤 사용할 수 있습니다.'
+      ? '가입 신청이 접수되었습니다. 관리자가 기관과 역할을 확인한 뒤 사용할 수 있습니다. 오래 걸리면 가입을 안내한 기관의 HALO PACS 관리자 또는 HALO PACS 운영 담당자에게 문의해 주세요.'
       : '기관 또는 업무 역할 설정이 올바르지 않습니다. 관리자에게 문의해 주세요.';
     $('#membership').hidden = false;
   }

@@ -715,11 +715,30 @@ body:has(#kc-register-form) {
     overflow: auto;
   }
 
+  /* The card and the notice links (js/legal-links.js appends them to this row) stack: side by side they made the row
+     wider than a phone window and cut off the card's left edge. */
+  .login-pf-page,
+  .login-pf-page:has(#kc-register-form),
+  .login-pf-page:has(#kc-totp-settings-form) {
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+
   .login-pf-page {
     justify-content: center;
     min-height: 100%;
     height: auto;
     padding: 64px 24px 72px;
+  }
+
+  .login-pf-page:has(#kc-register-form),
+  .login-pf-page:has(#kc-totp-settings-form) {
+    justify-content: flex-start;
+  }
+
+  .kin-legal-links {
+    width: 100%;
   }
 
   #kc-header {
@@ -732,9 +751,16 @@ body:has(#kc-register-form) {
     max-width: 380px;
   }
 
+  /* In the stacked column a flex basis would be the card's height: the card is as tall as its content. */
   .login-pf-page .card-pf:has(#kc-register-form) {
+    flex-basis: auto;
     width: min(460px, 100%);
     max-width: 460px;
+  }
+
+  .login-pf-page .card-pf:has(#kc-totp-settings-form) {
+    flex-basis: auto;
+    width: min(520px, 100%);
   }
 }
 
