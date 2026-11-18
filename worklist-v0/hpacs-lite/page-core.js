@@ -24,6 +24,18 @@
       const raw = String(value ?? "");
       return actorNames.get(raw) || actorNames.get(raw.split("@")[0]) || raw;
     }
+    /**
+     * The report state table (server: report-visibility.ts): why this study's report text is not on this screen, from the
+     * server's `prelimHidden` (no text for you) and `bodyLock` (the reason) - "" when the text is yours to read. Every screen
+     * that says why a report is empty or read-only says it with these words.
+     */
+    function reportLockText(a) {
+      if (!a?.prelimHidden) return "";
+      if (a.bodyLock === "destroyed") return "보존 기간이 끝나 판독문을 파기한 검사입니다";
+      if (a.bodyLock === "in-progress")
+        return `${displayActor(a.savedBy) || "다른 판독의"} 님이 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다`;
+      return "다른 판독의의 예비 판독(RS: P)입니다";
+    }
     function tagv(st, key) {
       const v = st[key]?.Value?.[0];
       if (v == null) return "";

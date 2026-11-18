@@ -73,7 +73,8 @@ const EPOCH = '0a1b2c3d-0000-4000-8000-00000000000a';
 const { TransactionLocks, fixedRecord, fixedRecordKey } = require('./transaction_locks.cjs');
 
 function fixture({ state = STATE,
-  report = { version: 4, updatedBy: 'doctor2@synthetic', findings: CHOICE_LINE, conclusion: '', recommendation: '' },
+  // The in-progress (T) head is this caller's own Save: another physician's Save is not theirs to read or write (report state table).
+  report = { version: 4, updatedBy: CALLER.actor, findings: CHOICE_LINE, conclusion: '', recommendation: '' },
   versions = new Map(), draft = null, drafts = null, bytes = null, failWith = null,
   createManyFails = [] } = {}) {
   const writes = [], audits = [], raw = [], created = [];

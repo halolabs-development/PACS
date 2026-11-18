@@ -39,6 +39,13 @@
       view.host.element.replaceChildren(head, meta, el('p', { className: 'order-note', 'data-report-state': 'unread', text: 'No report has been written yet (Unread).' }));
       return;
     }
+    // A report destroyed at the end of its retention is not a report waiting for approval: it says what happened to it.
+    if (rs === 'D') {
+      view.host.element.replaceChildren(head, meta,
+        el('div', {}, el('span', { className: 'order-badge', 'data-report-state': 'destroyed', text: RS_WORD.D })),
+        el('p', { className: 'order-note', text: '보존 기간이 끝나 판독문을 파기한 검사입니다.' }));
+      return;
+    }
     if (rs !== 'A') {
       view.host.element.replaceChildren(head, meta,
         el('div', {}, el('span', { className: 'order-badge open', 'data-report-state': 'not-final', text: (RS_WORD[rs] || rs) + ' · Not Approved' })),

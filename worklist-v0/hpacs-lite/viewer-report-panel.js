@@ -7,11 +7,14 @@
 (function (root) {
   'use strict';
   const FIELDS = ['findings', 'conclusion', 'recommendation'];
-  const WORDS = { W: 'Unread', T: 'In Progress', P: 'Preliminary', H: 'On Hold', A: 'Approved' };
+  const WORDS = { W: 'Unread', T: 'In Progress', P: 'Preliminary', H: 'On Hold', A: 'Approved', D: 'Destroyed' };
   const SOURCES = {
     live: 'Live — 판독 화면에서 쓰는 중인 글',
     none: 'No Report — 이 검사에는 아직 판독문이 없습니다',
     hidden: 'Hidden — 다른 판독의의 예비 판독(RS: P)입니다',
+    // The report state table (server: report-visibility.ts) - the reason the server gave with the hidden text.
+    'in-progress': 'Hidden — 다른 판독의가 Save해 둔 진행 중 판독입니다',
+    destroyed: 'Hidden — 보존 기간이 끝나 판독문을 파기한 검사입니다',
   };
   const TEXT = {
     loading: '판독문을 불러오는 중입니다.',
@@ -44,7 +47,8 @@
   function choose({ uid, row, live }) {
     if (!row) return { kind: 'none', source: SOURCES.none, fields: { ...EMPTY } };
     const state = row.state;
-    if (state.prelimHidden === true) return { kind: 'hidden', source: SOURCES.hidden, fields: { ...EMPTY } };
+    if (state.prelimHidden === true)
+      return { kind: 'hidden', source: SOURCES[state.bodyLock] || SOURCES.hidden, fields: { ...EMPTY } };
     if (live && live.uid === uid && live.editor && typeof live.editor === 'object' &&
         (!row.examScope || root.KinExamScope?.readingStamp(row) === live.examStamp))
       return { kind: 'live', source: SOURCES.live, fields: pick(live.editor) };

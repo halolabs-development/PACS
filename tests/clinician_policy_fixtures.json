@@ -1820,7 +1820,8 @@
       "T",
       "P",
       "H",
-      "A"
+      "A",
+      "D"
     ],
     "list_snapshot_pins": ["institutionId", "teleInstitutionId", "rs", "repDoc", "confirm", "version"],
     "viewer_changed_code": "VIEWER_REPORT_CHANGED",

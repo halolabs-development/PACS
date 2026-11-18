@@ -24,6 +24,18 @@
       const raw = String(value ?? "");
       return actorNames.get(raw) || actorNames.get(raw.split("@")[0]) || raw;
     }
+    /**
+     * The report state table (server: report-visibility.ts): why this study's report text is not on this screen, from the
+     * server's `prelimHidden` (no text for you) and `bodyLock` (the reason) - "" when the text is yours to read. Every screen
+     * that says why a report is empty or read-only says it with these words.
+     */
+    function reportLockText(a) {
+      if (!a?.prelimHidden) return "";
+      if (a.bodyLock === "destroyed") return "보존 기간이 끝나 판독문을 파기한 검사입니다";
+      if (a.bodyLock === "in-progress")
+        return `${displayActor(a.savedBy) || "다른 판독의"} 님이 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다`;
+      return "다른 판독의의 예비 판독(RS: P)입니다";
+    }
     function tagv(st, key) {
       const v = st[key]?.Value?.[0];
       if (v == null) return "";
@@ -319,7 +331,7 @@
       if (appState[selectedUid]?.examScopeChanged) return "검사 범위가 바뀌었습니다. 입력한 글은 보존했습니다. 초안을 버리거나 서버 판독을 다시 확인한 뒤 작성하세요.";
       if (!selectedUid) return "검사를 선택하세요";
       if (!KinAuth.has("radiologist")) return "판독문 편집은 판독의 권한이 필요합니다";
-      if (appState[selectedUid]?.prelimHidden) return "다른 판독의의 예비 판독(RS: P)입니다";
+      if (appState[selectedUid]?.prelimHidden) return (typeof reportLockText === "function" && reportLockText(appState[selectedUid])) || "다른 판독의의 예비 판독(RS: P)입니다";
       if (admission === RELATED_BASE) return null;
       return relatedMode.blocked(admission) ?? relatedInsertWriteBlock(selectedUid, admission);
     }
@@ -998,6 +1010,17 @@
       return parts;
     }
     function reportStatusLine(a, now) { return reportStatusParts(a, now).join(" · "); }
+    /**
+     * Who is on this study's report before approval (the report state table, report-visibility.ts): the live hold first (typing
+     * has started - shown as In Progress even while the stored state is still Unread), else whoever Saved or Deferred the
+     * text. `label` is what the screen names: the hold of another institution or of an unknown writer keeps its masked word.
+     */
+    function reportOnIt(s) {
+      if (!s || !["W", "T", "H"].includes(s.rs)) return { typing: false, by: null, label: "" };
+      if (s.holder) return { typing: s.rs === "W", by: s.holder, label: displayActor(s.holder) };
+      const saved = appState[s.uid]?.savedBy || null;
+      return { typing: false, by: saved, label: saved ? displayActor(saved) : "" };
+    }
 
     // 특수 렌더링이 필요한 칸만 함수로
     let studyPriority = null;
@@ -1008,7 +1031,14 @@
       em: s => {const phase=studyPriority?.get(s.uid)?.phase;return phase?`<span title="${phase==='saving'?'응급 상태를 저장 중입니다':'저장 결과 미확인 — 문맥 메뉴의 Refresh Status로 확인하세요'}">${phase==='saving'?'Saving':'Unverified'}</span>`:s.em === "E" ? `<span class="em-e">E</span>` : "";},
       // 판독 상태 이름은 목록과 건수 줄에서 같은 계약을 따른다. 승인(A) 뒤 24시간이 지난 판독문은 낱말만 Finalized다(값은 A).
       rs: s => { const finalized = reportFinalized({ rs: s.rs, amendUntil: appState[s.uid]?.amendUntil }), word = finalized ? "Finalized" : RS_WORD[s.rs] ?? s.rs;
-        return `<span class="rs ${esc(s.rs)}"${s.holdReason ? ' data-kin-keep="title"' : ''} title="${esc(s.holdReason || (finalized ? "승인 후 24시간이 지나 확정된 판독문 — Addendum으로만 덧붙일 수 있습니다" : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : ""))}">${esc(word)}</span>`; },
+        const on = reportOnIt(s), shown = on.typing ? "In Progress" : word;
+        const help = s.holdReason || (finalized ? "승인 후 24시간이 지나 확정된 판독문 — Addendum으로만 덧붙일 수 있습니다"
+          : on.typing ? "판독의가 판독문을 쓰기 시작했습니다(점유) — 아직 저장하지 않았습니다"
+          : s.rs === "D" ? "보존 기간이 끝나 판독문을 파기한 검사입니다"
+          : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : "");
+        // "In Progress by <name>": who is on it, for the other readers (the writer's own row needs no name). The name is data.
+        const by = on.by && on.by !== user ? ` <span class="rs-by">by <span translate="no">${esc(on.label)}</span></span>` : "";
+        return `<span class="rs ${esc(on.typing ? "T" : s.rs)}"${s.holdReason ? ' data-kin-keep="title"' : ''} title="${esc(help + (by ? (help ? " — " : "") + on.label : ""))}">${esc(shown)}${by}</span>`; },
       confirm: s => esc(confirmText({ ...appState[s.uid], rs: s.rs })),
       // Missing images (Technician tab only): a mark beside the count, the same answer as the Info panel's Needs Check line
       // (studyReceiptGap; renderObservation repaints it between renders). Its words are its title; the mark itself is CSS
@@ -2144,8 +2174,15 @@
       const filmingTitle = "촬영 중(미확인) 검사입니다 — 기사 확인(Verify) 뒤 판독할 수 있습니다";
       const held = heldByOther(s);
       const heldTitle = `${displayActor(held)} 님이 판독 중입니다`;
-      $("#holdbar").style.display = held ? "flex" : "none";
-      $("#holdmsg").textContent = !held ? ""
+      // The report state table (report-visibility.ts): another physician's Save is theirs - the same bar says who is on it.
+      // Fixtures that load this block without page-core.js keep the Preliminary words.
+      const lockText = typeof reportLockText === "function" ? reportLockText(appState[selectedUid]) : appState[selectedUid]?.prelimHidden ? "다른 판독의의 예비 판독(RS: P)입니다" : "";
+      const inProgress = appState[selectedUid]?.bodyLock === "in-progress";
+      $("#holdbar").style.display = held || inProgress ? "flex" : "none";
+      // A hold over another physician's Save does not end with the hold: the bar says the Save's words either way.
+      $("#holdmsg").textContent = inProgress
+        ? `✎ ${lockText}` + (rad ? ". 이어 쓰려면 More ▸ Reset to Unread로 되돌리세요 (그 글은 그 판독의의 개인 임시글로 남습니다)." : "")
+        : !held ? ""
         : `✎ ${heldTitle} — 잠금이 풀리면 이어서 판독할 수 있습니다` +
           (rad && ["W", "T", "H"].includes(s?.rs) ? ". 자리를 비웠다면 More ▸ Reset to Unread로 되돌릴 수 있습니다." : "");
       $("#deferbar").style.display = s?.rs === "H" ? "flex" : "none";
@@ -2159,11 +2196,12 @@
         const el = $(id);
         if (!el) continue;
         el.disabled = !rad || locked || filming || !!held;
-        kinWrite(el, held ? heldTitle : filming ? kinSay(filmingTitle) : locked ? kinSay("다른 판독의의 예비 판독(RS: P)입니다")
+        kinWrite(el, held ? heldTitle : filming ? kinSay(filmingTitle) : locked ? lockText
           : !rad ? kinSay("판독의 권한이 필요합니다") : "", "title");
       }
       // 남의 점유가 다른 단추를 잠가도 진행 중 판독 되돌리기는 열려 있다(아래의 응급·Related·식별 불일치 잠금은 그대로 덮는다).
-      const takeover = rad && !locked && !filming ? inProgressReset(s) : null;
+      // Another physician's Save locks the text, not this way out (FC-040: the server keeps Reset open for it).
+      const takeover = rad && (!locked || inProgress) && !filming ? inProgressReset(s) : null;
       if (takeover) {
         $("#b-unread").disabled = false;
         $("#b-unread").title = `${displayActor(takeover)} 님이 판독 중입니다 — 누르면 점유를 풀고 Unread로 되돌립니다 ` +
@@ -2172,7 +2210,7 @@
       // 승인된 판독문을 비우는 길은 사유가 남는 Reset뿐이다. Clear는 그 뒷문이었다.
       $("#b-defer").disabled = !rad || !s || s.rs === "A" || s.rs === "P" || locked || filming || !!held || !serverMode;
       kinWrite($("#b-defer"), held ? heldTitle : filming ? kinSay(filmingTitle)
-        : locked ? kinSay("다른 판독의의 예비 판독(RS: P)입니다")
+        : locked ? lockText
         : s?.rs === "A" ? kinSay("승인된 판독문은 보류할 수 없습니다. 먼저 판독 취소(Reset)를 하세요")
         : s?.rs === "P" ? kinSay("예비 판독(RS: P)은 보류할 수 없습니다 — 승인 또는 취소만 가능합니다")
         : !rad ? kinSay("판독의 권한이 필요합니다") : !serverMode ? kinSay("서버에 연결돼 있을 때만 보류할 수 있습니다") : "", "title");
@@ -2192,7 +2230,7 @@
       }
       // Addendum은 승인된 판독문에만 붙는다
       $("#b-addendum").disabled = s?.rs !== "A" || !rad || locked || filming || !!held;
-      kinWrite($("#b-addendum"), held ? heldTitle : filming ? kinSay(filmingTitle) : s?.rs !== "A" ? kinSay("승인된 판독문에만 추가기재할 수 있습니다") : "", "title");
+      kinWrite($("#b-addendum"), held ? heldTitle : filming ? kinSay(filmingTitle) : locked && lockText ? lockText : s?.rs !== "A" ? kinSay("승인된 판독문에만 추가기재할 수 있습니다") : "", "title");
       /**
        * Prelim은 "아직 확정 안 된 판독을 상급자에게 넘기는" 동작이다.
        * 이미 승인(A)된 것에는 의미가 없고, 이미 P인 것을 다시 넘기면 지정이 덮어써진다.
@@ -2201,7 +2239,7 @@
       const b = $("#b-prelim");
       if (b) {
         b.disabled = !rad || !s || s.rs === "A" || s.rs === "P" || locked || filming || !!held || !serverMode;
-        kinWrite(b, held ? heldTitle : filming ? kinSay(filmingTitle) : !serverMode ? kinSay("서버에 연결돼 있을 때만 지정할 수 있습니다")
+        kinWrite(b, held ? heldTitle : filming ? kinSay(filmingTitle) : locked && lockText ? lockText : !serverMode ? kinSay("서버에 연결돼 있을 때만 지정할 수 있습니다")
           : s?.rs === "P" ? kinSay("이미 예비 판독 중입니다")
           : s?.rs === "A" ? kinSay("이미 승인된 판독입니다")
           : kinSay("상급 판독의를 지정해 최종 판독을 맡깁니다 (RS: P)"), "title");
@@ -2209,7 +2247,7 @@
       for (const id of ["#findings", "#conclusion", "#recommendation"]) {
         $(id).readOnly = !rad || locked || filming || !!held;
         // C-R01-109#2: an unverified study locks these fields until Verify; the editor names that beside Read Only.
-        $(id).dataset.lockReason = filming && !held ? filmingTitle : "";
+        $(id).dataset.lockReason = filming && !held ? filmingTitle : !held && locked ? lockText : "";
       }
       if(studyPriority?.get(selectedUid))for(const id of ['#b-save','#b-approve','#b-unread','#b-addendum','#b-prelim','#b-defer']) {
         const button=$(id);if(button){button.disabled=true;kinWrite(button, kinSay('응급 상태 저장 결과를 확인한 뒤 판독을 저장하세요'), "title");}
@@ -3015,7 +3053,7 @@
       if (offline) return { status: "refused", reason: "서버 연결이 끊겨 저장할 수 없습니다" };
       if (!KinAuth.has("radiologist")) return { status: "refused", reason: "판독의 권한이 없어 저장할 수 없습니다" };
       const a = appState[uid] ?? {};
-      if (a.prelimHidden) return { status: "refused", reason: "다른 판독의의 예비 판독(RS: P)입니다" };
+      if (a.prelimHidden) return { status: "refused", reason: (typeof reportLockText === "function" && reportLockText(a)) || "다른 판독의의 예비 판독(RS: P)입니다" };
       // WORKLIST-SPLIT-UID: an unresolved study's kept text is never sent. It is a refused save, answered like the others
       // (Retry/Check/Stay, no target switch, nothing written); the text stays in the editor.
       if (a.identityUnresolved) return { status: "refused", reason: "환자 식별 불일치로 이 검사의 글을 저장할 수 없습니다. 원본 확인이 필요합니다" };
@@ -5514,13 +5552,15 @@
       // they are; no render replaces it, forced or not, until a later list returns it as one resource.
       let preserveValue = !!r.identityUnresolved || !force && (reportConverge.has(selectedUid) || (locked && !!r.draft));
       reportRefreshPendingFor = preserveValue && (locked || reportDirty()) ? selectedUid : null;
-      const src = locked ? {} : reportSource();
+      // Under another physician's Save my own draft is still mine: it is shown, read-only (the server sends it for that).
+      const ownUnderLock = locked && r.bodyLock === "in-progress" && r.draft ? r.draft : null;
+      const src = ownUnderLock ?? (locked ? {} : reportSource());
       const frame = mountReportFrame();
       if (!frame) return false;
       const opening = { uid: selectedUid, selectionSeq };
       const newOpening = !reportOpening || reportOpening.uid !== selectedUid || reportOpening.selectionSeq !== selectionSeq;
       if (!preserveValue || newOpening) {
-        const texts = Object.fromEntries(RFIELDS.map(k => [k, locked ? "" : String(src[k] ?? "")]));
+        const texts = Object.fromEntries(RFIELDS.map(k => [k, locked && !ownUnderLock ? "" : String(src[k] ?? "")]));
         const result = newOpening ? frame.switchStudy(opening, texts) : frame.replaceAuthoritative(texts);
         if (result.status === "refused") {
           // A refused authoritative render cannot advance the text's origin or erase current typing.
@@ -5539,9 +5579,12 @@
         // 편집기의 글이 바뀐다 — 그 전에 떠난 편집기 범위의 작업(붙여넣기 등)은 이 글 위에 쓰지 않는다.
         work.edited();
       }
-      const ph = locked
-        ? kinSay("{0} 님이 최종 판독 중입니다 (RS: P) — 내용은 지정된 판독의만 볼 수 있습니다", displayActor(r.preReviewer) || kinSay("지정된 판독의"))
-        : "";
+      // The report state table (report-visibility.ts): the empty fields say why they are empty - a Preliminary, another
+      // physician's Save, or a report destroyed at the end of its retention.
+      const lockWhy = locked && typeof reportLockText === "function" ? reportLockText(r) : "";
+      const ph = !locked ? ""
+        : r.bodyLock === "in-progress" || r.bodyLock === "destroyed" ? lockWhy
+        : kinSay("{0} 님이 최종 판독 중입니다 (RS: P) — 내용은 지정된 판독의만 볼 수 있습니다", displayActor(r.preReviewer) || kinSay("지정된 판독의"));
       for (const [sel, base] of [["#findings", "Please enter findings"],
                                  ["#conclusion", "Please enter conclusion"],
                                  ["#recommendation", "Please enter recommendation"]]) {
@@ -5551,7 +5594,7 @@
           || !!r.identityUnresolved;
         // C-R01-109#2: the Read Only reason for an unverified study, the same words as its buttons (updateReportButtons).
         el.dataset.lockReason = cur()?.ss === "Unverified" && cur()?.em !== "E" && !heldByOther(cur())
-          ? "촬영 중(미확인) 검사입니다 — 기사 확인(Verify) 뒤 판독할 수 있습니다" : "";
+          ? "촬영 중(미확인) 검사입니다 — 기사 확인(Verify) 뒤 판독할 수 있습니다" : !heldByOther(cur()) && lockWhy ? lockWhy : "";
       }
       renderDraftBar();
       updateReportTemplateButton();
@@ -5636,14 +5679,19 @@
       const holder = target?.holder || null;
       // `viewingNames` belongs to the worklist columns module; editor fixtures that load this module alone have none.
       const others = target && typeof viewingNames === "object" ? viewingNames.get(target.uid) || "" : "";
+      // The report state table: another physician's Save names its writer here too (the text stays with them).
+      const state = target ? appState[target.uid] : null;
+      const savedByOther = !holder && state?.bodyLock === "in-progress" && state.savedBy ? state.savedBy : null;
       const own = !target ? ""
         : holder && holder === user ? "✎ Held by you"
         : holder ? `✎ Held by ${displayActor(holder)}`
+        : savedByOther ? `✎ In Progress by ${displayActor(savedByOther)}`
         : "Opened by you";
       line.textContent = [own, others].filter(Boolean).join(" · ");
       // The head can wrap in a narrow column; keep presence updates within their reserved space so typing stays put.
       // Longer explanations belong in the title.
-      kinWrite(line, !target ? "" : holder && holder !== user ? kinSay("다른 판독의가 작성 중입니다")
+      kinWrite(line, !target ? "" : savedByOther ? kinSay("다른 판독의가 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다")
+        : holder && holder !== user ? kinSay("다른 판독의가 작성 중입니다")
         : holder ? kinSay("이 판독의가 작성 중입니다(점유){0}", others ? " · " + others : "")
         : kinSay("검사를 여는 것만으로는 점유하지 않습니다. 판독문에 두 글자 이상 쓰면 이 판독의가 잡습니다.{0}", others ? " · " + others : ""), "title");
     }
@@ -5718,7 +5766,9 @@
       $("#b-report-reload").style.display = pending && !r.prelimHidden ? "" : "none";
       if (pending) {
         $("#draftmsg").innerHTML = r.prelimHidden
-          ? `<b>● 다른 판독의가 이 검사를 예비 판독으로 넘겼습니다</b> — 쓰던 내용은 그대로 두었지만 저장할 수 없습니다`
+          ? (r.bodyLock === "in-progress" || r.bodyLock === "destroyed"
+            ? `<b>● ${esc(typeof reportLockText === "function" ? reportLockText(r) : "")}</b> — 쓰던 내용은 그대로 두었지만 저장할 수 없습니다`
+            : `<b>● 다른 판독의가 이 검사를 예비 판독으로 넘겼습니다</b> — 쓰던 내용은 그대로 두었지만 저장할 수 없습니다`)
           : `<b>● 서버에 새 내용이 있습니다</b> — 저장 안 된 입력은 덮지 않고 그대로 유지했습니다` +
             (d ? ` · 초안 버리기를 누르면 서버 내용으로 돌아갑니다` : ``);
         return;
@@ -8840,7 +8890,7 @@
       if (!a) return null;
       const holder = heldByOther(a);
       return {
-        rs: a.rs, ss: a.ss, em: a.em, prelimHidden: !!a.prelimHidden, identityUnresolved: !!a.identityUnresolved,
+        rs: a.rs, ss: a.ss, em: a.em, prelimHidden: !!a.prelimHidden, bodyLock: a.bodyLock ?? null, identityUnresolved: !!a.identityUnresolved,
         /**
          * FC-029: a Preliminary that may be mine to approve. The server shows a Preliminary only to its author and its designated
          * reviewer and judges the designation by account id first; the list carries names only, and names can change. So every
@@ -10459,7 +10509,8 @@
             </div>
 ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</span></div>` : ""}
             ${v.group ? `<div class="vr" data-exam-group="${esc(v.group.id)}"><b>Exam scope</b> — <span data-exam-scope-text></span></div>` : ""}
-            ${v.findings || v.conclusion || v.recommendation
+            ${v.bodyHidden ? `<div class="vr" data-body-hidden="${esc(v.bodyHidden)}">본문 비공개 — 그 판을 쓴 판독의만 볼 수 있습니다(승인 전 Save 또는 개인 초안)</div>`
+              : v.findings || v.conclusion || v.recommendation
               ? `<pre translate="no">${esc([v.findings, v.conclusion, v.recommendation].filter(Boolean).join("\n---\n"))}</pre>`
               : `<div style="color:#556;padding:4px 0">(내용 없음)</div>`}
             ${Array.isArray(v.drawings) && v.drawings.length ? `<div class="vdraw" data-version="${esc(v.version)}"
