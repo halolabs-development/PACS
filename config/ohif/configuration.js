@@ -24,6 +24,46 @@ function kinCreateMultiStudyStrip() {
   onModeExit() { epoch++; active = false; current?.stop(); current = null; } };
 }
 
+// DICOM overlay planes (60xx,3000) on an image: the archive sends their bits as a bulk data address, which the pinned overlay
+// tool (Image Overlay) cannot read — it cached an empty overlay and failed on every later draw, measurements in the same cell
+// included, and turning Image Overlay off and on raised an error. Here the overlay tool reads those bits itself, as the
+// viewer reads its other bulk data (kinFetchBulk: this origin's instance bulk path), and only for overlay planes; an overlay
+// whose bits cannot be read is left out instead of cached empty. An overlay is drawn only on the image it belongs to (a slow
+// answer for an image scrolled past is not drawn on the next one) and only while Image Overlay is on.
+function kinCreateOverlayPlanes() {
+  const MARK = Symbol.for('kin.overlay-planes');
+  function install() {
+    const proto = window.cornerstoneTools?.state?.tools?.ImageOverlayViewer?.toolClass?.prototype;
+    if (!proto || proto[MARK]) return;
+    if (typeof proto._getCachedStat !== 'function' || typeof proto._renderOverlay !== 'function') return;
+    const read = proto._getCachedStat, draw = proto._renderOverlay;
+    proto._getCachedStat = async function (imageId, overlayMetadata, color) {
+      const overlays = Array.isArray(overlayMetadata?.overlays) ? overlayMetadata.overlays : [];
+      await Promise.all(overlays.map(async overlay => {
+        const data = overlay?.pixelData;
+        if (!data || overlay.dataUrl || data.Value || Array.isArray(data) || data.retrieveBulkData || data.InlineBinary ||
+            typeof data.BulkDataURI !== 'string') return;
+        let bytes = null;
+        try { bytes = await kinFetchBulk(data.BulkDataURI); } catch (_) { bytes = null; }
+        if (bytes?.length) data.Value = bytes.slice().buffer;
+      }));
+      const answer = await read.call(this, imageId, overlayMetadata, color);
+      if (Array.isArray(answer?.overlays)) {
+        answer.overlays = answer.overlays.filter(Boolean);
+        for (const overlay of answer.overlays) overlay.kinImageId = imageId;
+      }
+      return answer;
+    };
+    proto._renderOverlay = function (enabledElement, svgDrawingHelper, overlay) {
+      if (!overlay || this.mode === 'Disabled') return false;
+      if (overlay.kinImageId && overlay.kinImageId !== this.getReferencedImageId(enabledElement?.viewport)) return false;
+      return draw.call(this, enabledElement, svgDrawingHelper, overlay);
+    };
+    proto[MARK] = true;
+  }
+  return { id: 'kin.overlay-planes', preRegistration() { install(); }, onModeEnter() { install(); } };
+}
+
 // The viewer's route `/` (see customizationService below): leave the viewer app for the sign-in entry, which sends a signed-in
 // account to its home screen (KinAuth.home: the worklist, or the clinician screen) and anyone else to sign in.
 function kinViewerRootToWorklist() {
@@ -32,7 +72,7 @@ function kinViewerRootToWorklist() {
 }
 
 window.config = {
-  extensions: [kinCreateSessionBoundary(), kinStackPrecision, kinCreateFrameMetadata(), kinCreateSRProvenance(), kinCreateViewerHistory(), kinCreateViewerFindings(), kinCreateViewerLayout(), kinCreateViewerJobs(), kinCreateViewerTechNote(), kinCreateFrameCoverage(), '@ohif/extension-dicom-pdf', kinCreateDicomPdf(), kinCreateCTSync(), kinCreateCine(), kinCreateDisplayScope(), kinCreateCellMerge(), kinCreateImagesOnly(), kinCreateImageText(), kinCreateCTPresets(), kinCreateThreeDCursor(), kinCreateSeriesMetadataRecovery(), kinCreateImageLoadStatus(), kinCreateContextLoss(), kinCreateMammographyHanging(), kinCreateSeriesSplit(), kinCreateSeriesOrder(), kinCreateMGReferenceLines(), kinCreateStudyPrefetch(), kinCreateStudySearch(), kinCreateViewerUX(), kinCreateViewerPrior(), kinCreateViewerReportPanel(), kinCreateMultiStudyStrip(), kinCreateMarkerStyle()],
+  extensions: [kinCreateSessionBoundary(), kinStackPrecision, kinCreateFrameMetadata(), kinCreateSRProvenance(), kinCreateViewerHistory(), kinCreateViewerFindings(), kinCreateViewerLayout(), kinCreateViewerJobs(), kinCreateViewerTechNote(), kinCreateFrameCoverage(), '@ohif/extension-dicom-pdf', kinCreateDicomPdf(), kinCreateCTSync(), kinCreateCine(), kinCreateDisplayScope(), kinCreateCellMerge(), kinCreateImagesOnly(), kinCreateImageText(), kinCreateCTPresets(), kinCreateThreeDCursor(), kinCreateSeriesMetadataRecovery(), kinCreateImageLoadStatus(), kinCreateContextLoss(), kinCreateMammographyHanging(), kinCreateSeriesSplit(), kinCreateSeriesOrder(), kinCreateMGReferenceLines(), kinCreateStudyPrefetch(), kinCreateStudySearch(), kinCreateViewerUX(), kinCreateViewerPrior(), kinCreateViewerReportPanel(), kinCreateMultiStudyStrip(), kinCreateMarkerStyle(), kinCreateOverlayPlanes()],
   // REQ-D-3D-CURSOR. 3D Cursor(대응점 표시)는 뷰어에 켜져 있다. 판독자는 도구 영역의 3D Cursor
   // 버튼으로 모드에 들어간다. === true 하나만 ON이고, 끄는 길도 이 리터럴 하나뿐이다.
   kinThreeDCursor: { enabled: true },
@@ -79,30 +119,3 @@ window.config = {
     }
   },
 };
-
-// Elements the archive sends as a bulk data address instead of a value — DICOM overlay planes (60xx,3000) among them — are
-// fetched when a tool asks for them. The DICOMweb data source comes from the Orthanc viewer plugin, which appends its
-// `window.config.dataSources = [...]` after this file; that block neither turns bulk data addresses on (the overlay tool then
-// caches an empty overlay and fails on every draw, measurements in the same cell included) nor takes bulk data as anything
-// but single part, which the archive does not answer. The block is adjusted here as it is set: addresses on, bulk data read
-// multipart (PDF and video stay single part, as before). An address of this archive's instance bulk data is reduced to its
-// instance path, which the data source resolves under its own root — this origin, as the product's other bulk reads.
-function kinBulkDataSources(sources) {
-  if (!Array.isArray(sources)) return sources;
-  const tail = uri => {
-    const found = typeof uri === 'string' &&
-      /^(?:https?:\/\/[^/]+)?\/dicom-web\/studies\/[^/]+\/series\/[^/]+\/(instances\/[^/?#]+\/bulk\/[0-9A-Fa-f/]+)$/.exec(uri);
-    return found ? found[1] : uri;
-  };
-  return sources.map(source => {
-    const c = source?.configuration;
-    if (!c || typeof c !== 'object' || !/dicomweb$/.test(String(source.namespace || ''))) return source;
-    const parts = typeof c.singlepart === 'string' ? c.singlepart.split(',').map(s => s.trim()).filter(s => s && s !== 'bulkdata').join(',') : c.singlepart;
-    return { ...source, configuration: { ...c, singlepart: parts, bulkDataURI: { ...(c.bulkDataURI || {}), enabled: true, transform: tail } } };
-  });
-}
-(function (config) {
-  let sources = kinBulkDataSources(config.dataSources);
-  Object.defineProperty(config, 'dataSources', { configurable: true, enumerable: true,
-    get: () => sources, set: value => { sources = kinBulkDataSources(value); } });
-})(window.config);

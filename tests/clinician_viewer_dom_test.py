@@ -2834,8 +2834,8 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.assertEqual([], self.length_rows())
 
     FREEHAND_TOOL = r'''() => {
-      // The pinned PlanarFreehandROI tool's own words (its defaultGetTextLines): the length unit is read from `unit`, which
-      // the pinned tool never fills (it stores the unit function's `unit` under `units`, and an open line under another name).
+      // The pinned PlanarFreehandROI tool's own words (its defaultGetTextLines): the perimeter or length it computed (a sum of
+      // distances on the screen) with the unit read from `unit`, which the pinned tool never fills.
       const round = x => String(Math.round(x));
       const pinned = (data, targetId) => {
         const { area, mean, stdDev, length, perimeter, max, unit, areaUnit, modalityUnit } = data.cachedStats[targetId] || {};
@@ -2849,13 +2849,15 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         return lines; };
       window.synFreehandPinned = pinned;
       // The image a target names, as the tool reads it (getTargetImageData), and the pinned unit function: mm with a pixel
-      // spacing, px without, a calibration's name after it.
+      // spacing, px without, a calibration's name after it and its scale.
       window.synFreehandImage = { imageData: { syn: true }, hasPixelSpacing: true };
       synTools.PlanarFreehandROI = { configuration: { getTextLines: pinned }, addNewAnnotation() { return {}; },
         getTargetImageData: () => window.synFreehandImage };
-      // The cell showing that image, turned a quarter (screen x = world y, screen y = -world x): the tool takes an open line's
-      // box on the screen and reads its corners back on the image. synFreehandViewports [] = no cell shows the image.
-      window.synFreehandViewports = [{ getCurrentImageId: () => synImage(), worldToCanvas: p => [p[1], -p[0]], canvasToWorld: c => [-c[1], c[0], 0] }];
+      // The cell showing that image, turned a quarter and zoomed (screen x = zoom * world y, screen y = -zoom * world x): the
+      // tool takes the outline's box on the screen and reads its corners back on the image. [] = no cell shows the image.
+      window.synZoom = 1;
+      window.synFreehandViewports = [{ getCurrentImageId: () => synImage(),
+        worldToCanvas: p => [synZoom * p[1], -synZoom * p[0]], canvasToWorld: c => [-c[1] / synZoom, c[0] / synZoom, 0] }];
       cornerstone.utilities = { ...(cornerstone.utilities || {}), transformWorldToIndex: (imageData, p) => [p[0] * 2, p[1] * 2, 0],
         imageIdToURI: id => id, getViewportsWithImageURI: () => synFreehandViewports };
       window.synUnitCalls = [];
@@ -2863,60 +2865,69 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         synUnitCalls.push(handles());
         const c = image.calibration, suffix = c && c.type ? ' ' + c.type : '';
         const unit = (image.hasPixelSpacing ? 'mm' : 'px') + suffix;
-        return { unit, areaUnit: unit.replace(/^(mm|px)/, '$1²'), scale: 1 }; } };
-      window.synFreehandText = (stats, polyline) => {
-        const target = 'imageId:' + synImage(), data = { contour: { polyline, closed: !!stats.areaUnit }, cachedStats: { [target]: stats } };
+        return { unit, areaUnit: unit.replace(/^(mm|px)/, '$1²'), scale: c && c.scale ? c.scale : 1 }; } };
+      window.synFreehandText = (stats, polyline, closed) => {
+        const target = 'imageId:' + synImage(), data = { contour: { polyline, closed }, cachedStats: { [target]: stats } };
         const before = JSON.stringify(data);
         const lines = synTools.PlanarFreehandROI.configuration.getTextLines(data, target);
         return { lines, untouched: JSON.stringify(data) === before }; };
     }'''
 
-    def test_33_freehand_roi_words_carry_the_unit_it_was_measured_in(self):
-        """A Freehand ROI's perimeter (closed outline) and length (open line) are said with the unit the tool measured in —
-        mm, px without a pixel spacing, a calibration's name after it — never "undefined"; its other lines stay as they are,
-        and the measurement itself (what is saved or exported) is not changed by its words."""
+    def test_33_freehand_roi_words_give_the_outline_length_on_the_image(self):
+        """A Freehand ROI's perimeter (closed outline) and length (open line) are the outline's length on the image, in the unit
+        the tool measures in — mm, px without a pixel spacing, a calibration's name and scale applied — the same at any zoom,
+        never a distance on the screen and never "undefined"; its other lines stay as they are, and the measurement itself
+        (what is saved or exported) is not changed by its words."""
         self.me = RADIOLOGIST
         self.open_viewer(before_boot=self.FREEHAND_TOOL)
         self.wait_until(lambda: 'Length' in self.panel()['buttons'], 'writer controls')
         self.page.evaluate('synTick(2)')
         self.wait_until(lambda: self.page.evaluate('() => synTools.PlanarFreehandROI.configuration.getTextLines !== synFreehandPinned'),
                         "the viewer's measurement settings over the Freehand ROI tool")
+        # A triangle on the image: sides 30, 20 and 36.06 — closed 86.06, open (two sides) 50. The tool's own numbers (253, 209)
+        # are distances on the screen.
         line = [[10, 10, 0], [40, 10, 0], [40, 30, 0]]
         closed = "{area: 283.2, areaUnit: '%s', perimeter: 253.39, mean: -800, max: -800, stdDev: 3.2, modalityUnit: 'HU', unit: undefined}"
+        opened = "{length: 208.8, modalityUnit: 'HU', getPixelValueUnitunit: undefined}"
+        spaced, unspaced = "{imageData: {syn: true}, hasPixelSpacing: true}", "{imageData: {syn: true}, hasPixelSpacing: false}"
+        user = "{imageData: {syn: true}, hasPixelSpacing: true, calibration: {type: 'User', scale: 2}}"
+        values = ['Area: 283 %s', 'Mean: -800 HU', 'Max: -800 HU', 'Std Dev: 3 HU']
         cases = [
-            (closed % 'mm²', None, ['Area: 283 mm²', 'Mean: -800 HU', 'Max: -800 HU', 'Std Dev: 3 HU', 'Perimeter: 253 mm']),
-            (closed % 'mm² User', None, ['Area: 283 mm² User', 'Mean: -800 HU', 'Max: -800 HU', 'Std Dev: 3 HU', 'Perimeter: 253 mm User']),
-            (closed % 'cm² US Region', None, ['Area: 283 cm² US Region', 'Mean: -800 HU', 'Max: -800 HU', 'Std Dev: 3 HU', 'Perimeter: 253 cm US Region']),
-            (closed % 'px²', None, ['Area: 283 px²', 'Mean: -800 HU', 'Max: -800 HU', 'Std Dev: 3 HU', 'Perimeter: 253 px']),
-            # An open line: the unit function for the line's box on the image.
-            ("{length: 208.8, modalityUnit: 'HU', getPixelValueUnitunit: undefined}", "{imageData: {syn: true}, hasPixelSpacing: true}", ['209 mm']),
-            ("{length: 208.8, modalityUnit: 'HU'}", "{imageData: {syn: true}, hasPixelSpacing: false}", ['209 px']),
-            ("{length: 208.8, modalityUnit: 'HU'}", "{imageData: {syn: true}, hasPixelSpacing: true, calibration: {type: 'User', scale: 2}}", ['209 mm User']),
-            # The image cannot be read (no viewport shows it now): a number without a unit, not "undefined".
-            ("{length: 208.8, modalityUnit: 'HU'}", "undefined", ['209 ']),
+            (closed % 'mm²', True, spaced, 1, [v % 'mm²' if '%s' in v else v for v in values] + ['Perimeter: 86 mm']),
+            (closed % 'mm²', True, spaced, 3, [v % 'mm²' if '%s' in v else v for v in values] + ['Perimeter: 86 mm']),
+            (closed % 'mm² User', True, user, 1, [v % 'mm² User' if '%s' in v else v for v in values] + ['Perimeter: 43 mm User']),
+            (closed % 'px²', True, unspaced, 1, [v % 'px²' if '%s' in v else v for v in values] + ['Perimeter: 86 px']),
+            (opened, False, spaced, 1, ['50 mm']),
+            (opened, False, spaced, 3, ['50 mm']),
+            (opened, False, unspaced, 1, ['50 px']),
+            (opened, False, user, 1, ['25 mm User']),
+            # The image cannot be read (no cell shows it now): no length line rather than a screen number.
+            (opened, False, 'undefined', 1, []),
+            (closed % 'mm²', True, 'undefined', 1, [v % 'mm²' if '%s' in v else v for v in values]),
             # A tool that does fill the unit (a fixed release) is left as it is.
-            ("{length: 208.8, modalityUnit: 'HU', unit: 'mm'}", "{imageData: {syn: true}, hasPixelSpacing: false}", ['209 mm']),
+            ("{length: 208.8, modalityUnit: 'HU', unit: 'mm'}", False, spaced, 1, ['209 mm']),
         ]
-        for stats, image, want in cases:
-            with self.subTest(stats=stats, image=image):
-                if image:
-                    self.page.evaluate('() => { window.synFreehandImage = %s; }' % image)
-                got = self.page.evaluate('([line]) => synFreehandText(%s, line)' % stats, [line])
+        for stats, is_closed, image, zoom, want in cases:
+            with self.subTest(stats=stats, image=image, zoom=zoom):
+                self.page.evaluate('([zoom]) => { window.synFreehandImage = %s; window.synZoom = zoom; }' % image, [zoom])
+                got = self.page.evaluate('([line, closed]) => synFreehandText(%s, line, closed)' % stats, [line, is_closed])
                 self.assertEqual(want, got['lines'])
                 self.assertTrue(got['untouched'], 'the measurement is not changed by its words')
                 self.assertNotIn('undefined', ' '.join(got['lines']))
-        # The open line's box as the tool takes it: around the line on the screen, its corners read back on the image —
+        # The unit's box as the tool takes it: around the outline on the screen, its corners read back on the image —
         # (10,-40)..(30,-10) on the turned screen are world (40,10) and (10,30), image (80,20) and (20,60).
         self.assertEqual([[80, 20, 0], [20, 60, 0]], self.page.evaluate('() => synUnitCalls[0]'))
-        # No cell shows the image: the line's own box on the image, lowest corner then highest.
+        # No cell shows the image: the outline's own box on the image, lowest corner then highest.
         self.page.evaluate("() => { synFreehandViewports = []; synUnitCalls.length = 0; synFreehandImage = {imageData: {syn: true}, hasPixelSpacing: true}; }")
-        got = self.page.evaluate("([line]) => synFreehandText({length: 208.8, modalityUnit: 'HU'}, line)", [line])
-        self.assertEqual(['209 mm'], got['lines'])
+        got = self.page.evaluate("([line]) => synFreehandText({length: 208.8, modalityUnit: 'HU'}, line, false)", [line])
+        self.assertEqual(['50 mm'], got['lines'])
         self.assertEqual([[20, 20, 0], [80, 60, 0]], self.page.evaluate('() => synUnitCalls[0]'))
 
     def test_34_the_saved_item_count_follows_saves_and_deletes(self):
         """The panel's "n개 저장 항목" is the study's saved items now: a save answered adds one, a delete answered takes one
-        away (with the delete's own words), not only when the list is read again."""
+        away (with the delete's own words), not only when the list is read again. A list read that began before a save or a
+        delete was answered does not undo it: the item saved meanwhile is not taken for deleted elsewhere, the item deleted
+        meanwhile does not come back."""
         self.writer_open()
         self.wait_until(lambda: 'SYN writer key' in str(self.panel()['rows']), 'the author list')
         self.assertEqual('1개 저장 항목 · 저장은 판독 확정과 별개입니다.', self.panel()['status'])
@@ -2939,7 +2950,30 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.assertEqual('Key Image 항목을 지웠습니다. 저장 이력은 서버에 남습니다. 1개 저장 항목 · 저장은 판독 확정과 별개입니다.',
                          self.panel()['status'])
         self.assertNotIn('SYN LATE WRITTEN KEY', str(self.panel()['rows']))
-
+        writer_head = author_page(WRITER_HEAD)['items'][0]
+        # A Refresh whose answer is held; meanwhile a new key image is saved; then the older answer (without it) arrives.
+        self.hold_writer = {(VA, 'first')}
+        history.get_by_role('button', name='Refresh', exact=True).click()
+        self.wait_until(lambda: self.held_writer, 'the Refresh held')
+        history.get_by_role('button', name='Add Key Image', exact=True).click()
+        self.wait_until(lambda: 'Save' in self.panel()['buttons'], "the second key image's Save")
+        history.get_by_role('button', name='Save', exact=True).click()
+        self.wait_until(lambda: self.held_writes, 'the second Save on the wire')
+        second = author_page(key_item(86, 'SYN SECOND KEY'))['items'][0]
+        self.release(self.held_writes.pop(), second)
+        self.release(self.held_writer.pop()[-1], {'items': [writer_head], 'nextCursor': None})
+        self.assertIn('SYN SECOND KEY', str(self.panel()['rows']), 'saved while the read was on its way: not taken for deleted')
+        self.assertEqual('2개 저장 항목 · 저장은 판독 확정과 별개입니다.', self.panel()['status'])
+        # A Refresh whose answer is held; meanwhile that key image is deleted; then the older answer (with it) arrives.
+        history.get_by_role('button', name='Refresh', exact=True).click()
+        self.wait_until(lambda: self.held_writer, 'the second Refresh held')
+        history.locator('section').filter(has_text='SYN SECOND KEY').get_by_role('button', name='Delete', exact=True).click()
+        self.wait_until(lambda: self.held_writes, 'the second delete on the wire')
+        gone = copy.deepcopy(second); gone['revision'] = 2; gone['item']['deleted'] = True
+        self.release(self.held_writes.pop(), gone)
+        self.release(self.held_writer.pop()[-1], {'items': [writer_head, second], 'nextCursor': None})
+        self.assertNotIn('SYN SECOND KEY', str(self.panel()['rows']), 'deleted while the read was on its way: does not come back')
+        self.assertEqual('1개 저장 항목 · 저장은 판독 확정과 별개입니다.', self.panel()['status'])
     def notice(self,session,kind='broadcast'):
         self.observer.evaluate("""([session,kind])=>{const notice={type:'session-ended',session,operation:Date.now(),status:'ending'};
           if(kind==='storage')localStorage.setItem('kin-session-end',JSON.stringify(notice));

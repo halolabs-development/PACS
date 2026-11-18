@@ -704,7 +704,7 @@ PROFILES = {
         'out': ROOT / 'tests/e2e/artifacts/viewer-overlay-units-ci',
         'project_prefix': 'kin-viewer-overlay-units-ci-',
         # Dispatch only (Focused integration): a CT with a DICOM overlay plane drawn, turned off and on and measured on, a
-        # palette colour image drawn without an error, a Freehand ROI's perimeter and length in mm, and the history panel's saved-item
+        # palette colour image drawn without an error, a Freehand ROI's perimeter and length in mm at any zoom, and the history panel's saved-item
         # count after a Save and a Delete, on a real stack. Four cases; the single-suite cap is a hang ceiling, not an estimate.
         'suite_timeout': 900,
         'suites': (('e2e/test_viewer_overlay_units.py', 'ViewerOverlayUnitsE2E', 'ci-viewer-overlay-units'),),

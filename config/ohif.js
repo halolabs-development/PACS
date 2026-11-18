@@ -2365,6 +2365,8 @@ function kinCreateViewerHistory() {
     // status is that text and the count; without one only a count already shown is brought up to date, so another message the
     // status shows meanwhile (a reason, an error, a recheck) is not overwritten.
     const COUNT_TAIL = '개 저장 항목';
+    // Items this panel deleted (the server keeps them and their revisions; no list of the author's shows them again).
+    const deletedHere = new Set();
     function recount(lead) {
       const n = [...entries.values()].filter(e => e.head && !e.gone).length;
       if (typeof lead === 'string') status.textContent = lead + n + COUNT_TAIL + ' · 저장은 판독 확정과 별개입니다.';
@@ -2374,6 +2376,9 @@ function kinCreateViewerHistory() {
     async function load(resume = false, recheck = null, answered = false) {
       if (!scope || ended || loading) return;
       const ticket = generation, seq = ++readSequence; loading = true; tried = Date.now();
+      // Saved items as this read begins: only one of these can be judged deleted in another window by its absence from the
+      // answer (an item saved while the read was on its way is not in it yet).
+      const savedAtStart = new Set([...entries.values()].filter(e => e.head).map(e => e.head.id));
       status.textContent = '저장 항목 확인 중…';
       try {
         if (!answered) await authenticate(ticket);
@@ -2397,7 +2402,10 @@ function kinCreateViewerHistory() {
           recovery.delete(scope);
         }
         for (const head of heads) {
+          // Deleted here while this read was on its way: an older answer does not bring it back.
+          if (deletedHere.has(head.id)) continue;
           let e = entries.get(head.id);
+          if (e) e.gone = false;
           if (e && (e.editing || e.pending || e.busy)) {
             if (head.revision !== e.head?.revision) { e.latest = head; e.message = '서버에 다른 판이 있습니다. 작성 내용은 유지됩니다.'; row(e); }
             else {
@@ -2418,7 +2426,7 @@ function kinCreateViewerHistory() {
         }
         // The whole author list leaves out only deleted items: a saved row it no longer has was deleted (in another window).
         // Work on such a row is kept and told; it can no longer be saved (any revision of a deleted item is refused).
-        if (!recheck) for (const e of [...entries.values()]) if (e.head && !heads.some(h => h.id === e.head.id)) {
+        if (!recheck) for (const e of [...entries.values()]) if (e.head && savedAtStart.has(e.head.id) && !heads.some(h => h.id === e.head.id)) {
           if (hasWork(e) || e.busy) { e.gone = true; e.message = '다른 창에서 지운 항목입니다. 이 창의 작성 내용은 저장되지 않습니다.'; continue; }
           removeAnnotation(e); entries.delete(e.id); e.element?.remove();
         }
@@ -2645,16 +2653,17 @@ function kinCreateViewerHistory() {
       else if (event.key === 'Enter' || event.key === ' ') for (const w of [...drawing.values()]) if (!w.element.contains(event.target)) leave(w);
     };
       const configured = new Map();
-    // The length unit a Freehand ROI was measured in, as the tool's own unit function gives it (a calibration's name included,
-    // e.g. "mm User", "cm US Region"): a closed outline's area unit without its square; an open line's from that function for
-    // the line's box as the tool takes it — the box around the line on the screen, its corners read back on the image (an
-    // ultrasound region is chosen by them) — or, with no cell showing that image, the line's box on the image itself. '' when
-    // it cannot be told, so the words never say "undefined".
-    function freehandUnit(tool, data, target, s) {
-      if (typeof s.areaUnit === 'string' && s.areaUnit) return s.areaUnit.replace('²', '');
+    // A Freehand ROI's outline length (a closed outline's perimeter, an open line's length) and its unit, as the Length tool
+    // measures: the distance along the outline on the image divided by the calibration's scale, in the unit the tool's own
+    // unit function gives for the outline's box (a calibration's name included, e.g. "mm User", "cm US Region"). The box is
+    // taken as the tool takes it — around the outline on the screen, its corners read back on the image (an ultrasound region
+    // is chosen by them) — or, with no cell showing that image, around the outline on the image. The pinned tool's own
+    // number sums distances on the screen (it changes with the zoom) and its unit is never read; null when the length cannot
+    // be told, so the words never give a screen number or "undefined".
+    function freehandLength(tool, data, target) {
       try {
         const image = tool.getTargetImageData(target), points = data.contour?.polyline;
-        if (!image?.imageData || !Array.isArray(points) || !points.length) return '';
+        if (!image?.imageData || !Array.isArray(points) || points.length < 2) return null;
         const u = cs.utilities, id = target.startsWith('imageId:') && target.slice(8);
         let v = null;
         try {
@@ -2667,9 +2676,14 @@ function kinCreateViewerHistory() {
           const [low, high] = box(points.map(p => v.worldToCanvas(p)));
           corners = [v.canvasToWorld([low[0], low[1]]), v.canvasToWorld([high[0], high[1]])].map(p => u.transformWorldToIndex(image.imageData, p));
         } else corners = box(points.map(p => u.transformWorldToIndex(image.imageData, p)));
-        const unit = ct.utilities.getCalibratedLengthUnitsAndScale(image, () => corners)?.unit;
-        return typeof unit === 'string' ? unit : '';
-      } catch (_) { return ''; }
+        const { unit, scale } = ct.utilities.getCalibratedLengthUnitsAndScale(image, () => corners) || {};
+        const along = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], (a[2] ?? 0) - (b[2] ?? 0));
+        let distance = 0;
+        for (let i = 1; i < points.length; i++) distance += along(points[i - 1], points[i]);
+        if (data.contour.closed) distance += along(points[points.length - 1], points[0]);
+        const value = distance / scale;
+        return typeof unit === 'string' && Number.isFinite(value) && value > 0 ? { value, unit } : null;
+      } catch (_) { return null; }
     }
     function configureMeasurements(group) {
       if (!group || configured.has(group)) return;
@@ -2701,16 +2715,18 @@ function kinCreateViewerHistory() {
         return lines;
       } };
       const restores = [() => { roi.configuration = previous; }];
-      // Freehand ROI's words: the pinned tool files its length unit under a name its own text does not read, so a closed
-      // outline's perimeter and an open line's length said "undefined". Its own text is made from a copy that carries the unit
-      // the tool measured in; the measurement itself (and so what is saved or exported) is not touched.
+      // Freehand ROI's words: the pinned tool gave a closed outline's perimeter and an open line's length as a distance on the
+      // screen with the unit "undefined". Its own text is made from a copy whose perimeter or length is the outline's length on
+      // the image in its unit (freehandLength), the other lines (area, values) as they are; when that length cannot be told the
+      // line is left out. The measurement itself (and so what is saved or exported) is not touched.
       const freehand = group.getToolInstance('PlanarFreehandROI'), freehandConfig = freehand?.configuration;
       if (typeof freehandConfig?.getTextLines === 'function') {
         freehand.configuration = { ...freehandConfig, getTextLines(data, target) {
           const s = data?.cachedStats?.[target];
           if (!s || typeof s.unit === 'string') return freehandConfig.getTextLines(data, target);
-          const unit = freehandUnit(freehand, data, target, s);
-          return freehandConfig.getTextLines({ ...data, cachedStats: { ...data.cachedStats, [target]: { ...s, unit } } }, target);
+          const found = freehandLength(freehand, data, target), key = data.contour?.closed ? 'perimeter' : 'length';
+          const words = { ...s, perimeter: undefined, length: undefined, unit: found?.unit ?? '', [key]: found?.value };
+          return freehandConfig.getTextLines({ ...data, cachedStats: { ...data.cachedStats, [target]: words } }, target);
         } };
         restores.push(() => { freehand.configuration = freehandConfig; });
       }
@@ -2950,7 +2966,7 @@ function kinCreateViewerHistory() {
         if (!valid(ticket) || !entries.has(e.id)) return;
         // Deleted: off the image and the list. The server keeps the item and its revisions; no list shows it again.
         if (head.item?.deleted === true) {
-          removeAnnotation(e); entries.delete(e.id); e.element?.remove();
+          deletedHere.add(head.id); removeAnnotation(e); entries.delete(e.id); e.element?.remove();
           recount(names[e.draft.kind] + ' 항목을 지웠습니다. 저장 이력은 서버에 남습니다. '); render(); return;
         }
         const duplicate = entries.get(head.id);
@@ -5757,6 +5773,43 @@ function kinCreateContextLoss() {
   return extension;
 }
 
+// Bulk data the viewer reads itself (a stored VOI LUT, a DICOM overlay plane): Orthanc builds bulk data URIs from its own
+// base URL. Only the DICOMweb instance bulk path is requested, and always on this origin, so a header cannot direct the
+// viewer elsewhere.
+function kinSameOriginBulk(uri) {
+  let url;
+  try { url = new URL(uri, location.href); } catch (_) { return null; }
+  const at = url.pathname.indexOf('/studies/');
+  const path = at < 0 ? '' : '/dicom-web' + url.pathname.slice(at);
+  return /^\/dicom-web\/studies\/[^/]+\/series\/[^/]+\/instances\/[^/]+\/bulk\/[0-9A-Fa-f/]+$/.test(path) ? path : null;
+}
+// The element's bytes are the first part of the multipart answer; a server that answers single-part sends them bare.
+function kinBulkFirstPart(bytes, type) {
+  if (!/^multipart\//i.test(type)) return bytes;
+  const boundary = /boundary="?([^";]+)"?/i.exec(type)?.[1];
+  if (!boundary) return null;
+  const encode = s => Uint8Array.from(s, c => c.charCodeAt(0));
+  const find = (needle, from) => {
+    outer: for (let i = from; i <= bytes.length - needle.length; i++) {
+      for (let j = 0; j < needle.length; j++) if (bytes[i + j] !== needle[j]) continue outer;
+      return i;
+    }
+    return -1;
+  };
+  const start = find(encode('--' + boundary), 0), body = start < 0 ? -1 : find(encode('\r\n\r\n'), start);
+  const end = body < 0 ? -1 : find(encode('\r\n--' + boundary), body + 4);
+  return end < 0 ? null : bytes.subarray(body + 4, end);
+}
+// One bulk data element's bytes, or null (not this archive's instance bulk path, refused, or not readable).
+async function kinFetchBulk(uri) {
+  const url = kinSameOriginBulk(uri);
+  if (!url) return null;
+  // DICOMweb bulk data is a multipart/related answer; Orthanc refuses a bare octet-stream Accept with 400.
+  const response = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'multipart/related; type="application/octet-stream"' } });
+  if (!response.ok) return null;
+  return kinBulkFirstPart(new Uint8Array(await response.arrayBuffer()), response.headers.get('content-type') || '');
+}
+
 // The generic comparison protocol chooses by arrival order, not by breast/view/image kind.
 // Use the existing DICOM classifier, while leaving pixels and viewport tools with OHIF.
 function kinCreateMammographyHanging() {
@@ -5770,32 +5823,6 @@ function kinCreateMammographyHanging() {
   const kinds = ['conventional', 'generated2d', 'dbt'];
   const labels = { conventional: 'Conventional', generated2d: 'Synthetic 2D', dbt: 'DBT' };
   const CT_IMAGE = '1.2.840.10008.5.1.4.1.1.2';
-  // Orthanc builds bulk data URIs from its own base URL. Only the DICOMweb instance bulk path is
-  // requested, and always on this origin, so a header cannot direct the viewer elsewhere.
-  function sameOriginBulk(uri) {
-    let url;
-    try { url = new URL(uri, location.href); } catch (_) { return null; }
-    const at = url.pathname.indexOf('/studies/');
-    const path = at < 0 ? '' : '/dicom-web' + url.pathname.slice(at);
-    return /^\/dicom-web\/studies\/[^/]+\/series\/[^/]+\/instances\/[^/]+\/bulk\/[0-9A-Fa-f/]+$/.test(path) ? path : null;
-  }
-  // The element's bytes are the first part of the multipart answer; a server that answers single-part sends them bare.
-  function firstPart(bytes, type) {
-    if (!/^multipart\//i.test(type)) return bytes;
-    const boundary = /boundary="?([^";]+)"?/i.exec(type)?.[1];
-    if (!boundary) return null;
-    const encode = s => Uint8Array.from(s, c => c.charCodeAt(0));
-    const find = (needle, from) => {
-      outer: for (let i = from; i <= bytes.length - needle.length; i++) {
-        for (let j = 0; j < needle.length; j++) if (bytes[i + j] !== needle[j]) continue outer;
-        return i;
-      }
-      return -1;
-    };
-    const start = find(encode('--' + boundary), 0), body = start < 0 ? -1 : find(encode('\r\n\r\n'), start);
-    const end = body < 0 ? -1 : find(encode('\r\n--' + boundary), body + 4);
-    return end < 0 ? null : bytes.subarray(body + 4, end);
-  }
   // U2 owns account storage. Restore through this hook after checking its owner; reset on logout.
   const preferences = {
     get: () => ({ ...preference }),
@@ -5877,13 +5904,7 @@ function kinCreateMammographyHanging() {
         }
       }
       await Promise.allSettled([...new Set(tables)].map(async uri => {
-        const url = sameOriginBulk(uri);
-        if (!url) return;
-        // DICOMweb bulk data is a multipart/related answer; Orthanc refuses a bare octet-stream Accept with 400.
-        const response = await fetch(url, { credentials: 'same-origin',
-          headers: { Accept: 'multipart/related; type="application/octet-stream"' } });
-        if (!response.ok) return;
-        const bytes = firstPart(new Uint8Array(await response.arrayBuffer()), response.headers.get('content-type') || '');
+        const bytes = await kinFetchBulk(uri);
         if (bytes && live()) lutBytes.set(uri, bytes);
       }));
     }
@@ -7272,6 +7293,46 @@ function kinCreateMultiStudyStrip() {
   onModeExit() { epoch++; active = false; current?.stop(); current = null; } };
 }
 
+// DICOM overlay planes (60xx,3000) on an image: the archive sends their bits as a bulk data address, which the pinned overlay
+// tool (Image Overlay) cannot read — it cached an empty overlay and failed on every later draw, measurements in the same cell
+// included, and turning Image Overlay off and on raised an error. Here the overlay tool reads those bits itself, as the
+// viewer reads its other bulk data (kinFetchBulk: this origin's instance bulk path), and only for overlay planes; an overlay
+// whose bits cannot be read is left out instead of cached empty. An overlay is drawn only on the image it belongs to (a slow
+// answer for an image scrolled past is not drawn on the next one) and only while Image Overlay is on.
+function kinCreateOverlayPlanes() {
+  const MARK = Symbol.for('kin.overlay-planes');
+  function install() {
+    const proto = window.cornerstoneTools?.state?.tools?.ImageOverlayViewer?.toolClass?.prototype;
+    if (!proto || proto[MARK]) return;
+    if (typeof proto._getCachedStat !== 'function' || typeof proto._renderOverlay !== 'function') return;
+    const read = proto._getCachedStat, draw = proto._renderOverlay;
+    proto._getCachedStat = async function (imageId, overlayMetadata, color) {
+      const overlays = Array.isArray(overlayMetadata?.overlays) ? overlayMetadata.overlays : [];
+      await Promise.all(overlays.map(async overlay => {
+        const data = overlay?.pixelData;
+        if (!data || overlay.dataUrl || data.Value || Array.isArray(data) || data.retrieveBulkData || data.InlineBinary ||
+            typeof data.BulkDataURI !== 'string') return;
+        let bytes = null;
+        try { bytes = await kinFetchBulk(data.BulkDataURI); } catch (_) { bytes = null; }
+        if (bytes?.length) data.Value = bytes.slice().buffer;
+      }));
+      const answer = await read.call(this, imageId, overlayMetadata, color);
+      if (Array.isArray(answer?.overlays)) {
+        answer.overlays = answer.overlays.filter(Boolean);
+        for (const overlay of answer.overlays) overlay.kinImageId = imageId;
+      }
+      return answer;
+    };
+    proto._renderOverlay = function (enabledElement, svgDrawingHelper, overlay) {
+      if (!overlay || this.mode === 'Disabled') return false;
+      if (overlay.kinImageId && overlay.kinImageId !== this.getReferencedImageId(enabledElement?.viewport)) return false;
+      return draw.call(this, enabledElement, svgDrawingHelper, overlay);
+    };
+    proto[MARK] = true;
+  }
+  return { id: 'kin.overlay-planes', preRegistration() { install(); }, onModeEnter() { install(); } };
+}
+
 // The viewer's route `/` (see customizationService below): leave the viewer app for the sign-in entry, which sends a signed-in
 // account to its home screen (KinAuth.home: the worklist, or the clinician screen) and anyone else to sign in.
 function kinViewerRootToWorklist() {
@@ -7280,7 +7341,7 @@ function kinViewerRootToWorklist() {
 }
 
 window.config = {
-  extensions: [kinCreateSessionBoundary(), kinStackPrecision, kinCreateFrameMetadata(), kinCreateSRProvenance(), kinCreateViewerHistory(), kinCreateViewerFindings(), kinCreateViewerLayout(), kinCreateViewerJobs(), kinCreateViewerTechNote(), kinCreateFrameCoverage(), '@ohif/extension-dicom-pdf', kinCreateDicomPdf(), kinCreateCTSync(), kinCreateCine(), kinCreateDisplayScope(), kinCreateCellMerge(), kinCreateImagesOnly(), kinCreateImageText(), kinCreateCTPresets(), kinCreateThreeDCursor(), kinCreateSeriesMetadataRecovery(), kinCreateImageLoadStatus(), kinCreateContextLoss(), kinCreateMammographyHanging(), kinCreateSeriesSplit(), kinCreateSeriesOrder(), kinCreateMGReferenceLines(), kinCreateStudyPrefetch(), kinCreateStudySearch(), kinCreateViewerUX(), kinCreateViewerPrior(), kinCreateViewerReportPanel(), kinCreateMultiStudyStrip(), kinCreateMarkerStyle()],
+  extensions: [kinCreateSessionBoundary(), kinStackPrecision, kinCreateFrameMetadata(), kinCreateSRProvenance(), kinCreateViewerHistory(), kinCreateViewerFindings(), kinCreateViewerLayout(), kinCreateViewerJobs(), kinCreateViewerTechNote(), kinCreateFrameCoverage(), '@ohif/extension-dicom-pdf', kinCreateDicomPdf(), kinCreateCTSync(), kinCreateCine(), kinCreateDisplayScope(), kinCreateCellMerge(), kinCreateImagesOnly(), kinCreateImageText(), kinCreateCTPresets(), kinCreateThreeDCursor(), kinCreateSeriesMetadataRecovery(), kinCreateImageLoadStatus(), kinCreateContextLoss(), kinCreateMammographyHanging(), kinCreateSeriesSplit(), kinCreateSeriesOrder(), kinCreateMGReferenceLines(), kinCreateStudyPrefetch(), kinCreateStudySearch(), kinCreateViewerUX(), kinCreateViewerPrior(), kinCreateViewerReportPanel(), kinCreateMultiStudyStrip(), kinCreateMarkerStyle(), kinCreateOverlayPlanes()],
   // REQ-D-3D-CURSOR. 3D Cursor(대응점 표시)는 뷰어에 켜져 있다. 판독자는 도구 영역의 3D Cursor
   // 버튼으로 모드에 들어간다. === true 하나만 ON이고, 끄는 길도 이 리터럴 하나뿐이다.
   kinThreeDCursor: { enabled: true },
@@ -7327,30 +7388,3 @@ window.config = {
     }
   },
 };
-
-// Elements the archive sends as a bulk data address instead of a value — DICOM overlay planes (60xx,3000) among them — are
-// fetched when a tool asks for them. The DICOMweb data source comes from the Orthanc viewer plugin, which appends its
-// `window.config.dataSources = [...]` after this file; that block neither turns bulk data addresses on (the overlay tool then
-// caches an empty overlay and fails on every draw, measurements in the same cell included) nor takes bulk data as anything
-// but single part, which the archive does not answer. The block is adjusted here as it is set: addresses on, bulk data read
-// multipart (PDF and video stay single part, as before). An address of this archive's instance bulk data is reduced to its
-// instance path, which the data source resolves under its own root — this origin, as the product's other bulk reads.
-function kinBulkDataSources(sources) {
-  if (!Array.isArray(sources)) return sources;
-  const tail = uri => {
-    const found = typeof uri === 'string' &&
-      /^(?:https?:\/\/[^/]+)?\/dicom-web\/studies\/[^/]+\/series\/[^/]+\/(instances\/[^/?#]+\/bulk\/[0-9A-Fa-f/]+)$/.exec(uri);
-    return found ? found[1] : uri;
-  };
-  return sources.map(source => {
-    const c = source?.configuration;
-    if (!c || typeof c !== 'object' || !/dicomweb$/.test(String(source.namespace || ''))) return source;
-    const parts = typeof c.singlepart === 'string' ? c.singlepart.split(',').map(s => s.trim()).filter(s => s && s !== 'bulkdata').join(',') : c.singlepart;
-    return { ...source, configuration: { ...c, singlepart: parts, bulkDataURI: { ...(c.bulkDataURI || {}), enabled: true, transform: tail } } };
-  });
-}
-(function (config) {
-  let sources = kinBulkDataSources(config.dataSources);
-  Object.defineProperty(config, 'dataSources', { configurable: true, enumerable: true,
-    get: () => sources, set: value => { sources = kinBulkDataSources(value); } });
-})(window.config);

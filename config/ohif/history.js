@@ -858,6 +858,8 @@ function kinCreateViewerHistory() {
     // status is that text and the count; without one only a count already shown is brought up to date, so another message the
     // status shows meanwhile (a reason, an error, a recheck) is not overwritten.
     const COUNT_TAIL = '개 저장 항목';
+    // Items this panel deleted (the server keeps them and their revisions; no list of the author's shows them again).
+    const deletedHere = new Set();
     function recount(lead) {
       const n = [...entries.values()].filter(e => e.head && !e.gone).length;
       if (typeof lead === 'string') status.textContent = lead + n + COUNT_TAIL + ' · 저장은 판독 확정과 별개입니다.';
@@ -867,6 +869,9 @@ function kinCreateViewerHistory() {
     async function load(resume = false, recheck = null, answered = false) {
       if (!scope || ended || loading) return;
       const ticket = generation, seq = ++readSequence; loading = true; tried = Date.now();
+      // Saved items as this read begins: only one of these can be judged deleted in another window by its absence from the
+      // answer (an item saved while the read was on its way is not in it yet).
+      const savedAtStart = new Set([...entries.values()].filter(e => e.head).map(e => e.head.id));
       status.textContent = '저장 항목 확인 중…';
       try {
         if (!answered) await authenticate(ticket);
@@ -890,7 +895,10 @@ function kinCreateViewerHistory() {
           recovery.delete(scope);
         }
         for (const head of heads) {
+          // Deleted here while this read was on its way: an older answer does not bring it back.
+          if (deletedHere.has(head.id)) continue;
           let e = entries.get(head.id);
+          if (e) e.gone = false;
           if (e && (e.editing || e.pending || e.busy)) {
             if (head.revision !== e.head?.revision) { e.latest = head; e.message = '서버에 다른 판이 있습니다. 작성 내용은 유지됩니다.'; row(e); }
             else {
@@ -911,7 +919,7 @@ function kinCreateViewerHistory() {
         }
         // The whole author list leaves out only deleted items: a saved row it no longer has was deleted (in another window).
         // Work on such a row is kept and told; it can no longer be saved (any revision of a deleted item is refused).
-        if (!recheck) for (const e of [...entries.values()]) if (e.head && !heads.some(h => h.id === e.head.id)) {
+        if (!recheck) for (const e of [...entries.values()]) if (e.head && savedAtStart.has(e.head.id) && !heads.some(h => h.id === e.head.id)) {
           if (hasWork(e) || e.busy) { e.gone = true; e.message = '다른 창에서 지운 항목입니다. 이 창의 작성 내용은 저장되지 않습니다.'; continue; }
           removeAnnotation(e); entries.delete(e.id); e.element?.remove();
         }
@@ -1138,16 +1146,17 @@ function kinCreateViewerHistory() {
       else if (event.key === 'Enter' || event.key === ' ') for (const w of [...drawing.values()]) if (!w.element.contains(event.target)) leave(w);
     };
       const configured = new Map();
-    // The length unit a Freehand ROI was measured in, as the tool's own unit function gives it (a calibration's name included,
-    // e.g. "mm User", "cm US Region"): a closed outline's area unit without its square; an open line's from that function for
-    // the line's box as the tool takes it — the box around the line on the screen, its corners read back on the image (an
-    // ultrasound region is chosen by them) — or, with no cell showing that image, the line's box on the image itself. '' when
-    // it cannot be told, so the words never say "undefined".
-    function freehandUnit(tool, data, target, s) {
-      if (typeof s.areaUnit === 'string' && s.areaUnit) return s.areaUnit.replace('²', '');
+    // A Freehand ROI's outline length (a closed outline's perimeter, an open line's length) and its unit, as the Length tool
+    // measures: the distance along the outline on the image divided by the calibration's scale, in the unit the tool's own
+    // unit function gives for the outline's box (a calibration's name included, e.g. "mm User", "cm US Region"). The box is
+    // taken as the tool takes it — around the outline on the screen, its corners read back on the image (an ultrasound region
+    // is chosen by them) — or, with no cell showing that image, around the outline on the image. The pinned tool's own
+    // number sums distances on the screen (it changes with the zoom) and its unit is never read; null when the length cannot
+    // be told, so the words never give a screen number or "undefined".
+    function freehandLength(tool, data, target) {
       try {
         const image = tool.getTargetImageData(target), points = data.contour?.polyline;
-        if (!image?.imageData || !Array.isArray(points) || !points.length) return '';
+        if (!image?.imageData || !Array.isArray(points) || points.length < 2) return null;
         const u = cs.utilities, id = target.startsWith('imageId:') && target.slice(8);
         let v = null;
         try {
@@ -1160,9 +1169,14 @@ function kinCreateViewerHistory() {
           const [low, high] = box(points.map(p => v.worldToCanvas(p)));
           corners = [v.canvasToWorld([low[0], low[1]]), v.canvasToWorld([high[0], high[1]])].map(p => u.transformWorldToIndex(image.imageData, p));
         } else corners = box(points.map(p => u.transformWorldToIndex(image.imageData, p)));
-        const unit = ct.utilities.getCalibratedLengthUnitsAndScale(image, () => corners)?.unit;
-        return typeof unit === 'string' ? unit : '';
-      } catch (_) { return ''; }
+        const { unit, scale } = ct.utilities.getCalibratedLengthUnitsAndScale(image, () => corners) || {};
+        const along = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], (a[2] ?? 0) - (b[2] ?? 0));
+        let distance = 0;
+        for (let i = 1; i < points.length; i++) distance += along(points[i - 1], points[i]);
+        if (data.contour.closed) distance += along(points[points.length - 1], points[0]);
+        const value = distance / scale;
+        return typeof unit === 'string' && Number.isFinite(value) && value > 0 ? { value, unit } : null;
+      } catch (_) { return null; }
     }
     function configureMeasurements(group) {
       if (!group || configured.has(group)) return;
@@ -1194,16 +1208,18 @@ function kinCreateViewerHistory() {
         return lines;
       } };
       const restores = [() => { roi.configuration = previous; }];
-      // Freehand ROI's words: the pinned tool files its length unit under a name its own text does not read, so a closed
-      // outline's perimeter and an open line's length said "undefined". Its own text is made from a copy that carries the unit
-      // the tool measured in; the measurement itself (and so what is saved or exported) is not touched.
+      // Freehand ROI's words: the pinned tool gave a closed outline's perimeter and an open line's length as a distance on the
+      // screen with the unit "undefined". Its own text is made from a copy whose perimeter or length is the outline's length on
+      // the image in its unit (freehandLength), the other lines (area, values) as they are; when that length cannot be told the
+      // line is left out. The measurement itself (and so what is saved or exported) is not touched.
       const freehand = group.getToolInstance('PlanarFreehandROI'), freehandConfig = freehand?.configuration;
       if (typeof freehandConfig?.getTextLines === 'function') {
         freehand.configuration = { ...freehandConfig, getTextLines(data, target) {
           const s = data?.cachedStats?.[target];
           if (!s || typeof s.unit === 'string') return freehandConfig.getTextLines(data, target);
-          const unit = freehandUnit(freehand, data, target, s);
-          return freehandConfig.getTextLines({ ...data, cachedStats: { ...data.cachedStats, [target]: { ...s, unit } } }, target);
+          const found = freehandLength(freehand, data, target), key = data.contour?.closed ? 'perimeter' : 'length';
+          const words = { ...s, perimeter: undefined, length: undefined, unit: found?.unit ?? '', [key]: found?.value };
+          return freehandConfig.getTextLines({ ...data, cachedStats: { ...data.cachedStats, [target]: words } }, target);
         } };
         restores.push(() => { freehand.configuration = freehandConfig; });
       }
@@ -1443,7 +1459,7 @@ function kinCreateViewerHistory() {
         if (!valid(ticket) || !entries.has(e.id)) return;
         // Deleted: off the image and the list. The server keeps the item and its revisions; no list shows it again.
         if (head.item?.deleted === true) {
-          removeAnnotation(e); entries.delete(e.id); e.element?.remove();
+          deletedHere.add(head.id); removeAnnotation(e); entries.delete(e.id); e.element?.remove();
           recount(names[e.draft.kind] + ' 항목을 지웠습니다. 저장 이력은 서버에 남습니다. '); render(); return;
         }
         const duplicate = entries.get(head.id);

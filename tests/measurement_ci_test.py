@@ -2020,7 +2020,7 @@ class MeasurementCiTests(unittest.TestCase):
         self.assertEqual([node.name for node in cls.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')],
                          ['test_overlay_units_01_an_overlay_plane_is_drawn_turned_off_and_on_and_measured_on',
                           'test_overlay_units_02_a_palette_colour_image_is_drawn_without_an_error',
-                          'test_overlay_units_03_freehand_roi_says_its_perimeter_and_length_in_mm',
+                          'test_overlay_units_03_freehand_roi_says_its_outline_length_in_mm_at_any_zoom',
                           'test_overlay_units_04_the_saved_item_count_follows_save_and_delete'])
         self.assertNotIn('viewer-overlay-units', self.catalog.text(automatic_only=True))
         dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')

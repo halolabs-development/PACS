@@ -6,6 +6,7 @@ tables sent as bulk data) is drawn without an error. A Freehand ROI says its per
 in mm, never "undefined". The history panel's "n개 저장 항목" follows a Save and a Delete at once."""
 import json
 import os
+import re
 import sys
 import time
 import unittest
@@ -27,6 +28,23 @@ EVIDENCE = Path(os.environ.get('KIN_EVIDENCE_DIR', 'tests/e2e/artifacts/viewer-o
 CELL = '''() => services.cornerstoneViewportService.getCornerstoneViewport(services.viewportGridService.getActiveViewportId())'''
 SVG_TEXT = '''() => [...(%s)().element.querySelectorAll('svg.svg-layer text')].map(t => t.textContent).join(' | ')''' % CELL
 OVERLAY_IMAGES = '''() => (%s)().element.querySelectorAll('svg.svg-layer image').length''' % CELL
+# The drawn overlay: its bitmap sampled inside each bar (image columns 40-71 and 184-215, rows 64-191), between them and above
+# them, and its box on the screen beside the image's own box (the overlay covers the whole image from its first pixel).
+OVERLAY_BITMAP = '''async () => { const v = (%s)(), node = v.element.querySelector('svg.svg-layer image');
+  const img = new Image(); img.src = node.getAttribute('href') || node.getAttribute('xlink:href'); await img.decode();
+  const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+  const g = c.getContext('2d'); g.drawImage(img, 0, 0); const on = (x, y) => g.getImageData(x, y, 1, 1).data[3] > 0;
+  const id = v.getCurrentImageId(), px = cornerstone.metaData.get('imagePixelModule', id);
+  const a = v.worldToCanvas(cornerstone.utilities.imageToWorldCoords(id, [0, 0]));
+  const b = v.worldToCanvas(cornerstone.utilities.imageToWorldCoords(id, [px.columns, px.rows]));
+  const box = name => Number(node.getAttribute(name));
+  return { size: [img.naturalWidth, img.naturalHeight], bars: [on(56, 128), on(200, 128)], between: [on(128, 128), on(56, 20)],
+    svg: [box('x'), box('y'), box('width'), box('height')], image: [a[0], a[1], b[0] - a[0], b[1] - a[1]] }; }''' % CELL
+# Each Freehand ROI's outline length on the image (world distances along its points, closed back to the first point).
+OUTLINES = '''() => cornerstoneTools.annotation.state.getAllAnnotations().filter(a => a.metadata.toolName === 'PlanarFreehandROI').map(a => {
+  const p = a.data.contour.polyline, d = (u, w) => Math.hypot(u[0] - w[0], u[1] - w[1], u[2] - w[2]); let n = 0;
+  for (let i = 1; i < p.length; i++) n += d(p[i - 1], p[i]); if (a.data.contour.closed) n += d(p[p.length - 1], p[0]);
+  return [a.data.contour.closed, n]; })'''
 
 
 class ViewerOverlayUnitsE2E(ViewerToolsE2E):
@@ -125,6 +143,10 @@ class ViewerOverlayUnitsE2E(ViewerToolsE2E):
             self.assertTrue(bulk and all(status == 200 for _, status in bulk), bulk)
             self.assertTrue(all(url.startswith(self.stack.proxy + '/dicom-web/studies/' + fixture.uid + '/') for url, _ in bulk), bulk)
             page.screenshot(path=str(EVIDENCE / 'overlay-on.png'))
+            drawn = page.evaluate(OVERLAY_BITMAP)
+            self.assertEqual([drawn['size'], drawn['bars'], drawn['between']], [[256, 256], [True, True], [False, False]], drawn)
+            for got, want in zip(drawn['svg'], drawn['image']):
+                self.assertAlmostEqual(got, want, delta=1.5, msg=drawn)
             # Off: gone. On again: drawn again, without a failure.
             select_image_tool(page, 'Image Overlay')
             page.wait_for_function('() => (%s)() === 0' % OVERLAY_IMAGES)
@@ -149,9 +171,10 @@ class ViewerOverlayUnitsE2E(ViewerToolsE2E):
             page.close(); work.close()
 
     def test_overlay_units_02_a_palette_colour_image_is_drawn_without_an_error(self):
-        # Its colour tables are bulk data too, now with an address the viewer may fetch. The pinned viewer draws such an image
-        # without its colours before and after (its palette reader cannot use fetched tables); what this case holds is that
-        # the image is still drawn and nothing fails. The colour seen is written down for the record.
+        # Its colour tables are bulk data too; only overlay planes are read by the viewer's own bulk read, so this image is read
+        # as before. The pinned viewer draws such an image without its colours (its palette reader cannot use tables sent as an
+        # address) on the current viewer as well; what this case holds is that the image is drawn and nothing fails. The colour
+        # seen is written down for the record.
         fixture = self.palette_image()
         work, page = self.open_tools_viewer(fixture)
         errors = self.watched(page)
@@ -173,7 +196,7 @@ class ViewerOverlayUnitsE2E(ViewerToolsE2E):
         finally:
             page.close(); work.close()
 
-    def test_overlay_units_03_freehand_roi_says_its_perimeter_and_length_in_mm(self):
+    def test_overlay_units_03_freehand_roi_says_its_outline_length_in_mm_at_any_zoom(self):
         fixture = self.plain_ct()
         work, page = self.open_tools_viewer(fixture)
         errors = self.watched(page)
@@ -194,6 +217,23 @@ class ViewerOverlayUnitsE2E(ViewerToolsE2E):
             text = page.evaluate(SVG_TEXT)
             page.screenshot(path=str(EVIDENCE / 'freehand.png'))
             self.assertNotIn('undefined', text)
+            # The numbers are the outlines' lengths on the image (this CT has no calibration: mm as they are), not on the screen.
+            def said():
+                words = page.evaluate(SVG_TEXT).split(' | ')
+                closed = [float(m) for w in words for m in re.findall(r'Perimeter: ([0-9.]+) mm', w)]
+                opened = [float(w.strip()[:-3]) for w in words if re.fullmatch(r'[0-9.]+ mm', w.strip())]
+                return closed, opened
+            outlines = dict((closed, length) for closed, length in page.evaluate(OUTLINES))
+            closed, opened = said()
+            self.assertEqual(len(closed), 1, text); self.assertEqual(len(opened), 1, text)
+            self.assertAlmostEqual(closed[0], outlines[True], delta=1, msg=(text, outlines))
+            self.assertAlmostEqual(opened[0], outlines[False], delta=1, msg=(text, outlines))
+            # Zoomed in twice as far: the same numbers.
+            page.evaluate('''() => { const v = (%s)(); v.setZoom(v.getZoom() * 2); v.render(); }''' % CELL)
+            page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+            page.wait_for_timeout(500)
+            self.assertEqual(said(), (closed, opened), page.evaluate(SVG_TEXT))
+            page.screenshot(path=str(EVIDENCE / 'freehand-zoomed.png'))
             # The words only: the measurement the tool keeps (what an export reads) is as the pinned tool made it.
             kept = page.evaluate('''() => cornerstoneTools.annotation.state.getAllAnnotations().filter(a => a.metadata.toolName === 'PlanarFreehandROI')
                 .map(a => Object.values(a.data.cachedStats)[0]).map(s => ({unit: s.unit ?? null, areaUnit: s.areaUnit ?? null}))''')
