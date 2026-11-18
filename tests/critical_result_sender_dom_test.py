@@ -2497,6 +2497,99 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
         self.assertEqual(1, len(cells))
         self.assertIn(actor[first["body"]["recipientSub"]], cells[0])
 
+    # SD13i-l: every outcome line names the account its own request was sent to ("요청 대상"), fixed at Send.
+    TWIN = {"sub": "cccccccc-dddd-4eee-afff-000000000002", "actor": "syn-clinician-twin@kin", "name": P["name"], "role": "clinician"}
+    WHO = "#cvr-send-status > p.cvr-who"
+
+    def test_sd13i_a_refusal_stays_the_refused_accounts_after_the_choice_moves_to_a_namesake(self):
+        self.server.candidates[A] = [P, self.TWIN]
+        self.server.add(A, P)
+        self.inbox_marks(None)
+        self.ready_reader()
+        self.mark()
+        self.tick(P)
+        self.page.locator("#cvr-send-message").fill("SYN critical finding")
+        self.page.locator("#cvr-send-submit").click()
+        self.dialog_says(NOT_DELIVERED)
+        expect(self.page.locator(self.WHO)).to_have_text(f"요청 대상: {P['name']} ({P['actor']}) · Clinician")
+        # The choice moves to the namesake; nothing is sent and the line still names the refused request's account.
+        self.tick(P, False)
+        self.tick(self.TWIN)
+        self.settle()
+        expect(self.page.locator(self.WHO)).to_have_text(f"요청 대상: {P['name']} ({P['actor']}) · Clinician")
+        self.assertIn(NOT_DELIVERED, self.view()["dialog"]["status"])
+        self.assertEqual([P["sub"]], [c["body"]["recipientSub"] for c in self.requests("create")], "no POST to the namesake")
+
+    def test_sd13j_answers_in_reverse_order_keep_each_lines_own_account_and_state(self):
+        self.server.candidates[A] = [P, self.TWIN]
+        self.inbox_marks(None)
+        self.ready_reader()
+        self.mark()
+        self.tick(P)
+        self.tick(self.TWIN)
+        self.page.locator("#cvr-send-message").fill("SYN critical finding")
+        self.fault("create", hold=True, apply=True)
+        self.fault("create", hold=True, status=409, body={"code": "CRITICAL_RESULT_RECIPIENT_CANNOT_READ", "message": "SYN cannot read"})
+        self.page.locator("#cvr-send-submit").click()
+        first, second = self.take("create", 2)
+        self.release(second)
+        self.release(first)
+        expect(self.page.locator(self.EACH.format("delivered"))).to_have_count(1)
+        actor = {P["sub"]: P["actor"], self.TWIN["sub"]: self.TWIN["actor"]}
+        delivered = self.page.locator(self.EACH.format("delivered")).inner_text()
+        refused = self.page.locator(self.EACH.format("rejected")).inner_text()
+        self.assertIn("요청 대상: ", delivered)
+        self.assertIn(actor[first["body"]["recipientSub"]], delivered)
+        self.assertIn(actor[second["body"]["recipientSub"]], refused)
+        self.assertNotIn(actor[second["body"]["recipientSub"]], delivered)
+
+    def test_sd13k_one_acknowledgement_is_that_accounts_record_only(self):
+        self.inbox_marks(P)
+        self.ready_reader()
+        self.mark()
+        self.tick(X)
+        self.page.locator("#cvr-send-message").fill("SYN critical finding")
+        self.page.locator("#cvr-send-submit").click()
+        expect(self.page.locator(self.EACH.format("delivered"))).to_have_count(2)
+        self.close_dialog()
+        acked = next(r for r in self.server.records.values() if r["recipient"]["sub"] == P["sub"])
+        acked.update(state="acknowledged", revision=2, acknowledgedAt=iso(57))
+        self.show_sent()
+        self.page.locator("#cvr-sent-filter").select_option("all")
+        expect(self.page.locator("#cvr-sent-rows tr[data-id]")).to_have_count(2)
+        rows = {r["cells"][1]: r["cells"][3] for r in self.view()["panel"]["rows"]}
+        by = {next(k for k in rows if P["actor"] in k): "P", next(k for k in rows if X["actor"] in k): "X"}
+        states = {by[k]: v for k, v in rows.items()}
+        self.assertTrue(states["P"].startswith("Acknowledged"), states)
+        self.assertTrue(states["X"].startswith("Pending ACK"), states)
+
+    def test_sd13l_disconnected_two_checked_sends_nothing_and_a_lost_answer_is_checked_with_its_own_request(self):
+        self.inbox_marks(P)
+        self.ready_reader()
+        self.mark()
+        self.tick(X)
+        self.page.locator("#cvr-send-message").fill("SYN critical finding")
+        self.page.evaluate(self.CONNECTION, False)
+        self.settle()
+        expect(self.page.locator("#cvr-send-submit")).to_be_disabled()
+        self.page.evaluate("() => document.querySelector('#cvr-send-submit').click()")
+        self.settle()
+        self.assertEqual([], self.requests("create"), "no POST while disconnected")
+        self.page.evaluate(self.CONNECTION, True)
+        self.entry_settled()
+        # The first answer is lost before the server applied it: unknown, settled only by Check Again with its own bytes.
+        self.fault("create", abort=True)
+        self.page.locator("#cvr-send-submit").click()
+        expect(self.page.locator(self.EACH.format("unknown"))).to_have_count(1)
+        expect(self.page.locator(self.EACH.format("delivered"))).to_have_count(1)
+        lost = self.requests("create")[0]
+        self.assertIn(UNKNOWN_WORD, self.page.locator(self.EACH.format("unknown")).inner_text())
+        self.page.locator("#cvr-send-check").click()
+        expect(self.page.locator(self.EACH.format("delivered"))).to_have_count(2)
+        creates = self.requests("create")
+        self.assertEqual(3, len(creates))
+        self.assertEqual(lost["raw"], creates[2]["raw"], "Check Again sends that request's own id and body")
+
     # ── SD11 ──
     def test_sd11_the_periodic_re_read_only_reads_and_an_acknowledged_record_stays_reachable(self):
         r1 = self.server.add(A, P)

@@ -2776,6 +2776,10 @@ window.KinLanguageTerms = {
     ["서버 연결이 끊겨 지금은 보낼 수 없습니다. 쓴 내용은 그대로 있습니다.", "Disconnected from the server, so this cannot be sent now. What you wrote stays.", "m"],
     // Send Critical Result: the recipients (check boxes; the hospital inbox comes checked, the ordering physician is a name only).
     ["Hospital inbox", "병원 공용 수신", "l"],
+    ["요청 대상:", "Sent to:", "l"],
+    ["요청 대상 알 수 없음", "Recipient of the request unknown", "l"],
+    ["받는 회원을 고르거나 해제하세요", "Choose the receiving member or clear it", "s"],
+    ["병원 수신 회원은 이 기관의 활성 임상의 또는 판독의여야 합니다", "The hospital inbox member must be an active clinician or radiologist of this institution", "s"],
     ["Ordering physician (ReqDoc):", "처방의(ReqDoc):", "l"],
     ["오더·검사에 처방의(ReqDoc) 이름이 없습니다.", "The order and study carry no ordering physician (ReqDoc) name.", "m"],
     ["처방의는 이름만 있어 회원과 자동으로 잇지 않습니다. 목록에서 그 의사를 직접 고르세요.", "The ordering physician is a name only and is not matched to a member automatically. Choose that physician in the list.", "m"],

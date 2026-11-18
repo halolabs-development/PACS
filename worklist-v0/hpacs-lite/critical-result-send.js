@@ -82,6 +82,9 @@
       inboxUnlisted: '병원 공용 수신(Hospital inbox)으로 정한 회원은 지금 이 판독 판을 받을 수 없어 목록에 없습니다.',
       inboxPending: '병원 공용 수신(Hospital inbox)에는 이미 확인 대기 중인 전달이 있어 미리 고르지 않았습니다.',
       each: '받는 사람마다 기록 하나씩 따로 보냅니다. 결과는 사람마다 아래에 있습니다.',
+      // Every outcome line names the account its request was sent to (fixed on the request at Send).
+      target: '요청 대상:',
+      targetUnknown: '요청 대상 알 수 없음',
     },
     // 첫 Send가 확정 SOURCE_MOVED로 거절된 뒤 열린 창이 지금 판과 후보를 다시 읽을 때(§8). 다시 보내는 것은 사용자의 다음 Send다.
     moved: {
@@ -324,11 +327,14 @@
       return element;
     };
     const statusWord = make('p', 'cvr-word'), statusText = make('p', 'cvr-text'), statusDetail = make('p', 'cvr-detail');
+    // The account the shown request was sent to (one recipient); a Send to several names it on each line below.
+    const statusWho = make('p', 'cvr-who');
+    statusWho.hidden = true;
     // One line per recipient when one Send went to more than one person (each its own request and record).
     const eachList = make('ul');
     eachList.id = 'cvr-send-each';
     eachList.hidden = true;
-    statusBox.append(statusWord, statusText, statusDetail, eachList);
+    statusBox.append(statusWord, statusWho, statusText, statusDetail, eachList);
     const modeNote = make('p', 'cvr-note');
     modeNote.id = 'cvr-sent-mode-reason';
     modeNote.setAttribute('role', 'status');
@@ -511,7 +517,7 @@
     // ── 발신 창(Send Critical Result) ──
 
     function resetForm() {
-      recipientField.replaceChildren(make('legend', null, 'Recipient'));
+      recipientField.replaceChildren(kinWrite(make('legend'), kinSay('Recipient')));
       recipientNote.replaceChildren();
       messageField.value = '';
     }
@@ -532,11 +538,11 @@
         const label = make('label');
         label.dataset.sub = r.sub;
         label.append(box, person, make('span', null, `· ${ROLES[r.role]}`));
-        if (r.inbox) label.append(make('span', 'cvr-tag', TEXT.recipients.inbox));
-        if (r.pending) label.append(make('span', 'cvr-tag', TEXT.recipients.pending));
+        if (r.inbox) label.append(kinWrite(make('span', 'cvr-tag'), kinSay(TEXT.recipients.inbox)));
+        if (r.pending) label.append(kinWrite(make('span', 'cvr-tag'), kinSay(TEXT.recipients.pending)));
         return label;
       });
-      recipientField.replaceChildren(make('legend', null, 'Recipient'), ...boxes);
+      recipientField.replaceChildren(kinWrite(make('legend'), kinSay('Recipient')), ...boxes);
       paintRecipientNote(read);
     }
 
@@ -550,12 +556,13 @@
         const name = make('span', null, doctor);
         name.setAttribute('translate', 'no');
         const line = make('span');
-        line.append(make('span', null, TEXT.recipients.ordering), name, make('span', null, `\n${TEXT.recipients.orderingHint}`));
+        line.append(kinWrite(make('span'), kinSay(TEXT.recipients.ordering)), name, make('span', null, '\n'),
+          kinWrite(make('span'), kinSay(TEXT.recipients.orderingHint)));
         lines.push(line);
-      } else lines.push(make('span', null, TEXT.recipients.orderingNone));
+      } else lines.push(kinWrite(make('span'), kinSay(TEXT.recipients.orderingNone)));
       const inbox = read.inbox === 'none' ? TEXT.recipients.inboxNone : read.inbox === 'unlisted' ? TEXT.recipients.inboxUnlisted
         : read.recipients.some(r => r.inbox && r.pending) ? TEXT.recipients.inboxPending : '';
-      if (inbox) lines.push(make('span', null, `\n${inbox}`));
+      if (inbox) lines.push(make('span', null, '\n'), kinWrite(make('span'), kinSay(inbox)));
       recipientNote.replaceChildren(...lines);
     }
 
@@ -619,6 +626,9 @@
       statusText.textContent = line;
       statusDetail.textContent = [detail, waiting].filter(Boolean).join('\n');
       statusDetail.hidden = !detail && !waiting;
+      if (attempt && !locked) sentTo(attempt, statusWho);
+      else statusWho.replaceChildren();
+      statusWho.hidden = !(attempt && !locked);
       paintEach(dialogMany ? list : []);
       const editable = sender() && live(dialogOwner) && view && view.phase === 'ready' && allRefused();
       recipientField.disabled = !editable;
@@ -633,6 +643,20 @@
       kinWrite(checkButton, open.length && open.every(item => item.state === 'not-sent') ? kinSay('Send') : kinSay('Check Again'));
     }
 
+    /**
+     * The one place an outcome names its person: the account fixed on that request when it was sent - the same candidate whose
+     * sub is the request's recipientSub. Never the current check boxes, the order of answers or a name alone. Without an
+     * account on the request it says so.
+     */
+    function sentTo(attempt, element) {
+      const label = kinWrite(make('span'), kinSay(attempt.who ? TEXT.recipients.target : TEXT.recipients.targetUnknown));
+      if (!attempt.who) return element.replaceChildren(label), element;
+      const person = make('span', 'cvr-line-what', ` ${attempt.who}`);
+      person.setAttribute('translate', 'no');
+      element.replaceChildren(label, person);
+      return element;
+    }
+
     /** One line per recipient of a Send that went to more than one person: that request's own word, sentence and detail. */
     function paintEach(list) {
       eachList.hidden = !list.length;
@@ -641,9 +665,7 @@
         const entry = make('li');
         entry.dataset.state = item.state;
         entry.dataset.request = item.requestId;
-        const person = make('span', 'cvr-line-what', item.who);
-        person.setAttribute('translate', 'no');
-        entry.append(make('strong', 'cvr-word', word || 'Sending'), make('span', null, ' · '), person,
+        entry.append(kinWrite(make('strong', 'cvr-word'), word || kinSay('Sending')), make('span', null, ' · '), sentTo(item, make('span')),
           make('span', 'cvr-text', `\n${line}`));
         if (detail) entry.append(make('span', 'cvr-detail', `\n${detail}`));
         return entry;
@@ -732,6 +754,8 @@
       resetForm();
       statusBox.dataset.state = '';
       statusWord.textContent = statusText.textContent = statusDetail.textContent = '';
+      statusWho.replaceChildren();
+      statusWho.hidden = true;
       paintEach([]);
       studyLine.textContent = sourceLine.textContent = '';
       checkButton.hidden = true;
