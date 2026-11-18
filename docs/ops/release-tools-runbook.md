@@ -48,6 +48,13 @@ is an admission condition for a clean install.
    `clean_env` drops an exported value. `.env` is not tracked, so `backup()`
    does not count the change as a dirty checkout.
 
+   Put the site's preload disk cap `KIN_PRELOAD_DISK_GB=<GiB>` in the same
+   `.env`: a positive number the site decides from the reading PC's free disk
+   ([preload-cache.md](preload-cache.md); `.env.example` carries `change-me`).
+   The product has no default. Without a valid value the stack still starts, but
+   Preload stays off, every study's Preload shows Failed with that reason and the
+   API logs one startup line naming `KIN_PRELOAD_DISK_GB`; step 3 checks for it.
+
    Decide signing before Compose starts. Online approvals are enabled at
    installation exactly when the custody configuration
    `/etc/kin-deploy/emr-wrapping-custody.json` is installed (Nightly job). Its
@@ -125,6 +132,17 @@ is an admission condition for a clean install.
    the API's authentication configuration. If either request fails, inspect the
    service logs and keep the installation unverified. After correcting the cause,
    repeat this bounded check and preserve the first failure in the release record.
+   Then check that the started API has the preload disk cap: its log carries no
+   startup line naming the setting.
+
+   ```python
+   logs = ops.run(['docker', 'logs', 'kin-api'])
+   assert b'KIN_PRELOAD_DISK_GB' not in logs.stdout + logs.stderr, 'Set KIN_PRELOAD_DISK_GB in .env'
+   ```
+
+   On failure set the value in `.env`, recreate the API with the same `compose`
+   (`ops.run(compose + ['up', '-d', 'api'], timeout=install_timeout)`), then
+   repeat the readiness loop and this check.
    Then perform the approved synthetic save/reopen and signing checks
    ([below](#synthetic-savereopen-and-signing-checks)) before clinical handover.
    Save their actual outcomes in the release record.
@@ -813,7 +831,8 @@ looked at.
    container or perform another backup between the last judgement and opening the entry, and compare the
    container events of the whole project over that interval: the proxy's start is the only one.
 7. Verify HTTPS, the actual served worklist/viewer files and sign-in theme, image labels, migrations,
-   signing-key access and the realm issuer, and that both file-reading services were created from the
+   signing-key access and the realm issuer, that the new API's log carries no startup line naming
+   `KIN_PRELOAD_DISK_GB` (installation step 3), and that both file-reading services were created from the
    candidate's directory after the switch began. Only after these checks: write what the declaration says
    moves with the site, file by file, load the managers, and let the declared executors go again, the
    schedulers first and, in a later request, what starts others (a timer that catches up on a missed run
