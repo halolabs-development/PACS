@@ -98,6 +98,7 @@ test('images outside the projection list keep the geometry they had',()=>{
   {...cr,PixelSpacing:[.2,.2],EstimatedRadiographicMagnificationFactor:'\t2'},
   {...cr,PixelSpacing:'0.2\\0.2',ImagePositionPatient:'0\\0\\0x1'},
   {...cr,PixelSpacing:'0.2\\0.2',ImagePositionPatient:[0,0]},
+  {...cr,PixelSpacing:[.2,.2],NumberOfFrames:'0000000000001'},
   {...projection,Modality:'XA',SOPClassUID:'1.2.840.10008.5.1.4.1.1.12.1',NumberOfFrames:2,ImagerPixelSpacing:[.25,.5]},
   {...projection,Modality:'RF',SOPClassUID:'1.2.840.10008.5.1.4.1.1.12.2',NumberOfFrames:'3',ImagerPixelSpacing:[.3,.3]},
   {...cr,PixelSpacing:[.2,.2],EstimatedRadiographicMagnificationFactor:'0x2'},

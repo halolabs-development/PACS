@@ -1391,8 +1391,8 @@ function kinViewerPlaneImage(tags) {
   const frames = tags?.NumberOfFrames;
   return ['CR', 'DX', 'RF', 'XA'].includes(tags?.Modality) && tags.ImageOrientationPatient === undefined &&
     tags.PerFrameFunctionalGroupsSequence === undefined && tags.SharedFunctionalGroupsSequence === undefined && tags.DetectorInformationSequence === undefined &&
-    // One frame only: a multi-frame run keeps the rules it had.
-    (frames === undefined || frames === 1 || typeof frames === 'string' && /^ *\+?0*1 *$/.test(frames)) &&
+    // One frame only (an Integer String is at most 12 bytes): a multi-frame run keeps the rules it had.
+    (frames === undefined || frames === 1 || typeof frames === 'string' && frames.length <= 12 && /^ *\+?0*1 *$/.test(frames)) &&
     (tags.PixelSpacing === undefined || positive(tags.PixelSpacing, 2)) && (tags.ImagerPixelSpacing === undefined || positive(tags.ImagerPixelSpacing, 2)) &&
     (tags.PixelSpacing !== undefined || tags.ImagerPixelSpacing !== undefined) &&
     (tags.EstimatedRadiographicMagnificationFactor === undefined || positive([tags.EstimatedRadiographicMagnificationFactor], 1)) &&
@@ -1685,6 +1685,12 @@ function kinCreateViewerHistory() {
         return same(drawn?.spacing, [geometry.spacing[1], geometry.spacing[0]]) && same(drawn?.direction, geometry.orientation) && same(drawn?.origin, geometry.origin);
       } catch (_) { return false; }
     }
+    // The cell where the point was set, and every other cell showing the same image: the tool reports a move from whichever
+    // cell recalculates first, so a cell drawing the image in another plane cannot be told apart from it.
+    function everyCellConfirmed(viewport, imageId, geometry) {
+      let others; try { others = cs.getEnabledElements().map(e => e?.viewport).filter(v => v && v !== viewport && v.getCurrentImageId?.() === imageId); } catch (_) { return false; }
+      return !!viewport && planeConfirmed(viewport, imageId, geometry) && others.every(v => planeConfirmed(v, imageId, geometry));
+    }
     // Every placement and move of a Length, Angle or Ellipse point: the tool reports each as a modification, with its cell.
     // (The first press is checked where the tool adds the mark.)
     function pointsPlaced(event) {
@@ -1694,7 +1700,7 @@ function kinCreateViewerHistory() {
       let geometry; try { geometry = planar(id, kind); } catch (_) { return; }
       if (!geometry?.viewerPlane) return;
       let viewport; try { viewport = cs.getRenderingEngine?.(event.detail.renderingEngineId)?.getViewport?.(event.detail.viewportId); } catch (_) { viewport = null; }
-      if (!planeConfirmed(viewport, id, geometry)) for (const point of a.data.handles.points) unconfirmedPoints.add(pointKey(id, point));
+      if (!everyCellConfirmed(viewport, id, geometry)) for (const point of a.data.handles.points) unconfirmedPoints.add(pointKey(id, point));
     }    function measurementReason(imageId, kind, points) {
       const image = cs.metaData.get('instance', imageId);
       const finite = n => (typeof n === 'number' || typeof n === 'string' && n.trim() !== '') && Number.isFinite(Number(n));
@@ -2665,7 +2671,7 @@ function kinCreateViewerHistory() {
           const v = cs.getEnabledElement(event.detail.element).viewport;
           const id = v.type === 'stack' && v.getCurrentImageId();
           let reason = id ? measurementReason(id, kind) : '원본 프레임을 선택하세요';
-          if (!reason) { let geometry; try { geometry = planar(id, kind); } catch (_) { geometry = null; } if (geometry?.viewerPlane && !planeConfirmed(v, id, geometry)) reason = PLANE_UNCONFIRMED; }
+          if (!reason) { let geometry; try { geometry = planar(id, kind); } catch (_) { geometry = null; } if (geometry?.viewerPlane && !everyCellConfirmed(v, id, geometry)) reason = PLANE_UNCONFIRMED; }
           if (!reason && kind === 'ellipse' && !planar(id, kind) && v.getCamera().viewUp.filter(n => Math.abs(n) > 1e-6).length !== 1)
             reason = '사선·회전 ROI는 아직 지원하지 않습니다';
           if (reason) { status.textContent = reason; cellNote(event.detail.element, reason); return refused; }

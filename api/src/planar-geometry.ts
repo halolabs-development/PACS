@@ -15,8 +15,8 @@ export function viewerPlaneImage(tags: any): boolean {
   const frames = tags?.NumberOfFrames;
   return ['CR', 'DX', 'RF', 'XA'].includes(tags?.Modality) && tags.ImageOrientationPatient === undefined &&
     tags.PerFrameFunctionalGroupsSequence === undefined && tags.SharedFunctionalGroupsSequence === undefined && tags.DetectorInformationSequence === undefined &&
-    // One frame only: a multi-frame run keeps the rules it had.
-    (frames === undefined || frames === 1 || typeof frames === 'string' && /^ *\+?0*1 *$/.test(frames)) &&
+    // One frame only (an Integer String is at most 12 bytes): a multi-frame run keeps the rules it had.
+    (frames === undefined || frames === 1 || typeof frames === 'string' && frames.length <= 12 && /^ *\+?0*1 *$/.test(frames)) &&
     (tags.PixelSpacing === undefined || positive(tags.PixelSpacing, 2)) && (tags.ImagerPixelSpacing === undefined || positive(tags.ImagerPixelSpacing, 2)) &&
     (tags.PixelSpacing !== undefined || tags.ImagerPixelSpacing !== undefined) &&
     (tags.EstimatedRadiographicMagnificationFactor === undefined || positive([tags.EstimatedRadiographicMagnificationFactor], 1)) &&
