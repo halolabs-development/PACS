@@ -43,6 +43,8 @@ EDITOR_NOTICE = "현재 편집문 · 미확정 — 인용 증적은 이 출력�
 # The job print dialog's own wording, not the preview's ('다시 확인을 누르세요').
 CHANGED = "출력 내용이 변경되었습니다. 다시 확인하세요."
 MISSING = "인용 출력 구성 요소를 불러오지 못했습니다. 다시 확인을 누르세요."
+# Every page prints dates by the rule kept in KinReportPaper, so without it no output is drawn at all.
+PAPER_MISSING = "출력 날짜 구성 요소를 불러오지 못했습니다. 다시 확인을 누르세요."
 PRESENT = "넣은 문자열이 이 칸에 그대로 있습니다"
 ABSENT = "넣은 문자열이 이 칸에 더는 없습니다"
 UNAVAILABLE = "이 인용의 소견을 지금 확인할 수 없습니다 — 판독문과 증언은 그대로 있습니다"
@@ -198,7 +200,8 @@ class ViewerJobPrintCitationDOM(unittest.TestCase):
         cls.playwright.stop()
 
     def setUp(self):
-        self.context = self.browser.new_context()
+        # Paper times are the reader's local time; a fixed zone keeps the expected text machine-independent.
+        self.context = self.browser.new_context(timezone_id="UTC")
         self.addCleanup(self.context.close)
 
     # ── fixtures ──
@@ -309,7 +312,7 @@ class ViewerJobPrintCitationDOM(unittest.TestCase):
         self.assertEqual(lines[0], "인용 증적 확인: doctor의 열람 권한 기준")
         self.assertEqual(lines[1], LIMITATION)
         self.assertIn("Findings · 소견 r11 · 출처 1번 · 인용 당시 연결 현재 판과 일치 · doctor"
-                      " · 2026-09-01 03:04(UTC) — " + PRESENT, lines[2])
+                      " · 2026-09-01 03:04 — " + PRESENT, lines[2])
         self.assertNotIn(NONE, "\n".join(lines))
         self.assertEqual(len(self.requests_for(page, UID_A)), 2)
         self.assertEqual(self.requests_for(page, UID_B), [])
@@ -325,7 +328,7 @@ class ViewerJobPrintCitationDOM(unittest.TestCase):
         lines = sections[0]["lines"]
         self.assertEqual(lines[0], "인용 증적 확인: doctor2의 열람 권한 기준")
         self.assertIn("Conclusion · 소견 r22 · 출처 7번 · 인용 당시 연결 이후 개정됨 · doctor2"
-                      " · 2026-09-01 03:04(UTC) — " + ABSENT, lines[2])
+                      " · 2026-09-01 03:04 — " + ABSENT, lines[2])
         # J1: the current study is previewed but never asked for citations.
         self.assertEqual(self.requests_for(page, UID_A), [])
         self.assertEqual(len(self.requests_for(page, UID_B)), 2)
@@ -493,15 +496,26 @@ class ViewerJobPrintCitationDOM(unittest.TestCase):
                 page = self.prepared(self.pair(), {UID_A: [answer(1, [entry("findings", 11, 0)])]})
                 page.evaluate("name => { delete globalThis[name]; }", missing)
                 self.assertEqual(page.evaluate("name => typeof globalThis[name]", missing), "undefined")
+                refusal = PAPER_MISSING if missing == "KinReportPaper" else MISSING
                 page.select_option(SELECT, "saved")
                 page.wait_for_function("t => document.querySelector('#kin-job-print [role=status]').textContent === t",
-                                       arg=MISSING, timeout=60000)
+                                       arg=refusal, timeout=60000)
                 self.assertEqual(self.srcdoc(page), "")
                 self.assertTrue(page.eval_on_selector("#kin-job-print button:text-is('인쇄 / PDF')",
                                                       "b => b.disabled"))
-                # 'none' is unaffected: it needs no evidence, so it still prepares.
-                self.choose(page, "none")
-                self.assertIn("빈 셀", self.srcdoc(page))
+                if missing == "KinReportPaper":
+                    # The paper's dates need that library on every page, images only included: it refuses too.
+                    page.select_option(SELECT, "none")
+                    page.wait_for_function("t => document.querySelector('#kin-job-print [role=status]').textContent === t",
+                                           arg=PAPER_MISSING, timeout=60000)
+                    # The status already said so for 'saved'; give 'none' time to draw if it wrongly could.
+                    page.wait_for_timeout(2000)
+                    self.assertEqual(self.srcdoc(page), "")
+                    self.assertEqual(page.eval_on_selector("#kin-job-print [role=status]", "s => s.textContent"), PAPER_MISSING)
+                else:
+                    # 'none' is unaffected: it needs no evidence, so it still prepares.
+                    self.choose(page, "none")
+                    self.assertIn("빈 셀", self.srcdoc(page))
                 self.assert_no_writes(page)
                 page.close()
 

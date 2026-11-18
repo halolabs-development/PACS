@@ -1535,7 +1535,7 @@ window.KinLanguageTerms = {
     ["자동 밝기", "Auto brightness", "l"],
     ["작성자 미확인", "Author unknown", "l"],
     ["작성자 비공개", "Author hidden", "l"],
-    ["작성자: {0} · 승인 판독의: {1} · 승인일(UTC): {2}", "Author: {0} · Approving radiologist: {1} · Approved (UTC): {2}", "l"],
+    ["작성자: {0} · 승인 판독의: {1} · 승인일시: {2}", "Author: {0} · Approving radiologist: {1} · Approved at: {2}", "l"],
     ["잘못된 검사에 작성", "Written on the wrong study", "l"],
     ["재촬영 필요", "Retake needed", "l"],
     ["저장", "Save", "l"],
