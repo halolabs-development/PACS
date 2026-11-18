@@ -94,6 +94,9 @@ class ImageReportE2E(TemplatePreservationE2E):
         expect(paper.locator("section.drawings h2")).to_contain_text("Image Report")
         expect(paper.locator("section.drawings img")).to_have_count(1)
         expect(paper.locator("section.drawings img")).to_have_attribute("src", re.compile(r"^blob:"))
+        # The real approval reaches the paper as the reader's local date and time, never as a UTC date.
+        expect(paper.locator("header")).to_contain_text(re.compile(r"승인일시: \d{4}-\d{2}-\d{2} \d{2}:\d{2}"))
+        expect(paper.locator("header")).not_to_contain_text("UTC")
 
         page.keyboard.press("Escape")
         expect(page.locator("#report-preview")).to_be_hidden()

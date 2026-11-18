@@ -1,4 +1,5 @@
-/* Chrome only: canvas, DICOM overlays and annotation colours retain their native rendering. */
+/* Chrome only: canvas and annotation colours retain their native rendering (the stock image text takes the primary
+   text colour - below). */
 /* The shell's rows have whole-pixel heights that never follow their text (tabs 38px, toolbar 36px,
    strip 66px, info bar 42px at the 12px font): the image area below them must not move by a
    fraction when a label, a status line or a fallback glyph changes. The toolbar and strip are one
@@ -68,6 +69,21 @@ body.kin-viewer-ux .bg-secondary-dark.z-20:has(#kin-viewer-brand) button,
   border-radius: 3px;
 }
 body.kin-viewer-ux [data-cy="viewport-grid"] > .border-primary-light { border-color: var(--kin-accent); }
+/* The five colours in the rest of the viewer (one theme in the worklist, viewer and editor alike). The stock
+   image text on the images was the light sky blue (#5ACCE6) the request calls hard to read: primary text now. The stock
+   study list beside the images had navy backgrounds of its own: background and panel. The Report Editor fields are
+   panels (inputs #2D2D2D). Image pixels, annotations and the reader's own image-text colour are not touched. */
+body.kin-viewer-ux [data-cy^="viewport-overlay-"], body.kin-viewer-ux [data-cy^="viewport-overlay-"] .text-primary-light {
+  color: var(--kin-ux-text) !important;
+}
+body.kin-viewer-ux #root div:has(> .bg-bkg-med [data-cy="seriesList-btn"]) :is(.bg-bkg-low, .bg-black, .bg-primary-dark, .bg-primary-main) {
+  background-color: var(--kin-ux-background) !important;
+}
+body.kin-viewer-ux #root div:has(> .bg-bkg-med [data-cy="seriesList-btn"]) :is(.bg-secondary-dark, .bg-secondary-main) {
+  background-color: var(--kin-panel) !important;
+}
+body.kin-viewer-ux #root div:has(> .bg-bkg-med [data-cy="seriesList-btn"]) .text-white { color: var(--kin-ux-text) !important; }
+#kin-viewer-report textarea { background: var(--kin-panel, #2D2D2D); color: var(--kin-ux-text, #E3E3E3); border: 1px solid var(--kin-ux-secondary, #B4B4B4); }
 body.kin-viewer-ux #kin-workspace-dock [role="status"],
 .kin-viewer-info-mode, .kin-series-count { color: var(--kin-ux-secondary); }
 body.kin-viewer-ux #kin-workspace-dock button[aria-expanded="true"],

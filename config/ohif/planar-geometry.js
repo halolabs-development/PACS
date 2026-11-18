@@ -1,3 +1,25 @@
+// The images that are measured in the viewer's own plane although they give no orientation: projection X-rays (CR, DX,
+// RF, XA) without ImageOrientationPatient, without functional groups or detector information, with one frame, whose spacing
+// and position tags read plainly as Decimal Strings (each Pixel Spacing / Imager Pixel Spacing absent or two positive
+// numbers, at least one given; a magnification factor absent or positive; a position absent or three numbers). Every other image keeps the rules it had (as api/src/planar-geometry.ts).
+function kinViewerPlaneImage(tags) {
+  // A Decimal String component (DICOM PS3.5 6.2): at most 16 bytes of digits, one point, an exponent and spaces only, judged
+  // before it becomes a number; a JSON number is taken as it is. Anything else (a tab, 19 bytes, 0x2, Infinity) is not plain.
+  const decimal = (x) => typeof x === 'number' ? Number.isFinite(x) :
+    typeof x === 'string' && x.length <= 16 && /^ *[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)? *$/.test(x) && Number.isFinite(Number(x));
+  const parts = (v, n) => { const a = typeof v === 'string' ? v.split('\\') : v; return Array.isArray(a) && a.length === n && a.every(decimal) ? a.map(Number) : null; };
+  const positive = (v, n) => { const a = parts(v, n); return !!a && a.every(x => x > 0); };
+  const frames = tags?.NumberOfFrames;
+  return ['CR', 'DX', 'RF', 'XA'].includes(tags?.Modality) && tags.ImageOrientationPatient === undefined &&
+    tags.PerFrameFunctionalGroupsSequence === undefined && tags.SharedFunctionalGroupsSequence === undefined && tags.DetectorInformationSequence === undefined &&
+    // One frame only (an Integer String is at most 12 bytes): a multi-frame run keeps the rules it had.
+    (frames === undefined || frames === 1 || typeof frames === 'string' && frames.length <= 12 && /^ *\+?0*1 *$/.test(frames)) &&
+    (tags.PixelSpacing === undefined || positive(tags.PixelSpacing, 2)) && (tags.ImagerPixelSpacing === undefined || positive(tags.ImagerPixelSpacing, 2)) &&
+    (tags.PixelSpacing !== undefined || tags.ImagerPixelSpacing !== undefined) &&
+    (tags.EstimatedRadiographicMagnificationFactor === undefined || positive([tags.EstimatedRadiographicMagnificationFactor], 1)) &&
+    (tags.ImagePositionPatient === undefined || !!parts(tags.ImagePositionPatient, 3));
+}
+
 // Physical lengths, angles and areas on a specified original frame; no non-CT HU inference.
 function kinPlanarGeometry(tags, frame) {
   const fail = () => { throw new Error('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다'); };
@@ -11,7 +33,7 @@ function kinPlanarGeometry(tags, frame) {
   const per = tags.PerFrameFunctionalGroupsSequence, shared = tags.SharedFunctionalGroupsSequence;
   if (per !== undefined && (!Array.isArray(per) || per.length !== frames)) return fail();
   const value = (sequence, key) => per || shared ? (per?.[frame - 1]?.[sequence]?.[0] ?? shared?.[0]?.[sequence]?.[0])?.[key] : tags[key];
-  const mg = tags.Modality === 'MG' ? kinMgGeometry(tags, frame) : null;
+  const mg = tags.Modality === 'MG' ? kinMgGeometry(tags, frame) : null, viewerPlane = kinViewerPlaneImage(tags);
   let origin, orientation, spacing, basis;
   if (mg) ({ origin, orientation, spacing, basis } = mg);
   else {
@@ -25,8 +47,16 @@ function kinPlanarGeometry(tags, frame) {
         spacing = spacing.map(x => x / k); basis = 'ermf';
       }
     }
-    origin = numbers(value('PlanePositionSequence', 'ImagePositionPatient') ?? [0, 0, 0], 3);
-    orientation = numbers(value('PlaneOrientationSequence', 'ImageOrientationPatient') ?? [1, 0, 0, 0, 1, 0], 6);
+    if (viewerPlane) {
+      // A projection X-ray as most devices send it (kinViewerPlaneImage): measured in the plane the viewer places it in,
+      // where the points of its marks lie — rows along [0,1,0], columns along [0,0,-1], origin [0,0,0] (the pinned OHIF
+      // imagePlaneModule).
+      origin = numbers(tags.ImagePositionPatient ?? [0, 0, 0], 3);
+      orientation = [0, 1, 0, 0, 0, -1];
+    } else {
+      origin = numbers(value('PlanePositionSequence', 'ImagePositionPatient') ?? [0, 0, 0], 3);
+      orientation = numbers(value('PlaneOrientationSequence', 'ImageOrientationPatient') ?? [1, 0, 0, 0, 1, 0], 6);
+    }
   }
   if (spacing.some(n => n <= 0)) return fail();
   const rows = Number(tags.Rows), columns = Number(tags.Columns);
@@ -59,7 +89,7 @@ function kinPlanarGeometry(tags, frame) {
   };
   const label = mg?.label || { pixel: 'PixelSpacing · 원본 기준면', detector: 'ImagerPixelSpacing · 검출기 기준', ermf: 'ImagerPixelSpacing / ERMF · 추정 보정' }[basis];
   return { origin, orientation, spacing, normal, imagePoint, measure, label, frameOfReferenceUid: tags.FrameOfReferenceUID || null,
-    calculator: 'kin-planar-manual-v1:' + basis };
+    calculator: 'kin-planar-manual-v1:' + basis, viewerPlane };
 }
 
 // Ultrasound Region Calibration (DICOM PS3.3 C.8.5.5.1): the physical size of a pixel inside one region of an ultrasound

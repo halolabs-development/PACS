@@ -317,7 +317,8 @@
   }
   function reasonText(reason, status, code) {
     const tail = [status === null || status === undefined ? '' : 'HTTP ' + status, code || ''].filter(Boolean).join(' · ');
-    return TEXT.reasons[reason] + (tail ? ' (' + tail + ')' : '');
+    // The reason is the page's words, the status and code are the server's: a sentence keeps them apart for the language.
+    return tail ? kinSay('{t0} ({1})', { t: kinSay(TEXT.reasons[reason]) }, tail) : TEXT.reasons[reason];
   }
 
   // ── stale after a later list observation (§8.1 S1-S8). The baseline is the painted answer's own DTO paths. ──
@@ -397,16 +398,16 @@
     const sections = SECTIONS.map(name => {
       const section = answer.sections[name], state = shown[name];
       let description;
-    if (state === 'present') description = fill(TEXT.present, { observedAt: format(section.observedAt), sourceLabel: { t: SOURCE_TEXT[name] } });
+    if (state === 'present') description = fill(TEXT.present, { observedAt: format(section.observedAt), sourceLabel: { t: kinSay(SOURCE_TEXT[name]) } });
       else if (state === 'absent') description = fill(TEXT.absent, { observedAt: format(section.observedAt) });
       else if (state === 'not_configured') description = TEXT.notConfigured[section.reason];
-    else if (state === 'failed') description = kinSay('{t0} {t1}', { t: TEXT.failed }, { t: reasonText(section.reason) });
+    else if (state === 'failed') description = kinSay('{t0} {t1}', { t: kinSay(TEXT.failed) }, { t: reasonText(section.reason) });
     else description = fill(TEXT.stale, { observedAt: format(section.observedAt), cause: { t: TEXT.staleCauses[marksBy[name]] } });
       const list = section.items.map(item => {
         if (name === 'priorReports') {
           return { key: item.studyUid, marks: marks(item.identity),
         line: [{ text: joined([item.study.date, item.study.modalities, item.study.description]), data: true },
-          { text: kinSay('{t0} v{n1}', { t: TEXT.actions[item.report.action] }, item.report.version) }, { text: actor(item.provenance.author), data: true },
+          { text: kinSay('{t0} v{n1}', { t: kinSay(TEXT.actions[item.report.action]) }, item.report.version) }, { text: actor(item.provenance.author), data: true },
               time(item.provenance.recordedAt), accessBadge(item.access, answer.anchor)],
             source: [{ text: SOURCE_TEXT[name] }, observed(item.provenance.observedAt)],
             details: TEXT.bodies.map(([key, label]) => ({ label, text: item.report[key] })) };
@@ -422,7 +423,7 @@
         if (name === 'requestTags') {
           const code = '(' + item.tag.slice(0, 4) + ',' + item.tag.slice(4) + ')';
           return { key: item.tag, marks: [],
-        line: [{ text: kinSay('{0} {1}: {2}', item.keyword, code, item.value === null ? { t: TEXT.tagNotes[item.note] } : item.value) }],
+        line: [{ text: kinSay('{0} {1}: {2}', item.keyword, code, item.value === null ? { t: kinSay(TEXT.tagNotes[item.note]) } : item.value) }],
         source: [{ text: 'DICOM header' }, { text: 'SOP ' + item.provenance.recordId, data: true }, recorded(item.provenance.recordedAt),
               observed(item.provenance.observedAt), anchorBadge],
             details: null };
@@ -446,14 +447,14 @@
     const identity = answer.identity;
     const fields = identity.birth === 'mismatch' && identity.sex === 'mismatch' ? 'both' : identity.birth === 'mismatch' ? 'birth' : 'sex';
     return {
-      conflict: identity.conflict ? { title: TEXT.conflictTitle, text: fill(TEXT.conflict, { fields: { t: TEXT.conflictFields[fields] } }) } : null,
+      conflict: identity.conflict ? { title: TEXT.conflictTitle, text: fill(TEXT.conflict, { fields: { t: kinSay(TEXT.conflictFields[fields]) } }) } : null,
       sections, noInformation: noInformation(answer, stale),
     };
   }
   /** The panel status line for a painted answer: the empty sentence, a kept answer after a failed re-read, or its read time. */
   function summary(answer, stale, kept, options) {
     const format = options && typeof options.format === 'function' ? options.format : localTime;
-    if (kept) return { label: TEXT.stateLabels.stale, text: TEXT.refreshFailed + ' ' + reasonText(kept.reason, kept.status, kept.code), title: '' };
+    if (kept) return { label: TEXT.stateLabels.stale, text: kinSay('{t0} {t1}', { t: kinSay(TEXT.refreshFailed) }, { t: reasonText(kept.reason, kept.status, kept.code) }), title: '' };
     if (noInformation(answer, stale)) return { label: '', text: TEXT.noInformation, title: '' };
     return { label: '', text: fill(TEXT.observedAnswer, { observedAt: format(answer.observedAt) }), title: answer.observedAt };
   }

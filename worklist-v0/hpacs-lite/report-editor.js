@@ -118,11 +118,11 @@
         row.className = "leftnote";
         message.textContent = text;
         open.type = dismiss.type = "button";
-        open.textContent = "Open Study";
-        dismiss.textContent = "Dismiss";
+        kinWrite(open, kinSay("Open Study"));
+        kinWrite(dismiss, kinSay("Dismiss"));
         // 목록에 없는 검사는 여기서 열 수 없다(목록 조건이 바뀌었다) — 눌리지 않는 단추에 그 까닭을 적는다.
         open.disabled = !studies.some(s => s.uid === uid);
-        if (open.disabled) open.title = "이 검사는 지금 목록에 없습니다. 목록 조건을 바꾼 뒤 여세요.";
+        if (open.disabled) kinWrite(open, kinSay("이 검사는 지금 목록에 없습니다. 목록 조건을 바꾼 뒤 여세요."), "title");
         open.addEventListener("click", () => { if (studies.some(s => s.uid === uid)) select(uid); else renderLeftNotes(); });
         dismiss.addEventListener("click", () => dropLeftNote(uid));
         row.append(message, open, dismiss);
@@ -234,13 +234,13 @@
         work.edited();
       }
       const ph = locked
-        ? `${displayActor(r.preReviewer) || "지정된 판독의"} 님이 최종 판독 중입니다 (RS: P) — 내용은 지정된 판독의만 볼 수 있습니다`
+        ? kinSay("{0} 님이 최종 판독 중입니다 (RS: P) — 내용은 지정된 판독의만 볼 수 있습니다", displayActor(r.preReviewer) || kinSay("지정된 판독의"))
         : "";
       for (const [sel, base] of [["#findings", "Please enter findings"],
                                  ["#conclusion", "Please enter conclusion"],
                                  ["#recommendation", "Please enter recommendation"]]) {
         const el = $(sel);
-        el.placeholder = locked ? (sel === "#findings" ? ph : "") : base;
+        kinWrite(el, locked ? (sel === "#findings" ? ph : "") : kinSay(base), "placeholder");
         el.readOnly = !!heldByOther(cur()) || locked || (cur()?.ss === "Unverified" && cur()?.em !== "E") || !KinAuth.has("radiologist")
           || !!r.identityUnresolved;
         // C-R01-109#2: the Read Only reason for an unverified study, the same words as its buttons (updateReportButtons).
@@ -274,7 +274,7 @@
     function renderEditorState() {
       const why = work.state() !== "active" ? "판독 화면이 지금 편집을 받지 않습니다." : !selectedUid ? "검사를 선택하세요" : reportEditorBlock();
       $("#report-editor").dataset.editable = String(!why);
-      $("#report-editor-state").textContent = why ? "Read Only" : "Editable";
+      kinWrite($("#report-editor-state"), why ? kinSay("Read Only") : kinSay("Editable"));
       $("#report-editor-why").textContent = $("#report-editor-why").title = why || "";
       // The study this editor writes for, so it is never confused with the prior report shown in the box above.
       const target = selectedUid ? studies.find(x => x.uid === selectedUid) : null;
@@ -337,9 +337,9 @@
       line.textContent = [own, others].filter(Boolean).join(" · ");
       // The head can wrap in a narrow column; keep presence updates within their reserved space so typing stays put.
       // Longer explanations belong in the title.
-      line.title = !target ? "" : holder && holder !== user ? "다른 판독의가 작성 중입니다"
-        : holder ? "이 판독의가 작성 중입니다(점유)" + (others ? " · " + others : "")
-        : "검사를 여는 것만으로는 점유하지 않습니다. 판독문에 두 글자 이상 쓰면 이 판독의가 잡습니다." + (others ? " · " + others : "");
+      kinWrite(line, !target ? "" : holder && holder !== user ? kinSay("다른 판독의가 작성 중입니다")
+        : holder ? kinSay("이 판독의가 작성 중입니다(점유){0}", others ? " · " + others : "")
+        : kinSay("검사를 여는 것만으로는 점유하지 않습니다. 판독문에 두 글자 이상 쓰면 이 판독의가 잡습니다.{0}", others ? " · " + others : ""), "title");
     }
 
     /**
@@ -541,13 +541,13 @@
         : checked || n.status === "unknown" ? "Result Unknown"
         : n.status === "composing" ? "Not Moved"
         : n.status === "conflict" ? "Save Failed — 서버의 초안이 이 화면과 다릅니다"
-        : kinSay("Save Failed — {0}", { e: n.reason ?? "서버가 저장을 받지 않았습니다" });
+        : kinSay("Save Failed — {0}", { e: n.reason ?? kinSay("서버가 저장을 받지 않았습니다") });
       // W5: the same notice for a Related Report mode entry the gate held (its Retry/Check continue that entry).
       const entry = n.action?.kind === "related-enter";
       const toward = { t: n.target ? kinSay(" ({0}(으)로 가려던 이동)", studyLabel(n.target.uid))
         : entry ? kinSay(" ({0}의 이전 판독문을 보려던 이동)", studyLabel(n.action.source)) : "" };
-      const notMoved = { t: entry ? "Related Report 모드로 들어가지 않았습니다" : "검사를 옮기지 않았습니다" };
-      const thenMove = { t: entry ? "들어갑니다" : "이동합니다" };
+      const notMoved = { t: entry ? kinSay("Related Report 모드로 들어가지 않았습니다") : kinSay("검사를 옮기지 않았습니다") };
+      const thenMove = { t: entry ? kinSay("들어갑니다") : kinSay("이동합니다") };
       // 서버의 초안에 이 화면의 글이 없다는 것을 읽어서 알았다: 다시 보내는 길(Retry, 쓰기 경로)을 함께 준다.
       const resend = checked === "different" && unconfirmed;
       const text = checked === "unread" ? kinSay("서버의 저장 상태를 확인하지 못해 {t0}{t1} — 입력한 내용은 그대로 있습니다. 다시 확인하려면 Check를 누르세요.", notMoved, toward)
@@ -1005,7 +1005,7 @@
         $("#stale-draft-" + k).textContent = $("#" + k).value;
       }
       $("#stale-rebase").style.display = rebase ? "" : "none";
-      $("#stale-rebase").textContent = `v${head.version} 기준으로 다시 잡기`;
+      kinWrite($("#stale-rebase"), kinSay("v{n0} 기준으로 다시 잡기", head.version));
       $("#stale-rebase").disabled = !rebase;
       $("#stale-status").textContent = "";
       $("#stalemodal").classList.add("show");
@@ -1066,7 +1066,7 @@
       // 화면에 쓰기 직전에 UID와 순번을 함께 확인한다. 안내가 열린 사이에 검사를 옮겼다면
       // 지금 textarea에 있는 글은 **다른 검사의 글**이다 (교훈: A→B→A — 돌아와도 같은 선택이 아니다).
       if (pane.uid !== selectedUid || pane.seq !== staleSeq || pane.selSeq !== selectionSeq) {
-        $("#stale-status").textContent = "검사가 바뀌었습니다 — 이 안내를 닫고 다시 확인하세요.";
+        kinWrite($("#stale-status"), kinSay("검사가 바뀌었습니다 — 이 안내를 닫고 다시 확인하세요."));
         $("#stale-rebase").disabled = true;
         return;
       }
@@ -1083,16 +1083,16 @@
         try { held = await reportDraftDrawings.read(pane.uid); } finally { staleBusy = false; }
         if (stalePane !== pane || pane.uid !== selectedUid || pane.seq !== staleSeq || pane.selSeq !== selectionSeq) return;
         if (!held.known) {
-          $("#stale-status").textContent = held.conflict ? "서버의 초안이 이 화면과 달라 기준을 잡지 않았습니다 — 닫고 초안 표시줄에서 고르세요."
-            : "서버의 초안을 확인하지 못해 기준을 잡지 않았습니다 — 잠시 뒤 다시 누르세요.";
+          kinWrite($("#stale-status"), held.conflict ? kinSay("서버의 초안이 이 화면과 달라 기준을 잡지 않았습니다 — 닫고 초안 표시줄에서 고르세요.")
+            : kinSay("서버의 초안을 확인하지 못해 기준을 잡지 않았습니다 — 잠시 뒤 다시 누르세요."));
           return;
         }
-        if (!KinReportDraftClient.holdsDraft({ ...next, drawings: held.drawings })) { $("#stale-status").textContent = "내용이 비어 있어 기준을 잡을 수 없습니다."; return; }
+        if (!KinReportDraftClient.holdsDraft({ ...next, drawings: held.drawings })) { kinWrite($("#stale-status"), kinSay("내용이 비어 있어 기준을 잡을 수 없습니다.")); return; }
         if (RFIELDS.some(k => $("#" + k).value !== next[k]) || reportWriteBlock()) return;
       }
       staleBusy = true;
       $("#stale-rebase").disabled = true;
-      $("#stale-status").textContent = "기준을 다시 잡는 중…";
+      kinWrite($("#stale-status"), kinSay("기준을 다시 잡는 중…"));
       /**
        * **화면에 보인 그 판 번호 그대로** 보낸다. 그 사이 승인본이 또 올라갔더라도
        * 여기서 따라 올리지 않는다 — 사람이 본 적 없는 판을 기준으로 삼는 것이

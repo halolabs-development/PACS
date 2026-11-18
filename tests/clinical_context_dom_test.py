@@ -51,6 +51,7 @@ local time (YYYY-MM-DD HH:MM:SS, scenario-table section 0) of the context's time
 Synthetic data only (SYN-* names, 1.2.826.0.1.3680043.10.* UIDs): no stack, no network, no credentials.
 """
 from page_source import read_page_source
+from main_split_harness import report_display_block
 import copy
 import json
 import re
@@ -350,8 +351,7 @@ const synScope = new Proxy({}, {
   set: () => true,
 });
 const synShipped = new Function('return [api, cur, relatedStudy, viewed, viewingUid, renderClinical, applyObservation,'
-  + ' staleAnswer, notifyAccountChanged, onCommonEnd, kinWrite];\\n' + synPageScript)().map(String);
-const kinWrite = eval("(" + synShipped[10] + ")");
+  + ' staleAnswer, notifyAccountChanged, onCommonEnd];\\n' + synPageScript)().map(String);
 let api, cur, relatedStudy, viewed, viewingUid, renderClinical, applyObservation, staleAnswer, notifyAccountChanged, onCommonEnd;
 with (synScope) {
   api = eval('(' + synShipped[0] + ')'); cur = eval('(' + synShipped[1] + ')'); relatedStudy = eval('(' + synShipped[2] + ')');
@@ -433,7 +433,7 @@ class Stub:
 class ClinicalContextDOMTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.block = page_block(PAGE_SCRIPT)
+        cls.block = report_display_block(HPACS / "main.html") + "\n" + page_block(PAGE_SCRIPT)
         cls.markup = PAGE_SOURCE.markup()
         cls.pw = sync_playwright().start()
         cls.browser = cls.pw.chromium.launch()

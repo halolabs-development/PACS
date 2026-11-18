@@ -280,6 +280,28 @@ test('U0B-CLINICIAN-PREVIEW reads non-final text with an access target and refus
   await refused(controller.read(UID, req), 403);
 });
 
+// The printed report shows the approval time the worklist Confirm column shows, so the preview answer carries the
+// approval instant (ISO, UTC) beside the stored approval date; it is null whenever the report is not Approved.
+test('report preview answer carries the approval instant of an Approved report only', async () => {
+  const { ReportPreviewController } = require('/app/dist/report-preview.controller');
+  const approvedAt = new Date('2026-11-17T18:06:00.000Z');
+  let state = { uid: UID, institutionId: 'syn-a', rs: 'A', repDoc: 'doctor', confirm: '2026-11-17', approvedAt };
+  const report = { version: 1, findings: 'SYN body', conclusion: '', recommendation: '' };
+  const db = { studyGroupMember:{findMany:async()=>[]}, studyState: { findUnique: async () => state }, report: { findUnique: async () => report },
+    reportVersion: { findUnique: async () => ({ version: 1, action: 'approve', author: 'doctor' }) },
+    viewerItem: { findMany: async () => [] } };
+  db.$transaction = async fn => fn(db);
+  const controller = new ReportPreviewController(db, { reportPreviewStudy: async () => ({}) }, { prepare:async()=>{},prepareSourceIdentity:async()=>{},require: async () => {}, assertIdentifiedSource:()=>({sourcePatientId:'SYN-P',sourceInstitution:null}) }, {});
+  const req = caller(['radiologist']);
+  const approved = readBody(await controller.read(UID, req)).report;
+  assert.equal(approved.approvedAt, '2026-11-17T18:06:00.000Z');
+  assert.equal(approved.confirm, '2026-11-17', 'the stored approval date is unchanged');
+  state = { ...state, rs: 'T' };
+  assert.equal(readBody(await controller.read(UID, req)).report.approvedAt, null);
+  state = { ...state, rs: 'A', approvedAt: null };
+  assert.equal(readBody(await controller.read(UID, req)).report.approvedAt, null);
+});
+
 test('U0B-IDENTITY-PATCH overlay vectors retain role, ownership, preliminary and state refusal precedence', async () => {
   // Every original shape vector remains in study_identity_server_test; this checks public storage/refusal order.
   for (const [options, c, body, status, message] of [

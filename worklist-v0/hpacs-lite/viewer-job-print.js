@@ -13,10 +13,13 @@
     if (month < 1 || month > 12 || day < 1 || day > lengths[month - 1]) return null;
     return parts[1] + parts[2] + parts[3];
   }
+  // Dates on report paper follow one rule, kept once in KinReportPaper (report-preview.js, loaded with this
+  // file's other print assets): a DICOM date prints as YYYY-MM-DD, a server instant as local YYYY-MM-DD HH:mm.
+  const paperRules = () => root.KinReportPaper || require('./report-preview.js');
   function dateText(identity) {
     const raw = identity && identity.date;
     const text = typeof raw === 'string' ? raw : raw === undefined || raw === null ? '' : String(raw);
-    return text.trim() ? text : '날짜 없음';
+    return text.trim() ? paperRules().paperDate(text) : '날짜 없음';
   }
   function dateRelation(currentDate, comparisonDate) {
     const current = normalizeStudyDate(currentDate), comparison = normalizeStudyDate(comparisonDate);
@@ -161,6 +164,8 @@ globalThis.kinViewerJobPrint = function ({ api, authenticate, live, editor }) {
   // printing nothing would make a signed report look exactly like one that has
   // nothing to cite.
   const CITATION_MISSING = '인용 출력 구성 요소를 불러오지 못했습니다. 다시 확인을 누르세요.';
+  // Every page prints dates, and their one rule lives in KinReportPaper: without it no output is drawn.
+  const PAPER_MISSING = '출력 날짜 구성 요소를 불러오지 못했습니다. 다시 확인을 누르세요.';
   // This page names people by their raw actor everywhere else (작성자, 승인
   // 판독의, annotation legends) and the viewer holds no name map, so the
   // citation lines say what the lines above them say.
@@ -274,6 +279,8 @@ globalThis.kinViewerJobPrint = function ({ api, authenticate, live, editor }) {
   const bytes = identity.sourceBytes;
   async function state(item, signal, reportChoice) {
     validCurrent(item);
+    if (!['paperDate', 'paperStamp', 'approvalText'].every(key => typeof globalThis.KinReportPaper?.[key] === 'function'))
+      throw new Error(PAPER_MISSING);
     await authenticate(signal);
     const readJob = async () => {
       if (!item.snapshot) return api('/studies/' + item.uid + '/viewer-jobs/' + item.id, { signal });
@@ -683,7 +690,7 @@ globalThis.kinViewerJobPrint = function ({ api, authenticate, live, editor }) {
   }
   function html(data, images, outputEdits, batchOutput) {
     const { job, identities } = data, main = el('main'), legends = [], mipPage = batchOutput?.mip || null;
-    const { reportLabel, dateLine, pageName, pageRules, summaryText } = identity;
+    const { reportLabel, dateLine, pageName, pageRules, summaryText, dateText } = identity;
     // Read here rather than at module load: this file is required with no DOM
     // by tests/viewer_job_print_identity_test.cjs, so a bare global at load
     // time would break it. state() has already refused the output if a page
@@ -693,7 +700,7 @@ globalThis.kinViewerJobPrint = function ({ api, authenticate, live, editor }) {
     const intro = node => { node.className = 'intro'; return node; };
     const basis = job.transient ? '처음 선택한 화면' : '저장 화면';
     intro(el('h1', mipPage?(job.transient?(mipBatchPage(mipPage.version)?'HALO PACS 현재 MIP Batch 출력':'HALO PACS 현재 MIP Viewer 출력'):mipBatchPage(mipPage.version)?'HALO PACS 저장 MIP Batch 출력':'HALO PACS 저장 MIP Viewer 출력'):batchOutput?(job.transient?'HALO PACS 현재 MPR 3평면':job.snapshot.batch?'HALO PACS 저장 MPR 단면 묶음':'HALO PACS 저장 MPR 3평면'):job.transient ? 'HALO PACS 현재 비교 영상' : 'HALO PACS 저장 비교 영상', main)); intro(el('h2', job.title, main)); intro(el('p', job.description, main));
-    intro(el('p', job.transient ? '비교 작업·표식·판독문을 저장하지 않는 출력입니다.' : `작업 작성자 ${job.authorActor} · 저장 ${job.createdAt} · r${job.revision}`, main));
+    intro(el('p', job.transient ? '비교 작업·표식·판독문을 저장하지 않는 출력입니다.' : `작업 작성자 ${job.authorActor} · 저장 ${paper.paperStamp(job.createdAt) || '-'} · r${job.revision}`, main));
     intro(el('p', mipPage ? (job.transient ? MIP_CURRENT_NOTE : MIP_NOTE) : (batchOutput?(job.transient?'처음 선택한 표시 조건으로 원본 CT를 다시 읽어 재구성':'저장한 생성 조건으로 원본 CT를 다시 읽어 재구성'):basis + '에 아래 출력 조절값 적용') + ' · ' + annotationMode(job) + ' · 실제 크기 아님', main));
     if(batchOutput&&!mipPage&&!job.transient&&!job.snapshot.batch)intro(el('p',`Job ${job.id} · ${job.snapshot.cells.length} saved planes`,main));
     if(mipPage)intro(el('p',mipBatchPage(mipPage.version)?`${job.transient?'Current display':'Job '+job.id} · MIP Batch · ${mipPage.recipe.count} frames · ${mipPage.recipe.axis} · Interval ${mipPage.recipe.interval}° · ${mipPage.recipe.reverse?'Reverse':'Forward'}`:`${job.transient?'Current display':'Job '+job.id} · MIP Viewer · 1 frame`,main));
@@ -705,7 +712,7 @@ globalThis.kinViewerJobPrint = function ({ api, authenticate, live, editor }) {
       const report = entry.report, identity = identities.find(s => s.uid === entry.uid), section = el('section', undefined, main);
       section.className = 'report'; section.dataset.reportUid = entry.uid; section.dataset.printPage = pageName(reportIndex);
       el('h2', entry.title, section);
-      el('p', `${identity.name} (${identity.id}) · ${identity.date} · ${identity.desc || identity.modality} · Acc ${identity.acc || '-'}`, section);
+      el('p', `${identity.name} (${identity.id}) · ${dateText(identity)} · ${identity.desc || identity.modality} · Acc ${identity.acc || '-'}`, section);
       el('p', dateLine(entry), section).className = 'report-date';
       el('p', `Study ${identity.uid}`, section).className = 'reference';
       el('p', reportLabel(report), section).className = 'report-source';
@@ -715,7 +722,7 @@ globalThis.kinViewerJobPrint = function ({ api, authenticate, live, editor }) {
         el('p', `작성자(편집 중): ${report.author || '-'}`, section);
       } else {
         el('p', '출력 확인 시점의 서버 저장본입니다. 비교 작업 저장 당시 판독문이나 미저장 편집문이 아닙니다.', section);
-        el('p', `작성자: ${report.author || '-'} · 승인 판독의: ${report.repDoc || '-'} · 승인일(UTC): ${report.confirm || '-'}`, section);
+        el('p', `작성자: ${report.author || '-'} · 승인 판독의: ${report.repDoc || '-'} · 승인일시: ${paper.approvalText(report) || '-'}`, section);
       }
       for (const [key, label] of [['findings', '소견'], ['conclusion', '결론'], ['recommendation', '권고']]) {
         el('h3', label, section); el('p', report[key] || '(내용 없음)', section).dataset.reportField = key;
@@ -747,7 +754,7 @@ globalThis.kinViewerJobPrint = function ({ api, authenticate, live, editor }) {
         const figure = el('section', undefined, grid); figure.className = 'cell'; figure.dataset.mipFrame = String(index + 1);
         el('strong', mipBatchPage(mipPage.version) ? 'Frame ' + (index + 1) : 'MIP Viewer', figure);
         const img = el('img', undefined, figure); img.src = images[index]; img.alt = 'MIP 출력 ' + (index + 1);
-        el('p', `${studyIdentity.name} (${studyIdentity.id}) · ${studyIdentity.date} · ${studyIdentity.desc || studyIdentity.modality}`, figure);
+        el('p', `${studyIdentity.name} (${studyIdentity.id}) · ${dateText(studyIdentity)} · ${studyIdentity.desc || studyIdentity.modality}`, figure);
         el('p', frame.caption, figure).className = 'mip-caption'; el('p', frame.display, figure).className = 'mip-display';
         el('p', `Study ${cell.study}\nSource series ${cell.series} · ${job.snapshot.volume.sops.length} original CT instances\nReconstructed display · no original SOP for this image`, figure).className = 'reference';
       });
@@ -758,14 +765,14 @@ globalThis.kinViewerJobPrint = function ({ api, authenticate, live, editor }) {
       const figure = el('section', undefined, grid); figure.className = 'cell'; el('strong', '셀 ' + (index + 1), figure);
       if (!cell) { el('p', '빈 셀', figure); return; }
       const identity = identities.find(s => s.uid === cell.study), img = el('img', undefined, figure); img.src = images[index]; img.alt = '출력 셀 ' + (index + 1);
-      el('p', `${identity.name} (${identity.id}) · ${identity.date} · ${identity.desc || identity.modality}`, figure);
+      el('p', `${identity.name} (${identity.id}) · ${dateText(identity)} · ${identity.desc || identity.modality}`, figure);
       if(batchOutput){
         figure.dataset.batchPlane=String(index+1);el('p',`Plane ${index+1} / ${cells.length} · ${['MPR','MIP','MinIP','Average'][cell.projection.blend]} ${cell.projection.thickness} mm · ${batchOutput.frames[index].width} × ${batchOutput.frames[index].height}`,figure);
         el('p','Center L/P/H (mm): '+cell.camera.focalPoint.map(n=>Number(n.toFixed(3))).join(' / '),figure);
         el('p',`VOI ${cell.properties.voiRange.lower} ~ ${cell.properties.voiRange.upper} (${cell.properties.VOILUTFunction}) · ${cell.properties.invert?'Inverted':'Normal grayscale'}`,figure);
         const annotations=batchOutput.frames[index].annotations;
         if(annotations.length){
-          const legend=el('div');legend.className='annotations';legends.push(legend);el('h2',`Plane ${index+1} · Manual 3D Annotations`,legend);el('p','십자: 평면 위 · 점선 원/물결 번호: 평면 밖 점의 투영 위치',legend);el('p',`${identity.name} (${identity.id}) · ${identity.date} · Study ${cell.study}`,legend);
+          const legend=el('div');legend.className='annotations';legends.push(legend);el('h2',`Plane ${index+1} · Manual 3D Annotations`,legend);el('p','십자: 평면 위 · 점선 원/물결 번호: 평면 밖 점의 투영 위치',legend);el('p',`${identity.name} (${identity.id}) · ${dateText(identity)} · Study ${cell.study}`,legend);
           for(const annotation of annotations){
             const row=el('div',undefined,legend);row.dataset.annotationId=annotation.id;row.dataset.plane=String(index+1);row.dataset.offset=String(annotation.offset);row.dataset.x=String(annotation.xy[0]);row.dataset.y=String(annotation.xy[1]);
             el('strong',`${annotation.number}. ${annotation.label}`,row);
@@ -783,7 +790,7 @@ globalThis.kinViewerJobPrint = function ({ api, authenticate, live, editor }) {
         el('p', `저장 당시 주석 ${annotations.length}개 · 영상 범위 밖의 주석은 일부 또는 전부 보이지 않을 수 있습니다.`, figure);
         const legend = el('div'); legend.className = 'annotations'; legends.push(legend);
         el('h2', `셀 ${index + 1} · 저장 당시 주석`, legend);
-        el('p', `${identity.name} (${identity.id}) · ${identity.date} · SOP ${cell.sop}`, legend);
+        el('p', `${identity.name} (${identity.id}) · ${dateText(identity)} · SOP ${cell.sop}`, legend);
         annotations.forEach((entry, index) => {
           const item = entry.item, values = item.kind === 'arrow' || TEXT_MARKS.includes(item.kind) || orthoMark(item.kind) || LINE_MARKS.includes(item.kind) ? null : item.baseline.values.map((n, i) => item.kind === 'ellipse' && i === 4 || item.kind === 'circle' && i === 6 ? String(n) : core.utilities.roundNumber(n));
           const kinds = { arrow: '화살표', length: '길이', angle: '각도', ellipse: 'ROI', text: '글', memo: '메모', spine: '척추 레벨', circle: '지름 원',

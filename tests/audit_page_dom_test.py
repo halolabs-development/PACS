@@ -74,6 +74,9 @@ class AuditPage(unittest.TestCase):
             reply = self.replies.pop(0)
             if reply == 'hold': self.held.append(route)
             else: route.fulfill(status=reply[0], json=reply[1])
+        elif path == '/api/emr-audit/intake-context':
+            # The F harnesses' institution and auditor (tests/emr/f/inspection_harness.cjs actor).
+            route.fulfill(json=dict(institutionId='SYN-SITE', verifier=dict(id='synthetic-auditor', issuer='synthetic', subject='auditor')))
         elif path == '/api/auth/logout': route.fulfill(status=204)
         else: route.fulfill(status=404, json={})
 

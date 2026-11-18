@@ -127,6 +127,7 @@ ROUTES: dict[tuple[str, str], Route] = {
     ("POST", "emr-audit/incidents/:id/close"): Route(Kind.TENANT),
     ("GET", "emr-audit/incidents/:id/drafts/:form"): Route(Kind.TENANT),
     ("POST", "emr-audit/rights-requests"): Route(Kind.TENANT),
+    ("GET", "emr-audit/intake-context"): Route(Kind.TENANT),
     ("GET", "emr-audit/rights-requests"): Route(Kind.TENANT),
     ("GET", "emr-audit/rights-requests/:id"): Route(Kind.TENANT),
     ("POST", "emr-audit/rights-requests/:id/decide"): Route(Kind.TENANT),
@@ -1900,12 +1901,17 @@ class BffInvariantTests(unittest.TestCase):
         self.assertIn("doctor2 KIN", [user["name"] for user in colleagues.body])
 
     def test_registration_success_page_has_safe_return_path(self) -> None:
-        source = (
-            ROOT / "keycloak" / "themes" / "kin-login" / "login" / "info.ftl"
-        ).read_text(encoding="utf-8")
-        self.assertIn('id="kin-continue"', source)
-        self.assertIn('href="/api/auth/login"', source)
-        self.assertIn('${msg("continueToKin")}', source)
+        theme = ROOT / "keycloak" / "themes" / "kin-login" / "login"
+        # FreeMarker comments are not drawn: a commented-out button does not count.
+        def drawn(name: str) -> str:
+            return re.sub(r"<#--.*?-->", "", (theme / name).read_text(encoding="utf-8"), flags=re.S)
+        source = drawn("info.ftl")
+        # The return button is the theme's one way back into the product (kin-home.ftl, shared with error.ftl); the
+        # rendered page is tests/e2e/test_login_error_page.py test 05.
+        self.assertIn('<@kin.homeButton id="kin-continue" label="continueToKin"/>', source)
+        home = drawn("kin-home.ftl")
+        self.assertEqual(home.count('href="/api/auth/login"'), 1)
+        self.assertIn('${msg(label)}', home)
 
     def test_member_explicit_email_verification_requirement_is_respected(self) -> None:
         username = "kin-test-unverified-" + uuid.uuid4().hex[:12]

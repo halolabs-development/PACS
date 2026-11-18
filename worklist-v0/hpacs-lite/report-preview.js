@@ -26,6 +26,36 @@
     return `${report.rs === 'A' ? '승인된' : '미승인'} ${report.action === 'addendum' ? '추가기재' : '저장본'} · v${report.version}` +
       (withRs ? ` · RS ${report.rs}` : '');
   }
+  // ── Dates and times on paper ──
+  //
+  // One rule for every date a report paper prints: the time the reading screen
+  // shows, in one human form. A server instant (ISO, UTC) is printed as this
+  // browser's local "YYYY-MM-DD HH:mm" - the same rule as the worklist's
+  // Confirm column (worklist-columns-view.js localStamp/confirmText), so the
+  // paper and the screen show one approval time. Stored values and audit
+  // records stay UTC; only the printed text changes.
+  const pad2 = n => String(n).padStart(2, '0');
+  /** A server instant as local "YYYY-MM-DD HH:mm"; anything unreadable is ''. */
+  function paperStamp(iso) {
+    const d = typeof iso === 'string' && iso ? new Date(iso) : null;
+    if (!d || !Number.isFinite(d.getTime())) return '';
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  }
+  /**
+   * The approval time of an Approved report, as the worklist Confirm cell shows it: the approval
+   * instant when the server kept one, else the stored approval date (YYYY-MM-DD, no time added);
+   * '' when the report is not approved or neither is readable.
+   */
+  function approvalText(report) {
+    if (report?.rs !== 'A') return '';
+    return paperStamp(report.approvedAt) ||
+      (typeof report.confirm === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(report.confirm) ? report.confirm : '');
+  }
+  /** A DICOM date (YYYYMMDD) as YYYY-MM-DD; any other text as it came; nothing as ''. */
+  function paperDate(value) {
+    const text = typeof value === 'string' ? value.trim() : '';
+    return /^\d{8}$/.test(text) ? `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6, 8)}` : text;
+  }
   // ── S3-U4: the citation section on the paper ──
   //
   // What the paper carries is the server's attestation ABOUT an insertion, never
@@ -68,9 +98,9 @@
   }
   function citationLine(entry, texts, name, citation) {
     const label = citation.FIELD_LABEL[entry.field] ?? '알 수 없는 칸';
-    // insertedAt is the server's UTC instant; the paper says so the way the
-    // header already does. A client clock is never printed as a witness.
-    const when = entry.insertedAt ? `${String(entry.insertedAt).replace('T', ' ').slice(0, 16)}(UTC)` : '시각 미확인';
+    // insertedAt is the server's instant, printed by the paper's one date rule
+    // (paperStamp). A client clock is never printed as a witness.
+    const when = paperStamp(entry.insertedAt) || '시각 미확인';
     const who = name(entry.insertedBy);
     if (citation.isReduced(entry)) return `${label} · ${who} · ${when} — ${citation.UNAVAILABLE_TEXT}`;
     const link = LINK_STATE_TEXT[entry.linkStateAtInsert] ?? LINK_STATE_UNKNOWN;
@@ -117,44 +147,56 @@
     const dialog = el('dialog'); dialog.id = 'report-preview'; dialog.setAttribute('aria-labelledby', 'report-preview-title');
     dialog.style.cssText = 'width:min(1150px,94vw);height:90vh;padding:0;border:1px solid #61748c;border-radius:8px;background:#18212b;color:#edf2f8';
     const top = el('div', undefined, dialog); top.style.cssText = 'display:flex;gap:12px;padding:12px;align-items:center;flex-wrap:wrap';
-    const title = el('strong', '판독문·키 이미지 미리보기', top); title.id = 'report-preview-title';
-    const source = el('select', undefined, top); source.setAttribute('aria-label', '출력 판독문');
-    for (const [value, label] of [['saved', '서버 저장본'], ['editor', '현재 편집문 · 미확정']]) { const option = el('option', label, source); option.value = value; }
-    const layout = el('select', undefined, top); layout.setAttribute('aria-label', '키 이미지 배치');
-    for (const [value, label] of [['single', '키 이미지 · 한 열'], ['double', '키 이미지 · 두 열']]) { const option = el('option', label, layout); option.value = value; }
-    const refresh = el('button', '다시 확인', top), closeButton = el('button', '닫기', top);
+    // These controls come from the product's fixed captions. Report and key image values use el() directly.
+    function caption(node, words, attribute) {
+      const language = globalThis.KinLanguage;
+      if (language) language.write(node, language.say(words), attribute);
+      else if (attribute) node.setAttribute(attribute, words);
+      else node.textContent = words;
+    }
+    function control(tag, words, parent) {
+      const node = el(tag, undefined, parent);
+      caption(node, words);
+      return node;
+    }
+    const title = control('strong', '판독문·키 이미지 미리보기', top); title.id = 'report-preview-title';
+    const source = el('select', undefined, top); caption(source, '출력 판독문', 'aria-label');
+    for (const [value, label] of [['saved', '서버 저장본'], ['editor', '현재 편집문 · 미확정']]) { const option = control('option', label, source); option.value = value; }
+    const layout = el('select', undefined, top); caption(layout, '키 이미지 배치', 'aria-label');
+    for (const [value, label] of [['single', '키 이미지 · 한 열'], ['double', '키 이미지 · 두 열']]) { const option = control('option', label, layout); option.value = value; }
+    const refresh = control('button', '다시 확인', top), closeButton = control('button', '닫기', top);
     const middle = el('div', undefined, dialog); middle.style.cssText = 'display:flex;gap:12px;height:calc(100% - 130px);min-height:150px;padding:0 12px';
     const sidebar = el('div', undefined, middle); sidebar.style.cssText = 'flex:0 1 260px;min-width:140px;overflow:auto';
-    el('strong', '함께 출력할 키 이미지', sidebar);
+    control('strong', '함께 출력할 키 이미지', sidebar);
     const windowControls = el('fieldset', undefined, sidebar); windowControls.style.cssText = 'border:0;padding:10px 0;margin:0';
-    el('legend', '선택 키 이미지 밝기', windowControls);
-    const brightness = el('select', undefined, windowControls); brightness.setAttribute('aria-label', '출력 영상 밝기');
-    for (const [value, label] of [['auto', '자동 밝기'], ['manual', 'CT 출력 W/L 직접 지정']]) { const option = el('option', label, brightness); option.value = value; }
+    control('legend', '선택 키 이미지 밝기', windowControls);
+    const brightness = el('select', undefined, windowControls); caption(brightness, '출력 영상 밝기', 'aria-label');
+    for (const [value, label] of [['auto', '자동 밝기'], ['manual', 'CT 출력 W/L 직접 지정']]) { const option = control('option', label, brightness); option.value = value; }
     const windowFields = el('div', undefined, windowControls); windowFields.style.display = 'none';
-    const widthLabel = el('label', 'W (폭) ', windowFields), windowWidth = el('input', undefined, widthLabel);
-    const centerLabel = el('label', 'L (중심) ', windowFields), windowCenter = el('input', undefined, centerLabel);
+    const widthLabel = control('label', 'W (폭) ', windowFields), windowWidth = el('input', undefined, widthLabel);
+    const centerLabel = control('label', 'L (중심) ', windowFields), windowCenter = el('input', undefined, centerLabel);
     for (const input of [windowWidth, windowCenter]) { input.type = 'number'; input.step = 'any'; input.style.cssText = 'width:100%;box-sizing:border-box;margin:4px 0 8px'; }
     windowWidth.min = '1'; windowWidth.max = '20000'; windowWidth.value = '400';
     windowCenter.min = '-10000'; windowCenter.max = '10000'; windowCenter.value = '40';
-    const applyWindow = el('button', '밝기 적용', windowFields);
+    const applyWindow = control('button', '밝기 적용', windowFields);
     const geometry = el('fieldset', undefined, sidebar); geometry.style.cssText = 'border:0;padding:10px 0;margin:0';
-    el('legend', '키 이미지 출력 범위', geometry);
-    const targetKey = el('select', undefined, geometry); targetKey.setAttribute('aria-label', '키 이미지 조절 대상');
+    control('legend', '키 이미지 출력 범위', geometry);
+    const targetKey = el('select', undefined, geometry); caption(targetKey, '키 이미지 조절 대상', 'aria-label');
     const geometryInputs = {};
     for (const [key, label, min, max, initial] of [['zoom', '키 확대 (%)', 25, 400, 100], ['x', '키 가로 이동 (%)', -100, 100, 0], ['y', '키 세로 이동 (%)', -100, 100, 0]]) {
-      const input = el('input', undefined, el('label', label, geometry)); input.type = 'number'; input.step = 'any'; input.min = min; input.max = max; input.value = initial;
+      const input = el('input', undefined, control('label', label, geometry)); input.type = 'number'; input.step = 'any'; input.min = min; input.max = max; input.value = initial;
       input.style.cssText = 'width:100%;box-sizing:border-box;margin:4px 0 8px'; geometryInputs[key] = input;
     }
-    const applyGeometry = el('button', '키 확대·이동 적용', geometry), resetGeometry = el('button', '키 원래 범위로', geometry);
+    const applyGeometry = control('button', '키 확대·이동 적용', geometry), resetGeometry = control('button', '키 원래 범위로', geometry);
     const geometryHint = el('p', '', geometry);
     const count = el('p', '', sidebar), choices = el('div', undefined, sidebar);
-    const paper = el('iframe', undefined, middle); paper.title = '출력물 미리보기'; paper.setAttribute('sandbox', 'allow-same-origin');
+    const paper = el('iframe', undefined, middle); caption(paper, '출력물 미리보기', 'title'); paper.setAttribute('sandbox', 'allow-same-origin');
     paper.style.cssText = 'flex:1;min-width:0;border:0;background:white';
     const footer = el('div', undefined, dialog); footer.style.cssText = 'display:flex;gap:12px;align-items:center;padding:12px';
     const status = el('span', '', footer); status.setAttribute('role', 'status'); status.style.cssText = 'flex:1;white-space:pre-wrap';
     // An error the page shows as it came: marked as an error, so one with no text in the screen language still says it failed.
     const showError = text => { const shown = document.createElement('span'); shown.setAttribute('data-kin-error', ''); shown.textContent = text; status.replaceChildren(shown); };
-    const printButton = el('button', '인쇄 / PDF', footer); printButton.disabled = true;
+    const printButton = control('button', '인쇄 / PDF', footer); printButton.disabled = true;
     document.body.append(dialog);
     let epoch = 0, session = null, request = null, urls = [], rendered = null, printWindow = null, focusBefore = null;
     let edits = new Map(), geometryDirty = false;
@@ -249,12 +291,13 @@
     function documentBody(s, images, windowing, citations, drawings = []) {
       const root = el('main'), head = el('header', undefined, root), d = s.data, st = d.study;
       el('h1', 'HALO PACS 판독문', head);
-      el('p', `환자: ${st.name} (${st.id}) · ${st.sex} · 생년월일 ${st.birth || '미확인'}`, head);
-      el('p', `검사: ${st.desc || st.modality || '(설명 없음)'} · ${st.date || '날짜 미확인'} · Acc: ${st.acc || '-'}`, head);
+      const studyDate = paperDate(st.date);
+      el('p', `환자: ${st.name} (${st.id}) · ${st.sex} · 생년월일 ${paperDate(st.birth) || '미확인'}`, head);
+      el('p', `검사: ${st.desc || st.modality || '(설명 없음)'} · ${studyDate || '날짜 미확인'} · Acc: ${st.acc || '-'}`, head);
       const editing = source.value === 'editor', report = editing ? s.editor : d.report;
       el('p', editing ? '현재 편집문 · 미확정 (출력으로 저장되거나 승인되지 않음)' : savedLabel(d.report, true), head).className = 'source';
-      el('p', `작성자: ${actorName(editing ? d.actor : d.report.author) || '-'} · 승인 판독의: ${editing ? '-' : actorName(d.report.repDoc) || '-'} · 승인일(UTC): ${editing ? '-' : d.report.confirm || '-'}`, head);
-      const identity = `환자 ${st.name} (${st.id}) · 검사 ${st.date || '-'} · Acc ${st.acc || '-'}\n${editing ? '현재 편집문 · 미확정' : savedLabel(d.report, false)}`;
+      el('p', `작성자: ${actorName(editing ? d.actor : d.report.author) || '-'} · 승인 판독의: ${editing ? '-' : actorName(d.report.repDoc) || '-'} · 승인일시: ${editing ? '-' : approvalText(d.report) || '-'}`, head);
+      const identity = `환자 ${st.name} (${st.id}) · 검사 ${studyDate || '-'} · Acc ${st.acc || '-'}\n${editing ? '현재 편집문 · 미확정' : savedLabel(d.report, false)}`;
       el('p', '모든 출력 페이지에 반복되는 식별정보\n' + identity, root).className = 'identity-example';
       for (const [index, name] of fields.entries()) {
         el('h2', ['Findings', 'Conclusion', 'Recommendation'][index], root); el('pre', report[name] || '(내용 없음)', root);
@@ -291,7 +334,7 @@
           el('p', key.item.description || '', figure);
           const img = el('img', undefined, figure); img.src = url; img.alt = key.item.title || '저장한 키 이미지';
           if (edit.zoom !== 100 || edit.x || edit.y) el('p', `출력 확대 ${edit.zoom}% · 가로 ${edit.x}% · 세로 ${edit.y}% · 최근접 화소 · 범위 밖 잘림/검정 · 실제 크기 아님`, figure).className = 'key-adjustment note';
-          el('p', `환자 ${st.name} (${st.id}) · ${st.date} · 프레임 ${key.item.frame} · r${key.revision}`, figure);
+          el('p', `환자 ${st.name} (${st.id}) · ${studyDate || '-'} · 프레임 ${key.item.frame} · r${key.revision}`, figure);
           el('p', `Study ${st.uid}\nSeries ${key.item.seriesUid}\nSOP ${key.item.sopUid}`, figure).className = 'reference';
         }
       }
@@ -591,7 +634,7 @@
   // how two papers start disagreeing about one citation - so the pure record is
   // published under its own global too. The object is the same one the node
   // tests already receive, so its contents do not change.
-  const paper = { savedLabel, citationSection, citationAnswerOk };
+  const paper = { savedLabel, citationSection, citationAnswerOk, paperStamp, approvalText, paperDate };
   globalThis.KinReportPaper = paper;
   if (typeof module === 'object' && module.exports) module.exports = paper;
 })();

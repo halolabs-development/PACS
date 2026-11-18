@@ -12,6 +12,7 @@ import unittest
 
 import auth_logout_dom_test as h
 import report_flow_dom_test as rf
+from page_source import settle
 from playwright.sync_api import expect, sync_playwright
 
 UIDS = [uid for uid, _, _ in rf.STUDIES]
@@ -276,7 +277,7 @@ class BatchReadingPage(unittest.TestCase):
         self.open()
         self.open_batch(UIDS[0], UIDS[1])
         self.site.epoch = "SYN-EPOCH-2"
-        self.page.evaluate("() => load()")
+        settle(self.page, "load()")
         self.wait(lambda: self.page.evaluate(f"() => appState['{UIDS[0]}']?.draftEpoch") == "SYN-EPOCH-2", "the new epoch")
         before = len(self.site.flow_commits)
         self.save()
@@ -450,7 +451,7 @@ class BatchReadingPage(unittest.TestCase):
         self.open()
         self.open_batch(UIDS[0], UIDS[1])
         self.site.hidden.add(UIDS[1])   # B leaves the list; the selection drops it (a new generation)
-        self.page.evaluate("() => load()")
+        settle(self.page, "load()")
         self.wait(lambda: not self.page.evaluate(f"() => studies.some(s => s.uid === '{UIDS[1]}')"), "B gone")
         self.save()
         expect(self.note()).to_have_text("선택이 바뀌었습니다 — 다시 여세요")
@@ -466,7 +467,7 @@ class BatchReadingPage(unittest.TestCase):
         expect(self.result_of(UIDS[1])).to_contain_text("Failed")
         # B leaves the list after the run; the selection drops it (a new generation).
         self.site.hidden.add(UIDS[1])
-        self.page.evaluate("() => load()")
+        settle(self.page, "load()")
         self.wait(lambda: not self.page.evaluate(f"() => studies.some(s => s.uid === '{UIDS[1]}')"), "B gone")
         before = len(self.site.flow_commits)
         self.dialog().locator("[data-batch-retry]").click()
