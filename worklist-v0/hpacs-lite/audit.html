@@ -33,6 +33,7 @@
     fieldset { border: 1px solid var(--line); margin: 14px 0; padding: 14px; min-width: 0; }
     .inspection-summary, #audit-inspection-history { white-space: pre-wrap; overflow-wrap: anywhere; }
     .inspection-actions { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+    input[readonly] { border-style: dashed; }
     #audit-incident-detail pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 28rem; overflow: auto; }
   </style>
 </head>
@@ -116,8 +117,8 @@
             <p>요청자와 실제 확인한 자격 증빙, 접수 시각 및 처리 기한을 입력하세요. 기본 범위는 원본과 수정본 전체 판입니다.</p>
             <div class="inspection-actions">
               <label>Copy Patient ID<input name="patientId" required></label>
-              <label>Copy Assigning Authority<input name="assigningAuthority" required></label>
-              <label>Patient Link ID<input name="linkId" required></label>
+              <label>Copy Assigning Authority<input name="assigningAuthority" readonly translate="no"></label>
+              <label>Patient Link ID<input name="linkId" readonly translate="no"></label>
               <label>Requester Kind<select name="requesterKind"><option value="patient">Patient</option><option value="family">Family</option><option value="designated-agent">Designated Agent</option><option value="statutory-authority">Statutory Authority</option></select></label>
               <label>Requester Name<input name="requesterName" required></label>
               <label>Requester Organization<input name="organization"></label>
@@ -126,11 +127,12 @@
               <label>Received At (UTC)<input name="receivedAt" type="datetime-local" required></label>
               <label>Due At (UTC)<input name="dueAt" type="datetime-local" required></label>
             </div>
-            <p>증빙을 확인한 사람의 등록 식별자와 확인 시각을 입력하세요. 필요한 증빙 종류는 서버가 요청 근거에 따라 확인합니다.</p>
+            <p>Assigning Authority와 Patient Link ID는 로그인한 감사자의 기관과 입력한 환자 ID로 화면이 채웁니다. 환자가 실제로 있는지 확인한 값은 아닙니다.</p>
+            <p>증빙을 확인한 사람의 등록 식별자와 확인 시각입니다. 지금 로그인한 감사자로 미리 채웠습니다 — 다른 사람이 증빙을 확인했다면 그 사람의 ID·Issuer·Subject로 고치세요. 필요한 증빙 종류는 서버가 요청 근거에 따라 확인합니다.</p>
             <div class="inspection-actions">
-              <label>Verifier ID<input name="verifierId" required></label>
-              <label>Verifier Issuer<input name="verifierIssuer" required></label>
-              <label>Verifier Subject<input name="verifierSubject" required></label>
+              <label>Verifier ID<input name="verifierId" translate="no"></label>
+              <label>Verifier Issuer<input name="verifierIssuer" translate="no"></label>
+              <label>Verifier Subject<input name="verifierSubject" translate="no"></label>
               <label>Checked At (UTC)<input name="checkedAt" type="datetime-local" required></label>
             </div>
             <div id="audit-disclosure-evidence"></div><button id="audit-disclosure-add-evidence" type="button">Add Evidence</button>
@@ -203,13 +205,13 @@
             <div class="inspection-actions">
               <label>Rights Kind<select name="kind"><option value="correction">Correction</option><option value="deletion">Deletion</option><option value="processing-suspension">Processing Suspension</option></select></label>
               <label>Rights Patient ID<input name="patientId" required></label>
-              <label>Rights Assigning Authority<input name="assigningAuthority" required></label>
-              <label>Rights Patient Link ID<input name="linkId" required></label>
+              <label>Rights Assigning Authority<input name="assigningAuthority" readonly translate="no"></label>
+              <label>Rights Patient Link ID<input name="linkId" readonly translate="no"></label>
               <label>Rights Record IDs<input name="recordIds" required></label>
               <label>Rights Record Type<select name="recordKind"><option value="">Not Selected</option><option value="report">Report</option><option value="clinical">Clinical Entry</option></select></label>
               <label>Rights Received At (UTC)<input name="receivedAt" type="datetime-local" required></label>
             </div>
-            <p>여러 기록 ID는 쉼표로 구분하세요. 판독문과 Tech Note가 같은 검사 ID를 쓰면 Rights Record Type으로 하나를 고르세요. 보존 분류와 결정은 서버 계약에서 가져옵니다.</p>
+            <p>Rights Assigning Authority와 Rights Patient Link ID는 로그인한 감사자의 기관과 입력한 환자 ID로 화면이 채웁니다. 여러 기록 ID는 쉼표로 구분하세요. 판독문과 Tech Note가 같은 검사 ID를 쓰면 Rights Record Type으로 하나를 고르세요. 보존 분류와 결정은 서버 계약에서 가져옵니다.</p>
             <label>Statement<textarea name="statement" required></textarea></label>
             <button id="audit-rights-receive-button" type="submit" disabled>Receive Request</button>
           </fieldset></form>

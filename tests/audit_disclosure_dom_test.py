@@ -67,7 +67,7 @@ class RecordCopyRequests(AuditPage):
 
     def receive(self, request_id='SYN-A', record='SYN-RECORD', part=None, method='electronic'):
         self.section.get_by_label('Request ID', exact=True).fill(request_id)
-        fields = {'Copy Patient ID': 'SYN-PATIENT', 'Copy Assigning Authority': 'SYN-SITE', 'Patient Link ID': 'SYN-LINK',
+        fields = {'Copy Patient ID': 'SYN-PATIENT',
             'Requester Name': '합성 <b>요청자</b>', 'Request Purpose': 'patient-copy', 'Received At (UTC)': date_input(-1),
             'Due At (UTC)': date_input(2), 'Verifier ID': 'synthetic-auditor', 'Verifier Issuer': 'synthetic',
             'Verifier Subject': 'auditor', 'Checked At (UTC)': date_input(), 'Evidence Document ID': 'SYN-EVIDENCE',

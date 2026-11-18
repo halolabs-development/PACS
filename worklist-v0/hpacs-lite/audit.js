@@ -37,7 +37,7 @@
     controls();
   }
   function refuse() {
-    denied = true; clear(); clearInspection(); clearDisclosure(true); clearRights(true); clearIncident(); el('workspace').hidden = true;
+    denied = true; forgetIntake(); clear(); clearInspection(); clearDisclosure(true); clearRights(true); clearIncident(); el('workspace').hidden = true;
     el('form').reset();
     message('감사 기록을 조회할 권한이 없습니다.');
   }
@@ -298,6 +298,80 @@
     if (!Number.isFinite(+date)) throw new Error('시각을 확인하세요.');
     return date.toISOString();
   };
+
+  // One reading of an audit answer: ok, denied (403), refused (400/404/409 with a code) or unconfirmed.
+  function answerOf(response) {
+    const code = typeof response.body?.code === 'string' ? response.body.code : null;
+    if (response.status === 403) return { kind: 'denied', code };
+    if (response.ok && !response.incomplete && response.body && typeof response.body === 'object') return { kind: 'ok', body: response.body };
+    if (!response.incomplete && !response.ok && [400, 404, 409].includes(response.status) && code) return { kind: 'refused', code };
+    return { kind: 'unconfirmed', code: code || 'ResponseUnavailable' };
+  }
+  // The intake forms fill what the product knows: the institution every copy/rights subject belongs to and the signed-in
+  // auditor as the default verifier (GET intake-context). The auditor enters only the patient ID and the request.
+  let intake = null, intakeLoad = null, intakeSession = 0;
+  // The product's patient link format (server studyPatientLink): the patient ID under the managing institution. It is a
+  // name for the pair, not a check that the patient exists.
+  const patientLink = patientId => ({ linkId: JSON.stringify([intake.institutionId, patientId]), patientId, assigningAuthority: intake.institutionId });
+  const intakeForms = () => [disclosureEl('receive'), rightsEl('receive')];
+  const verifierFields = () => ['verifierId', 'verifierIssuer', 'verifierSubject'].map(name => disclosureEl('receive').elements[name]);
+  function showIntake() {
+    for (const form of intakeForms()) {
+      const authority = intake?.institutionId ?? '', patientId = form.elements.patientId.value;
+      form.elements.assigningAuthority.defaultValue = authority; form.elements.assigningAuthority.value = authority;
+      form.elements.linkId.value = intake && patientId ? patientLink(patientId).linkId : '';
+    }
+  }
+  function fillIntake(context) {
+    intake = context; showIntake();
+    // A value the auditor already typed stays; an untouched field takes the signed-in auditor.
+    for (const input of verifierFields()) {
+      const value = context.verifier[{ verifierId: 'id', verifierIssuer: 'issuer', verifierSubject: 'subject' }[input.name]];
+      if (!input.value || input.value === input.defaultValue) input.value = value;
+      input.defaultValue = value;
+    }
+  }
+  function forgetIntake() {
+    intakeSession++; intake = null; intakeLoad = null;
+    for (const input of verifierFields()) { input.defaultValue = ''; input.value = ''; }
+    showIntake();
+  }
+  // Resolves with the context or rejects with the answer reading ({kind, code}); a session change drops the answer.
+  function loadIntake() {
+    if (intake) return Promise.resolve(intake);
+    if (intakeLoad) return intakeLoad;
+    const session = intakeSession, context = KinWorkContext.capture('document');
+    const load = (async () => {
+      let answer;
+      try { answer = answerOf(await KinSessionTransport.page().request(`${location.origin}/api/emr-audit/intake-context`, { method: 'GET', context })); }
+      catch { answer = { kind: 'unconfirmed', code: 'ResponseUnavailable' }; }
+      if (session !== intakeSession || !KinWorkContext.admits(context)) throw { stale: true };
+      const v = answer.body?.verifier;
+      if (answer.kind === 'ok' && typeof answer.body.institutionId === 'string' && answer.body.institutionId &&
+          ['id', 'issuer', 'subject'].every(key => typeof v?.[key] === 'string' && v[key])) {
+        fillIntake({ institutionId: answer.body.institutionId, verifier: { id: v.id, issuer: v.issuer, subject: v.subject } });
+        return intake;
+      }
+      throw answer.kind === 'ok' ? { kind: 'unconfirmed', code: 'ResponseUnavailable' } : answer;
+    })();
+    intakeLoad = load;
+    load.catch(() => { if (intakeLoad === load) intakeLoad = null; });
+    return load;
+  }
+  // A receive press first makes sure the context is there; the form is read again only after it arrives.
+  async function receiveWithIntake(show, receive) {
+    if (!ready || denied) return;
+    const session = intakeSession;
+    try { await loadIntake(); }
+    catch (failure) {
+      if (failure.stale || session !== intakeSession) return;
+      if (failure.kind === 'denied' && failure.code === 'AuditorNotDesignated') { refuse(); return; }
+      show(failure.kind === 'denied' ? '이 계정에는 접수 권한이 없습니다.' :
+        `접수에 필요한 기관·감사자 정보를 읽지 못했습니다 (${failure.code || 'ResponseUnavailable'}). 입력은 유지했습니다. 다시 Receive Request를 누르세요.`);
+      return;
+    }
+    if (session === intakeSession) receive();
+  }
   function disclosureControls() {
     const busy = !ready || denied || disclosurePending, state = disclosureCopy?.status.state;
     disclosureEl('open').querySelector('button').disabled = !ready || denied;
@@ -341,9 +415,10 @@
     disclosureEl('scope').append(row);
   }
   function disclosureIntake(id) {
-    const v = formValues('receive'), checkedBy = { id: v.verifierId, issuer: v.verifierIssuer, subject: v.verifierSubject };
+    const v = formValues('receive'), checkedBy = { id: v.verifierId.trim(), issuer: v.verifierIssuer.trim(), subject: v.verifierSubject.trim() };
+    if (!checkedBy.id || !checkedBy.issuer || !checkedBy.subject) throw new Error('증빙을 확인한 사람의 Verifier ID·Issuer·Subject를 입력하세요.');
     return { dueAt: utcInput(v.dueAt), request: { requestId: id, receivedAt: utcInput(v.receivedAt),
-      patient: { patientId: v.patientId, assigningAuthority: v.assigningAuthority, linkId: v.linkId },
+      patient: patientLink(v.patientId),
       basis: { clauseId: v.clauseId, purpose: v.purpose },
       requester: { kind: v.requesterKind, name: v.requesterName, organization: v.organization || null },
       evidence: Array.from(disclosureEl('evidence').children, row => ({ kind: row.querySelector('[name=evidenceKind]').value,
@@ -483,7 +558,11 @@
   disclosureEl('id').addEventListener('input', () => clearDisclosure());
   disclosureEl('open').addEventListener('submit', event => { event.preventDefault(); clearDisclosure(); disclosureRequest('open'); });
   for (const mode of ['receive', 'delivery', 'extend', 'resolve']) disclosureEl(mode).addEventListener('submit', event => {
-    event.preventDefault(); disclosureRequest(mode);
+    event.preventDefault();
+    if (mode === 'receive') receiveWithIntake(disclosureMessage, () => disclosureRequest(mode)); else disclosureRequest(mode);
+  });
+  disclosureEl('workspace').addEventListener('input', event => {
+    if (event.target === disclosureEl('receive').elements.patientId) showIntake();
   });
   for (const mode of ['prepare', 'issue']) disclosureEl(mode).addEventListener('click', () => disclosureRequest(mode));
   disclosureEl('add-evidence').addEventListener('click', addDisclosureEvidence);
@@ -575,8 +654,7 @@
       if (mode === 'receive') {
         const v = Object.fromEntries(new FormData(rightsEl('receive')));
         const ids = v.recordIds.split(',').map(s => s.trim()).filter(Boolean);
-        body = { requestId: id, kind: v.kind, receivedAt: utcInput(v.receivedAt),
-          patient: { patientId: v.patientId, assigningAuthority: v.assigningAuthority, linkId: v.linkId },
+        body = { requestId: id, kind: v.kind, receivedAt: utcInput(v.receivedAt), patient: patientLink(v.patientId),
           recordIds: v.recordKind ? ids.map(recordId => ({ recordId, recordKind: v.recordKind })) : ids, statement: v.statement };
       } else if (mode !== 'list') {
         path += `/${encodeURIComponent(id)}`;
@@ -622,7 +700,12 @@
   rightsEl('id').addEventListener('input', () => { rightsEl('notify').reset(); clearRights(); });
   rightsEl('load').addEventListener('click', () => rightsRequest('list'));
   for (const mode of ['open', 'receive', 'notify']) rightsEl(mode).addEventListener('submit', event => {
-    event.preventDefault(); if (mode === 'open') clearRights(); rightsRequest(mode);
+    event.preventDefault(); if (mode === 'open') clearRights();
+    if (mode === 'receive') receiveWithIntake(say => { rightsEl('message').textContent = say; }, () => rightsRequest(mode));
+    else rightsRequest(mode);
+  });
+  rightsEl('workspace').addEventListener('input', event => {
+    if (event.target === rightsEl('receive').elements.patientId) showIntake();
   });
   rightsEl('decide').addEventListener('click', () => rightsRequest('decide'));
   rightsEl('notify').elements.outcome.addEventListener('change', rightsControls);
@@ -869,7 +952,7 @@
   el('logout').addEventListener('click', () => KinAuth.logout());
   KinAuth.onLifecycle(state => {
     if (['ending', 'unconfirmed', 'confirmed'].includes(state.state)) {
-      ready = false; clear(); clearInspection(); clearDisclosure(true); clearRights(true); clearIncident(); el('workspace').hidden = true;
+      ready = false; forgetIntake(); clear(); clearInspection(); clearDisclosure(true); clearRights(true); clearIncident(); el('workspace').hidden = true;
       el('form').reset(); message('세션을 확인하고 다시 로그인하세요.');
     }
   });
@@ -889,5 +972,7 @@
     rightsEl('receive').elements.receivedAt.value = new Date().toISOString().slice(0, 16);
     for (const name of ['receivedAt', 'checkedAt']) disclosureEl('receive').elements[name].value = new Date().toISOString().slice(0, 16);
     ready = true; el('workspace').hidden = false; controls(); message('조건을 선택하고 Search로 조회하세요.');
+    // Pre-fill the intake forms; a refusal or failure here is said again when Receive Request is pressed.
+    loadIntake().catch(() => {});
   }).catch(() => message('세션을 확인할 수 없습니다. 다시 로그인하세요.'));
 })();
