@@ -16,7 +16,7 @@
       // fmtD는 모양만 바꾼다. 달력 검증 없이 정렬하면 미래·불량 날짜가 prior가 된다.
       // 같은 날의 선후는 StudyTime 근거가 없으므로 자동으로 추측하지 않는다.
       // A row whose exam cannot be read whole now (KinExamScope.unavailable) cannot be opened beside it: never the prior.
-      return studies.filter(x => x.sourcePatientKey === s.sourcePatientKey && x.uid !== uid && x.modality === s.modality && !KinExamScope.unavailable(x)
+      return studies.filter(x => x.sourcePatientKey === s.sourcePatientKey && x.uid !== uid && x.modality === s.modality && !globalThis.KinExamScope?.unavailable?.(x)
           && validPriorDate(x.date) && x.date < s.date)
         .sort((a, b) => b.date.localeCompare(a.date) || b.uid.localeCompare(a.uid))[0]?.uid ?? null;
     }
