@@ -105,9 +105,9 @@ export class AdminService {
   /** An institution being assigned: a real institution group, and only the administrator's own. */
   private async institution(value: unknown, admin: string): Promise<string> {
     const institution = text(value, 'institution', 128);
-    requireOwnAssignment(admin, institution);
     const allowed = await this.keycloak.institutions();
     if (!allowed.includes(institution)) throw new BadRequestException('허용되지 않은 기관입니다');
+    requireOwnAssignment(admin, institution);
     return institution;
   }
 
@@ -363,7 +363,11 @@ export class AdminService {
     const mode: 'temp' | 'email' = body.mode;
     // Password reset has no version CAS, so it never refreshes an existing identity or grants rights.
     // The pre-read validates the realm member and can register a missing pending row without remote I/O under lock.
-    const user = await this.managed(id);
+    // A directory read failure gets a page message, not the provider's words.
+    const user = await this.managed(id).catch(error => {
+      if (!(error instanceof RosterWriteFailure)) throw error;
+      throw new ServiceUnavailableException({ code: 'MEMBER_DIRECTORY_UNAVAILABLE', message: '회원 명부를 읽지 못했습니다. 잠시 뒤 다시 시도하세요.' });
+    });
     requireInScope(admin, memberInstitution(await this.prisma.memberRights.findUnique({ where: { sub: id } }), user.groups));
     let before: any;
     try {
@@ -410,6 +414,8 @@ export class AdminService {
     }
     const after = this.row(await this.member(id));
     await this.audit(c.actor, 'admin.user.reset-password', id, { before, after, mode });
+    // As for a temporary password: a member another institution took during the send is not shown here.
+    requireInScope(admin, memberInstitution(after));
     return after;
   }
 

@@ -48,11 +48,6 @@ export function requireInScope(admin: string, institution: MemberInstitution): v
   if (!inScope(admin, institution)) throw memberNotFound();
 }
 
-/** Only the administrator's own institution (not the waiting room): signing keys, identity changes. */
-export function requireOwnMember(admin: string, institution: MemberInstitution): void {
-  if (institution !== admin) throw memberNotFound();
-}
-
 /** An institution being assigned (create, approve, move) can only be the administrator's own. */
 export function requireOwnAssignment(admin: string, institution: string): void {
   if (institution !== admin) throw new BadRequestException('회원의 기관은 관리자 자신의 기관으로만 지정할 수 있습니다');

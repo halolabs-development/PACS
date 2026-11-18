@@ -398,7 +398,7 @@ class AdminAuditLive(unittest.TestCase):
         self.member_patch("u5b-admin-a", member, {"approvalState": "PENDING"}, "release from A",
                           a=[("admin.user.unapprove", member, ())])
         self.member_patch("u5b-admin-b", member, {"approvalState": "APPROVED", "institution": b, "roles": ["technician"],
-                                                  "verificationOverride": True}, "approve into B",
+                                                  "enabled": True, "verificationOverride": True}, "approve into B",
                           b=[("admin.user.approve", member, ())])
         self.member_patch("u5b-admin-b", member, {"enabled": False}, "suspend in B", b=[("admin.user.suspend", member, ())])
         self.member_patch("u5b-admin-b", member, {"approvalState": "PENDING"}, "un-approve in B",

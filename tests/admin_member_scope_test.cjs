@@ -187,6 +187,16 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
     w.kc.resetPassword = async (id, mode) => { if (mode === 'temp') claim(); };
     await assert.rejects(w.controller.resetPassword('waiting', { mode: 'temp' }, w.adminA), sameAsUnknown,
       'the temporary password of a member B took during the provider write is not shown to A');
+    Object.assign(w.rows.get('waiting'), { institution: null, approved: false, roles: [], version: 1 });
+    w.kc.resetPassword = async (id, mode) => { if (mode === 'email') claim(); };
+    await assert.rejects(w.controller.resetPassword('waiting', { mode: 'email' }, w.adminA), sameAsUnknown,
+      'a member B took during the send is not shown to A');
+    w.kc.getUser = async () => { throw new RosterWriteFailure({ state: 'unknown', outcome: 'http_500' }); };
+    await assert.rejects(w.controller.resetPassword('reader-a', { mode: 'email' }, w.adminA), error => {
+      assert.equal(error.getResponse().code, 'MEMBER_DIRECTORY_UNAVAILABLE');
+      assert.doesNotMatch(error.getResponse().message, /Keycloak|roster|http_/i);
+      return true;
+    });
     assert.ok(adminB);
   }
 
@@ -201,10 +211,12 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
     assert.equal(mail.id, 'waiting', 'the waiting room can receive a reset mail');
   }
 
-  // 6. Signing keys: only the administrator's own members (not another institution, not the waiting room).
+  // 6. Signing keys: the administrator's own members and the waiting room (a revoked doctor's keys here stay
+  //    revocable); another institution's member answers like an unknown id.
   {
     const w = world();
-    for (const id of ['reader-b', 'waiting', 'no-such-member']) {
+    assert.equal((await w.call('admin/users/:id/signing-key', 'GET', req => w.keys.read('waiting', req))).subject, 'waiting');
+    for (const id of ['reader-b', 'no-such-member']) {
       await assert.rejects(w.call('admin/users/:id/signing-key', 'GET', req => w.keys.read(id, req)), status(404), id);
       await assert.rejects(w.call('admin/users/:id/signing-key', 'POST', req => w.keys.change(id,
         { action: 'provision', expectedKid: null, reason: 'synthetic' }, req)), status(404), id);

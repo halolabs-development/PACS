@@ -5,7 +5,7 @@ import { EMR_SIGNING_KEY_ADMIN, SigningKeyAdmin } from './emr-clinical/startup';
 import { OnlineSigningStore } from './emr-report/online-store';
 import { REQUEST_CONTEXT_SOURCE, RequestContextSource, RequestWorkContext } from './emr-runtime/request-context';
 import { PrismaService } from './prisma.service';
-import { memberInstitution, memberNotFound, requireOwnMember } from './member-scope';
+import { memberInstitution, memberNotFound, requireInScope } from './member-scope';
 
 const ACTIONS = ['provision', 'replace', 'revoke'] as const;
 const KID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -53,11 +53,15 @@ export class SigningKeyAdminController {
     return institution;
   }
 
-  /** Only a member of the administrator's own institution; any other answers like an unknown id (member-scope.ts). */
+  /**
+   * A member of the administrator's own institution or the waiting room (member-scope.ts) — a doctor whose approval was
+   * revoked is released to the waiting room and their keys at this institution must stay revocable. Another institution's
+   * member answers like an unknown id. Provisioning still requires current clinical rights here (keys.manage).
+   */
   private async member(id: string, institution: string): Promise<string> {
     const row = typeof id === 'string' && id.length <= 512 ? await this.prisma.memberRights.findUnique({ where: { sub: id } }) : null;
     if (!row) throw memberNotFound();
-    requireOwnMember(institution, memberInstitution(row));
+    requireInScope(institution, memberInstitution(row));
     return row.sub;
   }
 

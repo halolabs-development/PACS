@@ -3236,6 +3236,8 @@ const CORE_COMMANDS=['Suspend','Approve','Change','Cancel','Activate'];
 // institution in one command any more (api/src/member-scope.ts; moves are tested with an explicit institution).
 const coreBody=name=>({Suspend:{enabled:false},Approve:{approvalState:'APPROVED',institution:A,roles:['radiologist'],enabled:true},
   Change:{institution:A,roles:['technician']},Cancel:{approvalState:'PENDING'},Activate:{enabled:true}}[name]);
+// Approving a waiting member into another institution is one command that changes the provider groups.
+const coreApproveB={approvalState:'APPROVED',institution:B,roles:['technician'],enabled:true};
 const realPG=()=>!process.env.KIN_AUTH_SESSION_DATABASE_URL.includes('local-stand-in');
 async function coreSetup(w,m,command){
   const setup=await coreMember(w,m);
@@ -3244,7 +3246,7 @@ async function coreSetup(w,m,command){
   return setup;
 }
 async function coreRoster(w,m){
-  const out=await r10Admin(w).listUsers(1,R10_CALLER);return out.users.find(u=>u.id===m);
+  const out=await r10Admin(w).listUsers(1,r10As(r10Current(m)??A));return out.users.find(u=>u.id===m);
 }
 async function coreSettled(w,m){
   await w.until('recorded credentials settled',async()=>{
@@ -3405,28 +3407,29 @@ for(const path of ['callback','refresh','document','authenticateSession','hasSes
 });
 
 for(const [outcome,state] of [[204,'done'],[404,'void'],[403,'void'],[503,'unknown'],['drop','unknown']])test(`CORE_ROSTER_HTTP_OUTCOMES U7 ${outcome}`,async t=>{
-  const w=await world(t),m='syn-http-'+outcome,{admin}=await coreMember(w,m);
-  kc.onAdmin=(name,sub)=>sub===m&&name==='POST role-mappings/realm'?outcome:undefined;
-  assert.equal((await r10Patch(admin,m,coreBody('Change'))).status,200);await coreSettled(w,m);
+  // A waiting member approved into B: one command whose publication moves the provider groups (DELETE A, PUT B).
+  const w=await world(t),m='syn-http-'+outcome,{admin}=await coreSetup(w,m,'Approve');
+  kc.onAdmin=(name,sub)=>sub===m&&name.startsWith('PUT groups/')?outcome:undefined;
+  assert.equal((await r10Patch(admin,m,coreApproveB)).status,200);await coreSettled(w,m);
   const record=await w.base.providerChange.findFirst({where:{sub:m,kind:'credentials'}});
   assert.equal(record.state,state);if(typeof outcome==='number'&&outcome!==204)assert.equal(record.outcome,'http_'+outcome);
   assert.equal((await coreRoster(w,m)).rosterUnconfirmed,state!=='done');
-  const fresh=await coreFresh(w,m);assert.equal((await w.call(w.I2,'me',{sid:fresh.done.newSid})).body.institution,A);
+  const fresh=await coreFresh(w,m);assert.equal((await w.call(w.I2,'me',{sid:fresh.done.newSid})).body.institution,B);
   assert.equal(kc.endRequests.length,0);await w.finish('U7 '+outcome);
 });
 
 test('CORE_CREDENTIALS_COMMIT_CRASH_SECOND_API U8 intent survives shutdown before publication; another API admits DB rights',async t=>{
-  const w=await world(t),m='syn-crash-credentials',{admin}=await coreMember(w,m);
+  const w=await world(t),m='syn-crash-credentials',{admin}=await coreSetup(w,m,'Approve');
   let crashed=false;w.observe({inst:'I1',model:'$transaction',phase:'after'},e=>{
     if(e.result?.change?.kind==='credentials'&&!crashed){crashed=true;w.I1.background.quiesce();}
   });
-  assert.equal((await r10Patch(admin,m,coreBody('Change'))).status,200);assert.equal(crashed,true);
+  assert.equal((await r10Patch(admin,m,coreApproveB)).status,200);assert.equal(crashed,true);
   const record=await w.base.providerChange.findFirst({where:{sub:m,kind:'credentials'}});assert.equal(record.state,'unknown');assert.equal(record.outcome,null);
   assert.ok(!kc.adminCalls.some(x=>/^(PUT|POST|DELETE) /.test(x)));
   const second=w.instance('crash-restart');await second.service.onModuleInit();t.after(()=>second.service.onModuleDestroy());
   w.tick(1000);const token=await w.issue(m+'-new',{sub:m,authTime:Math.floor(Date.now()/1000)});
   const entered=(await login(w,second,token)).done;assert.ok(entered.newSid);
-  assert.equal((await w.call(second,'me',{sid:entered.newSid})).body.institution,A);
+  const me=await w.call(second,'me',{sid:entered.newSid});assert.equal(me.body.institution,B);assert.deepEqual(me.body.roles,['technician']);
   assert.equal((await coreRoster(w,m)).rosterUnconfirmed,true);await quiet(w);
   assert.equal((await w.base.providerChange.findUnique({where:{id:record.id}})).state,'unknown');
   assert.ok(!kc.adminCalls.some(x=>/^(PUT|POST|DELETE) /.test(x)));await w.finish('U8');
@@ -3665,14 +3668,14 @@ test('CORE_REALM_404 a realm read 404 is a failed import, never a ready empty re
 
 for(const stage of ['GET groups','GET role-mappings/realm','POST role-mappings/realm'])
 test(`CORE_ROSTER_HTTP_STAGE ${stage} 404 records void with its HTTP outcome`,async t=>{
-  const w=await world(t),m='syn-stage-'+stage.replace(/\W/g,'-'),{admin}=await coreMember(w,m);let armed=false;
+  const w=await world(t),m='syn-stage-'+stage.replace(/\W/g,'-'),{admin}=await coreSetup(w,m,'Approve');let armed=false;
   w.observe({inst:'I1',scope:'tx',model:'providerChange',method:'create',phase:'after'},()=>{armed=true;});
   kc.beforeAdmin=(name,sub)=>armed&&sub===m&&name===stage?404:undefined;
-  assert.equal((await r10Patch(admin,m,coreBody('Change'))).status,200);await coreSettled(w,m);
+  assert.equal((await r10Patch(admin,m,coreApproveB)).status,200);await coreSettled(w,m);
   const record=await w.base.providerChange.findFirst({where:{sub:m,kind:'credentials'}});
   assert.deepEqual([record.state,record.outcome],['void','http_404']);
   kc.beforeAdmin=null;assert.equal((await coreRoster(w,m)).rosterUnconfirmed,true);
-  assert.equal((await w.base.memberRights.findUnique({where:{sub:m}})).institution,A);await w.finish('CORE_ROSTER_HTTP_STAGE '+stage);
+  assert.equal((await w.base.memberRights.findUnique({where:{sub:m}})).institution,B);await w.finish('CORE_ROSTER_HTTP_STAGE '+stage);
 });
 
 // D632 / REQ-S7-U5-DB-RIGHTS -> RISK-LEGACY-LOCKOUT / IDENTITY-REBIND / LOST-CAS / FALSE-PENDING -> CORE_* below.
@@ -3967,8 +3970,9 @@ test('CORE_INSTITUTION_ONLY_OUTAGE_NO_CONFLICT', async t => {
     // The identity endpoints remain healthy while ONLY /groups fails.
     assert.equal((await new KeycloakService().getUser(m)).id, m);
     const reads = kc.institutionReads, calls = kc.adminCalls.length;
-    const result = await r10Patch(admin, m, { ...coreBody(command),
-      institution: refusal === 'absent' ? 'syn-institution-not-listed' : B });
+    // The administrator of A names its own institution (outage) or an unlisted one (absent).
+    const result = await r10Answer(patchMember(admin, m, { ...coreBody(command),
+      institution: refusal === 'absent' ? 'syn-institution-not-listed' : A }, r10As(A)));
     assert.equal(result.status, refusal === 'outage' ? 503 : 400, command + '/' + refusal);
     assert.equal(kc.institutionReads, reads + 1, 'the command consulted the institution list');
     await quiet(w);
