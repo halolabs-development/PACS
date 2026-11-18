@@ -327,6 +327,8 @@ jobs:
       run: docker run --rm --network none --read-only -v "$PWD:/src:ro" -w /src node:22-alpine node --test tests/viewer_precision_test.cjs tests/viewer_frame_metadata_test.cjs tests/viewer_reference_lines_test.cjs tests/viewer_stack_loading_test.cjs
     - name: Deployment preflight refusal and shared lock
       run: python3 tests/ops_deploy_preflight_test.py
+    - name: Dependency audit targets, scanner failures and verdict
+      run: python3 -B tests/ops_dependency_audit_test.py
     - name: Deployment state machine and retained operations lock
       run: python3 -B tests/ops_deploy_runner_test.py
     - name: Protected deployment host files, UID boundary and synthetic HTTPS
