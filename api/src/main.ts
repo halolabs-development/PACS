@@ -4,6 +4,7 @@ import { dictationParser } from './dictation-parser';
 import { studyTransferLocalParser } from './study-transfer-local-parser';
 import { studyAttachmentParser } from './study-attachment-parser';
 import { reportDraftParser } from './report-draft-parser';
+import { preloadDiskStartupNotice } from './preload-disk-setting';
 import { join } from 'node:path';
 import { EmrRuntime } from './emr-runtime/application';
 import { PrismaClient } from '@prisma/client';
@@ -92,6 +93,8 @@ async function bootstrap() {
     throw error;
   }
   console.log('[KIN API] http://localhost:3000/api');
+  const preloadNotice = preloadDiskStartupNotice();
+  if (preloadNotice) console.warn(preloadNotice);
   if (process.env.AUTH_REQUIRED === 'false')
     console.warn('[KIN API] ⚠️  인증이 꺼져 있습니다 (AUTH_REQUIRED=false). 사내망 밖에 노출하지 마세요.');
   else

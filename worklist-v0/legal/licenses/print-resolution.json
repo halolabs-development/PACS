@@ -16,12 +16,12 @@
     {
       "download_info": {
         "archive_info": {
-          "hash": "sha256=f9f8e19b78525be57aa6384484298833e4d06ac1d6226c79459131ddb0bd7c42",
+          "hash": "sha256=35a594cc8ebae8dd40b1f632cd7c9f08ecaa147cb9305a9f9fbca2c03f5ccc93",
           "hashes": {
-            "sha256": "f9f8e19b78525be57aa6384484298833e4d06ac1d6226c79459131ddb0bd7c42"
+            "sha256": "35a594cc8ebae8dd40b1f632cd7c9f08ecaa147cb9305a9f9fbca2c03f5ccc93"
           }
         },
-        "url": "https://files.pythonhosted.org/packages/35/2a/8c0f6fe243e6b6793868c6834203a44cc8f3f25abad780e1c7b21e15594d/pydicom-2.4.4-py3-none-any.whl"
+        "url": "https://files.pythonhosted.org/packages/db/5b/4e7d67d880b3344afff01708725a39717694a79391a32711fd40a8958bed/pydicom-2.4.5-py3-none-any.whl"
       },
       "is_direct": false,
       "is_yanked": false,
@@ -34,9 +34,6 @@
           "Intended Audience :: Science/Research",
           "Development Status :: 5 - Production/Stable",
           "Programming Language :: Python",
-          "Programming Language :: Python :: 3.7",
-          "Programming Language :: Python :: 3.8",
-          "Programming Language :: Python :: 3.9",
           "Programming Language :: Python :: 3.10",
           "Programming Language :: Python :: 3.11",
           "Operating System :: OS Independent",
@@ -52,7 +49,10 @@
           "medical",
           "imaging"
         ],
-        "metadata_version": "2.1",
+        "license_file": [
+          "LICENSE"
+        ],
+        "metadata_version": "2.4",
         "name": "pydicom",
         "project_url": [
           "documentation, https://pydicom.github.io/pydicom",
@@ -74,9 +74,9 @@
           "sphinxcontrib-napoleon ; extra == \"docs\"",
           "sphinx-copybutton ; extra == \"docs\""
         ],
-        "requires_python": ">=3.7",
+        "requires_python": ">=3.10",
         "summary": "A pure Python package for reading and writing DICOM data",
-        "version": "2.4.4"
+        "version": "2.4.5"
       },
       "requested": true
     },

@@ -1579,6 +1579,19 @@
       "source": "git://github.com/juliangruber/brace-expansion.git",
       "supplier": "Julian Gruber"
     },
+    "brace-expansion@1.1.22": {
+      "files": [
+        {
+          "name": "LICENSE",
+          "path": "texts/68f12f6e2c33688699249c01d8f9623c534da20aa71989c57b061b7bc1676d14.txt",
+          "sha256": "68f12f6e2c33688699249c01d8f9623c534da20aa71989c57b061b7bc1676d14",
+          "source": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-1.1.22.tgz#package/LICENSE"
+        }
+      ],
+      "license": "MIT",
+      "source": "git://github.com/juliangruber/brace-expansion.git",
+      "supplier": "Julian Gruber"
+    },
     "brace-expansion@2.1.4": {
       "files": [
         {
@@ -1586,6 +1599,19 @@
           "path": "texts/68f12f6e2c33688699249c01d8f9623c534da20aa71989c57b061b7bc1676d14.txt",
           "sha256": "68f12f6e2c33688699249c01d8f9623c534da20aa71989c57b061b7bc1676d14",
           "source": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.1.4.tgz#package/LICENSE"
+        }
+      ],
+      "license": "MIT",
+      "source": "git://github.com/juliangruber/brace-expansion.git",
+      "supplier": "Julian Gruber"
+    },
+    "brace-expansion@2.1.8": {
+      "files": [
+        {
+          "name": "LICENSE",
+          "path": "texts/68f12f6e2c33688699249c01d8f9623c534da20aa71989c57b061b7bc1676d14.txt",
+          "sha256": "68f12f6e2c33688699249c01d8f9623c534da20aa71989c57b061b7bc1676d14",
+          "source": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.1.8.tgz#package/LICENSE"
         }
       ],
       "license": "MIT",
@@ -2652,6 +2678,19 @@
           "path": "texts/95a5762890e5c1c9808921cef095661fc482c5e1f0bba31446ac85595df6237c.txt",
           "sha256": "95a5762890e5c1c9808921cef095661fc482c5e1f0bba31446ac85595df6237c",
           "source": "https://registry.npmjs.org/express/-/express-4.22.1.tgz#package/LICENSE"
+        }
+      ],
+      "license": "MIT",
+      "source": "expressjs/express",
+      "supplier": "TJ Holowaychuk <tj@vision-media.ca>"
+    },
+    "express@4.22.3": {
+      "files": [
+        {
+          "name": "LICENSE",
+          "path": "texts/95a5762890e5c1c9808921cef095661fc482c5e1f0bba31446ac85595df6237c.txt",
+          "sha256": "95a5762890e5c1c9808921cef095661fc482c5e1f0bba31446ac85595df6237c",
+          "source": "https://registry.npmjs.org/express/-/express-4.22.3.tgz#package/LICENSE"
         }
       ],
       "license": "MIT",
@@ -3789,6 +3828,19 @@
       "source": "expressjs/multer",
       "supplier": "Unverified"
     },
+    "multer@2.5.0": {
+      "files": [
+        {
+          "name": "LICENSE",
+          "path": "texts/cc8f87aafbf72a74bafed2a8f6925d8895e1c716b36bd3df7ee0c46be54e87bb.txt",
+          "sha256": "cc8f87aafbf72a74bafed2a8f6925d8895e1c716b36bd3df7ee0c46be54e87bb",
+          "source": "https://registry.npmjs.org/multer/-/multer-2.5.0.tgz#package/LICENSE"
+        }
+      ],
+      "license": "MIT",
+      "source": "expressjs/multer",
+      "supplier": "Unverified"
+    },
     "mute-stream@0.0.8": {
       "files": [
         {
@@ -4564,6 +4616,19 @@
       "source": "jshttp/proxy-addr",
       "supplier": "Douglas Christopher Wilson <doug@somethingdoug.com>"
     },
+    "proxy-addr@2.0.8": {
+      "files": [
+        {
+          "name": "LICENSE",
+          "path": "texts/a7996721249a136fbcfc1c201bcb5f414f38a701d4a24f28abe65e16cfcce813.txt",
+          "sha256": "a7996721249a136fbcfc1c201bcb5f414f38a701d4a24f28abe65e16cfcce813",
+          "source": "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz#package/LICENSE"
+        }
+      ],
+      "license": "MIT",
+      "source": "jshttp/proxy-addr",
+      "supplier": "Douglas Christopher Wilson <doug@somethingdoug.com>"
+    },
     "punycode@2.3.1": {
       "files": [
         {
@@ -4767,6 +4832,23 @@
           "path": "texts/09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b.txt",
           "sha256": "09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b",
           "source": "https://files.pythonhosted.org/packages/1e/db/4254e3eabe8020b458f1a747140d32277ec7a271daf1d235b70dc0b4e6e3/requests-2.32.5-py3-none-any.whl#requests-2.32.5.dist-info/licenses/LICENSE"
+        }
+      ],
+      "license": "Apache-2.0",
+      "notes": [
+        "Python 3.12 의존성 해석 결과의 배포 wheel에 포함된 원문입니다."
+      ],
+      "source": "https://github.com/psf/requests",
+      "supplier": "Kenneth Reitz"
+    },
+    "requests@2.33.0": {
+      "files": [
+        {
+          "artifact_sha256": "3324635456fa185245e24865e810cecec7b4caf933d7eb133dcde67d48cee69b",
+          "name": "LICENSE",
+          "path": "texts/09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b.txt",
+          "sha256": "09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b",
+          "source": "https://files.pythonhosted.org/packages/56/5d/c814546c2333ceea4ba42262d8c4d55763003e767fa169adc693bd524478/requests-2.33.0-py3-none-any.whl#requests-2.33.0.dist-info/licenses/LICENSE"
         }
       ],
       "license": "Apache-2.0",
@@ -5909,7 +5991,7 @@
         ],
         [
           "requests",
-          "2.32.5"
+          "2.33.0"
         ],
         [
           "urllib3",
@@ -5917,7 +5999,7 @@
         ]
       ],
       "provenance": "gateway-resolution.json",
-      "provenance_sha256": "b579c64ebc6cc2ec413a6845bd41f787fed71a6763e8fa2031cfc3a645f94e9f",
+      "provenance_sha256": "207d59463b27bb752cff221107ba09db4547a74a859fb996661e327dc6da60d7",
       "python": {
         "implementation_name": "cpython",
         "implementation_version": "3.12.10",
@@ -5932,13 +6014,13 @@
         "sys_platform": "win32"
       },
       "resolver": "pip 25.0.1",
-      "sha256": "863b581f34ba99f8406b9da3a6e4930b3bea337c2965bc065c1326b0733d5794"
+      "sha256": "6f27c1c7f1918d97eee24a188b7ca45b2610504193e1e601506abe423b0a841f"
     },
     "api/print/requirements.txt": {
       "packages": [
         [
           "pydicom",
-          "2.4.4"
+          "2.4.5"
         ],
         [
           "pynetdicom",
@@ -5946,7 +6028,7 @@
         ]
       ],
       "provenance": "print-resolution.json",
-      "provenance_sha256": "eac9012d84a6d21332eff4464d80971ac5ae46858e296cece435d15b85386349",
+      "provenance_sha256": "cb8c52f4c63aeda100c647a966586ca861bfaa2392d650ecceeafdfb805f751c",
       "python": {
         "implementation_name": "cpython",
         "implementation_version": "3.12.10",
@@ -5961,7 +6043,7 @@
         "sys_platform": "win32"
       },
       "resolver": "pip 25.0.1",
-      "sha256": "02d73a2c27787e3aed67f9d08f91cc999ffd0599f887ea5da36fe073362e1445"
+      "sha256": "8239516f33da445f550bc459b6732bec82ccedeec26778039af79a1975920576"
     }
   }
 }
