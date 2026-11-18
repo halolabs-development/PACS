@@ -1,6 +1,9 @@
 # KIN 리버스 프록시 — 브라우저가 보는 출처를 하나로 모은다.
 # PUBLIC_PORT 계열만 envsubst한다. $host·$request_uri 같은 nginx 변수는 런타임까지 남아야 한다.
 
+# 응답 머리글(Server)과 nginx가 그리는 화면에 판 번호를 싣지 않는다.
+server_tokens off;
+
 
 # S9-U4b 원본 archive(D1489)의 접근 기록: 메서드·정규화한 경로·상태·바이트·시각뿐이다. 그 GET의 query에는 일회용
 # 다운로드 grant가 있으므로 $request·$request_uri·$args·$http_referer·Cookie·Authorization은 쓰지 않는다.
@@ -53,11 +56,38 @@ map $request_method $kin_image_read_method {
 # 영상·메타데이터·판독·업무 화면(/worklist/)의 캐시 정책은 이 값과 무관하다(빈 값이면 머리글을 내지 않는다). 오래 두는 것은
 # 성공 응답뿐이고 /ohif/의 오류 응답은 no-store다 — 배포 중 아직 없는 번들의 404가 브라우저에 남지 않는다. 값은 응답 상태를
 # 보고 정하므로 add_header는 always로 둔다(상태는 머리글을 쓸 때 정해져 있다).
-map "$status:$uri" $kin_app_cache_control {
+# 제품 오류 화면(@kin_error_page)은 앞에 "error:"를 붙여 어느 주소의 실패든 no-store로 둔다(그 location에 add_header를 두면
+# 위 보안 머리글의 상속이 끊기므로 이 map 하나로 한다).
+map "$kin_error_page$status:$uri" $kin_app_cache_control {
     default                                                             "";
+    "~^error:"                                                          "no-store";
     "~^20[06]:/ohif/([^/]+/)*([^/]+\.)?[0-9a-f]{20}\.(js|wasm)$"        "public, max-age=31536000, immutable";
     "~^[23][0-9][0-9]:/ohif/"                                           "no-cache";
     "~^[45][0-9][0-9]:/ohif/"                                           "no-store";
+}
+# 제품 오류 화면(@kin_error_page)의 한 줄: 무엇이 안 됐는지. 화면은 한 장이고 이 문장만 상태마다 다르다.
+map $status $kin_error_line {
+    default "요청을 처리하지 못했습니다. 잠시 뒤 다시 시도하세요.";
+    401     "로그인이 필요합니다. 다시 로그인하세요.";
+    403     "이 화면이나 자료를 열 권한이 없습니다.";
+    404     "찾는 화면이 없습니다. 주소가 바뀌었거나 잘못 입력되었을 수 있습니다.";
+    408     "요청이 제시간에 끝나지 않았습니다. 다시 시도하세요.";
+    413     "보낸 파일이 너무 큽니다.";
+    500     "서버가 지금 응답하지 않습니다. 잠시 뒤 다시 시도하세요.";
+    502     "서버가 지금 응답하지 않습니다. 잠시 뒤 다시 시도하세요.";
+    503     "서버가 지금 응답하지 않습니다. 잠시 뒤 다시 시도하세요.";
+    504     "서버의 응답이 늦어 요청을 마치지 못했습니다. 잠시 뒤 다시 시도하세요.";
+}
+# 제품 오류 화면은 화면(/worklist/, 뷰어)과 같은 cross-origin isolation에 둔다. 다르면 그 창이 오류 화면을 여는 순간 다른
+# browsing context group으로 옮겨져, 워크리스트가 쥔 이름 붙은 뷰어 창 핸들이 끊긴다(복구 뒤 창이 둘이 된다). 빈 값이면
+# 머리글을 내지 않으므로 server 수준에 두어도 오류 화면 밖에는 붙지 않는다.
+map $kin_error_page $kin_error_opener_policy {
+    default "";
+    "error:" "same-origin";
+}
+map $kin_error_page $kin_error_embedder_policy {
+    default "";
+    "error:" "require-corp";
 }
 # 그 archive의 API 연결은 응답 뒤에도 nginx가 먼저 끊지 않는다(keepalive). 끊으면 API의 writer가 마지막 byte를 넘긴 뒤 자기
 # 응답을 끝내기 전에 연결이 닫혀, 끝까지 받은 다운로드가 Incomplete로 기록된다(S9-U4b (c) r2, hosted G3 dfca33a: nginx 200 전체
@@ -161,6 +191,9 @@ server {
     # 뷰어 앱 파일의 캐시(위 map). 보안 헤더와 같은 수준에 두어 /ohif/ location이 보안 헤더와 함께 물려받는다 — location에
     # add_header를 따로 두면 위 보안 헤더의 상속이 끊긴다. 값이 빈 경로(/ohif/ 밖)에는 아무 머리글도 붙지 않는다.
     add_header Cache-Control $kin_app_cache_control always;
+    # 제품 오류 화면(@kin_error_page)에만 값이 있다(위 map).
+    add_header Cross-Origin-Opener-Policy $kin_error_opener_policy always;
+    add_header Cross-Origin-Embedder-Policy $kin_error_embedder_policy always;
 
     # 직접 DICOM 요청의 인증 거절이 어느 거절인지(S7-U5): 인증 서브요청(/kin-authz)은 본문을 전달하지 못하므로 API가
     # 실은 X-KIN-Auth-Code를 보호 경로의 401/403 응답에 그대로 옮긴다. 값이 비면 nginx는 이 헤더를 내지 않는다 —
@@ -179,6 +212,54 @@ server {
     access_log /var/log/nginx/access.log main if=$kin_plain_log;
     access_log /var/log/nginx/access.log kin_original_archive if=$kin_grant_query;
     if ($kin_grant_outside_archive) { return 400; }
+
+    # 사람이 브라우저로 연 주소가 실패하면 보는 화면은 이 한 장이다(무엇이 안 됐는지 한 줄, 워크리스트·로그인으로 가는 길,
+    # 서버 이름·판 번호 없음). nginx가 스스로 만드는 실패(닫힌·없는 주소, 로그인 관문의 401/403, 본문 한도 413, 뒷단이 죽거나
+    # 늦은 502/504)는 어느 location에서든 여기로 온다. 뒷단이 보낸 실패는 그대로 지나간다 — API·인증 서버의 JSON과 상태는
+    # 화면 코드가 읽는다. 뒷단의 실패를 이 화면으로 바꾸는 곳은 사람이 여는 화면 폴더(/worklist/, /ohif/)뿐이다
+    # (proxy_intercept_errors). 400은 넣지 않는다: grant 거절(위 if)의 기록 규칙을 건드리지 않는다.
+    error_page 401 403 404 408 413 500 502 503 504 @kin_error_page;
+
+    # 이름 붙은 location이라 server 수준의 rewrite(`set $kin_auth_code ""`)를 다시 돌지 않는다 — 로그인 관문이 실은
+    # X-KIN-Auth-Code가 그대로 남고(화면은 상태와 이 머리글로 세션 종료를 가린다), 위 보안 머리글·캐시 머리글을 물려받는다
+    # (그래서 여기 add_header를 두지 않는다). 화면은 정적 파일이 아니라 이 return의 글이다: 정적 파일 처리는 POST를 405로
+    # 바꾸지만 return은 요청 방법과 관계없이 원래 상태(error_page가 정한 것)로 나간다. 프록시 설정 안에 있으므로 뒷단이 모두
+    # 죽어도 나온다. 화면에는 상태와 정해진 문장만 들어간다 — 요청 주소·query·환자 자료는 싣지 않는다. 스크립트 없이 읽힌다.
+    # types를 비우는 것은 원래 주소의 확장자(.js 등)로 형식이 정해지지 않게 하려는 것이다.
+    location @kin_error_page {
+        set $kin_error_page "error:";
+        types { }
+        default_type text/html;
+        charset utf-8;
+        return 200 "<!doctype html>
+<html lang='ko'>
+<head>
+<meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'>
+<meta name='robots' content='noindex'>
+<title>HALO PACS</title>
+<link rel='icon' type='image/svg+xml' href='/kin-brand/kin-emblem-j1.svg'>
+<style>
+body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #0f1720; color: #e6edf3; font: 16px/1.6 system-ui, 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; }
+main { box-sizing: border-box; width: 100%; max-width: 32rem; padding: 2rem 1.5rem; }
+h1 { margin: 0 0 1rem; font-size: 1.25rem; }
+.line { margin: 0 0 .25rem; font-size: 1.05rem; overflow-wrap: anywhere; }
+.code { margin: 0 0 1.5rem; color: #9aa7b4; font-size: .875rem; }
+nav { display: flex; flex-wrap: wrap; gap: .75rem; }
+a { color: #7cc4ff; }
+</style>
+</head>
+<body>
+<main>
+<h1 translate='no'>HALO PACS</h1>
+<p class='line'>$kin_error_line</p>
+<p class='code'>오류 번호 <span translate='no'>$status</span></p>
+<nav><a href='/worklist/hpacs-lite/main.html'>워크리스트로 돌아가기</a> <a href='/worklist/hpacs-lite/index.html'>로그인 화면으로</a></nav>
+</main>
+</body>
+</html>
+";
+    }
 
     location = / { return 302 /worklist/hpacs-lite/index.html; }
 
@@ -288,6 +369,8 @@ server {
         add_header Cross-Origin-Embedder-Policy "require-corp" always;
         proxy_pass http://orthanc:8042;
         include /etc/nginx/snippets/orthanc-basic-auth.conf;
+        # 없는 화면 파일·뒷단 실패는 Orthanc의 JSON 대신 제품 오류 화면(@kin_error_page)이다.
+        proxy_intercept_errors on;
     }
 
     # 내장 뷰어의 번들을 포크하지 않는다. 브라우저 셸에 필요한 KIN 자산만 프록시가
@@ -328,6 +411,9 @@ server {
         include /etc/nginx/snippets/orthanc-basic-auth.conf;
         # 캐시 정책은 서버 수준의 $kin_app_cache_control 하나다. 뷰어 서버가 언젠가 자기 값을 내도 두 값이 겹치지 않게 숨긴다.
         proxy_hide_header Cache-Control;
+        # 없는 화면 파일·뒷단 실패는 Orthanc의 JSON 대신 제품 오류 화면(@kin_error_page, no-store)이다. 디코더 worker의 정확
+        # 경로(위)는 가로채지 않는다 — 그 응답의 CSP가 따로다.
+        proxy_intercept_errors on;
         sub_filter_once off;
         sub_filter '<meta name="application-name" content="OHIF Viewer"/>' '<meta name="application-name" content="HALO PACS 판독 뷰어"/>';
         sub_filter '<meta name="apple-mobile-web-app-title" content="@ohif/app"/>' '<meta name="apple-mobile-web-app-title" content="HALO PACS 판독 뷰어"/>';
@@ -361,6 +447,9 @@ server {
         client_max_body_size 0;
         limit_except GET HEAD POST { deny all; }
         error_page 418 = @kin_study_image_read;
+        # 418로 이미 error_page를 한 번 탔으므로, 이것이 없으면 @kin_study_image_read에서 nginx가 만든 실패(뒷단 502 등)가
+        # 제품 오류 화면(server 수준 error_page)으로 가지 못하고 nginx 기본 화면이 된다. 그 location은 418을 다시 내지 않는다.
+        recursive_error_pages on;
         if ($kin_image_read_method) { return 418; }
         auth_request /kin-authz;
         auth_request_set $kin_auth_code $upstream_http_x_kin_auth_code;
@@ -462,6 +551,7 @@ server {
         proxy_set_header X-KIN-Session $http_x_kin_session;
     }
 
-    # 목록에 없는 Orthanc 관리·삭제 경로는 뒷단으로 넘기지 않는다.
-    location / { return 404 "not exposed\n"; }
+    # 목록에 없는 Orthanc 관리·삭제 경로는 뒷단으로 넘기지 않는다. 잘못 친 주소·옛 즐겨찾기도 여기로 오므로 본문 없는
+    # 404로 끝내 제품 오류 화면(@kin_error_page)을 보인다(본문을 주면 error_page를 건너뛴다).
+    location / { return 404; }
 }
