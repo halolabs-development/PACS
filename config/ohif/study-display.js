@@ -180,16 +180,20 @@ const kinViewerStudyDisplay = (() => {
     return entry ? withBase(entry) : null;
   }
   // Everything learned belongs to the account and role that read it.
+  // The patient tab's lookup of an opening is that opening's one read: from its start, a place showing those studies waits
+  // for it instead of reading them itself (hold); a lookup that ends before its read began lets them be asked (release).
+  function hold(uids) { for (const uid of uids) if (typeof uid === 'string' && uid && !asked.has(uid)) asked.set(uid, 0); }
+  function release(uids) { for (const uid of uids) if (asked.get(uid) === 0 && !known.has(uid) && !rows.has(uid)) asked.delete(uid); }
   function forget() { epoch++; known.clear(); rows.clear(); asked.clear(); failed.clear(); queue = new Set(); tell(); }
   try { session()?.onChange?.(forget); } catch (_) {}
   try { if (typeof kinViewerOnEnd === 'function') kinViewerOnEnd(forget); } catch (_) {}
   return Object.freeze({
     keys: Object.freeze([...KEYS]), shown, years, of, row,
-    // Opened again (a list open, a reused window or reading frame): every study this viewer has asked about is read
-    // again, so a Match or Unmatch since shows - also in cells added after the opening.
+    // Opened again (the same studies from the list, a reused reading frame): every study this viewer has asked about is
+    // read again, so a Match or Unmatch since shows - also in cells added after the opening.
     refresh: uids => read(uids),
     refreshAll: () => read([...new Set([...known.keys(), ...rows.keys(), ...asked.keys()])]),
-    begin, settle, forget,
+    begin, settle, forget, hold, release,
     subscribe(watch) { watchers.add(watch); return () => { watchers.delete(watch); }; },
   });
 })();

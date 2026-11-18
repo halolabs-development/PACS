@@ -281,3 +281,17 @@ test('the prior list (Study menu, Previous Report) names each study as the workl
   assert.deepEqual(plain(ready.studies.map(s => [s.uid, s.relation, s.name, s.id, s.desc])),
     [['2.25.11', 'Current', 'M172 ORDERNAME', 'ORD-1', 'CT CHEST LOW DOSE'], ['2.25.5', 'Prior', 'M172 OLDORDER', 'ORD-0', 'CT CHEST OLD ORDER']]);
 });
+test('the patient tab lookup is the opening\'s one read; another opening reads only its own studies', async () => {
+  const gates = [];
+  const w = world({ answer: uids => new Promise(resolve => gates.push(() => resolve(uids.map(uid => uid === '2.25.11' ? MATCHED
+    : { ...ROW, uid, sourcePatientKey: 'inst|SYN-2', id: 'SYN-2' })))) });
+  const opening = tabsOf(w);
+  w.bar.refresh(); await settle(); w.bar.refresh(); await settle();
+  assert.equal(w.calls.length, 1, 'the heading waits for the tab lookup instead of reading the study itself');
+  gates[0](); const { tabs } = await opening; await settle();
+  assert.equal(w.heading(), ORDER);
+  const before = w.calls.length;
+  const switched = tabs.open('https://viewer.test/ohif/viewer?StudyInstanceUIDs=2.25.77'); await settle();
+  gates.at(-1)(); assert.equal(await switched, true); await settle();
+  assert.deepEqual(w.calls.slice(before).map(c => c.uids), [['2.25.77']], 'one lookup, of the new study only');
+});

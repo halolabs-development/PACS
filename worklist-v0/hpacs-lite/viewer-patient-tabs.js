@@ -444,7 +444,13 @@ window.KinViewerPatientTabs = (() => {
     document.body.classList.toggle('kin-viewer-empty', explicitlyClosed && !current && !pending);
     renderLeave();
   }
+  // The lookup is the opening's read of its studies' shown values too: the cells wait for it rather than read them first.
   async function resolve(href, signal) {
+    const display = window.kinViewerStudyDisplay, held = studies(href);
+    display?.hold(held);
+    try { return await lookup(href, signal); } finally { display?.release(held); }
+  }
+  async function lookup(href, signal) {
     const exam = await window.kinPrepareExamViewer?.(href);
     const wanted = exam?.studyUids || studies(href), found = new Map();
     if (session.state() === 'unconfirmed') await session.decide();
@@ -518,10 +524,10 @@ window.KinViewerPatientTabs = (() => {
     if (signal?.aborted) return false;
     const url = new URL(href, location.origin);
     if (url.origin !== location.origin || url.pathname !== '/ohif/viewer') return false;
-    // Every open (from the list, another window, a tab) reads again what this viewer shows: a Match or Unmatch since shows,
-    // also in cells added after the opening. The studies of this open are read again by its own lookup below.
-    window.kinViewerStudyDisplay?.refreshAll();
     if (current && openingKey(href) === openingKey(current.href)) {
+      // Opened again (from the list, another window): every study this viewer has asked about is read again, so a Match or
+      // Unmatch since shows - also in cells added after the opening. Another opening reads its own studies in its lookup.
+      window.kinViewerStudyDisplay?.refreshAll();
       if (current.exam) try { await window.KinViewerExamScope.resolve(href,{signal}); } catch (error) { status.textContent=error.message;return false; }
       if (!holds()) return false;
       if (pending) { sequence++; controller?.abort(); pending = false; render(); publish(); }
