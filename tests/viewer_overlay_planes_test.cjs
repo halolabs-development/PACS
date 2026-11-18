@@ -51,7 +51,7 @@ function viewer({ answer = () => new Response(null, { status: 404 }), headers = 
     window, fetch, { href: 'https://viewer.example/ohif/viewer?StudyInstanceUIDs=' + STUDY });
   const extension = api.kinCreateOverlayPlanes();
   extension.preRegistration(); extension.onModeEnter();
-  return { requests, extension, Tool };
+  return { requests, extension, Tool, header };
 }
 const multipart = bytes => new Response(Buffer.concat([Buffer.from('--B1\r\nContent-Type: application/octet-stream\r\n\r\n'), Buffer.from(bytes),
   Buffer.from('\r\n--B1--\r\n')]), { headers: { 'Content-Type': 'multipart/related; type="application/octet-stream"; boundary=B1' } });
@@ -76,9 +76,9 @@ test('a bulk plane in the allowed form is read once from this origin and drawn; 
     assert.deepEqual(answer.overlays.map(o => [o.dataUrl, o.kinImageId]), [['bits:' + frame.join(','), 'wadors:A']]);
   assert.equal(metadata.overlays[0], shared); assert.equal(shared.dataUrl, undefined); assert.equal(shared.pixelData.Value, undefined);
   assert.deepEqual(requests, [[OVERLAY, 'multipart/related; type="application/octet-stream"', 'same-origin']], 'one read for overlapping draws');
-  // An even-length element (one padding byte) is still one frame.
-  const padded = viewer({ answer: () => multipart([...frame, 0]) });
-  assert.equal((await new padded.Tool()._getCachedStat('wadors:A', { overlays: [plane()] }, [255, 0, 0, 255])).overlays.length, 1);
+  // A frame of an odd byte count (3 rows of 8) padded to an even length is still one frame.
+  const padded = viewer({ answer: () => multipart([1, 2, 3, 0]), headers: { Rows: 3 } });
+  assert.equal((await new padded.Tool()._getCachedStat('wadors:A', { overlays: [plane({ rows: 3 })] }, [255, 0, 0, 255])).overlays.length, 1);
 });
 
 test('a bulk plane outside the allowed form is not read and not drawn; the shared list stays as it was', async () => {
@@ -106,6 +106,8 @@ test('a failed, short or long answer draws nothing, keeps the shared list, and i
     ['network', () => { throw new TypeError('Failed to fetch'); }],
     ['short', () => multipart(frame.slice(0, ONE_FRAME - 1))],
     ['two frames', () => multipart([...frame, ...frame])],
+    // A frame of an even byte count has no padding: one byte more is not one frame.
+    ['one byte more than an even frame', () => multipart([...frame, 0])],
   ];
   for (const [name, answer] of cases) {
     const { requests, Tool } = viewer({ answer });
@@ -114,6 +116,22 @@ test('a failed, short or long answer draws nothing, keeps the shared list, and i
     assert.deepEqual([metadata.overlays.length, metadata.overlays[0]], [1, shared], name);
     assert.equal(requests.length, 1, name + ': one read, none again');
   }
+});
+
+test('a plane whose header declares more than one overlay frame is not read, even when its bytes would fit one', async () => {
+  // A 2 x 4 mask is one byte a frame: its two declared frames are two bytes, which would pass as one frame and its padding.
+  for (const declared of [2, [2], new TextEncoder().encode('2 ').buffer]) {
+    const { requests, Tool, header } = viewer({ answer: () => multipart([5, 6]), headers: { Rows: 2, Columns: 4 } });
+    const o = plane({ rows: 2, columns: 4 });
+    Object.assign(header, { '60003000': o.pixelData, '60000015': declared });
+    const answer = await new Tool()._getCachedStat('wadors:A', { overlays: [o] }, [255, 0, 0, 255]);
+    assert.deepEqual([answer.overlays, requests], [[], []], String(declared));
+  }
+  // Declared as one frame: read and drawn.
+  const { Tool, header } = viewer({ answer: () => multipart([5, 0]), headers: { Rows: 2, Columns: 4 } });
+  const o = plane({ rows: 2, columns: 4 });
+  Object.assign(header, { '60003000': o.pixelData, '60000015': 1 });
+  assert.equal((await new Tool()._getCachedStat('wadors:A', { overlays: [o] }, [255, 0, 0, 255])).overlays.length, 1);
 });
 
 test('planes the pinned tool already reads go its own way, unchanged', async () => {

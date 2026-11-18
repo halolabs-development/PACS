@@ -40,9 +40,21 @@ function kinCreateOverlayPlanes() {
     return !!d && !o.dataUrl && !d.Value && !Array.isArray(d) && !d.retrieveBulkData && !d.InlineBinary && typeof d.BulkDataURI === 'string'; };
   const pair = v => Array.isArray(v) && v.length >= 2 ? v.slice(0, 2).map(Number) : null;
   const header = id => { try { return window.cornerstone.metaData.get('instance', id) || null; } catch (_) { return null; } };
+  // A header number as the metadata keeps it (a number, a list, or the raw bytes of an element the dictionary does not name).
+  const number = v => { const x = Array.isArray(v) ? v[0] : v;
+    if (x === undefined || x === null || x === '') return undefined;
+    return Number(x instanceof ArrayBuffer ? new TextDecoder().decode(x).replace(/\0/g, '').trim() : x); };
+  // Overlay frames declared for this plane (60xx,0015); absent is one. Its group is the one holding this very element; when
+  // that cannot be told, any overlay group declaring more than one frame counts.
+  function frames(h, o) {
+    const groups = Array.from({ length: 16 }, (_, i) => (0x6000 + 2 * i).toString(16));
+    const own = groups.find(g => h[g + '3000'] === o.pixelData);
+    const declared = (own ? [own] : groups.filter(g => h[g + '3000'] !== undefined)).map(g => number(h[g + '0015'])).filter(n => n !== undefined);
+    return declared.length ? Math.max(...declared.map(n => Number.isFinite(n) ? n : Infinity)) : 1;
+  }
   function allowed(imageId, o) {
     const h = header(imageId);
-    if (!h || Number(h.NumberOfFrames) > 1) return false;
+    if (!h || Number(h.NumberOfFrames) > 1 || frames(h, o) !== 1) return false;
     if (o.x !== 1 || o.y !== 1 || o.rows !== Number(h.Rows) || o.columns !== Number(h.Columns) || !(o.rows > 0 && o.columns > 0)) return false;
     const spacing = pair(h.PixelSpacing) || pair(h.ImagerPixelSpacing), aspect = pair(h.PixelAspectRatio);
     const square = s => s.every(x => Number.isFinite(x) && x > 0) && Math.abs(s[0] - s[1]) <= 1e-6 * Math.max(s[0], s[1]);
@@ -69,8 +81,8 @@ function kinCreateOverlayPlanes() {
       let bytes = null;
       try { bytes = await kinFetchBulk(o.pixelData.BulkDataURI); } catch (_) { return null; }
       const need = Math.ceil(o.rows * o.columns / 8);
-      // One frame of the mask: the element is padded to an even length; more than that is another frame.
-      if (!bytes || bytes.length < need || bytes.length > need + 1) return null;
+      // Exactly one frame of the mask: one byte more only as the padding to an even length (a frame of an odd byte count).
+      if (!bytes || !(bytes.length === need || need % 2 === 1 && bytes.length === need + 1)) return null;
       try {
         const answer = await read.call(tool, imageId, { ...overlayMetadata, overlays: [{ ...o, pixelData: { Value: bytes.slice(0, need).buffer } }] }, color);
         const drawn = answer?.overlays?.[0];
