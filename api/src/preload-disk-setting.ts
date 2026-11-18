@@ -21,6 +21,6 @@ export function preloadDiskStartupNotice(env: Env = process.env): string | null 
   if (preloadDiskGb(env) !== null) return null;
   const effect = '미리 받기(Preload)가 꺼져 있고, 워크리스트의 Preload는 Failed와 그 이유를 보입니다.';
   return String(env.KIN_PRELOAD_DISK_GB ?? '').trim()
-    ? `[KIN API] KIN_PRELOAD_DISK_GB 설정 오류: 0보다 큰 GiB 숫자만 허용합니다. ${effect} ${GUIDE}`
+    ? `[KIN API] KIN_PRELOAD_DISK_GB 설정 오류: 바이트로 바꿔 1 이상이고 너무 크지 않은 GiB 숫자만 허용합니다. ${effect} ${GUIDE}`
     : `[KIN API] KIN_PRELOAD_DISK_GB가 설정되지 않았습니다. ${effect} ${GUIDE}`;
 }

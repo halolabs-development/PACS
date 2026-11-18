@@ -49,7 +49,7 @@ is an admission condition for a clean install.
    does not count the change as a dirty checkout.
 
    Put the site's preload disk cap `KIN_PRELOAD_DISK_GB=<GiB>` in the same
-   `.env`: a positive number the site decides from the reading PC's free disk
+   `.env`, as a bare number without quotes: a positive number the site decides from the reading PC's free disk
    ([preload-cache.md](preload-cache.md); `.env.example` carries `change-me`).
    The product has no default. Without a valid value the stack still starts, but
    Preload stays off, every study's Preload shows Failed with that reason and the
@@ -797,6 +797,21 @@ looked at.
    candidate's value. A preparation that did not finish is never continued: the reopening removes it, and
    a new window prepares again from nothing.
 
+   The candidate's environment file must carry the site's preload disk cap. Before the switch intent,
+   check it with the candidate's API image, giving the image only that one value and the rule of
+   installation step 3 (`preload_on`):
+
+   ```python
+   cap = [line.split('=', 1)[1] for line in (Path('<candidate directory>') / '.env').read_text(encoding='utf-8').splitlines()
+          if line.startswith('KIN_PRELOAD_DISK_GB=')]
+   assert len(cap) == 1 and ops.text(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'node',
+                                      '-e', 'KIN_PRELOAD_DISK_GB=' + cap[0], '<candidate API image ID>',
+                                      '-e', preload_on]) == 'true', 'Set KIN_PRELOAD_DISK_GB in the site .env first'
+   ```
+
+   A refusal here comes before any change: set the value in the site's `.env` and prepare again from
+   nothing.
+
    Then the decision that uses the first judgement is taken: release the protection, restore the
    database's access rules, flush what was prepared to disk, and write the **switch intent** durably. Only after that record exists is the
    first container created from the prepared directory. From the switch intent on, the preparation is in
@@ -832,9 +847,8 @@ looked at.
    container or perform another backup between the last judgement and opening the entry, and compare the
    container events of the whole project over that interval: the proxy's start is the only one.
 7. Verify HTTPS, the actual served worklist/viewer files and sign-in theme, image labels, migrations,
-   signing-key access and the realm issuer, the preload disk cap (the `preload_on` check of installation
-   step 3; the candidate's environment file is a copy of the site's, so a site without the cap fails here
-   until it is set), and that both file-reading services were created from the
+   signing-key access and the realm issuer, the preload disk cap on the running API (the `preload_on`
+   check of installation step 3; step 4 already checked the candidate's value before the switch), and that both file-reading services were created from the
    candidate's directory after the switch began. Only after these checks: write what the declaration says
    moves with the site, file by file, load the managers, and let the declared executors go again, the
    schedulers first and, in a later request, what starts others (a timer that catches up on a missed run
@@ -1275,8 +1289,11 @@ no `retain()`: keep the lock with `lease.retained = True`, release it with
     returns that row (the admin page reads exactly this function, for the
     caller's own institution, so only a kin-center admin sees it; on
     2026-11-01 production had none: kin-center 2 approved members, 0 admins);
-  - the API has the preload disk cap set in U1.1: the `preload_on` check of
-    installation step 3 prints `true`;
+  - the API has the preload disk cap set in U1.1: when N carries
+    `/app/dist/preload-disk-setting.js`, the `preload_on` check of
+    installation step 3 prints `true`; an N from before that file has the same
+    rule inside its controller, and `docker exec kin-api printenv KIN_PRELOAD_DISK_GB`
+    must print the U1.1 value;
   - `config_matches(compose, project)`.
 
   If `kin-api-migrate` exits non-zero, go to M below. Any other failure: keep
