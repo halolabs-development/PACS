@@ -725,7 +725,7 @@
       const heldTitle = `${displayActor(held)} 님이 판독 중입니다`;
       // The report state table (report-visibility.ts): another physician's Save is theirs - the same bar says who is on it.
       // Fixtures that load this block without page-core.js keep the Preliminary words.
-      const lockText = typeof reportLockText === "function" ? reportLockText(appState[selectedUid]) : appState[selectedUid]?.prelimHidden ? "다른 판독의의 예비 판독(RS: P)입니다" : "";
+      const lockText = typeof reportLockText === "function" ? reportLockText(appState[selectedUid]) : appState[selectedUid]?.prelimHidden ? kinSay("다른 판독의의 예비 판독(RS: P)입니다") : "";
       const inProgress = appState[selectedUid]?.bodyLock === "in-progress";
       $("#holdbar").style.display = held || inProgress ? "flex" : "none";
       // A hold over another physician's Save does not end with the hold: the bar says the Save's words either way.

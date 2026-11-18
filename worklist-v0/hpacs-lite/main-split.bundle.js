@@ -31,10 +31,10 @@
      */
     function reportLockText(a) {
       if (!a?.prelimHidden) return "";
-      if (a.bodyLock === "destroyed") return "보존 기간이 끝나 판독문을 파기한 검사입니다";
+      if (a.bodyLock === "destroyed") return kinSay("보존 기간이 끝나 판독문을 파기한 검사입니다");
       if (a.bodyLock === "in-progress")
-        return `${displayActor(a.savedBy) || "다른 판독의"} 님이 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다`;
-      return "다른 판독의의 예비 판독(RS: P)입니다";
+        return kinSay("{0} 님이 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다", displayActor(a.savedBy) || kinSay("다른 판독의"));
+      return kinSay("다른 판독의의 예비 판독(RS: P)입니다");
     }
     function tagv(st, key) {
       const v = st[key]?.Value?.[0];
@@ -2176,7 +2176,7 @@
       const heldTitle = `${displayActor(held)} 님이 판독 중입니다`;
       // The report state table (report-visibility.ts): another physician's Save is theirs - the same bar says who is on it.
       // Fixtures that load this block without page-core.js keep the Preliminary words.
-      const lockText = typeof reportLockText === "function" ? reportLockText(appState[selectedUid]) : appState[selectedUid]?.prelimHidden ? "다른 판독의의 예비 판독(RS: P)입니다" : "";
+      const lockText = typeof reportLockText === "function" ? reportLockText(appState[selectedUid]) : appState[selectedUid]?.prelimHidden ? kinSay("다른 판독의의 예비 판독(RS: P)입니다") : "";
       const inProgress = appState[selectedUid]?.bodyLock === "in-progress";
       $("#holdbar").style.display = held || inProgress ? "flex" : "none";
       // A hold over another physician's Save does not end with the hold: the bar says the Save's words either way.

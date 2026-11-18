@@ -77,6 +77,17 @@ class ReportStateTablePage(unittest.TestCase):
         self.assertEqual([], self.site.holds, "no hold is taken on another radiologist's Save")
         self.assertEqual([], self.site.flow_puts)
 
+    def test_read_only_reason_on_the_buttons_follows_the_screen_language(self):
+        # The lock reason is a product phrase carrying the writer's name as data: the chosen language names it.
+        self.open()
+        self.pick(h.PATIENT)
+        self.wait(lambda: self.selected() == h.PATIENT, "the study opens")
+        defer = self.page.locator("#b-defer")
+        self.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", "en")
+        expect(defer).to_have_attribute("title", f"In progress, saved by {WRITER} — only that radiologist can read and continue it")
+        self.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", "ko")
+        expect(defer).to_have_attribute("title", f"{WRITER} 님이 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다")
+
     def test_a_destroyed_report_opens_read_only_with_its_reason(self):
         self.open()
         self.pick(flow.PATIENT_C)
