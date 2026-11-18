@@ -6,6 +6,7 @@ or fail actual network reads only after the normally served baseline renders.
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import unittest
 import uuid
@@ -782,6 +783,103 @@ class ViewerUXPriorsE2E(ViewerLayoutE2E):
         self.assertEqual(grid, [2, 1])
         self.evidence(viewer, 'worklist-comparison-personal-layout')
         without_layouts()
+
+
+    # Viewer open failures: a comparison open whose prior's series list (QIDO) fails, refuses or is late shows the current
+    # study and says why; the same window opened again reads a new document; a study the account cannot see is refused.
+    PRIOR_LIST = '/dicom-web/studies/{}/series'
+
+    def comparison_open(self, current, prior, handler):
+        reader = self.login()
+        lists = []
+
+        def route(r):
+            lists.append(r.request.url)
+            handler(r)
+        pattern = re.compile(re.escape(self.PRIOR_LIST.format(prior.uid)) + r'(\?|$)')
+        reader.context.route(pattern, route)
+        self.open_toolbar_group(reader, '#image-opening-open')
+        reader.locator('#image-opening-open').click()
+        reader.get_by_label('Include Latest Prior', exact=True).check()
+        reader.get_by_role('button', name='Done', exact=True).click()
+        self.select(reader, current)
+        with reader.context.expect_page() as opened: reader.locator('#m-filmbox').click()
+        viewer = opened.value
+        viewer.on('dialog', lambda dialog: dialog.accept())
+        viewer.wait_for_url('**/ohif/viewer?**')
+        self.assertIn(current.uid + ',' + prior.uid, viewer.url)
+        return reader, viewer, lists, pattern
+
+    SHOWN_STUDIES = """() => [...services.viewportGridService.getState().viewports.keys()].map(id => {
+      const v = services.cornerstoneViewportService.getCornerstoneViewport(id), image = v?.getCurrentImageId?.();
+      return image ? cornerstone.metaData.get('instance', image)?.StudyInstanceUID || null : null; }).filter(Boolean)"""
+
+    def shows_only_current(self, viewer, current, prior):
+        viewer.wait_for_function('uid => (' + self.SHOWN_STUDIES + ')().includes(uid)', arg=current.uid, timeout=30000)
+        canvas_ready(viewer, 1)
+        self.assertNotIn(prior.uid, viewer.evaluate(self.SHOWN_STUDIES))
+        expect(viewer.get_by_text('Something went wrong', exact=False)).to_have_count(0)
+
+    def test_priors_11_prior_list_failure_keeps_the_current_study_and_the_window_reads_again(self):
+        patient = 'U3F-' + uuid.uuid4().hex[:12]
+        current = self.ct(patient, 'current', '20260801')
+        prior = self.ct(patient, 'prior', '20250701')
+        reader, viewer, lists, pattern = self.comparison_open(current, prior, lambda r: r.fulfill(status=503, body='Unavailable'))
+        self.shows_only_current(viewer, current, prior)
+        line = viewer.locator('#kin-viewer-open-status')
+        expect(line).to_be_visible()
+        expect(line).to_contain_text('2번째 검사의 영상 정보를 한 번 다시 요청했지만 불러오지 못했습니다(HTTP 503)')
+        expect(line).not_to_contain_text(prior.uid)
+        self.assertEqual(2, len(lists), 'one retry of the prior series list')
+        self.assertIn(prior.uid, viewer.evaluate('() => kinViewerFailedStudies()'))
+        # The same comparison again from the worklist: the window reads a new document and asks the server again.
+        reader.context.unroute(pattern)
+        before = viewer.evaluate('() => performance.timeOrigin')
+        reader.locator('#m-filmbox').click()
+        viewer.wait_for_function('t => performance.timeOrigin !== t && document.readyState === "complete"', arg=before, timeout=30000)
+        viewer.wait_for_function('uid => (' + self.SHOWN_STUDIES + ')().includes(uid)', arg=prior.uid, timeout=30000)
+        viewer.wait_for_function('uid => (' + self.SHOWN_STUDIES + ')().includes(uid)', arg=current.uid, timeout=30000)
+        expect(viewer.locator('#kin-viewer-open-status')).to_have_count(0)
+        self.evidence(viewer, 'prior-list-failure-reopened')
+
+    def test_priors_12_refused_or_late_prior_list_does_not_hold_the_current_study(self):
+        patient = 'U3R-' + uuid.uuid4().hex[:12]
+        current = self.ct(patient, 'current', '20260801')
+        prior = self.ct(patient, 'prior', '20250701')
+        reader, viewer, lists, _ = self.comparison_open(current, prior, lambda r: r.fulfill(status=403, body='Forbidden'))
+        self.shows_only_current(viewer, current, prior)
+        expect(viewer.locator('#kin-viewer-open-status')).to_contain_text('2번째 검사의 영상 정보에 접근할 수 없습니다(HTTP 403)')
+        self.assertEqual(1, len(lists), 'a refused list is not asked again')
+        viewer.close()
+        # Late: the prior's list is held until after the current study shows (5 s after the current list at most).
+        patient = 'U3L-' + uuid.uuid4().hex[:12]
+        current = self.ct(patient, 'current', '20260801')
+        prior = self.ct(patient, 'prior', '20250701')
+        held = []
+        reader, viewer, lists, _ = self.comparison_open(current, prior, held.append)
+        self.shows_only_current(viewer, current, prior)
+        self.assertEqual(1, len(held), 'the prior list is still held while the current study shows')
+        expect(viewer.locator('#kin-viewer-open-status')).to_contain_text('2번째 검사의 영상 정보가 늦어 그 검사 없이 표시했습니다')
+        for route in held:
+            try: route.continue_()
+            except Exception: pass
+        viewer.wait_for_timeout(1500)
+        self.assertNotIn(prior.uid, viewer.evaluate(self.SHOWN_STUDIES))
+        self.evidence(viewer, 'prior-list-late')
+
+    def test_priors_13_a_study_the_account_cannot_see_is_refused_in_one_line(self):
+        reader = self.login()
+        viewer = reader.context.new_page()
+        unknown = '1.2.826.0.1.3680043.10.' + str(uuid.uuid4().int % 10**12) + '.1'
+        viewer.goto(self.stack.proxy + '/ohif/viewer?StudyInstanceUIDs=' + unknown)
+        empty = viewer.locator('.kin-patient-empty')
+        expect(empty).to_have_text('이 검사를 볼 수 있는 권한이 없습니다.', timeout=30000)
+        expect(empty).to_be_visible()
+        viewer.wait_for_function("() => document.body.classList.contains('kin-viewer-empty')")
+        expect(viewer.get_by_role('button', name='Retry Patient', exact=True)).to_be_hidden()
+        expect(viewer.get_by_text('같은 환자의 검사인지 확인할 수 없어', exact=False)).to_have_count(0)
+        self.assertNotIn(unknown, viewer.locator('body').inner_text())
+        self.evidence(viewer, 'refused-study')
 
 
 def load_tests(loader, tests, pattern):
