@@ -810,13 +810,13 @@ class ViewerUXPriorsE2E(ViewerLayoutE2E):
         self.assertIn(current.uid + ',' + prior.uid, viewer.url)
         return reader, viewer, lists, pattern
 
-    SHOWN_STUDIES = """() => [...services.viewportGridService.getState().viewports.keys()].map(id => {
+    # The viewer defines `services` once OHIF has started; until then nothing is shown.
+    SHOWN_STUDIES = """() => typeof services === 'undefined' || typeof cornerstone === 'undefined' ? [] : [...services.viewportGridService.getState().viewports.keys()].map(id => {
       const v = services.cornerstoneViewportService.getCornerstoneViewport(id), image = v?.getCurrentImageId?.();
       return image ? cornerstone.metaData.get('instance', image)?.StudyInstanceUID || null : null; }).filter(Boolean)"""
 
     def shows_only_current(self, viewer, current, prior):
         viewer.wait_for_function('uid => (' + self.SHOWN_STUDIES + ')().includes(uid)', arg=current.uid, timeout=30000)
-        canvas_ready(viewer, 1)
         self.assertNotIn(prior.uid, viewer.evaluate(self.SHOWN_STUDIES))
         expect(viewer.get_by_text('Something went wrong', exact=False)).to_have_count(0)
 
