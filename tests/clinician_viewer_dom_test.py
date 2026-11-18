@@ -2833,6 +2833,113 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.assertEqual(['측정을 완료하세요'], self.page.evaluate('([uid]) => synLengthText(uid)', [uid]))
         self.assertEqual([], self.length_rows())
 
+    FREEHAND_TOOL = r'''() => {
+      // The pinned PlanarFreehandROI tool's own words (its defaultGetTextLines): the length unit is read from `unit`, which
+      // the pinned tool never fills (it stores the unit function's `unit` under `units`, and an open line under another name).
+      const round = x => String(Math.round(x));
+      const pinned = (data, targetId) => {
+        const { area, mean, stdDev, length, perimeter, max, unit, areaUnit, modalityUnit } = data.cachedStats[targetId] || {};
+        const lines = [];
+        if (area) lines.push('Area: ' + round(area) + ' ' + areaUnit);
+        if (mean) lines.push('Mean: ' + round(mean) + ' ' + modalityUnit);
+        if (Number.isFinite(max)) lines.push('Max: ' + round(max) + ' ' + modalityUnit);
+        if (stdDev) lines.push('Std Dev: ' + round(stdDev) + ' ' + modalityUnit);
+        if (perimeter) lines.push('Perimeter: ' + round(perimeter) + ' ' + unit);
+        if (length) lines.push(round(length) + ' ' + unit);
+        return lines; };
+      window.synFreehandPinned = pinned;
+      // The image a target names, as the tool reads it (getTargetImageData), and the pinned unit function: mm with a pixel
+      // spacing, px without, a calibration's name after it.
+      window.synFreehandImage = { imageData: { syn: true }, hasPixelSpacing: true };
+      synTools.PlanarFreehandROI = { configuration: { getTextLines: pinned }, addNewAnnotation() { return {}; },
+        getTargetImageData: () => window.synFreehandImage };
+      // The cell showing that image, turned a quarter (screen x = world y, screen y = -world x): the tool takes an open line's
+      // box on the screen and reads its corners back on the image. synFreehandViewports [] = no cell shows the image.
+      window.synFreehandViewports = [{ getCurrentImageId: () => synImage(), worldToCanvas: p => [p[1], -p[0]], canvasToWorld: c => [-c[1], c[0], 0] }];
+      cornerstone.utilities = { ...(cornerstone.utilities || {}), transformWorldToIndex: (imageData, p) => [p[0] * 2, p[1] * 2, 0],
+        imageIdToURI: id => id, getViewportsWithImageURI: () => synFreehandViewports };
+      window.synUnitCalls = [];
+      cornerstoneTools.utilities = { ...(cornerstoneTools.utilities || {}), getCalibratedLengthUnitsAndScale: (image, handles) => {
+        synUnitCalls.push(handles());
+        const c = image.calibration, suffix = c && c.type ? ' ' + c.type : '';
+        const unit = (image.hasPixelSpacing ? 'mm' : 'px') + suffix;
+        return { unit, areaUnit: unit.replace(/^(mm|px)/, '$1²'), scale: 1 }; } };
+      window.synFreehandText = (stats, polyline) => {
+        const target = 'imageId:' + synImage(), data = { contour: { polyline, closed: !!stats.areaUnit }, cachedStats: { [target]: stats } };
+        const before = JSON.stringify(data);
+        const lines = synTools.PlanarFreehandROI.configuration.getTextLines(data, target);
+        return { lines, untouched: JSON.stringify(data) === before }; };
+    }'''
+
+    def test_33_freehand_roi_words_carry_the_unit_it_was_measured_in(self):
+        """A Freehand ROI's perimeter (closed outline) and length (open line) are said with the unit the tool measured in —
+        mm, px without a pixel spacing, a calibration's name after it — never "undefined"; its other lines stay as they are,
+        and the measurement itself (what is saved or exported) is not changed by its words."""
+        self.me = RADIOLOGIST
+        self.open_viewer(before_boot=self.FREEHAND_TOOL)
+        self.wait_until(lambda: 'Length' in self.panel()['buttons'], 'writer controls')
+        self.page.evaluate('synTick(2)')
+        self.wait_until(lambda: self.page.evaluate('() => synTools.PlanarFreehandROI.configuration.getTextLines !== synFreehandPinned'),
+                        "the viewer's measurement settings over the Freehand ROI tool")
+        line = [[10, 10, 0], [40, 10, 0], [40, 30, 0]]
+        closed = "{area: 283.2, areaUnit: '%s', perimeter: 253.39, mean: -800, max: -800, stdDev: 3.2, modalityUnit: 'HU', unit: undefined}"
+        cases = [
+            (closed % 'mm²', None, ['Area: 283 mm²', 'Mean: -800 HU', 'Max: -800 HU', 'Std Dev: 3 HU', 'Perimeter: 253 mm']),
+            (closed % 'mm² User', None, ['Area: 283 mm² User', 'Mean: -800 HU', 'Max: -800 HU', 'Std Dev: 3 HU', 'Perimeter: 253 mm User']),
+            (closed % 'cm² US Region', None, ['Area: 283 cm² US Region', 'Mean: -800 HU', 'Max: -800 HU', 'Std Dev: 3 HU', 'Perimeter: 253 cm US Region']),
+            (closed % 'px²', None, ['Area: 283 px²', 'Mean: -800 HU', 'Max: -800 HU', 'Std Dev: 3 HU', 'Perimeter: 253 px']),
+            # An open line: the unit function for the line's box on the image.
+            ("{length: 208.8, modalityUnit: 'HU', getPixelValueUnitunit: undefined}", "{imageData: {syn: true}, hasPixelSpacing: true}", ['209 mm']),
+            ("{length: 208.8, modalityUnit: 'HU'}", "{imageData: {syn: true}, hasPixelSpacing: false}", ['209 px']),
+            ("{length: 208.8, modalityUnit: 'HU'}", "{imageData: {syn: true}, hasPixelSpacing: true, calibration: {type: 'User', scale: 2}}", ['209 mm User']),
+            # The image cannot be read (no viewport shows it now): a number without a unit, not "undefined".
+            ("{length: 208.8, modalityUnit: 'HU'}", "undefined", ['209 ']),
+            # A tool that does fill the unit (a fixed release) is left as it is.
+            ("{length: 208.8, modalityUnit: 'HU', unit: 'mm'}", "{imageData: {syn: true}, hasPixelSpacing: false}", ['209 mm']),
+        ]
+        for stats, image, want in cases:
+            with self.subTest(stats=stats, image=image):
+                if image:
+                    self.page.evaluate('() => { window.synFreehandImage = %s; }' % image)
+                got = self.page.evaluate('([line]) => synFreehandText(%s, line)' % stats, [line])
+                self.assertEqual(want, got['lines'])
+                self.assertTrue(got['untouched'], 'the measurement is not changed by its words')
+                self.assertNotIn('undefined', ' '.join(got['lines']))
+        # The open line's box as the tool takes it: around the line on the screen, its corners read back on the image —
+        # (10,-40)..(30,-10) on the turned screen are world (40,10) and (10,30), image (80,20) and (20,60).
+        self.assertEqual([[80, 20, 0], [20, 60, 0]], self.page.evaluate('() => synUnitCalls[0]'))
+        # No cell shows the image: the line's own box on the image, lowest corner then highest.
+        self.page.evaluate("() => { synFreehandViewports = []; synUnitCalls.length = 0; synFreehandImage = {imageData: {syn: true}, hasPixelSpacing: true}; }")
+        got = self.page.evaluate("([line]) => synFreehandText({length: 208.8, modalityUnit: 'HU'}, line)", [line])
+        self.assertEqual(['209 mm'], got['lines'])
+        self.assertEqual([[20, 20, 0], [80, 60, 0]], self.page.evaluate('() => synUnitCalls[0]'))
+
+    def test_34_the_saved_item_count_follows_saves_and_deletes(self):
+        """The panel's "n개 저장 항목" is the study's saved items now: a save answered adds one, a delete answered takes one
+        away (with the delete's own words), not only when the list is read again."""
+        self.writer_open()
+        self.wait_until(lambda: 'SYN writer key' in str(self.panel()['rows']), 'the author list')
+        self.assertEqual('1개 저장 항목 · 저장은 판독 확정과 별개입니다.', self.panel()['status'])
+        history = self.page.locator('#kin-viewer-history')
+        self.accept_writes = True
+        history.get_by_role('button', name='Add Key Image', exact=True).click()
+        self.wait_until(lambda: 'Save' in self.panel()['buttons'], "the new key image's Save")
+        history.get_by_role('button', name='Save', exact=True).click()
+        self.wait_until(lambda: self.held_writes, 'the Save on the wire')
+        saved = author_page(LATE_WRITE)['items'][0]
+        self.release(self.held_writes.pop(), saved)
+        self.wait_until(lambda: 'SYN LATE WRITTEN KEY' in str(self.panel()['rows']), 'the saved row')
+        self.assertEqual('2개 저장 항목 · 저장은 판독 확정과 별개입니다.', self.panel()['status'])
+        # Delete the saved key image (after its question): one left.
+        self.page.evaluate('() => { window.confirm = () => true; }')
+        history.locator('section').filter(has_text='SYN LATE WRITTEN KEY').get_by_role('button', name='Delete', exact=True).click()
+        self.wait_until(lambda: self.held_writes, 'the delete on the wire')
+        deleted = copy.deepcopy(saved); deleted['revision'] = 2; deleted['item']['deleted'] = True
+        self.release(self.held_writes.pop(), deleted)
+        self.assertEqual('Key Image 항목을 지웠습니다. 저장 이력은 서버에 남습니다. 1개 저장 항목 · 저장은 판독 확정과 별개입니다.',
+                         self.panel()['status'])
+        self.assertNotIn('SYN LATE WRITTEN KEY', str(self.panel()['rows']))
+
     def notice(self,session,kind='broadcast'):
         self.observer.evaluate("""([session,kind])=>{const notice={type:'session-ended',session,operation:Date.now(),status:'ending'};
           if(kind==='storage')localStorage.setItem('kin-session-end',JSON.stringify(notice));

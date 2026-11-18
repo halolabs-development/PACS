@@ -79,3 +79,30 @@ window.config = {
     }
   },
 };
+
+// Elements the archive sends as a bulk data address instead of a value — DICOM overlay planes (60xx,3000) among them — are
+// fetched when a tool asks for them. The DICOMweb data source comes from the Orthanc viewer plugin, which appends its
+// `window.config.dataSources = [...]` after this file; that block neither turns bulk data addresses on (the overlay tool then
+// caches an empty overlay and fails on every draw, measurements in the same cell included) nor takes bulk data as anything
+// but single part, which the archive does not answer. The block is adjusted here as it is set: addresses on, bulk data read
+// multipart (PDF and video stay single part, as before). An address of this archive's instance bulk data is reduced to its
+// instance path, which the data source resolves under its own root — this origin, as the product's other bulk reads.
+function kinBulkDataSources(sources) {
+  if (!Array.isArray(sources)) return sources;
+  const tail = uri => {
+    const found = typeof uri === 'string' &&
+      /^(?:https?:\/\/[^/]+)?\/dicom-web\/studies\/[^/]+\/series\/[^/]+\/(instances\/[^/?#]+\/bulk\/[0-9A-Fa-f/]+)$/.exec(uri);
+    return found ? found[1] : uri;
+  };
+  return sources.map(source => {
+    const c = source?.configuration;
+    if (!c || typeof c !== 'object' || !/dicomweb$/.test(String(source.namespace || ''))) return source;
+    const parts = typeof c.singlepart === 'string' ? c.singlepart.split(',').map(s => s.trim()).filter(s => s && s !== 'bulkdata').join(',') : c.singlepart;
+    return { ...source, configuration: { ...c, singlepart: parts, bulkDataURI: { ...(c.bulkDataURI || {}), enabled: true, transform: tail } } };
+  });
+}
+(function (config) {
+  let sources = kinBulkDataSources(config.dataSources);
+  Object.defineProperty(config, 'dataSources', { configurable: true, enumerable: true,
+    get: () => sources, set: value => { sources = kinBulkDataSources(value); } });
+})(window.config);
