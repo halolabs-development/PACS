@@ -66,7 +66,9 @@ function world() {
     $queryRaw: async () => [{ boundary: new Date(), id: null }],
   };
   db.$transaction = async work => work(db);
+  let identityHook = null;
   const identity = sub => {
+    if (identityHook) { const forced = identityHook(sub); if (forced !== undefined) return forced; }
     const row = rows.get(sub);
     const groups = row ? (row.institution ? [row.institution] : []) : kcOnly[sub];
     if (!groups) return null;
@@ -108,14 +110,15 @@ function world() {
       { method, route, purpose: 'clinical' }, async () => {});
     try { return await run(req); } finally { res.emit('finish'); }
   };
+  let factsMade = 0;
   const operatorFacts = institution => { const work = ledger.begin(); return {
     actor: { issuer: 'urn:kin:pacs:operator', subject: 'ops', id: '00000000-0000-4000-8000-000000000009' }, roles: ['admin'],
     rightsVersion: 0, institution, ip: null, sessionRef: null, requestId: '00000000-0000-4000-8000-00000000000a',
     surface: 'service:first-admin-designation',
     request: { work, requireCurrent: async () => {} } }; };
   const designate = (sub, institution) => service.designateFirstAdmin(sub, institution,
-    { name: 'ops', reason: 'synthetic hospital request confirmed by phone' }, operatorFacts(institution));
-  return { rows, audits, kcCalls, kc, db, service, controller, keys, adminA, call, writes: () => writes, designate, changes, sessions, events };
+    { name: 'ops', reason: 'synthetic hospital request confirmed by phone' }, async () => { factsMade++; return operatorFacts(institution); });
+  return { rows, audits, kcCalls, kc, db, service, controller, keys, adminA, call, writes: () => writes, designate, changes, sessions, events, factsMade: () => factsMade, kcOnly, identityOverride: f => { identityHook = f; } };
 }
 
 const status = code => error => { assert.equal(error?.getStatus?.(), code, String(error?.message)); return true; };
@@ -316,6 +319,7 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
     await assert.rejects(w.designate('kc-service', C), status(403), 'a service account');
     await assert.rejects(w.designate('waiting', 'not-an-institution'), status(400), 'an unknown institution');
     assert.equal(w.writes(), 0);
+    assert.equal(w.factsMade(), 0, 'no refusal resolves (writes) the operator ledger identity');
     // A signed-in person is refused (the command never ends a member session as a service job); signed out, it proceeds.
     w.sessions.push({ sid: 'synthetic-sid', sub: 'waiting', auditRef: 'authref:00000000-0000-4000-8000-00000000000b', institution: null });
     await refused('waiting', C, 'FIRST_ADMIN_TARGET_SIGNED_IN', 'a signed-in account');
@@ -338,6 +342,24 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
     w.db.memberRights.count = async args => (++calls === 1 ? 0 : realCount(args));
     await refused('waiting-2', C, 'FIRST_ADMIN_EXISTS', 'a second operator who read before the first committed');
     w.db.memberRights.count = realCount;
+    // A sign-in that commits after the pre-check is seen under the member lock (session admission holds it): refused.
+    const w4 = world();
+    const realSessions = w4.db.authSession.count;
+    let sessionReads = 0;
+    w4.db.authSession.count = async args => (++sessionReads === 1 ? 0 : 1);
+    await assert.rejects(w4.designate('waiting', C), e => e.getResponse().code === 'FIRST_ADMIN_TARGET_SIGNED_IN');
+    assert.equal(w4.writes(), 0);
+    assert.equal(w4.audits.length, 0, 'no failure audit');
+    w4.db.authSession.count = realSessions;
+    // The command's own (second) provider read of an existing member is checked for its groups too.
+    const w5 = world();
+    w5.rows.set('reader-c', { ...w5.rows.get('reader-a'), sub: 'reader-c', institution: C });
+    let reads = 0;
+    w5.identityOverride(sub => sub === 'reader-c' && ++reads > 1 ? { id: sub, username: sub, email: sub + '@example.test', emailVerified: true,
+      firstName: 'S', lastName: sub, enabled: true, serviceAccountClientId: null, groups: [C, B], roles: [] } : undefined);
+    await assert.rejects(w5.designate('reader-c', C), e => e.getResponse().code === 'FIRST_ADMIN_TARGET_CONFLICT');
+    assert.equal(w5.writes(), 0);
+    assert.equal(w5.audits.length, 0);
     assert.equal(w.audits.filter(a => a.action.startsWith('admin.user.')).length, 1, 'one success audit, no failure audit');
     // The roster is sent from the recorded audit of that generation, as --retry-roster recovers it.
     const sent = [], provider = { setGroups: async (...a) => sent.push(['groups', ...a]), setRoles: async (...a) => sent.push(['roles', ...a]) };

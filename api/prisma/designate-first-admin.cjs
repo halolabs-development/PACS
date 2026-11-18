@@ -40,13 +40,16 @@ let runtime;
     const work = runtime.port.begin();
     let after;
     try {
-      const issuer = 'urn:kin:pacs:operator';
-      const actor = { issuer, subject: options.operator, id: await work.resolveRequestIdentity(issuer, options.operator) };
-      const facts = { surface: 'service:first-admin-designation', actor, roles: ['admin'], rightsVersion: 0, institution: options.institution,
-        ip: null, sessionRef: null, requestId: randomUUID(), request: { work, requireCurrent: async () => {} } };
+      // The operator's ledger identity is resolved (written once) only after every refusal has passed.
+      const makeFacts = async () => {
+        const issuer = 'urn:kin:pacs:operator';
+        const actor = { issuer, subject: options.operator, id: await work.resolveRequestIdentity(issuer, options.operator) };
+        return { surface: 'service:first-admin-designation', actor, roles: ['admin'], rightsVersion: 0, institution: options.institution,
+          ip: null, sessionRef: null, requestId: randomUUID(), request: { work, requireCurrent: async () => {} } };
+      };
       const service = new AdminService(db, keycloak, null, { publishCredentials() {} });
       after = await service.designateFirstAdmin(options.subject, options.institution,
-        { name: options.operator, reason: options.reason }, facts);
+        { name: options.operator, reason: options.reason }, makeFacts);
     } finally { work.end(); }
     const change = await db.providerChange.findFirst({ where: { kind: 'credentials', sub: options.subject,
       target: options.subject, generation: after.version }, orderBy: { id: 'desc' } });

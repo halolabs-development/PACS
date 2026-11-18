@@ -298,6 +298,9 @@ export class AdminService {
           : await this.managed(id, within(300)).catch(() => null);
         if (approvalMutation && !identity!.emailVerified && body?.verificationOverride === false)
           throw new BadRequestException('이메일 검증이 끝나지 않은 사용자는 승인할 수 없습니다');
+        // The operator's group check holds for the identity this command actually uses (it may be a second read).
+        if (operator && identity!.groups.length && !(identity!.groups.length === 1 && identity!.groups[0] === operator.institution))
+          throw new FirstAdminRefusal('FIRST_ADMIN_TARGET_CONFLICT', '대상의 소속 그룹이 이 기관과 다릅니다');
       } catch (error) { preReadError = error; }
     }
 
@@ -314,6 +317,8 @@ export class AdminService {
         // The first-administrator condition is decided under the institution lock, before the member lock.
         if (operator) await this.firstAdminGate(tx, id, operator.institution);
         await lockMemberRights(tx, id);
+        // Session admission holds this member lock: no sign-in can commit between this check and the session read below.
+        if (operator && await tx.authSession.count({ where: { sub: id } })) throw signedIn();
         const current = await tx.memberRights.findUnique({ where: { sub: id } });
         // Scope on the locked row first: a member another institution took meanwhile is unknown here, not a conflict.
         if (current) requireInScope(admin, memberInstitution(current));
@@ -392,7 +397,8 @@ export class AdminService {
    * suspension and the administrator OTP are untouched. Concurrent or repeated runs: the institution lock and the
    * re-read under it let one succeed.
    */
-  async designateFirstAdmin(sub: string, institutionValue: string, operator: { name: string; reason: string }, facts: AdminRequestFacts) {
+  async designateFirstAdmin(sub: string, institutionValue: string, operator: { name: string; reason: string },
+    makeFacts: () => Promise<AdminRequestFacts>) {
     const institution = text(institutionValue, 'institution', 128);
     if (typeof sub !== 'string' || !sub || sub.length > 256) throw new BadRequestException('subject가 올바르지 않습니다');
     if (!OPERATOR_NAME.test(operator?.name ?? '')) throw new BadRequestException('operator가 올바르지 않습니다');
@@ -412,6 +418,8 @@ export class AdminService {
       throw new FirstAdminRefusal('FIRST_ADMIN_TARGET_ISOLATED', '격리된 계정은 지정할 수 없습니다');
     if (await this.prisma.authSession.count({ where: { sub } })) throw signedIn();
     const roles = [...new Set([...(existing?.approved ? existing.roles : []), 'admin'])];
+    // Request facts (and the operator's ledger identity) only after every refusal above: a refusal writes nothing.
+    const facts = await makeFacts();
     const c: Caller = { sub: facts.actor.subject, actor: 'operator:' + operator.name, roles: ['admin'], institution, kind: 'member' };
     return this.patchUser(sub, { approvalState: 'APPROVED', institution, roles, verificationOverride: true,
       ...(existing ? { version: existing.version } : {}) }, c, facts, { institution, name: operator.name, reason });
@@ -424,7 +432,6 @@ export class AdminService {
       throw new FirstAdminRefusal('FIRST_ADMIN_EXISTS', '이 기관에는 이미 활성 관리자가 있습니다');
     if (await tx.memberIsolation.findUnique({ where: { sub } }))
       throw new FirstAdminRefusal('FIRST_ADMIN_TARGET_ISOLATED', '격리된 계정은 지정할 수 없습니다');
-    if (await tx.authSession.count({ where: { sub } })) throw signedIn();
   }
 
   async resetPassword(id: string, body: any, c: Caller) {
