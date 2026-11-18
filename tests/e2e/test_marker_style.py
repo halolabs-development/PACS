@@ -56,6 +56,14 @@ LENGTH = '''() => { const a = cornerstoneTools.annotation.state.getAllAnnotation
   return a && {points: a.data.handles.points, stats: a.data.cachedStats}; }'''
 # The mark's own solid lines (the dashed one links the value text).
 SOLID = 'd.shapes.filter(s => !s.dash)'
+# A Length's line as drawn ('<uid>::line::1' in the tools' SVG node cache): its dashes ('' solid), null before it is drawn.
+LINE = '''uid => { for (const canvas of Object.values(cornerstoneTools.state?.svgNodeCache || {})) {
+  const n = canvas?.[uid + '::line::1']?.domRef; if (n?.isConnected) return n.getAttribute('stroke-dasharray') || ''; } return null; }'''
+# The cells' own styles as the viewer's style registry holds them.
+CELLS = '() => JSON.parse(JSON.stringify(cornerstoneTools.annotation.config.style.config.viewports || {}))'
+# A cell's styles set the way the measurement-tracking cell sets them, then that cell drawn again.
+SET_CELL = '''([cell, styles]) => { cornerstoneTools.annotation.config.style.setViewportToolStyles(cell, styles);
+  services.cornerstoneViewportService.getRenderingEngine().renderViewport(cell); }'''
 
 
 class MarkerStyleE2E(ViewerHistoryE2E):
@@ -178,7 +186,8 @@ class MarkerStyleE2E(ViewerHistoryE2E):
             const a = cornerstoneTools.annotation.state.getAnnotation(uid); out.record = {points: a.data.handles.points, text: a.data.text}; return out; }'''
         page.wait_for_function('uid => !!(' + arrow + ')(uid)[uid + "::line::2"]', arg=uid, timeout=30000)
         base = page.evaluate(arrow, uid)
-        self.assertEqual(['', '', ''], [base[uid + '::line::' + p]['dash'] for p in '123'])
+        # The viewer's own dash for the cell: none once its measurements are tracked, '4,4' before.
+        self.assertIn(base[uid + '::line::1']['dash'], ['', '4,4'])
         self.assertEqual([None, None], [base[uid + '::line::' + p]['visibility'] for p in '23'])
         self.settings(work)
         expect(work.locator('#reading-marker-line option')).to_have_count(3)
@@ -194,12 +203,81 @@ class MarkerStyleE2E(ViewerHistoryE2E):
         work.locator('#appearance-account-save').click()
         expect(work.locator('#appearance-account-status')).to_have_text('표시 설정을 계정에 저장했습니다.')
         stored = document_request(work, 'GET', self.stack.api + '/reading-appearance').json()['sizes']
-        self.assertEqual((stored['version'], stored['markers']), (11, {'version': 2, 'color': 'default', 'width': 'standard', 'line': 'dashed', 'arrowheads': 'off', 'font': 'serif'}))
+        # Version 12 adds the screen language; the marker choice is unchanged.
+        self.assertEqual((stored['version'], stored['markers']), (12, {'version': 2, 'color': 'default', 'width': 'standard', 'line': 'dashed', 'arrowheads': 'off', 'font': 'serif'}))
         work.locator('#reading-marker-reset').click()
-        page.wait_for_function('uid => { const d = (' + arrow + ')(uid); return d[uid + "::line::1"]?.dash === "" && d[uid + "::line::2"]?.visibility === null && '
-                               'd[uid + "::line::3"]?.visibility === null; }', arg=uid, timeout=15000)
+        page.wait_for_function('([uid, own]) => { const d = (' + arrow + ')(uid); return d[uid + "::line::1"]?.dash === own && d[uid + "::line::2"]?.visibility === null && '
+                               'd[uid + "::line::3"]?.visibility === null; }', arg=[uid, base[uid + '::line::1']['dash']], timeout=15000)
         self.assertEqual({k: v['font'] for k, v in base.items() if k != 'record'}, {k: v['font'] for k, v in page.evaluate(arrow, uid).items() if k != 'record'})
         page.close(); work.close()
+
+    def test_marker_style_03_line_style_on_a_length_in_tracked_and_untracked_cells(self):
+        # FB-111 "solid or dashed", "the screen follows at once": the measurement-tracking cell sets its marks' own dash
+        # ('4,4' before its measurements are tracked, none after), and the viewer reads a cell's styles before the default
+        # ones. Solid and Dashed draw the Length's line so in either cell, set before or after the choice, in the open window
+        # and in one opened afterwards; Default returns the cell's own dash; the points, values and saved item stay.
+        f = self.fixture(); self.seed_report(f)
+        work, page = self.open_viewer(f)
+        select_image_tool(page, 'Length')
+        box = page.evaluate('''() => services.cornerstoneViewportService.getCornerstoneViewport(
+            services.viewportGridService.getActiveViewportId()).element.querySelector('canvas').getBoundingClientRect().toJSON()''')
+        x, y = box['x'] + box['width'] * .4, box['y'] + box['height'] * .4
+        page.mouse.move(x, y); page.mouse.down(); page.mouse.move(x + 80, y + 50, steps=10); page.mouse.up()
+        row = page.locator('#kin-viewer-history section[data-kind=length]')
+        expect(row).to_have_count(1)
+        page.wait_for_function('''() => cornerstoneTools.annotation.state.getAllAnnotations().some(a => a.metadata.toolName === 'Length' &&
+            Object.values(a.data.cachedStats || {}).some(s => s.length > 0))''')
+        row.get_by_role('button', name='Save', exact=True).click()
+        expect(row).to_contain_text('저장 완료')
+        saved, measured = self.saved(f), page.evaluate(LENGTH)
+        uid = page.evaluate("() => cornerstoneTools.annotation.state.getAllAnnotations().find(a => a.metadata.toolName === 'Length').annotationUID")
+        cell = page.evaluate('() => services.viewportGridService.getActiveViewportId()')
+        page.wait_for_function('uid => (' + LINE + ')(uid) !== null', arg=uid, timeout=30000)
+        self.assertIn(page.evaluate(LINE, uid), ['', '4,4'])
+
+        def line_is(target, dash, label, mark=uid):
+            try:
+                target.wait_for_function('([uid, dash]) => (' + LINE + ')(uid) === dash', arg=[mark, dash], timeout=15000)
+            except Exception:
+                folder = Path(os.environ.get('KIN_EVIDENCE_DIR', 'tmp/marker-style')); folder.mkdir(parents=True, exist_ok=True)
+                (folder / (label + '-line.json')).write_text(json.dumps({'dash': target.evaluate(LINE, mark), 'cells': target.evaluate(CELLS)},
+                                                                       ensure_ascii=False, indent=1, default=str), encoding='utf-8')
+                target.screenshot(path=str(folder / (label + '-line.png')))
+                raise
+        untracked, tracked = {'global': {'lineDash': '4,4'}}, {'ReferenceLines': {'lineDash': '4,4'}, 'global': {'lineDash': ''}}
+        # The viewer sets the cell as it does before its measurements are tracked: its own dash for them.
+        page.evaluate(SET_CELL, [cell, untracked])
+        line_is(page, '4,4', 'untracked-own')
+        self.settings(work)
+        choose = work.locator('#reading-marker-line')
+        choose.select_option('solid')
+        line_is(page, '', 'untracked-solid')
+        choose.select_option('dashed')
+        line_is(page, '6,4', 'untracked-dashed')
+        # The cell's tracking changes after the choice: the choice stays on its marks; the reference lines keep their dash.
+        page.evaluate(SET_CELL, [cell, tracked])
+        line_is(page, '6,4', 'tracked-dashed')
+        self.assertEqual('4,4', page.evaluate(CELLS)[cell]['ReferenceLines']['lineDash'])
+        choose.select_option('solid')
+        line_is(page, '', 'tracked-solid')
+        page.evaluate(SET_CELL, [cell, untracked])
+        line_is(page, '', 'untracked-again-solid')
+        # A viewer opened afterwards starts with the choice on the saved mark it loads.
+        choose.select_option('dashed')
+        line_is(page, '6,4', 'open-dashed')
+        other = work.context.new_page()
+        other.goto(self.stack.proxy + '/ohif/viewer?StudyInstanceUIDs=' + f.uid)
+        self.open_measurement_tools(other)
+        other.wait_for_function("() => cornerstoneTools.annotation.state.getAllAnnotations().some(a => a.metadata.toolName === 'Length')", timeout=60000)
+        loaded = other.evaluate("() => cornerstoneTools.annotation.state.getAllAnnotations().find(a => a.metadata.toolName === 'Length').annotationUID")
+        line_is(other, '6,4', 'new-dashed', loaded)
+        # Default: each cell's own dash again.
+        work.locator('#reading-marker-reset').click()
+        line_is(page, '4,4', 'reset-own')
+        other.wait_for_function('uid => ["", "4,4"].includes((' + LINE + ')(uid))', arg=loaded, timeout=15000)
+        self.assertEqual(page.evaluate(LENGTH), measured, 'points and measured values never follow the display choice')
+        self.assertEqual(self.saved(f), saved, 'the saved item holds no display choice')
+        other.close(); page.close(); work.close()
 
 
 if __name__ == '__main__':

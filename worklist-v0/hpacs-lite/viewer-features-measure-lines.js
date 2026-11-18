@@ -58,7 +58,9 @@ window.KinViewerFeatures?.module('measure-lines', ({ ui }) => {
   }
   function lineCheck(a, imageId, fresh, tags) {
     if (!model) return { reason: '' };
-    const key = JSON.stringify([imageId, a.data.handles.points, a.data.kinBaseline]), cached = checks.get(a.annotationUID);
+    // The spacing the image gives the points now is part of the key: a screen calibration (or its removal) checks again.
+    let place; try { place = F.geometry(imageId, a.data.handles.points.map(p => F.toImage(imageId, p))); } catch (error) { place = { reason: error.message }; }
+    const key = JSON.stringify([imageId, a.data.handles.points, a.data.kinBaseline, place]), cached = checks.get(a.annotationUID);
     if (!fresh && !tags && cached?.key === key) return cached.result;
     let result;
     try {
@@ -140,8 +142,18 @@ window.KinViewerFeatures?.module('measure-lines', ({ ui }) => {
     return [];
   } };
 
+  // What a line mark shows now, beside it and on its panel's Result line: its values at its points as they are (or why they
+  // need a check again), the spacing label, and for a pixel-based mark why it has no spacing.
+  function shown(a, imageId = a.metadata.referencedImageId) {
+    const stored = a.data.kinBaseline, tool = toolOf(stored), check = lineCheck(a, imageId, false);
+    if (check.reason) return { lines: [check.reason], reason: true, label: '', note: '' };
+    const note = basisOf(stored) === 'px' ? spacingOf(imageId, a.data.handles.points.map(p => F.toImage(imageId, p))).reason || '' : '';
+    return { lines: model.lines(tool, stored.values, basisOf(stored)), reason: false, label: check.label || '', note };
+  }
+
   // ── Drawing ──
-  const seg = (g, a, b, color, look, dashed) => F.svg('line', g, { x1: a[0], y1: a[1], x2: b[0], y2: b[1], stroke: color, 'stroke-width': look.width, ...(dashed ? { 'stroke-dasharray': '6 4' } : {}) });
+  // A mark's own lines take the marker line style (look.line); a guide (dashed) keeps its own dashes.
+  const seg = (g, a, b, color, look, dashed) => F.svg('line', g, { x1: a[0], y1: a[1], x2: b[0], y2: b[1], stroke: color, 'stroke-width': look.width, ...(dashed ? { 'stroke-dasharray': '6 4' } : look.line) });
   const words = (g, at, lines, look, color) => lines.forEach((line, i) => F.label(g, at[0] + 8, at[1] + 4 + i * (parseFloat(look.font) || 14) * 1.25, line, look, color));
   function pointHandle(g, a, which, at, look, color) {
     const node = F.svg('circle', g, { cx: at[0], cy: at[1], r: Math.max(4, look.width * 3), fill: 'transparent', stroke: color, 'stroke-width': look.width, style: 'pointer-events:all;cursor:move' });
@@ -151,7 +163,7 @@ window.KinViewerFeatures?.module('measure-lines', ({ ui }) => {
   function drawLines({ g, a, imageId, canvas, look, color, editable }) {
     if (!model) return;
     const stored = a.data.kinBaseline, tool = toolOf(stored), image = a.data.handles.points.map(p => F.toImage(imageId, p)), at = image.map(canvas);
-    const check = lineCheck(a, imageId, false), spacing = spacingOf(imageId, image).spacing;
+    const now = shown(a, imageId), spacing = spacingOf(imageId, image).spacing;
     if (tool === 'ctr4') {
       seg(g, at[0], at[1], CENTRE, look, true);
       const feet = model.ctrFeet(image, spacing);
@@ -168,7 +180,7 @@ window.KinViewerFeatures?.module('measure-lines', ({ ui }) => {
       if (tool === 'ratio') { F.label(g, at[1][0] + 6, at[1][1], 'L1', look, color); F.label(g, at[3][0] + 6, at[3][1], 'L2', look, color); }
     }
     const corner = [Math.max(...at.map(p => p[0])), Math.min(...at.map(p => p[1]))];
-    words(g, corner, check.reason ? [check.reason] : [...model.lines(tool, stored.values, basisOf(stored)), ...(check.label ? [check.label] : [])], look, check.reason ? WARN : color);
+    words(g, corner, [...now.lines, ...(now.label ? [now.label] : [])], look, now.reason ? WARN : color);
     if (editable) {
       at.forEach((p, i) => pointHandle(g, a, ['point', i], p, look, color));
       // Parallel Lines: the second line's middle moves it sideways (the gap) and along.
@@ -300,28 +312,35 @@ window.KinViewerFeatures?.module('measure-lines', ({ ui }) => {
     const found = lineValues(calculator, press.imageId, image);
     const a = F.addMark(press.v, press.imageId, toolName, image.map(p => F.toWorld(press.imageId, p)), { kinBaseline: { calculator: 'kin-' + calculator + '-v1:' + found.basis, values: found.values } });
     tool.marks.push(a.annotationUID);
-    tool.state.last = model.lines(calculator, found.values, found.basis).join(' · ') + (found.reason ? ' — ' + found.reason : '');
+    tool.state.mark = a.annotationUID;
     return '';
   }
-  const result = tool => tool.state.last ? 'Result: ' + tool.state.last : '';
-  const restart = tool => { tool.state.last = ''; };
+  // The Result line is the panel's last mark as it is now (moved, its image turned or calibrated), never the values it was
+  // made with; the frame reads it again after every draw (live).
+  const result = tool => {
+    const a = model && tool.state.mark ? ct.annotation.state.getAnnotation(tool.state.mark) : null;
+    if (!a) return '';
+    const now = shown(a);
+    return 'Result: ' + now.lines.join(' · ') + (now.note ? ' — ' + now.note : '');
+  };
+  const restart = tool => { tool.state.mark = null; };
 
   function ctr() {
     const four = [{ text: 'Midline — 대동맥 꼭대기에서 심장 바닥까지 (두 점)', points: 2 }, { text: 'Right heart border — 정중선에서 가장 먼 오른쪽 끝 (한 점)', points: 1 },
       { text: 'Left heart border — 정중선에서 가장 먼 왼쪽 끝 (한 점)', points: 1 }, { text: 'Lung field — 폐야의 가장 넓은 곳 양 끝 (두 점)', points: 2 }];
     const two = [{ text: 'Heart — 심장의 가장 넓은 폭 양 끝 (두 점)', points: 2 }, { text: 'Chest — 흉곽 안쪽의 가장 넓은 폭 양 끝 (두 점)', points: 2 }];
-    const spec = { id: 'measure-ctr', title: 'CTR', steps: four, result, restart,
+    const spec = { id: 'measure-ctr', title: 'CTR', steps: four, result, live: true, restart,
       note: '흉부 영상에 선을 그어 심흉비를 냅니다. 4-line: CTR = (MRD + MLD) / ID. 2-line: 긴 선이 흉곽(ID), 짧은 선이 심장(CD), CTR = CD / ID.',
       fields(body, tool) {
         const method = field(body, 'Method', el('select', '', null, { 'aria-label': 'CTR Method' }));
         el('option', '4-line (midline, MRD, MLD, ID)', method, { value: '4' }); el('option', '2-line (heart and chest widths)', method, { value: '2' });
         tool.state.method = '4';
-        method.onchange = () => { tool.state.method = method.value; spec.steps = method.value === '2' ? two : four; tool.presses = []; tool.state.last = ''; tool.status.textContent = ''; tool.refresh(); };
+        method.onchange = () => { tool.state.method = method.value; spec.steps = method.value === '2' ? two : four; tool.presses = []; tool.state.mark = null; tool.status.textContent = ''; tool.refresh(); };
       },
       complete: (tool, presses) => stamp(tool, presses[0], TOOLS.ctr, tool.state.method === '2' ? 'ctr2' : 'ctr4', presses.map(p => p.image)) };
     return spec;
   }
-  const parallel = () => ({ id: 'measure-parallel', title: 'Parallel Lines', result, restart,
+  const parallel = () => ({ id: 'measure-parallel', title: 'Parallel Lines', result, live: true, restart,
     note: '평행한 두 선을 그으면 두 선 사이의 간격(Gap)과 두 선의 가운데를 잇는 중심선의 길이(Centre)를 따로 냅니다.',
     steps: [{ text: 'First line — 시작점과 끝점 (두 점)', points: 2 }, { text: 'Second line — 둘째 선의 가운데 자리 (한 점; 첫 선과 평행, 같은 길이로 놓입니다)', points: 1 }],
     complete(tool, [p, q, r]) {
@@ -331,11 +350,11 @@ window.KinViewerFeatures?.module('measure-lines', ({ ui }) => {
       if (spacingOf(p.imageId, [...first, ...second]).basis !== placed.basis) return '둘째 선이 초음파 보정 영역을 벗어납니다';
       return stamp(tool, p, TOOLS.parallel, 'parallel', [...first, ...second]);
     } });
-  const ratio = () => ({ id: 'measure-length-ratio', title: 'Length Ratio', result, restart,
+  const ratio = () => ({ id: 'measure-length-ratio', title: 'Length Ratio', result, live: true, restart,
     note: '두 선을 그으면 각 길이와 길이의 비(Ratio = Length 1 / Length 2)를 따로 냅니다.',
     steps: [{ text: 'First line — 첫 길이의 두 끝점', points: 2 }, { text: 'Second line — 둘째 길이의 두 끝점', points: 2 }],
     complete: (tool, presses) => stamp(tool, presses[0], TOOLS.ratio, 'ratio', presses.map(p => p.image)) });
-  const angle = () => ({ id: 'measure-centre-angle', title: 'Centre-line Angle', result, restart,
+  const angle = () => ({ id: 'measure-centre-angle', title: 'Centre-line Angle', result, live: true, restart,
     note: '선 네 개(점 여덟)를 그으면 선 1·2와 선 3·4의 중심선을 각각 그리고 두 중심선 사이의 각을 냅니다(괄호: 360° − 각).',
     steps: [{ text: 'Lines 1 and 2 — 선마다 두 끝점 (네 점)', points: 4 }, { text: 'Lines 3 and 4 — 선마다 두 끝점 (네 점)', points: 4 }],
     complete: (tool, presses) => stamp(tool, presses[0], TOOLS.angle, 'centreangle', presses.map(p => p.image)) });

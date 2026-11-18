@@ -114,10 +114,15 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
   }
 
   // ── Drawing ──
+  // The marks' look from the viewer's default tool style, where the account's marker choice is laid (marker-style.js): the
+  // colour, width, font and the line's dashes. line: the attributes of a mark's own lines (none: solid, as the frame's own);
+  // guide lines drawn dashed to set them apart keep their own dashes.
   const style = () => {
     const g = ct.annotation?.config?.style?.getDefaultToolStyles?.()?.global || {};
+    const dash = typeof g.lineDash === 'string' && /^[\d.]+([ ,]+[\d.]+)*$/.test(g.lineDash.trim()) ? g.lineDash.trim() : '';
     return { color: g.color || 'rgb(255, 255, 0)', locked: g.colorLocked || g.color || 'rgb(255, 255, 0)', width: parseFloat(g.lineWidth) || 1.5,
-      font: (parseFloat(g.textBoxFontSize) || 14) + 'px ' + (g.textBoxFontFamily || 'Helvetica Neue, Helvetica, Arial, sans-serif') };
+      font: (parseFloat(g.textBoxFontSize) || 14) + 'px ' + (g.textBoxFontFamily || 'Helvetica Neue, Helvetica, Arial, sans-serif'),
+      line: dash ? { 'stroke-dasharray': dash } : {} };
   };
   function layerOf(v) {
     let entry = layers.get(v.id);
@@ -157,6 +162,9 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
       }
     }
     for (const [id, entry] of layers) if (!shown.has(id)) { entry.root.replaceChildren(); }
+    // A panel whose result reads its mark as it is now (live: the mark may be dragged while the panel is open) shows it
+    // after every draw, so the result line and the values beside the mark agree.
+    if (active?.spec.live) { const text = active.spec.result?.(active) || ''; if (active.result.textContent !== text) active.result.textContent = text; }
   }
   function schedule() { if (!queued && !ended) { queued = true; requestAnimationFrame(draw); } }
   // A text with a dark outline, as the viewer's own text boxes.
@@ -196,7 +204,7 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
     const check = circleCheck(a, imageId);
     const rx = check.shape ? check.shape.rx : Math.hypot(edge[0] - center[0], edge[1] - center[1]), ry = check.shape ? check.shape.ry : rx;
     const ring = Array.from({ length: 73 }, (_, i) => canvas([center[0] + rx * Math.cos(i * Math.PI / 36), center[1] + ry * Math.sin(i * Math.PI / 36)]));
-    svg('polyline', g, { points: ring.map(p => p.join(',')).join(' '), fill: 'none', stroke: color, 'stroke-width': look.width });
+    svg('polyline', g, { points: ring.map(p => p.join(',')).join(' '), fill: 'none', stroke: color, 'stroke-width': look.width, ...look.line });
     const right = Math.max(...ring.map(p => p[0])), top = Math.min(...ring.map(p => p[1]));
     const lines = check.reason ? [check.reason] : model ? model.circleLines(a.data.kinBaseline?.values, a.data.kinBaseline?.calculator?.endsWith(':hu') ? 'HU' : '', check.label) : [];
     lines.forEach((line, i) => label(g, right + 6, top + 12 + i * size14(look), line, look, check.reason ? '#ff6b6b' : color));
@@ -309,7 +317,7 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
     }));
   }
   // spec: { id, title, note, fields(body, tool), steps: [{ text, points }], complete(tool, presses) → string (a reason) or
-  //         nothing, result(tool) → text, restart(tool) }. A tool of one step of one point stamps a mark on every press.
+  //         nothing, result(tool) → text, live (result read again after every draw), restart(tool) }. A tool of one step of one point stamps a mark on every press.
   function open(spec) {
     if (ended) return null;
     active?.close();

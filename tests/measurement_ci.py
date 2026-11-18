@@ -308,9 +308,11 @@ PROFILES = {
         'project_prefix': 'kin-measure-lines-ci-',
         # Measure menu line tools (patient-identity-measurements job): CTR, Parallel Lines, Length Ratio, Centre-line Angle and
         # Volume Measure made, saved, reopened, edited, frozen in a Job and printed; a Volume across a CT and an ultrasound frame.
-        # The single-suite cap is a hang ceiling, not an estimate.
+        # Then the account's marker style on the viewer's own marks (colour, thickness, line style in tracked and untracked
+        # cells, arrowheads, font) in open and new windows. The single-suite cap is a hang ceiling, not an estimate.
         'suite_timeout': 900,
-        'suites': (('e2e/test_measure_lines.py', 'MeasureLinesE2E', 'ci-measure-lines'),),
+        'suites': (('e2e/test_measure_lines.py', 'MeasureLinesE2E', 'ci-measure-lines'),
+                   ('e2e/test_marker_style.py', 'MarkerStyleE2E', 'ci-marker-style')),
     },
     'viewer-mg': {
         'out': ROOT / 'tests/e2e/artifacts/viewer-mg-ci',
