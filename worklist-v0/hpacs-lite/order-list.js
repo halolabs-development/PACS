@@ -32,7 +32,7 @@
       if (mode !== "Technician") return;
       const list = filteredOrders();
       $("#orderrows").innerHTML = list.map((o, i) => `
-        <tr data-oid="${esc(o.oid)}" class="${o.oid === selectedOid ? "sel" : ""}">
+        <tr data-oid="${esc(o.oid)}" tabindex="-1" class="${o.oid === selectedOid ? "sel" : ""}">
           <td class="num">${i + 1}</td>
           <td><span class="mt ${esc(o.matched)}">${esc(o.matched)}</span></td>
           <td translate="no">${esc(o.id)}</td><td translate="no">${esc(o.name)}</td><td translate="no">${esc(o.sex)}</td><td translate="no">${esc(o.birth)}</td>
@@ -48,6 +48,8 @@
       const tr = e.target.closest("tr[data-oid]"); if (!tr) return;
       selectedOid = tr.dataset.oid;
       renderOrders();
+      // The clicked order row keeps the focus in its redrawn row (the ContextMenu key / Shift+F10 opens its menu there).
+      $("#orderrows").querySelector(`tr[data-oid="${CSS.escape(selectedOid)}"]`)?.focus({ preventScroll: true });
     });
     $("#o-sync").addEventListener("change", renderOrders);
     /**

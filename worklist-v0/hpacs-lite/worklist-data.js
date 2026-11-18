@@ -879,7 +879,7 @@
     }
     studyPriority=KinStudyPriority.create({
       owner:()=>KinViewerOpening.key(KinAuth.session()),
-      allowed:uid=>serverMode&&!offline&&!demoMode&&!commitInFlight&&KinAuth.has('technician')&&!!studies.find(s=>s.uid===uid&&!s.tele),
+      allowed:uid=>serverMode&&!offline&&!demoMode&&!commitInFlight&&technicianWork()&&!!studies.find(s=>s.uid===uid&&!s.tele),
       request:async(uid,em,at)=>{const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),15000);
         try{return await api('PATCH','/studies/'+encodeURIComponent(uid),{em},controller.signal,at);}finally{clearTimeout(timeout);}},
       apply:(uid,em)=>{appState[uid]={...appState[uid],em};syncStudy(uid);},
@@ -891,7 +891,8 @@
       const s=studies.find(s=>s.uid===uid),state=studyPriority.get(uid),desired=s?.em==='E'?'N':'E';
       if(state?.phase==='unknown')return {label:'Refresh Status',dis:offline||!serverMode,act:()=>load()};
       return {label:state?.phase==='saving'?'Saving Emergency Status':s?.em==='E'?'Switch to Normal':'Switch to Emergency',
-        dis:!!state||!studyPriority.active()||!serverMode||offline||demoMode||commitInFlight||!KinAuth.has('technician')||!s||s.tele,
+        dis:!!state||!studyPriority.active()||!serverMode||offline||demoMode||commitInFlight||!technicianWork()||!s||s.tele,
+        ...(technicianWork()?{}:{title:TECHNICIAN_WORK_REASON}),
         act:()=>studyPriority.set(uid,desired)};
     }
     // While a list read is out the folder counts say 'Partial'. A read that ends without its answer applied (Stop Loading,

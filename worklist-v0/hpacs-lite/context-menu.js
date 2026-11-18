@@ -6,8 +6,12 @@
     let ctxOpener = null;
     // 행·오더 메뉴를 연 그 선택({uid, seq, oid}: 검사 UID·선택 순번·고른 오더). 다른 메뉴(상용구·저장 검색)는 선택에 묶이지 않는다(null).
     let ctxTarget = null;
+    // A menu opened from the keyboard on a row: where the focus goes back when it closes, if the element that had the
+    // focus was replaced meanwhile (the list is drawn again when the row is selected). Mouse menus keep ctxOpener only.
+    let ctxBack = null;
     function showCtx(e, items, keyboard = null, target = null) {
       ctxOpener = document.activeElement;
+      ctxBack = keyboard?.back ?? null;
       ctxItems = items;
       ctxTarget = target;
       ctx.setAttribute('role', 'menu');
@@ -16,8 +20,40 @@
       ctx.style.left = Math.max(0, Math.min(keyboard?.x ?? e.clientX, innerWidth - 200)) + "px";
       ctx.style.top = Math.max(0, Math.min(keyboard?.y ?? e.clientY, innerHeight - (items.length * 28 + 20))) + "px";
       ctx.style.display = "block";
-      if (keyboard?.focus) ctx.querySelector('[data-i]:not(.dis)')?.focus();
+      // With every item grey the menu itself takes the focus, so Escape and Tab still close it.
+      if (keyboard?.focus) {
+        const first = ctx.querySelector('[data-i]:not(.dis)');
+        if (!first) ctx.tabIndex = -1;
+        (first ?? ctx).focus();
+      }
     }
+    /** The focus goes back to the row a keyboard menu was opened on (as drawn now), else to what had it when it opened. */
+    function ctxReturnFocus() {
+      const back = (ctxBack && ctxBack()) || ctxOpener;
+      back?.focus();
+    }
+    /**
+     * The ContextMenu key and Shift+F10 on a row open its menu from the keyboard (as on a saved-search chip): the first
+     * item takes the focus. The browser may also fire its own `contextmenu` for the same key press (before or after
+     * keyup); that one is dropped while the key's menu is the one shown. A pointer press ends the key's turn.
+     */
+    let ctxKeyAt = 0;
+    const isMenuKey = e => e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10');
+    const ctxFromKey = e => {
+      if (!ctxKeyAt || performance.now() - ctxKeyAt > 1500) return false;
+      ctxKeyAt = 0; e.preventDefault(); return true;
+    };
+    document.addEventListener('pointerdown', () => { ctxKeyAt = 0; }, true);
+    // Wherever that browser `contextmenu` lands (the row, or the menu item that now has the focus), it is dropped here once.
+    document.addEventListener('contextmenu', e => { if (ctxFromKey(e)) e.stopPropagation(); }, true);
+    /** Where a keyboard menu of a row opens and where its focus goes back: that row as it is drawn now. */
+    function rowKeyboard(find) {
+      const tr = find(), rect = tr?.getBoundingClientRect();
+      return { x: rect?.left ?? 0, y: rect?.bottom ?? 0, focus: true, back: find };
+    }
+    // Tele-reading is a later feature (Part 2): its row menu items keep their names and places and only say so.
+    const TELE_LATER = "원격판독은 나중에 생길 기능입니다 — 지금은 의뢰·취소·판독 시작을 보내지 않습니다";
+    const teleLater = () => toast(TELE_LATER, "info", 6000);
     ctx.addEventListener('keydown', e => {
       const items = [...ctx.querySelectorAll('[data-i]:not(.dis)')];
       const index = items.indexOf(document.activeElement);
@@ -30,7 +66,7 @@
         e.preventDefault(); e.stopPropagation(); items[index]?.click();
       } else if (e.key === 'Escape' || e.key === 'Tab') {
         if (e.key === 'Escape') e.preventDefault();
-        e.stopPropagation(); ctx.style.display = 'none'; ctxOpener?.focus();
+        e.stopPropagation(); ctx.style.display = 'none'; ctxReturnFocus();
       }
     });
     ctx.addEventListener("click", async e => {
@@ -38,7 +74,10 @@
       const it = ctxItems[+d.dataset.i];
       if (it.dis) return;
       ctx.style.display = 'none';
-      ctxOpener?.focus();
+      ctxReturnFocus();
+      // A keyboard menu's item may draw the list again (Verify, Match…): the focus then goes back to that row as drawn.
+      const back = ctxBack;
+      const refocus = () => { if (back && (!document.activeElement || document.activeElement === document.body)) back()?.focus(); };
       /**
        * 행·오더 메뉴의 항목은 **메뉴를 연 그 선택**에 대한 것이다(W4-PAGE-10 MENU-TARGET). 여럿이 실행할 때의 지금 선택에 닿는다 —
        * Match·Unmatch·Modify Exam은 `cur()`·`curOrder()`를, 판독문 작성으로는 지금 편집기를 쓴다. 메뉴가 열린 채 키보드로 다른 행을
@@ -59,9 +98,10 @@
        * 사람은 한 번 더 누른다 — 되돌릴 수 없는 항목에서는 그게 두 번 실행이다.
        */
       const at = work.capture("document");
-      try { await it.act(); }
+      try { const done = it.act(); refocus(); await done; }
       // 항목이 기다리는 사이 작업 문맥이 바뀌었으면(로그아웃 준비·세션 종료) 그 실패는 알릴 실패가 아니다.
       catch (err) { work.commit(at, () => toast(`"${it.label}" 실패: ${err?.message ?? err}`, "err")); }
+      finally { refocus(); }
     });
     document.addEventListener("click", () => ctx.style.display = "none");
 
@@ -71,20 +111,33 @@
      * 띄우면 항목이 **앞 검사**에 닿는다. 저장을 기다려 옮겨지면 그때 같은 자리에 연다. 메뉴는 연 그 선택에 묶여, 그 사이
      * 선택이 바뀌었으면 어느 항목도 실행하지 않는다(위 클릭 처리).
      */
-    $("#rows").addEventListener("contextmenu", e => {
-      const tr = e.target.closest("tr");
-      if (!tr?.dataset.uid) return;
-      e.preventDefault();
+    function openRowMenu(e, tr, fromKey) {
       const uid = tr.dataset.uid;
+      const keyboard = fromKey
+        ? () => rowKeyboard(() => $("#rows").querySelector(`tr[data-uid="${CSS.escape(uid)}"]`)) : () => null;
       // W9: a row of the current multi-selection (two or more) opens the selection's own menu. It is offered before any
       // select(): opening it moves no Reading Target and saves or holds nothing. Its one item acts on the selection as it
       // was when the menu opened (owner, generation, ordered UIDs); a changed selection closes it (closeSelectionMenu).
       const set = mode === "Radiology" && multiSelection?.has(uid) ? multiStudyView?.menu() : null;
-      if (set) { showSelectionMenu(e, set); return; }
-      whenSelected(select(uid), uid, () => showRowMenu(e, uid));
+      if (set) { showSelectionMenu(e, set, keyboard()); return; }
+      whenSelected(select(uid), uid, () => showRowMenu(e, uid, keyboard()));
+    }
+    $("#rows").addEventListener("contextmenu", e => {
+      const tr = e.target.closest("tr");
+      if (!tr?.dataset.uid) return;
+      e.preventDefault();
+      openRowMenu(e, tr, false);
+    });
+    $("#rows").addEventListener("keydown", e => {
+      if (!isMenuKey(e)) return;
+      const tr = e.target.closest("tr");
+      if (!tr?.dataset.uid) return;
+      e.preventDefault();
+      ctxKeyAt = performance.now();
+      openRowMenu(e, tr, true);
     });
     let ctxSelection = null;
-    function showSelectionMenu(e, set) {
+    function showSelectionMenu(e, set, keyboard = null) {
       showCtx(e, [{ label: "Open Selected Studies",
         act: () => { ctxSelection = null; multiStudyView?.open(set); } },
         // FC-028: the same Batch Reading as the selection bar, for the selection as it was when this menu opened.
@@ -92,7 +145,7 @@
           act: () => { ctxSelection = null; batchReport?.open(set); } }] : []),
         // FC-029: the same Batch Approve as the selection bar, after Batch Reading.
         ...(batchApprove?.shown() ? [{ label: "Batch Approve", dis: !!batchApprove.blocked(),
-          act: () => { ctxSelection = null; batchApprove?.open(set); } }] : [])], null, null);
+          act: () => { ctxSelection = null; batchApprove?.open(set); } }] : [])], keyboard, null);
       ctxSelection = { items: ctxItems, generation: set.generation };
     }
     /** The selection changed from the one the open selection menu was offered for: that menu closes before anything can act. */
@@ -101,11 +154,11 @@
       if (ctxItems === ctxSelection.items && ctx.style.display === "block") {
         const focused = ctx.contains(document.activeElement);
         ctx.style.display = "none";
-        if (focused) ctxOpener?.focus();
+        if (focused) ctxReturnFocus();
       }
       ctxSelection = null;
     }
-    function showRowMenu(e, uid) {
+    function showRowMenu(e, uid, keyboard = null) {
       const s = studies.find(x => x.uid === uid);
       // 이 메뉴가 열린 선택. 항목은 이 선택이 그대로일 때만 실행된다(위 클릭 처리).
       const opened = { uid, seq: selectionSeq, oid: selectedOid };
@@ -137,39 +190,37 @@
         if (result.error) toast(result.error, "err");
       } };
       if (mode === "Radiology") {
-        const ts = appState[uid]?.ts ?? "none";
-        const requested = !["none", "cancelled", "fail"].includes(ts);
-        // 받는 쪽(원격판독으로 넘어온 검사)과 보내는 쪽은 할 수 있는 일이 다르다.
-        // 서버도 같은 규칙으로 막지만, 회색으로 보이는 편이 눌러보고 거절당하는 것보다 낫다.
-        const mine = !s?.tele;
         showCtx(e, [
           { label: "Film Box 열기", act: () => openFilmbox(uid) },
           { label: "판독문 작성으로", act: () => focusReportEditor() },
           openEmrItem,
           { sep: 1 },
-          { label: "원격판독 의뢰 (Tele Request)", dis: !mine || requested, act: () => teleRequest(uid) },
-          { label: "의뢰 취소", dis: !mine || !["wait", "sending", "sent"].includes(ts), act: () => setTs(uid, "cancelled") },
+          // Tele-reading is a later feature: the three items stay by name and place and only say so — nothing is sent
+          // (the server's tele-reading routes are kept; a request already shown in the list keeps its mark).
+          { label: "원격판독 의뢰 (Tele Request)", act: teleLater },
+          { label: "의뢰 취소", act: teleLater },
           { sep: 1 },
-          { label: "판독 시작 (수신 기관)", dis: mine || ts !== "sent", act: () => setTs(uid, "inReading") },
+          { label: "판독 시작 (수신 기관)", act: teleLater },
           // 원본 다운로드는 자기 기관 검사만이다(S9-U4p §3·§6) — 원격판독으로 받은 행은 회색, 서버도 404로 막는다.
           ...(studyTransfer.canDownload() ? [{ sep: 1 }, { label: "Download Originals", dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) }] : []),
           ...forceReleaseItems,
           // FC-076: attach a scanned document or picture to this row's study, at the end of the menu.
           ...(studyAttachments.canAttach() ? [{ sep: 1 }, { label: "Attach Document", dis: !!s?.tele, act: () => studyAttachments.open(opened.uid) }] : []),
-        ], null, opened);
+        ], keyboard, opened);
       } else {
         const o = curOrder();
         showCtx(e, [
-          { label: "Match", dis: !(o && s.matched === "U" && o.matched === "U"), act: doMatch },
-          { label: "Unmatch", dis: s.matched !== "M", act: doUnmatch },
+          // Technician work: the same answer as the Technician bar (technicianWork, page-boot.js), whatever the tab.
+          technicianItem({ label: "Match", dis: !(o && s.matched === "U" && o.matched === "U"), act: doMatch }),
+          technicianItem({ label: "Unmatch", dis: s.matched !== "M", act: doUnmatch }),
           { sep: 1 },
-          { label: "Verify", dis: s.ss === "Verified", act: () => setSs(uid, "Verified") },
-          { label: "Unverify", dis: s.ss === "Unverified", act: () => setSs(uid, "Unverified") },
-          { label: "Modify Exam", dis: s.rs !== "W", act: openModify },
+          technicianItem({ label: "Verify", dis: s.ss === "Verified", act: () => setSs(uid, "Verified") }),
+          technicianItem({ label: "Unverify", dis: s.ss === "Unverified", act: () => setSs(uid, "Unverified") }),
+          technicianItem({ label: "Modify Exam", dis: s.rs !== "W", act: openModify }),
           openEmrItem,
           { sep: 1 },
           emergencyMenu(uid),
-          { label: "Switch ReqHosp", act: () => {
+          technicianItem({ label: "Switch ReqHosp", act: () => {
               // 기관명이 있는 행의 ReqHosp 칸은 서버가 정한 기관명이다(applyState·syncStudy가 같은 규칙으로 그린다). 여기서 친
               // 값을 칸에 그리면 다음 목록 읽기에서 말없이 기관명으로 돌아가고, 저장해도 어디에도 보이지 않는다 — 값을 묻지도
               // 그리지도 보내지도 않고 까닭을 말한다. 기관명이 없는 행(서버 없이 연 목록 등)은 지금처럼 바꾼다.
@@ -182,9 +233,9 @@
               s.reqHosp = v.trim() || "KIN";
               appState[uid] = { ...appState[uid], reqHosp: s.reqHosp };
               saveApp(uid, { reqHosp: s.reqHosp }); render(); renderRelated();
-            } },
+            } }),
           { sep: 1 },
-          { label: "Delete", dis: s.rs !== "W", act: () => doDelete(uid) },
+          technicianItem({ label: "Delete", dis: s.rs !== "W", act: () => doDelete(uid) }),
           // 이 행의 검사로 반입(X-KIN-Expect-Study)과 원본 다운로드(S9-U4p §6). 둘 다 메뉴를 연 그 선택(opened)에 묶인다.
           ...(studyTransfer.canImport() || studyTransfer.canDownload() || studyAttachments.canAttach() ? [{ sep: 1 }] : []),
           ...(studyTransfer.canImport() ? [{ label: "Import DICOM", act: () => studyTransfer.importInto(opened.uid) }] : []),
@@ -192,29 +243,41 @@
           ...(studyAttachments.canAttach() ? [{ label: "Attach Document", dis: !!s?.tele, act: () => studyAttachments.open(opened.uid) }] : []),
           ...(studyTransfer.canDownload() ? [{ label: "Download Originals", dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) }] : []),
           ...forceReleaseItems,
-        ], null, opened);
+        ], keyboard, opened);
       }
     }
 
-    $("#orderrows").addEventListener("contextmenu", e => {
-      const tr = e.target.closest("tr[data-oid]"); if (!tr) return;
-      e.preventDefault();
-      selectedOid = tr.dataset.oid; renderOrders();
+    function showOrderMenu(e, tr, fromKey) {
+      const oid = tr.dataset.oid;
+      selectedOid = oid; renderOrders();
       const o = curOrder(), s = cur();
       showCtx(e, [
-        { label: "Match", dis: !(s && s.matched === "U" && o.matched === "U"), act: doMatch },
+        technicianItem({ label: "Match", dis: !(s && s.matched === "U" && o.matched === "U"), act: doMatch }),
         // selectedUid를 직접 대입하면 안 된다. select()가 하는 일 — 쓰던 판독문 저장,
         // 점유 해제, 오른쪽 판 갱신 — 이 전부 건너뛰어진다. 그 상태로 다음 검사를 고르면
         // **앞 환자의 소견이 뒤 환자에게 저장된다.** 실제로 그렇게 되는 코드였다.
-        { label: "Unmatch", dis: o.matched !== "M", act: async () => {
+        technicianItem({ label: "Unmatch", dis: o.matched !== "M", act: async () => {
             const s2 = studies.find(x => x.uid === o.studyUid);
             if (!s2) { toast("이 오더에 매칭된 검사를 목록에서 찾을 수 없습니다", "err"); return; }
             // 그 검사로 옮겨졌을 때만 한다 — 옮겨지지 않았으면(글자 조합·쓰던 글의 저장) Unmatch가 지금 선택에 닿는다.
             await select(s2.uid);
             if (selectedUid !== s2.uid) return;
             doUnmatch();
-          } },
+          } }),
         { sep: 1 },
         { label: "New Exam (SC 생성)", dis: 1, title: "새 검사(SC 생성)는 현재 연결되어 있지 않습니다.", act: () => {} },
-      ], null, { uid: selectedUid, seq: selectionSeq, oid: selectedOid });
+      ], fromKey ? rowKeyboard(() => $("#orderrows").querySelector(`tr[data-oid="${CSS.escape(oid)}"]`)) : null,
+      { uid: selectedUid, seq: selectionSeq, oid: selectedOid });
+    }
+    $("#orderrows").addEventListener("contextmenu", e => {
+      const tr = e.target.closest("tr[data-oid]"); if (!tr) return;
+      e.preventDefault();
+      showOrderMenu(e, tr, false);
+    });
+    $("#orderrows").addEventListener("keydown", e => {
+      if (!isMenuKey(e)) return;
+      const tr = e.target.closest("tr[data-oid]"); if (!tr) return;
+      e.preventDefault();
+      ctxKeyAt = performance.now();
+      showOrderMenu(e, tr, true);
     });

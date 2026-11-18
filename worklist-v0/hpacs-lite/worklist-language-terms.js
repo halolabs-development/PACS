@@ -3158,6 +3158,7 @@ window.KinLanguageTerms = {
     ["요청한 소견 위치를 자동으로 열지 않았습니다. 소견의 위치 버튼을 다시 누르세요.", "The requested finding location was not opened automatically. Press the finding's location button again.", "m"],
     ["요청한 임상의 또는 관리자만 취소할 수 있습니다.", "Only the requesting clinician or an administrator can cancel.", "m"],
     ["원격판독 상태 변경 실패: {e0}", "Could not change the teleradiology status: {e0}", "m"],
+    ["원격판독은 나중에 생길 기능입니다 — 지금은 의뢰·취소·판독 시작을 보내지 않습니다", "Teleradiology is a later feature — no request, cancel or start of reading is sent now", "m"],
     ["원격판독 수신 권한으로 읽은 값입니다 · 소유 기관 {institutionName}. 원격판독이 닫히면 더 읽을 수 없습니다.", "Value read with teleradiology-receiver access · owner institution {institutionName}. Once the teleradiology request is closed, it can no longer be read.", "m"],
     ["원격판독으로 받은 검사는 EMR을 열 수 없습니다", "EMR cannot be opened for studies received by teleradiology", "m"],
     ["원격판독으로 받은 검사에는 문서를 붙일 수 없습니다", "Documents cannot be attached to studies received for teleradiology", "m"],

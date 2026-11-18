@@ -114,12 +114,24 @@
     // ── action row ──
     const status = el('span', { className: 'order-status', role: 'status', 'aria-live': 'polite' });
     const condition = el('span', { className: 'order-condition', hidden: true });
+    // Delete Order, Match… and Unmatch… are technician work: the same answer as the Technician bar and the row and order
+    // menus (the server's need technician, admin passes). Without it they are grey with the bar's reason.
+    const technician = () => ctx.has('technician');
+    const TECHNICIAN_REASON = '방사선사(technician) 권한이 필요합니다';
+    const writes = [
+      ['Delete Order', () => deleteOrder(), 'Take the selected order off this list. Images, studies and reports are not deleted.'],
+      ['Match…', () => openMatch(), 'Compare the selected study with the selected order, then link them.'],
+      ['Unmatch…', () => openUnmatch(), 'Unlink the selected study from its order and go back to the values read from its images.'],
+    ].map(([label, open, title]) => ({ b: button(label, open, '', title), title }));
+    function rights() {
+      const may = technician();
+      for (const { b, title } of writes) { b.disabled = !may; b.title = may ? title : TECHNICIAN_REASON; }
+    }
     actions.replaceChildren(
       button('Search Orders', () => toggleSearch(), '', 'Find orders by scheduled date, state, ward or requesting doctor.'),
-      button('Delete Order', () => deleteOrder(), '', 'Take the selected order off this list. Images, studies and reports are not deleted.'),
-      button('Match…', () => openMatch(), '', 'Compare the selected study with the selected order, then link them.'),
-      button('Unmatch…', () => openUnmatch(), '', 'Unlink the selected study from its order and go back to the values read from its images.'),
+      ...writes.map(w => w.b),
       condition, status);
+    rights();
     actions.hidden = false;
     function setStatus(message, undo) {
       status.replaceChildren(message || '');
@@ -162,7 +174,7 @@
       return true;
     });
     const count = el('span', { className: 'order-count', role: 'status' });
-    const offOrders = ctx.orders.onRender(n => { drawStatus(); count.textContent = n + ' orders'; showCondition(); });
+    const offOrders = ctx.orders.onRender(n => { rights(); drawStatus(); count.textContent = n + ' orders'; showCondition(); });
     // The filter above drew the rows before this listener was there.
     drawStatus();
     const inputs = {};
@@ -206,6 +218,7 @@
     // ── Delete Order ──
     const selectedOrder = () => { const oid = ctx.orders.selected(); return oid ? ctx.orders.list().find(o => o.oid === oid) ?? null : null; };
     function deleteOrder() {
+      if (!technician()) { ctx.toast(TECHNICIAN_REASON, 'info'); return; }
       const o = selectedOrder();
       if (!o) { ctx.toast('Select an order to delete in Order List first.', 'info'); return; }
       const w = openWindow('Delete Order', 'order-delete');
@@ -257,6 +270,7 @@
     const digits = value => String(value ?? '').replace(/\D/g, '');
     const ageText = (birth, date) => digits(birth).length === 8 && digits(date).length === 8 ? Math.floor((+digits(date) - +digits(birth)) / 10000) : null;
     function openMatch() {
+      if (!technician()) { ctx.toast(TECHNICIAN_REASON, 'info'); return; }
       const uid = ctx.selectedUid(), s = uid ? ctx.study(uid) : null, o = selectedOrder();
       if (!s || !o) { ctx.toast('Select one study in Study List and one order in Order List first.', 'info'); return; }
       const w = openWindow('Match Study to Order', 'order-match');
@@ -307,6 +321,7 @@
 
     // ── Unmatch… ──
     function openUnmatch() {
+      if (!technician()) { ctx.toast(TECHNICIAN_REASON, 'info'); return; }
       const uid = ctx.selectedUid(), s = uid ? ctx.study(uid) : null;
       if (!s) { ctx.toast('Select a study to unlink in Study List.', 'info'); return; }
       const w = openWindow('Unmatch Study', 'order-unmatch');
