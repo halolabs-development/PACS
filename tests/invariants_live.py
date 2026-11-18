@@ -127,6 +127,7 @@ ROUTES: dict[tuple[str, str], Route] = {
     ("POST", "emr-audit/incidents/:id/close"): Route(Kind.TENANT),
     ("GET", "emr-audit/incidents/:id/drafts/:form"): Route(Kind.TENANT),
     ("POST", "emr-audit/rights-requests"): Route(Kind.TENANT),
+    ("GET", "emr-audit/intake-context"): Route(Kind.TENANT),
     ("GET", "emr-audit/rights-requests"): Route(Kind.TENANT),
     ("GET", "emr-audit/rights-requests/:id"): Route(Kind.TENANT),
     ("POST", "emr-audit/rights-requests/:id/decide"): Route(Kind.TENANT),

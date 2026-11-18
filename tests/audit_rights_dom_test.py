@@ -60,8 +60,7 @@ class RightsRequests(AuditPage):
 
     def receive(self, request_id='SYN-A', kind='correction'):
         self.section.get_by_label('Rights Request ID', exact=True).fill(request_id)
-        for label, text in {'Rights Patient ID': 'SYN-PATIENT', 'Rights Assigning Authority': 'SYN-SITE',
-                'Rights Patient Link ID': 'SYN-LINK', 'Rights Record IDs': 'SYN-RECORD',
+        for label, text in {'Rights Patient ID': 'SYN-PATIENT', 'Rights Record IDs': 'SYN-RECORD',
                 'Rights Received At (UTC)': '2026-10-01T00:00', 'Statement': '합성 요구 <b>원문</b>'}.items():
             self.section.get_by_label(label, exact=True).fill(text)
         self.section.get_by_role('combobox', name='Rights Kind', exact=True).select_option(kind)

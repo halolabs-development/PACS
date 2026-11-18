@@ -36,6 +36,8 @@ export class EmrAuditController {
   closeIncident(@Req() req: any, @Param('id') id: string, @Body() body: unknown) { return this.audit.incidentAction(req, id, 'close', body); }
   @Get('incidents/:id/drafts/:form')
   incidentDraft(@Req() req: any, @Param('id') id: string, @Param('form') form: string) { return this.audit.incidentAction(req, id, 'draft', form); }
+  @Get('intake-context')
+  intakeContext(@Req() req: any) { return this.audit.intakeContext(req); }
   @Post('rights-requests') @HttpCode(200)
   receiveRights(@Req() req: any, @Body() body: unknown) { return this.audit.receiveRights(req, body); }
   @Get('rights-requests')

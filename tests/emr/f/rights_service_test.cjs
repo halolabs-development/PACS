@@ -77,6 +77,30 @@ test('every route enforces designation, disclosure scope and current request aut
   }
 });
 
+test('intake context: the designated auditor reads its institution and identity, recorded without a patient target', async () => {
+  const f = fixture();
+  const { actor } = require('./rights_harness.cjs');
+  assert.deepEqual(await f.controller.intakeContext({}), { institutionId: 'SYN-SITE', verifier: actor });
+  assert.equal(f.records.length, 1);
+  assert.equal(f.records[0].surface, 'GET emr-audit/intake-context');
+  assert.equal(f.records[0].action, 'provide-prepared');
+  assert.deepEqual(f.records[0].targets, []);
+  assert.equal(f.requests.length, 0);
+  for (const [scopes, code] of [[[], 'AuditorNotDesignated'], [['inspection'], 'AuditScopeNotGranted']]) {
+    const refused = fixture(scopes);
+    await assert.rejects(refused.controller.intakeContext({}), { code });
+    assert.equal(refused.records.length, 0);
+  }
+  const { clinicianRouteAllowed } = require('../../../api/src/clinician-policy.ts');
+  const { routeContract } = require('../../../api/src/emr-contract/routes.ts');
+  assert.equal(clinicianRouteAllowed('GET emr-audit/intake-context'), true);
+  assert.deepEqual(routeContract('GET emr-audit/intake-context').kinds, ['disclosure']);
+  // The page's patient link is the product's: the patient ID under the managing institution.
+  const { studyPatientLink } = require('../../../api/src/emr-clinical/routes.ts');
+  assert.deepEqual(studyPatientLink('SYN-SITE', 'SYN-PATIENT'),
+    { linkId: JSON.stringify(['SYN-SITE', 'SYN-PATIENT']), patientId: 'SYN-PATIENT', assigningAuthority: 'SYN-SITE' });
+});
+
 test('foreign institution, mismatched subject, forged classification and unknown originals cannot be accepted', async () => {
   const f = fixture(), input = intake(); await f.controller.receiveRights({}, input);
   const foreign = fixture(['disclosure'], 'OTHER-SITE'); foreign.requests.push(...f.requests);

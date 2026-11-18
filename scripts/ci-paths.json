@@ -2762,6 +2762,7 @@
       "tests/emr/f/incident_harness.cjs",
       "tests/emr/f/incident_service_test.cjs",
       "tests/audit_rights_dom_test.py",
+      "tests/audit_intake_refusal_dom_test.py",
       "tests/emr/f/rights_harness.cjs",
       "tests/emr/f/rights_service_test.cjs",
       "tests/audit_disclosure_dom_test.py",
