@@ -69,6 +69,7 @@ REGRESSION_SUITES = {
         tests/order_reconciliation_dom_test.py
         tests/preload_pf_cell_dom_test.py
         tests/report_actions_dom_test.py
+        tests/row_menu_rights_dom_test.py
         tests/study_identity_dom_test.py
         tests/unavailable_controls_dom_test.py
         tests/worklist_arrivals_dom_test.py

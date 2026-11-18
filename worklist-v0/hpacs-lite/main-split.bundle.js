@@ -2315,7 +2315,7 @@
     }
     studyPriority=KinStudyPriority.create({
       owner:()=>KinViewerOpening.key(KinAuth.session()),
-      allowed:uid=>serverMode&&!offline&&!demoMode&&!commitInFlight&&KinAuth.has('technician')&&!!studies.find(s=>s.uid===uid&&!s.tele),
+      allowed:uid=>serverMode&&!offline&&!demoMode&&!commitInFlight&&technicianWork()&&!!studies.find(s=>s.uid===uid&&!s.tele),
       request:async(uid,em,at)=>{const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),15000);
         try{return await api('PATCH','/studies/'+encodeURIComponent(uid),{em},controller.signal,at);}finally{clearTimeout(timeout);}},
       apply:(uid,em)=>{appState[uid]={...appState[uid],em};syncStudy(uid);},
@@ -2327,7 +2327,8 @@
       const s=studies.find(s=>s.uid===uid),state=studyPriority.get(uid),desired=s?.em==='E'?'N':'E';
       if(state?.phase==='unknown')return {label:'Refresh Status',dis:offline||!serverMode,act:()=>load()};
       return {label:state?.phase==='saving'?'Saving Emergency Status':s?.em==='E'?'Switch to Normal':'Switch to Emergency',
-        dis:!!state||!studyPriority.active()||!serverMode||offline||demoMode||commitInFlight||!KinAuth.has('technician')||!s||s.tele,
+        dis:!!state||!studyPriority.active()||!serverMode||offline||demoMode||commitInFlight||!technicianWork()||!s||s.tele,
+        ...(technicianWork()?{}:{title:TECHNICIAN_WORK_REASON}),
         act:()=>studyPriority.set(uid,desired)};
     }
     // While a list read is out the folder counts say 'Partial'. A read that ends without its answer applied (Stop Loading,
@@ -3643,13 +3644,17 @@
       const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       if (mode !== "Technician") return;
       const list = filteredOrders();
+      // A redraw keeps the focus on the order row that had it (as the worklist rows do): after a click, a menu item
+      // (Match, Unmatch) or a list read again, the keyboard stays on that order.
+      const focusedOid = document.activeElement?.closest?.("#orderrows tr[data-oid]")?.dataset.oid ?? null;
       $("#orderrows").innerHTML = list.map((o, i) => `
-        <tr data-oid="${esc(o.oid)}" class="${o.oid === selectedOid ? "sel" : ""}">
+        <tr data-oid="${esc(o.oid)}" tabindex="-1" class="${o.oid === selectedOid ? "sel" : ""}">
           <td class="num">${i + 1}</td>
           <td><span class="mt ${esc(o.matched)}">${esc(o.matched)}</span></td>
           <td translate="no">${esc(o.id)}</td><td translate="no">${esc(o.name)}</td><td translate="no">${esc(o.sex)}</td><td translate="no">${esc(o.birth)}</td>
           <td translate="no">${esc(o.sched)}</td><td translate="no">${esc(o.modality)}</td><td translate="no">${esc(o.desc)}</td><td translate="no">${esc(o.ward)}</td><td translate="no">${esc(o.reqDoc)}</td>
         </tr>`).join("") || `<tr><td class="empty" colspan="11">오더 없음</td></tr>`;
+      if (focusedOid !== null) $("#orderrows").querySelector(`tr[data-oid="${CSS.escape(focusedOid)}"]`)?.focus({ preventScroll: true });
 
       const s = cur(), o = curOrder();
       kinWrite($("#orderhint"), kinSay("선택: 검사 {0}  ·  오더 {1}{t2}", s ? s.name + " / " + s.date : { t: "(없음)" }, o ? o.name + " / " + o.sched : { t: "(없음)" },
@@ -14983,8 +14988,12 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     let ctxOpener = null;
     // 행·오더 메뉴를 연 그 선택({uid, seq, oid}: 검사 UID·선택 순번·고른 오더). 다른 메뉴(상용구·저장 검색)는 선택에 묶이지 않는다(null).
     let ctxTarget = null;
+    // A menu opened from the keyboard on a row: where the focus goes back when it closes, if the element that had the
+    // focus was replaced meanwhile (the list is drawn again when the row is selected). Mouse menus keep ctxOpener only.
+    let ctxBack = null;
     function showCtx(e, items, keyboard = null, target = null) {
       ctxOpener = document.activeElement;
+      ctxBack = keyboard?.back ?? null;
       ctxItems = items;
       ctxTarget = target;
       ctx.setAttribute('role', 'menu');
@@ -15002,8 +15011,42 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       ctx.style.left = Math.max(0, Math.min(keyboard?.x ?? e.clientX, innerWidth - 200)) + "px";
       ctx.style.top = Math.max(0, Math.min(keyboard?.y ?? e.clientY, innerHeight - (items.length * 28 + 20))) + "px";
       ctx.style.display = "block";
-      if (keyboard?.focus) ctx.querySelector('[data-i]:not(.dis)')?.focus();
+      // With every item grey the menu itself takes the focus, so Escape and Tab still close it.
+      if (keyboard?.focus) {
+        const first = ctx.querySelector('[data-i]:not(.dis)');
+        if (!first) ctx.tabIndex = -1;
+        (first ?? ctx).focus();
+      }
     }
+    /** The focus goes back to the row a keyboard menu was opened on (as drawn now), else to what had it when it opened. */
+    function ctxReturnFocus() {
+      const back = (ctxBack && ctxBack()) || ctxOpener;
+      back?.focus();
+    }
+    /**
+     * The ContextMenu key and Shift+F10 on a row open its menu from the keyboard (as on a saved-search chip): the first
+     * item takes the focus. The browser may also fire its own `contextmenu` for the same key press (after keydown, or
+     * on keyup however long the key was held); the first one is dropped. A pointer press or another key ends the key's
+     * turn, so a later right-click or menu key is never taken for it.
+     */
+    let ctxKeyPending = false;
+    const isMenuKey = e => e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10');
+    const ctxFromKey = e => {
+      if (!ctxKeyPending) return false;
+      ctxKeyPending = false; e.preventDefault(); return true;
+    };
+    document.addEventListener('pointerdown', () => { ctxKeyPending = false; }, true);
+    document.addEventListener('keydown', e => { if (!isMenuKey(e) && e.key !== 'Shift') ctxKeyPending = false; }, true);
+    // Wherever that browser `contextmenu` lands (the row, or the menu item that now has the focus), it is dropped here once.
+    document.addEventListener('contextmenu', e => { if (ctxFromKey(e)) e.stopPropagation(); }, true);
+    /** Where a keyboard menu of a row opens and where its focus goes back: that row as it is drawn now. */
+    function rowKeyboard(find) {
+      const tr = find(), rect = tr?.getBoundingClientRect();
+      return { x: rect?.left ?? 0, y: rect?.bottom ?? 0, focus: true, back: find };
+    }
+    // Tele-reading is a later feature (Part 2): its row menu items keep their names and places and only say so.
+    const TELE_LATER = "원격판독은 나중에 생길 기능입니다 — 지금은 의뢰·취소·판독 시작을 보내지 않습니다";
+    const teleLater = () => toast(TELE_LATER, "info", 6000);
     ctx.addEventListener('keydown', e => {
       const items = [...ctx.querySelectorAll('[data-i]:not(.dis)')];
       const index = items.indexOf(document.activeElement);
@@ -15016,7 +15059,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         e.preventDefault(); e.stopPropagation(); items[index]?.click();
       } else if (e.key === 'Escape' || e.key === 'Tab') {
         if (e.key === 'Escape') e.preventDefault();
-        e.stopPropagation(); ctx.style.display = 'none'; ctxOpener?.focus();
+        e.stopPropagation(); ctx.style.display = 'none'; ctxReturnFocus();
       }
     });
     ctx.addEventListener("click", async e => {
@@ -15024,7 +15067,10 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const it = ctxItems[+d.dataset.i];
       if (it.dis) return;
       ctx.style.display = 'none';
-      ctxOpener?.focus();
+      ctxReturnFocus();
+      // A keyboard menu's item may draw the list again (Verify, Match…): the focus then goes back to that row as drawn.
+      const back = ctxBack;
+      const refocus = () => { if (back && (!document.activeElement || document.activeElement === document.body)) back()?.focus(); };
       /**
        * 행·오더 메뉴의 항목은 **메뉴를 연 그 선택**에 대한 것이다(W4-PAGE-10 MENU-TARGET). 여럿이 실행할 때의 지금 선택에 닿는다 —
        * Match·Unmatch·Modify Exam은 `cur()`·`curOrder()`를, 판독문 작성으로는 지금 편집기를 쓴다. 메뉴가 열린 채 키보드로 다른 행을
@@ -15045,9 +15091,10 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
        * 사람은 한 번 더 누른다 — 되돌릴 수 없는 항목에서는 그게 두 번 실행이다.
        */
       const at = work.capture("document");
-      try { await it.act(); }
+      try { const done = it.act(); refocus(); await done; }
       // 항목이 기다리는 사이 작업 문맥이 바뀌었으면(로그아웃 준비·세션 종료) 그 실패는 알릴 실패가 아니다.
       catch (err) { work.commit(at, () => toast(`"${it.label}" 실패: ${err?.message ?? err}`, "err")); }
+      finally { refocus(); }
     });
     document.addEventListener("click", () => ctx.style.display = "none");
 
@@ -15057,20 +15104,33 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
      * 띄우면 항목이 **앞 검사**에 닿는다. 저장을 기다려 옮겨지면 그때 같은 자리에 연다. 메뉴는 연 그 선택에 묶여, 그 사이
      * 선택이 바뀌었으면 어느 항목도 실행하지 않는다(위 클릭 처리).
      */
-    $("#rows").addEventListener("contextmenu", e => {
-      const tr = e.target.closest("tr");
-      if (!tr?.dataset.uid) return;
-      e.preventDefault();
+    function openRowMenu(e, tr, fromKey) {
       const uid = tr.dataset.uid;
+      const keyboard = fromKey
+        ? () => rowKeyboard(() => $("#rows").querySelector(`tr[data-uid="${CSS.escape(uid)}"]`)) : () => null;
       // W9: a row of the current multi-selection (two or more) opens the selection's own menu. It is offered before any
       // select(): opening it moves no Reading Target and saves or holds nothing. Its one item acts on the selection as it
       // was when the menu opened (owner, generation, ordered UIDs); a changed selection closes it (closeSelectionMenu).
       const set = mode === "Radiology" && multiSelection?.has(uid) ? multiStudyView?.menu() : null;
-      if (set) { showSelectionMenu(e, set); return; }
-      whenSelected(select(uid), uid, () => showRowMenu(e, uid));
+      if (set) { showSelectionMenu(e, set, keyboard()); return; }
+      whenSelected(select(uid), uid, () => showRowMenu(e, uid, keyboard()));
+    }
+    $("#rows").addEventListener("contextmenu", e => {
+      const tr = e.target.closest("tr");
+      if (!tr?.dataset.uid) return;
+      e.preventDefault();
+      openRowMenu(e, tr, false);
+    });
+    $("#rows").addEventListener("keydown", e => {
+      if (!isMenuKey(e)) return;
+      const tr = e.target.closest("tr");
+      if (!tr?.dataset.uid) return;
+      e.preventDefault();
+      ctxKeyPending = true;
+      openRowMenu(e, tr, true);
     });
     let ctxSelection = null;
-    function showSelectionMenu(e, set) {
+    function showSelectionMenu(e, set, keyboard = null) {
       showCtx(e, [{ label: kinSay("Open Selected Studies"),
         act: () => { ctxSelection = null; multiStudyView?.open(set); } },
         // FC-028: the same Batch Reading as the selection bar, for the selection as it was when this menu opened.
@@ -15078,7 +15138,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           act: () => { ctxSelection = null; batchReport?.open(set); } }] : []),
         // FC-029: the same Batch Approve as the selection bar, after Batch Reading.
         ...(batchApprove?.shown() ? [{ label: kinSay("Batch Approve"), dis: !!batchApprove.blocked(),
-          act: () => { ctxSelection = null; batchApprove?.open(set); } }] : [])], null, null);
+          act: () => { ctxSelection = null; batchApprove?.open(set); } }] : [])], keyboard, null);
       ctxSelection = { items: ctxItems, generation: set.generation };
     }
     /** The selection changed from the one the open selection menu was offered for: that menu closes before anything can act. */
@@ -15087,11 +15147,11 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       if (ctxItems === ctxSelection.items && ctx.style.display === "block") {
         const focused = ctx.contains(document.activeElement);
         ctx.style.display = "none";
-        if (focused) ctxOpener?.focus();
+        if (focused) ctxReturnFocus();
       }
       ctxSelection = null;
     }
-    function showRowMenu(e, uid) {
+    function showRowMenu(e, uid, keyboard = null) {
       const s = studies.find(x => x.uid === uid);
       // 이 메뉴가 열린 선택. 항목은 이 선택이 그대로일 때만 실행된다(위 클릭 처리).
       const opened = { uid, seq: selectionSeq, oid: selectedOid };
@@ -15123,39 +15183,37 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         if (result.error) toast(result.error, "err");
       } };
       if (mode === "Radiology") {
-        const ts = appState[uid]?.ts ?? "none";
-        const requested = !["none", "cancelled", "fail"].includes(ts);
-        // 받는 쪽(원격판독으로 넘어온 검사)과 보내는 쪽은 할 수 있는 일이 다르다.
-        // 서버도 같은 규칙으로 막지만, 회색으로 보이는 편이 눌러보고 거절당하는 것보다 낫다.
-        const mine = !s?.tele;
         showCtx(e, [
           { label: kinSay("Film Box 열기"), act: () => openFilmbox(uid) },
           { label: kinSay("판독문 작성으로"), act: () => focusReportEditor() },
           openEmrItem,
           { sep: 1 },
-          { label: kinSay("원격판독 의뢰 (Tele Request)"), dis: !mine || requested, act: () => teleRequest(uid) },
-          { label: kinSay("의뢰 취소"), dis: !mine || !["wait", "sending", "sent"].includes(ts), act: () => setTs(uid, "cancelled") },
+          // Tele-reading is a later feature: the three items stay by name and place and only say so — nothing is sent
+          // (the server's tele-reading routes are kept; a request already shown in the list keeps its mark).
+          { label: kinSay("원격판독 의뢰 (Tele Request)"), act: teleLater },
+          { label: kinSay("의뢰 취소"), act: teleLater },
           { sep: 1 },
-          { label: kinSay("판독 시작 (수신 기관)"), dis: mine || ts !== "sent", act: () => setTs(uid, "inReading") },
+          { label: kinSay("판독 시작 (수신 기관)"), act: teleLater },
           // 원본 다운로드는 자기 기관 검사만이다(S9-U4p §3·§6) — 원격판독으로 받은 행은 회색, 서버도 404로 막는다.
           ...(studyTransfer.canDownload() ? [{ sep: 1 }, { label: kinSay("Download Originals"), dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) }] : []),
           ...forceReleaseItems,
           // FC-076: attach a scanned document or picture to this row's study, at the end of the menu.
           ...(studyAttachments.canAttach() ? [{ sep: 1 }, { label: kinSay("Attach Document"), dis: !!s?.tele, act: () => studyAttachments.open(opened.uid) }] : []),
-        ], null, opened);
+        ], keyboard, opened);
       } else {
         const o = curOrder();
         showCtx(e, [
-          { label: kinSay("Match"), dis: !(o && s.matched === "U" && o.matched === "U"), act: doMatch },
-          { label: kinSay("Unmatch"), dis: s.matched !== "M", act: doUnmatch },
+          // Technician work: the same answer as the Technician bar (technicianWork, page-boot.js), whatever the tab.
+          technicianItem({ label: kinSay("Match"), dis: !(o && s.matched === "U" && o.matched === "U"), act: doMatch }),
+          technicianItem({ label: kinSay("Unmatch"), dis: s.matched !== "M", act: doUnmatch }),
           { sep: 1 },
-          { label: kinSay("Verify"), dis: s.ss === "Verified", act: () => setSs(uid, "Verified") },
-          { label: kinSay("Unverify"), dis: s.ss === "Unverified", act: () => setSs(uid, "Unverified") },
-          { label: kinSay("Modify Exam"), dis: s.rs !== "W", act: openModify },
+          technicianItem({ label: kinSay("Verify"), dis: s.ss === "Verified", act: () => setSs(uid, "Verified") }),
+          technicianItem({ label: kinSay("Unverify"), dis: s.ss === "Unverified", act: () => setSs(uid, "Unverified") }),
+          technicianItem({ label: kinSay("Modify Exam"), dis: s.rs !== "W", act: openModify }),
           openEmrItem,
           { sep: 1 },
           emergencyMenu(uid),
-          { label: kinSay("Switch ReqHosp"), act: () => {
+          technicianItem({ label: kinSay("Switch ReqHosp"), act: () => {
               // 기관명이 있는 행의 ReqHosp 칸은 서버가 정한 기관명이다(applyState·syncStudy가 같은 규칙으로 그린다). 여기서 친
               // 값을 칸에 그리면 다음 목록 읽기에서 말없이 기관명으로 돌아가고, 저장해도 어디에도 보이지 않는다 — 값을 묻지도
               // 그리지도 보내지도 않고 까닭을 말한다. 기관명이 없는 행(서버 없이 연 목록 등)은 지금처럼 바꾼다.
@@ -15168,9 +15226,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
               s.reqHosp = v.trim() || "KIN";
               appState[uid] = { ...appState[uid], reqHosp: s.reqHosp };
               saveApp(uid, { reqHosp: s.reqHosp }); render(); renderRelated();
-            } },
+            } }),
           { sep: 1 },
-          { label: kinSay("Delete"), dis: s.rs !== "W", act: () => doDelete(uid) },
+          technicianItem({ label: kinSay("Delete"), dis: s.rs !== "W", act: () => doDelete(uid) }),
           // 이 행의 검사로 반입(X-KIN-Expect-Study)과 원본 다운로드(S9-U4p §6). 둘 다 메뉴를 연 그 선택(opened)에 묶인다.
           ...(studyTransfer.canImport() || studyTransfer.canDownload() || studyAttachments.canAttach() ? [{ sep: 1 }] : []),
           ...(studyTransfer.canImport() ? [{ label: kinSay("Import DICOM"), act: () => studyTransfer.importInto(opened.uid) }] : []),
@@ -15178,31 +15236,43 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           ...(studyAttachments.canAttach() ? [{ label: kinSay("Attach Document"), dis: !!s?.tele, act: () => studyAttachments.open(opened.uid) }] : []),
           ...(studyTransfer.canDownload() ? [{ label: kinSay("Download Originals"), dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) }] : []),
           ...forceReleaseItems,
-        ], null, opened);
+        ], keyboard, opened);
       }
     }
 
-    $("#orderrows").addEventListener("contextmenu", e => {
-      const tr = e.target.closest("tr[data-oid]"); if (!tr) return;
-      e.preventDefault();
-      selectedOid = tr.dataset.oid; renderOrders();
+    function showOrderMenu(e, tr, fromKey) {
+      const oid = tr.dataset.oid;
+      selectedOid = oid; renderOrders();
       const o = curOrder(), s = cur();
       showCtx(e, [
-        { label: kinSay("Match"), dis: !(s && s.matched === "U" && o.matched === "U"), act: doMatch },
+        technicianItem({ label: kinSay("Match"), dis: !(s && s.matched === "U" && o.matched === "U"), act: doMatch }),
         // selectedUid를 직접 대입하면 안 된다. select()가 하는 일 — 쓰던 판독문 저장,
         // 점유 해제, 오른쪽 판 갱신 — 이 전부 건너뛰어진다. 그 상태로 다음 검사를 고르면
         // **앞 환자의 소견이 뒤 환자에게 저장된다.** 실제로 그렇게 되는 코드였다.
-        { label: kinSay("Unmatch"), dis: o.matched !== "M", act: async () => {
+        technicianItem({ label: kinSay("Unmatch"), dis: o.matched !== "M", act: async () => {
             const s2 = studies.find(x => x.uid === o.studyUid);
             if (!s2) { toast("이 오더에 매칭된 검사를 목록에서 찾을 수 없습니다", "err"); return; }
             // 그 검사로 옮겨졌을 때만 한다 — 옮겨지지 않았으면(글자 조합·쓰던 글의 저장) Unmatch가 지금 선택에 닿는다.
             await select(s2.uid);
             if (selectedUid !== s2.uid) return;
             doUnmatch();
-          } },
+          } }),
         { sep: 1 },
         { label: kinSay("New Exam (SC 생성)"), dis: 1, title: "새 검사(SC 생성)는 현재 연결되어 있지 않습니다.", act: () => {} },
-      ], null, { uid: selectedUid, seq: selectionSeq, oid: selectedOid });
+      ], fromKey ? rowKeyboard(() => $("#orderrows").querySelector(`tr[data-oid="${CSS.escape(oid)}"]`)) : null,
+      { uid: selectedUid, seq: selectionSeq, oid: selectedOid });
+    }
+    $("#orderrows").addEventListener("contextmenu", e => {
+      const tr = e.target.closest("tr[data-oid]"); if (!tr) return;
+      e.preventDefault();
+      showOrderMenu(e, tr, false);
+    });
+    $("#orderrows").addEventListener("keydown", e => {
+      if (!isMenuKey(e)) return;
+      const tr = e.target.closest("tr[data-oid]"); if (!tr) return;
+      e.preventDefault();
+      ctxKeyPending = true;
+      showOrderMenu(e, tr, true);
     });
 
     $('#related-include-current').addEventListener('change',e=>{if(cur()){relatedIncludeCurrent=e.target.checked;renderRelated();}});
@@ -15347,8 +15417,20 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     // 서버 없이도 앱이 열려야 GitHub Pages 데모와 오프라인 작업이 가능하다.
     // 역할에 따라 화면을 잠근다. 서버가 어차피 막지만, 눌러보고 거절당하는 것보다
     // 처음부터 회색인 편이 낫다. (서버 검사가 진짜 방어선이고 이건 안내다)
+    /**
+     * May this account do technician work on a study — Verify, Unverify, Modify Exam, Match, Unmatch, Switch ReqHosp,
+     * Delete, the emergency switch? One answer for the Technician bar's buttons and the row and order menus' items: the
+     * server's own rule (api/src/pacs/access.ts `need(roles, 'technician')`, admin passes). It does not depend on the tab
+     * the screen shows — switching to Technician grants nothing.
+     */
+    function technicianWork() { return KinAuth.has("technician"); }
+    const TECHNICIAN_WORK_REASON = "방사선사(technician) 권한이 필요합니다";
+    /** A row or order menu item that is technician work: grey with the bar's reason when this account may not do it. */
+    function technicianItem(item) {
+      return technicianWork() ? item : { ...item, dis: true, title: TECHNICIAN_WORK_REASON };
+    }
     function applyRoleUi() {
-      const rad = KinAuth.has("radiologist"), tec = KinAuth.has("technician");
+      const rad = KinAuth.has("radiologist"), tec = technicianWork();
       studyPanel?.setAvailable(studyPanelAvailable());
       document.querySelectorAll('[data-study-panel-tab]').forEach(button => {
         button.hidden = !studyPanelAvailable().includes(button.dataset.studyPanelTab);
@@ -15366,7 +15448,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       ["#findings", "#conclusion", "#recommendation"].forEach(s => $(s).readOnly = !rad);
       ["#t-verify", "#t-unverify", "#t-modify"].forEach(s => {
         const el = $(s); el.disabled = !tec;
-        if (!tec) el.title = "방사선사(technician) 권한이 필요합니다";
+        if (!tec) el.title = TECHNICIAN_WORK_REASON;
       });
       const r = sess.demo ? "데모" : (sess.roles.filter(x => ["radiologist","technician","admin"].includes(x)).join(", ") || "권한 없음");
       $("#roles").textContent = r;
