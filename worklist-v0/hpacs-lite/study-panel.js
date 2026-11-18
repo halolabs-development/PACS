@@ -177,6 +177,8 @@
       grip.hidden = !size;
       if (!size) return;
       grip.setAttribute('aria-orientation', size.axis === 'x' ? 'vertical' : 'horizontal');
+      // The free edge is the right/bottom one unless the page placed the drawer right of / below the work area.
+      if (size.flip) grip.setAttribute('data-edge', 'start'); else grip.removeAttribute?.('data-edge');
       grip.setAttribute('aria-valuenow', String(Math.round(size.value)));
       grip.setAttribute('aria-valuemin', String(Math.round(size.min)));
       grip.setAttribute('aria-valuemax', String(Math.round(size.max)));
@@ -195,16 +197,17 @@
       if (value === null) { size = null; stopDrag(); renderSize(); return true; }
       if (!value || !['x', 'y'].includes(value.axis) || ![value.value, value.min, value.max].every(Number.isFinite)
           || value.min > value.max || (value.key !== undefined && typeof value.key !== 'string')) return false;
-      if (drag && (drag.axis !== value.axis || drag.key !== value.key)) stopDrag();
+      if (drag && (drag.axis !== value.axis || drag.key !== value.key || drag.flip !== (value.flip === true))) stopDrag();
       // A press that has not moved yet starts from what the page shows now.
       else if (drag && !drag.moved) drag.start = value.value;
-      size = { axis: value.axis, key: value.key, value: value.value, min: value.min, max: value.max }; renderSize(); return true;
+      size = { axis: value.axis, key: value.key, value: value.value, min: value.min, max: value.max, flip: value.flip === true }; renderSize(); return true;
     }
-    const pointerAt = event => drag.axis === 'x' ? event.clientX : event.clientY;
+    // A drawer whose free edge is its left/top one grows as that edge moves left/up.
+    const pointerAt = event => (drag.axis === 'x' ? event.clientX : event.clientY) * (drag.flip ? -1 : 1);
     listen(grip, 'pointerdown', event => {
       if (event.button !== 0 || !size || !state.open || destroyed) return;
       event.preventDefault();
-      drag = { id: event.pointerId, axis: size.axis, key: size.key, from: 0, start: size.value, moved: false };
+      drag = { id: event.pointerId, axis: size.axis, key: size.key, flip: size.flip, from: 0, start: size.value, moved: false };
       drag.from = pointerAt(event);
       grip.setPointerCapture?.(event.pointerId);
     });
@@ -232,7 +235,7 @@
       event.preventDefault(); event.stopPropagation();
       const step = event.shiftKey ? 40 : 10;
       const next = Math.min(size.max, Math.max(size.min, event.key === 'Home' ? size.min : event.key === 'End' ? size.max
-        : size.value + (event.key === keys[0] ? -step : step)));
+        : size.value + ((event.key === keys[0]) !== size.flip ? -step : step)));
       // A key that cannot change the size (the bound is reached) is not a choice: nothing is reported or stored.
       if (next !== size.value) app.onResize?.(next, 'end');
     });

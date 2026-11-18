@@ -186,6 +186,8 @@
     let layoutMode = "auto";
     let workspaceState = KinWorkspaceLayout.defaults();
     let workspaceEnded = false, studyPanel = null, studyPanelRestoring = false, workspaceWasNarrow = false;
+    // Arrange Boxes (workspace-panels.js) follows every layout pass; it is defined later in the page.
+    let boxArrangeLayout = null;
     // A size under a drag is shown but stored only when the drag ends; the edge being resized now.
     let studyPanelPreview = null, studyPanelEdge = null;
     const studyPanelAvailable = () => KinAuth.has('radiologist') ? ['images', 'info', 'templates'] : ['images', 'info'];
@@ -281,6 +283,14 @@
       // Panels에서 되살린 선택을 기본 숨김 규칙으로 다시 덮지 않는다.
       const band = KinWorkspaceLayout.reportWindow(mode, geometry?.hiddenPanels || []);
       for (const [name, on] of Object.entries(band.classes)) document.body.classList.toggle(name, on);
+      // The five boxes' places (box-layout.js; the stylesheet applies them on the list screen only).
+      const boxSwaps = KinBoxLayout.arrangement(geometry?.boxSwaps || []).swaps;
+      for (const pair of KinBoxLayout.SWAPS) document.body.classList.toggle('kin-swap-' + pair, boxSwaps.includes(pair));
+      // The yields below bring the Related Report's first lines up past what is above it: the band and, stacked, the
+      // list. A box the reader put below the Related Report does not push it down, so it never yields for it; with the
+      // Report Editor above the Related Report the row scrolls instead (past the minimums the page scrolls).
+      const priorFirst = !boxSwaps.includes('report'), bandAbove = priorFirst && !boxSwaps.includes('side'),
+        listAbove = priorFirst && !boxSwaps.includes('columns');
       const shares = band.content.reduce((sum, p) => sum + p.share, 0);
       top.style.setProperty('--kin-rw-columns', band.content.map((p, i) => i === band.content.length - 1 ? 'minmax(0, 1fr)'
         : `${100 * p.share / shares}%`).join(' ') || 'minmax(0, 1fr)');
@@ -411,20 +421,22 @@
       };
       if (portrait && !narrow && (sizes.top == null || topMaximum < 140) && !document.body.classList.contains("reading")) {
         const over = lineOver();
-        if (over > 0) top.style.height = Math.max(140, Math.floor(top.getBoundingClientRect().height - over)) + "px";
+        if (over > 0 && bandAbove) top.style.height = Math.max(140, Math.floor(top.getBoundingClientRect().height - over)) + "px";
         // A band at its minimum can still leave the line below: the list's controls
         // took a line more (at 768x1024 the Selected toolbar wraps to a third line
         // since Preload, D1880). The stacked list yields the rest, as the narrow
         // sheet's does.
-        if (over > 0) listYields(lineOver());
+        if (over > 0 && listAbove) listYields(lineOver());
       }
       // In the narrow sheet the list band yields to that line the same way; the
       // next row is then a wheel turn away inside the band.
-      if (narrow && listNeed) listYields(lineOver());
+      if (narrow && listNeed && listAbove) listYields(lineOver());
       // Becoming the narrow sheet at selection reflows the list: bring the band's
       // top and the selected row back into view, scrolling inside the band only.
       if (becameNarrow && listNeed) {
         left.scrollTop = 0;
+        // Related Exam placed above the Worklist: the band starts at the list's own top instead.
+        if (boxSwaps.includes('list')) left.scrollTop = Math.max(0, listGrid.getBoundingClientRect().top - left.getBoundingClientRect().top - 6);
         const selected = selectedUid && listTable.tBodies[0]?.querySelector(`tr[data-uid="${CSS.escape(selectedUid)}"]`);
         if (selected) {
           const area = listGrid.getBoundingClientRect(), box = selected.getBoundingClientRect();
@@ -435,6 +447,7 @@
         }
       }
       if (studyPanel) placeStudyPanel();
+      boxArrangeLayout?.();
     }
     // The open Study Panel never covers the report section (W3R5-03 ②). Wide
     // landscape: the 360 px column left of the report, from the work area's top.
@@ -461,13 +474,19 @@
       // The default when nothing was chosen; otherwise the choice (or the default) within [minimum, room].
       const size = (name, initial, minimum, room) => wanted(name) == null && !text ? initial
         : Math.min(room, Math.max(minimum, wanted(name) ?? initial));
+      // Arrange Boxes may put the report column on the left (columns swapped) or the report section high in a stacked
+      // page: the panel then takes the room right of the report column, or below the report section, and its free
+      // edge faces the report from that side (flip). Never over the report section either way.
+      let flip = false;
+      const atRight = document.body.classList.contains('kin-swap-columns') && !document.body.classList.contains('reading');
+      host.style.left = atRight ? 'auto' : ''; host.style.right = atRight ? '12px' : '';
       const edge = (name, value, minimum, room) => {
         const key = axis + ':' + name;
         // The window turned or the panel changed form under a drag: that drag ends here without a result, and
         // the drawer stops it too (setSize names the new edge), so its release changes neither record.
         if (studyPanelPreview && studyPanelPreview.key !== key) studyPanelPreview = null;
         studyPanelEdge = { key, name, value, min: Math.min(minimum, room), max: room };
-        studyPanel.setSize({ axis: name === 'width' ? 'x' : 'y', key, value, min: studyPanelEdge.min, max: room });
+        studyPanel.setSize({ axis: name === 'width' ? 'x' : 'y', key, value, min: studyPanelEdge.min, max: room, flip });
       };
       studyPanel.setText(text);
       const report = $('.report-p').getBoundingClientRect();
@@ -475,13 +494,25 @@
         const area = $('.split').getBoundingClientRect();
         const top = Math.max(0, area.top), bottom = Math.min(report.top, area.bottom, innerHeight) - 12;
         host.style.top = top + 'px';
+        const beside = atRight ? innerWidth - report.right - 24 : report.left - 24;
         // Too little room above a report column beside the work area (Reading
-        // Workspace, short side-by-side windows): the column left of it instead.
-        if (bottom - top < 240 && report.left - 24 >= 240) {
-          const room = report.left - 24, width = size('width', room, minWidth, room);
+        // Workspace, short side-by-side windows): the column left of it instead (right of it with the columns swapped).
+        if (bottom - top < 240 && beside >= 240) {
+          const room = beside, width = size('width', room, minWidth, room);
+          flip = atRight;
           host.style.width = width + 'px';
           host.style.height = Math.max(120, Math.min(area.bottom, innerHeight) - 12 - top) + 'px';
           edge('width', width, minWidth, room);
+          return;
+        }
+        // A report section the reader moved up (stacked page): the room below it, when the room above is too small.
+        const below = Math.min(area.bottom, innerHeight) - 12 - (report.bottom + 12);
+        if (bottom - top < 240 && below >= 240) {
+          flip = true;
+          const height = Math.max(120, size('height', Math.min(innerHeight * 0.55, below), minHeight, below));
+          host.style.top = (Math.min(area.bottom, innerHeight) - 12 - height) + 'px';
+          host.style.height = height + 'px';
+          edge('height', height, Math.max(120, minHeight), below);
           return;
         }
         const room = Math.max(120, bottom - top);
@@ -496,7 +527,9 @@
       // The 360 px column (D1041 3-①) is the stylesheet's; any width, the default included, ends 12 px before the
       // report column, so neither the panel nor its edge reaches a report column widened to its largest
       // (Reading Workspace, Image and Report Size at End: W3R7-05). Where there is room it is the 360 px column.
-      const room = Math.max(120, Math.min(innerWidth, report.width ? report.left : innerWidth) - 24);
+      flip = atRight;
+      const room = atRight ? Math.max(120, (report.width ? innerWidth - report.right : innerWidth) - 24)
+        : Math.max(120, Math.min(innerWidth, report.width ? report.left : innerWidth) - 24);
       const width = size('width', Math.min(360, room), minWidth, room);
       if (wanted('width') != null || text || width !== 360) host.style.width = width + 'px';
       edge('width', width, minWidth, room);

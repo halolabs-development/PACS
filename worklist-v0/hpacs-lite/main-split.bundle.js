@@ -11633,6 +11633,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     let layoutMode = "auto";
     let workspaceState = KinWorkspaceLayout.defaults();
     let workspaceEnded = false, studyPanel = null, studyPanelRestoring = false, workspaceWasNarrow = false;
+    // Arrange Boxes (workspace-panels.js) follows every layout pass; it is defined later in the page.
+    let boxArrangeLayout = null;
     // A size under a drag is shown but stored only when the drag ends; the edge being resized now.
     let studyPanelPreview = null, studyPanelEdge = null;
     const studyPanelAvailable = () => KinAuth.has('radiologist') ? ['images', 'info', 'templates'] : ['images', 'info'];
@@ -11728,6 +11730,14 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       // Panels에서 되살린 선택을 기본 숨김 규칙으로 다시 덮지 않는다.
       const band = KinWorkspaceLayout.reportWindow(mode, geometry?.hiddenPanels || []);
       for (const [name, on] of Object.entries(band.classes)) document.body.classList.toggle(name, on);
+      // The five boxes' places (box-layout.js; the stylesheet applies them on the list screen only).
+      const boxSwaps = KinBoxLayout.arrangement(geometry?.boxSwaps || []).swaps;
+      for (const pair of KinBoxLayout.SWAPS) document.body.classList.toggle('kin-swap-' + pair, boxSwaps.includes(pair));
+      // The yields below bring the Related Report's first lines up past what is above it: the band and, stacked, the
+      // list. A box the reader put below the Related Report does not push it down, so it never yields for it; with the
+      // Report Editor above the Related Report the row scrolls instead (past the minimums the page scrolls).
+      const priorFirst = !boxSwaps.includes('report'), bandAbove = priorFirst && !boxSwaps.includes('side'),
+        listAbove = priorFirst && !boxSwaps.includes('columns');
       const shares = band.content.reduce((sum, p) => sum + p.share, 0);
       top.style.setProperty('--kin-rw-columns', band.content.map((p, i) => i === band.content.length - 1 ? 'minmax(0, 1fr)'
         : `${100 * p.share / shares}%`).join(' ') || 'minmax(0, 1fr)');
@@ -11858,20 +11868,22 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       };
       if (portrait && !narrow && (sizes.top == null || topMaximum < 140) && !document.body.classList.contains("reading")) {
         const over = lineOver();
-        if (over > 0) top.style.height = Math.max(140, Math.floor(top.getBoundingClientRect().height - over)) + "px";
+        if (over > 0 && bandAbove) top.style.height = Math.max(140, Math.floor(top.getBoundingClientRect().height - over)) + "px";
         // A band at its minimum can still leave the line below: the list's controls
         // took a line more (at 768x1024 the Selected toolbar wraps to a third line
         // since Preload, D1880). The stacked list yields the rest, as the narrow
         // sheet's does.
-        if (over > 0) listYields(lineOver());
+        if (over > 0 && listAbove) listYields(lineOver());
       }
       // In the narrow sheet the list band yields to that line the same way; the
       // next row is then a wheel turn away inside the band.
-      if (narrow && listNeed) listYields(lineOver());
+      if (narrow && listNeed && listAbove) listYields(lineOver());
       // Becoming the narrow sheet at selection reflows the list: bring the band's
       // top and the selected row back into view, scrolling inside the band only.
       if (becameNarrow && listNeed) {
         left.scrollTop = 0;
+        // Related Exam placed above the Worklist: the band starts at the list's own top instead.
+        if (boxSwaps.includes('list')) left.scrollTop = Math.max(0, listGrid.getBoundingClientRect().top - left.getBoundingClientRect().top - 6);
         const selected = selectedUid && listTable.tBodies[0]?.querySelector(`tr[data-uid="${CSS.escape(selectedUid)}"]`);
         if (selected) {
           const area = listGrid.getBoundingClientRect(), box = selected.getBoundingClientRect();
@@ -11882,6 +11894,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         }
       }
       if (studyPanel) placeStudyPanel();
+      boxArrangeLayout?.();
     }
     // The open Study Panel never covers the report section (W3R5-03 ②). Wide
     // landscape: the 360 px column left of the report, from the work area's top.
@@ -11908,13 +11921,19 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       // The default when nothing was chosen; otherwise the choice (or the default) within [minimum, room].
       const size = (name, initial, minimum, room) => wanted(name) == null && !text ? initial
         : Math.min(room, Math.max(minimum, wanted(name) ?? initial));
+      // Arrange Boxes may put the report column on the left (columns swapped) or the report section high in a stacked
+      // page: the panel then takes the room right of the report column, or below the report section, and its free
+      // edge faces the report from that side (flip). Never over the report section either way.
+      let flip = false;
+      const atRight = document.body.classList.contains('kin-swap-columns') && !document.body.classList.contains('reading');
+      host.style.left = atRight ? 'auto' : ''; host.style.right = atRight ? '12px' : '';
       const edge = (name, value, minimum, room) => {
         const key = axis + ':' + name;
         // The window turned or the panel changed form under a drag: that drag ends here without a result, and
         // the drawer stops it too (setSize names the new edge), so its release changes neither record.
         if (studyPanelPreview && studyPanelPreview.key !== key) studyPanelPreview = null;
         studyPanelEdge = { key, name, value, min: Math.min(minimum, room), max: room };
-        studyPanel.setSize({ axis: name === 'width' ? 'x' : 'y', key, value, min: studyPanelEdge.min, max: room });
+        studyPanel.setSize({ axis: name === 'width' ? 'x' : 'y', key, value, min: studyPanelEdge.min, max: room, flip });
       };
       studyPanel.setText(text);
       const report = $('.report-p').getBoundingClientRect();
@@ -11922,13 +11941,25 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         const area = $('.split').getBoundingClientRect();
         const top = Math.max(0, area.top), bottom = Math.min(report.top, area.bottom, innerHeight) - 12;
         host.style.top = top + 'px';
+        const beside = atRight ? innerWidth - report.right - 24 : report.left - 24;
         // Too little room above a report column beside the work area (Reading
-        // Workspace, short side-by-side windows): the column left of it instead.
-        if (bottom - top < 240 && report.left - 24 >= 240) {
-          const room = report.left - 24, width = size('width', room, minWidth, room);
+        // Workspace, short side-by-side windows): the column left of it instead (right of it with the columns swapped).
+        if (bottom - top < 240 && beside >= 240) {
+          const room = beside, width = size('width', room, minWidth, room);
+          flip = atRight;
           host.style.width = width + 'px';
           host.style.height = Math.max(120, Math.min(area.bottom, innerHeight) - 12 - top) + 'px';
           edge('width', width, minWidth, room);
+          return;
+        }
+        // A report section the reader moved up (stacked page): the room below it, when the room above is too small.
+        const below = Math.min(area.bottom, innerHeight) - 12 - (report.bottom + 12);
+        if (bottom - top < 240 && below >= 240) {
+          flip = true;
+          const height = Math.max(120, size('height', Math.min(innerHeight * 0.55, below), minHeight, below));
+          host.style.top = (Math.min(area.bottom, innerHeight) - 12 - height) + 'px';
+          host.style.height = height + 'px';
+          edge('height', height, Math.max(120, minHeight), below);
           return;
         }
         const room = Math.max(120, bottom - top);
@@ -11943,7 +11974,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       // The 360 px column (D1041 3-①) is the stylesheet's; any width, the default included, ends 12 px before the
       // report column, so neither the panel nor its edge reaches a report column widened to its largest
       // (Reading Workspace, Image and Report Size at End: W3R7-05). Where there is room it is the 360 px column.
-      const room = Math.max(120, Math.min(innerWidth, report.width ? report.left : innerWidth) - 24);
+      flip = atRight;
+      const room = atRight ? Math.max(120, (report.width ? innerWidth - report.right : innerWidth) - 24)
+        : Math.max(120, Math.min(innerWidth, report.width ? report.left : innerWidth) - 24);
       const width = size('width', Math.min(360, room), minWidth, room);
       if (wanted('width') != null || text || width !== 360) host.style.width = width + 'px';
       edge('width', width, minWidth, room);
@@ -13832,7 +13865,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         `<label${key === 'aiReport' ? ' title="추후 구현 탭입니다. 표시 여부만 정합니다."' : ''}><input type="checkbox" data-panel="${key}"> ${label}</label>`).join('')}</fieldset>
       <p>이 브라우저에 계정별로 기억합니다. 다른 기기에서는 View &gt; Account Layout으로 계정에 저장하고 불러오세요.</p>
       <p id="panel-settings-status" role="status"></p>
-      <footer><button type="button" id="panel-settings-show-all">Show All Panels</button><button type="button" id="panel-settings-close">Close</button></footer>`;
+      <footer><button type="button" id="box-arrange-open" title="Worklist·Related Exam·Clinical Information·Related Report·Report Editor 상자를 끌어 서로 자리를 바꿉니다.">Arrange Boxes</button><button type="button" id="panel-settings-show-all">Show All Panels</button><button type="button" id="panel-settings-close">Close</button></footer>`;
     document.body.append(panelDialog);
     const hiddenPanelsNow = () => workspaceState.workspace?.hiddenPanels?.slice() || [];
     function renderPanelSettings() {
@@ -13857,14 +13890,260 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     });
     $('#panel-settings-show-all').addEventListener('click', () => choosePanels([]));
     $('#panel-settings-close').addEventListener('click', () => panelDialog.close());
-    panelDialog.addEventListener('close', () => { const opener = $('#panel-settings-open'); if (!opener.disabled) opener.focus({ preventScroll: true }); });
+    // Arrange Boxes (below) closes this dialog and takes the focus to its first box itself.
+    panelDialog.addEventListener('close', () => { const opener = $('#panel-settings-open'); if (!opener.disabled && !arranging) opener.focus({ preventScroll: true }); });
     $('#panel-settings-open').addEventListener('click', () => {
       if (!workspaceEditable() || panelDialog.open) return;
       $('#panel-settings-status').textContent = ''; renderPanelSettings(); panelDialog.showModal();
       panelDialog.querySelector('input[data-panel]').focus();
     });
+    // ── Arrange Boxes, from Panel Settings (studio 2026-11-01: "Allow me to drop and drag these boxes so I can configure it the way I want to") ──
+    // The five boxes trade places inside the page's current structure (box-layout.js): the swaps are kept in the same
+    // layout record as the panel sizes, so this browser keeps them per account, Account Layout carries them to another
+    // browser and Reset Layout puts every box home. The boxes never change parents: only their order does.
+    const BOX_LABEL = { worklist: 'Worklist', relatedExams: 'Related Exam', clinical: 'Clinical Information',
+      relatedReports: 'Related Report', editor: 'Report Editor' };
+    const boxSwapsNow = () => KinWorkspaceLayout.boxSwaps(workspaceState);
+    function boxRect(nodes, clips) {
+      let top = Infinity, left = Infinity, right = -Infinity, bottom = -Infinity;
+      for (const node of nodes) {
+        if (!node?.isConnected || !node.getClientRects().length) continue;
+        const r = node.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) continue;
+        top = Math.min(top, r.top); left = Math.min(left, r.left); right = Math.max(right, r.right); bottom = Math.max(bottom, r.bottom);
+      }
+      if (top === Infinity) return { rect: null, visible: null };
+      const rect = { x: left, y: top, width: right - left, height: bottom - top };
+      for (const clip of [...clips, $('.split')]) {
+        if (!clip?.getClientRects().length) continue;
+        const c = clip.getBoundingClientRect();
+        top = Math.max(top, c.top); left = Math.max(left, c.left); right = Math.min(right, c.right); bottom = Math.min(bottom, c.bottom);
+      }
+      top = Math.max(top, 0); left = Math.max(left, 0); right = Math.min(right, innerWidth); bottom = Math.min(bottom, innerHeight);
+      return { rect, visible: right - left > 0 && bottom - top > 0 ? { x: left, y: top, width: right - left, height: bottom - top } : null };
+    }
+    /**
+     * Where each of the five boxes is now, in screen order (later work on this page reads the boxes here, never from
+     * their parents): key, label, the elements that make the box, its column ('A' = the list column, 'B' = the report
+     * column) and side ('first' = left/top of the page), its place inside the column, its whole rectangle and the part
+     * of it on screen. `shown` is false where the box is not on this screen (the Reading Workspace keeps its own
+     * arrangement; Clinical Information hidden in Panels or lent to the Study Panel; a box scrolled out of view).
+     */
+    function workspaceBoxes() {
+      const arrangement = KinBoxLayout.arrangement(boxSwapsNow()), tech = mode === 'Technician';
+      const reading = document.body.classList.contains('reading');
+      const parts = {
+        worklist: [...$('.left').children].filter(n => !n.matches('#worklist-folders-panel, #resize-left-split, .related-list-pane, #routing-factors')),
+        relatedExams: [$('.related-list-pane')],
+        clinical: [$('.right > .rw')],
+        relatedReports: [$('.related-p')],
+        editor: [$(tech ? '.order-p' : '.report-p')],
+      };
+      const clips = { worklist: ['.left'], relatedExams: ['.left'], clinical: ['.right'], relatedReports: ['.workrow', '.right'], editor: ['.workrow', '.right'] };
+      return arrangement.order.map(key => {
+        const { rect, visible } = boxRect(parts[key], clips[key].map(s => $(s)));
+        const clinicalAway = key === 'clinical' && !$('.rw > .s-clinical')?.getClientRects().length;
+        return { key, label: key === 'editor' && tech ? 'Order List' : BOX_LABEL[key], elements: parts[key],
+          ...arrangement.positions[key], rect, visible, shown: !reading && !clinicalAway && !!visible };
+      });
+    }
+    // What a drop of `from` on `to` would do, said before the drop (pointer and keyboard alike).
+    function boxOutcome(from, to) {
+      const pair = KinBoxLayout.swapFor(from, to), on = boxSwapsNow(), tech = mode === 'Technician';
+      if (!pair) return '같은 상자입니다. 놓아도 바뀌지 않습니다.';
+      if (pair === 'list') return '놓으면 Worklist와 Related Exam이 자리를 바꿉니다.';
+      if (pair === 'report') return tech ? '놓으면 Related Report와 Order List가 자리를 바꿉니다.' : '놓으면 Related Report와 Report Editor가 자리를 바꿉니다.';
+      if (pair === 'side') return on.includes('side') ? '놓으면 Clinical Information 띠가 판독 열의 맨 위로 갑니다.' : '놓으면 Clinical Information 띠가 판독 열의 맨 아래로 갑니다.';
+      const away = !on.includes('columns');
+      if (portraitLayout()) return away ? '놓으면 두 열이 바뀝니다: 목록 열(Worklist·Related Exam)이 아래로, 판독 열이 위로 갑니다.'
+        : '놓으면 두 열이 바뀝니다: 목록 열(Worklist·Related Exam)이 위로, 판독 열이 아래로 갑니다.';
+      return away ? '놓으면 두 열이 바뀝니다: 목록 열(Worklist·Related Exam)이 오른쪽으로, 판독 열이 왼쪽으로 갑니다.'
+        : '놓으면 두 열이 바뀝니다: 목록 열(Worklist·Related Exam)이 왼쪽으로, 판독 열이 오른쪽으로 갑니다.';
+    }
+    const arrangeBar = document.createElement('div');
+    arrangeBar.id = 'box-arrange-bar'; arrangeBar.hidden = true;
+    arrangeBar.setAttribute('role', 'region'); arrangeBar.setAttribute('aria-label', 'Arrange Boxes');
+    arrangeBar.innerHTML = `<p id="box-arrange-help" lang="ko">상자를 다른 상자 위로 끌어 놓으면 두 상자가 자리를 바꿉니다. 다른 열의 상자에 놓으면 두 열이 통째로 바뀝니다.
+        키보드: 상자에서 Enter로 집고, 놓을 상자에서 Enter를 누릅니다. Tab 순서는 화면 배치와 관계없이 그대로입니다.</p>
+      <span id="box-arrange-status" role="status" aria-live="polite" lang="ko"></span>
+      <button type="button" class="chip" data-box-swap="columns">Swap Columns</button>
+      <button type="button" class="chip" data-box-swap="list">Swap Worklist / Related Exam</button>
+      <button type="button" class="chip" data-box-swap="side">Move Clinical Information</button>
+      <button type="button" class="chip" data-box-swap="report" data-label-tech="Swap Related Report / Order List">Swap Related Report / Report Editor</button>
+      <button type="button" class="chip" id="box-arrange-default">Default Arrangement</button>
+      <button type="button" class="chip" id="box-arrange-done">Done</button>`;
+    const coverLayer = document.createElement('div');
+    coverLayer.id = 'box-arrange-covers'; coverLayer.hidden = true;
+    document.body.append(coverLayer, arrangeBar);
+    let arranging = false, boxPicked = null, boxDrag = null, boxDropped = false, arrangeReturn = null, lastWorkFocus = null, coverFrame = 0;
+    // The field the reader was in before opening View: Done puts focus back there (its caret and text are untouched).
+    document.addEventListener('focusin', event => {
+      const el = event.target;
+      if (el instanceof Element && el.closest('.split') && !el.closest('.kin-box-cover')) lastWorkFocus = el;
+    }, true);
+    const arrangeStatus = text => { $('#box-arrange-status').textContent = text; };
+    function renderBoxCovers() {
+      if (!arranging) return;
+      const boxes = workspaceBoxes().filter(box => box.shown);
+      const keep = new Map([...coverLayer.children].map(node => [node.dataset.box, node]));
+      const nodes = boxes.map(box => {
+        let cover = keep.get(box.key);
+        if (!cover) {
+          cover = document.createElement('button');
+          cover.type = 'button'; cover.className = 'kin-box-cover'; cover.dataset.box = box.key;
+          cover.innerHTML = '<span class="kin-box-name"></span><small lang="ko">다른 상자 위로 끌어 놓으세요</small>';
+          cover.addEventListener('pointerdown', startBoxDrag);
+          cover.addEventListener('click', boxKey);
+          cover.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); escapeArrange(); } });
+        }
+        cover.querySelector('.kin-box-name').textContent = box.label;
+        cover.setAttribute('aria-label', box.label);
+        cover.setAttribute('aria-pressed', String(boxPicked === box.key || boxDrag?.from === box.key));
+        Object.assign(cover.style, { left: box.visible.x + 'px', top: box.visible.y + 'px', width: box.visible.width + 'px', height: box.visible.height + 'px' });
+        return cover;
+      });
+      // Covers follow the screen order, so Tab among them goes the way the boxes are now shown.
+      const focused = coverLayer.contains(document.activeElement) ? document.activeElement : null;
+      coverLayer.replaceChildren(...nodes);
+      if (focused && !focused.isConnected) coverLayer.querySelector('.kin-box-cover')?.focus({ preventScroll: true });
+      else if (focused && document.activeElement !== focused) focused.focus({ preventScroll: true });
+      if (boxPicked && !nodes.some(node => node.dataset.box === boxPicked)) boxPicked = null;
+    }
+    const scheduleCovers = () => {
+      if (!arranging || coverFrame) return;
+      coverFrame = requestAnimationFrame(() => { coverFrame = 0; renderBoxCovers(); });
+    };
+    function markTarget(key) {
+      for (const cover of coverLayer.children) {
+        const target = !!key && cover.dataset.box === key;
+        cover.classList.toggle('kin-box-target', target);
+        const from = boxDrag?.from || boxPicked;
+        cover.querySelector('small').textContent = target && from ? boxOutcome(from, key)
+          : cover.dataset.box === from ? '집었습니다. 놓을 상자 위에서 놓으세요.' : '다른 상자 위로 끌어 놓으세요';
+      }
+      if (key && (boxDrag?.from || boxPicked)) arrangeStatus(boxOutcome(boxDrag?.from || boxPicked, key));
+    }
+    // What the bar says after a change: whole sentences, never joined from parts.
+    const BOX_SAID = {
+      swap: ['자리를 바꿨습니다. 이 브라우저에 기억했습니다.', '자리를 바꿨습니다. 브라우저에 저장하지 못해 이 창에서만 유지됩니다.'],
+      home: ['기본 배치로 되돌렸습니다. 이 브라우저에 기억했습니다.', '기본 배치로 되돌렸습니다. 브라우저에 저장하지 못해 이 창에서만 유지됩니다.'],
+    };
+    function chooseBoxSwaps(swaps, done) {
+      if (!workspaceEditable()) { endArrange(); return; }
+      const next = KinWorkspaceLayout.withBoxSwaps(workspaceState, swaps);
+      if (!next) { arrangeStatus('배치를 확인할 수 없습니다. Reset Layout으로 기본 배치를 사용할 수 있습니다.'); return; }
+      workspaceState = next; applyLayout(); saveWorkspace(true);
+      arrangeStatus(BOX_SAID[done][workspaceLocalKept ? 0 : 1]);
+    }
+    function dropBox(from, to) {
+      const pair = KinBoxLayout.swapFor(from, to);
+      boxPicked = null; boxDrag = null;
+      if (!pair) { markTarget(null); renderBoxCovers(); arrangeStatus('바뀐 것이 없습니다.'); return; }
+      chooseBoxSwaps(KinBoxLayout.toggled(boxSwapsNow(), pair), 'swap');
+      markTarget(null);
+      coverLayer.querySelector(`[data-box="${to}"]`)?.focus({ preventScroll: true });
+    }
+    function startBoxDrag(event) {
+      if (event.button !== 0 || !arranging || boxDrag) return;
+      event.preventDefault(); boxDropped = false;
+      const cover = event.currentTarget;
+      boxDrag = { from: cover.dataset.box, pointer: event.pointerId, target: null, cover };
+      boxPicked = null;
+      cover.setPointerCapture(event.pointerId);
+      cover.setAttribute('aria-pressed', 'true');
+      markTarget(null);
+      const move = e => {
+        if (e.pointerId !== boxDrag?.pointer) return;
+        const under = document.elementsFromPoint(e.clientX, e.clientY).find(n => n.classList?.contains('kin-box-cover'));
+        const key = under && under.dataset.box !== boxDrag.from ? under.dataset.box : null;
+        if (key !== boxDrag.target) { boxDrag.target = key; markTarget(key); }
+      };
+      const end = e => {
+        if (e.pointerId !== boxDrag?.pointer) return;
+        cover.removeEventListener('pointermove', move); cover.removeEventListener('pointerup', end); cover.removeEventListener('pointercancel', end);
+        if (cover.hasPointerCapture(e.pointerId)) cover.releasePointerCapture(e.pointerId);
+        const { from, target } = boxDrag;
+        // The click that follows a release over another box belongs to that drop, not to a click-pick.
+        boxDropped = e.type === 'pointerup' && !!target;
+        if (boxDropped) dropBox(from, target);
+        else { boxDrag = null; markTarget(null); renderBoxCovers(); }
+      };
+      boxDrag.cancel = () => end({ pointerId: boxDrag.pointer, type: 'pointercancel' });
+      cover.addEventListener('pointermove', move); cover.addEventListener('pointerup', end); cover.addEventListener('pointercancel', end);
+    }
+    // Enter or Space (or a click without a drag) on a box picks it; on another box drops it there; on the same box
+    // puts it back.
+    function boxKey(event) {
+      if (!arranging) return;
+      if (boxDropped) { boxDropped = false; return; }
+      const key = event.currentTarget.dataset.box;
+      if (!boxPicked) { boxPicked = key; markTarget(null); renderBoxCovers(); arrangeStatus('상자를 집었습니다. 놓을 상자로 Tab 이동한 뒤 Enter를 누르세요. Esc는 취소입니다.'); return; }
+      if (boxPicked === key) { boxPicked = null; markTarget(null); renderBoxCovers(); arrangeStatus('집은 상자를 내려놓았습니다.'); return; }
+      dropBox(boxPicked, key);
+    }
+    coverLayer.addEventListener('focusin', event => {
+      const key = event.target.dataset?.box;
+      if (boxPicked) markTarget(key !== boxPicked ? key : null);
+    });
+    function escapeArrange() {
+      if (boxPicked) { boxPicked = null; markTarget(null); renderBoxCovers(); arrangeStatus('집은 상자를 내려놓았습니다.'); return; }
+      endArrange(true);
+    }
+    function startArrange() {
+      if (arranging || !workspaceEditable() || document.body.classList.contains('reading')) return;
+      arrangeReturn = lastWorkFocus;
+      const view = $('#toolbar-view'); if (view.open) view.open = false;
+      if (panelDialog.open) panelDialog.close();
+      arranging = true; boxPicked = null;
+      document.body.classList.add('kin-arranging');
+      coverLayer.hidden = false; arrangeBar.hidden = false;
+      renderArrangeBar(); arrangeStatus('');
+      renderBoxCovers();
+      (coverLayer.querySelector('.kin-box-cover') || $('#box-arrange-done')).focus({ preventScroll: true });
+    }
+    function endArrange(returnFocus = true) {
+      if (!arranging) return;
+      boxDrag?.cancel?.(); boxDrag = null; boxPicked = null; arranging = false;
+      cancelAnimationFrame(coverFrame); coverFrame = 0;
+      document.body.classList.remove('kin-arranging');
+      coverLayer.replaceChildren(); coverLayer.hidden = true; arrangeBar.hidden = true;
+      if (!returnFocus) return;
+      const back = arrangeReturn;
+      arrangeReturn = null;
+      if (back?.isConnected && !back.disabled && !back.closest('[hidden], [inert]') && back.getClientRects().length) back.focus({ preventScroll: true });
+      else $('#toolbar-view > summary')?.focus({ preventScroll: true });
+    }
+    function renderArrangeBar() {
+      const on = boxSwapsNow(), tech = mode === 'Technician';
+      for (const button of arrangeBar.querySelectorAll('[data-box-swap]')) {
+        button.setAttribute('aria-pressed', String(on.includes(button.dataset.boxSwap)));
+        if (button.dataset.boxSwap === 'report') button.textContent = tech ? 'Swap Related Report / Order List' : 'Swap Related Report / Report Editor';
+      }
+      $('#box-arrange-default').disabled = !on.length;
+    }
+    arrangeBar.addEventListener('click', event => {
+      const swap = event.target.closest('[data-box-swap]');
+      if (swap && arranging) { boxPicked = null; chooseBoxSwaps(KinBoxLayout.toggled(boxSwapsNow(), swap.dataset.boxSwap), 'swap'); markTarget(null); }
+    });
+    arrangeBar.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); escapeArrange(); } });
+    $('#box-arrange-default').addEventListener('click', () => { if (arranging) { boxPicked = null; chooseBoxSwaps([], 'home'); markTarget(null); } });
+    $('#box-arrange-done').addEventListener('click', () => endArrange(true));
+    $('#box-arrange-open').addEventListener('click', startArrange);
+    // The work area scrolls under the covers (the list column, the report row, a stacked page): they follow it.
+    document.addEventListener('scroll', scheduleCovers, true);
+    work.onInvalidate(event => { if (event.reason === 'prepare') { boxDrag?.cancel?.(); } });
+    // Every layout pass (window size, Layout, workflow tab, panel choices, Reading Workspace) re-measures the covers.
+    boxArrangeLayout = () => {
+      const reading = document.body.classList.contains('reading');
+      $('#box-arrange-open').disabled = reading;
+      if (!arranging) return;
+      if (reading || !workspaceEditable()) { endArrange(false); return; }
+      renderArrangeBar(); renderBoxCovers();
+    };
+    boxArrangeLayout();
     function stopWorkspaceLayout() {
       if (panelDialog.open) panelDialog.close();
+      endArrange(false); document.removeEventListener('scroll', scheduleCovers, true);
       workspaceEnded = true; workspaceGeneration++;
       workspaceDragCancel?.(); workspaceObserver.disconnect(); cancelAnimationFrame(splitFrame); splitFrame = 0;
       window.removeEventListener('resize', applyLayout);
@@ -13885,29 +14164,37 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     });
     applyLayout();
 
-    bindPanelResize("#resize-main", () => portraitLayout() ? "y" : "x", (e, axis) => {
-      const box = $(".split").getBoundingClientRect();
+    // Each handle grows its own box toward the hand: with the boxes swapped (Arrange Boxes) the box can lie on the
+    // other side of its handle, and box-layout.js says which (edges: +1 its box is before the handle, -1 after).
+    const boxEdge = name => document.body.classList.contains('reading') ? KinBoxLayout.arrangement([]).edges[name]
+      : KinBoxLayout.arrangement(boxSwapsNow()).edges[name];
+    // A box placed after its handle follows the hand's movement (its size less the move), so it never jumps by the gaps
+    // between the handle and the box; a box before its handle keeps the measure it always had.
+    bindPanelResize("#resize-main", () => portraitLayout() ? "y" : "x", (e, axis, delta) => {
+      const box = $(".split").getBoundingClientRect(), left = $(".left"), before = boxEdge('main') > 0;
+      const now = left.getBoundingClientRect()[axis === "y" ? "height" : "width"];
       if (axis === "y")
-        $(".left").style.height = clampPanel(e.clientY - box.top, 180, box.height - 420) + "px";
+        left.style.height = clampPanel(before ? e.clientY - box.top : now - delta, 180, box.height - 420) + "px";
       else
-        $(".left").style.width = clampPanel(e.clientX - box.left, 500, box.width - 426) + "px";
+        left.style.width = clampPanel(before ? e.clientX - box.left : now - delta, 500, box.width - 426) + "px";
     });
     bindPanelResize("#resize-top", "y", (e, axis, delta) => {
       const top = $(".rw"), current = top.getBoundingClientRect().height;
       // 목록의 최소 높이 때문에 상한이 현재 띠보다 작아도 손과 반대로 줄이지 않는다.
       // 포인터 이동량을 쓰므로 손잡이 안의 누른 위치나 작업공간 스크롤에 영향받지 않는다.
       const maximum = Math.max(current, 140, $(".right").getBoundingClientRect().height - 266);
-      top.style.height = clampPanel(current + delta, Math.min(current, 140), maximum) + "px";
+      top.style.height = clampPanel(current + boxEdge('top') * delta, Math.min(current, 140), maximum) + "px";
     });
-    bindPanelResize("#resize-related", "y", e => {
-      const box = $(".workrow").getBoundingClientRect();
-      $(".related-p").style.height = clampPanel(e.clientY - box.top, portraitLayout() ? 286 : 150, box.height - 186) + "px";
+    bindPanelResize("#resize-related", "y", (e, axis, delta) => {
+      const box = $(".workrow").getBoundingClientRect(), before = boxEdge('related') > 0, related = $(".related-p");
+      related.style.height = clampPanel(before ? e.clientY - box.top : related.getBoundingClientRect().height - delta,
+        portraitLayout() ? 286 : 150, box.height - 186) + "px";
     });
-    bindPanelResize("#resize-left-split", "y", e => {
+    bindPanelResize("#resize-left-split", "y", (e, axis, delta) => {
       const box = $(".left").getBoundingClientRect();
       const list = $(".related-list-pane");
       list.style.flex = "none";
-      list.style.height = clampPanel(box.bottom - e.clientY, 80, box.height - 170) + "px";
+      list.style.height = clampPanel(boxEdge('prior') < 0 ? box.bottom - e.clientY : list.getBoundingClientRect().height + delta, 80, box.height - 170) + "px";
     });
 
 
