@@ -755,6 +755,12 @@ test('report state table: version classes - a Save inside a Preliminary stays wi
   assert.equal(reportBodyLock({ rs: 'W' }, head('approve'), reader('o')), null);
   assert.equal(reportBodyLock({ rs: 'A' }, head('save'), reader('o')), 'in-progress');
   assert.equal(reportBodyLock({ rs: 'A' }, head('save'), reader('w')), null);
+  // a Preliminary or a Save landing after the state read: the older state lends it to nobody but its writer
+  assert.equal(reportBodyLock({ rs: 'W' }, head('preliminary'), reader('o')), 'preliminary');
+  assert.equal(reportBodyLock({ rs: 'W' }, head('preliminary'), { actor: 'c', roles: ['clinician'] }), 'preliminary');
+  assert.equal(reportBodyLock({ rs: 'W' }, head('preliminary'), reader('w')), null);
+  assert.equal(reportBodyLock({ rs: 'P', preDoc: 'd', preReviewer: 'r' }, head('save', 'x'), reader('r')), 'in-progress');
+  assert.equal(reportBodyLock({ rs: 'P', preDoc: 'w', preReviewer: 'r' }, head('save'), reader('r')), null);
   assert.equal(versionBodyReadable({ action: 'save', author: 'w' }, 'unsigned', reader('o')), false);
   assert.equal(versionBodyReadable({ action: 'save', author: 'w' }, 'unsigned', reader('w')), true);
   assert.equal(versionBodyReadable({ action: 'save', author: 'w' }, 'unsigned', { actor: 'c', roles: ['clinician'] }), true);

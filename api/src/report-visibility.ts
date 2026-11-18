@@ -50,17 +50,30 @@ const hasText = (head: Head) => !!head && !!(head.findings || head.conclusion ||
  */
 export function unsignedAuthor(state: any, head: Head): string | null {
   if (!hasText(head)) return null;
-  const unsigned = typeof head!.headAction === 'string'
-    ? UNSIGNED_ACTIONS.includes(head!.headAction) && state?.rs !== 'P'
-    : UNSIGNED_STATES.includes(state?.rs);
+  const unsigned = typeof head!.headAction === 'string' ? unsignedAction(state, head) : UNSIGNED_STATES.includes(state?.rs);
   if (!unsigned) return null;
   return typeof head!.updatedBy === 'string' && head!.updatedBy ? head!.updatedBy : null;
+}
+
+/**
+ * The head version's own action decides: a Save, a Defer or a Preliminary is its writer's - except inside the Preliminary the
+ * state read shows (state P, the head written by its designated pair), where the Preliminary gate decides as before. A state
+ * read before a new Preliminary, or before a Reset and another reader's Save, therefore never lends that text to a reader the
+ * older state would have let through.
+ */
+function unsignedAction(state: any, head: NonNullable<Head>): boolean {
+  const action = head.headAction as string;
+  if (![...UNSIGNED_ACTIONS, 'preliminary'].includes(action)) return false;
+  const pair = [state?.preDoc, state?.preReviewer].filter(Boolean);
+  return !(state?.rs === 'P' && action !== 'defer' && !!head.updatedBy && pair.includes(head.updatedBy));
 }
 
 /** Why this reader gets no report text for this study now, or null when the text is theirs to read. */
 export function reportBodyLock(state: any, head: Head, reader: Reader): ReportBodyLock {
   if (state?.rs === 'D') return 'destroyed';
   if (!canReadPreliminary(state, reader)) return 'preliminary';
+  // A Preliminary that landed after the state was read is the Preliminary's, for every reader but its writer.
+  if (head?.headAction === 'preliminary' && state?.rs !== 'P' && hasText(head) && head.updatedBy !== reader.actor) return 'preliminary';
   // The clinician cell of the state table: left as the 2026-11-02 decision has it (clinician role alone; an admin or a
   // radiologist who also holds the clinician role reads as a radiologist).
   if (clinicianOnly(reader.roles)) return null;
@@ -87,13 +100,12 @@ export const assertHeadWritable = assertHeadReadable;
 export const HEAD_AUTHOR_SELECT = { updatedBy: true, findings: true, conclusion: true, recommendation: true } as const;
 /**
  * Report rows with the action of their head version (headAction), for reads that take the state and the head apart. Only a
- * head that could be withheld from this reader is asked about (text written by someone else, a reader who is not
- * clinician-only); every other row keeps the state rule and costs no read.
+ * head that could be withheld from this reader is asked about (text written by someone else); every other row keeps the
+ * state rule and costs no read.
  */
 export async function withHeadActions<T extends { uid: string; version?: number | null; updatedBy?: string | null;
   findings?: string | null; conclusion?: string | null; recommendation?: string | null }>(db: any, reports: T[], reader: Reader)
   : Promise<(T & { headAction?: string | null })[]> {
-  if (clinicianOnly(reader.roles)) return reports;
   const keyed = reports.filter(report => Number.isSafeInteger(report.version) && (report.version as number) > 0
     && hasText(report) && typeof report.updatedBy === 'string' && report.updatedBy !== reader.actor);
   if (!keyed.length) return reports;
