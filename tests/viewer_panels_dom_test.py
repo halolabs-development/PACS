@@ -177,9 +177,10 @@ class ViewerPanelsDOMTest(unittest.TestCase):
         self.assertEqual(grid, self.box(page, '[data-cy=viewport-grid]'))
         self.assertEqual(['left:header', 'left:header'], page.evaluate("synClicks"))
 
-    def test_02b_a_short_window_keeps_studies_as_a_side_column(self):
-        # 1366 x 768: a band would take the images' height; the panel stays the stock side column, the buttons work.
-        page = self.open(size=(1366, 768))
+    def test_02b_a_short_row_keeps_studies_as_a_side_column(self):
+        # A row under 700px (here 1366 x 640): a band would take the images' height; the panel stays the stock side
+        # column, the buttons work.
+        page = self.open(size=(1366, 640))
         left, column = self.box(page, LEFT), self.box(page, '#column')
         self.assertEqual(0, left['left']); self.assertEqual(left['right'], column['left'])
         self.assertAlmostEqual(left['top'], column['top'], delta=2)  # the stock panel stands 0.2% down
@@ -188,6 +189,11 @@ class ViewerPanelsDOMTest(unittest.TestCase):
         page.evaluate(FRAME)
         self.assertFalse(self.box(page, LEFT)['shown'], 'closed, no strip')
         self.assertEqual((0, 1366), (self.box(page, '#column')['left'], self.box(page, '#column')['right']))
+        # The window grows: the next refresh lays Studies out as the band again once it is opened.
+        page.set_viewport_size({'width': 1366, 'height': 1000})
+        self.button(page, 'studies').click()
+        page.evaluate(FRAME)
+        self.assertLessEqual(self.box(page, LEFT)['bottom'], self.box(page, '#column')['top'])
 
     def test_03_measurements_and_segmentation_open_their_tab_switch_and_close(self):
         page = self.open()

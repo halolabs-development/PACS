@@ -57,6 +57,7 @@ window.KinViewerUXShell = (() => {
     const group = document.createElement('section'); group.className = 'kin-ux-panels'; group.dataset.kinUxOwned = '';
     group.setAttribute('role', 'group'); group.setAttribute('aria-label', 'Panels');
     const TRACKED = '[data-cy="trackedMeasurements-panel"]';
+    const BAND_ROOM = 700;
     const entries = [
       { key: 'studies', label: 'Studies', side: 'left', title: '검사·시리즈 목록을 영상 위 가로 띠로 열거나 닫습니다.' },
       { key: 'measurements', label: 'Measurements', side: 'right', tab: '[data-cy="trackedMeasurements-btn"]',
@@ -109,7 +110,10 @@ window.KinViewerUXShell = (() => {
         const own = active && entries.some(entry => entry.side === side && !entry.node.hidden);
         box?.toggleAttribute?.('data-kin-side-closed', own && sides.open(side) === false);
       }
-      const left = sides.container('left'), band = active && !!left && !entries[0].node.hidden && sides.open('left') === true;
+      // The band takes height from the images: it is used only where the layout row (the height the panels and the images
+      // share, which the band does not change) has BAND_ROOM; a shorter row keeps Studies as the stock side column.
+      const left = sides.container('left'), room = left?.parentElement?.getBoundingClientRect?.().height || 0;
+      const band = active && !!left && !entries[0].node.hidden && sides.open('left') === true && room >= BAND_ROOM;
       const row = band ? left.parentElement : null;
       if (bandRow && bandRow !== row) bandRow.removeAttribute?.('data-kin-studies-band');
       if (bandPanel && bandPanel !== (band ? left : null)) bandPanel.removeAttribute?.('data-kin-studies-panel');
