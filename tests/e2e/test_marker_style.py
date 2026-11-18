@@ -54,8 +54,9 @@ DIAGNOSIS = '''() => ({
 STYLES = '() => cornerstoneTools.annotation.config.style.getDefaultToolStyles()'
 LENGTH = '''() => { const a = cornerstoneTools.annotation.state.getAllAnnotations().find(a => a.metadata.toolName === 'Length');
   return a && {points: a.data.handles.points, stats: a.data.cachedStats}; }'''
-# The mark's own solid lines (the dashed one links the value text).
-SOLID = 'd.shapes.filter(s => !s.dash)'
+# The mark's own lines: all but the one linking the value text (its own '2,3' dashes). A cell whose measurements are not
+# tracked yet draws them '4,4'.
+SOLID = 'd.shapes.filter(s => s.dash !== "2,3")'
 # A Length's line as drawn ('<uid>::line::1' in the tools' SVG node cache): its dashes ('' solid), null before it is drawn.
 LINE = '''uid => { for (const canvas of Object.values(cornerstoneTools.state?.svgNodeCache || {})) {
   const n = canvas?.[uid + '::line::1']?.domRef; if (n?.isConnected) return n.getAttribute('stroke-dasharray') || ''; } return null; }'''
@@ -126,7 +127,7 @@ class MarkerStyleE2E(ViewerHistoryE2E):
         measured = page.evaluate(LENGTH)
         base = self.rest(page, 'rest-open')
         own_styles = page.evaluate(STYLES)
-        base_width = max(s['width'] for s in base['shapes'] if not s['dash'])
+        base_width = max(s['width'] for s in base['shapes'] if s['dash'] != '2,3')
         page.screenshot(path=str(folder / 'marker-default.png'))
         page.evaluate('window.kinMarkerProbe = 1')
 
