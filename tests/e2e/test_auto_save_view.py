@@ -37,7 +37,7 @@ CHANGE = """([index, w, l, zoom]) => new Promise((resolve, reject) => { const g 
 CELLS = """() => [...services.viewportGridService.getState().viewports.values()].sort((a, b) => a.y - b.y || a.x - b.x).map(g => {
   const v = services.cornerstoneViewportService.getCornerstoneViewport(g.viewportId), id = v?.getCurrentImageId?.(), m = id && cornerstone.metaData.get('instance', id);
   if (!m) return { series: null };
-  const r = v.getProperties().voiRange, wl = cornerstone.utilities.windowLevel.toWindowLevel(r.lower, r.upper);
+  const r = v.getProperties().voiRange, wl = r ? cornerstone.utilities.windowLevel.toWindowLevel(r.lower, r.upper) : { windowWidth: NaN, windowCenter: NaN };
   return { series: m.SeriesInstanceUID, sop: m.SOPInstanceUID, index: v.getCurrentImageIdIndex(), drawn: v.getCornerstoneImage?.()?.imageId === id,
     zoom: v.getZoom(), focal: [...v.getCamera().focalPoint],
     w: Math.round(wl.windowWidth), l: Math.round(wl.windowCenter), badge: document.querySelector('[data-auto-view-badge]')?.textContent || null }; })"""
