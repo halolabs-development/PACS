@@ -351,7 +351,7 @@
     body .workrow > .related-p { width: calc(100% - 12px) !important; height: 42%; min-height: 150px; flex: none; }
     body .workrow > .report-p { flex: 1; min-width: 0; min-height: 180px; }
     /* Five separate boxes: Worklist, Related Exam, Clinical Information, Related Report, Report Editor.
-       Each is its own rounded card with a gap around it on a darker backdrop. (Dragging the boxes around is not built yet.) */
+       Each is its own rounded card with a gap around it on a darker backdrop. The reader can make them trade places (below). */
     body .left, body .right, body .workrow { background: #141414; }
     body .left > .grid { margin: 6px 6px 0; border: 1px solid var(--kin-line2); border-bottom: 0; border-radius: 6px 6px 0 0; background: var(--kin-panel); }
     body .left > .statusbar { margin: 0 6px 0; border: 1px solid var(--kin-line2); border-top: 1px solid var(--kin-line); border-radius: 0 0 6px 6px; background: var(--kin-panel); }
@@ -368,6 +368,40 @@
     .report-p:has(> #dictation-pane:not([hidden])) .rbtns { scroll-margin-block: 2px; }
     body .workrow > #resize-related { width: 100%; height: 6px; cursor: row-resize; }
     body .workrow > #resize-related::after { left: 0; right: 0; top: 2px; bottom: auto; width: auto; height: 2px; }
+    /* The boxes trade places (Panel Settings > Arrange Boxes; box-layout.js decides, applyLayout sets these classes). Only the order
+       inside the parents the boxes already have changes, so no box, field or caret leaves its element. The Reading
+       Workspace has its own arrangement (the list and the band are drawers there) and keeps it. */
+    body.kin-swap-columns:not(.reading) .split > .right { order: 1; }
+    body.kin-swap-columns:not(.reading) .split > #resize-main { order: 2; }
+    body.kin-swap-columns:not(.reading) .split > .left { order: 3; }
+    /* The Folders rail stays the column's first child: it is sticky to the column's top when the column scrolls. */
+    body.kin-swap-list:not(.reading) .left > #worklist-folders-panel { order: -3; }
+    body.kin-swap-list:not(.reading) .left > .related-list-pane { order: -2; margin: 6px 6px 0; }
+    body.kin-swap-list:not(.reading) .left > #resize-left-split { order: -1; }
+    body.kin-swap-list:not(.reading) .left > .statusbar { margin-bottom: 6px; }
+    body.kin-swap-side:not(.reading) .right > #multi-study { order: 1; }
+    body.kin-swap-side:not(.reading) .right > .workrow { order: 2; }
+    body.kin-swap-side:not(.reading) .right > #resize-top { order: 3; }
+    body.kin-swap-side:not(.reading) .right > .rw { order: 4; }
+    body.kin-swap-side:not(.reading) .rw > .s-clinical { margin-bottom: 6px; }
+    body.kin-swap-report:not(.reading) .workrow > :is(.report-p, .order-p) { order: 1; margin-bottom: 0; }
+    body.kin-swap-report:not(.reading) .workrow > #resize-related { order: 2; }
+    body.kin-swap-report:not(.reading) .workrow > .related-p { order: 3; margin-bottom: 6px; }
+    /* Arrange Boxes: a cover over each box takes the drag (or Enter/Space) and says what a drop would do. The covers sit
+       over each box's own rectangle only (measured, clipped to what is on screen); the resize handles between them stay usable. */
+    .kin-box-cover { position: fixed; z-index: 40; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+      box-sizing: border-box; margin: 0; padding: 8px; border: 2px dashed var(--kin-accent, #8ab4c8); border-radius: 6px; background: #0d1520e0;
+      color: var(--kin-text, #e5efff); font: 600 13px/1.3 inherit; text-align: center; cursor: grab; touch-action: none; overflow: hidden; }
+    .kin-box-cover:focus-visible { outline: 3px solid #93c5fd; outline-offset: -5px; }
+    .kin-box-cover[aria-pressed="true"] { border-style: solid; background: #16314ae8; cursor: grabbing; }
+    .kin-box-cover.kin-box-target { border-style: solid; border-color: #6fcf97; background: #143024e8; }
+    .kin-box-cover small { font-weight: 400; font-size: 11px; color: var(--kin-muted, #aab2c0); max-width: 100%; }
+    #box-arrange-bar { position: fixed; z-index: 95; left: 50%; top: 34px; transform: translateX(-50%); display: flex; flex-wrap: wrap; align-items: center;
+      gap: 6px 8px; max-width: calc(100vw - 24px); box-sizing: border-box; padding: 6px 10px; border: 1px solid var(--kin-accent, #8ab4c8);
+      border-radius: 6px; background: var(--kin-panel, #172234); color: var(--kin-text, #e5efff); font-size: 12px; box-shadow: 0 6px 18px #0009; }
+    #box-arrange-bar[hidden] { display: none; }
+    #box-arrange-bar p { margin: 0; flex: 1 1 260px; min-width: 0; }
+    #box-arrange-bar button { font-size: 12px; }
     /* Compact top bar: one 30px row instead of 52px. The Status group (Prefetch / Storage / DB state) goes from a 2-row grid to a single line. */
     body .menubar, body.portrait .menubar { height: 30px !important; min-height: 0 !important; flex-wrap: nowrap !important; padding-top: 0 !important; padding-bottom: 0 !important; overflow: visible; }
     body .menubar .tabs { height: 100% !important; min-height: 0 !important; margin-right: 8px; }
@@ -2501,6 +2535,7 @@
   <script src="study-identity.js"></script>
   <script src="clinical-context.js"></script>
   <script src="viewer-windows.js"></script>
+  <script src="box-layout.js"></script>
   <script src="workspace-layout.js"></script>
   <script src="viewer-identity.js"></script>
   <script src="volume-preferences.js"></script>

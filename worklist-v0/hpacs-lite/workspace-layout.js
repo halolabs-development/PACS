@@ -7,6 +7,8 @@
   const panels = ['main', 'top', 'related', 'prior'];
   const readingPanels = typeof module === 'object' && module.exports
     ? require('./reading-panel-layout.js') : root.KinReadingPanelLayout;
+  const boxLayout = typeof module === 'object' && module.exports
+    ? require('./box-layout.js') : root.KinBoxLayout;
   const defaults = () => ({ version: 1, mode: 'auto', portrait: {}, landscape: {} });
   const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
   const workspaceDefaults = () => ({ version: 1, rail: null, worklist: null, related: null,
@@ -45,13 +47,20 @@
     if (panels.length) workspace.hiddenPanels = panels; else delete workspace.hiddenPanels;
     return normalize({ ...clean, workspace });
   }
+  function withBoxSwaps(value, swaps) {
+    const clean = toVersion3(value), chosen = boxLayout.normalize(swaps);
+    if (!clean || !chosen) return null;
+    const workspace = { ...clean.workspace };
+    if (chosen.length) workspace.boxSwaps = chosen; else delete workspace.boxSwaps;
+    return normalize({ ...clean, workspace });
+  }
   function normalizeV3(value) {
     if (Object.keys(value).some(k => !['version', 'mode', 'portrait', 'landscape', 'reading', 'workspace'].includes(k))) return null;
     const legacy = normalize({ version: 2, mode: value.mode, portrait: value.portrait,
       landscape: value.landscape, reading: value.reading });
     const workspace = value.workspace, clean = workspaceDefaults();
     if (!legacy || !object(workspace) || Object.keys(clean).some(k => !Object.hasOwn(workspace, k))
-        || Object.keys(workspace).some(k => !Object.hasOwn(clean, k) && !['studyPanel', 'hiddenPanels'].includes(k)) || workspace.version !== 1
+        || Object.keys(workspace).some(k => !Object.hasOwn(clean, k) && !['studyPanel', 'hiddenPanels', 'boxSwaps'].includes(k)) || workspace.version !== 1
         || typeof workspace.railCollapsed !== 'boolean'
         || !['images', 'info', 'templates'].includes(workspace.studyPanelTab)) return null;
     for (const name of ['rail', 'worklist', 'related', 'prior']) {
@@ -73,6 +82,12 @@
       const hidden = normalizeHidden(workspace.hiddenPanels);
       if (!hidden) return null;
       if (hidden.length) clean.hiddenPanels = hidden;
+    }
+    // The five boxes' places (box-layout.js); sparse, so a record without it is the default arrangement.
+    if (Object.hasOwn(workspace, 'boxSwaps')) {
+      const swaps = boxLayout.normalize(workspace.boxSwaps);
+      if (!swaps) return null;
+      if (swaps.length) clean.boxSwaps = swaps;
     }
     return { ...legacy, version: 3, workspace: clean };
   }
@@ -160,6 +175,7 @@
     catch (_) { return false; }
   }
   const hiddenPanels = value => normalize(value)?.workspace?.hiddenPanels?.slice() || [];
+  const boxSwaps = value => normalize(value)?.workspace?.boxSwaps?.slice() || [];
   // The report window band's one allocation (W-SPACE layout contract 2026-10-29). Each workflow mode has its content
   // panels with the shares it has always painted (main.html: Thumbnail 34%, Clinical 30%, Template the rest; Technician
   // drops Template and gives Clinical 66%). A shown panel's width is its share of the shares still shown, so hiding one
@@ -191,7 +207,7 @@
     return { content, tabs, strip, state, classes, columns };
   }
   const api = { PREFIX, PANELS, defaults, normalize, withReading, workspaceDefaults, toVersion3, withStudyPanel,
-    withHiddenPanels, hiddenPanels, reportWindow, mergeLoaded, key, read, write, remove };
+    withHiddenPanels, hiddenPanels, withBoxSwaps, boxSwaps, reportWindow, mergeLoaded, key, read, write, remove };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.KinWorkspaceLayout = api;
 })(globalThis);

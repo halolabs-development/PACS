@@ -304,7 +304,7 @@ jobs:
     - name: Worklist column visibility and account storage model
       run: docker run --rm --network none --read-only -v "$PWD:/src:ro" -w /src node:22-alpine node --test tests/worklist_columns_test.cjs
     - name: Account and browser workspace storage boundaries
-      run: docker run --rm --network none --read-only -v "$PWD:/src:ro" -w /src node:22-alpine node --test tests/workspace_layout_test.cjs tests/reading_panel_layout_test.cjs tests/viewer_opening_test.cjs tests/viewer_windows_test.cjs tests/viewer_frame_coverage_test.cjs
+      run: docker run --rm --network none --read-only -v "$PWD:/src:ro" -w /src node:22-alpine node --test tests/workspace_layout_test.cjs tests/box_layout_test.cjs tests/reading_panel_layout_test.cjs tests/viewer_opening_test.cjs tests/viewer_windows_test.cjs tests/viewer_frame_coverage_test.cjs
     - name: Explicit recent viewer layout storage boundaries
       run: docker run --rm --network none --read-only -v "$PWD:/src:ro" -w /src node:22-alpine node --test tests/viewer_layout_test.cjs
     - name: CT position synchronization geometry boundaries
@@ -1776,6 +1776,9 @@ jobs:
     - name: W-SPACE report-window band, worklist columns and palette on the delivered split page
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: KIN_WSPACE_OUT="$PWD/tmp/workspace-ui-ci/w-space-screens" python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/w-space-page --cwd . --tree worklist-v0/hpacs-lite --tree tests --file scripts/main-split-order.json --file scripts/build-main-split-bundle.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/w_space_dom_test.py
+    - name: Work page boxes trade places (Arrange Boxes) on the delivered split page
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      run: KIN_BOXES_OUT="$PWD/tmp/workspace-ui-ci/reading-boxes-screens" python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/reading-boxes-page --cwd . --tree worklist-v0/hpacs-lite --tree tests --file scripts/main-split-order.json --file scripts/build-main-split-bundle.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/reading_boxes_dom_test.py
     - name: A1 FA-153 default colour scheme on the worklist, report editor and their dialogs
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/work-palette-page --cwd . --tree worklist-v0/hpacs-lite --tree tests --file scripts/main-split-order.json --file scripts/build-main-split-bundle.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/work_palette_dom_test.py
