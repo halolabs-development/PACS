@@ -49,9 +49,15 @@ SETUP = """([owner, right, dock]) => {
       box.style.cssText = 'margin-' + side + ':' + (state.open ? '0px' : '-248px') + ';width:280px;max-width:280px;position:relative;top:0.2%;height:99.8%';
       const header = '<div data-cy="side-panel-header-' + side + '" style="width:30px;height:24px;background:#222">x</div>';
       const buttons = tabs.map((tab, i) => '<div data-cy="' + tab.name + '-btn" data-i="' + i + '" style="width:30px;height:24px">' + tab.name[0] + '</div>').join('');
-      box.innerHTML = state.open ? '<div class="syn-head flex">' + header + buttons + '</div>' + tabs[state.tab].content : header + buttons;
+      // One tab: its label (<name>-btn) toggles the panel; several: a control per tab. The close control sits at the panel's right edge.
+      const close = header.replace('style="', 'style="position:absolute;right:0;top:10px;');
+      box.innerHTML = state.open ? '<div class="syn-head flex" style="height:40px">' + (tabs.length === 1
+          ? '<div data-cy="' + tabs[0].name + '-btn" data-toggle="" class="flex">' + close + '<span>' + tabs[0].label + '</span></div>'
+          : '<div class="flex">' + close + buttons + '</div>') + '</div>'
+        + '<div class="syn-rule" style="flex-shrink:0;height:2px;width:100%;background:#000"></div>' + tabs[state.tab].content : header + buttons;
       box.querySelector('[data-cy=side-panel-header-' + side + ']').onclick = () => { synClicks.push(side + ':header'); state.open = !state.open; draw(); };
-      box.querySelectorAll('[data-i]').forEach(node => node.onclick = () => { synClicks.push(side + ':' + tabs[+node.dataset.i].name); state.open = true; state.tab = +node.dataset.i; draw(); });
+      box.querySelectorAll('[data-toggle]').forEach(node => node.onclick = event => { if (event.target.closest('[data-cy^=side-panel-header]')) return; synClicks.push(side + ':label'); state.open = !state.open; draw(); });
+      box.querySelectorAll(state.open && tabs.length === 1 ? '[data-none]' : '[data-i]').forEach(node => node.onclick = () => { synClicks.push(side + ':' + tabs[+node.dataset.i].name); state.open = true; state.tab = +node.dataset.i; draw(); });
     };
     draw(); box.synState = state; box.synDraw = draw; return box;
   };
@@ -62,11 +68,12 @@ SETUP = """([owner, right, dock]) => {
   const study = (s, n) => '<div class="syn-study flex-shrink-0"><div data-state="open"><h3><button type="button">' + s + '<br>CT<br>' + n + ' series</button></h3>'
     + '<div role="region"><div class="min-h-350"><div id="ohif-thumbnail-list" class="grid grid-cols-2">' + Array.from({ length: n }, (_, i) => thumb(i + 1)).join('') + '</div></div></div></div></div>';
   // The panel's content and the list's own wrappers are plain blocks (React components that add a box of their own).
-  const studies = '<div class="syn-content"><div class="syn-wrap"><div data-cy="studyBrowser-panel" class="flex flex-1 flex-col" style="overflow:auto">'
+  const studies = '<div class="syn-settings flex" style="height:40px"><button type="button">List</button><button type="button">Thumbnails</button></div>'
+    + '<div class="syn-content"><div class="syn-wrap"><div data-cy="studyBrowser-panel" class="flex flex-1 flex-col" style="overflow:auto">'
     + [['20261101 CT', 3], ['20250101 CT', 5], ['20240101 CT', 8], ['20230101 CT', 8], ['20220101 CT', 8]].map(([s, n]) => study(s, n)).join('') + '</div></div></div>';
   const layout = document.getElementById('layout');
-  layout.prepend(make('left', [{ name: 'studyBrowser', content: studies }], true));
-  if (right.length) layout.append(make('right', right.map(name => ({ name, content: name === 'trackedMeasurements'
+  layout.prepend(make('left', [{ name: 'seriesList', label: 'Studies', content: studies }], true));
+  if (right.length) layout.append(make('right', right.map(name => ({ name, label: name, content: name === 'trackedMeasurements'
     ? '<div data-cy="trackedMeasurements-panel">Measurements (0)<div class="syn-rows"></div></div>' : '<div data-cy="' + name + '-panel">Segmentations</div>' })), false));
   if (dock) {
     const d = document.createElement('div'); d.id = 'kin-workspace-dock';

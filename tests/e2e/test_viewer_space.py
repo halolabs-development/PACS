@@ -36,10 +36,10 @@ GEOMETRY = '''() => {
 PANEL_OPEN = '''side => { const box = document.querySelector('[data-cy=side-panel-header-' + side + ']')?.closest('[style*="margin-' + side + '"]');
   return box ? box.style[side === 'left' ? 'marginLeft' : 'marginRight'] === '0px' : null; }'''
 BAND_OUTLINE = '''() => { const band = document.querySelector('[data-kin-studies-panel]'); if (!band) return null; const out = [];
-  const walk = (node, depth) => { if (depth > 9 || out.length > 80) return; const r = node.getBoundingClientRect(), s = getComputedStyle(node);
+  const walk = (node, depth) => { if (depth > 9 || out.length > 120) return; const r = node.getBoundingClientRect(), s = getComputedStyle(node);
     out.push([depth, node.tagName, (node.getAttribute('class') || '').slice(0, 70), node.dataset.cy || node.id || '', Math.round(r.x), Math.round(r.y),
       Math.round(r.width), Math.round(r.height), s.display, s.flexDirection, s.overflowX + '/' + s.overflowY]);
-    for (const child of [...node.children].slice(0, 3)) walk(child, depth + 1); };
+    for (const child of [...node.children].slice(0, node.matches('svg, svg *') ? 0 : 5)) walk(child, depth + 1); };
   walk(band, 0); return out; }'''
 CELL = '''id => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id), p = v.getProperties();
   return {voi: p.voiRange && [p.voiRange.lower, p.voiRange.upper], invert: !!p.invert, scale: v.getCamera().parallelScale,
