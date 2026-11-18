@@ -82,7 +82,7 @@ window.KinViewerInfoBar = (() => {
       placed.push(rect);
     }
   }
-  function mount({ services, studyActions }) {
+  function mount({ services, studyActions, cellTools }) {
     const bars = new Map(), labels = new Map();
     function rememberRendered(viewport) {
       if (viewport?.type === 'stack' && viewport.viewportStatus === window.cornerstone.Enums.ViewportStatus.RENDERED) {
@@ -131,7 +131,10 @@ window.KinViewerInfoBar = (() => {
           const study = document.createElement('button'); study.type = 'button'; study.textContent = 'Study ▾';
           study.disabled = true; study.title = '이전 검사 연결은 다음 단계에서 제공됩니다.';
           study.onclick = () => studyActions?.open(id, study);
-          bar.append(label, mode, study); pane.prepend(bar); bars.set(id, bar);
+          // The cell's own compact tools, at the row's end: the image toolbar fills them (cellTools) and they act in this cell.
+          const tools = document.createElement('span'); tools.className = 'kin-viewer-cell-tools'; tools.hidden = true;
+          tools.setAttribute('role', 'toolbar'); tools.setAttribute('aria-label', 'Cell Tools');
+          bar.append(label, mode, study, tools); pane.prepend(bar); bars.set(id, bar);
         }
         cells.push({ id, current, bar: bars.get(id) });
       }
@@ -170,6 +173,8 @@ window.KinViewerInfoBar = (() => {
         bar.children[0].title = labels.has(id) ? label : '';
         if (bar.children[1].textContent !== status) bar.children[1].textContent = status;
         bar.children[1].title = '영상 모드는 이 셀, 배치는 전체 뷰어에 적용됩니다.';
+        const fill = cellTools?.();
+        if (fill) fill(id, bar.children[3], { type, rendered: !!m, width: bar.clientWidth }); else bar.children[3].hidden = true;
       }
       for (const pane of document.querySelectorAll('[data-cy="viewport-grid"] [data-cy="viewport-pane"]') || []) settle(pane);
     }

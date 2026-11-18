@@ -118,6 +118,9 @@ REGRESSION_SUITES = {
         tests/viewer_measure_ortho_dom_test.py
         tests/viewer_measure_lines_dom_test.py
         tests/viewer_input_dom_test.py
+        tests/viewer_cell_text_dom_test.py
+        tests/viewer_cell_tools_dom_test.py
+        tests/viewer_panels_dom_test.py
         tests/viewer_hanging_protocol_display_dom_test.py
         tests/viewer_hanging_protocol_dom_test.py
         tests/viewer_hanging_protocol_mount_dom_test.py

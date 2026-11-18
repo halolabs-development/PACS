@@ -247,7 +247,7 @@ class MarkAutoSaveE2E(MeasurementReadbackE2E):
         p.wait_for_timeout(800)
         self.assertEqual(p.evaluate('uid=>!!cornerstoneTools.annotation.state.getAnnotation(uid)', uid), False, 'not drawn again')
         # 3. The viewer's Measurements panel: its row's Actions › Delete.
-        p.locator('[data-cy=trackedMeasurements-btn]').click()
+        p.locator('.kin-ux-panels [data-panel=measurements]').click()
         listed = p.locator('[data-cy=trackedMeasurements-panel] [data-cy=data-row]')
         expect(listed).to_have_count(1)
         listed.hover()

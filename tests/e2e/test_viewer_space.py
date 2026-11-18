@@ -116,16 +116,29 @@ class ViewerSpaceE2E(ViewerLayoutE2E):
                          'the stock mode opens Studies and keeps Measurements closed until the reader chooses')
         self.record(page, 'space-02-first-entry')
         before = page.evaluate(GEOMETRY)
+        # Studies lies across the top of the images (2026-11-01: "move this whole bar as a horizontal bar on the top").
+        with self.subTest(contract='the open Studies panel is a band above the images, as wide as they are'):
+            self.assertLessEqual(before['panels']['left']['y'] + before['panels']['left']['height'], before['grid']['y'] + 1, before)
+            self.assertGreaterEqual(before['panels']['left']['width'], before['grid']['width'], before)
+        expect(page.locator('.kin-ux-panels [data-panel=studies]')).to_have_attribute('aria-pressed', 'true')
         page.locator('[data-cy=side-panel-header-left]').click()
         self.panels_are(page, False, False)
-        page.wait_for_function('w => document.querySelector("[data-cy=viewport-grid]").getBoundingClientRect().width > w + 200',
-                               arg=before['grid']['width'])
+        # Closing the band gives its height back to the images; the closed panel leaves no strip at the side.
+        page.wait_for_function('h => document.querySelector("[data-cy=viewport-grid]").getBoundingClientRect().height > h + 100',
+                               arg=before['grid']['height'])
+        expect(page.locator('.kin-ux-panels [data-panel=studies]')).to_have_attribute('aria-pressed', 'false')
         self.record(page, 'space-02-studies-closed')
         # A new viewer document for the same account opens without the Studies panel.
         self.viewer(page, fixture)
         self.panels_are(page, False, False)
         after = page.evaluate(GEOMETRY)
-        self.assertGreater(after['grid']['width'], before['grid']['width'] + 200)
+        self.assertGreater(after['grid']['height'], before['grid']['height'] + 100)
+        self.assertGreaterEqual(after['grid']['width'], before['grid']['width'] - 1)
+        # The compact Studies button opens it again, kept as the reader's choice like the panel's own control.
+        page.locator('.kin-ux-panels [data-panel=studies]').click()
+        self.panels_are(page, True, False)
+        page.locator('.kin-ux-panels [data-panel=studies]').click()
+        self.panels_are(page, False, False)
         self.record(page, 'space-02-reopened-viewer')
         page.close()
         self.sign_out(worklist)
@@ -134,7 +147,7 @@ class ViewerSpaceE2E(ViewerLayoutE2E):
         worklist = self.sign_in(browser, 'doctor2')
         page = self.viewer(browser.new_page(), fixture)
         self.assertEqual(self.panels(page), [True, False], 'the first account\'s closed Studies did not carry over')
-        page.locator('[data-cy=trackedMeasurements-btn]').click()
+        page.locator('.kin-ux-panels [data-panel=measurements]').click()
         self.panels_are(page, True, True)
         page.wait_for_timeout(300)
         self.viewer(page, fixture)
@@ -191,6 +204,15 @@ class ViewerSpaceE2E(ViewerLayoutE2E):
             raise
         self.assertEqual(page.evaluate(CELL, ids[0]), windowed[0], 'zoom stays in the cell it was used on')
         self.record(page, 'space-03-independent-cells')
+        # Each cell's own compact tools: the first cell's Zoom makes that cell the active one and selects Zoom there.
+        for i in ids:
+            expect(page.locator('[data-viewport-uid="' + i + '"]').locator('xpath=ancestor::*[@data-cy="viewport-pane"]')
+                   .get_by_role('toolbar', name='Cell Tools').get_by_role('button', name='Zoom', exact=True)).to_be_visible()
+        page.locator('[data-viewport-uid="' + ids[0] + '"]').locator('xpath=ancestor::*[@data-cy="viewport-pane"]') \
+            .get_by_role('toolbar', name='Cell Tools').get_by_role('button', name='Zoom', exact=True).click()
+        page.wait_for_function('id => services.viewportGridService.getActiveViewportId() === id', arg=ids[0])
+        self.assertEqual(page.evaluate(CELL, ids[1])['scale'] != start[1]['scale'], True, 'the second cell keeps its zoom')
+        self.record(page, 'space-03-cell-tools')
 
     def test_space_04_tools_that_do_not_fit_keep_a_visible_control(self):
         fixture = self.multiple('VSPACE-' + uuid.uuid4().hex[:12], 'current', '20260801')
@@ -201,7 +223,7 @@ class ViewerSpaceE2E(ViewerLayoutE2E):
         bar = page.get_by_role('toolbar', name='Frequent Tools')
         expect(bar.get_by_role('button', name='Zoom', exact=True)).to_be_attached()
         page.wait_for_function('() => window.kinViewerHistoryWorkspaceState?.()?.busy === false && window.kinViewerJobWorkspaceState?.()?.busy === false')
-        page.locator('[data-cy=trackedMeasurements-btn]').click()
+        page.locator('.kin-ux-panels [data-panel=measurements]').click()
         self.panels_are(page, True, True)
         # The reader shows every tool in the frequent bar; saving also leaves the account status in the row.
         tools_row = page.get_by_label('Image Tools', exact=True)

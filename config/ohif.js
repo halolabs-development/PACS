@@ -6047,6 +6047,8 @@ function kinCreateMammographyHanging() {
       // pane's host becomes the inner viewport element, so the wrapper's "Missing" label would
       // stay over an image it does not describe. Keep only the labels written for this state.
       document.querySelectorAll('.kin-mg-slot').forEach(el => shown.has(el) || el.remove());
+      // A slot label never covers the other text over the image: its place beside it is settled in one place.
+      document.querySelectorAll('[data-cy="viewport-pane"]').forEach(pane => window.KinViewerInfoBar?.settle?.(pane));
     }
     // Shows the next image of a repeat-exposure slot in the cell showing this one, through the same grid
     // update a thumbnail double-click uses, so the other cells keep what the reader did with them.
