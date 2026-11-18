@@ -158,6 +158,13 @@
       // (which it gave only after checking this technician's access to every original) is the one undone.
       const lost=!!scopes.unavailable(win.row)?.kind;
       if(!lost&&scope?.groupId!==answer.group.id)throw Error('검사 범위가 바뀌었습니다. 목록을 새로고침한 뒤 다시 여세요.');
+      // That exception is the owning institution's cleanup only: when the server says this technician's institution does
+      // not own the group, the window says that and lists none of the group's originals.
+      const owner=(answer.checks||[]).find(c=>c.rule==='owner'&&!c.ok);
+      if(lost&&owner){
+        win.body.replaceChildren(el('p',{className:'order-note err',text:kinSay('{0}{t1}','✗ ',{t:owner.message})}));
+        win.buttons(win.closeButton());return;
+      }
       const originals=lost?[...new Set((answer.group.members||[]).map(m=>m.studyUid))]:scope.sources.map(s=>s.studyUid);
       const sources=lost?originals.map(uid=>({uid})):scopes.metadata(win.row),checks=el('ul',{className:'exam-merge-checks'});
       const go=button(split?'Unsplit':'Unmerge',submit);

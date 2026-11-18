@@ -152,6 +152,42 @@ class ViewerDicomPdfDOMTest(unittest.TestCase):
         self.page.get_by_role('button', name='Close', exact=True).click()
         self.assertFalse(self.page.evaluate('u=>KinViewerResource.has(u)', url))
 
+    def test_second_original_of_a_merged_exam_opens_after_its_own_patient_id_is_verified(self):
+        # A window opened on a merged exam of three originals; the PDF is in the second one, which has no list row.
+        meta = "/dicom-web/studies/1.5/series/1.3/instances/1.4/metadata"
+        scoped = "https://pdf.test/ohif/viewer?StudyInstanceUIDs=1.2,1.5,1.6&kinExamScopes=%7B%7D"
+        self.page.close()
+        self.page = self.browser.new_page()
+        self.page.route(scoped, lambda route: route.fulfill(body=HARNESS, content_type="text/html"))
+        self.page.goto(scoped)
+        self.unbound = install_viewer_session(self.page)
+        self.page.add_script_tag(path=str(MODULE))
+        self.page.evaluate("""meta=>{
+          const sources=['1.2','1.5','1.6'].map(studyUid=>({studyUid,series:{mode:'all',uids:[]}}));
+          window.KinViewerExamScope={role:study=>sources.some(s=>s.studyUid===study)?'current':null,
+            sources:study=>sources.some(s=>s.studyUid===study)?sources:null,send:(native,url,init)=>native(url,init)};
+          displaySet=makeSet({StudyInstanceUID:'1.5',pdfUrl:Promise.resolve('https://pdf.test/dicom-web/studies/1.5/series/1.3/instances/1.4/rendered'),
+            instance:{...makeSet().instance,StudyInstanceUID:'1.5'}});
+          view={viewportId:'vp1',displaySetInstanceUIDs:['ds-pdf']};state={activeViewportId:'vp1',viewports:new Map([['vp1',view]])};
+          window.patientOf='PID-001';
+          routes[meta]=()=>[{'0020000D':{Value:['1.5']},'0020000E':{Value:['1.3']},'00080018':{Value:['1.4']},'00100020':{Value:[patientOf]}}];
+        }""", meta)
+        self.page.evaluate("mountPdf()")
+        expect(self.page.locator("#kin-source-pdf-open")).to_be_enabled()
+        self.page.evaluate("requests=[]")
+        panel = self.page.locator("#kin-source-pdf")
+        expect(panel.locator("[data-role]")).to_have_text("Current source PDF")
+        self.page.locator("#kin-source-pdf-open").click()
+        expect(panel.locator("[data-patient]")).to_have_text("Verified Patient ID: PID-001")
+        self.assertEqual(["/api/me", "/api/dicom/lookup", meta, PDF, "/api/me"], self.page.evaluate("requests.map(r=>r.url)"))
+        self.page.get_by_role('button', name='Close', exact=True).click()
+        # The archive records another patient on that instance: no document.
+        self.page.evaluate("window.patientOf='PID-OTHER';requests=[]")
+        self.page.locator("#kin-source-pdf-open").click()
+        expect(panel.locator("[role=status]")).to_contain_text("원본 환자 식별을 확인할 수 없습니다")
+        expect(self.page.get_by_title('Source PDF', exact=True)).to_have_count(0)
+        self.assertNotIn(PDF, self.page.evaluate("requests.map(r=>r.url)"))
+
     def test_open_rejects_a_lookup_id_spliced_after_source_resolution(self):
         initial = self.page.evaluate("requests.filter(r=>r.url==='/api/dicom/lookup').map(r=>r.body)")
         self.assertEqual([{"studyUid": "1.2", "sopUid": "1.4"}], initial)

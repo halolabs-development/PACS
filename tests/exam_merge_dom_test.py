@@ -281,6 +281,19 @@ class ExamMerge(unittest.TestCase):
         self.site.lost, self.site.lost_members = {h.UID_B: "merge"}, {h.UID_B: [h.UID_B, "2.25.999"]}
         self.reload_technician()
         expect(badge).to_have_text("Merged · original unavailable")
+        # Another institution (a tele receiver) may read the group but does not own it: the window says only that, and lists
+        # none of the group's originals (one of which it cannot read).
+        owner = {"rule": "owner", "ok": False, "message": "검사 묶음은 원본 소유 기관에서만 되돌릴 수 있습니다.", "uids": []}
+        self.site.checks = [owner, *self.site.checks]
+        self.pick(h.UID_B)
+        self.page.locator("#t-split-unmerge").click()
+        win = self.window("unmerge")
+        expect(win).to_contain_text("원본 소유 기관에서만 되돌릴 수 있습니다.")
+        expect(win).not_to_contain_text("2.25.999")
+        expect(win.locator("table")).to_have_count(0)
+        expect(win.get_by_role("button", name="Unmerge", exact=True)).to_have_count(0)
+        win.get_by_role("button", name="Close").click()
+        self.site.checks = self.site.checks[1:]
         self.pick(h.UID_B)
         self.page.locator("#t-split-unmerge").click()
         win = self.window("unmerge")

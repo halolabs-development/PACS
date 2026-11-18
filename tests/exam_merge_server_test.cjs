@@ -898,13 +898,13 @@ test('worklist: a merged exam with an original the caller cannot read now says s
   // exam are unchanged.
   const clinician={...reader,sub:'syn-clinician-sub',actor:'syn-clinician',roles:['clinician']};
   // The clinician list's one snapshot statement (state joined with its report), as the database answers it here: no reports.
-  const answer=async svc=>{
+  const answer=async(svc,reportGroup={})=>{
     const raw=svc.prisma.$queryRaw;
     svc.prisma.$queryRaw=async(strings,...values)=>{
       if(!Array.isArray(strings)||!strings.join('?').includes('LEFT JOIN "Report"'))return raw(strings,...values);
       const uids=values.flatMap(v=>v?.values??[v]);
       return (await svc.prisma.studyState.findMany({where:{uid:{in:uids}}})).map(s=>({uid:s.uid,institutionId:s.institutionId,teleInstitutionId:s.teleInstitutionId,
-        rs:s.rs,repDoc:s.repDoc??null,confirm:s.confirm??null,version:0,action:null,findings:null,conclusion:null,recommendation:null,groupId:null}));
+        rs:s.rs,repDoc:s.repDoc??null,confirm:s.confirm??null,version:0,action:null,findings:null,conclusion:null,recommendation:null,groupId:reportGroup[s.uid]??null}));
     };
     try{const out=await svc.clinicianStudies(clinician);return JSON.parse(out.json).studies;}finally{svc.prisma.$queryRaw=raw;}
   };
@@ -914,6 +914,13 @@ test('worklist: a merged exam with an original the caller cannot read now says s
     else assert.equal('examUnavailable' in row,false,row.uid);
   }
   for(const row of await answer(await listFixture()))assert.equal('examUnavailable' in row,false,'readable merged exam: '+row.uid);
+  // Merged again: the exam in force (B+A) is readable; a report row still names an ended group that cannot be read now
+  // (its C is gone). The refusal follows the exam in force, not the report's group.
+  const before=merged(G2,B,[B,A,C],{dissolvedAt:new Date()}),now=merged(G1,B,[B,A]);
+  const again=await listFixture({group:{groups:[...before.groups,...now.groups],members:[...before.members,...now.members]},
+    rows:[qido(A,'ACC-A',8,1),qido(B,'ACC-B',8,1),qido(D,'ACC-D',3,1,'SYN-P2')],
+    extraStates:[{...state(C),origin:'dicom',createdAt:new Date('2020-01-01T00:00:00Z'),matched:'U',orderOid:null}]});
+  for(const row of await answer(again,{[B]:G2}))assert.equal('examUnavailable' in row,false,'merged again: '+row.uid);
   // An ended merge whose saved scope cannot be read is not a merged exam now: the row keeps the established answer.
   const ended=await listFixture({group:merged(G1,B,[B,A,C],{dissolvedAt:new Date()}),rows:[qido(A,'ACC-A',8,1),qido(B,'ACC-B',8,1),qido(D,'ACC-D',3,1,'SYN-P2')],
     extraStates:[{...state(C),origin:'dicom',createdAt:new Date('2020-01-01T00:00:00Z'),matched:'U',orderOid:null}]});
