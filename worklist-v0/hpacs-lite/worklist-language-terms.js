@@ -17,6 +17,7 @@ window.KinLanguageTerms = {
     // The report state table: who is on a report before approval, and why its text is not on this screen.
     ["{0} 님이 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다", "In progress, saved by {0} — only that radiologist can read and continue it", "m"],
     ["다른 판독의", "Another radiologist", "l"],
+    ["판독 상태가 바뀌는 중입니다. 잠시 후 다시 불러오세요.", "Report states are changing. Load again in a moment.", "s"],
     ["✎ In Progress by {0}", "✎ {0} 판독 중", "l"],
     ["다른 판독의가 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다", "Another radiologist saved this report in progress — only that radiologist can read and continue it", "m"],
     ["본문 비공개 — 그 판을 쓴 판독의만 볼 수 있습니다(승인 전 Save 또는 개인 초안)", "Text withheld — only the radiologist who wrote this version can read it (an unapproved Save or a private draft)", "m"],
