@@ -204,9 +204,13 @@
           ctx.examChanged?.(originals);
           await changed(win,'되돌렸습니다. 원본 영상과 기존 판독 이력은 보존했습니다.');
         }catch(error){failure(win,error);
-          let next=null;
-          try{next=await ctx.api('GET','/studies/'+encodeURIComponent(win.row.uid)+'/exam-group',undefined,undefined,win.at);}catch(_){next=null;}
-          if(win.live()){
+          // Read again: the same group is the latest answer; no group, another group, or a refusal of this technician
+          // (403/404) ends it here. A failure that says nothing of the group (a busy server, the network) keeps the last
+          // answer, so Unmerge can be tried again.
+          let next;
+          try{next=await ctx.api('GET','/studies/'+encodeURIComponent(win.row.uid)+'/exam-group',undefined,undefined,win.at);}
+          catch(again){next=again?.status===403||again?.status===404?null:undefined;}
+          if(win.live()&&next!==undefined){
             if(next?.group?.id===answer.group.id){answer=next;if(reasonOnly(answer))return;}
             else ended=true;
           }

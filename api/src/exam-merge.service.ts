@@ -831,16 +831,21 @@ export class ExamMergeService {
   private async unreadable(c: Caller, group: ExamGroup) {
     const originals = unique(group.members.map(m => m.studyUid));
     await this.studyAccess.prepareSourceIdentity(c, originals);
-    const readable = (member: ExamGroupMember) => {
-      try {
-        const source = this.studyAccess.assertIdentifiedSource(c, member.studyUid);
-        return member.sourcePatientId == null || member.sourcePatientId === source.sourcePatientId
-          && (member.sourceInstitution ?? null) === (source.sourceInstitution ?? null);
-      } catch { return false; }
+    const identity = (member: ExamGroupMember) => {
+      try { return this.studyAccess.assertIdentifiedSource(c, member.studyUid); } catch { return null; }
     };
     // The grouping snapshot of each member (activeGroups selects only the membership columns).
     const members: ExamGroupMember[] = await this.prisma.studyGroupMember.findMany({ where: { groupId: group.id } });
-    const gone = new Set(members.filter(member => !readable(member)).map(member => member.studyUid));
+    const readable = members.filter(member => {
+      const source = identity(member);
+      return !!source && (member.sourcePatientId == null || member.sourcePatientId === source.sourcePatientId
+        && (member.sourceInstitution ?? null) === (source.sourceInstitution ?? null));
+    });
+    // The exam's originals are one patient's. Members grouped without a snapshot cannot say which of them changed when
+    // the readable ones disagree, so none of those is named (never guessed by majority).
+    const unsnapped = (member: ExamGroupMember) => member.sourcePatientId == null;
+    const split = new Set(readable.map(member => identity(member)!.sourcePatientId)).size > 1;
+    const gone = new Set(members.filter(member => !readable.includes(member) || split && unsnapped(member)).map(member => member.studyUid));
     return { originals: gone, uids: new Set(group.members.filter(m => gone.has(m.studyUid)).flatMap(m => [m.studyUid, m.logicalUid])) };
   }
 

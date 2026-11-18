@@ -58,6 +58,7 @@ class MergeSite(rf.FlowSite):
         self.lost_members = {}          # uid -> the originals of that exam the reader can read, as the server's group read gives them
         self.lost_hidden = {}           # uid -> how many originals of that exam the server only counts (it names none of them)
         self.gone = set()               # originals the server's group read counts but no longer names
+        self.group_read_failure = None  # (status, body) the group read answers instead, when set
 
     def scope(self, uid):
         if self.split and uid in (self.split["uid"], SPLIT_UID):
@@ -144,6 +145,8 @@ class MergeSite(rf.FlowSite):
                 return route.fulfill(json={"group": {"id": GROUP_ID, "kind": "merge", "baseUid": body["baseUid"], "members": []}})
             found = re.fullmatch(r"/api/studies/([^/]+)/exam-group", path)
             if method == "GET" and found:
+                if self.group_read_failure:
+                    return self.answer(route, *self.group_read_failure)
                 base = found.group(1)
                 if self.split and base in (self.split["uid"], SPLIT_UID):
                     return route.fulfill(json={"group": {"id": GROUP_ID, "kind": "split"}, "checks": self.checks})
@@ -372,6 +375,14 @@ class ExamMerge(unittest.TestCase):
         win.locator(".order-dialog-foot button", has_text="Unmerge").click()
         expect(win.locator("table tbody tr")).to_have_count(2)
         expect(win.locator(".exam-merge-hidden")).to_have_count(0)
+        # A group read that fails for a reason that says nothing of the group keeps the last answer: Unmerge can be retried.
+        self.site.group_read_failure = (503, {"message": "SYN busy"})
+        win.locator(".order-dialog-foot button", has_text="Unmerge").click()
+        expect(win.locator(".exam-merge-refused")).to_have_count(1)
+        expect(win.locator("table tbody tr")).to_have_count(2)
+        expect(win).not_to_contain_text("검사 범위가 바뀌었습니다.")
+        expect(win.get_by_role("button", name="Unmerge", exact=True)).to_be_enabled()
+        self.site.group_read_failure = None
         # The next refused Unmerge finds the group ended meanwhile: the refusal stays, no originals, no Unmerge.
         self.site.gone = {h.UID_B}
         win.locator(".order-dialog-foot button", has_text="Unmerge").click()

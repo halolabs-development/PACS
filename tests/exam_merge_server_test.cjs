@@ -843,6 +843,17 @@ test('exam group read names no original the caller cannot read now: only how man
   assert.equal(JSON.stringify(read).includes(A),false,'split: the original');assert.equal(JSON.stringify(read).includes(L),false,'split: the part');
   assert.deepEqual([read.group.members,read.group.unavailable],[[],1]);
   assert.deepEqual(read.checks.find(c=>c.rule==='approved'),{rule:'approved',ok:false,message:'승인된 판독문이 있습니다. 먼저 판독 취소(Reset)를 하세요.',uids:[]});
+  // A group made before patient snapshots were kept: when its originals now answer for two patients, which one changed
+  // cannot be told, so none is named; while they agree, all are.
+  for(const changed of [true,false]){
+    const old=fixture({...merged(G1,A,[A,B,C])});
+    const rawOld=old.prisma.$queryRaw;
+    old.prisma.$queryRaw=async(strings,...values)=>strings.join('').includes('StudyAccessPolicy')?[]:rawOld(strings,...values);
+    const oldAccess=new StudyAccessService(old.prisma,{studyIdentityResources:async uid=>[qido(uid,'SYN',3,1,changed&&uid===B?'SYN-OTHER':'SYN-P1')]},{});
+    const answer=await new ExamMergeService(old.prisma,oldAccess).group({...tech},A);
+    if(changed){assert.equal([A,B,C].some(uid=>JSON.stringify(answer).includes(uid)),false);assert.equal(answer.group.unavailable,3);}
+    else assert.deepEqual([answer.group.members.map(m=>m.studyUid),'unavailable' in answer.group],[[A,B,C],false]);
+  }
   // Every original readable: the answer is as before (no count).
   const whole=fixture(merged(G1,B,[B,A]));
   const out=await whole.svc.group(tech,B);
