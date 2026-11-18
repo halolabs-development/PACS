@@ -413,8 +413,9 @@ class ServerPins(unittest.TestCase):
 
 class ClientPins(unittest.TestCase):
     def test_main_wires_the_server_receipt_through_the_readable_observation_only(self):
-        # fromApi (2), applyObservation (2), renderObservation (2: the row and, since S4-F01V, the Not Observed item)
-        self.assertEqual(MAIN.count("gatewayReceipt"), 8)
+        # fromApi (2), applyObservation (2), renderObservation (2: the row and, since S4-F01V, the Not Observed item),
+        # studyReceiptGap (1: the missing-images answer the Technician list and Info draw)
+        self.assertEqual(MAIN.count("gatewayReceipt"), 9)
         # The row built from the server keeps the server's receipt as is (later fields of that row do not matter here).
         self.assertIn("        gatewayReceipt: s.gatewayReceipt ?? null,\n", js_function(MAIN, "fromApi"))
         apply = js_function(MAIN, "applyObservation")

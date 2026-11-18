@@ -59,7 +59,10 @@ F01 = "같은 바이트로는 성공할 수 없습니다 — 지원 범위 밖(F
 U3_RULE_SHA256 = "bff24d487a066df554c2dbe70a9ca1dbc28cf52062eebac87f9a537344d27510"
 # The Gateway label pin moved once for the product rename: its one visible "KIN 보유" now reads "HALO PACS 보유"
 # (the 9152f43 text with only that name put back hashes to 4b1b003b…aad79); logic and keys are unchanged.
-U1B_GATEWAY_LABEL_SHA256 = "7ce3a2e6003f24e5ede7d76b5c8489bbd06c52eab2dc3132ddf0f82ab183e0e4"
+# It moved again for missing images: the K<M and Not Observed reasons now come from receiptGap (the one answer the
+# Technician list and Info draw), which compares only a report the observation is not older than (7ce3a2e6…3e0e4 before).
+# Its label text and keys are unchanged; the reason rules are pinned by tests/study_observation_vectors.json.
+U1B_GATEWAY_LABEL_SHA256 = "530d47ecd820d299665cb097414350292f8b2bd08525bc4f989aae04be68dfe6"
 
 
 def sha(value):
@@ -718,7 +721,8 @@ class ClientPins(unittest.TestCase):
         self.assertEqual(MAIN.count('$("#receipt-retry").addEventListener("click", requestGatewayRetry);'), 1)
         # U3 client pins keep: the receipt key count and the observation functions stay free of requests.
         # 5 -> 6 at S4-F01V: one `row.gatewayReceipt ?? null` for the Not Observed item (F01VPins below).
-        self.assertEqual(MAIN.count("gatewayReceipt"), 8)
+        # 8 -> 9 for missing images: studyReceiptGap reads `s.gatewayReceipt ?? null` (it draws nothing else).
+        self.assertEqual(MAIN.count("gatewayReceipt"), 9)
         self.assertIn('$("#receipt-gateway").title = labels.gateway.title;', js_function(MAIN, "renderObservation"))
 
     def test_study_observation_inventory_names_exactly_these_additions(self):

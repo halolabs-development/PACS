@@ -50,7 +50,9 @@ PRESERVE = extract_function(MAIN, "preservedLocal")
 MERGE = extract_function(MAIN, "mergeObservedReportState")
 # S4-U1b: the poll now reports each observation to these; they are sliced, not re-described, so the
 # cases below judge the shipped labels and the shipped failure rule.
-OBSERVE = "\n".join(extract_function(MAIN, name) for name in ("kinWrite", "applyObservation", "markObservationUnavailable", "renderObservation"))
+OBSERVE = "\n".join(extract_function(MAIN, name) for name in ("kinWrite", "applyObservation", "markObservationUnavailable", "studyReceiptGap", "renderObservation"))
+# Missing images: the Technician list's Count cell is the shipped CELL.count line (it draws studyReceiptGap's answer too).
+COUNT_CELL = next(line.strip() for line in MAIN.splitlines() if line.strip().startswith("count: s => {"))
 # S4-U2: applyObservation/markObservationUnavailable now hand the same observation to the order
 # reconciliation display. Sliced too; its model stays null here unless a case starts it
 # (tests/order_reconciliation_dom_test.py does), so the cases below run the same code path as before.
@@ -79,7 +81,7 @@ CURRENT = {
 
 HARNESS = """<!doctype html><html><body>
 <span id=\"observation-status\" hidden></span><details id=\"not-observed\" hidden><summary id=\"not-observed-summary\"></summary><div id=\"not-observed-list\"></div></details>
-<div id=\"study-receipt\" hidden><span id=\"receipt-assignment\"></span><span id=\"receipt-observation\"></span><span id=\"receipt-gateway\"></span><button type=\"button\" id=\"receipt-retry\" hidden>Now Retry</button><span id=\"receipt-retry-note\"></span></div>
+<div id=\"study-receipt\" hidden><span id=\"receipt-assignment\"></span><span id=\"receipt-observation\"></span><span id=\"receipt-gateway\"></span><div id=\"receipt-gap\" hidden></div><button type=\"button\" id=\"receipt-retry\" hidden>Now Retry</button><span id=\"receipt-retry-note\"></span></div>
 <details id=\"order-reconciliation\" hidden><summary id=\"order-reconciliation-summary\"></summary><div id=\"order-reconciliation-list\"></div></details>
 <table><tbody id=\"rows\"></tbody></table><textarea id=\"findings\">LOCAL FINDINGS</textarea>
 <textarea id=\"conclusion\">LOCAL CONCLUSION</textarea><textarea id=\"recommendation\">LOCAL RECOMMENDATION</textarea>
@@ -118,6 +120,9 @@ MERGESTATE
 function fromApi(s){observeExamScope(s);appState[s.uid]=mergeObservedReportState(s.uid,s.state);return {...s}}
 // Starts null: study-arrivals.js is added after this script, and setUp starts the session model.
 let studyObservationModel=null;function viewed(){return studies.find(s=>s.uid===selectedUid)}
+// The worklist tab (worklist-columns-view.js); the missing-images cases switch it to Technician.
+let mode='Radiology';const esc=value=>String(value).replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';');
+const CELL={COUNTCELL};
 let orderReconciliationModel=null;
 let studyIdentityModel=null;
 let clinicalContext=null;
@@ -143,7 +148,8 @@ window.snapshot=()=>({studies:structuredClone(studies),state:structuredClone(app
 studies.forEach(observeExamScope);render();startPolling();
 </script></body></html>""".replace("INITIAL", json.dumps([CURRENT], ensure_ascii=False)) \
    .replace("PRESERVELOCAL", PRESERVE).replace("MERGESTATE", MERGE).replace("START", START_POLLING).replace("EXAMOBSERVE", EXAM_OBSERVE) \
-   .replace("WORKCONTEXT", WORK).replace("OBSERVESTATE", OBSERVE).replace("ORDERSTATE", ORDERS).replace("IDENTITYSTATE", IDENTITY).replace("RETRYSTATE", RETRY).replace("SPLITSTATE", SPLIT)
+   .replace("WORKCONTEXT", WORK).replace("OBSERVESTATE", OBSERVE).replace("ORDERSTATE", ORDERS).replace("IDENTITYSTATE", IDENTITY).replace("RETRYSTATE", RETRY).replace("SPLITSTATE", SPLIT) \
+   .replace("{COUNTCELL}", "{" + COUNT_CELL + "}")
 
 OWNER = ["hospital", "reader-sub"]
 
@@ -444,6 +450,86 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
         self.poll(reply(self.receipt_row(done, 14), other, at=self.at(6)))
         self.assertEqual([done, None], self.page.evaluate("studies.map(s=>s.gatewayReceipt)"))
         self.assertTrue(self.text("#receipt-gateway").endswith("): 병원 보유 12건 중 12건 전송"))
+
+    # ── Missing images: the Technician list and the Info panel draw one answer, through the same real poll ──
+
+    GAP = "Needs Check · 영상 누락: Gateway 전송 15건 중 HALO PACS 보유 12건"
+
+    def gap_receipt(self, minute, phase="retry", sent=15, local=20, seq=11):
+        return {"phase": phase, "successCount": sent, "localCount": local, "attempt": 2,
+                "errorCode": "stow_http" if phase == "retry" else None,
+                "serverReceivedAt": self.at(minute), "agentSeq": seq, "epoch": "0a1b2c3d-0000-4000-8000-00000000000a"}
+
+    def gap_state(self):
+        return self.page.evaluate("""()=>{const line=$('#receipt-gap'),cell=document.createElement('td');
+          cell.innerHTML=CELL.count(studies[0]);const mark=cell.querySelector('.receipt-gap');
+          return {hidden:line.hidden,text:line.textContent,title:line.title,cell:cell.textContent.trim(),
+            mark:mark?mark.getAttribute('title'):null,label:mark?mark.getAttribute('aria-label'):null,
+            data:cell.querySelector('[translate="no"]')?.textContent??null}}""")
+
+    def test_missing_images_show_on_the_technician_list_and_info_and_clear_when_filled(self):
+        self.page.evaluate("()=>{mode='Technician'}")
+        # Gateway reported 15 of 20 sent (minute 1); HALO PACS holds 12 at the later observation (minute 2).
+        self.poll(reply(self.receipt_row(self.gap_receipt(1), 12), at=self.at(2)))
+        state = self.gap_state()
+        self.assertFalse(state["hidden"])
+        self.assertEqual(self.GAP, state["text"])
+        self.assertIn("재시도 요청이나 전송 성공과는 다른 표시", state["title"])
+        # The list says the same answer; the cell's text stays the count (the mark is CSS) and the count is data.
+        self.assertEqual((self.GAP, self.GAP, "12", "12"), (state["mark"], state["label"], state["cell"], state["data"]))
+        # The Gateway line, the observation line and the retry control are what they were: three different things.
+        self.assertTrue(self.text("#receipt-gateway").endswith("): 병원 보유 20건 중 15건 전송"))
+        self.assertTrue(self.text("#receipt-observation").startswith("HALO PACS 보유 12건("))
+        for banned in ("완료", "complete", "received"):
+            self.assertNotIn(banned, state["text"] + state["title"])
+        # The Radiology tab draws nothing new, in the Info panel or the list.
+        self.page.evaluate("()=>{mode='Radiology';renderObservation()}")
+        state = self.gap_state()
+        self.assertEqual((True, "", None, "12"), (state["hidden"], state["text"], state["mark"], state["cell"]))
+        self.page.evaluate("()=>{mode='Technician';renderObservation()}")
+        self.assertFalse(self.gap_state()["hidden"])
+        # A failed observation compares nothing (the Info says 관측 불가); the next readable one answers again.
+        self.fail_next()
+        self.assertEqual((True, None), (self.gap_state()["hidden"], self.gap_state()["mark"]))
+        self.poll(reply(self.receipt_row(self.gap_receipt(1), 12), at=self.at(3)))
+        self.assertEqual(self.GAP, self.gap_state()["text"])
+        # A report newer than the observation may count images that observation could not see yet: no answer this time.
+        self.poll(reply(self.receipt_row(self.gap_receipt(5, sent=16, seq=12), 12), at=self.at(4)))
+        self.assertEqual((True, None), (self.gap_state()["hidden"], self.gap_state()["mark"]))
+        # The images arrive: the next observation holds what was sent and the mark goes, on both surfaces.
+        self.poll(reply(self.receipt_row(self.gap_receipt(5, sent=16, seq=12), 16), at=self.at(6)))
+        state = self.gap_state()
+        self.assertEqual((True, "", None, "16"), (state["hidden"], state["text"], state["mark"], state["cell"]))
+
+    def test_missing_images_has_no_answer_without_a_report_or_when_holding_at_least_what_was_sent(self):
+        self.page.evaluate("()=>{mode='Technician'}")
+        for receipt, held in ((None, 0), (self.gap_receipt(1, phase="sending", sent=3, local=12), 12),
+                              (self.gap_receipt(1, phase="complete", sent=12, local=12, seq=12), 12),
+                              ({"phase": "done", "successCount": 1, "localCount": 1, "serverReceivedAt": self.at(1)}, 0)):
+            with self.subTest(receipt=receipt, held=held):
+                self.poll(reply(self.receipt_row(receipt, held), at=self.at(2)))
+                state = self.gap_state()
+                self.assertEqual((True, None, str(held)), (state["hidden"], state["mark"], state["cell"]))
+        # Unknown K is never read as zero.
+        self.poll(reply(self.receipt_row(self.gap_receipt(1), None), at=self.at(3)))
+        self.assertEqual((True, None), (self.gap_state()["hidden"], self.gap_state()["mark"]))
+
+    def test_missing_images_draws_nothing_new_on_a_merged_exam_row(self):
+        self.page.evaluate("()=>{mode='Technician'}")
+        first = self.receipt_row(self.gap_receipt(1), 12)
+        other = self.receipt_row(None, 7)
+        other.update(uid="1.2.4", acc="ACC-2", id="PID-2", sourcePatientKey="hospital|patient-2")
+        merged = {**first, "count": 19, "series": 6, "sourceMetadata": [first, other],
+                  "examScope": {"reportUid": first["uid"], "groupId": "syn-group", "kind": "merge", "part": None, "generation": "merged",
+                                "sources": [{"studyUid": s["uid"], "series": {"mode": "all", "uids": []}} for s in (first, other)]}}
+        # The first answer that turns the row into an exam rebuilds the list (the list cell is drawn from it at once); the
+        # Info panel is drawn by applyObservation before that rebuild, so the steady state is the next poll's.
+        self.poll(reply(merged, at=self.at(2)))
+        self.assertIsNone(self.gap_state()["mark"])
+        self.poll(reply(merged, at=self.at(3)))
+        state = self.gap_state()
+        self.assertEqual((True, "", None), (state["hidden"], state["text"], state["mark"]))
+        self.assertEqual("Original exams", self.text("#receipt-observation"))
 
     # ── S4-U4: Now Retry on the same receipt block, through the same real poll ──
 

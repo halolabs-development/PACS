@@ -217,8 +217,22 @@ test('S4-U4 Now Retry answer: fixed text only, requested means stored, the serve
 
 test('S4-U1b needs_check reasons for Gateway M-of-N beside KIN K',()=>{
   for(const row of V.reasonCases){
-    const labels=arrivals.receiptLabels({assignment:'assigned',observation:V.observations[row.observation],gateway:V.receipts[row.receipt]},same);
+    const labels=arrivals.receiptLabels({assignment:'assigned',observation:V.observations[row.observation],gateway:gapReceipt(row.receipt)},same);
     assert.deepEqual(labels.reasons,row.reasons,row.id);assert.equal(labels.needsCheck,row.reasons.length>0,row.id);
+  }
+});
+
+// Missing images: the one answer the Technician list and the Info panel draw. The nine label-table receipts stay nine;
+// reports only these cases use are V.gapReceipts.
+const gapReceipt=name=>Object.hasOwn(V.receipts,name)?V.receipts[name]:V.gapReceipts[name];
+test('missing images: K below the reported sent M, only when the observation is not older than the report',()=>{
+  for(const row of V.gapCases){
+    const got=arrivals.receiptGap(V.observations[row.observation],gapReceipt(row.receipt));
+    assert.deepEqual(got&&{missing:got.missing,held:got.held,sent:got.sent},row.gap,row.id);
+    if(got?.missing){
+      assert.equal(got.text,`Needs Check · 영상 누락: Gateway 전송 ${got.sent}건 중 HALO PACS 보유 ${got.held}건`,row.id);
+      assert.doesNotMatch(got.text+' '+got.title,arrivals.BANNED,row.id);
+    }else if(got)assert.equal(got.text,undefined,row.id);
   }
 });
 

@@ -1010,6 +1010,9 @@
       rs: s => { const finalized = reportFinalized({ rs: s.rs, amendUntil: appState[s.uid]?.amendUntil }), word = finalized ? "Finalized" : RS_WORD[s.rs] ?? s.rs;
         return `<span class="rs ${esc(s.rs)}"${s.holdReason ? ' data-kin-keep="title"' : ''} title="${esc(s.holdReason || (finalized ? "승인 후 24시간이 지나 확정된 판독문 — Addendum으로만 덧붙일 수 있습니다" : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : ""))}">${esc(word)}</span>`; },
       confirm: s => esc(confirmText({ ...appState[s.uid], rs: s.rs })),
+      // Missing images (Technician tab only): a mark beside the count, the same answer as the Info panel's Needs Check line
+      // (studyReceiptGap). Its words are its title; the mark itself is CSS, so a copy or export of the cell reads the count.
+      count: s => { const gap = studyReceiptGap(s); return `<span translate="no">${esc(s.count ?? "")}</span>` + (gap ? ` <span class="receipt-gap" role="img" aria-label="${esc(gap.text)}" title="${esc(gap.text)}"></span>` : ""); },
       ts: s => `<span class="ts ts-${esc(s.ts)}">${esc(s.ts)}</span>`,
       ss: s => `<span class="ss ${esc(s.ss)}">${esc(s.ss)}</span>`,
       // S4-U5: server values too, but escaped like every other cell; a stored value never becomes markup.
@@ -3089,6 +3092,15 @@
       applyStudyIdentity(null);
       renderObservation();
     }
+    /**
+     * Missing images, Technician tab only: the one answer (KinStudyArrivals.receiptGap) that the list's Count cell and the
+     * Info panel's Needs Check line both draw. A merged or split exam has no answer here: its originals are separate studies.
+     */
+    function studyReceiptGap(s) {
+      if (!s || !studyObservationModel || KinExamScope.read(s)?.groupId) return null;
+      const gap = KinStudyArrivals.receiptGap(KinStudyArrivals.studyObservation(studyObservationModel, s.uid), s.gatewayReceipt ?? null);
+      return gap?.missing && mode === "Technician" ? gap : null;
+    }
     function renderObservation() {
       if (!studyObservationModel) return;
       const summary = KinStudyArrivals.observationSummary(studyObservationModel), status = $("#observation-status");
@@ -3170,6 +3182,11 @@
       let originals=receipt.querySelector('.exam-original-receipts');
       if(!originals){originals=document.createElement('div');originals.className='exam-original-receipts';receipt.append(originals);}
       const scope=KinExamScope.read(s);
+      const gapLine = $("#receipt-gap");
+      if (gapLine) {
+        const gap = studyReceiptGap(s);
+        gapLine.hidden = !gap; kinWrite(gapLine, gap?.text ?? ""); gapLine.title = gap?.title ?? "";
+      }
       const receiptScope=scope?.groupId?KinExamScope.stamp(s):'';
       if(originals.dataset.scope!==receiptScope){
         for(const control of originals.querySelectorAll('button'))control.dataset.request='';

@@ -64,6 +64,15 @@
       applyStudyIdentity(null);
       renderObservation();
     }
+    /**
+     * Missing images, Technician tab only: the one answer (KinStudyArrivals.receiptGap) that the list's Count cell and the
+     * Info panel's Needs Check line both draw. A merged or split exam has no answer here: its originals are separate studies.
+     */
+    function studyReceiptGap(s) {
+      if (!s || !studyObservationModel || KinExamScope.read(s)?.groupId) return null;
+      const gap = KinStudyArrivals.receiptGap(KinStudyArrivals.studyObservation(studyObservationModel, s.uid), s.gatewayReceipt ?? null);
+      return gap?.missing && mode === "Technician" ? gap : null;
+    }
     function renderObservation() {
       if (!studyObservationModel) return;
       const summary = KinStudyArrivals.observationSummary(studyObservationModel), status = $("#observation-status");
@@ -145,6 +154,11 @@
       let originals=receipt.querySelector('.exam-original-receipts');
       if(!originals){originals=document.createElement('div');originals.className='exam-original-receipts';receipt.append(originals);}
       const scope=KinExamScope.read(s);
+      const gapLine = $("#receipt-gap");
+      if (gapLine) {
+        const gap = studyReceiptGap(s);
+        gapLine.hidden = !gap; kinWrite(gapLine, gap?.text ?? ""); gapLine.title = gap?.title ?? "";
+      }
       const receiptScope=scope?.groupId?KinExamScope.stamp(s):'';
       if(originals.dataset.scope!==receiptScope){
         for(const control of originals.querySelectorAll('button'))control.dataset.request='';

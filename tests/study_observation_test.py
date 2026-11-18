@@ -189,6 +189,27 @@ def change_text(b):
             "no_observed_change": "이 세션에서 관측한 변화 없음(%s 이후)" % since}[kind]
 
 
+def gap_receipt(name):
+    """A named receipt: the nine label-table receipts, then the reports only the missing-images cases use."""
+    return VECTORS["receipts"][name] if name in VECTORS["receipts"] else VECTORS["gapReceipts"][name]
+
+
+def receipt_gap(b, receipt):
+    """Missing images: K (0 when not observed) below the reported sent M, compared only when the observation is not older
+    than the report; anything unknown or unreadable is no answer."""
+    ok_count = lambda v: type(v) is int and v >= 0
+    if not isinstance(receipt, dict) or receipt.get("phase") not in VECTORS["phases"]:
+        return None
+    m, n, at = receipt.get("successCount"), receipt.get("localCount"), parse_time(receipt.get("serverReceivedAt"))
+    if not ok_count(m) or not ok_count(n) or m > n or at is None or not isinstance(b, dict):
+        return None
+    held = b.get("count") if b.get("state") == "observed" else 0 if b.get("state") == "not_observed" else None
+    seen = parse_time(b.get("observedAt"))
+    if not ok_count(held) or seen is None or at > seen:
+        return None
+    return {"missing": held < m, "held": held, "sent": m}
+
+
 def gateway(receipt, b):
     if receipt is None:
         return "No Gateway Report", []
@@ -198,11 +219,9 @@ def gateway(receipt, b):
             or parse_time(receipt.get("serverReceivedAt")) is None:
         return "Gateway 보고 형식을 확인할 수 없습니다", ["receipt_unreadable"]
     reasons = []
-    k = b["count"] if b["state"] == "observed" else None
-    if k is not None and k < m:
-        reasons.append("kin_below_reported")
-    if b["state"] == "not_observed" and m >= 1:
-        reasons.append("not_observed_with_reported_transfer")
+    gap = receipt_gap(b, receipt)
+    if gap and gap["missing"]:
+        reasons.append("kin_below_reported" if b["state"] == "observed" else "not_observed_with_reported_transfer")
     if b.get("changedAt") and parse_time(receipt["serverReceivedAt"]) < parse_time(b["changedAt"]):
         reasons.append("receipt_older_than_change")
     return "Gateway 보고(%s): 병원 보유 %d건 중 %d건 전송" % (receipt["serverReceivedAt"], n, m), reasons
@@ -282,8 +301,14 @@ class LabelTable(unittest.TestCase):
     def test_needs_check_reasons(self):
         for case in VECTORS["reasonCases"]:
             with self.subTest(case["id"]):
-                got = labels("assigned", VECTORS["observations"][case["observation"]], VECTORS["receipts"][case["receipt"]])
+                got = labels("assigned", VECTORS["observations"][case["observation"]], gap_receipt(case["receipt"]))
                 self.assertEqual(case["reasons"], got["reasons"])
+
+    def test_missing_images_answer(self):
+        for case in VECTORS["gapCases"]:
+            with self.subTest(case["id"]):
+                got = receipt_gap(VECTORS["observations"][case["observation"]], gap_receipt(case["receipt"]))
+                self.assertEqual(case["gap"], got)
 
     def test_if_w09_three_phrases_are_distinct(self):
         values = list(PHRASES.values())
@@ -321,8 +346,10 @@ class SourcePins(unittest.TestCase):
             "const prior=base.owner===owner&&(base.observedAt===null||Date.parse(at)>=Date.parse(base.observedAt))?base.rows:new Map();",
             "if(value===null||value===undefined)return {rows:null};",
             "return {...base,available:false};",
-            "const K=b.state==='observed'?b.count:null,comparable=K!==null;",
-            "if(b.state==='not_observed'&&M>=1)reasons.push('not_observed_with_reported_transfer');",
+            "const held=b.state==='observed'?b.count:b.state==='not_observed'?0:null;",
+            "if(!count(held)||!validTime(b.observedAt)||Date.parse(receipt.serverReceivedAt)>Date.parse(b.observedAt))return null;",
+            "if(held>=sent)return {missing:false,held,sent};",
+            "if(receiptGap(b,receipt)?.missing)reasons.push(b.state==='observed'?'kin_below_reported':'not_observed_with_reported_transfer');",
             "if(b.changedAt&&Date.parse(receipt.serverReceivedAt)<Date.parse(b.changedAt))reasons.push('receipt_older_than_change');",
             "const BANNED=/완료|수신 완료|안정|다 옴|received|complete|stable/i;",
             "const PHRASES=Object.freeze({orderWithoutImages:'영상 없는 주문',observationUnavailable:'관측 불가',viewerLoadFailed:'뷰어 로딩 실패'});",

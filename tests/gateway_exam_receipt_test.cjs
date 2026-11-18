@@ -10,7 +10,7 @@ const functions=(file,names)=>{
 };
 // The panel writes its status through the writer of the page (page-core.js). No screen language is chosen here, so
 // the writer puts the words into the element as they are.
-const source=[...functions('page-core.js',['kinWrite']),...functions('study-info-panel.js',['renderObservation','requestGatewayRetry'])].join('\n');
+const source=[...functions('page-core.js',['kinWrite']),...functions('study-info-panel.js',['studyReceiptGap','renderObservation','requestGatewayRetry'])].join('\n');
 class Element {
  constructor(tag='div'){this.tag=tag;this.children=[];this.dataset={};this.hidden=false;this.textContent='';this.events={};}
  append(...items){for(const item of items)if(typeof item==='object'){item.parent=this;this.children.push(item);}}
@@ -34,6 +34,8 @@ function harness(){
 }
 test('each original displays its own retry action; repaint retains its pending request and response',async()=>{
  const h=harness();h.render();assert.equal(h.requests.length,0);assert(h.line('1.2').children[1].hidden);
+ // A merged exam draws no missing-images line of its own (its originals are separate studies).
+ assert.equal(h.context.$('#receipt-gap').hidden,true);assert.equal(h.context.$('#receipt-gap').textContent,'');
  const button=h.line('1.3').children[1];assert.equal(button.hidden,false);const pending=button.events.click({currentTarget:button});
  assert.equal(h.requests[0][1],'/studies/1.3/gateway-retry');h.render();assert.equal(h.line('1.3').children[1],button);assert(button.disabled);
  h.finish({result:'requested',studyUid:'1.3',requestedAt:'2026-01-01T00:00:00Z'});await pending;

@@ -171,10 +171,9 @@
     if(typeof receipt!=='object'||!PHASES.includes(receipt.phase)||!count(M)||!count(N)||M>N||!validTime(receipt.serverReceivedAt))
       return {label:{key:'reported_unreadable',text:'Gateway 보고 형식을 확인할 수 없습니다',title:'보고 내용을 해석하지 못해 비교하지 않았습니다.'},reasons:['receipt_unreadable']};
     const reasons=[];
-    // K<M needs a known K from an available observation; null is never read as zero.
-    const K=b.state==='observed'?b.count:null,comparable=K!==null;
-    if(comparable&&K<M)reasons.push('kin_below_reported');
-    if(b.state==='not_observed'&&M>=1)reasons.push('not_observed_with_reported_transfer');
+    // K<M is receiptGap's answer, the one the Technician list and the Info panel draw; null K is never read as zero.
+    const comparable=b.state==='observed'&&b.count!==null;
+    if(receiptGap(b,receipt)?.missing)reasons.push(b.state==='observed'?'kin_below_reported':'not_observed_with_reported_transfer');
     if(b.changedAt&&Date.parse(receipt.serverReceivedAt)<Date.parse(b.changedAt))reasons.push('receipt_older_than_change');
     return {label:{key:'reported',text:'Gateway 보고('+format(receipt.serverReceivedAt)+'): 병원 보유 '+N+'건 중 '+M+'건 전송',
       title:'Gateway가 보고한 전송 수입니다. 검사 종료나 영상 수신 여부를 뜻하지 않습니다.'+(comparable?'':' HALO PACS 보유 개수를 알 수 없어 비교하지 않았습니다.')},reasons};
@@ -199,6 +198,26 @@
     failed:'재시도 요청을 보내지 못했습니다. 다시 시도하세요.'});
   const readableReceipt=receipt=>!!receipt&&typeof receipt==='object'&&PHASES.includes(receipt.phase)
     &&count(receipt.successCount)&&count(receipt.localCount)&&receipt.successCount<=receipt.localCount&&validTime(receipt.serverReceivedAt);
+
+  /*
+   * Missing images: the one answer to "does HALO PACS hold fewer images of this study than its Gateway reported sent?".
+   * K is what the last successful observation saw (0 for an own study it did not see at all), M the images a readable
+   * Gateway report says were sent. Only a report the observation came after is compared: images a newer report counts
+   * may have reached HALO PACS after that observation, so the next observation answers (no answer, not "fine").
+   * No report, an unreadable one, an unknown K, a failed or no observation: no answer — never "missing".
+   * K>=M is no gap whatever the hospital total N is: images still to send are the transfer's state (the Gateway line and
+   * its retry), not images missing at HALO PACS. A retry request is never a part of this answer.
+   */
+  function receiptGap(b,receipt){
+    if(!readableReceipt(receipt)||!b||typeof b!=='object')return null;
+    const held=b.state==='observed'?b.count:b.state==='not_observed'?0:null;
+    if(!count(held)||!validTime(b.observedAt)||Date.parse(receipt.serverReceivedAt)>Date.parse(b.observedAt))return null;
+    const sent=receipt.successCount;
+    if(held>=sent)return {missing:false,held,sent};
+    return {missing:true,held,sent,
+      text:kinSay('Needs Check · 영상 누락: Gateway 전송 {n0}건 중 HALO PACS 보유 {n1}건',sent,held),
+      title:'Gateway가 보냈다고 보고한 영상보다 HALO PACS가 가진 영상이 적습니다. 다음 관측에서 채워지면 이 표시는 사라집니다. 재시도 요청이나 전송 성공과는 다른 표시입니다.'};
+  }
 
   function gatewayRetryAction(receipt){
     if(!readableReceipt(receipt))return null;
@@ -329,7 +348,7 @@
   function phrase(kind){if(!Object.prototype.hasOwnProperty.call(PHRASES,kind))throw new TypeError('phrase');return PHRASES[kind];}
 
   const api={diff,observationStart,observationSucceeded,observationFailed,studyObservation,receiptLabels,observationSummary,phrase,formatTime:localTime,
-    gatewayRetryAction,gatewayRetryAnswer,RETRY_TEXT,PHASES:Object.freeze([...PHASES]),BANNED,PHRASES,
+    receiptGap,gatewayRetryAction,gatewayRetryAnswer,RETRY_TEXT,PHASES:Object.freeze([...PHASES]),BANNED,PHRASES,
     gatewayStatus,gatewayStatusRows,gatewayStatusSummary,GATEWAY_STATUS};root.KinStudyArrivals=api;
   if(typeof module==='object'&&module.exports)module.exports=api;
 })(typeof globalThis==='object'?globalThis:this);
