@@ -13988,7 +13988,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     };
     document.addEventListener('focusin', noteWorkFocus, true);
     // The covers follow the boxes: a resize handle dragged while arranging, a notice growing a box, the window.
-    const coverObserver = new ResizeObserver(() => scheduleCovers());
+    const coverObserver = new ResizeObserver(() => scheduleCovers()), coverObserved = new Set();
     // The scroller a box lives in (the list column, the report row, a stacked page), so the wheel over a cover still
     // scrolls what is under it.
     function boxScroller(node) {
@@ -14003,8 +14003,10 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       if (!arranging) return;
       const boxes = workspaceBoxes().filter(box => box.shown);
       const keep = new Map([...coverLayer.children].map(node => [node.dataset.box, node]));
-      coverObserver.disconnect();
-      for (const box of workspaceBoxes()) for (const node of box.elements) if (node) coverObserver.observe(node);
+      // Each box element is observed once while arranging (observing again would report it again, every frame).
+      for (const box of workspaceBoxes()) for (const node of box.elements) {
+        if (node && !coverObserved.has(node)) { coverObserved.add(node); coverObserver.observe(node); }
+      }
       const nodes = boxes.map(box => {
         let cover = keep.get(box.key);
         if (!cover) {
@@ -14021,8 +14023,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
             scroller.scrollBy({ top: event.deltaY, left: event.deltaX });
           }, { passive: false });
         }
-        cover.querySelector('.kin-box-name').textContent = box.label;
-        cover.setAttribute('aria-label', box.label);
+        const name = cover.querySelector('.kin-box-name');
+        if (name.textContent !== box.label) { name.textContent = box.label; cover.setAttribute('aria-label', box.label); }
         cover.setAttribute('aria-pressed', String(boxPicked === box.key || boxDrag?.from === box.key));
         Object.assign(cover.style, { left: box.visible.x + 'px', top: box.visible.y + 'px', width: box.visible.width + 'px', height: box.visible.height + 'px' });
         return cover;
@@ -14031,7 +14033,11 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       // layer only when that order changed, and never under a press: moving a node ends its pointer capture and drops
       // the click that a press and release on it make.
       const current = [...coverLayer.children];
-      if (!boxDrag && (current.length !== nodes.length || current.some((node, i) => node !== nodes[i]))) {
+      if (boxDrag) {
+        // Under a press: a box scrolled into view gets its cover, one scrolled away loses it; the pressed cover stays.
+        for (const node of current) if (node !== boxDrag.cover && !nodes.includes(node)) node.remove();
+        for (const node of nodes) if (!node.isConnected) coverLayer.append(node);
+      } else if (current.length !== nodes.length || current.some((node, i) => node !== nodes[i])) {
         const focused = coverLayer.contains(document.activeElement) ? document.activeElement : null;
         coverLayer.replaceChildren(...nodes);
         if (focused && !focused.isConnected) coverLayer.querySelector('.kin-box-cover')?.focus({ preventScroll: true });
@@ -14082,8 +14088,10 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       cover.setPointerCapture(event.pointerId);
       cover.setAttribute('aria-pressed', 'true');
       markTarget(null);
+      const startX = event.clientX, startY = event.clientY;
       const move = e => {
         if (e.pointerId !== boxDrag?.pointer) return;
+        if (Math.abs(e.clientX - startX) + Math.abs(e.clientY - startY) > 4) boxDrag.moved = true;
         // Only a cover that is on top under the pointer is a target (not one under the arrange bar).
         const under = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('.kin-box-cover');
         const key = under && under.dataset.box !== boxDrag.from ? under.dataset.box : null;
@@ -14095,9 +14103,10 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         if (cover.hasPointerCapture(e.pointerId)) cover.releasePointerCapture(e.pointerId);
         const { from, target } = boxDrag;
         if (target) boxPicked = null;
-        // The mouse click that follows a release over another box belongs to that drop, not to a click-pick.
-        boxDropped = e.type === 'pointerup' && !!target;
-        if (boxDropped) dropBox(from, target);
+        // The mouse click that follows a press which moved is not a click-pick or a click-drop: the release decided
+        // (a drop on a box, or nothing over the bar or outside the boxes).
+        boxDropped = !!boxDrag.moved || (e.type === 'pointerup' && !!target);
+        if (e.type === 'pointerup' && target) dropBox(from, target);
         else { boxDrag = null; markTarget(null); renderBoxCovers(); }
       };
       boxDrag.cancel = () => end({ pointerId: boxDrag.pointer, type: 'pointercancel' });
@@ -14140,7 +14149,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     function endArrange(returnFocus = true) {
       if (!arranging) return;
       boxDrag?.cancel?.(); boxDrag = null; boxPicked = null; arranging = false;
-      cancelAnimationFrame(coverFrame); coverFrame = 0; coverObserver.disconnect();
+      cancelAnimationFrame(coverFrame); coverFrame = 0; coverObserver.disconnect(); coverObserved.clear();
       document.body.classList.remove('kin-arranging');
       coverLayer.replaceChildren(); coverLayer.hidden = true; arrangeBar.hidden = true;
       if (!returnFocus) return;

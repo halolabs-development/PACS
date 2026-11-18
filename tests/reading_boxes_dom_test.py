@@ -498,6 +498,44 @@ class ReadingBoxesDOM(unittest.TestCase):
         rail, column = page.locator('#worklist-folders-panel').bounding_box(), page.locator('.left').bounding_box()
         self.assertIsNotNone(rail)
         self.assertLess(rail['y'], column['y'] + column['height'] - 20, f'{rail} {column}')
+    def test_18_a_moved_press_is_never_a_click_and_an_idle_arrange_screen_is_still(self):
+        page, _, _ = self.open()
+        bar = self.arrange(page)
+        # Pick Worklist with a click, then press Related Exam and release over Done: nothing is swapped.
+        self.cover(page, 'Worklist').click()
+        a, done = self.cover(page, 'Related Exam').bounding_box(), bar.get_by_role('button', name='Done', exact=True).bounding_box()
+        page.mouse.move(a['x'] + a['width'] / 2, a['y'] + a['height'] / 2); page.mouse.down()
+        page.mouse.move(done['x'] + done['width'] / 2, done['y'] + done['height'] / 2, steps=6); page.mouse.up()
+        settle(page)
+        self.assertIsNone(self.stored(page))
+        expect(bar).to_be_visible()
+        # Left alone, the arrange screen does not keep redrawing its covers.
+        changes = page.evaluate("""() => new Promise(done => { let n = 0;
+          const o = new MutationObserver(list => { n += list.length; });
+          o.observe(document.querySelector('#box-arrange-covers'), { subtree: true, childList: true, attributes: true, characterData: true });
+          setTimeout(() => { o.disconnect(); done(n); }, 1000); })""")
+        self.assertLessEqual(changes, 2)
+
+    def test_19_a_box_scrolled_into_view_under_a_press_takes_the_drop(self):
+        page, _, _ = self.open(width=800, height=600)
+        page.locator('#rows tr[data-uid] td').first.click()
+        settle(page)
+        self.arrange(page)
+        b = self.cover(page, 'Related Report').bounding_box()
+        page.mouse.move(b['x'] + b['width'] / 2, b['y'] + min(b['height'] / 2, 20)); page.mouse.down()
+        page.mouse.move(b['x'] + b['width'] / 2 + 10, b['y'] + min(b['height'] / 2, 20) + 5, steps=3)
+        for _ in range(8):
+            page.mouse.wheel(0, 200)
+            page.wait_for_timeout(80)
+            if self.cover(page, 'Report Editor').count() and self.cover(page, 'Report Editor').is_visible():
+                break
+        e = self.cover(page, 'Report Editor').bounding_box()
+        self.assertIsNotNone(e)
+        page.mouse.move(e['x'] + e['width'] / 2, e['y'] + e['height'] * 0.75, steps=6)
+        expect(self.cover(page, 'Report Editor')).to_contain_text('놓으면 Related Report와 Report Editor가 자리를 바꿉니다.')
+        page.mouse.up()
+        settle(page)
+        self.assertEqual(['report'], self.stored(page)['workspace']['boxSwaps'])
 
 if __name__ == '__main__':
     unittest.main()
