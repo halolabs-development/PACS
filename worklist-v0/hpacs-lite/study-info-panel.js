@@ -73,7 +73,8 @@
      * draws every surface of it at once (the list's marks too); setMode() and the poll's list rebuild call it.
      */
     function studyReceiptGap(s) {
-      if (!s || !studyObservationModel || KinExamScope.read(s)?.groupId) return null;
+      // A row of a merged or split exam in force whose originals cannot all be read now has no scope, yet is that exam.
+      if (!s || !studyObservationModel || KinExamScope.read(s)?.groupId || KinExamScope.unavailable(s)?.kind) return null;
       const seen = KinStudyArrivals.studyObservation(studyObservationModel, s.uid);
       const gap = KinStudyArrivals.receiptGap(seen, seen.receipt ?? null);
       return gap?.missing && mode === "Technician" ? gap : null;

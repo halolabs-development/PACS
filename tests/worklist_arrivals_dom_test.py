@@ -583,6 +583,21 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
             self.assertEqual((True, "", None), (state["hidden"], state["text"], state["mark"]), minute)
             self.assertEqual("Original exams", self.text("#receipt-observation"))
 
+    def test_missing_images_draws_nothing_new_on_a_merged_exam_row_that_cannot_be_read_whole(self):
+        # The server's row for a merged (or split) exam in force whose originals cannot all be read now: no scope, the kind
+        # of exam, this original's own count and report. It is still that exam, so it gets no answer here either.
+        self.page.evaluate("()=>{mode='Technician'}")
+        first = self.receipt_row(self.gap_receipt(1), 12)
+        self.poll(reply(first, at=self.at(2)))
+        self.assertFalse(self.gap_state()["hidden"])
+        for minute, kind in ((3, "merge"), (4, "split")):
+            self.poll(reply({**first, "examUnavailable": True, "examUnavailableKind": kind}, at=self.at(minute)))
+            state = self.gap_state()
+            self.assertEqual((True, "", None), (state["hidden"], state["text"], state["mark"]), kind)
+        # A row whose only grouping has ended carries no kind: it is an ordinary single original again.
+        self.poll(reply({**first, "examUnavailable": True}, at=self.at(5)))
+        self.assertFalse(self.gap_state()["hidden"])
+
     # ── S4-U4: Now Retry on the same receipt block, through the same real poll ──
 
     RETRY_EPOCH = "0a1b2c3d-0000-4000-8000-00000000000a"
