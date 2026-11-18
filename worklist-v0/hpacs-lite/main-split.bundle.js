@@ -1010,6 +1010,10 @@
       rs: s => { const finalized = reportFinalized({ rs: s.rs, amendUntil: appState[s.uid]?.amendUntil }), word = finalized ? "Finalized" : RS_WORD[s.rs] ?? s.rs;
         return `<span class="rs ${esc(s.rs)}"${s.holdReason ? ' data-kin-keep="title"' : ''} title="${esc(s.holdReason || (finalized ? "승인 후 24시간이 지나 확정된 판독문 — Addendum으로만 덧붙일 수 있습니다" : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : ""))}">${esc(word)}</span>`; },
       confirm: s => esc(confirmText({ ...appState[s.uid], rs: s.rs })),
+      // Missing images (Technician tab only): a mark beside the count, the same answer as the Info panel's Needs Check line
+      // (studyReceiptGap; renderObservation repaints it between renders). Its words are its title; the mark itself is CSS
+      // and there is no text around it, so a copy or export of the cell reads the count alone.
+      count: s => { const gap = studyReceiptGap(s); return `<span translate="no">${esc(s.count ?? "")}</span><span class="receipt-gap" role="img" data-gap-uid="${esc(s.uid)}"` + (gap ? ` aria-label="${esc(gap.text)}" title="${esc(gap.text)}"></span>` : ` hidden></span>`); },
       ts: s => `<span class="ts ts-${esc(s.ts)}">${esc(s.ts)}</span>`,
       ss: s => `<span class="ss ${esc(s.ss)}">${esc(s.ss)}</span>`,
       // S4-U5: server values too, but escaped like every other cell; a stored value never becomes markup.
@@ -2619,6 +2623,8 @@
       if (sortKey && !COLS[m].some(c => c.k === sortKey)) { sortKey = null; sortDir = 0; }
       worklistSearch?.apply();
       renderHeads(); render(); renderOrders(); renderRelated();
+      // The missing-images line of the Info panel is a Technician-tab line (studyReceiptGap): drawn again with the list.
+      renderObservation();
       applyLayout();
     }
     document.querySelector(".tabs").addEventListener("click", e => {
@@ -3133,8 +3139,33 @@
       applyStudyIdentity(null);
       renderObservation();
     }
+    /**
+     * Missing images, Technician tab only: the one answer (KinStudyArrivals.receiptGap) that the list's Count cell, the
+     * Info panel's Needs Check line and a Not Observed item draw. A merged or split exam has no answer here: its originals
+     * are separate studies. The count and the Gateway report it compares are both the last successful observation's, so
+     * a row replaced before its observation is judged never pairs an old count with a new report. renderObservation()
+     * draws every surface of it at once (the list's marks too); setMode() and the poll's list rebuild call it.
+     */
+    function studyReceiptGap(s) {
+      if (!s || !studyObservationModel || KinExamScope.read(s)?.groupId) return null;
+      const seen = KinStudyArrivals.studyObservation(studyObservationModel, s.uid);
+      const gap = KinStudyArrivals.receiptGap(seen, seen.receipt ?? null);
+      return gap?.missing && mode === "Technician" ? gap : null;
+    }
+    /**
+     * One list Count cell between renders: the count (the span before the mark) and the mark, painted together from the
+     * study row and the answer, as CELL.count draws them on render() — the number never lags behind its mark.
+     */
+    function paintReceiptGap(mark, s) {
+      const gap = studyReceiptGap(s), value = mark.previousElementSibling;
+      if (s && value) value.textContent = String(s.count ?? "");
+      mark.hidden = !gap; mark.title = gap?.text ?? "";
+      if (gap) mark.setAttribute("aria-label", gap.text); else mark.removeAttribute("aria-label");
+    }
     function renderObservation() {
       if (!studyObservationModel) return;
+      for (const mark of $("#rows")?.querySelectorAll(".receipt-gap[data-gap-uid]") ?? [])
+        paintReceiptGap(mark, studies.find(s => s.uid === mark.dataset.gapUid));
       const summary = KinStudyArrivals.observationSummary(studyObservationModel), status = $("#observation-status");
       if (status) { status.hidden = !summary.text; kinWrite(status, summary.text); status.title = summary.title; }
       // S4-U4 Now Retry, drawn only from labels.retry. Another study or a newer receipt drops the in-flight token
@@ -3170,9 +3201,13 @@
             control.textContent = KinStudyArrivals.RETRY_TEXT.button;
             control.addEventListener("click", requestGatewayRetry);
             item = document.createElement("div"); item.dataset.uid = row.uid;
-            item.append(document.createElement("span"), " ", control, " ", document.createElement("span"));
+            const gapText = document.createElement("span"); gapText.className = "receipt-gap-line"; gapText.hidden = true;
+            item.append(document.createElement("span"), " ", control, " ", document.createElement("span"), " ", gapText);
           }
-          const gateway = row.gatewayReceipt ?? null, [text, button, note] = item.children;
+          const gateway = row.gatewayReceipt ?? null, [text, button, note, gapText] = item.children;
+          // An own study the observation did not see at all while its Gateway reported images sent: the same answer.
+          const gap = studyReceiptGap(row);
+          gapText.hidden = !gap; kinWrite(gapText, gap?.text ?? ""); gapText.title = gap?.title ?? "";
           const labels = KinStudyArrivals.receiptLabels({ assignment: "assigned",
             observation: KinStudyArrivals.studyObservation(studyObservationModel, row.uid), gateway });
           // Without a receipt the text stays the U1b item text; no No Gateway Report is added to this list.
@@ -3214,6 +3249,11 @@
       let originals=receipt.querySelector('.exam-original-receipts');
       if(!originals){originals=document.createElement('div');originals.className='exam-original-receipts';receipt.append(originals);}
       const scope=KinExamScope.read(s);
+      const gapLine = $("#receipt-gap");
+      if (gapLine) {
+        const gap = studyReceiptGap(s);
+        gapLine.hidden = !gap; kinWrite(gapLine, gap?.text ?? ""); gapLine.title = gap?.title ?? "";
+      }
       const receiptScope=scope?.groupId?KinExamScope.stamp(s):'';
       if(originals.dataset.scope!==receiptScope){
         for(const control of originals.querySelectorAll('button'))control.dataset.request='';
@@ -10181,6 +10221,9 @@
             // 썸네일 등 오른쪽 전체를 다시 그릴 필요는 없지만, 판독문 잠금은 반영해야 한다.
             // loadReport가 값만 보호하므로 새 검사 도착과 Prelim 전환이 겹쳐도 입력은 유지된다.
             render();
+            // applyObservation drew the receipt block from the rows before this rebuild; a study that became a merged or
+            // split exam in this answer is drawn again from the rebuilt row (its missing-images line goes at once).
+            renderObservation();
             if (selectedUid) { loadReport(); updateReportButtons(); }
             autoPreload?.afterList();   // FC-073: a study that just arrived is queued without a manual Refresh
             if (fresh.length || arrivalNotice) {

@@ -1555,6 +1555,41 @@ class MultiInstitutionWorklist(unittest.TestCase):
         until(lambda: screen.cells_by_id(HOSPITAL).get("SYN-R-TELE") == "SYN Center LAST Tele", 10, "in-order answer")
         screen.finish()
 
+    def test_mi12_missing_images_follow_real_tab_clicks_on_the_list_and_info(self):
+        # Gateway reported 15 of 20 sent (before this list was read); HALO PACS holds 12. Another own study has no report.
+        session = {**SESSION_A, "roles": ["radiologist", "technician"]}
+        short = row("2.25.911", "SYN-G-SHORT", inst=A)
+        short["count"] = 12
+        short["gatewayReceipt"] = {"phase": "retry", "successCount": 15, "localCount": 20, "attempt": 1, "errorCode": "stow_http",
+                                   "serverReceivedAt": "2026-01-01T00:00:00.000Z", "agentSeq": 3,
+                                   "epoch": "0a1b2c3d-0000-4000-8000-00000000000a"}
+        server = Server(rows=[short, row("2.25.912", "SYN-G-PLAIN", inst=A)], session=session)
+        screen = self.boot(server)
+        screen.wait_rows(["SYN-G-SHORT", "SYN-G-PLAIN"])
+        text = "Needs Check · 영상 누락: Gateway 전송 15건 중 HALO PACS 보유 12건"
+        marks = lambda: screen.page.evaluate("""()=>[...document.querySelectorAll('#rows .receipt-gap:not([hidden])')]
+          .map(m=>[m.closest('tr').dataset.uid,m.title,m.getAttribute('aria-label'),m.closest('td').textContent])""")
+        info = lambda: screen.page.evaluate("()=>{const l=document.querySelector('#receipt-gap');return [l.hidden,l.textContent]}")
+        # The Radiology tab draws nothing new.
+        self.assertEqual([], marks())
+        screen.page.get_by_text("Technician", exact=True).first.click()
+        until(lambda: "Count" in screen.heads(), 10, "Technician columns")
+        until(lambda: marks() == [["2.25.911", text, text, "12"]], 10, "the list mark on the short study only")
+        screen.data_row("SYN-G-SHORT").get_by_role("cell", name="SYN-G-SHORT", exact=True).click()
+        until(lambda: info() == [False, text], 10, "the Info line of the selected study")
+        # A real tab click takes both away at once and brings both back.
+        screen.page.get_by_text("Radiology", exact=True).first.click()
+        until(lambda: info() == [True, ""] and marks() == [], 10, "nothing new on the Radiology tab")
+        screen.page.get_by_text("Technician", exact=True).first.click()
+        until(lambda: info() == [False, text] and marks() == [["2.25.911", text, text, "12"]], 10, "back on the Technician tab")
+        # The images arrive: the next list read clears both surfaces.
+        filled = copy.deepcopy(short)
+        filled["count"] = 15
+        server.rows = [filled, row("2.25.912", "SYN-G-PLAIN", inst=A)]
+        screen.refresh()
+        until(lambda: info() == [True, ""] and marks() == [], 10, "cleared once HALO PACS holds what was sent")
+        screen.finish()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

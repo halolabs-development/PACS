@@ -189,6 +189,42 @@ def change_text(b):
             "no_observed_change": "이 세션에서 관측한 변화 없음(%s 이후)" % since}[kind]
 
 
+def gap_receipt(name):
+    """A named receipt: the nine label-table receipts, then the reports only the missing-images cases use."""
+    return VECTORS["receipts"][name] if name in VECTORS["receipts"] else VECTORS["gapReceipts"][name]
+
+
+def receipt_gap(b, receipt):
+    """Missing images: K (0 when not observed) below the reported sent M, compared only when the observation is not older
+    than the report; anything unknown or unreadable is no answer."""
+    ok_count = lambda v: type(v) is int and v >= 0
+    if not isinstance(receipt, dict) or receipt.get("phase") not in VECTORS["phases"]:
+        return None
+    m, n, at = receipt.get("successCount"), receipt.get("localCount"), parse_time(receipt.get("serverReceivedAt"))
+    if not ok_count(m) or not ok_count(n) or m > n or at is None or not isinstance(b, dict):
+        return None
+    state = b.get("state")
+    stale = state == "observation_unavailable"
+    last = b.get("last") if stale else b
+    if not isinstance(last, dict):
+        return None
+    if state == "observed":
+        held = b.get("count")
+    elif state == "not_observed":
+        held = 0
+    elif stale:
+        held = 0 if last.get("notObserved") is True else last.get("count")
+    else:
+        held = None
+    # A paged list's first page bounds the comparison; without it the observation's own time does.
+    seen = parse_time(b["readSince"] if b.get("readSince") is not None else last.get("observedAt"))
+    if not ok_count(held) or seen is None:
+        return None
+    if at > seen:   # a known count read before the report: not compared yet
+        return {"missing": None, "pending": True, "held": held, "sent": m, "stale": stale}
+    return {"missing": held < m, "held": held, "sent": m, "stale": stale}
+
+
 def gateway(receipt, b):
     if receipt is None:
         return "No Gateway Report", []
@@ -198,11 +234,9 @@ def gateway(receipt, b):
             or parse_time(receipt.get("serverReceivedAt")) is None:
         return "Gateway 보고 형식을 확인할 수 없습니다", ["receipt_unreadable"]
     reasons = []
-    k = b["count"] if b["state"] == "observed" else None
-    if k is not None and k < m:
-        reasons.append("kin_below_reported")
-    if b["state"] == "not_observed" and m >= 1:
-        reasons.append("not_observed_with_reported_transfer")
+    gap = receipt_gap(b, receipt)
+    if gap and gap["missing"] and not gap["stale"]:
+        reasons.append("kin_below_reported" if b["state"] == "observed" else "not_observed_with_reported_transfer")
     if b.get("changedAt") and parse_time(receipt["serverReceivedAt"]) < parse_time(b["changedAt"]):
         reasons.append("receipt_older_than_change")
     return "Gateway 보고(%s): 병원 보유 %d건 중 %d건 전송" % (receipt["serverReceivedAt"], n, m), reasons
@@ -282,8 +316,15 @@ class LabelTable(unittest.TestCase):
     def test_needs_check_reasons(self):
         for case in VECTORS["reasonCases"]:
             with self.subTest(case["id"]):
-                got = labels("assigned", VECTORS["observations"][case["observation"]], VECTORS["receipts"][case["receipt"]])
+                got = labels("assigned", VECTORS["observations"][case["observation"]], gap_receipt(case["receipt"]))
                 self.assertEqual(case["reasons"], got["reasons"])
+
+    def test_missing_images_answer(self):
+        for case in VECTORS["gapCases"]:
+            with self.subTest(case["id"]):
+                observation = VECTORS["observations"].get(case["observation"]) or VECTORS["gapObservations"][case["observation"]]
+                got = receipt_gap(observation, gap_receipt(case["receipt"]))
+                self.assertEqual(case["gap"], got)
 
     def test_if_w09_three_phrases_are_distinct(self):
         values = list(PHRASES.values())
@@ -321,8 +362,11 @@ class SourcePins(unittest.TestCase):
             "const prior=base.owner===owner&&(base.observedAt===null||Date.parse(at)>=Date.parse(base.observedAt))?base.rows:new Map();",
             "if(value===null||value===undefined)return {rows:null};",
             "return {...base,available:false};",
-            "const K=b.state==='observed'?b.count:null,comparable=K!==null;",
-            "if(b.state==='not_observed'&&M>=1)reasons.push('not_observed_with_reported_transfer');",
+            "const held=b.state==='observed'?b.count:b.state==='not_observed'?0:stale?(seen.notObserved===true?0:seen.count):null;",
+            "if(!count(held)||!validTime(since))return null;",
+            "if(Date.parse(receipt.serverReceivedAt)>Date.parse(since))return {missing:null,pending:true,held,sent,stale};",
+            "if(held>=sent)return {missing:false,held,sent,stale};",
+            "if(gap?.missing&&!gap.stale)reasons.push(b.state==='observed'?'kin_below_reported':'not_observed_with_reported_transfer');",
             "if(b.changedAt&&Date.parse(receipt.serverReceivedAt)<Date.parse(b.changedAt))reasons.push('receipt_older_than_change');",
             "const BANNED=/완료|수신 완료|안정|다 옴|received|complete|stable/i;",
             "const PHRASES=Object.freeze({orderWithoutImages:'영상 없는 주문',observationUnavailable:'관측 불가',viewerLoadFailed:'뷰어 로딩 실패'});",
@@ -333,6 +377,13 @@ class SourcePins(unittest.TestCase):
         self.assertNotIn("||0", self.arrivals.replace(" ", ""))
         self.assertNotIn("localStorage", self.arrivals)
         self.assertNotIn("sessionStorage", self.arrivals)
+
+    def test_missing_images_is_drawn_again_on_a_tab_switch_and_a_list_rebuild(self):
+        # The Info line is a Technician-tab line: switching tabs draws it again with the list.
+        set_mode = body(self.main, "    function setMode(m) {", "\n    }\n")
+        self.assertLess(set_mode.index("render();"), set_mode.index("renderObservation();"))
+        # The poll's list rebuild draws the receipt block again from the rebuilt rows (a scope change shows at once).
+        self.assertRegex(self.main, r"studies = r\.studies\.map\(fromApi\);\n(?:\s*//[^\n]*\n)*\s*render\(\);\n(?:\s*//[^\n]*\n)*\s*renderObservation\(\);")
 
     def test_server_absence_surface_is_decided_from_the_whole_successful_enumeration(self):
         assert_behaviour('gateway_receipt_server_test.cjs', '^S4-F01V list:')
@@ -362,7 +413,7 @@ const finals = [
       const offset = new URL('https://synthetic.invalid' + path).searchParams.has('after') ? 100 : 0;
       return {studies: rows.slice(offset, offset + 100),
         pagination: {owner, limit: 100, offset, total: rows.length, next: offset === 0 ? 'next-page' : null},
-        ...(offset === 0 ? {observedAt: '2026-10-01T00:00:00Z', notObserved: absence,
+        ...(offset === 0 ? {observedAt: '2026-10-01T00:00:00Z', readFrom: '2026-09-30T23:59:00Z', notObserved: absence,
           identityIssues: [issue], orderReconciliation: [{uid: 'middle-page-only'}]} : final)};
     }});
     results.push(await client.read());
@@ -375,12 +426,14 @@ const finals = [
         self.assertEqual(0, result.returncode, result.stderr)
         rows = [{'uid': f'1.2.{1000 + i}', 'state': {}} for i in range(101)]
         owner = ['synthetic-institution', 'synthetic-reader']
+        # readFrom is when the first page's enumeration began (its readFrom, else its observedAt): every row was read after
+        # it, and missing images compares Gateway reports with it.
         observations = [
             {'observedAt': '2026-10-02T00:00:00Z',
              'notObserved': [{'uid': '1.2.9999', 'origin': 'synthetic', 'createdAt': '2026-10-01T00:00:00Z'}],
-             'orderReconciliation': []},
-            {'observedAt': '2026-10-03T00:00:00Z', 'notObserved': []},
-            {},
+             'readFrom': '2026-09-30T23:59:00Z', 'orderReconciliation': []},
+            {'observedAt': '2026-10-03T00:00:00Z', 'notObserved': [], 'readFrom': '2026-09-30T23:59:00Z'},
+            {'readFrom': '2026-09-30T23:59:00Z'},
         ]
         issues = [[{'uid': '1.2.8888', 'code': 'STUDY_IDENTITY_UNRESOLVED'}], [], None]
         self.assertEqual([{'studies': rows, 'owner': owner, 'observation': observation, 'identityIssues': issue}

@@ -210,6 +210,9 @@
             // 썸네일 등 오른쪽 전체를 다시 그릴 필요는 없지만, 판독문 잠금은 반영해야 한다.
             // loadReport가 값만 보호하므로 새 검사 도착과 Prelim 전환이 겹쳐도 입력은 유지된다.
             render();
+            // applyObservation drew the receipt block from the rows before this rebuild; a study that became a merged or
+            // split exam in this answer is drawn again from the rebuilt row (its missing-images line goes at once).
+            renderObservation();
             if (selectedUid) { loadReport(); updateReportButtons(); }
             autoPreload?.afterList();   // FC-073: a study that just arrived is queued without a manual Refresh
             if (fresh.length || arrivalNotice) {
