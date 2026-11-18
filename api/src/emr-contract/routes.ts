@@ -292,6 +292,9 @@ export const INTERNAL_SURFACES: Readonly<Record<string, RouteContract>> = freeze
   'server:doctor-key-management': { kinds: ['identity-access'], operation: 'write', causes: ['user-view'] },
   'service:auth-session-sweep': { kinds: ['authentication-session'], operation: 'auth', causes: ['service-job'] },
   'service:member-rights-import': { kinds: ['identity-access'], operation: 'write', causes: ['service-job'] },
+  // An operator designates an institution's first administrator (api/prisma/designate-first-admin.cjs): the ordinary
+  // approval command run by that process (it refuses a signed-in person, so it never ends a session).
+  'service:first-admin-designation': { kinds: ['identity-access'], operation: 'write', causes: ['service-job'] },
   // S7-U3a / D1860: the receiving institution's reader allocation closes inside the member's PATCH/DELETE studies/:uid.
   // That close is the server's own allocation operation, not a record act of the study route: the study routes serve
   // record kinds, and a route that mixed them with the non-record allocation would demand a served-record manifest.

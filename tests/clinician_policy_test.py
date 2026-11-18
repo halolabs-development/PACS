@@ -1771,6 +1771,12 @@ class ClinicianPolicySpec(unittest.TestCase):
                                 cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_07b_member_administration_is_scoped_to_the_administrators_institution(self):
+        # One server rule (api/src/member-scope.ts) for every member route; another institution answers like an unknown id.
+        result = subprocess.run(["node", str(ROOT / "tests" / "admin_member_scope_test.cjs")],
+                                cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_08_realm_defines_the_role_without_users_or_secrets(self):
         realm = json.loads(REALM.read_text(encoding="utf-8"))
         names = [r["name"] for r in realm["roles"]["realm"]]

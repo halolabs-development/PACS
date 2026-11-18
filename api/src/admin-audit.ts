@@ -19,7 +19,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 /** 회원 행: 행에 남은 before/after 스냅숏의 기관으로 귀속한다(admin.service.ts의 row() 모양). */
 export const AUDIT_MEMBER_ACTIONS: readonly string[] = Object.freeze([
   "admin.user.create", "admin.user.create.failed", "admin.user.approve", "admin.user.update",
-  "admin.user.unapprove", "admin.user.suspend", "admin.user.activate", "admin.user.reset-password",
+  "admin.user.unapprove", "admin.user.suspend", "admin.user.activate", "admin.user.reset-password", "admin.user.reset-password.failed",
   "admin.user.patch.failed",
 ]);
 

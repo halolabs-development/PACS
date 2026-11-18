@@ -822,73 +822,164 @@ class LiveStack:
         purge_user_audit(user_id)  # Scenarios measure their own commands after the owned fixture setup.
         return user_id
 
-    def set_member_rights(self, user_id: str, **changes) -> dict:
-        """The realm administrator uses the product PATCH, including its version, audit and authentication boundary.
+    # An administrator manages only the members of their own institution (api/src/member-scope.ts). The fixture keeps
+    # one product session per institution: hallym's imported realm administrator (jmryu); every other institution its
+    # own administrator, made once with the operator command api/prisma/designate-first-admin.cjs (keycloak/README.md
+    # "기관 첫 관리자 지정") — kin-center's fixed one (made once per stack, reused), a run's own institutions a synthetic
+    # one owned by the run. Each signs in with a real credential and the synthetic OTP, as every administrator must.
+    FIXED_INSTITUTION_ADMINS = {"kin-center": "kin-center-admin"}
+    _INSTITUTION = re.compile(r"[A-Za-z0-9._-]{1,128}")
 
-        A real credential login gives the imported realm admin an auth_time-bearing BFF session.
-        Synthetic members keep their Keycloak identity creation; no MemberRights row is seeded by the harness.
-        """
-        if not re.fullmatch(r"[0-9a-fA-F-]{36}", user_id):
-            raise RuntimeError("Invalid member id")
-        if not getattr(self, "_rights_admin", None):
-            deadline = time.monotonic() + 60
-            while self.request("GET", "/health").body.get("memberRights") != "ready":
-                if time.monotonic() >= deadline:
-                    raise RuntimeError("Fixture cannot admit its administrator before realm import is ready")
-                time.sleep(0.2)
-            # The boundary and auth_time use whole-second admission. This wait belongs only to fixture setup.
-            time.sleep(1.05)
-            found = self.kc_admin("GET", "/users?username=jmryu&exact=true")
-            matches = [u for u in (found.body if isinstance(found.body, list) else []) if u.get("username") == "jmryu"]
-            if found.status != 200 or len(matches) != 1 or not re.fullmatch(r"[0-9a-fA-F-]{36}", matches[0].get("id", "")):
-                raise RuntimeError("Imported realm administrator is unavailable")
-            password = os.environ.get("KIN_LIVE_IMPORTED_ADMIN_PASSWORD")
-            if not password:
-                raise RuntimeError("The imported synthetic administrator needs a real login credential; set KIN_LIVE_IMPORTED_ADMIN_PASSWORD")
-            public = urlparse(self.proxy)
-            jar = http.cookiejar.CookieJar()
-            trace = []
+    def _wait_rights_ready(self) -> None:
+        if getattr(self, "_rights_ready", False):
+            return
+        deadline = time.monotonic() + 60
+        while self.request("GET", "/health").body.get("memberRights") != "ready":
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Fixture cannot admit its administrator before realm import is ready")
+            time.sleep(0.2)
+        # The boundary and auth_time use whole-second admission. This wait belongs only to fixture setup.
+        time.sleep(1.05)
+        self._rights_ready = True
 
-            class PublicRedirects(HTTPRedirectHandler):
-                def redirect_request(handler, req, fp, code, msg, headers, newurl):
-                    target = urlparse(newurl)
-                    if (target.scheme, target.netloc) != (public.scheme, public.netloc):
-                        raise RuntimeError("Fixture BFF login redirected outside the public origin")
-                    # Paths and statuses only: code/state, cookies and the entry proof are secrets.
-                    trace.append((urlparse(req.full_url).path, code, target.path))
-                    return super().redirect_request(req, fp, code, msg, headers, newurl)
+    def _member_rights_row(self, user_id: str) -> tuple[str | None, bool, list[str]] | None:
+        """(institution, suspended, roles) from the authority, or None before the member's first command."""
+        rows = psql(f'SELECT coalesce(institution, \'\') || \'|\' || suspended::text || \'|\' || array_to_string(roles, \',\') '
+                    f'FROM "MemberRights" WHERE sub=\'{user_id}\'')
+        if not rows:
+            return None
+        institution, suspended, roles = rows[0].split("|", 2)
+        return institution or None, suspended == "true", [role for role in roles.split(",") if role]
 
-            opener = build_opener(HTTPCookieProcessor(jar), HTTPSHandler(context=self.context), PublicRedirects())
-            # Impersonation reaches the callback but has no auth_time. The product correctly refuses that token.
-            # Use the real form on the public origin, with the same jar for every redirect and callback.
-            with opener.open(self.proxy + "/api/auth/login", timeout=30) as response:
-                page = response.read().decode("utf-8")
-            form = re.search(r'<form[^>]+action="([^"]+)"', page, re.I)
-            if not form:
-                raise RuntimeError("Fixture BFF login did not reach the credential form")
-            action = html.unescape(form.group(1))
-            target = urlparse(action)
-            if (target.scheme, target.netloc) != (public.scheme, public.netloc):
-                raise RuntimeError("Fixture credential form left the public origin")
-            request = Request(action, data=urlencode({"username": "jmryu", "password": password, "credentialId": ""}).encode("utf-8"),
-                              headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST")
-            with opener.open(request, timeout=30) as response:
-                page, url = response.read().decode("utf-8", "replace"), response.geturl()
-            # The imported administrator holds admin: Keycloak asks its synthetic OTP (live_admin_credential seeds it).
-            landed = urlparse(admin_otp.answer_http(opener, page, url, "jmryu")[1])
-            if not any(path == "/api/auth/callback" for path, _, _ in trace) or landed.path != "/worklist/hpacs-lite/main.html":
-                # Audit causes are allowlisted classifications, never the audit body or credentials.
-                causes = psql('SELECT detail::jsonb->>\'cause\' FROM "AuditLog" WHERE action=\'auth.login\' '
-                              'AND target=\'' + matches[0]["id"] + '\' ORDER BY id DESC LIMIT 3')
-                allowed = {"rights_pending", "member_isolated", "storage_failure", "token_invalid", "state_mismatch", "exchange_failed"}
-                causes = [value if value in allowed else "unclassified" for value in causes]
-                raise RuntimeError(f"Fixture BFF callback not admitted: paths={trace}, landing={landed.path}, causes={causes}")
-            with opener.open(self.proxy + "/api/me", timeout=30) as response:
-                me = json.loads(response.read())
-            if me.get("sub") != matches[0]["id"] or "admin" not in me.get("roles", []) or not me.get("sessionId"):
-                raise RuntimeError("Product did not admit the imported realm administrator")
-            self._rights_admin = (opener, me["sessionId"])
-        opener, session = self._rights_admin
+    def _admin_bff_session(self, username: str, password: str, sub: str) -> tuple:
+        """A real credential login (with the administrator OTP) on the public origin: an auth_time-bearing BFF session."""
+        public = urlparse(self.proxy)
+        jar = http.cookiejar.CookieJar()
+        trace = []
+
+        class PublicRedirects(HTTPRedirectHandler):
+            def redirect_request(handler, req, fp, code, msg, headers, newurl):
+                target = urlparse(newurl)
+                if (target.scheme, target.netloc) != (public.scheme, public.netloc):
+                    raise RuntimeError("Fixture BFF login redirected outside the public origin")
+                # Paths and statuses only: code/state, cookies and the entry proof are secrets.
+                trace.append((urlparse(req.full_url).path, code, target.path))
+                return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+        opener = build_opener(HTTPCookieProcessor(jar), HTTPSHandler(context=self.context), PublicRedirects())
+        # Impersonation reaches the callback but has no auth_time. The product correctly refuses that token.
+        # Use the real form on the public origin, with the same jar for every redirect and callback.
+        with opener.open(self.proxy + "/api/auth/login", timeout=30) as response:
+            page = response.read().decode("utf-8")
+        form = re.search(r'<form[^>]+action="([^"]+)"', page, re.I)
+        if not form:
+            raise RuntimeError("Fixture BFF login did not reach the credential form")
+        action = html.unescape(form.group(1))
+        target = urlparse(action)
+        if (target.scheme, target.netloc) != (public.scheme, public.netloc):
+            raise RuntimeError("Fixture credential form left the public origin")
+        request = Request(action, data=urlencode({"username": username, "password": password, "credentialId": ""}).encode("utf-8"),
+                          headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST")
+        with opener.open(request, timeout=30) as response:
+            page, url = response.read().decode("utf-8", "replace"), response.geturl()
+        # Every administrator answers the synthetic OTP (admin_otp.seed / live_admin_credential).
+        landed = urlparse(admin_otp.answer_http(opener, page, url, username)[1])
+        if not any(path == "/api/auth/callback" for path, _, _ in trace) or landed.path != "/worklist/hpacs-lite/main.html":
+            # Audit causes are allowlisted classifications, never the audit body or credentials.
+            causes = psql('SELECT detail::jsonb->>\'cause\' FROM "AuditLog" WHERE action=\'auth.login\' '
+                          'AND target=\'' + sub + '\' ORDER BY id DESC LIMIT 3')
+            allowed = {"rights_pending", "member_isolated", "storage_failure", "token_invalid", "state_mismatch", "exchange_failed"}
+            causes = [value if value in allowed else "unclassified" for value in causes]
+            raise RuntimeError(f"Fixture BFF callback not admitted: paths={trace}, landing={landed.path}, causes={causes}")
+        with opener.open(self.proxy + "/api/me", timeout=30) as response:
+            me = json.loads(response.read())
+        if me.get("sub") != sub or "admin" not in me.get("roles", []) or not me.get("sessionId"):
+            raise RuntimeError("Product did not admit the fixture institution administrator")
+        return opener, me["sessionId"]
+
+    def _await_roster(self, user_id: str, institution: str, roles: list[str]) -> None:
+        # The retained roster consumers use Keycloak. Fixture setup observes the asynchronous publication;
+        # this never supplies DB rights or turns a refused authentication into a pass.
+        deadline = time.monotonic() + 10
+        while True:
+            groups = self.kc_admin("GET", f"/users/{quote(user_id)}/groups")
+            mapped = self.kc_admin("GET", f"/users/{quote(user_id)}/role-mappings/realm")
+            if groups.status != 200 or mapped.status != 200:
+                raise RuntimeError("Cannot observe fixture roster publication")
+            assigned = sorted(r["name"] for r in mapped.body if r["name"] in policy_app_roles())
+            if sorted(g["name"] for g in groups.body) == [institution] and assigned == sorted(roles):
+                return
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Fixture roster publication did not settle")
+            time.sleep(0.05)
+
+    def _api_command(self, args: list[str]) -> subprocess.CompletedProcess:
+        return subprocess.run(['docker', 'compose', 'exec', '-T', 'api', 'node', *args], cwd=ROOT, capture_output=True,
+                              text=True, encoding='utf-8', errors='replace', timeout=PSQL_TIMEOUT_SECONDS)
+
+    def _institution_admin(self, institution: str) -> tuple[str, str, str]:
+        """(username, password, sub) of this institution's administrator, designated by the operator command if needed."""
+        if not self._INSTITUTION.fullmatch(institution):
+            raise RuntimeError("Invalid fixture institution")
+        fixed = self.FIXED_INSTITUTION_ADMINS.get(institution)
+        if fixed:
+            found = self.kc_admin("GET", f"/users?username={quote(fixed)}&exact=true")
+            matches = [u for u in (found.body if isinstance(found.body, list) else []) if u.get("username") == fixed]
+            if found.status != 200 or len(matches) > 1:
+                raise RuntimeError("Fixed institution administrator lookup failed")
+            if matches:
+                sub = str(matches[0]["id"])
+            else:
+                created = self.kc_admin("POST", "/users", {"username": fixed, "enabled": True, "emailVerified": True,
+                                                           "email": fixed + "@local.test", "firstName": "KIN", "lastName": institution})
+                if created.status != 201 or not created.body:
+                    raise RuntimeError(f"Fixed institution administrator creation failed: {created.status}")
+                sub = str(created.body)
+            username, password = fixed, uuid.uuid4().hex + "Aa1!"
+            reset = self.kc_admin("PUT", f"/users/{quote(sub)}/reset-password",
+                                  {"type": "password", "value": password, "temporary": False})
+            if reset.status != 204:
+                raise RuntimeError(f"Fixed institution administrator password failed: {reset.status}")
+        else:
+            logical = "admin-" + re.sub(r"[^a-z0-9_-]", "-", institution.lower())[-40:]
+            sub = self.create_test_identity(logical, [], "")
+            username, password = self.usernames[logical], self.passwords[logical]
+        row = self._member_rights_row(sub)
+        if not (row and row[0] == institution and not row[1] and "admin" in row[2]):
+            designated = self._api_command(['prisma/designate-first-admin.cjs', '--institution', institution, '--subject', sub,
+                                            '--operator', 'live-fixture', '--reason', 'synthetic live-test institution administrator'])
+            if designated.returncode == 2:  # Designated; the roster answer was lost: the documented recovery.
+                designated = self._api_command(['prisma/import-member-rights.cjs', '--retry-roster'])
+            if designated.returncode:
+                raise RuntimeError(f"First administrator designation failed ({institution}): {designated.stdout}{designated.stderr}")
+            row = self._member_rights_row(sub)
+        self._await_roster(sub, institution, row[2])
+        admin_otp.seed(lambda method, path, body: (lambda r: (r.status, r.body))(self.kc_admin(method, path, body)), sub)
+        time.sleep(1.05)  # A login after the designation's re-login boundary.
+        return username, password, sub
+
+    def _rights_session(self, institution: str) -> tuple:
+        sessions = self.__dict__.setdefault("_rights_admins", {})
+        if institution not in sessions:
+            self._wait_rights_ready()
+            if institution == "hallym":
+                found = self.kc_admin("GET", "/users?username=jmryu&exact=true")
+                matches = [u for u in (found.body if isinstance(found.body, list) else []) if u.get("username") == "jmryu"]
+                if found.status != 200 or len(matches) != 1 or not re.fullmatch(r"[0-9a-fA-F-]{36}", matches[0].get("id", "")):
+                    raise RuntimeError("Imported realm administrator is unavailable")
+                password = os.environ.get("KIN_LIVE_IMPORTED_ADMIN_PASSWORD")
+                if not password:
+                    raise RuntimeError("The imported synthetic administrator needs a real login credential; set KIN_LIVE_IMPORTED_ADMIN_PASSWORD")
+                sessions[institution] = self._admin_bff_session("jmryu", password, matches[0]["id"])
+            else:
+                username, password, sub = self._institution_admin(institution)
+                sessions[institution] = self._admin_bff_session(username, password, sub)
+                # Its designation and sign-in rows are fixture setup, as for every created member (create_test_identity).
+                purge_user_audit(sub)
+        return sessions[institution]
+
+    def _patch_member(self, institution: str, user_id: str, changes: dict) -> dict:
+        opener, session = self._rights_session(institution)
         request = Request(self.proxy + "/api/admin/users/" + quote(user_id),
                           data=json.dumps(changes).encode("utf-8"), method="PATCH",
                           headers={"Content-Type": "application/json", "X-KIN-CSRF": "1", "X-KIN-Session": session})
@@ -896,22 +987,34 @@ class LiveStack:
             result = json.loads(response.read())
             if response.status != 200 or result.get("id") != user_id or not isinstance(result.get("version"), int):
                 raise RuntimeError("Product member command was not committed")
+        return result
+
+    def set_member_rights(self, user_id: str, **changes) -> dict:
+        """The member's institution administrator uses the product PATCH, with its version, audit and authentication boundary.
+
+        The acting administrator is the one of the member's current institution; a member without one (the waiting room)
+        is taken by the administrator of the institution it is approved into. A move to another institution is the two
+        acts the product allows: the current institution releases the member (Revoke Approval) and the destination
+        approves it, keeping its roles and suspension unless `changes` sets them.
+        Synthetic members keep their Keycloak identity creation; no MemberRights row is seeded by the harness.
+        """
+        if not re.fullmatch(r"[0-9a-fA-F-]{36}", user_id):
+            raise RuntimeError("Invalid member id")
+        self._wait_rights_ready()
+        row = self._member_rights_row(user_id)
+        current, target = (row[0] if row else None), changes.get("institution")
+        if current and target and target != current:
+            self._patch_member(current, user_id, {"approvalState": "PENDING"})
+            moved = {key: value for key, value in changes.items() if key != "version"}
+            moved["approvalState"] = "APPROVED"
+            moved.setdefault("roles", row[2])
+            moved.setdefault("enabled", not row[1])
+            result = self._patch_member(target, user_id, moved)
+        else:
+            result = self._patch_member(current or target or "hallym", user_id, changes)
         self.__dict__.setdefault("member_rights", {})[user_id] = result
         if "institution" in changes or "roles" in changes:
-            # The retained roster consumers use Keycloak. Fixture setup observes the asynchronous publication;
-            # this never supplies DB rights or turns a refused authentication into a pass.
-            deadline = time.monotonic() + 10
-            while True:
-                groups = self.kc_admin("GET", f"/users/{quote(user_id)}/groups")
-                roles = self.kc_admin("GET", f"/users/{quote(user_id)}/role-mappings/realm")
-                if groups.status != 200 or roles.status != 200:
-                    raise RuntimeError("Cannot observe fixture roster publication")
-                assigned = sorted(r["name"] for r in roles.body if r["name"] in policy_app_roles())
-                if sorted(g["name"] for g in groups.body) == [result["institution"]] and assigned == sorted(result["roles"]):
-                    break
-                if time.monotonic() >= deadline:
-                    raise RuntimeError("Fixture roster publication did not settle")
-                time.sleep(0.05)
+            self._await_roster(user_id, result["institution"], result["roles"])
             if "admin" in result["roles"]:
                 # Administrators sign in with OTP (keycloak/README.md): the test identity gets the synthetic one.
                 admin_otp.seed(lambda method, path, body: (lambda r: (r.status, r.body))(self.kc_admin(method, path, body)), user_id)
@@ -1004,14 +1107,13 @@ class LiveStack:
                 failures.append(f"gateway 역할: {deleted.status}")
         self.created_gateway_role = False
         self.tokens.clear()
-        if getattr(self, "_rights_admin", None):
-            opener, session = self._rights_admin
+        for institution, (opener, session) in list(self.__dict__.get("_rights_admins", {}).items()):
             request = Request(self.proxy + "/api/auth/logout", data=b"", method="POST",
                               headers={"X-KIN-CSRF": "1", "X-KIN-Session": session})
             with opener.open(request, timeout=30) as response:
                 if response.status != 204:
-                    failures.append("Product realm administrator session cleanup failed")
-            self._rights_admin = None
+                    failures.append(f"Product institution administrator session cleanup failed ({institution})")
+        self.__dict__.pop("_rights_admins", None)
         if failures:
             raise RuntimeError("로컬 시험 계정 정리 실패: " + "; ".join(failures))
 
@@ -2012,6 +2114,8 @@ class BffInvariantTests(unittest.TestCase):
             # roles 검사는 institution 뒤에 돌므로 유효한 기관을 같이 보내야 roles 규칙이 실제로 실행된다
             bad = (
                 ({"approvalState": "APPROVED", "institution": "nowhere", "roles": ["radiologist"]}, "허용되지 않은 기관"),
+                # An existing institution that is not the administrator's own (api/src/member-scope.ts).
+                ({"approvalState": "APPROVED", "institution": "kin-center", "roles": ["radiologist"]}, "관리자 자신의 기관으로만"),
                 ({"approvalState": "APPROVED", "institution": "hallym", "roles": []}, "roles"),
                 ({"approvalState": "APPROVED", "institution": "hallym", "roles": ["gateway"]}, "허용되지 않은 역할"),
                 ({"approvalState": "BANNED"}, "approvalState"),
@@ -2133,6 +2237,7 @@ class BffInvariantTests(unittest.TestCase):
         try:
             for extra, fragment in (
                 ({"institution": "no-such-institution", "roles": ["radiologist"]}, "허용되지 않은 기관"),
+                ({"institution": "kin-center", "roles": ["radiologist"]}, "관리자 자신의 기관으로만"),
                 ({"institution": "hallym", "roles": ["gateway"]}, "허용되지 않은 역할"),
                 ({"institution": "hallym", "roles": []}, "roles"),
             ):

@@ -645,7 +645,8 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         self.page.keyboard.press("Enter")
         self.page.wait_for_function("() => document.querySelector('#membership-dialog').open")
         seen = self.dialog()
-        self.assertEqual(("Approve Member", "", [], []), (seen["title"], seen["institution"], seen["checked"], seen["unmanaged"]))
+        # The server assigns a member only to the administrator's own institution, so the dialog starts from it.
+        self.assertEqual(("Approve Member", INSTITUTION, [], []), (seen["title"], seen["institution"], seen["checked"], seen["unmanaged"]))
         self.set_institution(INSTITUTION)
         self.page.get_by_role("checkbox", name="임상의", exact=True).check()
         self.assertEqual({"approvalState": "APPROVED", "institution": INSTITUTION, "roles": ["clinician"]}, self.save())
@@ -663,6 +664,17 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
                          tuple(self.user("syn-invalid")[key] for key in ("approvalState", "institution", "roles")))
         expect(self.row("syn-invalid").locator("td").nth(4)).to_have_text("APPROVED")
         self.assertFalse(self.message_shown())
+
+    def test_04b_revoke_says_it_suspends_and_create_starts_from_own_institution(self):
+        self.load()
+        revoke = self.row("syn-clinician").get_by_role("button", name="Revoke Approval", exact=True)
+        hint = revoke.get_attribute("title") or ""
+        # The button says what the server does: back to PENDING, suspended, and how to undo it.
+        for word in ("승인을 취소", "정지", "PENDING", "Approve", "Activate"):
+            self.assertIn(word, hint)
+        self.page.locator("#open-create").click()
+        self.page.wait_for_function("() => document.querySelector('#create-dialog').open")
+        self.assertEqual(INSTITUTION, self.page.locator("#create-form input[name=institution]").input_value())
 
     def test_05_english_required_labels_static_and_script_rendered(self):
         self.assertEqual(24, len(ENGLISH_REQUIRED))

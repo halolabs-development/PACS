@@ -585,6 +585,10 @@
         return (!query || haystack.includes(query)) && (!institution || user.institution === institution);
       }
 
+      const REVOKE_HINT = "승인을 취소하고 계정을 정지합니다 — 회원은 로그인하지 못하고, 기관·역할이 비워져 가입 대기자처럼 승인 대기(PENDING)로 돌아갑니다. 다시 쓰게 하려면 Approve 뒤 Activate를 누르세요.";
+      // The server assigns members only to the administrator's own institution (member-scope.ts); start from it.
+      const ownInstitution = () => KinAuth.session()?.institution || "";
+
       // 이 화면이 관리하는 역할은 마크업의 체크박스가 정한다. 스크립트에 목록을 따로 두면 둘이 어긋난다.
       const roleInputs = () => [...$("#membership-form").querySelectorAll('input[name="role"]')];
 
@@ -609,7 +613,7 @@
         setDialogMessage("#membership-message", "");
         $("#membership-title").textContent = user.approvalState === "PENDING" ? "Approve Member" : "Change Membership";
         const form = $("#membership-form");
-        form.elements.institution.value = user.institution || "";
+        form.elements.institution.value = user.institution || ownInstitution();
         roleInputs().forEach(input => {
           input.checked = user.roles.includes(input.value);
         });
@@ -687,8 +691,12 @@
           const actions = document.createElement("td");
           actions.className = "actions";
           actions.append(action(user.approvalState === "PENDING" ? "Approve" : "Change Membership", () => openMembership(user)));
-          if (user.approvalState === "APPROVED")
-            actions.append(action("Revoke Approval", () => mutate(user, { approvalState: "PENDING" })));
+          if (user.approvalState === "APPROVED") {
+            const revoke = action("Revoke Approval", () => mutate(user, { approvalState: "PENDING" }));
+            // What the server does (admin.service.ts unapprove): PENDING, suspended, institution and roles cleared.
+            revoke.title = REVOKE_HINT;
+            actions.append(revoke);
+          }
           actions.append(action("Temp Password", () => resetPassword(user, "temp")));
           actions.append(action("Email Reset Link", () => resetPassword(user, "email")));
           actions.append(user.enabled
@@ -771,6 +779,8 @@
       $("#next").addEventListener("click", () => { state.page += 1; loadUsers(); });
       $("#open-create").addEventListener("click", () => {
         setDialogMessage("#create-message", "");
+        const institution = $("#create-form").elements.institution;
+        if (!institution.value) institution.value = ownInstitution();
         $("#create-dialog").showModal();
       });
       $("#logout").addEventListener("click", () => KinConsoleSession.end());

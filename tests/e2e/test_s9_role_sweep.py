@@ -184,6 +184,9 @@ class S9RoleSweepE2E(StudyAccessE2E):
         self.assertIn(home.uid, [row['uid'] for row in listed.json()['studies']])
         self.assertNotIn(destination.uid, [row['uid'] for row in listed.json()['studies']])
 
+        # An administrator manages only their own institution (api/src/member-scope.ts): hallym cannot move the
+        # member to kin-center itself. It releases the member (Revoke Approval) and kin-center's administrator approves
+        # and activates them from the waiting room, on the same served console.
         admin = self.login('jmryu')
         admin.goto(self.stack.proxy + '/worklist/hpacs-lite/admin.html')
         self.member_row(admin, actor).get_by_role(
@@ -192,18 +195,40 @@ class S9RoleSweepE2E(StudyAccessE2E):
         dialog.locator('[name=institution]').fill('kin-center')
         path = '/api/admin/users/' + subject
         with admin.expect_response(lambda response:
-                urlsplit(response.url).path == path and response.request.method == 'PATCH') as changed:
+                urlsplit(response.url).path == path and response.request.method == 'PATCH') as refused:
             dialog.get_by_role('button', name='Save', exact=True).click()
-        self.assertEqual(changed.value.status, 200)
-        self.assertEqual(changed.value.json()['institution'], 'kin-center')
-        self.assertEqual(set(changed.value.json()['roles']), {'clinician', 'radiologist'})
-        self.assertNotIn('roles', changed.value.request.post_data_json)
+        self.assertEqual(refused.value.status, 400)
+        expect(admin.locator('#message')).to_contain_text('관리자 자신의 기관으로만')
+        with admin.expect_response(lambda response:
+                urlsplit(response.url).path == path and response.request.method == 'PATCH') as released:
+            self.member_row(admin, actor).get_by_role('button', name='Revoke Approval', exact=True).click()
+        self.assertEqual(released.value.status, 200)
+        self.assertEqual((released.value.json()['approvalState'], released.value.json()['institution']), ('PENDING', None))
         # Retain this document's original binding even if its background read
         # has already navigated it to the landing page after the change.
         stale = member.request.get(self.stack.api + '/studies',
                                    headers=session_headers(binding), max_redirects=0)
         self.assertEqual(stale.status, 401)
         self.assertEqual(stale.json()['code'], 'AUTH_SESSION_ENDED')
+
+        receiving = self.login(receiver)
+        receiving.goto(self.stack.proxy + '/worklist/hpacs-lite/admin.html')
+        self.member_row(receiving, actor).get_by_role('button', name='Approve', exact=True).click()
+        received = receiving.locator('#membership-dialog')
+        expect(received.locator('[name=institution]')).to_have_value('kin-center')
+        received.locator('[name=role][value=clinician]').check()
+        received.locator('[name=role][value=radiologist]').check()
+        with receiving.expect_response(lambda response:
+                urlsplit(response.url).path == path and response.request.method == 'PATCH') as approved:
+            received.get_by_role('button', name='Save', exact=True).click()
+        self.assertEqual(approved.value.status, 200)
+        self.assertEqual(approved.value.json()['institution'], 'kin-center')
+        self.assertEqual(set(approved.value.json()['roles']), {'clinician', 'radiologist'})
+        with receiving.expect_response(lambda response:
+                urlsplit(response.url).path == path and response.request.method == 'PATCH') as activated:
+            self.member_row(receiving, actor).get_by_role('button', name='Activate', exact=True).click()
+        self.assertEqual(activated.value.status, 200)
+        self.assertTrue(activated.value.json()['enabled'])
         # Same fixture allowance as set_member_rights: a fresh login must be in
         # a later auth_time second than the membership command.
         time.sleep(1.05)
