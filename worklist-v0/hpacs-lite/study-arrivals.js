@@ -187,7 +187,7 @@
     if(b.changedAt&&Date.parse(receipt.serverReceivedAt)<Date.parse(b.changedAt))reasons.push('receipt_older_than_change');
     return {label:{key:'reported',text:'Gateway 보고('+format(receipt.serverReceivedAt)+'): 병원 보유 '+N+'건 중 '+M+'건 전송',
       title:'Gateway가 보고한 전송 수입니다. 검사 종료나 영상 수신 여부를 뜻하지 않습니다.'+(comparable?'':gap?.pending
-        ?' HALO PACS 보유 개수는 이 보고가 오기 전에 센 값이라 다음 관측에서 비교합니다.':' HALO PACS 보유 개수를 알 수 없어 비교하지 않았습니다.')},reasons};
+        ?' 이 보고는 목록 조회가 시작된 뒤 도착해 다음 관측에서 HALO PACS 보유 개수와 비교합니다.':' HALO PACS 보유 개수를 알 수 없어 비교하지 않았습니다.')},reasons};
   }
 
   /*

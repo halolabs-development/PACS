@@ -273,7 +273,7 @@ test('missing images: a paged list bounds the comparison by when its first page 
     const gap=arrivals.receiptGap(seen,report);
     assert.deepEqual([gap.missing,gap.pending,gap.text],[null,true,undefined]);
     const title=arrivals.receiptLabels({assignment:'assigned',observation:seen,gateway:report}).gateway.title;
-    assert.match(title,/이 보고가 오기 전에 센 값이라 다음 관측에서 비교합니다/);assert.doesNotMatch(title,/알 수 없어/);
+    assert.match(title,/이 보고는 목록 조회가 시작된 뒤 도착해 다음 관측에서 HALO PACS 보유 개수와 비교합니다/);assert.doesNotMatch(title,/알 수 없어/);
   }
   // A first-page time that is not a time, or later than the completing page, is not a bound.
   for(const bad of ['yesterday','2026-09-24T01:03:00.000Z',null])
