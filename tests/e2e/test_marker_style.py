@@ -82,8 +82,10 @@ class MarkerStyleE2E(ViewerHistoryE2E):
             page.wait_for_function('arg => { const d = (' + DRAWN + ')(); return ' + condition + '; }', arg=arg, timeout=timeout)
         except Exception:
             folder = Path(os.environ.get('KIN_EVIDENCE_DIR', 'tmp/marker-style')); folder.mkdir(parents=True, exist_ok=True)
-            (folder / (label + '-diagnosis.json')).write_text(json.dumps({'drawn': page.evaluate(DRAWN), 'page': page.evaluate(DIAGNOSIS)},
-                                                                          ensure_ascii=False, indent=1, default=str), encoding='utf-8')
+            diagnosis = json.dumps({'drawn': page.evaluate(DRAWN), 'page': page.evaluate(DIAGNOSIS)}, ensure_ascii=False, indent=1, default=str)
+            (folder / (label + '-diagnosis.json')).write_text(diagnosis, encoding='utf-8')
+            # Also in the suite's log, which the CI keeps.
+            print('MARKER STYLE DIAGNOSIS', label, json.dumps(json.loads(diagnosis), ensure_ascii=False, default=str)[:20000], flush=True)
             page.screenshot(path=str(folder / (label + '-failed.png')))
             raise
         return page.evaluate(DRAWN)
