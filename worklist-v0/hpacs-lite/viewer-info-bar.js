@@ -33,15 +33,17 @@ window.KinViewerInfoBar = (() => {
   // it may be moved; a piece placed by its own module keeps that place unless an earlier piece of the same corner is
   // already there, when it moves away from the corner (up from a bottom corner, down from a top one) by its margin, just
   // past the earlier piece. The table's order is the order of precedence: the viewer's own corner text, then the
-  // reference/comparison label, then the Display text, the mammography slot label and the Navigation Bar. A module
-  // never writes another module's numbers; it only calls settle() after it has placed its own piece.
+  // reference/comparison label, then the Display text, the mammography slot label and the Navigation Bar (which keeps its
+  // bottom and only starts lower). A module never writes another module's numbers; it calls settle() after it has
+  // placed its own piece, and the shell settles every cell when it refreshes. A margin is written only when it changes,
+  // so a cell whose text stays where it is (every frame of a cine) is only read.
   const CELL_TEXT = [
     { selector: '[data-cy^="viewport-overlay-"]', corner: node => node.dataset.cy.slice('viewport-overlay-'.length), fixed: true },
     { selector: '.kin-viewer-identity', corner: 'inline', fixed: true },
     { selector: '.kin-viewer-identity-group', corner: node => node.dataset.position, fixed: true },
     { selector: '.kin-display-text > .kin-display-zoom, .kin-display-text > .kin-display-corner', corner: 'inline' },
     { selector: '.kin-mg-slot', corner: 'inline' },
-    { selector: '.kin-nav-bar', corner: () => 'top-right' },
+    { selector: '.kin-nav-bar', corner: () => 'top-right', stretch: true },
   ];
   const CORNERS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
   const GAP = 2;
@@ -56,28 +58,32 @@ window.KinViewerInfoBar = (() => {
     const pieces = [];
     for (const [order, rule] of CELL_TEXT.entries()) for (const node of pane.querySelectorAll?.(rule.selector) || []) {
       const corner = cornerOf(node, rule);
-      if (!CORNERS.includes(corner)) continue;
-      if (!rule.fixed) { node.style.marginTop = ''; node.style.marginBottom = ''; }
-      pieces.push({ node, corner, order, fixed: !!rule.fixed });
+      if (CORNERS.includes(corner)) pieces.push({ node, corner, order, fixed: !!rule.fixed, stretch: !!rule.stretch });
     }
     const placed = [];
     for (const piece of pieces) {
-      const box = piece.node.getBoundingClientRect();
-      if (!box.width || !box.height || piece.node.closest('[hidden]') || getComputedStyle(piece.node).visibility === 'hidden') continue;
+      const { node } = piece, box = node.getBoundingClientRect();
+      if (!box.width || !box.height || node.closest('[hidden]') || getComputedStyle(node).visibility === 'hidden') continue;
       const rect = { left: box.left, right: box.right, top: box.top, bottom: box.bottom, corner: piece.corner };
       if (!piece.fixed) {
-        const down = piece.corner.startsWith('top');
+        const down = piece.corner.startsWith('top'), property = down ? 'marginTop' : 'marginBottom', other = down ? 'marginBottom' : 'marginTop';
+        if (node.style[other]) node.style[other] = '';
+        // The place its module gave it: where it stands without the shift settled last time.
+        const had = parseFloat(node.style[property]) || 0;
+        if (down) { rect.top -= had; if (!piece.stretch) rect.bottom -= had; } else { rect.top += had; rect.bottom += had; }
         let shift = 0;
         // Earlier pieces of this corner that this piece would cover, nearest the corner first.
         const before = placed.filter(other => other.corner === piece.corner && other.left < rect.right && other.right > rect.left)
           .sort((a, b) => down ? a.top - b.top : b.bottom - a.bottom);
-        for (const other of before) {
-          const top = rect.top + (down ? shift : -shift), bottom = rect.bottom + (down ? shift : -shift);
-          if (other.top >= bottom || other.bottom <= top) continue;
-          shift += down ? other.bottom + GAP - top : bottom - (other.top - GAP);
+        for (const earlier of before) {
+          const top = rect.top + (down ? shift : -shift), bottom = piece.stretch ? rect.bottom : rect.bottom + (down ? shift : -shift);
+          if (earlier.top >= bottom || earlier.bottom <= top) continue;
+          shift += down ? earlier.bottom + GAP - top : bottom - (earlier.top - GAP);
         }
-        if (shift > 0) piece.node.style[down ? 'marginTop' : 'marginBottom'] = Math.ceil(shift) + 'px';
-        rect.top += down ? shift : -shift; rect.bottom += down ? shift : -shift;
+        const value = shift > 0 ? Math.ceil(shift) + 'px' : '';
+        if (node.style[property] !== value) node.style[property] = value;
+        rect.top += down ? shift : -shift;
+        if (!piece.stretch) rect.bottom += down ? shift : -shift;
       }
       placed.push(rect);
     }

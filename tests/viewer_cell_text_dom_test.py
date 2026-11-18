@@ -68,6 +68,14 @@ class MammographyZoomTest(display.ViewerDisplayDOMTest):
         expect(page.locator("#pane-left .kin-display-zoom")).to_have_text("Zoom 250%")
         page.wait_for_timeout(100)
         self.assertEqual([], page.evaluate(OVERLAPS, pieces))
+        # Settled again and again with nothing moved (every frame of a cine): nothing is written, nothing moves.
+        before = page.evaluate("() => [...document.querySelectorAll('.kin-mg-slot, .kin-display-zoom')].map(n => n.getBoundingClientRect().top)")
+        writes = page.evaluate("""() => { let n = 0; const watch = new MutationObserver(r => { n += r.length; });
+            document.querySelectorAll('.kin-mg-slot, .kin-display-zoom').forEach(node => watch.observe(node, { attributes: true }));
+            for (let i = 0; i < 5; i++) document.querySelectorAll('[data-cy=viewport-pane]').forEach(p => KinViewerInfoBar.settle(p));
+            watch.takeRecords().forEach(() => n++); watch.disconnect(); return n; }""")
+        self.assertEqual(0, writes)
+        self.assertEqual(before, page.evaluate("() => [...document.querySelectorAll('.kin-mg-slot, .kin-display-zoom')].map(n => n.getBoundingClientRect().top)"))
 
 
 class IdentityNavigationTest(identity.ViewerIdentityPositionDOMTest):
@@ -97,6 +105,10 @@ class IdentityNavigationTest(identity.ViewerIdentityPositionDOMTest):
             # The bar keeps its bottom; it only starts lower.
             bottom = self.page.evaluate("() => { const p = document.querySelector('[data-cy=viewport-pane]').getBoundingClientRect(), b = document.querySelector('.kin-nav-bar').getBoundingClientRect(); return Math.round(p.bottom - b.bottom); }")
             self.assertEqual(40, bottom, size)
+            # Settled again: the bar stays where it is.
+            top = self.page.evaluate("() => document.querySelector('.kin-nav-bar').getBoundingClientRect().top")
+            self.bar()
+            self.assertEqual(top, self.page.evaluate("() => document.querySelector('.kin-nav-bar').getBoundingClientRect().top"), size)
 
     def test_corner_menu_of_the_viewer_stands_above_the_label(self):
         self.page.evaluate("window.identityMount=__mount()")
