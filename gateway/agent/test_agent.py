@@ -21,6 +21,26 @@ from agent import (
 )
 
 SOURCE = (Path(__file__).resolve().parent / "agent.py").read_text(encoding="utf-8")
+REAL_SETTINGS_STORE = agent_module.SettingsStore
+
+
+class KnownEmptySettings(REAL_SETTINGS_STORE):
+    """The tests written before Gateway settings: KIN has answered once that none are set (the known "no rules")."""
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.known = True
+
+
+_SETTINGS_PATCH = patch.object(agent_module, "SettingsStore", KnownEmptySettings)
+
+
+def setUpModule():
+    _SETTINGS_PATCH.start()
+
+
+def tearDownModule():
+    _SETTINGS_PATCH.stop()
 RECEIPT_KEYS = {"studyUid", "phase", "attempt", "successCount", "localCount", "errorCode", "epoch", "seq"}
 EPOCH = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
@@ -1217,6 +1237,453 @@ class HeartbeatTests(unittest.TestCase):
         self.assertTrue(cloud.bodies, "the beat went out with Queue unavailable")
         self.assertEqual(cloud.bodies[0]["queue"], {"waiting": 0, "retry": 0, "failed": 0})
         self.assertEqual(set(threading.enumerate()) - before, set(), "nothing is left running after run()")
+
+
+PEER = "11111111-1111-4111-8111-111111111111"
+PEER_B = "22222222-2222-4222-8222-222222222222"
+NATIVE = "1.2.840.10008.1.2.1"
+
+
+def settings_answer(routes=(), days=None, compression="none", peers=(PEER, PEER_B), revision=1):
+    return {"revision": revision, "routes": [dict(route) for route in routes], "retentionDays": days,
+            "compression": compression,
+            "destinations": [{"id": peer, "name": "SYN PACS " + peer[0], "aet": "SYNPACS" + peer[0], "host": "10.0.0.9",
+                              "port": 11112} for peer in peers]}
+
+
+def rule(modality=None, source=None, *destinations):
+    return {"modality": modality, "sourceAe": source, "destinations": list(destinations)}
+
+
+class RouteOrthanc:
+    """A local Orthanc for routing: what is held, what each call asked, and the answers a test chooses."""
+
+    def __init__(self, sops, modalities=("CT",), source_ae="SYN_CT", syntax=NATIVE):
+        self.held = {sop: {"sop": sop, "id": "id-" + sop, "size": 16, "source_ae": source_ae, "syntax": syntax}
+                     for sop in sops}
+        self.modalities, self.calls, self.deleted = set(modalities), [], []
+        self.store_error = None
+        self.store_answer = None
+        self.refuse_lossless = False
+        self.delete_error_at = None
+
+    def instances(self, uid, preferred_id):
+        self.calls.append("instances")
+        if not self.held:
+            raise GatewayError("local study lookup count=0")
+        return "orthanc-id", {"MainDicomTags": {"InstitutionName": "SYNTHETIC"}}, [
+            dict(self.held[sop]) for sop in sorted(self.held)]
+
+    def series_modalities(self, orthanc_id):
+        self.calls.append("series")
+        return set(self.modalities)
+
+    def copy_file(self, instance_id, sink):
+        self.calls.append(("copy", instance_id))
+        sink.write(b"0" * 16)
+        return 16
+
+    def copy_lossless(self, instance_id, sink):
+        self.calls.append(("lossless", instance_id))
+        if self.refuse_lossless:
+            return None
+        sink.write(b"1" * 8)
+        return 8
+
+    def put_modality(self, name, peer):
+        self.calls.append(("modality", name))
+
+    def store(self, name, instance_ids, timeout):
+        self.calls.append(("store", name, tuple(instance_ids)))
+        if self.store_error is not None:
+            raise self.store_error
+        return self.store_answer or {"FailedInstancesCount": 0, "InstancesCount": len(instance_ids)}
+
+    def delete_instance(self, instance_id):
+        if self.delete_error_at == instance_id:
+            raise GatewayError("local Orthanc HTTP 500")
+        self.deleted.append(instance_id)
+        self.held = {sop: item for sop, item in self.held.items() if item["id"] != instance_id}
+
+
+class RouteCloud:
+    """KIN: records announce, STOW and receipts; names as stored (00081199) the SOPs a test lists in `confirms`."""
+
+    def __init__(self, confirms=None):
+        self.announced, self.stowed, self.receipts = [], [], []
+        self.confirms = confirms
+        self.last_stored = set()
+        self.bodies = []
+
+    def announce(self, uid, institution_name):
+        self.announced.append(uid)
+
+    def stow(self, uid, body, content_type, source_ae):
+        self.stowed.append(uid)
+        self.bodies.append(body.read())
+        self.last_stored = set(self.confirms() if self.confirms else ())
+        return set()
+
+    def receipt(self, body):
+        self.receipts.append(body)
+        return FakeResponse(200, {"result": "stored"})
+
+
+class RoutingTests(unittest.TestCase):
+    """Gateway settings: routing to destinations, keeping sent copies for a set time, lossless compression."""
+
+    UID = "1.2.840.99.7"
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.path = str(Path(directory.name) / "queue.db")
+        self.events = []
+        logging = patch.object(agent_module, "log", side_effect=lambda event, **fields: self.events.append((event, fields)))
+        logging.start()
+        self.addCleanup(logging.stop)
+
+    def agent(self, answer=None, sops=("1.2.840.99.7.1", "1.2.840.99.7.2"), confirm=True, **orthanc) -> Agent:
+        agent = Agent(config(self.path, client_id="gw-syn"))
+        self.addCleanup(agent.queue.close)
+        agent.orthanc = RouteOrthanc(sops, **orthanc)
+        agent.cloud = RouteCloud((lambda: set(agent.orthanc.held)) if confirm else None)
+        if answer is not None:
+            self.assertTrue(agent.settings.accept(answer))
+        agent.queue.record_changes([(self.UID, "orthanc-id")], 1)
+        return agent
+
+    def kin(self, agent):
+        row = agent.queue.due()
+        self.assertIsNotNone(row)
+        agent.process(row)
+
+    def forward(self, agent):
+        row = agent.queue.forward_due()
+        self.assertIsNotNone(row)
+        try:
+            agent.process_forward(row)
+        except GatewayError as error:
+            agent.queue.forward_retry(str(row["uid"]), str(row["dest"]), str(error), 1, 10)
+
+    def forward_row(self, agent, dest=PEER):
+        return agent.queue.db.execute("SELECT * FROM forwards WHERE uid=? AND dest=?", (self.UID, dest)).fetchone()
+
+    def study_row(self, agent):
+        return agent.queue.db.execute("SELECT * FROM studies WHERE uid=?", (self.UID,)).fetchone()
+
+    def purge_now(self, agent):
+        agent.purge_at = 0
+        agent.purge()
+
+    # ── settings ──
+
+    def test_settings_shape_is_closed_and_every_destination_is_kin_or_a_listed_peer(self):
+        good = settings_answer([rule("CT", None, "kin", PEER)], days=30, compression="lossless")
+        self.assertEqual(agent_module.parse_settings(good)["routes"][0]["destinations"], ["kin", PEER])
+        bad = [
+            dict(good, extra=1),
+            settings_answer([rule("CT", None)]),                      # no destination
+            settings_answer([rule("CT", None, "kin", "kin")]),        # the same destination twice
+            settings_answer([rule("CT", None, "33333333-3333-4333-8333-333333333333")]),   # not a listed peer
+            settings_answer([rule("ct", None, "kin")]),               # modality is a code
+            settings_answer(days=-1), settings_answer(days=3651), settings_answer(days=True),
+            settings_answer(compression="jpeg"), dict(good, revision=-1), None, [],
+        ]
+        for payload in bad:
+            with self.subTest(payload=payload):
+                self.assertIsNone(agent_module.parse_settings(payload))
+
+    def test_unknown_settings_send_nothing_and_no_rules_known_is_the_old_path(self):
+        with patch.object(agent_module, "SettingsStore", REAL_SETTINGS_STORE):
+            agent = self.agent()
+            self.assertFalse(agent.settings.known)
+            agent.poll_changes = lambda: None
+            agent.flush_receipts = agent.retry_requests = lambda: None
+            with patch.object(agent_module.time, "sleep", side_effect=lambda _s: setattr(agent, "stopping", True)):
+                agent.loop()
+            self.assertEqual((agent.cloud.announced, agent.cloud.stowed, agent.orthanc.calls), ([], [], []))
+            self.assertEqual(agent.queue.due()["phase"], "pending", "the study waits, it is not lost")
+            self.assertTrue(agent.settings.accept(settings_answer()))
+            agent.stopping = False
+            with patch.object(agent_module.time, "sleep", side_effect=lambda _s: setattr(agent, "stopping", True)):
+                agent.loop()
+        self.assertEqual(agent.cloud.stowed, [self.UID])
+        # No routes: nothing about routing is read or written; the calls are the ones before routing.
+        self.assertEqual(agent.orthanc.calls, ["instances", ("copy", "id-1.2.840.99.7.1"), ("copy", "id-1.2.840.99.7.2"),
+                                               "instances"])
+        self.assertIsNone(self.study_row(agent)["destinations"])
+        self.assertEqual(agent.queue.db.execute("SELECT count(*) FROM forwards").fetchone()[0], 0)
+        self.assertNotIn("compressed", json.dumps([fields for event, fields in self.events if event == "batch.stored"]))
+
+    def test_the_settings_copy_belongs_to_one_gateway_credential_and_survives_a_restart(self):
+        with patch.object(agent_module, "SettingsStore", REAL_SETTINGS_STORE):
+            first = REAL_SETTINGS_STORE(self.path, "gw-syn")
+            self.assertTrue(first.accept(settings_answer([rule("CT", None, PEER)], days=7)))
+            again = REAL_SETTINGS_STORE(self.path, "gw-syn")
+            self.assertTrue(again.known)
+            self.assertEqual(again.current["retentionDays"], 7)
+            other = REAL_SETTINGS_STORE(self.path, "gw-other")
+            self.assertFalse(other.known)
+            self.assertEqual(other.current, agent_module.NO_SETTINGS)
+            self.assertFalse(first.accept({"revision": 2}), "a bad answer is refused")
+            self.assertEqual(first.current["retentionDays"], 7, "and the last good settings stay")
+
+    def test_the_heartbeat_thread_reads_settings_and_a_bad_or_failed_read_keeps_the_last_good(self):
+        agent = Agent(config(self.path, client_id="gw-syn"))
+        self.addCleanup(agent.queue.close)
+        beat = agent_module.Heartbeat(agent.config, agent.queue.epoch, agent.orthanc, agent.cloud, time.monotonic(),
+                                      agent.settings)
+        self.addCleanup(beat.cloud.session.close)
+        answers = [FakeResponse(200, settings_answer(days=3)), FakeResponse(200, {"revision": 9}), FakeResponse(503)]
+
+        class SettingsCloud:
+            def settings(self):
+                return answers.pop(0)
+
+        beat.cloud = SettingsCloud()
+        self.assertEqual([beat.refresh_settings(), beat.refresh_settings(), beat.refresh_settings()], [True, False, False])
+        self.assertEqual(agent.settings.current["retentionDays"], 3)
+        self.assertEqual([event for event, _fields in self.events if event.startswith("settings.")],
+                         ["settings.invalid", "settings.deferred"])
+
+    # ── routing ──
+
+    def test_route_for_first_matching_rule_by_modality_and_sending_device_or_kin(self):
+        routes = [rule("MG", None, PEER), rule("CT", "SYN_CT", "kin", PEER_B), rule(None, "SYN_US", PEER_B)]
+        self.assertEqual(agent_module.route_for(routes, {"MG"}, {"X"}), [PEER])
+        self.assertEqual(agent_module.route_for(routes, {"CT", "SR"}, {"SYN_CT"}), ["kin", PEER_B])
+        self.assertEqual(agent_module.route_for(routes, {"CT"}, {"OTHER"}), ["kin"], "both conditions must hold")
+        self.assertEqual(agent_module.route_for(routes, {"US"}, {"SYN_US", "SYN_CT"}), [PEER_B], "any instance's device")
+        self.assertEqual(agent_module.route_for(routes, {"XA"}, set()), ["kin"], "no rule holds -> KIN")
+
+    def test_two_destinations_keep_their_own_success_and_a_dead_one_holds_back_nothing_else(self):
+        agent = self.agent(settings_answer([rule("CT", None, "kin", PEER)], days=0))
+        self.kin(agent)
+        self.assertEqual(self.study_row(agent)["phase"], "complete")
+        self.assertEqual(json.loads(self.study_row(agent)["destinations"]), ["kin", PEER])
+        agent.orthanc.store_error = GatewayError("forward C-STORE HTTP 500")
+        self.forward(agent)
+        row = self.forward_row(agent)
+        self.assertEqual((row["phase"], json.loads(row["successful_sops"]), row["attempt"]), ("retry", [], 1))
+        self.assertEqual(agent.queue.successes(self.UID), set(agent.orthanc.held), "KIN's own success is untouched")
+        # The study is not cleaned up while a destination lacks it, however old (0 days) it is.
+        self.purge_now(agent)
+        self.assertEqual(agent.orthanc.deleted, [])
+        agent.orthanc.store_error = None
+        agent.queue.db.execute("UPDATE forwards SET next_at=0")
+        self.forward(agent)
+        self.assertEqual(self.forward_row(agent)["phase"], "complete")
+        self.assertEqual(json.loads(self.forward_row(agent)["successful_sops"]), sorted(agent.orthanc.held))
+        self.assertIn(("modality", "kin-route-" + PEER), agent.orthanc.calls)
+        self.assertEqual(agent.cloud.stowed, [self.UID], "the peer's delivery sent nothing more to KIN")
+
+    def test_a_partial_store_answer_is_not_success(self):
+        agent = self.agent(settings_answer([rule("CT", None, "kin", PEER)]))
+        self.kin(agent)
+        for answer in ({"FailedInstancesCount": 1, "InstancesCount": 2}, {"FailedInstancesCount": 0, "InstancesCount": 1},
+                       {"InstancesCount": 2}):
+            with self.subTest(answer=answer):
+                agent.orthanc.store_answer = answer
+                agent.queue.db.execute("UPDATE forwards SET next_at=0")
+                self.forward(agent)
+                self.assertEqual((self.forward_row(agent)["phase"], self.forward_row(agent)["successful_sops"]),
+                                 ("retry", "[]"))
+
+    def test_a_peer_only_study_never_reaches_kin(self):
+        agent = self.agent(settings_answer([rule("CT", None, PEER)]))
+        self.kin(agent)
+        self.assertEqual(self.study_row(agent)["phase"], "not_routed")
+        self.assertIsNone(agent.queue.due())
+        self.forward(agent)
+        self.assertEqual(self.forward_row(agent)["phase"], "complete")
+        self.assertEqual((agent.cloud.announced, agent.cloud.stowed, agent.cloud.receipts), ([], [], []))
+        self.assertIsNone(agent.queue.receipt(self.UID))
+        self.assertEqual(agent_module.queue_counts(self.path), {"waiting": 0, "retry": 0, "failed": 0})
+
+    def test_destinations_are_decided_once_and_kept_through_late_instances_and_rule_changes(self):
+        agent = self.agent(settings_answer([rule("CT", None, "kin", PEER)]))
+        self.kin(agent)
+        agent.settings.accept(settings_answer([rule("CT", None, PEER_B)], revision=2))
+        agent.orthanc.held["1.2.840.99.7.3"] = dict(agent.orthanc.held["1.2.840.99.7.1"], sop="1.2.840.99.7.3",
+                                                    id="id-1.2.840.99.7.3")
+        agent.queue.record_changes([(self.UID, "orthanc-id")], 2)
+        self.kin(agent)
+        self.assertEqual(json.loads(self.study_row(agent)["destinations"]), ["kin", PEER])
+        self.assertIsNone(self.forward_row(agent, PEER_B))
+        self.assertEqual([event for event, _f in self.events].count("study.routed"), 1)
+
+    def test_a_row_kin_already_knows_stays_kin_when_rules_appear(self):
+        agent = self.agent(settings_answer())
+        self.kin(agent)
+        self.assertIsNone(self.study_row(agent)["destinations"])
+        agent.settings.accept(settings_answer([rule("CT", None, PEER)], revision=2))
+        agent.queue.record_changes([(self.UID, "orthanc-id")], 2)
+        self.kin(agent)
+        self.assertEqual(json.loads(self.study_row(agent)["destinations"]), ["kin"])
+        self.assertEqual(self.study_row(agent)["phase"], "complete")
+
+    def test_a_destination_no_longer_listed_retries_and_keeps_the_copy(self):
+        agent = self.agent(settings_answer([rule("CT", None, "kin", PEER)], days=0))
+        self.kin(agent)
+        agent.settings.accept(settings_answer(peers=(PEER_B,), days=0, revision=2))
+        self.forward(agent)
+        self.assertEqual((self.forward_row(agent)["phase"], self.forward_row(agent)["last_error"]),
+                         ("retry", "forward destination unknown"))
+        self.purge_now(agent)
+        self.assertEqual(agent.orthanc.deleted, [])
+
+    def test_the_peer_is_registered_as_a_destination_with_no_right_to_send_here(self):
+        orthanc = agent_module.Orthanc(config("unused"))
+        self.addCleanup(orthanc.session.close)
+        sent = []
+        orthanc.request = lambda method, path, **kwargs: sent.append((method, path, kwargs)) or FakeResponse(200, {})
+        orthanc.put_modality("kin-route-x", {"aet": "SYNPACS", "host": "10.0.0.9", "port": 104})
+        method, path, kwargs = sent[0]
+        self.assertEqual((method, path), ("PUT", "/modalities/kin-route-x"))
+        body = kwargs["json"]
+        self.assertEqual((body["AET"], body["Host"], body["Port"]), ("SYNPACS", "10.0.0.9", 104))
+        self.assertTrue(all(body[key] is False for key in ("AllowEcho", "AllowFind", "AllowGet", "AllowMove",
+                                                           "AllowStore", "AllowStorageCommitment")))
+
+    # ── keeping sent copies ──
+
+    def test_no_retention_never_deletes(self):
+        agent = self.agent(settings_answer())
+        self.kin(agent)
+        self.purge_now(agent)
+        self.assertEqual(agent.orthanc.deleted, [])
+
+    def test_retention_deletes_only_what_every_destination_has_after_the_days_passed(self):
+        agent = self.agent(settings_answer([rule("CT", None, "kin", PEER)], days=2))
+        self.kin(agent)
+        self.forward(agent)
+        self.purge_now(agent)
+        self.assertEqual(agent.orthanc.deleted, [], "not yet two days")
+        agent.queue.db.execute("UPDATE studies SET updated_at=updated_at-2*86400-5")
+        agent.queue.db.execute("UPDATE forwards SET updated_at=updated_at-2*86400-5")
+        agent.queue.db.commit()
+        # An instance that came after the study finished (not yet stable) is held but sent nowhere.
+        agent.orthanc.held["1.2.840.99.7.9"] = dict(agent.orthanc.held["1.2.840.99.7.1"], sop="1.2.840.99.7.9",
+                                                    id="id-late")
+        self.purge_now(agent)
+        self.assertEqual(sorted(agent.orthanc.deleted), ["id-1.2.840.99.7.1", "id-1.2.840.99.7.2"])
+        self.assertEqual(list(agent.orthanc.held), ["1.2.840.99.7.9"])
+        self.assertEqual(("study.purged", {"uid": self.UID, "sops": 2, "pending": 1}), self.events[-1])
+        self.purge_now(agent)
+        self.assertEqual(len(agent.orthanc.deleted), 2, "a cleaned study is not looked at again until it changes")
+
+    def test_kin_counts_only_as_having_what_its_stow_answer_named(self):
+        agent = self.agent(settings_answer(days=0), confirm=False)
+        self.kin(agent)
+        self.assertEqual(self.study_row(agent)["phase"], "complete", "the receipt still counts sent minus failed")
+        self.purge_now(agent)
+        self.assertEqual(agent.orthanc.deleted, [], "nothing KIN did not name as stored is deleted")
+
+    def test_the_record_comes_before_the_deletion_and_a_sop_seen_again_is_sent_again(self):
+        agent = self.agent(settings_answer(days=0))
+        self.kin(agent)
+        agent.orthanc.delete_error_at = "id-1.2.840.99.7.2"
+        self.purge_now(agent)
+        self.assertEqual(agent.orthanc.deleted, ["id-1.2.840.99.7.1"])
+        self.assertEqual(agent.queue.successes(self.UID), set(), "both left the sent set before any deletion")
+        self.assertEqual(agent.queue.purged_sops(self.UID), {"1.2.840.99.7.1", "1.2.840.99.7.2"})
+        # The kept copy and a re-sent copy of the deleted SOP are both sent again on the next StableStudy.
+        agent.orthanc.held["1.2.840.99.7.1"] = {"sop": "1.2.840.99.7.1", "id": "id-again", "size": 16,
+                                                "source_ae": "SYN_CT", "syntax": NATIVE}
+        agent.queue.record_changes([(self.UID, "orthanc-id")], 2)
+        self.kin(agent)
+        self.assertEqual(agent.cloud.stowed, [self.UID, self.UID])
+        self.assertEqual(self.study_row(agent)["phase"], "complete")
+        receipt = agent.queue.receipt(self.UID)
+        self.assertEqual((receipt["successCount"], receipt["localCount"]), (2, 2), "N and M count what is held now")
+
+    def test_a_late_instance_after_the_cleanup_completes_without_an_error(self):
+        agent = self.agent(settings_answer(days=0))
+        self.kin(agent)
+        self.purge_now(agent)
+        self.assertEqual(agent.orthanc.held, {})
+        agent.orthanc.held["1.2.840.99.7.3"] = {"sop": "1.2.840.99.7.3", "id": "id-3", "size": 16, "source_ae": "SYN_CT",
+                                                "syntax": NATIVE}
+        agent.queue.record_changes([(self.UID, "orthanc-id")], 2)
+        self.kin(agent)
+        self.assertEqual(self.study_row(agent)["phase"], "complete")
+        receipt = agent.queue.receipt(self.UID)
+        self.assertEqual((receipt["successCount"], receipt["localCount"]), (1, 1))
+
+    def test_a_stable_study_that_is_gone_is_skipped_and_the_feed_goes_on(self):
+        agent = Agent(config(self.path))
+        self.addCleanup(agent.queue.close)
+        feed = {"Changes": [{"ChangeType": "StableStudy", "ID": "gone"}, {"ChangeType": "StableStudy", "ID": "here"}],
+                "Last": 7, "Done": True}
+        agent.orthanc.changes = lambda since: feed
+
+        def request(method, path, **kwargs):
+            if path == "/studies/gone":
+                raise GatewayError("local Orthanc HTTP 404")
+            return FakeResponse(200, {"MainDicomTags": {"StudyInstanceUID": "1.2.840.99.8"}})
+
+        agent.orthanc.request = request
+        agent.poll_changes()
+        self.assertEqual(agent.queue.changes_since(), 7)
+        self.assertEqual(agent.queue.due()["uid"], "1.2.840.99.8")
+        self.assertIn(("study.gone", {}), self.events)
+
+    # ── lossless compression ──
+
+    def test_lossless_recompresses_only_native_pixel_data_and_a_refusal_sends_the_stored_bytes(self):
+        agent = self.agent(settings_answer(compression="lossless"))
+        agent.orthanc.held["1.2.840.99.7.2"]["syntax"] = "1.2.840.10008.1.2.4.50"   # already compressed (lossy)
+        self.kin(agent)
+        self.assertIn(("lossless", "id-1.2.840.99.7.1"), agent.orthanc.calls)
+        self.assertNotIn(("lossless", "id-1.2.840.99.7.2"), agent.orthanc.calls)
+        self.assertIn(("copy", "id-1.2.840.99.7.2"), agent.orthanc.calls)
+        stored = [fields for event, fields in self.events if event == "batch.stored"]
+        self.assertEqual(stored[0]["compressed"], 1)
+        self.assertIn(b"1" * 8, agent.cloud.bodies[0])
+        # Orthanc refuses: the original bytes go, checked against the stored size as before (a Gateway of its own).
+        self.path = str(Path(self.path).with_name("second.db"))
+        refused = self.agent(settings_answer(compression="lossless"))
+        refused.orthanc.refuse_lossless = True
+        self.kin(refused)
+        self.assertEqual([call for call in refused.orthanc.calls if call[0] == "copy"],
+                         [("copy", "id-1.2.840.99.7.1"), ("copy", "id-1.2.840.99.7.2")])
+        self.assertEqual([fields for event, fields in self.events if event == "batch.stored"][-1]["compressed"], 0)
+
+    def test_the_transcode_request_asks_orthanc_for_jpeg_lossless_and_a_refusal_writes_nothing(self):
+        orthanc = agent_module.Orthanc(config("unused"))
+        self.addCleanup(orthanc.session.close)
+        asked = []
+
+        class Streamed(FakeResponse):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def iter_content(self, chunk_size):
+                yield b"JLS"
+
+        answers = [Streamed(200), FakeResponse(415)]
+
+        def session_request(method, url, **kwargs):
+            asked.append((method, url, kwargs.get("params")))
+            return answers.pop(0)
+
+        with patch.object(orthanc.session, "request", side_effect=session_request):
+            with tempfile.TemporaryFile() as sink:
+                self.assertEqual(orthanc.copy_lossless("one", sink), 3)
+                self.assertIsNone(orthanc.copy_lossless("two", sink))
+                self.assertEqual(sink.tell(), 3)
+        self.assertEqual(asked[0][2], {"transcode": "1.2.840.10008.1.2.4.70"})
+
+    def test_stored_sops_reads_the_referenced_sequence_and_never_raises(self):
+        answer = {"00081199": {"vr": "SQ", "Value": [{"00081155": {"vr": "UI", "Value": ["1.2.3"]}}, {"bad": 1}]}}
+        self.assertEqual(agent_module.stored_sops(answer), {"1.2.3"})
+        self.assertEqual(agent_module.stored_sops([answer]), {"1.2.3"})
+        for odd in ({}, {"00081199": []}, None, "x", {"00081199": {"Value": "x"}}):
+            self.assertEqual(agent_module.stored_sops(odd), set())
 
 
 if __name__ == "__main__":
