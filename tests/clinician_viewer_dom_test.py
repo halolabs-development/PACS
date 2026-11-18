@@ -2833,6 +2833,195 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.assertEqual(['측정을 완료하세요'], self.page.evaluate('([uid]) => synLengthText(uid)', [uid]))
         self.assertEqual([], self.length_rows())
 
+    FREEHAND_TOOL = r'''() => {
+      // The pinned PlanarFreehandROI tool's own words (its defaultGetTextLines): the perimeter or length it computed (a sum of
+      // distances on the screen) with the unit read from `unit`, which the pinned tool never fills.
+      const round = x => String(Math.round(x));
+      const pinned = (data, targetId) => {
+        const { area, mean, stdDev, length, perimeter, max, unit, areaUnit, modalityUnit } = data.cachedStats[targetId] || {};
+        const lines = [];
+        if (area) lines.push('Area: ' + round(area) + ' ' + areaUnit);
+        if (mean) lines.push('Mean: ' + round(mean) + ' ' + modalityUnit);
+        if (Number.isFinite(max)) lines.push('Max: ' + round(max) + ' ' + modalityUnit);
+        if (stdDev) lines.push('Std Dev: ' + round(stdDev) + ' ' + modalityUnit);
+        if (perimeter) lines.push('Perimeter: ' + round(perimeter) + ' ' + unit);
+        if (length) lines.push(round(length) + ' ' + unit);
+        return lines; };
+      window.synFreehandPinned = pinned;
+      // The image a target names, as the tool reads it (getTargetImageData), and the pinned unit function: mm with a pixel
+      // spacing, px without, a calibration's name after it and its scale.
+      window.synFreehandImage = { imageData: { syn: true }, hasPixelSpacing: true };
+      // The image's own header (synFreehandHeader): its pixel spacing, or none, or an ultrasound region.
+      window.synFreehandHeader = { Modality: 'CT', PixelSpacing: [0.7, 0.7] };
+      const plane = cornerstone.metaData.get;
+      cornerstone.metaData.get = (type, id) => type === 'instance' ? synFreehandHeader : plane(type, id);
+      synTools.PlanarFreehandROI = { configuration: { getTextLines: pinned }, addNewAnnotation() { return {}; },
+        getTargetImageData: () => window.synFreehandImage };
+      // The cell showing that image, turned a quarter and zoomed (screen x = zoom * world y, screen y = -zoom * world x): the
+      // tool takes the outline's box on the screen and reads its corners back on the image. [] = no cell shows the image.
+      window.synZoom = 1;
+      window.synFreehandViewports = [{ getCurrentImageId: () => synImage(),
+        worldToCanvas: p => [synZoom * p[1], -synZoom * p[0]], canvasToWorld: c => [-c[1] / synZoom, c[0] / synZoom, 0] }];
+      cornerstone.utilities = { ...(cornerstone.utilities || {}), transformWorldToIndex: (imageData, p) => [p[0] * 2, p[1] * 2, 0],
+        imageIdToURI: id => id, getViewportsWithImageURI: () => synFreehandViewports };
+      window.synUnitCalls = [];
+      cornerstoneTools.utilities = { ...(cornerstoneTools.utilities || {}), getCalibratedLengthUnitsAndScale: (image, handles) => {
+        synUnitCalls.push(handles());
+        const c = image.calibration, suffix = c && c.type ? ' ' + c.type : '';
+        const unit = (image.hasPixelSpacing ? 'mm' : 'px') + suffix;
+        return { unit, areaUnit: unit.replace(/^(mm|px)/, '$1²'), scale: c && c.scale ? c.scale : 1 }; } };
+      window.synFreehandText = (stats, polyline, closed) => {
+        const target = 'imageId:' + synImage(), data = { contour: { polyline, closed }, cachedStats: { [target]: stats } };
+        const before = JSON.stringify(data);
+        const lines = synTools.PlanarFreehandROI.configuration.getTextLines(data, target);
+        return { lines, untouched: JSON.stringify(data) === before }; };
+    }'''
+
+    def test_33_freehand_roi_words_give_the_outline_length_on_the_image(self):
+        """Where a Freehand ROI's length is known to be physical — the image's own header gives a pixel spacing, no ultrasound
+        region, the tool measures in mm with a positive scale — its perimeter (closed outline) and length (open line) are the
+        outline's length on the image, the same at any zoom, never a distance on the screen or "undefined"; the other lines
+        stay as they are. Anywhere else (no spacing in the header, where the viewer stands in a spacing of 1; an ultrasound
+        region; the image not shown) the tool's own words are given unchanged, as before. The measurement itself is never
+        changed by its words."""
+        self.me = RADIOLOGIST
+        self.open_viewer(before_boot=self.FREEHAND_TOOL)
+        self.wait_until(lambda: 'Length' in self.panel()['buttons'], 'writer controls')
+        self.page.evaluate('synTick(2)')
+        self.wait_until(lambda: self.page.evaluate('() => synTools.PlanarFreehandROI.configuration.getTextLines !== synFreehandPinned'),
+                        "the viewer's measurement settings over the Freehand ROI tool")
+        # A triangle on the image: sides 30, 20 and 36.06 — closed 86.06, open (two sides) 50. The tool's own numbers (253, 209)
+        # are distances on the screen.
+        line = [[10, 10, 0], [40, 10, 0], [40, 30, 0]]
+        closed = "{area: 283.2, areaUnit: '%s', perimeter: 253.39, mean: -800, max: -800, stdDev: 3.2, modalityUnit: 'HU', unit: undefined}"
+        opened = "{length: 208.8, modalityUnit: 'HU', getPixelValueUnitunit: undefined}"
+        spaced = "{imageData: {syn: true}, hasPixelSpacing: true}"
+        user = "{imageData: {syn: true}, hasPixelSpacing: true, calibration: {type: 'User', scale: 2}}"
+        ct, bare = "{Modality: 'CT', PixelSpacing: [0.7, 0.7]}", "{Modality: 'CR'}"
+        us = "{Modality: 'US', SequenceOfUltrasoundRegions: [{RegionDataType: 1}]}"
+        region = "{imageData: {syn: true}, hasPixelSpacing: true, calibration: {sequenceOfUltrasoundRegions: [{}]}}"
+        values = lambda unit: ['Area: 283 ' + unit, 'Mean: -800 HU', 'Max: -800 HU', 'Std Dev: 3 HU']
+        cases = [
+            (closed % 'mm²', True, ct, spaced, 1, values('mm²') + ['Perimeter: 86 mm']),
+            (closed % 'mm²', True, ct, spaced, 3, values('mm²') + ['Perimeter: 86 mm']),
+            (closed % 'mm² User', True, ct, user, 1, values('mm² User') + ['Perimeter: 43 mm User']),
+            (opened, False, ct, spaced, 1, ['50 mm']),
+            (opened, False, ct, spaced, 3, ['50 mm']),
+            (opened, False, ct, user, 1, ['25 mm User']),
+            # The header gives no spacing (the viewer stands in 1 and says it has one): the tool's own words, as before.
+            (closed % 'mm²', True, bare, spaced, 1, values('mm²') + ['Perimeter: 253 undefined']),
+            (opened, False, bare, spaced, 1, ['209 undefined']),
+            # An ultrasound region, in the header or in the image's calibration: as before.
+            (opened, False, us, spaced, 1, ['209 undefined']),
+            (opened, False, ct, region, 1, ['209 undefined']),
+            # The image cannot be read (no cell shows it now): as before.
+            (opened, False, ct, 'undefined', 1, ['209 undefined']),
+            # A tool that does fill the unit (a fixed release) is left as it is.
+            ("{length: 208.8, modalityUnit: 'HU', unit: 'mm'}", False, ct, spaced, 1, ['209 mm']),
+        ]
+        for stats, is_closed, head, image, zoom, want in cases:
+            with self.subTest(stats=stats, header=head, image=image, zoom=zoom):
+                self.page.evaluate('([zoom]) => { window.synFreehandHeader = %s; window.synFreehandImage = %s; window.synZoom = zoom; }' % (head, image), [zoom])
+                got = self.page.evaluate('([line, closed]) => synFreehandText(%s, line, closed)' % stats, [line, is_closed])
+                self.assertEqual(want, got['lines'])
+                self.assertTrue(got['untouched'], 'the measurement is not changed by its words')
+        # The unit's box as the tool takes it: around the outline on the screen, its corners read back on the image —
+        # (10,-40)..(30,-10) on the turned screen are world (40,10) and (10,30), image (80,20) and (20,60).
+        self.assertEqual([[80, 20, 0], [20, 60, 0]], self.page.evaluate('() => synUnitCalls[0]'))
+        # No cell shows the image: the outline's own box on the image, lowest corner then highest.
+        self.page.evaluate("() => { synFreehandViewports = []; synUnitCalls.length = 0; synFreehandHeader = {Modality: 'CT', PixelSpacing: [0.7, 0.7]}; synFreehandImage = {imageData: {syn: true}, hasPixelSpacing: true}; }")
+        got = self.page.evaluate("([line]) => synFreehandText({length: 208.8, modalityUnit: 'HU'}, line, false)", [line])
+        self.assertEqual(['50 mm'], got['lines'])
+        self.assertEqual([[20, 20, 0], [80, 60, 0]], self.page.evaluate('() => synUnitCalls[0]'))
+    def test_34_the_saved_item_count_follows_saves_and_deletes(self):
+        """The panel's "n개 저장 항목" is the study's saved items now: a save answered adds one, a delete answered takes one
+        away (with the delete's own words), not only when the list is read again. A list read that began before a save or a
+        delete was answered does not undo it: the item saved meanwhile is not taken for deleted elsewhere, the item deleted
+        meanwhile does not come back."""
+        self.writer_open()
+        self.wait_until(lambda: 'SYN writer key' in str(self.panel()['rows']), 'the author list')
+        self.assertEqual('1개 저장 항목 · 저장은 판독 확정과 별개입니다.', self.panel()['status'])
+        history = self.page.locator('#kin-viewer-history')
+        self.accept_writes = True
+        history.get_by_role('button', name='Add Key Image', exact=True).click()
+        self.wait_until(lambda: 'Save' in self.panel()['buttons'], "the new key image's Save")
+        history.get_by_role('button', name='Save', exact=True).click()
+        self.wait_until(lambda: self.held_writes, 'the Save on the wire')
+        saved = author_page(LATE_WRITE)['items'][0]
+        self.release(self.held_writes.pop(), saved)
+        self.wait_until(lambda: 'SYN LATE WRITTEN KEY' in str(self.panel()['rows']), 'the saved row')
+        self.assertEqual('2개 저장 항목 · 저장은 판독 확정과 별개입니다.', self.panel()['status'])
+        # Delete the saved key image (after its question): one left.
+        self.page.evaluate('() => { window.confirm = () => true; }')
+        history.locator('section').filter(has_text='SYN LATE WRITTEN KEY').get_by_role('button', name='Delete', exact=True).click()
+        self.wait_until(lambda: self.held_writes, 'the delete on the wire')
+        deleted = copy.deepcopy(saved); deleted['revision'] = 2; deleted['item']['deleted'] = True
+        self.release(self.held_writes.pop(), deleted)
+        self.assertEqual('Key Image 항목을 지웠습니다. 저장 이력은 서버에 남습니다. 1개 저장 항목 · 저장은 판독 확정과 별개입니다.',
+                         self.panel()['status'])
+        self.assertNotIn('SYN LATE WRITTEN KEY', str(self.panel()['rows']))
+        writer_head = author_page(WRITER_HEAD)['items'][0]
+        # A Refresh whose answer is held; meanwhile a new key image is saved; then the older answer (without it) arrives.
+        self.hold_writer = {(VA, 'first')}
+        history.get_by_role('button', name='Refresh', exact=True).click()
+        self.wait_until(lambda: self.held_writer, 'the Refresh held')
+        history.get_by_role('button', name='Add Key Image', exact=True).click()
+        self.wait_until(lambda: 'Save' in self.panel()['buttons'], "the second key image's Save")
+        history.get_by_role('button', name='Save', exact=True).click()
+        self.wait_until(lambda: self.held_writes, 'the second Save on the wire')
+        second = author_page(key_item(86, 'SYN SECOND KEY'))['items'][0]
+        self.release(self.held_writes.pop(), second)
+        self.release(self.held_writer.pop()[-1], {'items': [writer_head], 'nextCursor': None})
+        self.assertIn('SYN SECOND KEY', str(self.panel()['rows']), 'saved while the read was on its way: not taken for deleted')
+        self.assertEqual('2개 저장 항목 · 저장은 판독 확정과 별개입니다.', self.panel()['status'])
+        # A Refresh whose answer is held; meanwhile that key image is deleted; then the older answer (with it) arrives.
+        history.get_by_role('button', name='Refresh', exact=True).click()
+        self.wait_until(lambda: self.held_writer, 'the second Refresh held')
+        history.locator('section').filter(has_text='SYN SECOND KEY').get_by_role('button', name='Delete', exact=True).click()
+        self.wait_until(lambda: self.held_writes, 'the second delete on the wire')
+        gone = copy.deepcopy(second); gone['revision'] = 2; gone['item']['deleted'] = True
+        self.release(self.held_writes.pop(), gone)
+        self.release(self.held_writer.pop()[-1], {'items': [writer_head, second], 'nextCursor': None})
+        self.assertNotIn('SYN SECOND KEY', str(self.panel()['rows']), 'deleted while the read was on its way: does not come back')
+        self.assertEqual('1개 저장 항목 · 저장은 판독 확정과 별개입니다.', self.panel()['status'])
+    def test_35_resumed_held_work_whose_item_was_deleted_elsewhere_is_not_counted(self):
+        """Held work taken up again (Resume Held Work) on a saved item that another window deleted meanwhile: the answer lists
+        no items, so the count is 0 as the list says; the work itself is kept and told it can no longer be saved."""
+        history = self.page.locator('#kin-viewer-history')
+        self.writer_open()
+        self.wait_until(lambda: 'SYN writer key' in str(self.panel()['rows']), "A's author list")
+        row = history.locator('section').filter(has_text='SYN writer key')
+        row.get_by_role('button', name='Edit', exact=True).click()
+        history.get_by_label('Key Title', exact=True).fill('SYN EDITED KEY')
+        self.page.evaluate('study => synSwitch(study)', VP)
+        self.wait_until(lambda: self.panel()['uid'] == VP, "B's author list")
+        self.page.evaluate('study => synSwitch(study)', VA)
+        self.wait_until(lambda: (lambda p: p['uid'] == VA and 'Resume Held Work' in p['buttons'])(self.panel()), "A's work held")
+        self.hold_writer = {(VA, 'first')}
+        history.get_by_role('button', name='Resume Held Work', exact=True).click()
+        self.wait_until(lambda: self.held_writer, 'the list read of the resumed work held')
+        self.release(self.held_writer.pop()[-1], {'items': [], 'nextCursor': None})
+        self.assertEqual('0개 저장 항목 · 저장은 판독 확정과 별개입니다.', self.panel()['status'])
+        self.assertIn('다른 창에서 지운 항목입니다', str(self.panel()['rows']))
+        # The same with marks saved on their own (Auto Save View): the held work is taken up by the first read on coming back.
+        self.fresh_page()
+        self.writer_open()
+        history = self.page.locator('#kin-viewer-history')
+        self.wait_until(lambda: 'SYN writer key' in str(self.panel()['rows']), "A's author list")
+        self.accept_writes = True
+        history.locator('section').filter(has_text='SYN writer key').get_by_role('button', name='Edit', exact=True).click()
+        history.get_by_label('Key Title', exact=True).fill('SYN EDITED KEY')
+        self.page.evaluate('study => synSwitch(study)', VP)
+        self.wait_until(lambda: self.panel()['uid'] == VP, "B's author list")
+        self.page.evaluate('() => { window.KinViewerAutoSave = { marks: () => true }; }')
+        self.hold_writer = {(VA, 'first')}
+        self.page.evaluate('study => synSwitch(study)', VA)
+        self.wait_until(lambda: self.held_writer, "A's list read held")
+        self.release(self.held_writer.pop()[-1], {'items': [], 'nextCursor': None})
+        self.wait_until(lambda: 'SYN EDITED KEY' in self.page.evaluate("() => [...document.querySelectorAll('#kin-viewer-history input')].map(e => e.value).join(' ')"),
+                        'the held work taken up')
+        self.assertEqual('0개 저장 항목 · 저장은 판독 확정과 별개입니다.', self.panel()['status'])
+        self.assertIn('다른 창에서 지운 항목입니다', str(self.panel()['rows']))
     def notice(self,session,kind='broadcast'):
         self.observer.evaluate("""([session,kind])=>{const notice={type:'session-ended',session,operation:Date.now(),status:'ending'};
           if(kind==='storage')localStorage.setItem('kin-session-end',JSON.stringify(notice));
