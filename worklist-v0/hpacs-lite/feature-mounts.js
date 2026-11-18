@@ -281,7 +281,7 @@
       // Each column is its share of the shown shares; the last takes the remainder, as Template always has, so the
       // default band paints to the same sub-pixel as the percentage widths it replaces.
       // Panels에서 되살린 선택을 기본 숨김 규칙으로 다시 덮지 않는다.
-      const band = KinWorkspaceLayout.reportWindow(mode, geometry?.hiddenPanels || []);
+      const band = KinWorkspaceLayout.reportWindow(mode, geometry?.hiddenPanels || [], geometry?.collapsedPanels || []);
       for (const [name, on] of Object.entries(band.classes)) document.body.classList.toggle(name, on);
       // The five boxes' places (box-layout.js; the stylesheet applies them on the list screen only).
       const boxSwaps = KinBoxLayout.arrangement(geometry?.boxSwaps || []).swaps;

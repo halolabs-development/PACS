@@ -418,3 +418,70 @@ test('TEST-BOXES-03 withBoxSwaps keeps a fixed order, drops the field when empty
   assert.equal(layout.write(storage, owner, swapped), true);
   assert.deepEqual(layout.read(storage, owner).state.workspace.boxSwaps, ['columns', 'report']);
 });
+test('TEST-PANELS-FOLD-01 withCollapsedPanels is a choice apart from hiddenPanels, in a fixed order, sparse, kept by other writes', () => {
+  const base = layout.withHiddenPanels(layout.withStudyPanel(v3(), 'landscape', { width: 420 }), ['template']);
+  const folded = layout.withCollapsedPanels(base, ['template', 'clinical']);
+  assert.deepEqual(folded.workspace.collapsedPanels, ['clinical', 'template']);
+  assert.deepEqual(layout.collapsedPanels(folded), ['clinical', 'template']);
+  assert.deepEqual(folded.workspace.hiddenPanels, ['template']);
+  // Hiding, Show All, Study Panel, reading and box writes keep the folds; folding keeps the hidden ones.
+  assert.deepEqual(layout.withHiddenPanels(folded, []).workspace.collapsedPanels, ['clinical', 'template']);
+  assert.deepEqual(layout.withStudyPanel(folded, 'portrait', { text: 1 }).workspace.collapsedPanels, ['clinical', 'template']);
+  assert.deepEqual(layout.withReading(folded, folded.reading).workspace.collapsedPanels, ['clinical', 'template']);
+  assert.deepEqual(layout.withBoxSwaps(folded, ['side']).workspace.collapsedPanels, ['clinical', 'template']);
+  assert.deepEqual(layout.withCollapsedPanels(folded, []).workspace.hiddenPanels, ['template']);
+  assert.equal(Object.hasOwn(layout.withCollapsedPanels(folded, []).workspace, 'collapsedPanels'), false);
+  for (const bad of [['clinical', 'clinical'], ['Clinical'], 'clinical', null, [{}]]) assert.equal(layout.withCollapsedPanels(base, bad), null);
+  const unknown = structuredClone(folded); unknown.workspace.collapsedPanels = ['clinical', 'viewer'];
+  assert.equal(layout.normalize(unknown), null);
+  // The one reading of both choices.
+  assert.deepEqual(layout.panelStates(folded), { thumbnail: { shown: true, expanded: true }, aiReport: { shown: true, expanded: true },
+    imageReport: { shown: true, expanded: true }, clinical: { shown: true, expanded: false }, template: { shown: false, expanded: false } });
+  assert.deepEqual(layout.collapsedPanels(layout.defaults()), []);
+  assert.equal(layout.withCollapsedPanels(layout.defaults(), ['clinical']).version, 3);
+  // An explicit Load of an older record keeps the current folds; a complete v3 record without the field has none.
+  assert.deepEqual(layout.collapsedPanels(layout.mergeLoaded(folded, { version: 2, mode: 'auto', portrait: {}, landscape: {}, reading: folded.reading })), ['clinical', 'template']);
+  assert.deepEqual(layout.collapsedPanels(layout.mergeLoaded(folded, v3())), []);
+  const data = new Map(), storage = { getItem: k => data.get(k) ?? null, setItem: (k, v) => data.set(k, v), removeItem: k => data.delete(k) };
+  const owner = layout.key({ state: 'approved', sub: 'reader', institution: 'hospital' });
+  assert.equal(layout.write(storage, owner, folded), true);
+  assert.deepEqual(layout.read(storage, owner).state.workspace.collapsedPanels, ['clinical', 'template']);
+  // The largest record with every choice stays within the browser record's cap.
+  const all = layout.withBoxSwaps(layout.withCollapsedPanels(layout.withHiddenPanels(base, layout.PANELS), layout.PANELS), ['columns', 'list', 'side', 'report']);
+  assert.equal(layout.write(storage, owner, all), true);
+});
+
+test('TEST-PANELS-FOLD-02 reportWindow: a folded panel owns no column, keeps its name in folds, and alone makes the band its names row', () => {
+  const r = layout.reportWindow('Radiology', [], ['imageReport']);
+  assert.deepEqual(r.content.map(p => p.key), ['thumbnail', 'clinical', 'template']);
+  assert.deepEqual(r.folds, ['imageReport']);
+  assert.equal(r.classes['kin-hide-imageReport'], true);
+  assert.equal(r.classes['kin-fold-imageReport'], true);
+  assert.equal(r.classes['kin-report-window-folds'], true);
+  assert.equal(r.state, 'content');
+  // Hidden wins over folded: no name on the band.
+  const hidden = layout.reportWindow('Radiology', ['clinical'], ['clinical']);
+  assert.deepEqual(hidden.folds, []);
+  assert.equal(hidden.classes['kin-fold-clinical'], false);
+  // Thumbnail folded, AI Report open: AI Report is the tab strip above the content.
+  const strip = layout.reportWindow('Radiology', [], ['thumbnail']);
+  assert.equal(strip.strip, true);
+  assert.deepEqual(strip.tabs, ['aiReport']);
+  // AI Report folded: no tab, its name in folds.
+  const ai = layout.reportWindow('Radiology', [], ['aiReport']);
+  assert.deepEqual(ai.tabs, []);
+  assert.equal(ai.classes['kin-hide-aiReport'], true);
+  assert.deepEqual(ai.folds, ['aiReport']);
+  // Everything folded: the band is the names row.
+  const all = layout.reportWindow('Radiology', [], layout.PANELS);
+  assert.equal(all.state, 'folds');
+  assert.equal(all.classes['kin-report-window-folded'], true);
+  assert.deepEqual(all.folds, [...layout.PANELS]);
+  // Technician has no Image Report or Template column: their folds are kept but not drawn.
+  const tech = layout.reportWindow('Technician', [], ['imageReport', 'template', 'clinical']);
+  assert.deepEqual(tech.folds, ['clinical']);
+  assert.deepEqual(tech.content.map(p => p.key), ['thumbnail']);
+  // Nothing folded: the same band as before folding existed.
+  assert.deepEqual(layout.reportWindow('Radiology', ['thumbnail'], []), { ...layout.reportWindow('Radiology', ['thumbnail']) });
+  assert.equal(layout.reportWindow('Radiology', [], []).classes['kin-report-window-folds'], false);
+});
