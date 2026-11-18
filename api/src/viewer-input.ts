@@ -421,6 +421,7 @@ function measureFrame(tags: any, frame: number, frameOfReferenceUid: string | nu
     if (oriented && planar) return points.map(point => planar.imagePoint(point));
     if (tags.SharedFunctionalGroupsSequence !== undefined || tags.PerFrameFunctionalGroupsSequence !== undefined) return invalid('측정 원본의 좌표를 확인할 수 없습니다');
     const plane = viewerPlaneDefault(tags, frame);
+    if (!plane) return invalid('측정 원본의 좌표를 확인할 수 없습니다');
     const origin = tags.ImagePositionPatient === undefined ? plane.origin : metadataNumbers(tags.ImagePositionPatient, 3);
     const orientation = tags.ImageOrientationPatient === undefined ? plane.orientation : metadataNumbers(tags.ImageOrientationPatient, 6);
     const u = orientation.slice(0, 3), v = orientation.slice(3), cross = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];

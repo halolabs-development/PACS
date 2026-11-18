@@ -2,13 +2,14 @@ import { BadRequestException } from '@nestjs/common';
 import { mgGeometry } from './mg-geometry';
 
 // The plane the pinned viewer places an image in when the image gives no position or orientation (most projection X-rays):
-// rows along [0,1,0], columns along [0,0,-1], origin [0,0,0]. A multi-frame or functional-group image takes, as OHIF
-// combineFrameInstance does, the first DetectorInformationSequence item's position and orientation (NM), else origin
-// [0,0,frame] frame by frame. Points of marks drawn on such an image lie in this plane.
+// rows along [0,1,0], columns along [0,0,-1], origin [0,0,0] — [0,0,frame] for a multi-frame or functional-group image,
+// frame by frame (OHIF combineFrameInstance). Points of marks drawn on such an image lie in this plane. A multi-frame image
+// with a DetectorInformationSequence (NM) has no such plane here (null): the viewer moves that sequence's position and
+// orientation into the image by rules this does not repeat, so it is not measured.
 export function viewerPlaneDefault(tags: any, frame: number) {
   const frames = Number(tags?.NumberOfFrames ?? 1), many = tags?.PerFrameFunctionalGroupsSequence !== undefined || frames > 1;
-  const detector = many ? tags?.DetectorInformationSequence?.[0] : undefined;
-  return { origin: detector?.ImagePositionPatient ?? (many ? [0, 0, frame] : [0, 0, 0]), orientation: detector?.ImageOrientationPatient ?? [0, 1, 0, 0, 0, -1] };
+  if (many && tags?.DetectorInformationSequence !== undefined) return null;
+  return { origin: many ? [0, 0, frame] : [0, 0, 0], orientation: [0, 1, 0, 0, 0, -1] };
 }
 
 export function planarGeometry(tags: any, frame: number) {
@@ -40,14 +41,16 @@ export function planarGeometry(tags: any, frame: number) {
     // As config/ohif/planar-geometry.js: an image without a position or an orientation (most projection X-rays) is measured
     // in the plane the viewer places it in (viewerPlaneDefault).
     const plane = viewerPlaneDefault(tags, frame);
+    if (!plane) return fail();
     const position = value('PlanePositionSequence', 'ImagePositionPatient'), direction = value('PlaneOrientationSequence', 'ImageOrientationPatient');
     // Some frames give their own position or orientation and this one none: the viewer then carries another frame's over,
     // so there is no plane to measure in.
     const someFrames = (sequence, key) => Array.isArray(per) && per.some(group => group?.[sequence]?.[0]?.[key] !== undefined);
     if (position === undefined && someFrames('PlanePositionSequence', 'ImagePositionPatient') ||
         direction === undefined && someFrames('PlaneOrientationSequence', 'ImageOrientationPatient')) return fail();
-    origin = numbers(position ?? plane.origin, 3);
-    orientation = numbers(direction ?? plane.orientation, 6);
+    // A functional-group image whose groups give no position or orientation keeps its top-level one in the viewer.
+    origin = numbers(position ?? tags.ImagePositionPatient ?? plane.origin, 3);
+    orientation = numbers(direction ?? tags.ImageOrientationPatient ?? plane.orientation, 6);
   }
   if (spacing.some(n => n <= 0)) return fail();
   const rows = Number(tags.Rows), columns = Number(tags.Columns);
