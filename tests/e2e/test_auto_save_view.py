@@ -38,7 +38,8 @@ CELLS = """() => [...services.viewportGridService.getState().viewports.values()]
   const v = services.cornerstoneViewportService.getCornerstoneViewport(g.viewportId), id = v?.getCurrentImageId?.(), m = id && cornerstone.metaData.get('instance', id);
   if (!m) return { series: null };
   const r = v.getProperties().voiRange, wl = cornerstone.utilities.windowLevel.toWindowLevel(r.lower, r.upper);
-  return { series: m.SeriesInstanceUID, sop: m.SOPInstanceUID, index: v.getCurrentImageIdIndex(), zoom: v.getZoom(), focal: [...v.getCamera().focalPoint],
+  return { series: m.SeriesInstanceUID, sop: m.SOPInstanceUID, index: v.getCurrentImageIdIndex(), drawn: v.getCornerstoneImage?.()?.imageId === id,
+    zoom: v.getZoom(), focal: [...v.getCamera().focalPoint],
     w: Math.round(wl.windowWidth), l: Math.round(wl.windowCenter), badge: document.querySelector('[data-auto-view-badge]')?.textContent || null }; })"""
 # The reader's change of several cells, the first made the active one: per cell [place in grid order, image (null: the one
 # shown), window, level, zoom].
@@ -258,6 +259,9 @@ class AutoSaveViewE2E(ViewerDisplayMenuE2E):
                                "return [...services.viewportGridService.getState().viewports.keys()].some(id => id.startsWith('kin-auto-view-')); } catch (_) { return false; } }",
                                timeout=60000)
         page.wait_for_timeout(1500)
+        waiting = page.evaluate(CELLS)
+        self.assertTrue(held['routes'], 'the coronal frames were held back')
+        self.assertEqual((coronal, False), (waiting[0]['series'], waiting[0]['drawn']), 'the coronal cell has not drawn its image as the saved view goes back')
         held['going'] = True
         for route in held['routes']:
             route.continue_()
@@ -268,8 +272,8 @@ class AutoSaveViewE2E(ViewerDisplayMenuE2E):
         ARTIFACTS.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(ARTIFACTS / 'AUTO-SAVE-VIEW-reordered-reopen.png'))
         for i in (0, 1):
-            self.assertEqual((before[i]['series'], before[i]['sop'], before[i]['index'], before[i]['w'], before[i]['l']),
-                             (now[i]['series'], now[i]['sop'], now[i]['index'], now[i]['w'], now[i]['l']), 'cell %d' % i)
+            self.assertEqual((before[i]['series'], before[i]['sop'], before[i]['index'], True, before[i]['w'], before[i]['l']),
+                             (now[i]['series'], now[i]['sop'], now[i]['index'], now[i]['drawn'], now[i]['w'], now[i]['l']), 'cell %d' % i)
             self.assertAlmostEqual(before[i]['zoom'], now[i]['zoom'], places=3, msg='cell %d' % i)
             for a, b in zip(before[i]['focal'], now[i]['focal']):
                 self.assertAlmostEqual(a, b, places=2, msg='cell %d focal point' % i)

@@ -48,7 +48,8 @@
     // protocols applied); discarding: Discard Saved View on its way (the view it discards is not sent again).
     let held = false, hpRun = 0, discarding = false;
     // restoreRun: turning the check off ends the putting back of the saved view that was going on (restoreAt).
-    let restoreRun = 0, restoreAt = -1;
+    // takenOver: the reader's hand on the images while it went on; putBack: this viewer put a saved view back.
+    let restoreRun = 0, restoreAt = -1, takenOver = false, putBack = false;
     // The server's Discard generation is pinned at capture, even for queued/closing saves. A rejected old capture is
     // never relabelled with a newer generation; only a subsequent capture may use it.
     const viewerId = crypto.randomUUID();
@@ -85,8 +86,9 @@
     const paneOf = v => v.element?.closest?.('[data-cy=viewport-pane]') || v.element?.parentElement;
     const switching = () => ['kin-patient-switching', 'kin-viewer-empty'].some(name => document.body.classList.contains(name));
     const live = () => !ended && location.search === search && !session?.ended?.();
-    // Putting the saved view back stops where it is when the check is turned off (even if it is turned on again).
-    const restoring = () => live() && on && restoreAt === restoreRun;
+    // Putting the saved view back stops where it is when the check is turned off (even if it is turned on again), and when
+    // the reader takes the screen over meanwhile (takenOver, below).
+    const restoring = () => live() && on && restoreAt === restoreRun && !takenOver;
     // A restore the address chose is changing this screen now. No length of time ends it: only that restore letting go.
     const landing = () => { for (const hold of openings.holds) if (hold.screen >= screen) return true; return false; };
     // Such a restore has held this screen at some time, be it over before this viewer was here to hear of it.
@@ -134,10 +136,12 @@
     // stays closed until save() next finds one that can (settling), however long that takes. That wait keeps the
     // screen a restore left from being sent. A viewer that starts saving on a screen no such restore ever held has
     // none to keep back and does not wait: what was taken as sent before it (nothing, or the view a Discard found)
-    // stays so, and the first screen that can be captured and differs from it is saved.
+    // stays so, and the first screen that can be captured and differs from it is saved. The saved view this viewer put
+    // back itself is kept back the same way: a cell of it still drawing its image (it came too late to be put back) is
+    // the viewer's own view as it comes, not a change to send over the saved one.
     function rebase(first = false) {
       const now = captured();
-      if (!now && first && !restoredHere()) { settling = false; return; }
+      if (!now && first && !restoredHere() && !putBack) { settling = false; return; }
       settling = !now;
       if (!now) return;
       floor = first ? 0 : ++order;
@@ -339,7 +343,7 @@
       }
       const index = model.findImage(v.getImageIds?.(), instance, cell.sop, cell.frame);
       if (index >= 0) {
-        if ((v.getCurrentImageIdIndex?.() ?? -1) !== index) await moveTo(v, index);
+        if ((v.getCurrentImageIdIndex?.() ?? -1) !== index) await Promise.race([moveTo(v, index), wait(Math.max(0, until - Date.now()))]);
         if (!still()) return null;
         result.image = v.getCurrentImageIdIndex?.() === index;
         if (result.image) result.index = index;
@@ -469,17 +473,31 @@
       if (started && on) {
         phase = 'restoring'; restoreAt = restoreRun;
         // Every enabled opening needs the Discard generation for closing saves. Only a fresh non-Job opening restores.
-        try { const saved = await read(); if (saved && firstOpening && !jobChosen && restoring()) await restore(saved.snapshot); }
+        try { const saved = await read(); if (saved && firstOpening && !jobChosen && restoring()) { putBack = true; await restore(saved.snapshot); } }
         catch (error) { console.error(error); }
         if (!live()) return;
       }
       phase = 'ready';
+      // The reader took the screen over while the saved view went back: what is on it now is the reader's, saved as a
+      // change (from the saved view, which is what the server holds) once it can be captured.
+      if (takenOver && putBack && last?.snapshot) { settling = false; floor = 0; issued = { text: JSON.stringify(last.snapshot), seq: 0 }; changed(); return; }
       // The view on the screen now is the starting point: it is saved once it changes. With a chosen restore landing
       // right now, the screen that restore leaves takes its place; one that was over before this is here already.
       // A screen that cannot be captured is waited for only where such a restore has been (rebase).
       rebase(true);
     })().catch(error => console.error(error));
 
+    // The reader's hand on the images (a press or a wheel turn on a cell, a key outside a form or a window) while the
+    // saved view is going back takes the screen over: the putting back stops where it is and leaves every cell it has
+    // not reached as the reader has it.
+    const takeOver = event => {
+      if (phase !== 'restoring' || takenOver) return;
+      const target = event.target instanceof Element ? event.target : null;
+      const theirs = event.type === 'keydown' ? !target?.closest?.('input, textarea, select, [contenteditable], dialog, [role=dialog]')
+        : !!target?.closest?.('[data-cy=viewport-pane], [data-cy=viewport-grid]');
+      if (theirs) takenOver = true;
+    };
+    for (const name of ['pointerdown', 'wheel', 'keydown']) document.addEventListener(name, takeOver, { capture: true, signal });
     // ── What changes the view ──
     const listen = name => { if (name) document.addEventListener(name, changed, { capture: true, signal }); };
     [events.CAMERA_MODIFIED, events.VOI_MODIFIED, events.STACK_NEW_IMAGE].forEach(listen);

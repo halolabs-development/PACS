@@ -226,7 +226,8 @@ LATE_DRAWING = """() => {
       v.drawn = null;
       const arrive = () => {
         if (v.drawn === v.getCurrentImageId()) return;
-        if (!v.drawn) { v.camera.parallelScale = 100 * v.camera.parallelScale; v.camera.focalPoint = v.camera.focalPoint.map(n => n * 100);
+        if (!v.drawn) { const shift = v.camera.focalPoint.map(n => n * 99); v.camera.parallelScale = 100 * v.camera.parallelScale;
+          v.camera.focalPoint = v.camera.focalPoint.map((n, i) => n + shift[i]); v.camera.position = v.camera.position.map((n, i) => n + shift[i]);
           v.properties.voiRange = { lower: -160, upper: 239 }; }
         v.drawn = v.getCurrentImageId();
         v.element.dispatchEvent(new CustomEvent('syn-new', { detail: { viewportId: v.id, element: v.element } }));
@@ -237,6 +238,10 @@ LATE_DRAWING = """() => {
     }
   };
 }"""
+
+# The reader turns the wheel on a cell (place in grid order) and it goes to an image (its place in the stack).
+READER_MOVES = """([at, index]) => { const v = [...synViewports.values()][at];
+  v.element.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true })); v.setImageIdIndex(index); }"""
 
 SORT_DOWN = {'magnification': 'fit', 'windowing': None, 'filter': 'none', 'sort': 'position-desc', 'rotate': 0, 'flip': 'none',
              'firstImage': 'first', 'gspsAuto': False, 'overlay': 'none'}
@@ -626,20 +631,37 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
                          setup="() => { (" + LATE_DRAWING + ")(); window.synDrawAfter = 4000; }")
         page.wait_for_function("[...synViewports.keys()].some(id => id.startsWith('kin-auto-view-'))", timeout=8000)
         page.wait_for_timeout(600)
-        # The reader goes to the third image of the first cell before its first image has come.
-        page.evaluate("[...synViewports.values()][0].setImageIdIndex(2)")
-        page.wait_for_function("document.querySelector('[data-auto-view-badge]')", timeout=12000)
+        # The reader turns the wheel on the first cell before its first image has come: it goes to the third image.
+        page.evaluate(READER_MOVES, [0, 2])
+        page.wait_for_timeout(5000)
         ids = page.evaluate('[...synViewports.keys()]')
         left, right = self.state(page, ids[0]), self.state(page, ids[1])
         self.assertEqual('syn:set-B:3', left['image'], 'the image the reader went to stays')
         self.assertNotEqual(26.5, left['scale'], 'the saved camera of image 1 is not put on image 3')
         self.assertNotEqual({'lower': 31, 'upper': 192}, left['voi'])
-        self.assertEqual(('syn:set-A:4', 40), (right['image'], right['scale']))
-        expect(page.locator('[data-auto-view-badge]')).to_have_text('Restored saved view: Zoom 250%, W 1500 / L -310, Image 4 (1 of 2 cells; 1 not restored)')
+        self.assertEqual('syn:set-A:1', right['image'], 'the putting back stopped there: the second cell is the reader\'s too')
+        self.assertEqual(0, page.locator('[data-auto-view-badge]').count())
+        # What the reader has on the screen is theirs: it is saved over the saved view.
+        page.wait_for_function('synServer.posts.length === 1', timeout=8000)
+        self.assertEqual([SB + '.3', SA + '.1'], [c['sop'] for c in self.posts(page)[0]['cells']])
 
-    def test_05e_a_cell_whose_image_never_comes_holds_the_others_back_only_for_a_while_and_is_not_restored(self):
+    def test_05f_a_cell_the_reader_moves_while_another_waits_for_its_image_is_not_put_back_over(self):
         page = self.open(saved=view([cell(SB, 1, scale=26.5, lower=31, upper=192), cell(SA, 4)], active=1),
-                         setup="() => { (" + LATE_DRAWING + ")(); window.synNeverDraws = 'set-B'; }")
+                         setup="() => { (" + LATE_DRAWING + ")(); window.synDrawAfter = 4000; }")
+        page.wait_for_function("[...synViewports.keys()].some(id => id.startsWith('kin-auto-view-'))", timeout=8000)
+        page.wait_for_timeout(600)
+        # While the first cell waits for its image, the reader goes to the seventh image of the second.
+        page.evaluate(READER_MOVES, [1, 6])
+        page.wait_for_timeout(5000)
+        ids = page.evaluate('[...synViewports.keys()]')
+        self.assertEqual('syn:set-A:7', self.state(page, ids[1])['image'], 'the saved image 4 is not put back over the reader\'s choice')
+        self.assertEqual(0, page.locator('[data-auto-view-badge]').count())
+        page.wait_for_function('synServer.posts.length === 1', timeout=8000)
+        self.assertEqual([SB + '.1', SA + '.7'], [c['sop'] for c in self.posts(page)[0]['cells']])
+
+    def test_05e_a_cell_whose_image_comes_too_late_holds_the_others_back_only_for_a_while_and_its_coming_is_not_saved(self):
+        page = self.open(saved=view([cell(SB, 1, scale=26.5, lower=31, upper=192), cell(SA, 4)], active=1),
+                         setup="() => { (" + LATE_DRAWING + ")(); window.synDrawAfter = 30000; }")
         page.wait_for_function("[...synViewports.keys()].some(id => id.startsWith('kin-auto-view-'))", timeout=8000)
         page.wait_for_timeout(3000)
         self.assertEqual(0, page.locator('[data-auto-view-badge]').count(), 'the restore waits for the first cell\'s image')
@@ -649,8 +671,18 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         self.assertEqual((None, 100), (page.evaluate('[...synViewports.values()][0].drawn'), left['scale']), 'nothing put on the cell still empty')
         self.assertEqual(('syn:set-A:4', 40, {'lower': -1060, 'upper': 439}), (right['image'], right['scale'], right['voi']))
         expect(page.locator('[data-auto-view-badge]')).to_have_text('Restored saved view: Zoom 250%, W 1500 / L -310, Image 4 (1 of 2 cells; 1 not restored)')
-        page.wait_for_timeout(2500)
-        self.assertEqual([], self.posts(page), 'nothing saved: the empty cell is not a view to keep')
+        # A screen with a cell still drawing its image is not saved, however the other cells change.
+        page.evaluate("synViewports.get(%s).setZoom(3)" % json.dumps(ids[1])); page.wait_for_timeout(2600)
+        page.evaluate("synViewports.get(%s).setZoom(4)" % json.dumps(ids[1])); page.wait_for_timeout(2600)
+        self.assertEqual([], self.posts(page), 'nothing saved while the first cell has no image')
+        # Its image comes at last, with the viewer's own window and camera: not a change to send over the saved view.
+        page.wait_for_function("[...synViewports.values()][0].drawn === 'syn:set-B:1'", timeout=15000)
+        page.wait_for_timeout(3000)
+        self.assertEqual([], self.posts(page), 'the late image is not saved over the saved view')
+        # The reader's next change is saved, the screen as it is.
+        page.evaluate("synViewports.get(%s).setZoom(2)" % json.dumps(ids[1]))
+        page.wait_for_function('synServer.posts.length === 1', timeout=6000)
+        self.assertEqual(50, self.posts(page)[0]['cells'][1]['camera']['parallelScale'])
 
     def test_06_a_job_chosen_to_open_wins(self):
         page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), query='&kinJob=00000000-0000-4000-8000-000000000001')
