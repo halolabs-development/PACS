@@ -14079,6 +14079,11 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       markTarget(null);
       coverLayer.querySelector(`[data-box="${to}"]`)?.focus({ preventScroll: true });
     }
+    // The box whose cover is on top at a point (not one under the arrange bar), other than `from`; or null.
+    function coverAt(x, y, from) {
+      const under = Number.isFinite(x) && Number.isFinite(y) ? document.elementFromPoint(x, y)?.closest?.('.kin-box-cover') : null;
+      return under && under.parentElement === coverLayer && under.dataset.box !== from ? under.dataset.box : null;
+    }
     function startBoxDrag(event) {
       if (event.button !== 0 || !arranging || boxDrag) return;
       event.preventDefault(); boxDropped = false;
@@ -14092,21 +14097,22 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const move = e => {
         if (e.pointerId !== boxDrag?.pointer) return;
         if (Math.abs(e.clientX - startX) + Math.abs(e.clientY - startY) > 4) boxDrag.moved = true;
-        // Only a cover that is on top under the pointer is a target (not one under the arrange bar).
-        const under = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('.kin-box-cover');
-        const key = under && under.dataset.box !== boxDrag.from ? under.dataset.box : null;
+        // The box under the pointer now is only shown (highlight and outcome); the release decides the drop.
+        const key = coverAt(e.clientX, e.clientY, boxDrag.from);
         if (key !== boxDrag.target) { boxDrag.target = key; markTarget(key); }
       };
       const end = e => {
         if (e.pointerId !== boxDrag?.pointer) return;
         for (const type of ['pointermove', 'pointerup', 'pointercancel', 'lostpointercapture']) cover.removeEventListener(type, type === 'pointermove' ? move : end);
         if (cover.hasPointerCapture(e.pointerId)) cover.releasePointerCapture(e.pointerId);
-        const { from, target } = boxDrag;
+        // The drop goes to the other box under the pointer where it is released — never to the last box it moved
+        // over (the column may have scrolled since, bringing the pressed box itself back under the hand).
+        const from = boxDrag.from, target = e.type === 'pointerup' ? coverAt(e.clientX, e.clientY, from) : null;
         if (target) boxPicked = null;
         // The mouse click that follows a press which moved is not a click-pick or a click-drop: the release decided
         // (a drop on a box, or nothing over the bar or outside the boxes).
-        boxDropped = !!boxDrag.moved || (e.type === 'pointerup' && !!target);
-        if (e.type === 'pointerup' && target) dropBox(from, target);
+        boxDropped = !!boxDrag.moved || !!target;
+        if (target) dropBox(from, target);
         else { boxDrag = null; markTarget(null); renderBoxCovers(); }
       };
       boxDrag.cancel = () => end({ pointerId: boxDrag.pointer, type: 'pointercancel' });

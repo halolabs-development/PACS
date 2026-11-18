@@ -89,13 +89,28 @@ class ReadingBoxesDOM(unittest.TestCase):
     def cover(page, name):
         return page.locator('#box-arrange-covers').get_by_role('button', name=name, exact=True)
 
+    def point(self, page, name):
+        """A point where the named cover is the top-most element (the arrange bar, whose height depends on the fonts,
+        may lie over part of a box at the top of the page)."""
+        found = page.evaluate('''(name) => {
+          const cover = [...document.querySelectorAll('#box-arrange-covers .kin-box-cover')].find(n => n.getAttribute('aria-label') === name);
+          if (!cover) return { missing: true };
+          const b = cover.getBoundingClientRect();
+          for (const fy of [0.5, 0.75, 0.25, 0.9, 0.1]) for (const fx of [0.5, 0.25, 0.75]) {
+            const x = b.x + b.width * fx, y = b.y + b.height * fy;
+            if (document.elementFromPoint(x, y)?.closest('.kin-box-cover') === cover) return { x, y };
+          }
+          const top = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
+          return { covered: top ? top.outerHTML.slice(0, 120) : null, box: [b.x, b.y, b.width, b.height] };
+        }''', name)
+        self.assertIn('x', found, f'{name}: {found}')
+        return found['x'], found['y']
+
     def drag(self, page, source, target, outcome=None):
         """A real pointer drag from one cover to another; the target says the outcome before the drop."""
-        a, b = self.cover(page, source).bounding_box(), self.cover(page, target).bounding_box()
-        page.mouse.move(a['x'] + a['width'] / 2, a['y'] + a['height'] / 2)
+        page.mouse.move(*self.point(page, source))
         page.mouse.down()
-        # Aim at the lower part of the target: the arrange bar may lie over the top of a box at the top of the page.
-        page.mouse.move(b['x'] + b['width'] / 2, b['y'] + b['height'] * 0.75, steps=8)
+        page.mouse.move(*self.point(page, target), steps=8)
         if outcome:
             expect(self.cover(page, target)).to_contain_text(outcome)
             expect(page.locator('#box-arrange-status')).to_have_text(outcome)
@@ -529,13 +544,40 @@ class ReadingBoxesDOM(unittest.TestCase):
             page.wait_for_timeout(80)
             if self.cover(page, 'Report Editor').count() and self.cover(page, 'Report Editor').is_visible():
                 break
-        e = self.cover(page, 'Report Editor').bounding_box()
-        self.assertIsNotNone(e)
-        page.mouse.move(e['x'] + e['width'] / 2, e['y'] + e['height'] * 0.75, steps=6)
+        page.mouse.move(*self.point(page, 'Report Editor'), steps=6)
         expect(self.cover(page, 'Report Editor')).to_contain_text('놓으면 Related Report와 Report Editor가 자리를 바꿉니다.')
         page.mouse.up()
         settle(page)
         self.assertEqual(['report'], self.stored(page)['workspace']['boxSwaps'])
+    def test_20_the_release_decides_wheeling_back_to_the_pressed_box_drops_nothing(self):
+        page, _, _ = self.open(width=800, height=600)
+        page.locator('#rows tr[data-uid] td').first.click()
+        settle(page)
+        self.arrange(page)
+        x, y = self.point(page, 'Related Report')
+        page.mouse.move(x, y); page.mouse.down()
+        page.mouse.move(x + 10, y + 5, steps=3)
+        for _ in range(8):
+            page.mouse.wheel(0, 200)
+            page.wait_for_timeout(80)
+            if self.cover(page, 'Report Editor').count() and self.cover(page, 'Report Editor').is_visible():
+                break
+        held = self.point(page, 'Report Editor')
+        page.mouse.move(*held, steps=6)
+        expect(self.cover(page, 'Report Editor')).to_contain_text('놓으면 Related Report와 Report Editor가 자리를 바꿉니다.')
+        # The hand stays still; the wheel brings the pressed box itself back under it.
+        under = "([x, y]) => document.elementFromPoint(x, y)?.closest('.kin-box-cover')?.getAttribute('aria-label') || null"
+        for _ in range(16):
+            page.mouse.wheel(0, -60)
+            page.wait_for_timeout(120)
+            if page.evaluate(under, list(held)) == 'Related Report':
+                break
+        self.assertEqual('Related Report', page.evaluate(under, list(held)), 'the pressed box did not come back under the pointer')
+        page.mouse.up()
+        settle(page)
+        self.assertIsNone(self.stored(page))
+        # (800x600 with a study selected is the stacked layout.)
+        self.assert_order(page, ['worklist', 'relatedExams'], ['clinical', 'relatedReports', 'editor'], portrait=True)
 
 if __name__ == '__main__':
     unittest.main()
