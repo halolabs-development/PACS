@@ -53,10 +53,13 @@ export class AdminAccessReview {
     try {
       // The ledger read ends in PostgreSQL itself after 30 s, also when the browser has already given up (its API
       // deadline is 60 s) or the connection is gone: Prisma does not cancel a running query. A week of a first
-      // site's entries answers in a few seconds; a failure here is the existing 503 'query again'.
-      // SET LOCAL holds only inside this transaction: the pooled connection keeps no limit afterwards.
+      // site's entries answers in a few seconds; a failure here is the existing 503 'query again'. A shorter limit
+      // already set for the role or database is kept. Local to this transaction (set_config(..., true) = SET LOCAL):
+      // the pooled connection keeps no limit afterwards.
       [, rows] = await this.db.$transaction([
-        this.db.$executeRaw`SET LOCAL statement_timeout = '30s'`,
+        this.db.$queryRaw`SELECT set_config('statement_timeout',
+          CASE WHEN setting::bigint BETWEEN 1 AND 30000 THEN setting ELSE '30000' END, true) AS limit_ms
+          FROM pg_settings WHERE name = 'statement_timeout'`,
         this.db.$queryRaw<Row[]>`
         SELECT * FROM emr_access.review_entries(${institution}::text, ${from}::timestamptz, ${until}::timestamptz,
           ${downloads}::boolean, ${cursor?.top ?? null}::bigint, ${cursor?.before ?? null}::bigint, ${PAGE_SIZE + 1}::integer)`]);

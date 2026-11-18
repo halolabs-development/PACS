@@ -49,14 +49,13 @@ const elapsed = async work => { const start = Date.now(); const value = await wo
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 (async () => {
   const db = new PrismaClient(), witness = new PrismaClient({ datasources: { db: { url: process.env.KIN_B2R_WITNESS_URL } } });
-  const locker = new PrismaClient({ datasources: { db: { url: process.env.KIN_B2R_WITNESS_URL } } });
   const store = new AccessLedgerStore(db, new FailureJournal(db, new FailureSpool(process.env.KIN_B2R_SPOOL)));
   const requests = createRequestContext({ resolve: async () => ({ status: 'unresolved', reason: 'not-observed' }) }, createRecordPort(store).port);
   const access = { snapshot: async () => ({ policy: { restricted: false } }), unchanged: async () => {} };
   const measured = {};
   let app;
   try {
-    await db.$connect(); await witness.$connect(); await locker.$connect();
+    await db.$connect(); await witness.$connect();
     // Templates through the normal writer: a member read, a written record (both streams: a pair is one event)
     // and the two stages of a file download. The bulk copies vary institution, its status and the action.
     const download = event({ surface: 'GET studies/:uid/original-downloads/:operationId/archive', targets: [target('download')] });
@@ -161,12 +160,13 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert.deepEqual(await malformed('review_entries', false), ['SYN-MALFORMED']);
     console.log(`previous and current definition: ${compared} answers identical (rows, order, ceiling); malformed targets alike: ${await malformed('review_entries', true)}`);
 
-    // The previous definition on a day: the defect. It does not finish in 20 s.
+    // The previous definition on a day: the defect, measured (not a pass condition — the pass conditions are the
+    // current definition's answers and times below).
     const stalled = await elapsed(() => witness.$transaction([witness.$executeRawUnsafe(`SET LOCAL statement_timeout = '20s'`),
       witness.$queryRawUnsafe(`SELECT count(*) FROM emr_access.review_entries_previous('SYN-A', $1::timestamptz, $2::timestamptz, false, NULL, NULL, 26)`,
-        ago(DAY), UNTIL)]).then(() => 'answered', error => String(error.message).includes('statement timeout') ? 'timed out' : 'failed: ' + error.message));
-    assert.equal(stalled.value, 'timed out', 'the previous definition answers a day within 20 s');
-    console.log(`previous definition, one day: timed out after ${stalled.ms} ms`);
+        ago(DAY), UNTIL)]).then(() => 'answered', error => String(error.message).includes('statement timeout') ? 'not answered within 20 s' : 'failed: ' + error.message));
+    measured.previousDay = `${stalled.value} (${stalled.ms} ms)`;
+    console.log(`previous definition, one day: ${stalled.value} (${stalled.ms} ms)`);
 
     class Fixture {}
     Module({ controllers: [AdminController], providers: [AdminAccessReview,
@@ -188,11 +188,14 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
       const r = await fetch(`${base}/api/admin/audit?${query}`, { signal: signal ?? AbortSignal.timeout(60000) });
       return { status: r.status, body: await r.json() };
     };
-    const shown = row => ({ eventId: row.eventId, occurredAt: row.occurredAt, recordedAt: row.recordedAt, statutoryAct: row.statutoryAct,
-      surface: row.surface, action: row.action, result: row.result, managingInstitution: row.managingInstitution, targets: row.targets });
+    // Every field of a served row, from the reference row and its stored event.
     const expected = row => { const e = JSON.parse(row.payload); return { eventId: row.event_id, occurredAt: row.occurred_at.toISOString(),
-      recordedAt: row.recorded_at.toISOString(), statutoryAct: row.statutory_act, surface: e.surface, action: e.action, result: e.result,
-      managingInstitution: e.managingInstitution, targets: e.targets }; };
+      recordedAt: row.recorded_at.toISOString(), statutoryAct: row.statutory_act, userId: e.userId, rolesAtTime: e.rolesAtTime,
+      actingInstitution: e.actingInstitution, managingInstitution: e.managingInstitution, trustedProxyIp: e.trustedProxyIp,
+      executor: e.executor, targets: e.targets, surface: e.surface, action: e.action, result: e.result, cause: e.cause,
+      context: e.context, requestId: e.requestId, auditLinkId: e.auditLinkId, relatedEventId: e.relatedEventId,
+      affectedIdentity: e.affectedIdentity ?? null, auth: e.auth ?? null, rightsVersion: e.rightsVersion ?? null }; };
+    const cursor = next => JSON.parse(Buffer.from(next, 'base64url').toString('utf8'));
     const served = async () => (await witness.$queryRawUnsafe(`SELECT payload::jsonb AS event FROM emr_access.access_entry
       WHERE payload::jsonb->>'surface' = 'GET admin/audit' ORDER BY sequence DESC LIMIT 1`))[0].event;
     // Two pages through HTTP against the reference's first 50 events, every shown field; `late` adds an entry
@@ -203,14 +206,18 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
       assert.equal(truth.length, 51, `${label}: the period has more than two pages`);
       const first = await elapsed(() => review(span, { downloads }));
       assert.equal(first.value.status, 200, `${label}: first page ${JSON.stringify(first.value.body).slice(0, 300)}`);
-      assert.deepEqual(first.value.body.rows.map(shown), truth.slice(0, 25).map(expected), `${label}: first page`);
+      assert.deepEqual(first.value.body.rows, truth.slice(0, 25).map(expected), `${label}: first page`);
       assert.ok(first.value.body.next, `${label}: a continuation`);
+      assert.deepEqual([cursor(first.value.body.next).top, cursor(first.value.body.next).before], [truth[0].snapshot_top, truth[24].sequence],
+        `${label}: the continuation holds the period's ceiling and the last shown entry`);
       const own = await served();
       assert.deepEqual(own.targets.map(t => t.recordId.value), truth.slice(0, 25).map(r => r.entry_id), `${label}: the reader's access record names the served rows`);
       if (late) await late();
       const second = await elapsed(() => review(span, { downloads, after: first.value.body.next }));
       assert.equal(second.value.status, 200, `${label}: continuation`);
-      assert.deepEqual(second.value.body.rows.map(shown), truth.slice(25, 50).map(expected), `${label}: continuation`);
+      assert.deepEqual(second.value.body.rows, truth.slice(25, 50).map(expected), `${label}: continuation`);
+      assert.deepEqual([cursor(second.value.body.next).top, cursor(second.value.body.next).before], [truth[0].snapshot_top, truth[49].sequence],
+        `${label}: the next continuation keeps the first ceiling`);
       measured[label] = { first: first.ms, second: second.ms };
       console.log(`${label}: first page ${first.ms} ms, continuation ${second.ms} ms`);
       return first.value.body.rows.map(r => r.eventId);
@@ -228,42 +235,59 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await pages('170k: one day, file events', DAY, true);
     await pages('170k: five days', 5 * DAY, false);
 
-    // An abandoned request ends in PostgreSQL by the limit. A lock holds the read so it cannot finish first.
-    let release;
-    const held = new Promise(resolve => { release = resolve; });
-    const locked = locker.$transaction(async tx => {
-      await tx.$executeRawUnsafe('LOCK TABLE emr_access.access_entry IN ACCESS EXCLUSIVE MODE');
-      await held;
-    }, { maxWait: 10000, timeout: 180000 });
-    await pause(500);
+    // An abandoned request ends in PostgreSQL by the statement limit. To have a read that is slow by itself (working,
+    // not waiting on a lock), the previous quadratic definition stands in for the current one, then is put back.
+    const signature = 'emr_access.review_entries(text,timestamptz,timestamptz,boolean,bigint,bigint,integer)';
+    const [{ sql: current }] = await witness.$queryRawUnsafe(`SELECT pg_get_functiondef('${signature}'::regprocedure) AS sql`);
     const running = async marker => (await witness.$queryRawUnsafe(`SELECT count(*)::int AS n FROM pg_stat_activity
       WHERE datname = current_database() AND usename = 'kin_runtime' AND state = 'active' AND query LIKE $1`, marker))[0].n;
     const PRODUCT = '%SELECT * FROM emr_access.review_entries(%', PROBE = '%unbounded probe%';
-    const started = Date.now();
-    const abandon = new AbortController();
-    const abandoned = review(DAY, {}, abandon.signal).then(() => 'answered', error => error.name);
-    const waited = review(DAY, {}, AbortSignal.timeout(90000));
-    // The read as the previous code issued it: outside a transaction, no limit. A Prisma query starts when awaited.
-    const unbounded = db.$queryRawUnsafe(`/* unbounded probe */ SELECT count(*) FROM emr_access.review_entries('SYN-A', $1::timestamptz, $2::timestamptz, false, NULL, NULL, 26)`,
-      ago(DAY), UNTIL).then(rows => rows, error => error);
-    for (let i = 0; i < 100 && (await running(PRODUCT) < 2 || await running(PROBE) < 1); i++) await pause(100);
-    assert.equal(await running(PRODUCT), 2, 'both Access Review reads wait in PostgreSQL');
-    assert.equal(await running(PROBE), 1, 'the unbounded read waits in PostgreSQL');
-    abandon.abort();
-    assert.equal(await abandoned, 'AbortError');
-    await pause(5000);
-    assert.equal(await running(PRODUCT), 2, 'closing the browser request alone does not end its read');
-    const answered = await waited;
-    assert.equal(answered.status, 503, 'the waiting read is refused at the limit');
-    assert.equal(answered.body.rows, undefined);
-    for (let i = 0; i < 100 && await running(PRODUCT); i++) await pause(100);
-    const gone = Date.now() - started;
-    assert.equal(await running(PRODUCT), 0, 'no Access Review read is left in PostgreSQL, the abandoned one included');
-    assert.ok(gone >= 29000 && gone < 42000, `both reads ended by the 30 s limit (${gone} ms)`);
-    assert.equal(await running(PROBE), 1, 'an unbounded read would still be waiting');
-    release(); await locked; await unbounded;
-    measured.abandoned = gone;
-    console.log(`abandoned and waiting reads ended in PostgreSQL ${gone} ms after they started (503); the unbounded read was still waiting`);
+    await witness.$executeRawUnsafe(body.replace('CREATE FUNCTION', 'CREATE OR REPLACE FUNCTION'));
+    try {
+      // A shorter limit already set for the runtime role is kept (new sessions read it).
+      await witness.$executeRawUnsafe(`ALTER ROLE kin_runtime SET statement_timeout = '3s'`);
+      await db.$disconnect(); await db.$connect();
+      const shorter = await elapsed(() => review(DAY));
+      assert.equal(shorter.value.status, 503, 'a slow read under a 3 s role limit is refused');
+      assert.ok(shorter.ms < 15000, `the role's 3 s limit is kept, not raised to 30 s (${shorter.ms} ms)`);
+      await witness.$executeRawUnsafe(`ALTER ROLE kin_runtime RESET statement_timeout`);
+      await db.$disconnect(); await db.$connect();
+      measured.roleLimit = shorter.ms;
+      console.log(`a 3 s role limit was kept: 503 after ${shorter.ms} ms`);
+
+      const started = Date.now();
+      const abandon = new AbortController();
+      const abandoned = review(DAY, {}, abandon.signal).then(() => 'answered', error => error.name);
+      const waited = review(DAY, {}, AbortSignal.timeout(90000));
+      // The read as the previous code issued it: outside a transaction, no limit. A Prisma query starts when awaited.
+      const unbounded = db.$queryRawUnsafe(`/* unbounded probe */ SELECT count(*) FROM emr_access.review_entries('SYN-A', $1::timestamptz, $2::timestamptz, false, NULL, NULL, 26)`,
+        ago(DAY), UNTIL).then(rows => rows, error => error);
+      for (let i = 0; i < 100 && (await running(PRODUCT) < 2 || await running(PROBE) < 1); i++) await pause(100);
+      assert.equal(await running(PRODUCT), 2, 'both Access Review reads run in PostgreSQL');
+      assert.equal(await running(PROBE), 1, 'the unbounded read runs in PostgreSQL');
+      abandon.abort();
+      assert.equal(await abandoned, 'AbortError');
+      await pause(5000);
+      assert.equal(await running(PRODUCT), 2, 'closing the browser request alone does not end its read');
+      const answered = await waited;
+      assert.equal(answered.status, 503, 'the waiting read is refused at the limit');
+      assert.equal(answered.body.rows, undefined);
+      for (let i = 0; i < 100 && await running(PRODUCT); i++) await pause(100);
+      const gone = Date.now() - started;
+      assert.equal(await running(PRODUCT), 0, 'no Access Review read is left in PostgreSQL, the abandoned one included');
+      assert.ok(gone >= 29000 && gone < 42000, `both reads ended by the 30 s limit (${gone} ms)`);
+      assert.equal(await running(PROBE), 1, 'an unbounded read would still be running');
+      await witness.$queryRawUnsafe(`SELECT pg_cancel_backend(pid)::text FROM pg_stat_activity WHERE usename = 'kin_runtime' AND query LIKE $1`, PROBE);
+      await unbounded;
+      measured.abandoned = gone;
+      console.log(`abandoned and waiting reads ended in PostgreSQL ${gone} ms after they started (503); the unbounded read was still running`);
+    } finally {
+      await witness.$executeRawUnsafe(`ALTER ROLE kin_runtime RESET statement_timeout`);
+      await witness.$executeRawUnsafe(current);
+      await witness.$queryRawUnsafe(`SELECT pg_cancel_backend(pid)::text FROM pg_stat_activity WHERE usename = 'kin_runtime' AND query LIKE $1`, PROBE);
+    }
+    assert.ok(!(await witness.$queryRawUnsafe(`SELECT prosrc FROM pg_proc WHERE oid = '${signature}'::regprocedure`))[0].prosrc.includes('ceiling AS ('),
+      'the current definition is back');
     // The limit stays inside its transaction: every pooled connection keeps the server default.
     const settings = await Promise.all(Array.from({ length: 30 }, () =>
       db.$queryRawUnsafe(`SELECT current_setting('statement_timeout') AS t, pg_backend_pid() AS pid FROM pg_sleep(0.3)`)));
@@ -291,6 +315,6 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     console.log('PASS: Access Review over a day, five days and a week on 170k and 1.02M entries; same answers as before; abandoned reads end in PostgreSQL');
   } finally {
     if (app) await app.close();
-    await db.$disconnect(); await witness.$disconnect(); await locker.$disconnect();
+    await db.$disconnect(); await witness.$disconnect();
   }
 })().catch(error => { console.error(error); process.exitCode = 1; });

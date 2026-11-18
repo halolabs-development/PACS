@@ -142,6 +142,7 @@ jobs:
             tmp/module-a-01-2/
             tmp/emr-a/
             tmp/download-producer-b2/
+            tmp/access-review-period/
             tmp/request-auth/
           if-no-files-found: error
           retention-days: 7
