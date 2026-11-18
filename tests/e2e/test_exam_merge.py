@@ -186,7 +186,10 @@ class ExamMergeE2E(WorklistE2E):
         viewer.wait_for_url("**/ohif/viewer?**", timeout=30000)
         query = parse_qs(urlsplit(viewer.url).query)
         self.assertEqual(query["StudyInstanceUIDs"], [a.uid])
-        self.assertIsNone(query.get("kinExamScopes"))
+        # A study with a grouping history opens on a reference the server attests holds it alone (no group).
+        self.assertIsNone(query.get("kinExam"))
+        scopes = json.loads(query["kinExamScopes"][0]) if query.get("kinExamScopes") else None
+        self.assertTrue(scopes is None or (scopes["current"]["groupId"] is None and scopes["prior"] is None), scopes)
         self.rendered(viewer, a.uid)
         viewer.close()
         # The saved report keeps the exam it was written on; it is not approved as the base study's alone — Reset goes on.
