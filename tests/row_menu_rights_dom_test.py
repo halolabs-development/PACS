@@ -219,9 +219,13 @@ class RowMenuRightsDOM(unittest.TestCase):
         toast = page.locator('#toast')
         expect(toast).to_contain_text('SYN 검사 정보 변경은 technician 권한이 필요합니다')
         expect(self.row(0)).not_to_contain_text('Verified')
+        # Delete gets its own refusal words: the toast must be Delete's, after a DELETE that was really sent.
+        self.site.refuse_writes = (403, 'SYN 검사 삭제는 technician 권한이 필요합니다')
+        page.evaluate("() => { document.querySelector('#toast').textContent = ''; }")
         self.row_menu(0)
         self.item('Delete').click()
-        expect(toast).to_contain_text('SYN 검사 정보 변경은 technician 권한이 필요합니다')
+        expect(toast).to_contain_text('SYN 검사 삭제는 technician 권한이 필요합니다')
+        self.assertTrue(any(m == 'DELETE' for m, _, _ in self.site.writes), self.site.writes)
         expect(page.locator('#rows tr[data-uid]')).to_have_count(len(self.site.modalities))
         self.assertEqual([], self.errors)
 
@@ -296,6 +300,22 @@ class RowMenuRightsDOM(unittest.TestCase):
         page.keyboard.press('Escape')
         expect(self.menu).to_be_hidden()
         expect(page.locator('#orderrows tr[data-oid]').first).to_be_focused()
+        # Enter on Match (confirm accepted): the match is sent, the lists are read again, and the focus is still on that
+        # order row after every redraw.
+        reads = lambda: sum(1 for m, p in self.site.calls if m == 'GET' and p == '/api/bootstrap')
+        before = reads()
+        page.keyboard.press('Shift+F10')
+        expect(self.item('Match')).to_be_focused()
+        page.keyboard.press('Enter')
+        expect(self.menu).to_be_hidden()
+        for _ in range(100):
+            if any(m == 'POST' and p == '/api/match' for m, p, _ in self.site.writes) and reads() > before:
+                break
+            page.wait_for_timeout(100)
+        self.assertTrue(any(m == 'POST' and p == '/api/match' for m, p, _ in self.site.writes), self.site.writes)
+        self.assertGreater(reads(), before, 'the Order List was not read again after the match')
+        page.wait_for_timeout(500)
+        expect(page.locator('#orderrows tr[data-oid]').first).to_be_focused()
         self.assertEqual([], self.errors)
 
     def test_keyboard_menu_with_every_item_grey_still_closes(self):
@@ -314,8 +334,10 @@ class RowMenuRightsDOM(unittest.TestCase):
     def test_mouse_menu_keeps_the_focus_where_it_was(self):
         page = self.open(BOTH)
         self.row(0).click()
+        expect(self.row(0)).to_be_focused()
         self.row_menu(0)
-        self.assertFalse(self.menu.evaluate('m => m.contains(document.activeElement)'))
+        # The right-clicked row keeps the focus (the menu does not take it), as before.
+        expect(self.row(0)).to_be_focused()
         self.close_menu()
         self.assertEqual([], self.errors)
 
@@ -331,6 +353,8 @@ class RowMenuRightsDOM(unittest.TestCase):
             if not self.menu.is_visible():
                 self.row_menu(0)
             expect(self.item(name)).to_have_attribute('aria-disabled', 'false')
+            # Each item's own notice: the toast is emptied first, so an earlier item's notice cannot answer for it.
+            page.evaluate("() => { document.querySelector('#toast').textContent = ''; }")
             self.item(name).click()
             expect(self.menu).to_be_hidden()
             expect(page.locator('#toast')).to_contain_text(LATER)

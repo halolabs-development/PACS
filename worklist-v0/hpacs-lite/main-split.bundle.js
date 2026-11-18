@@ -3555,6 +3555,9 @@
       const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       if (mode !== "Technician") return;
       const list = filteredOrders();
+      // A redraw keeps the focus on the order row that had it (as the worklist rows do): after a click, a menu item
+      // (Match, Unmatch) or a list read again, the keyboard stays on that order.
+      const focusedOid = document.activeElement?.closest?.("#orderrows tr[data-oid]")?.dataset.oid ?? null;
       $("#orderrows").innerHTML = list.map((o, i) => `
         <tr data-oid="${esc(o.oid)}" tabindex="-1" class="${o.oid === selectedOid ? "sel" : ""}">
           <td class="num">${i + 1}</td>
@@ -3562,6 +3565,7 @@
           <td translate="no">${esc(o.id)}</td><td translate="no">${esc(o.name)}</td><td translate="no">${esc(o.sex)}</td><td translate="no">${esc(o.birth)}</td>
           <td translate="no">${esc(o.sched)}</td><td translate="no">${esc(o.modality)}</td><td translate="no">${esc(o.desc)}</td><td translate="no">${esc(o.ward)}</td><td translate="no">${esc(o.reqDoc)}</td>
         </tr>`).join("") || `<tr><td class="empty" colspan="11">오더 없음</td></tr>`;
+      if (focusedOid !== null) $("#orderrows").querySelector(`tr[data-oid="${CSS.escape(focusedOid)}"]`)?.focus({ preventScroll: true });
 
       const s = cur(), o = curOrder();
       kinWrite($("#orderhint"), kinSay("선택: 검사 {0}  ·  오더 {1}{t2}", s ? s.name + " / " + s.date : { t: "(없음)" }, o ? o.name + " / " + o.sched : { t: "(없음)" },
@@ -3572,8 +3576,6 @@
       const tr = e.target.closest("tr[data-oid]"); if (!tr) return;
       selectedOid = tr.dataset.oid;
       renderOrders();
-      // The clicked order row keeps the focus in its redrawn row (the ContextMenu key / Shift+F10 opens its menu there).
-      $("#orderrows").querySelector(`tr[data-oid="${CSS.escape(selectedOid)}"]`)?.focus({ preventScroll: true });
     });
     $("#o-sync").addEventListener("change", renderOrders);
     /**
@@ -14483,16 +14485,18 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     }
     /**
      * The ContextMenu key and Shift+F10 on a row open its menu from the keyboard (as on a saved-search chip): the first
-     * item takes the focus. The browser may also fire its own `contextmenu` for the same key press (before or after
-     * keyup); that one is dropped while the key's menu is the one shown. A pointer press ends the key's turn.
+     * item takes the focus. The browser may also fire its own `contextmenu` for the same key press (after keydown, or
+     * on keyup however long the key was held); the first one is dropped. A pointer press or another key ends the key's
+     * turn, so a later right-click or menu key is never taken for it.
      */
-    let ctxKeyAt = 0;
+    let ctxKeyPending = false;
     const isMenuKey = e => e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10');
     const ctxFromKey = e => {
-      if (!ctxKeyAt || performance.now() - ctxKeyAt > 1500) return false;
-      ctxKeyAt = 0; e.preventDefault(); return true;
+      if (!ctxKeyPending) return false;
+      ctxKeyPending = false; e.preventDefault(); return true;
     };
-    document.addEventListener('pointerdown', () => { ctxKeyAt = 0; }, true);
+    document.addEventListener('pointerdown', () => { ctxKeyPending = false; }, true);
+    document.addEventListener('keydown', e => { if (!isMenuKey(e) && e.key !== 'Shift') ctxKeyPending = false; }, true);
     // Wherever that browser `contextmenu` lands (the row, or the menu item that now has the focus), it is dropped here once.
     document.addEventListener('contextmenu', e => { if (ctxFromKey(e)) e.stopPropagation(); }, true);
     /** Where a keyboard menu of a row opens and where its focus goes back: that row as it is drawn now. */
@@ -14582,7 +14586,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const tr = e.target.closest("tr");
       if (!tr?.dataset.uid) return;
       e.preventDefault();
-      ctxKeyAt = performance.now();
+      ctxKeyPending = true;
       openRowMenu(e, tr, true);
     });
     let ctxSelection = null;
@@ -14727,7 +14731,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       if (!isMenuKey(e)) return;
       const tr = e.target.closest("tr[data-oid]"); if (!tr) return;
       e.preventDefault();
-      ctxKeyAt = performance.now();
+      ctxKeyPending = true;
       showOrderMenu(e, tr, true);
     });
 

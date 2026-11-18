@@ -34,16 +34,18 @@
     }
     /**
      * The ContextMenu key and Shift+F10 on a row open its menu from the keyboard (as on a saved-search chip): the first
-     * item takes the focus. The browser may also fire its own `contextmenu` for the same key press (before or after
-     * keyup); that one is dropped while the key's menu is the one shown. A pointer press ends the key's turn.
+     * item takes the focus. The browser may also fire its own `contextmenu` for the same key press (after keydown, or
+     * on keyup however long the key was held); the first one is dropped. A pointer press or another key ends the key's
+     * turn, so a later right-click or menu key is never taken for it.
      */
-    let ctxKeyAt = 0;
+    let ctxKeyPending = false;
     const isMenuKey = e => e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10');
     const ctxFromKey = e => {
-      if (!ctxKeyAt || performance.now() - ctxKeyAt > 1500) return false;
-      ctxKeyAt = 0; e.preventDefault(); return true;
+      if (!ctxKeyPending) return false;
+      ctxKeyPending = false; e.preventDefault(); return true;
     };
-    document.addEventListener('pointerdown', () => { ctxKeyAt = 0; }, true);
+    document.addEventListener('pointerdown', () => { ctxKeyPending = false; }, true);
+    document.addEventListener('keydown', e => { if (!isMenuKey(e) && e.key !== 'Shift') ctxKeyPending = false; }, true);
     // Wherever that browser `contextmenu` lands (the row, or the menu item that now has the focus), it is dropped here once.
     document.addEventListener('contextmenu', e => { if (ctxFromKey(e)) e.stopPropagation(); }, true);
     /** Where a keyboard menu of a row opens and where its focus goes back: that row as it is drawn now. */
@@ -133,7 +135,7 @@
       const tr = e.target.closest("tr");
       if (!tr?.dataset.uid) return;
       e.preventDefault();
-      ctxKeyAt = performance.now();
+      ctxKeyPending = true;
       openRowMenu(e, tr, true);
     });
     let ctxSelection = null;
@@ -278,6 +280,6 @@
       if (!isMenuKey(e)) return;
       const tr = e.target.closest("tr[data-oid]"); if (!tr) return;
       e.preventDefault();
-      ctxKeyAt = performance.now();
+      ctxKeyPending = true;
       showOrderMenu(e, tr, true);
     });
