@@ -17,6 +17,7 @@ import type { Caller } from './pacs/access';
 import { dump } from './pacs/values';
 import { QR_MESSAGES, QR_ROW_CAP, answerRows, isStudyUid, jobAnswer, modalityBody, normalizePeer, peerFailure, peerKey, searchCriteria } from './query-retrieve';
 import type { JobAnswer } from './query-retrieve';
+import { GATEWAY_PEER_ROUTED, routedPeers, storedGatewaySettings } from './gateway-settings';
 
 const ANSWER_TTL_MS = 60 * 60 * 1000;
 const JOB_TTL_MS = 24 * 60 * 60 * 1000;
@@ -97,14 +98,27 @@ export class QueryRetrieveService {
     const peer = await this.peer(id, me);
     return this.inPeerTurn(peer.id, async () => {
       const current = await this.peer(peer.id, me);
+      // A Gateway route that sends to this peer keeps it: the route is changed first (Gateway Rules). Checked before
+      // anything is removed, and again under the institution row lock a Gateway settings save also takes.
+      await this.refuseRouted(this.prisma, me, current.id, false);
       await this.orthanc.deleteModality(peerKey(me, current.id));
       await this.prisma.$transaction(async tx => {
+        await this.refuseRouted(tx, me, current.id, true);
         await tx.dicomPeer.delete({ where: { id: current.id } });
         await tx.auditLog.create({ data: { actor: c.actor || 'unknown', action: 'institution.dicom-peer.remove', target: current.id,
           detail: dump({ institution: me, name: current.name, aet: current.aet, host: current.host, port: current.port }) } });
       }, { maxWait: 4000, timeout: 8000 });
       return { removed: current.id };
     });
+  }
+
+  private async refuseRouted(db: any, me: string, peerId: string, lock: boolean) {
+    const rows: any[] = lock
+      ? await db.$queryRaw`SELECT "gatewaySettings" FROM "Institution" WHERE id = ${me} FOR UPDATE`
+      : await db.institution.findMany({ where: { id: me }, select: { gatewaySettings: true } });
+    if (rows.length && routedPeers(storedGatewaySettings(rows[0].gatewaySettings)).has(peerId))
+      throw new ConflictException({ code: GATEWAY_PEER_ROUTED,
+        message: 'Gateway 규칙이 이 상대 PACS로 보내고 있습니다. Gateway Rules에서 먼저 빼세요.' });
   }
 
   // ── members: search, retrieve, follow ──

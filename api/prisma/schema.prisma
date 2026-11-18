@@ -118,6 +118,9 @@ model Institution {
   /// FA-090 EMR Link: the hospital EMR's web address with {patientId}, {accession} and {studyUid} placeholders, entered by
   /// the institution's administrator. NULL = not set (the worklist's Open EMR stays grey).
   emrLinkTemplate String? @db.VarChar(2000)
+  /// Gateway settings of the institution's Gateways: routing rules, how long sent copies are kept, lossless compression
+  /// (api/src/gateway-settings.ts). NULL = none set: KIN only, nothing deleted, sent as stored.
+  gatewaySettings Json?
   createdAt  DateTime @default(now())
   transferBases TransferBasis[]
   agreementsFrom ProcessingAgreement[] @relation("AgreementFrom")
