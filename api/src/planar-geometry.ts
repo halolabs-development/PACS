@@ -29,6 +29,8 @@ export function planarGeometry(tags: any, frame: number) {
   if (mg) ({ origin, orientation, spacing, basis } = mg);
   else {
     const pixel = value('PixelMeasuresSequence', 'PixelSpacing');
+    // An empty Pixel Spacing (null): which spacing and which basis it means is not given — no value.
+    if (pixel === null) return fail();
     spacing = numbers(pixel ?? value('FramePixelDataPropertiesSequence', 'ImagerPixelSpacing'), 2);
     basis = pixel !== undefined ? 'pixel' : 'detector';
     if (basis === 'detector') {

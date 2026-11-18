@@ -38,6 +38,7 @@ CORNERSTONE = """() => {
       if (type === 'instance') return tags;
       if (type === 'imagePlaneModule') return id === 'syn:ct' ? { imagePositionPatient: [0, 0, 0], rowCosines: [1, 0, 0], columnCosines: [0, 1, 0],
         rowPixelSpacing: 0.5, columnPixelSpacing: 0.5, frameOfReferenceUID: '2.25.4' } : { rowPixelSpacing: null, columnPixelSpacing: null };
+      if (type === 'calibratedPixelSpacing') return window.synCalibration?.[id];
       if (type === 'modalityLutModule') return id === 'syn:ct' ? { rescaleSlope: 1, rescaleIntercept: -1024 } : { rescaleSlope: 1, rescaleIntercept: 0 };
     } },
     cache: { getImage: id => ({ rows: 100, columns: 100, color: false, numberOfComponents: 1, slope: 1, intercept: id === 'syn:ct' ? -1024 : 0, getPixelData: () => pixels }) },
@@ -203,6 +204,21 @@ class ViewerMeasureDOMTest(unittest.TestCase):
         self.press(page, 'right', [10, 10])
         self.assertEqual([('KinText', 'syn:cr', 'scar')], [(m['tool'], m['image'], m['text']) for m in self.marks(page)])
 
+    def test_04b_a_screen_calibration_after_a_circle_takes_its_value_away(self):
+        page = self.open()
+        panel = self.tool(page, 'Circle by Diameter')
+        self.press(page, 'left', [50, 40])
+        label = page.locator('[data-kin-measure-layer=left] [data-kin-mark=KinCircleDiameter]')
+        expect(label).to_contain_text('Ø 10.0 mm')
+        # The Calibration tool writes its metadata first; the drawn circle no longer has a value in the original's spacing.
+        page.evaluate("() => { window.synCalibration = { 'syn:ct': { type: 'User', scale: 2 } }; synView('left', { zoom: 2 }); }")
+        expect(label).to_contain_text('보정한 간격의 영상에서는 mm 값을 내지 않습니다')
+        expect(label).not_to_contain_text('Ø 10.0 mm')
+        # A new circle on the calibrated image is refused.
+        self.press(page, 'left', [60, 60])
+        expect(panel.get_by_role('status')).to_contain_text('보정한 간격의 영상에서는 mm 값을 내지 않습니다')
+        self.assertEqual(1, len(self.marks(page)))
+        panel.get_by_role('button', name='Close').click()
     def test_05_every_press_asks_the_edit_gate_and_a_patient_switch_refuses(self):
         page = self.open()
         panel = self.tool(page, 'Text')

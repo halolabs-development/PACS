@@ -65,13 +65,16 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
   // The canvas point of a press, in the coordinates canvasToWorld reads.
   const canvasPoint = (v, event) => { const rect = (v.canvas || v.element).getBoundingClientRect(); return [event.clientX - rect.left, event.clientY - rect.top]; };
 
+  // A screen calibration on this image: the cached image's, or the calibrated-spacing metadata the Calibration tool writes first.
+  function calibratedHere(imageId) {
+    let calibrated; try { calibrated = cs.metaData.get('calibratedPixelSpacing', imageId); } catch (_) { calibrated = undefined; }
+    return !!(cs.cache?.getImage?.(imageId)?.calibration?.type || calibrated?.type);
+  }
   // The spacing of a measurement on an image, or a reason. points: image pixel coordinates that must share one spacing.
   // tags: the original's tags when the image has no instance metadata of its own (the Job print's offscreen copy).
   function geometry(imageId, points = [], tags = instance(imageId)) {
     if (!tags) return { reason: '영상 정보를 확인할 수 없습니다' };
-    // A screen calibration: the cached image's, or the calibrated-spacing metadata the Calibration tool writes first.
-    let calibrated; try { calibrated = cs.metaData.get('calibratedPixelSpacing', imageId); } catch (_) { calibrated = undefined; }
-    if (cs.cache?.getImage?.(imageId)?.calibration?.type || calibrated?.type) return { reason: '보정한 간격의 영상에서는 mm 값을 내지 않습니다' };
+    if (calibratedHere(imageId)) return { reason: '보정한 간격의 영상에서는 mm 값을 내지 않습니다' };
     const plane = cs.metaData.get('imagePlaneModule', imageId) || {};
     const us = typeof window.kinUsRegionGeometry === 'function' ? window.kinUsRegionGeometry(tags) : null;
     if (us) {
@@ -238,7 +241,8 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
   const checks = new Map();
   function circleCheck(a, imageId, fresh = false) {
     if (!model) return { reason: '' };
-    const key = JSON.stringify([imageId, a.data.handles.points, a.data.kinBaseline]);
+    // A screen calibration set since the last verdict changes it (the circle then has no value in the original's spacing).
+    const key = JSON.stringify([imageId, a.data.handles.points, a.data.kinBaseline, calibratedHere(imageId)]);
     const cached = checks.get(a.annotationUID);
     if (!fresh && cached?.key === key) return cached.result;
     let result;

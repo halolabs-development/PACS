@@ -105,7 +105,8 @@ test('multi-frame images: the viewer origin, the top-level position, no plane wh
  for(const geometry of [context.kinPlanarGeometry(partial,1),planarGeometry(partial,1)])assert.ok(Math.abs(geometry.measure('length',line)-10)<1e-9);
 });test('projection images without a usable spacing still measure nothing',()=>{
  const cr={...projection,Modality:'CR',SOPClassUID:'1.2.840.10008.5.1.4.1.1.1'};
- for(const tags of [cr,{...cr,PixelSpacing:['0.000','0.000']},{...cr,ImagerPixelSpacing:[.2,.2],EstimatedRadiographicMagnificationFactor:0}]){
+ // An empty Pixel Spacing (DICOM JSON without Value, read as null) beside an Imager Pixel Spacing names no basis: no value.
+ for(const tags of [cr,{...cr,PixelSpacing:['0.000','0.000']},{...cr,ImagerPixelSpacing:[.2,.2],EstimatedRadiographicMagnificationFactor:0},{...cr,Modality:'DX',SOPClassUID:'1.2.840.10008.5.1.4.1.1.1.1',PixelSpacing:null,ImagerPixelSpacing:[.2,.2]}]){
   assert.throws(()=>context.kinPlanarGeometry(tags,1),/원본 프레임의 좌표·간격·보정을 확인할 수 없습니다/);
   assert.throws(()=>planarGeometry(tags,1),/원본 프레임의 좌표·간격·보정을 확인할 수 없습니다/);
  }
