@@ -41,14 +41,14 @@
     function renderBodyParts() {
       const state = worklistBodyParts.sync(studies);
       $('#body-parts-load').disabled = !state.allowed || state.busy || !state.total || state.verified === state.total;
-      $('#body-parts-load').textContent = state.failed ? 'Retry Body Parts' : state.verified ? 'Resume Body Parts' : 'Read Body Parts';
+      kinWrite($('#body-parts-load'), state.failed ? kinSay('Retry Body Parts') : state.verified ? kinSay('Resume Body Parts') : kinSay('Read Body Parts'));
       $('#body-parts-refresh').hidden = !state.verified && !state.failed;
       $('#body-parts-refresh').disabled = !state.allowed || state.busy;
       $('#body-parts-cancel').hidden = !state.busy;
-      $('#body-parts-status').textContent = state.note || (state.busy
-        ? `부위 조회 중 · ${state.verified}/${state.total}건 확인`
-        : state.verified || state.failed ? `부위 ${state.verified}/${state.total}건 확인 · 실패 ${state.failed}건`
-        : 'Body Part 검색은 촬영 부위 조회 후 사용할 수 있습니다.');
+      kinWrite($('#body-parts-status'), state.note || (state.busy
+        ? kinSay("부위 조회 중 · {0}/{n1}건 확인", state.verified, state.total)
+        : state.verified || state.failed ? kinSay("부위 {0}/{n1}건 확인 · 실패 {n2}건", state.verified, state.total, state.failed)
+        : kinSay('Body Part 검색은 촬영 부위 조회 후 사용할 수 있습니다.')));
     }
     function relatedCandidates() {
       const s=cur();return s ? studies.filter(x=>x.uid===s.uid || (s.sourcePatientKey&&x.sourcePatientKey===s.sourcePatientKey)) : [];
@@ -227,7 +227,7 @@
         box.setAttribute("role", "status");
         box.style.cssText = "padding:2px 10px;font-size:12px";
         const title = document.createElement("strong"), text = document.createElement("span");
-        title.textContent = "Patient Identity Conflict";
+        kinWrite(title, kinSay("Patient Identity Conflict"));
         text.id = "identity-issues-text";
         box.append(title, " ", text);
         // Clicking the notice (or Enter/Space on it) shows the UID and status of each excluded study below it; again hides them.
@@ -237,7 +237,7 @@
         list.hidden = true;
         box.tabIndex = 0;
         box.style.cursor = "pointer";
-        box.title = "누르면 목록에서 제외한 검사의 Study UID와 상태를 펼칩니다.";
+        kinWrite(box, kinSay("누르면 목록에서 제외한 검사의 Study UID와 상태를 펼칩니다."), "title");
         box.setAttribute("aria-controls", list.id);
         box.setAttribute("aria-expanded", "false");
         const toggle = () => {
@@ -401,17 +401,17 @@
         return at(a.k) - at(b.k);
       });
       const head = document.createElement('header');
-      const title = document.createElement('h2'); title.id = 'exam-filter-title'; title.textContent = 'Filter Exams';
-      const close = document.createElement('button'); close.type = 'button'; close.textContent = 'Close';
+      const title = document.createElement('h2'); title.id = 'exam-filter-title'; kinWrite(title, kinSay('Filter Exams'));
+      const close = document.createElement('button'); close.type = 'button'; kinWrite(close, kinSay('Close'));
       head.append(title, close);
       const note = document.createElement('p'); note.lang = 'ko';
-      note.textContent = '조건을 고르고 Apply를 누르면 목록에 바로 적용됩니다. 목록 위 필터 줄과 같은 조건입니다.';
+      kinWrite(note, kinSay('조건을 고르고 Apply를 누르면 목록에 바로 적용됩니다. 목록 위 필터 줄과 같은 조건입니다.'));
       const form = document.createElement('form'); form.method = 'dialog';
       const inputs = new Map();
       for (const c of cols) {
         const label = document.createElement('label'); label.append(document.createTextNode(c.t + ' '));
         // A short code (PF, RS, EM, SS) carries the same explanation as its list header.
-        if (HEAD_HELP[c.k]) label.title = HEAD_HELP[c.k];
+        if (HEAD_HELP[c.k]) kinWrite(label, kinSay(HEAD_HELP[c.k]), "title");
         const current = Array.isArray(fval[c.k]) ? fval[c.k].join(',') : String(fval[c.k] ?? '');
         let control;
         if (c.k === 'date') {
@@ -429,27 +429,27 @@
           control = { get: () => input.value.trim(), set: v => { input.value = v; }, focus: () => input.focus() };
         } else {
           const input = document.createElement('select');
-          for (const o of ['', ...c.f]) { const opt = document.createElement('option'); opt.value = o; opt.textContent = o || 'Any'; input.append(opt); }
+          for (const o of ['', ...c.f]) { const opt = document.createElement('option'); opt.value = o; kinWrite(opt, o || kinSay('Any')); input.append(opt); }
           input.value = current; label.append(input);
           control = { get: () => input.value, set: v => { input.value = v; }, focus: () => input.focus() };
         }
         form.append(label); inputs.set(c.k, control);
       }
-      const apply = document.createElement('button'); apply.type = 'submit'; apply.textContent = 'Apply';
-      const clear = document.createElement('button'); clear.type = 'button'; clear.textContent = 'Clear';
+      const apply = document.createElement('button'); apply.type = 'submit'; kinWrite(apply, kinSay('Apply'));
+      const clear = document.createElement('button'); clear.type = 'button'; kinWrite(clear, kinSay('Clear'));
       // Save the chosen conditions as a named shortcut folder that appears under "My Shortcuts" in the Folders menu.
       const nameLabel = document.createElement('label'); nameLabel.append(document.createTextNode('Shortcut Name '));
       const nameInput = document.createElement('input'); nameInput.type = 'text'; nameInput.maxLength = 100; nameInput.placeholder = 'e.g. Unassigned CT';
       nameLabel.append(nameInput); form.append(nameLabel);
-      const saveBtn = document.createElement('button'); saveBtn.type = 'button'; saveBtn.textContent = 'Save as Shortcut';
+      const saveBtn = document.createElement('button'); saveBtn.type = 'button'; kinWrite(saveBtn, kinSay('Save as Shortcut'));
       const status = document.createElement('p'); status.setAttribute('role', 'status'); status.lang = 'ko';
       const actions = document.createElement('footer'); actions.append(apply, saveBtn, clear);
       form.append(actions, status);
       saveBtn.onclick = async () => {
         const name = nameInput.value.trim();
-        if (!name) { status.textContent = '바로가기 이름을 입력하세요.'; nameInput.focus(); return; }
+        if (!name) { kinWrite(status, kinSay('바로가기 이름을 입력하세요.')); nameInput.focus(); return; }
         commit([...inputs].map(([k, ctl]) => [k, ctl.get()]));
-        saveBtn.disabled = true; status.textContent = '저장 중입니다…';
+        saveBtn.disabled = true; kinWrite(status, kinSay('저장 중입니다…'));
         try {
           const at = work.capture('document');
           if (await filterWriteReady(undefined, at)) throw new Error('서버 계정으로 로그인한 뒤 저장할 수 있습니다.');
@@ -581,8 +581,10 @@
       $('#page-size').value = String(resultPageSize);
       $('#page-prev').disabled = resultPage === 0; $('#page-next').disabled = resultPage >= pages - 1;
       $('#page-current').disabled = !list.some(s => s.uid === selectedUid);
-      $('#row-keyboard-help').textContent='↑/↓ · Home/End 이동 · Space 선택 · Enter '+(mode==='Radiology'?'판독 진입':'검사 선택');
-      $('#page-status').textContent = `불러온 목록 중 ${list.length ? offset + 1 : 0}–${Math.min(offset + resultPageSize, list.length)} / ${list.length}건 · ${resultPage + 1}/${pages}페이지` + (bodyPartNote ? ` · ${bodyPartNote}` : '');
+      kinWrite($('#row-keyboard-help'), kinSay('↑/↓ · Home/End 이동 · Space 선택 · Enter {t0}', kinSay(mode === 'Radiology' ? '판독 진입' : '검사 선택')));
+      kinWrite($('#page-status'), kinSay('불러온 목록 중 {0}–{n1} / {n2}건 · {3}/{n4}페이지{5}',
+        list.length ? offset + 1 : 0, Math.min(offset + resultPageSize, list.length), list.length, resultPage + 1, pages,
+        bodyPartNote ? kinSay(' · {0}', bodyPartNote) : ''));
 
       rowNavigation?.beforeRender();
       $("#rows").innerHTML = list.slice(offset, offset + resultPageSize).map((s, i) => `
@@ -629,17 +631,28 @@
 
       const n = (k, v) => list.filter(s => s[k] === v).length;
       if (mode === "Radiology") {
-        $("#countlist").innerHTML =
-          // Same words as the RS column; T (saved draft, not yet approved) is counted too so drafts are not missed.
-          `<span class="count" title="RS: W — 아직 판독하지 않음"><span class="dot dot-w"></span>Unread: ${n("rs","W")}</span>` +
-          `<span class="count" title="RS: T — 저장했지만 아직 승인하지 않은 판독문"><span class="dot dot-t"></span>In Progress: ${n("rs","T")}</span>` +
-          `<span class="count" title="RS: P — 상급 판독의 승인 대기"><span class="dot dot-p"></span>Preliminary: ${n("rs","P")}</span>` +
-          `<span class="count" title="RS: H — 판독 보류"><span class="dot dot-ho"></span>On Hold: ${n("rs","H")}</span>` +
-          `<span class="count" title="RS: A — 승인된 판독문 (승인 후 24시간이 지난 Finalized 포함)"><span class="dot dot-a"></span>Approved: ${n("rs","A")}</span>` +
-          `<span class="count">Unverified:${n("ss","Unverified")}</span>`;
+        const states = [
+          ["W", "w", "Unread: {0}", "RS: W — 아직 판독하지 않음"],
+          ["T", "t", "In Progress: {0}", "RS: T — 저장했지만 아직 승인하지 않은 판독문"],
+          ["P", "p", "Preliminary: {0}", "RS: P — 상급 판독의 승인 대기"],
+          ["H", "ho", "On Hold: {0}", "RS: H — 판독 보류"],
+          ["A", "a", "Approved: {0}", "RS: A — 승인된 판독문 (승인 후 24시간이 지난 Finalized 포함)"],
+        ];
+        const counts = states.map(([state, color, caption, help]) => {
+          const count = document.createElement("span"), dot = document.createElement("span");
+          count.className = "count";
+          dot.className = "dot dot-" + color;
+          kinWrite(count, kinSay(caption, n("rs", state)));
+          kinWrite(count, kinSay(help), "title");
+          count.prepend(dot);
+          return count;
+        });
+        const unverified = document.createElement("span");
+        unverified.className = "count";
+        kinWrite(unverified, kinSay("Unverified:{0}", n("ss", "Unverified")));
+        $("#countlist").replaceChildren(...counts, unverified);
       } else {
-        $("#countlist").textContent =
-          `Verified:${n("ss","Verified")} Unverified:${n("ss","Unverified")} · Unmatched:${n("matched","U")} · Total ${list.length}`;
+        kinWrite($("#countlist"), kinSay("Verified:{0} Unverified:{1} · Unmatched:{2} · Total {n3}", n("ss","Verified"), n("ss","Unverified"), n("matched","U"), list.length));
       }
       renderChips();
       // S4-U5: the poll merges row state after it reports the observation, so the identity panel is redrawn here
@@ -660,7 +673,7 @@
       box.hidden = view.hidden;
       if (view.hidden) return;
       kinWrite($("#study-identity-summary"), view.summary.text);
-      $("#study-identity-summary").title = view.summary.title;
+      kinWrite($("#study-identity-summary"), view.summary.title || "", "title");
       const order = $("#study-identity-order");
       order.textContent = view.order?.text ?? ""; order.title = view.order?.title ?? "";
       $("#study-identity-tags").replaceChildren(...view.rows.map(row => {
@@ -668,8 +681,8 @@
         line.setAttribute("role", "listitem"); line.dataset.tag = row.key;
         // The DICOM value is data; the attribute name is a label (each its own text, the line reads the same).
         const shown = document.createElement("span"); shown.translate = false; shown.textContent = row.value;
-        value.replaceChildren(row.tag + " ", Object.assign(document.createElement("span"), { textContent: row.label }), ": ", shown); value.title = row.valueTitle;
-        relation.textContent = row.relation ? ` · ${row.relation}` : ""; relation.title = row.title;
+        value.replaceChildren(row.tag + " ", Object.assign(document.createElement("span"), { textContent: row.label }), ": ", shown); kinWrite(value, row.valueTitle || '', 'title');
+        relation.textContent = row.relation ? ` · ${row.relation}` : ""; kinWrite(relation, row.title || '', 'title');
         line.append(value, relation);
         return line;
       }));
@@ -685,10 +698,10 @@
       const hint = $("#drafthint");
       if (!hint) return;
       const open = id => { const el = $(id); return !!el && !el.disabled; };
-      hint.textContent = open("#b-addendum") && open("#b-approve") ? " · 고친 글로 다시 승인하려면 Approve, 추가기재로 확정하려면 More ▸ Addendum"
-        : open("#b-addendum") ? " · 추가기재로 확정하려면 More ▸ Addendum"
-        : open("#b-save") && open("#b-approve") ? " · 확정하려면 Save 또는 Approve"
-        : open("#b-save") ? " · 확정하려면 Save" : open("#b-approve") ? " · 확정하려면 Approve" : "";
+      kinWrite(hint, open("#b-addendum") && open("#b-approve") ? kinSay(" · 고친 글로 다시 승인하려면 Approve, 추가기재로 확정하려면 More ▸ Addendum")
+        : open("#b-addendum") ? kinSay(" · 추가기재로 확정하려면 More ▸ Addendum")
+        : open("#b-save") && open("#b-approve") ? kinSay(" · 확정하려면 Save 또는 Approve")
+        : open("#b-save") ? kinSay(" · 확정하려면 Save") : open("#b-approve") ? kinSay(" · 확정하려면 Approve") : "");
     }
     function heldByOther(s) { return s?.holder && s.holder !== user ? s.holder : null; }
     /**
@@ -723,8 +736,8 @@
         const el = $(id);
         if (!el) continue;
         el.disabled = !rad || locked || filming || !!held;
-        el.title = held ? heldTitle : filming ? filmingTitle : locked ? "다른 판독의의 예비 판독(RS: P)입니다"
-          : !rad ? "판독의 권한이 필요합니다" : "";
+        kinWrite(el, held ? heldTitle : filming ? kinSay(filmingTitle) : locked ? kinSay("다른 판독의의 예비 판독(RS: P)입니다")
+          : !rad ? kinSay("판독의 권한이 필요합니다") : "", "title");
       }
       // 남의 점유가 다른 단추를 잠가도 진행 중 판독 되돌리기는 열려 있다(아래의 응급·Related·식별 불일치 잠금은 그대로 덮는다).
       const takeover = rad && !locked && !filming ? inProgressReset(s) : null;
@@ -735,17 +748,17 @@
       }
       // 승인된 판독문을 비우는 길은 사유가 남는 Reset뿐이다. Clear는 그 뒷문이었다.
       $("#b-defer").disabled = !rad || !s || s.rs === "A" || s.rs === "P" || locked || filming || !!held || !serverMode;
-      $("#b-defer").title = held ? heldTitle : filming ? filmingTitle
-        : locked ? "다른 판독의의 예비 판독(RS: P)입니다"
-        : s?.rs === "A" ? "승인된 판독문은 보류할 수 없습니다. 먼저 판독 취소(Reset)를 하세요"
-        : s?.rs === "P" ? "예비 판독(RS: P)은 보류할 수 없습니다 — 승인 또는 취소만 가능합니다"
-        : !rad ? "판독의 권한이 필요합니다" : !serverMode ? "서버에 연결돼 있을 때만 보류할 수 있습니다" : "";
+      kinWrite($("#b-defer"), held ? heldTitle : filming ? kinSay(filmingTitle)
+        : locked ? kinSay("다른 판독의의 예비 판독(RS: P)입니다")
+        : s?.rs === "A" ? kinSay("승인된 판독문은 보류할 수 없습니다. 먼저 판독 취소(Reset)를 하세요")
+        : s?.rs === "P" ? kinSay("예비 판독(RS: P)은 보류할 수 없습니다 — 승인 또는 취소만 가능합니다")
+        : !rad ? kinSay("판독의 권한이 필요합니다") : !serverMode ? kinSay("서버에 연결돼 있을 때만 보류할 수 있습니다") : "", "title");
       if (s?.rs === "A" && rad && !locked && !filming && !held) {
         $("#b-clear").disabled = true;
-        $("#b-clear").title = "승인된 판독문은 판독 취소(Reset)로만 비울 수 있습니다";
+        kinWrite($("#b-clear"), kinSay("승인된 판독문은 판독 취소(Reset)로만 비울 수 있습니다"), "title");
         // Save는 사유 없이 승인을 푸는 길이었다 — 서버가 400으로 막고, 여기서는 회색으로 미리 말해준다.
         $("#b-save").disabled = true;
-        $("#b-save").title = "승인된 판독문은 24시간 안의 수정(승인한 판독의), 추가기재(Addendum) 또는 판독 취소(Reset)로만 바꿀 수 있습니다";
+        kinWrite($("#b-save"), kinSay("승인된 판독문은 24시간 안의 수정(승인한 판독의), 추가기재(Addendum) 또는 판독 취소(Reset)로만 바꿀 수 있습니다"), "title");
         /**
          * FC-034: 승인한 판독의는 첫 승인 뒤 24시간 안에, Addendum이 붙기 전까지 본문을 고쳐 Approve로 다시 승인한다(서버에는
          * amend로 간다 — commitReport). 그래서 Approve는 그때, 고친 글이 있을 때만 열린다. 그 밖에는 왜 닫혔는지를 말한다.
@@ -756,7 +769,7 @@
       }
       // Addendum은 승인된 판독문에만 붙는다
       $("#b-addendum").disabled = s?.rs !== "A" || !rad || locked || filming || !!held;
-      $("#b-addendum").title = held ? heldTitle : filming ? filmingTitle : s?.rs !== "A" ? "승인된 판독문에만 추가기재할 수 있습니다" : "";
+      kinWrite($("#b-addendum"), held ? heldTitle : filming ? kinSay(filmingTitle) : s?.rs !== "A" ? kinSay("승인된 판독문에만 추가기재할 수 있습니다") : "", "title");
       /**
        * Prelim은 "아직 확정 안 된 판독을 상급자에게 넘기는" 동작이다.
        * 이미 승인(A)된 것에는 의미가 없고, 이미 P인 것을 다시 넘기면 지정이 덮어써진다.
@@ -765,10 +778,10 @@
       const b = $("#b-prelim");
       if (b) {
         b.disabled = !rad || !s || s.rs === "A" || s.rs === "P" || locked || filming || !!held || !serverMode;
-        b.title = held ? heldTitle : filming ? filmingTitle : !serverMode ? "서버에 연결돼 있을 때만 지정할 수 있습니다"
-          : s?.rs === "P" ? "이미 예비 판독 중입니다"
-          : s?.rs === "A" ? "이미 승인된 판독입니다"
-          : "상급 판독의를 지정해 최종 판독을 맡깁니다 (RS: P)";
+        kinWrite(b, held ? heldTitle : filming ? kinSay(filmingTitle) : !serverMode ? kinSay("서버에 연결돼 있을 때만 지정할 수 있습니다")
+          : s?.rs === "P" ? kinSay("이미 예비 판독 중입니다")
+          : s?.rs === "A" ? kinSay("이미 승인된 판독입니다")
+          : kinSay("상급 판독의를 지정해 최종 판독을 맡깁니다 (RS: P)"), "title");
       }
       for (const id of ["#findings", "#conclusion", "#recommendation"]) {
         $(id).readOnly = !rad || locked || filming || !!held;
@@ -776,7 +789,7 @@
         $(id).dataset.lockReason = filming && !held ? filmingTitle : "";
       }
       if(studyPriority?.get(selectedUid))for(const id of ['#b-save','#b-approve','#b-unread','#b-addendum','#b-prelim','#b-defer']) {
-        const button=$(id);if(button){button.disabled=true;button.title='응급 상태 저장 결과를 확인한 뒤 판독을 저장하세요';}
+        const button=$(id);if(button){button.disabled=true;kinWrite(button, kinSay('응급 상태 저장 결과를 확인한 뒤 판독을 저장하세요'), "title");}
       }
       // W5 (설계 v5 §1.6): in Related Report mode the report commands wait for Back, with the reason said on each control;
       // an unsettled explicit Related insert holds the decisions that would carry its text. Prev/Next stay: they leave through
@@ -799,7 +812,7 @@
         for (const id of ["#b-approve", "#b-save", "#b-unread", "#b-clear", "#b-paste", "#b-defer", "#b-addendum",
           "#b-prelim", "#b-draft-keep", "#b-draft-load", "#b-draft-discard", "#b-report-reload", "#b-report-template", "#b-mark-cvr"]) {
           const el = $(id);
-          if (el) { el.disabled = true; el.title = "환자 식별 불일치로 이 검사를 사용할 수 없습니다. 원본 확인이 필요합니다."; }
+          if (el) { el.disabled = true; kinWrite(el, kinSay("환자 식별 불일치로 이 검사를 사용할 수 없습니다. 원본 확인이 필요합니다."), "title"); }
         }
         for (const id of ["#findings", "#conclusion", "#recommendation"]) $(id).readOnly = true;
       }
@@ -807,8 +820,8 @@
       const approveNext = $("#b-approve-next");
       if (approveNext) {
         approveNext.disabled = $("#b-approve").disabled;
-        approveNext.title = $("#b-approve").title
-          || "승인한 뒤 목록의 다음 검사로 갑니다 — 승인이 확인되고 화면에 그려진 뒤에만 이동하고, 결과를 모르거나 거절되면 이 검사에 머뭅니다";
+        kinWrite(approveNext, $("#b-approve").title
+          || kinSay("승인한 뒤 목록의 다음 검사로 갑니다 — 승인이 확인되고 화면에 그려진 뒤에만 이동하고, 결과를 모르거나 거절되면 이 검사에 머뭅니다"), "title");
       }
       // 초안 표시줄의 확정 안내는 방금 정한 단추 상태를 그대로 따른다(눌리지 않는 단추를 안내하지 않는다).
       renderDraftHint();
@@ -833,10 +846,10 @@
       const modified = !!stored && (filterCriteriaKey(stored) !== filterCriteriaKey(snapshotFilter())
         || !!favoriteList?.key() || !!studyTagList?.key());
       $('#active-filter-name').textContent = activeFilterName;
-      $('#active-filter-state').textContent = !stored ? 'Deleted' : modified ? 'Modified' : 'Saved';
-      holder.title = !stored ? '저장 검색이 삭제됐습니다. 현재 목록 조건은 유지됩니다.' : modified
-        ? '현재 목록 조건과 저장된 조건이 다릅니다. 저장 검색을 다시 적용하거나 현재 조건을 새 검색으로 저장하세요.'
-        : '저장된 검색 조건을 적용 중입니다. 결과 건수는 현재 불러온 목록을 기준으로 합니다.';
+      kinWrite($('#active-filter-state'), !stored ? kinSay('Deleted') : modified ? kinSay('Modified') : kinSay('Saved'));
+      kinWrite(holder, !stored ? kinSay('저장 검색이 삭제됐습니다. 현재 목록 조건은 유지됩니다.') : modified
+        ? kinSay('현재 목록 조건과 저장된 조건이 다릅니다. 저장 검색을 다시 적용하거나 현재 조건을 새 검색으로 저장하세요.')
+        : kinSay('저장된 검색 조건을 적용 중입니다. 결과 건수는 현재 불러온 목록을 기준으로 합니다.'), "title");
       $('#edit-active-filter').disabled = !stored;
     }
     function renderChips() {
@@ -851,7 +864,7 @@
       chipCountRows = userFilters.map((uf, i) => {
         const count = filteredFor(uf).length;
         const note = bodyPartCountNote(uf);
-        const label = kinSay("{0}, 로드된 목록 기준 {n1}건{t2}{t3}", uf.name, count, { t: uf.isDefault ? ", 기본 필터" : "" }, { t: note ? kinSay(" · {t0}", { t: note }) : "" });
+        const label = kinSay("{0}, 로드된 목록 기준 {n1}건{t2}{t3}", uf.name, count, { t: uf.isDefault ? kinSay(", 기본 필터") : "" }, { t: note ? kinSay(" · {t0}", { t: note }) : "" });
         return { i, uf, count, label, partial: !!note };
       });
       chipCountKey = countKey;
@@ -991,7 +1004,7 @@
         // S4-U1b: 관측 실패는 아무것도 비우지 않는다. 마지막 목록과 관측 시각을 두고 `관측 불가`만 더한다.
         // 차가운 시작에는 둘 목록이 없으므로 빈 스냅숏을 지어내지도 않는다.
         markObservationUnavailable();
-        $("#err").textContent = "서버 연결이 끊겨 검사 목록을 불러올 수 없습니다 — 보이는 목록은 마지막 관측값입니다. 우측 상단에서 재시도할 수 있습니다";
+        kinWrite($("#err"), kinSay("서버 연결이 끊겨 검사 목록을 불러올 수 없습니다 — 보이는 목록은 마지막 관측값입니다. 우측 상단에서 재시도할 수 있습니다"));
         render(); refreshRight();
         return;
       }
@@ -1095,7 +1108,7 @@
     // ── 데모 모드: Orthanc 없이 열람 시 (GitHub Pages 등) 가짜 데이터로 전환 ──
     function paintDemoList() {
       demoMode = true;
-      $("#err").textContent = "데모 모드 — 가짜 데이터 (Orthanc 미연결)";
+      kinWrite($("#err"), kinSay("데모 모드 — 가짜 데이터 (Orthanc 미연결)"));
       const P = (uid, id, name, age, birth, sex, desc, date, acc) => applyState(
         { uid, pf: "·", count: 20, series: 1, acc, id, name, age, birth, sex, modality: "CT", desc, date });
       studies = [

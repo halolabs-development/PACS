@@ -1,6 +1,7 @@
 # coding: utf-8
 """IF-V11 polling integration coverage with the real main.html startPolling body."""
 from page_source import read_page_source
+from main_split_harness import fixture_block
 import json
 import os
 from pathlib import Path
@@ -167,6 +168,7 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
     def setUp(self):
         self.page = self.browser.new_page()
         self.page.set_content(HARNESS)
+        self.page.add_script_tag(content=fixture_block(ROOT / "worklist-v0/hpacs-lite/main.html", {"say": ("kinSay",)}, "say"))
         self.page.add_script_tag(content=ARRIVALS)
         self.page.evaluate("()=>{studyObservationModel=KinStudyArrivals.observationStart()}")
 
@@ -248,6 +250,7 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
                 self.assertEqual("partial", self.page.evaluate("folderLoadState"), "an answer that was not applied completes nothing")
                 self.page.reload()
                 self.page.set_content(HARNESS)
+                self.page.add_script_tag(content=fixture_block(ROOT / "worklist-v0/hpacs-lite/main.html", {"say": ("kinSay",)}, "say"))
                 self.page.add_script_tag(content=ARRIVALS)
                 self.page.evaluate("()=>{studyObservationModel=KinStudyArrivals.observationStart()}")
 

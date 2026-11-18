@@ -56,11 +56,12 @@
     unattached: '이동 대상 미연결: Open Image로 기존 영상 창을 다시 연결하세요', 'no-viewer': '이동 대상 없음: Open Image로 영상을 여세요',
     owner: '이동 대상 확인 불가: 다른 계정의 영상 창입니다', invalid: '',
   };
-  function readinessText(choice) {
+  const plainLabel = (words, number) => words.replace("{n0}", String(number));
+  function readinessText(choice, label = plainLabel) {
     if (!choice) return '';
-    if (choice.kind === 'embedded') return '이동 대상: 통합 작업공간 영상';
-    if (choice.kind === 'window') return '이동 대상: 영상 창 ' + (choice.index + 1);
-    return READINESS[choice.reason] ?? '';
+    if (choice.kind === 'embedded') return label('이동 대상: 통합 작업공간 영상');
+    if (choice.kind === 'window') return label('이동 대상: 영상 창 {n0}', choice.index + 1);
+    return Object.hasOwn(READINESS, choice.reason) ? label(READINESS[choice.reason]) : '';
   }
 
   /* ---------- list ---------- */
@@ -148,11 +149,12 @@
    * generation and clears rows at once; a reload or Show Hidden bumps only the read sequence and keeps
    * the rows of the same context until its answer. A refused or failed read never leaves rows behind. */
   function createListStore(deps) {
+    const label = deps.label || plainLabel;
     const work = root.KinWorkContext;
     let resume = false;
-    const s = { owner: null, uid: null, generation: 0, readSequence: 0, includeHidden: false, loading: false, status: 'none', message: LIST_TEXT.none, rows: [], ended: false };
+    const s = { owner: null, uid: null, generation: 0, readSequence: 0, includeHidden: false, loading: false, status: 'none', message: label(LIST_TEXT.none), rows: [], ended: false };
     const changed = () => { try { deps.changed && deps.changed(); } catch (_) {} };
-    const set = (status, rows) => { s.status = status; s.message = LIST_TEXT[status]; if (rows) s.rows = rows; };
+    const set = (status, rows) => { s.status = status; s.message = LIST_TEXT[status] ? label(LIST_TEXT[status]) : ""; if (rows) s.rows = rows; };
     function context(owner, study) {
       if (s.ended) return false;
       const next = text(owner) && owner && uid(study) ? [owner, study] : [null, null];
@@ -182,7 +184,7 @@
         const rows = items.map(item => rowOf(item, ticket.uid)).filter(row => ticket.includeHidden || !row.hidden);
         if (!current()) return false;
         work.commit(at, () => { set('ready', rows);
-        s.message = rows.length ? rows.length + '개 소견 · 읽기 전용이며 판독문과 별개입니다.' : '이 검사에 표시할 소견이 없습니다.'; });
+        s.message = rows.length ? label('{n0}개 소견 · 읽기 전용이며 판독문과 별개입니다.', rows.length) : label('이 검사에 표시할 소견이 없습니다.'); });
         return true;
       } catch (error) {
         if (!current()) return false;

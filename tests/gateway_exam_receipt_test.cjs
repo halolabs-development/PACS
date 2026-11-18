@@ -4,17 +4,19 @@ const ts=require('../api/node_modules/typescript');
 const model=require('../worklist-v0/hpacs-lite/exam-scope.js'),arrivals=require('../worklist-v0/hpacs-lite/study-arrivals.js');
 const functions=(file,names)=>{
  const tree=ts.createSourceFile(file,fs.readFileSync('worklist-v0/hpacs-lite/'+file,'utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
- const found=tree.statements.filter(node=>ts.isFunctionDeclaration(node)&&names.includes(node.name?.text)).map(node=>node.getText(tree));
+ const found=tree.statements.filter(node=>ts.isFunctionDeclaration(node) ? names.includes(node.name?.text)
+  : ts.isVariableStatement(node) && node.declarationList.declarations.some(d=>names.includes(d.name.getText(tree)))).map(node=>node.getText(tree));
  assert.equal(found.length,names.length,file+' declares '+names.join(', '));
  return found;
 };
 // The panel writes its status through the writer of the page (page-core.js). No screen language is chosen here, so
 // the writer puts the words into the element as they are.
-const source=[...functions('page-core.js',['kinWrite']),...functions('study-info-panel.js',['renderObservation','requestGatewayRetry'])].join('\n');
+const source=[...functions('page-core.js',['kinWrite','kinSay']),...functions('study-info-panel.js',['renderObservation','requestGatewayRetry'])].join('\n');
 class Element {
  constructor(tag='div'){this.tag=tag;this.children=[];this.dataset={};this.hidden=false;this.textContent='';this.events={};}
  append(...items){for(const item of items)if(typeof item==='object'){item.parent=this;this.children.push(item);}}
  replaceChildren(...items){this.children=[];this.append(...items);}
+ setAttribute(name,value){this[name]=String(value);}
  addEventListener(type,handler){this.events[type]=handler;}
  querySelectorAll(selector){return this.children.flatMap(child=>[...(selector==='button'&&child.tag==='button'||selector==='.exam-original-receipts'&&child.className==='exam-original-receipts'?[child]:[]),...child.querySelectorAll(selector)]);}
  querySelector(selector){return this.querySelectorAll(selector)[0]||null;}

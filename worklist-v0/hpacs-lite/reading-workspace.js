@@ -10,11 +10,11 @@ window.KinReadingWorkspace = function (app) {
   let renewFrame=()=>{},renewReturn=()=>{};
   const $ = s => document.querySelector(s);
   const node = (tag, text, parent) => {
-    const el = document.createElement(tag); if (text) el.textContent = text;
+    const el = document.createElement(tag); if (text) kinWrite(el, text);
     if (parent) parent.append(el); return el;
   };
   const bar = node('section'); bar.id = 'reading-bar'; bar.hidden = true;
-  bar.setAttribute('aria-label', '판독 작업공간 이동'); bar.setAttribute('data-kin-lang-region', 'reading');
+  kinWrite(bar, kinSay('판독 작업공간 이동'), 'aria-label'); bar.setAttribute('data-kin-lang-region', 'reading');
   $('.split').before(bar);
   const nav = node('div', '', bar); nav.className = 'reading-actions';
   const button = (label, action, parent = nav) => {
@@ -26,27 +26,27 @@ window.KinReadingWorkspace = function (app) {
     if (menu) menu.open = true;
     search?.focus();
   }
-  const list = button('Worklist', () => {
+  const list = button(kinSay('Worklist'), () => {
     document.body.classList.toggle('reading-list-open');
     list.setAttribute('aria-expanded', String(document.body.classList.contains('reading-list-open')));
     if (document.body.classList.contains('reading-list-open')) ($('#rows tr[data-uid]') || list).focus();
     else { closeList(); list.focus(); }
   });
   list.setAttribute('aria-expanded', 'false');
-  const previous = button('Previous Study', () => app.move(-1));
-  const next = button('Next Study', () => app.move(1));
+  const previous = button(kinSay('Previous Study'), () => app.move(-1));
+  const next = button(kinSay('Next Study'), () => app.move(1));
   const position = node('span', '', nav); position.id = 'reading-position'; position.setAttribute('role', 'status');
-  const imageFocus = button('Image', () => focusPane('image'));
-  const priorFocus = button('Related Report', () => focusPane('prior'));
-  const reportFocus = button('Report Editor', () => focusPane('report'));
-  const toolsFocus = button('Image Tools', () => focusPane('tools'));
+  const imageFocus = button(kinSay('Image'), () => focusPane('image'));
+  const priorFocus = button(kinSay('Related Report'), () => focusPane('prior'));
+  const reportFocus = button(kinSay('Report Editor'), () => focusPane('report'));
+  const toolsFocus = button(kinSay('Image Tools'), () => focusPane('tools'));
   toolsFocus.id = 'reading-tools-focus';
-  const nativeToolsFocus = button('Viewer Toolbar', () => focusPane('nativeTools'));
+  const nativeToolsFocus = button(kinSay('Viewer Toolbar'), () => focusPane('nativeTools'));
   nativeToolsFocus.id = 'reading-native-tools-focus';
   [[list, '1'], [imageFocus, '2'], [priorFocus, '3'], [reportFocus, '4'], [toolsFocus, '7'], [nativeToolsFocus, '9'], [previous, 'ArrowLeft'], [next, 'ArrowRight']].forEach(([b, key]) => {
     b.setAttribute('aria-keyshortcuts', 'Control+Alt+' + key);
   });
-  const context = button('Study Info & Templates', () => {
+  const context = button(kinSay('Study Info & Templates'), () => {
     if (document.body.classList.contains('reading-context-open')) { closeContext(); context.focus(); }
     else focusPane('context');
   });
@@ -54,19 +54,19 @@ window.KinReadingWorkspace = function (app) {
   context.setAttribute('aria-controls', 'reading-context');
   context.setAttribute('aria-keyshortcuts', 'Control+Alt+5');
   $('.right > .rw').id = 'reading-context';
-  const contextReturn = button('Back to Report', () => focusPane('report'), $('.s-clinical'));
+  const contextReturn = button(kinSay('Back to Report'), () => focusPane('report'), $('.s-clinical'));
   contextReturn.id = 'reading-context-return';
-  const note = button('Image Tech Note', showNote);
+  const note = button(kinSay('Image Tech Note'), showNote);
   note.id = 'reading-tech-note';
   note.setAttribute('aria-keyshortcuts', 'Control+Alt+6');
   note.setAttribute('aria-describedby', 'reading-images');
-  const noteRetry = button('Reconnect Note', reconnectNote);
+  const noteRetry = button(kinSay('Reconnect Note'), reconnectNote);
   noteRetry.id = 'reading-note-retry'; noteRetry.hidden = true;
   let noteRetryFocus = null;
   const autoLabel = node('label', '', nav);
   const autoNote = node('input', '', autoLabel); autoNote.type = 'checkbox'; autoNote.id = 'reading-note-auto';
   autoLabel.append(document.createTextNode(' Auto-open Note'));
-  autoLabel.title = '이 브라우저의 현재 계정 설정 · 연결할 때 한 번 확인하며 입력·미저장 작업 중에는 건너뜁니다';
+  kinWrite(autoLabel, kinSay('이 브라우저의 현재 계정 설정 · 연결할 때 한 번 확인하며 입력·미저장 작업 중에는 건너뜁니다'), "title");
   let autoOwner = null, autoLast = null, preferenceGeneration = 0;
   autoNote.onchange = () => {
     preferenceGeneration++;
@@ -79,8 +79,8 @@ window.KinReadingWorkspace = function (app) {
     catch (_) { app.notice('자동 열기 설정을 저장하지 못했습니다. 현재 화면에서만 적용됩니다.'); }
     maybeAutoNote();
   };
-  const separate = button('Open Viewer Window', () => { if (shown && sameTarget()) app.popup(shown.uid, shown.prior, shown.series, returnLink(), shown.viewingSet ? {exam:window.KinExamScope.originalInput([shown.uid,shown.prior].filter(Boolean)),viewingSet:shown.viewingSet} : shown.exam ? {exam:shown.exam} : null); });
-  button('Exit Workspace', leave);
+  const separate = button(kinSay('Open Viewer Window'), () => { if (shown && sameTarget()) app.popup(shown.uid, shown.prior, shown.series, returnLink(), shown.viewingSet ? {exam:window.KinExamScope.originalInput([shown.uid,shown.prior].filter(Boolean)),viewingSet:shown.viewingSet} : shown.exam ? {exam:shown.exam} : null); });
+  button(kinSay('Exit Workspace'), leave);
   const target = node('div', '', bar); target.id = 'reading-target';
   const shortcutHelp = node('details', '', bar); shortcutHelp.id = 'reading-shortcut-help';
   node('summary', 'Keyboard Shortcuts', shortcutHelp);
@@ -112,7 +112,7 @@ window.KinReadingWorkspace = function (app) {
   async function paintViewerKeys() {
     const ticket = ++viewerKeysTicket, owner = app.allowed() ? app.noteOwner() : null;
     const live = () => ticket === viewerKeysTicket && shortcutHelp.open;
-    viewerKeys.textContent = 'Viewer 창 글자 키를 확인하는 중…';
+    kinWrite(viewerKeys, kinSay('Viewer 창 글자 키를 확인하는 중…'));
     try {
       const keys = await viewerKeyDefinitions();
       let settings = null;
@@ -128,19 +128,19 @@ window.KinReadingWorkspace = function (app) {
       const shown = Object.keys(map).filter(id => map[id]).map(id => keys.display(map[id]) + ' ' + (keys.names[id] || id));
       viewerKeys.textContent = 'Viewer 창 글자 키: ' + (shown.join(' · ') || '없음') + ' (입력 칸 밖에서)';
     } catch (_) {
-      if (live()) viewerKeys.textContent = 'Viewer 창 글자 키를 확인하지 못했습니다. Keyboard Shortcuts를 다시 열어 확인하세요.';
+      if (live()) kinWrite(viewerKeys, kinSay('Viewer 창 글자 키를 확인하지 못했습니다. Keyboard Shortcuts를 다시 열어 확인하세요.'));
     }
   }
   shortcutHelp.addEventListener('toggle', () => { if (shortcutHelp.open) void paintViewerKeys(); else viewerKeysTicket++; });
   const host = node('section'); host.id = 'reading-viewer'; host.hidden = true;
-  host.setAttribute('aria-label', '영상 작업공간'); host.setAttribute('data-kin-lang-region', 'reading'); $('.split').prepend(host);
+  kinWrite(host, kinSay('영상 작업공간'), 'aria-label'); host.setAttribute('data-kin-lang-region', 'reading'); $('.split').prepend(host);
   const info = node('div', '', host); info.id = 'reading-images';
   const status = node('div', '', host); status.id = 'reading-status'; status.setAttribute('role', 'status');
   const recovery = node('div', '', host); recovery.id = 'reading-recovery'; recovery.hidden = true;
-  const back = button('Return to Previous Viewer', () => { if (shown) app.select(shown.reportUid); }, recovery);
-  const retry = button('Reopen Viewer', () => { if (pending) attempt(pending, false); }, recovery);
-  const discard = button('Discard Viewer Changes & Open', () => {
-    if (pending && confirm('이전 영상의 저장하지 않은 표식·소견 작성 내용(보관 중인 다른 검사 소견 포함)과 작업 제목·설명을 버리고 선택한 영상을 엽니다. 판독문 초안은 별도로 유지됩니다. 계속할까요?')) attempt(pending, true);
+  const back = button(kinSay('Return to Previous Viewer'), () => { if (shown) app.select(shown.reportUid); }, recovery);
+  const retry = button(kinSay('Reopen Viewer'), () => { if (pending) attempt(pending, false); }, recovery);
+  const discard = button(kinSay('Discard Viewer Changes & Open'), () => {
+    if (pending && confirm(kinSay('이전 영상의 저장하지 않은 표식·소견 작성 내용(보관 중인 다른 검사 소견 포함)과 작업 제목·설명을 버리고 선택한 영상을 엽니다. 판독문 초안은 별도로 유지됩니다. 계속할까요?'))) attempt(pending, true);
   }, recovery);
   const reportTarget = node('div'); reportTarget.id = 'reading-report-target'; reportTarget.hidden = true;
   $('.report-p').prepend(reportTarget);
@@ -153,13 +153,13 @@ window.KinReadingWorkspace = function (app) {
   const relatedListHome = { parent: relatedList.parentNode, next: relatedList.nextSibling };
   reportColumn.id = 'reading-report-column'; relatedRegion.id = 'reading-related-region';
   relatedList.id = 'reading-related-list'; priorReport.id = 'reading-prior-report';
-  const relatedToggle = button('Hide Related Panel', () => setRelatedHidden(!panelValues.relatedHidden));
+  const relatedToggle = button(kinSay('Hide Related Panel'), () => setRelatedHidden(!panelValues.relatedHidden));
   relatedToggle.id = 'reading-related-toggle'; relatedToggle.setAttribute('aria-controls', relatedRegion.id);
-  relatedToggle.title = '관련 검사·이전 판독문 패널을 숨기거나 복원합니다. 작성 중인 내용은 유지됩니다.';
-  const panelsReset = button('Reset Panels', () => commitPanels(panelModel.defaults()));
+  kinWrite(relatedToggle, kinSay('관련 검사·이전 판독문 패널을 숨기거나 복원합니다. 작성 중인 내용은 유지됩니다.'), "title");
+  const panelsReset = button(kinSay('Reset Panels'), () => commitPanels(panelModel.defaults()));
   panelsReset.id = 'reading-panels-reset';
-  panelsReset.title = '통합 작업공간의 패널 크기와 표시를 기본값으로 되돌립니다.';
-  const panelHelp = node('p', '패널 경계는 드래그하거나 Tab으로 선택한 뒤 방향키로 조절합니다. Shift는 크게 이동, Home/End는 최소/최대, Enter는 해당 경계의 기본값입니다. 좁은 창의 영상·판독은 위아래로 배치하며, 숨긴 관련 패널은 Related Report로 다시 엽니다.', shortcutHelp);
+  kinWrite(panelsReset, kinSay('통합 작업공간의 패널 크기와 표시를 기본값으로 되돌립니다.'), "title");
+  const panelHelp = node('p', kinSay('패널 경계는 드래그하거나 Tab으로 선택한 뒤 방향키로 조절합니다. Shift는 크게 이동, Home/End는 최소/최대, Enter는 해당 경계의 기본값입니다. 좁은 창의 영상·판독은 위아래로 배치하며, 숨긴 관련 패널은 Related Report로 다시 엽니다.'), shortcutHelp);
   panelHelp.id = 'reading-panel-help';
   const panelSeparators = [];
   /**
@@ -207,7 +207,7 @@ window.KinReadingWorkspace = function (app) {
     relatedRegion.inert = active && panelValues.relatedHidden;
     if (active && panelValues.relatedHidden) relatedRegion.setAttribute('aria-hidden', 'true');
     else relatedRegion.removeAttribute('aria-hidden');
-    relatedToggle.textContent = panelValues.relatedHidden ? 'Show Related Panel' : 'Hide Related Panel';
+    kinWrite(relatedToggle, panelValues.relatedHidden ? kinSay('Show Related Panel') : kinSay('Hide Related Panel'));
     relatedToggle.setAttribute('aria-expanded', String(!panelValues.relatedHidden));
     relatedToggle.disabled = panelsReset.disabled = ended || !app.allowed();
     priorFocus.setAttribute('aria-controls', priorReport.id);
@@ -218,7 +218,7 @@ window.KinReadingWorkspace = function (app) {
       item.el.setAttribute('aria-orientation', horizontal ? 'horizontal' : 'vertical');
       item.el.setAttribute('aria-valuemin', String(range.min)); item.el.setAttribute('aria-valuemax', String(range.max));
       item.el.setAttribute('aria-valuenow', String(values[key]));
-      item.el.setAttribute('aria-valuetext', values[key] + ' 픽셀');
+      kinWrite(item.el, kinSay('{0} 픽셀', values[key]), 'aria-valuetext');
       item.el.setAttribute('aria-disabled', String(ended || !app.allowed()));
       item.el.tabIndex = ended || !app.allowed() ? -1 : 0;
     }
@@ -241,7 +241,7 @@ window.KinReadingWorkspace = function (app) {
   function separator(kind, id, label, controls, after) {
     const el = node('div'); el.id = id; el.className = 'reading-panel-separator'; el.hidden = true;
     el.setAttribute('role', 'separator'); el.setAttribute('aria-label', label); el.setAttribute('aria-controls', controls);
-    el.setAttribute('aria-describedby', panelHelp.id); el.title = '드래그 또는 방향키로 크기 조절 · Enter: 기본값';
+    el.setAttribute('aria-describedby', panelHelp.id); kinWrite(el, kinSay('드래그 또는 방향키로 크기 조절 · Enter: 기본값'), "title");
     after.after(el);
     const item = { kind, el }; panelSeparators.push(item);
     const keyFor = geometry => kind === 'report' ? (geometry.narrow ? 'imageHeight' : 'reportWidth') : kind;
@@ -382,7 +382,7 @@ window.KinReadingWorkspace = function (app) {
     const unavailable = ended || !app.allowed() || !queue.length;
     previous.disabled = unavailable || i === 0;
     next.disabled = unavailable || i === queue.length - 1;
-    position.textContent = !queue.length ? '현재 목록 0건' : i < 0 ? '현재 검사: 목록 밖 · ' + queue.length + '건' : '현재 목록 ' + (i + 1) + ' / ' + queue.length;
+    kinWrite(position, !queue.length ? kinSay('현재 목록 0건') : i < 0 ? kinSay('현재 검사: 목록 밖 · {n0}건', queue.length) : kinSay('현재 목록 {n0} / {n1}', i + 1, queue.length));
   }
   function closeList() {
     $('#quick')?.closest('details')?.removeAttribute('open');
@@ -408,20 +408,20 @@ window.KinReadingWorkspace = function (app) {
       $('#clinical').focus(); $('#clinical').scrollIntoView({ block: 'nearest' }); redrawRetainedViewer(); return;
     }
     if (which === 'image' || which === 'tools' || which === 'nativeTools') {
-      if (!frame || !sameTarget() || !loaded || frame.inert) { status.textContent = '영상 연결을 확인한 뒤 이동하세요.'; return; }
+      if (!frame || !sameTarget() || !loaded || frame.inert) { kinWrite(status, kinSay('영상 연결을 확인한 뒤 이동하세요.')); return; }
       if (which === 'nativeTools') {
         try {
-          if (!frame.contentWindow.kinViewerFocusNativeToolbar?.()) { status.textContent = '기본 영상 도구 연결을 확인한 뒤 이동하세요.'; return; }
+          if (!frame.contentWindow.kinViewerFocusNativeToolbar?.()) { kinWrite(status, kinSay('기본 영상 도구 연결을 확인한 뒤 이동하세요.')); return; }
           closeList();
-        } catch (_) { status.textContent = '기본 영상 도구 연결을 확인한 뒤 이동하세요.'; }
+        } catch (_) { kinWrite(status, kinSay('기본 영상 도구 연결을 확인한 뒤 이동하세요.')); }
         return;
       }
       let tool = null;
       if (which === 'tools') {
         try { tool = frame.contentDocument?.querySelector('#kin-workspace-dock nav button:not(:disabled)'); }
-        catch (_) { status.textContent = '영상 도구 연결을 확인한 뒤 이동하세요.'; return; }
+        catch (_) { kinWrite(status, kinSay('영상 도구 연결을 확인한 뒤 이동하세요.')); return; }
       }
-      if (which === 'tools' && (!tool || !tool.getClientRects().length)) { status.textContent = '영상 도구 연결을 확인한 뒤 이동하세요.'; return; }
+      if (which === 'tools' && (!tool || !tool.getClientRects().length)) { kinWrite(status, kinSay('영상 도구 연결을 확인한 뒤 이동하세요.')); return; }
       closeList(); frame.focus(); frame.contentWindow.focus();
       if (tool) { tool.focus({ preventScroll: true }); tool.scrollIntoView({ block: 'nearest' }); }
     } else {
@@ -527,7 +527,7 @@ window.KinReadingWorkspace = function (app) {
     const w = noteWindow(), connection = w?.kinViewerNoteConnectionState?.();
     noteRetry.hidden = !['failed', 'loading'].includes(connection);
     noteRetry.disabled = unavailable || connection !== 'failed';
-    noteRetry.textContent = connection === 'loading' ? 'Connecting Note…' : 'Reconnect Note';
+    kinWrite(noteRetry, connection === 'loading' ? kinSay('Connecting Note…') : kinSay('Reconnect Note'));
     if (noteRetryFocus && (!w || w !== noteRetryFocus || unavailable || connection !== 'loading')) {
       if (w === noteRetryFocus && !unavailable && connection === 'ready' &&
           (document.activeElement === noteRetry || document.activeElement === document.body)) (note.disabled ? imageFocus : note).focus({preventScroll:true});
@@ -603,7 +603,7 @@ window.KinReadingWorkspace = function (app) {
     else if (!active && relatedList.parentNode !== relatedListHome.parent)
       relatedListHome.parent.insertBefore(relatedList, relatedListHome.next);
     if (!active) cancelPanelDrag();
-    const toggle=$('#m-reading');toggle.textContent=active?'Back to Worklist':'Reading Workspace';toggle.setAttribute('aria-pressed',String(active));toggle.title=active?'기존 목록 화면으로 돌아갑니다. 작성 중인 판독문과 영상 작업은 유지됩니다.':'영상과 판독문을 함께 보는 작업공간을 엽니다.';
+    const toggle=$('#m-reading');kinWrite(toggle, active?kinSay('Back to Worklist'):kinSay('Reading Workspace'));toggle.setAttribute('aria-pressed',String(active));kinWrite(toggle, active?kinSay('기존 목록 화면으로 돌아갑니다. 작성 중인 판독문과 영상 작업은 유지됩니다.'):kinSay('영상과 판독문을 함께 보는 작업공간을 엽니다.'), "title");
     // The native viewer observes its container size even while hidden. Preserve
     // that size off screen so returning from the list cannot produce a NaN camera.
     if(!active&&frame&&!host.hidden){const r=host.getBoundingClientRect();if(r.width>0&&r.height>0){host.style.setProperty('--kin-retained-width',r.width+'px');host.style.setProperty('--kin-retained-height',r.height+'px');}}
@@ -623,9 +623,11 @@ window.KinReadingWorkspace = function (app) {
     updateNote();
   }
   function identify() {
-    const uid = app.current(); target.textContent = uid ? '판독 대상 · ' + label(uid) : '판독 대상을 선택하세요';
-    reportTarget.textContent = target.textContent;
-      kinWrite(info, shown && sameTarget() ? kinSay('영상 열람 · {0}{t1}', label(shown.uid, true), { t: shown.prior ? kinSay('\n비교 영상 · {0}', label(shown.prior, true)) : '' }) : '');
+    const uid = app.current();
+    const identity = uid ? kinSay('판독 대상 · {0}', label(uid)) : kinSay('판독 대상을 선택하세요');
+    kinWrite(target, identity);
+    kinWrite(reportTarget, identity);
+    kinWrite(info, shown && sameTarget() ? kinSay('영상 열람 · {0}{t1}', label(shown.uid, true), { t: shown.prior ? kinSay('\n비교 영상 · {0}', label(shown.prior, true)) : '' }) : '');
     separate.disabled = !frame || !sameTarget() || !loaded;
     imageFocus.disabled = separate.disabled;
     updateNote();
@@ -709,24 +711,24 @@ window.KinReadingWorkspace = function (app) {
     const state = viewerState();
     if (state.busy || state.dirty && !abandon) {
       if (frame) frame.hidden = !sameTarget();
-      status.textContent = state.busy ? '영상의 저장·복원 또는 상태 확인 중입니다. 작업을 확인한 뒤 다시 여세요.' : sameTarget() ? '현재 영상에 저장하지 않은 작업이 있습니다. 저장하거나 명시적으로 버린 뒤 다른 영상을 여세요.' : '이전 영상에 저장하지 않은 작업이 있습니다. 이전 검사로 돌아가 저장하거나, 명시적으로 버린 뒤 여세요.';
+      kinWrite(status, state.busy ? kinSay('영상의 저장·복원 또는 상태 확인 중입니다. 작업을 확인한 뒤 다시 여세요.') : sameTarget() ? kinSay('현재 영상에 저장하지 않은 작업이 있습니다. 저장하거나 명시적으로 버린 뒤 다른 영상을 여세요.') : kinSay('이전 영상에 저장하지 않은 작업이 있습니다. 이전 검사로 돌아가 저장하거나, 명시적으로 버린 뒤 여세요.'));
       recovery.hidden = false; discard.hidden = !!state.busy; back.hidden = !shown || sameTarget(); retry.hidden = false; return false;
     }
     if (frame && loaded) {
       let accepted=false;
       try { accepted=frame.contentWindow.kinViewerFrameCoverageConfirm?.(message=>confirm(message))===true; } catch (_) {}
       if (!accepted) {
-        frame.hidden=!sameTarget(); status.textContent='이전 영상을 유지했습니다. Frame Coverage와 원본 영상을 확인하세요.';
+        frame.hidden=!sameTarget(); kinWrite(status, kinSay('이전 영상을 유지했습니다. Frame Coverage와 원본 영상을 확인하세요.'));
         recovery.hidden=false; discard.hidden=true; back.hidden=!shown||sameTarget(); retry.hidden=false; return false;
       }
       const checked=viewerState();
       if(r.reportUid!==app.current()||!app.allowed()||checked.busy||checked.dirty&&!abandon)return false;
     }
     const ticket = ++epoch; clearInterval(timer); timer = null;
-    frame?.remove(); frame = node('iframe', '', host); frame.id = 'reading-frame'; frame.title = '영상 뷰어';
+    frame?.remove(); frame = node('iframe', '', host); frame.id = 'reading-frame'; kinWrite(frame, kinSay('영상 뷰어'), "title");
     frame.setAttribute('allow', 'fullscreen'); frame.referrerPolicy = 'no-referrer'; frame.inert = true;
     shown = r; loaded = false; failed = false; deadline = Date.now() + 45000; recovery.hidden = true; identify();
-    status.textContent = '영상 작업공간을 불러오는 중…';
+    kinWrite(status, kinSay('영상 작업공간을 불러오는 중…'));
     const currentFrame = frame;
     let observedDocument, observedHref;
     function check() {
@@ -746,7 +748,7 @@ window.KinReadingWorkspace = function (app) {
           const opening = new URLSearchParams(location.hash.slice(1)).get('kin-w9');
           if (opening) shown.viewingSet = opening;
           const job = location.searchParams.get('kinJob'); if (job) shown.job = job;
-          if (sameTarget()) { status.textContent = '영상 작업공간을 불러오는 중…'; identify(); }
+          if (sameTarget()) { kinWrite(status, kinSay('영상 작업공간을 불러오는 중…')); identify(); }
         }
         if (location.href === observedHref && doc.querySelector('.cornerstone-canvas') &&
             typeof w.kinViewerHistoryWorkspaceState === 'function' && typeof w.kinViewerJobWorkspaceState === 'function') {
@@ -762,7 +764,7 @@ window.KinReadingWorkspace = function (app) {
           if(toolHint){const key=id=>KinWorkspaceShortcuts.display(keyMap[id]);toolHint.textContent=key('tools')+' 측정 도구 · Control+Alt+8 비교 작업 도구 · '+key('nativeTools')+' 기본 영상 도구 (Tab 이동·Enter 선택) · '+key('image')+' 선택 영상 · '+key('report')+' 판독문으로';}
           if (!loaded) {
             loaded = true; failed = false; frame.inert = false;
-            if (sameTarget()) { pending = null; recovery.hidden = true; status.textContent = '영상 작업공간 연결됨'; identify(); }
+            if (sameTarget()) { pending = null; recovery.hidden = true; kinWrite(status, kinSay('영상 작업공간 연결됨')); identify(); }
           }
           // Display preferences also apply to a retained hidden viewer. Clinical
           // actions keep the active/current/visible checks in allowed().
@@ -774,14 +776,14 @@ window.KinReadingWorkspace = function (app) {
       if (!loaded && !failed && Date.now() > deadline) {
         failed = true;
         if (!sameTarget()) return;
-        status.textContent = '영상 작업공간을 확인하지 못했습니다. 로그인·연결 상태를 확인하고 다시 여세요.';
+        kinWrite(status, kinSay('영상 작업공간을 확인하지 못했습니다. 로그인·연결 상태를 확인하고 다시 여세요.'));
         pending = shown; recovery.hidden = false; back.hidden = discard.hidden = true; retry.hidden = false;
       }
     }
     const onLoad = () => {
       if (ended || ticket !== epoch || currentFrame !== frame) return;
       loaded = false; failed = false; frame.inert = true; deadline = Date.now() + 45000; observedDocument = undefined; observedHref = undefined;
-      if (sameTarget()) { info.textContent = ''; status.textContent = '영상 작업공간을 불러오는 중…'; separate.disabled = true; }
+      if (sameTarget()) { info.textContent = ''; kinWrite(status, kinSay('영상 작업공간을 불러오는 중…')); separate.disabled = true; }
       check();
     };
     renewFrame=()=>{frame.onload=guarded(onLoad);clearInterval(timer);timer=setInterval(guarded(check),250);};
@@ -803,11 +805,11 @@ window.KinReadingWorkspace = function (app) {
     if (shown?.reportUid === uid && frame) {
       frame.hidden = false;
       redrawRetainedViewer();
-      if (!failed) { pending = null; recovery.hidden = true; status.textContent = loaded ? '기존 영상 작업으로 돌아왔습니다.' : '영상 작업공간을 불러오는 중…'; }
+      if (!failed) { pending = null; recovery.hidden = true; kinWrite(status, loaded ? kinSay('기존 영상 작업으로 돌아왔습니다.') : kinSay('영상 작업공간을 불러오는 중…')); }
       identify(); return;
     }
     if (uid && !deferOpen) open(uid, app.prior(uid));
-    else { pending = null; recovery.hidden = true; status.textContent = '판독 대상을 선택하세요'; }
+    else { pending = null; recovery.hidden = true; kinWrite(status, kinSay('판독 대상을 선택하세요')); }
   }
   // Session invalidation must hide the embedded document even if its own request
   // has not yet noticed the expired account. Never reconnect it from a late load.

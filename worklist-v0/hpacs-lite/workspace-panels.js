@@ -129,8 +129,8 @@
       workspaceLocalKept = !["disabled", "unavailable"].includes(result.status);
       layoutMode = workspaceState.mode;
       readingWorkspace.applyPanels(workspaceState.reading || KinReadingPanelLayout.defaults());
-      $("#layout-status").textContent = ({ restored: "배치 복원됨 · 이 브라우저", empty: "배치 · 이 브라우저",
-        disabled: "배치 · 이 창에서만 유지", invalid: "저장된 배치 오류 · 기본 배치", unavailable: "배치 저장소 사용 불가 · 기본 배치" })[result.status];
+      kinWrite($("#layout-status"), kinSay(({ restored: "배치 복원됨 · 이 브라우저", empty: "배치 · 이 브라우저",
+        disabled: "배치 · 이 창에서만 유지", invalid: "저장된 배치 오류 · 기본 배치", unavailable: "배치 저장소 사용 불가 · 기본 배치" })[result.status]));
       applyLayout();
     }
     $("#layout-toggle").addEventListener("click", () => {
