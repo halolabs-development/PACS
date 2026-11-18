@@ -566,15 +566,15 @@ test('Open failures L3: priors wait at most 5 s after the current list; the late
   const current = h.list(CURRENT), prior = h.list(PRIOR);
   assert.deepEqual(h.delays(), []);
   h.lists[0].resolve([]); await flush();
-  assert.equal(current.seen.value.length, 0); assert.deepEqual(h.delays(), [5000]);
+  assert.equal(current.seen.value.length, 0); assert.equal(h.delays().length, 1); assert.ok(h.delays()[0] <= 5000 && h.delays()[0] > 4800);
   h.fire(); await flush();
   assert.equal(prior.seen.error.kinLate, true);
   assert.equal(h.shown(), '2번째 검사의 영상 정보가 늦어 그 검사 없이 표시했습니다. 뷰어를 다시 열면 다시 요청합니다.');
   h.lists[1].resolve([{ late: true }]); await flush();
   assert.equal(prior.seen.value, undefined); assert.deepEqual([...h.window.kinViewerFailedStudies()], [PRIOR]);
   // A prior series asked after the current list has its own 5 s; a current series has none.
-  const s = h.load(PRIOR, OTHER); assert.deepEqual(h.delays(), [5000]);
-  h.load(CURRENT, SERIES); assert.deepEqual(h.delays(), [5000]);
+  const s = h.load(PRIOR, OTHER); assert.equal(h.delays().length, 1);
+  h.load(CURRENT, SERIES); assert.equal(h.delays().length, 1);
   h.calls[0].resolve([]); await flush(); assert.deepEqual(h.delays(), []);
   assert.deepEqual(s.seen.value, []);
   // Leaving the route stops the deadline: no reason, no rejection of its own.
@@ -586,7 +586,7 @@ test('Open failures L3: priors wait at most 5 s after the current list; the late
 test('Open failures L4: the admitted exam scope decides which studies are current; a URL alone makes only the first current', async () => {
   // A merged exam's URL also lists its prior's originals: without the admitted scope the second study is a prior.
   const u = recovery({ search: `?StudyInstanceUIDs=${CURRENT},${PRIOR}&kinExam=merged` }); u.enter();
-  u.list(CURRENT); u.list(PRIOR); u.lists[0].resolve([]); await flush(); assert.deepEqual(u.delays(), [5000]);
+  u.list(CURRENT); u.list(PRIOR); u.lists[0].resolve([]); await flush(); assert.equal(u.delays().length, 1);
   // With the scope admitted, both originals of the current exam are current: no deadline, and the layout needs both.
   const h = recovery({ search: `?StudyInstanceUIDs=${CURRENT},${PRIOR}&kinExam=merged` });
   h.window.KinViewerExamScope = { snapshot: () => ({}), role: () => 'current' }; h.enter();
@@ -629,4 +629,49 @@ test('Open failures L7: a read outside this route still enters the record; a ref
   h.window.KinViewerPatientTabs = { imagesRefused: () => false };
   h.list(CURRENT); h.lists[0].reject(http(403)); await flush();
   assert.match(h.shown(), /^1번째 검사의 영상 정보에 접근할 수 없습니다\(HTTP 403\)/);
+});
+
+test('Open failures L8: one deadline per prior study for this route; a cached current list arms it at once; the first layout ends it', async () => {
+  const near = (ms, want) => ms.length === 1 && ms[0] <= want && ms[0] > want - 200;
+  // The current list is already in this document (an earlier route had it; no request now): the prior's deadline runs from
+  // its own first request.
+  const h = recovery(); h.enter(); h.list(CURRENT); h.lists[0].resolve([]); await flush(); h.exit(); h.enter();
+  // Without such a cache a prior asked before the current list waits for that list (no deadline yet).
+  const fresh = recovery(); fresh.enter(); fresh.list(PRIOR); assert.deepEqual(fresh.delays(), []);
+  const prior = h.list(PRIOR); assert.ok(near(h.delays(), 5000), String(h.delays()));
+  h.lists[1].resolve([]); await flush(); assert.deepEqual(h.delays(), []);
+  // Its series asked later shares the same deadline (not a new 5 s each).
+  const s = h.load(PRIOR, OTHER); assert.ok(h.delays().length === 1 && h.delays()[0] <= 5000, String(h.delays()));
+  h.fire(); await flush(); assert.equal(s.seen.error.kinLate, true); assert.deepEqual(prior.seen.value, []);
+  assert.match(h.shown(), /^2번째 검사의 일부 시리즈 영상 정보가 늦어 그 시리즈 없이 표시했습니다/);
+  // After this route's first layout no request has a deadline (the remaining series load in their own time).
+  const r = recovery(); r.enter(); r.list(CURRENT); r.lists[0].resolve([]); await flush();
+  r.hp.run({ studies: [{ StudyInstanceUID: CURRENT }], activeStudy: null, displaySets: [1] }, 'p');
+  const later = r.load(PRIOR, OTHER); assert.deepEqual(r.delays(), []);
+  r.calls[0].resolve([]); await flush(); assert.deepEqual(later.seen.value, []);
+  // A pending prior whose deadline was running stops running at the layout.
+  const q = recovery(); q.enter(); q.list(CURRENT); const waiting = q.list(PRIOR); q.lists[0].resolve([]); await flush();
+  assert.equal(q.delays().length, 1);
+  q.hp.run({ studies: [{ StudyInstanceUID: CURRENT }, undefined], activeStudy: null, displaySets: [1] }, 'p');
+  assert.deepEqual(q.delays(), []); q.lists[1].resolve([]); await flush(); assert.deepEqual(waiting.seen.value, []);
+});
+
+test('Open failures L9: a layout that does not hold the present URL\'s current study is not laid out (a left route\'s late answer)', async () => {
+  const h = recovery({ search: `?StudyInstanceUIDs=1.2.840.99.7` }); h.enter();
+  const a = { StudyInstanceUID: CURRENT }, b = { StudyInstanceUID: PRIOR };
+  assert.equal(h.hp.run({ studies: [a, b], activeStudy: a, displaySets: [1] }, 'p'), undefined);
+  assert.equal(h.runs.length, 0);
+  const c = { StudyInstanceUID: '1.2.840.99.7' };
+  assert.equal(h.hp.run({ studies: [c], activeStudy: c, displaySets: [1] }, 'p'), 'ran');
+  // Without studies in the URL the guard stands aside.
+  const n = recovery({ search: '' });
+  assert.equal(n.hp.run({ studies: [a], activeStudy: a, displaySets: [1] }, 'p'), 'ran');
+});
+
+test('Open failures L10: a prior list answered 404 or 410 is refused like 403 and not suggested again', async () => {
+  for (const status of [404, 410]) {
+    const h = recovery(); h.enter(); h.list(PRIOR); h.lists[0].reject(http(status)); await flush();
+    assert.deepEqual(h.delays(), []);
+    assert.equal(h.shown(), `2번째 검사의 영상 정보에 접근할 수 없습니다(HTTP ${status}). 이 검사 영상은 표시하지 않았습니다.`);
+  }
 });

@@ -5109,9 +5109,9 @@ function kinCreateDicomPdf() {
      결과를 그대로 돌려준다. (수명주기, 검사, 시리즈|목록)마다 한 번, 고정 1000ms 뒤, 같은 this·options로 보낸다.
    - 로더가 쥐는 약속은 여기서 돌려준 하나뿐이다. 다시 받은 응답으로 그 약속을 한 번 채우므로 storeInstances·표시 세트·
      HP 적용도 한 번만 일어난다. 끝난 실패는 마지막 오류로 거절하고 영상이 준비된 척하지 않는다.
-   - 이전 검사(현재 검사가 아닌 것)의 요청은 현재 검사의 목록이 끝난 뒤 5초를 넘겨 기다리지 않는다: 그때 아직 오지 않은
-     요청은 '늦음'으로 거절하고 늦게 온 답은 버린다. 경로 초기화는 모든 검사의 목록을 기다린 뒤 배치하므로, 이전 검사
-     하나가 늦어 현재 검사까지 비는 일을 막는다.
+   - 이전 검사(현재 검사가 아닌 것)는 이 경로의 첫 배치를 5초 넘게 붙잡지 않는다: 이전 검사마다 기한 하나 — 현재 검사의
+     목록이 끝난 때(이 문서가 현재 목록을 이미 가져 요청하지 않으면 그 이전 검사의 첫 요청 때)부터 5초 — 를 그 검사의
+     목록·시리즈 요청이 함께 쓰고, 기한에 아직 오지 않은 요청은 '늦음'으로 거절하며 늦게 온 답은 버린다. 첫 배치 뒤의 요청
    - URL의 검사 목록과 수명주기에 묶는다. 나가거나 URL이 바뀌면 기다리던 재요청은 보내지 않고 원래 오류로 끝내며
      알림도 남기지 않는다.
    - 실패는 URL 순서의 검사 번호와 HTTP 상태로만 알린다. UID·환자 정보는 쓰지 않는다. 사유는 상태 패널의 줄과 영상 위의
@@ -5119,14 +5119,16 @@ function kinCreateDicomPdf() {
    - 실패한 검사는 이 문서가 사는 동안 기억한다(kinViewerFailedStudies): OHIF가 그 거절을 문서 수명 동안 다시 쓰므로,
      그 검사를 다시 보이려면 새 문서여야 한다(목록의 창 열기와 환자 탭이 이것을 읽는다).
    - 배치: 목록을 못 받은 검사는 OHIF의 검사 목록에 빈 값으로 남아 배치가 예외로 멈춘다(Route Error Boundary). 문서 수명
-     동안 한 번 hangingProtocolService.run을 감싸 빈 값을 빼고, 현재 검사 가운데 하나라도 없으면 배치하지 않는다(일부만, 또는 이전 검사를
-     현재 검사처럼 놓지 않는다). 다른 확장의 경로별 감싸개보다 먼저(preRegistration) 씌워 그 아래에 둔다.
+     동안 한 번 hangingProtocolService.run을 감싸 빈 값을 빼고, 지금 주소의 현재 검사 가운데 하나라도 없으면 배치하지 않는다
+     (일부만, 이전 검사를 현재처럼, 떠난 경로의 늦은 배치를 지금 화면에 놓지 않는다). 다른 확장의 경로별 감싸개보다 먼저(preRegistration) 씌워 그 아래에 둔다.
    - 현재 검사의 목록이 접근 거절이면 환자 탭의 권한 없음 화면으로 넘긴다(KinViewerPatientTabs.imagesRefused).
    - 모양이 예상과 다르면 씌우지 않고 기본 동작을 둔 채 그 사실만 표시한다. */
 function kinCreateSeriesMetadataRecovery() {
   const retryDelay = 1000, priorGrace = 5000, own = (target, key) => Object.prototype.hasOwnProperty.call(target, key);
   let services = null, extensions = null, ticket = null, phase = 'stopped';
-  const failedStudies = new Set();
+  // Document lifetime: studies whose image read failed here (OHIF reuses that failure), and studies whose image list this
+  // document has (OHIF answers a later route from its cache without a request).
+  const failedStudies = new Set(), listedStudies = new Set();
   const retryable = error => !!error && typeof error === 'object' && !!error.request &&
     (window.KinSessionTransport.refusal(error) === 'temporary' ||
       Number.isInteger(error.status) && error.status >= 500 && error.status <= 599);
@@ -5171,9 +5173,10 @@ function kinCreateSeriesMetadataRecovery() {
   }
   function describe(failure) {
     const code = Number.isInteger(failure.status) && failure.status > 0 ? 'HTTP ' + failure.status : '요청 오류';
-    if (failure.late) return failure.position + '번째 검사의 영상 정보가 늦어 그 검사 없이 표시했습니다. 뷰어를 다시 열면 다시 요청합니다.';
+    if (failure.late) return failure.position + (failure.list ? '번째 검사의 영상 정보가 늦어 그 검사 없이 표시했습니다. 뷰어를 다시 열면 다시 요청합니다.'
+      : '번째 검사의 일부 시리즈 영상 정보가 늦어 그 시리즈 없이 표시했습니다. 뷰어를 다시 열면 다시 요청합니다.');
     if (window.KinSessionTransport.refusal(failure.error) === 'temporary') return failure.position + '번째 검사의 연결을 확인하지 못했습니다. 뷰어를 다시 열어 재시도하세요.';
-    if (window.KinSessionTransport.refusal(failure.error) === 'denied') return failure.position + '번째 검사의 영상 정보에 접근할 수 없습니다(' + code + '). 이 검사 영상은 표시하지 않았습니다.';
+    if (window.KinSessionTransport.openFailure(failure.error) === 'denied') return failure.position + '번째 검사의 영상 정보에 접근할 수 없습니다(' + code + '). 이 검사 영상은 표시하지 않았습니다.';
     return failure.position + '번째 검사의 영상 정보를 ' + (failure.retried ? '한 번 다시 요청했지만 ' : '') +
       '불러오지 못했습니다(' + code + '). 이 검사 영상은 표시하지 않았습니다. 뷰어를 다시 여세요.';
   }
@@ -5205,8 +5208,10 @@ function kinCreateSeriesMetadataRecovery() {
     if (!client || typeof client !== 'object' || typeof client.retrieveSeriesMetadata !== 'function' ||
         typeof client.searchForSeries !== 'function' || own(client, 'retrieveSeriesMetadata') || own(client, 'searchForSeries') ||
         config?.enableStudyLazyLoad !== true || !studies.length) return refuse();
-    const current = { client, wrappers: {}, used: new Set(), waits: new Set(), priors: new Set(), failures: new Map(), retries: 0,
-      listed: new Set(), currentDone: false };
+    const current = { client, search, wrappers: {}, used: new Set(), waits: new Set(), priors: new Set(), failures: new Map(), retries: 0,
+      currentLists: 0, answered: new Set(), due: new Map(), laidOut: false };
+    // This route's first layout is done (guardLayout): no prior holds it any more, so no deadline remains.
+    current.layout = () => { current.laidOut = true; for (const deadline of current.priors) clearTimeout(deadline.timer); current.priors.clear(); };
     const live = () => ticket === current && location.search === search;
     const succeed = key => { if (live() && current.failures.delete(key)) render(current); };
     const fail = (key, position, study, error, retried, late, list) => {
@@ -5218,7 +5223,7 @@ function kinCreateSeriesMetadataRecovery() {
       let screen = false;
       if (list && currentOf(search, studies).includes(study) && window.KinSessionTransport.openFailure(error) === 'denied')
         try { screen = window.KinViewerPatientTabs?.imagesRefused?.() === true; } catch (_) {}
-      current.failures.set(key, { position, status: error?.status, error, late: !!late, screen,
+      current.failures.set(key, { position, status: error?.status, error, late: !!late, list, screen,
         retried: retried || !!current.failures.get(key)?.retried });
       render(current);
       // The route boundary also listens to unhandled rejections. Its generic toast must not replace the reason
@@ -5227,11 +5232,11 @@ function kinCreateSeriesMetadataRecovery() {
       if (!fresh) return;
       try { services?.uiNotificationService?.show?.({ title: 'Image Loading', message: describe(current.failures.get(key)), type: 'error' }); } catch (_) {}
     };
-    // Every study of the current exam has its image list answered (or finally refused): priors now wait priorGrace at most.
-    const listed = study => {
-      current.listed.add(study);
-      if (current.currentDone || !live() || !currentOf(search, studies).every(uid => current.listed.has(uid))) return;
-      current.currentDone = true;
+    // Every current study's image list is answered (in this route, or by this document's cache - no request comes then) and none
+    // is in flight: every waiting prior's deadline runs.
+    const armPriors = () => {
+      if (current.laidOut || current.currentLists || !live()) return;
+      if (!currentOf(search, studies).every(uid => current.answered.has(uid) || listedStudies.has(uid))) return;
       for (const deadline of current.priors) deadline.arm();
     };
     // One request of the URL's studies, list (series === null) or one series: the single retry, the prior deadline, the
@@ -5248,20 +5253,24 @@ function kinCreateSeriesMetadataRecovery() {
       const key = JSON.stringify([study, series]), prior = !currentOf(search, studies).includes(study);
       return new Promise((resolve, reject) => {
         let done = false;
+        // One deadline per prior study for this route, shared by its list and series requests.
         const deadline = { timer: null, arm() {
-          if (done || deadline.timer) return;
+          if (done || deadline.timer || current.laidOut) return;
+          if (!current.due.has(study)) current.due.set(study, Date.now() + priorGrace);
           deadline.timer = setTimeout(() => {
-            if (!live()) return;
+            if (!live() || current.laidOut) return;
             finish(false, Object.assign(new Error('Prior study image metadata did not arrive in time.'), { kinLate: true }), false, true);
-          }, priorGrace);
+          }, Math.max(0, current.due.get(study) - Date.now()));
         } };
         function finish(ok, value, retried, late) {
           if (done) return;
           done = true; clearTimeout(deadline.timer); current.priors.delete(deadline);
           if (ok) { resolve(value); succeed(key); } else { reject(value); fail(key, position, study, value, retried, late, list); }
-          if (list && !prior) listed(study);
+          if (list && ok) listedStudies.add(study);
+          if (list && !prior) { current.currentLists--; current.answered.add(study); armPriors(); }
         }
-        if (prior) { current.priors.add(deadline); if (current.currentDone) deadline.arm(); }
+        if (list && !prior) current.currentLists++;
+        if (prior && !current.laidOut) { current.priors.add(deadline); armPriors(); }
         first.then(value => finish(true, value), error => {
           if (done) return;
           // 예산은 첫 거절 때 잡는다. 같은 키의 반복·동시 요청은 예산을 새로 만들지 못한다.
@@ -5297,16 +5306,19 @@ function kinCreateSeriesMetadataRecovery() {
     ticket = current; phase = 'installed';
   }
   // Document lifetime, under every per-route run wrapper: a study missing from OHIF's study list (its image list failed)
-  // is left out of the layout; without every current study nothing is laid out.
+  // is left out of the layout; without every current study of the present URL nothing is laid out (also a left route's late
+  // layout, which names another patient's studies).
   function guardLayout(hp) {
     if (!hp || typeof hp.run !== 'function' || hp.run.kinStudiesGuard) return;
     const run = hp.run;
     const guardedRun = function (data, ...rest) {
-      const studies = data?.studies;
-      if (!Array.isArray(studies) || studies.every(Boolean)) return run.call(this, data, ...rest);
-      const present = studies.filter(Boolean), currents = currentOf(location.search, studiesOf(location.search));
+      const studies = data?.studies, currents = currentOf(location.search, studiesOf(location.search));
+      if (!Array.isArray(studies) || !currents.length) return run.call(this, data, ...rest);
+      const present = studies.filter(Boolean);
       // Every current study must be there: a current exam is never laid out in part, nor a prior in its place.
-      if (!currents.length || !currents.every(uid => present.some(study => study.StudyInstanceUID === uid))) return undefined;
+      if (!currents.every(uid => present.some(study => study?.StudyInstanceUID === uid))) return undefined;
+      if (ticket && ticket.search === location.search) ticket.layout();
+      if (present.length === studies.length) return run.call(this, data, ...rest);
       const active = present.includes(data.activeStudy) ? data.activeStudy : present.find(study => currents.includes(study.StudyInstanceUID));
       return run.call(this, { ...data, studies: present, activeStudy: active }, ...rest);
     };

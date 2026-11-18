@@ -454,7 +454,7 @@ window.KinViewerPatientTabs = (() => {
   }
   async function resolve(href, signal) {
     const exam = await window.kinPrepareExamViewer?.(href);
-    const wanted = exam?.studyUids || studies(href), found = new Map();
+    const wanted = exam?.studyUids || studies(href), found = new Map(), listed = new Set();
     if (session.state() === 'unconfirmed') await session.decide();
     const endpoint = session.readOnly() ? '/api/clinician/studies' : '/api/studies';
     // Match only the open studies through the existing scoped endpoint. The
@@ -468,6 +468,8 @@ window.KinViewerPatientTabs = (() => {
       }
       const result = await response.json();
       for (const row of result.studies || []) {
+        // A merged or split exam answers for its originals inside its row: those are listed (visible) too.
+        listed.add(row.uid); for (const source of row.sourceMetadata || []) listed.add(source?.uid);
         if (wanted.includes(row.uid)) found.set(row.uid, row);
         if (exam) for (const source of row.sourceMetadata || []) if (wanted.includes(source.uid))
           found.set(source.uid,{...row,...source,sourcePatientKey:row.sourcePatientKey});
@@ -477,7 +479,7 @@ window.KinViewerPatientTabs = (() => {
     // The account's own scoped lookup does not return the study being opened (another institution's, a cancelled request's,
     // or no such study): refused. A missing prior alone stays the identity check below (the current study may be shown).
     const opened = exam?.current?.sources?.map(source => source.studyUid).filter(uid => wanted.includes(uid));
-    if ((opened?.length ? opened : wanted.slice(0, 1)).some(uid => !found.get(uid))) throw refusal();
+    if ((opened?.length ? opened : wanted.slice(0, 1)).some(uid => !listed.has(uid))) throw refusal();
     if (!rows.length || rows.some(row => !row?.sourcePatientKey) || rows.some(row => row.sourcePatientKey !== rows[0].sourcePatientKey))
       throw new Error('같은 환자의 검사인지 확인할 수 없어 현재 화면을 유지합니다.');
     const row = rows[0], born = String(row.birth || '').replace(/-/g, ''), date = String(row.date || '').replace(/-/g, '');
@@ -604,7 +606,8 @@ window.KinViewerPatientTabs = (() => {
       if (focusAfterMount) { host.querySelector('[aria-selected=true]')?.focus(); focusAfterMount = false; }
       document.body.classList.remove('kin-patient-switching');
       } catch (error) {
-        if (mounted && epoch === mountEpoch && ticket === sequence && error?.kinRefused) { imagesRefused(); return; }
+        // A refusal (this lookup's, or the image list's that came first) stands: no Retry over it.
+        if (mounted && epoch === mountEpoch && ticket === sequence && (error?.kinRefused || refused)) { imagesRefused(); return; }
         if (mounted && epoch === mountEpoch && ticket === sequence) {
           render(); status.textContent = error.message; retry.hidden = false;
           document.body.classList.remove('kin-patient-switching');
