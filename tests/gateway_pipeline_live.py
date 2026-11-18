@@ -75,6 +75,9 @@ DEADLINES = {'setup': 240, 'fixtures': 60, 'N': 90, 'B': 320, 'R': 235, 'F': 90,
 # project so its residue is the project's. The Gateway reaches it by an alias on the local network only, so detaching
 # that network is a destination that is down.
 PEER_IMAGE = 'orthancteam/orthanc:24.12.0'
+# The institution of the test Gateway credential: the group LiveStack.service_identity('gateway') puts it in (its client
+# name carries a test suffix, so it is not derived from the name). Block G's administrator belongs to the same one.
+GATEWAY_GROUP = 'kin-center'
 PEER_AET = 'EG1PEER'
 PEER_ALIAS = 'eg1-peer'
 PEER_HTTP_PORT = 18044
@@ -133,7 +136,6 @@ class GatewayPipelineLive(unittest.TestCase):
         cls.project = 'kin-eg1-gw-' + secrets.token_hex(6)
         cls.agent, cls.gw_orthanc = cls.project + '-agent', cls.project + '-orthanc'
         cls.peer = cls.project + '-peer'
-        cls.gateway_institution = identity['client_id'].removeprefix('gw-')
         cls.cloud_network = cls.project + '-cloud'
         cls.ev['setup']['project'] = cls.project
         cls.write_env_file(identity['client_id'], identity['secret'])
@@ -692,12 +694,12 @@ class GatewayPipelineLive(unittest.TestCase):
             uid, block = study['uid'], self.ev['G']
             admin = 'eg1-gw-admin'
             try:
-                self.stack.create_test_identity(admin, ['admin'], self.gateway_institution)
+                self.stack.create_test_identity(admin, ['admin'], GATEWAY_GROUP)
             except Exception as error:   # the product's own refusal, kept as evidence (it names no patient value)
                 read = getattr(error, 'read', None)
                 block['identity_error'] = [type(error).__name__, getattr(error, 'code', None),
                                            (read().decode('utf-8', 'replace') if read else str(error))[:400],
-                                           self.gateway_institution]
+                                           GATEWAY_GROUP]
                 raise
             # The hospital PACS, registered as the institution's DICOM Peer, and the rule: CT -> KIN and that PACS.
             self.docker('run', '-d', '--rm', '--name', self.peer, '--label', 'com.docker.compose.project=' + self.project,
