@@ -422,6 +422,8 @@ class ViewerMeasureLinesDOMTest(unittest.TestCase):
         for pixel in [(50, 10), (50, 90), (30, 50), (85, 50), (10, 60), (90, 60)]: self.press(page, 'left', pixel)
         expect(panel.locator('[data-measure-result]')).to_contain_text('CTR 0.69')
         ctr = '[data-kin-measure-layer=left] g[data-kin-mark=KinCTR] line'
+        # The midline, the two heart-border perpendiculars and the lung field line, drawn on the next frame.
+        expect(page.locator(ctr)).to_have_count(4)
         own = page.evaluate(self.LINES, ctr)
         self.assertEqual([None, None, None], [l['dash'] for l in own if l['stroke'] != '#9fd4ff'])
         self.assertEqual(['6 4'], [l['dash'] for l in own if l['stroke'] == '#9fd4ff'])
