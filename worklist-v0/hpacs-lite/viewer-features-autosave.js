@@ -10,7 +10,7 @@
   // Studies this document has shown before: a patient tab brought back keeps the view the tab held (viewer-patient-tabs.js),
   // so only the first opening of a study in a document puts the saved view back.
   const opened = new Set();
-  const DEBOUNCE = 2000, QUIET = 600, START_MS = 30000, SETTINGS_MS = 15000, BADGE_MS = 8000, RULES_MS = 10000;
+  const DEBOUNCE = 2000, QUIET = 600, START_MS = 30000, SETTINGS_MS = 15000, BADGE_MS = 8000, RULES_MS = 10000, DRAWN_MS = 20000;
   const UID = /^[0-9]+(?:\.[0-9]+)+$/;
   const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -107,15 +107,15 @@
       for (const g of views) {
         const ids = g.displaySetInstanceUIDs || [];
         if (!ids.length) { saved.push(null); continue; }
-        const v = stackOf(g.viewportId), image = v?.getCurrentImageId?.(), meta = image && instance(image);
-        if (ids.length !== 1 || !v || !meta || !studies.includes(meta.StudyInstanceUID) ||
-            exam && !window.KinViewerExamScope.allows(exam, meta.StudyInstanceUID, meta.SeriesInstanceUID)) return null;
+        const v = stackOf(g.viewportId), image = v?.getCurrentImageId?.(), key = image ? model.imageKey(image, instance) : null;
+        if (ids.length !== 1 || !v || !key || !isDrawn(v) || !studies.includes(key.study) ||
+            exam && !window.KinViewerExamScope.allows(exam, key.study, key.series)) return null;
         const camera = v.getCamera() || {}, properties = v.getProperties() || {}, range = properties.voiRange;
         if (!range) return null;
         let display = null;
         try { display = window.KinViewerCellRules?.rule?.(g.viewportId) ?? null; } catch (_) { display = null; }
         const rotation = Number.isFinite(camera.rotation) ? camera.rotation : Number(v.getViewPresentation?.()?.rotation ?? 0);
-        saved.push({ study: meta.StudyInstanceUID, series: meta.SeriesInstanceUID, sop: meta.SOPInstanceUID, frame: model.frameOf(image),
+        saved.push({ study: key.study, series: key.series, sop: key.sop, frame: key.frame,
           index: v.getCurrentImageIdIndex?.() ?? 0, zoom: Number(v.getZoom?.() ?? 1),
           camera: { focalPoint: list(camera.focalPoint), position: list(camera.position), viewUp: list(camera.viewUp), viewPlaneNormal: list(camera.viewPlaneNormal),
             parallelScale: camera.parallelScale, rotation, flipHorizontal: !!camera.flipHorizontal, flipVertical: !!camera.flipVertical },
@@ -290,6 +290,27 @@
         await Promise.race([display ? settled : new Promise(resolve => requestAnimationFrame(() => resolve())), wait(2000)]);
       } finally { v.element.removeEventListener('kin-display-image-settled', heard); }
     }
+    // The image the cell shows as it is drawn. A stack drawing its first image puts its own window on it and its camera fitted to it, keeping
+    // only the zoom and pan measured from the camera it had: a camera put on an empty cell before that comes back blown up (zoom about 1%,
+    // the image a dot) and the window as the image's own. So a window and a camera are put on a cell (restoreCell) only once the image it is on
+    // is drawn, whichever the cell, series or orientation, and a cell still drawing its image is not saved either (capture): its window and
+    // camera are not yet that image's. A viewer that does not say what it has drawn is taken to have drawn it.
+    function isDrawn(v) {
+      try { return typeof v.getCornerstoneImage !== 'function' || (v.getCornerstoneImage()?.imageId ?? null) === v.getCurrentImageId?.(); } catch (_) { return false; }
+    }
+    // Waits until the cell has drawn `imageId` and the viewer's display pass over a new image is over (its stored window goes on just after),
+    // till `until`. False when the time is up, the cell is not this one any more, or the reader has gone to another image meanwhile.
+    async function drawn(v, imageId, still, until) {
+      while (still() && v.getCurrentImageId?.() === imageId) {
+        if (isDrawn(v)) {
+          await wait(0); await new Promise(resolve => requestAnimationFrame(() => resolve()));
+          return still() && v.getCurrentImageId?.() === imageId && isDrawn(v);
+        }
+        if (Date.now() >= until) return false;
+        await wait(50);
+      }
+      return false;
+    }
     // The Display Set Presets rules, once that module has started (it may start after this one).
     async function cellRules() {
       for (const until = Date.now() + RULES_MS; Date.now() < until && restoring();) {
@@ -300,8 +321,8 @@
     }
     // One cell: its rule (sort first), then its image by SOP and frame in the sorted stack, then its window and camera.
     // Resolves what was put back ({ zoom, window, image, index: the image's place now, rule: true / false, or null when
-    // the cell kept no rule }), or null when the cell was not this one any more.
-    async function restoreCell(viewportId, cell) {
+    // the cell kept no rule }), or null when the cell was not this one any more or did not draw its image by `until`.
+    async function restoreCell(viewportId, cell, until) {
       const v = stackOf(viewportId), set = setOf(viewportId);
       if (!v) return null;
       const still = () => restoring() && stackOf(viewportId) === v && setOf(viewportId) === set;
@@ -323,6 +344,8 @@
         result.image = v.getCurrentImageIdIndex?.() === index;
         if (result.image) result.index = index;
       }
+      // The window and camera go on the image the cell has drawn: put on before, they are lost as it comes.
+      if (!await drawn(v, v.getCurrentImageId?.(), still, until)) return null;
       v.setProperties({ invert: false, VOILUTFunction: 'LINEAR' });
       v.setProperties(structuredClone(cell.properties));
       result.window = true;
@@ -360,12 +383,14 @@
         if (!await shown(ids.map((id, i) => ({ id, set: wanted[i] })))) return null;
       } else if (!sameLayout) targets = [];
       const results = [];
+      // One time for all the cells to draw their images, not one each.
+      const until = Date.now() + DRAWN_MS;
       for (let i = 0; i < view.cells.length; i++) {
         const cell = view.cells[i], id = targets[i];
         // A cell whose series is not the saved one now (or is not in this viewer) is left as it is.
         if (!cell || !id || !wanted[i] || setOf(id) !== wanted[i]) { results.push(null); continue; }
         let result = null;
-        try { result = await restoreCell(id, cell); } catch (error) { console.error(error); }
+        try { result = await restoreCell(id, cell, until); } catch (error) { console.error(error); }
         if (!restoring()) return null;
         results.push(result);
       }

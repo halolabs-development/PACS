@@ -52,12 +52,19 @@
     const frame = match ? Number(match[1]) : 1;
     return Number.isInteger(frame) && frame >= 1 ? frame : 1;
   }
+  // The source image an image id shows, as a saved cell names it: { study, series, sop, frame }, or null without its
+  // instance data. A cell is saved by it and put back by it (findImage), never by its place on the screen or in a stack.
+  function imageKey(imageId, instanceOf) {
+    let meta = null; try { meta = instanceOf(imageId); } catch (_) {}
+    if (!meta?.SOPInstanceUID) return null;
+    return { study: meta.StudyInstanceUID, series: meta.SeriesInstanceUID, sop: meta.SOPInstanceUID, frame: frameOf(imageId) };
+  }
   // The place of the saved image (SOP and frame) in a stack as it is ordered now; -1 when it is not in it (or twice).
   function findImage(imageIds, instanceOf, sop, frame) {
     let found = -1;
     (imageIds || []).forEach((id, index) => {
-      let meta = null; try { meta = instanceOf(id); } catch (_) {}
-      if (meta?.SOPInstanceUID === sop && frameOf(id) === frame) found = found === -1 ? index : -2;
+      const key = imageKey(id, instanceOf);
+      if (key?.sop === sop && key.frame === frame) found = found === -1 ? index : -2;
     });
     return found >= 0 ? found : -1;
   }
@@ -108,7 +115,7 @@
     return 'Restored saved view' + (words ? ': ' + words : '') + (saved.length > 1 ? ' (' + done + ' of ' + saved.length + ' cells' + (notes ? '; ' + notes : '') + ')' : '');
   }
 
-  const api = Object.freeze({ validate, frameOf, findImage, windowOf, cellText, summary, restoredText });
+  const api = Object.freeze({ validate, frameOf, imageKey, findImage, windowOf, cellText, summary, restoredText });
   root.KinAutoViewModel = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

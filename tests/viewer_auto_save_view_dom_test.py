@@ -214,7 +214,8 @@ def view(cells, rows=1, cols=None, active=0):
 # Cells a restore lays out anew draw their image a moment after they take it, as the viewer's stacks do: the first image
 # drawn in a cell puts the image's own window on it and a camera fitted to it, keeping the zoom and pan measured from the
 # empty cell's camera (scale 1), so a camera put on before that comes back a hundred times smaller. Moving to an image
-# draws it before the move is over. The viewer's first cells have drawn theirs. (`drawn`: the image drawn, or null.)
+# draws it before the move is over. The viewer's first cells have drawn theirs. (`drawn`: the image drawn, or null;
+# synDrawAfter: the moment in ms, synNeverDraws: a set whose cell never draws its first image.)
 LATE_DRAWING = """() => {
   const build = window.synBuild;
   window.synBuild = (rows, cols, cells, active) => {
@@ -232,7 +233,7 @@ LATE_DRAWING = """() => {
       };
       const move = v.setImageIdIndex;
       v.setImageIdIndex = async index => { await move(index); arrive(); };
-      setTimeout(arrive, 700);
+      if (window.synNeverDraws !== synShown.get(v.id)?.set) setTimeout(arrive, window.synDrawAfter || 700);
     }
   };
 }"""
@@ -619,6 +620,37 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         expect(page.locator('[data-auto-view-badge]')).to_have_text('Restored saved view: Zoom 377%, W 162 / L 112, Image 1 (2 of 2 cells)')
         page.wait_for_timeout(2500)
         self.assertEqual([], self.posts(page), 'putting the view back saved nothing')
+
+    def test_05d_a_cell_the_reader_moves_on_while_its_image_comes_is_left_to_the_reader(self):
+        page = self.open(saved=view([cell(SB, 1, scale=26.5, lower=31, upper=192), cell(SA, 4)], active=1),
+                         setup="() => { (" + LATE_DRAWING + ")(); window.synDrawAfter = 4000; }")
+        page.wait_for_function("[...synViewports.keys()].some(id => id.startsWith('kin-auto-view-'))", timeout=8000)
+        page.wait_for_timeout(600)
+        # The reader goes to the third image of the first cell before its first image has come.
+        page.evaluate("[...synViewports.values()][0].setImageIdIndex(2)")
+        page.wait_for_function("document.querySelector('[data-auto-view-badge]')", timeout=12000)
+        ids = page.evaluate('[...synViewports.keys()]')
+        left, right = self.state(page, ids[0]), self.state(page, ids[1])
+        self.assertEqual('syn:set-B:3', left['image'], 'the image the reader went to stays')
+        self.assertNotEqual(26.5, left['scale'], 'the saved camera of image 1 is not put on image 3')
+        self.assertNotEqual({'lower': 31, 'upper': 192}, left['voi'])
+        self.assertEqual(('syn:set-A:4', 40), (right['image'], right['scale']))
+        expect(page.locator('[data-auto-view-badge]')).to_have_text('Restored saved view: Zoom 250%, W 1500 / L -310, Image 4 (1 of 2 cells; 1 not restored)')
+
+    def test_05e_a_cell_whose_image_never_comes_holds_the_others_back_only_for_a_while_and_is_not_restored(self):
+        page = self.open(saved=view([cell(SB, 1, scale=26.5, lower=31, upper=192), cell(SA, 4)], active=1),
+                         setup="() => { (" + LATE_DRAWING + ")(); window.synNeverDraws = 'set-B'; }")
+        page.wait_for_function("[...synViewports.keys()].some(id => id.startsWith('kin-auto-view-'))", timeout=8000)
+        page.wait_for_timeout(3000)
+        self.assertEqual(0, page.locator('[data-auto-view-badge]').count(), 'the restore waits for the first cell\'s image')
+        page.wait_for_function("document.querySelector('[data-auto-view-badge]')", timeout=30000)
+        ids = page.evaluate('[...synViewports.keys()]')
+        left, right = self.state(page, ids[0]), self.state(page, ids[1])
+        self.assertEqual((None, 100), (page.evaluate('[...synViewports.values()][0].drawn'), left['scale']), 'nothing put on the cell still empty')
+        self.assertEqual(('syn:set-A:4', 40, {'lower': -1060, 'upper': 439}), (right['image'], right['scale'], right['voi']))
+        expect(page.locator('[data-auto-view-badge]')).to_have_text('Restored saved view: Zoom 250%, W 1500 / L -310, Image 4 (1 of 2 cells; 1 not restored)')
+        page.wait_for_timeout(2500)
+        self.assertEqual([], self.posts(page), 'nothing saved: the empty cell is not a view to keep')
 
     def test_06_a_job_chosen_to_open_wins(self):
         page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), query='&kinJob=00000000-0000-4000-8000-000000000001')
