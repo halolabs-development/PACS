@@ -107,7 +107,7 @@ def lf_text(path):
 
 ORIGIN = "https://clinician.test"
 BASE = "/worklist/hpacs-lite/"
-SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "product-info-data.js", "product-info.js", "worklist-language-terms.js", "worklist-language.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "critical-result-inbox.js", "report-editor-frame.js")}
+SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "critical-result-inbox.js", "report-editor-frame.js")}
 MAIN = read_page_source(HPACS / "main.html")
 EMBLEM = (HPACS / "kin-emblem-j1.svg").read_bytes()
 INDEX_STAND_IN = ('<!doctype html><html><head><meta charset="utf-8"><title>SYN index stand-in</title></head>'
@@ -376,7 +376,8 @@ def without_u4b_clinician(text):
 # Everything the cut block reads from the page script, as small stand-ins. select() is the page's early return for the
 # same study followed by renderClinical(), whose S5-U4b line is the shipped HOOK. KIN_AUTH is the KinAuth stand-in below,
 # or nothing when the case loads the shipped auth.js first (test_18).
-READER_PRELUDE = """
+READER_PRELUDE = extract_function(MAIN, "kinWrite") + """
+const kinSay = t => t;
 const $ = s => document.querySelector(s);
 const API = location.origin + '/api';
 let sess = window.synSession;
@@ -894,8 +895,6 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
             self.unexpected.append(f"{method} {request.url}")
             route.abort()
             return
-        if getattr(self, "planter", None) is not None and path.startswith("/api/") and path != "/api/reading-appearance":
-            route = self.planter.wrap(route)  # language_data_probe: answers carry planted data
         if method == "GET" and path.startswith(BASE):
             name = path[len(BASE):]
             if name == "index.html":
@@ -953,12 +952,6 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
             self.inbox_reads.append(request.url)
             route.fulfill(json={"owner": [account.get("institution"), account.get("sub")], "view": "received", "items": [],
                                 "nextCursor": None, "pending": 0})
-            return
-        # The page reads the account's screen language once it knows the session (no saved appearance here).
-        if method == "GET" and path == "/api/reading-appearance":
-            language = getattr(self, "language", None)  # the account's screen language (None: no saved appearance)
-            route.fulfill(json={"owner": None, "revision": 0 if language is None else 1,
-                                "sizes": None if language is None else {"version": 12, "language": language}})
             return
         kind = kind_of(method, path)
         if kind is None:
@@ -1140,26 +1133,6 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
     def reader_note(self, state):
         expect(self.page.locator("#question-thread [data-note-key]:not([hidden])").first).to_have_attribute("data-state", state)
         return self.reader()
-
-    def test_40_question_data_is_shown_as_written_in_english(self):
-        """Question threads (bodies, answers, authors) replaced with glossary words, sentences and filled templates: none
-        shows as its English (language_data_probe)."""
-        import language_data_probe as probe
-        opened, answered, _ = self.seed_threads()
-        self.language = probe.ENGLISH
-
-        def draw(planter):
-            self.planter = planter
-            self.fresh_context()
-            self.open_home()
-            self.pick(A)
-            self.open_questions("ready")
-            self.open_thread(answered["id"])
-            return probe.snapshot(self.page), self.page
-
-        found, reached = probe.compare(draw)
-        self.assertEqual([], found)
-        self.assertGreater(len(reached), 2)
 
     def seed_threads(self):
         """A: an Open thread, an Answered thread whose answer was written at Preliminary v1 (now Approved v2), a Closed one."""

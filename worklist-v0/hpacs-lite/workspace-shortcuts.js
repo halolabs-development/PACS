@@ -54,7 +54,7 @@
     const work=root.KinWorkContext,transport=root.KinSessionTransport.page();
     const storage=()=>{try{return root.localStorage;}catch(_){return undefined;}};
     const d = host.ownerDocument;
-    const el = (tag, text, parent) => { const n = d.createElement(tag); n.textContent = text; parent?.append(n); return n; };
+    const el = (tag, text, parent) => { const n = d.createElement(tag); kinWrite(n, text); parent?.append(n); return n; };
     let map = {...defaultsV2}, currentOwner = null, ended = false, draftOwner = null, baseline = null;
     let accountRequest=null, accountEpoch=0, accountRevision=null, accountBusy=false;
     const edit = el('button','Edit Shortcuts',host); edit.type='button'; edit.className='chip'; edit.id='workspace-shortcuts-edit';
@@ -76,15 +76,15 @@
     const fields = {};
     for (const id of ids) {
       const row=el('label',labels[id],panels[scope(id)]); row.style.cssText='display:grid;grid-template-columns:minmax(100px,1fr) minmax(130px,1fr);align-items:center;gap:12px;margin:8px 0';
-      const field=el('input','',row);field.readOnly=true;field.id='workspace-shortcut-'+id;kinWrite(field,kinSay('{t0} 단축키',{t:labels[id]}),'aria-label');field.style.cssText='box-sizing:border-box;width:100%;padding:6px;background:#0b1320;color:inherit;border:1px solid #718eaa;border-radius:4px';fields[id]=field;
+      const field=el('input','',row);field.readOnly=true;field.id='workspace-shortcut-'+id;kinWrite(field,kinSay('{t0} 단축키',kinSay(labels[id])),'aria-label');field.style.cssText='box-sizing:border-box;width:100%;padding:6px;background:#0b1320;color:inherit;border:1px solid #718eaa;border-radius:4px';fields[id]=field;
       field.onkeydown=e=>{
         if (e.key==='Tab'||e.key==='Escape') return;
         e.preventDefault();e.stopPropagation();
         if(e.repeat||e.isComposing||e.getModifierState('AltGraph'))return;
-        if(!e.ctrlKey&&!e.altKey&&!e.shiftKey&&!e.metaKey&&['Backspace','Delete'].includes(e.key)){field.dataset.code='';field.value=display(null);message.textContent='미배정했습니다. 적용하려면 저장하세요.';return;}
+        if(!e.ctrlKey&&!e.altKey&&!e.shiftKey&&!e.metaKey&&['Backspace','Delete'].includes(e.key)){field.dataset.code='';field.value=display(null);kinWrite(message, kinSay('미배정했습니다. 적용하려면 저장하세요.'));return;}
         const key=eventChord(e);
-        if(!chord(key)) { message.textContent='예약 키입니다. Ctrl+Alt와 숫자 1~9(8 제외), 영문(C 제외), 좌우 방향키 또는 Ctrl+S를 사용하세요.';return; }
-        field.dataset.code=key;field.value=display(key);message.textContent='적용 전에 중복 단축키를 확인합니다.';
+        if(!chord(key)) { kinWrite(message, kinSay('예약 키입니다. Ctrl+Alt와 숫자 1~9(8 제외), 영문(C 제외), 좌우 방향키 또는 Ctrl+S를 사용하세요.'));return; }
+        field.dataset.code=key;field.value=display(key);kinWrite(message, kinSay('적용 전에 중복 단축키를 확인합니다.'));
       };
     }
     const message=el('p','',dialog);message.id='workspace-shortcuts-message';message.setAttribute('role','status');
@@ -93,8 +93,8 @@
     const close=()=>{cancelAccount();dialog.close();draftOwner=null;if(!ended)edit.focus();};
     const draft=()=>({version:2,...Object.fromEntries(ids.map(id=>[id,fields[id].dataset.code||null]))});
     el('p','계정에서 불러오면 아래 입력란에 채워집니다. 계정 저장은 표시된 키를 보관하며, 현재 브라우저에는 Apply & Save로 적용하세요.',dialog);
-    const accountLoad=button('Load from Account','workspace-shortcuts-account-load',()=>accountRun('load'));
-    const accountSave=button('Save to Account','workspace-shortcuts-account-save',()=>accountRun('save'));
+    const accountLoad=button(kinSay('Load from Account'),'workspace-shortcuts-account-load',()=>accountRun('load'));
+    const accountSave=button(kinSay('Save to Account'),'workspace-shortcuts-account-save',()=>accountRun('save'));
     const accountStatus=el('p','',dialog);accountStatus.id='workspace-shortcuts-account-status';accountStatus.setAttribute('role','status');
     function refreshAccount(){accountLoad.disabled=ended||accountBusy||!dialog.open||!allowed()||owner()!==draftOwner;accountSave.disabled=accountLoad.disabled||accountRevision===null;}
     function cancelAccount(){accountEpoch++;accountRequest?.abort();accountRequest=null;accountRevision=null;accountBusy=false;}
@@ -109,7 +109,7 @@
       }
       const live=()=>!ended&&ticket===accountEpoch&&dialog.open&&allowed()&&owner()===bound&&draftOwner===bound;
       const controller=new AbortController();accountRequest=controller;accountBusy=true;interruptedAction=action;refreshAccount();
-      const timeout=setTimeout(()=>controller.abort(),10000);accountStatus.textContent='계정 단축키를 확인하는 중…';
+      const timeout=setTimeout(()=>controller.abort(),10000);kinWrite(accountStatus, kinSay('계정 단축키를 확인하는 중…'));
       try{
         const response=await transport.request('/api/workspace-shortcuts',{context:at,method:action==='save'?'PUT':'GET',credentials:'same-origin',cache:'no-store',signal:controller.signal,headers:{'Content-Type':'application/json'},...(action==='save'?{body:JSON.stringify({expectedOwner:JSON.parse(bound),revision:accountRevision,bindings:snapshot})}:{})});
         if(!live())return;
@@ -118,30 +118,30 @@
         const data=response.body;if(!live())return;
         if(JSON.stringify(data.owner)!==bound||!Number.isInteger(data.revision)||data.revision<0||data.revision>2147483647||(data.revision===0?data.bindings!==null||data.invalid===true:!valid(data.bindings)&&!(data.invalid===true&&data.bindings===null)))throw Error('계정 단축키 응답을 확인할 수 없습니다.');
         work.commit(at,()=>{
-        if(action==='load'&&JSON.stringify(snapshot)!==JSON.stringify(draft())){accountRevision=null;accountStatus.textContent='입력이 바뀌어 불러온 설정을 적용하지 않았습니다.';return;}
+        if(action==='load'&&JSON.stringify(snapshot)!==JSON.stringify(draft())){accountRevision=null;kinWrite(accountStatus, kinSay('입력이 바뀌어 불러온 설정을 적용하지 않았습니다.'));return;}
         accountRevision=data.revision;
-        if(data.invalid===true){accountStatus.textContent='저장된 단축키를 읽을 수 없습니다. 현재 입력으로 계정에 다시 저장할 수 있습니다.';return;}
-        if(action==='load'&&data.bindings!==null){const migrated=migrate(data.bindings);fill(migrated.map);message.textContent=migrated.notices.join(' ');accountStatus.textContent='계정 단축키를 입력란에 불러왔습니다. Apply & Save로 적용하세요.';}
-        else if(action==='save')accountStatus.textContent=JSON.stringify(snapshot)===JSON.stringify(draft())?'단축키를 계정에 저장했습니다.':'요청 당시 단축키를 저장했습니다. 이후 입력 변경은 저장되지 않았습니다.';
-        else accountStatus.textContent=data.bindings===null?'계정에 저장된 단축키가 없습니다.':'계정 설정이 있습니다. 불러오면 입력란에 표시합니다.';
+        if(data.invalid===true){kinWrite(accountStatus, kinSay('저장된 단축키를 읽을 수 없습니다. 현재 입력으로 계정에 다시 저장할 수 있습니다.'));return;}
+        if(action==='load'&&data.bindings!==null){const migrated=migrate(data.bindings);fill(migrated.map);message.textContent=migrated.notices.join(' ');kinWrite(accountStatus, kinSay('계정 단축키를 입력란에 불러왔습니다. Apply & Save로 적용하세요.'));}
+        else if(action==='save')kinWrite(accountStatus, JSON.stringify(snapshot)===JSON.stringify(draft())?kinSay('단축키를 계정에 저장했습니다.'):kinSay('요청 당시 단축키를 저장했습니다. 이후 입력 변경은 저장되지 않았습니다.'));
+        else kinWrite(accountStatus, data.bindings===null?kinSay('계정에 저장된 단축키가 없습니다.'):kinSay('계정 설정이 있습니다. 불러오면 입력란에 표시합니다.'));
         });
-      }catch(e){work.commit(at,()=>{if(live()){accountRevision=null;accountStatus.textContent=e instanceof TypeError||e.name==='AbortError'?'응답을 확인하지 못했습니다. 입력은 유지했습니다. 다시 불러오세요.':e instanceof SyntaxError?'계정 응답 형식을 확인하지 못했습니다.':e.message;}});}
+      }catch(e){work.commit(at,()=>{if(live()){accountRevision=null;kinWrite(accountStatus, e instanceof TypeError||e.name==='AbortError'?kinSay('응답을 확인하지 못했습니다. 입력은 유지했습니다. 다시 불러오세요.'):e instanceof SyntaxError?kinSay('계정 응답 형식을 확인하지 못했습니다.'):e.message);}});}
       finally{clearTimeout(timeout);if(ticket===accountEpoch){accountRequest=null;accountBusy=false;work.commit(at,()=>{interruptedAction=null;refreshAccount();});}}
     }
-    button('Defaults','workspace-shortcuts-default',()=>{fill(defaultsV2);message.textContent='기본값을 적용하려면 저장하세요.';});
-    button('Cancel','workspace-shortcuts-cancel',close);
-    button('Apply & Save','workspace-shortcuts-apply',()=>{
-      if(ended||!allowed()||!draftOwner||owner()!==draftOwner){message.textContent='계정이 바뀌었습니다. 창을 닫고 다시 확인하세요.';return;}
+    button(kinSay('Defaults'),'workspace-shortcuts-default',()=>{fill(defaultsV2);kinWrite(message, kinSay('기본값을 적용하려면 저장하세요.'));});
+    button(kinSay('Cancel'),'workspace-shortcuts-cancel',close);
+    button(kinSay('Apply & Save'),'workspace-shortcuts-apply',()=>{
+      if(ended||!allowed()||!draftOwner||owner()!==draftOwner){kinWrite(message, kinSay('계정이 바뀌었습니다. 창을 닫고 다시 확인하세요.'));return;}
       const next=draft();
       if(!valid(next)){
         const conflicts=ids.filter(id=>next[id]&&ids.some(other=>other!==id&&next[other]===next[id]));
         message.textContent='중복 단축키: '+conflicts.map(id=>labels[id]+' ('+scope(id)+')').join(', ')+'. 서로 다른 키로 지정하세요.';return;
       }
       try {
-        if(localBaseline(storage(),draftOwner)!==baseline){message.textContent='다른 창에서 설정이 바뀌었습니다. 취소 후 다시 열어 확인하세요.';return;}
+        if(localBaseline(storage(),draftOwner)!==baseline){kinWrite(message, kinSay('다른 창에서 설정이 바뀌었습니다. 취소 후 다시 열어 확인하세요.'));return;}
         storage().setItem(prefix+draftOwner,JSON.stringify(next));
-      } catch (_) {message.textContent='설정을 저장하지 못했습니다. 입력을 유지했습니다. 다시 시도하세요.';return;}
-      map=next;changed(map);status.textContent='단축키를 저장했습니다. 열린 Viewer의 새 키는 다음 열기부터 적용됩니다.';close();
+      } catch (_) {kinWrite(message, kinSay('설정을 저장하지 못했습니다. 입력을 유지했습니다. 다시 시도하세요.'));return;}
+      map=next;changed(map);kinWrite(status, kinSay('단축키를 저장했습니다. 열린 Viewer의 새 키는 다음 열기부터 적용됩니다.'));close();
     });
     function sync() {
       if(ended)return;
@@ -157,7 +157,7 @@
       draftOwner=currentOwner;
       try{baseline=localBaseline(storage(),draftOwner);}catch(_){baseline=null;}
       const saved=readLocal(storage(),draftOwner);map=saved.map;changed(map);
-      fill(map);message.textContent=saved.notices.join(' ')||'각 항목에서 사용할 조합을 누르세요.';showTab('Worklist');dialog.showModal();fields.list.focus();refreshAccount();accountRun('inspect');
+      fill(map);kinWrite(message, saved.notices.join(' ')||kinSay('각 항목에서 사용할 조합을 누르세요.'));showTab('Worklist');dialog.showModal();fields.list.focus();refreshAccount();accountRun('inspect');
     };
     dialog.addEventListener('cancel',e=>{e.preventDefault();close();});
     dialog.addEventListener('keydown',e=>e.stopPropagation());

@@ -119,7 +119,7 @@
       const make = (tag, className, text) => {
         const node = document.createElement(tag);
         if (className) node.className = className;
-        if (text !== undefined) node.textContent = text;
+        if (text !== undefined) kinWrite(node, text);
         return node;
       };
       const button = (label, onClick) => {
@@ -138,8 +138,8 @@
       };
       const setState = (box, state, text, detail) => {
         box.dataset.state = state;
-        box.querySelector('.question-text').textContent = text;
-        box.querySelector('.question-detail').textContent = detail || '';
+        kinWrite(box.querySelector('.question-text'), text);
+        kinWrite(box.querySelector('.question-detail'), detail || '');
       };
       const dash = value => typeof value === 'string' && value.trim() ? value : '—';
       const person = value => dash(value && (value.name || value.actor));
@@ -279,7 +279,7 @@
       const studyView = make('div');
       studyView.dataset.view = 'study';
       const listState = stateBox('question-list-state');
-      const listRetry = button('Retry', () => loadList());
+      const listRetry = button(kinSay('Retry'), () => loadList());
       listRetry.id = 'question-list-retry';
       listState.append(listRetry);
       const list = make('ol');
@@ -292,7 +292,7 @@
       const inboxView = make('div');
       inboxView.dataset.view = 'inbox';
       const inboxHead = make('div', 'question-actions');
-      const inboxLabel = make('label', null, 'State');
+      const inboxLabel = make('label', null, kinSay('State'));
       inboxLabel.htmlFor = 'question-inbox-filter';
       const inboxFilter = make('select');
       inboxFilter.id = 'question-inbox-filter';
@@ -302,18 +302,18 @@
         inboxFilter.append(option);
       }
       inboxFilter.addEventListener('change', () => { inboxState = inboxFilter.value; loadInbox(false); });
-      const inboxReload = button('Reload', () => loadInbox(false));
+      const inboxReload = button(kinSay('Reload'), () => loadInbox(false));
       inboxReload.id = 'question-inbox-reload';
       inboxHead.append(inboxLabel, inboxFilter, inboxReload);
       const inboxLine = stateBox('question-inbox-state');
-      const inboxRetry = button('Retry', () => loadInbox(inboxItems.length > 0));
+      const inboxRetry = button(kinSay('Retry'), () => loadInbox(inboxItems.length > 0));
       inboxRetry.id = 'question-inbox-retry';
       inboxLine.append(inboxRetry);
       const inboxList = make('ol');
       inboxList.id = 'question-inbox-list';
-      const inboxMore = button('More', () => loadInbox(true));
+      const inboxMore = button(kinSay('More'), () => loadInbox(true));
       inboxMore.id = 'question-inbox-more';
-      inboxView.append(make('p', 'question-muted', TEXT.inboxHint), inboxHead, inboxLine, inboxList, inboxMore);
+      inboxView.append(make('p', 'question-muted', kinSay(TEXT.inboxHint)), inboxHead, inboxLine, inboxList, inboxMore);
       pane.append(lockBox, studyView, inboxView);
 
       /**
@@ -326,26 +326,26 @@
         root.dataset.state = ended ? 'ended' : lock ? 'locked' : listFailure ? 'failed' : listLoading ? 'loading'
           : items === null ? 'idle' : items.length ? 'ready' : 'empty';
         const counts = state => (items || []).filter(item => item.state === state).length;
-        const line = lock ? lock.text : shownFor && !online() ? TEXT.offline : uid === null || !allowed() ? (shownFor ? TEXT.unread : TEXT.none)
-          : listFailure ? TEXT.failed
-          : items === null ? TEXT.loading
-          : items.length ? TEXT.counts(items.length, counts('Open'), counts('Answered'), counts('Closed')) : TEXT.empty;
-        summary.textContent = line;
-        summary.title = line;
+        const line = lock ? lock.text : shownFor && !online() ? kinSay(TEXT.offline) : uid === null || !allowed() ? (shownFor ? kinSay(TEXT.unread) : kinSay(TEXT.none))
+          : listFailure ? kinSay(TEXT.failed)
+          : items === null ? kinSay(TEXT.loading)
+          : items.length ? TEXT.counts(items.length, counts('Open'), counts('Answered'), counts('Closed')) : kinSay(TEXT.empty);
+        kinWrite(summary, line);
+        kinWrite(summary, line, "title");
         if (notice) {
           // 알 때만 말한다: 잠김·실패·질문 있음은 그 글, 성공한 빈 답·읽지 않는 검사는 알림 없음, 읽는 중은 그대로.
           const parts = ['Open', 'Answered', 'Closed'].filter(state => counts(state)).map(state => `${state} ${counts(state)}`).join(' · ');
           // 끊긴 동안은 새로 아는 것이 없다: 마지막으로 말한 것을 그대로 둔다.
-          const now = !lock && uid !== null && !allowed() ? null : lock ? (lock.account ? TEXT.notice.account : TEXT.notice.refused) : listFailure ? TEXT.notice.failed
+          const now = !lock && uid !== null && !allowed() ? null : lock ? (lock.account ? kinSay(TEXT.notice.account) : kinSay(TEXT.notice.refused)) : listFailure ? kinSay(TEXT.notice.failed)
             : items && items.length ? TEXT.notice.counts(items.length, parts) : uid === null || items !== null ? '' : null;
           if (now !== null) told = now ? { text: now, title: kinSay('{t0} — Show Questions', { t: line }) } : null;
           notice.hidden = ended || visible || !told;
           if (told) {
-            notice.textContent = told.text;
+            kinWrite(notice, told.text);
             kinWrite(notice, told.title, 'title');
           }
         }
-        toggle.textContent = mode === 'study' ? 'Hide Questions' : 'Show Questions';
+        kinWrite(toggle, mode === 'study' ? kinSay('Hide Questions') : kinSay('Show Questions'));
         toggle.setAttribute('aria-expanded', String(mode === 'study'));
         inboxButton.setAttribute('aria-expanded', String(mode === 'inbox'));
         pane.hidden = mode === null;
@@ -370,7 +370,7 @@
         const li = make('li');
         li.dataset.id = item.id;
         if (item.id === threadId) li.setAttribute('aria-current', 'true');
-        const open = button('Open Thread', () => openThread(item.id));
+        const open = button(kinSay('Open Thread'), () => openThread(item.id));
         open.dataset.openThread = '';
         li.append(badge(item.state), ' ',
           TEXT.item(time(item.createdAt), person(item.author), item.entryCount, time(item.lastEntryAt)), ' ', open);
@@ -391,7 +391,7 @@
       function buildThread(target, id) {
         threadBox.dataset.id = id;
         const head = make('div', 'question-actions');
-        const title = make('h4', null, 'Thread');
+        const title = make('h4', null, kinSay('Thread'));
         const status = make('span');
         status.dataset.part = 'status';
         head.append(title, status);
@@ -399,17 +399,17 @@
         meta.dataset.part = 'meta';
         const state = stateBox('question-thread-state');
         state.dataset.part = 'state';
-        const retry = button('Retry', () => loadThread());
+        const retry = button(kinSay('Retry'), () => loadThread());
         retry.dataset.part = 'retry';
         state.append(retry);
         const entries = make('ol');
         entries.id = 'question-entries';
         entries.dataset.part = 'entries';
-        const closed = make('p', 'question-muted', TEXT.closedNote);
+        const closed = make('p', 'question-muted', kinSay(TEXT.closedNote));
         closed.dataset.part = 'closed';
         const reply = composer(target, id, 'reply', { label: 'Reply', hint: TEXT.replyHint, button: 'Reply', multiline: true });
         // OQ-11 (a): 서버는 답변 문장을 거르지 않는다. 확정 전 소견이 그대로 전해진다는 사실을 입력 곁에 둔다.
-        const nonFinal = make('p', 'question-nonfinal', TEXT.nonFinal);
+        const nonFinal = make('p', 'question-nonfinal', kinSay(TEXT.nonFinal));
         nonFinal.id = 'question-nonfinal';
         reply.querySelector('textarea').before(nonFinal);
         reply.querySelector('textarea').setAttribute('aria-describedby', 'question-reply-hint question-nonfinal');
@@ -450,7 +450,7 @@
         li.dataset.kind = entry.kind;
         const meta = make('p', 'question-muted');
         meta.append(make('strong', null, KINDS[entry.kind]), ` · ${person(entry.author)} (${ROLES[entry.author.role]}) · ${time(entry.at)}`);
-        const body = entry.body ? Object.assign(make('p', 'question-body', entry.body), { translate: false }) : make('p', 'question-muted', TEXT.closeEmpty);
+        const body = entry.body ? Object.assign(make('p', 'question-body', entry.body), { translate: false }) : make('p', 'question-muted', kinSay(TEXT.closeEmpty));
         li.append(meta, body);
         const signed = window.KinClinicalSignature?.(evidence, entry.seq);
         if (signed) li.append(make('p', 'question-muted', signed));
@@ -458,7 +458,7 @@
         if (entry.kind === 'answer' && (entry.reportAnchor.rs !== current.rs || entry.reportAnchor.version !== current.version)) {
           const note = make('p', 'question-anchor');
           note.dataset.anchor = '';
-          note.append(make('strong', null, TEXT.anchorChanged), ' ', TEXT.anchorDetail(reportText(entry.reportAnchor), reportText(current)));
+          note.append(make('strong', null, kinSay(TEXT.anchorChanged)), ' ', TEXT.anchorDetail(reportText(entry.reportAnchor), reportText(current)));
           li.append(note);
         }
         return li;
@@ -490,9 +490,9 @@
         const actions = make('div', 'question-actions');
         const send = button(spec.button, () => submit(target, id, action, field));
         send.dataset.send = '';
-        const retry = button('Retry', () => resend(key));
+        const retry = button(kinSay('Retry'), () => resend(key));
         retry.dataset.retry = '';
-        const discard = button('Discard', () => drop(key));
+        const discard = button(kinSay('Discard'), () => drop(key));
         discard.dataset.discard = '';
         actions.append(send, retry, discard);
         wrap.append(label, hint, field, actions);
@@ -871,11 +871,11 @@
         li.dataset.uid = item.studyUid;
         const row = study(item.studyUid);
         const label = row ? `${dash(row.name)} · ${dash(row.id)} · ${dash(row.date)} · ${dash(row.desc)}` : `${TEXT.unlisted} · ${item.studyUid}`;
-        const open = button('Open Study', () => openFromInbox(item));
+        const open = button(kinSay('Open Study'), () => openFromInbox(item));
         open.dataset.openStudy = '';
         if (!row) {
           open.disabled = true;
-          open.title = TEXT.notListed;
+          kinWrite(open, kinSay(TEXT.notListed), "title");
         }
         li.append(badge(item.state), ' ', make('span', null, label), ' ',
           make('span', 'question-muted', TEXT.item(time(item.createdAt), person(item.author), item.entryCount, time(item.lastEntryAt))), ' ', open);

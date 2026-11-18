@@ -117,44 +117,56 @@
     const dialog = el('dialog'); dialog.id = 'report-preview'; dialog.setAttribute('aria-labelledby', 'report-preview-title');
     dialog.style.cssText = 'width:min(1150px,94vw);height:90vh;padding:0;border:1px solid #61748c;border-radius:8px;background:#18212b;color:#edf2f8';
     const top = el('div', undefined, dialog); top.style.cssText = 'display:flex;gap:12px;padding:12px;align-items:center;flex-wrap:wrap';
-    const title = el('strong', '판독문·키 이미지 미리보기', top); title.id = 'report-preview-title';
-    const source = el('select', undefined, top); source.setAttribute('aria-label', '출력 판독문');
-    for (const [value, label] of [['saved', '서버 저장본'], ['editor', '현재 편집문 · 미확정']]) { const option = el('option', label, source); option.value = value; }
-    const layout = el('select', undefined, top); layout.setAttribute('aria-label', '키 이미지 배치');
-    for (const [value, label] of [['single', '키 이미지 · 한 열'], ['double', '키 이미지 · 두 열']]) { const option = el('option', label, layout); option.value = value; }
-    const refresh = el('button', '다시 확인', top), closeButton = el('button', '닫기', top);
+    // These controls come from the product's fixed captions. Report and key image values use el() directly.
+    function caption(node, words, attribute) {
+      const language = globalThis.KinLanguage;
+      if (language) language.write(node, language.say(words), attribute);
+      else if (attribute) node.setAttribute(attribute, words);
+      else node.textContent = words;
+    }
+    function control(tag, words, parent) {
+      const node = el(tag, undefined, parent);
+      caption(node, words);
+      return node;
+    }
+    const title = control('strong', '판독문·키 이미지 미리보기', top); title.id = 'report-preview-title';
+    const source = el('select', undefined, top); caption(source, '출력 판독문', 'aria-label');
+    for (const [value, label] of [['saved', '서버 저장본'], ['editor', '현재 편집문 · 미확정']]) { const option = control('option', label, source); option.value = value; }
+    const layout = el('select', undefined, top); caption(layout, '키 이미지 배치', 'aria-label');
+    for (const [value, label] of [['single', '키 이미지 · 한 열'], ['double', '키 이미지 · 두 열']]) { const option = control('option', label, layout); option.value = value; }
+    const refresh = control('button', '다시 확인', top), closeButton = control('button', '닫기', top);
     const middle = el('div', undefined, dialog); middle.style.cssText = 'display:flex;gap:12px;height:calc(100% - 130px);min-height:150px;padding:0 12px';
     const sidebar = el('div', undefined, middle); sidebar.style.cssText = 'flex:0 1 260px;min-width:140px;overflow:auto';
-    el('strong', '함께 출력할 키 이미지', sidebar);
+    control('strong', '함께 출력할 키 이미지', sidebar);
     const windowControls = el('fieldset', undefined, sidebar); windowControls.style.cssText = 'border:0;padding:10px 0;margin:0';
-    el('legend', '선택 키 이미지 밝기', windowControls);
-    const brightness = el('select', undefined, windowControls); brightness.setAttribute('aria-label', '출력 영상 밝기');
-    for (const [value, label] of [['auto', '자동 밝기'], ['manual', 'CT 출력 W/L 직접 지정']]) { const option = el('option', label, brightness); option.value = value; }
+    control('legend', '선택 키 이미지 밝기', windowControls);
+    const brightness = el('select', undefined, windowControls); caption(brightness, '출력 영상 밝기', 'aria-label');
+    for (const [value, label] of [['auto', '자동 밝기'], ['manual', 'CT 출력 W/L 직접 지정']]) { const option = control('option', label, brightness); option.value = value; }
     const windowFields = el('div', undefined, windowControls); windowFields.style.display = 'none';
-    const widthLabel = el('label', 'W (폭) ', windowFields), windowWidth = el('input', undefined, widthLabel);
-    const centerLabel = el('label', 'L (중심) ', windowFields), windowCenter = el('input', undefined, centerLabel);
+    const widthLabel = control('label', 'W (폭) ', windowFields), windowWidth = el('input', undefined, widthLabel);
+    const centerLabel = control('label', 'L (중심) ', windowFields), windowCenter = el('input', undefined, centerLabel);
     for (const input of [windowWidth, windowCenter]) { input.type = 'number'; input.step = 'any'; input.style.cssText = 'width:100%;box-sizing:border-box;margin:4px 0 8px'; }
     windowWidth.min = '1'; windowWidth.max = '20000'; windowWidth.value = '400';
     windowCenter.min = '-10000'; windowCenter.max = '10000'; windowCenter.value = '40';
-    const applyWindow = el('button', '밝기 적용', windowFields);
+    const applyWindow = control('button', '밝기 적용', windowFields);
     const geometry = el('fieldset', undefined, sidebar); geometry.style.cssText = 'border:0;padding:10px 0;margin:0';
-    el('legend', '키 이미지 출력 범위', geometry);
-    const targetKey = el('select', undefined, geometry); targetKey.setAttribute('aria-label', '키 이미지 조절 대상');
+    control('legend', '키 이미지 출력 범위', geometry);
+    const targetKey = el('select', undefined, geometry); caption(targetKey, '키 이미지 조절 대상', 'aria-label');
     const geometryInputs = {};
     for (const [key, label, min, max, initial] of [['zoom', '키 확대 (%)', 25, 400, 100], ['x', '키 가로 이동 (%)', -100, 100, 0], ['y', '키 세로 이동 (%)', -100, 100, 0]]) {
-      const input = el('input', undefined, el('label', label, geometry)); input.type = 'number'; input.step = 'any'; input.min = min; input.max = max; input.value = initial;
+      const input = el('input', undefined, control('label', label, geometry)); input.type = 'number'; input.step = 'any'; input.min = min; input.max = max; input.value = initial;
       input.style.cssText = 'width:100%;box-sizing:border-box;margin:4px 0 8px'; geometryInputs[key] = input;
     }
-    const applyGeometry = el('button', '키 확대·이동 적용', geometry), resetGeometry = el('button', '키 원래 범위로', geometry);
+    const applyGeometry = control('button', '키 확대·이동 적용', geometry), resetGeometry = control('button', '키 원래 범위로', geometry);
     const geometryHint = el('p', '', geometry);
     const count = el('p', '', sidebar), choices = el('div', undefined, sidebar);
-    const paper = el('iframe', undefined, middle); paper.title = '출력물 미리보기'; paper.setAttribute('sandbox', 'allow-same-origin');
+    const paper = el('iframe', undefined, middle); caption(paper, '출력물 미리보기', 'title'); paper.setAttribute('sandbox', 'allow-same-origin');
     paper.style.cssText = 'flex:1;min-width:0;border:0;background:white';
     const footer = el('div', undefined, dialog); footer.style.cssText = 'display:flex;gap:12px;align-items:center;padding:12px';
     const status = el('span', '', footer); status.setAttribute('role', 'status'); status.style.cssText = 'flex:1;white-space:pre-wrap';
     // An error the page shows as it came: marked as an error, so one with no text in the screen language still says it failed.
     const showError = text => { const shown = document.createElement('span'); shown.setAttribute('data-kin-error', ''); shown.textContent = text; status.replaceChildren(shown); };
-    const printButton = el('button', '인쇄 / PDF', footer); printButton.disabled = true;
+    const printButton = control('button', '인쇄 / PDF', footer); printButton.disabled = true;
     document.body.append(dialog);
     let epoch = 0, session = null, request = null, urls = [], rendered = null, printWindow = null, focusBefore = null;
     let edits = new Map(), geometryDirty = false;

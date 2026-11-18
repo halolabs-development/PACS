@@ -225,7 +225,7 @@
       const cur = String(fval[c.k] ?? ""), presets = datePresets(), hit = presets.find(p => p.value === cur);
       const sel = cur === "" ? "" : hit ? hit.id : "custom", [from = "", to = ""] = cur.includes("..") ? cur.split("..") : [cur, cur];
       const opt = (v, l) => `<option value="${v}"${sel === v ? " selected" : ""}>${l}</option>`;
-      return `<select data-date-preset aria-label="${esc(c.t)} Filter" title="기간을 고릅니다. Custom은 시작일과 종료일을 직접 정합니다.">` +
+      return `<select data-date-preset aria-label="${esc(c.t)} Filter">` +
         opt("", "All dates") + presets.map(p => opt(p.id, p.label)).join("") + opt("custom", "Custom…") + `</select>` +
         `<span class="date-custom" hidden><label>From <input type="date" data-date-from aria-label="${esc(c.t)} From" value="${esc(from)}"></label><label>To <input type="date" data-date-to aria-label="${esc(c.t)} To" value="${esc(to)}"></label></span>`;
     }
@@ -269,12 +269,28 @@
     };
     function renderHeads() {
       // The first header also holds the "+" button; its own label keeps the column named by its title, not "Choose columns <title>".
-      $("#heads").innerHTML = shownColumns().map((c, i) => `<th data-key="${c.k}" class="${c.num ? "num" : ""}"${i === 0 ? ` aria-label="${esc(c.t)}"` : ""}${HEAD_HELP[c.k] ? ` title="${esc(HEAD_HELP[c.k])}"` : ""}>${i === 0 ? '<button type="button" class="col-add" aria-haspopup="dialog" aria-label="Choose columns" title="표시할 열을 고릅니다.">+</button>' : ""}${c.t}</th>`).join("");
+      $("#heads").replaceChildren(...shownColumns().map((column, index) => {
+        const head = document.createElement("th");
+        head.dataset.key = column.k;
+        if (column.num) head.className = "num";
+        if (HEAD_HELP[column.k]) kinWrite(head, kinSay(HEAD_HELP[column.k]), "title");
+        if (index === 0) {
+          kinWrite(head, kinSay(column.t), "aria-label");
+          const add = document.createElement("button");
+          add.type = "button"; add.className = "col-add"; add.textContent = "+";
+          add.setAttribute("aria-haspopup", "dialog");
+          kinWrite(add, kinSay("Choose columns"), "aria-label");
+          kinWrite(add, kinSay("표시할 열을 고릅니다."), "title");
+          head.append(add);
+        }
+        head.append(kinWrite(document.createTextNode(""), kinSay(column.t)));
+        return head;
+      }));
       $("#heads .col-add")?.addEventListener("click", e => { e.stopPropagation(); openColumnPicker(e.currentTarget); });
       bindColumnResize();
       $("#filterrow").innerHTML = shownColumns().map((c, i) => {
         // The first column has no filter of its own, so the worklist's "Clear Filters" button lives in that cell.
-        if (!c.f && i === 0) return '<th class="clear-cell"><button type="button" class="col-clear" title="모든 검색 조건을 지웁니다.">Clear</button></th>';
+        if (!c.f && i === 0) return '<th class="clear-cell"><button type="button" class="col-clear" >Clear</button></th>';
         if (!c.f) return "<th></th>";
         if (c.k === "date") return `<th class="date-filter">${dateFilterHtml(c)}</th>`;
         if (c.choices) return `<th><select data-f="${c.k}" aria-label="${esc(c.t)} Filter">` +
@@ -286,7 +302,14 @@
           ["", ...c.f].map(o => `<option value="${esc(o)}"${(fval[c.k] ?? "") === o ? " selected" : ""}>${esc(o)}</option>`).join("") +
           `</select></th>`;
       }).join("");
-      if (!$("#filterrow .col-clear")) $("#filterrow th")?.insertAdjacentHTML("afterbegin", '<button type="button" class="col-clear" title="모든 검색 조건을 지웁니다.">Clear</button>');
+      if (!$("#filterrow .col-clear")) $("#filterrow th")?.insertAdjacentHTML("afterbegin", '<button type="button" class="col-clear" >Clear</button>');
+      const clear = $("#filterrow .col-clear");
+      if (clear) {
+        kinWrite(clear, kinSay("Clear"));
+        kinWrite(clear, kinSay("모든 검색 조건을 지웁니다."), "title");
+      }
+      const date = $("#filterrow [data-date-preset]");
+      if (date) kinWrite(date, kinSay("기간을 고릅니다. Custom은 시작일과 종료일을 직접 정합니다."), "title");
     }
     // Top bar "Config" had no action. For now it opens the existing Panel Settings dialog (same as the Panels button).
     (function bindConfig() {
@@ -304,7 +327,7 @@
       for (const th of heads.children) {
         const grip = document.createElement("span");
         grip.className = "col-grip";
-        grip.title = "열 너비: 끌어서 조절, 두 번 클릭하면 자동 너비로 돌아갑니다.";
+        kinWrite(grip, kinSay("열 너비: 끌어서 조절, 두 번 클릭하면 자동 너비로 돌아갑니다."), "title");
         // Pointer-only handle (the keyboard path is the picker's width field). Exposed, its tooltip joined every column header's name.
         grip.setAttribute("aria-hidden", "true");
         grip.addEventListener("click", e => e.stopPropagation());
@@ -342,7 +365,7 @@
       }
       const m = mode, head = document.createElement("header");
       const title = document.createElement("strong"); title.textContent = "Columns · " + m;
-      const close = document.createElement("button"); close.type = "button"; close.textContent = "Close"; close.onclick = () => columnPicker.close();
+      const close = document.createElement("button"); close.type = "button"; kinWrite(close, kinSay("Close")); close.onclick = () => columnPicker.close();
       head.append(title, close);
       const list = document.createElement("div"); list.className = "cp-list";
       let dragged = null;
@@ -351,7 +374,7 @@
         list.replaceChildren(...columnPrefs.all(m).map(c => {
           const row = document.createElement("div"); row.className = "cp-row"; row.dataset.column = c.k;
           const grip = document.createElement("span"); grip.className = "cp-grip"; grip.textContent = "≡"; grip.draggable = true;
-          grip.title = "끌어서 열 순서를 바꿉니다.";
+          kinWrite(grip, kinSay("끌어서 열 순서를 바꿉니다."), "title");
           grip.addEventListener("dragstart", e => { dragged = c.k; row.classList.add("cp-dragging"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", c.k); });
           grip.addEventListener("dragend", () => { dragged = null; clearDrop(); row.classList.remove("cp-dragging"); });
           row.addEventListener("dragover", e => {
@@ -371,7 +394,7 @@
           // The column name and the (Required) mark are each their own text (the label reads the same).
           label.append(box, " ", c.t, c.required ? " (Required)" : "");
           const width = document.createElement("input"); width.type = "number";
-          width.min = "64"; width.max = "600"; width.step = "1"; width.placeholder = "Auto";
+          width.min = "64"; width.max = "600"; width.step = "1"; kinWrite(width, kinSay("Auto"), "placeholder");
           width.setAttribute("aria-label", c.t + " width (px)"); width.value = c.width ?? "";
           width.addEventListener("change", () => {
             if (width.validity.valid) columnPrefs.setWidth(m, c.k, width.value === "" ? null : width.valueAsNumber);
@@ -380,7 +403,7 @@
         }));
       };
       const bulk = document.createElement("footer");
-      const all = document.createElement("button"); all.type = "button"; all.textContent = "Show All";
+      const all = document.createElement("button"); all.type = "button"; kinWrite(all, kinSay("Show All"));
       all.onclick = () => { for (const c of columnPrefs.all(m)) if (!c.shown) columnPrefs.setShown(m, c.k, true); draw(); };
       bulk.append(all);
       draw(); columnPicker.replaceChildren(head, list, bulk);

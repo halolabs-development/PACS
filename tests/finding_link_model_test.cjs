@@ -342,8 +342,6 @@ const measuredRevisions = path => path.includes('/' + ML + '/') ? { revisions: [
 const measureRow = (h, kind) => h.all().find(e => e.tagName === 'section' && e.dataset.kind === kind);
 // An element's text as a browser reads it: its own text then its children's.
 const shown = e => e.textContent + e.children.map(shown).join('');
-// The same for an assertion in a case that names its own shown.
-const lineText = e => e.textContent + e.children.map(lineText).join('');
 // The row's own value line (a History line carries its value in a span of its own).
 const valueLines = row => row.all().filter(e => e.tagName === 'div' && e.dataset.kinValue !== undefined).map(shown);
 const historyLines = row => row.all().filter(e => e.tagName === 'p' && /^r\d+ · /.test(e.textContent)).map(shown);
@@ -1850,7 +1848,7 @@ test('mounted comparison viewer: the section stays on the first study, links a c
   assert.equal(h.all().find(e => e.id === 'kin-viewer-findings-held').hidden, true);
   const draft = rowsOf(h)[0];
   assert.deepEqual(draft.all().filter(e => e.dataset.sourceStudy).map(e => e.dataset.sourceStudy), ['current', 'comparison']);
-  assert.ok(draft.all().some(e => lineText(e).includes('[비교 검사] Key Image · P 비교 키')));
+  assert.ok(textOf(draft).includes('[비교 검사] Key Image · P 비교 키'));
   assert.ok(textOf(draft).includes('현재 검사의 표식은 현재 검사의 영상 칸을 선택하면 연결할 수 있습니다.'));
   // Saved while the comparison viewport is active: exactly the two pairs.
   buttonIn(draft, 'Save').click(); await flush(); await h.sync();
@@ -2191,7 +2189,7 @@ async function valueViewer() {
 test('mounted values: a saved finding shows its frozen server copies with units, the revised one included, and history lines stay count-only (S2-V C1, C5a/b)', async () => {
   const h = await valueViewer();
   assert.equal(h.panel().dataset.comparisonState, 'ready');
-  const first = line => lineText(line.children[0]);
+  const first = line => line.children[0].textContent;
   assert.equal(first(h.line(VL)), '[현재 검사] ★ Length · 길이 · 프레임 1 · r1 · 12.3 mm · ');
   assert.equal(h.line(VL).dataset.linkState, 'revised');
   assert.ok(textOf(h.line(VL)).includes(' (현재 r2)'));
@@ -2212,7 +2210,7 @@ test('mounted values: live heads show units without a calculator, comparison hea
   // A comparison head that lost its calculator key is still a server copy: no unit.
   delete h.store().state().pair.heads.get(PD).calculator;
   await h.press(h.row(), 'Edit');
-  assert.equal(lineText(h.line(VO).children[0]), '[현재 검사] Length · 옛 길이 · 프레임 1 · r1 · 수치(단위 미확인): 10.0 · ');
+  assert.equal(h.line(VO).children[0].textContent, '[현재 검사] Length · 옛 길이 · 프레임 1 · r1 · 수치(단위 미확인): 10.0 · ');
   assert.deepEqual(h.choices('Link Saved Items'), [
     ['Link Length · 새 길이 · 프레임 1 · r1', ' Length · 새 길이 · 프레임 1 · r1 · 20.0 mm · Verified'],
     ['Link Angle · 각도 · 프레임 1 · r1', ' Angle · 각도 · 프레임 1 · r1 · 12.3° · Verified'],
@@ -2227,7 +2225,7 @@ test('mounted values: live heads show units without a calculator, comparison hea
   // A newly linked pair has no server copy yet: it is named from its head with the head's value, as its choice was (C-R01-012#13).
   const box = h.panel().all().find(e => e.attributes['aria-label'] === 'Link Length · 새 길이 · 프레임 1 · r1');
   box.checked = true; box.dispatchEvent(new Event('change')); await h.sync();
-  assert.equal(lineText(h.line(VM).children[0]), '[현재 검사] Length · 새 길이 · 프레임 1 · r1 · 20.0 mm · ');
+  assert.equal(h.line(VM).children[0].textContent, '[현재 검사] Length · 새 길이 · 프레임 1 · r1 · 20.0 mm · ');
   await h.press(h.row(), 'Save');
   const post = h.server.log.filter(x => x.method === 'POST');
   assert.equal(post.length, 1);
@@ -2246,7 +2244,7 @@ test('mounted values: a new pair on an unsaved draft shows its head value by pro
   await tick('Link Length · 새 길이 · 프레임 1 · r1');
   await tick('Link Comparison Length · P 계산 · 프레임 1 · r1');
   await tick('Link Comparison Length · P 무계산 · 프레임 1 · r1');
-  const line = id => lineText(draft.all().find(e => e.dataset.itemId === id).children[0]);
+  const line = id => draft.all().find(e => e.dataset.itemId === id).children[0].textContent;
   assert.equal(line(VM), '[현재 검사] ★ Length · 새 길이 · 프레임 1 · r1 · 20.0 mm · ');
   // A comparison head is a server copy: units only with its exact calculator, as in its choice.
   assert.equal(line(PC), '[비교 검사] Length · P 계산 · 프레임 1 · r1 · 55.6 mm · ');
@@ -2265,11 +2263,11 @@ test('mounted values: a new pair keeps its own revision value when the head move
   const box = h.panel().all().find(e => e.attributes['aria-label'] === 'Link Length · 새 길이 · 프레임 1 · r1');
   box.checked = true; box.dispatchEvent(new Event('change')); await h.sync();
   const line = () => draft.all().find(e => e.dataset.itemId === VM);
-  assert.equal(lineText(line().children[0]), '[현재 검사] ★ Length · 새 길이 · 프레임 1 · r1 · 20.0 mm · ');
+  assert.equal(line().children[0].textContent, '[현재 검사] ★ Length · 새 길이 · 프레임 1 · r1 · 20.0 mm · ');
   // The measurement is saved again as r2 (99.0 mm) while the draft still names r1.
   Object.assign(h.heads.find(x => x.id === VM), { revision: 2, values: [99] });
   await h.sync();
-  assert.equal(lineText(line().children[0]), '[현재 검사] ★ Length · 새 길이 · 프레임 1 · r1 · 20.0 mm · ');
+  assert.equal(line().children[0].textContent, '[현재 검사] ★ Length · 새 길이 · 프레임 1 · r1 · 20.0 mm · ');
   assert.equal(line().dataset.linkState, 'revised');
   assert.equal(shown(line()).includes('99.0'), false, 'the newer revision lends no number');
   h.findings.stop();
@@ -2285,7 +2283,7 @@ test('mounted values: a pair whose head moved on before its line was ever drawn 
   Object.assign(h.heads.find(x => x.id === VM), { revision: 2, values: [99] });
   await h.sync();
   const line = draft.all().find(x => x.dataset.itemId === VM);
-  assert.equal(lineText(line.children[0]), '[현재 검사] ★ Length · 새 길이 · 프레임 1 · r1 · ');
+  assert.equal(line.children[0].textContent, '[현재 검사] ★ Length · 새 길이 · 프레임 1 · r1 · ');
   h.findings.stop();
 });
 
@@ -2353,7 +2351,7 @@ test('mounted values: a refused comparison study leaves no copied or listed numb
   await h.press(h.panel(), 'Reload Comparison Items');
   assert.equal(h.panel().dataset.comparisonState, 'denied');
   assert.ok(h.row(), 'the finding being edited stays');
-  assert.equal(lineText(h.line(PL).children[0]), '[비교 검사] 접근할 수 없는 비교 검사의 표식 · ');
+  assert.equal(h.line(PL).children[0].textContent, '[비교 검사] 접근할 수 없는 비교 검사의 표식 · ');
   assert.deepEqual(h.choices('Link Comparison Items'), []);
   const shown = textOf(h.panel());
   for (const secret of ['77.8', '66.6', '55.6', '44.4', 'P 길이', 'P 무계산', 'P 계산', 'P 지운 계산']) assert.equal(shown.includes(secret), false, secret);
@@ -2744,7 +2742,7 @@ async function locationViewer({ schemaHeader = '3', modelOverride, itemOverride 
 test('mounted locations: characteristics line, point and view lines with their own buttons, and the restore request', async () => {
   const h = await locationViewer();
   const lines = h.row().all().filter(e => e.dataset.jobId);
-  assert.deepEqual(lines.map(e => [e.dataset.sourceKind, e.dataset.linkState, lineText(e.children[0])]), [
+  assert.deepEqual(lines.map(e => [e.dataset.sourceKind, e.dataset.linkState, e.children[0].textContent]), [
     ['point', 'current', '★ 3D Point · 결절 · 저장 위치 · v6 · r1 · '], ['view', 'metadata-changed', 'Saved View · 저장 위치 · v4 · r1 · ']]);
   assert.ok(textOf(lines[1]).includes(' (현재 r3)') && textOf(lines[1]).includes('제목·설명만'));
   assert.ok(h.row().all().some(e => e.dataset.kinCharacteristics === '' && e.textContent === 'Characteristics (병변 특성): 경계 불명확한 간유리 결절'));

@@ -24,10 +24,7 @@ window.kinCreateViewerPatientCopy=function(options){
       const current=copyTarget(),signature=current?JSON.stringify([current.viewportId,current.uid,current.image,current.patientId,current.sourceSignature||'']):'';
       if(signature!==copySignature){copySignature=signature;copyEpoch++;copyStatus.textContent='';}
       copy.disabled=!current;copy.setAttribute('aria-disabled',String(!current||copyBusy));copy.setAttribute('aria-busy',String(copyBusy));
-      // The page's words, then the study's data as written (its own parts); the text reads as one line.
-      const dataPart=value=>Object.assign(document.createElement('span'),{textContent:value,translate:false});
-      if(current)copyContext.replaceChildren(current.sourceSignature?'선택 볼륨 원본':'선택 영상',dataPart(' · '+current.study.name+' ('+current.patientId+') · '+current.study.date+' · 검사 '+current.uid));
-      else copyContext.textContent='환자 ID가 확인되는 영상 칸을 선택하세요.';
+      copyContext.textContent=current?(current.sourceSignature?'선택 볼륨 원본':'선택 영상')+' · '+current.study.name+' ('+current.patientId+') · '+current.study.date+' · 검사 '+current.uid:'환자 ID가 확인되는 영상 칸을 선택하세요.';
       if(!identity&&live()&&owner())identity=window.KinViewerIdentity?.mount({services,resolve:selected,owner,allowed:live,studies:options.studies});
     }
     async function copyPatientId(expected=null){

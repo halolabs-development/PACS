@@ -65,15 +65,6 @@ window.kinViewerFindings = function (services, model) {
     const panel = document.createElement('details'); panel.id = 'kin-viewer-findings'; panel.open = true;
     panel.style.cssText = 'border-top:1px solid #405777;margin-top:10px;padding-top:8px';
     const text = (parent, tag, value) => { const el = document.createElement(tag); el.textContent = value; parent.append(el); return el; };
-    // A linked item's line: the page's tag and star, then the item's own name (a saved job's title, a mark's label, a finding's text: data,
-    // shown as written in any screen language) or the page's sentence when it is withheld, then the separator.
-    const itemLine = (line, lead, name, withheldWords) => {
-      const head = text(line, 'span', lead);
-      if (withheldWords) head.append(document.createTextNode(withheldWords));
-      else { const own = document.createElement('span'); own.textContent = name; own.translate = false; head.append(own); }
-      head.append(document.createTextNode(' · '));
-      return head;
-    };
     text(panel, 'summary', 'Findings');
     text(panel, 'p', '저장한 표식을 연결해 소견을 기록합니다. 소견의 수치는 연결 당시 서버 사본이며 표식의 현재 확인 상태와는 별개입니다.');
     // Not role=status and not <section> rows: the Measurements panel's own tests and scans address
@@ -133,7 +124,7 @@ window.kinViewerFindings = function (services, model) {
       line.style.cssText = 'margin:2px 0 2px 6px;padding-left:6px;border-left:2px solid ' + (own ? '#405777' : '#b08a3c');
       const withheld = !own && st.pair.status === 'denied';
       const tag = own ? (store.pairOf() ? '[현재 검사] ' : '') : '[비교 검사] ';
-      itemLine(line, tag + (index === (e.head && !editing ? e.head.item.primary ?? 0 : e.draft.primary) ? '★ ' : ''), name, withheld ? '접근할 수 없는 비교 검사의 저장 위치' : '');
+      text(line, 'span', tag + (index === (e.head && !editing ? e.head.item.primary ?? 0 : e.draft.primary) ? '★ ' : '') + (withheld ? '접근할 수 없는 비교 검사의 저장 위치' : name) + ' · ');
       const badge = text(line, 'strong', status.label); badge.dataset.kinLinkState = status.linkState;
       if (status.linkState === 'metadata-changed' && status.headRevision) text(line, 'span', ' (현재 r' + status.headRevision + ')');
       if (e.staleSource && e.staleSource.jobId === s.jobId && (e.staleSource.markId || undefined) === markId)
@@ -164,7 +155,7 @@ window.kinViewerFindings = function (services, model) {
       // its newer name or numbers (pairText). The request body still carries the pair only.
       const label = withheld ? '접근할 수 없는 비교 검사의 표식' : s.kind ? describe(s) + values(s, 'server-copy') : head ? pairText(study, s, head, own) : '표식 ' + s.itemId.slice(0, 8);
       const tag = own ? (store.pairOf() ? '[현재 검사] ' : '') : '[비교 검사] ';
-      itemLine(line, tag + (index === (e.head ? e.head.item.primary ?? 0 : e.draft.primary) ? '★ ' : ''), label, withheld ? label : '');
+      text(line, 'span', tag + (index === (e.head ? e.head.item.primary ?? 0 : e.draft.primary) ? '★ ' : '') + label + ' · ');
       const badge = text(line, 'strong', status.label); badge.dataset.kinLinkState = status.linkState;
       if (status.referenceLabel) text(line, 'span', ' · ' + status.referenceLabel);
       if (status.linkState === 'revised' && status.headRevision) text(line, 'span', ' (현재 r' + status.headRevision + ')');

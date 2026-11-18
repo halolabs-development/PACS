@@ -365,6 +365,20 @@ class ViewerWindowManagerDOMTest(unittest.TestCase):
         self.assertIn("Comparison: 2026-09-11 · 1.2.2", text)
         self.assertNotIn("Prior:", text)
 
+    def test_window_list_keeps_study_values_when_language_changes(self):
+        for name in ("worklist-language-terms.js", "worklist-language.js"):
+            self.page.add_script_tag(path=str(WINDOWS.with_name(name)))
+        self.page.evaluate("""() => {
+          Object.assign(studies[0], {name:'승인',desc:'Unread'});
+          __makePopup({href:'https://example.test/ohif/viewer?StudyInstanceUIDs=1.2.1'});
+          document.querySelector('#viewer-windows-open').click();
+        }""")
+        for lang in ("en", "ko"):
+            self.page.evaluate("l => KinLanguage.restore({version:1,worklist:l,reading:l})", lang)
+            label = self.page.locator(".viewer-window-row p").inner_text()
+            self.assertIn("승인", label)
+            self.assertIn("Unread", label)
+
     def test_latest_images_refuses_reload_and_preserves_dirty_source(self):
         result = self.page.evaluate("""() => {
           const made=__makePopup({dirty:true});

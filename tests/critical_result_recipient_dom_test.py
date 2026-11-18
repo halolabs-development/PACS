@@ -122,7 +122,7 @@ def lf_text(path):
 
 MAIN = read_page_source(HPACS / "main.html")
 INBOX_JS = lf_text(HPACS / INBOX)
-HOME_FILES = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "product-info-data.js", "product-info.js", "worklist-language-terms.js", "worklist-language.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", INBOX)}
+HOME_FILES = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", INBOX)}
 ORIGIN = "https://recipient.test"
 BASE = "/worklist/hpacs-lite/"
 
@@ -900,10 +900,6 @@ class CriticalResultRecipientDOMTest(unittest.TestCase):
                 self.held_logouts.append(route)
                 return
             route.fulfill(status=204, body="")
-            return
-        # The page reads the account's screen language once it knows the session (no saved appearance here).
-        if method == "GET" and path == "/api/reading-appearance":
-            route.fulfill(json={"owner": None, "revision": 0, "sizes": None})
             return
         kind = kind_of(method, path)
         if kind is None:

@@ -11,6 +11,7 @@ Each discriminating case also runs the b6a317c code it replaces (in-test control
 the defect, so a green run here is not a tautology. Hosted only; no server, database or clinical data.
 """
 from page_source import read_page_source
+from main_split_harness import fixture_block
 import json
 import os
 from pathlib import Path
@@ -159,6 +160,7 @@ class Browser(unittest.TestCase):
         self.page.set_default_timeout(3000)
         self.page.on("pageerror", lambda error: self.errors.append(str(error)))
         self.page.set_content(html)
+        self.page.add_script_tag(content=fixture_block(ROOT / "worklist-v0/hpacs-lite/main.html", {"say": ("kinSay",)}, "say"))
         for script in scripts:
             self.page.add_script_tag(content=script)
         bind_api_fixture(self.page, "async " + extract_function(MAIN, "api"))

@@ -1,5 +1,5 @@
 <!doctype html>
-<html data-kin-language-source="browser" lang="ko">
+<html lang="ko">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -166,7 +166,7 @@
     <div class="brand">HALO PACS</div>
     <h1>Members</h1>
     <div class="spacer"></div>
-    <span class="actor" id="actor" translate="no"></span>
+    <span class="actor" id="actor"></span>
     <a class="button-link" href="main.html">Worklist</a>
     <button type="button" id="product-info-open" data-product-info title="제조·허가·버전·지원 정보와 고지 문서를 봅니다. 하던 작업은 그대로 남습니다.">Product Information</button>
     <button type="button" id="logout">Log out</button>
@@ -416,15 +416,13 @@
     <div class="dialog-body">
       <h2>Temporary Password</h2>
       <p class="secret-warning">이 창을 닫으면 다시 볼 수 없습니다. 안전한 방법으로 회원에게 전달하세요.</p>
-      <div class="secret" id="temporary-password" translate="no"></div>
+      <div class="secret" id="temporary-password"></div>
       <div class="dialog-actions">
         <button type="button" class="primary" id="close-password">Confirm &amp; Close</button>
       </div>
     </div>
   </dialog>
 
-  <script src="worklist-language-terms.js"></script>
-  <script src="worklist-language.js"></script>
   <script src="auth.js"></script>
   <script src="work-context.js"></script>
   <script src="session-transport.js"></script>
@@ -626,11 +624,7 @@
           input.type = "checkbox";
           input.checked = true;
           input.disabled = true;
-          // The role's name is data (a site may name its own roles); the label's title is the page's words.
-          const name = document.createElement("span");
-          name.textContent = role;
-          name.translate = false;
-          label.append(input, name);
+          label.append(input, document.createTextNode(role));
           fieldset.append(label);
         });
         $("#membership-dialog").showModal();
@@ -677,19 +671,17 @@
         }
         visible.forEach(user => {
           const row = document.createElement("tr");
-          // Data (a member's names, email and institution) is shown as written in any screen language.
-          appendCell(row, user.username, "username").translate = false;
+          appendCell(row, user.username, "username");
           const identity = document.createElement("td");
           const name = document.createElement("div");
           name.textContent = user.name;
           const email = document.createElement("div");
           email.className = "dim";
           email.textContent = user.email;
-          name.translate = email.translate = false;
           identity.append(name, email);
           row.append(identity);
-          appendCell(row, user.institution).translate = false;
-          appendCell(row, user.roles.join(", ")).translate = false; // role names: data
+          appendCell(row, user.institution);
+          appendCell(row, user.roles.join(", "));
           statusCell(row, user);
 
           const actions = document.createElement("td");
@@ -723,11 +715,9 @@
           const filterOption = document.createElement("option");
           filterOption.value = institution;
           filterOption.textContent = institution;
-          filterOption.translate = false;
           filter.append(filterOption);
           const inputOption = document.createElement("option");
           inputOption.value = institution;
-          inputOption.translate = false;
           list.append(inputOption);
         });
         if ([...filter.options].some(option => option.value === selected)) filter.value = selected;
@@ -1879,7 +1869,6 @@
           const value = document.createElement("span");
           value.className = `aval ${item.state}`;
           value.textContent = item.text;
-          if (item.state === "value") value.translate = false; // a recorded value: data
           if (item.title) value.title = item.title;
           line.append(value);
           return line;
@@ -1889,10 +1878,9 @@
       function drawRow(row) {
         const shown = window.KinAdminAudit.display(row), tr = document.createElement("tr");
         Object.assign(tr.dataset, { action: shown.action, target: shown.target });
-        for (const [value, title, data] of [[shown.time, shown.timeTitle], [shown.actor, "", true], [shown.action], [shown.target, "", true]]) {
+        for (const [value, title] of [[shown.time, shown.timeTitle], [shown.actor], [shown.action], [shown.target]]) {
           const cell = document.createElement("td");
           cell.textContent = value;
-          if (data) cell.translate = false; // who and what: data
           if (title) cell.title = title;
           tr.append(cell);
         }

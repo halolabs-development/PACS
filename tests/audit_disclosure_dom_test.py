@@ -65,13 +65,13 @@ class RecordCopyRequests(AuditPage):
     def click(self, name):
         self.section.get_by_role('button', name=name, exact=True).click()
 
-    def receive(self, request_id='SYN-A', record='SYN-RECORD', part=None, method='electronic', overrides=None):
+    def receive(self, request_id='SYN-A', record='SYN-RECORD', part=None, method='electronic'):
         self.section.get_by_label('Request ID', exact=True).fill(request_id)
         fields = {'Copy Patient ID': 'SYN-PATIENT', 'Copy Assigning Authority': 'SYN-SITE', 'Patient Link ID': 'SYN-LINK',
             'Requester Name': '합성 <b>요청자</b>', 'Request Purpose': 'patient-copy', 'Received At (UTC)': date_input(-1),
             'Due At (UTC)': date_input(2), 'Verifier ID': 'synthetic-auditor', 'Verifier Issuer': 'synthetic',
             'Verifier Subject': 'auditor', 'Checked At (UTC)': date_input(), 'Evidence Document ID': 'SYN-EVIDENCE',
-            'Record ID': record, 'Recipient': '합성 수령자', **(overrides or {})}
+            'Record ID': record, 'Recipient': '합성 수령자'}
         for label, value in fields.items(): self.section.get_by_label(label, exact=True).fill(value)
         self.section.get_by_role('combobox', name='Delivery Method', exact=True).select_option(method)
         self.section.get_by_role('combobox', name='Version Scope', exact=True).select_option('part' if part else 'all')
@@ -79,7 +79,7 @@ class RecordCopyRequests(AuditPage):
         self.click('Receive Request')
         expect(self.state).to_contain_text('Issuance ID: null')
         expect(self.section.get_by_role('button', name='Prepare Issuance', exact=True)).to_be_enabled()
-        expect(self.state).to_contain_text(fields['Requester Name'])
+        expect(self.state).to_contain_text('합성 <b>요청자</b>')
         self.assertEqual(self.state.locator('b').count(), 0)
 
     def prepare_issue(self):
@@ -102,19 +102,6 @@ class RecordCopyRequests(AuditPage):
         self.section.get_by_label('Resolution Evidence', exact=True).fill('SYN-RESOLUTION')
         self.click('Resolve'); expect(self.state).to_contain_text('Request: Resolved')
         expect(self.state).to_contain_text('Hold: Released')
-
-    def test_english_reads_the_notice_and_keeps_the_request_data(self):
-        """English (the browser's kept choice): the page's notice under the request state reads in English; the requester
-        and recipient a person typed stay as written even when they equal a glossary word (성 Last Name, 승인 Approval)."""
-        self.page.add_init_script("localStorage.setItem('kin-language:v1', JSON.stringify({version: 1, worklist: 'en', reading: 'en'}))")
-        self.open()
-        self.receive(overrides={'Requester Name': '성', 'Recipient': '승인'})
-        expect(self.state).to_contain_text('Issuance preparation is not complete yet.')
-        text = self.state.inner_text()
-        self.assertIn('Requester: 성', text)
-        self.assertIn('Recipient: 승인', text)
-        self.assertNotIn('Last Name', text)
-        self.assertNotIn('Approval', text)
 
     def test_round_trip_and_each_step_screenshot(self):
         self.open(); self.receive(); self.screenshot('disclosure-01-received.png')

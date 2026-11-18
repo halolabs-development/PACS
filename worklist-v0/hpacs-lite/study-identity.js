@@ -36,7 +36,7 @@
     Object.freeze({key:'acc',tag:'(0008,0050)',label:'Accession Number',field:'accession',absent:'Absent',title:''}),
     Object.freeze({key:'id',tag:'(0010,0020)',label:'Patient ID',field:'patientId',absent:'Absent',title:''}),
     Object.freeze({key:'name',tag:'(0010,0010)',label:'Patient Name · Alphabetic',field:'patientName',absent:'Alphabetic Absent',
-      title:kinSay('{t0} {t1}',{t:NAME_SCOPE},{t:'^는 공백으로 보입니다.'})}),
+      title:kinSay('{t0} {t1}',{t:kinSay(NAME_SCOPE)},{t:kinSay('^는 공백으로 보입니다.')})}),
     Object.freeze({key:'birth',tag:'(0010,0030)',label:'Patient Birth Date',field:'birth',absent:'Absent',title:''}),
     Object.freeze({key:'sex',tag:'(0010,0040)',label:'Patient Sex',field:'sex',absent:'Absent',title:''}),
     Object.freeze({key:'desc',tag:'(0008,1030)',label:'Study Description',field:'not_compared',absent:'Absent',title:''}),
@@ -112,12 +112,12 @@
     if(m.available===null)return {hidden:true};
     const tail=m.available===false?' · '+OBSERVATION_UNAVAILABLE+(m.observedAt?' · 마지막 관측 '+format(m.observedAt)+' 기준':''):'';
     // The page's sentences joined: each part is read in the screen language (none of them is data).
-    const unavailableTitle=m.available===false?kinSay('{t0}{t1}',{t:UNAVAILABLE_TITLE},{t:m.observedAt?' 아래 값은 마지막으로 성공한 관측의 것입니다.':''}):'';
+    const unavailableTitle=m.available===false?kinSay('{t0}{t1}',{t:kinSay(UNAVAILABLE_TITLE)},{t:m.observedAt?kinSay(' 아래 값은 마지막으로 성공한 관측의 것입니다.'):''}):'';
     const row=m.rows?.get(uid)??null;
     if(!row){
       // A cold failure or a study the last observation did not carry: nothing is invented.
       if(m.available!==false)return {hidden:true};
-      return {hidden:false,key:'unavailable',summary:{text:'DICOM Identity'+tail,title:kinSay('{t0}{t1}',{t:SUMMARY_TITLE},{t:unavailableTitle})},
+      return {hidden:false,key:'unavailable',summary:{text:'DICOM Identity'+tail,title:kinSay('{t0}{t1}',{t:kinSay(SUMMARY_TITLE)},{t:unavailableTitle})},
         order:null,rows:[],guidance:'',patientMismatch:false,accessionMismatch:false};
     }
     const own=state&&typeof state==='object'?state:{};
@@ -134,7 +134,7 @@
       if(identity&&tag.field==='not_compared'){relation=RELATION_TEXT.not_compared;title=RELATION_TITLE.not_compared;}
       else if(identity&&tag.field){
         relation=RELATION_TEXT[identity[tag.field]];
-        title=tag.key==='name'?kinSay('{t0} {t1}',{t:RELATION_TITLE[identity[tag.field]]},{t:NAME_SCOPE}):RELATION_TITLE[identity[tag.field]];
+        title=tag.key==='name'?kinSay('{t0} {t1}',{t:RELATION_TITLE[identity[tag.field]]},{t:kinSay(NAME_SCOPE)}):RELATION_TITLE[identity[tag.field]];
       }
       return {key:tag.key,tag:tag.tag,label:tag.label,value:value===''?tag.absent:value,valueTitle:tag.title,relation,title};
     });
@@ -145,8 +145,8 @@
       :key==='no_linked_order'?{text:'No Linked Order',title:ORDER_TITLE.no_linked_order}
       :{text:'Unknown',title:ORDER_TITLE.unknown};
     const summary={
-    text:kinSay('DICOM Identity{t0}{t1}{t2}',{t:patientMismatch?' · Patient Mismatch':''},{t:accessionMismatch?' · Accession Mismatch':''},{t:tail}),
-      title:kinSay('{t0}{t1}{t2}{t3}',{t:SUMMARY_TITLE},{t:patientMismatch?PATIENT_MISMATCH_TITLE:''},{t:accessionMismatch?ACCESSION_MISMATCH_TITLE:''},{t:unavailableTitle})};
+    text:kinSay('DICOM Identity{t0}{t1}{t2}',{t:patientMismatch?kinSay(' · Patient Mismatch'):''},{t:accessionMismatch?kinSay(' · Accession Mismatch'):''},{t:tail}),
+      title:kinSay('{t0}{t1}{t2}{t3}',{t:kinSay(SUMMARY_TITLE)},{t:patientMismatch?kinSay(PATIENT_MISMATCH_TITLE):''},{t:accessionMismatch?kinSay(ACCESSION_MISMATCH_TITLE):''},{t:unavailableTitle})};
     const show=patientMismatch||accessionMismatch||m.refused===uid;
     return {hidden:false,key,summary,order,rows,guidance:guidance(own.rs,show,key==='tele'),patientMismatch,accessionMismatch};
   }

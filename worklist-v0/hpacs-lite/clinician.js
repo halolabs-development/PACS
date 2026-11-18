@@ -201,13 +201,6 @@
     return element;
   }
 
-  // Data (patient and study fields, report text, names and words people wrote): shown as written in any screen language.
-  function data(tag, className, text) {
-    const element = node(tag, className, text);
-    element.translate = false;
-    return element;
-  }
-
   const dash = value => typeof value === 'string' && value.trim() ? value : '—';
   const number = value => Number.isSafeInteger(value) ? String(value) : '—';
 
@@ -491,14 +484,13 @@
     view.tabIndex = -1;
     view.dataset.view = '';
     action.append(view);
-    const institution = node('td');
-    institution.append(data('span', null, dash(row.institutionName)));
+    const institution = node('td', null, dash(row.institutionName));
     if (row.tele === true) institution.append(' ', teleTag());
     const report = node('td');
     report.append(statusBadge(row.report));
-    tr.append(action, data('td', 'name', dash(row.name)), data('td', null, dash(row.id)), node('td', null, sexAge(row)),
-      node('td', null, day(row.birth)), node('td', null, day(row.date)), data('td', null, dash(row.modality)),
-      data('td', null, dash(row.desc)), institution, report);
+    tr.append(action, node('td', 'name', dash(row.name)), node('td', null, dash(row.id)), node('td', null, sexAge(row)),
+      node('td', null, day(row.birth)), node('td', null, day(row.date)), node('td', null, dash(row.modality)),
+      node('td', null, dash(row.desc)), institution, report);
     return tr;
   }
 
@@ -544,12 +536,11 @@
 
   // ── 선택한 검사 ──
 
-  /** A labelled value: the value is data unless words says it is the page's own word. */
-  function field(label, value, note, words) {
+  function field(label, value, note) {
     const wrap = node('div', 'field');
     const term = node('dt', null, label);
     if (note) term.title = note;
-    wrap.append(term, (words ? node : data)('dd', null, value));
+    wrap.append(term, node('dd', null, value));
     return wrap;
   }
 
@@ -660,9 +651,9 @@
       const button = node('button', null, 'Compare');
       button.type = 'button';
       button.addEventListener('click', () => openViewer(other.uid));
-      item.append(data('span', null, `${day(other.date)} · ${dash(other.modality)} · ${dash(other.desc)}`), ' ',
+      item.append(node('span', null, `${day(other.date)} · ${dash(other.modality)} · ${dash(other.desc)}`), ' ',
         statusBadge(other.report), ' ', button,
-        data('p', 'muted', `${dash(other.name)} · ${dash(other.id)} · ${dash(other.institutionName)}${other.tele === true ? ' · Tele' : ''}`));
+        node('p', 'muted', `${dash(other.name)} · ${dash(other.id)} · ${dash(other.institutionName)}${other.tele === true ? ' · Tele' : ''}`));
       list.append(item);
     }
     section.append(head, node('p', 'muted', TEXT.compareHint), list);
@@ -821,15 +812,15 @@
   function bodySection(title, text) {
     const section = node('section', 'body-section');
     section.append(node('h4', null, title));
-    section.append(text.trim() ? data('p', 'body-text', text) : node('p', 'muted', TEXT.emptyField));
+    section.append(text.trim() ? node('p', 'body-text', text) : node('p', 'muted', TEXT.emptyField));
     return section;
   }
 
   function keyItem(key) {
     const item = key && typeof key.item === 'object' && key.item ? key.item : {};
     const entry = node('li', 'key');
-    entry.append(typeof item.title === 'string' && item.title.trim() ? data('p', 'key-title', item.title) : node('p', 'key-title', TEXT.untitled));
-    if (typeof item.description === 'string' && item.description.trim()) entry.append(data('p', 'key-description', item.description));
+    entry.append(node('p', 'key-title', typeof item.title === 'string' && item.title.trim() ? item.title : TEXT.untitled));
+    if (typeof item.description === 'string' && item.description.trim()) entry.append(node('p', 'key-description', item.description));
     const frame = Number.isSafeInteger(item.frame) ? String(item.frame) : '—';
     entry.append(node('p', 'key-ref', root.KinExamScope.originalLabel(displayedExam, key?.sourceUid ? 'Study '+key.sourceUid : null, `Series ${dash(item.seriesUid)} · Instance ${dash(item.sopUid)} · Frame ${frame}`, true)));
     return entry;
@@ -849,7 +840,7 @@
     }
     setReport('final', view.action === 'addendum' ? TEXT.addendum : TEXT.approved);
     const meta = $('#report-meta');
-    meta.replaceChildren(field('Version', String(view.version)), field('Type', FINAL_TYPE[view.action], '', true),
+    meta.replaceChildren(field('Version', String(view.version)), field('Type', FINAL_TYPE[view.action]),
       field('Signed By', dash(view.repDoc)), field('Signed On', day(view.confirm)));
     meta.hidden = false;
     const body = $('#report-body');
@@ -1221,7 +1212,7 @@
     line.style.margin = '2px 0 0';
     const name = node('span', null, label);
     name.style.color = 'var(--muted)';
-    line.append(name, ' ', data('span', null, value));
+    line.append(name, ' ', value);
     return line;
   }
 
@@ -1998,11 +1989,10 @@
     if (current) item.setAttribute('aria-current', 'true');
     const line = node('p');
     line.style.margin = '0';
-    line.append(node('strong', null, day(row.date)), ' · ', data('span', null, `${dash(row.modality)} · ${dash(row.desc)}`), ' ', statusBadge(row.report));
-    const where = node('p', 'muted');
-    where.append(data('span', null, dash(row.institutionName)));
+    line.append(node('strong', null, day(row.date)), ` · ${dash(row.modality)} · ${dash(row.desc)} `, statusBadge(row.report));
+    const where = node('p', 'muted', dash(row.institutionName));
     if (row.tele === true) where.append(' ', teleTag());
-    const who = data('p', 'muted', `${dash(row.name)} · ${dash(row.id)} · ${day(row.birth)} · ${dash(row.sex)}`);
+    const who = node('p', 'muted', `${dash(row.name)} · ${dash(row.id)} · ${day(row.birth)} · ${dash(row.sex)}`);
     for (const part of [where, who]) part.style.margin = '0';
     item.append(line, where, who);
     const tags = [];
@@ -2311,7 +2301,7 @@
     open.dataset.openPending = '';
     open.addEventListener('click', () => openQuestionThread(uid, id));
     li.append(node('span', `status ${item.state === 'Draft' ? 'unknown' : 'open'}`, item.state), ' ',
-      QUESTION.pendingStates[item.state], ' ', data('span', null, excerpt ? `“${excerpt}”` : ''), ' ', open);
+      QUESTION.pendingStates[item.state], ' ', node('span', null, excerpt ? `“${excerpt}”` : ''), ' ', open);
     return li;
   }
 
@@ -2536,7 +2526,7 @@
     meta.style.margin = '0';
     meta.append(node('strong', null, QUESTION_KIND[entry.kind]),
       ` · ${dash(entry.author.name || entry.author.actor)} (${QUESTION_ROLE[entry.author.role]}) · ${questionTime(entry.at)}`);
-    const body = entry.body ? data('p', 'body-text', entry.body) : node('p', 'muted', QUESTION.closeEmpty);
+    const body = entry.body ? node('p', 'body-text', entry.body) : node('p', 'muted', QUESTION.closeEmpty);
     body.style.margin = '2px 0 0';
     li.append(meta, body);
     // 답변 뒤 판독이 승인·Addendum·Reset되었으면 그 답이 어느 판독 상태를 보고 쓴 것인지 알린다(서버는 스레드를 다시 열지 않는다).
@@ -2935,24 +2925,6 @@
     tbody.addEventListener('keydown', rowKey);
   }
 
-  /**
-   * Screen language: the account's choice (saved from the Language window of the work page). This page's glossary covers
-   * its Korean words, so it follows English and otherwise keeps the page as it is. A choice made on this page since the
-   * request left, or a failed read, leaves the page as it is.
-   */
-  async function readLanguage() {
-    const language = root.KinLanguage;
-    if (!language) return;
-    const before = language.generation();
-    let body;
-    try { body = await request('/reading-appearance'); } catch (_) { return; }
-    const sizes = body && body.sizes;
-    const chosen = sizes && sizes.version >= 12 ? language.normalize(sizes.language) : null;
-    if (!chosen || leaving || language.generation() !== before) return;
-    const english = region => chosen[region] === 'en' ? 'en' : null;
-    language.restore({ version: 1, worklist: english('worklist'), reading: english('reading') });
-  }
-
   async function boot() {
     listen();
     wire();
@@ -2981,7 +2953,6 @@
     paintSession(session);
     clearDetail();
     loadList();
-    readLanguage();
     // The shared inbox uses this document's defaults; verified owner replacement closes all work.
     try {
       criticalInbox = KinCriticalResultInbox.mount({ apiBase: API, root: 'critical-results', prefix: 'critical-results',

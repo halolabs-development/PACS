@@ -56,7 +56,7 @@
     for (const peer of peers) {
       const tr = document.createElement('tr');
       tr.dataset.peer = peer.id;
-      cell(tr, peer.name).translate = false; cell(tr, peer.aet); cell(tr, peer.host); cell(tr, String(peer.port));
+      cell(tr, peer.name); cell(tr, peer.aet); cell(tr, peer.host); cell(tr, String(peer.port));
       cell(tr, peer.kind === 'printer' ? 'Film Printer' + (peer.filmSizes ? ' (' + peer.filmSizes.split(',').join(', ') + ')' : '') : 'PACS / Modality');
       cell(tr, typeof peer.createdAt === 'string' ? peer.createdAt.slice(0, 16).replace('T', ' ') : '');
       const button = document.createElement('button');

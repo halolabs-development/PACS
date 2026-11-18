@@ -15,7 +15,7 @@
       // S7-U4b: 보는 검사가 바뀐 때만 Clinical Context를 다시 읽는다(같은 검사면 요청도 그리기도 없다).
       clinicalContext?.sync();
       $("#clinical").innerHTML = s ? `
-        <div class="clinical-scope">${s.uid === selectedUid ? '판독 대상 검사 정보' : '관련 검사 정보 · 판독 대상은 바뀌지 않습니다'}</div>
+        <div class="clinical-scope"></div>
         <table>
           <tr><td>Patient</td><td translate="no">${esc(s.name)} (${esc(s.id)})</td></tr>
           <tr><td>Sex/Age</td><td translate="no">${esc(s.sex)} / ${esc(s.age)}</td></tr>
@@ -28,6 +28,7 @@
           <tr><td>Ward</td><td translate="no">${esc(s.ward) || "-"}</td></tr>
           <tr><td>Study UID</td><td translate="no">${esc(s.uid)}</td></tr>
         </table>` : "No clinical information provided.";
+      if (s) kinWrite($("#clinical .clinical-scope"), s.uid === selectedUid ? kinSay("판독 대상 검사 정보") : kinSay("관련 검사 정보 · 판독 대상은 바뀌지 않습니다"));
       renderStudyIdentity();
       renderObservation();
     }
@@ -135,7 +136,7 @@
         const name = typeof s.institutionName === "string" ? s.institutionName.trim() : "";
         institution.textContent = name ? `${name} · ` : "";
         institution.translate = false;
-        institution.title = name ? "HALO PACS에 등록된 보낸 기관 이름입니다. DICOM 원문 기관명은 DICOM Identity의 (0008,0080) 줄에 있습니다." : "";
+        kinWrite(institution, name ? kinSay("HALO PACS에 등록된 보낸 기관 이름입니다. DICOM 원문 기관명은 DICOM Identity의 (0008,0080) 줄에 있습니다.") : "", "title");
       }
       $("#receipt-assignment").textContent = labels.assignment.text; $("#receipt-assignment").title = labels.assignment.title;
       $("#receipt-observation").textContent = [labels.observation.text, labels.change?.text].filter(Boolean).join(" · ");
@@ -152,8 +153,8 @@
       }
       originals.hidden=!scope?.groupId;
       if(scope?.groupId){
-        $("#receipt-observation").textContent='Original exams';
-        $("#receipt-observation").title='보유 수와 도착 변화는 원본 검사별 관측입니다.';
+        kinWrite($("#receipt-observation"), kinSay('Original exams'));
+        kinWrite($("#receipt-observation"), kinSay('보유 수와 도착 변화는 원본 검사별 관측입니다.'), "title");
         $("#receipt-gateway").textContent='';$("#receipt-gateway").title='';
         $("#receipt-retry").hidden=true;$("#receipt-retry-note").textContent='';
         const kept=new Map([...originals.children].map(line=>[line.dataset.uid,line]));
@@ -170,7 +171,7 @@
           // The Accession No is data; each label after it is its own text so the screen language reads it.
           const accession=document.createElement('span');accession.translate=false;accession.textContent=source.acc||source.uid;
           text.replaceChildren(accession,...[own.observation.text,own.change?.text,
-            source.gatewayReceipt===undefined?'Gateway 영수증 정보가 이 목록에 제공되지 않았습니다.':own.gateway.text].filter(Boolean)
+            source.gatewayReceipt===undefined?kinSay('Gateway 영수증 정보가 이 목록에 제공되지 않았습니다.'):own.gateway.text].filter(Boolean)
             .flatMap(words=>[' · ',kinWrite(document.createElement('span'),words)]));
           drawRetry(source,own.retry,control,note);return line;
         });

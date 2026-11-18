@@ -82,9 +82,9 @@
     const rows=(m.orders||[]).map(rowLabel),missing=rows.filter(row=>WITHOUT_IMAGES.has(row.key)).length;
     if(m.available===false)return {key:'observation_unavailable',hidden:false,
       text:head+' · '+OBSERVATION_UNAVAILABLE+(m.observedAt?' · 마지막 관측 '+format(m.observedAt)+' 기준':''),
-      title:m.observedAt?kinSay('{t0} {t1} {t2}',{t:TITLE},{t:'HALO PACS 관측 요청이 실패했습니다.'},{t:'아래 목록은 마지막으로 성공한 관측의 답입니다.'}):kinSay('{t0} {t1}',{t:TITLE},{t:'HALO PACS 관측 요청이 실패했습니다.'}),rows};
+      title:m.observedAt?kinSay('{t0} {t1} {t2}',{t:kinSay(TITLE)},{t:kinSay('HALO PACS 관측 요청이 실패했습니다.')},{t:kinSay('아래 목록은 마지막으로 성공한 관측의 답입니다.')}):kinSay('{t0} {t1}',{t:kinSay(TITLE)},{t:kinSay('HALO PACS 관측 요청이 실패했습니다.')}),rows};
     if(m.orders===null)return {key:'unknown',hidden:false,text:head+' · Unknown · Observed '+format(m.observedAt),
-      title:kinSay('{t0} {t1}',{t:TITLE},{t:'이번 관측으로는 오더 대사를 판정하지 못했습니다.'}),rows:[]};
+      title:kinSay('{t0} {t1}',{t:kinSay(TITLE)},{t:kinSay('이번 관측으로는 오더 대사를 판정하지 못했습니다.')}),rows:[]};
     return {key:'observed',hidden:false,
       text:head+' · Orders '+rows.length+(missing?' · '+ORDER_WITHOUT_IMAGES+' '+missing:'')+' · Observed '+format(m.observedAt),
       title:TITLE,rows};

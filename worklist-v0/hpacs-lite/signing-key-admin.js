@@ -35,7 +35,6 @@
         <button type="button" class="danger" data-action="revoke" hidden>Retire Key</button></div></form>`;
     const $ = q => dialog.querySelector(q), form = $('form'), status = $('[data-status]');
     $('[data-target]').textContent = `${user.name || user.username} · ${user.username} · ${user.institution}`;
-    $('[data-target]').translate = false; // the member: data
     // view: the last answer this dialog drew; unknown: a change whose result was not read back (Reload decides).
     let generation = 0, view = null, busy = false, unknown = false, closed = false;
     const sameOwner = () => {

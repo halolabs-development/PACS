@@ -121,7 +121,7 @@
       const make = (tag, className, text) => {
         const node = document.createElement(tag);
         if (className) node.className = className;
-        if (text !== undefined) node.textContent = text;
+        if (text !== undefined) kinWrite(node, text);
         return node;
       };
       const button = (label, onClick) => {
@@ -139,7 +139,7 @@
       };
       const setState = (box, state, text, detail) => {
         box.dataset.state = state;
-        box.querySelector('.image-request-line').textContent = text;
+        kinWrite(box.querySelector('.image-request-line'), text);
         kinWrite(box.querySelector('.image-request-detail'), detail || '');
       };
       const dash = value => typeof value === 'string' && value.trim() ? value : '—';
@@ -158,7 +158,7 @@
         return parts.length ? `${message} (${parts.join(' · ')})` : message;
       };
       // The page's sentence, and under it what failed (its own words or the server's message).
-      const readDetail = error => error && error.status === 404 ? kinSay('{t0}\n{e1}', { t: TEXT.notFound }, { e: describe(error) }) : describe(error);
+      const readDetail = error => error && error.status === 404 ? kinSay('{t0}\n{e1}', { t: kinSay(TEXT.notFound) }, { e: describe(error) }) : describe(error);
       // 상태명은 색과 함께 늘 글자로 쓰고(UXR-G-12), Closed에는 기록일 뿐이라는 문구를 바로 옆에 붙인다.
       const badge = state => {
         const wrap = make('span');
@@ -166,7 +166,7 @@
         name.dataset.state = state;
         wrap.append(name);
         if (state === 'Closed') {
-          const note = make('span', 'image-request-closed', TEXT.closedNote);
+          const note = make('span', 'image-request-closed', kinSay(TEXT.closedNote));
           note.dataset.closedNote = '';
           wrap.append(' ', note);
         }
@@ -310,7 +310,7 @@
       lockBox.setAttribute('role', 'alert');
       const queueView = make('div');
       const filters = make('div', 'image-request-actions');
-      const stateLabel = make('label', null, 'State');
+      const stateLabel = make('label', null, kinSay('State'));
       stateLabel.htmlFor = 'image-request-queue-state';
       const stateFilter = make('select');
       stateFilter.id = 'image-request-queue-state';
@@ -319,7 +319,7 @@
         option.value = value;
         stateFilter.append(option);
       }
-      const kindLabel = make('label', null, 'Kind');
+      const kindLabel = make('label', null, kinSay('Kind'));
       kindLabel.htmlFor = 'image-request-queue-kind';
       const kindFilter = make('select');
       kindFilter.id = 'image-request-queue-kind';
@@ -328,35 +328,35 @@
         option.value = value;
         kindFilter.append(option);
       }
-      const reload = button('Reload', () => { loadQueue(false); if (detailId !== null) loadDetail(detailId); });
+      const reload = button(kinSay('Reload'), () => { loadQueue(false); if (detailId !== null) loadDetail(detailId); });
       reload.id = 'image-request-queue-reload';
       filters.append(stateLabel, stateFilter, kindLabel, kindFilter, reload);
       const queueLine = stateBox();
       queueLine.id = 'image-request-queue-status';
-      const queueRetry = button('Retry', () => loadQueue(queueItems.length > 0));
+      const queueRetry = button(kinSay('Retry'), () => loadQueue(queueItems.length > 0));
       queueRetry.id = 'image-request-queue-retry';
       queueLine.append(queueRetry);
       const queueList = make('ol');
       queueList.id = 'image-request-queue-list';
-      const queueMore = button('More', () => loadQueue(true));
+      const queueMore = button(kinSay('More'), () => loadQueue(true));
       queueMore.id = 'image-request-queue-more';
       const detailBox = make('section');
       detailBox.id = 'image-request-detail';
       detailBox.setAttribute('aria-labelledby', 'image-request-detail-title');
       const detailHead = make('div', 'image-request-actions');
-      const detailTitle = make('h4', null, 'Request');
+      const detailTitle = make('h4', null, kinSay('Request'));
       detailTitle.id = 'image-request-detail-title';
       const detailStatus = make('span');
       detailHead.append(detailTitle, detailStatus);
       const detailLine = stateBox();
       detailLine.dataset.part = 'read';
-      const detailRetry = button('Retry', () => { if (detailId !== null) loadDetail(detailId); });
+      const detailRetry = button(kinSay('Retry'), () => { if (detailId !== null) loadDetail(detailId); });
       detailLine.append(detailRetry);
       const detailLines = make('div');
       detailLines.dataset.part = 'lines';
-      const noteLabel = make('label', null, 'Note');
+      const noteLabel = make('label', null, kinSay('Note'));
       noteLabel.htmlFor = 'image-request-note';
-      const noteHint = make('p', 'image-request-muted', TEXT.noteHint);
+      const noteHint = make('p', 'image-request-muted', kinSay(TEXT.noteHint));
       noteHint.id = 'image-request-note-hint';
       const noteField = make('textarea');
       noteField.id = 'image-request-note';
@@ -372,21 +372,21 @@
         actionRow.append(actions[action]);
       }
       const retryRow = make('div', 'image-request-actions');
-      const writeRetry = button('Retry', () => resend());
+      const writeRetry = button(kinSay('Retry'), () => resend());
       writeRetry.dataset.write = 'retry';
-      const writeDiscard = button('Discard', () => drop());
+      const writeDiscard = button(kinSay('Discard'), () => drop());
       writeDiscard.dataset.write = 'discard';
       retryRow.append(writeRetry, writeDiscard);
       const writeNote = stateBox();
       writeNote.dataset.part = 'write';
       detailBox.append(detailHead, detailLine, detailLines, noteLabel, noteHint, noteField, actionRow, retryRow, writeNote);
-      queueView.append(make('p', 'image-request-muted', TEXT.queueHint), filters, queueLine, queueList, queueMore, detailBox);
+      queueView.append(make('p', 'image-request-muted', kinSay(TEXT.queueHint)), filters, queueLine, queueList, queueMore, detailBox);
       queueBody.append(lockBox, queueView);
 
       function renderQueue() {
         const unavailable = !ended && lock === null && !allowed();
         lockBox.hidden = !ended && lock === null;
-        setState(lockBox, 'failed', ended ? TEXT.ended : lock ? lock.text : '', lock && !ended ? lock.detail : '');
+        setState(lockBox, 'failed', ended ? kinSay(TEXT.ended) : lock ? lock.text : '', lock && !ended ? lock.detail : '');
         queueView.hidden = ended || lock !== null;
         const state = unavailable ? 'offline' : queueLoading ? 'loading' : queueFailure ? 'failed' : !queueLoaded ? 'idle'
           : queueItems.length ? 'ready' : 'empty';
@@ -404,9 +404,9 @@
         const info = make('div');
         info.dataset.part = 'info';
         info.append(...itemLines(item, true));
-        const open = button('Open', () => openDetail(item.id));
+        const open = button(kinSay('Open'), () => openDetail(item.id));
         open.dataset.open = '';
-        open.title = '이 요청을 읽고 처리 칸을 엽니다.';
+        kinWrite(open, kinSay('이 요청을 읽고 처리 칸을 엽니다.'), "title");
         li.append(info, open);
         if (item.id === detailId) li.setAttribute('aria-current', 'true');
         li.dataset.state = item.state;
@@ -673,7 +673,7 @@
           const stale = !loaded ? '' : action === 'accept' ? (state === 'Requested' ? '' : TEXT.stateAccept)
             : ACTIVE.includes(state) ? '' : TEXT.stateDone;
           control.disabled = attempt !== null || !loaded || !!role || !!stale;
-          control.title = role || stale || TEXT.tips[action];
+          kinWrite(control, role || stale || kinSay(TEXT.tips[action]), "title");
         }
         writeRetry.hidden = writeDiscard.hidden = !attempt || attempt.busy;
         const note = id === null ? null : notes.get(id) || null;
@@ -807,11 +807,11 @@
       // ── 판독 화면(읽기 전용) ──
       const readLine = stateBox();
       readLine.id = 'image-request-read-status';
-      const readRetry = button('Retry', () => loadReading());
+      const readRetry = button(kinSay('Retry'), () => loadReading());
       readLine.append(readRetry);
       const readList = make('ol');
       readList.id = 'image-request-read-list';
-      readPane.append(make('p', 'image-request-muted', TEXT.readHint), readLine, readList);
+      readPane.append(make('p', 'image-request-muted', kinSay(TEXT.readHint)), readLine, readList);
       // 접힌 줄에도 Closed 옆 문구가 보여야 한다(U4p §3.3). 요약은 말줄임으로 잘리므로 그 안에 두지 않고 바로 아래에 줄을 넘기는
       // 한 줄로 둔다. 그 자리는 줄이 서 있는 동안 늘 잡혀 있고(Closed가 없으면 보이지 않게) 답은 보임만 바꾼다 — 늦게 온 답이
       // 그 줄을 끼우면 판독 칸이 줄어 단추 줄이 움직였다(main.html "An answer never resizes").
@@ -835,30 +835,30 @@
         readRoot.hidden = !visible;
         readRoot.dataset.state = ended ? 'ended' : lock ? 'locked' : readFailure ? 'failed' : readLoading ? 'loading'
           : readItems === null ? 'idle' : readItems.length ? 'ready' : 'empty';
-        const text = lock ? lock.text : !allowed() ? TEXT.readOffline : readUid === null ? TEXT.readUnread : readFailure ? TEXT.readFailed : readItems === null
-          ? TEXT.readLoading : readItems.length ? TEXT.readCounts(readItems.length, readCounts(readItems)) : TEXT.readEmpty;
-        readSummary.textContent = text;
+        const text = lock ? lock.text : !allowed() ? kinSay(TEXT.readOffline) : readUid === null ? kinSay(TEXT.readUnread) : readFailure ? kinSay(TEXT.readFailed) : readItems === null
+          ? kinSay(TEXT.readLoading) : readItems.length ? TEXT.readCounts(readItems.length, readCounts(readItems)) : kinSay(TEXT.readEmpty);
+        kinWrite(readSummary, text);
         kinWrite(readSummary, lock ? (lock.detail ? kinSay('{t0}\n{e1}', { t: lock.text }, { e: lock.detail }) : lock.text) : readFailure ? readDetail(readFailure) : text, 'title');
         readClosed.dataset.shown = String(!lock && !readFailure && !!readItems && readItems.some(item => item.state === 'Closed'));
-        readToggle.textContent = readOpen ? 'Hide Requests' : 'Show Requests';
+        kinWrite(readToggle, readOpen ? kinSay('Hide Requests') : kinSay('Show Requests'));
         readToggle.setAttribute('aria-expanded', String(readOpen));
         // 연 창은 잠겨도 연 채로 두고 안에 잠금을 쓴다(닫으면 판독 칸이 다시 커진다).
         readPane.hidden = !readOpen;
         if (readNotice) {
           // 알 때만 말한다: 요청 있음·실패·잠금은 그 글, 성공한 빈 답·읽지 않는 검사는 알림 없음, 읽는 중은 그대로.
           // 끊긴 동안은 새로 아는 것이 없다: 마지막으로 말한 것을 그대로 둔다.
-          const told = !lock && readUid !== null && !allowed() ? null : lock ? (lock.account ? TEXT.notice.account : TEXT.notice.refused) : readFailure ? TEXT.notice.failed
+          const told = !lock && readUid !== null && !allowed() ? null : lock ? (lock.account ? kinSay(TEXT.notice.account) : kinSay(TEXT.notice.refused)) : readFailure ? kinSay(TEXT.notice.failed)
             : readItems && readItems.length ? TEXT.notice.counts(readItems.length, readCounts(readItems))
             : readUid === null || readItems !== null ? '' : null;
           if (ended) readNotice.hidden = true;
           else if (told !== null) {
             readNotice.hidden = !told;
-            readNotice.textContent = told;
+            kinWrite(readNotice, told);
             kinWrite(readNotice, told ? kinSay('{t0} — Show Requests', { t: text }) : '', 'title');
           }
         }
         const state = lock || readFailure ? 'failed' : readLoading ? 'loading' : 'ready';
-        setState(readLine, state, lock ? lock.text : { failed: TEXT.readFailed, loading: TEXT.readLoading }[state] || '',
+        setState(readLine, state, lock ? lock.text : { failed: kinSay(TEXT.readFailed), loading: kinSay(TEXT.readLoading) }[state] || '',
           lock ? lock.detail : readFailure ? readDetail(readFailure) : '');
         readLine.hidden = state === 'ready';
         readRetry.hidden = !readFailure;

@@ -1,280 +1,180 @@
-/*
- * Screen language of the worklist and the reading screen (Korean / English), chosen per screen and kept in the
- * account (reading appearance version 12). An account that never chose keeps the screen exactly as it is.
- *
- * Every word on the screen passes one place: tr() reads the glossary (worklist-language-terms.js) and paint() writes the
- * result into a text node or a title-like attribute, keeping the words the page wrote so they come back unchanged.
- * Only whole glossary entries are translated: a sentence that carries data is a glossary template written where the
- * code builds it ({0} data shown as is, {t0} words the code chose, {e0} an error message). Data is never translated:
- * nothing inside translate=no, form fields, contenteditable text, an option whose text is its value, or an attribute
- * named in data-kin-keep. Words the page writes later (lists drawn again, dialogs, toasts, the Pop Out window) are
- * painted by one MutationObserver per document; alert, confirm, prompt and setCustomValidity are translated before
- * the browser shows them.
+/* Screen language is opt-in. Capture the page's markup before its renderers start.
+ * Dynamic UI carries a product phrase and its arguments to the point of display.
+ * Ordinary strings, including server details, pass through unchanged.
  */
 (function () {
   'use strict';
   const HANGUL = /[가-힣]/;
-  // Filled-in parts: {0} data, {n0} a number, {t0} words the code chose, {e0} an error message. A named part
-  // ({institutionName}) is data; a sentence built with say() states each part itself (its words are marked {t: words}).
-  const SLOT = /\{(?:[ten]?\d+|[A-Za-z]\w*)\}/;
-  const SLOTS = /(\{(?:[ten]?\d+|[A-Za-z]\w*)\})/;
-  const slotKind = slot => /^\{[ten]\d/.test(slot) ? slot[1] : '';
-  // A number part takes whole numbers only (never a digit of the text around it), so it has one reading.
-  const NUMBER = '(?<![\\d-])(-?\\d+(?:[.,]\\d+)*)(?!\\d)';
+  const slots = /\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g;
   const LANGS = ['en', 'ko'];
   const REGIONS = ['worklist', 'reading'];
   const NAMES = { en: 'English', ko: '한국어' };
-  // The general sentence before an error that has no text in the chosen language yet (the original follows it).
-  const UNKNOWN_ERROR = '요청을 처리하지 못했습니다. 원문:';
-
-  // ── Glossary ──────────────────────────────────────────────────────────────────────────────────────────────────
-  // An entry is [words as the page writes them, the other language, kinds, the same language with translated names].
-  const exact = new Map(), templates = [], bySource = new Map();
-  const space = text => text.replace(/\s+/g, ' ').trim();
-  const escape = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  function index(terms) {
-    for (const term of terms || []) {
-      if (!Array.isArray(term) || typeof term[0] !== 'string' || typeof term[1] !== 'string') continue;
-      const source = space(term[0]), korean = HANGUL.test(source.replace(new RegExp(SLOT.source, 'g'), ''));
-      const entry = korean ? { en: term[1], ko: term[3] || source } : { en: term[3] || source, ko: term[1] };
-      if (!SLOT.test(source)) { exact.set(source, entry); continue; }
-      bySource.set(source, entry);
-      const slots = [], parts = source.split(SLOTS), isSlot = part => SLOTS.test(part) && part.match(SLOTS)[0] === part;
-      // The fixed words match the page text as written (any run of spaces or line breaks), so a filled-in part keeps
-      // its own spaces; the lazy and the greedy reading of one text must agree, or the parts are not known for sure.
-      const fixedRe = part => escape(part).replace(/\s+/g, '\\s+?');
-      const pattern = group => '^' + parts.map(part => isSlot(part) ? (slotKind(part) === 'n' ? NUMBER : group) : fixedRe(part)).join('') + '$';
-      parts.forEach(part => { if (isSlot(part)) slots.push(part); });
-      const fixed = parts.filter(part => !isSlot(part));
-      templates.push({ lazy: new RegExp(pattern('([\\s\\S]*?)')), greedy: new RegExp(pattern('([\\s\\S]*)')), slots, entry,
-        anchor: space(fixed.slice().sort((a, b) => b.length - a.length)[0] || ''), weight: fixed.join('').replace(/\s/g, '').length });
-    }
-    // The longest fixed words first; of two with the same words, the one that knows its parts are words or errors.
-    const typed = t => t.slots.filter(slot => slotKind(slot)).length;
-    templates.sort((a, b) => b.weight - a.weight || typed(b) - typed(a));
+  const terms = window.KinLanguageTerms || {};
+  const glossary = new Map();
+  const keyOf = text => text.replace(/\s+/g, ' ').trim();
+  for (const [source, other, , same] of terms.terms || []) {
+    const key = keyOf(source);
+    glossary.set(key, HANGUL.test(key.replace(slots, ''))
+      ? { en: other, ko: same || key } : { en: same || key, ko: other });
   }
-  const terms = window.KinLanguageTerms || { terms: [], css: [] };
-  index(terms.terms);
-
-  // Words of the other language: the ones a translation into lang should have replaced.
-  const foreign = (text, lang) => lang === 'en' ? HANGUL.test(text) : !HANGUL.test(text) && /[A-Za-z]{2}/.test(text);
-  const unknownError = (text, lang) => (exact.get(UNKNOWN_ERROR)?.[lang] || UNKNOWN_ERROR) + ' ' + text;
-  const cache = { en: new Map(), ko: new Map() };
-  // Sentences carry their parts to the writer; equal text can have different data boundaries.
   const sentences = new WeakSet();
-  const isSentence = value => value !== null && typeof value === 'object' && sentences.has(value);
-  const word = value => value && typeof value === 'object' && !isSentence(value) ? (value.t ?? value.e ?? '') : value;
-  function fillSaid(template, params, filler) {
-    const named = params.length === 1 && params[0] && typeof params[0] === 'object' && !isSentence(params[0]) && !('t' in params[0]) && !('e' in params[0]);
-    return template.replace(new RegExp(SLOTS.source, 'g'), slot => {
-      const key = slot.slice(1, -1).replace(/^[ten](?=\d)/, '');
-      const value = named ? params[0][key] : params[Number(key)];
-      return value === undefined ? slot : filler(value, slot);
-    });
-  }
-  /** Keep the template and parts until write() or a browser dialog displays the sentence. */
+  const isSentence = value => sentences.has(value);
   function say(template, ...params) {
-    const sentence = Object.freeze({ template, params,
-      toString() { return renderSentence(this, state[lastRegion]); },
-      toJSON() { return renderSentence(this, null); },
+    if (typeof template !== 'string') return template;
+    const sentence = Object.freeze({ template, params: Object.freeze(params),
+      toString() { return tr(this, state[lastRegion]); },
+      toJSON() { return tr(this, null); },
     });
     sentences.add(sentence);
     return sentence;
   }
-  function renderSentence(sentence, lang, visiting = new Set()) {
-    if (visiting.has(sentence)) return '';
-    visiting.add(sentence);
-    try {
-      const source = sentence.template, key = space(source), entry = bySource.get(key) || exact.get(key);
-      // The lookup key alone collapses whitespace. A composition made only of slots keeps its line breaks.
-      const template = !lang || !entry || entry[lang] === key ? source
-        : source.match(/^\s*/)[0] + entry[lang] + source.match(/\s*$/)[0];
-      return fillSaid(template, sentence.params, value => {
-        if (isSentence(value)) return renderSentence(value, lang, visiting);
-        if (!value || typeof value !== 'object') return String(value);
-        const part = word(value);
-        if (isSentence(part)) return renderSentence(part, lang, visiting);
-        const text = String(part);
-        if (!lang || !text.trim()) return text;
-        const translated = tr(text, lang);
-        return translated === text && 'e' in value && foreign(text, lang) ? unknownError(text.trim(), lang) : translated;
-      });
-    } finally { visiting.delete(sentence); }
-  }
-  /** One text as the page wrote it (ends trimmed): the glossary entry, or a template whose parts are filled in once. */
-  function translate(text, lang, depth) {
-    const flat = space(text), hit = exact.get(flat);
-    if (hit) return hit[lang];
-    for (const t of templates) {
-      if (t.anchor && !flat.includes(t.anchor)) continue;
-      const m = t.lazy.exec(text);
-      if (!m) continue;
-      // Two readings of the same text (a part that holds the words of the template itself): the parts are not known.
-      const g = t.greedy.exec(text);
-      if (!g || m.some((part, k) => part !== g[k])) continue;
-      // A template with almost no words of its own ({0}건) only fits counts, never names or sentences.
-      if (t.weight < 3 && t.slots.some((slot, k) => !slotKind(slot) && !/^[\d\s.,:%+\-/()~–—]*$/.test(m[k + 1]))) continue;
-      const filled = {};
-      t.slots.forEach((slot, k) => {
-        const value = m[k + 1], kind = slotKind(slot);
-        let out = value;
-        if ((kind === 't' || kind === 'e') && depth < 3 && value.trim()) {
-          const inner = translate(value.trim(), lang, depth + 1);
-          if (inner !== value.trim()) out = value.match(/^\s*/)[0] + inner + value.match(/\s*$/)[0];
-          else if (kind === 'e' && foreign(value, lang)) out = unknownError(value.trim(), lang);
-        }
-        filled[slot] = out;
-      });
-      // Each part goes in once, as it is: a part that reads like a slot is never filled again.
-      return t.entry[lang].replace(new RegExp(SLOTS.source, 'g'), slot => Object.hasOwn(filled, slot) ? filled[slot] : slot);
-    }
-    return text;
-  }
-  /** The words of the page in lang (en or ko); null or words outside the glossary come back unchanged. */
-  function tr(text, lang) {
-    if (isSentence(text)) return renderSentence(text, lang);
-    if (!lang || typeof text !== 'string' || !/[A-Za-z가-힣]/.test(text)) return text;
-    const core = text.trim();
-    let out = cache[lang].get(core);
-    if (out === undefined) { out = translate(core, lang, 0); cache[lang].set(core, out); }
-    if (out === core) return text;
-    return text.match(/^\s*/)[0] + out + text.match(/\s*$/)[0];
+  function tr(value, lang, visiting = new Set()) {
+    if (!isSentence(value)) return value;
+    if (visiting.has(value)) return '';
+    visiting.add(value);
+    const { template, params } = value;
+    const key = keyOf(template), translated = lang && glossary.get(key)?.[lang];
+    const pattern = translated && translated !== key
+      ? template.match(/^\s*/)[0] + translated + template.match(/\s*$/)[0] : template;
+    const result = pattern.replace(slots, (slot, index, name) => {
+      const arg = name === undefined ? params[index] : params[0]?.[name];
+      if (arg === undefined) return slot;
+      // Older callers wrap parts in {t} or {e}. Only a nested sentence carries a translation.
+      const part = arg && typeof arg === 'object' && !isSentence(arg) ? arg.t ?? arg.e ?? '' : arg;
+      return String(tr(part, lang, visiting));
+    });
+    visiting.delete(value);
+    return result;
   }
 
   // ── Where a node is and what may change ───────────────────────────────────────────────────────────────────────
   const state = { worklist: null, reading: null };
-  // A document that is one screen (the viewer is the reading screen) says so on its root; the work page starts at the list.
-  let lastRegion = document.documentElement.getAttribute('data-kin-lang-region') === 'reading' ? 'reading' : 'worklist', generation = 0;
+  let lastRegion = 'worklist', generation = 0;
   const regionOf = el => {
     const marked = el?.closest?.('[data-kin-lang-region]');
     return marked ? marked.getAttribute('data-kin-lang-region') : lastRegion;
   };
   const langOf = el => state[regionOf(el)] || null;
-  // What the reader or the data wrote: the words of a field and of an option whose words are its value stay; a field
-  // keeps its own placeholder and title translated (they are the page words around the input).
-  const DATA = 'script,style,[contenteditable=""],[contenteditable="true"],[translate="no"]';
-  function frozen(el) {
-    if (!el || el.nodeType !== 1) return true;
-    if (el.closest(DATA + ',textarea')) return true;
-    const option = el.closest('option');
-    return !!option && !option.hasAttribute('value');
-  }
-  const frozenAttr = el => !el || el.nodeType !== 1 || !!el.closest(DATA);
-
-  // The words the page wrote, kept per text node and per attribute so a later language (or none) starts from them.
-  const texts = new WeakMap(), attrs = new WeakMap();
   const ATTRS = ['title', 'aria-label', 'placeholder', 'alt', 'aria-valuetext', 'aria-description'];
-  // Places that show an error (the page marks them): an error that has no text in the chosen language yet still says
-  // what failed, in the chosen language, followed by the original words.
-  const ERROR = '#toast.err, #err, [data-kin-error]';
-  function paintText(node, forced) {
-    const el = node.parentElement;
-    const lang = forced === undefined ? (frozen(el) ? null : langOf(el)) : forced;
-    const now = node.nodeValue;
-    let rec = texts.get(node);
-    if (rec && now !== rec.shown) rec = null; // the page wrote new words: they are the original now
-    const orig = rec ? rec.orig : now;
-    if (!lang && !rec) return;
-    let want = tr(orig, lang);
-    if (lang && want === orig && el?.closest(ERROR) && foreign(orig, lang)) want = unknownError(orig.trim(), lang);
-    if (want !== now) node.nodeValue = want;
-    if (isSentence(orig) || want !== orig) texts.set(node, { orig, shown: want }); else texts.delete(node);
+  const records = new WeakMap(); // text node or attribute owner -> original UI sentences
+  const targets = new Set();     // weak so discarded rows and closed windows can be collected
+  const collected = new FinalizationRegistry(ref => targets.delete(ref));
+
+  // Observe registered targets themselves. An ordinary write revokes ownership even if it writes
+  // identical text, happens while detached, or is followed by Apply in the same task.
+  function invalidate(changes) {
+    for (const change of changes) records.get(change.target)?.delete(change.attributeName || '');
   }
-  function paintAttr(el, name, forced) {
-    const now = el.getAttribute(name);
-    const map = attrs.get(el);
-    let rec = map?.[name];
-    if (now === null) { if (rec) delete map[name]; return; }
-    if (rec && now !== rec.shown) rec = null;
-    const orig = rec ? rec.orig : now;
-    const keep = frozenAttr(el) || (el.getAttribute('data-kin-keep') || '').split(' ').includes(name);
-    const lang = forced === undefined ? (keep ? null : langOf(el)) : forced;
-    if (!lang && !rec) return;
-    const want = tr(orig, lang);
-    if (want !== now) el.setAttribute(name, want);
-    if (isSentence(orig) || want !== orig) { let m = map; if (!m) attrs.set(el, m = {}); m[name] = { orig, shown: want }; } else if (map) delete map[name];
+  const writes = new MutationObserver(invalidate);
+  const flush = () => invalidate(writes.takeRecords());
+  function register(node, name, sentence) {
+    let fields = records.get(node);
+    if (!fields) {
+      fields = new Map();
+      records.set(node, fields);
+      const ref = new WeakRef(node);
+      targets.add(ref);
+      collected.register(node, ref);
+      writes.observe(node, name ? { attributes: true, attributeFilter: ATTRS } : { characterData: true });
+    }
+    fields.set(name, sentence);
   }
-  /** Write screen words without losing the sentence at the DOM string boundary. */
-  function write(el, value, name) {
-    if (!el) return el;
-    const orig = isSentence(value) ? value : String(value ?? '');
-    const shown = tr(orig, null);
+  function display(node, name, sentence) {
+    const text = tr(sentence, langOf(name ? node : node.parentElement));
     if (name) {
-      el.setAttribute(name, shown);
-      let map = attrs.get(el);
-      if (!map) attrs.set(el, map = {});
-      map[name] = { orig, shown };
-      if (el.isConnected) paintAttr(el, name);
+      if (node.getAttribute(name) === text) return;
+      node.setAttribute(name, text);
     } else {
-      let node = el;
-      if (el.nodeType !== 3) {
-        node = el.ownerDocument.createTextNode('');
-        el.replaceChildren(node);
-      }
-      node.nodeValue = shown;
-      texts.set(node, { orig, shown });
-      if (node.isConnected) paintText(node);
+      if (node.data === text) return;
+      node.data = text;
+    }
+    // A custom element can synchronously write another registered field from attributeChangedCallback.
+    // Only our first mutation belongs to the translator. Ordinary writes after it revoke their registrations.
+    const [, ...ordinary] = writes.takeRecords();
+    invalidate(ordinary);
+  }
+  function write(el, value, name = '') {
+    if (!el) return el;
+    flush();
+    let node = el;
+    if (!name && el.nodeType !== 3) {
+      node = el.ownerDocument.createTextNode('');
+      el.replaceChildren(node);
+    }
+    if (isSentence(value)) {
+      register(node, name, value);
+      display(node, name, value);
+    } else {
+      records.get(node)?.delete(name);
+      if (name) node.setAttribute(name, String(value ?? ''));
+      else node.data = String(value ?? '');
     }
     return el;
   }
-  function paintTree(root, forced) {
-    if (!root) return;
-    if (root.nodeType === 3) return paintText(root, forced);
-    if (root.nodeType !== 1) return;
-    const walk = root.ownerDocument.createTreeWalker(root, 5 /* SHOW_ELEMENT | SHOW_TEXT */);
-    for (let n = root; n; n = walk.nextNode()) {
-      if (n.nodeType === 3) { if (n.nodeValue.trim()) paintText(n, forced); continue; }
-      for (const name of ATTRS) if (n.hasAttribute(name)) paintAttr(n, name, forced);
+  function registerMarkup(doc) {
+    const skip = 'script,style,[translate="no"],[contenteditable="true"],[contenteditable=""]';
+    const walk = doc.createTreeWalker(doc.documentElement, 5 /* SHOW_ELEMENT | SHOW_TEXT */);
+    for (let node = walk.currentNode; node; node = walk.nextNode()) {
+      const el = node.nodeType === 3 ? node.parentElement : node;
+      if (el.closest(skip)) continue;
+      if (node.nodeType === 3) {
+        if (!el.closest('textarea,option:not([value])') && glossary.has(keyOf(node.data)))
+          register(node, '', say(node.data));
+      } else {
+        const keep = (el.getAttribute('data-kin-keep') || '').split(' ');
+        for (const name of ATTRS) {
+          const text = el.getAttribute(name);
+          if (text && !keep.includes(name) && glossary.has(keyOf(text))) register(el, name, say(text));
+        }
+      }
     }
   }
-
-  // ── Watching each document ────────────────────────────────────────────────────────────────────────────────────
-  const docs = new Map(); // document -> { observer }
-  function watch(doc) {
-    const entry = docs.get(doc);
-    if (!entry || entry.observer) return;
-    entry.observer = new MutationObserver(records => {
-      for (const r of records) {
-        if (r.type === 'characterData') paintText(r.target);
-        else if (r.type === 'attributes') paintAttr(r.target, r.attributeName);
-        else for (const n of r.addedNodes) if (n.isConnected) paintTree(n);
+  const docs = new Map();
+  const active = () => REGIONS.some(r => state[r]);
+  function refresh(node) {
+    if (!node.isConnected || !docs.has(node.ownerDocument)) return;
+    for (const [name, sentence] of records.get(node) || []) display(node, name, sentence);
+  }
+  function watchMoves(doc) {
+    const observer = new MutationObserver(changes => {
+      flush();
+      if (!active()) return;
+      // Moving a subtree (including adoption into the report window) can change its region.
+      // Consult existing registrations only. Never infer a phrase from the current DOM.
+      for (const change of changes) for (const root of change.addedNodes) {
+        if (!root.isConnected) continue;
+        const walk = doc.createTreeWalker(root, 5);
+        for (let node = root; node; node = walk.nextNode()) if (records.has(node)) refresh(node);
       }
     });
-    entry.observer.observe(doc.documentElement, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ATTRS });
+    observer.observe(doc, { subtree: true, childList: true });
+    docs.set(doc, observer);
   }
-  const active = () => REGIONS.some(r => state[r]);
-  /** Another document showing the reading screen (the report Pop Out window): painted and watched like the page. */
   function attach(doc, region) {
     if (!doc || docs.has(doc)) return () => {};
-    docs.set(doc, { observer: null });
     if (region) doc.documentElement.setAttribute('data-kin-lang-region', region);
-    // Its pointer and keys say which screen was used last too (a dialog it starts follows that screen).
+    watchMoves(doc);
     doc.addEventListener('pointerdown', remember, true);
     doc.addEventListener('keydown', remember, true);
     styleCss(doc);
     mark(doc);
-    if (active()) { paintTree(doc.documentElement); watch(doc); }
-    // The window going away lets go of its document: no observer, no listeners, no entry.
-    return function detach() {
-      const entry = docs.get(doc);
-      entry?.observer?.disconnect();
+    return () => {
+      docs.get(doc)?.disconnect();
+      docs.delete(doc);
       doc.removeEventListener('pointerdown', remember, true);
       doc.removeEventListener('keydown', remember, true);
-      docs.delete(doc);
     };
   }
   function mark(doc) {
     for (const r of REGIONS) { if (state[r]) doc.documentElement.setAttribute('data-kin-lang-' + r, state[r]); else doc.documentElement.removeAttribute('data-kin-lang-' + r); }
   }
   function repaint() {
-    for (const [doc, entry] of docs) {
-      if (!doc.defaultView || doc.defaultView.closed) { entry.observer?.disconnect(); docs.delete(doc); continue; }
-      mark(doc);
-      paintTree(doc.documentElement);
-      if (active()) watch(doc); else { entry.observer?.disconnect(); entry.observer = null; }
+    flush();
+    for (const doc of docs.keys()) mark(doc);
+    for (const ref of targets) {
+      const node = ref.deref();
+      if (node) refresh(node); else targets.delete(ref);
     }
-    // The page keeps its own lang: lang=ko would draw every line, English ones too, with the Korean font metrics.
-    if (active()) wrapBrowser();
     for (const el of validity.keys()) { if (el.isConnected) setValidity(el); else validity.delete(el); }
     showLabel();
   }
@@ -296,7 +196,7 @@
   function setValidity(el) {
     const native = nativeValidity.get(Object.getPrototypeOf(el)) || HTMLInputElement.prototype.setCustomValidity;
     const message = validity.get(el);
-    native.call(el, message ? tr(message, frozen(el.parentElement) ? null : langOf(el)) : '');
+    native.call(el, message ? tr(message, langOf(el)) : '');
   }
   function wrapBrowser() {
     if (wrapped) return;
@@ -318,7 +218,7 @@
     if (typeof native !== 'function' || nativeValidity.has(proto)) continue;
     nativeValidity.set(proto, native);
     proto.setCustomValidity = function (message) {
-      if (message) validity.set(this, message); else validity.delete(this);
+      if (isSentence(message)) validity.set(this, message); else validity.delete(this);
       return native.call(this, message ? tr(message, langOf(this)) : message);
     };
   }
@@ -335,22 +235,14 @@
       v.version === 1 && valid(v.worklist) && valid(v.reading) ? { version: 1, worklist: v.worklist, reading: v.reading } : null;
   }
   const value = () => ({ version: 1, worklist: state.worklist, reading: state.reading });
-  // The account's choice as this browser last showed it. A page that cannot read the account (the administration and
-  // audit pages, the sign-in page, the viewer document) starts from it; the work page writes it whenever the account
-  // choice is restored or saved.
-  const BROWSER = 'kin-language:v1';
-  function set(next, fromAccount = true) {
+  function set(next) {
     const clean = normalize(next);
     if (!clean) return false;
     generation += 1;
     const changed = REGIONS.some(r => state[r] !== clean[r]);
     state.worklist = clean.worklist; state.reading = clean.reading;
-    if (fromAccount) { try { localStorage.setItem(BROWSER, JSON.stringify(clean)); } catch (_) {} }
     if (changed) { repaint(); paintDialog(); }
     return true;
-  }
-  function fromBrowser() {
-    try { return normalize(JSON.parse(localStorage.getItem(BROWSER))); } catch (_) { return null; }
   }
 
   // The header mark: what the account chose (EN / KO, both when the screens differ); an account that never chose keeps
@@ -406,7 +298,7 @@
   const make = (tag, props = {}, ...children) => { const el = Object.assign(document.createElement(tag), props); el.append(...children); return el; };
   const keep = el => { el.setAttribute('translate', 'no'); return el; };
   function sampleRows(choice, scopes) {
-    const pick = (scope, words) => words.map(w => scopes[scope] && choice ? tr(w, choice) : w).join(' · ');
+    const pick = (scope, words) => words.map(w => scopes[scope] && choice ? tr(say(w), choice) : w).join(' · ');
     return [
       ['Worklist', pick('worklist', ['StudyDate', 'Name', 'RS', 'Unread', '↻ Refresh'])],
       ['Reading screen', pick('reading', ['Findings', 'Conclusion', 'Approve', 'Save', 'Approve & Next'])],
@@ -509,33 +401,26 @@
     reading: ['.split > .right', '#reading-bar', '#reading-viewer', '#histmodal', '#stalemodal', '#tplmodal', '#tpl-preview', '#structmodal', '#cite-preview', '#reasonmodal', '#cvr-send'],
   };
   function start() {
-    docs.set(document, { observer: null });
+    registerMarkup(document);
+    watchMoves(document);
     for (const [region, selectors] of Object.entries(REGION_OF))
       for (const selector of selectors) document.querySelector(selector)?.setAttribute('data-kin-lang-region', region);
     styleCss(document);
     document.head.append(make('style', { id: 'language-style', textContent: css }));
     document.getElementById('language-open')?.addEventListener('click', openDialog);
-    // A page that cannot read the account says so (data-kin-language-source="browser"): it shows the choice this browser
-    // last showed, and follows a change made in another window of this browser.
-    // Its glossary covers its Korean words only, so it follows English and keeps its own page for Korean or no choice.
-    if (document.documentElement.getAttribute('data-kin-language-source') === 'browser') {
-      const follow = () => { const kept = fromBrowser(), en = r => kept?.[r] === 'en' ? 'en' : null;
-        set({ version: 1, worklist: en('worklist'), reading: en('reading') }, false); };
-      follow();
-      window.addEventListener('storage', e => { if (e.key === BROWSER) follow(); });
-    }
-    // A choice restored before the page finished loading is painted now.
     if (active()) repaint(); else showLabel();
   }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();
+  start();
 
   /** The words the page wrote into this element (or one of its attributes), whatever language shows now. */
   function source(el, name) {
     if (!el) return null;
-    if (name) { const now = el.getAttribute(name), rec = attrs.get(el)?.[name]; return rec && rec.shown === now ? tr(rec.orig, null) : now; }
+    flush();
+    if (name) return tr(records.get(el)?.get(name), null) ?? el.getAttribute(name);
     let out = '';
-    const walk = el.ownerDocument.createTreeWalker(el, 4 /* SHOW_TEXT */);
-    for (let n = walk.nextNode(); n; n = walk.nextNode()) { const rec = texts.get(n); out += rec && rec.shown === n.nodeValue ? tr(rec.orig, null) : n.nodeValue; }
+    const walk = el.ownerDocument.createTreeWalker(el, 4);
+    for (let node = walk.nextNode(); node; node = walk.nextNode())
+      out += tr(records.get(node)?.get(''), null) ?? node.data;
     return out;
   }
 

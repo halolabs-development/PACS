@@ -22,17 +22,6 @@ const KIN_VIEWER_EXPECTED_SESSION = (() => {
 function kinCreateSessionBoundary() {
   return { id: 'kin.session-boundary', async preRegistration({servicesManager} = {}) {
     kinExamViewerServices=servicesManager?.services;
-    // Screen language: the viewer is the reading screen and shows the choice this browser last showed for the account
-    // (worklist-language.js). Loaded in order beside the session scripts, never in their way.
-    if (!window.KinLanguage) {
-      document.documentElement.setAttribute('data-kin-language-source', 'browser');
-      document.documentElement.setAttribute('data-kin-lang-region', 'reading');
-      for (const name of ['worklist-language-terms.js', 'worklist-language.js']) {
-        const script = document.createElement('script');
-        script.src = '/worklist/hpacs-lite/' + name; script.async = false;
-        document.head.append(script);
-      }
-    }
     for (const name of ['work-context.js', 'session-transport.js', 'viewer-resources.js', 'viewer-preload.js', 'viewer-session.js']) {
       await new Promise((resolve, reject) => {
         const script = document.createElement('script');

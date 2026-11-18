@@ -187,10 +187,13 @@
     };
     return {send(uids){const identity=owner();if(identity)channel.postMessage({owner:identity,uids:[...new Set(uids)]});},close(){channel.close();}};
   }
-  function chooseOriginals(row,scope,{title='Download Originals',multiple=true,live=()=>true}={}) {
+  function chooseOriginals(row,scope,{title,multiple=true,live=()=>true}={}) {
     return new Promise(resolve=>{
       const dialog=document.createElement('dialog'),heading=document.createElement('h3'),note=document.createElement('p');
-      dialog.className='order-dialog';heading.textContent=title;
+      const language = root.KinLanguage;
+      const write = (node, words) => language ? language.write(node, words) : (node.textContent = words);
+      const phrase = words => language ? language.say(words) : words;
+      dialog.className='order-dialog';write(heading,title ?? phrase('Download Originals'));
       note.textContent=scope.kind==='split'?'나눈 시리즈만이 아니라 원본 검사 전체를 내보냅니다. 원본 UID와 영상은 바뀌지 않습니다.':'내보낼 원본 검사를 고르세요. 원본 UID와 영상은 바뀌지 않습니다.';
       dialog.append(heading,note);const choices=[];
       for(const source of scope.sources){
@@ -200,7 +203,7 @@
         const words=document.createElement('span');words.translate=false;words.textContent=[original?.acc,original?.desc,source.studyUid].filter(Boolean).join(' · ');
         label.append(input,' ',words);dialog.append(label,document.createElement('br'));choices.push(input);
       }
-      const go=document.createElement('button'),close=document.createElement('button');go.type=close.type='button';go.textContent='Continue';close.textContent='Cancel';
+      const go=document.createElement('button'),close=document.createElement('button');go.type=close.type='button';write(go,phrase('Continue'));write(close,phrase('Cancel'));
       const update=()=>{go.disabled=!choices.some(c=>c.checked);};dialog.onchange=update;update();
       let result=[];go.onclick=()=>{if(live())result=choices.filter(c=>c.checked).map(c=>c.value);dialog.close();};close.onclick=()=>dialog.close();
       dialog.addEventListener('close',()=>{dialog.remove();resolve(result);},{once:true});dialog.append(go,close);document.body.append(dialog);dialog.showModal();
@@ -248,17 +251,6 @@ const KIN_VIEWER_EXPECTED_SESSION = (() => {
 function kinCreateSessionBoundary() {
   return { id: 'kin.session-boundary', async preRegistration({servicesManager} = {}) {
     kinExamViewerServices=servicesManager?.services;
-    // Screen language: the viewer is the reading screen and shows the choice this browser last showed for the account
-    // (worklist-language.js). Loaded in order beside the session scripts, never in their way.
-    if (!window.KinLanguage) {
-      document.documentElement.setAttribute('data-kin-language-source', 'browser');
-      document.documentElement.setAttribute('data-kin-lang-region', 'reading');
-      for (const name of ['worklist-language-terms.js', 'worklist-language.js']) {
-        const script = document.createElement('script');
-        script.src = '/worklist/hpacs-lite/' + name; script.async = false;
-        document.head.append(script);
-      }
-    }
     for (const name of ['work-context.js', 'session-transport.js', 'viewer-resources.js', 'viewer-preload.js', 'viewer-session.js']) {
       await new Promise((resolve, reject) => {
         const script = document.createElement('script');
@@ -403,9 +395,7 @@ const kinViewerToolbarLabels = (() => {
   // 누르면 켜지고 다른 도구를 고르면 꺼지는 버튼. Capture·Layout·More Tools는 동작·목록이라 켜짐 상태가 없다.
   const TOGGLES = new Set(['MeasurementTools', 'Zoom', 'Pan', 'TrackballRotate', 'WindowLevel', 'Crosshairs']);
   const ACTIVE = 'bg-primary-light';
-  // What this file wrote is compared, not what the screen shows: the screen language may show the words translated.
-  const written = (element, name) => globalThis.KinLanguage ? globalThis.KinLanguage.source(element, name) : element.getAttribute(name);
-  const put = (element, name, value) => { if (written(element, name) !== value) element.setAttribute(name, value); };
+  const put = (element, name, value) => { if (element.getAttribute(name) !== value) element.setAttribute(name, value); };
   const shown = element => element.nodeType === 1
     ? (element.localName === 'svg' ? '' : [...element.childNodes].map(shown).join('')) : element.nodeType === 3 ? element.data : '';
   // data-cy 하나가 가리키는 것: 주 도구막대 버튼, 분할 버튼의 주/목록 부분, 또는 분할 버튼 목록의 항목.
@@ -443,7 +433,7 @@ const kinViewerToolbarLabels = (() => {
   function outputScope(scope) {
     const meaning = PRIMARY.Capture[1];
     for (const button of scope.querySelectorAll('[data-tool="Capture"]')) {
-      const title = written(button, 'title') || '';
+      const title = button.getAttribute('title') || '';
       if (!title.startsWith(meaning)) put(button, 'title', meaning + (title ? ' · ' + title : ''));
     }
   }
@@ -2036,8 +2026,6 @@ function kinCreateViewerHistory() {
       policyRestores.push(unsubscribe(toolbarService.subscribe(toolbarService.EVENTS.TOOL_BAR_MODIFIED, () => { if (nativeAuthoringClosed()) enforceToolbar(); })));
     function unsubscribe(subscription) { return () => subscription?.unsubscribe?.(); }
     const text = (parent, tag, value) => { const el = document.createElement(tag); el.textContent = value; parent.append(el); return el; };
-    // A mark's own words (its title, text, description, a spine level) and its author: data, shown as written in any screen language.
-    const data = (parent, tag, value) => { const el = text(parent, tag, value); el.translate = false; return el; };
     const button = (parent, label, run, disabled = false) => {
       const b = text(parent, 'button', label); b.type = 'button'; b.disabled = disabled;
       b.style.cssText = 'margin:3px;padding:4px 7px;border:1px solid #657c9f;border-radius:4px';
@@ -2580,20 +2568,19 @@ function kinCreateViewerHistory() {
       text(el, 'strong', names[e.draft.kind] + ' · ' + stateLabel + (e.head?.hidden ? ' · Hidden' : ''));
       if (e.head && stateLabel !== 'Saved r' + e.head.revision) text(el, 'div', '서버 저장 이력 r' + e.head.revision + ' · 현재 수정·저장 결과와는 별개입니다.');
       // The clinician projection carries no author (clinician-policy.ts clinicianViewerItem).
-      if (e.head && readOnly()) text(el, 'div', 'Read-only');
-      else if (e.head) text(el, 'div', '').append(Object.assign(document.createElement('span'), { textContent: e.head.authorActor, translate: false }), document.createTextNode(writable(e) ? ' · My Item' : ' · Read-only'));
+      if (e.head) text(el, 'div', readOnly() ? 'Read-only' : e.head.authorActor + (writable(e) ? ' · My Item' : ' · Read-only'));
       if (e.editing) {
         if (e.draft.kind === 'memo') input(el, 'Memo Title', e.draft.title ?? '', value => { e.draft.title = value; updateAnnotation(e); }, !!(e.busy || e.pending));
         // A Spine Label's text is its level; another level is another label.
-        if (e.draft.kind === 'spine') data(el, 'p', e.draft.label);
+        if (e.draft.kind === 'spine') text(el, 'p', e.draft.label);
         else input(el, e.draft.kind !== 'key' ? 'Annotation Text' : 'Key Title', e.draft.label ?? e.draft.title, value => {
           e.draft[e.draft.kind !== 'key' ? 'label' : 'title'] = value; updateAnnotation(e);
         }, !!(e.busy || e.pending));
         if (e.draft.kind === 'key') input(el, 'Key Description', e.draft.description || '', value => { e.draft.description = value; }, !!(e.busy || e.pending));
       } else {
-        if (e.draft.kind === 'memo' && e.draft.title) data(el, 'p', e.draft.title);
-        data(el, 'p', e.draft.kind === 'key' ? e.draft.title : e.draft.label);
-        if (e.draft.description) data(el, 'p', e.draft.description);
+        if (e.draft.kind === 'memo' && e.draft.title) text(el, 'p', e.draft.title);
+        text(el, 'p', e.draft.kind === 'key' ? e.draft.title : e.draft.label);
+        if (e.draft.description) text(el, 'p', e.draft.description);
       }
       // The Measure menu's marks go to no SR and carry no SR conversion; say so instead of leaving them out silently.
       if (measureMark(e.draft.kind)) text(el, 'div', 'SR 미지원 표식 · SR 저장에는 들어가지 않습니다.');
@@ -2606,8 +2593,8 @@ function kinCreateViewerHistory() {
         text(el, 'p', '미저장 수정은 보관 중입니다. ' + (e.head.hidden ?
           '숨김을 복원하고 원본을 확인한 후 다시 편집할 수 있습니다.' : '원본을 다시 확인하면 보관한 수정으로 돌아갑니다.'));
         const held = text(el, 'details', ''); text(held, 'summary', 'Held Changes');
-        data(held, 'p', e.heldDraft.label ?? e.heldDraft.title);
-        if (e.heldDraft.description) data(held, 'p', e.heldDraft.description);
+        text(held, 'p', e.heldDraft.label ?? e.heldDraft.title);
+        if (e.heldDraft.description) text(held, 'p', e.heldDraft.description);
         text(held, 'p', '프레임 ' + e.heldDraft.frame + ' · 아직 저장되지 않은 내용입니다.');
       }
       button(el, 'Go to Image', () => navigate(e));

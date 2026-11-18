@@ -7,7 +7,7 @@ LiveStack, no Orthanc, no database and no original DICOM. Only the refusal body
 the test hands back can become the approved report shown to the user.
 """
 from page_source import read_page_source
-from main_split_harness import REPORT_FIXTURE, fixture_block
+from main_split_harness import REPORT_FIXTURE, fixture_block, report_display_block
 import json
 import os
 import unittest
@@ -243,7 +243,7 @@ def harness(state):
             .replace("APIFN", API_FN)
             .replace("WRITEBLOCKFN", WRITE_BLOCK_FN)
             .replace("EDITORBLOCKFN", EDITOR_BLOCK_FN)
-            .replace("BASEBLOCK", fixture_block(MAIN_PATH, REPORT_FIXTURE, "BASE_BLOCK"))
+            .replace("BASEBLOCK", report_display_block(MAIN_PATH) + fixture_block(MAIN_PATH, REPORT_FIXTURE, "BASE_BLOCK"))
             .replace("REPORTBLOCK", fixture_block(MAIN_PATH, REPORT_FIXTURE, "REPORT_BLOCK"))
             .replace("INITIALSTATE", json.dumps(state, ensure_ascii=False))
             .replace("UIDVALUE", UID)

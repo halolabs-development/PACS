@@ -23,22 +23,22 @@ window.KinReadingFindings = function (app) {
     throw new Error(links.MODULE_MISMATCH_TEXT || '화면 구성 요소 판이 다릅니다. 새로고침하세요.');
   const node = (tag, value, parent) => { const el = document.createElement(tag); if (value) kinWrite(el, value); if (parent) parent.append(el); return el; };
   const button = (label, run, parent) => { const b = node('button', label, parent); b.type = 'button'; b.addEventListener('click', run); return b; };
-  const toggle = button('Image Findings', () => show(panel.hidden), null);
+  const toggle = button(kinSay('Image Findings'), () => show(panel.hidden), null);
   toggle.id = 'reading-findings-open'; toggle.setAttribute('aria-controls', 'reading-findings'); toggle.setAttribute('aria-expanded', 'false');
-  toggle.title = '선택한 판독 대상 검사의 영상 소견(읽기 전용)과 영상 이동';
+  kinWrite(toggle, kinSay('선택한 판독 대상 검사의 영상 소견(읽기 전용)과 영상 이동'), "title");
   header.append(toggle);
   // A fixed panel inside the related region: it follows that region's visibility and inertness
   // and never changes the related list, report or viewer geometry.
   const panel = node('section', '', region); panel.id = 'reading-findings'; panel.hidden = true;
   panel.setAttribute('aria-labelledby', 'reading-findings-title');
   const title = node('strong', 'Image Findings', panel); title.id = 'reading-findings-title';
-  const close = button('Close Image Findings', () => { show(false); toggle.focus(); }, panel); close.id = 'reading-findings-close';
-  node('p', '선택한 판독 대상 검사에 저장된 소견입니다. 작성·수정·숨김은 영상 화면의 Findings에서 하며 여기서는 소견을 바꿀 수 없습니다. ' +
+  const close = button(kinSay('Close Image Findings'), () => { show(false); toggle.focus(); }, panel); close.id = 'reading-findings-close';
+  node('p', kinSay('선택한 판독 대상 검사에 저장된 소견입니다. 작성·수정·숨김은 영상 화면의 Findings에서 하며 여기서는 소견을 바꿀 수 없습니다. ' +
     'Insert into Report를 누르면 그 소견의 글을 판독문 초안에 넣을 수 있고, 어느 소견의 어느 출처에서 왔는지가 판독문과 함께 기록됩니다. ' +
-    '같은 환자의 비교 검사 하나의 표식을 함께 연결한 소견은 그 비교 검사를 볼 수 있을 때만 표시됩니다.', panel);
+    '같은 환자의 비교 검사 하나의 표식을 함께 연결한 소견은 그 비교 검사를 볼 수 있을 때만 표시됩니다.'), panel);
   const status = node('p', '', panel); status.id = 'reading-findings-status'; status.setAttribute('role', 'status');
   const controls = node('p', '', panel);
-  const reload = button('Reload Findings', () => { sync(); if (live()) store.load(); }, controls);
+  const reload = button(kinSay('Reload Findings'), () => { sync(); if (live()) store.load(); }, controls);
   const hiddenLabel = node('label', '', controls);
   const hiddenBox = node('input', '', hiddenLabel); hiddenBox.type = 'checkbox'; hiddenBox.id = 'reading-findings-hidden';
   hiddenLabel.append(document.createTextNode(' Show Hidden'));
@@ -46,9 +46,9 @@ window.KinReadingFindings = function (app) {
   const readiness = node('p', '', panel); readiness.id = 'reading-findings-target';
   const result = node('p', '', panel); result.id = 'reading-findings-nav'; result.setAttribute('role', 'status'); result.dataset.result = '';
   const recovery = node('p', '', panel); recovery.id = 'reading-findings-recovery'; recovery.hidden = true;
-  const openImage = button('Open Image', openViewer, recovery);
-  const retry = button('Retry Go to Image', () => { if (last) go(last.id, last.index, last); }, recovery);
-  node('p', 'Current·Revised·Hidden·Missing은 저장된 표식과의 DB 연결 상태이며 영상 원본 확인 결과가 아닙니다. 수치는 연결 당시 서버 사본입니다.', panel);
+  const openImage = button(kinSay('Open Image'), openViewer, recovery);
+  const retry = button(kinSay('Retry Go to Image'), () => { if (last) go(last.id, last.index, last); }, recovery);
+  node('p', kinSay('Current·Revised·Hidden·Missing은 저장된 표식과의 DB 연결 상태이며 영상 원본 확인 결과가 아닙니다. 수치는 연결 당시 서버 사본입니다.'), panel);
   const list = node('section', '', panel); list.id = 'reading-findings-list'; list.setAttribute('aria-label', 'Image Findings List');
   panel.addEventListener('keydown', e => { if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); show(false); toggle.focus(); } });
 
@@ -70,7 +70,7 @@ window.KinReadingFindings = function (app) {
     work.commit(at, () => { oldApi = links.schemaOf(response) !== String(links.SCHEMA); });
     return data;
   }
-  const store = command.createListStore({ fetch: listRead, changed: () => render() });
+  const store = command.createListStore({ label: kinSay, fetch: listRead, changed: () => render() });
   const commands = command.createNavigator({ timeoutMs: 15000 });
 
   /* ---------- keeping the panel off the report's controls ---------- */
@@ -403,7 +403,10 @@ window.KinReadingFindings = function (app) {
   }
   function renderReadiness() {
     const target = renderRecovery(), value = target ? command.readinessText(target) : '';
-    if (readiness.textContent !== value) readiness.textContent = value;
+    if (readiness.dataset.targetMessage !== value) {
+      readiness.dataset.targetMessage = value;
+      kinWrite(readiness, target ? command.readinessText(target, kinSay) : '');
+    }
     readiness.dataset.target = target ? (target.kind === 'refused' ? target.reason : target.kind) : '';
   }
   function rebuild(rows) {
@@ -413,16 +416,16 @@ window.KinReadingFindings = function (app) {
     for (const row of rows) {
       const article = node('article', '', list); article.dataset.findingId = row.id; article.dataset.hidden = String(row.hidden);
       const heading = node('p', '', article); heading.className = 'reading-findings-title'; heading.id = 'reading-findings-label-' + (++labels);
-      node('strong', row.title || '(제목 없음)', heading);
+      node('strong', row.title || kinSay('(제목 없음)'), heading);
       if (row.text) node('p', row.text, article).className = 'reading-findings-text';
       // Version 3: the user's own lesion location, labelled the same way (free text, never interpreted).
       if (row.lesionLocation) {
-        const line = node('p', 'Location (병변 위치): ' + row.lesionLocation, article);
+        const line = node('p', kinSay('Location (병변 위치): {0}', row.lesionLocation), article);
         line.className = 'reading-findings-characteristics'; line.dataset.kinLesionLocation = '';
       }
       // Version 2: the user's own lesion characteristics, labelled; never interpreted or mapped to a vocabulary.
       if (row.characteristics) {
-        const line = node('p', 'Characteristics (병변 특성): ' + row.characteristics, article);
+        const line = node('p', kinSay('Characteristics (병변 특성): {0}', row.characteristics), article);
         line.className = 'reading-findings-characteristics'; line.dataset.kinCharacteristics = '';
       }
       node('p', (row.author || '작성자 미확인') + ' · r' + row.revision + ' · ' + row.updated + (row.hidden ? ' · Hidden' : ''), article).className = 'reading-findings-meta';
@@ -439,18 +442,18 @@ window.KinReadingFindings = function (app) {
         item.dataset.sourceStudy = s.foreign ? 'comparison' : 'current';
         if (job) node('span', s.foreign ? ' · 저장 작업의 두 검사를 같은 순서로 표시하는 영상 화면에서만 엽니다' : ' · 이 검사만 표시하는 영상 화면에서만 엽니다', item);
         else if (s.foreign) node('span', ' · 비교 검사 영상(선택한 검사와 이 비교 검사를 함께 표시하는 화면으로만 이동)', item);
-        const target = button(job ? (s.mark ? 'Go to 3D Point' : 'Open Saved View') : 'Go to Image', () => go(row.id, i), item);
+        const target = button(job ? (s.mark ? kinSay('Go to 3D Point') : kinSay('Open Saved View')) : kinSay('Go to Image'), () => go(row.id, i), item);
         target.dataset.focusKey = row.id + ':' + i; target.setAttribute('aria-describedby', heading.id + ' ' + label.id);
         if (target.dataset.focusKey === key) refocus = target;
         // One button per source: the block is the finding's own words, and the attestation records
         // which source of which revision the reader was looking at when they pressed it.
-        const insert = button('Insert into Report', () => cite(row.id, i, insert), item);
+        const insert = button(kinSay('Insert into Report'), () => cite(row.id, i, insert), item);
         insert.dataset.focusKey = row.id + ':' + i + ':cite';
-        insert.title = '이 소견의 제목·본문·특성을 판독문 초안에 넣습니다. 미리보기에서 확인한 뒤 서버가 기록합니다.';
+        kinWrite(insert, kinSay('이 소견의 제목·본문·특성을 판독문 초안에 넣습니다. 미리보기에서 확인한 뒤 서버가 기록합니다.'), "title");
         insert.setAttribute('aria-describedby', heading.id + ' ' + label.id);
         if (insert.dataset.focusKey === key) refocus = insert;
       });
-      const primary = button('Go to Primary Image', () => go(row.id, row.primary), article);
+      const primary = button(kinSay('Go to Primary Image'), () => go(row.id, row.primary), article);
       primary.dataset.focusKey = row.id + ':primary'; primary.setAttribute('aria-describedby', heading.id);
       if (primary.dataset.focusKey === key) refocus = primary;
     }
@@ -461,8 +464,8 @@ window.KinReadingFindings = function (app) {
     const st = store.state();
     if (!ended && !live() && st.uid) { sync(); return; }
     const usable = live() && !!st.uid;
-    status.textContent = ended ? '로그인이 종료되었습니다. 다시 로그인한 뒤 확인하세요.' : !live() ? '로그인과 서버 연결을 확인한 뒤 소견을 확인하세요.'
-      : st.message + (oldApi && st.status === 'ready' ? ' · ' + links.OLD_API_TEXT : '');
+    kinWrite(status, ended ? kinSay('로그인이 종료되었습니다. 다시 로그인한 뒤 확인하세요.') : !live() ? kinSay('로그인과 서버 연결을 확인한 뒤 소견을 확인하세요.')
+      : oldApi && st.status === 'ready' ? kinSay('{t0} · {t1}', st.message, kinSay(links.OLD_API_TEXT)) : st.message);
     panel.dataset.studyUid = usable ? st.uid : ''; panel.dataset.state = ended ? 'ended' : st.status;
     reload.disabled = !usable || st.loading;
     hiddenBox.disabled = !usable; hiddenBox.checked = st.includeHidden;

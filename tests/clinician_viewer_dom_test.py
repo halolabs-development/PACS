@@ -35,7 +35,7 @@ ORIGIN = "https://clinician.test"
 
 BASE = "/worklist/hpacs-lite/"
 
-SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "product-info-data.js", "product-info.js", "worklist-language-terms.js", "worklist-language.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "viewer-resources.js", "viewer-preload.js", "viewer-session.js", "viewer-exam-scope.js", "critical-result-inbox.js", "clinical-signature.js")}
+SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "viewer-resources.js", "viewer-preload.js", "viewer-session.js", "viewer-exam-scope.js", "critical-result-inbox.js", "clinical-signature.js")}
 
 CONFIG = lf_text(ROOT / "config" / "ohif.js")
 
@@ -1061,10 +1061,6 @@ class ClinicianViewerDOMTest(unittest.TestCase):
             account = self.me if isinstance(self.me, dict) else {}
             self.inbox_reads.append(request.url)
             route.fulfill(json={'owner': [account.get('institution'), account.get('sub')], 'view': 'received', 'items': [], 'nextCursor': None, 'pending': 0})
-            return
-        # The page reads the account's screen language once it knows the session (no saved appearance here).
-        if method == 'GET' and path == '/api/reading-appearance':
-            route.fulfill(json={'owner': None, 'revision': 0, 'sizes': None})
             return
         self.unexpected.append(f'{method} {request.url}')
         route.abort()

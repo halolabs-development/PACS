@@ -1,7 +1,6 @@
 # coding: utf-8
 """REQ-D02-IDENTITY-POSITION / RISK-D02-WRONG-IDENTITY/OCCLUSION/PREFERENCE-LOSS/STALE / TEST-VIEWER-IDENTITY-POSITION."""
 from pathlib import Path
-import json
 import unittest
 
 from playwright.sync_api import sync_playwright
@@ -90,44 +89,6 @@ class ViewerIdentityPositionDOMTest(unittest.TestCase):
 
     def tearDown(self):
         self.page.close()
-
-    def test_english_screen_shows_the_identity_data_as_written(self):
-        """The viewer document follows English (the browser's kept choice): the label's role words and the window title's
-        name are English, the patient name, date and descriptions stay as written even when they equal a glossary word,
-        sentence or filled template (language_data_probe)."""
-        import language_data_probe as probe
-        hpacs = ROOT / "worklist-v0" / "hpacs-lite"
-        words = probe.pools()[0]
-        planted = {"image-current": {"PatientName": words[0], "StudyDescription": words[1]},
-                   "image-prior": {"PatientName": words[2], "StudyDescription": words[3]}}
-
-        def draw(values):
-            page = self.browser.new_page(viewport={"width": 1280, "height": 900})
-            page.add_init_script("localStorage.setItem('kin-language:v1', JSON.stringify(%s))" % json.dumps(probe.ENGLISH))
-            page.route("https://identity.test/", lambda route: route.fulfill(body=HARNESS, content_type="text/html"))
-            page.goto("https://identity.test/")
-            activate(page)
-            page.evaluate("""values => { for (const [image, fields] of Object.entries(values)) Object.assign(metadata[image], fields);
-              document.documentElement.setAttribute('data-kin-language-source', 'browser');
-              document.documentElement.setAttribute('data-kin-lang-region', 'reading'); }""", values)
-            for name in ("worklist-language-terms.js", "worklist-language.js"):
-                page.add_script_tag(path=str(hpacs / name))
-            page.add_script_tag(path=str(IDENTITY))
-            page.evaluate("""() => { window.identityMount = __mount(); const v = KinViewerIdentity.defaults();
-              for (const role of ["current", "prior"]) v[role].name = v[role].date = v[role].description = true;
-              KinViewerIdentity.publish(JSON.stringify(ownerValue), v); }""")
-            page.wait_for_timeout(300)
-            self.assertEqual("en", page.evaluate("document.documentElement.getAttribute('data-kin-lang-reading')"))
-            return probe.snapshot(page), page
-
-        plain, _ = draw({})
-        seen, page = draw(planted)
-        values = sorted({v for fields in planted.values() for v in fields.values()})
-        found, reached = probe.check(plain, seen, values, probe.translations(page, values, "en"))
-        self.assertEqual([], found)
-        self.assertEqual(values, sorted(reached), "every planted value is on the labels or the title")
-        self.assertIn("Base Study", page.title())
-        self.assertIn("Base Study", page.locator("#vp1 .kin-viewer-identity").inner_text())
 
     def test_v1_migrates_on_same_local_key_and_v3_schema_is_strict(self):
         legacy = v1_viewer()

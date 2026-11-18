@@ -4,7 +4,7 @@ Requirement: a reader who chose a screen language sees the page's own words in i
 report text, names, institutions, roles, free text) exactly as written - even when a value equals a glossary word or a
 sentence the glossary knows.
 
-RISK: a value the page writes without marking it as data (translate="no") is translated when it equals a glossary entry;
+RISK: a renderer passes a data value as the source of a UI phrase when it equals a glossary entry;
 reading the code for those places finds only the ones read.
 
 The probe: a harness's valid synthetic answers go through Planter, which replaces the displayed text values (not ids,
@@ -142,8 +142,14 @@ def snapshot(page, dialogs=()):
     return page.evaluate(SNAPSHOT) + list(dialogs)
 
 
-def translations(page, values, lang):
-    return page.evaluate("([vs, l]) => vs.map(v => window.KinLanguage ? KinLanguage.tr(v, l) : v)", [list(values), lang])
+def translations(values, lang):
+    """Independent oracle for the glossary words, sentences and single-slot templates in pools()."""
+    expected = {}
+    for source, other, *_ in glossary():
+        if bool(HANGUL.search(SLOT.sub("", source))) != (lang == "en"):
+            continue
+        expected[source.replace("{0}", MARK)] = other.replace("{0}", MARK)
+    return [expected[value] for value in values]
 
 
 def check(plain, planted, values, shown, planter=None):
@@ -166,4 +172,4 @@ def compare(draw, lang="en", codes=False):
     planter = Planter(pools()[0 if lang == "en" else 1], codes=codes)
     planted, page = draw(planter)
     values = planter.planted()
-    return check(plain, planted, values, translations(page, values, lang), planter)
+    return check(plain, planted, values, translations(values, lang), planter)

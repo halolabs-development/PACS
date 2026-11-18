@@ -230,9 +230,6 @@ class AuthEntryDOMTest(unittest.TestCase):
             return route.fulfill(json={}) if self.discovery == "ok" else route.fulfill(status=self.discovery, json={})
         if path.startswith("/branding/"):
             return route.fulfill(body="", content_type="image/svg+xml")
-        if request.method == "GET" and path == "/api/reading-appearance":
-            # The clinician home reads the account's screen language once it knows the session (none saved here).
-            return route.fulfill(json={"owner": None, "revision": 0, "sizes": None})
         self.errors.append("Unexpected request: " + request.method + " " + path)
         route.abort()
 

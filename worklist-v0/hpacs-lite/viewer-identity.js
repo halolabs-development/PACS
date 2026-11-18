@@ -123,22 +123,16 @@ window.KinViewerIdentity=(()=>{
           const role=current.uid===studies[0]?'current':'prior',general=value[role],modality=typeof m.Modality==='string'&&modalities.includes(m.Modality.trim().toUpperCase())?m.Modality.trim().toUpperCase():'',p=modality&&general.overrides[modality]||general;
           e.dataset.role=role;e.dataset.study=current.uid;e.dataset.modality=modality;e.dataset.profile=modality&&general.overrides[modality]?'override':'general';
           const shown={name:text(m.PatientName).slice(0,128),date:text(m.StudyDate).slice(0,16),description:text(m.StudyDescription||m.SeriesDescription).slice(0,128)};
-          const titleParts=[m.PatientID];for(const field of fields)if(p[field]&&shown[field])titleParts.push(shown[field]);
-          // The role words and the window name are the page's; the rest is data: one sentence, read in the screen language
-          // when the title is set (its data part is never read as the page's words).
-          const roleWords=role==='current'?'기준 검사':'비교 검사',titleData=titleParts.concat(text(m.Modality).slice(0,16)).filter(Boolean).join(' · ');
-          titles.set(id,String(window.KinLanguage?window.KinLanguage.say('{t0} · {1} — 판독 뷰어',{t:roleWords},titleData):roleWords+' · '+titleData+' — 판독 뷰어'));
-          // Each label part is the page's words ({w}) or data ({d}: its own span, shown as written in any screen language).
-          const groups=new Map([[p.position,[{w:roleWords},{d:m.PatientID}]]]);
-          for(const field of fields)if(p[field]&&shown[field]){const at=p.fieldPositions[field];if(!groups.has(at))groups.set(at,[]);groups.get(at).push({d:shown[field]});}
-          // The separator goes with the data after it (no text of the label is a separator alone - image output draws each text).
-          const fill=(node,parts)=>node.replaceChildren(...parts.map((part,index)=>part.d===undefined?part.w:Object.assign(document.createElement('span'),{textContent:(index?' · ':'')+part.d,translate:false})));
+          const titleParts=[(role==='current'?'기준 검사':'비교 검사')+' · '+m.PatientID];for(const field of fields)if(p[field]&&shown[field])titleParts.push(shown[field]);
+          titles.set(id,titleParts.concat(text(m.Modality).slice(0,16)).filter(Boolean).join(' · ')+' — 판독 뷰어');
+          const groups=new Map([[p.position,[(role==='current'?'기준 검사':'비교 검사')+' · '+m.PatientID]]]);
+          for(const field of fields)if(p[field]&&shown[field]){const at=p.fieldPositions[field];if(!groups.has(at))groups.set(at,[]);groups.get(at).push(shown[field]);}
           // Compare › Exam Marks on Images: the study's exam mark (* current, P1… earlier and N1… later studies) goes before
           // the role, in this label's own place and settings; a related study's mark is in an italic serif face.
           let exam='';try{exam=window.kinViewerExamMark?.(current.uid,current.series)||'';}catch(_){exam='';}
           exam=typeof exam==='string'&&/^(\*|[PN]\d{1,3})$/.test(exam)?exam:'';e.dataset.examMark=exam;
           const marked=()=>{if(!exam)return;const mark=document.createElement('span');mark.className='kin-viewer-exam-mark';mark.textContent=exam+' ';if(exam!=='*'){mark.style.fontStyle='italic';mark.style.fontFamily=fonts.serif;}primary.prepend(mark);};
-          e.replaceChildren();const primary=document.createElement('span');primary.className='kin-viewer-identity-content';fill(primary,groups.get(p.position));primary.style.cssText='display:block;box-sizing:border-box;overflow:hidden;overflow-wrap:anywhere;background:#0b182bcc;padding:3px 6px;border-radius:3px';marked();e.append(primary);
+          e.replaceChildren();const primary=document.createElement('span');primary.className='kin-viewer-identity-content';primary.textContent=groups.get(p.position).join(' · ');primary.style.cssText='display:block;box-sizing:border-box;overflow:hidden;overflow-wrap:anywhere;background:#0b182bcc;padding:3px 6px;border-radius:3px';marked();e.append(primary);
           e.style.cssText='position:absolute;box-sizing:border-box;overflow:visible;pointer-events:none;z-index:2;line-height:1.3';
           const bounds=v.element.getBoundingClientRect(),small=bounds.width<140||bounds.height<100,pane=v.element.closest('[data-cy="viewport-pane"]')||v.element.parentElement;
           function place(group,position,root){
@@ -154,13 +148,13 @@ window.KinViewerIdentity=(()=>{
             group.style.left=(absoluteLeft-rootBox.left)+'px';group.style.top=(absoluteTop-rootBox.top)+'px';
           }
           place(e,p.position,true);
-          for(const position of positions)if(position!==p.position&&groups.has(position)){const group=document.createElement('span');group.className='kin-viewer-identity-group';group.dataset.position=position;fill(group,groups.get(position));e.append(group);place(group,position,false);}
+          for(const position of positions)if(position!==p.position&&groups.has(position)){const group=document.createElement('span');group.className='kin-viewer-identity-group';group.dataset.position=position;group.textContent=groups.get(position).join(' · ');e.append(group);place(group,position,false);}
           const boxes=[primary,...e.querySelectorAll('.kin-viewer-identity-group')].map(node=>node.getBoundingClientRect()),overlap=boxes.some((a,index)=>boxes.slice(index+1).some(b=>a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top));
           // Four independently anchored labels cannot always fit in a narrow
           // viewport. Keep every configured value, with the required patient
           // identity first, in one bounded label when their measured boxes
           // would cover each other. Ordinary layouts keep their chosen corners.
-          if(overlap){fill(primary,[...groups.values()].flat());marked();for(const group of e.querySelectorAll('.kin-viewer-identity-group'))group.remove();place(e,p.position,true);}
+          if(overlap){primary.textContent=[...groups.values()].flat().join(' · ');marked();for(const group of e.querySelectorAll('.kin-viewer-identity-group'))group.remove();place(e,p.position,true);}
         }
         syncTitle();
       }catch(_){clear();}finally{viewing.update(displayed.values());}

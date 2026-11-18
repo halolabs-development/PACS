@@ -26,10 +26,7 @@
   function cell(lines) {
     const td = document.createElement('td');
     for (const [label, text] of lines) {
-      // The recorded value is data (shown as written); "not recorded" is the page's word.
-      const line = document.createElement('div'), part = document.createElement('span');
-      part.textContent = text; if (text !== 'not recorded') part.translate = false;
-      line.append(`${label}: `, part); td.append(line);
+      const line = document.createElement('div'); line.textContent = `${label}: ${text}`; td.append(line);
     }
     return td;
   }

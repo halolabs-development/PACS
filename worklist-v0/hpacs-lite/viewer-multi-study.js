@@ -64,10 +64,7 @@
         : !s ? '목록 창의 상태를 기다리는 중입니다.' : [s.summary, s.status].filter(Boolean).join(' · ');
       members.replaceChildren(...(s && s !== 'ended' ? s.members : []).map(m => {
         const li = document.createElement('li');
-        // The study's label is data (shown as written); its state words are the page's, each its own text.
-        const words = [m.state, m.viewing ? 'Viewing' : ''].filter(Boolean);
-        li.replaceChildren(...(m.label ? [Object.assign(document.createElement('span'), { textContent: m.label, translate: false })] : []),
-          ...words.flatMap((word, index) => [...(m.label || index ? [' · '] : []), word]));
+        li.textContent = [m.label, m.state, m.viewing ? 'Viewing' : ''].filter(Boolean).join(' · ');
         return li;
       }));
       for (const b of buttons) {

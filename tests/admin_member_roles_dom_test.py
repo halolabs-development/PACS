@@ -83,8 +83,6 @@ SCRIPTS = {
     # CD-01: the shared Product Information panel and its embedded facts.
     "/worklist/hpacs-lite/product-info-data.js": lf_text(HPACS / "product-info-data.js"),
     "/worklist/hpacs-lite/product-info.js": lf_text(HPACS / "product-info.js"),
-    "/worklist/hpacs-lite/worklist-language-terms.js": lf_text(HPACS / "worklist-language-terms.js"),
-    "/worklist/hpacs-lite/worklist-language.js": lf_text(HPACS / "worklist-language.js"),
 }
 # CD-01: GET /api/version of a server built without a commit (the development stack).
 VERSION = {"schema": 1, "build": {"revision": None}}
@@ -158,8 +156,7 @@ DIALOG = """() => ({
   unmanaged: [...document.querySelectorAll('#membership-roles label.unmanaged')].map(label => {
     const input = label.querySelector('input');
     return {text: label.textContent, title: label.title, checked: input.checked, disabled: input.disabled,
-            named: input.hasAttribute('name'), elements: label.querySelectorAll('*').length,
-            name: [...label.querySelectorAll('span')].map(s => [s.textContent, s.translate, s.childElementCount])}; }),
+            named: input.hasAttribute('name'), elements: label.querySelectorAll('*').length}; }),
   message: document.querySelector('#membership-message').textContent,
   open: document.querySelector('#membership-dialog').open})"""
 
@@ -620,10 +617,8 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         self.assertEqual(["radiologist"], seen["checked"])
         self.assertEqual([HOSTILE_ROLE, FUTURE_ROLE], [item["text"] for item in seen["unmanaged"]])
         for item in seen["unmanaged"]:
-            # Checked and disabled, no name (never a form value); besides the input only the role's name, as text in one span
-            # that the screen language leaves as written (a role name is data).
-            self.assertEqual((True, True, False, 2), (item["checked"], item["disabled"], item["named"], item["elements"]))
-            self.assertEqual([[item["text"], False, 0]], item["name"])
+            # Checked and disabled, no name (never a form value), one child element (the input only).
+            self.assertEqual((True, True, False, 1), (item["checked"], item["disabled"], item["named"], item["elements"]))
             self.assertTrue(has_hangul(item["title"]), item["title"])
         self.assertIsNone(self.page.evaluate("() => document.body.dataset.pwned ?? null"))
         # The page lists the unmanaged roles after the checked ones, the server sorted them: still no change.

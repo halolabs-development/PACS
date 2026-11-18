@@ -178,8 +178,6 @@ class PageSessionDOMTest(unittest.TestCase):
             route.fulfill(json={'owner':OWNER,'items':[]})
         elif path == '/api/critical-results':
             route.fulfill(json={'owner':OWNER,'view':'received','items':[],'nextCursor':None,'pending':0})
-        elif path == '/api/reading-appearance':  # the clinician page reads the account's screen language (none saved)
-            route.fulfill(json={'owner':None,'revision':0,'sizes':None})
         elif path == '/favicon.ico' or path.startswith('/kin-brand/'):
             route.fulfill(status=404)
         else:

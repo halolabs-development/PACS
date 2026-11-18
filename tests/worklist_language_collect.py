@@ -34,14 +34,6 @@ class Piece:
     file: str
     line: int
     kind: str  # html | js-ko | js-en | css | server
-    # The screen the words are on: main (worklist and reading, both directions), or one of OTHER_SCREENS (English only:
-    # a reader who chose Korean keeps those screens as they are, so only their Korean words need an English entry).
-    screen: str = "main"
-
-
-# The other pages, each loading the language module, and the viewer document (its modules come from config/ohif).
-OTHER_PAGES = ("clinician.html", "admin.html", "audit.html", "index.html")
-OTHER_SCREENS = OTHER_PAGES + ("viewer",)
 
 
 def normalize(text: str) -> str:
@@ -115,21 +107,6 @@ def page_scripts(page_name="main.html"):
         if (PAGE_DIR / name).exists():
             seen.add(name); files.append(name)
     return files
-
-
-OHIF = ROOT / "config" / "ohif"
-
-
-def viewer_sources():
-    """The viewer document's own scripts: the config/ohif sources (config/ohif.js is built from them) and every page
-    module they load into the viewer (named as a .js literal there and listed in config/ohif/source-map.json)."""
-    sources = sorted(OHIF.glob("*.js"))
-    named = set(re.findall(r"/worklist/hpacs-lite/([\w.-]+\.js)", (OHIF / "source-map.json").read_text(encoding="utf-8")))
-    for source in sources:
-        # 'name.js' or '/worklist/hpacs-lite/name.js' (a loader's own list or a path it builds).
-        named |= set(re.findall(r"""['"`/]([\w.-]+\.js)['"`]""", source.read_text(encoding="utf-8")))
-    modules = sorted(PAGE_DIR / n for n in named if n not in OWN and (PAGE_DIR / n).exists())
-    return sources + modules
 
 
 def inline_scripts(page_name, tmp):
@@ -237,38 +214,8 @@ def collect_server() -> list[Piece]:
     return found
 
 
-def collect_main() -> list[Piece]:
-    return collect_html() + collect_js() + collect_css() + collect_server()
-
-
-def collect_other() -> list[Piece]:
-    """The Korean words of the other pages and of the viewer document (OTHER_SCREENS)."""
-    import tempfile
-    found = []
-    with tempfile.TemporaryDirectory() as tmp:
-        for page in OTHER_PAGES:
-            pieces = collect_html(page) + collect_css(page) + collect_js(page_scripts(page) + [inline_scripts(page, tmp)])
-            found += [Piece(p.text, p.file, p.line, p.kind, page) for p in pieces]
-        found += [Piece(p.text, p.file, p.line, p.kind, "viewer") for p in collect_js(viewer_sources()) + collect_css_files(VIEWER_CSS)]
-    return [p for p in found if HANGUL.search(SLOT.sub("", p.text))]
-
-
-VIEWER_CSS = ("viewer-ux-theme.css",)
-
-
-def collect_css_files(names) -> list[Piece]:
-    found = []
-    for name in names:
-        text = (PAGE_DIR / name).read_text(encoding="utf-8")
-        for m in CSS_CONTENT.finditer(text):
-            t = normalize(m.group(2))
-            if meaningful(t):
-                found.append(Piece(t, name, text.count("\n", 0, m.start()) + 1, "css"))
-    return found
-
-
 def collect() -> list[Piece]:
-    return collect_main() + collect_other()
+    return collect_html() + collect_js() + collect_css() + collect_server()
 
 
 if __name__ == "__main__":

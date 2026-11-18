@@ -1658,7 +1658,7 @@ jobs:
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/worklist-language-service --cwd . --tree api/src --file api/prisma/schema.prisma --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/worklist_language_service_test.cjs -- node --test tests/worklist_language_service_test.cjs
     - name: Screen language glossary (two languages per entry, same slots) and every word of the worklist and reading screens in it
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
-      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/worklist-language-glossary --cwd . --tree worklist-v0/hpacs-lite --tree config/ohif --tree api/src --file scripts/main-split-order.json --file tests/worklist_language_collect.py --file tests/worklist_language_collect.cjs --file api/package-lock.json --file tests/worklist_language_source_test.py -- python3 -B tests/worklist_language_source_test.py
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/worklist-language-glossary --cwd . --tree worklist-v0/hpacs-lite --tree api/src --file scripts/main-split-order.json --file tests/worklist_language_collect.py --file tests/worklist_language_collect.cjs --file api/package-lock.json --file tests/worklist_language_source_test.py -- python3 -B tests/worklist_language_source_test.py
     - name: Theme palette (no file adds a colour outside the five-colour theme variables)
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/theme-palette-source --cwd . --tree worklist-v0/hpacs-lite --tree config/ohif --file tests/worklist_language_collect.py --file tests/worklist_language_collect.cjs --file api/package-lock.json --file tests/theme_palette_baseline.json --file tests/theme_palette_source_test.py -- python3 -B tests/theme_palette_source_test.py
@@ -1779,12 +1779,9 @@ jobs:
     - name: A1 FA-153 default colour scheme on the worklist, report editor and their dialogs
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/work-palette-page --cwd . --tree worklist-v0/hpacs-lite --tree tests --file scripts/main-split-order.json --file scripts/build-main-split-bundle.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/work_palette_dom_test.py
-    - name: Screen language on the clinician, administration, audit and sign-in pages (English leaves no Korean word; no choice or Korean keeps each page)
+    - name: Only the work page loads the screen language translator
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
-      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/pages-language-dom --cwd . --tree worklist-v0/hpacs-lite --tree tests -- $RUNNER_TEMP/measurement-python/bin/python -B tests/screen_language_pages_dom_test.py
-    - name: Viewer saved marks list on an English screen (a mark's own words stay as written)
-      if: ${{ !cancelled() && !github.event.pull_request.draft }}
-      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/viewer-history-language --cwd . --file config/ohif/history.js --file worklist-v0/hpacs-lite/worklist-language.js --file worklist-v0/hpacs-lite/worklist-language-terms.js --file tests/language_data_probe.py --file tests/viewer_history_language_dom_test.py --file api/package-lock.json -- $RUNNER_TEMP/measurement-python/bin/python -B tests/viewer_history_language_dom_test.py
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/pages-language-dom --cwd . --tree worklist-v0/hpacs-lite --file config/ohif.js --tree tests -- $RUNNER_TEMP/measurement-python/bin/python -B tests/screen_language_pages_dom_test.py
     - name: Viewer exam scope admission and series boundaries
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/viewer-exam-scope --cwd . --file tests/viewer_exam_scope_test.cjs --file tests/gateway_exam_receipt_test.cjs --file worklist-v0/hpacs-lite/page-core.js --file worklist-v0/hpacs-lite/study-info-panel.js --file worklist-v0/hpacs-lite/study-arrivals.js --file worklist-v0/hpacs-lite/clinician.js --file worklist-v0/hpacs-lite/exam-scope.js --file worklist-v0/hpacs-lite/viewer-exam-scope.js -- node --test tests/viewer_exam_scope_test.cjs tests/gateway_exam_receipt_test.cjs
