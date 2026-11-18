@@ -36,7 +36,11 @@ window.KinViewerPriorController = (() => {
     function listed(data, value) {
       if (!Array.isArray(data?.studies)) throw new Error('검사 목록 응답을 확인할 수 없습니다.');
       const patient = viewer.snapshot();
-      const studies = data.studies.map(study => ({ ...study, date: date(study.date) }));
+      // Each study's patient and exam as the worklist shows them (kinViewerStudyDisplay: a Match or Modify shows here too).
+      const display = window.kinViewerStudyDisplay;
+      const studies = data.studies.map(study => { const s = display?.shown(study);
+        return { ...study, ...(s ? { id: s.id, name: s.name, sex: s.sex, birth: s.birth, desc: s.desc, acc: s.acc, modality: s.modality } : {}),
+          date: date(s ? s.date : study.date) }; });
       const reference = studies.find(study => study.uid === (patient.examScope?.reportUid || patient.studyUIDs[0]) && study.sourcePatientKey === value.patientKey);
       // The cell's own exam: its study listed by UID, a part of the tab's current exam, or a listed merged or split exam
       // that holds the cell's original (and series) — e.g. the second original of a merged prior.

@@ -129,10 +129,12 @@ window.KinViewerIdentity=(()=>{
           if(!role){labels.get(id)?.remove();labels.delete(id);titles.delete(id);continue;}
           const general=value[role],modality=typeof m.Modality==='string'&&modalities.includes(m.Modality.trim().toUpperCase())?m.Modality.trim().toUpperCase():'',p=modality&&general.overrides[modality]||general;
           e.dataset.role=role;e.dataset.study=current.uid;e.dataset.modality=modality;e.dataset.profile=modality&&general.overrides[modality]?'override':'general';
-          // The patient and examination are the worklist's answer for this study (kinViewerStudyDisplay: a Match or Modify
-          // shows here as in the list); until it is known, the image's own values. The checks above stay on the image.
-          const d=window.kinViewerStudyDisplay?.of(current.uid),patientId=(d&&d.id)||m.PatientID;
-          const shown={name:(d?d.name:text(m.PatientName)).slice(0,128),date:(d?d.date:text(m.StudyDate)).slice(0,16),description:((d?d.desc:text(m.StudyDescription))||text(m.SeriesDescription)).slice(0,128)};
+          // The patient and examination are the worklist's answer for this image's study (kinViewerStudyDisplay: a Match or
+          // Modify shows here as in the list); while it is not certain for this image, the image's own values. The checks
+          // above stay on the image. A value the answer replaced is never filled from the image (an emptied ID is Unknown).
+          const d=window.kinViewerStudyDisplay?.of(current.uid,current.series,m.PatientID),patientId=d?d.id||'Unknown':m.PatientID;
+          const description=d?(d.over.includes('desc')?d.desc:d.desc||text(m.SeriesDescription)):text(m.StudyDescription||m.SeriesDescription);
+          const shown={name:(d?d.name:text(m.PatientName)).slice(0,128),date:(d?d.date:text(m.StudyDate)).slice(0,16),description:description.slice(0,128)};
           const titleParts=[(role==='current'?'기준 검사':'비교 검사')+' · '+patientId];for(const field of fields)if(p[field]&&shown[field])titleParts.push(shown[field]);
           titles.set(id,titleParts.concat(text(m.Modality).slice(0,16)).filter(Boolean).join(' · ')+' — 판독 뷰어');
           const groups=new Map([[p.position,[(role==='current'?'기준 검사':'비교 검사')+' · '+patientId]]]);

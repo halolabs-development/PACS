@@ -21,10 +21,10 @@ ORIGIN = "https://study-display.test"
 
 ROWS = {
     "study-current": {"uid": "study-current", "id": "PID-1", "name": "CURRENT PATIENT", "birth": "19700101", "date": "20260911",
-                      "sex": "M", "desc": "Current CT", "state": {"ov": {"id": "ORD-1", "name": "ORDER PATIENT", "desc": "Order CT",
+                      "sex": "M", "desc": "Current CT", "sourcePatientKey": "inst|PID-1", "state": {"ov": {"id": "ORD-1", "name": "ORDER PATIENT", "desc": "Order CT",
                                                                          "birth": "1970-02-02", "age": 56}}},
     "study-prior": {"uid": "study-prior", "id": "PID-2", "name": "PRIOR PATIENT", "birth": "19700101", "date": "20250911",
-                    "sex": "M", "desc": "Prior CT", "state": {"ov": None}},
+                    "sex": "M", "desc": "Prior CT", "sourcePatientKey": "inst|PID-2", "state": {"ov": None}},
 }
 
 
@@ -102,6 +102,18 @@ class ViewerStudyDisplayDOMTest(unittest.TestCase):
         self.page.evaluate("kinViewerStudyDisplay.refresh(['study-current'])")
         self.page.wait_for_function("() => document.querySelector('#vp1>.kin-viewer-identity')?.textContent.includes('PID-1')")
         self.assertEqual(self.labels()[0], {"role": "current", "text": "기준 검사 · PID-1 · CURRENT PATIENT · 20260911"})
+
+    def test_an_emptied_id_is_unknown_and_another_patients_row_is_not_shown(self):
+        self.answer["study-current"] = {**ROWS["study-current"], "state": {"ov": {"id": "", "name": "ORDER PATIENT", "desc": ""}}}
+        self.answer["study-prior"] = {**ROWS["study-prior"], "sourcePatientKey": "inst|SOMEONE-ELSE",
+                                      "state": {"ov": {"id": "ORD-9", "name": "OTHER PATIENT"}}}
+        self.page.evaluate("window.identityMount=__mount()")
+        self.page.wait_for_function("() => document.querySelector('#vp1>.kin-viewer-identity')?.textContent.includes('ORDER PATIENT')")
+        labels = self.labels()
+        self.assertEqual(labels[0], {"role": "current", "text": "기준 검사 · Unknown · ORDER PATIENT · 20260911"},
+                         "an ID the overlay emptied is not filled from the image")
+        self.assertEqual(labels[1], {"role": "prior", "text": "비교 검사 · PID-2 · PRIOR^PATIENT · 20250911"},
+                         "a row of another original patient never labels this image")
 
     def test_the_label_still_belongs_to_the_drawn_image(self):
         # An image whose own Patient ID is not the opened study's is not labelled, whatever the list's answer says.

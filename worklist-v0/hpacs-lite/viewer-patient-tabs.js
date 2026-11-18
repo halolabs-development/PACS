@@ -451,25 +451,28 @@ window.KinViewerPatientTabs = (() => {
     const endpoint = session.readOnly() ? '/api/clinician/studies' : '/api/studies';
     // These rows are also the viewer's shown values of these studies (kinViewerStudyDisplay), so the cell headings and
     // labels of a tab opened now start from the same answer as the tab.
-    const display = window.kinViewerStudyDisplay, ticket = display?.begin(wanted);
+    const display = window.kinViewerStudyDisplay, ticket = display?.begin(wanted), served = [];
     // Match only the open studies through the existing scoped endpoint. The
     // source UID lookup accepts at most 100 UIDs per request.
-    for (let offset = 0; offset < wanted.length; offset += 100) {
-      const query = new URLSearchParams({ uids: wanted.slice(offset, offset + 100).join(',') });
-      const response = await fetch(endpoint + '?' + query, { credentials: 'same-origin', signal });
-      if (!response.ok) throw new Error('환자 정보를 불러오지 못했습니다. 영상은 계속 볼 수 있습니다. 다시 시도하세요.');
-      const result = await response.json();
-      display?.learn(result.studies, ticket);
-      for (const row of result.studies || []) {
-        if (wanted.includes(row.uid)) found.set(row.uid, row);
-        if (exam) for (const source of row.sourceMetadata || []) if (wanted.includes(source.uid))
-          found.set(source.uid,{...row,...source,sourcePatientKey:row.sourcePatientKey});
+    try {
+      for (let offset = 0; offset < wanted.length; offset += 100) {
+        const query = new URLSearchParams({ uids: wanted.slice(offset, offset + 100).join(',') });
+        const response = await fetch(endpoint + '?' + query, { credentials: 'same-origin', signal });
+        if (!response.ok) throw new Error('환자 정보를 불러오지 못했습니다. 영상은 계속 볼 수 있습니다. 다시 시도하세요.');
+        const result = await response.json();
+        served.push(...(result.studies || []));
+        for (const row of result.studies || []) {
+          if (wanted.includes(row.uid)) found.set(row.uid, row);
+          if (exam) for (const source of row.sourceMetadata || []) if (wanted.includes(source.uid))
+            found.set(source.uid,{...row,...source,sourcePatientKey:row.sourcePatientKey});
+        }
       }
-    }
+    } catch (error) { display?.settle(ticket, null); throw error; }
+    display?.settle(ticket, served);
     const rows = wanted.map(uid => found.get(uid));
     if (!rows.length || rows.some(row => !row?.sourcePatientKey) || rows.some(row => row.sourcePatientKey !== rows[0].sourcePatientKey))
       throw new Error('같은 환자의 검사인지 확인할 수 없어 현재 화면을 유지합니다.');
-    const row = rows[0], shown = display?.peek(wanted[0]);
+    const row = rows[0], shown = display?.row(exam?.reportUid || wanted[0]);
     let patient;
     if (shown) patient = patientOf(shown);
     else {
@@ -480,13 +483,13 @@ window.KinViewerPatientTabs = (() => {
     return { key: row.sourcePatientKey+(exam ? '|'+JSON.stringify([exam.key,exam.prior&&window.KinExamScope.key(exam.prior)]) : ''),
       href: new URL(href, location.origin).href, studies: wanted, ...(exam?{exam,patientKey:row.sourcePatientKey}:{}), patient };
   }
-  // A tab names its patient by its first study's shown values (the worklist's answer: a Match shows here as in the list).
-  // The tab's identity (key) stays the server's patient key from the image's own Patient ID.
+  // A tab names its patient by its exam row's shown values (the worklist's answer: a Match shows here as in the list); it
+  // follows a later read of that row. The tab's identity (key) stays the server's patient key from the image's own Patient ID.
   const patientOf = shown => ({ name: shown.name || 'Unknown', id: shown.id || 'Unknown', age: shown.age || 'Unknown', sex: shown.sex || 'Unknown' });
   function renamed() {
     let changed = false;
     for (const tab of tabs) {
-      const shown = window.kinViewerStudyDisplay?.peek(tab.studies[0]);
+      const shown = window.kinViewerStudyDisplay?.row(tab.exam?.reportUid || tab.studies[0], true);
       if (!shown) continue;
       const next = patientOf(shown);
       if (JSON.stringify(next) !== JSON.stringify(tab.patient)) { tab.patient = next; changed = true; }
@@ -515,9 +518,10 @@ window.KinViewerPatientTabs = (() => {
     if (signal?.aborted) return false;
     const url = new URL(href, location.origin);
     if (url.origin !== location.origin || url.pathname !== '/ohif/viewer') return false;
+    // Every open (from the list, another window, a tab) reads again what this viewer shows: a Match or Unmatch since shows,
+    // also in cells added after the opening. The studies of this open are read again by its own lookup below.
+    window.kinViewerStudyDisplay?.refreshAll();
     if (current && openingKey(href) === openingKey(current.href)) {
-      // Opened again from the list: its shown patient is read again (a Match or Unmatch since shows; the screen stays).
-      window.kinViewerStudyDisplay?.refresh(current.studies);
       if (current.exam) try { await window.KinViewerExamScope.resolve(href,{signal}); } catch (error) { status.textContent=error.message;return false; }
       if (!holds()) return false;
       if (pending) { sequence++; controller?.abort(); pending = false; render(); publish(); }

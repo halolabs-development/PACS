@@ -709,7 +709,10 @@ window.KinReadingWorkspace = function (app) {
     if (!r || r.reportUid !== app.current() || !app.allowed()) return false;
     pending = r; active = true; layout(); identify();
     if (frame && !failed && JSON.stringify(shown) === JSON.stringify(r)) {
-      frame.hidden = false; recovery.hidden = true; pending = null; identify(); return true;
+      frame.hidden = false; recovery.hidden = true; pending = null; identify();
+      // Shown again: the viewer reads again what it shows, so a Match or Unmatch since the frame opened shows.
+      try { frame.contentWindow.kinViewerStudyDisplay?.refreshAll(); } catch (_) {}
+      return true;
     }
     const state = viewerState();
     if (state.busy || state.dirty && !abandon) {

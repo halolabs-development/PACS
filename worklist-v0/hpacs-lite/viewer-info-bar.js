@@ -98,11 +98,12 @@ window.KinViewerInfoBar = (() => {
         // Without a rendered identity: a cell given no images, or whose viewer has no data, has no image; a cell whose
         // current image failed to load says so; otherwise its images are loading.
         const given = current.cell?.displaySetInstanceUIDs?.length && current.viewport;
-        // The patient and examination are the worklist's answer for this study (kinViewerStudyDisplay: a Match or Modify
-        // shows here as in the list); until that answer is known, the image's own values. Age is counted from the birth
-        // date and study date; without both, the image's Patient's Age.
-        const display = window.kinViewerStudyDisplay, d = m ? display?.of(m.StudyInstanceUID) : null;
-        const age = (d ? d.age : display?.years(text(m?.PatientBirthDate), text(m?.StudyDate))) || text(m?.PatientAge);
+        // The patient and examination are the worklist's answer for this image's study (kinViewerStudyDisplay: a Match or
+        // Modify shows here as in the list); while that answer is not certain for this image, the image's own values. Age is
+        // counted from the birth date and study date; without both, the image's Patient's Age unless the answer replaced them.
+        const display = window.kinViewerStudyDisplay, d = m ? display?.of(m.StudyInstanceUID, m.SeriesInstanceUID, text(m.PatientID)) : null;
+        const age = (d ? d.age : display?.years(text(m?.PatientBirthDate), text(m?.StudyDate)))
+          || (d && (d.over.includes('birth') || d.over.includes('date')) ? '' : text(m?.PatientAge));
         let label = m ? [(d ? d.name : text(m.PatientName)) || 'Unknown', (d ? d.sex : text(m.PatientSex)) || 'Unknown',
           age || 'Unknown', (d ? d.id : text(m.PatientID)) || 'Unknown',
           [d ? d.date : text(m.StudyDate), text(m.StudyTime)].filter(Boolean).join(' ') || 'Unknown',
