@@ -335,17 +335,18 @@ test('actual HTTP report approval/reset and ledger failure preserve exact versio
       [true, liveDraft.revision, '합성 새 초안', keptHead.state.version, liveDraft.workUnit]);
     assert.equal((await witness.reportVersion.findFirst({ where: { uid: kept.uid, action: 'discarded' } })).findings, text.findings);
 
-    // The holder and the saver are different readers: the answer keeps them apart.
+    // Another reader cannot take a hold over a saved report (the report state table: a Save is its writer's until it is taken
+    // back), so a holder and a saver who are different readers no longer meet; the Reset names the saver alone.
     const split = await study('1.2.840.9999.44');
     await save(split.uid, third);
-    assert.equal((await hold(split.uid, second)).mine, true);
+    assert.equal((await hold(split.uid, second)).code, 'REPORT_IN_PROGRESS');
     const splitReset = await resetByFirst(split.uid);
     assert.equal(splitReset.status, 201, JSON.stringify(splitReset.body));
-    assert.deepEqual(splitReset.body.released, { holder: second.author, holderDraft: false, savedBy: third.author, savedKept: true });
+    assert.deepEqual(splitReset.body.released, { holder: null, holderDraft: false, savedBy: third.author, savedKept: true });
     assert.equal((await draftOf(split.uid, third.author)).present, true);
-    assert.equal(await draftOf(split.uid, second.author), null, 'the holder had no draft and gets none');
+    assert.equal(await draftOf(split.uid, second.author), null, 'the refused reader had no draft and gets none');
     assert.equal((await witness.reportVersion.findFirst({ where: { uid: split.uid, action: 'reset' } })).reason,
-      `진행 중 판독 되돌림 (점유: ${second.author}, 저장 글: ${third.author})`);
+      `진행 중 판독 되돌림 (점유: 없음, 저장 글: ${third.author})`);
 
     // Approved (A): this path does not exist - another reader's hold refuses the reset as before, reason or not.
     const approvedStudy = await study('1.2.840.9999.45');
@@ -508,12 +509,15 @@ test('actual HTTP report approval/reset and ledger failure preserve exact versio
       batch.push({ uid, shown: body, version: saved.body.state.version });
     }
     const [batchA, batchB, batchC, batchD] = batch;
-    await write(batchB.uid, third, fixed('그 사이 고친 소견'));
-    assert.equal((await commitAs(batchB.uid, third, 'save', fixed('그 사이 고친 소견'))).status, 201);
+    // The writer's own other window saves B again meanwhile (another reader cannot write over a Save - the report state table).
+    await write(batchB.uid, second, fixed('그 사이 고친 소견'), batchB.version);
+    assert.equal((await commitAs(batchB.uid, second, 'save', fixed('그 사이 고친 소견'))).status, 201);
+    // Batch Approve is the writer's: a saved report is approved by the reader who saved it (another reader's is skipped).
     const approveShown = async row => {
       const state = await stateOf(row.uid);
-      return send(row.uid, '/report/commit', { expectedOwner: { institution, sub, author }, expectedRevision: state.draftEpoch + ':0',
-        baseVersion: row.version, ...row.shown, action: 'approve', reason: 'Batch Approve' });
+      const draft = await draftOf(row.uid, second.author);
+      return send(row.uid, '/report/commit', { expectedOwner: ownerOf(second), expectedRevision: state.draftEpoch + ':' + (draft?.revision ?? 0),
+        baseVersion: row.version, ...row.shown, action: 'approve', reason: 'Batch Approve' }, tokenOf(second));
     };
     // Saves are not signed: before the batch none of these studies has a signature.
     const batchSignatures = uid => witness.$queryRaw`SELECT version_id FROM emr_signing.signed_version WHERE record_id=${uid}`;
@@ -530,7 +534,7 @@ test('actual HTTP report approval/reset and ledger failure preserve exact versio
       assert.equal((await stateOf(row.uid)).rs, 'A');
       const head = await witness.reportVersion.findFirst({ where: { uid: row.uid }, orderBy: { version: 'desc' } });
       assert.deepEqual([head.action, head.reason, head.author, head.version, head.findings],
-        ['approve', 'Batch Approve', author, row.version + 1, row.shown.findings]);
+        ['approve', 'Batch Approve', second.author, row.version + 1, row.shown.findings]);
       assert.deepEqual((await batchSignatures(row.uid)).map(s => s.version_id), [String(head.version)], 'one signature per approved study');
       assert.deepEqual([answer.body.signature.recordId, answer.body.signature.versionId], [row.uid, String(head.version)]);
       const body = JSON.parse(verify(answer.body.signature.envelope, answer.body.signature.keyAtSigning).payload.text.body);
