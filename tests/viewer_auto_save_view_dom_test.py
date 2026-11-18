@@ -211,6 +211,32 @@ def view(cells, rows=1, cols=None, active=0):
     return {'version': 1, 'studies': [STUDY], 'rows': rows, 'cols': cols or len(cells) // rows, 'active': active, 'cells': cells}
 
 
+# Cells a restore lays out anew draw their image a moment after they take it, as the viewer's stacks do: the first image
+# drawn in a cell puts the image's own window on it and a camera fitted to it, keeping the zoom and pan measured from the
+# empty cell's camera (scale 1), so a camera put on before that comes back a hundred times smaller. Moving to an image
+# draws it before the move is over. The viewer's first cells have drawn theirs. (`drawn`: the image drawn, or null.)
+LATE_DRAWING = """() => {
+  const build = window.synBuild;
+  window.synBuild = (rows, cols, cells, active) => {
+    build(rows, cols, cells, active);
+    for (const v of synViewports.values()) {
+      v.getCornerstoneImage = () => v.drawn ? { imageId: v.drawn } : undefined;
+      if (!v.id.startsWith('kin-auto-view-')) { v.drawn = v.getCurrentImageId(); continue; }
+      v.drawn = null;
+      const arrive = () => {
+        if (v.drawn === v.getCurrentImageId()) return;
+        if (!v.drawn) { v.camera.parallelScale = 100 * v.camera.parallelScale; v.camera.focalPoint = v.camera.focalPoint.map(n => n * 100);
+          v.properties.voiRange = { lower: -160, upper: 239 }; }
+        v.drawn = v.getCurrentImageId();
+        v.element.dispatchEvent(new CustomEvent('syn-new', { detail: { viewportId: v.id, element: v.element } }));
+      };
+      const move = v.setImageIdIndex;
+      v.setImageIdIndex = async index => { await move(index); arrive(); };
+      setTimeout(arrive, 700);
+    }
+  };
+}"""
+
 SORT_DOWN = {'magnification': 'fit', 'windowing': None, 'filter': 'none', 'sort': 'position-desc', 'rotate': 0, 'flip': 'none',
              'firstImage': 'first', 'gspsAuto': False, 'overlay': 'none'}
 
@@ -575,6 +601,25 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         self.assertEqual(['syn:mr/frames/4', 'syn:mr/frames/5', 'syn:mr/frames/6'], left['ids'], 'the second time point is shown')
         self.assertEqual(('syn:mr/frames/5', 1), (left['image'], left['index']))
         expect(page.locator('[data-auto-view-badge]')).to_have_text('Restored saved view: Zoom 250%, W 1500 / L -310, Image 2')
+
+    def test_05c_series_put_in_another_order_come_back_with_their_zoom_once_each_image_is_drawn(self):
+        # The saved view has the second series in the first cell, on its first image: the viewer opens with the series the
+        # other way round, so the saved layout is laid out anew and that cell is a new one still drawing its first image.
+        page = self.open(saved=view([cell(SB, 1, scale=26.5, lower=31, upper=192), cell(SA, 4)]), setup=LATE_DRAWING)
+        page.wait_for_function("document.querySelector('[data-auto-view-badge]')", timeout=12000)
+        page.wait_for_timeout(1200)
+        ids = page.evaluate('[...synViewports.keys()]')
+        self.assertEqual([[1, 2]], page.evaluate('synLayouts'))
+        left, right = self.state(page, ids[0]), self.state(page, ids[1])
+        self.assertEqual(('syn:set-B:1', 26.5, {'lower': 31, 'upper': 192}), (left['image'], left['scale'], left['voi']),
+                         'the first cell keeps the saved zoom and window once its image has come')
+        self.assertEqual([12.5, -3.25, 5], left['focal'])
+        self.assertEqual(('syn:set-A:4', 40, {'lower': -1060, 'upper': 439}), (right['image'], right['scale'], right['voi']))
+        self.assertEqual(['syn:set-B:1', 'syn:set-A:4'], page.evaluate('[...synViewports.values()].map(v => v.drawn)'))
+        expect(page.locator('[data-auto-view-badge]')).to_have_text('Restored saved view: Zoom 377%, W 162 / L 112, Image 1 (2 of 2 cells)')
+        page.wait_for_timeout(2500)
+        self.assertEqual([], self.posts(page), 'putting the view back saved nothing')
+
     def test_06_a_job_chosen_to_open_wins(self):
         page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), query='&kinJob=00000000-0000-4000-8000-000000000001')
         self.started(page); page.wait_for_timeout(1000)

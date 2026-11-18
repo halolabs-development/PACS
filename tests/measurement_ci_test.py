@@ -1902,7 +1902,8 @@ class MeasurementCiTests(unittest.TestCase):
         self.assertEqual([node.name for node in cls.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')],
                          ['test_auto_view_01_reopened_with_the_saved_window_zoom_and_image_and_a_badge',
                           'test_auto_view_02_closed_at_once_still_saved_and_off_opens_the_stock_view',
-                          'test_auto_view_03_a_job_chosen_to_open_wins'])
+                          'test_auto_view_03_a_job_chosen_to_open_wins',
+                          'test_auto_view_04_series_put_in_another_order_come_back_with_their_zoom_and_window'])
         self.assertNotIn('auto-save-view', self.catalog.text(automatic_only=True))
         dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
         self.assertIn('- auto-save-view', dispatch)
