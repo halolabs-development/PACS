@@ -64,7 +64,7 @@ class RecordKindSelection(AuditPage):
     def fill_copy(self, request_id):
         section = self.page.get_by_role('region', name='Record Copy Requests', exact=True)
         section.get_by_label('Request ID', exact=True).fill(request_id)
-        fields = {'Copy Patient ID': 'SYN-PATIENT', 'Copy Assigning Authority': 'SYN-SITE', 'Patient Link ID': 'SYN-LINK',
+        fields = {'Copy Patient ID': 'SYN-PATIENT',
             'Requester Name': '합성 요청자', 'Request Purpose': 'patient-copy', 'Received At (UTC)': disclosure.date_input(-1),
             'Due At (UTC)': disclosure.date_input(2), 'Verifier ID': 'synthetic-auditor', 'Verifier Issuer': 'synthetic',
             'Verifier Subject': 'auditor', 'Checked At (UTC)': disclosure.date_input(), 'Evidence Document ID': 'SYN-EVIDENCE',
@@ -278,8 +278,7 @@ class RecordKindSelection(AuditPage):
         self.open()
         section = self.page.get_by_role('region', name='Rights Requests', exact=True)
         section.get_by_label('Rights Request ID', exact=True).fill('SYN-R-UNSELECTED')
-        for label, text in {'Rights Patient ID': 'SYN-PATIENT', 'Rights Assigning Authority': 'SYN-SITE',
-                'Rights Patient Link ID': 'SYN-LINK', 'Rights Record IDs': UID,
+        for label, text in {'Rights Patient ID': 'SYN-PATIENT', 'Rights Record IDs': UID,
                 'Rights Received At (UTC)': '2026-10-01T00:00', 'Statement': '합성 정정 요구'}.items():
             section.get_by_label(label, exact=True).fill(text)
         section.get_by_role('button', name='Receive Request', exact=True).click()

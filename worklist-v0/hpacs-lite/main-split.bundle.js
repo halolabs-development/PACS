@@ -194,7 +194,7 @@
       clearTimeout(toastTimer);
       toastTimer = setTimeout(() => { el.className = kind; }, ms);
     }
-    function apiFail(e) { toast("서버 저장 실패: " + e.message, "err"); }
+    function apiFail(e) { toast(kinSay("서버 저장 실패: {e0}", e.message), "err"); }
     // B2-COMMIT B6: an answer shown although its 열람 record failed gets one line; nothing is withheld or retried.
     window.addEventListener(KinSessionTransport.ACCESS_RECORD_EVENT, event => {
       if (event.detail && event.detail.notice) toast(event.detail.notice, "info", 6000);
@@ -1074,7 +1074,7 @@
       const cur = String(fval[c.k] ?? ""), presets = datePresets(), hit = presets.find(p => p.value === cur);
       const sel = cur === "" ? "" : hit ? hit.id : "custom", [from = "", to = ""] = cur.includes("..") ? cur.split("..") : [cur, cur];
       const opt = (v, l) => `<option value="${v}"${sel === v ? " selected" : ""}>${l}</option>`;
-      return `<select data-date-preset aria-label="${esc(c.t)} Filter" title="기간을 고릅니다. Custom은 시작일과 종료일을 직접 정합니다.">` +
+      return `<select data-date-preset aria-label="${esc(c.t)} Filter">` +
         opt("", "All dates") + presets.map(p => opt(p.id, p.label)).join("") + opt("custom", "Custom…") + `</select>` +
         `<span class="date-custom" hidden><label>From <input type="date" data-date-from aria-label="${esc(c.t)} From" value="${esc(from)}"></label><label>To <input type="date" data-date-to aria-label="${esc(c.t)} To" value="${esc(to)}"></label></span>`;
     }
@@ -1118,12 +1118,28 @@
     };
     function renderHeads() {
       // The first header also holds the "+" button; its own label keeps the column named by its title, not "Choose columns <title>".
-      $("#heads").innerHTML = shownColumns().map((c, i) => `<th data-key="${c.k}" class="${c.num ? "num" : ""}"${i === 0 ? ` aria-label="${esc(c.t)}"` : ""}${HEAD_HELP[c.k] ? ` title="${esc(HEAD_HELP[c.k])}"` : ""}>${i === 0 ? '<button type="button" class="col-add" aria-haspopup="dialog" aria-label="Choose columns" title="표시할 열을 고릅니다.">+</button>' : ""}${c.t}</th>`).join("");
+      $("#heads").replaceChildren(...shownColumns().map((column, index) => {
+        const head = document.createElement("th");
+        head.dataset.key = column.k;
+        if (column.num) head.className = "num";
+        if (HEAD_HELP[column.k]) kinWrite(head, kinSay(HEAD_HELP[column.k]), "title");
+        if (index === 0) {
+          kinWrite(head, kinSay(column.t), "aria-label");
+          const add = document.createElement("button");
+          add.type = "button"; add.className = "col-add"; add.textContent = "+";
+          add.setAttribute("aria-haspopup", "dialog");
+          kinWrite(add, kinSay("Choose columns"), "aria-label");
+          kinWrite(add, kinSay("표시할 열을 고릅니다."), "title");
+          head.append(add);
+        }
+        head.append(kinWrite(document.createTextNode(""), kinSay(column.t)));
+        return head;
+      }));
       $("#heads .col-add")?.addEventListener("click", e => { e.stopPropagation(); openColumnPicker(e.currentTarget); });
       bindColumnResize();
       $("#filterrow").innerHTML = shownColumns().map((c, i) => {
         // The first column has no filter of its own, so the worklist's "Clear Filters" button lives in that cell.
-        if (!c.f && i === 0) return '<th class="clear-cell"><button type="button" class="col-clear" title="모든 검색 조건을 지웁니다.">Clear</button></th>';
+        if (!c.f && i === 0) return '<th class="clear-cell"><button type="button" class="col-clear" >Clear</button></th>';
         if (!c.f) return "<th></th>";
         if (c.k === "date") return `<th class="date-filter">${dateFilterHtml(c)}</th>`;
         if (c.choices) return `<th><select data-f="${c.k}" aria-label="${esc(c.t)} Filter">` +
@@ -1135,7 +1151,14 @@
           ["", ...c.f].map(o => `<option value="${esc(o)}"${(fval[c.k] ?? "") === o ? " selected" : ""}>${esc(o)}</option>`).join("") +
           `</select></th>`;
       }).join("");
-      if (!$("#filterrow .col-clear")) $("#filterrow th")?.insertAdjacentHTML("afterbegin", '<button type="button" class="col-clear" title="모든 검색 조건을 지웁니다.">Clear</button>');
+      if (!$("#filterrow .col-clear")) $("#filterrow th")?.insertAdjacentHTML("afterbegin", '<button type="button" class="col-clear" >Clear</button>');
+      const clear = $("#filterrow .col-clear");
+      if (clear) {
+        kinWrite(clear, kinSay("Clear"));
+        kinWrite(clear, kinSay("모든 검색 조건을 지웁니다."), "title");
+      }
+      const date = $("#filterrow [data-date-preset]");
+      if (date) kinWrite(date, kinSay("기간을 고릅니다. Custom은 시작일과 종료일을 직접 정합니다."), "title");
     }
     // Top bar "Config" had no action. For now it opens the existing Panel Settings dialog (same as the Panels button).
     (function bindConfig() {
@@ -1153,7 +1176,7 @@
       for (const th of heads.children) {
         const grip = document.createElement("span");
         grip.className = "col-grip";
-        grip.title = "열 너비: 끌어서 조절, 두 번 클릭하면 자동 너비로 돌아갑니다.";
+        kinWrite(grip, kinSay("열 너비: 끌어서 조절, 두 번 클릭하면 자동 너비로 돌아갑니다."), "title");
         // Pointer-only handle (the keyboard path is the picker's width field). Exposed, its tooltip joined every column header's name.
         grip.setAttribute("aria-hidden", "true");
         grip.addEventListener("click", e => e.stopPropagation());
@@ -1191,7 +1214,7 @@
       }
       const m = mode, head = document.createElement("header");
       const title = document.createElement("strong"); title.textContent = "Columns · " + m;
-      const close = document.createElement("button"); close.type = "button"; close.textContent = "Close"; close.onclick = () => columnPicker.close();
+      const close = document.createElement("button"); close.type = "button"; kinWrite(close, kinSay("Close")); close.onclick = () => columnPicker.close();
       head.append(title, close);
       const list = document.createElement("div"); list.className = "cp-list";
       let dragged = null;
@@ -1200,7 +1223,7 @@
         list.replaceChildren(...columnPrefs.all(m).map(c => {
           const row = document.createElement("div"); row.className = "cp-row"; row.dataset.column = c.k;
           const grip = document.createElement("span"); grip.className = "cp-grip"; grip.textContent = "≡"; grip.draggable = true;
-          grip.title = "끌어서 열 순서를 바꿉니다.";
+          kinWrite(grip, kinSay("끌어서 열 순서를 바꿉니다."), "title");
           grip.addEventListener("dragstart", e => { dragged = c.k; row.classList.add("cp-dragging"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", c.k); });
           grip.addEventListener("dragend", () => { dragged = null; clearDrop(); row.classList.remove("cp-dragging"); });
           row.addEventListener("dragover", e => {
@@ -1220,7 +1243,7 @@
           // The column name and the (Required) mark are each their own text (the label reads the same).
           label.append(box, " ", c.t, c.required ? " (Required)" : "");
           const width = document.createElement("input"); width.type = "number";
-          width.min = "64"; width.max = "600"; width.step = "1"; width.placeholder = "Auto";
+          width.min = "64"; width.max = "600"; width.step = "1"; kinWrite(width, kinSay("Auto"), "placeholder");
           width.setAttribute("aria-label", c.t + " width (px)"); width.value = c.width ?? "";
           width.addEventListener("change", () => {
             if (width.validity.valid) columnPrefs.setWidth(m, c.k, width.value === "" ? null : width.valueAsNumber);
@@ -1229,7 +1252,7 @@
         }));
       };
       const bulk = document.createElement("footer");
-      const all = document.createElement("button"); all.type = "button"; all.textContent = "Show All";
+      const all = document.createElement("button"); all.type = "button"; kinWrite(all, kinSay("Show All"));
       all.onclick = () => { for (const c of columnPrefs.all(m)) if (!c.shown) columnPrefs.setShown(m, c.k, true); draw(); };
       bulk.append(all);
       draw(); columnPicker.replaceChildren(head, list, bulk);
@@ -1318,10 +1341,12 @@
       $('#related-load-parts').disabled=!s||!serverMode||offline||demoMode||relatedParts.busy();
       $('#related-cancel-parts').hidden=!relatedParts.busy();
       $("#related-return").disabled = !s || !relatedUid;
-      $("#related-current").textContent = s
-        ? `판독 대상 · ${s.date || "날짜 없음"} · ${s.modality} · ${s.name} (${s.id}) · ${shownStudyDesc(s)}`
-        : "판독 대상을 선택하세요";
-      $("#related-current").title = $("#related-current").textContent;
+      // The study's own data in one sentence of the page: no other glossary template reads its parts as page words.
+      const currentLine = s
+        ? kinSay("판독 대상 · {t0} · {1} · {2} ({3}) · {4}", s.date || kinSay("날짜 없음"), s.modality, s.name, s.id, shownStudyDesc(s))
+        : kinSay("판독 대상을 선택하세요");
+      kinWrite($("#related-current"), currentLine);
+      kinWrite($("#related-current"), currentLine, "title");
       let rel = [];
       if (s) {
         rel = relatedCandidates().filter(x => relatedIncludeCurrent || x.uid !== s.uid);
@@ -1334,7 +1359,7 @@
         ...partTokens.map(v=>Object.assign(new Option(v,JSON.stringify(v)),{translate:false}))];
       if(relatedBodyPart&&!bodyOptions.some(o=>o.value===relatedBodyPart))bodyOptions.push(Object.assign(new Option(JSON.parse(relatedBodyPart),relatedBodyPart),{translate:false}));
       body.replaceChildren(...bodyOptions);body.value=relatedBodyPart;body.disabled=!s;body.title=body.selectedOptions[0]?.textContent||'';if(body.selectedOptions[0]?.translate===false)body.setAttribute('data-kin-keep','title');else body.removeAttribute('data-kin-keep');
-      $('#related-parts-status').textContent=relatedParts.note() || (s?`${relatedParts.busy()?'조회 중 · ':''}부위 확인 ${known}/${relatedCandidates().length} · 미조회·실패는 Unverified` : '');
+      kinWrite($('#related-parts-status'), relatedParts.note() || (s?kinSay("{t0}부위 확인 {1}/{n2} · 미조회·실패는 Unverified", relatedParts.busy()?kinSay('조회 중 · '):'', known, relatedCandidates().length) : ''));
       const modality = $("#related-modality");
       const tokens = [...new Set(rel.flatMap(relatedModalities))].sort();
       const options = [new Option("All Modalities", ""), new Option("Unspecified", JSON.stringify("")),
@@ -1361,7 +1386,7 @@
       $('#related-pages').hidden = pages <= 1;
       $('#related-page-prev').disabled = relatedPage === 0; $('#related-page-next').disabled = relatedPage >= pages - 1;
       $('#related-page-current').disabled = viewed < 0;
-      $('#related-page-status').textContent = `${relatedPage + 1}/${pages}페이지`;
+      kinWrite($('#related-page-status'), kinSay("{0}/{n1}페이지", relatedPage + 1, pages));
       relatedRows = rel;
       $("#relrows").innerHTML = s
         ? (rel.slice(relatedPage * 50, (relatedPage + 1) * 50).map(x => {
@@ -1372,8 +1397,11 @@
               <td><span class="rs ${esc(x.rs)}">${esc(x.rs)}</span></td>
               <td>${({ W: "Unread", T: "In Progress", P: "Preliminary", A: "Approved", H: "On Hold", D: "Destroyed" })[x.rs] || "Unverified"} <button class="chip" type="button" data-related-open="${esc(x.uid)}">${x.uid === s.uid ? 'Open Images' : 'Compare Images'}</button></td>
             </tr>`;
-          }).join("") || `<tr><td class="empty" colspan="7">${relatedModality || relatedBodyPart ? "조건에 맞는 관련 검사 없음" : "관련 검사 없음"}</td></tr>`)
-        : `<tr><td class="empty" colspan="7">검사를 선택하세요</td></tr>`;
+          }).join("") || '<tr><td class="empty" colspan="7"></td></tr>')
+        : '<tr><td class="empty" colspan="7"></td></tr>';
+      const emptyCell = $("#relrows td.empty");
+      if (emptyCell) kinWrite(emptyCell, !s ? kinSay("검사를 선택하세요") :
+        relatedModality || relatedBodyPart ? kinSay("조건에 맞는 관련 검사 없음") : kinSay("관련 검사 없음"));
       columnPrefs?.decorateRelated(mode);
       for (const report of s?.relatedExamReports || []) {
         if (report.uid === s.uid) continue;
@@ -1381,7 +1409,7 @@
         // "Exam" here names the exam scope the report was written on (not the Exam column): each line is one template.
         cell.colSpan=7;link.type='button';link.className='chip';
         kinWrite(link,kinSay(report.scope?.part===1?'Related Report · Exam 2 · v{n0}':'Related Report · Exam · v{n0}',report.version));
-        link.title='묶음을 되돌리기 전 저장한 판독문과 당시 영상 범위를 엽니다.';
+        kinWrite(link, kinSay('묶음을 되돌리기 전 저장한 판독문과 당시 영상 범위를 엽니다.'), "title");
         const selected=s.uid;link.onclick=()=>{if(selectedUid===selected)showHistory(report.uid);};
         cell.append(link);row.append(cell);$('#relrows').append(row);
       }
@@ -1430,14 +1458,14 @@
     function renderBodyParts() {
       const state = worklistBodyParts.sync(studies);
       $('#body-parts-load').disabled = !state.allowed || state.busy || !state.total || state.verified === state.total;
-      $('#body-parts-load').textContent = state.failed ? 'Retry Body Parts' : state.verified ? 'Resume Body Parts' : 'Read Body Parts';
+      kinWrite($('#body-parts-load'), state.failed ? kinSay('Retry Body Parts') : state.verified ? kinSay('Resume Body Parts') : kinSay('Read Body Parts'));
       $('#body-parts-refresh').hidden = !state.verified && !state.failed;
       $('#body-parts-refresh').disabled = !state.allowed || state.busy;
       $('#body-parts-cancel').hidden = !state.busy;
-      $('#body-parts-status').textContent = state.note || (state.busy
-        ? `부위 조회 중 · ${state.verified}/${state.total}건 확인`
-        : state.verified || state.failed ? `부위 ${state.verified}/${state.total}건 확인 · 실패 ${state.failed}건`
-        : 'Body Part 검색은 촬영 부위 조회 후 사용할 수 있습니다.');
+      kinWrite($('#body-parts-status'), state.note || (state.busy
+        ? kinSay("부위 조회 중 · {0}/{n1}건 확인", state.verified, state.total)
+        : state.verified || state.failed ? kinSay("부위 {0}/{n1}건 확인 · 실패 {n2}건", state.verified, state.total, state.failed)
+        : kinSay('Body Part 검색은 촬영 부위 조회 후 사용할 수 있습니다.')));
     }
     function relatedCandidates() {
       const s=cur();return s ? studies.filter(x=>x.uid===s.uid || (s.sourcePatientKey&&x.sourcePatientKey===s.sourcePatientKey)) : [];
@@ -1616,7 +1644,7 @@
         box.setAttribute("role", "status");
         box.style.cssText = "padding:2px 10px;font-size:12px";
         const title = document.createElement("strong"), text = document.createElement("span");
-        title.textContent = "Patient Identity Conflict";
+        kinWrite(title, kinSay("Patient Identity Conflict"));
         text.id = "identity-issues-text";
         box.append(title, " ", text);
         // Clicking the notice (or Enter/Space on it) shows the UID and status of each excluded study below it; again hides them.
@@ -1626,7 +1654,7 @@
         list.hidden = true;
         box.tabIndex = 0;
         box.style.cursor = "pointer";
-        box.title = "누르면 목록에서 제외한 검사의 Study UID와 상태를 펼칩니다.";
+        kinWrite(box, kinSay("누르면 목록에서 제외한 검사의 Study UID와 상태를 펼칩니다."), "title");
         box.setAttribute("aria-controls", list.id);
         box.setAttribute("aria-expanded", "false");
         const toggle = () => {
@@ -1790,17 +1818,17 @@
         return at(a.k) - at(b.k);
       });
       const head = document.createElement('header');
-      const title = document.createElement('h2'); title.id = 'exam-filter-title'; title.textContent = 'Filter Exams';
-      const close = document.createElement('button'); close.type = 'button'; close.textContent = 'Close';
+      const title = document.createElement('h2'); title.id = 'exam-filter-title'; kinWrite(title, kinSay('Filter Exams'));
+      const close = document.createElement('button'); close.type = 'button'; kinWrite(close, kinSay('Close'));
       head.append(title, close);
       const note = document.createElement('p'); note.lang = 'ko';
-      note.textContent = '조건을 고르고 Apply를 누르면 목록에 바로 적용됩니다. 목록 위 필터 줄과 같은 조건입니다.';
+      kinWrite(note, kinSay('조건을 고르고 Apply를 누르면 목록에 바로 적용됩니다. 목록 위 필터 줄과 같은 조건입니다.'));
       const form = document.createElement('form'); form.method = 'dialog';
       const inputs = new Map();
       for (const c of cols) {
         const label = document.createElement('label'); label.append(document.createTextNode(c.t + ' '));
         // A short code (PF, RS, EM, SS) carries the same explanation as its list header.
-        if (HEAD_HELP[c.k]) label.title = HEAD_HELP[c.k];
+        if (HEAD_HELP[c.k]) kinWrite(label, kinSay(HEAD_HELP[c.k]), "title");
         const current = Array.isArray(fval[c.k]) ? fval[c.k].join(',') : String(fval[c.k] ?? '');
         let control;
         if (c.k === 'date') {
@@ -1818,27 +1846,27 @@
           control = { get: () => input.value.trim(), set: v => { input.value = v; }, focus: () => input.focus() };
         } else {
           const input = document.createElement('select');
-          for (const o of ['', ...c.f]) { const opt = document.createElement('option'); opt.value = o; opt.textContent = o || 'Any'; input.append(opt); }
+          for (const o of ['', ...c.f]) { const opt = document.createElement('option'); opt.value = o; kinWrite(opt, o || kinSay('Any')); input.append(opt); }
           input.value = current; label.append(input);
           control = { get: () => input.value, set: v => { input.value = v; }, focus: () => input.focus() };
         }
         form.append(label); inputs.set(c.k, control);
       }
-      const apply = document.createElement('button'); apply.type = 'submit'; apply.textContent = 'Apply';
-      const clear = document.createElement('button'); clear.type = 'button'; clear.textContent = 'Clear';
+      const apply = document.createElement('button'); apply.type = 'submit'; kinWrite(apply, kinSay('Apply'));
+      const clear = document.createElement('button'); clear.type = 'button'; kinWrite(clear, kinSay('Clear'));
       // Save the chosen conditions as a named shortcut folder that appears under "My Shortcuts" in the Folders menu.
       const nameLabel = document.createElement('label'); nameLabel.append(document.createTextNode('Shortcut Name '));
       const nameInput = document.createElement('input'); nameInput.type = 'text'; nameInput.maxLength = 100; nameInput.placeholder = 'e.g. Unassigned CT';
       nameLabel.append(nameInput); form.append(nameLabel);
-      const saveBtn = document.createElement('button'); saveBtn.type = 'button'; saveBtn.textContent = 'Save as Shortcut';
+      const saveBtn = document.createElement('button'); saveBtn.type = 'button'; kinWrite(saveBtn, kinSay('Save as Shortcut'));
       const status = document.createElement('p'); status.setAttribute('role', 'status'); status.lang = 'ko';
       const actions = document.createElement('footer'); actions.append(apply, saveBtn, clear);
       form.append(actions, status);
       saveBtn.onclick = async () => {
         const name = nameInput.value.trim();
-        if (!name) { status.textContent = '바로가기 이름을 입력하세요.'; nameInput.focus(); return; }
+        if (!name) { kinWrite(status, kinSay('바로가기 이름을 입력하세요.')); nameInput.focus(); return; }
         commit([...inputs].map(([k, ctl]) => [k, ctl.get()]));
-        saveBtn.disabled = true; status.textContent = '저장 중입니다…';
+        saveBtn.disabled = true; kinWrite(status, kinSay('저장 중입니다…'));
         try {
           const at = work.capture('document');
           if (await filterWriteReady(undefined, at)) throw new Error('서버 계정으로 로그인한 뒤 저장할 수 있습니다.');
@@ -1970,8 +1998,10 @@
       $('#page-size').value = String(resultPageSize);
       $('#page-prev').disabled = resultPage === 0; $('#page-next').disabled = resultPage >= pages - 1;
       $('#page-current').disabled = !list.some(s => s.uid === selectedUid);
-      $('#row-keyboard-help').textContent='↑/↓ · Home/End 이동 · Space 선택 · Enter '+(mode==='Radiology'?'판독 진입':'검사 선택');
-      $('#page-status').textContent = `불러온 목록 중 ${list.length ? offset + 1 : 0}–${Math.min(offset + resultPageSize, list.length)} / ${list.length}건 · ${resultPage + 1}/${pages}페이지` + (bodyPartNote ? ` · ${bodyPartNote}` : '');
+      kinWrite($('#row-keyboard-help'), kinSay('↑/↓ · Home/End 이동 · Space 선택 · Enter {t0}', kinSay(mode === 'Radiology' ? '판독 진입' : '검사 선택')));
+      kinWrite($('#page-status'), kinSay('불러온 목록 중 {0}–{n1} / {n2}건 · {3}/{n4}페이지{5}',
+        list.length ? offset + 1 : 0, Math.min(offset + resultPageSize, list.length), list.length, resultPage + 1, pages,
+        bodyPartNote ? kinSay(' · {0}', bodyPartNote) : ''));
 
       rowNavigation?.beforeRender();
       $("#rows").innerHTML = list.slice(offset, offset + resultPageSize).map((s, i) => `
@@ -2018,17 +2048,28 @@
 
       const n = (k, v) => list.filter(s => s[k] === v).length;
       if (mode === "Radiology") {
-        $("#countlist").innerHTML =
-          // Same words as the RS column; T (saved draft, not yet approved) is counted too so drafts are not missed.
-          `<span class="count" title="RS: W — 아직 판독하지 않음"><span class="dot dot-w"></span>Unread: ${n("rs","W")}</span>` +
-          `<span class="count" title="RS: T — 저장했지만 아직 승인하지 않은 판독문"><span class="dot dot-t"></span>In Progress: ${n("rs","T")}</span>` +
-          `<span class="count" title="RS: P — 상급 판독의 승인 대기"><span class="dot dot-p"></span>Preliminary: ${n("rs","P")}</span>` +
-          `<span class="count" title="RS: H — 판독 보류"><span class="dot dot-ho"></span>On Hold: ${n("rs","H")}</span>` +
-          `<span class="count" title="RS: A — 승인된 판독문 (승인 후 24시간이 지난 Finalized 포함)"><span class="dot dot-a"></span>Approved: ${n("rs","A")}</span>` +
-          `<span class="count">Unverified:${n("ss","Unverified")}</span>`;
+        const states = [
+          ["W", "w", "Unread: {0}", "RS: W — 아직 판독하지 않음"],
+          ["T", "t", "In Progress: {0}", "RS: T — 저장했지만 아직 승인하지 않은 판독문"],
+          ["P", "p", "Preliminary: {0}", "RS: P — 상급 판독의 승인 대기"],
+          ["H", "ho", "On Hold: {0}", "RS: H — 판독 보류"],
+          ["A", "a", "Approved: {0}", "RS: A — 승인된 판독문 (승인 후 24시간이 지난 Finalized 포함)"],
+        ];
+        const counts = states.map(([state, color, caption, help]) => {
+          const count = document.createElement("span"), dot = document.createElement("span");
+          count.className = "count";
+          dot.className = "dot dot-" + color;
+          kinWrite(count, kinSay(caption, n("rs", state)));
+          kinWrite(count, kinSay(help), "title");
+          count.prepend(dot);
+          return count;
+        });
+        const unverified = document.createElement("span");
+        unverified.className = "count";
+        kinWrite(unverified, kinSay("Unverified:{0}", n("ss", "Unverified")));
+        $("#countlist").replaceChildren(...counts, unverified);
       } else {
-        $("#countlist").textContent =
-          `Verified:${n("ss","Verified")} Unverified:${n("ss","Unverified")} · Unmatched:${n("matched","U")} · Total ${list.length}`;
+        kinWrite($("#countlist"), kinSay("Verified:{0} Unverified:{1} · Unmatched:{2} · Total {n3}", n("ss","Verified"), n("ss","Unverified"), n("matched","U"), list.length));
       }
       renderChips();
       // S4-U5: the poll merges row state after it reports the observation, so the identity panel is redrawn here
@@ -2049,7 +2090,7 @@
       box.hidden = view.hidden;
       if (view.hidden) return;
       kinWrite($("#study-identity-summary"), view.summary.text);
-      $("#study-identity-summary").title = view.summary.title;
+      kinWrite($("#study-identity-summary"), view.summary.title || "", "title");
       const order = $("#study-identity-order");
       order.textContent = view.order?.text ?? ""; order.title = view.order?.title ?? "";
       $("#study-identity-tags").replaceChildren(...view.rows.map(row => {
@@ -2057,8 +2098,8 @@
         line.setAttribute("role", "listitem"); line.dataset.tag = row.key;
         // The DICOM value is data; the attribute name is a label (each its own text, the line reads the same).
         const shown = document.createElement("span"); shown.translate = false; shown.textContent = row.value;
-        value.replaceChildren(row.tag + " ", Object.assign(document.createElement("span"), { textContent: row.label }), ": ", shown); value.title = row.valueTitle;
-        relation.textContent = row.relation ? ` · ${row.relation}` : ""; relation.title = row.title;
+        value.replaceChildren(row.tag + " ", Object.assign(document.createElement("span"), { textContent: row.label }), ": ", shown); kinWrite(value, row.valueTitle || '', 'title');
+        relation.textContent = row.relation ? ` · ${row.relation}` : ""; kinWrite(relation, row.title || '', 'title');
         line.append(value, relation);
         return line;
       }));
@@ -2074,10 +2115,10 @@
       const hint = $("#drafthint");
       if (!hint) return;
       const open = id => { const el = $(id); return !!el && !el.disabled; };
-      hint.textContent = open("#b-addendum") && open("#b-approve") ? " · 고친 글로 다시 승인하려면 Approve, 추가기재로 확정하려면 More ▸ Addendum"
-        : open("#b-addendum") ? " · 추가기재로 확정하려면 More ▸ Addendum"
-        : open("#b-save") && open("#b-approve") ? " · 확정하려면 Save 또는 Approve"
-        : open("#b-save") ? " · 확정하려면 Save" : open("#b-approve") ? " · 확정하려면 Approve" : "";
+      kinWrite(hint, open("#b-addendum") && open("#b-approve") ? kinSay(" · 고친 글로 다시 승인하려면 Approve, 추가기재로 확정하려면 More ▸ Addendum")
+        : open("#b-addendum") ? kinSay(" · 추가기재로 확정하려면 More ▸ Addendum")
+        : open("#b-save") && open("#b-approve") ? kinSay(" · 확정하려면 Save 또는 Approve")
+        : open("#b-save") ? kinSay(" · 확정하려면 Save") : open("#b-approve") ? kinSay(" · 확정하려면 Approve") : "");
     }
     function heldByOther(s) { return s?.holder && s.holder !== user ? s.holder : null; }
     /**
@@ -2112,8 +2153,8 @@
         const el = $(id);
         if (!el) continue;
         el.disabled = !rad || locked || filming || !!held;
-        el.title = held ? heldTitle : filming ? filmingTitle : locked ? "다른 판독의의 예비 판독(RS: P)입니다"
-          : !rad ? "판독의 권한이 필요합니다" : "";
+        kinWrite(el, held ? heldTitle : filming ? kinSay(filmingTitle) : locked ? kinSay("다른 판독의의 예비 판독(RS: P)입니다")
+          : !rad ? kinSay("판독의 권한이 필요합니다") : "", "title");
       }
       // 남의 점유가 다른 단추를 잠가도 진행 중 판독 되돌리기는 열려 있다(아래의 응급·Related·식별 불일치 잠금은 그대로 덮는다).
       const takeover = rad && !locked && !filming ? inProgressReset(s) : null;
@@ -2124,17 +2165,17 @@
       }
       // 승인된 판독문을 비우는 길은 사유가 남는 Reset뿐이다. Clear는 그 뒷문이었다.
       $("#b-defer").disabled = !rad || !s || s.rs === "A" || s.rs === "P" || locked || filming || !!held || !serverMode;
-      $("#b-defer").title = held ? heldTitle : filming ? filmingTitle
-        : locked ? "다른 판독의의 예비 판독(RS: P)입니다"
-        : s?.rs === "A" ? "승인된 판독문은 보류할 수 없습니다. 먼저 판독 취소(Reset)를 하세요"
-        : s?.rs === "P" ? "예비 판독(RS: P)은 보류할 수 없습니다 — 승인 또는 취소만 가능합니다"
-        : !rad ? "판독의 권한이 필요합니다" : !serverMode ? "서버에 연결돼 있을 때만 보류할 수 있습니다" : "";
+      kinWrite($("#b-defer"), held ? heldTitle : filming ? kinSay(filmingTitle)
+        : locked ? kinSay("다른 판독의의 예비 판독(RS: P)입니다")
+        : s?.rs === "A" ? kinSay("승인된 판독문은 보류할 수 없습니다. 먼저 판독 취소(Reset)를 하세요")
+        : s?.rs === "P" ? kinSay("예비 판독(RS: P)은 보류할 수 없습니다 — 승인 또는 취소만 가능합니다")
+        : !rad ? kinSay("판독의 권한이 필요합니다") : !serverMode ? kinSay("서버에 연결돼 있을 때만 보류할 수 있습니다") : "", "title");
       if (s?.rs === "A" && rad && !locked && !filming && !held) {
         $("#b-clear").disabled = true;
-        $("#b-clear").title = "승인된 판독문은 판독 취소(Reset)로만 비울 수 있습니다";
+        kinWrite($("#b-clear"), kinSay("승인된 판독문은 판독 취소(Reset)로만 비울 수 있습니다"), "title");
         // Save는 사유 없이 승인을 푸는 길이었다 — 서버가 400으로 막고, 여기서는 회색으로 미리 말해준다.
         $("#b-save").disabled = true;
-        $("#b-save").title = "승인된 판독문은 24시간 안의 수정(승인한 판독의), 추가기재(Addendum) 또는 판독 취소(Reset)로만 바꿀 수 있습니다";
+        kinWrite($("#b-save"), kinSay("승인된 판독문은 24시간 안의 수정(승인한 판독의), 추가기재(Addendum) 또는 판독 취소(Reset)로만 바꿀 수 있습니다"), "title");
         /**
          * FC-034: 승인한 판독의는 첫 승인 뒤 24시간 안에, Addendum이 붙기 전까지 본문을 고쳐 Approve로 다시 승인한다(서버에는
          * amend로 간다 — commitReport). 그래서 Approve는 그때, 고친 글이 있을 때만 열린다. 그 밖에는 왜 닫혔는지를 말한다.
@@ -2145,7 +2186,7 @@
       }
       // Addendum은 승인된 판독문에만 붙는다
       $("#b-addendum").disabled = s?.rs !== "A" || !rad || locked || filming || !!held;
-      $("#b-addendum").title = held ? heldTitle : filming ? filmingTitle : s?.rs !== "A" ? "승인된 판독문에만 추가기재할 수 있습니다" : "";
+      kinWrite($("#b-addendum"), held ? heldTitle : filming ? kinSay(filmingTitle) : s?.rs !== "A" ? kinSay("승인된 판독문에만 추가기재할 수 있습니다") : "", "title");
       /**
        * Prelim은 "아직 확정 안 된 판독을 상급자에게 넘기는" 동작이다.
        * 이미 승인(A)된 것에는 의미가 없고, 이미 P인 것을 다시 넘기면 지정이 덮어써진다.
@@ -2154,10 +2195,10 @@
       const b = $("#b-prelim");
       if (b) {
         b.disabled = !rad || !s || s.rs === "A" || s.rs === "P" || locked || filming || !!held || !serverMode;
-        b.title = held ? heldTitle : filming ? filmingTitle : !serverMode ? "서버에 연결돼 있을 때만 지정할 수 있습니다"
-          : s?.rs === "P" ? "이미 예비 판독 중입니다"
-          : s?.rs === "A" ? "이미 승인된 판독입니다"
-          : "상급 판독의를 지정해 최종 판독을 맡깁니다 (RS: P)";
+        kinWrite(b, held ? heldTitle : filming ? kinSay(filmingTitle) : !serverMode ? kinSay("서버에 연결돼 있을 때만 지정할 수 있습니다")
+          : s?.rs === "P" ? kinSay("이미 예비 판독 중입니다")
+          : s?.rs === "A" ? kinSay("이미 승인된 판독입니다")
+          : kinSay("상급 판독의를 지정해 최종 판독을 맡깁니다 (RS: P)"), "title");
       }
       for (const id of ["#findings", "#conclusion", "#recommendation"]) {
         $(id).readOnly = !rad || locked || filming || !!held;
@@ -2165,7 +2206,7 @@
         $(id).dataset.lockReason = filming && !held ? filmingTitle : "";
       }
       if(studyPriority?.get(selectedUid))for(const id of ['#b-save','#b-approve','#b-unread','#b-addendum','#b-prelim','#b-defer']) {
-        const button=$(id);if(button){button.disabled=true;button.title='응급 상태 저장 결과를 확인한 뒤 판독을 저장하세요';}
+        const button=$(id);if(button){button.disabled=true;kinWrite(button, kinSay('응급 상태 저장 결과를 확인한 뒤 판독을 저장하세요'), "title");}
       }
       // W5 (설계 v5 §1.6): in Related Report mode the report commands wait for Back, with the reason said on each control;
       // an unsettled explicit Related insert holds the decisions that would carry its text. Prev/Next stay: they leave through
@@ -2188,7 +2229,7 @@
         for (const id of ["#b-approve", "#b-save", "#b-unread", "#b-clear", "#b-paste", "#b-defer", "#b-addendum",
           "#b-prelim", "#b-draft-keep", "#b-draft-load", "#b-draft-discard", "#b-report-reload", "#b-report-template", "#b-mark-cvr"]) {
           const el = $(id);
-          if (el) { el.disabled = true; el.title = "환자 식별 불일치로 이 검사를 사용할 수 없습니다. 원본 확인이 필요합니다."; }
+          if (el) { el.disabled = true; kinWrite(el, kinSay("환자 식별 불일치로 이 검사를 사용할 수 없습니다. 원본 확인이 필요합니다."), "title"); }
         }
         for (const id of ["#findings", "#conclusion", "#recommendation"]) $(id).readOnly = true;
       }
@@ -2196,8 +2237,8 @@
       const approveNext = $("#b-approve-next");
       if (approveNext) {
         approveNext.disabled = $("#b-approve").disabled;
-        approveNext.title = $("#b-approve").title
-          || "승인한 뒤 목록의 다음 검사로 갑니다 — 승인이 확인되고 화면에 그려진 뒤에만 이동하고, 결과를 모르거나 거절되면 이 검사에 머뭅니다";
+        kinWrite(approveNext, $("#b-approve").title
+          || kinSay("승인한 뒤 목록의 다음 검사로 갑니다 — 승인이 확인되고 화면에 그려진 뒤에만 이동하고, 결과를 모르거나 거절되면 이 검사에 머뭅니다"), "title");
       }
       // 초안 표시줄의 확정 안내는 방금 정한 단추 상태를 그대로 따른다(눌리지 않는 단추를 안내하지 않는다).
       renderDraftHint();
@@ -2222,10 +2263,10 @@
       const modified = !!stored && (filterCriteriaKey(stored) !== filterCriteriaKey(snapshotFilter())
         || !!favoriteList?.key() || !!studyTagList?.key());
       $('#active-filter-name').textContent = activeFilterName;
-      $('#active-filter-state').textContent = !stored ? 'Deleted' : modified ? 'Modified' : 'Saved';
-      holder.title = !stored ? '저장 검색이 삭제됐습니다. 현재 목록 조건은 유지됩니다.' : modified
-        ? '현재 목록 조건과 저장된 조건이 다릅니다. 저장 검색을 다시 적용하거나 현재 조건을 새 검색으로 저장하세요.'
-        : '저장된 검색 조건을 적용 중입니다. 결과 건수는 현재 불러온 목록을 기준으로 합니다.';
+      kinWrite($('#active-filter-state'), !stored ? kinSay('Deleted') : modified ? kinSay('Modified') : kinSay('Saved'));
+      kinWrite(holder, !stored ? kinSay('저장 검색이 삭제됐습니다. 현재 목록 조건은 유지됩니다.') : modified
+        ? kinSay('현재 목록 조건과 저장된 조건이 다릅니다. 저장 검색을 다시 적용하거나 현재 조건을 새 검색으로 저장하세요.')
+        : kinSay('저장된 검색 조건을 적용 중입니다. 결과 건수는 현재 불러온 목록을 기준으로 합니다.'), "title");
       $('#edit-active-filter').disabled = !stored;
     }
     function renderChips() {
@@ -2240,7 +2281,7 @@
       chipCountRows = userFilters.map((uf, i) => {
         const count = filteredFor(uf).length;
         const note = bodyPartCountNote(uf);
-        const label = kinSay("{0}, 로드된 목록 기준 {n1}건{t2}{t3}", uf.name, count, { t: uf.isDefault ? ", 기본 필터" : "" }, { t: note ? kinSay(" · {t0}", { t: note }) : "" });
+        const label = kinSay("{0}, 로드된 목록 기준 {n1}건{t2}{t3}", uf.name, count, { t: uf.isDefault ? kinSay(", 기본 필터") : "" }, { t: note ? kinSay(" · {t0}", { t: note }) : "" });
         return { i, uf, count, label, partial: !!note };
       });
       chipCountKey = countKey;
@@ -2380,7 +2421,7 @@
         // S4-U1b: 관측 실패는 아무것도 비우지 않는다. 마지막 목록과 관측 시각을 두고 `관측 불가`만 더한다.
         // 차가운 시작에는 둘 목록이 없으므로 빈 스냅숏을 지어내지도 않는다.
         markObservationUnavailable();
-        $("#err").textContent = "서버 연결이 끊겨 검사 목록을 불러올 수 없습니다 — 보이는 목록은 마지막 관측값입니다. 우측 상단에서 재시도할 수 있습니다";
+        kinWrite($("#err"), kinSay("서버 연결이 끊겨 검사 목록을 불러올 수 없습니다 — 보이는 목록은 마지막 관측값입니다. 우측 상단에서 재시도할 수 있습니다"));
         render(); refreshRight();
         return;
       }
@@ -2484,7 +2525,7 @@
     // ── 데모 모드: Orthanc 없이 열람 시 (GitHub Pages 등) 가짜 데이터로 전환 ──
     function paintDemoList() {
       demoMode = true;
-      $("#err").textContent = "데모 모드 — 가짜 데이터 (Orthanc 미연결)";
+      kinWrite($("#err"), kinSay("데모 모드 — 가짜 데이터 (Orthanc 미연결)"));
       const P = (uid, id, name, age, birth, sex, desc, date, acc) => applyState(
         { uid, pf: "·", count: 20, series: 1, acc, id, name, age, birth, sex, modality: "CT", desc, date });
       studies = [
@@ -3040,7 +3081,7 @@
       // S7-U4b: 보는 검사가 바뀐 때만 Clinical Context를 다시 읽는다(같은 검사면 요청도 그리기도 없다).
       clinicalContext?.sync();
       $("#clinical").innerHTML = s ? `
-        <div class="clinical-scope">${s.uid === selectedUid ? '판독 대상 검사 정보' : '관련 검사 정보 · 판독 대상은 바뀌지 않습니다'}</div>
+        <div class="clinical-scope"></div>
         <table>
           <tr><td>Patient</td><td translate="no">${esc(s.name)} (${esc(s.id)})</td></tr>
           <tr><td>Sex/Age</td><td translate="no">${esc(s.sex)} / ${esc(s.age)}</td></tr>
@@ -3053,6 +3094,7 @@
           <tr><td>Ward</td><td translate="no">${esc(s.ward) || "-"}</td></tr>
           <tr><td>Study UID</td><td translate="no">${esc(s.uid)}</td></tr>
         </table>` : "No clinical information provided.";
+      if (s) kinWrite($("#clinical .clinical-scope"), s.uid === selectedUid ? kinSay("판독 대상 검사 정보") : kinSay("관련 검사 정보 · 판독 대상은 바뀌지 않습니다"));
       renderStudyIdentity();
       renderObservation();
     }
@@ -3160,7 +3202,7 @@
         const name = typeof s.institutionName === "string" ? s.institutionName.trim() : "";
         institution.textContent = name ? `${name} · ` : "";
         institution.translate = false;
-        institution.title = name ? "HALO PACS에 등록된 보낸 기관 이름입니다. DICOM 원문 기관명은 DICOM Identity의 (0008,0080) 줄에 있습니다." : "";
+        kinWrite(institution, name ? kinSay("HALO PACS에 등록된 보낸 기관 이름입니다. DICOM 원문 기관명은 DICOM Identity의 (0008,0080) 줄에 있습니다.") : "", "title");
       }
       $("#receipt-assignment").textContent = labels.assignment.text; $("#receipt-assignment").title = labels.assignment.title;
       $("#receipt-observation").textContent = [labels.observation.text, labels.change?.text].filter(Boolean).join(" · ");
@@ -3177,8 +3219,8 @@
       }
       originals.hidden=!scope?.groupId;
       if(scope?.groupId){
-        $("#receipt-observation").textContent='Original exams';
-        $("#receipt-observation").title='보유 수와 도착 변화는 원본 검사별 관측입니다.';
+        kinWrite($("#receipt-observation"), kinSay('Original exams'));
+        kinWrite($("#receipt-observation"), kinSay('보유 수와 도착 변화는 원본 검사별 관측입니다.'), "title");
         $("#receipt-gateway").textContent='';$("#receipt-gateway").title='';
         $("#receipt-retry").hidden=true;$("#receipt-retry-note").textContent='';
         const kept=new Map([...originals.children].map(line=>[line.dataset.uid,line]));
@@ -3195,7 +3237,7 @@
           // The Accession No is data; each label after it is its own text so the screen language reads it.
           const accession=document.createElement('span');accession.translate=false;accession.textContent=source.acc||source.uid;
           text.replaceChildren(accession,...[own.observation.text,own.change?.text,
-            source.gatewayReceipt===undefined?'Gateway 영수증 정보가 이 목록에 제공되지 않았습니다.':own.gateway.text].filter(Boolean)
+            source.gatewayReceipt===undefined?kinSay('Gateway 영수증 정보가 이 목록에 제공되지 않았습니다.'):own.gateway.text].filter(Boolean)
             .flatMap(words=>[' · ',kinWrite(document.createElement('span'),words)]));
           drawRetry(source,own.retry,control,note);return line;
         });
@@ -3248,10 +3290,10 @@
       const summary = KinOrderReconciliation.summary(orderReconciliationModel);
       box.hidden = summary.hidden;
       $("#order-reconciliation-summary").textContent = summary.text;
-      $("#order-reconciliation-summary").title = summary.title;
+      kinWrite($("#order-reconciliation-summary"), summary.title || "", "title");
       $("#order-reconciliation-list").replaceChildren(...summary.rows.map(row => {
         const item = document.createElement("div");
-        item.textContent = row.text; item.title = row.title;
+        item.textContent = row.text; kinWrite(item, row.title || "", "title");
         return item;
       }));
     }
@@ -3622,6 +3664,9 @@
     // 그려진다. 계정 변경은 같은 목록에 사유 'account-changed'로 알려 이 페이지의 다른 영역(S5-U4b 질문 줄)도 같은 자리에서 잠근다.
     // 쓰던 note는 요청별로 이 문서의 메모리에만 두고, 잠그거나 끝나면 이전 계정의 글이라 버린다.
     function mountImageRequests({ api, apiBase, work, transport, owner, allowed, current, study, institution, can }) {
+      // The page's sentences and the words it writes go through the screen language (this part also runs on its own).
+      const kinSay = (t, ...p) => window.KinLanguage ? window.KinLanguage.say(t, ...p) : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+      const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
       const TEXT = {
         queueHint: '소속 기관 검사에 임상의가 남긴 외부영상(External Images)·영상전송(Send Images) 요청입니다. 요청은 처리 상태의 '
           + '기록이며 이 칸은 영상을 옮기지 않습니다. 영상은 기존 경로에서 따로 옮기고, 처리를 마치면 Close에 처리 기록을 남기세요.',
@@ -3725,7 +3770,7 @@
       const make = (tag, className, text) => {
         const node = document.createElement(tag);
         if (className) node.className = className;
-        if (text !== undefined) node.textContent = text;
+        if (text !== undefined) kinWrite(node, text);
         return node;
       };
       const button = (label, onClick) => {
@@ -3743,8 +3788,8 @@
       };
       const setState = (box, state, text, detail) => {
         box.dataset.state = state;
-        box.querySelector('.image-request-line').textContent = text;
-        box.querySelector('.image-request-detail').textContent = detail || '';
+        kinWrite(box.querySelector('.image-request-line'), text);
+        kinWrite(box.querySelector('.image-request-detail'), detail || '');
       };
       const dash = value => typeof value === 'string' && value.trim() ? value : '—';
       const person = value => dash(value && (value.name || value.actor));
@@ -3761,7 +3806,8 @@
         const message = error && error.message ? error.message : TEXT.rejected;
         return parts.length ? `${message} (${parts.join(' · ')})` : message;
       };
-      const readDetail = error => `${error && error.status === 404 ? `${TEXT.notFound}\n` : ''}${describe(error)}`;
+      // The page's sentence, and under it what failed (its own words or the server's message).
+      const readDetail = error => error && error.status === 404 ? kinSay('{t0}\n{e1}', { t: kinSay(TEXT.notFound) }, { e: describe(error) }) : describe(error);
       // 상태명은 색과 함께 늘 글자로 쓰고(UXR-G-12), Closed에는 기록일 뿐이라는 문구를 바로 옆에 붙인다.
       const badge = state => {
         const wrap = make('span');
@@ -3769,7 +3815,7 @@
         name.dataset.state = state;
         wrap.append(name);
         if (state === 'Closed') {
-          const note = make('span', 'image-request-closed', TEXT.closedNote);
+          const note = make('span', 'image-request-closed', kinSay(TEXT.closedNote));
           note.dataset.closedNote = '';
           wrap.append(' ', note);
         }
@@ -3913,7 +3959,7 @@
       lockBox.setAttribute('role', 'alert');
       const queueView = make('div');
       const filters = make('div', 'image-request-actions');
-      const stateLabel = make('label', null, 'State');
+      const stateLabel = make('label', null, kinSay('State'));
       stateLabel.htmlFor = 'image-request-queue-state';
       const stateFilter = make('select');
       stateFilter.id = 'image-request-queue-state';
@@ -3922,7 +3968,7 @@
         option.value = value;
         stateFilter.append(option);
       }
-      const kindLabel = make('label', null, 'Kind');
+      const kindLabel = make('label', null, kinSay('Kind'));
       kindLabel.htmlFor = 'image-request-queue-kind';
       const kindFilter = make('select');
       kindFilter.id = 'image-request-queue-kind';
@@ -3931,35 +3977,35 @@
         option.value = value;
         kindFilter.append(option);
       }
-      const reload = button('Reload', () => { loadQueue(false); if (detailId !== null) loadDetail(detailId); });
+      const reload = button(kinSay('Reload'), () => { loadQueue(false); if (detailId !== null) loadDetail(detailId); });
       reload.id = 'image-request-queue-reload';
       filters.append(stateLabel, stateFilter, kindLabel, kindFilter, reload);
       const queueLine = stateBox();
       queueLine.id = 'image-request-queue-status';
-      const queueRetry = button('Retry', () => loadQueue(queueItems.length > 0));
+      const queueRetry = button(kinSay('Retry'), () => loadQueue(queueItems.length > 0));
       queueRetry.id = 'image-request-queue-retry';
       queueLine.append(queueRetry);
       const queueList = make('ol');
       queueList.id = 'image-request-queue-list';
-      const queueMore = button('More', () => loadQueue(true));
+      const queueMore = button(kinSay('More'), () => loadQueue(true));
       queueMore.id = 'image-request-queue-more';
       const detailBox = make('section');
       detailBox.id = 'image-request-detail';
       detailBox.setAttribute('aria-labelledby', 'image-request-detail-title');
       const detailHead = make('div', 'image-request-actions');
-      const detailTitle = make('h4', null, 'Request');
+      const detailTitle = make('h4', null, kinSay('Request'));
       detailTitle.id = 'image-request-detail-title';
       const detailStatus = make('span');
       detailHead.append(detailTitle, detailStatus);
       const detailLine = stateBox();
       detailLine.dataset.part = 'read';
-      const detailRetry = button('Retry', () => { if (detailId !== null) loadDetail(detailId); });
+      const detailRetry = button(kinSay('Retry'), () => { if (detailId !== null) loadDetail(detailId); });
       detailLine.append(detailRetry);
       const detailLines = make('div');
       detailLines.dataset.part = 'lines';
-      const noteLabel = make('label', null, 'Note');
+      const noteLabel = make('label', null, kinSay('Note'));
       noteLabel.htmlFor = 'image-request-note';
-      const noteHint = make('p', 'image-request-muted', TEXT.noteHint);
+      const noteHint = make('p', 'image-request-muted', kinSay(TEXT.noteHint));
       noteHint.id = 'image-request-note-hint';
       const noteField = make('textarea');
       noteField.id = 'image-request-note';
@@ -3975,21 +4021,21 @@
         actionRow.append(actions[action]);
       }
       const retryRow = make('div', 'image-request-actions');
-      const writeRetry = button('Retry', () => resend());
+      const writeRetry = button(kinSay('Retry'), () => resend());
       writeRetry.dataset.write = 'retry';
-      const writeDiscard = button('Discard', () => drop());
+      const writeDiscard = button(kinSay('Discard'), () => drop());
       writeDiscard.dataset.write = 'discard';
       retryRow.append(writeRetry, writeDiscard);
       const writeNote = stateBox();
       writeNote.dataset.part = 'write';
       detailBox.append(detailHead, detailLine, detailLines, noteLabel, noteHint, noteField, actionRow, retryRow, writeNote);
-      queueView.append(make('p', 'image-request-muted', TEXT.queueHint), filters, queueLine, queueList, queueMore, detailBox);
+      queueView.append(make('p', 'image-request-muted', kinSay(TEXT.queueHint)), filters, queueLine, queueList, queueMore, detailBox);
       queueBody.append(lockBox, queueView);
 
       function renderQueue() {
         const unavailable = !ended && lock === null && !allowed();
         lockBox.hidden = !ended && lock === null;
-        setState(lockBox, 'failed', ended ? TEXT.ended : lock ? lock.text : '', lock && !ended ? lock.detail : '');
+        setState(lockBox, 'failed', ended ? kinSay(TEXT.ended) : lock ? lock.text : '', lock && !ended ? lock.detail : '');
         queueView.hidden = ended || lock !== null;
         const state = unavailable ? 'offline' : queueLoading ? 'loading' : queueFailure ? 'failed' : !queueLoaded ? 'idle'
           : queueItems.length ? 'ready' : 'empty';
@@ -4007,9 +4053,9 @@
         const info = make('div');
         info.dataset.part = 'info';
         info.append(...itemLines(item, true));
-        const open = button('Open', () => openDetail(item.id));
+        const open = button(kinSay('Open'), () => openDetail(item.id));
         open.dataset.open = '';
-        open.title = '이 요청을 읽고 처리 칸을 엽니다.';
+        kinWrite(open, kinSay('이 요청을 읽고 처리 칸을 엽니다.'), "title");
         li.append(info, open);
         if (item.id === detailId) li.setAttribute('aria-current', 'true');
         li.dataset.state = item.state;
@@ -4276,7 +4322,7 @@
           const stale = !loaded ? '' : action === 'accept' ? (state === 'Requested' ? '' : TEXT.stateAccept)
             : ACTIVE.includes(state) ? '' : TEXT.stateDone;
           control.disabled = attempt !== null || !loaded || !!role || !!stale;
-          control.title = role || stale || TEXT.tips[action];
+          kinWrite(control, role || stale || kinSay(TEXT.tips[action]), "title");
         }
         writeRetry.hidden = writeDiscard.hidden = !attempt || attempt.busy;
         const note = id === null ? null : notes.get(id) || null;
@@ -4410,11 +4456,11 @@
       // ── 판독 화면(읽기 전용) ──
       const readLine = stateBox();
       readLine.id = 'image-request-read-status';
-      const readRetry = button('Retry', () => loadReading());
+      const readRetry = button(kinSay('Retry'), () => loadReading());
       readLine.append(readRetry);
       const readList = make('ol');
       readList.id = 'image-request-read-list';
-      readPane.append(make('p', 'image-request-muted', TEXT.readHint), readLine, readList);
+      readPane.append(make('p', 'image-request-muted', kinSay(TEXT.readHint)), readLine, readList);
       // 접힌 줄에도 Closed 옆 문구가 보여야 한다(U4p §3.3). 요약은 말줄임으로 잘리므로 그 안에 두지 않고 바로 아래에 줄을 넘기는
       // 한 줄로 둔다. 그 자리는 줄이 서 있는 동안 늘 잡혀 있고(Closed가 없으면 보이지 않게) 답은 보임만 바꾼다 — 늦게 온 답이
       // 그 줄을 끼우면 판독 칸이 줄어 단추 줄이 움직였다(main.html "An answer never resizes").
@@ -4438,30 +4484,30 @@
         readRoot.hidden = !visible;
         readRoot.dataset.state = ended ? 'ended' : lock ? 'locked' : readFailure ? 'failed' : readLoading ? 'loading'
           : readItems === null ? 'idle' : readItems.length ? 'ready' : 'empty';
-        const text = lock ? lock.text : !allowed() ? TEXT.readOffline : readUid === null ? TEXT.readUnread : readFailure ? TEXT.readFailed : readItems === null
-          ? TEXT.readLoading : readItems.length ? TEXT.readCounts(readItems.length, readCounts(readItems)) : TEXT.readEmpty;
-        readSummary.textContent = text;
-        readSummary.title = lock ? `${lock.text}\n${lock.detail}`.trim() : readFailure ? readDetail(readFailure) : text;
+        const text = lock ? lock.text : !allowed() ? kinSay(TEXT.readOffline) : readUid === null ? kinSay(TEXT.readUnread) : readFailure ? kinSay(TEXT.readFailed) : readItems === null
+          ? kinSay(TEXT.readLoading) : readItems.length ? TEXT.readCounts(readItems.length, readCounts(readItems)) : kinSay(TEXT.readEmpty);
+        kinWrite(readSummary, text);
+        kinWrite(readSummary, lock ? (lock.detail ? kinSay('{t0}\n{e1}', { t: lock.text }, { e: lock.detail }) : lock.text) : readFailure ? readDetail(readFailure) : text, 'title');
         readClosed.dataset.shown = String(!lock && !readFailure && !!readItems && readItems.some(item => item.state === 'Closed'));
-        readToggle.textContent = readOpen ? 'Hide Requests' : 'Show Requests';
+        kinWrite(readToggle, readOpen ? kinSay('Hide Requests') : kinSay('Show Requests'));
         readToggle.setAttribute('aria-expanded', String(readOpen));
         // 연 창은 잠겨도 연 채로 두고 안에 잠금을 쓴다(닫으면 판독 칸이 다시 커진다).
         readPane.hidden = !readOpen;
         if (readNotice) {
           // 알 때만 말한다: 요청 있음·실패·잠금은 그 글, 성공한 빈 답·읽지 않는 검사는 알림 없음, 읽는 중은 그대로.
           // 끊긴 동안은 새로 아는 것이 없다: 마지막으로 말한 것을 그대로 둔다.
-          const told = !lock && readUid !== null && !allowed() ? null : lock ? (lock.account ? TEXT.notice.account : TEXT.notice.refused) : readFailure ? TEXT.notice.failed
+          const told = !lock && readUid !== null && !allowed() ? null : lock ? (lock.account ? kinSay(TEXT.notice.account) : kinSay(TEXT.notice.refused)) : readFailure ? kinSay(TEXT.notice.failed)
             : readItems && readItems.length ? TEXT.notice.counts(readItems.length, readCounts(readItems))
             : readUid === null || readItems !== null ? '' : null;
           if (ended) readNotice.hidden = true;
           else if (told !== null) {
             readNotice.hidden = !told;
-            readNotice.textContent = told;
-            readNotice.title = told ? `${text} — Show Requests` : '';
+            kinWrite(readNotice, told);
+            kinWrite(readNotice, told ? kinSay('{t0} — Show Requests', { t: text }) : '', 'title');
           }
         }
         const state = lock || readFailure ? 'failed' : readLoading ? 'loading' : 'ready';
-        setState(readLine, state, lock ? lock.text : { failed: TEXT.readFailed, loading: TEXT.readLoading }[state] || '',
+        setState(readLine, state, lock ? lock.text : { failed: kinSay(TEXT.readFailed), loading: kinSay(TEXT.readLoading) }[state] || '',
           lock ? lock.detail : readFailure ? readDetail(readFailure) : '');
         readLine.hidden = state === 'ready';
         readRetry.hidden = !readFailure;
@@ -4948,12 +4994,12 @@
     // ── Report ──
     let relatedReportSeq = 0;
 
-    function clearRelatedReport(message = "Related Exam을 선택하세요") {
+    function clearRelatedReport(message = kinSay("Related Exam을 선택하세요")) {
       // A5: the Source opening ends with its text; a later read of any Source is a new display.
       KinReportViews.end("related");
       $("#prior-report-meta").textContent = "";
       $("#prior-report-meta").title = "";
-      $("#prior-report-status").textContent = message;
+      kinWrite($("#prior-report-status"), message);
       $("#prior-report-status").style.display = "";
       $("#prior-report-content").style.display = "none";
       for (const id of ["#prior-findings", "#prior-conclusion", "#prior-recommendation"])
@@ -5325,11 +5371,11 @@
         row.className = "leftnote";
         message.textContent = text;
         open.type = dismiss.type = "button";
-        open.textContent = "Open Study";
-        dismiss.textContent = "Dismiss";
+        kinWrite(open, kinSay("Open Study"));
+        kinWrite(dismiss, kinSay("Dismiss"));
         // 목록에 없는 검사는 여기서 열 수 없다(목록 조건이 바뀌었다) — 눌리지 않는 단추에 그 까닭을 적는다.
         open.disabled = !studies.some(s => s.uid === uid);
-        if (open.disabled) open.title = "이 검사는 지금 목록에 없습니다. 목록 조건을 바꾼 뒤 여세요.";
+        if (open.disabled) kinWrite(open, kinSay("이 검사는 지금 목록에 없습니다. 목록 조건을 바꾼 뒤 여세요."), "title");
         open.addEventListener("click", () => { if (studies.some(s => s.uid === uid)) select(uid); else renderLeftNotes(); });
         dismiss.addEventListener("click", () => dropLeftNote(uid));
         row.append(message, open, dismiss);
@@ -5441,13 +5487,13 @@
         work.edited();
       }
       const ph = locked
-        ? `${displayActor(r.preReviewer) || "지정된 판독의"} 님이 최종 판독 중입니다 (RS: P) — 내용은 지정된 판독의만 볼 수 있습니다`
+        ? kinSay("{0} 님이 최종 판독 중입니다 (RS: P) — 내용은 지정된 판독의만 볼 수 있습니다", displayActor(r.preReviewer) || kinSay("지정된 판독의"))
         : "";
       for (const [sel, base] of [["#findings", "Please enter findings"],
                                  ["#conclusion", "Please enter conclusion"],
                                  ["#recommendation", "Please enter recommendation"]]) {
         const el = $(sel);
-        el.placeholder = locked ? (sel === "#findings" ? ph : "") : base;
+        kinWrite(el, locked ? (sel === "#findings" ? ph : "") : kinSay(base), "placeholder");
         el.readOnly = !!heldByOther(cur()) || locked || (cur()?.ss === "Unverified" && cur()?.em !== "E") || !KinAuth.has("radiologist")
           || !!r.identityUnresolved;
         // C-R01-109#2: the Read Only reason for an unverified study, the same words as its buttons (updateReportButtons).
@@ -5481,7 +5527,7 @@
     function renderEditorState() {
       const why = work.state() !== "active" ? "판독 화면이 지금 편집을 받지 않습니다." : !selectedUid ? "검사를 선택하세요" : reportEditorBlock();
       $("#report-editor").dataset.editable = String(!why);
-      $("#report-editor-state").textContent = why ? "Read Only" : "Editable";
+      kinWrite($("#report-editor-state"), why ? kinSay("Read Only") : kinSay("Editable"));
       $("#report-editor-why").textContent = $("#report-editor-why").title = why || "";
       // The study this editor writes for, so it is never confused with the prior report shown in the box above.
       const target = selectedUid ? studies.find(x => x.uid === selectedUid) : null;
@@ -5544,9 +5590,9 @@
       line.textContent = [own, others].filter(Boolean).join(" · ");
       // The head can wrap in a narrow column; keep presence updates within their reserved space so typing stays put.
       // Longer explanations belong in the title.
-      line.title = !target ? "" : holder && holder !== user ? "다른 판독의가 작성 중입니다"
-        : holder ? "이 판독의가 작성 중입니다(점유)" + (others ? " · " + others : "")
-        : "검사를 여는 것만으로는 점유하지 않습니다. 판독문에 두 글자 이상 쓰면 이 판독의가 잡습니다." + (others ? " · " + others : "");
+      kinWrite(line, !target ? "" : holder && holder !== user ? kinSay("다른 판독의가 작성 중입니다")
+        : holder ? kinSay("이 판독의가 작성 중입니다(점유){0}", others ? " · " + others : "")
+        : kinSay("검사를 여는 것만으로는 점유하지 않습니다. 판독문에 두 글자 이상 쓰면 이 판독의가 잡습니다.{0}", others ? " · " + others : ""), "title");
     }
 
     /**
@@ -5748,13 +5794,13 @@
         : checked || n.status === "unknown" ? "Result Unknown"
         : n.status === "composing" ? "Not Moved"
         : n.status === "conflict" ? "Save Failed — 서버의 초안이 이 화면과 다릅니다"
-        : kinSay("Save Failed — {0}", { e: n.reason ?? "서버가 저장을 받지 않았습니다" });
+        : kinSay("Save Failed — {0}", { e: n.reason ?? kinSay("서버가 저장을 받지 않았습니다") });
       // W5: the same notice for a Related Report mode entry the gate held (its Retry/Check continue that entry).
       const entry = n.action?.kind === "related-enter";
       const toward = { t: n.target ? kinSay(" ({0}(으)로 가려던 이동)", studyLabel(n.target.uid))
         : entry ? kinSay(" ({0}의 이전 판독문을 보려던 이동)", studyLabel(n.action.source)) : "" };
-      const notMoved = { t: entry ? "Related Report 모드로 들어가지 않았습니다" : "검사를 옮기지 않았습니다" };
-      const thenMove = { t: entry ? "들어갑니다" : "이동합니다" };
+      const notMoved = { t: entry ? kinSay("Related Report 모드로 들어가지 않았습니다") : kinSay("검사를 옮기지 않았습니다") };
+      const thenMove = { t: entry ? kinSay("들어갑니다") : kinSay("이동합니다") };
       // 서버의 초안에 이 화면의 글이 없다는 것을 읽어서 알았다: 다시 보내는 길(Retry, 쓰기 경로)을 함께 준다.
       const resend = checked === "different" && unconfirmed;
       const text = checked === "unread" ? kinSay("서버의 저장 상태를 확인하지 못해 {t0}{t1} — 입력한 내용은 그대로 있습니다. 다시 확인하려면 Check를 누르세요.", notMoved, toward)
@@ -6212,7 +6258,7 @@
         $("#stale-draft-" + k).textContent = $("#" + k).value;
       }
       $("#stale-rebase").style.display = rebase ? "" : "none";
-      $("#stale-rebase").textContent = `v${head.version} 기준으로 다시 잡기`;
+      kinWrite($("#stale-rebase"), kinSay("v{n0} 기준으로 다시 잡기", head.version));
       $("#stale-rebase").disabled = !rebase;
       $("#stale-status").textContent = "";
       $("#stalemodal").classList.add("show");
@@ -6273,7 +6319,7 @@
       // 화면에 쓰기 직전에 UID와 순번을 함께 확인한다. 안내가 열린 사이에 검사를 옮겼다면
       // 지금 textarea에 있는 글은 **다른 검사의 글**이다 (교훈: A→B→A — 돌아와도 같은 선택이 아니다).
       if (pane.uid !== selectedUid || pane.seq !== staleSeq || pane.selSeq !== selectionSeq) {
-        $("#stale-status").textContent = "검사가 바뀌었습니다 — 이 안내를 닫고 다시 확인하세요.";
+        kinWrite($("#stale-status"), kinSay("검사가 바뀌었습니다 — 이 안내를 닫고 다시 확인하세요."));
         $("#stale-rebase").disabled = true;
         return;
       }
@@ -6290,16 +6336,16 @@
         try { held = await reportDraftDrawings.read(pane.uid); } finally { staleBusy = false; }
         if (stalePane !== pane || pane.uid !== selectedUid || pane.seq !== staleSeq || pane.selSeq !== selectionSeq) return;
         if (!held.known) {
-          $("#stale-status").textContent = held.conflict ? "서버의 초안이 이 화면과 달라 기준을 잡지 않았습니다 — 닫고 초안 표시줄에서 고르세요."
-            : "서버의 초안을 확인하지 못해 기준을 잡지 않았습니다 — 잠시 뒤 다시 누르세요.";
+          kinWrite($("#stale-status"), held.conflict ? kinSay("서버의 초안이 이 화면과 달라 기준을 잡지 않았습니다 — 닫고 초안 표시줄에서 고르세요.")
+            : kinSay("서버의 초안을 확인하지 못해 기준을 잡지 않았습니다 — 잠시 뒤 다시 누르세요."));
           return;
         }
-        if (!KinReportDraftClient.holdsDraft({ ...next, drawings: held.drawings })) { $("#stale-status").textContent = "내용이 비어 있어 기준을 잡을 수 없습니다."; return; }
+        if (!KinReportDraftClient.holdsDraft({ ...next, drawings: held.drawings })) { kinWrite($("#stale-status"), kinSay("내용이 비어 있어 기준을 잡을 수 없습니다.")); return; }
         if (RFIELDS.some(k => $("#" + k).value !== next[k]) || reportWriteBlock()) return;
       }
       staleBusy = true;
       $("#stale-rebase").disabled = true;
-      $("#stale-status").textContent = "기준을 다시 잡는 중…";
+      kinWrite($("#stale-status"), kinSay("기준을 다시 잡는 중…"));
       /**
        * **화면에 보인 그 판 번호 그대로** 보낸다. 그 사이 승인본이 또 올라갔더라도
        * 여기서 따라 올리지 않는다 — 사람이 본 적 없는 판을 기준으로 삼는 것이
@@ -6949,7 +6995,7 @@
       } catch (e) {
         if (!work.admits(at) || citationReads.get(uid) !== ticket) return mine = false;
         // 확인하지 못한 것과 인용이 없는 것은 다르다. 모른다고 말하고, 키는 만들지 않는다.
-        citationNotes.set(uid, "인용 건수를 확인하지 못했습니다: " + e.message);
+        citationNotes.set(uid, kinSay("인용 건수를 확인하지 못했습니다: {e0}", e.message));
         return false;
       } finally {
         // 이 읽기의 표는 이 읽기가 치운다(자기 것만).
@@ -7346,7 +7392,7 @@
       bar.style.display = "flex";
       $("#b-cite-list").style.display = row ? "" : "none";
       // The note is a sentence of its own (its own text), so the screen language reaches it whole.
-      if (!row) { $("#citemsg").replaceChildren("● ", note); }
+      if (!row) kinWrite($("#citemsg"), kinSay("● {t0}", note ?? ""));
       else $("#citemsg").textContent =
         (unknownDraft
             ? `● 승인본 ${row.head.length}건 · 저장된 초안의 인용은 다시 확인하는 중입니다` + (note ? ` (${note})` : "")
@@ -7471,9 +7517,9 @@
       if (plan.mode === "end")
         return kinSay("삽입 위치: {t0} 칸 맨 끝 — 이 칸에서 확인된 커서 자리가 없어 끝에 붙입니다", { t: label });
       return kinSay("삽입 위치: {t0} 칸 {n1}번째 줄(줄바꿈 기준)부터{t2}{t3}{t4}", { t: label }, plan.line,
-        { t: plan.snapped === "line-end" ? " · 커서가 줄 중간이라 그 줄 다음으로 맞췄습니다" : "" },
-        { t: plan.snapped === "past-citation" ? " · 이미 인용된 문장을 쪼개지 않도록 그 뒤로 옮겼습니다" : "" },
-        { t: plan.mode === "selection" ? " · 선택한 글은 지우지 않고 그 뒤에 넣습니다" : "" });
+        { t: plan.snapped === "line-end" ? kinSay(" · 커서가 줄 중간이라 그 줄 다음으로 맞췄습니다") : "" },
+        { t: plan.snapped === "past-citation" ? kinSay(" · 이미 인용된 문장을 쪼개지 않도록 그 뒤로 옮겼습니다") : "" },
+        { t: plan.mode === "selection" ? kinSay(" · 선택한 글은 지우지 않고 그 뒤에 넣습니다") : "" });
     }
     /**
      * 200을 받은 뒤 **화면에** 놓을 계획(P-10). 보낸 문자열이 딛고 선 값이 아직 그대로면 그
@@ -7552,11 +7598,11 @@
       if (!citePane) return;
       const s = cur();
       const why = citationInsertBlock();
-      $("#cite-preview-target").textContent = s
-        ? `삽입 대상: ${s.name} (${s.id})\n${s.date} · ${shownStudyDesc(s)} · AccNo: ${s.acc || "없음"}`
-        : "삽입 대상: 검사 미선택";
+      kinWrite($("#cite-preview-target"), s
+        ? kinSay("삽입 대상: {0} ({1})\n{2} · {3} · AccNo: {4}", s.name, s.id, s.date, shownStudyDesc(s), s.acc || kinSay("없음"))
+        : kinSay("삽입 대상: 검사 미선택"));
       kinWrite($("#cite-preview-source"), kinSay("출처: {0} · 소견 r{1} · 인용 당시 연결 {2}",
-        { t: citePane.sourceLabel }, citePane.findingRevision, citePane.linkState));
+        citePane.sourceLabel, citePane.findingRevision, citePane.linkState));
       // 미리보기는 **조립된 그 유니코드 문자열 그대로**를 보인다. 공백도 줄바꿈도 보존된다.
       $("#cite-preview-block").textContent = citePane.block;
       // 측정 줄은 블록 바로 아래, 따로 표시된 칸에 — 사람 글과 기계가 붙인 글을 눈으로 가를 수 있게.
@@ -7664,7 +7710,7 @@
         work.commit(at, () => {
           if (!live()) return;
           setMeasure(pane, { state: "failed", seq,
-            note: kinSay("측정값을 넣지 않았습니다 — {e0}. 체크를 다시 켜면 다시 읽습니다.", { e: e?.transport === "timeout" ? "요청 시간이 초과되었습니다" : e?.message || String(e) }) });
+            note: kinSay("측정값을 넣지 않았습니다 — {e0}. 체크를 다시 켜면 다시 읽습니다.", { e: e?.transport === "timeout" ? kinSay("요청 시간이 초과되었습니다") : e?.message || String(e) }) });
         });
       }
     });
@@ -7706,7 +7752,7 @@
       if (!pane || citeBusy) return;
       const void_ = () => pane.uid !== selectedUid || pane.seq !== citeSeq || pane.selSeq !== selectionSeq;
       if (void_()) {
-        $("#cite-preview-status").textContent = "검사가 바뀌었습니다 — 이 창을 닫고 다시 확인하세요.";
+        kinWrite($("#cite-preview-status"), kinSay("검사가 바뀌었습니다 — 이 창을 닫고 다시 확인하세요."));
         $("#cite-preview-insert").disabled = true;
         return;
       }
@@ -9806,7 +9852,7 @@
             prep.uid = current.uid; prep.texts = current.texts; prep.reason = current.reason;
             showLogoutPanel(prep);
         logoutStatus(prep, kinSay("{t0}{n1}건은 저장하지 못했습니다 — 사유는 위 목록에 있습니다.{t2}{t3}", { t: stored ? kinSay("{n0}건은 저장했습니다. ", stored) : "" }, left.length,
-          { t: current.reason === "conflict" ? " Overwrite Server Draft를 누르면 충돌한 검사를 이 창의 내용으로 덮어씁니다(글만 — 붙은 그림은 서버의 초안 것을 따릅니다)." : "" }, { t: kept }));
+          { t: current.reason === "conflict" ? kinSay(" Overwrite Server Draft를 누르면 충돌한 검사를 이 창의 내용으로 덮어씁니다(글만 — 붙은 그림은 서버의 초안 것을 따릅니다).") : "" }, { t: kept }));
             return;
           }
           forgetCapture(prep);
@@ -9862,24 +9908,32 @@
       title.id = "kin-logout-title";
       // 판독문 초안 밖의 저장하지 않은 작업을 묻는 창(A006): 같은 창, 같은 두 갈래(돌아가기 / 버리고 나가기).
       const otherWork = prep.state === "failed" && prep.reason === "work";
-      title.textContent = otherWork ? "Unsaved Work" : LOGOUT_TITLES[prep.state] || LOGOUT_TITLES.closing;
+      kinWrite(title, otherWork ? kinSay("Unsaved Work") : kinSay(LOGOUT_TITLES[prep.state] || LOGOUT_TITLES.closing));
       const note = document.createElement("p");
-      note.textContent = otherWork
-        ? "저장하지 않은 작업이 있어 로그아웃하지 않았습니다. 로그아웃하면 아래 작업은 사라집니다. Back to Editing을 누르면 보던 그대로 돌아갑니다."
+      kinWrite(note, otherWork
+        ? kinSay("저장하지 않은 작업이 있어 로그아웃하지 않았습니다. 로그아웃하면 아래 작업은 사라집니다. Back to Editing을 누르면 보던 그대로 돌아갑니다.")
         : prep.state === "failed"
-        ? `${LOGOUT_FAILED[prep.reason] || LOGOUT_FAILED.refused} 로그아웃하지 않았고 입력한 내용은 이 화면에 그대로 있습니다.`
-        : LOGOUT_NOTES[prep.state] || LOGOUT_NOTES.closing;
+        ? kinSay("{0} 로그아웃하지 않았고 입력한 내용은 이 화면에 그대로 있습니다.", kinSay(LOGOUT_FAILED[prep.reason] || LOGOUT_FAILED.refused))
+        : kinSay(LOGOUT_NOTES[prep.state] || LOGOUT_NOTES.closing));
       const pending = document.createElement("p");
       if (otherWork) pending.textContent = (prep.work || []).join("\n");
       else if (["failed", "ended"].includes(prep.state)) {
         pending.style.whiteSpace = "pre-wrap";
         const label = report => prep.state === "ended" ? report.uid : `${report.label || report.uid} (${report.uid})`;
         const current = (prep.reports || []).find(report => report.uid === prep.uid);
-      // Each study line keeps its own parts: the study (data) and the reason (words of the page).
-      const lines = (prep.reports || []).filter(r => !r.safe)
-        .map(report => kinSay("{0}{t1}", label(report), { t: report.reason ? kinSay(" — {t0}", { t: LOGOUT_FAILED[report.reason] }) : "" }));
-      kinWrite(pending, kinSay("보존이 필요한 검사: {t0}{t1}", { t: kinSay(lines.map((_, i) => "{t" + i + "}").join("\n"), ...lines.map(line => ({ t: line }))) },
-        { t: current ? kinSay(" · 현재 확인 중: {0}", label(current)) : "" }));
+        kinWrite(pending, kinSay("보존이 필요한 검사: {t0}{t1}", "", ""));
+        const append = sentence => {
+          const node = document.createTextNode("");
+          pending.append(node);
+          kinWrite(node, sentence);
+        };
+        const unsafe = (prep.reports || []).filter(report => !report.safe);
+        unsafe.forEach((report, index) => {
+          if (index) pending.append("\n");
+          pending.append(label(report));
+          if (report.reason) append(kinSay(" — {t0}", kinSay(LOGOUT_FAILED[report.reason])));
+        });
+        if (current) append(kinSay(" · 현재 확인 중: {0}", label(current)));
       }
       const status = document.createElement("p");
       status.setAttribute("role", "status");
@@ -9895,19 +9949,19 @@
       const overwritable = prep.reason === "conflict" && !!prep.uid && !!draftClient.conflict(prep.uid)?.latest;
       if (prep.state === "waiting" || prep.state === "saving") {
         // 기다리는 동안에도 돌아갈 수 있다 — 준비의 취소는 아무것도 잃지 않는다.
-        button("Back to Editing", () => returnToEditing(prep));
+        button(kinSay("Back to Editing"), () => returnToEditing(prep));
       } else if (otherWork) {
-        button("Back to Editing", () => returnToEditing(prep));
-        button("Discard and Log Out", () => logOutAnyway(prep));
+        button(kinSay("Back to Editing"), () => returnToEditing(prep));
+        button(kinSay("Discard and Log Out"), () => logOutAnyway(prep));
       } else if (prep.state === "failed") {
-        button("Retry", () => { if (logoutPrep === prep && prep.state === "failed") saveForLogout(prep); });
-        if (overwritable) button("Overwrite Server Draft", () => overwriteServerDraft(prep));
-        button("Back to Editing", () => returnToEditing(prep));
-        button("Discard and Log Out", () => discardAndLogOut(prep));
+        button(kinSay("Retry"), () => { if (logoutPrep === prep && prep.state === "failed") saveForLogout(prep); });
+        if (overwritable) button(kinSay("Overwrite Server Draft"), () => overwriteServerDraft(prep));
+        button(kinSay("Back to Editing"), () => returnToEditing(prep));
+        button(kinSay("Discard and Log Out"), () => discardAndLogOut(prep));
       } else if (prep.state === "ended") {
-        button("Recover Draft", () => recoverEndedDraft(prep));
-        if (overwritable) button("Overwrite Server Draft", () => overwriteServerDraft(prep));
-        button("Discard Draft", () => dropEndedDraft(prep));
+        button(kinSay("Recover Draft"), () => recoverEndedDraft(prep));
+        if (overwritable) button(kinSay("Overwrite Server Draft"), () => overwriteServerDraft(prep));
+        button(kinSay("Discard Draft"), () => dropEndedDraft(prep));
       }
       prep.panel.replaceChildren(title, note, pending, status, actions);
       if (!prep.panel.open) prep.panel.showModal();
@@ -10361,10 +10415,11 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         // The Exam scope sentence is written whole, its Accession Nos as data, so the screen language reads it.
         const scopeLines = box.querySelectorAll("[data-exam-scope-text]");
         list.filter(v => v.group).forEach((v, i) => {
+          kinWrite(scopeLines[i].parentElement.querySelector("b"), kinSay("Exam scope"));
           kinWrite(scopeLines[i], v.group.readable
             ? kinSay("원본 검사({0})의 영상으로 쓴 판입니다{t1}", (KinExamScope.storedReport(v, uid)?.sources || [])
-                .map(source => studies.find(s => s.uid === source.studyUid)?.acc || source.studyUid).join(" + "), { t: v.group.active ? "" : " · 지금은 되돌린 범위" })
-            : "저장된 범위의 일부 영상을 볼 수 없어 이 판의 본문을 보이지 않습니다");
+                .map(source => studies.find(s => s.uid === source.studyUid)?.acc || source.studyUid).join(" + "), { t: v.group.active ? "" : kinSay(" · 지금은 되돌린 범위") })
+            : kinSay("저장된 범위의 일부 영상을 볼 수 없어 이 판의 본문을 보이지 않습니다"));
         });
         for (const button of box.querySelectorAll("[data-history-images]")) button.onclick = async () => {
           const version = Number(button.dataset.historyImages);
@@ -11633,6 +11688,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     let layoutMode = "auto";
     let workspaceState = KinWorkspaceLayout.defaults();
     let workspaceEnded = false, studyPanel = null, studyPanelRestoring = false, workspaceWasNarrow = false;
+    // Arrange Boxes (workspace-panels.js) follows every layout pass; it is defined later in the page.
+    let boxArrangeLayout = null;
     // A size under a drag is shown but stored only when the drag ends; the edge being resized now.
     let studyPanelPreview = null, studyPanelEdge = null;
     const studyPanelAvailable = () => KinAuth.has('radiologist') ? ['images', 'info', 'templates'] : ['images', 'info'];
@@ -11728,6 +11785,14 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       // Panels에서 되살린 선택을 기본 숨김 규칙으로 다시 덮지 않는다.
       const band = KinWorkspaceLayout.reportWindow(mode, geometry?.hiddenPanels || []);
       for (const [name, on] of Object.entries(band.classes)) document.body.classList.toggle(name, on);
+      // The five boxes' places (box-layout.js; the stylesheet applies them on the list screen only).
+      const boxSwaps = KinBoxLayout.arrangement(geometry?.boxSwaps || []).swaps;
+      for (const pair of KinBoxLayout.SWAPS) document.body.classList.toggle('kin-swap-' + pair, boxSwaps.includes(pair));
+      // The yields below bring the Related Report's first lines up past what is above it: the band and, stacked, the
+      // list. A box the reader put below the Related Report does not push it down, so it never yields for it; with the
+      // Report Editor above the Related Report the row scrolls instead (past the minimums the page scrolls).
+      const priorFirst = !boxSwaps.includes('report'), bandAbove = priorFirst && !boxSwaps.includes('side'),
+        listAbove = priorFirst && !boxSwaps.includes('columns');
       const shares = band.content.reduce((sum, p) => sum + p.share, 0);
       top.style.setProperty('--kin-rw-columns', band.content.map((p, i) => i === band.content.length - 1 ? 'minmax(0, 1fr)'
         : `${100 * p.share / shares}%`).join(' ') || 'minmax(0, 1fr)');
@@ -11858,20 +11923,22 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       };
       if (portrait && !narrow && (sizes.top == null || topMaximum < 140) && !document.body.classList.contains("reading")) {
         const over = lineOver();
-        if (over > 0) top.style.height = Math.max(140, Math.floor(top.getBoundingClientRect().height - over)) + "px";
+        if (over > 0 && bandAbove) top.style.height = Math.max(140, Math.floor(top.getBoundingClientRect().height - over)) + "px";
         // A band at its minimum can still leave the line below: the list's controls
         // took a line more (at 768x1024 the Selected toolbar wraps to a third line
         // since Preload, D1880). The stacked list yields the rest, as the narrow
         // sheet's does.
-        if (over > 0) listYields(lineOver());
+        if (over > 0 && listAbove) listYields(lineOver());
       }
       // In the narrow sheet the list band yields to that line the same way; the
       // next row is then a wheel turn away inside the band.
-      if (narrow && listNeed) listYields(lineOver());
+      if (narrow && listNeed && listAbove) listYields(lineOver());
       // Becoming the narrow sheet at selection reflows the list: bring the band's
       // top and the selected row back into view, scrolling inside the band only.
       if (becameNarrow && listNeed) {
         left.scrollTop = 0;
+        // Related Exam placed above the Worklist: the band starts at the list's own top instead.
+        if (boxSwaps.includes('list')) left.scrollTop = Math.max(0, listGrid.getBoundingClientRect().top - left.getBoundingClientRect().top - 6);
         const selected = selectedUid && listTable.tBodies[0]?.querySelector(`tr[data-uid="${CSS.escape(selectedUid)}"]`);
         if (selected) {
           const area = listGrid.getBoundingClientRect(), box = selected.getBoundingClientRect();
@@ -11882,6 +11949,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         }
       }
       if (studyPanel) placeStudyPanel();
+      boxArrangeLayout?.();
     }
     // The open Study Panel never covers the report section (W3R5-03 ②). Wide
     // landscape: the 360 px column left of the report, from the work area's top.
@@ -11908,27 +11976,49 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       // The default when nothing was chosen; otherwise the choice (or the default) within [minimum, room].
       const size = (name, initial, minimum, room) => wanted(name) == null && !text ? initial
         : Math.min(room, Math.max(minimum, wanted(name) ?? initial));
+      // Arrange Boxes may put the report column on the left (columns swapped) or the report section high in a stacked
+      // page: the panel then takes the room right of the report column, or below the report section, and its free
+      // edge faces the report from that side (flip). Never over the report section either way.
+      let flip = false;
+      const atRight = document.body.classList.contains('kin-swap-columns') && !document.body.classList.contains('reading');
+      host.style.left = atRight ? 'auto' : ''; host.style.right = atRight ? '12px' : '';
       const edge = (name, value, minimum, room) => {
         const key = axis + ':' + name;
         // The window turned or the panel changed form under a drag: that drag ends here without a result, and
         // the drawer stops it too (setSize names the new edge), so its release changes neither record.
         if (studyPanelPreview && studyPanelPreview.key !== key) studyPanelPreview = null;
         studyPanelEdge = { key, name, value, min: Math.min(minimum, room), max: room };
-        studyPanel.setSize({ axis: name === 'width' ? 'x' : 'y', key, value, min: studyPanelEdge.min, max: room });
+        studyPanel.setSize({ axis: name === 'width' ? 'x' : 'y', key, value, min: studyPanelEdge.min, max: room, flip });
       };
       studyPanel.setText(text);
-      const report = $('.report-p').getBoundingClientRect();
+      // The report section is the Report Editor box; in Technician (no editor) with the columns swapped, the Order
+      // List in its place, so the panel measured from the right never covers it either.
+      let report = $('.report-p').getBoundingClientRect();
+      if (!report.width && atRight && $('.order-p')?.getClientRects().length) report = $('.order-p').getBoundingClientRect();
       if (portraitLayout() || innerWidth <= 1100) {
         const area = $('.split').getBoundingClientRect();
         const top = Math.max(0, area.top), bottom = Math.min(report.top, area.bottom, innerHeight) - 12;
         host.style.top = top + 'px';
+        const beside = atRight ? innerWidth - report.right - 24 : report.left - 24;
         // Too little room above a report column beside the work area (Reading
-        // Workspace, short side-by-side windows): the column left of it instead.
-        if (bottom - top < 240 && report.left - 24 >= 240) {
-          const room = report.left - 24, width = size('width', room, minWidth, room);
+        // Workspace, short side-by-side windows): the column left of it instead (right of it with the columns swapped).
+        if (bottom - top < 240 && beside >= 240) {
+          const room = beside, width = size('width', room, minWidth, room);
+          flip = atRight;
           host.style.width = width + 'px';
           host.style.height = Math.max(120, Math.min(area.bottom, innerHeight) - 12 - top) + 'px';
           edge('width', width, minWidth, room);
+          return;
+        }
+        // A report section the reader moved up (stacked page): the room below it when the room above is too small and
+        // the room below is the larger one (with both small, the larger keeps the most of the section clear).
+        const below = Math.min(area.bottom, innerHeight) - 12 - (report.bottom + 12);
+        if (bottom - top < 240 && below > bottom - top && below >= 120) {
+          flip = true;
+          const height = Math.max(120, size('height', Math.min(innerHeight * 0.55, below), minHeight, below));
+          host.style.top = (Math.min(area.bottom, innerHeight) - 12 - height) + 'px';
+          host.style.height = height + 'px';
+          edge('height', height, Math.max(120, minHeight), below);
           return;
         }
         const room = Math.max(120, bottom - top);
@@ -11943,7 +12033,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       // The 360 px column (D1041 3-①) is the stylesheet's; any width, the default included, ends 12 px before the
       // report column, so neither the panel nor its edge reaches a report column widened to its largest
       // (Reading Workspace, Image and Report Size at End: W3R7-05). Where there is room it is the 360 px column.
-      const room = Math.max(120, Math.min(innerWidth, report.width ? report.left : innerWidth) - 24);
+      flip = atRight;
+      const room = atRight ? Math.max(120, (report.width ? innerWidth - report.right : innerWidth) - 24)
+        : Math.max(120, Math.min(innerWidth, report.width ? report.left : innerWidth) - 24);
       const width = size('width', Math.min(360, room), minWidth, room);
       if (wanted('width') != null || text || width !== 360) host.style.width = width + 'px';
       edge('width', width, minWidth, room);
@@ -12564,6 +12656,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     // 네트워크 대기 전에 그 목록을 동기로 부른다. auth.js의 session-ended 방송은 그 POST가 끝난 뒤라 기다리지 않는다.
     // 한 영역이 알아챈 계정 변경(다른 계정의 봉투·OWNER_CHANGED)은 같은 목록에 사유 'account-changed'로 알려 두 영역을 함께 잠근다.
     function mountStudyQuestions({ apiBase, work, transport, current, study, openStudy, allowed, owner, online = () => true }) {
+      // The page's sentences and the words it writes go through the screen language (this part also runs on its own).
+      const kinSay = (t, ...p) => window.KinLanguage ? window.KinLanguage.say(t, ...p) : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+      const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
       const root = $('#question-p'), summary = $('#question-summary'), toggle = $('#question-toggle');
       const inboxButton = $('#question-inbox'), pane = $('#question-pane'), notice = $('#question-notice');
       const TEXT = {
@@ -12663,7 +12758,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const make = (tag, className, text) => {
         const node = document.createElement(tag);
         if (className) node.className = className;
-        if (text !== undefined) node.textContent = text;
+        if (text !== undefined) kinWrite(node, text);
         return node;
       };
       const button = (label, onClick) => {
@@ -12682,8 +12777,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       };
       const setState = (box, state, text, detail) => {
         box.dataset.state = state;
-        box.querySelector('.question-text').textContent = text;
-        box.querySelector('.question-detail').textContent = detail || '';
+        kinWrite(box.querySelector('.question-text'), text);
+        kinWrite(box.querySelector('.question-detail'), detail || '');
       };
       const dash = value => typeof value === 'string' && value.trim() ? value : '—';
       const person = value => dash(value && (value.name || value.actor));
@@ -12823,7 +12918,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const studyView = make('div');
       studyView.dataset.view = 'study';
       const listState = stateBox('question-list-state');
-      const listRetry = button('Retry', () => loadList());
+      const listRetry = button(kinSay('Retry'), () => loadList());
       listRetry.id = 'question-list-retry';
       listState.append(listRetry);
       const list = make('ol');
@@ -12836,7 +12931,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const inboxView = make('div');
       inboxView.dataset.view = 'inbox';
       const inboxHead = make('div', 'question-actions');
-      const inboxLabel = make('label', null, 'State');
+      const inboxLabel = make('label', null, kinSay('State'));
       inboxLabel.htmlFor = 'question-inbox-filter';
       const inboxFilter = make('select');
       inboxFilter.id = 'question-inbox-filter';
@@ -12846,18 +12941,18 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         inboxFilter.append(option);
       }
       inboxFilter.addEventListener('change', () => { inboxState = inboxFilter.value; loadInbox(false); });
-      const inboxReload = button('Reload', () => loadInbox(false));
+      const inboxReload = button(kinSay('Reload'), () => loadInbox(false));
       inboxReload.id = 'question-inbox-reload';
       inboxHead.append(inboxLabel, inboxFilter, inboxReload);
       const inboxLine = stateBox('question-inbox-state');
-      const inboxRetry = button('Retry', () => loadInbox(inboxItems.length > 0));
+      const inboxRetry = button(kinSay('Retry'), () => loadInbox(inboxItems.length > 0));
       inboxRetry.id = 'question-inbox-retry';
       inboxLine.append(inboxRetry);
       const inboxList = make('ol');
       inboxList.id = 'question-inbox-list';
-      const inboxMore = button('More', () => loadInbox(true));
+      const inboxMore = button(kinSay('More'), () => loadInbox(true));
       inboxMore.id = 'question-inbox-more';
-      inboxView.append(make('p', 'question-muted', TEXT.inboxHint), inboxHead, inboxLine, inboxList, inboxMore);
+      inboxView.append(make('p', 'question-muted', kinSay(TEXT.inboxHint)), inboxHead, inboxLine, inboxList, inboxMore);
       pane.append(lockBox, studyView, inboxView);
 
       /**
@@ -12870,26 +12965,26 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         root.dataset.state = ended ? 'ended' : lock ? 'locked' : listFailure ? 'failed' : listLoading ? 'loading'
           : items === null ? 'idle' : items.length ? 'ready' : 'empty';
         const counts = state => (items || []).filter(item => item.state === state).length;
-        const line = lock ? lock.text : shownFor && !online() ? TEXT.offline : uid === null || !allowed() ? (shownFor ? TEXT.unread : TEXT.none)
-          : listFailure ? TEXT.failed
-          : items === null ? TEXT.loading
-          : items.length ? TEXT.counts(items.length, counts('Open'), counts('Answered'), counts('Closed')) : TEXT.empty;
-        summary.textContent = line;
-        summary.title = line;
+        const line = lock ? lock.text : shownFor && !online() ? kinSay(TEXT.offline) : uid === null || !allowed() ? (shownFor ? kinSay(TEXT.unread) : kinSay(TEXT.none))
+          : listFailure ? kinSay(TEXT.failed)
+          : items === null ? kinSay(TEXT.loading)
+          : items.length ? TEXT.counts(items.length, counts('Open'), counts('Answered'), counts('Closed')) : kinSay(TEXT.empty);
+        kinWrite(summary, line);
+        kinWrite(summary, line, "title");
         if (notice) {
           // 알 때만 말한다: 잠김·실패·질문 있음은 그 글, 성공한 빈 답·읽지 않는 검사는 알림 없음, 읽는 중은 그대로.
           const parts = ['Open', 'Answered', 'Closed'].filter(state => counts(state)).map(state => `${state} ${counts(state)}`).join(' · ');
           // 끊긴 동안은 새로 아는 것이 없다: 마지막으로 말한 것을 그대로 둔다.
-          const now = !lock && uid !== null && !allowed() ? null : lock ? (lock.account ? TEXT.notice.account : TEXT.notice.refused) : listFailure ? TEXT.notice.failed
+          const now = !lock && uid !== null && !allowed() ? null : lock ? (lock.account ? kinSay(TEXT.notice.account) : kinSay(TEXT.notice.refused)) : listFailure ? kinSay(TEXT.notice.failed)
             : items && items.length ? TEXT.notice.counts(items.length, parts) : uid === null || items !== null ? '' : null;
-          if (now !== null) told = now ? { text: now, title: `${line} — Show Questions` } : null;
+          if (now !== null) told = now ? { text: now, title: kinSay('{t0} — Show Questions', { t: line }) } : null;
           notice.hidden = ended || visible || !told;
           if (told) {
-            notice.textContent = told.text;
-            notice.title = told.title;
+            kinWrite(notice, told.text);
+            kinWrite(notice, told.title, 'title');
           }
         }
-        toggle.textContent = mode === 'study' ? 'Hide Questions' : 'Show Questions';
+        kinWrite(toggle, mode === 'study' ? kinSay('Hide Questions') : kinSay('Show Questions'));
         toggle.setAttribute('aria-expanded', String(mode === 'study'));
         inboxButton.setAttribute('aria-expanded', String(mode === 'inbox'));
         pane.hidden = mode === null;
@@ -12914,7 +13009,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         const li = make('li');
         li.dataset.id = item.id;
         if (item.id === threadId) li.setAttribute('aria-current', 'true');
-        const open = button('Open Thread', () => openThread(item.id));
+        const open = button(kinSay('Open Thread'), () => openThread(item.id));
         open.dataset.openThread = '';
         li.append(badge(item.state), ' ',
           TEXT.item(time(item.createdAt), person(item.author), item.entryCount, time(item.lastEntryAt)), ' ', open);
@@ -12935,7 +13030,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       function buildThread(target, id) {
         threadBox.dataset.id = id;
         const head = make('div', 'question-actions');
-        const title = make('h4', null, 'Thread');
+        const title = make('h4', null, kinSay('Thread'));
         const status = make('span');
         status.dataset.part = 'status';
         head.append(title, status);
@@ -12943,17 +13038,17 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         meta.dataset.part = 'meta';
         const state = stateBox('question-thread-state');
         state.dataset.part = 'state';
-        const retry = button('Retry', () => loadThread());
+        const retry = button(kinSay('Retry'), () => loadThread());
         retry.dataset.part = 'retry';
         state.append(retry);
         const entries = make('ol');
         entries.id = 'question-entries';
         entries.dataset.part = 'entries';
-        const closed = make('p', 'question-muted', TEXT.closedNote);
+        const closed = make('p', 'question-muted', kinSay(TEXT.closedNote));
         closed.dataset.part = 'closed';
         const reply = composer(target, id, 'reply', { label: 'Reply', hint: TEXT.replyHint, button: 'Reply', multiline: true });
         // OQ-11 (a): 서버는 답변 문장을 거르지 않는다. 확정 전 소견이 그대로 전해진다는 사실을 입력 곁에 둔다.
-        const nonFinal = make('p', 'question-nonfinal', TEXT.nonFinal);
+        const nonFinal = make('p', 'question-nonfinal', kinSay(TEXT.nonFinal));
         nonFinal.id = 'question-nonfinal';
         reply.querySelector('textarea').before(nonFinal);
         reply.querySelector('textarea').setAttribute('aria-describedby', 'question-reply-hint question-nonfinal');
@@ -12994,7 +13089,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         li.dataset.kind = entry.kind;
         const meta = make('p', 'question-muted');
         meta.append(make('strong', null, KINDS[entry.kind]), ` · ${person(entry.author)} (${ROLES[entry.author.role]}) · ${time(entry.at)}`);
-        const body = entry.body ? Object.assign(make('p', 'question-body', entry.body), { translate: false }) : make('p', 'question-muted', TEXT.closeEmpty);
+        const body = entry.body ? Object.assign(make('p', 'question-body', entry.body), { translate: false }) : make('p', 'question-muted', kinSay(TEXT.closeEmpty));
         li.append(meta, body);
         const signed = window.KinClinicalSignature?.(evidence, entry.seq);
         if (signed) li.append(make('p', 'question-muted', signed));
@@ -13002,7 +13097,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         if (entry.kind === 'answer' && (entry.reportAnchor.rs !== current.rs || entry.reportAnchor.version !== current.version)) {
           const note = make('p', 'question-anchor');
           note.dataset.anchor = '';
-          note.append(make('strong', null, TEXT.anchorChanged), ' ', TEXT.anchorDetail(reportText(entry.reportAnchor), reportText(current)));
+          note.append(make('strong', null, kinSay(TEXT.anchorChanged)), ' ', TEXT.anchorDetail(reportText(entry.reportAnchor), reportText(current)));
           li.append(note);
         }
         return li;
@@ -13034,9 +13129,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         const actions = make('div', 'question-actions');
         const send = button(spec.button, () => submit(target, id, action, field));
         send.dataset.send = '';
-        const retry = button('Retry', () => resend(key));
+        const retry = button(kinSay('Retry'), () => resend(key));
         retry.dataset.retry = '';
-        const discard = button('Discard', () => drop(key));
+        const discard = button(kinSay('Discard'), () => drop(key));
         discard.dataset.discard = '';
         actions.append(send, retry, discard);
         wrap.append(label, hint, field, actions);
@@ -13426,11 +13521,11 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         li.dataset.uid = item.studyUid;
         const row = study(item.studyUid);
         const label = row ? `${dash(row.name)} · ${dash(row.id)} · ${dash(row.date)} · ${dash(row.desc)}` : `${TEXT.unlisted} · ${item.studyUid}`;
-        const open = button('Open Study', () => openFromInbox(item));
+        const open = button(kinSay('Open Study'), () => openFromInbox(item));
         open.dataset.openStudy = '';
         if (!row) {
           open.disabled = true;
-          open.title = TEXT.notListed;
+          kinWrite(open, kinSay(TEXT.notListed), "title");
         }
         li.append(badge(item.state), ' ', make('span', null, label), ' ',
           make('span', 'question-muted', TEXT.item(time(item.createdAt), person(item.author), item.entryCount, time(item.lastEntryAt))), ' ', open);
@@ -13752,8 +13847,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       workspaceLocalKept = !["disabled", "unavailable"].includes(result.status);
       layoutMode = workspaceState.mode;
       readingWorkspace.applyPanels(workspaceState.reading || KinReadingPanelLayout.defaults());
-      $("#layout-status").textContent = ({ restored: "배치 복원됨 · 이 브라우저", empty: "배치 · 이 브라우저",
-        disabled: "배치 · 이 창에서만 유지", invalid: "저장된 배치 오류 · 기본 배치", unavailable: "배치 저장소 사용 불가 · 기본 배치" })[result.status];
+      kinWrite($("#layout-status"), kinSay(({ restored: "배치 복원됨 · 이 브라우저", empty: "배치 · 이 브라우저",
+        disabled: "배치 · 이 창에서만 유지", invalid: "저장된 배치 오류 · 기본 배치", unavailable: "배치 저장소 사용 불가 · 기본 배치" })[result.status]));
       applyLayout();
     }
     $("#layout-toggle").addEventListener("click", () => {
@@ -13832,8 +13927,11 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         `<label${key === 'aiReport' ? ' title="추후 구현 탭입니다. 표시 여부만 정합니다."' : ''}><input type="checkbox" data-panel="${key}"> ${label}</label>`).join('')}</fieldset>
       <p>이 브라우저에 계정별로 기억합니다. 다른 기기에서는 View &gt; Account Layout으로 계정에 저장하고 불러오세요.</p>
       <p id="panel-settings-status" role="status"></p>
-      <footer><button type="button" id="panel-settings-show-all">Show All Panels</button><button type="button" id="panel-settings-close">Close</button></footer>`;
+      <footer><button type="button" id="box-arrange-open"></button><button type="button" id="panel-settings-show-all">Show All Panels</button><button type="button" id="panel-settings-close">Close</button></footer>`;
     document.body.append(panelDialog);
+    // Arrange Boxes is written as a product sentence (the dialog is built after the page's first markup was read).
+    kinWrite($('#box-arrange-open'), kinSay('Arrange Boxes'));
+    kinWrite($('#box-arrange-open'), kinSay('Worklist·Related Exam·Clinical Information·Related Report·Report Editor 상자를 끌어 서로 자리를 바꿉니다.'), 'title');
     const hiddenPanelsNow = () => workspaceState.workspace?.hiddenPanels?.slice() || [];
     function renderPanelSettings() {
       const hidden = hiddenPanelsNow(), editable = workspaceEditable();
@@ -13857,14 +13955,321 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     });
     $('#panel-settings-show-all').addEventListener('click', () => choosePanels([]));
     $('#panel-settings-close').addEventListener('click', () => panelDialog.close());
-    panelDialog.addEventListener('close', () => { const opener = $('#panel-settings-open'); if (!opener.disabled) opener.focus({ preventScroll: true }); });
+    // Arrange Boxes (below) closes this dialog and takes the focus to its first box itself.
+    panelDialog.addEventListener('close', () => { const opener = $('#panel-settings-open'); if (!opener.disabled && !arranging) opener.focus({ preventScroll: true }); });
     $('#panel-settings-open').addEventListener('click', () => {
       if (!workspaceEditable() || panelDialog.open) return;
       $('#panel-settings-status').textContent = ''; renderPanelSettings(); panelDialog.showModal();
       panelDialog.querySelector('input[data-panel]').focus();
     });
+    // ── Arrange Boxes, from Panel Settings (studio 2026-11-01: "Allow me to drop and drag these boxes so I can configure it the way I want to") ──
+    // The five boxes trade places inside the page's current structure (box-layout.js): the swaps are kept in the same
+    // layout record as the panel sizes, so this browser keeps them per account, Account Layout carries them to another
+    // browser and Reset Layout puts every box home. The boxes never change parents: only their order does.
+    const BOX_LABEL = { worklist: 'Worklist', relatedExams: 'Related Exam', clinical: 'Clinical Information',
+      relatedReports: 'Related Report', editor: 'Report Editor' };
+    const boxSwapsNow = () => KinWorkspaceLayout.boxSwaps(workspaceState);
+    function boxRect(nodes, clips) {
+      let top = Infinity, left = Infinity, right = -Infinity, bottom = -Infinity;
+      for (const node of nodes) {
+        if (!node?.isConnected || !node.getClientRects().length) continue;
+        const r = node.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) continue;
+        top = Math.min(top, r.top); left = Math.min(left, r.left); right = Math.max(right, r.right); bottom = Math.max(bottom, r.bottom);
+      }
+      if (top === Infinity) return { rect: null, visible: null };
+      const rect = { x: left, y: top, width: right - left, height: bottom - top };
+      for (const clip of [...clips, $('.split')]) {
+        if (!clip?.getClientRects().length) continue;
+        const c = clip.getBoundingClientRect();
+        top = Math.max(top, c.top); left = Math.max(left, c.left); right = Math.min(right, c.right); bottom = Math.min(bottom, c.bottom);
+      }
+      top = Math.max(top, 0); left = Math.max(left, 0); right = Math.min(right, innerWidth); bottom = Math.min(bottom, innerHeight);
+      return { rect, visible: right - left > 0 && bottom - top > 0 ? { x: left, y: top, width: right - left, height: bottom - top } : null };
+    }
+    /**
+     * Where each of the five boxes is now, in screen order (later work on this page reads the boxes here, never from
+     * their parents): key, label, the elements that make the box, its column ('A' = the list column, 'B' = the report
+     * column) and side ('first' = left/top of the page), its place inside the column, its whole rectangle and the part
+     * of it on screen. `shown` is false where the box is not on this screen (the Reading Workspace keeps its own
+     * arrangement; Clinical Information hidden in Panels or lent to the Study Panel; a box scrolled out of view).
+     */
+    function workspaceBoxes() {
+      const arrangement = KinBoxLayout.arrangement(boxSwapsNow()), tech = mode === 'Technician';
+      const reading = document.body.classList.contains('reading');
+      const parts = {
+        worklist: [...$('.left').children].filter(n => !n.matches('#worklist-folders-panel, #resize-left-split, .related-list-pane, #routing-factors')),
+        relatedExams: [$('.related-list-pane')],
+        clinical: [$('.right > .rw')],
+        relatedReports: [$('.related-p')],
+        editor: [$(tech ? '.order-p' : '.report-p')],
+      };
+      const clips = { worklist: ['.left'], relatedExams: ['.left'], clinical: ['.right'], relatedReports: ['.workrow', '.right'], editor: ['.workrow', '.right'] };
+      return arrangement.order.map(key => {
+        const { rect, visible } = boxRect(parts[key], clips[key].map(s => $(s)));
+        const clinicalAway = key === 'clinical' && !$('.rw > .s-clinical')?.getClientRects().length;
+        return { key, label: key === 'editor' && tech ? 'Order List' : BOX_LABEL[key], elements: parts[key],
+          ...arrangement.positions[key], rect, visible, shown: !reading && !clinicalAway && !!visible };
+      });
+    }
+    // What a drop of `from` on `to` would do, said before the drop (pointer and keyboard alike).
+    function boxOutcome(from, to) {
+      const pair = KinBoxLayout.swapFor(from, to), on = boxSwapsNow(), tech = mode === 'Technician';
+      if (!pair) return '같은 상자입니다. 놓아도 바뀌지 않습니다.';
+      if (pair === 'list') return '놓으면 Worklist와 Related Exam이 자리를 바꿉니다.';
+      if (pair === 'report') return tech ? '놓으면 Related Report와 Order List가 자리를 바꿉니다.' : '놓으면 Related Report와 Report Editor가 자리를 바꿉니다.';
+      if (pair === 'side') return on.includes('side') ? '놓으면 Clinical Information 띠가 판독 열의 맨 위로 갑니다.' : '놓으면 Clinical Information 띠가 판독 열의 맨 아래로 갑니다.';
+      const away = !on.includes('columns');
+      if (portraitLayout()) return away ? '놓으면 두 열이 바뀝니다: 목록 열(Worklist·Related Exam)이 아래로, 판독 열이 위로 갑니다.'
+        : '놓으면 두 열이 바뀝니다: 목록 열(Worklist·Related Exam)이 위로, 판독 열이 아래로 갑니다.';
+      return away ? '놓으면 두 열이 바뀝니다: 목록 열(Worklist·Related Exam)이 오른쪽으로, 판독 열이 왼쪽으로 갑니다.'
+        : '놓으면 두 열이 바뀝니다: 목록 열(Worklist·Related Exam)이 왼쪽으로, 판독 열이 오른쪽으로 갑니다.';
+    }
+    const arrangeBar = document.createElement('div');
+    arrangeBar.id = 'box-arrange-bar'; arrangeBar.hidden = true;
+    arrangeBar.setAttribute('role', 'region');
+    // The bar is built after the page's first markup was read for the screen language, so each fixed caption is
+    // written as a product sentence (kinSay) and follows the language the reader chose.
+    arrangeBar.innerHTML = `<p id="box-arrange-help" lang="ko"></p>
+      <span id="box-arrange-status" role="status" aria-live="polite" lang="ko"></span>
+      <button type="button" class="chip" data-box-swap="columns"></button>
+      <button type="button" class="chip" data-box-swap="list"></button>
+      <button type="button" class="chip" data-box-swap="side"></button>
+      <button type="button" class="chip" data-box-swap="report" data-label-tech="Swap Related Report / Order List"></button>
+      <button type="button" class="chip" id="box-arrange-default"></button>
+      <button type="button" class="chip" id="box-arrange-done"></button>`;
+    const BOX_SWAP_LABEL = { columns: 'Swap Columns', list: 'Swap Worklist / Related Exam', side: 'Move Clinical Information',
+      report: 'Swap Related Report / Report Editor' };
+    kinWrite(arrangeBar, kinSay('Arrange Boxes'), 'aria-label');
+    kinWrite(arrangeBar.querySelector('#box-arrange-help'), kinSay('상자를 다른 상자 위로 끌어 놓으면 두 상자가 자리를 바꿉니다. 다른 열의 상자에 놓으면 두 열이 통째로 바뀝니다. 키보드: 상자에서 Enter로 집고, 놓을 상자에서 Enter를 누릅니다. Tab 순서는 화면 배치와 관계없이 그대로입니다.'));
+    for (const button of arrangeBar.querySelectorAll('[data-box-swap]')) {
+      button.dataset.label = BOX_SWAP_LABEL[button.dataset.boxSwap]; kinWrite(button, kinSay(BOX_SWAP_LABEL[button.dataset.boxSwap]));
+    }
+    kinWrite(arrangeBar.querySelector('#box-arrange-default'), kinSay('Default Arrangement'));
+    kinWrite(arrangeBar.querySelector('#box-arrange-done'), kinSay('Done'));
+    const coverLayer = document.createElement('div');
+    coverLayer.id = 'box-arrange-covers'; coverLayer.hidden = true;
+    document.body.append(coverLayer, arrangeBar);
+    let arranging = false, boxPicked = null, boxDrag = null, boxDropped = false, arrangeReturn = null, lastWorkFocus = null, coverFrame = 0;
+    // The field the reader was in before opening Panel Settings: Done puts focus back there (its caret and text are
+    // untouched). Kept only while the page works (stopWorkspaceLayout removes it and forgets the field).
+    const noteWorkFocus = event => {
+      const el = event.target;
+      if (el instanceof Element && el.closest('.split') && !el.closest('.kin-box-cover')) lastWorkFocus = el;
+    };
+    document.addEventListener('focusin', noteWorkFocus, true);
+    // The covers follow the boxes: a resize handle dragged while arranging, a notice growing a box, the window.
+    const coverObserver = new ResizeObserver(() => scheduleCovers()), coverObserved = new Set();
+    // The scroller a box lives in (the list column, the report row, a stacked page), so the wheel over a cover still
+    // scrolls what is under it.
+    function boxScroller(node) {
+      for (let el = node?.parentElement; el && el !== document.body; el = el.parentElement) {
+        const style = getComputedStyle(el);
+        if (/(auto|scroll)/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 1) return el;
+      }
+      return null;
+    }
+    // Only the product's own sentences above and below come here (boxOutcome, BOX_SAID, literals), never a value.
+    const arrangeStatus = text => { kinWrite($('#box-arrange-status'), kinSay(text)); };
+    function renderBoxCovers() {
+      if (!arranging) return;
+      const boxes = workspaceBoxes().filter(box => box.shown);
+      const keep = new Map([...coverLayer.children].map(node => [node.dataset.box, node]));
+      // Each box element is observed once while arranging (observing again would report it again, every frame).
+      for (const box of workspaceBoxes()) for (const node of box.elements) {
+        if (node && !coverObserved.has(node)) { coverObserved.add(node); coverObserver.observe(node); }
+      }
+      const nodes = boxes.map(box => {
+        let cover = keep.get(box.key);
+        if (!cover) {
+          cover = document.createElement('button');
+          cover.type = 'button'; cover.className = 'kin-box-cover'; cover.dataset.box = box.key;
+          cover.innerHTML = '<span class="kin-box-name"></span><small lang="ko"></small>';
+          kinWrite(cover.querySelector('small'), kinSay('다른 상자 위로 끌어 놓으세요'));
+          cover.addEventListener('pointerdown', startBoxDrag);
+          cover.addEventListener('click', boxKey);
+          cover.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); escapeArrange(); } });
+          cover.addEventListener('wheel', event => {
+            const scroller = boxScroller(workspaceBoxes().find(b => b.key === cover.dataset.box)?.elements[0]);
+            if (!scroller) return;
+            event.preventDefault();
+            scroller.scrollBy({ top: event.deltaY, left: event.deltaX });
+          }, { passive: false });
+        }
+        const name = cover.querySelector('.kin-box-name');
+        if (cover.dataset.label !== box.label) { cover.dataset.label = box.label; kinWrite(name, kinSay(box.label)); kinWrite(cover, kinSay(box.label), 'aria-label'); }
+        cover.setAttribute('aria-pressed', String(boxPicked === box.key || boxDrag?.from === box.key));
+        Object.assign(cover.style, { left: box.visible.x + 'px', top: box.visible.y + 'px', width: box.visible.width + 'px', height: box.visible.height + 'px' });
+        return cover;
+      });
+      // Covers follow the screen order, so Tab among them goes the way the boxes are now shown. A cover is moved in the
+      // layer only when that order changed, and never under a press: moving a node ends its pointer capture and drops
+      // the click that a press and release on it make.
+      const current = [...coverLayer.children];
+      if (boxDrag) {
+        // Under a press: a box scrolled into view gets its cover, one scrolled away loses it; the pressed cover stays.
+        for (const node of current) if (node !== boxDrag.cover && !nodes.includes(node)) node.remove();
+        for (const node of nodes) if (!node.isConnected) coverLayer.append(node);
+      } else if (current.length !== nodes.length || current.some((node, i) => node !== nodes[i])) {
+        const focused = coverLayer.contains(document.activeElement) ? document.activeElement : null;
+        coverLayer.replaceChildren(...nodes);
+        if (focused && !focused.isConnected) coverLayer.querySelector('.kin-box-cover')?.focus({ preventScroll: true });
+        else if (focused && document.activeElement !== focused) focused.focus({ preventScroll: true });
+      }
+      if (boxPicked && !nodes.some(node => node.dataset.box === boxPicked)) boxPicked = null;
+    }
+    const scheduleCovers = () => {
+      if (!arranging || coverFrame) return;
+      coverFrame = requestAnimationFrame(() => { coverFrame = 0; renderBoxCovers(); });
+    };
+    function markTarget(key) {
+      for (const cover of coverLayer.children) {
+        const target = !!key && cover.dataset.box === key;
+        cover.classList.toggle('kin-box-target', target);
+        const from = boxDrag?.from || boxPicked;
+        kinWrite(cover.querySelector('small'), kinSay(target && from ? boxOutcome(from, key)
+          : cover.dataset.box === from ? '집었습니다. 놓을 상자 위에서 놓으세요.' : '다른 상자 위로 끌어 놓으세요'));
+      }
+      if (key && (boxDrag?.from || boxPicked)) arrangeStatus(boxOutcome(boxDrag?.from || boxPicked, key));
+    }
+    // What the bar says after a change: whole sentences, never joined from parts.
+    const BOX_SAID = {
+      swap: ['자리를 바꿨습니다. 이 브라우저에 기억했습니다.', '자리를 바꿨습니다. 브라우저에 저장하지 못해 이 창에서만 유지됩니다.'],
+      home: ['기본 배치로 되돌렸습니다. 이 브라우저에 기억했습니다.', '기본 배치로 되돌렸습니다. 브라우저에 저장하지 못해 이 창에서만 유지됩니다.'],
+    };
+    function chooseBoxSwaps(swaps, done) {
+      if (!workspaceEditable()) { endArrange(); return; }
+      const next = KinWorkspaceLayout.withBoxSwaps(workspaceState, swaps);
+      if (!next) { arrangeStatus('배치를 확인할 수 없습니다. Reset Layout으로 기본 배치를 사용할 수 있습니다.'); return; }
+      workspaceState = next; applyLayout(); saveWorkspace(true);
+      arrangeStatus(BOX_SAID[done][workspaceLocalKept ? 0 : 1]);
+    }
+    function dropBox(from, to) {
+      const pair = KinBoxLayout.swapFor(from, to);
+      boxPicked = null; boxDrag = null;
+      if (!pair) { markTarget(null); renderBoxCovers(); arrangeStatus('바뀐 것이 없습니다.'); return; }
+      chooseBoxSwaps(KinBoxLayout.toggled(boxSwapsNow(), pair), 'swap');
+      markTarget(null);
+      coverLayer.querySelector(`[data-box="${to}"]`)?.focus({ preventScroll: true });
+    }
+    // The box whose cover is on top at a point (not one under the arrange bar), other than `from`; or null.
+    function coverAt(x, y, from) {
+      const under = Number.isFinite(x) && Number.isFinite(y) ? document.elementFromPoint(x, y)?.closest?.('.kin-box-cover') : null;
+      return under && under.parentElement === coverLayer && under.dataset.box !== from ? under.dataset.box : null;
+    }
+    function startBoxDrag(event) {
+      if (event.button !== 0 || !arranging || boxDrag) return;
+      event.preventDefault(); boxDropped = false;
+      const cover = event.currentTarget;
+      // A box picked by a click stays picked: this press may be the click that drops it.
+      boxDrag = { from: cover.dataset.box, pointer: event.pointerId, target: null, cover };
+      cover.setPointerCapture(event.pointerId);
+      cover.setAttribute('aria-pressed', 'true');
+      markTarget(null);
+      const startX = event.clientX, startY = event.clientY;
+      const move = e => {
+        if (e.pointerId !== boxDrag?.pointer) return;
+        if (Math.abs(e.clientX - startX) + Math.abs(e.clientY - startY) > 4) boxDrag.moved = true;
+        // The box under the pointer now is only shown (highlight and outcome); the release decides the drop.
+        const key = coverAt(e.clientX, e.clientY, boxDrag.from);
+        if (key !== boxDrag.target) { boxDrag.target = key; markTarget(key); }
+      };
+      const end = e => {
+        if (e.pointerId !== boxDrag?.pointer) return;
+        for (const type of ['pointermove', 'pointerup', 'pointercancel', 'lostpointercapture']) cover.removeEventListener(type, type === 'pointermove' ? move : end);
+        if (cover.hasPointerCapture(e.pointerId)) cover.releasePointerCapture(e.pointerId);
+        // The drop goes to the other box under the pointer where it is released — never to the last box it moved
+        // over (the column may have scrolled since, bringing the pressed box itself back under the hand).
+        const from = boxDrag.from, target = e.type === 'pointerup' ? coverAt(e.clientX, e.clientY, from) : null;
+        if (target) boxPicked = null;
+        // The mouse click that follows a press which moved is not a click-pick or a click-drop: the release decided
+        // (a drop on a box, or nothing over the bar or outside the boxes).
+        boxDropped = !!boxDrag.moved || !!target;
+        if (target) dropBox(from, target);
+        else { boxDrag = null; markTarget(null); renderBoxCovers(); }
+      };
+      boxDrag.cancel = () => end({ pointerId: boxDrag.pointer, type: 'pointercancel' });
+      // A capture the page loses (the window, a dialog) ends the drag without a drop.
+      for (const type of ['pointermove', 'pointerup', 'pointercancel', 'lostpointercapture']) cover.addEventListener(type, type === 'pointermove' ? move : end);
+    }
+    // Enter or Space (or a click without a drag) on a box picks it; on another box drops it there; on the same box
+    // puts it back.
+    function boxKey(event) {
+      if (!arranging) return;
+      // Only the mouse click of that drop is skipped; Enter or Space (detail 0) always counts.
+      const dropClick = boxDropped && event.detail > 0;
+      boxDropped = false;
+      if (dropClick) return;
+      const key = event.currentTarget.dataset.box;
+      if (!boxPicked) { boxPicked = key; markTarget(null); renderBoxCovers(); arrangeStatus('상자를 집었습니다. 놓을 상자로 Tab 이동한 뒤 Enter를 누르세요. Esc는 취소입니다.'); return; }
+      if (boxPicked === key) { boxPicked = null; markTarget(null); renderBoxCovers(); arrangeStatus('집은 상자를 내려놓았습니다.'); return; }
+      dropBox(boxPicked, key);
+    }
+    coverLayer.addEventListener('focusin', event => {
+      const key = event.target.dataset?.box;
+      if (boxPicked) markTarget(key !== boxPicked ? key : null);
+    });
+    function escapeArrange() {
+      if (boxPicked) { boxPicked = null; markTarget(null); renderBoxCovers(); arrangeStatus('집은 상자를 내려놓았습니다.'); return; }
+      endArrange(true);
+    }
+    function startArrange() {
+      if (arranging || !workspaceEditable() || document.body.classList.contains('reading')) return;
+      arrangeReturn = lastWorkFocus;
+      const view = $('#toolbar-view'); if (view.open) view.open = false;
+      if (panelDialog.open) panelDialog.close();
+      arranging = true; boxPicked = null;
+      document.body.classList.add('kin-arranging');
+      coverLayer.hidden = false; arrangeBar.hidden = false;
+      renderArrangeBar(); arrangeStatus('');
+      renderBoxCovers();
+      (coverLayer.querySelector('.kin-box-cover') || $('#box-arrange-done')).focus({ preventScroll: true });
+    }
+    function endArrange(returnFocus = true) {
+      if (!arranging) return;
+      boxDrag?.cancel?.(); boxDrag = null; boxPicked = null; arranging = false;
+      cancelAnimationFrame(coverFrame); coverFrame = 0; coverObserver.disconnect(); coverObserved.clear();
+      document.body.classList.remove('kin-arranging');
+      coverLayer.replaceChildren(); coverLayer.hidden = true; arrangeBar.hidden = true;
+      if (!returnFocus) return;
+      const back = arrangeReturn;
+      arrangeReturn = null;
+      if (back?.isConnected && !back.disabled && !back.closest('[hidden], [inert]') && back.getClientRects().length) back.focus({ preventScroll: true });
+      else $('#toolbar-view > summary')?.focus({ preventScroll: true });
+    }
+    function renderArrangeBar() {
+      const on = boxSwapsNow(), tech = mode === 'Technician';
+      for (const button of arrangeBar.querySelectorAll('[data-box-swap]')) {
+        button.setAttribute('aria-pressed', String(on.includes(button.dataset.boxSwap)));
+        const label = button.dataset.boxSwap === 'report' && tech ? 'Swap Related Report / Order List' : BOX_SWAP_LABEL[button.dataset.boxSwap];
+        if (button.dataset.label !== label) { button.dataset.label = label; kinWrite(button, kinSay(label)); }
+      }
+      $('#box-arrange-default').disabled = !on.length;
+    }
+    arrangeBar.addEventListener('click', event => {
+      const swap = event.target.closest('[data-box-swap]');
+      if (swap && arranging) { boxPicked = null; chooseBoxSwaps(KinBoxLayout.toggled(boxSwapsNow(), swap.dataset.boxSwap), 'swap'); markTarget(null); }
+    });
+    arrangeBar.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); escapeArrange(); } });
+    $('#box-arrange-default').addEventListener('click', () => { if (arranging) { boxPicked = null; chooseBoxSwaps([], 'home'); markTarget(null); } });
+    $('#box-arrange-done').addEventListener('click', () => endArrange(true));
+    $('#box-arrange-open').addEventListener('click', startArrange);
+    // The work area scrolls under the covers (the list column, the report row, a stacked page): they follow it.
+    document.addEventListener('scroll', scheduleCovers, true);
+    work.onInvalidate(event => { if (event.reason === 'prepare') { boxDrag?.cancel?.(); } });
+    // Every layout pass (window size, Layout, workflow tab, panel choices, Reading Workspace) re-measures the covers.
+    boxArrangeLayout = () => {
+      const reading = document.body.classList.contains('reading');
+      $('#box-arrange-open').disabled = reading;
+      if (!arranging) return;
+      if (reading || !workspaceEditable()) { endArrange(false); return; }
+      renderArrangeBar(); renderBoxCovers();
+    };
+    boxArrangeLayout();
     function stopWorkspaceLayout() {
       if (panelDialog.open) panelDialog.close();
+      endArrange(false); document.removeEventListener('scroll', scheduleCovers, true);
+      document.removeEventListener('focusin', noteWorkFocus, true); lastWorkFocus = null; arrangeReturn = null;
       workspaceEnded = true; workspaceGeneration++;
       workspaceDragCancel?.(); workspaceObserver.disconnect(); cancelAnimationFrame(splitFrame); splitFrame = 0;
       window.removeEventListener('resize', applyLayout);
@@ -13885,29 +14290,37 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     });
     applyLayout();
 
-    bindPanelResize("#resize-main", () => portraitLayout() ? "y" : "x", (e, axis) => {
-      const box = $(".split").getBoundingClientRect();
+    // Each handle grows its own box toward the hand: with the boxes swapped (Arrange Boxes) the box can lie on the
+    // other side of its handle, and box-layout.js says which (edges: +1 its box is before the handle, -1 after).
+    const boxEdge = name => document.body.classList.contains('reading') ? KinBoxLayout.arrangement([]).edges[name]
+      : KinBoxLayout.arrangement(boxSwapsNow()).edges[name];
+    // A box placed after its handle follows the hand's movement (its size less the move), so it never jumps by the gaps
+    // between the handle and the box; a box before its handle keeps the measure it always had.
+    bindPanelResize("#resize-main", () => portraitLayout() ? "y" : "x", (e, axis, delta) => {
+      const box = $(".split").getBoundingClientRect(), left = $(".left"), before = boxEdge('main') > 0;
+      const now = left.getBoundingClientRect()[axis === "y" ? "height" : "width"];
       if (axis === "y")
-        $(".left").style.height = clampPanel(e.clientY - box.top, 180, box.height - 420) + "px";
+        left.style.height = clampPanel(before ? e.clientY - box.top : now - delta, 180, box.height - 420) + "px";
       else
-        $(".left").style.width = clampPanel(e.clientX - box.left, 500, box.width - 426) + "px";
+        left.style.width = clampPanel(before ? e.clientX - box.left : now - delta, 500, box.width - 426) + "px";
     });
     bindPanelResize("#resize-top", "y", (e, axis, delta) => {
       const top = $(".rw"), current = top.getBoundingClientRect().height;
       // 목록의 최소 높이 때문에 상한이 현재 띠보다 작아도 손과 반대로 줄이지 않는다.
       // 포인터 이동량을 쓰므로 손잡이 안의 누른 위치나 작업공간 스크롤에 영향받지 않는다.
       const maximum = Math.max(current, 140, $(".right").getBoundingClientRect().height - 266);
-      top.style.height = clampPanel(current + delta, Math.min(current, 140), maximum) + "px";
+      top.style.height = clampPanel(current + boxEdge('top') * delta, Math.min(current, 140), maximum) + "px";
     });
-    bindPanelResize("#resize-related", "y", e => {
-      const box = $(".workrow").getBoundingClientRect();
-      $(".related-p").style.height = clampPanel(e.clientY - box.top, portraitLayout() ? 286 : 150, box.height - 186) + "px";
+    bindPanelResize("#resize-related", "y", (e, axis, delta) => {
+      const box = $(".workrow").getBoundingClientRect(), before = boxEdge('related') > 0, related = $(".related-p");
+      related.style.height = clampPanel(before ? e.clientY - box.top : related.getBoundingClientRect().height - delta,
+        portraitLayout() ? 286 : 150, box.height - 186) + "px";
     });
-    bindPanelResize("#resize-left-split", "y", e => {
+    bindPanelResize("#resize-left-split", "y", (e, axis, delta) => {
       const box = $(".left").getBoundingClientRect();
       const list = $(".related-list-pane");
       list.style.flex = "none";
-      list.style.height = clampPanel(box.bottom - e.clientY, 80, box.height - 170) + "px";
+      list.style.height = clampPanel(boxEdge('prior') < 0 ? box.bottom - e.clientY : list.getBoundingClientRect().height + delta, 80, box.height - 170) + "px";
     });
 
 
@@ -14457,8 +14870,17 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       ctxItems = items;
       ctxTarget = target;
       ctx.setAttribute('role', 'menu');
-      ctx.innerHTML = items.map((it, i) =>
-        it.sep ? '<hr role="separator">' : `<div data-i="${i}" role="menuitem" tabindex="-1" aria-disabled="${!!it.dis}" class="${it.dis ? "dis" : ""}"${it.title ? ` title="${esc(it.title)}"` : ""}>${esc(it.label)}</div>`).join("");
+      ctx.replaceChildren(...items.map((item, index) => {
+        const el = document.createElement(item.sep ? "hr" : "div");
+        el.setAttribute("role", item.sep ? "separator" : "menuitem");
+        if (item.sep) return el;
+        el.dataset.i = index;
+        el.tabIndex = -1;
+        el.setAttribute("aria-disabled", String(!!item.dis));
+        if (item.dis) el.className = "dis";
+        if (item.title) kinWrite(el, item.title, "title");
+        return kinWrite(el, item.label);
+      }));
       ctx.style.left = Math.max(0, Math.min(keyboard?.x ?? e.clientX, innerWidth - 200)) + "px";
       ctx.style.top = Math.max(0, Math.min(keyboard?.y ?? e.clientY, innerHeight - (items.length * 28 + 20))) + "px";
       ctx.style.display = "block";
@@ -14531,13 +14953,13 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     });
     let ctxSelection = null;
     function showSelectionMenu(e, set) {
-      showCtx(e, [{ label: "Open Selected Studies",
+      showCtx(e, [{ label: kinSay("Open Selected Studies"),
         act: () => { ctxSelection = null; multiStudyView?.open(set); } },
         // FC-028: the same Batch Reading as the selection bar, for the selection as it was when this menu opened.
-        ...(batchReport?.shown() ? [{ label: "Batch Reading", dis: !!batchReport.blocked(),
+        ...(batchReport?.shown() ? [{ label: kinSay("Batch Reading"), dis: !!batchReport.blocked(),
           act: () => { ctxSelection = null; batchReport?.open(set); } }] : []),
         // FC-029: the same Batch Approve as the selection bar, after Batch Reading.
-        ...(batchApprove?.shown() ? [{ label: "Batch Approve", dis: !!batchApprove.blocked(),
+        ...(batchApprove?.shown() ? [{ label: kinSay("Batch Approve"), dis: !!batchApprove.blocked(),
           act: () => { ctxSelection = null; batchApprove?.open(set); } }] : [])], null, null);
       ctxSelection = { items: ctxItems, generation: set.generation };
     }
@@ -14556,7 +14978,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       // 이 메뉴가 열린 선택. 항목은 이 선택이 그대로일 때만 실행된다(위 클릭 처리).
       const opened = { uid, seq: selectionSeq, oid: selectedOid };
       const forceReleaseItems = KinAuth.has("admin") && s?.holder ? [{
-        label: "점유 강제 해제 (관리자)", dis: s.holder === user, act: async () => {
+        label: kinSay("점유 강제 해제 (관리자)"), dis: s.holder === user, act: async () => {
           if (!confirm(`${displayActor(s.holder)} 님의 점유를 강제로 해제합니다. 그쪽 화면은 다음 저장에서 거절됩니다. 계속할까요?`)) return;
           const at = work.capture("document");
           try { await api("POST", `/studies/${encodeURIComponent(uid)}/release/force`, undefined, undefined, at); }
@@ -14575,7 +14997,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       // patient IDs). The values are read from the list as it is at the click: a refresh while the menu was open may have
       // replaced the row (a Match changes the patient ID it shows).
       const emrLink = () => KinAuth.session()?.emrLink?.template ?? null;
-      const openEmrItem = { label: "Open EMR", dis: !emrLink() || !!s?.tele, act: () => {
+      const openEmrItem = { label: kinSay("Open EMR"), dis: !emrLink() || !!s?.tele, act: () => {
         const row = studies.find(x => x.uid === opened.uid);
         if (!row) { toast("이 검사를 목록에서 찾을 수 없습니다", "err"); return; }
         if (row.tele) { toast("원격판독으로 받은 검사는 EMR을 열 수 없습니다", "err"); return; }
@@ -14589,33 +15011,33 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         // 서버도 같은 규칙으로 막지만, 회색으로 보이는 편이 눌러보고 거절당하는 것보다 낫다.
         const mine = !s?.tele;
         showCtx(e, [
-          { label: "Film Box 열기", act: () => openFilmbox(uid) },
-          { label: "판독문 작성으로", act: () => focusReportEditor() },
+          { label: kinSay("Film Box 열기"), act: () => openFilmbox(uid) },
+          { label: kinSay("판독문 작성으로"), act: () => focusReportEditor() },
           openEmrItem,
           { sep: 1 },
-          { label: "원격판독 의뢰 (Tele Request)", dis: !mine || requested, act: () => teleRequest(uid) },
-          { label: "의뢰 취소", dis: !mine || !["wait", "sending", "sent"].includes(ts), act: () => setTs(uid, "cancelled") },
+          { label: kinSay("원격판독 의뢰 (Tele Request)"), dis: !mine || requested, act: () => teleRequest(uid) },
+          { label: kinSay("의뢰 취소"), dis: !mine || !["wait", "sending", "sent"].includes(ts), act: () => setTs(uid, "cancelled") },
           { sep: 1 },
-          { label: "판독 시작 (수신 기관)", dis: mine || ts !== "sent", act: () => setTs(uid, "inReading") },
+          { label: kinSay("판독 시작 (수신 기관)"), dis: mine || ts !== "sent", act: () => setTs(uid, "inReading") },
           // 원본 다운로드는 자기 기관 검사만이다(S9-U4p §3·§6) — 원격판독으로 받은 행은 회색, 서버도 404로 막는다.
-          ...(studyTransfer.canDownload() ? [{ sep: 1 }, { label: "Download Originals", dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) }] : []),
+          ...(studyTransfer.canDownload() ? [{ sep: 1 }, { label: kinSay("Download Originals"), dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) }] : []),
           ...forceReleaseItems,
           // FC-076: attach a scanned document or picture to this row's study, at the end of the menu.
-          ...(studyAttachments.canAttach() ? [{ sep: 1 }, { label: "Attach Document", dis: !!s?.tele, act: () => studyAttachments.open(opened.uid) }] : []),
+          ...(studyAttachments.canAttach() ? [{ sep: 1 }, { label: kinSay("Attach Document"), dis: !!s?.tele, act: () => studyAttachments.open(opened.uid) }] : []),
         ], null, opened);
       } else {
         const o = curOrder();
         showCtx(e, [
-          { label: "Match", dis: !(o && s.matched === "U" && o.matched === "U"), act: doMatch },
-          { label: "Unmatch", dis: s.matched !== "M", act: doUnmatch },
+          { label: kinSay("Match"), dis: !(o && s.matched === "U" && o.matched === "U"), act: doMatch },
+          { label: kinSay("Unmatch"), dis: s.matched !== "M", act: doUnmatch },
           { sep: 1 },
-          { label: "Verify", dis: s.ss === "Verified", act: () => setSs(uid, "Verified") },
-          { label: "Unverify", dis: s.ss === "Unverified", act: () => setSs(uid, "Unverified") },
-          { label: "Modify Exam", dis: s.rs !== "W", act: openModify },
+          { label: kinSay("Verify"), dis: s.ss === "Verified", act: () => setSs(uid, "Verified") },
+          { label: kinSay("Unverify"), dis: s.ss === "Unverified", act: () => setSs(uid, "Unverified") },
+          { label: kinSay("Modify Exam"), dis: s.rs !== "W", act: openModify },
           openEmrItem,
           { sep: 1 },
           emergencyMenu(uid),
-          { label: "Switch ReqHosp", act: () => {
+          { label: kinSay("Switch ReqHosp"), act: () => {
               // 기관명이 있는 행의 ReqHosp 칸은 서버가 정한 기관명이다(applyState·syncStudy가 같은 규칙으로 그린다). 여기서 친
               // 값을 칸에 그리면 다음 목록 읽기에서 말없이 기관명으로 돌아가고, 저장해도 어디에도 보이지 않는다 — 값을 묻지도
               // 그리지도 보내지도 않고 까닭을 말한다. 기관명이 없는 행(서버 없이 연 목록 등)은 지금처럼 바꾼다.
@@ -14630,13 +15052,13 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
               saveApp(uid, { reqHosp: s.reqHosp }); render(); renderRelated();
             } },
           { sep: 1 },
-          { label: "Delete", dis: s.rs !== "W", act: () => doDelete(uid) },
+          { label: kinSay("Delete"), dis: s.rs !== "W", act: () => doDelete(uid) },
           // 이 행의 검사로 반입(X-KIN-Expect-Study)과 원본 다운로드(S9-U4p §6). 둘 다 메뉴를 연 그 선택(opened)에 묶인다.
           ...(studyTransfer.canImport() || studyTransfer.canDownload() || studyAttachments.canAttach() ? [{ sep: 1 }] : []),
-          ...(studyTransfer.canImport() ? [{ label: "Import DICOM", act: () => studyTransfer.importInto(opened.uid) }] : []),
+          ...(studyTransfer.canImport() ? [{ label: kinSay("Import DICOM"), act: () => studyTransfer.importInto(opened.uid) }] : []),
           // FC-076: right after Import DICOM; grey on a study received for tele-reading.
-          ...(studyAttachments.canAttach() ? [{ label: "Attach Document", dis: !!s?.tele, act: () => studyAttachments.open(opened.uid) }] : []),
-          ...(studyTransfer.canDownload() ? [{ label: "Download Originals", dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) }] : []),
+          ...(studyAttachments.canAttach() ? [{ label: kinSay("Attach Document"), dis: !!s?.tele, act: () => studyAttachments.open(opened.uid) }] : []),
+          ...(studyTransfer.canDownload() ? [{ label: kinSay("Download Originals"), dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) }] : []),
           ...forceReleaseItems,
         ], null, opened);
       }
@@ -14648,11 +15070,11 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       selectedOid = tr.dataset.oid; renderOrders();
       const o = curOrder(), s = cur();
       showCtx(e, [
-        { label: "Match", dis: !(s && s.matched === "U" && o.matched === "U"), act: doMatch },
+        { label: kinSay("Match"), dis: !(s && s.matched === "U" && o.matched === "U"), act: doMatch },
         // selectedUid를 직접 대입하면 안 된다. select()가 하는 일 — 쓰던 판독문 저장,
         // 점유 해제, 오른쪽 판 갱신 — 이 전부 건너뛰어진다. 그 상태로 다음 검사를 고르면
         // **앞 환자의 소견이 뒤 환자에게 저장된다.** 실제로 그렇게 되는 코드였다.
-        { label: "Unmatch", dis: o.matched !== "M", act: async () => {
+        { label: kinSay("Unmatch"), dis: o.matched !== "M", act: async () => {
             const s2 = studies.find(x => x.uid === o.studyUid);
             if (!s2) { toast("이 오더에 매칭된 검사를 목록에서 찾을 수 없습니다", "err"); return; }
             // 그 검사로 옮겨졌을 때만 한다 — 옮겨지지 않았으면(글자 조합·쓰던 글의 저장) Unmatch가 지금 선택에 닿는다.
@@ -14661,7 +15083,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
             doUnmatch();
           } },
         { sep: 1 },
-        { label: "New Exam (SC 생성)", dis: 1, title: "새 검사(SC 생성)는 현재 연결되어 있지 않습니다.", act: () => {} },
+        { label: kinSay("New Exam (SC 생성)"), dis: 1, title: "새 검사(SC 생성)는 현재 연결되어 있지 않습니다.", act: () => {} },
       ], null, { uid: selectedUid, seq: selectionSeq, oid: selectedOid });
     });
 

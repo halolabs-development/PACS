@@ -606,7 +606,7 @@
             prep.uid = current.uid; prep.texts = current.texts; prep.reason = current.reason;
             showLogoutPanel(prep);
         logoutStatus(prep, kinSay("{t0}{n1}건은 저장하지 못했습니다 — 사유는 위 목록에 있습니다.{t2}{t3}", { t: stored ? kinSay("{n0}건은 저장했습니다. ", stored) : "" }, left.length,
-          { t: current.reason === "conflict" ? " Overwrite Server Draft를 누르면 충돌한 검사를 이 창의 내용으로 덮어씁니다(글만 — 붙은 그림은 서버의 초안 것을 따릅니다)." : "" }, { t: kept }));
+          { t: current.reason === "conflict" ? kinSay(" Overwrite Server Draft를 누르면 충돌한 검사를 이 창의 내용으로 덮어씁니다(글만 — 붙은 그림은 서버의 초안 것을 따릅니다).") : "" }, { t: kept }));
             return;
           }
           forgetCapture(prep);
@@ -662,24 +662,32 @@
       title.id = "kin-logout-title";
       // 판독문 초안 밖의 저장하지 않은 작업을 묻는 창(A006): 같은 창, 같은 두 갈래(돌아가기 / 버리고 나가기).
       const otherWork = prep.state === "failed" && prep.reason === "work";
-      title.textContent = otherWork ? "Unsaved Work" : LOGOUT_TITLES[prep.state] || LOGOUT_TITLES.closing;
+      kinWrite(title, otherWork ? kinSay("Unsaved Work") : kinSay(LOGOUT_TITLES[prep.state] || LOGOUT_TITLES.closing));
       const note = document.createElement("p");
-      note.textContent = otherWork
-        ? "저장하지 않은 작업이 있어 로그아웃하지 않았습니다. 로그아웃하면 아래 작업은 사라집니다. Back to Editing을 누르면 보던 그대로 돌아갑니다."
+      kinWrite(note, otherWork
+        ? kinSay("저장하지 않은 작업이 있어 로그아웃하지 않았습니다. 로그아웃하면 아래 작업은 사라집니다. Back to Editing을 누르면 보던 그대로 돌아갑니다.")
         : prep.state === "failed"
-        ? `${LOGOUT_FAILED[prep.reason] || LOGOUT_FAILED.refused} 로그아웃하지 않았고 입력한 내용은 이 화면에 그대로 있습니다.`
-        : LOGOUT_NOTES[prep.state] || LOGOUT_NOTES.closing;
+        ? kinSay("{0} 로그아웃하지 않았고 입력한 내용은 이 화면에 그대로 있습니다.", kinSay(LOGOUT_FAILED[prep.reason] || LOGOUT_FAILED.refused))
+        : kinSay(LOGOUT_NOTES[prep.state] || LOGOUT_NOTES.closing));
       const pending = document.createElement("p");
       if (otherWork) pending.textContent = (prep.work || []).join("\n");
       else if (["failed", "ended"].includes(prep.state)) {
         pending.style.whiteSpace = "pre-wrap";
         const label = report => prep.state === "ended" ? report.uid : `${report.label || report.uid} (${report.uid})`;
         const current = (prep.reports || []).find(report => report.uid === prep.uid);
-      // Each study line keeps its own parts: the study (data) and the reason (words of the page).
-      const lines = (prep.reports || []).filter(r => !r.safe)
-        .map(report => kinSay("{0}{t1}", label(report), { t: report.reason ? kinSay(" — {t0}", { t: LOGOUT_FAILED[report.reason] }) : "" }));
-      kinWrite(pending, kinSay("보존이 필요한 검사: {t0}{t1}", { t: kinSay(lines.map((_, i) => "{t" + i + "}").join("\n"), ...lines.map(line => ({ t: line }))) },
-        { t: current ? kinSay(" · 현재 확인 중: {0}", label(current)) : "" }));
+        kinWrite(pending, kinSay("보존이 필요한 검사: {t0}{t1}", "", ""));
+        const append = sentence => {
+          const node = document.createTextNode("");
+          pending.append(node);
+          kinWrite(node, sentence);
+        };
+        const unsafe = (prep.reports || []).filter(report => !report.safe);
+        unsafe.forEach((report, index) => {
+          if (index) pending.append("\n");
+          pending.append(label(report));
+          if (report.reason) append(kinSay(" — {t0}", kinSay(LOGOUT_FAILED[report.reason])));
+        });
+        if (current) append(kinSay(" · 현재 확인 중: {0}", label(current)));
       }
       const status = document.createElement("p");
       status.setAttribute("role", "status");
@@ -695,19 +703,19 @@
       const overwritable = prep.reason === "conflict" && !!prep.uid && !!draftClient.conflict(prep.uid)?.latest;
       if (prep.state === "waiting" || prep.state === "saving") {
         // 기다리는 동안에도 돌아갈 수 있다 — 준비의 취소는 아무것도 잃지 않는다.
-        button("Back to Editing", () => returnToEditing(prep));
+        button(kinSay("Back to Editing"), () => returnToEditing(prep));
       } else if (otherWork) {
-        button("Back to Editing", () => returnToEditing(prep));
-        button("Discard and Log Out", () => logOutAnyway(prep));
+        button(kinSay("Back to Editing"), () => returnToEditing(prep));
+        button(kinSay("Discard and Log Out"), () => logOutAnyway(prep));
       } else if (prep.state === "failed") {
-        button("Retry", () => { if (logoutPrep === prep && prep.state === "failed") saveForLogout(prep); });
-        if (overwritable) button("Overwrite Server Draft", () => overwriteServerDraft(prep));
-        button("Back to Editing", () => returnToEditing(prep));
-        button("Discard and Log Out", () => discardAndLogOut(prep));
+        button(kinSay("Retry"), () => { if (logoutPrep === prep && prep.state === "failed") saveForLogout(prep); });
+        if (overwritable) button(kinSay("Overwrite Server Draft"), () => overwriteServerDraft(prep));
+        button(kinSay("Back to Editing"), () => returnToEditing(prep));
+        button(kinSay("Discard and Log Out"), () => discardAndLogOut(prep));
       } else if (prep.state === "ended") {
-        button("Recover Draft", () => recoverEndedDraft(prep));
-        if (overwritable) button("Overwrite Server Draft", () => overwriteServerDraft(prep));
-        button("Discard Draft", () => dropEndedDraft(prep));
+        button(kinSay("Recover Draft"), () => recoverEndedDraft(prep));
+        if (overwritable) button(kinSay("Overwrite Server Draft"), () => overwriteServerDraft(prep));
+        button(kinSay("Discard Draft"), () => dropEndedDraft(prep));
       }
       prep.panel.replaceChildren(title, note, pending, status, actions);
       if (!prep.panel.open) prep.panel.showModal();

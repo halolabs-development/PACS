@@ -964,8 +964,9 @@ class WSpaceDOM(unittest.TestCase):
         self.assertEqual(rgb('#e3e3e3'), colours['cell'])
         self.assertEqual(rgb('#e3e3e3'), colours['editor'])
         # The editable report field is marked apart from the read-only panels (studio 11-01 88507f93, feedback 8); A1
-        # FA-153 keeps that mark inside the five colours: a background well with a solid secondary edge on the panel.
-        self.assertEqual(rgb('#212121'), colours['editorBg'])
+        # FA-153 keeps that mark inside the five colours: a solid secondary edge (read-only fields are dashed); the field
+        # itself is an input, and inputs are #2D2D2D like the panels (the colour table).
+        self.assertEqual(rgb('#2d2d2d'), colours['editorBg'])
         self.assertEqual([rgb('#b4b4b4'), 'solid'], colours['editorEdge'])
         self.assertEqual(rgb('#2d2d2d'), colours['editorPanel'])
         self.assertEqual('rgba(138, 180, 200, 0.2)', colours['selected'])

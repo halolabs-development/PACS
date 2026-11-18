@@ -589,6 +589,18 @@ class RelatedModePage(unittest.TestCase):
         for word in ("Reading Target", "Source Study", "판독 대상", "READ ONLY", "SYNACCB002", "SYN Hospital A", "Accession"):
             self.assertNotIn(word, shown)
 
+    def test_related_report_keeps_all_three_authored_sections_in_each_language(self):
+        values = {"findings": "승인", "conclusion": "취소", "recommendation": "Unread"}
+        self.site.store[UID_B]["report"].update(values)
+        self.site.versions[UID_B][0].update(values)
+        self.open()
+        self.open_target()
+        self.enter()
+        for lang in ("en", "ko", "en"):
+            self.js("l => KinLanguage.restore({version:1,worklist:l,reading:l})", lang)
+            for field, expected in values.items():
+                self.assertEqual(expected, self.source_text(field))
+
     def test_related_report_mode_hides_the_reading_target_and_source_study_cards_everywhere_it_opens(self):
         """Hide the two identity cards of the Related Report mode, in the Workspace and the reading layout, in English and
         Korean, at the usual and the smallest window."""

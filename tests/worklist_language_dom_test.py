@@ -15,6 +15,7 @@ from pathlib import Path
 from playwright.sync_api import expect, sync_playwright
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import language_data_probe as probe  # noqa: E402
 import study_panel_page_dom_test as dom  # noqa: E402
 from study_panel_page_dom_test import RASTER, WorkspaceSite, auth, wait_startup  # noqa: E402
 
@@ -66,8 +67,11 @@ class LanguageSite(WorkspaceSite):
         self.fail_write = None
         self.filters = []
         self.clinical_fixture = None
+        self.planter = None  # language_data_probe.Planter: answers carry planted data
 
     def api(self, route, request, method, path, query):
+        if self.planter is not None and path != "/api/reading-appearance":
+            route = self.planter.wrap(route)
         if method == "GET" and path in ("/api/bootstrap", "/api/filter-folders") and self.filters:
             route = WithFilters(route, self.filters)
         if method == 'GET' and path.endswith('/clinical-context') and self.clinical_fixture:
@@ -260,31 +264,56 @@ class WorklistLanguageDOM(unittest.TestCase):
         expect(chips.nth(0)).to_contain_text("Unread")
         expect(chips.nth(1)).to_contain_text("Approve")
 
-    def test_words_the_page_writes_while_translated_are_the_ones_revert_shows(self):
+    def test_an_ordinary_overwrite_revokes_the_previous_text_and_attribute(self):
         self.boot()
-        self.choose("ko").locator("#language-apply").click()
-        self.expect_words(READING, "ko")
-        # The page changes a label while the screen is Korean (as a status update would): Korean now, and that
-        # new label — not the old one — after Revert.
-        self.page.evaluate("() => { document.querySelector('#b-save').textContent = 'Approve'; }")
-        expect(self.page.locator("#b-save")).to_have_text("승인")
-        self.page.locator("#language-revert").click()
-        expect(self.page.locator("#b-save")).to_have_text("Approve")
+        self.apply("ko")
+        self.page.evaluate("""() => {
+          const save = document.querySelector('#b-save');
+          KinLanguage.write(save, KinLanguage.say('Approve'), 'title');
+          save.title = save.title;
+          save.firstChild.data = save.firstChild.data;
+          const approve = document.querySelector('#b-approve');
+          KinLanguage.write(approve, KinLanguage.say('Approve'));
+          KinLanguage.write(approve, approve.textContent);
+          KinLanguage.restore({version:1,worklist:'en',reading:'en'});
+        }""")
+        expect(self.page.locator('#b-save')).to_have_text('저장')
+        expect(self.page.locator('#b-save')).to_have_attribute('title', '승인')
+        expect(self.page.locator('#b-approve')).to_have_text('승인')
+        self.page.locator('#language-revert').click()
+        expect(self.page.locator('#b-save')).to_have_text('저장')
+
+    def test_unchanged_inbox_reads_leave_both_live_regions_quiet(self):
+        self.page.clock.install()
+        self.boot()
+        counts = self.page.evaluate_handle("""() => {
+          const counts = {};
+          for (const id of ['cvr-inbox-badge', 'cvr-inbox-status']) {
+            counts[id] = 0;
+            new MutationObserver(changes => counts[id] += changes.length)
+              .observe(document.getElementById(id), {childList: true, characterData: true, subtree: true});
+          }
+          return counts;
+        }""")
+        for _ in range(2):
+            with self.page.expect_response("**/api/critical-results?view=received&state=pending") as read:
+                self.page.clock.fast_forward(60_000)
+            self.assertTrue(read.value.ok)
+            self.assertEqual(0, read.value.json()["pending"])
+        self.page.clock.fast_forward(10_000)
+        self.assertEqual({"cvr-inbox-badge": 0, "cvr-inbox-status": 0}, counts.json_value())
 
     def test_browser_dialogs_and_errors_follow_the_language(self):
         self.boot()
         self.apply("en")
-        self.page.locator("#rows tr").first.click()
-        self.page.evaluate("() => window.confirm('계정 설정이 변경되었습니다. 불러온 뒤 다시 저장하세요')")
-        self.assertEqual(1, len(self.dialogs))
-        self.assertNotRegex(self.dialogs[0], "[가-힣]")
-        toast = self.page.locator("#toast")
-        self.page.evaluate("() => { const t = document.querySelector('#toast'); t.className = 'show err'; t.textContent = '서버 저장 실패: 계정 설정이 변경되었습니다. 불러온 뒤 다시 저장하세요'; }")
-        expect(toast).not_to_contain_text("서버")
-        # An error with no English text yet: the general sentence and the original words.
-        self.page.evaluate("() => { const t = document.querySelector('#toast'); t.className = 'show err'; t.textContent = '서버 저장 실패: SYN 알 수 없는 오류'; }")
-        expect(toast).to_contain_text("SYN 알 수 없는 오류")
-        expect(toast).to_contain_text("Original")
+        self.page.evaluate("""() => {
+          window.confirm('승인');
+          window.confirm(KinLanguage.say('검사를 선택하세요.'));
+          const error = KinLanguage.say('서버 저장 실패: {e0}', '검사를 선택하세요.');
+          KinLanguage.write(document.querySelector('#toast'), error);
+        }""")
+        self.assertEqual(['승인', 'Select a study.'], self.dialogs)
+        expect(self.page.locator('#toast')).to_have_text('Server save failed: 검사를 선택하세요.')
 
     def test_the_pop_out_window_follows_the_reading_screen(self):
         self.boot()
@@ -304,45 +333,221 @@ class WorklistLanguageDOM(unittest.TestCase):
         expect(pip.locator("#b-save")).to_have_text("Save")
         expect(pip.get_by_role("button", name="Pin: Off")).to_be_visible()
 
-    def visible_words(self, lang):
-        """Visible words of the other language on the page (data and names people give are excluded where they are
-        drawn); product names, codes and the synthetic data of this site are not words to translate."""
-        return self.page.evaluate("""lang => { const out = new Set();
-          const keep = /\\b(HALO PACS|PACS|DICOM|Gateway|HTTP|[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+|HL7|EMR|PDF|CSV|JPG|PNG|SR|CT|MR|CR|DX|US|MG|XA|PT|NM|SC|OT|AE|UID|ID|W\\/L|Ctrl|Alt|Shift|Enter|Esc|Tab|Space|Home|End|SYN[\\w-]*|KIM MINJUN|Brain CT|Language|English|Korean)\\b/g;
-          const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    def test_surviving_initial_labels_follow_both_languages(self):
+        script = dom.ROOT / "worklist-v0/hpacs-lite/worklist-language.js"
+        capture = """{ const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          window.initialLabels = [];
           for (let n = walk.nextNode(); n; n = walk.nextNode()) {
-            const el = n.parentElement, text = n.nodeValue.trim();
-            if (!text || !el || el.closest('script,style,textarea,[translate="no"],[contenteditable="true"],#language-dialog,#language-applied')) continue;
-            const box = el.getBoundingClientRect();
-            if (!box.width || !box.height || box.bottom < 0 || box.top > innerHeight || getComputedStyle(el).visibility === 'hidden') continue;
-            // An error with no text in this language yet: the general sentence, then the original words on purpose.
-            if (/(The request could not be processed\\. Original message:|요청을 처리하지 못했습니다\\. 원문:)/.test(text)) continue;
-            const bare = text.replace(keep, '');
-            // Korean: no English word of three letters or more is left, even beside Korean words (a mixed line counts).
-            if (lang === 'ko' ? /[A-Za-z]{3,}/.test(bare) : /[\\uac00-\\ud7a3]/.test(bare)) out.add(text.slice(0, 80));
+            if (n.data.trim() && !n.parentElement.closest('script,style,textarea,option:not([value]),[translate=no],[contenteditable]'))
+              initialLabels.push([n, n.data]);
           }
-          return [...out].sort(); }""", lang)
-
-    def test_no_visible_word_is_left_in_the_other_language(self):
-        """The screen as a reader sees it after Apply: no label left in English on the Korean screen, no Korean
-        explanation left on the English one (the static check names the file and line; this one the screen)."""
+        }"""
+        self.page.route("**/worklist-language.js*", lambda r: r.fulfill(
+            content_type="application/javascript", body=capture + script.read_text(encoding="utf-8")))
         self.boot()
-        self.apply("ko")
-        self.assertEqual([], self.visible_words("ko"))
+        # Subsequent ordinary writes to the same node belong to the renderer.
+        self.page.evaluate("initialLabels = initialLabels.filter(([n, raw]) => n.isConnected && n.data === raw)")
+        pairs = {}
+        for source, other, *meta in probe.glossary():
+            same = meta[1] if len(meta) > 1 and meta[1] else source
+            pairs[source] = (other, same) if re.search("[가-힣]", source) else (same, other)
+        for lang in ("en", "ko"):
+            self.apply(lang)
+            words = self.page.evaluate("initialLabels.filter(([n]) => n.isConnected).map(([n, raw]) => [raw,n.data])")
+            matched = 0
+            for raw, displayed in words:
+                key = " ".join(raw.split())
+                if key in pairs:
+                    self.assertEqual(pairs[key][lang == "ko"], " ".join(displayed.split()), key)
+                    matched += 1
+            self.assertGreater(matched, 0)
+
+    def test_nested_ordinary_attribute_write_revokes_ownership_during_repaint(self):
+        self.boot()
+        self.page.evaluate("""() => {
+          const title = document.createElement('button');
+          title.id = 'overwrite-title'; document.body.append(title);
+          customElements.define('language-test-trigger', class extends HTMLElement {
+            static get observedAttributes() { return ['title']; }
+            attributeChangedCallback(_, old) { if (old !== null) title.title = '승인'; }
+          });
+          const trigger = document.createElement('language-test-trigger'); document.body.append(trigger);
+          KinLanguage.write(trigger, KinLanguage.say('검사를 선택하세요.'), 'title');
+          KinLanguage.write(title, KinLanguage.say('검사를 선택하세요.'), 'title');
+        }""")
+        for lang in ("en", "ko"):
+            self.apply(lang)
+            expect(self.page.locator("#overwrite-title")).to_have_attribute("title", "승인")
+
+    def test_authored_controls_and_plain_data_on_the_same_screen(self):
+        self.boot()
+        # Replace one authored cell with a fresh ordinary text node containing exactly the label
+        # of a neighbouring control. Only the control follows Apply, including on the return trip.
+        cell = self.page.locator("#rows tr").first.locator("td").last
+        cell.evaluate("el => el.replaceChildren(document.createTextNode('Approve'))")
+        for lang in ("ko", "en", "ko"):
+            self.apply(lang)
+            self.expect_words(WORKLIST, lang)
+            self.expect_words(READING, lang)
+            expect(cell).to_have_text("Approve")
+
+    def test_viewer_title_and_parent_study_labels_keep_their_values(self):
+        row = self.site.study_row
+        self.site.study_row = lambda *a, **kw: {**row(*a, **kw), "desc": "승인"}
+        self.boot()
+        self.page.route("**/ohif/viewer?**", lambda r: r.fulfill(
+            content_type="text/html", body="<title>Viewer</title><script>window.frameElement.title='승인'</script>"))
+        self.page.locator("#m-reading").click()
+        frame = self.page.locator("#reading-frame")
+        expect(frame).to_be_attached()
+        # The same-origin viewer publishes its identity to the parent's iframe title.
+        expect(frame).to_have_attribute("title", "승인")
+        for lang in ("en", "ko"):
+            self.page.evaluate("l => KinLanguage.restore({version:1,worklist:l,reading:l})", lang)
+            expect(frame).to_have_attribute("title", "승인")
+            expect(self.page.locator("#reading-target")).to_contain_text("승인")
+            expect(self.page.locator("#rows tr").first).to_contain_text("승인")
+
+    def test_finished_strings_are_never_used_as_templates(self):
+        self.boot()
+        for raw in ("취소 사유: A  B\nC", "단축어: {1} · Modality: CT · Bodypart: Chest",
+                    "단축어: a · Modality: b · Modality: c · Bodypart: d"):
+            self.assertEqual(raw, self.page.evaluate("t => KinLanguage.tr(t, 'en')", raw))
+
+    def drawn(self, planter, lang):
+        """The work page drawn from the harness answers (planted or not) in lang: the worklist, a study on the reading
+        screen, a refresh, the Pop Out window, the language chosen again. Every word met, and the glossary readings of
+        the planted values."""
+        site, context, kept = LanguageSite(), self.browser.new_context(viewport={"width": 1920, "height": 1080}), self.page
+        site.planter, dialogs, seen = planter, [], []
+        try:
+            context.route("**/*", lambda route, request: site.handle(route, request))
+            page = self.page = context.new_page()
+            page.on("pageerror", lambda e: self.errors.append(str(e)))
+            page.on("dialog", lambda d: (dialogs.append(d.message), d.dismiss()))
+            page.goto(auth.MAIN_URL)
+            expect(page.locator("#rows tr").first).to_be_visible()
+            wait_startup(page, site)
+            self.apply(lang)
+            seen += probe.snapshot(page)
+            page.locator("#rows tr").first.click()
+            expect(page.locator("#b-approve")).to_be_visible()
+            page.wait_for_timeout(300)
+            seen += probe.snapshot(page)
+            page.locator("#m-refresh").click()
+            page.wait_for_timeout(500)
+            seen += probe.snapshot(page)
+            page.locator("#report-popout").click()
+            for _ in range(250):
+                if len(context.pages) == 2:
+                    break
+                page.wait_for_timeout(20)
+            self.assertEqual(2, len(context.pages), "the Pop Out window opens")
+            if len(context.pages) == 2:
+                pip = context.pages[1]
+                pip.wait_for_load_state()
+                pip.wait_for_timeout(300)
+                seen += probe.snapshot(pip)
+                pip.close()
+            self.apply("ko" if lang == "en" else "en")
+            self.apply(lang)
+            page.wait_for_timeout(300)
+            seen += probe.snapshot(page, dialogs)
+            values = planter.planted() if planter else []
+            return seen, values, probe.translations(values, lang)
+        finally:
+            self.page = kept
+            context.close()
+
+    def test_data_is_shown_as_written_on_both_screens_in_english_and_in_korean(self):
+        """Displayed values of the synthetic answers replaced with glossary words, sentences and filled templates (English
+        screen) or English page words (Korean screen): no planted value shows as its translation anywhere."""
+        korean, english = probe.pools()
+        for lang, pool in (("en", korean), ("ko", english)):
+            with self.subTest(lang=lang):
+                plain, _, _ = self.drawn(None, lang)
+                planter = probe.Planter(pool)
+                planted, values, shown = self.drawn(planter, lang)
+                found, reached = probe.check(plain, planted, values, shown, planter)
+                self.assertEqual([], found)
+                self.assertGreater(len(reached), 2, "planted data reaches the screens")
+
+    def test_finding_fields_and_citation_source_keep_the_authors_words(self):
+        from report_text_boundaries_dom_test import FINDING
+        finding = copy.deepcopy(FINDING)
+        finding["item"].update(schemaVersion=3, title="승인", text="취소", lesionLocation="없음", characteristics="Unread")
+        finding["item"]["sources"][0]["label"] = "승인"
+        self.page.route("**/api/studies/*/findings?**", lambda r: r.fulfill(
+            json={"items": [finding], "nextCursor": None}, headers={"X-KIN-Finding-Schema": "3"}))
+        self.boot()
+        self.page.locator("#reading-findings-open").click()
+        row = self.page.locator("#reading-findings-list article").first
+        expect(row).to_be_visible()
+        for lang in ("en", "ko"):
+            self.page.evaluate("l => KinLanguage.restore({version:1,worklist:l,reading:l})", lang)
+            expect(row.locator("strong").first).to_have_text("승인")
+            expect(row.locator(".reading-findings-text")).to_have_text("취소")
+            self.assertTrue(row.locator("[data-kin-lesion-location]").inner_text().endswith(": 없음"))
+            self.assertTrue(row.locator("[data-kin-characteristics]").inner_text().endswith(": Unread"))
+        self.page.evaluate("KinLanguage.restore({version:1,worklist:'en',reading:'en'})")
+        row.get_by_role("button", name="Insert into Report").first.click()
+        target = self.page.locator("#cite-preview-target")
+        for lang in ("en", "ko", None):
+            self.page.evaluate("l => KinLanguage.restore({version:1,worklist:l,reading:l})", lang)
+            expect(self.page.locator("#cite-preview-source")).to_contain_text("승인")
+            lines = target.inner_text().splitlines()
+            if lang == "en":
+                self.assertEqual(1, len(lines))
+                self.assertTrue(lines[0].startswith("Insert target: " + auth.PATIENT))
+            else:
+                self.assertEqual(2, len(lines))
+                self.assertTrue(lines[0].startswith("삽입 대상: " + auth.PATIENT))
+                self.assertIn("SYN CT CHEST", lines[1])
+
+    def test_key_image_title_and_tech_note_keep_the_authors_words(self):
+        self.boot()
+        self.page.route("**/api/studies/*/report-preview", lambda r: r.fulfill(json={
+            "study": {"uid": auth.UID}, "report": {"version": 0}, "canPreviewEditor": False,
+            "keys": [{"id": "SYN-KEY", "item": {"title": "승인", "frame": 1}}]}))
+        self.page.locator("#b-print").dispatch_event("click")
+        key = self.page.locator("#report-preview input[type=checkbox]").first
+        expect(key).to_be_visible()
+        for lang in ("ko", "en"):
+            self.page.evaluate("l => KinLanguage.restore({version:1,worklist:l,reading:l})", lang)
+            expect(key).to_have_attribute("aria-label", "승인")
+            expect(key.locator("..")).to_contain_text("승인")
+        self.page.locator("#report-preview").press("Escape")
+        self.page.route("**/api/studies/*/tech-note", lambda r: r.fulfill(json={
+            "uid": auth.UID, "writable": True, "note": {"studyUid": auth.UID, "version": 1,
+            "text": "취소", "reason": "", "author": auth.RAD["actor"], "createdAt": "2026-10-05T00:00:00Z",
+            "attemptId": None, "isOwnAttempt": False}}))
+        self.page.locator("#tech-note-open").dispatch_event("click")
+        for lang in ("ko", "en"):
+            self.page.evaluate("l => KinLanguage.restore({version:1,worklist:l,reading:l})", lang)
+            expect(self.page.locator("#tech-note-text")).to_have_value("취소")
+
+    def test_dicom_identity_notes_joined_by_the_page_read_in_english(self):
+        """The DICOM Identity line's note after a failed observation is the page's sentences joined: in English each is
+        read (the reading screen's tooltip shows no Korean)."""
+        self.boot()
         self.apply("en")
-        self.assertEqual([], self.visible_words("en"))
-
-    def test_template_parts_go_in_once_as_written_and_two_readings_are_not_translated(self):
+        title = self.page.evaluate("""() => { const M = KinStudyIdentity, v = M.view(M.failed(M.start()), 'SYN-UID', {});
+          return KinLanguage.tr(v.summary.title, 'en'); }""")
+        self.assertIn("HALO PACS", title)
+        self.assertIsNone(re.search("[가-힣]", title), title)
+    def test_words_the_page_joins_are_its_sentences_and_data_in_them_stays(self):
         self.boot()
-        tr = lambda text, lang: self.page.evaluate("([t, l]) => KinLanguage.tr(t, l)", [text, lang])
-        # The data part keeps its own spaces and line breaks; a part that reads like a slot is never filled again.
-        self.assertEqual("Cancellation reason: A  B\nC", tr("취소 사유: A  B\nC", "en"))
-        shown = tr("단축어: {1} · Modality: CT · Bodypart: Chest", "en")
-        self.assertIn("{1}", shown)
-        self.assertNotIn("단축어", shown)
-        # A part that holds the fixed words of its own template has two readings: left as the page wrote it.
-        twice = "단축어: a · Modality: b · Modality: c · Bodypart: d"
-        self.assertEqual(twice, tr(twice, "en"))
+        result = self.page.evaluate(r"""() => {
+          const {tr, say} = KinLanguage;
+          const message = '이 검사의 질문을 불러오지 못했습니다.';
+          return [tr(say('{t0} — Show Questions', say(message)), 'en'),
+            tr(say('{t0} — Show Questions', {t:message}), 'en'),
+            tr(say('{t0}\n{e1}', say('지금 확인할 수 없습니다'), {e:'승인'}), 'en'),
+            tr(say('취소 사유: {0}', message), 'en')];
+        }""")
+        self.assertEqual(['Could not load questions for this study. — Show Questions',
+                          '이 검사의 질문을 불러오지 못했습니다. — Show Questions',
+                          'Cannot check right now\n승인', 'Cancellation reason: 이 검사의 질문을 불러오지 못했습니다.'], result)
 
     def test_sentences_built_with_their_parts_translate_the_words_and_keep_the_data(self):
         self.boot()
@@ -350,8 +555,8 @@ class WorklistLanguageDOM(unittest.TestCase):
         say = "([t, p, l]) => KinLanguage.tr(KinLanguage.say(t, ...p), l)"
         # Spaces and line breaks at the start of a data part stay.
         tr = "([t, l]) => KinLanguage.tr(t, l)"
-        self.assertEqual("Cancellation reason:   A  B\nC", run(tr, "취소 사유:   A  B\nC", "en"))
-        self.assertEqual("Cancellation reason: \nA", run(tr, "취소 사유: \nA", "en"))
+        self.assertEqual("Cancellation reason:   A  B\nC", run(say, "취소 사유: {0}", ["  A  B\nC"], "en"))
+        self.assertEqual("Cancellation reason: \nA", run(say, "취소 사유: {0}", ["\nA"], "en"))
         # A named part is data: an institution named like a label stays as named.
         title = "원격판독 수신 권한으로 읽은 값입니다 · 소유 기관 {institutionName}. 원격판독이 닫히면 더 읽을 수 없습니다."
         shown = run(say, title, [{"institutionName": "Unread"}], "en")
@@ -359,7 +564,7 @@ class WorklistLanguageDOM(unittest.TestCase):
         self.assertNotRegex(shown, "[가-힣]")
         # Parts next to each other are given, not guessed: words translated, data as it is.
         self.assertEqual("2 new studies arrived: SYN", run(say, "새 검사 {n0}건이 도착했습니다: {1}{t2}", [2, "SYN", {"t": ""}], "en").strip())
-        both = run(say, "{t0} · {t1}", [{"t": "Unread"}, {"t": "Approved"}], "ko")
+        both = self.page.evaluate("() => { const {say, tr} = KinLanguage; return tr(say('{t0} · {t1}', say('Unread'), say('Approved')), 'ko'); }")
         self.assertEqual("미판독 · 승인됨", both)
         # A number keeps its sign; an English plural ending has no place in Korean.
         self.assertIn("-1920", run(say, "Display {n0} · {1}, {2} · {3} × {4}", [2, -1920, 0, 1920, 1080], "ko"))
@@ -413,7 +618,7 @@ class WorklistLanguageDOM(unittest.TestCase):
           const data = document.createElement('p'); data.id = 'sentence-equal-data'; document.body.append(data);
           const ui = document.createElement('p'); ui.id = 'sentence-equal-ui'; document.body.append(ui);
           KinLanguage.write(data, KinLanguage.say('{0}', 'Unread'));
-          KinLanguage.write(ui, KinLanguage.say('{t0}', {t: 'Unread'}));
+          KinLanguage.write(ui, KinLanguage.say('{t0}', KinLanguage.say('Unread')));
         }""")
         for lang in ('en', 'ko', 'en', 'ko'):
             self.apply(lang)
@@ -448,16 +653,16 @@ class WorklistLanguageDOM(unittest.TestCase):
         self.boot()
         result = self.page.evaluate("""() => {
           const {say, tr} = KinLanguage;
-          return [tr(say('{t0} v{n1}', {t:'Approve'}, 3), 'ko'),
-            tr(say('{t0} v{n1}', {t:'Addendum'}, 2), 'ko'),
-            tr(say('DICOM Identity{t0}{t1}{t2}', {t:' · Patient Mismatch'}, {t:''}, {t:''}), 'ko')];
+          return [tr(say('{t0} v{n1}', say('Approve'), 3), 'ko'),
+            tr(say('{t0} v{n1}', say('Addendum'), 2), 'ko'),
+            tr(say('DICOM Identity{t0}{t1}{t2}', say(' · Patient Mismatch'), {t:''}, {t:''}), 'ko')];
         }""")
         self.assertEqual(['승인 v3', '추가 기재 v2', 'DICOM 식별 정보 · 환자 불일치'], result)
 
     def test_logout_preservation_list_keeps_two_lines_and_translates_the_failure_reasons(self):
         self.boot()
         display = declarations('work-exit.js', ['showLogoutPanel', 'LOGOUT_TITLES', 'LOGOUT_NOTES', 'LOGOUT_FAILED'])
-        self.page.evaluate("() => { const kinWrite=KinLanguage.write; " + display + """
+        self.page.evaluate("() => { const {write:kinWrite, say:kinSay}=KinLanguage; " + display + """
           const prep={state:'failed',reason:'refused',reports:[
             {uid:'1.2.3',label:'SYN first',safe:false,reason:'refused'},
             {uid:'1.2.4',label:'SYN second',safe:false,reason:'unknown'}]};
@@ -512,7 +717,7 @@ class WorklistLanguageDOM(unittest.TestCase):
         field = page.locator("#findings")
         placeholder = field.get_attribute("placeholder")
         # A validity message the page set before any language was chosen follows the later choice.
-        page.evaluate("() => document.querySelector('#page-size').setCustomValidity('계정 설정이 변경되었습니다. 불러온 뒤 다시 저장하세요')")
+        page.evaluate("() => document.querySelector('#page-size').setCustomValidity(KinLanguage.say('계정 설정이 변경되었습니다. 불러온 뒤 다시 저장하세요'))")
         self.apply("ko", worklist=False)
         if placeholder:
             expect(field).not_to_have_attribute("placeholder", placeholder)
@@ -523,8 +728,19 @@ class WorklistLanguageDOM(unittest.TestCase):
         page.remove_listener("dialog", self.answer)
         page.on("dialog", lambda d: (values.append((d.message, d.default_value)), d.dismiss()))
         page.locator("#rows tr").first.click()
-        page.evaluate("() => window.prompt('검사를 선택하세요.', 'Unread')")
+        page.evaluate("() => window.prompt(KinLanguage.say('검사를 선택하세요.'), 'Unread')")
         self.assertEqual([("Select a study.", "Unread")], values)
+
+    def test_raw_validity_overwrites_an_equal_registered_message(self):
+        self.boot()
+        self.apply('en')
+        self.page.evaluate("""() => {
+          const field = document.querySelector('#page-size');
+          field.setCustomValidity(KinLanguage.say('검사를 선택하세요.'));
+          field.setCustomValidity(field.validationMessage);
+        }""")
+        self.apply('ko')
+        self.assertEqual('Select a study.', self.page.locator('#page-size').evaluate('el => el.validationMessage'))
 
     def test_an_alert_started_in_the_pop_out_window_follows_the_reading_screen(self):
         self.boot()
@@ -537,7 +753,7 @@ class WorklistLanguageDOM(unittest.TestCase):
         pip = self.context.pages[1]
         expect(pip.locator("#findings")).to_be_visible()
         pip.locator("#findings").click()
-        self.page.evaluate("() => window.alert('검사를 선택하세요.')")
+        self.page.evaluate("() => window.alert(KinLanguage.say('검사를 선택하세요.'))")
         self.assertTrue(self.dialogs and not re.search("[가-힣]", self.dialogs[-1]), self.dialogs)
 
     def test_an_account_that_never_chose_keeps_the_page_as_it_is(self):

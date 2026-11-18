@@ -1,4 +1,6 @@
 'use strict';
+// Paper times are the reader's local time; pin the zone so the expected text does not depend on this machine.
+process.env.TZ = 'UTC';
 /* TEST-S3-U4-PREVIEW-CITATION: the printed citation section's pure record wording.
  *
  * REQ-S3-U4-CITATION-OUTPUT -> RISK-S3-U4-PAPER-IDENTIFIER-LEAK / FALSE-EMPTY /
@@ -165,7 +167,7 @@ test('each terminal state maps to its own wording and only ok-0 may say 없음',
 
 // ── P5 · the record wording itself ──
 
-test('the record names the reader, the link state, UTC and its own limitation', () => {
+test('the record names the reader, the link state, the local time and its own limitation', () => {
   const states = { current: '현재 판과 일치', revised: '이후 개정됨', 'metadata-changed': '메타데이터 변경됨',
     hidden: '숨김 처리됨', missing: '찾을 수 없음' };
   for (const [value, korean] of Object.entries(states)) {
@@ -178,7 +180,8 @@ test('the record names the reader, the link state, UTC and its own limitation', 
   assert.ok(!odd.includes('SENTINELSTATE'), odd);
 
   const line = section('ok', [readable()]).lines[2];
-  assert.ok(line.includes('2026-09-19 05:00(UTC)'), line);
+  // The paper prints a server instant in the reader's local time (zone pinned to UTC at the top of this file).
+  assert.ok(line.includes('2026-09-19 05:00') && !line.includes('UTC'), line);
   assert.ok(line.includes('doctor2'), line);
   assert.ok(!line.includes('doctor2@kin'), 'the paper shows the display name the screen shows');
   assert.ok(section('ok', [readable({ insertedAt: null })]).lines[2].includes('시각 미확인'));
@@ -203,7 +206,7 @@ test('the record names the reader, the link state, UTC and its own limitation', 
 // ── P6 · the node surface of the shipped module ──
 
 test('the module still exports the saved label beside the citation wording', () => {
-  assert.deepEqual(Object.keys(preview), ['savedLabel', 'citationSection', 'citationAnswerOk']);
+  assert.deepEqual(Object.keys(preview), ['savedLabel', 'citationSection', 'citationAnswerOk', 'paperStamp', 'approvalText', 'paperDate']);
   for (const name of Object.keys(preview)) assert.equal(typeof preview[name], 'function', name);
   assert.equal(typeof globalThis.KinReportPreview, 'function', 'the browser factory still reaches the page');
   // Loading the module must not need a DOM: the job-print identity test and the

@@ -193,18 +193,22 @@
       note.className = 'related-mode-note';
       note.setAttribute('lang', 'ko');
       const ready = view.state === 'ready';
-      note.textContent = ready ? '비교 중인 검사의 판독문입니다.' : view.message || SOURCE_STATE[view.state] || SOURCE_STATE.idle;
+      const language = globalThis.KinLanguage;
+      const phrase = words => language ? language.say(words) : words;
+      const write = (node, value) => language ? language.write(node, value) : (node.textContent = value);
+      const message = ready ? phrase('비교 중인 검사의 판독문입니다.') : view.message || phrase(SOURCE_STATE[view.state] || SOURCE_STATE.idle);
+      write(note, message);
       extra.push(note);
       // Minhoon item 8: the mode stands in the Related panel's place for the plain view, so without a report its first
       // line says why (loading, failed, none) where the text would be, instead of empty section headings.
       // The identity cards are not on screen, so this line also carries the Retry of a failed read.
       sourceState.hidden = ready;
-      sourceState.textContent = ready ? '' : note.textContent;
+      write(sourceState, ready ? '' : message);
       if (view.state === 'failed') {
         const retry = doc.createElement('button');
         retry.type = 'button';
         retry.className = 'related-mode-retry';
-        retry.textContent = 'Retry';
+        write(retry, phrase('Retry'));
         retry.addEventListener('click', () => { if (state) app.reloadSource(); });
         sourceState.append(retry);
       }

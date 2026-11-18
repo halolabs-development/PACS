@@ -691,6 +691,15 @@ PROFILES = {
         'suite_timeout': 900,
         'suites': (('e2e/test_worklist_language.py', 'WorklistLanguageE2E', 'ci-screen-language'),),
     },
+    'login-error-page': {
+        'out': ROOT / 'tests/e2e/artifacts/login-error-page-ci',
+        'project_prefix': 'kin-login-error-page-ci-',
+        # Dispatch only (Focused integration): the login server's error page through the real proxy - a dead reset link,
+        # a lost login cookie, an unknown client, a wrong return address - each with the one way back into HALO PACS,
+        # and that way back starting a real login that ends on the worklist.
+        'suite_timeout': 540,
+        'suites': (('e2e/test_login_error_page.py', 'LoginErrorPageE2E', 'ci-login-error-page'),),
+    },
 }
 
 # S4-EG1 A3: the gateway-e2e suite names its own Compose project here before its first compose call, so the project

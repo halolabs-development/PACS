@@ -125,6 +125,7 @@ SERVED_FILES = (
     "worklist-v0/hpacs-lite/study-identity.js",
     "worklist-v0/hpacs-lite/clinical-context.js",
     "worklist-v0/hpacs-lite/viewer-windows.js",
+    "worklist-v0/hpacs-lite/box-layout.js",
     "worklist-v0/hpacs-lite/workspace-layout.js",
     "worklist-v0/hpacs-lite/study-panel.js",
     "worklist-v0/hpacs-lite/study-panel.css",

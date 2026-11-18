@@ -16,7 +16,7 @@ person read is the position that is sent. Nothing here talks to a server, a data
 Two files may be replaced through KIN_CURSOR_MAIN / KIN_CURSOR_CITATION_JS so the mutant runner can
 break the product on purpose without ever touching the source tree.
 """
-from page_source import read_page_source
+from page_source import read_page_source, settle
 from main_split_harness import REPORT_FIXTURE, fixture_block
 import json
 import os
@@ -557,7 +557,7 @@ class ReportCursorInsertDOMTest(unittest.TestCase):
         self.assertEqual([3, 3], self.snap()["caret"]["findings"])
         self.assertNotEqual("findings", self.snap()["focused"])
         # (b) the real non-force loadReport with the SAME text moves neither caret nor marker
-        self.page.evaluate("load()")
+        settle(self.page, "load()")
         self.assertEqual([3, 3], self.snap()["caret"]["findings"], "an identical assignment must not move the caret")
         self.assertEqual([3, 3], self.snap()["insertionRange"]["findings"], "the next insertion keeps the position")
         # (c) a real change does forget it, and the next insertion is the legacy append. The forced

@@ -599,7 +599,7 @@
       } catch (e) {
         if (!work.admits(at) || citationReads.get(uid) !== ticket) return mine = false;
         // 확인하지 못한 것과 인용이 없는 것은 다르다. 모른다고 말하고, 키는 만들지 않는다.
-        citationNotes.set(uid, "인용 건수를 확인하지 못했습니다: " + e.message);
+        citationNotes.set(uid, kinSay("인용 건수를 확인하지 못했습니다: {e0}", e.message));
         return false;
       } finally {
         // 이 읽기의 표는 이 읽기가 치운다(자기 것만).

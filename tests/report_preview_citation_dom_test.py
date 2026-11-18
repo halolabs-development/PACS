@@ -266,7 +266,8 @@ class ReportPreviewCitationDOMTest(unittest.TestCase):
         self.page.close()
 
     def open(self, cite=None, answer=None, render=True):
-        self.page = self.browser.new_page()
+        # Paper times are the reader's local time; a fixed zone keeps the expected text machine-independent.
+        self.page = self.browser.new_page(timezone_id="UTC")
         self.page.set_default_timeout(10000)
         errors = []
         self.page.on("pageerror", lambda error: errors.append(str(error)))
@@ -333,7 +334,9 @@ class ReportPreviewCitationDOMTest(unittest.TestCase):
         self.assertIn(ATTRIBUTION, section)
         self.assertIn(LIMITATION, section)
         self.assertIn("Findings · 소견 r2 · 출처 1번 · 인용 당시 연결 현재 판과 일치", section)
-        self.assertIn("2026-09-19 05:00(UTC)", section)
+        # Local time of the page; the page runs in UTC (open()), so the instant reads as it was stored.
+        self.assertIn("2026-09-19 05:00", section)
+        self.assertNotIn("UTC", section)
         # The first entry's text is in the printed body, the second one's is not.
         self.assertIn("넣은 문자열이 이 칸에 그대로 있습니다", section)
         self.assertIn("넣은 문자열이 이 칸에 더는 없습니다", section)

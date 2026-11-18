@@ -17,7 +17,7 @@ the collaborators that have nothing to do with the report, and it captures windo
 the shipped 20 s autosave callback runs on demand with its own declared delay asserted. Neither
 replaces a product function.
 """
-from page_source import read_page_source
+from page_source import read_page_source, settle
 from main_split_harness import REPORT_FIXTURE, fixture_block
 import json
 import os
@@ -453,7 +453,7 @@ class ReportCitationDOMTest(unittest.TestCase):
                          "the sliced product code did not define insertCitation")
         if citations is not None:
             self.page.evaluate("citeReply(%s)" % json.dumps(citations, ensure_ascii=False))
-        self.page.evaluate("load({force: true})")
+        settle(self.page, "load({force: true})")
         # loadReport fires the dedicated read; wait for it so the state is settled either way.
         self.page.wait_for_function("()=>citeCalls.length>=1")
         self.errors = errors

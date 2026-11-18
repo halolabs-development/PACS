@@ -4,7 +4,7 @@ const {test}=require('node:test'), assert=require('node:assert/strict');
 const fs=require('node:fs'),vm=require('node:vm');
 const {viewerCommand,verifyViewerReference}=require('/app/dist/viewer-input.js');
 const {srMeasurement,srDataset,srFile}=require('/app/dist/manual-sr-dicom.js');
-const {planarGeometry}=require('/app/dist/planar-geometry.js');
+const {planarGeometry,viewerPlaneImage}=require('/app/dist/planar-geometry.js');
 const context=vm.createContext({});
 for(const file of ['mg-length','planar-geometry'])vm.runInContext(fs.readFileSync('config/ohif/'+file+'.js','utf8'),context);
 const base={StudyInstanceUID:'2.25.1',SeriesInstanceUID:'2.25.2',SOPInstanceUID:'2.25.3',SOPClassUID:'1.2.840.10008.5.1.4.1.1.4',Rows:128,Columns:128,PixelSpacing:[.5,.25],ImagePositionPatient:[0,0,0],ImageOrientationPatient:[1,0,0,0,1,0]};
@@ -28,6 +28,101 @@ for(const modality of ['MR','DX','US','XA','MG'])test(modality+' length, angle a
   const file=srFile(dataset);assert.equal(file.subarray(128,132).toString(),'DICM');
   assert.ok(file.includes(Buffer.from(computed.basis)));
   assert.throws(()=>verifyViewerReference(tags.StudyInstanceUID,{...item,baseline:{...item.baseline,values:[expected+1]}},tags));
+ }
+});
+// Projection X-rays mostly carry no ImagePositionPatient / ImageOrientationPatient. The pinned viewer (OHIF's
+// imagePlaneModule and the DICOM image loader alike) then places the image at origin [0,0,0] with rows along [0,1,0] and
+// columns along [0,0,-1], and every mark's points lie in that plane. The tag sets below follow DICOM PS3.3: Imager Pixel
+// Spacing is required in the DX family; Pixel Spacing that differs from it has been corrected or calibrated (10.7.1.1).
+// The CR rows mirror public samples of the pydicom project (MIT licence): pydicom test_files dicomdirtests CR (Imager Pixel
+// Spacing 0.1\0.1, 16x16, no position or orientation) and pydicom-data RG1 (Philips CR, Pixel Spacing 0.000\0.000, no
+// position or orientation). The DX, RF and XA rows are synthetic tag sets, not copies of a device file.
+const projection={StudyInstanceUID:'2.25.1',SeriesInstanceUID:'2.25.2',SOPInstanceUID:'2.25.3',Rows:200,Columns:300};
+const viewerPoint=(tags,[x,y],spacing)=>[0,x*spacing[1],-y*spacing[0]];
+const projections=[
+ ['CR Pixel Spacing calibrated',{...projection,Modality:'CR',SOPClassUID:'1.2.840.10008.5.1.4.1.1.1',PixelSpacing:[.15,.15],ImagerPixelSpacing:[.168,.168]},[.15,.15],/원본 기준면/],
+ ['CR public sample',{...projection,Modality:'CR',SOPClassUID:'1.2.840.10008.5.1.4.1.1.1',Rows:16,Columns:16,ImagerPixelSpacing:['0.1000','0.1000']},[.1,.1],/검출기/],
+ ['DX detector',{...projection,Modality:'DX',SOPClassUID:'1.2.840.10008.5.1.4.1.1.1.1',ImagerPixelSpacing:[.2,.3]},[.2,.3],/검출기/],
+ ['RF magnification',{...projection,Modality:'RF',SOPClassUID:'1.2.840.10008.5.1.4.1.1.12.2',ImagerPixelSpacing:[.3,.3],EstimatedRadiographicMagnificationFactor:1.2},[.25,.25],/ERMF/],
+ ['XA single frame',{...projection,Modality:'XA',SOPClassUID:'1.2.840.10008.5.1.4.1.1.12.1',NumberOfFrames:'1',ImagerPixelSpacing:['0.25','0.5']},[.25,.5],/검출기/],
+ ['RF with a position',{...projection,Modality:'RF',SOPClassUID:'1.2.840.10008.5.1.4.1.1.12.2',ImagerPixelSpacing:[.3,.3],ImagePositionPatient:'0\\0\\0'},[.3,.3],/검출기/],
+];
+for(const [name,tags,spacing,label] of projections)test(name+' without position or orientation measures in the viewer plane',()=>{
+ const small=tags.Columns<100, at=p=>small?p.map(n=>n/20):p;
+ const pixels={length:[[10,20],[40,60]],angle:[[40,20],[10,20],[10,60]],ellipse:[[50,70],[50,30],[30,50],[70,50]]};
+ const expected={length:Math.hypot(30*spacing[1],40*spacing[0]),angle:90,ellipse:Math.PI*40*spacing[1]*40*spacing[0]/4};
+ for(const kind of ['length','angle','ellipse']){
+  const image=pixels[kind].map(at),value=small&&kind!=='angle'?expected[kind]/(kind==='ellipse'?400:20):expected[kind];
+  for(const frame of tags.NumberOfFrames>1?[1,2]:[1]){
+   const points=image.map(p=>viewerPoint(tags,p,spacing,frame));
+   const browser=context.kinPlanarGeometry(tags,frame),server=planarGeometry(tags,frame);
+   // The browser reads the viewer's combined instance, which carries that frame origin as ImagePositionPatient.
+   if(tags.NumberOfFrames>1)assert.deepEqual([...context.kinPlanarGeometry({...tags,ImagePositionPatient:[0,0,frame]},frame).origin],[...browser.origin]);
+   assert.deepEqual([...browser.spacing],spacing);assert.match(browser.label,label);assert.equal(browser.label,server.label);
+   for(const geometry of [browser,server]){
+    assert.ok(Math.abs(geometry.measure(kind,points)-value)<1e-9,name+' '+kind);
+    points.forEach((p,i)=>geometry.imagePoint(p).forEach((n,j)=>assert.ok(Math.abs(n-image[i][j])<1e-9)));
+   }
+   const item=viewerCommand(Buffer.from(JSON.stringify({requestId:'00000000-0000-4000-8000-000000000002',item:{schemaVersion:1,kind,seriesUid:tags.SeriesInstanceUID,sopUid:tags.SOPInstanceUID,frame,frameOfReferenceUid:null,label:'Manual',points,viewPlaneNormal:[-1,0,0],viewUp:[0,0,1],baseline:{calculator:server.calculator,values:[value]}}})),true).item;
+   verifyViewerReference(tags.StudyInstanceUID,item,tags);
+   // The SR graphic is the image pixel coordinates (pixel corner origin), the same coordinates the viewer drew.
+   const computed=srMeasurement(item,tags);assert.ok(Math.abs(computed.values[0]-value)<1e-9);
+   const graphic=(kind==='ellipse'&&(image[0][1]-image[1][1])*spacing[0]<(image[3][0]-image[2][0])*spacing[1]?[image[2],image[3],image[0],image[1]]:image).flat().map(n=>n+.5);
+   computed.graphic.forEach((n,i)=>assert.ok(Math.abs(n-graphic[i])<1e-9,name+' graphic'));
+  }
+ }
+ // A point off the viewer's plane, or one in the plane once assumed ([1,0,0]/[0,1,0]), is never measured.
+ for(const geometry of [context.kinPlanarGeometry(tags,1),planarGeometry(tags,1)]){
+  assert.throws(()=>geometry.measure('length',[[1,0,0],[0,4,-3].map(n=>small?n/20:n)]));
+  assert.throws(()=>geometry.measure('length',[[0,0,0],[3,4,0]]));
+ }
+});
+// Outside the projection list (other modalities, functional groups, detector information, an orientation, spacing tags that
+// are empty, zero or malformed) nothing changes: the geometry keeps the default plane it always had ([1,0,0,0,1,0] at
+// [0,0,0]) and the same answer in the browser and on the server, so what was refused stays refused and what was measured
+// gives the same value.
+test('images outside the projection list keep the geometry they had',()=>{
+ const regions={SequenceOfUltrasoundRegions:[{RegionSpatialFormat:1,PhysicalUnitsXDirection:3,PhysicalUnitsYDirection:3,PhysicalDeltaX:.02,PhysicalDeltaY:.02,RegionLocationMinX0:0,RegionLocationMinY0:0,RegionLocationMaxX1:299,RegionLocationMaxY1:199}]};
+ const cr={...projection,Modality:'CR',SOPClassUID:'1.2.840.10008.5.1.4.1.1.1'};
+ const outside=[
+  {...projection,Modality:'US',SOPClassUID:'1.2.840.10008.5.1.4.1.1.6.1',PixelSpacing:[.5,.5]},
+  {...projection,Modality:'US',SOPClassUID:'1.2.840.10008.5.1.4.1.1.6.1',...regions},
+  {...projection,Modality:'US',SOPClassUID:'1.2.840.10008.5.1.4.1.1.6.1',PixelSpacing:[.5,.5],...regions},
+  {...projection,Modality:'NM',SOPClassUID:'1.2.840.10008.5.1.4.1.1.20',NumberOfFrames:2,PixelSpacing:[1,1],DetectorInformationSequence:[{ImagePositionPatient:[0,0,0],ImageOrientationPatient:[0,1,0,0,0,-1]}]},
+  {...projection,Modality:'OT',SOPClassUID:'1.2.840.10008.5.1.4.1.1.7',PixelSpacing:[.5,.5]},
+  {...cr,PixelSpacing:null,ImagerPixelSpacing:[.2,.2]},
+  {...cr,PixelSpacing:['0.000','0.000']},
+  {...cr,ImagerPixelSpacing:[.2,.2],EstimatedRadiographicMagnificationFactor:0},
+  {...cr,ImagerPixelSpacing:'0.2'},
+  {...cr,PixelSpacing:[.2,.2],EstimatedRadiographicMagnificationFactor:'2.00000000000000000'},
+  {...cr,PixelSpacing:[.2,.2],EstimatedRadiographicMagnificationFactor:'\t2'},
+  {...cr,PixelSpacing:'0.2\\0.2',ImagePositionPatient:'0\\0\\0x1'},
+  {...cr,PixelSpacing:'0.2\\0.2',ImagePositionPatient:[0,0]},
+  {...cr,PixelSpacing:[.2,.2],NumberOfFrames:'0000000000001'},
+  {...projection,Modality:'XA',SOPClassUID:'1.2.840.10008.5.1.4.1.1.12.1',NumberOfFrames:2,ImagerPixelSpacing:[.25,.5]},
+  {...projection,Modality:'RF',SOPClassUID:'1.2.840.10008.5.1.4.1.1.12.2',NumberOfFrames:'3',ImagerPixelSpacing:[.3,.3]},
+  {...cr,PixelSpacing:[.2,.2],EstimatedRadiographicMagnificationFactor:'0x2'},
+  {...cr,ImagerPixelSpacing:'Infinity\\Infinity'},
+  {...cr,PixelSpacing:'0x1\\0x1'},
+  {...cr},
+  {...projection,Modality:'XA',SOPClassUID:'1.2.840.10008.5.1.4.1.1.12.1.1',NumberOfFrames:1,PerFrameFunctionalGroupsSequence:[{PixelMeasuresSequence:[{PixelSpacing:[.3,.3]}]}]},
+  {...cr,PixelSpacing:[.5,.5],ImageOrientationPatient:[1,0,0,0,1,0],ImagePositionPatient:[0,0,0]},
+ ];
+ for(const tags of outside){
+  assert.equal(context.kinViewerPlaneImage(tags),false,JSON.stringify(tags));assert.equal(viewerPlaneImage(tags),false,JSON.stringify(tags));
+  const make=[()=>context.kinPlanarGeometry(tags,1),()=>planarGeometry(tags,1)];
+  const built=make.map(f=>{try{return f();}catch(_){return null;}});
+  assert.equal(!!built[0],!!built[1],JSON.stringify(tags));
+  for(const geometry of built.filter(Boolean)){
+   assert.equal(geometry.viewerPlane,false);
+   assert.deepEqual([...geometry.orientation],tags.ImageOrientationPatient||[1,0,0,0,1,0]);assert.deepEqual([...geometry.origin],(typeof tags.ImagePositionPatient==='string'?tags.ImagePositionPatient.split('\\').map(Number):tags.ImagePositionPatient)||[0,0,0]);
+  }
+ }
+});
+test('projection images without a usable spacing still measure nothing',()=>{
+ for(const tags of [{...projection,Modality:'CR',SOPClassUID:'1.2.840.10008.5.1.4.1.1.1'},{...projection,Modality:'CR',SOPClassUID:'1.2.840.10008.5.1.4.1.1.1',PixelSpacing:['0.000','0.000']},{...projection,Modality:'CR',SOPClassUID:'1.2.840.10008.5.1.4.1.1.1',ImagerPixelSpacing:[.2,.2],EstimatedRadiographicMagnificationFactor:0}]){
+  assert.throws(()=>context.kinPlanarGeometry(tags,1),/원본 프레임의 좌표·간격·보정을 확인할 수 없습니다/);
+  assert.throws(()=>planarGeometry(tags,1),/원본 프레임의 좌표·간격·보정을 확인할 수 없습니다/);
  }
 });
 test('selected multiframe spacing and detector calibration remain explicit',()=>{

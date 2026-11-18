@@ -41,7 +41,7 @@
       bar.style.display = "flex";
       $("#b-cite-list").style.display = row ? "" : "none";
       // The note is a sentence of its own (its own text), so the screen language reaches it whole.
-      if (!row) { $("#citemsg").replaceChildren("● ", note); }
+      if (!row) kinWrite($("#citemsg"), kinSay("● {t0}", note ?? ""));
       else $("#citemsg").textContent =
         (unknownDraft
             ? `● 승인본 ${row.head.length}건 · 저장된 초안의 인용은 다시 확인하는 중입니다` + (note ? ` (${note})` : "")
@@ -166,9 +166,9 @@
       if (plan.mode === "end")
         return kinSay("삽입 위치: {t0} 칸 맨 끝 — 이 칸에서 확인된 커서 자리가 없어 끝에 붙입니다", { t: label });
       return kinSay("삽입 위치: {t0} 칸 {n1}번째 줄(줄바꿈 기준)부터{t2}{t3}{t4}", { t: label }, plan.line,
-        { t: plan.snapped === "line-end" ? " · 커서가 줄 중간이라 그 줄 다음으로 맞췄습니다" : "" },
-        { t: plan.snapped === "past-citation" ? " · 이미 인용된 문장을 쪼개지 않도록 그 뒤로 옮겼습니다" : "" },
-        { t: plan.mode === "selection" ? " · 선택한 글은 지우지 않고 그 뒤에 넣습니다" : "" });
+        { t: plan.snapped === "line-end" ? kinSay(" · 커서가 줄 중간이라 그 줄 다음으로 맞췄습니다") : "" },
+        { t: plan.snapped === "past-citation" ? kinSay(" · 이미 인용된 문장을 쪼개지 않도록 그 뒤로 옮겼습니다") : "" },
+        { t: plan.mode === "selection" ? kinSay(" · 선택한 글은 지우지 않고 그 뒤에 넣습니다") : "" });
     }
     /**
      * 200을 받은 뒤 **화면에** 놓을 계획(P-10). 보낸 문자열이 딛고 선 값이 아직 그대로면 그
@@ -247,11 +247,11 @@
       if (!citePane) return;
       const s = cur();
       const why = citationInsertBlock();
-      $("#cite-preview-target").textContent = s
-        ? `삽입 대상: ${s.name} (${s.id})\n${s.date} · ${shownStudyDesc(s)} · AccNo: ${s.acc || "없음"}`
-        : "삽입 대상: 검사 미선택";
+      kinWrite($("#cite-preview-target"), s
+        ? kinSay("삽입 대상: {0} ({1})\n{2} · {3} · AccNo: {4}", s.name, s.id, s.date, shownStudyDesc(s), s.acc || kinSay("없음"))
+        : kinSay("삽입 대상: 검사 미선택"));
       kinWrite($("#cite-preview-source"), kinSay("출처: {0} · 소견 r{1} · 인용 당시 연결 {2}",
-        { t: citePane.sourceLabel }, citePane.findingRevision, citePane.linkState));
+        citePane.sourceLabel, citePane.findingRevision, citePane.linkState));
       // 미리보기는 **조립된 그 유니코드 문자열 그대로**를 보인다. 공백도 줄바꿈도 보존된다.
       $("#cite-preview-block").textContent = citePane.block;
       // 측정 줄은 블록 바로 아래, 따로 표시된 칸에 — 사람 글과 기계가 붙인 글을 눈으로 가를 수 있게.
@@ -359,7 +359,7 @@
         work.commit(at, () => {
           if (!live()) return;
           setMeasure(pane, { state: "failed", seq,
-            note: kinSay("측정값을 넣지 않았습니다 — {e0}. 체크를 다시 켜면 다시 읽습니다.", { e: e?.transport === "timeout" ? "요청 시간이 초과되었습니다" : e?.message || String(e) }) });
+            note: kinSay("측정값을 넣지 않았습니다 — {e0}. 체크를 다시 켜면 다시 읽습니다.", { e: e?.transport === "timeout" ? kinSay("요청 시간이 초과되었습니다") : e?.message || String(e) }) });
         });
       }
     });
@@ -401,7 +401,7 @@
       if (!pane || citeBusy) return;
       const void_ = () => pane.uid !== selectedUid || pane.seq !== citeSeq || pane.selSeq !== selectionSeq;
       if (void_()) {
-        $("#cite-preview-status").textContent = "검사가 바뀌었습니다 — 이 창을 닫고 다시 확인하세요.";
+        kinWrite($("#cite-preview-status"), kinSay("검사가 바뀌었습니다 — 이 창을 닫고 다시 확인하세요."));
         $("#cite-preview-insert").disabled = true;
         return;
       }

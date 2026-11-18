@@ -105,7 +105,7 @@ class ReportPreviewE2E(ViewerHistoryE2E):
         with p.expect_popup() as opened:p.locator('#report-preview').get_by_role('button',name='인쇄 / PDF').click()
         printed=opened.value;printed.wait_for_function('()=>window.__printCalled===true')
         expect(printed.locator('main')).to_contain_text(f.patient_id);expect(printed.locator('.key')).to_have_count(2)
-        expect(printed.locator('header')).to_contain_text('승인일(UTC):')
+        expect(printed.locator('header')).to_contain_text('승인일시:')
         printed.evaluate("()=>window.dispatchEvent(new Event('afterprint'))")
         self.assertFalse(printed.is_closed())
         output=Path(__file__).parent/'artifacts/report-preview.pdf'

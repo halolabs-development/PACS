@@ -378,7 +378,8 @@ def without_u4b_clinician(text):
 # Everything the cut block reads from the page script, as small stand-ins. select() is the page's early return for the
 # same study followed by renderClinical(), whose S5-U4b line is the shipped HOOK. KIN_AUTH is the KinAuth stand-in below,
 # or nothing when the case loads the shipped auth.js first (test_18).
-READER_PRELUDE = """
+READER_PRELUDE = extract_function(MAIN, "kinWrite") + """
+const kinSay = t => t;
 const $ = s => document.querySelector(s);
 const API = location.origin + '/api';
 let sess = window.synSession;
