@@ -98,7 +98,11 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
           -- Another institution (1 in 50), an unknown managing institution (1 in 97), a PDF export on the viewing entry (1 in 7).
           CROSS JOIN LATERAL (SELECT CASE WHEN g % 97 = 0 THEN jsonb_set(a.a, '{managingInstitution}', '{"status":"unresolved","reason":"not-observed"}')
             WHEN g % 50 = 0 THEN jsonb_set(a.a, '{managingInstitution,value}', '"SYN-B"') ELSE a.a END AS b) b
-          CROSS JOIN LATERAL (SELECT CASE WHEN g % 7 = 0 AND e.stream = 'viewing' THEN jsonb_set(b.b, '{action}', '"pdf"') ELSE b.b END AS p) v
+          CROSS JOIN LATERAL (SELECT CASE WHEN g % 7 = 0 AND e.stream = 'viewing' THEN jsonb_set(b.b, '{action}', '"pdf"') ELSE b.b END AS c) c
+          -- Values in the optional authentication fields (1 in 11), which the screen shows when present.
+          CROSS JOIN LATERAL (SELECT CASE WHEN g % 11 = 0 THEN c.c || '{"auth":{"method":"session","sessionRef":"SYN-SESSION"},
+            "affectedIdentity":{"status":"known","value":{"id":"SYN-MEMBER","issuer":"SYN-ISSUER","subject":"SYN-MEMBER-SUB"}},
+            "rightsVersion":3}'::jsonb ELSE c.c END AS p) v
           ORDER BY g, CASE WHEN (g / $6::int) % 2 = 0 THEN e.stream END DESC, e.stream`, templates.map(e => e.eventId), first, count, start, step, templates.length)]);
     const perEvent = streams.reduce((sum, row) => sum + row.n, 0) / templates.length;
     const events = days => Math.round(days * PER_DAY / perEvent);
@@ -216,6 +220,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
       const second = await elapsed(() => review(span, { downloads, after: first.value.body.next }));
       assert.equal(second.value.status, 200, `${label}: continuation`);
       assert.deepEqual(second.value.body.rows, truth.slice(25, 50).map(expected), `${label}: continuation`);
+      if (!files) assert.ok([...first.value.body.rows, ...second.value.body.rows].some(r => r.auth && r.affectedIdentity && r.rightsVersion === 3),
+        `${label}: the optional authentication fields are compared with values`);
       assert.deepEqual([cursor(second.value.body.next).top, cursor(second.value.body.next).before], [truth[0].snapshot_top, truth[49].sequence],
         `${label}: the next continuation keeps the first ceiling`);
       measured[label] = { first: first.ms, second: second.ms };
@@ -235,21 +241,38 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await pages('170k: one day, file events', DAY, true);
     await pages('170k: five days', 5 * DAY, false);
 
-    // An abandoned request ends in PostgreSQL by the statement limit. To have a read that is slow by itself (working,
-    // not waiting on a lock), the previous quadratic definition stands in for the current one, then is put back.
+    // The limit stays inside its transaction: after successful reads every pooled connection keeps the server default.
+    const pooled = async when => {
+      const settings = await Promise.all(Array.from({ length: 30 }, () =>
+        db.$queryRawUnsafe(`SELECT current_setting('statement_timeout') AS t, pg_backend_pid() AS pid FROM pg_sleep(0.3)`)));
+      assert.deepEqual([...new Set(settings.map(([row]) => row.t))], ['0'], `no pooled connection keeps the limit (${when})`);
+      console.log(`statement_timeout on ${new Set(settings.map(([row]) => row.pid)).size} pooled connections ${when}: 0`);
+    };
+    await pooled('after the answered reads');
+
+    // An abandoned request ends in PostgreSQL by the statement limit. A read that is slow by itself (sleeping, not
+    // waiting on a lock) stands in for the current definition, which is then put back.
     const signature = 'emr_access.review_entries(text,timestamptz,timestamptz,boolean,bigint,bigint,integer)';
     const [{ sql: current }] = await witness.$queryRawUnsafe(`SELECT pg_get_functiondef('${signature}'::regprocedure) AS sql`);
     const running = async marker => (await witness.$queryRawUnsafe(`SELECT count(*)::int AS n FROM pg_stat_activity
       WHERE datname = current_database() AND usename = 'kin_runtime' AND state = 'active' AND query LIKE $1`, marker))[0].n;
     const PRODUCT = '%SELECT * FROM emr_access.review_entries(%', PROBE = '%unbounded probe%';
-    await witness.$executeRawUnsafe(body.replace('CREATE FUNCTION', 'CREATE OR REPLACE FUNCTION'));
+    await witness.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION emr_access.review_entries(p_institution text, p_from timestamptz,
+      p_until timestamptz, p_files boolean, p_top bigint, p_before bigint, p_limit integer)
+      RETURNS TABLE(entry_id uuid, sequence bigint, event_id text, occurred_at timestamptz, recorded_at timestamptz,
+        statutory_act text, payload text, snapshot_top bigint)
+      LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+        WITH nap AS MATERIALIZED (SELECT p_limit AS x FROM pg_sleep(120))
+        SELECT NULL::uuid, NULL::bigint, NULL::text, NULL::timestamptz, NULL::timestamptz, NULL::text, NULL::text, NULL::bigint
+        FROM nap WHERE nap.x < 0
+      $$`);
     try {
       // A shorter limit already set for the runtime role is kept (new sessions read it).
       await witness.$executeRawUnsafe(`ALTER ROLE kin_runtime SET statement_timeout = '3s'`);
       await db.$disconnect(); await db.$connect();
       const shorter = await elapsed(() => review(DAY));
       assert.equal(shorter.value.status, 503, 'a slow read under a 3 s role limit is refused');
-      assert.ok(shorter.ms < 15000, `the role's 3 s limit is kept, not raised to 30 s (${shorter.ms} ms)`);
+      assert.ok(shorter.ms >= 2900 && shorter.ms < 9000, `the role's 3 s limit is kept, not raised (${shorter.ms} ms)`);
       await witness.$executeRawUnsafe(`ALTER ROLE kin_runtime RESET statement_timeout`);
       await db.$disconnect(); await db.$connect();
       measured.roleLimit = shorter.ms;
@@ -286,14 +309,10 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
       await witness.$executeRawUnsafe(current);
       await witness.$queryRawUnsafe(`SELECT pg_cancel_backend(pid)::text FROM pg_stat_activity WHERE usename = 'kin_runtime' AND query LIKE $1`, PROBE);
     }
-    assert.ok(!(await witness.$queryRawUnsafe(`SELECT prosrc FROM pg_proc WHERE oid = '${signature}'::regprocedure`))[0].prosrc.includes('ceiling AS ('),
+    assert.equal((await witness.$queryRawUnsafe(`SELECT pg_get_functiondef('${signature}'::regprocedure) AS sql`))[0].sql, current,
       'the current definition is back');
-    // The limit stays inside its transaction: every pooled connection keeps the server default.
-    const settings = await Promise.all(Array.from({ length: 30 }, () =>
-      db.$queryRawUnsafe(`SELECT current_setting('statement_timeout') AS t, pg_backend_pid() AS pid FROM pg_sleep(0.3)`)));
-    assert.deepEqual([...new Set(settings.map(([row]) => row.t))], ['0'], 'no pooled connection keeps the limit');
-    console.log(`statement_timeout on ${new Set(settings.map(([row]) => row.pid)).size} pooled connections: 0`);
     assert.equal((await review(DAY)).status, 200, 'the next read answers');
+    await pooled('after the refused and the next answered read');
 
     // A thirty-day ledger: older entries outside the reviewed day do not change its answer.
     const before = filled.n;
