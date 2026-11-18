@@ -278,6 +278,42 @@ class AuthEntryDOMTest(unittest.TestCase):
         self.assertEqual(urlparse(self.page.url).query, "")
         self.assertEqual(self.requests, [("/api/me", None)], "the recorded end of this session still wins after bootstrap")
 
+    # The callback's answers for a verified sign-in that may not enter, written out here (not read from the page).
+    REFUSED = {
+        "member_suspended": "이 계정은 사용이 정지되어 로그인할 수 없습니다. 소속 기관의 HALO PACS 관리자 또는 HALO PACS 운영 담당자에게 문의해 주세요.",
+        "member_suspended_unapproved": "이 계정은 현재 승인이 없고 사용이 정지되어 로그인할 수 없습니다. 다시 쓰려면 승인이 필요합니다 — "
+                                       "소속 기관의 HALO PACS 관리자 또는 HALO PACS 운영 담당자에게 문의해 주세요.",
+        "admin_otp_required": "관리자 계정은 OTP 확인이 필요합니다. OTP를 방금 등록하셨다면 정상입니다 — 등록한 OTP로 한 번 더 로그인해 주십시오.",
+    }
+
+    def test_a_refused_sign_in_says_why_and_whom_to_ask(self):
+        # Suspended (approval kept or not) and the administrator's OTP answer each say why, in the error colour; the
+        # general failure keeps its sentence. Nothing enters and nothing starts by itself.
+        self.me_absent = True
+        for code, said in {**self.REFUSED, "login_failed": "로그인을 마치지 못했습니다. 잠시 뒤 로그인 버튼을 다시 눌러 주세요."}.items():
+            with self.subTest(code=code):
+                self.landing(query="?auth_error=" + code)
+                expect(self.page.locator("#msg")).to_have_text(said)
+                expect(self.page.locator("#msg")).not_to_have_class("ended")
+                self.assertEqual((urlparse(self.page.url).path, urlparse(self.page.url).query, self.starts()),
+                                 (BASE + "index.html", "", []))
+
+    def test_a_refused_sign_in_after_a_finished_log_out_still_says_why(self):
+        # A browser that logged out cleanly (a confirmed end record) and then signs in as a suspended member: the
+        # refusal is what the person needs now, also after the window regains focus. An unfinished Log out still wins
+        # with its Retry Log Out (A012).
+        self.landing(SESSION, query="?auth_error=member_suspended")
+        expect(self.page.locator("#msg")).to_have_text(self.REFUSED["member_suspended"])
+        self.page.evaluate("dispatchEvent(new Event('focus'))")
+        expect(self.page.locator("#msg")).to_have_text(self.REFUSED["member_suspended"])
+        expect(self.page.locator("#msg")).not_to_have_class("ended")
+        expect(self.page.locator("#retry-logout")).to_be_hidden()
+
+    def test_an_unfinished_log_out_still_wins_over_a_refusal(self):
+        self.landing(SESSION, query="?auth_error=member_suspended", status="unconfirmed", reason="network")
+        expect(self.page.locator("#msg")).to_contain_text("서버에 연결하지 못해")
+        expect(self.page.locator("#retry-logout")).to_be_visible()
+
     def landing(self, record=None, query="?auth_error=stale", origin="logout", status="confirmed", reason=None,
                 raw=None, script=None, expect_button=True):
         """The real landing in a browser that holds `record` (a session id) as an end record of that origin and status,

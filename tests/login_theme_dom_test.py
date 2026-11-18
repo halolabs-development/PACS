@@ -213,6 +213,62 @@ class LoginThemeDomTest(unittest.TestCase):
         self.assertLess(place["link"]["left"] - place["settings"]["left"], place["settings"]["width"] / 2)
         self.assertIn("TLS", place["note"])
 
+    def test_05_a_phone_sized_window_keeps_the_card_inside(self):
+        """375x667: the card (and its first letters) stays inside the window, the page does not scroll sideways, and the
+        notice links sit under the card, not beside it. The OTP page keeps the same shape."""
+        measure = """() => { const r = s => document.querySelector(s).getBoundingClientRect();
+          return {card: r('.card-pf'), links: r('#kin-legal-links'), width: innerWidth,
+                  scroll: document.documentElement.scrollWidth}; }"""
+        self.page.set_viewport_size({"width": 375, "height": 667})
+        for path in ("/auth/realms/kin/protocol/openid-connect/auth", OTP_PATH):
+            with self.subTest(path=path):
+                self.page.goto(ORIGIN + path)
+                expect(self.page.locator("#kin-legal-links")).to_be_attached()
+                place = self.page.evaluate(measure)
+                self.assertGreaterEqual(place["card"]["left"], 0, "card starts inside the window")
+                self.assertLessEqual(place["card"]["right"], place["width"], "card ends inside the window")
+                self.assertLessEqual(place["scroll"], place["width"], "no sideways scrolling")
+                self.assertGreaterEqual(place["links"]["top"], place["card"]["bottom"], "notice links under the card")
+        # A wide window is laid out as before: the card keeps its width.
+        self.page.set_viewport_size({"width": 1600, "height": 1050})
+        self.page.goto(ORIGIN + "/auth/realms/kin/protocol/openid-connect/auth")
+        self.assertEqual(round(self.page.locator(".card-pf").bounding_box()["width"]), 380)
+
+
+class LoginThemeMessagesTest(unittest.TestCase):
+    """The lock sentence (Keycloak 26.7.3 draws `accountTemporarilyDisabledMessage` on the password form and
+    `accountTemporarilyDisabledMessageTotp` on the OTP form only for a temporarily locked account, before it reads the
+    password). Keycloak's base theme gives both the same words as a wrong password; this theme says the account is locked
+    and how long to wait, from the realm's own brute-force values. A wrong password and an unknown username keep
+    Keycloak's one sentence (the theme does not override invalidUserMessage)."""
+
+    REALM = ROOT / "keycloak" / "kin-realm.json"
+    # Keycloak 26.7.3 base theme words for a wrong password (theme/base/login/messages), written out here.
+    WRONG = {"messages.properties": "잘못된 사용자 이름 또는 비밀번호입니다.", "messages_ko.properties": "잘못된 사용자 이름 또는 비밀번호입니다.",
+             "messages_en.properties": "Invalid username or password."}
+    WORDS = {"messages.properties": ("잠", "1분", "15분"), "messages_ko.properties": ("잠", "1분", "15분"),
+             "messages_en.properties": ("locked", "1 minute", "15 minutes")}
+
+    def test_06_a_locked_account_is_told_it_is_locked_and_how_long_to_wait(self):
+        import json
+        realm = json.loads(self.REALM.read_text(encoding="utf-8"))
+        # The sentence's minutes are the realm's: 60 s per lock step, Keycloak's default 900 s ceiling, no permanent lock.
+        self.assertEqual((realm["bruteForceProtected"], realm["failureFactor"], realm["waitIncrementSeconds"]), (True, 5, 60))
+        self.assertEqual(realm.get("maxFailureWaitSeconds", 900), 900)
+        self.assertFalse(realm.get("permanentLockout", False))
+        for name, (locked, first, longest) in self.WORDS.items():
+            rows = properties(THEME / "messages" / name)
+            for key in ("accountTemporarilyDisabledMessage", "accountTemporarilyDisabledMessageTotp"):
+                with self.subTest(file=name, key=key):
+                    said = rows.get(key, "")
+                    self.assertIn(locked, said)
+                    self.assertIn(first, said)
+                    self.assertIn(longest, said)
+                    self.assertNotEqual(said, self.WRONG[name])
+                    # Keycloak formats these with MessageFormat: a quote or a brace would be eaten or break the text.
+                    self.assertFalse(set("'{}") & set(said), said)
+            self.assertNotIn("invalidUserMessage", rows, "a wrong password and an unknown username keep one sentence")
+
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")

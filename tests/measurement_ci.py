@@ -696,7 +696,7 @@ PROFILES = {
         'project_prefix': 'kin-login-error-page-ci-',
         # Dispatch only (Focused integration): the login server's error page through the real proxy - a dead reset link,
         # a lost login cookie, an unknown client, a wrong return address - each with the one way back into HALO PACS,
-        # and that way back starting a real login that ends on the worklist.
+        # and that way back starting a real login that ends on the worklist; a locked account and a suspended member told why.
         'suite_timeout': 540,
         'suites': (('e2e/test_login_error_page.py', 'LoginErrorPageE2E', 'ci-login-error-page'),),
     },

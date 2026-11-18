@@ -1038,7 +1038,7 @@ test('AS-03 a failed login of a login this server started leaves one failure row
   assert.deepEqual(await last(), failure('provider_error'), 'another error value: the same row, no error text');
   // This server's own landing answers come only from its checks: a provider error carrying one (the administrator OTP
   // answer, or any other) is a plain login failure, before any code exchange or token check.
-  for (const own of ['admin_otp_required', 'stale', 'session_active', 'login_failed']) {
+  for (const own of ['admin_otp_required', 'stale', 'session_active', 'login_failed', 'member_suspended', 'member_suspended_unapproved']) {
     p = await begin();
     out = await w.call(w.I1, 'callback', { cookie: p.pending, query: { error: own, state: p.state } });
     assert.equal(out.location, ORIGIN + '/worklist/hpacs-lite/index.html?auth_error=login_failed', own);
@@ -3522,6 +3522,37 @@ test('CORE_PENDING_CONTRACT RV-01 pending/invalid/missing and registration get n
   await w.finish('RV-01');
 });
 
+// A verified sign-in of a suspended member is told why (index.html ARRIVAL_NOTICES): suspended with approval kept, or
+// suspended without approval (Revoke Approval's row, or an applicant suspended before approval). The answer comes from
+// the row that refused the sign-in - also when the suspension lands between the first read and the transaction's read.
+// A rights change that is not a suspension keeps the general answer. No session, no code reuse.
+test('LOGIN_BLOCKED_REASON a suspended member is told why; other refusals stay general',async t=>{
+  const w=await world(t);
+  const cases=[['approved',{suspended:true},'member_suspended'],
+    ['revoked',{suspended:true,approved:false,institution:null,roles:[]},'member_suspended_unapproved'],
+    ['applicant',{suspended:true,approved:false},'member_suspended_unapproved']];
+  for(const [label,patch,answer] of cases){
+    const m='syn-blocked-'+label,token=await w.issue(m,{sub:m,groups:[A]});
+    await w.base.memberRights.update({where:{sub:m},data:patch});
+    const done=(await login(w,w.I1,token)).done;
+    assert.deepEqual([done.status,done.location,done.newSid],[302,landing(answer),null],label);
+  }
+  // Suspended while the callback is between its two reads: the transaction's row refuses and says why.
+  const late='syn-blocked-late',lateToken=await w.issue(late,{sub:late,groups:[A]});
+  const hold=w.pause({inst:'I1',model:'memberRights',method:'findUnique',scope:'root',phase:'after'});
+  const running=login(w,w.I1,lateToken);await hold.arrived();
+  await w.base.memberRights.update({where:{sub:late},data:{suspended:true}});hold.release();
+  const lateDone=(await running).done;
+  assert.deepEqual([lateDone.location,lateDone.newSid],[landing('member_suspended'),null],'suspended between the reads');
+  // A change that is not a suspension (the version moves) between the reads: the general answer.
+  const moved='syn-blocked-moved',movedToken=await w.issue(moved,{sub:moved,groups:[A]});
+  const hold2=w.pause({inst:'I1',model:'memberRights',method:'findUnique',scope:'root',phase:'after'});
+  const running2=login(w,w.I1,movedToken);await hold2.arrived();
+  await w.base.memberRights.update({where:{sub:moved},data:{version:{increment:1}}});hold2.release();
+  const movedDone=(await running2).done;
+  assert.deepEqual([movedDone.location,movedDone.newSid],[landing('login_failed'),null],'a rights change that is not a suspension');
+  await w.finish('LOGIN_BLOCKED_REASON');
+});
 test('CORE_LOGOUT_BEARER RV-03 blocked identities may logout only after full token verification',async t=>{
   const w=await world(t),m='syn-bearer-logout',{token,admin}=await coreMember(w,m);
   for(const patch of [{suspended:true},{suspended:false,approved:false,institution:null,roles:[]}]){
