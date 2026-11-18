@@ -2688,7 +2688,7 @@ async function patchMember(admin, sub, body, caller) {
       ip:null,sessionRef:null,requestId:request.facts.requestId,request }));
   } finally { res.emit('finish'); }
 }
-const R10_CALLER = { roles: ['admin'], actor: 'syn-r10-admin@synthetic.test', sub: 'syn-r10-admin' };
+const R10_CALLER = { roles: ['admin'], actor: 'syn-r10-admin@synthetic.test', sub: 'syn-r10-admin', kind: 'member', institution: A };
 function r10Admin(w, inst = w.I1) {
   const { AdminService } = require('/app/dist/admin.service');
   return makeAdmin(inst, new KeycloakService());
@@ -2698,7 +2698,29 @@ function r10Member(sub, sessions = [], groups = [A], roles = ['radiologist']) {
   return sub;
 }
 const r10Answer = p => p.then(user => ({ status: 200, user }), error => ({ status: error.getStatus?.() ?? 500, body: error.getResponse?.() ?? {} }));
-const r10Patch = (admin, sub, body) => r10Answer(patchMember(admin, sub, body, R10_CALLER));
+// An administrator manages only the members of their own institution (api/src/member-scope.ts). The test administrator
+// therefore acts for the member's institution (an approval: for the institution it approves into), and a move to another
+// institution is what the product allows: the member's institution releases it (Revoke Approval, which also suspends)
+// and the destination approves it from the waiting room, keeping the member's roles and suspension state unless the
+// command sets them. The harness tracks the institution from the product's answers (seeded by the provider groups)
+// instead of reading the database, so it never meets a test's pauses on the product's own reads.
+const r10As = institution => ({ ...R10_CALLER, institution });
+const r10Seen = new Map();
+const r10Current = sub => r10Seen.has(sub) ? r10Seen.get(sub).institution
+  : (groups => groups.length === 1 ? groups[0] : null)(kc.members[sub]?.groups ?? []);
+async function r10Command(admin, sub, body) {
+  const current = r10Current(sub), target = body.institution;
+  const remember = user => { r10Seen.set(sub, { institution: user.institution ?? null, roles: user.roles, enabled: user.enabled }); return user; };
+  if (body.approvalState === 'APPROVED' || current === null || target === undefined || target === current)
+    return remember(await patchMember(admin, sub, body,
+      r10As(body.approvalState === 'APPROVED' ? (target ?? current ?? A) : (current ?? target ?? A))));
+  const { version, enabled, ...move } = body, seen = r10Seen.get(sub);
+  const roles = move.roles ?? (seen?.roles?.length ? seen.roles : kc.members[sub]?.roles);
+  await patchMember(admin, sub, { approvalState: 'PENDING', ...(version === undefined ? {} : { version }) }, r10As(current));
+  return remember(await patchMember(admin, sub, { ...move, approvalState: 'APPROVED', roles,
+    enabled: enabled ?? seen?.enabled ?? true }, r10As(target)));
+}
+const r10Patch = (admin, sub, body) => r10Answer(r10Command(admin, sub, body));
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function r10Survives(w, sub, idpSid, entered, label) {
   assert.ok(await w.base.authSession.findUnique({ where: { sid: entered.newSid } }), label + ': product row survives');
@@ -3128,7 +3150,7 @@ test('CORE-R2-BEARER interactive grants after boundary need no product session; 
 test('CORE-R2-LIST GET leaves rights unchanged; PATCH registers and approves atomically', async t => {
   const w=await world(t),m='syn-r2-unregistered'; r10Member(m); kc.members[m].emailVerified=true;
   const admin=r10Admin(w), before=await w.base.memberRights.count();
-  const list=await admin.listUsers(1,{actor:'syn-admin',roles:['admin']});
+  const list=await admin.listUsers(1,{actor:'syn-admin',roles:['admin'],kind:'member',institution:A});
   const shown=list.users.find(u=>u.id===m); assert.ok(shown);
   assert.equal(shown.approvalState,'PENDING'); assert.equal(shown.version,null); assert.equal(shown.rosterUnconfirmed,false);
   assert.equal(await w.base.memberRights.count(),before,'GET cannot register');
@@ -3210,8 +3232,10 @@ test('CORE_R8_RESET_EXISTING_AND_RACE: reset preserves suspended rights, session
 // D628 / REQ-S7-U5-DB-RIGHTS -> RISK-STALE-CREDENTIAL / PARTIAL-COMMIT / MISATTRIBUTED-END.
 // U1–U13 enumerate independent decisions; PG runs use actual transaction/statement boundaries.
 const CORE_COMMANDS=['Suspend','Approve','Change','Cancel','Activate'];
-const coreBody=name=>({Suspend:{enabled:false},Approve:{approvalState:'APPROVED',institution:B,roles:['radiologist'],enabled:true},
-  Change:{institution:B,roles:['technician']},Cancel:{approvalState:'PENDING'},Activate:{enabled:true}}[name]);
+// Each command is one command inside the member's institution: an administrator cannot move a member to another
+// institution in one command any more (api/src/member-scope.ts; moves are tested with an explicit institution).
+const coreBody=name=>({Suspend:{enabled:false},Approve:{approvalState:'APPROVED',institution:A,roles:['radiologist'],enabled:true},
+  Change:{institution:A,roles:['technician']},Cancel:{approvalState:'PENDING'},Activate:{enabled:true}}[name]);
 const realPG=()=>!process.env.KIN_AUTH_SESSION_DATABASE_URL.includes('local-stand-in');
 async function coreSetup(w,m,command){
   const setup=await coreMember(w,m);
@@ -3382,12 +3406,12 @@ for(const path of ['callback','refresh','document','authenticateSession','hasSes
 
 for(const [outcome,state] of [[204,'done'],[404,'void'],[403,'void'],[503,'unknown'],['drop','unknown']])test(`CORE_ROSTER_HTTP_OUTCOMES U7 ${outcome}`,async t=>{
   const w=await world(t),m='syn-http-'+outcome,{admin}=await coreMember(w,m);
-  kc.onAdmin=(name,sub)=>sub===m&&name.startsWith('PUT groups/')?outcome:undefined;
+  kc.onAdmin=(name,sub)=>sub===m&&name==='POST role-mappings/realm'?outcome:undefined;
   assert.equal((await r10Patch(admin,m,coreBody('Change'))).status,200);await coreSettled(w,m);
   const record=await w.base.providerChange.findFirst({where:{sub:m,kind:'credentials'}});
   assert.equal(record.state,state);if(typeof outcome==='number'&&outcome!==204)assert.equal(record.outcome,'http_'+outcome);
   assert.equal((await coreRoster(w,m)).rosterUnconfirmed,state!=='done');
-  const fresh=await coreFresh(w,m);assert.equal((await w.call(w.I2,'me',{sid:fresh.done.newSid})).body.institution,B);
+  const fresh=await coreFresh(w,m);assert.equal((await w.call(w.I2,'me',{sid:fresh.done.newSid})).body.institution,A);
   assert.equal(kc.endRequests.length,0);await w.finish('U7 '+outcome);
 });
 
@@ -3402,7 +3426,7 @@ test('CORE_CREDENTIALS_COMMIT_CRASH_SECOND_API U8 intent survives shutdown befor
   const second=w.instance('crash-restart');await second.service.onModuleInit();t.after(()=>second.service.onModuleDestroy());
   w.tick(1000);const token=await w.issue(m+'-new',{sub:m,authTime:Math.floor(Date.now()/1000)});
   const entered=(await login(w,second,token)).done;assert.ok(entered.newSid);
-  assert.equal((await w.call(second,'me',{sid:entered.newSid})).body.institution,B);
+  assert.equal((await w.call(second,'me',{sid:entered.newSid})).body.institution,A);
   assert.equal((await coreRoster(w,m)).rosterUnconfirmed,true);await quiet(w);
   assert.equal((await w.base.providerChange.findUnique({where:{id:record.id}})).state,'unknown');
   assert.ok(!kc.adminCalls.some(x=>/^(PUT|POST|DELETE) /.test(x)));await w.finish('U8');
@@ -3648,7 +3672,7 @@ test(`CORE_ROSTER_HTTP_STAGE ${stage} 404 records void with its HTTP outcome`,as
   const record=await w.base.providerChange.findFirst({where:{sub:m,kind:'credentials'}});
   assert.deepEqual([record.state,record.outcome],['void','http_404']);
   kc.beforeAdmin=null;assert.equal((await coreRoster(w,m)).rosterUnconfirmed,true);
-  assert.equal((await w.base.memberRights.findUnique({where:{sub:m}})).institution,B);await w.finish('CORE_ROSTER_HTTP_STAGE '+stage);
+  assert.equal((await w.base.memberRights.findUnique({where:{sub:m}})).institution,A);await w.finish('CORE_ROSTER_HTTP_STAGE '+stage);
 });
 
 // D632 / REQ-S7-U5-DB-RIGHTS -> RISK-LEGACY-LOCKOUT / IDENTITY-REBIND / LOST-CAS / FALSE-PENDING -> CORE_* below.

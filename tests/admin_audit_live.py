@@ -391,8 +391,15 @@ class AdminAuditLive(unittest.TestCase):
             "policy": {"version": 1, "restricted": False, "startsAt": None, "endsAt": None, "rules": []}})
         self.assertIn(policy.status, (200, 201), policy.text)
         self.expect_rows(a=[("study.access", member, ())])
-        self.member_patch("u5b-admin-z", member, {"institution": b, "verificationOverride": True}, "move A->B by Z",
-                          a=[("admin.user.update", member, ("after",))], b=[("admin.user.update", member, ("before",))])
+        # An administrator manages only their own institution: Z cannot move an A member (the same answer as an unknown
+        # id, no row). The move is A releasing the member (Revoke Approval) and B approving them from the waiting room.
+        refused = self.stack.request("PATCH", f"/admin/users/{quote(member)}", "u5b-admin-z", {"institution": b, "verificationOverride": True})
+        self.assertEqual(refused.status, 404, f"move A->B by Z: {refused.status}")
+        self.member_patch("u5b-admin-a", member, {"approvalState": "PENDING"}, "release from A",
+                          a=[("admin.user.unapprove", member, ())])
+        self.member_patch("u5b-admin-b", member, {"approvalState": "APPROVED", "institution": b, "roles": ["technician"],
+                                                  "verificationOverride": True}, "approve into B",
+                          b=[("admin.user.approve", member, ())])
         self.member_patch("u5b-admin-b", member, {"enabled": False}, "suspend in B", b=[("admin.user.suspend", member, ())])
         self.member_patch("u5b-admin-b", member, {"approvalState": "PENDING"}, "un-approve in B",
                           b=[("admin.user.unapprove", member, ())])
@@ -409,6 +416,10 @@ class AdminAuditLive(unittest.TestCase):
         self.expect_rows(a=[("admin.user.patch.failed", partial, ("before",))], b=[("admin.user.patch.failed", partial, ("after",))])
         self.insert_audit("admin.user.update", ambiguous, {"before": snapshot(ambiguous, None, "INVALID"),
                           "after": snapshot(ambiguous, a, "APPROVED"), "verificationOverride": True})
+        # A one-step move stored before administration was scoped to the administrator's own institution (history).
+        self.insert_audit("admin.user.update", member, {"before": snapshot(member, a, "APPROVED"),
+                          "after": snapshot(member, b, "APPROVED"), "verificationOverride": True}, actor=self.stack.actor("u5b-admin-z"))
+        self.expect_rows(a=[("admin.user.update", member, ("after",))], b=[("admin.user.update", member, ("before",))])
 
         seen_a, seen_b = self.assert_history("A"), self.assert_history("B")
         self.assertEqual(self.read("Z")["total"], 0, "Z (the mover's institution) receives nothing")

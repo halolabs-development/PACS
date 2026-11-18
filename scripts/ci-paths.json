@@ -313,7 +313,8 @@
       "api/src/orthanc.service.ts",
       "api/src/auth.guard.ts",
       "api/src/auth.service.ts",
-      "api/src/member-rights.ts"
+      "api/src/member-rights.ts",
+      "api/src/member-scope.ts"
     ],
     "contract": [
       "api/Dockerfile*",
@@ -1119,6 +1120,7 @@
       "api/src/manual-sr.service.ts",
       "api/src/member-rights-import.ts",
       "api/src/member-rights.ts",
+      "api/src/member-scope.ts",
       "api/src/order-reconciliation.ts",
       "api/src/orthanc.service.ts",
       "api/src/pacs.controller.ts",
@@ -1196,6 +1198,7 @@
       "tests/access_record_writes_test.cjs",
       "tests/admin_audit_attribution_test.cjs",
       "tests/admin_member_policy_test.cjs",
+      "tests/admin_member_scope_test.cjs",
       "tests/auth_logout_dom_test.py",
       "tests/candidate_ci.py",
       "tests/ci_artifacts.py",
