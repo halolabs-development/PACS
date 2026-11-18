@@ -96,8 +96,12 @@ class MarkerStyleE2E(ViewerHistoryE2E):
         page.evaluate('() => document.activeElement?.blur?.()')
         corner = page.evaluate('''() => services.cornerstoneViewportService.getCornerstoneViewport(
             services.viewportGridService.getActiveViewportId()).element.querySelector('canvas').getBoundingClientRect().toJSON()''')
-        page.mouse.move(corner['x'] + 30, corner['y'] + 30, steps=4); page.mouse.move(corner['x'] + 8, corner['y'] + 8, steps=4)
+        # Inside the image, away from the mark and the image text in the corners (the text takes the pointer there, and the
+        # mark would stay in its hover colour); a pointer that left a mark leaves it unhighlighted.
+        page.mouse.move(corner['x'] + corner['width'] * .15, corner['y'] + corner['height'] * .8, steps=4)
+        page.mouse.move(corner['x'] + corner['width'] * .12, corner['y'] + corner['height'] * .85, steps=4)
         page.evaluate('''() => { cornerstoneTools.annotation.selection.deselectAnnotation?.();
+            for (const a of cornerstoneTools.annotation.state.getAllAnnotations()) a.highlighted = false;
             for (const engine of cornerstone.getRenderingEngines()) for (const v of engine.getViewports())
               try { cornerstoneTools.utilities.triggerAnnotationRender(v.element); } catch (_) { v.render(); } }''')
         return self.until(page, SOLID + '.length > 0 && d.texts.length > 0 && d.shapes.every(s => !d.feedback.includes(s.stroke)) && '
