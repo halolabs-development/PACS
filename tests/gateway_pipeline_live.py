@@ -691,7 +691,14 @@ class GatewayPipelineLive(unittest.TestCase):
             study = self.new_study('G')
             uid, block = study['uid'], self.ev['G']
             admin = 'eg1-gw-admin'
-            self.stack.create_test_identity(admin, ['admin'], self.gateway_institution)
+            try:
+                self.stack.create_test_identity(admin, ['admin'], self.gateway_institution)
+            except Exception as error:   # the product's own refusal, kept as evidence (it names no patient value)
+                read = getattr(error, 'read', None)
+                block['identity_error'] = [type(error).__name__, getattr(error, 'code', None),
+                                           (read().decode('utf-8', 'replace') if read else str(error))[:400],
+                                           self.gateway_institution]
+                raise
             # The hospital PACS, registered as the institution's DICOM Peer, and the rule: CT -> KIN and that PACS.
             self.docker('run', '-d', '--rm', '--name', self.peer, '--label', 'com.docker.compose.project=' + self.project,
                         '--label', 'com.docker.compose.service=eg1-peer', '--network', self.project + '-ingress',
