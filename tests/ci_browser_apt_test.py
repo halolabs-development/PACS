@@ -28,4 +28,27 @@ class BrowserAptTests(unittest.TestCase):
  def test_non_ci_execution_refuses_before_filesystem_changes(self):
   with patch.dict(os.environ,{},clear=True),patch.object(apt.Path,'iterdir',side_effect=AssertionError('must not inspect sources')):
    with self.assertRaises(RuntimeError):apt.main()
+ def test_deb_cache_hooks_copy_in_before_update_and_out_after_dpkg(self):
+  hooks=apt.deb_cache_hooks('/home/runner/.cache/playwright-apt')
+  self.assertIn('APT::Update::Pre-Invoke { "cp /home/runner/.cache/playwright-apt/*.deb /var/cache/apt/archives/ 2>/dev/null || true"; };',hooks)
+  self.assertIn('DPkg::Post-Invoke { "cp /var/cache/apt/archives/*.deb /home/runner/.cache/playwright-apt/ 2>/dev/null || true"; };',hooks)
+  # No signature or hash option is relaxed.
+  self.assertNotRegex(hooks,r'(?i)allow-?unauthenticated|AllowInsecure|trusted|Check-Valid')
+ def test_deb_cache_folder_belongs_to_the_invoking_user(self):
+  import sys,tempfile,types
+  with tempfile.TemporaryDirectory() as home:
+   owned=[]
+   entry=types.SimpleNamespace(pw_dir=home,pw_uid=1001,pw_gid=127)
+   fake=types.SimpleNamespace(getpwnam=lambda user:entry if user=='runner' else None)
+   hooks=Path(home)/'hooks.conf'
+   with patch.dict(os.environ,{'SUDO_USER':'runner'}),patch.dict(sys.modules,{'pwd':fake}),\
+        patch.object(apt.os,'chown',side_effect=lambda path,uid,gid:owned.append((Path(path),uid,gid)),create=True),\
+        patch.object(apt,'HOOKS',hooks):
+    apt.prepare_deb_cache()
+   folder=Path(home)/'.cache/playwright-apt'
+   self.assertTrue(folder.is_dir())
+   self.assertEqual(owned,[(folder.parent,1001,127),(folder,1001,127)])
+   self.assertEqual(hooks.read_text(encoding='utf-8'),apt.deb_cache_hooks(folder))
+  with patch.dict(os.environ,{},clear=True),patch.object(apt,'HOOKS',Path('/nonexistent/hooks')):
+   apt.prepare_deb_cache()  # not run through sudo: no folder, no hooks
 if __name__=='__main__':unittest.main(verbosity=2)

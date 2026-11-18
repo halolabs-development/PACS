@@ -811,6 +811,10 @@ class MeasurementCiTests(unittest.TestCase):
         # needs the hosted APT guard and pip cache, including jobs without profiles.
         workflow = self.catalog.combined()
         validation_jobs = self.catalog.validation()['jobs']
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('browser_apt_guard', ci.ROOT / 'scripts/ci_browser_apt.py')
+        apt_cache = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(apt_cache)
         browser_cache_jobs = {job_id for document in ('validate.yml', 'pr-regressions.yml')
                               for job_id, job in self.catalog.documents['.github/workflows/' + document]['jobs'].items()
                               if 'PLAYWRIGHT_BROWSERS_PATH' not in json.dumps(job)}
@@ -831,17 +835,18 @@ class MeasurementCiTests(unittest.TestCase):
                     self.assertEqual(guards[-1].get('if'), install.get('if'))
                     self.assertEqual(caches[-1].get('if'), install.get('if'))
                     self.assertRegex(caches[-1]['uses'], r'^actions/cache@[0-9a-f]{40}$')
-                    # The browser download is restored from a cache keyed by the pinned Playwright requirement and
-                    # runner image; a miss or a broken restore leaves the same install command to download it.
+                    # The browser download and its OS packages (kept by the APT guard's hooks) are restored from a
+                    # cache keyed by the pinned Playwright requirement and runner image; a miss or a broken restore
+                    # leaves the same install command to download them, and apt verifies every package file.
                     # Jobs with their own browser folder (PLAYWRIGHT_BROWSERS_PATH) keep installing into it.
                     if name in browser_cache_jobs:
                         browsers = [s for s in preceding if s.get('uses', '').startswith('actions/cache@')
-                                    and s.get('with', {}).get('path') == '~/.cache/ms-playwright']
+                                    and '~/.cache/ms-playwright' in str(s.get('with', {}).get('path'))]
                         self.assertEqual(len(browsers), 1, 'browser install requires one preceding browser cache')
                         self.assertRegex(browsers[0]['uses'], r'^actions/cache@[0-9a-f]{40}$')
                         self.assertEqual(browsers[0].get('if'), install.get('if'))
                         self.assertEqual(browsers[0]['with'], {
-                            'path': '~/.cache/ms-playwright',
+                            'path': '~/.cache/ms-playwright\n~/.cache/' + apt_cache.DEB_CACHE.split('/', 1)[1] + '\n',
                             'key': '${{ runner.os }}-${{ runner.arch }}-' + job['runs-on']
                                    + "-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}"})
                         self.assertIn('-r tests/e2e/requirements.txt', install['run'])

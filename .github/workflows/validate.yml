@@ -738,10 +738,12 @@ jobs:
       run: |
         python3 tests/ci_browser_apt_test.py
         sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
-    - name: Cache pinned Playwright browsers
+    - name: Cache pinned Playwright browsers and their OS packages
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
       with:
-        path: ~/.cache/ms-playwright
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
         key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -868,10 +870,12 @@ jobs:
       run: python3 scripts/record-run.py --run-dir tmp/emr-d-ci/contract --cwd . --tree api/src/emr-clinical --tree api/src/emr-contract --file api/src/finding.controller.ts --file api/src/finding.service.ts --file tests/emr/d/contract_test.cjs --file tests/transaction_locks.cjs --file tests/emr/d/finding_api_regression_test.cjs --file api/tsconfig.json --file api/package-lock.json -- docker run --rm --network none --read-only --tmpfs /tmp -v "$PWD:/src:ro" -w /src node:22-alpine node --test tests/emr/d/contract_test.cjs tests/emr/d/finding_api_regression_test.cjs
     - name: Keep pinned browser dependencies independent of unused Chrome APT repository
       run: sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
-    - name: Cache pinned Playwright browsers
+    - name: Cache pinned Playwright browsers and their OS packages
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
       with:
-        path: ~/.cache/ms-playwright
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
         key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
       with:
@@ -1064,10 +1068,12 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || inputs.candidate_sha || github.sha }}
     - name: Keep pinned browser dependencies independent of unused Chrome APT repository
       run: sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
-    - name: Cache pinned Playwright browsers
+    - name: Cache pinned Playwright browsers and their OS packages
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
       with:
-        path: ~/.cache/ms-playwright
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
         key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -1512,10 +1518,12 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || inputs.candidate_sha || github.sha }}
     - name: Keep pinned browser dependencies independent of unused Chrome APT repository
       run: sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
-    - name: Cache pinned Playwright browsers
+    - name: Cache pinned Playwright browsers and their OS packages
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
       with:
-        path: ~/.cache/ms-playwright
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
         key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -1571,10 +1579,12 @@ jobs:
       run: python3 scripts/record-run.py --run-dir tmp/vr-ci/pure-volume-models --cwd . --file worklist-v0/hpacs-lite/volume-display.js --file tests/volume_display_test.cjs --file worklist-v0/hpacs-lite/volume-batch.js --file tests/volume_batch_test.cjs --file worklist-v0/hpacs-lite/volume-batch-scout.js --file tests/volume_batch_scout_test.cjs --file worklist-v0/hpacs-lite/volume-crosshair.js --file tests/volume_crosshair_test.cjs --file worklist-v0/hpacs-lite/volume-marks.js --file tests/volume_marks_test.cjs --file worklist-v0/hpacs-lite/volume-curved.js --file tests/volume_curved_test.cjs --file worklist-v0/hpacs-lite/volume-path.js --file tests/volume_path_test.cjs --file worklist-v0/hpacs-lite/volume-orientation.js --file tests/volume_orientation_test.cjs --file worklist-v0/hpacs-lite/volume-preferences.js --file tests/volume_preferences_test.cjs --file worklist-v0/hpacs-lite/viewer-tech-note.js --file tests/volume_average_shader_test.cjs --file worklist-v0/hpacs-lite/volume-mip.js --file tests/volume_mip_test.cjs --file worklist-v0/hpacs-lite/volume-voi.js --file tests/volume_voi_test.cjs --file worklist-v0/hpacs-lite/volume-mip-job.js --file tests/volume_mip_job_test.cjs --file worklist-v0/hpacs-lite/volume-mip-batch.js --file tests/volume_mip_batch_test.cjs --file worklist-v0/hpacs-lite/volume-mip-output.js --file tests/volume_mip_output_test.cjs --file worklist-v0/hpacs-lite/viewer-volume-job.js --file tests/viewer_volume_job_capture_test.cjs --file worklist-v0/hpacs-lite/viewer-jobs.js --file worklist-v0/hpacs-lite/viewer-volume-mip.js --file tests/viewer_session_fixture.cjs --file worklist-v0/hpacs-lite/work-context.js --file worklist-v0/hpacs-lite/exam-scope.js --file worklist-v0/hpacs-lite/session-transport.js --file worklist-v0/hpacs-lite/viewer-session.js --file worklist-v0/hpacs-lite/viewer-resources.js --file worklist-v0/hpacs-lite/viewer-stack-restore.js -- docker run --rm --network none --read-only -v "$PWD:/src:ro" -w /src node:22-alpine node --test tests/volume_display_test.cjs tests/volume_batch_test.cjs tests/volume_batch_scout_test.cjs tests/volume_crosshair_test.cjs tests/volume_marks_test.cjs tests/volume_curved_test.cjs tests/volume_path_test.cjs tests/volume_orientation_test.cjs tests/volume_preferences_test.cjs tests/volume_average_shader_test.cjs tests/volume_mip_test.cjs tests/volume_voi_test.cjs tests/volume_mip_job_test.cjs tests/volume_mip_batch_test.cjs tests/volume_mip_output_test.cjs tests/viewer_volume_job_capture_test.cjs
     - name: Keep pinned browser dependencies independent of unused Chrome APT repository
       run: sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
-    - name: Cache pinned Playwright browsers
+    - name: Cache pinned Playwright browsers and their OS packages
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
       with:
-        path: ~/.cache/ms-playwright
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
         key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -1697,11 +1707,13 @@ jobs:
       run: |
         python3 tests/ci_browser_apt_test.py
         sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
-    - name: Cache pinned Playwright browsers
+    - name: Cache pinned Playwright browsers and their OS packages
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
       with:
-        path: ~/.cache/ms-playwright
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
         key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
@@ -2046,10 +2058,12 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || inputs.candidate_sha || github.sha }}
     - name: Keep pinned browser dependencies independent of unused Chrome APT repository
       run: sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
-    - name: Cache pinned Playwright browsers
+    - name: Cache pinned Playwright browsers and their OS packages
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
       with:
-        path: ~/.cache/ms-playwright
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
         key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -2155,10 +2169,12 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || inputs.candidate_sha || github.sha }}
     - name: Keep pinned browser dependencies independent of unused Chrome APT repository
       run: sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
-    - name: Cache pinned Playwright browsers
+    - name: Cache pinned Playwright browsers and their OS packages
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
       with:
-        path: ~/.cache/ms-playwright
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
         key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -2208,10 +2224,12 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || inputs.candidate_sha || github.sha }}
     - name: Keep pinned browser dependencies independent of unused Chrome APT repository
       run: sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
-    - name: Cache pinned Playwright browsers
+    - name: Cache pinned Playwright browsers and their OS packages
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
       with:
-        path: ~/.cache/ms-playwright
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
         key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -2317,10 +2335,12 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || inputs.candidate_sha || github.sha }}
     - name: Keep pinned browser dependencies independent of unused Chrome APT repository
       run: sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
-    - name: Cache pinned Playwright browsers
+    - name: Cache pinned Playwright browsers and their OS packages
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
       with:
-        path: ~/.cache/ms-playwright
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
         key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -2623,10 +2643,12 @@ jobs:
       run: python3 scripts/build-ohif-config.py --check
     - name: Keep pinned browser dependencies independent of unused Chrome APT repository
       run: sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
-    - name: Cache pinned Playwright browsers
+    - name: Cache pinned Playwright browsers and their OS packages
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
       with:
-        path: ~/.cache/ms-playwright
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
         key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -2673,10 +2695,12 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || inputs.candidate_sha || github.sha }}
     - name: Keep pinned browser dependencies independent of unused Chrome APT repository
       run: sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
-    - name: Cache pinned Playwright browsers
+    - name: Cache pinned Playwright browsers and their OS packages
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
       with:
-        path: ~/.cache/ms-playwright
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
         key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809

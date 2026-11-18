@@ -3,11 +3,20 @@
 Playwright downloads its pinned Chromium separately. Its OS dependency installer
 runs apt update, which otherwise also queries the runner's unrelated Chrome repo.
 APT signature/hash verification and all Ubuntu package sources remain enabled.
+
+The browser's OS packages are reused from the invoking user's DEB_CACHE folder, which the
+workflow caches: apt copies them in before its update and out after dpkg. apt checks each
+file against the signed index, so a stale or broken file is downloaded again.
 """
 import os
 from pathlib import Path
 import re
+import shlex
 from urllib.parse import urlsplit
+
+SOURCES=Path('/etc/apt/sources.list.d')
+HOOKS=Path('/etc/apt/apt.conf.d/99kin-ci-deb-cache')
+DEB_CACHE='.cache/playwright-apt'
 
 
 def chrome_url(value):
@@ -33,10 +42,32 @@ def without_chrome(text,suffix):
     return '\n\n'.join(stanza(block) for block in text.split('\n\n'))
 
 
+def deb_cache_hooks(folder):
+    q=shlex.quote(str(folder))
+    return ('// Reuse cached browser OS packages; apt verifies every file against the signed index.\n'
+        'APT::Update::Pre-Invoke { "cp '+q+'/*.deb /var/cache/apt/archives/ 2>/dev/null || true"; };\n'
+        'DPkg::Post-Invoke { "cp /var/cache/apt/archives/*.deb '+q+'/ 2>/dev/null || true"; };\n')
+
+
+def prepare_deb_cache():
+    user=os.environ.get('SUDO_USER')
+    if not user or user=='root':return
+    import pwd
+    entry=pwd.getpwnam(user)
+    folder=Path(entry.pw_dir)/DEB_CACHE
+    # Created for the invoking user: the cache restore and save run as that user.
+    for path in (folder.parent,folder):
+        if not path.exists():
+            path.mkdir()
+            os.chown(path,entry.pw_uid,entry.pw_gid)
+    HOOKS.write_text(deb_cache_hooks(folder),encoding='utf-8')
+    print('Browser OS packages are reused from '+str(folder),flush=True)
+
+
 def main():
     if os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('RUNNER_ENVIRONMENT')!='github-hosted' or os.geteuid()!=0:
         raise RuntimeError('Only a root process on a disposable GitHub-hosted runner may prepare browser APT sources')
-    for path in sorted(Path('/etc/apt/sources.list.d').iterdir()):
+    for path in sorted(SOURCES.iterdir()):
         if path.suffix not in ('.list','.sources'):continue
         if path.is_symlink():raise RuntimeError('Unexpected linked APT source')
         if not path.is_file():continue
@@ -44,6 +75,7 @@ def main():
         if old!=new:
             path.write_text(new,encoding='utf-8')
             print('Excluded unused Chrome APT source in '+path.name,flush=True)
+    prepare_deb_cache()
 
 
 if __name__=='__main__':main()
