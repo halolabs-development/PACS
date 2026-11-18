@@ -30,7 +30,10 @@
     const study = valid ? studies[0] : null, reportUid = exam?.reportUid || study;
     const path = study ? '/api/studies/' + reportUid + '/viewer-auto-view' : null;
     const scopeKey = exam ? window.KinExamScope.key(exam.current) : null;
-    const openingKey = scopeKey || studies.join(',');
+    const account = () => { const owner = session?.owner?.(); return owner ? JSON.stringify(owner) : null; };
+    let owner = account();
+    const sameOwner = () => { owner ??= account(); return owner !== null && owner === account(); };
+    const openingKey = JSON.stringify([owner, scopeKey || studies.join(',')]);
     const scopedPath = suffix => path + suffix + (examReference ? '?exam=' + encodeURIComponent(JSON.stringify(examReference)) : '');
     const firstOpening = valid && !opened.has(openingKey);
     if (valid) opened.add(openingKey);
@@ -40,7 +43,7 @@
     const jobChosen = ['kinJob', 'kinFinding'].some(name => query.has(name));
     const abort = new AbortController(), { signal } = abort;
     const convert = (lower, upper) => native?.utilities?.windowLevel?.toWindowLevel?.(lower, upper);
-    // phase: starting (the viewer's first layout and images), restoring (the saved view going back), ready (saving).
+    // An unanswered first read holds writes. Once the layout is known, each pane can finish independently.
     let ended = false, on = false, phase = 'starting', timer = null, chain = Promise.resolve(), epoch = 0;
     let last;  // undefined: not read yet; null: nothing saved; else { snapshot, savedAt }
     let painter = null, badge = null, badgeTimer = null;
@@ -48,8 +51,7 @@
     // protocols applied); discarding: Discard Saved View on its way (the view it discards is not sent again).
     let held = false, hpRun = 0, discarding = false;
     // restoreRun: turning the check off ends the putting back of the saved view that was going on (restoreAt).
-    // takenOver: the reader's hand on the images while it went on; putBack: this viewer put a saved view back.
-    let restoreRun = 0, restoreAt = -1, takenOver = false, putBack = false;
+    let restoreRun = 0, restoreAt = -1;
     // The server's Discard generation is pinned at capture, even for queued/closing saves. A rejected old capture is
     // never relabelled with a newer generation; only a subsequent capture may use it.
     const viewerId = crypto.randomUUID();
@@ -83,21 +85,65 @@
     const stackOf = id => { try { const v = cells.getCornerstoneViewport(id); return v?.type === 'stack' && v.element?.isConnected !== false ? v : null; } catch (_) { return null; } };
     const instance = id => { try { return native.metaData.get('instance', id) || null; } catch (_) { return null; } };
     const setOf = id => { try { return grid.getState().viewports.get(id)?.displaySetInstanceUIDs?.[0] || ''; } catch (_) { return ''; } };
-    const paneOf = v => v.element?.closest?.('[data-cy=viewport-pane]') || v.element?.parentElement;
     const switching = () => ['kin-patient-switching', 'kin-viewer-empty'].some(name => document.body.classList.contains(name));
     const live = () => !ended && location.search === search && !session?.ended?.();
-    // Putting the saved view back stops where it is when the check is turned off (even if it is turned on again), and when
-    // the reader takes the screen over meanwhile (takenOver, below).
-    const restoring = () => live() && on && restoreAt === restoreRun && !takenOver;
+    const restoring = () => live() && sameOwner() && on && restoreAt === restoreRun && !landing();
     // A restore the address chose is changing this screen now. No length of time ends it: only that restore letting go.
     const landing = () => { for (const hold of openings.holds) if (hold.screen >= screen) return true; return false; };
     // Such a restore has held this screen at some time, be it over before this viewer was here to hear of it.
     const restoredHere = () => openings.held >= screen;
-    const writer = () => session?.writer?.() !== false && !session?.ended?.();
+    const writer = () => sameOwner() && session?.writer?.() !== false && !session?.ended?.();
     const list = value => Array.from(value || [], Number);
 
-    // The view as it stands, or null when it is not one this feature keeps (a merged or non-grid layout, an MPR or
-    // other non-stack cell, an image of another study, a cell still loading).
+    const panes = new Map();
+    let partialLayout = null;
+    // Edits made while reading or replacing the layout travel with the original viewport's series.
+    const opening = new Map();
+    let watchingOpening = firstOpening && !jobChosen, initialGrid;
+    function readCell(id) {
+      const v = stackOf(id);
+      try {
+        const image = v?.getCurrentImageId(), key = image && model.imageKey(image, instance);
+        if (!key || !isDrawn(v, image) || !studies.includes(key.study) ||
+            exam && !window.KinViewerExamScope.allows(exam, key.study, key.series)) return null;
+        const camera = v.getCamera() || {}, properties = v.getProperties() || {}, range = properties.voiRange;
+        if (!range) return null;
+        const display = window.KinViewerCellRules?.rule?.(id) ?? null;
+        const rotation = Number.isFinite(camera.rotation) ? camera.rotation : Number(v.getViewPresentation?.()?.rotation ?? 0);
+        const cell = { study: key.study, series: key.series, sop: key.sop, frame: key.frame,
+          index: v.getCurrentImageIdIndex?.() ?? 0, zoom: Number(v.getZoom?.() ?? 1),
+          camera: { focalPoint: list(camera.focalPoint), position: list(camera.position), viewUp: list(camera.viewUp), viewPlaneNormal: list(camera.viewPlaneNormal),
+            parallelScale: camera.parallelScale, rotation, flipHorizontal: !!camera.flipHorizontal, flipVertical: !!camera.flipVertical },
+          properties: { voiRange: { lower: range.lower, upper: range.upper }, VOILUTFunction: properties.VOILUTFunction || 'LINEAR', invert: !!properties.invert,
+            interpolationType: properties.interpolationType ?? 1 }, display };
+        return model.validCell(cell) && v.getCurrentImageId() === image && isDrawn(v, image) ? cell : null;
+      } catch (_) { return null; }
+    }
+    function observeCell(id) {
+      const v = stackOf(id), image = v?.getCurrentImageId?.(), set = setOf(id);
+      if (!image || !set) return null;
+      let record = opening.get(id);
+      if (!record || record.viewport !== v || record.set !== set) {
+        record = { viewport: v, set, image, base: null, edit: null };
+        opening.set(id, record);
+      }
+      const cell = readCell(id);
+      if (cell) {
+        const text = JSON.stringify(cell);
+        if (record.expected === image && record.image !== image) record.expected = null;
+        else if (record.image !== image || record.base !== null && record.base !== text) record.edit = cell;
+        record.first ??= cell;
+        record.image = image; record.base = text;
+      } else {
+        // The first stable values after a draw belong to the viewer. A move to another source still belongs to the reader.
+        record.base = null;
+      }
+      return record;
+    }
+    function observeOpening() {
+      if (watchingOpening) for (const g of ordered()) observeCell(g.viewportId);
+    }
+
     function capture() {
       const state = grid.getState(), views = ordered(), layout = state.layout || {};
       const rows = layout.numRows, cols = layout.numCols;
@@ -105,43 +151,45 @@
       const uniform = views.every((g, i) => g.x === undefined || (Math.abs(g.x - (i % cols) / cols) <= 1e-6 && Math.abs(g.y - Math.floor(i / cols) / rows) <= 1e-6 &&
         Math.abs(g.width - 1 / cols) <= 1e-6 && Math.abs(g.height - 1 / rows) <= 1e-6));
       if (!uniform) return null;
+      if (partialLayout && (views.length !== partialLayout.visible.size ||
+          views.some(g => partialLayout.visible.get(g.viewportId) !== setOf(g.viewportId)))) partialLayout = null;
       const saved = [];
       for (const g of views) {
         const ids = g.displaySetInstanceUIDs || [];
-        if (!ids.length) { saved.push(null); continue; }
-        const v = stackOf(g.viewportId), image = v?.getCurrentImageId?.(), key = image ? model.imageKey(image, instance) : null;
-        if (ids.length !== 1 || !v || !key || !isDrawn(v) || !studies.includes(key.study) ||
-            exam && !window.KinViewerExamScope.allows(exam, key.study, key.series)) return null;
-        const camera = v.getCamera() || {}, properties = v.getProperties() || {}, range = properties.voiRange;
-        if (!range) return null;
-        let display = null;
-        try { display = window.KinViewerCellRules?.rule?.(g.viewportId) ?? null; } catch (_) { display = null; }
-        const rotation = Number.isFinite(camera.rotation) ? camera.rotation : Number(v.getViewPresentation?.()?.rotation ?? 0);
-        saved.push({ study: key.study, series: key.series, sop: key.sop, frame: key.frame,
-          index: v.getCurrentImageIdIndex?.() ?? 0, zoom: Number(v.getZoom?.() ?? 1),
-          camera: { focalPoint: list(camera.focalPoint), position: list(camera.position), viewUp: list(camera.viewUp), viewPlaneNormal: list(camera.viewPlaneNormal),
-            parallelScale: camera.parallelScale, rotation, flipHorizontal: !!camera.flipHorizontal, flipVertical: !!camera.flipVertical },
-          properties: { voiRange: { lower: range.lower, upper: range.upper }, VOILUTFunction: properties.VOILUTFunction || 'LINEAR', invert: !!properties.invert,
-            interpolationType: properties.interpolationType ?? 1 }, display });
+        const pane = panes.get(g.viewportId);
+        if (ids.length > 1) return null;
+        if (pane && (pane.set === (ids[0] || '') || !pane.placed && !ids.length)) {
+          if (pane.placed) {
+            const now = readCell(g.viewportId);
+            if (now) {
+              const text = JSON.stringify(now);
+              if (pane.base !== null && pane.base !== text) pane.value = now;
+              pane.base = text;
+            }
+          }
+          saved.push(pane.value);
+        } else if (!ids.length || partialLayout?.visible.get(g.viewportId) === setOf(g.viewportId)) saved.push(null);
+        else {
+          const cell = readCell(g.viewportId);
+          if (!cell) return null;
+          saved.push(cell);
+        }
       }
       const active = views.findIndex(g => g.viewportId === state.activeViewportId);
+      if (partialLayout) {
+        const { view, targets } = partialLayout;
+        const values = view.cells.map((cell, i) => panes.get(targets[i])?.value ?? cell);
+        const selected = targets.indexOf(state.activeViewportId);
+        return model.validate({ ...view, cells: values, active: selected < 0 ? view.active : selected }, study, exam ? 20 : 8);
+      }
       return model.validate({ version: 1, studies: [...studies], rows, cols, active: active >= 0 ? active : 0, cells: saved }, study, exam ? 20 : 8);
     }
     const captured = () => { try { return capture(); } catch (error) { console.error(error); return null; } };
-    // The screen as it stands is not a change of the reader's: it is where saving starts from. This is said in two
-    // places only, as this viewer starts saving (`first`) and as a restore the address chose lets go of the screen.
-    // The point is later in order than every save before it (none before the first), so a late failure of one of
-    // those cannot unsend it, and going away does not send this screen for their sake (floor, in save). A screen that
-    // cannot be captured (a cell still loading, a layout this feature does not keep) is no starting point: saving
-    // stays closed until save() next finds one that can (settling), however long that takes. That wait keeps the
-    // screen a restore left from being sent. A viewer that starts saving on a screen no such restore ever held has
-    // none to keep back and does not wait: what was taken as sent before it (nothing, or the view a Discard found)
-    // stays so, and the first screen that can be captured and differs from it is saved. The saved view this viewer put
-    // back itself is kept back the same way: a cell of it still drawing its image (it came too late to be put back) is
-    // the viewer's own view as it comes, not a change to send over the saved one.
+    // A Job or finding owns the entire screen until it lands. Its completed screen becomes the save baseline,
+    // ordered after every earlier capture so that an outstanding request cannot force it to be sent again.
     function rebase(first = false) {
       const now = captured();
-      if (!now && first && !restoredHere() && !putBack) { settling = false; return; }
+      if (!now && first && !restoredHere()) { settling = false; return; }
       settling = !now;
       if (!now) return;
       floor = first ? 0 : ++order;
@@ -149,16 +197,16 @@
     }
 
     // The session owner is [institution, subject], shared by this reader's windows but not by another account.
-    const account = () => { const owner = session?.owner?.(); return owner ? JSON.stringify(owner) : null; };
     let channel = null;
     try {
       channel = new BroadcastChannel('kin-auto-view');
       channel.onmessage = ({ data }) => {
         const owner = account();
-        if (!live() || !owner || data?.owner !== owner || data.study !== study || (data.scopeKey ?? null) !== scopeKey ||
+        if (!live() || !sameOwner() || !owner || data?.owner !== owner || data.study !== study || (data.scopeKey ?? null) !== scopeKey ||
             data.generation === generation || !observeGeneration(data.generation)) return;
         // Treat the view present at Discard as already issued. Old captures retain their old generation, and neither
         // a pending timer nor closing the window may revive this view. Only the reader's next change is saved.
+        cancelPlacement();
         const now = captured(); issued = { text: now ? JSON.stringify(now) : null, seq: ++order };
         last = null; painter?.();
       };
@@ -176,12 +224,12 @@
       return reading;
     }
     async function readView() {
-      if (!path) return null;
+      if (!path || !sameOwner()) return;
       let answer;
-      try { answer = await request(scopedPath(''), { signal }); } catch (_) { return last ?? null; }
-      if (ended) return null;
-      if (!answer.ok || !observeGeneration(answer.value?.generation)) return last ?? null;
+      try { answer = await request(scopedPath(''), { signal }); } catch (_) { return; }
+      if (!live() || !sameOwner() || !answer.ok || !observeGeneration(answer.value?.generation)) return;
       const view = answer.value?.view, snapshot = view ? model.validate(view.snapshot, study, exam ? 20 : 8) : null;
+      if (view !== null && !snapshot) return;
       last = snapshot ? { snapshot, savedAt: view.savedAt } : null;
       painter?.();
       return last;
@@ -191,9 +239,10 @@
     async function send(snapshot, text, at, seq, when, capturedGeneration, mode) {
       let reached = false;
       try {
+        if (!sameOwner()) return;
         const answer = await request(scopedPath(''), { method: 'POST', body: JSON.stringify({ snapshot, writer: viewerId, seq, at: when, generation: capturedGeneration }), ...(mode === 'close' ? { keepalive: true } : {}) });
         reached = answer.ok;
-        const current = answer.ok && observeGeneration(answer.value?.generation);
+        const current = sameOwner() && answer.ok && observeGeneration(answer.value?.generation);
         if (current && at === epoch && answer.value?.saved !== false && capturedGeneration === generation) { last = { snapshot, savedAt: answer.value?.savedAt || new Date().toISOString() }; painter?.(); }
       } catch (_) { reached = false; }
       // A save that did not reach the server leaves its view unsent: the next chance (a change, the switch, the window
@@ -236,6 +285,7 @@
       return chain;
     }
     function changed() {
+      if (!ended && on && phase === 'unread') { openSaved().catch(error => console.error(error)); return; }
       if (ended || !on || phase !== 'ready') return;
       // With no starting point yet this is not a change to save after a quiet moment: save() looks at the screen now.
       if (settling) { if (!switching()) save(); return; }
@@ -246,6 +296,7 @@
     // Discard Saved View: it waits for every save sent before it (queued or not), and the server refuses any save of
     // this reader taken before it (from this viewer or an earlier one) that arrives after it.
     async function discard() {
+      cancelPlacement();
       epoch++; clearTimeout(timer); timer = null; discarding = true;
       // The view on the screen as Discard is pressed is the one discarded: it is not sent again afterwards either.
       const seq = ++order, when = stamp(), shownNow = captured();
@@ -255,8 +306,9 @@
       chain = (async () => {
         await Promise.all(before.map(going => Promise.resolve(going).catch(() => {})));
         try {
+          if (!sameOwner()) return;
           const answer = await request(scopedPath('/discard'), { method: 'POST', body: JSON.stringify({ writer: viewerId, seq, at: when }), signal });
-          ok = answer.ok;
+          ok = sameOwner() && answer.ok;
           if (ok && observeGeneration(answer.value?.generation)) {
             const owner = account();
             if (owner) try { channel?.postMessage({ owner, study, generation, ...(scopeKey ? { scopeKey } : {}) }); } catch (_) {}
@@ -280,131 +332,206 @@
         (!Array.isArray(d.images) || holdsImage(d, cell.sop, cell.frame))); } catch (_) { found = []; }
       return found.length === 1 ? found[0].displaySetInstanceUID : null;
     };
-    async function moveTo(v, index) {
-      const display = paneOf(v)?.dataset?.kinDisplay === 'on';
-      let done;
-      const settled = new Promise(resolve => { done = resolve; });
-      const heard = event => { if (event.detail?.viewportId === v.id) done(); };
-      v.element.addEventListener('kin-display-image-settled', heard);
-      try {
-        clearTimeout(v.debouncedTimeout);
-        if ('targetImageIdIndex' in v) v.targetImageIdIndex = index;
-        if (typeof v.setImageIdIndex === 'function') await v.setImageIdIndex(index);
-        else await native?.utilities?.jumpToSlice?.(v.element, { imageIndex: index });
-        await Promise.race([display ? settled : new Promise(resolve => requestAnimationFrame(() => resolve())), wait(2000)]);
-      } finally { v.element.removeEventListener('kin-display-image-settled', heard); }
+    function isDrawn(v, image) {
+      return !!image && v.getCornerstoneImage?.()?.imageId === image &&
+        (v.viewportStatus === undefined || v.viewportStatus === (native?.Enums?.ViewportStatus?.RENDERED || 'rendered')) &&
+        window.kinViewerDisplayImageSettled?.(v) !== false;
     }
-    // The image the cell shows as it is drawn. A stack drawing its first image puts its own window on it and its camera fitted to it, keeping
-    // only the zoom and pan measured from the camera it had: a camera put on an empty cell before that comes back blown up (zoom about 1%,
-    // the image a dot) and the window as the image's own. So a window and a camera are put on a cell (restoreCell) only once the image it is on
-    // is drawn, whichever the cell, series or orientation, and a cell still drawing its image is not saved either (capture): its window and
-    // camera are not yet that image's. A viewer that does not say what it has drawn is taken to have drawn it.
-    function isDrawn(v) {
-      try { return typeof v.getCornerstoneImage !== 'function' || (v.getCornerstoneImage()?.imageId ?? null) === v.getCurrentImageId?.(); } catch (_) { return false; }
+    // Cameras can round during a world-to-canvas conversion. Compare the applied camera, since the reported
+    // zoom is relative to the fit of the current window and can differ from the saved percentage.
+    function agrees(actual, expected) {
+      if (typeof expected === 'number') return Math.abs(actual - expected) <= 1e-6 * Math.max(1, Math.abs(expected));
+      if (expected && typeof expected === 'object') return !!actual && Object.keys(expected).every(key => agrees(actual[key], expected[key]));
+      return actual === expected;
     }
-    // Waits until the cell has drawn `imageId` and the viewer's display pass over a new image is over (its stored window goes on just after),
-    // till `until`. False when the time is up, the cell is not this one any more, or the reader has gone to another image meanwhile.
-    async function drawn(v, imageId, still, until) {
-      while (still() && v.getCurrentImageId?.() === imageId) {
-        if (isDrawn(v)) {
-          await wait(0); await new Promise(resolve => requestAnimationFrame(() => resolve()));
-          return still() && v.getCurrentImageId?.() === imageId && isDrawn(v);
-        }
-        if (Date.now() >= until) return false;
+    function cancelPlacement() {
+      restoreRun++;
+      watchingOpening = false;
+      opening.clear(); panes.clear(); partialLayout = null;
+      clearTimeout(badgeTimer); badge?.remove(); badge = null;
+    }
+    function place(pane, cell, edited) {
+      pane.placed = true;
+      pane.watch = null;
+      pane.base = JSON.stringify(cell);
+      if (edited) pane.value = cell;
+    }
+    // Keep the last trustworthy source and values until this cell can be read again.
+    function readerChanged(id, pane) {
+      if (!pane.watch || pane.placed || pane.writing) return false;
+      const record = observeCell(id);
+      if (!record?.edit || record.viewport !== pane.watch.viewport || record.set !== pane.set) return false;
+      if (pane.moving) return true;
+      place(pane, record.edit, true);
+      changed();
+      return true;
+    }
+    async function restoreCell(id, pane, stored, previous) {
+      const until = Date.now() + DRAWN_MS;
+      const current = () => restoring() && panes.get(id) === pane && setOf(id) === pane.set;
+      while (restoring() && panes.get(id) === pane && (!current() || !stackOf(id)?.getCurrentImageId?.())) {
+        if (Date.now() >= until) return null;
         await wait(50);
       }
-      return false;
-    }
-    // The Display Set Presets rules, once that module has started (it may start after this one).
-    async function cellRules() {
-      for (const until = Date.now() + RULES_MS; Date.now() < until && restoring();) {
-        if (typeof window.KinViewerCellRules?.apply === 'function') return window.KinViewerCellRules;
-        await wait(100);
-      }
-      return typeof window.KinViewerCellRules?.apply === 'function' ? window.KinViewerCellRules : null;
-    }
-    // One cell: its rule (sort first), then its image by SOP and frame in the sorted stack, then its window and camera.
-    // Resolves what was put back ({ zoom, window, image, index: the image's place now, rule: true / false, or null when
-    // the cell kept no rule }), or null when the cell was not this one any more or did not draw its image by `until`.
-    async function restoreCell(viewportId, cell, until) {
-      const v = stackOf(viewportId), set = setOf(viewportId);
-      if (!v) return null;
-      const still = () => restoring() && stackOf(viewportId) === v && setOf(viewportId) === set;
-      const result = { zoom: false, window: false, image: false, index: null, rule: null };
-      if (cell.display) {
-        const rules = await cellRules();
-        if (!still()) return null;
-        result.rule = false;
-        if (rules) {
-          // The cell's own condition goes into the rule's work: turned off meanwhile, the rule's later steps are not done.
-          try { result.rule = await rules.apply(viewportId, cell.display, still) === true; } catch (error) { console.error(error); }
-          if (!still()) return null;
+      if (!current()) return null;
+      const v = stackOf(id), still = () => current() && stackOf(id) === v && !pane.placed;
+      pane.watch = observeCell(id);
+      if (readerChanged(id, pane)) return null;
+      let edit = previous?.edit, cell = edit || stored;
+      const find = () => model.findImage(v.getImageIds(), instance, cell.sop, cell.frame);
+      if (!v || !cell || wantedSet(cell) !== pane.set || find() < 0) return null;
+
+      // Ignore the synchronous events from our own writes. Across an await, only the move to the requested
+      // source belongs to this operation. A zoom or a move to a different image remains a reader edit.
+      function write(fn, expected) {
+        pane.writing = true;
+        try { return fn(); }
+        finally {
+          pane.writing = false;
+          const image = v.getCurrentImageId();
+          pane.watch.expected = image === expected ? null : expected;
+          pane.watch.image = image;
+          const now = readCell(id);
+          pane.watch.base = now ? JSON.stringify(now) : null;
         }
       }
-      const index = model.findImage(v.getImageIds?.(), instance, cell.sop, cell.frame);
-      if (index >= 0) {
-        if ((v.getCurrentImageIdIndex?.() ?? -1) !== index) await Promise.race([moveTo(v, index), wait(Math.max(0, until - Date.now()))]);
-        if (!still()) return null;
-        result.image = v.getCurrentImageIdIndex?.() === index;
-        if (result.image) result.index = index;
+      function takePendingEdit() {
+        const pending = pane.watch?.edit;
+        if (!pending) return false;
+        edit = pending; cell = pending;
+        pane.watch.edit = null;
+        return true;
       }
-      // The window and camera go on the image the cell has drawn: put on before, they are lost as it comes.
-      if (!await drawn(v, v.getCurrentImageId?.(), still, until)) return null;
+      let rule = null;
+      if (cell.display) {
+        const limit = Date.now() + RULES_MS;
+        while (!window.KinViewerCellRules && Date.now() < limit && still()) await wait(100);
+        if (!still() || readerChanged(id, pane)) return null;
+        const rules = window.KinViewerCellRules;
+        if (!rules) return null;
+        pane.moving = true;
+        try { rule = await rules.restore(id, cell.display, () => still() && !pane.watch.edit, write); }
+        finally { pane.moving = false; }
+        if (!still() || !takePendingEdit() && !rule) return null;
+      }
+
+      const target = () => {
+        const key = model.imageKey(v.getCurrentImageId(), instance);
+        return key && key.study === cell.study && key.series === cell.series && key.sop === cell.sop && key.frame === cell.frame;
+      };
+      while (still() && !target()) {
+        if (readerChanged(id, pane)) return null;
+        const index = find();
+        if (index < 0 || Date.now() >= until) return null;
+        const next = v.getImageIds()[index];
+        clearTimeout(v.debouncedTimeout);
+        if ('targetImageIdIndex' in v) v.targetImageIdIndex = index;
+        pane.moving = true;
+        try {
+          await write(() => typeof v.setImageIdIndex === 'function' ? v.setImageIdIndex(index) :
+            native?.utilities?.jumpToSlice?.(v.element, { imageIndex: index }), next);
+        } finally { pane.moving = false; }
+        if (!still() || !takePendingEdit() && !target()) return null;
+      }
+      const image = v.getCurrentImageId();
+      while (still()) {
+        if (readerChanged(id, pane) || !target()) return null;
+        if (isDrawn(v, image)) break;
+        if (Date.now() >= until) return null;
+        await wait(50);
+      }
+      const onImage = () => still() && target() && isDrawn(v, image);
+      if (!onImage() || !readCell(id) || readerChanged(id, pane)) return null;
+      pane.watch = null;
       v.setProperties({ invert: false, VOILUTFunction: 'LINEAR' });
+      if (!onImage()) return null;
       v.setProperties(structuredClone(cell.properties));
-      result.window = true;
-      // A camera belongs to its image: without that image the cell keeps the viewer's own.
-      if (result.image) {
-        v.setCamera({ flipHorizontal: cell.camera.flipHorizontal, flipVertical: cell.camera.flipVertical });
-        const camera = structuredClone(cell.camera); delete camera.flipHorizontal; delete camera.flipVertical;
-        v.setCamera(camera);
-        result.zoom = true;
-      }
+      if (!onImage()) return null;
+      v.setCamera({ flipHorizontal: cell.camera.flipHorizontal, flipVertical: cell.camera.flipVertical });
+      if (!onImage()) return null;
+      const camera = structuredClone(cell.camera); delete camera.flipHorizontal; delete camera.flipVertical;
+      v.setCamera(camera);
       v.render?.();
-      return result;
+      while (still() && target() && !isDrawn(v, image) && Date.now() < until) await wait(50);
+      const actual = readCell(id);
+      if (!actual || !onImage() || !agrees(actual.properties, cell.properties) || !agrees(actual.camera, cell.camera)) return null;
+      place(pane, actual, !!edit);
+      if (edit) { changed(); return null; }
+      return { actual, zoom: true, window: true, image: true, index: actual.index, rule };
     }
-    async function shown(ids) {
-      for (let i = 0; i < 100; i++) {
-        if (!restoring()) return false;
-        if (ids.every(({ id, set }) => !set || (setOf(id) === set && stackOf(id)?.getCurrentImageId?.()))) return true;
-        await wait(100);
-      }
-      return false;
-    }
-    async function restore(view) {
+
+    async function restore(view, keepLayout) {
+      observeOpening();
       const views = ordered(), state = grid.getState(), wanted = view.cells.map(wantedSet);
       const sameLayout = state.layout?.numRows === view.rows && state.layout?.numCols === view.cols && views.length === view.cells.length;
+      const old = views.map(g => opening.get(g.viewportId));
       let targets = views.map(g => g.viewportId);
-      // A cell saved empty is part of the layout too.
-      const matches = sameLayout && view.cells.every((cell, i) => cell ? setOf(targets[i]) === wanted[i] : !setOf(targets[i]));
-      if (!matches && view.cells.every((cell, i) => !cell || wanted[i])) {
-        // The saved layout and series, when every saved series is in this viewer.
-        const ids = view.cells.map(() => 'kin-auto-view-' + crypto.randomUUID());
-        await grid.setLayout({ numRows: view.rows, numCols: view.cols, activeViewportId: ids[view.active], isHangingProtocolLayout: false,
+      const matches = sameLayout && view.cells.every((cell, i) => cell ? wanted[i] && setOf(targets[i]) === wanted[i] : !setOf(targets[i]));
+      const previous = wanted.map(set => {
+        const i = old.findIndex(record => record?.set === set);
+        return i < 0 ? null : old.splice(i, 1)[0];
+      });
+      keepLayout ||= old.some(record => record?.edit);
+      const replace = !keepLayout && !matches && view.cells.every((cell, i) => !cell || wanted[i]);
+      if (replace) {
+        targets = view.cells.map(() => 'kin-auto-view-' + crypto.randomUUID());
+        await grid.setLayout({ numRows: view.rows, numCols: view.cols, activeViewportId: targets[view.active], isHangingProtocolLayout: false,
           findOrCreateViewport: index => ({ displaySetInstanceUIDs: wanted[index] ? [wanted[index]] : [], displaySetOptions: [{}],
-            viewportOptions: { viewportId: ids[index], viewportType: 'stack', toolGroupId: 'default', allowUnmatchedView: true } }) });
-        targets = ids;
-        if (!await shown(ids.map((id, i) => ({ id, set: wanted[i] })))) return null;
-      } else if (!sameLayout) targets = [];
-      const results = [];
-      // One time for all the cells to draw their images, not one each.
-      const until = Date.now() + DRAWN_MS;
-      for (let i = 0; i < view.cells.length; i++) {
-        const cell = view.cells[i], id = targets[i];
-        // A cell whose series is not the saved one now (or is not in this viewer) is left as it is.
-        if (!cell || !id || !wanted[i] || setOf(id) !== wanted[i]) { results.push(null); continue; }
-        let result = null;
-        try { result = await restoreCell(id, cell, until); } catch (error) { console.error(error); }
-        if (!restoring()) return null;
-        results.push(result);
+            viewportOptions: { viewportId: targets[index], viewportType: 'stack', toolGroupId: 'default', allowUnmatchedView: true } }) });
+        const until = Date.now() + DRAWN_MS;
+        while (restoring() && !ordered().some(g => targets.includes(g.viewportId))) {
+          if (Date.now() >= until) return;
+          await wait(50);
+        }
       }
-      if (!restoring()) return null;
-      const activeId = targets[view.active];
-      if (activeId && results[view.active]) try { grid.setActiveViewportId?.(activeId); } catch (_) {}
-      const text = model.restoredText(view, results, convert);
-      const at = results.findIndex((result, i) => i === view.active && result) >= 0 ? view.active : results.findIndex(Boolean);
-      if (text && at >= 0) showBadge(targets[at], text);
-      return text;
+      if (!restoring()) return;
+      if (keepLayout || !matches && !replace) {
+        // A missing series can prevent restoring the layout itself. Keep its stored slot and find the available
+        // series in the current grid, even when the two layouts have different dimensions.
+        const remaining = [...views];
+        targets = wanted.map(set => {
+          const i = set ? remaining.findIndex(g => setOf(g.viewportId) === set) : -1;
+          return i < 0 ? null : remaining.splice(i, 1)[0].viewportId;
+        });
+        if (!keepLayout) partialLayout = { view, targets, visible: new Map(views.map(g => [g.viewportId, setOf(g.viewportId)])) };
+      }
+      watchingOpening = false;
+      // Register every reservation before any restore emits events or a closing save reads the whole grid.
+      for (const [i, id] of targets.entries()) {
+        if (!id) continue;
+        panes.set(id, { set: wanted[i] || '', value: view.cells[i] ?? null, placed: false, watch: null });
+      }
+      const active = targets[view.active];
+      if (!keepLayout && active && wanted[view.active] && setOf(active) === wanted[view.active]) grid.setActiveViewportId?.(active);
+      phase = 'ready';
+      if (keepLayout) {
+        // A source chosen while the read was pending wins in its own pane. Other original panes can still restore.
+        for (const g of views) {
+          const id = g.viewportId, set = setOf(id);
+          if (panes.has(id) && initialGrid.get(id) === set) continue;
+          const now = readCell(id);
+          panes.set(id, { set, placed: true, base: now && JSON.stringify(now), value: now || panes.get(id)?.value || null });
+        }
+        issued = { text: JSON.stringify(view), seq: floor };
+        changed();
+      } else rebase(true);
+      const results = [];
+      targets.forEach((id, i) => {
+        const pane = panes.get(id), cell = view.cells[i];
+        if (!pane || pane.placed || !cell || !wanted[i]) return;
+        restoreCell(id, pane, cell, previous[i]).then(result => {
+          if (!result || !restoring() || panes.get(id) !== pane) return;
+          results[i] = result;
+          const actualView = { ...view, cells: view.cells.map((saved, n) => results[n]?.actual || saved) };
+          const at = results[view.active] ? view.active : results.findIndex(Boolean);
+          showBadge(targets[at], model.restoredText(actualView, results, convert));
+        }).catch(error => console.error(error)).finally(() => {
+          if (restoring() && panes.get(id) === pane && !pane.placed && !pane.watch && setOf(id) === pane.set) {
+            opening.delete(id);
+            pane.watch = observeCell(id);
+          }
+        });
+      });
     }
     function showBadge(viewportId, text) {
       clearTimeout(badgeTimer); badge?.remove(); badge = null;
@@ -444,7 +571,7 @@
     // when it starts; one whose restore never began hears nothing.
     addEventListener('kin-viewer-opening-restore', ({ detail }) => {
       if (ended || !detail?.hold || !(detail.hold.screen >= screen)) return;
-      if (detail.phase === 'begin') { if (!landing()) { clearTimeout(timer); timer = null; save('now'); } return; }
+      if (detail.phase === 'begin') { if (!landing()) { clearTimeout(timer); timer = null; save('now'); cancelPlacement(); } return; }
       if (landing()) return;
       clearTimeout(timer); timer = null;
       if (phase === 'ready') rebase();
@@ -456,7 +583,7 @@
       on = value === true;  // anything else (absent, malformed) is off
       known();
       // Off ends the putting back that is going on and the saves waiting in the queue.
-      if (!on) { clearTimeout(timer); timer = null; if (was) { restoreRun++; epoch++; } }
+      if (!on) { clearTimeout(timer); timer = null; if (was) { cancelPlacement(); epoch++; } }
       else if (!was && phase === 'ready') { if (generation === null) read(); changed(); }
       painter?.();
     });
@@ -471,39 +598,74 @@
       const started = await firstView();
       if (!live()) return;
       if (started && on) {
-        phase = 'restoring'; restoreAt = restoreRun;
-        // Every enabled opening needs the Discard generation for closing saves. Only a fresh non-Job opening restores.
-        try { const saved = await read(); if (saved && firstOpening && !jobChosen && restoring()) { putBack = true; await restore(saved.snapshot); } }
-        catch (error) { console.error(error); }
-        if (!live()) return;
+        restoreAt = restoreRun;
+        initialGrid = new Map(ordered().map(g => [g.viewportId, setOf(g.viewportId)]));
+        await openSaved();
+      } else {
+        watchingOpening = false; opening.clear();
+        phase = 'ready'; rebase(true);
       }
-      phase = 'ready';
-      // The reader took the screen over while the saved view went back: what is on it now is the reader's, saved as a
-      // change (from the saved view, which is what the server holds) once it can be captured.
-      if (takenOver && putBack && last?.snapshot) { settling = false; floor = 0; issued = { text: JSON.stringify(last.snapshot), seq: 0 }; changed(); return; }
-      // The view on the screen now is the starting point: it is saved once it changes. With a chosen restore landing
-      // right now, the screen that restore leaves takes its place; one that was over before this is here already.
-      // A screen that cannot be captured is waited for only where such a restore has been (rebase).
-      rebase(true);
     })().catch(error => console.error(error));
 
-    // The reader's hand on the images (a press or a wheel turn on a cell, a key outside a form or a window) while the
-    // saved view is going back takes the screen over: the putting back stops where it is and leaves every cell it has
-    // not reached as the reader has it.
-    const takeOver = event => {
-      if (phase !== 'restoring' || takenOver) return;
-      const target = event.target instanceof Element ? event.target : null;
-      const theirs = event.type === 'keydown' ? !target?.closest?.('input, textarea, select, [contenteditable], dialog, [role=dialog]')
-        : !!target?.closest?.('[data-cy=viewport-pane], [data-cy=viewport-grid]');
-      if (theirs) takenOver = true;
-    };
-    for (const name of ['pointerdown', 'wheel', 'keydown']) document.addEventListener(name, takeOver, { capture: true, signal });
+    async function openSaved() {
+      phase = 'restoring';
+      observeOpening();
+      const saved = await read();
+      if (!live() || !sameOwner()) return;
+      if (watchingOpening && restoring()) {
+        if (saved === undefined) { phase = 'unread'; return; }
+        // A finding opened in this document may already have replaced the first layout during the read.
+        const views = ordered();
+        const keepLayout = initialGrid.size !== views.length || views.some(g => initialGrid.get(g.viewportId) !== setOf(g.viewportId));
+        if (saved) {
+          try { await restore(saved.snapshot, keepLayout); }
+          catch (error) { console.error(error); }
+          if (phase === 'ready') return;
+          if (restoring()) { phase = 'unread'; return; }
+        } else {
+          observeOpening();
+          watchingOpening = false;
+          for (const g of ordered()) {
+            const record = opening.get(g.viewportId);
+            panes.set(g.viewportId, { set: setOf(g.viewportId), placed: true,
+              value: record?.first ?? null, base: record?.base ?? null });
+          }
+          phase = 'ready';
+          rebase(true);
+          for (const [id, record] of opening) {
+            if (record.edit && panes.has(id)) { panes.get(id).value = record.edit; changed(); }
+          }
+          if (keepLayout) { issued = { text: null, seq: floor }; changed(); }
+          opening.clear();
+          return;
+        }
+      }
+      watchingOpening = false; opening.clear();
+      phase = 'ready';
+      rebase(true);
+    }
+
     // ── What changes the view ──
-    const listen = name => { if (name) document.addEventListener(name, changed, { capture: true, signal }); };
-    [events.CAMERA_MODIFIED, events.VOI_MODIFIED, events.STACK_NEW_IMAGE].forEach(listen);
+    observeOpening();
+    function observeEvent(event) {
+      const id = event.detail?.viewportId, pane = panes.get(id);
+      if (watchingOpening && id) observeCell(id);
+      if (pane && !pane.placed && pane.set === setOf(id)) {
+        if (pane.watch) readerChanged(id, pane);
+        return;
+      }
+      if (pane?.placed && pane.base === null) {
+        const first = readCell(id);
+        if (first) pane.base = JSON.stringify(first);
+      }
+      if (event.type !== events.IMAGE_RENDERED) changed();
+    }
+    for (const name of [events.CAMERA_MODIFIED, events.VOI_MODIFIED, events.STACK_NEW_IMAGE, events.IMAGE_RENDERED, 'kin-display-image-settled']) {
+      if (name) document.addEventListener(name, observeEvent, { capture: true, signal });
+    }
     const subscriptions = [];
     for (const name of new Set([grid?.EVENTS?.GRID_STATE_CHANGED, grid?.EVENTS?.LAYOUT_CHANGED, grid?.EVENTS?.ACTIVE_VIEWPORT_ID_CHANGED].filter(Boolean)))
-      try { const subscription = grid.subscribe(name, () => changed()); if (subscription) subscriptions.push(subscription); } catch (error) { console.error(error); }
+      try { const subscription = grid.subscribe(name, () => { observeOpening(); changed(); }); if (subscription) subscriptions.push(subscription); } catch (error) { console.error(error); }
     // A Hanging Protocol applied: its cell rules are put on the cells next. Nothing is saved (after a quiet moment, on a
     // patient switch or as the window closes) until Display Set Presets and any replacement pass finish, and then the
     // grid has stood still for the quiet time. There is no time

@@ -26,6 +26,11 @@
       finite(value.voiRange.lower, -1e9, 1e9) && finite(value.voiRange.upper, -1e9, 1e9) && value.voiRange.upper > value.voiRange.lower &&
       ['LINEAR', 'LINEAR_EXACT', 'SIGMOID'].includes(value.VOILUTFunction) && typeof value.invert === 'boolean' && [0, 1, 2].includes(value.interpolationType);
   }
+  function validCell(cell) {
+    return exact(cell, CELL_KEYS) && uid(cell.study) && uid(cell.series) && uid(cell.sop) && count(cell.frame, 1, 100000) &&
+      count(cell.index, 0, 100000) && finite(cell.zoom, 1e-9, 10000) && camera(cell.camera) && properties(cell.properties) &&
+      (cell.display === null || exact(cell.display, DISPLAY_KEYS));
+  }
   // The saved view of `study` (the first study it names), as the server checks it; null when it is not one.
   function validate(value, study, maxStudies = 8) {
     try {
@@ -37,9 +42,7 @@
           value.cells.every(cell => cell === null) || !count(value.active, 0, value.cells.length - 1)) return null;
       for (const cell of value.cells) {
         if (cell === null) continue;
-        if (!exact(cell, CELL_KEYS) || !studies.includes(cell.study) || !uid(cell.series) || !uid(cell.sop) || !count(cell.frame, 1, 100000) ||
-            !count(cell.index, 0, 100000) || !finite(cell.zoom, 1e-9, 10000) || cell.zoom <= 0 || !camera(cell.camera) || !properties(cell.properties)) return null;
-        if (cell.display !== null && !exact(cell.display, DISPLAY_KEYS)) return null;
+        if (!validCell(cell) || !studies.includes(cell.study)) return null;
       }
       return JSON.parse(JSON.stringify(value));
     } catch (_) { return null; }
@@ -115,7 +118,7 @@
     return 'Restored saved view' + (words ? ': ' + words : '') + (saved.length > 1 ? ' (' + done + ' of ' + saved.length + ' cells' + (notes ? '; ' + notes : '') + ')' : '');
   }
 
-  const api = Object.freeze({ validate, frameOf, imageKey, findImage, windowOf, cellText, summary, restoredText });
+  const api = Object.freeze({ validate, validCell, frameOf, imageKey, findImage, windowOf, cellText, summary, restoredText });
   root.KinAutoViewModel = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
