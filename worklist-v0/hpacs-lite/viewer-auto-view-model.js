@@ -26,6 +26,11 @@
       finite(value.voiRange.lower, -1e9, 1e9) && finite(value.voiRange.upper, -1e9, 1e9) && value.voiRange.upper > value.voiRange.lower &&
       ['LINEAR', 'LINEAR_EXACT', 'SIGMOID'].includes(value.VOILUTFunction) && typeof value.invert === 'boolean' && [0, 1, 2].includes(value.interpolationType);
   }
+  function validCell(cell) {
+    return exact(cell, CELL_KEYS) && uid(cell.study) && uid(cell.series) && uid(cell.sop) && count(cell.frame, 1, 100000) &&
+      count(cell.index, 0, 100000) && finite(cell.zoom, 1e-9, 10000) && camera(cell.camera) && properties(cell.properties) &&
+      (cell.display === null || exact(cell.display, DISPLAY_KEYS));
+  }
   // The saved view of `study` (the first study it names), as the server checks it; null when it is not one.
   function validate(value, study, maxStudies = 8) {
     try {
@@ -37,9 +42,7 @@
           value.cells.every(cell => cell === null) || !count(value.active, 0, value.cells.length - 1)) return null;
       for (const cell of value.cells) {
         if (cell === null) continue;
-        if (!exact(cell, CELL_KEYS) || !studies.includes(cell.study) || !uid(cell.series) || !uid(cell.sop) || !count(cell.frame, 1, 100000) ||
-            !count(cell.index, 0, 100000) || !finite(cell.zoom, 1e-9, 10000) || cell.zoom <= 0 || !camera(cell.camera) || !properties(cell.properties)) return null;
-        if (cell.display !== null && !exact(cell.display, DISPLAY_KEYS)) return null;
+        if (!validCell(cell) || !studies.includes(cell.study)) return null;
       }
       return JSON.parse(JSON.stringify(value));
     } catch (_) { return null; }
@@ -52,12 +55,19 @@
     const frame = match ? Number(match[1]) : 1;
     return Number.isInteger(frame) && frame >= 1 ? frame : 1;
   }
+  // The source image an image id shows, as a saved cell names it: { study, series, sop, frame }, or null without its
+  // instance data. A cell is saved by it and put back by it (findImage), never by its place on the screen or in a stack.
+  function imageKey(imageId, instanceOf) {
+    let meta = null; try { meta = instanceOf(imageId); } catch (_) {}
+    if (!meta?.SOPInstanceUID) return null;
+    return { study: meta.StudyInstanceUID, series: meta.SeriesInstanceUID, sop: meta.SOPInstanceUID, frame: frameOf(imageId) };
+  }
   // The place of the saved image (SOP and frame) in a stack as it is ordered now; -1 when it is not in it (or twice).
   function findImage(imageIds, instanceOf, sop, frame) {
     let found = -1;
     (imageIds || []).forEach((id, index) => {
-      let meta = null; try { meta = instanceOf(id); } catch (_) {}
-      if (meta?.SOPInstanceUID === sop && frameOf(id) === frame) found = found === -1 ? index : -2;
+      const key = imageKey(id, instanceOf);
+      if (key?.sop === sop && key.frame === frame) found = found === -1 ? index : -2;
     });
     return found >= 0 ? found : -1;
   }
@@ -108,7 +118,7 @@
     return 'Restored saved view' + (words ? ': ' + words : '') + (saved.length > 1 ? ' (' + done + ' of ' + saved.length + ' cells' + (notes ? '; ' + notes : '') + ')' : '');
   }
 
-  const api = Object.freeze({ validate, frameOf, findImage, windowOf, cellText, summary, restoredText });
+  const api = Object.freeze({ validate, validCell, frameOf, imageKey, findImage, windowOf, cellText, summary, restoredText });
   root.KinAutoViewModel = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

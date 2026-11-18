@@ -57,6 +57,18 @@ test('the frame of an image id and the saved image found again in a stack sorted
   assert.equal(model.findImage(ids, () => { throw new Error('no metadata'); }, '1.1', 1), -1);
 });
 
+test('a cell is saved and found again by one key: the source study, series, SOP and frame, not its place', () => {
+  const meta = { StudyInstanceUID: '1.9', SeriesInstanceUID: '1.9.2', SOPInstanceUID: '1.9.2.7' };
+  assert.deepEqual(model.imageKey('wadors:/i/x/frames/3', () => meta), { study: '1.9', series: '1.9.2', sop: '1.9.2.7', frame: 3 });
+  assert.deepEqual(model.imageKey('wadouri:/x?objectUID=1.9.2.7', () => meta), { study: '1.9', series: '1.9.2', sop: '1.9.2.7', frame: 1 });
+  assert.equal(model.imageKey('wadors:/i/x/frames/1', () => undefined), null);
+  assert.equal(model.imageKey('wadors:/i/x/frames/1', () => { throw new Error('no metadata'); }), null);
+  // What findImage looks for is what imageKey saved: the key of the image at the place found is the saved one.
+  const ids = ['wadors:/i/a/frames/2', 'wadors:/i/a/frames/1'], of = () => ({ ...meta, SOPInstanceUID: '1.9.2.1' });
+  const key = model.imageKey(ids[1], of);
+  assert.deepEqual(model.imageKey(ids[model.findImage(ids, of, key.sop, key.frame)], of), key);
+});
+
 test('the last saved view and the badge say what was saved and what was put back', () => {
   // W/L from the window range by the DICOM linear rule (the viewer's own conversion when it is given).
   assert.deepEqual(model.windowOf({ lower: 31, upper: 192 }), { w: 162, l: 112 });
