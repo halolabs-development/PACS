@@ -9,7 +9,9 @@ type Env = Record<string, string | undefined>;
 export function preloadDiskGb(env: Env = process.env): number | null {
   const raw = String(env.KIN_PRELOAD_DISK_GB ?? '').trim();
   const gb = raw ? Number(raw) : NaN;
-  return Number.isFinite(gb) && gb > 0 && Number.isSafeInteger(Math.floor(gb * 1024 ** 3)) ? gb : null;
+  // The same test the reading PC applies to the cap it receives (preload-store.js budgetFor): whole bytes, at least one.
+  const bytes = Number.isFinite(gb) && gb > 0 ? Math.floor(gb * 1024 ** 3) : NaN;
+  return Number.isSafeInteger(bytes) && bytes > 0 ? gb : null;
 }
 
 const GUIDE = '기관이 판독 PC 디스크에 맞춰 .env에 GiB 숫자로 정합니다(docs/ops/preload-cache.md).';

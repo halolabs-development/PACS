@@ -832,7 +832,9 @@ looked at.
    container or perform another backup between the last judgement and opening the entry, and compare the
    container events of the whole project over that interval: the proxy's start is the only one.
 7. Verify HTTPS, the actual served worklist/viewer files and sign-in theme, image labels, migrations,
-   signing-key access and the realm issuer, and that both file-reading services were created from the
+   signing-key access and the realm issuer, the preload disk cap (the `preload_on` check of installation
+   step 3; the candidate's environment file is a copy of the site's, so a site without the cap fails here
+   until it is set), and that both file-reading services were created from the
    candidate's directory after the switch began. Only after these checks: write what the declaration says
    moves with the site, file by file, load the managers, and let the declared executors go again, the
    schedulers first and, in a later request, what starts others (a timer that catches up on a missed run
@@ -996,7 +998,8 @@ had. Read this start's recovery, complete sweeps, pause writers, drain DB transa
 and judge again - so what N itself wrote in an earlier, failed return is judged beside N's database. A
 completed destruction on R must remain absent on N; an unfinished attempt may refuse in both directions.
 
-Resume the identical judged containers and start only N's prepared proxy. Check HTTPS/signing. Then put
+Resume the identical judged containers and start only N's prepared proxy. Check HTTPS/signing and the
+preload disk cap (installation step 3's `preload_on`). Then put
 what moves with the site back to the **bytes recorded for N's directory**, not a guessed inverse
 substitution of R's current contents, and let the declared executors go again. Only then record
 `ROLLBACK_ABANDONED`. Failure leaves `NEEDS_ATTENTION` with entry closed; the same step is run again.

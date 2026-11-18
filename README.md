@@ -13,7 +13,7 @@ Orthanc, NestJS/Prisma, PostgreSQL, Keycloak, nginx로 구성된 의료영상 �
 
 Docker Desktop과 Docker Compose가 필요하다. Python 기반 시험의 준비물은 [시험 안내](tests/README.md)를 따른다.
 
-새 환경에서만 `.env.example`을 로컬 `.env`로 복사하고 필요한 자격증명을 직접 설정한다. 기존 `.env`를 덮어쓰지 않으며 비밀번호·토큰·키를 저장소에 넣지 않는다.
+새 환경에서만 `.env.example`을 로컬 `.env`로 복사하고 필요한 자격증명을 직접 설정한다. 기존 `.env`를 덮어쓰지 않으며 비밀번호·토큰·키를 저장소에 넣지 않는다. 미리 받기 용량 `KIN_PRELOAD_DISK_GB`도 양수(GiB)로 바꾼다 — 합성 자료만 쓰는 개발·시험 스택은 작은 값(예: `1`)이면 된다. `change-me`나 빈 값이면 스택은 뜨지만 API가 기동 로그에 그 까닭을 한 줄 남기고, 모든 검사의 Preload가 Failed와 그 이유를 보인다([미리 받기 운영](docs/ops/preload-cache.md)).
 
 기동이 필요하면 저장소 루트에서 실행한다. 이미 실행 중인 환경은 변경에 필요한 서비스만 갱신한다.
 

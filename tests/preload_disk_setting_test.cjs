@@ -7,8 +7,16 @@ const { preloadDiskGb, preloadDiskStartupNotice } = require('../api/src/preload-
 test('a positive GiB number is the cap; empty, missing, zero, negative, text and too large are no cap', () => {
   assert.equal(preloadDiskGb({ KIN_PRELOAD_DISK_GB: '20' }), 20);
   assert.equal(preloadDiskGb({ KIN_PRELOAD_DISK_GB: ' 0.25 ' }), 0.25);
-  for (const raw of [undefined, '', '   ', '0', '-1', 'change-me', 'NaN', 'Infinity', '1e400', String(2 ** 53)])
+  for (const raw of [undefined, '', '   ', '0', '-1', 'change-me', 'NaN', 'Infinity', '1e400', String(2 ** 53), '1e-12'])
     assert.equal(preloadDiskGb({ KIN_PRELOAD_DISK_GB: raw }), null, String(raw));
+});
+
+test('the server accepts exactly the caps the reading PC turns into a budget', () => {
+  const { budgetFor } = require('../worklist-v0/hpacs-lite/preload-store.js');
+  for (const raw of ['20', '0.25', '1e-9', '1e-10', '1e-12', '0', '-1', '1e400', String(2 ** 23), String(2 ** 24)]) {
+    const gb = preloadDiskGb({ KIN_PRELOAD_DISK_GB: raw });
+    assert.equal(gb !== null, budgetFor(Number(raw)) !== null, raw);
+  }
 });
 
 test('the startup log says nothing when the cap is set', () => {
