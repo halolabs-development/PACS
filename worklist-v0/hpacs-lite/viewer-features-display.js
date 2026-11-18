@@ -168,6 +168,8 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
     }
     for (const [id, entry] of layers) if (!live.has(id)) { clearPane(entry.pane); entry.node.remove(); layers.delete(id); }
     for (const fn of painters.values()) try { fn(); } catch (error) { console.error(error); }
+    // Where this text meets other text over the image is settled in one place (viewer-info-bar.js).
+    for (const entry of layers.values()) window.KinViewerInfoBar?.settle?.(entry.pane);
   }
   function clearPane(pane) { if (pane) for (const name of ['kinDisplay', 'kinDisplayWl', 'kinDisplayDicom', 'kinDisplayCorners']) delete pane.dataset[name]; }
   function drawCell(v) {

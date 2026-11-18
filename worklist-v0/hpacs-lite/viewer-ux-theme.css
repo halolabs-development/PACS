@@ -177,6 +177,9 @@ body.kin-viewer-ux #root :has(> .kin-viewer-series-strip) { min-width: 0; }
 section.kin-ux-feature-panel { position: fixed; top: 4em; right: 1em; z-index: 55; }
 .kin-ux-feature-panel :focus-visible { outline: 2px solid var(--kin-accent); outline-offset: -2px; }
 .kin-ux-cell-layer { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
+/* The viewer's own corner buttons (OHIF ViewportActionCorners, which set no z-index) and the menus they open stand above
+   the text this shell draws over the image (cell layers 5, labels 2-5), so an opened menu is never covered. */
+body.kin-viewer-ux [data-cy="viewport-pane"] .pointer-events-auto.flex.items-center.gap-1.absolute { z-index: 6; }
 .kin-ux-settings { background: var(--kin-panel); color: var(--kin-ux-text); max-width: 90vw; max-height: 85vh; overflow: auto; padding: 1em; border: 1px solid var(--kin-ux-secondary); }
 .kin-ux-setting-row { display: flex; gap: .7em; align-items: center; padding: .25em; }
 .kin-ux-setting-row span { flex: 1; }
