@@ -75,12 +75,13 @@ def dockerfile_images(text):
     return images
 
 
-COMPOSE_IMAGE = re.compile(r"""^\s*image:\s*["']?([^"'\s#]+)""")
+COMPOSE_IMAGE = re.compile(r"""(?:^|[\s{,])image:\s*["']?((?:\$\{[^}]*\}|[^"'\s,}#])+)""")
 
 
 def compose_images(text):
-    """Every `image:` of a Compose file, variables included (the caller decides what a variable means)."""
-    return [m.group(1) for m in map(COMPOSE_IMAGE.match, text.splitlines()) if m]
+    """Every `image:` of a Compose file, block or flow style, variables included (the caller decides what a variable
+    means)."""
+    return [m.group(1) for line in text.splitlines() for m in COMPOSE_IMAGE.finditer(line.split(" #", 1)[0])]
 
 
 def slug(name):
@@ -192,19 +193,22 @@ def parse_pip(doc):
 
 
 def parse_trivy(doc):
-    if type(doc) is not dict or "SchemaVersion" not in doc or type(doc.get("Results") or []) is not list:
+    if type(doc) is not dict or "SchemaVersion" not in doc or type(doc.get("Results")) is not list:
         raise Unchecked("trivy gave no image report")
-    findings, seen = [], set()
-    for result in doc.get("Results") or []:
+    findings = {}
+    for result in doc["Results"]:
         for vuln in result.get("Vulnerabilities") or []:
+            # The same package, version and advisory can appear under several of the image's results: merge them,
+            # keeping the highest severity and any fixed version, so the order of the results never decides.
             key = (vuln.get("PkgName"), vuln.get("InstalledVersion"), vuln.get("VulnerabilityID"))
-            if key in seen:
-                continue
-            seen.add(key)
-            findings.append({"package": vuln.get("PkgName"), "version": vuln.get("InstalledVersion"),
-                             "severity": severity(vuln.get("Severity")), "ids": [vuln.get("VulnerabilityID")],
-                             "fix": "yes" if vuln.get("FixedVersion") else "none", "fixed": vuln.get("FixedVersion") or ""})
-    return findings
+            found = findings.setdefault(key, {"package": key[0], "version": key[1], "severity": "unrated",
+                                              "ids": [key[2]], "fix": "none", "fixed": ""})
+            level = severity(vuln.get("Severity"))
+            if SEVERITIES.index(level) < SEVERITIES.index(found["severity"]):
+                found["severity"] = level
+            if vuln.get("FixedVersion") and found["fix"] == "none":
+                found.update(fix="yes", fixed=vuln["FixedVersion"])
+    return list(findings.values())
 
 
 PARSE = {"npm": parse_npm, "pip": parse_pip, "image": parse_trivy}
@@ -255,6 +259,10 @@ def bundled(root=ROOT):
         rows = [(r["section"], r["name"], r["version"]) for r in inventory["components"] if r.get("section") in BUNDLED_SECTIONS]
     except (OSError, ValueError, KeyError, TypeError):
         rows = [("inventory", INVENTORY, "unreadable")]
+    # The official PostgreSQL image builds the server from source: the image scan sees its OS packages, not the server.
+    for target in targets(root):
+        if target["kind"] == "image" and target["image"].split("@")[0].rsplit("/", 1)[-1].startswith("postgres:"):
+            rows.append(("Database", "PostgreSQL server (built from source in the image)", target["image"]))
     try:
         pin = re.search(r"libjpeg-turbo/releases/download/([0-9][^/]*)/", (root / SOF3_BUILD).read_text(encoding="utf-8"))
         rows.append(("Viewer decoder", "libjpeg-turbo (worklist-v0/hpacs-lite/kin-sof3.wasm)", pin.group(1) if pin else "unreadable"))

@@ -652,11 +652,15 @@ that a window that is going to be refused is refused before it costs a closed en
 Before the window, read the latest `Dependency audit` run (Actions; weekly on `main`, or run it by hand). It counts
 only if it is at most 8 days old and ran on the candidate SHA, or on a commit whose dependency files equal the
 candidate's (`git diff --quiet <run-sha> <candidate> -- '*package-lock.json' '*requirements*.txt' '*Dockerfile*'
-'*compose*.yml'` exits 0); otherwise run it by hand on the candidate's ref first. An incomplete run (exit 2,
-"Not checked") is not a check: run it again. For every line under "Needs action", the private release record names
-the update this release carries or why the release goes out without it; do the same for the components under
-"Not seen by the scanners", against their vendors' advisories. The run builds the product images with `--pull`;
-build the release images the same way, so they hold what was checked.
+'*compose*.yml' worklist-v0/legal/licenses/components.json scripts/build-sof3-wasm.py` exits 0); otherwise run it
+by hand on the candidate's ref first. An incomplete run (exit 2, "Not checked") is not a check: run it again. For
+every line under "Needs action", the private release record names the update this release carries or why the
+release goes out without it; do the same for the components under "Not seen by the scanners", against their
+vendors' advisories. The run builds the product images with `--pull`; build the release images the same way, so
+they hold what was checked. The images the stack runs by name (Orthanc, PostgreSQL, Keycloak) are checked as their
+registry serves them on the run's day: compare each digest in the run's "Image" column with
+`docker image inspect --format '{{index .RepoDigests 0}}' <image>` on the host, and record a difference - an older
+local copy of the same tag is not what was checked.
 
 Then read the host's pending operating-system security updates, installing nothing:
 

@@ -72,6 +72,9 @@ class TargetTests(unittest.TestCase):
         text = "services:\n  a:\n    image: 'postgres:16-alpine'\n  b:\n    image: ${API_IMAGE:-kin-api:x}\n" \
                "  c:\n    image: \"quay.io/k/k:1\"  # pinned\n  d:\n    build: ./d\n"
         self.assertEqual(audit.compose_images(text), ["postgres:16-alpine", "${API_IMAGE:-kin-api:x}", "quay.io/k/k:1"])
+        flow = "services:\n  db: {image: postgres:16-alpine, restart: always}\n  x: {build: ., image_name: no}\n" \
+               "  # image: commented:1\n  y: {image: \"${A:-b:1}\"}\n  z:\n    image: $BARE\n"
+        self.assertEqual(audit.compose_images(flow), ["postgres:16-alpine", "${A:-b:1}", "$BARE"])
 
     def test_targets_are_found_not_listed(self):
         with tempfile.TemporaryDirectory() as root:
@@ -102,15 +105,16 @@ class TargetTests(unittest.TestCase):
         names = {t["name"]: t for t in audit.targets()}
         for name in ("npm api (production)", "pip api/print/requirements.txt", "pip gateway/agent/requirements.txt",
                      "image built from api/Dockerfile", "image built from proxy/Dockerfile",
-                     "image built from gateway/agent/Dockerfile", "image orthancteam/orthanc:24.12.0",
-                     "image postgres:16-alpine"):
+                     "image built from gateway/agent/Dockerfile"):
             self.assertIn(name, names)
             self.assertTrue(names[name]["shipped"], name)
-        self.assertTrue(any(n.startswith("image quay.io/keycloak/keycloak:") for n in names))
+        # By image name, not tag: a security update of an engine image must not fail this test.
+        for prefix in ("image orthancteam/orthanc:", "image postgres:", "image quay.io/keycloak/keycloak:"):
+            self.assertTrue(any(n.startswith(prefix) and names[n]["shipped"] for n in names), prefix)
         # Today every shipped Compose image is pinned by name; a variable one would make every run incomplete.
         self.assertEqual([n for n, t in names.items() if t.get("unresolved")], [])
         sections = {row[0] for row in audit.bundled()}
-        self.assertTrue({"OHIF", "Orthanc", "ASR", "Viewer decoder"} <= sections, sections)
+        self.assertTrue({"OHIF", "Orthanc", "ASR", "Viewer decoder", "Database"} <= sections, sections)
         self.assertNotIn("unreadable", {row[2] for row in audit.bundled()})
 
 
@@ -141,6 +145,16 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(image["identity"], "x@sha256:2222")
         self.assertIn(audit.TRIVY_IMAGE, run.calls[-1][0])
         self.assertRegex(audit.TRIVY_IMAGE, r":[0-9.]+@sha256:[0-9a-f]{64}$")
+
+    def test_the_same_advisory_in_two_results_merges_whatever_the_order(self):
+        rows = [{"VulnerabilityID": "CVE-9", "PkgName": "lib", "InstalledVersion": "1", "FixedVersion": "", "Severity": "MEDIUM"},
+                {"VulnerabilityID": "CVE-9", "PkgName": "lib", "InstalledVersion": "1", "FixedVersion": "2", "Severity": "HIGH"}]
+        for order in (rows, rows[::-1]):
+            doc = {"SchemaVersion": 2, "Results": [{"Target": "a", "Vulnerabilities": [order[0]]},
+                                                   {"Target": "b", "Vulnerabilities": [order[1]]}]}
+            result = audit.check(self.target("image"), fake({"image": (0, json.dumps(doc))}))
+            self.assertEqual([(f["severity"], f["fix"], f["fixed"]) for f in result["findings"]], [("high", "yes", "2")])
+            self.assertTrue(audit.actionable(result, result["findings"][0]))
 
     def test_a_built_image_is_built_with_pull_then_scanned_as_built(self):
         run = fake({"build": (0, "sha256:abc\n"), "image": (0, json.dumps(TRIVY))})
@@ -176,7 +190,8 @@ class CheckTests(unittest.TestCase):
                            ("pip checked nothing", {"dependencies": []}), ("pip no report", {"fixes": []})):
             with self.subTest(label):
                 self.assertEqual(audit.check(self.target("pip"), fake({"pip": (0, json.dumps(out))}))["status"], "not checked")
-        for label, out, code in (("trivy found something but exits 1", TRIVY, 1), ("not a trivy report", {"Results": []}, 0)):
+        for label, out, code in (("trivy found something but exits 1", TRIVY, 1), ("not a trivy report", {"Results": []}, 0),
+                                 ("trivy report without results", {"SchemaVersion": 2}, 0)):
             with self.subTest(label):
                 self.assertEqual(audit.check(self.target("image"), fake({"image": (code, json.dumps(out))}))["status"], "not checked")
         run = fake({})
@@ -230,7 +245,7 @@ class VerdictTests(unittest.TestCase):
 
     def test_an_unchecked_target_is_never_clean_and_keeps_the_rest(self):
         clean = self.results({"npm": (0, json.dumps(EMPTY_NPM)), "pip": (0, json.dumps(CLEAN_PIP)),
-                              "image": (0, json.dumps({"SchemaVersion": 2}))})
+                              "image": (0, json.dumps({"SchemaVersion": 2, "Results": []}))})
         self.assertEqual(audit.summarize(clean)[0], 0)
         broken = self.results({"npm": (0, json.dumps(EMPTY_NPM)), "pip": (0, json.dumps(CLEAN_PIP)), "image": (None, "")})
         code, markdown, summary = audit.summarize(broken)
@@ -246,7 +261,7 @@ class VerdictTests(unittest.TestCase):
 
     def test_bundled_components_are_named_but_do_not_decide(self):
         results = self.results({"npm": (0, json.dumps(EMPTY_NPM)), "pip": (0, json.dumps(CLEAN_PIP)),
-                                "image": (0, json.dumps({"SchemaVersion": 2}))})
+                                "image": (0, json.dumps({"SchemaVersion": 2, "Results": []}))})
         code, markdown, summary = audit.summarize(results, bundle=[("OHIF", "OHIF embedded build", "3.9.1")])
         self.assertEqual(code, 0)
         self.assertIn("## Not seen by the scanners", markdown)
