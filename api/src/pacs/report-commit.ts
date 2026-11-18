@@ -448,7 +448,9 @@ export class PacsReportCommit {
         if (takeover) {
           const holderDraft = !!heldByOther && !!(await tx.reportDraft.findUnique({
             where: { uid_author: { uid, author: heldByOther } }, select: { present: true } }))?.present;
-          const savedKept = !!savedByOther && await this.reportDraft.keepSavedText(tx, uid, prev.draftEpoch, savedByOther, {
+          // Only saved text moves into the writer's draft; a Save of drawings alone has none to move - its drawings stay with
+          // the writer in the Reset copy above (no empty draft is made for them).
+          const savedKept = !!savedByOther && !!(cur.findings || cur.conclusion || cur.recommendation) && await this.reportDraft.keepSavedText(tx, uid, prev.draftEpoch, savedByOther, {
             findings: cur.findings, conclusion: cur.conclusion, recommendation: cur.recommendation,
             baseVersion: cur.version, citations: headCitations, structured: headStructured, groupId: cur.groupId ?? null,
           }, source => record!(prev, null, 'draft-save', source));

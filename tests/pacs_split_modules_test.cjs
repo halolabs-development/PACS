@@ -717,7 +717,8 @@ test('report state table: a Save of drawings alone belongs to its writer too - l
   await refused(() => w.commit.commitReport(s.uid, commitBody(RAD_A2, 'save', s.draftEpoch, 0, 1, { findings: 'over it' }), RAD_A2, null), 403, 'REPORT_IN_PROGRESS');
   await refused(() => w.hold.hold(s.uid, RAD_A2), 403, 'REPORT_IN_PROGRESS');
   const reset = await w.commit.commitReport(s.uid, commitBody(RAD_A2, 'reset', s.draftEpoch, 0, 1), RAD_A2, null);
-  assert.equal(reset.released.savedBy, RAD_A.actor);
+  assert.deepEqual([reset.released.savedBy, reset.released.savedKept], [RAD_A.actor, false]);
+  assert.equal(w.db.rows('reportDraft').filter(d => d.uid === s.uid && d.author === RAD_A.actor && d.present).length, 0, 'no empty draft is made for the writer');
   const copy = w.db.rows('reportVersion').find(v => v.uid === s.uid && v.action === 'discarded');
   assert.ok(copy, 'the Reset keeps a copy of the drawings-only Save');
   assert.deepEqual(copy.drawings.map(d => d.id), drawings.map(d => d.id));
