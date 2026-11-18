@@ -213,7 +213,16 @@ class LoginErrorPageE2E(base.WorklistE2E):
         page = self.fresh_page()
         page.goto(self.stack.proxy + HOME)
         expect(page.locator("#kc-form-login")).to_be_visible()
-        for _ in range(5):
+        # Before the lock, a wrong password on this account and any password for a username nobody has draw the very
+        # same sentence: the page says nothing about who exists.
+        self.submit(page, name, "syn-wrong-password")
+        expect(page.locator("#input-error")).to_have_text(WRONG)
+        nobody = self.fresh_page()
+        nobody.goto(self.stack.proxy + HOME)
+        self.submit(nobody, "syn-nobody-has-this-name", "syn-wrong-password")
+        expect(nobody.locator("#input-error")).to_have_text(WRONG)
+        self.assertEqual(page.locator("#input-error").inner_text().strip(), nobody.locator("#input-error").inner_text().strip())
+        for _ in range(4):
             self.submit(page, name, "syn-wrong-password")
             expect(page.locator("#kc-form-login")).to_be_visible()
         ARTIFACTS.mkdir(exist_ok=True)
@@ -222,20 +231,18 @@ class LoginErrorPageE2E(base.WorklistE2E):
             content = page.locator("#kc-content")
             expect(content, label).to_contain_text(LOCKED)
             expect(content, label).not_to_contain_text(WRONG)
-            page.screenshot(path=str(ARTIFACTS / f"LOGIN-LOCKED-{label}-password.png"), full_page=True)
+            page.screenshot(path=str(ARTIFACTS / f"LOGIN-ERROR-PAGE-locked-{label}-password.png"), full_page=True)
         # The English screen says the same.
         english = self.fresh_page(locale="en-US")
         english.goto(self.stack.proxy + HOME)
         expect(english.locator("html")).to_have_attribute("lang", "en")
         self.submit(english, name, right)
         expect(english.locator("#kc-content")).to_contain_text(LOCKED_EN)
-        english.screenshot(path=str(ARTIFACTS / "LOGIN-LOCKED-en.png"), full_page=True)
-        # A username nobody has: six tries, the same wrong-password sentence every time, never the lock.
-        nobody = self.fresh_page()
-        nobody.goto(self.stack.proxy + HOME)
-        for _ in range(6):
+        english.screenshot(path=str(ARTIFACTS / "LOGIN-ERROR-PAGE-locked-en.png"), full_page=True)
+        # The username nobody has, five more tries (six in all): the same wrong-password sentence every time, never the lock.
+        for _ in range(5):
             self.submit(nobody, "syn-nobody-has-this-name", "syn-wrong-password")
-            expect(nobody.locator("#kc-content")).to_contain_text(WRONG)
+            expect(nobody.locator("#input-error")).to_have_text(WRONG)
             expect(nobody.locator("#kc-content")).not_to_contain_text(LOCKED)
 
     def test_login_error_page_07_a_suspended_member_is_told_why(self):
@@ -253,7 +260,7 @@ class LoginErrorPageE2E(base.WorklistE2E):
                 page.wait_for_url(re.compile(r".*/worklist/hpacs-lite/index\.html(\?.*)?$"), timeout=30000)
                 expect(page.locator("#msg")).to_have_text(said)
                 ARTIFACTS.mkdir(exist_ok=True)
-                page.screenshot(path=str(ARTIFACTS / f"LOGIN-BLOCKED-{logical}.png"), full_page=True)
+                page.screenshot(path=str(ARTIFACTS / f"LOGIN-ERROR-PAGE-blocked-{logical}.png"), full_page=True)
                 expect(page.locator("#signin")).to_be_visible()
 
 

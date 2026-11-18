@@ -110,6 +110,29 @@ OTP = f"""<!doctype html><html class="login-pf" lang="ko" dir="ltr"><head><meta 
    </form></div></div>
  </div>
 </div></body></html>"""
+# The administrator's first OTP set-up page (26.7.3 login-config-totp.ftl's shape as served with this theme): the widest card.
+TOTP_SETUP_PATH = "/auth/realms/kin/login-actions/required-action"
+TOTP_SETUP = f"""<!doctype html><html class="login-pf" lang="ko" dir="ltr"><head><meta charset="utf-8">
+<title>{MSG["loginTitle"]}</title>{HEAD}</head>
+<body class="" data-page-id="login-login-config-totp">
+<div class="login-pf-page">
+ <div id="kc-header" class="login-pf-page-header"><div id="kc-header-wrapper" class="">KIN</div></div>
+ <div class="card-pf"><header class="login-pf-header"><h1 id="kc-page-title">{MSG["loginTotpTitle"]}</h1></header>
+  <div id="kc-content"><div id="kc-content-wrapper">
+   <ol id="kc-totp-settings">
+    <li><p>{MSG["loginTotpStep1"]}</p><ul id="kc-totp-supported-apps"><li>SYN Authenticator</li></ul></li>
+    <li><p>{MSG["loginTotpStep2"]}</p><img id="kc-totp-secret-qr-code" src="data:image/png;base64,iVBORw0KGgo=" alt="Figure: Barcode"></li>
+    <li><p>{MSG["loginTotpStep3"]}</p><p>{MSG["loginTotpStep3DeviceName"]}</p></li>
+   </ol>
+   <form action="{TOTP_SETUP_PATH}" class="form-horizontal" id="kc-totp-settings-form" method="post">
+    <div class="form-group"><label for="totp" class="control-label">{MSG["authenticatorCode"]}</label>
+     <input type="text" id="totp" name="totp" autocomplete="off" class="pf-c-form-control"></div>
+    <div class="form-group"><label for="userLabel" class="control-label">{MSG["loginTotpDeviceName"]}</label>
+     <input type="text" class="pf-c-form-control" id="userLabel" name="userLabel" autocomplete="off"></div>
+    <input type="submit" class="pf-c-button pf-m-primary pf-m-block btn-lg" id="saveTOTPBtn" value="{MSG["doSubmit"]}">
+   </form></div></div>
+ </div>
+</div></body></html>"""
 # Which element has focus, by the name a person would use.
 FOCUSED = """() => { const e = document.activeElement;
   return e.id === 'kc-login' ? 'Login' : e.id || e.textContent.trim(); }"""
@@ -148,6 +171,8 @@ class LoginThemeDomTest(unittest.TestCase):
             return route.abort()
         if url.path == "/auth/realms/kin/protocol/openid-connect/auth":
             return route.fulfill(body=LOGIN, content_type="text/html; charset=utf-8")
+        if url.path == TOTP_SETUP_PATH:
+            return route.fulfill(body=TOTP_SETUP, content_type="text/html; charset=utf-8")
         if url.path == OTP_PATH:
             return route.fulfill(body=OTP, content_type="text/html; charset=utf-8")
         if url.path == RESET:
@@ -215,12 +240,12 @@ class LoginThemeDomTest(unittest.TestCase):
 
     def test_05_a_phone_sized_window_keeps_the_card_inside(self):
         """375x667: the card (and its first letters) stays inside the window, the page does not scroll sideways, and the
-        notice links sit under the card, not beside it. The OTP page keeps the same shape."""
+        notice links sit under the card, not beside it. The OTP code page and the wider OTP set-up page keep the same shape."""
         measure = """() => { const r = s => document.querySelector(s).getBoundingClientRect();
           return {card: r('.card-pf'), links: r('#kin-legal-links'), width: innerWidth,
                   scroll: document.documentElement.scrollWidth}; }"""
         self.page.set_viewport_size({"width": 375, "height": 667})
-        for path in ("/auth/realms/kin/protocol/openid-connect/auth", OTP_PATH):
+        for path in ("/auth/realms/kin/protocol/openid-connect/auth", OTP_PATH, TOTP_SETUP_PATH):
             with self.subTest(path=path):
                 self.page.goto(ORIGIN + path)
                 expect(self.page.locator("#kin-legal-links")).to_be_attached()
@@ -267,6 +292,10 @@ class LoginThemeMessagesTest(unittest.TestCase):
                     self.assertNotEqual(said, self.WRONG[name])
                     # Keycloak formats these with MessageFormat: a quote or a brace would be eaten or break the text.
                     self.assertFalse(set("'{}") & set(said), said)
+            # The lock is the account's, not the form's: the OTP form says the same first sentence (failed sign-ins of any
+            # kind lock it, also from another window), not that codes were wrong.
+            first = rows["accountTemporarilyDisabledMessage"].split(":")[0].split(".")[0]
+            self.assertTrue(rows["accountTemporarilyDisabledMessageTotp"].startswith(first), name)
             self.assertNotIn("invalidUserMessage", rows, "a wrong password and an unknown username keep one sentence")
 
 

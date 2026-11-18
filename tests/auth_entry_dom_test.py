@@ -313,6 +313,10 @@ class AuthEntryDOMTest(unittest.TestCase):
         self.landing(SESSION, query="?auth_error=member_suspended", status="unconfirmed", reason="network")
         expect(self.page.locator("#msg")).to_contain_text("서버에 연결하지 못해")
         expect(self.page.locator("#retry-logout")).to_be_visible()
+        # Retry Log Out now succeeds: the person just pressed it, so its result is the news, not the earlier refusal.
+        self.page.locator("#retry-logout").click()
+        expect(self.page.locator("#msg")).to_have_text("이 브라우저의 HALO PACS 로그인 세션을 끝냈습니다. 다시 사용하려면 로그인해 주세요.")
+        self.assertEqual(self.logouts, [SESSION])
 
     def landing(self, record=None, query="?auth_error=stale", origin="logout", status="confirmed", reason=None,
                 raw=None, script=None, expect_button=True):
