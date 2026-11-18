@@ -101,7 +101,7 @@
     // Edits made while reading or replacing the layout travel with the original viewport's series.
     const opening = new Map();
     let watchingOpening = firstOpening && !jobChosen, initialGrid;
-    function readCell(id) {
+    function readPane(id) {
       const v = stackOf(id);
       try {
         const image = v?.getCurrentImageId(), key = image && model.imageKey(image, instance);
@@ -110,17 +110,37 @@
         const camera = v.getCamera() || {}, properties = v.getProperties() || {}, range = properties.voiRange;
         if (!range) return null;
         const display = window.KinViewerCellRules?.rule?.(id) ?? null;
-        const rotation = Number.isFinite(camera.rotation) ? camera.rotation : Number(v.getViewPresentation?.()?.rotation ?? 0);
+        const presentation = v.getViewPresentation({ zoom: true, pan: true, rotation: true });
+        const rotation = presentation.rotation ?? camera.rotation ?? 0;
         const cell = { study: key.study, series: key.series, sop: key.sop, frame: key.frame,
-          index: v.getCurrentImageIdIndex?.() ?? 0, zoom: Number(v.getZoom?.() ?? 1),
+          index: v.getCurrentImageIdIndex?.() ?? 0, zoom: presentation.zoom,
           camera: { focalPoint: list(camera.focalPoint), position: list(camera.position), viewUp: list(camera.viewUp), viewPlaneNormal: list(camera.viewPlaneNormal),
             parallelScale: camera.parallelScale, rotation, flipHorizontal: !!camera.flipHorizontal, flipVertical: !!camera.flipVertical },
           properties: { voiRange: { lower: range.lower, upper: range.upper }, VOILUTFunction: properties.VOILUTFunction || 'LINEAR', invert: !!properties.invert,
             interpolationType: properties.interpolationType ?? 1 }, display };
-        return model.validCell(cell) && v.getCurrentImageId() === image && isDrawn(v, image) ? cell : null;
+        const pan = list(presentation.pan);
+        return pan.length === 2 && pan.every(Number.isFinite) && model.validCell(cell) && v.getCurrentImageId() === image && isDrawn(v, image)
+          ? { cell, pan } : null;
       } catch (_) { return null; }
     }
-    function observeCell(id) {
+    // Resizing changes the camera's world coordinates and fit scale. The host keeps this image-relative presentation.
+    function sameReaderView(before, now) {
+      const a = before.cell, b = now.cell;
+      return a.study === b.study && a.series === b.series && a.sop === b.sop && a.frame === b.frame &&
+        Math.abs(a.zoom - b.zoom) <= 0.0015 * a.zoom && agrees(now.pan, before.pan) &&
+        agrees(b.camera.rotation, a.camera.rotation) && b.camera.flipHorizontal === a.camera.flipHorizontal &&
+        b.camera.flipVertical === a.camera.flipVertical && agrees(b.properties, a.properties) && agrees(b.display, a.display);
+    }
+    // Without a stored pane (including a Job landing), the first drawn camera represents this presentation until it changes.
+    const capturedPanes = new WeakMap();
+    function visibleCell(id, now = readPane(id)) {
+      if (!now) return null;
+      const v = stackOf(id), before = capturedPanes.get(v);
+      if (before && sameReaderView(before, now)) return before.cell;
+      capturedPanes.set(v, now);
+      return now.cell;
+    }
+    function observeCell(id, adjusting = false) {
       const v = stackOf(id), image = v?.getCurrentImageId?.(), set = setOf(id);
       if (!image || !set) return null;
       let record = opening.get(id);
@@ -128,13 +148,18 @@
         record = { viewport: v, set, image, base: null, edit: null };
         opening.set(id, record);
       }
-      const cell = readCell(id);
-      if (cell) {
-        const text = JSON.stringify(cell);
-        if (record.expected === image && record.image !== image) record.expected = null;
-        else if (record.image !== image || record.base !== null && record.base !== text) record.edit = cell;
-        if (!record.edit) record.first = cell;
-        record.image = image; record.base = text;
+      const now = readPane(id);
+      // Camera and VOI notifications can expose intermediate writes on an already drawn image. Keep the last
+      // sample in case the stack moves before its render; otherwise compare at render or at the restore boundary.
+      record.beforeMove = adjusting ? now : null;
+      if (adjusting && now) return record;
+      if (now) {
+        const moved = record.image !== image, changedView = record.base && !sameReaderView(record.base, now);
+        if (moved && record.expected === image) record.expected = null;
+        else if (moved || changedView) record.edit = now;
+        if (!record.edit) record.first = now.cell;
+        if (!record.base || moved || changedView) record.base = now;
+        record.image = image;
       } else {
         // The first stable values after a draw belong to the viewer. A move to another source still belongs to the reader.
         record.base = null;
@@ -162,7 +187,7 @@
       if (!start.missing.size) delete issued.start;
     }
 
-    function capture() {
+    function capture(currentCells) {
       const state = grid.getState(), views = ordered(), layout = state.layout || {};
       const rows = layout.numRows, cols = layout.numCols;
       if ((layout.layoutType && layout.layoutType !== 'grid') || !(rows >= 1 && rows <= 4 && cols >= 1 && cols <= 4) || views.length !== rows * cols) return null;
@@ -178,18 +203,19 @@
         if (ids.length > 1) return null;
         if (pane && (pane.set === (ids[0] || '') || !pane.placed && !ids.length)) {
           if (pane.placed) {
-            const now = readCell(g.viewportId);
-            if (now) {
-              const text = JSON.stringify(now);
-              if (pane.base !== text) pane.value = now;
-              pane.base = text;
+            const now = readPane(g.viewportId);
+            if (now && !sameReaderView(pane.base, now)) {
+              pane.value = now.cell;
+              pane.base = now;
             }
           }
           saved.push(pane.value);
         } else if (!ids.length || partialLayout?.visible.get(g.viewportId) === setOf(g.viewportId)) saved.push(null);
         else {
-          const cell = readCell(g.viewportId);
-          if (!cell) return null;
+          const now = readPane(g.viewportId);
+          if (!now) return null;
+          const cell = visibleCell(g.viewportId, now);
+          if (!partialLayout && now.cell !== cell) currentCells?.set(saved.length, now.cell);
           observeFirst(g.viewportId, cell);
           saved.push(cell);
         }
@@ -202,7 +228,7 @@
       }
       return model.validate(gridView(state, views, saved), study, exam ? 20 : 8);
     }
-    const captured = () => { try { return capture(); } catch (error) { console.error(error); return null; } };
+    const captured = currentCells => { try { return capture(currentCells); } catch (error) { console.error(error); return null; } };
     // A Job or finding owns the entire screen until it lands. Its completed screen becomes the save baseline,
     // ordered after every earlier capture so that an outstanding request cannot force it to be sent again.
     function rebase(first = false) {
@@ -277,7 +303,7 @@
       if (settling) { rebase(); return chain; }
       if (window.KinViewerCellRules?.busy?.()) { if (mode === 'queue') changed(); return chain; }
       if (generation === null) { read().then(() => { if (live() && on && generation !== null) changed(); }); return chain; }
-      const snapshot = captured();
+      const currentCells = new Map(), snapshot = captured(currentCells);
       waitingForImage = !snapshot;
       if (!snapshot) return chain;
       const text = JSON.stringify(snapshot);
@@ -287,6 +313,8 @@
       // on its way (that request goes on, and its own answer settles it).
       const canOverwrite = [...pending].some(([seq, taken]) => seq > floor && taken === generation);
       if (text === issued.text && !(mode !== 'queue' && canOverwrite)) return chain;
+      // Once a reader edit calls for a save, include the current drawn camera for panes with no reserved value.
+      for (const [index, cell] of currentCells) snapshot.cells[index] = structuredClone(cell);
       const at = epoch, seq = ++order, when = stamp(), capturedGeneration = generation;
       issued = { text, seq };
       pending.set(seq, capturedGeneration);
@@ -376,11 +404,11 @@
       opening.clear(); panes.clear(); partialLayout = null;
       clearTimeout(badgeTimer); badge?.remove(); badge = null;
     }
-    function place(pane, cell, edited) {
+    function place(pane, now, edited) {
       pane.placed = true;
       pane.watch = null;
-      pane.base = JSON.stringify(cell);
-      if (edited) pane.value = cell;
+      pane.base = now;
+      if (edited) pane.value = now.cell;
     }
     // Keep the last trustworthy source and values until this cell can be read again.
     function readerChanged(id, pane) {
@@ -403,7 +431,7 @@
       const v = stackOf(id), still = () => current() && stackOf(id) === v && !pane.placed;
       pane.watch = observeCell(id);
       if (readerChanged(id, pane)) return null;
-      let edit = previous?.edit, cell = edit || stored;
+      let edit = previous?.edit, cell = edit?.cell || stored;
       const find = () => model.findImage(v.getImageIds(), instance, cell.sop, cell.frame);
       if (!v || !cell || wantedSet(cell) !== pane.set || find() < 0) return null;
 
@@ -417,14 +445,14 @@
           const image = v.getCurrentImageId();
           pane.watch.expected = image === expected ? null : expected;
           pane.watch.image = image;
-          const now = readCell(id);
-          pane.watch.base = now ? JSON.stringify(now) : null;
+          pane.watch.beforeMove = null;
+          pane.watch.base = readPane(id);
         }
       }
       function takePendingEdit() {
         const pending = pane.watch?.edit;
         if (!pending) return false;
-        edit = pending; cell = pending;
+        edit = pending; cell = pending.cell;
         pane.watch.edit = null;
         return true;
       }
@@ -467,7 +495,7 @@
         await wait(50);
       }
       const onImage = () => still() && target() && isDrawn(v, image);
-      if (!onImage() || !readCell(id) || readerChanged(id, pane)) return null;
+      if (!onImage() || !readPane(id) || readerChanged(id, pane)) return null;
       pane.watch = null;
       v.setProperties({ invert: false, VOILUTFunction: 'LINEAR' });
       if (!onImage()) return null;
@@ -479,9 +507,9 @@
       v.setCamera(camera);
       v.render?.();
       while (still() && target() && !isDrawn(v, image) && Date.now() < until) await wait(50);
-      const actual = readCell(id);
+      const now = readPane(id), actual = now?.cell;
       if (!actual || !onImage() || !agrees(actual.properties, cell.properties) || !agrees(actual.camera, cell.camera)) return null;
-      place(pane, actual, !!edit);
+      place(pane, now, !!edit);
       if (edit) { changed(); return null; }
       return { actual, zoom: true, window: true, image: true, index: actual.index, rule };
     }
@@ -653,7 +681,7 @@
           const missing = new Map();
           const baseline = gridView(grid.getState(), views, views.map(({ viewportId: id }, index) => {
             const record = opening.get(id), set = setOf(id);
-            const cell = record?.edit ? record.first : readCell(id);
+            const cell = record?.edit ? record.first : visibleCell(id);
             if (set && !cell && !record?.edit) missing.set(id, { set, index });
             return cell ?? null;
           }));
@@ -676,17 +704,28 @@
       const id = event.detail?.viewportId, pane = panes.get(id);
       const v = stackOf(id);
       if (event.type === events.PRE_STACK_NEW_IMAGE || event.type === events.STACK_NEW_IMAGE) drawnImages.delete(v);
-      if (event.type === events.PRE_STACK_NEW_IMAGE) return;
+      if (event.type === events.PRE_STACK_NEW_IMAGE) {
+        const record = opening.get(id);
+        if (record?.beforeMove && record.viewport === v && record.set === setOf(id)) {
+          if (record.base && !sameReaderView(record.base, record.beforeMove)) record.edit = record.beforeMove;
+          record.beforeMove = null;
+        }
+        return;
+      }
       if (event.type === events.IMAGE_RENDERED && v?.element === event.target && v.viewportStatus === rendered) {
         const image = v.getCornerstoneImage?.()?.imageId;
         if (image && image === v.getCurrentImageId()) drawnImages.set(v, image);
       }
-      if (watchingOpening && id) observeCell(id);
+      const adjusting = event.type === events.CAMERA_MODIFIED || event.type === events.VOI_MODIFIED;
+      if (watchingOpening && id) observeCell(id, adjusting);
       if (pane && !pane.placed && pane.set === setOf(id)) {
-        if (pane.watch) readerChanged(id, pane);
+        if (pane.watch && !pane.writing) {
+          if (adjusting) observeCell(id, true);
+          else readerChanged(id, pane);
+        }
         return;
       }
-      if (issued.start?.missing.has(id)) observeFirst(id, readCell(id));
+      if (issued.start?.missing.has(id)) observeFirst(id, visibleCell(id));
       if (event.type !== events.IMAGE_RENDERED || waitingForImage || settling) {
         waitingForImage = false;
         changed();

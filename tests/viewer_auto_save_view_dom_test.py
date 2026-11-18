@@ -75,6 +75,7 @@ SETUP = """config => {
   const fire = (v, name, detail = {}) => v.element.dispatchEvent(new CustomEvent(EVENTS[name], { detail: { viewportId: v.id, element: v.element, ...detail } }));
   window.synFire = (id, name) => fire(synViewports.get(id), name);
   window.synViewports = new Map(); window.synShown = new Map(); window.synActive = null; window.synLayout = { rows: 1, cols: 1 }; window.synLayouts = [];
+  let firstLayout = true;
   function makeViewport(id, setUid, index, rows, cols) {
     const x = (index % cols) / cols, y = Math.floor(index / cols) / rows;
     const pane = document.createElement('div'); pane.dataset.cy = 'viewport-pane'; pane.id = 'pane-' + id;
@@ -85,6 +86,8 @@ SETUP = """config => {
     const v = { id, type: 'stack', element, ids: set ? set.ids ? [...set.ids] : Array.from({ length: set.n }, (_, i) => 'syn:' + set.uid + ':' + (i + 1)) : [], index: 0,
       presentation: { rotation: 0 }, properties: { invert: false, voiRange: { lower: -160, upper: 239 }, VOILUTFunction: 'LINEAR', interpolationType: 1 },
       camera: { focalPoint: [0, 0, 5], position: [0, 0, 105], viewUp: [0, -1, 0], viewPlaneNormal: [0, 0, 1], parallelScale: 100, rotation: 0, flipHorizontal: false, flipVertical: false } };
+    let fitScale = firstLayout ? 100 / 0.99875 : 100;
+    v.camera.parallelScale = fitScale;
     let frame;
     function render() {
       if (frame) return;
@@ -108,11 +111,27 @@ SETUP = """config => {
       getCornerstoneImage: () => ({ imageId: v.getCurrentImageId() }),
       async setImageIdIndex(index) { if (index !== v.index) move(index); },
       async setStack(ids, index = 0) { v.ids = [...ids]; move(index); },
-      getZoom: () => 100 / v.camera.parallelScale, setZoom(zoom) { v.camera.parallelScale = 100 / zoom; fire(v, 'CAMERA_MODIFIED'); },
-      setPan() {}, resetProperties() {}, render,
+      getZoom: () => fitScale / v.camera.parallelScale, setZoom(zoom) { v.camera.parallelScale = fitScale / zoom; fire(v, 'CAMERA_MODIFIED'); },
+      setPan([x, y]) { v.setCamera({ focalPoint: [x, y, v.camera.focalPoint[2]], position: [x, y, v.camera.position[2]] }); },
+      resetProperties() {}, render,
       getCamera: () => structuredClone(v.camera), setCamera(next) { const { rotation, ...rest } = structuredClone(next); v.camera = { ...v.camera, ...rest };
         if (rotation !== undefined) { v.camera.rotation = rotation; v.presentation.rotation = rotation; } fire(v, 'CAMERA_MODIFIED'); },
-      getViewPresentation: () => ({ ...v.presentation }), setViewPresentation(next) { v.presentation = { rotation: next.rotation }; v.camera.rotation = next.rotation; fire(v, 'CAMERA_MODIFIED'); },
+      getViewPresentation: () => ({ ...v.presentation, zoom: v.getZoom(), pan: v.camera.focalPoint.slice(0, 2) }),
+      setViewPresentation(next) {
+        if (next.zoom !== undefined) v.setZoom(next.zoom);
+        if (next.pan) v.setPan(next.pan);
+        if (next.rotation !== undefined) v.setCamera({ rotation: next.rotation });
+      },
+      resizeTo(scale) {
+        if (v.viewportStatus !== 'rendered' || !v.getCurrentImageId()) return;
+        // The engine refits a drawn stack, restores its old camera, then the host reapplies the relative presentation.
+        const previous = v.getCamera(), presentation = v.getViewPresentation();
+        v.setCamera({ parallelScale: scale });
+        fitScale = scale;
+        v.setCamera(previous);
+        v.setViewPresentation(presentation);
+        render();
+      },
       getProperties: () => structuredClone(v.properties),
       setProperties(next) { v.viewportStatus = 'preRender'; v.properties = { ...v.properties, ...structuredClone(next) };
         if (next.voiRange) fire(v, 'VOI_MODIFIED', { range: next.voiRange }); render(); },
@@ -125,6 +144,7 @@ SETUP = """config => {
   window.synBuild = (rows, cols, cells, active) => {
     document.getElementById('grid').replaceChildren(); synViewports.clear(); synShown.clear();
     cells.forEach(([id, set], index) => makeViewport(id, set, index, rows, cols));
+    firstLayout = false;
     synLayout = { rows, cols }; synActive = active ?? cells[0][0];
     synEmit('grid', 'gridState', { viewports: cells.map(([id]) => ({ viewportId: id })) });
   };
@@ -447,6 +467,7 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         cells = [list(c) for c in cells]
         page.evaluate("([rows, cols, cells]) => { synBuild(rows, cols, cells); synMount(); }", [rows, len(cells) // rows, cells])
         page.wait_for_function(("KinViewerFeatures.settings().some(s => s.id === 'autoSaveView')" if autosave else "true") + ("" if late else " && !!window.KinViewerCellRules"))
+        page.evaluate("() => { for (const v of synViewports.values()) v.resizeTo(100); }")
         self.addCleanup(lambda: self.assertEqual([], errors))
         return page
 
@@ -640,7 +661,16 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
     def test_05c_series_put_in_another_order_come_back_with_their_zoom_once_each_image_is_drawn(self):
         # The saved view has the second series in the first cell, on its first image: the viewer opens with the series the
         # other way round, so the saved layout is laid out anew and that cell is a new one still drawing its first image.
-        page = self.open(saved=view([cell(SB, 1, scale=26.5, lower=31, upper=192), cell(SA, 4)]), setup=LATE_DRAWING)
+        setup = """() => { (%s)();
+          const grid = document.getElementById('grid');
+          function resize(event) {
+            const v = synViewports.get(event.detail.viewportId);
+            if (v?.drawn !== 'syn:set-A:4') return;
+            grid.removeEventListener('syn-rendered', resize, true);
+            v.resizeTo(99.875);
+          }
+          grid.addEventListener('syn-rendered', resize, true); }""" % LATE_DRAWING
+        page = self.open(saved=view([cell(SB, 1, scale=26.5, lower=31, upper=192), cell(SA, 4)]), setup=setup)
         page.wait_for_function("document.querySelector('[data-auto-view-badge]')", timeout=12000)
         page.wait_for_timeout(1200)
         ids = page.evaluate('[...synViewports.keys()]')
@@ -748,6 +778,36 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         self.assertEqual(['syn:set-A:4', 'syn:set-B:3'], [self.state(page, key)['image'] for key in ('left', 'right')])
         self.assertEqual([], self.posts(page))
 
+    def test_resize_during_read_and_after_placement_preserves_the_saved_view(self):
+        saved = view([cell(SA, 4, scale=26.5, lower=31, upper=192), cell(SB, 2)])
+        page = self.open(saved=saved, setup=HOLD_READ)
+        page.wait_for_function(READING)
+        page.evaluate("synViewports.get('left').resizeTo(99.875); synServer.releaseRead()")
+        expect(page.locator('[data-auto-view-badge]')).to_contain_text('2 of 2 cells')
+        left = self.state(page, 'left')
+        self.assertEqual(('syn:set-A:4', 26.5, {'lower': 31, 'upper': 192}), (left['image'], left['scale'], left['voi']))
+        page.evaluate("synViewports.get('left').resizeTo(95)")
+        self.quiet(page, 0, 2500)
+        self.close(page)
+        self.assertEqual([READ], self.requests(page))
+
+    def test_reader_changes_to_relative_zoom_pan_and_window_are_each_saved_after_resize(self):
+        page = self.open(saved=view([cell(SA, 4, scale=50), cell(SB, 2)]))
+        expect(page.locator('[data-auto-view-badge]')).to_contain_text('2 of 2 cells')
+        page.evaluate("synViewports.get('left').resizeTo(95)")
+        self.close(page)
+        self.assertEqual([], self.posts(page))
+        page.evaluate("synViewports.get('left').setZoom(2.004)")
+        self.close(page)
+        page.evaluate("synViewports.get('left').setPan([13.5, -3.25])")
+        self.close(page)
+        page.evaluate("synViewports.get('left').setProperties({voiRange: {lower: -1059, upper: 439}})")
+        self.close(page)
+        zoom, pan, window = [snapshot['cells'][0] for snapshot in self.posts(page)]
+        self.assertAlmostEqual(2.004, zoom['zoom'])
+        self.assertEqual([13.5, -3.25, 20], pan['camera']['focalPoint'])
+        self.assertEqual({'lower': -1059, 'upper': 439}, window['properties']['voiRange'])
+
     def test_window_change_during_read_survives_reopen(self):
         page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), setup=HOLD_READ)
         page.wait_for_function(READING)
@@ -785,10 +845,14 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
           v.getCornerstoneImage = image; v.render(); }""")
         page.evaluate('synServer.releaseRead()')
         self.quiet(page, 0, 2500)
+        page.evaluate("synViewports.get('right').resizeTo(95)")
+        self.close(page)
+        self.assertEqual([], self.posts(page))
         page.evaluate("synViewports.get('left').setZoom(2)")
         page.wait_for_function('synServer.posts.length === 1', timeout=5500)
         right = self.posts(page)[0]['cells'][1]
         self.assertEqual((SB + '.1', {'lower': 0, 'upper': 255}), (right['sop'], right['properties']['voiRange']))
+        self.assertEqual((1, 95), (right['zoom'], right['camera']['parallelScale']))
 
     def test_first_save_waits_for_the_other_pane_to_draw_and_reopens_both_series(self):
         page = self.unstarted()
@@ -864,12 +928,13 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
 
     def test_badge_uses_readback_from_the_drawn_frame_and_omits_an_unapplied_window(self):
         saved = view([cell(SA, 4), cell(SB, 2, scale=40, lower=-300, upper=899)], active=1)
-        setup = """() => { const build = synBuild; window.synBuild = (...args) => {
+        setup = """() => { (%s)(); const build = synBuild; window.synBuild = (...args) => {
           build(...args);
           synViewports.get('left').setProperties = () => {};
-          const right = synViewports.get('right'); right.getZoom = () => 80 / right.camera.parallelScale;
-        }; }"""
+        }; }""" % HOLD_READ
         page = self.open(saved=saved, setup=setup)
+        page.wait_for_function(READING)
+        page.evaluate("synViewports.get('right').resizeTo(80); synServer.releaseRead()")
         expect(page.locator('#pane-right [data-auto-view-badge]')).to_have_text(
             'Restored saved view: Zoom 200%, W 1200 / L 300, Image 2 (1 of 2 cells; 1 not restored)')
         self.assertEqual('syn:set-B:2', self.state(page, 'right')['image'])
