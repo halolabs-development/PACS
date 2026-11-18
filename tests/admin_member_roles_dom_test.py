@@ -80,6 +80,7 @@ SCRIPTS = {
     "/worklist/hpacs-lite/emr-link-admin.js": lf_text(HPACS / "emr-link-admin.js"),
     # FC-070: the DICOM Peers section.
     "/worklist/hpacs-lite/dicom-peers-admin.js": lf_text(HPACS / "dicom-peers-admin.js"),
+    "/worklist/hpacs-lite/gateway-rules-admin.js": lf_text(HPACS / "gateway-rules-admin.js"),
     # CD-01: the shared Product Information panel and its embedded facts.
     "/worklist/hpacs-lite/product-info-data.js": lf_text(HPACS / "product-info-data.js"),
     "/worklist/hpacs-lite/product-info.js": lf_text(HPACS / "product-info.js"),

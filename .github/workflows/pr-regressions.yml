@@ -837,7 +837,7 @@ jobs:
     needs: select
     if: ${{ !cancelled() && (needs.select.result != 'success' || fromJSON(needs.select.outputs.jobs)['admin-session-dom']) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 97
+    timeout-minutes: 100
     steps:
     - name: Path selection completed
       if: ${{ needs.select.result != 'success' }}
@@ -913,6 +913,10 @@ jobs:
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       timeout-minutes: 3
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/admin-gateway-status-dom --cwd . --file worklist-v0/hpacs-lite/admin.html --file worklist-v0/hpacs-lite/auth.js --file worklist-v0/hpacs-lite/study-access-admin.js --file worklist-v0/hpacs-lite/study-arrivals.js --file tests/admin_gateway_status_dom_test.py --file worklist-v0/hpacs-lite/work-context.js --file worklist-v0/hpacs-lite/exam-scope.js --file worklist-v0/hpacs-lite/session-transport.js -- "$RUNNER_TEMP/measurement-python/bin/python" -B tests/admin_gateway_status_dom_test.py
+    - name: Members console Gateway Rules load, edit, save, refusals, session end and wording DOM
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      timeout-minutes: 3
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/admin-gateway-rules-dom --cwd . --file worklist-v0/hpacs-lite/admin.html --file worklist-v0/hpacs-lite/auth.js --file worklist-v0/hpacs-lite/gateway-rules-admin.js --file tests/admin_gateway_rules_dom_test.py --file worklist-v0/hpacs-lite/work-context.js --file worklist-v0/hpacs-lite/session-transport.js -- "$RUNNER_TEMP/measurement-python/bin/python" -B tests/admin_gateway_rules_dom_test.py
     - name: S5-U6b Members console Operations metrics states, unknown never 0, A-B-A guard and wording DOM
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       timeout-minutes: 3
