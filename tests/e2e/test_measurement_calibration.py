@@ -317,7 +317,11 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
                 vertex = angle['points'][1]
                 u, v = ([q[1] - vertex[1], -(q[2] - vertex[2])] for q in (angle['points'][0], angle['points'][2]))
                 expected = math.degrees(math.acos(max(-1, min(1, (u[0] * v[0] + u[1] * v[1]) / math.hypot(*u) / math.hypot(*v)))))
-                expect(p.locator('#kin-viewer-history section[data-kind=angle]')).to_contain_text('°')
+                expect(p.locator('#kin-viewer-history section[data-kind=angle]')).to_have_count(1)
+                try:
+                    p.wait_for_function(SVG_TEXT.replace(".join(' ')", ".join(' ').includes('°')"), timeout=15000)
+                except Exception:
+                    self.fail('No degrees drawn: ' + p.evaluate(SVG_TEXT) + ' | ' + p.locator('#kin-viewer-history [role=status]').inner_text())
                 text = p.evaluate(SVG_TEXT)
                 self.assertNotIn('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다', text)
                 shown = float(re.search(r'(\d+(?:\.\d+)?) ?°', text).group(1))
