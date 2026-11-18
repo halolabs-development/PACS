@@ -177,6 +177,8 @@
         // Merge Exam: the studies of a merged exam (the base first); Count and Series above are already of all of them.
         examScope: s.examScope ?? null, reportScope: s.reportScope ?? null,
         relatedExamReports: s.relatedExamReports ?? [], examUnavailable: s.examUnavailable === true,
+        // The kind of exam in force (merge / split) this row belongs to when its originals cannot all be read now.
+        examUnavailableKind: s.examUnavailable === true && ['merge', 'split'].includes(s.examUnavailableKind) ? s.examUnavailableKind : null,
         draftEpoch: s.state?.draftEpoch ?? null,
         sourceMetadata: (s.sourceMetadata || []).map(m => ({ ...m, sourceAcc: m.acc,
           acc: m.orderAccession || m.acc, date: fmtD(m.date), reqDate: localStamp(m.reqDate) })),

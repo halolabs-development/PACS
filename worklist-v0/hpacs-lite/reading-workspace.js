@@ -299,17 +299,20 @@ window.KinReadingWorkspace = function (app) {
   window.addEventListener('resize', panelWindowResize);
   const boundDocuments = new WeakSet();
   let returnChannel=null;
+  // The studies the pane's viewer opened: every original of the exam it opened on scopes (a merged exam), else the
+  // study and its comparison.
+  const shownStudies=()=>shown?.exam?.studyUids?[...shown.exam.studyUids]:[shown.uid,...(shown.prior?[shown.prior]:[])];
   function returnLink(){
     returnChannel?.close();returnChannel=null;
     if(ended||!active||!app.allowed()||!sameTarget())return null;
-    const owner=app.noteOwner?.(),report=app.current(),studies=[shown.uid,...(shown.prior?[shown.prior]:[])];
+    const owner=app.noteOwner?.(),report=app.current(),studies=shownStudies();
     if(!owner)return null;
     try{
       const token=crypto.randomUUID(),link=new BroadcastChannel('kin-reading-return:'+token);returnChannel=link;
       const receive=e=>{
         const m=e.data;if(!m||m.type!=='request'||typeof m.request!=='string'||!/^[0-9a-f-]{36}$/.test(m.request))return;
         const reply=result=>{if(returnChannel===link)link.postMessage({type:'result',request:m.request,result});};
-        const matchingScope=()=>sameTarget()&&shown&&JSON.stringify([shown.uid,...(shown.prior?[shown.prior]:[])])===JSON.stringify(studies)&&Array.isArray(m.studies)&&m.studies.length===studies.length&&m.studies.every((uid,i)=>uid===studies[i])&&studies.includes(m.activeUid);
+        const matchingScope=()=>sameTarget()&&shown&&JSON.stringify(shownStudies())===JSON.stringify(studies)&&Array.isArray(m.studies)&&m.studies.length===studies.length&&m.studies.every((uid,i)=>uid===studies[i])&&studies.includes(m.activeUid);
         if(ended||!app.allowed()||app.noteOwner?.()!==owner||m.owner!==owner){reply('session');return;}
         if(!active||app.current()!==report||!matchingScope()){reply('context');return;}
         if(modalOpen(document)){reply('modal');return;}

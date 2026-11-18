@@ -37,8 +37,9 @@
   /** Queue studies `[{ uid, label, urgent? }]` for the given session, in the reader's order. `auto`: an Auto Preload add. */
   function add(studies, session, { auto = false } = {}) {
     if (!connect() || typeof session !== 'string' || !session) return false;
+    // A row whose exam cannot be read whole (KinExamScope.unavailable) is left out there; its PF says why.
     if(root.KinExamScope)studies=root.KinExamScope.preload(studies);
-    port.postMessage(auto ? { type: 'add', session, studies, auto: true } : { type: 'add', session, studies });
+    if(studies.length)port.postMessage(auto ? { type: 'add', session, studies, auto: true } : { type: 'add', session, studies });
     return true;
   }
 
@@ -52,7 +53,7 @@
   /** The prior a viewer would open beside `s` (viewer-launch.js autoPrior): same patient key and modality, the latest earlier valid date. */
   function prior(s, all) {
     if (!s?.sourcePatientKey || !validDate(s.date)) return null;
-    return all.filter(x => x.sourcePatientKey === s.sourcePatientKey && x.uid !== s.uid && x.modality === s.modality
+    return all.filter(x => x.sourcePatientKey === s.sourcePatientKey && x.uid !== s.uid && x.modality === s.modality && !root.KinExamScope?.unavailable?.(x)
         && validDate(x.date) && x.date < s.date)
       .sort((a, b) => b.date.localeCompare(a.date) || b.uid.localeCompare(a.uid))[0] || null;
   }
@@ -63,10 +64,12 @@
    */
   function pick(matched, all, { priors = false, label = s => s.uid } = {}) {
     const out = [], seen = new Set();
-    const put = (s, urgent) => { if (s && !seen.has(s.uid)) { seen.add(s.uid); out.push({ uid: s.uid, label: label(s), urgent, ...(s.examScope?{examScope:s.examScope}:{}) }); } };
+    const put = (s, urgent) => { if (s && !seen.has(s.uid)) { seen.add(s.uid); out.push({ uid: s.uid, label: label(s), urgent, ...(s.examScope?{examScope:s.examScope}:{}),
+        ...(s.examUnavailable?{examUnavailable:true,examUnavailableKind:s.examUnavailableKind??null}:{}) }); } };
     for (const urgent of [true, false]) {
       for (const s of matched) {
-        if ((s.em === 'E') !== urgent) continue;
+        // An exam that cannot be read whole now is not fetched (its PF says why), nor counted, nor are its priors.
+        if ((s.em === 'E') !== urgent || root.KinExamScope?.unavailable?.(s)) continue;
         put(s, urgent);
         if (priors) put(prior(s, all), urgent);
       }

@@ -195,7 +195,11 @@
           const known = new Map(studies.map(x => [x.uid, x]));
           const knownOriginals=new Set(KinExamScope.originals(studies).map(s=>s.uid));
           const fresh = KinExamScope.originals(r.studies).filter(s=>!knownOriginals.has(s.uid));
-          const scopeChanged = r.studies.some(s=>KinExamScope.screenStamp(s)!==KinExamScope.screenStamp(known.get(s.uid)));
+          // A row whose exam became (or stopped being) unreadable as a whole is a changed exam too, though neither answer
+          // carries a scope.
+          const lostKey = s => s?.examUnavailable === true ? String(s.examUnavailableKind ?? '') : null;
+          const scopeChanged = r.studies.some(s=>KinExamScope.screenStamp(s)!==KinExamScope.screenStamp(known.get(s.uid))
+            || lostKey(s)!==lostKey(known.get(s.uid)));
 
           // 목록이 달라졌으면(도착·삭제) 통째로 다시 그린다.
           if (scopeChanged || fresh.length || r.studies.length !== studies.length) {

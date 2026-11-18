@@ -15,7 +15,8 @@
       if (!s?.sourcePatientKey || !validPriorDate(s.date)) return null;
       // fmtD는 모양만 바꾼다. 달력 검증 없이 정렬하면 미래·불량 날짜가 prior가 된다.
       // 같은 날의 선후는 StudyTime 근거가 없으므로 자동으로 추측하지 않는다.
-      return studies.filter(x => x.sourcePatientKey === s.sourcePatientKey && x.uid !== uid && x.modality === s.modality
+      // A row whose exam cannot be read whole now (KinExamScope.unavailable) cannot be opened beside it: never the prior.
+      return studies.filter(x => x.sourcePatientKey === s.sourcePatientKey && x.uid !== uid && x.modality === s.modality && !globalThis.KinExamScope?.unavailable?.(x)
           && validPriorDate(x.date) && x.date < s.date)
         .sort((a, b) => b.date.localeCompare(a.date) || b.uid.localeCompare(a.uid))[0]?.uid ?? null;
     }
@@ -546,10 +547,15 @@
         list.replaceChildren();
         for (const row of values) {
           const section = document.createElement('section'); section.className = 'viewer-window-row';
-          const label = document.createElement('p'), study = studies.find(s => s.uid === row.scope?.studies[0]);
+          // A window opened on exam scopes names its exam and its comparison by those scopes: the originals of a merged
+          // exam are one exam, never a study and its comparison. Other windows keep the opened order.
+          let exam = null; try { exam = row.scope?.exam ? JSON.parse(row.scope.exam) : null; } catch (_) { exam = null; }
+          const opened = exam ? exam.current?.reportUid : row.scope?.studies[0];
+          const compared = exam ? exam.prior?.reportUid ?? null : row.scope?.studies.length === 2 ? row.scope.studies[1] : null;
+          const label = document.createElement('p'), study = studies.find(s => s.uid === opened);
           label.textContent = 'Window ' + (row.index + 1) + ' · ' + row.state + ' · ' +
             (study ? [study.name, study.date, study.desc, study.uid].filter(Boolean).join(' · ') : row.scope?.studies.join(' / ') || 'Unverified');
-          if (row.scope?.studies.length === 2) { const comparison = studies.find(s => s.uid === row.scope.studies[1]); label.textContent += ' · Comparison: ' + (comparison ? [comparison.date, comparison.uid].join(' · ') : row.scope.studies[1]); }
+          if (compared) { const comparison = studies.find(s => s.uid === compared); label.textContent += ' · Comparison: ' + (comparison ? [comparison.date, comparison.uid].join(' · ') : compared); }
           section.append(label);
           for (const action of ['focus', 'latest', 'close']) {
             const control = document.createElement('button'); control.type = 'button'; control.className = 'chip';

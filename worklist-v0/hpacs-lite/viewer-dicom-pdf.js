@@ -21,7 +21,13 @@
     const currentState=()=>grid?.getState?.();
     function studies(){
       const all=new URLSearchParams(root.location.search).getAll('StudyInstanceUIDs');if(all.length!==1)return null;
-      const values=all[0].split(',');return values.length>=1&&values.length<=2&&values.every(uid)&&new Set(values).size===values.length?values:null;
+      // A window opened on exam scopes holds every original of its exams (a merged exam may have more than two).
+      const values=all[0].split(','),most=new URLSearchParams(root.location.search).has('kinExamScopes')?20:2;return values.length>=1&&values.length<=most&&values.every(uid)&&new Set(values).size===values.length?values:null;
+    }
+    // Every original of a merged exam is the current exam in a window opened on exam scopes; elsewhere the first study is.
+    function roleOf(study,series,scope){
+      if(!new URLSearchParams(root.location.search).has('kinExamScopes'))return scope.indexOf(study)===0?'Current':'Related';
+      const role=root.KinViewerExamScope?.role?.(study,series);return role==='current'?'Current':role==='prior'?'Related':'?';
     }
     function selection(){
       const state=currentState(),viewportId=state?.activeViewportId||grid?.getActiveViewportId?.(),viewport=state?.viewports?.get?.(viewportId),ids=viewport?.displaySetInstanceUIDs;
@@ -36,7 +42,7 @@
       if(instance.MIMETypeOfEncapsulatedDocument!=='application/pdf'||instance.EncapsulatedDocument?.DirectRetrieveURL||instance.EncapsulatedDocument?.InlineBinary)return {kind:'invalid'};
       const views=[...state.viewports.values()].map(v=>[v.viewportId,v.x??null,v.y??null,v.width??null,v.height??null,v.displaySetInstanceUIDs||[]]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
       const layout=state.layout||{};const gridSignature=JSON.stringify([state.activeViewportId,layout.layoutType??null,layout.numRows??null,layout.numCols??null,views]);
-      return {kind:'valid',value:{viewportId,displaySetId:ids[0],displaySet,study,series,sop,patientId,gridSignature,role:scope.indexOf(study)===0?'Current':'Related',title:typeof displaySet.SeriesDescription==='string'&&displaySet.SeriesDescription.trim()?displaySet.SeriesDescription.trim():'PDF Document',pdfUrl:displaySet.pdfUrl}};
+      return {kind:'valid',value:{viewportId,displaySetId:ids[0],displaySet,study,series,sop,patientId,gridSignature,role:roleOf(study,series,scope),title:typeof displaySet.SeriesDescription==='string'&&displaySet.SeriesDescription.trim()?displaySet.SeriesDescription.trim():'PDF Document',pdfUrl:displaySet.pdfUrl}};
     }
     const candidate=()=>{const selected=selection();return selected.kind==='valid'?selected.value:null;};
     const sameSource=(a,b)=>!!a&&!!b&&a.viewportId===b.viewportId&&a.displaySetId===b.displaySetId&&a.displaySet===b.displaySet&&a.study===b.study&&a.series===b.series&&a.sop===b.sop&&a.patientId===b.patientId&&a.gridSignature===b.gridSignature&&a.search===b.search;
@@ -118,11 +124,26 @@
         const lookup=await response('/api/dicom/lookup',init('POST',{studyUid:before.study,sopUid:before.sop}),operation);
         if(!lookup||Object.keys(lookup).length!==1||typeof lookup.id!=='string'||!/^[a-f0-9]{8}(?:-[a-f0-9]{8}){4}$/.test(lookup.id))throw Error('원본 PDF 식별을 확인할 수 없습니다.');assertLive(operation);
         const parsed=new URL(before.url,root.location.href),expected='/instances/'+lookup.id+'/pdf';if(lookup.id!==before.orthancId||parsed.origin!==root.location.origin||parsed.pathname!==expected||parsed.search||parsed.hash||parsed.username||parsed.password)throw Error('원본 PDF 식별을 확인할 수 없습니다.');assertLive(operation);
-        const listing=await response('/api/studies',init(),operation),matches=Array.isArray(listing?.studies)?listing.studies.filter(item=>item?.uid===before.study):[];
-        if(matches.length!==1||matches[0].id!==before.patientId)throw Error('원본 환자 식별을 확인할 수 없습니다.');assertLive(operation);
+        let verified;
+        if(new URLSearchParams(root.location.search).has('kinExamScopes')){
+          // A window opened on exam scopes: the selected original must be one of its exams' originals (a merged exam's other
+          // originals have no list row of their own), and the patient is the one the archive records on that very
+          // Study / Series / SOP.
+          const held=root.KinViewerExamScope?.sources?.(before.study,before.series);
+          if(!Array.isArray(held)||!held.some(source=>source.studyUid===before.study))throw Error('원본 환자 식별을 확인할 수 없습니다.');
+          const rows=await response('/dicom-web/studies/'+encodeURIComponent(before.study)+'/series/'+encodeURIComponent(before.series)+'/instances/'+encodeURIComponent(before.sop)+'/metadata',init(),operation);
+          const row=Array.isArray(rows)&&rows.length===1?rows[0]:null,tag=key=>row?.[key]?.Value?.[0];
+          if(!row||tag('0020000D')!==before.study||tag('0020000E')!==before.series||tag('00080018')!==before.sop||tag('00100020')!==before.patientId)
+            throw Error('원본 환자 식별을 확인할 수 없습니다.');
+          verified=before.patientId;assertLive(operation);
+        }else{
+          const listing=await response('/api/studies',init(),operation),matches=Array.isArray(listing?.studies)?listing.studies.filter(item=>item?.uid===before.study):[];
+          if(matches.length!==1||matches[0].id!==before.patientId)throw Error('원본 환자 식별을 확인할 수 없습니다.');assertLive(operation);
+          verified=matches[0].id;
+        }
         operation.url=await root.KinViewerResource.read(before.url,{signal,type:'application/pdf'});assertLive(operation);
         const last=ownerOf(await response('/api/me',init(),operation));if(!sameOwner(last,owner))throw Error('계정이 변경되어 PDF를 열지 않았습니다.');assertLive(operation);
-        showDocument(operation);patient.textContent='Verified Patient ID: '+matches[0].id;if(request===operation)status.textContent='Opened source PDF · 브라우저 PDF 도구에서 페이지 이동·검색·인쇄를 사용할 수 있습니다.';
+        showDocument(operation);patient.textContent='Verified Patient ID: '+verified;if(request===operation)status.textContent='Opened source PDF · 브라우저 PDF 도구에서 페이지 이동·검색·인쇄를 사용할 수 있습니다.';
       }catch(error){failure=error;if(operation.url)root.KinViewerResource.release(operation.url);if(!ended&&request===operation){patient.textContent='';status.textContent=error?.name==='AbortError'||error instanceof TypeError?'원본 PDF 확인 요청을 완료하지 못했습니다.':error.message;}}
       finally{clearTimeout(timer);if(request===operation){request=null;if(!ended){const ready=!!source&&sameOwner(boundOwner,source.owner);button.textContent=nativeRetryNeeded||!ready||failure?.retryable?'Retry Source PDF':'Open Source PDF';button.disabled=nativeRetryNeeded?nativeRetryPending||!boundOwner:!ready||root.KinSessionTransport.refusal(failure)==='denied';}}}
     }
