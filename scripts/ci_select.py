@@ -29,6 +29,15 @@ def select(paths, *, all_jobs=False, main_push=False):
     # Broad source/tree globs must not turn documentation edits into regressions.
     # A job can explicitly declare a Markdown contract; fixtures stay executable.
     paths = list(paths)
+    # A main-split source stands for the bundle built from it: a source edit without a
+    # rebuilt bundle still selects every job that serves or reads that bundle.
+    # (Removing the manifest itself is a common change that selects every job.)
+    manifest = ROOT / 'scripts/main-split-order.json'
+    if manifest.is_file():
+        order = json.loads(manifest.read_text(encoding='utf-8'))
+        folder = order['page'].rsplit('/', 1)[0]
+        if any(folder + '/' + row['file'] in paths for row in order['sources']):
+            paths.append(order['artifact'])
 
     def changed(patterns):
         return any(matches(path, pattern) for path in paths for pattern in patterns

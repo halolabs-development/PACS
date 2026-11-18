@@ -2,7 +2,53 @@
   "common": [
     ".github/workflows/**",
     "scripts/ci_select.py",
-    "scripts/ci-paths.json"
+    "scripts/ci-paths.json",
+    "scripts/ci_browser_apt.py",
+    "scripts/record-run.py",
+    "scripts/run-tests.py",
+    "tests/admin_otp.py",
+    "tests/ci_regression_inputs.py",
+    "tests/ci_workflow_consumers*",
+    "tests/ci_workflows.py",
+    "tests/emr/d/synthetic_stack.py",
+    "tests/invariants_live.py",
+    "tests/live_admin_credential.py",
+    "tests/live_test_gate.py",
+    "tests/main_split_harness*",
+    "tests/measurement_ci.py",
+    "tests/measurement_ci_test.py",
+    "tests/module_session_harness*",
+    "tests/page_source*",
+    "tests/service_test_loader.cjs",
+    "api/.dockerignore",
+    "api/Dockerfile*",
+    "api/nest-cli.json",
+    "api/package-lock.json",
+    "api/package.json",
+    "api/print/requirements*.txt",
+    "api/start-production.sh",
+    "api/tsconfig*.json",
+    "docker-compose*.yml",
+    "emr/deploy/docker-compose*.yml",
+    "gateway/agent/.dockerignore",
+    "gateway/agent/Dockerfile*",
+    "gateway/agent/requirements*.txt",
+    "gateway/docker-compose*.yml",
+    "proxy/Dockerfile*",
+    "rehearsal-bundle/rehearsal/*-compose.yml",
+    "scripts/requirements*.txt",
+    "tests/e2e/requirements*.txt",
+    "tests/fixtures/asr/Dockerfile*",
+    ".gitattributes",
+    "config/ohif/source-order.json",
+    "scripts/build-dicom-dictionary.py",
+    "scripts/build-main-split-bundle.py",
+    "scripts/build-ohif-config.py",
+    "scripts/build-open-source-notices.py",
+    "scripts/build-product-info.py",
+    "scripts/build-sof3-wasm.py",
+    "scripts/main-split-order.json",
+    "scripts/sof3/**"
   ],
   "shared_browser": [
     "tests/e2e/test_cd10_access_records.py",
@@ -155,7 +201,8 @@
     "worklist-v0/hpacs-lite/workspace-shortcuts.js",
     "worklist-v0/hpacs-lite/viewer-exam-scope.js",
     "tests/viewer_exam_scope_test.cjs",
-    "tests/gateway_exam_receipt_test.cjs"
+    "tests/gateway_exam_receipt_test.cjs",
+    "tests/e2e/viewer_tools.py"
   ],
   "browser_jobs": [
     "asr-engine",
@@ -197,7 +244,25 @@
       "tests/report_dictation*",
       "tests/service_test_loader.cjs",
       "worklist-v0/hpacs-lite/dictation*",
-      "worklist-v0/hpacs-lite/report-dictation*"
+      "worklist-v0/hpacs-lite/report-dictation*",
+      "worklist-v0/hpacs-lite/clinical-info-actions.js",
+      "worklist-v0/hpacs-lite/clinical-signature.js",
+      "worklist-v0/hpacs-lite/emr-link.js",
+      "worklist-v0/hpacs-lite/exam-merge.js",
+      "worklist-v0/hpacs-lite/film-print.js",
+      "worklist-v0/hpacs-lite/image-report-diagrams.js",
+      "worklist-v0/hpacs-lite/image-report.js",
+      "worklist-v0/hpacs-lite/multi-study-view.js",
+      "worklist-v0/hpacs-lite/query-retrieve.js",
+      "worklist-v0/hpacs-lite/related-report-mode.js",
+      "worklist-v0/hpacs-lite/report-popout.js",
+      "worklist-v0/hpacs-lite/report-view-observation.js",
+      "worklist-v0/hpacs-lite/study-attachments.js",
+      "worklist-v0/hpacs-lite/technician-orders.js",
+      "worklist-v0/hpacs-lite/technician-report.js",
+      "worklist-v0/hpacs-lite/technician-scheduled.js",
+      "worklist-v0/hpacs-lite/viewer-ux-shortcuts.js",
+      "worklist-v0/hpacs-lite/worklist-folder-tree.css"
     ],
     "emr-c": [
       "api/Dockerfile*",
@@ -227,7 +292,10 @@
       "api/src/signing-key-admin.controller.ts",
       "api/src/clinician-question.controller.ts",
       "api/src/clinician-question.service.ts",
-      "api/src/pacs/report-draft.ts"
+      "api/src/pacs/report-draft.ts",
+      "tests/auth_logout_dom_test.py",
+      "tests/emr/b/commit_judgement_pg_test.cjs",
+      "tests/emr/b/pg_ledger_api_test.cjs"
     ],
     "emr-d": [
       "api/Dockerfile*",
@@ -248,7 +316,13 @@
       "scripts/record-run.py",
       "tests/emr/d/**",
       "tests/transaction_locks.cjs",
-      "worklist-v0/hpacs-lite/preload-*"
+      "worklist-v0/hpacs-lite/preload-*",
+      "api/src/**",
+      "tests/auth_logout_dom_test.py",
+      "tests/emr/b/commit_judgement_pg_test.cjs",
+      "tests/emr/b/pg_ledger_api_test.cjs",
+      "tests/emr/b/pg_ledger_restore_test.py",
+      "worklist-v0/hpacs-lite/**"
     ],
     "emr-e-contracts": [
       "api/Dockerfile*",
@@ -282,7 +356,11 @@
       "tests/proxy_grant_log_test.py",
       "api/src/emr-source/image.ts",
       "tests/fixtures/mg_vendor_cases.json",
-      "worklist-v0/hpacs-lite/mammography-model.js"
+      "worklist-v0/hpacs-lite/mammography-model.js",
+      "api/prisma/**",
+      "api/src/**",
+      "tests/emr/b/commit_judgement_pg_test.cjs",
+      "tests/emr/b/pg_ledger_api_test.cjs"
     ],
     "emr-f-contracts": [
       "api/Dockerfile*",
@@ -314,7 +392,11 @@
       "api/src/orthanc.service.ts",
       "api/src/auth.guard.ts",
       "api/src/auth.service.ts",
-      "api/src/member-rights.ts"
+      "api/src/member-rights.ts",
+      "api/prisma/**",
+      "api/src/**",
+      "tests/emr/b/commit_judgement_pg_test.cjs",
+      "tests/emr/b/pg_ledger_api_test.cjs"
     ],
     "contract": [
       "api/Dockerfile*",
@@ -330,7 +412,11 @@
       "proxy/**",
       "scripts/emr-compose.py",
       "scripts/record-run.py",
-      "tests/emr/h/**"
+      "tests/emr/h/**",
+      "api/src/**",
+      "tests/emr/b/commit_judgement_pg_test.cjs",
+      "tests/emr/b/pg_ledger_api_test.cjs",
+      "tests/emr/b/pg_ledger_restore_test.py"
     ],
     "hanging-protocols": [
       "api/package-lock.json",
@@ -690,7 +776,9 @@
       "tests/volume_marks*",
       "worklist-v0/hpacs-lite/*marks*",
       "worklist-v0/hpacs-lite/viewer-context*.js",
-      "worklist-v0/hpacs-lite/viewer-session*.js"
+      "worklist-v0/hpacs-lite/viewer-session*.js",
+      "worklist-v0/hpacs-lite/viewer-volume-orientation.js",
+      "worklist-v0/hpacs-lite/viewer-volume-progressive.js"
     ],
     "volume-rendering": [
       "api/package-lock.json",
@@ -942,7 +1030,40 @@
       "worklist-v0/hpacs-lite/work-context.js",
     "worklist-v0/hpacs-lite/exam-scope.js",
       "worklist-v0/hpacs-lite/worklist*",
-      "worklist-v0/hpacs-lite/workspace*"
+      "worklist-v0/hpacs-lite/workspace*",
+      "tests/**",
+      "tests/dicom_frame_compressed_test.cjs",
+      "tests/dicom_frame_delivery_test.cjs",
+      "tests/dicom_frame_fixture.cjs",
+      "tests/dicom_frame_test.cjs",
+      "tests/e2e/network_faults.py",
+      "tests/e2e/test_ct_sync.py",
+      "tests/e2e/test_dicom_pdf.py",
+      "tests/e2e/test_hanging_protocol.py",
+      "tests/e2e/test_mammography_hanging.py",
+      "tests/e2e/test_physical_monitors.py",
+      "tests/e2e/test_viewer_display_layout.py",
+      "tests/e2e/test_viewer_opening.py",
+      "tests/e2e/test_viewer_windows.py",
+      "tests/e2e/test_volume_batch.py",
+      "tests/e2e/test_volume_batch_save.py",
+      "tests/e2e/test_volume_cine.py",
+      "tests/e2e/test_volume_preferences.py",
+      "tests/e2e/test_workspace_persistence.py",
+      "tests/gateway_status_server_test.cjs",
+      "tests/image_delivery_record_test.cjs",
+      "tests/marker_style_test.cjs",
+      "tests/preload_disk_setting_test.cjs",
+      "tests/preload_key_route_test.cjs",
+      "tests/viewer_auto_view_service_test.cjs",
+      "tests/viewer_open_after_move_dom_test.py",
+      "tests/viewer_report_panel_dom_test.py",
+      "worklist-v0/hpacs-lite/**",
+      "worklist-v0/hpacs-lite/dictation-worklet.js",
+      "worklist-v0/hpacs-lite/emr-link.js",
+      "worklist-v0/hpacs-lite/image-report-diagrams.js",
+      "worklist-v0/hpacs-lite/image-report.js",
+      "worklist-v0/hpacs-lite/query-retrieve.js"
     ],
     "restore-product": [
       "api/prisma/**",
@@ -1016,7 +1137,10 @@
       "tests/ci_workflows.py",
       "scripts/build-trace-matrix.py",
       "scripts/test_trace_matrix.py",
-      "tests/fixtures/trace/**"
+      "tests/fixtures/trace/**",
+      "tests/candidate_ci.py",
+      "tests/dictation_refusal_oracle.py",
+      "tests/live_admin_credential_test.py"
     ],
     "emr-b": [
       "api/**",
@@ -1028,7 +1152,10 @@
       "scripts/ops_backup.py",
       "tests/emr/**",
       "tests/live_test_gate.py",
-      "tests/candidate_ci.py"
+      "tests/candidate_ci.py",
+      "tests/dictation_refusal_oracle.py",
+      "tests/document_session.py",
+      "tests/e2e/test_worklist.py"
     ],
     "source-regressions": [
       "tests/product_info_test.py",

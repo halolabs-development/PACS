@@ -7,6 +7,7 @@ import hashlib
 import re
 import shlex
 import shutil
+import subprocess
 import sys
 from datetime import datetime
 from types import SimpleNamespace
@@ -14,7 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 import measurement_ci as ci
 from ci_workflows import WorkflowCatalog
-from ci_regression_inputs import regression_inputs
+from ci_regression_inputs import InputClosure, regression_inputs, workflow_inputs
 from live_admin_credential_test import AdminOtpHelperTests, ImportedAdminCredentialTests
 
 # validate.yml steps that run after a failure keep doing so on a ready run and exclude a draft run, whose
@@ -242,11 +243,92 @@ class MeasurementCiTests(unittest.TestCase):
             self.assertEqual(actual, set(expected) | (set() if owner == 'proxy-contracts'
                                                      else {'tests/ci_browser_apt_test.py'}), owner)
 
-    def test_regression_inputs_select_their_pr_job(self):
+    @classmethod
+    def input_closure(cls):
+        # The import scan is the slow part; both selection tests share one.
+        if not hasattr(cls, '_input_closure'):
+            cls._input_closure = InputClosure(ci.ROOT)
+        return cls._input_closure
+
+    @staticmethod
+    def path_selector():
         import importlib.util
         spec = importlib.util.spec_from_file_location('regression_selector', ci.ROOT / 'scripts/ci_select.py')
         selector = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(selector)
+        return selector
+
+    def test_every_selected_step_input_selects_its_job(self):
+        # Changing a file a selected step runs or reads (recorder --file/--tree, the test file itself, a profile's
+        # suites, their imports and served-page scripts) must select that step's job on a ready PR. This covers
+        # every job of both path-selected workflows and the runtime job's selected step, not only REGRESSION_SUITES.
+        selector = self.path_selector()
+        selected, missing = {}, []
+        inputs = workflow_inputs(ci.ROOT, self.catalog, ci.PROFILES, self.input_closure())
+        declared = json.loads((ci.ROOT / 'scripts/ci-paths.json').read_text(encoding='utf-8'))['jobs']
+        self.assertEqual(set(inputs), set(declared))
+        for owner, (files, trees) in sorted(inputs.items()):
+            self.assertTrue(files, owner)
+            for path in sorted(files) + sorted(tree + '/new-input.py' for tree in trees):
+                if path not in selected:
+                    selected[path] = selector.select([path])
+                if not selected[path][owner]:
+                    missing.append((owner, path))
+        self.assertEqual(missing, [])
+
+    def test_named_path_gaps_select_the_job_that_runs_them(self):
+        selector = self.path_selector()
+
+        def jobs(*paths):
+            return {job for job, enabled in selector.select(list(paths)).items() if enabled}
+
+        # The changed test is run by worklist-ux-measurements, not only by the broad tests/** consumer.
+        self.assertIn('worklist-ux-measurements', jobs('tests/viewer_auto_view_service_test.cjs'))
+        # emr-d's served clinician page test imports the logout DOM test; its command declares both.
+        self.assertIn('emr-d', jobs('tests/auth_logout_dom_test.py'))
+        self.assertIn('emr-d', jobs('tests/page_source.py'))
+        # A main-split source edited without rebuilding the bundle selects whatever the bundle selects.
+        order = json.loads((ci.ROOT / 'scripts/main-split-order.json').read_text(encoding='utf-8'))
+        bundle = jobs(order['artifact'])
+        self.assertIn('asr-engine', bundle)
+        folder = order['page'].rsplit('/', 1)[0]
+        for row in order['sources']:
+            self.assertLessEqual(bundle, jobs(folder + '/' + row['file']), row['file'])
+        self.assertIn('asr-engine', jobs('worklist-v0/hpacs-lite/page-core.js'))
+        # The alias only adds: a source plus its unrelated neighbour selects at least both.
+        self.assertLessEqual(jobs('worklist-v0/hpacs-lite/viewer-measurements.js'),
+                             jobs('worklist-v0/hpacs-lite/viewer-measurements.js', 'worklist-v0/hpacs-lite/page-core.js'))
+        for path in ('docs/unrelated.md', 'keycloak/README.md'):
+            self.assertEqual(jobs(path), set(), path)
+
+    def test_shared_runner_image_and_generator_changes_select_every_job(self):
+        # Shared test running/judging, image and stack assembly with pinned versions, and generation method/order
+        # decide every job's result, so a ready PR that touches one runs all of them.
+        selector = self.path_selector()
+        config = json.loads((ci.ROOT / 'scripts/ci-paths.json').read_text(encoding='utf-8'))
+        tracked = subprocess.run(['git', 'ls-files', '-z'], cwd=ci.ROOT, capture_output=True, check=True).stdout
+        tracked = [name.decode('utf-8') for name in tracked.split(b'\0') if name]
+        for pattern in config['common']:
+            with self.subTest(pattern=pattern):
+                self.assertTrue(any(selector.matches(name, pattern) for name in tracked), 'unused common pattern')
+        shared = re.compile(
+            r'(?:^|/)(?:Dockerfile[^/]*|\.dockerignore|[^/]*compose[^/]*\.ya?ml|requirements[^/]*\.txt)$'
+            r'|^api/(?:package(?:-lock)?\.json|tsconfig[^/]*\.json|nest-cli\.json|start-production\.sh)$'
+            r'|^scripts/build-(?!trace-matrix\.py$)[^/]+\.py$|^scripts/sof3/|^\.gitattributes$'
+            r'|^scripts/(?:main-split-order\.json|record-run\.py|run-tests\.py|ci_browser_apt\.py)$'
+            r'|^config/ohif/source-order\.json$'
+            r'|^tests/(?:measurement_ci|ci_workflows|ci_regression_inputs|live_test_gate|invariants_live)\.py$'
+            r'|^tests/(?:ci_workflow_consumers|main_split_harness|module_session_harness|page_source)[^/]*$'
+            r'|^tests/service_test_loader\.cjs$')
+        inventory = [name for name in tracked if shared.search(name) and not name.startswith('.github/')]
+        self.assertIn('api/.dockerignore', inventory)
+        self.assertIn('api/print/requirements.txt', inventory)
+        for name in inventory:
+            with self.subTest(path=name):
+                self.assertTrue(all(selector.select([name]).values()))
+
+    def test_regression_inputs_select_their_pr_job(self):
+        selector = self.path_selector()
         selected = {}
 
         def check(path, owner):
@@ -254,7 +336,7 @@ class MeasurementCiTests(unittest.TestCase):
                 selected[path] = selector.select([path])
             self.assertTrue(selected[path][owner], (owner, path))
 
-        for owner, inputs in regression_inputs(ci.ROOT, self.catalog, REGRESSION_SUITES).items():
+        for owner, inputs in regression_inputs(ci.ROOT, self.catalog, REGRESSION_SUITES, self.input_closure()).items():
             for path in inputs:
                 check(path, owner)
             for step in self.catalog.job(owner)['steps']:
