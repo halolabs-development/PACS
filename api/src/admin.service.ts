@@ -27,6 +27,24 @@ export type AdminRequestFacts = RightsRequestFacts & { request: RequestWorkConte
 // 감사 기록 다음 쪽 값의 봉인 키. 프로세스마다 새로 만든다 — API가 다시 시작되면 이어받기는 만료(409)되고
 // 처음부터 다시 읽는다. 키를 설정으로 두면 값이 재시작을 넘어 살아남을 이유만 생긴다.
 const AUDIT_CURSOR_KEY = randomBytes(32);
+
+/** The operator command's own fields (api/prisma/designate-first-admin.cjs). Never taken from an HTTP body. */
+export interface FirstAdminOperator { institution: string; name: string; reason: string }
+
+/** A first-administrator refusal: nothing written, no failure audit (the condition, not the command, failed). */
+export class FirstAdminRefusal extends ConflictException {
+  constructor(code: string, message: string) { super({ code, message }); }
+}
+
+/** The ledger event of an operator command, as for the realm import's service job (member-rights-import.ts). */
+const OPERATOR_EVENT = {
+  cause: 'service-job', executor: 'service',
+  context: { basis: 'service-job', studyId: null, relatedStudyId: null, reason: null },
+  trustedProxyIp: { status: 'not-applicable', reason: 'in-process-service' },
+} as const;
+const OPERATOR_NAME = /^[A-Za-z0-9._@-]{1,64}$/;
+const activeAdmins = (db: any, institution: string) => db.memberRights.count({
+  where: { institution, approved: true, suspended: false, roles: { has: 'admin' } } });
 function text(value: unknown, field: string, max: number, required = true): string {
   if (value == null && !required) return '';
   if (typeof value !== 'string') throw new BadRequestException(`${field}은(는) 문자열이어야 합니다`);
@@ -211,7 +229,7 @@ export class AdminService {
     }
   }
 
-  async patchUser(id: string, body: any, c: Caller, facts: AdminRequestFacts) {
+  async patchUser(id: string, body: any, c: Caller, facts: AdminRequestFacts, operator?: FirstAdminOperator) {
     const admin = this.admin(c);
     if (!facts?.request || facts.actor.subject !== c.sub)
       throw new ServiceUnavailableException('회원 변경 요청의 접속 사실을 확인할 수 없습니다');
@@ -284,11 +302,14 @@ export class AdminService {
     const verificationOverride = approvalMutation && identity?.emailVerified === false && body?.verificationOverride !== false;
     const work = facts.request.work;
     try {
-      const issuer = facts.actor.issuer;
+      // An operator command's actor is a service identity; the member keeps the realm issuer.
+      const issuer = operator ? process.env.KC_ISSUER : facts.actor.issuer;
       if (!issuer) throw new Error('Missing member identity issuer');
       const affected = { issuer, subject: id, id: await work.resolveRequestIdentity(issuer, id) };
       const committed = await work.transactionWithRecords(async (tx, record) => {
         await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
+        // The first-administrator condition is decided under the institution lock, before the member lock.
+        if (operator) await this.firstAdminGate(tx, id, operator.institution);
         await lockMemberRights(tx, id);
         const current = await tx.memberRights.findUnique({ where: { sub: id } });
         // Scope on the locked row first: a member another institution took meanwhile is unknown here, not a conflict.
@@ -302,6 +323,7 @@ export class AdminService {
         const version = existing ? observed.version : 1;
         let result: { after: ReturnType<AdminService['row']>; change: any; rosterUnconfirmed: boolean };
         const event = rightsAccessEvent(facts, affected, version + 1, new Date().toISOString());
+        if (operator) Object.assign(event, OPERATOR_EVENT);
         await record(event, async () => {
           if (!existing) await this.register(tx, identity!);
           const [{ boundary }] = await tx.$queryRaw<{ boundary: Date }[]>`SELECT now() AS boundary`;
@@ -334,7 +356,8 @@ export class AdminService {
           const after = this.row(await tx.memberRights.findUnique({ where: { sub: id } }));
           const audit = await tx.auditLog.create({ data: { at: new Date(event.occurredAt),
             actor: c.actor, action: `admin.user.${action}`, target: id,
-            detail: JSON.stringify({ before, after, verificationOverride }) } });
+            detail: JSON.stringify({ before, after, verificationOverride,
+              ...(operator ? { operator: { by: operator.name, institution: operator.institution, reason: operator.reason } } : {}) }) } });
           const change = approvalMutation ? await tx.providerChange.create({ data: {
             kind: 'credentials', target: id, sub: id, generation: after.version, state: 'unknown', createdAt: new Date(),
           } }) : null;
@@ -346,7 +369,7 @@ export class AdminService {
       if (committed.change) this.auth.publishCredentials({ id: committed.change.id, kind: 'credentials', target: id }, institution!, roles);
       return { ...committed.after, rosterUnconfirmed: committed.rosterUnconfirmed };
     } catch (error) {
-      if (error === preReadError) throw error;
+      if (error === preReadError || error instanceof FirstAdminRefusal) throw error;
       await this.audit(c.actor, 'admin.user.patch.failed', id, {
         before, after: null, verificationOverride, failed: true,
       });
@@ -354,6 +377,49 @@ export class AdminService {
         throw new ConflictException({ code: 'MEMBER_BUSY', message: '다른 요청이 회원 상태를 변경하고 있습니다. 잠시 후 다시 시도하세요' });
       throw error;
     }
+  }
+
+  /**
+   * Operator command only (api/prisma/designate-first-admin.cjs; no controller calls it): make one person the first
+   * administrator of institution X while X has no approved, active administrator. It is the ordinary approval command
+   * (patchUser: rights, version, re-login boundary, session end, audit, roster intent) run for X, with the operator,
+   * institution and reason in its audit row. Refused without any write: X unknown or already administered; a service
+   * account; a person of another institution or of several; provider groups that disagree with X; a suspended or
+   * isolated account. Roles are the person's current X roles plus admin — nothing else is chosen here, and passwords,
+   * suspension and the administrator OTP are untouched. Concurrent or repeated runs: the institution lock and the
+   * re-read under it let one succeed.
+   */
+  async designateFirstAdmin(sub: string, institutionValue: string, operator: { name: string; reason: string }, facts: AdminRequestFacts) {
+    const institution = text(institutionValue, 'institution', 128);
+    if (typeof sub !== 'string' || !sub || sub.length > 256) throw new BadRequestException('subject가 올바르지 않습니다');
+    if (!OPERATOR_NAME.test(operator?.name ?? '')) throw new BadRequestException('operator가 올바르지 않습니다');
+    const reason = text(operator?.reason, 'reason', 500);
+    if (/[\x00-\x1f\x7f]/.test(reason)) throw new BadRequestException('reason 길이가 올바르지 않습니다');
+    if (!(await this.keycloak.institutions()).includes(institution)) throw new BadRequestException('허용되지 않은 기관입니다');
+    if (await activeAdmins(this.prisma, institution))
+      throw new FirstAdminRefusal('FIRST_ADMIN_EXISTS', '이 기관에는 이미 활성 관리자가 있습니다');
+    const identity = await this.managed(sub);
+    if (identity.groups.length && !(identity.groups.length === 1 && identity.groups[0] === institution))
+      throw new FirstAdminRefusal('FIRST_ADMIN_TARGET_CONFLICT', '대상의 소속 그룹이 이 기관과 다릅니다');
+    const existing = await this.prisma.memberRights.findUnique({ where: { sub } });
+    if (existing?.institution && existing.institution !== institution)
+      throw new FirstAdminRefusal('FIRST_ADMIN_TARGET_CONFLICT', '대상은 다른 기관의 회원입니다');
+    if (existing?.suspended) throw new FirstAdminRefusal('FIRST_ADMIN_TARGET_SUSPENDED', '정지된 계정은 지정할 수 없습니다');
+    if (await this.prisma.memberIsolation.findUnique({ where: { sub } }))
+      throw new FirstAdminRefusal('FIRST_ADMIN_TARGET_ISOLATED', '격리된 계정은 지정할 수 없습니다');
+    const roles = [...new Set([...(existing?.approved ? existing.roles : []), 'admin'])];
+    const c: Caller = { sub: facts.actor.subject, actor: 'operator:' + operator.name, roles: ['admin'], institution, kind: 'member' };
+    return this.patchUser(sub, { approvalState: 'APPROVED', institution, roles, verificationOverride: true,
+      ...(existing ? { version: existing.version } : {}) }, c, facts, { institution, name: operator.name, reason });
+  }
+
+  /** Under the institution lock: X still has no active administrator and the person is not isolated. */
+  private async firstAdminGate(tx: any, sub: string, institution: string) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${0x4b494e46}::int4, hashtext(${institution})::int4)`;
+    if (await activeAdmins(tx, institution))
+      throw new FirstAdminRefusal('FIRST_ADMIN_EXISTS', '이 기관에는 이미 활성 관리자가 있습니다');
+    if (await tx.memberIsolation.findUnique({ where: { sub } }))
+      throw new FirstAdminRefusal('FIRST_ADMIN_TARGET_ISOLATED', '격리된 계정은 지정할 수 없습니다');
   }
 
   async resetPassword(id: string, body: any, c: Caller) {

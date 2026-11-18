@@ -128,6 +128,18 @@ is an admission condition for a clean install.
    Then perform the approved synthetic save/reopen and signing checks
    ([below](#synthetic-savereopen-and-signing-checks)) before clinical handover.
    Save their actual outcomes in the release record.
+
+   **First administrator of each institution.** A hospital administrator manages
+   only the members of their own institution, so an institution without an
+   active administrator needs its first one from the operator command (see
+   [keycloak/README.md, "기관 첫 관리자 지정"](../../keycloak/README.md)):
+   `ops.run(compose + ['exec', '-T', 'api', 'node', 'prisma/designate-first-admin.cjs',
+   '--institution', '<group>', '--subject', '<Keycloak user id>', '--operator', '<who>',
+   '--reason', '<hospital request and how it was confirmed>'])`. Exit 0 records the
+   designation; exit 2 means the roster answer was lost — run
+   `node prisma/import-member-rights.cjs --retry-roster` in the same container;
+   exit 1 is a refusal with nothing written. Record the institution, subject and
+   exit code in the release record. Skip institutions that already have one.
 4. Backup and restore: after verification, take the **first populated backup**
    with `ops.backup('<backup-directory>')` in this same locked session (the CLI
    equivalent outside this session is `python3 scripts/ops_backup.py backup --output <backup-directory>`).

@@ -1049,6 +1049,7 @@
       "api/package*.json",
       "api/package-lock.json",
       "api/package.json",
+      "api/prisma/designate-first-admin.cjs",
       "api/prisma/import-member-rights.cjs",
       "api/prisma/migrations/**",
       "api/prisma/migrations/20260920120000_report_citations/migration.sql",

@@ -19,7 +19,7 @@ const { IncomingMessage, ServerResponse } = require('node:http');
 const { Socket } = require('node:net');
 
 process.env.KC_ISSUER = 'https://synthetic-identity.example.test/auth/realms/kin';
-const A = 'synthetic-hospital-a', B = 'synthetic-hospital-b';
+const A = 'synthetic-hospital-a', B = 'synthetic-hospital-b', C = 'synthetic-hospital-c';
 
 function world() {
   const rows = new Map();
@@ -30,7 +30,11 @@ function world() {
   put('reader-a', A);
   put('reader-b', B);
   put('waiting', null);
-  const kcOnly = { 'kc-pending': [], 'kc-b': [B], 'kc-two': [A, B] };
+  put('waiting-2', null);
+  put('revoked', null, { suspended: true });
+  put('isolated', null);
+  const kcOnly = { 'kc-pending': [], 'kc-b': [B], 'kc-two': [A, B], 'kc-c-group': [C], 'kc-service': [] };
+  const isolations = new Set(['isolated']), changes = [];
   const audits = [], kcCalls = [];
   let writes = 0;
   const db = {
@@ -38,6 +42,8 @@ function world() {
       findUnique: async ({ where }) => rows.get(where.sub) ? { ...rows.get(where.sub) } : null,
       findMany: async ({ where }) => [...rows.values()].filter(r => !where?.sub?.in || where.sub.in.includes(r.sub)).map(r => ({ ...r })),
       create: async ({ data }) => { writes++; rows.set(data.sub, { version: 1, ...data }); return { ...rows.get(data.sub) }; },
+      count: async ({ where }) => [...rows.values()].filter(r => r.institution === where.institution && r.approved === where.approved
+        && r.suspended === where.suspended && r.roles.includes(where.roles.has)).length,
       updateMany: async ({ where, data }) => {
         const row = rows.get(where.sub);
         if (!row || (where.version !== undefined && row.version !== where.version)) return { count: 0 };
@@ -48,8 +54,12 @@ function world() {
       },
     },
     authSession: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
-    auditLog: { create: async ({ data }) => { audits.push(data); return { id: audits.length }; }, findFirst: async () => null },
-    providerChange: { create: async () => ({ id: 1 }), findMany: async () => [], findFirst: async () => null },
+    memberIsolation: { findUnique: async ({ where }) => isolations.has(where.sub) ? { sub: where.sub } : null },
+    auditLog: { create: async ({ data }) => { audits.push(data); return { id: audits.length }; }, findFirst: async () => null,
+      findMany: async ({ where }) => audits.filter(a => a.target === where.target && where.action.in.includes(a.action)).reverse() },
+    providerChange: { create: async ({ data }) => { writes++; changes.push({ id: changes.length + 1, ...data }); return changes.at(-1); },
+      findMany: async () => [], findFirst: async () => null,
+      updateMany: async ({ where, data }) => { const row = changes.find(c => c.id === where.id); if (row) Object.assign(row, data); return { count: row ? 1 : 0 }; } },
     $executeRaw: async () => 0,
     $queryRaw: async () => [{ boundary: new Date(), id: null }],
   };
@@ -59,11 +69,12 @@ function world() {
     const groups = row ? (row.institution ? [row.institution] : []) : kcOnly[sub];
     if (!groups) return null;
     return { id: sub, username: sub, email: row ? row.email : sub + '@example.test', emailVerified: true,
-      firstName: 'Synthetic', lastName: sub, enabled: true, serviceAccountClientId: null, groups, roles: [] };
+      firstName: 'Synthetic', lastName: sub, enabled: true, serviceAccountClientId: sub === 'kc-service' ? 'synthetic-client' : null, groups, roles: [] };
   };
-  const all = () => [...new Set([...rows.keys(), ...Object.keys(kcOnly)])].map(identity);
+  // As KeycloakService.listUsers: service accounts never reach the member list.
+  const all = () => [...new Set([...rows.keys(), ...Object.keys(kcOnly)])].map(identity).filter(u => !u.serviceAccountClientId);
   const kc = {
-    institutions: async () => [A, B],
+    institutions: async () => [A, B, C],
     getUser: async id => identity(id),
     listUsers: async page => {
       const users = all();
@@ -95,7 +106,13 @@ function world() {
       { method, route, purpose: 'clinical' }, async () => {});
     try { return await run(req); } finally { res.emit('finish'); }
   };
-  return { rows, audits, kcCalls, kc, db, service, controller, keys, adminA, call, writes: () => writes };
+  const operatorFacts = institution => { const work = ledger.begin(); return { surface: 'operator:first-admin',
+    actor: { issuer: 'urn:kin:pacs:operator', subject: 'ops', id: '00000000-0000-4000-8000-000000000009' }, roles: ['admin'],
+    rightsVersion: 0, institution, ip: null, sessionRef: null, requestId: '00000000-0000-4000-8000-00000000000a',
+    request: { work, requireCurrent: async () => {} } }; };
+  const designate = (sub, institution) => service.designateFirstAdmin(sub, institution,
+    { name: 'ops', reason: 'synthetic hospital request confirmed by phone' }, operatorFacts(institution));
+  return { rows, audits, kcCalls, kc, db, service, controller, keys, adminA, call, writes: () => writes, designate, changes };
 }
 
 const status = code => error => { assert.equal(error?.getStatus?.(), code, String(error?.message)); return true; };
@@ -107,9 +124,10 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
     const w = world();
     const list = await w.controller.list('1', w.adminA);
     const ids = list.users.map(u => u.id).sort();
-    assert.deepEqual(ids, ['admin-a', 'kc-pending', 'reader-a', 'waiting'], 'no other institution in the list');
-    assert.equal(list.total, 4);
-    assert.equal(list.pendingCount, 2, 'the pending badge counts what this administrator can act on');
+    assert.deepEqual(ids, ['admin-a', 'isolated', 'kc-pending', 'reader-a', 'revoked', 'waiting', 'waiting-2'], 'no other institution in the list');
+    assert.equal(list.total, 7);
+    assert.equal(list.pendingCount, 5, 'the pending badge counts what this administrator can act on');
+    assert.ok(!ids.includes('kc-c-group'), 'a member of a group without an administrator is not the waiting room');
     assert.ok(!JSON.stringify(list).includes('reader-b'), 'nothing of another institution in the answer');
     assert.ok(!JSON.stringify(list).includes('kc-two'), 'a member of two groups is nobody\'s to manage');
     const noInstitution = { ...w.adminA, institution: null };
@@ -273,6 +291,54 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
       provider.adm = async () => unreadable;
       await assert.rejects(provider.mailSettings(), status(503), 'an unreadable realm is unknown, not "not configured"');
     }
+  }
+
+  // 8. The first administrator of an institution without one: an operator command, never an HTTP route.
+  {
+    const { sendRecordedRoster } = require('../api/src/member-rights-import.ts');
+    assert.equal(typeof AdminController.prototype.designateFirstAdmin, 'undefined', 'no controller route designates');
+    const w = world();
+    const refused = async (sub, institution, code, label) => {
+      const before = w.writes(), audits = w.audits.length;
+      await assert.rejects(w.designate(sub, institution), error => { assert.equal(error.getResponse().code ?? null, code, label); return true; }, label);
+      assert.equal(w.writes(), before, label + ': nothing written');
+      assert.equal(w.audits.length, audits, label + ': no audit row');
+    };
+    await refused('waiting', A, 'FIRST_ADMIN_EXISTS', 'an institution with an active administrator');
+    await refused('reader-b', C, 'FIRST_ADMIN_TARGET_CONFLICT', 'another institution\'s member');
+    await refused('kc-two', C, 'FIRST_ADMIN_TARGET_CONFLICT', 'a member of several groups');
+    await refused('kc-b', C, 'FIRST_ADMIN_TARGET_CONFLICT', 'provider groups naming another institution');
+    await refused('revoked', C, 'FIRST_ADMIN_TARGET_SUSPENDED', 'a suspended account');
+    await refused('isolated', C, 'FIRST_ADMIN_TARGET_ISOLATED', 'an isolated account');
+    await assert.rejects(w.designate('kc-service', C), status(403), 'a service account');
+    await assert.rejects(w.designate('waiting', 'not-an-institution'), status(400), 'an unknown institution');
+    assert.equal(w.writes(), 0);
+    const first = await w.designate('waiting', C);
+    assert.deepEqual([first.institution, first.roles, first.approvalState, first.enabled], [C, ['admin'], 'APPROVED', true]);
+    const row = w.audits.filter(a => a.action === 'admin.user.approve');
+    assert.equal(row.length, 1);
+    assert.equal(row[0].actor, 'operator:ops');
+    assert.deepEqual(JSON.parse(row[0].detail).operator, { by: 'ops', institution: C, reason: 'synthetic hospital request confirmed by phone' });
+    assert.equal(w.changes.length, 1, 'one roster intent');
+    // Repeated or concurrent: the condition is read again under the institution lock; one administrator only.
+    await refused('waiting', C, 'FIRST_ADMIN_EXISTS', 'the same command again');
+    const realCount = w.db.memberRights.count;
+    let calls = 0;
+    w.db.memberRights.count = async args => (++calls === 1 ? 0 : realCount(args));
+    await refused('waiting-2', C, 'FIRST_ADMIN_EXISTS', 'a second operator who read before the first committed');
+    w.db.memberRights.count = realCount;
+    assert.equal(w.audits.filter(a => a.action.startsWith('admin.user.')).length, 1, 'one success audit, no failure audit');
+    // The roster is sent from the recorded audit of that generation, as --retry-roster recovers it.
+    const sent = [], provider = { setGroups: async (...a) => sent.push(['groups', ...a]), setRoles: async (...a) => sent.push(['roles', ...a]) };
+    assert.equal(await sendRecordedRoster(w.db, provider, w.changes[0]), 'done');
+    assert.deepEqual(sent, [['groups', 'waiting', [C]], ['roles', 'waiting', ['admin']]]);
+    // An approved member of the institution keeps their roles and gains admin; a KC-only member of that one group may be named.
+    const w2 = world();
+    w2.rows.set('reader-c', { ...w2.rows.get('reader-a'), sub: 'reader-c', institution: C });
+    const promoted = await w2.designate('reader-c', C);
+    assert.deepEqual(promoted.roles.sort(), ['admin', 'radiologist']);
+    const w3 = world();
+    assert.equal((await w3.designate('kc-c-group', C)).institution, C);
   }
 
   process.stdout.write('Member institution scope contracts passed\n');
