@@ -28,7 +28,8 @@ def page_scripts(root, page):
 
     class Scripts(HTMLParser):
         def handle_starttag(self, tag, attrs):
-            src = dict(attrs).get('src') if tag == 'script' else None
+            # Scripts and the stylesheets (and other local links) the page loads.
+            src = dict(attrs).get({'script': 'src', 'link': 'href'}.get(tag, ''))
             if not src:
                 return
             path = local_script(page, src)
@@ -109,13 +110,15 @@ SELECTION = re.compile(r"fromJSON\((?:needs\.select|steps\.paths)\.outputs\.jobs
 
 
 def selected_steps(catalog):
-    """Every step whose execution follows a selection key, keyed by that key.
+    """(step, env) for every step whose execution follows a selection key, keyed by that key.
 
-    A job that waits on another selected job (consume after produce) inherits its key.
+    A job that waits on another selected job (consume after produce) inherits its key. The env
+    merges the workflow, job and step env, as the step sees it.
     """
     rows = {}
     for workflow in SELECTING_WORKFLOWS:
-        jobs = catalog.documents[workflow]['jobs']
+        document = catalog.documents[workflow]
+        jobs = document['jobs']
         for job_id, job in jobs.items():
             owner = SELECTION.search(str(job.get('if', '')))
             needs = job.get('needs')
@@ -124,51 +127,92 @@ def selected_steps(catalog):
             for step in job.get('steps', []):
                 key = owner or SELECTION.search(str(step.get('if', '')))
                 if key:
-                    rows.setdefault(key[1], []).append(step)
+                    env = {**(document.get('env') or {}), **(job.get('env') or {}), **(step.get('env') or {})}
+                    rows.setdefault(key[1], []).append((step, env))
     return rows
 
 
-def command_inputs(root, run, profiles):
-    """Repository files a step's shell text names: recorder --file/--tree, run test files,
-    discover patterns and measurement profiles. Trees yield a synthetic new file."""
-    files, trees = set(), set()
-    text = re.sub(r'\$\{\{[^}]+\}\}', 'EXPRESSION', str(run)).replace('\\\n', ' ')
+def _expand(value, env):
+    return re.sub(r'\$\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}', lambda m: str(env.get(m[1], m[0])), str(value))
+
+
+def command_inputs(root, step, profiles, env=None):
+    """Repository files a step names: recorder --file/--tree, run test files (also through a
+    working directory or a docker bind mount), discover patterns, measurement profiles and env
+    values. Returns the files and synthetic new files that must select the step's job: one in
+    each recorded tree and one matching each discover pattern."""
+    env = env or {}
+    files, synthetic, trees = set(), set(), set()
+
+    def repository_file(word, prefixes):
+        for prefix in prefixes:
+            name = posixpath.normpath(posixpath.join(prefix, word)) if prefix else word
+            if not name.startswith('..') and (root / name).is_file():
+                return name
+        return None
+
+    for value in env.values():
+        value = str(value)
+        if '/' in value and '$' not in value and (root / value).is_file():
+            files.add(value)
+    directory = _expand(step.get('working-directory', ''), env)
+    text = re.sub(r'\$\{\{[^}]+\}\}', 'EXPRESSION', _expand(step.get('run', ''), env)).replace('\\\n', ' ')
     for line in text.splitlines():
         try:
             words = shlex.split(line, comments=True)
         except ValueError:
             words = line.split()  # an inline program; its literal paths still count
+        mounts = {}
+        for index, word in enumerate(words[:-1]):
+            if word in ('-v', '--volume') and words[index + 1].startswith('$PWD'):
+                source, _, target = words[index + 1][len('$PWD'):].lstrip('/').partition(':')
+                mounts[target.split(':')[0].rstrip('/')] = source.rstrip('/')
         words = [re.sub(r'^(?:\./|\$PWD/|"\$PWD"/)', '', word) for word in words]
+        prefixes = [''] + ([directory] if directory and '$' not in directory else [])
+        for index, word in enumerate(words[:-1]):
+            following = words[index + 1]
+            if word in ('--cwd', 'cd') and '$' not in following and following != '.':
+                prefixes.append(following.rstrip('/'))
         for index, word in enumerate(words):
             following = words[index + 1] if index + 1 < len(words) else ''
             if word == '--tree' and following and '$' not in following:
                 trees.add(following.rstrip('/'))
+                synthetic.add(following.rstrip('/') + '/new-input.py')
             elif word == '-p' and 'discover' in words:
-                files.update(path.relative_to(root).as_posix() for path in (root / 'tests').glob(following))
+                start = words[words.index('-s') + 1].rstrip('/') if '-s' in words[:-1] else 'tests'
+                files.update(path.relative_to(root).as_posix() for path in (root / start).glob(following))
+                synthetic.add(start + '/' + following.replace('*', 'new'))
             elif word == '--profile' and following in profiles:
                 files.update('tests/' + row[0] for row in profiles[following]['suites'])
             elif word == '-m' and following and (root / (following.replace('.', '/') + '.py')).is_file():
                 files.add(following.replace('.', '/') + '.py')
-            elif ('$' not in word and 'node_modules/' not in word and not word.startswith(('/', '-', 'tmp/'))
-                  and '/' in word and (root / word).is_file()):
-                files.add(word)
-    return files, trees
+            elif '$' in word or 'node_modules/' in word or word.startswith(('-', 'tmp/')):
+                continue
+            elif word.startswith('/'):
+                for target, source in mounts.items():
+                    if word.startswith(target + '/') and (root / source / word[len(target) + 1:]).is_file():
+                        files.add(posixpath.join(source, word[len(target) + 1:]) if source else word[len(target) + 1:])
+            elif (name := repository_file(word, prefixes)):
+                files.add(name)
+    return files, synthetic, trees
 
 
 def workflow_inputs(root, catalog, profiles, closure=None):
-    """For every selection key: the files its steps run or read, with their imports and pages."""
+    """For every selection key: the files its steps run or read, with their imports and pages,
+    and the synthetic new files (in a recorded tree, matching a discover pattern) it must catch."""
     closure = closure or InputClosure(root)
     result = {}
     for owner, steps in selected_steps(catalog).items():
-        files, trees = set(), set()
-        for step in steps:
-            found, folders = command_inputs(root, step.get('run', ''), profiles)
+        files, synthetic, trees = set(), set(), set()
+        for step, env in steps:
+            found, new, folders = command_inputs(root, step, profiles, env)
             files |= found
+            synthetic |= new
             trees |= folders
         # A test tree's own files are run; follow what they import from outside the tree.
         for tree in trees:
             if tree.startswith('tests/') and (root / tree).is_dir():
                 files.update(path.relative_to(root).as_posix() for path in (root / tree).rglob('*')
                              if path.is_file() and path.suffix in ('.py', '.cjs', '.js', '.mjs'))
-        result[owner] = (closure(owner, files), trees)
+        result[owner] = (closure(owner, files), synthetic)
     return result

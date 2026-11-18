@@ -267,9 +267,16 @@ class MeasurementCiTests(unittest.TestCase):
         inputs = workflow_inputs(ci.ROOT, self.catalog, ci.PROFILES, self.input_closure())
         declared = json.loads((ci.ROOT / 'scripts/ci-paths.json').read_text(encoding='utf-8'))['jobs']
         self.assertEqual(set(inputs), set(declared))
-        for owner, (files, trees) in sorted(inputs.items()):
+        # Inputs named through a working directory, a docker bind mount or an env value are still seen.
+        self.assertIn('rehearsal-bundle/selftest_rollout_stage2.py', inputs['restore-product'][0])
+        self.assertIn('tests/asr_fixture_validate.cjs', inputs['asr-engine'][0])
+        self.assertIn('tests/emr/e/rule-cases.json', inputs['part1-mg'][0])
+        self.assertIn('.env.example', inputs['worklist-ux-measurements'][0])
+        self.assertIn('worklist-v0/hpacs-lite/related-report-mode.css', inputs['related-layout-dom'][0])
+        self.assertIn('tests/viewer_hanging_protocolnewdom_test.py', inputs['viewer-dom'][1])
+        for owner, (files, synthetic) in sorted(inputs.items()):
             self.assertTrue(files, owner)
-            for path in sorted(files) + sorted(tree + '/new-input.py' for tree in trees):
+            for path in sorted(files | synthetic):
                 if path not in selected:
                     selected[path] = selector.select([path])
                 if not selected[path][owner]:
@@ -300,6 +307,22 @@ class MeasurementCiTests(unittest.TestCase):
                              jobs('worklist-v0/hpacs-lite/viewer-measurements.js', 'worklist-v0/hpacs-lite/page-core.js'))
         for path in ('docs/unrelated.md', 'keycloak/README.md'):
             self.assertEqual(jobs(path), set(), path)
+        # A root-level recorded input; a stylesheet the served page loads; a new test matching a discover pattern.
+        self.assertIn('worklist-ux-measurements', jobs('.env.example'))
+        self.assertIn('related-layout-dom', jobs('worklist-v0/hpacs-lite/related-report-mode.css'))
+        self.assertIn('viewer-dom', jobs('tests/viewer_hanging_protocol_new_dom_test.py'))
+        # The CI self-checks read registered suites as text, so any test change runs them.
+        self.assertIn('ci-selfchecks', jobs('tests/e2e/test_dictation_live.py'))
+        # Image assembly in a new folder, and a broken bundle manifest, select every job.
+        everything = set(selector.select([], all_jobs=True))
+        self.assertEqual(jobs('newdir/Dockerfile'), everything)
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'scripts').mkdir()
+            shutil.copy(ci.ROOT / 'scripts/ci-paths.json', root / 'scripts/ci-paths.json')
+            (root / 'scripts/main-split-order.json').write_text('{"page": ', encoding='utf-8')
+            with patch.object(selector, 'ROOT', root):
+                self.assertEqual(jobs('worklist-v0/hpacs-lite/page-core.js'), everything)
 
     def test_shared_runner_image_and_generator_changes_select_every_job(self):
         # Shared test running/judging, image and stack assembly with pinned versions, and generation method/order

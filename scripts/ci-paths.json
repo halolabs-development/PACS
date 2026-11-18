@@ -20,25 +20,15 @@
     "tests/module_session_harness*",
     "tests/page_source*",
     "tests/service_test_loader.cjs",
-    "api/.dockerignore",
-    "api/Dockerfile*",
+    "**/.dockerignore",
+    "**/Dockerfile*",
+    "**/*compose*.yml",
+    "**/requirements*.txt",
     "api/nest-cli.json",
     "api/package-lock.json",
     "api/package.json",
-    "api/print/requirements*.txt",
     "api/start-production.sh",
     "api/tsconfig*.json",
-    "docker-compose*.yml",
-    "emr/deploy/docker-compose*.yml",
-    "gateway/agent/.dockerignore",
-    "gateway/agent/Dockerfile*",
-    "gateway/agent/requirements*.txt",
-    "gateway/docker-compose*.yml",
-    "proxy/Dockerfile*",
-    "rehearsal-bundle/rehearsal/*-compose.yml",
-    "scripts/requirements*.txt",
-    "tests/e2e/requirements*.txt",
-    "tests/fixtures/asr/Dockerfile*",
     ".gitattributes",
     "config/ohif/source-order.json",
     "scripts/build-dicom-dictionary.py",
@@ -262,7 +252,19 @@
       "worklist-v0/hpacs-lite/technician-report.js",
       "worklist-v0/hpacs-lite/technician-scheduled.js",
       "worklist-v0/hpacs-lite/viewer-ux-shortcuts.js",
-      "worklist-v0/hpacs-lite/worklist-folder-tree.css"
+      "worklist-v0/hpacs-lite/worklist-folder-tree.css",
+      "worklist-v0/hpacs-lite/consultations.css",
+      "worklist-v0/hpacs-lite/favorites.css",
+      "worklist-v0/hpacs-lite/multi-study-view.css",
+      "worklist-v0/hpacs-lite/reader-assignment.css",
+      "worklist-v0/hpacs-lite/reading-workspace.css",
+      "worklist-v0/hpacs-lite/related-report-mode.css",
+      "worklist-v0/hpacs-lite/saved-filter-manager.css",
+      "worklist-v0/hpacs-lite/study-panel.css",
+      "worklist-v0/hpacs-lite/study-tags.css",
+      "worklist-v0/hpacs-lite/tech-note.css",
+      "worklist-v0/hpacs-lite/worklist-columns.css",
+      "worklist-v0/hpacs-lite/workspace-theme.css"
     ],
     "emr-c": [
       "api/Dockerfile*",
@@ -1063,7 +1065,8 @@
       "worklist-v0/hpacs-lite/emr-link.js",
       "worklist-v0/hpacs-lite/image-report-diagrams.js",
       "worklist-v0/hpacs-lite/image-report.js",
-      "worklist-v0/hpacs-lite/query-retrieve.js"
+      "worklist-v0/hpacs-lite/query-retrieve.js",
+      ".env.example"
     ],
     "restore-product": [
       "api/prisma/**",
@@ -1140,7 +1143,8 @@
       "tests/fixtures/trace/**",
       "tests/candidate_ci.py",
       "tests/dictation_refusal_oracle.py",
-      "tests/live_admin_credential_test.py"
+      "tests/live_admin_credential_test.py",
+      "tests/**"
     ],
     "emr-b": [
       "api/**",
@@ -1609,7 +1613,19 @@
       "worklist-v0/legal/open-source-notices.html",
       "worklist-v0/legal/operator-notice.html",
       "worklist-v0/legal/privacy-date.js",
-      "worklist-v0/legal/privacy.html"
+      "worklist-v0/legal/privacy.html",
+      "worklist-v0/hpacs-lite/consultations.css",
+      "worklist-v0/hpacs-lite/favorites.css",
+      "worklist-v0/hpacs-lite/multi-study-view.css",
+      "worklist-v0/hpacs-lite/reader-assignment.css",
+      "worklist-v0/hpacs-lite/reading-workspace.css",
+      "worklist-v0/hpacs-lite/related-report-mode.css",
+      "worklist-v0/hpacs-lite/saved-filter-manager.css",
+      "worklist-v0/hpacs-lite/study-panel.css",
+      "worklist-v0/hpacs-lite/study-tags.css",
+      "worklist-v0/hpacs-lite/tech-note.css",
+      "worklist-v0/hpacs-lite/worklist-columns.css",
+      "worklist-v0/hpacs-lite/workspace-theme.css"
     ],
     "worklist-dom": [
       ".gitattributes",
@@ -2002,7 +2018,11 @@
       "worklist-v0/hpacs-lite/workspace-layout.js",
       "worklist-v0/hpacs-lite/workspace-panels.js",
       "worklist-v0/hpacs-lite/workspace-roaming.js",
-      "worklist-v0/hpacs-lite/workspace-shortcuts.js"
+      "worklist-v0/hpacs-lite/workspace-shortcuts.js",
+      "worklist-v0/hpacs-lite/multi-study-view.css",
+      "worklist-v0/hpacs-lite/related-report-mode.css",
+      "worklist-v0/hpacs-lite/study-panel.css",
+      "worklist-v0/hpacs-lite/workspace-theme.css"
     ],
     "viewer-dom": [
       "worklist-v0/hpacs-lite/product-info.js",
@@ -2314,7 +2334,20 @@
       "worklist-v0/hpacs-lite/workspace-layout.js",
       "worklist-v0/hpacs-lite/workspace-panels.js",
       "worklist-v0/hpacs-lite/workspace-roaming.js",
-      "worklist-v0/hpacs-lite/workspace-shortcuts.js"
+      "worklist-v0/hpacs-lite/workspace-shortcuts.js",
+      "tests/viewer_hanging_protocol*dom_test.py",
+      "worklist-v0/hpacs-lite/consultations.css",
+      "worklist-v0/hpacs-lite/favorites.css",
+      "worklist-v0/hpacs-lite/multi-study-view.css",
+      "worklist-v0/hpacs-lite/reader-assignment.css",
+      "worklist-v0/hpacs-lite/reading-workspace.css",
+      "worklist-v0/hpacs-lite/related-report-mode.css",
+      "worklist-v0/hpacs-lite/saved-filter-manager.css",
+      "worklist-v0/hpacs-lite/study-panel.css",
+      "worklist-v0/hpacs-lite/study-tags.css",
+      "worklist-v0/hpacs-lite/tech-note.css",
+      "worklist-v0/hpacs-lite/worklist-columns.css",
+      "worklist-v0/hpacs-lite/workspace-theme.css"
     ],
     "clinician-dom": [
       "worklist-v0/hpacs-lite/product-info.js",
@@ -2503,7 +2536,11 @@
       "worklist-v0/hpacs-lite/workspace-layout.js",
       "worklist-v0/hpacs-lite/workspace-panels.js",
       "worklist-v0/hpacs-lite/workspace-roaming.js",
-      "worklist-v0/hpacs-lite/workspace-shortcuts.js"
+      "worklist-v0/hpacs-lite/workspace-shortcuts.js",
+      "worklist-v0/hpacs-lite/multi-study-view.css",
+      "worklist-v0/hpacs-lite/related-report-mode.css",
+      "worklist-v0/hpacs-lite/study-panel.css",
+      "worklist-v0/hpacs-lite/workspace-theme.css"
     ],
     "critical-result-dom": [
       "worklist-v0/hpacs-lite/product-info.js",
@@ -2684,7 +2721,11 @@
       "worklist-v0/hpacs-lite/workspace-layout.js",
       "worklist-v0/hpacs-lite/workspace-panels.js",
       "worklist-v0/hpacs-lite/workspace-roaming.js",
-      "worklist-v0/hpacs-lite/workspace-shortcuts.js"
+      "worklist-v0/hpacs-lite/workspace-shortcuts.js",
+      "worklist-v0/hpacs-lite/multi-study-view.css",
+      "worklist-v0/hpacs-lite/related-report-mode.css",
+      "worklist-v0/hpacs-lite/study-panel.css",
+      "worklist-v0/hpacs-lite/workspace-theme.css"
     ],
     "admin-session-dom": [
       "tests/product_info_dom_test.py",
@@ -2908,7 +2949,11 @@
       "api/src/emr-report/**",
       "api/src/prisma.service.ts",
       "api/tsconfig.json",
-      "api/package-lock.json"
+      "api/package-lock.json",
+      "worklist-v0/hpacs-lite/multi-study-view.css",
+      "worklist-v0/hpacs-lite/related-report-mode.css",
+      "worklist-v0/hpacs-lite/study-panel.css",
+      "worklist-v0/hpacs-lite/workspace-theme.css"
     ],
     "related-layout-dom": [
       "worklist-v0/hpacs-lite/product-info.js",
@@ -3084,7 +3129,11 @@
       "worklist-v0/hpacs-lite/workspace-layout.js",
       "worklist-v0/hpacs-lite/workspace-panels.js",
       "worklist-v0/hpacs-lite/workspace-roaming.js",
-      "worklist-v0/hpacs-lite/workspace-shortcuts.js"
+      "worklist-v0/hpacs-lite/workspace-shortcuts.js",
+      "worklist-v0/hpacs-lite/multi-study-view.css",
+      "worklist-v0/hpacs-lite/related-report-mode.css",
+      "worklist-v0/hpacs-lite/study-panel.css",
+      "worklist-v0/hpacs-lite/workspace-theme.css"
     ],
     "study-transfer-dom": [
       "api/package*.json",

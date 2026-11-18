@@ -31,13 +31,18 @@ def select(paths, *, all_jobs=False, main_push=False):
     paths = list(paths)
     # A main-split source stands for the bundle built from it: a source edit without a
     # rebuilt bundle still selects every job that serves or reads that bundle.
-    # (Removing the manifest itself is a common change that selects every job.)
+    # The manifest is a common input: removing or breaking it selects every job.
     manifest = ROOT / 'scripts/main-split-order.json'
     if manifest.is_file():
-        order = json.loads(manifest.read_text(encoding='utf-8'))
-        folder = order['page'].rsplit('/', 1)[0]
-        if any(folder + '/' + row['file'] in paths for row in order['sources']):
-            paths.append(order['artifact'])
+        try:
+            order = json.loads(manifest.read_text(encoding='utf-8'))
+            folder = order['page'].rsplit('/', 1)[0]
+            sources = {folder + '/' + row['file'] for row in order['sources']}
+        except (ValueError, KeyError, TypeError, AttributeError):
+            paths.append('scripts/main-split-order.json')
+        else:
+            if sources.intersection(paths):
+                paths.append(order['artifact'])
 
     def changed(patterns):
         return any(matches(path, pattern) for path in paths for pattern in patterns
