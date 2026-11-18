@@ -647,6 +647,27 @@ reaches the ledgers, ledger storage the lock was not verified on, a paused site 
 does not answer on its own ports, a candidate whose Compose file does not carry the recreation label), so
 that a window that is going to be refused is refused before it costs a closed entry.
 
+### Security updates
+
+Before the window, read the latest `Dependency audit` run (Actions; weekly on `main`, or run it by hand). It counts
+only if it is at most 8 days old and ran on the candidate SHA, or on a commit whose dependency files equal the
+candidate's (`git diff --quiet <run-sha> <candidate> -- '*package-lock.json' '*requirements*.txt' '*Dockerfile*'
+'*compose*.yml'` exits 0); otherwise run it by hand on the candidate's ref first. An incomplete run (exit 2,
+"Not checked") is not a check: run it again. For every line under "Needs action", the private release record names
+the update this release carries or why the release goes out without it; do the same for the components under
+"Not seen by the scanners", against their vendors' advisories. The run builds the product images with `--pull`;
+build the release images the same way, so they hold what was checked.
+
+Then read the host's pending operating-system security updates, installing nothing:
+
+```sh
+sudo apt-get update      # a failed refresh means "not checked", not "nothing pending"
+apt list --upgradable 2>/dev/null | grep -- '-security'
+```
+
+Record the list in the private release record. Install host updates only in a maintenance window of their own (a
+kernel or Docker update restarts the stack), never between the judgement and the switch of this procedure.
+
 ### The host declaration
 
 The host is not enumerated and nothing on it is blocked. A reviewed host declaration names only what the
