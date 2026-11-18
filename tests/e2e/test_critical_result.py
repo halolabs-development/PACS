@@ -2682,7 +2682,7 @@ class CriticalResultScreensE2E(KeycloakGroups, CriticalResultHarness, base.Workl
                 expect(status).to_contain_text(UNKNOWN_TEXT)
                 expect(dialog.get_by_role("button", name="Check Again", exact=True)).to_be_visible()
                 expect(s.page.get_by_text("Not delivered")).to_have_count(0)
-                expect(dialog.get_by_label("Recipient", exact=True)).to_be_disabled()
+                expect(dialog.get_by_role("group", name="Recipient", exact=True)).to_be_disabled()
                 expect(dialog.get_by_label("Message", exact=True)).not_to_be_editable()
                 expect(dialog.get_by_role("button", name="Send", exact=True)).to_be_disabled()
                 self.server_eq(critical_row(q)["state"], "created", "L-01 R1 exists")
