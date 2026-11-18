@@ -1329,6 +1329,36 @@ class RouteCloud:
         return FakeResponse(200, {"result": "stored"})
 
 
+class LogLineTests(unittest.TestCase):
+    def test_lines_written_at_once_from_two_threads_stay_whole(self):
+        """The main loop and the heartbeat thread log at the same moments (an outage); every line stays one object."""
+        import io
+
+        class Slow(io.StringIO):
+            def write(self, text):   # a stream that is slow and yields inside a write, as a pipe under load does
+                time.sleep(0.0002)
+                return super().write(text)
+
+        sink = Slow()
+        with patch.object(agent_module.sys, "stdout", sink):
+            start = threading.Barrier(4)
+
+            def burst(name):
+                start.wait()
+                for index in range(300):
+                    agent_module.log(name, uid="1.2.3", attempt=index)
+            threads = [threading.Thread(target=burst, args=("thread.%d" % n,)) for n in range(4)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        lines = sink.getvalue().split("\n")
+        self.assertEqual(lines[-1], "")
+        self.assertEqual(len(lines) - 1, 1200)
+        for line in lines[:-1]:
+            self.assertIsInstance(json.loads(line), dict)
+
+
 class RoutingTests(unittest.TestCase):
     """Gateway settings: routing to destinations, keeping sent copies for a set time, lossless compression."""
 

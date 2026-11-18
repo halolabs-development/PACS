@@ -12,6 +12,7 @@ import os
 import re
 import signal
 import sqlite3
+import sys
 import time
 import math
 import tempfile
@@ -261,12 +262,20 @@ class SettingsStore:
         return True
 
 
+_LOG_LOCK = threading.Lock()
+
+
 def log(event: str, *, uid: str | None = None, **fields: Any) -> None:
     safe = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "event": event}
     if uid:
         safe["uid"] = uid
     safe.update(fields)
-    print(json.dumps(safe, ensure_ascii=False, separators=(",", ":")), flush=True)
+    # One whole line per write, one writer at a time: the main loop and the heartbeat thread both log, and print() writes
+    # the text and the newline separately, so two lines written at once could interleave into one unreadable line.
+    line = json.dumps(safe, ensure_ascii=False, separators=(",", ":")) + "\n"
+    with _LOG_LOCK:
+        sys.stdout.write(line)
+        sys.stdout.flush()
 
 
 def truthy(value: str) -> bool:
