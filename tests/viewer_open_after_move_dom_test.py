@@ -238,6 +238,22 @@ class ViewerOpenAfterMove(rf.ReportFlowPage):
         self.assertEqual([], self.loads_of(h.UID_B), "no viewer document of the mismatched study")
         self.assertEqual([], self.popups(), "the held blank window is closed")
 
+    def test_a_row_without_a_dicom_uid_chosen_while_the_move_waits_says_so_and_leaves_no_window(self):
+        # A list row keyed by an old study key that is not a DICOM UID (the list shows it; the viewer cannot address it).
+        legacy, name = "LEGACY_7", "SYN PATIENT LEGACY"
+        self.site.flow = (*self.site.flow, (legacy, name, "SYN-P-007"))
+        self.site.store[legacy] = {"revs": 0, "row": None, "report": {"version": 0, "rs": "W"}}
+        self.wait_for_b()
+        self.row(name).dblclick()
+        self.release_page_time()
+        self.site.finish_flow_put()
+        self.wait(lambda: self.selected() == name, "the move goes to the row chosen last")
+        expect(self.page.locator("#toast")).to_be_visible()
+        self.settle(400)
+        self.assertEqual([], self.loads_of(h.UID_B), "the study chosen first is never shown")
+        self.assertEqual([], self.popups(), "the window held for the waiting move is closed")
+        self.assertEqual([], self.errors, "no page error")
+
 
 def load_tests(loader, tests, pattern):
     return unittest.TestSuite(ViewerOpenAfterMove(name) for name in ViewerOpenAfterMove.__dict__ if name.startswith("test_"))

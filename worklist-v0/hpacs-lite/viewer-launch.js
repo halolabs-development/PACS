@@ -70,7 +70,10 @@
       const leave = pendingMoveTo(uid);
       if (!leave) { dropMoveBlank(); return false; }
       const at = work.capture('document');
-      const reserved = reserveViewingSet([uid, priorUid].filter(Boolean));
+      // Holding a window is best effort: a study the viewer cannot address (no DICOM UID) holds none, and the answer's
+      // openFilmbox says why it does not open.
+      let reserved = {};
+      try { reserved = reserveViewingSet([uid, priorUid].filter(Boolean)); } catch (_) {}
       // Only a blank window this flow opened is kept for the answer: a live window is chosen again then, for the study's own
       // scope and state at that moment.
       const blank = reserved.status === 'reserved' && reserved.kind === 'window' && reserved.own ? reserved : null;
