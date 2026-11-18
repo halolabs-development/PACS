@@ -286,7 +286,7 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
                 self.assertEqual([native['row'], native['column'], native['origin']], [[0, 1, 0], [0, 0, -1], origin], native)
                 text = p.evaluate(SVG_TEXT)
                 self.assertNotIn('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다', text)
-                self.assertIn(basis, text)
+                self.assertTrue(all(part in text for part in basis.split(' · ')), (basis, text))  # drawn as two lines
                 self.assertNotIn(SCREEN, text)
                 shown = float(re.search(r'(\d+(?:\.\d+)?) mm', text).group(1))
                 # The image pixel offsets of the two points in that plane (columns along y, rows along -z), times the
@@ -323,6 +323,46 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
                 shown = float(re.search(r'(\d+(?:\.\d+)?) ?°', text).group(1))
                 self.assertLess(abs(shown - expected), .051, (text, expected, angle))
                 self.assertLess(abs(angle['value'] - expected), 1e-3, (expected, angle))
+                box = p.locator('.cornerstone-canvas').bounding_box()
+                if frames > 1:
+                    # The second frame of the run: its own origin [0,0,2] in the viewer, measured and saved on that frame.
+                    p.evaluate("async()=>{const v=cornerstone.getEnabledElements()[0].viewport;await v.setImageIdIndex(1);}")
+                    self.choose(p, 'Length')
+                    self.drag(p, box['x'] + box['width'] * .3, box['y'] + box['height'] * .25, 80, 20)
+                    p.wait_for_timeout(350)
+                    p.wait_for_function('''()=>{const v=cornerstone.getEnabledElements()[0].viewport;
+                      return cornerstoneTools.annotation.state.getAllAnnotations().some(a=>a.metadata.toolName==='Length' &&
+                        a.metadata.referencedImageId===v.getCurrentImageId() && !a.invalidated &&
+                        Object.values(a.data.cachedStats||{}).some(s=>Number.isFinite(s.length)))}''')
+                    second = p.evaluate(NATIVE, 'Length')
+                    self.assertEqual(second['origin'], [0, 0, 2], second)
+                    self.assertIn('/frames/2', second['image'])
+                    (a, b) = second['points']
+                    expected = math.hypot(b[1] - a[1], b[2] - a[2])
+                    text = p.evaluate(SVG_TEXT)
+                    self.assertTrue(all(part in text for part in basis.split(' · ')), (basis, text))  # drawn as two lines
+                    shown = float(re.search(r'(\d+(?:\.\d+)?) mm', text).group(1))
+                    self.assertLess(abs(shown - expected), .051, (text, expected, second))
+                    rows = p.locator('#kin-viewer-history section[data-kind=length]')
+                    rows.last.get_by_role('button', name='Save', exact=True).click()
+                    expect(rows.last).to_contain_text('저장 완료')
+                    saved = self.saved(f)
+                    self.assertEqual(2, len(saved))
+                    self.assertEqual([1, 2], sorted(s['item']['frame'] for s in saved))
+                    self.assertTrue(all(s['referenceStatus'] == 'verified' for s in saved), saved)
+                if modality == 'DX':
+                    # A screen calibration over an image with spacing of its own gives no value in the original's basis.
+                    p.evaluate("()=>document.querySelector('[aria-label=Calibration]').click()")
+                    self.drag(p, box['x'] + box['width'] * .3, box['y'] + box['height'] * .2, 120, 0)
+                    field = p.locator('input[type=text]:visible').first
+                    expect(field).to_be_visible(); field.fill('30'); field.press('Enter')
+                    p.wait_for_function('''()=>{const v=cornerstone.getEnabledElements()[0].viewport, id=v.getCurrentImageId();
+                      return !!(cornerstone.metaData.get('calibratedPixelSpacing', id)?.type || cornerstone.cache.getImage(id)?.calibration?.type);}''')
+                    self.choose(p, 'Length')
+                    self.drag(p, box['x'] + box['width'] * .3, box['y'] + box['height'] * .8, 120, 0)
+                    expect(p.locator('#kin-viewer-history [role=status]')).to_contain_text('표시 간격과 원본 간격이 일치하지 않습니다')
+                    p.wait_for_timeout(600)
+                    self.assertEqual(1, len(self.saved(f)))
                 p.close(); w.close()
 
 

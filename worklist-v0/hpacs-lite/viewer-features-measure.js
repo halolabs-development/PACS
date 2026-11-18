@@ -69,7 +69,9 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
   // tags: the original's tags when the image has no instance metadata of its own (the Job print's offscreen copy).
   function geometry(imageId, points = [], tags = instance(imageId)) {
     if (!tags) return { reason: '영상 정보를 확인할 수 없습니다' };
-    if (cs.cache?.getImage?.(imageId)?.calibration?.type) return { reason: '보정한 간격의 영상에서는 mm 값을 내지 않습니다' };
+    // A screen calibration: the cached image's, or the calibrated-spacing metadata the Calibration tool writes first.
+    let calibrated; try { calibrated = cs.metaData.get('calibratedPixelSpacing', imageId); } catch (_) { calibrated = undefined; }
+    if (cs.cache?.getImage?.(imageId)?.calibration?.type || calibrated?.type) return { reason: '보정한 간격의 영상에서는 mm 값을 내지 않습니다' };
     const plane = cs.metaData.get('imagePlaneModule', imageId) || {};
     const us = typeof window.kinUsRegionGeometry === 'function' ? window.kinUsRegionGeometry(tags) : null;
     if (us) {
