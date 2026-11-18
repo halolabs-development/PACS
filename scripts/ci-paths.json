@@ -888,6 +888,7 @@
       "tests/transaction_locks.cjs",
       "tests/w_space_dom_test.py",
       "tests/reading_boxes_dom_test.py",
+      "tests/reading_panels_fold_dom_test.py",
       "tests/work_palette_dom_test.py",
       "tests/worklist*",
       "tests/workspace*",

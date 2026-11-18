@@ -6,12 +6,13 @@ reporting. Restore the preferred arrangement automatically.").
 
 REQ -> RISK: a fold that hides the panel's name (no way back), a fold that is Show/Hide under another name, folds
 forgotten on reload or mixed between accounts, freed space not given back, a fold that moves the report being
-written, a control off screen in a small window, words outside the screen language -> TEST-PANELS-FOLD-DOM-01..15.
+written, a control off screen in a small window, words outside the screen language -> TEST-PANELS-FOLD-DOM-01..18.
 
 The real main.html and its assets are served; only HTTP answers are synthetic (study_panel_page_dom_test.WorkspaceSite).
 Every assertion reads public controls, geometry, focus, field values and the stored preferences.
 """
 import json
+import os
 import re
 import sys
 import unittest
@@ -23,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import study_panel_page_dom_test as dom  # noqa: E402,F401
 from study_panel_page_dom_test import KEY, RASTER, WorkspaceSite, auth, settle, wait_startup  # noqa: E402
 
+OUT = Path(os.environ.get('KIN_FOLD_OUT', dom.ROOT / 'tmp/reading-panels-fold/dom'))
 PANELS = ('thumbnail', 'aiReport', 'imageReport', 'clinical', 'template')
 LABEL = {'thumbnail': 'Thumbnail', 'aiReport': 'AI Report', 'imageReport': 'Image Report',
          'clinical': 'Clinical Information', 'template': 'Reading Template'}
@@ -62,6 +64,7 @@ def plant(value, key=KEY):
 class ReadingPanelsFoldDOM(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        OUT.mkdir(parents=True, exist_ok=True)
         cls.pw = sync_playwright().start()
         cls.browser = cls.pw.chromium.launch(args=RASTER)
 
@@ -351,7 +354,7 @@ class ReadingPanelsFoldDOM(unittest.TestCase):
                     for control in ('#findings', '#b-save'):
                         page.locator(control).scroll_into_view_if_needed()
                         expect(page.locator(control)).to_be_in_viewport()
-                    page.screenshot(path=str(dom.ROOT / 'tmp' / f'panels-fold-{width}x{height}-{len(value["workspace"]["collapsedPanels"])}.png'))
+                    page.screenshot(path=str(OUT / f'panels-fold-{width}x{height}-{len(value["workspace"]["collapsedPanels"])}.png'))
 
     def test_12_the_new_words_follow_the_screen_language(self):
         from worklist_language_dom_test import LanguageSite
@@ -479,7 +482,7 @@ class ReadingPanelsFoldDOM(unittest.TestCase):
                 for key in PANELS:
                     self.fold(page, key).click()
                 after = self.geometry(page)
-                page.screenshot(path=str(dom.ROOT / 'tmp' / f'panels-fold-multi-{width}x{height}.png'))
+                page.screenshot(path=str(OUT / f'panels-fold-multi-{width}x{height}.png'))
                 self.assertIsNone(after['handle'])
                 self.assertAlmostEqual(after['band']['h'], after['folds']['h'], delta=1)
                 # The band is the names row and no more. Where Multi-Study had already squeezed the band below it (840 px:
