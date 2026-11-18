@@ -94,7 +94,8 @@ class ReadingBoxesDOM(unittest.TestCase):
         a, b = self.cover(page, source).bounding_box(), self.cover(page, target).bounding_box()
         page.mouse.move(a['x'] + a['width'] / 2, a['y'] + a['height'] / 2)
         page.mouse.down()
-        page.mouse.move(b['x'] + b['width'] / 2, b['y'] + b['height'] / 2, steps=8)
+        # Aim at the lower part of the target: the arrange bar may lie over the top of a box at the top of the page.
+        page.mouse.move(b['x'] + b['width'] / 2, b['y'] + b['height'] * 0.75, steps=8)
         if outcome:
             expect(self.cover(page, target)).to_contain_text(outcome)
             expect(page.locator('#box-arrange-status')).to_have_text(outcome)
@@ -389,6 +390,114 @@ class ReadingBoxesDOM(unittest.TestCase):
         bar.get_by_role('button', name='Swap Columns', exact=True).click()
         self.assert_order(page, ['worklist', 'relatedExams'], ['clinical', 'relatedReports', 'editor'], columns_swapped=True, portrait=True)
 
+    def test_13_mouse_click_pick_bar_is_not_a_target_and_covers_follow_a_resize(self):
+        page, _, _ = self.open()
+        bar = self.arrange(page)
+        # A click (no drag) picks a box; a click on another box drops it there.
+        self.cover(page, 'Worklist').click()
+        expect(self.cover(page, 'Worklist')).to_have_attribute('aria-pressed', 'true')
+        self.cover(page, 'Related Exam').click()
+        self.assertEqual(['list'], self.stored(page)['workspace']['boxSwaps'])
+        # Right after a mouse drop, Enter on the next box still picks it.
+        self.drag(page, 'Report Editor', 'Related Report')
+        self.cover(page, 'Clinical Information').focus()
+        page.keyboard.press('Enter')
+        expect(self.cover(page, 'Clinical Information')).to_have_attribute('aria-pressed', 'true')
+        page.keyboard.press('Escape')
+        # Releasing over the arrange bar (even where a box lies under it) drops nothing.
+        before = self.stored(page)['workspace']['boxSwaps']
+        a, done = self.cover(page, 'Related Report').bounding_box(), bar.get_by_role('button', name='Done', exact=True).bounding_box()
+        page.mouse.move(a['x'] + a['width'] / 2, a['y'] + a['height'] / 2); page.mouse.down()
+        page.mouse.move(done['x'] + done['width'] / 2, done['y'] + done['height'] / 2, steps=6); page.mouse.up()
+        settle(page)
+        self.assertEqual(before, self.stored(page)['workspace']['boxSwaps'])
+        expect(bar).to_be_visible()
+        # A handle dragged while arranging: the cover follows its box.
+        h = page.locator('#resize-related').bounding_box()
+        page.mouse.move(h['x'] + h['width'] / 2, h['y'] + 3); page.mouse.down()
+        page.mouse.move(h['x'] + h['width'] / 2, h['y'] + 63, steps=6); page.mouse.up()
+        settle(page)
+        page.wait_for_timeout(100)
+        box, cover = page.locator('.workrow > .related-p').bounding_box(), self.cover(page, 'Related Report').bounding_box()
+        self.assertAlmostEqual(box['y'] + box['height'], cover['y'] + cover['height'], delta=2)
+
+    def test_14_window_resize_under_a_drag_still_drops_and_the_next_drag_works(self):
+        page, _, _ = self.open()
+        self.arrange(page)
+        a = self.cover(page, 'Worklist').bounding_box()
+        page.mouse.move(a['x'] + a['width'] / 2, a['y'] + a['height'] / 2); page.mouse.down()
+        page.set_viewport_size({'width': 1700, 'height': 1000})
+        settle(page)
+        b = self.cover(page, 'Related Exam').bounding_box()
+        page.mouse.move(b['x'] + b['width'] / 2, b['y'] + b['height'] / 2, steps=6); page.mouse.up()
+        settle(page)
+        self.assertEqual(['list'], self.stored(page)['workspace']['boxSwaps'])
+        self.drag(page, 'Related Report', 'Report Editor', '놓으면 Related Report와 Report Editor가 자리를 바꿉니다.')
+        self.assertEqual(['list', 'report'], self.stored(page)['workspace']['boxSwaps'])
+
+    def test_15_wheel_over_a_cover_scrolls_the_column_under_it(self):
+        page, _, _ = self.open(width=800, height=600)
+        page.locator('#rows tr[data-uid] td').first.click()
+        settle(page)
+        self.arrange(page)
+        cover = self.cover(page, 'Related Report')
+        b = cover.bounding_box()
+        scrolled = "() => [...document.querySelectorAll('.workrow, .right, .split, .left')].map(n => n.scrollTop).reduce((a, b) => a + b, 0)"
+        before = page.evaluate(scrolled)
+        page.mouse.move(b['x'] + b['width'] / 2, b['y'] + min(b['height'] / 2, 20))
+        page.mouse.wheel(0, 300)
+        page.wait_for_timeout(200)
+        self.assertGreater(page.evaluate(scrolled), before)
+        expect(self.cover(page, 'Report Editor')).to_be_visible()
+
+    def test_16_study_panel_clears_the_editor_box_in_technician_and_small_windows(self):
+        # Technician with the columns swapped: the panel stays off the Order List.
+        page, _, _ = self.open(width=1024, height=768)
+        page.locator('.tabs > div[data-tab="Technician"]').click()
+        bar = self.arrange(page)
+        bar.get_by_role('button', name='Swap Columns', exact=True).click()
+        bar.get_by_role('button', name='Done', exact=True).click()
+        # (The first Technician cell opens the reader assignment dialog; a later cell only selects the row.)
+        page.locator('#rows tr[data-uid]').first.locator('td').nth(4).click()
+        page.locator('#toolbar-view > summary').click()
+        page.get_by_role('button', name='Study Panel', exact=True).click()
+        drawer = page.get_by_role('complementary', name='Study Panel', exact=True)
+        expect(drawer).to_be_visible()
+        settle(page)
+        box, order = drawer.bounding_box(), page.locator('.order-p').bounding_box()
+        apart_x = box['x'] >= order['x'] + order['width'] - 1 or box['x'] + box['width'] <= order['x'] + 1
+        apart_y = box['y'] >= order['y'] + order['height'] - 1 or box['y'] + box['height'] <= order['y'] + 1
+        self.assertTrue(apart_x or apart_y, f'{box} {order}')
+        # 800x600 with every swap: the panel does not lie over the Findings field.
+        record = {'version': 3, 'mode': 'auto', 'portrait': {}, 'landscape': {},
+                  'reading': {'version': 1, 'reportWidth': None, 'imageHeight': None, 'relatedHeight': None, 'relatedListHeight': None, 'relatedHidden': False},
+                  'workspace': {'version': 1, 'rail': None, 'worklist': None, 'related': None, 'prior': None,
+                                'railCollapsed': False, 'studyPanelTab': 'info', 'boxSwaps': ['columns', 'side', 'report']}}
+        init = 'localStorage.setItem(%s, %s)' % (json.dumps(KEY), json.dumps(json.dumps(record)))
+        page, _, _ = self.open(width=800, height=600, init=init)
+        page.locator('#rows tr[data-uid] td').first.click()
+        page.keyboard.press('Control+Alt+5')
+        drawer = page.get_by_role('complementary', name='Study Panel', exact=True)
+        expect(drawer).to_be_visible()
+        settle(page)
+        box, field = drawer.bounding_box(), page.locator('#findings').bounding_box()
+        overlap = max(0, min(box['y'] + box['height'], field['y'] + field['height']) - max(box['y'], field['y']))
+        self.assertEqual(0, overlap, f'{box} {field}')
+
+    def test_17_folders_rail_stays_at_the_top_of_a_scrolled_list_column(self):
+        record = {'version': 3, 'mode': 'auto', 'portrait': {}, 'landscape': {},
+                  'reading': {'version': 1, 'reportWidth': None, 'imageHeight': None, 'relatedHeight': None, 'relatedListHeight': None, 'relatedHidden': False},
+                  'workspace': {'version': 1, 'rail': None, 'worklist': None, 'related': None, 'prior': None,
+                                'railCollapsed': False, 'studyPanelTab': 'info', 'boxSwaps': ['list']}}
+        init = 'localStorage.setItem(%s, %s)' % (json.dumps(KEY), json.dumps(json.dumps(record)))
+        page, _, _ = self.open(width=800, height=600, init=init)
+        page.locator('#rows tr[data-uid] td').first.click()
+        settle(page)
+        page.evaluate("() => { document.querySelector('.left').scrollTop = 0; }")
+        settle(page)
+        rail, column = page.locator('#worklist-folders-panel').bounding_box(), page.locator('.left').bounding_box()
+        self.assertIsNotNone(rail)
+        self.assertLess(rail['y'], column['y'] + column['height'] - 20, f'{rail} {column}')
 
 if __name__ == '__main__':
     unittest.main()

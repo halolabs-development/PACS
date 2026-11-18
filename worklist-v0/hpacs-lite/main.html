@@ -374,6 +374,8 @@
     body.kin-swap-columns:not(.reading) .split > .right { order: 1; }
     body.kin-swap-columns:not(.reading) .split > #resize-main { order: 2; }
     body.kin-swap-columns:not(.reading) .split > .left { order: 3; }
+    /* The Folders rail stays the column's first child: it is sticky to the column's top when the column scrolls. */
+    body.kin-swap-list:not(.reading) .left > #worklist-folders-panel { order: -3; }
     body.kin-swap-list:not(.reading) .left > .related-list-pane { order: -2; margin: 6px 6px 0; }
     body.kin-swap-list:not(.reading) .left > #resize-left-split { order: -1; }
     body.kin-swap-list:not(.reading) .left > .statusbar { margin-bottom: 6px; }

@@ -11936,7 +11936,10 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         studyPanel.setSize({ axis: name === 'width' ? 'x' : 'y', key, value, min: studyPanelEdge.min, max: room, flip });
       };
       studyPanel.setText(text);
-      const report = $('.report-p').getBoundingClientRect();
+      // The report section is the Report Editor box; in Technician (no editor) with the columns swapped, the Order
+      // List in its place, so the panel measured from the right never covers it either.
+      let report = $('.report-p').getBoundingClientRect();
+      if (!report.width && atRight && $('.order-p')?.getClientRects().length) report = $('.order-p').getBoundingClientRect();
       if (portraitLayout() || innerWidth <= 1100) {
         const area = $('.split').getBoundingClientRect();
         const top = Math.max(0, area.top), bottom = Math.min(report.top, area.bottom, innerHeight) - 12;
@@ -11952,9 +11955,10 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           edge('width', width, minWidth, room);
           return;
         }
-        // A report section the reader moved up (stacked page): the room below it, when the room above is too small.
+        // A report section the reader moved up (stacked page): the room below it when the room above is too small and
+        // the room below is the larger one (with both small, the larger keeps the most of the section clear).
         const below = Math.min(area.bottom, innerHeight) - 12 - (report.bottom + 12);
-        if (bottom - top < 240 && below >= 240) {
+        if (bottom - top < 240 && below > bottom - top && below >= 120) {
           flip = true;
           const height = Math.max(120, size('height', Math.min(innerHeight * 0.55, below), minHeight, below));
           host.style.top = (Math.min(area.bottom, innerHeight) - 12 - height) + 'px';
@@ -13976,16 +13980,31 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     coverLayer.id = 'box-arrange-covers'; coverLayer.hidden = true;
     document.body.append(coverLayer, arrangeBar);
     let arranging = false, boxPicked = null, boxDrag = null, boxDropped = false, arrangeReturn = null, lastWorkFocus = null, coverFrame = 0;
-    // The field the reader was in before opening View: Done puts focus back there (its caret and text are untouched).
-    document.addEventListener('focusin', event => {
+    // The field the reader was in before opening Panel Settings: Done puts focus back there (its caret and text are
+    // untouched). Kept only while the page works (stopWorkspaceLayout removes it and forgets the field).
+    const noteWorkFocus = event => {
       const el = event.target;
       if (el instanceof Element && el.closest('.split') && !el.closest('.kin-box-cover')) lastWorkFocus = el;
-    }, true);
+    };
+    document.addEventListener('focusin', noteWorkFocus, true);
+    // The covers follow the boxes: a resize handle dragged while arranging, a notice growing a box, the window.
+    const coverObserver = new ResizeObserver(() => scheduleCovers());
+    // The scroller a box lives in (the list column, the report row, a stacked page), so the wheel over a cover still
+    // scrolls what is under it.
+    function boxScroller(node) {
+      for (let el = node?.parentElement; el && el !== document.body; el = el.parentElement) {
+        const style = getComputedStyle(el);
+        if (/(auto|scroll)/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 1) return el;
+      }
+      return null;
+    }
     const arrangeStatus = text => { $('#box-arrange-status').textContent = text; };
     function renderBoxCovers() {
       if (!arranging) return;
       const boxes = workspaceBoxes().filter(box => box.shown);
       const keep = new Map([...coverLayer.children].map(node => [node.dataset.box, node]));
+      coverObserver.disconnect();
+      for (const box of workspaceBoxes()) for (const node of box.elements) if (node) coverObserver.observe(node);
       const nodes = boxes.map(box => {
         let cover = keep.get(box.key);
         if (!cover) {
@@ -13995,6 +14014,12 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           cover.addEventListener('pointerdown', startBoxDrag);
           cover.addEventListener('click', boxKey);
           cover.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); escapeArrange(); } });
+          cover.addEventListener('wheel', event => {
+            const scroller = boxScroller(workspaceBoxes().find(b => b.key === cover.dataset.box)?.elements[0]);
+            if (!scroller) return;
+            event.preventDefault();
+            scroller.scrollBy({ top: event.deltaY, left: event.deltaX });
+          }, { passive: false });
         }
         cover.querySelector('.kin-box-name').textContent = box.label;
         cover.setAttribute('aria-label', box.label);
@@ -14002,11 +14027,16 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         Object.assign(cover.style, { left: box.visible.x + 'px', top: box.visible.y + 'px', width: box.visible.width + 'px', height: box.visible.height + 'px' });
         return cover;
       });
-      // Covers follow the screen order, so Tab among them goes the way the boxes are now shown.
-      const focused = coverLayer.contains(document.activeElement) ? document.activeElement : null;
-      coverLayer.replaceChildren(...nodes);
-      if (focused && !focused.isConnected) coverLayer.querySelector('.kin-box-cover')?.focus({ preventScroll: true });
-      else if (focused && document.activeElement !== focused) focused.focus({ preventScroll: true });
+      // Covers follow the screen order, so Tab among them goes the way the boxes are now shown. A cover is moved in the
+      // layer only when that order changed, and never under a press: moving a node ends its pointer capture and drops
+      // the click that a press and release on it make.
+      const current = [...coverLayer.children];
+      if (!boxDrag && (current.length !== nodes.length || current.some((node, i) => node !== nodes[i]))) {
+        const focused = coverLayer.contains(document.activeElement) ? document.activeElement : null;
+        coverLayer.replaceChildren(...nodes);
+        if (focused && !focused.isConnected) coverLayer.querySelector('.kin-box-cover')?.focus({ preventScroll: true });
+        else if (focused && document.activeElement !== focused) focused.focus({ preventScroll: true });
+      }
       if (boxPicked && !nodes.some(node => node.dataset.box === boxPicked)) boxPicked = null;
     }
     const scheduleCovers = () => {
@@ -14047,35 +14077,41 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       if (event.button !== 0 || !arranging || boxDrag) return;
       event.preventDefault(); boxDropped = false;
       const cover = event.currentTarget;
+      // A box picked by a click stays picked: this press may be the click that drops it.
       boxDrag = { from: cover.dataset.box, pointer: event.pointerId, target: null, cover };
-      boxPicked = null;
       cover.setPointerCapture(event.pointerId);
       cover.setAttribute('aria-pressed', 'true');
       markTarget(null);
       const move = e => {
         if (e.pointerId !== boxDrag?.pointer) return;
-        const under = document.elementsFromPoint(e.clientX, e.clientY).find(n => n.classList?.contains('kin-box-cover'));
+        // Only a cover that is on top under the pointer is a target (not one under the arrange bar).
+        const under = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('.kin-box-cover');
         const key = under && under.dataset.box !== boxDrag.from ? under.dataset.box : null;
         if (key !== boxDrag.target) { boxDrag.target = key; markTarget(key); }
       };
       const end = e => {
         if (e.pointerId !== boxDrag?.pointer) return;
-        cover.removeEventListener('pointermove', move); cover.removeEventListener('pointerup', end); cover.removeEventListener('pointercancel', end);
+        for (const type of ['pointermove', 'pointerup', 'pointercancel', 'lostpointercapture']) cover.removeEventListener(type, type === 'pointermove' ? move : end);
         if (cover.hasPointerCapture(e.pointerId)) cover.releasePointerCapture(e.pointerId);
         const { from, target } = boxDrag;
-        // The click that follows a release over another box belongs to that drop, not to a click-pick.
+        if (target) boxPicked = null;
+        // The mouse click that follows a release over another box belongs to that drop, not to a click-pick.
         boxDropped = e.type === 'pointerup' && !!target;
         if (boxDropped) dropBox(from, target);
         else { boxDrag = null; markTarget(null); renderBoxCovers(); }
       };
       boxDrag.cancel = () => end({ pointerId: boxDrag.pointer, type: 'pointercancel' });
-      cover.addEventListener('pointermove', move); cover.addEventListener('pointerup', end); cover.addEventListener('pointercancel', end);
+      // A capture the page loses (the window, a dialog) ends the drag without a drop.
+      for (const type of ['pointermove', 'pointerup', 'pointercancel', 'lostpointercapture']) cover.addEventListener(type, type === 'pointermove' ? move : end);
     }
     // Enter or Space (or a click without a drag) on a box picks it; on another box drops it there; on the same box
     // puts it back.
     function boxKey(event) {
       if (!arranging) return;
-      if (boxDropped) { boxDropped = false; return; }
+      // Only the mouse click of that drop is skipped; Enter or Space (detail 0) always counts.
+      const dropClick = boxDropped && event.detail > 0;
+      boxDropped = false;
+      if (dropClick) return;
       const key = event.currentTarget.dataset.box;
       if (!boxPicked) { boxPicked = key; markTarget(null); renderBoxCovers(); arrangeStatus('상자를 집었습니다. 놓을 상자로 Tab 이동한 뒤 Enter를 누르세요. Esc는 취소입니다.'); return; }
       if (boxPicked === key) { boxPicked = null; markTarget(null); renderBoxCovers(); arrangeStatus('집은 상자를 내려놓았습니다.'); return; }
@@ -14104,7 +14140,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     function endArrange(returnFocus = true) {
       if (!arranging) return;
       boxDrag?.cancel?.(); boxDrag = null; boxPicked = null; arranging = false;
-      cancelAnimationFrame(coverFrame); coverFrame = 0;
+      cancelAnimationFrame(coverFrame); coverFrame = 0; coverObserver.disconnect();
       document.body.classList.remove('kin-arranging');
       coverLayer.replaceChildren(); coverLayer.hidden = true; arrangeBar.hidden = true;
       if (!returnFocus) return;
@@ -14144,6 +14180,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     function stopWorkspaceLayout() {
       if (panelDialog.open) panelDialog.close();
       endArrange(false); document.removeEventListener('scroll', scheduleCovers, true);
+      document.removeEventListener('focusin', noteWorkFocus, true); lastWorkFocus = null; arrangeReturn = null;
       workspaceEnded = true; workspaceGeneration++;
       workspaceDragCancel?.(); workspaceObserver.disconnect(); cancelAnimationFrame(splitFrame); splitFrame = 0;
       window.removeEventListener('resize', applyLayout);

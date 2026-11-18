@@ -489,7 +489,10 @@
         studyPanel.setSize({ axis: name === 'width' ? 'x' : 'y', key, value, min: studyPanelEdge.min, max: room, flip });
       };
       studyPanel.setText(text);
-      const report = $('.report-p').getBoundingClientRect();
+      // The report section is the Report Editor box; in Technician (no editor) with the columns swapped, the Order
+      // List in its place, so the panel measured from the right never covers it either.
+      let report = $('.report-p').getBoundingClientRect();
+      if (!report.width && atRight && $('.order-p')?.getClientRects().length) report = $('.order-p').getBoundingClientRect();
       if (portraitLayout() || innerWidth <= 1100) {
         const area = $('.split').getBoundingClientRect();
         const top = Math.max(0, area.top), bottom = Math.min(report.top, area.bottom, innerHeight) - 12;
@@ -505,9 +508,10 @@
           edge('width', width, minWidth, room);
           return;
         }
-        // A report section the reader moved up (stacked page): the room below it, when the room above is too small.
+        // A report section the reader moved up (stacked page): the room below it when the room above is too small and
+        // the room below is the larger one (with both small, the larger keeps the most of the section clear).
         const below = Math.min(area.bottom, innerHeight) - 12 - (report.bottom + 12);
-        if (bottom - top < 240 && below >= 240) {
+        if (bottom - top < 240 && below > bottom - top && below >= 120) {
           flip = true;
           const height = Math.max(120, size('height', Math.min(innerHeight * 0.55, below), minHeight, below));
           host.style.top = (Math.min(area.bottom, innerHeight) - 12 - height) + 'px';
