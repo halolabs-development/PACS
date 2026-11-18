@@ -371,8 +371,8 @@ class AgentPins(unittest.TestCase):
         # 25 -> 26: S4-EG1 OrthancConnectionTests (one case).
         # CD-10 adds source-AE association, forwarded provenance and mixed-device batch coverage.
         # 29 -> 44: HeartbeatTests (15 cases), the operational heartbeat thread.
-        # 44 -> 69: RoutingTests (24 cases) and LogLineTests (one case), the Gateway settings.
-        self.assertEqual(count, 69)
+        # 44 -> 70: RoutingTests (including upgrade from a pre-routing queue) and LogLineTests.
+        self.assertEqual(count, 70)
 
 
 class ServerPins(unittest.TestCase):

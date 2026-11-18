@@ -1657,6 +1657,51 @@ class RoutingTests(unittest.TestCase):
             agent_module.status(cfg.queue_db)
         return json.loads(out.getvalue())
 
+    def test_pre_routing_queue_binds_on_start_and_sends_pending_study_to_kin(self):
+        epoch = "11111111-1111-4111-8111-111111111111"
+        completed = "1.2.840.99.6"
+        db = sqlite3.connect(self.path)
+        with db:
+            db.executescript("""
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE studies (
+                    uid TEXT PRIMARY KEY, orthanc_id TEXT NOT NULL, phase TEXT NOT NULL DEFAULT 'pending',
+                    batch_index INTEGER NOT NULL DEFAULT 0, successful_sops TEXT NOT NULL DEFAULT '[]',
+                    attempt INTEGER NOT NULL DEFAULT 0, next_at REAL NOT NULL DEFAULT 0, last_error TEXT,
+                    updated_at REAL NOT NULL, seq INTEGER NOT NULL DEFAULT 0, local_count INTEGER,
+                    success_count INTEGER NOT NULL DEFAULT 0, error_code TEXT, announced INTEGER NOT NULL DEFAULT 0,
+                    reported_seq INTEGER NOT NULL DEFAULT 0);
+            """)
+            db.executemany("INSERT INTO meta VALUES (?, ?)", [("epoch", epoch), ("changes_since", "5")])
+            db.execute("""INSERT INTO studies(uid, orthanc_id, phase, updated_at, seq, announced,
+                          local_count, success_count, successful_sops) VALUES (?, 'old-id', 'complete', 1, 7, 1, 1, 1, ?)""",
+                       (completed, json.dumps([completed + ".1"])))
+            db.execute("INSERT INTO studies(uid, orthanc_id, updated_at) VALUES (?, 'pending-id', 2)", (self.UID,))
+        db.close()
+
+        cfg = config(self.path)
+        agent = Agent(cfg)
+        self.addCleanup(agent.queue.close)
+        self.assertIsNone(agent.identity_error)
+        self.assertTrue(agent.settings.accept(settings_answer()))
+        agent.cloud = RouteCloud()
+        agent.orthanc = FakeOrthanc([self.UID + ".1"])
+        with (patch.object(agent.orthanc, "changes", create=True, return_value={"Done": True}) as changes,
+              patch.object(agent_module, "Heartbeat") as heartbeat, patch.object(agent_module.signal, "signal"),
+              patch.object(agent_module.time, "sleep", side_effect=agent.stop)):
+            agent.run()
+        heartbeat.return_value.start.assert_called_once()
+        changes.assert_called_once_with(5)
+        self.assertEqual((agent.cloud.announced, agent.cloud.stowed), ([self.UID], [self.UID]))
+        self.assertIn((completed, epoch, 7), [(r["studyUid"], r["epoch"], r["seq"]) for r in agent.cloud.receipts])
+
+        queue = Queue(self.path)
+        self.addCleanup(queue.close)
+        owner = queue.db.execute("SELECT value FROM meta WHERE key='owner'").fetchone()
+        self.assertEqual(json.loads(owner["value"]), {"client": cfg.client_id, "base": cfg.kin_base_url})
+        self.assertEqual(queue.summary()["complete"], 2)
+        self.assertEqual(queue.successes(completed), {completed + ".1"})
+
     def test_queue_owner_mismatch_blocks_all_outbound_work_before_start(self):
         agent = self.agent(settings_answer([rule("CT", None, "kin", PEER)]))
         self.kin(agent)

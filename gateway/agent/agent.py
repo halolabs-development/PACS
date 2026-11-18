@@ -501,7 +501,7 @@ class Queue:
         return attempt, delay
 
     def check_owner(self, owner: dict[str, str], settings_error: str | None) -> str | None:
-        """Only a fresh queue may acquire an owner. Keep legacy progress and unidentified forwards intact."""
+        """Queues from before routing can bind on upgrade. Fixed routes require a known owner."""
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
             meta = dict(self.db.execute("SELECT key, value FROM meta"))
@@ -510,8 +510,9 @@ class Queue:
             if "owner" in meta:
                 if meta["owner"] != encoded:
                     error = "queue_identity_mismatch"
-            elif (meta.keys() - {"epoch", "identity_error"} or
-                  self.db.execute("SELECT 1 FROM studies UNION ALL SELECT 1 FROM forwards LIMIT 1").fetchone()):
+            elif self.db.execute("""
+                SELECT 1 FROM forwards UNION ALL SELECT 1 FROM studies WHERE destinations IS NOT NULL LIMIT 1
+            """).fetchone():
                 error = "queue_identity_unknown"
             elif not error:
                 self.db.execute("INSERT INTO meta(key, value) VALUES ('owner', ?)", (encoded,))
