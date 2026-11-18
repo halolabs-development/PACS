@@ -159,6 +159,11 @@
       const run = () => { if (selectedUid === uid) then(); };
       if (result instanceof Promise) result.then(run); else run();
     }
+    /**
+     * The move now waiting (for the text's draft save) to go to `uid` - `{done, target}`: its answer, and the destination it
+     * ends with (read once answered: a later choice replaces it) - or null when no move is on its way there.
+     */
+    function pendingMoveTo(uid) { return pendingLeave?.target?.uid === uid ? pendingLeave : null; }
 
     /**
      * 지금 검사를 떠나도 되는가(W5 인터페이스 `leaveStudyGate`). 바로 정해지면 결과를, 저장의 답을 기다려야 하면 Promise를

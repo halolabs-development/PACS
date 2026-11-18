@@ -42,5 +42,6 @@
     $("#rows").addEventListener("dblclick", e => {
       if (e.target.closest('[data-tech-note]')) return;
       const tr = e.target.closest("tr");
-      if (tr?.dataset.uid) openFilmbox(tr.dataset.uid, autoPrior(tr.dataset.uid));
+      // The viewer follows the move the two clicks asked for: it opens on this study only once the list is on it.
+      if (tr?.dataset.uid) openStudyAfterMove(tr.dataset.uid, autoPrior(tr.dataset.uid));
     });
