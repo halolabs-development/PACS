@@ -450,6 +450,10 @@ window.KinViewerPatientTabs = (() => {
     }
     if (emptyNode) emptyNode.textContent = refused && !current ? DENIED : 'No Patient — 목록에서 검사를 여세요.';
     document.body.classList.toggle('kin-viewer-empty', (explicitlyClosed || refused) && !current && !pending);
+    // The refusal screen is up: its one line is all that shows (series-recovery.js takes back its image line and notices).
+    const screen = refused && !current && !pending, before = document.body.classList.contains('kin-open-refused');
+    document.body.classList.toggle('kin-open-refused', screen);
+    if (screen && !before) window.dispatchEvent(new CustomEvent('kin-viewer-open-refused'));
     renderLeave();
   }
   async function resolve(href, signal) {

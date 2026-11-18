@@ -8,26 +8,29 @@
      결과를 그대로 돌려준다. (수명주기, 검사, 시리즈|목록)마다 한 번, 고정 1000ms 뒤, 같은 this·options로 보낸다.
    - 로더가 쥐는 약속은 여기서 돌려준 하나뿐이다. 다시 받은 응답으로 그 약속을 한 번 채우므로 storeInstances·표시 세트·
      HP 적용도 한 번만 일어난다. 끝난 실패는 마지막 오류로 거절하고 영상이 준비된 척하지 않는다.
-   - 이전 검사(현재 검사가 아닌 것)는 이 경로의 첫 배치를 5초 넘게 붙잡지 않는다: 이전 검사마다 기한 하나 — 현재 검사의
-     목록이 끝난 때(이 문서가 현재 목록을 이미 가져 요청하지 않으면 그 이전 검사의 첫 요청 때)부터 5초 — 를 그 검사의
-     목록·시리즈 요청이 함께 쓰고, 기한에 아직 오지 않은 요청은 '늦음'으로 거절하며 늦게 온 답은 버린다. 첫 배치 뒤의 요청
+   - 다루는 것은 요청이 실제로 실패한 때(오류 상태·망 오류)뿐이다. 느린 요청은 끝까지 기다린다(시간으로 실패를 만들지 않는다).
    - URL의 검사 목록과 수명주기에 묶는다. 나가거나 URL이 바뀌면 기다리던 재요청은 보내지 않고 원래 오류로 끝내며
      알림도 남기지 않는다.
    - 실패는 URL 순서의 검사 번호와 HTTP 상태로만 알린다. UID·환자 정보는 쓰지 않는다. 사유는 상태 패널의 줄과 영상 위의
-     보이는 줄(#kin-viewer-open-status)에 같이 쓴다.
+     보이는 줄(#kin-viewer-open-status)에 같이 쓴다. 이 문서가 권한 없음 화면을 세웠으면(환자 탭, body의
+     kin-open-refused) 그 화면의 한 줄만 남긴다: 영상 위 줄과 이 확장의 알림을 감추고 뒤늦은 실패도 보이지 않는다.
    - 실패한 검사는 이 문서가 사는 동안 기억한다(kinViewerFailedStudies): OHIF가 그 거절을 문서 수명 동안 다시 쓰므로,
      그 검사를 다시 보이려면 새 문서여야 한다(목록의 창 열기와 환자 탭이 이것을 읽는다).
    - 배치: 목록을 못 받은 검사는 OHIF의 검사 목록에 빈 값으로 남아 배치가 예외로 멈춘다(Route Error Boundary). 문서 수명
-     동안 한 번 hangingProtocolService.run을 감싸 빈 값을 빼고, 지금 주소의 현재 검사 가운데 하나라도 없으면 배치하지 않는다
-     (일부만, 이전 검사를 현재처럼, 떠난 경로의 늦은 배치를 지금 화면에 놓지 않는다). 다른 확장의 경로별 감싸개보다 먼저(preRegistration) 씌워 그 아래에 둔다.
+     동안 한 번 hangingProtocolService.run을 감싸, 배치를 요청한 검사 목록(빈 값의 자리까지, 순서대로)이 지금 주소의
+     StudyInstanceUIDs와 같을 때만 배치한다 — 같으면 빈 값만 빼고(현재 검사가 빠졌으면 배치하지 않는다: 이전 검사를
+     현재처럼 놓지 않는다), 다르면 떠난 경로의 늦은 배치이므로 버리고 지금 화면을 둔다. 다른 확장의 경로별 감싸개보다
+     먼저(preRegistration) 씌워 그 아래에 둔다.
    - 현재 검사의 목록이 접근 거절이면 환자 탭의 권한 없음 화면으로 넘긴다(KinViewerPatientTabs.imagesRefused).
    - 모양이 예상과 다르면 씌우지 않고 기본 동작을 둔 채 그 사실만 표시한다. */
 function kinCreateSeriesMetadataRecovery() {
-  const retryDelay = 1000, priorGrace = 5000, own = (target, key) => Object.prototype.hasOwnProperty.call(target, key);
+  const retryDelay = 1000, own = (target, key) => Object.prototype.hasOwnProperty.call(target, key);
   let services = null, extensions = null, ticket = null, phase = 'stopped';
-  // Document lifetime: studies whose image read failed here (OHIF reuses that failure), and studies whose image list this
-  // document has (OHIF answers a later route from its cache without a request).
-  const failedStudies = new Set(), listedStudies = new Set();
+  // Document lifetime: studies whose image read failed here (OHIF reuses that failure for the document's life).
+  const failedStudies = new Set();
+  // This extension's own notices, so a refusal screen can take them back.
+  const notices = new Set();
+  const refusedScreen = () => !!document.body?.classList?.contains?.('kin-open-refused');
   const retryable = error => !!error && typeof error === 'object' && !!error.request &&
     (window.KinSessionTransport.refusal(error) === 'temporary' ||
       Number.isInteger(error.status) && error.status >= 500 && error.status <= 599);
@@ -60,7 +63,7 @@ function kinCreateSeriesMetadataRecovery() {
   // The same reason where the reader looks: one line over the images (the panel above may be collapsed).
   function show(text) {
     let node = document.querySelector('#kin-viewer-open-status');
-    if (!text) { node?.remove(); return; }
+    if (!text || refusedScreen()) { node?.remove(); return; }
     if (!node) {
       node = document.createElement('p'); node.id = 'kin-viewer-open-status'; node.setAttribute('role', 'status');
       node.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:1000;max-width:min(60em,calc(100vw - 16px));' +
@@ -70,27 +73,28 @@ function kinCreateSeriesMetadataRecovery() {
     }
     node.textContent = text;
   }
+  // A refusal screen stands (the patient tabs announce it): only its one line stays, whichever answer came first.
+  function quiet() {
+    show('');
+    for (const id of notices) try { services?.uiNotificationService?.hide?.(id); } catch (_) {}
+    notices.clear();
+  }
   function describe(failure) {
     const code = Number.isInteger(failure.status) && failure.status > 0 ? 'HTTP ' + failure.status : '요청 오류';
-    if (failure.late) return failure.position + (failure.list ? '번째 검사의 영상 정보가 늦어 그 검사 없이 표시했습니다. 뷰어를 다시 열면 다시 요청합니다.'
-      : '번째 검사의 일부 시리즈 영상 정보가 늦어 그 시리즈 없이 표시했습니다. 뷰어를 다시 열면 다시 요청합니다.');
     if (window.KinSessionTransport.refusal(failure.error) === 'temporary') return failure.position + '번째 검사의 연결을 확인하지 못했습니다. 뷰어를 다시 열어 재시도하세요.';
     if (window.KinSessionTransport.openFailure(failure.error) === 'denied') return failure.position + '번째 검사의 영상 정보에 접근할 수 없습니다(' + code + '). 이 검사 영상은 표시하지 않았습니다.';
     return failure.position + '번째 검사의 영상 정보를 ' + (failure.retried ? '한 번 다시 요청했지만 ' : '') +
       '불러오지 못했습니다(' + code + '). 이 검사 영상은 표시하지 않았습니다. 뷰어를 다시 여세요.';
   }
   function render(current) {
-    const failures = [...current.failures.values()].sort((a, b) => a.position - b.position);
-    say([...new Set(failures.map(describe))].join(' '));
-    // A refused current study shown on the patient tabs' one-line screen (KinViewerPatientTabs.imagesRefused) gets nothing more over it.
-    show([...new Set(failures.filter(failure => !failure.screen).map(describe))].join(' '));
+    const text = [...new Set([...current.failures.values()].sort((a, b) => a.position - b.position).map(describe))].join(' ');
+    say(text); show(text);
   }
   function release() {
     const current = ticket; ticket = null; phase = 'stopped'; say(''); show('');
     if (!current) return;
     for (const wait of current.waits) { clearTimeout(wait.timer); wait.cancel(); }
-    for (const deadline of current.priors) clearTimeout(deadline.timer);
-    current.waits.clear(); current.priors.clear(); current.failures.clear();
+    current.waits.clear(); current.failures.clear();
     for (const [key, wrapper] of Object.entries(current.wrappers))
       if (own(current.client, key) && current.client[key] === wrapper) delete current.client[key];
   }
@@ -107,39 +111,30 @@ function kinCreateSeriesMetadataRecovery() {
     if (!client || typeof client !== 'object' || typeof client.retrieveSeriesMetadata !== 'function' ||
         typeof client.searchForSeries !== 'function' || own(client, 'retrieveSeriesMetadata') || own(client, 'searchForSeries') ||
         config?.enableStudyLazyLoad !== true || !studies.length) return refuse();
-    const current = { client, search, wrappers: {}, used: new Set(), waits: new Set(), priors: new Set(), failures: new Map(), retries: 0,
-      currentLists: 0, answered: new Set(), due: new Map(), laidOut: false };
-    // This route's first layout is done (guardLayout): no prior holds it any more, so no deadline remains.
-    current.layout = () => { current.laidOut = true; for (const deadline of current.priors) clearTimeout(deadline.timer); current.priors.clear(); };
+    const current = { client, wrappers: {}, used: new Set(), waits: new Set(), failures: new Map(), retries: 0 };
     const live = () => ticket === current && location.search === search;
     const succeed = key => { if (live() && current.failures.delete(key)) render(current); };
-    const fail = (key, position, study, error, retried, late, list) => {
+    const fail = (key, position, study, error, retried, list) => {
       // The document keeps this rejection whether or not the route is still here (see failedInViewer, viewer-launch.js).
       failedStudies.add(study);
       if (!live()) return;
       const fresh = !current.failures.has(key);
+      current.failures.set(key, { position, status: error?.status, error, retried: retried || !!current.failures.get(key)?.retried });
       // The current exam's image list refused: the study cannot be shown to this account (KinSessionTransport.openFailure).
-      let screen = false;
       if (list && currentOf(search, studies).includes(study) && window.KinSessionTransport.openFailure(error) === 'denied')
-        try { screen = window.KinViewerPatientTabs?.imagesRefused?.() === true; } catch (_) {}
-      current.failures.set(key, { position, status: error?.status, error, late: !!late, list, screen,
-        retried: retried || !!current.failures.get(key)?.retried });
+        try { window.KinViewerPatientTabs?.imagesRefused?.(); } catch (_) {}
       render(current);
       // The route boundary also listens to unhandled rejections. Its generic toast must not replace the reason
       // this request already has (including the exhausted single retry), even if an upstream caller drops its catch.
       window.dispatchEvent(new CustomEvent('kin-series-metadata-failed', { detail: { error, message: describe(current.failures.get(key)) } }));
-      if (!fresh) return;
-      try { services?.uiNotificationService?.show?.({ title: 'Image Loading', message: describe(current.failures.get(key)), type: 'error' }); } catch (_) {}
+      if (!fresh || refusedScreen()) return;
+      try {
+        const id = services?.uiNotificationService?.show?.({ title: 'Image Loading', message: describe(current.failures.get(key)), type: 'error' });
+        if (id !== undefined && id !== null) notices.add(id);
+      } catch (_) {}
     };
-    // Every current study's image list is answered (in this route, or by this document's cache - no request comes then) and none
-    // is in flight: every waiting prior's deadline runs.
-    const armPriors = () => {
-      if (current.laidOut || current.currentLists || !live()) return;
-      if (!currentOf(search, studies).every(uid => current.answered.has(uid) || listedStudies.has(uid))) return;
-      for (const deadline of current.priors) deadline.arm();
-    };
-    // One request of the URL's studies, list (series === null) or one series: the single retry, the prior deadline, the
-    // failure record. Anything else (another study, a synchronous throw, a non-promise) is the original's own result.
+    // One request of the URL's studies, list (series === null) or one series: the single retry and the failure record.
+    // Anything else (another study, a synchronous throw, a non-promise) is the original's own result.
     function guarded(original, self, options, study, series) {
       const first = original.call(self, options);
       const position = studies.indexOf(study) + 1, list = series === null;
@@ -149,27 +144,14 @@ function kinCreateSeriesMetadataRecovery() {
         if (typeof study === 'string' && study && typeof first?.then === 'function') first.then(undefined, () => { failedStudies.add(study); });
         return first;
       }
-      const key = JSON.stringify([study, series]), prior = !currentOf(search, studies).includes(study);
+      const key = JSON.stringify([study, series]);
       return new Promise((resolve, reject) => {
         let done = false;
-        // One deadline per prior study for this route, shared by its list and series requests.
-        const deadline = { timer: null, arm() {
-          if (done || deadline.timer || current.laidOut) return;
-          if (!current.due.has(study)) current.due.set(study, Date.now() + priorGrace);
-          deadline.timer = setTimeout(() => {
-            if (!live() || current.laidOut) return;
-            finish(false, Object.assign(new Error('Prior study image metadata did not arrive in time.'), { kinLate: true }), false, true);
-          }, Math.max(0, current.due.get(study) - Date.now()));
-        } };
-        function finish(ok, value, retried, late) {
+        const finish = (ok, value, retried) => {
           if (done) return;
-          done = true; clearTimeout(deadline.timer); current.priors.delete(deadline);
-          if (ok) { resolve(value); succeed(key); } else { reject(value); fail(key, position, study, value, retried, late, list); }
-          if (list && ok) listedStudies.add(study);
-          if (list && !prior) { current.currentLists--; current.answered.add(study); armPriors(); }
-        }
-        if (list && !prior) current.currentLists++;
-        if (prior && !current.laidOut) { current.priors.add(deadline); armPriors(); }
+          done = true;
+          if (ok) { resolve(value); succeed(key); } else { reject(value); fail(key, position, study, value, retried, list); }
+        };
         first.then(value => finish(true, value), error => {
           if (done) return;
           // 예산은 첫 거절 때 잡는다. 같은 키의 반복·동시 요청은 예산을 새로 만들지 못한다.
@@ -204,20 +186,20 @@ function kinCreateSeriesMetadataRecovery() {
     }
     ticket = current; phase = 'installed';
   }
-  // Document lifetime, under every per-route run wrapper: a study missing from OHIF's study list (its image list failed)
-  // is left out of the layout; without every current study of the present URL nothing is laid out (also a left route's late
-  // layout, which names another patient's studies).
+  // Document lifetime, under every per-route run wrapper. OHIF asks for a layout with the route's studies in URL order, a study
+  // whose image list failed left as an empty entry. That whole list (empty entries in their places, same order) must be the
+  // present URL's StudyInstanceUIDs: then only the empty entries go, and nothing is laid out without every current study; any
+  // other list is a left route's late layout and is dropped, the present screen stays.
   function guardLayout(hp) {
     if (!hp || typeof hp.run !== 'function' || hp.run.kinStudiesGuard) return;
     const run = hp.run;
     const guardedRun = function (data, ...rest) {
-      const studies = data?.studies, currents = currentOf(location.search, studiesOf(location.search));
-      if (!Array.isArray(studies) || !currents.length) return run.call(this, data, ...rest);
-      const present = studies.filter(Boolean);
-      // Every current study must be there: a current exam is never laid out in part, nor a prior in its place.
-      if (!currents.every(uid => present.some(study => study?.StudyInstanceUID === uid))) return undefined;
-      if (ticket && ticket.search === location.search) ticket.layout();
-      if (present.length === studies.length) return run.call(this, data, ...rest);
+      const studies = data?.studies, uids = studiesOf(location.search);
+      if (!Array.isArray(studies) || !uids.length) return run.call(this, data, ...rest);
+      if (studies.length !== uids.length || studies.some((study, i) => study && study.StudyInstanceUID !== uids[i])) return undefined;
+      if (studies.every(Boolean)) return run.call(this, data, ...rest);
+      const present = studies.filter(Boolean), currents = currentOf(location.search, uids);
+      if (!currents.every(uid => present.some(study => study.StudyInstanceUID === uid))) return undefined;
       const active = present.includes(data.activeStudy) ? data.activeStudy : present.find(study => currents.includes(study.StudyInstanceUID));
       return run.call(this, { ...data, studies: present, activeStudy: active }, ...rest);
     };
@@ -231,6 +213,7 @@ function kinCreateSeriesMetadataRecovery() {
       services = servicesManager?.services || null; extensions = extensionManager || null;
       window.kinSeriesMetadataRecoveryState = state;
       window.kinViewerFailedStudies = () => [...failedStudies];
+      window.addEventListener?.('kin-viewer-open-refused', quiet);
       try { guardLayout(services?.hangingProtocolService); } catch (_) {}
     },
     onModeEnter() { release(); install(); },

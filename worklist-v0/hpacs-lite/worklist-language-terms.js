@@ -5321,8 +5321,6 @@ window.KinLanguageTerms = {
     ["{0}번째 검사의 영상 정보에 접근할 수 없습니다({1}). 이 검사 영상은 표시하지 않았습니다.", "Cannot access image information for study #{0} ({1}). Images from this study were not shown.", "m"],
     ["{0}번째 검사의 영상 정보를 {t1}불러오지 못했습니다({2}). 이 검사 영상은 표시하지 않았습니다. 뷰어를 다시 여세요.", "Could not load image information for study #{0} {t1}({2}). Images from this study were not shown. Reopen the viewer.", "m"],
     ["한 번 다시 요청했지만", "even after one retry", "l"],
-    ["{0}번째 검사의 영상 정보가 늦어 그 검사 없이 표시했습니다. 뷰어를 다시 열면 다시 요청합니다.", "Image information for study #{0} was late, so it is shown without that study. Reopen the viewer to request it again.", "m"],
-    ["{0}번째 검사의 일부 시리즈 영상 정보가 늦어 그 시리즈 없이 표시했습니다. 뷰어를 다시 열면 다시 요청합니다.", "Image information for some series of study #{0} was late, so they are shown without those series. Reopen the viewer to request them again.", "m"],
     ["영상 정보 재요청 기능을 연결하지 못했습니다. 기본 동작으로 계속 표시하며, 영상 칸이 비어 있으면 뷰어를 다시 여세요.", "Could not connect the image information retry feature. Display continues with the default behavior; if a viewport is empty, reopen the viewer.", "m"],
     ["뷰어 세션 연결을 불러오지 못했습니다.", "Could not load the viewer session connection.", "m"],
     ["검사 범위 도구를 불러오지 못했습니다.", "Could not load the study scope tool.", "m"],

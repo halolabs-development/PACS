@@ -846,7 +846,12 @@ class ViewerUXPriorsE2E(ViewerLayoutE2E):
         expect(viewer.locator('#kin-viewer-open-status')).to_have_count(0)
         self.evidence(viewer, 'prior-list-failure-reopened')
 
-    def test_priors_12_refused_or_late_prior_list_does_not_hold_the_current_study(self):
+    def release(self, held):
+        for route in held:
+            try: route.continue_()
+            except Exception: pass  # The page that asked is gone.
+
+    def test_priors_12_refused_prior_list_and_a_slow_prior(self):
         patient = 'U3R-' + uuid.uuid4().hex[:12]
         current = self.ct(patient, 'current', '20260801')
         prior = self.ct(patient, 'prior', '20250701')
@@ -854,35 +859,116 @@ class ViewerUXPriorsE2E(ViewerLayoutE2E):
         self.shows_only_current(viewer, current, prior)
         expect(viewer.locator('#kin-viewer-open-status')).to_contain_text('2번째 검사의 영상 정보에 접근할 수 없습니다(HTTP 403)')
         viewer.close()
-        # Late: the prior's list is held until after the current study shows (5 s after the current list at most).
+        # Slow, not failed: the prior's list is held for more than 5 s and then answered - both studies show, no reason,
+        # nothing recorded as failed (a slow request is waited for, as before).
         patient = 'U3L-' + uuid.uuid4().hex[:12]
         current = self.ct(patient, 'current', '20260801')
         prior = self.ct(patient, 'prior', '20250701')
         held = []
-        reader, viewer, lists, _ = self.comparison_open(current, prior, held.append)
-        self.shows_only_current(viewer, current, prior)
-        self.assertGreaterEqual(len(held), 1, 'the prior list is still held while the current study shows')
-        expect(viewer.locator('#kin-viewer-open-status')).to_contain_text('2번째 검사의 영상 정보가 늦어 그 검사 없이 표시했습니다')
-        for route in held:
-            try: route.continue_()
-            except Exception: pass
-        viewer.wait_for_timeout(1500)
-        self.assertNotIn(prior.uid, viewer.evaluate(self.SHOWN_STUDIES))
-        self.evidence(viewer, 'prior-list-late')
+        reader, viewer, _, _ = self.comparison_open(current, prior, held.append)
+        viewer.wait_for_timeout(6500)
+        self.assertGreaterEqual(len(held), 1, 'the prior list was held')
+        self.release(held)
+        for uid in (current.uid, prior.uid):
+            viewer.wait_for_function('uid => (' + self.SHOWN_STUDIES + ')().includes(uid)', arg=uid, timeout=30000)
+        expect(viewer.locator('#kin-viewer-open-status')).to_have_count(0)
+        self.assertEqual([], viewer.evaluate('() => kinViewerFailedStudies()'))
+        self.evidence(viewer, 'prior-list-slow')
 
-    def test_priors_13_a_study_the_account_cannot_see_is_refused_in_one_line(self):
-        reader = self.login()
-        viewer = reader.context.new_page()
-        unknown = '1.2.826.0.1.3680043.10.' + str(uuid.uuid4().int % 10**12) + '.1'
-        viewer.goto(self.stack.proxy + '/ohif/viewer?StudyInstanceUIDs=' + unknown)
+    def refused_screen(self, viewer, *hidden_texts):
         empty = viewer.locator('.kin-patient-empty')
         expect(empty).to_have_text('이 검사를 볼 수 있는 권한이 없습니다.', timeout=30000)
         expect(empty).to_be_visible()
         viewer.wait_for_function("() => document.body.classList.contains('kin-viewer-empty')")
         expect(viewer.get_by_role('button', name='Retry Patient', exact=True)).to_be_hidden()
         expect(viewer.get_by_text('같은 환자의 검사인지 확인할 수 없어', exact=False)).to_have_count(0)
-        self.assertNotIn(unknown, viewer.locator('body').inner_text())
-        self.evidence(viewer, 'refused-study')
+        expect(viewer.locator('#kin-viewer-open-status')).to_have_count(0)
+        shown = viewer.locator('body').inner_text()
+        for text in ('HTTP', 'Retry', '다시 여세요', '재시도') + hidden_texts:
+            self.assertNotIn(text, shown)
+
+    def test_priors_13_a_study_the_account_cannot_see_is_refused_in_one_line(self):
+        reader = self.login()
+        viewer = reader.context.new_page()
+        unknown = '1.2.826.0.1.3680043.10.' + str(uuid.uuid4().int % 10**12) + '.1'
+        viewer.goto(self.stack.proxy + '/ohif/viewer?StudyInstanceUIDs=' + unknown)
+        self.refused_screen(viewer, unknown)
+        self.evidence(viewer, 'refused-unknown-study')
+        viewer.close()
+        # A study that exists but this account may not see: a study-access rule allows only another study of the patient.
+        patient = 'U3A-' + uuid.uuid4().hex[:12]
+        allowed = self.ct(patient, 'allowed', '20260801')
+        hidden = self.ct(patient, 'hidden', '20250701')
+        subject = self.stack.request('GET', '/me', 'doctor').body['sub']
+        owner = self.stack.request('GET', '/me', 'jmryu').body
+        self.addCleanup(self.clear_access, subject)
+        written = self.stack.request('POST', '/admin/users/' + subject + '/study-access', 'jmryu', dict(
+            expectedOwner=[owner['institution'], owner['sub']], revision=0, requestId=str(uuid.uuid4()),
+            reason='SYNTHETIC viewer refusal', policy=dict(version=1, restricted=True, startsAt=None, endsAt=None, rules=[
+                dict(patientId=None, modalities=[], dateFrom=None, dateTo=None, studyUids=[allowed.uid])])))
+        self.assertEqual(written.status, 201, written.text)
+        url = self.stack.proxy + '/ohif/viewer?StudyInstanceUIDs=' + hidden.uid + ',' + unknown
+        prior_list = re.compile(re.escape(self.PRIOR_LIST.format(unknown)) + r'(\?|$)')
+        # The prior's failure comes after the refusal ...
+        reader = self.login()
+        held = []
+        reader.context.route(prior_list, held.append)
+        viewer = reader.context.new_page()
+        viewer.goto(url)
+        self.refused_screen(viewer, hidden.uid, unknown, patient)
+        self.release(held)
+        viewer.wait_for_timeout(2500)
+        self.refused_screen(viewer, hidden.uid, unknown, patient)
+        self.evidence(viewer, 'refused-hidden-study-prior-later')
+        viewer.close()
+        # ... and before it (the account's lookup and the study's own list are held until the prior's list has failed).
+        reader = self.login()
+        lookups, failed = [], []
+        reader.context.route(prior_list, lambda r: (failed.append(1), r.fulfill(status=503, body='Unavailable')))
+        reader.context.route(re.compile(r'/api/studies\?uids='), lookups.append)
+        reader.context.route(re.compile(re.escape(self.PRIOR_LIST.format(hidden.uid)) + r'(\?|$)'), lookups.append)
+        viewer = reader.context.new_page()
+        viewer.goto(url)
+        deadline = __import__('time').monotonic() + 30
+        while len(failed) < 2 and __import__('time').monotonic() < deadline: viewer.wait_for_timeout(200)
+        self.assertGreaterEqual(len(failed), 2, 'the prior list failed (and its one retry) before the lookup answered')
+        expect(viewer.locator('#kin-viewer-open-status')).to_contain_text('2번째 검사')
+        self.release(lookups)
+        self.refused_screen(viewer, hidden.uid, unknown, patient)
+        self.evidence(viewer, 'refused-hidden-study-prior-first')
+
+    def clear_access(self, subject):
+        from test_worklist import psql
+        from invariants_live import past_audit_guard
+        lit = lambda v: "'" + str(v).replace("'", "''") + "'"
+        for table in ['StudyAccessRevision', 'StudyAccessPolicy']:
+            for raw in psql('SELECT to_jsonb(t)::text FROM "' + table + '" t WHERE subject=' + lit(subject)):
+                self.assertTrue(json.loads(raw)['reason'].startswith('SYNTHETIC'))
+                self.assertEqual(psql('DELETE FROM "' + table + '" t WHERE to_jsonb(t)=' + lit(raw) + '::jsonb RETURNING 1'), ['1'])
+        for raw in psql('SELECT to_jsonb(t)::text FROM "AuditLog" t WHERE target=' + lit(subject) + " AND action='study.access'"):
+            self.assertTrue(json.loads(json.loads(raw)['detail'])['reason'].startswith('SYNTHETIC'))
+            self.assertEqual(psql(past_audit_guard('DELETE FROM "AuditLog" t WHERE to_jsonb(t)=' + lit(raw) + '::jsonb RETURNING 1')), ['1'])
+
+    def test_priors_14_a_left_comparisons_late_layout_does_not_replace_the_present_study(self):
+        patient = 'U3M-' + uuid.uuid4().hex[:12]
+        current = self.ct(patient, 'current', '20260801')
+        prior = self.ct(patient, 'prior', '20250701')
+        held = []
+        reader, viewer, _, _ = self.comparison_open(current, prior, held.append)
+        viewer.wait_for_function('() => typeof kinViewerOpenPatient === "function"', timeout=30000)
+        deadline = __import__('time').monotonic() + 30
+        while not held and __import__('time').monotonic() < deadline: viewer.wait_for_timeout(200)
+        self.assertTrue(held, 'the comparison waits on the prior list')
+        # Move this window to the prior alone while the comparison's layout is still waiting.
+        target = self.stack.proxy + '/ohif/viewer?StudyInstanceUIDs=' + prior.uid
+        viewer.evaluate('u => { window.__synMove = kinViewerOpenPatient(u); }', target)
+        viewer.wait_for_function('uid => new URLSearchParams(location.search).get("StudyInstanceUIDs") === uid', arg=prior.uid, timeout=30000)
+        self.release(held)
+        viewer.wait_for_function('uid => (' + self.SHOWN_STUDIES + ')().includes(uid)', arg=prior.uid, timeout=30000)
+        viewer.wait_for_timeout(2500)
+        self.assertNotIn(current.uid, viewer.evaluate(self.SHOWN_STUDIES))
+        self.assertEqual(prior.uid, viewer.evaluate('() => new URLSearchParams(location.search).get("StudyInstanceUIDs")'))
+        self.evidence(viewer, 'left-comparison-late-layout')
 
 
 def load_tests(loader, tests, pattern):
