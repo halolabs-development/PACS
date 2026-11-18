@@ -26,8 +26,8 @@ html, body { margin: 0; height: 100%; background: #000; color: #ddd; font: 12px 
 [data-cy=viewport-grid] { display: grid; grid-template-columns: 1fr 1fr; }
 [data-cy=viewport-pane] { position: relative; overflow: hidden; outline: 1px solid #333; }
 .syn-side { flex: none; background: #111; overflow: hidden; display: flex; flex-direction: column; }
-.syn-thumbs { display: grid; grid-template-columns: repeat(2, 128px); gap: 4px; }
-[data-cy=study-browser-thumbnail] { width: 128px; height: 100px; background: #333; }
+.grid { display: grid; } .grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .min-h-350 { min-height: 350px; }
+.syn-thumb { height: 170px; width: 135px; background: #333; display: flex; flex-direction: column; }
 </style></head><body><div id="root"><div id="app" class="flex flex-col" style="height: 100vh">
   <div id="layout" class="relative flex w-full flex-row overflow-hidden flex-1">
     <div id="column" class="flex h-full flex-1 flex-col">
@@ -55,9 +55,15 @@ SETUP = """([owner, right, dock]) => {
     };
     draw(); box.synState = state; box.synDraw = draw; return box;
   };
-  const studies = '<div class="flex flex-col"><div data-cy="studyBrowser-panel" class="flex flex-1 flex-col" style="overflow:auto">'
-    + ['20261101 CT', '20250101 CT'].map(s => '<div class="syn-study" style="flex-shrink:0"><div>' + s + '</div><div class="syn-thumbs">'
-    + '<div data-cy="study-browser-thumbnail"></div><div data-cy="study-browser-thumbnail"></div><div data-cy="study-browser-thumbnail"></div></div></div>').join('') + '</div></div>';
+  // OHIF 3.9.1 ui-next: StudyBrowser (studyBrowser-panel, the scroll container) > StudyItem (Accordion root > item > h3
+  // heading + region) > ThumbnailList (min-h-[350px] > #ohif-thumbnail-list, a two-column grid) > Thumbnail
+  // (h-[170px] w-[135px], study-browser-thumbnail) > the draggable inner box.
+  const thumb = n => '<div data-cy="study-browser-thumbnail" class="syn-thumb"><div draggable="true" class="h-full w-full">Series ' + n + '</div></div>';
+  const study = (s, n) => '<div class="syn-study flex-shrink-0"><div data-state="open"><h3><button type="button">' + s + '<br>CT<br>' + n + ' series</button></h3>'
+    + '<div role="region"><div class="min-h-350"><div id="ohif-thumbnail-list" class="grid grid-cols-2">' + Array.from({ length: n }, (_, i) => thumb(i + 1)).join('') + '</div></div></div></div></div>';
+  // The panel's content and the list's own wrappers are plain blocks (React components that add a box of their own).
+  const studies = '<div class="syn-content"><div class="syn-wrap"><div data-cy="studyBrowser-panel" class="flex flex-1 flex-col" style="overflow:auto">'
+    + [['20261101 CT', 3], ['20250101 CT', 5], ['20240101 CT', 8], ['20230101 CT', 8], ['20220101 CT', 8]].map(([s, n]) => study(s, n)).join('') + '</div></div></div>';
   const layout = document.getElementById('layout');
   layout.prepend(make('left', [{ name: 'studyBrowser', content: studies }], true));
   if (right.length) layout.append(make('right', right.map(name => ({ name, content: name === 'trackedMeasurements'
@@ -142,8 +148,14 @@ class ViewerPanelsDOMTest(unittest.TestCase):
         # Studies run left to right; each study's thumbnails in one row.
         studies = page.evaluate("""() => [...document.querySelectorAll('.syn-study')].map(s => { const r = s.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top)]; })""")
         self.assertEqual(studies[0][1], studies[1][1]); self.assertLess(studies[0][0], studies[1][0])
-        thumbs = page.evaluate("""() => new Set([...document.querySelectorAll('.syn-study:first-child [data-cy=study-browser-thumbnail]')].map(t => Math.round(t.getBoundingClientRect().top))).size""")
-        self.assertEqual(1, thumbs)
+        thumbs = page.evaluate("""() => [...document.querySelectorAll('.syn-study')].map(s => new Set([...s.querySelectorAll('[data-cy=study-browser-thumbnail]')].map(t => Math.round(t.getBoundingClientRect().top))).size)""")
+        self.assertEqual([1] * 5, thumbs, 'each study\'s thumbnails in one row')
+        # Every thumbnail can be reached and pressed: brought into the band's view, its own box takes the press there.
+        reach = page.evaluate("""() => [...document.querySelectorAll('[data-cy=study-browser-thumbnail] [draggable=true]')].map(node => {
+            node.scrollIntoView({ block: 'nearest', inline: 'nearest' }); const r = node.getBoundingClientRect();
+            return node.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)); })""")
+        self.assertEqual(32, len(reach)); self.assertTrue(all(reach), reach)
+        self.assertLessEqual(self.box(page, LEFT)['height'], 200, 'a band, not a column')
         self.button(page, 'studies').click()
         page.evaluate(FRAME)
         closed = self.box(page, '[data-cy=viewport-grid]')
@@ -166,7 +178,9 @@ class ViewerPanelsDOMTest(unittest.TestCase):
         expect(self.button(page, 'measurements')).to_have_attribute('aria-pressed', 'true')
         right = self.box(page, RIGHT)
         self.assertTrue(right['shown']); self.assertEqual(1366, right['right'])
-        self.assertLess(self.box(page, '#column')['right'], right['left'] + 1)
+        # The long Studies band never widens a column: the images and the right panel share the row's width.
+        self.assertEqual(280, right['width'])
+        self.assertEqual(right['left'], self.box(page, '#column')['right'])
         self.button(page, 'segmentation').click()
         page.evaluate(FRAME)
         expect(page.locator('[data-cy=panelSegmentation-panel]')).to_have_count(1)

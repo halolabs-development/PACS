@@ -35,6 +35,12 @@ GEOMETRY = '''() => {
 # The stock panel is open when its sliding margin is zero; its header toggles it.
 PANEL_OPEN = '''side => { const box = document.querySelector('[data-cy=side-panel-header-' + side + ']')?.closest('[style*="margin-' + side + '"]');
   return box ? box.style[side === 'left' ? 'marginLeft' : 'marginRight'] === '0px' : null; }'''
+BAND_OUTLINE = '''() => { const band = document.querySelector('[data-kin-studies-panel]'); if (!band) return null; const out = [];
+  const walk = (node, depth) => { if (depth > 9 || out.length > 80) return; const r = node.getBoundingClientRect(), s = getComputedStyle(node);
+    out.push([depth, node.tagName, (node.getAttribute('class') || '').slice(0, 70), node.dataset.cy || node.id || '', Math.round(r.x), Math.round(r.y),
+      Math.round(r.width), Math.round(r.height), s.display, s.flexDirection, s.overflowX + '/' + s.overflowY]);
+    for (const child of [...node.children].slice(0, 3)) walk(child, depth + 1); };
+  walk(band, 0); return out; }'''
 CELL = '''id => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id), p = v.getProperties();
   return {voi: p.voiRange && [p.voiRange.lower, p.voiRange.upper], invert: !!p.invert, scale: v.getCamera().parallelScale,
     flip: !!v.getCamera().flipHorizontal}; }'''
@@ -62,6 +68,10 @@ class ViewerSpaceE2E(ViewerLayoutE2E):
         folder = evidence()
         (folder / (name + '.json')).write_text(json.dumps(page.evaluate(GEOMETRY), indent=1), encoding='utf-8')
         page.screenshot(path=str(folder / (name + '.png')))
+        # The Studies band as the viewer draws it: each box down to the thumbnails, with its place and overflow.
+        outline = page.evaluate(BAND_OUTLINE)
+        if outline:
+            print('STUDIES BAND ' + name + ' ' + json.dumps(outline), flush=True)
 
     def test_space_01_one_line_tools_and_series(self):
         fixture = self.multiple('VSPACE-' + uuid.uuid4().hex[:12], 'current', '20260801')

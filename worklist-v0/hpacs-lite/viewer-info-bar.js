@@ -180,7 +180,10 @@ window.KinViewerInfoBar = (() => {
         if (bar.children[1].textContent !== status) bar.children[1].textContent = status;
         bar.children[1].title = '영상 모드는 이 셀, 배치는 전체 뷰어에 적용됩니다.';
         const fill = cellTools?.();
-        if (fill) fill(id, bar.children[3], { type, rendered: !!m, width: bar.clientWidth }); else bar.children[3].hidden = true;
+        // A cell given images keeps its tools while its next image loads (every scroll and cine frame): only an empty
+        // cell, or one whose viewer has no data, has none.
+        const holding = !!given && current.viewport.viewportStatus !== viewportStatus.NO_DATA;
+        if (fill) fill(id, bar.children[3], { type, rendered: holding, width: bar.clientWidth }); else bar.children[3].hidden = true;
       }
       for (const pane of document.querySelectorAll('[data-cy="viewport-grid"] [data-cy="viewport-pane"]') || []) settle(pane);
     }
