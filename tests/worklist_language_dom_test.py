@@ -272,12 +272,36 @@ class WorklistLanguageDOM(unittest.TestCase):
           KinLanguage.write(save, KinLanguage.say('Approve'), 'title');
           save.title = save.title;
           save.firstChild.data = save.firstChild.data;
+          const approve = document.querySelector('#b-approve');
+          KinLanguage.write(approve, KinLanguage.say('Approve'));
+          KinLanguage.write(approve, approve.textContent);
           KinLanguage.restore({version:1,worklist:'en',reading:'en'});
         }""")
         expect(self.page.locator('#b-save')).to_have_text('저장')
         expect(self.page.locator('#b-save')).to_have_attribute('title', '승인')
+        expect(self.page.locator('#b-approve')).to_have_text('승인')
         self.page.locator('#language-revert').click()
         expect(self.page.locator('#b-save')).to_have_text('저장')
+
+    def test_unchanged_inbox_reads_leave_both_live_regions_quiet(self):
+        self.page.clock.install()
+        self.boot()
+        counts = self.page.evaluate_handle("""() => {
+          const counts = {};
+          for (const id of ['cvr-inbox-badge', 'cvr-inbox-status']) {
+            counts[id] = 0;
+            new MutationObserver(changes => counts[id] += changes.length)
+              .observe(document.getElementById(id), {childList: true, characterData: true, subtree: true});
+          }
+          return counts;
+        }""")
+        for _ in range(2):
+            with self.page.expect_response("**/api/critical-results?view=received&state=pending") as read:
+                self.page.clock.fast_forward(60_000)
+            self.assertTrue(read.value.ok)
+            self.assertEqual(0, read.value.json()["pending"])
+        self.page.clock.fast_forward(10_000)
+        self.assertEqual({"cvr-inbox-badge": 0, "cvr-inbox-status": 0}, counts.json_value())
 
     def test_browser_dialogs_and_errors_follow_the_language(self):
         self.boot()
@@ -467,9 +491,18 @@ class WorklistLanguageDOM(unittest.TestCase):
             self.assertTrue(row.locator("[data-kin-characteristics]").inner_text().endswith(": Unread"))
         self.page.evaluate("KinLanguage.restore({version:1,worklist:'en',reading:'en'})")
         row.get_by_role("button", name="Insert into Report").first.click()
-        for lang in ("en", "ko"):
+        target = self.page.locator("#cite-preview-target")
+        for lang in ("en", "ko", None):
             self.page.evaluate("l => KinLanguage.restore({version:1,worklist:l,reading:l})", lang)
             expect(self.page.locator("#cite-preview-source")).to_contain_text("승인")
+            lines = target.inner_text().splitlines()
+            if lang == "en":
+                self.assertEqual(1, len(lines))
+                self.assertTrue(lines[0].startswith("Insert target: " + auth.PATIENT))
+            else:
+                self.assertEqual(2, len(lines))
+                self.assertTrue(lines[0].startswith("삽입 대상: " + auth.PATIENT))
+                self.assertIn("SYN CT CHEST", lines[1])
 
     def test_key_image_title_and_tech_note_keep_the_authors_words(self):
         self.boot()

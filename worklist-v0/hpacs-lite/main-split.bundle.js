@@ -7545,7 +7545,7 @@
       const s = cur();
       const why = citationInsertBlock();
       kinWrite($("#cite-preview-target"), s
-        ? kinSay("삽입 대상: {0} ({1}) {2} · {3} · AccNo: {4}", s.name, s.id, s.date, shownStudyDesc(s), s.acc || kinSay("없음"))
+        ? kinSay("삽입 대상: {0} ({1})\n{2} · {3} · AccNo: {4}", s.name, s.id, s.date, shownStudyDesc(s), s.acc || kinSay("없음"))
         : kinSay("삽입 대상: 검사 미선택"));
       kinWrite($("#cite-preview-source"), kinSay("출처: {0} · 소견 r{1} · 인용 당시 연결 {2}",
         citePane.sourceLabel, citePane.findingRevision, citePane.linkState));

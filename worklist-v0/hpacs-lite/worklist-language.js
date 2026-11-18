@@ -98,16 +98,20 @@
     flush();
     let node = el;
     if (!name && el.nodeType !== 3) {
-      node = el.ownerDocument.createTextNode('');
-      el.replaceChildren(node);
+      node = el.firstChild;
+      if (node?.nodeType !== 3 || node.nextSibling) {
+        node = el.ownerDocument.createTextNode('');
+        el.replaceChildren(node);
+      }
     }
     if (isSentence(value)) {
       register(node, name, value);
       display(node, name, value);
     } else {
       records.get(node)?.delete(name);
-      if (name) node.setAttribute(name, String(value ?? ''));
-      else node.data = String(value ?? '');
+      const text = String(value ?? '');
+      if (name) node.setAttribute(name, text);
+      else if (node.data !== text) node.data = text;
     }
     return el;
   }
