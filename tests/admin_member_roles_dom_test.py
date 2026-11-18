@@ -79,6 +79,7 @@ SCRIPTS = {
     "/worklist/hpacs-lite/emr-link.js": lf_text(HPACS / "emr-link.js"),
     "/worklist/hpacs-lite/emr-link-admin.js": lf_text(HPACS / "emr-link-admin.js"),
     # FC-070: the DICOM Peers section.
+    "/worklist/hpacs-lite/critical-result-inbox-admin.js": lf_text(HPACS / "critical-result-inbox-admin.js"),
     "/worklist/hpacs-lite/dicom-peers-admin.js": lf_text(HPACS / "dicom-peers-admin.js"),
     # CD-01: the shared Product Information panel and its embedded facts.
     "/worklist/hpacs-lite/product-info-data.js": lf_text(HPACS / "product-info-data.js"),
@@ -461,6 +462,66 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         expect(self.page.locator("#emr-link-template")).to_have_value("")
         self.assertEqual([("PATCH", {"template": "javascript:alert({patientId})"}), ("PATCH", {"template": changed}),
                           ("PATCH", {"template": None})], writes)
+
+    def test_critical_result_hospital_inbox_section_loads_on_request_sets_refuses_and_clears(self):
+        # The hospital inbox: the one member the Send Critical Result dialog checks by default (GET/PATCH
+        # /api/admin/critical-result-inbox). Opening the page reads nothing; Load Members reads it; Save sends {sub}.
+        desk = {"sub": "00000000-0000-4000-8000-00000000d001", "actor": "syn-desk@synthetic.test", "name": "SYN Ward Desk", "role": "clinician"}
+        reader = {"sub": "00000000-0000-4000-8000-00000000d002", "actor": "syn-reader@synthetic.test", "name": "SYN Reader", "role": "radiologist"}
+        state = {"inbox": None, "fail": None}
+        calls = []
+        def answer():
+            inbox = state["inbox"]
+            member = next((m for m in (desk, reader) if m["sub"] == inbox), None)
+            return {"owner": ["SYN-INST", "SYN-ADMIN-SUB"], "members": [desk, reader],
+                    "inbox": None if inbox is None else {"sub": inbox, "member": member}}
+        def inbox_route(route):
+            request = route.request
+            body = request.post_data_json if request.method == "PATCH" else None
+            calls.append((request.method, body))
+            if request.method == "PATCH":
+                if state["fail"]:
+                    route.fulfill(status=state["fail"][0], json=state["fail"][1])
+                    return
+                state["inbox"] = body["sub"]
+                route.fulfill(json={**answer(), "changed": True})
+                return
+            route.fulfill(json=answer())
+        self.page.route("**/api/admin/critical-result-inbox", inbox_route)
+        self.load()
+        expect(self.page.locator("#cr-inbox-title")).to_have_text("Critical Result Hospital Inbox")
+        expect(self.page.locator("#cr-inbox-state")).to_have_text("Not Loaded")
+        expect(self.page.locator("#cr-inbox-save")).to_be_disabled()
+        self.assertEqual([], calls, "opening the page reads nothing")
+        self.page.locator("#cr-inbox-refresh").click()
+        expect(self.page.locator("#cr-inbox-state")).to_have_text("Not Set")
+        expect(self.page.locator("#cr-inbox-current")).to_have_text("Current: Not Set")
+        expect(self.page.locator("#cr-inbox-member option")).to_have_count(3)
+        expect(self.page.locator("#cr-inbox-member option").nth(1)).to_have_text("SYN Ward Desk (syn-desk@synthetic.test) · Clinician")
+        # Set: PATCH {sub}; the answer becomes the current value.
+        self.page.locator("#cr-inbox-member").select_option(desk["sub"])
+        self.page.locator("#cr-inbox-save").click()
+        expect(self.page.locator("#cr-inbox-current")).to_have_text("Current: SYN Ward Desk (syn-desk@synthetic.test)")
+        expect(self.page.locator("#cr-inbox-state")).to_have_text("Set")
+        expect(self.page.locator("#cr-inbox-message")).to_contain_text("미리 체크됩니다")
+        # A refusal shows the server's wording and the stored value is read again (never assumed unchanged or saved).
+        state["fail"] = (400, {"statusCode": 400, "code": "CRITICAL_RESULT_RECIPIENT_INVALID",
+                               "message": "병원 수신 회원은 이 기관의 활성 임상의 또는 판독의여야 합니다"})
+        self.page.locator("#cr-inbox-member").select_option(reader["sub"])
+        self.page.locator("#cr-inbox-save").click()
+        expect(self.page.locator("#cr-inbox-message")).to_have_text("병원 수신 회원은 이 기관의 활성 임상의 또는 판독의여야 합니다")
+        expect(self.page.locator("#cr-inbox-member")).to_have_value(desk["sub"])
+        # A stored member who can no longer receive is said, not shown as set.
+        state["fail"] = None
+        state["inbox"] = "00000000-0000-4000-8000-00000000d0ff"
+        self.page.locator("#cr-inbox-refresh").click()
+        expect(self.page.locator("#cr-inbox-state")).to_have_text("Not Reachable")
+        expect(self.page.locator("#cr-inbox-member")).to_have_value("")
+        # Clear: None saves {sub: null}.
+        self.page.locator("#cr-inbox-save").click()
+        expect(self.page.locator("#cr-inbox-current")).to_have_text("Current: Not Set")
+        self.assertEqual([("GET", None), ("PATCH", {"sub": desk["sub"]}), ("PATCH", {"sub": reader["sub"]}), ("GET", None),
+                          ("GET", None), ("PATCH", {"sub": None})], calls)
 
     def test_fc070_dicom_peers_section_lists_adds_refuses_with_the_server_wording_and_removes(self):
         peers, calls = [], []

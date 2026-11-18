@@ -259,6 +259,21 @@
       <p class="audit-fixed" id="emr-link-preview"></p>
       <p class="message" id="emr-link-message" role="alert"></p>
     </section>
+    <section class="gateway" id="cr-inbox" aria-labelledby="cr-inbox-title">
+      <div class="gateway-head">
+        <h2 id="cr-inbox-title">Critical Result Hospital Inbox</h2>
+        <span class="gstate not_loaded" id="cr-inbox-state" role="status">Not Loaded</span>
+        <div class="spacer"></div>
+        <button type="button" id="cr-inbox-refresh" disabled>Load Members</button>
+      </div>
+      <p class="gateway-hint">병원이 중요 결과(CVR)를 함께 받는 공용 창구로 쓰는 회원 한 명입니다. 정해 두면 판독의의 Send Critical Result 창에서 이 회원이 미리 체크되고, 판독의가 고른 처방의와 함께 사람마다 따로 전달됩니다(확인도 따로). 이 기관의 활성 임상의·판독의만 고를 수 있습니다. HALO PACS 화면 안에서만 가고 메일·문자·전화로 가지 않습니다. None으로 저장하면 해제됩니다.</p>
+      <form id="cr-inbox-form" class="audit-head">
+        <label class="wide">Inbox Member <select id="cr-inbox-member" disabled><option value="">None</option></select></label>
+        <button type="submit" class="primary" id="cr-inbox-save" disabled>Save</button>
+      </form>
+      <p class="audit-fixed" id="cr-inbox-current">Current: Not Loaded</p>
+      <p class="message" id="cr-inbox-message" role="alert"></p>
+    </section>
     <section class="gateway" id="dicom-peers" aria-labelledby="dicom-peers-title">
       <div class="gateway-head">
         <h2 id="dicom-peers-title">DICOM Peers</h2>
@@ -1993,6 +2008,7 @@
   <script src="held-sources-admin.js"></script>
   <script src="emr-link.js"></script>
   <script src="emr-link-admin.js"></script>
+  <script src="critical-result-inbox-admin.js"></script>
   <script src="dicom-peers-admin.js"></script>
   <script src="product-info-data.js"></script>
   <script src="product-info.js"></script>

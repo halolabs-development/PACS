@@ -2161,11 +2161,15 @@ class CriticalResultScreensE2E(KeycloakGroups, CriticalResultHarness, base.Workl
         return dialog, read["json"] or {}
 
     def fill_and_send(self, dialog: Any, logical: str, message: str) -> None:
-        field = dialog.get_by_label("Recipient", exact=True)
+        # Recipient is one check box per candidate: exactly this account's box is checked, every other one is not.
+        field = dialog.get_by_role("group", name="Recipient", exact=True)
         actor = self.stack.actor(logical)
-        options = [text for text in field.get_by_role("option", include_hidden=True).all_inner_texts() if names(actor, text)]
-        self.screen_ok(len(options) == 1, f"one Recipient option names {logical}'s account, got {len(options)}")
-        field.select_option(label=options[0])
+        labels = field.locator("label")
+        texts = labels.all_inner_texts()
+        mine = [n for n, text in enumerate(texts) if names(actor, text)]
+        self.screen_ok(len(mine) == 1, f"one Recipient box names {logical}'s account, got {len(mine)}")
+        for n in range(len(texts)):
+            labels.nth(n).get_by_role("checkbox").set_checked(n == mine[0])
         dialog.get_by_label("Message", exact=True).fill(message)
         dialog.get_by_role("button", name="Send", exact=True).click()
 
@@ -2513,7 +2517,7 @@ class CriticalResultScreensE2E(KeycloakGroups, CriticalResultHarness, base.Workl
                 self.server_eq((source.get("version"), source.get("action")), (1, "approve"), "S-02 #1 source")
                 expect(dialog).to_contain_text("Source: v1 · Approve")
                 candidates = self.session_read(s, f"/studies/{u1.uid}/critical-result-recipients")["json"]["recipients"]
-                options = dialog.get_by_label("Recipient", exact=True).get_by_role("option", include_hidden=True).all_inner_texts()
+                options = dialog.get_by_role("group", name="Recipient", exact=True).locator("label").all_inner_texts()
                 for row in candidates:
                     self.screen_ok(sum(names(row["actor"], option) for option in options) == 1, f"S-02: one option for {row['actor']}")
                 self.screen_ok(sum(any(names(row["actor"], option) for row in candidates) for option in options) == len(candidates),

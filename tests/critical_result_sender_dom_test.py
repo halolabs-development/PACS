@@ -2308,6 +2308,8 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
         self.ready_reader()
         self.page.evaluate("uid => { window.synStudies.find(s => s.uid === uid).reqDoc = 'SYN ORDERING DOCTOR'; }", A)
         self.mark()
+        # The field is a group named Recipient (as a screen reader and the stack test find it), one check box per candidate.
+        expect(self.page.get_by_role("group", name="Recipient", exact=True).get_by_role("checkbox")).to_have_count(2)
         boxes = {b["sub"]: b for b in self.boxes()}
         self.assertEqual({P["sub"]: True, X["sub"]: False}, {sub: b["checked"] for sub, b in boxes.items()})
         self.assertEqual((["Hospital inbox"], []), (boxes[P["sub"]]["tags"], boxes[X["sub"]]["tags"]))
