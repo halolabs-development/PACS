@@ -614,9 +614,15 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
 
     def test_missing_images_of_a_split_exam_are_its_one_original(self):
         # A split part is one original's series: the answer is that original's (its whole count and its Gateway report).
+        # The part's own count (its series only) is never compared with the original's report.
         self.page.evaluate("()=>{mode='Technician'}")
-        first = self.receipt_row(self.gap_receipt(1), 12)
-        self.poll(reply(self.merged(first, kind="split"), at=self.at(2)))
+        whole = self.receipt_row(self.gap_receipt(1), 15)
+        self.poll(reply({**self.merged(whole, kind="split"), "count": 4}, at=self.at(2)))
+        state = self.gap_state()
+        self.assertEqual((True, None, "4"), (state["hidden"], state["mark"], state["cell"]))
+        # The original holds 12 of the 15 its Gateway sent: the part's row says one of one, whatever its own count.
+        short = self.receipt_row(self.gap_receipt(1), 12)
+        self.poll(reply({**self.merged(short, kind="split"), "count": 4}, at=self.at(3)))
         self.assertEqual("Needs Check · 영상 누락: 원본 검사 1건 중 1건", self.gap_state()["mark"])
         self.assertIn(" · " + self.GAP, self.original_line("1.2.3"))
 

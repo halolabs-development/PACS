@@ -372,6 +372,32 @@ class ExamMerge(unittest.TestCase):
         win.locator(".order-dialog-foot button", has_text="Unmerge").click()
         expect(win.locator("table tbody tr")).to_have_count(2)
         expect(win.locator(".exam-merge-hidden")).to_have_count(0)
+        # The next refused Unmerge finds the group ended meanwhile: the refusal stays, no originals, no Unmerge.
+        self.site.gone = {h.UID_B}
+        win.locator(".order-dialog-foot button", has_text="Unmerge").click()
+        expect(win.locator(".exam-merge-hidden")).to_have_count(1)
+        self.site.groups.clear()
+        win.locator(".order-dialog-foot button", has_text="Unmerge").click()
+        expect(win.locator(".exam-merge-refused")).to_contain_text("이 검사의 전송 또는 내보내기가 진행 중입니다.")
+        expect(win.locator("table")).to_have_count(0)
+        expect(win).to_contain_text("검사 범위가 바뀌었습니다. 목록을 새로고침한 뒤 다시 여세요.")
+        expect(win.get_by_role("button", name="Unmerge", exact=True)).to_be_disabled()
+
+    def test_receiving_institution_window_says_only_why_once_an_original_is_gone(self):
+        # Read whole by the list, then one original is gone when the window asks: the server counts it and says this
+        # technician's institution does not own the group — the window says only that.
+        self.site.groups[h.UID] = [h.UID, h.UID_B]
+        owner = {"rule": "owner", "ok": False, "message": "검사 묶음은 원본 소유 기관에서만 되돌릴 수 있습니다.", "uids": []}
+        self.site.checks = [owner, *self.site.checks]
+        settle(self.page, "load()")
+        self.site.gone = {h.UID_B}
+        self.pick(h.UID)
+        self.page.locator("#t-split-unmerge").click()
+        win = self.window("unmerge")
+        expect(win).to_contain_text("원본 소유 기관에서만 되돌릴 수 있습니다.")
+        expect(win.locator("table")).to_have_count(0)
+        expect(win).not_to_contain_text("SYNACC")
+        expect(win.get_by_role("button", name="Unmerge", exact=True)).to_have_count(0)
 
     def test_unmerge_is_off_while_a_check_fails(self):
         self.site.groups[h.UID] = [h.UID, h.UID_B]

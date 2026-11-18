@@ -70,7 +70,7 @@ function fixture({states=[A,B,C,D,E,F].map(uid=>state(uid)),groups=[],members=[]
     allowed:async(_c,uids)=>new Set(uids.filter(uid=>!denied.includes(uid))),
     assertUnsplitSource:(_c,uid)=>({sourcePatientId:PATIENT[uid]??null,sourceInstitution:'hallym'}),
     assertIdentifiedSource:(_c,uid)=>({sourcePatientId:PATIENT[uid]??null,sourceInstitution:'hallym'}),
-    requireSourceOwner:async()=>{},sourcePresent:()=>true,sourceSeries:async()=>[{uid:'2.25.701',count:3,images:true},{uid:'2.25.702',count:5,images:true}]};
+    requireSourceOwner:async()=>{},sourceSeries:async()=>[{uid:'2.25.701',count:3,images:true},{uid:'2.25.702',count:5,images:true}]};
   return {svc:new ExamMergeService(prisma,access),db,prisma,access};
 }
 const rulesOf=e=>(body(e)?.refusals??[]).map(r=>[r.uid,r.rule]);
@@ -802,17 +802,19 @@ test('exam group read names no original the caller cannot read now: only how man
   // Every original of the merged exam was sent for remote reading; then one is gone from the archive (its registration
   // stays). The receiving institution's technician and the owner's both get the group: neither gets the gone original's
   // UID (as a member, the base or a check), both get how many such originals there are, and the owner can still undo it.
-  for(const gone of [B,A])for(const who of ['owner','remote']){
+  // Not readable as this exam's original: gone, answered by two resources, or by another patient's resource.
+  for(const [gone,alteration] of [[B,'missing'],[A,'missing'],[B,'ambiguous'],[B,'patient']])for(const who of ['owner','remote']){
     const grouped=merged(G1,A,[A,B,C]);
     grouped.members.forEach(m=>Object.assign(m,{sourcePatientId:'SYN-P1',sourceInstitution:'hallym'}));
     const f=fixture({...grouped,states:[A,B,C].map(uid=>state(uid,{teleInstitutionId:'remote',rs:uid===gone?'A':'W'})),
       transfers:[{studyUid:gone,status:'OPEN'}]});
     const raw=f.prisma.$queryRaw;
     f.prisma.$queryRaw=async(strings,...values)=>strings.join('').includes('StudyAccessPolicy')?[]:raw(strings,...values);
-    const access=new StudyAccessService(f.prisma,{studyIdentityResources:async uid=>uid===gone?[]:[qido(uid,'SYN',3,1)]},{});
+    const access=new StudyAccessService(f.prisma,{studyIdentityResources:async uid=>uid!==gone?[qido(uid,'SYN',3,1)]
+      :alteration==='missing'?[]:alteration==='ambiguous'?[qido(uid,'SYN',3,1),qido(uid,'SYN',3,1)]:[qido(uid,'SYN',3,1,'SYN-OTHER')]},{});
     const svc=new ExamMergeService(f.prisma,access),caller=who==='owner'?{...tech}:{...tech,institution:'remote'};
     const out=await svc.group(caller,gone===A?B:A);
-    const label=`${who}, gone ${gone===A?'base':'member'}`;
+    const label=`${who}, ${alteration} ${gone===A?'base':'member'}`;
     assert.equal(out.group.id,G1,label);
     assert.equal(JSON.stringify(out).includes(gone),false,label+': the gone original is named nowhere');
     assert.deepEqual(out.group.members.map(m=>m.studyUid),[A,B,C].filter(uid=>uid!==gone),label);

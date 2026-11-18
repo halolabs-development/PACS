@@ -821,15 +821,26 @@ export class ExamMergeService {
   }
 
   /**
-   * The UIDs a group answer must not name to this caller: every original this request cannot read now (gone from the
-   * archive, or its source not observed) and the report UIDs of the parts on it (a split part's logical UID). Callers
-   * passed the access check of every original first; these are counted, never named — to the owner or anyone — in the
-   * group read (members, base, checks) and in an Unmerge refusal.
+   * The UIDs a group answer must not name to this caller: every original this request cannot read as this exam's now
+   * and the report UIDs of the parts on it (a split part's logical UID). An original is readable only as an exam scope
+   * reads it (resolveExamScope): one identified original resource answers its UID, with the patient and institution
+   * fixed at grouping — not one gone from the archive, not observed, answered by two resources or by another patient's.
+   * Callers passed the access check of every original first; these are counted, never named — to the owner or anyone —
+   * in the group read (members, base, checks) and in an Unmerge refusal.
    */
   private async unreadable(c: Caller, group: ExamGroup) {
     const originals = unique(group.members.map(m => m.studyUid));
     await this.studyAccess.prepareSourceIdentity(c, originals);
-    const gone = new Set(originals.filter(source => !this.studyAccess.sourcePresent(c, source)));
+    const readable = (member: ExamGroupMember) => {
+      try {
+        const source = this.studyAccess.assertIdentifiedSource(c, member.studyUid);
+        return member.sourcePatientId == null || member.sourcePatientId === source.sourcePatientId
+          && (member.sourceInstitution ?? null) === (source.sourceInstitution ?? null);
+      } catch { return false; }
+    };
+    // The grouping snapshot of each member (activeGroups selects only the membership columns).
+    const members: ExamGroupMember[] = await this.prisma.studyGroupMember.findMany({ where: { groupId: group.id } });
+    const gone = new Set(members.filter(member => !readable(member)).map(member => member.studyUid));
     return { originals: gone, uids: new Set(group.members.filter(m => gone.has(m.studyUid)).flatMap(m => [m.studyUid, m.logicalUid])) };
   }
 
