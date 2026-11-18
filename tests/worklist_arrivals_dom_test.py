@@ -50,7 +50,7 @@ PRESERVE = extract_function(MAIN, "preservedLocal")
 MERGE = extract_function(MAIN, "mergeObservedReportState")
 # S4-U1b: the poll now reports each observation to these; they are sliced, not re-described, so the
 # cases below judge the shipped labels and the shipped failure rule.
-OBSERVE = "\n".join(extract_function(MAIN, name) for name in ("kinWrite", "applyObservation", "markObservationUnavailable", "studyReceiptGap", "renderObservation"))
+OBSERVE = "\n".join(extract_function(MAIN, name) for name in ("kinWrite", "applyObservation", "markObservationUnavailable", "studyReceiptGap", "paintReceiptGap", "renderObservation"))
 # Missing images: the Technician list's Count cell is the shipped CELL.count line (it draws studyReceiptGap's answer too).
 COUNT_CELL = next(line.strip() for line in MAIN.splitlines() if line.strip().startswith("count: s => {"))
 # S4-U2: applyObservation/markObservationUnavailable now hand the same observation to the order
@@ -139,7 +139,8 @@ let studyIdentityIssues=new Map();
 SPLITSTATE
 $('#receipt-retry').addEventListener('click',requestGatewayRetry);
 function syncStudy(uid){const study=studies.find(item=>item.uid===uid),state=appState[uid];if(!study||!state)return;for(const key of ['rs','ss','em','holder','version'])if(state[key]!==undefined)study[key]=state[key]}
-function render(){renders++;rows.innerHTML=studies.map(s=>`<tr data-uid="${s.uid}"><td data-count>${s.count}</td><td data-series>${s.series}</td></tr>`).join('')}
+// The Count cell is the shipped CELL.count (it carries the missing-images mark); its text stays the count.
+function render(){renders++;rows.innerHTML=studies.map(s=>`<tr data-uid="${s.uid}"><td data-count>${CELL.count(s)}</td><td data-series>${s.series}</td></tr>`).join('')}
 function loadReport(){loadReports++}function updateReportButtons(){buttonUpdates++}function toast(message,type){toasts.push({message,type})}
 START
 window.runPoll=()=>pollCallback();window.start=startPolling;window.setReply=value=>{nextReply=value};window.holdRead=()=>{readResolver=true};
@@ -460,12 +461,13 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
                 "errorCode": "stow_http" if phase == "retry" else None,
                 "serverReceivedAt": self.at(minute), "agentSeq": seq, "epoch": "0a1b2c3d-0000-4000-8000-00000000000a"}
 
-    def gap_state(self):
-        return self.page.evaluate("""()=>{const line=$('#receipt-gap'),cell=document.createElement('td');
-          cell.innerHTML=CELL.count(studies[0]);const mark=cell.querySelector('.receipt-gap');
-          return {hidden:line.hidden,text:line.textContent,title:line.title,cell:cell.textContent.trim(),
-            mark:mark?mark.getAttribute('title'):null,label:mark?mark.getAttribute('aria-label'):null,
-            data:cell.querySelector('[translate="no"]')?.textContent??null}}""")
+    def gap_state(self, uid="1.2.3"):
+        # The cell on screen (drawn by render(), repainted by renderObservation()), never a fresh copy.
+        return self.page.evaluate("""uid=>{const line=$('#receipt-gap'),cell=document.querySelector(`#rows tr[data-uid="${uid}"] td[data-count]`);
+          const mark=cell.querySelector('.receipt-gap'),shown=mark&&!mark.hidden;
+          return {hidden:line.hidden,text:line.textContent,title:line.title,cell:cell.textContent,
+            mark:shown?mark.getAttribute('title'):null,label:shown?mark.getAttribute('aria-label'):null,
+            data:cell.querySelector('[translate="no"]')?.textContent??null}}""", uid)
 
     def test_missing_images_show_on_the_technician_list_and_info_and_clear_when_filled(self):
         self.page.evaluate("()=>{mode='Technician'}")
@@ -504,6 +506,25 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
         state = self.gap_state()
         self.assertEqual((True, "", None, "16"), (state["hidden"], state["text"], state["mark"], state["cell"]))
 
+    def test_missing_images_list_and_info_change_together_and_a_failure_keeps_the_observed_pair(self):
+        self.page.evaluate("()=>{mode='Technician'}")
+        self.poll(reply(self.receipt_row(self.gap_receipt(1), 12), at=self.at(2)))
+        self.assertEqual((False, self.GAP), (self.gap_state()["hidden"], self.gap_state()["mark"]))
+        # The answer that fills the study is applied without a list render: both surfaces follow it at once.
+        filled = reply(self.receipt_row(self.gap_receipt(1), 15), at=self.at(3))
+        drawn = self.page.evaluate("v=>{const before=renders;applyObservation(v);return renders-before}", filled)
+        state = self.gap_state()
+        self.assertEqual((0, True, None, "12"), (drawn, state["hidden"], state["mark"], state["cell"]))
+        # Back to missing, then the row is replaced with a newer report before an observation that cannot be read: the
+        # answer stays the last observation's pair (12 held of 15 sent), said as such, never the old count with the new report.
+        self.poll(reply(self.receipt_row(self.gap_receipt(1), 12), at=self.at(4)))
+        self.page.evaluate("r=>{studies[0].gatewayReceipt=r}", self.gap_receipt(5, sent=12, seq=13))
+        self.poll(reply(self.receipt_row(self.gap_receipt(5, sent=12, seq=13), 12), at="yesterday"))
+        shown_at = self.page.evaluate("t=>KinStudyArrivals.formatTime(t)", self.at(4))
+        stale = "Needs Check · 영상 누락(관측 불가 · 마지막 관측 " + shown_at + " 기준): Gateway 전송 15건 중 HALO PACS 보유 12건"
+        state = self.gap_state()
+        self.assertEqual((False, stale, stale), (state["hidden"], state["text"], state["mark"]))
+
     def test_missing_images_has_no_answer_without_a_report_or_when_holding_at_least_what_was_sent(self):
         self.page.evaluate("()=>{mode='Technician'}")
         for receipt, held in ((None, 0), (self.gap_receipt(1, phase="sending", sent=3, local=12), 12),
@@ -521,10 +542,13 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
         absent = [{"uid": "1.2.9", "origin": "gateway", "createdAt": self.at(0),
                    "gatewayReceipt": self.gap_receipt(1, phase="complete", sent=12, local=12, seq=12)}]
         item = lambda: self.page.evaluate("""()=>{const i=$('#not-observed-list').children[0],s=i.children[3];
-          return {hidden:s.hidden,text:s.textContent,note:i.children[1].nextElementSibling===i.children[2]}}""")
+          return {hidden:s.hidden,text:s.textContent,note:i.children[1].nextElementSibling===i.children[2],
+            notCompared:i.children[0].title.includes('비교하지 않았습니다')}}""")
         self.page.evaluate("()=>{mode='Technician'}")
         self.poll(reply(self.changed(count=5, series=2), at=self.at(2), not_observed=absent))
-        self.assertEqual({"hidden": False, "text": "Needs Check · 영상 누락: Gateway 전송 12건 중 HALO PACS 보유 0건", "note": True}, item())
+        # The item's Gateway title does not say "not compared" beside the line that compared it.
+        self.assertEqual({"hidden": False, "text": "Needs Check · 영상 누락: Gateway 전송 12건 중 HALO PACS 보유 0건", "note": True,
+                          "notCompared": False}, item())
         self.assertIn("1.2.9 · gateway · ", self.text("#not-observed-list"))
         # The Radiology tab draws nothing new here either.
         self.page.evaluate("()=>{mode='Radiology';renderObservation()}")

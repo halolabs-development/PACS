@@ -239,11 +239,30 @@ test('missing images: K below the reported sent M, only when the observation is 
   }
 });
 
-test('missing images: a paged list bounds the comparison by its first page, kept through a failed observation',()=>{
+test('missing images: the report is kept with the count of the same successful observation',()=>{
+  const uid='1.2.840.10',absentUid='1.2.840.11',sent=n=>({phase:'retry',successCount:n,localCount:20,attempt:1,errorCode:'stow_http',
+    serverReceivedAt:'2026-09-24T01:01:00.000Z',agentSeq:n,epoch:1});
+  const answer=(at,report,absent)=>({owner:['h','s'],studies:[{uid,count:8,series:3,gatewayReceipt:report}],
+    observation:{observedAt:at,notObserved:[{uid:absentUid,origin:'gateway',createdAt:'2026-09-24T01:00:00.000Z',gatewayReceipt:absent}]}});
+  const model=arrivals.observationSucceeded(arrivals.observationStart(),answer('2026-09-24T01:02:00.000Z',sent(12),sent(3))).model;
+  assert.deepEqual(arrivals.studyObservation(model,uid).receipt,sent(12));
+  assert.deepEqual(arrivals.studyObservation(model,absentUid).receipt,sent(3));
+  // A failed observation keeps the pair; a row replaced afterwards does not reach it (the answer names 12, not 8).
+  const failed=arrivals.studyObservation(arrivals.observationFailed(model),uid);
+  assert.deepEqual(failed.receipt,sent(12));
+  assert.deepEqual((({missing,held,sent,stale})=>({missing,held,sent,stale}))(arrivals.receiptGap(failed,failed.receipt)),{missing:true,held:8,sent:12,stale:true});
+  // The next successful answer replaces the pair; a row without a report is none, never the last one.
+  const next=arrivals.observationSucceeded(model,answer('2026-09-24T01:03:00.000Z',undefined,null)).model;
+  assert.equal(arrivals.studyObservation(next,uid).receipt,null);
+  assert.equal(arrivals.studyObservation(next,absentUid).receipt,null);
+  assert.equal(arrivals.studyObservation(next,'1.2.840.99').receipt,undefined);
+});
+
+test('missing images: a paged list bounds the comparison by when its first page began, kept through a failed observation',()=>{
   const uid='1.2.840.10',report={phase:'retry',successCount:15,localCount:20,attempt:1,errorCode:'stow_http',
     serverReceivedAt:'2026-09-24T01:01:00.000Z',agentSeq:1,epoch:1};
-  const read=(firstObservedAt,count=12)=>arrivals.observationSucceeded(arrivals.observationStart(),{owner:['h','s'],
-    studies:[{uid,count,series:3}],observation:{observedAt:'2026-09-24T01:02:00.000Z',notObserved:[],...(firstObservedAt===undefined?{}:{firstObservedAt})}}).model;
+  const read=(readFrom,count=12)=>arrivals.observationSucceeded(arrivals.observationStart(),{owner:['h','s'],
+    studies:[{uid,count,series:3}],observation:{observedAt:'2026-09-24T01:02:00.000Z',notObserved:[],...(readFrom===undefined?{}:{readFrom})}}).model;
   // One page (no first-page time): the observation's own time bounds it.
   assert.equal(arrivals.studyObservation(read(),uid).readSince,'2026-09-24T01:02:00.000Z');
   assert.equal(arrivals.receiptGap(arrivals.studyObservation(read(),uid),report).missing,true);

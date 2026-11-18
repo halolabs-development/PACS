@@ -1011,8 +1011,9 @@
         return `<span class="rs ${esc(s.rs)}"${s.holdReason ? ' data-kin-keep="title"' : ''} title="${esc(s.holdReason || (finalized ? "승인 후 24시간이 지나 확정된 판독문 — Addendum으로만 덧붙일 수 있습니다" : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : ""))}">${esc(word)}</span>`; },
       confirm: s => esc(confirmText({ ...appState[s.uid], rs: s.rs })),
       // Missing images (Technician tab only): a mark beside the count, the same answer as the Info panel's Needs Check line
-      // (studyReceiptGap). Its words are its title; the mark itself is CSS, so a copy or export of the cell reads the count.
-      count: s => { const gap = studyReceiptGap(s); return `<span translate="no">${esc(s.count ?? "")}</span>` + (gap ? ` <span class="receipt-gap" role="img" aria-label="${esc(gap.text)}" title="${esc(gap.text)}"></span>` : ""); },
+      // (studyReceiptGap; renderObservation repaints it between renders). Its words are its title; the mark itself is CSS
+      // and there is no text around it, so a copy or export of the cell reads the count alone.
+      count: s => { const gap = studyReceiptGap(s); return `<span translate="no">${esc(s.count ?? "")}</span><span class="receipt-gap" role="img" data-gap-uid="${esc(s.uid)}"` + (gap ? ` aria-label="${esc(gap.text)}" title="${esc(gap.text)}"></span>` : ` hidden></span>`); },
       ts: s => `<span class="ts ts-${esc(s.ts)}">${esc(s.ts)}</span>`,
       ss: s => `<span class="ss ${esc(s.ss)}">${esc(s.ss)}</span>`,
       // S4-U5: server values too, but escaped like every other cell; a stored value never becomes markup.
@@ -3097,15 +3098,25 @@
     /**
      * Missing images, Technician tab only: the one answer (KinStudyArrivals.receiptGap) that the list's Count cell, the
      * Info panel's Needs Check line and a Not Observed item draw. A merged or split exam has no answer here: its originals
-     * are separate studies. setMode() and the poll's list rebuild draw it again, so a tab or scope change shows at once.
+     * are separate studies. The count and the Gateway report it compares are both the last successful observation's, so
+     * a row replaced before its observation is judged never pairs an old count with a new report. renderObservation()
+     * draws every surface of it at once (the list's marks too); setMode() and the poll's list rebuild call it.
      */
     function studyReceiptGap(s) {
       if (!s || !studyObservationModel || KinExamScope.read(s)?.groupId) return null;
-      const gap = KinStudyArrivals.receiptGap(KinStudyArrivals.studyObservation(studyObservationModel, s.uid), s.gatewayReceipt ?? null);
+      const seen = KinStudyArrivals.studyObservation(studyObservationModel, s.uid);
+      const gap = KinStudyArrivals.receiptGap(seen, seen.receipt ?? null);
       return gap?.missing && mode === "Technician" ? gap : null;
+    }
+    /** The list's mark for one study (CELL.count draws it on render(); this follows the answer between renders). */
+    function paintReceiptGap(mark, gap) {
+      mark.hidden = !gap; mark.title = gap?.text ?? "";
+      if (gap) mark.setAttribute("aria-label", gap.text); else mark.removeAttribute("aria-label");
     }
     function renderObservation() {
       if (!studyObservationModel) return;
+      for (const mark of $("#rows")?.querySelectorAll(".receipt-gap[data-gap-uid]") ?? [])
+        paintReceiptGap(mark, studyReceiptGap(studies.find(s => s.uid === mark.dataset.gapUid)));
       const summary = KinStudyArrivals.observationSummary(studyObservationModel), status = $("#observation-status");
       if (status) { status.hidden = !summary.text; kinWrite(status, summary.text); status.title = summary.title; }
       // S4-U4 Now Retry, drawn only from labels.retry. Another study or a newer receipt drops the in-flight token

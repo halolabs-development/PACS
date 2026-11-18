@@ -67,15 +67,25 @@
     /**
      * Missing images, Technician tab only: the one answer (KinStudyArrivals.receiptGap) that the list's Count cell, the
      * Info panel's Needs Check line and a Not Observed item draw. A merged or split exam has no answer here: its originals
-     * are separate studies. setMode() and the poll's list rebuild draw it again, so a tab or scope change shows at once.
+     * are separate studies. The count and the Gateway report it compares are both the last successful observation's, so
+     * a row replaced before its observation is judged never pairs an old count with a new report. renderObservation()
+     * draws every surface of it at once (the list's marks too); setMode() and the poll's list rebuild call it.
      */
     function studyReceiptGap(s) {
       if (!s || !studyObservationModel || KinExamScope.read(s)?.groupId) return null;
-      const gap = KinStudyArrivals.receiptGap(KinStudyArrivals.studyObservation(studyObservationModel, s.uid), s.gatewayReceipt ?? null);
+      const seen = KinStudyArrivals.studyObservation(studyObservationModel, s.uid);
+      const gap = KinStudyArrivals.receiptGap(seen, seen.receipt ?? null);
       return gap?.missing && mode === "Technician" ? gap : null;
+    }
+    /** The list's mark for one study (CELL.count draws it on render(); this follows the answer between renders). */
+    function paintReceiptGap(mark, gap) {
+      mark.hidden = !gap; mark.title = gap?.text ?? "";
+      if (gap) mark.setAttribute("aria-label", gap.text); else mark.removeAttribute("aria-label");
     }
     function renderObservation() {
       if (!studyObservationModel) return;
+      for (const mark of $("#rows")?.querySelectorAll(".receipt-gap[data-gap-uid]") ?? [])
+        paintReceiptGap(mark, studyReceiptGap(studies.find(s => s.uid === mark.dataset.gapUid)));
       const summary = KinStudyArrivals.observationSummary(studyObservationModel), status = $("#observation-status");
       if (status) { status.hidden = !summary.text; kinWrite(status, summary.text); status.title = summary.title; }
       // S4-U4 Now Retry, drawn only from labels.retry. Another study or a newer receipt drops the in-flight token

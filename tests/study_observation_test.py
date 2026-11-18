@@ -410,7 +410,7 @@ const finals = [
       const offset = new URL('https://synthetic.invalid' + path).searchParams.has('after') ? 100 : 0;
       return {studies: rows.slice(offset, offset + 100),
         pagination: {owner, limit: 100, offset, total: rows.length, next: offset === 0 ? 'next-page' : null},
-        ...(offset === 0 ? {observedAt: '2026-10-01T00:00:00Z', notObserved: absence,
+        ...(offset === 0 ? {observedAt: '2026-10-01T00:00:00Z', readFrom: '2026-09-30T23:59:00Z', notObserved: absence,
           identityIssues: [issue], orderReconciliation: [{uid: 'middle-page-only'}]} : final)};
     }});
     results.push(await client.read());
@@ -423,13 +423,14 @@ const finals = [
         self.assertEqual(0, result.returncode, result.stderr)
         rows = [{'uid': f'1.2.{1000 + i}', 'state': {}} for i in range(101)]
         owner = ['synthetic-institution', 'synthetic-reader']
-        # firstObservedAt is the first page's time (the earliest any row was read; missing images compares with it).
+        # readFrom is when the first page's enumeration began (its readFrom, else its observedAt): every row was read after
+        # it, and missing images compares Gateway reports with it.
         observations = [
             {'observedAt': '2026-10-02T00:00:00Z',
              'notObserved': [{'uid': '1.2.9999', 'origin': 'synthetic', 'createdAt': '2026-10-01T00:00:00Z'}],
-             'firstObservedAt': '2026-10-01T00:00:00Z', 'orderReconciliation': []},
-            {'observedAt': '2026-10-03T00:00:00Z', 'notObserved': [], 'firstObservedAt': '2026-10-01T00:00:00Z'},
-            {'firstObservedAt': '2026-10-01T00:00:00Z'},
+             'readFrom': '2026-09-30T23:59:00Z', 'orderReconciliation': []},
+            {'observedAt': '2026-10-03T00:00:00Z', 'notObserved': [], 'readFrom': '2026-09-30T23:59:00Z'},
+            {'readFrom': '2026-09-30T23:59:00Z'},
         ]
         issues = [[{'uid': '1.2.8888', 'code': 'STUDY_IDENTITY_UNRESOLVED'}], [], None]
         self.assertEqual([{'studies': rows, 'owner': owner, 'observation': observation, 'identityIssues': issue}

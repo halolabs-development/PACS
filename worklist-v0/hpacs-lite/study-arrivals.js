@@ -98,19 +98,23 @@
     // Another account, or a server clock that went backwards, cannot continue this session's comparison.
     const prior=base.owner===owner&&(base.observedAt===null||Date.parse(at)>=Date.parse(base.observedAt))?base.rows:new Map();
     const rows=new Map();
+    // Missing images: each row's Gateway report is kept with the count it is compared with, from this same answer, so a
+    // failed observation keeps both and a later row replacement cannot pair an old count with a new report.
+    const reports=new Map((root.KinExamScope?root.KinExamScope.originals(result.studies):result.studies).map(row=>[row.uid,row.gatewayReceipt??null]));
     for(const [uid,value] of current.values){
       // Only the immediately preceding successful observation counts; a UID that left the list and came
       // back has no predecessor here, so leaving a page, filter or scope is never a decrease.
       const previous=prior.get(uid),kind=compare(previous,value);
-      const row={count:value.count,series:value.series,observedAt:at,change:null,valueSince:value.count===null?null:at,changedAt:null,needsCheck:false,decreasedAt:null};
+      const row={count:value.count,series:value.series,observedAt:at,change:null,valueSince:value.count===null?null:at,changedAt:null,needsCheck:false,decreasedAt:null,receipt:reports.get(uid)??null};
       if(kind==='no_observed_change')Object.assign(row,{change:{kind,since:previous.valueSince},valueSince:previous.valueSince,
         changedAt:previous.changedAt,needsCheck:previous.needsCheck,decreasedAt:previous.decreasedAt});
       else if(kind)Object.assign(row,{change:{kind,since:previous.observedAt},changedAt:at,
         needsCheck:kind==='decreased'||previous.needsCheck,decreasedAt:kind==='decreased'?at:previous.decreasedAt});
       rows.set(uid,row);
     }
-    // A paged list reads its first page earliest: that time bounds the reports its counts are compared with (receiptGap).
-    const first=observation.firstObservedAt,readSince=validTime(first)&&Date.parse(first)<=Date.parse(at)?first:at;
+    // readFrom is when the server began the enumeration of the first page (study-pages.js): every count and absence of this
+    // answer was read after it, so it bounds the reports they are compared with (receiptGap). Without it, observedAt.
+    const from=observation.readFrom,readSince=validTime(from)&&Date.parse(from)<=Date.parse(at)?from:at;
     return {ok:true,model:{owner,observedAt:at,readSince,available:true,rows,notObserved:absent.rows}};
   }
 
@@ -124,14 +128,15 @@
   function studyObservation(model,uid){
     const m=model&&model.rows instanceof Map?model:observationStart(),row=m.rows.get(uid)||null;
     const absent=m.notObserved?m.notObserved.find(item=>item.uid===uid)||null:null;
-    const readSince=m.readSince??m.observedAt;
+    // readSince and receipt: what the missing-images answer compares (receiptGap), both from the last successful answer.
+    const readSince=m.readSince??m.observedAt,receipt=row?row.receipt??null:absent?absent.gatewayReceipt??null:null;
     if(m.available===false)return {state:'observation_unavailable',
       last:row?{count:row.count,series:row.series,observedAt:row.observedAt}:absent?{notObserved:true,observedAt:m.observedAt}:null,
-      changedAt:row?row.changedAt:null,needsCheck:!!row&&row.needsCheck,decreasedAt:row?row.decreasedAt:null,readSince};
+      changedAt:row?row.changedAt:null,needsCheck:!!row&&row.needsCheck,decreasedAt:row?row.decreasedAt:null,readSince,receipt};
     if(m.available!==true)return {state:'not_attempted'};
     if(row)return {state:'observed',count:row.count,series:row.series,observedAt:row.observedAt,change:row.change,
-      changedAt:row.changedAt,needsCheck:row.needsCheck,decreasedAt:row.decreasedAt,readSince};
-    if(absent)return {state:'not_observed',observedAt:m.observedAt,origin:absent.origin,createdAt:absent.createdAt,readSince};
+      changedAt:row.changedAt,needsCheck:row.needsCheck,decreasedAt:row.decreasedAt,readSince,receipt};
+    if(absent)return {state:'not_observed',observedAt:m.observedAt,origin:absent.origin,createdAt:absent.createdAt,readSince,receipt};
     return {state:'outside_list'};
   }
 
@@ -175,8 +180,8 @@
       return {label:{key:'reported_unreadable',text:'Gateway 보고 형식을 확인할 수 없습니다',title:'보고 내용을 해석하지 못해 비교하지 않았습니다.'},reasons:['receipt_unreadable']};
     const reasons=[];
     // K<M is receiptGap's answer, the one the Technician list and the Info panel draw; null K is never read as zero.
-    const comparable=b.state==='observed'&&b.count!==null;
-    const gap=receiptGap(b,receipt,format);
+    // The title says "not compared" exactly when that answer is none, so it never contradicts a missing-images line.
+    const gap=receiptGap(b,receipt,format),comparable=gap!==null;
     if(gap?.missing&&!gap.stale)reasons.push(b.state==='observed'?'kin_below_reported':'not_observed_with_reported_transfer');
     if(b.changedAt&&Date.parse(receipt.serverReceivedAt)<Date.parse(b.changedAt))reasons.push('receipt_older_than_change');
     return {label:{key:'reported',text:'Gateway 보고('+format(receipt.serverReceivedAt)+'): 병원 보유 '+N+'건 중 '+M+'건 전송',

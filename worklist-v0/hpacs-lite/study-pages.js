@@ -42,7 +42,7 @@
       const changedList = () => Object.assign(new Error('읽는 동안 검사 목록이 계속 바뀌었습니다. 새로고침하세요.'), { code:'STUDY_LIST_CHANGED' });
       const recovering = () => changedAt === null || Date.now() - changedAt < timeoutMs;
       const restart = () => {
-        if (!work.commit(at,()=>{ changedAt ??= Date.now(); draft.rows = []; draft.total = null; draft.next = null; delete draft.observation; delete draft.identityIssues; delete draft.firstObservedAt;
+        if (!work.commit(at,()=>{ changedAt ??= Date.now(); draft.rows = []; draft.total = null; draft.next = null; delete draft.observation; delete draft.identityIssues; delete draft.readFrom;
           state('검사 목록이 바뀌어 처음부터 다시 불러오는 중…'); })) throw Object.assign(new Error('목록 조회가 중단되었습니다.'),{stale:true});
       };
       try {
@@ -78,11 +78,11 @@
           if (issues !== undefined && (!Array.isArray(issues) || issues.some(issue => !issue || typeof issue.uid !== 'string' || !issue.uid
             || typeof issue.code !== 'string'))) throw Object.assign(new Error('목록 페이지 형식을 확인할 수 없습니다. 새로고침하세요.'),{stale:true});
           if(!work.commit(at,()=>{draft.rows.push(...rows); draft.total = page.total; draft.next = page.next;
-          // Missing images: the first page's time is the earliest any row of this list was read (a resumed read can be older),
-          // so a Gateway report is compared only with counts read after it (study-arrivals.js receiptGap).
-          if (page.offset === 0) draft.firstObservedAt = data.observedAt;
+          // Missing images: the first page began reading before any other row of this list was read (a resumed read can be
+          // much older), so a Gateway report is compared only with counts read after that start (study-arrivals.js receiptGap).
+          if (page.offset === 0) draft.readFrom = data.readFrom ?? data.observedAt;
           // S4-U1b: only the page that completes the list carries the absence answer and its time.
-          if (page.next === null) draft.observation = { observedAt: data.observedAt, notObserved: data.notObserved, firstObservedAt: draft.firstObservedAt };
+          if (page.next === null) draft.observation = { observedAt: data.observedAt, notObserved: data.notObserved, readFrom: draft.readFrom };
           // S4-U2: the order answer comes from that same completing page; an absent one stays absent, never [].
           if (page.next === null && data.orderReconciliation !== undefined) draft.observation.orderReconciliation = data.orderReconciliation;
           // An absent answer stays unknown (null), never "no issue": only a completed [] clears the notice.

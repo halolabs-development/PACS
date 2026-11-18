@@ -61,8 +61,9 @@ U3_RULE_SHA256 = "bff24d487a066df554c2dbe70a9ca1dbc28cf52062eebac87f9a537344d275
 # (the 9152f43 text with only that name put back hashes to 4b1b003b…aad79); logic and keys are unchanged.
 # It moved again for missing images: the K<M and Not Observed reasons now come from receiptGap (the one answer the
 # Technician list and Info draw), which compares only a report the observation is not older than (7ce3a2e6…3e0e4 before).
-# Its label text and keys are unchanged; the reason rules are pinned by tests/study_observation_vectors.json.
-U1B_GATEWAY_LABEL_SHA256 = "463bb9c0e73e707c093fe85b74adc35d4c50d976850f6cdd8e67c63f631490b0"
+# Its label text and keys are unchanged; the reason rules are pinned by tests/study_observation_vectors.json. Its title
+# says "not compared" exactly when that answer is none (so it never contradicts a missing-images line).
+U1B_GATEWAY_LABEL_SHA256 = "f96f40bcb16baa65f551e079b0f74af456ec3ba9872a123e8fc11d8e5a094f7e"
 
 
 def sha(value):
@@ -721,8 +722,7 @@ class ClientPins(unittest.TestCase):
         self.assertEqual(MAIN.count('$("#receipt-retry").addEventListener("click", requestGatewayRetry);'), 1)
         # U3 client pins keep: the receipt key count and the observation functions stay free of requests.
         # 5 -> 6 at S4-F01V: one `row.gatewayReceipt ?? null` for the Not Observed item (F01VPins below).
-        # 8 -> 9 for missing images: studyReceiptGap reads `s.gatewayReceipt ?? null` (it draws nothing else).
-        self.assertEqual(MAIN.count("gatewayReceipt"), 9)
+        self.assertEqual(MAIN.count("gatewayReceipt"), 8)
         self.assertIn('$("#receipt-gateway").title = labels.gateway.title;', js_function(MAIN, "renderObservation"))
 
     def test_study_observation_inventory_names_exactly_these_additions(self):
