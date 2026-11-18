@@ -2,8 +2,10 @@
 // Access Review over practical periods: the real Nest GET and the migrated PG function on a synthetic ledger of
 // about 170,000 and then about 1,020,000 entries (about 34,000 a day). Checks that
 //  - the function answers exactly what the previous definition answered (rows, order, ceiling, page boundaries),
-//    where the previous definition still answers (half-hour and 90-minute windows);
-//  - a day, five days and a week answer through HTTP, first page and continuation, at both ledger sizes;
+//    where the previous definition still answers (half-hour and 90-minute windows), and for a day and a week exactly
+//    what the previous definition answers with only its ceiling computed once (the reference: same SQL otherwise);
+//  - a day, five days and a week answer through HTTP within the screen's 60 s, first page and continuation equal
+//    the reference field by field, and the reader's own access record names the served rows;
 //  - the previous definition does not answer a day within 20 s (the defect this replaces);
 //  - a request the browser abandons ends in PostgreSQL by the 30 s limit, while an unbounded read would stay.
 // Synthetic rows only; the bulk rows copy entries this test appends through the normal writer.
@@ -44,6 +46,7 @@ function event(extra = {}) {
     auditLinkId: `audit:${randomUUID()}`, relatedEventId: null, ...extra };
 }
 const elapsed = async work => { const start = Date.now(); const value = await work(); return { value, ms: Date.now() - start }; };
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 (async () => {
   const db = new PrismaClient(), witness = new PrismaClient({ datasources: { db: { url: process.env.KIN_B2R_WITNESS_URL } } });
   const locker = new PrismaClient({ datasources: { db: { url: process.env.KIN_B2R_WITNESS_URL } } });
@@ -66,14 +69,14 @@ const elapsed = async work => { const start = Date.now(); const value = await wo
     const streams = await witness.$queryRawUnsafe(`SELECT stream, count(*)::int AS n FROM emr_access.access_entry GROUP BY stream ORDER BY stream`);
     console.log('template entries', JSON.stringify(streams));
     assert.ok(streams.length === 2, 'templates cover both streams');
-    // Bulk copies of the templates, oldest first; occurredAt in the payload follows the column.
+    // Bulk copies of templates[g % 4], oldest first; occurredAt in the payload follows the column. A pair's two
+    // entries alternate which stream is inserted first (has the smaller sequence): viewing for even g / 4, history for odd.
     const fill = async (first, count, start, step) => {
       const { ms } = await elapsed(() => witness.$transaction([
         // The receipt and operation rows of real appends are not part of what Access Review reads.
         witness.$executeRawUnsafe(`SET LOCAL session_replication_role = replica`),
         witness.$executeRawUnsafe(`
-          WITH tpl AS (SELECT (row_number() OVER (ORDER BY event_id) - 1)::int AS i, event_id
-                       FROM (SELECT DISTINCT event_id FROM emr_access.access_entry WHERE event_id = ANY($1::text[])) d)
+          WITH tpl AS (SELECT (u.i - 1)::int AS i, u.id AS event_id FROM unnest($1::text[]) WITH ORDINALITY AS u(id, i))
           INSERT INTO emr_access.access_entry(entry_id, operation_id, stream, event_id, payload, occurred_at, statutory_act, retention_class)
           SELECT gen_random_uuid(), gen_random_uuid(), e.stream, 'SYN-PERIOD-' || g, v.p::text,
             t.ts, e.statutory_act, e.retention_class
@@ -83,49 +86,74 @@ const elapsed = async work => { const start = Date.now(); const value = await wo
           JOIN emr_access.access_entry e ON e.event_id = tpl.event_id
           CROSS JOIN LATERAL (SELECT jsonb_set(jsonb_set(e.payload::jsonb, '{eventId}', to_jsonb('SYN-PERIOD-' || g)), '{occurredAt}',
             to_jsonb(to_char(t.ts AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))) AS a) a
-          -- Another institution (1 in 50), an unknown managing institution (1 in 97), a PDF export action (1 in 7).
+          -- Another institution (1 in 50), an unknown managing institution (1 in 97), a PDF export on the viewing entry (1 in 7).
           CROSS JOIN LATERAL (SELECT CASE WHEN g % 97 = 0 THEN jsonb_set(a.a, '{managingInstitution}', '{"status":"unresolved","reason":"not-observed"}')
             WHEN g % 50 = 0 THEN jsonb_set(a.a, '{managingInstitution,value}', '"SYN-B"') ELSE a.a END AS b) b
           CROSS JOIN LATERAL (SELECT CASE WHEN g % 7 = 0 AND e.stream = 'viewing' THEN jsonb_set(b.b, '{action}', '"pdf"') ELSE b.b END AS p) v
-          ORDER BY g, e.stream DESC`, templates.map(e => e.eventId), first, count, start, step, templates.length)]));
+          ORDER BY g, CASE WHEN (g / $6::int) % 2 = 0 THEN e.stream END DESC, e.stream`,templates.map(e => e.eventId), first, count, start, step, templates.length)]));
       await witness.$executeRawUnsafe('ANALYZE emr_access.access_entry');
       const [{ n }] = await witness.$queryRawUnsafe(`SELECT count(*)::int AS n FROM emr_access.access_entry`);
       return { ms, n };
     };
-    // Events, not entries: about 1.4 entries per event over the templates.
     const perEvent = streams.reduce((sum, row) => sum + row.n, 0) / templates.length;
     const events = days => Math.round(days * PER_DAY / perEvent);
     let filled = await fill(1, events(5), ago(5 * DAY), 5 * DAY / events(5));
     console.log(`ledger ${filled.n} entries (5 days) filled in ${filled.ms} ms`);
     measured.small = filled.n;
+    // One entry whose targets is not an array, alone in its institution: both definitions must treat it alike.
+    await witness.$transaction([witness.$executeRawUnsafe(`SET LOCAL session_replication_role = replica`),
+      witness.$executeRawUnsafe(`INSERT INTO emr_access.access_entry(entry_id, operation_id, stream, event_id, payload, occurred_at, statutory_act, retention_class)
+        SELECT gen_random_uuid(), gen_random_uuid(), stream, 'SYN-MALFORMED',
+          jsonb_set(jsonb_set(payload::jsonb, '{managingInstitution,value}', '"SYN-C"'), '{targets}', '{}')::text, $2::timestamptz, statutory_act, retention_class
+        FROM emr_access.access_entry WHERE event_id = $1`, templates[0].eventId, ago(20 * 60000))]);
 
-    // The previous definition, installed under another name as the reference answer.
+    // The previous definition, installed under other names: exactly (the defect) and with only its ceiling computed
+    // once (the reference for windows the previous one cannot answer — MATERIALIZED changes the plan, not the answer).
     const previous = fs.readFileSync(process.env.KIN_ACCESS_REVIEW_PREVIOUS, 'utf8');
-    const body = previous.slice(previous.indexOf('CREATE FUNCTION'), previous.indexOf('$$;', previous.indexOf('$$') + 2) + 3)
-      .replace('emr_access.review_entries(', 'emr_access.review_entries_previous(');
-    assert.ok(body.includes('ceiling AS (') && body.endsWith('$$;'), 'reference definition extracted');
-    await witness.$executeRawUnsafe(body);
-    const direct = async (name, from, files, top, before, limit, client = witness) => client.$queryRawUnsafe(
+    const body = previous.slice(previous.indexOf('CREATE FUNCTION'), previous.indexOf('$$;', previous.indexOf('$$') + 2) + 3);
+    assert.ok(body.includes('ceiling AS (') && body.endsWith('$$;'), 'previous definition extracted');
+    await witness.$executeRawUnsafe(body.replace('emr_access.review_entries(', 'emr_access.review_entries_previous('));
+    await witness.$executeRawUnsafe(body.replace('emr_access.review_entries(', 'emr_access.review_entries_reference(')
+      .replace('ceiling AS (', 'ceiling AS MATERIALIZED ('));
+    const direct = async (name, from, files, top, before, limit, { client = witness, inst = 'SYN-A' } = {}) => client.$queryRawUnsafe(
       `SELECT entry_id::text, sequence::text, event_id, occurred_at, recorded_at, statutory_act, payload, snapshot_top::text
-       FROM emr_access.${name}('SYN-A', $1::timestamptz, $2::timestamptz, $3::boolean, $4::bigint, $5::bigint, $6::integer)`,
-      from, UNTIL, files, top, before, limit);
+       FROM emr_access.${name}($7::text, $1::timestamptz, $2::timestamptz, $3::boolean, $4::bigint, $5::bigint, $6::integer)`,
+      from, UNTIL, files, top, before, limit, inst);
+    const same = async (reference, from, files, top, before, limit, label) => {
+      const was = await direct(reference, from, files, top, before, limit);
+      const now = await direct('review_entries', from, files, top, before, limit);
+      assert.deepEqual(now, was, `same answer as ${reference}: ${label}, files ${files}, top ${top}, before ${before}, limit ${limit}`);
+      return now;
+    };
     let compared = 0;
     for (const span of [30 * 60000, 90 * 60000]) {
       for (const files of [false, true]) {
         const all = await direct('review_entries', ago(span), files, null, null, 1000000);
         assert.ok(all.length > 100, `window ${span / 60000} min has rows (${all.length})`);
-        const mid = all[Math.floor(all.length / 2)];
-        const cases = [[null, null, 26], [null, null, 1000000], [all[0].snapshot_top, mid.sequence, 26], [mid.sequence, null, 1000000],
-          [null, null, 0], [all[0].snapshot_top, all[all.length - 2].sequence, 26]];
-        for (const [top, before, limit] of span > 30 * 60000 ? cases.slice(0, 3) : cases) {
-          const was = await direct('review_entries_previous', ago(span), files, top, before, limit);
-          const now = await direct('review_entries', ago(span), files, top, before, limit);
-          assert.deepEqual(now, was, `same answer: ${span / 60000} min, files ${files}, top ${top}, before ${before}, limit ${limit}`);
-          compared++;
+        const top = all[0].snapshot_top, mid = all[Math.floor(all.length / 2)].sequence;
+        const cases = [[null, null, 26], [null, null, 1000000], [top, mid, 26], [null, mid, 26], [mid, null, 1000000],
+          [top, all[all.length - 2].sequence, 26], [null, null, 0], [null, null, -1], [null, null, null]];
+        for (const [t, b, limit] of span > 30 * 60000 ? cases.slice(0, 4) : cases) {
+          await same('review_entries_previous', ago(span), files, t, b, limit, `${span / 60000} min`); compared++;
         }
       }
     }
-    console.log(`previous and current definition: ${compared} answers identical (rows, order, ceiling)`);
+    // The reference is the previous answer, where the previous one answers.
+    for (const files of [false, true]) {
+      const was = await direct('review_entries_previous', ago(90 * 60000), files, null, null, 1000000);
+      assert.deepEqual(await direct('review_entries_reference', ago(90 * 60000), files, null, null, 1000000), was, 'reference = previous');
+    }
+    // An institution with no entries, and one whose only entry has a non-array targets.
+    for (const files of [false, true]) {
+      const none = await direct('review_entries', ago(DAY), files, null, null, 26, { inst: 'SYN-NONE' });
+      assert.deepEqual(none, await direct('review_entries_previous', ago(DAY), files, null, null, 26, { inst: 'SYN-NONE' }));
+      assert.deepEqual(none, []);
+    }
+    const malformed = async (name, files) => direct(name, ago(DAY), files, null, null, 26, { inst: 'SYN-C' })
+      .then(rows => rows.map(r => r.event_id), error => `error ${error.meta?.code ?? ''} ${String(error.message).match(/cannot extract elements[^"\n]*/)?.[0]}`);
+    for (const files of [false, true]) assert.deepEqual(await malformed('review_entries', files), await malformed('review_entries_previous', files));
+    assert.deepEqual(await malformed('review_entries', false), ['SYN-MALFORMED']);
+    console.log(`previous and current definition: ${compared} answers identical (rows, order, ceiling); malformed targets alike: ${await malformed('review_entries', true)}`);
 
     // The previous definition on a day: the defect. It does not finish in 20 s.
     const stalled = await elapsed(() => witness.$transaction([witness.$executeRawUnsafe(`SET LOCAL statement_timeout = '20s'`),
@@ -148,28 +176,48 @@ const elapsed = async work => { const start = Date.now(); const value = await wo
       next(); });
     await app.listen(0, '127.0.0.1');
     const base = (await app.getUrl()).replace('0.0.0.0', '127.0.0.1');
+    // The screen gives up at 60 s (session-transport.js DEADLINES.api); an answer after that is not an answer.
     const review = async (span, options = {}, signal) => {
       const query = new URLSearchParams({ report: 'access', from: ago(span), until: UNTIL, downloads: 'all', ...options });
-      const r = await fetch(`${base}/api/admin/audit?${query}`, { signal: signal ?? AbortSignal.timeout(90000) });
+      const r = await fetch(`${base}/api/admin/audit?${query}`, { signal: signal ?? AbortSignal.timeout(60000) });
       return { status: r.status, body: await r.json() };
     };
-    const pages = async (label, span, files) => {
+    const shown = row => ({ eventId: row.eventId, occurredAt: row.occurredAt, recordedAt: row.recordedAt, statutoryAct: row.statutoryAct,
+      surface: row.surface, action: row.action, result: row.result, managingInstitution: row.managingInstitution, targets: row.targets });
+    const expected = row => { const e = JSON.parse(row.payload); return { eventId: row.event_id, occurredAt: row.occurred_at.toISOString(),
+      recordedAt: row.recorded_at.toISOString(), statutoryAct: row.statutory_act, surface: e.surface, action: e.action, result: e.result,
+      managingInstitution: e.managingInstitution, targets: e.targets }; };
+    const served = async () => (await witness.$queryRawUnsafe(`SELECT payload::jsonb AS event FROM emr_access.access_entry
+      WHERE payload::jsonb->>'surface' = 'GET admin/audit' ORDER BY sequence DESC LIMIT 1`))[0].event;
+    // Two pages through HTTP against the reference's first 50 events, every shown field; `late` adds an entry
+    // inside the period between the pages: the continuation keeps the first page's ceiling.
+    const pages = async (label, span, files, late) => {
       const downloads = files ? 'files' : 'all';
+      const truth = await direct('review_entries_reference', ago(span), files, null, null, 51);
+      assert.equal(truth.length, 51, `${label}: the period has more than two pages`);
       const first = await elapsed(() => review(span, { downloads }));
       assert.equal(first.value.status, 200, `${label}: first page ${JSON.stringify(first.value.body).slice(0, 300)}`);
-      assert.equal(first.value.body.rows.length, 25, `${label}: a full first page`);
+      assert.deepEqual(first.value.body.rows.map(shown), truth.slice(0, 25).map(expected), `${label}: first page`);
       assert.ok(first.value.body.next, `${label}: a continuation`);
+      const own = await served();
+      assert.deepEqual(own.targets.map(t => t.recordId.value), truth.slice(0, 25).map(r => r.entry_id), `${label}: the reader's access record names the served rows`);
+      if (late) await late();
       const second = await elapsed(() => review(span, { downloads, after: first.value.body.next }));
       assert.equal(second.value.status, 200, `${label}: continuation`);
-      const shown = [...first.value.body.rows, ...second.value.body.rows].map(r => r.eventId);
-      assert.equal(new Set(shown).size, shown.length, `${label}: pages do not repeat an event`);
-      // The two pages are exactly the function's first 50 events in sequence order.
-      const truth = await direct('review_entries', ago(span), files, null, null, 50, db);
-      assert.deepEqual(shown, truth.map(r => r.event_id), `${label}: page boundary`);
+      assert.deepEqual(second.value.body.rows.map(shown), truth.slice(25, 50).map(expected), `${label}: continuation`);
       measured[label] = { first: first.ms, second: second.ms };
       console.log(`${label}: first page ${first.ms} ms, continuation ${second.ms} ms`);
       return first.value.body.rows.map(r => r.eventId);
     };
+    // A day and a week: the current definition equals the reference beyond the first page as well.
+    const deep = async (span, label) => { for (const files of [false, true]) {
+      const all = await direct('review_entries_reference', ago(span), files, null, null, 2000);
+      assert.equal(all.length, 2000, `${label}: files ${files} has 2000 events`);
+      assert.deepEqual(await direct('review_entries', ago(span), files, null, null, 2000), all, `same answer as the reference: ${label}, files ${files}, first 2000`);
+      await same('review_entries_reference', ago(span), files, all[0].snapshot_top, all[1000].sequence, 26, label);
+      compared += 2;
+    } };
+    await deep(DAY, '170k one day');
     const dayBefore = await pages('170k: one day', DAY, false);
     await pages('170k: one day, file events', DAY, true);
     await pages('170k: five days', 5 * DAY, false);
@@ -181,38 +229,41 @@ const elapsed = async work => { const start = Date.now(); const value = await wo
       await tx.$executeRawUnsafe('LOCK TABLE emr_access.access_entry IN ACCESS EXCLUSIVE MODE');
       await held;
     }, { maxWait: 10000, timeout: 180000 });
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await pause(500);
     const running = async marker => (await witness.$queryRawUnsafe(`SELECT count(*)::int AS n FROM pg_stat_activity
       WHERE datname = current_database() AND usename = 'kin_runtime' AND state = 'active' AND query LIKE $1`, marker))[0].n;
+    const PRODUCT = '%SELECT * FROM emr_access.review_entries(%', PROBE = '%unbounded probe%';
     const started = Date.now();
     const abandon = new AbortController();
     const abandoned = review(DAY, {}, abandon.signal).then(() => 'answered', error => error.name);
-    const waited = review(DAY);
-    // The read as the previous code issued it: outside a transaction, no limit.
+    const waited = review(DAY, {}, AbortSignal.timeout(90000));
+    // The read as the previous code issued it: outside a transaction, no limit. A Prisma query starts when awaited.
     const unbounded = db.$queryRawUnsafe(`/* unbounded probe */ SELECT count(*) FROM emr_access.review_entries('SYN-A', $1::timestamptz, $2::timestamptz, false, NULL, NULL, 26)`,
-      ago(DAY), UNTIL);
-    let seen = 0;
-    for (let i = 0; i < 50 && seen < 2; i++) { await new Promise(resolve => setTimeout(resolve, 100)); seen = await running('%SELECT * FROM emr_access.review_entries(%'); }
-    assert.equal(seen, 2, 'both Access Review reads wait in PostgreSQL');
+      ago(DAY), UNTIL).then(rows => rows, error => error);
+    for (let i = 0; i < 100 && (await running(PRODUCT) < 2 || await running(PROBE) < 1); i++) await pause(100);
+    assert.equal(await running(PRODUCT), 2, 'both Access Review reads wait in PostgreSQL');
+    assert.equal(await running(PROBE), 1, 'the unbounded read waits in PostgreSQL');
     abandon.abort();
     assert.equal(await abandoned, 'AbortError');
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    assert.equal(await running('%SELECT * FROM emr_access.review_entries(%'), 2, 'closing the browser request does not end the read');
+    await pause(5000);
+    assert.equal(await running(PRODUCT), 2, 'closing the browser request alone does not end its read');
     const answered = await waited;
-    const ended = Date.now() - started;
     assert.equal(answered.status, 503, 'the waiting read is refused at the limit');
     assert.equal(answered.body.rows, undefined);
-    for (let i = 0; i < 50 && await running('%SELECT * FROM emr_access.review_entries(%'); i++) await new Promise(resolve => setTimeout(resolve, 100));
-    assert.equal(await running('%SELECT * FROM emr_access.review_entries(%'), 0, 'no Access Review read is left in PostgreSQL');
-    assert.ok(ended >= 29000 && ended < 45000, `ended by the 30 s limit (${ended} ms)`);
-    assert.equal(await running('%unbounded probe%'), 1, 'an unbounded read would still be waiting');
+    for (let i = 0; i < 100 && await running(PRODUCT); i++) await pause(100);
+    const gone = Date.now() - started;
+    assert.equal(await running(PRODUCT), 0, 'no Access Review read is left in PostgreSQL, the abandoned one included');
+    assert.ok(gone >= 29000 && gone < 42000, `both reads ended by the 30 s limit (${gone} ms)`);
+    assert.equal(await running(PROBE), 1, 'an unbounded read would still be waiting');
     release(); await locked; await unbounded;
-    measured.abandoned = ended;
-    console.log(`abandoned and waiting reads ended in PostgreSQL after ${ended} ms (503); the unbounded read was still waiting`);
-    // The limit stays inside its transaction: the pooled connections keep the server default.
-    for (let i = 0; i < 12; i++) assert.equal((await db.$queryRawUnsafe('SHOW statement_timeout'))[0].statement_timeout, '0');
-    const after = await review(DAY);
-    assert.equal(after.status, 200, 'the next read answers');
+    measured.abandoned = gone;
+    console.log(`abandoned and waiting reads ended in PostgreSQL ${gone} ms after they started (503); the unbounded read was still waiting`);
+    // The limit stays inside its transaction: every pooled connection keeps the server default.
+    const settings = await Promise.all(Array.from({ length: 30 }, () =>
+      db.$queryRawUnsafe(`SELECT current_setting('statement_timeout') AS t, pg_backend_pid() AS pid FROM pg_sleep(0.3)`)));
+    assert.deepEqual([...new Set(settings.map(([row]) => row.t))], ['0'], 'no pooled connection keeps the limit');
+    console.log(`statement_timeout on ${new Set(settings.map(([row]) => row.pid)).size} pooled connections: 0`);
+    assert.equal((await review(DAY)).status, 200, 'the next read answers');
 
     // A thirty-day ledger: older entries outside the reviewed day do not change its answer.
     const before = filled.n;
@@ -222,11 +273,14 @@ const elapsed = async work => { const start = Date.now(); const value = await wo
     assert.ok(filled.n - before > 800000);
     const dayAfter = await pages('1.02M: one day', DAY, false);
     assert.deepEqual(dayAfter, dayBefore, 'the reviewed day answers the same on the larger ledger');
+    await deep(7 * DAY, '1.02M one week');
     await pages('1.02M: one week', 7 * DAY, false);
-    await pages('1.02M: one week, file events', 7 * DAY, true);
-    const month = await elapsed(() => review(30 * DAY));
+    // Last: a file entry arrives inside the period between the two pages (templates[2] is the download).
+    await pages('1.02M: one week, file events', 7 * DAY, true, () => fill(20000002, 1, ago(60000), 1));
+    const month = await elapsed(() => review(30 * DAY, {}, AbortSignal.timeout(90000)).catch(error => ({ status: error.name })));
     measured.month = { status: month.value.status, ms: month.ms };
     console.log(`1.02M: thirty days (not required) answered ${month.value.status} in ${month.ms} ms`);
+    console.log(`compared ${compared} answers in all`);
     console.log('MEASURED ' + JSON.stringify(measured));
     console.log('PASS: Access Review over a day, five days and a week on 170k and 1.02M entries; same answers as before; abandoned reads end in PostgreSQL');
   } finally {
