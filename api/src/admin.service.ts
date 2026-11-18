@@ -43,6 +43,9 @@ const OPERATOR_EVENT = {
   trustedProxyIp: { status: 'not-applicable', reason: 'in-process-service' },
 } as const;
 const OPERATOR_NAME = /^[A-Za-z0-9._@-]{1,64}$/;
+/** A signed-in person is not designated: the command never ends a member's session as a service job (the ledger records
+ * session ends by the member routes and the idle sweep only). The person signs out, or the session ends, then rerun. */
+const signedIn = () => new FirstAdminRefusal('FIRST_ADMIN_TARGET_SIGNED_IN', '대상이 로그인 중입니다. 로그아웃한 뒤 다시 실행하세요');
 const activeAdmins = (db: any, institution: string) => db.memberRights.count({
   where: { institution, approved: true, suspended: false, roles: { has: 'admin' } } });
 function text(value: unknown, field: string, max: number, required = true): string {
@@ -385,7 +388,7 @@ export class AdminService {
    * (patchUser: rights, version, re-login boundary, session end, audit, roster intent) run for X, with the operator,
    * institution and reason in its audit row. Refused without any write: X unknown or already administered; a service
    * account; a person of another institution or of several; provider groups that disagree with X; a suspended or
-   * isolated account. Roles are the person's current X roles plus admin — nothing else is chosen here, and passwords,
+   * isolated account, or one that is signed in. Roles are the person's current X roles plus admin — nothing else is chosen here, and passwords,
    * suspension and the administrator OTP are untouched. Concurrent or repeated runs: the institution lock and the
    * re-read under it let one succeed.
    */
@@ -407,6 +410,7 @@ export class AdminService {
     if (existing?.suspended) throw new FirstAdminRefusal('FIRST_ADMIN_TARGET_SUSPENDED', '정지된 계정은 지정할 수 없습니다');
     if (await this.prisma.memberIsolation.findUnique({ where: { sub } }))
       throw new FirstAdminRefusal('FIRST_ADMIN_TARGET_ISOLATED', '격리된 계정은 지정할 수 없습니다');
+    if (await this.prisma.authSession.count({ where: { sub } })) throw signedIn();
     const roles = [...new Set([...(existing?.approved ? existing.roles : []), 'admin'])];
     const c: Caller = { sub: facts.actor.subject, actor: 'operator:' + operator.name, roles: ['admin'], institution, kind: 'member' };
     return this.patchUser(sub, { approvalState: 'APPROVED', institution, roles, verificationOverride: true,
@@ -420,6 +424,7 @@ export class AdminService {
       throw new FirstAdminRefusal('FIRST_ADMIN_EXISTS', '이 기관에는 이미 활성 관리자가 있습니다');
     if (await tx.memberIsolation.findUnique({ where: { sub } }))
       throw new FirstAdminRefusal('FIRST_ADMIN_TARGET_ISOLATED', '격리된 계정은 지정할 수 없습니다');
+    if (await tx.authSession.count({ where: { sub } })) throw signedIn();
   }
 
   async resetPassword(id: string, body: any, c: Caller) {

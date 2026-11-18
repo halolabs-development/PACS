@@ -42,7 +42,7 @@ let runtime;
     try {
       const issuer = 'urn:kin:pacs:operator';
       const actor = { issuer, subject: options.operator, id: await work.resolveRequestIdentity(issuer, options.operator) };
-      const facts = { surface: 'operator:first-admin', actor, roles: ['admin'], rightsVersion: 0, institution: options.institution,
+      const facts = { surface: 'service:first-admin-designation', actor, roles: ['admin'], rightsVersion: 0, institution: options.institution,
         ip: null, sessionRef: null, requestId: randomUUID(), request: { work, requireCurrent: async () => {} } };
       const service = new AdminService(db, keycloak, null, { publishCredentials() {} });
       after = await service.designateFirstAdmin(options.subject, options.institution,

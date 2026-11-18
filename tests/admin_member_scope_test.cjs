@@ -34,7 +34,7 @@ function world() {
   put('revoked', null, { suspended: true });
   put('isolated', null);
   const kcOnly = { 'kc-pending': [], 'kc-b': [B], 'kc-two': [A, B], 'kc-c-group': [C], 'kc-service': [] };
-  const isolations = new Set(['isolated']), changes = [];
+  const isolations = new Set(['isolated']), changes = [], sessions = [], events = [];
   const audits = [], kcCalls = [];
   let writes = 0;
   const db = {
@@ -53,7 +53,9 @@ function world() {
         return { count: 1 };
       },
     },
-    authSession: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
+    authSession: { findMany: async ({ where }) => sessions.filter(s => s.sub === where.sub),
+      count: async ({ where }) => sessions.filter(s => s.sub === where.sub).length,
+      deleteMany: async ({ where }) => { const before = sessions.length; sessions.splice(0, sessions.length, ...sessions.filter(s => s.sid !== where.sid)); return { count: before - sessions.length }; } },
     memberIsolation: { findUnique: async ({ where }) => isolations.has(where.sub) ? { sub: where.sub } : null },
     auditLog: { create: async ({ data }) => { audits.push(data); return { id: audits.length }; }, findFirst: async () => null,
       findMany: async ({ where }) => audits.filter(a => a.target === where.target && where.action.in.includes(a.action)).reverse() },
@@ -91,7 +93,7 @@ function world() {
   };
   const ledger = { begin: () => ({
     resolveRequestIdentity: async () => '00000000-0000-4000-8000-000000000001',
-    transactionWithRecords: async work => work(db, async (event, mutation) => mutation()),
+    transactionWithRecords: async work => work(db, async (event, mutation) => { events.push(event); return mutation(); }),
     end() {},
   }) };
   const service = new AdminService(db, kc, null, { publishCredentials() {} });
@@ -106,13 +108,14 @@ function world() {
       { method, route, purpose: 'clinical' }, async () => {});
     try { return await run(req); } finally { res.emit('finish'); }
   };
-  const operatorFacts = institution => { const work = ledger.begin(); return { surface: 'operator:first-admin',
+  const operatorFacts = institution => { const work = ledger.begin(); return {
     actor: { issuer: 'urn:kin:pacs:operator', subject: 'ops', id: '00000000-0000-4000-8000-000000000009' }, roles: ['admin'],
     rightsVersion: 0, institution, ip: null, sessionRef: null, requestId: '00000000-0000-4000-8000-00000000000a',
+    surface: 'service:first-admin-designation',
     request: { work, requireCurrent: async () => {} } }; };
   const designate = (sub, institution) => service.designateFirstAdmin(sub, institution,
     { name: 'ops', reason: 'synthetic hospital request confirmed by phone' }, operatorFacts(institution));
-  return { rows, audits, kcCalls, kc, db, service, controller, keys, adminA, call, writes: () => writes, designate, changes };
+  return { rows, audits, kcCalls, kc, db, service, controller, keys, adminA, call, writes: () => writes, designate, changes, sessions, events };
 }
 
 const status = code => error => { assert.equal(error?.getStatus?.(), code, String(error?.message)); return true; };
@@ -313,6 +316,10 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
     await assert.rejects(w.designate('kc-service', C), status(403), 'a service account');
     await assert.rejects(w.designate('waiting', 'not-an-institution'), status(400), 'an unknown institution');
     assert.equal(w.writes(), 0);
+    // A signed-in person is refused (the command never ends a member session as a service job); signed out, it proceeds.
+    w.sessions.push({ sid: 'synthetic-sid', sub: 'waiting', auditRef: 'authref:00000000-0000-4000-8000-00000000000b', institution: null });
+    await refused('waiting', C, 'FIRST_ADMIN_TARGET_SIGNED_IN', 'a signed-in account');
+    w.sessions.length = 0;
     const first = await w.designate('waiting', C);
     assert.deepEqual([first.institution, first.roles, first.approvalState, first.enabled], [C, ['admin'], 'APPROVED', true]);
     const row = w.audits.filter(a => a.action === 'admin.user.approve');
@@ -320,6 +327,10 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
     assert.equal(row[0].actor, 'operator:ops');
     assert.deepEqual(JSON.parse(row[0].detail).operator, { by: 'ops', institution: C, reason: 'synthetic hospital request confirmed by phone' });
     assert.equal(w.changes.length, 1, 'one roster intent');
+    // Every ledger event the command recorded is valid under the access-event contract (closed internal surface).
+    const { parseAccessEvent } = require('../api/src/emr-contract/access-event.ts');
+    assert.equal(w.events.length, 1);
+    for (const event of w.events) parseAccessEvent(JSON.parse(JSON.stringify(event)));
     // Repeated or concurrent: the condition is read again under the institution lock; one administrator only.
     await refused('waiting', C, 'FIRST_ADMIN_EXISTS', 'the same command again');
     const realCount = w.db.memberRights.count;
