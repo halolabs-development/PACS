@@ -113,7 +113,7 @@ class ViewerPanelsDOMTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.browser.close(); cls.pw.stop()
 
-    def open(self, right=('trackedMeasurements', 'panelSegmentation'), dock=True, size=(1366, 768)):
+    def open(self, right=('trackedMeasurements', 'panelSegmentation'), dock=True, size=(1366, 1000)):
         context = self.browser.new_context(viewport={'width': size[0], 'height': size[1]})
         page = context.new_page(); errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
@@ -176,6 +176,18 @@ class ViewerPanelsDOMTest(unittest.TestCase):
         page.evaluate(FRAME)
         self.assertEqual(grid, self.box(page, '[data-cy=viewport-grid]'))
         self.assertEqual(['left:header', 'left:header'], page.evaluate("synClicks"))
+
+    def test_02b_a_short_window_keeps_studies_as_a_side_column(self):
+        # 1366 x 768: a band would take the images' height; the panel stays the stock side column, the buttons work.
+        page = self.open(size=(1366, 768))
+        left, column = self.box(page, LEFT), self.box(page, '#column')
+        self.assertEqual(0, left['left']); self.assertEqual(left['right'], column['left'])
+        self.assertAlmostEqual(left['top'], column['top'], delta=2)  # the stock panel stands 0.2% down
+        expect(self.button(page, 'studies')).to_have_attribute('aria-pressed', 'true')
+        self.button(page, 'studies').click()
+        page.evaluate(FRAME)
+        self.assertFalse(self.box(page, LEFT)['shown'], 'closed, no strip')
+        self.assertEqual((0, 1366), (self.box(page, '#column')['left'], self.box(page, '#column')['right']))
 
     def test_03_measurements_and_segmentation_open_their_tab_switch_and_close(self):
         page = self.open()
