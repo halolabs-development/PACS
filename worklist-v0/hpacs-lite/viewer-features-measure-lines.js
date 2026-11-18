@@ -97,7 +97,12 @@ window.KinViewerFeatures?.module('measure-lines', ({ ui }) => {
   }
   function volumeCheck(a, fresh, template = a.metadata.referencedImageId, study) {
     if (!model) return { reason: '' };
-    const key = JSON.stringify([template, a.data.handles.points, a.data.kinBaseline]), cached = checks.get(a.annotationUID);
+    // As for a line mark, the spacing each length's original gives its points now is part of the key.
+    const places = (Array.isArray(a.data.kinBaseline?.sources) ? a.data.kinBaseline.sources : []).map(source => {
+      try { const id = sourceImage(template, source, study); return id && F.instance(id) ? F.geometry(id, source.points.map(p => F.toImage(id, p))) : null; }
+      catch (error) { return { reason: error.message }; }
+    });
+    const key = JSON.stringify([template, a.data.handles.points, a.data.kinBaseline, places]), cached = checks.get(a.annotationUID);
     if (!fresh && cached?.key === key) return cached.result;
     let result;
     try {

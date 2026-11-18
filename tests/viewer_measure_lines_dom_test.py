@@ -250,6 +250,14 @@ class ViewerMeasureLinesDOMTest(unittest.TestCase):
         self.drag(page, 'left', (50, 10), (70, 10))
         expect(panel.locator('[data-measure-result]')).to_have_text('Stamped: Prostate volume: 2.36 mL')
         expect(page.locator('[data-kin-measure-layer=right] g[data-kin-mark=KinVolume]')).to_contain_text('Prostate volume: 2.36 mL')
+        # A screen calibration of a length's original frame: the volume is no longer given, beside the mark or on the line.
+        page.evaluate("""() => { const get = cornerstone.cache.getImage; window.synUncalibrated = get;
+          cornerstone.cache.getImage = id => ({ ...get(id), ...(id === 'syn:ct' ? { calibration: { type: 'User', scale: 1.2 } } : {}) });
+          document.dispatchEvent(new Event('CORNERSTONE_IMAGE_RENDERED')); }""")
+        expect(panel.locator('[data-measure-result]')).to_contain_text('재확인 필요')
+        expect(page.locator('[data-kin-measure-layer=right] g[data-kin-mark=KinVolume]')).to_contain_text('재확인 필요')
+        page.evaluate("() => { cornerstone.cache.getImage = synUncalibrated; document.dispatchEvent(new Event('CORNERSTONE_IMAGE_RENDERED')); }")
+        expect(panel.locator('[data-measure-result]')).to_have_text('Stamped: Prostate volume: 2.36 mL')
         self.assertEqual('', page.evaluate("uid => KinMeasureFrame.verify(cornerstoneTools.annotation.state.getAnnotation(uid))", mark['uid']))
         self.assertIn('재확인 필요', page.evaluate("""uid => { const a = cornerstoneTools.annotation.state.getAnnotation(uid);
           a.data.kinBaseline = { ...a.data.kinBaseline, values: [21, 15, 10, Math.PI / 6 * 21 * 15 * 10 / 1000] }; return KinMeasureFrame.verify(a); }""", mark['uid']))
@@ -398,6 +406,14 @@ class ViewerMeasureLinesDOMTest(unittest.TestCase):
         page.evaluate("() => { cornerstone.cache.getImage = synUncalibrated; document.dispatchEvent(new Event('CORNERSTONE_IMAGE_RENDERED')); }")
         expect(result).to_contain_text('CTR 0.73 (73.3%)')
         expect(words).to_contain_text('CTR 0.73 (73.3%)')
+        # The Calibration tool writes its calibrated-spacing metadata before the cached image changes: the same.
+        page.evaluate("""() => { const get = cornerstone.metaData.get; window.synUnwritten = get;
+          cornerstone.metaData.get = (type, id) => type === 'calibratedPixelSpacing' ? (id === 'syn:ct' ? { type: 'User', scale: 1.2 } : undefined) : get.call(cornerstone.metaData, type, id);
+          document.dispatchEvent(new Event('CORNERSTONE_IMAGE_RENDERED')); }""")
+        expect(result).to_contain_text('재확인 필요')
+        expect(words).to_contain_text('재확인 필요')
+        page.evaluate("() => { cornerstone.metaData.get = synUnwritten; document.dispatchEvent(new Event('CORNERSTONE_IMAGE_RENDERED')); }")
+        expect(result).to_contain_text('CTR 0.73 (73.3%)')
         # Another method, or Restart, starts the Result line again.
         panel.get_by_label('CTR Method').select_option('4')
         expect(result).to_have_text('')
