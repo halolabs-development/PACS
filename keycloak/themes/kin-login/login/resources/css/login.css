@@ -390,7 +390,8 @@ h1#kc-page-title {
   cursor: pointer;
 }
 
-#kin-continue {
+#kin-continue,
+#kin-back {
   display: block;
   box-sizing: border-box;
   text-align: center;
