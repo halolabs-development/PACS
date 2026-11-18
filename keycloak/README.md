@@ -220,7 +220,7 @@ Keycloak 자체 DB migration이 있는 minor 업그레이드다. 업그레이드
 회원 가입 검증과 비밀번호 재설정 메일은 Google Workspace SMTP를 사용한다.
 
 - SMTP: `smtp.gmail.com:587`, STARTTLS, 인증 사용
-- 발신 주소: `no-reply@koreaimagingnetwork.com`
+- 발신 주소: `no-reply@halolabs.co.kr`
 - 렐름 정책: `verifyEmail=false`(병원 선택 시 켠다), `resetPasswordAllowed=true`
 - 이메일 언어: 기본 한국어(`kin-email`), 필요 시 영어 선택
 - SMTP 앱 비밀번호는 사용자가 무표시 입력으로 라이브 렐름에만 넣는다.
@@ -233,7 +233,7 @@ Keycloak 자체 DB migration이 있는 minor 업그레이드다. 업그레이드
 ```text
 host=smtp.gmail.com
 port=587
-from=no-reply@koreaimagingnetwork.com
+from=no-reply@halolabs.co.kr
 auth=true
 starttls=true
 password=<SMTP_APP_PASSWORD>

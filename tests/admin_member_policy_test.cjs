@@ -16,7 +16,7 @@ const { KeycloakService } = require('../api/src/keycloak.service.ts');
 (async () => {
   const member = { sub: 'synthetic-member', username: 'synthetic', email: 'synthetic@example.test', name: 'Synthetic',
     emailVerified: true, approved: true, suspended: false, institution: 'synthetic-hospital', roles: ['admin'], version: 1 };
-  const caller = { sub: 'synthetic-admin', actor: 'synthetic-admin', roles: ['admin'] };
+  const caller = { sub: 'synthetic-admin', actor: 'synthetic-admin', roles: ['admin'], institution: 'synthetic-hospital', kind: 'member' };
   let writes = 0, changed;
   const audits = [];
   const db = { memberRights: { findUnique: async () => member, updateMany: async ({data}) => { writes++; changed = data; return {count:1}; } },

@@ -11,7 +11,10 @@ import { lockMemberRights, rightsAllow, rosterOverlap, rightsAccessEvent, Rights
 import { AuthService, lockWaitExceeded } from './auth.service';
 // 역할 목록은 clinician-policy 한 곳에서 온다. 여기서 별도 literal을 두면 guard와 어긋난다.
 import { APP_ROLES } from './clinician-policy';
-import { KeycloakService, KeycloakUser, within } from './keycloak.service';
+import { KeycloakService, KeycloakUser, RosterWriteFailure, within } from './keycloak.service';
+import {
+  adminInstitution, inScope, memberInstitution, memberNotFound, requireInScope, requireOwnAssignment,
+} from './member-scope';
 import { Caller } from './pacs.service';
 import { PrismaService } from './prisma.service';
 import { StudyAccessService } from './study-access.service';
@@ -42,8 +45,9 @@ export class AdminService {
     private auth: AuthService,
   ) {}
 
-  private admin(c: Caller) {
-    if (!c.roles?.includes('admin')) throw new ForbiddenException('회원 관리는 admin 권한이 필요합니다');
+  /** The administrator's own institution: every member route is scoped by it (member-scope.ts). */
+  private admin(c: Caller): string {
+    return adminInstitution(c);
   }
 
   private row(user: any) {
@@ -77,7 +81,7 @@ export class AdminService {
 
   private async managed(id: string, signal?: AbortSignal): Promise<KeycloakUser> {
     const user = await this.keycloak.getUser(id, signal);
-    if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다');
+    if (!user) throw memberNotFound();
     if (user.serviceAccountClientId)
       throw new ForbiddenException('서비스 계정은 회원 관리 API로 변경할 수 없습니다');
     return user;
@@ -98,22 +102,27 @@ export class AdminService {
     return roles;
   }
 
-  private async institution(value: unknown): Promise<string> {
+  /** An institution being assigned: a real institution group, and only the administrator's own. */
+  private async institution(value: unknown, admin: string): Promise<string> {
     const institution = text(value, 'institution', 128);
+    requireOwnAssignment(admin, institution);
     const allowed = await this.keycloak.institutions();
     if (!allowed.includes(institution)) throw new BadRequestException('허용되지 않은 기관입니다');
     return institution;
   }
 
   async listUsers(pageValue: unknown, c: Caller) {
-    this.admin(c);
+    const admin = this.admin(c);
     const page = pageValue == null || pageValue === '' ? 1 : Number(pageValue);
     if (!Number.isInteger(page) || page < 1) throw new BadRequestException('page는 1 이상의 정수여야 합니다');
-    const { realmUsers, ...result } = await this.keycloak.listUsers(page);
+    const { realmUsers, pageSize } = await this.keycloak.listUsers(page);
     const rightsRows = await this.prisma.memberRights.findMany({ where: { sub: { in: realmUsers.map(user => user.id) } } });
     const bySub = new Map(rightsRows.map(row => [row.sub, row]));
+    // Scope before paging: counts and pages describe only what this administrator may see.
+    const visible = realmUsers.filter(user => inScope(admin, memberInstitution(bySub.get(user.id), user.groups)));
+    const first = (page - 1) * pageSize;
     const users = [];
-    for (const user of result.users) {
+    for (const user of visible.slice(first, first + pageSize)) {
       const rights = bySub.get(user.id);
       if (!rights) {
         users.push({ ...this.row(this.pendingMember(user)), rosterUnconfirmed: false });
@@ -121,10 +130,10 @@ export class AdminService {
       }
       users.push({ ...this.row(rights), rosterUnconfirmed: await this.rosterUnconfirmed(user.id) });
     }
-    const pendingCount = new Set(realmUsers.filter(user => !bySub.get(user.id)?.approved).map(user => user.id)).size;
-    const response = { ...result, pendingCount, users };
+    const pendingCount = visible.filter(user => !bySub.get(user.id)?.approved).length;
+    const response = { page, pageSize, total: visible.length, pendingCount, users };
     await this.audit(c.actor, 'admin.user.list', 'admin-users', {
-      page, count: response.users.length, pendingCount: response.pendingCount,
+      page, count: response.users.length, pendingCount: response.pendingCount, institution: admin,
     });
     return response;
   }
@@ -138,7 +147,7 @@ export class AdminService {
   }
 
   async createUser(body: any, c: Caller, facts: AdminRequestFacts) {
-    this.admin(c);
+    const admin = this.admin(c);
     if (!facts?.request || facts.actor.subject !== c.sub)
       throw new ServiceUnavailableException('회원 변경 요청의 접속 사실을 확인할 수 없습니다');
     const username = text(body?.username, 'username', 128);
@@ -159,7 +168,7 @@ export class AdminService {
     if (verificationOverride) {
       if (!facts || facts.actor.subject !== c.sub)
         throw new ServiceUnavailableException('회원 변경 요청의 접속 사실을 확인할 수 없습니다');
-      await this.institution(body.institution);
+      await this.institution(body.institution, admin);
       this.roles(body.roles);
     }
 
@@ -180,8 +189,10 @@ export class AdminService {
         after = await this.prisma.$transaction(async tx => {
           await lockMemberRights(tx, created!.id);
           await facts.request.requireCurrent(tx);
-          return this.row(await tx.memberRights.findUnique({ where: { sub: created!.id } })
-            ?? await this.register(tx, created!));
+          const registered = await tx.memberRights.findUnique({ where: { sub: created!.id } });
+          // Another institution may have approved the new waiting member already: then no password is shown here.
+          if (registered) requireInScope(admin, memberInstitution(registered));
+          return this.row(registered ?? await this.register(tx, created!));
         });
       }
       await this.audit(c.actor, 'admin.user.create', created.id, {
@@ -201,11 +212,12 @@ export class AdminService {
   }
 
   async patchUser(id: string, body: any, c: Caller, facts: AdminRequestFacts) {
-    this.admin(c);
+    const admin = this.admin(c);
     if (!facts?.request || facts.actor.subject !== c.sub)
       throw new ServiceUnavailableException('회원 변경 요청의 접속 사실을 확인할 수 없습니다');
     const existing = await this.prisma.memberRights.findUnique({ where: { sub: id } });
     const identityToRegister = existing ? null : await this.managed(id);
+    requireInScope(admin, memberInstitution(existing, identityToRegister?.groups));
     const observed = existing ?? this.pendingMember(identityToRegister!);
     const before = this.row(observed);
     if (existing && body?.version !== undefined && body.version !== observed.version)
@@ -237,10 +249,12 @@ export class AdminService {
     if (body?.approvalState === 'PENDING') {
       if (body?.institution !== undefined || body?.roles !== undefined)
         throw new BadRequestException('승인 취소와 기관·역할 변경을 한 요청에 섞을 수 없습니다');
+      // Revoking returns the member to PENDING, suspends the account and clears institution and roles (the button says
+      // so): the member leaves this institution for the waiting room, from which an administrator may approve them again.
       action = 'unapprove'; approved = false; suspended = true; institution = null; roles = [];
     } else if (approvalMutation) {
       action = observed.approved ? 'update' : 'approve';
-      try { institution = await this.institution(body?.institution ?? observed.institution); }
+      try { institution = await this.institution(body?.institution ?? observed.institution, admin); }
       catch (error) { preReadError = error; }
       roles = this.roles(body?.roles ?? observed.roles);
       approved = true;
@@ -277,6 +291,8 @@ export class AdminService {
         await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
         await lockMemberRights(tx, id);
         const current = await tx.memberRights.findUnique({ where: { sub: id } });
+        // Scope on the locked row first: a member another institution took meanwhile is unknown here, not a conflict.
+        if (current) requireInScope(admin, memberInstitution(current));
         if (existing ? current?.version !== observed.version : !!current)
           throw new ConflictException({ code: 'MEMBER_VERSION_CONFLICT', message: '회원 상태가 바뀌었습니다. 새로고침하세요' });
         if (preReadError) throw preReadError;
@@ -341,19 +357,23 @@ export class AdminService {
   }
 
   async resetPassword(id: string, body: any, c: Caller) {
-    this.admin(c);
+    const admin = this.admin(c);
     if (!['temp', 'email'].includes(body?.mode))
       throw new BadRequestException('mode는 temp 또는 email이어야 합니다');
     const mode: 'temp' | 'email' = body.mode;
     // Password reset has no version CAS, so it never refreshes an existing identity or grants rights.
     // The pre-read validates the realm member and can register a missing pending row without remote I/O under lock.
     const user = await this.managed(id);
+    requireInScope(admin, memberInstitution(await this.prisma.memberRights.findUnique({ where: { sub: id } }), user.groups));
     let before: any;
     try {
       before = this.row(await this.prisma.$transaction(async tx => {
         await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
         await lockMemberRights(tx, id);
-        return await tx.memberRights.findUnique({ where: { sub: id } }) ?? await this.register(tx, user);
+        const row = await tx.memberRights.findUnique({ where: { sub: id } });
+        // Decided again on the locked row: a concurrent change may have moved the member.
+        requireInScope(admin, memberInstitution(row, user.groups));
+        return row ?? await this.register(tx, user);
       }, { maxWait: 4000, timeout: 8000 }));
     } catch (error) {
       if (lockWaitExceeded(error))
@@ -365,9 +385,29 @@ export class AdminService {
       await this.keycloak.resetPassword(id, mode, temporaryPassword);
       const after = this.row(await this.member(id));
       await this.audit(c.actor, 'admin.user.reset-password', id, { before, after, mode });
+      // The provider write runs outside the member lock. If another institution approved a waiting member meanwhile,
+      // the new password is set but never shown here (that institution resets it again).
+      requireInScope(admin, memberInstitution(after));
       return { ...after, temporaryPassword };
     }
-    await this.keycloak.resetPassword(id, mode);
+    if (!user.email) {
+      await this.audit(c.actor, 'admin.user.reset-password.failed', id, { before, after: before, mode, reason: 'no-address', failed: true });
+      throw new BadRequestException({ code: 'RESET_MAIL_NO_ADDRESS',
+        message: '이 회원은 이메일 주소가 없어 재설정 메일을 보낼 수 없습니다. Temp Password로 임시 비밀번호를 전달하세요.' });
+    }
+    try {
+      await this.keycloak.resetPassword(id, mode);
+    } catch {
+      // Any failure (refusal, transport, token) gets a page message. Only a confirmed missing mail setting is reported
+      // as such; anything else, including failing to read the settings, is a general sending failure. No provider
+      // words, addresses or secrets reach the page.
+      const configured = await this.keycloak.mailSettings().then(s => s.configured, () => true);
+      const reason = configured ? 'send-failed' : 'mail-not-configured';
+      await this.audit(c.actor, 'admin.user.reset-password.failed', id, { before, after: before, mode, reason, failed: true });
+      throw new ServiceUnavailableException(configured
+        ? { code: 'RESET_MAIL_FAILED', message: '재설정 메일을 보내지 못했습니다. 잠시 뒤 다시 시도하거나 Temp Password로 임시 비밀번호를 전달하세요.' }
+        : { code: 'RESET_MAIL_NOT_CONFIGURED', message: '메일 발송 설정이 없어 재설정 메일을 보내지 못했습니다. Temp Password로 임시 비밀번호를 전달하고, 운영 담당자에게 메일 발송 설정을 요청하세요.' });
+    }
     const after = this.row(await this.member(id));
     await this.audit(c.actor, 'admin.user.reset-password', id, { before, after, mode });
     return after;
