@@ -251,6 +251,8 @@ class AutoSaveViewE2E(ViewerDisplayMenuE2E):
         p.close()
         page = self.login()
         held = dict(going=False, routes=[])
+        requests = []
+        self.counting(page, requests)
         page.route(lambda url: '/series/' + coronal + '/' in url and '/frames/' in url,
                    lambda route: route.continue_() if held['going'] else held['routes'].append(route))
         page.goto(self.stack.proxy + '/ohif/viewer?StudyInstanceUIDs=' + f.uid)
@@ -278,3 +280,4 @@ class AutoSaveViewE2E(ViewerDisplayMenuE2E):
             for a, b in zip(before[i]['focal'], now[i]['focal']):
                 self.assertAlmostEqual(a, b, places=2, msg='cell %d focal point' % i)
         self.assertEqual('Restored saved view: Zoom 250%%, W %d / L %d, Image 1 (2 of 2 cells)' % (before[0]['w'], before[0]['l']), now[0]['badge'])
+        self.assertEqual(['GET /studies/%s/viewer-auto-view' % f.uid], requests)

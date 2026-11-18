@@ -22,6 +22,7 @@
     const model = window.KinAutoViewModel;
     const grid = services.viewportGridService, cells = services.cornerstoneViewportService, sets = services.displaySetService;
     const native = window.cornerstone, events = native?.Enums?.Events || {};
+    const rendered = native?.Enums?.ViewportStatus?.RENDERED || 'rendered';
     const search = location.search, query = new URLSearchParams(search);
     const exam = window.KinViewerExamScope?.snapshot();
     const examReference = exam ? window.KinExamScope.snapshotReference(exam) : null;
@@ -69,7 +70,7 @@
     const outside = new Set();
     const pending = new Map();  // capture sequence -> Discard generation, including saves still waiting in the queue
     // floor: the place in order of the starting point (rebase, below); settling: no starting point could be taken yet.
-    let floor = 0, settling = false;
+    let floor = 0, settling = false, waitingForImage = false;
 
     const element = (tag, text, parent, className) => {
       const node = document.createElement(tag); if (text) node.textContent = text; if (className) node.className = className; parent?.append(node); return node;
@@ -95,7 +96,7 @@
     const writer = () => sameOwner() && session?.writer?.() !== false && !session?.ended?.();
     const list = value => Array.from(value || [], Number);
 
-    const panes = new Map();
+    const panes = new Map(), drawnImages = new WeakMap();
     let partialLayout = null;
     // Edits made while reading or replacing the layout travel with the original viewport's series.
     const opening = new Map();
@@ -132,7 +133,7 @@
         const text = JSON.stringify(cell);
         if (record.expected === image && record.image !== image) record.expected = null;
         else if (record.image !== image || record.base !== null && record.base !== text) record.edit = cell;
-        record.first ??= cell;
+        if (!record.edit) record.first = cell;
         record.image = image; record.base = text;
       } else {
         // The first stable values after a draw belong to the viewer. A move to another source still belongs to the reader.
@@ -142,6 +143,23 @@
     }
     function observeOpening() {
       if (watchingOpening) for (const g of ordered()) observeCell(g.viewportId);
+    }
+
+    function gridView(state, views, cells) {
+      const active = views.findIndex(g => g.viewportId === state.activeViewportId);
+      return { version: 1, studies: [...studies], rows: state.layout?.numRows, cols: state.layout?.numCols,
+        active: Math.max(0, active), cells };
+    }
+
+    // The first complete screen can arrive one pane at a time. Fill only its previously unreadable slots;
+    // an edit already made in a different pane must still compare against that pane's own starting value.
+    function observeFirst(id, cell) {
+      const start = issued.start, slot = start?.missing.get(id);
+      if (!cell || !slot || slot.set !== setOf(id)) return;
+      start.view.cells[slot.index] = cell;
+      start.missing.delete(id);
+      issued.text = JSON.stringify(start.view);
+      if (!start.missing.size) delete issued.start;
     }
 
     function capture() {
@@ -163,7 +181,7 @@
             const now = readCell(g.viewportId);
             if (now) {
               const text = JSON.stringify(now);
-              if (pane.base !== null && pane.base !== text) pane.value = now;
+              if (pane.base !== text) pane.value = now;
               pane.base = text;
             }
           }
@@ -172,17 +190,17 @@
         else {
           const cell = readCell(g.viewportId);
           if (!cell) return null;
+          observeFirst(g.viewportId, cell);
           saved.push(cell);
         }
       }
-      const active = views.findIndex(g => g.viewportId === state.activeViewportId);
       if (partialLayout) {
         const { view, targets } = partialLayout;
         const values = view.cells.map((cell, i) => panes.get(targets[i])?.value ?? cell);
         const selected = targets.indexOf(state.activeViewportId);
         return model.validate({ ...view, cells: values, active: selected < 0 ? view.active : selected }, study, exam ? 20 : 8);
       }
-      return model.validate({ version: 1, studies: [...studies], rows, cols, active: active >= 0 ? active : 0, cells: saved }, study, exam ? 20 : 8);
+      return model.validate(gridView(state, views, saved), study, exam ? 20 : 8);
     }
     const captured = () => { try { return capture(); } catch (error) { console.error(error); return null; } };
     // A Job or finding owns the entire screen until it lands. Its completed screen becomes the save baseline,
@@ -259,13 +277,16 @@
       if (settling) { rebase(); return chain; }
       if (window.KinViewerCellRules?.busy?.()) { if (mode === 'queue') changed(); return chain; }
       if (generation === null) { read().then(() => { if (live() && on && generation !== null) changed(); }); return chain; }
-      const snapshot = captured(), text = snapshot && JSON.stringify(snapshot);
+      const snapshot = captured();
+      waitingForImage = !snapshot;
+      if (!snapshot) return chain;
+      const text = JSON.stringify(snapshot);
       // An old-generation request cannot overwrite this generation. It must not force the unchanged, discarded view
       // to be captured again merely because the window closes before that old request answers. Nor does a save from
       // before the starting point: the screen a restore left is not sent because the reader's earlier view is still
       // on its way (that request goes on, and its own answer settles it).
       const canOverwrite = [...pending].some(([seq, taken]) => seq > floor && taken === generation);
-      if (!snapshot || (text === issued.text && !(mode !== 'queue' && canOverwrite))) return chain;
+      if (text === issued.text && !(mode !== 'queue' && canOverwrite)) return chain;
       const at = epoch, seq = ++order, when = stamp(), capturedGeneration = generation;
       issued = { text, seq };
       pending.set(seq, capturedGeneration);
@@ -333,9 +354,14 @@
       return found.length === 1 ? found[0].displaySetInstanceUID : null;
     };
     function isDrawn(v, image) {
-      return !!image && v.getCornerstoneImage?.()?.imageId === image &&
-        (v.viewportStatus === undefined || v.viewportStatus === (native?.Enums?.ViewportStatus?.RENDERED || 'rendered')) &&
-        window.kinViewerDisplayImageSettled?.(v) !== false;
+      if (!image || v.getCornerstoneImage?.()?.imageId !== image || window.kinViewerDisplayImageSettled?.(v) === false) return false;
+      // A window change puts an already displayed stack image back into PRE_RENDER. Its camera and
+      // window are still readable. A new stack image must earn its own first render.
+      if (v.viewportStatus === rendered) {
+        drawnImages.set(v, image);
+        return true;
+      }
+      return v.viewportStatus === undefined || v.viewportStatus === (native?.Enums?.ViewportStatus?.PRE_RENDER || 'preRender') && drawnImages.get(v) === image;
     }
     // Cameras can round during a world-to-canvas conversion. Compare the applied camera, since the reported
     // zoom is relative to the fit of the current window and can differ from the saved percentage.
@@ -509,8 +535,7 @@
         for (const g of views) {
           const id = g.viewportId, set = setOf(id);
           if (panes.has(id) && initialGrid.get(id) === set) continue;
-          const now = readCell(id);
-          panes.set(id, { set, placed: true, base: now && JSON.stringify(now), value: now || panes.get(id)?.value || null });
+          panes.delete(id);
         }
         issued = { text: JSON.stringify(view), seq: floor };
         changed();
@@ -625,17 +650,17 @@
         } else {
           observeOpening();
           watchingOpening = false;
-          for (const g of ordered()) {
-            const record = opening.get(g.viewportId);
-            panes.set(g.viewportId, { set: setOf(g.viewportId), placed: true,
-              value: record?.first ?? null, base: record?.base ?? null });
-          }
+          const missing = new Map();
+          const baseline = gridView(grid.getState(), views, views.map(({ viewportId: id }, index) => {
+            const record = opening.get(id), set = setOf(id);
+            const cell = record?.edit ? record.first : readCell(id);
+            if (set && !cell && !record?.edit) missing.set(id, { set, index });
+            return cell ?? null;
+          }));
           phase = 'ready';
-          rebase(true);
-          for (const [id, record] of opening) {
-            if (record.edit && panes.has(id)) { panes.get(id).value = record.edit; changed(); }
-          }
-          if (keepLayout) { issued = { text: null, seq: floor }; changed(); }
+          issued = { text: keepLayout ? null : JSON.stringify(baseline), seq: floor };
+          if (!keepLayout && missing.size) issued.start = { view: baseline, missing };
+          if (keepLayout || [...opening.values()].some(record => record.edit)) changed();
           opening.clear();
           return;
         }
@@ -649,18 +674,25 @@
     observeOpening();
     function observeEvent(event) {
       const id = event.detail?.viewportId, pane = panes.get(id);
+      const v = stackOf(id);
+      if (event.type === events.PRE_STACK_NEW_IMAGE || event.type === events.STACK_NEW_IMAGE) drawnImages.delete(v);
+      if (event.type === events.PRE_STACK_NEW_IMAGE) return;
+      if (event.type === events.IMAGE_RENDERED && v?.element === event.target && v.viewportStatus === rendered) {
+        const image = v.getCornerstoneImage?.()?.imageId;
+        if (image && image === v.getCurrentImageId()) drawnImages.set(v, image);
+      }
       if (watchingOpening && id) observeCell(id);
       if (pane && !pane.placed && pane.set === setOf(id)) {
         if (pane.watch) readerChanged(id, pane);
         return;
       }
-      if (pane?.placed && pane.base === null) {
-        const first = readCell(id);
-        if (first) pane.base = JSON.stringify(first);
+      if (issued.start?.missing.has(id)) observeFirst(id, readCell(id));
+      if (event.type !== events.IMAGE_RENDERED || waitingForImage || settling) {
+        waitingForImage = false;
+        changed();
       }
-      if (event.type !== events.IMAGE_RENDERED) changed();
     }
-    for (const name of [events.CAMERA_MODIFIED, events.VOI_MODIFIED, events.STACK_NEW_IMAGE, events.IMAGE_RENDERED, 'kin-display-image-settled']) {
+    for (const name of [events.CAMERA_MODIFIED, events.VOI_MODIFIED, events.PRE_STACK_NEW_IMAGE, events.STACK_NEW_IMAGE, events.IMAGE_RENDERED, 'kin-display-image-settled']) {
       if (name) document.addEventListener(name, observeEvent, { capture: true, signal });
     }
     const subscriptions = [];

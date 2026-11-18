@@ -66,8 +66,8 @@ SETUP = """config => {
   for (const set of synSets) for (let i = 1; i <= set.n; i++) synMeta['syn:' + set.uid + ':' + i] = { Modality: 'CT', StudyInstanceUID: STUDY,
     SeriesInstanceUID: set.series, SOPInstanceUID: set.series + '.' + i, InstanceNumber: i, ImagePositionPatient: [0, 0, i * 5],
     ImageOrientationPatient: [1, 0, 0, 0, 1, 0], PixelSpacing: [0.5, 0.5], Rows: 400, Columns: 600 };
-  const EVENTS = { STACK_NEW_IMAGE: 'syn-new', CAMERA_MODIFIED: 'syn-camera', VOI_MODIFIED: 'syn-voi', IMAGE_RENDERED: 'syn-rendered' };
-  window.cornerstone = { Enums: { Events: EVENTS },
+  const EVENTS = { PRE_STACK_NEW_IMAGE: 'syn-before-image', STACK_NEW_IMAGE: 'syn-new', CAMERA_MODIFIED: 'syn-camera', VOI_MODIFIED: 'syn-voi', IMAGE_RENDERED: 'syn-rendered' };
+  window.cornerstone = { Enums: { Events: EVENTS, ViewportStatus: { RENDERED: 'rendered', PRE_RENDER: 'preRender' } },
     metaData: { get: (type, id) => type === 'instance' ? synMeta[id] : type === 'voiLutModule' && synMeta[id] ? { windowCenter: [40], windowWidth: [400] } : undefined },
     utilities: { windowLevel: { toWindowLevel: (low, high) => ({ windowWidth: Math.abs(high - low) + 1, windowCenter: (low + high + 1) / 2 }),
       toLowHighRange: (w, c) => ({ lower: c - 0.5 - (w - 1) / 2, upper: c - 0.5 + (w - 1) / 2 }) } } };
@@ -85,18 +85,37 @@ SETUP = """config => {
     const v = { id, type: 'stack', element, ids: set ? set.ids ? [...set.ids] : Array.from({ length: set.n }, (_, i) => 'syn:' + set.uid + ':' + (i + 1)) : [], index: 0,
       presentation: { rotation: 0 }, properties: { invert: false, voiRange: { lower: -160, upper: 239 }, VOILUTFunction: 'LINEAR', interpolationType: 1 },
       camera: { focalPoint: [0, 0, 5], position: [0, 0, 105], viewUp: [0, -1, 0], viewPlaneNormal: [0, 0, 1], parallelScale: 100, rotation: 0, flipHorizontal: false, flipVertical: false } };
+    let frame;
+    function render() {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        if (!v.getCurrentImageId() || v.getCornerstoneImage()?.imageId !== v.getCurrentImageId()) return;
+        v.viewportStatus = 'rendered';
+        fire(v, 'IMAGE_RENDERED');
+      });
+    }
+    function move(index) {
+      v.viewportStatus = 'preRender';
+      v.index = index;
+      fire(v, 'PRE_STACK_NEW_IMAGE');
+      fire(v, 'STACK_NEW_IMAGE');
+      render();
+    }
     Object.assign(v, {
+      viewportStatus: set ? 'rendered' : 'noData',
       getImageIds: () => [...v.ids], getCurrentImageId: () => v.ids[v.index], getCurrentImageIdIndex: () => v.index,
       getCornerstoneImage: () => ({ imageId: v.getCurrentImageId() }),
-      async setImageIdIndex(index) { v.index = index; fire(v, 'STACK_NEW_IMAGE'); },
-      async setStack(ids, index = 0) { v.ids = [...ids]; v.index = index; fire(v, 'STACK_NEW_IMAGE'); },
+      async setImageIdIndex(index) { if (index !== v.index) move(index); },
+      async setStack(ids, index = 0) { v.ids = [...ids]; move(index); },
       getZoom: () => 100 / v.camera.parallelScale, setZoom(zoom) { v.camera.parallelScale = 100 / zoom; fire(v, 'CAMERA_MODIFIED'); },
-      setPan() {}, resetProperties() {}, render() {},
+      setPan() {}, resetProperties() {}, render,
       getCamera: () => structuredClone(v.camera), setCamera(next) { const { rotation, ...rest } = structuredClone(next); v.camera = { ...v.camera, ...rest };
         if (rotation !== undefined) { v.camera.rotation = rotation; v.presentation.rotation = rotation; } fire(v, 'CAMERA_MODIFIED'); },
       getViewPresentation: () => ({ ...v.presentation }), setViewPresentation(next) { v.presentation = { rotation: next.rotation }; v.camera.rotation = next.rotation; fire(v, 'CAMERA_MODIFIED'); },
       getProperties: () => structuredClone(v.properties),
-      setProperties(next) { v.properties = { ...v.properties, ...structuredClone(next) }; if (next.voiRange) fire(v, 'VOI_MODIFIED', { range: next.voiRange }); },
+      setProperties(next) { v.viewportStatus = 'preRender'; v.properties = { ...v.properties, ...structuredClone(next) };
+        if (next.voiRange) fire(v, 'VOI_MODIFIED', { range: next.voiRange }); render(); },
       setVOI(range) { v.properties.voiRange = { ...range }; fire(v, 'VOI_MODIFIED', { range }); },
       getDefaultActor: () => ({ actor: {} }), getCanvas: () => element.querySelector('canvas'),
       getImageData: () => ({ spacing: [0.5, 0.5, 1], imageData: { indexToWorld: ([i, j]) => [i * 0.5, j * 0.5, 0] } }), worldToCanvas: ([x, y]) => [x, y],
@@ -184,8 +203,14 @@ SETUP = """config => {
   window.synFirst = () => { const v = [...synViewports.values()][0]; return { id: v.id, image: synMeta[v.getCurrentImageId()].SOPInstanceUID, zoom: v.getZoom() }; };
   // A cell whose image has not come yet (it shows none: there is nothing to capture there), and its coming, with the
   // viewer's own word of it (STACK_NEW_IMAGE) or with none.
-  window.synLoading = (index = 1) => { const v = [...synViewports.values()][index]; v.kept = v.ids; v.ids = []; };
-  window.synLoaded = (index = 1, silent = false) => { const v = [...synViewports.values()][index]; if (silent) v.ids = v.kept; else v.setStack(v.kept, 0); };
+  window.synLoading = (index = 1) => { const v = [...synViewports.values()][index]; v.kept = v.ids; v.ids = []; v.viewportStatus = 'loading'; };
+  window.synLoaded = (index = 1, silent = false) => {
+    const v = [...synViewports.values()][index];
+    if (silent) { v.ids = v.kept; v.viewportStatus = 'rendered'; return; }
+    const drawn = new Promise(resolve => v.element.addEventListener('syn-rendered', resolve, { once: true }));
+    v.setStack(v.kept, 0);
+    return drawn;
+  };
   window.synSession = { owner: () => owner, ended: () => synEnded, writer: () => synWriter, state: () => 'confirmed', decide: async () => {} };
   window.synMount = () => {
     window.synToolbar = KinViewerUXToolbar.mount({ services: synServices, commands: synCommands, session: synSession });
@@ -222,7 +247,7 @@ LATE_DRAWING = """() => {
     for (const v of synViewports.values()) {
       v.getCornerstoneImage = () => v.drawn ? { imageId: v.drawn } : undefined;
       if (!v.id.startsWith('kin-auto-view-')) { v.drawn = v.getCurrentImageId(); continue; }
-      v.drawn = null;
+      v.drawn = null; v.viewportStatus = 'preRender';
       const arrive = () => {
         if (v.drawn === v.getCurrentImageId()) return;
         if (!v.drawn) { const shift = v.camera.focalPoint.map(n => n * 99); v.camera.parallelScale = 100 * v.camera.parallelScale;
@@ -230,6 +255,7 @@ LATE_DRAWING = """() => {
           v.properties.voiRange = { lower: -160, upper: 239 }; }
         v.drawn = v.getCurrentImageId();
         v.element.dispatchEvent(new CustomEvent('syn-new', { detail: { viewportId: v.id, element: v.element } }));
+        v.render();
       };
       const move = v.setImageIdIndex;
       v.setImageIdIndex = async index => { await move(index); arrive(); };
@@ -336,6 +362,7 @@ COMBINED = """config => {
     const v = synViewports.get(id); if (!v || !cell) return;
     v.setImageIdIndex(v.getImageIds().findIndex(image => synMeta[image].SOPInstanceUID === cell.sop));
     v.setProperties(structuredClone(cell.properties)); v.setCamera(structuredClone(cell.camera));
+    return new Promise(resolve => v.element.addEventListener('syn-rendered', resolve, { once: true }));
   };
   window.kinCreateStackRestore = () => ({
     prepare: async (cells, sets) => cells.map((cell, index) => ({ cell, set: sets[index] })),
@@ -344,14 +371,15 @@ COMBINED = """config => {
       async complete() {
         const step = synRestore.steps.shift() || {};
         for (let n = 0; n < 200 && !ids.every((id, index) => !plans[index].cell || synViewports.has(id)); n++) await new Promise(resolve => setTimeout(resolve, 10));
-        place(ids[0], plans[0].cell);
+        const draws = [place(ids[0], plans[0].cell)];
         if (step.gate) {
           if (!synGates[step.gate]) synGate(step.gate);
           synRestore.waiting = step.gate; await passed(step.gate);
           if (synRestore.waiting === step.gate) synRestore.waiting = null;
         }
         if (step.fail) throw new Error('저장한 영상 표시를 확인하지 못했습니다.');
-        plans.forEach((plan, index) => { if (index) place(ids[index], plan.cell); });
+        plans.forEach((plan, index) => { if (index) draws.push(place(ids[index], plan.cell)); });
+        await Promise.all(draws);
       },
       verify() {}, dispose() {},
     }),
@@ -441,9 +469,10 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         return page.evaluate(STATE, cell)
 
     def change(self, page, cell='left', zoom=2.5, window=(1500, -600), image=5):
-        """The reader changes one cell: zoom, window and image (as the viewer's tools do)."""
+        """The reader changes one cell and sees the chosen image before switching or closing."""
         page.evaluate("""([id, zoom, w, l, image]) => { const v = synViewports.get(id);
-          v.setZoom(zoom); v.setProperties({ voiRange: cornerstone.utilities.windowLevel.toLowHighRange(w, l) }); v.setImageIdIndex(image); }""",
+          v.setZoom(zoom); v.setProperties({ voiRange: cornerstone.utilities.windowLevel.toLowHighRange(w, l) }); v.setImageIdIndex(image);
+          return new Promise(resolve => v.element.addEventListener('syn-rendered', resolve, { once: true })); }""",
                       [cell, zoom, window[0], window[1], image])
 
     def started(self, page):
@@ -683,7 +712,6 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
     def with_display(self, page):
         page.route(ORIGIN + '/worklist/hpacs-lite/viewer-display-model.js', self.serve(HPACS / 'viewer-display-model.js'))
         page.add_script_tag(path=str(HPACS / 'viewer-features-display.js'))
-        page.evaluate("cornerstone.Enums.Events.PRE_STACK_NEW_IMAGE = 'syn-before-image'")
 
     def test_reader_edits_during_read_survive_layout_replacement_and_reopen(self):
         setup = """() => { (%s)();
@@ -719,6 +747,72 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         self.close(page)
         self.assertEqual(['syn:set-A:4', 'syn:set-B:3'], [self.state(page, key)['image'] for key in ('left', 'right')])
         self.assertEqual([], self.posts(page))
+
+    def test_window_change_during_read_survives_reopen(self):
+        page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), setup=HOLD_READ)
+        page.wait_for_function(READING)
+        page.evaluate("""() => { synViewports.get('left').setProperties({voiRange: {lower: -500, upper: 500}});
+          synServer.releaseRead(); }""")
+        page.wait_for_function('synServer.saved.cells[0].sop === synMeta["syn:set-A:1"].SOPInstanceUID', timeout=6500)
+        saved = self.posts(page)[-1]
+        self.assertEqual({'lower': -500, 'upper': 500}, saved['cells'][0]['properties']['voiRange'])
+        self.assertEqual(SB + '.2', saved['cells'][1]['sop'])
+        again = self.open(saved=saved)
+        expect(again.locator('[data-auto-view-badge]')).to_contain_text('2 of 2 cells')
+        self.assertEqual(saved['cells'][0]['properties']['voiRange'], self.state(again, 'left')['voi'])
+
+    def test_reloaded_source_with_pixels_ready_waits_for_its_own_first_render(self):
+        page = self.open(saved=view([cell(SA, 1), cell(SB, 2)]), setup=HOLD_READ)
+        page.wait_for_function(READING)
+        # Reloading the same image can leave its id and pixels available before the new stack has drawn it.
+        page.evaluate("""() => { const v = synViewports.get('left');
+          v.viewportStatus = 'preRender';
+          synFire('left', 'PRE_STACK_NEW_IMAGE'); synFire('left', 'STACK_NEW_IMAGE'); synServer.releaseRead(); }""")
+        expect(page.locator('#pane-right [data-auto-view-badge]')).to_contain_text('1 of 2 cells; 1 not restored')
+        self.assertEqual(100, self.state(page, 'left')['scale'])
+        self.assertEqual({'lower': -160, 'upper': 239}, self.state(page, 'left')['voi'])
+        page.evaluate("synViewports.get('left').render()")
+        expect(page.locator('[data-auto-view-badge]')).to_contain_text('2 of 2 cells')
+        self.assertEqual(40, self.state(page, 'left')['scale'])
+        self.close(page)
+        self.assertEqual([], self.posts(page))
+
+    def test_first_save_contains_the_settled_window_of_the_untouched_pane(self):
+        page = self.unstarted()
+        page.evaluate("""() => { const v = synViewports.get('right'), image = v.getCornerstoneImage;
+          v.getCornerstoneImage = () => undefined;
+          v.setVOI({lower: 0, upper: 255});
+          v.getCornerstoneImage = image; v.render(); }""")
+        page.evaluate('synServer.releaseRead()')
+        self.quiet(page, 0, 2500)
+        page.evaluate("synViewports.get('left').setZoom(2)")
+        page.wait_for_function('synServer.posts.length === 1', timeout=5500)
+        right = self.posts(page)[0]['cells'][1]
+        self.assertEqual((SB + '.1', {'lower': 0, 'upper': 255}), (right['sop'], right['properties']['voiRange']))
+
+    def test_first_save_waits_for_the_other_pane_to_draw_and_reopens_both_series(self):
+        page = self.unstarted()
+        page.evaluate('synLoading(); synServer.releaseRead()')
+        page.wait_for_timeout(300)
+        page.evaluate("synViewports.get('left').setZoom(2)")
+        self.quiet(page, 0, 2500)
+        page.evaluate('synLoaded()')
+        page.wait_for_function('synServer.posts.length === 1', timeout=5500)
+        saved = self.posts(page)[0]
+        self.assertEqual([(SA + '.1', 2), (SB + '.1', 1)], [(c['sop'], c['zoom']) for c in saved['cells']])
+        again = self.open(saved=saved)
+        expect(again.locator('[data-auto-view-badge]')).to_contain_text('2 of 2 cells')
+        self.assertEqual(['set-A', 'set-B'], again.evaluate('[...synShown.values()].map(pane => pane.set)'))
+
+    def test_reader_replacement_still_loading_when_read_finishes_saves_its_own_image(self):
+        page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), setup=HOLD_READ)
+        page.wait_for_function(READING)
+        page.evaluate("""() => { synBuild(1, 2, [['left', 'set-A'], ['picked', 'set-A']]);
+          synLoading(); synServer.releaseRead(); }""")
+        self.quiet(page, 0, 2500)
+        page.evaluate('synLoaded()')
+        page.wait_for_function('synServer.posts.length === 1', timeout=5500)
+        self.assertEqual([SA + '.4', SA + '.1'], [c['sop'] for c in self.posts(page)[0]['cells']])
 
     def test_reader_zoom_while_sorting_survives_the_late_stack_and_reopen(self):
         saved = view([cell(SA, 3, display=SORT_DOWN), cell(SB, 2)])
@@ -1818,7 +1912,7 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         page.wait_for_function('synJobs.reads === 1')
         page.evaluate('synLoading(); synServer.releaseRead()')
         page.wait_for_timeout(300)
-        page.evaluate("synLoaded(); synOpen('read')")
+        page.evaluate("synLoaded().then(() => synOpen('read'))")
         self.restored(page)
         self.assertEqual(([(1, SA + '.1')], [['begin', 0, 0], ['end', 0, 0]]), (self.sent(page), page.evaluate('synTold')))
         self.quiet(page, 1)
