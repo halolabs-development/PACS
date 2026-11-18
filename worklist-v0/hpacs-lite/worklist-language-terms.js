@@ -4010,6 +4010,7 @@ window.KinLanguageTerms = {
     ["현재 설정이 바뀌어 적용하지 않았습니다. 다시 불러오세요.", "Not applied because the current settings changed. Load again.", "m"],
     ["현재 세 칸을 새 개인 상용구 편집창으로 가져옵니다", "Brings the current three fields into a new personal template editor", "m"],
     ["현재 승인·점유·초안·진행 중 전송이 있으면 서버가 되돌리기를 거절합니다. 합친 뒤 도착한 영상은 자기 원본에 그대로 남습니다.", "If there is a current approval, reading hold, draft, or transfer in progress, the server refuses the restore. Images that arrived after the merge stay in their own original.", "m"],
+    ["원본 검사 {n0}건은 지금 볼 수 없어 이 표에 없습니다.", "{n0} original exam(s) cannot be read now and are not in this table.", "m"],
     ["현재 영상 도구 모음에 적용했습니다.", "Applied to the current viewer toolbar.", "m"],
     ["현재 영상에 저장하지 않은 작업이 있습니다. 저장하거나 명시적으로 버린 뒤 다른 영상을 여세요.", "The current images have unsaved work. Save it or explicitly discard it before opening other images.", "m"],
     ["현재 입력은 마지막 확인본과 {t0} 앞선 저장 결과는 아직 확인되지 않았습니다.", "The current input {t0} the last confirmed copy, and the earlier save result is not confirmed yet.", "m"],

@@ -55,7 +55,8 @@ class MergeSite(rf.FlowSite):
         self.related_reports = {}       # uid -> relatedExamReports of the row
         self.acc = dict(ACC)            # uid -> Accession No of the row and of its original in a merged exam
         self.lost = {}                  # uid -> kind of the exam in force whose originals the reader cannot all read now
-        self.lost_members = {}          # uid -> the originals of that exam, as the server's group read gives them
+        self.lost_members = {}          # uid -> the originals of that exam the reader can read, as the server's group read gives them
+        self.lost_hidden = {}           # uid -> how many originals of that exam the server only counts (it names none of them)
 
     def scope(self, uid):
         if self.split and uid in (self.split["uid"], SPLIT_UID):
@@ -147,7 +148,8 @@ class MergeSite(rf.FlowSite):
                     return route.fulfill(json={"group": {"id": GROUP_ID, "kind": "split"}, "checks": self.checks})
                 if base in self.lost_members:
                     return route.fulfill(json={"group": {"id": GROUP_ID, "kind": "merge", "baseUid": base, "members": [
-                        {"logicalUid": u, "studyUid": u, "part": i, "seriesUids": []} for i, u in enumerate(self.lost_members[base])]}, "checks": self.checks})
+                        {"logicalUid": u, "studyUid": u, "part": i, "seriesUids": []} for i, u in enumerate(self.lost_members[base])],
+                        **({"unavailable": self.lost_hidden[base]} if base in self.lost_hidden else {})}, "checks": self.checks})
                 if base not in self.groups:
                     return route.fulfill(json={"group": None})
                 return route.fulfill(json={"group": {"id": GROUP_ID, "kind": "merge", "baseUid": base, "members": [
@@ -159,6 +161,7 @@ class MergeSite(rf.FlowSite):
                 self.groups.clear()
                 self.lost.clear()
                 self.lost_members.clear()
+                self.lost_hidden.clear()
                 self.split = None
                 self.generation += 1
                 return route.fulfill(json={"group": {"id": GROUP_ID, "dissolvedAt": "2026-10-03T01:00:00.000Z"}})
@@ -279,7 +282,8 @@ class ExamMerge(unittest.TestCase):
         self.reload_technician()
         expect(badge).to_have_text("Split · original unavailable")
         # The technician can still undo it: the window takes the server's group (the server checked access to every original).
-        self.site.lost, self.site.lost_members = {h.UID_B: "merge"}, {h.UID_B: [h.UID_B, "2.25.999"]}
+        # The server names only the originals the reader can read now and counts the others.
+        self.site.lost, self.site.lost_members, self.site.lost_hidden = {h.UID_B: "merge"}, {h.UID_B: [h.UID_B]}, {h.UID_B: 1}
         self.reload_technician()
         expect(badge).to_have_text("Merged · original unavailable")
         # Another institution (a tele receiver) may read the group but does not own it: the window says only that, and lists
@@ -299,6 +303,9 @@ class ExamMerge(unittest.TestCase):
         self.page.locator("#t-split-unmerge").click()
         win = self.window("unmerge")
         expect(win.locator(".exam-merge-checks li")).to_have_count(3)
+        # The owner's window lists the original it can read and says how many it cannot, naming none of them.
+        expect(win.locator("table tbody tr")).to_have_count(1)
+        expect(win.locator(".exam-merge-hidden")).to_have_text("원본 검사 1건은 지금 볼 수 없어 이 표에 없습니다.")
         win.get_by_role("button", name="Unmerge", exact=True).click()
         expect(win).to_contain_text("되돌렸습니다.")
         self.assertIn(("POST", f"/api/exam-groups/{GROUP_ID}/dissolve", None), self.site.sent)

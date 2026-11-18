@@ -592,8 +592,13 @@ export class ExamMergeService {
     await this.studyAccess.require(c, unique(group.members.map(m => m.studyUid)));
     const rows = await this.prisma.studyState.findMany({ where: { uid: { in: uids } } });
     const refusals = await this.dissolveRefusals(this.prisma, c, group, rows);
-    return { group: this.view(group), checks: [...(group.institutionId === me ? [] : [
-      { rule: 'owner', ok: false, message: '검사 묶음은 원본 소유 기관에서만 되돌릴 수 있습니다.', uids: [] }]), ...this.checks(refusals)] };
+    // Every original passed the access check above. One this request cannot read now all the same (gone from the archive,
+    // or its source not observed) is counted, never named: not as a member, the base or a check, to the owner or anyone.
+    const originals = unique(group.members.map(m => m.studyUid));
+    await this.studyAccess.prepareSourceIdentity(c, originals);
+    const hidden = new Set(originals.filter(source => !this.studyAccess.sourcePresent(c, source)));
+    return { group: this.view(group, hidden), checks: [...(group.institutionId === me ? [] : [
+      { rule: 'owner', ok: false, message: '검사 묶음은 원본 소유 기관에서만 되돌릴 수 있습니다.', uids: [] }]), ...this.checks(refusals, hidden)] };
   }
 
   /**
@@ -789,10 +794,11 @@ export class ExamMergeService {
   }
 
   /** The Checks the Split / Unmerge window lists: each rule with ✓ (passes) or the refusals that apply. */
-  private checks(refusals: GroupRefusal[]) {
+  private checks(refusals: GroupRefusal[], hidden = new Set<string>()) {
     const rule = (key: string[], ok: string) => {
       const hit = refusals.filter(r => key.includes(r.rule));
-      return { rule: key[0], ok: !hit.length, message: hit.length ? hit.map(r => r.message).join(' ') : ok, uids: hit.map(r => r.uid) };
+      return { rule: key[0], ok: !hit.length, message: hit.length ? hit.map(r => r.message).join(' ') : ok,
+        uids: hit.map(r => r.uid).filter(uid => !hidden.has(uid)) };
     };
     return [rule(['approved', 'destroyed'], '합친 검사에 지금 승인된 판독문이 없습니다.'),
       rule(['transfer'], '이 검사들의 전송·내보내기가 진행 중이지 않습니다.'),
@@ -816,8 +822,11 @@ export class ExamMergeService {
     for (const uid of uids) await tx.studyState.update({ where: { uid }, data: { draftEpoch: randomUUID() } });
   }
 
-  private view(group: ExamGroup) {
-    return { id: group.id, kind: group.kind, baseUid: group.baseUid,
-      members: group.members.map(m => ({ logicalUid: m.logicalUid, studyUid: m.studyUid, part: m.part, seriesUids: m.seriesUids })) };
+  /** `hidden`: originals the caller cannot read now — left out (with the parts on them) and only counted. */
+  private view(group: ExamGroup, hidden = new Set<string>()) {
+    return { id: group.id, kind: group.kind, baseUid: hidden.has(group.baseUid) ? null : group.baseUid,
+      members: group.members.filter(m => !hidden.has(m.studyUid))
+        .map(m => ({ logicalUid: m.logicalUid, studyUid: m.studyUid, part: m.part, seriesUids: m.seriesUids })),
+      ...(hidden.size ? { unavailable: hidden.size } : {}) };
   }
 }

@@ -172,8 +172,11 @@
       let busy=false;
       // The mark, then the server's sentence for that check (in the glossary when the server writes one sentence).
       const paint=()=>{checks.replaceChildren(...(answer.checks||[]).map(c=>el('li',{className:c.ok?'order-note ok':'order-note err',text:kinSay('{0}{t1}',c.ok?'✓ ':'✗ ',{t:c.message})})));go.disabled=busy || !Array.isArray(answer.checks) || answer.checks.some(c=>!c.ok);};
+      // Originals this technician cannot read now: the server counts them and names none, so the window says how many.
+      const hidden=Number.isSafeInteger(answer.group.unavailable)&&answer.group.unavailable>0?answer.group.unavailable:0;
       win.body.replaceChildren(note(split?'나눈 검사를 원래 영상 소속으로 되돌립니다. 양쪽의 판독 이력은 남습니다.':'합친 검사를 원래 영상 소속으로 되돌립니다. 합친 동안 쓴 판독 이력은 남습니다.'),
-        table(['Original exam','StudyDate','StudyDesc','Series / Images back'],sources.map(s=>[s.acc??s.uid,s.date,s.desc,seriesImages(s.series,s.count)])),el('h4',{text:'Checks'}),checks,
+        table(['Original exam','StudyDate','StudyDesc','Series / Images back'],sources.map(s=>[s.acc??s.uid,s.date,s.desc,seriesImages(s.series,s.count)])),
+        ...(hidden?[note(kinSay('원본 검사 {n0}건은 지금 볼 수 없어 이 표에 없습니다.',hidden),'exam-merge-hidden')]:[]),el('h4',{text:'Checks'}),checks,
         note(kinSay('현재 승인·점유·초안·진행 중 전송이 있으면 서버가 되돌리기를 거절합니다. 합친 뒤 도착한 영상은 자기 원본에 그대로 남습니다.'),'muted'));
       win.buttons(go,win.closeButton());paint();
       async function submit() {

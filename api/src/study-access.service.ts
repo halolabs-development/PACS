@@ -166,6 +166,11 @@ export class StudyAccessService {
     if(observed.count>1)throw new ConflictException({code:STUDY_IDENTITY_UNRESOLVED,message:STUDY_IDENTITY_UNRESOLVED_MESSAGE});
     return {sourcePatientId:observed.sourcePatientId,sourceInstitution:observed.sourceInstitution};
   }
+  /**
+   * Whether this request observed at least one original resource answering the UID (prepareSourceIdentity or a worklist
+   * enumeration). A UID gone from the archive, or one this request could not observe, is not present.
+   */
+  sourcePresent(c:Caller,uid:string){return (this.sources.get(c)?.get(uid)?.count??0)>0;}
   /** Logical reports require a real, identified original, unlike import and UID-only policy decisions. */
   assertIdentifiedSource(c:Caller,uid:string):SourceIdentity {
     const identity=this.assertUnsplitSource(c,uid);
