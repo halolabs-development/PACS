@@ -3,12 +3,12 @@
     // ── Report ──
     let relatedReportSeq = 0;
 
-    function clearRelatedReport(message = "Related Exam을 선택하세요") {
+    function clearRelatedReport(message = kinSay("Related Exam을 선택하세요")) {
       // A5: the Source opening ends with its text; a later read of any Source is a new display.
       KinReportViews.end("related");
       $("#prior-report-meta").textContent = "";
       $("#prior-report-meta").title = "";
-      $("#prior-report-status").textContent = message;
+      kinWrite($("#prior-report-status"), message);
       $("#prior-report-status").style.display = "";
       $("#prior-report-content").style.display = "none";
       for (const id of ["#prior-findings", "#prior-conclusion", "#prior-recommendation"])

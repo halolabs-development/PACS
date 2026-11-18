@@ -182,7 +182,9 @@ class ViewerAppCacheTests(unittest.TestCase):
                 with self.subTest(target=target, status=status):
                     got, headers = self.request(target, status=status, cache=upstream)
                     self.assertEqual(status, got)
-                    self.assertEqual([upstream] if upstream else None, headers.get_all("Cache-Control"))
+                    # A failed screen file is the proxy's error page (proxy_error_page_test.py), which is never kept.
+                    expected = ["no-store"] if target.startswith("/worklist/") else [upstream] if upstream else None
+                    self.assertEqual(expected, headers.get_all("Cache-Control"))
 
     def test_images_records_and_other_routes_keep_their_own_policy(self):
         for target, upstream in OTHER:

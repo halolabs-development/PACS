@@ -393,3 +393,28 @@ test('TEST-WSPACE-PANELS-05 reportWindow: mode shares, placeholders own no colum
   assert.equal(layout.reportWindow('Technician', []).classes['kin-hide-template'], true);
   assert.equal(layout.reportWindow('Radiology', []).classes['kin-hide-template'], false);
 });
+
+test('TEST-BOXES-03 withBoxSwaps keeps a fixed order, drops the field when empty, and keeps other choices', () => {
+  const base = layout.withHiddenPanels(layout.withStudyPanel(v3(), 'landscape', { width: 420 }), ['template']);
+  const swapped = layout.withBoxSwaps(base, ['report', 'columns']);
+  assert.deepEqual(swapped.workspace.boxSwaps, ['columns', 'report']);
+  assert.deepEqual(layout.boxSwaps(swapped), ['columns', 'report']);
+  assert.deepEqual([swapped.workspace.studyPanel, swapped.workspace.hiddenPanels], [{ landscape: { width: 420 } }, ['template']]);
+  // Later Panel Settings, Study Panel or reading writes keep the boxes where the reader put them.
+  assert.deepEqual(layout.withHiddenPanels(swapped, []).workspace.boxSwaps, ['columns', 'report']);
+  assert.deepEqual(layout.withStudyPanel(swapped, 'portrait', { text: 1 }).workspace.boxSwaps, ['columns', 'report']);
+  assert.deepEqual(layout.withReading(swapped, swapped.reading).workspace.boxSwaps, ['columns', 'report']);
+  assert.equal(Object.hasOwn(layout.withBoxSwaps(swapped, []).workspace, 'boxSwaps'), false);
+  for (const bad of [['list', 'list'], ['List'], 'list', null, [{}]]) assert.equal(layout.withBoxSwaps(base, bad), null);
+  // A record from an earlier build is the default arrangement; the first swap upgrades it.
+  assert.deepEqual(layout.boxSwaps(layout.defaults()), []);
+  assert.equal(layout.withBoxSwaps(layout.defaults(), ['side']).version, 3);
+  // A swap a later build might add is not this build's record: the whole record falls back to the default layout.
+  const unknown = structuredClone(swapped); unknown.workspace.boxSwaps = ['columns', 'diagonal'];
+  assert.equal(layout.normalize(unknown), null);
+  // Stored and read back through the browser record.
+  const data = new Map(), storage = { getItem: k => data.get(k) ?? null, setItem: (k, v) => data.set(k, v), removeItem: k => data.delete(k) };
+  const owner = layout.key({ state: 'approved', sub: 'reader', institution: 'hospital' });
+  assert.equal(layout.write(storage, owner, swapped), true);
+  assert.deepEqual(layout.read(storage, owner).state.workspace.boxSwaps, ['columns', 'report']);
+});

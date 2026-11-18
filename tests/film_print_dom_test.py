@@ -26,6 +26,7 @@ from urllib.parse import urlparse
 
 import auth_logout_dom_test as h
 import report_flow_dom_test as rf
+from page_source import settle
 from playwright.sync_api import expect, sync_playwright
 
 PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==")
@@ -288,7 +289,7 @@ class FilmPrintWindow(unittest.TestCase):
         self.open_from_more()
         expect(self.page.locator("#film-print-go")).to_be_enabled()
         self.site.exam_scopes[h.UID]["generation"] = "scope-2"
-        self.page.evaluate("() => load()")
+        settle(self.page, "load()")
         expect(self.page.locator("#film-print-go")).to_be_disabled()
         expect(self.page.locator("#film-print-status")).to_contain_text("검사 범위가 바뀌었습니다")
         self.assertEqual([],self.site.posts)

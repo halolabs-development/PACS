@@ -30,8 +30,8 @@ mutant runner can break the product on purpose without touching the source tree.
 
 The browser assertions replace the former source and harness-shape pins.
 """
-from page_source import read_page_source
-from main_split_harness import REPORT_FIXTURE, fixture_block
+from page_source import read_page_source, settle
+from main_split_harness import REPORT_FIXTURE, fixture_block, report_display_block
 import json
 import os
 import re
@@ -349,7 +349,7 @@ def harness(state):
             .replace("APIFN", API_FN)
             .replace("WRITEBLOCKFN", WRITE_BLOCK_FN)
             .replace("EDITORBLOCKFN", EDITOR_BLOCK_FN)
-            .replace("BASEBLOCK", fixture_block(MAIN_PATH, REPORT_FIXTURE, "BASE_BLOCK"))
+            .replace("BASEBLOCK", report_display_block(MAIN_PATH) + fixture_block(MAIN_PATH, REPORT_FIXTURE, "BASE_BLOCK"))
             .replace("REPORTBLOCK", fixture_block(MAIN_PATH, REPORT_FIXTURE, "REPORT_BLOCK"))
             .replace("HOLDBLOCK", HOLD_BLOCK)
             .replace("INITIALSTATE", json.dumps(state))
@@ -487,7 +487,7 @@ class ReportDictationInputDOMTest(unittest.TestCase):
         self.page.set_content(harness(state))
         self.opened = True
         self.page.evaluate("citeReply(%s)" % json.dumps(citations or {"version": 1, "head": [], "draft": []}))
-        self.page.evaluate("load({force:true})")
+        settle(self.page, "load({force:true})")
         self.page.wait_for_function("()=>citeCalls.length>=1")
         # The forced load has now put the state's text into the fields; start every case from a
         # screen that matches the saved source exactly.
@@ -612,7 +612,7 @@ class ReportDictationInputDOMTest(unittest.TestCase):
         before = self.snap()
         writes = len(before["calls"])
         draft = before["state"]["draft"]
-        self.page.evaluate("load()")
+        settle(self.page, "load()")
         after = self.snap()
         self.compose("#findings", [], COMPOSED)
         final = self.snap()
@@ -640,7 +640,7 @@ class ReportDictationInputDOMTest(unittest.TestCase):
         self.compose("#findings", STEPS)
         self.page.evaluate("stash()")
         self.page.wait_for_function("()=>calls.length>=1")
-        self.page.evaluate("load()")
+        settle(self.page, "load()")
         self.compose("#findings", [], COMPOSED)
         value = self.snap()
         self.assertEqual("첫 줄" + COMPOSED + "\n둘째 줄\n셋째 줄", value["text"][0],

@@ -1,4 +1,5 @@
 <#import "template.ftl" as layout>
+<#import "kin-home.ftl" as kin>
 <@layout.registrationLayout displayMessage=false; section>
     <#if section = "header">
         <#if messageHeader??>
@@ -16,9 +17,7 @@
         <#elseif !(skipLink??) && (client.baseUrl)?has_content>
             <p><a href="${client.baseUrl}">${msg("backToApplication")}</a></p>
         <#else>
-            <div id="kc-form-buttons" class="${properties.kcFormButtonsClass!}">
-                <a id="kin-continue" class="${properties.kcButtonClass!} ${properties.kcButtonPrimaryClass!} ${properties.kcButtonBlockClass!} ${properties.kcButtonLargeClass!}" href="/api/auth/login">${msg("continueToKin")}</a>
-            </div>
+            <@kin.homeButton id="kin-continue" label="continueToKin"/>
         </#if>
     </div>
     </#if>

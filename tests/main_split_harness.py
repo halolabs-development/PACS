@@ -91,6 +91,12 @@ def fixture_block(page, ranges, key):
     return _FIXTURES[cache][key]
 
 
+def report_display_block(page):
+    """Actual page writers for report slices that run without a selected screen language."""
+    ranges = {"say": ("kinSay",), "write": ("kinWrite",)}
+    return "\n".join(fixture_block(page, ranges, key) for key in ranges)
+
+
 def derive_spec(page, out):
     """The move spec's runs for `page` when it changed since the move baseline (written to `out`, a scratch path)."""
     return json.loads(subprocess.check_output(["node", str(_HELPER), "derive", str(page), str(out)], text=True,

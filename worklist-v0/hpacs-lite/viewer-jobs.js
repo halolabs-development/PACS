@@ -100,7 +100,7 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
         // their place in the request order.
         const assets=[['viewer-job-print.js',fn('kinViewerJobPrint')],['viewer-editor-link.js',fn('kinViewerEditorLink')],
           ['report-citation.js',members('KinReportCitation',['presenceOf','isReduced'])],
-          ['report-preview.js',members('KinReportPaper',['citationSection','citationAnswerOk'])],
+          ['report-preview.js',members('KinReportPaper',['citationSection','citationAnswerOk','paperDate','paperStamp','approvalText'])],
           ...([4,5,6].includes(shape)?[volumePrint]:[12,14].includes(shape)?mipPrint:[13,15].includes(shape)?[...mipPrint,['volume-mip-batch.js',members('KinVolumeMipBatch',['validate','plan','verifyCamera','budget'])]]:[])].filter(([,ready])=>!ready());
         if (assets.length) {
           // A print-only asset failure must leave saving/restoring available.

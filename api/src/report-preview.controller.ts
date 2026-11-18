@@ -106,6 +106,8 @@ export class ReportPreviewController {
         // read above, so this adds no query, no gate and no history field.
         report: { scope:examScopeView(scope), version: report?.version ?? 0, rs: state.rs, action: version?.action ?? null, author: version?.author ?? null,
           repDoc: state.repDoc ?? null, confirm: state.confirm ?? null,
+          // The approval instant the worklist Confirm column shows; the paper prints it in the reader's local time.
+          approvedAt: state.rs === 'A' && state.approvedAt ? new Date(state.approvedAt).toISOString() : null,
           findings: report?.findings ?? '', conclusion: report?.conclusion ?? '', recommendation: report?.recommendation ?? '' },
         keys: heads.map(head => ({ id: head.id, revision: head.revision, sourceUid:head.studyUid, author: head.authorActor, item: head.snapshot })),
         ...(pinned.length ? { drawings: pinned

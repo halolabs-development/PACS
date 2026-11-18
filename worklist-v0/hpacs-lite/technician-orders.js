@@ -26,7 +26,10 @@
     for (const [key, value] of Object.entries(props)) {
       if (value === undefined || value === null) continue;
       if (key === 'className') node.className = value;
-      else if (key === 'text') node.textContent = value;
+      else if (key === 'text') {
+        if (window.KinLanguage) window.KinLanguage.write(node, value);
+        else node.textContent = value;
+      } else if (key === 'aria-label' && window.KinLanguage) window.KinLanguage.write(node, value, key);
       else if (key in node && typeof value !== 'string') node[key] = value;
       else node.setAttribute(key, value);
     }
@@ -54,7 +57,8 @@
    * is the report's approval on these screens).
    */
   const RIS_STATUS = Object.freeze({ confirmed: 'Order Confirmed', scheduled: 'Scheduled', acquired: 'Acquired' });
-  const risStatusLabel = code => Object.hasOwn(RIS_STATUS, code ?? '') ? RIS_STATUS[code] : '—';
+  const phrase = (template, ...args) => window.KinLanguage?.say(template, ...args) ?? template.replace(/\{(\d+)\}/g, (_, i) => args[i]);
+  const risStatusLabel = code => Object.hasOwn(RIS_STATUS, code ?? '') ? phrase(RIS_STATUS[code]) : '—';
 
   /** A modal window (Esc and Close close it; it is removed when closed). */
   function openWindow(title, name) {
@@ -132,7 +136,7 @@
     const headRow = grid.querySelector('thead tr:not(.filters)'), filterRow = grid.querySelector('thead tr.filters');
     const orderRows = grid.querySelector('#orderrows');
     if (!headRow || !filterRow || !orderRows) throw new Error('The Order List table is missing');
-    const statusHead = el('th', { 'data-ris-status': '', text: 'RIS Status' }), statusFilter = el('th', { 'data-ris-status': '' });
+    const statusHead = el('th', { 'data-ris-status': '', text: phrase('RIS Status') }), statusFilter = el('th', { 'data-ris-status': '' });
     headRow.append(statusHead); filterRow.append(statusFilter);
     added.push(statusHead, statusFilter);
     let emptyColspan = null;
@@ -176,12 +180,12 @@
       el('option', { value: '', text: 'All' }), el('option', { value: 'U', text: 'Unmatched' }), el('option', { value: 'M', text: 'Matched' }));
     state.addEventListener('change', () => { crit.state = state.value; ctx.orders.render(); });
     inputs.state = state;
-    const ris = el('select', { 'aria-label': 'RIS Status' }, el('option', { value: '', text: 'All' }),
-      Object.entries(RIS_STATUS).map(([value, label]) => el('option', { value, text: label })));
+    const ris = el('select', { 'aria-label': phrase('RIS Status') }, el('option', { value: '', text: phrase('All') }),
+      Object.keys(RIS_STATUS).map(value => el('option', { value, text: risStatusLabel(value) })));
     ris.addEventListener('change', () => { crit.ris = ris.value; ctx.orders.render(); });
     inputs.ris = ris;
     search.replaceChildren(field('from', 'Scheduled from', 'date'), field('to', 'to', 'date'), el('label', {}, 'State ', state),
-      el('label', {}, 'RIS Status ', ris), field('ward', 'Ward', 'text'), field('doc', 'ReqDoc', 'text'),
+      el('label', {}, el('span', {text: phrase('RIS Status')}), ' ', ris), field('ward', 'Ward', 'text'), field('doc', 'ReqDoc', 'text'),
       button('Reset', () => resetSearch()), button('Close', () => toggleSearch(false)), count);
     function resetSearch() {
       for (const key of Object.keys(crit)) { crit[key] = ''; inputs[key].value = ''; }
@@ -199,7 +203,7 @@
       const risWord = crit.ris ? el('span', { text: risStatusLabel(crit.ris) }) : null;
       condition.hidden = searchOpen || !(words.length || risWord);
       condition.replaceChildren(...(words.length || risWord
-        ? ['Order search: ' + words.join(' · ') + ' ', words.length && risWord ? '· ' : null, risWord, ' ', button('Reset', () => resetSearch())].filter(Boolean)
+        ? [el('span', {text: phrase('Order search: {0}', words.join(' · '))}), ' ', words.length && risWord ? '· ' : null, risWord, ' ', button('Reset', () => resetSearch())].filter(Boolean)
         : []));
     }
 

@@ -23,6 +23,20 @@
   --kin-btn: #8ab4c8;
 }
 
+/* Status words (RS) read at 4.5:1 or more on the panel, on a hovered row and on a selected row: each is its meaning
+   colour lightened toward the text white (same hue). The status dots, the row edges and the counts keep the meaning
+   colours themselves. */
+:root {
+  --kin-st-w-text: #90b8fa;
+  --kin-st-a-text: #60caa2;
+  --kin-st-p-text: #c7a8f9;
+  --kin-st-t-text: #3bc8d1;
+}
+.rs.W, #rows tr.st-w .rs { color: var(--kin-st-w-text); }
+.rs.A, #rows tr.st-a .rs { color: var(--kin-st-a-text); }
+.rs.P, #rows tr.st-p .rs { color: var(--kin-st-p-text); }
+.rs.T, #rows tr.st-t .rs { color: var(--kin-st-t-text); }
+
 /* Data text is not an accent: Accession No and the shown study line read as text. */
 .left .grid td.acc { color: var(--kin-text); }
 #related-current, .prior-report-head .meta { color: var(--kin-muted); }
@@ -54,7 +68,7 @@ tbody tr.sel td { background: var(--kin-row-sel); }
 .thumb-card { background: var(--kin-bg); border-color: var(--kin-line2); }
 .thumb-number, .thumb-preview, .thumb-full { color: var(--kin-text); }
 .thumb-description, .thumb-images-view > p { color: var(--kin-muted); }
-.thumb-images-toolbar select, .tpl-opts select, .tpl-search input { background: var(--kin-bg); color: var(--kin-text); border-color: var(--kin-line2); }
+.thumb-images-toolbar select, .tpl-opts select, .tpl-search input { background: var(--kin-panel); color: var(--kin-text); border-color: var(--kin-line2); }
 .tpl-opts { background: var(--kin-panel); color: var(--kin-muted); }
 .tpl-filter-status, .clinical, .clinical-context, .clinical-context .cc-note, .clinical-context .cc-source { color: var(--kin-muted); }
 .image-report-panel { color: var(--kin-muted); }
@@ -102,7 +116,8 @@ tbody tr.sel td { background: var(--kin-row-sel); }
 .modal .box { background: var(--kin-panel); border-color: var(--kin-line2); }
 .modal .box h3, .modal .foot { background: var(--kin-bg); color: var(--kin-text); }
 .modal .body label, .modal .note, .stalecols h5 { color: var(--kin-muted); }
-.modal .body input, .modal .body select, .modal .tplbody textarea, .stalecols pre, .hist pre { background: var(--kin-bg); border-color: var(--kin-line2); color: var(--kin-text); }
+.modal .body input, .modal .body select, .modal .tplbody textarea { background: var(--kin-panel); border-color: var(--kin-line2); color: var(--kin-text); }
+.stalecols pre, .hist pre { background: var(--kin-bg); border-color: var(--kin-line2); color: var(--kin-text); }
 .modal .foot button { background: var(--kin-panel); border-color: var(--kin-line2); color: var(--kin-text); }
 #cite-preview-target, #cite-preview-source, #stale-msg, .stalecols h4, .vh b, .vcite h5 { color: var(--kin-text); }
 .stalecols section, #tpl-source, #tpl-preview-target { border-color: var(--kin-line2); }
@@ -113,7 +128,8 @@ tbody tr.sel td { background: var(--kin-row-sel); }
 
 /* Dialogs created by page scripts (their <style> is appended after this file, hence the html prefix). */
 html #reading-appearance-dialog, #panel-settings-dialog { background: var(--kin-panel); color: var(--kin-text); border: 1px solid var(--kin-line2); }
-html #reading-appearance-dialog select, html #reading-appearance-dialog button { background: var(--kin-bg); color: var(--kin-text); border-color: var(--kin-line2); }
+html #reading-appearance-dialog button { background: var(--kin-bg); color: var(--kin-text); border-color: var(--kin-line2); }
+html #reading-appearance-dialog select { background: var(--kin-panel); color: var(--kin-text); border-color: var(--kin-line2); }
 #panel-settings-dialog { width: 420px; max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); overflow: auto; box-sizing: border-box; border-radius: 8px; padding: 20px; font-size: 14px; }
 #panel-settings-dialog::backdrop { background: #0009; }
 #panel-settings-dialog h2 { margin: 0 0 12px; font-size: 18px; }
@@ -156,12 +172,12 @@ body.reading #clinical:focus-visible, #reading-findings button:focus-visible, #r
 /* Panels: the gutters between the work panels are the page background. */
 body .left, body .right, body .workrow, body .rw { background: var(--kin-bg); }
 
-/* Report editor: a field the reader can write in stays marked apart from the read-only panels around it - a background
-   well with a solid secondary edge on the panel, beside the accent edge, outline and Editable badge; read-only stays
-   dashed. Focus keeps the accent edge. Text colour is not set here: the reader's saved Current Report colour
+/* Report editor: a field the reader can write in stays marked apart from the read-only panels around it - a solid
+   secondary edge (the field itself is a panel, #2D2D2D as every input), beside the accent edge, outline and Editable
+   badge; read-only stays dashed. Focus keeps the accent edge. Text colour is not set here: the reader's saved Current Report colour
    (--kin-current-color) still wins. */
 .redit { background: none; }
-.redit textarea:read-write { background: var(--kin-bg); border-color: var(--kin-muted); }
+.redit textarea:read-write { background: var(--kin-panel); border-color: var(--kin-muted); }
 .redit textarea:read-write:focus { border-color: var(--kin-accent); }
 
 /* Native controls nobody styled (browser white/grey): zero specificity, so every styled control keeps its own colours. */
@@ -200,7 +216,15 @@ body .left, body .right, body .workrow, body .rw { background: var(--kin-bg); }
   #viewer-windows-dialog, #image-opening-dialog, #reading-appearance-dialog)
   :is(button, select, textarea, input:not([type=checkbox], [type=radio], [type=range])) {
   background: var(--kin-bg); color: var(--kin-text); border-color: var(--kin-line2); }
-:root #workspace-shortcuts-dialog input { background: var(--kin-bg) !important; border-color: var(--kin-line2) !important; }
+/* A field's placeholder is secondary text (4.5:1 or more on the panel), not the browser's grey; a field that styles its
+   own placeholder keeps it. */
+:where(input, textarea)::placeholder { color: var(--kin-muted); opacity: 1; }
+/* Inputs are panels (the colour table: panels and inputs #2D2D2D); buttons stay on the background. */
+:root :is(#favorite-dialog, #study-tag-dialog, #saved-filter-manager, #consultations-dialog, #reader-assignment-dialog,
+  #tech-note-dialog, #sr-dialog, #worklist-alerts-dialog, #workspace-shortcuts-dialog, #report-preview,
+  #viewer-windows-dialog, #image-opening-dialog, #reading-appearance-dialog)
+  :is(select, textarea, input:not([type=checkbox], [type=radio], [type=range])) { background: var(--kin-panel); }
+:root #workspace-shortcuts-dialog input { background: var(--kin-panel) !important; border-color: var(--kin-line2) !important; }
 :root :is(#favorite-dialog, #study-tag-dialog, #saved-filter-manager, #consultations-dialog) button[aria-pressed=true],
 :root #saved-filter-manager #sfm-list button[aria-pressed=true] {
   background: var(--kin-row-sel); border-color: var(--kin-accent); }
