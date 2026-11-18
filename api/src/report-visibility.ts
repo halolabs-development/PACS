@@ -1,7 +1,7 @@
 /*
  * Who may read and write a study's report text, and what its state is called for them. One place: the list, bootstrap,
- * state answers, history, preview, citations, structure, drawings, the clinician reads, draft writes, commits, holds and
- * the critical-result source all ask this module.
+ * state answers, history, preview, citations, structure, drawings, the clinician reads, draft writes, commits and holds ask
+ * this module. (The critical-result source keeps the same rule in its own module: critical-result-policy.ts senderReadsHead.)
  *
  * - P (Preliminary): its designated author and reviewer only (canReadPreliminary, unchanged).
  * - W/T/H text not yet approved (a Save or a Defer in the head version of the report): only the reading physician who
@@ -131,12 +131,3 @@ export async function storedVersionReadable(db: any, uid: string, row: VersionRo
   return versionBodyReadable(row, versionClasses(rows).get(row.version), reader);
 }
 
-/**
- * The critical-result sender reads the head it pins (the sender picks the recipients; the recipients see what the
- * sender chose to send). Another physician's unsigned head is not theirs to send.
- */
-export function senderReadsHead(state: any, head: { action?: string | null; author?: string | null } | null | undefined,
-  reader: Reader): boolean {
-  if (!head || state?.rs === 'P' || !UNSIGNED_STATES.includes(state?.rs)) return true;
-  return !UNSIGNED_ACTIONS.includes(head.action as string) || head.author === reader.actor;
-}

@@ -21,6 +21,7 @@ window.KinLanguageTerms = {
     ["다른 판독의가 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다", "Another radiologist saved this report in progress — only that radiologist can read and continue it", "m"],
     ["본문 비공개 — Save한 판독의만 볼 수 있는 판입니다(승인 전의 글)", "Text withheld — only the radiologist who saved this version can read it (not yet approved)", "m"],
     ["다른 판독의가 Save해 둔 진행 중 판독입니다", "Another radiologist saved this report in progress", "m"],
+    ["다른 판독의가 Save해 둔 진행 중 판독 — 본문 비공개 · v{n0}", "Saved in progress by another radiologist — text withheld · v{n0}", "l"],
     ["판독의가 판독문을 쓰기 시작했습니다(점유) — 아직 저장하지 않았습니다", "A radiologist started writing this report (held) — not saved yet", "m"],
     [". 이어 쓰려면 More ▸ Reset to Unread로 되돌리세요 (그 글은 그 판독의의 개인 임시글로 남습니다).", ". To continue, use More ▸ Reset to Unread (the text stays as that radiologist's private draft).", "m"],
     ["Open Worklist on Monitor {0}", "Monitor {0}에 목록 창 열기", "l"],

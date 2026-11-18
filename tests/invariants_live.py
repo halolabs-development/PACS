@@ -2870,13 +2870,14 @@ class LiveInvariantTests(unittest.TestCase):
             v = accepted("doctor", "defer", v, "H", reason="prior 없음")              # W→H
             with self.subTest(cell="H×addendum"):
                 rejected("doctor", "addendum", v, "승인(RS: A)된")
-            v = accepted("doctor2", "defer", v, "H", reason="영상 불량")              # H→H 사유 갱신
+            # Another reader cannot write over a deferred report (the report state table): its writer renews the reason.
+            v = accepted("doctor", "defer", v, "H", reason="영상 불량")               # H→H 사유 갱신
             self.assertEqual(self.report_state(fixture, "doctor")["holdReason"], "영상 불량")
             v = accepted("doctor", "save", v, "T")                                    # H→T
             self.assertIsNone(self.report_state(fixture, "doctor")["holdReason"])
             v = accepted("doctor", "defer", v, "H", reason="재촬영 필요")             # T→H
-            v = accepted("doctor2", "preliminary", v, "P", reviewer=self.stack.actor("doctor"))   # H→P
-            v = accepted("doctor", "reset", v, "W", reason="표 검증")                  # P→W 지정자의 사유 있는 취소
+            v = accepted("doctor", "preliminary", v, "P", reviewer=self.stack.actor("doctor2"))   # H→P 쓴 사람이 넘김
+            v = accepted("doctor", "reset", v, "W", reason="표 검증")                  # P→W 지정된 둘(작성자)의 사유 있는 취소
             # 지정을 바꾸는 길은 거절 안내대로 사유 있는 취소 뒤 재지정이다. 새 지정이 그대로 서야 한다.
             v = accepted("doctor2", "preliminary", v, "P", reviewer=senior)           # W→P 취소 뒤 재지정
             designation = self.report_state(fixture, "doctor2")
@@ -3075,7 +3076,12 @@ class LiveInvariantTests(unittest.TestCase):
             self.assertIsNone(self.state(fixture, "doctor2")["draft"])
         with self.stack.fixture() as deferred:   # H
             self.assert_status(self.commit(deferred, "doctor", "defer", 0, reason="r"), 201)
-            self.assert_status(self.stack.request("PUT", f"/studies/{quote(deferred.uid)}/report", "doctor2", {"findings": "x"}), 200)
+            # The writer's draft is accepted; another reader's is refused - a deferred report is its writer's (the report
+            # state table). Neither changes the report.
+            self.assert_status(self.stack.request("PUT", f"/studies/{quote(deferred.uid)}/report", "doctor", {"findings": "x"}), 200)
+            refused = self.stack.request("PUT", f"/studies/{quote(deferred.uid)}/report", "doctor2", {"findings": "x"})
+            self.assert_status(refused, 403)
+            self.assertEqual(refused.body.get("code"), "REPORT_IN_PROGRESS")
             state = self.report_state(deferred, "doctor")
             self.assertEqual((state["rs"], state["holdReason"], state["version"]), ("H", "r", 1))
         with self.stack.fixture() as prelim:   # P

@@ -1,4 +1,3 @@
-import { senderReadsHead } from './report-visibility';
 import { criticalRead } from './emr-viewing/consumer-read';
 import { rightsUser, lockMemberRights } from './member-rights';
 import { Injectable, BadRequestException, ConflictException, ForbiddenException, HttpException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
@@ -17,7 +16,7 @@ import {
   CRITICAL_RESULT_CODES as CODE, CRITICAL_RESULT_PAGE, CRITICAL_RESULT_PINNABLE_ACTIONS, CRITICAL_RESULT_STATE_FILTERS, Head,
   RADIOLOGIST, RecipientClass, Refusal, ackFingerprint, ackRefusal, appliedResult, auditDetail, cancelFingerprint, clip,
   createCase, createFingerprint, decodeCursor, deliveryOf, eligibleRecipient, effectiveRoles, encodeCursor, exactKeys, holds,
-  isObject, legacyReadable, originalIdentity, positiveValue, recipientCase, recipientClass, recipientSees, recipientView, recordRefusal,
+  isObject, legacyReadable, senderReadsHead, originalIdentity, positiveValue, recipientCase, recipientClass, recipientSees, recipientView, recordRefusal,
   senderScope, senderSees, senderView, sourceRefusal, studyIdentity, studyUidValue, supersedeFingerprint, textValue, userActor, userName,
   uuidValue,
 } from './critical-result-policy';
@@ -284,7 +283,7 @@ export class CriticalResultService {
    */
   private async pinRefusal(tx: any, uid: string, sourceVersion: number, head: Head, state: any, c: Caller): Promise<Refusal | null> {
     // The state table (report-visibility.ts): another physician's unsigned head is not theirs to send.
-    const refusal = sourceRefusal({ sourceVersion, head, senderReadable: legacyReadable(state, c.actor, c.sub) && senderReadsHead(state, head, c) });
+    const refusal = sourceRefusal({ sourceVersion, head, senderReadable: legacyReadable(state, c.actor, c.sub) && senderReadsHead(state, head, c.actor) });
     if (refusal || !head) return refusal;
     if(!await this.readableBy(c,uid,tx,sourceVersion))return {status:403,code:CODE.SOURCE_FORBIDDEN};
     const rows: any[] = await tx.$queryRaw`SELECT count(*)::int AS beyond FROM "ReportVersion"
@@ -467,7 +466,7 @@ export class CriticalResultService {
       if (await this.visibleStudy(tx, uid, c, state, studyMissing) !== institution) throw unavailable();
       const head = await this.head(tx, uid);
       const pinnable = !!head && CRITICAL_RESULT_PINNABLE_ACTIONS.includes(head.action as string);
-      const readable = legacyReadable(state, c.actor, c.sub) && senderReadsHead(state, head, c) && !!head && await this.readableBy(c,uid,tx,head.version);
+      const readable = legacyReadable(state, c.actor, c.sub) && senderReadsHead(state, head, c.actor) && !!head && await this.readableBy(c,uid,tx,head.version);
       const recipients: any[] = [];
       if (pinnable && readable) for (const x of candidates) {
         const roster = members.map(user => ({ id: userActor(user), sub: user.id }));

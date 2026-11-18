@@ -23,6 +23,8 @@
   // Every other action keeps the saved wording byte for byte.
   function savedLabel(report, withRs) {
     if (!report.version) return '저장된 판독문 없음';
+    // The report state table: another physician's Save keeps its text; the paper says so instead of printing an empty report.
+    if (report.bodyLock === 'in-progress') return `다른 판독의가 Save해 둔 진행 중 판독 — 본문 비공개 · v${report.version}`;
     return `${report.rs === 'A' ? '승인된' : '미승인'} ${report.action === 'addendum' ? '추가기재' : '저장본'} · v${report.version}` +
       (withRs ? ` · RS ${report.rs}` : '');
   }

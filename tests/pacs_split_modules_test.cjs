@@ -737,7 +737,8 @@ test('report state table: a destroyed report is read-only for everyone and the c
 });
 
 test('report state table: version classes - a Save inside a Preliminary stays with the pair, a Reset copy follows what it preserved, a draft copy is private', () => {
-  const { versionClasses, versionBodyReadable, senderReadsHead } = require('/app/dist/report-visibility');
+  const { versionClasses, versionBodyReadable } = require('/app/dist/report-visibility');
+  const { senderReadsHead } = require('/app/dist/critical-result-policy');
   const reset = (version, by) => ({ version, action: 'reset', author: by });
   const copyOf = (version, by) => ({ version, action: 'discarded', author: 'w', reason: `판독 취소로 폐기 (취소자: ${by})` });
   const classes = versionClasses([
@@ -752,10 +753,10 @@ test('report state table: version classes - a Save inside a Preliminary stays wi
   assert.equal(versionBodyReadable({ action: 'save', author: 'w' }, 'unsigned', { actor: 'c', roles: ['clinician'] }), true);
   assert.equal(versionBodyReadable({ action: 'discarded', author: 'x' }, 'private', { actor: 'c', roles: ['clinician'] }), false);
   assert.equal(versionBodyReadable({ action: 'save', author: 'w' }, 'unsigned', { actor: 'a', roles: ['admin', 'clinician'] }), false);
-  assert.equal(senderReadsHead({ rs: 'T' }, { action: 'save', author: 'w' }, reader('o')), false);
-  assert.equal(senderReadsHead({ rs: 'T' }, { action: 'save', author: 'w' }, reader('w')), true);
-  assert.equal(senderReadsHead({ rs: 'P' }, { action: 'save', author: 'w' }, reader('o')), true);
-  assert.equal(senderReadsHead({ rs: 'A' }, { action: 'approve', author: 'w' }, reader('o')), true);
+  assert.equal(senderReadsHead({ rs: 'T' }, { action: 'save', author: 'w' }, 'o'), false);
+  assert.equal(senderReadsHead({ rs: 'T' }, { action: 'save', author: 'w' }, 'w'), true);
+  assert.equal(senderReadsHead({ rs: 'P' }, { action: 'save', author: 'w' }, 'o'), true);
+  assert.equal(senderReadsHead({ rs: 'A' }, { action: 'approve', author: 'w' }, 'o'), true);
 });
 // ── SPLIT-09 the draft boundary: owner, epoch, revision, session, one transaction (M08, M09, M10) ──
 
