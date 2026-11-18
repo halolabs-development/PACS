@@ -827,8 +827,9 @@ test('exam group read names no original the caller cannot read now: only how man
         assert.equal(status(e),409,label);assert.equal(JSON.stringify(body(e)).includes(gone),false,label+': refusal');
         assert.deepEqual(rulesOf(e).map(([,rule])=>rule).sort(),['approved','transfer'],label);return true;});
       f.db.states.get(gone).rs='W';f.db.transfers=[];
-      await svc.dissolve(caller,G1);
+      const undone=await svc.dissolve(caller,G1);
       assert.ok(f.db.groups[0].dissolvedAt,label+': the owner undoes the group');
+      assert.equal(JSON.stringify(undone).includes(gone),false,label+': the Unmerge answer');
     } else await assert.rejects(svc.dissolve(caller,G1),e=>status(e)===404,label);
   }
   // A split original gone, its second part approved: neither the original nor the part's own UID is named.

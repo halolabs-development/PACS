@@ -734,7 +734,7 @@ export class ExamMergeService {
       await this.newEpochs(tx, uids);
       await tx.auditLog.create({ data: { actor: c.actor || 'unknown', action: group.kind === 'split' ? 'study.unsplit' : 'study.unmerge',
         target: group.baseUid, detail: dump({ by: me, group: id, base: group.baseUid, studies: group.members.map(m => m.logicalUid) }) } });
-      return { group: { ...this.view(group), dissolvedAt: at.toISOString() } };
+      return { group: { ...this.view(group, hidden), dissolvedAt: at.toISOString() } };
     }, { maxWait: 4000, timeout: 8000 });
   }
 
