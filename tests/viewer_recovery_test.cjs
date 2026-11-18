@@ -69,6 +69,8 @@ async function harness() {
       return new Response(JSON.stringify(r.data), { status: r.status, headers: r.data?.code ? { 'X-KIN-Auth-Code': r.data.code } : {} });
     } });
   window.KinSessionTransport = transports;
+  window.KinViewerPatientTabs = { imagesRefused: () => { refused.push(true); return true; } };
+  const hp = { run(data, ...rest) { runs.push({ data, rest }); return 'ran'; } };
   vm.runInNewContext(source, { window, document, crypto: webcrypto, TextEncoder, console, Event, AbortController,
     setInterval: fn => { tick = fn; return 1; }, clearInterval() {}, setTimeout, clearTimeout,
     fetch: transport.fetch,
@@ -342,7 +344,7 @@ function recovery({ search = `?StudyInstanceUIDs=${CURRENT},${PRIOR}`, lazy = tr
   const document = new EventTarget(); document.body = new Element('body'); document.createElement = tag => new Element(tag);
   document.querySelector = selector => document.body.all().find(e => e.id && '#' + e.id === selector) || null;
   const panel = new Element('details'); panel.id = 'kin-viewer-layout'; document.body.append(panel);
-  const window = new EventTarget(), location = { search }, timers = new Map(), calls = [], notices = [];
+  const window = new EventTarget(), location = { search }, timers = new Map(), calls = [], notices = [], lists = [], runs = [], refused = [];
   let serial = 0;
   function Client() {}
   Client.prototype.retrieveSeriesMetadata = function (options) {
@@ -351,18 +353,32 @@ function recovery({ search = `?StudyInstanceUIDs=${CURRENT},${PRIOR}`, lazy = tr
     call.promise = new Promise((resolve, reject) => { call.resolve = resolve; call.reject = reject; });
     calls.push(call); return call.promise;
   };
+  // The study's series list (QIDO) the lazy loader asks first; held like the series calls, in its own list.
+  Client.prototype.searchForSeries = function (options) {
+    const call = { self: this, options };
+    call.promise = new Promise((resolve, reject) => { call.resolve = resolve; call.reject = reject; });
+    lists.push(call); return call.promise;
+  };
   const native = Client.prototype.retrieveSeriesMetadata, client = new Client();
   if (own) client.retrieveSeriesMetadata = function foreign(options) { return native.call(this, options); };
   const dataSource = { retrieve: accessor ? { getWadoDicomWebClient: () => client } : {}, getConfig: () => ({ enableStudyLazyLoad: lazy }) };
   window.KinSessionTransport = transports;
+  window.KinViewerPatientTabs = { imagesRefused: () => { refused.push(true); return true; } };
+  const hp = { run(data, ...rest) { runs.push({ data, rest }); return 'ran'; } };
   vm.runInNewContext(source, { window, document, location, URLSearchParams, crypto: webcrypto, TextEncoder, console, Event, CustomEvent, AbortController,
     setInterval: () => 0, clearInterval() {}, setTimeout: (fn, ms) => { timers.set(++serial, { fn, ms }); return serial; }, clearTimeout: id => { timers.delete(id); },
     fetch: async () => { throw new Error('no network in this contract'); } });
   timers.clear();
   const extension = window.config.extensions.find(e => e.id === 'kin.series-metadata-recovery');
-  extension.preRegistration({ servicesManager: { services: { uiNotificationService: { show: x => notices.push(x) } } },
+  extension.preRegistration({ servicesManager: { services: { uiNotificationService: { show: x => notices.push(x) }, hangingProtocolService: hp } },
     extensionManager: { getActiveDataSource: () => [dataSource] } });
-  return { location, timers, calls, notices, client, native, Client,
+  return { location, timers, calls, notices, client, native, Client, lists, runs, refused, hp, window,
+    shown: () => document.querySelector('#kin-viewer-open-status')?.textContent ?? null,
+    list: (studyInstanceUID = CURRENT) => {
+      const promise = client.searchForSeries({ studyInstanceUID, queryParams: {} }), seen = {};
+      promise.then(value => { seen.value = value; }, error => { seen.error = error; });
+      return { promise, seen };
+    },
     enter: () => extension.onModeEnter({}), exit: () => extension.onModeExit({}),
     state: () => copy(window.kinSeriesMetadataRecoveryState()),
     text: () => document.querySelector('#kin-series-metadata-status')?.textContent ?? null,
@@ -508,4 +524,109 @@ test('U5-CI1 R6: a failure belongs to its own study and series; only a matching 
   assert.equal(h.text(), denied);
   h.exit(); assert.equal(h.text(), null); h.enter(); assert.equal(h.text(), null);
   assert.deepEqual(h.state(), { phase: 'installed', pending: 0, retries: 0, errors: 0 });
+});
+
+// Viewer open failures: the study's image list (QIDO) through the same retry, the prior deadline, the document's record
+// of failed studies, and the layout guard under the per-route run wrappers.
+test('Open failures L1: a prior image list gets the one retry and its reason over the images; the document records it', async () => {
+  const h = recovery(); h.enter(); const held = h.list(PRIOR);
+  h.lists[0].reject(http(503)); await flush();
+  assert.deepEqual(h.delays(), [1000]); assert.equal(held.seen.error, undefined);
+  h.fire(); assert.equal(h.lists.length, 2); assert.equal(h.lists[1].options, h.lists[0].options);
+  const final = http(503); h.lists[1].reject(final); await flush();
+  assert.equal(held.seen.error, final);
+  assert.match(h.text(), /^2번째 검사의 영상 정보를 한 번 다시 요청했지만 불러오지 못했습니다\(HTTP 503\)/);
+  assert.equal(h.shown(), h.text()); assert.doesNotMatch(h.shown(), /1\.2\.840/);
+  assert.deepEqual([...h.window.kinViewerFailedStudies()], [PRIOR]); assert.deepEqual(h.refused, []);
+  // A list answered on the retry is not a failure.
+  const r = recovery(); r.enter(); const ok = r.list(PRIOR); r.lists[0].reject(http(500)); await flush(); r.fire();
+  const reply = []; r.lists[1].resolve(reply); await flush();
+  assert.equal(ok.seen.value, reply); assert.equal(r.shown(), null); assert.deepEqual([...r.window.kinViewerFailedStudies()], []);
+});
+
+test('Open failures L2: a refused list is not asked again; a refused current list is the refusal screen with no line over it', async () => {
+  const h = recovery(); h.enter(); const prior = h.list(PRIOR);
+  h.lists[0].reject(http(403)); await flush();
+  assert.equal(prior.seen.error.status, 403); assert.deepEqual(h.delays(), []);
+  assert.match(h.shown(), /^2번째 검사의 영상 정보에 접근할 수 없습니다\(HTTP 403\)/); assert.deepEqual(h.refused, []);
+  for (const status of [403, 404]) {
+    const c = recovery(); c.enter(); const current = c.list(CURRENT);
+    c.lists[0].reject(http(status)); await flush();
+    assert.equal(current.seen.error.status, status); assert.deepEqual(c.delays(), []);
+    assert.equal(c.refused.length, 1); assert.equal(c.shown(), null); assert.match(c.text(), /^1번째 검사/);
+    assert.deepEqual([...c.window.kinViewerFailedStudies()], [CURRENT]);
+  }
+  // A current list that keeps failing for a temporary reason is not a refusal: its line says to reopen.
+  const t = recovery(); t.enter(); t.list(CURRENT); t.lists[0].reject(http(502)); await flush(); t.fire(); t.lists[1].reject(http(502)); await flush();
+  assert.deepEqual(t.refused, []); assert.match(t.shown(), /^1번째 검사의 영상 정보를 한 번 다시 요청했지만 .*뷰어를 다시 여세요/);
+});
+
+test('Open failures L3: priors wait at most 5 s after the current list; the late answer is dropped and the reason shown', async () => {
+  const h = recovery(); h.enter();
+  const current = h.list(CURRENT), prior = h.list(PRIOR);
+  assert.deepEqual(h.delays(), []);
+  h.lists[0].resolve([]); await flush();
+  assert.equal(current.seen.value.length, 0); assert.deepEqual(h.delays(), [5000]);
+  h.fire(); await flush();
+  assert.equal(prior.seen.error.kinLate, true);
+  assert.equal(h.shown(), '2번째 검사의 영상 정보가 늦어 그 검사 없이 표시했습니다. 뷰어를 다시 열면 다시 요청합니다.');
+  h.lists[1].resolve([{ late: true }]); await flush();
+  assert.equal(prior.seen.value, undefined); assert.deepEqual([...h.window.kinViewerFailedStudies()], [PRIOR]);
+  // A prior series asked after the current list has its own 5 s; a current series has none.
+  const s = h.load(PRIOR, OTHER); assert.deepEqual(h.delays(), [5000]);
+  h.load(CURRENT, SERIES); assert.deepEqual(h.delays(), [5000]);
+  h.calls[0].resolve([]); await flush(); assert.deepEqual(h.delays(), []);
+  assert.deepEqual(s.seen.value, []);
+  // Leaving the route stops the deadline: no reason, no rejection of its own.
+  const x = recovery(); x.enter(); x.list(CURRENT); const waiting = x.list(PRIOR); x.lists[0].resolve([]); await flush();
+  x.exit(); assert.deepEqual(x.delays(), []); x.fire(); await flush();
+  assert.equal(waiting.seen.error, undefined); assert.equal(x.shown(), null);
+});
+
+test('Open failures L4: the admitted exam scope decides which studies are current; a URL alone makes only the first current', async () => {
+  // A merged exam's URL also lists its prior's originals: without the admitted scope the second study is a prior.
+  const u = recovery({ search: `?StudyInstanceUIDs=${CURRENT},${PRIOR}&kinExam=merged` }); u.enter();
+  u.list(CURRENT); u.list(PRIOR); u.lists[0].resolve([]); await flush(); assert.deepEqual(u.delays(), [5000]);
+  // With the scope admitted, both originals of the current exam are current: no deadline, and the layout needs both.
+  const h = recovery({ search: `?StudyInstanceUIDs=${CURRENT},${PRIOR}&kinExam=merged` });
+  h.window.KinViewerExamScope = { snapshot: () => ({}), role: () => 'current' }; h.enter();
+  h.list(CURRENT); const second = h.list(PRIOR); h.lists[0].resolve([]); await flush();
+  assert.deepEqual(h.delays(), []); h.lists[1].resolve([]); await flush(); assert.deepEqual(second.seen.value, []);
+  const one = { StudyInstanceUID: CURRENT }, two = { StudyInstanceUID: PRIOR };
+  assert.equal(h.hp.run({ studies: [undefined, two], activeStudy: undefined, displaySets: [1] }, 'p'), undefined);
+  assert.equal(h.hp.run({ studies: [one, undefined], activeStudy: one, displaySets: [1] }, 'p'), undefined);
+  assert.equal(h.runs.length, 0);
+  assert.equal(h.hp.run({ studies: [one, two], activeStudy: one, displaySets: [1] }, 'p'), 'ran');
+});
+test('Open failures L5: the layout leaves out a study with no list and never lays out a prior as the current study', async () => {
+  const h = recovery(); h.enter();
+  const current = { StudyInstanceUID: CURRENT }, prior = { StudyInstanceUID: PRIOR }, sets = [1, 2];
+  const whole = { studies: [current, prior], activeStudy: current, displaySets: sets };
+  assert.equal(h.hp.run(whole, '@ohif/hpCompare', { stageIndex: 0 }), 'ran');
+  assert.equal(h.runs[0].data, whole); assert.deepEqual(h.runs[0].rest, ['@ohif/hpCompare', { stageIndex: 0 }]);
+  assert.equal(h.hp.run({ studies: [current, undefined], activeStudy: current, displaySets: sets }, '@ohif/hpCompare'), 'ran');
+  assert.deepEqual(h.runs[1].data.studies, [current]); assert.equal(h.runs[1].data.activeStudy, current); assert.equal(h.runs[1].data.displaySets, sets);
+  assert.equal(h.hp.run({ studies: [undefined, prior], activeStudy: undefined, displaySets: sets }, '@ohif/hpCompare'), undefined);
+  assert.equal(h.runs.length, 2);
+  // One guard for the document: a later mode does not wrap it again.
+  const guard = h.hp.run; h.exit(); h.enter(); assert.equal(h.hp.run, guard);
+});
+
+test('Open failures L6: the record of failed studies is the document\'s: it outlives the route, and a wait ended by leaving counts', async () => {
+  const h = recovery(); h.enter(); h.load(PRIOR, OTHER); h.calls[0].reject(http(500)); await flush();
+  h.exit(); await flush();
+  assert.deepEqual([...h.window.kinViewerFailedStudies()], [PRIOR]);
+  h.enter(); assert.deepEqual([...h.window.kinViewerFailedStudies()], [PRIOR]); assert.equal(h.shown(), null);
+  h.load(); h.calls[1].resolve([]); await flush();
+  assert.deepEqual([...h.window.kinViewerFailedStudies()], [PRIOR]);
+});
+
+test('Open failures L7: a read outside this route still enters the record; a refusal no screen took keeps its line', async () => {
+  const h = recovery(); h.enter();
+  const other = h.load('1.2.840.99.9', '1.2.840.99.9.1'); h.calls[0].reject(http(500)); await flush();
+  assert.equal(other.seen.error.status, 500); assert.deepEqual(h.delays(), []); assert.equal(h.shown(), null);
+  assert.deepEqual([...h.window.kinViewerFailedStudies()], ['1.2.840.99.9']);
+  h.window.KinViewerPatientTabs = { imagesRefused: () => false };
+  h.list(CURRENT); h.lists[0].reject(http(403)); await flush();
+  assert.match(h.shown(), /^1번째 검사의 영상 정보에 접근할 수 없습니다\(HTTP 403\)/);
 });
