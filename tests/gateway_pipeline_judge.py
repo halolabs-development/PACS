@@ -23,10 +23,11 @@ IDS = ('S-1', 'S-2',
        'R-1', 'R-2', 'R-3', 'R-4', 'R-5', 'R-6', 'R-7', 'R-8', 'R-9', 'R-10',
        'F-1', 'F-2', 'F-3', 'F-4', 'F-5', 'F-6', 'F-7', 'F-8',
        'X-1', 'X-2', 'X-3', 'X-4', 'X-5',
+       'G-1', 'G-2', 'G-3', 'G-4', 'G-5', 'G-6', 'G-7',
        'T-1', 'T-2', 'T-3', 'T-4', 'T-5')
 SCENARIO_IDS = tuple(name for name in IDS if not name.startswith('T-'))
 # What the harness asks after each part. X-5 needs every block complete and the T IDs need the teardown, so both are
-# judged later: X-5 at the end of the last method, the T IDs only offline.
+# judged later: X-5 at the end of the last method (Block G), the T IDs only offline.
 BLOCK_IDS = {
     'setup': ('S-1', 'S-2'),
     'N': ('N-1', 'N-2', 'N-3', 'N-4', 'N-5', 'N-6'),
@@ -34,6 +35,7 @@ BLOCK_IDS = {
     'R': ('R-1', 'R-2', 'R-3', 'R-4', 'R-5', 'R-6', 'R-7', 'R-8', 'R-9', 'R-10'),
     'F': ('F-1', 'F-2', 'F-3', 'F-4', 'F-5', 'F-6', 'F-7', 'F-8'),
     'X': ('X-1', 'X-2', 'X-3', 'X-4'),
+    'G': ('G-1', 'G-2', 'G-3', 'G-4', 'G-5', 'G-6', 'G-7'),
 }
 
 BUDGET = 24 * 1024 * 1024       # the agent's batching target at BYTE_BUDGET_MIB=24
@@ -51,6 +53,10 @@ OUTAGE_ERRORS = ('token request ConnectionError', 'cloud request ConnectionError
 STALL_ERROR = 'cloud request ReadTimeout'
 INSTITUTION = 'KIN 판독센터'
 RESOLVE = {'kin-cloud': True, 'kin-api': False, 'kin-db': False, 'kin-keycloak': False, 'kin-orthanc': False}
+# Block G: lossless re-compression toward KIN (JPEG Lossless SV1), and one clean-up pass of the agent (PURGE_SECONDS 60)
+# plus loop time: a copy still held this long after KIN finished was looked at by a pass and kept.
+LOSSLESS_SYNTAX = '1.2.840.10008.1.2.4.70'
+PURGE_WINDOW = 62
 OWNED_COUNTS = ('orthanc_studies', 'StudyState', 'GatewayReceipt', 'GatewayRetryRequest', 'AuditLog')
 _STAMP = re.compile(r'(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,9}))?(?:Z|\+00:00)')
 
@@ -403,7 +409,74 @@ def _x4(s, t, d, e):
 
 
 def _x5(s, t, d, e):
-    return s['schema'] == SCHEMA and all(s[key]['complete'] is True for key in ('setup', 'N', 'B', 'R', 'F', 'X'))
+    return s['schema'] == SCHEMA and all(s[key]['complete'] is True for key in ('setup', 'N', 'B', 'R', 'F', 'X', 'G'))
+
+
+# ── Block G: Gateway settings - routing to a second destination, kept copies, lossless compression ───────────────────
+
+def _g1(s, t, d, e):
+    block = s['G']
+    saved, peer = block['settings'], block['peer']
+    return (peer['status'] == 200 and isinstance(peer['id'], str) and bool(peer['id'])
+            and (saved['status'], saved['changed']) == (200, True) and isinstance(saved['revision'], int)
+            and saved['revision'] >= 1
+            and saved['routes'] == [{'modality': 'CT', 'sourceAe': None, 'destinations': ['kin', peer['id']]}]
+            and (saved['retentionDays'], saved['compression']) == (0, 'lossless')
+            and block['applied']['revision'] == saved['revision'])
+
+
+def _g2(s, t, d, e):
+    block = s['G']
+    seen = pick(e, uid=block['uid'], after=block['send']['t_send'], before=block['t_end'])
+    stored = named(seen, 'batch.stored')
+    return (cstore_ok(block['send']['cstore'], 2)
+            and [item['destinations'] for item in named(seen, 'study.routed')] == [2]
+            and bool(stored) and sum(item['sops'] for item in stored) == 2
+            and all(item['failed'] == 0 for item in stored) and sum(item['compressed'] for item in stored) == 2
+            and [item['sops'] for item in named(seen, 'study.complete')] == [2]
+            and receipt_is(block['kin']['list'], 'complete', 2, 2))
+
+
+def _g3(s, t, d, e):
+    block = s['G']
+    kin, original = block['kin'], block['original']
+    return (len(original['sops']) == len(set(original['sops'])) == 2 and sorted(kin['cloud']) == original['sops']
+            and kin['syntaxes'] == [LOSSLESS_SYNTAX] * 2
+            and all(isinstance(value, str) and value for value in original['pixels'])
+            and kin['pixels'] == original['pixels'])
+
+
+def _g4(s, t, d, e):
+    block = s['G']
+    down, hold, up = block['down'], block['hold'], block['up']
+    held = pick(e, uid=block['uid'], after=down['t'], before=up['t'])
+    return (down['detached'] is True and bool(named(held, 'forward.retry'))
+            and not named(held, 'forward.complete') and not named(held, 'study.purged')
+            and sorted(hold['local']) == block['original']['sops']
+            and stamp(hold['t']) - stamp(block['kin']['t_complete']) >= PURGE_WINDOW and stamp(hold['t']) <= stamp(up['t']))
+
+
+def _g5(s, t, d, e):
+    block = s['G']
+    done = pick(e, event='forward.complete', uid=block['uid'], after=block['up']['t'], before=block['t_end'])
+    received = block['peer_received']
+    return (block['up']['attached'] is True and [item['sops'] for item in done] == [2]
+            and sorted(received['sops']) == block['original']['sops'] and received['pixels'] == block['original']['pixels'])
+
+
+def _g6(s, t, d, e):
+    block = s['G']
+    done = pick(e, event='forward.complete', uid=block['uid'], after=block['up']['t'], before=block['t_end'])
+    purged = pick(e, event='study.purged', uid=block['uid'], after=block['up']['t'], before=block['t_end'])
+    return (len(done) == 1 and [(item['sops'], item['pending']) for item in purged] == [(2, 0)]
+            and purged[0]['_t'] >= done[0]['_t'] and block['purge']['local'] == []
+            and sorted(block['purge']['cloud']) == block['original']['sops'])
+
+
+def _g7(s, t, d, e):
+    block = s['G']
+    return (block['refuse'] == {'status': 409, 'code': 'GATEWAY_PEER_ROUTED'}
+            and block['cleared'] == {'status': 200, 'revision': block['settings']['revision'] + 1})
 
 
 # ── Teardown (offline only) ───────────────────────────────────────────────────────────────────────────────────────
@@ -416,7 +489,7 @@ def _t1(s, t, d, e):
 
 def _t2(s, t, d, e):
     owned = t['owned']
-    expected = {s[key]['uid'] for key in ('N', 'B', 'R', 'F')
+    expected = {s[key]['uid'] for key in ('N', 'B', 'R', 'F', 'G')
                 if isinstance(s, dict) and isinstance(s.get(key), dict) and 'uid' in s[key]}
     return (bool(owned) and expected <= set(owned)
             and all(set(row) == set(OWNED_COUNTS) and all(row[key] == 0 for key in OWNED_COUNTS)
@@ -445,6 +518,7 @@ CHECKS = {
     'R-10': _r10,
     'F-1': _f1, 'F-2': _f2, 'F-3': _f3, 'F-4': _f4, 'F-5': _f5, 'F-6': _f6, 'F-7': _f7, 'F-8': _f8,
     'X-1': _x1, 'X-2': _x2, 'X-3': _x3, 'X-4': _x4, 'X-5': _x5,
+    'G-1': _g1, 'G-2': _g2, 'G-3': _g3, 'G-4': _g4, 'G-5': _g5, 'G-6': _g6, 'G-7': _g7,
     'T-1': _t1, 'T-2': _t2, 'T-3': _t3, 'T-4': _t4, 'T-5': _t5,
 }
 

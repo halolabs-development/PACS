@@ -30,8 +30,9 @@ VALIDATE = '\n'.join(CATALOG.job_text(job) for name, job in CATALOG.combined()['
 VECTORS = json.loads((ROOT / 'tests' / 'gateway_pipeline_vectors.json').read_text(encoding='utf-8'))
 METHODS = ['test_eg1_1_normal_transfer_and_late_delta', 'test_eg1_2_multibatch_outage_restart_resume',
            'test_eg1_3_storage_stall_crash_restart_now_retry', 'test_eg1_4_oversized_f01_boundary_bounded_repeat',
-           'test_eg1_5_cross_study_convergence_and_negative_controls']
-BLOCKS = ['N', 'B', 'R', 'F', 'X']
+           'test_eg1_5_cross_study_convergence_and_negative_controls',
+           'test_eg1_6_routing_kept_copies_and_lossless_compression']
+BLOCKS = ['N', 'B', 'R', 'F', 'X', 'G']
 # The live step binds every source the run depends on (contract section 7, Binding).
 BOUND = ['gateway/agent/agent.py', 'gateway/agent/Dockerfile', 'gateway/agent/requirements.txt',
          'gateway/docker-compose.yml', 'gateway/orthanc.json', 'scripts/send_cstore.py', 'scripts/run-tests.py',
@@ -100,8 +101,8 @@ def step_text(anchor):
 
 class JudgeAdequacy(unittest.TestCase):
     def test_ids_are_exact_and_partitioned(self):
-        self.assertEqual(len(judge.IDS), 41)
-        self.assertEqual(len(set(judge.IDS)), 41)
+        self.assertEqual(len(judge.IDS), 48)
+        self.assertEqual(len(set(judge.IDS)), 48)
         self.assertEqual(set(judge.CHECKS), set(judge.IDS))
         self.assertEqual(judge.SCENARIO_IDS, tuple(name for name in judge.IDS if not name.startswith('T-')))
         asked = [name for group in judge.BLOCK_IDS.values() for name in group]
@@ -145,7 +146,7 @@ class JudgeAdequacy(unittest.TestCase):
             evidence = str(base / 'scenario-evidence.json')
             self.assertEqual(judge.main(['--evidence', evidence, '--out', str(base / 'judge.json')]), 0)
             written = json.loads((base / 'judge.json').read_text(encoding='utf-8'))
-            self.assertEqual((written['findings'], written['ids']), ([], 41))
+            self.assertEqual((written['findings'], written['ids']), ([], 48))
             self.assertEqual(sorted(written['inputs']), ['daemon-empty.json', 'scenario-evidence.json',
                                                          'teardown-evidence.json'])
             with self.assertRaises(FileExistsError):
@@ -194,9 +195,10 @@ class HarnessPins(unittest.TestCase):
                         elif isinstance(inner, ast.ImportFrom):
                             local.setdefault(inner.module, set()).add(node.name)
         self.assertEqual(local, {'numpy': {'write_fixtures'}, 'pydicom.dataset': {'write_fixtures'},
-                                 'pydicom.uid': {'write_fixtures'}, 'importlib.util': {'plan'}})
+                                 'pydicom.uid': {'write_fixtures'}, 'importlib.util': {'plan'},
+                                 'io': {'pixel_digest'}, 'pydicom': {'pixel_digest'}})
 
-    def test_one_class_five_fixed_methods_each_one_block(self):
+    def test_one_class_six_fixed_methods_each_one_block(self):
         cls = harness()
         self.assertEqual([node.name for node in LIVE_TREE.body if isinstance(node, ast.ClassDef)],
                          ['GatewayPipelineLive'])
@@ -231,8 +233,8 @@ class HarnessPins(unittest.TestCase):
                                'GW_STOW_TIMEOUT_SECONDS': '30', 'GW_BACKOFF_BASE_SECONDS': '90',
                                'GW_BACKOFF_MAX_SECONDS': '90', 'GW_BYTE_BUDGET_MIB': '24'})
         deadlines = assigned(LIVE_TREE, 'DEADLINES')
-        self.assertEqual(deadlines, {'setup': 240, 'fixtures': 60, 'N': 90, 'B': 320, 'R': 235, 'F': 90, 'X': 180})
-        self.assertEqual(sum(deadlines.values()) + 45, 1260)
+        self.assertEqual(deadlines, {'setup': 240, 'fixtures': 60, 'N': 90, 'B': 320, 'R': 235, 'F': 90, 'X': 180, 'G': 360})
+        self.assertEqual(sum(deadlines.values()) + 45, 1620)
         self.assertEqual((judge.BACKOFF, judge.RECEIPT_LAG, judge.RETRY_NOW_WITHIN, judge.QUIET), (90, 100, 45, 18))
         self.assertEqual(int(env['GW_BACKOFF_BASE_SECONDS']), judge.BACKOFF)
         self.assertEqual(int(env['GW_BACKOFF_MAX_SECONDS']), judge.BACKOFF)
@@ -355,7 +357,7 @@ class WorkflowPins(unittest.TestCase):
     def test_dispatch_only_exact_commit_first_attempt(self):
         for needle in ('on:\n  workflow_dispatch:\n    inputs:\n      expected_sha:\n', 'required: true',
                        'permissions:\n  contents: read\n', 'concurrency:\n  group: gateway-e2e\n  cancel-in-progress: false\n',
-                       'runs-on: ubuntu-24.04', 'timeout-minutes: 40', 'ref: ${{ github.sha }}',
+                       'runs-on: ubuntu-24.04', 'timeout-minutes: 45', 'ref: ${{ github.sha }}',
                        'persist-credentials: false', 'EXPECTED_SHA: ${{ inputs.expected_sha }}',
                        'ACTUAL_SHA: ${{ github.sha }}', 'RUN_ATTEMPT: ${{ github.run_attempt }}',
                        "grep -Eqx '[0-9a-f]{40}'", '[ "$EXPECTED_SHA" = "$ACTUAL_SHA" ]', '[ "$RUN_ATTEMPT" = "1" ]'):
@@ -368,7 +370,7 @@ class WorkflowPins(unittest.TestCase):
     def test_steps_run_in_the_contract_order(self):
         order = ['Exact commit and first attempt only', '-- python3 -B tests/measurement_ci_test.py',
                  '-- python3 -B tests/gateway_pipeline_contract_test.py', '-m venv',
-                 'ExecutionSelectionTests.test_gateway_e2e_profile_selects_five_declared_cases',
+                 'ExecutionSelectionTests.test_gateway_e2e_profile_selects_six_declared_cases',
                  '--run-dir tmp/gateway-e2e-ci/environment', '--profile gateway-e2e',
                  'tests/gateway_pipeline_judge.py --evidence', 'actions/upload-artifact@']
         at = [WORKFLOW.index(needle) for needle in order]
@@ -399,7 +401,7 @@ class WorkflowPins(unittest.TestCase):
         for path in BOUND:
             self.assertIn(' --file ' + path + ' ', live, path)
         self.assertTrue(live.endswith('"$RUNNER_TEMP/gateway-e2e-python/bin/python" tests/measurement_ci.py --profile gateway-e2e'))
-        self.assertIn('timeout-minutes: 28', step_text('--profile gateway-e2e'))
+        self.assertIn('timeout-minutes: 33', step_text('--profile gateway-e2e'))
 
     def test_judge_and_upload_always_run_and_keep_the_evidence(self):
         judged = step_text('tests/gateway_pipeline_judge.py --evidence')

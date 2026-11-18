@@ -3283,17 +3283,17 @@ class MeasurementCiTests(unittest.TestCase):
         self.assertEqual(profile['suites'], (('gateway_pipeline_live.py', 'GatewayPipelineLive', 'ci-eg1-gateway'),))
         self.assertEqual(profile['out'].name, 'gateway-e2e-ci')
         self.assertEqual(profile['project_prefix'], 'kin-gateway-e2e-ci-')
-        self.assertEqual(profile['suite_timeout'], 1260)
+        self.assertEqual(profile['suite_timeout'], 1620)
         self.assertNotIn('suite_budgets', profile)
         command, outer = ci.guarded_profile_run(profile, *profile['suites'][0], 2000)
         self.assertEqual(command[command.index('--module')+1], 'tests/gateway_pipeline_live.py')
         self.assertEqual(command[command.index('--class')+1], 'GatewayPipelineLive')
         self.assertEqual(command[command.index('--unit')+1], 'ci-eg1-gateway')
-        self.assertEqual(command[command.index('--timeout')+1], '1260')
-        self.assertEqual(outer, 1295)
-        # A1: 1260+35 = 1295 <= 1500-205, and 205s is about 2.5x the recorded hosted stack setup and cleanup.
-        self.assertTrue(all(ci.profile_deadline_seconds(name) == {'hanging-protocols': 1884, 'measurements': 3300, 'exam-merge': 2100}.get(name, 1500) for name in ci.PROFILES))
-        self.assertLessEqual(profile['suite_timeout'] + 35, 25*60 - 205)
+        self.assertEqual(command[command.index('--timeout')+1], '1620')
+        self.assertEqual(outer, 1655)
+        # A1 and Block G: 1620+35 = 1655 <= 1860-205, and 205s is about 2.5x the recorded hosted stack setup and cleanup.
+        self.assertTrue(all(ci.profile_deadline_seconds(name) == {'hanging-protocols': 1884, 'measurements': 3300, 'exam-merge': 2100, 'gateway-e2e': 1860}.get(name, 1500) for name in ci.PROFILES))
+        self.assertLessEqual(profile['suite_timeout'] + 35, ci.profile_deadline_seconds('gateway-e2e') - 205)
         for name, other in ci.PROFILES.items():
             if name != 'gateway-e2e':
                 self.assertNotEqual(profile['out'], other['out'])

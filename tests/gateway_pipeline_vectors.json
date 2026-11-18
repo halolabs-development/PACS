@@ -52,7 +52,16 @@
           "2026-09-25T00:04:48.000000000Z {\"at\":\"2026-09-25T00:04:48Z\",\"event\":\"study.complete\",\"uid\":\"2.25.400\",\"sops\":1}",
           "2026-09-25T00:05:01.000000000Z {\"at\":\"2026-09-25T00:05:01Z\",\"event\":\"study.queued\",\"uid\":\"2.25.400\"}",
           "2026-09-25T00:05:02.000000000Z {\"at\":\"2026-09-25T00:05:02Z\",\"event\":\"batch.stored\",\"uid\":\"2.25.400\",\"sops\":1,\"failed\":0}",
-          "2026-09-25T00:05:02.000000000Z {\"at\":\"2026-09-25T00:05:02Z\",\"event\":\"study.complete\",\"uid\":\"2.25.400\",\"sops\":2}"
+          "2026-09-25T00:05:02.000000000Z {\"at\":\"2026-09-25T00:05:02Z\",\"event\":\"study.complete\",\"uid\":\"2.25.400\",\"sops\":2}",
+          "2026-09-25T00:06:26.000000000Z {\"at\":\"2026-09-25T00:06:26Z\",\"event\":\"study.queued\",\"uid\":\"2.25.500\"}",
+          "2026-09-25T00:06:27.000000000Z {\"at\":\"2026-09-25T00:06:27Z\",\"event\":\"study.routed\",\"uid\":\"2.25.500\",\"destinations\":2}",
+          "2026-09-25T00:06:28.000000000Z {\"at\":\"2026-09-25T00:06:28Z\",\"event\":\"batch.stored\",\"uid\":\"2.25.500\",\"batch\":1,\"sops\":2,\"failed\":0,\"bytes\":90000,\"compressed\":2}",
+          "2026-09-25T00:06:28.500000000Z {\"at\":\"2026-09-25T00:06:28Z\",\"event\":\"study.complete\",\"uid\":\"2.25.500\",\"sops\":2}",
+          "2026-09-25T00:06:29.000000000Z {\"at\":\"2026-09-25T00:06:29Z\",\"event\":\"forward.retry\",\"uid\":\"2.25.500\",\"attempt\":1,\"afterSeconds\":90.0,\"error\":\"forward C-STORE HTTP 500\"}",
+          "2026-09-25T00:06:40.000000000Z {\"at\":\"2026-09-25T00:06:40Z\",\"event\":\"study.purged\",\"uid\":\"2.25.100\",\"sops\":2,\"pending\":0}",
+          "2026-09-25T00:07:59.000000000Z {\"at\":\"2026-09-25T00:07:59Z\",\"event\":\"forward.stored\",\"uid\":\"2.25.500\",\"batch\":1,\"sops\":2}",
+          "2026-09-25T00:07:59.500000000Z {\"at\":\"2026-09-25T00:07:59Z\",\"event\":\"forward.complete\",\"uid\":\"2.25.500\",\"sops\":2}",
+          "2026-09-25T00:08:41.000000000Z {\"at\":\"2026-09-25T00:08:41Z\",\"event\":\"study.purged\",\"uid\":\"2.25.500\",\"sops\":2,\"pending\":0}"
         ],
         "stderr": []
       },
@@ -246,8 +255,25 @@
         },
         "t_end": "2026-09-25T00:05:30.000000Z",
         "complete": true
-      }
-    },
+      },
+      "G": {
+        "uid": "2.25.500",
+        "peer": {"status": 200, "id": "7a0c5e21-3b4d-4e5f-8a6b-7c8d9e0f1a2b", "up": true},
+        "settings": {"status": 200, "changed": true, "revision": 1, "routes": [{"modality": "CT", "sourceAe": null, "destinations": ["kin", "7a0c5e21-3b4d-4e5f-8a6b-7c8d9e0f1a2b"]}], "retentionDays": 0, "compression": "lossless"},
+        "applied": {"revision": 1, "t": "2026-09-25T00:06:15.000000Z"},
+        "down": {"t": "2026-09-25T00:06:20.000000Z", "detached": true},
+        "send": {"t_send": "2026-09-25T00:06:21.000000Z", "cstore": {"exit": 0, "ok": 2, "fail": 0}},
+        "original": {"sops": ["2.25.5001", "2.25.5002"], "pixels": ["sha256:5001", "sha256:5002"]},
+        "kin": {"t_complete": "2026-09-25T00:06:30.000000Z", "list": {"uid": "2.25.500", "count": 2, "institutionName": "KIN 판독센터", "ss": "Unverified", "gatewayReceipt": {"phase": "complete", "successCount": 2, "localCount": 2, "attempt": 0, "errorCode": null, "serverReceivedAt": "2026-09-25T00:06:29.100Z", "agentSeq": 6, "epoch": "11111111-2222-4333-8444-555555555555"}}, "cloud": ["2.25.5001", "2.25.5002"], "syntaxes": ["1.2.840.10008.1.2.4.70", "1.2.840.10008.1.2.4.70"], "pixels": ["sha256:5001", "sha256:5002"]},
+        "hold": {"t": "2026-09-25T00:07:35.000000Z", "local": ["2.25.5001", "2.25.5002"]},
+        "up": {"t": "2026-09-25T00:07:36.000000Z", "attached": true},
+        "peer_received": {"sops": ["2.25.5001", "2.25.5002"], "pixels": ["sha256:5001", "sha256:5002"]},
+        "purge": {"local": [], "cloud": ["2.25.5001", "2.25.5002"]},
+        "refuse": {"status": 409, "code": "GATEWAY_PEER_ROUTED"},
+        "cleared": {"status": 200, "revision": 2},
+        "t_end": "2026-09-25T00:08:50.000000Z",
+        "complete": true
+      }    },
     "teardown": {
       "schema": "kin-eg1-teardown/1",
       "gateway_project": {"project": "kin-eg1-gw-0123456789ab", "containers": [], "volumes": [], "networks": []},
@@ -255,7 +281,8 @@
         "2.25.100": {"orthanc_studies": 0, "StudyState": 0, "GatewayReceipt": 0, "GatewayRetryRequest": 0, "AuditLog": 0},
         "2.25.200": {"orthanc_studies": 0, "StudyState": 0, "GatewayReceipt": 0, "GatewayRetryRequest": 0, "AuditLog": 0},
         "2.25.300": {"orthanc_studies": 0, "StudyState": 0, "GatewayReceipt": 0, "GatewayRetryRequest": 0, "AuditLog": 0},
-        "2.25.400": {"orthanc_studies": 0, "StudyState": 0, "GatewayReceipt": 0, "GatewayRetryRequest": 0, "AuditLog": 0}
+        "2.25.400": {"orthanc_studies": 0, "StudyState": 0, "GatewayReceipt": 0, "GatewayRetryRequest": 0, "AuditLog": 0},
+        "2.25.500": {"orthanc_studies": 0, "StudyState": 0, "GatewayReceipt": 0, "GatewayRetryRequest": 0, "AuditLog": 0}
       },
       "gateway_client": {"id": "5f0c7a52-8f4e-4c1a-9d4b-2b8f6f1e7a10", "status_after": 404},
       "fixtures": {"dir_exists": false, "dcm_in_artifacts": []},
@@ -303,7 +330,13 @@
     {"id": "X-3", "patch": [{"op": "append", "path": ["scenario", "agent_log", "stdout"], "value": "2026-09-25T00:04:10.000000000Z {\"at\":\"2026-09-25T00:04:10Z\",\"event\":\"receipt.deferred\",\"uid\":\"2.25.300\",\"status\":503}"}]},
     {"id": "X-4", "patch": [{"op": "set", "path": ["scenario", "agent_log", "stderr"], "value": ["Traceback (most recent call last):"]}]},
     {"id": "X-5", "patch": [{"op": "set", "path": ["scenario", "N", "complete"], "value": false}]},
-    {"id": "T-1", "patch": [{"op": "set", "path": ["teardown", "gateway_project", "containers"], "value": ["3f2a1b0c9d8e"]}]},
+    {"id": "G-1", "patch": [{"op": "set", "path": ["scenario", "G", "settings", "compression"], "value": "none"}]},
+    {"id": "G-2", "patch": [{"op": "set", "path": ["scenario", "G", "send", "cstore"], "value": {"exit": 0, "ok": 1, "fail": 1}}]},
+    {"id": "G-3", "patch": [{"op": "set", "path": ["scenario", "G", "kin", "syntaxes"], "value": ["1.2.840.10008.1.2.1", "1.2.840.10008.1.2.4.70"]}]},
+    {"id": "G-4", "patch": [{"op": "append", "path": ["scenario", "agent_log", "stdout"], "value": "2026-09-25T00:07:00.000000000Z {\"at\":\"2026-09-25T00:07:00Z\",\"event\":\"study.purged\",\"uid\":\"2.25.500\",\"sops\":2,\"pending\":0}"}]},
+    {"id": "G-5", "patch": [{"op": "set", "path": ["scenario", "G", "peer_received", "pixels"], "value": ["sha256:5001", "sha256:ffff"]}]},
+    {"id": "G-6", "patch": [{"op": "set", "path": ["scenario", "G", "purge", "local"], "value": ["2.25.5002"]}]},
+    {"id": "G-7", "patch": [{"op": "set", "path": ["scenario", "G", "refuse", "status"], "value": 200}]},    {"id": "T-1", "patch": [{"op": "set", "path": ["teardown", "gateway_project", "containers"], "value": ["3f2a1b0c9d8e"]}]},
     {"id": "T-2", "patch": [{"op": "set", "path": ["teardown", "owned", "2.25.100", "GatewayReceipt"], "value": 1}]},
     {"id": "T-3", "patch": [{"op": "set", "path": ["teardown", "gateway_client", "status_after"], "value": 200}]},
     {"id": "T-4", "patch": [{"op": "set", "path": ["daemon", "remaining", "volumes"], "value": ["kin-eg1-gw-0123456789ab_agent-data"]}]},
