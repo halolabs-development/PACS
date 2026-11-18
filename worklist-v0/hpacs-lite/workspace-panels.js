@@ -209,8 +209,11 @@
         `<label${key === 'aiReport' ? ' title="추후 구현 탭입니다. 표시 여부만 정합니다."' : ''}><input type="checkbox" data-panel="${key}"> ${label}</label>`).join('')}</fieldset>
       <p>이 브라우저에 계정별로 기억합니다. 다른 기기에서는 View &gt; Account Layout으로 계정에 저장하고 불러오세요.</p>
       <p id="panel-settings-status" role="status"></p>
-      <footer><button type="button" id="box-arrange-open" title="Worklist·Related Exam·Clinical Information·Related Report·Report Editor 상자를 끌어 서로 자리를 바꿉니다.">Arrange Boxes</button><button type="button" id="panel-settings-show-all">Show All Panels</button><button type="button" id="panel-settings-close">Close</button></footer>`;
+      <footer><button type="button" id="box-arrange-open"></button><button type="button" id="panel-settings-show-all">Show All Panels</button><button type="button" id="panel-settings-close">Close</button></footer>`;
     document.body.append(panelDialog);
+    // Arrange Boxes is written as a product sentence (the dialog is built after the page's first markup was read).
+    kinWrite($('#box-arrange-open'), kinSay('Arrange Boxes'));
+    kinWrite($('#box-arrange-open'), kinSay('Worklist·Related Exam·Clinical Information·Related Report·Report Editor 상자를 끌어 서로 자리를 바꿉니다.'), 'title');
     const hiddenPanelsNow = () => workspaceState.workspace?.hiddenPanels?.slice() || [];
     function renderPanelSettings() {
       const hidden = hiddenPanelsNow(), editable = workspaceEditable();
@@ -306,16 +309,26 @@
     }
     const arrangeBar = document.createElement('div');
     arrangeBar.id = 'box-arrange-bar'; arrangeBar.hidden = true;
-    arrangeBar.setAttribute('role', 'region'); arrangeBar.setAttribute('aria-label', 'Arrange Boxes');
-    arrangeBar.innerHTML = `<p id="box-arrange-help" lang="ko">상자를 다른 상자 위로 끌어 놓으면 두 상자가 자리를 바꿉니다. 다른 열의 상자에 놓으면 두 열이 통째로 바뀝니다.
-        키보드: 상자에서 Enter로 집고, 놓을 상자에서 Enter를 누릅니다. Tab 순서는 화면 배치와 관계없이 그대로입니다.</p>
+    arrangeBar.setAttribute('role', 'region');
+    // The bar is built after the page's first markup was read for the screen language, so each fixed caption is
+    // written as a product sentence (kinSay) and follows the language the reader chose.
+    arrangeBar.innerHTML = `<p id="box-arrange-help" lang="ko"></p>
       <span id="box-arrange-status" role="status" aria-live="polite" lang="ko"></span>
-      <button type="button" class="chip" data-box-swap="columns">Swap Columns</button>
-      <button type="button" class="chip" data-box-swap="list">Swap Worklist / Related Exam</button>
-      <button type="button" class="chip" data-box-swap="side">Move Clinical Information</button>
-      <button type="button" class="chip" data-box-swap="report" data-label-tech="Swap Related Report / Order List">Swap Related Report / Report Editor</button>
-      <button type="button" class="chip" id="box-arrange-default">Default Arrangement</button>
-      <button type="button" class="chip" id="box-arrange-done">Done</button>`;
+      <button type="button" class="chip" data-box-swap="columns"></button>
+      <button type="button" class="chip" data-box-swap="list"></button>
+      <button type="button" class="chip" data-box-swap="side"></button>
+      <button type="button" class="chip" data-box-swap="report" data-label-tech="Swap Related Report / Order List"></button>
+      <button type="button" class="chip" id="box-arrange-default"></button>
+      <button type="button" class="chip" id="box-arrange-done"></button>`;
+    const BOX_SWAP_LABEL = { columns: 'Swap Columns', list: 'Swap Worklist / Related Exam', side: 'Move Clinical Information',
+      report: 'Swap Related Report / Report Editor' };
+    kinWrite(arrangeBar, kinSay('Arrange Boxes'), 'aria-label');
+    kinWrite(arrangeBar.querySelector('#box-arrange-help'), kinSay('상자를 다른 상자 위로 끌어 놓으면 두 상자가 자리를 바꿉니다. 다른 열의 상자에 놓으면 두 열이 통째로 바뀝니다. 키보드: 상자에서 Enter로 집고, 놓을 상자에서 Enter를 누릅니다. Tab 순서는 화면 배치와 관계없이 그대로입니다.'));
+    for (const button of arrangeBar.querySelectorAll('[data-box-swap]')) {
+      button.dataset.label = BOX_SWAP_LABEL[button.dataset.boxSwap]; kinWrite(button, kinSay(BOX_SWAP_LABEL[button.dataset.boxSwap]));
+    }
+    kinWrite(arrangeBar.querySelector('#box-arrange-default'), kinSay('Default Arrangement'));
+    kinWrite(arrangeBar.querySelector('#box-arrange-done'), kinSay('Done'));
     const coverLayer = document.createElement('div');
     coverLayer.id = 'box-arrange-covers'; coverLayer.hidden = true;
     document.body.append(coverLayer, arrangeBar);
@@ -338,7 +351,8 @@
       }
       return null;
     }
-    const arrangeStatus = text => { $('#box-arrange-status').textContent = text; };
+    // Only the product's own sentences above and below come here (boxOutcome, BOX_SAID, literals), never a value.
+    const arrangeStatus = text => { kinWrite($('#box-arrange-status'), kinSay(text)); };
     function renderBoxCovers() {
       if (!arranging) return;
       const boxes = workspaceBoxes().filter(box => box.shown);
@@ -352,7 +366,8 @@
         if (!cover) {
           cover = document.createElement('button');
           cover.type = 'button'; cover.className = 'kin-box-cover'; cover.dataset.box = box.key;
-          cover.innerHTML = '<span class="kin-box-name"></span><small lang="ko">다른 상자 위로 끌어 놓으세요</small>';
+          cover.innerHTML = '<span class="kin-box-name"></span><small lang="ko"></small>';
+          kinWrite(cover.querySelector('small'), kinSay('다른 상자 위로 끌어 놓으세요'));
           cover.addEventListener('pointerdown', startBoxDrag);
           cover.addEventListener('click', boxKey);
           cover.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); escapeArrange(); } });
@@ -364,7 +379,7 @@
           }, { passive: false });
         }
         const name = cover.querySelector('.kin-box-name');
-        if (name.textContent !== box.label) { name.textContent = box.label; cover.setAttribute('aria-label', box.label); }
+        if (cover.dataset.label !== box.label) { cover.dataset.label = box.label; kinWrite(name, kinSay(box.label)); kinWrite(cover, kinSay(box.label), 'aria-label'); }
         cover.setAttribute('aria-pressed', String(boxPicked === box.key || boxDrag?.from === box.key));
         Object.assign(cover.style, { left: box.visible.x + 'px', top: box.visible.y + 'px', width: box.visible.width + 'px', height: box.visible.height + 'px' });
         return cover;
@@ -394,8 +409,8 @@
         const target = !!key && cover.dataset.box === key;
         cover.classList.toggle('kin-box-target', target);
         const from = boxDrag?.from || boxPicked;
-        cover.querySelector('small').textContent = target && from ? boxOutcome(from, key)
-          : cover.dataset.box === from ? '집었습니다. 놓을 상자 위에서 놓으세요.' : '다른 상자 위로 끌어 놓으세요';
+        kinWrite(cover.querySelector('small'), kinSay(target && from ? boxOutcome(from, key)
+          : cover.dataset.box === from ? '집었습니다. 놓을 상자 위에서 놓으세요.' : '다른 상자 위로 끌어 놓으세요'));
       }
       if (key && (boxDrag?.from || boxPicked)) arrangeStatus(boxOutcome(boxDrag?.from || boxPicked, key));
     }
@@ -508,7 +523,8 @@
       const on = boxSwapsNow(), tech = mode === 'Technician';
       for (const button of arrangeBar.querySelectorAll('[data-box-swap]')) {
         button.setAttribute('aria-pressed', String(on.includes(button.dataset.boxSwap)));
-        if (button.dataset.boxSwap === 'report') button.textContent = tech ? 'Swap Related Report / Order List' : 'Swap Related Report / Report Editor';
+        const label = button.dataset.boxSwap === 'report' && tech ? 'Swap Related Report / Order List' : BOX_SWAP_LABEL[button.dataset.boxSwap];
+        if (button.dataset.label !== label) { button.dataset.label = label; kinWrite(button, kinSay(label)); }
       }
       $('#box-arrange-default').disabled = !on.length;
     }

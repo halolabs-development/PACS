@@ -579,5 +579,57 @@ class ReadingBoxesDOM(unittest.TestCase):
         # (800x600 with a study selected is the stacked layout.)
         self.assert_order(page, ['worklist', 'relatedExams'], ['clinical', 'relatedReports', 'editor'], portrait=True)
 
+    def test_21_the_arrange_captions_follow_the_chosen_screen_language(self):
+        """Panel Settings and the arrange bar are built after the page's first markup was read for the screen
+        language, so their fixed captions are product sentences: with Korean chosen they read in Korean, with English
+        the Korean sentences read in English; the arrangement itself is the same in both."""
+        # The account appearance row that keeps the chosen language (as the language page test serves it).
+        from worklist_language_dom_test import LanguageSite
+        page, _, _ = self.open(LanguageSite())
+
+        def choose(lang):
+            page.locator('#language-open').click()
+            dialog = page.locator('#language-dialog')
+            expect(dialog).to_be_visible()
+            dialog.locator('#language-' + lang).check()
+            for scope in ('worklist', 'reading'):
+                dialog.locator('#language-scope-' + scope).check()
+            dialog.locator('#language-apply').click()
+            expect(dialog).to_be_hidden()
+
+        def open_bar():
+            page.locator('#m-config').click()
+            expect(page.locator('#panel-settings-dialog')).to_be_visible()
+            page.locator('#box-arrange-open').click()
+            expect(page.locator('#box-arrange-bar')).to_be_visible()
+            return page.locator('#box-arrange-bar')
+
+        choose('ko')
+        page.locator('#m-config').click()
+        expect(page.locator('#box-arrange-open')).to_have_text('상자 배치')
+        page.locator('#panel-settings-close').click()
+        bar = open_bar()
+        self.assertEqual('상자 배치', bar.get_attribute('aria-label'))
+        expect(bar.locator('[data-box-swap="columns"]')).to_have_text('두 열 바꾸기')
+        expect(bar.locator('[data-box-swap="list"]')).to_have_text('워크리스트 / 관련 검사 바꾸기')
+        expect(bar.locator('#box-arrange-default')).to_have_text('기본 배치')
+        bar.locator('[data-box-swap="list"]').click()
+        expect(page.locator('#box-arrange-status')).to_have_text('자리를 바꿨습니다. 이 브라우저에 기억했습니다.')
+        expect(page.locator('#box-arrange-covers .kin-box-cover small').first).to_have_text('다른 상자 위로 끌어 놓으세요')
+        bar.locator('#box-arrange-done').click()
+        expect(bar).to_be_hidden()
+        self.assertEqual(['list'], page.evaluate(SWAP_CLASSES))
+
+        choose('en')
+        bar = open_bar()
+        expect(page.locator('#box-arrange-help')).to_have_text(
+            'Drag a box onto another box to swap the two. Dropping it on a box in the other column swaps the whole columns. '
+            'Keyboard: press Enter on a box to pick it up, then Enter on the box to drop it on. The Tab order stays the same whatever the arrangement.')
+        expect(bar.locator('[data-box-swap="columns"]')).to_have_text('Swap Columns')
+        expect(page.locator('#box-arrange-covers .kin-box-cover small').first).to_have_text('Drag onto another box')
+        bar.locator('[data-box-swap="list"]').click()
+        expect(page.locator('#box-arrange-status')).to_have_text('Swapped. Remembered in this browser.')
+        self.assertEqual([], page.evaluate(SWAP_CLASSES))
+
 if __name__ == '__main__':
     unittest.main()
