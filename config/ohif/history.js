@@ -176,8 +176,14 @@ function kinCreateViewerHistory() {
           const plane = cs.metaData.get('imagePlaneModule', imageId);
           // A projection X-ray measured in the viewer's plane (geometry.viewerPlane): the Calibration tool writes its
           // calibrated-spacing metadata before the image is loaded again, and the viewer then places new points with it.
-          let calibrated; try { calibrated = geometry.viewerPlane && cs.metaData.get('calibratedPixelSpacing', imageId)?.type; } catch (_) { calibrated = undefined; }
-          if (cs.cache.getImage(imageId)?.calibration?.type || calibrated || Number(plane?.rowPixelSpacing) !== geometry.spacing[0] || Number(plane?.columnPixelSpacing) !== geometry.spacing[1])
+          // It must also be drawn with its own spacing: a stack keeps the spacing it drew the previous image with when the
+          // next one differs by less than the viewer's tolerance, and then places points with that one.
+          let calibrated, drawn; try {
+            calibrated = geometry.viewerPlane && cs.metaData.get('calibratedPixelSpacing', imageId)?.type;
+            drawn = geometry.viewerPlane && cs.getEnabledElements?.().map(e => e?.viewport).find(v => v?.getCurrentImageId?.() === imageId)?.getImageData?.()?.spacing;
+          } catch (_) { calibrated = undefined; drawn = undefined; }
+          const redrawn = drawn && (Math.abs(Number(drawn[0]) - geometry.spacing[1]) > 1e-9 || Math.abs(Number(drawn[1]) - geometry.spacing[0]) > 1e-9);
+          if (cs.cache.getImage(imageId)?.calibration?.type || calibrated || redrawn || Number(plane?.rowPixelSpacing) !== geometry.spacing[0] || Number(plane?.columnPixelSpacing) !== geometry.spacing[1])
             return '표시 간격과 원본 간격이 일치하지 않습니다';
           if (points) geometry.measure(kind, points);
           return '';

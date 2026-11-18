@@ -328,6 +328,17 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
                 self.assertLess(abs(shown - expected), .051, (text, expected, angle))
                 self.assertLess(abs(angle['value'] - expected), 1e-3, (expected, angle))
                 box = p.locator('.cornerstone-canvas').bounding_box()
+                if modality == 'CR':
+                    # Drawn with a spacing other than its own (a stack keeps the previous image's spacing when the next one
+                    # differs by less than the viewer's tolerance): no value in the original's basis. The display data only.
+                    p.evaluate('''()=>{const v=cornerstone.getEnabledElements()[0].viewport, own=v.getImageData.bind(v);
+                      window.kinTestImageData=own; v.getImageData=(...a)=>{const d=own(...a); return d && {...d, spacing:[d.spacing[0]*(1+1e-6), d.spacing[1], d.spacing[2]]};};}''')
+                    self.choose(p, 'Length')
+                    self.drag(p, box['x'] + box['width'] * .3, box['y'] + box['height'] * .8, 120, 0)
+                    expect(p.locator('#kin-viewer-history [role=status]')).to_contain_text('표시 간격과 원본 간격이 일치하지 않습니다')
+                    p.wait_for_timeout(600)
+                    self.assertEqual(1, len(self.saved(f)))
+                    p.evaluate("()=>{const v=cornerstone.getEnabledElements()[0].viewport; v.getImageData=window.kinTestImageData; delete window.kinTestImageData;}")
                 if frames > 1:
                     # The second frame of the run: its own origin [0,0,2] in the viewer, measured and saved on that frame.
                     p.evaluate("async()=>{const v=cornerstone.getEnabledElements()[0].viewport;await v.setImageIdIndex(1);}")

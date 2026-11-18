@@ -6,14 +6,15 @@ import { mgGeometry } from './mg-geometry';
 // Pixel Spacing / Imager Pixel Spacing absent or two positive numbers, at least one given; a magnification factor absent
 // or positive) are measured in the viewer's own plane. Every other image keeps the rules it had.
 export function viewerPlaneImage(tags: any): boolean {
-  const pair = (v: any) => { const a = typeof v === 'string' ? v.split('\\') : v;
-    return Array.isArray(a) && a.length === 2 && a.every(x => (typeof x === 'number' || typeof x === 'string' && x.trim() !== '') && Number(x) > 0 && Number.isFinite(Number(x))); };
+  // A positive Decimal String (DICOM PS3.5 6.2: digits, one point, an exponent) or a positive number — not what Number() also reads (0x2, Infinity).
+  const positive = (x: any) => (typeof x === 'number' || typeof x === 'string' && /^\s*[+]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?\s*$/.test(x)) && Number(x) > 0 && Number.isFinite(Number(x));
+  const pair = (v: any) => { const a = typeof v === 'string' ? v.split('\\') : v; return Array.isArray(a) && a.length === 2 && a.every(positive); };
   const factor = tags?.EstimatedRadiographicMagnificationFactor;
   return ['CR', 'DX', 'RF', 'XA'].includes(tags?.Modality) && tags.ImageOrientationPatient === undefined &&
     tags.PerFrameFunctionalGroupsSequence === undefined && tags.SharedFunctionalGroupsSequence === undefined && tags.DetectorInformationSequence === undefined &&
     (tags.PixelSpacing === undefined || pair(tags.PixelSpacing)) && (tags.ImagerPixelSpacing === undefined || pair(tags.ImagerPixelSpacing)) &&
     (tags.PixelSpacing !== undefined || tags.ImagerPixelSpacing !== undefined) &&
-    (factor === undefined || (typeof factor === 'number' || typeof factor === 'string' && factor.trim() !== '') && Number(factor) > 0 && Number.isFinite(Number(factor)));
+    (factor === undefined || positive(factor));
 }
 
 export function planarGeometry(tags: any, frame: number) {
