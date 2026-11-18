@@ -200,7 +200,8 @@ class ReportPreviewE2E(ViewerHistoryE2E):
         f=self.fixture();path='/studies/'+f.uid
         opened=self.stack.request('PATCH',path,'doctor',dict(ts='wait',teleTo='kin-center'))
         self.assertEqual(opened.status,200,opened.text)
-        self.seed_report(f);self.add_keys(f)
+        # Approved: a Save is read only by the physician who saved it (the report state table), not by the tele reader.
+        self.seed_report(f,action='approve');self.add_keys(f)
         self.assertEqual(self.stack.request('POST',path+'/hold','doctor').status,201)
         before=self.saved_rows(f);original=self.hashes()
         for actor in ['kdoctor','ktech']:
