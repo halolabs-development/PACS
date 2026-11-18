@@ -44,7 +44,7 @@ RETRY_NOW_WITHIN = 45           # one 30 s Now Retry poll plus loop time after t
 QUIET = 18                      # F-8: 3 x (StableAge 5 + poll 1); a bounded window, not a proof of never
 IN_FLIGHT_TAIL = 12             # a request already in flight at reconnect ends by the 10 s HTTP timeout plus one poll
 LOG_KEYS = frozenset(('at', 'event', 'uid', 'batch', 'sops', 'failed', 'bytes', 'attempt', 'afterSeconds', 'error',
-                      'status', 'code', 'pending', 'byteBudget'))
+                      'status', 'code', 'pending', 'byteBudget', 'version'))
 # Disconnecting an established cloud socket can time out instead of failing to connect (VM fix1-y).
 OUTAGE_ERRORS = ('token request ConnectionError', 'cloud request ConnectionError', 'cloud request ReadTimeout')
 STALL_ERROR = 'cloud request ReadTimeout'

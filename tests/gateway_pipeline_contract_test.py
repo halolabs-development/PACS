@@ -154,6 +154,19 @@ class JudgeAdequacy(unittest.TestCase):
             self.assertEqual(judge.main(['--evidence', evidence, '--out', str(base / 'second.json')]), 1)
             self.assertEqual(json.loads((base / 'second.json').read_text(encoding='utf-8'))['findings'], ['T-4'])
 
+    def test_every_agent_log_field_is_a_known_log_key(self):
+        # X-4 reads every agent stdout line against LOG_KEYS. A field the agent writes but the judge does not know turns
+        # a clean run red (the start line's version), so the two stay pinned to each other: every keyword of every
+        # log(...) call in agent.py is a known key, and no log call spreads an unknown mapping into the line.
+        tree = ast.parse((ROOT / 'gateway' / 'agent' / 'agent.py').read_text(encoding='utf-8'))
+        written = set()
+        logs = [call for call in calls(tree) if isinstance(call.func, ast.Name) and call.func.id == 'log']
+        self.assertTrue(logs)
+        for call in logs:
+            self.assertTrue(all(item.arg is not None for item in call.keywords), ast.unparse(call))
+            written.update(item.arg for item in call.keywords)
+        self.assertLessEqual(written | {'at', 'event'}, judge.LOG_KEYS)
+
 
 class HarnessPins(unittest.TestCase):
     def test_module_imports_are_stdlib_plus_the_live_stack_and_the_judge(self):
