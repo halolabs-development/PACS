@@ -1,3 +1,18 @@
+// The images that are measured in the viewer's own plane although they give no orientation: projection X-rays (CR, DX,
+// RF, XA) without ImageOrientationPatient, without functional groups or detector information, whose spacing tags read
+// plainly in the standard's order (each Pixel Spacing / Imager Pixel Spacing absent or two positive numbers, at least one
+// given; a magnification factor absent or positive). Every other image keeps the rules it had (as api/src/planar-geometry.ts).
+function kinViewerPlaneImage(tags) {
+  const pair = v => { const a = typeof v === 'string' ? v.split('\\') : v;
+    return Array.isArray(a) && a.length === 2 && a.every(x => (typeof x === 'number' || typeof x === 'string' && x.trim() !== '') && Number(x) > 0 && Number.isFinite(Number(x))); };
+  const factor = tags?.EstimatedRadiographicMagnificationFactor;
+  return ['CR', 'DX', 'RF', 'XA'].includes(tags?.Modality) && tags.ImageOrientationPatient === undefined &&
+    tags.PerFrameFunctionalGroupsSequence === undefined && tags.SharedFunctionalGroupsSequence === undefined && tags.DetectorInformationSequence === undefined &&
+    (tags.PixelSpacing === undefined || pair(tags.PixelSpacing)) && (tags.ImagerPixelSpacing === undefined || pair(tags.ImagerPixelSpacing)) &&
+    (tags.PixelSpacing !== undefined || tags.ImagerPixelSpacing !== undefined) &&
+    (factor === undefined || (typeof factor === 'number' || typeof factor === 'string' && factor.trim() !== '') && Number(factor) > 0 && Number.isFinite(Number(factor)));
+}
+
 // Physical lengths, angles and areas on a specified original frame; no non-CT HU inference.
 function kinPlanarGeometry(tags, frame) {
   const fail = () => { throw new Error('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다'); };
@@ -11,13 +26,11 @@ function kinPlanarGeometry(tags, frame) {
   const per = tags.PerFrameFunctionalGroupsSequence, shared = tags.SharedFunctionalGroupsSequence;
   if (per !== undefined && (!Array.isArray(per) || per.length !== frames)) return fail();
   const value = (sequence, key) => per || shared ? (per?.[frame - 1]?.[sequence]?.[0] ?? shared?.[0]?.[sequence]?.[0])?.[key] : tags[key];
-  const mg = tags.Modality === 'MG' ? kinMgGeometry(tags, frame) : null;
+  const mg = tags.Modality === 'MG' ? kinMgGeometry(tags, frame) : null, viewerPlane = kinViewerPlaneImage(tags);
   let origin, orientation, spacing, basis;
   if (mg) ({ origin, orientation, spacing, basis } = mg);
   else {
     const pixel = value('PixelMeasuresSequence', 'PixelSpacing');
-    // An empty Pixel Spacing (null): which spacing and which basis it means is not given — no value.
-    if (pixel === null) return fail();
     spacing = numbers(pixel ?? value('FramePixelDataPropertiesSequence', 'ImagerPixelSpacing'), 2);
     basis = pixel !== undefined ? 'pixel' : 'detector';
     if (basis === 'detector') {
@@ -27,23 +40,16 @@ function kinPlanarGeometry(tags, frame) {
         spacing = spacing.map(x => x / k); basis = 'ermf';
       }
     }
-    // An image without a position or an orientation (most projection X-rays: CR, DX, RF, XA) is measured in the plane the
-    // viewer itself places it in, where the points of its marks lie: rows along [0,1,0], columns along [0,0,-1], origin
-    // [0,0,0] — [0,0,frame] for a multi-frame or functional-group image, frame by frame (the pinned OHIF
-    // combineFrameInstance). Any other default puts the points off the plane or shifts them on the image. A multi-frame
-    // image with a DetectorInformationSequence (NM) is not measured: the viewer moves that sequence's position and
-    // orientation into the image by rules this does not repeat (as api/src/planar-geometry.ts viewerPlaneDefault).
-    const many = per !== undefined || frames > 1;
-    if (many && tags.DetectorInformationSequence !== undefined) return fail();
-    const position = value('PlanePositionSequence', 'ImagePositionPatient'), direction = value('PlaneOrientationSequence', 'ImageOrientationPatient');
-    // Some frames give their own position or orientation and this one none: the viewer then carries another frame's over,
-    // so there is no plane to measure in.
-    const someFrames = (sequence, key) => Array.isArray(per) && per.some(group => group?.[sequence]?.[0]?.[key] !== undefined);
-    if (position === undefined && someFrames('PlanePositionSequence', 'ImagePositionPatient') ||
-        direction === undefined && someFrames('PlaneOrientationSequence', 'ImageOrientationPatient')) return fail();
-    // A functional-group image whose groups give no position or orientation keeps its top-level one in the viewer.
-    origin = numbers(position ?? tags.ImagePositionPatient ?? (many ? [0, 0, frame] : [0, 0, 0]), 3);
-    orientation = numbers(direction ?? tags.ImageOrientationPatient ?? [0, 1, 0, 0, 0, -1], 6);
+    if (viewerPlane) {
+      // A projection X-ray as most devices send it (kinViewerPlaneImage): measured in the plane the viewer places it in,
+      // where the points of its marks lie — rows along [0,1,0], columns along [0,0,-1], origin [0,0,0], or [0,0,frame] for
+      // frame n of a multi-frame image (the pinned OHIF imagePlaneModule and combineFrameInstance).
+      origin = numbers(tags.ImagePositionPatient ?? (frames > 1 ? [0, 0, frame] : [0, 0, 0]), 3);
+      orientation = [0, 1, 0, 0, 0, -1];
+    } else {
+      origin = numbers(value('PlanePositionSequence', 'ImagePositionPatient') ?? [0, 0, 0], 3);
+      orientation = numbers(value('PlaneOrientationSequence', 'ImageOrientationPatient') ?? [1, 0, 0, 0, 1, 0], 6);
+    }
   }
   if (spacing.some(n => n <= 0)) return fail();
   const rows = Number(tags.Rows), columns = Number(tags.Columns);
@@ -76,7 +82,7 @@ function kinPlanarGeometry(tags, frame) {
   };
   const label = mg?.label || { pixel: 'PixelSpacing · 원본 기준면', detector: 'ImagerPixelSpacing · 검출기 기준', ermf: 'ImagerPixelSpacing / ERMF · 추정 보정' }[basis];
   return { origin, orientation, spacing, normal, imagePoint, measure, label, frameOfReferenceUid: tags.FrameOfReferenceUID || null,
-    calculator: 'kin-planar-manual-v1:' + basis };
+    calculator: 'kin-planar-manual-v1:' + basis, viewerPlane };
 }
 
 // Ultrasound Region Calibration (DICOM PS3.3 C.8.5.5.1): the physical size of a pixel inside one region of an ultrasound

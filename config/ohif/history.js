@@ -166,14 +166,6 @@ function kinCreateViewerHistory() {
       clearTimeout(note.kinTimer);
       note.kinTimer = setTimeout(() => { note.remove(); cellNotes.delete(note); }, 4000);
     }
-    // A calibration set on this screen over an image with spacing of its own: the cached image's, or the calibrated-spacing
-    // metadata the Calibration tool writes first (the image may not have been loaded again yet). The viewer then places the
-    // points with the calibrated spacing, so the original's spacing no longer measures them.
-    const calibratedHere = imageId => {
-      let found;
-      try { found = cs.metaData.get('calibratedPixelSpacing', imageId); } catch (_) { found = undefined; }
-      return !!(cs.cache.getImage(imageId)?.calibration?.type || found?.type);
-    };
     function measurementReason(imageId, kind, points) {
       const image = cs.metaData.get('instance', imageId);
       const finite = n => (typeof n === 'number' || typeof n === 'string' && n.trim() !== '') && Number.isFinite(Number(n));
@@ -182,7 +174,10 @@ function kinCreateViewerHistory() {
         const geometry = planar(imageId, kind);
         if (geometry) {
           const plane = cs.metaData.get('imagePlaneModule', imageId);
-          if (calibratedHere(imageId) || Number(plane?.rowPixelSpacing) !== geometry.spacing[0] || Number(plane?.columnPixelSpacing) !== geometry.spacing[1])
+          // A projection X-ray measured in the viewer's plane (geometry.viewerPlane): the Calibration tool writes its
+          // calibrated-spacing metadata before the image is loaded again, and the viewer then places new points with it.
+          let calibrated; try { calibrated = geometry.viewerPlane && cs.metaData.get('calibratedPixelSpacing', imageId)?.type; } catch (_) { calibrated = undefined; }
+          if (cs.cache.getImage(imageId)?.calibration?.type || calibrated || Number(plane?.rowPixelSpacing) !== geometry.spacing[0] || Number(plane?.columnPixelSpacing) !== geometry.spacing[1])
             return '표시 간격과 원본 간격이 일치하지 않습니다';
           if (points) geometry.measure(kind, points);
           return '';
@@ -191,7 +186,7 @@ function kinCreateViewerHistory() {
       if (image?.Modality === 'MG' && kind === 'length') {
         try {
           const mg = kinMgGeometry(image, reference(imageId)?.frame);
-          if (!mg || calibratedHere(imageId)) return 'MG 원본 간격·보정을 확인할 수 없습니다';
+          if (!mg || cs.cache.getImage(imageId)?.calibration?.type) return 'MG 원본 간격·보정을 확인할 수 없습니다';
           const plane = cs.metaData.get('imagePlaneModule', imageId);
           if (Number(plane?.rowPixelSpacing) !== mg.spacing[0] || Number(plane?.columnPixelSpacing) !== mg.spacing[1])
             return '표시 간격과 MG 원본 간격이 일치하지 않습니다';
@@ -205,7 +200,7 @@ function kinCreateViewerHistory() {
       if (!Array.isArray(spacing) || spacing.length !== 2 || spacing.some(n => !finite(n) || Number(n) <= 0) ||
           !Array.isArray(orientation) || orientation.length !== 6 || orientation.some(n => !finite(n)) ||
           !Array.isArray(origin) || origin.length !== 3 || origin.some(n => !finite(n)) || !image.FrameOfReferenceUID ||
-          image.PixelSpacingCalibrationType || calibratedHere(imageId)) return '원본 좌표·간격·보정을 확인할 수 없습니다';
+          image.PixelSpacingCalibrationType || cs.cache.getImage(imageId)?.calibration?.type) return '원본 좌표·간격·보정을 확인할 수 없습니다';
       const dot = (a, b) => a.reduce((s, n, i) => s + n * b[i], 0);
       const u = orientation.slice(0, 3).map(Number), v = orientation.slice(3).map(Number);
       const normal = [u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0]];
