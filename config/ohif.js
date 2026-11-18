@@ -1380,6 +1380,28 @@ function kinMgGeometry(tags, frame) {
   return { origin, orientation, spacing, normal, imagePoint, length, basis, label,
     frameOfReferenceUid: tags.FrameOfReferenceUID || null, calculator: 'kin-mg-length-v1:' + basis };
 }
+// The images that are measured in the viewer's own plane although they give no orientation: projection X-rays (CR, DX,
+// RF, XA) without ImageOrientationPatient, without functional groups or detector information, with one frame, whose spacing
+// and position tags read plainly as Decimal Strings (each Pixel Spacing / Imager Pixel Spacing absent or two positive
+// numbers, at least one given; a magnification factor absent or positive; a position absent or three numbers). Every other image keeps the rules it had (as api/src/planar-geometry.ts).
+function kinViewerPlaneImage(tags) {
+  // A Decimal String component (DICOM PS3.5 6.2): at most 16 bytes of digits, one point, an exponent and spaces only, judged
+  // before it becomes a number; a JSON number is taken as it is. Anything else (a tab, 19 bytes, 0x2, Infinity) is not plain.
+  const decimal = (x) => typeof x === 'number' ? Number.isFinite(x) :
+    typeof x === 'string' && x.length <= 16 && /^ *[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)? *$/.test(x) && Number.isFinite(Number(x));
+  const parts = (v, n) => { const a = typeof v === 'string' ? v.split('\\') : v; return Array.isArray(a) && a.length === n && a.every(decimal) ? a.map(Number) : null; };
+  const positive = (v, n) => { const a = parts(v, n); return !!a && a.every(x => x > 0); };
+  const frames = tags?.NumberOfFrames;
+  return ['CR', 'DX', 'RF', 'XA'].includes(tags?.Modality) && tags.ImageOrientationPatient === undefined &&
+    tags.PerFrameFunctionalGroupsSequence === undefined && tags.SharedFunctionalGroupsSequence === undefined && tags.DetectorInformationSequence === undefined &&
+    // One frame only (an Integer String is at most 12 bytes): a multi-frame run keeps the rules it had.
+    (frames === undefined || frames === 1 || typeof frames === 'string' && frames.length <= 12 && /^ *\+?0*1 *$/.test(frames)) &&
+    (tags.PixelSpacing === undefined || positive(tags.PixelSpacing, 2)) && (tags.ImagerPixelSpacing === undefined || positive(tags.ImagerPixelSpacing, 2)) &&
+    (tags.PixelSpacing !== undefined || tags.ImagerPixelSpacing !== undefined) &&
+    (tags.EstimatedRadiographicMagnificationFactor === undefined || positive([tags.EstimatedRadiographicMagnificationFactor], 1)) &&
+    (tags.ImagePositionPatient === undefined || !!parts(tags.ImagePositionPatient, 3));
+}
+
 // Physical lengths, angles and areas on a specified original frame; no non-CT HU inference.
 function kinPlanarGeometry(tags, frame) {
   const fail = () => { throw new Error('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다'); };
@@ -1393,7 +1415,7 @@ function kinPlanarGeometry(tags, frame) {
   const per = tags.PerFrameFunctionalGroupsSequence, shared = tags.SharedFunctionalGroupsSequence;
   if (per !== undefined && (!Array.isArray(per) || per.length !== frames)) return fail();
   const value = (sequence, key) => per || shared ? (per?.[frame - 1]?.[sequence]?.[0] ?? shared?.[0]?.[sequence]?.[0])?.[key] : tags[key];
-  const mg = tags.Modality === 'MG' ? kinMgGeometry(tags, frame) : null;
+  const mg = tags.Modality === 'MG' ? kinMgGeometry(tags, frame) : null, viewerPlane = kinViewerPlaneImage(tags);
   let origin, orientation, spacing, basis;
   if (mg) ({ origin, orientation, spacing, basis } = mg);
   else {
@@ -1407,8 +1429,16 @@ function kinPlanarGeometry(tags, frame) {
         spacing = spacing.map(x => x / k); basis = 'ermf';
       }
     }
-    origin = numbers(value('PlanePositionSequence', 'ImagePositionPatient') ?? [0, 0, 0], 3);
-    orientation = numbers(value('PlaneOrientationSequence', 'ImageOrientationPatient') ?? [1, 0, 0, 0, 1, 0], 6);
+    if (viewerPlane) {
+      // A projection X-ray as most devices send it (kinViewerPlaneImage): measured in the plane the viewer places it in,
+      // where the points of its marks lie — rows along [0,1,0], columns along [0,0,-1], origin [0,0,0] (the pinned OHIF
+      // imagePlaneModule).
+      origin = numbers(tags.ImagePositionPatient ?? [0, 0, 0], 3);
+      orientation = [0, 1, 0, 0, 0, -1];
+    } else {
+      origin = numbers(value('PlanePositionSequence', 'ImagePositionPatient') ?? [0, 0, 0], 3);
+      orientation = numbers(value('PlaneOrientationSequence', 'ImageOrientationPatient') ?? [1, 0, 0, 0, 1, 0], 6);
+    }
   }
   if (spacing.some(n => n <= 0)) return fail();
   const rows = Number(tags.Rows), columns = Number(tags.Columns);
@@ -1441,7 +1471,7 @@ function kinPlanarGeometry(tags, frame) {
   };
   const label = mg?.label || { pixel: 'PixelSpacing · 원본 기준면', detector: 'ImagerPixelSpacing · 검출기 기준', ermf: 'ImagerPixelSpacing / ERMF · 추정 보정' }[basis];
   return { origin, orientation, spacing, normal, imagePoint, measure, label, frameOfReferenceUid: tags.FrameOfReferenceUID || null,
-    calculator: 'kin-planar-manual-v1:' + basis };
+    calculator: 'kin-planar-manual-v1:' + basis, viewerPlane };
 }
 
 // Ultrasound Region Calibration (DICOM PS3.3 C.8.5.5.1): the physical size of a pixel inside one region of an ultrasound
@@ -1643,7 +1673,38 @@ function kinCreateViewerHistory() {
       clearTimeout(note.kinTimer);
       note.kinTimer = setTimeout(() => { note.remove(); cellNotes.delete(note); }, 4000);
     }
-    function measurementReason(imageId, kind, points) {
+    // A point of a mark on a projection X-ray measured in the viewer's plane (geometry.viewerPlane) counts only where it was
+    // placed or moved while its cell showed that very image in that very plane: the image the cell last finished rendering
+    // is the mark's own SOP (viewer-info-bar.js — the requested image changes before its pixels do), and the drawn spacing,
+    // orientation and origin are the original's exactly. A point set when that is not confirmed gives no value and no SR.
+    const PLANE_UNCONFIRMED = '화면에 그려진 영상을 확인할 수 없어 이 점으로 재지 않습니다';
+    const unconfirmedPoints = new Set();
+    const pointKey = (imageId, point) => imageId + '|' + JSON.stringify(point);
+    function planeConfirmed(viewport, imageId, geometry) {
+      try {
+        const tags = cs.metaData.get('instance', imageId), shown = window.KinViewerInfoBar?.identity?.(services, viewport?.id)?.instance;
+        if (viewport?.type !== 'stack' || !tags || !shown || shown.SOPInstanceUID !== tags.SOPInstanceUID || viewport.getCurrentImageId?.() !== imageId) return false;
+        const drawn = viewport.getImageData?.(), same = (a, b) => !!a && b.every((n, i) => Number(a[i]) === n);
+        return same(drawn?.spacing, [geometry.spacing[1], geometry.spacing[0]]) && same(drawn?.direction, geometry.orientation) && same(drawn?.origin, geometry.origin);
+      } catch (_) { return false; }
+    }
+    // The cell where the point was set, and every other cell showing the same image: the tool reports a move from whichever
+    // cell recalculates first, so a cell drawing the image in another plane cannot be told apart from it.
+    function everyCellConfirmed(viewport, imageId, geometry) {
+      let others; try { others = cs.getEnabledElements().map(e => e?.viewport).filter(v => v && v !== viewport && v.getCurrentImageId?.() === imageId); } catch (_) { return false; }
+      return !!viewport && planeConfirmed(viewport, imageId, geometry) && others.every(v => planeConfirmed(v, imageId, geometry));
+    }
+    // Every placement and move of a Length, Angle or Ellipse point: the tool reports each as a modification, with its cell.
+    // (The first press is checked where the tool adds the mark.)
+    function pointsPlaced(event) {
+      const a = event.detail?.annotation, kind = kinds[a?.metadata?.toolName];
+      if (!a || !manual(kind) || !Array.isArray(a.data?.handles?.points)) return;
+      const id = a.metadata.referencedImageId;
+      let geometry; try { geometry = planar(id, kind); } catch (_) { return; }
+      if (!geometry?.viewerPlane) return;
+      let viewport; try { viewport = cs.getRenderingEngine?.(event.detail.renderingEngineId)?.getViewport?.(event.detail.viewportId); } catch (_) { viewport = null; }
+      if (!everyCellConfirmed(viewport, id, geometry)) for (const point of a.data.handles.points) unconfirmedPoints.add(pointKey(id, point));
+    }    function measurementReason(imageId, kind, points) {
       const image = cs.metaData.get('instance', imageId);
       const finite = n => (typeof n === 'number' || typeof n === 'string' && n.trim() !== '') && Number.isFinite(Number(n));
       if (noSpacing(imageId, kind)) return screenCalibration(imageId, kind) ? '' : NO_SPACING;
@@ -1651,8 +1712,12 @@ function kinCreateViewerHistory() {
         const geometry = planar(imageId, kind);
         if (geometry) {
           const plane = cs.metaData.get('imagePlaneModule', imageId);
-          if (cs.cache.getImage(imageId)?.calibration?.type || Number(plane?.rowPixelSpacing) !== geometry.spacing[0] || Number(plane?.columnPixelSpacing) !== geometry.spacing[1])
+          // A projection X-ray measured in the viewer's plane (geometry.viewerPlane): the Calibration tool writes its
+          // calibrated-spacing metadata before the image is loaded again, and the viewer then places new points with it.
+          let calibrated; try { calibrated = geometry.viewerPlane && cs.metaData.get('calibratedPixelSpacing', imageId)?.type; } catch (_) { calibrated = undefined; }
+          if (cs.cache.getImage(imageId)?.calibration?.type || calibrated || Number(plane?.rowPixelSpacing) !== geometry.spacing[0] || Number(plane?.columnPixelSpacing) !== geometry.spacing[1])
             return '표시 간격과 원본 간격이 일치하지 않습니다';
+          if (geometry.viewerPlane && points?.some(point => unconfirmedPoints.has(pointKey(imageId, point)))) return PLANE_UNCONFIRMED;
           if (points) geometry.measure(kind, points);
           return '';
         }
@@ -2609,6 +2674,7 @@ function kinCreateViewerHistory() {
           const v = cs.getEnabledElement(event.detail.element).viewport;
           const id = v.type === 'stack' && v.getCurrentImageId();
           let reason = id ? measurementReason(id, kind) : '원본 프레임을 선택하세요';
+          if (!reason) { let geometry; try { geometry = planar(id, kind); } catch (_) { geometry = null; } if (geometry?.viewerPlane && !everyCellConfirmed(v, id, geometry)) reason = PLANE_UNCONFIRMED; }
           if (!reason && kind === 'ellipse' && !planar(id, kind) && v.getCamera().viewUp.filter(n => Math.abs(n) > 1e-6).length !== 1)
             reason = '사선·회전 ROI는 아직 지원하지 않습니다';
           if (reason) { status.textContent = reason; cellNote(event.detail.element, reason); return refused; }
@@ -3199,7 +3265,8 @@ function kinCreateViewerHistory() {
     // An unfinished drawing ends with the tool's own report, and is checked the moment any tool changes mode; another
     // image or cell reaches the scan above through the stack and grid events.
     const toolEvents = ct.Enums?.Events || {};
-    const drawingEvents = cs.eventTarget ? [[toolEvents.ANNOTATION_COMPLETED, drawingCompleted], [toolEvents.TOOL_MODE_CHANGED, checkDrawings]].filter(([name]) => name) : [];
+    const drawingEvents = cs.eventTarget ? [[toolEvents.ANNOTATION_COMPLETED, drawingCompleted], [toolEvents.TOOL_MODE_CHANGED, checkDrawings],
+      [toolEvents.ANNOTATION_MODIFIED, pointsPlaced]].filter(([name]) => name) : [];
     for (const [name, listener] of drawingEvents) cs.eventTarget.addEventListener(name, listener);
     // A held press is not saved under (autoReady); it ends with its release wherever that is, or with the window losing it.
     const pressed = () => { pressing = true; }, released = () => { pressing = false; };
