@@ -998,6 +998,10 @@ jobs:
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       timeout-minutes: 3
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/admin-gateway-rules-dom --cwd . --file worklist-v0/hpacs-lite/admin.html --file worklist-v0/hpacs-lite/auth.js --file worklist-v0/hpacs-lite/gateway-rules-admin.js --file tests/admin_gateway_rules_dom_test.py --file worklist-v0/hpacs-lite/work-context.js --file worklist-v0/hpacs-lite/session-transport.js -- "$RUNNER_TEMP/measurement-python/bin/python" -B tests/admin_gateway_rules_dom_test.py
+    - name: Members console Signing Key action, create, rotate and retire commands, reason, confirmation and refusals DOM
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      timeout-minutes: 3
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/admin-signing-key-dom --cwd . --file worklist-v0/hpacs-lite/admin.html --file worklist-v0/hpacs-lite/auth.js --file worklist-v0/hpacs-lite/work-context.js --file worklist-v0/hpacs-lite/session-transport.js --file worklist-v0/hpacs-lite/study-access-admin.js --file worklist-v0/hpacs-lite/signing-key-admin.js --file worklist-v0/hpacs-lite/admin-access-review.js --file worklist-v0/hpacs-lite/held-sources-admin.js --file worklist-v0/hpacs-lite/emr-link.js --file worklist-v0/hpacs-lite/emr-link-admin.js --file worklist-v0/hpacs-lite/critical-result-inbox-admin.js --file worklist-v0/hpacs-lite/dicom-peers-admin.js --file worklist-v0/hpacs-lite/gateway-rules-admin.js --file worklist-v0/hpacs-lite/product-info-data.js --file worklist-v0/hpacs-lite/product-info.js --file tests/admin_signing_key_dom_test.py -- "$RUNNER_TEMP/measurement-python/bin/python" -B tests/admin_signing_key_dom_test.py
     - name: S5-U6b Members console Operations metrics states, unknown never 0, A-B-A guard and wording DOM
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       timeout-minutes: 3
