@@ -1157,7 +1157,9 @@ class RelatedModePage(unittest.TestCase):
         const r = e.getBoundingClientRect(), hit = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2);
         out[e.textContent.trim()] = {inside: r.top >= b.top - 0.5 && r.bottom <= b.bottom + 0.5 && r.left >= b.left - 0.5 && r.right <= b.right + 0.5
           && r.bottom <= innerHeight && r.top >= 0, top: hit === e || e.contains(hit)}; }
-      return {band: b.height, scroll: band.scrollTop, buttons: out,
+      const alerts = [...document.querySelectorAll('#report-alerts > button')].filter(e => getComputedStyle(e).display !== 'none')
+        .map(e => { const r = e.getBoundingClientRect(); return {name: e.id, inside: r.left >= b.left - 0.5 && r.right <= b.right + 0.5 && r.top >= b.top - 0.5 && r.bottom <= b.bottom + 0.5}; });
+      return {band: b.height, scroll: band.scrollTop, buttons: out, alerts,
               words: (r => r.top >= b.top - 0.5 && r.top + 8 <= b.bottom)(document.getElementById('report-notice-msg').getBoundingClientRect())}; }"""
 
     def test_f81_the_notice_buttons_stand_in_the_band_line_in_every_window(self):
@@ -1165,8 +1167,11 @@ class RelatedModePage(unittest.TestCase):
         (Retry, Discard Insert, Stay) is told in the notice band above the editor, whose height is one notice line. The words
         took the whole row and the buttons went to a line below the band in every window (1920x1080 too). Each shown button
         is now whole inside the band's line and on top, the words' first line beside them, the band at its one line and not
-        scrolled: the worklist layout at 1920x1080 and 1400x900, the Reading Workspace in a laptop's Chrome window (1366x640)."""
-        cases = [((1920, 1080), False), ((1400, 900), False), ((1366, 640), True)]
+        scrolled: the worklist layout at 1920x1080 and 1400x900, the Reading Workspace in a laptop's Chrome window (1366x640).
+        The question and request notices beside it stay whole in the band too. At the Reading column's narrowest (1024x720, a
+        340px column beside those notices) the buttons that do not fit go down one by one: each comes whole into the band's
+        line as the band scrolls to it, and the first is on the first line."""
+        cases = [((1920, 1080), False), ((1400, 900), False), ((1366, 640), True), ((1024, 720), True)]
         for (width, height), reading in cases:
             for outcome in ("lost", "refused"):
                 with self.subTest(window=f"{width}x{height}{' reading' if reading else ''}", outcome=outcome):
@@ -1189,9 +1194,17 @@ class RelatedModePage(unittest.TestCase):
                     seen = self.js(self.NOTICE_BUTTONS)
                     names = {"lost": {"Retry", "Check", "Stay"}, "refused": {"Retry", "Discard Insert", "Stay"}}[outcome]
                     self.assertEqual(names, set(seen["buttons"]), f"the notice's buttons {seen}")
+                    for alert in seen["alerts"]:
+                        self.assertTrue(alert["inside"], f"the notice {alert['name']} beside it whole in the band {seen}")
+                    narrow = width <= 1250
                     for label, b in seen["buttons"].items():
+                        if narrow and not b["inside"]:
+                            self.page.locator("#report-notice > button", has_text=label).evaluate("e => e.scrollIntoView({block: 'nearest'})")
+                            b = self.js(self.NOTICE_BUTTONS)["buttons"][label]
+                            self.page.locator("#report-notices").evaluate("e => { e.scrollTop = 0; }")
                         self.assertTrue(b["inside"], f"{label} whole inside the band's line {seen}")
                         self.assertTrue(b["top"], f"{label} on top at its centre {seen}")
+                    self.assertTrue(next(iter(seen["buttons"].values()))["inside"], f"the first button on the first line {seen}")
                     self.assertTrue(seen["words"], f"the words' first line in the band {seen}")
                     self.assertEqual(0, seen["scroll"], "the band is not scrolled")
                     self.assertAlmostEqual(band, seen["band"], delta=0.5, msg="the band keeps its one line")

@@ -186,12 +186,27 @@ window.KinReadingWorkspace = function (app) {
    * opened a row before the button row (questions, citations, dictation) the region's floor is its one line as before, so
    * those rows and the button row keep the order the Reading rules give them (reading-workspace.css, the column's height).
    */
+  // The line pitch of an element's text as laid out. A `normal` line height is not 1.2 times the size: a Korean line in a
+  // 20px Latin font is 29px. So it is read from two lines of that font (Korean and Latin) laid out once per font.
+  const pitches = new Map();
+  function linePitch(e) {
+    const s = getComputedStyle(e), stated = parseFloat(s.lineHeight);
+    if (stated) return stated;
+    const key = [s.fontStyle, s.fontWeight, s.fontSize, s.fontFamily].join('|');
+    if (!pitches.has(key)) {
+      const probe = document.createElement('div');
+      probe.style.cssText = 'position:absolute;left:-10000px;top:0;visibility:hidden;white-space:pre;margin:0;padding:0;border:0;line-height:normal';
+      Object.assign(probe.style, { fontStyle: s.fontStyle, fontWeight: s.fontWeight, fontSize: s.fontSize, fontFamily: s.fontFamily });
+      probe.textContent = '가Ag\n가Ag'; document.body.append(probe);
+      pitches.set(key, probe.getBoundingClientRect().height / 2); probe.remove();
+    }
+    return pitches.get(key);
+  }
   function reportColumnGeometry() {
     const column = $('.report-p'), compose = column?.querySelector('.report-compose'), region = column?.querySelector('.redit');
     const row = column?.querySelector('.rfoot2'), findings = $('#findings'), label = region?.querySelector('label');
     if (!column || !compose || !region || !row || !findings || !column.getClientRects().length) return null;
-    const px = value => parseFloat(value) || 0, style = e => getComputedStyle(e);
-    const lineOf = e => { const s = style(e); return px(s.lineHeight) || px(s.fontSize) * 1.2; };
+    const px = value => parseFloat(value) || 0, style = e => getComputedStyle(e), lineOf = linePitch;
     const target = reportTarget.getClientRects().length ? (s => lineOf(reportTarget) + px(s.paddingTop) + px(s.paddingBottom)
       + px(s.borderTopWidth) + px(s.borderBottomWidth))(style(reportTarget)) : 0;
     const band = $('#report-notices')?.getBoundingClientRect().height || 0;
@@ -338,14 +353,25 @@ window.KinReadingWorkspace = function (app) {
   separator('report', 'reading-resize-report', 'Image and Report Size', 'reading-viewer reading-report-column', host);
   separator('relatedHeight', 'reading-resize-related', 'Related Panel Height', relatedRegion.id, relatedRegion);
   separator('relatedListHeight', 'reading-resize-prior', 'Related List and Report Size', relatedList.id + ' ' + priorReport.id, relatedList);
-  let panelObserver = new ResizeObserver(guarded(() => { if (active && !ended) renderPanels(); }));
-  panelObserver.observe(split); panelObserver.observe($('.workrow')); panelObserver.observe(relatedList);
-  [...relatedList.children].filter(child => !child.classList.contains('grid2')).forEach(child => panelObserver.observe(child));
-  // The table's header and rows decide its floor (relatedTableFloor): a new row height or header font re-sizes the list.
-  const relatedTable = relatedList.querySelector('.grid2 table'); if (relatedTable) panelObserver.observe(relatedTable);
-  // The report column's rows decide the field region's floor (reportColumnGeometry): a row the reader opens or folds, the
-  // editor's head or the button row taking another line (width, language, text size).
-  [...$('.report-p').children, $('.report-editor-head')].filter(Boolean).forEach(child => panelObserver.observe(child));
+  // Everything the panels' sizes and the report column's division depend on (panelGeometry), in one list: set up here and
+  // again when a session becomes active, so no path keeps an observer that misses some of it. The split, the work row and
+  // the Related list's rows; the table's header and rows (relatedTableFloor: a new row height or header font re-sizes the
+  // list); the report column's rows (reportColumnGeometry: a row the reader opens or folds, the editor's head taking
+  // another line when its state words change, the button row's lines); and the root element's style, where Reading
+  // Appearance writes the reader's text sizes and fonts (the field region's five lines follow them).
+  let panelObserver = null, panelStyleObserver = null;
+  const relatedTable = relatedList.querySelector('.grid2 table');
+  function watchPanels() {
+    panelObserver?.disconnect(); panelStyleObserver?.disconnect();
+    const changed = guarded(() => { if (active && !ended) renderPanels(); });
+    panelObserver = new ResizeObserver(changed);
+    [split, $('.workrow'), relatedList, ...[...relatedList.children].filter(child => !child.classList.contains('grid2')), relatedTable,
+      ...($('.report-p')?.children || []), $('.report-editor-head')].filter(Boolean).forEach(e => panelObserver.observe(e));
+    panelStyleObserver = new MutationObserver(changed);
+    panelStyleObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
+  }
+  function unwatchPanels() { panelObserver?.disconnect(); panelStyleObserver?.disconnect(); }
+  watchPanels();
   let panelWindowResize = guarded(() => { if (panelDrag) cancelPanelDrag(); if (active && !ended) renderPanels(); });
   window.addEventListener('resize', panelWindowResize);
   const boundDocuments = new WeakSet();
@@ -876,16 +902,13 @@ window.KinReadingWorkspace = function (app) {
   }
   // Session invalidation must hide the embedded document even if its own request
   // has not yet noticed the expired account. Never reconnect it from a late load.
-  function end() { ended = true; cancelPanelDrag(); panelObserver.disconnect(); window.removeEventListener('resize', panelWindowResize); shortcuts.end(); epoch++; returnChannel?.close();returnChannel=null;clearInterval(timer); timer = null; queueObserver.disconnect(); document.removeEventListener('keydown', parentKeyboard, true); frame?.remove(); frame = null; shown = pending = null; loaded = false; active = false; layout(); identify(); }
+  function end() { ended = true; cancelPanelDrag(); unwatchPanels(); window.removeEventListener('resize', panelWindowResize); shortcuts.end(); epoch++; returnChannel?.close();returnChannel=null;clearInterval(timer); timer = null; queueObserver.disconnect(); document.removeEventListener('keydown', parentKeyboard, true); frame?.remove(); frame = null; shown = pending = null; loaded = false; active = false; layout(); identify(); }
   work.onInvalidate(event=>{
     if(event.reason==='lifecycle'&&!['active','preparing'].includes(event.state)){end();return;}
-    if(event.reason==='prepare'){cancelPanelDrag();clearInterval(timer);panelObserver.disconnect();queueObserver.disconnect();}
+    if(event.reason==='prepare'){cancelPanelDrag();clearInterval(timer);unwatchPanels();queueObserver.disconnect();}
     if(event.reason==='cancel'||event.reason==='lifecycle'&&event.state==='active'){
-      panelObserver.disconnect();queueObserver.disconnect();
-      panelObserver=new ResizeObserver(guarded(()=>{if(active&&!ended)renderPanels();}));
-      panelObserver.observe(split);panelObserver.observe($('.workrow'));panelObserver.observe(relatedList);
-      [...relatedList.children].filter(child=>!child.classList.contains('grid2')).forEach(child=>panelObserver.observe(child));
-      if(relatedTable)panelObserver.observe(relatedTable);
+      queueObserver.disconnect();
+      watchPanels();
       queueObserver=new MutationObserver(guarded(navigation));queueObserver.observe($('#rows'),{childList:true});
       window.removeEventListener('resize',panelWindowResize);panelWindowResize=guarded(()=>{if(panelDrag)cancelPanelDrag();if(active&&!ended)renderPanels();});window.addEventListener('resize',panelWindowResize);
       renewFrame();renewReturn();

@@ -16,12 +16,13 @@
 /* B21: the bar above the image and the report took 186px of a laptop's Chrome window (1366x640), 20px of it an empty line
    kept for the shortcut editor's message and 22px the Keyboard Shortcuts line, and the report's Findings had one line
    left. The message keeps a place of one line's height at the end of its own row, after Edit Shortcuts, where that row has
-   room (a line of its own where it has not), and stays on one line (a longer message is cut, not wrapped): a message never
+   room for the editor's longest message (34em; a line of its own where it has not, as before), and stays on one line (a
+   longer message is cut, not wrapped; the whole of it is the status a screen reader reads): a message never
    changes the bar's height, so it never resizes the image. The row after it still starts a line of its own (an empty
    break, the nav's last item, ordered between them), so every button keeps its name and its place in its row. Keyboard
    Shortcuts stands at the right end of the target line, which keeps room for it; opened, its list comes under that line
    and the summary stays where it was clicked. */
-#reading-bar #workspace-shortcuts-status { order: 1; flex: 1 1 8em; min-width: 8em; min-height: 1.5em; align-self: center;
+#reading-bar #workspace-shortcuts-status { order: 1; flex: 1 1 34em; min-width: 8em; min-height: 1.5em; align-self: center;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #reading-bar .reading-actions::after { content: ''; order: 1; flex-basis: 100%; height: 0; }
 #reading-bar #workspace-shortcuts-status ~ * { order: 2; }

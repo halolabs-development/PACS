@@ -1613,7 +1613,12 @@ class RelatedLayoutDOMTest(Base):
     CHROME_WINDOWS = [((1366, 640), 3), ((1280, 650), 3), ((1366, 768), 4.9)]
     FIELD_PROBE = r"""
       const [field, row] = arg, s = getComputedStyle(field), rb = row.getBoundingClientRect(), fb = field.getBoundingClientRect();
-      const line = parseFloat(s.lineHeight) || parseFloat(s.fontSize) * 1.2;
+      // The field's line pitch as laid out (a `normal` line in a Latin font holding Korean is not 1.2 times the size): two
+      // lines in the field's own font and line height, Korean and Latin.
+      const line = (() => { const p = document.createElement('div');
+        p.style.cssText = 'position:absolute;left:-10000px;top:0;visibility:hidden;white-space:pre;margin:0;padding:0;border:0';
+        for (const k of ['fontStyle', 'fontWeight', 'fontSize', 'fontFamily', 'lineHeight']) p.style[k] = s[k];
+        p.textContent = '가Ag\n가Ag'; document.body.append(p); const h = p.getBoundingClientRect().height; p.remove(); return h / 2; })();
       const cut = clip(field, [fb.left, fb.top, fb.right, fb.bottom]);
       const top = Math.max(cut[1], fb.top + parseFloat(s.borderTopWidth) + parseFloat(s.paddingTop)), bottom = Math.min(cut[3], rb.top);
       const column = row.parentElement, work = column.parentElement, related = work.querySelector('.related-p');
@@ -1689,7 +1694,64 @@ class RelatedLayoutDOMTest(Base):
                     page.wait_for_timeout(200)
                     seen = self.field_view(page, parts)
                     self.assertGreaterEqual(seen["lines"], want, f"{tag}: Related shown again {seen}")
+                    # An answer that gives the editor's head another line (another reader's hold: Read Only and its reason
+                    # wrap the head's words, 29 -> 57px in a 400px column) takes that line from the field region, not the
+                    # button row. The head's second line stands in as 28px more of the head.
+                    before = seen["region"]
+                    page.evaluate("""() => { const s = document.createElement('style'); s.id = 'rl14-head';
+                      s.textContent = '.report-editor-head { padding-bottom: 28px !important; }'; document.head.append(s); }""")
+                    page.wait_for_timeout(200)
+                    seen = self.field_view(page, parts)
+                    measure(f"{tag} head grew", field=seen)
+                    self.assert_report_row(w, f"{tag} head grew", parts)
+                    self.assertLess(seen["region"], before, f"{tag}: the region gave the head its lines {seen}")
+                    page.evaluate("() => document.getElementById('rl14-head').remove()")
+
+                    page.wait_for_timeout(200)
+                    # Reading Appearance's larger report text (the root element's --kin-current-text): the region's floor
+                    # follows the new line pitch at once, as far as the column has room.
+                    before = self.field_view(page, parts)
+                    page.evaluate("() => document.documentElement.style.setProperty('--kin-current-text', '20px')")
+                    page.wait_for_timeout(200)
+                    seen = self.field_view(page, parts)
+                    measure(f"{tag} 20px text", field=seen)
+                    self.assert_report_row(w, f"{tag} 20px text", parts)
+                    self.assertGreater(seen["line"], before["line"] + 4, f"{tag}: the text is larger {seen}")
+                    self.assertGreaterEqual(seen["region"], before["region"] - 0.5, f"{tag}: at 20px the region keeps the room the column has {seen}")
+                    page.evaluate("() => document.documentElement.style.removeProperty('--kin-current-text')")
+                    page.wait_for_timeout(200)
+                if (width, height) == (1366, 768):
+                    page.evaluate("() => document.documentElement.style.setProperty('--kin-current-text', '20px')")
+                    page.wait_for_timeout(200)
+                    seen = self.field_view(page, parts)
+                    measure(f"{tag} 20px text", field=seen)
+                    self.assertGreaterEqual(seen["lines"], 4, f"{tag}: the larger text keeps four lines and more {seen}")
+                    self.assert_report_row(w, f"{tag} 20px text", parts)
+                    page.evaluate("() => document.documentElement.style.removeProperty('--kin-current-text')")
+                    page.wait_for_timeout(200)
                 self.walk_report_row(w, parts, tag)
+                w.screen.finish()
+
+    def test_rl14b_worklist_wheel_at_the_end_of_findings_stays_in_it(self):
+        """C38 (Minhoon 2026-11-04 "what should scroll is the report itself"): in the worklist layout the card's own scroll
+        reaches the rows under the button row (RL-13d step 3); the wheel over Findings at its end carried on to it and moved
+        the button row (84px at 1366x768). Wheeled well past the end, the card stays and the row with it."""
+        for size in ((1366, 768), (1920, 1080)):
+            name = f"{size[0]}x{size[1]}"
+            with self.subTest(size=name):
+                w, parts = self.open_normal_report_row(size)
+                page, tag = w.page, f"RL-14b {name}"
+                at = self.assert_report_row(w, f"{tag} opened", parts)
+                box = parts[1][0].bounding_box()
+                page.mouse.move(box["x"] + box["width"] / 2, min(box["y"] + box["height"] / 2, at["row"][1] - 10))
+                for _ in range(12):
+                    page.mouse.wheel(0, 1200)
+                    page.wait_for_timeout(40)
+                page.wait_for_timeout(200)
+                seen = self.field_view(page, parts)
+                measure(f"{tag} wheel to the end", field=seen)
+                self.assertEqual(0, seen["columnScroll"], f"{tag}: the wheel at the end of Findings scrolled the card {seen}")
+                self.assert_report_row(w, f"{tag} wheel to the end", parts, at)
                 w.screen.finish()
 
 
