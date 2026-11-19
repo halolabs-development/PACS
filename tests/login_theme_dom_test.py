@@ -20,6 +20,9 @@ size, line height and colour itself.
   07  the Halo Labs design of the company's other products: charcoal ground, top bar with the HALO LABS logo and the
       product name, product line and picture left of the sign-in column, the HALO mark, accent button with dark text;
       every picture is a file of this theme and no old name is drawn.
+  08  a laptop's Chrome window (inside 1366x640, 1280x650): the notice links and the line under them are in the window
+      without scrolling on the login page (also with a wrong-password or locked-account line), an error page and the OTP
+      code page; the long OTP set-up page reaches its picture, button and notices by scrolling.
 
 Synthetic data only; no server, no credentials.
 """
@@ -332,6 +335,19 @@ class LoginThemeDomTest(unittest.TestCase):
                         self.assertLessEqual(seen["error"]["bottom"], seen["button"]["top"], "the error line above the button")
                     for link in self.page.locator("#kin-legal-links a").all():
                         expect(link).to_be_in_viewport(ratio=1)
+            # The administrator's one-time code page fits too; the first OTP set-up is a long form that scrolls from its
+            # top (login.css "Long forms"), and its picture, its button and the notices are reached by scrolling.
+            with self.subTest(window=f"{width}x{height}", page="otp code"):
+                self.page.goto(ORIGIN + OTP_PATH)
+                expect(self.page.locator("#kin-legal-links")).to_be_attached()
+                seen = self.page.evaluate(measure)
+                self.assertLessEqual(seen["scroll"], seen["inner"], "the one-time code page does not scroll")
+                self.assertLessEqual(seen["links"]["bottom"], seen["inner"], "the notice links in the window")
+            with self.subTest(window=f"{width}x{height}", page="otp set-up"):
+                self.page.goto(ORIGIN + TOTP_SETUP_PATH)
+                for target in ("#kc-totp-secret-qr-code", "#saveTOTPBtn", "#kin-legal-links"):
+                    self.page.locator(target).scroll_into_view_if_needed()
+                    expect(self.page.locator(target)).to_be_in_viewport(ratio=0.95)
 
     def test_07_the_page_wears_the_halo_labs_design(self):
         """Like the other Halo Labs products' first screen: charcoal ground, a top bar with the HALO LABS logo and the product
