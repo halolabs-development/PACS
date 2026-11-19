@@ -88,7 +88,8 @@ window.KinViewerFeatures?.module('measure-ortho', ({ services, ui }) => {
       const f = frame(); if (!f || !model) return;
       const image = a.data.handles.points.map(p => f.toImage(imageId, p)), c = image.map(canvas);
       const result = check(a);
-      const line = (p, q, extra = {}) => f.svg('line', g, { x1: p[0], y1: p[1], x2: q[0], y2: q[1], stroke: color, 'stroke-width': look.width, ...extra });
+      // The mark's own lines take the marker line style (look.line); a guide (dashed) keeps its own dashes.
+      const line = (p, q, extra = {}) => f.svg('line', g, { x1: p[0], y1: p[1], x2: q[0], y2: q[1], stroke: color, 'stroke-width': look.width, ...(look.line || {}), ...extra });
       const dashed = { 'stroke-dasharray': '6 4' };
       const at = (i, j) => [(image[i][0] + image[j][0]) / 2, (image[i][1] + image[j][1]) / 2];
       const text = result.reason ? [result.reason] : textOf(kind, imageId, result);
@@ -104,7 +105,7 @@ window.KinViewerFeatures?.module('measure-ortho', ({ services, ui }) => {
         if (result.reason) block(leftEnd[0], leftEnd[1] + step, text);
         else { block(leftEnd[0] - 10, leftEnd[1] + step, [text[1]]); block(rightEnd[0] - 10, rightEnd[1] + step, [text[0], ...text.slice(2)]); }
       } else if (kind === 'spineBalance') {
-        f.svg('polygon', g, { points: c.slice(0, 4).map(p => p.join(',')).join(' '), fill: 'none', stroke: color, 'stroke-width': look.width });
+        f.svg('polygon', g, { points: c.slice(0, 4).map(p => p.join(',')).join(' '), fill: 'none', stroke: color, 'stroke-width': look.width, ...(look.line || {}) });
         line(c[4], c[5]);
         // The two vertical lines (the image's columns) and the horizontal distance between them at the pelvic level.
         const centre = [image.slice(0, 4).reduce((s, p) => s + p[0], 0) / 4, image.slice(0, 4).reduce((s, p) => s + p[1], 0) / 4], pelvis = at(4, 5);
