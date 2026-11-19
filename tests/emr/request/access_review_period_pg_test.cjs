@@ -99,10 +99,11 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
           CROSS JOIN LATERAL (SELECT CASE WHEN g % 97 = 0 THEN jsonb_set(a.a, '{managingInstitution}', '{"status":"unresolved","reason":"not-observed"}')
             WHEN g % 50 = 0 THEN jsonb_set(a.a, '{managingInstitution,value}', '"SYN-B"') ELSE a.a END AS b) b
           CROSS JOIN LATERAL (SELECT CASE WHEN g % 7 = 0 AND e.stream = 'viewing' THEN jsonb_set(b.b, '{action}', '"pdf"') ELSE b.b END AS c) c
-          -- Values in the optional authentication fields (1 in 11), which the screen shows when present.
-          CROSS JOIN LATERAL (SELECT CASE WHEN g % 11 = 0 THEN c.c || '{"auth":{"method":"session","sessionRef":"SYN-SESSION"},
+          -- Values in the optional authentication fields (1 in 11), in the shapes the sign-in producer records
+          -- (api/src/emr-runtime/auth-events.ts sessionAccessEvent), which the screen shows when present.
+          CROSS JOIN LATERAL (SELECT CASE WHEN g % 11 = 0 THEN c.c || '{"auth":{"endCause":null,"failureCause":null,"trigger":null},
             "affectedIdentity":{"status":"known","value":{"id":"SYN-MEMBER","issuer":"SYN-ISSUER","subject":"SYN-MEMBER-SUB"}},
-            "rightsVersion":3}'::jsonb ELSE c.c END AS p) v
+            "rightsVersion":{"status":"known","value":3}}'::jsonb ELSE c.c END AS p) v
           ORDER BY g, CASE WHEN (g / $6::int) % 2 = 0 THEN e.stream END DESC, e.stream`, templates.map(e => e.eventId), first, count, start, step, templates.length)]);
     const perEvent = streams.reduce((sum, row) => sum + row.n, 0) / templates.length;
     const events = days => Math.round(days * PER_DAY / perEvent);
@@ -220,8 +221,14 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
       const second = await elapsed(() => review(span, { downloads, after: first.value.body.next }));
       assert.equal(second.value.status, 200, `${label}: continuation`);
       assert.deepEqual(second.value.body.rows, truth.slice(25, 50).map(expected), `${label}: continuation`);
-      if (!files) assert.ok([...first.value.body.rows, ...second.value.body.rows].some(r => r.auth && r.affectedIdentity && r.rightsVersion === 3),
-        `${label}: the optional authentication fields are compared with values`);
+      if (!files) {
+        const authRows = [...first.value.body.rows, ...second.value.body.rows].filter(r => r.rightsVersion !== null);
+        assert.ok(authRows.length > 0, `${label}: the optional authentication fields are compared with values`);
+        for (const r of authRows) assert.deepEqual([r.rightsVersion, r.auth, r.affectedIdentity],
+          [{ status: 'known', value: 3 }, { endCause: null, failureCause: null, trigger: null },
+            { status: 'known', value: { id: 'SYN-MEMBER', issuer: 'SYN-ISSUER', subject: 'SYN-MEMBER-SUB' } }],
+          `${label}: the authentication fields keep the producer's shape`);
+      }
       assert.deepEqual([cursor(second.value.body.next).top, cursor(second.value.body.next).before], [truth[0].snapshot_top, truth[49].sequence],
         `${label}: the next continuation keeps the first ceiling`);
       measured[label] = { first: first.ms, second: second.ms };
@@ -250,33 +257,49 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     };
     await pooled('after the answered reads');
 
-    // An abandoned request ends in PostgreSQL by the statement limit. A read that is slow by itself (sleeping, not
-    // waiting on a lock) stands in for the current definition, which is then put back.
+    // Stand-ins for the current definition (put back afterwards): one reports, as an ordinary served row, the
+    // statement_timeout in force inside the product's own read transaction; one sleeps (slow by itself, not waiting
+    // on a lock) so that only the statement limit can end it.
     const signature = 'emr_access.review_entries(text,timestamptz,timestamptz,boolean,bigint,bigint,integer)';
     const [{ sql: current }] = await witness.$queryRawUnsafe(`SELECT pg_get_functiondef('${signature}'::regprocedure) AS sql`);
     const running = async marker => (await witness.$queryRawUnsafe(`SELECT count(*)::int AS n FROM pg_stat_activity
       WHERE datname = current_database() AND usename = 'kin_runtime' AND state = 'active' AND query LIKE $1`, marker))[0].n;
     const PRODUCT = '%SELECT * FROM emr_access.review_entries(%', PROBE = '%unbounded probe%';
-    await witness.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION emr_access.review_entries(p_institution text, p_from timestamptz,
-      p_until timestamptz, p_files boolean, p_top bigint, p_before bigint, p_limit integer)
+    const standIn = body => witness.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION emr_access.review_entries(p_institution text,
+      p_from timestamptz, p_until timestamptz, p_files boolean, p_top bigint, p_before bigint, p_limit integer)
       RETURNS TABLE(entry_id uuid, sequence bigint, event_id text, occurred_at timestamptz, recorded_at timestamptz,
         statutory_act text, payload text, snapshot_top bigint)
-      LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
-        WITH nap AS MATERIALIZED (SELECT p_limit AS x FROM pg_sleep(120))
+      LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$ ${body} $$`);
+    const reporting = () => standIn(`SELECT gen_random_uuid(), 0::bigint, 'SYN-LIMIT', now(), now(), 'none',
+        json_build_object('eventId', 'SYN-LIMIT', 'targets', json_build_array(),
+          'surface', 'statement_timeout=' || (SELECT setting FROM pg_settings WHERE name = 'statement_timeout'))::text, 0::bigint`);
+    const sleeping = () => standIn(`WITH nap AS MATERIALIZED (SELECT p_limit AS x FROM pg_sleep(120))
         SELECT NULL::uuid, NULL::bigint, NULL::text, NULL::timestamptz, NULL::timestamptz, NULL::text, NULL::text, NULL::bigint
-        FROM nap WHERE nap.x < 0
-      $$`);
+        FROM nap WHERE nap.x < 0`);
+    // The limit in force inside the read, as the page shows it (an answered read, so nothing is rolled back).
+    const applied = async () => {
+      const answer = await review(DAY);
+      assert.equal(answer.status, 200, `the reporting read answers ${JSON.stringify(answer.body).slice(0, 300)}`);
+      assert.deepEqual(answer.body.rows.map(r => r.eventId), ['SYN-LIMIT']);
+      return answer.body.rows[0].surface;
+    };
     try {
       // A shorter limit already set for the runtime role is kept (new sessions read it).
       await witness.$executeRawUnsafe(`ALTER ROLE kin_runtime SET statement_timeout = '3s'`);
       await db.$disconnect(); await db.$connect();
+      await reporting();
+      assert.equal(await applied(), 'statement_timeout=3000', "the read runs under the role's 3 s limit");
+      await sleeping();
       const shorter = await elapsed(() => review(DAY));
       assert.equal(shorter.value.status, 503, 'a slow read under a 3 s role limit is refused');
-      assert.ok(shorter.ms >= 2900 && shorter.ms < 9000, `the role's 3 s limit is kept, not raised (${shorter.ms} ms)`);
+      assert.ok(shorter.ms >= 2900 && shorter.ms < 9000, `refused at about 3 s (${shorter.ms} ms)`);
       await witness.$executeRawUnsafe(`ALTER ROLE kin_runtime RESET statement_timeout`);
       await db.$disconnect(); await db.$connect();
+      await reporting();
+      assert.equal(await applied(), 'statement_timeout=30000', 'without a role limit the read runs under 30 s');
       measured.roleLimit = shorter.ms;
-      console.log(`a 3 s role limit was kept: 503 after ${shorter.ms} ms`);
+      console.log(`limit in force inside the read: 3000 ms under a 3 s role limit (503 after ${shorter.ms} ms), 30000 ms without`);
+      await sleeping();
 
       const started = Date.now();
       const abandon = new AbortController();
