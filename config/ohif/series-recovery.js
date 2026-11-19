@@ -12,7 +12,7 @@
    - URL의 검사 목록과 수명주기에 묶는다. 나가거나 URL이 바뀌면 기다리던 재요청은 보내지 않고 원래 오류로 끝내며
      알림도 남기지 않는다.
    - 실패는 URL 순서의 검사 번호와 HTTP 상태로만 알린다. UID·환자 정보는 쓰지 않는다. 사유는 상태 패널의 줄과 영상 위의
-     보이는 줄(#kin-viewer-open-status)에 같이 쓴다. 이 문서가 권한 없음 화면을 세웠으면(환자 탭, body의
+     보이는 줄(#kin-viewer-open-status — 환자 탭 줄 안, 컨트롤을 덮지 않음)에 같이 쓴다. 이 문서가 권한 없음 화면을 세웠으면(환자 탭, body의
      kin-open-refused) 그 화면의 한 줄만 남긴다: 영상 위 줄과 이 확장의 알림을 감추고 뒤늦은 실패도 보이지 않는다.
    - 실패한 검사는 이 문서가 사는 동안 기억한다(kinViewerFailedStudies): OHIF가 그 거절을 문서 수명 동안 다시 쓰므로,
      그 검사를 다시 보이려면 새 문서여야 한다(목록의 창 열기와 환자 탭이 이것을 읽는다).
@@ -60,18 +60,21 @@ function kinCreateSeriesMetadataRecovery() {
     }
     node.textContent = text;
   }
-  // The same reason where the reader looks: one line over the images (the panel above may be collapsed).
+  // The same reason where the reader looks (the panel above may be collapsed): one line in the patient tab row, in the page's
+  // flow so it covers no control; without that row, a fixed line that lets clicks through. Full text in its title.
   function show(text) {
     let node = document.querySelector('#kin-viewer-open-status');
     if (!text || refusedScreen()) { node?.remove(); return; }
+    const row = document.querySelector('.kin-patient-tabs');
+    if (node && node.parentNode !== (row || document.body)) { node.remove(); node = null; }
     if (!node) {
       node = document.createElement('p'); node.id = 'kin-viewer-open-status'; node.setAttribute('role', 'status');
-      node.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:1000;max-width:min(60em,calc(100vw - 16px));' +
-        'box-sizing:border-box;margin:0;padding:4px 8px;background:#2D2D2D;color:#ffb4a8;border:1px solid currentColor;' +
-        'font:12px/1.4 sans-serif;white-space:normal';
-      document.body.append(node);
+      node.style.cssText = (row ? 'flex:0 1 auto;min-width:0;' : 'position:fixed;left:8px;bottom:8px;z-index:1000;pointer-events:none;max-width:calc(100vw - 16px);') +
+        'box-sizing:border-box;margin:0;padding:0 .5em;color:#ffb4a8;font:12px/1.4 sans-serif;' +
+        'white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+      (row || document.body).append(node);
     }
-    node.textContent = text;
+    node.textContent = text; node.title = text;
   }
   // A refusal screen stands (the patient tabs announce it): only its one line stays, whichever answer came first.
   function quiet() {
