@@ -9,6 +9,7 @@ import { folderAction, folderEntries, folderPath, shortcutEntries } from '../fil
 import { copySearchFolder, mergeCopiedFolders, sharedKeys, sharedLibrary, sharedSearch } from '../shared-filters';
 import { parse, dump } from './values';
 import { need, inst } from './access';
+import { accountOwner } from '../owner-identity';
 import type { Caller } from './access';
 
 export class PacsFilters {
@@ -17,7 +18,8 @@ export class PacsFilters {
 
   /** 필터 저장 (같은 이름이면 덮어쓴다 — 이름이 곧 사용자에게는 그 필터다) */
   async saveFilter(body: any, c: Caller) {
-    const owner = c.actor;
+    // Saved searches and their folder collection are the account's (owner-identity.ts): owner holds its account id.
+    const owner = accountOwner(c);
     const name = String(body.name ?? '').trim();
     if (!name) throw new BadRequestException('필터 이름이 필요합니다');
 
@@ -72,7 +74,7 @@ export class PacsFilters {
 
   /** 기본 필터 지정/해제 */
   async setDefaultFilter(id: number, on: boolean, c: Caller) {
-    const owner = c.actor;
+    const owner = accountOwner(c);
     await this.prisma.$transaction(async tx => {
       await this.lockFilterCollection(tx, owner);
       const f = await tx.userFilter.findUnique({ where: { id } });
@@ -87,8 +89,8 @@ export class PacsFilters {
     // 남의 것을 지우지 못하게 owner를 조건에 넣는다. 찾아서 검사하고 지우면
     // 그 사이가 벌어질 수 있으므로 조건을 삭제문 안에 둔다.
     await this.prisma.$transaction(async tx => {
-      await this.lockFilterCollection(tx, c.actor);
-      const r = await tx.userFilter.deleteMany({ where: { id, owner: c.actor } });
+      await this.lockFilterCollection(tx, accountOwner(c));
+      const r = await tx.userFilter.deleteMany({ where: { id, owner: accountOwner(c) } });
       if (!r.count) throw new NotFoundException('필터를 찾을 수 없습니다');
     });
     return { ok: true };
@@ -108,8 +110,8 @@ export class PacsFilters {
   }
 
   private async filterCollectionSnapshot(tx: Prisma.TransactionClient, c: Caller) {
-    const collection = await tx.userFilterCollection.findUnique({ where: { owner: c.actor } });
-    const filters = await tx.userFilter.findMany({ where: { owner: c.actor }, orderBy: { id: 'asc' } });
+    const collection = await tx.userFilterCollection.findUnique({ where: { owner: accountOwner(c) } });
+    const filters = await tx.userFilter.findMany({ where: { owner: accountOwner(c) }, orderBy: { id: 'asc' } });
     return { owner: this.filterCollectionOwner(c), revision: collection?.revision ?? 0,
       folders: folderEntries(collection?.folders ?? []),
       shortcuts: shortcutEntries(collection?.shortcuts ?? []),
@@ -131,27 +133,27 @@ export class PacsFilters {
     if (JSON.stringify(body.expectedOwner) !== JSON.stringify(owner))
       throw new ConflictException('계정이 변경되었습니다. 다시 로그인하세요');
     return this.prisma.$transaction(async tx => {
-      const collection = await this.lockFilterCollection(tx, c.actor);
+      const collection = await this.lockFilterCollection(tx, accountOwner(c));
       if (collection.revision !== body.revision + 1)
         throw new ConflictException('다른 화면에서 검색 모음이 변경되었습니다. 편집 내용을 확인한 뒤 다시 불러오세요');
       if (body.command?.action === 'replace-shortcuts') {
         if (Object.keys(body.command).sort().join(',') !== 'action,shortcuts')
           throw new BadRequestException('바로가기 교체 요청 형식을 확인하세요');
         const shortcuts = shortcutEntries(body.command.shortcuts);
-        await tx.userFilterCollection.update({ where: { owner: c.actor }, data: { shortcuts } });
+        await tx.userFilterCollection.update({ where: { owner: accountOwner(c) }, data: { shortcuts } });
         return this.filterCollectionSnapshot(tx, c);
       }
-      const searches = await tx.userFilter.findMany({ where: { owner: c.actor }, select: { id: true, folder: true } });
+      const searches = await tx.userFilter.findMany({ where: { owner: accountOwner(c) }, select: { id: true, folder: true } });
       const result = folderAction(collection.folders, searches, body.command);
       for (const move of result.moves) {
-        const changed = await tx.userFilter.updateMany({ where: { id: move.id, owner: c.actor }, data: { folder: move.folder } });
+        const changed = await tx.userFilter.updateMany({ where: { id: move.id, owner: accountOwner(c) }, data: { folder: move.folder } });
         if (changed.count !== 1) throw new ConflictException('선택한 검색이 변경되었습니다');
       }
       if (result.deletes.length) {
-        const changed = await tx.userFilter.deleteMany({ where: { owner: c.actor, id: { in: result.deletes } } });
+        const changed = await tx.userFilter.deleteMany({ where: { owner: accountOwner(c), id: { in: result.deletes } } });
         if (changed.count !== result.deletes.length) throw new ConflictException('선택한 검색이 변경되었습니다');
       }
-      await tx.userFilterCollection.update({ where: { owner: c.actor }, data: { folders: result.folders } });
+      await tx.userFilterCollection.update({ where: { owner: accountOwner(c) }, data: { folders: result.folders } });
       return this.filterCollectionSnapshot(tx, c);
     });
   }
@@ -191,7 +193,7 @@ export class PacsFilters {
         typeof body.command.replace !== 'boolean')) throw new BadRequestException('폴더 배포 요청 형식을 확인하세요');
     return this.prisma.$transaction(async tx => {
       // Every operation needing both locks uses personal -> institution order.
-      const personal = publish ? await this.lockFilterCollection(tx, c.actor, 0) : null;
+      const personal = publish ? await this.lockFilterCollection(tx, accountOwner(c), 0) : null;
       if (publish && personal.revision !== body.command.sourceRevision)
         throw new ConflictException('개인 검색이 변경되었습니다. 개인 폴더를 다시 불러오세요');
       const row = await this.lockSharedFilters(tx, c, 1);
@@ -199,7 +201,7 @@ export class PacsFilters {
       let library = sharedLibrary(row.folders, row.filters);
       if (publish) {
         const from = folderPath(body.command.from, true);
-        const owned = await tx.userFilter.findMany({ where: { owner: c.actor } });
+        const owned = await tx.userFilter.findMany({ where: { owner: accountOwner(c) } });
         const sources = owned.filter(filter => !from || filter.folder === from || filter.folder.startsWith(from + '/'))
           .map(filter => sharedSearch(filter, filter.id));
         const copied = copySearchFolder(folderEntries(personal.folders), sources, from, body.command.to, body.command.namePrefix);
@@ -229,7 +231,7 @@ export class PacsFilters {
     if (!Number.isInteger(body.personalRevision) || body.personalRevision < 0 || body.personalRevision >= 2147483647)
       throw new BadRequestException('개인 검색 버전을 확인하세요');
     return this.prisma.$transaction(async tx => {
-      const personal = await this.lockFilterCollection(tx, c.actor);
+      const personal = await this.lockFilterCollection(tx, accountOwner(c));
       if (personal.revision !== body.personalRevision + 1) throw new ConflictException('개인 검색이 변경되었습니다. 개인 폴더를 다시 불러오세요');
       const row = await this.lockSharedFilters(tx, c, 0);
       if (row.revision !== body.revision) throw new ConflictException('기관 검색이 변경되었습니다. 공유 목록을 다시 불러오세요');
@@ -237,15 +239,15 @@ export class PacsFilters {
       if (row.revision === 0 && !library.folders.length && !library.filters.length)
         throw new NotFoundException('배포된 기관 검색이 없습니다');
       const copied = copySearchFolder(library.folders, library.filters, body.from, body.to, body.namePrefix);
-      const owned = await tx.userFilter.findMany({ where: { owner: c.actor } });
+      const owned = await tx.userFilter.findMany({ where: { owner: accountOwner(c) } });
       const folders = mergeCopiedFolders(folderEntries(personal.folders), owned, copied.folders, false);
       const names = new Set(owned.map(filter => filter.name));
       if (copied.filters.some(filter => names.has(filter.name))) throw new ConflictException('같은 이름의 개인 검색이 있습니다. 이름 접두사를 입력하세요');
       for (const filter of copied.filters) {
         const { id, cols, ...definition } = filter;
-        await tx.userFilter.create({ data: { ...definition, owner: c.actor, cols: JSON.stringify(cols), isDefault: false } });
+        await tx.userFilter.create({ data: { ...definition, owner: accountOwner(c), cols: JSON.stringify(cols), isDefault: false } });
       }
-      await tx.userFilterCollection.update({ where: { owner: c.actor }, data: { folders } });
+      await tx.userFilterCollection.update({ where: { owner: accountOwner(c) }, data: { folders } });
       return this.filterCollectionSnapshot(tx, c);
     });
   }

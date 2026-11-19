@@ -82,6 +82,11 @@ class ImageReportPg(ReportCommitPg):
     script = 'image_report_pg_test.cjs'
 
 
+class OwnerKeysPg(ReportCommitPg):
+    # Whose rows are an account's: the owner-key migration's fill over rows shaped as before it, on PostgreSQL.
+    script = 'owner_keys_pg_test.cjs'
+
+
 class ClinicalRoutesPg(pg.PgLedgerFixture):
     script = 'routes_pg_test.cjs'
 

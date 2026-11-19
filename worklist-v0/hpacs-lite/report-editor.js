@@ -595,10 +595,9 @@
       clearReportNotice();
       continueReportNotice(n);
     }
-    /** 서버가 읽어 준 초안의 작성자가 이 페이지의 계정인가(기관·사용자 ID·작성자 셋 다 같아야 한다). */
+    /** 서버가 읽어 준 초안의 작성자가 이 페이지의 계정인가(기관·계정 ID가 같아야 한다 — 로그인 이메일은 바뀌었을 수 있다). */
     function sameDraftOwner(owner, mine) {
-      return !!owner && !!mine && owner.sub === mine.sub && (owner.institution ?? null) === (mine.institution ?? null)
-        && owner.author === mine.author;
+      return !!owner && !!mine && owner.sub === mine.sub && (owner.institution ?? null) === (mine.institution ?? null);
     }
     /**
      * Check(W4-PAGE-01/02, 설계 v4 §4.2): 쓰기를 다시 보내지 않는다. 초안 명령 경로의 전체 읽기 하나(`draftClient.read`)로 서버가

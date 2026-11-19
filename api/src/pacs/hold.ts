@@ -11,6 +11,7 @@ import { need, inst } from './access';
 import { resolveExamScope } from '../exam-merge.service';
 import { assertHeadWritable, headForLock } from '../report-visibility';
 import type { Caller, PacsAccess } from './access';
+import { sameAccount } from '../owner-identity';
 
 export class PacsHold {
   constructor(
@@ -46,13 +47,13 @@ export class PacsHold {
       refuseDestroyed(prev);
       if(prev.ss==='Unverified'&&prev.em!=='E')throw new ConflictException('촬영 중(미확인) 검사입니다 — 기사 확인(Verify) 뒤 판독할 수 있습니다');
       if(!canReadPreliminary(prev,c))throw new ForbiddenException('예비 판독(RS: P) 중인 검사입니다');
-      const other=holdAlive(prev)&&prev.holder!==c.actor?prev.holder:null;
-      if(renew&&prev.holder!==c.actor)
+      const other=holdAlive(prev)&&!sameAccount(prev.holderSub,c)?prev.holder:null;
+      if(renew&&!sameAccount(prev.holderSub,c))
         return {holder:holdAlive(prev)?visibleHolder(prev,c):null,mine:false,conflict:!!other,lost:true};
       // Another physician's saved (unsigned) report is not taken by typing: the screen shows it read-only (report-visibility.ts).
       assertHeadWritable(prev,await headForLock(tx,uid,prev),c);
       if(!other){
-        await tx.studyState.update({where:{uid},data:{holder:c.actor,holderInstitutionId:inst(c),heldAt:new Date()}});
+        await tx.studyState.update({where:{uid},data:{holder:c.actor,holderSub:c.sub,holderInstitutionId:inst(c),heldAt:new Date()}});
         if(!holdAlive(prev))await tx.auditLog.create({data:{actor:c.actor,action:'report.hold',target:uid,detail:dump({institution:inst(c)})}});
       }
       return {holder:other?visibleHolder(prev,c):c.actor,mine:!other,conflict:!!other};
@@ -64,8 +65,8 @@ export class PacsHold {
     return this.access.scopeWrite(uid,c,async(tx,audit)=>{
     need(c.roles, 'radiologist', '판독문 점유 해제');   // hold와 같은 역할 경계
     const prev = await this.access.gate(uid,c,tx);
-    if (!prev || prev.holder !== c.actor) return { ok: true };   // 내 것이 아니면 건드리지 않는다
-    await tx.studyState.update({ where: { uid }, data: { holder: null, holderInstitutionId: null, heldAt: null } });
+    if (!prev || !sameAccount(prev.holderSub, c)) return { ok: true };   // 내 것이 아니면 건드리지 않는다
+    await tx.studyState.update({ where: { uid }, data: { holder: null, holderSub: null, holderInstitutionId: null, heldAt: null } });
     return { ok: true };
     });
   }
@@ -75,11 +76,11 @@ export class PacsHold {
     need(c.roles, 'admin', '판독 점유 강제 해제');
     const prev = await this.access.gate(uid,c,tx);
     if (!prev) throw new NotFoundException('검사를 찾을 수 없습니다');
-    await tx.studyState.update({ where: { uid }, data: { holder: null, holderInstitutionId: null, heldAt: null } });
+    await tx.studyState.update({ where: { uid }, data: { holder: null, holderSub: null, holderInstitutionId: null, heldAt: null } });
     // 점유가 없었어도 관리자 조치의 호출 흔적은 남긴다.
     await audit(c.actor, 'hold.force-release', uid, {
       institution: inst(c), by: inst(c), holder: prev.holder ?? null, heldAt: prev.heldAt ?? null, alive: holdAlive(prev),
-      holderInstitutionId: prev.holderInstitutionId ?? null,
+      holderInstitutionId: prev.holderInstitutionId ?? null, holderSub: prev.holderSub ?? null,
     });
     return { ok: true, released: visibleHolder(prev,c) };
     });

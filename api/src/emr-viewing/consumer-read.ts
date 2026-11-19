@@ -1,4 +1,5 @@
 import { ServiceUnavailableException } from '@nestjs/common';
+import { draftRecordOf } from '../owner-identity';
 import { randomUUID } from 'node:crypto';
 import type { LocalReadTarget } from '../emr-contract/access-event';
 import type { SourceIdentity } from '../study-access.service';
@@ -36,7 +37,7 @@ export function worklistRead(body: any, author: string, institution: string, ins
     if (state.version > 0 && !state.prelimHidden && row.reportReadable !== false)
       sources.push(consumerSource('report-head', uid, state.institutionId, uid, state.version, [...path, 'state'], identity, reportFields));
     if (state.draft)
-      sources.push(consumerSource('private-draft', uid, state.institutionId, JSON.stringify([uid, author]), state.draftRevision,
+      sources.push(consumerSource('private-draft', uid, state.institutionId, JSON.stringify([uid, draftRecordOf.get(state.draft) ?? author]), state.draftRevision,
         [...path, 'state', 'draft'], identity));
   }
   for (const [index, row] of (body.identityIssues ?? []).entries())
@@ -56,7 +57,7 @@ export function bootstrapRead(body: any, author: string, institution: string): L
     sources.push(consumerSource('study-metadata', uid, state.institutionId, uid, null, path));
     if (state.version > 0 && !state.prelimHidden && state.reportReadable !== false)
       sources.push(consumerSource('report-head', uid, state.institutionId, uid, state.version, path, undefined, reportFields));
-    if (state.draft) sources.push(consumerSource('private-draft', uid, state.institutionId, JSON.stringify([uid, author]),
+    if (state.draft) sources.push(consumerSource('private-draft', uid, state.institutionId, JSON.stringify([uid, draftRecordOf.get(state.draft) ?? author]),
       state.draftRevision, [...path, 'draft']));
   }
   for (const [index, order] of body.orders.entries())

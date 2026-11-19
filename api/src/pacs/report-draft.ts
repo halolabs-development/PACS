@@ -22,7 +22,7 @@ import { examScopeChanged, assertExamSource, resolveExamScope, prepareExamRead, 
 import type { PacsReportEvidence } from './report-evidence';
 import { relatedInsertInput, relatedInsertId, relatedEvidenceIds, relatedRequestHash, relatedProposalHash, relatedInsertionText,
   relatedInsertTargets,
-  relatedOwnReceipt, relatedSameBinding, relatedResult, relatedInsertInvalid, relatedInsertRefusal, relatedInsertIdReused }
+  relatedOwnReceipt, relatedSameBinding, relatedReceiptHash, relatedResult, relatedInsertInvalid, relatedInsertRefusal, relatedInsertIdReused }
   from '../report-related-insert';
 import type { RelatedInsertRefusal } from '../report-related-insert';
 import type { AccessAction, AccessEventV1 } from '../emr-contract/access-event';
@@ -35,6 +35,7 @@ import { draftDrawings, drawingEntries, drawingHash, drawingKey, drawingRequest,
 import type { DrawingRequest } from '../image-report';
 
 import type { RequestWorkContext } from '../emr-runtime/request-context';
+import { sameAccount, lockedDraftOf, newDraftAuthor, draftRecordAuthor, draftAuthorName } from '../owner-identity';
 
 export interface DraftRequestFacts {
   request: RequestWorkContext;
@@ -48,7 +49,7 @@ type DraftObservation = { facts: DraftRequestFacts; surface: string; action: Acc
 type RecordDraft = (state: any, value: any, action?: AccessAction,
   source?: { uid: string; version: number } | { author: string; revision: string }) => Promise<void>;
 /** The work an ending transaction ended: its unit and the (uid, author) row's revision before that transaction. */
-export type EndedWork = { unit: string; author: string; uid: string; revision: number };
+export type EndedWork = { unit: string; author: string; uid: string; revision: number; sub: string | null };
 
 export class PacsReportDraft {
   constructor(
@@ -79,7 +80,9 @@ export class PacsReportDraft {
         const draft = source && !version ? source as { author: string; revision: string } : null;
         const report = !!version || !draft && observation.target === 'report-version';
         const revision = draft ? draft.revision : version ? String(version.version) : report ? String(value.state.version) : value.revision;
-        const resource = report ? version?.uid ?? uid : JSON.stringify([uid, draft?.author ?? c.actor]);
+        // A draft's record id is its row's (owner-identity.ts): the caller's own row is found by its account, whatever the
+        // caller's email is now; a caller with no row yet is named as the row it would make.
+        const resource = report ? version?.uid ?? uid : JSON.stringify([uid, draft?.author ?? await draftRecordAuthor(tx, uid, c)]);
         const event: AccessEventV1 = {
           formatVersion: 1, surface, eventId: randomUUID(),
           userId: { status: 'known', value: identity }, rolesAtTime: { status: 'known', value: facts.request.facts.roles },
@@ -135,7 +138,7 @@ export class PacsReportDraft {
   private reportDraftRules(prev: any, c: Caller) {
     if (prev?.ss === 'Unverified' && prev.em !== 'E')
       throw new ConflictException('촬영 중(미확인) 검사입니다 — 기사 확인(Verify) 뒤 판독할 수 있습니다');
-    const heldByOther = holdAlive(prev) && prev.holder !== c.actor ? prev.holder : null;
+    const heldByOther = holdAlive(prev) && !sameAccount(prev.holderSub, c) ? prev.holder : null;
     if (heldByOther)
       throw reportHeld(prev, c);
     if (!prev) throw new NotFoundException('검사를 찾을 수 없습니다');
@@ -261,11 +264,7 @@ export class PacsReportDraft {
 
   /** 내 초안 행을 잠그고 요청이 본 revision과 대조한다. 행이 없으면 이 세대의 revision 0이다. */
   async ownDraft(tx: Prisma.TransactionClient, uid: string, c: Caller, revision: number, intent: ExamScopeRequest['intent'] = 'reading') {
-    const rows = await tx.$queryRaw<any[]>`
-      SELECT uid, author, findings, conclusion, recommendation, "baseVersion", citations, structured, drawings, revision, present, "updatedAt",
-        "workUnit", "workSince", "workIntent", "groupId"
-      FROM "ReportDraft" WHERE uid = ${uid} AND author = ${c.actor} FOR UPDATE`;
-    const row = rows[0] ?? null;
+    const row = await lockedDraftOf(tx, uid, c.sub);
     if ((row?.revision ?? 0) !== revision) throw draftConflict();
     if (row?.present) await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: row, intent });
     return row;
@@ -276,7 +275,7 @@ export class PacsReportDraft {
    * (present=false) 내용 칸은 비운다 — 행을 지우면 revision이 사라져 지운 뒤에 닿은 옛 쓰기가 초안을 되살린다.
    * 초안이 없던 작성자의 비우기·버리기·확정도 경계를 올린다(0 → 1). 0행 갱신은 충돌이다 — 덮지 않는다.
    */
-  async storeDraft(tx: Prisma.TransactionClient, uid: string, author: string, row: any,
+  async storeDraft(tx: Prisma.TransactionClient, uid: string, owner: { sub: string | null; actor: string }, row: any,
       content: { findings: string; conclusion: string; recommendation: string; baseVersion: number;
         citations: any[]; structured: any[]; drawings?: { seed: string[]; ids: string[] } | null } | null, intent: 'approve' | 'addendum' = 'approve', groupId?: string | null, caller?: Caller) {
     const revision = (row?.revision ?? 0) + 1;
@@ -309,9 +308,14 @@ export class PacsReportDraft {
     // starts with none); emptying the row empties them with the text.
     const drawings = !content ? null : content.drawings !== undefined ? content.drawings
       : row?.present ? draftDrawings(row.drawings) : null;
-    if (!row)
-      return tx.reportDraft.create({ data: { uid, author, ...text, revision,
+    // A row is written under its own record id; a first row names its account (owner-identity.ts).
+    if (!row) {
+      if (!owner.sub) throw draftConflict();
+      const author = await newDraftAuthor(tx, uid, owner.sub, owner.actor);
+      return tx.reportDraft.create({ data: { uid, author, authorSub: owner.sub, ...text, revision,
         ...(citations ? { citations } : {}), ...(structured ? { structured } : {}), ...(drawings ? { drawings } : {}) } });
+    }
+    const author = row.author as string;
     const changed = await tx.reportDraft.updateMany({
       where: { uid, author, revision: row.revision },
       data: { ...text, revision, citations: citations ?? Prisma.DbNull, structured: structured ?? Prisma.DbNull,
@@ -331,19 +335,19 @@ export class PacsReportDraft {
    * 잠금 순서는 StudyState → Report → 초안으로 다른 길과 같다. 바꾼 것은 남의 기록이므로 그 작성자 행의 접속기록을
    * 실행한 사람의 이름으로 따로 남긴다(관리자 강제 해제와 같은 결). 옮겼으면 true.
    */
-  async keepSavedText(tx: Prisma.TransactionClient, uid: string, epoch: string, author: string,
+  async keepSavedText(tx: Prisma.TransactionClient, uid: string, epoch: string, writer: { sub: string | null; actor: string },
       text: { findings: string; conclusion: string; recommendation: string; baseVersion: number; citations: any[]; structured: any[];
         groupId?: string | null },
       record: (source: { author: string; revision: string }) => Promise<void>): Promise<boolean> {
-    const rows = await tx.$queryRaw<any[]>`
-      SELECT uid, author, revision, present, "workUnit", "workSince", "workIntent"
-      FROM "ReportDraft" WHERE uid = ${uid} AND author = ${author} FOR UPDATE`;
-    const row = rows[0] ?? null;
+    // The text goes to the account that saved it (whatever its email is now); a head no account can be found for keeps its
+    // text in the Reset copy only.
+    if (!writer.sub) return false;
+    const row = await lockedDraftOf(tx, uid, writer.sub);
     if (row?.present) return false;
     // The moved text keeps the exam group it was saved on (never relabelled with the study's current one).
     const { groupId, ...content } = text;
-    const stored = await this.storeDraft(tx, uid, author, row, content, 'approve', groupId ?? null);
-    await record({ author, revision: draftToken(epoch, stored!.revision) });
+    const stored = await this.storeDraft(tx, uid, writer, row, content, 'approve', groupId ?? null);
+    await record({ author: stored!.author, revision: draftToken(epoch, stored!.revision) });
     return true;
   }
 
@@ -355,11 +359,14 @@ export class PacsReportDraft {
    * the row without a purpose end, and another member's approval never ends this author's draft. Returns the unit to
    * destroy after commit, or null when the row held no work.
    */
-  async endWork(tx: Prisma.TransactionClient, row: any, actor: string,
+  async endWork(tx: Prisma.TransactionClient, row: any, caller: { sub: string; actor: string },
       end: { trigger: 'explicit-discard' } | { trigger: 'result-version-signed'; action: 'approve' | 'amend' | 'addendum';
         signed: { recordId: string; versionId: string; signedAt: string } }): Promise<EndedWork | null> {
     if (!row?.present || !row.workUnit) return null;
-    if (row.author !== actor) throw new ForbiddenException('다른 작성자의 초안 목적을 종료할 수 없습니다');
+    if (!sameAccount(row.authorSub, caller)) throw new ForbiddenException('다른 작성자의 초안 목적을 종료할 수 없습니다');
+    // The retention record names the row's own author (its record id; the ledger requires actorId = author), whatever the
+    // account's email is now.
+    const actor = row.author as string;
     let endedAt = end.trigger === 'result-version-signed' ? new Date(end.signed.signedAt) : new Date();
     // The end is a later instant than the work's start on the server clock; never an adjusted one.
     while (end.trigger === 'explicit-discard' && endedAt.getTime() <= new Date(row.workSince).getTime()) {
@@ -377,7 +384,7 @@ export class PacsReportDraft {
       ...(row.structured === null || row.structured === undefined ? {} : { structured: row.structured }),
       ...(row.drawings === null || row.drawings === undefined ? {} : { drawings: row.drawings }),
     } });
-    return { unit: row.workUnit, author: row.author, uid: row.uid, revision: row.revision };
+    return { unit: row.workUnit, author: row.author, uid: row.uid, revision: row.revision, sub: row.authorSub ?? null };
   }
 
   /**
@@ -395,10 +402,10 @@ export class PacsReportDraft {
     try { value = await run(); } catch (error) { failure = error; failed = true; }
     const work = ended();
     if (!work) { if (failed) throw failure; return value!; }
-    const target = { kind: 'ended' as const, uid: work.uid, author: work.author, unit: work.unit, revision: work.revision };
+    const target = { kind: 'ended' as const, uid: work.uid, author: work.author, unit: work.unit, revision: work.revision, account: work.sub ?? '' };
     const outcome = await judgeCommit(this.prisma, target, draftPurpose()?.ledger ?? null);
     if (outcome === 'committed') {
-      draftPurpose()?.scheduleDestruction(work.unit, work.author);
+      draftPurpose()?.scheduleDestruction(work.unit, work.sub ?? '');
       if (!failed) return value!;
       throw new ServiceUnavailableException({ code: 'REPORT_DRAFT_END_SAVED',
         message: '초안 정리는 서버에 저장됐지만 응답을 완성하지 못했습니다. 저장된 상태를 다시 불러옵니다' });
@@ -437,7 +444,7 @@ export class PacsReportDraft {
           `예비 판독(RS: P) 중입니다. ${state?.preReviewer ?? '지정된 판독의'}만 볼 수 있습니다.`);
       const scope = await examParentAccess(tx, this.studyAccess, c, uid);
       for (const source of scope.studies) this.studyAccess.assertUnsplitSource(c, source);
-      const draft = await this.access.myDraft(uid, c.actor, tx);
+      const draft = await this.access.myDraft(uid, c, tx);
       if (draft?.present) await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: draft });
       const envelope = draftEnvelope(uid, owner, state.draftEpoch, draft);
       if (receiptId === null) return { state, value: envelope };
@@ -498,9 +505,10 @@ export class PacsReportDraft {
       const settled = (receipt: any, envelope: any) => {
         if (!receipt) return null;
         // 같은 ID의 다른 요청: 이 호출만 거절하고 그 행은 바꾸지도, 답하지도 않는다.
-        if (!relatedSameBinding(receipt, owner, uid, related, expected, asked.requestHash, asked.proposalHash))
+        const requestHash = relatedReceiptHash(receipt, related, owner, expected, proposal, asked.requestHash);
+        if (!relatedSameBinding(receipt, owner, uid, related, expected, requestHash, asked.proposalHash))
           return { refusal: relatedInsertIdReused() };
-        const view = relatedResult(related.insertRequestId, receipt, envelope, true, asked);
+        const view = relatedResult(related.insertRequestId, receipt, envelope, true, { ...asked, requestHash });
         if (receipt.state === 'applied') {
           if (related.intent === 'discard') return { refusal: relatedInsertRefusal('RELATED_INSERT_NOT_DISCARDABLE', envelope, view) };
           // 정확한 replay: 쓰기·감사·revision 증가 없이 지금 봉투와 영수증. clear/discard/commit/force/세대 교체 뒤에도 다시 넣지 않는다.
@@ -530,7 +538,7 @@ export class PacsReportDraft {
         if (!canReadPreliminary(state, c))
           throw new ForbiddenException(
             `예비 판독(RS: P) 중입니다. ${state?.preReviewer ?? '지정된 판독의'}만 볼 수 있습니다.`);
-        const mine = await this.access.myDraft(uid, c.actor, tx);
+        const mine = await this.access.myDraft(uid, c, tx);
         if(mine?.present)await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:'stored',record:mine});
         const stored = await tx.reportDraftInsertReceipt.findUnique({ where: { insertRequestId: related.insertRequestId } });
         return { state, outcome: settled(stored, draftEnvelope(uid, owner, state.draftEpoch, mine)) };
@@ -559,11 +567,7 @@ export class PacsReportDraft {
           throw new ForbiddenException(
             `예비 판독(RS: P) 중입니다. ${state?.preReviewer ?? '지정된 판독의'}만 볼 수 있습니다.`);
         // 잠금 순서의 나머지: 내 초안 행 → 영수증 행. 경쟁한 요청의 적용·취소는 이 잠금 뒤에 읽히므로 놓치지 않는다.
-        const drafts = await tx.$queryRaw<any[]>`
-          SELECT uid, author, findings, conclusion, recommendation, "baseVersion", citations, structured, drawings, revision, present, "updatedAt",
-        "workUnit", "workSince", "workIntent", "groupId"
-          FROM "ReportDraft" WHERE uid = ${uid} AND author = ${c.actor} FOR UPDATE`;
-        const row = drafts[0] ?? null;
+        const row = await lockedDraftOf(tx, uid, c.sub);
         if(row?.present)await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:'stored',record:row});
         const receipts = await tx.$queryRaw<any[]>`
           SELECT * FROM "ReportDraftInsertReceipt" WHERE "insertRequestId" = ${related.insertRequestId}::uuid FOR UPDATE`;
@@ -676,7 +680,7 @@ export class PacsReportDraft {
         const prior = present ? row : null;
         const cited = await this.reportEvidence.draftCitations(tx, uid, prior, body, content, c, head?.version ?? 0);
         const structure = await this.reportEvidence.draftStructure(tx, uid, prior, body, content, c, head?.version ?? 0);
-        const saved = await this.storeDraft(tx, uid, c.actor, row,
+        const saved = await this.storeDraft(tx, uid, c, row,
           { ...content, citations: cited.entries, structured: structure.entries }, state.rs === 'A' ? 'addendum' : 'approve', undefined, c);
         await audit(c.actor, 'report.draft', uid, {
           institution: inst(c),
@@ -739,8 +743,8 @@ export class PacsReportDraft {
         throw new ConflictException({ code: 'REPORT_STRUCTURE_TEXT',
           message: '구조화 항목의 문장이 그 칸의 본문에 줄 단위로 그대로 있지 않습니다' });
       // Clearing every field is the author ending this draft (CD-09-P explicit discard): its text is destroyed after commit.
-      ended = await this.endWork(tx, row, c.actor, { trigger: 'explicit-discard' });
-      const cleared = await this.storeDraft(tx, uid, c.actor, row, null);
+      ended = await this.endWork(tx, row, c, { trigger: 'explicit-discard' });
+      const cleared = await this.storeDraft(tx, uid, c, row, null);
       await audit(c.actor, 'report.draft.clear', uid, { institution: inst(c) });
       return draftEnvelope(uid, owner, state.draftEpoch, cleared);
     }
@@ -773,13 +777,13 @@ export class PacsReportDraft {
     // A drawing operation that leaves no text and changes nothing of the head's drawings ends the draft as a Clear does; an
     // explicit removal of a head drawing is kept as the draft ({ seed: [id], ids: [] }).
     if (drawn && !(content.findings || content.conclusion || content.recommendation) && !drawn.drawings) {
-      ended = await this.endWork(tx, row, c.actor, { trigger: 'explicit-discard' });
-      const cleared = await this.storeDraft(tx, uid, c.actor, row, null);
+      ended = await this.endWork(tx, row, c, { trigger: 'explicit-discard' });
+      const cleared = await this.storeDraft(tx, uid, c, row, null);
       await audit(c.actor, 'report.draft.clear', uid, { institution: inst(c), drw: drawn.detail });
       return { ...draftEnvelope(uid, owner, state.draftEpoch, cleared), drawn: drawn.answer };
     }
 
-    const saved = await this.storeDraft(tx, uid, c.actor, row,
+    const saved = await this.storeDraft(tx, uid, c, row,
       { ...content, citations: cited.entries, structured: structure.entries, ...(drawn ? { drawings: drawn.drawings } : {}) },
       state.rs === 'A' ? 'addendum' : 'approve', undefined, c);
     // CD-09-P: an attached drawing belongs to the work this write continues or starts (storeDraft drew its unit).
@@ -911,9 +915,9 @@ export class PacsReportDraft {
         const row = await this.ownDraft(tx, uid, c, expected.revision, 'cleanup');
         if (!namesDraftDrawings(namedDrawingIds, draftDrawings(row?.present ? row.drawings : null))) throw drawingsConflict();
         // CD-09-P: the author's Discard ends this work's purpose; its exact text is destroyed after this commit.
-        ended = await this.endWork(tx, row, c.actor, { trigger: 'explicit-discard' });
+        ended = await this.endWork(tx, row, c, { trigger: 'explicit-discard' });
         // 초안이 없었어도 경계는 올린다 — 이 버리기보다 앞서 보낸 쓰기가 뒤늦게 닿아 초안을 만들지 못하게.
-        const cleared = await this.storeDraft(tx, uid, c.actor, row, null);
+        const cleared = await this.storeDraft(tx, uid, c, row, null);
         await audit(c.actor, 'report.draft.discard', uid, { institution: inst(c) });
         const stored = await tx.report.findUnique({ where: { uid } });
         const rep = stored ? (await withStoredExtras(tx, [stored]))[0] : stored;
@@ -951,8 +955,8 @@ export class PacsReportDraft {
       async (tx, state, _audit, record) => {
       // 비운 자리(present=false)는 초안이 아니다: 판으로 보존하지도, 건수에 넣지도 않는다.
       const drafts = await tx.$queryRaw<any[]>`
-        SELECT uid, author, findings, conclusion, recommendation, "baseVersion", citations, structured, drawings, revision, present, "updatedAt",
-        "workUnit", "workSince", "workIntent", "groupId"
+        SELECT uid, author, "authorSub", findings, conclusion, recommendation, "baseVersion", citations, structured, drawings, revision, present,
+        "updatedAt", "workUnit", "workSince", "workIntent", "groupId"
         FROM "ReportDraft"
         WHERE uid = ${uid} AND present
         ORDER BY author
@@ -980,7 +984,7 @@ export class PacsReportDraft {
       const firstVersion = (last?.version ?? 0) + 1;
       const versions = drafts.map((d, i) => firstVersion + i);
       const summary = drafts.map(d => ({
-        author: d.author,
+        author: draftAuthorName(d), authorSub: d.authorSub ?? null,
         len: [d.findings.length, d.conclusion.length, d.recommendation.length],
       }));
 
@@ -1005,7 +1009,8 @@ export class PacsReportDraft {
           // Image Report: the drawings that author's draft held, kept with its text (the same reason as above).
           ...(drawn[i].length ? { drawings: drawn[i] } : {}),
           reason: `관리자 강제 초안 해제 (해제자: ${c.actor})`,
-          author: d.author,   // 지운 관리자가 아니라 실제로 **쓴 사람**이 저자다
+          author: draftAuthorName(d),   // 지운 관리자가 아니라 실제로 **쓴 사람**이 저자다
+          authorSub: d.authorSub ?? null,
           // Merge Exam: the kept text keeps the exam group it was written on.
           ...nativeReportScope(d.groupId ?? null),
         })),
@@ -1015,7 +1020,7 @@ export class PacsReportDraft {
       // 판으로 보존한 바로 그 행들만 비운다(잠근 revision일 때만). 각 작성자의 경계도 하나씩 오른다.
       // 지운 초안마다 그 작성자 행의 수정(discard)을 같은 commit에 남긴다 — 관리자가 바꾼 것은 남의 기록이다.
       for (const d of drafts) {
-        await this.storeDraft(tx, uid, d.author, d, null);
+        await this.storeDraft(tx, uid, { sub: d.authorSub ?? null, actor: d.author }, d, null);
         // storeDraft wrote exactly the locked revision + 1 (or refused); that is the row's new boundary.
         await record!(state, null, 'discard', { author: d.author, revision: draftToken(rotated.draftEpoch, d.revision + 1) });
       }

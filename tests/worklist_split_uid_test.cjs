@@ -125,7 +125,8 @@ function world({ resources = [], states = [], policy = null, institutions = INST
       if (sql.includes('TechNoteRevision')) return [];
       if (sql.includes('FROM "StudyState" WHERE uid')) return [...store.states.values()]
         .filter(row => values.flatMap(value => value?.values ?? [value]).includes(row.uid)).map(clone);
-      if (sql.includes('FROM "ReportDraft"')) { const row = store.drafts.get(values[0] + '|' + values[1]); return row ? [clone(row)] : []; }
+      // The caller's own row, locked by its account (owner-identity.ts).
+      if (sql.includes('FROM "ReportDraft"')) { const row = [...store.drafts.values()].find(d => d.uid === values[0] && d.authorSub === values[1]); return row ? [clone(row)] : []; }
       if (sql.includes('LEFT JOIN "Report"')) return [...store.states.values()].filter(s => values.flatMap(v => v?.values ?? [v]).includes(s.uid))
         .map(s => ({ uid: s.uid, institutionId: s.institutionId, teleInstitutionId: s.teleInstitutionId, rs: s.rs, repDoc: s.repDoc,
           confirm: s.confirm, version: 0, action: null }));
@@ -143,7 +144,9 @@ function world({ resources = [], states = [], policy = null, institutions = INST
         createMany: async x => { write('reportVersion', 'createMany', {}); return { count: x.data.length }; } },
       studyGroup: { findMany: async () => [] }, studyGroupMember: { findMany: async () => [] },
       reportDraft: {
-        findMany: async ({ where }) => [...store.drafts.values()].filter(d => d.author === where.author && where.uid.in.includes(d.uid)).map(clone),
+        findMany: async ({ where }) => [...store.drafts.values()].filter(d => (typeof where.authorSub === 'string' ? d.authorSub === where.authorSub : false)
+          && where.uid.in.includes(d.uid)).map(clone),
+        findFirst: async ({ where }) => clone([...store.drafts.values()].find(d => d.uid === where.uid && d.authorSub === where.authorSub)) ?? null,
         findUnique: async ({ where }) => clone(store.drafts.get(where.uid_author.uid + '|' + where.uid_author.author)) ?? null,
         create: async ({ data }) => { const row = { ...data, updatedAt: new Date() }; store.drafts.set(data.uid + '|' + data.author, row);
           write('reportDraft', 'create', { uid: data.uid }); return clone(row); },
@@ -158,6 +161,7 @@ function world({ resources = [], states = [], policy = null, institutions = INST
       institution: { upsert: async () => ({}), findMany: async () => clone(institutions) },
       memberRights: { findUnique: async () => null },
       readingTemplate: { count: async () => 1, findMany: async () => [] }, userFilter: { findMany: async () => [] },
+      reportDraftPurposeEnd: { findFirst: async () => null },
       $queryRaw: raw, $executeRaw: async () => 1,
     };
     if (root) db.$transaction = async (work) => {
@@ -520,7 +524,7 @@ test('TEST-WSU-08 every report write and read on a split UID is 409 STUDY_IDENTI
 });
 test('TEST-WSU-08 hold release and force release stay available; images are 403 for a split UID and pass for another UID', async () => {
   const c = caller({ roles: ['radiologist', 'admin'] });
-  const w = await clinical([A(), B(), resource(NORMAL, 'SYN-PID-N')], { holder: 'reader', heldAt: new Date() });
+  const w = await clinical([A(), B(), resource(NORMAL, 'SYN-PID-N')], { holder: 'reader', holderSub: 'sub-reader', heldAt: new Date() });
   w.states.set(NORMAL, stateRow(NORMAL, { institutionId: 'hallym' }));
   assert.deepEqual(await w.pacs.release(SPLIT, c), { ok: true });
   assert.equal(w.states.get(SPLIT).holder, null);
@@ -672,7 +676,7 @@ test('TEST-WSU-09 D1882 a row with no owner opens for nobody through the DICOM g
 test('TEST-WSU-12 refusals keep rows, drafts and audits; an external resolution returns the UID to the normal list on the same row', async () => {
   const c = caller();
   const w = await clinical([A(), B()], { rs: 'T', reqHosp: 'Hallym', teleInstitutionId: 'center' });
-  w.drafts.set(SPLIT + '|reader', { uid: SPLIT, author: 'reader', findings: 'SYN kept text', conclusion: '', recommendation: '',
+  w.drafts.set(SPLIT + '|reader', { uid: SPLIT, author: 'reader', authorSub: 'sub-reader', findings: 'SYN kept text', conclusion: '', recommendation: '',
     baseVersion: 0, citations: null, structured: null, revision: 3, present: true, updatedAt: new Date() });
   const before = JSON.stringify([[...w.states], [...w.drafts], w.audits]);
   await w.pacs.listStudies(c);

@@ -10,6 +10,7 @@ import { draftDrawings, namedDrawings } from '../image-report';
 import type { NamedDrawings } from '../image-report';
 import { relatedInsertIdReused } from '../report-related-insert';
 import type { Caller } from './access';
+import { sameAccount, shownActor, PRIVATE_WRITER, draftRecordOf } from '../owner-identity';
 
 /**
  * QIDO 개수 태그(00201208 영상 수·00201206 시리즈 수)의 목록 값. 태그가 없거나
@@ -96,15 +97,30 @@ export function requestColumns(order: { reqAt?: unknown; reqDept?: unknown; reqD
  */
 export function visibleHolder(s: any, caller: Caller): string | null {
   if (!s?.holder) return null;
-  return s.holder === caller.actor || (caller.institution && s.holderInstitutionId === caller.institution)
-    ? s.holder : s.holderInstitutionId ? '다른 기관' : '작성자 비공개';
+  // Whose hold it is follows its account (owner-identity.ts): the caller's own hold reads as the caller's login now.
+  if (sameAccount(s.holderSub, caller)) return shownActor(s.holder, s.holderSub, caller);
+  return caller.institution && s.holderInstitutionId === caller.institution
+    ? shownActor(s.holder, s.holderSub, caller) : s.holderInstitutionId ? '다른 기관' : PRIVATE_WRITER;
+}
+
+/**
+ * A holder as an audit record wrote it: named to the caller's institution, and to the caller when the record names the
+ * caller's account (an older record names no account: then only the institution rule).
+ */
+export function recordedHolder(s: any, caller: Caller): string | null {
+  if (!s?.holder) return null;
+  return sameAccount(s.holderSub, caller) || (caller.institution && s.holderInstitutionId === caller.institution)
+    ? s.holder : s.holderInstitutionId ? '다른 기관' : PRIVATE_WRITER;
 }
 
 // ReportDraft and its discarded safety copies have no recorded affiliation.
-// Neither the study owner nor a current holder proves who wrote those drafts.
-export const visibleDraftAuthor = (author: string, caller: Caller): string => author === caller.actor ? author : '작성자 비공개';
+// Neither the study owner nor a current holder proves who wrote those drafts. Only their own account reads the name.
+export const visibleDraftAuthor = (author: string, authorSub: string | null | undefined, caller: Caller): string =>
+  sameAccount(authorSub, caller) ? author : PRIVATE_WRITER;
 export const visibleDraftSummary = (drafts: any[], caller: Caller) =>
-  drafts.map(draft => ({ ...draft, author: visibleDraftAuthor(draft.author, caller) }));
+  drafts.map(({ authorSub, ...draft }) => ({ ...draft, author: visibleDraftAuthor(draft.author, authorSub, caller) }));
+/** The draft list an audit record wrote: an author is named to its own account only (an older record names none). */
+export const recordedDraftSummary = (drafts: any[], caller: Caller) => visibleDraftSummary(drafts, caller);
 
 export function reportHeld(s: any, caller: Caller): ConflictException {
   const holder = visibleHolder(s, caller);
@@ -133,6 +149,13 @@ export function reportHeld(s: any, caller: Caller): ConflictException {
  * 이미 읽은 사람의 머릿속은 안 뒤집힌다 (RS=P를 가리는 것과 같은 이유).
  * 남이 쓰고 있다는 사실은 점유 표시(holder)가 이미 말해준다.
  */
+/** The caller's own draft as an answer carries it; the row's record id goes beside it (owner-identity.ts draftRecordOf). */
+function ownDraft(d: any) {
+  const draft = { findings: d.findings, conclusion: d.conclusion, recommendation: d.recommendation, baseVersion: d.baseVersion, at: d.updatedAt };
+  if (typeof d.author === 'string') draftRecordOf.set(draft, d.author);
+  return draft;
+}
+
 export function toClient(s: any, r: any, caller: Caller, d: any = null, head: any = r) {
   /**
    * Who may read this report's text: the state table (report-visibility.ts). `head` is the stored head before any other
@@ -143,6 +166,7 @@ export function toClient(s: any, r: any, caller: Caller, d: any = null, head: an
   const bodyLock = reportBodyLock(s, head, caller);
   const hidden = bodyLock !== null;
   const unsigned = unsignedAuthor(s, head);
+  const saver = r?.updatedBy ? shownActor(r.updatedBy, r.updatedBySub, caller) : null;
   return {
     rs: s.rs, ss: s.ss, em: s.em, ts: s.ts,
     matched: s.matched, ward: s.ward, reqHosp: s.reqHosp,
@@ -188,8 +212,8 @@ export function toClient(s: any, r: any, caller: Caller, d: any = null, head: an
     // 머리 판의 글을 확정한 사람(본문이 있을 때만). 그 판의 작성자로 이력에 이미 보이는 사실이다 — 화면이 "남이 Save해 둔
     // 진행 중 판독"을 알아 되돌리기(FC-040)를 연다.
     // Another physician's unsigned text: its writer is said ("In Progress by ...") while the text stays with them.
-    savedBy: bodyLock === 'in-progress' ? unsigned || null
-      : !hidden && r && storedContent({ ...r, storedExtras: head?.storedExtras }) ? r.updatedBy ?? null : null,
+    savedBy: bodyLock === 'in-progress' ? (unsigned ? shownActor(unsigned.actor, unsigned.sub, caller) : null)
+      : !hidden && r && storedContent({ ...r, storedExtras: head?.storedExtras }) ? saver : null,
     findings: hidden ? '' : (r?.findings ?? ''),
     conclusion: hidden ? '' : (r?.conclusion ?? ''),
     recommendation: hidden ? '' : (r?.recommendation ?? ''),
@@ -200,10 +224,7 @@ export function toClient(s: any, r: any, caller: Caller, d: any = null, head: an
      * 비운 초안의 행(present=false)은 초안이 아니다 — 경계(revision)만 남긴 자리다.
      */
     // My own draft is mine to keep under another physician's in-progress lock (the editor keeps it on screen, read-only).
-    draft: ((hidden && bodyLock !== 'in-progress') || !d || !d.present) ? null : {
-      findings: d.findings, conclusion: d.conclusion, recommendation: d.recommendation,
-      baseVersion: d.baseVersion, at: d.updatedAt,
-    },
+    draft: ((hidden && bodyLock !== 'in-progress') || !d || !d.present) ? null : ownDraft(d),
     // 초안이 없어도 내 경계는 나간다(S7-U5): 다음 쓰기가 무엇을 보고 쓰는지 말할 수 있어야 한다.
     draftRevision: draftToken(s.draftEpoch, d?.revision ?? 0),
     draftEpoch: s.draftEpoch,
@@ -241,7 +262,9 @@ export function draftOwner(body: any, c: Caller): DraftOwner {
   if (typeof owner !== 'object' || Array.isArray(owner) || Object.keys(owner).length !== 3
       || typeof owner.institution !== 'string' || typeof owner.sub !== 'string' || typeof owner.author !== 'string')
     throw draftInvalid('expectedOwner');
-  if (owner.institution !== c.institution || owner.sub !== c.sub || owner.author !== c.actor)
+  // The same account (institution and account id: owner-identity.ts) is the owner whatever its email is now; `author` is the
+  // login the screen was opened under, echoed back so a request made before an email change still matches its own receipt.
+  if (owner.institution !== c.institution || !sameAccount(owner.sub, c))
     throw new ConflictException({ code: 'REPORT_DRAFT_OWNER_CHANGED',
       message: '판독문 초안을 쓰던 계정이 아닙니다. 그 계정으로 다시 로그인한 뒤 저장하세요.' });
   return { institution: owner.institution, sub: owner.sub, author: owner.author };

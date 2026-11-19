@@ -74,7 +74,7 @@ const { TransactionLocks, fixedRecord, fixedRecordKey } = require('./transaction
 
 function fixture({ state = STATE,
   // The in-progress (T) head is this caller's own Save: another physician's Save is not theirs to read or write (report state table).
-  report = { version: 4, updatedBy: CALLER.actor, findings: CHOICE_LINE, conclusion: '', recommendation: '' },
+  report = { version: 4, updatedBy: CALLER.actor, updatedBySub: CALLER.sub, findings: CHOICE_LINE, conclusion: '', recommendation: '' },
   versions = new Map(), draft = null, drafts = null, bytes = null, failWith = null,
   createManyFails = [] } = {}) {
   const writes = [], audits = [], raw = [], created = [];
@@ -82,7 +82,7 @@ function fixture({ state = STATE,
   // [P2002, CHECK] makes the first attempt lose the version race and the second raise our CHECK.
   const manyFails = createManyFails.slice();
   // S7-U5: the caller's draft row as the store holds it, with its boundary; the study row carries the draft epoch.
-  let row = draft ? { uid: UID, author: CALLER.actor, findings: '', conclusion: '', recommendation: '', baseVersion: 0, citations: null,
+  let row = draft ? { uid: UID, author: CALLER.actor, authorSub: CALLER.sub, findings: '', conclusion: '', recommendation: '', baseVersion: 0, citations: null,
     structured: null, revision: 1, present: true, updatedAt: 'then', ...draft } : null;
   const stored = state ? { ...state, draftEpoch: EPOCH } : null;
   // The fixed-record keys taken, in order; `owner` is the open transaction, so a key outside one is refused.
@@ -97,8 +97,8 @@ function fixture({ state = STATE,
       if (key !== null) { await locks.acquire(owner, key); keys.push(key); return [{ locked: '' }]; }
       if (sql.includes('FROM "StudyState"')) return stored ? [stored] : [];
       if (sql.includes('FROM "Report" WHERE')) return report ? [report] : [];
-      // The caller's own row (by author) before the forced release's read of every present draft of the study.
-      if (sql.includes('FROM "ReportDraft"') && sql.includes('AND author')) return row ? [row] : [];
+      // The caller's own row (by its account) before the forced release's read of every present draft of the study.
+      if (sql.includes('FROM "ReportDraft"') && sql.includes('AND "authorSub" =')) return row && row.authorSub === values[1] ? [row] : [];
       if (sql.includes('SELECT uid, author')) return drafts ?? [];
       if (sql.includes('octet_length')) return [{ bytes: bytes ?? Buffer.byteLength(String(values[0] ?? ''), 'utf8') }];
       throw new Error('unexpected raw query: ' + sql);
@@ -112,8 +112,11 @@ function fixture({ state = STATE,
     // draft is recorded as `reportDraft.upsert` with what it stored (`create` and `update` name the same stored row);
     // one that leaves none (commit, clear, forced release) as `reportDraft.deleteMany`.
     studyGroupMember: { findMany: async () => [] },
+    reportDraftPurposeEnd: { findFirst: async () => null },
     reportDraft: new Proxy({}, { get: (_target, method) => async a => {
-      if (method === 'findUnique') return row;
+      // The caller's own row by its account (findFirst), or a record id probe by (uid, author) (findUnique).
+      if (method === 'findUnique') return row && (!a?.where?.uid_author || a.where.uid_author.author === row.author) ? row : null;
+      if (method === 'findFirst') return row && (!a?.where?.authorSub || a.where.authorSub === row.authorSub) ? row : null;
       const data = a.data ?? a.create ?? a.update;
       if (data.present === false) { writes.push('reportDraft.deleteMany'); return method === 'updateMany' ? { count: 1 } : { ...data }; }
       if (failWith) throw failWith;
@@ -142,7 +145,8 @@ function fixture({ state = STATE,
     },
     studyState: { findMany: async () => stored ? [stored] : [], findUnique: async () => stored },
     report: { findUnique: async () => report },
-    reportDraft: { findUnique: async () => row },
+    reportDraft: { findUnique: async () => row, findFirst: async a => (row && (!a?.where?.authorSub || a.where.authorSub === row.authorSub) ? row : null) },
+    reportDraftPurposeEnd: { findFirst: async () => null },
     auditLog: { create: async a => { audits.push(a.data); return a.data; } },
   };
   // WORKLIST-SPLIT-UID: the request's source observation answers one resource per UID here.

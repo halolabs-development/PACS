@@ -127,14 +127,12 @@ export class CriticalResultService {
     try { return rightsUser(await this.prisma.memberRights.findUnique({ where: { sub } })); } catch { throw unavailable(); }
   }
 
-  /** The report picker stores roster ids; only an unambiguous binding to a subject identifies its readers. */
-  private recipientReadState(state: any, roster: { id: string; sub: string }[]) {
-    const subject = (actor: string) => {
-      const matches = roster.filter(user => user.id === actor);
-      return matches.length === 1 ? matches[0].sub : null;
-    };
-    return { ...state, preDoc: null, preReviewer: null, preDocSub: state?.preDocSub ?? subject(state?.preDoc),
-      preReviewerSub: state?.preReviewerSub ?? subject(state?.preReviewer) };
+  /**
+   * The Preliminary pair as readers: the stored accounts only (owner-identity.ts). A designation without an account is
+   * nobody's - it is never matched again by the email or username someone has now.
+   */
+  private recipientReadState(state: any) {
+    return { ...state, preDoc: null, preReviewer: null, preDocSub: state?.preDocSub ?? null, preReviewerSub: state?.preReviewerSub ?? null };
   }
 
   /** 원본 신원 한 건(§3.2). 트랜잭션 밖에서만 부른다. 영상 저장·전송·변경 호출은 없다. */
@@ -270,14 +268,14 @@ export class CriticalResultService {
   /** 머리 판 = ReportVersion(uid, Report.version) 한 행의 번호·action·작성자·시각. Report의 본문 칸은 읽지 않는다. */
   private async head(tx: any, uid: string): Promise<Head> {
     // headContent: the head version stored text, a structured item or a drawing (an empty head is nobody's work to keep).
-    const rows: any[] = await tx.$queryRaw`SELECT r.version AS "headVersion",v.action AS "headAction",v.author AS "headAuthor",v.at AS "headAt",
+    const rows: any[] = await tx.$queryRaw`SELECT r.version AS "headVersion",v.action AS "headAction",v.author AS "headAuthor",v."authorSub" AS "headAuthorSub",v.at AS "headAt",
         (COALESCE(v.findings,'')<>'' OR COALESCE(v.conclusion,'')<>'' OR COALESCE(v.recommendation,'')<>''
           OR CASE WHEN jsonb_typeof(v.structured)='array' THEN jsonb_array_length(v.structured)>0 ELSE false END
           OR CASE WHEN jsonb_typeof(v.drawings)='array' THEN jsonb_array_length(v.drawings)>0 ELSE false END) AS "headContent"
       FROM "Report" r LEFT JOIN "ReportVersion" v ON v.uid=r.uid AND v.version=r.version WHERE r.uid=${uid}`;
     const row = rows[0];
     if (!row || !Number.isSafeInteger(row.headVersion) || row.headVersion < 1) return null;
-    return { version: row.headVersion, action: row.headAction ?? null, author: row.headAuthor ?? null, at: row.headAt ?? null,
+    return { version: row.headVersion, action: row.headAction ?? null, author: row.headAuthor ?? null, authorSub: row.headAuthorSub ?? null, at: row.headAt ?? null,
       content: row.headContent !== false };
   }
 
@@ -288,7 +286,7 @@ export class CriticalResultService {
    */
   private async pinRefusal(tx: any, uid: string, sourceVersion: number, head: Head, state: any, c: Caller): Promise<Refusal | null> {
     // The state table (report-visibility.ts): another physician's unsigned head is not theirs to send.
-    const refusal = sourceRefusal({ sourceVersion, head, senderReadable: legacyReadable(state, c.actor, c.sub) && senderReadsHead(state, head, c.actor) });
+    const refusal = sourceRefusal({ sourceVersion, head, senderReadable: legacyReadable(state, c.actor, c.sub) && senderReadsHead(state, head, c) });
     if (refusal || !head) return refusal;
     if(!await this.readableBy(c,uid,tx,sourceVersion))return {status:403,code:CODE.SOURCE_FORBIDDEN};
     const rows: any[] = await tx.$queryRaw`SELECT count(*)::int AS beyond FROM "ReportVersion"
@@ -430,12 +428,7 @@ export class CriticalResultService {
     if (!cls || !subject) throw recipientInvalid();
     const visible = await this.readableBy(subject, uid, tx);
     // Legacy rows use DB identity only. A missing/ambiguous label cannot be reassigned by a provider outage.
-    let readState = state;
-    if (state?.rs === 'P' && (state.preDocSub == null || state.preReviewerSub == null)) {
-      const actors = [state.preDoc, state.preReviewer].filter(Boolean);
-      const rows = await tx.memberRights.findMany({ where: { OR: [{ email: { in: actors } }, { username: { in: actors } }] } });
-      readState = this.recipientReadState(state, rows.map(row => ({ id: row.email || row.username, sub: row.sub })));
-    }
+    const readState = this.recipientReadState(state);
     const kase = createCase({ cls, visible, head, state: readState, actor: userActor(recipient), sub });
     if (kase !== 'C2' && kase !== 'R2') throw cannotRead();
     return cls;
@@ -471,12 +464,11 @@ export class CriticalResultService {
       if (await this.visibleStudy(tx, uid, c, state, studyMissing) !== institution) throw unavailable();
       const head = await this.head(tx, uid);
       const pinnable = !!head && CRITICAL_RESULT_PINNABLE_ACTIONS.includes(head.action as string);
-      const readable = legacyReadable(state, c.actor, c.sub) && senderReadsHead(state, head, c.actor) && !!head && await this.readableBy(c,uid,tx,head.version);
+      const readable = legacyReadable(state, c.actor, c.sub) && senderReadsHead(state, head, c) && !!head && await this.readableBy(c,uid,tx,head.version);
       const recipients: any[] = [];
       if (pinnable && readable) for (const x of candidates) {
-        const roster = members.map(user => ({ id: userActor(user), sub: user.id }));
         const kase = createCase({ cls: x.cls, visible: await this.readableBy(x.subject, uid, tx), head,
-          state: this.recipientReadState(state, roster), actor: userActor(x.user), sub: x.user.id });
+          state: this.recipientReadState(state), actor: userActor(x.user), sub: x.user.id });
         if (kase === 'C2' || kase === 'R2') recipients.push({ sub: x.user.id, actor: userActor(x.user), name: userName(x.user), role: x.cls });
       }
       return { state, head, pinnable, readable, recipients };
@@ -811,7 +803,7 @@ export class CriticalResultService {
           AND cr.id=ANY(${readableIds}::uuid[])
           AND NOT (cr."sourceVersion"=COALESCE(r.version,0) AND CASE WHEN ${clinician}
             THEN NOT (s.rs='A' AND COALESCE(hv.action=ANY(ARRAY['approve','amend','addendum']::text[]),false) AND COALESCE(r.version,0)>0)
-            ELSE (s.rs='P' AND NOT (COALESCE(CASE WHEN s."preDocSub" IS NOT NULL THEN s."preDocSub"=${c.sub} ELSE s."preDoc"=${c.actor} END,false) OR COALESCE(CASE WHEN s."preReviewerSub" IS NOT NULL THEN s."preReviewerSub"=${c.sub} ELSE s."preReviewer"=${c.actor} END,false))) END)
+            ELSE (s.rs='P' AND NOT (COALESCE(s."preDocSub"=${c.sub},false) OR COALESCE(s."preReviewerSub"=${c.sub},false))) END)
           AND (${stateValue}::text='all' OR cr.state::text=${stateValue}::text)
           AND (cr."createdAt",cr.id)<((${before}::timestamptz AT TIME ZONE 'UTC'),${beforeId}::uuid)
         ORDER BY cr."createdAt" DESC,cr.id DESC LIMIT 51`;
@@ -822,7 +814,7 @@ export class CriticalResultService {
           AND cr.id=ANY(${readableIds}::uuid[])
           AND NOT (cr."sourceVersion"=COALESCE(r.version,0) AND CASE WHEN ${clinician}
             THEN NOT (s.rs='A' AND COALESCE(hv.action=ANY(ARRAY['approve','amend','addendum']::text[]),false) AND COALESCE(r.version,0)>0)
-            ELSE (s.rs='P' AND NOT (COALESCE(CASE WHEN s."preDocSub" IS NOT NULL THEN s."preDocSub"=${c.sub} ELSE s."preDoc"=${c.actor} END,false) OR COALESCE(CASE WHEN s."preReviewerSub" IS NOT NULL THEN s."preReviewerSub"=${c.sub} ELSE s."preReviewer"=${c.actor} END,false))) END)
+            ELSE (s.rs='P' AND NOT (COALESCE(s."preDocSub"=${c.sub},false) OR COALESCE(s."preReviewerSub"=${c.sub},false))) END)
           AND cr.state::text='created'`;
       return { rows: await this.reportScopes(tx, c, rows), pending: counted[0]?.pending ?? 0 };
     }, true);

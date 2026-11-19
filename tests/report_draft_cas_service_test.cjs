@@ -380,7 +380,7 @@ async function world() {
         author: REVIEWER.actor, citations: [] } });
     }
     // A present draft holds its work (CD-09-P ReportDraft_work_check), written for the result this study's next commit makes.
-    if (draft) await base.reportDraft.create({ data: { uid, author: A.actor, findings: 'SYN first draft', conclusion: '',
+    if (draft) await base.reportDraft.create({ data: { uid, author: A.actor, authorSub: A.sub, findings: 'SYN first draft', conclusion: '',
       recommendation: '', baseVersion: rs === 'A' && !staleBase ? 1 : 0, revision: 1, present: true,
       workUnit: 'disposal:' + randomUUID(), workSince: new Date(), workIntent: rs === 'A' ? 'addendum' : 'approve' } });
     return uid;
@@ -749,9 +749,9 @@ for (const ender of ['clear', 'discard', 'approve']) {
 test('D04 force-discard archives present drafts, advances their owners, rotates the epoch; every older boundary is refused', async () => {
   const w = await world();
   const uid = await w.study();
-  await w.base.reportDraft.create({ data: { uid, author: B.actor, findings: 'SYN draft of b', revision: 4, present: true,
+  await w.base.reportDraft.create({ data: { uid, author: B.actor, authorSub: B.sub, findings: 'SYN draft of b', revision: 4, present: true,
     workUnit: 'disposal:' + randomUUID(), workSince: new Date(), workIntent: 'approve' } });
-  await w.base.reportDraft.create({ data: { uid, author: REVIEWER.actor, revision: 2, present: false } });
+  await w.base.reportDraft.create({ data: { uid, author: REVIEWER.actor, authorSub: REVIEWER.sub, revision: 2, present: false } });
   const epoch = await w.epoch(uid);
   const stale = { a: `${epoch}:1`, b: `${epoch}:4`, unseen: `${epoch}:0` };
   const forced = await w.send('F', 'force', { as: ADMIN, uid, body: { expectedOwner: ownerOf(ADMIN), expectedEpoch: epoch } });
@@ -881,8 +881,9 @@ test('D05 no reassignment: a write carrying one owner never lands in another acc
     assert.deepEqual(brief(await w.send('X', route, { as: B, sid: sidB, uid, body })),
       { ok: false, status: 409, code: 'REPORT_DRAFT_OWNER_CHANGED' }, kind);
   }
-  // each part of the owner is compared: the same subject in another institution, another subject with the same author
-  for (const forged of [{ ...ownerOf(A), institution: OTHER }, { ...ownerOf(A), sub: B.sub }, { ...ownerOf(A), author: B.actor }]) {
+  // the owner is the account: the same subject in another institution, another subject with the same author. The author
+  // alone (the login the document was opened under) is not compared - the account's email may have changed since.
+  for (const forged of [{ ...ownerOf(A), institution: OTHER }, { ...ownerOf(A), sub: B.sub }]) {
     const body = { ...request('put', A, { token: `${epoch}:1`, head: 0, mark: 'old' })[1], expectedOwner: forged };
     assert.deepEqual(brief(await w.send('X', 'put', { as: A, uid, body })), { ok: false, status: 409, code: 'REPORT_DRAFT_OWNER_CHANGED' });
   }

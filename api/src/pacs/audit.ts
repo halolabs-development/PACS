@@ -5,7 +5,7 @@
 import type { StudyAccessService } from '../study-access.service';
 import { NotFoundException } from '@nestjs/common';
 import type { PrismaService } from '../prisma.service';
-import { noteTransactionError, dump, parse, visibleHolder, visibleDraftSummary } from './values';
+import { noteTransactionError, dump, parse, recordedHolder, recordedDraftSummary } from './values';
 import { inst } from './access';
 import type { Caller, PacsAccess } from './access';
 
@@ -60,13 +60,13 @@ export class PacsAudit {
     const rows = selected.map(({ managingInstitution, ...row }) => {
       if (row.action === 'report.draft.force-discard') {
         const detail = parse(row.detail) ?? {};
-        return { ...row, detail: dump({ ...detail, drafts: visibleDraftSummary(detail.drafts ?? [], c) }) };
+        return { ...row, detail: dump({ ...detail, drafts: recordedDraftSummary(detail.drafts ?? [], c) }) };
       }
       if (row.action !== 'hold.force-release') return row;
       // A local administrator can release a foreign writer's hold. Keep the raw audit,
       // but the institution-scoped action must not reveal that writer in its response.
-      const { holderInstitutionId, ...detail } = parse(row.detail) ?? {};
-      return { ...row, detail: dump({ ...detail, holder: visibleHolder({ holder: detail.holder, holderInstitutionId }, c) }) };
+      const { holderInstitutionId, holderSub, ...detail } = parse(row.detail) ?? {};
+      return { ...row, detail: dump({ ...detail, holder: recordedHolder({ holder: detail.holder, holderInstitutionId, holderSub }, c) }) };
     });
     return { rows, managing: selected.map(row => row.managingInstitution ?? null) };
   }

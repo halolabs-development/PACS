@@ -51,7 +51,7 @@ test('exam scope membership is immutable and a competing Unmerge observes a draf
     const writer = db.$transaction(async tx=>{
       await resolveExamScope(tx,access,caller,{uid:a,purpose:'current',phase:'write',prepared});
       acquired(); await proceed;
-      await tx.reportDraft.create({data:{uid:a,author:caller.actor,groupId:id,present:true,findings:'SYN GROUP DRAFT',
+      await tx.reportDraft.create({data:{uid:a,author:caller.actor,authorSub:caller.sub,groupId:id,present:true,findings:'SYN GROUP DRAFT',
         workUnit:'disposal:'+randomUUID(),workSince:new Date(),workIntent:'approve'}});
     },{timeout:15000});
     await locked;
@@ -368,7 +368,7 @@ test('actual HTTP report approval/reset and ledger failure preserve exact versio
     // Preliminary (P): the existing rule - only its two readers, never a bypass of the hold.
     const prelim = await study('1.2.840.9999.46');
     await witness.studyState.update({ where: { uid: prelim.uid }, data: { rs: 'P', preDoc: second.author, preDocSub: second.sub,
-      preReviewer: third.author, preReviewerSub: third.sub, holder: second.author, holderInstitutionId: institution, heldAt: new Date() } });
+      preReviewer: third.author, preReviewerSub: third.sub, holder: second.author, holderSub: second.sub, holderInstitutionId: institution, heldAt: new Date() } });
     for (const reason of [undefined, '합성 정정']) assert.notEqual((await resetByFirst(prelim.uid, reason)).status, 201);
     assert.equal((await witness.studyState.findUnique({ where: { uid: prelim.uid } })).rs, 'P');
 

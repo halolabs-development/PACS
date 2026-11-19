@@ -57,7 +57,7 @@ export class PacsClinician {
     const uids: string[] = list.studies.map((row: any) => row.uid);
     const current = !uids.length ? [] : await this.prisma.$queryRaw<any[]>`
       SELECT s.uid, s."institutionId", s."teleInstitutionId", s.rs, s."repDoc", s.confirm,
-        COALESCE(r.version, 0) AS version, v.action, r.findings, r.conclusion, r.recommendation, r."groupId", r."updatedBy"
+        COALESCE(r.version, 0) AS version, v.action, r.findings, r.conclusion, r.recommendation, r."groupId", r."updatedBy", r."updatedBySub"
       FROM "StudyState" s
       LEFT JOIN "Report" r ON r.uid = s.uid
       LEFT JOIN "ReportVersion" v ON v.uid = r.uid AND v.version = r.version
@@ -254,7 +254,7 @@ export class PacsClinician {
     const uids: string[] = window.rows.map((row: any) => row.uid);
     const current = !uids.length ? [] : await this.prisma.$queryRaw<any[]>`
       SELECT s.uid, s."institutionId", s."teleInstitutionId", s.rs, s."repDoc", s.confirm,
-        COALESCE(r.version, 0) AS version, v.action, r.findings, r.conclusion, r.recommendation, r."groupId", r."updatedBy"
+        COALESCE(r.version, 0) AS version, v.action, r.findings, r.conclusion, r.recommendation, r."groupId", r."updatedBy", r."updatedBySub"
       FROM "StudyState" s
       LEFT JOIN "Report" r ON r.uid = s.uid
       LEFT JOIN "ReportVersion" v ON v.uid = r.uid AND v.version = r.version

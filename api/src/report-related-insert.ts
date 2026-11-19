@@ -8,6 +8,7 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import type { DraftOwner } from './pacs/values';
+import { sameAccount } from './owner-identity';
 
 /** 요청 digest의 첫 칸. 직렬화 규칙을 바꾸면 이 값도 바꾼다 — 옛 영수증과 새 요청이 우연히 같은 digest가 되지 않게. */
 export const RELATED_INSERT_SCHEMA = 'related-insert-v1';
@@ -184,8 +185,19 @@ export function relatedInsertionText(version: Record<SourceField, unknown>, part
 }
 
 /** 영수증 행이 이 owner·이 Target의 것인가. 다른 사람·다른 검사의 행은 그 내용을 한 칸도 답하지 않는다. */
+// Whose receipt it is follows the account (owner-identity.ts): `ownerAuthor` keeps the email the request was made under.
 export const relatedOwnReceipt = (row: any, owner: DraftOwner, uid: string) => row.ownerInstitution === owner.institution
-  && row.ownerSub === owner.sub && row.ownerAuthor === owner.author && row.targetUid === uid;
+  && sameAccount(row.ownerSub, owner) && row.targetUid === uid;
+
+/**
+ * The request digest to compare with a receipt of the same account: the request as it was made, under the email the receipt
+ * names (the account's email may have changed since). Another account's receipt is never compared.
+ */
+export function relatedReceiptHash(row: any, r: RelatedInsertRequest, owner: DraftOwner, expected: { epoch: string; revision: number },
+    proposal: RelatedProposal, requestHash: string): string {
+  return !row || row.ownerAuthor === owner.author ? requestHash
+    : relatedRequestHash(r, { ...owner, author: row.ownerAuthor }, expected, proposal);
+}
 
 /** 영수증 행이 바로 이 고정 요청의 것인가. digest만 믿지 않고 행에 남은 결속 칸도 함께 대조한다. */
 export function relatedSameBinding(row: any, owner: DraftOwner, uid: string, r: RelatedInsertRequest,

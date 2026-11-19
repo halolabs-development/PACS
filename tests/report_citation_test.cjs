@@ -63,12 +63,12 @@ const EPOCH = '0a1b2c3d-0000-4000-8000-00000000000a';
 // own scheduling of the key is tests/emr/d/related_boundaries_pg_test.cjs.
 const { TransactionLocks, fixedRecord, fixedRecordKey } = require('./transaction_locks.cjs');
 
-function fixture({ state = STATE, report = { version: 4, updatedBy: CALLER.actor, findings: 'HEAD', conclusion: '', recommendation: '' },
+function fixture({ state = STATE, report = { version: 4, updatedBy: CALLER.actor, updatedBySub: CALLER.sub, findings: 'HEAD', conclusion: '', recommendation: '' },
   versions = new Map(), draft = null, readable = READABLE, readableAll = false, bytes = null, fail = null,
   refuseTxRequire = false, checkError = fail_error() } = {}) {
   const writes = [], audits = [], raw = [], calls = [], created = [];
   // S7-U5: the caller's draft row as the store holds it, with its boundary; the study row carries the draft epoch.
-  let row = draft ? { uid: UID, author: CALLER.actor, findings: '', conclusion: '', recommendation: '', baseVersion: 0, citations: null,
+  let row = draft ? { uid: UID, author: CALLER.actor, authorSub: CALLER.sub, findings: '', conclusion: '', recommendation: '', baseVersion: 0, citations: null,
     structured: null, revision: 1, present: true, updatedAt: 'then', ...draft } : null;
   const stored = { ...state, draftEpoch: EPOCH };
   // The fixed-record keys taken, in order; `owner` is the open transaction, so a key outside one is refused.
@@ -111,7 +111,9 @@ function fixture({ state = STATE, report = { version: 4, updatedBy: CALLER.actor
     // `reportDraft.deleteMany` - the names the cases below have always used for "the draft is stored / is gone".
     studyGroupMember: { findMany: async () => [] },
     reportDraft: new Proxy({}, { get: (_target, method) => async a => {
-      if (method === 'findUnique') { calls.push({ call: 'reportDraft.findUnique', tx: true }); return row; }
+      // The caller's own row by its account (findFirst), or a record id probe by (uid, author) (findUnique).
+      if (method === 'findUnique') { calls.push({ call: 'reportDraft.findUnique', tx: true }); return row && (!a?.where?.uid_author || a.where.uid_author.author === row.author) ? row : null; }
+      if (method === 'findFirst') { calls.push({ call: 'reportDraft.findFirst', tx: true }); return row && (!a?.where?.authorSub || a.where.authorSub === row.authorSub) ? row : null; }
       if (fail === 'upsert') throw checkError;
       const data = a.data ?? a.create ?? a.update;
       if (data.present === false) writes.push('reportDraft.deleteMany');
@@ -135,6 +137,7 @@ function fixture({ state = STATE, report = { version: 4, updatedBy: CALLER.actor
         writes.push('reportVersion.createMany'); created.push({ call: 'many', data: a.data }); },
     },
     auditLog: { create: async a => { audits.push(a.data); return a.data; } },
+    reportDraftPurposeEnd: { findFirst: async () => null },
   };
   const prisma = {
     studyGroupMember: { findMany: async () => [] },
@@ -144,7 +147,9 @@ function fixture({ state = STATE, report = { version: 4, updatedBy: CALLER.actor
       try { return await work(tx); } finally { locks.release(mine); owner = null; } },
     studyState: { findMany: async () => stored ? [stored] : [], findUnique: async () => { calls.push({ call: 'studyState', tx: false }); return stored; } },
     report: { findUnique: async () => report },
-    reportDraft: { findUnique: async () => { calls.push({ call: 'reportDraft.findUnique', tx: false }); return row; } },
+    reportDraft: { findUnique: async () => { calls.push({ call: 'reportDraft.findUnique', tx: false }); return row; },
+      findFirst: async a => { calls.push({ call: 'reportDraft.findFirst', tx: false }); return row && (!a?.where?.authorSub || a.where.authorSub === row.authorSub) ? row : null; } },
+    reportDraftPurposeEnd: { findFirst: async () => null },
     reportVersion: { findMany: async a => { calls.push({ call: 'versions', args: a });
       return [...versions.values()].map(version => a.select
         ? Object.fromEntries(Object.entries(version).filter(([key]) => a.select[key])) : { ...version }); } },

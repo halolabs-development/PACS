@@ -11,6 +11,7 @@ import { LocalReadResponse } from './emr-viewing/local-read';
 import { consumerSource, viewerSources } from './emr-viewing/consumer-read';
 import { prepareExamRead, resolveExamScope, scopeIncludesSeries, examScopeView, examScopeChanged, examParentAccess } from './exam-merge.service';
 import { versionDrawings, draftDrawings, effectiveDrawingIds, drawingEntries } from './image-report';
+import { draftOf } from './owner-identity';
 
 const member = (req: any): Caller => ({ sub: req.sub, actor: req.actor, roles: req.roles ?? [],
   institution: req.institution ?? null, kind: req.kind ?? 'member' });
@@ -66,7 +67,7 @@ export class ReportPreviewController {
     const query=caller.query??{};
     if(query.version!==undefined&&(!/^[1-9]\d*$/.test(String(query.version))||!Number.isSafeInteger(Number(query.version))))throw new BadRequestException('판 번호를 확인하세요');
     if(query.draft!==undefined&&query.draft!=='1'||query.draft&&query.version!==undefined)throw new BadRequestException('미리보기 대상을 하나만 선택하세요');
-    const selected=async(db:any)=>query.draft?db.reportDraft.findUnique({where:{uid_author:{uid,author:caller.actor}}})
+    const selected=async(db:any)=>query.draft?draftOf(db,uid,caller)
       :query.version!==undefined?db.reportVersion.findUnique({where:{uid_version:{uid,version:Number(query.version)}}}):db.report.findUnique({where:{uid}});
     const initial=await selected(this.prisma);
     if((query.draft&&!initial?.present||query.version!==undefined&&!initial))throw new BadRequestException('미리보기 대상을 찾을 수 없습니다');
@@ -123,9 +124,9 @@ export class ReportPreviewController {
       const sources = [consumerSource('study-metadata', uid, state.institutionId, uid, null, ['study'], identity),
         ...viewerSources(uid, state.institutionId, body.keys, ['keys'], identity)];
       if (report && !withheld) sources.push(consumerSource(query.draft?'private-draft':query.version?'report-version':'report-head', uid, state.institutionId,
-        query.draft?JSON.stringify([uid,caller.actor]):query.version?String(report.id):uid, query.draft?report.revision:report.version, ['report'], identity));
+        query.draft?JSON.stringify([uid,report.author]):query.version?String(report.id):uid, query.draft?report.revision:report.version, ['report'], identity));
       if (report && (body as any).drawings) sources.push(consumerSource(query.draft?'private-draft':query.version?'report-version':'report-head', uid, state.institutionId,
-        query.draft?JSON.stringify([uid,caller.actor]):query.version?String(report.id):uid, query.draft?report.revision:report.version, ['drawings'], identity));
+        query.draft?JSON.stringify([uid,report.author]):query.version?String(report.id):uid, query.draft?report.revision:report.version, ['drawings'], identity));
       return new LocalReadResponse(body, sources);
     }, { isolationLevel: 'RepeatableRead', maxWait: 2000, timeout: 5000 });
   }

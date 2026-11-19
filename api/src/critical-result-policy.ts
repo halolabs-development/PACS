@@ -1,6 +1,7 @@
 import { canReadPreliminary } from './preliminary-reader';
 import { createHash } from 'node:crypto';
 import { CLINICIAN_ROLE, clinicianFinal } from './clinician-policy';
+import { sameAccount } from './owner-identity';
 
 /**
  * S7-U1a 중요 결과 전달(계약 S7-U1p §3~§8, §11)의 순수 판정. DB·Keycloak·Orthanc·Nest 예외를 모른다 — 서비스가 읽은
@@ -24,7 +25,7 @@ export const CRITICAL_RESULT_TRANSITIONS: Readonly<Record<string, { from: string
 
 export type RecipientClass = 'clinician' | 'radiologist';
 export type Refusal = { status: 400 | 403 | 404 | 409 | 503; code: string; id?: string; replacedBy?: string };
-export type Head = { version: number; action: string | null; author?: string | null; at?: any; content?: boolean } | null;
+export type Head = { version: number; action: string | null; author?: string | null; authorSub?: string | null; at?: any; content?: boolean } | null;
 type StudyReadState = { rs?: string | null; preDoc?: string | null; preReviewer?: string | null; preDocSub?: string | null; preReviewerSub?: string | null };
 type RecipientCase = {
   case: 'C2' | 'C3' | 'C4' | 'C5' | 'R2' | 'R3' | 'R4' | 'R5';
@@ -130,10 +131,11 @@ export function recipientSees(record: RecordSides, state: StudyScopeState | null
  * another physician's unsigned head (a Save or Defer outside a Preliminary) is not theirs to send. The recipients see what
  * the sender chose to send.
  */
-export function senderReadsHead(state: StudyReadState | null | undefined, head: Head, actor: string): boolean {
+export function senderReadsHead(state: StudyReadState | null | undefined, head: Head, sender: { sub?: string | null }): boolean {
   // An empty head (no text, structured item or drawing stored) is nobody's work: any eligible sender may send, as before.
   if (!head || head.content === false || state?.rs === 'P' || !['W', 'T', 'H'].includes(state?.rs as string)) return true;
-  return !['save', 'defer'].includes(head.action as string) || head.author === actor;
+  // Whose unsigned text it is follows the account that wrote it (owner-identity.ts), never the email string.
+  return !['save', 'defer'].includes(head.action as string) || sameAccount(head.authorSub, sender);
 }
 
 export function legacyReadable(state: StudyReadState | null | undefined, actor: string, sub?: string): boolean {

@@ -49,7 +49,7 @@ function fixture({ state = STATE, head = HEAD, draft = null } = {}) {
   let owner = null;
   const record = (list, value) => { list.push(value); return value; };
   // The caller's draft row as the store holds it (the fixture's `draft` names only its base version).
-  let row = draft ? { uid: UID, author: CALLER.actor, findings: 'SYN DRAFT', conclusion: '', recommendation: '', citations: null,
+  let row = draft ? { uid: UID, author: CALLER.actor, authorSub: CALLER.sub, findings: 'SYN DRAFT', conclusion: '', recommendation: '', citations: null,
     structured: null, revision: 1, present: true, updatedAt: new Date(0), ...draft } : null;
   const stored = { ...state, draftEpoch: EPOCH };
   const tx = {
@@ -74,7 +74,9 @@ function fixture({ state = STATE, head = HEAD, draft = null } = {}) {
     // base version, a write that leaves no draft (commit, clear) is a tombstone.
     studyGroupMember: { findMany: async () => [] },
     reportDraft: new Proxy({}, { get: (_target, method) => async a => {
-      if (method === 'findUnique') { reads.push('reportDraft.findUnique'); return row; }
+      // The caller's own row by its account (findFirst), or a record id probe by (uid, author) (findUnique).
+      if (method === 'findUnique') { reads.push('reportDraft.findUnique'); return row && (!a?.where?.uid_author || a.where.uid_author.author === row.author) ? row : null; }
+      if (method === 'findFirst') { reads.push('reportDraft.findFirst'); return row && (!a?.where?.authorSub || a.where.authorSub === row.authorSub) ? row : null; }
       const data = a.data ?? a.create ?? a.update;
       record(writes, data.present === false ? 'reportDraft.tombstone' : 'reportDraft.store:base' + data.baseVersion);
       row = { ...(row ?? { uid: UID, author: CALLER.actor }), ...data, updatedAt: new Date(0) };
@@ -88,6 +90,7 @@ function fixture({ state = STATE, head = HEAD, draft = null } = {}) {
       create: async a => record(writes, `reportVersion.create:v${a.data.version}:${a.data.action}`),
     },
     auditLog: { create: async a => { audits.push(a.data); return a.data; } },
+    reportDraftPurposeEnd: { findFirst: async () => null },
   };
   const prisma = {
     studyGroupMember: { findMany: async () => [] },
@@ -98,7 +101,8 @@ function fixture({ state = STATE, head = HEAD, draft = null } = {}) {
     },
     studyState: { findMany: async () => stored ? [stored] : [], findUnique: async () => stored },
     report: { findUnique: async () => head },
-    reportDraft: { findUnique: async () => row },
+    reportDraft: { findUnique: async () => row, findFirst: async a => (row && (!a?.where?.authorSub || a.where.authorSub === row.authorSub) ? row : null) },
+    reportDraftPurposeEnd: { findFirst: async () => null },
     auditLog: { create: async a => { audits.push(a.data); return a.data; } },
   };
   // WORKLIST-SPLIT-UID: the request's source observation answers one resource per UID here.
@@ -168,7 +172,7 @@ test('callers without a draft, and drafts standing on the head, keep the existin
 test('the guard is addendum only — a stale draft still saves, defers and resets', async () => {
   for (const [action, rs, extra] of [['save', 'T', {}], ['defer', 'H', { reason: 'r' }], ['reset', 'W', { reason: 'r' }]]) {
     // An in-progress head (T, H) here is the caller's own Save: another reader's is not theirs to write over (report state table).
-    const f = fixture({ state: { ...STATE, rs }, head: { ...HEAD, updatedBy: CALLER.actor }, draft: { baseVersion: 2 } });
+    const f = fixture({ state: { ...STATE, rs }, head: { ...HEAD, updatedBy: CALLER.actor, updatedBySub: CALLER.sub }, draft: { baseVersion: 2 } });
     await f.svc.commitReport(UID, { action, baseVersion: 4, ...BODY, ...extra }, CALLER);
     assert.ok(f.writes.some(w => w.includes(`:${action}`)), `${action} must still commit`);
   }

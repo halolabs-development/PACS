@@ -11,7 +11,8 @@ const first = { id: 'a', name: 'CT & MR', searchId: 'own:1' };
 const absent = { id: 'b', name: 'Unavailable shared', searchId: 'shared:999' };
 const status = n => e => e.getStatus?.() === n;
 function fixture() {
-  let db = { collections: {}, filters: [{ id: 1, owner: caller().actor, name: 'Search', folder: '', cols: '{}' }] }, tail = Promise.resolve();
+  // A saved search belongs to its account: owner holds the account id (sub), not the login email.
+  let db = { collections: {}, filters: [{ id: 1, owner: caller().sub, name: 'Search', folder: '', cols: '{}' }] }, tail = Promise.resolve();
   const prisma = {
     $transaction(run) {
       const pending = tail.then(async () => {

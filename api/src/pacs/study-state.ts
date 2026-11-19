@@ -352,7 +352,7 @@ export class PacsStudyState {
   }
 
   private async response(tx:any,state:any,c:Caller) {
-    const uid=state.uid, stored=await tx.report.findUnique({where:{uid}}), draft=await this.access.myDraft(uid,c.actor,tx);
+    const uid=state.uid, stored=await tx.report.findUnique({where:{uid}}), draft=await this.access.myDraft(uid,c,tx);
     // Read in the transaction that wrote (and locked) the study row: the state and the head are of the same moment.
     const report=stored?(await withStoredExtras(tx,[stored]))[0]:stored;
     const readable=!report||await readableExamRecord(tx,this.studyAccess,c,uid,report);

@@ -16,6 +16,7 @@ import { applyStructureKeepList, isStructureEntry, projectStructure, structureAp
   structureIdList, structureItemKey, structureSameTextCounts, structureUnion, StructureInputError, STRUCTURE_CATALOG,
   REPORT_STRUCTURE_LIMITS, REPORT_STRUCTURE_SCHEMA } from '../report-structure';
 import { draftToken, refuseDestroyed, visibleDraftAuthor } from './values';
+import { draftOf } from '../owner-identity';
 import { assertHeadReadable, headForLock, storedVersionReadable, versionBodyReadable, versionClasses, inProgressRefusal } from '../report-visibility';
 import type { Caller, PacsAccess } from './access';
 import { reportVersionCitationsRead, reportVersionsRead } from '../emr-viewing/report-read';
@@ -357,7 +358,7 @@ export class PacsReportEvidence {
      */
     const rows = await tx.reportVersion.findMany({ where: { uid }, orderBy: { version: 'desc' },
       select: { id: true, uid: true, version: true, action: true, findings: true, conclusion: true,
-        recommendation: true, reason: true, author: true, at: true, drawings: true, groupId: true } });
+        recommendation: true, reason: true, author: true, authorSub: true, at: true, drawings: true, groupId: true } });
     // Merge Exam: a version written on an exam group says which studies it was written on; its text is shown only to a caller
     // who may read every one of them now. A version of the study alone keeps its shape (no group key).
     // Versions written on the same exam share one answer in this snapshot: it is resolved once, not once per version.
@@ -376,7 +377,8 @@ export class PacsReportEvidence {
     // discarded draft alone cannot establish that its author belongs to a side.
     const signers = new Set(scoped.filter(row => row.action !== 'discarded').map(row => row.author));
     const resets = new Map(scoped.filter(row => row.action === 'reset').map(row => [row.version, row.author]));
-    const shown = scoped.map(row => {
+    // The account id of each version stays here: it judges whose text it is (below), and is not shown.
+    const shown = scoped.map(({ authorSub, ...row }) => {
       if (row.action !== 'discarded') return row;
       // Historical copies share action=discarded. Reset writes this reason and
       // its following reset row atomically; adjacency alone could be an admin
@@ -384,7 +386,7 @@ export class PacsReportEvidence {
       const resetActor = resets.get(row.version + 1);
       const resetCopy = resetActor && row.reason === `판독 취소로 폐기 (취소자: ${resetActor})`;
       return { ...row,
-        author: signers.has(row.author) ? row.author : visibleDraftAuthor(row.author, c),
+        author: signers.has(row.author) ? row.author : visibleDraftAuthor(row.author, authorSub, c),
         reason: resetCopy ? row.reason : '관리자 강제 초안 해제' };
     });
     // The state table (report-visibility.ts): a Save/Defer version outside a Preliminary, and a discarded copy of one or of a
@@ -432,8 +434,7 @@ export class PacsReportEvidence {
       const report = await tx.report.findUnique({ where: { uid }, select: { version: true, groupId: true } });
       if (report) await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: report });
       const head = await this.versionCitations(tx, uid, report?.version ?? 0);
-      const draft = await tx.reportDraft.findUnique({
-        where: { uid_author: { uid, author: c.actor } }, select: { citations: true, revision: true, present: true, groupId: true } });
+      const draft = await draftOf(tx, uid, c, { author: true, citations: true, revision: true, present: true, groupId: true });
       if (draft?.present) await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: draft });
       // 같은 스냅숏의 세대 — 이 목록이 어느 경계의 것인지 화면이 알아야 유지 목록을 그 경계에 묶어 보낼 수 있다.
       const epoch = await tx.studyState.findUnique({ where: { uid }, select: { draftEpoch: true } });
@@ -466,7 +467,7 @@ export class PacsReportEvidence {
         draftRevision: draftToken(epoch.draftEpoch, draft?.revision ?? 0), measurementLines: true };
       return new LocalReadResponse(body, [
         ...(report ? [consumerSource('report-evidence', uid, prev.institutionId, uid, report.version, ['head'], sourceIdentity)] : []),
-        ...(draft?.present ? [consumerSource('private-draft', uid, prev.institutionId, JSON.stringify([uid, c.actor]), body.draftRevision, ['draft'], sourceIdentity)] : []),
+        ...(draft?.present ? [consumerSource('private-draft', uid, prev.institutionId, JSON.stringify([uid, draft.author]), body.draftRevision, ['draft'], sourceIdentity)] : []),
       ]);
     }, { isolationLevel: 'RepeatableRead', maxWait: 2000, timeout: 5000 });
   }
@@ -494,14 +495,13 @@ export class PacsReportEvidence {
       assertHeadReadable(state, await headForLock(tx, uid, state), c);
       const report = await tx.report.findUnique({ where: { uid }, select: { version: true, groupId: true } });
       const stored = report?.version ? await tx.reportVersion.findUnique({
-        where: { uid_version: { uid, version: report.version } }, select: { version: true, action: true, author: true, reason: true, drawings: true, groupId: true } }) : null;
+        where: { uid_version: { uid, version: report.version } }, select: { version: true, action: true, author: true, authorSub: true, reason: true, drawings: true, groupId: true } }) : null;
       // The report state table on the head version itself: another physician's Save of drawings alone keeps them too.
       const headRow = stored && await storedVersionReadable(tx, uid, stored, c) ? stored : null;
       const headScope = headRow ? await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: headRow }) : null;
       const head = versionDrawings(headRow?.drawings);
       if (headScope) await drawingEntries(tx, uid, head.map(d => d.id), headScope);
-      const draft = await tx.reportDraft.findUnique({
-        where: { uid_author: { uid, author: c.actor } }, select: { drawings: true, revision: true, present: true, workSince: true, groupId: true } });
+      const draft = await draftOf(tx, uid, c, { author: true, drawings: true, revision: true, present: true, workSince: true, groupId: true });
       const epoch = await tx.studyState.findUnique({ where: { uid }, select: { draftEpoch: true } });
       if (!epoch) throw new NotFoundException('검사를 찾을 수 없습니다');
       const mine = draftDrawings(draft?.present ? draft.drawings : null);
@@ -526,7 +526,7 @@ export class PacsReportEvidence {
         draftRevision: draftToken(epoch.draftEpoch, draft?.revision ?? 0) };
       return new LocalReadResponse(body, [
         ...(report ? [consumerSource('report-evidence', uid, prev.institutionId, uid, report.version, ['head'], sourceIdentity)] : []),
-        ...(draft?.present ? [consumerSource('private-draft', uid, prev.institutionId, JSON.stringify([uid, c.actor]), body.draftRevision, ['draft'], sourceIdentity)] : []),
+        ...(draft?.present ? [consumerSource('private-draft', uid, prev.institutionId, JSON.stringify([uid, draft.author]), body.draftRevision, ['draft'], sourceIdentity)] : []),
       ]);
     }, { isolationLevel: 'RepeatableRead', maxWait: 2000, timeout: 5000 });
   }
@@ -554,13 +554,12 @@ export class PacsReportEvidence {
       refuseDestroyed(state);
       // The newest version holding this drawing whose text this reader may read (the state table, report-visibility.ts):
       // another physician's Save does not show its drawing; an approved version that holds it still does.
-      const holding = await tx.$queryRaw<any[]>`SELECT version, "groupId", action, author, reason FROM "ReportVersion" WHERE uid = ${uid}
+      const holding = await tx.$queryRaw<any[]>`SELECT version, "groupId", action, author, "authorSub", reason FROM "ReportVersion" WHERE uid = ${uid}
         AND drawings @> jsonb_build_array(jsonb_build_object('id', ${id}::text)) ORDER BY version DESC`;
       const held: any[] = [];
       for (const row of holding) if (await storedVersionReadable(tx, uid, row, c)) { held.push(row); break; }
       if (!held.length) assertHeadReadable(state, await headForLock(tx, uid, state), c);
-      const draft = held.length ? null : await tx.reportDraft.findUnique({
-        where: { uid_author: { uid, author: c.actor } }, select: { drawings: true, present: true, revision: true, groupId: true } });
+      const draft = held.length ? null : await draftOf(tx, uid, c, { author: true, drawings: true, present: true, revision: true, groupId: true });
       if (!held.length && !(draft?.present && draftDrawings(draft.drawings)?.ids.includes(id)))
         throw new NotFoundException('그림을 찾을 수 없습니다');
       const scope = await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: held[0] ?? draft! });
@@ -573,7 +572,7 @@ export class PacsReportEvidence {
       const epoch = held.length ? null : await tx.studyState.findUnique({ where: { uid }, select: { draftEpoch: true } });
       return new LocalReadResponse(body, [held.length
         ? consumerSource('report-evidence', uid, prev.institutionId, uid, held[0].version, [], sourceIdentity)
-        : consumerSource('private-draft', uid, prev.institutionId, JSON.stringify([uid, c.actor]),
+        : consumerSource('private-draft', uid, prev.institutionId, JSON.stringify([uid, draft!.author]),
             draftToken(epoch!.draftEpoch, draft!.revision), [], sourceIdentity)]);
     }, { isolationLevel: 'RepeatableRead', maxWait: 2000, timeout: 5000 });
   }
@@ -611,9 +610,7 @@ export class PacsReportEvidence {
         select: { version: true, findings: true, conclusion: true, recommendation: true, groupId: true } });
       if (report) await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: report });
       const head = await this.versionStructured(tx, uid, report?.version ?? 0);
-      const stored = await tx.reportDraft.findUnique({
-        where: { uid_author: { uid, author: c.actor } },
-        select: { findings: true, conclusion: true, recommendation: true, structured: true, revision: true, present: true, groupId: true } });
+      const stored = await draftOf(tx, uid, c, { author: true, findings: true, conclusion: true, recommendation: true, structured: true, revision: true, present: true, groupId: true });
       if (stored?.present) await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: stored });
       const epoch = await tx.studyState.findUnique({ where: { uid }, select: { draftEpoch: true } });
       if (!epoch) throw new NotFoundException('검사를 찾을 수 없습니다');
@@ -629,7 +626,7 @@ export class PacsReportEvidence {
       if (!head.every(isStructureEntry) || !mine.every(isStructureEntry))
         return new LocalReadResponse({ version: report?.version ?? 0, unknown: true, head: null, draft: null, draftRevision }, [
           ...(report ? [consumerSource('report-head', uid, prev.institutionId, uid, report.version, [], sourceIdentity, ['version', 'unknown'])] : []),
-          ...(stored?.present ? [consumerSource('private-draft', uid, prev.institutionId, JSON.stringify([uid, c.actor]), draftRevision, [], sourceIdentity, ['draftRevision', 'unknown'])] : []),
+          ...(stored?.present ? [consumerSource('private-draft', uid, prev.institutionId, JSON.stringify([uid, stored.author]), draftRevision, [], sourceIdentity, ['draftRevision', 'unknown'])] : []),
         ]);
       const project = (entries: any[], body: any) => {
         const counts = structureSameTextCounts(entries);
@@ -640,7 +637,7 @@ export class PacsReportEvidence {
         head: project(head, report), draft: project(mine, draftRow), draftRevision };
       return new LocalReadResponse(body, [
         ...(report ? [consumerSource('report-evidence', uid, prev.institutionId, uid, report.version, ['head'], sourceIdentity)] : []),
-        ...(draftRow ? [consumerSource('private-draft', uid, prev.institutionId, JSON.stringify([uid, c.actor]), draftRevision, ['draft'], sourceIdentity)] : []),
+        ...(draftRow ? [consumerSource('private-draft', uid, prev.institutionId, JSON.stringify([uid, draftRow.author]), draftRevision, ['draft'], sourceIdentity)] : []),
       ]);
     }, { isolationLevel: 'RepeatableRead', maxWait: 2000, timeout: 5000 });
   }
@@ -689,7 +686,7 @@ export class PacsReportEvidence {
         where: { uid_version: { uid, version: want } },
         // action separates safety copies from committed provenance; it is not
         // returned. id likewise stays internal to the access record.
-        select: { id: true, version: true, action: true, author: true, reason: true, citations: true, findings: true, conclusion: true, recommendation: true, groupId: true },
+        select: { id: true, version: true, action: true, author: true, authorSub: true, reason: true, citations: true, findings: true, conclusion: true, recommendation: true, groupId: true },
       });
       // 없는 판을 「인용 없음」으로 답하면 그 자체가 거짓말이다.
       if (!row) throw new NotFoundException('그 판을 찾을 수 없습니다');
@@ -704,7 +701,7 @@ export class PacsReportEvidence {
       for (const found of await this.findings.readableFindings(tx, c, uid, ids)) readable.add(String(found.id));
       const answer = { version: want, actor: c.actor, entries: entries.map((entry, index) => {
         const insertedBy = row.action === 'discarded' && entry?.insertedBy
-          ? visibleDraftAuthor(entry.insertedBy, c) : entry?.insertedBy ?? null;
+          ? visibleDraftAuthor(entry.insertedBy, row.authorSub, c) : entry?.insertedBy ?? null;
         if (!readable.has(String(entry?.findingId ?? '')))
           return { field: entry?.field ?? null, insertedAt: entry?.insertedAt ?? null,
             insertedBy, state: SOURCE_UNAVAILABLE };

@@ -148,7 +148,10 @@ function storeDouble() {
         event(label, `read ${name}`);
         const [[key, dir] = []] = Object.entries(orderBy ?? {});
         const found = rows().filter(r => matches(r, where)).sort((a, b) => (key ? (a[key] < b[key] ? -1 : 1) * (dir === 'desc' ? -1 : 1) : 0));
-        return found[0] ? read(name, found[0], select) : null;
+        const out = found[0] ? read(name, found[0], select) : null;
+        // The caller's own draft is read by its account (findFirst): the same "after the read" hook as findUnique.
+        if (store.hooks.afterRead?.model === name) { const { fn } = store.hooks.afterRead; store.hooks.afterRead = null; await fn(); }
+        return out;
       },
       async findMany({ where, select } = {}) { event(label, `read ${name}`); return rows().filter(r => matches(r, where)).map(r => read(name, r, select)); },
       async create({ data, select }) {
@@ -210,9 +213,10 @@ function storeDouble() {
       if (store.lockedRows.has(values[0])) throw sqlError('55P03', `canceling statement due to lock timeout (${values[0]})`);
       return (t.studyState ?? []).filter(r => r.uid === values[0]).map(r => (m[1] === '*' ? copy(r) : { uid: r.uid }));
     }
-    if (/FROM "ReportDraft" WHERE uid = \? AND author = \? FOR UPDATE$/.test(sql)) {
+    // The caller's own draft row is found by its account (owner-identity.ts).
+    if (/FROM "ReportDraft" WHERE uid = \? AND "authorSub" = \? FOR UPDATE$/.test(sql)) {
       event(label, 'lock ReportDraft');
-      return (t.reportDraft ?? []).filter(r => r.uid === values[0] && r.author === values[1]).map(r => read('reportDraft', r));
+      return (t.reportDraft ?? []).filter(r => r.uid === values[0] && r.authorSub === values[1]).map(r => read('reportDraft', r));
     }
     if (/^SELECT \* FROM "ReportDraftInsertReceipt" WHERE "insertRequestId" = \?::uuid FOR UPDATE$/.test(sql)) {
       event(label, 'lock ReportDraftInsertReceipt');
@@ -332,17 +336,17 @@ function world({ source = SOURCE_LOW } = {}) {
   store.seed('report', { uid: TARGET, version: 1, findings: 'SYN target head findings', conclusion: 'SYN target head conclusion',
     recommendation: '', updatedBy: B.actor, updatedAt: now });
   store.seed('reportVersion', { uid: TARGET, version: 1, action: 'approve', findings: 'SYN target head findings',
-    conclusion: 'SYN target head conclusion', recommendation: '', author: B.actor, citations: null, structured: null, at: now });
-  store.seed('reportDraft', { uid: TARGET, author: A.actor, findings: 'SYN draft findings', conclusion: 'SYN draft conclusion\n',
+    conclusion: 'SYN target head conclusion', recommendation: '', author: B.actor, authorSub: B.sub, citations: null, structured: null, at: now });
+  store.seed('reportDraft', { uid: TARGET, author: A.actor, authorSub: A.sub, findings: 'SYN draft findings', conclusion: 'SYN draft conclusion\n',
     recommendation: 'SYN draft recommendation', baseVersion: 1, revision: 1, present: true, structured: null, updatedAt: now,
     citations: [{ v: 2, cid: CID, field: 'findings', findingId: '0f0f0f0f-0000-4000-8000-00000000000a', findingRevision: 1,
       sourceIndex: 0, insertedText: 'SYN draft findings', insertedAt: now.toISOString(), insertedBy: A.actor }] });
   store.seed('studyState', { uid: source, institutionId: INST, teleInstitutionId: null, rs: 'A', ss: 'Verified', em: 'N', holder: null,
     heldAt: null, preDoc: null, preDocSub: null, preReviewer: null, preReviewerSub: null, draftEpoch: randomUUID() });
-  store.seed('report', { uid: source, version: 2, ...PRIOR, updatedBy: B.actor, updatedAt: now });
+  store.seed('report', { uid: source, version: 2, ...PRIOR, updatedBy: B.actor, updatedBySub: B.sub, updatedAt: now });
   store.seed('reportVersion', { uid: source, version: 1, action: 'approve', findings: 'SYN prior v1', conclusion: '', recommendation: '',
-    author: B.actor, citations: null, structured: null, at: now });
-  store.seed('reportVersion', { uid: source, version: 2, action: 'addendum', ...PRIOR, author: B.actor, citations: null, structured: null, at: now });
+    author: B.actor, authorSub: B.sub, citations: null, structured: null, at: now });
+  store.seed('reportVersion', { uid: source, version: 2, action: 'addendum', ...PRIOR, author: B.actor, authorSub: B.sub, citations: null, structured: null, at: now });
   /** One request as the router hands it over; the answer is what the HTTP layer would send. */
   w.send = async (name, { as = A, uid = TARGET, body, query = {} }) => {
     const key = ROUTES[name];
@@ -502,10 +506,32 @@ test('W5API-04 the same ID with another binding is ID_REUSED: other text, other 
   }
 });
 
+test('W5API-04b a receipt is its account\'s: after the account\'s email changes the same request replays; another account given the old email gets ID_REUSED', async () => {
+  const w = world();
+  const body = insertBody(w);
+  assert.equal((await w.send('put', { body })).status, 200);
+  const before = w.snapshot();
+  // No screen changes an email yet: the caller's login email (actor) changes as an administrator's change would.
+  const renamed = { ...A, actor: 'syn-a-renamed@synthetic.test' };
+  const asOpened = await w.send('put', { as: renamed, body });   // the screen opened before the change still names the old login
+  assert.equal(asOpened.status, 200, JSON.stringify(asOpened.body));
+  assertAnswer(asOpened.body.relatedInsert, { result: 'applied', state: 'applied', appliedRevision: `${w.epoch}:2`, currentMatches: true }, 'as opened');
+  const reopened = { ...body, expectedOwner: { ...body.expectedOwner, author: renamed.actor } };
+  const again = await w.send('put', { as: renamed, body: reopened });   // and a screen opened after it names the new one
+  assert.equal(again.status, 200, JSON.stringify(again.body));
+  assertAnswer(again.body.relatedInsert, { result: 'applied', state: 'applied', appliedRevision: `${w.epoch}:2`, currentMatches: true }, 'reopened');
+  assert.equal(w.snapshot(), before, 'replays write nothing');
+  const tookOldEmail = { ...member('took-old-email', INST, ['radiologist']), actor: A.actor };
+  const foreign = { ...body, expectedOwner: { ...body.expectedOwner, sub: tookOldEmail.sub } };
+  const answer = await w.send('put', { as: tookOldEmail, body: foreign });
+  assert.deepEqual([answer.status, answer.code], [409, 'ID_REUSED'], JSON.stringify(answer.body));
+  assert.equal(w.snapshot(), before);
+});
+
 // ── A-07 / A-02: refusal, same-ID retry, discard tombstone ──
 
-const hold = (w, holder = B.actor) => Object.assign(w.store.rows('studyState').find(r => r.uid === TARGET), { holder, heldAt: new Date() });
-const release = w => Object.assign(w.store.rows('studyState').find(r => r.uid === TARGET), { holder: null, heldAt: null });
+const hold = (w, who = B) => Object.assign(w.store.rows('studyState').find(r => r.uid === TARGET), { holder: who.actor, holderSub: who.sub, heldAt: new Date() });
+const release = w => Object.assign(w.store.rows('studyState').find(r => r.uid === TARGET), { holder: null, holderSub: null, heldAt: null });
 
 test('W5API-05 a business refusal is a durable refused receipt (409, discardable), the draft untouched; the same ID retried at the original CAS applies once', async () => {
   const w = world();
@@ -731,7 +757,7 @@ test('W5API-13 the Source is re-validated on the server: unreadable, hidden prel
     ['deleted study', w => { w.store.tables.studyState = w.store.rows('studyState').filter(r => r.uid !== w.source); }, 'SOURCE_UNAVAILABLE'],
     ['hidden preliminary', w => Object.assign(w.store.rows('studyState').find(r => r.uid === w.source), { rs: 'P', preDoc: B.actor, preReviewer: 'syn-x' }), 'SOURCE_UNAVAILABLE'],
     ['newer head', w => { w.store.rows('report').find(r => r.uid === w.source).version = 3;
-      w.store.seed('reportVersion', { uid: w.source, version: 3, action: 'reset', findings: '', conclusion: '', recommendation: '', author: B.actor, reason: 'SYN', at: new Date() }); }, 'SOURCE_CHANGED'],
+      w.store.seed('reportVersion', { uid: w.source, version: 3, action: 'reset', findings: '', conclusion: '', recommendation: '', author: B.actor, authorSub: B.sub, reason: 'SYN', at: new Date() }); }, 'SOURCE_CHANGED'],
   ];
   for (const [label, change, reason] of cases) {
     const w = world(), body = insertBody(w);
