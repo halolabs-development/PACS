@@ -852,10 +852,26 @@ function kinCreateViewerHistory() {
       if (error.status === 400 || error.status === 413) return '지원 영상·원본 평면·입력 길이를 확인하세요. 작성 내용은 저장되지 않았습니다.';
       return '저장 결과를 확인하지 못했습니다. 같은 요청 재시도로 결과를 확인하세요.';
     }
+    // The status's saved-item count: the items this study holds on the server now — rows with a saved revision, hidden ones
+    // included (the list is read with them), not one deleted in another window. Every way that number changes comes here: a
+    // read of the list, a save answered (the Save button, autosave, Hide, Restore) and a delete answered. With a lead the
+    // status is that text and the count; without one only a count already shown is brought up to date, so another message the
+    // status shows meanwhile (a reason, an error, a recheck) is not overwritten.
+    const COUNT_TAIL = '개 저장 항목';
+    // Items this panel deleted (the server keeps them and their revisions; no list of the author's shows them again).
+    const deletedHere = new Set();
+    function recount(lead) {
+      const n = [...entries.values()].filter(e => e.head && !e.gone).length;
+      if (typeof lead === 'string') status.textContent = lead + n + COUNT_TAIL + ' · 저장은 판독 확정과 별개입니다.';
+      else status.textContent = status.textContent.replace(/^(.*?)\d+개 저장 항목/, (_, before) => before + n + COUNT_TAIL);
+    }
     // `answered`: only the clinician-only boundary passes it, from inside this panel's own /me answer — that answer is this read's /me.
     async function load(resume = false, recheck = null, answered = false) {
       if (!scope || ended || loading) return;
       const ticket = generation, seq = ++readSequence; loading = true; tried = Date.now();
+      // Saved items as this read begins: only one of these can be judged deleted in another window by its absence from the
+      // answer (an item saved while the read was on its way is not in it yet).
+      const savedAtStart = new Set([...entries.values()].filter(e => e.head).map(e => e.head.id));
       status.textContent = '저장 항목 확인 중…';
       try {
         if (!answered) await authenticate(ticket);
@@ -875,11 +891,16 @@ function kinCreateViewerHistory() {
         if ((resume === true || autoMarks()) && parked && parked.subject === subject) {
           for (const e of entries.values()) removeAnnotation(e);
           entries.clear(); list.replaceChildren();
-          for (const e of clone(parked.entries)) { e.rehydrate = !e.head; entries.set(e.id, e); row(e); }
+          // Held work taken up: its saved items count as saved when this read began, so one deleted meanwhile in another
+          // window is judged by this answer like any other.
+          for (const e of clone(parked.entries)) { e.rehydrate = !e.head; if (e.head) savedAtStart.add(e.head.id); entries.set(e.id, e); row(e); }
           recovery.delete(scope);
         }
         for (const head of heads) {
+          // Deleted here while this read was on its way: an older answer does not bring it back.
+          if (deletedHere.has(head.id)) continue;
           let e = entries.get(head.id);
+          if (e) e.gone = false;
           if (e && (e.editing || e.pending || e.busy)) {
             if (head.revision !== e.head?.revision) { e.latest = head; e.message = '서버에 다른 판이 있습니다. 작성 내용은 유지됩니다.'; row(e); }
             else {
@@ -900,12 +921,13 @@ function kinCreateViewerHistory() {
         }
         // The whole author list leaves out only deleted items: a saved row it no longer has was deleted (in another window).
         // Work on such a row is kept and told; it can no longer be saved (any revision of a deleted item is refused).
-        if (!recheck) for (const e of [...entries.values()]) if (e.head && !heads.some(h => h.id === e.head.id)) {
-          if (hasWork(e) || e.busy) { e.message = '다른 창에서 지운 항목입니다. 이 창의 작성 내용은 저장되지 않습니다.'; continue; }
+        if (!recheck) for (const e of [...entries.values()]) if (e.head && savedAtStart.has(e.head.id) && !heads.some(h => h.id === e.head.id)) {
+          if (hasWork(e) || e.busy) { e.gone = true; e.message = '다른 창에서 지운 항목입니다. 이 창의 작성 내용은 저장되지 않습니다.'; continue; }
           removeAnnotation(e); entries.delete(e.id); e.element?.remove();
         }
         for (const e of entries.values()) row(e);
-        status.textContent = recheck ? (heads.some(h => h.id === recheck) ? '선택한 항목의 원본 확인을 마쳤습니다. 항목의 확인 상태를 보세요. 저장 이력은 바뀌지 않습니다.' : '선택한 저장 항목을 찾지 못했습니다. 목록을 새로고침하세요.') : heads.length + '개 저장 항목 · 저장은 판독 확정과 별개입니다.';
+        if (recheck) status.textContent = heads.some(h => h.id === recheck) ? '선택한 항목의 원본 확인을 마쳤습니다. 항목의 확인 상태를 보세요. 저장 이력은 바뀌지 않습니다.' : '선택한 저장 항목을 찾지 못했습니다. 목록을 새로고침하세요.';
+        else recount('');
         panel.dataset.studyUid = scope;
         toolbar(); hydrate();
       } catch (e) { if (!e.stale && valid(ticket)) status.textContent = '목록을 확인하지 못했습니다. 새로고침으로 다시 확인하세요.'; }
@@ -1126,6 +1148,47 @@ function kinCreateViewerHistory() {
       else if (event.key === 'Enter' || event.key === ' ') for (const w of [...drawing.values()]) if (!w.element.contains(event.target)) leave(w);
     };
       const configured = new Map();
+    // A Freehand ROI's outline length (a closed outline's perimeter, an open line's length) and its unit, as the Length tool
+    // measures: the distance along the outline on the image divided by the calibration's scale, in the unit the tool's own
+    // unit function gives for the outline's box (a calibration's name included, e.g. "mm User", "cm US Region"). The box is
+    // taken as the tool takes it — around the outline on the screen, its corners read back on the image (an ultrasound region
+    // is chosen by them) — or, with no cell showing that image, around the outline on the image. The pinned tool's own
+    // number sums distances on the screen (it changes with the zoom) and its unit is never read; null when the length is not
+    // known to be physical (below), and the tool's own words are kept.
+    // Only where the length is known to be physical: a stack image whose own header gives a pixel spacing (two positive
+    // numbers), with no ultrasound region calibration, measured by the tool in mm with a positive scale. Anything else (no
+    // spacing — the viewer then stands in a spacing of 1 —, an ultrasound region, a reformatted plane) is left to the tool's
+    // own words, as before.
+    const physical = v => Array.isArray(v) && v.length >= 2 && v.slice(0, 2).every(x => Number.isFinite(Number(x)) && Number(x) > 0);
+    function freehandLength(tool, data, target) {
+      try {
+        const image = tool.getTargetImageData(target), points = data.contour?.polyline;
+        if (!image?.imageData || !Array.isArray(points) || points.length < 2) return null;
+        const u = cs.utilities, id = target.startsWith('imageId:') && target.slice(8);
+        const header = id && cs.metaData.get('instance', id);
+        if (!header || !(physical(header.PixelSpacing) || physical(header.ImagerPixelSpacing)) || given(header.SequenceOfUltrasoundRegions) ||
+            image.hasPixelSpacing !== true || image.calibration?.sequenceOfUltrasoundRegions) return null;
+        let v = null;
+        try {
+          v = id ? (u.getViewportsWithImageURI?.(u.imageIdToURI(id)) || []).find(x => x.getCurrentImageId?.() === id)
+            : target.startsWith('volumeId:') ? (u.getViewportsWithVolumeId?.(u.getVolumeId(target)) || [])[0] : null;
+        } catch (_) { v = null; }
+        const box = list => [[0, 1, 2].map(i => Math.min(...list.map(p => p[i] ?? 0))), [0, 1, 2].map(i => Math.max(...list.map(p => p[i] ?? 0)))];
+        let corners;
+        if (v) {
+          const [low, high] = box(points.map(p => v.worldToCanvas(p)));
+          corners = [v.canvasToWorld([low[0], low[1]]), v.canvasToWorld([high[0], high[1]])].map(p => u.transformWorldToIndex(image.imageData, p));
+        } else corners = box(points.map(p => u.transformWorldToIndex(image.imageData, p)));
+        const { unit, scale } = ct.utilities.getCalibratedLengthUnitsAndScale(image, () => corners) || {};
+        const along = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], (a[2] ?? 0) - (b[2] ?? 0));
+        let distance = 0;
+        for (let i = 1; i < points.length; i++) distance += along(points[i - 1], points[i]);
+        if (data.contour.closed) distance += along(points[points.length - 1], points[0]);
+        const value = distance / scale;
+        return typeof unit === 'string' && /^mm( |$)/.test(unit) && Number.isFinite(scale) && scale > 0 && Number.isFinite(value) && value > 0
+          ? { value, unit } : null;
+      } catch (_) { return null; }
+    }
     function configureMeasurements(group) {
       if (!group || configured.has(group)) return;
       const roi = group.getToolInstance('EllipticalROI');
@@ -1156,6 +1219,22 @@ function kinCreateViewerHistory() {
         return lines;
       } };
       const restores = [() => { roi.configuration = previous; }];
+      // Freehand ROI's words: the pinned tool gave a closed outline's perimeter and an open line's length as a distance on the
+      // screen with the unit "undefined". Its own text is made from a copy whose perimeter or length is the outline's length on
+      // the image in its unit (freehandLength), the other lines (area, values) as they are; where that length is not known to be
+      // physical the tool's own words are given unchanged. The measurement itself (and so what is saved or exported) is not touched.
+      const freehand = group.getToolInstance('PlanarFreehandROI'), freehandConfig = freehand?.configuration;
+      if (typeof freehandConfig?.getTextLines === 'function') {
+        freehand.configuration = { ...freehandConfig, getTextLines(data, target) {
+          const s = data?.cachedStats?.[target];
+          if (!s || typeof s.unit === 'string') return freehandConfig.getTextLines(data, target);
+          const found = freehandLength(freehand, data, target), key = data.contour?.closed ? 'perimeter' : 'length';
+          if (!found) return freehandConfig.getTextLines(data, target);
+          const words = { ...s, perimeter: undefined, length: undefined, unit: found.unit, [key]: found.value };
+          return freehandConfig.getTextLines({ ...data, cachedStats: { ...data.cachedStats, [target]: words } }, target);
+        } };
+        restores.push(() => { freehand.configuration = freehandConfig; });
+      }
       for (const kind of ['length', 'angle', 'ellipse']) {
         if (!group.getToolInstance(tools[kind])) group.addTool(tools[kind]);
         const tool = group.getToolInstance(tools[kind]), config = tool.configuration, add = tool.addNewAnnotation;
@@ -1392,8 +1471,8 @@ function kinCreateViewerHistory() {
         if (!valid(ticket) || !entries.has(e.id)) return;
         // Deleted: off the image and the list. The server keeps the item and its revisions; no list shows it again.
         if (head.item?.deleted === true) {
-          removeAnnotation(e); entries.delete(e.id); e.element?.remove();
-          status.textContent = names[e.draft.kind] + ' 항목을 지웠습니다. 저장 이력은 서버에 남습니다.'; render(); return;
+          deletedHere.add(head.id); removeAnnotation(e); entries.delete(e.id); e.element?.remove();
+          recount(names[e.draft.kind] + ' 항목을 지웠습니다. 저장 이력은 서버에 남습니다. '); render(); return;
         }
         const duplicate = entries.get(head.id);
         if (duplicate && duplicate !== e && hasWork(duplicate)) {
@@ -1417,7 +1496,10 @@ function kinCreateViewerHistory() {
         e.message = errorMessage(error);
         if (error.status >= 400 && error.status < 500) { e.pending = null; lock(e, !e.editing); }
         if (error.status === 409) await load();
-      } finally { if (valid(ticket) && entries.has(e.id)) { e.busy = false; row(e); } }
+      } finally {
+        if (valid(ticket) && entries.has(e.id)) { e.busy = false; row(e); }
+        if (valid(ticket)) recount();
+      }
     }
     // ── Marks saved without the Save button ──
     // With Auto Save View's account setting on (viewer-features-autosave.js, window.KinViewerAutoSave) a mark is saved on its

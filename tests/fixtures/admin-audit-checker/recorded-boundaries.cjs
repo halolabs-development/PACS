@@ -103,7 +103,7 @@ module.exports = async function recordedBoundaries() {
   });
   const requests = createRequestContext(createRequestIngress({ proxyPeers: [] }), port);
   const invoke = async (route, run) => {
-    const req = Object.assign(new IncomingMessage(new Socket()), { sub: subject, actor: subject, roles: ['admin'] });
+    const req = Object.assign(new IncomingMessage(new Socket()), { sub: subject, actor: subject, roles: ['admin'], institution, kind: 'member' });
     const res = new ServerResponse(req);
     requests.capture.capture(req, res, { issuer, subject, roles: ['admin'], institution, rightsVersion: 1,
       binding: { method: 'bearer', sessionRef: null } }, route, async tx => {

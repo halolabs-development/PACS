@@ -196,10 +196,13 @@ window.KinViewerUXShell = (() => {
     };
     const context = viewportId => {
       const patient = tabs.snapshot(), cell = window.KinViewerInfoBar.identity(services, viewportId);
-      return patient && cell.instance ? { patientKey: patient.key, sequence: patient.sequence, viewportId,
+      const sourceId = cell.instance?.PatientID;
+      const key = patient?.key;
+      if (!sourceId || !key?.includes('|') || key.slice(key.indexOf('|') + 1) !== sourceId) return null;
+      return { patientKey: key, sequence: patient.sequence, viewportId,
         studyUid: cell.instance.StudyInstanceUID, seriesUid: cell.instance.SeriesInstanceUID,
         // One series can be split into several display sets; a cell moved to another of them is another origin.
-        displaySetUid: cell.set.displaySetInstanceUID, mode: cell.viewport.type } : null;
+        displaySetUid: cell.set.displaySetInstanceUID, mode: cell.viewport.type };
     };
     const admits = value => {
       const now = value && context(value.viewportId);

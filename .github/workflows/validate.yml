@@ -1645,7 +1645,7 @@ jobs:
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/orthanc-transport --cwd . --tree api/src --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/orthanc_transport_test.cjs -- node --test tests/orthanc_transport_test.cjs
     - name: FC-070 Query/Retrieve search, retrieve and peers against a synthetic Orthanc
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
-      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/query-retrieve-service --cwd . --tree api/src --file api/prisma/schema.prisma --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/query_retrieve_service_test.cjs -- node --test tests/query_retrieve_service_test.cjs
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/query-retrieve-service --cwd . --tree api/src --file api/prisma/schema.prisma --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/transaction_locks.cjs --file tests/query_retrieve_service_test.cjs -- node --test tests/query_retrieve_service_test.cjs
     - name: FC-076 Attach Document attach, read-back, recovery, withdrawal and serving paths against a synthetic Orthanc
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/study-attachment-service --cwd . --tree api/src --file api/prisma/schema.prisma --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/study_attachment_service_test.cjs -- node --test tests/study_attachment_service_test.cjs
@@ -1658,6 +1658,9 @@ jobs:
     - name: Gateway operational status heartbeat rules, late beats, bounds and the admin read against the API memory table
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/gateway-status-service --cwd . --tree api/src --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/gateway_status_server_test.cjs -- node --test tests/gateway_status_server_test.cjs
+    - name: Gateway settings (routing rules, kept copies, lossless compression) form, revision, audit and the Gateway's read
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/gateway-settings-service --cwd . --tree api/src --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/gateway_settings_server_test.cjs -- node --test tests/gateway_settings_server_test.cjs
     - name: Screen language in the account appearance (version 12 form, other display choices kept, an older client cannot erase it)
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/worklist-language-service --cwd . --tree api/src --file api/prisma/schema.prisma --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/worklist_language_service_test.cjs -- node --test tests/worklist_language_service_test.cjs

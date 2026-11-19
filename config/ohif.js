@@ -2393,10 +2393,26 @@ function kinCreateViewerHistory() {
       if (error.status === 400 || error.status === 413) return '지원 영상·원본 평면·입력 길이를 확인하세요. 작성 내용은 저장되지 않았습니다.';
       return '저장 결과를 확인하지 못했습니다. 같은 요청 재시도로 결과를 확인하세요.';
     }
+    // The status's saved-item count: the items this study holds on the server now — rows with a saved revision, hidden ones
+    // included (the list is read with them), not one deleted in another window. Every way that number changes comes here: a
+    // read of the list, a save answered (the Save button, autosave, Hide, Restore) and a delete answered. With a lead the
+    // status is that text and the count; without one only a count already shown is brought up to date, so another message the
+    // status shows meanwhile (a reason, an error, a recheck) is not overwritten.
+    const COUNT_TAIL = '개 저장 항목';
+    // Items this panel deleted (the server keeps them and their revisions; no list of the author's shows them again).
+    const deletedHere = new Set();
+    function recount(lead) {
+      const n = [...entries.values()].filter(e => e.head && !e.gone).length;
+      if (typeof lead === 'string') status.textContent = lead + n + COUNT_TAIL + ' · 저장은 판독 확정과 별개입니다.';
+      else status.textContent = status.textContent.replace(/^(.*?)\d+개 저장 항목/, (_, before) => before + n + COUNT_TAIL);
+    }
     // `answered`: only the clinician-only boundary passes it, from inside this panel's own /me answer — that answer is this read's /me.
     async function load(resume = false, recheck = null, answered = false) {
       if (!scope || ended || loading) return;
       const ticket = generation, seq = ++readSequence; loading = true; tried = Date.now();
+      // Saved items as this read begins: only one of these can be judged deleted in another window by its absence from the
+      // answer (an item saved while the read was on its way is not in it yet).
+      const savedAtStart = new Set([...entries.values()].filter(e => e.head).map(e => e.head.id));
       status.textContent = '저장 항목 확인 중…';
       try {
         if (!answered) await authenticate(ticket);
@@ -2416,11 +2432,16 @@ function kinCreateViewerHistory() {
         if ((resume === true || autoMarks()) && parked && parked.subject === subject) {
           for (const e of entries.values()) removeAnnotation(e);
           entries.clear(); list.replaceChildren();
-          for (const e of clone(parked.entries)) { e.rehydrate = !e.head; entries.set(e.id, e); row(e); }
+          // Held work taken up: its saved items count as saved when this read began, so one deleted meanwhile in another
+          // window is judged by this answer like any other.
+          for (const e of clone(parked.entries)) { e.rehydrate = !e.head; if (e.head) savedAtStart.add(e.head.id); entries.set(e.id, e); row(e); }
           recovery.delete(scope);
         }
         for (const head of heads) {
+          // Deleted here while this read was on its way: an older answer does not bring it back.
+          if (deletedHere.has(head.id)) continue;
           let e = entries.get(head.id);
+          if (e) e.gone = false;
           if (e && (e.editing || e.pending || e.busy)) {
             if (head.revision !== e.head?.revision) { e.latest = head; e.message = '서버에 다른 판이 있습니다. 작성 내용은 유지됩니다.'; row(e); }
             else {
@@ -2441,12 +2462,13 @@ function kinCreateViewerHistory() {
         }
         // The whole author list leaves out only deleted items: a saved row it no longer has was deleted (in another window).
         // Work on such a row is kept and told; it can no longer be saved (any revision of a deleted item is refused).
-        if (!recheck) for (const e of [...entries.values()]) if (e.head && !heads.some(h => h.id === e.head.id)) {
-          if (hasWork(e) || e.busy) { e.message = '다른 창에서 지운 항목입니다. 이 창의 작성 내용은 저장되지 않습니다.'; continue; }
+        if (!recheck) for (const e of [...entries.values()]) if (e.head && savedAtStart.has(e.head.id) && !heads.some(h => h.id === e.head.id)) {
+          if (hasWork(e) || e.busy) { e.gone = true; e.message = '다른 창에서 지운 항목입니다. 이 창의 작성 내용은 저장되지 않습니다.'; continue; }
           removeAnnotation(e); entries.delete(e.id); e.element?.remove();
         }
         for (const e of entries.values()) row(e);
-        status.textContent = recheck ? (heads.some(h => h.id === recheck) ? '선택한 항목의 원본 확인을 마쳤습니다. 항목의 확인 상태를 보세요. 저장 이력은 바뀌지 않습니다.' : '선택한 저장 항목을 찾지 못했습니다. 목록을 새로고침하세요.') : heads.length + '개 저장 항목 · 저장은 판독 확정과 별개입니다.';
+        if (recheck) status.textContent = heads.some(h => h.id === recheck) ? '선택한 항목의 원본 확인을 마쳤습니다. 항목의 확인 상태를 보세요. 저장 이력은 바뀌지 않습니다.' : '선택한 저장 항목을 찾지 못했습니다. 목록을 새로고침하세요.';
+        else recount('');
         panel.dataset.studyUid = scope;
         toolbar(); hydrate();
       } catch (e) { if (!e.stale && valid(ticket)) status.textContent = '목록을 확인하지 못했습니다. 새로고침으로 다시 확인하세요.'; }
@@ -2667,6 +2689,47 @@ function kinCreateViewerHistory() {
       else if (event.key === 'Enter' || event.key === ' ') for (const w of [...drawing.values()]) if (!w.element.contains(event.target)) leave(w);
     };
       const configured = new Map();
+    // A Freehand ROI's outline length (a closed outline's perimeter, an open line's length) and its unit, as the Length tool
+    // measures: the distance along the outline on the image divided by the calibration's scale, in the unit the tool's own
+    // unit function gives for the outline's box (a calibration's name included, e.g. "mm User", "cm US Region"). The box is
+    // taken as the tool takes it — around the outline on the screen, its corners read back on the image (an ultrasound region
+    // is chosen by them) — or, with no cell showing that image, around the outline on the image. The pinned tool's own
+    // number sums distances on the screen (it changes with the zoom) and its unit is never read; null when the length is not
+    // known to be physical (below), and the tool's own words are kept.
+    // Only where the length is known to be physical: a stack image whose own header gives a pixel spacing (two positive
+    // numbers), with no ultrasound region calibration, measured by the tool in mm with a positive scale. Anything else (no
+    // spacing — the viewer then stands in a spacing of 1 —, an ultrasound region, a reformatted plane) is left to the tool's
+    // own words, as before.
+    const physical = v => Array.isArray(v) && v.length >= 2 && v.slice(0, 2).every(x => Number.isFinite(Number(x)) && Number(x) > 0);
+    function freehandLength(tool, data, target) {
+      try {
+        const image = tool.getTargetImageData(target), points = data.contour?.polyline;
+        if (!image?.imageData || !Array.isArray(points) || points.length < 2) return null;
+        const u = cs.utilities, id = target.startsWith('imageId:') && target.slice(8);
+        const header = id && cs.metaData.get('instance', id);
+        if (!header || !(physical(header.PixelSpacing) || physical(header.ImagerPixelSpacing)) || given(header.SequenceOfUltrasoundRegions) ||
+            image.hasPixelSpacing !== true || image.calibration?.sequenceOfUltrasoundRegions) return null;
+        let v = null;
+        try {
+          v = id ? (u.getViewportsWithImageURI?.(u.imageIdToURI(id)) || []).find(x => x.getCurrentImageId?.() === id)
+            : target.startsWith('volumeId:') ? (u.getViewportsWithVolumeId?.(u.getVolumeId(target)) || [])[0] : null;
+        } catch (_) { v = null; }
+        const box = list => [[0, 1, 2].map(i => Math.min(...list.map(p => p[i] ?? 0))), [0, 1, 2].map(i => Math.max(...list.map(p => p[i] ?? 0)))];
+        let corners;
+        if (v) {
+          const [low, high] = box(points.map(p => v.worldToCanvas(p)));
+          corners = [v.canvasToWorld([low[0], low[1]]), v.canvasToWorld([high[0], high[1]])].map(p => u.transformWorldToIndex(image.imageData, p));
+        } else corners = box(points.map(p => u.transformWorldToIndex(image.imageData, p)));
+        const { unit, scale } = ct.utilities.getCalibratedLengthUnitsAndScale(image, () => corners) || {};
+        const along = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], (a[2] ?? 0) - (b[2] ?? 0));
+        let distance = 0;
+        for (let i = 1; i < points.length; i++) distance += along(points[i - 1], points[i]);
+        if (data.contour.closed) distance += along(points[points.length - 1], points[0]);
+        const value = distance / scale;
+        return typeof unit === 'string' && /^mm( |$)/.test(unit) && Number.isFinite(scale) && scale > 0 && Number.isFinite(value) && value > 0
+          ? { value, unit } : null;
+      } catch (_) { return null; }
+    }
     function configureMeasurements(group) {
       if (!group || configured.has(group)) return;
       const roi = group.getToolInstance('EllipticalROI');
@@ -2697,6 +2760,22 @@ function kinCreateViewerHistory() {
         return lines;
       } };
       const restores = [() => { roi.configuration = previous; }];
+      // Freehand ROI's words: the pinned tool gave a closed outline's perimeter and an open line's length as a distance on the
+      // screen with the unit "undefined". Its own text is made from a copy whose perimeter or length is the outline's length on
+      // the image in its unit (freehandLength), the other lines (area, values) as they are; where that length is not known to be
+      // physical the tool's own words are given unchanged. The measurement itself (and so what is saved or exported) is not touched.
+      const freehand = group.getToolInstance('PlanarFreehandROI'), freehandConfig = freehand?.configuration;
+      if (typeof freehandConfig?.getTextLines === 'function') {
+        freehand.configuration = { ...freehandConfig, getTextLines(data, target) {
+          const s = data?.cachedStats?.[target];
+          if (!s || typeof s.unit === 'string') return freehandConfig.getTextLines(data, target);
+          const found = freehandLength(freehand, data, target), key = data.contour?.closed ? 'perimeter' : 'length';
+          if (!found) return freehandConfig.getTextLines(data, target);
+          const words = { ...s, perimeter: undefined, length: undefined, unit: found.unit, [key]: found.value };
+          return freehandConfig.getTextLines({ ...data, cachedStats: { ...data.cachedStats, [target]: words } }, target);
+        } };
+        restores.push(() => { freehand.configuration = freehandConfig; });
+      }
       for (const kind of ['length', 'angle', 'ellipse']) {
         if (!group.getToolInstance(tools[kind])) group.addTool(tools[kind]);
         const tool = group.getToolInstance(tools[kind]), config = tool.configuration, add = tool.addNewAnnotation;
@@ -2933,8 +3012,8 @@ function kinCreateViewerHistory() {
         if (!valid(ticket) || !entries.has(e.id)) return;
         // Deleted: off the image and the list. The server keeps the item and its revisions; no list shows it again.
         if (head.item?.deleted === true) {
-          removeAnnotation(e); entries.delete(e.id); e.element?.remove();
-          status.textContent = names[e.draft.kind] + ' 항목을 지웠습니다. 저장 이력은 서버에 남습니다.'; render(); return;
+          deletedHere.add(head.id); removeAnnotation(e); entries.delete(e.id); e.element?.remove();
+          recount(names[e.draft.kind] + ' 항목을 지웠습니다. 저장 이력은 서버에 남습니다. '); render(); return;
         }
         const duplicate = entries.get(head.id);
         if (duplicate && duplicate !== e && hasWork(duplicate)) {
@@ -2958,7 +3037,10 @@ function kinCreateViewerHistory() {
         e.message = errorMessage(error);
         if (error.status >= 400 && error.status < 500) { e.pending = null; lock(e, !e.editing); }
         if (error.status === 409) await load();
-      } finally { if (valid(ticket) && entries.has(e.id)) { e.busy = false; row(e); } }
+      } finally {
+        if (valid(ticket) && entries.has(e.id)) { e.busy = false; row(e); }
+        if (valid(ticket)) recount();
+      }
     }
     // ── Marks saved without the Save button ──
     // With Auto Save View's account setting on (viewer-features-autosave.js, window.KinViewerAutoSave) a mark is saved on its
@@ -3548,225 +3630,169 @@ const kinViewerSession = (() => {
     },
   };
 })();
-
-/* The patient and examination a study is shown as in this viewer: the worklist's answer for that study. That answer is the
-   server's list row with the display overlay a Match or Modify stored (state.ov) over it, by the worklist's own rule
-   (study-state.js OVERLAY_KEYS / overlayValue, worklist-data.js applyState); a clinician's row comes from the server with
-   the overlay already applied. The cell heading, the cell identity label and window title, the patient tab and the prior
-   list all read this one answer. The image header is never changed: Corner Information, Copy Patient ID and the DICOM tag
-   views still show the image's own values. Age is counted from the shown birth date and study date.
-   Whenever the answer is not certain for the drawn image - not read yet, the read failed, no row answers for it, two
-   exam rows answer differently for it, or the row's own Patient ID is not the image's - a place shows the image's values. */
+/* Viewer metadata belongs to the session that read it. A list answer replaces the entire
+   examination (including all its originals and split parts) under one request number. */
 const kinViewerStudyDisplay = (() => {
-  const KEYS = ['id', 'name', 'sex', 'birth', 'age', 'desc', 'ward', 'date', 'acc', 'modality'];
-  const SHOWN = ['id', 'name', 'sex', 'birth', 'date', 'desc', 'acc', 'modality'], PATIENT = ['id', 'name', 'sex', 'birth'];
-  const valid = (key, value) => typeof value === 'string' || (key === 'age' && Number.isFinite(value));
-  const text = value => typeof value === 'string' ? value : '';
-  const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
-  // A calendar date written YYYYMMDD or YYYY-MM-DD, as YYYYMMDD; '' when it is not a real date.
-  function day(value) {
-    const v = text(value).replace(/-/g, '');
-    if (!/^\d{8}$/.test(v)) return '';
-    const y = +v.slice(0, 4), m = +v.slice(4, 6), d = +v.slice(6, 8), at = new Date(Date.UTC(y, m - 1, d));
-    return at.getUTCFullYear() === y && at.getUTCMonth() === m - 1 && at.getUTCDate() === d ? v : '';
-  }
-  // Whole years between two dates, as 'NY'; '' when either is not a date or the study precedes the birth.
-  function years(birth, date) {
-    const b = day(birth), d = day(date);
-    if (!b || !d || d < b) return '';
-    return Math.floor((Number(d) - Number(b)) / 10000) + 'Y';
-  }
-  // One list row as it is shown. A key the overlay holds in the worklist's shape replaces the row's value (also with '');
-  // `over` names the keys it replaced, so a place never fills a replaced value from the image.
-  function shown(row) {
-    const ov = row && typeof row === 'object' && row.state && typeof row.state === 'object' ? row.state.ov : null;
-    const overlay = ov && typeof ov === 'object' && !Array.isArray(ov) ? ov : {};
-    const out = {}, over = [];
-    for (const key of SHOWN) {
-      if (own(overlay, key) && valid(key, overlay[key])) { out[key] = overlay[key]; over.push(key); }
-      else out[key] = text(row?.[key]);
+  const exams = new Map(), latest = new Map(), held = new Map(), retries = new Map();
+  const watchers = new Set(), visibleSources = new Set(), queue = new Set();
+  const session = typeof kinViewerSession === 'object' ? kinViewerSession : null;
+  const period = 30000;
+  let epoch = 0, sequence = 0, queued = false, ended = false;
+  function notify() {
+    for (const watch of watchers) {
+      try { watch(); } catch (error) { console.error('Viewer display refresh failed', error); }
     }
-    out.age = years(out.birth, out.date);
-    out.over = Object.freeze(over);
-    // A worklist row carries its overlay, so `over` is exactly what it replaced. A clinician's row comes overlaid by the
-    // server without saying what it replaced (view() then compares with the image).
-    out.exact = !!(row && typeof row === 'object' && row.state && typeof row.state === 'object');
-    return Object.freeze(out);
   }
-  const norm = (key, value) => key === 'name' ? text(value).replace(/\^/g, ' ').replace(/\s+/g, ' ').trim()
-    : key === 'birth' || key === 'date' ? text(value).replace(/-/g, '') : text(value).trim();
-  // What a place shows for a drawn image: the image's own value (its own form, as before) for every field the worklist's
-  // answer did not replace, the answer's value where a Match or Modify replaced it, and the age counted from the shown birth
-  // date and study date - without both, the image's Patient's Age unless the answer replaced one of them.
-  // `image`: the place's own text of PatientID, PatientName, PatientSex, PatientBirthDate, StudyDate, StudyDescription, PatientAge.
-  function view(d, image) {
-    const out = {}, changed = [];
-    for (const key of ['id', 'name', 'sex', 'birth', 'date', 'desc']) {
-      const replaced = !!d && (d.exact ? d.over.includes(key) : d[key] !== '' && norm(key, d[key]) !== norm(key, image[key]));
-      out[key] = replaced ? d[key] : text(image[key]);
-      if (replaced) changed.push(key);
-    }
-    out.age = years(out.birth, out.date) || (changed.includes('birth') || changed.includes('date') ? '' : text(image.age));
-    out.changed = Object.freeze(changed);
-    return Object.freeze(out);
-  }
-  // The row's own (image) Patient ID: the server's patient key is `institution|PatientID` of the original, also for a
-  // clinician's overlaid row. Without it the answer cannot be tied to an image.
-  const sourceOf = row => typeof row?.sourcePatientKey === 'string' && row.sourcePatientKey.includes('|')
-    ? row.sourcePatientKey.slice(row.sourcePatientKey.indexOf('|') + 1) : null;
-  const inSeries = (spec, series) => !spec || spec.mode === 'all' ||
-    (typeof series === 'string' && Array.isArray(spec.uids) && (spec.mode === 'include' ? spec.uids.includes(series) : spec.mode === 'exclude' && !spec.uids.includes(series)));
+  const distinct = values => [...new Set(values.filter(v => typeof v === 'string' && v))];
+  const ids = exam => [exam.uid, ...exam.displaySources.map(s => s.studyUid)];
+  const visible = () => distinct(visibleSources.size ? [...visibleSources].flatMap(get => [...get()]) : [...latest.keys()]);
+  const failure = () => new Error('환자 정보를 불러오지 못했습니다. 영상은 계속 볼 수 있습니다. 다시 시도하세요.');
+  const stale = () => new Error('검사 또는 로그인 상태가 바뀌었습니다. 다시 시도하세요.');
 
-  // Original study UID -> the exam rows that answer for it: { exam (row uid), series (null = all), value, source, base, gen }.
-  // A plain study has one; the parts of a split study each answer for their own series; a merged exam answers for each original.
-  const known = new Map(), rows = new Map(), asked = new Map(), failed = new Map(), watchers = new Set();
-  const RETRY_MS = 30000, BATCH = 100;
-  let generation = 0, epoch = 0, queue = new Set(), queued = false;
-  const tell = () => { for (const watch of [...watchers]) { try { watch(); } catch (_) {} } };
-  function begin(uids) { const gen = ++generation, list = [...new Set(uids)]; for (const uid of list) asked.set(uid, gen); return { gen, epoch, uids: list }; }
-  // The originals a row answers for, each with its value.
-  function targets(row, value) {
-    const scope = row.examScope && typeof row.examScope === 'object' ? row.examScope : null;
-    const meta = new Map((Array.isArray(row.sourceMetadata) ? row.sourceMetadata : []).filter(s => s && typeof s.uid === 'string').map(s => [s.uid, s]));
-    const sources = Array.isArray(scope?.sources) ? scope.sources.filter(s => s && typeof s.studyUid === 'string' && s.studyUid) : [];
-    const other = uid => { const s = meta.get(uid); if (!s) return value; const date = text(s.date);
-      return Object.freeze({ ...value, date, desc: text(s.desc), acc: text(s.acc), modality: text(s.modality), age: years(value.birth, date), over: Object.freeze(value.over.filter(k => PATIENT.includes(k))) }); };
-    if (sources.length) return sources.map(s => ({ study: s.studyUid, series: s.series && typeof s.series === 'object' ? s.series : null,
-      value: sources.length === 1 || s.studyUid === row.uid ? value : other(s.studyUid) }));
-    return [{ study: row.uid, series: null, value }, ...[...meta.keys()].filter(uid => uid !== row.uid).map(uid => ({ study: uid, series: null, value: other(uid) }))];
+  function validExam(exam) {
+    const key = exam?.sourcePatientKey;
+    return typeof exam?.uid === 'string' && typeof key === 'string' && key.indexOf('|') > 0 && key.indexOf('|') < key.length - 1 &&
+      Array.isArray(exam.displaySources) && exam.displaySources.length > 0 && exam.displaySources.every(s =>
+        s?.sourcePatientKey === key && typeof s.studyUid === 'string' && s.studyUid &&
+        ['all', 'include', 'exclude'].includes(s.series?.mode) && Array.isArray(s.series.uids) && Array.isArray(s.values?.over));
   }
-  // One successful answer: what each row says, and which studies (and row UIDs) it covered.
-  function learn(list, ticket) {
-    let changed = false;
-    const covered = new Set();
-    for (const row of Array.isArray(list) ? list : []) {
-      if (!row || typeof row.uid !== 'string' || !row.uid) continue;
-      const value = shown(row), source = sourceOf(row);
-      covered.add(row.uid);
-      // A clinician's row of a merged exam's other original names the exam's (base) patient, as the writer's list does.
-      const exam = row.exam && typeof row.exam === 'object' ? row.exam : null;
-      const base = exam?.active === true && typeof exam.baseUid === 'string' && exam.baseUid && exam.baseUid !== row.uid ? exam.baseUid : null;
-      const before = rows.get(row.uid);
-      if (!before || before.gen <= ticket.gen) {
-        const entry = { value, source, base, gen: ticket.gen };
-        if (!before || JSON.stringify([before.value, before.source, before.base]) !== JSON.stringify([value, source, base])) changed = true;
-        rows.set(row.uid, entry);
+  function affected(uids, projections = exams.values()) {
+    const touched = new Set(uids), groups = [...projections].map(ids);
+    // An answer may replace an old grouping with a split or a merge. Include both sides.
+    let before;
+    do {
+      before = touched.size;
+      for (const group of groups) if (group.some(uid => touched.has(uid)))
+        for (const uid of group) touched.add(uid);
+    } while (before !== touched.size);
+    return touched;
+  }
+
+  async function lookup(uids, { signal, patientKey, valid = () => true, role = session } = {}) {
+    const touched = affected(distinct(uids)), number = ++sequence, start = epoch;
+    const current = () => !ended && start === epoch && !role?.ended?.() && !signal?.aborted && valid();
+    if (!current()) throw stale();
+    for (const uid of touched) { latest.set(uid, number); queue.delete(uid); }
+    const replace = (rows, failed) => {
+      if (!current()) return false;
+      const groups = [...exams.values(), ...rows];
+      const scope = affected([...touched, ...rows.flatMap(ids)], groups);
+      // A newer read of one prior protects that entire exam. An independent exam in the
+      // same batch must still lose its old values if this response omitted or refused it.
+      const protectedIds = affected([...scope].filter(uid => latest.get(uid) > number), groups);
+      const accepted = new Set([...scope].filter(uid => !protectedIds.has(uid)));
+      for (const [uid, exam] of exams) if (ids(exam).some(id => accepted.has(id))) exams.delete(uid);
+      for (const uid of accepted) {
+        latest.set(uid, number);
+        if (failed) retries.set(uid, Date.now() + period); else retries.delete(uid);
       }
-      for (const target of targets(row, value)) {
-        covered.add(target.study);
-        const entries = known.get(target.study) || [], at = entries.findIndex(e => e.exam === row.uid);
-        if (at >= 0 && entries[at].gen > ticket.gen) continue;
-        const entry = { exam: row.uid, series: target.series, value: target.value, source, base, gen: ticket.gen };
-        if (at < 0 || JSON.stringify(entries[at]) !== JSON.stringify(entry)) changed = true;
-        if (at >= 0) entries[at] = entry; else entries.push(entry);
-        known.set(target.study, entries); failed.delete(target.study);
-      }
-    }
-    return { changed, covered };
-  }
-  // A study asked by this read and answered by no row (gone from the caller's list), or a failed read: what an older read
-  // said of it is not shown any more.
-  function drop(ticket, uids) {
-    let changed = false;
-    for (const uid of uids) {
-      const entries = known.get(uid);
-      if (entries) { const kept = entries.filter(e => e.gen > ticket.gen); if (kept.length !== entries.length) changed = true;
-        if (kept.length) known.set(uid, kept); else known.delete(uid); }
-      const row = rows.get(uid);
-      if (row && row.gen <= ticket.gen) { rows.delete(uid); changed = true; }
-    }
-    return changed;
-  }
-  // Every read - the store's own and the patient tab's - ends here: its rows, or null when it failed.
-  function settle(ticket, list) {
-    if (!ticket || ticket.epoch !== epoch) return;
-    let changed;
-    if (list === null) {
-      changed = drop(ticket, ticket.uids);
-      for (const uid of ticket.uids) if (asked.get(uid) === ticket.gen) failed.set(uid, Date.now());
-    } else {
-      const result = learn(list, ticket);
-      const gone = drop(ticket, ticket.uids.filter(uid => !result.covered.has(uid)));
-      changed = result.changed || gone;
-    }
-    if (changed) tell();
-  }
-  function session() { return typeof kinViewerSession === 'object' && kinViewerSession ? kinViewerSession : null; }
-  async function read(uids) {
-    const list = [...new Set(uids)].filter(uid => typeof uid === 'string' && uid);
-    if (!list.length) return;
-    const ticket = begin(list), answered = [];
+      for (const exam of rows) if (accepted.has(exam.uid)) exams.set(exam.uid, exam);
+      if (accepted.size) notify();
+      return accepted.size === scope.size;
+    };
+    const incoming = [];
     try {
-      const s = session();
-      if (s?.state?.() === 'unconfirmed') await s.decide?.();
-      if (ticket.epoch !== epoch || s?.ended?.()) return;
-      // The same scoped list endpoint the patient tab reads: a clinician's rows come overlaid from the server.
-      const endpoint = s?.readOnly?.() ? '/api/clinician/studies' : '/api/studies';
-      for (let offset = 0; offset < list.length; offset += BATCH) {
-        const query = new URLSearchParams({ uids: list.slice(offset, offset + BATCH).join(',') });
-        const response = await fetch(endpoint + '?' + query, { credentials: 'same-origin', cache: 'no-store' });
-        if (!response.ok) throw new Error('study display read failed');
+      if (role?.state?.() === 'unconfirmed') await role.decide();
+      if (!current() || role?.state?.() === 'unconfirmed') throw stale();
+      const endpoint = role?.readOnly?.() ? '/api/clinician/studies' : '/api/studies';
+      // Unknown split siblings can only be discovered by asking for the original. A catalog read
+      // uses the same endpoint without a UID filter, retaining only the open patient's rows.
+      const queryIds = [...touched];
+      for (let offset = 0; offset < (patientKey ? 1 : queryIds.length); offset += 100) {
+        const query = patientKey ? '' : '?' + new URLSearchParams({ uids: queryIds.slice(offset, offset + 100).join(',') });
+        const response = await fetch(endpoint + query, { credentials: 'same-origin', cache: 'no-store', signal,
+          headers: { 'X-Kin-Viewer-Display': '1' } });
+        if (!response.ok) throw failure();
         const body = await response.json();
-        if (!Array.isArray(body?.studies)) throw new Error('study display read failed');
-        answered.push(...body.studies);
+        if (!Array.isArray(body?.studies)) throw failure();
+        for (const exam of body.studies) {
+          if (validExam(exam) && (patientKey ? exam.sourcePatientKey === patientKey : ids(exam).some(uid => touched.has(uid)))) incoming.push(exam);
+        }
+        if (!current()) throw stale();
       }
-    } catch (_) { settle(ticket, null); return; }
-    settle(ticket, answered);
+    } catch (error) {
+      replace([], true);
+      throw error;
+    }
+    if (!replace(incoming, false)) throw stale();
+    return { studies: incoming, current: () => current() && [...affected([...touched, ...incoming.flatMap(ids)])].every(uid => latest.get(uid) === number) };
   }
-  function flush() { queued = false; const list = [...queue]; queue = new Set(); read(list); }
+  const refresh = uids => uids.length ? lookup(uids).catch(() => null) : Promise.resolve(null);
+  const refreshAll = () => refresh(visible());
   function ask(uid) {
-    const at = failed.get(uid);
-    if (asked.has(uid) && !(at !== undefined && Date.now() - at >= RETRY_MS)) return;
-    failed.delete(uid); asked.set(uid, asked.get(uid) || 0); queue.add(uid);
-    if (!queued) { queued = true; queueMicrotask(flush); }
+    if (ended || session?.ended?.() || held.has(uid)) return;
+    if (latest.has(uid) && (!retries.has(uid) || Date.now() < retries.get(uid))) return;
+    queue.add(uid);
+    if (!queued) {
+      queued = true;
+      queueMicrotask(() => {
+        queued = false;
+        const list = [...queue]; queue.clear();
+        if (list.length) refresh(list);
+      });
+    }
   }
-  // An entry's value with its exam's patient (a clinician's merged original names its base's patient once that is known).
-  function withBase(entry) {
-    if (!entry.base) return entry.value;
-    const base = rows.get(entry.base);
-    if (!base) { ask(entry.base); return null; }
-    const value = { ...entry.value };
-    for (const key of PATIENT) value[key] = base.value[key];
-    value.age = years(value.birth, value.date);
-    value.exact = entry.value.exact && base.value.exact;
-    value.over = Object.freeze([...new Set([...entry.value.over.filter(k => !PATIENT.includes(k)), ...base.value.over.filter(k => PATIENT.includes(k))])]);
-    return Object.freeze(value);
+  const primary = exam => (exam.displaySources.find(s => s.studyUid === exam.uid) || exam.displaySources[0]).values;
+  function row(uid, key) {
+    const exam = exams.get(uid);
+    if (exam && (!key || exam.sourcePatientKey === key)) return primary(exam);
+    // A tab opened before a merge can still be addressed by its original study UID.
+    const sources = [...exams.values()].filter(e => !key || e.sourcePatientKey === key)
+      .flatMap(e => e.displaySources.filter(s => s.studyUid === uid));
+    return sources.length === 1 ? sources[0].values : null;
   }
-  // The shown values for a drawn image (its study, series and own Patient ID), or null: then the image's values.
-  function of(study, series, patientId) {
-    if (typeof study !== 'string' || !study) return null;
-    const entries = known.get(study);
-    if (!entries) { ask(study); return null; }
-    const answers = entries.filter(e => inSeries(e.series, series));
-    if (!answers.length) return null;
-    const values = answers.map(withBase);
-    if (values.some(v => !v) || values.some(v => JSON.stringify(v) !== JSON.stringify(values[0]))) return null;
-    if (typeof patientId !== 'string' || answers.some(e => e.source !== patientId)) return null;
-    return values[0];
+  function of(uid, series, patientId) {
+    if (!uid || !series || !patientId) return null;
+    ask(uid);
+    const matches = [...exams.values()].flatMap(exam => exam.displaySources.filter(s => s.studyUid === uid &&
+      (s.series.mode === 'all' || (s.series.mode === 'include') === s.series.uids.includes(series))));
+    if (matches.length !== 1) return null;
+    const source = matches[0], key = source.sourcePatientKey;
+    const tabKey = window.KinViewerPatientTabs?.snapshot()?.key;
+    return (!tabKey || tabKey === key) && key.slice(key.indexOf('|') + 1) === patientId ? source.values : null;
   }
-  // The shown values of an exam row (the patient tab: its exam, not an image); `read`: ask for it when unknown.
-  function row(uid, read = false) {
-    const entry = typeof uid === 'string' ? rows.get(uid) : null;
-    if (!entry && read && typeof uid === 'string' && uid) ask(uid);
-    return entry ? withBase(entry) : null;
+
+  // Without a server replacement keep the DICOM spelling (in particular PN) and the last rendered image's age.
+  function years(birth, date) {
+    function day(value) {
+      const digits = typeof value === 'string' && value.replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$1$2$3');
+      if (!digits || !/^\d{8}$/.test(digits)) return '';
+      const iso = digits.slice(0, 4) + '-' + digits.slice(4, 6) + '-' + digits.slice(6);
+      const time = Date.parse(iso);
+      return Number.isFinite(time) && new Date(time).toISOString().startsWith(iso + 'T') ? digits : '';
+    }
+    const b = day(birth), d = day(date);
+    return b && d && d >= b ? Math.floor((Number(d) - Number(b)) / 10000) + 'Y' : '';
   }
-  // Everything learned belongs to the account and role that read it.
-  // The patient tab's lookup of an opening is that opening's one read: from its start, a place showing those studies waits
-  // for it instead of reading them itself (hold); a lookup that ends before its read began lets them be asked (release).
-  function hold(uids) { for (const uid of uids) if (typeof uid === 'string' && uid && !asked.has(uid)) asked.set(uid, 0); }
-  function release(uids) { for (const uid of uids) if (asked.get(uid) === 0 && !known.has(uid) && !rows.has(uid)) asked.delete(uid); }
-  function forget() { epoch++; known.clear(); rows.clear(); asked.clear(); failed.clear(); queue = new Set(); tell(); }
-  try { session()?.onChange?.(forget); } catch (_) {}
-  try { if (typeof kinViewerOnEnd === 'function') kinViewerOnEnd(forget); } catch (_) {}
-  return Object.freeze({
-    keys: Object.freeze([...KEYS]), shown, view, years, of, row,
-    // Opened again (the same studies from the list, a reused reading frame): every study this viewer has asked about is
-    // read again, so a Match or Unmatch since shows - also in cells added after the opening.
-    refresh: uids => read(uids),
-    refreshAll: () => read([...new Set([...known.keys(), ...rows.keys(), ...asked.keys()])]),
-    begin, settle, forget, hold, release,
-    subscribe(watch) { watchers.add(watch); return () => { watchers.delete(watch); }; },
+  function view(answer, image) {
+    const changed = answer?.over || [], out = { ...image, changed };
+    for (const key of changed) out[key] = answer[key];
+    out.age = (answer?.age || years(out.birth, out.date)) ||
+      (changed.includes('birth') || changed.includes('date') ? '' : image.age || '');
+    return out;
+  }
+  function hold(uids) {
+    for (const uid of uids) { held.set(uid, (held.get(uid) || 0) + 1); queue.delete(uid); }
+    return () => { for (const uid of uids) {
+      if (held.get(uid) > 1) held.set(uid, held.get(uid) - 1); else held.delete(uid);
+    } };
+  }
+  function forget() { epoch++; exams.clear(); latest.clear(); retries.clear(); queue.clear(); notify(); }
+  let previousRole = session?.state?.();
+  session?.onChange?.(next => {
+    const previous = previousRole; previousRole = next;
+    // The first verdict releases reads waiting on decide(); none was sent as 'unconfirmed'.
+    if (previous === 'unconfirmed' && !session.ended?.()) return;
+    const shown = visible();
+    forget();
+    if (shown.length && !session.ended?.() && next !== 'unconfirmed') refresh(shown);
   });
+  const timer = window.setInterval?.(() => { if (!ended && !window.KinViewerPatientTabs?.pending?.()) refreshAll(); }, period);
+  if (typeof kinViewerOnEnd === 'function') kinViewerOnEnd(() => { ended = true; window.clearInterval?.(timer); forget(); });
+  return { of, row, view, lookup, hold, refresh, refreshAll,
+    examsFor(uids, key) { return [...exams.values()].filter(exam => exam.sourcePatientKey === key && ids(exam).some(uid => uids.includes(uid))); },
+    subscribe(fn) { watchers.add(fn); return () => watchers.delete(fn); },
+    showing(get) { visibleSources.add(get); return () => visibleSources.delete(get); } };
 })();
 window.kinViewerStudyDisplay = kinViewerStudyDisplay;
 
@@ -5958,6 +5984,43 @@ function kinCreateContextLoss() {
   return extension;
 }
 
+// Bulk data the viewer reads itself (a stored VOI LUT, a DICOM overlay plane): Orthanc builds bulk data URIs from its own
+// base URL. Only the DICOMweb instance bulk path is requested, and always on this origin, so a header cannot direct the
+// viewer elsewhere.
+function kinSameOriginBulk(uri) {
+  let url;
+  try { url = new URL(uri, location.href); } catch (_) { return null; }
+  const at = url.pathname.indexOf('/studies/');
+  const path = at < 0 ? '' : '/dicom-web' + url.pathname.slice(at);
+  return /^\/dicom-web\/studies\/[^/]+\/series\/[^/]+\/instances\/[^/]+\/bulk\/[0-9A-Fa-f/]+$/.test(path) ? path : null;
+}
+// The element's bytes are the first part of the multipart answer; a server that answers single-part sends them bare.
+function kinBulkFirstPart(bytes, type) {
+  if (!/^multipart\//i.test(type)) return bytes;
+  const boundary = /boundary="?([^";]+)"?/i.exec(type)?.[1];
+  if (!boundary) return null;
+  const encode = s => Uint8Array.from(s, c => c.charCodeAt(0));
+  const find = (needle, from) => {
+    outer: for (let i = from; i <= bytes.length - needle.length; i++) {
+      for (let j = 0; j < needle.length; j++) if (bytes[i + j] !== needle[j]) continue outer;
+      return i;
+    }
+    return -1;
+  };
+  const start = find(encode('--' + boundary), 0), body = start < 0 ? -1 : find(encode('\r\n\r\n'), start);
+  const end = body < 0 ? -1 : find(encode('\r\n--' + boundary), body + 4);
+  return end < 0 ? null : bytes.subarray(body + 4, end);
+}
+// One bulk data element's bytes, or null (not this archive's instance bulk path, refused, or not readable).
+async function kinFetchBulk(uri) {
+  const url = kinSameOriginBulk(uri);
+  if (!url) return null;
+  // DICOMweb bulk data is a multipart/related answer; Orthanc refuses a bare octet-stream Accept with 400.
+  const response = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'multipart/related; type="application/octet-stream"' } });
+  if (!response.ok) return null;
+  return kinBulkFirstPart(new Uint8Array(await response.arrayBuffer()), response.headers.get('content-type') || '');
+}
+
 // The generic comparison protocol chooses by arrival order, not by breast/view/image kind.
 // Use the existing DICOM classifier, while leaving pixels and viewport tools with OHIF.
 function kinCreateMammographyHanging() {
@@ -5971,32 +6034,6 @@ function kinCreateMammographyHanging() {
   const kinds = ['conventional', 'generated2d', 'dbt'];
   const labels = { conventional: 'Conventional', generated2d: 'Synthetic 2D', dbt: 'DBT' };
   const CT_IMAGE = '1.2.840.10008.5.1.4.1.1.2';
-  // Orthanc builds bulk data URIs from its own base URL. Only the DICOMweb instance bulk path is
-  // requested, and always on this origin, so a header cannot direct the viewer elsewhere.
-  function sameOriginBulk(uri) {
-    let url;
-    try { url = new URL(uri, location.href); } catch (_) { return null; }
-    const at = url.pathname.indexOf('/studies/');
-    const path = at < 0 ? '' : '/dicom-web' + url.pathname.slice(at);
-    return /^\/dicom-web\/studies\/[^/]+\/series\/[^/]+\/instances\/[^/]+\/bulk\/[0-9A-Fa-f/]+$/.test(path) ? path : null;
-  }
-  // The element's bytes are the first part of the multipart answer; a server that answers single-part sends them bare.
-  function firstPart(bytes, type) {
-    if (!/^multipart\//i.test(type)) return bytes;
-    const boundary = /boundary="?([^";]+)"?/i.exec(type)?.[1];
-    if (!boundary) return null;
-    const encode = s => Uint8Array.from(s, c => c.charCodeAt(0));
-    const find = (needle, from) => {
-      outer: for (let i = from; i <= bytes.length - needle.length; i++) {
-        for (let j = 0; j < needle.length; j++) if (bytes[i + j] !== needle[j]) continue outer;
-        return i;
-      }
-      return -1;
-    };
-    const start = find(encode('--' + boundary), 0), body = start < 0 ? -1 : find(encode('\r\n\r\n'), start);
-    const end = body < 0 ? -1 : find(encode('\r\n--' + boundary), body + 4);
-    return end < 0 ? null : bytes.subarray(body + 4, end);
-  }
   // U2 owns account storage. Restore through this hook after checking its owner; reset on logout.
   const preferences = {
     get: () => ({ ...preference }),
@@ -6078,13 +6115,7 @@ function kinCreateMammographyHanging() {
         }
       }
       await Promise.allSettled([...new Set(tables)].map(async uri => {
-        const url = sameOriginBulk(uri);
-        if (!url) return;
-        // DICOMweb bulk data is a multipart/related answer; Orthanc refuses a bare octet-stream Accept with 400.
-        const response = await fetch(url, { credentials: 'same-origin',
-          headers: { Accept: 'multipart/related; type="application/octet-stream"' } });
-        if (!response.ok) return;
-        const bytes = firstPart(new Uint8Array(await response.arrayBuffer()), response.headers.get('content-type') || '');
+        const bytes = await kinFetchBulk(uri);
         if (bytes && live()) lutBytes.set(uri, bytes);
       }));
     }
@@ -7479,6 +7510,93 @@ function kinCreateMultiStudyStrip() {
   onModeExit() { epoch++; active = false; current?.stop(); current = null; } };
 }
 
+// DICOM overlay planes (60xx,3000) on an image: the archive sends their bits as a bulk data address, which the pinned overlay
+// tool (Image Overlay) cannot read — it cached an empty overlay and failed on every later draw, measurements in the same cell
+// included, and turning Image Overlay off and on raised an error. Only such a plane takes a new way here, and only in the
+// form the pinned tool draws in the right place: one frame of image and mask, the mask from the first pixel covering the
+// whole image, square pixels, and at the moment of drawing the image's axes on the screen neither flipped nor turned. Its bits
+// are read once (a second draw waits for the same read; no read again after a failure) from this origin's instance bulk path
+// through the viewer's one bulk read (kinFetchBulk), and must be exactly one frame of the mask. A plane outside that form, or
+// one whose bits cannot be read, is not drawn — for that draw only, the overlay list the tool shares is left as it is, so
+// the cell's measurements are still drawn. A drawn plane appears only on its own image and only while Image Overlay is on.
+// Planes the pinned tool already reads (values in the metadata) go its own way, unchanged.
+function kinCreateOverlayPlanes() {
+  const MARK = Symbol.for('kin.overlay-planes');
+  const bulkOnly = o => { const d = o?.pixelData;
+    return !!d && !o.dataUrl && !d.Value && !Array.isArray(d) && !d.retrieveBulkData && !d.InlineBinary && typeof d.BulkDataURI === 'string'; };
+  const pair = v => Array.isArray(v) && v.length >= 2 ? v.slice(0, 2).map(Number) : null;
+  const header = id => { try { return window.cornerstone.metaData.get('instance', id) || null; } catch (_) { return null; } };
+  // A header number as the metadata keeps it (a number, a list, or the raw bytes of an element the dictionary does not name).
+  const number = v => { const x = Array.isArray(v) ? v[0] : v;
+    if (x === undefined || x === null || x === '') return undefined;
+    return Number(x instanceof ArrayBuffer ? new TextDecoder().decode(x).replace(/\0/g, '').trim() : x); };
+  // Overlay frames declared for this plane (60xx,0015); absent is one. Its group is the one holding this very element; when
+  // that cannot be told, any overlay group declaring more than one frame counts.
+  function frames(h, o) {
+    const groups = Array.from({ length: 16 }, (_, i) => (0x6000 + 2 * i).toString(16));
+    const own = groups.find(g => h[g + '3000'] === o.pixelData);
+    const declared = (own ? [own] : groups.filter(g => h[g + '3000'] !== undefined)).map(g => number(h[g + '0015'])).filter(n => n !== undefined);
+    return declared.length ? Math.max(...declared.map(n => Number.isFinite(n) ? n : Infinity)) : 1;
+  }
+  function allowed(imageId, o) {
+    const h = header(imageId);
+    if (!h || Number(h.NumberOfFrames) > 1 || frames(h, o) !== 1) return false;
+    if (o.x !== 1 || o.y !== 1 || o.rows !== Number(h.Rows) || o.columns !== Number(h.Columns) || !(o.rows > 0 && o.columns > 0)) return false;
+    const spacing = pair(h.PixelSpacing) || pair(h.ImagerPixelSpacing), aspect = pair(h.PixelAspectRatio);
+    const square = s => s.every(x => Number.isFinite(x) && x > 0) && Math.abs(s[0] - s[1]) <= 1e-6 * Math.max(s[0], s[1]);
+    return spacing ? square(spacing) : !aspect || square(aspect);
+  }
+  // The image's first pixel, its last column and its last row on the screen: axes along the screen's, pointing right and down.
+  function upright(viewport, imageId) {
+    try {
+      const h = header(imageId), u = window.cornerstone.utilities;
+      const at = p => viewport.worldToCanvas(u.imageToWorldCoords(imageId, p));
+      const o = at([0, 0]), r = at([Number(h.Columns), 0]), d = at([0, Number(h.Rows)]);
+      return r[0] > o[0] && Math.abs(r[1] - o[1]) < .5 && d[1] > o[1] && Math.abs(d[0] - o[0]) < .5;
+    } catch (_) { return false; }
+  }
+  function install() {
+    const proto = window.cornerstoneTools?.state?.tools?.ImageOverlayViewer?.toolClass?.prototype;
+    if (!proto || proto[MARK]) return;
+    if (typeof proto._getCachedStat !== 'function' || typeof proto._renderOverlay !== 'function') return;
+    const read = proto._getCachedStat, draw = proto._renderOverlay;
+    // The plane ready to draw, or null; one per bulk data element, kept for the page.
+    const planes = new WeakMap();
+    async function plane(tool, imageId, overlayMetadata, o, color) {
+      if (!allowed(imageId, o)) return null;
+      let bytes = null;
+      try { bytes = await kinFetchBulk(o.pixelData.BulkDataURI); } catch (_) { return null; }
+      const need = Math.ceil(o.rows * o.columns / 8);
+      // Exactly one frame of the mask: one byte more only as the padding to an even length (a frame of an odd byte count).
+      if (!bytes || !(bytes.length === need || need % 2 === 1 && bytes.length === need + 1)) return null;
+      try {
+        const answer = await read.call(tool, imageId, { ...overlayMetadata, overlays: [{ ...o, pixelData: { Value: bytes.slice(0, need).buffer } }] }, color);
+        const drawn = answer?.overlays?.[0];
+        return drawn?.dataUrl ? { ...drawn, kinImageId: imageId, kinBulk: true } : null;
+      } catch (_) { return null; }
+    }
+    proto._getCachedStat = async function (imageId, overlayMetadata, color) {
+      const list = Array.isArray(overlayMetadata?.overlays) ? overlayMetadata.overlays : [];
+      if (!list.some(bulkOnly)) return read.call(this, imageId, overlayMetadata, color);
+      const drawn = await Promise.all(list.map(o => {
+        if (!bulkOnly(o)) return Promise.resolve(read.call(this, imageId, { ...overlayMetadata, overlays: [o] }, color))
+          .then(answer => answer?.overlays?.[0] || null, () => null);
+        if (!planes.has(o.pixelData)) planes.set(o.pixelData, plane(this, imageId, overlayMetadata, o, color));
+        return planes.get(o.pixelData);
+      }));
+      return { ...overlayMetadata, overlays: drawn.filter(Boolean) };
+    };
+    proto._renderOverlay = function (enabledElement, svgDrawingHelper, overlay) {
+      if (overlay?.kinBulk) {
+        const viewport = enabledElement?.viewport, id = this.getReferencedImageId(viewport);
+        if (this.mode === 'Disabled' || overlay.kinImageId !== id || !upright(viewport, id)) return false;
+      }
+      return draw.call(this, enabledElement, svgDrawingHelper, overlay);
+    };
+    proto[MARK] = true;
+  }
+  return { id: 'kin.overlay-planes', preRegistration() { install(); }, onModeEnter() { install(); } };
+}
 // The viewer's route `/` (see customizationService below): leave the viewer app for the sign-in entry, which sends a signed-in
 // account to its home screen (KinAuth.home: the worklist, or the clinician screen) and anyone else to sign in.
 function kinViewerRootToWorklist() {
@@ -7487,7 +7605,7 @@ function kinViewerRootToWorklist() {
 }
 
 window.config = {
-  extensions: [kinCreateSessionBoundary(), kinStackPrecision, kinCreateFrameMetadata(), kinCreateSRProvenance(), kinCreateViewerHistory(), kinCreateViewerFindings(), kinCreateViewerLayout(), kinCreateViewerJobs(), kinCreateViewerTechNote(), kinCreateFrameCoverage(), '@ohif/extension-dicom-pdf', kinCreateDicomPdf(), kinCreateCTSync(), kinCreateCine(), kinCreateDisplayScope(), kinCreateCellMerge(), kinCreateImagesOnly(), kinCreateImageText(), kinCreateCTPresets(), kinCreateThreeDCursor(), kinCreateSeriesMetadataRecovery(), kinCreateImageLoadStatus(), kinCreateContextLoss(), kinCreateMammographyHanging(), kinCreateSeriesSplit(), kinCreateSeriesOrder(), kinCreateMGReferenceLines(), kinCreateStudyPrefetch(), kinCreateStudySearch(), kinCreateViewerUX(), kinCreateViewerPrior(), kinCreateViewerReportPanel(), kinCreateMultiStudyStrip(), kinCreateMarkerStyle()],
+  extensions: [kinCreateSessionBoundary(), kinStackPrecision, kinCreateFrameMetadata(), kinCreateSRProvenance(), kinCreateViewerHistory(), kinCreateViewerFindings(), kinCreateViewerLayout(), kinCreateViewerJobs(), kinCreateViewerTechNote(), kinCreateFrameCoverage(), '@ohif/extension-dicom-pdf', kinCreateDicomPdf(), kinCreateCTSync(), kinCreateCine(), kinCreateDisplayScope(), kinCreateCellMerge(), kinCreateImagesOnly(), kinCreateImageText(), kinCreateCTPresets(), kinCreateThreeDCursor(), kinCreateSeriesMetadataRecovery(), kinCreateImageLoadStatus(), kinCreateContextLoss(), kinCreateMammographyHanging(), kinCreateSeriesSplit(), kinCreateSeriesOrder(), kinCreateMGReferenceLines(), kinCreateStudyPrefetch(), kinCreateStudySearch(), kinCreateViewerUX(), kinCreateViewerPrior(), kinCreateViewerReportPanel(), kinCreateMultiStudyStrip(), kinCreateMarkerStyle(), kinCreateOverlayPlanes()],
   // REQ-D-3D-CURSOR. 3D Cursor(대응점 표시)는 뷰어에 켜져 있다. 판독자는 도구 영역의 3D Cursor
   // 버튼으로 모드에 들어간다. === true 하나만 ON이고, 끄는 길도 이 리터럴 하나뿐이다.
   kinThreeDCursor: { enabled: true },

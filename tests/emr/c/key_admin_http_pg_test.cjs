@@ -160,10 +160,10 @@ test('admin creates, rotates and retires a doctor key over HTTP; the doctor appr
     assert.equal((await change('doctor', 'revoke', created.current, 'admin', 409)).code, 'KeyManagementConflict');
 
     // Scope and input: another institution's admin, a non-clinical member, malformed commands, missing reason.
-    await change('doctor', 'revoke', rotated.current, 'outsider', 409);
-    await change('doctor', 'provision', null, 'outsider', 403);
-    assert.deepEqual(await send('outsider', 'GET', keyRoute('doctor'), undefined, 200),
-      { subject: members.doctor.sub, institutionId: other, current: null, keys: [] });
+    // Another institution's member answers like an unknown id (404) for reads and every change.
+    await change('doctor', 'revoke', rotated.current, 'outsider', 404);
+    await change('doctor', 'provision', null, 'outsider', 404);
+    await send('outsider', 'GET', keyRoute('doctor'), undefined, 404);
     await change('staff', 'provision', null, 'admin', 403);
     await change('doctor', 'revoke', rotated.current, 'doctor', 403);
     for (const body of [{ action: 'suspend', expectedKid: rotated.current, reason: '사유' },

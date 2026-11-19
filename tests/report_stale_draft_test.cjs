@@ -167,7 +167,8 @@ test('callers without a draft, and drafts standing on the head, keep the existin
 
 test('the guard is addendum only — a stale draft still saves, defers and resets', async () => {
   for (const [action, rs, extra] of [['save', 'T', {}], ['defer', 'H', { reason: 'r' }], ['reset', 'W', { reason: 'r' }]]) {
-    const f = fixture({ state: { ...STATE, rs }, draft: { baseVersion: 2 } });
+    // An in-progress head (T, H) here is the caller's own Save: another reader's is not theirs to write over (report state table).
+    const f = fixture({ state: { ...STATE, rs }, head: { ...HEAD, updatedBy: CALLER.actor }, draft: { baseVersion: 2 } });
     await f.svc.commitReport(UID, { action, baseVersion: 4, ...BODY, ...extra }, CALLER);
     assert.ok(f.writes.some(w => w.includes(`:${action}`)), `${action} must still commit`);
   }

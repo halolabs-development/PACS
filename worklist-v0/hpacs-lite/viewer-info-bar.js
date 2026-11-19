@@ -89,9 +89,8 @@ window.KinViewerInfoBar = (() => {
     function refresh() {
       const { layout, cells } = adopt();
       for (const { id, current, bar } of cells) {
-        const m = current.instance;
         bar.children[2].hidden = !!studyActions?.hidden?.();
-        bar.children[2].disabled = !m || !studyActions?.available();
+        bar.children[2].disabled = !current.instance || !studyActions?.available();
         bar.children[2].title = studyActions?.available() ? '이 셀의 이전 검사 목록을 엽니다.' : '이전 검사 연결은 다음 단계에서 제공됩니다.';
         const previous = labels.get(id);
         const viewportStatus = window.cornerstone.Enums.ViewportStatus;
@@ -100,22 +99,23 @@ window.KinViewerInfoBar = (() => {
         const given = current.cell?.displaySetInstanceUIDs?.length && current.viewport;
         // A field a Match or Modify replaced shows the worklist's value (kinViewerStudyDisplay), every other field the image's
         // own, as before; the age is counted from the shown birth date and study date (else the image's Patient's Age).
+        // While the next frame loads the last rendered pixels keep their original identity.
+        // Recompute their text from this read, including a revocation or an explicit blank.
+        const pending = [viewportStatus.LOADING, viewportStatus.PRE_RENDER, viewportStatus.RESIZE].includes(current.viewport?.viewportStatus);
+        const retained = pending && current.viewport?.type === 'stack' && previous?.viewport === current.viewport &&
+          previous.set === current.set && !failed.has(current.viewport.getCurrentImageId?.());
+        const m = current.instance || (retained ? previous.instance : null);
         const display = window.kinViewerStudyDisplay;
         const v = m && display ? display.view(display.of(m.StudyInstanceUID, m.SeriesInstanceUID, text(m.PatientID)), { id: text(m.PatientID),
           name: text(m.PatientName), sex: text(m.PatientSex), birth: text(m.PatientBirthDate), date: text(m.StudyDate),
           desc: text(m.StudyDescription), age: text(m.PatientAge) }) : null;
-        let label = m ? [(v ? v.name : text(m.PatientName)) || 'Unknown', (v ? v.sex : text(m.PatientSex)) || 'Unknown',
+        const label = m ? [(v ? v.name : text(m.PatientName)) || 'Unknown', (v ? v.sex : text(m.PatientSex)) || 'Unknown',
           (v ? v.age : text(m.PatientAge)) || 'Unknown', (v ? v.id : text(m.PatientID)) || 'Unknown',
           [v ? v.date : text(m.StudyDate), text(m.StudyTime)].filter(Boolean).join(' ') || 'Unknown',
           v ? v.desc : text(m.StudyDescription), text(m.InstitutionName)].filter(Boolean).join(' | ')
           : !given || current.viewport.viewportStatus === viewportStatus.NO_DATA ? 'No image'
           : failed.has(current.viewport.getCurrentImageId?.()) ? 'Load failed' : 'Loading';
-        const pending = [viewportStatus.LOADING, viewportStatus.PRE_RENDER, viewportStatus.RESIZE].includes(current.viewport?.viewportStatus);
-        // While another frame of this same stack loads, the last rendered
-        // pixels still have this identity. Replacing it with a shorter Loading
-        // label resizes the image area on every cine frame.
-        if (m) labels.set(id, { viewport: current.viewport, set: current.set, label });
-        else if (pending && current.viewport?.type === 'stack' && previous?.viewport === current.viewport && previous.set === current.set) label = previous.label;
+        if (m) labels.set(id, { viewport: current.viewport, set: current.set, instance: m });
         else labels.delete(id);
         const type = current.viewport?.type;
         const mode = ({ stack: '2D', orthographic: 'MPR', volume3d: '3D' })[type] || type || 'No image';

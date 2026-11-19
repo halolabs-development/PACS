@@ -16,7 +16,7 @@ import {
   CRITICAL_RESULT_CODES as CODE, CRITICAL_RESULT_PAGE, CRITICAL_RESULT_PINNABLE_ACTIONS, CRITICAL_RESULT_STATE_FILTERS, Head,
   RADIOLOGIST, RecipientClass, Refusal, ackFingerprint, ackRefusal, appliedResult, auditDetail, cancelFingerprint, clip,
   createCase, createFingerprint, decodeCursor, deliveryOf, eligibleRecipient, effectiveRoles, encodeCursor, exactKeys, holds,
-  isObject, legacyReadable, originalIdentity, positiveValue, recipientCase, recipientClass, recipientSees, recipientView, recordRefusal,
+  isObject, legacyReadable, senderReadsHead, originalIdentity, positiveValue, recipientCase, recipientClass, recipientSees, recipientView, recordRefusal,
   senderScope, senderSees, senderView, sourceRefusal, studyIdentity, studyUidValue, supersedeFingerprint, textValue, userActor, userName,
   uuidValue,
 } from './critical-result-policy';
@@ -269,11 +269,16 @@ export class CriticalResultService {
 
   /** 머리 판 = ReportVersion(uid, Report.version) 한 행의 번호·action·작성자·시각. Report의 본문 칸은 읽지 않는다. */
   private async head(tx: any, uid: string): Promise<Head> {
-    const rows: any[] = await tx.$queryRaw`SELECT r.version AS "headVersion",v.action AS "headAction",v.author AS "headAuthor",v.at AS "headAt"
+    // headContent: the head version stored text, a structured item or a drawing (an empty head is nobody's work to keep).
+    const rows: any[] = await tx.$queryRaw`SELECT r.version AS "headVersion",v.action AS "headAction",v.author AS "headAuthor",v.at AS "headAt",
+        (COALESCE(v.findings,'')<>'' OR COALESCE(v.conclusion,'')<>'' OR COALESCE(v.recommendation,'')<>''
+          OR CASE WHEN jsonb_typeof(v.structured)='array' THEN jsonb_array_length(v.structured)>0 ELSE false END
+          OR CASE WHEN jsonb_typeof(v.drawings)='array' THEN jsonb_array_length(v.drawings)>0 ELSE false END) AS "headContent"
       FROM "Report" r LEFT JOIN "ReportVersion" v ON v.uid=r.uid AND v.version=r.version WHERE r.uid=${uid}`;
     const row = rows[0];
     if (!row || !Number.isSafeInteger(row.headVersion) || row.headVersion < 1) return null;
-    return { version: row.headVersion, action: row.headAction ?? null, author: row.headAuthor ?? null, at: row.headAt ?? null };
+    return { version: row.headVersion, action: row.headAction ?? null, author: row.headAuthor ?? null, at: row.headAt ?? null,
+      content: row.headContent !== false };
   }
 
   /**
@@ -282,7 +287,8 @@ export class CriticalResultService {
    * 대신 고정하면 판독의가 고르지 않은 판이 전달된다. force-discard의 discarded 판은 머리를 옮기지 않으므로 세지 않는다.
    */
   private async pinRefusal(tx: any, uid: string, sourceVersion: number, head: Head, state: any, c: Caller): Promise<Refusal | null> {
-    const refusal = sourceRefusal({ sourceVersion, head, senderReadable: legacyReadable(state, c.actor, c.sub) });
+    // The state table (report-visibility.ts): another physician's unsigned head is not theirs to send.
+    const refusal = sourceRefusal({ sourceVersion, head, senderReadable: legacyReadable(state, c.actor, c.sub) && senderReadsHead(state, head, c.actor) });
     if (refusal || !head) return refusal;
     if(!await this.readableBy(c,uid,tx,sourceVersion))return {status:403,code:CODE.SOURCE_FORBIDDEN};
     const rows: any[] = await tx.$queryRaw`SELECT count(*)::int AS beyond FROM "ReportVersion"
@@ -465,7 +471,7 @@ export class CriticalResultService {
       if (await this.visibleStudy(tx, uid, c, state, studyMissing) !== institution) throw unavailable();
       const head = await this.head(tx, uid);
       const pinnable = !!head && CRITICAL_RESULT_PINNABLE_ACTIONS.includes(head.action as string);
-      const readable = legacyReadable(state, c.actor, c.sub) && !!head && await this.readableBy(c,uid,tx,head.version);
+      const readable = legacyReadable(state, c.actor, c.sub) && senderReadsHead(state, head, c.actor) && !!head && await this.readableBy(c,uid,tx,head.version);
       const recipients: any[] = [];
       if (pinnable && readable) for (const x of candidates) {
         const roster = members.map(user => ({ id: userActor(user), sub: user.id }));

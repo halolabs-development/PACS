@@ -1555,8 +1555,10 @@ class FindingAPI(unittest.TestCase):
         self.access('xauthor')
         self.assertEqual(self.citations()['draft'][0]['insertedText'], text)
 
-        # 14c - and the signature is not blocked by any of it: the record can always be finished.
-        self.call(path=report+'/commit', body=dict(action='save', baseVersion=0, findings=text, conclusion='', recommendation=''), user='xauthor', status=201)
+        # 14c - and the signature is not blocked by any of it: the record can always be finished. It is signed (approved): a
+        # Save would stay the writer's own text, which no other reader gets (the report state table), and step 18 reads it as
+        # another reader.
+        self.call(path=report+'/commit', body=dict(action='approve', baseVersion=0, findings=text, conclusion='', recommendation=''), user='xauthor', status=201)
         versions = self.call(method='GET', path=report+'/versions', user='xauthor')
         self.assertNotIn('citations', json.dumps(versions), 'the history surface is not a citation surface')
         signed = self.citations()
@@ -1597,7 +1599,8 @@ class FindingAPI(unittest.TestCase):
         self.cite(spare, 0, '두 번째 줄', base=1)
         held = self.citations()['draft']
         self.assertEqual(len(held), 1)
-        self.call(path=report+'/commit', body=dict(action='approve', baseVersion=1, findings='다른 판독의의 승인본', conclusion='', recommendation=''), user='doctor', status=201)
+        # Another reader adds to the approved report (an Addendum: a colleague's approved report is open to it).
+        self.call(path=report+'/commit', body=dict(action='addendum', baseVersion=1, findings='다른 판독의의 승인본', conclusion='', recommendation=''), user='doctor', status=201)
         # The approved report is v2 now while this draft still stands on v1. Addendum is the only way
         # out of A, and U3's gate names the refusal before the optimistic lock can answer with the
         # wording that sends an old tab down the destructive reload path.

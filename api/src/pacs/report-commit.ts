@@ -3,6 +3,7 @@
  * PacsService가 만들어 소유하는 평범한 객체다(Nest provider가 아니다). 생성자는 참조만 저장한다.
  */
 import { canReadPreliminary, designationMatches } from '../preliminary-reader';
+import { assertHeadWritable, storedContent, withStoredExtras } from '../report-visibility';
 import { rightsAllow, lockMemberRights } from '../member-rights';
 import type { StudyAccessService } from '../study-access.service';
 import { BadRequestException, ConflictException, ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
@@ -94,7 +95,8 @@ export class PacsReportCommit {
      * 길 그대로다 — 점유를 우회하지 않고, 두 사람만, 사유 필수. 내 글만 있는 검사도 지금처럼 사유를 받는다.
      * 사유는 묻지 않고 **이 잠금 안에서** 서버가 만든다: 요청이 본 것이 아니라 지금 잠근 점유·저장 글이 기록된다.
      */
-    const savedByOther = early?.updatedBy && early.updatedBy !== c.actor && (early.findings || early.conclusion || early.recommendation)
+    // Someone's work is any stored content - text, a structured item or a drawing (report-visibility.ts storedContent).
+    const savedByOther = early?.updatedBy && early.updatedBy !== c.actor && storedContent(early)
       ? early.updatedBy as string : null;
     const takeover = inProgress && (heldByOther || savedByOther)
       ? { holder: heldByOther ? visibleHolder(prev, c) : null, heldAt: heldByOther ? prev.heldAt : null, savedBy: savedByOther }
@@ -270,6 +272,9 @@ export class PacsReportCommit {
         // 잠글 수 없으므로, 항상 존재하는 그 부모 잠금이 첫 판부터 같은 uid의 확정을 직렬화한다.
         // 안정된 부모 행을 잡은 뒤 현재 Report를 잠근 채 판 번호를 읽는다(되돌리기 후보는 위에서 이미 잠가 읽었다).
         const cur = inProgress ? early : await this.lockHead(tx, uid);
+        // The state table (report-visibility.ts): another physician's saved (unsigned) report is not written over, approved,
+        // deferred or handed on by someone who cannot read it. Reset (taking an in-progress report back to Unread) stays open.
+        if (action !== 'reset') assertHeadWritable(prev, cur, c);
 
         /**
          * 내 초안 행을 **잠그고** 경계를 대조한 뒤 읽는다.
@@ -413,7 +418,7 @@ export class PacsReportCommit {
         // Reset은 현재 판독문을 비우기 직전에 이력으로 보존한다. 같은 트랜잭션이라
         // 실패하면 비움도 스냅샷도 함께 취소되어 판독문을 잃을 틈이 없다.
         if (action === 'reset' && cur &&
-            (cur.findings || cur.conclusion || cur.recommendation || headDrawings.length)) {
+            (storedContent(cur) || headDrawings.length)) {
           await tx.reportVersion.create({ data: {
             uid, version, action: 'discarded',
             findings: cur.findings, conclusion: cur.conclusion,
@@ -443,7 +448,9 @@ export class PacsReportCommit {
         if (takeover) {
           const holderDraft = !!heldByOther && !!(await tx.reportDraft.findUnique({
             where: { uid_author: { uid, author: heldByOther } }, select: { present: true } }))?.present;
-          const savedKept = !!savedByOther && await this.reportDraft.keepSavedText(tx, uid, prev.draftEpoch, savedByOther, {
+          // Only saved text moves into the writer's draft; a Save of drawings alone has none to move - its drawings stay with
+          // the writer in the Reset copy above (no empty draft is made for them).
+          const savedKept = !!savedByOther && !!(cur.findings || cur.conclusion || cur.recommendation) && await this.reportDraft.keepSavedText(tx, uid, prev.draftEpoch, savedByOther, {
             findings: cur.findings, conclusion: cur.conclusion, recommendation: cur.recommendation,
             baseVersion: cur.version, citations: headCitations, structured: headStructured, groupId: cur.groupId ?? null,
           }, source => record!(prev, null, 'draft-save', source));
@@ -534,6 +541,7 @@ export class PacsReportCommit {
     const [head] = await tx.$queryRaw`
       SELECT version, "updatedBy", findings, conclusion, recommendation, "groupId"
       FROM "Report" WHERE uid = ${uid} FOR UPDATE`;
-    return head;
+    // With whether its version stored a structured item or a drawing (a head without text is judged by them).
+    return head ? (await withStoredExtras(tx, [{ ...head, uid }]))[0] : head;
   }
 }

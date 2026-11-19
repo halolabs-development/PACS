@@ -534,10 +534,18 @@ class AuthAuditLive(unittest.TestCase):
             self.assertEqual((status, json.loads(body).get("code")), (403, "INSTITUTION_PENDING"))
             self.assertEqual(204, self.logout(waiting), name)
         self.assertEqual(204, self.logout(self.login("mm")))
-        # Z's admin moves mm from A to B (an isolation: its sessions end without an access row), then mm logs in in B.
+        # mm moves from A to B. An administrator manages only their own institution, so the move is two institutions'
+        # acts: A's admin releases mm (Revoke Approval, an isolation: its sessions end without an access row), B's admin
+        # approves mm into B and activates the account; then mm logs in in B. Z's admin cannot touch an A member.
         mm = self.members["mm"]["id"]
-        moved = self.stack.request("PATCH", f"/admin/users/{mm}", "u5-admin-z", {"institution": b, "verificationOverride": True})
-        self.assertIn(moved.status, (200, 204), moved.text)
+        refused = self.stack.request("PATCH", f"/admin/users/{mm}", "u5-admin-z", {"institution": b, "verificationOverride": True})
+        self.assertEqual(404, refused.status, refused.text)
+        for step, admin, body in (("release", "u5-admin-a", {"approvalState": "PENDING"}),
+                                  ("approve", "u5-admin-b", {"approvalState": "APPROVED", "institution": b, "roles": ["radiologist"],
+                                                             "verificationOverride": True}),
+                                  ("activate", "u5-admin-b", {"enabled": True})):
+            moved = self.stack.request("PATCH", f"/admin/users/{mm}", admin, body)
+            self.assertIn(moved.status, (200, 204), step + ": " + moved.text)
         self.login("mm")
         expected_rows = lambda name, inst: {(r["action"], r["target"], json.loads(r["detail"]).get("cause") or json.loads(r["detail"]).get("outcome"), inst)
                                             for r in self.rows_of(name) if json.loads(r["detail"]).get("institution") == inst}

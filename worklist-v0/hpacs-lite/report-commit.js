@@ -559,7 +559,7 @@
       if (!a) return null;
       const holder = heldByOther(a);
       return {
-        rs: a.rs, ss: a.ss, em: a.em, prelimHidden: !!a.prelimHidden, identityUnresolved: !!a.identityUnresolved,
+        rs: a.rs, ss: a.ss, em: a.em, prelimHidden: !!a.prelimHidden, bodyLock: a.bodyLock ?? null, identityUnresolved: !!a.identityUnresolved,
         /**
          * FC-029: a Preliminary that may be mine to approve. The server shows a Preliminary only to its author and its designated
          * reviewer and judges the designation by account id first; the list carries names only, and names can change. So every

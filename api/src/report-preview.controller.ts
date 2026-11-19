@@ -6,6 +6,7 @@ import { OrthancService } from './orthanc.service';
 import { Caller, PacsService } from './pacs.service';
 import { viewerUid } from './viewer-input';
 import { refuseDestroyed } from './pacs/values';
+import { assertHeadReadable, headForLock, inProgressRefusal, reportBodyLock, storedVersionReadable, withStoredExtras } from './report-visibility';
 import { LocalReadResponse } from './emr-viewing/local-read';
 import { consumerSource, viewerSources } from './emr-viewing/consumer-read';
 import { prepareExamRead, resolveExamScope, scopeIncludesSeries, examScopeView, examScopeChanged, examParentAccess } from './exam-merge.service';
@@ -25,7 +26,7 @@ export class ReportPreviewController {
    */
   @Get('clinician/studies')
   clinicianStudies(@Query() query: any, @Req() req: any) {
-    return this.pacs.clinicianStudies(member(req), query);
+    return this.pacs.clinicianStudies(member(req), query, req.headers?.['x-kin-viewer-display'] === '1');
   }
 
   /** Final head (approve/addendum at RS A): that row's body and key images. Anything else: status only (S5-F5). */
@@ -78,10 +79,15 @@ export class ReportPreviewController {
       allowed(state);
       const report = await selected(tx);
       if(query.draft&&!report?.present)throw examScopeChanged();
+      // The state table (report-visibility.ts): another physician's unsigned head keeps its text - the preview (study, key images)
+      // still opens and its report part is empty and says why; one of their Save versions and my draft over their head are refused.
+      const withheld=!query.draft&&query.version===undefined&&!!report&&reportBodyLock(state,(await withStoredExtras(tx,[{...report,uid}]))[0],caller)==='in-progress';
+      if(query.draft)assertHeadReadable(state,await headForLock(tx,uid,state),caller);
+      if(query.version!==undefined&&report&&!await storedVersionReadable(tx,uid,report,caller))throw inProgressRefusal(null);
       const scope=await resolveExamScope(tx,this.studyAccess,caller,{uid,purpose:report?'stored':'current',...(report?{record:report}:{}),prepared:before});
       if(query.generation!==undefined&&query.generation!==scope.generation)throw examScopeChanged();
       const version = report?.version ? await tx.reportVersion.findUnique({ where: { uid_version: { uid, version: report.version } } }) : null;
-      let pinned = versionDrawings(version?.drawings);
+      let pinned = withheld ? [] : versionDrawings(version?.drawings);
       if (query.draft) {
         const head = await tx.report.findUnique({ where: { uid } });
         const headVersion = head?.version && (head.groupId ?? null) === scope.groupId
@@ -108,14 +114,15 @@ export class ReportPreviewController {
           repDoc: state.repDoc ?? null, confirm: state.confirm ?? null,
           // The approval instant the worklist Confirm column shows; the paper prints it in the reader's local time.
           approvedAt: state.rs === 'A' && state.approvedAt ? new Date(state.approvedAt).toISOString() : null,
-          findings: report?.findings ?? '', conclusion: report?.conclusion ?? '', recommendation: report?.recommendation ?? '' },
+          findings: withheld ? '' : report?.findings ?? '', conclusion: withheld ? '' : report?.conclusion ?? '',
+          recommendation: withheld ? '' : report?.recommendation ?? '', ...(withheld ? { bodyLock: 'in-progress' } : {}) },
         keys: heads.map(head => ({ id: head.id, revision: head.revision, sourceUid:head.studyUid, author: head.authorActor, item: head.snapshot })),
         ...(pinned.length ? { drawings: pinned
           .map(d => ({ id: d.id, background: d.background, source: d.source ?? null })) } : {}) };
       const identity = { sourcePatientId: tag('00100020') || null, sourceInstitution: tag('00080080') || null };
       const sources = [consumerSource('study-metadata', uid, state.institutionId, uid, null, ['study'], identity),
         ...viewerSources(uid, state.institutionId, body.keys, ['keys'], identity)];
-      if (report) sources.push(consumerSource(query.draft?'private-draft':query.version?'report-version':'report-head', uid, state.institutionId,
+      if (report && !withheld) sources.push(consumerSource(query.draft?'private-draft':query.version?'report-version':'report-head', uid, state.institutionId,
         query.draft?JSON.stringify([uid,caller.actor]):query.version?String(report.id):uid, query.draft?report.revision:report.version, ['report'], identity));
       if (report && (body as any).drawings) sources.push(consumerSource(query.draft?'private-draft':query.version?'report-version':'report-head', uid, state.institutionId,
         query.draft?JSON.stringify([uid,caller.actor]):query.version?String(report.id):uid, query.draft?report.revision:report.version, ['drawings'], identity));

@@ -301,7 +301,8 @@ window.KinViewerFeatures?.module('view', async ({ services, commands, store, ui 
   let marks = 0;
   function enter(id) { setting.set(id, (setting.get(id) || 0) + 1); began.set(id, ++marks); }
   function leave(id) { const n = (setting.get(id) || 1) - 1; if (n) setting.set(id, n); else setting.delete(id); }
-  async function applyCell(target, rule, run, alive) {
+  const directly = fn => fn();
+  async function applyCell(target, rule, run, alive, write = directly) {
     const v = target.v, live = () => run === pass && current(target) && (!alive || alive());
     if (!live()) return null;
     const record = recordOf(v);
@@ -311,12 +312,12 @@ window.KinViewerFeatures?.module('view', async ({ services, commands, store, ui 
       // Sort, then the first image of the sorted stack.
       const order = model.sortOrder(record.stock.map(metadata), rule.sort).map(i => record.stock[i]);
       const index = model.firstIndex(order.length, rule.firstImage);
-      if (!sameList(v.getImageIds?.() || [], order)) await changeImage(v, () => v.setStack(order, index));
-      else if ((v.getCurrentImageIdIndex?.() ?? 0) !== index) await changeImage(v, () => jump(v, index));
+      if (!sameList(v.getImageIds?.() || [], order)) await changeImage(v, () => write(() => v.setStack(order, index), order[index]));
+      else if ((v.getCurrentImageIdIndex?.() ?? 0) !== index) await changeImage(v, () => write(() => jump(v, index), order[index]));
       if (!live()) return null;
       clearMarks(record);
       record.rule = rule; record.presentations = null; record.presentation = null; record.shown = null; record.signature = ''; record.presented = false; record.notes = [];
-      plain(v, record);
+      write(() => plain(v, record));
       filters.apply(canvasOf(v), rule.filter);
       if (rule.overlay === 'none') record.pane.dataset.kinCellOverlay = 'none';
       let notes = [];
@@ -325,7 +326,7 @@ window.KinViewerFeatures?.module('view', async ({ services, commands, store, ui 
         let list = null;
         try { list = await presentations(study); } catch (error) { if (!live()) return null; notes = [error.message]; }
         if (!live()) return null;
-        if (list) { record.presentations = list; notes = present(v, record); }
+        if (list) { record.presentations = list; notes = write(() => present(v, record)); }
       }
       v.render();
       draw(record);
@@ -342,9 +343,10 @@ window.KinViewerFeatures?.module('view', async ({ services, commands, store, ui 
   // cell without one has them (plain: no turn or flip, fit with no pan, the stock window drawn anew), whatever was turned,
   // moved or windowed since; a cell without one keeps the camera and window the reader has. Resolves true when it took
   // the cell back, false when the cell had no rule of this module, null when the cell changed or another pass began.
-  async function clearCell(target, run, rule) {
+  async function clearCell(target, run, rule, alive, write = directly) {
     const v = target.v, record = records.get(target.id);
-    if (!current(target) || run !== pass) return null;
+    const live = () => current(target) && run === pass && (!alive || alive());
+    if (!live()) return null;
     if (!record || record.viewport !== v || record.key !== target.key) return false;
     const presented = !!record.presentation;
     record.busy = true;  // no image the cell moves to meanwhile gets a presentation state
@@ -353,18 +355,19 @@ window.KinViewerFeatures?.module('view', async ({ services, commands, store, ui 
       if (!presented) {
         clearMarks(record);
         record.rule = null; record.presentations = null; record.presentation = null; record.shown = null; record.signature = '';
-        if (record.table) stockWindow(v, record);
-        if (record.invertBefore !== null) { v.setProperties({ invert: record.invertBefore }); record.invertBefore = null; }
+        if (record.table) write(() => stockWindow(v, record));
+        if (record.invertBefore !== null) { write(() => v.setProperties({ invert: record.invertBefore })); record.invertBefore = null; }
       }
       // A presentation state stays on the cell, and its record with it, until the stock order is back: a failure or a
       // change of the cell meanwhile leaves the cell as it was, to be taken off again.
       const now = imageId(v), stock = record.stock;
-      if (!sameList(v.getImageIds?.() || [], stock)) await changeImage(v, () => v.setStack(stock, Math.max(0, stock.indexOf(now))));
-      if (!current(target) || run !== pass) return null;
+      const index = Math.max(0, stock.indexOf(now));
+      if (!sameList(v.getImageIds?.() || [], stock)) await changeImage(v, () => write(() => v.setStack(stock, index), stock[index]));
+      if (!live()) return null;
       if (presented) {
         clearMarks(record);
         record.rule = rule; record.presentations = null; record.presentation = null; record.shown = null; record.signature = '';
-        plain(v, record, true);
+        write(() => plain(v, record, true));
       }
       clearMarks(record);
       records.delete(target.id);
@@ -673,6 +676,13 @@ window.KinViewerFeatures?.module('view', async ({ services, commands, store, ui 
       if (ended || !rule || !target || (alive && !alive())) return false;
       const text = await applyAll([{ index: 0, target, rule, alive }]);
       return text !== null && current(target) && (!alive || alive()) && (model.isDefaultDisplay(rule) || !!records.get(viewportId)?.rule);
+    },
+    // A reopened layout restores its cells independently. A later reader or protocol pass still supersedes them all.
+    async restore(viewportId, value, alive, write) {
+      const rule = model.displayRule(value), target = targetOf(viewportId);
+      if (!rule || !target || !alive()) return false;
+      if (model.isDefaultDisplay(rule)) return await clearCell(target, pass, rule, alive, write) !== null;
+      return await applyCell(target, rule, pass, alive, write) !== null;
     },
     busy() { return !ended && !!rulesPass && rulesPass.outcome === null; },
     // For a linked view (MG Mirrored, Manual Sync): true while a rule is being put on the cell, or — given a value of

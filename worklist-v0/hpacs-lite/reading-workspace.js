@@ -704,6 +704,9 @@ window.KinReadingWorkspace = function (app) {
     const openedFrame = frame;
     return { status: 'accepted', isOpen: () => !ended && active && frame === openedFrame && sameTarget() && shown?.viewingSet === set.opening };
   }
+  function refreshViewerDisplay() {
+    try { frame?.contentWindow?.kinViewerStudyDisplay?.refreshAll(); } catch (_) {}
+  }
   function attempt(r, abandon) {
     if (ended) { app.notice('영상 작업공간이 종료되었습니다. 판독문 초안을 저장한 뒤 화면을 새로고침하세요.'); return false; }
     if (!r || r.reportUid !== app.current() || !app.allowed()) return false;
@@ -711,7 +714,7 @@ window.KinReadingWorkspace = function (app) {
     if (frame && !failed && JSON.stringify(shown) === JSON.stringify(r)) {
       frame.hidden = false; recovery.hidden = true; pending = null; identify();
       // Shown again: the viewer reads again what it shows, so a Match or Unmatch since the frame opened shows.
-      try { frame.contentWindow.kinViewerStudyDisplay?.refreshAll(); } catch (_) {}
+      refreshViewerDisplay();
       return true;
     }
     const state = viewerState();
@@ -810,6 +813,7 @@ window.KinReadingWorkspace = function (app) {
     document.body.classList.remove('reading-list-open'); list.setAttribute('aria-expanded', 'false');
     if (shown?.reportUid === uid && frame) {
       frame.hidden = false;
+      if (!failed && app.allowed()) refreshViewerDisplay();
       redrawRetainedViewer();
       if (!failed) { pending = null; recovery.hidden = true; kinWrite(status, loaded ? kinSay('기존 영상 작업으로 돌아왔습니다.') : kinSay('영상 작업공간을 불러오는 중…')); }
       identify(); return;

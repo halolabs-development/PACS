@@ -24,7 +24,7 @@ export const CRITICAL_RESULT_TRANSITIONS: Readonly<Record<string, { from: string
 
 export type RecipientClass = 'clinician' | 'radiologist';
 export type Refusal = { status: 400 | 403 | 404 | 409 | 503; code: string; id?: string; replacedBy?: string };
-export type Head = { version: number; action: string | null; author?: string | null; at?: any } | null;
+export type Head = { version: number; action: string | null; author?: string | null; at?: any; content?: boolean } | null;
 type StudyReadState = { rs?: string | null; preDoc?: string | null; preReviewer?: string | null; preDocSub?: string | null; preReviewerSub?: string | null };
 type RecipientCase = {
   case: 'C2' | 'C3' | 'C4' | 'C5' | 'R2' | 'R3' | 'R4' | 'R5';
@@ -125,6 +125,17 @@ export function recipientSees(record: RecordSides, state: StudyScopeState | null
 }
 
 /** 판독의의 기존 읽기 규칙(report-preview·versions(), F-8·F-9): P면 preDoc·preReviewer만. 가시성은 따로 본다. */
+/**
+ * The report state table (report-visibility.ts) at the source of a critical result: the sender reads the head it pins, and
+ * another physician's unsigned head (a Save or Defer outside a Preliminary) is not theirs to send. The recipients see what
+ * the sender chose to send.
+ */
+export function senderReadsHead(state: StudyReadState | null | undefined, head: Head, actor: string): boolean {
+  // An empty head (no text, structured item or drawing stored) is nobody's work: any eligible sender may send, as before.
+  if (!head || head.content === false || state?.rs === 'P' || !['W', 'T', 'H'].includes(state?.rs as string)) return true;
+  return !['save', 'defer'].includes(head.action as string) || head.author === actor;
+}
+
 export function legacyReadable(state: StudyReadState | null | undefined, actor: string, sub?: string): boolean {
   if (!state) return false;
   return canReadPreliminary(state, { actor, sub });

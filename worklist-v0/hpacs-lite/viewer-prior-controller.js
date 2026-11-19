@@ -24,6 +24,8 @@ window.KinViewerPriorController = (() => {
   }
   function create({ viewer, loadStudy, onList, onReport }) {
     let origin = null, rows = [], listRequest = null, reportRequest = null, imageRequest = null, disposed = false;
+    const display = window.kinViewerStudyDisplay;
+    let reportView = null, listedUids = [];
     const fields = ['patientKey', 'sequence', 'viewportId', 'studyUid', 'seriesUid', 'displaySetUid', 'mode'];
     // A cell still shows, for the same patient tab, what it showed when the request began.
     function same(value) {
@@ -36,15 +38,18 @@ window.KinViewerPriorController = (() => {
     function listed(data, value) {
       if (!Array.isArray(data?.studies)) throw new Error('검사 목록 응답을 확인할 수 없습니다.');
       const patient = viewer.snapshot();
-      // Each study's patient and exam as the worklist shows them (kinViewerStudyDisplay: a Match or Modify shows here too).
-      const display = window.kinViewerStudyDisplay;
-      const studies = data.studies.map(study => { const s = display?.shown(study);
-        return { ...study, ...(s ? { id: s.id, name: s.name, sex: s.sex, birth: s.birth, desc: s.desc, acc: s.acc, modality: s.modality } : {}),
-          date: date(s ? s.date : study.date) }; });
-      const reference = studies.find(study => study.uid === (patient.examScope?.reportUid || patient.studyUIDs[0]) && study.sourcePatientKey === value.patientKey);
+      const studies = data.studies.flatMap(study => {
+        if (study.sourcePatientKey !== value.patientKey) return [];
+        const values = display ? display.row(study.uid, value.patientKey) : study;
+        return values ? [{ ...study, ...values, date: date(values.date) }] : [];
+      });
+      const referenceUid = patient.examScope?.reportUid || patient.studyUIDs[0];
+      const originals = studies.filter(study => study.displaySources?.some(source => source.studyUid === referenceUid));
+      const reference = studies.find(study => study.uid === referenceUid) || (originals.length === 1 ? originals[0] : null);
       // The cell's own exam: its study listed by UID, a part of the tab's current exam, or a listed merged or split exam
       // that holds the cell's original (and series) — e.g. the second original of a merged prior.
       const source = studies.find(study => study.uid === value.studyUid && study.sourcePatientKey === value.patientKey) ||
+        (value.studyUid === referenceUid ? reference : null) ||
         (patient.examScope?.sources.some(source=>source.studyUid===value.studyUid)?reference:null) ||
         window.KinExamScope?.listedExam?.(studies.filter(study => study.sourcePatientKey === value.patientKey), value.studyUid, value.seriesUid) || null;
       if (!reference || !source) return null;
@@ -52,9 +57,30 @@ window.KinViewerPriorController = (() => {
         .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || b.uid.localeCompare(a.uid))
         .map(study => ({ ...study, relation: relation(study, reference) }));
     }
-    function closeReport() { reportRequest?.abort(); reportRequest = null; onReport({ state: 'closed' }); }
+    async function readList(value, signal) {
+      if (!display) return read('/api/studies', { signal });
+      const result = await display.lookup([...viewer.snapshot().studyUIDs, value.studyUid, ...listedUids],
+        { patientKey: value.patientKey, signal, valid: () => same(value) });
+      return { studies: result.studies };
+    }
+    function showReport(value) { reportView = value; onReport(value); }
+    const stopShowing = display?.showing(() => listedUids);
+    const stopDisplay = display?.subscribe(() => {
+      if (!listedUids.length) return;
+      if (!current()) { close(); return; }
+      const fresh = listed({ studies: display.examsFor(listedUids, origin.patientKey) }, origin) || [];
+      if (JSON.stringify(rows) === JSON.stringify(fresh)) return;
+      rows = fresh;
+      onList(rows.length ? { state: 'ready', origin, studies: rows } : { state: 'no-study', origin });
+      if (reportView?.study) {
+        const study = rows.find(row => row.uid === reportView.study.uid);
+        if (study) showReport({ ...reportView, study });
+        else closeReport();
+      }
+    });
+    function closeReport() { reportRequest?.abort(); reportRequest = null; reportView = null; onReport({ state: 'closed' }); }
     function close() {
-      listRequest?.abort(); listRequest = null; rows = []; origin = null;
+      listRequest?.abort(); listRequest = null; rows = []; listedUids = []; origin = null;
       imageRequest?.abort(); imageRequest = null;
       closeReport(); onList({ state: 'closed' });
     }
@@ -76,11 +102,11 @@ window.KinViewerPriorController = (() => {
       const admitted = () => listRequest === request && !request.signal.aborted && current();
       onList({ state: 'loading', origin });
       try {
-        const data = await read('/api/studies', request);
+        const data = await readList(origin, request.signal);
         if (!admitted()) return;
         const found = listed(data, origin);
         if (!found) { onList({ state: 'no-study', origin }); return; }
-        rows = found;
+        rows = found; listedUids = rows.map(row => row.uid);
         onList({ state: 'ready', origin, studies: rows });
       } catch (error) {
         if (admitted()) onList({ state: 'error', origin, message: error.message });
@@ -93,17 +119,17 @@ window.KinViewerPriorController = (() => {
       if (!study) { onReport({ state: 'no-study' }); return; }
       const request = reportRequest = new AbortController();
       const admitted = () => reportRequest === request && !request.signal.aborted && current();
-      onReport({ state: 'loading', origin, study });
+      showReport({ state: 'loading', origin, study });
       try {
         const versions = await read('/api/studies/' + encodeURIComponent(uid) + '/report/versions', request);
         if (!admitted()) return;
         if (!Array.isArray(versions)) throw new Error('판독 이력 응답을 확인할 수 없습니다.');
         const report = reportHead(versions);
         // C-R01-122: the same read is the study's report history; the panel's History shows every version it holds.
-        onReport({ state: report ? 'ready' : 'none', origin, study, report,
+        showReport({ state: report ? 'ready' : 'none', origin, study: reportView.study, report,
           versions: versions.filter(version => version && Number.isSafeInteger(version.version)).sort((a, b) => b.version - a.version) });
       } catch (error) {
-        if (admitted()) onReport({ state: 'error', origin, study, message: error.message });
+        if (admitted()) showReport({ state: 'error', origin, study: reportView.study, message: error.message });
       }
     }
     async function openImages(uid) {
@@ -133,7 +159,7 @@ window.KinViewerPriorController = (() => {
       // The patient's related studies for the cell value, or null when that cell's study is not in the list.
       async studies(value, signal) {
         if (!same(value)) return null;
-        const data = await read('/api/studies', { signal });
+        const data = await readList(value, signal);
         if (signal?.aborted || !same(value)) return null;
         return listed(data, value);
       },
@@ -170,7 +196,7 @@ window.KinViewerPriorController = (() => {
     const unsubscribe = viewer.subscribe(close);
     return { open, openReport, openImages, closeReport, close, refresh, related,
       retryList() { if (origin && current()) return open(origin); },
-      dispose() { disposed = true; unsubscribe(); close(); } };
+      dispose() { disposed = true; stopDisplay?.(); stopShowing?.(); unsubscribe(); close(); } };
   }
   return { create };
 })();

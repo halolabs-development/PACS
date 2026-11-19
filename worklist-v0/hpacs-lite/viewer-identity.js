@@ -209,13 +209,15 @@ window.KinViewerIdentity=(()=>{
     }
     const unsubscribe=subscribe(bound,next=>{value=next;refresh();});
     // A study's shown patient arrives (or changes on a new read) after its pixels: label every cell again then.
-    const stopDisplay=window.kinViewerStudyDisplay?.subscribe(()=>changed())||(()=>{});
+    const display = window.kinViewerStudyDisplay;
+    const stopShowing = display?.showing(() => [...studies, ...displayed.values()]);
+    const stopDisplay = display?.subscribe(() => refresh());
     const stop=work.onInvalidate(event=>{
       if(event.reason==='prepare'){removeNative();clearInterval(timer);}
       if(event.reason==='cancel'||event.reason==='lifecycle'&&event.state==='active'){bind();refresh();}
       else if(event.reason==='lifecycle'&&event.state!=='preparing')dispose();
     });
-    function dispose(){ended=true;viewing.close();clearInterval(timer);unsubscribe();stopDisplay();removeNative();stop();loading.clear();clear();}
+    function dispose(){ended=true;viewing.close();clearInterval(timer);unsubscribe();stopDisplay?.();stopShowing?.();removeNative();stop();loading.clear();clear();}
     bind();refresh();return {dispose};
   }
   return {positions:[...positions],modalities:[...modalities],defaults,normalize,read,publish,subscribe,mount};
