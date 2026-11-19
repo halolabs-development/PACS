@@ -243,7 +243,7 @@ class MammographyDicomContractTest(unittest.TestCase):
         self.assertEqual([c["declaredSourceCount"] for c in counts], [10, 10, 10, 10], "nine X-Ray 3D acquisition sources + one derivation source")
 
     def test_mg01_description_derivation_or_secondary_capture_never_confirms_a_kind(self):
-        victre, processing, specimen = (dicom_json(dataset(s)) for s in ("victre-208084664-1", "ea1141-8036458-1", "breastdx-01-0021-1"))
+        victre, processing, specimen = (dicom_json(dataset(s)) for s in ("victre-208084664-1", "ea1141-8036458-1", "ea1141-857478-specimen-1"))
         relabelled = dicom_json(dataset("cmmd-d2-0140-1"))
         relabelled["0008103E"] = {"vr": "LO", "Value": ["R CC C-View"]}
         tomo_text = dicom_json(dataset("cmmd-d2-0140-1"))
