@@ -129,7 +129,7 @@ TOTP_SETUP = f"""<!doctype html><html class="login-pf" lang="ko" dir="ltr"><head
   <div id="kc-content"><div id="kc-content-wrapper">
    <ol id="kc-totp-settings">
     <li><p>{MSG["loginTotpStep1"]}</p><ul id="kc-totp-supported-apps"><li>SYN Authenticator</li></ul></li>
-    <li><p>{MSG["loginTotpStep2"]}</p><img id="kc-totp-secret-qr-code" src="data:image/png;base64,iVBORw0KGgo=" alt="Figure: Barcode"></li>
+    <li><p>{MSG["loginTotpStep2"]}</p><img id="kc-totp-secret-qr-code" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" alt="Figure: Barcode"></li>
     <li><p>{MSG["loginTotpStep3"]}</p><p>{MSG["loginTotpStep3DeviceName"]}</p></li>
    </ol>
    <form action="{TOTP_SETUP_PATH}" class="form-horizontal" id="kc-totp-settings-form" method="post">
@@ -264,7 +264,13 @@ class LoginThemeDomTest(unittest.TestCase):
                 self.assertLessEqual(place["card"]["right"], place["width"], "card ends inside the window")
                 self.assertLessEqual(place["scroll"], place["width"], "no sideways scrolling")
                 self.assertGreaterEqual(place["links"]["top"], place["card"]["bottom"], "notice links under the card")
-                expect(self.page.locator("#kc-login, #saveTOTPBtn").first).to_be_in_viewport()
+                button = self.page.locator("#kc-login, #saveTOTPBtn").first
+                button.scroll_into_view_if_needed()
+                edge = button.bounding_box()
+                self.assertGreaterEqual(edge["x"], 0, "the button's left edge is inside the window")
+                self.assertLessEqual(edge["x"] + edge["width"], place["width"], "the button's right edge is inside the window")
+                if path == TOTP_SETUP_PATH:
+                    self.assertGreater(self.page.locator("#kc-totp-secret-qr-code").evaluate("(i) => i.naturalWidth"), 0)
 
     def test_07_the_page_wears_the_halo_labs_design(self):
         """Like the other Halo Labs products' first screen: charcoal ground, a top bar with the HALO LABS logo and the product
@@ -284,6 +290,8 @@ class LoginThemeDomTest(unittest.TestCase):
             foot: css('.login-pf-page', '::after', 'content'),
             button: css('#kc-login', null, 'backgroundColor'), label: css('#kc-form-buttons', '::after', 'color'),
             title: document.querySelector('#kc-page-title').textContent.trim(), titleSize: css('#kc-page-title', null, 'fontSize'),
+            realmName: (() => { const r = document.createRange(); r.selectNodeContents(document.querySelector('#kc-header-wrapper'));
+              return Array.from(r.getClientRects()).reduce((a, b) => a + b.width * b.height, 0); })(),
             story: box('#kc-header'), card: box('.card-pf'), links: box('#kin-legal-links'),
             favicons: Array.from(document.querySelectorAll('link[rel~=icon]')).map(l => l.getAttribute('href')),
           }; }""")
@@ -298,6 +306,7 @@ class LoginThemeDomTest(unittest.TestCase):
         self.assertEqual(look["title"], MSG["loginAccountTitle"], "the page title is drawn as its own text")
         self.assertNotEqual(look["titleSize"], "0px")
         self.assertIn("주식회사 헤일로랩스", look["foot"])
+        self.assertEqual(look["realmName"], 0, "the realm's own name (the old name on the server) takes no space on the page")
         for drawn in (look["name"], look["eyebrow"], look["line"], look["foot"], MSG["loginTitle"]):
             self.assertNotRegex(drawn.upper(), r"KOREA|IMAGING NETWORK|\bKIN\b", drawn)
         # Product line on the left, sign-in column on the right, notices under the sign-in column.
@@ -308,9 +317,13 @@ class LoginThemeDomTest(unittest.TestCase):
         self.page.wait_for_load_state("networkidle")
         self.assertTrue({"img/halo-labs-light-text.svg", "img/halo-icon.svg", "img/halo-pacs-art.svg"} <= set(self.served),
                         self.served)
-        css = (THEME / "resources" / "css" / "login.css").read_text(encoding="utf-8")
+        # theme.properties may add a version query (?v=…) so browsers drop a cached old look; the file is the part before it.
+        css = "".join((THEME / "resources" / style.split("?")[0]).read_text(encoding="utf-8")
+                      for style in THEME_PROPERTIES["styles"].split())
+        icons = {THEME_PROPERTIES.get(k + ".type") for k in THEME_PROPERTIES if re.fullmatch(r"favicons\.\d+", k)}
+        self.assertEqual(icons, {"image/svg+xml", "image/png"}, "the tab has the HALO mark and a PNG fallback")
         named = set(re.findall(r'url\("\.\./(img/[^"]+)"\)', css))
-        named |= {v for k, v in THEME_PROPERTIES.items() if re.fullmatch(r"favicons\.\d+", k)}
+        named |= {v.split("?")[0] for k, v in THEME_PROPERTIES.items() if re.fullmatch(r"favicons\.\d+", k)}
         for name in sorted(named):
             with self.subTest(file=name):
                 self.assertTrue((THEME / "resources" / name).is_file(), name)
