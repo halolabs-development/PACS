@@ -487,10 +487,20 @@ export class CriticalResultService {
       const pendingRows: any[] = await tx.$queryRaw`SELECT "recipientSub" FROM "CriticalResult" WHERE "studyUid"=${uid}
         AND "senderSub"=${c.sub} AND state='created'`;
       const inboxSub: string | null = own[0]?.criticalResultInbox ?? null;
-      const inboxRights = inboxSub === null ? null : rightsUser(await tx.memberRights.findUnique({ where: { sub: inboxSub } }));
+      // The inbox is checked by default only if a send to it would pass now: the send's own recipient judgement on the
+      // durable member rights (the roster the candidates come from may lag them), in this snapshot.
+      const inboxCandidate = inboxSub === null ? undefined : candidates.find(x => x.user.id.toLowerCase() === inboxSub);
+      let inboxReceivable = false;
+      if (inboxCandidate && pinnable && readable) {
+        try {
+          await this.judgeRecipient(tx, uid, institution, c, inboxSub as string, null, inboxCandidate.subject, head, state);
+          inboxReceivable = true;
+        } catch (e) {
+          if (!(e instanceof HttpException && [400, 409].includes(e.getStatus()))) throw e;
+        }
+      }
       const marked = recipientMarks(recipients, inboxSub,
-        new Set(pendingRows.map(row => String(row.recipientSub).toLowerCase())),
-        !!inboxRights && !!eligibleRecipient(inboxRights, { sub: inboxRights.id, institution, sender: c.sub }));
+        new Set(pendingRows.map(row => String(row.recipientSub).toLowerCase())), inboxReceivable);
       return { state, head, pinnable, readable, recipients: marked.recipients, inbox: marked.inboxState };
     }, true);
     const reason = !out.pinnable ? 'NO_PINNABLE_SOURCE' : !out.readable ? 'SOURCE_FORBIDDEN' : !out.recipients.length ? 'NO_ELIGIBLE_RECIPIENT' : null;

@@ -1143,13 +1143,18 @@ test('the hospital inbox: the admin sets an eligible member of the own instituti
   assert.equal(got.members.some(m => m.sub === SUBS.Y), false, 'moved in the rights: not offered');
   assert.ok(got.members.some(m => m.sub === SUBS.X), 'the others are still offered');
   await assert.rejects(w.svc.saveInbox(AD(), { sub: SUBS.Y }), code(400, 'CRITICAL_RESULT_RECIPIENT_INVALID'));
-  // the dialog checks the inbox only while the member's rights still make them a recipient: the roster may lag a suspension
+  // the dialog checks the inbox only if a send to it would pass now: the roster may lag a suspension in the rights
+  // (X has no pending record to P, so the dialog's `inbox && !pending` is the inbox mark alone)
   await w.svc.saveInbox(AD(), { sub: SUBS.P });
-  assert.deepEqual((await w.svc.recipients(UID, S())).recipients.filter(r => r.inbox).map(r => r.sub), [SUBS.P]);
+  let mine = await w.svc.recipients(UID, person('X'));
+  assert.deepEqual(mine.recipients.filter(r => r.inbox && !r.pending).map(r => r.sub), [SUBS.P], 'checked by default');
   await w.rights('P', { suspended: true });
-  out = await w.svc.recipients(UID, S());
-  assert.deepEqual(out.recipients.filter(r => r.inbox), [], 'suspended in the rights: not checked by default');
-  assert.equal(out.inbox, 'unlisted');
+  mine = await w.svc.recipients(UID, person('X'));
+  assert.ok(mine.recipients.some(r => r.sub === SUBS.P), 'the roster still lists P');
+  assert.deepEqual(mine.recipients.filter(r => r.inbox), [], 'suspended in the rights: not checked by default');
+  assert.equal(mine.inbox, 'unlisted');
+  await assert.rejects(w.svc.create(UID, person('X'), createBody(person('X'), id(4804), 'P', v)), code(400, 'CRITICAL_RESULT_RECIPIENT_INVALID'),
+    'and the send would be refused');
 });
 
 // ── S7-U1c: critical results on tele studies (TEST-S7-U1c-SERVICE TSV01..TSV19) ──
