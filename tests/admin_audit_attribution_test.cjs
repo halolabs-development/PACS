@@ -119,6 +119,8 @@ Object.assign(CONTRACT.field_rules, {"study.attach":{"source":"detail.institutio
   "institution.alias.register":{"source":"detail.institution","meaning":"registering administrator's institution"}});
 /* FA-090 EMR Link: the administrator's own institution is the row's target (the setting it changed). */
 CONTRACT.field_rules["institution.emr-link.save"] = {"source":"target","meaning":"target is the institution whose EMR Link the administrator saved"};
+/* The critical result hospital inbox: the administrator's own institution is the row's target (the setting it changed). */
+CONTRACT.field_rules["institution.critical-result-inbox.save"] = {"source":"target","meaning":"target is the institution whose critical result hospital inbox the administrator set"};
 /* FC-070 Query/Retrieve: each row names the institution it was written for (the admin's peers, the member's search and retrieve). */
 Object.assign(CONTRACT.field_rules, {
   "institution.dicom-peer.register":{"source":"detail.institution","meaning":"registering administrator's institution"},
@@ -336,7 +338,8 @@ test('the module table is the card contract; allowed and hidden never overlap; t
     const covers = action => entry.endsWith('*') ? action.startsWith(entry.slice(0, -1)) : action === entry;
     assert.deepEqual(allowed.filter(covers), [], `${entry} shadows an allowed action`);
   }
-  assert.deepEqual(json(A.AUDIT_TARGET_ACTIONS), ['hanging-protocol.site.save', 'hanging-protocol.site.reset', 'institution.emr-link.save']);
+  assert.deepEqual(json(A.AUDIT_TARGET_ACTIONS), ['hanging-protocol.site.save', 'hanging-protocol.site.reset', 'institution.emr-link.save',
+    'institution.critical-result-inbox.save']);
   // study.question (S5-U4a), study.image-request (S5-U4c) and study.critical-result (S7-U1a) are hidden by their own
   // rows, and the SQL prefilter never fetches them for any institution.
   for (const action of ['study.question', 'study.image-request', 'study.critical-result']) {
@@ -945,6 +948,14 @@ test('FA-090 an EMR Link save belongs to the institution it changed (target) and
     detail: JSON.stringify({ host: 'emr.synthetic.test', placeholders: ['patientId'] }) };
   assert.equal(A.auditRule('institution.emr-link.save'), 'field:target');
   assert.deepEqual(A.projectAuditRow(source, 'inst-a').detail, { host: 'emr.synthetic.test', placeholders: ['patientId'] });
+  assert.equal(A.projectAuditRow(source, 'inst-b'), null);
+});
+
+test('a hospital inbox save belongs to the institution it changed (target) and to no other', () => {
+  const source = { ...ROWS.get(29), action: 'institution.critical-result-inbox.save', target: 'inst-a',
+    detail: JSON.stringify({ member: 'syn-desk@inst-a' }) };
+  assert.equal(A.auditRule('institution.critical-result-inbox.save'), 'field:target');
+  assert.deepEqual(A.projectAuditRow(source, 'inst-a').detail, { member: 'syn-desk@inst-a' });
   assert.equal(A.projectAuditRow(source, 'inst-b'), null);
 });
 
