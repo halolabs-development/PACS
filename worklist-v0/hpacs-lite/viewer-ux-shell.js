@@ -57,9 +57,8 @@ window.KinViewerUXShell = (() => {
     const group = document.createElement('section'); group.className = 'kin-ux-panels'; group.dataset.kinUxOwned = '';
     group.setAttribute('role', 'group'); group.setAttribute('aria-label', 'Panels');
     const TRACKED = '[data-cy="trackedMeasurements-panel"]';
-    const BAND_ROOM = 700;
     const entries = [
-      { key: 'studies', label: 'Studies', side: 'left', title: '검사·시리즈 목록을 영상 위 가로 띠로 열거나 닫습니다.' },
+      { key: 'studies', label: 'Studies', side: 'left', title: '검사·시리즈 목록을 열거나 닫습니다.' },
       { key: 'measurements', label: 'Measurements', side: 'right', tab: '[data-cy="trackedMeasurements-btn"]',
         title: '추적을 수락한 측정 목록(CSV·SR 내보내기)을 열거나 닫습니다.' },
       { key: 'segmentation', label: 'Segmentation', side: 'right', tab: '[data-cy$="-btn"][data-cy*="segmentation" i]',
@@ -110,10 +109,8 @@ window.KinViewerUXShell = (() => {
         const own = active && entries.some(entry => entry.side === side && !entry.node.hidden);
         box?.toggleAttribute?.('data-kin-side-closed', own && sides.open(side) === false);
       }
-      // The band takes height from the images: it is used only where the layout row (the height the panels and the images
-      // share, which the band does not change) has BAND_ROOM; a shorter row keeps Studies as the stock side column.
-      const left = sides.container('left'), room = left?.parentElement?.getBoundingClientRect?.().height || 0;
-      const band = active && !!left && !entries[0].node.hidden && sides.open('left') === true && room >= BAND_ROOM;
+      const left = sides.container('left');
+      const band = active && !!left && !entries[0].node.hidden && sides.open('left') === true;
       const row = band ? left.parentElement : null;
       if (bandRow && bandRow !== row) bandRow.removeAttribute?.('data-kin-studies-band');
       if (bandPanel && bandPanel !== (band ? left : null)) bandPanel.removeAttribute?.('data-kin-studies-panel');
@@ -302,6 +299,10 @@ window.KinViewerUXShell = (() => {
       const now = value && context(value.viewportId);
       return !!now && ['patientKey', 'sequence', 'viewportId', 'studyUid', 'seriesUid', 'displaySetUid', 'mode'].every(key => now[key] === value[key]);
     };
+    // The patient of an original study in the rows read for this patient: its own row, or the listed exam whose scope holds
+    // it (a merged exam's other originals have no row of their own).
+    const patientOf = (rows, uid) => (rows.find(row => row.uid === uid) || rows.find(row => row.examScope?.sources?.some(source => source.studyUid === uid)
+      || row.sourceMetadata?.some(source => (source.uid ?? source.studyUid) === uid)))?.sourcePatientKey;
     const seam = {
       snapshot: tabs.snapshot, subscribe: tabs.subscribe, viewport: context,
       registerStudyActions(value) {
@@ -318,7 +319,7 @@ window.KinViewerUXShell = (() => {
         const key = plan[0].value?.patientKey;
         const sets = plan.flatMap(entry => (entry.displaySetInstanceUIDs || []).map(id => services.displaySetService.getDisplaySetByUID(id)));
         if (!sets.length || sets.some(set => !set) || plan.some(entry => !admits(entry.value) || entry.value.patientKey !== key || !entry.displaySetInstanceUIDs?.length)) return false;
-        if (!Array.isArray(studies) || sets.some(set => studies.find(study => study.uid === set.StudyInstanceUID)?.sourcePatientKey !== key)) return false;
+        if (!Array.isArray(studies) || sets.some(set => patientOf(studies, set.StudyInstanceUID) !== key)) return false;
         if (!tabs.guard(true) || tabs.snapshot()?.key !== key || plan.some(entry => !admits(entry.value))) return false;
         services.viewportGridService.setDisplaySetsForViewports(plan.map(entry => ({ viewportId: entry.value.viewportId,
           displaySetInstanceUIDs: entry.displaySetInstanceUIDs, viewportOptions: { viewportType: 'stack', toolGroupId: 'default', allowUnmatchedView: true } })));
@@ -360,17 +361,21 @@ window.KinViewerUXShell = (() => {
           studies = (await response.json()).studies;
         }
         if (signal?.aborted || !admits(value) || before !== signature() || !tabs.guard(true) || sets.some(set =>
-          studies?.find(study => study.uid === set.StudyInstanceUID)?.sourcePatientKey !== value.patientKey)) return false;
+          patientOf(studies || [], set.StudyInstanceUID) !== value.patientKey)) return false;
         const preference = window.kinViewerHangingPreference?.(sets[0].Modality) || window.KinViewerHangingSettings.defaults;
         const currentUid = tabs.snapshot().studyUIDs[0], cells = [...grid.getState().viewports.values()];
+        // In a window opened on exam scopes every original of the current exam (a merged exam) is current; elsewhere the
+        // first opened study is.
+        const scoped = /[?&]kinExamScopes=/.test(window.location?.search || '');
+        const isCurrent = (study, series) => scoped ? window.KinViewerExamScope?.role?.(study, series) === 'current' : study === currentUid;
         if (sets.every(set => set.StudyInstanceUID === value.studyUid)) return true;
         // A prior cell is replaceable. From the current cell, preserve every
         // current image and reuse an assigned comparison or an empty cell.
         const originCell = cells.find(cell => cell.viewportId === value.viewportId);
         const onPriorSide = cell => preference.priorPosition === 'left' ? cell.x < originCell.x : preference.priorPosition === 'top' ? cell.y < originCell.y : preference.priorPosition === 'bottom' ? cell.y > originCell.y : cell.x > originCell.x;
-        let target = value.studyUid !== currentUid ? value.viewportId : cells.find(cell => {
+        let target = !isCurrent(value.studyUid, value.seriesUid) ? value.viewportId : cells.find(cell => {
           const rendered = context(cell.viewportId);
-          return rendered && rendered.studyUid !== currentUid;
+          return rendered && !isCurrent(rendered.studyUid, rendered.seriesUid);
         })?.viewportId || cells.find(cell => cell.viewportId !== value.viewportId && !cell.displaySetInstanceUIDs?.length && onPriorSide(cell))?.viewportId;
         if (target) {
           grid.setDisplaySetsForViewport({ viewportId: target, displaySetInstanceUIDs,

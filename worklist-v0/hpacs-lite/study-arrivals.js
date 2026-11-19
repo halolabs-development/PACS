@@ -58,7 +58,7 @@
   const localTime=iso=>{const d=new Date(iso);
     return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());};
 
-  function observationStart(){return {owner:null,observedAt:null,available:null,rows:new Map(),notObserved:null};}
+  function observationStart(){return {owner:null,observedAt:null,readSince:null,available:null,rows:new Map(),notObserved:null};}
 
   // null/absent means the server could not decide absence (failed or partly unknown enumeration).
   // It stays unknown; turning it into [] would claim every row was checked.
@@ -98,18 +98,24 @@
     // Another account, or a server clock that went backwards, cannot continue this session's comparison.
     const prior=base.owner===owner&&(base.observedAt===null||Date.parse(at)>=Date.parse(base.observedAt))?base.rows:new Map();
     const rows=new Map();
+    // Missing images: each row's Gateway report is kept with the count it is compared with, from this same answer, so a
+    // failed observation keeps both and a later row replacement cannot pair an old count with a new report.
+    const reports=new Map((root.KinExamScope?root.KinExamScope.originals(result.studies):result.studies).map(row=>[row.uid,row.gatewayReceipt??null]));
     for(const [uid,value] of current.values){
       // Only the immediately preceding successful observation counts; a UID that left the list and came
       // back has no predecessor here, so leaving a page, filter or scope is never a decrease.
       const previous=prior.get(uid),kind=compare(previous,value);
-      const row={count:value.count,series:value.series,observedAt:at,change:null,valueSince:value.count===null?null:at,changedAt:null,needsCheck:false,decreasedAt:null};
+      const row={count:value.count,series:value.series,observedAt:at,change:null,valueSince:value.count===null?null:at,changedAt:null,needsCheck:false,decreasedAt:null,receipt:reports.get(uid)??null};
       if(kind==='no_observed_change')Object.assign(row,{change:{kind,since:previous.valueSince},valueSince:previous.valueSince,
         changedAt:previous.changedAt,needsCheck:previous.needsCheck,decreasedAt:previous.decreasedAt});
       else if(kind)Object.assign(row,{change:{kind,since:previous.observedAt},changedAt:at,
         needsCheck:kind==='decreased'||previous.needsCheck,decreasedAt:kind==='decreased'?at:previous.decreasedAt});
       rows.set(uid,row);
     }
-    return {ok:true,model:{owner,observedAt:at,available:true,rows,notObserved:absent.rows}};
+    // readFrom is when the server began the enumeration of the first page (study-pages.js): every count and absence of this
+    // answer was read after it, so it bounds the reports they are compared with (receiptGap). Without it, observedAt.
+    const from=observation.readFrom,readSince=validTime(from)&&Date.parse(from)<=Date.parse(at)?from:at;
+    return {ok:true,model:{owner,observedAt:at,readSince,available:true,rows,notObserved:absent.rows}};
   }
 
   // A failed observation empties nothing: rows, their observedAt and the last absence list stay as
@@ -122,13 +128,15 @@
   function studyObservation(model,uid){
     const m=model&&model.rows instanceof Map?model:observationStart(),row=m.rows.get(uid)||null;
     const absent=m.notObserved?m.notObserved.find(item=>item.uid===uid)||null:null;
+    // readSince and receipt: what the missing-images answer compares (receiptGap), both from the last successful answer.
+    const readSince=m.readSince??m.observedAt,receipt=row?row.receipt??null:absent?absent.gatewayReceipt??null:null;
     if(m.available===false)return {state:'observation_unavailable',
       last:row?{count:row.count,series:row.series,observedAt:row.observedAt}:absent?{notObserved:true,observedAt:m.observedAt}:null,
-      changedAt:row?row.changedAt:null,needsCheck:!!row&&row.needsCheck,decreasedAt:row?row.decreasedAt:null};
+      changedAt:row?row.changedAt:null,needsCheck:!!row&&row.needsCheck,decreasedAt:row?row.decreasedAt:null,readSince,receipt};
     if(m.available!==true)return {state:'not_attempted'};
     if(row)return {state:'observed',count:row.count,series:row.series,observedAt:row.observedAt,change:row.change,
-      changedAt:row.changedAt,needsCheck:row.needsCheck,decreasedAt:row.decreasedAt};
-    if(absent)return {state:'not_observed',observedAt:m.observedAt,origin:absent.origin,createdAt:absent.createdAt};
+      changedAt:row.changedAt,needsCheck:row.needsCheck,decreasedAt:row.decreasedAt,readSince,receipt};
+    if(absent)return {state:'not_observed',observedAt:m.observedAt,origin:absent.origin,createdAt:absent.createdAt,readSince,receipt};
     return {state:'outside_list'};
   }
 
@@ -171,13 +179,15 @@
     if(typeof receipt!=='object'||!PHASES.includes(receipt.phase)||!count(M)||!count(N)||M>N||!validTime(receipt.serverReceivedAt))
       return {label:{key:'reported_unreadable',text:'Gateway 보고 형식을 확인할 수 없습니다',title:'보고 내용을 해석하지 못해 비교하지 않았습니다.'},reasons:['receipt_unreadable']};
     const reasons=[];
-    // K<M needs a known K from an available observation; null is never read as zero.
-    const K=b.state==='observed'?b.count:null,comparable=K!==null;
-    if(comparable&&K<M)reasons.push('kin_below_reported');
-    if(b.state==='not_observed'&&M>=1)reasons.push('not_observed_with_reported_transfer');
+    // K<M is receiptGap's answer, the one the Technician list and the Info panel draw; null K is never read as zero.
+    // The title says why it did not compare exactly when that answer did not (count unknown, or read before this report),
+    // so it never contradicts a missing-images line or a count shown beside it.
+    const gap=receiptGap(b,receipt,format),comparable=gap!==null&&!gap.pending;
+    if(gap?.missing&&!gap.stale)reasons.push(b.state==='observed'?'kin_below_reported':'not_observed_with_reported_transfer');
     if(b.changedAt&&Date.parse(receipt.serverReceivedAt)<Date.parse(b.changedAt))reasons.push('receipt_older_than_change');
     return {label:{key:'reported',text:'Gateway 보고('+format(receipt.serverReceivedAt)+'): 병원 보유 '+N+'건 중 '+M+'건 전송',
-      title:'Gateway가 보고한 전송 수입니다. 검사 종료나 영상 수신 여부를 뜻하지 않습니다.'+(comparable?'':' HALO PACS 보유 개수를 알 수 없어 비교하지 않았습니다.')},reasons};
+      title:'Gateway가 보고한 전송 수입니다. 검사 종료나 영상 수신 여부를 뜻하지 않습니다.'+(comparable?'':gap?.pending
+        ?' 이 보고는 목록 조회가 시작된 뒤 도착해 다음 관측에서 HALO PACS 보유 개수와 비교합니다.':' HALO PACS 보유 개수를 알 수 없어 비교하지 않았습니다.')},reasons};
   }
 
   /*
@@ -199,6 +209,33 @@
     failed:'재시도 요청을 보내지 못했습니다. 다시 시도하세요.'});
   const readableReceipt=receipt=>!!receipt&&typeof receipt==='object'&&PHASES.includes(receipt.phase)
     &&count(receipt.successCount)&&count(receipt.localCount)&&receipt.successCount<=receipt.localCount&&validTime(receipt.serverReceivedAt);
+
+  /*
+   * Missing images: the one answer to "does HALO PACS hold fewer images of this study than its Gateway reported sent?".
+   * K is what the last successful observation saw (0 for an own study it did not see at all), M the images a readable
+   * Gateway report says were sent. Only a report the observation came after is compared: images a newer report counts
+   * may have reached HALO PACS after that observation, so the next observation answers (no answer, not "fine").
+   * No report, an unreadable one, an unknown K, a failed or no observation: no answer — never "missing".
+   * K>=M is no gap whatever the hospital total N is: images still to send are the transfer's state (the Gateway line and
+   * its retry), not images missing at HALO PACS. A retry request is never a part of this answer.
+   */
+  // readSince is when the earliest row of that observation was read (its first page); without it, its observedAt.
+  // While an observation fails, the answer is the last successful one's, said as such (stale), never a new answer.
+  function receiptGap(b,receipt,format=localTime){
+    if(!readableReceipt(receipt)||!b||typeof b!=='object')return null;
+    const stale=b.state==='observation_unavailable',seen=stale?b.last:b;
+    if(!seen||typeof seen!=='object')return null;
+    const held=b.state==='observed'?b.count:b.state==='not_observed'?0:stale?(seen.notObserved===true?0:seen.count):null;
+    const since=b.readSince??seen.observedAt,sent=receipt.successCount;
+    if(!count(held)||!validTime(since))return null;
+    // A known count read before this report: not compared yet (the next observation answers), never "missing" or "fine".
+    if(Date.parse(receipt.serverReceivedAt)>Date.parse(since))return {missing:null,pending:true,held,sent,stale};
+    if(held>=sent)return {missing:false,held,sent,stale};
+    return {missing:true,held,sent,stale,
+      text:stale?kinSay('Needs Check · 영상 누락(관측 불가 · 마지막 관측 {0} 기준): Gateway 전송 {n1}건 중 HALO PACS 보유 {n2}건',format(seen.observedAt),sent,held)
+        :kinSay('Needs Check · 영상 누락: Gateway 전송 {n0}건 중 HALO PACS 보유 {n1}건',sent,held),
+      title:'Gateway가 보냈다고 보고한 영상보다 HALO PACS가 가진 영상이 적습니다. 다음 관측에서 채워지면 이 표시는 사라집니다. 재시도 요청이나 전송 성공과는 다른 표시입니다.'};
+  }
 
   function gatewayRetryAction(receipt){
     if(!readableReceipt(receipt))return null;
@@ -329,7 +366,7 @@
   function phrase(kind){if(!Object.prototype.hasOwnProperty.call(PHRASES,kind))throw new TypeError('phrase');return PHRASES[kind];}
 
   const api={diff,observationStart,observationSucceeded,observationFailed,studyObservation,receiptLabels,observationSummary,phrase,formatTime:localTime,
-    gatewayRetryAction,gatewayRetryAnswer,RETRY_TEXT,PHASES:Object.freeze([...PHASES]),BANNED,PHRASES,
+    receiptGap,gatewayRetryAction,gatewayRetryAnswer,RETRY_TEXT,PHASES:Object.freeze([...PHASES]),BANNED,PHRASES,
     gatewayStatus,gatewayStatusRows,gatewayStatusSummary,GATEWAY_STATUS};root.KinStudyArrivals=api;
   if(typeof module==='object'&&module.exports)module.exports=api;
 })(typeof globalThis==='object'?globalThis:this);

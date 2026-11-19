@@ -299,11 +299,15 @@ test('A-HTTP-REPORT / A-HTTP-BODY / A-PG-COMMIT: every returned version is commi
     const stored = rows.find(r => r.version === row.version);
     const { accessRef, ...fields } = row;
     assert.match(accessRef, UUID4);
-    assert.deepEqual(fields, { id: stored.id, uid, version: stored.version, action: stored.action, findings: stored.findings,
-      conclusion: stored.conclusion, recommendation: stored.recommendation,
-      reason: stored.version === 3 ? '관리자 강제 초안 해제' : stored.reason,
-      author: stored.version === 3 ? '작성자 비공개' : stored.author,
-      at: stored.at.toISOString() });
+    // v3 is an administrator's release copy of another user's private draft: its row stays, its text stays with its writer
+    // (the report state table), and the row says why it is empty.
+    const withheld = stored.version === 3;
+    assert.deepEqual(fields, { id: stored.id, uid, version: stored.version, action: stored.action,
+      findings: withheld ? '' : stored.findings, conclusion: withheld ? '' : stored.conclusion,
+      recommendation: withheld ? '' : stored.recommendation,
+      reason: withheld ? '관리자 강제 초안 해제' : stored.reason,
+      author: withheld ? '작성자 비공개' : stored.author,
+      at: stored.at.toISOString(), ...(withheld ? { bodyHidden: 'in-progress' } : {}) });
   }
   const recorded = await settled(uid, rows.length);
   const opened = recorded.filter(e => e.event.action === 'provide-prepared');

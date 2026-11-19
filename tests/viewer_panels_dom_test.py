@@ -177,9 +177,7 @@ class ViewerPanelsDOMTest(unittest.TestCase):
         self.assertEqual(grid, self.box(page, '[data-cy=viewport-grid]'))
         self.assertEqual(['left:header', 'left:header'], page.evaluate("synClicks"))
 
-    def test_02b_a_short_row_keeps_studies_as_a_side_column(self):
-        # A row under 700px (here 1366 x 640): a band would take the images' height; the panel stays the stock side
-        # column, the buttons work.
+    def test_02b_a_short_window_keeps_studies_as_a_side_column(self):
         page = self.open(size=(1366, 640))
         left, column = self.box(page, LEFT), self.box(page, '#column')
         self.assertEqual(0, left['left']); self.assertEqual(left['right'], column['left'])
@@ -189,11 +187,43 @@ class ViewerPanelsDOMTest(unittest.TestCase):
         page.evaluate(FRAME)
         self.assertFalse(self.box(page, LEFT)['shown'], 'closed, no strip')
         self.assertEqual((0, 1366), (self.box(page, '#column')['left'], self.box(page, '#column')['right']))
-        # The window grows: the next refresh lays Studies out as the band again once it is opened.
+        # Growing the window gives the open panel room above the images.
         page.set_viewport_size({'width': 1366, 'height': 1000})
         self.button(page, 'studies').click()
         page.evaluate(FRAME)
         self.assertLessEqual(self.box(page, LEFT)['bottom'], self.box(page, '#column')['top'])
+
+    def test_02c_opening_and_closing_the_dock_preserves_the_studies_position(self):
+        for size in [(1520, 970), (1920, 1080), (1280, 720)]:
+            with self.subTest(size=size):
+                page = self.open(size=size)
+                # Reserve the tool area's closed and expanded heights as in the viewer.
+                page.add_style_tag(content="""
+                    #app { max-height: calc(100vh - 42px) }
+                    body:has(#kin-workspace-dock [aria-expanded=true]) #app {
+                        max-height: calc(100vh - min(280px, 45vh))
+                    }
+                """)
+                tab = page.locator('#kin-workspace-dock').get_by_role('button', name='Measurements')
+                grid = '[data-cy=viewport-grid]'
+                initial = self.box(page, grid)
+                if size == (1920, 1080):
+                    self.assertLessEqual(self.box(page, LEFT)['bottom'], initial['top'])
+                if size == (1280, 720):
+                    self.assertEqual(self.box(page, LEFT)['right'], initial['left'])
+                for expanded in [True, False]:
+                    tab.click()
+                    expect(tab).to_have_attribute('aria-expanded', str(expanded).lower())
+                    # OHIF can deliver a fresh grid render while an output request is in flight.
+                    page.locator(grid).evaluate("grid => grid.firstElementChild.append(document.createElement('canvas'))")
+                    page.evaluate(FRAME)
+                    current = self.box(page, grid)
+                    self.assertEqual((initial['left'], initial['top'], initial['width']),
+                                     (current['left'], current['top'], current['width']))
+                    if expanded:
+                        self.assertLess(current['height'], initial['height'])
+                    else:
+                        self.assertEqual(current, initial)
 
     def test_03_measurements_and_segmentation_open_their_tab_switch_and_close(self):
         page = self.open()

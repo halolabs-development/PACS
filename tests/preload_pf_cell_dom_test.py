@@ -184,6 +184,46 @@ class PreloadPfCellDOM(unittest.TestCase):
         expect(second).to_have_text('·')
         screen.finish()
 
+    def test_merged_exam_with_an_unreadable_original_is_not_preloaded_and_its_pf_says_why(self):
+        # The list server's answer for a merged exam in force whose originals this reader cannot all read now (one gone
+        # from the archive, or outside the reader's access): the row, no scope, the kind of exam, nothing of the original.
+        lost = {**row(LOST, 'SYN-PF-51'), 'examUnavailable': True, 'examUnavailableKind': 'merge'}
+        server = Server(rows=[row(STUDY, 'SYN-PF-01'), lost])
+        original = mi.STORAGE_RECORDER
+        mi.STORAGE_RECORDER = original + '\n' + WORKER_DOUBLE
+        try:
+            screen = self.boot(server)
+        finally:
+            mi.STORAGE_RECORDER = original
+        page = screen.page
+        screen.show_column('PF')
+        cell = self.row_pf(screen, LOST)
+        # The PF says at once that this exam is not preloaded, and why.
+        expect(cell).to_have_text('Failed')
+        expect(cell.get_by_title(re.compile('^합친 검사의 원본 일부를 볼 수 없어'))).to_have_count(1)
+        for pid in ('SYN-PF-01', 'SYN-PF-51'):
+            screen.data_row(pid).get_by_role('cell', name=pid, exact=True).click(modifiers=['Control'])
+        page.get_by_role('button', name='Preload', exact=True).click()
+        added = until(lambda: [m for m in page.evaluate('() => window.__synPreload.posted') if m['type'] == 'add'], 5, 'add')
+        # Only the ordinary study goes to the queue: nothing of the exam that cannot be read whole is fetched.
+        self.assertEqual([STUDY], [s['uid'] for s in added[0]['studies']])
+        expect(cell).to_have_text('Failed')
+        expect(cell.get_by_title(re.compile('^합친 검사의 원본 일부를 볼 수 없어'))).to_have_count(1)
+        session = added[0]['session']
+        # The queue moves on for the other row; the lost row keeps its refusal, never another row's or an original's Ready.
+        page.evaluate('([studies, to]) => window.__synPreload.state(studies, to)', [[{**entry('Ready', 3, 3), 'uid': LOST}, entry('Ready', 3, 3)], session])
+        expect(self.row_pf(screen, STUDY)).to_have_text('Ready')
+        expect(cell).to_have_text('Failed')
+        # A PF filter compares the same word.
+        box = screen.filter_box('PF')
+        box.select_option('Failed')
+        self.wait_uids(page, [LOST])
+        box.select_option('')
+        # Opening it says why instead of opening a viewer.
+        page.locator(f'#rows tr[data-uid="{LOST}"]').get_by_role('cell', name='SYN-PF-51', exact=True).dblclick()
+        expect(page.get_by_text(re.compile('합친 검사의 원본 일부를 볼 수 없어')).first).to_be_visible()
+        screen.finish()
+
     def row_pf(self, screen, uid):
         return screen.page.locator(f'#rows tr[data-uid="{uid}"]').get_by_role('cell').nth(screen.heads().index('PF'))
 
@@ -197,7 +237,7 @@ class PreloadPfCellDOM(unittest.TestCase):
 
 # A merged exam (base row over two originals) and a split exam (two rows over parts of one original), in the list
 # server's shape: the merged row keeps the base UID, the second part of a split has a new UID.
-MERGE_BASE, MERGE_OTHER, SPLIT_SOURCE, SPLIT_SECOND, CLOSED = '2.25.611', '2.25.612', '2.25.621', '2.25.6219', '2.25.641'
+MERGE_BASE, MERGE_OTHER, SPLIT_SOURCE, SPLIT_SECOND, CLOSED, LOST = '2.25.611', '2.25.612', '2.25.621', '2.25.6219', '2.25.641', '2.25.651'
 MERGE_GROUP, SPLIT_GROUP, MOVED_SERIES = '00000000-0000-4000-8000-0000000f1401', '00000000-0000-4000-8000-0000000f1402', '2.25.62102'
 MERGE_REF = {'reportUid': MERGE_BASE, 'groupId': MERGE_GROUP, 'part': None}
 SPLIT_REF0 = {'reportUid': SPLIT_SOURCE, 'groupId': SPLIT_GROUP, 'part': 0}

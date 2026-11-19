@@ -16,89 +16,6 @@
     {
       "download_info": {
         "archive_info": {
-          "hash": "sha256=2462f94637a34fd532264295e186976db0f5d453d1cdd31473c85a6a161affb6",
-          "hashes": {
-            "sha256": "2462f94637a34fd532264295e186976db0f5d453d1cdd31473c85a6a161affb6"
-          }
-        },
-        "url": "https://files.pythonhosted.org/packages/1e/db/4254e3eabe8020b458f1a747140d32277ec7a271daf1d235b70dc0b4e6e3/requests-2.32.5-py3-none-any.whl"
-      },
-      "is_direct": false,
-      "is_yanked": false,
-      "metadata": {
-        "author": "Kenneth Reitz",
-        "author_email": "me@kennethreitz.org",
-        "classifier": [
-          "Development Status :: 5 - Production/Stable",
-          "Environment :: Web Environment",
-          "Intended Audience :: Developers",
-          "License :: OSI Approved :: Apache Software License",
-          "Natural Language :: English",
-          "Operating System :: OS Independent",
-          "Programming Language :: Python",
-          "Programming Language :: Python :: 3",
-          "Programming Language :: Python :: 3.9",
-          "Programming Language :: Python :: 3.10",
-          "Programming Language :: Python :: 3.11",
-          "Programming Language :: Python :: 3.12",
-          "Programming Language :: Python :: 3.13",
-          "Programming Language :: Python :: 3.14",
-          "Programming Language :: Python :: 3 :: Only",
-          "Programming Language :: Python :: Implementation :: CPython",
-          "Programming Language :: Python :: Implementation :: PyPy",
-          "Topic :: Internet :: WWW/HTTP",
-          "Topic :: Software Development :: Libraries"
-        ],
-        "description": "# Requests\n\n**Requests** is a simple, yet elegant, HTTP library.\n\n```python\n>>> import requests\n>>> r = requests.get('https://httpbin.org/basic-auth/user/pass', auth=('user', 'pass'))\n>>> r.status_code\n200\n>>> r.headers['content-type']\n'application/json; charset=utf8'\n>>> r.encoding\n'utf-8'\n>>> r.text\n'{\"authenticated\": true, ...'\n>>> r.json()\n{'authenticated': True, ...}\n```\n\nRequests allows you to send HTTP/1.1 requests extremely easily. There’s no need to manually add query strings to your URLs, or to form-encode your `PUT` & `POST` data — but nowadays, just use the `json` method!\n\nRequests is one of the most downloaded Python packages today, pulling in around `30M downloads / week`— according to GitHub, Requests is currently [depended upon](https://github.com/psf/requests/network/dependents?package_id=UGFja2FnZS01NzA4OTExNg%3D%3D) by `1,000,000+` repositories. You may certainly put your trust in this code.\n\n[![Downloads](https://static.pepy.tech/badge/requests/month)](https://pepy.tech/project/requests)\n[![Supported Versions](https://img.shields.io/pypi/pyversions/requests.svg)](https://pypi.org/project/requests)\n[![Contributors](https://img.shields.io/github/contributors/psf/requests.svg)](https://github.com/psf/requests/graphs/contributors)\n\n## Installing Requests and Supported Versions\n\nRequests is available on PyPI:\n\n```console\n$ python -m pip install requests\n```\n\nRequests officially supports Python 3.9+.\n\n## Supported Features & Best–Practices\n\nRequests is ready for the demands of building robust and reliable HTTP–speaking applications, for the needs of today.\n\n- Keep-Alive & Connection Pooling\n- International Domains and URLs\n- Sessions with Cookie Persistence\n- Browser-style TLS/SSL Verification\n- Basic & Digest Authentication\n- Familiar `dict`–like Cookies\n- Automatic Content Decompression and Decoding\n- Multi-part File Uploads\n- SOCKS Proxy Support\n- Connection Timeouts\n- Streaming Downloads\n- Automatic honoring of `.netrc`\n- Chunked HTTP Requests\n\n## API Reference and User Guide available on [Read the Docs](https://requests.readthedocs.io)\n\n[![Read the Docs](https://raw.githubusercontent.com/psf/requests/main/ext/ss.png)](https://requests.readthedocs.io)\n\n## Cloning the repository\n\nWhen cloning the Requests repository, you may need to add the `-c\nfetch.fsck.badTimezone=ignore` flag to avoid an error about a bad commit timestamp (see\n[this issue](https://github.com/psf/requests/issues/2690) for more background):\n\n```shell\ngit clone -c fetch.fsck.badTimezone=ignore https://github.com/psf/requests.git\n```\n\nYou can also apply this setting to your global Git config:\n\n```shell\ngit config --global fetch.fsck.badTimezone ignore\n```\n\n---\n\n[![Kenneth Reitz](https://raw.githubusercontent.com/psf/requests/main/ext/kr.png)](https://kennethreitz.org) [![Python Software Foundation](https://raw.githubusercontent.com/psf/requests/main/ext/psf.png)](https://www.python.org/psf)\n",
-        "description_content_type": "text/markdown",
-        "dynamic": [
-          "author",
-          "author-email",
-          "classifier",
-          "description",
-          "description-content-type",
-          "home-page",
-          "license",
-          "license-file",
-          "project-url",
-          "provides-extra",
-          "requires-dist",
-          "requires-python",
-          "summary"
-        ],
-        "home_page": "https://requests.readthedocs.io",
-        "license": "Apache-2.0",
-        "license_file": [
-          "LICENSE"
-        ],
-        "metadata_version": "2.4",
-        "name": "requests",
-        "project_url": [
-          "Documentation, https://requests.readthedocs.io",
-          "Source, https://github.com/psf/requests"
-        ],
-        "provides_extra": [
-          "security",
-          "socks",
-          "use-chardet-on-py3"
-        ],
-        "requires_dist": [
-          "charset_normalizer<4,>=2",
-          "idna<4,>=2.5",
-          "urllib3<3,>=1.21.1",
-          "certifi>=2017.4.17",
-          "PySocks!=1.5.7,>=1.5.6; extra == \"socks\"",
-          "chardet<6,>=3.0.2; extra == \"use-chardet-on-py3\""
-        ],
-        "requires_python": ">=3.9",
-        "summary": "Python HTTP for Humans.",
-        "version": "2.32.5"
-      },
-      "requested": true
-    },
-    {
-      "download_info": {
-        "archive_info": {
           "hash": "sha256=e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1",
           "hashes": {
             "sha256": "e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1"
@@ -156,7 +73,7 @@
         "summary": "Python package for providing Mozilla's CA Bundle.",
         "version": "2026.10.23"
       },
-      "requested": false
+      "requested": true
     },
     {
       "download_info": {
@@ -232,7 +149,7 @@
         "summary": "The Real First Universal Charset Detector. Open, modern and actively maintained alternative to Chardet.",
         "version": "3.5.2"
       },
-      "requested": false
+      "requested": true
     },
     {
       "download_info": {
@@ -297,7 +214,84 @@
         "summary": "Internationalized Domain Names in Applications (IDNA)",
         "version": "3.20"
       },
-      "requested": false
+      "requested": true
+    },
+    {
+      "download_info": {
+        "archive_info": {
+          "hash": "sha256=3324635456fa185245e24865e810cecec7b4caf933d7eb133dcde67d48cee69b",
+          "hashes": {
+            "sha256": "3324635456fa185245e24865e810cecec7b4caf933d7eb133dcde67d48cee69b"
+          }
+        },
+        "url": "https://files.pythonhosted.org/packages/56/5d/c814546c2333ceea4ba42262d8c4d55763003e767fa169adc693bd524478/requests-2.33.0-py3-none-any.whl"
+      },
+      "is_direct": false,
+      "is_yanked": false,
+      "metadata": {
+        "author_email": "Kenneth Reitz <me@kennethreitz.org>",
+        "classifier": [
+          "Development Status :: 5 - Production/Stable",
+          "Environment :: Web Environment",
+          "Intended Audience :: Developers",
+          "License :: OSI Approved :: Apache Software License",
+          "Natural Language :: English",
+          "Operating System :: OS Independent",
+          "Programming Language :: Python",
+          "Programming Language :: Python :: 3",
+          "Programming Language :: Python :: 3.10",
+          "Programming Language :: Python :: 3.11",
+          "Programming Language :: Python :: 3.12",
+          "Programming Language :: Python :: 3.13",
+          "Programming Language :: Python :: 3.14",
+          "Programming Language :: Python :: 3 :: Only",
+          "Programming Language :: Python :: Implementation :: CPython",
+          "Programming Language :: Python :: Implementation :: PyPy",
+          "Topic :: Internet :: WWW/HTTP",
+          "Topic :: Software Development :: Libraries"
+        ],
+        "description": "# Requests\n\n[![Version](https://img.shields.io/pypi/v/requests.svg?maxAge=86400)](https://pypi.org/project/requests/)\n[![Supported Versions](https://img.shields.io/pypi/pyversions/requests.svg)](https://pypi.org/project/requests)\n[![Downloads](https://static.pepy.tech/badge/requests/month)](https://pepy.tech/project/requests)\n[![Contributors](https://img.shields.io/github/contributors/psf/requests.svg)](https://github.com/psf/requests/graphs/contributors)\n\n**Requests** is a simple, yet elegant, HTTP library.\n\n```python\n>>> import requests\n>>> r = requests.get('https://httpbin.org/basic-auth/user/pass', auth=('user', 'pass'))\n>>> r.status_code\n200\n>>> r.headers['content-type']\n'application/json; charset=utf8'\n>>> r.encoding\n'utf-8'\n>>> r.text\n'{\"authenticated\": true, ...'\n>>> r.json()\n{'authenticated': True, ...}\n```\n\nRequests allows you to send HTTP/1.1 requests extremely easily. There’s no need to manually add query strings to your URLs, or to form-encode your `PUT` & `POST` data — but nowadays, just use the `json` method!\n\nRequests is one of the most downloaded Python packages today, pulling in around `30M downloads / week`— according to GitHub, Requests is currently [depended upon](https://github.com/psf/requests/network/dependents?package_id=UGFja2FnZS01NzA4OTExNg%3D%3D) by `1,000,000+` repositories. You may certainly put your trust in this code.\n\n## Installing Requests and Supported Versions\n\nRequests is available on PyPI:\n\n```console\n$ python -m pip install requests\n```\n\nRequests officially supports Python 3.10+.\n\n## Supported Features & Best–Practices\n\nRequests is ready for the demands of building robust and reliable HTTP–speaking applications, for the needs of today.\n\n- Keep-Alive & Connection Pooling\n- International Domains and URLs\n- Sessions with Cookie Persistence\n- Browser-style TLS/SSL Verification\n- Basic & Digest Authentication\n- Familiar `dict`–like Cookies\n- Automatic Content Decompression and Decoding\n- Multi-part File Uploads\n- SOCKS Proxy Support\n- Connection Timeouts\n- Streaming Downloads\n- Automatic honoring of `.netrc`\n- Chunked HTTP Requests\n\n## API Reference and User Guide available on [Read the Docs](https://requests.readthedocs.io)\n\n[![Read the Docs](https://raw.githubusercontent.com/psf/requests/main/ext/ss.png)](https://requests.readthedocs.io)\n\n## Cloning the repository\n\nWhen cloning the Requests repository, you may need to add the `-c\nfetch.fsck.badTimezone=ignore` flag to avoid an error about a bad commit timestamp (see\n[this issue](https://github.com/psf/requests/issues/2690) for more background):\n\n```shell\ngit clone -c fetch.fsck.badTimezone=ignore https://github.com/psf/requests.git\n```\n\nYou can also apply this setting to your global Git config:\n\n```shell\ngit config --global fetch.fsck.badTimezone ignore\n```\n\n---\n\n[![Kenneth Reitz](https://raw.githubusercontent.com/psf/requests/main/ext/kr.png)](https://kennethreitz.org) [![Python Software Foundation](https://raw.githubusercontent.com/psf/requests/main/ext/psf.png)](https://www.python.org/psf)\n",
+        "description_content_type": "text/markdown",
+        "dynamic": [
+          "license-file"
+        ],
+        "license": "Apache-2.0",
+        "license_file": [
+          "LICENSE",
+          "NOTICE"
+        ],
+        "maintainer_email": "Ian Stapleton Cordasco <graffatcolmingov@gmail.com>, Nate Prewitt <nate.prewitt@gmail.com>",
+        "metadata_version": "2.4",
+        "name": "requests",
+        "project_url": [
+          "Documentation, https://requests.readthedocs.io",
+          "Source, https://github.com/psf/requests"
+        ],
+        "provides_extra": [
+          "security",
+          "socks",
+          "use-chardet-on-py3",
+          "test"
+        ],
+        "requires_dist": [
+          "charset_normalizer<4,>=2",
+          "idna<4,>=2.5",
+          "urllib3<3,>=1.26",
+          "certifi>=2023.5.7",
+          "PySocks!=1.5.7,>=1.5.6; extra == \"socks\"",
+          "chardet<8,>=3.0.2; extra == \"use-chardet-on-py3\"",
+          "pytest-httpbin==2.1.0; extra == \"test\"",
+          "pytest-cov; extra == \"test\"",
+          "pytest-mock; extra == \"test\"",
+          "pytest-xdist; extra == \"test\"",
+          "PySocks!=1.5.7,>=1.5.6; extra == \"test\"",
+          "pytest>=3; extra == \"test\""
+        ],
+        "requires_python": ">=3.10",
+        "summary": "Python HTTP for Humans.",
+        "version": "2.33.0"
+      },
+      "requested": true
     },
     {
       "download_info": {
@@ -375,7 +369,7 @@
         "summary": "HTTP library with thread-safe connection pooling, file post, and more.",
         "version": "2.8.0"
       },
-      "requested": false
+      "requested": true
     }
   ],
   "pip_version": "25.0.1",

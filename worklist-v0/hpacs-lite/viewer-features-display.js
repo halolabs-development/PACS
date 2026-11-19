@@ -3,6 +3,11 @@
 // viewerSettings.features (overlayItems, cornerInfo, autoRotate, wlPresets, voiLut). Calculations are in
 // viewer-display-model.js. Only stack (2D) cells take part; MPR keeps its own display settings.
 window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
+  const loading = new WeakMap(), applying = new Set();
+  let initialized = false;
+  // The source ID can change before its default VOI and inversion have finished changing.
+  const imageSettled = v => initialized && !loading.has(v) && !applying.has(v.id);
+  window.kinViewerDisplayImageSettled = imageSettled;
   await ui.load('viewer-display-model.js');
   const model = window.KinViewerDisplayModel;
   const grid = services.viewportGridService, cells = services.cornerstoneViewportService;
@@ -306,7 +311,7 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
   // Per cell: the viewport and display set, the image's stored VOI kind, the check in this cell (null: the account
   // default), whether the reader set a window by hand and a copy of that window (kept on later images, always linear),
   // the last image handled and what this module drew last ('lut', 'linear' or 'reader').
-  const luts = new Map(), applying = new Set(), loading = new Set();
+  const luts = new Map();
   function lutRecord(v) {
     const key = keyOf(v);
     let record = luts.get(v.id);
@@ -377,7 +382,7 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
   // goes off. Events while an image loads or while this module draws are the viewer's own, not the reader's.
   function voiChanged(event) {
     const v = viewportOf(event.detail?.viewportId); if (!v) return;
-    if (applying.has(v.id) || loading.has(v.id)) return;
+    if (!imageSettled(v)) return;
     const record = luts.get(v.id);
     if (record && record.viewport === v && record.key === keyOf(v) && (record.reader || record.kind !== 'none')) {
       const was = record.on || record.drawn === 'lut' || nonLinear(v);
@@ -396,18 +401,26 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
   const on = (name, fn) => { if (name) document.addEventListener(name, fn, { capture: true, signal }); };
   // An image is loading from PRE_STACK_NEW_IMAGE until the viewer has also applied its per-image properties, which it
   // does after STACK_NEW_IMAGE (later in the same load): the cell is examined at the event and again after that.
-  on(events.PRE_STACK_NEW_IMAGE, event => { const v = fromEvent(event); if (v) loading.add(v.id); });
+  on(events.PRE_STACK_NEW_IMAGE, event => { const v = fromEvent(event); if (v) loading.set(v, {}); });
   on(events.STACK_NEW_IMAGE, event => {
     const v = fromEvent(event); if (!v) return;
-    loading.add(v.id); examine(v);
+    const pass = {}, image = imageId(v);
+    loading.set(v, pass); examine(v);
     setTimeout(() => {
-      if (ended) return; if (viewportOf(v.id) === v) examine(v, true); loading.delete(v.id);
+      if (ended || loading.get(v) !== pass || viewportOf(v.id) !== v || imageId(v) !== image) return;
+      examine(v, true); loading.delete(v);
       // The new image's display (its stored VOI included) is in place: a feature that sets this cell's window next
       // (Display Set Presets) waits for this, so its window is not replaced and counts as the reader's.
-      v.element.dispatchEvent(new CustomEvent('kin-display-image-settled', { detail: { viewportId: v.id } }));
+      v.element.dispatchEvent(new CustomEvent('kin-display-image-settled', { detail: { viewportId: v.id, imageId: image } }));
     }, 0);
   });
-  on(events.VIEWPORT_NEW_IMAGE_SET, event => { const v = fromEvent(event); if (!v) return; loading.add(v.id); examine(v); loading.delete(v.id); });
+  on(events.VIEWPORT_NEW_IMAGE_SET, event => {
+    const v = fromEvent(event); if (!v) return;
+    const pending = loading.has(v);
+    if (!pending) loading.set(v, {});
+    examine(v);
+    if (!pending) loading.delete(v);
+  });
   on(events.CAMERA_RESET, cameraReset);
   on(events.CAMERA_MODIFIED, refresh);
   on(events.VOI_MODIFIED, voiChanged);
@@ -841,9 +854,11 @@ window.KinViewerFeatures?.module('display', async ({ services, store, ui }) => {
   store.subscribe('autoRotate', value => { const was = state.autoRotate; state.autoRotate = value === true; if (state.autoRotate && !was) examineAll(); });
   store.subscribe('voiLut', value => { const was = state.voiLut; state.voiLut = value !== false; if (state.voiLut !== was) examineAll(); });
   examineAll();
+  initialized = true;
 
   return () => {
     ended = true; endSmart(); abort.abort(); classes.disconnect();
+    if (window.kinViewerDisplayImageSettled === imageSettled) delete window.kinViewerDisplayImageSettled;
     for (const entry of [...cellRuns]) entry.abort();
     for (const subscription of subscriptions) try { subscription?.unsubscribe?.(); } catch (_) {}
     for (const entry of layers.values()) { clearPane(entry.pane); entry.node.remove(); }

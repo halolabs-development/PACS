@@ -57,7 +57,7 @@
     // 계약 §16.1 비활성 이유(#1 reason).
     reasons: {
       NO_PINNABLE_SOURCE: '보낼 수 있는 판독 판이 없습니다(판독 전이거나 판독 취소됨)',
-      SOURCE_FORBIDDEN: '예비 판독 중이라 지정된 판독의만 보낼 수 있습니다',
+      SOURCE_FORBIDDEN: '이 판독 판을 읽을 수 있는 판독의만 보낼 수 있습니다(예비 판독은 지정된 판독의, Save해 둔 진행 중 판독은 그 판독의)',
       NO_ELIGIBLE_RECIPIENT: '이 판독 판을 지금 읽을 수 있는 수신자가 없습니다(임상의는 승인·추가기재된 판독만 받을 수 있습니다)',
     },
     dialog: {
@@ -97,7 +97,7 @@
       CRITICAL_RESULT_INPUT_INVALID: '서버가 요청 형식을 거절했습니다.',
       CRITICAL_RESULT_RECIPIENT_INVALID: '받는 사람이 지금 받을 수 없는 계정입니다(본인·비활성·다른 기관·역할 없음 등).',
       CRITICAL_RESULT_ROLE_REQUIRED: '이 계정에는 지금 중요 결과를 보낼 역할이 없습니다.',
-      CRITICAL_RESULT_SOURCE_FORBIDDEN: '예비 판독 중이라 지정된 판독의만 보낼 수 있습니다.',
+      CRITICAL_RESULT_SOURCE_FORBIDDEN: '이 판독 판을 읽을 수 있는 판독의만 보낼 수 있습니다(예비 판독은 지정된 판독의, Save해 둔 진행 중 판독은 그 판독의).',
       STUDY_NOT_FOUND: '검사를 찾을 수 없습니다. 접근 조건이 바뀌었거나 검사가 옮겨졌을 수 있습니다.',
       CRITICAL_RESULT_NOT_FOUND: '전달 기록을 찾을 수 없습니다. 접근 조건이 바뀌었을 수 있습니다.',
       OWNER_CHANGED: '로그인한 계정이 바뀌었습니다. 화면을 다시 불러오세요.',

@@ -120,7 +120,13 @@ window.KinViewerIdentity=(()=>{
           if(!current||!dynamic&&!studies.includes(current.uid)||!m||!v?.element||v.viewportStatus!==window.cornerstone.Enums.ViewportStatus.RENDERED||m.StudyInstanceUID!==current.uid||m.SeriesInstanceUID!==current.series||m.SOPInstanceUID!==current.sop||typeof m.PatientID!=='string'||!m.PatientID.trim()||m.PatientID.length>64||(current.study.id&&current.study.id!==m.PatientID)){labels.get(id)?.remove();labels.delete(id);titles.delete(id);continue;}
           displayed.set(id,current.uid);
           let e=labels.get(id);if(!e||e.parentNode!==v.element){e?.remove();e=document.createElement('div');e.className='kin-viewer-identity';v.element.append(e);labels.set(id,e);}
-          const role=current.uid===studies[0]?'current':'prior',general=value[role],modality=typeof m.Modality==='string'&&modalities.includes(m.Modality.trim().toUpperCase())?m.Modality.trim().toUpperCase():'',p=modality&&general.overrides[modality]||general;
+          // A window opened on exam scopes asks its admitted scopes (every original of a merged exam is the current exam);
+          // while they are not admitted, or the image is in neither, it shows no role rather than guess one. A window
+          // without scopes keeps the opened order: its first study is current.
+          const role=new URLSearchParams(location.search).has('kinExamScopes')?window.KinViewerExamScope?.role?.(current.uid,current.series)||null
+            :current.uid===studies[0]?'current':'prior';
+          if(!role){labels.get(id)?.remove();labels.delete(id);titles.delete(id);continue;}
+          const general=value[role],modality=typeof m.Modality==='string'&&modalities.includes(m.Modality.trim().toUpperCase())?m.Modality.trim().toUpperCase():'',p=modality&&general.overrides[modality]||general;
           e.dataset.role=role;e.dataset.study=current.uid;e.dataset.modality=modality;e.dataset.profile=modality&&general.overrides[modality]?'override':'general';
           const shown={name:text(m.PatientName).slice(0,128),date:text(m.StudyDate).slice(0,16),description:text(m.StudyDescription||m.SeriesDescription).slice(0,128)};
           const titleParts=[(role==='current'?'기준 검사':'비교 검사')+' · '+m.PatientID];for(const field of fields)if(p[field]&&shown[field])titleParts.push(shown[field]);

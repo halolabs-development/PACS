@@ -48,6 +48,14 @@ is an admission condition for a clean install.
    `clean_env` drops an exported value. `.env` is not tracked, so `backup()`
    does not count the change as a dirty checkout.
 
+   Put the site's preload disk cap `KIN_PRELOAD_DISK_GB=<GiB>` in the same
+   `.env`: a positive number the site decides from the reading PC's free disk
+   ([preload-cache.md](preload-cache.md); `.env.example` carries `change-me`).
+   The product has no default. Without a valid value the stack still starts, but
+   Preload stays off, each study's Preload shows Failed with that reason (a row with a
+   refusal of its own, such as a merged exam that cannot be read whole, shows its own)
+   and the API logs one startup line naming `KIN_PRELOAD_DISK_GB`; step 3 checks for it.
+
    Decide signing before Compose starts. Online approvals are enabled at
    installation exactly when the custody configuration
    `/etc/kin-deploy/emr-wrapping-custody.json` is installed (Nightly job). Its
@@ -125,9 +133,32 @@ is an admission condition for a clean install.
    the API's authentication configuration. If either request fails, inspect the
    service logs and keep the installation unverified. After correcting the cause,
    repeat this bounded check and preserve the first failure in the release record.
+   Then check that the started API has the preload disk cap: its log carries no
+   startup line naming the setting.
+
+   ```python
+   logs = ops.run(['docker', 'logs', 'kin-api'])
+   assert b'KIN_PRELOAD_DISK_GB' not in logs.stdout + logs.stderr, 'Set KIN_PRELOAD_DISK_GB in .env'
+   ```
+
+   On failure set the value in `.env`, recreate the API with the same `compose`
+   (`ops.run(compose + ['up', '-d', 'api'], timeout=install_timeout)`), then
+   repeat the readiness loop and this check.
    Then perform the approved synthetic save/reopen and signing checks
    ([below](#synthetic-savereopen-and-signing-checks)) before clinical handover.
    Save their actual outcomes in the release record.
+
+   **First administrator of each institution.** A hospital administrator manages
+   only the members of their own institution, so an institution without an
+   active administrator needs its first one from the operator command (see
+   [keycloak/README.md, "기관 첫 관리자 지정"](../../keycloak/README.md)):
+   `ops.run(compose + ['exec', '-T', 'api', 'node', 'prisma/designate-first-admin.cjs',
+   '--institution', '<group>', '--subject', '<Keycloak user id>', '--operator', '<who>',
+   '--reason', '<hospital request and how it was confirmed>'])`. Exit 0 records the
+   designation; exit 2 means the roster answer was lost — run
+   `node prisma/import-member-rights.cjs --retry-roster` in the same container;
+   exit 1 is a refusal with nothing written. Record the institution, subject and
+   exit code in the release record. Skip institutions that already have one.
 4. Backup and restore: after verification, take the **first populated backup**
    with `ops.backup('<backup-directory>')` in this same locked session (the CLI
    equivalent outside this session is `python3 scripts/ops_backup.py backup --output <backup-directory>`).
@@ -647,6 +678,33 @@ reaches the ledgers, ledger storage the lock was not verified on, a paused site 
 does not answer on its own ports, a candidate whose Compose file does not carry the recreation label), so
 that a window that is going to be refused is refused before it costs a closed entry.
 
+### Security updates
+
+Before the window, read the latest `Dependency audit` run (Actions; weekly on `main`, or run it by hand). It counts
+only if it is at most 8 days old and ran on the candidate SHA, or on a commit whose dependency files equal the
+candidate's (`git diff --quiet <run-sha> <candidate> -- '*package-lock.json' '*requirements*.txt' '*Dockerfile*'
+'*compose*.yml' worklist-v0/legal/licenses/components.json scripts/build-sof3-wasm.py` exits 0); otherwise run it
+by hand on the candidate's ref first. An incomplete run (exit 2, "Not checked") is not a check: run it again. For
+every line under "Needs action", the private release record names the update this release carries or why the
+release goes out without it; do the same for the components under "Not seen by the scanners", against their
+vendors' advisories. The run builds the product images with `--pull` on a runner without a build cache; build the
+release images with `--pull --no-cache`, so a cached package-install layer cannot keep packages older than what was
+checked. The images the stack runs by name (Orthanc, PostgreSQL, Keycloak) are checked as their registry serves
+them on the run's day: compare each digest in the run's "Image" column with the image the running container uses,
+`docker image inspect --format '{{index .RepoDigests 0}}' "$(docker inspect --format '{{.Image}}' <container>)"`,
+and record a difference - a newer local copy of the tag does not change a container that is still running the old
+one.
+
+Then read the host's pending operating-system security updates, installing nothing:
+
+```sh
+sudo apt-get update      # a failed refresh means "not checked", not "nothing pending"
+apt list --upgradable 2>/dev/null | grep -- '-security'
+```
+
+Record the list in the private release record. Install host updates only in a maintenance window of their own (a
+kernel or Docker update restarts the stack), never between the judgement and the switch of this procedure.
+
 ### The host declaration
 
 The host is not enumerated and nothing on it is blocked. A reviewed host declaration names only what the
@@ -813,7 +871,8 @@ looked at.
    container or perform another backup between the last judgement and opening the entry, and compare the
    container events of the whole project over that interval: the proxy's start is the only one.
 7. Verify HTTPS, the actual served worklist/viewer files and sign-in theme, image labels, migrations,
-   signing-key access and the realm issuer, and that both file-reading services were created from the
+   signing-key access and the realm issuer, that the new API's log carries no startup line naming
+   `KIN_PRELOAD_DISK_GB` (installation step 3), and that both file-reading services were created from the
    candidate's directory after the switch began. Only after these checks: write what the declaration says
    moves with the site, file by file, load the managers, and let the declared executors go again, the
    schedulers first and, in a later request, what starts others (a timer that catches up on a missed run

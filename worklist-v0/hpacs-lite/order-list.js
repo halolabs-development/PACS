@@ -31,13 +31,17 @@
       const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       if (mode !== "Technician") return;
       const list = filteredOrders();
+      // A redraw keeps the focus on the order row that had it (as the worklist rows do): after a click, a menu item
+      // (Match, Unmatch) or a list read again, the keyboard stays on that order.
+      const focusedOid = document.activeElement?.closest?.("#orderrows tr[data-oid]")?.dataset.oid ?? null;
       $("#orderrows").innerHTML = list.map((o, i) => `
-        <tr data-oid="${esc(o.oid)}" class="${o.oid === selectedOid ? "sel" : ""}">
+        <tr data-oid="${esc(o.oid)}" tabindex="-1" class="${o.oid === selectedOid ? "sel" : ""}">
           <td class="num">${i + 1}</td>
           <td><span class="mt ${esc(o.matched)}">${esc(o.matched)}</span></td>
           <td translate="no">${esc(o.id)}</td><td translate="no">${esc(o.name)}</td><td translate="no">${esc(o.sex)}</td><td translate="no">${esc(o.birth)}</td>
           <td translate="no">${esc(o.sched)}</td><td translate="no">${esc(o.modality)}</td><td translate="no">${esc(o.desc)}</td><td translate="no">${esc(o.ward)}</td><td translate="no">${esc(o.reqDoc)}</td>
         </tr>`).join("") || `<tr><td class="empty" colspan="11">오더 없음</td></tr>`;
+      if (focusedOid !== null) $("#orderrows").querySelector(`tr[data-oid="${CSS.escape(focusedOid)}"]`)?.focus({ preventScroll: true });
 
       const s = cur(), o = curOrder();
       kinWrite($("#orderhint"), kinSay("선택: 검사 {0}  ·  오더 {1}{t2}", s ? s.name + " / " + s.date : { t: "(없음)" }, o ? o.name + " / " + o.sched : { t: "(없음)" },

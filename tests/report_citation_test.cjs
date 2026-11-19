@@ -63,7 +63,7 @@ const EPOCH = '0a1b2c3d-0000-4000-8000-00000000000a';
 // own scheduling of the key is tests/emr/d/related_boundaries_pg_test.cjs.
 const { TransactionLocks, fixedRecord, fixedRecordKey } = require('./transaction_locks.cjs');
 
-function fixture({ state = STATE, report = { version: 4, updatedBy: 'doctor2@synthetic', findings: 'HEAD', conclusion: '', recommendation: '' },
+function fixture({ state = STATE, report = { version: 4, updatedBy: CALLER.actor, findings: 'HEAD', conclusion: '', recommendation: '' },
   versions = new Map(), draft = null, readable = READABLE, readableAll = false, bytes = null, fail = null,
   refuseTxRequire = false, checkError = fail_error() } = {}) {
   const writes = [], audits = [], raw = [], calls = [], created = [];

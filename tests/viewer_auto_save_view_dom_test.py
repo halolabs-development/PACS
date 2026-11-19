@@ -1,7 +1,7 @@
 # coding: utf-8
 """Auto Save View on the shipped image toolbar: Display > Auto Save View... and Viewer Settings > Tools & Display (the
-account check and the window); with the check on, one save a moment after the view last changed and none while the
-viewer opens, while the saved view goes back or right after a Hanging Protocol is applied; nothing at all with it off;
+account check and the window); with the check on, settled panes can save reader edits while others are still restoring.
+Display processing and applying a saved value do not by themselves trigger a save. With the setting off nothing is sent;
 the saved view put back over the viewer's first layout (layout, cell rule, image by SOP, window and camera) with a badge
 naming only what went back; a Job chosen to open wins; Discard Saved View wins over a save on its way; a patient switch
 saves at once.
@@ -28,10 +28,8 @@ mode being left, the check switched on later, either Discard and a Hanging Proto
 can be captured is the starting point, and the reader's next change is saved. A viewer that starts saving after the
 restore was over starts the same way, whether it heard that restore or was installed after it.
 
-A screen no such restore ever held is not waited for. A viewer that starts saving there with an image still to come
-saves the first screen that can be captured, as it always has: as the image comes, and what the reader made of the
-screen meanwhile as the window closes, a patient switches or the mode is left. A restore of a screen that is over does
-not make the next screen wait, and a view discarded before saving started is not sent again by an image coming late.
+On a fresh opening each already drawn cell has a baseline before the read. A new cell starts from its first stable
+image. An unanswered rule, an unreadable frame or a late display pass leaves that cell's stored value in place.
 """
 from pathlib import Path
 import json
@@ -68,8 +66,8 @@ SETUP = """config => {
   for (const set of synSets) for (let i = 1; i <= set.n; i++) synMeta['syn:' + set.uid + ':' + i] = { Modality: 'CT', StudyInstanceUID: STUDY,
     SeriesInstanceUID: set.series, SOPInstanceUID: set.series + '.' + i, InstanceNumber: i, ImagePositionPatient: [0, 0, i * 5],
     ImageOrientationPatient: [1, 0, 0, 0, 1, 0], PixelSpacing: [0.5, 0.5], Rows: 400, Columns: 600 };
-  const EVENTS = { STACK_NEW_IMAGE: 'syn-new', CAMERA_MODIFIED: 'syn-camera', VOI_MODIFIED: 'syn-voi', IMAGE_RENDERED: 'syn-rendered' };
-  window.cornerstone = { Enums: { Events: EVENTS },
+  const EVENTS = { PRE_STACK_NEW_IMAGE: 'syn-before-image', STACK_NEW_IMAGE: 'syn-new', CAMERA_MODIFIED: 'syn-camera', VOI_MODIFIED: 'syn-voi', IMAGE_RENDERED: 'syn-rendered' };
+  window.cornerstone = { Enums: { Events: EVENTS, ViewportStatus: { RENDERED: 'rendered', PRE_RENDER: 'preRender' } },
     metaData: { get: (type, id) => type === 'instance' ? synMeta[id] : type === 'voiLutModule' && synMeta[id] ? { windowCenter: [40], windowWidth: [400] } : undefined },
     utilities: { windowLevel: { toWindowLevel: (low, high) => ({ windowWidth: Math.abs(high - low) + 1, windowCenter: (low + high + 1) / 2 }),
       toLowHighRange: (w, c) => ({ lower: c - 0.5 - (w - 1) / 2, upper: c - 0.5 + (w - 1) / 2 }) } } };
@@ -77,6 +75,7 @@ SETUP = """config => {
   const fire = (v, name, detail = {}) => v.element.dispatchEvent(new CustomEvent(EVENTS[name], { detail: { viewportId: v.id, element: v.element, ...detail } }));
   window.synFire = (id, name) => fire(synViewports.get(id), name);
   window.synViewports = new Map(); window.synShown = new Map(); window.synActive = null; window.synLayout = { rows: 1, cols: 1 }; window.synLayouts = [];
+  let firstLayout = true;
   function makeViewport(id, setUid, index, rows, cols) {
     const x = (index % cols) / cols, y = Math.floor(index / cols) / rows;
     const pane = document.createElement('div'); pane.dataset.cy = 'viewport-pane'; pane.id = 'pane-' + id;
@@ -87,17 +86,55 @@ SETUP = """config => {
     const v = { id, type: 'stack', element, ids: set ? set.ids ? [...set.ids] : Array.from({ length: set.n }, (_, i) => 'syn:' + set.uid + ':' + (i + 1)) : [], index: 0,
       presentation: { rotation: 0 }, properties: { invert: false, voiRange: { lower: -160, upper: 239 }, VOILUTFunction: 'LINEAR', interpolationType: 1 },
       camera: { focalPoint: [0, 0, 5], position: [0, 0, 105], viewUp: [0, -1, 0], viewPlaneNormal: [0, 0, 1], parallelScale: 100, rotation: 0, flipHorizontal: false, flipVertical: false } };
+    let fitScale = firstLayout ? 100 / 0.99875 : 100;
+    v.camera.parallelScale = fitScale;
+    let frame;
+    function render() {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        if (!v.getCurrentImageId() || v.getCornerstoneImage()?.imageId !== v.getCurrentImageId()) return;
+        v.viewportStatus = 'rendered';
+        fire(v, 'IMAGE_RENDERED');
+      });
+    }
+    function move(index) {
+      v.viewportStatus = 'preRender';
+      v.index = index;
+      fire(v, 'PRE_STACK_NEW_IMAGE');
+      fire(v, 'STACK_NEW_IMAGE');
+      render();
+    }
     Object.assign(v, {
+      viewportStatus: set ? 'rendered' : 'noData',
       getImageIds: () => [...v.ids], getCurrentImageId: () => v.ids[v.index], getCurrentImageIdIndex: () => v.index,
-      async setImageIdIndex(index) { v.index = index; fire(v, 'STACK_NEW_IMAGE'); },
-      async setStack(ids, index = 0) { v.ids = [...ids]; v.index = index; fire(v, 'STACK_NEW_IMAGE'); },
-      getZoom: () => 100 / v.camera.parallelScale, setZoom(zoom) { v.camera.parallelScale = 100 / zoom; fire(v, 'CAMERA_MODIFIED'); },
-      setPan() {}, resetProperties() {}, render() {},
+      getCornerstoneImage: () => ({ imageId: v.getCurrentImageId() }),
+      async setImageIdIndex(index) { if (index !== v.index) move(index); },
+      async setStack(ids, index = 0) { v.ids = [...ids]; move(index); },
+      getZoom: () => fitScale / v.camera.parallelScale, setZoom(zoom) { v.camera.parallelScale = fitScale / zoom; fire(v, 'CAMERA_MODIFIED'); },
+      setPan([x, y]) { v.setCamera({ focalPoint: [x, y, v.camera.focalPoint[2]], position: [x, y, v.camera.position[2]] }); },
+      resetProperties() {}, render,
       getCamera: () => structuredClone(v.camera), setCamera(next) { const { rotation, ...rest } = structuredClone(next); v.camera = { ...v.camera, ...rest };
         if (rotation !== undefined) { v.camera.rotation = rotation; v.presentation.rotation = rotation; } fire(v, 'CAMERA_MODIFIED'); },
-      getViewPresentation: () => ({ ...v.presentation }), setViewPresentation(next) { v.presentation = { rotation: next.rotation }; v.camera.rotation = next.rotation; fire(v, 'CAMERA_MODIFIED'); },
+      getViewPresentation: () => ({ ...v.presentation, zoom: v.getZoom(), pan: v.camera.focalPoint.slice(0, 2) }),
+      setViewPresentation(next) {
+        if (next.zoom !== undefined) v.setZoom(next.zoom);
+        if (next.pan) v.setPan(next.pan);
+        if (next.rotation !== undefined) v.setCamera({ rotation: next.rotation });
+      },
+      resizeTo(scale) {
+        if (v.viewportStatus !== 'rendered' || !v.getCurrentImageId()) return;
+        // The engine refits a drawn stack, restores its old camera, then the host reapplies the relative presentation.
+        const previous = v.getCamera(), presentation = v.getViewPresentation();
+        v.setCamera({ parallelScale: scale });
+        fitScale = scale;
+        v.setCamera(previous);
+        v.setViewPresentation(presentation);
+        render();
+      },
       getProperties: () => structuredClone(v.properties),
-      setProperties(next) { v.properties = { ...v.properties, ...structuredClone(next) }; if (next.voiRange) fire(v, 'VOI_MODIFIED', { range: next.voiRange }); },
+      setProperties(next) { v.viewportStatus = 'preRender'; v.properties = { ...v.properties, ...structuredClone(next) };
+        if (next.voiRange) fire(v, 'VOI_MODIFIED', { range: next.voiRange }); render(); },
       setVOI(range) { v.properties.voiRange = { ...range }; fire(v, 'VOI_MODIFIED', { range }); },
       getDefaultActor: () => ({ actor: {} }), getCanvas: () => element.querySelector('canvas'),
       getImageData: () => ({ spacing: [0.5, 0.5, 1], imageData: { indexToWorld: ([i, j]) => [i * 0.5, j * 0.5, 0] } }), worldToCanvas: ([x, y]) => [x, y],
@@ -107,6 +144,7 @@ SETUP = """config => {
   window.synBuild = (rows, cols, cells, active) => {
     document.getElementById('grid').replaceChildren(); synViewports.clear(); synShown.clear();
     cells.forEach(([id, set], index) => makeViewport(id, set, index, rows, cols));
+    firstLayout = false;
     synLayout = { rows, cols }; synActive = active ?? cells[0][0];
     synEmit('grid', 'gridState', { viewports: cells.map(([id]) => ({ viewportId: id })) });
   };
@@ -185,8 +223,14 @@ SETUP = """config => {
   window.synFirst = () => { const v = [...synViewports.values()][0]; return { id: v.id, image: synMeta[v.getCurrentImageId()].SOPInstanceUID, zoom: v.getZoom() }; };
   // A cell whose image has not come yet (it shows none: there is nothing to capture there), and its coming, with the
   // viewer's own word of it (STACK_NEW_IMAGE) or with none.
-  window.synLoading = (index = 1) => { const v = [...synViewports.values()][index]; v.kept = v.ids; v.ids = []; };
-  window.synLoaded = (index = 1, silent = false) => { const v = [...synViewports.values()][index]; if (silent) v.ids = v.kept; else v.setStack(v.kept, 0); };
+  window.synLoading = (index = 1) => { const v = [...synViewports.values()][index]; v.kept = v.ids; v.ids = []; v.viewportStatus = 'loading'; };
+  window.synLoaded = (index = 1, silent = false) => {
+    const v = [...synViewports.values()][index];
+    if (silent) { v.ids = v.kept; v.viewportStatus = 'rendered'; return; }
+    const drawn = new Promise(resolve => v.element.addEventListener('syn-rendered', resolve, { once: true }));
+    v.setStack(v.kept, 0);
+    return drawn;
+  };
   window.synSession = { owner: () => owner, ended: () => synEnded, writer: () => synWriter, state: () => 'confirmed', decide: async () => {} };
   window.synMount = () => {
     window.synToolbar = KinViewerUXToolbar.mount({ services: synServices, commands: synCommands, session: synSession });
@@ -210,6 +254,39 @@ def cell(series, n, scale=40, lower=-1060, upper=439, flip=False, display=None, 
 def view(cells, rows=1, cols=None, active=0):
     return {'version': 1, 'studies': [STUDY], 'rows': rows, 'cols': cols or len(cells) // rows, 'active': active, 'cells': cells}
 
+
+# Cells a restore lays out anew draw their image a moment after they take it, as the viewer's stacks do: the first image
+# drawn in a cell puts the image's own window on it and a camera fitted to it, keeping the zoom and pan measured from the
+# empty cell's camera (scale 1), so a camera put on before that comes back a hundred times smaller. Moving to an image
+# draws it before the move is over. The viewer's first cells have drawn theirs. (`drawn`: the image drawn, or null;
+# synDrawAfter: the moment in ms, synNeverDraws: a set whose cell never draws its first image.)
+LATE_DRAWING = """() => {
+  const build = window.synBuild;
+  window.synBuild = (rows, cols, cells, active) => {
+    build(rows, cols, cells, active);
+    for (const v of synViewports.values()) {
+      v.getCornerstoneImage = () => v.drawn ? { imageId: v.drawn } : undefined;
+      if (!v.id.startsWith('kin-auto-view-')) { v.drawn = v.getCurrentImageId(); continue; }
+      v.drawn = null; v.viewportStatus = 'preRender';
+      const arrive = () => {
+        if (v.drawn === v.getCurrentImageId()) return;
+        if (!v.drawn) { const shift = v.camera.focalPoint.map(n => n * 99); v.camera.parallelScale = 100 * v.camera.parallelScale;
+          v.camera.focalPoint = v.camera.focalPoint.map((n, i) => n + shift[i]); v.camera.position = v.camera.position.map((n, i) => n + shift[i]);
+          v.properties.voiRange = { lower: -160, upper: 239 }; }
+        v.drawn = v.getCurrentImageId();
+        v.element.dispatchEvent(new CustomEvent('syn-new', { detail: { viewportId: v.id, element: v.element } }));
+        v.render();
+      };
+      const move = v.setImageIdIndex;
+      v.setImageIdIndex = async index => { await move(index); arrive(); };
+      if (window.synNeverDraws !== synShown.get(v.id)?.set) setTimeout(arrive, window.synDrawAfter || 700);
+    }
+  };
+}"""
+
+# The reader turns the wheel on a cell (place in grid order) and it goes to an image (its place in the stack).
+READER_MOVES = """([at, index]) => { const v = [...synViewports.values()][at];
+  v.element.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true })); v.setImageIdIndex(index); }"""
 
 SORT_DOWN = {'magnification': 'fit', 'windowing': None, 'filter': 'none', 'sort': 'position-desc', 'rotate': 0, 'flip': 'none',
              'firstImage': 'first', 'gspsAuto': False, 'overlay': 'none'}
@@ -305,6 +382,7 @@ COMBINED = """config => {
     const v = synViewports.get(id); if (!v || !cell) return;
     v.setImageIdIndex(v.getImageIds().findIndex(image => synMeta[image].SOPInstanceUID === cell.sop));
     v.setProperties(structuredClone(cell.properties)); v.setCamera(structuredClone(cell.camera));
+    return new Promise(resolve => v.element.addEventListener('syn-rendered', resolve, { once: true }));
   };
   window.kinCreateStackRestore = () => ({
     prepare: async (cells, sets) => cells.map((cell, index) => ({ cell, set: sets[index] })),
@@ -313,14 +391,15 @@ COMBINED = """config => {
       async complete() {
         const step = synRestore.steps.shift() || {};
         for (let n = 0; n < 200 && !ids.every((id, index) => !plans[index].cell || synViewports.has(id)); n++) await new Promise(resolve => setTimeout(resolve, 10));
-        place(ids[0], plans[0].cell);
+        const draws = [place(ids[0], plans[0].cell)];
         if (step.gate) {
           if (!synGates[step.gate]) synGate(step.gate);
           synRestore.waiting = step.gate; await passed(step.gate);
           if (synRestore.waiting === step.gate) synRestore.waiting = null;
         }
         if (step.fail) throw new Error('저장한 영상 표시를 확인하지 못했습니다.');
-        plans.forEach((plan, index) => { if (index) place(ids[index], plan.cell); });
+        plans.forEach((plan, index) => { if (index) draws.push(place(ids[index], plan.cell)); });
+        await Promise.all(draws);
       },
       verify() {}, dispose() {},
     }),
@@ -388,6 +467,7 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         cells = [list(c) for c in cells]
         page.evaluate("([rows, cols, cells]) => { synBuild(rows, cols, cells); synMount(); }", [rows, len(cells) // rows, cells])
         page.wait_for_function(("KinViewerFeatures.settings().some(s => s.id === 'autoSaveView')" if autosave else "true") + ("" if late else " && !!window.KinViewerCellRules"))
+        page.evaluate("() => { for (const v of synViewports.values()) v.resizeTo(100); }")
         self.addCleanup(lambda: self.assertEqual([], errors))
         return page
 
@@ -410,9 +490,10 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         return page.evaluate(STATE, cell)
 
     def change(self, page, cell='left', zoom=2.5, window=(1500, -600), image=5):
-        """The reader changes one cell: zoom, window and image (as the viewer's tools do)."""
+        """The reader changes one cell and sees the chosen image before switching or closing."""
         page.evaluate("""([id, zoom, w, l, image]) => { const v = synViewports.get(id);
-          v.setZoom(zoom); v.setProperties({ voiRange: cornerstone.utilities.windowLevel.toLowHighRange(w, l) }); v.setImageIdIndex(image); }""",
+          v.setZoom(zoom); v.setProperties({ voiRange: cornerstone.utilities.windowLevel.toLowHighRange(w, l) }); v.setImageIdIndex(image);
+          return new Promise(resolve => v.element.addEventListener('syn-rendered', resolve, { once: true })); }""",
                       [cell, zoom, window[0], window[1], image])
 
     def started(self, page):
@@ -520,6 +601,7 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         # The viewer opens on one cell of series A; the saved view is two cells, A and B.
         page = self.open(saved=saved, cells=(('first', 'set-A'),))
         page.wait_for_function("document.querySelector('[data-auto-view-badge]')", timeout=8000)
+        expect(page.locator('[data-auto-view-badge]')).to_contain_text('2 of 2 cells')
         self.assertEqual([[1, 2]], page.evaluate('synLayouts'), 'the saved layout')
         ids = page.evaluate('[...synViewports.keys()]')
         left, right = self.state(page, ids[0]), self.state(page, ids[1])
@@ -575,6 +657,392 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         self.assertEqual(['syn:mr/frames/4', 'syn:mr/frames/5', 'syn:mr/frames/6'], left['ids'], 'the second time point is shown')
         self.assertEqual(('syn:mr/frames/5', 1), (left['image'], left['index']))
         expect(page.locator('[data-auto-view-badge]')).to_have_text('Restored saved view: Zoom 250%, W 1500 / L -310, Image 2')
+
+    def test_05c_series_put_in_another_order_come_back_with_their_zoom_once_each_image_is_drawn(self):
+        # The saved view has the second series in the first cell, on its first image: the viewer opens with the series the
+        # other way round, so the saved layout is laid out anew and that cell is a new one still drawing its first image.
+        setup = """() => { (%s)();
+          const grid = document.getElementById('grid');
+          function resize(event) {
+            const v = synViewports.get(event.detail.viewportId);
+            if (v?.drawn !== 'syn:set-A:4') return;
+            grid.removeEventListener('syn-rendered', resize, true);
+            v.resizeTo(99.875);
+          }
+          grid.addEventListener('syn-rendered', resize, true); }""" % LATE_DRAWING
+        page = self.open(saved=view([cell(SB, 1, scale=26.5, lower=31, upper=192), cell(SA, 4)]), setup=setup)
+        page.wait_for_function("document.querySelector('[data-auto-view-badge]')", timeout=12000)
+        page.wait_for_timeout(1200)
+        ids = page.evaluate('[...synViewports.keys()]')
+        self.assertEqual([[1, 2]], page.evaluate('synLayouts'))
+        left, right = self.state(page, ids[0]), self.state(page, ids[1])
+        self.assertEqual(('syn:set-B:1', 26.5, {'lower': 31, 'upper': 192}), (left['image'], left['scale'], left['voi']),
+                         'the first cell keeps the saved zoom and window once its image has come')
+        self.assertEqual([12.5, -3.25, 5], left['focal'])
+        self.assertEqual(('syn:set-A:4', 40, {'lower': -1060, 'upper': 439}), (right['image'], right['scale'], right['voi']))
+        self.assertEqual(['syn:set-B:1', 'syn:set-A:4'], page.evaluate('[...synViewports.values()].map(v => v.drawn)'))
+        expect(page.locator('[data-auto-view-badge]')).to_have_text('Restored saved view: Zoom 377%, W 162 / L 112, Image 1 (2 of 2 cells)')
+        page.wait_for_timeout(2500)
+        self.assertEqual([], self.posts(page), 'putting the view back saved nothing')
+
+    def test_05d_a_cell_the_reader_moves_on_while_its_image_comes_is_left_to_the_reader(self):
+        page = self.open(saved=view([cell(SB, 1, scale=26.5, lower=31, upper=192), cell(SA, 4)], active=1),
+                         setup="() => { (" + LATE_DRAWING + ")(); window.synDrawAfter = 4000; }")
+        page.wait_for_function("[...synViewports.keys()].some(id => id.startsWith('kin-auto-view-'))", timeout=8000)
+        page.wait_for_timeout(600)
+        # The reader turns the wheel on the first cell before its first image has come: it goes to the third image.
+        page.evaluate(READER_MOVES, [0, 2])
+        page.wait_for_timeout(5000)
+        ids = page.evaluate('[...synViewports.keys()]')
+        left, right = self.state(page, ids[0]), self.state(page, ids[1])
+        self.assertEqual('syn:set-B:3', left['image'], 'the image the reader went to stays')
+        self.assertNotEqual(26.5, left['scale'], 'the saved camera of image 1 is not put on image 3')
+        self.assertNotEqual({'lower': 31, 'upper': 192}, left['voi'])
+        self.assertEqual('syn:set-A:4', right['image'])
+        expect(page.locator('[data-auto-view-badge]')).to_contain_text('1 of 2 cells; 1 not restored')
+        page.wait_for_function('synServer.posts.length === 1', timeout=8000)
+        self.assertEqual([SB + '.3', SA + '.4'], [c['sop'] for c in self.posts(page)[0]['cells']])
+
+    def test_05f_a_cell_the_reader_moves_while_another_waits_for_its_image_is_not_put_back_over(self):
+        page = self.open(saved=view([cell(SB, 1, scale=26.5, lower=31, upper=192), cell(SA, 4)], active=1),
+                         setup="() => { (" + LATE_DRAWING + ")(); window.synDrawAfter = 4000; }")
+        page.wait_for_function("[...synViewports.keys()].some(id => id.startsWith('kin-auto-view-'))", timeout=8000)
+        page.wait_for_timeout(600)
+        # While the first cell waits for its image, the reader goes to the seventh image of the second.
+        page.evaluate(READER_MOVES, [1, 6])
+        page.wait_for_timeout(5000)
+        ids = page.evaluate('[...synViewports.keys()]')
+        self.assertEqual('syn:set-A:7', self.state(page, ids[1])['image'], 'the saved image 4 is not put back over the reader\'s choice')
+        self.assertEqual(26.5, self.state(page, ids[0])['scale'], 'the independent first cell restored')
+        page.wait_for_function('synServer.posts.length === 1', timeout=8000)
+        self.assertEqual([SB + '.1', SA + '.7'], [c['sop'] for c in self.posts(page)[0]['cells']])
+
+    def test_05e_late_draw_keeps_its_saved_cell_while_other_zoom_changes_are_sent(self):
+        saved = view([cell(SB, 1, scale=26.5, lower=31, upper=192), cell(SA, 4)], active=1)
+        page = self.open(saved=saved, setup="() => { (" + LATE_DRAWING + ")(); window.synDrawAfter = 24000; }")
+        expect(page.locator('[data-auto-view-badge]')).to_contain_text('1 of 2 cells; 1 not restored')
+        ids = page.evaluate('[...synViewports.keys()]')
+        self.assertIsNone(page.evaluate('[...synViewports.values()][0].drawn'))
+        for n, zoom in enumerate((3, 4), 1):
+            page.evaluate("([id,z]) => synViewports.get(id).setZoom(z)", [ids[1], zoom])
+            page.wait_for_function('synServer.posts.length === ' + str(n), timeout=4500)
+            left, right = self.posts(page)[-1]['cells']
+            self.assertEqual(saved['cells'][0], left)
+            self.assertEqual((SA + '.4', zoom), (right['sop'], right['zoom']))
+        page.wait_for_function("[...synViewports.values()][0].drawn === 'syn:set-B:1'", timeout=26000)
+        page.wait_for_timeout(2500)
+        self.close(page)
+        self.assertEqual(2, len(self.posts(page)), 'a late default window and camera never replace the saved cell')
+        page.evaluate("id => synViewports.get(id).setZoom(2.5)", ids[1])
+        self.close(page)
+        left, right = self.posts(page)[2]['cells']
+        self.assertEqual(saved['cells'][0], left)
+        self.assertEqual(2.5, right['zoom'])
+
+    def with_display(self, page):
+        page.route(ORIGIN + '/worklist/hpacs-lite/viewer-display-model.js', self.serve(HPACS / 'viewer-display-model.js'))
+        page.add_script_tag(path=str(HPACS / 'viewer-features-display.js'))
+
+    def test_reader_edits_during_read_survive_layout_replacement_and_reopen(self):
+        setup = """() => { (%s)();
+          const fetch = window.fetch;
+          window.fetch = async (url, options) => {
+            if (url.endsWith('/workspace-shortcuts')) await new Promise(resolve => { window.settingsReady = resolve; });
+            return fetch(url, options);
+          }; }""" % HOLD_READ
+        page = self.open(saved=view([cell(SB, 2), cell(SA, 4)]), setup=setup, prepare=self.with_display)
+        page.wait_for_function('!!window.settingsReady')
+        page.evaluate("synViewports.get('left').setImageIdIndex(6); settingsReady()")
+        page.wait_for_function(READING)
+        page.evaluate("synServices.viewportGridService.setActiveViewportId('right')")
+        page.get_by_role('button', name='Display ▾').click()
+        page.get_by_role('menuitem', name='Zoom…').click()
+        page.get_by_role('button', name='200%').click()
+        page.evaluate('synServer.releaseRead()')
+        page.wait_for_function('synServer.posts.length > 0', timeout=6000)
+        saved = page.evaluate('synServer.saved')
+        self.assertEqual([(SB + '.1', 2), (SA + '.7', 1)], [(c['sop'], c['zoom']) for c in saved['cells']])
+        again = self.open(saved=saved)
+        expect(again.locator('[data-auto-view-badge]')).to_contain_text('2 of 2 cells')
+        self.assertEqual([['syn:set-B:1', 2], ['syn:set-A:7', 1]],
+                         again.evaluate('[...synViewports.values()].map(v => [v.getCurrentImageId(), v.getZoom()])'))
+
+    def test_shift_during_read_leaves_the_restored_view_unsaved(self):
+        saved = view([cell(SA, 4), cell(SB, 3)])
+        page = self.open(saved=saved, setup=HOLD_READ)
+        page.wait_for_function(READING)
+        page.keyboard.press('Shift')
+        page.evaluate('synServer.releaseRead()')
+        expect(page.locator('[data-auto-view-badge]')).to_contain_text('2 of 2 cells')
+        self.close(page)
+        self.assertEqual(['syn:set-A:4', 'syn:set-B:3'], [self.state(page, key)['image'] for key in ('left', 'right')])
+        self.assertEqual([], self.posts(page))
+
+    def test_resize_during_read_and_after_placement_preserves_the_saved_view(self):
+        saved = view([cell(SA, 4, scale=26.5, lower=31, upper=192), cell(SB, 2)])
+        page = self.open(saved=saved, setup=HOLD_READ)
+        page.wait_for_function(READING)
+        page.evaluate("synViewports.get('left').resizeTo(99.875); synServer.releaseRead()")
+        expect(page.locator('[data-auto-view-badge]')).to_contain_text('2 of 2 cells')
+        left = self.state(page, 'left')
+        self.assertEqual(('syn:set-A:4', 26.5, {'lower': 31, 'upper': 192}), (left['image'], left['scale'], left['voi']))
+        page.evaluate("synViewports.get('left').resizeTo(95)")
+        self.quiet(page, 0, 2500)
+        self.close(page)
+        self.assertEqual([READ], self.requests(page))
+
+    def test_reader_changes_to_relative_zoom_pan_and_window_are_each_saved_after_resize(self):
+        page = self.open(saved=view([cell(SA, 4, scale=50), cell(SB, 2)]))
+        expect(page.locator('[data-auto-view-badge]')).to_contain_text('2 of 2 cells')
+        page.evaluate("synViewports.get('left').resizeTo(95)")
+        self.close(page)
+        self.assertEqual([], self.posts(page))
+        page.evaluate("synViewports.get('left').setZoom(2.004)")
+        self.close(page)
+        page.evaluate("synViewports.get('left').setPan([13.5, -3.25])")
+        self.close(page)
+        page.evaluate("synViewports.get('left').setProperties({voiRange: {lower: -1059, upper: 439}})")
+        self.close(page)
+        zoom, pan, window = [snapshot['cells'][0] for snapshot in self.posts(page)]
+        self.assertAlmostEqual(2.004, zoom['zoom'])
+        self.assertEqual([13.5, -3.25, 20], pan['camera']['focalPoint'])
+        self.assertEqual({'lower': -1059, 'upper': 439}, window['properties']['voiRange'])
+
+    def test_window_change_during_read_survives_reopen(self):
+        page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), setup=HOLD_READ)
+        page.wait_for_function(READING)
+        page.evaluate("""() => { synViewports.get('left').setProperties({voiRange: {lower: -500, upper: 500}});
+          synServer.releaseRead(); }""")
+        page.wait_for_function('synServer.saved.cells[0].sop === synMeta["syn:set-A:1"].SOPInstanceUID', timeout=6500)
+        saved = self.posts(page)[-1]
+        self.assertEqual({'lower': -500, 'upper': 500}, saved['cells'][0]['properties']['voiRange'])
+        self.assertEqual(SB + '.2', saved['cells'][1]['sop'])
+        again = self.open(saved=saved)
+        expect(again.locator('[data-auto-view-badge]')).to_contain_text('2 of 2 cells')
+        self.assertEqual(saved['cells'][0]['properties']['voiRange'], self.state(again, 'left')['voi'])
+
+    def test_reloaded_source_with_pixels_ready_waits_for_its_own_first_render(self):
+        page = self.open(saved=view([cell(SA, 1), cell(SB, 2)]), setup=HOLD_READ)
+        page.wait_for_function(READING)
+        # Reloading the same image can leave its id and pixels available before the new stack has drawn it.
+        page.evaluate("""() => { const v = synViewports.get('left');
+          v.viewportStatus = 'preRender';
+          synFire('left', 'PRE_STACK_NEW_IMAGE'); synFire('left', 'STACK_NEW_IMAGE'); synServer.releaseRead(); }""")
+        expect(page.locator('#pane-right [data-auto-view-badge]')).to_contain_text('1 of 2 cells; 1 not restored')
+        self.assertEqual(100, self.state(page, 'left')['scale'])
+        self.assertEqual({'lower': -160, 'upper': 239}, self.state(page, 'left')['voi'])
+        page.evaluate("synViewports.get('left').render()")
+        expect(page.locator('[data-auto-view-badge]')).to_contain_text('2 of 2 cells')
+        self.assertEqual(40, self.state(page, 'left')['scale'])
+        self.close(page)
+        self.assertEqual([], self.posts(page))
+
+    def test_first_save_contains_the_settled_window_of_the_untouched_pane(self):
+        page = self.unstarted()
+        page.evaluate("""() => { const v = synViewports.get('right'), image = v.getCornerstoneImage;
+          v.getCornerstoneImage = () => undefined;
+          v.setVOI({lower: 0, upper: 255});
+          v.getCornerstoneImage = image; v.render(); }""")
+        page.evaluate('synServer.releaseRead()')
+        self.quiet(page, 0, 2500)
+        page.evaluate("synViewports.get('right').resizeTo(95)")
+        self.close(page)
+        self.assertEqual([], self.posts(page))
+        page.evaluate("synViewports.get('left').setZoom(2)")
+        page.wait_for_function('synServer.posts.length === 1', timeout=5500)
+        right = self.posts(page)[0]['cells'][1]
+        self.assertEqual((SB + '.1', {'lower': 0, 'upper': 255}), (right['sop'], right['properties']['voiRange']))
+        self.assertEqual((1, 95), (right['zoom'], right['camera']['parallelScale']))
+
+    def test_first_save_waits_for_the_other_pane_to_draw_and_reopens_both_series(self):
+        page = self.unstarted()
+        page.evaluate('synLoading(); synServer.releaseRead()')
+        page.wait_for_timeout(300)
+        page.evaluate("synViewports.get('left').setZoom(2)")
+        self.quiet(page, 0, 2500)
+        page.evaluate('synLoaded()')
+        page.wait_for_function('synServer.posts.length === 1', timeout=5500)
+        saved = self.posts(page)[0]
+        self.assertEqual([(SA + '.1', 2), (SB + '.1', 1)], [(c['sop'], c['zoom']) for c in saved['cells']])
+        again = self.open(saved=saved)
+        expect(again.locator('[data-auto-view-badge]')).to_contain_text('2 of 2 cells')
+        self.assertEqual(['set-A', 'set-B'], again.evaluate('[...synShown.values()].map(pane => pane.set)'))
+
+    def test_reader_replacement_still_loading_when_read_finishes_saves_its_own_image(self):
+        page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), setup=HOLD_READ)
+        page.wait_for_function(READING)
+        page.evaluate("""() => { synBuild(1, 2, [['left', 'set-A'], ['picked', 'set-A']]);
+          synLoading(); synServer.releaseRead(); }""")
+        self.quiet(page, 0, 2500)
+        page.evaluate('synLoaded()')
+        page.wait_for_function('synServer.posts.length === 1', timeout=5500)
+        self.assertEqual([SA + '.4', SA + '.1'], [c['sop'] for c in self.posts(page)[0]['cells']])
+
+    def test_reader_zoom_while_sorting_survives_the_late_stack_and_reopen(self):
+        saved = view([cell(SA, 3, display=SORT_DOWN), cell(SB, 2)])
+        page = self.open(saved=saved, setup=HOLD_READ)
+        page.wait_for_function(READING)
+        page.evaluate("""() => { const v = synViewports.get('left'), set = v.setStack;
+          v.setStack = (ids, index) => new Promise(resolve => { window.sorted = () => resolve(set(ids, index)); });
+          synServer.releaseRead(); }""")
+        page.wait_for_function('!!window.sorted')
+        page.evaluate("synViewports.get('left').setZoom(2); sorted()")
+        page.wait_for_function('synServer.posts.length > 0', timeout=5500)
+        snapshot = page.evaluate('synServer.saved')
+        left = snapshot['cells'][0]
+        self.assertEqual((SA + '.1', 2), (left['sop'], left['zoom']))
+        again = self.open(saved=snapshot)
+        expect(again.locator('[data-auto-view-badge]')).to_contain_text('2 of 2 cells')
+        self.assertEqual(('syn:set-A:1', 50), (self.state(again, 'left')['image'], self.state(again, 'left')['scale']))
+
+    def test_failed_read_retries_without_overwriting_an_untouched_pane(self):
+        saved = view([cell(SA, 4), cell(SB, 2)])
+        setup = """() => { const fetch = window.fetch;
+          let first = true;
+          window.fetch = (url, options) => {
+            if (first && url.endsWith('/viewer-auto-view')) { first = false;
+              synRequests.push('failed read'); return Promise.resolve(new Response('{}', {status: 503})); }
+            return fetch(url, options);
+          }; }"""
+        page = self.open(saved=saved, setup=setup)
+        page.wait_for_function("synRequests.includes('failed read')")
+        self.assertEqual([], self.posts(page))
+        page.evaluate("synViewports.get('left').setZoom(2)")
+        page.wait_for_function('synServer.posts.length > 0', timeout=5500)
+        self.assertEqual(saved['cells'][1], self.posts(page)[0]['cells'][1])
+        self.assertEqual('syn:set-B:2', self.state(page, 'right')['image'])
+        self.assertEqual(2, self.posts(page)[0]['cells'][0]['zoom'])
+
+    def test_unreadable_placement_has_no_badge_and_preserves_the_saved_cell(self):
+        saved = view([cell(SA, 4), cell(SB, 2)])
+        page = self.open(saved=saved, setup=HOLD_READ)
+        page.wait_for_function(READING)
+        page.evaluate("""() => { const v = synViewports.get('left'), get = v.getProperties;
+          v.getProperties = () => { if (v.index === 3) throw Error('image properties unavailable'); return get(); };
+          synServer.releaseRead(); }""")
+        expect(page.locator('#pane-right [data-auto-view-badge]')).to_contain_text('1 of 2 cells; 1 not restored')
+        page.evaluate("synViewports.get('right').setZoom(4)")
+        self.close(page)
+        self.assertEqual(saved['cells'][0], self.posts(page)[0]['cells'][0])
+        self.assertEqual(4, self.posts(page)[0]['cells'][1]['zoom'])
+
+    def test_badge_uses_readback_from_the_drawn_frame_and_omits_an_unapplied_window(self):
+        saved = view([cell(SA, 4), cell(SB, 2, scale=40, lower=-300, upper=899)], active=1)
+        setup = """() => { (%s)(); const build = synBuild; window.synBuild = (...args) => {
+          build(...args);
+          synViewports.get('left').setProperties = () => {};
+        }; }""" % HOLD_READ
+        page = self.open(saved=saved, setup=setup)
+        page.wait_for_function(READING)
+        page.evaluate("synViewports.get('right').resizeTo(80); synServer.releaseRead()")
+        expect(page.locator('#pane-right [data-auto-view-badge]')).to_have_text(
+            'Restored saved view: Zoom 200%, W 1200 / L 300, Image 2 (1 of 2 cells; 1 not restored)')
+        self.assertEqual('syn:set-B:2', self.state(page, 'right')['image'])
+        self.close(page)
+        self.assertEqual([], self.posts(page))
+
+    def test_available_series_restores_across_a_missing_layout_slot(self):
+        absent = cell(STUDY + '.9', 2)
+        saved = view([absent, cell(SB, 3)], active=1)
+        page = self.open(saved=saved, cells=(('only', 'set-B'),))
+        expect(page.locator('[data-auto-view-badge]')).to_contain_text('Image 3 (1 of 2 cells; 1 not restored)')
+        page.evaluate("synViewports.get('only').setZoom(4)")
+        self.close(page)
+        self.assertEqual([absent, {**saved['cells'][1], 'zoom': 4,
+                                  'camera': {**saved['cells'][1]['camera'], 'parallelScale': 25}}],
+                         self.posts(page)[0]['cells'])
+
+    def test_a_replaced_pane_during_read_keeps_its_view_while_the_other_restores(self):
+        page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), setup=HOLD_READ)
+        page.wait_for_function(READING)
+        page.evaluate("""() => { synBuild(1, 2, [['replacement', 'set-A'], ['right', 'set-B']]);
+          synViewports.get('replacement').setImageIdIndex(6); synServer.releaseRead(); }""")
+        expect(page.locator('#pane-right [data-auto-view-badge]')).to_contain_text('1 of 2 cells; 1 not restored')
+        self.close(page)
+        self.assertEqual([SA + '.7', SB + '.2'], [c['sop'] for c in self.posts(page)[0]['cells']])
+
+    def test_unanswered_stack_preserves_one_saved_rule_while_the_other_restores_and_saves(self):
+        saved = view([cell(SA, 3, display=SORT_DOWN), cell(SB, 2, display=SORT_DOWN, index=2)])
+        page = self.open(saved=saved, setup=HOLD_READ)
+        page.wait_for_function(READING)
+        page.evaluate("""() => { synViewports.get('left').setStack = () => {
+          window.sortingLeft = true; return new Promise(() => {}); }; synServer.releaseRead(); }""")
+        page.wait_for_function('window.sortingLeft')
+        expect(page.locator('#pane-right [data-auto-view-badge]')).to_contain_text('1 of 2 cells; 1 not restored')
+        self.assertEqual(0, page.locator('#pane-left [data-auto-view-badge]').count())
+        self.assertEqual('syn:set-B:2', self.state(page, 'right')['image'])
+        self.assertEqual([], self.posts(page))
+        for count, zoom in enumerate((4, 2.5), 1):
+            page.evaluate("zoom => synViewports.get('right').setZoom(zoom)", zoom)
+            self.close(page)
+            self.assertEqual(count, len(self.posts(page)))
+            left, right = self.posts(page)[-1]['cells']
+            self.assertEqual(saved['cells'][0], left)
+            self.assertEqual((SB + '.2', zoom, SORT_DOWN), (right['sop'], right['zoom'], right['display']))
+
+    def test_late_monochrome_display_preserves_the_saved_cell_until_its_frame_is_settled(self):
+        saved = view([cell(SA, 1), cell(SB, 3)], active=1)
+        page = self.open(saved=saved, setup=HOLD_READ, prepare=self.with_display)
+        page.wait_for_function(READING)
+        page.evaluate("""() => { const v = synViewports.get('left');
+          synMeta[v.getCurrentImageId()].PhotometricInterpretation = 'MONOCHROME1';
+          synFire('left', 'PRE_STACK_NEW_IMAGE'); v.setVOI({lower: 0, upper: 255}); synServer.releaseRead(); }""")
+        expect(page.locator('#pane-right [data-auto-view-badge]')).to_contain_text('1 of 2 cells; 1 not restored')
+        self.assertEqual({'lower': 0, 'upper': 255}, self.state(page, 'left')['voi'])
+        page.evaluate("synViewports.get('right').setZoom(4)")
+        self.close(page)
+        self.assertEqual(saved['cells'][0], self.posts(page)[0]['cells'][0])
+        self.assertEqual(4, self.posts(page)[0]['cells'][1]['zoom'])
+        page.evaluate("""() => { const v = synViewports.get('left'); v.setProperties({ invert: true });
+          synFire('left', 'STACK_NEW_IMAGE'); }""")
+        expect(page.locator('[data-auto-view-badge]')).to_contain_text('2 of 2 cells')
+        self.assertEqual((False, saved['cells'][0]['properties']['voiRange']),
+                         (self.state(page, 'left')['invert'], self.state(page, 'left')['voi']))
+        page.wait_for_timeout(2300)
+        self.close(page)
+        self.assertEqual(1, len(self.posts(page)), 'display processing is not a second reader edit')
+
+    def test_v1_missing_frame_never_applies_its_window_to_the_visible_image(self):
+        missing = cell(SA, 1, scale=12, lower=10, upper=90)
+        missing['frame'] = 2
+        saved = view([missing, cell(SB, 3, index=0)], active=1)
+        page = self.open(saved=saved)
+        expect(page.locator('[data-auto-view-badge]')).to_contain_text('1 of 2 cells; 1 not restored')
+        self.assertEqual(('syn:set-B:3', 40), (self.state(page, 'right')['image'], self.state(page, 'right')['scale']))
+        self.assertEqual({'lower': -160, 'upper': 239}, self.state(page, 'left')['voi'])
+        page.evaluate("synViewports.get('right').setZoom(3)")
+        self.close(page)
+        self.assertEqual(missing, self.posts(page)[0]['cells'][0])
+
+    def test_open_saved_finding_during_auto_view_read_keeps_the_cited_position(self):
+        page = self.combined(query='', setup=HOLD_READ)
+        page.evaluate('synMountJobs(); synMountFindings()')
+        page.wait_for_function(READING)
+        page.locator('#kin-viewer-findings').get_by_role('button', name='Open Saved View').click()
+        page.wait_for_function("document.querySelector('[data-kin-location-result]')?.dataset.kinLocationResult === 'ok'")
+        self.assertEqual(JOB_IMAGE, page.evaluate('synFirst().image'))
+        page.evaluate('synServer.releaseRead()')
+        page.wait_for_timeout(2500)
+        self.assertEqual(JOB_IMAGE, page.evaluate('synFirst().image'))
+        self.assertEqual(0, page.locator('[data-auto-view-badge]').count())
+
+    def test_account_change_during_read_does_not_apply_or_send_the_previous_readers_view(self):
+        other = [OWNER[0], 'second-reader']
+        page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), setup=HOLD_READ)
+        page.wait_for_function(READING)
+        page.evaluate("owner => { synSession.owner = () => owner; synServer.releaseRead(); }", other)
+        page.wait_for_timeout(1000)
+        self.assertEqual('syn:set-A:1', self.state(page, 'left')['image'])
+        self.assertEqual(0, page.locator('[data-auto-view-badge]').count())
+        self.change(page)
+        self.close(page)
+        self.assertEqual([], self.posts(page))
+        again = self.open(owner=other, saved=view([cell(SA, 8), cell(SB, 1)]))
+        expect(again.locator('[data-auto-view-badge]')).to_contain_text('Image 8')
+        again.evaluate("synViewports.get('left').setZoom(4)")
+        self.close(again)
+        self.assertEqual((SA + '.8', 4), (self.posts(again)[0]['cells'][0]['sop'], self.posts(again)[0]['cells'][0]['zoom']))
+
     def test_06_a_job_chosen_to_open_wins(self):
         page = self.open(saved=view([cell(SA, 4), cell(SB, 2)]), query='&kinJob=00000000-0000-4000-8000-000000000001')
         self.started(page); page.wait_for_timeout(1000)
@@ -689,10 +1157,10 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         page = self.open(saved=view([cell(SA, 4), cell(SB, 2, display=SORT_DOWN, index=2)]), late=('viewer-gsps.js',))
         page.wait_for_function("synRequests.some(r => r.startsWith('GET ') && r.endsWith('/viewer-auto-view'))", timeout=8000)
         page.wait_for_timeout(2000)
-        self.assertEqual(0, page.locator('[data-auto-view-badge]').count(), 'the rule is waited for')
+        expect(page.locator('[data-auto-view-badge]')).to_contain_text('1 of 2 cells; 1 not restored')
         for go in self.pending:
             go()
-        page.wait_for_function("document.querySelector('[data-auto-view-badge]')", timeout=8000)
+        expect(page.locator('[data-auto-view-badge]')).to_contain_text('2 of 2 cells')
         right = self.state(page, 'right')
         self.assertEqual(['syn:set-B:4', 'syn:set-B:3', 'syn:set-B:2', 'syn:set-B:1'], right['ids'])
         self.assertEqual(('syn:set-B:2', 2), (right['image'], right['index']))
@@ -1466,16 +1934,15 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         page.wait_for_function(READING, timeout=8000)
         return page
 
-    def test_first_start_without_restore_saves_the_first_capturable_screen(self):
-        # No restore at all, and one image still to come as saving starts: there is no restore's screen to keep from
-        # being sent, and the first screen that can be captured is saved. The image coming is all it takes.
+    def test_first_start_without_a_saved_view_uses_the_first_stable_cell_as_its_baseline(self):
         page = self.unstarted()
         page.evaluate('synLoading(); synServer.releaseRead()')
         page.wait_for_timeout(300)
         page.evaluate('synLoaded()')
-        page.wait_for_function('synServer.posts.length === 1', timeout=6000)
-        self.assertEqual([(1, SA + '.1')], self.sent(page))
-        self.own(page, 2)
+        self.quiet(page, 0, 2500)
+        self.close(page)
+        self.assertEqual([], self.posts(page))
+        self.own(page, 1)
         # The reader makes the screen one cell while that image is still to come, and goes away: that cell is saved.
         for how in ('close', 'switch', 'end'):
             with self.subTest(leave=how):
@@ -1510,7 +1977,7 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         page.wait_for_function('synJobs.reads === 1')
         page.evaluate('synLoading(); synServer.releaseRead()')
         page.wait_for_timeout(300)
-        page.evaluate("synLoaded(); synOpen('read')")
+        page.evaluate("synLoaded().then(() => synOpen('read'))")
         self.restored(page)
         self.assertEqual(([(1, SA + '.1')], [['begin', 0, 0], ['end', 0, 0]]), (self.sent(page), page.evaluate('synTold')))
         self.quiet(page, 1)

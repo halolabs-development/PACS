@@ -3,8 +3,8 @@
 and Memo are made through the step panel, saved through the Measurements & Key Images panel, reopened, edited, frozen
 into a Job with annotations and printed; an image without pixel spacing gives no mm.
 
-Run in CI: `python tests/measurement_ci.py --profile measure-base` (validate.yml worklist-ux-measurements; the
-"Focused integration" workflow runs the same profile on a branch).
+The patient-identity-measurements job and the Focused integration workflow both run
+`python tests/measurement_ci.py --profile measure-base`.
 """
 import io
 import math
@@ -18,6 +18,7 @@ from pydicom import dcmread
 from pydicom.uid import generate_uid
 from playwright.sync_api import expect
 from test_viewer_job_print import ViewerJobPrintE2E, canvas_ready
+from viewer_tools import displayed_image_box
 
 TOOLS = {'circle': 'KinCircleDiameter', 'text': 'KinText', 'memo': 'KinMemo', 'spine': 'KinSpineLabel'}
 
@@ -40,13 +41,16 @@ class MeasureBaseE2E(ViewerJobPrintE2E):
         return panel
 
     def press(self, p, fx, fy):
-        # A press on the image, at the given place unless an open tool window covers it there; then the nearest place to
-        # its left on the same line that reaches the cell (the windows float over the right of the viewer).
-        box = p.locator('.cornerstone-canvas').first.bounding_box()
-        x, y = box['x'] + box['width'] * fx, box['y'] + box['height'] * fy
-        x = p.evaluate('''([x, y, left]) => { const cell = document.querySelector('.cornerstone-canvas').closest('[data-viewport-uid]');
-            for (let at = x; at >= left; at -= 10) if (cell.contains(document.elementFromPoint(at, y))) return at; return x; }''', [x, y, box['x']])
-        p.mouse.click(x, y)
+        prompt = p.locator('[data-cy=viewport-notification]')
+        if prompt.is_visible():
+            # An outside pointer click dismisses tracking without placing an extra mark.
+            p.get_by_role('dialog').get_by_role('heading').click()
+            expect(prompt).to_be_hidden()
+        image = displayed_image_box(p)
+        canvas = p.locator('.cornerstone-canvas')
+        rect = canvas.bounding_box()
+        canvas.click(position={'x': image['x'] + fx * image['width'] - rect['x'],
+                               'y': image['y'] + fy * image['height'] - rect['y']})
 
     # The centre of a drawn point handle, found and measured in one page task. The measurement layer is rebuilt on
     # every render of its cell (viewer-features-measure.js draw: replaceChildren), so an element a locator resolved
@@ -129,8 +133,9 @@ class MeasureBaseE2E(ViewerJobPrintE2E):
         panel.get_by_label('Include L6').check()
         panel.get_by_label('Direction').select_option('Top to bottom')
         expect(panel.locator('[data-spine-preview]')).to_contain_text('[L4] L5 L6 S1')
-        for fy in (.3, .45, .6):
+        for count, fy in enumerate((.3, .45, .6), start=1):
             self.press(p, .45, fy)
+            expect(p.locator('[data-kin-mark=KinSpineLabel]')).to_have_count(count)
         self.assertEqual(['L4', 'L5', 'L6'], [m['text'] for m in self.marks(p, 'spine')])
         panel = self.tool(p, 'Marking')
         panel.get_by_label('New marking text').fill('RLL nodule')
@@ -138,12 +143,15 @@ class MeasureBaseE2E(ViewerJobPrintE2E):
         expect(panel.get_by_label('Marking Text List').locator('option')).to_have_text(['RLL nodule'])
         panel.get_by_label('Marking Text List').select_option('RLL nodule')
         self.press(p, .3, .5)
+        expect(p.locator('[data-kin-mark=KinText]')).to_have_count(1)
         panel = self.tool(p, 'Text')
         panel.locator('textarea[aria-label=Text]').fill('Rt. lower lobe')
         self.press(p, .55, .55)
+        expect(p.locator('[data-kin-mark=KinText]')).to_have_count(2)
         panel = self.tool(p, 'Memo')
         panel.get_by_label('Memo Title').fill('F/U'); panel.get_by_label('Memo Text').fill('Compare with prior CT')
         self.press(p, .3, .75)
+        expect(p.locator('[data-kin-mark=KinMemo]')).to_have_count(1)
         panel.get_by_role('button', name='Close', exact=True).click()
         self.save_rows(p, 'spine', 3); self.save_rows(p, 'text', 2); self.save_rows(p, 'memo', 1)
         saved = {(h['item']['kind'], h['item']['label'], h['item'].get('title')) for h in self.items(f)}

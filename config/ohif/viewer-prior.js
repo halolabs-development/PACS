@@ -26,6 +26,9 @@ function kinCreateViewerPrior() {
     const report = (uid, opener) => { reportUid = uid; reportOpener = opener; controller.openReport(uid); };
     const controller = window.KinViewerPriorController.create({ viewer,
       async loadStudy(uid, origin, row, options = {}) {
+        // A related exam whose originals cannot all be read now is not opened beside this one, in part or whole.
+        const lost=window.KinExamScope?.unavailable?.(row);
+        if(lost)throw Error(lost.message);
         const input=window.KinViewerExamScope?.snapshot();
         let scope=null;
         if(input||row?.examScope){

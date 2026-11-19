@@ -24,6 +24,24 @@
       const raw = String(value ?? "");
       return actorNames.get(raw) || actorNames.get(raw.split("@")[0]) || raw;
     }
+    /**
+     * The report state table (server: report-visibility.ts): why this study's report text is not on this screen, from the
+     * server's `prelimHidden` (no text for you) and `bodyLock` (the reason) - "" when the text is yours to read. Every screen
+     * that says why a report is empty or read-only says it with these words. reportLockSay is the product phrase for a
+     * control written with kinWrite (in the language of its own region); reportLockText is the same words as a plain string
+     * (the name of the writer as is) for text that is interpolated, stored or posted to another window.
+     */
+    function reportLockText(a) {
+      const said = reportLockSay(a);
+      return typeof said === "string" ? said : String(said.toJSON());
+    }
+    function reportLockSay(a) {
+      if (!a?.prelimHidden) return "";
+      if (a.bodyLock === "destroyed") return kinSay("보존 기간이 끝나 판독문을 파기한 검사입니다");
+      if (a.bodyLock === "in-progress")
+        return kinSay("{0} 님이 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다", displayActor(a.savedBy) || kinSay("다른 판독의"));
+      return kinSay("다른 판독의의 예비 판독(RS: P)입니다");
+    }
     function tagv(st, key) {
       const v = st[key]?.Value?.[0];
       if (v == null) return "";
@@ -319,7 +337,7 @@
       if (appState[selectedUid]?.examScopeChanged) return "검사 범위가 바뀌었습니다. 입력한 글은 보존했습니다. 초안을 버리거나 서버 판독을 다시 확인한 뒤 작성하세요.";
       if (!selectedUid) return "검사를 선택하세요";
       if (!KinAuth.has("radiologist")) return "판독문 편집은 판독의 권한이 필요합니다";
-      if (appState[selectedUid]?.prelimHidden) return "다른 판독의의 예비 판독(RS: P)입니다";
+      if (appState[selectedUid]?.prelimHidden) return (typeof reportLockText === "function" && reportLockText(appState[selectedUid])) || "다른 판독의의 예비 판독(RS: P)입니다";
       if (admission === RELATED_BASE) return null;
       return relatedMode.blocked(admission) ?? relatedInsertWriteBlock(selectedUid, admission);
     }
@@ -998,6 +1016,17 @@
       return parts;
     }
     function reportStatusLine(a, now) { return reportStatusParts(a, now).join(" · "); }
+    /**
+     * Who is on this study's report before approval (the report state table, report-visibility.ts): the live hold first (typing
+     * has started - shown as In Progress even while the stored state is still Unread), else whoever Saved or Deferred the
+     * text. `label` is what the screen names: the hold of another institution or of an unknown writer keeps its masked word.
+     */
+    function reportOnIt(s) {
+      if (!s || !["W", "T", "H"].includes(s.rs)) return { typing: false, by: null, label: "" };
+      if (s.holder) return { typing: s.rs === "W", by: s.holder, label: displayActor(s.holder) };
+      const saved = appState[s.uid]?.savedBy || null;
+      return { typing: false, by: saved, label: saved ? displayActor(saved) : "" };
+    }
 
     // 특수 렌더링이 필요한 칸만 함수로
     let studyPriority = null;
@@ -1008,8 +1037,19 @@
       em: s => {const phase=studyPriority?.get(s.uid)?.phase;return phase?`<span title="${phase==='saving'?'응급 상태를 저장 중입니다':'저장 결과 미확인 — 문맥 메뉴의 Refresh Status로 확인하세요'}">${phase==='saving'?'Saving':'Unverified'}</span>`:s.em === "E" ? `<span class="em-e">E</span>` : "";},
       // 판독 상태 이름은 목록과 건수 줄에서 같은 계약을 따른다. 승인(A) 뒤 24시간이 지난 판독문은 낱말만 Finalized다(값은 A).
       rs: s => { const finalized = reportFinalized({ rs: s.rs, amendUntil: appState[s.uid]?.amendUntil }), word = finalized ? "Finalized" : RS_WORD[s.rs] ?? s.rs;
-        return `<span class="rs ${esc(s.rs)}"${s.holdReason ? ' data-kin-keep="title"' : ''} title="${esc(s.holdReason || (finalized ? "승인 후 24시간이 지나 확정된 판독문 — Addendum으로만 덧붙일 수 있습니다" : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : ""))}">${esc(word)}</span>`; },
+        const on = reportOnIt(s), shown = on.typing ? "In Progress" : word;
+        const help = s.holdReason || (finalized ? "승인 후 24시간이 지나 확정된 판독문 — Addendum으로만 덧붙일 수 있습니다"
+          : on.typing ? "판독의가 판독문을 쓰기 시작했습니다(점유) — 아직 저장하지 않았습니다"
+          : s.rs === "D" ? "보존 기간이 끝나 판독문을 파기한 검사입니다"
+          : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : "");
+        // "In Progress by <name>": who is on it, for the other readers (the writer's own row needs no name). The name is data.
+        const by = on.by && on.by !== user ? ` <span class="rs-by">by <span translate="no">${esc(on.label)}</span></span>` : "";
+        return `<span class="rs ${esc(on.typing ? "T" : s.rs)}"${s.holdReason ? ' data-kin-keep="title"' : ''} title="${esc(help + (by ? (help ? " — " : "") + on.label : ""))}">${esc(shown)}${by}</span>`; },
       confirm: s => esc(confirmText({ ...appState[s.uid], rs: s.rs })),
+      // Missing images (Technician tab only): a mark beside the count, the same answer as the Info panel's Needs Check line
+      // (studyReceiptGap; renderObservation repaints it between renders). Its words are its title; the mark itself is CSS
+      // and there is no text around it, so a copy or export of the cell reads the count alone.
+      count: s => { const gap = studyReceiptGap(s); return `<span translate="no">${esc(s.count ?? "")}</span><span class="receipt-gap" role="img" data-gap-uid="${esc(s.uid)}"` + (gap ? ` aria-label="${esc(gap.text)}" title="${esc(gap.text)}"></span>` : ` hidden></span>`); },
       ts: s => `<span class="ts ts-${esc(s.ts)}">${esc(s.ts)}</span>`,
       ss: s => `<span class="ss ${esc(s.ss)}">${esc(s.ss)}</span>`,
       // S4-U5: server values too, but escaped like every other cell; a stored value never becomes markup.
@@ -1594,6 +1634,8 @@
         // Merge Exam: the studies of a merged exam (the base first); Count and Series above are already of all of them.
         examScope: s.examScope ?? null, reportScope: s.reportScope ?? null,
         relatedExamReports: s.relatedExamReports ?? [], examUnavailable: s.examUnavailable === true,
+        // The kind of exam in force (merge / split) this row belongs to when its originals cannot all be read now.
+        examUnavailableKind: s.examUnavailable === true && ['merge', 'split'].includes(s.examUnavailableKind) ? s.examUnavailableKind : null,
         draftEpoch: s.state?.draftEpoch ?? null,
         sourceMetadata: (s.sourceMetadata || []).map(m => ({ ...m, sourceAcc: m.acc,
           acc: m.orderAccession || m.acc, date: fmtD(m.date), reqDate: localStamp(m.reqDate) })),
@@ -2138,8 +2180,17 @@
       const filmingTitle = "촬영 중(미확인) 검사입니다 — 기사 확인(Verify) 뒤 판독할 수 있습니다";
       const held = heldByOther(s);
       const heldTitle = `${displayActor(held)} 님이 판독 중입니다`;
-      $("#holdbar").style.display = held ? "flex" : "none";
-      $("#holdmsg").textContent = !held ? ""
+      // The report state table (report-visibility.ts): another physician's Save is theirs - the same bar says who is on it.
+      // Fixtures that load this block without page-core.js keep the Preliminary words.
+      const lockText = typeof reportLockText === "function" ? reportLockText(appState[selectedUid]) : appState[selectedUid]?.prelimHidden ? "다른 판독의의 예비 판독(RS: P)입니다" : "";
+      // The button titles carry the phrase itself, so each says it in the language of its own screen.
+      const lockSay = typeof reportLockSay === "function" ? reportLockSay(appState[selectedUid]) : lockText && kinSay(lockText);
+      const inProgress = appState[selectedUid]?.bodyLock === "in-progress";
+      $("#holdbar").style.display = held || inProgress ? "flex" : "none";
+      // A hold over another physician's Save does not end with the hold: the bar says the Save's words either way.
+      $("#holdmsg").textContent = inProgress
+        ? `✎ ${lockText}` + (rad ? ". 이어 쓰려면 More ▸ Reset to Unread로 되돌리세요 (그 글은 그 판독의의 개인 임시글로 남습니다)." : "")
+        : !held ? ""
         : `✎ ${heldTitle} — 잠금이 풀리면 이어서 판독할 수 있습니다` +
           (rad && ["W", "T", "H"].includes(s?.rs) ? ". 자리를 비웠다면 More ▸ Reset to Unread로 되돌릴 수 있습니다." : "");
       $("#deferbar").style.display = s?.rs === "H" ? "flex" : "none";
@@ -2153,11 +2204,12 @@
         const el = $(id);
         if (!el) continue;
         el.disabled = !rad || locked || filming || !!held;
-        kinWrite(el, held ? heldTitle : filming ? kinSay(filmingTitle) : locked ? kinSay("다른 판독의의 예비 판독(RS: P)입니다")
+        kinWrite(el, held ? heldTitle : filming ? kinSay(filmingTitle) : locked ? lockSay
           : !rad ? kinSay("판독의 권한이 필요합니다") : "", "title");
       }
       // 남의 점유가 다른 단추를 잠가도 진행 중 판독 되돌리기는 열려 있다(아래의 응급·Related·식별 불일치 잠금은 그대로 덮는다).
-      const takeover = rad && !locked && !filming ? inProgressReset(s) : null;
+      // Another physician's Save locks the text, not this way out (FC-040: the server keeps Reset open for it).
+      const takeover = rad && (!locked || inProgress) && !filming ? inProgressReset(s) : null;
       if (takeover) {
         $("#b-unread").disabled = false;
         $("#b-unread").title = `${displayActor(takeover)} 님이 판독 중입니다 — 누르면 점유를 풀고 Unread로 되돌립니다 ` +
@@ -2166,7 +2218,7 @@
       // 승인된 판독문을 비우는 길은 사유가 남는 Reset뿐이다. Clear는 그 뒷문이었다.
       $("#b-defer").disabled = !rad || !s || s.rs === "A" || s.rs === "P" || locked || filming || !!held || !serverMode;
       kinWrite($("#b-defer"), held ? heldTitle : filming ? kinSay(filmingTitle)
-        : locked ? kinSay("다른 판독의의 예비 판독(RS: P)입니다")
+        : locked ? lockSay
         : s?.rs === "A" ? kinSay("승인된 판독문은 보류할 수 없습니다. 먼저 판독 취소(Reset)를 하세요")
         : s?.rs === "P" ? kinSay("예비 판독(RS: P)은 보류할 수 없습니다 — 승인 또는 취소만 가능합니다")
         : !rad ? kinSay("판독의 권한이 필요합니다") : !serverMode ? kinSay("서버에 연결돼 있을 때만 보류할 수 있습니다") : "", "title");
@@ -2186,7 +2238,7 @@
       }
       // Addendum은 승인된 판독문에만 붙는다
       $("#b-addendum").disabled = s?.rs !== "A" || !rad || locked || filming || !!held;
-      kinWrite($("#b-addendum"), held ? heldTitle : filming ? kinSay(filmingTitle) : s?.rs !== "A" ? kinSay("승인된 판독문에만 추가기재할 수 있습니다") : "", "title");
+      kinWrite($("#b-addendum"), held ? heldTitle : filming ? kinSay(filmingTitle) : locked && lockSay ? lockSay : s?.rs !== "A" ? kinSay("승인된 판독문에만 추가기재할 수 있습니다") : "", "title");
       /**
        * Prelim은 "아직 확정 안 된 판독을 상급자에게 넘기는" 동작이다.
        * 이미 승인(A)된 것에는 의미가 없고, 이미 P인 것을 다시 넘기면 지정이 덮어써진다.
@@ -2195,7 +2247,7 @@
       const b = $("#b-prelim");
       if (b) {
         b.disabled = !rad || !s || s.rs === "A" || s.rs === "P" || locked || filming || !!held || !serverMode;
-        kinWrite(b, held ? heldTitle : filming ? kinSay(filmingTitle) : !serverMode ? kinSay("서버에 연결돼 있을 때만 지정할 수 있습니다")
+        kinWrite(b, held ? heldTitle : filming ? kinSay(filmingTitle) : locked && lockSay ? lockSay : !serverMode ? kinSay("서버에 연결돼 있을 때만 지정할 수 있습니다")
           : s?.rs === "P" ? kinSay("이미 예비 판독 중입니다")
           : s?.rs === "A" ? kinSay("이미 승인된 판독입니다")
           : kinSay("상급 판독의를 지정해 최종 판독을 맡깁니다 (RS: P)"), "title");
@@ -2203,7 +2255,7 @@
       for (const id of ["#findings", "#conclusion", "#recommendation"]) {
         $(id).readOnly = !rad || locked || filming || !!held;
         // C-R01-109#2: an unverified study locks these fields until Verify; the editor names that beside Read Only.
-        $(id).dataset.lockReason = filming && !held ? filmingTitle : "";
+        $(id).dataset.lockReason = filming && !held ? filmingTitle : !held && locked ? lockText : "";
       }
       if(studyPriority?.get(selectedUid))for(const id of ['#b-save','#b-approve','#b-unread','#b-addendum','#b-prelim','#b-defer']) {
         const button=$(id);if(button){button.disabled=true;kinWrite(button, kinSay('응급 상태 저장 결과를 확인한 뒤 판독을 저장하세요'), "title");}
@@ -2309,7 +2361,7 @@
     }
     studyPriority=KinStudyPriority.create({
       owner:()=>KinViewerOpening.key(KinAuth.session()),
-      allowed:uid=>serverMode&&!offline&&!demoMode&&!commitInFlight&&KinAuth.has('technician')&&!!studies.find(s=>s.uid===uid&&!s.tele),
+      allowed:uid=>serverMode&&!offline&&!demoMode&&!commitInFlight&&technicianWork()&&!!studies.find(s=>s.uid===uid&&!s.tele),
       request:async(uid,em,at)=>{const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),15000);
         try{return await api('PATCH','/studies/'+encodeURIComponent(uid),{em},controller.signal,at);}finally{clearTimeout(timeout);}},
       apply:(uid,em)=>{appState[uid]={...appState[uid],em};syncStudy(uid);},
@@ -2321,7 +2373,8 @@
       const s=studies.find(s=>s.uid===uid),state=studyPriority.get(uid),desired=s?.em==='E'?'N':'E';
       if(state?.phase==='unknown')return {label:'Refresh Status',dis:offline||!serverMode,act:()=>load()};
       return {label:state?.phase==='saving'?'Saving Emergency Status':s?.em==='E'?'Switch to Normal':'Switch to Emergency',
-        dis:!!state||!studyPriority.active()||!serverMode||offline||demoMode||commitInFlight||!KinAuth.has('technician')||!s||s.tele,
+        dis:!!state||!studyPriority.active()||!serverMode||offline||demoMode||commitInFlight||!technicianWork()||!s||s.tele,
+        ...(technicianWork()?{}:{title:TECHNICIAN_WORK_REASON}),
         act:()=>studyPriority.set(uid,desired)};
     }
     // While a list read is out the folder counts say 'Partial'. A read that ends without its answer applied (Stop Loading,
@@ -2617,6 +2670,8 @@
       if (sortKey && !COLS[m].some(c => c.k === sortKey)) { sortKey = null; sortDir = 0; }
       worklistSearch?.apply();
       renderHeads(); render(); renderOrders(); renderRelated();
+      // The missing-images line of the Info panel is a Technician-tab line (studyReceiptGap): drawn again with the list.
+      renderObservation();
       applyLayout();
     }
     document.querySelector(".tabs").addEventListener("click", e => {
@@ -2945,6 +3000,11 @@
       const run = () => { if (selectedUid === uid) then(); };
       if (result instanceof Promise) result.then(run); else run();
     }
+    /**
+     * The move now waiting (for the text's draft save) to go to `uid` - `{done, target}`: its answer, and the destination it
+     * ends with (read once answered: a later choice replaces it) - or null when no move is on its way there.
+     */
+    function pendingMoveTo(uid) { return pendingLeave?.target?.uid === uid ? pendingLeave : null; }
 
     /**
      * 지금 검사를 떠나도 되는가(W5 인터페이스 `leaveStudyGate`). 바로 정해지면 결과를, 저장의 답을 기다려야 하면 Promise를
@@ -3001,7 +3061,7 @@
       if (offline) return { status: "refused", reason: "서버 연결이 끊겨 저장할 수 없습니다" };
       if (!KinAuth.has("radiologist")) return { status: "refused", reason: "판독의 권한이 없어 저장할 수 없습니다" };
       const a = appState[uid] ?? {};
-      if (a.prelimHidden) return { status: "refused", reason: "다른 판독의의 예비 판독(RS: P)입니다" };
+      if (a.prelimHidden) return { status: "refused", reason: (typeof reportLockText === "function" && reportLockText(a)) || "다른 판독의의 예비 판독(RS: P)입니다" };
       // WORKLIST-SPLIT-UID: an unresolved study's kept text is never sent. It is a refused save, answered like the others
       // (Retry/Check/Stay, no target switch, nothing written); the text stays in the editor.
       if (a.identityUnresolved) return { status: "refused", reason: "환자 식별 불일치로 이 검사의 글을 저장할 수 없습니다. 원본 확인이 필요합니다" };
@@ -3131,8 +3191,34 @@
       applyStudyIdentity(null);
       renderObservation();
     }
+    /**
+     * Missing images, Technician tab only: the one answer (KinStudyArrivals.receiptGap) that the list's Count cell, the
+     * Info panel's Needs Check line and a Not Observed item draw. A merged or split exam has no answer here: its originals
+     * are separate studies. The count and the Gateway report it compares are both the last successful observation's, so
+     * a row replaced before its observation is judged never pairs an old count with a new report. renderObservation()
+     * draws every surface of it at once (the list's marks too); setMode() and the poll's list rebuild call it.
+     */
+    function studyReceiptGap(s) {
+      // A row of a merged or split exam in force whose originals cannot all be read now has no scope, yet is that exam.
+      if (!s || !studyObservationModel || KinExamScope.read(s)?.groupId || KinExamScope.unavailable(s)?.kind) return null;
+      const seen = KinStudyArrivals.studyObservation(studyObservationModel, s.uid);
+      const gap = KinStudyArrivals.receiptGap(seen, seen.receipt ?? null);
+      return gap?.missing && mode === "Technician" ? gap : null;
+    }
+    /**
+     * One list Count cell between renders: the count (the span before the mark) and the mark, painted together from the
+     * study row and the answer, as CELL.count draws them on render() — the number never lags behind its mark.
+     */
+    function paintReceiptGap(mark, s) {
+      const gap = studyReceiptGap(s), value = mark.previousElementSibling;
+      if (s && value) value.textContent = String(s.count ?? "");
+      mark.hidden = !gap; mark.title = gap?.text ?? "";
+      if (gap) mark.setAttribute("aria-label", gap.text); else mark.removeAttribute("aria-label");
+    }
     function renderObservation() {
       if (!studyObservationModel) return;
+      for (const mark of $("#rows")?.querySelectorAll(".receipt-gap[data-gap-uid]") ?? [])
+        paintReceiptGap(mark, studies.find(s => s.uid === mark.dataset.gapUid));
       const summary = KinStudyArrivals.observationSummary(studyObservationModel), status = $("#observation-status");
       if (status) { status.hidden = !summary.text; kinWrite(status, summary.text); status.title = summary.title; }
       // S4-U4 Now Retry, drawn only from labels.retry. Another study or a newer receipt drops the in-flight token
@@ -3168,9 +3254,13 @@
             control.textContent = KinStudyArrivals.RETRY_TEXT.button;
             control.addEventListener("click", requestGatewayRetry);
             item = document.createElement("div"); item.dataset.uid = row.uid;
-            item.append(document.createElement("span"), " ", control, " ", document.createElement("span"));
+            const gapText = document.createElement("span"); gapText.className = "receipt-gap-line"; gapText.hidden = true;
+            item.append(document.createElement("span"), " ", control, " ", document.createElement("span"), " ", gapText);
           }
-          const gateway = row.gatewayReceipt ?? null, [text, button, note] = item.children;
+          const gateway = row.gatewayReceipt ?? null, [text, button, note, gapText] = item.children;
+          // An own study the observation did not see at all while its Gateway reported images sent: the same answer.
+          const gap = studyReceiptGap(row);
+          gapText.hidden = !gap; kinWrite(gapText, gap?.text ?? ""); gapText.title = gap?.title ?? "";
           const labels = KinStudyArrivals.receiptLabels({ assignment: "assigned",
             observation: KinStudyArrivals.studyObservation(studyObservationModel, row.uid), gateway });
           // Without a receipt the text stays the U1b item text; no No Gateway Report is added to this list.
@@ -3212,6 +3302,11 @@
       let originals=receipt.querySelector('.exam-original-receipts');
       if(!originals){originals=document.createElement('div');originals.className='exam-original-receipts';receipt.append(originals);}
       const scope=KinExamScope.read(s);
+      const gapLine = $("#receipt-gap");
+      if (gapLine) {
+        const gap = studyReceiptGap(s);
+        gapLine.hidden = !gap; kinWrite(gapLine, gap?.text ?? ""); gapLine.title = gap?.title ?? "";
+      }
       const receiptScope=scope?.groupId?KinExamScope.stamp(s):'';
       if(originals.dataset.scope!==receiptScope){
         for(const control of originals.querySelectorAll('button'))control.dataset.request='';
@@ -3596,13 +3691,17 @@
       const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       if (mode !== "Technician") return;
       const list = filteredOrders();
+      // A redraw keeps the focus on the order row that had it (as the worklist rows do): after a click, a menu item
+      // (Match, Unmatch) or a list read again, the keyboard stays on that order.
+      const focusedOid = document.activeElement?.closest?.("#orderrows tr[data-oid]")?.dataset.oid ?? null;
       $("#orderrows").innerHTML = list.map((o, i) => `
-        <tr data-oid="${esc(o.oid)}" class="${o.oid === selectedOid ? "sel" : ""}">
+        <tr data-oid="${esc(o.oid)}" tabindex="-1" class="${o.oid === selectedOid ? "sel" : ""}">
           <td class="num">${i + 1}</td>
           <td><span class="mt ${esc(o.matched)}">${esc(o.matched)}</span></td>
           <td translate="no">${esc(o.id)}</td><td translate="no">${esc(o.name)}</td><td translate="no">${esc(o.sex)}</td><td translate="no">${esc(o.birth)}</td>
           <td translate="no">${esc(o.sched)}</td><td translate="no">${esc(o.modality)}</td><td translate="no">${esc(o.desc)}</td><td translate="no">${esc(o.ward)}</td><td translate="no">${esc(o.reqDoc)}</td>
         </tr>`).join("") || `<tr><td class="empty" colspan="11">오더 없음</td></tr>`;
+      if (focusedOid !== null) $("#orderrows").querySelector(`tr[data-oid="${CSS.escape(focusedOid)}"]`)?.focus({ preventScroll: true });
 
       const s = cur(), o = curOrder();
       kinWrite($("#orderhint"), kinSay("선택: 검사 {0}  ·  오더 {1}{t2}", s ? s.name + " / " + s.date : { t: "(없음)" }, o ? o.name + " / " + o.sched : { t: "(없음)" },
@@ -5461,13 +5560,15 @@
       // they are; no render replaces it, forced or not, until a later list returns it as one resource.
       let preserveValue = !!r.identityUnresolved || !force && (reportConverge.has(selectedUid) || (locked && !!r.draft));
       reportRefreshPendingFor = preserveValue && (locked || reportDirty()) ? selectedUid : null;
-      const src = locked ? {} : reportSource();
+      // Under another physician's Save my own draft is still mine: it is shown, read-only (the server sends it for that).
+      const ownUnderLock = locked && r.bodyLock === "in-progress" && r.draft ? r.draft : null;
+      const src = ownUnderLock ?? (locked ? {} : reportSource());
       const frame = mountReportFrame();
       if (!frame) return false;
       const opening = { uid: selectedUid, selectionSeq };
       const newOpening = !reportOpening || reportOpening.uid !== selectedUid || reportOpening.selectionSeq !== selectionSeq;
       if (!preserveValue || newOpening) {
-        const texts = Object.fromEntries(RFIELDS.map(k => [k, locked ? "" : String(src[k] ?? "")]));
+        const texts = Object.fromEntries(RFIELDS.map(k => [k, locked && !ownUnderLock ? "" : String(src[k] ?? "")]));
         const result = newOpening ? frame.switchStudy(opening, texts) : frame.replaceAuthoritative(texts);
         if (result.status === "refused") {
           // A refused authoritative render cannot advance the text's origin or erase current typing.
@@ -5486,9 +5587,13 @@
         // 편집기의 글이 바뀐다 — 그 전에 떠난 편집기 범위의 작업(붙여넣기 등)은 이 글 위에 쓰지 않는다.
         work.edited();
       }
-      const ph = locked
-        ? kinSay("{0} 님이 최종 판독 중입니다 (RS: P) — 내용은 지정된 판독의만 볼 수 있습니다", displayActor(r.preReviewer) || kinSay("지정된 판독의"))
-        : "";
+      // The report state table (report-visibility.ts): the empty fields say why they are empty - a Preliminary, another
+      // physician's Save, or a report destroyed at the end of its retention.
+      const lockWhy = locked && typeof reportLockText === "function" ? reportLockText(r) : "";
+      const lockSay = locked && typeof reportLockSay === "function" ? reportLockSay(r) : lockWhy;
+      const ph = !locked ? ""
+        : r.bodyLock === "in-progress" || r.bodyLock === "destroyed" ? lockSay
+        : kinSay("{0} 님이 최종 판독 중입니다 (RS: P) — 내용은 지정된 판독의만 볼 수 있습니다", displayActor(r.preReviewer) || kinSay("지정된 판독의"));
       for (const [sel, base] of [["#findings", "Please enter findings"],
                                  ["#conclusion", "Please enter conclusion"],
                                  ["#recommendation", "Please enter recommendation"]]) {
@@ -5498,7 +5603,7 @@
           || !!r.identityUnresolved;
         // C-R01-109#2: the Read Only reason for an unverified study, the same words as its buttons (updateReportButtons).
         el.dataset.lockReason = cur()?.ss === "Unverified" && cur()?.em !== "E" && !heldByOther(cur())
-          ? "촬영 중(미확인) 검사입니다 — 기사 확인(Verify) 뒤 판독할 수 있습니다" : "";
+          ? "촬영 중(미확인) 검사입니다 — 기사 확인(Verify) 뒤 판독할 수 있습니다" : !heldByOther(cur()) && lockWhy ? lockWhy : "";
       }
       renderDraftBar();
       updateReportTemplateButton();
@@ -5583,14 +5688,19 @@
       const holder = target?.holder || null;
       // `viewingNames` belongs to the worklist columns module; editor fixtures that load this module alone have none.
       const others = target && typeof viewingNames === "object" ? viewingNames.get(target.uid) || "" : "";
+      // The report state table: another physician's Save names its writer here too (the text stays with them).
+      const state = target ? appState[target.uid] : null;
+      const savedByOther = !holder && state?.bodyLock === "in-progress" && state.savedBy ? state.savedBy : null;
       const own = !target ? ""
         : holder && holder === user ? "✎ Held by you"
         : holder ? `✎ Held by ${displayActor(holder)}`
+        : savedByOther ? `✎ In Progress by ${displayActor(savedByOther)}`
         : "Opened by you";
       line.textContent = [own, others].filter(Boolean).join(" · ");
       // The head can wrap in a narrow column; keep presence updates within their reserved space so typing stays put.
       // Longer explanations belong in the title.
-      kinWrite(line, !target ? "" : holder && holder !== user ? kinSay("다른 판독의가 작성 중입니다")
+      kinWrite(line, !target ? "" : savedByOther ? kinSay("다른 판독의가 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다")
+        : holder && holder !== user ? kinSay("다른 판독의가 작성 중입니다")
         : holder ? kinSay("이 판독의가 작성 중입니다(점유){0}", others ? " · " + others : "")
         : kinSay("검사를 여는 것만으로는 점유하지 않습니다. 판독문에 두 글자 이상 쓰면 이 판독의가 잡습니다.{0}", others ? " · " + others : ""), "title");
     }
@@ -5665,7 +5775,9 @@
       $("#b-report-reload").style.display = pending && !r.prelimHidden ? "" : "none";
       if (pending) {
         $("#draftmsg").innerHTML = r.prelimHidden
-          ? `<b>● 다른 판독의가 이 검사를 예비 판독으로 넘겼습니다</b> — 쓰던 내용은 그대로 두었지만 저장할 수 없습니다`
+          ? (r.bodyLock === "in-progress" || r.bodyLock === "destroyed"
+            ? `<b>● ${esc(typeof reportLockText === "function" ? reportLockText(r) : "")}</b> — 쓰던 내용은 그대로 두었지만 저장할 수 없습니다`
+            : `<b>● 다른 판독의가 이 검사를 예비 판독으로 넘겼습니다</b> — 쓰던 내용은 그대로 두었지만 저장할 수 없습니다`)
           : `<b>● 서버에 새 내용이 있습니다</b> — 저장 안 된 입력은 덮지 않고 그대로 유지했습니다` +
             (d ? ` · 초안 버리기를 누르면 서버 내용으로 돌아갑니다` : ``);
         return;
@@ -8787,7 +8899,7 @@
       if (!a) return null;
       const holder = heldByOther(a);
       return {
-        rs: a.rs, ss: a.ss, em: a.em, prelimHidden: !!a.prelimHidden, identityUnresolved: !!a.identityUnresolved,
+        rs: a.rs, ss: a.ss, em: a.em, prelimHidden: !!a.prelimHidden, bodyLock: a.bodyLock ?? null, identityUnresolved: !!a.identityUnresolved,
         /**
          * FC-029: a Preliminary that may be mine to approve. The server shows a Preliminary only to its author and its designated
          * reviewer and judges the designation by account id first; the list carries names only, and names can change. So every
@@ -10164,7 +10276,11 @@
           const known = new Map(studies.map(x => [x.uid, x]));
           const knownOriginals=new Set(KinExamScope.originals(studies).map(s=>s.uid));
           const fresh = KinExamScope.originals(r.studies).filter(s=>!knownOriginals.has(s.uid));
-          const scopeChanged = r.studies.some(s=>KinExamScope.screenStamp(s)!==KinExamScope.screenStamp(known.get(s.uid)));
+          // A row whose exam became (or stopped being) unreadable as a whole is a changed exam too, though neither answer
+          // carries a scope.
+          const lostKey = s => s?.examUnavailable === true ? String(s.examUnavailableKind ?? '') : null;
+          const scopeChanged = r.studies.some(s=>KinExamScope.screenStamp(s)!==KinExamScope.screenStamp(known.get(s.uid))
+            || lostKey(s)!==lostKey(known.get(s.uid)));
 
           // 목록이 달라졌으면(도착·삭제) 통째로 다시 그린다.
           if (scopeChanged || fresh.length || r.studies.length !== studies.length) {
@@ -10175,6 +10291,9 @@
             // 썸네일 등 오른쪽 전체를 다시 그릴 필요는 없지만, 판독문 잠금은 반영해야 한다.
             // loadReport가 값만 보호하므로 새 검사 도착과 Prelim 전환이 겹쳐도 입력은 유지된다.
             render();
+            // applyObservation drew the receipt block from the rows before this rebuild; a study that became a merged or
+            // split exam in this answer is drawn again from the rebuilt row (its missing-images line goes at once).
+            renderObservation();
             if (selectedUid) { loadReport(); updateReportButtons(); }
             autoPreload?.afterList();   // FC-073: a study that just arrived is queued without a manual Refresh
             if (fresh.length || arrivalNotice) {
@@ -10399,7 +10518,8 @@
             </div>
 ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</span></div>` : ""}
             ${v.group ? `<div class="vr" data-exam-group="${esc(v.group.id)}"><b>Exam scope</b> — <span data-exam-scope-text></span></div>` : ""}
-            ${v.findings || v.conclusion || v.recommendation
+            ${v.bodyHidden ? `<div class="vr" data-body-hidden="${esc(v.bodyHidden)}">본문 비공개 — 그 판을 쓴 판독의만 볼 수 있습니다(승인 전 Save 또는 개인 초안)</div>`
+              : v.findings || v.conclusion || v.recommendation
               ? `<pre translate="no">${esc([v.findings, v.conclusion, v.recommendation].filter(Boolean).join("\n---\n"))}</pre>`
               : `<div style="color:#556;padding:4px 0">(내용 없음)</div>`}
             ${Array.isArray(v.drawings) && v.drawings.length ? `<div class="vdraw" data-version="${esc(v.version)}"
@@ -10869,7 +10989,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       if (!s?.sourcePatientKey || !validPriorDate(s.date)) return null;
       // fmtD는 모양만 바꾼다. 달력 검증 없이 정렬하면 미래·불량 날짜가 prior가 된다.
       // 같은 날의 선후는 StudyTime 근거가 없으므로 자동으로 추측하지 않는다.
-      return studies.filter(x => x.sourcePatientKey === s.sourcePatientKey && x.uid !== uid && x.modality === s.modality
+      // A row whose exam cannot be read whole now (KinExamScope.unavailable) cannot be opened beside it: never the prior.
+      return studies.filter(x => x.sourcePatientKey === s.sourcePatientKey && x.uid !== uid && x.modality === s.modality && !globalThis.KinExamScope?.unavailable?.(x)
           && validPriorDate(x.date) && x.date < s.date)
         .sort((a, b) => b.date.localeCompare(a.date) || b.uid.localeCompare(a.uid))[0]?.uid ?? null;
     }
@@ -10890,6 +11011,60 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       if (readingWorkspace.active() || imageOpening?.snapshot().listTarget === 'workspace')
         return openingOptions?.exam ? openOhifWindow(uid, priorUid, initialSeriesUid, null, openingOptions) : readingWorkspace.open(uid, priorUid, initialSeriesUid);
       return openOhifWindow(uid, priorUid, initialSeriesUid, null, openingOptions);
+    }
+    /**
+     * The one place an entry that means "move to this study and show its images" (the list row's double-click) opens the
+     * viewer: only once the list has moved to that study, so a refused move never leaves the images of another study open
+     * beside the report the reader is still writing. The move itself is select()'s (the study-move gate); a double-click
+     * comes after its two clicks have already asked for it, so this only reads where that move stands:
+     * - moved (the study is the selection): opened now, inside the gesture, exactly as before;
+     * - still waiting for the text's draft save: when no viewer window is live, a blank one is opened now, inside the
+     *   gesture, so the browser does not block it later. Once the move ends on that study it is opened through
+     *   openFilmbox (every check of an ordinary open: identity, workspace target, a live window's unsaved work and scope),
+     *   into that blank window if it is still unused; if the move does not end there the blank window is closed and a live
+     *   one is left as it was. When the move's own automatic open (Open on Selection) has opened it, nothing more is done;
+     * - not moving (refused, result unknown, composing, held by another reader - the Notice says which): nothing opens.
+     * A later open overtakes one still waiting: only the last decides. The blank window is also closed when this list
+     * document goes away, and a later reservation of the same window (Open Selected Studies) takes it over.
+     */
+    let moveOpenTicket = 0, moveBlank = null;
+    function dropMoveBlank() {
+      const blank = moveBlank; moveBlank = null;
+      if (!blank) return;
+      try {
+        // Only the blank window this flow opened, and only while nothing has been opened into it since.
+        if (!blank.popup.closed && ohifPopupSequences.get(blank.popup) === blank.sequence && blank.popup.location.href === 'about:blank')
+          blank.popup.close();
+      } catch (_) {}
+      try { viewerWindows?.refresh(); } catch (_) {}
+    }
+    window.addEventListener('pagehide', () => dropMoveBlank());
+    function openStudyAfterMove(uid, priorUid = autoPrior(uid)) {
+      const ticket = ++moveOpenTicket;
+      if (selectedUid === uid) { const opened = openFilmbox(uid, priorUid); dropMoveBlank(); return opened; }
+      const leave = pendingMoveTo(uid);
+      if (!leave) { dropMoveBlank(); return false; }
+      const at = work.capture('document');
+      // Holding a window is best effort: a study the viewer cannot address (no DICOM UID) holds none, and the answer's
+      // openFilmbox says why it does not open.
+      let reserved = {};
+      try { reserved = reserveViewingSet([uid, priorUid].filter(Boolean)); } catch (_) {}
+      // Only a blank window this flow opened is kept for the answer: a live window is chosen again then, for the study's own
+      // scope and state at that moment.
+      const blank = reserved.status === 'reserved' && reserved.kind === 'window' && reserved.own ? reserved : null;
+      if (blank) moveBlank = { popup: blank.popup, sequence: ohifPopupSequences.get(blank.popup) };
+      return Promise.resolve(leave.done).then(() => {
+        if (ticket !== moveOpenTicket) return false;
+        if (!work.admits(at) || selectedUid !== uid) { dropMoveBlank(); return false; }
+        const moved = leave.target;
+        if (moved?.uid === uid && moved.options?.openSelected && !moved.options.deferViewer && !readingWorkspace.active() &&
+            imageOpening?.snapshot().autoLoad) { dropMoveBlank(); return { status: 'accepted', message: null }; }
+        const unused = !!blank && moveBlank?.popup === blank.popup && ohifPopupSequences.get(blank.popup) === moveBlank.sequence;
+        // A held blank window the reader closed meanwhile is not reopened outside the gesture (openOhifWindow refuses it).
+        const opened = openFilmbox(uid, priorUid, null, unused ? { reservation: blank } : null);
+        dropMoveBlank();
+        return opened;
+      }, () => { if (ticket === moveOpenTicket) dropMoveBlank(); return false; });
     }
     function ohifScope(value) {
       try {
@@ -11245,6 +11420,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       if (known) KinExamScope.raiseWindow(popup);
       let own = false;
       try { own = !known && popup.location.href === 'about:blank'; } catch (_) {}
+      // A blank window held for a list move still waiting (openStudyAfterMove) passes to this reservation, which closes it
+      // when unused (releaseViewingSet); the move's answer then chooses a window again.
+      if (!own && moveBlank?.popup === popup) { own = true; moveBlank = null; }
       return { status: 'reserved', kind: 'window', choice, popup, own, preservePartner, compositionId };
     }
     function launchViewingSet(reservation, plan, opening, metadata, signal) {
@@ -11400,10 +11578,15 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         list.replaceChildren();
         for (const row of values) {
           const section = document.createElement('section'); section.className = 'viewer-window-row';
-          const label = document.createElement('p'), study = studies.find(s => s.uid === row.scope?.studies[0]);
+          // A window opened on exam scopes names its exam and its comparison by those scopes: the originals of a merged
+          // exam are one exam, never a study and its comparison. Other windows keep the opened order.
+          let exam = null; try { exam = row.scope?.exam ? JSON.parse(row.scope.exam) : null; } catch (_) { exam = null; }
+          const opened = exam ? exam.current?.reportUid : row.scope?.studies[0];
+          const compared = exam ? exam.prior?.reportUid ?? null : row.scope?.studies.length === 2 ? row.scope.studies[1] : null;
+          const label = document.createElement('p'), study = studies.find(s => s.uid === opened);
           label.textContent = 'Window ' + (row.index + 1) + ' · ' + row.state + ' · ' +
             (study ? [study.name, study.date, study.desc, study.uid].filter(Boolean).join(' · ') : row.scope?.studies.join(' / ') || 'Unverified');
-          if (row.scope?.studies.length === 2) { const comparison = studies.find(s => s.uid === row.scope.studies[1]); label.textContent += ' · Comparison: ' + (comparison ? [comparison.date, comparison.uid].join(' · ') : row.scope.studies[1]); }
+          if (compared) { const comparison = studies.find(s => s.uid === compared); label.textContent += ' · Comparison: ' + (comparison ? [comparison.date, comparison.uid].join(' · ') : compared); }
           section.append(label);
           for (const action of ['focus', 'latest', 'close']) {
             const control = document.createElement('button'); control.type = 'button'; control.className = 'chip';
@@ -14801,7 +14984,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     $("#rows").addEventListener("dblclick", e => {
       if (e.target.closest('[data-tech-note]')) return;
       const tr = e.target.closest("tr");
-      if (tr?.dataset.uid) openFilmbox(tr.dataset.uid, autoPrior(tr.dataset.uid));
+      // The viewer follows the move the two clicks asked for: it opens on this study only once the list is on it.
+      if (tr?.dataset.uid) openStudyAfterMove(tr.dataset.uid, autoPrior(tr.dataset.uid));
     });
 
     // ── 원격판독 의뢰 상태머신 (TS, 6.3.2) ──
@@ -14865,8 +15049,12 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     let ctxOpener = null;
     // 행·오더 메뉴를 연 그 선택({uid, seq, oid}: 검사 UID·선택 순번·고른 오더). 다른 메뉴(상용구·저장 검색)는 선택에 묶이지 않는다(null).
     let ctxTarget = null;
+    // A menu opened from the keyboard on a row: where the focus goes back when it closes, if the element that had the
+    // focus was replaced meanwhile (the list is drawn again when the row is selected). Mouse menus keep ctxOpener only.
+    let ctxBack = null;
     function showCtx(e, items, keyboard = null, target = null) {
       ctxOpener = document.activeElement;
+      ctxBack = keyboard?.back ?? null;
       ctxItems = items;
       ctxTarget = target;
       ctx.setAttribute('role', 'menu');
@@ -14884,8 +15072,42 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       ctx.style.left = Math.max(0, Math.min(keyboard?.x ?? e.clientX, innerWidth - 200)) + "px";
       ctx.style.top = Math.max(0, Math.min(keyboard?.y ?? e.clientY, innerHeight - (items.length * 28 + 20))) + "px";
       ctx.style.display = "block";
-      if (keyboard?.focus) ctx.querySelector('[data-i]:not(.dis)')?.focus();
+      // With every item grey the menu itself takes the focus, so Escape and Tab still close it.
+      if (keyboard?.focus) {
+        const first = ctx.querySelector('[data-i]:not(.dis)');
+        if (!first) ctx.tabIndex = -1;
+        (first ?? ctx).focus();
+      }
     }
+    /** The focus goes back to the row a keyboard menu was opened on (as drawn now), else to what had it when it opened. */
+    function ctxReturnFocus() {
+      const back = (ctxBack && ctxBack()) || ctxOpener;
+      back?.focus();
+    }
+    /**
+     * The ContextMenu key and Shift+F10 on a row open its menu from the keyboard (as on a saved-search chip): the first
+     * item takes the focus. The browser may also fire its own `contextmenu` for the same key press (after keydown, or
+     * on keyup however long the key was held); the first one is dropped. A pointer press or another key ends the key's
+     * turn, so a later right-click or menu key is never taken for it.
+     */
+    let ctxKeyPending = false;
+    const isMenuKey = e => e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10');
+    const ctxFromKey = e => {
+      if (!ctxKeyPending) return false;
+      ctxKeyPending = false; e.preventDefault(); return true;
+    };
+    document.addEventListener('pointerdown', () => { ctxKeyPending = false; }, true);
+    document.addEventListener('keydown', e => { if (!isMenuKey(e) && e.key !== 'Shift') ctxKeyPending = false; }, true);
+    // Wherever that browser `contextmenu` lands (the row, or the menu item that now has the focus), it is dropped here once.
+    document.addEventListener('contextmenu', e => { if (ctxFromKey(e)) e.stopPropagation(); }, true);
+    /** Where a keyboard menu of a row opens and where its focus goes back: that row as it is drawn now. */
+    function rowKeyboard(find) {
+      const tr = find(), rect = tr?.getBoundingClientRect();
+      return { x: rect?.left ?? 0, y: rect?.bottom ?? 0, focus: true, back: find };
+    }
+    // Tele-reading is a later feature (Part 2): its row menu items keep their names and places and only say so.
+    const TELE_LATER = "원격판독은 나중에 생길 기능입니다 — 지금은 의뢰·취소·판독 시작을 보내지 않습니다";
+    const teleLater = () => toast(kinSay(TELE_LATER), "info", 6000);
     ctx.addEventListener('keydown', e => {
       const items = [...ctx.querySelectorAll('[data-i]:not(.dis)')];
       const index = items.indexOf(document.activeElement);
@@ -14898,7 +15120,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         e.preventDefault(); e.stopPropagation(); items[index]?.click();
       } else if (e.key === 'Escape' || e.key === 'Tab') {
         if (e.key === 'Escape') e.preventDefault();
-        e.stopPropagation(); ctx.style.display = 'none'; ctxOpener?.focus();
+        e.stopPropagation(); ctx.style.display = 'none'; ctxReturnFocus();
       }
     });
     ctx.addEventListener("click", async e => {
@@ -14906,7 +15128,10 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const it = ctxItems[+d.dataset.i];
       if (it.dis) return;
       ctx.style.display = 'none';
-      ctxOpener?.focus();
+      ctxReturnFocus();
+      // A keyboard menu's item may draw the list again (Verify, Match…): the focus then goes back to that row as drawn.
+      const back = ctxBack;
+      const refocus = () => { if (back && (!document.activeElement || document.activeElement === document.body)) back()?.focus(); };
       /**
        * 행·오더 메뉴의 항목은 **메뉴를 연 그 선택**에 대한 것이다(W4-PAGE-10 MENU-TARGET). 여럿이 실행할 때의 지금 선택에 닿는다 —
        * Match·Unmatch·Modify Exam은 `cur()`·`curOrder()`를, 판독문 작성으로는 지금 편집기를 쓴다. 메뉴가 열린 채 키보드로 다른 행을
@@ -14927,9 +15152,10 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
        * 사람은 한 번 더 누른다 — 되돌릴 수 없는 항목에서는 그게 두 번 실행이다.
        */
       const at = work.capture("document");
-      try { await it.act(); }
+      try { const done = it.act(); refocus(); await done; }
       // 항목이 기다리는 사이 작업 문맥이 바뀌었으면(로그아웃 준비·세션 종료) 그 실패는 알릴 실패가 아니다.
       catch (err) { work.commit(at, () => toast(`"${it.label}" 실패: ${err?.message ?? err}`, "err")); }
+      finally { refocus(); }
     });
     document.addEventListener("click", () => ctx.style.display = "none");
 
@@ -14939,20 +15165,33 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
      * 띄우면 항목이 **앞 검사**에 닿는다. 저장을 기다려 옮겨지면 그때 같은 자리에 연다. 메뉴는 연 그 선택에 묶여, 그 사이
      * 선택이 바뀌었으면 어느 항목도 실행하지 않는다(위 클릭 처리).
      */
-    $("#rows").addEventListener("contextmenu", e => {
-      const tr = e.target.closest("tr");
-      if (!tr?.dataset.uid) return;
-      e.preventDefault();
+    function openRowMenu(e, tr, fromKey) {
       const uid = tr.dataset.uid;
+      const keyboard = fromKey
+        ? () => rowKeyboard(() => $("#rows").querySelector(`tr[data-uid="${CSS.escape(uid)}"]`)) : () => null;
       // W9: a row of the current multi-selection (two or more) opens the selection's own menu. It is offered before any
       // select(): opening it moves no Reading Target and saves or holds nothing. Its one item acts on the selection as it
       // was when the menu opened (owner, generation, ordered UIDs); a changed selection closes it (closeSelectionMenu).
       const set = mode === "Radiology" && multiSelection?.has(uid) ? multiStudyView?.menu() : null;
-      if (set) { showSelectionMenu(e, set); return; }
-      whenSelected(select(uid), uid, () => showRowMenu(e, uid));
+      if (set) { showSelectionMenu(e, set, keyboard()); return; }
+      whenSelected(select(uid), uid, () => showRowMenu(e, uid, keyboard()));
+    }
+    $("#rows").addEventListener("contextmenu", e => {
+      const tr = e.target.closest("tr");
+      if (!tr?.dataset.uid) return;
+      e.preventDefault();
+      openRowMenu(e, tr, false);
+    });
+    $("#rows").addEventListener("keydown", e => {
+      if (!isMenuKey(e)) return;
+      const tr = e.target.closest("tr");
+      if (!tr?.dataset.uid) return;
+      e.preventDefault();
+      ctxKeyPending = true;
+      openRowMenu(e, tr, true);
     });
     let ctxSelection = null;
-    function showSelectionMenu(e, set) {
+    function showSelectionMenu(e, set, keyboard = null) {
       showCtx(e, [{ label: kinSay("Open Selected Studies"),
         act: () => { ctxSelection = null; multiStudyView?.open(set); } },
         // FC-028: the same Batch Reading as the selection bar, for the selection as it was when this menu opened.
@@ -14960,7 +15199,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           act: () => { ctxSelection = null; batchReport?.open(set); } }] : []),
         // FC-029: the same Batch Approve as the selection bar, after Batch Reading.
         ...(batchApprove?.shown() ? [{ label: kinSay("Batch Approve"), dis: !!batchApprove.blocked(),
-          act: () => { ctxSelection = null; batchApprove?.open(set); } }] : [])], null, null);
+          act: () => { ctxSelection = null; batchApprove?.open(set); } }] : [])], keyboard, null);
       ctxSelection = { items: ctxItems, generation: set.generation };
     }
     /** The selection changed from the one the open selection menu was offered for: that menu closes before anything can act. */
@@ -14969,11 +15208,11 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       if (ctxItems === ctxSelection.items && ctx.style.display === "block") {
         const focused = ctx.contains(document.activeElement);
         ctx.style.display = "none";
-        if (focused) ctxOpener?.focus();
+        if (focused) ctxReturnFocus();
       }
       ctxSelection = null;
     }
-    function showRowMenu(e, uid) {
+    function showRowMenu(e, uid, keyboard = null) {
       const s = studies.find(x => x.uid === uid);
       // 이 메뉴가 열린 선택. 항목은 이 선택이 그대로일 때만 실행된다(위 클릭 처리).
       const opened = { uid, seq: selectionSeq, oid: selectedOid };
@@ -15005,39 +15244,37 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         if (result.error) toast(result.error, "err");
       } };
       if (mode === "Radiology") {
-        const ts = appState[uid]?.ts ?? "none";
-        const requested = !["none", "cancelled", "fail"].includes(ts);
-        // 받는 쪽(원격판독으로 넘어온 검사)과 보내는 쪽은 할 수 있는 일이 다르다.
-        // 서버도 같은 규칙으로 막지만, 회색으로 보이는 편이 눌러보고 거절당하는 것보다 낫다.
-        const mine = !s?.tele;
         showCtx(e, [
           { label: kinSay("Film Box 열기"), act: () => openFilmbox(uid) },
           { label: kinSay("판독문 작성으로"), act: () => focusReportEditor() },
           openEmrItem,
           { sep: 1 },
-          { label: kinSay("원격판독 의뢰 (Tele Request)"), dis: !mine || requested, act: () => teleRequest(uid) },
-          { label: kinSay("의뢰 취소"), dis: !mine || !["wait", "sending", "sent"].includes(ts), act: () => setTs(uid, "cancelled") },
+          // Tele-reading is a later feature: the three items stay by name and place and only say so — nothing is sent
+          // (the server's tele-reading routes are kept; a request already shown in the list keeps its mark).
+          { label: kinSay("원격판독 의뢰 (Tele Request)"), act: teleLater },
+          { label: kinSay("의뢰 취소"), act: teleLater },
           { sep: 1 },
-          { label: kinSay("판독 시작 (수신 기관)"), dis: mine || ts !== "sent", act: () => setTs(uid, "inReading") },
+          { label: kinSay("판독 시작 (수신 기관)"), act: teleLater },
           // 원본 다운로드는 자기 기관 검사만이다(S9-U4p §3·§6) — 원격판독으로 받은 행은 회색, 서버도 404로 막는다.
           ...(studyTransfer.canDownload() ? [{ sep: 1 }, { label: kinSay("Download Originals"), dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) }] : []),
           ...forceReleaseItems,
           // FC-076: attach a scanned document or picture to this row's study, at the end of the menu.
           ...(studyAttachments.canAttach() ? [{ sep: 1 }, { label: kinSay("Attach Document"), dis: !!s?.tele, act: () => studyAttachments.open(opened.uid) }] : []),
-        ], null, opened);
+        ], keyboard, opened);
       } else {
         const o = curOrder();
         showCtx(e, [
-          { label: kinSay("Match"), dis: !(o && s.matched === "U" && o.matched === "U"), act: doMatch },
-          { label: kinSay("Unmatch"), dis: s.matched !== "M", act: doUnmatch },
+          // Technician work: the same answer as the Technician bar (technicianWork, page-boot.js), whatever the tab.
+          technicianItem({ label: kinSay("Match"), dis: !(o && s.matched === "U" && o.matched === "U"), act: doMatch }),
+          technicianItem({ label: kinSay("Unmatch"), dis: s.matched !== "M", act: doUnmatch }),
           { sep: 1 },
-          { label: kinSay("Verify"), dis: s.ss === "Verified", act: () => setSs(uid, "Verified") },
-          { label: kinSay("Unverify"), dis: s.ss === "Unverified", act: () => setSs(uid, "Unverified") },
-          { label: kinSay("Modify Exam"), dis: s.rs !== "W", act: openModify },
+          technicianItem({ label: kinSay("Verify"), dis: s.ss === "Verified", act: () => setSs(uid, "Verified") }),
+          technicianItem({ label: kinSay("Unverify"), dis: s.ss === "Unverified", act: () => setSs(uid, "Unverified") }),
+          technicianItem({ label: kinSay("Modify Exam"), dis: s.rs !== "W", act: openModify }),
           openEmrItem,
           { sep: 1 },
           emergencyMenu(uid),
-          { label: kinSay("Switch ReqHosp"), act: () => {
+          technicianItem({ label: kinSay("Switch ReqHosp"), act: () => {
               // 기관명이 있는 행의 ReqHosp 칸은 서버가 정한 기관명이다(applyState·syncStudy가 같은 규칙으로 그린다). 여기서 친
               // 값을 칸에 그리면 다음 목록 읽기에서 말없이 기관명으로 돌아가고, 저장해도 어디에도 보이지 않는다 — 값을 묻지도
               // 그리지도 보내지도 않고 까닭을 말한다. 기관명이 없는 행(서버 없이 연 목록 등)은 지금처럼 바꾼다.
@@ -15050,9 +15287,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
               s.reqHosp = v.trim() || "KIN";
               appState[uid] = { ...appState[uid], reqHosp: s.reqHosp };
               saveApp(uid, { reqHosp: s.reqHosp }); render(); renderRelated();
-            } },
+            } }),
           { sep: 1 },
-          { label: kinSay("Delete"), dis: s.rs !== "W", act: () => doDelete(uid) },
+          technicianItem({ label: kinSay("Delete"), dis: s.rs !== "W", act: () => doDelete(uid) }),
           // 이 행의 검사로 반입(X-KIN-Expect-Study)과 원본 다운로드(S9-U4p §6). 둘 다 메뉴를 연 그 선택(opened)에 묶인다.
           ...(studyTransfer.canImport() || studyTransfer.canDownload() || studyAttachments.canAttach() ? [{ sep: 1 }] : []),
           ...(studyTransfer.canImport() ? [{ label: kinSay("Import DICOM"), act: () => studyTransfer.importInto(opened.uid) }] : []),
@@ -15060,31 +15297,43 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           ...(studyAttachments.canAttach() ? [{ label: kinSay("Attach Document"), dis: !!s?.tele, act: () => studyAttachments.open(opened.uid) }] : []),
           ...(studyTransfer.canDownload() ? [{ label: kinSay("Download Originals"), dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) }] : []),
           ...forceReleaseItems,
-        ], null, opened);
+        ], keyboard, opened);
       }
     }
 
-    $("#orderrows").addEventListener("contextmenu", e => {
-      const tr = e.target.closest("tr[data-oid]"); if (!tr) return;
-      e.preventDefault();
-      selectedOid = tr.dataset.oid; renderOrders();
+    function showOrderMenu(e, tr, fromKey) {
+      const oid = tr.dataset.oid;
+      selectedOid = oid; renderOrders();
       const o = curOrder(), s = cur();
       showCtx(e, [
-        { label: kinSay("Match"), dis: !(s && s.matched === "U" && o.matched === "U"), act: doMatch },
+        technicianItem({ label: kinSay("Match"), dis: !(s && s.matched === "U" && o.matched === "U"), act: doMatch }),
         // selectedUid를 직접 대입하면 안 된다. select()가 하는 일 — 쓰던 판독문 저장,
         // 점유 해제, 오른쪽 판 갱신 — 이 전부 건너뛰어진다. 그 상태로 다음 검사를 고르면
         // **앞 환자의 소견이 뒤 환자에게 저장된다.** 실제로 그렇게 되는 코드였다.
-        { label: kinSay("Unmatch"), dis: o.matched !== "M", act: async () => {
+        technicianItem({ label: kinSay("Unmatch"), dis: o.matched !== "M", act: async () => {
             const s2 = studies.find(x => x.uid === o.studyUid);
             if (!s2) { toast("이 오더에 매칭된 검사를 목록에서 찾을 수 없습니다", "err"); return; }
             // 그 검사로 옮겨졌을 때만 한다 — 옮겨지지 않았으면(글자 조합·쓰던 글의 저장) Unmatch가 지금 선택에 닿는다.
             await select(s2.uid);
             if (selectedUid !== s2.uid) return;
             doUnmatch();
-          } },
+          } }),
         { sep: 1 },
         { label: kinSay("New Exam (SC 생성)"), dis: 1, title: "새 검사(SC 생성)는 현재 연결되어 있지 않습니다.", act: () => {} },
-      ], null, { uid: selectedUid, seq: selectionSeq, oid: selectedOid });
+      ], fromKey ? rowKeyboard(() => $("#orderrows").querySelector(`tr[data-oid="${CSS.escape(oid)}"]`)) : null,
+      { uid: selectedUid, seq: selectionSeq, oid: selectedOid });
+    }
+    $("#orderrows").addEventListener("contextmenu", e => {
+      const tr = e.target.closest("tr[data-oid]"); if (!tr) return;
+      e.preventDefault();
+      showOrderMenu(e, tr, false);
+    });
+    $("#orderrows").addEventListener("keydown", e => {
+      if (!isMenuKey(e)) return;
+      const tr = e.target.closest("tr[data-oid]"); if (!tr) return;
+      e.preventDefault();
+      ctxKeyPending = true;
+      showOrderMenu(e, tr, true);
     });
 
     $('#related-include-current').addEventListener('change',e=>{if(cur()){relatedIncludeCurrent=e.target.checked;renderRelated();}});
@@ -15229,8 +15478,20 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     // 서버 없이도 앱이 열려야 GitHub Pages 데모와 오프라인 작업이 가능하다.
     // 역할에 따라 화면을 잠근다. 서버가 어차피 막지만, 눌러보고 거절당하는 것보다
     // 처음부터 회색인 편이 낫다. (서버 검사가 진짜 방어선이고 이건 안내다)
+    /**
+     * May this account do technician work on a study — Verify, Unverify, Modify Exam, Match, Unmatch, Switch ReqHosp,
+     * Delete, the emergency switch? One answer for the Technician bar's buttons and the row and order menus' items: the
+     * server's own rule (api/src/pacs/access.ts `need(roles, 'technician')`, admin passes). It does not depend on the tab
+     * the screen shows — switching to Technician grants nothing.
+     */
+    function technicianWork() { return KinAuth.has("technician"); }
+    const TECHNICIAN_WORK_REASON = "방사선사(technician) 권한이 필요합니다";
+    /** A row or order menu item that is technician work: grey with the bar's reason when this account may not do it. */
+    function technicianItem(item) {
+      return technicianWork() ? item : { ...item, dis: true, title: TECHNICIAN_WORK_REASON };
+    }
     function applyRoleUi() {
-      const rad = KinAuth.has("radiologist"), tec = KinAuth.has("technician");
+      const rad = KinAuth.has("radiologist"), tec = technicianWork();
       studyPanel?.setAvailable(studyPanelAvailable());
       document.querySelectorAll('[data-study-panel-tab]').forEach(button => {
         button.hidden = !studyPanelAvailable().includes(button.dataset.studyPanelTab);
@@ -15248,7 +15509,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       ["#findings", "#conclusion", "#recommendation"].forEach(s => $(s).readOnly = !rad);
       ["#t-verify", "#t-unverify", "#t-modify"].forEach(s => {
         const el = $(s); el.disabled = !tec;
-        if (!tec) el.title = "방사선사(technician) 권한이 필요합니다";
+        if (!tec) el.title = TECHNICIAN_WORK_REASON;
       });
       const r = sess.demo ? "데모" : (sess.roles.filter(x => ["radiologist","technician","admin"].includes(x)).join(", ") || "권한 없음");
       $("#roles").textContent = r;

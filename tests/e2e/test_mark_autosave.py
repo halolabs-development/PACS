@@ -145,6 +145,8 @@ class MarkAutoSaveE2E(MeasurementReadbackE2E):
         self.switch(p, True)
         expect(first).to_contain_text('Ellipse ROI · Saved r1', timeout=10000)
         expect(first.get_by_role('button', name='Save', exact=True)).to_have_count(0)
+        # The panel's count follows the save at once (not only when the list is read again).
+        expect(p.locator(PANEL + ' > [role=status]')).to_have_text('1개 저장 항목 · 저장은 판독 확정과 별개입니다.')
         saved = self.saved(f)
         self.assertEqual([x['item']['kind'] for x in saved], ['ellipse'])
         self.assertEqual(len(saved[0]['item']['baseline']['values']), 5)
@@ -210,6 +212,8 @@ class MarkAutoSaveE2E(MeasurementReadbackE2E):
             expect(p.locator(PANEL + ' section[data-kind=length]').nth(i)).to_contain_text('Saved r1', timeout=10000)
         items = {x['id']: x for x in self.saved(f)}
         self.assertEqual(len(items), 3)
+        count = p.locator(PANEL + ' > [role=status]')
+        expect(count).to_contain_text('3개 저장 항목')
         rows = p.locator(PANEL + ' section[data-kind=length]')
         target = rows.first.get_attribute('data-item-id')
         first = p.locator(PANEL + ' section[data-item-id="' + target + '"]')
@@ -223,6 +227,8 @@ class MarkAutoSaveE2E(MeasurementReadbackE2E):
         p.once('dialog', lambda d: d.accept('합성 복원'))
         first.get_by_role('button', name='Restore', exact=True).click()
         expect(first).to_contain_text('Saved r3')
+        # Hidden and restored: still a saved item.
+        expect(count).to_contain_text('3개 저장 항목')
         p.wait_for_function('()=>cornerstoneTools.annotation.state.getAllAnnotations().filter(a=>a.metadata.toolName==="Length").length===3')
         self.assertEqual(self.revisions(f, target), ['create', 'hide', 'restore'])
         self.assertEqual(len(self.saved(f)), 3)
@@ -233,6 +239,7 @@ class MarkAutoSaveE2E(MeasurementReadbackE2E):
         expect(first).to_have_count(0)
         self.assertIn('저장 이력은 서버에 남습니다', questions[0])
         expect(p.locator(PANEL + ' > [role=status]')).to_contain_text('항목을 지웠습니다')
+        expect(count).to_contain_text('2개 저장 항목')
         # 2. The image's right-click "Delete measurement" on a saved Length.
         uid = p.evaluate('''()=>cornerstoneTools.annotation.state.getAllAnnotations().find(a=>a.metadata.toolName==='Length').annotationUID''')
         at = p.evaluate('''uid=>{const a=cornerstoneTools.annotation.state.getAnnotation(uid);
@@ -246,6 +253,7 @@ class MarkAutoSaveE2E(MeasurementReadbackE2E):
         p.wait_for_function('uid=>!cornerstoneTools.annotation.state.getAnnotation(uid)', arg=uid)
         p.wait_for_timeout(800)
         self.assertEqual(p.evaluate('uid=>!!cornerstoneTools.annotation.state.getAnnotation(uid)', uid), False, 'not drawn again')
+        expect(count).to_contain_text('1개 저장 항목')
         # 3. The viewer's Measurements panel: its row's Actions › Delete.
         p.locator('.kin-ux-panels [data-panel=measurements]').click()
         listed = p.locator('[data-cy=trackedMeasurements-panel] [data-cy=data-row]')
@@ -256,6 +264,7 @@ class MarkAutoSaveE2E(MeasurementReadbackE2E):
         p.get_by_role('menuitem', name='Delete').click()
         expect(rows).to_have_count(0)
         expect(listed).to_have_count(0)
+        expect(count).to_contain_text('0개 저장 항목')
         p.wait_for_timeout(800)
         self.assertEqual(p.evaluate(MARKS), [], 'none drawn again')
         # The server: no list has them; every revision stays.

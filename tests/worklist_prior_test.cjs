@@ -33,6 +33,14 @@ test('TEST-D03A-PAST: closest strictly older study; future and same day are excl
   assert.equal(choose([rows[0], rows[3], rows[4]]), null);
 });
 
+test('a study of a merged exam that cannot be read whole now is never the automatic prior', () => {
+  sandbox.KinExamScope = require('../worklist-v0/hpacs-lite/exam-scope.js');
+  try {
+    const rows = [row('1.2.3', '20260907'), row('1.2.5', '20260906', { examUnavailable: true, examUnavailableKind: 'merge' }), row('1.2.4', '20260801')];
+    assert.equal(choose(rows), '1.2.4');
+  } finally { delete sandbox.KinExamScope; }
+});
+
 test('TEST-D03A-DATE: malformed source dates cannot become automatic priors through fmtD', () => {
   for (const date of ['', '2026', '202609', 'abcdefgh', '20260230', '20261301', '20260010',
     '20260100', '20260132', '20260431', '2026-9-01', '2026-09-1', '2026-09-01T00:00:00Z',

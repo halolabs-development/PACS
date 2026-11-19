@@ -293,7 +293,7 @@ REPORT_TEXT = "SYN findings text that must never become the message"
 # Contract wording (S7-U1p §16.1, §8.1 rule 2 and 4, §17) and the work order's "cannot check now".
 REASONS = {
     "NO_PINNABLE_SOURCE": "보낼 수 있는 판독 판이 없습니다(판독 전이거나 판독 취소됨)",
-    "SOURCE_FORBIDDEN": "예비 판독 중이라 지정된 판독의만 보낼 수 있습니다",
+    "SOURCE_FORBIDDEN": "이 판독 판을 읽을 수 있는 판독의만 보낼 수 있습니다(예비 판독은 지정된 판독의, Save해 둔 진행 중 판독은 그 판독의)",
     "NO_ELIGIBLE_RECIPIENT": "이 판독 판을 지금 읽을 수 있는 수신자가 없습니다(임상의는 승인·추가기재된 판독만 받을 수 있습니다)",
 }
 CANNOT_CHECK = "지금 확인할 수 없습니다"

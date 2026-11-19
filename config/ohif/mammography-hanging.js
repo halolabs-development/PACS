@@ -1,4 +1,41 @@
 
+// Bulk data the viewer reads itself (a stored VOI LUT, a DICOM overlay plane): Orthanc builds bulk data URIs from its own
+// base URL. Only the DICOMweb instance bulk path is requested, and always on this origin, so a header cannot direct the
+// viewer elsewhere.
+function kinSameOriginBulk(uri) {
+  let url;
+  try { url = new URL(uri, location.href); } catch (_) { return null; }
+  const at = url.pathname.indexOf('/studies/');
+  const path = at < 0 ? '' : '/dicom-web' + url.pathname.slice(at);
+  return /^\/dicom-web\/studies\/[^/]+\/series\/[^/]+\/instances\/[^/]+\/bulk\/[0-9A-Fa-f/]+$/.test(path) ? path : null;
+}
+// The element's bytes are the first part of the multipart answer; a server that answers single-part sends them bare.
+function kinBulkFirstPart(bytes, type) {
+  if (!/^multipart\//i.test(type)) return bytes;
+  const boundary = /boundary="?([^";]+)"?/i.exec(type)?.[1];
+  if (!boundary) return null;
+  const encode = s => Uint8Array.from(s, c => c.charCodeAt(0));
+  const find = (needle, from) => {
+    outer: for (let i = from; i <= bytes.length - needle.length; i++) {
+      for (let j = 0; j < needle.length; j++) if (bytes[i + j] !== needle[j]) continue outer;
+      return i;
+    }
+    return -1;
+  };
+  const start = find(encode('--' + boundary), 0), body = start < 0 ? -1 : find(encode('\r\n\r\n'), start);
+  const end = body < 0 ? -1 : find(encode('\r\n--' + boundary), body + 4);
+  return end < 0 ? null : bytes.subarray(body + 4, end);
+}
+// One bulk data element's bytes, or null (not this archive's instance bulk path, refused, or not readable).
+async function kinFetchBulk(uri) {
+  const url = kinSameOriginBulk(uri);
+  if (!url) return null;
+  // DICOMweb bulk data is a multipart/related answer; Orthanc refuses a bare octet-stream Accept with 400.
+  const response = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'multipart/related; type="application/octet-stream"' } });
+  if (!response.ok) return null;
+  return kinBulkFirstPart(new Uint8Array(await response.arrayBuffer()), response.headers.get('content-type') || '');
+}
+
 // The generic comparison protocol chooses by arrival order, not by breast/view/image kind.
 // Use the existing DICOM classifier, while leaving pixels and viewport tools with OHIF.
 function kinCreateMammographyHanging() {
@@ -12,32 +49,6 @@ function kinCreateMammographyHanging() {
   const kinds = ['conventional', 'generated2d', 'dbt'];
   const labels = { conventional: 'Conventional', generated2d: 'Synthetic 2D', dbt: 'DBT' };
   const CT_IMAGE = '1.2.840.10008.5.1.4.1.1.2';
-  // Orthanc builds bulk data URIs from its own base URL. Only the DICOMweb instance bulk path is
-  // requested, and always on this origin, so a header cannot direct the viewer elsewhere.
-  function sameOriginBulk(uri) {
-    let url;
-    try { url = new URL(uri, location.href); } catch (_) { return null; }
-    const at = url.pathname.indexOf('/studies/');
-    const path = at < 0 ? '' : '/dicom-web' + url.pathname.slice(at);
-    return /^\/dicom-web\/studies\/[^/]+\/series\/[^/]+\/instances\/[^/]+\/bulk\/[0-9A-Fa-f/]+$/.test(path) ? path : null;
-  }
-  // The element's bytes are the first part of the multipart answer; a server that answers single-part sends them bare.
-  function firstPart(bytes, type) {
-    if (!/^multipart\//i.test(type)) return bytes;
-    const boundary = /boundary="?([^";]+)"?/i.exec(type)?.[1];
-    if (!boundary) return null;
-    const encode = s => Uint8Array.from(s, c => c.charCodeAt(0));
-    const find = (needle, from) => {
-      outer: for (let i = from; i <= bytes.length - needle.length; i++) {
-        for (let j = 0; j < needle.length; j++) if (bytes[i + j] !== needle[j]) continue outer;
-        return i;
-      }
-      return -1;
-    };
-    const start = find(encode('--' + boundary), 0), body = start < 0 ? -1 : find(encode('\r\n\r\n'), start);
-    const end = body < 0 ? -1 : find(encode('\r\n--' + boundary), body + 4);
-    return end < 0 ? null : bytes.subarray(body + 4, end);
-  }
   // U2 owns account storage. Restore through this hook after checking its owner; reset on logout.
   const preferences = {
     get: () => ({ ...preference }),
@@ -119,13 +130,7 @@ function kinCreateMammographyHanging() {
         }
       }
       await Promise.allSettled([...new Set(tables)].map(async uri => {
-        const url = sameOriginBulk(uri);
-        if (!url) return;
-        // DICOMweb bulk data is a multipart/related answer; Orthanc refuses a bare octet-stream Accept with 400.
-        const response = await fetch(url, { credentials: 'same-origin',
-          headers: { Accept: 'multipart/related; type="application/octet-stream"' } });
-        if (!response.ok) return;
-        const bytes = firstPart(new Uint8Array(await response.arrayBuffer()), response.headers.get('content-type') || '');
+        const bytes = await kinFetchBulk(uri);
         if (bytes && live()) lutBytes.set(uri, bytes);
       }));
     }

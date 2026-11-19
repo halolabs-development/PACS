@@ -121,8 +121,38 @@
     }
     return out;
   }
+  // A listed row of a merged or split exam in force whose originals the reader cannot all read now (one gone from the
+  // archive, or outside the reader's access): the server says so (examUnavailable, and the exam kind) and names none of
+  // those originals. It is not an ordinary row: it opens no viewer, is not preloaded, and its PF says why. The list badge,
+  // Preload, PF and every viewer opening ask this one answer. A temporary archive failure is not this: the list read fails
+  // or the Preload entry fails with the server's reason and Retry.
+  const UNAVAILABLE = {
+    merge:'합친 검사의 원본 일부를 볼 수 없어 열거나 미리 받지 않습니다. 원본이 영상 저장소에 없거나 이 계정이 볼 수 없습니다. 목록을 새로고침하세요.',
+    split:'나눈 검사의 원본을 볼 수 없어 열거나 미리 받지 않습니다. 원본이 영상 저장소에 없거나 이 계정이 볼 수 없습니다. 목록을 새로고침하세요.',
+  };
+  function unavailable(row) {
+    if(row?.examUnavailable!==true)return null;
+    const kind=Object.hasOwn(UNAVAILABLE,row.examUnavailableKind??'')?row.examUnavailableKind:null;
+    return {kind,message:kind?UNAVAILABLE[kind]:'검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.'};
+  }
+  // The exam of this window (its current exam or its comparison) an image belongs to, by the scopes the server admitted:
+  // every original of a merged exam is the current exam, never a prior; the two parts of one split original are told apart
+  // by the series. null: the image is in neither, or in both and no series tells them apart (never guessed), or the
+  // window has no scope. Later features (a cell's current / prior mark, Match information) read the window's roles here.
+  function examRole(input, studyUid, seriesUid = null) {
+    if(!input||typeof studyUid!=='string')return null;
+    const holds=scope=>!!scope?.sources&&scope.sources.some(source=>source.studyUid===studyUid&&(!seriesUid||allows(source,seriesUid)));
+    const current=holds(input.current),prior=holds(input.prior);
+    return current&&prior?null:current?'current':prior?'prior':null;
+  }
+  // The originals (with their series rules) of the exam that image belongs to, base first: one list for one exam.
+  function examSources(input, studyUid, seriesUid = null) {
+    const role=examRole(input,studyUid,seriesUid);
+    return role?copy(input[role].sources):null;
+  }
   function viewerInput(current, prior = null, version = null, priorVersion = null) {
-    if(current?.examUnavailable||prior?.examUnavailable)throw Error('검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.');
+    const lost=unavailable(current)||unavailable(prior);
+    if(lost)throw Error(lost.message);
     const scope=read(current),comparison=prior?read(prior):null;
     if(!scope || prior&&!comparison)throw new Error('검사 범위를 확인할 수 없습니다.');
     if([...scope.sources,...(comparison?.sources||[])].some(s=>s.studyUid.length>64||!/^\d+(?:\.\d+)+$/.test(s.studyUid)))throw new Error('원본 검사 UID를 확인할 수 없습니다.');
@@ -167,6 +197,7 @@
   function preload(rows) {
     const sources=new Map();
     for(const row of rows) {
+      if(unavailable(row))continue;
       const scope=read(row);
       if(!scope)throw Error('미리 받을 검사 범위를 확인할 수 없습니다.');
       for(const source of scope.sources) {
@@ -186,8 +217,11 @@
   const preloadRank = ['Failed','Evicted',null,'Downloading','Queued','Ready'];
   const sameReference = (a, b) => a?.reportUid===b.reportUid && (a.groupId??null)===(b.groupId??null) && (a.part??null)===(b.part??null);
   function preloadState(row, entryOf) {
-    // A row whose exam the reader cannot read whole (examUnavailable) cannot be opened: no state, like viewerInput refuses it.
-    if(row?.examUnavailable)return null;
+    // A row whose exam the reader cannot read whole (unavailable) is never fetched. A merged or split exam in force says
+    // so at once — Failed with the reason, in every window and filter, never the state of the originals it can still
+    // read — until the list says it is whole again; any other such row has no state, like viewerInput refuses it.
+    const lost=unavailable(row);
+    if(lost)return lost.kind?{uid:row.uid,status:'Failed',reason:lost.message,unavailable:true}:null;
     let scope=null;
     try{scope=read(row);}catch(_){return null;}
     if(!scope)return null;
@@ -261,7 +295,7 @@
     finally{try{popup.name=name;}catch(_){}}
     return true;
   }
-  const api={raiseWindow,read,key,stamp,screenScope,screenStamp,originalLabel,sourceRequest,seriesValue,seriesRequest,attachmentTarget,attachmentHeaders,storedReport,allows,listedExam,metadata,projections,values,originals,viewingSelection,originalInput,readingScope,readingStamp,fetch:fetchScope,dicom,viewerInput,viewerUrl,viewerReference,reference,roleRows,snapshotReference,jobSnapshot,snapshotUrl,preload,preloadState,chooseOriginals,changes};
+  const api={raiseWindow,read,key,stamp,screenScope,screenStamp,originalLabel,sourceRequest,seriesValue,seriesRequest,attachmentTarget,attachmentHeaders,storedReport,allows,listedExam,metadata,projections,values,originals,viewingSelection,originalInput,readingScope,readingStamp,fetch:fetchScope,dicom,unavailable,examRole,examSources,viewerInput,viewerUrl,viewerReference,reference,roleRows,snapshotReference,jobSnapshot,snapshotUrl,preload,preloadState,chooseOriginals,changes};
   root.KinExamScope=api;
   if(typeof module==='object'&&module.exports)module.exports=api;
 })(globalThis);
@@ -2359,10 +2393,26 @@ function kinCreateViewerHistory() {
       if (error.status === 400 || error.status === 413) return '지원 영상·원본 평면·입력 길이를 확인하세요. 작성 내용은 저장되지 않았습니다.';
       return '저장 결과를 확인하지 못했습니다. 같은 요청 재시도로 결과를 확인하세요.';
     }
+    // The status's saved-item count: the items this study holds on the server now — rows with a saved revision, hidden ones
+    // included (the list is read with them), not one deleted in another window. Every way that number changes comes here: a
+    // read of the list, a save answered (the Save button, autosave, Hide, Restore) and a delete answered. With a lead the
+    // status is that text and the count; without one only a count already shown is brought up to date, so another message the
+    // status shows meanwhile (a reason, an error, a recheck) is not overwritten.
+    const COUNT_TAIL = '개 저장 항목';
+    // Items this panel deleted (the server keeps them and their revisions; no list of the author's shows them again).
+    const deletedHere = new Set();
+    function recount(lead) {
+      const n = [...entries.values()].filter(e => e.head && !e.gone).length;
+      if (typeof lead === 'string') status.textContent = lead + n + COUNT_TAIL + ' · 저장은 판독 확정과 별개입니다.';
+      else status.textContent = status.textContent.replace(/^(.*?)\d+개 저장 항목/, (_, before) => before + n + COUNT_TAIL);
+    }
     // `answered`: only the clinician-only boundary passes it, from inside this panel's own /me answer — that answer is this read's /me.
     async function load(resume = false, recheck = null, answered = false) {
       if (!scope || ended || loading) return;
       const ticket = generation, seq = ++readSequence; loading = true; tried = Date.now();
+      // Saved items as this read begins: only one of these can be judged deleted in another window by its absence from the
+      // answer (an item saved while the read was on its way is not in it yet).
+      const savedAtStart = new Set([...entries.values()].filter(e => e.head).map(e => e.head.id));
       status.textContent = '저장 항목 확인 중…';
       try {
         if (!answered) await authenticate(ticket);
@@ -2382,11 +2432,16 @@ function kinCreateViewerHistory() {
         if ((resume === true || autoMarks()) && parked && parked.subject === subject) {
           for (const e of entries.values()) removeAnnotation(e);
           entries.clear(); list.replaceChildren();
-          for (const e of clone(parked.entries)) { e.rehydrate = !e.head; entries.set(e.id, e); row(e); }
+          // Held work taken up: its saved items count as saved when this read began, so one deleted meanwhile in another
+          // window is judged by this answer like any other.
+          for (const e of clone(parked.entries)) { e.rehydrate = !e.head; if (e.head) savedAtStart.add(e.head.id); entries.set(e.id, e); row(e); }
           recovery.delete(scope);
         }
         for (const head of heads) {
+          // Deleted here while this read was on its way: an older answer does not bring it back.
+          if (deletedHere.has(head.id)) continue;
           let e = entries.get(head.id);
+          if (e) e.gone = false;
           if (e && (e.editing || e.pending || e.busy)) {
             if (head.revision !== e.head?.revision) { e.latest = head; e.message = '서버에 다른 판이 있습니다. 작성 내용은 유지됩니다.'; row(e); }
             else {
@@ -2407,12 +2462,13 @@ function kinCreateViewerHistory() {
         }
         // The whole author list leaves out only deleted items: a saved row it no longer has was deleted (in another window).
         // Work on such a row is kept and told; it can no longer be saved (any revision of a deleted item is refused).
-        if (!recheck) for (const e of [...entries.values()]) if (e.head && !heads.some(h => h.id === e.head.id)) {
-          if (hasWork(e) || e.busy) { e.message = '다른 창에서 지운 항목입니다. 이 창의 작성 내용은 저장되지 않습니다.'; continue; }
+        if (!recheck) for (const e of [...entries.values()]) if (e.head && savedAtStart.has(e.head.id) && !heads.some(h => h.id === e.head.id)) {
+          if (hasWork(e) || e.busy) { e.gone = true; e.message = '다른 창에서 지운 항목입니다. 이 창의 작성 내용은 저장되지 않습니다.'; continue; }
           removeAnnotation(e); entries.delete(e.id); e.element?.remove();
         }
         for (const e of entries.values()) row(e);
-        status.textContent = recheck ? (heads.some(h => h.id === recheck) ? '선택한 항목의 원본 확인을 마쳤습니다. 항목의 확인 상태를 보세요. 저장 이력은 바뀌지 않습니다.' : '선택한 저장 항목을 찾지 못했습니다. 목록을 새로고침하세요.') : heads.length + '개 저장 항목 · 저장은 판독 확정과 별개입니다.';
+        if (recheck) status.textContent = heads.some(h => h.id === recheck) ? '선택한 항목의 원본 확인을 마쳤습니다. 항목의 확인 상태를 보세요. 저장 이력은 바뀌지 않습니다.' : '선택한 저장 항목을 찾지 못했습니다. 목록을 새로고침하세요.';
+        else recount('');
         panel.dataset.studyUid = scope;
         toolbar(); hydrate();
       } catch (e) { if (!e.stale && valid(ticket)) status.textContent = '목록을 확인하지 못했습니다. 새로고침으로 다시 확인하세요.'; }
@@ -2633,6 +2689,47 @@ function kinCreateViewerHistory() {
       else if (event.key === 'Enter' || event.key === ' ') for (const w of [...drawing.values()]) if (!w.element.contains(event.target)) leave(w);
     };
       const configured = new Map();
+    // A Freehand ROI's outline length (a closed outline's perimeter, an open line's length) and its unit, as the Length tool
+    // measures: the distance along the outline on the image divided by the calibration's scale, in the unit the tool's own
+    // unit function gives for the outline's box (a calibration's name included, e.g. "mm User", "cm US Region"). The box is
+    // taken as the tool takes it — around the outline on the screen, its corners read back on the image (an ultrasound region
+    // is chosen by them) — or, with no cell showing that image, around the outline on the image. The pinned tool's own
+    // number sums distances on the screen (it changes with the zoom) and its unit is never read; null when the length is not
+    // known to be physical (below), and the tool's own words are kept.
+    // Only where the length is known to be physical: a stack image whose own header gives a pixel spacing (two positive
+    // numbers), with no ultrasound region calibration, measured by the tool in mm with a positive scale. Anything else (no
+    // spacing — the viewer then stands in a spacing of 1 —, an ultrasound region, a reformatted plane) is left to the tool's
+    // own words, as before.
+    const physical = v => Array.isArray(v) && v.length >= 2 && v.slice(0, 2).every(x => Number.isFinite(Number(x)) && Number(x) > 0);
+    function freehandLength(tool, data, target) {
+      try {
+        const image = tool.getTargetImageData(target), points = data.contour?.polyline;
+        if (!image?.imageData || !Array.isArray(points) || points.length < 2) return null;
+        const u = cs.utilities, id = target.startsWith('imageId:') && target.slice(8);
+        const header = id && cs.metaData.get('instance', id);
+        if (!header || !(physical(header.PixelSpacing) || physical(header.ImagerPixelSpacing)) || given(header.SequenceOfUltrasoundRegions) ||
+            image.hasPixelSpacing !== true || image.calibration?.sequenceOfUltrasoundRegions) return null;
+        let v = null;
+        try {
+          v = id ? (u.getViewportsWithImageURI?.(u.imageIdToURI(id)) || []).find(x => x.getCurrentImageId?.() === id)
+            : target.startsWith('volumeId:') ? (u.getViewportsWithVolumeId?.(u.getVolumeId(target)) || [])[0] : null;
+        } catch (_) { v = null; }
+        const box = list => [[0, 1, 2].map(i => Math.min(...list.map(p => p[i] ?? 0))), [0, 1, 2].map(i => Math.max(...list.map(p => p[i] ?? 0)))];
+        let corners;
+        if (v) {
+          const [low, high] = box(points.map(p => v.worldToCanvas(p)));
+          corners = [v.canvasToWorld([low[0], low[1]]), v.canvasToWorld([high[0], high[1]])].map(p => u.transformWorldToIndex(image.imageData, p));
+        } else corners = box(points.map(p => u.transformWorldToIndex(image.imageData, p)));
+        const { unit, scale } = ct.utilities.getCalibratedLengthUnitsAndScale(image, () => corners) || {};
+        const along = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], (a[2] ?? 0) - (b[2] ?? 0));
+        let distance = 0;
+        for (let i = 1; i < points.length; i++) distance += along(points[i - 1], points[i]);
+        if (data.contour.closed) distance += along(points[points.length - 1], points[0]);
+        const value = distance / scale;
+        return typeof unit === 'string' && /^mm( |$)/.test(unit) && Number.isFinite(scale) && scale > 0 && Number.isFinite(value) && value > 0
+          ? { value, unit } : null;
+      } catch (_) { return null; }
+    }
     function configureMeasurements(group) {
       if (!group || configured.has(group)) return;
       const roi = group.getToolInstance('EllipticalROI');
@@ -2663,6 +2760,22 @@ function kinCreateViewerHistory() {
         return lines;
       } };
       const restores = [() => { roi.configuration = previous; }];
+      // Freehand ROI's words: the pinned tool gave a closed outline's perimeter and an open line's length as a distance on the
+      // screen with the unit "undefined". Its own text is made from a copy whose perimeter or length is the outline's length on
+      // the image in its unit (freehandLength), the other lines (area, values) as they are; where that length is not known to be
+      // physical the tool's own words are given unchanged. The measurement itself (and so what is saved or exported) is not touched.
+      const freehand = group.getToolInstance('PlanarFreehandROI'), freehandConfig = freehand?.configuration;
+      if (typeof freehandConfig?.getTextLines === 'function') {
+        freehand.configuration = { ...freehandConfig, getTextLines(data, target) {
+          const s = data?.cachedStats?.[target];
+          if (!s || typeof s.unit === 'string') return freehandConfig.getTextLines(data, target);
+          const found = freehandLength(freehand, data, target), key = data.contour?.closed ? 'perimeter' : 'length';
+          if (!found) return freehandConfig.getTextLines(data, target);
+          const words = { ...s, perimeter: undefined, length: undefined, unit: found.unit, [key]: found.value };
+          return freehandConfig.getTextLines({ ...data, cachedStats: { ...data.cachedStats, [target]: words } }, target);
+        } };
+        restores.push(() => { freehand.configuration = freehandConfig; });
+      }
       for (const kind of ['length', 'angle', 'ellipse']) {
         if (!group.getToolInstance(tools[kind])) group.addTool(tools[kind]);
         const tool = group.getToolInstance(tools[kind]), config = tool.configuration, add = tool.addNewAnnotation;
@@ -2899,8 +3012,8 @@ function kinCreateViewerHistory() {
         if (!valid(ticket) || !entries.has(e.id)) return;
         // Deleted: off the image and the list. The server keeps the item and its revisions; no list shows it again.
         if (head.item?.deleted === true) {
-          removeAnnotation(e); entries.delete(e.id); e.element?.remove();
-          status.textContent = names[e.draft.kind] + ' 항목을 지웠습니다. 저장 이력은 서버에 남습니다.'; render(); return;
+          deletedHere.add(head.id); removeAnnotation(e); entries.delete(e.id); e.element?.remove();
+          recount(names[e.draft.kind] + ' 항목을 지웠습니다. 저장 이력은 서버에 남습니다. '); render(); return;
         }
         const duplicate = entries.get(head.id);
         if (duplicate && duplicate !== e && hasWork(duplicate)) {
@@ -2924,7 +3037,10 @@ function kinCreateViewerHistory() {
         e.message = errorMessage(error);
         if (error.status >= 400 && error.status < 500) { e.pending = null; lock(e, !e.editing); }
         if (error.status === 409) await load();
-      } finally { if (valid(ticket) && entries.has(e.id)) { e.busy = false; row(e); } }
+      } finally {
+        if (valid(ticket) && entries.has(e.id)) { e.busy = false; row(e); }
+        if (valid(ticket)) recount();
+      }
     }
     // ── Marks saved without the Save button ──
     // With Auto Save View's account setting on (viewer-features-autosave.js, window.KinViewerAutoSave) a mark is saved on its
@@ -5703,6 +5819,43 @@ function kinCreateContextLoss() {
   return extension;
 }
 
+// Bulk data the viewer reads itself (a stored VOI LUT, a DICOM overlay plane): Orthanc builds bulk data URIs from its own
+// base URL. Only the DICOMweb instance bulk path is requested, and always on this origin, so a header cannot direct the
+// viewer elsewhere.
+function kinSameOriginBulk(uri) {
+  let url;
+  try { url = new URL(uri, location.href); } catch (_) { return null; }
+  const at = url.pathname.indexOf('/studies/');
+  const path = at < 0 ? '' : '/dicom-web' + url.pathname.slice(at);
+  return /^\/dicom-web\/studies\/[^/]+\/series\/[^/]+\/instances\/[^/]+\/bulk\/[0-9A-Fa-f/]+$/.test(path) ? path : null;
+}
+// The element's bytes are the first part of the multipart answer; a server that answers single-part sends them bare.
+function kinBulkFirstPart(bytes, type) {
+  if (!/^multipart\//i.test(type)) return bytes;
+  const boundary = /boundary="?([^";]+)"?/i.exec(type)?.[1];
+  if (!boundary) return null;
+  const encode = s => Uint8Array.from(s, c => c.charCodeAt(0));
+  const find = (needle, from) => {
+    outer: for (let i = from; i <= bytes.length - needle.length; i++) {
+      for (let j = 0; j < needle.length; j++) if (bytes[i + j] !== needle[j]) continue outer;
+      return i;
+    }
+    return -1;
+  };
+  const start = find(encode('--' + boundary), 0), body = start < 0 ? -1 : find(encode('\r\n\r\n'), start);
+  const end = body < 0 ? -1 : find(encode('\r\n--' + boundary), body + 4);
+  return end < 0 ? null : bytes.subarray(body + 4, end);
+}
+// One bulk data element's bytes, or null (not this archive's instance bulk path, refused, or not readable).
+async function kinFetchBulk(uri) {
+  const url = kinSameOriginBulk(uri);
+  if (!url) return null;
+  // DICOMweb bulk data is a multipart/related answer; Orthanc refuses a bare octet-stream Accept with 400.
+  const response = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'multipart/related; type="application/octet-stream"' } });
+  if (!response.ok) return null;
+  return kinBulkFirstPart(new Uint8Array(await response.arrayBuffer()), response.headers.get('content-type') || '');
+}
+
 // The generic comparison protocol chooses by arrival order, not by breast/view/image kind.
 // Use the existing DICOM classifier, while leaving pixels and viewport tools with OHIF.
 function kinCreateMammographyHanging() {
@@ -5716,32 +5869,6 @@ function kinCreateMammographyHanging() {
   const kinds = ['conventional', 'generated2d', 'dbt'];
   const labels = { conventional: 'Conventional', generated2d: 'Synthetic 2D', dbt: 'DBT' };
   const CT_IMAGE = '1.2.840.10008.5.1.4.1.1.2';
-  // Orthanc builds bulk data URIs from its own base URL. Only the DICOMweb instance bulk path is
-  // requested, and always on this origin, so a header cannot direct the viewer elsewhere.
-  function sameOriginBulk(uri) {
-    let url;
-    try { url = new URL(uri, location.href); } catch (_) { return null; }
-    const at = url.pathname.indexOf('/studies/');
-    const path = at < 0 ? '' : '/dicom-web' + url.pathname.slice(at);
-    return /^\/dicom-web\/studies\/[^/]+\/series\/[^/]+\/instances\/[^/]+\/bulk\/[0-9A-Fa-f/]+$/.test(path) ? path : null;
-  }
-  // The element's bytes are the first part of the multipart answer; a server that answers single-part sends them bare.
-  function firstPart(bytes, type) {
-    if (!/^multipart\//i.test(type)) return bytes;
-    const boundary = /boundary="?([^";]+)"?/i.exec(type)?.[1];
-    if (!boundary) return null;
-    const encode = s => Uint8Array.from(s, c => c.charCodeAt(0));
-    const find = (needle, from) => {
-      outer: for (let i = from; i <= bytes.length - needle.length; i++) {
-        for (let j = 0; j < needle.length; j++) if (bytes[i + j] !== needle[j]) continue outer;
-        return i;
-      }
-      return -1;
-    };
-    const start = find(encode('--' + boundary), 0), body = start < 0 ? -1 : find(encode('\r\n\r\n'), start);
-    const end = body < 0 ? -1 : find(encode('\r\n--' + boundary), body + 4);
-    return end < 0 ? null : bytes.subarray(body + 4, end);
-  }
   // U2 owns account storage. Restore through this hook after checking its owner; reset on logout.
   const preferences = {
     get: () => ({ ...preference }),
@@ -5823,13 +5950,7 @@ function kinCreateMammographyHanging() {
         }
       }
       await Promise.allSettled([...new Set(tables)].map(async uri => {
-        const url = sameOriginBulk(uri);
-        if (!url) return;
-        // DICOMweb bulk data is a multipart/related answer; Orthanc refuses a bare octet-stream Accept with 400.
-        const response = await fetch(url, { credentials: 'same-origin',
-          headers: { Accept: 'multipart/related; type="application/octet-stream"' } });
-        if (!response.ok) return;
-        const bytes = firstPart(new Uint8Array(await response.arrayBuffer()), response.headers.get('content-type') || '');
+        const bytes = await kinFetchBulk(uri);
         if (bytes && live()) lutBytes.set(uri, bytes);
       }));
     }
@@ -6694,10 +6815,13 @@ function kinCreateStudySearch() {
       if (keys.size > 1) throw new Error('기관별 환자 식별이 달라 이전 검사를 하나로 묶을 수 없습니다.');
       if (keys.size === 0) throw new Error('열린 검사의 환자 식별을 확인하지 못했습니다.');
       const rows = list.studies.filter(row => row.id === params.patientId && keys.has(row.sourcePatientKey));
+      // A listed exam is searched by the original studies its scope holds: a merged exam's other originals have no row
+      // of their own but are part of the opened exam, and each keeps its own entry, UID and count in the panel.
+      const uids = [...new Set(rows.flatMap(row => row.examScope?.sources?.length ? row.examScope.sources.map(source => source.studyUid) : [row.uid]))];
       const results = [];
-      for (const row of rows) {
+      for (const uid of uids) {
         current();
-        results.push(...await original.call(this, { ...params, studyInstanceUid: row.uid, disableWildcard: true }));
+        results.push(...await original.call(this, { ...params, studyInstanceUid: uid, disableWildcard: true }));
       }
       current();
       return results;
@@ -7068,6 +7192,9 @@ function kinCreateViewerPrior() {
     const report = (uid, opener) => { reportUid = uid; reportOpener = opener; controller.openReport(uid); };
     const controller = window.KinViewerPriorController.create({ viewer,
       async loadStudy(uid, origin, row, options = {}) {
+        // A related exam whose originals cannot all be read now is not opened beside this one, in part or whole.
+        const lost=window.KinExamScope?.unavailable?.(row);
+        if(lost)throw Error(lost.message);
         const input=window.KinViewerExamScope?.snapshot();
         let scope=null;
         if(input||row?.examScope){
@@ -7220,6 +7347,93 @@ function kinCreateMultiStudyStrip() {
   onModeExit() { epoch++; active = false; current?.stop(); current = null; } };
 }
 
+// DICOM overlay planes (60xx,3000) on an image: the archive sends their bits as a bulk data address, which the pinned overlay
+// tool (Image Overlay) cannot read — it cached an empty overlay and failed on every later draw, measurements in the same cell
+// included, and turning Image Overlay off and on raised an error. Only such a plane takes a new way here, and only in the
+// form the pinned tool draws in the right place: one frame of image and mask, the mask from the first pixel covering the
+// whole image, square pixels, and at the moment of drawing the image's axes on the screen neither flipped nor turned. Its bits
+// are read once (a second draw waits for the same read; no read again after a failure) from this origin's instance bulk path
+// through the viewer's one bulk read (kinFetchBulk), and must be exactly one frame of the mask. A plane outside that form, or
+// one whose bits cannot be read, is not drawn — for that draw only, the overlay list the tool shares is left as it is, so
+// the cell's measurements are still drawn. A drawn plane appears only on its own image and only while Image Overlay is on.
+// Planes the pinned tool already reads (values in the metadata) go its own way, unchanged.
+function kinCreateOverlayPlanes() {
+  const MARK = Symbol.for('kin.overlay-planes');
+  const bulkOnly = o => { const d = o?.pixelData;
+    return !!d && !o.dataUrl && !d.Value && !Array.isArray(d) && !d.retrieveBulkData && !d.InlineBinary && typeof d.BulkDataURI === 'string'; };
+  const pair = v => Array.isArray(v) && v.length >= 2 ? v.slice(0, 2).map(Number) : null;
+  const header = id => { try { return window.cornerstone.metaData.get('instance', id) || null; } catch (_) { return null; } };
+  // A header number as the metadata keeps it (a number, a list, or the raw bytes of an element the dictionary does not name).
+  const number = v => { const x = Array.isArray(v) ? v[0] : v;
+    if (x === undefined || x === null || x === '') return undefined;
+    return Number(x instanceof ArrayBuffer ? new TextDecoder().decode(x).replace(/\0/g, '').trim() : x); };
+  // Overlay frames declared for this plane (60xx,0015); absent is one. Its group is the one holding this very element; when
+  // that cannot be told, any overlay group declaring more than one frame counts.
+  function frames(h, o) {
+    const groups = Array.from({ length: 16 }, (_, i) => (0x6000 + 2 * i).toString(16));
+    const own = groups.find(g => h[g + '3000'] === o.pixelData);
+    const declared = (own ? [own] : groups.filter(g => h[g + '3000'] !== undefined)).map(g => number(h[g + '0015'])).filter(n => n !== undefined);
+    return declared.length ? Math.max(...declared.map(n => Number.isFinite(n) ? n : Infinity)) : 1;
+  }
+  function allowed(imageId, o) {
+    const h = header(imageId);
+    if (!h || Number(h.NumberOfFrames) > 1 || frames(h, o) !== 1) return false;
+    if (o.x !== 1 || o.y !== 1 || o.rows !== Number(h.Rows) || o.columns !== Number(h.Columns) || !(o.rows > 0 && o.columns > 0)) return false;
+    const spacing = pair(h.PixelSpacing) || pair(h.ImagerPixelSpacing), aspect = pair(h.PixelAspectRatio);
+    const square = s => s.every(x => Number.isFinite(x) && x > 0) && Math.abs(s[0] - s[1]) <= 1e-6 * Math.max(s[0], s[1]);
+    return spacing ? square(spacing) : !aspect || square(aspect);
+  }
+  // The image's first pixel, its last column and its last row on the screen: axes along the screen's, pointing right and down.
+  function upright(viewport, imageId) {
+    try {
+      const h = header(imageId), u = window.cornerstone.utilities;
+      const at = p => viewport.worldToCanvas(u.imageToWorldCoords(imageId, p));
+      const o = at([0, 0]), r = at([Number(h.Columns), 0]), d = at([0, Number(h.Rows)]);
+      return r[0] > o[0] && Math.abs(r[1] - o[1]) < .5 && d[1] > o[1] && Math.abs(d[0] - o[0]) < .5;
+    } catch (_) { return false; }
+  }
+  function install() {
+    const proto = window.cornerstoneTools?.state?.tools?.ImageOverlayViewer?.toolClass?.prototype;
+    if (!proto || proto[MARK]) return;
+    if (typeof proto._getCachedStat !== 'function' || typeof proto._renderOverlay !== 'function') return;
+    const read = proto._getCachedStat, draw = proto._renderOverlay;
+    // The plane ready to draw, or null; one per bulk data element, kept for the page.
+    const planes = new WeakMap();
+    async function plane(tool, imageId, overlayMetadata, o, color) {
+      if (!allowed(imageId, o)) return null;
+      let bytes = null;
+      try { bytes = await kinFetchBulk(o.pixelData.BulkDataURI); } catch (_) { return null; }
+      const need = Math.ceil(o.rows * o.columns / 8);
+      // Exactly one frame of the mask: one byte more only as the padding to an even length (a frame of an odd byte count).
+      if (!bytes || !(bytes.length === need || need % 2 === 1 && bytes.length === need + 1)) return null;
+      try {
+        const answer = await read.call(tool, imageId, { ...overlayMetadata, overlays: [{ ...o, pixelData: { Value: bytes.slice(0, need).buffer } }] }, color);
+        const drawn = answer?.overlays?.[0];
+        return drawn?.dataUrl ? { ...drawn, kinImageId: imageId, kinBulk: true } : null;
+      } catch (_) { return null; }
+    }
+    proto._getCachedStat = async function (imageId, overlayMetadata, color) {
+      const list = Array.isArray(overlayMetadata?.overlays) ? overlayMetadata.overlays : [];
+      if (!list.some(bulkOnly)) return read.call(this, imageId, overlayMetadata, color);
+      const drawn = await Promise.all(list.map(o => {
+        if (!bulkOnly(o)) return Promise.resolve(read.call(this, imageId, { ...overlayMetadata, overlays: [o] }, color))
+          .then(answer => answer?.overlays?.[0] || null, () => null);
+        if (!planes.has(o.pixelData)) planes.set(o.pixelData, plane(this, imageId, overlayMetadata, o, color));
+        return planes.get(o.pixelData);
+      }));
+      return { ...overlayMetadata, overlays: drawn.filter(Boolean) };
+    };
+    proto._renderOverlay = function (enabledElement, svgDrawingHelper, overlay) {
+      if (overlay?.kinBulk) {
+        const viewport = enabledElement?.viewport, id = this.getReferencedImageId(viewport);
+        if (this.mode === 'Disabled' || overlay.kinImageId !== id || !upright(viewport, id)) return false;
+      }
+      return draw.call(this, enabledElement, svgDrawingHelper, overlay);
+    };
+    proto[MARK] = true;
+  }
+  return { id: 'kin.overlay-planes', preRegistration() { install(); }, onModeEnter() { install(); } };
+}
 // The viewer's route `/` (see customizationService below): leave the viewer app for the sign-in entry, which sends a signed-in
 // account to its home screen (KinAuth.home: the worklist, or the clinician screen) and anyone else to sign in.
 function kinViewerRootToWorklist() {
@@ -7228,7 +7442,7 @@ function kinViewerRootToWorklist() {
 }
 
 window.config = {
-  extensions: [kinCreateSessionBoundary(), kinStackPrecision, kinCreateFrameMetadata(), kinCreateSRProvenance(), kinCreateViewerHistory(), kinCreateViewerFindings(), kinCreateViewerLayout(), kinCreateViewerJobs(), kinCreateViewerTechNote(), kinCreateFrameCoverage(), '@ohif/extension-dicom-pdf', kinCreateDicomPdf(), kinCreateCTSync(), kinCreateCine(), kinCreateDisplayScope(), kinCreateCellMerge(), kinCreateImagesOnly(), kinCreateImageText(), kinCreateCTPresets(), kinCreateThreeDCursor(), kinCreateSeriesMetadataRecovery(), kinCreateImageLoadStatus(), kinCreateContextLoss(), kinCreateMammographyHanging(), kinCreateSeriesSplit(), kinCreateSeriesOrder(), kinCreateMGReferenceLines(), kinCreateStudyPrefetch(), kinCreateStudySearch(), kinCreateViewerUX(), kinCreateViewerPrior(), kinCreateViewerReportPanel(), kinCreateMultiStudyStrip(), kinCreateMarkerStyle()],
+  extensions: [kinCreateSessionBoundary(), kinStackPrecision, kinCreateFrameMetadata(), kinCreateSRProvenance(), kinCreateViewerHistory(), kinCreateViewerFindings(), kinCreateViewerLayout(), kinCreateViewerJobs(), kinCreateViewerTechNote(), kinCreateFrameCoverage(), '@ohif/extension-dicom-pdf', kinCreateDicomPdf(), kinCreateCTSync(), kinCreateCine(), kinCreateDisplayScope(), kinCreateCellMerge(), kinCreateImagesOnly(), kinCreateImageText(), kinCreateCTPresets(), kinCreateThreeDCursor(), kinCreateSeriesMetadataRecovery(), kinCreateImageLoadStatus(), kinCreateContextLoss(), kinCreateMammographyHanging(), kinCreateSeriesSplit(), kinCreateSeriesOrder(), kinCreateMGReferenceLines(), kinCreateStudyPrefetch(), kinCreateStudySearch(), kinCreateViewerUX(), kinCreateViewerPrior(), kinCreateViewerReportPanel(), kinCreateMultiStudyStrip(), kinCreateMarkerStyle(), kinCreateOverlayPlanes()],
   // REQ-D-3D-CURSOR. 3D Cursor(대응점 표시)는 뷰어에 켜져 있다. 판독자는 도구 영역의 3D Cursor
   // 버튼으로 모드에 들어간다. === true 하나만 ON이고, 끄는 길도 이 리터럴 하나뿐이다.
   kinThreeDCursor: { enabled: true },

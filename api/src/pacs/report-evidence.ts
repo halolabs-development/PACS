@@ -16,6 +16,7 @@ import { applyStructureKeepList, isStructureEntry, projectStructure, structureAp
   structureIdList, structureItemKey, structureSameTextCounts, structureUnion, StructureInputError, STRUCTURE_CATALOG,
   REPORT_STRUCTURE_LIMITS, REPORT_STRUCTURE_SCHEMA } from '../report-structure';
 import { draftToken, refuseDestroyed, visibleDraftAuthor } from './values';
+import { assertHeadReadable, headForLock, storedVersionReadable, versionBodyReadable, versionClasses, inProgressRefusal } from '../report-visibility';
 import type { Caller, PacsAccess } from './access';
 import { reportVersionCitationsRead, reportVersionsRead } from '../emr-viewing/report-read';
 import { LocalReadResponse } from '../emr-viewing/local-read';
@@ -386,7 +387,16 @@ export class PacsReportEvidence {
         author: signers.has(row.author) ? row.author : visibleDraftAuthor(row.author, c),
         reason: resetCopy ? row.reason : '관리자 강제 초안 해제' };
     });
-    return reportVersionsRead(uid, prev.institutionId, shown, sourceIdentity);
+    // The state table (report-visibility.ts): a Save/Defer version outside a Preliminary, and a discarded copy of one or of a
+    // private draft, keeps its text for its writer. The row (number, action, who, when) stays, marked so the screen says why it is empty.
+    const classes = versionClasses(scoped);
+    const readable = shown.map((row, i) => {
+      const raw = scoped[i];
+      if (versionBodyReadable(raw, classes.get(raw.version), c)) return row;
+      const { drawings: _withheld, ...rest } = row as any;
+      return { ...rest, findings: '', conclusion: '', recommendation: '', bodyHidden: 'in-progress' };
+    });
+    return reportVersionsRead(uid, prev.institutionId, readable, sourceIdentity);
     }, { isolationLevel: 'RepeatableRead', maxWait: 2000, timeout: 5000 });
   }
 
@@ -418,6 +428,7 @@ export class PacsReportEvidence {
       if (!state) throw new NotFoundException('검사를 찾을 수 없습니다');
       if (!canReadPreliminary(state, c)) throw new ForbiddenException('예비 판독(RS: P) 중입니다. 지정된 판독의만 볼 수 있습니다.');
       refuseDestroyed(state);
+      assertHeadReadable(state, await headForLock(tx, uid, state), c);
       const report = await tx.report.findUnique({ where: { uid }, select: { version: true, groupId: true } });
       if (report) await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: report });
       const head = await this.versionCitations(tx, uid, report?.version ?? 0);
@@ -480,9 +491,12 @@ export class PacsReportEvidence {
       if (!state) throw new NotFoundException('검사를 찾을 수 없습니다');
       if (!canReadPreliminary(state, c)) throw new ForbiddenException('예비 판독 중입니다');
       refuseDestroyed(state);
+      assertHeadReadable(state, await headForLock(tx, uid, state), c);
       const report = await tx.report.findUnique({ where: { uid }, select: { version: true, groupId: true } });
-      const headRow = report?.version ? await tx.reportVersion.findUnique({
-        where: { uid_version: { uid, version: report.version } }, select: { drawings: true, groupId: true } }) : null;
+      const stored = report?.version ? await tx.reportVersion.findUnique({
+        where: { uid_version: { uid, version: report.version } }, select: { version: true, action: true, author: true, reason: true, drawings: true, groupId: true } }) : null;
+      // The report state table on the head version itself: another physician's Save of drawings alone keeps them too.
+      const headRow = stored && await storedVersionReadable(tx, uid, stored, c) ? stored : null;
       const headScope = headRow ? await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: headRow }) : null;
       const head = versionDrawings(headRow?.drawings);
       if (headScope) await drawingEntries(tx, uid, head.map(d => d.id), headScope);
@@ -538,8 +552,13 @@ export class PacsReportEvidence {
       if (!state) throw new NotFoundException('검사를 찾을 수 없습니다');
       if (!canReadPreliminary(state, c)) throw new ForbiddenException('예비 판독 중입니다');
       refuseDestroyed(state);
-      const held = await tx.$queryRaw<any[]>`SELECT version, "groupId" FROM "ReportVersion" WHERE uid = ${uid}
-        AND drawings @> jsonb_build_array(jsonb_build_object('id', ${id}::text)) ORDER BY version DESC LIMIT 1`;
+      // The newest version holding this drawing whose text this reader may read (the state table, report-visibility.ts):
+      // another physician's Save does not show its drawing; an approved version that holds it still does.
+      const holding = await tx.$queryRaw<any[]>`SELECT version, "groupId", action, author, reason FROM "ReportVersion" WHERE uid = ${uid}
+        AND drawings @> jsonb_build_array(jsonb_build_object('id', ${id}::text)) ORDER BY version DESC`;
+      const held: any[] = [];
+      for (const row of holding) if (await storedVersionReadable(tx, uid, row, c)) { held.push(row); break; }
+      if (!held.length) assertHeadReadable(state, await headForLock(tx, uid, state), c);
       const draft = held.length ? null : await tx.reportDraft.findUnique({
         where: { uid_author: { uid, author: c.actor } }, select: { drawings: true, present: true, revision: true, groupId: true } });
       if (!held.length && !(draft?.present && draftDrawings(draft.drawings)?.ids.includes(id)))
@@ -587,6 +606,7 @@ export class PacsReportEvidence {
       if (!state) throw new NotFoundException('검사를 찾을 수 없습니다');
       if (!canReadPreliminary(state, c)) throw new ForbiddenException('예비 판독(RS: P) 중입니다. 지정된 판독의만 볼 수 있습니다.');
       refuseDestroyed(state);
+      assertHeadReadable(state, await headForLock(tx, uid, state), c);
       const report = await tx.report.findUnique({ where: { uid },
         select: { version: true, findings: true, conclusion: true, recommendation: true, groupId: true } });
       if (report) await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: report });
@@ -669,11 +689,13 @@ export class PacsReportEvidence {
         where: { uid_version: { uid, version: want } },
         // action separates safety copies from committed provenance; it is not
         // returned. id likewise stays internal to the access record.
-        select: { id: true, action: true, citations: true, findings: true, conclusion: true, recommendation: true, groupId: true },
+        select: { id: true, version: true, action: true, author: true, reason: true, citations: true, findings: true, conclusion: true, recommendation: true, groupId: true },
       });
       // 없는 판을 「인용 없음」으로 답하면 그 자체가 거짓말이다.
       if (!row) throw new NotFoundException('그 판을 찾을 수 없습니다');
       await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: row });
+      // The state table (report-visibility.ts): another physician's Save keeps the citations measured on its text.
+      if (!await storedVersionReadable(tx, uid, row, c)) throw inProgressRefusal(null);
       const entries = citationArray(row.citations);
       // `n`은 **행 전체**에서 센다. 축약된 건이 빠지면 `ambiguous`여야 할 것이 `present`가 된다.
       const counts = sameTextCounts(entries);

@@ -1,0 +1,41 @@
+name: Dependency audit
+# Known vulnerabilities in what the product ships: npm lock files, Python requirements, the images the product's
+# Dockerfiles build (built with --pull) and the images its Compose files run. scripts/ops_dependency_audit.py finds
+# the targets, runs the scanners and decides; this file only installs the scanner and keeps the results.
+# Weekly and by hand only - never on a pull request or a push - so it neither slows nor fails pull-request CI.
+# Exit of the check: 0 clean, 1 shipped critical/high finding (listed under "Needs action"), 2 incomplete.
+# The release runbook reads the latest run on main before every release (docs/ops/release-tools-runbook.md).
+permissions:
+  contents: read
+concurrency:
+  group: dependency-audit
+  cancel-in-progress: false
+'on':
+  # Sunday 21:00 UTC = Monday 06:00 KST, away from the nightly validation at 18:00 UTC.
+  schedule:
+  - cron: '0 21 * * 0'
+  workflow_dispatch: {}
+jobs:
+  dependency-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - name: Scanner for Python requirements
+      run: |
+        python3 -m venv "$RUNNER_TEMP/pip-audit"
+        "$RUNNER_TEMP/pip-audit/bin/python" -m pip install --disable-pip-version-check --quiet pip-audit==2.10.1
+    - name: Known vulnerabilities in dependencies and images
+      run: >-
+        python3 -B scripts/ops_dependency_audit.py run --out "$RUNNER_TEMP/dependency-audit"
+        --pip-audit "$RUNNER_TEMP/pip-audit/bin/pip-audit" --trivy-cache "$RUNNER_TEMP/trivy-cache"
+    - name: Keep the scan results
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: dependency-audit
+        path: ${{ runner.temp }}/dependency-audit
+        retention-days: 90
+        if-no-files-found: error

@@ -181,7 +181,12 @@ test('S4-U3 list: only own rows carry the stored receipt; tele, stray and absent
   const svc=new PacsService(prisma,orthanc,{},new StudyAccessService(prisma,orthanc,{}));
   await start(svc,prisma,[{id:'hallym',name:'hallym'},{id:'kin-center',name:'kin-center'}]);
   const caller={institution:'hallym',sub:'synthetic-sub',actor:'synthetic-tech',roles:['technician'],kind:'member'};
+  // Missing images: readFrom is the server time before the enumeration began, never after it nor after observedAt.
+  const enumerated=[],studies=orthanc.studies;orthanc.studies=async(...args)=>{enumerated.push(Date.now());return studies(...args);};
   const r=await svc.listStudies(caller);
+  assert.match(r.readFrom,/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  assert.equal(enumerated.length,1);
+  assert.ok(Date.parse(r.readFrom)<=enumerated[0]&&Date.parse(r.readFrom)<=Date.parse(r.observedAt),JSON.stringify([r.readFrom,enumerated,r.observedAt]));
   const rows=Object.fromEntries(r.studies.map(s=>[s.uid,s]));
   assert.deepEqual(Object.keys(rows).sort(),['2.25.21','2.25.22','2.25.23','2.25.24']);
   assert.deepEqual(rows['2.25.21'].gatewayReceipt,{phase:'complete',successCount:12,localCount:12,attempt:0,errorCode:null,
@@ -196,6 +201,7 @@ test('S4-U3 list: only own rows carry the stored receipt; tele, stray and absent
   reads.length=0;
   const page=await svc.listStudies(caller,{limit:'1'});
   assert.equal(page.studies.length,1);
+  assert.ok(Date.parse(page.readFrom)<=Date.parse(page.observedAt),'every page carries its own readFrom');
   assert.deepEqual(reads.map(x=>[x.where.studyUid.in,x.where.institutionId]),[[[page.studies[0].uid],'hallym']]);
 });
 

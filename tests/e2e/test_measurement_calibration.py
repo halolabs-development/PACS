@@ -10,7 +10,7 @@ from pynetdicom import AE
 from invariants_live import Fixture
 from test_measurement_panel import MeasurementPanelE2E, expect
 from viewer_precision_support import canvas_ready
-from viewer_tools import select_image_tool
+from viewer_tools import displayed_image_box, select_image_tool
 
 NO_SPACING = '원본에 픽셀 간격이 없습니다 · Calibration으로 화면 보정 후 잴 수 있습니다'
 SCREEN = '화면 보정 · 저장 안 됨'
@@ -331,9 +331,7 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
                 self.assertLess(abs(angle['value'] - expected), 1e-3, (expected, angle))
                 # The places below are fractions of the image as drawn (a fraction of the canvas falls beside a narrow
                 # image in a wide cell, and a line off the image is refused).
-                box = p.evaluate('''()=>{const v=cornerstone.getEnabledElements()[0].viewport, d=v.getImageData(), r=v.canvas.getBoundingClientRect();
-                  const [w,h]=d.dimensions, a=v.worldToCanvas(d.imageData.indexToWorld([0,0,0])), b=v.worldToCanvas(d.imageData.indexToWorld([w-1,h-1,0]));
-                  return {x:r.left+Math.min(a[0],b[0]), y:r.top+Math.min(a[1],b[1]), width:Math.abs(b[0]-a[0]), height:Math.abs(b[1]-a[1])};}''')
+                box = displayed_image_box(p)
                 if modality == 'CR':
                     unconfirmed = '화면에 그려진 영상을 확인할 수 없어 이 점으로 재지 않습니다'
                     # Drawn with a spacing other than its own (a stack keeps the previous image's spacing when the next one
