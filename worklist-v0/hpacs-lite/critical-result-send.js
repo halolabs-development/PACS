@@ -586,29 +586,32 @@
       paintRecipientNote(read);
     }
 
-    /** Current role bindings come from the server. Only an older response uses the worklist's free-text physician name. */
+    // ReqDoc helps the sender pick an account by hand. The name never selects a recipient.
+    function orderingPhysicianHint() {
+      const row = dialogUid === null ? null : study(dialogUid);
+      const doctor = row && text(row.reqDoc) ? row.reqDoc.trim() : '';
+      if (!doctor) return kinWrite(make('span'), kinSay(TEXT.recipients.orderingNone));
+      const name = make('span', null, doctor);
+      name.setAttribute('translate', 'no');
+      const line = make('span');
+      line.append(kinWrite(make('span'), kinSay(TEXT.recipients.ordering)), name, make('span', null, '\n'),
+        kinWrite(make('span'), kinSay(TEXT.recipients.orderingHint)));
+      return line;
+    }
+
     function paintRecipientNote(read) {
       if (read.orderingPhysician !== undefined) {
         const notes = [];
-        if (read.orderingPhysician === 'none') notes.push('처방의 미도달 — 계정 미연결');
-        if (read.orderingPhysician === 'unlisted') notes.push('연결된 처방의는 지금 선택할 수 없습니다.');
-        if (read.inbox === 'none') notes.push(TEXT.recipients.inboxNone);
-        if (read.inbox === 'unlisted') notes.push('지정된 병원 공용 수신함은 지금 선택할 수 없습니다.');
-        recipientNote.replaceChildren(...notes.map(note => kinWrite(make('div'), kinSay(note))));
+        const note = value => kinWrite(make('div'), kinSay(value));
+        if (read.orderingPhysician === 'none') notes.push(note('처방의 미도달 — 계정 미연결'), orderingPhysicianHint());
+        if (read.orderingPhysician === 'unlisted') notes.push(note('연결된 처방의는 지금 선택할 수 없습니다.'));
+        if (read.inbox === 'none') notes.push(note(TEXT.recipients.inboxNone));
+        if (read.inbox === 'unlisted') notes.push(note('지정된 병원 공용 수신함은 지금 선택할 수 없습니다.'));
+        recipientNote.replaceChildren(...notes);
         return;
       }
       if (!read.recipients.length) { recipientNote.replaceChildren(); return; }
-      const row = dialogUid === null ? null : study(dialogUid);
-      const doctor = row && text(row.reqDoc) ? row.reqDoc.trim() : '';
-      const lines = [];
-      if (doctor) {
-        const name = make('span', null, doctor);
-        name.setAttribute('translate', 'no');
-        const line = make('span');
-        line.append(kinWrite(make('span'), kinSay(TEXT.recipients.ordering)), name, make('span', null, '\n'),
-          kinWrite(make('span'), kinSay(TEXT.recipients.orderingHint)));
-        lines.push(line);
-      } else lines.push(kinWrite(make('span'), kinSay(TEXT.recipients.orderingNone)));
+      const lines = [orderingPhysicianHint()];
       const inbox = read.inbox === 'none' ? TEXT.recipients.inboxNone : read.inbox === 'unlisted' ? TEXT.recipients.inboxUnlisted
         : read.recipients.some(r => r.inbox && r.pending) ? TEXT.recipients.inboxPending : '';
       if (inbox) lines.push(make('span', null, '\n'), kinWrite(make('span'), kinSay(inbox)));

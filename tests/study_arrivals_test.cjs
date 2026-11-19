@@ -284,6 +284,29 @@ test('missing images: a paged list bounds the comparison by when its first page 
   assert.deepEqual(arrivals.receiptLabels({assignment:'assigned',observation:failed,gateway:report}).reasons,[]);
 });
 
+test('missing images of a merged exam: each original answered alone, never from the summed count',()=>{
+  const report=(sent,seq)=>({phase:'retry',successCount:sent,localCount:20,attempt:1,errorCode:'stow_http',
+    serverReceivedAt:'2026-09-24T01:01:00.000Z',agentSeq:seq,epoch:1});
+  const sources=[row('1.1',12,3,{gatewayReceipt:report(15,1)}),row('1.2',30,2,{gatewayReceipt:null})];
+  const exam=list=>row('1.1',list.reduce((sum,s)=>sum+s.count,0),5,{examScope:{reportUid:'1.1',groupId:'g',kind:'merge',part:null,generation:'g1',
+    sources:list.map(s=>({studyUid:s.uid,series:{mode:'all',uids:[]}}))},sourceMetadata:list});
+  const read=list=>arrivals.observationSucceeded(arrivals.observationStart(),{owner:['h','s'],studies:[exam(list)],
+    observation:{observedAt:'2026-09-24T01:02:00.000Z',notObserved:[]}}).model;
+  // 42 held in all is more than the 15 sent, yet the first original holds 12 of its 15: one of two.
+  const model=read(sources);
+  assert.equal(arrivals.originalGap(model,'1.1').missing,true);assert.equal(arrivals.originalGap(model,'1.2'),null);
+  assert.deepEqual((({missing,stale,originals,short,text})=>({missing,stale,originals,short,text}))(arrivals.examGap(model,['1.1','1.2'])),
+    {missing:true,stale:false,originals:2,short:1,text:'Needs Check · 영상 누락: 원본 검사 2건 중 1건'});
+  // The same original named twice (two split parts of it) is one original.
+  assert.equal(arrivals.examGap(model,['1.1','1.1']).text,'Needs Check · 영상 누락: 원본 검사 1건 중 1건');
+  // A failed observation keeps the last answer, said as such.
+  const failed=arrivals.examGap(arrivals.observationFailed(model),['1.1','1.2'],()=>'T');
+  assert.deepEqual([failed.stale,failed.text],[true,'Needs Check · 영상 누락(관측 불가 · 마지막 관측 T 기준): 원본 검사 2건 중 1건']);
+  // Filled, or never observed: no answer.
+  assert.equal(arrivals.examGap(read([row('1.1',15,3,{gatewayReceipt:report(15,1)}),sources[1]]),['1.1','1.2']),null);
+  assert.equal(arrivals.examGap(arrivals.observationStart(),['1.1','1.2']),null);
+});
+
 test('S4-U1b IF-W09 three phrases are distinct and only 관측 불가 comes from a failed observation',()=>{
   const phrases=Object.keys(V.phrases).map(kind=>arrivals.phrase(kind));
   assert.deepEqual(phrases,Object.values(V.phrases));

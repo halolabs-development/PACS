@@ -300,6 +300,40 @@ test('the tool groups\' own dashes (SR previews) follow Solid and Dashed and ret
   mounted.dispose();delete globalThis.document;
 });
 
+test('a cell\'s own dashes (the measurement-tracking cell sets them) follow Solid and Dashed, whenever the cell sets them, and return with Default',()=>{
+  const d=arrowViewer(),style=d.tools.annotation.config.style;
+  let cells={};
+  Object.assign(style,{config:{get viewports(){return cells;}},setViewportToolStyles(id,s){cells={...cells,[id]:clone(s)};}});
+  // Cornerstone reads a cell's own entry before the defaults: the dash a cell's marks are drawn with.
+  const drawn=(id,tool)=>cells[id]?.[tool]?.lineDash??cells[id]?.global?.lineDash??d.styles()[tool]?.lineDash??d.styles().global.lineDash;
+  const tracked={ReferenceLines:{lineDash:'4,4'},global:{lineDash:''}},untracked={global:{lineDash:'4,4'}};
+  style.setViewportToolStyles('a',tracked);
+  const mounted=markers.mount({tools:d.tools,cornerstone:d.cornerstone,owner:OWNER});
+  assert.deepEqual(cells,{a:tracked},'Default keeps the cell\'s own dashes');
+  const choose=over=>d.win.dispatchEvent(new CustomEvent('kin-marker-style-change',{detail:{owner:OWNER,value:v2(over)}}));
+  choose({line:'dashed',color:'red',width:'thick'});
+  assert.equal(drawn('a','Length'),'12,8');assert.equal(drawn('a','ReferenceLines'),'4,4','the reference lines keep their own dashes');
+  assert.deepEqual(Object.keys(cells.a.global),['lineDash'],'the cell takes nothing it did not set');
+  // A cell the viewer sets after the mount (its tracking changed) is drawn with the choice at once.
+  style.setViewportToolStyles('b',untracked);assert.equal(drawn('b','Length'),'12,8');
+  style.setViewportToolStyles('a',untracked);assert.equal(drawn('a','Length'),'12,8');
+  choose({line:'solid'});
+  for(const id of ['a','b'])assert.equal(drawn(id,'ArrowAnnotate'),'',id+' Solid is solid in every cell');
+  // Another account's choice does not reach the cells.
+  d.win.dispatchEvent(new CustomEvent('kin-marker-style-change',{detail:{owner:OTHER,value:v2({line:'dashed'})}}));
+  assert.equal(drawn('b','Length'),'');
+  // The viewer's own clearing of a cell stays empty; Default returns every cell to what the viewer set last.
+  style.setViewportToolStyles('c',{});assert.deepEqual(cells.c,{});
+  choose({});
+  assert.deepEqual(cells,{a:untracked,b:untracked,c:{}});
+  // A later mount of the same document keeps the cells' own styles.
+  mounted.dispose();style.setViewportToolStyles('a',tracked);
+  const again=markers.mount({tools:d.tools,cornerstone:d.cornerstone,owner:OWNER});
+  choose({line:'dashed'});assert.equal(drawn('a','Length'),'6,4');assert.equal(drawn('a','ReferenceLines'),'4,4');
+  choose({});assert.deepEqual(cells.a,tracked);
+  again.dispose();delete globalThis.document;
+});
+
 test('appearance version 11 keeps the version 2 marker choice and a version 10 client cannot erase it',async()=>{
   const f=appearanceFixture(),save=(sizes,revision)=>f.service.saveReadingAppearance({expectedOwner:owner,revision,sizes},caller);
   const v11=(choice=v2({color:'red',width:'thick',line:'dashed',arrowheads:'off',font:'serif'}))=>({...v9(),version:11,markers:choice});

@@ -22,6 +22,9 @@ MARKER = b'KIN-SYNTHETIC-IMAGE-RESTORE\n'
 FIELDS = {'schema', 'code_sha', 'run_id', 'run_attempt', 'producer_boot_id', 'token', 'image_id',
           'archive_bytes', 'archive_sha256', 'marker_sha256'}
 UUID = re.compile(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}')
+# Repositories whose hosted runners may run the synthetic restore fixtures: the
+# project itself and its CI-only fork. Every other repository is refused.
+CI_REPOSITORIES = frozenset({'halolabs-development/PACS', 'jmryu1989/PACS-ci'})
 
 
 def require(value):
@@ -43,7 +46,7 @@ def ci_context():
     # boundary against a hostile process with this runner's user privileges.
     require(sys.platform == 'linux' and os.environ.get('GITHUB_ACTIONS') == 'true'
             and os.environ.get('RUNNER_ENVIRONMENT') == 'github-hosted'
-            and os.environ.get('GITHUB_REPOSITORY') == 'halolabs-development/PACS')
+            and os.environ.get('GITHUB_REPOSITORY') in CI_REPOSITORIES)
     body = {key: os.environ[env] for key, env in
             [('code_sha', 'GITHUB_SHA'), ('run_id', 'GITHUB_RUN_ID'), ('run_attempt', 'GITHUB_RUN_ATTEMPT')]}
     require(re.fullmatch('[0-9a-f]{40}', body['code_sha']))

@@ -96,6 +96,7 @@ const studyMissing = () => refuse({ status: 404, code: CODE.STUDY_NOT_FOUND });
 const recordMissing = () => refuse({ status: 404, code: CODE.NOT_FOUND });
 const ownerChanged = () => refuse({ status: 409, code: CODE.OWNER_CHANGED });
 const reused = () => refuse({ status: 409, code: CODE.REUSED });
+const pendingRefusal = (id: string): Refusal => ({ status: 409, code: CODE.PENDING_EXISTS, id });
 const busy = () => refuse({ status: 503, code: CODE.BUSY });
 const unavailable = () => refuse({ status: 503, code: CODE.UNAVAILABLE });
 
@@ -457,6 +458,18 @@ export class CriticalResultService {
     return rows[0] ?? { orderingPhysician: null, hospitalInbox: null };
   }
 
+  private async prepareRecipients(c: Caller, uid: string, institution: string, candidates: Iterable<string>) {
+    const preparedRoles = await this.roleAccounts(this.prisma, uid, institution);
+    const subjects = new Map<string, Caller>();
+    for (const sub of new Set([...candidates, preparedRoles.orderingPhysician, preparedRoles.hospitalInbox])) {
+      if (!sub) continue;
+      const subject = this.subject(c, institution, sub);
+      await prepareRecordExamRead(this.prisma, this.studyAccess, subject, uid);
+      subjects.set(sub, subject);
+    }
+    return subjects;
+  }
+
   // ── #1 후보 ──
 
   /**
@@ -480,14 +493,7 @@ export class CriticalResultService {
     }
     // Directory entries supply general candidates. A matched order or configured inbox identifies its own
     // account by subject even when the provider roster lags. Only prepare here; decide from the read snapshot.
-    const preparedRoles = await this.roleAccounts(this.prisma, uid, institution);
-    const subjects = new Map<string, Caller>();
-    for (const sub of new Set([...directory.keys(), preparedRoles.orderingPhysician, preparedRoles.hospitalInbox])) {
-      if (!sub) continue;
-      const subject = this.subject(c, institution, sub);
-      await prepareRecordExamRead(this.prisma, this.studyAccess, subject, uid);
-      subjects.set(sub, subject);
-    }
+    const subjects = await this.prepareRecipients(c, uid, institution, directory.keys());
     const out = await this.run(c, [], async tx => {
       const state = await this.studyRow(tx, uid, false);
       // 사전 읽기 뒤 소유 기관이 바뀌어 범위가 다른 기관이 되었으면 준비한 후보는 그 기관의 것이 아니다.
@@ -530,6 +536,53 @@ export class CriticalResultService {
       recipients: out.recipients };
   }
 
+  private async pendingDeliveries(tx: any, uid: string, sender: string) {
+    const rows = await tx.$queryRaw`SELECT id,"recipientSub" FROM "CriticalResult" WHERE "studyUid"=${uid}
+      AND "senderSub"=${sender} AND state='created'`;
+    return new Map<string, string>(rows.map(row => [row.recipientSub, row.id]));
+  }
+
+  // A replacement selects just its existing recipient. Its role results use the same current bindings,
+  // member locks and report-read decisions as a new send.
+  private async planDeliveries(tx: any, c: Caller, state: any, head: Head, request: {
+    requestId: string; selected: string[]; subjects: Map<string, Caller>; pendingBySub: Map<string, string>;
+  }) {
+    const { uid, institutionId: institution } = state;
+    const { requestId, selected, subjects, pendingBySub } = request;
+    const roles = await this.roleAccounts(tx, uid, institution);
+    const chosen = new Set(selected);
+    const accounts = new Map<string, SendTarget>();
+    const deliveries: {user: KeycloakUser; cls: RecipientClass; id: string}[] = [];
+    let firstRefusal: Refusal | null = null;
+    for (const sub of [...new Set([...selected, roles.orderingPhysician, roles.hospitalInbox])].filter(Boolean).sort()) {
+      // An administrator may have changed a target while we prepared its access metadata.
+      if (!subjects.has(sub)) throw refuse({ status: 409, code: CODE.CHANGED });
+      await lockMemberRights(tx, sub);
+      const decision = await this.judgeRecipient(tx, uid, institution, c, sub, subjects.get(sub), head, state);
+      const existing = pendingBySub.get(sub);
+      let target: SendTarget;
+      if ('refusal' in decision) {
+        // A missing/unrelated account is never disclosed through an automatic role.
+        target = { sub: chosen.has(sub) ? sub : decision.memberSub, status: decision.refusal.code };
+        if (chosen.has(sub)) firstRefusal ??= decision.refusal;
+      } else if (existing) {
+        target = { sub, actor: userActor(decision.user), status: 'pending' };
+        if (chosen.has(sub)) firstRefusal ??= pendingRefusal(existing);
+      } else if (!chosen.has(sub)) {
+        target = { sub, actor: userActor(decision.user), status: 'unchecked' };
+      } else {
+        const id = deliveries.length ? randomUUID() : requestId;
+        deliveries.push({ user: decision.user, cls: decision.cls, id });
+        target = { sub, actor: userActor(decision.user), status: 'delivered', id };
+      }
+      accounts.set(sub, target);
+    }
+    if (!deliveries.length) throw refuse(firstRefusal ?? { status: 400, code: CODE.RECIPIENT_INVALID });
+    const outcome = (sub: string | null): SendTarget => sub ? accounts.get(sub) : { sub: null, status: 'unlinked' };
+    const send = { requestId, orderingPhysician: outcome(roles.orderingPhysician), hospitalInbox: outcome(roles.hospitalInbox) };
+    return { deliveries, accounts, send };
+  }
+
   // ── #2 생성 ──
 
   /** POST studies/:uid/critical-results. 발신자는 인증된 요청, 수신자 자격·귀속은 DB 회원에서 온다. */
@@ -549,20 +602,14 @@ export class CriticalResultService {
     const input = { uid, institution: c.institution, subject: c.sub, sourceVersion: b.sourceVersion, message: b.message };
     const mark = batch ? sendFingerprint({ ...input, recipientSubs: selected }) : createFingerprint({ ...input, recipientSub: selected[0] });
     const known = await this.prisma.criticalResultReceipt.findUnique({ where: { requestId } });
-    const subjects = new Map<string, Caller>();
+    let subjects = new Map<string, Caller>();
     let identity: any = null, prepared: string | null = null;
     if (!known) {
       await this.recheck(c, roles => holds(roles, RADIOLOGIST));
       prepared = await this.scope(uid, c);
       if (prepared) {
         identity = await this.identity(uid, c);
-        const roles = await this.roleAccounts(this.prisma, uid, prepared);
-        for (const sub of new Set([...selected, roles.orderingPhysician, roles.hospitalInbox])) {
-          if (!sub) continue;
-          const subject = this.subject(c, prepared, sub);
-          await prepareRecordExamRead(this.prisma, this.studyAccess, subject, uid);
-          subjects.set(sub, subject);
-        }
+        subjects = await this.prepareRecipients(c, uid, prepared, selected);
       }
     }
     await prepareRecordExamRead(this.prisma, this.studyAccess, c, uid);
@@ -585,47 +632,16 @@ export class CriticalResultService {
         if (record.sendOutcome && record.sendOutcome.requestId !== requestId) throw reused();
         return replayed;
       }
-      const pending = await tx.$queryRaw`SELECT id,"recipientSub" FROM "CriticalResult" WHERE "studyUid"=${uid}
-        AND "senderSub"=${c.sub} AND state='created'`;
-      const pendingBySub = new Map<string, string>(pending.map(row => [row.recipientSub, row.id]));
-      const pendingRefusal = (id: string): Refusal => ({ status: 409, code: CODE.PENDING_EXISTS, id });
+      const pendingBySub = await this.pendingDeliveries(tx, uid, c.sub);
       if (!batch && pendingBySub.has(selected[0])) throw refuse(pendingRefusal(pendingBySub.get(selected[0])));
       const head = await this.head(tx, uid);
       const source = await this.pinRefusal(tx, uid, b.sourceVersion, head, state, c);
       if (source) throw refuse(source);
       if (!identity || prepared !== institution) throw unavailable();
 
-      const roles = await this.roleAccounts(tx, uid, institution);
-      const chosen = new Set(selected);
-      const accounts = new Map<string, SendTarget>();
-      const deliveries: {user: KeycloakUser; cls: RecipientClass; id: string}[] = [];
-      let firstRefusal: Refusal | null = null;
-      for (const sub of [...new Set([...selected, roles.orderingPhysician, roles.hospitalInbox])].filter(Boolean).sort()) {
-        // An administrator may have changed a target while we prepared its access metadata.
-        if (!subjects.has(sub)) throw refuse({ status: 409, code: CODE.CHANGED });
-        await lockMemberRights(tx, sub);
-        const decision = await this.judgeRecipient(tx, uid, institution, c, sub, subjects.get(sub), head, state);
-        const existing = pendingBySub.get(sub);
-        let target: SendTarget;
-        if ('refusal' in decision) {
-          // A missing/unrelated account is never disclosed through an automatic role.
-          target = { sub: chosen.has(sub) ? sub : decision.memberSub, status: decision.refusal.code };
-          if (chosen.has(sub)) firstRefusal ??= decision.refusal;
-        } else if (existing) {
-          target = { sub, actor: userActor(decision.user), status: 'pending' };
-          if (chosen.has(sub)) firstRefusal ??= pendingRefusal(existing);
-        } else if (!chosen.has(sub)) {
-          target = { sub, actor: userActor(decision.user), status: 'unchecked' };
-        } else {
-          const id = deliveries.length ? randomUUID() : requestId;
-          deliveries.push({ user: decision.user, cls: decision.cls, id });
-          target = { sub, actor: userActor(decision.user), status: 'delivered', id };
-        }
-        accounts.set(sub, target);
-      }
-      if (!deliveries.length) throw refuse(firstRefusal ?? { status: 400, code: CODE.RECIPIENT_INVALID });
-      const outcome = (sub: string | null): SendTarget => sub ? accounts.get(sub) : { sub: null, status: 'unlinked' };
-      const send = { requestId, orderingPhysician: outcome(roles.orderingPhysician), hospitalInbox: outcome(roles.hospitalInbox) };
+      const { deliveries, accounts, send } = await this.planDeliveries(tx, c, state, head, {
+        requestId, selected, subjects, pendingBySub,
+      });
       const at = new Date(), name = this.name(c);
       let applied;
       for (const { id, user, cls } of deliveries) {
@@ -740,7 +756,8 @@ export class CriticalResultService {
     const mark = supersedeFingerprint({ id: recordId, institution: c.institution, subject: c.sub, revision: b.revision,
       sourceVersion: b.sourceVersion, message: b.message });
     const known = await this.prisma.criticalResultReceipt.findUnique({ where: { requestId } });
-    let identity: any = null, subject: Caller | null = null;
+    let identity: any = null;
+    let subjects = new Map<string, Caller>();
     if (!known) {
       await this.recheck(c, roles => holds(roles, RADIOLOGIST));
       // 수신자·검사·기록 기관은 옛 기록의 것이다. 남의 기록이거나 기록 기관이 지금 발신 범위가 아니면(tele 통로 닫힘
@@ -750,12 +767,11 @@ export class CriticalResultService {
       if (prior && prior.senderInstitutionId === c.institution && prior.senderSub === c.sub
         && await this.scope(prior.studyUid, c) === prior.institutionId) {
         identity = await this.identity(prior.studyUid, c);
-        subject = this.subject(c, prior.institutionId, prior.recipientSub);
-        await prepareRecordExamRead(this.prisma, this.studyAccess, subject, prior.studyUid);
+        subjects = await this.prepareRecipients(c, prior.studyUid, prior.institutionId, [prior.recipientSub]);
       }
     }
     await this.studyAccess.prepare(c);
-    return this.run(c, subject ? [subject] : [], async (tx, workflow) => {
+    return this.run(c, [...subjects.values()], async (tx, workflow) => {
       const { row, state, head } = await this.writeTarget(tx, recordId, c, 'sender', true, b.sourceVersion);
       const receipt = await tx.criticalResultReceipt.findUnique({ where: { requestId } });
       if (receipt) return this.replay(receipt, mark, recordId, 'supersede', c);
@@ -764,11 +780,13 @@ export class CriticalResultService {
       if (refusal) throw refuse(refusal);
       const source = await this.pinRefusal(tx, row.studyUid, b.sourceVersion, head, state, c);
       if (source) throw refuse(source);
-      if (!identity || !subject || subject.sub !== row.recipientSub || subject.institution !== row.institutionId) throw unavailable();
-      await lockMemberRights(tx, row.recipientSub);
-      const decision = await this.judgeRecipient(tx, row.studyUid, row.institutionId, c, row.recipientSub, subject, head, state);
-      if ('refusal' in decision) throw refuse(decision.refusal);
-      const { user, cls } = decision;
+      if (!identity || subjects.get(row.recipientSub)?.institution !== row.institutionId) throw unavailable();
+      const pendingBySub = await this.pendingDeliveries(tx, row.studyUid, c.sub);
+      // The old delivery is closed in this transaction. Any other pending recipient keeps their own delivery.
+      if (pendingBySub.get(row.recipientSub) === row.id) pendingBySub.delete(row.recipientSub);
+      const { deliveries: [{ user, cls }], send } = await this.planDeliveries(tx, c, state, head, {
+        requestId, selected: [row.recipientSub], subjects, pendingBySub,
+      });
       const at = new Date(), name = this.name(c);
       await tx.criticalResult.update({ where: { id: row.id }, data: { state: 'superseded', revision: 2, supersededAt: at,
         changedBy: c.actor, updatedAt: at } });
@@ -777,7 +795,7 @@ export class CriticalResultService {
         supersedes: null, replacedBy: requestId });
       const record = this.newRecord({ id: requestId, uid: row.studyUid, institution: row.institutionId, senderInstitution: row.senderInstitutionId,
         c, name, recipient: user, cls, head, identity, message: b.message, supersedesId: row.id, at });
-      await tx.criticalResult.create({ data: record });
+      await tx.criticalResult.create({ data: { ...record, sendOutcome: send } });
       await this.event(tx, requestId, 1, 'created', c, name, RADIOLOGIST, requestId, at);
       await this.writeAudit(tx, c, record, { event: 'created', from: null, to: 'created', revision: 1, requestId, role: RADIOLOGIST,
         supersedes: row.id, replacedBy: null });

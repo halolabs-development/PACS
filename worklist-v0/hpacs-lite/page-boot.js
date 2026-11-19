@@ -374,7 +374,7 @@
         fallback:()=>$('#filterrow [data-f="id"]'),
         current:()=>selectedUid,reveal:uid=>render(uid),activate:uid=>whenSelected(select(uid),uid,()=>{if(mode==='Radiology')focusReportEditor();})});
       relatedRowNavigation = KinWorklistRowNavigation.mount({tbody:$('#relrows'),owner:()=>KinViewerOpening.key(KinAuth.session()),rows:()=>relatedRows,
-        current:()=>relatedUid||selectedUid,fallback:()=>$('#related-modality').disabled?$('#clinical'):$('#related-modality'),
+        current:()=>relatedUid||selectedUid,fallback:()=>$('#related-modality').disabled?([$('#clinical'),$('.rw > .rw-folds > [data-unfold="clinical"]')].find(node=>node?.getClientRects().length)||$('#clinical')):$('#related-modality'),
         reveal:uid=>{const index=relatedRows.findIndex(row=>row.uid===uid);if(index>=0){relatedPage=Math.floor(index/50);renderRelated();}},
         activate:uid=>uid===selectedUid?returnToReportStudy():relatedActivate(uid,{focus:true})});
       mountViewerWindows();

@@ -78,7 +78,6 @@ model ProviderChange {
 
 /// PACS rights are authoritative here, never in identity-provider claims. Rows are retained on cancellation.
 model MemberRights {
-  ordersAsPhysician Order[]
   sub String @id
   username String
   email String
@@ -714,7 +713,6 @@ model Order {
   ward      String
   reqDoc    String
   orderingPhysicianSub String?
-  orderingPhysician MemberRights? @relation(fields: [orderingPhysicianSub], references: [sub], onDelete: SetNull, onUpdate: Cascade)
   matched   String  @default("U")
   /// 반대편에도 같은 1:1 제약을 둔다. 애플리케이션 검사 사이의 경쟁은 DB만이 끝까지 볼 수 있다.
   studyUid  String? @unique

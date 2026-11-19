@@ -2304,27 +2304,45 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
 
     EACH = '#cvr-send-each li[data-state="{0}"]'
 
-    def role_marks(self, disabled=False):
+    def role_marks(self, physician="listed"):
         self.inbox_marks(X)
         recipients = self.server.recipients
 
         def marked(uid):
             status, data = recipients(uid)
-            data["orderingPhysician"] = "unlisted" if disabled else "listed"
+            data["orderingPhysician"] = physician
             for row in data["recipients"]:
-                row["orderingPhysician"] = row["sub"] == P["sub"] and not disabled
-                row["reason"] = "CRITICAL_RESULT_RECIPIENT_CANNOT_READ" if disabled and row["sub"] == P["sub"] else None
+                row["orderingPhysician"] = row["sub"] == P["sub"] and physician == "listed"
+                row["reason"] = "CRITICAL_RESULT_RECIPIENT_CANNOT_READ" if physician == "unlisted" and row["sub"] == P["sub"] else None
             return status, data
         self.server.recipients = marked
 
+    def assert_wide_send_fields(self):
+        dialog_width = self.page.locator("#cvr-send .body").bounding_box()["width"]
+        for field in ("#cvr-send-recipient", "#cvr-send-message"):
+            with self.subTest(field=field):
+                self.assertGreater(self.page.locator(field).bounding_box()["width"], dialog_width / 2)
+
+    def test_unlinked_physician_shows_reqdoc_and_manual_selection_hint(self):
+        self.role_marks(physician="none")
+        self.ready_reader()
+        self.page.evaluate("uid => { window.synStudies.find(s => s.uid === uid).reqDoc = 'SYN ORDERING DOCTOR'; }", A)
+        self.mark()
+        note = self.page.locator("#cvr-send-recipient-note")
+        expect(note).to_contain_text("처방의 미도달")
+        expect(note).to_contain_text("Ordering physician (ReqDoc): SYN ORDERING DOCTOR")
+        expect(note).to_contain_text("목록에서 그 의사를 직접 고르세요")
+        self.assertEqual([X["sub"]], [b["sub"] for b in self.boxes() if b["checked"]])
+
     def test_role_change_disables_the_visible_account(self):
-        self.role_marks(disabled=True)
+        self.role_marks(physician="unlisted")
         self.ready_reader()
         self.mark()
         physician = self.page.locator(f'#cvr-send-recipient input[value="{P["sub"]}"]')
         expect(physician).not_to_be_checked()
         expect(physician).to_be_disabled()
         expect(self.page.locator(f'#cvr-send-recipient input[value="{X["sub"]}"]')).to_be_checked()
+        self.assert_wide_send_fields()
 
     def test_role_send_reopen_and_check_same_request_after_lost_partial_response(self):
         self.role_marks()
@@ -2347,6 +2365,7 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
         self.ready_reader()
         self.mark()
         self.assertEqual({b["sub"] for b in self.boxes() if b["checked"]}, {P["sub"], X["sub"]})
+        self.assert_wide_send_fields()
         self.fault("create", apply=True, abort=True)
         self.page.locator("#cvr-send-message").fill("SYN dual-role notification")
         self.page.locator("#cvr-send-submit").click()

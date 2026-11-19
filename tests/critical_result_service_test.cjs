@@ -2719,3 +2719,33 @@ test('send roles: sender history retains omissions and replay returns the origin
   assert.equal(readBody(await w.svc.list(person('P'), {view: 'received'})).items.length, 0);
   await assert.rejects(w.svc.create(UID, S(), roleSend([SUBS.P])), code(400, P.CRITICAL_RESULT_CODES.RECIPIENT_INVALID));
 });
+
+test('send roles: supersede records current role outcomes on the pending replacement', async () => {
+  const w = await world();
+  await approved(w);
+  await matchOrderingPhysician(w, UID, SUBS.P);
+  await w.svc.saveInbox(person('AD'), {sub: SUBS.X});
+  const {applied} = await w.svc.create(UID, S(), roleSend([SUBS.P, SUBS.X]));
+  const original = applied.send;
+  const inboxId = original.hospitalInbox.id;
+  const order = {oid: 'synthetic-order-' + UID};
+  await w.base.order.update({where: order, data: {orderingPhysicianSub: null}});
+
+  const replace = async (oldId, physician) => {
+    const rid = randomUUID(), body = supersedeBody(S(), rid, 1, 1);
+    const answer = await w.svc.supersede(oldId, S(), body);
+    const pending = readBody(await w.svc.list(S(), {view: 'sent', state: 'pending'})).items;
+    assert.deepEqual(pending.map(r => r.id).sort(), [original.orderingPhysician.id, rid].sort());
+    assert.deepEqual(pending.find(r => r.id === rid).send, {
+      requestId: rid, orderingPhysician: physician, hospitalInbox: {sub: SUBS.X, actor: actorOf('X'), status: 'delivered', id: rid},
+    });
+    assert.deepEqual(await w.svc.supersede(oldId, S(), body), {...answer, replayed: true});
+    return rid;
+  };
+  const first = await replace(inboxId, {sub: null, status: 'unlinked'});
+  await w.base.order.update({where: order, data: {orderingPhysicianSub: SUBS.P}});
+  const next = await replace(first, {sub: SUBS.P, actor: actorOf('P'), status: 'pending'});
+  await w.rights('P', {suspended: true});
+  await replace(next, {sub: SUBS.P, status: P.CRITICAL_RESULT_CODES.RECIPIENT_INVALID});
+  assert.deepEqual((await w.record(inboxId)).sendOutcome, original);
+});
