@@ -30,17 +30,17 @@ test('sc01 the compiled normalizer keeps every pre-unit document and shows Hospi
     assert.deepEqual(normalizeWorklistColumns(clone(v.document)).modes.Technician.order,v.expect.modes.Technician.order,v.id+' Technician');
   }
   // Preserving pair: another permutation of the stored order stays that permutation, Hospital after it; the request columns
-  // join right after Name and Confirm right after RS wherever the user put those two.
+  // join right after Name, Confirm right after RS and Referred right after StudyDate wherever the user put those.
   const permuted=clone(byId.V02.document);permuted.modes.Radiology.order.reverse();
   assert.deepEqual(normalizeWorklistColumns(permuted).modes.Radiology.order,[...clone(byId.V02.document).modes.Radiology.order].reverse()
-    .flatMap(k=>k==='name'?['name','reqDate','reqDept','reqDoc','ptClass']:k==='rs'?['rs','confirm']:[k]).concat('institutionName','time'));
+    .flatMap(k=>k==='name'?['name','reqDate','reqDept','reqDoc','ptClass']:k==='rs'?['rs','confirm']:k==='date'?['date','referredAt']:[k]).concat('institutionName','time'));
   // PF-10: both modes with every key at the widest width and all but ID and Name hidden still fit the 8192 bound.
   const widest=mode=>{const keys=byId.V01.expect.modes[mode].order;
     return {order:[...keys],hidden:keys.filter(k=>k!=='id'&&k!=='name'),appearance:{widths:Object.fromEntries(keys.map(k=>[k,600])),font:'mono',size:20,color:'warm'}};};
   const wide={version:1,modes:{Radiology:widest('Radiology'),Technician:widest('Technician')}};
   assert.ok(JSON.stringify(wide).length<=8192,String(JSON.stringify(wide).length));
   assert.deepEqual(normalizeWorklistColumns(clone(wide)),wide);
-  // A synthetic document over the bound is refused whole (no valid-key document can reach it: 29 keys at most).
+  // A synthetic document over the bound is refused whole (no valid-key document can reach it: 30 keys at most).
   const big=clone(byId.V01.document);big.modes.Radiology.appearance={widths:Object.fromEntries(Array.from({length:1000},(_,i)=>['k'+i,64])),font:'default',size:13,color:'default'};
   assert.ok(JSON.stringify(big).length>8192);assert.equal(normalizeWorklistColumns(big),null,'over the 8192 bound');
 });
@@ -212,7 +212,7 @@ test('sc05 list rows carry the owner registry name and tele only for a study rec
 const TECH=byId.V01.expect.modes.Technician;
 const doc=radiology=>({version:1,modes:{Radiology:radiology,Technician:clone(TECH)}});
 test('sc06 a stored layout gains the request columns after Name and Confirm after RS; the user\'s order and hidden stay',()=>{
-  const rest=['pf','assignedReader','techNote','no','viewing','count','series','em','ss','acc','ts','id','age','birth','sex','modality','desc','date','preDoc','preReviewer','institutionName','time'];
+  const rest=['pf','assignedReader','techNote','no','viewing','count','series','em','ss','acc','ts','id','age','birth','sex','modality','desc','date','referredAt','preDoc','preReviewer','institutionName','time'];
   // A partial order: RS and Name where the user put them, Age hidden; every other column after them as before.
   assert.deepEqual(normalizeWorklistColumns(doc({order:['rs','name'],hidden:['age']})).modes.Radiology,
     {order:['rs','confirm','name','reqDate','reqDept','reqDoc','ptClass',...rest],hidden:['age']});
@@ -283,6 +283,45 @@ test('sc08 list rows: an own matched study shows its order; a received tele stud
     const request=orderReads.find(r=>r.select&&'reqAt' in r.select);
     assert.deepEqual(request,{where:{oid:{in:['SYN-O1']},institutionId:'hallym'},select:{oid:true,reqAt:true,reqDept:true,reqDoc:true,ptClass:true,accession:true}});
   }
+});
+
+// ── Referred (after StudyDate): when the referring hospital's Gateway sent the study ──
+test('sc09 Referred is the stored first Gateway announce time of the study row, and nothing where no announce is recorded',async()=>{
+  const sent=new Date('2026-11-20T00:05:00.000Z');
+  assert.equal(values.referredAt({referredAt:sent}),'2026-11-20T00:05:00.000Z');
+  // Not the creation time: a device study registered by a list has a creation time and no Referred time.
+  assert.equal(values.referredAt({origin:'dicom',createdAt:sent,referredAt:null}),null);
+  assert.equal(values.referredAt({origin:'gateway',createdAt:sent}),null,'only the stored Referred time');
+  assert.equal(values.referredAt({referredAt:new Date('not a time')}),null);
+  assert.equal(values.referredAt({referredAt:'2026-11-20T00:05:00.000Z'}),null,'only the stored Date');
+  assert.equal(values.referredAt(null),null);assert.equal(values.referredAt(undefined),null);
+  // List rows: an own Gateway study, an own device study, and a Gateway study another institution sent hallym for tele-reading.
+  const times={'2.25.8301':new Date('2026-11-19T23:10:00.000Z'),'2.25.8302':new Date('2026-11-19T23:20:00.000Z'),'2.25.8303':new Date('2026-11-19T23:30:00.000Z')};
+  // 8302 was registered by a list (a device sent it directly): it has a creation time and no Referred time.
+  const states=[{...S('2.25.8301','hallym',null),origin:'gateway'},S('2.25.8302','hallym',null),{...S('2.25.8303','kin-center','hallym'),origin:'gateway'}];
+  const prisma={
+    studyState:{findMany:async arg=>{let rows=clone(states).map(s=>({...s,createdAt:times[s.uid],referredAt:s.origin==='gateway'?times[s.uid]:null}));const where=arg?.where;
+      if(where?.uid)rows=rows.filter(s=>where.uid.in.includes(s.uid));
+      else if(where?.institutionId)rows=rows.filter(s=>s.institutionId===where.institutionId);
+      return project(rows,arg?.select);}},
+    order:{findMany:async arg=>project([],arg?.select)},
+    studyGroup:{findMany:async()=>[]},studyGroupMember:{findMany:async()=>[]},report:{findMany:async()=>[]},reportDraft:{findMany:async()=>[]},studyAttachment:{groupBy:async()=>[],findMany:async()=>[],findFirst:async()=>null},gatewayReceipt:{findMany:async()=>[]},
+    readerAssignment:{findMany:async()=>[]},$queryRaw:async()=>[],
+  };
+  const qido=[Q('2.25.8301','SYN-DICOM-A'),Q('2.25.8302','SYN-DICOM-A'),Q('2.25.8303','SYN-DICOM-B')];
+  const orthanc={studies:async()=>clone(qido),
+    studyIdentities:async(accessMetadata,accession)=>clone(qido).map(r=>({'0020000D':r['0020000D'],'00080080':r['00080080'],
+      ...(accessMetadata?{'00100020':r['00100020'],'00080020':r['00080020'],'00080061':r['00080061']}:{}),...(accession?{'00080050':r['00080050']}:{})})),
+    studiesByUid:async uids=>uids.map(uid=>clone(qido).find(r=>r['0020000D'].Value[0]===uid))};
+  const svc=new PacsService(prisma,orthanc,{},new StudyAccessService(prisma,orthanc,{}));
+  await start(svc,prisma,clone(INSTITUTIONS));
+  const referred=async(who,query)=>Object.fromEntries((await svc.listStudies(who,query)).studies.map(r=>[r.uid,r.referredAt]));
+  for(const query of [undefined,{limit:'100'},{uids:'2.25.8301,2.25.8302,2.25.8303'}])
+    assert.deepEqual(await referred(caller,query),{'2.25.8301':'2026-11-19T23:10:00.000Z','2.25.8302':null,'2.25.8303':'2026-11-19T23:30:00.000Z'},
+      JSON.stringify(query));
+  // The sending institution sees the same time on its own study.
+  const other={...caller,institution:'kin-center',sub:'syn-sub-b',actor:'syn-reader-b@synthetic.test'};
+  assert.deepEqual(await referred(other),{'2.25.8303':'2026-11-19T23:30:00.000Z'});
 });
 
 after(()=>{

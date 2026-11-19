@@ -2,7 +2,7 @@
 (function(root) {
   'use strict';
   const sourceFields = new Set(['id','name','acc','sourceAcc','date','time','desc','modality','birth','sex','age',
-    'institutionName','reqHosp','reqDate','reqDept','reqDoc','ptClass']);
+    'institutionName','reqHosp','reqDate','reqDept','reqDoc','ptClass','referredAt']);
   const copy = value => JSON.parse(JSON.stringify(value));
   function read(value, purpose = 'current') {
     const scope = value?.sources ? value : purpose === 'stored' ? value?.reportScope : value?.examScope;

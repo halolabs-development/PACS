@@ -919,6 +919,83 @@ test('worklist: a merged exam is its base row with every study\'s Count and Seri
   assert.deepEqual(original.body.studies.map(s=>s.uid).sort(),[A,B,C,D]);
 });
 
+test('worklist Referred: a split exam\'s second row shows its original\'s time; a merged exam\'s originals carry their own',async()=>{
+  const at=new Date('2026-11-19T23:10:00.000Z'),later=new Date('2026-11-19T23:40:00.000Z'),L='2.25.599';
+  const split={groups:[{id:G1,institutionId:'hallym',kind:'split',baseUid:A,createdBy:'syn-tech',createdBySub:'syn-tech-sub',dissolvedAt:null}],
+    members:[{groupId:G1,logicalUid:A,studyUid:A,part:0,seriesUids:[]},{groupId:G1,logicalUid:L,studyUid:A,part:1,seriesUids:['2.25.702']}]};
+  split.members.forEach(m=>Object.assign(m,{sourcePatientId:'SYN-P1',sourceInstitution:'hallym'}));
+  const extra=(uid,more)=>({...state(uid),origin:'dicom',createdAt:new Date('2020-01-01T00:00:00Z'),matched:'U',orderOid:null,referredAt:null,...more});
+  const parted=await listFixture({rows:[qido(A,'ACC-A',8,2),qido(D,'ACC-D',3,1,'SYN-P2')],group:split,
+    extraStates:[extra(A,{origin:'gateway',referredAt:at}),extra(L,{origin:'logical'}),extra(D)],
+    series:[{uid:'2.25.701',count:4},{uid:'2.25.702',count:4}]});
+  for(const query of [undefined,{limit:'100'}]){
+    const rows=new Map((await parted.listStudies(reader,query)).studies.map(r=>[r.uid,r]));
+    assert.deepEqual([...rows.keys()].sort(),[A,L,D].sort(),JSON.stringify(query));
+    // The logical row stores no time of its own: it shows its original's, like its other study columns.
+    assert.deepEqual([A,L,D].map(uid=>rows.get(uid).referredAt),[at.toISOString(),at.toISOString(),null],JSON.stringify(query));
+    assert.deepEqual(rows.get(L).sourceMetadata.map(m=>[m.uid,m.referredAt]),[[A,at.toISOString()]],JSON.stringify(query));
+  }
+  // Merged: the row is its base's; each original carries its own (a filter compares each).
+  const merge=await listFixture({extraStates:[extra(A,{referredAt:at}),extra(B,{referredAt:later})]});
+  const base=(await merge.listStudies(reader)).studies.find(s=>s.uid===B);
+  assert.equal(base.referredAt,later.toISOString());
+  assert.deepEqual(base.sourceMetadata.map(m=>[m.uid,m.referredAt]),[[B,later.toISOString()],[A,at.toISOString()],[C,null]]);
+});
+
+test('worklist Referred through Split, Merge and Unmerge: the second row is created blank and closed, an announce naming it records nothing, and every original keeps its own',async()=>{
+  const {PacsDicomGateway}=require('/app/dist/pacs/dicom-gateway');
+  const hospitalGateway={institution:'hallym',sub:'syn-gw-sub',actor:'syn-gw',roles:['gateway'],kind:'gateway'};
+  const stored=(f,uid)=>{const s=f.db.states.get(uid);return [s.referredAt??null,s.referredOpen];};
+  const listed=async(f,rows,series=[])=>new Map((await (await listFixture({rows,series,group:{groups:f.db.groups,members:f.db.members},
+    extraStates:[...f.db.states.values()].map(s=>({origin:'dicom',createdAt:new Date('2020-01-01T00:00:00Z'),matched:'U',orderOid:null,...clone(s)}))}))
+    .listStudies(reader)).studies.map(r=>[r.uid,r]));
+  const iso=value=>value===null?null:value.toISOString();
+
+  // Split. The original was sent by a device and still waits for its first Gateway announce.
+  const f=fixture({states:[state(A,{referredAt:null,referredOpen:true}),state(D,{referredAt:null,referredOpen:true})]});
+  const made=await f.svc.split(tech,{uid:A,seriesUids:['2.25.701']});
+  const L=made.group.members.find(m=>m.part===1).logicalUid;
+  assert.deepEqual([stored(f,A),stored(f,L)],[[null,true],[null,false]],'the second row is created blank and closed; the original still waits');
+  const gateway=new PacsDicomGateway(f.prisma);
+  // The generated UID is a well-formed study UID. The institution's Gateway naming it is answered as before and records nothing.
+  for(let i=0;i<2;i++)assert.deepEqual(await gateway.announceStudy(L,'',hospitalGateway),{studyUid:L,institutionId:'hallym',origin:'logical'});
+  assert.deepEqual([stored(f,A),stored(f,L)],[[null,true],[null,false]]);
+  const splitRows=[qido(A,'ACC-A',8,2),qido(D,'ACC-D',3,1,'SYN-P2')],splitSeries=[{uid:'2.25.701',count:4},{uid:'2.25.702',count:4}];
+  let rows=await listed(f,splitRows,splitSeries);
+  assert.deepEqual([A,L,D].map(uid=>rows.get(uid).referredAt),[null,null,null]);
+  // The original's first announce is recorded on the original, and both rows of the split exam show that one time.
+  await gateway.announceStudy(A,'',hospitalGateway);
+  const at=f.db.states.get(A).referredAt;
+  assert.ok(at instanceof Date);
+  assert.deepEqual([stored(f,A),stored(f,L)],[[at,false],[null,false]],'the second row stores none of its own');
+  rows=await listed(f,splitRows,splitSeries);
+  assert.deepEqual([A,L,D].map(uid=>rows.get(uid).referredAt),[iso(at),iso(at),null]);
+  assert.deepEqual(rows.get(L).sourceMetadata.map(m=>[m.uid,m.referredAt]),[[A,iso(at)]]);
+  // Unsplit keeps what each row stores; the original shows its own time.
+  await f.svc.dissolve(tech,made.group.id);
+  assert.deepEqual([stored(f,A),stored(f,L)],[[at,false],[null,false]]);
+  assert.equal((await listed(f,splitRows,splitSeries)).get(A).referredAt,iso(at));
+
+  // Merge and Unmerge change the group and the report generation, never an original's two fields.
+  const sent=new Date('2026-11-19T23:10:00.000Z');
+  const m=fixture({states:[state(A,{referredAt:sent,referredOpen:false}),state(B,{referredAt:null,referredOpen:true}),state(C,{referredAt:null,referredOpen:false})]});
+  const before=[A,B,C].map(uid=>stored(m,uid));
+  const group=(await m.svc.merge(tech,{baseUid:B,uids:[B,A,C]})).group;
+  assert.deepEqual([A,B,C].map(uid=>stored(m,uid)),before);
+  // An original inside a merged exam is announced as itself: the base's first announce is the base's time only.
+  await new PacsDicomGateway(m.prisma).announceStudy(B,'',hospitalGateway);
+  const baseAt=m.db.states.get(B).referredAt;
+  assert.deepEqual([A,B,C].map(uid=>stored(m,uid)),[[sent,false],[baseAt,false],[null,false]]);
+  const mergedRows=[qido(A,'ACC-A',8,1),qido(B,'ACC-B',8,1),qido(C,'ACC-C',4,2)];
+  const base=(await listed(m,mergedRows)).get(B);
+  assert.equal(base.referredAt,iso(baseAt));
+  assert.deepEqual(base.sourceMetadata.map(s=>[s.uid,s.referredAt]),[[B,iso(baseAt)],[A,iso(sent)],[C,null]]);
+  await m.svc.dissolve(tech,group.id);
+  assert.deepEqual([A,B,C].map(uid=>stored(m,uid)),[[sent,false],[baseAt,false],[null,false]]);
+  rows=await listed(m,mergedRows);
+  assert.deepEqual([A,B,C].map(uid=>rows.get(uid).referredAt),[iso(sent),iso(baseAt),null],'after Unmerge each study shows its own');
+});
+
 test('targeted source reads preserve a merged member UID while the worklist resolves its reporting exam', async () => {
   const svc = await listFixture();
   assert.deepEqual((await svc.listStudies(reader, { uids: A })).studies.map(s => s.uid), [B]);
