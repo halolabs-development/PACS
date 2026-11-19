@@ -256,9 +256,10 @@
         probe();
       }
     }
-    // 종료 기록이 이 문서가 열린 뒤 바뀌었다(다른 창): 그 결과가 새 소식이다.
+    // 다른 창이 이 문서가 열린 뒤 종료 기록을 새로 썼다(로그아웃): 그 결과가 새 소식이다. 기록이 지워진 것(다른 창의 로그인 성공)은
+    // 소식이 아니다 — 거절 이유를 그대로 둔다.
     const endNews = () => { refusal = null; followEnd(); };
-    addEventListener('storage', event => event.key === null || event.key.startsWith('kin-session-end:') ? endNews() : followEnd());
+    addEventListener('storage', event => event.key?.startsWith('kin-session-end:') && event.newValue !== null ? endNews() : followEnd());
     addEventListener('focus', followEnd);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) followEnd(); });
     KinAuth.onEndedElsewhere(endNews);

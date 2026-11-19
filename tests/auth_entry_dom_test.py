@@ -308,6 +308,18 @@ class AuthEntryDOMTest(unittest.TestCase):
         expect(self.page.locator("#msg")).to_have_text(self.REFUSED["member_suspended"])
         expect(self.page.locator("#msg")).not_to_have_class("ended")
         expect(self.page.locator("#retry-logout")).to_be_hidden()
+        # Another tab signs in and clears the old end record: that is no news here, the refusal stays.
+        key = "kin-session-end:" + SESSION
+        self.page.evaluate("""key => { const old = localStorage.getItem(key); localStorage.removeItem(key);
+          dispatchEvent(new StorageEvent('storage', {key, oldValue: old, newValue: null, storageArea: localStorage})); }""", key)
+        expect(self.page.locator("#msg")).to_have_text(self.REFUSED["member_suspended"])
+        self.assertEqual(self.logouts, [])
+        # Another tab then logs out (a newer end record is written): its result is the news.
+        record = json.dumps({"session": SESSION, "operation": 2, "status": "confirmed", "origin": "logout"})
+        self.page.evaluate("""([key, value]) => { localStorage.setItem(key, value);
+          dispatchEvent(new StorageEvent('storage', {key, oldValue: null, newValue: value, storageArea: localStorage})); }""",
+                           [key, record])
+        expect(self.page.locator("#msg")).to_have_text("이 브라우저의 HALO PACS 로그인 세션을 끝냈습니다. 다시 사용하려면 로그인해 주세요.")
 
     def test_an_unfinished_log_out_still_wins_over_a_refusal(self):
         self.landing(SESSION, query="?auth_error=member_suspended", status="unconfirmed", reason="network")
