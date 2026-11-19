@@ -16,12 +16,11 @@ for (const name of ['DATABASE_URL', 'KC_ADMIN_URL', 'KC_REALM', 'KC_ISSUER', 'KC
   if (!process.env[name]) throw new Error('Missing setting: ' + name);
 }
 const { randomUUID } = require('node:crypto');
-const { join } = require('node:path');
 const { PrismaService } = require('../dist/prisma.service');
 const { KeycloakService } = require('../dist/keycloak.service');
 const { AdminService } = require('../dist/admin.service');
 const { sendRecordedRoster } = require('../dist/member-rights-import');
-const { EmrRuntime } = require('../dist/emr-runtime/application');
+const { OperatorRuntime } = require('../dist/emr-runtime/operator-runtime');
 const { runFirstAdminCommand } = require('../dist/first-admin-command');
 
 const USAGE = 'Usage: designate-first-admin.cjs --institution <group> --subject <user id> --operator <name> --reason <text>';
@@ -43,8 +42,9 @@ runFirstAdminCommand({
   subject: options.subject,
   db,
   async start() {
-    // Its own failure journal: the running API is the one writer of its own.
-    runtime = new EmrRuntime(process.env.DATABASE_URL, join(process.env.KIN_EMR_STATE_DIR, 'operator-outage'));
+    // Beside the running API: never settles another process's pending work; a failure spool of this run's own
+    // (api/src/emr-runtime/operator-runtime.ts).
+    runtime = new OperatorRuntime(process.env.DATABASE_URL, process.env.KIN_EMR_STATE_DIR);
     await runtime.start();
     keycloak = new KeycloakService();
   },

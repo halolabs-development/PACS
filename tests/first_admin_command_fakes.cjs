@@ -1,6 +1,7 @@
 'use strict';
-// Preloaded (`node -r`) by admin_member_scope_test.cjs section 9 to run the real operator command
-// api/prisma/designate-first-admin.cjs without a database or identity provider: each `../dist/<module>` the command
+// Preloaded (`node -r`) by admin_member_scope_test.cjs sections 9 and 11 to run the real operator commands
+// api/prisma/designate-first-admin.cjs and replace-sole-admin.cjs without a database or identity provider: each
+// `../dist/<module>` the command
 // requires resolves to a synthetic stand-in below (the command's own outcome module is the real source, transpiled),
 // and the comma-separated scenario in KIN_TEST_FIRST_ADMIN_SCENARIO decides where a step fails. Every step the
 // command took is appended to the JSON-lines file KIN_TEST_FIRST_ADMIN_LOG.
@@ -17,6 +18,8 @@ const { LedgerFailure } = require(path.join(root, 'api/src/emr-runtime/store.ts'
 const scenario = new Set((process.env.KIN_TEST_FIRST_ADMIN_SCENARIO || '').split(',').filter(Boolean));
 const log = step => fs.appendFileSync(process.env.KIN_TEST_FIRST_ADMIN_LOG, JSON.stringify(step) + '\n');
 const SUB = 'synthetic-first-admin', INSTITUTION = 'synthetic-hospital-c', AUDIT_ID = 41, VERSION = 2;
+// The replacement's predecessor: its suspension row is this run's too, but never the successor's approval.
+const FROM = 'synthetic-departed-admin';
 const change = { id: 7, kind: 'credentials', sub: SUB, target: SUB, generation: VERSION, state: 'unknown' };
 let committed = false;
 
@@ -28,11 +31,13 @@ class PrismaService {
       // Another run's approval of the same person (a different audit id) is never this run's.
       // A session it ended (auth.logout) is this run's row too, but not the member change.
       const action = scenario.has('promoted') ? 'admin.user.update' : 'admin.user.approve';
-      const rows = [...(scenario.has('other-run-committed') ? [{ id: 99, action: 'admin.user.approve' }] : []),
-        ...(committed ? [{ id: AUDIT_ID - 1, action: 'auth.logout' }, { id: AUDIT_ID, action }] : [])];
-      const row = rows.find(r => where.id.in.includes(r.id) && r.action.startsWith(where.action.startsWith));
-      return row ? { ...row, target: SUB, detail: row.action === 'auth.logout' ? '{}'
-        : JSON.stringify({ after: { id: SUB, institution: INSTITUTION, version: VERSION } }) } : null;
+      const rows = [...(scenario.has('other-run-committed') ? [{ id: 99, action: 'admin.user.approve', target: SUB }] : []),
+        ...(committed ? [{ id: AUDIT_ID - 2, action: 'admin.user.suspend', target: FROM }, { id: AUDIT_ID - 1, action: 'auth.logout', target: SUB },
+          { id: AUDIT_ID, action, target: SUB }] : [])];
+      const row = rows.find(r => where.id.in.includes(r.id) && (where.target === undefined || r.target === where.target)
+        && (where.action.in ? where.action.in.includes(r.action) : r.action.startsWith(where.action.startsWith)));
+      return row ? { ...row, detail: row.action === 'auth.logout' ? '{}'
+        : JSON.stringify({ after: { id: row.target, institution: INSTITUTION, version: row.target === SUB ? VERSION : 3 } }) } : null;
     } };
     this.providerChange = { findFirst: async ({ where }) => {
       log('lookup-change');
@@ -60,6 +65,25 @@ class AdminService {
     if (scenario.has('http-after-commit')) throw new ConflictException({ code: 'SYNTHETIC_AFTER_COMMIT', message: 'synthetic' });
     return { id: sub, institution, version: VERSION, roles: ['admin'] };
   }
+  // As AdminService.replaceSoleAdmin: refusals before the transaction; inside it the decision, then the ledger
+  // identities, then the predecessor's suspension (its own audit row first) and the successor's approval.
+  async replaceSoleAdmin(from, to, institution, operator, work) {
+    log('replace');
+    if (scenario.has('refused')) throw new ConflictException({ code: 'REPLACE_ADMIN_NOT_SOLE', message: '이 기관에는 다른 활성 관리자가 있습니다' });
+    if (scenario.has('fails-before-commit')) throw new Error('synthetic failure before the transaction');
+    await work.transactionWithRecords(async (tx, record) => {
+      if (scenario.has('callback-refused')) throw new ConflictException({ code: 'REPLACE_ADMIN_FROM_NOT_ADMIN', message: '전임은 이 기관의 승인·활성 관리자가 아닙니다' });
+      await work.resolveIdentity(tx, 'urn:kin:pacs:operator', operator.name);
+      await record({ eventId: 'synthetic-suspend' }, async () => ({ kind: 'AuditLog', id: String(AUDIT_ID - 2), version: null }));
+      await record({ eventId: 'synthetic-event' }, async () => {
+        await record({ eventId: 'synthetic-session-end' }, async () => ({ kind: 'AuditLog', id: String(AUDIT_ID - 1), version: null }));
+        return { kind: 'AuditLog', id: String(AUDIT_ID), version: null };
+      });
+      return { synthetic: true };
+    });
+    if (scenario.has('http-after-commit')) throw new ConflictException({ code: 'SYNTHETIC_AFTER_COMMIT', message: 'synthetic' });
+    return { id: to, institution, version: VERSION, roles: ['admin'] };
+  }
 }
 const sendRecordedRoster = async () => {
   log('send-roster');
@@ -69,6 +93,7 @@ const sendRecordedRoster = async () => {
 class EmrRuntime {
   constructor() { this.port = { begin: () => ({
     resolveRequestIdentity: async () => { log('operator-identity'); return '00000000-0000-4000-8000-000000000009'; },
+    resolveIdentity: async () => { log('operator-identity'); return '00000000-0000-4000-8000-000000000009'; },
     // As EmrRecordStore.transactionWithRecords: the callback's value once committed; LedgerFailure after a returned
     // callback whose COMMIT is known not committed (AppendNotCommitted) or unanswered (CommitUnknown).
     transactionWithRecords: async body => {
@@ -90,6 +115,7 @@ const fakes = {
   'admin.service': { AdminService },
   'member-rights-import': { sendRecordedRoster },
   'emr-runtime/application': { EmrRuntime },
+  'emr-runtime/operator-runtime': { OperatorRuntime: class OperatorRuntime extends EmrRuntime {} },
 };
 // Writing the outcome throws at once (as a write on a destroyed stream can); the exit code must still say it.
 if (scenario.has('write-throws')) process.stdout.write = () => { throw new Error('synthetic write failure'); };

@@ -35,12 +35,15 @@ function world() {
   put('isolated', null);
   const kcOnly = { 'kc-pending': [], 'kc-b': [B], 'kc-two': [A, B], 'kc-c-group': [C], 'kc-service': [] };
   const isolations = new Set(['isolated']), changes = [], sessions = [], events = [];
-  const audits = [], kcCalls = [];
+  const audits = [], kcCalls = [], raws = [];
+  let identities = 0;
   let writes = 0;
   const db = {
     memberRights: {
       findUnique: async ({ where }) => rows.get(where.sub) ? { ...rows.get(where.sub) } : null,
-      findMany: async ({ where }) => [...rows.values()].filter(r => !where?.sub?.in || where.sub.in.includes(r.sub)).map(r => ({ ...r })),
+      findMany: async ({ where }) => [...rows.values()].filter(r => (!where?.sub?.in || where.sub.in.includes(r.sub))
+        && (where?.institution === undefined || (r.institution === where.institution && r.approved === where.approved
+          && r.suspended === where.suspended && r.roles.includes(where.roles.has)))).map(r => ({ ...r })),
       create: async ({ data }) => { writes++; rows.set(data.sub, { version: 1, ...data }); return { ...rows.get(data.sub) }; },
       count: async ({ where }) => [...rows.values()].filter(r => r.institution === where.institution && r.approved === where.approved
         && r.suspended === where.suspended && r.roles.includes(where.roles.has)).length,
@@ -62,7 +65,7 @@ function world() {
     providerChange: { create: async ({ data }) => { writes++; changes.push({ id: changes.length + 1, ...data }); return changes.at(-1); },
       findMany: async () => [], findFirst: async () => null,
       updateMany: async ({ where, data }) => { const row = changes.find(c => c.id === where.id); if (row) Object.assign(row, data); return { count: row ? 1 : 0 }; } },
-    $executeRaw: async () => 0,
+    $executeRaw: async (strings, ...values) => { raws.push([strings.join('?'), ...values]); return 0; },
     $queryRaw: async () => [{ boundary: new Date(), id: null }],
   };
   db.$transaction = async work => work(db);
@@ -95,6 +98,7 @@ function world() {
   };
   const ledger = { begin: () => ({
     resolveRequestIdentity: async () => '00000000-0000-4000-8000-000000000001',
+    resolveIdentity: async () => { identities++; return '00000000-0000-4000-8000-00000000000' + (identities % 10); },
     transactionWithRecords: async work => work(db, async (event, mutation) => { events.push(event); return mutation(); }),
     end() {},
   }) };
@@ -118,7 +122,10 @@ function world() {
     request: { work, requireCurrent: async () => {} } }; };
   const designate = (sub, institution) => service.designateFirstAdmin(sub, institution,
     { name: 'ops', reason: 'synthetic hospital request confirmed by phone' }, async () => { factsMade++; return operatorFacts(institution); });
-  return { rows, audits, kcCalls, kc, db, service, controller, keys, adminA, call, writes: () => writes, designate, changes, sessions, events, factsMade: () => factsMade, kcOnly, identityOverride: f => { identityHook = f; } };
+  const replace = (from, to, institution, operator = { name: 'ops', reason: 'synthetic hospital request confirmed by phone' }) =>
+    service.replaceSoleAdmin(from, to, institution, operator, ledger.begin());
+  return { rows, audits, kcCalls, kc, db, service, controller, keys, adminA, call, writes: () => writes, designate, changes, sessions, events, factsMade: () => factsMade, kcOnly, identityOverride: f => { identityHook = f; },
+    replace, raws, identities: () => identities, put };
 }
 
 const status = code => error => { assert.equal(error?.getStatus?.(), code, String(error?.message)); return true; };
@@ -452,6 +459,281 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
       expect(scenario, code, designated, 'cleanup failure: ' + scenario, r => assert.match(r.stderr, /cleanup failed|disconnect failed/i));
     }
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // 10. Replacing an institution's sole administrator (one who left while their rights are live): an operator command,
+  // never an HTTP route. Decided on the rights rows read again under the institution lock; one transaction suspends the
+  // predecessor (institution and roles kept, every session ended) and approves the successor (current roles plus admin,
+  // every session ended), with the operator, institution, reason and pair in both audit rows and one roster intent.
+  {
+    const { parseAccessEvent } = require('../api/src/emr-contract/access-event.ts');
+    assert.equal(typeof AdminController.prototype.replaceSoleAdmin, 'undefined', 'no controller route replaces');
+    const D = 'synthetic-hospital-d';
+    const setup = () => {
+      const w = world();
+      w.kc.institutions = async () => [A, B, C, D];
+      w.put('admin-d', D, { roles: ['admin'] });
+      w.put('reader-d', D);
+      w.put('colleague-d', D);
+      w.put('suspended-admin-d', D, { roles: ['admin'], suspended: true });
+      w.kcOnly['kc-d-group'] = [D];
+      return w;
+    };
+    const refused = async (w, from, to, code, label, institution = D, operator) => {
+      const before = w.writes(), audits = w.audits.length, ids = w.identities(), sessions = w.sessions.length;
+      const rows = JSON.stringify([...w.rows.values()]);
+      await assert.rejects(w.replace(from, to, institution, operator), error => {
+        if (typeof code === 'number') assert.equal(error.getStatus?.(), code, label + ': ' + error.message);
+        else assert.equal(error.getResponse?.().code ?? null, code, label + ': ' + error.message);
+        return true;
+      }, label);
+      assert.equal(w.writes(), before, label + ': nothing written');
+      assert.equal(w.audits.length, audits, label + ': no audit row (success or failure)');
+      assert.equal(w.identities(), ids, label + ': no ledger identity resolved');
+      assert.equal(w.sessions.length, sessions, label + ': no session ended');
+      assert.equal(JSON.stringify([...w.rows.values()]), rows, label + ': rights unchanged');
+      assert.equal(w.changes.length, 0, label + ': no roster intent');
+    };
+    {
+      const w = setup();
+      w.sessions.push({ sid: 'sid-admin-d', sub: 'admin-d', auditRef: 'authref:00000000-0000-4000-8000-0000000000d1', institution: D });
+      // The predecessor is X's approved, active administrator, and the only one.
+      await refused(w, 'admin-a', 'reader-d', 'REPLACE_ADMIN_FROM_NOT_ADMIN', 'a predecessor of another institution');
+      await refused(w, 'no-such-member', 'reader-d', 'REPLACE_ADMIN_FROM_NOT_ADMIN', 'a predecessor that does not exist');
+      await refused(w, 'colleague-d', 'reader-d', 'REPLACE_ADMIN_FROM_NOT_ADMIN', 'a predecessor who is not an administrator');
+      await refused(w, 'suspended-admin-d', 'reader-d', 'REPLACE_ADMIN_FROM_NOT_ADMIN', 'a suspended predecessor');
+      await refused(w, 'waiting', 'reader-d', 'REPLACE_ADMIN_FROM_NOT_ADMIN', 'a waiting member as predecessor');
+      // The successor: a person of X or the waiting room, usable, not suspended or isolated.
+      await refused(w, 'admin-d', 'no-such-member', 404, 'a successor that does not exist');
+      await refused(w, 'admin-d', 'reader-b', 'REPLACE_ADMIN_TO_CONFLICT', 'a successor of another institution');
+      await refused(w, 'admin-d', 'kc-b', 'REPLACE_ADMIN_TO_CONFLICT', 'a successor whose provider group is another institution');
+      await refused(w, 'admin-d', 'kc-two', 'REPLACE_ADMIN_TO_CONFLICT', 'a successor of several groups');
+      await refused(w, 'admin-d', 'kc-service', 403, 'a service account');
+      await refused(w, 'admin-d', 'revoked', 'REPLACE_ADMIN_TO_SUSPENDED', 'a suspended successor');
+      await refused(w, 'admin-d', 'isolated', 'REPLACE_ADMIN_TO_ISOLATED', 'an isolated successor');
+      w.identityOverride(sub => sub === 'reader-d' ? { id: sub, username: sub, email: sub + '@example.test', emailVerified: true,
+        firstName: 'S', lastName: sub, enabled: false, serviceAccountClientId: null, groups: [D], roles: [] } : undefined);
+      await refused(w, 'admin-d', 'reader-d', 'REPLACE_ADMIN_TO_UNUSABLE', 'a successor disabled in the provider');
+      w.identityOverride(sub => sub === 'reader-d' ? { id: sub, username: sub, email: sub + '@example.test', emailVerified: true,
+        firstName: 'S', lastName: sub, enabled: true, serviceAccountClientId: null, groups: [D], roles: ['gateway'] } : undefined);
+      await refused(w, 'admin-d', 'reader-d', 'REPLACE_ADMIN_TO_UNUSABLE', 'a gateway identity');
+      w.identityOverride(() => undefined);
+      // The input itself.
+      await refused(w, 'admin-d', 'admin-d', 400, 'the predecessor as successor');
+      await refused(w, 'admin-d', 'reader-d', 400, 'an unknown institution', 'not-an-institution');
+      await refused(w, 'admin-d', 'reader-d', 400, 'a blank institution', ' ');
+      for (const reason of [undefined, '', '   ', 'x'.repeat(501), 'request\nconfirmed', '\nrequest', 'request\n'])
+        await refused(w, 'admin-d', 'reader-d', 400, 'reason ' + JSON.stringify(reason), D, { name: 'ops', reason });
+      for (const name of [undefined, '', 'two words', 'x'.repeat(65)])
+        await refused(w, 'admin-d', 'reader-d', 400, 'operator ' + JSON.stringify(name), D, { name, reason: 'synthetic request' });
+      for (const [from, to] of [['', 'reader-d'], ['admin-d', ''], [' admin-d', 'reader-d'], [null, 'reader-d'], ['admin-d', 'r'.repeat(257)]])
+        await refused(w, from, to, 400, `subjects ${JSON.stringify([from, to])}`);
+      // Not the sole administrator: the other one manages the institution from the screen.
+      w.put('second-admin-d', D, { roles: ['admin', 'radiologist'] });
+      await refused(w, 'admin-d', 'reader-d', 'REPLACE_ADMIN_NOT_SOLE', 'another active administrator');
+    }
+    // Replaced: both members change in one transaction, every session of both ends, a third member's session lives.
+    {
+      const w = setup();
+      w.sessions.push({ sid: 'sid-from-1', sub: 'admin-d', auditRef: 'authref:00000000-0000-4000-8000-0000000000d1', institution: D },
+        { sid: 'sid-from-2', sub: 'admin-d', auditRef: 'authref:00000000-0000-4000-8000-0000000000d2', institution: D },
+        { sid: 'sid-to', sub: 'reader-d', auditRef: 'authref:00000000-0000-4000-8000-0000000000d3', institution: D },
+        { sid: 'sid-other', sub: 'colleague-d', auditRef: 'authref:00000000-0000-4000-8000-0000000000d4', institution: D });
+      const result = await w.replace('admin-d', 'reader-d', D);
+      assert.deepEqual([result.id, result.institution, result.approvalState, result.enabled, [...result.roles].sort()],
+        ['reader-d', D, 'APPROVED', true, ['admin', 'radiologist']]);
+      const from = w.rows.get('admin-d');
+      assert.deepEqual([from.suspended, from.approved, from.institution, from.roles, from.version], [true, true, D, ['admin'], 2],
+        'the predecessor is suspended as the screen\'s Suspend does: institution and roles kept');
+      assert.deepEqual(w.sessions.map(s => s.sid), ['sid-other'], 'both members\' sessions end; another member\'s session lives');
+      const memberRows = w.audits.filter(a => a.action.startsWith('admin.user.'));
+      assert.deepEqual(memberRows.map(a => [a.action, a.target]), [['admin.user.suspend', 'admin-d'], ['admin.user.update', 'reader-d']]);
+      for (const row of memberRows) {
+        assert.equal(row.actor, 'operator:ops');
+        assert.deepEqual(JSON.parse(row.detail).operator, { by: 'ops', institution: D, reason: 'synthetic hospital request confirmed by phone',
+          replaced: { from: 'admin-d', to: 'reader-d' } });
+      }
+      assert.equal(w.audits.filter(a => a.action === 'auth.logout').length, 3);
+      assert.deepEqual(w.changes.map(c => [c.target, c.generation]), [['reader-d', 2]], 'one roster intent: the successor\'s');
+      assert.equal(w.identities(), 3, 'the operator and both members, resolved once inside the transaction');
+      // Every ledger event is valid under the access-event contract: two rights changes, three service isolations.
+      assert.equal(w.events.length, 5);
+      for (const event of w.events) parseAccessEvent(JSON.parse(JSON.stringify(event)));
+      const ends = w.events.filter(e => e.action === 'auth.logout');
+      assert.deepEqual(ends.map(e => [e.surface, e.executor, e.auth.endCause, e.cause]),
+        Array(3).fill(['service:sole-admin-replacement', 'service', 'isolation', 'service-job']));
+      assert.deepEqual(ends.map(e => e.session.value), ['authref:00000000-0000-4000-8000-0000000000d1',
+        'authref:00000000-0000-4000-8000-0000000000d2', 'authref:00000000-0000-4000-8000-0000000000d3']);
+      // Locks: the institution, then both members in one fixed order; the boundary is read after them.
+      const locks = w.raws.filter(r => /pg_advisory_xact_lock/.test(r[0]));
+      assert.equal(locks[0][1], 0x4b494e46, 'the institution lock first');
+      assert.equal(locks[0][2], D);
+      assert.equal(locks.slice(1).filter(r => r[1] === 0x4b494e4d).length, 2, 'then both member locks');
+      // Again: the predecessor is no longer X's administrator.
+      w.changes.length = 0;
+      await refused(w, 'admin-d', 'colleague-d', 'REPLACE_ADMIN_FROM_NOT_ADMIN', 'the same predecessor again');
+      // The successor now administers X from the screen: another institution's member stays unknown to them.
+      const adminD = { sub: 'reader-d', actor: 'reader-d@example.test', roles: ['admin', 'radiologist'], institution: D, kind: 'member' };
+      await assert.rejects(w.call('admin/users/:id', 'PATCH', req => w.controller.patch('reader-b', { enabled: false, version: 1 }, req), adminD), sameAsUnknown);
+      const list = await w.controller.list('1', adminD);
+      assert.ok(list.users.some(u => u.id === 'admin-d' && u.enabled === false), 'the suspended predecessor is in the successor\'s list');
+    }
+    // A waiting successor gets admin only; a provider-only member of X's group is registered and approved.
+    {
+      const w = setup();
+      const waiting = await w.replace('admin-d', 'waiting', D);
+      assert.deepEqual([waiting.institution, waiting.roles, waiting.approvalState], [D, ['admin'], 'APPROVED']);
+      assert.equal(w.audits.find(a => a.target === 'waiting').action, 'admin.user.approve');
+      const w2 = setup();
+      assert.equal((await w2.replace('admin-d', 'kc-d-group', D)).institution, D);
+    }
+    // Same predecessor, two different successors at once: the second read the rows before the first committed, and is
+    // refused on the rows read again under the institution lock. Only one replacement is applied.
+    {
+      const w = setup();
+      const stale = { ...w.rows.get('admin-d') };
+      await w.replace('admin-d', 'reader-d', D);
+      const writes = w.writes(), audits = w.audits.length, ids = w.identities(), colleague = JSON.stringify(w.rows.get('colleague-d'));
+      const realFind = w.db.memberRights.findUnique, realMany = w.db.memberRights.findMany;
+      let preRead = true;
+      w.db.memberRights.findUnique = async args => (preRead && args.where.sub === 'admin-d' ? { ...stale } : realFind(args));
+      w.db.memberRights.findMany = async args => (preRead && args.where?.institution === D ? [{ sub: 'admin-d' }] : realMany(args));
+      const realLock = w.db.$executeRaw;
+      w.db.$executeRaw = async (strings, ...values) => { if (/pg_advisory_xact_lock/.test(strings.join(''))) preRead = false; return realLock(strings, ...values); };
+      await assert.rejects(w.replace('admin-d', 'colleague-d', D), e => e.getResponse().code === 'REPLACE_ADMIN_FROM_NOT_ADMIN');
+      assert.equal(w.writes(), writes); assert.equal(w.audits.length, audits); assert.equal(w.identities(), ids);
+      assert.equal(JSON.stringify(w.rows.get('colleague-d')), colleague, 'the losing successor is untouched');
+      assert.deepEqual(w.changes.map(c => c.target), ['reader-d']);
+    }
+    // A successor row changed between the read and the locks: refused, nothing written (re-run reads it again).
+    {
+      const w = setup();
+      const realLock = w.db.$executeRaw;
+      w.db.$executeRaw = async (strings, ...values) => {
+        if (/pg_advisory_xact_lock/.test(strings.join('')) && values[0] === 0x4b494e46) w.rows.get('reader-d').version = 7;
+        return realLock(strings, ...values);
+      };
+      await assert.rejects(w.replace('admin-d', 'reader-d', D), e => e.getResponse().code === 'MEMBER_VERSION_CONFLICT',
+        'a successor changed meanwhile');
+      assert.deepEqual([w.writes(), w.audits.length, w.identities(), w.changes.length], [0, 0, 0, 0]);
+      assert.equal(w.rows.get('admin-d').suspended, false, 'the predecessor is untouched too');
+      const w2 = setup();
+      const realLock2 = w2.db.$executeRaw;
+      w2.db.$executeRaw = async (strings, ...values) => {
+        if (/pg_advisory_xact_lock/.test(strings.join('')) && values[0] === 0x4b494e46 && !w2.rows.get('kc-d-group'))
+          w2.put('kc-d-group', null);
+        return realLock2(strings, ...values);
+      };
+      await assert.rejects(w2.replace('admin-d', 'kc-d-group', D), e => e.getResponse().code === 'MEMBER_VERSION_CONFLICT',
+        'a row registered meanwhile for a successor observed without one');
+      assert.equal(w2.changes.length, 0);
+      assert.equal(w2.rows.get('admin-d').suspended, false);
+    }
+    // The screen's member changes take the same institution lock before the member lock.
+    {
+      const w = world();
+      await w.call('admin/users/:id', 'PATCH', req => w.controller.patch('reader-a', { enabled: false, version: 1 }, req));
+      const locks = w.raws.filter(r => /pg_advisory_xact_lock/.test(r[0]));
+      assert.deepEqual(locks.map(r => r[1]), [0x4b494e46, 0x4b494e4d], 'the institution lock, then the member lock');
+      assert.equal(locks[0][2], A);
+    }
+  }
+
+  // 11. The replacement command itself (api/prisma/replace-sole-admin.cjs, over the same stand-ins): the exit codes and
+  // their meaning are the first-administrator command's, printed as `replaced`; the run's own committed change is the
+  // successor's approval — never the predecessor's suspension row of the same run.
+  {
+    const { spawnSync } = require('node:child_process'), os = require('node:os');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'replace-admin-command-'));
+    const run = (scenario, args = ['--institution', 'synthetic-hospital-c', '--from', 'synthetic-departed-admin',
+      '--to', 'synthetic-first-admin', '--operator', 'ops', '--reason', 'synthetic hospital request']) => {
+      const logFile = path.join(dir, (scenario || 'plain').replace(/,/g, '+') + '.jsonl');
+      fs.writeFileSync(logFile, '');
+      const env = { ...process.env, KIN_TEST_FIRST_ADMIN_SCENARIO: scenario, KIN_TEST_FIRST_ADMIN_LOG: logFile,
+        DATABASE_URL: 'postgresql://synthetic.invalid/kin', KC_ADMIN_URL: 'https://synthetic-identity.example.test/admin',
+        KC_REALM: 'kin', KC_ISSUER: process.env.KC_ISSUER, KC_CLIENT_ID: 'synthetic', KC_CLIENT_SECRET: 'synthetic',
+        KIN_EMR_STATE_DIR: dir };
+      const result = spawnSync(process.execPath, ['-r', path.join(root, 'tests/first_admin_command_fakes.cjs'),
+        path.join(root, 'api/prisma/replace-sole-admin.cjs'), ...args], { cwd: root, env, encoding: 'utf8', timeout: 60000 });
+      const json = text => text.split('\n').filter(l => l.startsWith('{')).map(l => JSON.parse(l));
+      return { code: result.status, out: json(result.stdout), errJson: json(result.stderr), stderr: result.stderr,
+        steps: fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) };
+    };
+    const expect = (scenario, code, replaced, label, more = () => {}) => {
+      const r = run(scenario);
+      const shown = [...r.out, ...r.errJson].map(o => o.replaced);
+      assert.equal(r.code, code, `${label}: exit ${r.code}\n${r.stderr}`);
+      assert.deepEqual(shown, [replaced], `${label}: replaced ${JSON.stringify(shown)}\n${r.stderr}`);
+      assert.ok([...r.out, ...r.errJson].every(o => !('designated' in o)), label + ': printed as replaced');
+      assert.ok(r.steps.includes('stop') && r.steps.includes('disconnect') || scenario.includes('start-fails'), label + ': cleanup ran');
+      more(r);
+    };
+    const retry = r => assert.match(r.stderr, /--retry-roster/);
+    const noRetry = r => assert.doesNotMatch(r.stderr, /--retry-roster/);
+    // Usage: five flags, each once, all with values — anything else ends 1 before anything runs.
+    for (const args of [[], ['--institution', 'x'], ['--institution', 'x', '--from', 'a', '--to', 'b', '--operator', 'ops', '--reason'],
+      ['--institution', 'x', '--from', 'a', '--from', 'b', '--operator', 'ops', '--reason', 'r'],
+      ['--institution', 'x', '--from', 'a', '--to', 'b', '--operator', 'ops', '--why', 'r'],
+      ['--institution', 'x', '--from', 'a', '--to', 'b', '--subject', 'ops', '--reason', 'r']]) {
+      const r = run('', args);
+      assert.equal(r.code, 1, 'usage ' + JSON.stringify(args));
+      assert.deepEqual(r.steps, [], 'nothing runs on a usage error');
+    }
+    expect('refused', 1, false, 'a refusal', r => {
+      assert.equal(r.errJson[0].code, 'REPLACE_ADMIN_NOT_SOLE');
+      for (const step of ['operator-identity', 'transaction', 'reread-audit', 'lookup-change', 'send-roster']) assert.ok(!r.steps.includes(step), step);
+      noRetry(r);
+    });
+    expect('start-fails', 1, false, 'the ledger did not start', r => assert.ok(!r.steps.includes('replace')));
+    expect('callback-refused', 1, false, 'a refusal under the locks (rolled back)', r => {
+      assert.equal(r.errJson[0].code, 'REPLACE_ADMIN_FROM_NOT_ADMIN'); assert.ok(!r.steps.includes('operator-identity')); noRetry(r); });
+    expect('not-committed', 1, false, 'COMMIT asked and known not committed', noRetry);
+    expect('', 0, true, 'replaced and roster confirmed', r => {
+      assert.equal(r.out[0].subject, 'synthetic-first-admin'); assert.equal(r.out[0].roster, 'done'); noRetry(r); });
+    expect('roster-unknown', 2, true, 'the roster answer was lost', retry);
+    expect('lookup-throws', 2, true, 'the roster-intent lookup threw after the commit', retry);
+    // A lost commit answer: the successor's own approval row of this run decides; the predecessor's row never does.
+    expect('commit-lost', 2, true, 'a lost commit answer; this run\'s successor row is there', r => {
+      assert.equal(r.out[0].subject, 'synthetic-first-admin'); assert.equal(r.out[0].version, 2);
+      assert.ok(!r.steps.includes('send-roster'), 'no roster sent'); retry(r); });
+    expect('commit-lost-not-committed', 3, null, 'a lost commit answer and no row of this run', retry);
+    expect('commit-lost,reread-fails', 3, null, 'a lost commit answer and an unreadable record', retry);
+    expect('stop-fails', 0, true, 'a cleanup failure keeps the outcome', r => assert.match(r.stderr, /cleanup failed/i));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // 12. An operator command beside the running API writes its failure spool in a directory of its own run, and imports
+  // each finished run's spool exactly once (claimed by one rename); an unfinished run's spool is never touched.
+  {
+    const os = require('node:os');
+    const { importFinishedSpools, closeRunSpool } = require('../api/src/emr-runtime/operator-runtime.ts');
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'operator-spool-'));
+    const write = (dir, text) => { fs.mkdirSync(path.join(base, dir), { recursive: true }); fs.writeFileSync(path.join(base, dir, 'failure-spool.jsonl'), text); };
+    fs.writeFileSync(path.join(base, 'failure-spool.jsonl'), 'legacy\n');
+    write('run-finished', 'finished\n'); fs.writeFileSync(path.join(base, 'run-finished', 'closed'), '');
+    write('run-unfinished', 'unfinished\n');
+    write('run-own', '');
+    const seen = [];
+    const importer = async directory => { seen.push(fs.readFileSync(path.join(directory, 'failure-spool.jsonl'), 'utf8')); return 1; };
+    // Two commands start together: each finished spool is imported once.
+    const counts = await Promise.all([importFinishedSpools(base, 'run-own', importer), importFinishedSpools(base, 'run-other', importer)]);
+    assert.deepEqual(seen.sort(), ['finished\n', 'legacy\n']);
+    assert.equal(counts[0] + counts[1], 2);
+    assert.deepEqual(fs.readdirSync(base).sort(), ['run-own', 'run-unfinished'], 'imported spools removed; unfinished and own kept');
+    // A failed import puts the claimed spool back as it was, and the start fails.
+    write('run-later', 'later\n'); fs.writeFileSync(path.join(base, 'run-later', 'closed'), '');
+    await assert.rejects(importFinishedSpools(base, 'run-own', async () => { throw new Error('synthetic database outage'); }), /outage/);
+    assert.ok(fs.existsSync(path.join(base, 'run-later', 'closed')) && fs.readFileSync(path.join(base, 'run-later', 'failure-spool.jsonl'), 'utf8') === 'later\n');
+    fs.writeFileSync(path.join(base, 'failure-spool.jsonl'), 'legacy again\n');
+    await assert.rejects(importFinishedSpools(base, 'run-own', async () => { throw new Error('synthetic database outage'); }), /outage/);
+    assert.equal(fs.readFileSync(path.join(base, 'failure-spool.jsonl'), 'utf8'), 'legacy again\n', 'the earlier layout\'s file is put back');
+    assert.ok(!fs.readdirSync(base).some(name => name.startsWith('claim-')), 'no claim left behind');
+    // Closing a run: empty — removed; with records — marked closed for the next run.
+    closeRunSpool(path.join(base, 'run-own'));
+    assert.ok(!fs.existsSync(path.join(base, 'run-own')));
+    write('run-kept', 'kept\n'); closeRunSpool(path.join(base, 'run-kept'));
+    assert.ok(fs.existsSync(path.join(base, 'run-kept', 'closed')));
+    fs.rmSync(base, { recursive: true, force: true });
   }
 
   process.stdout.write('Member institution scope contracts passed\n');
