@@ -1,4 +1,4 @@
-﻿# coding: utf-8
+# coding: utf-8
 """A viewer window over two monitors: where the image grid is divided (viewer-display-span.js).
 
 Runs the shipped viewer-display-layout.js and viewer-display-span.js in Chromium over a synthetic viewport grid service
