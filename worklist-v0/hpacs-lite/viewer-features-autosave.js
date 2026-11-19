@@ -643,7 +643,9 @@
     // The marks' side of the setting (the History panel saves each mark as it is drawn or changed): on, for a writer, while
     // this viewer is up. It does not wait for the view's own start or a restore landing, which concern the view only, nor
     // for the address (a patient tab changes it before this viewer ends). A later viewer's own answer is not taken away.
-    const marks = { marks: () => on && !ended && writer() };
+    // settling: the saved view is still being read or put back at opening; a layout change by another module then would be
+    // taken for one the reader made first and keep the saved layout from coming back (viewer-display-span.js waits).
+    const marks = { marks: () => on && !ended && writer(), settling: () => !ended && on && (phase === 'starting' || phase === 'restoring') };
     window.KinViewerAutoSave = marks;
     (async () => {
       await Promise.race([settingsRead, wait(SETTINGS_MS)]);

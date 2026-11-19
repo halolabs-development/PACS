@@ -257,6 +257,31 @@ class HangingProtocolMonitorsDOMTest(unittest.TestCase):
         self.assertEqual(4, len(self.screen()))
         self.assertIsNone(self.page.evaluate('window.kinViewerSplitPlanes'))
 
+    def test_13_monitors_reached_after_the_browser_kept_the_window_apply_the_rule_once_more(self):
+        # The browser kept the window off monitor 2 (the monitors module said so in its note); the reader has now laid the
+        # window over it and the monitors module says so: the rule this panel applied is applied again, as it was chosen.
+        value = split_library([monitor('2x1'), monitor('2x1')])
+        other = rule('Other CT'); other['id'] = OTHER_ID
+        value['rules'].append(other)
+        self.seed(value)
+        self.apply()
+        reached = "id => dispatchEvent(new CustomEvent('kin-viewer-monitors-reached', { detail: { ruleId: id } }))"
+        # Another rule's monitors: nothing.
+        self.page.evaluate(reached, OTHER_ID)
+        self.page.wait_for_timeout(300)
+        self.assertEqual([['prepare', 'Brain CT'], ['commit', 'Brain CT']], self.page.evaluate('monitorCalls'))
+        # The rule that stands, while the screen is as it left it: applied once more, even with another rule selected.
+        self.page.get_by_label('Hanging Protocol Rule').select_option(OTHER_ID)
+        self.page.evaluate(reached, value['rules'][0]['id'])
+        self.page.wait_for_function("monitorCalls.length === 4")
+        self.assertEqual([['prepare', 'Brain CT'], ['commit', 'Brain CT']], self.page.evaluate('monitorCalls.slice(2)'))
+        expect(self.page.locator('#kin-hp-status')).to_contain_text('Applied: Brain CT')
+        # The reader changed a cell's series since: the rule is not put back over it.
+        self.page.evaluate("() => { const view = [...viewports.values()][0]; view.displaySetInstanceUIDs = ['ds-related']; grid.setActiveViewportId?.(view.viewportId); }")
+        self.page.evaluate(reached, value['rules'][0]['id'])
+        self.page.wait_for_timeout(500)
+        self.assertEqual(4, len(self.page.evaluate('monitorCalls')))
+
     def test_09_export_and_duplicate_keep_the_monitors(self):
         monitors = [monitor('1x1'), monitor('2x2', thumbs='right')]
         self.seed(split_library(monitors))

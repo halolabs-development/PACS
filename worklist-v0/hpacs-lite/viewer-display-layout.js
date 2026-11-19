@@ -54,5 +54,16 @@
     const r=v=>Math.round(v*100)/100;
     return seam<=middle?{seam,left:0,right:r(base.left+base.right-2*seam)}:{seam,left:r(2*seam-base.left-base.right),right:0};
   }
-  const api={screens,identity,fit,span,seams,split};if(typeof module==='object'&&module.exports)module.exports=api;else root.KinViewerDisplayLayout=api;
+  // Whether a window (outer rectangle, screen DIPs) has been laid over every one of these displays: it overlaps each of
+  // them both across and down by at least 200px (or a quarter of that display, if smaller). A window wholly on one of two
+  // displays, side by side or one above the other, does not; neither does one barely over the edge. The browser may
+  // refuse to move a window over two displays (Span Displays); the reader then drags it there, and this tells it is.
+  function covers(rect,targets){
+    const n=Number.isFinite;
+    if(!rect||![rect.left,rect.top,rect.width,rect.height].every(n)||rect.width<=0||rect.height<=0||!Array.isArray(targets)||targets.length<2)return false;
+    return targets.every(s=>!!s&&[s.left,s.top,s.width,s.height].every(n)&&s.width>0&&s.height>0&&
+      Math.min(rect.left+rect.width,s.left+s.width)-Math.max(rect.left,s.left)>=Math.min(200,s.width/4)&&
+      Math.min(rect.top+rect.height,s.top+s.height)-Math.max(rect.top,s.top)>=Math.min(200,s.height/4));
+  }
+  const api={screens,identity,fit,span,seams,split,covers};if(typeof module==='object'&&module.exports)module.exports=api;else root.KinViewerDisplayLayout=api;
 })(globalThis);

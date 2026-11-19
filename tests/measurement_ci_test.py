@@ -104,6 +104,8 @@ REGRESSION_SUITES = {
         tests/viewer_auto_save_view_dom_test.py
         tests/viewer_cell_merge_dom_test.py
         tests/viewer_monitor_double_click_dom_test.py
+        tests/viewer_display_span_grid_dom_test.py
+        tests/viewer_span_displays_dom_test.py
         tests/viewer_worklist_monitor_dom_test.py
         tests/viewer_chrome_position_dom_test.py
         tests/viewer_hanging_protocol_monitors_dom_test.py
@@ -2021,6 +2023,35 @@ class MeasurementCiTests(unittest.TestCase):
         self.assertIn('- monitor-hanging', dispatch)
         self.assertIn('tests/e2e/artifacts/monitor-hanging-ci/', dispatch)
 
+    def test_two_monitor_layout_profile_is_exact_and_dispatch_only(self):
+        # One viewer window over two displays: the module's own declared cases (its load_tests), one unit, reached only
+        # through the Focused integration dispatch.
+        import ast
+        profile = ci.PROFILES['two-monitor-layout']
+        suite, unit = 'e2e/test_viewer_two_monitor_layout.py', 'ci-two-monitor-layout'
+        self.assertEqual(profile['suites'], ((suite, None, unit),))
+        self.assertEqual(profile['out'].name, 'two-monitor-layout-ci')
+        self.assertEqual(profile['project_prefix'], 'kin-two-monitor-ci-')
+        command, outer = ci.guarded_profile_run(profile, *profile['suites'][0], 2000)
+        self.assertNotIn('--class', command)
+        self.assertEqual(outer, 935)
+        for name, other in ci.PROFILES.items():
+            if name != 'two-monitor-layout':
+                self.assertNotEqual(profile['out'], other['out'], name)
+                self.assertNotEqual(profile['project_prefix'], other['project_prefix'], name)
+                self.assertNotIn(suite, [row[0] for row in other['suites']], name)
+        tree = ast.parse((ci.ROOT/'tests'/suite).read_text(encoding='utf-8'))
+        cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'ViewerTwoMonitorLayoutE2E')
+        self.assertEqual([node.name for node in cls.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')],
+                         ['test_two_01_the_first_layout_after_stretching_is_divided_at_the_display_edge',
+                          'test_two_02_one_column_is_one_cell_per_monitor_also_for_the_next_patient',
+                          'test_two_03_a_double_click_fills_the_cells_monitor_and_the_next_puts_eight_back',
+                          'test_two_04_span_displays_the_browser_refuses_asks_for_a_drag_and_takes_the_window_over_both'])
+        self.assertNotIn('two-monitor-layout', self.catalog.text(automatic_only=True))
+        dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
+        self.assertIn('- two-monitor-layout', dispatch)
+        self.assertIn('tests/e2e/artifacts/two-monitor-layout-ci/', dispatch)
+
     def test_image_report_profile_is_exact_and_dispatch_only(self):
         # Image Report: one case of one declared class in one unit, reached only through the Focused integration dispatch.
         import ast
@@ -2237,6 +2268,8 @@ class MeasurementCiTests(unittest.TestCase):
                           'display-set-presets',
                           # Monitors in Hanging Protocol on a real stack, Focused integration dispatch only.
                           'monitor-hanging',
+                          # One viewer window over two displays on a real stack, Focused integration dispatch only.
+                          'two-monitor-layout',
                           # Image Report on a real stack, Focused integration dispatch only.
                           'image-report',
                           # Auto Save View on a real stack, Focused integration dispatch only.

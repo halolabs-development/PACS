@@ -41,9 +41,10 @@ window.KinViewerDisplaySpan = (() => {
     for (const index of path || []) { at = at?.children[index]; if (!at) return null; }
     return at;
   }
-  function mount({ services, enabled }) {
+  function mount({ services, commands = null, enabled }) {
     const layout = window.KinViewerDisplayLayout;
     let ended = false, frame = null, details = null, geometry = '', firstSeen = 0, link = null, channel = null;
+    let owed = false, dividing = false, divided = 0;
     const abort = new AbortController(), mirrors = new Map();
     const style = document.createElement('style'); style.dataset.kinUxOwned = ''; document.head.append(style);
     const on = () => { try { return enabled() !== false; } catch (_) { return true; } };
@@ -70,25 +71,55 @@ window.KinViewerDisplaySpan = (() => {
       return layout.seams(screens(), { screenX: window.screenX, screenY: window.screenY, outerWidth: window.outerWidth,
         outerHeight: window.outerHeight, innerWidth: window.innerWidth, innerHeight: window.innerHeight }, zoom());
     }
-    // M-1: the grid fills its column; its middle edge goes to the seam.
+    // M-1: the grid fills its column; its middle edge goes to the seam. A grid of one column has no middle edge: over two
+    // monitors it becomes one cell per monitor (divide), and then its middle edge goes to the seam as any other.
     function placeGrid(list) {
       const grid = document.querySelector('[data-cy="viewport-grid"]'), column = grid?.parentElement;
       let rule = '', seam = null;
       const state = services.viewportGridService.getState();
-      const middle = [...state.viewports.values()].some(cell => Math.abs((cell.x ?? -1) - 0.5) < 0.001);
-      if (grid && column && middle) {
+      const cells = [...state.viewports.values()];
+      const middle = cells.some(cell => Math.abs((cell.x ?? -1) - 0.5) < 0.001);
+      owed = false;
+      if (grid && column) {
         const box = column.getBoundingClientRect(), css = getComputedStyle(column);
         const base = { left: box.left + parseFloat(css.paddingLeft || 0) + parseFloat(css.borderLeftWidth || 0),
           right: box.right - parseFloat(css.paddingRight || 0) - parseFloat(css.borderRightWidth || 0) };
         const plan = layout.split(base, list);
-        if (plan && (plan.left || plan.right)) {
+        if (plan && middle) {
           seam = plan.seam;
-          rule = 'body.kin-viewer-ux [data-cy="viewport-grid"] { margin-left: ' + plan.left + 'px !important; margin-right: ' + plan.right +
+          if (plan.left || plan.right) rule = 'body.kin-viewer-ux [data-cy="viewport-grid"] { margin-left: ' + plan.left + 'px !important; margin-right: ' + plan.right +
             'px !important; width: calc(100% - ' + (plan.left + plan.right) + 'px) !important; max-width: calc(100% - ' + (plan.left + plan.right) + 'px) !important; }';
-        } else if (plan) seam = plan.seam;
+        } else if (plan) divide(state, cells);
       }
       if (style.textContent !== rule) style.textContent = rule;
       return seam;
+    }
+    // F-20: one column of image stacks over two monitors - its one image would have the monitor seam down its middle - is
+    // made two columns, one per monitor, by the Layout menu's own command; a protocol that gives one column again (another
+    // patient in this window) is divided again. Left alone: what owns the grid itself (the mammography hanging; Monitors in
+    // Hanging Protocol does not reach here), MPR / 3D cells, and a grid while a layout operation runs, a cell is maximized
+    // or Auto Save View is still putting the saved view back (asked again once it ends: owed). One request at a time, at
+    // most one per 2 s.
+    function divide(state, cells) {
+      const rows = state.layout?.numRows;
+      const single = (state.layout?.layoutType ?? 'grid') === 'grid' && state.layout?.numCols === 1 && Number.isInteger(rows) && rows >= 1 &&
+        cells.length === rows && cells.every(cell => Math.abs(cell.x ?? -1) < 0.001 && Math.abs((cell.width ?? 0) - 1) < 0.001 &&
+          (cell.viewportOptions?.viewportType ?? 'stack') === 'stack');
+      if (!single || typeof commands?.runCommand !== 'function') return;
+      let protocol = '';
+      try { protocol = String(services.hangingProtocolService?.getState?.()?.protocolId || ''); } catch (_) { protocol = ''; }
+      if (protocol.startsWith('kin.mammography')) return;
+      if (layoutBusy() || dividing || Date.now() - divided < 2000) { owed = true; return; }
+      dividing = true; divided = Date.now();
+      Promise.resolve().then(() => commands.runCommand('setViewportGridLayout', { numRows: rows, numCols: 2 }))
+        .catch(() => {}).then(() => { dividing = false; schedule(); });
+    }
+    function layoutBusy() {
+      try {
+        const merge = window.kinCellMergeWorkspaceState?.();
+        return !!(merge?.busy || merge?.merged || window.kinViewerJobWorkspaceState?.()?.busy || window.kinViewerHistoryWorkspaceState?.()?.busy ||
+          window.KinViewerHangingProtocol?.current?.()?.busy?.() || window.KinViewerCellRules?.busy?.() || window.KinViewerAutoSave?.settling?.());
+      } catch (_) { return true; }
     }
     // M-2: the copy of one row on the display past the seam.
     function drop(spec) { const state = mirrors.get(spec); if (!state) return; clearTimeout(state.timer); state.observer.disconnect(); state.host.remove(); state.row?.classList.remove('kin-span-row'); mirrors.delete(spec); }
@@ -322,6 +353,7 @@ window.KinViewerDisplaySpan = (() => {
       const placed = window.KinViewerMonitorRows || null;
       const list = seams();
       if (placed && style.textContent) style.textContent = '';
+      if (placed) owed = false;
       const seam = placed ? null : placeGrid(list);
       const rowSeam = seam ?? list.find(x => x > window.innerWidth / 4 && x < window.innerWidth * 3 / 4) ?? null;
       for (const spec of ROWS) {
@@ -334,10 +366,18 @@ window.KinViewerDisplaySpan = (() => {
       document.body.classList.toggle('kin-second-display-tabs-off', !!placed && !on() && !!second);
     }
     function schedule() { if (!ended && !frame) frame = requestAnimationFrame(update); }
+    // The grid's shape, to measure again when it changed without an event read after it: the stock grid announces a new
+    // layout before its state shows it, so the first layout picked after stretching the window stayed across the seam.
+    function shape() {
+      try {
+        const state = services.viewportGridService.getState();
+        return JSON.stringify([state.layout?.numRows, state.layout?.numCols, [...state.viewports.values()].map(cell => [cell.x, cell.width])]);
+      } catch (_) { return ''; }
+    }
     function poll() {
-      // Browsers announce no window move. Compare the geometry each second.
-      const now = [window.screenX, window.screenY, window.outerWidth, window.outerHeight, window.innerWidth, window.innerHeight].join(',');
-      if (now !== geometry) { geometry = now; schedule(); }
+      // Browsers announce no window move. Compare the geometry each second, and the grid's shape with it.
+      const now = [window.screenX, window.screenY, window.outerWidth, window.outerHeight, window.innerWidth, window.innerHeight, shape()].join(',');
+      if (now !== geometry || owed) { geometry = now; schedule(); }
       if (link?.slot > 0) channel?.postMessage({ type: 'who' });
       if (link && link.slot > 0 && firstSeen && Date.now() - firstSeen >= 7000) schedule();
     }

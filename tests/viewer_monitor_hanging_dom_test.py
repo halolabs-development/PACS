@@ -385,6 +385,53 @@ class MonitorHangingDOMTest(unittest.TestCase):
         self.assertAlmostEqual(boxes['toolbar']['bottom'], boxes['thumbs']['top'], delta=1)
         self.assertLessEqual(boxes['thumbs']['bottom'], boxes['grid']['top'] + 1)
 
+    def test_16_the_browser_keeps_the_window_off_monitor_2_and_the_drag_over_it_is_noticed(self):
+        # Monitor 1 is this window's display, monitor 2 the one to its right; a browser does not move the window over both.
+        page = self.open(displays="""() => {
+          const at = screenX + (outerWidth - innerWidth) / 2, w = innerWidth;
+          const screens = [0, 1].map(i => ({ availLeft: at + i * w, availTop: screenY, availWidth: w, availHeight: 2000,
+            left: at + i * w, top: screenY, width: w, height: 2000, isPrimary: i === 0, devicePixelRatio }));
+          const query = navigator.permissions.query.bind(navigator.permissions);
+          navigator.permissions.query = async value => value?.name === 'window-management' ? { state: 'granted', onchange: null } : query(value);
+          window.getScreenDetails = async () => ({ screens, currentScreen: screens[0], addEventListener() {}, removeEventListener() {} });
+        }""", size=(900, 800))
+        page.evaluate("window.synReached = []; addEventListener('kin-viewer-monitors-reached', e => synReached.push(e.detail.ruleId))")
+        result = self.prepare(page, [monitor('1x1', toolbar='top'), monitor('1x1', toolbar='top')])
+        # Not a dead end: the reader is told to lay the window over them. (The headless window's refused move leaves its outer
+        # size apart from its inner one, so what this apply itself placed is not judged here; viewer_hanging_protocol_monitors
+        # covers the rule standing.)
+        self.assertIn('브라우저가 영상 창을 Monitor 1·Monitor 2(으)로 옮기지 않았습니다. 영상 창의 가장자리를 끌어 그 화면에 걸쳐 놓으세요. '
+                      '걸쳐 놓으면 이 규칙을 다시 적용합니다.', result['note'])
+        page.evaluate('synAnswer.commit()')
+        page.wait_for_timeout(1200)
+        self.assertEqual([], page.evaluate('synReached'))
+        # The reader stretches the window over monitor 2: noticed, and the rule is asked for again; the rows the rule placed
+        # are released without the "window changed" notice (the rule is coming back).
+        page.set_viewport_size({'width': 1800, 'height': 800})
+        page.wait_for_function("() => synReached.length === 1")
+        self.assertEqual([RULE_ID], page.evaluate('synReached'))
+        page.wait_for_timeout(1200)
+        self.assertFalse(page.evaluate("() => synNotes.some(n => String(n.message).includes('모니터별 도구 줄·썸네일 배치를 해제했습니다'))"))
+        self.assertEqual([RULE_ID], page.evaluate('synReached'), 'once')
+
+    def test_17_a_newer_rule_ends_the_wait_for_the_drag(self):
+        page = self.open(displays="""() => {
+          const at = screenX + (outerWidth - innerWidth) / 2, w = innerWidth;
+          const screens = [0, 1].map(i => ({ availLeft: at + i * w, availTop: screenY, availWidth: w, availHeight: 2000,
+            left: at + i * w, top: screenY, width: w, height: 2000, isPrimary: i === 0, devicePixelRatio }));
+          const query = navigator.permissions.query.bind(navigator.permissions);
+          navigator.permissions.query = async value => value?.name === 'window-management' ? { state: 'granted', onchange: null } : query(value);
+          window.getScreenDetails = async () => ({ screens, currentScreen: screens[0], addEventListener() {}, removeEventListener() {} });
+        }""", size=(900, 800))
+        page.evaluate("window.synReached = []; addEventListener('kin-viewer-monitors-reached', e => synReached.push(e.detail.ruleId))")
+        self.prepare(page, [monitor('1x1', toolbar='top'), monitor('1x1', toolbar='top')])
+        page.evaluate('synAnswer.commit()')
+        # A rule without monitors is applied meanwhile (the panel clears the monitors module).
+        page.evaluate('KinViewerMonitors.clear()')
+        page.set_viewport_size({'width': 1800, 'height': 800})
+        page.wait_for_timeout(1500)
+        self.assertEqual([], page.evaluate('synReached'))
+
     def test_14_both_monitors_with_a_toolbar_each_reach_viewer_settings(self):
         page = self.open(displays=TWO_DISPLAYS)
         self.prepare(page, [monitor('1x1', toolbar='top', thumbs='none'), monitor('1x1', toolbar='left', thumbs='none')])

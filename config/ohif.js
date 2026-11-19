@@ -4497,6 +4497,9 @@ function kinCreateCellMerge() {
   // gesture is the merge's alone; everywhere else (3x3, VR/SR/PDF cells, no merge module)
   // the native toggle runs unchanged. Only this one command is replaced, so the click
   // bindings and the right-click menu that share its customization are untouched.
+  // A window over two monitors is the merge's too (claimsDoubleClick): the native toggle
+  // would make one cell of the whole window, across the display edge, before the merge's
+  // maximize of that cell's monitor could read the screen.
   function guardOneUp(commandsManager) {
     restoreOneUp?.(); restoreOneUp = null;
     const native = commandsManager?.getCommand?.('toggleOneUp', 'DEFAULT');
@@ -4504,6 +4507,7 @@ function kinCreateCellMerge() {
     const guarded = { ...native, commandFn: options => {
       const merge = current?.state?.();
       if (merge && (merge.busy || merge.merged)) return;
+      if (current?.claimsDoubleClick?.()) return;
       return native.commandFn(options);
     } };
     commandsManager.registerCommand('DEFAULT', 'toggleOneUp', guarded);
@@ -7020,7 +7024,8 @@ function kinCreateViewerUX() {
         const shell = window.KinViewerUXShell.mount({ services, session: kinViewerSession });
         toolbar = window.KinViewerUXToolbar.mount({ services, commands, session: kinViewerSession });
         // A window across two displays, or a second window: the account's Second Display setting.
-        const span = window.KinViewerDisplaySpan.mount({ services, enabled: () => toolbar?.secondDisplay?.() });
+        // Its commands: a one-column grid over two monitors is divided by the Layout menu's own command.
+        const span = window.KinViewerDisplaySpan.mount({ services, commands, enabled: () => toolbar?.secondDisplay?.() });
         const channel = kinViewerOnEnd(() => { window.KinViewerPatientTabs.end(); stop(); });
         dispose = () => { channel?.close(); span.dispose(); toolbar?.dispose(); toolbar = null; shell.dispose(); };
       } catch (error) {

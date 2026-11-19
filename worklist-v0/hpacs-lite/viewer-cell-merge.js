@@ -685,12 +685,13 @@
       try { const value = win.kinMprMarks?.capture?.(true); return value ? JSON.stringify(value) : null; } catch (_) { return undefined; }
     }
 
-    async function run(op, anchorId) {
+    async function run(op, anchorId, known = null) {
       const reason = blocked(); if (reason) return { ok: false, message: note(reason) };
       // The display edges are asked before the screen is read; meanwhile this operation is busy, so a second double
-      // click is remembered as usual (onDoubleClick) and a button press is refused.
-      let edges = null;
-      if (op === 'maximize' && typeof win.kinViewerMonitorEdges === 'function') {
+      // click is remembered as usual (onDoubleClick) and a button press is refused. A double click this panel took from the
+      // stock one-up (claimsDoubleClick) brings the edges it was decided on.
+      let edges = Array.isArray(known) ? known : null;
+      if (op === 'maximize' && !edges && typeof win.kinViewerMonitorEdges === 'function') {
         const asked = layoutSignature();
         busy = true; refresh();
         try { edges = await displayEdges(); } finally { busy = false; refresh(); }
@@ -846,7 +847,10 @@
       // answered when the operation finishes.
       if (busy) { pendingToggle = true; return; }
       if (record) { unmerge(); return; }
-      run('maximize', matches[0].viewportId);
+      // The edges this double click was taken from the stock one-up on (within the same gesture), or none.
+      const taken = claimed && Date.now() - claimed.at < 1000 ? claimed.edges : null;
+      claimed = null;
+      run('maximize', matches[0].viewportId, taken);
     }
 
     function refresh() {
@@ -920,7 +924,30 @@
       return true;
     }
 
-    return { mount, stop, merge: run, unmerge,
+    // A window over two monitors: the double click is this panel's monitor maximize (onDoubleClick), not the stock one-up,
+    // which would first make one cell of the whole window - over the display edge - and change the grid while the maximize
+    // reads the displays. Decided at once (the stock one-up runs before anything could be awaited) from the display edges
+    // last read (kinViewerMonitorEdgesNow): taken only when a display edge is inside the grid and the monitor maximize of
+    // the active cell would be made on this screen as it is (plan). Everything else - one display, unknown edges, a grid
+    // the monitor maximize refuses (a 3D, SR or PDF cell, a cell over the edge) - keeps the stock one-up as it was. The
+    // double click that follows uses the same edges (claimed), so what was decided is what is done.
+    let claimed = null;
+    function claimsDoubleClick() {
+      claimed = null;
+      if (ended || !panel || busy || record || quarantined || blocked()) return false;
+      try {
+        const edges = typeof win.kinViewerMonitorEdgesNow === 'function' ? win.kinViewerMonitorEdgesNow() : null;
+        if (!Array.isArray(edges) || !edges.length) return false;
+        const base = snapshot(), anchor = base?.active;
+        if (!base || !anchor) return false;
+        const result = plan({ rows: base.rows, cols: base.cols, cells: base.cells, anchorId: anchor, op: 'maximize', edges, split: base.options });
+        if (!result.ok || !result.area) return false;
+        claimed = { edges: [...edges], at: Date.now() };
+        return true;
+      } catch (_) { return false; }
+    }
+
+    return { mount, stop, merge: run, unmerge, claimsDoubleClick,
       state: () => ({ merged: !!record, op: record?.op || null, busy, quarantined, ended }), refresh: observe };
   }
 

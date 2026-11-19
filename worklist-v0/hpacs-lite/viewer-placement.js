@@ -197,6 +197,30 @@
       return defaultOhifRect(currentScreenRect());
     }
 
+    // The displays a viewer window was to stand over when the browser kept it on one (it moves a window over one display
+    // only): the known displays the intended rectangle reaches, when they are two or more. Without the display access
+    // nothing is known: [].
+    function spanTargets(intended) {
+      if (!intended || !monitorPermissionGranted()) return [];
+      const touched = screensCache.filter(target => overlapArea(intended, target) > 0);
+      return touched.length >= 2 ? touched : [];
+    }
+    // The reader was asked to drag the viewer window over `targets` (the browser would not move it there): this watches
+    // for the window to stand over every one of them (KinViewerDisplayLayout.covers) and runs done(rect) once when it does.
+    // It stops without a word when still() no longer holds (the window closed or reloaded, the list's account or context
+    // changed, another move was asked) or after two minutes; a later move is still saved as any move is (watchOhifRect).
+    function awaitSpan(popup, targets, still, done) {
+      const until = Date.now() + 120000;
+      const timer = setInterval(() => {
+        let going = false;
+        try { going = !popup.closed && still(); } catch (_) { going = false; }
+        if (!going || Date.now() > until) { clearInterval(timer); return; }
+        const rect = popupRect(popup);
+        if (rect && KinViewerDisplayLayout.covers(rect, targets)) { clearInterval(timer); done(rect); }
+      }, 500);
+      return () => clearInterval(timer);
+    }
+
     function popupRect(popup) {
       try {
         if (!popup || popup.closed) return null;
