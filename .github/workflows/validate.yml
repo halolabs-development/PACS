@@ -312,7 +312,7 @@ jobs:
     - name: S5-U2c clinician CT sync access route, state wording and late-answer boundaries
       run: docker run --rm --network none --read-only -v "$PWD:/src:ro" -w /src node:22-alpine node --test tests/viewer_ct_sync_test.cjs
     - name: Compare menu calculations and the Prior Studies connection it opens studies through
-      run: docker run --rm --network none --read-only -v "$PWD:/src:ro" -w /src node:22-alpine node --test tests/viewer_compare_model_test.cjs tests/viewer_prior_related_test.cjs
+      run: docker run --rm --network none --read-only -v "$PWD:/src:ro" -w /src node:22-alpine node --test tests/viewer_compare_model_test.cjs tests/viewer_prior_related_test.cjs tests/viewer_split_exam_place_test.cjs
     - name: MG menu calculations (counterparts, quadrants, breast region and window, zoom modes, DBT slab, next tab)
       run: docker run --rm --network none --read-only -v "$PWD:/src:ro" -w /src node:22-alpine node --test tests/mg_breast_model_test.cjs
     - name: Cine range, playback ownership and preparation budget boundaries
