@@ -98,16 +98,16 @@ window.KinViewerInfoBar = (() => {
         // Without a rendered identity: a cell given no images, or whose viewer has no data, has no image; a cell whose
         // current image failed to load says so; otherwise its images are loading.
         const given = current.cell?.displaySetInstanceUIDs?.length && current.viewport;
-        // The patient and examination are the worklist's answer for this image's study (kinViewerStudyDisplay: a Match or
-        // Modify shows here as in the list); while that answer is not certain for this image, the image's own values. Age is
-        // counted from the birth date and study date; without both, the image's Patient's Age unless the answer replaced them.
-        const display = window.kinViewerStudyDisplay, d = m ? display?.of(m.StudyInstanceUID, m.SeriesInstanceUID, text(m.PatientID)) : null;
-        const age = (d ? d.age : display?.years(text(m?.PatientBirthDate), text(m?.StudyDate)))
-          || (d && (d.over.includes('birth') || d.over.includes('date')) ? '' : text(m?.PatientAge));
-        let label = m ? [(d ? d.name : text(m.PatientName)) || 'Unknown', (d ? d.sex : text(m.PatientSex)) || 'Unknown',
-          age || 'Unknown', (d ? d.id : text(m.PatientID)) || 'Unknown',
-          [d ? d.date : text(m.StudyDate), text(m.StudyTime)].filter(Boolean).join(' ') || 'Unknown',
-          d ? d.desc : text(m.StudyDescription), text(m.InstitutionName)].filter(Boolean).join(' | ')
+        // A field a Match or Modify replaced shows the worklist's value (kinViewerStudyDisplay), every other field the image's
+        // own, as before; the age is counted from the shown birth date and study date (else the image's Patient's Age).
+        const display = window.kinViewerStudyDisplay;
+        const v = m && display ? display.view(display.of(m.StudyInstanceUID, m.SeriesInstanceUID, text(m.PatientID)), { id: text(m.PatientID),
+          name: text(m.PatientName), sex: text(m.PatientSex), birth: text(m.PatientBirthDate), date: text(m.StudyDate),
+          desc: text(m.StudyDescription), age: text(m.PatientAge) }) : null;
+        let label = m ? [(v ? v.name : text(m.PatientName)) || 'Unknown', (v ? v.sex : text(m.PatientSex)) || 'Unknown',
+          (v ? v.age : text(m.PatientAge)) || 'Unknown', (v ? v.id : text(m.PatientID)) || 'Unknown',
+          [v ? v.date : text(m.StudyDate), text(m.StudyTime)].filter(Boolean).join(' ') || 'Unknown',
+          v ? v.desc : text(m.StudyDescription), text(m.InstitutionName)].filter(Boolean).join(' | ')
           : !given || current.viewport.viewportStatus === viewportStatus.NO_DATA ? 'No image'
           : failed.has(current.viewport.getCurrentImageId?.()) ? 'Load failed' : 'Loading';
         const pending = [viewportStatus.LOADING, viewportStatus.PRE_RENDER, viewportStatus.RESIZE].includes(current.viewport?.viewportStatus);

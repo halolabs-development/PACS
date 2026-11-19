@@ -38,6 +38,26 @@ const kinViewerStudyDisplay = (() => {
     }
     out.age = years(out.birth, out.date);
     out.over = Object.freeze(over);
+    // A worklist row carries its overlay, so `over` is exactly what it replaced. A clinician's row comes overlaid by the
+    // server without saying what it replaced (view() then compares with the image).
+    out.exact = !!(row && typeof row === 'object' && row.state && typeof row.state === 'object');
+    return Object.freeze(out);
+  }
+  const norm = (key, value) => key === 'name' ? text(value).replace(/\^/g, ' ').replace(/\s+/g, ' ').trim()
+    : key === 'birth' || key === 'date' ? text(value).replace(/-/g, '') : text(value).trim();
+  // What a place shows for a drawn image: the image's own value (its own form, as before) for every field the worklist's
+  // answer did not replace, the answer's value where a Match or Modify replaced it, and the age counted from the shown birth
+  // date and study date - without both, the image's Patient's Age unless the answer replaced one of them.
+  // `image`: the place's own text of PatientID, PatientName, PatientSex, PatientBirthDate, StudyDate, StudyDescription, PatientAge.
+  function view(d, image) {
+    const out = {}, changed = [];
+    for (const key of ['id', 'name', 'sex', 'birth', 'date', 'desc']) {
+      const replaced = !!d && (d.exact ? d.over.includes(key) : d[key] !== '' && norm(key, d[key]) !== norm(key, image[key]));
+      out[key] = replaced ? d[key] : text(image[key]);
+      if (replaced) changed.push(key);
+    }
+    out.age = years(out.birth, out.date) || (changed.includes('birth') || changed.includes('date') ? '' : text(image.age));
+    out.changed = Object.freeze(changed);
     return Object.freeze(out);
   }
   // The row's own (image) Patient ID: the server's patient key is `institution|PatientID` of the original, also for a
@@ -158,6 +178,7 @@ const kinViewerStudyDisplay = (() => {
     const value = { ...entry.value };
     for (const key of PATIENT) value[key] = base.value[key];
     value.age = years(value.birth, value.date);
+    value.exact = entry.value.exact && base.value.exact;
     value.over = Object.freeze([...new Set([...entry.value.over.filter(k => !PATIENT.includes(k)), ...base.value.over.filter(k => PATIENT.includes(k))])]);
     return Object.freeze(value);
   }
@@ -188,7 +209,7 @@ const kinViewerStudyDisplay = (() => {
   try { session()?.onChange?.(forget); } catch (_) {}
   try { if (typeof kinViewerOnEnd === 'function') kinViewerOnEnd(forget); } catch (_) {}
   return Object.freeze({
-    keys: Object.freeze([...KEYS]), shown, years, of, row,
+    keys: Object.freeze([...KEYS]), shown, view, years, of, row,
     // Opened again (the same studies from the list, a reused reading frame): every study this viewer has asked about is
     // read again, so a Match or Unmatch since shows - also in cells added after the opening.
     refresh: uids => read(uids),

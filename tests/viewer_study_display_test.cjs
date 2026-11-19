@@ -108,12 +108,12 @@ test('after a Match the cell heading shows the order values the worklist shows; 
   assert.equal(w.heading(), UNREAD);
   await settle();
   assert.deepEqual(w.calls.map(c => [c.path, c.uids]), [['/api/studies', ['2.25.11']]], 'one read of the list endpoint for the shown study');
-  assert.equal(w.heading(), ORDER, 'the answer redraws the heading without a new render: name, sex, age (order birth date), ID and description of the order');
+  assert.equal(w.heading(), ORDER, 'the answer redraws the heading without a new render: name, sex, age (order birth date), ID and description of the order; the study date and time stay the image\'s');
   w.bar.refresh(); await settle();
   assert.equal(w.calls.length, 1, 'a known study is not read again on every repaint');
   server = ROW;                       // Unmatch: the overlay is gone from the row.
   await w.display.refreshAll();
-  assert.equal(w.heading(), 'M172 TEMPNAME | M | 56Y | SYN-1 | 20261116 081000 | CT CHEST WO CONTRAST | Synthetic Hospital');
+  assert.equal(w.heading(), UNREAD, 'every field the image\'s own again, in its own form');
 });
 
 test('the heading age is counted from the birth date and study date; without both it is the image age, else Unknown', async () => {
@@ -124,8 +124,8 @@ test('the heading age is counted from the birth date and study date; without bot
   assert.equal(await age({ ...unread, instance: { ...IMAGE, PatientBirthDate: '' } }), 'Unknown');
   assert.equal(await age({ ...unread, instance: { ...IMAGE, PatientBirthDate: '20270101' } }), 'Unknown', 'a study date before the birth date is no age');
   assert.equal(await age({ ...unread, instance: { ...IMAGE, PatientBirthDate: '20000231' } }), 'Unknown', 'a birth date that is not a date is no age');
-  // A row without a birth date: the image age, never an age counted from another birth date.
-  assert.equal(await age({ answer: () => [{ ...ROW, birth: '' }], instance: { ...IMAGE, PatientAge: '056Y' } }), '056Y');
+  // A row that replaced nothing leaves the image's birth date and age as they were.
+  assert.equal(await age({ answer: () => [{ ...ROW, birth: '' }], instance: { ...IMAGE, PatientAge: '099Y' } }), '56Y');
   // A Match whose order has no birth date: no age, never the image patient's age beside the order patient's name.
   assert.equal(await age({ answer: () => [{ ...MATCHED, state: { ov: { ...MATCHED.state.ov, birth: '' } } }], instance: { ...IMAGE, PatientAge: '056Y' } }), 'Unknown');
 });
@@ -294,4 +294,17 @@ test('the patient tab lookup is the opening\'s one read; another opening reads o
   const switched = tabs.open('https://viewer.test/ohif/viewer?StudyInstanceUIDs=2.25.77'); await settle();
   gates.at(-1)(); assert.equal(await switched, true); await settle();
   assert.deepEqual(w.calls.slice(before).map(c => c.uids), [['2.25.77']], 'one lookup, of the new study only');
+});
+test('only what a Match or Modify replaced is taken from the answer; a clinician row is compared with the image', () => {
+  const w = world(), d = w.display;
+  const image = { id: 'SYN-1', name: 'M172^TEMPNAME', sex: 'M', birth: '19700101', date: '20261116', desc: 'CT CHEST WO CONTRAST', age: '056Y' };
+  const plainRow = d.view(d.shown(ROW), image);
+  assert.deepEqual(plain(plainRow), { id: 'SYN-1', name: 'M172^TEMPNAME', sex: 'M', birth: '19700101', date: '20261116', desc: 'CT CHEST WO CONTRAST', age: '56Y', changed: [] });
+  const clinician = row => d.view(d.shown({ ...row, state: undefined }), image);
+  assert.deepEqual(plain(clinician(ROW).changed), [], 'the same values in the list form are not a replacement');
+  const matched = clinician({ ...ROW, id: 'ORD-1', name: 'M172 ORDERNAME', birth: '1975-02-02' });
+  assert.deepEqual([matched.id, matched.name, matched.birth, matched.age, [...matched.changed]], ['ORD-1', 'M172 ORDERNAME', '1975-02-02', '51Y', ['id', 'name', 'birth']]);
+  // A name the server cannot read (only an Ideographic group) is not taken as a replacement by an empty list value.
+  assert.equal(d.view(d.shown({ ...ROW, name: '', state: undefined }), { ...image, name: '한글 이름' }).name, '한글 이름');
+  assert.equal(d.view(null, image).name, 'M172^TEMPNAME', 'no answer: the image');
 });

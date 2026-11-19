@@ -91,8 +91,8 @@ class ViewerStudyDisplayDOMTest(unittest.TestCase):
         self.page.wait_for_function("() => document.querySelector('#vp1>.kin-viewer-identity')?.textContent.includes('ORD-1')")
         after = self.labels()
         self.assertEqual(after[0], {"role": "current", "text": "기준 검사 · ORD-1 · ORDER PATIENT · 20260911"})
-        self.assertEqual(after[1], {"role": "prior", "text": "비교 검사 · PID-2 · PRIOR PATIENT · 20250911"},
-                         "an unmatched prior shows its own list values; the role is unchanged")
+        self.assertEqual(after[1], {"role": "prior", "text": "비교 검사 · PID-2 · PRIOR^PATIENT · 20250911"},
+                         "an unmatched prior shows its image values as before; the role is unchanged")
         self.assertEqual("기준 검사 · ORD-1 · ORDER PATIENT · 20260911 · CT — 판독 뷰어", self.page.title())
 
     def test_unmatch_then_read_again_shows_the_image_values(self):
@@ -101,7 +101,7 @@ class ViewerStudyDisplayDOMTest(unittest.TestCase):
         self.answer["study-current"] = {**ROWS["study-current"], "state": {"ov": None}}
         self.page.evaluate("kinViewerStudyDisplay.refresh(['study-current'])")
         self.page.wait_for_function("() => document.querySelector('#vp1>.kin-viewer-identity')?.textContent.includes('PID-1')")
-        self.assertEqual(self.labels()[0], {"role": "current", "text": "기준 검사 · PID-1 · CURRENT PATIENT · 20260911"})
+        self.assertEqual(self.labels()[0], {"role": "current", "text": "기준 검사 · PID-1 · CURRENT^PATIENT · 20260911"})
 
     def test_an_emptied_id_is_unknown_and_another_patients_row_is_not_shown(self):
         self.answer["study-current"] = {**ROWS["study-current"], "state": {"ov": {"id": "", "name": "ORDER PATIENT", "desc": ""}}}
