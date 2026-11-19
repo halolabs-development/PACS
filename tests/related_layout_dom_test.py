@@ -1725,7 +1725,7 @@ class RelatedLayoutDOMTest(Base):
                     page.wait_for_timeout(200)
                     seen = self.field_view(page, parts)
                     measure(f"{tag} 20px text", field=seen)
-                    self.assertGreaterEqual(seen["lines"], 4, f"{tag}: the larger text keeps four lines and more {seen}")
+                    self.assertGreaterEqual(seen["lines"], 4.9, f"{tag}: five whole lines of the larger text {seen}")
                     self.assert_report_row(w, f"{tag} 20px text", parts)
                     page.evaluate("() => document.documentElement.style.removeProperty('--kin-current-text')")
                     page.wait_for_timeout(200)
