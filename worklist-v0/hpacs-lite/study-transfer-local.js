@@ -77,6 +77,9 @@ window.KinStudyTransferLocal = function (app) {
     checking: '이 파일의 저장 결과를 다시 확인하는 중입니다…',
     sent: '서버가 이 검사의 모든 원본을 보냈습니다. 내 컴퓨터에 저장됐는지는 브라우저의 다운로드 목록에서 확인하세요.',
     ready: (n, size) => `검사 원본 ${n}개(${size})를 내려받을 준비가 되었습니다.`,
+    readyChosen: (n, size) => kinSay('고른 원본 {n0}개({1})를 내려받을 준비가 되었습니다.', n, size),
+    sentChosen: '서버가 고른 시리즈·영상의 원본을 모두 보냈습니다. 내 컴퓨터에 저장됐는지는 브라우저의 다운로드 목록에서 확인하세요.',
+    selectionMissing: '고른 시리즈·영상 가운데 이 검사의 원본에서 찾을 수 없는 것이 있어 준비하지 않았습니다. 다시 골라 주세요.',
     downloading: (done, n) => `서버가 원본을 보내는 중입니다 (${done}/${n}).`,
     incomplete: '서버 기록에서 전송 완료를 확인하지 못했습니다. Check Again으로 확인하거나 Prepare Again으로 새 원본 목록을 준비하세요.',
     downloadUnconfirmed: '서버의 전송 결과를 확인하지 못했습니다. Check Again으로 확인하거나 Prepare Again으로 새로 준비하세요.',
@@ -397,6 +400,9 @@ window.KinStudyTransferLocal = function (app) {
         || !(v.note === null || typeof v.note === 'string') || !Object.prototype.hasOwnProperty.call(DOWNLOAD_NAMES, v.state)
         || !Array.isArray(v.attempts) || (op.manifestSha256 && (op.manifestSha256 !== v.manifestSha256
           || op.preparedAt !== v.preparedAt || op.objects !== v.objects || op.bytes !== v.bytes))) return null;
+    // A chosen download is answered with the counts of its choice; a whole-study one with none.
+    if (op.selection ? !(isObject(v.selection) && v.selection.series === op.selection.series.length
+        && v.selection.instances === op.selection.instances.length) : v.selection !== undefined) return null;
     const ids = new Set();
     for (let i = 0; i < v.attempts.length; i++) {
       const a = v.attempts[i], last = i === v.attempts.length - 1;
@@ -466,7 +472,8 @@ window.KinStudyTransferLocal = function (app) {
   function descriptor(op) {
     return op.kind === 'import'
       ? { kind: 'import', id: op.id, expect: op.expect, files: op.files.map(f => ({ index: f.index, name: f.name, size: f.size, sha256: f.sha256 })) }
-      : { kind: 'download', id: op.id, uid: op.uid, manifestSha256: op.manifestSha256, preparedAt: op.preparedAt, objects: op.objects, bytes: op.bytes };
+      : { kind: 'download', id: op.id, uid: op.uid, manifestSha256: op.manifestSha256, preparedAt: op.preparedAt, objects: op.objects, bytes: op.bytes,
+        ...(op.selection ? { selection: op.selection } : {}) };
   }
 
   const sameOwner = value => JSON.stringify(value) === JSON.stringify(owner);
@@ -524,7 +531,8 @@ window.KinStudyTransferLocal = function (app) {
       } else if (kept.kind === 'download') {
         if (!uid(kept.uid) || !(kept.manifestSha256 == null || hash(kept.manifestSha256))
             || !(kept.preparedAt == null || time(kept.preparedAt)) || !(kept.objects == null || count(kept.objects, Number.MAX_SAFE_INTEGER))
-            || !(kept.bytes == null || count(kept.bytes, Number.MAX_SAFE_INTEGER))) throw new Error('Unverified download history');
+            || !(kept.bytes == null || count(kept.bytes, Number.MAX_SAFE_INTEGER))
+            || (kept.selection !== undefined && !sameSelection(closedSelection(kept.selection), kept.selection))) throw new Error('Unverified download history');
       } else throw new Error('Unknown history kind');
     }
   }
@@ -534,7 +542,8 @@ window.KinStudyTransferLocal = function (app) {
     for (const kept of saved) {
       const op = operations.find(o => o.id === kept.id) || clearedHistory.get(kept.id);
       if (!op) continue;
-      if (op.kind !== kept.kind || (op.kind === 'download' ? op.uid !== kept.uid : op.expect !== (kept.expect ?? null)))
+      if (op.kind !== kept.kind || (op.kind === 'download' ? op.uid !== kept.uid || !sameSelection(op.selection, kept.selection)
+          : op.expect !== (kept.expect ?? null)))
         throw new Error('Conflicting history');
       if (op.kind === 'import') for (const f of kept.files) {
         const entry = op.files.find(e => e.index === f.index);
@@ -592,7 +601,7 @@ window.KinStudyTransferLocal = function (app) {
           if (existing && !added.includes(op)) added.push(op);
         }
       } else {
-        op = op || downloadOperation(kept.id, kept.uid);
+        op = op || downloadOperation(kept.id, kept.uid, kept.selection ? closedSelection(kept.selection) : null);
         if (!op.manifestSha256 && hash(kept.manifestSha256) && time(kept.preparedAt) && count(kept.objects, Number.MAX_SAFE_INTEGER) && count(kept.bytes, Number.MAX_SAFE_INTEGER))
           Object.assign(op, { manifestSha256: kept.manifestSha256, preparedAt: kept.preparedAt, objects: kept.objects, bytes: kept.bytes });
       }
@@ -826,13 +835,161 @@ window.KinStudyTransferLocal = function (app) {
   }
 
   // ── Download Originals (5.2, 5.3, 6) ──
-  function downloadOperation(id, uid) {
-    return { kind: 'download', id, uid, state: null, objects: 0, bytes: 0, done: 0, notice: '', gen: generation, readSeq: 0,
+  // selection: null for the whole study, else { series, instances } of chosen original UIDs (Download Selected Originals).
+  function downloadOperation(id, uid, selection = null) {
+    return { kind: 'download', id, uid, selection, state: null, objects: 0, bytes: 0, done: 0, notice: '', gen: generation, readSeq: 0,
       inFlight: false, lost: false, polling: false, pollTimer: null, polls: 0, grantId: null, manifestSha256: null, preparedAt: null, label: studyLabel(uid) };
   }
 
+  /** The closed form of a choice, as the server keeps it: distinct UIDs, both lists sorted, together 1..4096; else null. */
+  function closedSelection(v) {
+    if (!isObject(v) || Object.keys(v).sort().join() !== 'instances,series') return null;
+    const list = items => Array.isArray(items) && items.every(uid) && new Set(items).size === items.length ? [...items].sort() : null;
+    const series = list(v.series), instances = list(v.instances);
+    if (!series || !instances || series.length + instances.length < 1 || series.length + instances.length > 4096) return null;
+    return { series, instances };
+  }
+  const sameSelection = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
+
+  /**
+   * Download Selected Originals: the chosen series and single images of one original study at a time. A merged or split
+   * exam first chooses its originals (KinExamScope.chooseOriginals, as Download Originals does), then each original's own
+   * series and images by their own UIDs - never one exam's merged list. An exam the reader cannot read whole opens nothing.
+   */
+  async function downloadChosen(uid) {
+    sync();
+    if (!canDownload()) return;
+    const row = app.study(uid), scope = window.KinExamScope.read(row);
+    const at = work.capture('study'), stamp = window.KinExamScope.stamp(row);
+    const live = () => work.admits(at) && stamp === window.KinExamScope.stamp(app.study(uid));
+    if (!usable()) { openPanel(); status.textContent = unavailable(); return; }
+    let sources = [uid];
+    if (scope?.groupId) {
+      const lost = window.KinExamScope.unavailable(row);
+      if (lost) { openPanel(); kinWrite(status, lost.message || kinSay('이 검사의 원본을 지금 모두 볼 수 없어 고를 수 없습니다.')); return; }
+      sources = await window.KinExamScope.chooseOriginals(row, scope, { live, title: kinSay('Download Selected Originals'),
+        note: kinSay('시리즈·영상을 고를 원본 검사를 고르세요. 원본 UID와 영상은 바뀌지 않습니다.') });
+    }
+    for (const source of sources) {
+      if (!live()) return;
+      const selection = await pickOriginals(source, live);
+      if (!selection || !live()) return;
+      await download(source, true, selection);
+    }
+  }
+
+  // The archive's own listing (QIDO-RS) of one original study, read for the choice only; values are data.
+  const tag = (row, key) => { const v = isObject(row) && isObject(row[key]) && Array.isArray(row[key].Value) ? row[key].Value[0] : undefined; return v === undefined || v === null ? '' : String(v); };
+  async function listing(path, at) {
+    let answer = null;
+    try { answer = await app.transport.request(path, { context: at, headers: { Accept: 'application/dicom+json' } }); } catch (_) {}
+    // An empty listing answers 204 (no body) or an empty array; anything else unreadable is a failure.
+    if (answer && answer.ok && answer.status === 204) return [];
+    return answer && answer.ok && !answer.incomplete && Array.isArray(answer.body) ? answer.body : null;
+  }
+
+  /**
+   * The choice of one original study's series and images. Continue only with something chosen; a chosen series takes all
+   * its images (its own image boxes are then off). Cancel, Escape or a moved selection choose nothing (null). A listing
+   * that answers after the dialog closed, or after the person or the work context changed, is not applied.
+   */
+  function pickOriginals(studyUid, live) {
+    return new Promise(resolve => {
+      const at = work.capture('document');
+      const dialog = node('dialog', 'order-dialog study-transfer-pick'), heading = node('h3'), note = node('p');
+      kinWrite(heading, kinSay('Download Selected Originals'));
+      kinWrite(note, kinSay('내려받을 시리즈나 영상을 고르세요. 시리즈를 고르면 그 시리즈의 영상을 모두 받습니다. 원본 UID와 영상은 바뀌지 않습니다.'));
+      // The study's own label and UID are data.
+      const study = node('p', 'study-transfer-pick-study', [studyLabel(studyUid), studyUid].filter(Boolean).join(' · '));
+      study.translate = false;
+      const list = node('div', 'study-transfer-pick-list'), counted = node('p', 'study-transfer-pick-count');
+      counted.setAttribute('role', 'status');
+      const go = node('button'), cancel = node('button');
+      go.type = cancel.type = 'button';
+      kinWrite(go, kinSay('Continue'));
+      kinWrite(cancel, kinSay('Cancel'));
+      let open = true, result = null;
+      const seriesBoxes = [], imageBoxes = [];
+      const chosen = () => {
+        const series = seriesBoxes.filter(b => b.checked).map(b => b.value), whole = new Set(series);
+        const instances = imageBoxes.filter(b => b.checked && !whole.has(b.dataset.series)).map(b => b.value);
+        return { series, instances };
+      };
+      const update = () => {
+        for (const b of imageBoxes) b.disabled = seriesBoxes.some(s => s.checked && s.value === b.dataset.series);
+        const c = chosen();
+        go.disabled = c.series.length + c.instances.length === 0;
+        kinWrite(counted, kinSay('고른 것: 시리즈 {n0}개, 영상 {n1}개', c.series.length, c.instances.length));
+      };
+      const failed = (where, words) => { where.replaceChildren(); where.append(kinWrite(node('p', 'study-transfer-pick-failed'), kinSay(words))); };
+      dialog.addEventListener('change', update);
+      go.addEventListener('click', () => { if (live()) result = closedSelection(chosen()); dialog.close(); });
+      cancel.addEventListener('click', () => dialog.close());
+      dialog.addEventListener('close', () => { open = false; dialog.remove(); resolve(result); }, { once: true });
+      kinWrite(list, kinSay('시리즈 목록을 읽는 중입니다…'));
+      dialog.append(heading, note, study, list, counted, go, cancel);
+      document.body.append(dialog);
+      dialog.showModal();
+      update();
+      const base = '/dicom-web/studies/' + encodeURIComponent(studyUid) + '/series';
+      listing(base + '?includefield=0020000E,00200011,00080060,0008103E,00201209', at).then(rows => work.commit(at, () => {
+        // Nothing of the study is drawn once the person, the row or its exam scope moved: the dialog closes instead.
+        if (!open) return;
+        if (!live()) { dialog.close(); return; }
+        if (!rows) { failed(list, '시리즈 목록을 읽지 못했습니다. 창을 닫고 다시 시도하세요.'); return; }
+        list.replaceChildren();
+        const series = rows.map(r => ({ uid: tag(r, '0020000E'), number: tag(r, '00200011'), modality: tag(r, '00080060'),
+          desc: tag(r, '0008103E'), count: tag(r, '00201209') })).filter(s => uid(s.uid))
+          .sort((a, b) => (Number(a.number) || 0) - (Number(b.number) || 0) || (a.uid < b.uid ? -1 : 1));
+        if (!series.length) { failed(list, '이 검사에서 내려받을 수 있는 시리즈를 찾지 못했습니다.'); return; }
+        for (const s of series) {
+          const box = node('div', 'study-transfer-pick-series'), label = node('label'), input = node('input');
+          input.type = 'checkbox'; input.value = s.uid;
+          // Series number, modality, description and image count are data.
+          const words = node('span', null, [s.number, s.modality, s.desc].filter(Boolean).join(' · ') || s.uid);
+          words.translate = false;
+          label.append(input, ' ', words);
+          if (s.count) label.append(' ', kinWrite(node('span', 'study-transfer-pick-images'), kinSay('영상 {n0}개', Number(s.count))));
+          const images = node('ol', 'study-transfer-pick-instances'), more = node('button');
+          images.hidden = true; more.type = 'button';
+          kinWrite(more, kinSay('Choose Images'));
+          more.addEventListener('click', () => {
+            more.disabled = true;
+            images.hidden = false;
+            kinWrite(images, kinSay('영상 목록을 읽는 중입니다…'));
+            listing(base + '/' + encodeURIComponent(s.uid) + '/instances?includefield=00080018,00200013,00280008', at).then(found => work.commit(at, () => {
+              if (!open) return;
+              if (!live()) { dialog.close(); return; }
+              if (!found) { failed(images, '영상 목록을 읽지 못했습니다. 시리즈 전체를 고르거나 창을 닫고 다시 시도하세요.'); more.disabled = false; return; }
+              images.replaceChildren();
+              const sops = found.map(r => ({ uid: tag(r, '00080018'), number: tag(r, '00200013'), frames: tag(r, '00280008') }))
+                .filter(i => uid(i.uid)).sort((a, b) => (Number(a.number) || 0) - (Number(b.number) || 0) || (a.uid < b.uid ? -1 : 1));
+              for (const i of sops) {
+                const li = node('li'), l = node('label'), pick = node('input');
+                pick.type = 'checkbox'; pick.value = i.uid; pick.dataset.series = s.uid;
+                // Instance number and SOP Instance UID are data.
+                const what = node('span', null, [i.number, i.uid].filter(Boolean).join(' · '));
+                what.translate = false;
+                l.append(pick, ' ', what);
+                if (Number(i.frames) > 1) l.append(' ', kinWrite(node('span', 'study-transfer-pick-frames'), kinSay('프레임 {n0}개', Number(i.frames))));
+                li.append(l);
+                images.append(li);
+                imageBoxes.push(pick);
+              }
+              update();
+            }));
+          });
+          box.append(label, more, images);
+          list.append(box);
+          seriesBoxes.push(input);
+        }
+        update();
+      }));
+    });
+  }
+
   /** The row's Download Originals: a new operation is prepared for that study's fixed manifest (5.2 steps 1-2). */
-  async function download(uid, original = false) {
+  async function download(uid, original = false, selection = null) {
     if (!original) {
       const row=app.study(uid),scope=window.KinExamScope.read(row);
       if(scope?.groupId) {
@@ -846,7 +1003,9 @@ window.KinStudyTransferLocal = function (app) {
     if (!canDownload()) return;
     openPanel();
     if (!usable()) { status.textContent = unavailable(); return; }
-    const op = downloadOperation(crypto.randomUUID(), uid);
+    const chosen = selection ? closedSelection(selection) : null;
+    if (selection && !chosen) return;
+    const op = downloadOperation(crypto.randomUUID(), uid, chosen);
     firstDownloads.add(op);
     operations.unshift(op);
     store();
@@ -856,14 +1015,20 @@ window.KinStudyTransferLocal = function (app) {
     render();
     let answer = null;
     try {
+      // The whole study keeps its closed body {operationId}; a chosen download adds its selection.
       answer = await app.transport.request(app.api + '/studies/' + encodeURIComponent(uid) + '/original-downloads',
-        { method: 'POST', json: { operationId: op.id }, context: at });
+        { method: 'POST', json: chosen ? { operationId: op.id, selection: chosen } : { operationId: op.id }, context: at });
     } catch (_) {}
     const applied = work.commit(at, () => {
       if (!live(op) || op.gen !== gen) return;
       op.inFlight = false;
       const view = downloadPositive(answer, op);
       if (view) { adoptDownload(op, view); op.notice = ''; }
+      // A chosen series or image the study does not hold now: the server prepared nothing (its own refusal, no UID).
+      else if (op.selection && answer && answer.status === 409 && answer.body?.code === 'SELECTION_NOT_FOUND') {
+        firstDownloads.delete(op);
+        op.notice = TEXT.selectionMissing;
+      }
       else { op.notice = TEXT.prepareUnknown; readDownload(op, false, true); }
       store();
       render();
@@ -1114,26 +1279,33 @@ window.KinStudyTransferLocal = function (app) {
     const box = node('section', 'study-transfer-op');
     box.dataset.operation = op.id;
     const head = node('div', 'study-transfer-op-head');
-    head.append(node('b', null, 'Download Originals'), node('span', null, ' · ' + op.id.slice(0, 8) + (op.label ? ' · ' + op.label : '')));
+    head.append(op.selection ? kinWrite(node('b'), kinSay('Download Selected Originals')) : node('b', null, 'Download Originals'),
+      node('span', null, ' · ' + op.id.slice(0, 8) + (op.label ? ' · ' + op.label : '')));
     box.append(head);
+    if (op.selection) {
+      box.dataset.selected = 'true';
+      box.append(kinWrite(node('p', 'study-transfer-selection'),
+        kinSay('고른 범위: 시리즈 {n0}개, 영상 {n1}개', op.selection.series.length, op.selection.instances.length)));
+    }
     const line = node('p', 'study-transfer-download');
     const ready = op.state === 'prepared' && firstDownloads.has(op);
     line.append(node('span', 'study-transfer-state', ready ? 'Ready' : op.state && op.state !== 'prepared' ? DOWNLOAD_NAMES[op.state] : 'Not confirmed'),
-      node('span', 'study-transfer-reason', downloadText(op)));
+      kinWrite(node('span', 'study-transfer-reason'), downloadText(op)));
     box.append(line);
     if (op.notice) box.append(node('p', 'study-transfer-note', op.notice));
     if (ready && !op.polling && !op.inFlight) box.append(button('Download', () => start(op)));
     box.append(button('Copy ID', () => copyId({ op })));
     if (!op.inFlight) {
       box.append(button('Check Again', () => readDownload(op)));
-      box.append(button('Prepare Again', () => download(op.uid,true)));
+      // Prepare Again keeps the operation's own choice: the whole study, or the same series and images.
+      box.append(button('Prepare Again', () => download(op.uid, true, op.selection)));
     }
     return box;
   }
   function downloadText(op) {
-    if (op.state === 'prepared' && firstDownloads.has(op)) return TEXT.ready(op.objects, size(op.bytes));
+    if (op.state === 'prepared' && firstDownloads.has(op)) return op.selection ? TEXT.readyChosen(op.objects, size(op.bytes)) : TEXT.ready(op.objects, size(op.bytes));
     if (op.state === 'sending') return TEXT.downloading(op.done, op.objects);
-    if (op.state === 'sent') return TEXT.sent;
+    if (op.state === 'sent') return op.selection ? TEXT.sentChosen : TEXT.sent;
     if (op.state === 'incomplete') return TEXT.incomplete;
     return TEXT.downloadUnconfirmed;
   }
@@ -1151,6 +1323,8 @@ window.KinStudyTransferLocal = function (app) {
     /** The Technician row's Import DICOM: the row's study goes as X-KIN-Expect-Study. */
     importInto: uid => choose(uid),
     download,
+    /** The row's Download Selected Originals: the chosen series and images of the row's original study (or studies). */
+    downloadChosen,
     sync,
   });
 };

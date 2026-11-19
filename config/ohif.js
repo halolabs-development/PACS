@@ -258,14 +258,16 @@
     };
     return {send(uids){const identity=owner();if(identity)channel.postMessage({owner:identity,uids:[...new Set(uids)]});},close(){channel.close();}};
   }
-  function chooseOriginals(row,scope,{title,multiple=true,live=()=>true}={}) {
+  // `note`: the caller's own sentence when what follows the choice is not the whole original (a chosen download).
+  function chooseOriginals(row,scope,{title,note:said,multiple=true,live=()=>true}={}) {
     return new Promise(resolve=>{
       const dialog=document.createElement('dialog'),heading=document.createElement('h3'),note=document.createElement('p');
       const language = root.KinLanguage;
       const write = (node, words) => language ? language.write(node, words) : (node.textContent = words);
       const phrase = words => language ? language.say(words) : words;
       dialog.className='order-dialog';write(heading,title ?? phrase('Download Originals'));
-      note.textContent=scope.kind==='split'?'나눈 시리즈만이 아니라 원본 검사 전체를 내보냅니다. 원본 UID와 영상은 바뀌지 않습니다.':'내보낼 원본 검사를 고르세요. 원본 UID와 영상은 바뀌지 않습니다.';
+      if(said!=null)write(note,said);
+      else note.textContent=scope.kind==='split'?'나눈 시리즈만이 아니라 원본 검사 전체를 내보냅니다. 원본 UID와 영상은 바뀌지 않습니다.':'내보낼 원본 검사를 고르세요. 원본 UID와 영상은 바뀌지 않습니다.';
       dialog.append(heading,note);const choices=[];
       for(const source of scope.sources){
         const original=metadata(row).find(s=>s.uid===source.studyUid),label=document.createElement('label'),input=document.createElement('input');

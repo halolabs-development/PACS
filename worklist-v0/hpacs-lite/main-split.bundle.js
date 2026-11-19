@@ -15320,7 +15320,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           { sep: 1 },
           { label: kinSay("판독 시작 (수신 기관)"), act: teleLater },
           // 원본 다운로드는 자기 기관 검사만이다(S9-U4p §3·§6) — 원격판독으로 받은 행은 회색, 서버도 404로 막는다.
-          ...(studyTransfer.canDownload() ? [{ sep: 1 }, { label: kinSay("Download Originals"), dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) }] : []),
+          ...(studyTransfer.canDownload() ? [{ sep: 1 }, { label: kinSay("Download Originals"), dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) },
+            // The chosen series or images of the same originals, right after the whole-study item (which keeps its name and place).
+            { label: kinSay("Download Selected Originals"), dis: !!s?.tele, act: () => studyTransfer.downloadChosen(opened.uid) }] : []),
           ...forceReleaseItems,
           // FC-076: attach a scanned document or picture to this row's study, at the end of the menu.
           ...(studyAttachments.canAttach() ? [{ sep: 1 }, { label: kinSay("Attach Document"), dis: !!s?.tele, act: () => studyAttachments.open(opened.uid) }] : []),
@@ -15359,7 +15361,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           ...(studyTransfer.canImport() ? [{ label: kinSay("Import DICOM"), act: () => studyTransfer.importInto(opened.uid) }] : []),
           // FC-076: right after Import DICOM; grey on a study received for tele-reading.
           ...(studyAttachments.canAttach() ? [{ label: kinSay("Attach Document"), dis: !!s?.tele, act: () => studyAttachments.open(opened.uid) }] : []),
-          ...(studyTransfer.canDownload() ? [{ label: kinSay("Download Originals"), dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) }] : []),
+          ...(studyTransfer.canDownload() ? [{ label: kinSay("Download Originals"), dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) },
+            { label: kinSay("Download Selected Originals"), dis: !!s?.tele, act: () => studyTransfer.downloadChosen(opened.uid) }] : []),
           ...forceReleaseItems,
         ], keyboard, opened);
       }

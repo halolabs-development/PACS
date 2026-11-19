@@ -95,6 +95,7 @@ export const TRANSFER_MESSAGES = Object.freeze({
   /** The status read's own storage answer: it starts nothing, and says nothing of what earlier attempts supplied. */
   statusStorage: '원본 다운로드 기록을 읽지 못했습니다. 이 작업의 상태를 잠시 뒤 다시 확인하세요.',
   sent: '서버가 이 검사의 모든 원본을 보냈습니다. 내 컴퓨터에 저장됐는지는 브라우저의 다운로드 목록에서 확인하세요.',
+  sentChosen: '서버가 고른 시리즈·영상의 원본을 모두 보냈습니다. 내 컴퓨터에 저장됐는지는 브라우저의 다운로드 목록에서 확인하세요.',
   grantSession: '원본 내려받기 권한은 로그인한 브라우저 화면에서만 받을 수 있습니다.',
   grantOrigin: '이 화면에서 시작한 내려받기만 받을 수 있습니다. 화면의 Download 단추로 다시 시도하세요.',
   grantInvalid: '내려받기 권한이 맞지 않습니다. 화면의 Download 단추로 다시 시도하세요.',
@@ -125,6 +126,53 @@ const BEFORE_STUDY_CODES = new Set(['DICOM_NOT_PART10', 'DICOM_FILE_META_MISSING
   'PATIENT_ID_UNREADABLE', 'PATIENT_ID_MISSING', 'MODALITY_NOT_IMPORTABLE', 'STUDY_UID_MISMATCH', 'PATIENT_ISSUER_CONFLICT',
   'STUDY_OWNERSHIP_CONFLICT', 'STUDY_OWNERSHIP_UNDETERMINED', 'ORTHANC_UNAVAILABLE']);
 const storeInvalid = () => error(503, 'MANIFEST_STORE_INVALID', ORIGINAL_ARCHIVE_MESSAGES.MANIFEST_STORE_INVALID);
+/** At most this many chosen series and images together in one download. */
+const SELECTION_MAX = 4096;
+/** A chosen series or image that is not one of the study's downloadable originals now: one answer, naming none of them. */
+const SELECTION_NOT_FOUND = '고른 시리즈·영상 가운데 이 검사의 원본에서 찾을 수 없는 것이 있습니다. 목록을 다시 열어 고르세요. 내려받기는 준비되지 않았습니다.';
+
+/** The chosen part of a study a download carries: whole series and single images, by their own original UIDs. */
+export interface Selection { series: string[]; instances: string[] }
+
+/**
+ * A selection in its closed form - exactly series and instances, each a list of distinct UIDs, together 1 to
+ * SELECTION_MAX - returned with both lists sorted (one text for one choice). Null when it is anything else.
+ */
+export function readSelection(value: unknown): Selection | null {
+  if (!exactKeys(value, ['series', 'instances'])) return null;
+  const v = value as any;
+  const list = (items: unknown) => Array.isArray(items) && items.every(u => typeof u === 'string' && u.length <= 64 && UID.test(u))
+    && new Set(items).size === items.length ? [...items as string[]].sort() : null;
+  const series = list(v.series), instances = list(v.instances);
+  if (!series || !instances) return null;
+  const total = series.length + instances.length;
+  return total >= 1 && total <= SELECTION_MAX ? { series, instances } : null;
+}
+
+/** Whether an original (by its own Series and SOP Instance UIDs) is in the selection: a chosen series or a chosen image. */
+function chosenFilter(selection: Selection) {
+  const series = new Set(selection.series), sops = new Set(selection.instances);
+  return (o: { seriesUid: string; sopUid: string }) => series.has(o.seriesUid) || sops.has(o.sopUid);
+}
+
+const sameSelection = (a: Selection | null, b: Selection | null) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+interface OriginalsRead { kind: 'read'; objects: ManifestObjectInput[]; patients: (string | null)[] }
+
+/**
+ * The one rule of a chosen download: of one complete reading of the study's downloadable originals (withdrawn
+ * attachments already left out), the images of the chosen series and the chosen images, each by its own UIDs. Every
+ * chosen series and image must be among them, or nothing is chosen ('missing'): never a part of the choice. Without a
+ * selection the reading is the whole study, as it is.
+ */
+function chosenOriginals(read: OriginalsRead | { kind: 'failed' }, selection: Selection | null): OriginalsRead | { kind: 'failed' } | { kind: 'missing' } {
+  if (read.kind !== 'read' || !selection) return read;
+  const kept = read.objects.map(chosenFilter(selection));
+  const objects = read.objects.filter((_, i) => kept[i]), patients = read.patients.filter((_, i) => kept[i]);
+  const foundSeries = new Set(objects.map(o => o.seriesUid)), foundSops = new Set(objects.map(o => o.sopUid));
+  if (selection.series.some(s => !foundSeries.has(s)) || selection.instances.some(s => !foundSops.has(s))) return { kind: 'missing' };
+  return { kind: 'read', objects, patients };
+}
 const downloadStorage = () => error(503, 'IMPORT_STORAGE_UNAVAILABLE', TRANSFER_MESSAGES.storage);
 const statusStorage = () => error(503, 'IMPORT_STORAGE_UNAVAILABLE', TRANSFER_MESSAGES.statusStorage);
 const text = (value: unknown, max = 1024): value is string => typeof value === 'string' && value.length > 0 && value.length <= max;
@@ -149,8 +197,15 @@ export function checkDownloadRow(op: any): StoredDownload {
   const keys = v2 ? DOWNLOAD_KEYS_V2 : DOWNLOAD_KEYS;
   // Older prepared operations have no retained source-subject observation.
   const hasSourcePatients = d && Object.prototype.hasOwnProperty.call(d, 'sourcePatientIds');
-  if (!exactKeys(d, hasSourcePatients ? [...keys, 'sourcePatientIds'] : keys) || (d.schemaVersion !== 1 && !v2) || d.targetStudyUid !== op.studyUid
+  // A chosen download keeps its selection in the closed sorted form; a whole-study download has none.
+  const hasSelection = d && Object.prototype.hasOwnProperty.call(d, 'selection');
+  const allowed = [...keys, ...(hasSourcePatients ? ['sourcePatientIds'] : []), ...(hasSelection ? ['selection'] : [])];
+  if (!exactKeys(d, allowed) || (d.schemaVersion !== 1 && !v2) || d.targetStudyUid !== op.studyUid
       || d.destination !== 'browser-download' || !storedTime(d.preparedAt) || !Array.isArray(d.attempts)) fail();
+  if (hasSelection) {
+    const closed = readSelection(d.selection);
+    if (!closed || JSON.stringify([closed.series, closed.instances]) !== JSON.stringify([d.selection.series, d.selection.instances])) fail();
+  }
   if (hasSourcePatients && (!Array.isArray(d.sourcePatientIds) || !d.sourcePatientIds.length
       || d.sourcePatientIds.some((id: unknown) => id !== null && !(typeof id === 'string' && id.trim())))) fail();
   const stored = parseCanonicalManifest(d.manifestCanonical, op.manifestSha256);
@@ -495,9 +550,12 @@ export class StudyTransferLocalService implements OnModuleInit, OnModuleDestroy 
   }
 
   private downloadView(op: any, stored: StoredDownload, now: Date | null = null) {
-    const attempts = stored.download.attempts;
+    const attempts = stored.download.attempts, selection: Selection | undefined = stored.download.selection;
+    // A chosen download also says how many series and single images were chosen (never which: the page holds them).
     return { operationId: op.id, studyUid: op.studyUid, state: op.status, manifestSha256: op.manifestSha256, preparedAt: stored.download.preparedAt,
-      objects: stored.manifest.objects.length, bytes: totalBytes(stored.manifest), note: op.status === 'sent' ? TRANSFER_MESSAGES.sent : null,
+      ...(selection ? { selection: { series: selection.series.length, instances: selection.instances.length } } : {}),
+      objects: stored.manifest.objects.length, bytes: totalBytes(stored.manifest),
+      note: op.status === 'sent' ? (selection ? TRANSFER_MESSAGES.sentChosen : TRANSFER_MESSAGES.sent) : null,
       attempts: attempts.map((a: any) => ({ attemptId: a.attemptId, number: a.number, state: a.state, startedAt: a.startedAt, endedAt: a.endedAt,
         archiveSha256: a.archiveSha256, responseFinished: a.responseFinished,
         objectsComplete: a.objects.filter((o: any) => o.complete).length, bytesSupplied: a.objects.reduce((n: number, o: any) => n + o.bytesSupplied, 0) })),
@@ -545,16 +603,20 @@ export class StudyTransferLocalService implements OnModuleInit, OnModuleDestroy 
   async prepareDownload(uid: string, body: unknown, c: Caller, request: RequestWorkContext) {
     const owner = this.owner(c, 'download');
     await this.gate.ready(true);
-    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).join() !== 'operationId'
+    // The whole study ({operationId}) or a chosen part of it ({operationId, selection}); nothing else.
+    const keys = body && typeof body === 'object' && !Array.isArray(body) ? Object.keys(body).sort().join() : '';
+    if ((keys !== 'operationId' && keys !== 'operationId,selection')
         || typeof (body as any).operationId !== 'string' || !OPERATION_ID.test((body as any).operationId))
       throw error(400, 'IMPORT_REQUEST_INVALID', TRANSFER_MESSAGES.request);
+    const selection = keys === 'operationId' ? null : readSelection((body as any).selection);
+    if (keys !== 'operationId' && !selection) throw error(400, 'IMPORT_REQUEST_INVALID', TRANSFER_MESSAGES.request);
     const operationId = (body as any).operationId.toLowerCase();
     await this.storageRead(() => this.ownStudy(uid, c), downloadStorage);
     // A preparation and its replay alike: no download of a Study UID two original resources answer (WORKLIST-SPLIT-UID).
     await this.unsplitSource(uid, c);
     const existing = await this.storageRead(() => this.prisma.importOperation.findUnique({ where: { id: operationId } }), downloadStorage);
-    if (existing) return this.replayPrepared(existing, owner, uid);
-    const built = await this.preparedManifest(uid);
+    if (existing) return this.replayPrepared(existing, owner, uid, selection);
+    const built = await this.preparedManifest(uid, selection);
     if (built.ok === false) throw error(409, built.code, built.message);
     const plan = planArchive(built.manifest);
     if (plan.ok === false) throw error(409, plan.code, plan.message);
@@ -570,7 +632,8 @@ export class StudyTransferLocalService implements OnModuleInit, OnModuleDestroy 
         await tx.$queryRaw`SELECT uid FROM "StudyState" WHERE uid = ${uid} FOR SHARE`;
         const now = await this.gate.clock(tx);
         const download = { schemaVersion: 1, targetStudyUid: uid, destination: 'browser-download', preparedAt: now.toISOString(),
-          manifestCanonical: built.manifestCanonical, sourcePatientIds: built.sourcePatientIds, attempts: [] as any[] };
+          manifestCanonical: built.manifestCanonical, sourcePatientIds: built.sourcePatientIds, attempts: [] as any[],
+          ...(selection ? { selection } : {}) };
         // claimKey and claim are left out, so both are the columns' SQL NULL that the kind check requires of a download
         // (U4BL-02): a literal null on the JSONB claim is written as the JSON null value, which is not NULL. The answer is
         // made from the row the database returned, which reads both back as null.
@@ -579,17 +642,19 @@ export class StudyTransferLocalService implements OnModuleInit, OnModuleDestroy 
         await this.downloadAudit(tx, record, request, download, 'provide-prepared', { actor: owner.actor, action: 'original.download.prepare', target: uid,
           detail: JSON.stringify({ institutionId: owner.institutionId, operationId, studyUid: uid, manifestSha256: built.manifestSha256,
             objects: built.manifest.objects.length, bytes: totalBytes(built.manifest), ownerIssuer: owner.ownerIssuer,
-            ownerSubject: owner.ownerSubject, at: now.toISOString() }) });
+            ownerSubject: owner.ownerSubject, at: now.toISOString(),
+            // A chosen download says how much was chosen; which originals it holds is the manifest under its hash.
+            ...(selection ? { selection: { series: selection.series.length, instances: selection.instances.length } } : {}) }) });
         return { view: this.downloadView(row, this.storedDownload(row)) };
       });
     } catch (failure: any) {
       if (failure instanceof HttpException) throw failure;
       // A storage failure: the row may still have been written by the other request of the same id; replay it if so.
       const winner = await this.prisma.importOperation.findUnique({ where: { id: operationId } }).catch(() => null);
-      if (winner) return this.replayPrepared(winner, owner, uid);
+      if (winner) return this.replayPrepared(winner, owner, uid, selection);
       throw downloadStorage();
     }
-    return 'replay' in answer ? this.replayPrepared(answer.replay, owner, uid) : answer.view;
+    return 'replay' in answer ? this.replayPrepared(answer.replay, owner, uid, selection) : answer.view;
   }
 
   /**
@@ -603,58 +668,70 @@ export class StudyTransferLocalService implements OnModuleInit, OnModuleDestroy 
     this.studyAccess.assertUnsplitSource(c, uid);
   }
 
-  private replayPrepared(op: any, owner: ImportOwner, uid: string) {
+  /** A replay is the same request only for the same owner, study and choice (the whole study or the same selection). */
+  private replayPrepared(op: any, owner: ImportOwner, uid: string, selection: Selection | null) {
     if (!this.ownsDownload(op, owner) || op.studyUid !== uid) throw error(409, 'OPERATION_CONFLICT', TRANSFER_MESSAGES.conflict);
-    return this.downloadView(op, this.storedDownload(op));
+    const stored = this.storedDownload(op);
+    if (!sameSelection(stored.download.selection ?? null, selection)) throw error(409, 'OPERATION_CONFLICT', TRANSFER_MESSAGES.conflict);
+    return this.downloadView(op, stored);
   }
 
   /**
    * One complete reading of the study's originals: every instance id (Expand false) with its Study/Series/SOP UIDs and its
-   * stored size/MD5. 'failed' when any read fails or answers outside its form.
+   * stored size/MD5. 'failed' when any read fails or answers outside its form. With a selection, an original outside it
+   * is passed over once its UIDs are read - its size and MD5 are not read, so it can neither fail nor change the chosen
+   * download.
    */
-  private async readOriginals(uid: string): Promise<{ kind: 'read'; objects: ManifestObjectInput[]; sourcePatientIds: (string | null)[] } | { kind: 'failed' }> {
+  private async readOriginals(uid: string, selection: Selection | null = null): Promise<OriginalsRead | { kind: 'failed' }> {
     const ids = await this.gate.studyInstanceIds(uid);
     if (!ids) return { kind: 'failed' };
     // FC-076: a withdrawn attachment (or one never confirmed stored) is not an original anyone downloads.
     const hidden = await hiddenAttachments(this.prisma, uid);
     const objects: ManifestObjectInput[] = [];
-    const sourcePatientIds = new Set<string | null>();
+    const patients: (string | null)[] = [];
+    const wanted = selection ? chosenFilter(selection) : null;
     for (const orthancId of ids) {
       if (hidden.orthancIds.has(orthancId)) continue;
       const uids = await this.gate.instanceUids(orthancId);
       if (!uids || uids.studyUid !== uid) return { kind: 'failed' };
       if (hidden.series.has(uids.seriesUid) || hidden.sops.has(uids.sopUid)) continue;
+      if (wanted && !wanted(uids)) continue;
       const info = await this.gate.attachmentInfo(orthancId);
       if (!info) return { kind: 'failed' };
       objects.push({ orthancId, seriesUid: uids.seriesUid, sopUid: uids.sopUid, bytes: info.bytes, md5: info.md5 });
-      sourcePatientIds.add(uids.sourcePatientId);
+      patients.push(uids.sourcePatientId);
     }
-    return { kind: 'read', objects, sourcePatientIds: [...sourcePatientIds] };
+    return { kind: 'read', objects, patients };
   }
 
   /**
    * 5.2 step 2: the originals read twice, completely (enumeration and every object's UIDs, size and MD5), and the manifest
    * made only when both readings are the same set with the same values (order alone may differ). Empty, unreadable,
-   * malformed or changed between the two readings is MANIFEST_INCOMPLETE. ZIP64 carries large inventories.
+   * malformed or changed between the two readings is MANIFEST_INCOMPLETE. ZIP64 carries large inventories. A chosen
+   * download compares the chosen originals of both readings (chosenOriginals); a choice the first reading does not
+   * hold whole is SELECTION_NOT_FOUND, one the second reading lost is a change between the readings.
    */
-  private async preparedManifest(uid: string) {
+  private async preparedManifest(uid: string, selection: Selection | null) {
     const incomplete = { ok: false as const, code: 'MANIFEST_INCOMPLETE', message: ORIGINAL_ARCHIVE_MESSAGES.MANIFEST_INCOMPLETE };
-    const first = await this.readOriginals(uid);
+    const first = chosenOriginals(await this.readOriginals(uid, selection), selection);
+    if (first.kind === 'missing') return { ok: false as const, code: 'SELECTION_NOT_FOUND', message: SELECTION_NOT_FOUND };
     if (first.kind === 'failed' || first.objects.length === 0) return incomplete;
-    const second = await this.readOriginals(uid);
+    const second = chosenOriginals(await this.readOriginals(uid, selection), selection);
     if (second.kind !== 'read' || sameSet(first.objects) !== sameSet(second.objects)) return incomplete;
     const built = canonicalManifest(uid, first.objects);
     // Both reads processed these subjects. Preserve every observed ID without inventing a patient match.
-    return built.ok ? { ...built, sourcePatientIds: [...new Set([...first.sourcePatientIds, ...second.sourcePatientIds])] } : incomplete;
+    return built.ok ? { ...built, sourcePatientIds: [...new Set([...first.patients, ...second.patients])] } : incomplete;
   }
 
   /**
    * 5.2 step 3 at every archive start: the originals now against the stored manifest (same sort, so order alone never
-   * matters). A set or a value that differs - an empty set, more objects than ZIP32 allows and a duplicate included - is
-   * 409 MANIFEST_CHANGED; originals that cannot be read completely are 409 MANIFEST_INCOMPLETE. Byte 0 either way.
+   * matters) - for a chosen download, the chosen originals now (chosenOriginals with the stored selection). A set or a
+   * value that differs - an empty set, a chosen series or image gone, more objects than ZIP32 allows and a duplicate
+   * included - is 409 MANIFEST_CHANGED; originals that cannot be read completely are 409 MANIFEST_INCOMPLETE. Byte 0
+   * either way.
    */
   private async unchangedOriginals(uid: string, stored: StoredDownload) {
-    const now = await this.readOriginals(uid);
+    const selection: Selection | null = stored.download.selection ?? null;
     if (now.kind === 'failed') throw error(409, 'MANIFEST_INCOMPLETE', ORIGINAL_ARCHIVE_MESSAGES.MANIFEST_INCOMPLETE);
     const built = now.kind === 'read' && now.objects.length ? canonicalManifest(uid, now.objects) : null;
     if (!built || !built.ok || built.manifestCanonical !== stored.manifestCanonical) throw error(409, 'MANIFEST_CHANGED', TRANSFER_MESSAGES.changed);
