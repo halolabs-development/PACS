@@ -54,9 +54,10 @@ html,
   -webkit-font-smoothing: antialiased;
 }
 
-/* Top bar: the HALO LABS logo (light-text version for a dark ground). */
+/* Top bar: the HALO LABS logo (light-text version for a dark ground). It scrolls with the page, so on a long form it never
+   covers the field that has focus. */
 .login-pf body::before {
-  position: fixed;
+  position: absolute;
   top: 0;
   right: 0;
   left: 0;
@@ -71,7 +72,7 @@ html,
 
 /* Top bar: the product name beside the logo, behind a thin rule. */
 .login-pf body::after {
-  position: fixed;
+  position: absolute;
   top: calc((var(--kin-bar-height) - 26px) / 2);
   left: calc(var(--kin-bar-side) + var(--kin-logo-width) + 18px);
   z-index: 11;
@@ -214,6 +215,16 @@ html,
   padding: 70px 0 0;
   background: url("../img/halo-icon.svg") left top / 48px 48px no-repeat;
   text-align: left;
+}
+
+/* Room for the language button at the column's top right: a long title or a signed-in address wraps before it. */
+.login-pf-page .card-pf:has(#kc-locale) .login-pf-header {
+  padding-right: 96px;
+}
+
+#kc-attempted-username,
+h1#kc-page-title {
+  overflow-wrap: anywhere;
 }
 
 h1#kc-page-title {
