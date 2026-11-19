@@ -295,7 +295,7 @@
     // Referred says where its time comes from and what a blank cell means.
     const HEAD_HELP = {
       rs: "RS (Report Status, 판독 상태)\nW: Unread — 판독 전\nT: In Progress — 저장했지만 승인 전\nP: Preliminary — 상급 판독의 승인 대기\nH: On Hold — 보류\nA: Approved — 승인됨\nA: Finalized — 승인 후 24시간이 지남, Addendum으로만 덧붙임\nD: Destroyed — 보존 기간 만료로 파기됨",
-      referredAt: "Referred: 의뢰 병원의 Gateway가 이 검사를 처음 보낸 시각(서버 기준)\n비어 있음: Gateway로 보낸 기록이 없는 검사(장비 직접 전송·가져오기, 또는 기록 전에 받은 검사)",
+      referredAt: "Referred: 의뢰 병원의 Gateway가 이 검사를 처음 보낸 시각(서버 기준)\n비어 있음: 최초 Gateway 접수 시각이 기록되지 않은 검사",
       em: "EM (Emergency)\nE: 응급\nN: 일반",
       ss: "SS (촬영 확인 상태)\nVerified: 촬영 확인됨\nUnverified: 촬영 미확인",
       pf: "PF (Prefetch, 미리 받기): 이 브라우저에 영상을 미리 받아 두는 상태입니다. 자세한 내용은 선택 막대의 Preload 패널에 있습니다.\nQueued: 받을 차례나 저장 공간을 기다림\nDownloading: 받는 중 (진행률 %)\nReady: 받아 둠 — 받기 시작한 때부터 72시간이 지나면 자동으로 정리됨\nFailed: 받지 못함 — Preload 패널의 Retry로 다시 받음\nEvicted: 미리 받은 사본이 지워짐 (저장 공간·기한·Clear All 등) — Retry로 다시 받음\n· (None): 이 로그인의 미리 받기 상태가 없거나 아직 확인되지 않음",

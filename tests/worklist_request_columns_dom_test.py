@@ -209,6 +209,9 @@ class WorklistReferredColumnDOM(unittest.TestCase):
                           "SYN-RF-04": ""}, screen.cells_by_id("Referred"))
         head = screen.table().locator('th[data-key="referredAt"]')
         self.assertIn("Gateway", head.get_attribute("title"))
+        # A blank cell is "no first reception time recorded": it does not say the study never came through a Gateway.
+        self.assertIn("비어 있음: 최초 Gateway 접수 시각이 기록되지 않은 검사", head.get_attribute("title"))
+        self.assertNotIn("기록이 없는 검사", head.get_attribute("title"))
         # The value is data of the study: never handed to the screen's translation.
         cell = screen.data_row("SYN-RF-03").locator("td").nth(REFERRED_HEADS.index("Referred"))
         self.assertEqual("no", cell.get_attribute("translate"))
@@ -263,8 +266,8 @@ class WorklistReferredColumnDOM(unittest.TestCase):
         screen.header("Referred").click()
         screen.wait_rows(["SYN-RF-04", "SYN-RF-02", "SYN-RF-01", "SYN-RF-03"])
         reads = sum(1 for e in server.ledger if e["path"] == "/api/studies")
-        # The same studies (no arrival, nothing removed), so the poll refreshes the rows in place. A value the server now
-        # sends (a stub change only - a real study's time never moves) is shown and sorted like the first list.
+        # The same studies (no arrival, nothing removed), so the poll refreshes the rows in place. SYN-RF-04 was blank and
+        # waiting; its first Gateway announce is recorded now, and the poll shows and sorts it like the first list.
         server.rows = [referred_row("2.25.951", "SYN-RF-01", "2026-11-19T23:10:40.000Z"),
                        referred_row("2.25.952", "SYN-RF-02", "2026-11-19T23:10:20.000Z"),
                        referred_row("2.25.953", "SYN-RF-03", "2026-11-20T02:45:00.000Z"),
@@ -285,8 +288,33 @@ class WorklistReferredColumnDOM(unittest.TestCase):
         cell = screen.data_row("SYN-RF-03").locator("td").nth(screen.heads().index("병원 전송"))
         self.assertEqual("2026-11-20 11:45", cell.inner_text().strip())
         self.assertIn("Gateway", screen.table().locator('th[data-key="referredAt"]').get_attribute("title"))
+        self.assertIn("비어 있음: 최초 Gateway 접수 시각이 기록되지 않은 검사", screen.table().locator('th[data-key="referredAt"]').get_attribute("title"))
         self.assertTrue(screen.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", "en"))
         until(lambda: "Referred" in screen.heads(), 5, "English header")
+        until(lambda: "Blank: the first Gateway reception time is not recorded for this study"
+              in screen.table().locator('th[data-key="referredAt"]').get_attribute("title"), 5, "English header help")
+        screen.finish()
+
+    def test_rf06_export_list_writes_the_cell_text_and_the_blank(self):
+        screen = self.boot(Server(rows=REFERRED_ROWS))
+        screen.wait_rows(REFERRED_IDS)
+        page = screen.page
+        more = page.locator("#toolbar-more")
+        if more.get_attribute("open") is None:
+            more.locator(":scope > summary").click()
+        page.locator("#worklist-export-open").click()
+        dialog = page.locator("#worklist-export-dialog")
+        for box in dialog.locator("input[type=checkbox]").all():
+            box.set_checked(box.get_attribute("value") in ("id", "referredAt"))
+        with page.expect_download() as info:
+            dialog.locator("[data-export-run]").click()
+        with open(info.value.path(), "rb") as file:
+            lines = file.read()[3:].decode("utf-8").split("\r\n")
+        # The list's own column order and words: the local time the cell shows, and nothing for a study with no time.
+        self.assertEqual("Referred,ID", lines[0])
+        self.assertEqual({"SYN-RF-01": "2026-11-20 08:10", "SYN-RF-02": "2026-11-20 08:10", "SYN-RF-03": "2026-11-20 11:45",
+                          "SYN-RF-04": ""}, {pid: referred for referred, pid in (line.split(",") for line in lines[1:5])})
+        self.assertEqual([""], lines[5:])
         screen.finish()
 
 

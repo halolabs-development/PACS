@@ -296,8 +296,9 @@ def expected_rows(uid):
         # FC-034: the approval round's lookup values travel as they are (two set, two NULL).
         approvedAt=STAMP, approvedBySub='SYNTHETIC-reader-sub', amendedAt=STAMP, addendumAt=None, preDoc=None, preReviewer=None, preDocSub="SYNTHETIC-author-sub", preReviewerSub="SYNTHETIC-reviewer-sub",
         ov=None, orig=None, orderOid=None, holder=None, holderInstitutionId=None, heldAt=None,
-        # Worklist Referred: the first Gateway announce time is a value of the row (written once), kept as it is.
-        referredAt=STAMP,
+        # Worklist Referred: a study registered directly and then announced. The first Gateway announce time and the closed
+        # mark are values of the row (written once, together), kept as they are: a restore never re-opens the row.
+        referredAt=STAMP, referredOpen=False,
         # S7-U5: the draft epoch is a value of the row (rotated by a forced release), not something a restore may re-draw.
         draftEpoch='00000000-0000-4000-8000-0000000000d1', reportUnit='disposal:00000000-0000-4000-8000-0000000000d2',
         updatedAt=STAMP, createdAt=STAMP)]
