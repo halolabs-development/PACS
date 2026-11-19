@@ -21,17 +21,11 @@ const { KeycloakService } = require('../dist/keycloak.service');
 const { AdminService } = require('../dist/admin.service');
 const { sendRecordedRoster } = require('../dist/member-rights-import');
 const { OperatorRuntime } = require('../dist/emr-runtime/operator-runtime');
-const { runFirstAdminCommand } = require('../dist/first-admin-command');
+const { operatorArguments, runFirstAdminCommand } = require('../dist/first-admin-command');
 
 const USAGE = 'Usage: designate-first-admin.cjs --institution <group> --subject <user id> --operator <name> --reason <text>';
-const options = {};
-const args = process.argv.slice(2);
-if (args.length !== 8) throw new Error(USAGE);
-for (let i = 0; i < args.length; i += 2) {
-  const key = { '--institution': 'institution', '--subject': 'subject', '--operator': 'operator', '--reason': 'reason' }[args[i]];
-  if (!key || key in options) throw new Error(USAGE);
-  options[key] = args[i + 1];
-}
+const options = operatorArguments(process.argv.slice(2),
+  { '--institution': 'institution', '--subject': 'subject', '--operator': 'operator', '--reason': 'reason' }, USAGE);
 
 const db = new PrismaService();
 let runtime, keycloak;

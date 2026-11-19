@@ -21,6 +21,20 @@ export const FIRST_ADMIN_EXIT = { designated: 0, notDesignated: 1, rosterUnconfi
 
 export const RETRY_ROSTER = 'node prisma/import-member-rights.cjs --retry-roster';
 
+/** An operator command's arguments: each flag of `flags` (flag -> option name) exactly once with its value, and
+ * nothing else. Only the table's own flags count (an inherited name such as `constructor` is no flag). */
+export function operatorArguments(args: readonly string[], flags: Readonly<Record<string, string>>, usage: string): Record<string, string> {
+  if (args.length !== Object.keys(flags).length * 2) throw new Error(usage);
+  const options: Record<string, string> = Object.create(null);
+  for (let i = 0; i < args.length; i += 2) {
+    if (!Object.prototype.hasOwnProperty.call(flags, args[i])) throw new Error(usage);
+    const key = flags[args[i]];
+    if (Object.prototype.hasOwnProperty.call(options, key)) throw new Error(usage);
+    options[key] = args[i + 1];
+  }
+  return options;
+}
+
 type Designation = { id: string; institution: string | null; version: number | null };
 type RecordedChange = { generation: number };
 type Records = {

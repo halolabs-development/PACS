@@ -231,6 +231,21 @@ export class KeycloakService {
   }
 
   /** Keycloak의 실제 기관 그룹 이름이 쓰기 화이트리스트다. */
+  /**
+   * A person's provider standing for an operator command that makes them an administrator: their groups and their
+   * *effective* realm roles (composites included, as their token will carry them). Read strictly: an answer that is not
+   * a list is a failed read, never "no groups" or "no roles".
+   */
+  async memberStanding(id: string): Promise<{ groups: string[]; effectiveRoles: string[] }> {
+    const [groups, roles] = await Promise.all([
+      this.adm(`/users/${encodeURIComponent(id)}/groups?briefRepresentation=true&max=500`),
+      this.adm(`/users/${encodeURIComponent(id)}/role-mappings/realm/composite`),
+    ]);
+    if (!Array.isArray(groups) || !Array.isArray(roles)) throw new RosterWriteFailure({ state: 'unknown', outcome: 'unreadable' });
+    return { groups: groups.map((group: any) => String(group.name ?? group.path ?? '').replace(/^\//, '')),
+      effectiveRoles: roles.map((role: any) => String(role.name ?? '')) };
+  }
+
   async institutions(): Promise<string[]> {
     const groups: any[] = await this.adm('/groups?briefRepresentation=true&first=0&max=500') ?? [];
     return groups.map(group => String(group.name ?? '')).filter(Boolean);

@@ -23,17 +23,11 @@ const { KeycloakService } = require('../dist/keycloak.service');
 const { AdminService } = require('../dist/admin.service');
 const { sendRecordedRoster } = require('../dist/member-rights-import');
 const { OperatorRuntime } = require('../dist/emr-runtime/operator-runtime');
-const { runReplaceSoleAdminCommand } = require('../dist/first-admin-command');
+const { operatorArguments, runReplaceSoleAdminCommand } = require('../dist/first-admin-command');
 
 const USAGE = 'Usage: replace-sole-admin.cjs --institution <group> --from <user id> --to <user id> --operator <name> --reason <text>';
-const options = {};
-const args = process.argv.slice(2);
-if (args.length !== 10) throw new Error(USAGE);
-for (let i = 0; i < args.length; i += 2) {
-  const key = { '--institution': 'institution', '--from': 'from', '--to': 'to', '--operator': 'operator', '--reason': 'reason' }[args[i]];
-  if (!key || key in options) throw new Error(USAGE);
-  options[key] = args[i + 1];
-}
+const options = operatorArguments(process.argv.slice(2),
+  { '--institution': 'institution', '--from': 'from', '--to': 'to', '--operator': 'operator', '--reason': 'reason' }, USAGE);
 
 const db = new PrismaService();
 let runtime, keycloak;

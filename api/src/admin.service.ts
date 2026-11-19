@@ -68,11 +68,30 @@ function replacementGate(fromRow: any, admins: { sub: string }[], from: string, 
   if (admins.some(admin => admin.sub !== from))
     throw new ReplaceAdminRefusal('REPLACE_ADMIN_NOT_SOLE', '이 기관에는 다른 활성 관리자가 있습니다. 그 관리자가 화면에서 바꿉니다');
 }
-/** The successor's rights row, if any, is of X (or the waiting room) and not suspended. */
-function successorGate(toRow: any, institution: string) {
-  if (toRow?.institution && toRow.institution !== institution)
+/** The keys a session of this person acts under (auth.guard.ts: email, else username, else id) — private drafts and
+ * report history are keyed by that actor — compared without case. */
+const actorKeys = (...values: unknown[]) => new Set(values.filter((v): v is string => typeof v === 'string' && !!v).map(v => v.toLowerCase()));
+/**
+ * Every condition on the successor, in one place (before the locks, and again under them): their rights row, if any,
+ * is X's or the waiting room's and not suspended; they are not isolated; their provider account is a usable person
+ * account — enabled, no `gateway` among its effective roles (composites included), in no group but X; and none of
+ * their actor keys is one of the predecessor's, so no private draft or history of the predecessor answers to them.
+ */
+function successorGate(s: { toRow: any; isolated: boolean; identity: KeycloakUser;
+  standing: { groups: string[]; effectiveRoles: string[] }; fromRow: any; institution: string }) {
+  if (s.toRow?.institution && s.toRow.institution !== s.institution)
     throw new ReplaceAdminRefusal('REPLACE_ADMIN_TO_CONFLICT', '후임은 다른 기관의 회원입니다');
-  if (toRow?.suspended) throw new ReplaceAdminRefusal('REPLACE_ADMIN_TO_SUSPENDED', '정지된 계정은 후임으로 지정할 수 없습니다');
+  if (s.toRow?.suspended) throw new ReplaceAdminRefusal('REPLACE_ADMIN_TO_SUSPENDED', '정지된 계정은 후임으로 지정할 수 없습니다');
+  if (s.isolated) throw new ReplaceAdminRefusal('REPLACE_ADMIN_TO_ISOLATED', '격리된 계정은 후임으로 지정할 수 없습니다');
+  if (!s.identity.enabled || s.standing.effectiveRoles.includes('gateway'))
+    throw new ReplaceAdminRefusal('REPLACE_ADMIN_TO_UNUSABLE', '후임 계정은 사용할 수 없는 상태입니다(비활성 또는 게이트웨이 계정)');
+  const groups = s.standing.groups;
+  if (groups.length && !(groups.length === 1 && groups[0] === s.institution))
+    throw new ReplaceAdminRefusal('REPLACE_ADMIN_TO_CONFLICT', '후임의 소속 그룹이 이 기관과 다릅니다');
+  const theirs = actorKeys(s.fromRow?.email, s.fromRow?.username, s.fromRow?.sub);
+  if ([...actorKeys(s.identity.email, s.identity.username, s.identity.id)].some(key => theirs.has(key)))
+    throw new ReplaceAdminRefusal('REPLACE_ADMIN_TO_SHARES_KEY',
+      '후임 계정의 이메일 또는 사용자 이름이 전임과 같습니다. 전임의 개인 초안이 후임에게 보이지 않도록 후임 계정을 바꾼 뒤 다시 실행하세요');
 }
 function memberSubject(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value || value.length > 256 || value.trim() !== value) throw new BadRequestException(`${field}가 올바르지 않습니다`);
@@ -510,15 +529,14 @@ export class AdminService {
     // The predecessor is judged on the rights row alone: a departed person's provider account may already be gone.
     const fromRow = await this.prisma.memberRights.findUnique({ where: { sub: from } });
     replacementGate(fromRow, await adminsOf(this.prisma, institution), from, institution);
-    const identity = await this.managed(to);
-    if (!identity.enabled || identity.roles.includes('gateway'))
-      throw new ReplaceAdminRefusal('REPLACE_ADMIN_TO_UNUSABLE', '후임 계정은 사용할 수 없는 상태입니다(비활성 또는 게이트웨이 계정)');
-    if (identity.groups.length && !(identity.groups.length === 1 && identity.groups[0] === institution))
-      throw new ReplaceAdminRefusal('REPLACE_ADMIN_TO_CONFLICT', '후임의 소속 그룹이 이 기관과 다릅니다');
+    // The successor's provider account, then — the last remote read, strict — their groups and effective roles. The
+    // identity registered for them is this one, with those groups.
+    const account = await this.managed(to);
+    const standing = await this.keycloak.memberStanding(to);
+    const identity: KeycloakUser = { ...account, groups: standing.groups };
     const toRow = await this.prisma.memberRights.findUnique({ where: { sub: to } });
-    successorGate(toRow, institution);
-    if (await this.prisma.memberIsolation.findUnique({ where: { sub: to } }))
-      throw new ReplaceAdminRefusal('REPLACE_ADMIN_TO_ISOLATED', '격리된 계정은 후임으로 지정할 수 없습니다');
+    successorGate({ toRow, isolated: !!await this.prisma.memberIsolation.findUnique({ where: { sub: to } }),
+      identity, standing, fromRow, institution });
     const issuer = process.env.KC_ISSUER;
     if (!issuer) throw new Error('Missing member identity issuer');
     const conflict = () => new ConflictException({ code: 'MEMBER_VERSION_CONFLICT', message: '회원 상태가 바뀌었습니다. 다시 실행하세요' });
@@ -531,9 +549,8 @@ export class AdminService {
         const fromNow = await tx.memberRights.findUnique({ where: { sub: from } });
         replacementGate(fromNow, await adminsOf(tx, institution), from, institution);
         const toNow = await tx.memberRights.findUnique({ where: { sub: to } });
-        successorGate(toNow, institution);
-        if (await tx.memberIsolation.findUnique({ where: { sub: to } }))
-          throw new ReplaceAdminRefusal('REPLACE_ADMIN_TO_ISOLATED', '격리된 계정은 후임으로 지정할 수 없습니다');
+        successorGate({ toRow: toNow, isolated: !!await tx.memberIsolation.findUnique({ where: { sub: to } }),
+          identity, standing, fromRow: fromNow, institution });
         // What was observed before the locks (a missing row included) is the version this command writes over.
         if (fromNow.version !== fromRow!.version || (toRow ? toNow?.version !== toRow.version : !!toNow)) throw conflict();
         const actor = { issuer: OPERATOR_ISSUER, subject: name, id: await work.resolveIdentity(tx, OPERATOR_ISSUER, name) };

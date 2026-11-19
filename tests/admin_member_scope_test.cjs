@@ -69,7 +69,7 @@ function world() {
     $queryRaw: async () => [{ boundary: new Date(), id: null }],
   };
   db.$transaction = async work => work(db);
-  let identityHook = null;
+  let identityHook = null, standingHook = null;
   const identity = sub => {
     if (identityHook) { const forced = identityHook(sub); if (forced !== undefined) return forced; }
     const row = rows.get(sub);
@@ -95,6 +95,13 @@ function world() {
     resetPassword: async (...a) => { kcCalls.push(['reset', ...a]); },
     mailSettings: async () => ({ configured: true }),
     updateIdentity: async (...a) => { kcCalls.push(['identity', ...a]); return { state: 'done', outcome: 'http_204' }; },
+    // As KeycloakService.memberStanding: groups and effective realm roles (a composite's included), read strictly.
+    memberStanding: async id => {
+      if (standingHook) { const forced = await standingHook(id); if (forced !== undefined) return forced; }
+      const user = identity(id);
+      if (!user) throw new RosterWriteFailure({ state: 'void', outcome: 'http_404' });
+      return { groups: user.groups, effectiveRoles: user.roles };
+    },
   };
   const ledger = { begin: () => ({
     resolveRequestIdentity: async () => '00000000-0000-4000-8000-000000000001',
@@ -125,7 +132,7 @@ function world() {
   const replace = (from, to, institution, operator = { name: 'ops', reason: 'synthetic hospital request confirmed by phone' }) =>
     service.replaceSoleAdmin(from, to, institution, operator, ledger.begin());
   return { rows, audits, kcCalls, kc, db, service, controller, keys, adminA, call, writes: () => writes, designate, changes, sessions, events, factsMade: () => factsMade, kcOnly, identityOverride: f => { identityHook = f; },
-    replace, raws, identities: () => identities, put };
+    replace, raws, identities: () => identities, put, standingOverride: f => { standingHook = f; } };
 }
 
 const status = code => error => { assert.equal(error?.getStatus?.(), code, String(error?.message)); return true; };
@@ -518,6 +525,22 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
         firstName: 'S', lastName: sub, enabled: true, serviceAccountClientId: null, groups: [D], roles: ['gateway'] } : undefined);
       await refused(w, 'admin-d', 'reader-d', 'REPLACE_ADMIN_TO_UNUSABLE', 'a gateway identity');
       w.identityOverride(() => undefined);
+      // A gateway role reached through a composite is in the effective roles the token will carry.
+      w.standingOverride(sub => sub === 'reader-d' ? { groups: [D], effectiveRoles: ['radiologist', 'gateway'] } : undefined);
+      await refused(w, 'admin-d', 'reader-d', 'REPLACE_ADMIN_TO_UNUSABLE', 'a gateway role through a composite');
+      // An unreadable standing is a failed read, never "no groups".
+      w.standingOverride(sub => { if (sub === 'kc-d-group') throw new RosterWriteFailure({ state: 'unknown', outcome: 'unreadable' }); });
+      await assert.rejects(w.replace('admin-d', 'kc-d-group', D), RosterWriteFailure, 'an unreadable standing refuses');
+      assert.deepEqual([w.writes(), w.changes.length, w.identities()], [0, 0, 0]);
+      w.standingOverride(() => undefined);
+      // A successor whose email or username is the predecessor's would act under the same key: the predecessor's
+      // private drafts and history would answer to them.
+      for (const [field, value] of [['email', 'admin-d@example.test'], ['email', 'ADMIN-D@example.test'], ['username', 'admin-d']]) {
+        w.identityOverride(sub => sub === 'reader-d' ? { id: sub, username: 'reader-d', email: 'reader-d@example.test', emailVerified: true,
+          firstName: 'S', lastName: sub, enabled: true, serviceAccountClientId: null, groups: [D], roles: [], [field]: value } : undefined);
+        await refused(w, 'admin-d', 'reader-d', 'REPLACE_ADMIN_TO_SHARES_KEY', `a successor ${field} ${value}`);
+      }
+      w.identityOverride(() => undefined);
       // The input itself.
       await refused(w, 'admin-d', 'admin-d', 400, 'the predecessor as successor');
       await refused(w, 'admin-d', 'reader-d', 400, 'an unknown institution', 'not-an-institution');
@@ -674,7 +697,11 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
     for (const args of [[], ['--institution', 'x'], ['--institution', 'x', '--from', 'a', '--to', 'b', '--operator', 'ops', '--reason'],
       ['--institution', 'x', '--from', 'a', '--from', 'b', '--operator', 'ops', '--reason', 'r'],
       ['--institution', 'x', '--from', 'a', '--to', 'b', '--operator', 'ops', '--why', 'r'],
-      ['--institution', 'x', '--from', 'a', '--to', 'b', '--subject', 'ops', '--reason', 'r']]) {
+      ['--institution', 'x', '--from', 'a', '--to', 'b', '--subject', 'ops', '--reason', 'r'],
+      // A name every object inherits is no flag.
+      ['--institution', 'x', '--from', 'a', '--to', 'b', '--operator', 'ops', 'constructor', 'r'],
+      ['--institution', 'x', '--from', 'a', '--to', 'b', '__proto__', 'ops', '--reason', 'r'],
+      ['--institution', 'x', '--from', 'a', 'toString', 'b', '--operator', 'ops', '--reason', 'r']]) {
       const r = run('', args);
       assert.equal(r.code, 1, 'usage ' + JSON.stringify(args));
       assert.deepEqual(r.steps, [], 'nothing runs on a usage error');
@@ -714,7 +741,9 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
     write('run-unfinished', 'unfinished\n');
     write('run-own', '');
     const seen = [];
-    const importer = async directory => { seen.push(fs.readFileSync(path.join(directory, 'failure-spool.jsonl'), 'utf8')); return 1; };
+    // As the real replay: every record imported, then the spool file emptied.
+    const importer = async directory => { const file = path.join(directory, 'failure-spool.jsonl');
+      seen.push(fs.readFileSync(file, 'utf8')); fs.truncateSync(file, 0); return 1; };
     // Two commands start together: each finished spool is imported once.
     const counts = await Promise.all([importFinishedSpools(base, 'run-own', importer), importFinishedSpools(base, 'run-other', importer)]);
     assert.deepEqual(seen.sort(), ['finished\n', 'legacy\n']);
@@ -733,6 +762,29 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
     assert.ok(!fs.existsSync(path.join(base, 'run-own')));
     write('run-kept', 'kept\n'); closeRunSpool(path.join(base, 'run-kept'));
     assert.ok(fs.existsSync(path.join(base, 'run-kept', 'closed')));
+    fs.rmSync(path.join(base, 'run-kept'), { recursive: true, force: true });
+    fs.rmSync(path.join(base, 'run-later'), { recursive: true, force: true });
+    fs.rmSync(path.join(base, 'failure-spool.jsonl'), { force: true });
+    // The real spool replay: an incomplete last record is set aside as `.partial` — kept (never deleted with the spool).
+    const { FailureSpool } = require('../api/src/emr-runtime/journal-file.ts');
+    const record = JSON.stringify({ id: '00000000-0000-4000-8000-0000000000f1', operationId: null, eventId: null,
+      at: new Date().toISOString(), cause: 'capacity' });
+    write('run-torn', record + '\n{"id":"torn'); fs.writeFileSync(path.join(base, 'run-torn', 'closed'), '');
+    const replayed = [];
+    const real = async directory => new FailureSpool(directory).replay(async r => { replayed.push(r.id); });
+    assert.equal(await importFinishedSpools(base, 'run-own', real), 1);
+    assert.deepEqual(replayed, ['00000000-0000-4000-8000-0000000000f1']);
+    const kept = fs.readdirSync(base).filter(name => name.startsWith('kept-'));
+    assert.equal(kept.length, 1, 'the spool with an incomplete record is kept');
+    assert.equal(fs.readFileSync(path.join(base, kept[0], 'failure-spool.jsonl.partial'), 'utf8'), '{"id":"torn');
+    // A claim whose process has ended is claimed again and imported; one of a live process (this one) is left alone.
+    write('claim-999999-abandoned', record + '\n');
+    write(`claim-${process.pid}-in-progress`, record + '\n');
+    replayed.length = 0;
+    assert.equal(await importFinishedSpools(base, 'run-own', real), 1);
+    assert.deepEqual(replayed, ['00000000-0000-4000-8000-0000000000f1']);
+    assert.ok(!fs.existsSync(path.join(base, 'claim-999999-abandoned')));
+    assert.ok(fs.existsSync(path.join(base, `claim-${process.pid}-in-progress`)), 'a live claim is not taken over');
     fs.rmSync(base, { recursive: true, force: true });
   }
 

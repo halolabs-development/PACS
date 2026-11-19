@@ -1955,6 +1955,11 @@ class BffInvariantTests(unittest.TestCase):
         successor = "replace-successor-" + tag
         successor_id = self.stack.create_test_identity(successor, [], "")
         waiting_opener, _ = self.bff_login(successor, self.stack.passwords[successor])
+        predecessor_logical = "admin-" + institution[-40:]
+        # Bearer tokens issued before the replacement: the predecessor's (an administrator, confirmed by GET /me) and the
+        # waiting successor's (refused=True: a waiting member's GET /me is 403, and no actor is recorded).
+        self.stack.token(predecessor_logical)
+        self.stack.token(successor, refused=True)
         try:
             # A refusal (the successor is not the predecessor's institution's administrator to be replaced) changes nothing.
             refused = self.stack._api_command(["prisma/replace-sole-admin.cjs", "--institution", institution, "--from", successor_id,
@@ -1973,11 +1978,11 @@ class BffInvariantTests(unittest.TestCase):
             # The predecessor: the open session ends, a new login is refused; membership is kept, suspended.
             self.assertEqual(self.proxy(old_opener, "GET", "/api/me", headers={"X-KIN-Session": old_session}).status, 401)
             self.assertEqual(self.stack._member_rights_row(predecessor), (institution, True, ["admin"]))
-            with self.assertRaises(RuntimeError):
-                self.stack._admin_bff_session(self.stack.usernames["admin-" + institution[-40:]],
-                                              self.stack.passwords["admin-" + institution[-40:]], predecessor)
-            # The successor's earlier session ends; a colleague's session lives.
+            self.assertEqual(self.stack.request("GET", "/me", predecessor_logical).status, 401, "the predecessor's earlier Bearer")
+            self.bff_login(predecessor_logical, self.stack.passwords[predecessor_logical], refused=True)
+            # The successor's earlier session and earlier Bearer end; a colleague's session lives.
             self.assertEqual(self.proxy(waiting_opener, "GET", "/api/me").status, 401)
+            self.assertEqual(self.stack.request("GET", "/me", successor).status, 401, "an authentication from before the replacement")
             self.assertEqual(self.proxy(colleague_opener, "GET", "/api/me").status, 200)
             # The successor signs in again (administrator OTP) and manages this institution only.
             self.stack._await_roster(successor_id, institution, ["admin"])
@@ -1998,6 +2003,9 @@ class BffInvariantTests(unittest.TestCase):
             self.assertEqual(elsewhere.status, 404, "another institution's member is unknown to the successor")
         finally:
             self.stack.__dict__.get("_rights_admins", {}).pop(institution, None)
+            for logical in (predecessor_logical, successor):
+                self.stack.tokens.pop(logical, None)
+                self.stack.actors.pop(logical, None)
 
     def test_member_delete_proxy_client_and_impersonation_paths_are_absent(self) -> None:
         target_id = self.stack.user_ids["doctor2"]

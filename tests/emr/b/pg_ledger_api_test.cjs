@@ -992,13 +992,31 @@ async function rightsReplace() {
   const otherJournal=new FailureJournal(otherDb,new FailureSpool(path.join(process.env.KIN_B2R_SPOOL,'other-process')));
   const other=new AccessLedgerStore(otherDb,otherJournal);
   const runtime=new OperatorRuntime(process.env.DATABASE_URL,process.env.KIN_B2R_SPOOL);
-  const groups={departed:[X],'first-successor':[X],'second-successor':[X],colleague:[X],'other-admin':[Y]};
+  const groups={departed:[X],'first-successor':[X],'second-successor':[X],colleague:[X],'other-admin':[Y],
+    'waiting-1':[],'waiting-2':[],'y-first':[Y],'y-second':[Y]};
   let gate=null;
   const provider={institutions:async()=>[X,Y],getUser:async id=>{
     if(gate) await gate();
     return groups[id]&&{id,username:id,email:id+'@synthetic.invalid',emailVerified:true,firstName:'Synthetic',lastName:id,
       enabled:true,serviceAccountClientId:null,groups:groups[id],roles:[]};
-  }};
+  },memberStanding:async id=>({groups:groups[id]??[],effectiveRoles:[]})};
+  // The screen's member command (AdminController's PATCH) over the same record port, as in rightsProducer.
+  const { createRequestContext } = require(path.join(build, 'emr-runtime/request-context.js'));
+  const { createRequestIngress } = require(path.join(build, 'emr-runtime/request-ingress.js'));
+  const { IncomingMessage, ServerResponse } = require('node:http'), { Socket } = require('node:net');
+  const screen=async(adminSub,institution,sub,body)=>{
+    const requests=createRequestContext(createRequestIngress({proxyPeers:[]}),runtime.port);
+    const caller={sub:adminSub,actor:adminSub+'@synthetic.invalid',roles:['admin'],institution,kind:'member'};
+    const req=new IncomingMessage(new Socket()),res=new ServerResponse(req);
+    requests.capture.capture(req,res,{issuer:process.env.KC_ISSUER,subject:adminSub,roles:['admin'],rightsVersion:1,institution,
+      binding:{method:'bearer',sessionRef:null}},{method:'PATCH',route:'admin/users/:id',purpose:'clinical'},async()=>{});
+    try{
+      return await requests.source.withWork(req,request=>service.patchUser(sub,body,caller,{surface:request.facts.surface,
+        actor:request.facts.actor,roles:request.facts.roles,rightsVersion:request.facts.rightsVersion,institution:request.facts.institution,
+        ip:null,ipSource:'trusted-proxy',sessionRef:null,requestId:request.facts.requestId,request}));
+    }finally{res.emit('finish');}
+  };
+  const refusedWith=(...codes)=>e=>{assert.ok(codes.includes(e?.getResponse?.().code),String(e?.message));return true;};
   const service=new AdminService(db,provider,null,{publishCredentials(){}});
   const replace=async(from,to)=>{
     const work=runtime.port.begin();
@@ -1036,7 +1054,10 @@ async function rightsReplace() {
       atExpiresAt:new Date(Date.now()+600000),lastSeenAt:new Date(),rightsVersion:1,institution:X}});
     for(const sub of ['departed','departed','first-successor','second-successor','colleague']) await session(sub);
     // The departed administrator's own draft, signed history and audit trail.
-    await witness.reportDraft.create({data:{uid:UID,author:'departed@synthetic.invalid',findings:'synthetic draft of the departed administrator'}});
+    // A present draft holds its work (CD-09-P ReportDraft_work_check).
+    await witness.reportDraft.create({data:{uid:UID,author:'departed@synthetic.invalid',revision:1,present:true,
+      findings:'synthetic draft of the departed administrator',conclusion:'',recommendation:'',baseVersion:0,
+      workUnit:'disposal:'+randomUUID(),workSince:new Date(),workIntent:'approve'}});
     await witness.reportVersion.create({data:{uid:UID,version:1,action:'commit',findings:'synthetic signed text',author:'departed@synthetic.invalid'}});
     await witness.auditLog.create({data:{actor:'departed@synthetic.invalid',action:'report.synthetic-history',target:UID,detail:'{}'}});
     const kept=await history();
@@ -1055,7 +1076,8 @@ async function rightsReplace() {
     gate=null;
     const won=outcomes.filter(o=>o.status==='fulfilled'),lost=outcomes.filter(o=>o.status==='rejected');
     assert.equal(won.length,1,'one replacement applies');assert.equal(lost.length,1);
-    assert.equal(lost[0].reason.getResponse().code,'REPLACE_ADMIN_FROM_NOT_ADMIN',String(lost[0].reason));
+    // The loser either read the committed suspension under the locks, or waited past the lock limit: nothing written.
+    refusedWith('REPLACE_ADMIN_FROM_NOT_ADMIN','MEMBER_BUSY')(lost[0].reason);
     const winner=won[0].value.id,loser=winner==='first-successor'?'second-successor':'first-successor';
     const admins=await witness.memberRights.findMany({where:{institution:X,approved:true,suspended:false,roles:{has:'admin'}}});
     assert.deepEqual(admins.map(a=>a.sub),[winner],'one active administrator: the winner');
@@ -1089,11 +1111,70 @@ async function rightsReplace() {
     assert.equal(await history(),kept);
     // 4. The same command again: the predecessor is no longer X's administrator; nothing changes.
     const settled=await snapshot();
-    await assert.rejects(replace('departed',loser),e=>e.getResponse().code==='REPLACE_ADMIN_FROM_NOT_ADMIN');
+    await assert.rejects(replace('departed',loser),refusedWith('REPLACE_ADMIN_FROM_NOT_ADMIN'));
     assert.equal(await snapshot(),settled);
-    console.log(JSON.stringify({status:'PASS',boundary:'actual replacement service + operator runtime + independent PG',
+    // 5. Two institutions, one waiting member. Y's administrator approves it first: X's replacement refuses it.
+    await screen('other-admin',Y,'waiting-1',{approvalState:'APPROVED',institution:Y,roles:['radiologist']});
+    await assert.rejects(replace(winner,'waiting-1'),refusedWith('REPLACE_ADMIN_TO_CONFLICT'));
+    // X's replacement takes the other waiting member first: to Y's administrator it is now an unknown member.
+    await replace(winner,'waiting-2');
+    await assert.rejects(screen('other-admin',Y,'waiting-2',{approvalState:'APPROVED',institution:Y,roles:['radiologist']}),
+      e=>e.getStatus()===404);
+    assert.equal((await witness.memberRights.findUnique({where:{sub:'waiting-2'}})).institution,X);
+    // 6. The screen promotes a second administrator first: the replacement is refused (not the sole administrator).
+    const colleague=await witness.memberRights.findUnique({where:{sub:'colleague'}});
+    await screen('waiting-2',X,'colleague',{roles:['radiologist','admin'],version:colleague.version});
+    const beforeNotSole=await snapshot();
+    await assert.rejects(replace('waiting-2',loser),refusedWith('REPLACE_ADMIN_NOT_SOLE'));
+    assert.equal(await snapshot(),beforeNotSole);
+    // 7. Two operator commands (the real CLI, separate processes) replace Y's sole administrator with different successors,
+    // both past their reads before either takes the locks: exit 0 and exit 1, one administrator.
+    const os=require('node:os'),{spawn}=require('node:child_process');
+    const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'replace-cli-')),barrier=path.join(scratch,'barrier');
+    fs.mkdirSync(barrier);
+    const preload=path.join(scratch,'keycloak-stand-in.cjs');
+    fs.writeFileSync(preload,`'use strict';
+const Module=require('node:module'),fs=require('node:fs'),path=require('node:path');
+const groups=${JSON.stringify(groups)},dir=${JSON.stringify(barrier)};
+const together=async()=>{fs.writeFileSync(path.join(dir,String(process.pid)),'');const until=Date.now()+30000;
+  while(fs.readdirSync(dir).length<2){if(Date.now()>until)throw new Error('barrier');await new Promise(r=>setTimeout(r,20));}};
+class KeycloakService{
+  async institutions(){return ${JSON.stringify([X,Y])};}
+  async getUser(id){await together();const g=groups[id];return g&&{id,username:id,email:id+'@synthetic.invalid',emailVerified:true,
+    firstName:'Synthetic',lastName:id,enabled:true,serviceAccountClientId:null,groups:g,roles:[]};}
+  async memberStanding(id){return {groups:groups[id]||[],effectiveRoles:[]};}
+  async setGroups(){} async setRoles(){}
+}
+const id='kin-test-keycloak',mod=new Module(id);mod.filename=id;mod.loaded=true;mod.exports={KeycloakService};require.cache[id]=mod;
+const resolve=Module._resolveFilename;
+Module._resolveFilename=function(request,parent,...rest){
+  if(request==='../dist/keycloak.service'&&parent&&/replace-sole-admin\\.cjs$/.test(parent.filename))return id;
+  return resolve.call(this,request,parent,...rest);};
+`);
+    await member('y-first',Y,['radiologist']);await member('y-second',Y,['technician']);
+    const cli=path.join(build,'..','prisma','replace-sole-admin.cjs');
+    const command=to=>new Promise(resolve=>{
+      const child=spawn(process.execPath,['-r',preload,cli,'--institution',Y,'--from','other-admin','--to',to,'--operator','ops',
+        '--reason','synthetic hospital request'],{env:{...process.env,KC_ADMIN_URL:'https://synthetic.invalid/admin',KC_REALM:'replace',
+        KC_CLIENT_ID:'synthetic',KC_CLIENT_SECRET:'synthetic',KIN_EMR_STATE_DIR:path.join(scratch,'state')}});
+      let out='',err='';child.stdout.on('data',d=>{out+=d;});child.stderr.on('data',d=>{err+=d;});
+      child.on('close',code=>resolve({to,code,out,err}));
+    });
+    const runs=await Promise.all([command('y-first'),command('y-second')]);
+    assert.deepEqual(runs.map(r=>r.code).sort(),[0,1],JSON.stringify(runs));
+    const yWinner=runs.find(r=>r.code===0),yLoser=runs.find(r=>r.code===1);
+    assert.equal(JSON.parse(yWinner.out.trim().split('\n').pop()).replaced,true);
+    const loserLine=JSON.parse(yLoser.err.split('\n').find(l=>l.startsWith('{')));
+    assert.equal(loserLine.replaced,false);assert.ok(['REPLACE_ADMIN_FROM_NOT_ADMIN','MEMBER_BUSY'].includes(loserLine.code),yLoser.err);
+    const yAdmins=await witness.memberRights.findMany({where:{institution:Y,approved:true,suspended:false,roles:{has:'admin'}}});
+    assert.deepEqual(yAdmins.map(a=>a.sub),[yWinner.to],'one administrator of Y: the winning command\'s successor');
+    assert.equal((await witness.memberRights.findUnique({where:{sub:yLoser.to}})).version,1,'the losing successor is untouched');
+    assert.equal(await witness.providerChange.count({where:{target:yLoser.to}}),0);
+    fs.rmSync(scratch,{recursive:true,force:true});
+    console.log(JSON.stringify({status:'PASS',boundary:'actual replacement service and CLI + operator runtime + independent PG',
       green:['operator start leaves pending work','failed second change rolls back both','concurrent replacements: one winner',
-        'both members\' sessions end, colleague\'s live','predecessor history unchanged','rerun refused without writes']}));
+        'both members\' sessions end, colleague\'s live','predecessor history unchanged','rerun refused without writes',
+        'waiting successor taken by one institution only','screen promotion first refuses the replacement','two CLI processes: exit 0 and 1']}));
   }finally{
     await witness.$executeRawUnsafe('DROP TRIGGER IF EXISTS b2r_fail_replace ON public."AuditLog"');
     await runtime.stop(Date.now()+15000);await otherJournal.close();await otherDb.$disconnect();await db.$disconnect();await witness.$disconnect();
