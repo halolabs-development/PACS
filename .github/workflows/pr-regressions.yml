@@ -99,6 +99,14 @@ jobs:
       run: |
         python3 tests/ci_browser_apt_test.py
         sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
+    - name: Cache pinned Playwright browsers and their OS packages
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
+        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -246,6 +254,14 @@ jobs:
       run: |
         python3 tests/ci_browser_apt_test.py
         sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
+    - name: Cache pinned Playwright browsers and their OS packages
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
+        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -376,6 +392,14 @@ jobs:
       run: |
         python3 tests/ci_browser_apt_test.py
         sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
+    - name: Cache pinned Playwright browsers and their OS packages
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
+        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -487,6 +511,14 @@ jobs:
       run: |
         python3 tests/ci_browser_apt_test.py
         sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
+    - name: Cache pinned Playwright browsers and their OS packages
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
+        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -725,6 +757,14 @@ jobs:
       run: |
         python3 tests/ci_browser_apt_test.py
         sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
+    - name: Cache pinned Playwright browsers and their OS packages
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
+        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -813,6 +853,14 @@ jobs:
       run: |
         python3 tests/ci_browser_apt_test.py
         sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
+    - name: Cache pinned Playwright browsers and their OS packages
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
+        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -889,6 +937,14 @@ jobs:
       run: |
         python3 tests/ci_browser_apt_test.py
         sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
+    - name: Cache pinned Playwright browsers and their OS packages
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
+        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -1023,6 +1079,14 @@ jobs:
       run: |
         python3 tests/ci_browser_apt_test.py
         sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
+    - name: Cache pinned Playwright browsers and their OS packages
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
+        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -1083,6 +1147,14 @@ jobs:
       run: |
         python3 tests/ci_browser_apt_test.py
         sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
+    - name: Cache pinned Playwright browsers and their OS packages
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
+        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -1143,6 +1215,14 @@ jobs:
       run: |
         python3 tests/ci_browser_apt_test.py
         sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
+    - name: Cache pinned Playwright browsers and their OS packages
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
+        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -1203,6 +1283,14 @@ jobs:
       run: |
         python3 tests/ci_browser_apt_test.py
         sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
+    - name: Cache pinned Playwright browsers and their OS packages
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
+        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -1308,6 +1396,14 @@ jobs:
       run: |
         python3 tests/ci_browser_apt_test.py
         sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 scripts/ci_browser_apt.py
+    - name: Cache pinned Playwright browsers and their OS packages
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-apt
+        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}
     - name: Cache pinned Python downloads
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
