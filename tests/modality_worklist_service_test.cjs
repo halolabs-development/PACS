@@ -1,0 +1,311 @@
+'use strict';
+/* Modality Worklist: what a device is answered (api/src/modality-worklist.ts) and the API's side of the helper
+ * (api/src/modality-worklist.service.ts), against an in-memory order table, the real device rule (PacsInstitutions
+ * .resolveDevice) and, for the process side, a stand-in helper (stdlib Python) in place of api/mwl/mwl_scp.py. The real
+ * helper is covered by tests/modality_worklist_helper_test.py, the whole path by tests/e2e/test_modality_worklist.py.
+ * No DB, credentials or network.
+ */
+require('./service_test_loader.cjs');
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const { answerQuery, parseIdentifier, MWL_STATUS, MWL_MAX_MATCHES, scheduledAt } = require('/app/dist/modality-worklist');
+const { ModalityWorklistService, mwlConfig } = require('/app/dist/modality-worklist.service');
+const { PacsInstitutions } = require('/app/dist/pacs/institutions');
+
+const PN = v => ({ vr: 'PN', Value: [{ Alphabetic: v }] });
+const S = (vr, v) => v === undefined ? { vr } : { vr, Value: [v] };
+const SQ = (...items) => ({ vr: 'SQ', Value: items });
+const value = (el) => el?.Value?.[0]?.Alphabetic ?? el?.Value?.[0] ?? '';
+
+let n = 0;
+function order(over = {}) {
+  n += 1;
+  return { oid: `SYN-ORDER-${n}`, institutionId: 'inst-a', patientId: 'SYN-P1', name: 'SYNTHETIC^ONE', sex: 'F', birth: '1980-02-03',
+    sched: '2026-11-20 09:10', modality: 'CT', descr: 'SYN CT HEAD', ward: 'SYNWARD', reqDoc: 'SYN DOC', accession: 'SYNACC1',
+    mwlProcedureId: `SYNPROC${String(n).padStart(9, '0')}`, mwlStudyUid: `2.25.${1000 + n}`, scheduledStationAet: 'SYNCT1',
+    removedAt: null, matched: 'U', studyUid: null, risStatus: null, ...over };
+}
+
+function harness(rows, { auditFails = false } = {}) {
+  const audits = [], reads = [];
+  const institutions = new PacsInstitutions(null, null, null, null, null);
+  institutions.institutions = [
+    { id: 'inst-a', name: 'A', dicomNames: '', dicomAets: 'SYNCT1,SYNCT2' },
+    { id: 'inst-b', name: 'B', dicomNames: '', dicomAets: 'SYNCTB' },
+    { id: 'inst-c', name: 'C', dicomNames: '', dicomAets: 'SYNSHARED' },
+    { id: 'inst-d', name: 'D', dicomNames: '', dicomAets: 'SYNSHARED' },
+  ];
+  const prisma = {
+    order: {
+      findMany: async (q) => {
+        reads.push(q);
+        assert.deepEqual(Object.keys(q.where).sort(), ['institutionId', 'removedAt']);
+        assert.equal(q.where.removedAt, null);
+        return rows.filter(o => o.institutionId === q.where.institutionId && o.removedAt === null)
+          .map(o => Object.fromEntries(Object.keys(q.select).map(k => [k, o[k]])));
+      },
+      update: () => assert.fail('a query never writes an order'), updateMany: () => assert.fail('a query never writes an order'),
+    },
+    auditLog: { create: async ({ data }) => { if (auditFails) throw new Error('audit down'); audits.push({ ...data, detail: JSON.parse(data.detail) }); return data; } },
+  };
+  const service = new ModalityWorklistService(prisma, { resolveDevice: aet => institutions.resolveDevice(aet) });
+  return { service, audits, reads };
+}
+
+const dayQuery = (date, extra = {}) => ({ '00100010': S('PN'), '00100020': S('LO'), '00080050': S('SH'),
+  '00400100': SQ({ '00400002': S('DA', date), '00080060': S('CS'), '00400001': S('AE') }), ...extra });
+
+test('a registered device gets its own institution listed orders only; another device gets its own', async () => {
+  const a = order({ patientId: 'SYN-SAME', accession: 'SYNACC-SAME' });
+  const b = order({ institutionId: 'inst-b', patientId: 'SYN-SAME', accession: 'SYNACC-SAME', scheduledStationAet: 'SYNCTB' });
+  const { service, audits } = harness([a, b]);
+  const q = dayQuery('20261120', { '00100020': S('LO', 'SYN-SAME'), '00080050': S('SH', 'SYNACC-SAME') });
+  const fromA = await service.answer('SYNCT1', q);
+  assert.equal(fromA.status, 0);
+  assert.deepEqual(fromA.items.map(i => value(i['00080050'])), ['SYNACC-SAME']);
+  assert.deepEqual(fromA.items.map(i => value(i['00400100'].Value[0]['00400001'])), ['SYNCT1']);
+  const fromB = await service.answer('SYNCTB', q);
+  assert.deepEqual(fromB.items.map(i => value(i['00400100'].Value[0]['00400001'])), ['SYNCTB']);
+  // The second registered device of A gets A's, with its own station key telling A's devices apart.
+  const second = await service.answer('SYNCT2', dayQuery('20261120', { '00400100': SQ({ '00400001': S('AE', 'SYNCT2') }) }));
+  assert.equal(second.items.length, 0);
+  assert.deepEqual(audits.map(r => [r.action, r.detail.institution, r.detail.aet, r.detail.outcome, r.detail.matches]),
+    [['modality-worklist.query', 'inst-a', 'SYNCT1', 'answered', 1], ['modality-worklist.query', 'inst-b', 'SYNCTB', 'answered', 1],
+     ['modality-worklist.query', 'inst-a', 'SYNCT2', 'answered', 0]]);
+  for (const r of audits) assert.ok(!JSON.stringify(r).includes('SYN-SAME') && !JSON.stringify(r).includes('SYNTHETIC'), 'no patient or search value');
+});
+
+test('an unregistered, shared or empty calling AE is refused without reading any order', async () => {
+  const { service, audits, reads } = harness([order()]);
+  for (const aet of ['SYNUNKNOWN', 'SYNSHARED', '', '  ', 'synct1', null]) {
+    const got = await service.answer(aet, dayQuery('20261120'));
+    assert.deepEqual(got, { status: MWL_STATUS.refused, warning: false, items: [] }, String(aet));
+  }
+  assert.equal(reads.length, 0);
+  assert.ok(audits.every(r => r.detail.institution === null && r.detail.outcome === 'refused' && r.target === '-'));
+});
+
+test('Delete Order takes it out of the next query and Undo brings it back; repeated queries change no order', async () => {
+  const kept = order(), removed = order({ patientId: 'SYN-P2', matched: 'M', studyUid: '2.25.77', risStatus: 'acquired' });
+  const rows = [kept, removed];
+  const { service } = harness(rows);
+  const snapshot = JSON.stringify(rows);
+  const oids = async () => (await service.answer('SYNCT1', { '00402016': S('LO') })).items.map(i => value(i['00402016']));
+  // A matched, RIS-acquired order is still listed: neither is a step the worklist reads.
+  assert.deepEqual(await oids(), [kept.oid, removed.oid]);
+  removed.removedAt = new Date();
+  assert.deepEqual(await oids(), [kept.oid]);
+  removed.removedAt = null;
+  const back = await service.answer('SYNCT1', { '00402016': S('LO'), '00401001': S('SH'), '0020000D': S('UI') });
+  assert.deepEqual(back.items.map(i => [value(i['00402016']), value(i['00401001']), value(i['0020000D'])]),
+    [[kept.oid, kept.mwlProcedureId, kept.mwlStudyUid], [removed.oid, removed.mwlProcedureId, removed.mwlStudyUid]]);
+  for (let i = 0; i < 3; i++) await oids();
+  assert.equal(JSON.stringify(rows), snapshot, 'Match, receipt and RIS state are untouched by queries');
+  // The matched study's own UID is never handed out: the worklist UID is the order's.
+  assert.notEqual(value(back.items[1]['0020000D']), removed.studyUid);
+});
+
+test('only the keys asked for come back, with the character set and the hospital offset', () => {
+  const o = order({ name: '홍길동^SYNTHETIC' });
+  const got = answerQuery([o], { '00100020': S('LO') });
+  assert.deepEqual(Object.keys(got.items[0]).sort(), ['00080005', '00080201', '00100020']);
+  assert.deepEqual(got.items[0]['00080005'], { vr: 'CS', Value: ['ISO_IR 192'] });
+  assert.deepEqual(got.items[0]['00080201'], { vr: 'SH', Value: ['+0900'] });
+  const named = answerQuery([o], { '00100010': PN('홍*') });
+  assert.equal(value(named.items[0]['00100010']), '홍길동^SYNTHETIC');
+  // A whole SPS (empty sequence or one empty item) is every SPS key; a partial item only its keys.
+  for (const sps of [{ vr: 'SQ' }, SQ(), SQ({})]) {
+    const whole = answerQuery([o], { '00400100': sps });
+    assert.deepEqual(Object.keys(whole.items[0]['00400100'].Value[0]).sort(),
+      ['00080060', '00400001', '00400002', '00400003', '00400006', '00400007', '00400009', '00400010', '00400011']);
+    assert.equal(value(whole.items[0]['00400100'].Value[0]['00400003']), '091000');
+    assert.equal(whole.items[0]['00400100'].Value[0]['00400006'].Value, undefined, 'performing physician unknown: empty');
+  }
+  const part = answerQuery([o], { '00400100': SQ({ '00080060': S('CS') }) });
+  assert.deepEqual(Object.keys(part.items[0]['00400100'].Value[0]), ['00080060']);
+});
+
+test('return values come from the order and are never made up', () => {
+  const o = order({ accession: null, reqDoc: 'SYN REQ', birth: '1980-02-03', sex: 'X' });
+  const got = answerQuery([o], { '00080050': S('SH'), '00321032': S('PN'), '00080090': S('PN'), '00100030': S('DA'), '00100040': S('CS'),
+    '00401001': S('SH'), '00402016': S('LO'), '0020000D': S('UI'), '00380300': S('LO'), '00321060': S('LO') }).items[0];
+  assert.deepEqual(got['00080050'], { vr: 'SH' });
+  assert.equal(value(got['00321032']), 'SYN REQ');
+  assert.deepEqual(got['00080090'], { vr: 'PN' });
+  assert.equal(value(got['00100030']), '19800203');
+  assert.deepEqual(got['00100040'], { vr: 'CS' });
+  assert.equal(value(got['00401001']), o.mwlProcedureId);
+  assert.equal(value(got['00402016']), o.oid);
+  assert.equal(value(got['00380300']), 'SYNWARD');
+  // Two orders whose oids share their first 16 characters keep their own procedure IDs.
+  const one = order({ oid: 'SYNTHETIC-techord-aaaa' }), two = order({ oid: 'SYNTHETIC-techord-bbbb' });
+  const ids = answerQuery([one, two], { '00401001': S('SH'), '00400100': SQ({ '00400009': S('SH') }) }).items
+    .map(i => [value(i['00401001']), value(i['00400100'].Value[0]['00400009'])]);
+  assert.deepEqual(ids, [[one.mwlProcedureId, one.mwlProcedureId], [two.mwlProcedureId, two.mwlProcedureId]]);
+  assert.ok(ids.every(([id]) => id.length <= 16));
+  // A specific accession does not match an order without one.
+  assert.equal(answerQuery([o], { '00080050': S('SH', 'SYNACC1') }).items.length, 0);
+});
+
+test('matching: name wildcards, single values, station, performing physician and UID lists', () => {
+  const a = order({ name: 'KIM^SYNTHETIC', patientId: 'SYN-A', modality: 'CT', scheduledStationAet: 'SYNCT1' });
+  const b = order({ name: 'LEE^SYNTHETIC', patientId: 'SYN-B', modality: 'MR', scheduledStationAet: 'SYNMR1' });
+  const c = order({ name: 'KAN^SYNTHETIC', patientId: 'SYN-C', modality: 'CT', scheduledStationAet: null });
+  const ids = q => answerQuery([a, b, c], { '00100020': S('LO'), ...q }).items.map(i => value(i['00100020']));
+  assert.deepEqual(ids({ '00100010': PN('K*') }), ['SYN-A', 'SYN-C']);
+  assert.deepEqual(ids({ '00100010': PN('K?M^*') }), ['SYN-A']);
+  assert.deepEqual(ids({ '00100010': PN('KIM') }), []);
+  assert.deepEqual(ids({ '00100020': S('LO', 'SYN-B') }), ['SYN-B']);
+  assert.deepEqual(ids({ '00400100': SQ({ '00080060': S('CS', 'CT') }) }), ['SYN-A', 'SYN-C']);
+  // A station query never finds an order not scheduled on a device; the calling device is not copied into it.
+  assert.deepEqual(ids({ '00400100': SQ({ '00400001': S('AE', 'SYNCT1') }) }), ['SYN-A']);
+  assert.deepEqual(ids({ '00400100': SQ({ '00400006': S('PN', 'SYN DOCTOR') }) }), []);
+  assert.deepEqual(ids({ '00400100': SQ({ '00400006': S('PN', '*') }) }), ['SYN-A', 'SYN-B', 'SYN-C']);
+  assert.deepEqual(ids({ '0020000D': { vr: 'UI', Value: [a.mwlStudyUid, b.mwlStudyUid] } }), ['SYN-A', 'SYN-B']);
+  // Asking for the station back while an order without one matches: the query fails, no identifier, no silent drop.
+  const failed = answerQuery([a, c], { '00400100': SQ({ '00400001': S('AE'), '00080060': S('CS', 'CT') }) });
+  assert.equal(failed.status, MWL_STATUS.missingValue);
+  assert.deepEqual(failed.items, []);
+  assert.equal(failed.matches, 2);
+});
+
+test('scheduled date and time: single, ranges, one continuous span over midnight, date-only and unreadable orders', () => {
+  const at = (sched, extra = {}) => order({ sched, patientId: sched, ...extra });
+  const rows = [at('2026-11-20 21:00'), at('2026-11-20 23:00'), at('2026-11-21 01:00'), at('2026-11-21 03:00'), at('20261120'), at('soon')];
+  const pick = (date, time, keys = { '00100020': S('LO') }) => answerQuery(rows, { ...keys,
+    '00400100': SQ({ ...(date !== undefined ? { '00400002': S('DA', date) } : {}), ...(time !== undefined ? { '00400003': S('TM', time) } : {}) }) });
+  const ids = (...a) => { const r = pick(...a); assert.equal(r.status, 0, JSON.stringify(r)); return r.items.map(i => value(i['00100020'])); };
+  assert.deepEqual(ids('20261120'), ['2026-11-20 21:00', '2026-11-20 23:00', '20261120']);
+  assert.deepEqual(ids('20261121-'), ['2026-11-21 01:00', '2026-11-21 03:00']);
+  assert.deepEqual(ids('-20261120'), ['2026-11-20 21:00', '2026-11-20 23:00', '20261120']);
+  assert.deepEqual(ids('20261120-20261121', '2200-0200'), ['2026-11-20 23:00', '2026-11-21 01:00']);
+  assert.deepEqual(ids('20261120', '2100'), ['2026-11-20 21:00']);
+  assert.deepEqual(ids(undefined, '0000-0200'), ['2026-11-21 01:00']);
+  // A date-only order has no midnight: a time key does not match it, and asking for its time fails the query.
+  assert.ok(!ids('20261120', '0000-2359').includes('20261120'));
+  assert.equal(answerQuery(rows, { '00100020': S('LO'), '00400100': SQ({ '00400002': S('DA', '20261120'), '00400003': S('TM') }) }).status,
+    MWL_STATUS.missingValue);
+  // Two times out of order are one span only across two dates.
+  assert.equal(pick('20261120', '2200-0200').status, MWL_STATUS.identifier);
+  assert.equal(pick(undefined, '2200-0200').status, MWL_STATUS.identifier);
+  // An unreadable scheduled date is out of every date query, and asking for its date with no date key fails.
+  assert.ok(!ids('19000101-29991231').includes('soon'));
+  assert.equal(answerQuery([at('soon')], { '00400100': SQ({ '00400002': S('DA') }) }).status, MWL_STATUS.missingValue);
+  assert.deepEqual(scheduledAt('20261131'), null);
+});
+
+test('a query in another UTC offset is moved to the hospital time', () => {
+  const o = order({ sched: '2026-11-20 09:10' });
+  const ids = (offset, date, time) => answerQuery([o], { '00080201': S('SH', offset), '00100020': S('LO'),
+    '00400100': SQ({ '00400002': S('DA', date), ...(time ? { '00400003': S('TM', time) } : {}) }) }).items.length;
+  assert.equal(ids('+0000', '20261120', '0000-0100'), 1);   // 00:10 UTC = 09:10 KST
+  assert.equal(ids('+0000', '20261120', '0100-0200'), 0);
+  assert.equal(ids('+0900', '20261120', '0900-1000'), 1);
+  assert.equal(ids('-0500', '20261119', '1900-2000'), 1);   // 19:10 the day before at -0500
+  assert.equal(answerQuery([o], { '00080201': S('SH', '+9999'), '00100020': S('LO') }).status, MWL_STATUS.identifier);
+});
+
+test('identifiers the SOP Class does not allow, an empty identifier, unsupported keys and too many matches', () => {
+  const o = order();
+  assert.equal(answerQuery([o], { '00400100': SQ({}, {}) }).status, MWL_STATUS.identifier);
+  assert.equal(answerQuery([o], { '00400100': SQ({ '00400002': S('DA', '2026-11-20') }) }).status, MWL_STATUS.identifier);
+  assert.equal(answerQuery([o], { '00400100': SQ({ '00400002': S('DA', '20261121-20261120') }) }).status, MWL_STATUS.identifier);
+  assert.equal(answerQuery([o], { '00400100': SQ({ '00400003': S('TM', '2500') }) }).status, MWL_STATUS.identifier);
+  assert.equal(answerQuery([o], { '00100020': { vr: 'LO', Value: ['A', 'B'] } }).status, MWL_STATUS.identifier);
+  assert.equal(answerQuery([o], { '00100020': SQ() }).status, MWL_STATUS.identifier);
+  assert.throws(() => parseIdentifier([]));
+  // Nothing asked: no match. Only the character set: still nothing asked.
+  assert.deepEqual(answerQuery([o], {}), { status: 0, items: [], warning: false, matches: 0 });
+  assert.equal(answerQuery([o], { '00080005': S('CS', 'ISO_IR 192') }).items.length, 0);
+  // A key the answer does not support: a warning, returned empty; a value given to a returned-only key: a warning.
+  const unknown = answerQuery([o], { '00100020': S('LO'), '00101030': S('DS'), '00400100': SQ({ '00400020': S('CS') }) });
+  assert.equal(unknown.warning, true);
+  assert.deepEqual(unknown.items[0]['00101030'], { vr: 'DS' });
+  assert.deepEqual(unknown.items[0]['00400100'].Value[0]['00400020'], { vr: 'CS' });
+  assert.equal(answerQuery([o], { '00380300': S('LO', 'SYNWARD') }).warning, true);
+  assert.equal(answerQuery([o], { '00100020': S('LO') }).warning, false);
+  const many = Array.from({ length: MWL_MAX_MATCHES + 1 }, () => order());
+  const over = answerQuery(many, { '00100020': S('LO') });
+  assert.equal(over.status, MWL_STATUS.resources);
+  assert.deepEqual(over.items, []);
+});
+
+test('the audit row is written before any identifier, and its failure answers none', async () => {
+  const { service } = harness([order()], { auditFails: true });
+  assert.deepEqual(await service.answer('SYNCT1', { '00100020': S('LO') }), { status: MWL_STATUS.audit, warning: false, items: [] });
+  const ok = harness([order()]);
+  await ok.service.answer('SYNCT1', { '00400100': SQ({}, {}) });
+  assert.deepEqual(ok.audits.map(r => r.detail.outcome), ['invalid']);
+});
+
+test('off unless KIN_MWL_PORT is set; a bad setting refuses to start', () => {
+  assert.equal(mwlConfig({}), null);
+  assert.equal(mwlConfig({ KIN_MWL_PORT: '' }), null);
+  assert.deepEqual(Object.entries(mwlConfig({ KIN_MWL_PORT: '4243' })).filter(([k]) => ['port', 'aet', 'answerSeconds'].includes(k)),
+    [['port', 4243], ['aet', 'KINMWL'], ['answerSeconds', 10]]);
+  for (const env of [{ KIN_MWL_PORT: 'x' }, { KIN_MWL_PORT: '70000' }, { KIN_MWL_PORT: '4243', KIN_MWL_AET: 'A'.repeat(17) },
+    { KIN_MWL_PORT: '4243', KIN_MWL_ANSWER_SECONDS: '0' }])
+    assert.throws(() => mwlConfig(env), JSON.stringify(env));
+  const saved = process.env.KIN_MWL_PORT;
+  delete process.env.KIN_MWL_PORT;
+  const { service } = harness([]);
+  service.onApplicationBootstrap();
+  assert.equal(service.child, null);
+  service.onApplicationShutdown();
+  if (saved !== undefined) process.env.KIN_MWL_PORT = saved;
+});
+
+test('the helper process: asked, answered on its own stdin, started again after it stops, stopped with the API', async (t) => {
+  const python = process.env.KIN_TEST_PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-mwl-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const stand = path.join(dir, 'stand.py');
+  fs.writeFileSync(stand, [
+    'import json, os, sys',
+    'log = os.path.join(os.path.dirname(os.path.abspath(__file__)), "log.jsonl")',
+    'open(log, "a").write(json.dumps({"start": sys.argv[1:]}) + "\\n")',
+    'print(json.dumps({"type": "listening", "port": 1}), flush=True)',
+    'print(json.dumps({"type": "find", "id": "syn:1", "calling": "SYNCT1", "called": "KINMWL", "identifier": {"00100020": {"vr": "LO"}}}), flush=True)',
+    'line = sys.stdin.readline()',
+    'open(log, "a").write(line)',
+    'sys.exit(0)',
+  ].join('\n'));
+  const env = { KIN_MWL_PORT: '4999', KIN_MWL_AET: 'SYNMWL', KIN_MWL_PYTHON: python, KIN_MWL_HELPER: stand };
+  const saved = Object.fromEntries(Object.keys(env).map(k => [k, process.env[k]]));
+  Object.assign(process.env, env);
+  t.after(() => { for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v; });
+  const { service, audits } = harness([order({ patientId: 'SYN-PROC' })]);
+  service.onApplicationBootstrap();
+  const log = path.join(dir, 'log.jsonl');
+  const lines = () => fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)) : [];
+  const deadline = Date.now() + 15000;
+  while (lines().filter(l => l.start).length < 2 && Date.now() < deadline) await new Promise(r => setTimeout(r, 100));
+  service.onApplicationShutdown();
+  const seen = lines();
+  assert.ok(seen.filter(l => l.start).length >= 2, 'started again after it stopped');
+  assert.deepEqual(seen[0].start, ['--port', '4999', '--aet', 'SYNMWL', '--answer-seconds', '10']);
+  const answer = seen.find(l => l.id === 'syn:1');
+  assert.equal(answer.status, 0);
+  assert.deepEqual(answer.items.map(i => i['00100020'].Value[0]), ['SYN-PROC']);
+  assert.ok(audits.length >= 1);
+  // Once stopped with the API, no new start.
+  const count = lines().filter(l => l.start).length;
+  await new Promise(r => setTimeout(r, 1500));
+  assert.equal(lines().filter(l => l.start).length, count);
+});
+
+test('the main and production compose files never turn it on; only the synthetic overlay does', () => {
+  const root = path.resolve(__dirname, '..');
+  for (const file of ['docker-compose.yml', 'docker-compose.prod.yml']) {
+    const text = fs.readFileSync(path.join(root, file), 'utf8');
+    assert.ok(!/KIN_MWL_/.test(text), `${file} sets no Modality Worklist value`);
+    assert.ok(!/4243/.test(text), `${file} publishes no worklist port`);
+  }
+  const overlay = fs.readFileSync(path.join(root, 'docker-compose.mwl.yml'), 'utf8');
+  assert.match(overlay, /KIN_MWL_PORT: "4243"/);
+  assert.match(overlay, /"127\.0\.0\.1:\$\{KIN_MWL_HOST_PORT:-4243\}:4243"/);
+});

@@ -37,6 +37,7 @@ export const AUDIT_FIELD_RULES: Readonly<Record<string, AuditFieldSource>> = Obj
   "unmatch": 'detail.by',
   "order.remove": 'detail.by',                    // Delete Order: 호출 기관, 자기 기관 오더만 내린다
   "order.restore": 'detail.by',
+  "modality-worklist.query": 'detail.institution',  // Modality Worklist: the institution the calling device was registered to (null = refused, nobody's)
   "study.merge": 'detail.by',                     // Merge Exam / Unmerge: 호출 기관, 자기 기관 검사만 합치고 되돌린다
   "study.unmerge": 'detail.by',
   "state.delete": 'detail.by',

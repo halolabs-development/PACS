@@ -134,6 +134,9 @@ CONTRACT.field_rules["film-print.job"] = {"source":"detail.institution","meaning
 Object.assign(CONTRACT.field_rules, {
   "order.remove":{"source":"detail.by","meaning":"removing technician's institution (owner of the order)"},
   "order.restore":{"source":"detail.by","meaning":"restoring technician's institution (owner of the order)"}});
+/* Modality Worklist: a device's query belongs to the institution its AE Title was registered to; a refused one (no single
+   institution) to none. */
+CONTRACT.field_rules["modality-worklist.query"] = {"source":"detail.institution","meaning":"the calling device's registered institution (device, outcome and match count only)"};
 /* Merge Exam / Unmerge: the calling technician's institution, which owns every study of the group (detail.by). */
 Object.assign(CONTRACT.field_rules, {
   "study.merge":{"source":"detail.by","meaning":"merging technician's institution (owner of the studies)"},
@@ -1000,6 +1003,17 @@ test('Technician Delete Order and Undo rows belong to the order\'s institution a
     assert.deepEqual(A.projectAuditRow(source, 'inst-a').detail, detail);
     assert.equal(A.projectAuditRow(source, 'inst-b'), null);
   }
+});
+
+test('Modality Worklist query rows belong to the device\'s institution; a refused query to no institution', () => {
+  const answered = { institution: 'inst-a', aet: 'SYNCT1', outcome: 'answered', matches: 2 };
+  const source = { ...ROWS.get(29), action: 'modality-worklist.query', target: 'inst-a', detail: JSON.stringify(answered) };
+  assert.equal(A.auditRule('modality-worklist.query'), 'field:detail.institution');
+  assert.deepEqual(A.projectAuditRow(source, 'inst-a').detail, answered);
+  assert.equal(A.projectAuditRow(source, 'inst-b'), null);
+  const refused = { ...source, target: '-', detail: JSON.stringify({ institution: null, aet: 'SYNUNKNOWN', outcome: 'refused', matches: 0 }) };
+  assert.equal(A.projectAuditRow(refused, 'inst-a'), null);
+  assert.equal(A.projectAuditRow(refused, 'inst-b'), null);
 });
 
 test('Merge Exam and Unmerge rows belong to the studies\' institution and to no other', () => {
