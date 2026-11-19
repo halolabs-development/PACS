@@ -123,6 +123,13 @@ body.kin-viewer-ux [data-cy="viewport-pane"] { box-sizing: border-box; padding-t
 .kin-viewer-info-mode { white-space: nowrap; }
 .kin-viewer-info-bar button { flex: none; padding: .25em .5em; }
 .kin-viewer-info-bar button:disabled { color: var(--kin-ux-secondary); }
+/* A cell's own compact tools at the end of its information row (viewer-ux-toolbar.js): icons in the row's height. */
+.kin-viewer-cell-tools { display: flex; flex: none; align-items: center; gap: 2px; }
+.kin-viewer-cell-tools[hidden] { display: none; }
+.kin-viewer-info-bar .kin-viewer-cell-tools button { box-sizing: border-box; min-width: 24px; height: 24px; padding: 0 .3em; line-height: 1; }
+.kin-viewer-cell-tools button[aria-pressed="true"] { border-color: var(--kin-accent); box-shadow: inset 0 0 0 1px var(--kin-accent); }
+.kin-ux-cell-menu kbd { margin-left: auto; padding-left: 1em; color: var(--kin-ux-secondary); }
+.kin-ux-cell-menu button { display: flex; align-items: center; gap: .4em; }
 .kin-viewer-series-strip {
   display: flex; flex: none; align-items: stretch; min-width: 0; font: 12px/1.4 sans-serif;
   /* A 4em thumbnail beside two text lines + card/list padding and border (64.4px) in a
@@ -180,6 +187,9 @@ body.kin-viewer-ux #root :has(> .kin-viewer-series-strip) { min-width: 0; }
 section.kin-ux-feature-panel { position: fixed; top: 4em; right: 1em; z-index: 55; }
 .kin-ux-feature-panel :focus-visible { outline: 2px solid var(--kin-accent); outline-offset: -2px; }
 .kin-ux-cell-layer { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
+/* The viewer's own corner buttons (OHIF ViewportActionCorners, which set no z-index) and the menus they open stand above
+   the text this shell draws over the image (cell layers 5, labels 2-5), so an opened menu is never covered. */
+body.kin-viewer-ux [data-cy="viewport-pane"] .pointer-events-auto.flex.items-center.gap-1.absolute { z-index: 6; }
 .kin-ux-settings { background: var(--kin-panel); color: var(--kin-ux-text); max-width: 90vw; max-height: 85vh; overflow: auto; padding: 1em; border: 1px solid var(--kin-ux-secondary); }
 .kin-ux-setting-row { display: flex; gap: .7em; align-items: center; padding: .25em; }
 .kin-ux-setting-row span { flex: 1; }
@@ -284,3 +294,41 @@ body.kin-viewer-ux.kin-second-display-rows-off[data-kin-chrome] #root :has(> .ki
 .kin-study-tabs button[aria-selected=true] { border-color: var(--kin-accent); box-shadow: inset 0 -3px var(--kin-accent); }
 .kin-study-tabs button:disabled { opacity: .5; cursor: default; }
 .kin-study-tabs button:focus-visible { outline: 2px solid var(--kin-accent); outline-offset: -2px; }
+/* Panels (viewer-ux-shell.js mountPanels): Studies, Measurements and Segmentation as compact buttons at the end of the
+   patient row. While they are shown, a closed side panel's edge strip (the navigation they replace) is not shown. */
+.kin-ux-panels { display: flex; flex: none; align-items: center; gap: .3em; margin-left: auto; }
+.kin-ux-panels button { flex: none; background: var(--kin-panel); color: var(--kin-ux-text); border: 1px solid var(--kin-ux-secondary); border-radius: 3px; padding: .15em .5em; }
+.kin-ux-panels button[hidden] { display: none; }
+.kin-ux-panels button[aria-pressed="true"] { border-color: var(--kin-accent); box-shadow: inset 0 0 0 1px var(--kin-accent); }
+.kin-ux-panels button:focus-visible { outline: 2px solid var(--kin-accent); outline-offset: -2px; }
+body.kin-viewer-ux[data-kin-panels] [data-kin-side-closed] { display: none !important; }
+/* A tall viewer can keep Studies above the images even with the 280px dock open.
+   Reserve 700px beyond the dock. Only resizing the window changes the orientation,
+   so a delayed grid refresh cannot move the strip during measurement or output. */
+@media (min-height: 980px) {
+  body.kin-viewer-ux [data-kin-studies-band] { display: grid !important; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: var(--kin-studies-band, 176px) minmax(0, 1fr); }
+  body.kin-viewer-ux [data-kin-studies-band] > * { grid-row: 2; grid-column: 1; min-width: 0; min-height: 0; }
+  body.kin-viewer-ux [data-kin-studies-band] > [style*="margin-right"] { grid-column: 2; }
+  body.kin-viewer-ux [data-kin-studies-band] > [data-kin-studies-panel] { grid-row: 1; grid-column: 1 / -1; width: auto !important; max-width: none !important; height: auto !important;
+    top: 0 !important; margin: 0 !important; display: grid !important; grid-template-columns: max-content minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr);
+    overflow: hidden; contain: inline-size; border-bottom: 1px solid var(--kin-ux-secondary); }
+  body.kin-viewer-ux [data-kin-studies-panel] > * { grid-column: 1; min-width: 0; min-height: 0; }
+  body.kin-viewer-ux [data-kin-studies-panel] > :empty { display: none !important; }
+  body.kin-viewer-ux [data-kin-studies-panel] > :is([data-cy="studyBrowser-panel"], :has([data-cy="studyBrowser-panel"])) { grid-column: 2; grid-row: 1 / -1; overflow: auto; }
+  body.kin-viewer-ux [data-kin-studies-panel] [data-cy="studyBrowser-panel"] { flex-direction: row !important; align-items: flex-start; gap: 6px; overflow: auto !important; }
+  body.kin-viewer-ux [data-kin-studies-panel] [data-cy="studyBrowser-panel"] > * { flex: 0 0 auto; }
+  body.kin-viewer-ux [data-kin-studies-panel] [data-cy="studyBrowser-panel"] :has(> h3):has(> [role="region"]) { display: flex; flex-direction: row; align-items: flex-start; }
+  body.kin-viewer-ux [data-kin-studies-panel] [data-cy="studyBrowser-panel"] :has(> [role="region"]) > h3 { flex: 0 0 auto; width: 150px; }
+  body.kin-viewer-ux [data-kin-studies-panel] :has(> #ohif-thumbnail-list) { min-height: 0 !important; }
+  body.kin-viewer-ux [data-kin-studies-panel] #ohif-thumbnail-list { display: flex !important; flex-direction: row; flex-wrap: nowrap; gap: 4px; overflow-x: auto; overflow-y: hidden; padding-bottom: 4px; }
+  body.kin-viewer-ux [data-kin-studies-panel] [data-cy^="study-browser-thumbnail"] { flex: 0 0 auto; width: 96px !important; height: 120px !important; overflow: hidden; }
+}
+/* A window floating over the images (Recent Layout without a tool area, config/ohif/layout.js: fixed 30px above the
+   bottom) never rises above the image grid's top (--kin-frame-top, kept by the shell), so the viewer's top rows stay
+   reachable wherever the Studies band puts them. Inside a tool area the panel is not a child of the body. */
+body.kin-viewer-ux > #kin-viewer-layout { max-height: calc(100vh - var(--kin-frame-top, 48px) - 30px) !important; }
+/* The stock tracked-measurements list, while it lists none: what it lists, and where every drawn measurement is. */
+.kin-tracked-hint { display: flex; flex-wrap: wrap; align-items: center; gap: .4em; margin: .4em; padding: .4em .5em; font: 12px/1.4 sans-serif;
+  color: var(--kin-ux-text); background: var(--kin-panel); border: 1px solid var(--kin-ux-secondary); border-radius: 3px; }
+.kin-tracked-hint button { background: var(--kin-panel); color: var(--kin-ux-text); border: 1px solid var(--kin-accent); border-radius: 3px; padding: .2em .5em; }
+.kin-tracked-hint button[hidden] { display: none; }

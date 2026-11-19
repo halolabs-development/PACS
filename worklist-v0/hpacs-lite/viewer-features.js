@@ -216,6 +216,37 @@ window.KinViewerFeatures = (() => {
         return true;
       } catch (error) { runs.delete(entry); report(error?.message || action.label + '을(를) 실행하지 못했습니다.'); return false; }
     }
+    // ── runInCell(entry, viewportId, still): the one way a control that belongs to a cell acts there ──
+    // A cell's own controls (the compact tools on each cell's information row), the Context Toolbar and a feature's
+    // ui.invoke(id, { viewportId }) all come here, so the toolbar's buttons and shortcuts (the active cell) and a cell's
+    // controls (that cell, made the active one first) act on one target. The toolbar's guards come first, so a refused
+    // tool changes nothing, not even the active cell. The cell is then made the active one; the entry runs only if that
+    // cell is still the one the caller meant: `still` is the caller's check (the Context Toolbar pins its cell at the
+    // press), by default the cell's generation, viewer and images as they were when the control was pressed.
+    function pinned(viewportId) {
+      deliver();
+      const at = generation(viewportId), viewport = cells?.getCornerstoneViewport?.(viewportId), sets = shown(viewportId);
+      return () => { deliver(); return !switching() && generation(viewportId) === at && cells?.getCornerstoneViewport?.(viewportId) === viewport && shown(viewportId) === sets; };
+    }
+    const shown = id => JSON.stringify(grid?.getState?.()?.viewports?.get?.(id)?.displaySetInstanceUIDs || []);
+    // The viewer makes a requested cell active on a later render; resolves whether that cell is active within a second.
+    function activate(viewportId) {
+      if (grid?.getActiveViewportId?.() === viewportId) return Promise.resolve(true);
+      if (typeof grid?.setActiveViewportId !== 'function' || !grid.getState?.()?.viewports?.has?.(viewportId)) return Promise.resolve(false);
+      grid.setActiveViewportId(viewportId);
+      const until = Date.now() + 1000;
+      return new Promise(resolve => {
+        const check = () => ended ? resolve(false) : grid.getActiveViewportId?.() === viewportId ? resolve(true) : Date.now() >= until ? resolve(false) : setTimeout(check, 16);
+        setTimeout(check, 0);
+      });
+    }
+    async function runInCell(entry, viewportId, still = pinned(viewportId)) {
+      if (ended || !entry || !viewportId || !still()) return false;
+      if (entry.kind !== 'feature' && !context.tools().some(tool => tool.id === entry.id)) return false;
+      if (!context.allowed() || !await activate(viewportId) || ended || !still() || grid?.getActiveViewportId?.() !== viewportId) return false;
+      if (entry.kind === 'feature') return run(entry.id, { viewportId });
+      return await context.invoke(entry.id) === true;
+    }
     // A menu's items in their order; without a menu, every menu in toolbar order and then the toolbar buttons.
     function items(menu) {
       const list = menu === undefined
@@ -334,8 +365,11 @@ window.KinViewerFeatures = (() => {
         // feature that must check them before it changes anything itself (e.g. which cell is active).
         allowed: () => live() && context.allowed(),
         tools: () => live() ? context.tools() : [],
-        // An existing toolbar tool in a cell (default: the active one); resolves true when it ran.
-        invoke: async (id, options = {}) => live() && await context.invoke(id, options) === true,
+        // An existing toolbar tool in a cell (default: the active one); resolves true when it ran. A named cell is reached the
+        // one way every cell control is (runInCell).
+        invoke: async (id, options = {}) => live() && (options.viewportId ? await runInCell({ kind: 'tool', id }, options.viewportId) : await context.invoke(id) === true),
+        // A tool ({ kind: 'tool', id }) or feature action ({ kind: 'feature', id }) in a given cell, while still() holds (runInCell).
+        runInCell: (entry, viewportId, still) => live() ? runInCell(entry, viewportId, still) : Promise.resolve(false),
       };
       const featureStore = {
         get: key => copy(store.value()[key]),
@@ -409,7 +443,7 @@ window.KinViewerFeatures = (() => {
     }
     const controller = {
       install,
-      items, run, actions: actionList, settings: settingList, openSetting,
+      items, run, runInCell, actions: actionList, settings: settingList, openSetting,
       has: id => actions.has(id),
       shortcuts: () => sorted([...actions.values()].filter(action => action.shortcut)).map(action => ({ id: action.id, label: action.shortcutLabel || action.label })),
       fill, collect,

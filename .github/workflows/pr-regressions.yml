@@ -456,7 +456,7 @@ jobs:
     needs: select
     if: ${{ !cancelled() && (needs.select.result != 'success' || fromJSON(needs.select.outputs.jobs)['viewer-dom']) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 162
+    timeout-minutes: 171
     steps:
     - name: Path selection completed
       if: ${{ needs.select.result != 'success' }}
@@ -601,6 +601,21 @@ jobs:
       timeout-minutes: 3
       run: |
         python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/viewer-input-dom --cwd . --file config/ohif/viewer-ux.js --file worklist-v0/hpacs-lite/viewer-features.js --file worklist-v0/hpacs-lite/viewer-features-input.js --file worklist-v0/hpacs-lite/viewer-ux-toolbar.js --file worklist-v0/hpacs-lite/viewer-ux-shortcuts.js --file worklist-v0/hpacs-lite/viewer-ux-theme.css --file tests/viewer_input_dom_test.py -- "$RUNNER_TEMP/measurement-python/bin/python" -B tests/viewer_input_dom_test.py
+    - name: Viewer cell text - the text over an image never covers other text over it, nor the viewer corner menu
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      timeout-minutes: 3
+      run: |
+        python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/viewer-cell-text-dom --cwd . --file worklist-v0/hpacs-lite/viewer-info-bar.js --file worklist-v0/hpacs-lite/viewer-features-display.js --file worklist-v0/hpacs-lite/viewer-features-navigate.js --file worklist-v0/hpacs-lite/viewer-identity.js --file config/ohif/mammography-hanging.js --file worklist-v0/hpacs-lite/viewer-ux-theme.css --file tests/viewer_display_dom_test.py --file tests/viewer_identity_position_dom_test.py --file tests/viewer_cell_text_dom_test.py -- "$RUNNER_TEMP/measurement-python/bin/python" -B tests/viewer_cell_text_dom_test.py
+    - name: Viewer cell tools - each cell has its own compact tools and they act in that cell
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      timeout-minutes: 3
+      run: |
+        python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/viewer-cell-tools-dom --cwd . --file worklist-v0/hpacs-lite/viewer-ux-shell.js --file worklist-v0/hpacs-lite/viewer-info-bar.js --file worklist-v0/hpacs-lite/viewer-ux-toolbar.js --file worklist-v0/hpacs-lite/viewer-features.js --file worklist-v0/hpacs-lite/viewer-ux-shortcuts.js --file worklist-v0/hpacs-lite/viewer-ux-theme.css --file tests/viewer_cell_tools_dom_test.py -- "$RUNNER_TEMP/measurement-python/bin/python" -B tests/viewer_cell_tools_dom_test.py
+    - name: Viewer panels - Studies, Measurements and Segmentation at the top, Studies as a band above the images
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      timeout-minutes: 3
+      run: |
+        python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/viewer-panels-dom --cwd . --file worklist-v0/hpacs-lite/viewer-ux-shell.js --file worklist-v0/hpacs-lite/viewer-info-bar.js --file worklist-v0/hpacs-lite/viewer-ux-theme.css --file tests/viewer_panels_dom_test.py -- "$RUNNER_TEMP/measurement-python/bin/python" -B tests/viewer_panels_dom_test.py
     - name: Viewer Display menu, its windows, account values and cell text
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       timeout-minutes: 4

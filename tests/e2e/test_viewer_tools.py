@@ -261,6 +261,7 @@ class ViewerStackControlsE2E(DisplayControlsE2E):
         self.assertEqual(self.display(page)[0]['image'], zoom_before['image'])
         select_image_tool(page, 'Zoom')
         zoom_after = self.display(page)[0]
+        canvas_after = page.evaluate('''() => { const v=services.cornerstoneViewportService.getCornerstoneViewport(services.viewportGridService.getActiveViewportId()); const c=v.element.querySelector('canvas'); return [v.element.clientWidth, v.element.clientHeight, c.width, c.height]; }''')
         print('MOUSE deselected ' + json.dumps(page.evaluate('''() => {
             const v=services.cornerstoneViewportService.getCornerstoneViewport(services.viewportGridService.getActiveViewportId());
             const group=cornerstoneTools.ToolGroupManager.getToolGroupForViewport(v.id,v.renderingEngineId);
@@ -280,7 +281,11 @@ class ViewerStackControlsE2E(DisplayControlsE2E):
                     configuration:tool.configuration};
             }''')), flush=True)
             raise
-        self.assertEqual(self.display(page)[0]['camera']['parallelScale'], zoom_after['camera']['parallelScale'])
+        # The zoom stays: the cell was not laid out again (same element and canvas size, so no re-fit), and the scale the
+        # viewer keeps for the next image is the same to the ninth decimal (the last bit of the float the viewer computes
+        # again for a new image follows the canvas size).
+        self.assertEqual(page.evaluate('''() => { const v=services.cornerstoneViewportService.getCornerstoneViewport(services.viewportGridService.getActiveViewportId()); const c=v.element.querySelector('canvas'); return [v.element.clientWidth, v.element.clientHeight, c.width, c.height]; }'''), canvas_after)
+        self.assertAlmostEqual(self.display(page)[0]['camera']['parallelScale'], zoom_after['camera']['parallelScale'], places=9)
         before_wheel = self.display(page)[0]
         page.mouse.move(x,y); page.mouse.wheel(0,100)
         page.wait_for_function('before => services.cornerstoneViewportService.getCornerstoneViewport(services.viewportGridService.getActiveViewportId()).getCurrentImageId() !== before', arg=before_wheel['image'])
