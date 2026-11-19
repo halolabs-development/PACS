@@ -19,6 +19,7 @@ import { StudyAccessService } from './study-access.service';
 import { need, inst } from './pacs/access';
 import type { Caller } from './pacs/access';
 import { dump, holdAlive, draftConflict } from './pacs/values';
+import { qcGroupRefusal } from './pacs/qc-flag';
 import { canReadPreliminary } from './preliminary-reader';
 
 export const STUDY_MERGED = 'STUDY_MERGED';
@@ -624,6 +625,8 @@ export class ExamMergeService {
         if (current.generation !== scope.generation) throw examScopeChanged();
       }
       const refusals = await this.mergeRefusals(tx, c, me, sorted, rows);
+      // A study other than the base leaves the list when merged: its unresolved QC mark must not leave with it.
+      for (const row of rows) if (row.uid !== baseUid) { const qc = qcGroupRefusal(row, true); if (qc) refusals.push(qc); }
       if (refusals.length) throw this.refused('합칠 수 없습니다', refusals);
       const id = randomUUID(), at = new Date();
       await tx.studyGroup.create({ data: { id, institutionId: me, kind: 'merge', baseUid, createdBy: c.actor, createdBySub: c.sub, createdAt: at } });
@@ -765,7 +768,13 @@ export class ExamMergeService {
 
   private async dissolveRefusals(tx: any, c: Caller, group: ExamGroup, rows: any[]): Promise<GroupRefusal[]> {
     const studies = [...new Set(group.members.map(m => m.studyUid))];
-    return this.commonRefusals(tx, c, rows, studies, rows, true);
+    const out = await this.commonRefusals(tx, c, rows, studies, rows, true);
+    // Unsplit ends the second part's row: an unresolved QC mark on it is refused, naming that row.
+    if (group.kind === 'split') for (const member of group.members.filter(m => m.logicalUid !== m.studyUid)) {
+      const qc = qcGroupRefusal(rows.find(row => row.uid === member.logicalUid), false);
+      if (qc) out.push(qc);
+    }
+    return out;
   }
 
   /**
@@ -800,7 +809,9 @@ export class ExamMergeService {
     };
     return [rule(['approved', 'destroyed'], '합친 검사에 지금 승인된 판독문이 없습니다.'),
       rule(['transfer'], '이 검사들의 전송·내보내기가 진행 중이지 않습니다.'),
-      rule(['held', 'draft'], '합친 검사의 판독문을 쓰는 사람이 없습니다.')];
+      rule(['held', 'draft'], '합친 검사의 판독문을 쓰는 사람이 없습니다.'),
+      // Listed only when it refuses (a split whose second part carries an unresolved QC mark).
+      ...(refusals.some(r => r.rule === 'qc-flagged') ? [rule(['qc-flagged'], '')] : [])];
   }
 
   private refused(prefix: string, refusals: GroupRefusal[]) {

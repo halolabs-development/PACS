@@ -97,7 +97,7 @@ const DEFAULTS = {
   studyState: () => ({ teleInstitutionId: null, rs: 'W', ss: 'Unverified', em: 'N', ts: 'none', matched: 'U', ward: null,
     reqHosp: null, holder: null, heldAt: null, holdReason: null, preDoc: null, preReviewer: null, preDocSub: null,
     preReviewerSub: null, repDoc: null, confirm: null, ov: null, orig: null, orderOid: null, origin: 'device',
-    draftEpoch: randomUUID(), createdAt: new Date() }),
+    qcReason: null, qcBy: null, qcAt: null, qcRevision: 0, draftEpoch: randomUUID(), createdAt: new Date() }),
   auditLog: () => ({ detail: null, at: new Date() }),
   reportVersion: () => ({ citations: null, structured: null, reason: null, at: new Date() }),
   reportDraft: () => ({ citations: null, structured: null, updatedAt: new Date() }),
@@ -1664,4 +1664,90 @@ test('SPLIT-27 the report preview of a destroyed report: the study access policy
   };
   assert.deepEqual(await read(false), { status: 404, code: null, policy: 1, orthanc: 0 });
   assert.deepEqual(await read(true), { status: 410, code: 'REPORT_DESTROYED', policy: 1, orthanc: 0 });
+});
+
+
+// ── SPLIT-28 QC Flag: one command on the listed row, its revision and generation, its gates and its audit row ──
+
+test('SPLIT-28 QC Flag marks, changes and clears with a rising revision; refusals write nothing; the history keeps the row', async () => {
+  const w = world();
+  await w.boot();
+  const s = w.study();
+  const row = () => w.db.rows('studyState').find(r => r.uid === s.uid);
+  const cmd = (qc, extra = {}) => ({ qc, qcRevision: row().qcRevision, epoch: row().draftEpoch, ...extra });
+  // mark → change the reason → clear: 0 → 1 → 2 → 3; the server sets who and when
+  const marked = await w.workflow(workflow => w.studyState.patchState(s.uid, cmd({ reason: '  SYN motion on series 2 ' }), TECH_A, workflow));
+  assert.equal(marked.qc.reason, 'SYN motion on series 2');
+  assert.equal(marked.qc.by, TECH_A.actor);
+  assert.equal(marked.qc.revision, 1);
+  assert.ok(!Number.isNaN(Date.parse(marked.qc.at)));
+  const changed = await w.studyState.patchState(s.uid, cmd({ reason: 'SYN repeat requested' }), ADMIN_A);
+  assert.deepEqual([changed.qc.reason, changed.qc.by, changed.qc.revision], ['SYN repeat requested', ADMIN_A.actor, 2]);
+  const cleared = await w.studyState.patchState(s.uid, cmd(null), TECH_A);
+  assert.deepEqual(cleared.qc, { reason: null, by: null, at: null, revision: 3 });
+  assert.deepEqual([row().qcReason, row().qcBy, row().qcAt, row().qcRevision], [null, null, null, 3]);
+  // every change is one state.patch row holding the revision it stored; the other study fields stay as they were
+  assert.deepEqual(w.audits('state.patch').map(a => JSON.parse(a.detail)), [
+    { qc: { reason: 'SYN motion on series 2' }, qcRevision: 1, by: INST_A }, { qc: { reason: 'SYN repeat requested' }, qcRevision: 2, by: INST_A },
+    { qc: null, qcRevision: 3, by: INST_A }]);
+  assert.deepEqual([row().ss, row().rs, row().em, row().matched], ['Verified', 'W', 'N', 'U']);
+  assert.equal(w.writes.length, 1, 'the workflow write recorded one 수정 record');
+  // clearing a row that is not flagged answers it as it is: same revision, nothing written
+  const audits = w.audits().length;
+  const again = await w.studyState.patchState(s.uid, cmd(null), TECH_A);
+  assert.equal(again.qc.revision, 3);
+  assert.equal(w.audits().length, audits);
+
+  // malformed commands: 400 before anything is read or written
+  const before = w.db.writes.length;
+  for (const body of [cmd({ reason: '' }), cmd({ reason: '   ' }), cmd({ reason: 'x'.repeat(501) }), cmd({ reason: 'SYN\u0007bell' }),
+    cmd({ reason: 1 }), cmd('SYN'), cmd({ reason: 'SYN', extra: 1 }), cmd({ reason: 'SYN' }, { em: 'E' }),
+    { qc: { reason: 'SYN' } }, cmd({ reason: 'SYN' }, { qcRevision: -1 }), cmd({ reason: 'SYN' }, { epoch: 'not-an-epoch' })])
+    await refused(() => w.studyState.patchState(s.uid, body, TECH_A), 400);
+  assert.deepEqual(w.db.writes.slice(before), []);
+  // 500 characters is accepted
+  const long = await w.studyState.patchState(s.uid, cmd({ reason: 'y'.repeat(500) }), TECH_A);
+  assert.equal(long.qc.reason.length, 500);
+
+  // two screens saw revision 4; one changes the reason, the other's clear is refused and the new reason stays
+  const seen = cmd(null);
+  await w.studyState.patchState(s.uid, cmd({ reason: 'SYN newer reason' }), TECH_A);
+  await refused(() => w.studyState.patchState(s.uid, seen, TECH_A), 409, 'QC_REVISION_CHANGED');
+  assert.equal(row().qcReason, 'SYN newer reason');
+  // a command made for an earlier generation of the row (a forced release, a merge or split since) is refused
+  await refused(() => w.studyState.patchState(s.uid, cmd(null, { epoch: randomUUID() }), TECH_A), 409, 'QC_STUDY_CHANGED');
+  // an audit row that cannot be written takes the change back with it
+  const boom = new Error('audit store down');
+  w.db.faults.push({ model: 'auditLog', op: 'create', client: 'tx', error: boom });
+  await assert.rejects(() => w.studyState.patchState(s.uid, cmd(null), TECH_A), error => error === boom);
+  assert.equal(row().qcReason, 'SYN newer reason');
+
+  // who may: a radiologist alone, the tele receiver's technician and administrator, an undesignated reader of a
+  // preliminary report, and a row this caller cannot see are refused, with nothing written
+  const writes = w.db.writes.length;
+  await refused(() => w.studyState.patchState(s.uid, cmd({ reason: 'SYN' }), RAD_A), 403);
+  const tele = w.study({ teleInstitutionId: INST_B, ts: 'sent' });
+  const teleCmd = { qc: { reason: 'SYN' }, qcRevision: 0, epoch: w.db.rows('studyState').find(r => r.uid === tele.uid).draftEpoch };
+  await refused(() => w.studyState.patchState(tele.uid, teleCmd, TECH_B), 403);
+  await refused(() => w.studyState.patchState(tele.uid, teleCmd, ADMIN_B), 403);
+  const prelim = w.study({ rs: 'P', preDoc: RAD_A.actor, preDocSub: RAD_A.sub, preReviewer: RAD_A2.actor, preReviewerSub: RAD_A2.sub });
+  await refused(() => w.studyState.patchState(prelim.uid, { qc: { reason: 'SYN' }, qcRevision: 0,
+    epoch: w.db.rows('studyState').find(r => r.uid === prelim.uid).draftEpoch }, TECH_A), 403);
+  const other = w.study({ institutionId: INST_B });
+  await refused(() => w.studyState.patchState(other.uid, { qc: { reason: 'SYN' }, qcRevision: 0,
+    epoch: w.db.rows('studyState').find(r => r.uid === other.uid).draftEpoch }, TECH_A), 404);
+  assert.deepEqual(w.db.writes.slice(writes), []);
+
+  // the tele receiver sees the mark and its reason, not who made it
+  await w.studyState.patchState(tele.uid, teleCmd, TECH_A);
+  const view = values.toClient(w.db.rows('studyState').find(r => r.uid === tele.uid), null, RAD_B, null);
+  assert.deepEqual([view.qc.reason, view.qc.by, view.qc.revision], ['SYN', null, 1]);
+  assert.equal(values.toClient(w.db.rows('studyState').find(r => r.uid === tele.uid), null, RAD_A, null).qc.by, TECH_A.actor);
+  // a row the server has never marked answers the one shape, revision 0
+  assert.deepEqual(values.toClient(w.db.rows('studyState').find(r => r.uid === other.uid), null, RAD_A, null).qc,
+    { reason: null, by: null, at: null, revision: 0 });
+
+  // a study whose mark was ever set keeps its row (and its revision): deletion is refused, cleared or not
+  await refused(() => w.studyState.removeState(s.uid, TECH_A), 409, 'STUDY_HAS_QC_HISTORY');
+  assert.ok(row());
 });

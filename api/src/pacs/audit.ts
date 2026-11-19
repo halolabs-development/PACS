@@ -43,6 +43,8 @@ export class PacsAudit {
    * INSTITUTION_AUDIT_ACTIONS 행은 기록 기관 = 나일 때만(S7-U3a). 그 조건은 LIMIT이 있는 같은 SQL의 WHERE에 둔다 —
    * 가져온 뒤 거르면 짧은 쪽이 숨긴 행의 수·시각을 드러내고 보여야 할 오래된 행을 밀어낸다. CASE는 목록의 action에만 detail을 jsonb로 읽고, 검사 행이 없거나 기관이
    * null이면 NULL이 되어 행이 빠진다(닫힌 쪽). 같은 시각의 행은 id로 순서를 고정한다.
+   * QC Flag를 바꾼 state.patch 행(detail에 qc가 있는 행)은 표시한 계정을 담으므로 기록 기관(detail.by) = 나일 때만 나간다.
+   * 그 밖의 state.patch 행(TS 등)은 전과 같다.
    */
   async audits(uid: string | undefined, take: number, c: Caller) {
     return (await this.auditRead(uid, take, c)).rows;
@@ -90,7 +92,9 @@ export class PacsAudit {
         return tx.$queryRaw<any[]>`SELECT a.*, CASE WHEN a.action IN ('hold.force-release', 'report.draft.force-discard')
             THEN COALESCE(a.detail::jsonb ->> 'institution', a.detail::jsonb ->> 'by')
             WHEN a.action = ANY(${OWNER_ONLY_AUDIT_ACTIONS}::text[]) OR a.action = ANY(${INSTITUTION_AUDIT_ACTIONS}::text[])
-            THEN (a.detail::jsonb ->> 'institution') ELSE s."institutionId" END AS "managingInstitution"
+            THEN (a.detail::jsonb ->> 'institution')
+            WHEN a.action = 'state.patch' THEN CASE WHEN (a.detail::jsonb -> 'qc') IS NULL THEN s."institutionId" ELSE (a.detail::jsonb ->> 'by') END
+            ELSE s."institutionId" END AS "managingInstitution"
           FROM "AuditLog" a LEFT JOIN "StudyState" s ON s.uid = a.target
           WHERE a.target = ${uid}
             AND CASE WHEN a.action = ANY(${OWNER_ONLY_AUDIT_ACTIONS}::text[])
@@ -99,6 +103,8 @@ export class PacsAudit {
                      THEN COALESCE(a.detail::jsonb ->> 'institution', a.detail::jsonb ->> 'by') = ${me}
                      WHEN a.action = ANY(${INSTITUTION_AUDIT_ACTIONS}::text[])
                      THEN (a.detail::jsonb ->> 'institution') = ${me}
+                     WHEN a.action = 'state.patch'
+                     THEN CASE WHEN (a.detail::jsonb -> 'qc') IS NULL THEN TRUE ELSE (a.detail::jsonb ->> 'by') = ${me} END
                      ELSE TRUE END
           ORDER BY a.at DESC, a.id DESC LIMIT ${limit}`;
       }, { maxWait: 4000, timeout: 8000 }).catch(noteTransactionError);
@@ -113,7 +119,9 @@ export class PacsAudit {
     return this.prisma.$queryRaw<any[]>`SELECT a.*, CASE WHEN a.action IN ('hold.force-release', 'report.draft.force-discard')
             THEN COALESCE(a.detail::jsonb ->> 'institution', a.detail::jsonb ->> 'by')
             WHEN a.action = ANY(${OWNER_ONLY_AUDIT_ACTIONS}::text[]) OR a.action = ANY(${INSTITUTION_AUDIT_ACTIONS}::text[])
-            THEN (a.detail::jsonb ->> 'institution') ELSE s."institutionId" END AS "managingInstitution"
+            THEN (a.detail::jsonb ->> 'institution')
+            WHEN a.action = 'state.patch' THEN CASE WHEN (a.detail::jsonb -> 'qc') IS NULL THEN s."institutionId" ELSE (a.detail::jsonb ->> 'by') END
+            ELSE s."institutionId" END AS "managingInstitution"
           FROM "AuditLog" a LEFT JOIN "StudyState" s ON s.uid = a.target
       WHERE a.target = ANY(${allowed}::text[])
         AND (s."institutionId" = ${me} OR s."teleInstitutionId" = ${me})
@@ -123,6 +131,8 @@ export class PacsAudit {
                  THEN COALESCE(a.detail::jsonb ->> 'institution', a.detail::jsonb ->> 'by') = ${me}
                  WHEN a.action = ANY(${INSTITUTION_AUDIT_ACTIONS}::text[])
                  THEN (a.detail::jsonb ->> 'institution') = ${me}
+                 WHEN a.action = 'state.patch'
+                 THEN CASE WHEN (a.detail::jsonb -> 'qc') IS NULL THEN TRUE ELSE (a.detail::jsonb ->> 'by') = ${me} END
                  ELSE TRUE END
       ORDER BY a.at DESC, a.id DESC LIMIT ${limit}`;
   }
