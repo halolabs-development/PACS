@@ -671,7 +671,15 @@ export class PacsWorklist {
       reports = await withStoredExtras(this.prisma, await this.prisma.report.findMany({ where: { uid: { in: uids } } }));
       const fresh = new Map((await this.prisma.studyState.findMany({ where: { uid: { in: uids } } })).map(s => [s.uid, s]));
       if (await headVersionsUnchanged(this.prisma, uids, reports)) {
-        for (let i = 0; i < states.length; i++) states[i] = fresh.get(states[i].uid) ?? states[i];
+        // A fresh row replaces the first read only while it is still this caller's to see (a tele request cancelled
+        // meanwhile takes it away) and of the same kind; a row gone or changed is left out, never kept from the first read.
+        const kept = states.flatMap(s => {
+          const now = fresh.get(s.uid);
+          return now && now.origin === s.origin && this.access.visible(now, me) ? [now] : [];
+        });
+        states.splice(0, states.length, ...kept);
+        const shown = new Set(kept.map(s => s.uid));
+        reports = reports.filter(report => shown.has(report.uid));
         break;
       }
       if (attempt === 2) throw new ServiceUnavailableException('판독 상태가 바뀌는 중입니다. 잠시 후 다시 불러오세요.');

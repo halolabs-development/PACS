@@ -751,6 +751,24 @@ test('report state table: a list or bootstrap that read the heads while commits 
   const st = (await booted.w.worklist.bootstrap(RAD_A2)).states[booted.s.uid];
   assert.deepEqual([st.rs, st.version, st.findings], ['A', 4, 'SYN FINAL']);
 });
+test('report state table: a tele request cancelled while bootstrap reads the heads takes the row away from the receiver', async () => {
+  const w = world();
+  await w.boot();
+  const s = w.study({ rs: 'A', teleInstitutionId: INST_B });
+  w.orthanc.rows = [qido(s.uid, 'SYN A HOSPITAL')];
+  w.db.seed('report', { uid: s.uid, findings: 'SYN APPROVED TEXT', conclusion: '', recommendation: '', version: 1, updatedBy: RAD_A.actor });
+  const real = w.db.root.report.findMany;
+  let calls = 0;
+  w.db.root.report.findMany = async function (args) {
+    const out = await real.call(this, args);
+    if (++calls === 1) Object.assign(w.db.rows('studyState').find(r => r.uid === s.uid), { teleInstitutionId: null });
+    return out;
+  };
+  const boot = await w.worklist.bootstrap(RAD_B);
+  assert.equal(boot.states[s.uid], undefined, 'the fresh row is no longer the receiver\'s: it is left out, not kept from the first read');
+  assert.ok(!JSON.stringify(boot).includes('SYN APPROVED TEXT'));
+  assert.equal((await w.worklist.bootstrap(RAD_A)).states[s.uid].findings, 'SYN APPROVED TEXT', 'the owner still reads it');
+});
 test('report state table: approved text and a preliminary reading keep their readers; a clinician-only reader keeps the 2026-11-02 reads', async () => {
   const w = world();
   await w.boot();
