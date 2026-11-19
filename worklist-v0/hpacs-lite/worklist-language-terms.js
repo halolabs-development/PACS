@@ -6216,6 +6216,8 @@ window.KinLanguageTerms = {
     ["판독 화면이 {0}의 검사를 열었는지 확인하지 못했고({1})", "Could not confirm that the report screen opened {0}'s study ({1})", "m"],
     ["환자 정보를 불러오지 못했습니다. 영상은 계속 볼 수 있습니다. 다시 시도하세요.", "Could not load patient information. You can still view the images. Try again.", "m"],
     ["같은 환자의 검사인지 확인할 수 없어 현재 화면을 유지합니다.", "Cannot verify that the study belongs to the same patient, so the current view is kept.", "m"],
+    ["이 검사를 볼 수 있는 권한이 없습니다.", "You do not have permission to view this study.", "m"],
+    ["이 창에서 영상을 불러오지 못한 검사입니다. 목록에서 다시 여세요.", "Images of this study failed to load in this window. Open it again from the worklist.", "m"],
     ["영상 열람 기록을 저장하지 못해 환자를 전환하지 않았습니다. 다시 시도하세요.", "Could not save the image access record, so the patient was not switched. Try again.", "m"],
     ["No Patient — 목록에서 검사를 여세요.", "No Patient — Open a study from the list.", "m"],
     ["열 때 확인한 검사 정보가 미리 받을 때와 달라 미리 받은 영상을 버렸습니다.", "The study information checked at opening differed from when it was preloaded, so the preloaded images were discarded.", "m"],
