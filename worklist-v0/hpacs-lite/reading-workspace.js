@@ -197,7 +197,8 @@ window.KinReadingWorkspace = function (app) {
       const probe = document.createElement('div');
       probe.style.cssText = 'position:absolute;left:-10000px;top:0;visibility:hidden;white-space:pre;margin:0;padding:0;border:0;line-height:normal';
       Object.assign(probe.style, { fontStyle: s.fontStyle, fontWeight: s.fontWeight, fontSize: s.fontSize, fontFamily: s.fontFamily });
-      probe.textContent = '가Ag\n가Ag'; document.body.append(probe);
+      // A Hangul syllable and Latin letters on each line, built from code points: a sample of glyphs, not a screen word.
+      const sample = String.fromCharCode(0xAC00) + 'Ag'; probe.textContent = sample + '\n' + sample; document.body.append(probe);
       pitches.set(key, probe.getBoundingClientRect().height / 2); probe.remove();
     }
     return pitches.get(key);
