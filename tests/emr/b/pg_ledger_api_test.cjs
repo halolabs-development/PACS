@@ -133,6 +133,7 @@ async function main() {
   if (process.env.KIN_B2R_CASE === 'auth-end') return authSuccess(true);
   if (process.env.KIN_B2R_CASE === 'rights') return rightsProducer();
   if (process.env.KIN_B2R_CASE === 'rights-import') return rightsImport();
+  if (process.env.KIN_B2R_CASE === 'rights-replace') return rightsReplace();
   const db = new EmrLedgerClient(process.env.DATABASE_URL);
   const witness = new PrismaClient({ datasources: { db: { url: process.env.KIN_B2R_WITNESS_URL } } });
   const journal = new FailureJournal(db, new FailureSpool(process.env.KIN_B2R_SPOOL));
@@ -973,6 +974,129 @@ async function rightsImport() {
   } finally {
     await witness.$executeRawUnsafe('DROP TRIGGER IF EXISTS b2r_fail_import ON emr_access.access_entry');
     await runtime.stop(Date.now()+15000);await db.$disconnect();await witness.$disconnect();
+  }
+}
+// The operator's replacement of an institution's sole administrator (AdminService.replaceSoleAdmin over the operator
+// runtime), on a real PostgreSQL with an independent witness connection.
+async function rightsReplace() {
+  require('reflect-metadata');
+  const { OperatorRuntime } = require(path.join(build, 'emr-runtime/operator-runtime.js'));
+  const { AdminService } = require(path.join(build, 'admin.service.js'));
+  const { PrismaService } = require(path.join(build, 'prisma.service.js'));
+  process.env.KC_ISSUER='https://synthetic.invalid/realms/replace';
+  const X='synthetic-hospital-x', Y='synthetic-hospital-y', UID='1.2.826.0.1.3680043.10.999.1';
+  const witness=new PrismaClient({datasources:{db:{url:process.env.KIN_B2R_WITNESS_URL}}});
+  const db=new PrismaService();
+  // Another process's ledger work (the running API's), and this command's own operator runtime.
+  const otherDb=new EmrLedgerClient(process.env.DATABASE_URL);
+  const otherJournal=new FailureJournal(otherDb,new FailureSpool(path.join(process.env.KIN_B2R_SPOOL,'other-process')));
+  const other=new AccessLedgerStore(otherDb,otherJournal);
+  const runtime=new OperatorRuntime(process.env.DATABASE_URL,process.env.KIN_B2R_SPOOL);
+  const groups={departed:[X],'first-successor':[X],'second-successor':[X],colleague:[X],'other-admin':[Y]};
+  let gate=null;
+  const provider={institutions:async()=>[X,Y],getUser:async id=>{
+    if(gate) await gate();
+    return groups[id]&&{id,username:id,email:id+'@synthetic.invalid',emailVerified:true,firstName:'Synthetic',lastName:id,
+      enabled:true,serviceAccountClientId:null,groups:groups[id],roles:[]};
+  }};
+  const service=new AdminService(db,provider,null,{publishCredentials(){}});
+  const replace=async(from,to)=>{
+    const work=runtime.port.begin();
+    try{return await service.replaceSoleAdmin(from,to,X,{name:'ops',reason:'synthetic hospital request confirmed by phone'},work);}
+    finally{work.end();}
+  };
+  const replacementEntries=()=>witness.$queryRaw`SELECT e.retention_class,e.payload,p.audit_log_id FROM emr_access.access_entry e
+    LEFT JOIN emr_access.audit_projection p ON p.event_id=e.event_id WHERE e.payload::jsonb->>'surface'='service:sole-admin-replacement'`;
+  const history=async()=>JSON.stringify([
+    await witness.reportDraft.findMany({orderBy:{author:'asc'}}),
+    await witness.reportVersion.findMany({orderBy:{id:'asc'}}),
+    await witness.auditLog.findMany({where:{action:'report.synthetic-history'}}),
+  ]);
+  const snapshot=async()=>JSON.stringify([
+    await witness.memberRights.findMany({orderBy:{sub:'asc'}}),
+    (await witness.authSession.findMany({select:{sid:true}})).map(s=>s.sid).sort(),
+    await witness.auditLog.count(), await witness.providerChange.count(), (await replacementEntries()).length,
+    await witness.$queryRaw`SELECT count(*)::int AS n FROM emr_access.access_entry`, await history(),
+  ]);
+  try{
+    await witness.$connect();await db.$connect();await otherDb.$connect();
+    // 1. Started beside the running API, the operator runtime never settles another process's pending operation.
+    const identity=await other.resolveIdentity(otherDb,'synthetic-issuer','doctor');
+    const pending=await other.admit(syntheticEvent(identity));
+    await runtime.start();
+    const [state]=await witness.$queryRaw`SELECT emr_access.operation_result(${pending.operationId}::uuid) AS value`;
+    assert.equal(state.value.outcome,'pending','an operator start leaves the running API\'s pending work alone');
+    await other.settle(pending.operationId);
+    // The institution, its sole administrator who left, two candidate successors, a colleague; another institution.
+    const member=(sub,institution,roles)=>witness.memberRights.create({data:{sub,username:sub,email:sub+'@synthetic.invalid',
+      name:'Synthetic '+sub,emailVerified:true,approved:true,suspended:false,institution,roles}});
+    await member('departed',X,['admin','radiologist']);await member('first-successor',X,['radiologist']);
+    await member('second-successor',X,['technician']);await member('colleague',X,['radiologist']);await member('other-admin',Y,['admin']);
+    const session=sub=>witness.authSession.create({data:{sid:randomUUID(),sub,accessToken:'synthetic-unused',refreshToken:randomUUID(),
+      atExpiresAt:new Date(Date.now()+600000),lastSeenAt:new Date(),rightsVersion:1,institution:X}});
+    for(const sub of ['departed','departed','first-successor','second-successor','colleague']) await session(sub);
+    // The departed administrator's own draft, signed history and audit trail.
+    await witness.reportDraft.create({data:{uid:UID,author:'departed@synthetic.invalid',findings:'synthetic draft of the departed administrator'}});
+    await witness.reportVersion.create({data:{uid:UID,version:1,action:'commit',findings:'synthetic signed text',author:'departed@synthetic.invalid'}});
+    await witness.auditLog.create({data:{actor:'departed@synthetic.invalid',action:'report.synthetic-history',target:UID,detail:'{}'}});
+    const kept=await history();
+    // 2. The second member's change fails after the first was written: both roll back with every session and record.
+    await witness.$executeRawUnsafe(`CREATE FUNCTION public.b2r_fail_replace() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.action IN ('admin.user.approve','admin.user.update') THEN RAISE EXCEPTION 'Synthetic successor failure'; END IF; RETURN NEW; END $$`);
+    await witness.$executeRawUnsafe('CREATE TRIGGER b2r_fail_replace BEFORE INSERT ON public."AuditLog" FOR EACH ROW EXECUTE FUNCTION public.b2r_fail_replace()');
+    const untouched=await snapshot();
+    await assert.rejects(replace('departed','first-successor'));
+    assert.equal(await snapshot(),untouched,'a failed replacement leaves rights, sessions, audits, roster intents and ledger as they were');
+    await witness.$executeRawUnsafe('DROP TRIGGER b2r_fail_replace ON public."AuditLog"');
+    // 3. The same predecessor, two different successors at once, both past their reads before either takes the locks.
+    let arrived=0,release;const together=new Promise(resolve=>{release=resolve;});
+    gate=async()=>{if(++arrived===2)release();await together;};
+    const outcomes=await Promise.allSettled([replace('departed','first-successor'),replace('departed','second-successor')]);
+    gate=null;
+    const won=outcomes.filter(o=>o.status==='fulfilled'),lost=outcomes.filter(o=>o.status==='rejected');
+    assert.equal(won.length,1,'one replacement applies');assert.equal(lost.length,1);
+    assert.equal(lost[0].reason.getResponse().code,'REPLACE_ADMIN_FROM_NOT_ADMIN',String(lost[0].reason));
+    const winner=won[0].value.id,loser=winner==='first-successor'?'second-successor':'first-successor';
+    const admins=await witness.memberRights.findMany({where:{institution:X,approved:true,suspended:false,roles:{has:'admin'}}});
+    assert.deepEqual(admins.map(a=>a.sub),[winner],'one active administrator: the winner');
+    const departed=await witness.memberRights.findUnique({where:{sub:'departed'}});
+    assert.deepEqual([departed.suspended,departed.approved,departed.institution,departed.roles,departed.version],
+      [true,true,X,['admin','radiologist'],2],'the predecessor is suspended with institution and roles kept');
+    const won1=await witness.memberRights.findUnique({where:{sub:winner}});
+    assert.equal(won1.newAuthAfter.getTime(),departed.newAuthAfter.getTime(),'one re-login boundary for both');
+    const lost1=await witness.memberRights.findUnique({where:{sub:loser}});
+    assert.deepEqual([lost1.version,lost1.roles.includes('admin')],[1,false],'the losing successor is untouched');
+    assert.equal(await witness.authSession.count({where:{sub:'departed'}}),0,'the predecessor\'s sessions end');
+    assert.equal(await witness.authSession.count({where:{sub:winner}}),0,'the successor\'s sessions end');
+    assert.equal(await witness.authSession.count({where:{sub:loser}}),1,'the losing successor\'s session lives');
+    assert.equal(await witness.authSession.count({where:{sub:'colleague'}}),1,'a colleague\'s session lives');
+    const changes=await witness.auditLog.findMany({where:{action:{startsWith:'admin.user.'}},orderBy:{id:'asc'}});
+    assert.deepEqual(changes.map(a=>[a.action,a.target]),[['admin.user.suspend','departed'],['admin.user.update',winner]]);
+    for(const row of changes) assert.deepEqual(JSON.parse(row.detail).operator,{by:'ops',institution:X,
+      reason:'synthetic hospital request confirmed by phone',replaced:{from:'departed',to:winner}});
+    assert.deepEqual((await witness.providerChange.findMany()).map(c=>c.target),[winner],'one roster intent: the winner\'s');
+    // Two rights facts and one service isolation per ended session, each projected to its own audit row.
+    const entries=await replacementEntries();
+    const events=entries.map(e=>JSON.parse(e.payload));
+    assert.equal(events.filter(e=>e.formatVersion===1).length,2);
+    const ends=events.filter(e=>e.action==='auth.logout');
+    assert.equal(ends.length,3);
+    for(const e of ends){assert.equal(e.executor,'service');assert.equal(e.auth.endCause,'isolation');assert.equal(e.userId.value.subject,'ops');
+      assert.ok(['departed',winner].includes(e.affectedIdentity.value.subject));}
+    assert.ok(entries.every(e=>e.audit_log_id!==null),'every replacement fact has its audit row');
+    assert.ok(entries.filter(e=>JSON.parse(e.payload).formatVersion===1).every(e=>e.retention_class==='rights3y'));
+    // The predecessor's draft, signed history and audit trail stay theirs, unchanged.
+    assert.equal(await history(),kept);
+    // 4. The same command again: the predecessor is no longer X's administrator; nothing changes.
+    const settled=await snapshot();
+    await assert.rejects(replace('departed',loser),e=>e.getResponse().code==='REPLACE_ADMIN_FROM_NOT_ADMIN');
+    assert.equal(await snapshot(),settled);
+    console.log(JSON.stringify({status:'PASS',boundary:'actual replacement service + operator runtime + independent PG',
+      green:['operator start leaves pending work','failed second change rolls back both','concurrent replacements: one winner',
+        'both members\' sessions end, colleague\'s live','predecessor history unchanged','rerun refused without writes']}));
+  }finally{
+    await witness.$executeRawUnsafe('DROP TRIGGER IF EXISTS b2r_fail_replace ON public."AuditLog"');
+    await runtime.stop(Date.now()+15000);await otherJournal.close();await otherDb.$disconnect();await db.$disconnect();await witness.$disconnect();
   }
 }
 async function pgBoundary(body) {

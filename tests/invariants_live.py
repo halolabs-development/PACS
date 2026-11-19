@@ -1938,6 +1938,67 @@ class BffInvariantTests(unittest.TestCase):
             self.stack.tokens.pop("doctor", None)
             self.stack.actors.pop("doctor", None)
 
+    def test_member_sole_admin_replacement_by_operator_command(self) -> None:
+        # The operator command api/prisma/replace-sole-admin.cjs (keycloak/README.md): an institution's sole administrator
+        # left while their rights are live; the hospital names a successor. On a run-owned institution: the predecessor's
+        # open session and a new login are refused, the successor's earlier (waiting-room) session ends, a colleague's
+        # session lives, and the successor signs in again with the administrator OTP to manage that institution only.
+        tag = uuid.uuid4().hex[:8]
+        institution = "kin-test-replace-" + tag
+        created = self.stack.kc_admin("POST", "/groups", {"name": institution})
+        self.assertEqual(created.status, 201, created.text)
+        old_opener, old_session = self.stack._rights_session(institution)  # its first administrator (operator command)
+        predecessor = self.stack.user_ids["admin-" + institution[-40:]]
+        colleague = "replace-colleague-" + tag
+        self.stack.create_test_identity(colleague, ["radiologist"], institution)
+        colleague_opener, _ = self.bff_login(colleague, self.stack.passwords[colleague])
+        successor = "replace-successor-" + tag
+        successor_id = self.stack.create_test_identity(successor, [], "")
+        waiting_opener, _ = self.bff_login(successor, self.stack.passwords[successor])
+        try:
+            # A refusal (the successor is not the predecessor's institution's administrator to be replaced) changes nothing.
+            refused = self.stack._api_command(["prisma/replace-sole-admin.cjs", "--institution", institution, "--from", successor_id,
+                                               "--to", predecessor, "--operator", "live-fixture", "--reason", "synthetic live replacement"])
+            self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+            self.assertIn('"replaced":false', refused.stderr)
+            self.assertEqual(self.proxy(old_opener, "GET", "/api/me", headers={"X-KIN-Session": old_session}).status, 200)
+            replaced = self.stack._api_command(["prisma/replace-sole-admin.cjs", "--institution", institution, "--from", predecessor,
+                                                "--to", successor_id, "--operator", "live-fixture", "--reason", "synthetic live replacement"])
+            if replaced.returncode == 2:  # Replaced; the roster answer was lost: the documented recovery.
+                retried = self.stack._api_command(["prisma/import-member-rights.cjs", "--retry-roster"])
+                self.assertEqual(retried.returncode, 0, retried.stdout + retried.stderr)
+            else:
+                self.assertEqual(replaced.returncode, 0, replaced.stdout + replaced.stderr)
+            self.assertIn('"replaced":true', replaced.stdout)
+            # The predecessor: the open session ends, a new login is refused; membership is kept, suspended.
+            self.assertEqual(self.proxy(old_opener, "GET", "/api/me", headers={"X-KIN-Session": old_session}).status, 401)
+            self.assertEqual(self.stack._member_rights_row(predecessor), (institution, True, ["admin"]))
+            with self.assertRaises(RuntimeError):
+                self.stack._admin_bff_session(self.stack.usernames["admin-" + institution[-40:]],
+                                              self.stack.passwords["admin-" + institution[-40:]], predecessor)
+            # The successor's earlier session ends; a colleague's session lives.
+            self.assertEqual(self.proxy(waiting_opener, "GET", "/api/me").status, 401)
+            self.assertEqual(self.proxy(colleague_opener, "GET", "/api/me").status, 200)
+            # The successor signs in again (administrator OTP) and manages this institution only.
+            self.stack._await_roster(successor_id, institution, ["admin"])
+            admin_otp.seed(lambda method, path, body: (lambda r: (r.status, r.body))(self.stack.kc_admin(method, path, body)), successor_id)
+            time.sleep(1.05)  # A login after the replacement's re-login boundary.
+            opener, session = self.stack._admin_bff_session(self.stack.usernames[successor], self.stack.passwords[successor], successor_id)
+            rows, page, pages = {}, 1, 1
+            while page <= pages:  # The waiting room of the shared realm may fill more than one page.
+                listed = self.proxy(opener, "GET", f"/api/admin/users?page={page}", headers={"X-KIN-Session": session})
+                self.assertEqual(listed.status, 200, listed.text)
+                rows.update({row["id"]: row for row in listed.body["users"]})
+                pages, page = -(-listed.body["total"] // listed.body["pageSize"]), page + 1
+            self.assertTrue(all(row["institution"] in (institution, None) for row in rows.values()), "only this institution and the waiting room")
+            self.assertFalse(rows[predecessor]["enabled"], "the suspended predecessor is in the successor's list")
+            self.assertIn(self.stack.user_ids[colleague], rows)
+            elsewhere = self.proxy(opener, "PATCH", "/api/admin/users/" + quote(self.stack.user_ids["doctor"]), {"enabled": False},
+                                   headers={"X-KIN-Session": session, "X-KIN-CSRF": "1"})
+            self.assertEqual(elsewhere.status, 404, "another institution's member is unknown to the successor")
+        finally:
+            self.stack.__dict__.get("_rights_admins", {}).pop(institution, None)
+
     def test_member_delete_proxy_client_and_impersonation_paths_are_absent(self) -> None:
         target_id = self.stack.user_ids["doctor2"]
         absent = (
