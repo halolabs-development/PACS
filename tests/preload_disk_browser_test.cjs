@@ -137,23 +137,28 @@ test('R1 R2 R3 R4 R5 R9 R15 R16 real encrypted storage, persistent profile, corr
   const expired=await dump(page);assert.equal(expired.frames.length+expired.studies.length,0);
 });
 
-// B39 on the real SharedWorker, IndexedDB and panel: two studies received at server hour 0; at hour 24 a viewer of the
-// session opens one (its live check confirmed the copy) and leaves. Started again at hour 73, the unopened one is gone
-// and the opened one is Ready until hour 96 - its record says so, its frames (their own date passed) still decrypt, and
-// the panel shows that date. At hour 96 nothing of it is served or kept. Synthetic loopback HTTP only.
-test('B39 only the unused copy goes: the opened one counts from its use, on real storage and the shipped panel', {timeout:180000}, async t=>{
-  const key=randomBytes(32), H=3600000, ids=['1.2.840.99.11','1.2.840.99.12'];
+// B39 on the real SharedWorker, IndexedDB and panel, through the shipped viewer code (viewer-preload.js): two studies
+// received at server hour 0; at hour 24 a viewer window reads the first one (its live check confirms the held copy - the
+// use) and is left. Started again at hour 73, the unopened one is gone and the opened one is Ready until hour 96 - its
+// record says so, its frames (their own date passed) still decrypt, and the panel shows that date. At hour 96 nothing of
+// it is served or kept. Synthetic loopback HTTP only.
+test('B39 only the unused copy goes: the copy a viewer used counts from its use, on real storage and the shipped panel', {timeout:180000}, async t=>{
+  const key=randomBytes(32), keyId='key-'+randomBytes(4).toString('hex'), H=3600000, ids=['1.2.840.99.11','1.2.840.99.12'];
+  const PART='multipart/related; type="application/octet-stream"; boundary=body';
   let clock=Date.parse('2026-11-02T00:00:00Z');
-  const start=clock, payload=uid=>Buffer.concat([Buffer.from('--body\r\nContent-Type: application/octet-stream\r\n\r\n'),Buffer.from('frame '+uid),Buffer.from('\r\n--body--\r\n')]);
+  const start=clock, payload=p=>Buffer.concat([Buffer.from('--body\r\nContent-Type: application/octet-stream\r\n\r\n'),Buffer.from('frame '+p),Buffer.from('\r\n--body--\r\n')]);
+  const checks=[];
   const server=http.createServer((req,res)=>{
     res.setHeader('Date',new Date(clock).toUTCString());res.setHeader('Cache-Control','no-store');
-    if(req.url==='/api/preload/cache-key'){res.setHeader('Content-Type','application/json');return res.end(JSON.stringify({keyId:'A',key:key.toString('base64'),serverTime:new Date(clock).toISOString()}));}
+    if(req.url==='/api/preload/cache-key'){res.setHeader('Content-Type','application/json');return res.end(JSON.stringify({keyId,key:key.toString('base64'),serverTime:new Date(clock).toISOString()}));}
     if(req.url==='/api/me')return res.end(JSON.stringify({preloadDiskGb:0.1}));
     if(req.url.endsWith('/metadata'))return res.end(JSON.stringify([{'0020000E':{Value:['2']},'00080018':{Value:['3']},'00280008':{Value:[2]},'7FE00010':{BulkDataURI:'x'}}]));
-    if(req.url.startsWith('/dicom-web/')){const body=payload(req.url);res.setHeader('Content-Type','multipart/related; type="application/octet-stream"; boundary=body');
+    if(req.url.startsWith('/dicom-web/')){
+      if(req.headers['x-kin-preload']==='check')checks.push({url:req.url,session:req.headers['x-kin-session'],opening:req.headers['x-kin-view-opening']});
+      const body=payload(req.url);res.setHeader('Content-Type',PART);
       res.setHeader('X-KIN-Study-Revision','rev');res.setHeader('Content-Length',body.length);return res.end(body);}
     const name=path.posix.basename(req.url);
-    if(['preload-worker.js','preload-store.js','preload-disk.js','preload-queue.js','session-transport.js'].includes(name)){res.setHeader('Content-Type','application/javascript; charset=utf-8');return res.end(fs.readFileSync(path.join(root,'worklist-v0/hpacs-lite',name)));}
+    if(['preload-worker.js','preload-store.js','preload-disk.js','preload-queue.js','session-transport.js','viewer-preload.js'].includes(name)){res.setHeader('Content-Type','application/javascript; charset=utf-8');return res.end(fs.readFileSync(path.join(root,'worklist-v0/hpacs-lite',name)));}
     res.setHeader('Content-Type','text/html; charset=utf-8');res.end('<!doctype html><meta charset="utf-8"><title>Synthetic retention test</title><div id="panel"></div>');
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
@@ -164,26 +169,34 @@ test('B39 only the unused copy goes: the opened one counts from its use, on real
       ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ? {executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH} : {})});
     const page=await context.newPage();page.setDefaultTimeout(20000);await page.goto(origin);
     await page.evaluate(()=>{
-      window.messages=[];const open=role=>{const w=new SharedWorker('/worklist/hpacs-lite/preload-worker.js',{name:'kin-preload'});w.port.start();w.port.postMessage({type:'hello',role});return w.port;};
-      window.list=open('list');list.onmessage=e=>messages.push(e.data);list.postMessage({type:'session',session:'sess-1'});
-      window.viewer=open('viewer');
-      window.ask=data=>new Promise(resolve=>{const id=Math.random();const fn=e=>{if(e.data.id===id){viewer.removeEventListener('message',fn);resolve(e.data);}};viewer.addEventListener('message',fn);viewer.postMessage({...data,id});});
+      window.messages=[];const w=new SharedWorker('/worklist/hpacs-lite/preload-worker.js',{name:'kin-preload'});w.port.start();
+      window.list=w.port;list.onmessage=e=>messages.push(e.data);list.postMessage({type:'hello',role:'list'});list.postMessage({type:'session',session:'sess-1'});
+      window.ask=data=>new Promise(resolve=>{const id=Math.random();const fn=e=>{if(e.data.id===id){list.removeEventListener('message',fn);resolve(e.data);}};list.addEventListener('message',fn);list.postMessage({...data,id});});
     });
     return page;
   }
-  const rows=page=>page.evaluate(()=>messages.at(-1)?.studies||[]);
-  const row=async(page,uid)=>(await rows(page)).find(s=>s.uid===uid);
+  const row=async(page,uid)=>(await page.evaluate(()=>messages.at(-1)?.studies||[])).find(s=>s.uid===uid);
+  const framePath=(uid,n)=>`/dicom-web/studies/${uid}/series/2/instances/3/frames/${n}`;
   let page=await connect();
   await page.evaluate(ids=>list.postMessage({type:'add',session:'sess-1',studies:ids.map(uid=>({uid,label:'SYN-B39 · Synthetic^Patient'}))}),ids);
   await page.waitForFunction(ids=>ids.every(uid=>messages.at(-1)?.studies?.some(s=>s.uid===uid&&s.status==='Ready')),ids);
   await context.close();context=null;
-  // Hour 24: a viewer of this session opens the first study and leaves it.
+  // Hour 24: a viewer window (the shipped viewer-preload.js under a bound fetch) reads the first study, then is left.
   clock=start+24*H;page=await connect();
   await page.waitForFunction(ids=>ids.every(uid=>messages.at(-1)?.studies?.some(s=>s.uid===uid&&s.status==='Ready')),ids);
-  const held=(await page.evaluate(uid=>ask({type:'query',uid,session:'sess-1'}),ids[0])).held;assert.ok(held);
-  await page.evaluate(({uid,copy})=>viewer.postMessage({type:'open',uid,copy,session:'sess-1'}),{uid:ids[0],copy:held.copy});
-  await page.waitForFunction(({uid,at})=>messages.at(-1)?.studies?.some(s=>s.uid===uid&&s.expiresAt===at),{uid:ids[0],at:start+96*H});
-  await page.evaluate(()=>viewer.postMessage({type:'bye'}));
+  const viewer=await context.newPage();viewer.setDefaultTimeout(20000);await viewer.goto(origin+'/viewer');
+  await viewer.addScriptTag({url:origin+'/worklist/hpacs-lite/session-transport.js'});
+  await viewer.addScriptTag({url:origin+'/worklist/hpacs-lite/viewer-preload.js'});
+  const texts=await viewer.evaluate(async({paths,PART})=>{
+    const read=KinViewerPreload.attach(window,(url,init)=>fetch(url,init));
+    const out=[];for(const p of paths){const r=await read(p,{headers:{'X-KIN-Session':'sess-1',Accept:PART}});out.push(await r.text());}return out;
+  },{paths:[framePath(ids[0],1),framePath(ids[0],2)],PART});
+  assert.equal(checks.length,1,'one live check of the held copy');assert.ok(checks[0].opening&&checks[0].session==='sess-1');
+  assert.ok(texts[1].includes('frame '+framePath(ids[0],2)),'the second frame from the held copy');
+  await page.waitForFunction(({uid,at})=>messages.at(-1)?.studies?.some(s=>s.uid===uid&&s.expiresAt===at&&s.open),{uid:ids[0],at:start+96*H});
+  await viewer.goto(origin+'/away');                                // the window is left: pagehide says bye
+  await page.waitForFunction(uid=>messages.at(-1)?.studies?.some(s=>s.uid===uid&&!s.open),ids[0]);
+  assert.equal((await row(page,ids[0])).expiresAt,start+96*H);
   assert.equal((await row(page,ids[1])).expiresAt,start+72*H);
   await context.close();context=null;
   // Hour 73: only the unopened copy went.
@@ -196,7 +209,7 @@ test('B39 only the unused copy goes: the opened one counts from its use, on real
   assert.ok(kept.frames.length===2&&kept.frames.every(f=>f.expiresAt===start+72*H&&kept.studies[0].frameIds.includes(f.entryId)),'its frames, past their own date, kept by its record');
   const again=(await page.evaluate(uid=>ask({type:'query',uid,session:'sess-1'}),ids[0])).held;
   for(const n of [1,2]){
-    const p=`/dicom-web/studies/${ids[0]}/series/2/instances/3/frames/${n}`;
+    const p=framePath(ids[0],n);
     const bytes=(await page.evaluate(async({p,copy})=>{const r=await ask({type:'frame',path:p,session:'sess-1',copy});return r.bytes?[...new Uint8Array(r.bytes)]:null;},{p,copy:again.copy}));
     assert.deepEqual(Buffer.from(bytes),payload(p));
   }

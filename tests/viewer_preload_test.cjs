@@ -643,7 +643,7 @@ test('B39 a use names the copy and session its check confirmed: the check frame 
   assert.equal(kinds(live.posted, 'open').length, 0);
 });
 
-test('B39 a study the next scope no longer shows is left once it is shown; an abandoned switch and the last tab closing', async () => {
+test('B39 a new opening shown leaves the earlier opening\'s copies and confirms its own again; an abandoned switch leaves nothing; the last tab closing', async () => {
   const held = { [STUDY]: { revision: 'rev-now', session: 'sess-1', copy: 2 }, [OTHER_STUDY]: { revision: 'rev-now', session: 'sess-1', copy: 3 } };
   const { fetch, posted } = setup({ held, studies: [STUDY] });
   await (await fetch(frameUrl(1), bound())).text();
@@ -651,12 +651,16 @@ test('B39 a study the next scope no longer shows is left once it is shown; an ab
   assert.deepEqual(kinds(posted, 'open').map(o => o[1]), [STUDY, OTHER_STUDY]);
   await fetch.reenter([OTHER_STUDY]);                                 // not committed: the switch did not happen
   assert.deepEqual(kinds(posted, 'close'), []);
-  (await fetch.reenter([OTHER_STUDY])).commit();                      // another patient's scope shown
-  assert.deepEqual(kinds(posted, 'close'), [['close', STUDY, 2, 'sess-1']]);
-  fetch.leave();                                                      // the last patient tab closed
+  (await fetch.reenter([OTHER_STUDY])).commit();                      // another scope shown (another patient, or another
+  // exam of the same original): every copy of the earlier opening is left - one the new scope shows is used again only
+  // when its own check confirms it.
   assert.deepEqual(kinds(posted, 'close'), [['close', STUDY, 2, 'sess-1'], ['close', OTHER_STUDY, 3, 'sess-1']]);
+  await (await fetch(frameUrl(2, OTHER_STUDY), bound())).text();
+  assert.deepEqual(kinds(posted, 'open').map(o => o[1]), [STUDY, OTHER_STUDY, OTHER_STUDY]);
+  fetch.leave();                                                      // the last patient tab closed
+  assert.deepEqual(kinds(posted, 'close').slice(2), [['close', OTHER_STUDY, 3, 'sess-1']]);
   fetch.leave();
-  assert.equal(kinds(posted, 'close').length, 2, 'left once');
+  assert.equal(kinds(posted, 'close').length, 3, 'left once');
 });
 
 test('B39 a check left behind by a new opening or by leaving the page opens and drops nothing; the return checks again', async () => {
@@ -686,7 +690,7 @@ test('B39 a check left behind by a new opening or by leaving the page opens and 
   const checksSent = t.sent.filter(r => r.headers.get('X-KIN-Preload') === 'check');
   assert.equal(checksSent.length, 2);
   assert.notEqual(openingOf(checksSent[0]), openingOf(checksSent[1]));
-  assert.deepEqual(kinds(t.posted, 'evict'), [['evict', STUDY, 1, undefined]], 'one drop: the earlier opening\'s check drops nothing');
+  assert.deepEqual(kinds(t.posted, 'evict'), [['evict', STUDY, 1, 'sess-1']], 'one drop: the earlier opening\'s check drops nothing');
 });
 
 test('B39 while shown, the document says every ten minutes which copies it still uses; after leaving, nothing', async () => {
@@ -701,4 +705,53 @@ test('B39 while shown, the document says every ten minutes which copies it still
   s.fetch.leave();
   beat.run();
   assert.equal(kinds(s.posted, 'using').length, 1);
+});
+
+test('B39 a check still under way when another scope is shown or the last tab closes opens and drops nothing', async () => {
+  for (const [end, status] of [['switch', 200], ['switch', 403], ['leave', 200], ['leave', 403]]) {
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const held = { [STUDY]: { revision: 'rev-now', session: 'sess-1', copy: 1 } };
+    const s = setup({ held, studies: [STUDY], network: async url => { await gate;
+      return new Response('live ' + url, { status, headers: { 'Content-Type': PART, 'X-KIN-Study-Revision': 'rev-now' } }); } });
+    const pending = s.fetch(frameUrl(1), bound());
+    await tick();
+    if (end === 'switch') (await s.fetch.reenter([OTHER_STUDY])).commit(); else s.fetch.leave();
+    release();
+    await (await pending).text();
+    await tick();
+    assert.deepEqual(kinds(s.posted, 'open', 'evict'), [], end + ' ' + status);
+  }
+});
+
+test('B39 a back/forward return used again: each copy the page used is checked live under the return\'s opening, without a frame read', async () => {
+  const held = { [STUDY]: { revision: 'rev-now', session: 'sess-1', copy: 6 } };
+  const s = setup({ held, studies: [STUDY], page: true });
+  await (await s.fetch(frameUrl(1), bound())).text();
+  await (await s.fetch(frameUrl(2), bound())).text();
+  assert.deepEqual(kinds(s.posted, 'open'), [['open', STUDY, 6, 'sess-1']]);
+  s.listeners.pagehide({ persisted: true });
+  assert.equal(s.posted.at(-1).type, 'bye');
+  const before = s.sent.length;
+  s.listeners.pageshow({ persisted: true });
+  for (let i = 0; i < 20 && kinds(s.posted, 'open').length < 2; i++) await tick();
+  assert.deepEqual(kinds(s.posted, 'open'), [['open', STUDY, 6, 'sess-1'], ['open', STUDY, 6, 'sess-1']], 'used again after its own check');
+  const after = s.sent.slice(before);
+  assert.ok(after.some(r => r.headers.get('X-KIN-Preload') === 'check' && r.url === frameUrl(2)), 'the frame it last showed, checked live');
+  const opening = openingOf(after.find(r => r.headers.get('X-KIN-Preload') === 'check'));
+  assert.ok(opening && opening !== openingOf(s.sent[0]), 'under the return\'s opening');
+});
+
+test('B39 a check read whose body is cut after its headers confirms nothing: no use, the next frame is checked live again', async () => {
+  let cut = true;
+  const held = { [STUDY]: { revision: 'rev-now', session: 'sess-1', copy: 1 } };
+  const { fetch, posted, sent } = setup({ held, network: async url => new Response(cut
+    ? new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('par')); c.error(new TypeError('cut')); } }) : 'live ' + url,
+    { headers: { 'Content-Type': PART, 'X-KIN-Study-Revision': 'rev-now' } }) });
+  await assert.rejects(async () => (await fetch(frameUrl(1), bound())).text());
+  assert.deepEqual(kinds(posted, 'open'), []);
+  cut = false;
+  assert.equal(await (await fetch(frameUrl(2), bound())).text(), 'live ' + frameUrl(2), 'checked live again, not from memory');
+  assert.equal(sent.filter(r => r.headers.get('X-KIN-Preload') === 'check').length, 2);
+  assert.deepEqual(kinds(posted, 'open'), [['open', STUDY, 1, 'sess-1']]);
 });

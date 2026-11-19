@@ -258,8 +258,13 @@ class FailureServicesE2E(unittest.TestCase):
                 with page.expect_response(lambda r: f"/dicom-web/studies/{fixture.uid}/instances" in r.url) as response:
                     self.select(page, fixture)
                 # The DICOM auth_request boundary maps unavailable source identity
-                # to 403 (pacs/dicom-gateway.ts); it cannot forward a 503 body.
+                # to 403 (pacs/dicom-gateway.ts); it cannot forward a 503 body. Its one
+                # X-KIN-Auth-Code says the refusal is temporary (an archive the gate
+                # could not observe), and the product error page stays no-store.
                 self.assertEqual(response.value.status, 403)
+                codes = [h["value"] for h in response.value.headers_array() if h["name"].lower() == "x-kin-auth-code"]
+                self.assertEqual(codes, ["AUTH_SOURCE_UNAVAILABLE"])
+                self.assertEqual(response.value.headers.get("cache-control"), "no-store")
                 expect(page.locator("#thumbwrap")).to_contain_text("실패")
                 self.assertEqual(page.locator("#thumbwrap img").count(), 0)
                 event("orthanc_thumbnail", result="unavailable")

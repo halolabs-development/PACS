@@ -83,12 +83,13 @@
       unfetched(uid, at) { const s = studies.get(uid); if (s) { s.fetchedAt = at; s.expiresAt = expiryOf(s); } },
       /**
        * A confirmed use of `copy` at `at` (server time), not after its expiry. False when the copy is gone, replaced, holds
-       * nothing or had expired at `at` - an expired copy is never brought back by a late open, close or key answer.
+       * nothing, had expired at `at` or has expired by now (a record written meanwhile does not bring it back) - an expired
+       * copy is never brought back by a late open, close, key answer or slow disk.
        * `apply` false only asks: the worker writes the new expiry to disk first, then applies it.
        */
       use(uid, copy, at, apply = true) {
         const s = studies.get(uid);
-        if (!s || s.copy === null || s.copy !== copy || !s.frames.size || !Number.isFinite(at) || at >= s.expiresAt
+        if (!s || s.copy === null || s.copy !== copy || !s.frames.size || !Number.isFinite(at) || at >= s.expiresAt || s.expiresAt <= now()
           || ![STATUS.downloading, STATUS.ready, STATUS.queued].includes(s.status) || at <= (s.usedAt ?? -Infinity)) return false;
         if (apply) { s.usedAt = at; s.expiresAt = expiryOf(s); }
         return true;
