@@ -86,7 +86,7 @@ const pinnedText = v => 'SYNTHETIC-PINNED-V' + v;
 
 const DATABASE = 'kin_critical_result_test';
 // Every table a case writes, directly or through the service; CASCADE empties whatever else references them.
-const OWNED_TABLES = ['CriticalResultEvent', 'CriticalResultReceipt', 'CriticalResult', 'AuditLog', 'ReportDraft', 'ReportVersion',
+const OWNED_TABLES = ['Order', 'CriticalResultEvent', 'CriticalResultReceipt', 'CriticalResult', 'AuditLog', 'ReportDraft', 'ReportVersion',
   'Report', 'StudyAccessRevision', 'StudyAccessPolicy', 'StudyState', 'Institution', 'MemberRights'];
 let prepared = null;
 
@@ -192,7 +192,8 @@ async function world({ policies = {} } = {}) {
   const txView = tx => view('tx', tx, w.onRecordCreate ? { criticalResult: {
     create: async args => { await w.onRecordCreate(tx, args); return tx.criticalResult.create(args); },
     update: args => tx.criticalResult.update(args) } } : {});
-  const prisma = view('root', base, { memberRights: { findUnique: async args => { if(w.rightsFail) throw Error('SYNTHETIC rights unavailable'); return base.memberRights.findUnique(args); } }, $transaction: async (fn, options) => {
+  const prisma = view('root', base, { memberRights: { findUnique: async args => { if(w.rightsFail) throw Error('SYNTHETIC rights unavailable'); return base.memberRights.findUnique(args); },
+    findMany: async args => { if(w.rightsFail) throw Error('SYNTHETIC rights unavailable'); return base.memberRights.findMany(args); } }, $transaction: async (fn, options) => {
     transactions.push(options);
     return base.$transaction(async tx => {
       if(w.beforeTx) { const work=w.beforeTx;w.beforeTx=null;await work(); }
@@ -1048,11 +1049,13 @@ test('candidates follow the create rules: C1 clinicians, readers outside the P p
   const w = await world();
   const s1 = await w.commit(UID, 'save');
   let out = await w.svc.recipients(UID, S());
-  assert.deepEqual(Object.keys(out).sort(), ['owner', 'reason', 'recipients', 'sendable', 'source', 'uid']);
+  assert.deepEqual(Object.keys(out).sort(), ['inbox', 'orderingPhysician', 'owner', 'reason', 'recipients', 'sendable', 'source', 'uid']);
+  assert.equal(out.inbox, 'none', 'no hospital inbox is set');
   assert.deepEqual([out.sendable, out.reason, out.source.version, out.source.action, out.source.final], [true, null, s1, 'save', false]);
   const subs = out.recipients.map(r => r.sub).sort();
   assert.deepEqual(subs, [SUBS.AR, SUBS.M, SUBS.X, SUBS.Y, SUBS.Z].sort(), 'radiologists (and mixed) only for an unsigned head');
-  for (const r of out.recipients) assert.deepEqual(Object.keys(r).sort(), ['actor', 'name', 'role', 'sub']);
+  for (const r of out.recipients) assert.deepEqual(Object.keys(r).sort(), ['actor', 'inbox', 'name', 'orderingPhysician', 'pending', 'reason', 'role', 'sub']);
+  assert.deepEqual(out.recipients.filter(r => r.inbox || r.pending), [], 'nothing is marked without a setting or a pending record');
   await w.commit(UID, 'approve');
   out = await w.svc.recipients(UID, S());
   assert.deepEqual(out.recipients.map(r => r.sub).sort(), [SUBS.AR, SUBS.CA, SUBS.CT, SUBS.M, SUBS.P, SUBS.P2, SUBS.X, SUBS.Y, SUBS.Z].sort());
@@ -1071,6 +1074,94 @@ test('candidates follow the create rules: C1 clinicians, readers outside the P p
   assert.deepEqual([out.sendable, out.reason, out.source], [false, 'NO_PINNABLE_SOURCE', null]);
   assert.equal(p1 > 0, true);
   await assert.rejects(w.svc.recipients(UID, person('P')), code(403, 'CRITICAL_RESULT_ROLE_REQUIRED'));
+});
+
+test('the hospital inbox: the admin sets an eligible member of the own institution; the candidates mark it and every pending recipient', async () => {
+  const w = await world();
+  const AD = () => person('AD');
+  const inboxAudits = async () => w.base.$queryRaw`SELECT actor, action, target, detail FROM "AuditLog"
+    WHERE action = 'institution.critical-result-inbox.save' ORDER BY id`;
+  // reading: admin only, the own institution's eligible members (clinicians and radiologists; the technician is not one)
+  let got = await w.svc.inbox(AD());
+  assert.deepEqual(Object.keys(got).sort(), ['inbox', 'members', 'owner']);
+  assert.equal(got.inbox, null);
+  assert.deepEqual(got.members.map(m => m.sub).sort(), [SUBS.S, SUBS.X, SUBS.Y, SUBS.Z, SUBS.P, SUBS.P2, SUBS.M, SUBS.CT, SUBS.CA, SUBS.AR].sort());
+  for (const m of got.members) assert.deepEqual(Object.keys(m).sort(), ['actor', 'name', 'role', 'sub']);
+  for (const who of ['S', 'P', 'T']) {
+    await assert.rejects(w.svc.inbox(person(who)), code(403, 'CRITICAL_RESULT_ROLE_REQUIRED'), who);
+    await assert.rejects(w.svc.saveInbox(person(who), { sub: SUBS.P2 }), code(403, 'CRITICAL_RESULT_ROLE_REQUIRED'), who);
+  }
+  // refused: a wrong body, a member of another institution, a technician, an unknown subject - nothing is written
+  for (const body of [{}, { sub: 'x' }, { sub: SUBS.P2, extra: 1 }, { sub: undefined }])
+    await assert.rejects(w.svc.saveInbox(AD(), body), code(400, 'CRITICAL_RESULT_INPUT_INVALID'), JSON.stringify(body));
+  for (const sub of [SUBS.KC, SUBS.T, id(8999)])
+    await assert.rejects(w.svc.saveInbox(AD(), { sub }), code(400, 'CRITICAL_RESULT_RECIPIENT_INVALID'), sub);
+  assert.deepEqual(await inboxAudits(), []);
+  // set: one audit row whose target is the institution; saving the same value again writes nothing
+  got = await w.svc.saveInbox(AD(), { sub: SUBS.P2 });
+  assert.equal(got.changed, true);
+  assert.deepEqual(got.inbox, { sub: SUBS.P2, member: { sub: SUBS.P2, actor: actorOf('P2'), name: 'P2 SYNTHETIC', role: 'clinician' } });
+  assert.equal((await w.svc.saveInbox(AD(), { sub: SUBS.P2 })).changed, false);
+  let audits = await inboxAudits();
+  assert.equal(audits.length, 1);
+  assert.deepEqual([audits[0].actor, audits[0].target, JSON.parse(audits[0].detail)], [actorOf('AD'), INST, { member: actorOf('P2') }]);
+  assert.equal(auditRule('institution.critical-result-inbox.save'), 'field:target');
+  // the dialog's candidates: an unsigned head lists no clinician, so the set inbox is not among them
+  await w.commit(UID, 'save');
+  let out = await w.svc.recipients(UID, S());
+  assert.equal(out.inbox, 'unlisted');
+  assert.deepEqual(out.recipients.filter(r => r.inbox), []);
+  // approved: the inbox member is a candidate and marked; nobody else is
+  const v = await w.commit(UID, 'approve');
+  out = await w.svc.recipients(UID, S());
+  assert.equal(out.inbox, 'listed');
+  assert.deepEqual(out.recipients.filter(r => r.inbox).map(r => r.sub), [SUBS.P2]);
+  assert.deepEqual(out.recipients.filter(r => r.pending), []);
+  // a delivery to the inbox is an ordinary record of that one member; a second sender's candidates are their own
+  await w.svc.create(UID, S(), createBody(S(), id(4801), 'P2', v));
+  await w.svc.create(UID, S(), createBody(S(), id(4802), 'P', v));
+  out = await w.svc.recipients(UID, S());
+  assert.deepEqual(out.recipients.filter(r => r.pending).map(r => r.sub).sort(), [SUBS.P, SUBS.P2].sort());
+  assert.deepEqual(out.recipients.filter(r => r.inbox).map(r => [r.sub, r.pending]), [[SUBS.P2, true]]);
+  const other = await w.svc.recipients(UID, person('X'));
+  assert.deepEqual(other.recipients.filter(r => r.pending), [], 'pending is per sender');
+  assert.deepEqual(other.recipients.filter(r => r.inbox).map(r => [r.sub, r.pending]), [[SUBS.P2, false]]);
+  // one recipient's acknowledgement is that record's only: the other stays pending
+  await w.svc.ack(id(4801), person('P2'), ackBody(person('P2'), id(4803)));
+  assert.deepEqual([(await w.record(id(4801))).state, (await w.record(id(4802))).state], ['acknowledged', 'created']);
+  out = await w.svc.recipients(UID, S());
+  assert.deepEqual(out.recipients.filter(r => r.pending).map(r => r.sub), [SUBS.P]);
+  // the member loses the role: still the setting, no longer a candidate or an offered member
+  await w.rights('P2', { roles: ['technician'] });
+  w.users.get(SUBS.P2).roles = ['technician'];
+  got = await w.svc.inbox(AD());
+  assert.deepEqual(got.inbox, { sub: SUBS.P2, member: null });
+  assert.equal((await w.svc.recipients(UID, S())).inbox, 'unlisted');
+  // cleared: one more audit row with no member
+  got = await w.svc.saveInbox(AD(), { sub: null });
+  assert.deepEqual([got.changed, got.inbox], [true, null]);
+  audits = await inboxAudits();
+  assert.deepEqual(JSON.parse(audits[1].detail), { member: null });
+  assert.equal((await w.svc.recipients(UID, S())).inbox, 'none');
+  // the offered members are the institution's member rights, as the save judges them: a member the rights put in another
+  // institution is neither offered nor saved while the provider's group still lists them here
+  await w.rights('Y', { institution: OTHER });
+  got = await w.svc.inbox(AD());
+  assert.equal(got.members.some(m => m.sub === SUBS.Y), false, 'moved in the rights: not offered');
+  assert.ok(got.members.some(m => m.sub === SUBS.X), 'the others are still offered');
+  await assert.rejects(w.svc.saveInbox(AD(), { sub: SUBS.Y }), code(400, 'CRITICAL_RESULT_RECIPIENT_INVALID'));
+  // the dialog checks the inbox only if a send to it would pass now: the roster may lag a suspension in the rights
+  // (X has no pending record to P, so the dialog's `inbox && !pending` is the inbox mark alone)
+  await w.svc.saveInbox(AD(), { sub: SUBS.P });
+  let mine = await w.svc.recipients(UID, person('X'));
+  assert.deepEqual(mine.recipients.filter(r => r.inbox && !r.pending).map(r => r.sub), [SUBS.P], 'checked by default');
+  await w.rights('P', { suspended: true });
+  mine = await w.svc.recipients(UID, person('X'));
+  assert.ok(mine.recipients.some(r => r.sub === SUBS.P), 'the roster still lists P');
+  assert.deepEqual(mine.recipients.filter(r => r.inbox), [], 'suspended in the rights: not checked by default');
+  assert.equal(mine.inbox, 'unlisted');
+  await assert.rejects(w.svc.create(UID, person('X'), createBody(person('X'), id(4804), 'P', v)), code(400, 'CRITICAL_RESULT_RECIPIENT_INVALID'),
+    'and the send would be refused');
 });
 
 // ── S7-U1c: critical results on tele studies (TEST-S7-U1c-SERVICE TSV01..TSV19) ──
@@ -2520,4 +2611,177 @@ test('WV11 (T11) a harness failure is a failure: an unobserved holder, a holder 
     assert.match(hanging.stdout, /not ok \d+ - \S*hanging\.cjs/);
     assert.match(hanging.stdout, /failureType: 'testTimeoutFailure'/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('send roles: admin member lock leaves the list open and inbox assignment waits for a committed move', async () => {
+  const w = await world();
+  await approved(w);
+  await w.svc.saveInbox(person('AD'), {sub: SUBS.X});
+  const held = await holder(w, 'admin moves inbox member', async tx => {
+    await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(${MEMBER_CLASS}::int4, ${memberKey(SUBS.X)}::int4)`;
+    await tx.memberRights.update({where: {sub: SUBS.X}, data: {institution: OTHER}});
+  });
+  let save;
+  await withCleanup(async () => {
+    const list = await w.svc.recipients(UID, S());
+    assert.ok(list.recipients.some(r => r.sub === SUBS.Y));
+    save = w.svc.saveInbox(person('AD'), {sub: SUBS.X});
+    assert.ok(await waiterBehind(w, held.pid, save), 'assignment must wait for the member edit');
+    await held.release();
+    await assert.rejects(save, code(400, P.CRITICAL_RESULT_CODES.RECIPIENT_INVALID));
+    assert.equal((await w.base.auditLog.count({where: {action: 'institution.critical-result-inbox.save'}})), 1);
+  }, () => held.release(), () => save?.catch(() => {}));
+});
+
+test('send roles: unsigned head disables the still-listed inbox after a DB-only role change', async () => {
+  const w = await world(), v = await w.commit(UID, 'save');
+  await w.svc.saveInbox(person('AD'), {sub: SUBS.X});
+  const find = async () => (await w.svc.recipients(UID, S())).recipients.find(r => r.sub === SUBS.X);
+  assert.equal((await find()).inbox, true);
+  await w.rights('X', {roles: ['clinician']});
+  const disabled = await find();
+  assert.equal(disabled.reason, P.CRITICAL_RESULT_CODES.RECIPIENT_CANNOT_READ);
+  assert.equal(disabled.inbox, false);
+  await assert.rejects(w.svc.create(UID, S(), createBody(S(), id(9200), 'X', v)), code(409, disabled.reason));
+});
+
+test('send roles: opening access window fails the whole GET and an all-disabled roster cannot send', async () => {
+  const start = '2030-01-01T00:00:00.000Z';
+  const w = await world({policies: {X: {...restrictTo({modalities: ['CT']}), startsAt: start}}});
+  await w.commit(UID, 'save');
+  for (const who of [...w.users.keys()]) if (who !== SUBS.X) w.users.delete(who);
+  const now = Date.now;
+  try {
+    Date.now = () => Date.parse(start) - 1;
+    w.beforeTx = () => { Date.now = () => Date.parse(start); };
+    await assert.rejects(w.svc.recipients(UID, S()), code(409, 'STUDY_ACCESS_CHANGED'));
+    await w.rights('X', {roles: ['clinician']});
+    const list = await w.svc.recipients(UID, S());
+    assert.deepEqual([list.sendable, list.reason, list.recipients.map(r => r.reason)],
+      [false, 'NO_ELIGIBLE_RECIPIENT', [P.CRITICAL_RESULT_CODES.RECIPIENT_CANNOT_READ]]);
+  } finally { Date.now = now; }
+});
+
+async function matchOrderingPhysician(w, uid, physician) {
+  const oid = 'synthetic-order-' + uid;
+  await w.base.order.create({data: {oid, institutionId: INST, patientId: 'test', name: 'test', sex: '', birth: '', sched: '',
+    modality: 'CT', descr: '', ward: '', reqDoc: 'same display name', matched: 'M', studyUid: uid, orderingPhysicianSub: physician}});
+  await w.base.studyState.update({where: {uid}, data: {matched: 'M', orderOid: oid}});
+}
+const roleSend = (selected, requestId = randomUUID()) => ({requestId, expectedOwner: owner(S()),
+  recipientSubs: selected, sourceVersion: 1, message: MESSAGE});
+
+test('send roles: a preliminary reviewer with only a matching roster login cannot receive the result', async () => {
+  const w = await world();
+  await w.commit(UID, 'preliminary', {reviewer: actorOf('X')});
+  await matchOrderingPhysician(w, UID, SUBS.X);
+  await w.svc.saveInbox(person('AD'), {sub: SUBS.X});
+  const bound = await w.svc.recipients(UID, S());
+  assert.deepEqual(bound.recipients.filter(r => r.orderingPhysician && r.inbox).map(r => r.sub), [SUBS.X]);
+
+  await w.base.studyState.update({where: {uid: UID}, data: {preReviewerSub: null}});
+  const unbound = await w.svc.recipients(UID, S());
+  assert.equal(unbound.recipients.some(r => r.sub === SUBS.X), false);
+  assert.deepEqual([unbound.orderingPhysician, unbound.inbox, unbound.reason],
+    ['unlisted', 'unlisted', 'NO_ELIGIBLE_RECIPIENT']);
+  const before = await w.count();
+  await assert.rejects(w.svc.create(UID, S(), roleSend([SUBS.X])), code(409, P.CRITICAL_RESULT_CODES.RECIPIENT_CANNOT_READ));
+  assert.deepEqual(await w.count(), before);
+});
+
+test('send roles: matched physician and inbox receive independently, or share one delivery and ACK', async () => {
+  const w = await world();
+  w.users.delete(SUBS.P); // The matched order still identifies this eligible member without a directory entry.
+  w.users.delete(SUBS.P2); // An unassigned, directory-absent member is never added to the general picker.
+  for (const [uid, physician] of [[UID, SUBS.P], [UID2, SUBS.X]]) {
+    await approved(w, uid);
+    await matchOrderingPhysician(w, uid, physician);
+    await w.svc.saveInbox(person('AD'), {sub: SUBS.X});
+    const oid = 'synthetic-order-' + uid;
+    await w.base.order.update({where: {oid}, data: {institutionId: OTHER}});
+    const unrelated = await w.svc.recipients(uid, S());
+    assert.equal(unrelated.orderingPhysician, 'none', 'a cross-institution order never supplies the physician');
+    await w.base.order.update({where: {oid}, data: {institutionId: INST}});
+    const { recipients } = await w.svc.recipients(uid, S());
+    assert.ok(!recipients.some(r => r.sub === SUBS.P2));
+    const defaults = recipients.filter(r => r.orderingPhysician || r.inbox).map(r => r.sub);
+    assert.deepEqual(defaults.sort(), [...new Set([physician, SUBS.X])].sort());
+    const body = roleSend(defaults);
+    const result = await w.svc.create(uid, S(), body);
+    const {orderingPhysician, hospitalInbox} = result.applied.send;
+    assert.deepEqual([orderingPhysician.status, hospitalInbox.status], ['delivered', 'delivered']);
+    for (const [who, outcome] of [[physician === SUBS.P ? 'P' : 'X', orderingPhysician], ['X', hospitalInbox]]) {
+      const items = readBody(await w.svc.list(person(who), {view: 'received'})).items.filter(i => i.studyUid === uid);
+      assert.deepEqual(items.map(i => i.id), [outcome.id]);
+      assert.equal(items[0].send, undefined);
+    }
+    if (physician !== SUBS.X) {
+      const second = [orderingPhysician.id, hospitalInbox.id].find(id => id !== body.requestId);
+      await assert.rejects(w.svc.create(uid, S(), {...body, requestId: second}), code(409, 'REQUEST_ID_REUSED'));
+    }
+    const reader = person(physician === SUBS.P ? 'P' : 'X');
+    await w.svc.ack(orderingPhysician.id, reader, ackBody(reader, randomUUID()));
+    assert.equal((await w.record(hospitalInbox.id)).state, physician === SUBS.X ? 'acknowledged' : 'created');
+  }
+});
+
+test('send roles: sender history retains omissions and replay returns the original partial outcome', async () => {
+  const w = await world();
+  await approved(w);
+  await w.svc.saveInbox(person('AD'), {sub: SUBS.X});
+  const send = async (selected, expected) => {
+    const body = roleSend(selected);
+    const answer = await w.svc.create(UID, S(), body);
+    const summary = answer.applied.send;
+    assert.deepEqual([summary.orderingPhysician.status, summary.hospitalInbox.status], expected);
+    const before = await w.count();
+    const again = await w.svc.create(UID, S(), body);
+    assert.deepEqual(again, {...answer, replayed: true});
+    await assert.rejects(w.svc.create(UID, S(), {...body, recipientSubs: [SUBS.P2]}), code(409, 'REQUEST_ID_REUSED'));
+    assert.deepEqual(await w.count(), before);
+    const history = readBody(await w.svc.list(S(), {view: 'sent'})).items.find(r => r.id === body.requestId);
+    assert.deepEqual(history.send, summary);
+    const checked = readBody(await w.svc.read(body.requestId, S())).item;
+    assert.deepEqual(checked.dispatch, answer.applied);
+    return body.requestId;
+  };
+  await send([SUBS.X], ['unlinked', 'delivered']);
+  await matchOrderingPhysician(w, UID, SUBS.P);
+  await send([SUBS.Y], ['unchecked', 'pending']);
+  await w.rights('P', {suspended: true});
+  const before = await w.count();
+  await send([SUBS.Z, SUBS.P], [P.CRITICAL_RESULT_CODES.RECIPIENT_INVALID, 'pending']);
+  assert.equal((await w.count()).records, before.records + 1);
+  assert.equal(readBody(await w.svc.list(person('P'), {view: 'received'})).items.length, 0);
+  await assert.rejects(w.svc.create(UID, S(), roleSend([SUBS.P])), code(400, P.CRITICAL_RESULT_CODES.RECIPIENT_INVALID));
+});
+
+test('send roles: supersede records current role outcomes on the pending replacement', async () => {
+  const w = await world();
+  await approved(w);
+  await matchOrderingPhysician(w, UID, SUBS.P);
+  await w.svc.saveInbox(person('AD'), {sub: SUBS.X});
+  const {applied} = await w.svc.create(UID, S(), roleSend([SUBS.P, SUBS.X]));
+  const original = applied.send;
+  const inboxId = original.hospitalInbox.id;
+  const order = {oid: 'synthetic-order-' + UID};
+  await w.base.order.update({where: order, data: {orderingPhysicianSub: null}});
+
+  const replace = async (oldId, physician) => {
+    const rid = randomUUID(), body = supersedeBody(S(), rid, 1, 1);
+    const answer = await w.svc.supersede(oldId, S(), body);
+    const pending = readBody(await w.svc.list(S(), {view: 'sent', state: 'pending'})).items;
+    assert.deepEqual(pending.map(r => r.id).sort(), [original.orderingPhysician.id, rid].sort());
+    assert.deepEqual(pending.find(r => r.id === rid).send, {
+      requestId: rid, orderingPhysician: physician, hospitalInbox: {sub: SUBS.X, actor: actorOf('X'), status: 'delivered', id: rid},
+    });
+    assert.deepEqual(await w.svc.supersede(oldId, S(), body), {...answer, replayed: true});
+    return rid;
+  };
+  const first = await replace(inboxId, {sub: null, status: 'unlinked'});
+  await w.base.order.update({where: order, data: {orderingPhysicianSub: SUBS.P}});
+  const next = await replace(first, {sub: SUBS.P, actor: actorOf('P'), status: 'pending'});
+  await w.rights('P', {suspended: true});
+  await replace(next, {sub: SUBS.P, status: P.CRITICAL_RESULT_CODES.RECIPIENT_INVALID});
+  assert.deepEqual((await w.record(inboxId)).sendOutcome, original);
 });

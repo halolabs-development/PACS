@@ -148,8 +148,10 @@ MIGRATIONS = ['api/prisma/migrations/0_init/migration.sql',
               'api/prisma/migrations/20261116120000_order_ris_status/migration.sql',
               'api/prisma/migrations/20261116120000_viewer_item_delete/migration.sql',
               'api/prisma/migrations/20261118120000_gateway_settings/migration.sql',
+              'api/prisma/migrations/20261118120000_institution_critical_result_inbox/migration.sql',
               'api/prisma/migrations/20261119120000_access_review_linear/migration.sql',
-              'api/prisma/migrations/20261119120000_owner_account_keys/migration.sql']
+              'api/prisma/migrations/20261119160000_critical_result_send_roles/migration.sql',
+              'api/prisma/migrations/20261120120000_owner_account_keys/migration.sql']
 # S9-U4b (52 tables, 47 migrations): ImportOperation, its twelve synthetic rows (one import with every attempt phase over four
 # studies, a prepared, a Sent and a still-sending download, four Study and four SOP reservations with their holders), one
 # primary key, two checks and three indexes. Not measured on a stack when written: estimated at about 16 KB of catalog and
@@ -273,7 +275,8 @@ def expected_rows(uid):
     rows['Institution'] = [dict(id='SYNTHETIC-'+kind, name='SYNTHETIC '+kind, type=kind,
         dicomNames='SYNTHETIC', dicomAets='', createdAt=STAMP,
         emrLinkTemplate='https://emr.synthetic.test/chart?pid={patientId}' if kind == 'hospital' else None,
-        gatewaySettings=None)
+        gatewaySettings=None,
+        criticalResultInbox=None)
         for kind in ('hospital', 'tele')]
     # FC-070: the hospital's one registered peer PACS (synthetic name, AE Title, host and port).
     rows['DicomPeer'] = [dict(id='00000000-0000-4000-8000-000000000e01', institutionId='SYNTHETIC-hospital', name='SYNTHETIC peer PACS',
@@ -388,7 +391,7 @@ def expected_rows(uid):
         # Delete Order: the order is taken off the list with who and why (a mark, never a row delete).
         removedAt=STAMP, removedBySub='SYNTHETIC-sub', removedBy='SYNTHETIC-actor', removeReason='SYNTHETIC reason',
         # Order List RIS Status: a real value of the CHECK set, so a dump that lost the column or its CHECK would differ.
-        risStatus='acquired')]
+        risStatus='acquired', orderingPhysicianSub=None)]
     # S4-U3: one synthetic receipt in a retry state, so BIGINT counts, the UUID epoch and a non-null
     # errorCode all carry real values through the dump (an empty table would pass on nothing).
     rows['GatewayReceipt'] = [dict(studyUid=uid, institutionId='SYNTHETIC-hospital',
@@ -550,7 +553,7 @@ def expected_rows(uid):
         return dict(id=record, studyUid=uid, institutionId='SYNTHETIC-hospital', senderInstitutionId='SYNTHETIC-hospital', **reader,
             recipientSub='SYNTHETIC-' + recipient + '-sub', recipientActor='SYNTHETIC-' + recipient, recipientName='SYNTHETIC ' + recipient,
             recipientRole=role, sourceVersion=version, sourceAction='approve' if version == 1 else 'addendum', sourceAuthor='SYNTHETIC-reader',
-            sourceAt=STAMP, **identity, message=message, state=state, revision=revision, supersedesId=supersedes,
+            sourceAt=STAMP, **identity, sendOutcome=None, message=message, state=state, revision=revision, supersedesId=supersedes,
             **{**none, **terminal}, changedBy='SYNTHETIC-clinician' if state == 'acknowledged' else 'SYNTHETIC-reader',
             createdAt=STAMP, updatedAt=STAMP)
     rows['CriticalResult'] = [

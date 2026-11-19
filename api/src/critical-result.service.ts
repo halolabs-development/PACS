@@ -16,7 +16,7 @@ import {
   CRITICAL_RESULT_CODES as CODE, CRITICAL_RESULT_PAGE, CRITICAL_RESULT_PINNABLE_ACTIONS, CRITICAL_RESULT_STATE_FILTERS, Head,
   RADIOLOGIST, RecipientClass, Refusal, ackFingerprint, ackRefusal, appliedResult, auditDetail, cancelFingerprint, clip,
   createCase, createFingerprint, decodeCursor, deliveryOf, eligibleRecipient, effectiveRoles, encodeCursor, exactKeys, holds,
-  isObject, legacyReadable, senderReadsHead, originalIdentity, positiveValue, recipientCase, recipientClass, recipientSees, recipientView, recordRefusal,
+  isObject, legacyReadable, senderReadsHead, originalIdentity, positiveValue, recipientCase, recipientClass, sendFingerprint, recipientSees, recipientView, recordRefusal,
   senderScope, senderSees, senderView, sourceRefusal, studyIdentity, studyUidValue, supersedeFingerprint, textValue, userActor, userName,
   uuidValue,
 } from './critical-result-policy';
@@ -37,7 +37,11 @@ import {
  * 쓰지 않는다(§4.1). 쓰기의 새 요청은 caller의 Keycloak 현재 상태를 다시 확인하고, 읽기는 토큰만 쓴다(I-10, §17 L-10).
  */
 export const CRITICAL_RESULT_AUDIT_ACTION = 'study.critical-result';
+/** The administrator's hospital inbox setting (target = the institution it changed). */
+export const CRITICAL_RESULT_INBOX_AUDIT_ACTION = 'institution.critical-result-inbox.save';
+const ADMIN = 'admin';
 const CREATE_KEYS = ['requestId', 'expectedOwner', 'recipientSub', 'sourceVersion', 'message'];
+const SEND_KEYS = ['requestId', 'expectedOwner', 'recipientSubs', 'sourceVersion', 'message'];
 const ACK_KEYS = ['requestId', 'expectedOwner', 'revision'];
 const CANCEL_KEYS = ['requestId', 'expectedOwner', 'revision', 'reason'];
 const SUPERSEDE_KEYS = ['requestId', 'expectedOwner', 'revision', 'sourceVersion', 'message'];
@@ -46,6 +50,10 @@ const WRITE = { maxWait: 4000, timeout: 8000 };
 
 type CriticalCaller = Caller & { name?: string };
 type CreateRequest = { requestId: string; expectedOwner: unknown; recipientSub: string; sourceVersion: number; message: string };
+type SendRequest = Omit<CreateRequest, 'recipientSub'> & { recipientSubs: string[] };
+type RecipientDecision = ({ user: KeycloakUser; cls: RecipientClass } | { refusal: Refusal; memberSub: string | null }) & { visible: boolean };
+type SendTarget = { sub: string | null; status: string; id?: string; actor?: string };
+type RoleAccounts = { orderingPhysician: string | null; hospitalInbox: string | null };
 type ListQuery = { view?: string; state?: string; cursor?: string };
 
 const MESSAGES: Record<string, string> = {
@@ -88,7 +96,7 @@ const studyMissing = () => refuse({ status: 404, code: CODE.STUDY_NOT_FOUND });
 const recordMissing = () => refuse({ status: 404, code: CODE.NOT_FOUND });
 const ownerChanged = () => refuse({ status: 409, code: CODE.OWNER_CHANGED });
 const reused = () => refuse({ status: 409, code: CODE.REUSED });
-const cannotRead = () => refuse({ status: 409, code: CODE.RECIPIENT_CANNOT_READ });
+const pendingRefusal = (id: string): Refusal => ({ status: 409, code: CODE.PENDING_EXISTS, id });
 const busy = () => refuse({ status: 503, code: CODE.BUSY });
 const unavailable = () => refuse({ status: 503, code: CODE.UNAVAILABLE });
 
@@ -121,18 +129,6 @@ export class CriticalResultService {
     const roles = effectiveRoles(user, c);
     if (!roles || !allowed(roles)) throw roleRequired();
     return roles;
-  }
-
-  private async user(sub: string): Promise<KeycloakUser | null> {
-    try { return rightsUser(await this.prisma.memberRights.findUnique({ where: { sub } })); } catch { throw unavailable(); }
-  }
-
-  /**
-   * The Preliminary pair as readers: the stored accounts only (owner-identity.ts). A designation without an account is
-   * nobody's - it is never matched again by the email or username someone has now.
-   */
-  private recipientReadState(state: any) {
-    return { ...state, preDoc: null, preReviewer: null, preDocSub: state?.preDocSub ?? null, preReviewerSub: state?.preReviewerSub ?? null };
   }
 
   /** 원본 신원 한 건(§3.2). 트랜잭션 밖에서만 부른다. 영상 저장·전송·변경 호출은 없다. */
@@ -168,10 +164,15 @@ export class CriticalResultService {
    */
   private subject(c: Caller, institution: string, sub: string): Caller { return { ...c, institution, sub }; }
 
-  private async readableBy(subject: Caller, uid: string, tx:any=this.prisma, version?:number) {
+  private async readableBy(subject: Caller, uid: string, tx:any=this.prisma, version?:number, judgingSource = false) {
     return withGroupedExam(tx, uid, async () => (await this.studyAccess.allowed(subject, [uid], tx)).has(uid), async () => {
       const record = await reportExamReference(tx, uid, version);
-      return !!record&&!!await readableExamRecord(tx,this.studyAccess,subject,uid,record);
+      if (!record) return false;
+      if (!judgingSource) return !!await readableExamRecord(tx, this.studyAccess, subject, uid, record);
+      // A changing access window or exam generation invalidates the operation, including a candidate GET.
+      try { await resolveExamScope(tx, this.studyAccess, subject, { uid, purpose: 'stored', record }); }
+      catch (error) { if (error instanceof NotFoundException) return false; throw error; }
+      return true;
     });
   }
 
@@ -288,7 +289,7 @@ export class CriticalResultService {
     // The state table (report-visibility.ts): another physician's unsigned head is not theirs to send.
     const refusal = sourceRefusal({ sourceVersion, head, senderReadable: legacyReadable(state, c.actor, c.sub) && senderReadsHead(state, head, c) });
     if (refusal || !head) return refusal;
-    if(!await this.readableBy(c,uid,tx,sourceVersion))return {status:403,code:CODE.SOURCE_FORBIDDEN};
+    if(!await this.readableBy(c,uid,tx,sourceVersion,true))return {status:403,code:CODE.SOURCE_FORBIDDEN};
     const rows: any[] = await tx.$queryRaw`SELECT count(*)::int AS beyond FROM "ReportVersion"
       WHERE uid=${uid} AND version>${head.version} AND action<>'discarded'`;
     return rows[0]?.beyond === 0 ? null : { status: 409, code: CODE.SOURCE_INVALID };
@@ -414,31 +415,49 @@ export class CriticalResultService {
       supersedesId: v.supersedesId, changedBy: v.c.actor, createdAt: v.at, updatedAt: v.at };
   }
 
-  /**
-   * 생성·대체의 수신자 판정(§4 순서 15): Keycloak 현재 상태의 자격(T-8, 기록 기관의 회원) → 400, 부류별로 지금 고정 원문을
-   * 읽는가(C2/R2) → 409. 수신자 주체(기록 기관)의 StudyAccess는 트랜잭션 전에 준비한 태그로 같은 트랜잭션에서 판정한다.
-   */
-  private async judgeRecipient(tx: any, uid: string, institution: string, c: Caller, sub: string, recipient: KeycloakUser | null,
-    subject: Caller | null, head: Head, state: any): Promise<RecipientClass> {
-    await lockMemberRights(tx, sub);
-    recipient = rightsUser(await tx.memberRights.findUnique({ where: { sub } }));
-    const cls = eligibleRecipient(recipient, { sub, institution, sender: c.sub });
-    // Keep the prepared subject object: StudyAccess binds source metadata to its identity.
-    if (subject && recipient) { subject.roles = recipient.roles; subject.institution = recipient.groups[0]; }
-    if (!cls || !subject) throw recipientInvalid();
-    const visible = await this.readableBy(subject, uid, tx);
-    // Legacy rows use DB identity only. A missing/ambiguous label cannot be reassigned by a provider outage.
-    const readState = this.recipientReadState(state);
-    const kase = createCase({ cls, visible, head, state: readState, actor: userActor(recipient), sub });
-    if (kase !== 'C2' && kase !== 'R2') throw cannotRead();
-    return cls;
+  /** Shared by the picker and writes. Only an account refusal or a refused report read belongs to one person.
+   * All infrastructure, policy-change and scope errors propagate. The write caller holds the member lock. */
+  private async judgeRecipient(tx: any, uid: string, institution: string, c: Caller, sub: string,
+    subject: Caller | undefined, head: Head, state: any, listing = false): Promise<RecipientDecision> {
+    const user = rightsUser(await tx.memberRights.findUnique({ where: { sub } }));
+    const cls = eligibleRecipient(user, { sub, institution, sender: c.sub });
+    // Access preparation belongs to this subject object. A stale roster entry must still pass the
+    // original display boundary before its disabled state can appear.
+    if (cls && subject) subject.roles = user.roles;
+    const visible = !!subject && (listing || !!cls) && await this.readableBy(subject, uid, tx, head?.version, true);
+    if (!cls || !subject) return { visible, memberSub: user?.groups[0] === institution ? sub : null,
+      refusal: { status: 400, code: CODE.RECIPIENT_INVALID } };
+    const kase = createCase({ cls, visible, head, state, actor: userActor(user), sub });
+    return kase === 'C2' || kase === 'R2' ? { user, cls, visible } : { visible, memberSub: sub, refusal: { status: 409, code: CODE.RECIPIENT_CANNOT_READ } };
+  }
+
+  /** Both links must still name the same matched order in the study's owning institution. */
+  private async roleAccounts(tx: any, uid: string, institution: string): Promise<RoleAccounts> {
+    const rows = await tx.$queryRaw`SELECT i."criticalResultInbox" AS "hospitalInbox", o."orderingPhysicianSub" AS "orderingPhysician"
+      FROM "StudyState" s JOIN "Institution" i ON i.id=s."institutionId"
+      LEFT JOIN "Order" o ON s.matched='M' AND o.oid=s."orderOid" AND o."studyUid"=s.uid
+        AND o."institutionId"=i.id AND o.matched='M' AND o."removedAt" IS NULL
+      WHERE s.uid=${uid} AND i.id=${institution}`;
+    return rows[0] ?? { orderingPhysician: null, hospitalInbox: null };
+  }
+
+  private async prepareRecipients(c: Caller, uid: string, institution: string, candidates: Iterable<string>) {
+    const preparedRoles = await this.roleAccounts(this.prisma, uid, institution);
+    const subjects = new Map<string, Caller>();
+    for (const sub of new Set([...candidates, preparedRoles.orderingPhysician, preparedRoles.hospitalInbox])) {
+      if (!sub) continue;
+      const subject = this.subject(c, institution, sub);
+      await prepareRecordExamRead(this.prisma, this.studyAccess, subject, uid);
+      subjects.set(sub, subject);
+    }
+    return subjects;
   }
 
   // ── #1 후보 ──
 
   /**
    * GET studies/:uid/critical-result-recipients. Mark CVR 활성 판단·고정할 원천·수신자 후보(§3.3 Candidates). 후보는 생성
-   * 판정(T-8 자격 + C2/R2)을 지금 통과하는 사람만이다. 후보 목록은 권한이 아니다 — 생성이 같은 판정을 다시 한다.
+   * 판정과 명부의 표시 범위를 구분해, 표시할 수 있지만 받을 수 없는 후보에는 사유를 붙인다.
    */
   async recipients(uid: string, c: CriticalCaller) {
     this.member(c);
@@ -450,66 +469,133 @@ export class CriticalResultService {
     // 후보는 기록 기관(검사 소유 기관)의 회원이다. tele 발신자 기관(B)의 회원은 수신자가 아니다(TR-02).
     let members: KeycloakUser[];
     try { members = await this.keycloak.institutionMembers(institution); } catch { throw unavailable(); }
-    const candidates: { user: KeycloakUser; cls: RecipientClass; subject: Caller }[] = [];
+    const directory = new Map<string, { user: KeycloakUser; cls: RecipientClass }>();
     for (const user of members) {
       const cls = eligibleRecipient(user, { sub: user.id, institution, sender: c.sub });
-      if (!cls) continue;
-      const subject = this.subject(c, institution, user.id);
-      await prepareRecordExamRead(this.prisma,this.studyAccess,subject,uid);
-      candidates.push({ user, cls, subject });
+      if (cls) directory.set(user.id, { user, cls });
     }
+    // Directory entries supply general candidates. A matched order or configured inbox identifies its own
+    // account by subject even when the provider roster lags. Only prepare here; decide from the read snapshot.
+    const subjects = await this.prepareRecipients(c, uid, institution, directory.keys());
     const out = await this.run(c, [], async tx => {
       const state = await this.studyRow(tx, uid, false);
       // 사전 읽기 뒤 소유 기관이 바뀌어 범위가 다른 기관이 되었으면 준비한 후보는 그 기관의 것이 아니다.
       if (await this.visibleStudy(tx, uid, c, state, studyMissing) !== institution) throw unavailable();
       const head = await this.head(tx, uid);
       const pinnable = !!head && CRITICAL_RESULT_PINNABLE_ACTIONS.includes(head.action as string);
-      const readable = legacyReadable(state, c.actor, c.sub) && senderReadsHead(state, head, c) && !!head && await this.readableBy(c,uid,tx,head.version);
-      const recipients: any[] = [];
-      if (pinnable && readable) for (const x of candidates) {
-        const kase = createCase({ cls: x.cls, visible: await this.readableBy(x.subject, uid, tx), head,
-          state: this.recipientReadState(state), actor: userActor(x.user), sub: x.user.id });
-        if (kase === 'C2' || kase === 'R2') recipients.push({ sub: x.user.id, actor: userActor(x.user), name: userName(x.user), role: x.cls });
+      const readable = legacyReadable(state, c.actor, c.sub) && senderReadsHead(state, head, c) && !!head && await this.readableBy(c,uid,tx,head.version,true);
+      const targets = await this.roleAccounts(tx, uid, institution);
+      const pendingRows = await tx.$queryRaw`SELECT "recipientSub" FROM "CriticalResult" WHERE "studyUid"=${uid}
+        AND "senderSub"=${c.sub} AND state='created'`;
+      const pendingSubs = new Set(pendingRows.map(row => row.recipientSub));
+      const recipients = [];
+      if (pinnable && readable) for (const sub of new Set([...directory.keys(), targets.orderingPhysician, targets.hospitalInbox])) {
+        if (!sub) continue;
+        const subject = subjects.get(sub);
+        if (!subject) throw refuse({ status: 409, code: CODE.CHANGED });
+        const entry = directory.get(sub);
+        const decision = await this.judgeRecipient(tx, uid, institution, c, sub, subject, head, state, !!entry);
+        if (!decision.visible) continue;
+        // A disabled name can only come from the directory's original display boundary.
+        const listed = entry && createCase({ cls: entry.cls, visible: true, head, state, actor: userActor(entry.user), sub });
+        if ('refusal' in decision && listed !== 'C2' && listed !== 'R2') continue;
+        const user = entry?.user ?? ('user' in decision ? decision.user : null);
+        const cls = 'cls' in decision ? decision.cls : entry.cls;
+        const reason = 'refusal' in decision ? decision.refusal.code : null;
+        recipients.push({ sub, actor: userActor(user), name: userName(user), role: cls, reason,
+          inbox: !reason && sub === targets.hospitalInbox, orderingPhysician: !reason && sub === targets.orderingPhysician,
+          pending: pendingSubs.has(sub) });
       }
-      return { state, head, pinnable, readable, recipients };
+      const mark = (sub: string | null) => !sub ? 'none' : recipients.some(r => r.sub === sub && !r.reason) ? 'listed' : 'unlisted';
+      return { state, head, pinnable, readable, recipients, inbox: mark(targets.hospitalInbox), orderingPhysician: mark(targets.orderingPhysician) };
     }, true);
-    const reason = !out.pinnable ? 'NO_PINNABLE_SOURCE' : !out.readable ? 'SOURCE_FORBIDDEN' : !out.recipients.length ? 'NO_ELIGIBLE_RECIPIENT' : null;
+    const reason = !out.pinnable ? 'NO_PINNABLE_SOURCE' : !out.readable ? 'SOURCE_FORBIDDEN' : !out.recipients.some(r => !r.reason && !r.pending) ? 'NO_ELIGIBLE_RECIPIENT' : null;
     out.recipients.sort((a, b) => a.name.localeCompare(b.name) || a.sub.localeCompare(b.sub));
-    return { owner: this.owner(c), uid, sendable: reason === null, reason,
+    return { owner: this.owner(c), uid, sendable: reason === null, inbox: out.inbox, orderingPhysician: out.orderingPhysician, reason,
       // 발신자가 읽을 수 없는 머리(P 짝 밖)는 판 메타데이터도 싣지 않는다.
       source: out.pinnable && out.readable ? { version: out.head.version, action: out.head.action, author: out.head.author,
         at: out.head.at == null ? null : new Date(out.head.at).toISOString(), final: clinicianFinal(out.state.rs, out.head) } : null,
       recipients: out.recipients };
   }
 
+  private async pendingDeliveries(tx: any, uid: string, sender: string) {
+    const rows = await tx.$queryRaw`SELECT id,"recipientSub" FROM "CriticalResult" WHERE "studyUid"=${uid}
+      AND "senderSub"=${sender} AND state='created'`;
+    return new Map<string, string>(rows.map(row => [row.recipientSub, row.id]));
+  }
+
+  // A replacement selects just its existing recipient. Its role results use the same current bindings,
+  // member locks and report-read decisions as a new send.
+  private async planDeliveries(tx: any, c: Caller, state: any, head: Head, request: {
+    requestId: string; selected: string[]; subjects: Map<string, Caller>; pendingBySub: Map<string, string>;
+  }) {
+    const { uid, institutionId: institution } = state;
+    const { requestId, selected, subjects, pendingBySub } = request;
+    const roles = await this.roleAccounts(tx, uid, institution);
+    const chosen = new Set(selected);
+    const accounts = new Map<string, SendTarget>();
+    const deliveries: {user: KeycloakUser; cls: RecipientClass; id: string}[] = [];
+    let firstRefusal: Refusal | null = null;
+    for (const sub of [...new Set([...selected, roles.orderingPhysician, roles.hospitalInbox])].filter(Boolean).sort()) {
+      // An administrator may have changed a target while we prepared its access metadata.
+      if (!subjects.has(sub)) throw refuse({ status: 409, code: CODE.CHANGED });
+      await lockMemberRights(tx, sub);
+      const decision = await this.judgeRecipient(tx, uid, institution, c, sub, subjects.get(sub), head, state);
+      const existing = pendingBySub.get(sub);
+      let target: SendTarget;
+      if ('refusal' in decision) {
+        // A missing/unrelated account is never disclosed through an automatic role.
+        target = { sub: chosen.has(sub) ? sub : decision.memberSub, status: decision.refusal.code };
+        if (chosen.has(sub)) firstRefusal ??= decision.refusal;
+      } else if (existing) {
+        target = { sub, actor: userActor(decision.user), status: 'pending' };
+        if (chosen.has(sub)) firstRefusal ??= pendingRefusal(existing);
+      } else if (!chosen.has(sub)) {
+        target = { sub, actor: userActor(decision.user), status: 'unchecked' };
+      } else {
+        const id = deliveries.length ? randomUUID() : requestId;
+        deliveries.push({ user: decision.user, cls: decision.cls, id });
+        target = { sub, actor: userActor(decision.user), status: 'delivered', id };
+      }
+      accounts.set(sub, target);
+    }
+    if (!deliveries.length) throw refuse(firstRefusal ?? { status: 400, code: CODE.RECIPIENT_INVALID });
+    const outcome = (sub: string | null): SendTarget => sub ? accounts.get(sub) : { sub: null, status: 'unlinked' };
+    const send = { requestId, orderingPhysician: outcome(roles.orderingPhysician), hospitalInbox: outcome(roles.hospitalInbox) };
+    return { deliveries, accounts, send };
+  }
+
   // ── #2 생성 ──
 
   /** POST studies/:uid/critical-results. 발신자는 인증된 요청, 수신자 자격·귀속은 DB 회원에서 온다. */
-  async create(uid: string, c: CriticalCaller, b: CreateRequest, recorded?: RecordedTransaction) {
+  async create(uid: string, c: CriticalCaller, b: CreateRequest | SendRequest, recorded?: RecordedTransaction) {
     this.member(c);
     if (!holds(c.roles, RADIOLOGIST)) throw roleRequired();
     if (!studyUidValue(uid)) throw invalid('검사 UID를 확인하세요');
-    if (!exactKeys(b, CREATE_KEYS) || !uuidValue(b.requestId) || !uuidValue(b.recipientSub) || !positiveValue(b.sourceVersion)
-      || !textValue(b.message)) throw invalid('요청 ID·받는 사람·보낼 판 번호와 1~2,000자의 메시지를 입력하세요');
-    const recipientSub = b.recipientSub.toLowerCase();
-    if (recipientSub === c.sub) throw recipientInvalid();
+    const batch = isObject(b) && 'recipientSubs' in b;
+    const subs = batch ? b.recipientSubs : [(b as CreateRequest)?.recipientSub];
+    if (!exactKeys(b, batch ? SEND_KEYS : CREATE_KEYS) || !uuidValue(b.requestId) || !positiveValue(b.sourceVersion)
+      || !textValue(b.message) || !Array.isArray(subs) || !subs.length || subs.length > 1000 || !subs.every(uuidValue))
+      throw invalid('요청 ID·받는 사람·보낼 판 번호와 1~2,000자의 메시지를 입력하세요');
+    const selected = [...new Set(subs.map(sub => sub.toLowerCase()))].sort();
+    if (!batch && selected[0] === c.sub) throw recipientInvalid();
     this.expectOwner(c, b);
     const requestId = b.requestId.toLowerCase();
-    const mark = createFingerprint({ uid, institution: c.institution, subject: c.sub, recipientSub, sourceVersion: b.sourceVersion, message: b.message });
-    // 순서 4: 적용된 요청의 재전송이면 Keycloak·Orthanc를 읽지 않는다(Keycloak이 멈춰도 재전송은 답한다).
+    const input = { uid, institution: c.institution, subject: c.sub, sourceVersion: b.sourceVersion, message: b.message };
+    const mark = batch ? sendFingerprint({ ...input, recipientSubs: selected }) : createFingerprint({ ...input, recipientSub: selected[0] });
     const known = await this.prisma.criticalResultReceipt.findUnique({ where: { requestId } });
-    let recipient: KeycloakUser | null | undefined, identity: any = null, prepared: string | null = null;
+    let subjects = new Map<string, Caller>();
+    let identity: any = null, prepared: string | null = null;
     if (!known) {
       await this.recheck(c, roles => holds(roles, RADIOLOGIST));
       prepared = await this.scope(uid, c);
       if (prepared) {
-        recipient = await this.user(recipientSub); identity = await this.identity(uid,c);
+        identity = await this.identity(uid, c);
+        subjects = await this.prepareRecipients(c, uid, prepared, selected);
       }
     }
-    const subject = recipient && prepared ? this.subject(c, prepared, recipientSub) : null;
-    await prepareRecordExamRead(this.prisma,this.studyAccess,c,uid);
-    if (subject) await prepareRecordExamRead(this.prisma,this.studyAccess,subject,uid);
-    return this.run(c, subject ? [subject] : [], async (tx, workflow) => {
+    await prepareRecordExamRead(this.prisma, this.studyAccess, c, uid);
+    return this.run(c, [...subjects.values()], async (tx, workflow) => {
       // 판독·Related·Tech Note·질문 쓰기처럼 정책 공유 잠금 뒤, 검사 행 앞에 이 검사의 fixed-record 키를 잡는다. 같은 키를
       // 쓰는 writer가 모두 이 순서여야 머리 판을 바꾸는 쓰기와 그 판을 고정하는 쓰기가 서로 반대 순서로 기다리지 않는다.
       await this.lockReportScope(tx, c, uid, b.sourceVersion, true);
@@ -522,31 +608,38 @@ export class CriticalResultService {
         // 재전송은 그 기록을 지금 보는 발신자에게만 저장 결과로 답한다. 검사가 보여도(통로는 그대로인데 소유 기관이
         // 바뀜) 기록 기관이 지금의 발신 범위가 아니면 404다(TC-08) — 같은 기관 경로에서는 늘 같다.
         const record = await tx.criticalResult.findUnique({ where: { id: requestId },
-          select: { institutionId: true, senderInstitutionId: true, senderSub: true, recipientSub: true } });
+          select: { institutionId: true, senderInstitutionId: true, senderSub: true, recipientSub: true, sendOutcome: true } });
         if (!record || !senderSees(record, state, c)) throw studyMissing();
+        // Only the original request ID replays a multi-recipient send. Other delivery IDs identify records for ACK.
+        if (record.sendOutcome && record.sendOutcome.requestId !== requestId) throw reused();
         return replayed;
       }
-      const pending: any[] = await tx.$queryRaw`SELECT id FROM "CriticalResult" WHERE "studyUid"=${uid} AND "senderSub"=${c.sub}
-        AND "recipientSub"=${recipientSub} AND state='created'`;
-      if (pending.length) throw refuse({ status: 409, code: CODE.PENDING_EXISTS, id: pending[0].id });
+      const pendingBySub = await this.pendingDeliveries(tx, uid, c.sub);
+      if (!batch && pendingBySub.has(selected[0])) throw refuse(pendingRefusal(pendingBySub.get(selected[0])));
       const head = await this.head(tx, uid);
       const source = await this.pinRefusal(tx, uid, b.sourceVersion, head, state, c);
       if (source) throw refuse(source);
-      // 잠금 없는 사전 읽기가 이 검사를 발신 범위로 보지 못해 수신자·원본을 읽지 않았는데 지금은 보이거나(그 사이 기관
-      // 배정·통로 열림), 범위의 기관이 달라졌다(그 사이 소유 기관 변경). 준비한 수신자 판정을 다른 기관에 쓰지 않는다.
-      if (recipient === undefined || !identity || prepared !== institution) throw unavailable();
-      const cls = await this.judgeRecipient(tx, uid, institution, c, recipientSub, recipient, subject, head, state);
+      if (!identity || prepared !== institution) throw unavailable();
+
+      const { deliveries, accounts, send } = await this.planDeliveries(tx, c, state, head, {
+        requestId, selected, subjects, pendingBySub,
+      });
       const at = new Date(), name = this.name(c);
-      // 기록 기관 = 검사 소유 기관, 발신 기관 = caller 기관(tele면 둘이 다르다). 둘 다 기록 시점 값으로 남는다.
-      const record = this.newRecord({ id: requestId, uid, institution, senderInstitution: c.institution, c, name,
-        recipient, cls, head, identity, message: b.message, supersedesId: null, at });
-      await tx.criticalResult.create({ data: record });
-      await this.event(tx, requestId, 1, 'created', c, name, RADIOLOGIST, requestId, at);
-      const applied = appliedResult({ id: requestId, studyUid: uid, requestId, action: 'create', from: null, to: 'created', revision: 1, at });
-      await this.receipt(tx, c, requestId, 'create', mark, applied, at);
-      await this.writeAudit(tx, c, record, { event: 'created', from: null, to: 'created', revision: 1, requestId, role: RADIOLOGIST,
-        supersedes: null, replacedBy: null });
-      await workflow?.record(this.change('POST studies/:uid/critical-results', record, 'critical-result', 1, 'write'));
+      let applied;
+      for (const { id, user, cls } of deliveries) {
+        const record = this.newRecord({ id, uid, institution, senderInstitution: c.institution, c, name, recipient: user, cls, head,
+          identity, message: b.message, supersedesId: null, at });
+        // The two role outcomes stay with every delivered row, including when the sender filters the history by ACK state.
+        await tx.criticalResult.create({ data: { ...record, sendOutcome: send } });
+        await this.event(tx, id, 1, 'created', c, name, RADIOLOGIST, id, at);
+        const result = appliedResult({ id, studyUid: uid, requestId: id, action: 'create', from: null, to: 'created', revision: 1, at });
+        const response = id === requestId && batch ? { ...result, send, recipients: selected.map(sub => accounts.get(sub)) } : result;
+        await this.receipt(tx, c, id, 'create', mark, response, at);
+        await this.writeAudit(tx, c, record, { event: 'created', from: null, to: 'created', revision: 1, requestId: id, role: RADIOLOGIST,
+          supersedes: null, replacedBy: null });
+        await workflow?.record(this.change('POST studies/:uid/critical-results', record, 'critical-result', 1, 'write'));
+        if (id === requestId) applied = response;
+      }
       return { owner: this.owner(c), applied, replayed: false };
     }, false, recorded);
   }
@@ -645,7 +738,8 @@ export class CriticalResultService {
     const mark = supersedeFingerprint({ id: recordId, institution: c.institution, subject: c.sub, revision: b.revision,
       sourceVersion: b.sourceVersion, message: b.message });
     const known = await this.prisma.criticalResultReceipt.findUnique({ where: { requestId } });
-    let recipient: KeycloakUser | null | undefined, identity: any = null, subject: Caller | null = null;
+    let identity: any = null;
+    let subjects = new Map<string, Caller>();
     if (!known) {
       await this.recheck(c, roles => holds(roles, RADIOLOGIST));
       // 수신자·검사·기록 기관은 옛 기록의 것이다. 남의 기록이거나 기록 기관이 지금 발신 범위가 아니면(tele 통로 닫힘
@@ -654,16 +748,12 @@ export class CriticalResultService {
         select: { institutionId: true, senderInstitutionId: true, senderSub: true, recipientSub: true, studyUid: true } });
       if (prior && prior.senderInstitutionId === c.institution && prior.senderSub === c.sub
         && await this.scope(prior.studyUid, c) === prior.institutionId) {
-        recipient = await this.user(prior.recipientSub);
-        identity = await this.identity(prior.studyUid,c);
-        if (recipient) {
-          subject = this.subject(c, prior.institutionId, prior.recipientSub);
-          await prepareRecordExamRead(this.prisma,this.studyAccess,subject,prior.studyUid);
-        }
+        identity = await this.identity(prior.studyUid, c);
+        subjects = await this.prepareRecipients(c, prior.studyUid, prior.institutionId, [prior.recipientSub]);
       }
     }
     await this.studyAccess.prepare(c);
-    return this.run(c, subject ? [subject] : [], async (tx, workflow) => {
+    return this.run(c, [...subjects.values()], async (tx, workflow) => {
       const { row, state, head } = await this.writeTarget(tx, recordId, c, 'sender', true, b.sourceVersion);
       const receipt = await tx.criticalResultReceipt.findUnique({ where: { requestId } });
       if (receipt) return this.replay(receipt, mark, recordId, 'supersede', c);
@@ -672,8 +762,13 @@ export class CriticalResultService {
       if (refusal) throw refuse(refusal);
       const source = await this.pinRefusal(tx, row.studyUid, b.sourceVersion, head, state, c);
       if (source) throw refuse(source);
-      if (recipient === undefined || !identity || (recipient && recipient.id !== row.recipientSub)) throw unavailable();
-      const cls = await this.judgeRecipient(tx, row.studyUid, row.institutionId, c, row.recipientSub, recipient, subject, head, state);
+      if (!identity || subjects.get(row.recipientSub)?.institution !== row.institutionId) throw unavailable();
+      const pendingBySub = await this.pendingDeliveries(tx, row.studyUid, c.sub);
+      // The old delivery is closed in this transaction. Any other pending recipient keeps their own delivery.
+      if (pendingBySub.get(row.recipientSub) === row.id) pendingBySub.delete(row.recipientSub);
+      const { deliveries: [{ user, cls }], send } = await this.planDeliveries(tx, c, state, head, {
+        requestId, selected: [row.recipientSub], subjects, pendingBySub,
+      });
       const at = new Date(), name = this.name(c);
       await tx.criticalResult.update({ where: { id: row.id }, data: { state: 'superseded', revision: 2, supersededAt: at,
         changedBy: c.actor, updatedAt: at } });
@@ -681,8 +776,8 @@ export class CriticalResultService {
       await this.writeAudit(tx, c, row, { event: 'superseded', from: 'created', to: 'superseded', revision: 2, requestId, role: RADIOLOGIST,
         supersedes: null, replacedBy: requestId });
       const record = this.newRecord({ id: requestId, uid: row.studyUid, institution: row.institutionId, senderInstitution: row.senderInstitutionId,
-        c, name, recipient, cls, head, identity, message: b.message, supersedesId: row.id, at });
-      await tx.criticalResult.create({ data: record });
+        c, name, recipient: user, cls, head, identity, message: b.message, supersedesId: row.id, at });
+      await tx.criticalResult.create({ data: { ...record, sendOutcome: send } });
       await this.event(tx, requestId, 1, 'created', c, name, RADIOLOGIST, requestId, at);
       await this.writeAudit(tx, c, record, { event: 'created', from: null, to: 'created', revision: 1, requestId, role: RADIOLOGIST,
         supersedes: row.id, replacedBy: null });
@@ -855,7 +950,12 @@ export class CriticalResultService {
       if(!await this.readableBy(c,row.studyUid,tx,row.sourceVersion))throw recordMissing();
       await this.reportScopes(tx, c, [row]);
       const head = await this.head(tx, row.studyUid);
-      if (sender) return { sender: true as const, row, state, head, replacedBy: await this.replacement(tx, row,c, null) };
+      if (sender) {
+        const receipt = row.sendOutcome?.requestId === row.id
+          ? await tx.criticalResultReceipt.findUnique({ where: { requestId: row.id }, select: { result: true } }) : null;
+        return { sender: true as const, row, state, head, dispatch: receipt?.result?.send ? receipt.result : null,
+          replacedBy: await this.replacement(tx, row, c, null) };
+      }
       const kase = recipientCase({ cls, visible: true, pin: row.sourceVersion, head, state, actor: c.actor, sub: c.sub });
       if (kase.view === null) throw recordMissing();
       const pinned = kase.view === 'full' ? await this.pinnedBody(tx, row.studyUid, row.sourceVersion,c) : null;
@@ -864,7 +964,9 @@ export class CriticalResultService {
     }, true);
     if (!out.sender) return criticalRead({ owner: this.owner(c), item: out.item }, [out.row], true);
     const delivery = await this.deliveries(c, [{ row: out.row, head: out.head, state: out.state }]);
-    return criticalRead({ owner: this.owner(c), item: senderView(out.row, out.head, studyIdentity(out.row, out.state.ov), delivery.get(out.row.id) ?? null, out.replacedBy) }, [out.row], true);
+    return criticalRead({ owner: this.owner(c), item: {
+      ...senderView(out.row, out.head, studyIdentity(out.row, out.state.ov), delivery.get(out.row.id) ?? null, out.replacedBy),
+      ...(out.dispatch ? { dispatch: out.dispatch } : {}) } }, [out.row], true);
   }
 
   /**
@@ -910,5 +1012,70 @@ export class CriticalResultService {
         this.replacementOf(next, { cls, state: out.state, head: out.head, actor: c.actor, sub: c.sub }));
     });
     return criticalRead({ owner: this.owner(c), uid, items }, out.rows);
+  }
+
+  // ── Hospital inbox: the institution setting the dialog's default recipient comes from ──
+
+  private adminOnly(c: CriticalCaller) {
+    this.member(c);
+    if (!holds(c.roles, ADMIN)) throw roleRequired();
+  }
+
+  /** A member as the setting shows it. Only an eligible one (as a candidate would be) is offered. */
+  private inboxMember(user: KeycloakUser, institution: string) {
+    const cls = eligibleRecipient(user, { sub: user.id, institution, sender: '' });
+    return cls ? { sub: user.id, actor: userActor(user), name: userName(user), role: cls } : null;
+  }
+
+  /**
+   * GET admin/critical-result-inbox. The administrator's own institution's hospital inbox and the members who can hold it
+   * (active clinicians and radiologists of that institution, as the dialog's candidates are drawn). The stored member who
+   * is no longer one of them is still reported (`member: null`), so the page says the setting no longer reaches anyone.
+   */
+  async inbox(c: CriticalCaller) {
+    this.adminOnly(c);
+    const institution = c.institution as string;
+    let members: KeycloakUser[];
+    try { members = (await this.prisma.memberRights.findMany({ where: { institution } })).map(rightsUser).filter(Boolean); }
+    catch { throw unavailable(); }
+    const eligible = members.map(user => this.inboxMember(user, institution)).filter(Boolean) as { sub: string; actor: string; name: string; role: RecipientClass }[];
+    eligible.sort((a, b) => a.name.localeCompare(b.name) || a.sub.localeCompare(b.sub));
+    const own = await this.prisma.institution.findUnique({ where: { id: institution }, select: { criticalResultInbox: true } });
+    const sub = own?.criticalResultInbox ?? null;
+    return { owner: this.owner(c), inbox: sub === null ? null : { sub, member: eligible.find(m => m.sub === sub) ?? null },
+      members: eligible };
+  }
+
+  /**
+   * PATCH admin/critical-result-inbox `{ sub: string | null }`. Sets or clears the own institution's hospital inbox. The
+   * member must be an eligible recipient of that institution now (the current member rights, as create judges a
+   * recipient). The write and its audit row are one transaction; saving the stored value changes nothing and writes no row.
+   */
+  async saveInbox(c: CriticalCaller, b: any) {
+    this.adminOnly(c);
+    if (!exactKeys(b, ['sub']) || !(b.sub === null || uuidValue(b.sub))) throw invalid('받는 회원을 고르거나 해제하세요');
+    await this.recheck(c, roles => holds(roles, ADMIN));
+    const institution = c.institution as string;
+    const sub = b.sub === null ? null : String(b.sub).toLowerCase();
+    let member: { actor: string } | null = null;
+    const changed = await this.prisma.$transaction(async tx => {
+      // The member is judged under the lock every member change takes, so a suspension or move that commits first is seen.
+      if (sub !== null) {
+        await lockMemberRights(tx, sub);
+        const user = rightsUser(await tx.memberRights.findUnique({ where: { sub } }));
+        const found = user ? this.inboxMember(user, institution) : null;
+        if (!found) throw refuse({ status: 400, code: CODE.RECIPIENT_INVALID },
+          '병원 수신 회원은 이 기관의 활성 임상의 또는 판독의여야 합니다');
+        member = found;
+      }
+      const rows: any[] = await tx.$queryRaw`SELECT "criticalResultInbox" FROM "Institution" WHERE id=${institution} FOR UPDATE`;
+      if (!rows.length) throw roleRequired();
+      if ((rows[0].criticalResultInbox ?? null) === sub) return false;
+      await tx.institution.update({ where: { id: institution }, data: { criticalResultInbox: sub } });
+      await tx.auditLog.create({ data: { actor: c.actor, action: CRITICAL_RESULT_INBOX_AUDIT_ACTION, target: institution,
+        detail: JSON.stringify({ member: member?.actor ?? null }) } });
+      return true;
+    }, WRITE);
+    return { ...(await this.inbox(c)), changed };
   }
 }

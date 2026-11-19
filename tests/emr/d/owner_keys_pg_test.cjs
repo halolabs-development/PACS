@@ -9,7 +9,7 @@ const api = process.env.KIN_D_API || path.resolve(__dirname, '../../../api');
 const dependency = name => require(path.join(api, 'node_modules', name));
 const { PrismaClient } = dependency('@prisma/client');
 
-const MIGRATION = path.join(api, 'prisma', 'migrations', '20261119120000_owner_account_keys', 'migration.sql');
+const MIGRATION = path.join(api, 'prisma', 'migrations', '20261120120000_owner_account_keys', 'migration.sql');
 
 const { spawnSync } = require('node:child_process');
 const witness = process.env.KIN_D_WITNESS_URL;
