@@ -313,16 +313,24 @@ class MeasurementCiTests(unittest.TestCase):
         self.assertIn('viewer-dom', jobs('tests/viewer_hanging_protocol_new_dom_test.py'))
         # The CI self-checks read registered suites as text, so any test change runs them.
         self.assertIn('ci-selfchecks', jobs('tests/e2e/test_dictation_live.py'))
-        # Image assembly in a new folder, and a broken bundle manifest, select every job.
+        # Files a test opens as data, injects into the page or hands to Node by path select its job.
+        self.assertIn('viewer-native-dom', jobs('worklist-v0/hpacs-lite/exam-scope.js'))
+        self.assertIn('source-regressions', jobs('tests/study_observation_vectors.json'))
+        self.assertIn('source-regressions', jobs('tests/clinician_policy_live.py'))
+        self.assertIn('measurements', jobs('tests/emr/d/finding_read_fixture.cjs'))
+        self.assertIn('emr-c', jobs('emr/units/b.json'))
+        # Image assembly in a new folder (either compose extension), and a broken bundle manifest, select every job.
         everything = set(selector.select([], all_jobs=True))
-        self.assertEqual(jobs('newdir/Dockerfile'), everything)
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
-            (root / 'scripts').mkdir()
-            shutil.copy(ci.ROOT / 'scripts/ci-paths.json', root / 'scripts/ci-paths.json')
-            (root / 'scripts/main-split-order.json').write_text('{"page": ', encoding='utf-8')
-            with patch.object(selector, 'ROOT', root):
-                self.assertEqual(jobs('worklist-v0/hpacs-lite/page-core.js'), everything)
+        for path in ('newdir/Dockerfile', 'newdir/compose.yml', 'newdir/compose.yaml', 'newdir/requirements.txt'):
+            self.assertEqual(jobs(path), everything, path)
+        for manifest in ('{"page": ', '{"page": "worklist-v0/hpacs-lite/main.html", "sources": [{"file": "page-core.js"}]}'):
+            with self.subTest(manifest=manifest), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                (root / 'scripts').mkdir()
+                shutil.copy(ci.ROOT / 'scripts/ci-paths.json', root / 'scripts/ci-paths.json')
+                (root / 'scripts/main-split-order.json').write_text(manifest, encoding='utf-8')
+                with patch.object(selector, 'ROOT', root):
+                    self.assertEqual(jobs('worklist-v0/hpacs-lite/page-core.js'), everything)
 
     def test_shared_runner_image_and_generator_changes_select_every_job(self):
         # Shared test running/judging, image and stack assembly with pinned versions, and generation method/order

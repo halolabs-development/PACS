@@ -62,8 +62,40 @@ def expand_scripts(root, scripts, graph):
     return required
 
 
+STRING = re.compile(r'''(['"`])([^'"`\n\\$]{1,200})\1''')
+
+
+def literal_files(root, name, source):
+    """Repository files a test names in a string literal, conservatively.
+
+    A test reads fixtures, opens sources as data or loads scripts into a browser
+    by path, not only by import. Each literal, and consecutive literals of one
+    line joined by '/', is tried from the root, the test's folder and tests/.
+    """
+    found = set()
+    folder = posixpath.dirname(name)
+    for line in source.splitlines():
+        words = [match[2].strip() for match in STRING.finditer(line)]
+        candidates = set(words)
+        for size in (2, 3, 4):
+            candidates.update('/'.join(words[i:i + size]) for i in range(len(words) - size + 1))
+        for candidate in candidates:
+            candidate = re.sub(r'^/worklist/', 'worklist-v0/', candidate).removeprefix('./')
+            last = candidate.rsplit('/', 1)[-1]
+            if (not candidate or candidate.startswith(('/', '.git')) or ':' in candidate or '*' in candidate
+                    or '.' not in last.strip('.')):
+                continue
+            for base in ('', folder, 'tests'):
+                path = posixpath.normpath(posixpath.join(base, candidate))
+                if (not path.startswith('..') and 'node_modules/' not in path and path != name
+                        and (root / path).is_file()):
+                    found.add(path)
+                    break
+    return found
+
+
 class InputClosure:
-    """Follow test imports and served-page scripts from a job's direct inputs."""
+    """Follow test imports, files tests name, and served-page scripts from a job's direct inputs."""
 
     def __init__(self, root):
         from ci_workflow_consumers_test import consumers
@@ -75,20 +107,43 @@ class InputClosure:
         self.script_graph = {}
         self.pages = {page.relative_to(root).as_posix(): expand_scripts(root, page_scripts(root, page.relative_to(root).as_posix()), self.script_graph)
                       for page in (root / 'worklist-v0/hpacs-lite').glob('*.html')}
+        self.named = {}
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('input_closure_selector', root / 'scripts/ci_select.py')
+        selector = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(selector)
+        # A shared runner already selects every job; the files it names (its registries) are not each job's inputs.
+        self.common = lambda name: any(selector.matches(name, pattern) for pattern in self.config['common'])
 
-    def __call__(self, owner, required):
-        required = set(required)
+    def named_files(self, name):
+        if not (name.startswith('tests/') and name.endswith(('.py', '.cjs', '.js', '.mjs'))) or self.common(name):
+            return set()
+        if name not in self.named:
+            path = self.root / name
+            self.named[name] = (literal_files(self.root, name, path.read_text(encoding='utf-8-sig', errors='replace'))
+                                if path.is_file() else set())
+        return self.named[name]
+
+    def follow(self, required, step):
         pending = list(required)
         while pending:
-            for dependency in self.graph['edges'].get(pending.pop(), []):
+            for dependency in step(pending.pop()):
                 if dependency not in required:
                     required.add(dependency)
                     pending.append(dependency)
-        for page, scripts in self.pages.items():
-            if page in required or page in self.config['jobs'][owner]:
-                required.update(scripts)
-        return required
 
+    def __call__(self, owner, required):
+        required = set(required)
+        self.follow(required, lambda name: self.graph['edges'].get(name, []))
+        # Pages a job serves bring the scripts and stylesheets they load: a page its command names, or a page in
+        # its own map entry when it uses the page-serving helper (the recorder's served-page rule).
+        serving = bool(required & {'tests/page_source.py', 'tests/page_source.cjs'})
+        for page, scripts in self.pages.items():
+            if page in required or (serving and page in self.config['jobs'][owner]):
+                required.update(scripts)
+        # Then files a test names as data, with their imports; a page named here is read, not served.
+        self.follow(required, lambda name: set(self.graph['edges'].get(name, [])) | self.named_files(name))
+        return required
 
 def regression_inputs(root, catalog, suites, closure=None):
     closure = closure or InputClosure(root)
@@ -101,7 +156,6 @@ def regression_inputs(root, catalog, suites, closure=None):
                             and '$' not in words[i + 1] and 'node_modules/' not in words[i + 1])
         result[owner] = closure(owner, required)
     return result
-
 
 # Both path-selected workflows gate a job, or a single step inside the always-on
 # runtime job, on one key of the select output.

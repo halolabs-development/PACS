@@ -22,7 +22,7 @@
     "tests/service_test_loader.cjs",
     "**/.dockerignore",
     "**/Dockerfile*",
-    "**/*compose*.yml",
+    "**/*compose*.y*ml",
     "**/requirements*.txt",
     "api/nest-cli.json",
     "api/package-lock.json",
@@ -297,7 +297,43 @@
       "api/src/pacs/report-draft.ts",
       "tests/auth_logout_dom_test.py",
       "tests/emr/b/commit_judgement_pg_test.cjs",
-      "tests/emr/b/pg_ledger_api_test.cjs"
+      "tests/emr/b/pg_ledger_api_test.cjs",
+      "emr/units/b.json",
+      "tests/emr/b/pg_ledger_profile.cjs",
+      "tests/transaction_locks.cjs",
+      "worklist-v0/hpacs-lite/admin-access-review.js",
+      "worklist-v0/hpacs-lite/admin.html",
+      "worklist-v0/hpacs-lite/clinical-info-actions.js",
+      "worklist-v0/hpacs-lite/clinician.html",
+      "worklist-v0/hpacs-lite/clinician.js",
+      "worklist-v0/hpacs-lite/consultations.css",
+      "worklist-v0/hpacs-lite/dicom-peers-admin.js",
+      "worklist-v0/hpacs-lite/emr-link-admin.js",
+      "worklist-v0/hpacs-lite/favorites.css",
+      "worklist-v0/hpacs-lite/film-print.js",
+      "worklist-v0/hpacs-lite/held-sources-admin.js",
+      "worklist-v0/hpacs-lite/image-report-diagrams.js",
+      "worklist-v0/hpacs-lite/image-report.js",
+      "worklist-v0/hpacs-lite/kin-emblem-j1.svg",
+      "worklist-v0/hpacs-lite/multi-study-view.css",
+      "worklist-v0/hpacs-lite/multi-study-view.js",
+      "worklist-v0/hpacs-lite/reader-assignment.css",
+      "worklist-v0/hpacs-lite/reading-workspace.css",
+      "worklist-v0/hpacs-lite/related-report-mode.css",
+      "worklist-v0/hpacs-lite/related-report-mode.js",
+      "worklist-v0/hpacs-lite/report-popout.js",
+      "worklist-v0/hpacs-lite/saved-filter-manager.css",
+      "worklist-v0/hpacs-lite/signing-key-admin.js",
+      "worklist-v0/hpacs-lite/study-access-admin.js",
+      "worklist-v0/hpacs-lite/study-panel.css",
+      "worklist-v0/hpacs-lite/study-tags.css",
+      "worklist-v0/hpacs-lite/tech-note.css",
+      "worklist-v0/hpacs-lite/viewer-ux-shortcuts.js",
+      "worklist-v0/hpacs-lite/worklist-columns.css",
+      "worklist-v0/hpacs-lite/worklist-folder-tree.css",
+      "worklist-v0/hpacs-lite/workspace-theme.css",
+      "worklist-v0/hpacs-lite/clinical-signature.js",
+      "worklist-v0/hpacs-lite/emr-link.js"
     ],
     "emr-d": [
       "api/Dockerfile*",
@@ -324,7 +360,9 @@
       "tests/emr/b/commit_judgement_pg_test.cjs",
       "tests/emr/b/pg_ledger_api_test.cjs",
       "tests/emr/b/pg_ledger_restore_test.py",
-      "worklist-v0/hpacs-lite/**"
+      "worklist-v0/hpacs-lite/**",
+      "emr/units/b.json",
+      "tests/emr/b/pg_ledger_profile.cjs"
     ],
     "emr-e-contracts": [
       "api/Dockerfile*",
@@ -362,7 +400,11 @@
       "api/prisma/**",
       "api/src/**",
       "tests/emr/b/commit_judgement_pg_test.cjs",
-      "tests/emr/b/pg_ledger_api_test.cjs"
+      "tests/emr/b/pg_ledger_api_test.cjs",
+      "emr/units/b.json",
+      "tests/emr/b/pg_ledger_profile.cjs",
+      "worklist-v0/hpacs-lite/index.html",
+      "worklist-v0/hpacs-lite/main.html"
     ],
     "emr-f-contracts": [
       "api/Dockerfile*",
@@ -398,7 +440,10 @@
       "api/prisma/**",
       "api/src/**",
       "tests/emr/b/commit_judgement_pg_test.cjs",
-      "tests/emr/b/pg_ledger_api_test.cjs"
+      "tests/emr/b/pg_ledger_api_test.cjs",
+      "emr/units/b.json",
+      "tests/emr/b/pg_ledger_profile.cjs",
+      "worklist-v0/hpacs-lite/index.html"
     ],
     "contract": [
       "api/Dockerfile*",
@@ -418,7 +463,10 @@
       "api/src/**",
       "tests/emr/b/commit_judgement_pg_test.cjs",
       "tests/emr/b/pg_ledger_api_test.cjs",
-      "tests/emr/b/pg_ledger_restore_test.py"
+      "tests/emr/b/pg_ledger_restore_test.py",
+      "emr/units/b.json",
+      "tests/emr/b/pg_ledger_profile.cjs",
+      "worklist-v0/hpacs-lite/index.html"
     ],
     "hanging-protocols": [
       "api/package-lock.json",
@@ -588,7 +636,8 @@
       "worklist-v0/hpacs-lite/volume-display*",
       "worklist-v0/hpacs-lite/volume-orientation*",
       "worklist-v0/hpacs-lite/volume-path*",
-      "worklist-v0/hpacs-lite/volume-preferences*"
+      "worklist-v0/hpacs-lite/volume-preferences*",
+      "tests/emr/d/finding_read_fixture.cjs"
     ],
     "volume-batch": [
       "api/package-lock.json",
@@ -1066,7 +1115,8 @@
       "worklist-v0/hpacs-lite/image-report-diagrams.js",
       "worklist-v0/hpacs-lite/image-report.js",
       "worklist-v0/hpacs-lite/query-retrieve.js",
-      ".env.example"
+      ".env.example",
+      "worklist-v0/legal/open-source-notices.html"
     ],
     "restore-product": [
       "api/prisma/**",
@@ -1083,7 +1133,9 @@
       "tests/emr/b/**",
       "tests/live_test_gate.py",
       "api/src/emr-runtime/**",
-      "api/src/emr-contract/**"
+      "api/src/emr-contract/**",
+      "emr/units/b.json",
+      "worklist-v0/hpacs-lite/index.html"
     ],
     "s9-u0e-served": [
       "tests/e2e/test_prior_selection.py",
@@ -1127,7 +1179,10 @@
       "worklist-v0/hpacs-lite/mammography-model.js",
       "worklist-v0/hpacs-lite/viewer-patient-tabs.js",
       "worklist-v0/hpacs-lite/viewer-editor-link.js",
-      "worklist-v0/hpacs-lite/report-editor.js"
+      "worklist-v0/hpacs-lite/report-editor.js",
+      "tests/viewer_readback_fault.cjs",
+      "worklist-v0/hpacs-lite/viewer-prior-controller.js",
+      "worklist-v0/hpacs-lite/viewer-prior-panel.js"
     ],
     "ci-selfchecks": [
       "tests/ci_regression_inputs.py",
@@ -1144,7 +1199,25 @@
       "tests/candidate_ci.py",
       "tests/dictation_refusal_oracle.py",
       "tests/live_admin_credential_test.py",
-      "tests/**"
+      "tests/**",
+      "api/prisma/schema.prisma",
+      "api/src/asr.service.ts",
+      "config/product-info.json",
+      "emr/units/b.json",
+      "gateway/agent/agent.py",
+      "proxy/nginx.conf.template",
+      "scripts/emr-compose.py",
+      "scripts/send_cstore.py",
+      "worklist-v0/hpacs-lite/admin.html",
+      "worklist-v0/hpacs-lite/auth.js",
+      "worklist-v0/hpacs-lite/clinician.html",
+      "worklist-v0/hpacs-lite/dictation-worklet.js",
+      "worklist-v0/hpacs-lite/index.html",
+      "worklist-v0/hpacs-lite/main.html",
+      "worklist-v0/hpacs-lite/viewer-display-layout.js",
+      "worklist-v0/hpacs-lite/viewer-windows.js",
+      "worklist-v0/legal/open-source-notices.html",
+      "worklist-v0/legal/privacy.html"
     ],
     "emr-b": [
       "api/**",
@@ -1159,7 +1232,10 @@
       "tests/candidate_ci.py",
       "tests/dictation_refusal_oracle.py",
       "tests/document_session.py",
-      "tests/e2e/test_worklist.py"
+      "tests/e2e/test_worklist.py",
+      "worklist-v0/hpacs-lite/index.html",
+      "worklist-v0/hpacs-lite/main.html",
+      "worklist-v0/hpacs-lite/**"
     ],
     "source-regressions": [
       "tests/product_info_test.py",
@@ -1625,7 +1701,58 @@
       "worklist-v0/hpacs-lite/study-tags.css",
       "worklist-v0/hpacs-lite/tech-note.css",
       "worklist-v0/hpacs-lite/worklist-columns.css",
-      "worklist-v0/hpacs-lite/workspace-theme.css"
+      "worklist-v0/hpacs-lite/workspace-theme.css",
+      "README.md",
+      "config/orthanc.json",
+      "gateway/README.md",
+      "proxy/branding/kin-favicon-32.png",
+      "scripts/collect-rerun-diagnostic.py",
+      "scripts/g3_dispatch.py",
+      "scripts/send_cstore.py",
+      "tests/audit_store_db_test.py",
+      "tests/auth_audit_live.py",
+      "tests/candidate_ci_test.py",
+      "tests/clinician_policy_live.py",
+      "tests/clinician_read_live.py",
+      "tests/dictation_capture_signal.py",
+      "tests/dictation_capture_signal_test.py",
+      "tests/document_session.py",
+      "tests/e2e/**",
+      "tests/emr/a/report_observation_browser_test.py",
+      "tests/emr/b/pg_ledger_profile.cjs",
+      "tests/emr/d/finding_read_fixture.cjs",
+      "tests/emr/e/online_live.py",
+      "tests/emr/e/stream_pg_test.cjs",
+      "tests/emr/f/link_live.py",
+      "tests/emr/f/link_pg_test.cjs",
+      "tests/emr/f/native_copy_pg_test.cjs",
+      "tests/execution_selection_test.py",
+      "tests/finding_api_test.py",
+      "tests/hanging_protocol_api_live.py",
+      "tests/live/session_support.py",
+      "tests/live_admin_credential_test.py",
+      "tests/main_move_spec.json",
+      "tests/migration_rehearsal.py",
+      "tests/ops_backup_held_test.py",
+      "tests/ops_backup_restore_test.py",
+      "tests/ops_deploy_host_container_test.py",
+      "tests/ops_deploy_host_test.py",
+      "tests/ops_deploy_preflight_test.py",
+      "tests/ops_deploy_round4_test.py",
+      "tests/ops_deploy_round5_test.py",
+      "tests/ops_deploy_runner_test.py",
+      "tests/ops_deploy_smoke_test.py",
+      "tests/ops_emr_introduction_test.py",
+      "tests/reading_appearance_live.py",
+      "tests/report_dictation_capture_dom_test.py",
+      "tests/report_dictation_host_dom_test.py",
+      "tests/report_page_contract.py",
+      "tests/study_arrivals_test.cjs",
+      "tests/study_identity_dom_test.py",
+      "tests/study_identity_test.cjs",
+      "tests/study_observation_vectors.json",
+      "tests/viewer_api_test.py",
+      "tests/workspace_roaming_support.py"
     ],
     "worklist-dom": [
       ".gitattributes",
@@ -2022,7 +2149,8 @@
       "worklist-v0/hpacs-lite/multi-study-view.css",
       "worklist-v0/hpacs-lite/related-report-mode.css",
       "worklist-v0/hpacs-lite/study-panel.css",
-      "worklist-v0/hpacs-lite/workspace-theme.css"
+      "worklist-v0/hpacs-lite/workspace-theme.css",
+      "worklist-v0/hpacs-lite/viewer-editor-link.js"
     ],
     "viewer-dom": [
       "worklist-v0/hpacs-lite/product-info.js",
@@ -2347,7 +2475,12 @@
       "worklist-v0/hpacs-lite/study-tags.css",
       "worklist-v0/hpacs-lite/tech-note.css",
       "worklist-v0/hpacs-lite/worklist-columns.css",
-      "worklist-v0/hpacs-lite/workspace-theme.css"
+      "worklist-v0/hpacs-lite/workspace-theme.css",
+      "api/src/auth.controller.ts",
+      "tests/main_move_spec.json",
+      "worklist-v0/hpacs-lite/viewer-volume-job.js",
+      "worklist-v0/hpacs-lite/volume-rendering-removal.js",
+      "worklist-v0/legal/open-source-notices.html"
     ],
     "clinician-dom": [
       "worklist-v0/hpacs-lite/product-info.js",
@@ -2540,7 +2673,18 @@
       "worklist-v0/hpacs-lite/multi-study-view.css",
       "worklist-v0/hpacs-lite/related-report-mode.css",
       "worklist-v0/hpacs-lite/study-panel.css",
-      "worklist-v0/hpacs-lite/workspace-theme.css"
+      "worklist-v0/hpacs-lite/workspace-theme.css",
+      "proxy/branding/kin-emblem-j1.svg",
+      "proxy/branding/kin-favicon-32.png",
+      "tests/main_move_spec.json",
+      "worklist-v0/hpacs-lite/admin-access-review.js",
+      "worklist-v0/hpacs-lite/admin.html",
+      "worklist-v0/hpacs-lite/dicom-peers-admin.js",
+      "worklist-v0/hpacs-lite/emr-link-admin.js",
+      "worklist-v0/hpacs-lite/held-sources-admin.js",
+      "worklist-v0/hpacs-lite/signing-key-admin.js",
+      "worklist-v0/hpacs-lite/study-access-admin.js",
+      "worklist-v0/legal/open-source-notices.html"
     ],
     "critical-result-dom": [
       "worklist-v0/hpacs-lite/product-info.js",
@@ -2725,7 +2869,18 @@
       "worklist-v0/hpacs-lite/multi-study-view.css",
       "worklist-v0/hpacs-lite/related-report-mode.css",
       "worklist-v0/hpacs-lite/study-panel.css",
-      "worklist-v0/hpacs-lite/workspace-theme.css"
+      "worklist-v0/hpacs-lite/workspace-theme.css",
+      "proxy/branding/kin-emblem-j1.svg",
+      "proxy/branding/kin-favicon-32.png",
+      "tests/main_move_spec.json",
+      "worklist-v0/hpacs-lite/admin-access-review.js",
+      "worklist-v0/hpacs-lite/admin.html",
+      "worklist-v0/hpacs-lite/dicom-peers-admin.js",
+      "worklist-v0/hpacs-lite/emr-link-admin.js",
+      "worklist-v0/hpacs-lite/held-sources-admin.js",
+      "worklist-v0/hpacs-lite/signing-key-admin.js",
+      "worklist-v0/hpacs-lite/study-access-admin.js",
+      "worklist-v0/legal/open-source-notices.html"
     ],
     "admin-session-dom": [
       "tests/product_info_dom_test.py",
@@ -2953,7 +3108,9 @@
       "worklist-v0/hpacs-lite/multi-study-view.css",
       "worklist-v0/hpacs-lite/related-report-mode.css",
       "worklist-v0/hpacs-lite/study-panel.css",
-      "worklist-v0/hpacs-lite/workspace-theme.css"
+      "worklist-v0/hpacs-lite/workspace-theme.css",
+      "api/src/auth.controller.ts",
+      "tests/main_move_spec.json"
     ],
     "related-layout-dom": [
       "worklist-v0/hpacs-lite/product-info.js",
@@ -3133,7 +3290,19 @@
       "worklist-v0/hpacs-lite/multi-study-view.css",
       "worklist-v0/hpacs-lite/related-report-mode.css",
       "worklist-v0/hpacs-lite/study-panel.css",
-      "worklist-v0/hpacs-lite/workspace-theme.css"
+      "worklist-v0/hpacs-lite/workspace-theme.css",
+      "proxy/branding/kin-emblem-j1.svg",
+      "proxy/branding/kin-favicon-32.png",
+      "tests/main_move_spec.json",
+      "worklist-v0/hpacs-lite/admin-access-review.js",
+      "worklist-v0/hpacs-lite/admin.html",
+      "worklist-v0/hpacs-lite/clinician.html",
+      "worklist-v0/hpacs-lite/clinician.js",
+      "worklist-v0/hpacs-lite/dicom-peers-admin.js",
+      "worklist-v0/hpacs-lite/emr-link-admin.js",
+      "worklist-v0/hpacs-lite/held-sources-admin.js",
+      "worklist-v0/hpacs-lite/signing-key-admin.js",
+      "worklist-v0/hpacs-lite/study-access-admin.js"
     ],
     "study-transfer-dom": [
       "api/package*.json",
@@ -3148,7 +3317,9 @@
       "tests/page_source.py",
       "tests/report_flow_dom_test.py",
       "tests/study_transfer_local_dom_test.py",
-      "worklist-v0/hpacs-lite/**"
+      "worklist-v0/hpacs-lite/**",
+      "proxy/branding/kin-emblem-j1.svg",
+      "proxy/branding/kin-favicon-32.png"
     ],
     "privacy-dom": [
       "api/package*.json",
@@ -3182,7 +3353,8 @@
       "worklist-v0/hpacs-lite/session-transport.js",
       "worklist-v0/hpacs-lite/viewer-jobs.js",
       "worklist-v0/hpacs-lite/viewer-stack-restore.js",
-      "worklist-v0/hpacs-lite/viewer-volume-job.js"
+      "worklist-v0/hpacs-lite/viewer-volume-job.js",
+      "worklist-v0/hpacs-lite/exam-scope.js"
     ],
     "proxy-contracts": [
       "proxy/15-kin-config.envsh",
@@ -3191,7 +3363,10 @@
       "tests/ci_workflows.py",
       "tests/proxy_app_cache_test.py",
       "tests/proxy_error_page_test.py",
-      "tests/proxy_grant_log_test.py"
+      "tests/proxy_grant_log_test.py",
+      "worklist-v0/hpacs-lite/index.html",
+      "worklist-v0/hpacs-lite/main.html",
+      "worklist-v0/hpacs-lite/viewer-preload.js"
     ],
     "measurements": [
       "emr/deploy/**",
@@ -3278,7 +3453,12 @@
       "tests/report_page_contract.py",
       "tests/viewer_api_test.py",
       "tests/workspace_roaming_support.py",
-      "worklist-v0/hpacs-lite/**"
+      "worklist-v0/hpacs-lite/**",
+      "tests/dictation_capture_signal_test.py",
+      "tests/emr/d/finding_read_fixture.cjs",
+      "tests/main_move_spec.json",
+      "tests/manual_sr_fault.cjs",
+      "tests/viewer_readback_fault.cjs"
     ]
   }
 }

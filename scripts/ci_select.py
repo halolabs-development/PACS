@@ -38,11 +38,14 @@ def select(paths, *, all_jobs=False, main_push=False):
             order = json.loads(manifest.read_text(encoding='utf-8'))
             folder = order['page'].rsplit('/', 1)[0]
             sources = {folder + '/' + row['file'] for row in order['sources']}
+            artifact = order['artifact']
+            if not isinstance(artifact, str):
+                raise TypeError('artifact')
         except (ValueError, KeyError, TypeError, AttributeError):
             paths.append('scripts/main-split-order.json')
         else:
             if sources.intersection(paths):
-                paths.append(order['artifact'])
+                paths.append(artifact)
 
     def changed(patterns):
         return any(matches(path, pattern) for path in paths for pattern in patterns

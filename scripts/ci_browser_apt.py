@@ -5,8 +5,9 @@ runs apt update, which otherwise also queries the runner's unrelated Chrome repo
 APT signature/hash verification and all Ubuntu package sources remain enabled.
 
 The browser's OS packages are reused from the invoking user's DEB_CACHE folder, which the
-workflow caches: apt copies them in before its update and out after dpkg. apt checks each
-file against the signed index, so a stale or broken file is downloaded again.
+workflow caches: apt copies them in before its update and out after dpkg. apt reuses a file
+whose name and size match the signed index and downloads any other (a newer version or a
+truncated file). Only this repository's jobs write that cache, under the same workflow trust.
 """
 import os
 from pathlib import Path
@@ -44,7 +45,7 @@ def without_chrome(text,suffix):
 
 def deb_cache_hooks(folder):
     q=shlex.quote(str(folder))
-    return ('// Reuse cached browser OS packages; apt verifies every file against the signed index.\n'
+    return ('// Reuse cached browser OS packages; apt takes a file whose name and size match the index.\n'
         'APT::Update::Pre-Invoke { "cp '+q+'/*.deb /var/cache/apt/archives/ 2>/dev/null || true"; };\n'
         'DPkg::Post-Invoke { "cp /var/cache/apt/archives/*.deb '+q+'/ 2>/dev/null || true"; };\n')
 
