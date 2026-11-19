@@ -206,10 +206,17 @@ test('detect: much dense tissue, even fat of one value, and a nipple at the imag
 
 test('detect: no region rather than a doubtful one; declared padding is no pixel of the image', () => {
   const columns = 600, rows = 800;
-  // Only a strip along the chest-wall border (no breast).
-  const strip = new Uint16Array(columns * rows);
-  for (let y = 0; y < rows; y++) for (let x = columns - 3; x < columns; x++) strip[y * columns + x] = 30;
-  assert.deepEqual(M.detect(strip, columns, rows, { chest: 'right' }), { found: false, reason: 'no-region' });
+  // Only a strip along the chest-wall border (no breast), thin or up to a twelfth of the image wide; a small breast
+  // that reaches an eighth of the image's width is one.
+  for (const wide of [3, 12, 30, 50]) {
+    const strip = new Uint16Array(columns * rows);
+    for (let y = 0; y < rows; y++) for (let x = columns - wide; x < columns; x++) strip[y * columns + x] = 30 + (x + y) % 5;
+    assert.deepEqual(M.detect(strip, columns, rows, { chest: 'right' }), { found: false, reason: 'no-region' }, 'strip ' + wide);
+  }
+  const small = new Uint16Array(columns * rows);
+  for (let y = 0; y < rows; y++) for (let x = 0; x < columns; x++) small[y * columns + x] = ((x - columns) / 75) ** 2 + ((y - 400) / 200) ** 2 <= 1 ? 30 + (x + y) % 5 : 0;
+  // (its pixels: x 525 … 599, and at the chest-wall column y 201 … 599)
+  assert.deepEqual(M.detect(small, columns, rows, { chest: 'right' }).box, { x0: 525, y0: 201, x1: 600, y1: 600 });
   // No air and no skin line: tissue fills the image (fat with its grain to the border, dense beyond the middle) —
   // however much brighter the dense tissue is, the grain of the fat is not the flat of air.
   let filled;

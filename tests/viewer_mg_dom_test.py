@@ -1361,6 +1361,22 @@ class ViewerMgDOMTest(unittest.TestCase):
         self.assertAlmostEqual(self.fit(self.BOX['L']), self.camera(page, 'lcc')['zoom'], places=6)
         # Fit Breast set that cell's camera (zoom and centre), and nothing else did.
         self.assertEqual(2, page.evaluate("() => synCameraSets.lcc"))
+        # A held cell's new size is answered only while no command came after it: the cells become narrower, and before the
+        # step is worked out again for them (another header still to be read) Fit Breast is pressed.
+        self.menu(page, 'Quadrant Zoom')
+        quadrant = page.get_by_role('dialog', name='Quadrant Zoom')
+        quadrant.get_by_label('Zoom').evaluate("select => { select.value = 'fill'; select.dispatchEvent(new Event('change')); }")
+        expect(page.locator('#pane-lcc [data-mg-badge=quadrant]')).to_have_text('Q1 Upper-Outer · Fill Quadrant')
+        page.evaluate("() => { synMetadataDelay = 400; synViews.get('dbt').show(2); for (const v of synViews.values()) v.element.style.width = '120px'; }")
+        page.wait_for_timeout(250)
+        page.evaluate("() => { synCameraSets.lcc = 0; }")
+        display.get_by_role('button', name='Fit Breast').evaluate('b => b.click()')
+        expect(page.locator('#pane-lcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: Fit Breast')
+        page.wait_for_timeout(400)
+        box = self.BOX['L']
+        self.assertAlmostEqual(min(120 / (box['x1'] - box['x0']), 150 / (box['y1'] - box['y0'])) * 0.98 / 0.5, self.camera(page, 'lcc')['zoom'], places=6)
+        self.assertEqual(2, page.evaluate("() => synCameraSets.lcc"))
+        expect(page.locator('#pane-lcc [data-mg-badge=quadrant]')).to_have_count(0)
 
     def test_04f_a_linked_lens_asked_for_before_the_release_a_new_press_or_magnifier_off_is_not_drawn_when_the_headers_come(self):
         page = self.open()

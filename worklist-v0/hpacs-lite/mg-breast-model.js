@@ -114,7 +114,8 @@
   //   runs on along the chest wall as a thin strip (a body or paddle edge, the abdomen under an oblique view), the strip
   //   is not the breast: the rows at either end whose tissue reaches no farther from the chest wall than an eighth of the
   //   piece's greatest reach (or a twenty-fifth of the image's width) are left out when that run of rows is at least four
-  //   times as long as its median reach (the breast's own rounded end is not). Nothing is cut on the nipple side.
+  //   times as long as its median reach (the breast's own rounded end is not). Nothing is cut on the nipple side. A
+  //   piece that nowhere reaches a tenth of the image's width from the chest wall is not a breast at all.
   // - Holes in it are part of it.
   // No region ({ found: false, reason }) rather than a doubtful one: without the chest-wall side ('chest-wall-unknown'),
   // for a magnification, spot or partial view (options.partial: 'partial-view'), without clear air over a twentieth of
@@ -207,6 +208,8 @@
       if (!farthest[gy]) continue;
       if (top < 0) top = gy; bottom = gy; widest = Math.max(widest, farthest[gy]);
     }
+    // A piece that nowhere reaches a tenth of the image's width from the chest wall is itself a strip.
+    if (widest * 10 < width) return none('no-region');
     const thin = Math.max(widest / 8, width / 25);
     const strip = (from, by) => {
       const run = [];
