@@ -250,6 +250,8 @@ const sha = (value: unknown) => createHash('sha256').update(JSON.stringify(value
 /** 요청 지문(§7). 키 순서가 지문의 일부다 — 표의 순서 그대로 만든다. */
 export const createFingerprint = (v: { uid: string; institution: string; subject: string; recipientSub: string; sourceVersion: number; message: string }) =>
   sha({ uid: v.uid, institution: v.institution, subject: v.subject, recipientSub: v.recipientSub, sourceVersion: v.sourceVersion, message: v.message });
+export const sendFingerprint = (v: { uid: string; institution: string; subject: string; recipientSubs: string[]; sourceVersion: number; message: string }) =>
+  sha({ uid: v.uid, institution: v.institution, subject: v.subject, recipientSubs: v.recipientSubs, sourceVersion: v.sourceVersion, message: v.message });
 export const ackFingerprint = (v: { id: string; institution: string; subject: string; revision: number }) =>
   sha({ id: v.id, institution: v.institution, subject: v.subject, revision: v.revision, action: 'ack' });
 export const cancelFingerprint = (v: { id: string; institution: string; subject: string; revision: number; reason: string }) =>
@@ -321,6 +323,7 @@ export function recipientView(record: any, kase: RecipientCase, study: Record<st
 export function senderView(record: any, head: Head, study: Record<string, string>, delivery: string | null, replacedBy: string | null) {
   const current = !!head && head.version > 0 && record.sourceVersion === head.version;
   return { ...base(record, replacedBy), supersedes: record.supersedesId ?? null, view: 'sender' as const,
+    ...(record.sendOutcome ? { send: record.sendOutcome } : {}),
     recipient: { actor: record.recipientActor, name: record.recipientName, role: record.recipientRole }, study, message: record.message,
     source: { version: record.sourceVersion, action: record.sourceAction, author: record.sourceAuthor, at: iso(record.sourceAt), current,
       reason: current ? null : head?.action === 'reset' ? 'reset' : 'head_moved' },

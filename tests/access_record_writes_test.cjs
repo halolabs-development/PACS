@@ -323,6 +323,7 @@ function criticalDatabase({ groups = [], members = [], extraUids = [] } = {}) {
         take(tx, 'fixed:' + recordId);
         return [{}];
       }
+      if (sql.includes('JOIN "Institution" i') && sql.includes('LEFT JOIN "Order"')) return [{ orderingPhysician: null, hospitalInbox: null }];
       if (sql.includes('FROM "StudyState"')) {
         const uids = values[0]?.values ?? [values[0]];
         if (sql.includes('FOR UPDATE')) for (const uid of uids) take(tx, 'study:' + uid);
@@ -331,8 +332,9 @@ function criticalDatabase({ groups = [], members = [], extraUids = [] } = {}) {
       if (sql.includes('FROM "Report" r')) return [{ ...head }];
       if (sql.includes('FROM "ReportVersion"')) return [{ beyond: versions.filter(v => v.version > values[1] && v.action !== 'discarded').length }];
       if (sql.includes('"supersedesId"=')) return [...s.records.values()].filter(r => r.supersedesId === values[0]).map(r => ({ id: r.id, sourceVersion: r.sourceVersion }));
-      if (sql.includes('SELECT id FROM "CriticalResult"')) return [...s.records.values()].filter(r => r.studyUid === values[0] && r.senderSub === values[1]
-        && r.recipientSub === values[2] && r.state === 'created').map(r => ({ id: r.id }));
+      if (sql.includes('FROM "CriticalResult"') && sql.includes("state='created'")) return [...s.records.values()]
+        .filter(r => r.studyUid === values[0] && r.senderSub === values[1] && r.state === 'created')
+        .map(r => ({ id: r.id, recipientSub: r.recipientSub }));
       if (sql.includes('FROM "CriticalResult" WHERE id=')) return s.records.has(values[0]) ? [{ ...s.records.get(values[0]) }] : [];
       throw new Error('critical double: unexpected statement');
     },

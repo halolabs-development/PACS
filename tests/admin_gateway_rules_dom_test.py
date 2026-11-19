@@ -44,7 +44,7 @@ BASE = "/worklist/hpacs-lite/"
 PAGE_PATH = BASE + "admin.html"
 SCRIPTS = {BASE + name: lf_text(HPACS / name) for name in (
     "auth.js", "work-context.js", "session-transport.js", "study-access-admin.js", "signing-key-admin.js",
-    "admin-access-review.js", "held-sources-admin.js", "emr-link.js", "emr-link-admin.js", "dicom-peers-admin.js",
+    "admin-access-review.js", "held-sources-admin.js", "emr-link.js", "emr-link-admin.js", "critical-result-inbox-admin.js", "dicom-peers-admin.js",
     "gateway-rules-admin.js", "product-info-data.js", "product-info.js")}
 INSTITUTION = "SYN-INST-A"
 ME = {"sub": "SYN-ADMIN-SUB", "user": "syn-admin", "displayName": "SYN Admin", "roles": ["admin"], "institution": INSTITUTION,
