@@ -1023,9 +1023,9 @@
      */
     function reportOnIt(s) {
       if (!s || !["W", "T", "H"].includes(s.rs)) return { typing: false, by: null, label: "" };
-      if (s.holder) return { typing: s.rs === "W", by: s.holder, label: displayActor(s.holder) };
+      if (s.holder) return { typing: s.rs === "W", by: s.holder, mine: s.holderMine, label: displayActor(s.holder) };
       const saved = appState[s.uid]?.savedBy || null;
-      return { typing: false, by: saved, label: saved ? displayActor(saved) : "" };
+      return { typing: false, by: saved, mine: appState[s.uid]?.savedByMine, label: saved ? displayActor(saved) : "" };
     }
 
     // 특수 렌더링이 필요한 칸만 함수로
@@ -1043,7 +1043,7 @@
           : s.rs === "D" ? "보존 기간이 끝나 판독문을 파기한 검사입니다"
           : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : "");
         // "In Progress by <name>": who is on it, for the other readers (the writer's own row needs no name). The name is data.
-        const by = on.by && on.by !== user ? ` <span class="rs-by">by <span translate="no">${esc(on.label)}</span></span>` : "";
+        const by = on.by && !on.mine ? ` <span class="rs-by">by <span translate="no">${esc(on.label)}</span></span>` : "";
         return `<span class="rs ${esc(on.typing ? "T" : s.rs)}"${s.holdReason ? ' data-kin-keep="title"' : ''} title="${esc(help + (by ? (help ? " — " : "") + on.label : ""))}">${esc(shown)}${by}</span>`; },
       confirm: s => esc(confirmText({ ...appState[s.uid], rs: s.rs })),
       // Missing images (Technician tab only): a mark beside the count, the same answer as the Info panel's Needs Check line
@@ -1059,7 +1059,7 @@
       preReviewer: s => esc(displayActor(s.preReviewer)),
       // A writer can hold the report with no viewer open. Presence excludes self; the lock does not.
       viewing: s => {
-        const hold = !s.holder ? '' : s.holder === user
+        const hold = !s.holder ? '' : s.holderMine
           ? `<span class="hold me" title="내가 작성 중">✎ 나</span>`
           : `<span class="hold other" title="${s.holder === '다른 기관' ? '다른 기관 판독의가' : s.holder === '작성자 비공개' ? '비공개 작성자가' : esc(displayActor(s.holder)) + ' 님이'} 작성 중">✎ <span translate="no">${esc(displayActor(s.holder))}</span></span>`;
         const presence = esc(viewingNames.get(s.uid) || '');
@@ -1530,6 +1530,7 @@
       s.preDoc = a.preDoc ?? "";
       s.preReviewer = a.preReviewer ?? "";
       s.prelimHidden = a.prelimHidden;
+      s.holderMine = a.holderMine === true;
       s.holder = a.holder;          // 서버가 만료된 점유는 빼고 준다
       s.version = a.version ?? 0;   // 낙관적 락 기준
       // S4-U5: the overlay repaints display fields only. RS, matching, UID, patient key and the rest of the row state
@@ -2162,7 +2163,7 @@
         : open("#b-save") && open("#b-approve") ? kinSay(" · 확정하려면 Save 또는 Approve")
         : open("#b-save") ? kinSay(" · 확정하려면 Save") : open("#b-approve") ? kinSay(" · 확정하려면 Approve") : "");
     }
-    function heldByOther(s) { return s?.holder && s.holder !== user ? s.holder : null; }
+    function heldByOther(s) { return s?.holder && !s.holderMine ? s.holder : null; }
     /**
      * FC-040 진행 중 판독 되돌리기: 대기·임시저장·보류(W·T·H)인 검사를 남이 판독 중이거나(살아 있는 점유) 남이 Save해 둔 글이
      * 있으면, 판독의 누구나 Reset to Unread로 점유를 풀고 Unread로 되돌린다 — 사유는 묻지 않는다(서버가 기록한다).
@@ -2171,7 +2172,7 @@
     function inProgressReset(s) {
       if (!s || !["W", "T", "H"].includes(s.rs)) return null;
       const savedBy = appState[s.uid]?.savedBy;
-      return heldByOther(s) || (savedBy && savedBy !== user ? savedBy : null);
+      return heldByOther(s) || (savedBy && !appState[s.uid].savedByMine ? savedBy : null);
     }
     function updateReportButtons() {
       const s = cur();
@@ -5700,7 +5701,7 @@
       const state = target ? appState[target.uid] : null;
       const savedByOther = !holder && state?.bodyLock === "in-progress" && state.savedBy ? state.savedBy : null;
       const own = !target ? ""
-        : holder && holder === user ? "✎ Held by you"
+        : holder && target.holderMine ? "✎ Held by you"
         : holder ? `✎ Held by ${displayActor(holder)}`
         : savedByOther ? `✎ In Progress by ${displayActor(savedByOther)}`
         : "Opened by you";
@@ -5708,7 +5709,7 @@
       // The head can wrap in a narrow column; keep presence updates within their reserved space so typing stays put.
       // Longer explanations belong in the title.
       kinWrite(line, !target ? "" : savedByOther ? kinSay("다른 판독의가 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다")
-        : holder && holder !== user ? kinSay("다른 판독의가 작성 중입니다")
+        : holder && !target.holderMine ? kinSay("다른 판독의가 작성 중입니다")
         : holder ? kinSay("이 판독의가 작성 중입니다(점유){0}", others ? " · " + others : "")
         : kinSay("검사를 여는 것만으로는 점유하지 않습니다. 판독문에 두 글자 이상 쓰면 이 판독의가 잡습니다.{0}", others ? " · " + others : ""), "title");
     }
@@ -7041,7 +7042,7 @@
 
     /** 점유 거절(REPORT_HELD): 누가 잡고 있는지 화면에 반영하고 그 검사에 한 번만 알린다. */
     function noteHeld(uid, holder) {
-      appState[uid] = { ...appState[uid], holder };
+      appState[uid] = { ...appState[uid], holder, holderMine: false };
       syncStudy(uid);
       if (uid === selectedUid) { updateReportButtons(); loadReport(); }
       if (warnedFor !== uid) {
@@ -8245,7 +8246,7 @@
         const draft = unconfirmedReport(uid);
         if (!draft) continue;
         const a = appState[uid];
-        if (a.prelimHidden || a.identityUnresolved || relatedInsertPending(uid) || (a.holder && a.holder !== user) || draftClient.busy(uid)) continue;
+        if (a.prelimHidden || a.identityUnresolved || relatedInsertPending(uid) || (a.holder && !a.holderMine) || draftClient.busy(uid)) continue;
         const conflict = draftClient.conflict(uid);
         if (conflict) {
           draftClient.keep(uid, draft);
@@ -8422,7 +8423,7 @@
     function releasedText(r) {
       const parts = [];
       // 점유자가 곧 저장 글을 쓴 사람이고 임시글이 있으면 아래 저장 글 문장이 같은 사실을 말한다.
-      if (r.holder && r.holderDraft && r.holder !== r.savedBy) {
+      if (r.holder && r.holderDraft && !r.sameWriter) {
         const who = displayActor(r.holder);
         parts.push(`${who} 선생님이 쓰던 글이 있습니다 — 그 글은 ${who} 선생님의 개인 임시글로 남아 있습니다.`);
       }
@@ -8517,7 +8518,7 @@
         .sort((a, b) => a.version - b.version)[0];
       if (!next) return "none";
       const drawn = Array.isArray(next.drawings) ? next.drawings.map(d => d?.id) : [], named = sent.drawings ?? [];
-      return next.action === sent.action && !!sent.author && next.author === sent.author
+      return next.action === sent.action && next.mine === true
         && RFIELDS.every(k => KinReportCitation.toLf(String(next[k] ?? "")) === KinReportCitation.toLf(sent.texts[k]))
         && drawn.length === named.length && named.every(id => drawn.includes(id)) ? "mine" : "other";
     }
@@ -8676,7 +8677,7 @@
                * 확정이 끝나며 `commitEpoch`이 올라가 그 읽기의 답은 버려진다 — 읽는다고 말해 놓고 읽지 않는 셈이 된다.
                */
               // Image Report: the list this commit named as its version's (none named, or a Reset: the version holds none).
-              reportUnknownCommits.set(uid, { sentAt, action, reason, baseVersion, author: draftOwner?.author ?? null,
+              reportUnknownCommits.set(uid, { sentAt, action, reason, baseVersion,
                 texts: action === "reset" ? Object.fromEntries(RFIELDS.map(k => [k, ""])) : content,
                 drawings: action === "reset" ? [] : [...(result.named?.expectedEffectiveDrawingIds ?? [])],
                 revision: draftClient.revision(uid) });
@@ -9008,7 +9009,7 @@
       catch (_) { list = null; }
       if (!work.admits(at)) return { status: "stopped" };
       const record = { batch: true, sentAt: sent?.sentAt ?? reportEdits, seq: sent?.seq ?? null, action, reason,
-        author: draftOwner?.author ?? null, baseVersion: item.version, texts: { ...texts }, revision: draftClient.revision(uid) };
+        baseVersion: item.version, texts: { ...texts }, revision: draftClient.revision(uid) };
       const found = batchVersionOutcome(list, record);
       if (found === "mine") {
         if (heldUid === uid) { heldUid = null; clearInterval(heartbeat); heartbeat = null; }
@@ -9042,7 +9043,7 @@
       if (!Array.isArray(list)) return "none";
       const same = v => RFIELDS.every(k => KinReportCitation.toLf(String(v?.[k] ?? "")) === KinReportCitation.toLf(sent.texts[k]));
       // Image Report: a batch commit names no drawings, so its version holds none - a version with drawings is not it.
-      if (list.some(v => v && v.version === sent.baseVersion + 1 && v.action === sent.action && !!sent.author && v.author === sent.author
+      if (list.some(v => v && v.version === sent.baseVersion + 1 && v.action === sent.action && v.mine === true
         && v.reason === sent.reason && same(v) && !(Array.isArray(v.drawings) && v.drawings.length))) return "mine";
       return list.some(v => v && Number.isSafeInteger(v.version) && v.version > sent.baseVersion) ? "other" : "none";
     }
@@ -9217,7 +9218,7 @@
       const s = studies.find(x => x.uid === uid);
       const a = appState[uid];
       if (!s || !a) return;
-      for (const k of ["rs", "ss", "em", "ts", "matched", "holder", "version", "repDoc", "confirm",
+      for (const k of ["rs", "ss", "em", "ts", "matched", "holder", "holderMine", "version", "repDoc", "confirm",
                         "preDoc", "preReviewer", "prelimHidden", "holdReason"])
         if (a[k] !== undefined) s[k] = a[k];
       if (a.holder === null || a.holder === undefined) s.holder = a.holder;
@@ -9270,8 +9271,8 @@
         const r = await api("POST", `/studies/${encodeURIComponent(uid)}/hold`, undefined, undefined, at);
         if (!work.admits(at)) return;
         const s = studies.find(x => x.uid === uid);
-        if (s) s.holder = r.holder;
-        appState[uid] = { ...appState[uid], holder: r.holder };
+        if (s) { s.holder = r.holder; s.holderMine = r.mine === true; }
+        appState[uid] = { ...appState[uid], holder: r.holder, holderMine: r.mine === true };
         render();
         if (uid === selectedUid) { updateReportButtons(); loadReport(); }
 
@@ -9301,9 +9302,9 @@
         if (uid !== selectedUid) {
           try { await api("POST", `/studies/${encodeURIComponent(uid)}/release`, undefined, undefined, at); } catch (e) {}
           work.commit(at, () => {
-            if (appState[uid]) appState[uid].holder = null;
+            if (appState[uid]) Object.assign(appState[uid], { holder: null, holderMine: false });
             const s2 = studies.find(x => x.uid === uid);
-            if (s2) s2.holder = null;
+            if (s2) Object.assign(s2, { holder: null, holderMine: false });
             render();
           });
           return;
@@ -9335,8 +9336,8 @@
       clearInterval(heartbeat); heartbeat = null;
       const holder = r.holder ?? null;
       const s = studies.find(x => x.uid === uid);
-      if (s) s.holder = holder;
-      appState[uid] = { ...appState[uid], holder };
+      if (s) { s.holder = holder; s.holderMine = false; }
+      appState[uid] = { ...appState[uid], holder, holderMine: false };
       render();
       if (uid === selectedUid) updateReportButtons();
       toast("이 검사의 판독 점유가 풀렸습니다 — 이어 쓰면 다시 판독을 시작합니다.", "err");
@@ -9348,8 +9349,8 @@
       heldUid = null;
       clearInterval(heartbeat); heartbeat = null;
       const s = studies.find(x => x.uid === uid);
-      if (s) s.holder = undefined;
-      if (appState[uid]) appState[uid].holder = undefined;
+      if (s) Object.assign(s, { holder: undefined, holderMine: false });
+      if (appState[uid]) Object.assign(appState[uid], { holder: undefined, holderMine: false });
       // 세션을 끝내는 중의 해제(auth.js가 종료 기록·통지 뒤, 로그아웃 POST 앞에 부른다)는 업무가 아니라 그 종료의 일부다:
       // 닫힌 문서의 수명주기 문맥으로, 끝나는 그 세션의 식별값을 실어 나간다. 그 밖에는 평소의 업무 요청이다.
       const at = work.capture(closing ? "lifecycle" : "document");
@@ -15280,14 +15281,14 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       // 이 메뉴가 열린 선택. 항목은 이 선택이 그대로일 때만 실행된다(위 클릭 처리).
       const opened = { uid, seq: selectionSeq, oid: selectedOid };
       const forceReleaseItems = KinAuth.has("admin") && s?.holder ? [{
-        label: kinSay("점유 강제 해제 (관리자)"), dis: s.holder === user, act: async () => {
+        label: kinSay("점유 강제 해제 (관리자)"), dis: s.holderMine === true, act: async () => {
           if (!confirm(`${displayActor(s.holder)} 님의 점유를 강제로 해제합니다. 그쪽 화면은 다음 저장에서 거절됩니다. 계속할까요?`)) return;
           const at = work.capture("document");
           try { await api("POST", `/studies/${encodeURIComponent(uid)}/release/force`, undefined, undefined, at); }
           catch (e) { work.commit(at, () => apiFail(e)); return; }
           work.commit(at, () => {
-            s.holder = null;
-            appState[uid] = { ...appState[uid], holder: null };
+            s.holder = null; s.holderMine = false;
+            appState[uid] = { ...appState[uid], holder: null, holderMine: false };
             render();
             if (uid === selectedUid) { updateReportButtons(); loadReport(); }
             toast("점유를 해제했습니다 (감사로그 기록)");

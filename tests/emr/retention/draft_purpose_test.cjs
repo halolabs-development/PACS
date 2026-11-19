@@ -1085,9 +1085,9 @@ test('B2-COMMIT a refusal whose snapshot view cannot be recorded is still that r
     w.facts.request.work.transactionWithRecords = async fn => {
       calls++;
       const study = { uid: UID, institutionId: 'syn-inst', draftEpoch: w.body.expectedRevision.split(':')[0] };
-      // The view's record names the caller's draft row (by its account); this caller has none here.
+      // The refusal carries this caller's stored draft snapshot, including its immutable record id.
       await fn({ studyGroupMember: { findMany: async () => [] }, studyState: { findUnique: async () => study },
-        reportDraft: { findFirst: async () => null, findUnique: async () => null }, reportDraftPurposeEnd: { findFirst: async () => null },
+        reportDraft: { findFirst: async () => ({ author: AUTHOR }) },
         $executeRaw: async () => 0, $queryRaw: async () => [study] },
         async () => {});
       if (calls === 2) throw new LedgerFailure(ledger);

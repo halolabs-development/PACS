@@ -1,3 +1,4 @@
+import { sameAccount, PRIVATE_WRITER } from './owner-identity';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
 /**
@@ -10,8 +11,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
  * (RISK-S5-U5b-CURRENT-GROUP/OWNER-ATTRIBUTION). AuditLog에는 기관 칸이 없고 이 판은 migration을 두지 않으므로
  * (D7 a) 기관을 분명히 남기지 않은 행은 아무에게도 보이지 않는다. 표에 없는 action도 같다(fail closed).
  *
- * 이 모듈은 node:crypto 말고는 가져오지 않는다. tests/admin_audit_attribution_test.cjs가 이 소스를 Node type
- * stripping으로 그대로 싣는다. 표의 action 이름은 큰따옴표로 쓴다 — api/src에서 작은따옴표 action 문자열은 감사
+ * 표의 action 이름은 큰따옴표로 쓴다 — api/src에서 작은따옴표 action 문자열은 감사
  * 쓰기 자리로 읽히고(tests/gateway_retry_source_test.py는 Now Retry 요청 감사 action의 작은따옴표 문자열이 api/src
  * 전체에 한 번뿐임을 센다), 이 표는 아무것도 쓰지 않는다.
  */
@@ -268,7 +268,7 @@ function memberAttribution(rule: string, base: Omit<AuditProjection, 'rule' | 'd
   return { rule, visible_to: sides, projection_by_side, hidden: null };
 }
 
-function fieldAttribution(rule: string, base: Omit<AuditProjection, 'rule' | 'detail'>, detail: Record<string, any>) {
+function fieldAttribution(rule: string, base: Omit<AuditProjection, 'rule' | 'detail'>, detail: Record<string, any>, readerSub?: string) {
   const source = rule.slice('field:'.length);
   const key = source.startsWith('detail.') ? source.slice('detail.'.length) : null;
   const value = key === null ? base.target : own(detail, key) ? detail[key] : undefined;
@@ -276,24 +276,21 @@ function fieldAttribution(rule: string, base: Omit<AuditProjection, 'rule' | 'de
   // A local administrator may release a foreign writer. Attribution of the
   // action does not grant access to that writer's identity. Never alter storage.
   if (base.action === 'hold.force-release') {
-    // A record that names the holder's account (owner-identity.ts) is never "the releaser's own" by its email alone: the
-    // releaser's email may be one the holder's account had before.
     const { holderInstitutionId, holderSub, ...rest } = detail;
-    const ownByEmail = holderSub === undefined && rest.holder === base.actor;
     detail = { ...rest, holder: !rest.holder ? null
-      : ownByEmail || holderInstitutionId === value ? rest.holder
+      : sameAccount(holderSub, { sub: readerSub }) || holderInstitutionId === value ? rest.holder
       : holderInstitutionId ? '다른 기관' : '작성자 비공개' };
   } else if (base.action === 'report.draft.force-discard' && Array.isArray(detail.drafts)) {
     // Drafts do not record their author's institution. The releasing institution
     // is not evidence of authorship, including for legacy rows.
     detail = { ...detail, drafts: detail.drafts.map(({ authorSub, ...draft }: any) => ({ ...draft,
-      author: authorSub === undefined && draft.author === base.actor ? draft.author : '작성자 비공개' })) };
+      author: sameAccount(authorSub, { sub: readerSub }) ? draft.author : PRIVATE_WRITER })) };
   }
   return { rule, visible_to: [value], projection_by_side: new Map([[value, { ...base, rule, detail }]]), hidden: null };
 }
 
 /** 저장된 행 하나의 기록 시점 귀속과 기관별 투영(REQ-S5-U5b-ADMIN-AUDIT/MOVE-PROJECTION/UNCLEAR-HIDDEN). */
-export function attributeAuditRow(row: AuditLogRow): AuditAttribution {
+export function attributeAuditRow(row: AuditLogRow, readerSub?: string): AuditAttribution {
   const rule = auditRule(row?.action);
   if (rule.startsWith('hidden:')) return hidden(rule, rule.slice('hidden:'.length));
   const at = isoTime(row.at);
@@ -301,12 +298,12 @@ export function attributeAuditRow(row: AuditLogRow): AuditAttribution {
   const detail = parsedDetail(row.detail);
   if (!detail) return hidden(rule, 'unparsable_detail');
   const base = { at, actor: row.actor, action: row.action, target: row.target };
-  return rule === 'member_snapshots' ? memberAttribution(rule, base, detail) : fieldAttribution(rule, base, detail);
+  return rule === 'member_snapshots' ? memberAttribution(rule, base, detail) : fieldAttribution(rule, base, detail, readerSub);
 }
 
 /** 읽는 기관에게 보일 행, 없으면 null. 읽는 기관은 "누가 읽는가"일 뿐 행의 귀속을 정하지 않는다. */
-export function projectAuditRow(row: AuditLogRow, reader: string): AuditProjection | null {
-  return attributeAuditRow(row).projection_by_side.get(reader) ?? null;
+export function projectAuditRow(row: AuditLogRow, reader: string, readerSub?: string): AuditProjection | null {
+  return attributeAuditRow(row, readerSub).projection_by_side.get(reader) ?? null;
 }
 
 /** 아래 id(null이면 맨 위)보다 작은 행을 id 내림차순으로 최대 take개. 조회 기준 top 이하만 준다(서비스가 감싼다). */
@@ -320,7 +317,7 @@ export type AuditSource = (below: number | null, take: number) => Promise<AuditL
  * `ids`는 담은 행의 id(같은 순서)로, 서버의 열람 기록에만 쓰고 응답에 싣지 않는다.
  */
 export async function readAuditPage(source: AuditSource, reader: string,
-    page: { after: number | null; limit: number; batch?: number }) {
+    page: { after: number | null; limit: number; batch?: number }, readerSub?: string) {
   const batch = page.batch ?? 1000;
   const rows: AuditProjection[] = [], ids: number[] = [];
   let below: number | null = null, previous = Infinity, total = 0, last: number | null = null, more = false;
@@ -331,7 +328,7 @@ export async function readAuditPage(source: AuditSource, reader: string,
       // 내림차순이 아니면 같은 행을 두 번 세거나 건너뛴다. 조용히 넘기지 않는다.
       if (!Number.isSafeInteger(row?.id) || row.id >= previous) throw new Error('audit source order');
       previous = row.id;
-      const shown = projectAuditRow(row, reader);
+      const shown = projectAuditRow(row, reader, readerSub);
       if (!shown) continue;
       total++;
       if (page.after !== null && row.id >= page.after) continue;

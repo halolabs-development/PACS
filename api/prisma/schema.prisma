@@ -496,11 +496,15 @@ model Report {
 /// 없는 것으로 읽는다). `Report.version`/`baseVersion`과는 별개의 수다.
 model ReportDraft {
   uid            String
-  /// The record id's second part ([uid, author]): the author's login email when the row was made, never rewritten.
+  /// Immutable second part of the [uid, author] record id.
   author         String
   /// The account (sub) whose draft this is. Whose draft it is is judged by this, never by `author`; NULL = an older row
   /// no member could be found for (it stays, and is nobody's).
   authorSub      String?
+  /// Login at key allocation. A legacy row stores its exact display name in author.
+  authorLogin    String?
+  /// Only a first-view reservation may have revision zero. A write consumes the reservation.
+  firstViewOnly  Boolean @default(false)
   findings       String   @default("")
   conclusion     String   @default("")
   recommendation String   @default("")
@@ -775,7 +779,7 @@ model SharedFilterLibrary {
 
 model UserFilter {
   id        Int      @id @default(autoincrement())
-  owner     String                          // 토큰의 actor. 이 사람 것만 보인다
+  owner     String                          // 소유 계정의 sub
   name      String
   mode      String   @default("Radiology")  // Radiology / Technician
   isDefault Boolean  @default(false)

@@ -8,10 +8,10 @@
  * handed to whoever has that email now.
  *
  * The email stays where it is written: as the shown name of a holder or a writer, in history and signed records, and as
- * the second part of a draft's record id ([uid, author]) that retention and viewing records point to.
+ * the original login in a draft's immutable record id ([uid, author]) that retention and viewing records point to.
  */
 import type { Prisma } from '@prisma/client';
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 
 type Account = { sub?: string | null; actor?: string | null };
 
@@ -24,10 +24,8 @@ export function sameAccount(storedSub: string | null | undefined, caller: Accoun
 export const PRIVATE_WRITER = '작성자 비공개';
 
 /**
- * The login email of a stored holder or writer as this caller is given it. The screens compare such a value with their own
- * login (`x === user`), so: the caller's own row reads as the caller's login now; another account's row whose stored email is
- * the caller's login now (an email that moved to the caller) never reads as the caller's - it is withheld; any other row
- * reads as stored.
+ * Display the caller's current login on their own row. Withhold a different account's old login if it
+ * now names the caller. Ownership booleans are calculated separately with sameAccount.
  */
 export function shownActor(stored: string, storedSub: string | null | undefined, caller: Account): string {
   if (sameAccount(storedSub, caller)) return typeof caller.actor === 'string' && caller.actor ? caller.actor : stored;
@@ -51,34 +49,36 @@ export async function lockedDraftOf(tx: Prisma.TransactionClient, uid: string, s
 }
 
 /**
- * The record id's second part for the first draft row an account makes on a study: its login email - unless that string was
- * already a draft record id of the study (a row, or an ended work kept for retention: the email belonged to another account
- * then, or the row went with a deleted study), then the email and the account id (and a number, should that be taken too).
- * A record id is never given to a second account. Called under the study row lock every draft write holds.
+ * Allocate under the study lock shared by first reads and writes. A legacy row (or retained work) can already
+ * have the literal login#sub as its id. Its id stays reserved even if its author could not be resolved.
  */
-export async function newDraftAuthor(tx: any, uid: string, sub: string, preferred: string): Promise<string> {
-  for (let n = 0; n < 100; n++) {
-    const author = n === 0 ? preferred : n === 1 ? `${preferred}#${sub}` : `${preferred}#${sub}#${n}`;
+export async function newDraftAuthor(tx: Prisma.TransactionClient, uid: string, sub: string, login: string): Promise<string> {
+  const base = `${login}#${sub}`;
+  for (let n = 1; ; n++) {
+    const author = n === 1 ? base : `${base}#${n}`;
     if (await tx.reportDraft.findUnique({ where: { uid_author: { uid, author } }, select: { uid: true } })) continue;
     if (await tx.reportDraftPurposeEnd.findFirst({ where: { uid, author }, select: { uid: true } })) continue;
     return author;
   }
-  throw new Error('no free draft record id');
 }
 
-/** The login email a draft row was made under: its record id without the account suffix `newDraftAuthor` may have added. */
-export function draftAuthorName(row: { author: string; authorSub?: string | null }): string {
-  const at = row.authorSub ? row.author.indexOf('#' + row.authorSub) : -1;
-  return at > 0 ? row.author.slice(0, at) : row.author;
+/** Keep the original login verbatim, even when its own text ends in #sub or #sub#2. */
+export function draftAuthorName(row: { author: string; authorLogin?: string | null }): string {
+  return row.authorLogin ?? row.author;
 }
-/**
- * The record id's second part of the caller's draft of a study, for a viewing or writing record: its own row's author
- * (whatever the caller's email is now), or - with no row yet - the author its first row would get.
- */
-export async function draftRecordAuthor(db: any, uid: string, caller: { sub?: string | null; actor: string }): Promise<string> {
-  if (!caller.sub) return caller.actor;
-  const own = await db.reportDraft.findFirst({ where: { uid, authorSub: caller.sub }, select: { author: true } });
-  return own ? own.author : newDraftAuthor(db, uid, caller.sub, caller.actor);
+
+/** An empty first view reserves its key at revision zero. A first write advances the same row to revision one. */
+export async function draftRecordAuthor(tx: Prisma.TransactionClient, uid: string, caller: Account & { actor: string }): Promise<string> {
+  const sub = accountOwner(caller);
+  const own = await draftOf(tx, uid, caller, { author: true });
+  if (own) return own.author;
+  const state = await tx.$queryRaw<{ uid: string }[]>`SELECT uid FROM "StudyState" WHERE uid = ${uid} FOR UPDATE`;
+  if (!state.length) throw new NotFoundException('검사를 찾을 수 없습니다');
+  const reserved = await draftOf(tx, uid, caller, { author: true });
+  if (reserved) return reserved.author;
+  const author = await newDraftAuthor(tx, uid, sub, caller.actor);
+  await tx.reportDraft.create({ data: { uid, author, authorSub: sub, authorLogin: caller.actor, firstViewOnly: true, revision: 0, present: false } });
+  return author;
 }
 
 /** The where-part that selects only the caller's own draft rows (none when the caller names no account). */

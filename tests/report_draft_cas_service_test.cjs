@@ -38,8 +38,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const {IncomingMessage, ServerResponse} = require('node:http');
 const {Socket} = require('node:net');
-const {createRequestContext} = require('/app/dist/emr-runtime/request-context');
-const {createRequestIngress} = require('/app/dist/emr-runtime/request-ingress');
+const api = process.env.KIN_DRAFT_API || '/app';
+const {createRequestContext} = require(`${api}/dist/emr-runtime/request-context`);
+const {createRequestIngress} = require(`${api}/dist/emr-runtime/request-ingress`);
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { execFileSync } = require('node:child_process');
 const { randomBytes, randomUUID } = require('node:crypto');
@@ -51,17 +52,17 @@ Object.assign(process.env, { KC_ISSUER: 'https://syn.test/auth/realms/kin', KC_A
   // a closed loopback port: the Keycloak logout after a revocation fails at once and changes nothing
   KC_JWKS_URL: 'http://127.0.0.1:9/realms/kin/protocol/openid-connect/certs' });
 
-const { PacsService } = require('/app/dist/pacs.service');
-const { AuthService } = require('/app/dist/auth.service');
-const { PresenceService } = require('/app/dist/presence.service');
-const { StudyAccessService } = require('/app/dist/study-access.service');
-const { AppModule } = require('/app/dist/app.module');
-const { STRUCTURE_CATALOG, renderItem } = require('/app/dist/report-structure');
-const { LocalReadResponse } = require('/app/dist/emr-viewing/local-read');
+const { PacsService } = require(`${api}/dist/pacs.service`);
+const { AuthService } = require(`${api}/dist/auth.service`);
+const { PresenceService } = require(`${api}/dist/presence.service`);
+const { StudyAccessService } = require(`${api}/dist/study-access.service`);
+const { AppModule } = require(`${api}/dist/app.module`);
+const { STRUCTURE_CATALOG, renderItem } = require(`${api}/dist/report-structure`);
+const { LocalReadResponse } = require(`${api}/dist/emr-viewing/local-read`);
 // Module A local reads (#264) return a LocalReadResponse; the HTTP layer sends its serialized body
 // (emr-viewing.module.ts ViewingResponseInterceptor), so that is the answer these cases read.
 const sent = value => value instanceof LocalReadResponse ? JSON.parse(value.json) : value;
-const nest = createRequire('/app/dist/app.module.js');
+const nest = createRequire(`${api}/dist/app.module.js`);
 const { PATH_METADATA, METHOD_METADATA, MODULE_METADATA, ROUTE_ARGS_METADATA } = nest('@nestjs/common/constants');
 const { RequestMethod, HttpException } = nest('@nestjs/common');
 const { RouteParamtypes } = nest('@nestjs/common/enums/route-paramtypes.enum');
@@ -77,16 +78,16 @@ function database() {
     assert.ok(url, 'set KIN_REPORT_DRAFT_DATABASE_URL to the disposable ' + DATABASE + ' database');
     assert.equal(new URL(url).pathname, '/' + DATABASE, 'refusing any database but the disposable ' + DATABASE);
     process.env.DATABASE_URL = url;
-    const { PrismaService } = require('/app/dist/prisma.service');
+    const { PrismaService } = require(`${api}/dist/prisma.service`);
     const base = new PrismaService();
     await base.$connect();
     const [{ tables }] = await base.$queryRawUnsafe(`SELECT count(*)::int AS tables FROM pg_tables WHERE schemaname = 'public'`);
     assert.equal(tables, 0, 'refusing a database that already holds tables: this file writes the tables it reads');
-    execFileSync('/app/node_modules/.bin/prisma', ['migrate', 'deploy', '--schema', '/app/prisma/schema.prisma'],
-      { cwd: '/app', env: { ...process.env, DATABASE_URL: url, HOME: os.tmpdir(), CHECKPOINT_DISABLE: '1' }, stdio: 'pipe' });
+    execFileSync(process.execPath, [`${api}/node_modules/prisma/build/index.js`, 'migrate', 'deploy', '--schema', `${api}/prisma/schema.prisma`],
+      { cwd: api, env: { ...process.env, DATABASE_URL: url, HOME: os.tmpdir(), CHECKPOINT_DISABLE: '1' }, stdio: 'pipe' });
     const applied = await base.$queryRawUnsafe(`SELECT migration_name FROM _prisma_migrations
       WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`);
-    const folders = fs.readdirSync('/app/prisma/migrations', { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name).sort();
+    const folders = fs.readdirSync(`${api}/prisma/migrations`, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name).sort();
     assert.deepEqual(applied.map(row => row.migration_name).sort(), folders, 'every migration of the image applied');
     for (const id of [INST, OTHER]) await base.institution.create({ data: { id, name: id } });
     return base;
@@ -271,10 +272,10 @@ async function world() {
     const value = base[key];
     return typeof value === 'function' ? value.bind(base) : value;
   } });
-  const { AccessLedgerStore } = require('/app/dist/emr-runtime/store');
-  const { FailureJournal, FailureSpool } = require('/app/dist/emr-runtime/failure-journal');
-  const { createRecordPort } = require('/app/dist/emr-runtime/record-port');
-  const { createBackgroundWorkRegistry } = require('/app/dist/emr-runtime/background-work');
+  const { AccessLedgerStore } = require(`${api}/dist/emr-runtime/store`);
+  const { FailureJournal, FailureSpool } = require(`${api}/dist/emr-runtime/failure-journal`);
+  const { createRecordPort } = require(`${api}/dist/emr-runtime/record-port`);
+  const { createBackgroundWorkRegistry } = require(`${api}/dist/emr-runtime/background-work`);
   const spool = fs.mkdtempSync(require('node:path').join(os.tmpdir(), 'kin-draft-ledger-'));
   const journal = new FailureJournal(recorder, new FailureSpool(spool));
   const { port: ledger, control } = createRecordPort(new AccessLedgerStore(recorder, journal));
@@ -325,8 +326,8 @@ async function world() {
     fs.rmSync(spool, { recursive: true });
   });
   w.suspendReviewer = () => flow.run({label:'suspend'}, async () => {
-    const {AdminService}=require('/app/dist/admin.service');
-    const {AdminController}=require('/app/dist/admin.controller');
+    const {AdminService}=require(`${api}/dist/admin.service`);
+    const {AdminController}=require(`${api}/dist/admin.controller`);
     const provider={getUser:async()=>({id:REVIEWER.sub,username:'reviewer',email:REVIEWER.actor,
       emailVerified:true,firstName:'Synthetic',lastName:'Reviewer',groups:[INST],roles:['radiologist'],enabled:true})};
     const req=Object.assign(new IncomingMessage(new Socket()),ADMIN),res=new ServerResponse(req);
@@ -394,7 +395,7 @@ async function world() {
     return sid;
   };
   w.epoch = async uid => (await base.studyState.findUnique({ where: { uid }, select: { draftEpoch: true } }))?.draftEpoch ?? null;
-  w.row = (uid, principal) => base.reportDraft.findUnique({ where: { uid_author: { uid, author: principal.actor } } });
+  w.row = (uid, principal) => base.reportDraft.findUnique({ where: { uid_authorSub: { uid, authorSub: principal.sub } } });
   /** The boundary a document of `principal` read: the study epoch and its own revision. */
   w.token = async (uid, principal) => `${await w.epoch(uid)}:${(await w.row(uid, principal))?.revision ?? 0}`;
   w.audits = async uid => (await base.auditLog.findMany({ where: { target: uid }, orderBy: { id: 'asc' } })).map(r => `${r.actor} ${r.action}`);
@@ -1134,6 +1135,23 @@ test('D10 commit and discard answer the envelope and the state; the commit audit
 
 // ── D11: study removal and recreation ──
 
+test('a first view of a removed study cannot reserve a key on its replacement', async () => {
+  const w = await world();
+  const uid = await w.study({ draft: false });
+  const captured = w.gate('R', 'read-commit');
+  const reading = w.send('R', 'read', { as: A, uid });
+  try {
+    await captured.arrived();
+    const removed = await w.send('X', 'remove', { as: ADMIN, uid });
+    assert.equal(removed.ok, true, JSON.stringify(removed.body));
+    await w.study({ uid, draft: false });
+  } finally {
+    captured.release();
+  }
+  assert.deepEqual(brief(await reading), { ok: false, status: 409, code: 'REPORT_DRAFT_CONFLICT' });
+  assert.equal(await w.row(uid, A), null);
+});
+
 test('D11 tombstones do not block the removal of a study; the same UID created again has a new epoch that refuses every old boundary', async () => {
   const w = await world();
   const uid = await w.study();
@@ -1159,10 +1177,19 @@ test('D11 tombstones do not block the removal of a study; the same UID created a
     assert.deepEqual(brief(late), { ok: false, status: 409, code: 'REPORT_DRAFT_CONFLICT' }, token);
   }
   // The kept tombstone is still empty and keeps its revision; the new epoch is what refuses every old boundary above.
+  const empty = await w.send('R', 'read', { as: A, uid });
   const kept = await w.row(uid, A);
-  assert.deepEqual([kept.present, kept.findings], [false, '']);
-  const fresh = await w.send('X', 'put', { as: A, uid, body: request('put', A, { token: `${next}:${kept.revision}`, head: 0, mark: 'X' })[1] });
+  assert.deepEqual([kept.author, kept.present, empty.body.revision], [A.actor, false, `${next}:${kept.revision}`]);
+  const fresh = await w.send('X', 'put', { as: A, uid, body: request('put', A, { token: empty.body.revision, head: 0, mark: 'X' })[1] });
   assert.deepEqual([fresh.ok, fresh.body.revision], [true, `${next}:${kept.revision + 1}`]);
+  // A second reader first opens this recreated study, then changes login before writing.
+  const other = await w.send('R', 'read', { as: B, uid });
+  const renamed = { ...B, actor: A.actor };
+  const first = await w.send('Y', 'put', { as: renamed, uid, body: request('put', renamed,
+    { token: other.body.revision, head: 0, mark: 'Y' })[1] });
+  assert.equal(first.ok, true, JSON.stringify(first.body));
+  assert.equal((await w.row(uid, B)).author, `${B.actor}#${B.sub}`);
+  assert.equal((await w.row(uid, A)).author, A.actor);
 });
 
 // ── REQ-18: bounds ──
@@ -1347,7 +1374,7 @@ const reservations = [];
 let endingsObserved = false;
 function observeEndings() {
   if (endingsObserved) return;
-  require('/app/dist/emr-retention/draft-purpose').configureDraftPurpose({ ledger: null, ensureLedger: async () => {},
+  require(`${api}/dist/emr-retention/draft-purpose`).configureDraftPurpose({ ledger: null, ensureLedger: async () => {},
     scheduleDestruction: (unit, author) => { reservations.push({ unit, author }); }, recheckEnd: target => { reservations.push({ recheck: target.unit }); } });
   endingsObserved = true;
 }
@@ -1383,7 +1410,7 @@ test('B2-COMMIT K3 a Clear or Discard whose COMMIT a deferred P0001 fails is REP
 
 test('REQ-18 migration: existing drafts become present at revision 1 with their content, existing states get distinct epochs', async () => {
   const w = await world();
-  const sql = fs.readFileSync('/app/prisma/migrations/20261004120000_draft_revision_session_entry/migration.sql', 'utf8');
+  const sql = fs.readFileSync(`${api}/prisma/migrations/20261004120000_draft_revision_session_entry/migration.sql`, 'utf8');
   const schema = 'kin_u5s_before';
   // the two tables as they were before this migration, in a scratch schema of the same disposable database
   const run = text => w.base.$executeRawUnsafe(text);
@@ -1437,7 +1464,7 @@ test('CORE-REVIEWER preliminary assignment uses current DB eligibility while the
 
 // D638 R9-3/4: REQ-S7-U5-DB-RIGHTS -> RISK-STALE-REVIEWER / SELF-APPROVAL / LOCK-SCOPE.
 test('CORE_R9_REVIEWER_FRESH: a cached colleague read cannot decide designation, and fresh I/O precedes the transaction',async()=>{
-  const w=await world(),{KeycloakService}=require('/app/dist/keycloak.service');
+  const w=await world(),{KeycloakService}=require(`${api}/dist/keycloak.service`);
   const provider=new KeycloakService();let current=[{id:REVIEWER.sub,email:REVIEWER.actor,username:'reviewer',enabled:true}];
   provider.adm=async route=>{
     // REQUEST_FACTS resolves the request identity in its own short ledger transaction before the handler runs;
@@ -1494,7 +1521,7 @@ test('CORE_REVIEWER_IDENTITY_LATE_CALLBACK_AND_BEARER roster subject binds fresh
     assert.equal((await w.state(uid)).study.preReviewer,identity);
     assert.deepEqual(await w.base.memberRights.findUnique({where:{sub:REVIEWER.sub}}),stale);
   }
-  const {ServiceUnavailableException}=require('/app/node_modules/@nestjs/common');
+  const {ServiceUnavailableException}=require(`${api}/node_modules/@nestjs/common`);
   w.rosterError=new ServiceUnavailableException('synthetic roster outage');
   const uid=await w.study(),token=await w.token(uid,A),[route,body]=request('preliminary',A,{token,head:0,mark:'roster-down'});
   const before=await w.state(uid);
@@ -1571,7 +1598,7 @@ async function r11Consumer() {
     remote:f=>{onRemote=f;},transaction:f=>{onTransaction=f;}};
 }
 test('PREVIEW_DESIGNATION_RENAME_RECYCLE initial and post-Orthanc permission',async()=>{
-  const w=await r11Consumer(),{ReportPreviewController}=require('/app/dist/report-preview.controller');
+  const w=await r11Consumer(),{ReportPreviewController}=require(`${api}/dist/report-preview.controller`);
   const svc=new ReportPreviewController(w.client,w.orthanc,w.access,{});
   for(const field of ['preDoc','preReviewer']) {
     await w.designate(field);
@@ -1579,12 +1606,12 @@ test('PREVIEW_DESIGNATION_RENAME_RECYCLE initial and post-Orthanc permission',as
     const reads=w.remoteReads;await w.refusal(svc.read(w.uid,w.y));assert.equal(w.remoteReads,reads,'initial refusal reads no original');
     await w.designate(field,w.y.sub);w.remote(()=>w.designate(field));
     await w.refusal(svc.read(w.uid,w.y));
-    await w.designate(field,null);assert.equal(sent(await svc.read(w.uid,w.y)).report.findings,'R11-PRIVATE-BODY');
+    await w.designate(field,null);await w.refusal(svc.read(w.uid,w.y));
     await w.refusal(svc.read(w.uid,w.renamed));
   }
 });
 test('VIEWER_DESIGNATION_RENAME_RECYCLE list, single recheck and revision SQL',async()=>{
-  const w=await r11Consumer(),{ViewerService}=require('/app/dist/viewer.service'),svc=new ViewerService(w.client,w.orthanc,w.access);
+  const w=await r11Consumer(),{ViewerService}=require(`${api}/dist/viewer.service`),svc=new ViewerService(w.client,w.orthanc,w.access);
   const item=await w.item(w.x);
   const reads=[c=>svc.list(w.uid,{},c),c=>svc.list(w.uid,{recheck:item.id},c),c=>svc.list(w.uid,{},c,item.id)];
   for(const field of ['preDoc','preReviewer'])for(const read of reads) {
@@ -1592,12 +1619,12 @@ test('VIEWER_DESIGNATION_RENAME_RECYCLE list, single recheck and revision SQL',a
     for(const c of [w.x,w.renamed]){const r=await read(c);assert.equal((r.items??r.revisions).length,1);}
     await w.refusal(read(w.y));
     await w.designate(field,w.y.sub);w.transaction(()=>w.designate(field));await w.refusal(read(w.y));
-    await w.designate(field,null);assert.equal(((await read(w.y)).items??(await read(w.y)).revisions).length,1);
+    await w.designate(field,null);await w.refusal(read(w.y));
     await w.refusal(read(w.renamed));
   }
 });
 test('FINDING_DESIGNATION_RENAME_RECYCLE list, history, readableFindings and comparison lineage',async()=>{
-  const w=await r11Consumer(),{FindingService}=require('/app/dist/finding.service'),svc=new FindingService(w.client,w.access,w.orthanc);
+  const w=await r11Consumer(),{FindingService}=require(`${api}/dist/finding.service`),svc=new FindingService(w.client,w.access,w.orthanc);
   const item=await w.item(w.x),id=randomUUID(),snapshot={schemaVersion:1,title:'R11-PRIVATE-FINDING',text:'R11-PRIVATE',hidden:false,primary:0,
     sources:[{kind:'key',studyUid:w.uid,itemId:item.id,revision:1}]};
   await w.db.finding.create({data:{id,studyUid:w.uid,authorSub:w.x.sub,authorActor:w.x.actor,revision:1,snapshot,updatedAt:new Date()}});
@@ -1614,8 +1641,8 @@ test('FINDING_DESIGNATION_RENAME_RECYCLE list, history, readableFindings and com
     for(const read of reads)await w.refusal(read(w.y));
     await w.access.prepare(w.y);assert.deepEqual(await readable(w.y),[]);
     for(const read of reads){await w.designate(field,w.y.sub);w.transaction(()=>w.designate(field));await w.refusal(read(w.y));}
-    await w.designate(field,null);for(const read of reads){const r=await read(w.y);assert.equal((r.items??r.revisions).length,1);}
-    assert.equal((await readable(w.y)).length,1);assert.deepEqual(await readable(w.renamed),[]);
+    await w.designate(field,null);for(const read of reads)await w.refusal(read(w.y));
+    assert.deepEqual(await readable(w.y),[]);assert.deepEqual(await readable(w.renamed),[]);
   }
   // Public anchor, P comparison: the source filter must withhold the complete finding and all its history.
   const prior=w.uid+'.9';await w.db.studyState.create({data:{uid:prior,institutionId:INST,rs:'P',preDoc:w.x.actor,preDocSub:w.x.sub}});
@@ -1628,7 +1655,7 @@ test('FINDING_DESIGNATION_RENAME_RECYCLE list, history, readableFindings and com
   for(const c of [w.x,w.renamed]) {assert.equal((await svc.list(w.uid,{},c)).items.length,1);assert.equal((await readable(c)).length,1);}
   assert.deepEqual((await svc.list(w.uid,{},w.y)).items,[]);await w.refusal(svc.list(w.uid,{},w.y,id),404);
   assert.deepEqual(await readable(w.y),[]);
-  await w.db.studyState.update({where:{uid:prior},data:{preDocSub:null}});assert.equal((await readable(w.y)).length,1);
+  await w.db.studyState.update({where:{uid:prior},data:{preDocSub:null}});assert.deepEqual(await readable(w.y),[]);
 });
 function r11Job(w) {
   return {id:randomUUID(),title:'R11-PRIVATE-JOB',description:'SYNTHETIC',snapshot:{version:1,studies:[w.uid],rows:1,cols:1,active:0,
@@ -1637,7 +1664,7 @@ function r11Job(w) {
       properties:{voiRange:{lower:0,upper:100},VOILUTFunction:'LINEAR',invert:false}}]}};
 }
 test('VIEWER_JOB_DESIGNATION_RENAME_RECYCLE reads and locked parents on save',async()=>{
-  const w=await r11Consumer(),{ViewerJobService}=require('/app/dist/viewer-job.service'),svc=new ViewerJobService(w.client,w.orthanc,w.access);
+  const w=await r11Consumer(),{ViewerJobService}=require(`${api}/dist/viewer-job.service`),svc=new ViewerJobService(w.client,w.orthanc,w.access);
   for(const field of ['preDoc','preReviewer']) {
     await w.designate(field);const job=r11Job(w),raw=Buffer.from(JSON.stringify(job));await svc.create(w.uid,raw,w.x);
     assert.equal((await svc.get(w.uid,job.id,w.renamed)).title,job.title);
@@ -1648,15 +1675,15 @@ test('VIEWER_JOB_DESIGNATION_RENAME_RECYCLE reads and locked parents on save',as
     await w.designate(field,w.y.sub);w.transaction(()=>w.designate(field));
     await w.refusal(svc.create(w.uid,Buffer.from(JSON.stringify(r11Job(w))),w.y));assert.equal(await w.db.viewerJob.count(),before);
     await w.designate(field,w.y.sub);w.remote(()=>w.designate(field));await w.refusal(svc.get(w.uid,job.id,w.y));
-    await w.designate(field,null);assert.equal((await svc.get(w.uid,job.id,w.y)).title,job.title);
-    await svc.create(w.uid,Buffer.from(JSON.stringify(r11Job(w))),w.y);
+    await w.designate(field,null);await w.refusal(svc.get(w.uid,job.id,w.y));
+    await w.refusal(svc.create(w.uid,Buffer.from(JSON.stringify(r11Job(w))),w.y));
     await w.refusal(svc.get(w.uid,job.id,w.renamed));
   }
 });
 test('MANUAL_SR_DESIGNATION_RENAME_RECYCLE prepare and locked recheck preserve SR and measurement on refusal',async()=>{
   // Preparation never signs; the required signing provider refuses if reached.
   const unsigned={authorize:async()=>assert.fail('prepare must not sign'),authorized:async()=>assert.fail('prepare must not sign')};
-  const w=await r11Consumer(),{ManualSrService}=require('/app/dist/manual-sr.service'),svc=new ManualSrService(w.client,w.orthanc,w.access,unsigned);
+  const w=await r11Consumer(),{ManualSrService}=require(`${api}/dist/manual-sr.service`),svc=new ManualSrService(w.client,w.orthanc,w.access,unsigned);
   const ix=await w.item(w.x,'length'),iy=await w.item(w.y,'length');
   const command=id=>Buffer.from(JSON.stringify({requestId:randomUUID(),items:[{id,revision:1}]}));
   for(const field of ['preDoc','preReviewer']) {
@@ -1667,12 +1694,12 @@ test('MANUAL_SR_DESIGNATION_RENAME_RECYCLE prepare and locked recheck preserve S
     await w.designate(field,w.y.sub);w.remote(()=>w.designate(field));await w.refusal(svc.prepare(w.uid,command(iy.id),w.y));
     assert.deepEqual(await w.db.manualSr.findMany({where:{studyUid:w.uid}}),rows);
     assert.deepEqual(await w.db.viewerItem.findMany({where:{studyUid:w.uid}}),items);
-    await w.designate(field,null);assert.ok((await svc.prepare(w.uid,command(iy.id),w.y)).dicom);
+    await w.designate(field,null);await w.refusal(svc.prepare(w.uid,command(iy.id),w.y));
     await w.refusal(svc.prepare(w.uid,command(ix.id),w.renamed));
   }
 });
 test('STUDY_TAG_DESIGNATION_RENAME_RECYCLE raw SQL read and FOR SHARE write',async()=>{
-  const w=await r11Consumer(),{StudyTagsService}=require('/app/dist/study-tags.service'),svc=new StudyTagsService(w.client,w.access);
+  const w=await r11Consumer(),{StudyTagsService}=require(`${api}/dist/study-tags.service`),svc=new StudyTagsService(w.client,w.access);
   const id=randomUUID();await w.db.studyTagCatalog.upsert({where:{institution_ownerSub:{institution:INST,ownerSub:''}},
     create:{institution:INST,ownerSub:'',revision:1,value:JSON.stringify([{id,name:'R11',uids:[w.uid]}])},
     update:{revision:1,value:JSON.stringify([{id,name:'R11',uids:[w.uid]}]),lastRequest:null,lastFingerprint:null}});
@@ -1683,7 +1710,7 @@ test('STUDY_TAG_DESIGNATION_RENAME_RECYCLE raw SQL read and FOR SHARE write',asy
     await w.designate(field);for(const c of [w.x,w.renamed]){assert.deepEqual(await read(c),[w.uid]);await write(c);}
     assert.deepEqual(await read(w.y),[]);const before=await w.db.studyTagCatalog.findMany({where:{institution:INST}});
     await w.refusal(write(w.y),404);assert.deepEqual(await w.db.studyTagCatalog.findMany({where:{institution:INST}}),before);
-    await w.designate(field,null);assert.deepEqual(await read(w.y),[w.uid]);await write(w.y);assert.deepEqual(await read(w.renamed),[]);
+    await w.designate(field,null);assert.deepEqual(await read(w.y),[]);await w.refusal(write(w.y),404);assert.deepEqual(await read(w.renamed),[]);
   }
 });
 

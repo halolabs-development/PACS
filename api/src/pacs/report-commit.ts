@@ -447,7 +447,7 @@ export class PacsReportCommit {
          * (있는지만 본다 — 같은 부모 잠금 아래라 이 읽기와 그 사람의 초안 쓰기는 엇갈리지 않는다), 남이 Save해 둔 글은
          * 위의 `discarded` 판에 더해 그 글을 쓴 사람의 개인 초안으로 옮긴다(그 사람에게 살아 있는 초안이 없을 때만).
          */
-        let released: { holder: string | null; holderDraft: boolean; savedBy: string | null; savedKept: boolean } | null = null;
+        let released: { holder: string | null; holderDraft: boolean; savedBy: string | null; savedKept: boolean; sameWriter?: true } | null = null;
         if (takeover) {
           const holderDraft = !!heldByOther && !!(await draftOf(tx, uid, { sub: prev.holderSub }, { present: true }))?.present;
           // Only saved text moves into the writer's draft; a Save of drawings alone has none to move - its drawings stay with
@@ -456,10 +456,11 @@ export class PacsReportCommit {
             findings: cur.findings, conclusion: cur.conclusion, recommendation: cur.recommendation,
             baseVersion: cur.version, citations: headCitations, structured: headStructured, groupId: cur.groupId ?? null,
           }, source => record!(prev, null, 'draft-save', source));
-          // The screen tells "the holder's draft" from "the saver's draft" by comparing these two names: one account is one name.
-          const savedName = !savedByOther ? null : heldByOther && takeover.holder && sameAccount(early.updatedBySub, { sub: prev.holderSub })
+          // The notice combines the two draft outcomes only when the holder and saver were the same account.
+          const sameWriter = !!(savedByOther && heldByOther && sameAccount(early.updatedBySub, { sub: prev.holderSub }));
+          const savedName = !savedByOther ? null : sameWriter
             ? takeover.holder : shownActor(savedByOther, early.updatedBySub, c);
-          released = { holder: takeover.holder, holderDraft, savedBy: savedName, savedKept };
+          released = { holder: takeover.holder, holderDraft, savedBy: savedName, savedKept, ...(sameWriter ? { sameWriter: true as const } : {}) };
         }
 
         const state = await tx.studyState.update({ where: { uid }, data: stateData });

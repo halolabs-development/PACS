@@ -9,6 +9,7 @@ const { createCipheriv, randomBytes } = require('node:crypto');
 
 const ROOT = path.join(__dirname, '..');
 const MODULE = process.env.KIN_ADMIN_AUDIT_MODULE || 'api/src/admin-audit.ts';
+if (MODULE.endsWith('.ts')) require('./service_test_loader.cjs');
 const A = require(path.isAbsolute(MODULE) ? MODULE : path.resolve(ROOT, MODULE));
 
 /* BEGIN S5-U5b audit_attribution_contract */
@@ -234,7 +235,7 @@ test('writer privacy: admin audit row 30 and legacy releases redact foreign or u
   const legacy = { ...ROWS.get(30), detail: JSON.stringify({ by: 'inst-a', holder: 'legacy@synthetic.test' }) };
   assert.equal(A.projectAuditRow(legacy, 'inst-a').detail.holder, '작성자 비공개');
   const self = { ...legacy, actor: 'legacy@synthetic.test' };
-  assert.equal(A.projectAuditRow(self, 'inst-a').detail.holder, self.actor);
+  assert.equal(A.projectAuditRow(self, 'inst-a').detail.holder, '작성자 비공개');
 });
 
 test('writer privacy: administrator draft discard audit cannot reveal authors whose institution was never recorded', () => {
@@ -246,7 +247,7 @@ test('writer privacy: administrator draft discard audit cannot reveal authors wh
   const before = source.detail;
   const shown = A.projectAuditRow(source, 'inst-a');
   assert.deepEqual(shown.detail.drafts, [{ author: '작성자 비공개', len: [4, 0, 0] },
-    { author: '작성자 비공개', len: [5, 0, 0] }, { author: source.actor, len: [6, 0, 0] }]);
+    { author: '작성자 비공개', len: [5, 0, 0] }, { author: '작성자 비공개', len: [6, 0, 0] }]);
   assert.deepEqual(shown.detail.versions, [2, 3, 4]);
   assert.equal(A.projectAuditRow(source, 'inst-b'), null);
   assert.equal(source.detail, before);
@@ -998,5 +999,22 @@ test('Merge Exam and Unmerge rows belong to the studies\' institution and to no 
     assert.equal(A.auditRule(action), 'field:detail.by');
     assert.deepEqual(A.projectAuditRow(source, 'inst-a').detail, detail);
     assert.equal(A.projectAuditRow(source, 'inst-b'), null);
+  }
+});
+
+test('force-release audit uses the viewing account within the recorded institution', async () => {
+  const old = 'syn-old@example.test', sub = 'syn-original';
+  for (const stored of [sub, '', undefined]) {
+    const records = [
+      row(2, 'report.draft.force-discard', S2, { by: 'inst-a', drafts: [{ author: old, authorSub: stored }] }, old),
+      row(1, 'hold.force-release', S2, { by: 'inst-a', holder: old, holderSub: stored }, old),
+    ];
+    for (const reader of [sub, 'syn-inherited-email', '']) {
+      const page = await A.readAuditPage(async below => below === null ? records : [], 'inst-a',
+        { after: null, limit: 5 }, reader);
+      const name = stored === sub && reader === sub ? old : '작성자 비공개';
+      assert.deepEqual(page.rows.map(r => r.detail.drafts?.[0].author ?? r.detail.holder), [name, name]);
+      assert.equal(A.projectAuditRow(records[0], 'inst-b', reader), null);
+    }
   }
 });

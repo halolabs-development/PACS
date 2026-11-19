@@ -47,6 +47,7 @@ class FlowSite(h.Site):
 
     def __init__(self, count=3):
         super().__init__()
+        self.version_author = None
         self.flow = STUDIES[:count]
         self.store = {uid: {"revs": 0, "row": None, "report": {"version": 0, "rs": "W"}} for uid, _, _ in self.flow}
         self.flow_puts = []             # (uid, body) of every draft write that reached the server
@@ -121,7 +122,8 @@ class FlowSite(h.Site):
         st["report"] = {"version": st["report"]["version"] + 1, "rs": RS_OF.get(action, "T"), **texts}
         # The version this commit made, as GET report/versions lists it: a lost answer is proved against it.
         st.setdefault("versions", []).append({"version": st["report"]["version"], "action": action,
-                                              "author": h.owner_of(account)["author"], "reason": body.get("reason"), **texts})
+                                              "mine": True, "author": self.version_author or h.owner_of(account)["author"],
+                                              "reason": body.get("reason"), **texts})
         return 200, {**self.envelope_of(uid, account), "state": self.state_of(uid, account)}
 
     def stored_of(self, uid):
@@ -162,7 +164,7 @@ class FlowSite(h.Site):
         uid, what = found.groups()
         if method == "POST" and what == "hold":
             self.holds.append(path)
-            return route.fulfill(json={"holder": account["user"], "conflict": False})
+            return route.fulfill(json={"holder": account["user"], "mine": True, "conflict": False})
         if method == "POST" and what == "release":
             self.releases.append((path, request.headers.get("x-kin-session")))
             return route.fulfill(json={"ok": True})

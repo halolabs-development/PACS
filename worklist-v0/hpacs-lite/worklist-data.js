@@ -73,6 +73,7 @@
       s.preDoc = a.preDoc ?? "";
       s.preReviewer = a.preReviewer ?? "";
       s.prelimHidden = a.prelimHidden;
+      s.holderMine = a.holderMine === true;
       s.holder = a.holder;          // 서버가 만료된 점유는 빼고 준다
       s.version = a.version ?? 0;   // 낙관적 락 기준
       // S4-U5: the overlay repaints display fields only. RS, matching, UID, patient key and the rest of the row state
@@ -705,7 +706,7 @@
         : open("#b-save") && open("#b-approve") ? kinSay(" · 확정하려면 Save 또는 Approve")
         : open("#b-save") ? kinSay(" · 확정하려면 Save") : open("#b-approve") ? kinSay(" · 확정하려면 Approve") : "");
     }
-    function heldByOther(s) { return s?.holder && s.holder !== user ? s.holder : null; }
+    function heldByOther(s) { return s?.holder && !s.holderMine ? s.holder : null; }
     /**
      * FC-040 진행 중 판독 되돌리기: 대기·임시저장·보류(W·T·H)인 검사를 남이 판독 중이거나(살아 있는 점유) 남이 Save해 둔 글이
      * 있으면, 판독의 누구나 Reset to Unread로 점유를 풀고 Unread로 되돌린다 — 사유는 묻지 않는다(서버가 기록한다).
@@ -714,7 +715,7 @@
     function inProgressReset(s) {
       if (!s || !["W", "T", "H"].includes(s.rs)) return null;
       const savedBy = appState[s.uid]?.savedBy;
-      return heldByOther(s) || (savedBy && savedBy !== user ? savedBy : null);
+      return heldByOther(s) || (savedBy && !appState[s.uid].savedByMine ? savedBy : null);
     }
     function updateReportButtons() {
       const s = cur();

@@ -88,7 +88,8 @@ function receiptGuard(before, after) {
     throw sqlError('42501', 'ReportDraftInsertReceipt keeps its binding and moves one receipt revision at a time');
 }
 function draftChecks(row) {
-  if (!(row.revision >= 1)) throw sqlError('23514', 'ReportDraft_revision_check');
+  if (!(row.revision >= 1 && !row.firstViewOnly || row.revision === 0 && row.firstViewOnly &&
+      !row.present && row.authorSub && row.authorLogin)) throw sqlError('23514', 'ReportDraft_revision_check');
   if (!row.present && !(row.findings === '' && row.conclusion === '' && row.recommendation === '' && row.baseVersion === 0
       && row.citations === null && row.structured === null)) throw sqlError('23514', 'ReportDraft_absent_check');
 }
@@ -158,7 +159,7 @@ function storeDouble() {
         fault(name, 'create'); store.ops.push(`${label} create ${name}`);
         const row = { ...(AUTO_ID.has(name) ? { id: ++store.seq } : {}),
           ...(name === 'reportDraftInsertReceipt' ? { receiptRevision: 1, appliedRevision: null, reason: null, createdAt: new Date() } : {}),
-          ...(name === 'reportDraft' ? { citations: null, structured: null, revision: 1, present: true } : {}),
+          ...(name === 'reportDraft' ? { findings: '', conclusion: '', recommendation: '', baseVersion: 0, citations: null, structured: null, revision: 1, present: true } : {}),
           ...(name === 'auditLog' ? { at: new Date(), detail: null } : {}) };
         write(name, row, data);
         check(row);
@@ -368,7 +369,7 @@ function world({ source = SOURCE_LOW } = {}) {
       return { status: error.getStatus(), code: typeof answer === 'object' ? answer.code ?? null : null, body: answer };
     } finally { done(); }
   };
-  w.draft = (who = A) => store.rows('reportDraft').find(r => r.uid === TARGET && r.author === who.actor) ?? null;
+  w.draft = (who = A) => store.rows('reportDraft').find(r => r.uid === TARGET && r.authorSub === who.sub) ?? null;
   w.receipt = id => store.rows('reportDraftInsertReceipt').find(r => r.insertRequestId === id) ?? null;
   w.audits = () => store.rows('auditLog').map(r => `${r.actor} ${r.action} ${r.target}`);
   /** Everything a request could change, in committed form. */
@@ -687,6 +688,7 @@ test('W5API-09 Retry against Discard in both orders (serial in this store; the P
 test('W5API-10 Check reads the envelope and the receipt in one snapshot and writes nothing: absent, applied, superseded, refused, discarded, foreign', async () => {
   const w = world();
   const check = async (id, as = A) => w.send('read', { as, query: { insertRequestId: id } });
+  assert.equal((await w.send('read', { as: B })).status, 200); // B already has an empty first-view reservation.
   const before = w.snapshot();
   const absent = await check(randomUUID());
   assert.equal(absent.status, 200);
@@ -700,6 +702,7 @@ test('W5API-10 Check reads the envelope and the receipt in one snapshot and writ
   assertAnswer(applied.body.relatedInsert, { result: 'applied', state: 'applied', currentMatches: true, requestHash: contractHash(body).request }, 'applied');
   assert.equal(applied.body.snapshot.findings, body.findings);
   const foreign = await check(id, B);
+  assert.equal(foreign.status, 200, foreign.error?.stack);
   assertAnswer(foreign.body.relatedInsert, { result: 'refused', state: null, reason: 'ID_REUSED', requestHash: null, proposalHash: null,
     expectedRevision: null, receiptRevision: null }, 'another owner');
   w.sa.denied.add(w.source);

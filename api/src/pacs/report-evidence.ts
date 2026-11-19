@@ -16,7 +16,7 @@ import { applyStructureKeepList, isStructureEntry, projectStructure, structureAp
   structureIdList, structureItemKey, structureSameTextCounts, structureUnion, StructureInputError, STRUCTURE_CATALOG,
   REPORT_STRUCTURE_LIMITS, REPORT_STRUCTURE_SCHEMA } from '../report-structure';
 import { draftToken, refuseDestroyed, visibleDraftAuthor } from './values';
-import { draftOf } from '../owner-identity';
+import { draftOf, sameAccount } from '../owner-identity';
 import { assertHeadReadable, headForLock, storedVersionReadable, versionBodyReadable, versionClasses, inProgressRefusal } from '../report-visibility';
 import type { Caller, PacsAccess } from './access';
 import { reportVersionCitationsRead, reportVersionsRead } from '../emr-viewing/report-read';
@@ -381,7 +381,8 @@ export class PacsReportEvidence {
     const signers = new Set(scoped.filter(row => row.action !== 'discarded').map(signer));
     const resets = new Map(scoped.filter(row => row.action === 'reset').map(row => [row.version, row.author]));
     // The account id of each version stays here: it judges whose text it is (below), and is not shown.
-    const shown = scoped.map(({ authorSub, ...row }) => {
+    const shown = scoped.map(({ authorSub, ...stored }) => {
+      const row = { ...stored, mine: sameAccount(authorSub, c) };
       if (row.action !== 'discarded') return row;
       const disclosed = signers.has(signer({ author: row.author, authorSub }));
       // Historical copies share action=discarded. Reset writes this reason and

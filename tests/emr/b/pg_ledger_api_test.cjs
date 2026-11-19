@@ -501,7 +501,7 @@ async function clinicalHttp() {
     assert.equal(unchanged.version,3);assert.equal(unchanged.suspended,false);
     const refused=await send('PUT',green.uid,input(saved.body.revision,'SYNTHETIC refused draft'));
     assert.equal(refused.status>=400,true);assert.equal(refused.text.includes('SYNTHETIC refused draft'),false);
-    assert.equal((await witness.reportDraft.findUnique({where:{uid_author:{uid:green.uid,author}}})).findings,content);
+    assert.equal((await witness.reportDraft.findUnique({where:{uid_authorSub:{uid:green.uid,authorSub:sub}}})).findings,content);
     const noView=await send('GET',green.uid);assert.equal(noView.status>=400,true);assert.equal(noView.text.includes(content),false);
     for(const f of [related,held]){
       const denied=await send('PUT',f.uid,f.body);assert.ok(denied.status>=400);assert.equal(denied.text.includes(f.seed),false);

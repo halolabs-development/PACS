@@ -340,7 +340,7 @@
       const state = target ? appState[target.uid] : null;
       const savedByOther = !holder && state?.bodyLock === "in-progress" && state.savedBy ? state.savedBy : null;
       const own = !target ? ""
-        : holder && holder === user ? "✎ Held by you"
+        : holder && target.holderMine ? "✎ Held by you"
         : holder ? `✎ Held by ${displayActor(holder)}`
         : savedByOther ? `✎ In Progress by ${displayActor(savedByOther)}`
         : "Opened by you";
@@ -348,7 +348,7 @@
       // The head can wrap in a narrow column; keep presence updates within their reserved space so typing stays put.
       // Longer explanations belong in the title.
       kinWrite(line, !target ? "" : savedByOther ? kinSay("다른 판독의가 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다")
-        : holder && holder !== user ? kinSay("다른 판독의가 작성 중입니다")
+        : holder && !target.holderMine ? kinSay("다른 판독의가 작성 중입니다")
         : holder ? kinSay("이 판독의가 작성 중입니다(점유){0}", others ? " · " + others : "")
         : kinSay("검사를 여는 것만으로는 점유하지 않습니다. 판독문에 두 글자 이상 쓰면 이 판독의가 잡습니다.{0}", others ? " · " + others : ""), "title");
     }

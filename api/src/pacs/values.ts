@@ -166,7 +166,10 @@ export function toClient(s: any, r: any, caller: Caller, d: any = null, head: an
   const bodyLock = reportBodyLock(s, head, caller);
   const hidden = bodyLock !== null;
   const unsigned = unsignedAuthor(s, head);
+  const holding = !!holdAlive(s);
   const saver = r?.updatedBy ? shownActor(r.updatedBy, r.updatedBySub, caller) : null;
+  const savedBy = bodyLock === 'in-progress' ? (unsigned ? shownActor(unsigned.actor, unsigned.sub, caller) : null)
+    : !hidden && r && storedContent({ ...r, storedExtras: head?.storedExtras }) ? saver : null;
   return {
     rs: s.rs, ss: s.ss, em: s.em, ts: s.ts,
     matched: s.matched, ward: s.ward, reqHosp: s.reqHosp,
@@ -206,14 +209,14 @@ export function toClient(s: any, r: any, caller: Caller, d: any = null, head: an
     // undefined가 아니라 null인 이유: JSON.stringify는 undefined 키를 통째로 지운다.
     // 키가 사라지면 클라이언트의 `{...기존, ...응답}` 이 이전 점유자를 그대로 남긴다.
     // "값을 비웠다"는 사실도 전송되어야 한다.
-    holder: holdAlive(s) ? visibleHolder(s, caller) : null,
+    holder: holding ? visibleHolder(s, caller) : null,
+    holderMine: holding && sameAccount(s.holderSub, caller),
     holdReason: s.holdReason ?? null,
     version: r?.version ?? 0,
     // 머리 판의 글을 확정한 사람(본문이 있을 때만). 그 판의 작성자로 이력에 이미 보이는 사실이다 — 화면이 "남이 Save해 둔
     // 진행 중 판독"을 알아 되돌리기(FC-040)를 연다.
     // Another physician's unsigned text: its writer is said ("In Progress by ...") while the text stays with them.
-    savedBy: bodyLock === 'in-progress' ? (unsigned ? shownActor(unsigned.actor, unsigned.sub, caller) : null)
-      : !hidden && r && storedContent({ ...r, storedExtras: head?.storedExtras }) ? saver : null,
+    savedBy, savedByMine: !!savedBy && sameAccount(bodyLock === 'in-progress' ? unsigned?.sub : r?.updatedBySub, caller),
     findings: hidden ? '' : (r?.findings ?? ''),
     conclusion: hidden ? '' : (r?.conclusion ?? ''),
     recommendation: hidden ? '' : (r?.recommendation ?? ''),

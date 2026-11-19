@@ -552,6 +552,7 @@ class LiveStack:
         self.usernames: dict[str, str] = {}
         self.user_ids: dict[str, str] = {}
         self.template_owners: set[str] = set()
+        self.settings_accounts: set[str] = set()
         self.test_client_id = "kin-invariants-" + uuid.uuid4().hex[:12]
         self.test_client_uuid: str | None = None
         self.service_clients: dict[str, dict[str, str]] = {}
@@ -803,6 +804,7 @@ class LiveStack:
         user_id = str(created.body)
         self.user_ids[logical] = user_id
         self.template_owners.add(template_owner)
+        self.register_settings_account(user_id)
         self.usernames[logical] = username
         self.passwords[logical] = password
 
@@ -1054,6 +1056,15 @@ class LiveStack:
     def username(self, logical: str) -> str:
         return self.usernames.get(logical, logical)
 
+    def register_settings_account(self, sub: str) -> None:
+        # Register the newly issued account before its first bootstrap can seed templates.
+        if not re.fullmatch(UUID_RE, sub):
+            raise RuntimeError("Invalid temporary account id")
+        for table in ('ReadingTemplate', 'UserFilter', 'UserFilterCollection'):
+            if psql(f'SELECT count(*) FROM "{table}" WHERE owner=\'{sub}\'') != ["0"]:
+                raise RuntimeError("Temporary settings account already has data; refusing reuse")
+        self.settings_accounts.add(sub)
+
     def cleanup_test_identities(self) -> None:
         # Only owners created by this instance, proven empty before provisioning.
         # Bootstrap seeds templates even when a test never opens the editor.
@@ -1070,13 +1081,9 @@ class LiveStack:
                 psql(past_audit_guard(f'DELETE FROM "AuditLog" t WHERE actor=\'{owner}\' AND to_jsonb(t)={saved}'))
             if psql(f'SELECT count(*) FROM "AuditLog" WHERE actor=\'{owner}\'') != ["0"]:
                 raise RuntimeError("Temporary audits changed during cleanup")
-            rows = psql(f'SELECT to_jsonb(t)::text FROM "ReadingTemplate" t WHERE owner=\'{owner}\'')
-            for raw in rows:
-                saved = "'" + raw.replace("'", "''") + "'::jsonb"
-                psql(f'DELETE FROM "ReadingTemplate" t WHERE owner=\'{owner}\' AND to_jsonb(t)={saved}')
-            if psql(f'SELECT count(*) FROM "ReadingTemplate" WHERE owner=\'{owner}\'') != ["0"]:
-                raise RuntimeError("Temporary templates changed during cleanup")
-            for table in ('UserFilter', 'UserFilterCollection'):
+        # Both the historical and current API images run against synthetic fixtures.
+        for owner in sorted(self.template_owners | self.settings_accounts):
+            for table in ('ReadingTemplate', 'UserFilter', 'UserFilterCollection'):
                 rows = psql(f'SELECT to_jsonb(t)::text FROM "{table}" t WHERE owner=\'{owner}\'')
                 for raw in rows:
                     saved = "'" + raw.replace("'", "''") + "'::jsonb"
@@ -1084,6 +1091,7 @@ class LiveStack:
                 if psql(f'SELECT count(*) FROM "{table}" WHERE owner=\'{owner}\'') != ["0"]:
                     raise RuntimeError("Temporary saved searches changed during cleanup")
         self.template_owners.clear()
+        self.settings_accounts.clear()
         if self.user_ids or self.test_client_uuid or self.service_clients or self.created_gateway_role:
             self._admin_login()
         failures = []
