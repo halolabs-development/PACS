@@ -40,8 +40,13 @@ class MeasureBaseE2E(ViewerJobPrintE2E):
         return panel
 
     def press(self, p, fx, fy):
+        # A press on the image, at the given place unless an open tool window covers it there; then the nearest place to
+        # its left on the same line that reaches the cell (the windows float over the right of the viewer).
         box = p.locator('.cornerstone-canvas').first.bounding_box()
-        p.mouse.click(box['x'] + box['width'] * fx, box['y'] + box['height'] * fy)
+        x, y = box['x'] + box['width'] * fx, box['y'] + box['height'] * fy
+        x = p.evaluate('''([x, y, left]) => { const cell = document.querySelector('.cornerstone-canvas').closest('[data-viewport-uid]');
+            for (let at = x; at >= left; at -= 10) if (cell.contains(document.elementFromPoint(at, y))) return at; return x; }''', [x, y, box['x']])
+        p.mouse.click(x, y)
 
     # The centre of a drawn point handle, found and measured in one page task. The measurement layer is rebuilt on
     # every render of its cell (viewer-features-measure.js draw: replaceChildren), so an element a locator resolved

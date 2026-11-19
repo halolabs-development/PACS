@@ -306,7 +306,9 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
                 # Angle on the same image: degrees, the viewer's own value.
                 self.choose(p, 'Angle')
                 box = p.locator('.cornerstone-canvas').bounding_box()
-                x, y = box['x'] + box['width'] * .35, box['y'] + box['height'] * .62
+                # Around the canvas centre, where the fitted image always is: a fraction of the canvas width falls beside a
+                # narrow image in a wide cell, and a point off the image is refused (planar-geometry.js).
+                x, y = box['x'] + box['width'] / 2 - 45, box['y'] + box['height'] / 2 - 5
                 p.mouse.move(x, y); p.mouse.down(); p.mouse.move(x + 70, y + 30, steps=10); p.mouse.up()
                 p.mouse.move(x + 90, y - 20, steps=8); p.mouse.click(x + 90, y - 20)
                 p.wait_for_timeout(350)
