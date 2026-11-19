@@ -179,7 +179,7 @@ HOLD_BLOCK = slice_between(MAIN, *MARKERS["HOLD_BLOCK"])
 API_FN = extract_function(MAIN, "api")
 WRITE_BLOCK_FN = extract_function(MAIN, "reportWriteBlock")
 # The report state table's reason words (page-core.js), which the write block names for a locked study.
-LOCK_TEXT_FN = extract_function(MAIN, "reportLockText")
+LOCK_TEXT_FN = extract_function(MAIN, "reportLockText") + "\n" + extract_function(MAIN, "reportLockSay")
 EDITOR_BLOCK_FN = extract_function(MAIN, "reportEditorBlock")
 
 # DI-14 only (asr-binding-contract §10 succession). The shipped dictation wiring and pane, sliced from

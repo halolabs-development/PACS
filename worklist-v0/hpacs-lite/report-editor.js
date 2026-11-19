@@ -238,8 +238,9 @@
       // The report state table (report-visibility.ts): the empty fields say why they are empty - a Preliminary, another
       // physician's Save, or a report destroyed at the end of its retention.
       const lockWhy = locked && typeof reportLockText === "function" ? reportLockText(r) : "";
+      const lockSay = locked && typeof reportLockSay === "function" ? reportLockSay(r) : lockWhy;
       const ph = !locked ? ""
-        : r.bodyLock === "in-progress" || r.bodyLock === "destroyed" ? lockWhy
+        : r.bodyLock === "in-progress" || r.bodyLock === "destroyed" ? lockSay
         : kinSay("{0} 님이 최종 판독 중입니다 (RS: P) — 내용은 지정된 판독의만 볼 수 있습니다", displayActor(r.preReviewer) || kinSay("지정된 판독의"));
       for (const [sel, base] of [["#findings", "Please enter findings"],
                                  ["#conclusion", "Please enter conclusion"],

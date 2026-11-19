@@ -88,6 +88,19 @@ class ReportStateTablePage(unittest.TestCase):
         self.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", "ko")
         expect(defer).to_have_attribute("title", f"{WRITER} 님이 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다")
 
+    def test_a_korean_report_screen_keeps_its_lock_reason_when_the_list_is_english(self):
+        # The list in English, the report screen in Korean, the study picked from the list: every lock reason on the
+        # report screen is Korean (plain writes are not translated by the region last clicked).
+        self.open()
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'ko'})")
+        self.pick(h.PATIENT)
+        self.wait(lambda: self.selected() == h.PATIENT, "the study opens")
+        korean = f"{WRITER} 님이 Save해 둔 진행 중 판독입니다"
+        expect(self.page.locator("#b-defer")).to_have_attribute("title", korean + " — 그 판독의만 보고 이어 쓸 수 있습니다")
+        expect(self.page.locator("#holdmsg")).to_contain_text(korean)
+        expect(self.page.locator("#report-editor-why")).to_contain_text(korean)
+        self.assertIn(korean, self.page.locator("#findings").get_attribute("placeholder"))
+
     def test_a_destroyed_report_opens_read_only_with_its_reason(self):
         self.open()
         self.pick(flow.PATIENT_C)
