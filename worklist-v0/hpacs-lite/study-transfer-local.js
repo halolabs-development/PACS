@@ -863,10 +863,11 @@ window.KinStudyTransferLocal = function (app) {
     const at = work.capture('study'), stamp = window.KinExamScope.stamp(row);
     const live = () => work.admits(at) && stamp === window.KinExamScope.stamp(app.study(uid));
     if (!usable()) { openPanel(); status.textContent = unavailable(); return; }
+    // An exam the reader cannot read whole names none of its originals: nothing is listed or chosen.
+    const lost = window.KinExamScope.unavailable(row);
+    if (lost) { openPanel(); kinWrite(status, lost.message || kinSay('이 검사의 원본을 지금 모두 볼 수 없어 고를 수 없습니다.')); return; }
     let sources = [uid];
     if (scope?.groupId) {
-      const lost = window.KinExamScope.unavailable(row);
-      if (lost) { openPanel(); kinWrite(status, lost.message || kinSay('이 검사의 원본을 지금 모두 볼 수 없어 고를 수 없습니다.')); return; }
       sources = await window.KinExamScope.chooseOriginals(row, scope, { live, title: kinSay('Download Selected Originals'),
         note: kinSay('시리즈·영상을 고를 원본 검사를 고르세요. 원본 UID와 영상은 바뀌지 않습니다.') });
     }

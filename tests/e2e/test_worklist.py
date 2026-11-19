@@ -806,6 +806,45 @@ class WorklistE2E(unittest.TestCase):
         rows = psql(f"SELECT action || E'\\t' || detail FROM \"AuditLog\" WHERE detail::jsonb->>'operationId'='{operation}' ORDER BY id;")
         return [(action, json.loads(detail)) for action, detail in (line.split("\t", 1) for line in rows)]
 
+    def test_s9_u4_download_selected_originals(self):
+        """Download Selected Originals on the real stack: the row menu's item lists the study's own series from the archive;
+        one chosen series is prepared with that choice and the saved ZIP is the whole archive of exactly that series'
+        originals (each entry its stored bytes, under its own Series and SOP UIDs) plus manifest.json."""
+        fixture = self.fixture()
+        page = self.login("doctor")
+        self.select(page, fixture)
+        page.locator(f'#rows tr[data-uid="{fixture.uid}"]').click(button="right")
+        page.locator("#ctx").get_by_text("Download Selected Originals", exact=True).click()
+        dialog = page.locator("dialog.study-transfer-pick")
+        first = dialog.locator(".study-transfer-pick-series").first
+        expect(first.locator("input[type=checkbox]")).to_be_visible(timeout=30000)
+        expect(dialog.get_by_role("button", name="Continue", exact=True)).to_be_disabled()
+        series = first.locator("input[type=checkbox]").get_attribute("value")
+        images = int(re.search(r"\d+", first.locator(".study-transfer-pick-images").inner_text()).group(0))
+        first.locator("input[type=checkbox]").check()
+        with page.expect_response(lambda r: r.request.method == "POST"
+                                  and r.url.endswith(f"/studies/{fixture.uid}/original-downloads")) as prepared:
+            dialog.get_by_role("button", name="Continue", exact=True).click()
+        self.assertEqual(prepared.value.status, 200, prepared.value.text())
+        self.assertEqual(prepared.value.request.post_data_json["selection"], {"series": [series], "instances": []})
+        operation = prepared.value.json()["operationId"]
+        self.assertEqual((prepared.value.json()["objects"], prepared.value.json()["selection"]), (images, {"series": 1, "instances": 0}))
+        expect(self.transfer_box(page, operation).locator(".study-transfer-state")).to_have_text("Ready")
+        download, _ = self.native_download(page, fixture, operation)
+        self.archive_supplied(page, download.path(), operation, 1)
+        [stored] = psql(f"SELECT download::text FROM \"ImportOperation\" WHERE id='{operation}';")
+        row = json.loads(stored)
+        manifest = json.loads(row["manifestCanonical"])
+        self.assertEqual((manifest["studyUid"], row["selection"]), (fixture.uid, {"series": [series], "instances": []}))
+        self.assertEqual(len(manifest["objects"]), images, "as many originals as the chosen series holds")
+        self.assertEqual({o["seriesUid"] for o in manifest["objects"]}, {series}, "only the chosen series, under its own UID")
+        with zipfile.ZipFile(download.path()) as archive:
+            self.assertEqual(len(archive.infolist()), images + 1, "the chosen originals and manifest.json")
+        prepare = [json.loads(detail) for action, detail in
+                   (line.split("\t", 1) for line in psql(f"SELECT action || E'\\t' || detail FROM \"AuditLog\" WHERE detail::jsonb->>'operationId'='{operation}' ORDER BY id;"))
+                   if action == "original.download.prepare"]
+        self.assertEqual([p["selection"] for p in prepare], [{"series": 1, "instances": 0}], "the audit says how much was chosen")
+
     def test_s9_u4_download_states(self):
         """REQ-S9-U4-09 with the D1489 grant (REQ-S9-U4-DG-01..06): Download Originals in an authenticated member session
         with no terminal registration: Ready, one bound grant request and the browser's own download of the archive with

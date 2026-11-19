@@ -132,7 +132,7 @@ const SELECTION_MAX = 4096;
 const SELECTION_NOT_FOUND = '고른 시리즈·영상 가운데 이 검사의 원본에서 찾을 수 없는 것이 있습니다. 목록을 다시 열어 고르세요. 내려받기는 준비되지 않았습니다.';
 
 /** The chosen part of a study a download carries: whole series and single images, by their own original UIDs. */
-export interface Selection { series: string[]; instances: string[] }
+export type Selection = { series: string[]; instances: string[] };
 
 /**
  * A selection in its closed form - exactly series and instances, each a list of distinct UIDs, together 1 to
@@ -732,6 +732,7 @@ export class StudyTransferLocalService implements OnModuleInit, OnModuleDestroy 
    */
   private async unchangedOriginals(uid: string, stored: StoredDownload) {
     const selection: Selection | null = stored.download.selection ?? null;
+    const now = chosenOriginals(await this.readOriginals(uid, selection), selection);
     if (now.kind === 'failed') throw error(409, 'MANIFEST_INCOMPLETE', ORIGINAL_ARCHIVE_MESSAGES.MANIFEST_INCOMPLETE);
     const built = now.kind === 'read' && now.objects.length ? canonicalManifest(uid, now.objects) : null;
     if (!built || !built.ok || built.manifestCanonical !== stored.manifestCanonical) throw error(409, 'MANIFEST_CHANGED', TRANSFER_MESSAGES.changed);

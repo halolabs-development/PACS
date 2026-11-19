@@ -122,14 +122,15 @@ def status_of(result):
     return 400 if (result["code"] or "").startswith(("DICOM_", "PATIENT_ID_", "MODALITY")) else 409
 
 
-def download_view(op, uid, state="prepared", objects=3, size=3 * 1048576, complete=0):
+def download_view(op, uid, state="prepared", objects=3, size=3 * 1048576, complete=0, selection=None):
     attempts = [] if state == "prepared" else [{"attemptId": "00000000-0000-4000-9000-000000000001", "number": 1,
         "state": state, "startedAt": "2026-10-17T00:00:00.000Z", "endedAt": None if state == "sending" else "2026-10-17T00:01:00.000Z",
         "archiveSha256": "1" * 64 if state == "sent" else None, "responseFinished": state == "sent",
         "objectsComplete": complete, "bytesSupplied": size if state == "sent" else 0}]
     return {"operationId": op, "studyUid": uid, "state": state, "manifestSha256": "2" * 64,
             "preparedAt": "2026-10-17T00:00:00.000Z", "objects": objects, "bytes": size,
-            "note": SENT if state == "sent" else None, "attempts": attempts, "archiveRequest": None}
+            "note": SENT if state == "sent" else None, "attempts": attempts, "archiveRequest": None,
+            **({"selection": selection} if selection else {})}
 
 
 # r6 (D1668, OPUS-01): the server's finite positive history (dicom-import-gate.service.ts retryEnded/resultBound). A
@@ -429,7 +430,10 @@ class TransferSite(rf.FlowSite):
                 if reply[0] == "raw":
                     return route.fulfill(status=reply[1], body=reply[2], content_type=reply[3])
                 return self.answer(route, *reply)
-            view = download_view(body["operationId"], uid)
+            # A chosen download is answered with the counts of its choice, as the server does.
+            chosen = body.get("selection")
+            counts = {"series": len(chosen["series"]), "instances": len(chosen["instances"])} if isinstance(chosen, dict) else None
+            view = download_view(body["operationId"], uid, selection=counts)
             self.download_state[body["operationId"]] = view
             return self.answer(route, 200, view)
         found = re.fullmatch(r"/api/studies/([^/]+)/original-downloads/([^/]+)/archive/grant", path)
@@ -613,7 +617,7 @@ class TransferPanelPage(rf.ReportFlowPage):
         labels = self.labels()
         self.assertEqual("Open EMR", labels[labels.index("판독문 작성으로") + 1], "FA-090 place in the Radiology menu")
         self.assertEqual(["Film Box 열기", "판독문 작성으로", "원격판독 의뢰 (Tele Request)", "의뢰 취소", "판독 시작 (수신 기관)",
-                          "Download Originals"], [label for label in labels if label not in ("Open EMR", "Attach Document")], "the existing items as they were")
+                          "Download Originals", "Download Selected Originals"], [label for label in labels if label not in ("Open EMR", "Attach Document")], "the existing items as they were")
         item = self.menu_item("Open EMR")
         self.assertEqual("false", item.get_attribute("aria-disabled"))
         with self.context.expect_page() as tab:
@@ -656,7 +660,7 @@ class TransferPanelPage(rf.ReportFlowPage):
         labels = self.labels()
         self.assertEqual("Open EMR", labels[labels.index("Modify Exam") + 1], "FA-090 place in the Technician menu")
         self.assertEqual(["Match", "Unmatch", "Verify", "Unverify", "Modify Exam", "Switch to Emergency", "Switch ReqHosp",
-                          "Delete", "Import DICOM", "Download Originals"],
+                          "Delete", "Import DICOM", "Download Originals", "Download Selected Originals"],
                          [label for label in labels if label not in ("Open EMR", "Attach Document")], "the existing items as they were")
         self.assertEqual("false", self.menu_item("Open EMR").get_attribute("aria-disabled"))
         self.close_menu()
@@ -1023,7 +1027,7 @@ class TransferPanelPage(rf.ReportFlowPage):
         labels = self.labels()
         self.assertEqual("Attach Document", labels[-1], "FC-076 the end of the Radiology menu")
         self.assertEqual(["Film Box 열기", "판독문 작성으로", "Open EMR", "원격판독 의뢰 (Tele Request)", "의뢰 취소", "판독 시작 (수신 기관)",
-                          "Download Originals"], labels[:-1], "the existing items as they were")
+                          "Download Originals", "Download Selected Originals"], labels[:-1], "the existing items as they were")
         self.close_menu()
         # A study received for tele-reading: grey, and a click opens no chooser.
         self.right_click(rf.PATIENT_C)
@@ -1036,7 +1040,7 @@ class TransferPanelPage(rf.ReportFlowPage):
         labels = self.labels()
         self.assertEqual("Attach Document", labels[labels.index("Import DICOM") + 1], "FC-076 place in the Technician menu")
         self.assertEqual(["Match", "Unmatch", "Verify", "Unverify", "Modify Exam", "Open EMR", "Switch to Emergency", "Switch ReqHosp",
-                          "Delete", "Import DICOM", "Download Originals"], [l for l in labels if l != "Attach Document"])
+                          "Delete", "Import DICOM", "Download Originals", "Download Selected Originals"], [l for l in labels if l != "Attach Document"])
         self.close_menu()
         ids = self.page.evaluate("[...document.querySelectorAll('#ctxbtns > button')].map(b => b.id || b.textContent)")
         self.assertEqual("t-attach", ids[ids.index("t-import") + 1], "FC-076 #t-attach right after Import DICOM")
@@ -1488,6 +1492,159 @@ class TransferPanelPage(rf.ReportFlowPage):
         self.settle(300)
         self.assertEqual([], self.site.prepares, "C-06 nothing for the old or the new selection")
         expect(self.page.locator("#toast")).to_contain_text(self.MENU_CANCELLED)
+
+    # ── Download Selected Originals: the chosen series and images of one original study ──
+    def originals_listing(self, study, series):
+        """The archive's QIDO answers for `study`: series -> [(SOP Instance UID, Instance Number, frames)], as data."""
+        tag = lambda vr, value: {"vr": vr, "Value": [value]}
+        rows = []
+        for number, (uid, images) in enumerate(series.items(), start=1):
+            rows.append({"0020000E": tag("UI", uid), "00200011": tag("IS", number), "00080060": tag("CS", "CT"),
+                         "0008103E": tag("LO", "Continue" if number == 1 else "SYN AXIAL"), "00201209": tag("IS", len(images))})
+            self.site.gets[f"/dicom-web/studies/{study}/series/{uid}/instances"] = (200, [
+                {"00080018": tag("UI", sop), "00200013": tag("IS", n), **({"00280008": tag("IS", frames)} if frames else {})}
+                for sop, n, frames in images])
+        self.site.gets[f"/dicom-web/studies/{study}/series"] = (200, rows)
+
+    def picker(self):
+        return self.page.locator("dialog.study-transfer-pick")
+
+    def test_b38_selected_originals_series_and_one_image_sent_as_chosen_ready_download_prepare_again_and_reload(self):
+        s1, s2 = UID_A + ".901", UID_A + ".902"
+        sops = [UID_A + ".9021." + str(i) for i in (1, 2, 3)]
+        self.originals_listing(UID_A, {s1: [(UID_A + ".9011.1", 1, None), (UID_A + ".9011.2", 2, None)],
+                                       s2: [(sops[0], 1, None), (sops[1], 2, 4), (sops[2], 3, None)]})
+        self.open_as(RAD_ONLY)
+        self.row_menu(h.PATIENT)
+        labels = self.labels()
+        self.assertEqual("Download Selected Originals", labels[labels.index("Download Originals") + 1], "right after the whole-study item")
+        self.menu_item("Download Selected Originals").click()
+        dialog = self.picker()
+        expect(dialog.locator("h3")).to_have_text("Download Selected Originals")
+        expect(dialog.locator(".study-transfer-pick-series")).to_have_count(2)
+        go = dialog.get_by_role("button", name="Continue", exact=True)
+        expect(go).to_be_disabled()
+        # Series descriptions are data: "Continue" stays a series name and is never the button.
+        self.assertEqual("no", dialog.locator(".study-transfer-pick-series span[translate]").first.get_attribute("translate"))
+        dialog.locator(f"input[value='{s1}']").check()
+        expect(go).to_be_enabled()
+        dialog.locator(".study-transfer-pick-series").nth(1).get_by_role("button", name="Choose Images").click()
+        expect(dialog.locator(f"input[value='{sops[1]}']")).to_be_visible()
+        dialog.locator(f"input[value='{sops[1]}']").check()
+        expect(dialog.locator(".study-transfer-pick-count")).to_contain_text("1")
+        go.click()
+        expect(dialog).to_have_count(0)
+        self.wait(lambda: self.site.prepares, "the chosen preparation")
+        uid, body = self.site.prepares[0]
+        self.assertEqual(UID_A, uid)
+        self.assertEqual(["operationId", "selection"], sorted(body))
+        self.assertEqual({"series": [s1], "instances": [sops[1]]}, body["selection"], "a series and one image of another series, by their own UIDs")
+        op = body["operationId"]
+        box = self.operations().first
+        expect(box.locator("b").first).to_have_text("Download Selected Originals")
+        expect(box.locator(".study-transfer-state")).to_have_text("Ready")
+        expect(box.locator(".study-transfer-selection")).to_contain_text("1")
+        with self.page.expect_download() as started:
+            box.get_by_role("button", name="Download", exact=True).click()
+        self.assertEqual(f"/api/studies/{UID_A}/original-downloads/{op}/archive", urlparse(started.value.url).path)
+        self.site.download_state[op] = download_view(op, UID_A, "sent", complete=3, selection={"series": 1, "instances": 1})
+        self.page.clock.run_for(3100)
+        expect(box.locator(".study-transfer-state")).to_have_text("Sent")
+        self.assertNotEqual(SENT, box.locator(".study-transfer-reason").inner_text(), "not the whole study's Sent sentence")
+        # Prepare Again keeps the choice, also after the panel's history is read back.
+        box.get_by_role("button", name="Prepare Again").click()
+        self.wait(lambda: len(self.site.prepares) == 2, "the new chosen preparation")
+        self.assertEqual(body["selection"], self.site.prepares[1][1]["selection"])
+        self.reload_transfers()
+        kept = self.page.evaluate("k=>JSON.parse(sessionStorage.getItem(k)).operations", self.own_slot())
+        self.assertEqual([body["selection"]] * 2, [o.get("selection") for o in kept if o["kind"] == "download"])
+        restored = self.page.locator(f"section.study-transfer-op[data-operation='{op}']")
+        expect(restored.locator(".study-transfer-state")).to_have_text("Sent")
+        restored.get_by_role("button", name="Prepare Again").click()
+        self.wait(lambda: len(self.site.prepares) == 3, "Prepare Again after reload")
+        self.assertEqual(body["selection"], self.site.prepares[2][1]["selection"])
+        # The whole-study item still sends its closed body.
+        self.row_menu(h.PATIENT)
+        self.menu_item("Download Originals").click()
+        self.wait(lambda: len(self.site.prepares) == 4, "the whole-study preparation")
+        self.assertEqual(["operationId"], list(self.site.prepares[3][1]))
+
+    def test_b38_nothing_chosen_cancel_and_an_unreadable_listing_prepare_nothing(self):
+        self.open_as(RAD_ONLY)
+        # No listing stubbed: the archive's answer is not a list.
+        self.row_menu(h.PATIENT)
+        self.menu_item("Download Selected Originals").click()
+        dialog = self.picker()
+        expect(dialog.locator(".study-transfer-pick-failed")).to_be_visible()
+        expect(dialog.locator("input[type=checkbox]")).to_have_count(0)
+        expect(dialog.get_by_role("button", name="Continue", exact=True)).to_be_disabled()
+        dialog.get_by_role("button", name="Cancel", exact=True).click()
+        expect(dialog).to_have_count(0)
+        self.originals_listing(UID_A, {UID_A + ".901": [(UID_A + ".9011.1", 1, None)]})
+        self.row_menu(h.PATIENT)
+        self.menu_item("Download Selected Originals").click()
+        dialog = self.picker()
+        box = dialog.locator("input[type=checkbox]")
+        expect(box).to_have_count(1)
+        box.check()
+        box.uncheck()
+        expect(dialog.get_by_role("button", name="Continue", exact=True)).to_be_disabled()
+        self.page.keyboard.press("Escape")
+        expect(dialog).to_have_count(0)
+        self.settle(200)
+        self.assertEqual([], self.site.prepares, "nothing chosen, nothing prepared")
+        # A tele-received row: the item is grey and opens nothing.
+        self.right_click(rf.PATIENT_C)
+        self.wait(self.menu_shown, "the menu of the tele row")
+        item = self.menu_item("Download Selected Originals")
+        self.assertEqual("true", item.get_attribute("aria-disabled"))
+        item.dispatch_event("click")
+        self.settle(200)
+        expect(self.picker()).to_have_count(0)
+
+    def test_b38_merged_exam_chooses_an_original_then_its_own_series_never_the_merged_list(self):
+        merged = {"reportUid": UID_A, "groupId": "syn-group", "kind": "merge", "part": None, "generation": "scope-2",
+                  "sources": [{"studyUid": source, "series": {"mode": "all", "uids": []}} for source in (UID_A, UID_B)]}
+        self.site.exam_scopes[UID_A] = merged
+        self.site.source_acc[UID_A] = {UID_A: "SYNACC-A", UID_B: "SYNACC-B"}
+        self.originals_listing(UID_A, {UID_A + ".901": [(UID_A + ".9011.1", 1, None)]})
+        self.originals_listing(UID_B, {UID_B + ".902": [(UID_B + ".9021.1", 1, None)]})
+        self.open_as(RAD_ONLY)
+        before = len(self.page.evaluate("window.__synFetches"))
+        self.row_menu(h.PATIENT)
+        self.menu_item("Download Selected Originals").click()
+        sources = self.page.get_by_role("dialog").filter(has_text="SYNACC-B")
+        expect(sources.locator("h3")).to_have_text("Download Selected Originals")
+        sources.locator(f"input[value='{UID_B}']").check()
+        sources.get_by_role("button", name="Continue", exact=True).click()
+        dialog = self.picker()
+        expect(dialog.locator(".study-transfer-pick-study")).to_contain_text(UID_B)
+        dialog.locator(f"input[value='{UID_B}.902']").check()
+        dialog.get_by_role("button", name="Continue", exact=True).click()
+        self.wait(lambda: self.site.prepares, "the preparation of the chosen original")
+        self.assertEqual([(UID_B, {"series": [UID_B + ".902"], "instances": []})], [(u, b["selection"]) for u, b in self.site.prepares])
+        listed = [urlparse(u).path for u in self.page.evaluate("window.__synFetches")[before:] if "/dicom-web/" in u and "/series" in u]
+        self.assertTrue(listed and all(path.startswith(f"/dicom-web/studies/{UID_B}/") for path in listed),
+                        "only the chosen original's own listing is read: " + repr(listed))
+        # An exam the reader cannot read whole lists nothing.
+        self.site.exam_scopes.clear()
+        own_list = self.site.list_body
+        def list_body(account, rename=None):
+            body = own_list(account, rename)
+            for row in body["studies"]:
+                if row["uid"] == UID_B:
+                    row.update({"examUnavailable": True, "examUnavailableKind": "merge"})
+            return body
+        self.site.list_body = list_body
+        self.page.reload()
+        expect(self.page.locator("#rows")).to_contain_text(h.PATIENT_B)
+        before = len(self.page.evaluate("window.__synFetches"))
+        self.row_menu(h.PATIENT_B)
+        self.menu_item("Download Selected Originals").click()
+        self.settle(300)
+        expect(self.picker()).to_have_count(0)
+        self.assertEqual([], [u for u in self.page.evaluate("window.__synFetches")[before:] if "/dicom-web/" in u and "/series" in u])
+        self.assertEqual(1, len(self.site.prepares))
 
     # ── C-07 late answers and account boundaries ──
 
