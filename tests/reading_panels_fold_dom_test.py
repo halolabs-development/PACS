@@ -448,7 +448,8 @@ class ReadingPanelsFoldDOM(unittest.TestCase):
         self.assertAlmostEqual(g['band']['w'], g['thumb']['w'], delta=1)
         tab = page.locator('.rw > .s-thumb > .rtabs > [data-panel="aiReport"]').bounding_box()
         button = self.fold(page, 'aiReport').bounding_box()
-        self.assertLess(button['x'] - (tab['x'] + tab['width']), 8)
+        self.assertGreaterEqual(button['x'], tab['x'])
+        self.assertLessEqual(button['x'] + button['width'], tab['x'] + tab['width'] + 0.5)
         self.assertGreater(g['clinical']['y'], g['thumb']['y'])
         self.fold(page, 'aiReport').click()
         self.assertEqual(['thumbnail', 'aiReport'], self.collapsed(page))
@@ -525,6 +526,43 @@ class ReadingPanelsFoldDOM(unittest.TestCase):
                 expect(self.fold(page, 'template')).to_have_attribute(
                     'aria-label', 'Fold the Reading Template panel' if english else 'Reading Template 패널 접기')
                 expect(page.locator('.rw > .rw-folds')).to_have_attribute('aria-label', 'Folded panels' if english else '접힌 패널')
+
+    def test_19_every_fold_button_is_the_one_clicked_in_narrow_windows_with_all_panels_open(self):
+        """Narrow columns: each panel's own button takes the click (a real click checks what lies at that point)."""
+        for width, height in ((1024, 768), (900, 768), (840, 768)):
+            for select in (False, True):
+                with self.subTest(size=f'{width}x{height}', selected=select):
+                    page, _ = self.open(width=width, height=height, init=plant(record()))
+                    if select:
+                        page.locator('#rows tr[data-uid]').first.click()
+                        settle(page)
+                    for key in ('aiReport', 'thumbnail', 'imageReport', 'clinical', 'template'):
+                        button = self.fold(page, key)
+                        button.scroll_into_view_if_needed()
+                        hit = button.evaluate("""b => { const r = b.getBoundingClientRect();
+                          return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === b; }""")
+                        self.assertTrue(hit, key)
+                        button.click(timeout=5000)
+                        self.assert_folded(page, key)
+                    page.screenshot(path=str(OUT / f'panels-fold-narrow-{width}x{height}-{int(select)}.png'))
+
+    def test_20_a_folded_panel_the_study_panel_holds_has_no_name_on_the_band_until_it_comes_back(self):
+        page, _ = self.open(init=plant(record(collapsed=('imageReport', 'clinical', 'template'))))
+        page.locator('#rows tr[data-uid]').first.click()
+        settle(page)
+        page.keyboard.press('Control+Alt+5')
+        expect(page.get_by_role('complementary', name='Study Panel', exact=True)).to_be_visible()
+        settle(page)
+        # Clinical and Template are in the drawer, shown open there: the band offers no name that would open nothing.
+        expect(self.unfold(page, 'clinical')).to_be_hidden()
+        expect(self.unfold(page, 'template')).to_be_hidden()
+        expect(self.unfold(page, 'imageReport')).to_be_visible()
+        self.assertEqual(['imageReport', 'clinical', 'template'], self.collapsed(page))
+        page.keyboard.press('Escape')
+        expect(page.get_by_role('complementary', name='Study Panel', exact=True)).to_be_hidden()
+        settle(page)
+        for key in ('imageReport', 'clinical', 'template'):
+            self.assert_folded(page, key)
 
 
 if __name__ == '__main__':

@@ -481,6 +481,11 @@ test('TEST-PANELS-FOLD-02 reportWindow: a folded panel owns no column, keeps its
   const tech = layout.reportWindow('Technician', [], ['imageReport', 'template', 'clinical']);
   assert.deepEqual(tech.folds, ['clinical']);
   assert.deepEqual(tech.content.map(p => p.key), ['thumbnail']);
+  // A panel the Study Panel drawer holds is not offered on the band; the choice is untouched.
+  const lent = layout.reportWindow('Radiology', [], ['clinical', 'imageReport'], ['clinical']);
+  assert.deepEqual(lent.folds, ['imageReport']);
+  assert.equal(lent.classes['kin-fold-clinical'], false);
+  assert.equal(layout.reportWindow('Radiology', ['thumbnail', 'aiReport', 'imageReport', 'template'], ['clinical'], ['clinical']).state, 'empty');
   // Nothing folded: the same band as before folding existed.
   assert.deepEqual(layout.reportWindow('Radiology', ['thumbnail'], []), { ...layout.reportWindow('Radiology', ['thumbnail']) });
   assert.equal(layout.reportWindow('Radiology', [], []).classes['kin-report-window-folds'], false);

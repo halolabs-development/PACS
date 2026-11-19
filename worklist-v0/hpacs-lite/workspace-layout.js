@@ -207,12 +207,15 @@
   // panels by the same shares as hiding, and its name stays on the band as a button in the folded-panels row above
   // the columns (`folds`). With nothing expanded the band is that row (state 'folds') and its height goes to the
   // Related/report row, as with the placeholder strip; the stored band height stays for when a panel opens again.
-  function reportWindow(mode, hidden = [], collapsed = []) {
+  // `away` names the panels the Study Panel drawer holds now: it shows them open, so the band offers no name to open
+  // them meanwhile (pressing it would open nothing on the band); the choice itself stays.
+  function reportWindow(mode, hidden = [], collapsed = [], away = []) {
     const off = new Set(hidden), folded = new Set(collapsed.filter(key => !off.has(key)));
     const modePanels = MODE_PANELS[mode] || MODE_PANELS.Radiology;
     const content = modePanels.filter(([key]) => !off.has(key) && !folded.has(key)).map(([key, share]) => ({ key, share }));
     const tabs = PLACEHOLDERS.filter(key => !off.has(key) && !folded.has(key));
-    const folds = PANELS.filter(key => folded.has(key) && (PLACEHOLDERS.includes(key) || modePanels.some(([k]) => k === key)));
+    const folds = PANELS.filter(key => folded.has(key) && !away.includes(key)
+      && (PLACEHOLDERS.includes(key) || modePanels.some(([k]) => k === key)));
     const strip = !content.some(p => p.key === 'thumbnail') && tabs.length > 0;
     const state = content.length ? 'content' : strip ? 'tabs' : folds.length ? 'folds' : 'empty';
     const classes = {};
