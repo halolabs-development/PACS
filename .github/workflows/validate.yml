@@ -125,6 +125,12 @@ jobs:
         env:
           KIN_LIVE_ENVIRONMENT: ci-download-producer
         run: python3 scripts/record-run.py --run-dir tmp/emr-b-ci/download-producer --tree api/src --tree tests/emr/request --file tests/emr/b/pg_ledger_restore_test.py -- python3 scripts/run-tests.py --module tests/emr/request/download_producer_live.py --class DownloadProducerLive --mode live --unit ci-download-producer --timeout 300
+      - name: Access Review over a day and a week on 170k and 1.02M synthetic entries
+        if: ${{ !cancelled() && !github.event.pull_request.draft }}
+        timeout-minutes: 25
+        env:
+          KIN_LIVE_ENVIRONMENT: ci-access-review-period
+        run: python3 scripts/record-run.py --run-dir tmp/emr-b-ci/access-review-period --tree api/src --tree api/prisma/migrations --tree tests/emr/request --file tests/emr/b/pg_ledger_restore_test.py -- python3 scripts/run-tests.py --module tests/emr/request/access_review_period_live.py --class AccessReviewPeriodLive --mode live --unit ci-access-review-period --timeout 1300
       - name: EMR-B evidence (synthetic, sanitized)
         if: ${{ always() && !github.event.pull_request.draft }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -136,6 +142,7 @@ jobs:
             tmp/module-a-01-2/
             tmp/emr-a/
             tmp/download-producer-b2/
+            tmp/access-review-period/
             tmp/request-auth/
           if-no-files-found: error
           retention-days: 7
