@@ -532,7 +532,8 @@ window.KinStudyTransferLocal = function (app) {
         if (!uid(kept.uid) || !(kept.manifestSha256 == null || hash(kept.manifestSha256))
             || !(kept.preparedAt == null || time(kept.preparedAt)) || !(kept.objects == null || count(kept.objects, Number.MAX_SAFE_INTEGER))
             || !(kept.bytes == null || count(kept.bytes, Number.MAX_SAFE_INTEGER))
-            || (kept.selection !== undefined && !sameSelection(closedSelection(kept.selection), kept.selection))) throw new Error('Unverified download history');
+            || (Object.prototype.hasOwnProperty.call(kept, 'selection')
+              && !(closedSelection(kept.selection) && sameSelection(closedSelection(kept.selection), kept.selection)))) throw new Error('Unverified download history');
       } else throw new Error('Unknown history kind');
     }
   }
@@ -841,12 +842,14 @@ window.KinStudyTransferLocal = function (app) {
       inFlight: false, lost: false, polling: false, pollTimer: null, polls: 0, grantId: null, manifestSha256: null, preparedAt: null, label: studyLabel(uid) };
   }
 
-  /** The closed form of a choice, as the server keeps it: distinct UIDs, both lists sorted, together 1..4096; else null. */
+  // At most this many chosen series and images together (the server's own bound: the request stays within its body limit).
+  const SELECTION_MAX = 1000;
+  /** The closed form of a choice, as the server keeps it: distinct UIDs, both lists sorted, together 1..SELECTION_MAX; else null. */
   function closedSelection(v) {
     if (!isObject(v) || Object.keys(v).sort().join() !== 'instances,series') return null;
     const list = items => Array.isArray(items) && items.every(uid) && new Set(items).size === items.length ? [...items].sort() : null;
     const series = list(v.series), instances = list(v.instances);
-    if (!series || !instances || series.length + instances.length < 1 || series.length + instances.length > 4096) return null;
+    if (!series || !instances || series.length + instances.length < 1 || series.length + instances.length > SELECTION_MAX) return null;
     return { series, instances };
   }
   const sameSelection = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
@@ -919,14 +922,19 @@ window.KinStudyTransferLocal = function (app) {
       const update = () => {
         for (const b of imageBoxes) b.disabled = seriesBoxes.some(s => s.checked && s.value === b.dataset.series);
         const c = chosen();
-        go.disabled = c.series.length + c.instances.length === 0;
-        kinWrite(counted, kinSay('고른 것: 시리즈 {n0}개, 영상 {n1}개', c.series.length, c.instances.length));
+        const total = c.series.length + c.instances.length;
+        go.disabled = total === 0 || total > SELECTION_MAX;
+        kinWrite(counted, total > SELECTION_MAX ? kinSay('한 번에 {n0}개까지 고를 수 있습니다. 영상이 많으면 시리즈 전체를 고르세요.', SELECTION_MAX)
+          : kinSay('고른 것: 시리즈 {n0}개, 영상 {n1}개', c.series.length, c.instances.length));
       };
       const failed = (where, words) => { where.replaceChildren(); where.append(kinWrite(node('p', 'study-transfer-pick-failed'), kinSay(words))); };
       dialog.addEventListener('change', update);
       go.addEventListener('click', () => { if (live()) result = closedSelection(chosen()); dialog.close(); });
       cancel.addEventListener('click', () => dialog.close());
-      dialog.addEventListener('close', () => { open = false; dialog.remove(); resolve(result); }, { once: true });
+      // The dialog lives only while its row, its exam scope and the work context still hold (a list refresh, a lost right,
+      // a logout): checked while it is open, not only when an answer comes or Continue is pressed.
+      const watch = setInterval(() => { if (open && !live()) dialog.close(); }, 500);
+      dialog.addEventListener('close', () => { open = false; clearInterval(watch); dialog.remove(); resolve(result); }, { once: true });
       kinWrite(list, kinSay('시리즈 목록을 읽는 중입니다…'));
       dialog.append(heading, note, study, list, counted, go, cancel);
       document.body.append(dialog);
@@ -1026,9 +1034,13 @@ window.KinStudyTransferLocal = function (app) {
       const view = downloadPositive(answer, op);
       if (view) { adoptDownload(op, view); op.notice = ''; }
       // A chosen series or image the study does not hold now: the server prepared nothing (its own refusal, no UID).
+      // Nothing exists on the server: the operation leaves the panel and the tab's history, and the panel says why.
       else if (op.selection && answer && answer.status === 409 && answer.body?.code === 'SELECTION_NOT_FOUND') {
-        firstDownloads.delete(op);
-        op.notice = TEXT.selectionMissing;
+        endDownload(op);
+        clearedHistory.set(op.id, op);
+        op.gen = -1;
+        operations.splice(operations.indexOf(op), 1);
+        status.textContent = TEXT.selectionMissing;
       }
       else { op.notice = TEXT.prepareUnknown; readDownload(op, false, true); }
       store();

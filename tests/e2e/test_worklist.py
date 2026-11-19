@@ -811,16 +811,34 @@ class WorklistE2E(unittest.TestCase):
         one chosen series is prepared with that choice and the saved ZIP is the whole archive of exactly that series'
         originals (each entry its stored bytes, under its own Series and SOP UIDs) plus manifest.json."""
         fixture = self.fixture()
+        # A later series of two images of the same patient under the fixture's Study UID (the fixture's own: one series of one
+        # image): choosing the later series must leave the fixture's own image out of the ZIP.
+        command = self.stack.fixture_command(fixture.institution, "INVARIANT^" + fixture.secret[len("REPORT-"):][:10], fixture.patient_id)
+        command += ["--study-uid", fixture.uid, "--slices", "2", "--instance-offset", "1"]
+        done = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        try:
+            self._selected_originals(fixture)
+        finally:
+            if self._selected_operation:
+                psql(f"DELETE FROM \"ImportOperation\" WHERE id='{self._selected_operation}';")
+
+    _selected_operation = None
+
+    def _selected_originals(self, fixture):
         page = self.login("doctor")
         self.select(page, fixture)
         page.locator(f'#rows tr[data-uid="{fixture.uid}"]').click(button="right")
         page.locator("#ctx").get_by_text("Download Selected Originals", exact=True).click()
         dialog = page.locator("dialog.study-transfer-pick")
-        first = dialog.locator(".study-transfer-pick-series").first
-        expect(first.locator("input[type=checkbox]")).to_be_visible(timeout=30000)
+        rows = dialog.locator(".study-transfer-pick-series")
+        expect(rows).to_have_count(2, timeout=30000)
         expect(dialog.get_by_role("button", name="Continue", exact=True)).to_be_disabled()
+        counts = [int(re.search(r"\d+", rows.nth(i).locator(".study-transfer-pick-images").inner_text()).group(0)) for i in range(2)]
+        self.assertEqual(sorted(counts), [1, 2], "the fixture's series of one image and the later series of two")
+        first = rows.nth(counts.index(2))
         series = first.locator("input[type=checkbox]").get_attribute("value")
-        images = int(re.search(r"\d+", first.locator(".study-transfer-pick-images").inner_text()).group(0))
+        images = 2
         first.locator("input[type=checkbox]").check()
         with page.expect_response(lambda r: r.request.method == "POST"
                                   and r.url.endswith(f"/studies/{fixture.uid}/original-downloads")) as prepared:
@@ -828,6 +846,7 @@ class WorklistE2E(unittest.TestCase):
         self.assertEqual(prepared.value.status, 200, prepared.value.text())
         self.assertEqual(prepared.value.request.post_data_json["selection"], {"series": [series], "instances": []})
         operation = prepared.value.json()["operationId"]
+        self._selected_operation = operation
         self.assertEqual((prepared.value.json()["objects"], prepared.value.json()["selection"]), (images, {"series": 1, "instances": 0}))
         expect(self.transfer_box(page, operation).locator(".study-transfer-state")).to_have_text("Ready")
         download, _ = self.native_download(page, fixture, operation)

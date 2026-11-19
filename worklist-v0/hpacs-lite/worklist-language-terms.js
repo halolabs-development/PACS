@@ -2850,6 +2850,7 @@ window.KinLanguageTerms = {
     ["영상 목록을 읽지 못했습니다. 시리즈 전체를 고르거나 창을 닫고 다시 시도하세요.", "The image list could not be read. Choose the whole series, or close the window and try again.", "m"],
     ["프레임 {n0}개", "{n0} frames", "l"],
     ["고른 범위: 시리즈 {n0}개, 영상 {n1}개", "Chosen range: {n0} series, {n1} images", "m"],
+    ["한 번에 {n0}개까지 고를 수 있습니다. 영상이 많으면 시리즈 전체를 고르세요.", "Up to {n0} can be chosen at once. For many images, choose the whole series.", "m"],
     ["서버가 이 계정의 영상 요청 읽기를 거절했습니다. 권한이 바뀌었다면 화면을 다시 불러오세요.", "The server refused image request access for this account. If permissions changed, reload the screen.", "m"],
     ["서버가 이 계정의 질문 읽기를 거절했습니다. 권한이 바뀌었다면 화면을 다시 불러오세요.", "The server refused question access for this account. If permissions changed, reload the screen.", "m"],
     ["서버가 이 동작을 거절했습니다.", "The server rejected this action.", "m"],

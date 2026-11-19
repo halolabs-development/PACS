@@ -1602,6 +1602,58 @@ class TransferPanelPage(rf.ReportFlowPage):
         self.settle(200)
         expect(self.picker()).to_have_count(0)
 
+    def choose_series(self, study_uid):
+        self.row_menu(h.PATIENT)
+        self.menu_item("Download Selected Originals").click()
+        dialog = self.picker()
+        dialog.locator(f"input[value='{study_uid}']").check()
+        dialog.get_by_role("button", name="Continue", exact=True).click()
+
+    def test_b38_the_dialog_closes_when_its_row_moves_a_refused_choice_leaves_no_operation_and_a_broken_history_never_turns_whole(self):
+        s1 = UID_A + ".901"
+        many = [(UID_A + ".9022." + str(i), i, None) for i in range(1, 1003)]
+        self.originals_listing(UID_A, {s1: [(UID_A + ".9011.1", 1, None)], UID_A + ".902": many})
+        self.open_as(RAD_ONLY)
+        # The selection moves while the dialog is open: it closes by itself and nothing is prepared.
+        self.row_menu(h.PATIENT)
+        self.menu_item("Download Selected Originals").click()
+        dialog = self.picker()
+        dialog.locator(f"input[value='{s1}']").check()
+        self.page.evaluate("() => select(studies.find(s => s.name === 'SYN PATIENT CHARLIE').uid)")
+        expect(dialog).to_have_count(0)
+        self.settle(200)
+        self.assertEqual([], self.site.prepares)
+        # More than the bound: Continue stays off and the dialog says why.
+        self.row_menu(h.PATIENT)
+        self.menu_item("Download Selected Originals").click()
+        dialog = self.picker()
+        dialog.locator(".study-transfer-pick-series").nth(1).get_by_role("button", name="Choose Images").click()
+        expect(dialog.locator(".study-transfer-pick-instances input")).to_have_count(1002)
+        self.page.evaluate("""() => { const d = document.querySelector('dialog.study-transfer-pick');
+          for (const b of d.querySelectorAll('.study-transfer-pick-instances input')) b.checked = true;
+          d.dispatchEvent(new Event('change', { bubbles: true })); }""")
+        expect(dialog.get_by_role("button", name="Continue", exact=True)).to_be_disabled()
+        expect(dialog.locator(".study-transfer-pick-count")).to_contain_text("1000")
+        dialog.get_by_role("button", name="Cancel", exact=True).click()
+        # The server finds a chosen series gone: no operation stays in the panel or the tab's history.
+        self.site.prepare_answers = [(409, {"code": "SELECTION_NOT_FOUND", "message": "SYN refused"})]
+        self.choose_series(s1)
+        self.wait(lambda: self.site.prepares, "the refused preparation")
+        expect(self.operations()).to_have_count(0)
+        expect(self.panel().locator(".study-transfer-status")).to_contain_text("다시 골라")
+        kept = self.page.evaluate("k=>{const v=sessionStorage.getItem(k);return v?JSON.parse(v).operations:[]}", self.own_slot())
+        self.assertEqual([], kept)
+        # A prepared chosen operation whose kept choice is broken (null) is unverified history: never restored as the whole study.
+        self.choose_series(s1)
+        self.wait(lambda: len(self.site.prepares) == 2, "the chosen preparation")
+        op = self.site.prepares[1][1]["operationId"]
+        expect(self.page.locator(f"section.study-transfer-op[data-operation='{op}'] .study-transfer-state")).to_have_text("Ready")
+        self.page.evaluate("""k => { const v = JSON.parse(sessionStorage.getItem(k));
+          for (const o of v.operations) if (o.kind === 'download') o.selection = null; sessionStorage.setItem(k, JSON.stringify(v)); }""", self.own_slot())
+        self.reload_transfers()
+        expect(self.operations()).to_have_count(0)
+        self.assertEqual(2, len(self.site.prepares), "nothing prepared again, least of all the whole study")
+
     def test_b38_merged_exam_chooses_an_original_then_its_own_series_never_the_merged_list(self):
         merged = {"reportUid": UID_A, "groupId": "syn-group", "kind": "merge", "part": None, "generation": "scope-2",
                   "sources": [{"studyUid": source, "series": {"mode": "all", "uids": []}} for source in (UID_A, UID_B)]}

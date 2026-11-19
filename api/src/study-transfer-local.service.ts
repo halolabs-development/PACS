@@ -126,8 +126,11 @@ const BEFORE_STUDY_CODES = new Set(['DICOM_NOT_PART10', 'DICOM_FILE_META_MISSING
   'PATIENT_ID_UNREADABLE', 'PATIENT_ID_MISSING', 'MODALITY_NOT_IMPORTABLE', 'STUDY_UID_MISMATCH', 'PATIENT_ISSUER_CONFLICT',
   'STUDY_OWNERSHIP_CONFLICT', 'STUDY_OWNERSHIP_UNDETERMINED', 'ORTHANC_UNAVAILABLE']);
 const storeInvalid = () => error(503, 'MANIFEST_STORE_INVALID', ORIGINAL_ARCHIVE_MESSAGES.MANIFEST_STORE_INVALID);
-/** At most this many chosen series and images together in one download. */
-const SELECTION_MAX = 4096;
+/**
+ * At most this many chosen series and images together in one download: with 64-character UIDs the request stays well
+ * inside the JSON body limit (100 kB), so a choice the page allows is never refused for its size. More images are a series.
+ */
+const SELECTION_MAX = 1000;
 /** A chosen series or image that is not one of the study's downloadable originals now: one answer, naming none of them. */
 const SELECTION_NOT_FOUND = '고른 시리즈·영상 가운데 이 검사의 원본에서 찾을 수 없는 것이 있습니다. 목록을 다시 열어 고르세요. 내려받기는 준비되지 않았습니다.';
 

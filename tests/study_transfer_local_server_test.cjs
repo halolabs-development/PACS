@@ -1871,6 +1871,12 @@ test('S9U4-B91 chosen originals refused before any row: nothing chosen or a malf
     assert.deepEqual([r.status, r.body.code], [400, 'IMPORT_REQUEST_INVALID'], JSON.stringify(selection));
     assert.ok(!h.s.op(id), 'nothing prepared');
   }
+  // The bound: 1,000 choices of 64-character UIDs fit the request body and are judged (here: not the study's); 1,001 is 400.
+  const long = n => Array.from({ length: n }, (_, i) => '2.25.' + (10n ** 58n + BigInt(i)).toString());
+  assert.equal(long(1)[0].length, 64);
+  const most = await prepareChosen(h, study, { series: [], instances: long(1000) });
+  assert.deepEqual([most.status, most.body.code], [409, 'SELECTION_NOT_FOUND'], 'a full choice reaches the rule, never 413');
+  assert.deepEqual((await prepareChosen(h, study, { series: [], instances: long(1001) })).body.code, 'IMPORT_REQUEST_INVALID');
   const before = h.s.audits.length;
   for (const selection of [{ series: [other + '.1'], instances: [] }, { series: [], instances: [originalsOf(h, other)[0].h.sopInstanceUid] },
     { series: [s1], instances: [uid()] }]) {
