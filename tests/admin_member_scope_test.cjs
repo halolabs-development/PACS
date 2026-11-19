@@ -424,21 +424,24 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
       assert.equal(r.out[0].version, 2); assert.equal(r.out[0].roster, 'unknown'); retry(r); });
     expect('roster-throws', 2, true, 'the roster send threw after the commit', retry);
     expect('roster-unknown', 2, true, 'the roster answer was lost', retry);
-    expect('work-end-fails', 0, true, 'closing the request work threw after the commit', r => assert.equal(r.out[0].version, 2));
-    expect('http-after-commit', 0, true, 'an HTTP-shaped error after the commit is not a refusal', r => assert.equal(r.out[0].version, 2));
+    // Settled after a failure (not seen returning): designated, and the roster is left to --retry-roster, which sends
+    // each member's latest generation — this run's own generation is never re-sent over a later change.
+    const settled = r => { assert.equal(r.out[0].version, 2); assert.equal(r.out[0].roster, 'unknown');
+      assert.ok(!r.steps.includes('lookup-change') && !r.steps.includes('send-roster'), 'no roster sent'); retry(r); };
+    expect('work-end-fails', 2, true, 'closing the request work threw after the commit', settled);
+    expect('http-after-commit', 2, true, 'an HTTP-shaped error after the commit is not a refusal', settled);
     expect('http-after-commit,reread-fails', 2, true, 'after the commit, its audit row unreadable: still designated', r => {
       assert.equal(r.out[0].version, null); retry(r); });
     // The commit answer was lost: only this run's own audit row (by id) says it committed.
-    expect('commit-lost', 0, true, 'a lost commit answer; this run\'s audit row is there', r => assert.equal(r.out[0].version, 2));
-    expect('commit-lost,roster-unknown', 2, true, 'a lost commit answer, committed, roster unconfirmed', retry);
+    expect('commit-lost', 2, true, 'a lost commit answer; this run\'s audit row is there', settled);
     expect('commit-lost-not-committed', 3, null, 'a lost commit answer and no audit row of this run (it may still commit)', retry);
     expect('commit-lost-not-committed,other-run-committed', 3, null, 'another run\'s approval of the person is not this run\'s', retry);
     expect('commit-lost,reread-fails', 3, null, 'a lost commit answer and an unreadable record', retry);
     // An approved member promoted to administrator: the change's audit row is admin.user.update, still this run's.
-    expect('commit-lost,promoted', 0, true, 'a lost commit answer for a promotion; its update row is there', r => assert.equal(r.out[0].version, 2));
-    expect('work-end-fails,promoted', 0, true, 'a promotion committed, then a later step threw', r => assert.equal(r.out[0].version, 2));
+    expect('commit-lost,promoted', 2, true, 'a lost commit answer for a promotion; its update row is there', settled);
+    expect('work-end-fails,promoted', 2, true, 'a promotion committed, then a later step threw', settled);
     // Writing the outcome throws at once: the exit code still says what was saved.
-    for (const [scenario, code] of [['write-throws', 0], ['write-throws,commit-lost', 0], ['write-throws,roster-unknown', 2]]) {
+    for (const [scenario, code] of [['write-throws', 0], ['write-throws,commit-lost', 2], ['write-throws,roster-unknown', 2]]) {
       const r = run(scenario);
       assert.equal(r.code, code, `${scenario}: exit ${r.code}\n${r.stderr}`);
       assert.ok(r.steps.includes('stop') && r.steps.includes('disconnect'), scenario + ': cleanup ran');

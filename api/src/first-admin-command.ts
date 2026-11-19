@@ -8,7 +8,8 @@ import { LedgerFailure } from './emr-runtime/store';
  *    transaction is known not to have committed. No rights were granted.
  *  - 0, designated:true — committed and the roster (provider groups/roles) confirmed.
  *  - 2, designated:true — committed; the roster is unconfirmed (the record lookup, the roster send or its answer failed,
- *    or a later step threw). Recover with `node prisma/import-member-rights.cjs --retry-roster`.
+ *    or the commit was settled after a failure — then the roster is not sent here, so a later change is never
+ *    overwritten). Recover with `node prisma/import-member-rights.cjs --retry-roster` (each member's latest generation).
  *  - 3, designated:null — the commit answer was lost and this run's own audit row is not (or cannot be) seen: it may
  *    still have committed. Check the member list or audit log, then run --retry-roster or the same command again.
  * The run's transaction is observed through `track` (the records work the designation uses): whether its callback
@@ -96,8 +97,12 @@ async function outcome(command: FirstAdminCommand, say: Say, transaction: Transa
   };
   try { await command.start(); } catch (error) { return notDesignated(error); }
   let designated: Designation | null = null;
+  // Only a designation this command saw return sends its own generation. Settled after a failure, a later change may
+  // already be on the roster: leave the roster to --retry-roster (it sends each member's latest generation).
+  let send = false;
   try {
     designated = await command.designate(tracker(transaction));
+    send = true;
   } catch (error) {
     if (transaction.phase === 'none' || transaction.phase === 'not-committed') return notDesignated(error);
     // Committed (a later step threw), or COMMIT asked without an answer: this run's own audit row says what was saved.
@@ -114,7 +119,7 @@ async function outcome(command: FirstAdminCommand, say: Say, transaction: Transa
   transaction.saved = true;
   let roster = 'unknown';
   try {
-    const change = designated.version === null ? null : await command.db.providerChange.findFirst({ where: {
+    const change = !send || designated.version === null ? null : await command.db.providerChange.findFirst({ where: {
       kind: 'credentials', sub: command.subject, target: command.subject, generation: designated.version }, orderBy: { id: 'desc' } });
     if (change) roster = await command.sendRoster(change);
   } catch { roster = 'unknown'; }

@@ -232,8 +232,8 @@ Keycloak 자체 DB migration이 있는 minor 업그레이드다. 업그레이드
 3. 결과(출력 JSON의 `designated`가 끝 코드와 같은 뜻이다):
    - 0 = 지정되고 Keycloak 반영 확인(`designated: true`).
    - 2 = 지정은 저장(커밋)됐고 반영이 확인되지 않음 — 저장 뒤의 기록 조회·반영 전송·그 답 가운데 하나가 실패했거나
-     저장 뒤 다른 단계가 예외를 냄(`designated: true`). `node prisma/import-member-rights.cjs --retry-roster`가 같은
-     변경을 다시 보낸다.
+     저장 뒤 다른 단계가 예외를 냄(`designated: true` — 이때 명령은 반영을 보내지 않는다).
+     `node prisma/import-member-rights.cjs --retry-roster`가 회원마다 가장 최근 변경을 보낸다.
    - 1 = 지정 안 됨: 거절(그 앞의 거절은 아무것도 쓰지 않음), 또는 지정 트랜잭션이 커밋되기 전에 실패하거나 커밋되지
      않았음이 확인됨. 실패 감사 행·운영자 원장 신원이 남을 수 있으나 권한은 주지 않는다(`designated: false`).
    - 3 = 저장됐는지 모름: 커밋 답을 잃었고 이 실행이 쓴 감사 행도 보이지 않음(아직 커밋 중일 수 있음, `designated: null`).
