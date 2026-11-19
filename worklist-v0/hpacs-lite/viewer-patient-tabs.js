@@ -453,6 +453,11 @@ window.KinViewerPatientTabs = (() => {
     // The refusal screen is up: its one line is all that shows (series-recovery.js takes back its image line and notices).
     const screen = refused && !current && !pending, before = document.body.classList.contains('kin-open-refused');
     document.body.classList.toggle('kin-open-refused', screen);
+    let line = document.getElementById?.('kin-viewer-refused');
+    if (screen && !line) {
+      line = document.createElement('p'); line.id = 'kin-viewer-refused'; line.setAttribute('role', 'alert'); line.textContent = DENIED;
+      document.body.append(line);
+    } else if (!screen) line?.remove();
     if (screen && !before) window.dispatchEvent(new CustomEvent('kin-viewer-open-refused'));
     renderLeave();
   }

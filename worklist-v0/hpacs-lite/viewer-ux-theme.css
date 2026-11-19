@@ -43,6 +43,9 @@ body.kin-viewer-empty #root > div > :not(.kin-patient-tabs),
 body.kin-viewer-empty #kin-workspace-dock,
 body.kin-patient-switching #root > div > :not(.kin-patient-tabs),
 body.kin-patient-switching #kin-workspace-dock { visibility: hidden; }
+/* A refused open (viewer-patient-tabs.js): only its one line, whatever OHIF has rendered (an error boundary, panels, notices). */
+body.kin-open-refused #root, body.kin-open-refused #kin-workspace-dock { display: none !important; }
+#kin-viewer-refused { position: fixed; inset: 0; z-index: 2147483000; display: flex; align-items: center; justify-content: center; margin: 0; padding: 1em; background: #212121; color: #E3E3E3; font: 14px/1.4 sans-serif; text-align: center; }
 body.kin-viewer-ux {
   --kin-ux-background: #212121;
   --kin-panel: #2D2D2D;

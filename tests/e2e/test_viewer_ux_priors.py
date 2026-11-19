@@ -876,9 +876,9 @@ class ViewerUXPriorsE2E(ViewerLayoutE2E):
         self.evidence(viewer, 'prior-list-slow')
 
     def refused_screen(self, viewer, *hidden_texts):
-        empty = viewer.locator('.kin-patient-empty')
-        expect(empty).to_have_text('이 검사를 볼 수 있는 권한이 없습니다.', timeout=30000)
-        expect(empty).to_be_visible()
+        line = viewer.locator('#kin-viewer-refused')
+        expect(line).to_have_text('이 검사를 볼 수 있는 권한이 없습니다.', timeout=30000)
+        expect(line).to_be_visible()
         viewer.wait_for_function("() => document.body.classList.contains('kin-viewer-empty')")
         expect(viewer.get_by_role('button', name='Retry Patient', exact=True)).to_be_hidden()
         expect(viewer.get_by_text('같은 환자의 검사인지 확인할 수 없어', exact=False)).to_have_count(0)
