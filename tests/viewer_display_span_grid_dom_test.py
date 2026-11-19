@@ -313,6 +313,18 @@ class DisplaySpanGridDOMTest(unittest.TestCase):
         page = self.open(displays=THREE_DISPLAYS, rows=1, cols=1)
         self.left_alone(page)
 
+    def test_13_only_two_monitors_side_by_side_under_the_images_divide_them(self):
+        # What the viewer counts as monitors under the grid (one above the other is one monitor there) decides with the
+        # display edge: no edge between two monitors' parts - nothing is divided; one - divided; unknown - the display edge.
+        page = self.open(rows=1, cols=1, before="window.synEdges = []; window.kinViewerMonitorEdgesNow = () => synEdges")
+        self.left_alone(page, 'no two monitors side by side')
+        page.evaluate("synEdges = [0.3, 0.7]")
+        self.left_alone(page, 'three parts')
+        page.evaluate("synEdges = [0.6]")
+        self.divided(page)
+        page = self.open(rows=1, cols=1, before="window.kinViewerMonitorEdgesNow = () => null")
+        self.divided(page)
+
 
 if __name__ == '__main__':
     unittest.main()

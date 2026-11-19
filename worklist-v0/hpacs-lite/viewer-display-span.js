@@ -115,6 +115,11 @@ window.KinViewerDisplaySpan = (() => {
       let protocol = '';
       try { protocol = String(services.hangingProtocolService?.getState?.()?.protocolId || ''); } catch (_) { protocol = ''; }
       if (protocol.startsWith('kin.mammography')) return;
+      // Two monitors side by side under the images, as the monitor maximize and Monitors in Hanging Protocol count them
+      // (viewer-features-monitors.js: of two displays one above the other only one is the monitor there): one edge
+      // between their parts of the grid. Unknown there (null) leaves it to the display edge found above. Looked at again
+      // each second: that answer follows a later reading of the displays, with nothing else changing here.
+      try { const edges = window.kinViewerMonitorEdgesNow?.(); if (Array.isArray(edges) && edges.length !== 1) { owed = true; return; } } catch (_) { return; }
       // The stock one-up's one cell (a double click the monitor maximize could not take): that toggle puts its grid back.
       // Looked at again each second: another layout of the same shape can take its place with nothing else changing.
       try { if (window.kinViewerStockOneUp?.()) { owed = true; return; } } catch (_) { return; }
