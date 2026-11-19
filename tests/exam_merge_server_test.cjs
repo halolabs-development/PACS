@@ -128,7 +128,7 @@ test('a saved image drawing on another merged original belongs to the report sco
   assert.equal(d.rows[0].groupId,G1);assert.equal(d.rows[0].source.studyUid,B);
   // The drawing is of the work that attached it: the draft on the base, written on this exam.
   assert.match(d.draft().workUnit,/^disposal:/);assert.equal(d.rows[0].workUnit,d.draft().workUnit);
-  d.versions.push({uid:A,version:1,groupId:G1,drawings:[{id:d.rows[0].id}]});
+  d.versions.push({uid:A,version:1,action:'approve',author:reader.actor,groupId:G1,drawings:[{id:d.rows[0].id}]});
   f.db.groups[0].dissolvedAt=new Date();
   const picture=JSON.parse((await d.evidence.reportDrawing(A,d.rows[0].id,reader)).json);
   assert.equal(picture.png,drawingBody(f,A,key).drawing.png);
@@ -1072,14 +1072,15 @@ test('links: a held, tele-only, foreign, denied or unregistered study gets the l
 // only; H disposed and on hold; B held without an owner (its tele column names the caller); D foreign; E denied.
 async function boundaryList(roles=reader.roles){
   const shown=[A,C,F,H,P],hidden=[B,D,E],all=[...shown,...hidden];
-  const reports=all.map(uid=>({uid,version:1,findings:'SYN '+uid,conclusion:'',recommendation:'',updatedBy:'syn-reader',groupId:uid===F?G1:null}));
+  // The heads are the caller's own: another physician's unsigned head is withheld by the report state table, not by the exam.
+  const reports=all.map(uid=>({uid,version:1,findings:'SYN '+uid,conclusion:'',recommendation:'',updatedBy:reader.actor,groupId:uid===F?G1:null}));
   const drafts=all.map(uid=>({uid,author:reader.actor,present:true,revision:1,findings:'SYN DRAFT '+uid,groupId:uid===F?G1:null}));
   const extra={rs:'A',repDoc:'syn-reader',confirm:null,origin:'dicom',createdAt:new Date('2020-01-01T00:00:00Z'),matched:'U',orderOid:null};
   const svc=await listFixture({group:merged(G1,F,[F,A],{dissolvedAt:new Date()}),reports,drafts,
     versions:reports.map(report=>({...report,action:'approve'})),
     rows:all.map(uid=>({...qido(uid,'ACC-'+uid.slice(-3),4,1),...(uid===B?{'00080080':{Value:['SYN UNREGISTERED']}}:{})})),
     extraStates:[state(B,{...extra,institutionId:null,teleInstitutionId:'hallym'}),state(C,{...extra,institutionId:'other',teleInstitutionId:'hallym'}),
-      state(D,{...extra,institutionId:'other'}),state(H,{...extra,rs:'D',holdReason:'SYN HOLD'}),...[A,F,P,E].map(uid=>state(uid,extra))],
+      state(D,{...extra,institutionId:'other'}),state(H,{...extra,rs:'H',holdReason:'SYN HOLD'}),...[A,F,P,E].map(uid=>state(uid,extra))],
     policy:{version:1,restricted:true,startsAt:null,endsAt:null,rules:[{patientId:null,modalities:[],dateFrom:null,dateTo:null,studyUids:all.filter(uid=>uid!==E)}]}});
   const {resolveExamScope,prepareExamRead,examScopeView}=require('/app/dist/exam-merge.service');
   const c={...reader,roles};

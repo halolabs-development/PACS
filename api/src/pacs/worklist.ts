@@ -3,9 +3,10 @@
  * 보낸 병원을 모르는 검사의 보류·운영자 알림·장비/표기 등록 뒤 자동 연결(D1882)도 같은 등록 자리에서 한다.
  * PacsService가 만들어 소유하는 평범한 객체다(Nest provider가 아니다). 생성자는 참조만 저장한다.
  */
+import { headVersionsUnchanged, withStoredExtras } from '../report-visibility';
 import type { StudyAccessService } from '../study-access.service';
 import type { AccessSnapshot } from '../study-access.service';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { PrismaService } from '../prisma.service';
 import { OrthancService } from '../orthanc.service';
@@ -313,7 +314,7 @@ export class PacsWorklist {
       for (const state of details) sourceStates.set(state.uid, state);
     }
     for (const [uid, state] of shown) sourceStates.set(uid, state);
-    const reports = await this.prisma.report.findMany({ where: { uid: { in: pageUids } } });
+    const reports = await withStoredExtras(this.prisma, await this.prisma.report.findMany({ where: { uid: { in: pageUids } } }));
     const repByUid = new Map(reports.map(r => [r.uid, r]));
     // Merge Exam: a report written on an exam group is about every study of it. Its text goes only to a caller who may read
     // every one of them now (the row stays; the text is withheld), and the row says which studies it was written on.
@@ -513,7 +514,7 @@ export class PacsWorklist {
         institutionNameTag: OrthancService.tag(st, '00080080'),
         // 이 검사가 우리에게 원격판독으로 넘어온 것인가 (화면에서 구분해 보여준다)
         tele: s.teleInstitutionId === me && s.institutionId !== me,
-        state: { ...toClient(s, reportOf(uid), c, draftByUid.get(uid)),
+        state: { ...toClient(s, reportOf(uid), c, draftByUid.get(uid), repByUid.get(uid)),
           reportScope: recordScopes.get(uid) ? examScopeView(recordScopes.get(uid)!) : null },
         reportScope: recordScopes.get(uid) ? examScopeView(recordScopes.get(uid)!) : null,
         reportReadable: !repByUid.has(uid) || !!recordScopes.get(uid),
@@ -528,6 +529,9 @@ export class PacsWorklist {
     const current = () => this.prisma.studyState.findMany({ where: { uid: { in: watched } },
       select: { uid:true, institutionId:true, teleInstitutionId:true, rs:true, preDoc:true, preReviewer:true, preDocSub:true, preReviewerSub:true, draftEpoch:true } });
     if (changedAccess(await current(), watched)) throw accessConflict();
+    // The report state table (report-visibility.ts): the states the answer uses equal the states read after the heads, and no
+    // report version moved since the heads were read - so each lock is judged on a state and a head of the same moment.
+    if (!await headVersionsUnchanged(this.prisma, pageUids, reports)) throw accessConflict();
     // S4-U2: the order side is read with the page that completes the list and BEFORE the access
     // re-check below, so a policy change during this request refuses the whole answer.
     const orderRows = completes ? await this.orderSide(me) : null;
@@ -646,7 +650,7 @@ export class PacsWorklist {
     }
     // A tele assignment without its owning institution is held residue, not a
     // publishable study. Exclude it before reading reports/drafts or recording delivery.
-    const states = [];
+    let states: any[] = [];
     for (const state of stateRows) {
       if (!this.access.visible(state, me) || unresolved.has(state.uid)) continue;
       if (state.origin !== 'logical') { if (permitted.has(state.uid)) states.push(state); continue; }
@@ -659,12 +663,31 @@ export class PacsWorklist {
       }
     }
     const orders=orderRows.filter(o=>o.studyUid?permitted.has(o.studyUid):!access.policy.restricted);
-    const reports = omitStates ? [] : await this.prisma.report.findMany({
-      where: { uid: { in: states.map(s => s.uid) } },
-    });
+    // The report state table (report-visibility.ts): the heads are read, then the states again, and the answer is used only when
+    // no report version moved meanwhile - the states and heads it judges a lock on are of the same moment (a few tries).
+    const uids = states.map(s => s.uid);
+    let reports: any[] = [];
+    for (let attempt = 0; !omitStates; attempt++) {
+      reports = await withStoredExtras(this.prisma, await this.prisma.report.findMany({ where: { uid: { in: uids } } }));
+      const fresh = new Map((await this.prisma.studyState.findMany({ where: { uid: { in: uids } } })).map(s => [s.uid, s]));
+      if (await headVersionsUnchanged(this.prisma, uids, reports)) {
+        // A fresh row replaces the first read only while it is still visible to this caller (a tele request cancelled
+        // meanwhile takes it away) and of the same kind; a row gone or changed is left out, never kept from the first read.
+        const kept = states.flatMap(s => {
+          const now = fresh.get(s.uid);
+          return now && now.origin === s.origin && this.access.visible(now, me) ? [now] : [];
+        });
+        states = kept;
+        const shown = new Set(kept.map(s => s.uid));
+        reports = reports.filter(report => shown.has(report.uid));
+        break;
+      }
+      if (attempt === 2) throw new ServiceUnavailableException('판독 상태가 바뀌는 중입니다. 잠시 후 다시 불러오세요.');
+    }
     // Merge Exam: the same rule as the list — a report written on an exam group goes only to a caller who may read all of it.
     const byUid: Record<string, any> = {};
     const reportScopes: Record<string,any> = {};
+    const storedHead: Record<string, any> = Object.fromEntries(reports.map(report => [report.uid, report]));
     const readable = await readableExamRecords(this.prisma, this.studyAccess, c, reports);
     for (const report of reports) {
       const scope = readable.get(report.uid);
@@ -689,7 +712,7 @@ export class PacsWorklist {
       filters: prefs.filters,
       templates: prefs.templates,
       institutions: this.institutions.institutions.map(i => ({ id: i.id, name: i.name, type: i.type })),
-      states: Object.fromEntries(states.map(s => [s.uid, { ...toClient(s, byUid[s.uid], c, draftByUid[s.uid]),
+      states: Object.fromEntries(states.map(s => [s.uid, { ...toClient(s, byUid[s.uid], c, draftByUid[s.uid], storedHead[s.uid]),
         reportScope:reportScopes[s.uid]??null, reportReadable:!byUid[s.uid]||!!reportScopes[s.uid] }])),
       orders: orders.map(o => ({
         oid: o.oid, id: o.patientId, name: o.name, sex: o.sex, birth: o.birth,

@@ -19,7 +19,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 /** 회원 행: 행에 남은 before/after 스냅숏의 기관으로 귀속한다(admin.service.ts의 row() 모양). */
 export const AUDIT_MEMBER_ACTIONS: readonly string[] = Object.freeze([
   "admin.user.create", "admin.user.create.failed", "admin.user.approve", "admin.user.update",
-  "admin.user.unapprove", "admin.user.suspend", "admin.user.activate", "admin.user.reset-password",
+  "admin.user.unapprove", "admin.user.suspend", "admin.user.activate", "admin.user.reset-password", "admin.user.reset-password.failed",
   "admin.user.patch.failed",
 ]);
 
@@ -53,6 +53,7 @@ export const AUDIT_FIELD_RULES: Readonly<Record<string, AuditFieldSource>> = Obj
   "institution.emr-link.save": 'target',          // FA-090: target이 EMR Link를 바꾼 관리자의 기관 id다
   "institution.dicom-peer.register": 'detail.institution',  // FC-070: 상대 PACS를 자기 기관에 등록한 관리자의 기관
   "institution.dicom-peer.remove": 'detail.institution',    // FC-070: 상대 PACS를 자기 기관에서 지운 관리자의 기관
+  "institution.gateway-settings.save": 'detail.institution',  // Gateway 규칙(목적지·보관·압축)을 저장한 관리자의 기관
   "query-retrieve.search": 'detail.institution',  // FC-070: 자기 기관의 상대 PACS를 검색한 회원의 기관(조건 이름·건수만)
   "query-retrieve.retrieve": 'detail.institution',  // FC-070: 자기 기관의 상대 PACS에서 가져오기를 건 회원의 기관
   "film-print.job": 'detail.institution',  // Film / DICOM Print: 필름을 인쇄하거나 인쇄 배치를 장치로 보낸 회원의 기관(검사·대상·필름 번호만)

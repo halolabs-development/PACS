@@ -723,8 +723,17 @@
       const filmingTitle = "촬영 중(미확인) 검사입니다 — 기사 확인(Verify) 뒤 판독할 수 있습니다";
       const held = heldByOther(s);
       const heldTitle = `${displayActor(held)} 님이 판독 중입니다`;
-      $("#holdbar").style.display = held ? "flex" : "none";
-      $("#holdmsg").textContent = !held ? ""
+      // The report state table (report-visibility.ts): another physician's Save is theirs - the same bar says who is on it.
+      // Fixtures that load this block without page-core.js keep the Preliminary words.
+      const lockText = typeof reportLockText === "function" ? reportLockText(appState[selectedUid]) : appState[selectedUid]?.prelimHidden ? "다른 판독의의 예비 판독(RS: P)입니다" : "";
+      // The button titles carry the phrase itself, so each says it in the language of its own screen.
+      const lockSay = typeof reportLockSay === "function" ? reportLockSay(appState[selectedUid]) : lockText && kinSay(lockText);
+      const inProgress = appState[selectedUid]?.bodyLock === "in-progress";
+      $("#holdbar").style.display = held || inProgress ? "flex" : "none";
+      // A hold over another physician's Save does not end with the hold: the bar says the Save's words either way.
+      $("#holdmsg").textContent = inProgress
+        ? `✎ ${lockText}` + (rad ? ". 이어 쓰려면 More ▸ Reset to Unread로 되돌리세요 (그 글은 그 판독의의 개인 임시글로 남습니다)." : "")
+        : !held ? ""
         : `✎ ${heldTitle} — 잠금이 풀리면 이어서 판독할 수 있습니다` +
           (rad && ["W", "T", "H"].includes(s?.rs) ? ". 자리를 비웠다면 More ▸ Reset to Unread로 되돌릴 수 있습니다." : "");
       $("#deferbar").style.display = s?.rs === "H" ? "flex" : "none";
@@ -738,11 +747,12 @@
         const el = $(id);
         if (!el) continue;
         el.disabled = !rad || locked || filming || !!held;
-        kinWrite(el, held ? heldTitle : filming ? kinSay(filmingTitle) : locked ? kinSay("다른 판독의의 예비 판독(RS: P)입니다")
+        kinWrite(el, held ? heldTitle : filming ? kinSay(filmingTitle) : locked ? lockSay
           : !rad ? kinSay("판독의 권한이 필요합니다") : "", "title");
       }
       // 남의 점유가 다른 단추를 잠가도 진행 중 판독 되돌리기는 열려 있다(아래의 응급·Related·식별 불일치 잠금은 그대로 덮는다).
-      const takeover = rad && !locked && !filming ? inProgressReset(s) : null;
+      // Another physician's Save locks the text, not this way out (FC-040: the server keeps Reset open for it).
+      const takeover = rad && (!locked || inProgress) && !filming ? inProgressReset(s) : null;
       if (takeover) {
         $("#b-unread").disabled = false;
         $("#b-unread").title = `${displayActor(takeover)} 님이 판독 중입니다 — 누르면 점유를 풀고 Unread로 되돌립니다 ` +
@@ -751,7 +761,7 @@
       // 승인된 판독문을 비우는 길은 사유가 남는 Reset뿐이다. Clear는 그 뒷문이었다.
       $("#b-defer").disabled = !rad || !s || s.rs === "A" || s.rs === "P" || locked || filming || !!held || !serverMode;
       kinWrite($("#b-defer"), held ? heldTitle : filming ? kinSay(filmingTitle)
-        : locked ? kinSay("다른 판독의의 예비 판독(RS: P)입니다")
+        : locked ? lockSay
         : s?.rs === "A" ? kinSay("승인된 판독문은 보류할 수 없습니다. 먼저 판독 취소(Reset)를 하세요")
         : s?.rs === "P" ? kinSay("예비 판독(RS: P)은 보류할 수 없습니다 — 승인 또는 취소만 가능합니다")
         : !rad ? kinSay("판독의 권한이 필요합니다") : !serverMode ? kinSay("서버에 연결돼 있을 때만 보류할 수 있습니다") : "", "title");
@@ -771,7 +781,7 @@
       }
       // Addendum은 승인된 판독문에만 붙는다
       $("#b-addendum").disabled = s?.rs !== "A" || !rad || locked || filming || !!held;
-      kinWrite($("#b-addendum"), held ? heldTitle : filming ? kinSay(filmingTitle) : s?.rs !== "A" ? kinSay("승인된 판독문에만 추가기재할 수 있습니다") : "", "title");
+      kinWrite($("#b-addendum"), held ? heldTitle : filming ? kinSay(filmingTitle) : locked && lockSay ? lockSay : s?.rs !== "A" ? kinSay("승인된 판독문에만 추가기재할 수 있습니다") : "", "title");
       /**
        * Prelim은 "아직 확정 안 된 판독을 상급자에게 넘기는" 동작이다.
        * 이미 승인(A)된 것에는 의미가 없고, 이미 P인 것을 다시 넘기면 지정이 덮어써진다.
@@ -780,7 +790,7 @@
       const b = $("#b-prelim");
       if (b) {
         b.disabled = !rad || !s || s.rs === "A" || s.rs === "P" || locked || filming || !!held || !serverMode;
-        kinWrite(b, held ? heldTitle : filming ? kinSay(filmingTitle) : !serverMode ? kinSay("서버에 연결돼 있을 때만 지정할 수 있습니다")
+        kinWrite(b, held ? heldTitle : filming ? kinSay(filmingTitle) : locked && lockSay ? lockSay : !serverMode ? kinSay("서버에 연결돼 있을 때만 지정할 수 있습니다")
           : s?.rs === "P" ? kinSay("이미 예비 판독 중입니다")
           : s?.rs === "A" ? kinSay("이미 승인된 판독입니다")
           : kinSay("상급 판독의를 지정해 최종 판독을 맡깁니다 (RS: P)"), "title");
@@ -788,7 +798,7 @@
       for (const id of ["#findings", "#conclusion", "#recommendation"]) {
         $(id).readOnly = !rad || locked || filming || !!held;
         // C-R01-109#2: an unverified study locks these fields until Verify; the editor names that beside Read Only.
-        $(id).dataset.lockReason = filming && !held ? filmingTitle : "";
+        $(id).dataset.lockReason = filming && !held ? filmingTitle : !held && locked ? lockText : "";
       }
       if(studyPriority?.get(selectedUid))for(const id of ['#b-save','#b-approve','#b-unread','#b-addendum','#b-prelim','#b-defer']) {
         const button=$(id);if(button){button.disabled=true;kinWrite(button, kinSay('응급 상태 저장 결과를 확인한 뒤 판독을 저장하세요'), "title");}

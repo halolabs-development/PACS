@@ -144,7 +144,8 @@
             </div>
 ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</span></div>` : ""}
             ${v.group ? `<div class="vr" data-exam-group="${esc(v.group.id)}"><b>Exam scope</b> — <span data-exam-scope-text></span></div>` : ""}
-            ${v.findings || v.conclusion || v.recommendation
+            ${v.bodyHidden ? `<div class="vr" data-body-hidden="${esc(v.bodyHidden)}">본문 비공개 — 그 판을 쓴 판독의만 볼 수 있습니다(승인 전 Save 또는 개인 초안)</div>`
+              : v.findings || v.conclusion || v.recommendation
               ? `<pre translate="no">${esc([v.findings, v.conclusion, v.recommendation].filter(Boolean).join("\n---\n"))}</pre>`
               : `<div style="color:#556;padding:4px 0">(내용 없음)</div>`}
             ${Array.isArray(v.drawings) && v.drawings.length ? `<div class="vdraw" data-version="${esc(v.version)}"

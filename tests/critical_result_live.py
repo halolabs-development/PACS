@@ -266,14 +266,17 @@ class CriticalResultTeleLiveTests(CriticalResultHarness, unittest.TestCase):
         rx, sent = self.send("kdoctor", f.uid, "doctor2", 1)                                                     # F-RO 2: R_X
         self.check(sent, 201)
         replay_body = self.check(sent, 201).body["applied"]
-        self.check(self.commit(f.uid, "doctor", "approve", 1, findings="SYNTHETIC owner v2 " + f.secret), 201)  # v2, RS A
+        # The owner's radiologist cannot read or sign over B's Save (the report state table): it takes the reading back
+        # first (Reset of an in-progress report, no reason - B's text goes to B's own draft), then reports and approves.
+        self.check(self.commit(f.uid, "doctor", "reset", 1), 201)                                              # discarded v2, reset v3
+        self.check(self.commit(f.uid, "doctor", "approve", 3, findings="SYNTHETIC owner v4 " + f.secret), 201)  # v4, RS A
         self.assertEqual(study_state(f.uid)["ts"], "wait", "the owner's approve keeps TS")
-        rc, sent_c = self.send("kdoctor", f.uid, "clinician", 2)                                                 # F-RO 3: R_C
+        rc, sent_c = self.send("kdoctor", f.uid, "clinician", 4)                                                 # F-RO 3: R_C
         self.check(sent_c, 201)
         self.channel(f.uid, {"ts": "cancelled"})                                                                 # F-RO 4
         self.check(self.read("kdoctor", rx), 404, NOT_FOUND)
         self.channel(f.uid, {"ts": "wait", "teleTo": "kin-center"}, 400)                                        # TO-01: RS is not W
-        self.check(self.commit(f.uid, "doctor", "reset", 2, reason="SYNTHETIC reset before reopening"), 201)    # discarded v3, reset v4
+        self.check(self.commit(f.uid, "doctor", "reset", 4, reason="SYNTHETIC reset before reopening"), 201)    # discarded v5, reset v6
         self.channel(f.uid, {"ts": "wait", "teleTo": "kin-center"})                                              # F-RO 7: reopened
         l0 = {"records": 2, "events": 2, "receipts": 2, "audits": 2}
         self.assertEqual(critical_ledger(f.uid), l0)

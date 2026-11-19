@@ -178,6 +178,8 @@ STRUCT_HTML = slice_between(MAIN, *MARKERS["STRUCT_HTML"]) + "\n  </div>"
 HOLD_BLOCK = slice_between(MAIN, *MARKERS["HOLD_BLOCK"])
 API_FN = extract_function(MAIN, "api")
 WRITE_BLOCK_FN = extract_function(MAIN, "reportWriteBlock")
+# The report state table's reason words (page-core.js), which the write block names for a locked study.
+LOCK_TEXT_FN = extract_function(MAIN, "reportLockText") + "\n" + extract_function(MAIN, "reportLockSay")
 EDITOR_BLOCK_FN = extract_function(MAIN, "reportEditorBlock")
 
 # DI-14 only (asr-binding-contract §10 succession). The shipped dictation wiring and pane, sliced from
@@ -347,7 +349,7 @@ def harness(state):
             .replace("CITATIONJS", CITATION_JS)
             .replace("STRUCTUREJS", STRUCTURE_JS)
             .replace("APIFN", API_FN)
-            .replace("WRITEBLOCKFN", WRITE_BLOCK_FN)
+            .replace("WRITEBLOCKFN", LOCK_TEXT_FN + "\n" + WRITE_BLOCK_FN)
             .replace("EDITORBLOCKFN", EDITOR_BLOCK_FN)
             .replace("BASEBLOCK", report_display_block(MAIN_PATH) + fixture_block(MAIN_PATH, REPORT_FIXTURE, "BASE_BLOCK"))
             .replace("REPORTBLOCK", fixture_block(MAIN_PATH, REPORT_FIXTURE, "REPORT_BLOCK"))

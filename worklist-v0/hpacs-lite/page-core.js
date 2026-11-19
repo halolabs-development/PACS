@@ -24,6 +24,24 @@
       const raw = String(value ?? "");
       return actorNames.get(raw) || actorNames.get(raw.split("@")[0]) || raw;
     }
+    /**
+     * The report state table (server: report-visibility.ts): why this study's report text is not on this screen, from the
+     * server's `prelimHidden` (no text for you) and `bodyLock` (the reason) - "" when the text is yours to read. Every screen
+     * that says why a report is empty or read-only says it with these words. reportLockSay is the product phrase for a
+     * control written with kinWrite (in the language of its own region); reportLockText is the same words as a plain string
+     * (the name of the writer as is) for text that is interpolated, stored or posted to another window.
+     */
+    function reportLockText(a) {
+      const said = reportLockSay(a);
+      return typeof said === "string" ? said : String(said.toJSON());
+    }
+    function reportLockSay(a) {
+      if (!a?.prelimHidden) return "";
+      if (a.bodyLock === "destroyed") return kinSay("보존 기간이 끝나 판독문을 파기한 검사입니다");
+      if (a.bodyLock === "in-progress")
+        return kinSay("{0} 님이 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다", displayActor(a.savedBy) || kinSay("다른 판독의"));
+      return kinSay("다른 판독의의 예비 판독(RS: P)입니다");
+    }
     function tagv(st, key) {
       const v = st[key]?.Value?.[0];
       if (v == null) return "";

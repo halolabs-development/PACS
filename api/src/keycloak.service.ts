@@ -302,6 +302,19 @@ export class KeycloakService {
     await this.adm(`/users/${encodeURIComponent(id)}/execute-actions-email`, 'PUT', ['UPDATE_PASSWORD']);
   }
 
+  /**
+   * Whether the realm has a mail server and a sender address — read only after a reset mail failed, to tell a missing
+   * setting from any other failure. Returns nothing but the yes/no (no host, address or secret leaves this method).
+   */
+  async mailSettings(): Promise<{ configured: boolean }> {
+    const realm = await this.adm('');
+    // Only a readable realm answers the question; anything else is "unknown" to the caller (never "not configured").
+    if (!realm || typeof realm !== 'object' || Array.isArray(realm)) throw new ServiceUnavailableException('realm settings unreadable');
+    const smtp = realm.smtpServer && typeof realm.smtpServer === 'object' ? realm.smtpServer : {};
+    const present = (value: unknown) => typeof value === 'string' && value.trim().length > 0;
+    return { configured: present(smtp.host) && present(smtp.from) };
+  }
+
   /** Creation and the recorded post-commit credentials write may enable an account; rights stay in the DB. */
   async setEnabled(id: string, enabled: boolean): Promise<void> {
     await this.adm(`/users/${encodeURIComponent(id)}`, 'PUT', { enabled });
