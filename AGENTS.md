@@ -58,7 +58,7 @@ Orthanc·NestJS/Prisma·PostgreSQL·Keycloak·nginx로 구성된 의료영상 �
 ## 1. 판독·권한 불변조건
 
 1. `ReportVersion`은 추가만 하는 이력이다. 판독 취소에는 사유를 남긴다. 승인본(A)에는 기록된 첫 승인 시각부터 24시간이 지나기 전이고 Addendum이 없을 때 승인한 판독의의 본문 수정(amend), 이전 판을 남기는 Addendum, 사유가 있는 Reset만 허용한다. Reset만 W로 되돌리며, A에서 `save`·`approve`를 거절한다.
-2. 개인 `ReportDraft`의 키는 `(uid, author)`이며 확정 `Report`를 바꾸지 않는다. 충돌은 확정(`commitReport`) 때 처리하고 남의 초안은 응답에 포함하지 않는다.
+2. 개인 `ReportDraft`의 행 키는 `(uid, author)`이고, 누구의 초안인지는 로그인 이메일이 아니라 계정 ID(`authorSub`, uid마다 하나)로 판정한다(`api/src/owner-identity.ts` — 점유·저장 글·검색·템플릿의 주인도 같다). 초안은 확정 `Report`를 바꾸지 않는다. 충돌은 확정(`commitReport`) 때 처리하고 남의 초안은 응답에 포함하지 않는다.
 3. RS=P에서는 지정된 상급 판독의의 승인 또는 사유가 있는 취소만 상태를 바꾼다. 임시저장은 P를 유지하며 작성자 자신의 승인은 금지한다.
 4. 타 기관 열람은 `StudyState.teleInstitutionId` 경계를 지킨다. `admin`도 예외가 아니며 기관 범위와 역할 권한을 따로 검사한다.
 5. 역할 검사는 서버의 `need()`, 기관 검사는 `visible()`에서 강제한다(`api/src/pacs/access.ts`). 화면 잠금으로 서버 검사를 대신하지 않는다.
