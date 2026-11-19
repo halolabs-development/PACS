@@ -707,11 +707,20 @@ window.KinReadingWorkspace = function (app) {
   function refreshViewerDisplay() {
     try { frame?.contentWindow?.kinViewerStudyDisplay?.refreshAll(); } catch (_) {}
   }
+  // The frame's viewer document holds a failed image read of a study it shows (series-recovery.js kinViewerFailedStudies):
+  // the fixed OHIF reuses that failure for the document's life, so the same request opens a new frame.
+  function frameFailed() {
+    try {
+      const w = frame?.contentWindow, failedUids = w?.kinViewerFailedStudies?.();
+      const uids = (new URL(w.location.href).searchParams.get('StudyInstanceUIDs') || '').split(',');
+      return Array.isArray(failedUids) && failedUids.some(uid => uids.includes(uid));
+    } catch (_) { return false; }
+  }
   function attempt(r, abandon) {
     if (ended) { app.notice('영상 작업공간이 종료되었습니다. 판독문 초안을 저장한 뒤 화면을 새로고침하세요.'); return false; }
     if (!r || r.reportUid !== app.current() || !app.allowed()) return false;
     pending = r; active = true; layout(); identify();
-    if (frame && !failed && JSON.stringify(shown) === JSON.stringify(r)) {
+    if (frame && !failed && !frameFailed() && JSON.stringify(shown) === JSON.stringify(r)) {
       frame.hidden = false; recovery.hidden = true; pending = null; identify();
       // Shown again: the viewer reads again what it shows, so a Match or Unmatch since the frame opened shows.
       refreshViewerDisplay();

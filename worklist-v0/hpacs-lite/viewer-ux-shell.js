@@ -26,17 +26,111 @@ window.KinViewerUXShell = (() => {
         if (typeof saved[side] === 'boolean' && saved[side] !== now) header(side).click();
       }
     }
-    document.addEventListener('click', event => {
-      const side = sides.find(value => container(value)?.contains(event.target));
-      if (!side || !event.isTrusted) return;
-      const before = open(side);
+    // The panel's state after the reader's action is the reader's choice (read on the next frame, once the stock applied it).
+    function remember(side, before) {
       requestAnimationFrame(() => {
         const now = open(side), name = key();
         if (signal.aborted || !name || now === null || now === before) return;
         try { localStorage.setItem(name, JSON.stringify({ ...read(), [side]: now })); } catch (_) {}
       });
+    }
+    document.addEventListener('click', event => {
+      const side = sides.find(value => container(value)?.contains(event.target));
+      if (!side || !event.isTrusted) return;
+      remember(side, open(side));
     }, { capture: true, signal });
-    return { apply };
+    // A compact panel button (mountPanels) acts with the panel's own control; what it opens or closes is the reader's choice.
+    function press(side, act) { const before = open(side); act(); remember(side, before); }
+    return { apply, press, container, header, open };
+  }
+  // Minhoon 2026-10-27 item 4 ("Move Studies, Measurement, and Segmentation navigation into compact upper controls") and
+  // 2026-11-01 ("move this whole bar as a horizontal bar on the top", of the Studies panel). Three compact buttons at the
+  // end of the patient row open and close the stock panels, each with the panel's own control, so the stock panel keeps
+  // its state and a choice made here is kept as the reader's (mountSidePanels.press). While the buttons are shown the
+  // panels' closed edge strips, the navigation they replace, are not shown; the images take that room. The open Studies
+  // panel lies across the top of the images (theme: [data-kin-studies-band]). Where the patient row is not shown (a
+  // second window that shows images only) or a panel's control is not found, the stock entrances stay as they are.
+  // The stock Measurements tab lists only measurements accepted for tracking; while it lists none it says so and offers
+  // the tool area's Measurements list, where every drawn measurement is (two lists of one name, one always empty, read
+  // as "no measurements").
+  function mountPanels(sides) {
+    const group = document.createElement('section'); group.className = 'kin-ux-panels'; group.dataset.kinUxOwned = '';
+    group.setAttribute('role', 'group'); group.setAttribute('aria-label', 'Panels');
+    const TRACKED = '[data-cy="trackedMeasurements-panel"]';
+    const entries = [
+      { key: 'studies', label: 'Studies', side: 'left', title: '검사·시리즈 목록을 열거나 닫습니다.' },
+      { key: 'measurements', label: 'Measurements', side: 'right', tab: '[data-cy="trackedMeasurements-btn"]',
+        title: '추적을 수락한 측정 목록(CSV·SR 내보내기)을 열거나 닫습니다.' },
+      { key: 'segmentation', label: 'Segmentation', side: 'right', tab: '[data-cy$="-btn"][data-cy*="segmentation" i]',
+        title: '분할 목록을 열거나 닫습니다.' },
+    ];
+    for (const entry of entries) {
+      const node = entry.node = document.createElement('button'); node.type = 'button'; node.textContent = entry.label;
+      node.dataset.panel = entry.key; node.title = entry.title; node.hidden = true;
+      node.onclick = () => press(entry); group.append(node);
+    }
+    const tabOf = entry => entry.tab && sides.container(entry.side)?.querySelector(entry.tab) || null;
+    const available = entry => !!sides.container(entry.side) && (!entry.tab || !!tabOf(entry));
+    // A tab is shown when its panel is open and its content is there: Measurements by its list, Segmentation otherwise.
+    function on(entry) {
+      if (sides.open(entry.side) !== true) return false;
+      if (!entry.tab) return true;
+      const tracked = !!sides.container(entry.side).querySelector(TRACKED);
+      return entry.key === 'measurements' ? tracked : !tracked;
+    }
+    function press(entry) {
+      if (!available(entry)) return;
+      // Open on this tab: close the panel. Closed, or open on the other tab: this tab's own control opens it there.
+      if (on(entry)) sides.press(entry.side, () => sides.header(entry.side)?.click());
+      else sides.press(entry.side, () => (entry.tab ? tabOf(entry) : sides.header(entry.side))?.click());
+    }
+    const hint = document.createElement('p'); hint.className = 'kin-tracked-hint'; hint.dataset.kinUxOwned = ''; hint.setAttribute('role', 'note');
+    const hintText = document.createElement('span');
+    hintText.textContent = 'This list shows only measurements accepted for tracking. Every drawn measurement is in the Measurements list of the tool area.';
+    const openList = document.createElement('button'); openList.type = 'button'; openList.textContent = 'Open Measurements List';
+    const dockTab = () => document.querySelector('#kin-workspace-dock nav button[aria-controls="kin-viewer-history"]');
+    openList.onclick = () => { const tab = dockTab(); if (!tab) return; if (tab.getAttribute('aria-expanded') !== 'true') tab.click(); tab.focus(); };
+    hint.append(hintText, openList);
+    let bandRow = null, bandPanel = null, frameTop = null;
+    function apply() {
+      const host = document.querySelector('.kin-patient-tabs'), any = entries.some(available);
+      if (!host || !any) group.remove();
+      else if (group.parentElement !== host || host.lastElementChild !== group) host.append(group);
+      const active = group.isConnected && !document.body.classList.contains('kin-second-display-rows-off');
+      for (const entry of entries) {
+        const shown = active && available(entry);
+        if (entry.node.hidden !== !shown) entry.node.hidden = !shown;
+        entry.node.setAttribute('aria-pressed', String(shown && on(entry)));
+      }
+      document.body.toggleAttribute?.('data-kin-panels', active);
+      for (const side of ['left', 'right']) {
+        const box = sides.container(side);
+        // Only a panel whose button is shown loses its strip: the stock strip stays the way in otherwise.
+        const own = active && entries.some(entry => entry.side === side && !entry.node.hidden);
+        box?.toggleAttribute?.('data-kin-side-closed', own && sides.open(side) === false);
+      }
+      const left = sides.container('left');
+      const band = active && !!left && !entries[0].node.hidden && sides.open('left') === true;
+      const row = band ? left.parentElement : null;
+      if (bandRow && bandRow !== row) bandRow.removeAttribute?.('data-kin-studies-band');
+      if (bandPanel && bandPanel !== (band ? left : null)) bandPanel.removeAttribute?.('data-kin-studies-panel');
+      bandRow = row; bandPanel = band ? left : null;
+      row?.setAttribute?.('data-kin-studies-band', ''); bandPanel?.setAttribute?.('data-kin-studies-panel', '');
+      // A viewer window floating over the images (Recent Layout where there is no tool area) never rises over the
+      // viewer's top rows, wherever the Studies band puts them: the theme keeps it below the image grid's top.
+      const gridTop = Math.round(document.querySelector('[data-cy="viewport-grid"]')?.getBoundingClientRect?.().top ?? NaN);
+      if (Number.isFinite(gridTop) && gridTop !== frameTop) { frameTop = gridTop; document.documentElement?.style?.setProperty?.('--kin-frame-top', gridTop + 'px'); }
+      const tracked = document.querySelector(TRACKED);
+      if (tracked && !tracked.querySelector('[data-cy="data-row"]')) {
+        openList.hidden = !dockTab();
+        if (hint.nextElementSibling !== tracked) tracked.before(hint);
+      } else if (hint.isConnected) hint.remove();
+    }
+    return { apply, dispose() {
+      group.remove(); hint.remove(); document.body.removeAttribute?.('data-kin-panels'); document.documentElement?.style?.removeProperty?.('--kin-frame-top');
+      bandRow?.removeAttribute?.('data-kin-studies-band'); bandPanel?.removeAttribute?.('data-kin-studies-panel');
+      for (const side of ['left', 'right']) sides.container(side)?.removeAttribute?.('data-kin-side-closed');
+    } };
   }
   // A3 C-R01-027 #18/#19: the pinned OHIF 3.9.1 Studies panel already builds Primary/Recent/All tabs, but shows them
   // only as a dropdown behind its unlabeled settings icon. This row shows the same tabs over the list. Selecting one calls
@@ -334,9 +428,17 @@ window.KinViewerUXShell = (() => {
         },
       },
     };
+    // The compact tools on each cell's information row: the image toolbar gives the function that fills a cell's
+    // row (viewer-ux-toolbar.js) and takes it back when it ends.
+    let cellProvider = null;
+    seam.cellTools = provider => {
+      cellProvider = provider; info.refresh();
+      return () => { if (cellProvider === provider) { cellProvider = null; if (!ended) info.refresh(); } };
+    };
+    seam.refreshCells = () => { if (!ended) info.refresh(); };
     window.KinViewerUX = seam;
     const stopPatient = tabs.subscribe(closeReport);
-    const info = window.KinViewerInfoBar.mount({ services, studyActions: {
+    const info = window.KinViewerInfoBar.mount({ services, cellTools: () => cellProvider, studyActions: {
       hidden: () => session.readOnly(),
       available: () => !session.readOnly() && typeof actions?.listPriors === 'function',
       open(viewportId, anchor) { const value = context(viewportId); if (value) actions?.listPriors({ ...value, anchor, openImages: actions.openImages, openReport: actions.openReport }); },
@@ -344,6 +446,7 @@ window.KinViewerUXShell = (() => {
     const series = window.KinViewerSeriesStrip.mount({ services });
     tabs.mount({ services, session, refreshChrome() { info.refresh(); series.refresh(); } });
     const subscriptions = [], abort = new AbortController(), panels = mountSidePanels(session, abort.signal), studies = mountStudyTabs();
+    const compact = mountPanels(panels);
     const autoHide = mountAutoHide(abort.signal, { toolbar: () => document.querySelector('.kin-ux-toolbar-slot'), thumbs: () => document.querySelector('.kin-viewer-series-strip') });
     // Rows turned to a side page up and down; the strip's arrows follow.
     const chromeChanged = () => { series.orient?.(); autoHide.changed(); };
@@ -362,7 +465,7 @@ window.KinViewerUXShell = (() => {
     function refresh() { frame = null; if (!ended) {
       if (reportContext && !admits(reportContext)) closeReport();
       actions?.refresh?.();
-      info.refresh(); series.refresh(); tabs.refresh(); panels.apply(); studies.apply();
+      info.refresh(); series.refresh(); tabs.refresh(); panels.apply(); studies.apply(); compact.apply();
     } }
     function schedule() { if (!ended && !frame) frame = requestAnimationFrame(refresh); }
     for (const service of [services.viewportGridService, services.displaySetService, services.cornerstoneViewportService]) {
@@ -387,7 +490,7 @@ window.KinViewerUXShell = (() => {
       // microtask, as soon as the grid exists, and a pane gets its bar in the
       // row its padding reserves: neither changes the size of a canvas the
       // stock has already created.
-      series.place(); info.adopt(); panels.apply(); studies.apply();
+      series.place(); info.adopt(); panels.apply(); studies.apply(); compact.apply();
       schedule();
     });
     observer.observe(document.getElementById('root'), { childList: true, subtree: true });
@@ -397,7 +500,7 @@ window.KinViewerUXShell = (() => {
       subscriptions.forEach(subscription => subscription.unsubscribe());
       imageEvents.forEach(event => document.removeEventListener(event, schedule, true));
       stopPatient(); closeReport(); report.remove(); if (window.KinViewerUX === seam) delete window.KinViewerUX;
-      tabs.dispose(); info.dispose(); series.dispose(); studies.dispose(); document.body.classList.remove('kin-viewer-ux');
+      tabs.dispose(); info.dispose(); series.dispose(); studies.dispose(); compact.dispose(); document.body.classList.remove('kin-viewer-ux');
     } };
   }
   return { mount, chrome };

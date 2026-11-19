@@ -30,9 +30,14 @@ function displayValues(base: any, source: any, other: boolean) {
 }
 
 /** Only metadata from the admitted exam selection reaches the viewer, including on the clinician route. */
-export function viewerStudyDisplay(rows: any[], institutions: Map<string, string>, identities: Map<string, SourceIdentity>) {
+export function viewerStudyDisplay(rows: any[], institutions: Map<string, string>, identities: Map<string, SourceIdentity>,
+  requestedUids: string[] | null = null) {
   const studies = [], audit: LocalReadSource[] = [];
+  const unlisted = new Set(requestedUids);
   for (const row of rows) {
+    // Membership comes from the authorized selection, before checking whether every original can supply display values.
+    unlisted.delete(row.uid);
+    for (const source of row.sourceMetadata || []) unlisted.delete(source.uid);
     const ranges = row.group ? row.examScope.sources : [{ studyUid: row.uid, series: { mode: 'all', uids: [] } }];
     const sources = [];
     for (const { studyUid, series } of ranges) {
@@ -55,5 +60,5 @@ export function viewerStudyDisplay(rows: any[], institutions: Map<string, string
     studies.push({ uid: row.uid, sourcePatientKey: row.sourcePatientKey, displaySources: sources, state: { rs: row.state.rs },
       examScope: row.examScope, examUnavailable: row.examUnavailable, examUnavailableKind: row.examUnavailableKind });
   }
-  return new LocalReadResponse({ studies }, audit);
+  return new LocalReadResponse({ studies, ...(requestedUids && { unlistedUids: [...unlisted] }) }, audit);
 }

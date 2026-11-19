@@ -6,8 +6,12 @@
 //   node prisma/designate-first-admin.cjs --institution <group> --subject <Keycloak user id> \
 //     --operator <who runs it> --reason "<why, e.g. the hospital's request and who confirmed it>"
 //
-// Exit 0: designated and the roster (Keycloak groups/roles) confirmed. Exit 2: designated, roster unconfirmed —
-// recover with `node prisma/import-member-rights.cjs --retry-roster`. Exit 1: refused or failed; nothing written.
+// Exit 0: designated and the roster (Keycloak groups/roles) confirmed. Exit 2: designated (committed), roster
+// unconfirmed — recover with `node prisma/import-member-rights.cjs --retry-roster`. Exit 1: not designated — refused,
+// or failed before its transaction committed. Exit 3: the commit answer was lost and this run's audit row is not seen —
+// it may still commit: check the institution's members for this person as administrator, then --retry-roster if
+// they are, or the same command again if they are not.
+// A failed cleanup at the end is reported on its own line and does not change the exit code.
 for (const name of ['DATABASE_URL', 'KC_ADMIN_URL', 'KC_REALM', 'KC_ISSUER', 'KC_CLIENT_ID', 'KC_CLIENT_SECRET', 'KIN_EMR_STATE_DIR']) {
   if (!process.env[name]) throw new Error('Missing setting: ' + name);
 }
@@ -18,6 +22,7 @@ const { KeycloakService } = require('../dist/keycloak.service');
 const { AdminService } = require('../dist/admin.service');
 const { sendRecordedRoster } = require('../dist/member-rights-import');
 const { EmrRuntime } = require('../dist/emr-runtime/application');
+const { runFirstAdminCommand } = require('../dist/first-admin-command');
 
 const USAGE = 'Usage: designate-first-admin.cjs --institution <group> --subject <user id> --operator <name> --reason <text>';
 const options = {};
@@ -30,15 +35,21 @@ for (let i = 0; i < args.length; i += 2) {
 }
 
 const db = new PrismaService();
-let runtime;
-(async () => {
-  try {
+let runtime, keycloak;
+// A closed output pipe must not turn a decided outcome into a crash (the exit code below still stands).
+for (const stream of [process.stdout, process.stderr]) stream.on('error', () => {});
+// The exit code and the printed `designated` are decided in one place (api/src/first-admin-command.ts).
+runFirstAdminCommand({
+  subject: options.subject,
+  db,
+  async start() {
     // Its own failure journal: the running API is the one writer of its own.
     runtime = new EmrRuntime(process.env.DATABASE_URL, join(process.env.KIN_EMR_STATE_DIR, 'operator-outage'));
     await runtime.start();
-    const keycloak = new KeycloakService();
-    const work = runtime.port.begin();
-    let after;
+    keycloak = new KeycloakService();
+  },
+  async designate(track) {
+    const begun = runtime.port.begin(), work = track(begun);
     try {
       // The operator's ledger identity is resolved (written once) only after every refusal has passed.
       const makeFacts = async () => {
@@ -48,28 +59,15 @@ let runtime;
           ip: null, sessionRef: null, requestId: randomUUID(), request: { work, requireCurrent: async () => {} } };
       };
       const service = new AdminService(db, keycloak, null, { publishCredentials() {} });
-      after = await service.designateFirstAdmin(options.subject, options.institution,
+      return await service.designateFirstAdmin(options.subject, options.institution,
         { name: options.operator, reason: options.reason }, makeFacts);
-    } finally { work.end(); }
-    const change = await db.providerChange.findFirst({ where: { kind: 'credentials', sub: options.subject,
-      target: options.subject, generation: after.version }, orderBy: { id: 'desc' } });
-    const roster = change ? await sendRecordedRoster(db, keycloak, change) : 'unknown';
-    process.stdout.write(JSON.stringify({ designated: true, institution: after.institution, subject: after.id,
-      version: after.version, roster }) + '\n');
-    if (roster !== 'done') {
-      process.stderr.write('Roster unconfirmed; recover with: node prisma/import-member-rights.cjs --retry-roster\n');
-      process.exitCode = 2;
-    }
-  } catch (error) {
-    const body = typeof error?.getResponse === 'function' ? error.getResponse() : null;
-    const code = body && typeof body === 'object' ? body.code ?? null : null;
-    const message = body && typeof body === 'object' ? body.message : null;
-    process.stderr.write(JSON.stringify({ designated: false, code, message: typeof message === 'string' ? message
-      : 'First administrator designation failed; inspect the recorded outcome' }) + '\n');
-    process.exitCode = 1;
-  } finally {
-    try { if (runtime) await runtime.stop(Date.now() + 5000); }
-    catch { process.stderr.write('Ledger cleanup failed\n'); process.exitCode = 1; }
-    finally { await db.$disconnect(); }
-  }
-})();
+    } finally { begun.end(); }
+  },
+  sendRoster: change => sendRecordedRoster(db, keycloak, change),
+  cleanup: [
+    ['Ledger cleanup', async () => { if (runtime) await runtime.stop(Date.now() + 5000); }],
+    ['Database disconnect', () => db.$disconnect()],
+  ],
+  out: line => process.stdout.write(line + '\n'),
+  err: line => process.stderr.write(line + '\n'),
+}).then(code => { process.exitCode = code; }, () => { process.exitCode = 3; });

@@ -62,7 +62,16 @@ export type LoginFailureCause =
 /** 관리자 OTP 관문의 거절 문구(adminProved). 원인(막 등록함·역할 반영 전·역할 빠짐)을 가르지 않는다 — 답은 모두 다시 로그인이다. */
 const ADMIN_OTP_REQUIRED = '관리자 계정은 OTP 확인이 필요합니다. 다시 로그인해 주십시오';
 /** The landing answers this server gives itself (index.html ARRIVAL_NOTICES); a provider error never borrows one. */
-const OWN_LANDING_ERRORS: ReadonlySet<string> = new Set(['stale', 'session_active', 'login_failed', 'admin_otp_required']);
+/**
+ * Why a verified sign-in of a suspended member is refused (index.html ARRIVAL_NOTICES says it and whom to ask): suspended
+ * with approval kept, or suspended without approval (approval revoked, or an applicant suspended before approval - the
+ * same rights row). Read from the row that refused the sign-in (`entryRights`), never looked up again.
+ */
+type BlockedAnswer = 'member_suspended' | 'member_suspended_unapproved';
+const OWN_LANDING_ERRORS: ReadonlySet<string> = new Set(['stale', 'session_active', 'login_failed', 'admin_otp_required',
+  'member_suspended', 'member_suspended_unapproved']);
+/** The refusal `entryRights` throws for a suspended member carries the answer its row gives. */
+const BLOCKED = Symbol('kin.blockedAnswer');
 type StorageStep = 'session_read' | 'session_write' | 'end_transaction' | 'login_transaction' | 'login_failure_row'
   | 'sweep_read' | 'sweep_target' | 'sweep_cycle'
   | 'change_write';
@@ -224,7 +233,12 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     const marker = await this.storage('session_read', () => db.memberRightsImport.findUnique({ where: { id: 'realm-v1' } }));
     if (!marker) throw authRefusal(401, 'AUTH_RIGHTS_PENDING', '회원 권한을 준비하고 있습니다');
     const row: any = await this.storage('session_read', () => db.memberRights.findUnique({ where: { sub } }));
-    if (row?.suspended) throw this.ended('현재 회원 자격으로 접근할 수 없습니다');
+    if (row?.suspended) {
+      const refusal: any = this.ended('현재 회원 자격으로 접근할 수 없습니다');
+      const answer: BlockedAnswer = row.approved && row.institution ? 'member_suspended' : 'member_suspended_unapproved';
+      refusal[BLOCKED] = answer;
+      throw refusal;
+    }
     return row ?? { sub, version: 0, approved: false, suspended: false, institution: null, roles: [], newAuthAfter: null };
   }
 
@@ -903,7 +917,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
       const cause = error?.getResponse?.()?.code === 'AUTH_RIGHTS_PENDING' ? 'rights_pending'
         : error?.getStatus?.() === 401 ? 'member_isolated' : 'storage_failure';
       await this.loginFailureRow(req, cause, this.identity(payload, String(payload.sub)));
-      return { kind: 'landing', error: 'login_failed' };
+      return { kind: 'landing', error: error?.[BLOCKED] ?? 'login_failed' };
     }
     if (observed.newAuthAfter) {
       try {
@@ -970,7 +984,8 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
       this.storageWarning('login_transaction');
       await this.loginFailureRow(req, error?.getStatus?.() === 401 ? 'member_isolated'
         : error?.getResponse?.()?.code === 'AUTH_STORAGE_FAILURE' ? 'storage_failure' : 'session_failed', who);
-      return { kind: 'landing', error: 'login_failed' };
+      // Suspended between the first read and this one: the refusing row says why. Anything else stays general.
+      return { kind: 'landing', error: error?.[BLOCKED] ?? 'login_failed' };
     }
 
     if (outcome === 'isolated') {

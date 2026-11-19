@@ -215,6 +215,49 @@ class ViewerStudyDisplayDOMTest(unittest.TestCase):
     def test_clinician_match_then_unmatch_keeps_empty_overrides_on_all_visible_surfaces(self):
         self.exercise_surfaces("read-only")
 
+    def mount_empty_display(self, *, status=200, unlisted=()):
+        self.page.route(ORIGIN + "/api/studies**", lambda route: route.fulfill(
+            status=status, json={"studies": [], "unlistedUids": list(unlisted)}))
+        self.page.add_style_tag(path=str(IDENTITY.with_name("viewer-ux-theme.css")))
+        self.page.add_script_tag(path=str(IDENTITY.with_name("viewer-patient-tabs.js")))
+        self.page.evaluate("""async () => {
+          history.replaceState({}, '', '/ohif/viewer?StudyInstanceUIDs=study-current');
+          const root = document.body.appendChild(document.createElement('div'));
+          root.id = 'root';
+          const layout = root.appendChild(document.createElement('div'));
+          layout.innerHTML = '<div class="bg-secondary-dark z-20"><span id="kin-viewer-brand"></span></div>';
+          layout.append(document.querySelector('#vp1').parentElement);
+          window.refusals = 0;
+          window.addEventListener('kin-viewer-open-refused', () => window.refusals++);
+          Object.assign(services.cornerstoneViewportService, {
+            EVENTS: {VIEWPORT_DATA_CHANGED:'data'}, subscribe: () => ({unsubscribe(){}})
+          });
+          await KinViewerPatientTabs.mount({ services, session:kinViewerSession, refreshChrome(){} });
+        }""")
+
+    def test_selected_study_omitted_from_display_keeps_its_image(self):
+        # The selected exam has an original with a different patient key. Its display projection has no row.
+        self.mount_empty_display()
+        expect(self.page.get_by_role("status")).to_have_text("같은 환자의 검사인지 확인할 수 없어 현재 화면을 유지합니다.")
+        expect(self.page.get_by_role("button", name="Retry Patient")).to_be_visible()
+        expect(self.page.locator("#vp1")).to_be_visible()
+        expect(self.page.get_by_text("이 검사를 볼 수 있는 권한이 없습니다.")).to_have_count(0)
+        self.assertEqual(0, self.page.evaluate("refusals"))
+
+    def assert_refused_open(self):
+        expect(self.page.get_by_role("alert")).to_have_text("이 검사를 볼 수 있는 권한이 없습니다.")
+        expect(self.page.locator("#vp1")).to_be_hidden()
+        expect(self.page.get_by_role("button", name="Retry Patient")).to_be_hidden()
+        self.assertEqual(1, self.page.evaluate("refusals"))
+
+    def test_server_refuses_the_open(self):
+        self.mount_empty_display(status=403)
+        self.assert_refused_open()
+
+    def test_open_study_is_missing_from_the_authorized_selection(self):
+        self.mount_empty_display(unlisted=["study-current"])
+        self.assert_refused_open()
+
     def test_the_label_still_belongs_to_the_drawn_image(self):
         # An image whose own Patient ID is not the opened study's is not labelled, whatever the list's answer says.
         self.page.evaluate("window.identityMount=__mount()")

@@ -7,6 +7,7 @@ import hashlib
 import re
 import shlex
 import shutil
+import subprocess
 import sys
 from datetime import datetime
 from types import SimpleNamespace
@@ -14,7 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 import measurement_ci as ci
 from ci_workflows import WorkflowCatalog
-from ci_regression_inputs import regression_inputs
+from ci_regression_inputs import InputClosure, regression_inputs, workflow_inputs
 from live_admin_credential_test import AdminOtpHelperTests, ImportedAdminCredentialTests
 
 # validate.yml steps that run after a failure keep doing so on a ready run and exclude a draft run, whose
@@ -121,6 +122,9 @@ REGRESSION_SUITES = {
         tests/viewer_measure_ortho_dom_test.py
         tests/viewer_measure_lines_dom_test.py
         tests/viewer_input_dom_test.py
+        tests/viewer_cell_text_dom_test.py
+        tests/viewer_cell_tools_dom_test.py
+        tests/viewer_panels_dom_test.py
         tests/viewer_hanging_protocol_display_dom_test.py
         tests/viewer_hanging_protocol_dom_test.py
         tests/viewer_hanging_protocol_mount_dom_test.py
@@ -246,11 +250,143 @@ class MeasurementCiTests(unittest.TestCase):
             self.assertEqual(actual, set(expected) | (set() if owner == 'proxy-contracts'
                                                      else {'tests/ci_browser_apt_test.py'}), owner)
 
-    def test_regression_inputs_select_their_pr_job(self):
+    @classmethod
+    def input_closure(cls):
+        # The import scan is the slow part; both selection tests share one.
+        if not hasattr(cls, '_input_closure'):
+            cls._input_closure = InputClosure(ci.ROOT)
+        return cls._input_closure
+
+    @staticmethod
+    def path_selector():
         import importlib.util
         spec = importlib.util.spec_from_file_location('regression_selector', ci.ROOT / 'scripts/ci_select.py')
         selector = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(selector)
+        return selector
+
+    def test_every_selected_step_input_selects_its_job(self):
+        # Changing a file a selected step runs or reads (recorder --file/--tree, the test file itself, a profile's
+        # suites, their imports and served-page scripts) must select that step's job on a ready PR. This covers
+        # every job of both path-selected workflows and the runtime job's selected step, not only REGRESSION_SUITES.
+        selector = self.path_selector()
+        selected, missing = {}, []
+        inputs = workflow_inputs(ci.ROOT, self.catalog, ci.PROFILES, self.input_closure())
+        declared = json.loads((ci.ROOT / 'scripts/ci-paths.json').read_text(encoding='utf-8'))['jobs']
+        self.assertEqual(set(inputs), set(declared))
+        # Inputs named through a working directory, a docker bind mount or an env value are still seen.
+        self.assertIn('rehearsal-bundle/selftest_rollout_stage2.py', inputs['restore-product'][0])
+        self.assertIn('tests/asr_fixture_validate.cjs', inputs['asr-engine'][0])
+        self.assertIn('tests/emr/e/rule-cases.json', inputs['part1-mg'][0])
+        self.assertIn('.env.example', inputs['worklist-ux-measurements'][0])
+        self.assertIn('worklist-v0/hpacs-lite/related-report-mode.css', inputs['related-layout-dom'][0])
+        self.assertIn('tests/viewer_hanging_protocolnewdom_test.py', inputs['viewer-dom'][1])
+        for owner, (files, synthetic) in sorted(inputs.items()):
+            self.assertTrue(files, owner)
+            for path in sorted(files | synthetic):
+                if path not in selected:
+                    selected[path] = selector.select([path])
+                if not selected[path][owner]:
+                    missing.append((owner, path))
+        self.assertEqual(missing, [])
+
+    def test_named_path_gaps_select_the_job_that_runs_them(self):
+        selector = self.path_selector()
+
+        def jobs(*paths):
+            return {job for job, enabled in selector.select(list(paths)).items() if enabled}
+
+        # The changed test is run by worklist-ux-measurements, not only by the broad tests/** consumer.
+        self.assertIn('worklist-ux-measurements', jobs('tests/viewer_auto_view_service_test.cjs'))
+        # emr-d's served clinician page test imports the logout DOM test; its command declares both.
+        self.assertIn('emr-d', jobs('tests/auth_logout_dom_test.py'))
+        self.assertIn('emr-d', jobs('tests/page_source.py'))
+        # A main-split source edited without rebuilding the bundle selects whatever the bundle selects.
+        order = json.loads((ci.ROOT / 'scripts/main-split-order.json').read_text(encoding='utf-8'))
+        bundle = jobs(order['artifact'])
+        self.assertIn('asr-engine', bundle)
+        folder = order['page'].rsplit('/', 1)[0]
+        for row in order['sources']:
+            self.assertLessEqual(bundle, jobs(folder + '/' + row['file']), row['file'])
+        self.assertIn('asr-engine', jobs('worklist-v0/hpacs-lite/page-core.js'))
+        # The alias only adds: a source plus its unrelated neighbour selects at least both.
+        self.assertLessEqual(jobs('worklist-v0/hpacs-lite/viewer-measurements.js'),
+                             jobs('worklist-v0/hpacs-lite/viewer-measurements.js', 'worklist-v0/hpacs-lite/page-core.js'))
+        for path in ('docs/unrelated.md', 'keycloak/README.md'):
+            self.assertEqual(jobs(path), set(), path)
+        # A root-level recorded input; a stylesheet the served page loads; a new test matching a discover pattern.
+        self.assertIn('worklist-ux-measurements', jobs('.env.example'))
+        self.assertIn('related-layout-dom', jobs('worklist-v0/hpacs-lite/related-report-mode.css'))
+        self.assertIn('viewer-dom', jobs('tests/viewer_hanging_protocol_new_dom_test.py'))
+        # The CI self-checks read registered suites as text, so any test change runs them.
+        self.assertIn('ci-selfchecks', jobs('tests/e2e/test_dictation_live.py'))
+        # Files a test opens as data, injects into the page or hands to Node by path select its job.
+        self.assertIn('viewer-native-dom', jobs('worklist-v0/hpacs-lite/exam-scope.js'))
+        self.assertIn('source-regressions', jobs('tests/study_observation_vectors.json'))
+        self.assertIn('source-regressions', jobs('tests/clinician_policy_live.py'))
+        self.assertIn('measurements', jobs('tests/emr/d/finding_read_fixture.cjs'))
+        self.assertIn('emr-c', jobs('emr/units/b.json'))
+        # Image assembly in a new folder (either compose extension), and a broken bundle manifest, select every job.
+        everything = set(selector.select([], all_jobs=True))
+        for path in ('newdir/Dockerfile', 'newdir/compose.yml', 'newdir/compose.yaml', 'newdir/requirements.txt'):
+            self.assertEqual(jobs(path), everything, path)
+        for manifest in ('{"page": ', '{"page": "worklist-v0/hpacs-lite/main.html", "sources": [{"file": "page-core.js"}]}'):
+            with self.subTest(manifest=manifest), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                (root / 'scripts').mkdir()
+                shutil.copy(ci.ROOT / 'scripts/ci-paths.json', root / 'scripts/ci-paths.json')
+                (root / 'scripts/main-split-order.json').write_text(manifest, encoding='utf-8')
+                with patch.object(selector, 'ROOT', root):
+                    self.assertEqual(jobs('worklist-v0/hpacs-lite/page-core.js'), everything)
+
+    def selected_by(self, path):
+        return {job for job, enabled in self.path_selector().select([path]).items() if enabled}
+
+    def test_scripts_a_viewer_test_injects_select_viewer_and_clinician_dom(self):
+        # The viewer and clinician DOM tests inject this script by a folder variable plus its name.
+        self.assertLessEqual({'viewer-dom', 'clinician-dom'}, self.selected_by('worklist-v0/hpacs-lite/viewer-exam-scope.js'))
+
+    def test_script_order_spec_the_page_helper_requires_selects_emr_d(self):
+        # The page-serving helper requires this spec; emr-d's served clinician page runs through it.
+        self.assertIn('emr-d', self.selected_by('tests/main_move_spec.json'))
+
+    def test_synthetic_provisioning_the_live_helpers_run_selects_every_job(self):
+        # The live helpers hand this file to Node when they create test accounts, for every live profile.
+        self.assertEqual(self.selected_by('tests/emr/d/provision_synthetic.cjs'),
+                         set(self.path_selector().select([], all_jobs=True)))
+
+    def test_print_and_editor_scripts_the_viewer_loads_select_mip_output(self):
+        # The viewer's job page loads both at run time; the MIP output test prints through them.
+        for path in ('worklist-v0/hpacs-lite/viewer-job-print.js', 'worklist-v0/hpacs-lite/viewer-editor-link.js'):
+            self.assertIn('volume-mip-voi', self.selected_by(path), path)
+    def test_shared_runner_image_and_generator_changes_select_every_job(self):
+        # Shared test running/judging, image and stack assembly with pinned versions, and generation method/order
+        # decide every job's result, so a ready PR that touches one runs all of them.
+        selector = self.path_selector()
+        config = json.loads((ci.ROOT / 'scripts/ci-paths.json').read_text(encoding='utf-8'))
+        tracked = subprocess.run(['git', 'ls-files', '-z'], cwd=ci.ROOT, capture_output=True, check=True).stdout
+        tracked = [name.decode('utf-8') for name in tracked.split(b'\0') if name]
+        for pattern in config['common']:
+            with self.subTest(pattern=pattern):
+                self.assertTrue(any(selector.matches(name, pattern) for name in tracked), 'unused common pattern')
+        shared = re.compile(
+            r'(?:^|/)(?:Dockerfile[^/]*|\.dockerignore|[^/]*compose[^/]*\.ya?ml|requirements[^/]*\.txt)$'
+            r'|^api/(?:package(?:-lock)?\.json|tsconfig[^/]*\.json|nest-cli\.json|start-production\.sh)$'
+            r'|^scripts/build-(?!trace-matrix\.py$)[^/]+\.py$|^scripts/sof3/|^\.gitattributes$'
+            r'|^scripts/(?:main-split-order\.json|record-run\.py|run-tests\.py|ci_browser_apt\.py)$'
+            r'|^config/ohif/source-order\.json$'
+            r'|^tests/(?:measurement_ci|ci_workflows|ci_regression_inputs|live_test_gate|invariants_live)\.py$'
+            r'|^tests/(?:ci_workflow_consumers|main_split_harness|module_session_harness|page_source)[^/]*$'
+            r'|^tests/service_test_loader\.cjs$')
+        inventory = [name for name in tracked if shared.search(name) and not name.startswith('.github/')]
+        self.assertIn('api/.dockerignore', inventory)
+        self.assertIn('api/print/requirements.txt', inventory)
+        for name in inventory:
+            with self.subTest(path=name):
+                self.assertTrue(all(selector.select([name]).values()))
+
+    def test_regression_inputs_select_their_pr_job(self):
+        selector = self.path_selector()
         selected = {}
 
         def check(path, owner):
@@ -258,7 +394,7 @@ class MeasurementCiTests(unittest.TestCase):
                 selected[path] = selector.select([path])
             self.assertTrue(selected[path][owner], (owner, path))
 
-        for owner, inputs in regression_inputs(ci.ROOT, self.catalog, REGRESSION_SUITES).items():
+        for owner, inputs in regression_inputs(ci.ROOT, self.catalog, REGRESSION_SUITES, self.input_closure()).items():
             for path in inputs:
                 check(path, owner)
             for step in self.catalog.job(owner)['steps']:
@@ -710,6 +846,13 @@ class MeasurementCiTests(unittest.TestCase):
         # needs the hosted APT guard and pip cache, including jobs without profiles.
         workflow = self.catalog.combined()
         validation_jobs = self.catalog.validation()['jobs']
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('browser_apt_guard', ci.ROOT / 'scripts/ci_browser_apt.py')
+        apt_cache = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(apt_cache)
+        browser_cache_jobs = {job_id for document in ('validate.yml', 'pr-regressions.yml')
+                              for job_id, job in self.catalog.documents['.github/workflows/' + document]['jobs'].items()
+                              if 'PLAYWRIGHT_BROWSERS_PATH' not in json.dumps(job)}
         checked = []
         for name, job in workflow['jobs'].items():
             for index, install in enumerate(job.get('steps', [])):
@@ -727,6 +870,23 @@ class MeasurementCiTests(unittest.TestCase):
                     self.assertEqual(guards[-1].get('if'), install.get('if'))
                     self.assertEqual(caches[-1].get('if'), install.get('if'))
                     self.assertRegex(caches[-1]['uses'], r'^actions/cache@[0-9a-f]{40}$')
+                    # The browser download and its OS packages (kept by the APT guard's hooks) are restored from a
+                    # cache keyed by the pinned Playwright requirement and runner image; a miss or a broken restore
+                    # leaves the same install command to download them, and apt verifies every package file.
+                    # Jobs with their own browser folder (PLAYWRIGHT_BROWSERS_PATH) keep installing into it.
+                    if name in browser_cache_jobs:
+                        browsers = [s for s in preceding if s.get('uses', '').startswith('actions/cache@')
+                                    and '~/.cache/ms-playwright' in str(s.get('with', {}).get('path'))]
+                        self.assertEqual(len(browsers), 1, 'browser install requires one preceding browser cache')
+                        self.assertRegex(browsers[0]['uses'], r'^actions/cache@[0-9a-f]{40}$')
+                        self.assertEqual(browsers[0].get('if'), install.get('if'))
+                        self.assertEqual(browsers[0]['with'], {
+                            'path': '~/.cache/ms-playwright\n~/.cache/' + apt_cache.DEB_CACHE.split('/', 1)[1] + '\n',
+                            'key': '${{ runner.os }}-${{ runner.arch }}-' + job['runs-on']
+                                   + "-playwright-${{ hashFiles('tests/e2e/requirements.txt') }}"})
+                        self.assertIn('-r tests/e2e/requirements.txt', install['run'])
+                        self.assertIn('playwright install --with-deps chromium', install['run'])
+                        self.assertNotIn('PLAYWRIGHT_BROWSERS_PATH', json.dumps(job))
                     # Preserve the existing pinned-profile budget and cache-key contract.
                     if name not in validation_jobs:
                         continue
@@ -756,6 +916,8 @@ class MeasurementCiTests(unittest.TestCase):
         self.assertIn('measurements', checked)
         self.assertIn('s7-u5-session-contracts', checked)
         self.assertIn('worklist-ux-measurements', checked)
+        self.assertEqual(len(set(checked) & browser_cache_jobs), 24)
+        self.assertTrue({'part1-mg', 'part1-xa'} <= set(checked) - browser_cache_jobs)
 
     def exercise_profile_failures(self, exhaust_deadline=False, real_runner=False, inspection_failure=False,
                                   wrong_unit=False, default_unit=False, manual=False, evidence=None,
@@ -1997,7 +2159,9 @@ class MeasurementCiTests(unittest.TestCase):
                           'test_login_error_page_02_lost_login_cookie_has_one_way_back',
                           'test_login_error_page_03_the_way_back_starts_a_real_login',
                           'test_login_error_page_04_phone_sized_window',
-                          'test_login_error_page_05_logged_out_page_keeps_its_continue_button'])
+                          'test_login_error_page_05_logged_out_page_keeps_its_continue_button',
+                          'test_login_error_page_06_a_locked_account_is_told_it_is_locked',
+                          'test_login_error_page_07_a_suspended_member_is_told_why'])
         self.assertNotIn('login-error-page', self.catalog.text(automatic_only=True))
         dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
         self.assertIn('- login-error-page', dispatch)

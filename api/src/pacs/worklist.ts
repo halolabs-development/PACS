@@ -60,8 +60,8 @@ export class PacsWorklist {
 
   async readStudies(c: Caller, query?: any, viewer = false) {
     // The worklist's own read (GET studies): a list of exams, like listStudies; every study a row returns is recorded.
-    const { body, institutions, identities } = await this.selectStudies(c, query, 'current');
-    if (viewer) return viewerStudyDisplay(body.studies, institutions, identities);
+    const { body, institutions, identities, requestedUids } = await this.selectStudies(c, query, 'current');
+    if (viewer) return viewerStudyDisplay(body.studies, institutions, identities, requestedUids);
     return worklistRead(body, c.actor, inst(c), institutions, identities);
   }
 
@@ -558,7 +558,7 @@ export class PacsWorklist {
       ...(completes ? { identityIssues: identityIssueList(issues) } : {}), ...(page ? { pagination: window.pagination } : {}) };
     const identities = new Map([...sourceRows, ...memberRow.values()].map(st => [OrthancService.tag(st, '0020000D'), {
       sourcePatientId: OrthancService.tag(st, '00100020') || null, sourceInstitution: OrthancService.tag(st, '00080080') || null }]));
-    return { body, identities, institutions: new Map([...byUid].map(([uid, state]) => [uid, state.institutionId])) };
+    return { body, identities, requestedUids: uids, institutions: new Map([...byUid].map(([uid, state]) => [uid, state.institutionId])) };
   }
 
   /**

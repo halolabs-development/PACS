@@ -169,25 +169,13 @@ window.KinViewerFeatures?.module('input', ({ services, store, ui }) => {
     return !!target && !switching() && generation(target.viewportId) === target.at && cells?.getCornerstoneViewport(target.viewportId) === target.viewport
       && shown(target.viewportId) === target.sets;
   }
-  // The viewer makes a requested cell active on a later render; resolves whether that cell is active within a second.
-  function activate(viewportId) {
-    if (grid?.getActiveViewportId?.() === viewportId) return Promise.resolve(true);
-    if (typeof grid?.setActiveViewportId !== 'function') return Promise.resolve(false);
-    grid.setActiveViewportId(viewportId);
-    const until = Date.now() + 1000;
-    return new Promise(resolve => {
-      const check = () => grid.getActiveViewportId?.() === viewportId ? resolve(true) : Date.now() >= until ? resolve(false) : setTimeout(check, 16);
-      setTimeout(check, 0);
-    });
-  }
   async function runOn(entry, target) {
     if (!same(target)) return false;
-    // The toolbar's guards come first, so a refused tool or feature item changes nothing (not even the active cell). The
-    // target then becomes the active cell (a feature item may act on the active cell, e.g. Folded / Unfolded); it runs
-    // there only if the cell still shows the same images.
-    if (!ui.allowed() || !await activate(target.viewportId) || !same(target)) return false;
-    if (entry.kind !== 'tool') return window.KinViewerFeatures?.run(entry.id, { viewportId: target.viewportId });
-    return ui.invoke(entry.id);
+    // The one way a cell's control acts in its cell (viewer-features.js runInCell): the toolbar's guards first, so a refused
+    // tool or feature item changes nothing (not even the active cell); then the target becomes the active cell (a feature
+    // item may act on the active cell, e.g. Folded / Unfolded); it runs there only while the cell pinned at the press is
+    // still this target.
+    return ui.runInCell({ kind: entry.kind === 'tool' ? 'tool' : 'feature', id: entry.id }, target.viewportId, () => same(target));
   }
   function openContext() {
     const panel = ui.panel({ id: 'context', title: 'Context Toolbar' });

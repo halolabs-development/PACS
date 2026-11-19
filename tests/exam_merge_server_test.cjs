@@ -1407,15 +1407,27 @@ test('ordinary ended draft records do not prevent study deletion',async()=>{
  assert.deepEqual(await unit.removeState(A,tech),{ok:true});assert.equal(deleted,true);
 });
 
+test('a selected exam with an inconsistent original is omitted only from display metadata', () => {
+  const { viewerStudyDisplay } = require('/app/dist/pacs/viewer-study-display');
+  const sources = [A, B].map(studyUid => ({ studyUid, series: { mode: 'all', uids: [] } }));
+  const row = { uid: A, state: state(A), sourcePatientKey: 'hallym|SYN-P1', group: { kind: 'merge' },
+    examScope: { sources }, sourceMetadata: [A, B].map(uid => ({ uid })) };
+  const institutions = new Map([[A, 'hallym'], [B, 'hallym']]);
+  const identities = new Map([[A, { sourcePatientId: 'SYN-P1' }], [B, { sourcePatientId: 'SYN-P2' }]]);
+  const response = viewerStudyDisplay([row], institutions, identities, [A, B, C]);
+  assert.deepEqual(JSON.parse(response.json), { studies: [], unlistedUids: [C] });
+});
+
 for (const role of ['author', 'clinician']) {
-  const fetchDisplay = async (svc, uid) => {
+  const fetchDisplay = async (svc, uid, expectedUnlisted) => {
     const { PacsController } = require('/app/dist/pacs.controller');
     const { ReportPreviewController } = require('/app/dist/report-preview.controller');
     const req = { ...reader, roles: role === 'author' ? reader.roles : ['clinician'], headers: { 'x-kin-viewer-display': '1' } };
     const query = { uids: uid };
     const result = role === 'author' ? await new PacsController(svc).studies(req, query)
       : await new ReportPreviewController(null, null, null, svc).clinicianStudies(query, req);
-    const rows = JSON.parse(result.json).studies;
+    const { studies: rows, unlistedUids } = JSON.parse(result.json);
+    if (expectedUnlisted) assert.deepEqual(unlistedUids, expectedUnlisted);
     for (const row of rows) {
       assert.deepEqual(Object.keys(row.state || {}).sort(), ['rs']);
       const returned = new Set([row.uid, ...row.displaySources.map(source => source.studyUid)]);
@@ -1454,7 +1466,7 @@ for (const role of ['author', 'clinician']) {
     rows[0]['00080030'] = { Value: ['090000'] };
     rows[1]['00080030'] = { Value: ['150000'] };
     const options = { rows, group: merged(G1, B, [B,A]), extraStates: [{ ...state(B), ov: JSON.stringify({ id: 'ORDER-ID', birth: '2000-11-15' }) }] };
-    const result = await fetchDisplay(await listFixture(options), A);
+    const result = await fetchDisplay(await listFixture(options), [A, C].join(','), [C]);
     assert.deepEqual(result.map(r => r.uid), [B]);
     assert.deepEqual(result[0].displaySources.map(s => [s.studyUid, s.values.id, s.values.age, s.values.acc, s.values.time]),
       [[B,'ORDER-ID','25Y','ACC-B','150000'], [A,'ORDER-ID','24Y','ACC-A','090000']]);

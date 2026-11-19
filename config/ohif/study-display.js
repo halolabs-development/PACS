@@ -14,7 +14,7 @@ const kinViewerStudyDisplay = (() => {
   const distinct = values => [...new Set(values.filter(v => typeof v === 'string' && v))];
   const ids = exam => [exam.uid, ...exam.displaySources.map(s => s.studyUid)];
   const visible = () => distinct(visibleSources.size ? [...visibleSources].flatMap(get => [...get()]) : [...latest.keys()]);
-  const failure = () => new Error('환자 정보를 불러오지 못했습니다. 영상은 계속 볼 수 있습니다. 다시 시도하세요.');
+  const failure = cause => new Error('환자 정보를 불러오지 못했습니다. 영상은 계속 볼 수 있습니다. 다시 시도하세요.', { cause });
   const stale = () => new Error('검사 또는 로그인 상태가 바뀌었습니다. 다시 시도하세요.');
 
   function validExam(exam) {
@@ -58,7 +58,7 @@ const kinViewerStudyDisplay = (() => {
       if (accepted.size) notify();
       return accepted.size === scope.size;
     };
-    const incoming = [];
+    const incoming = [], unlistedUids = new Set();
     try {
       if (role?.state?.() === 'unconfirmed') await role.decide();
       if (!current() || role?.state?.() === 'unconfirmed') throw stale();
@@ -70,20 +70,21 @@ const kinViewerStudyDisplay = (() => {
         const query = patientKey ? '' : '?' + new URLSearchParams({ uids: queryIds.slice(offset, offset + 100).join(',') });
         const response = await fetch(endpoint + query, { credentials: 'same-origin', cache: 'no-store', signal,
           headers: { 'X-Kin-Viewer-Display': '1' } });
-        if (!response.ok) throw failure();
+        if (!response.ok) throw failure(response);
         const body = await response.json();
         if (!Array.isArray(body?.studies)) throw failure();
+        for (const uid of body.unlistedUids || []) unlistedUids.add(uid);
         for (const exam of body.studies) {
           if (validExam(exam) && (patientKey ? exam.sourcePatientKey === patientKey : ids(exam).some(uid => touched.has(uid)))) incoming.push(exam);
         }
         if (!current()) throw stale();
       }
     } catch (error) {
-      replace([], true);
+      if (!replace([], true)) throw stale();
       throw error;
     }
     if (!replace(incoming, false)) throw stale();
-    return { studies: incoming, current: () => current() && [...affected([...touched, ...incoming.flatMap(ids)])].every(uid => latest.get(uid) === number) };
+    return { studies: incoming, unlistedUids, current: () => current() && [...affected([...touched, ...incoming.flatMap(ids)])].every(uid => latest.get(uid) === number) };
   }
   const refresh = uids => uids.length ? lookup(uids).catch(() => null) : Promise.resolve(null);
   const refreshAll = () => refresh(visible());

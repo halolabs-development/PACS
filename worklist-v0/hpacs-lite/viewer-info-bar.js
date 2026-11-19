@@ -29,7 +29,66 @@ window.KinViewerInfoBar = (() => {
       instance.SeriesInstanceUID === set.SeriesInstanceUID;
     return { viewportId, viewport, cell, set, instance: matched ? instance : null };
   }
-  function mount({ services, studyActions }) {
+  // The text drawn over a cell's image, in one place. Each piece is named here with the corner it stands in and whether
+  // it may be moved; a piece placed by its own module keeps that place unless an earlier piece of the same corner is
+  // already there, when it moves away from the corner (up from a bottom corner, down from a top one) by its margin, just
+  // past the earlier piece. The table's order is the order of precedence: the viewer's own corner text, then the
+  // reference/comparison label, then the Display text, the mammography slot label and the Navigation Bar (which keeps its
+  // bottom and only starts lower). A module never writes another module's numbers; it calls settle() after it has
+  // placed its own piece, and the shell settles every cell when it refreshes. A margin is written only when it changes,
+  // so a cell whose text stays where it is (every frame of a cine) is only read.
+  const CELL_TEXT = [
+    { selector: '[data-cy^="viewport-overlay-"]', corner: node => node.dataset.cy.slice('viewport-overlay-'.length), fixed: true },
+    { selector: '.kin-viewer-identity', corner: 'inline', fixed: true },
+    { selector: '.kin-viewer-identity-group', corner: node => node.dataset.position, fixed: true },
+    { selector: '.kin-display-text > .kin-display-zoom, .kin-display-text > .kin-display-corner', corner: 'inline' },
+    { selector: '.kin-mg-slot', corner: 'inline' },
+    { selector: '.kin-nav-bar', corner: () => 'top-right', stretch: true },
+  ];
+  const CORNERS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+  const GAP = 2;
+  function cornerOf(node, rule) {
+    if (rule.corner !== 'inline') return rule.corner(node);
+    const set = side => node.style[side] !== '' && node.style[side] !== 'auto';
+    const vertical = set('bottom') && !set('top') ? 'bottom' : 'top', horizontal = set('right') && !set('left') ? 'right' : 'left';
+    return vertical + '-' + horizontal;
+  }
+  function settle(pane) {
+    if (!pane?.isConnected) return;
+    const pieces = [];
+    for (const [order, rule] of CELL_TEXT.entries()) for (const node of pane.querySelectorAll?.(rule.selector) || []) {
+      const corner = cornerOf(node, rule);
+      if (CORNERS.includes(corner)) pieces.push({ node, corner, order, fixed: !!rule.fixed, stretch: !!rule.stretch });
+    }
+    const placed = [];
+    for (const piece of pieces) {
+      const { node } = piece, box = node.getBoundingClientRect();
+      if (!box.width || !box.height || node.closest('[hidden]') || getComputedStyle(node).visibility === 'hidden') continue;
+      const rect = { left: box.left, right: box.right, top: box.top, bottom: box.bottom, corner: piece.corner };
+      if (!piece.fixed) {
+        const down = piece.corner.startsWith('top'), property = down ? 'marginTop' : 'marginBottom', other = down ? 'marginBottom' : 'marginTop';
+        if (node.style[other]) node.style[other] = '';
+        // The place its module gave it: where it stands without the shift settled last time.
+        const had = parseFloat(node.style[property]) || 0;
+        if (down) { rect.top -= had; if (!piece.stretch) rect.bottom -= had; } else { rect.top += had; rect.bottom += had; }
+        let shift = 0;
+        // Earlier pieces of this corner that this piece would cover, nearest the corner first.
+        const before = placed.filter(other => other.corner === piece.corner && other.left < rect.right && other.right > rect.left)
+          .sort((a, b) => down ? a.top - b.top : b.bottom - a.bottom);
+        for (const earlier of before) {
+          const top = rect.top + (down ? shift : -shift), bottom = piece.stretch ? rect.bottom : rect.bottom + (down ? shift : -shift);
+          if (earlier.top >= bottom || earlier.bottom <= top) continue;
+          shift += down ? earlier.bottom + GAP - top : bottom - (earlier.top - GAP);
+        }
+        const value = shift > 0 ? Math.ceil(shift) + 'px' : '';
+        if (node.style[property] !== value) node.style[property] = value;
+        rect.top += down ? shift : -shift;
+        if (!piece.stretch) rect.bottom += down ? shift : -shift;
+      }
+      placed.push(rect);
+    }
+  }
+  function mount({ services, studyActions, cellTools }) {
     const bars = new Map(), labels = new Map();
     function rememberRendered(viewport) {
       if (viewport?.type === 'stack' && viewport.viewportStatus === window.cornerstone.Enums.ViewportStatus.RENDERED) {
@@ -80,7 +139,10 @@ window.KinViewerInfoBar = (() => {
           const study = document.createElement('button'); study.type = 'button'; study.textContent = 'Study ▾';
           study.disabled = true; study.title = '이전 검사 연결은 다음 단계에서 제공됩니다.';
           study.onclick = () => studyActions?.open(id, study);
-          bar.append(label, mode, study); pane.prepend(bar); bars.set(id, bar);
+          // The cell's own compact tools, at the row's end: the image toolbar fills them (cellTools) and they act in this cell.
+          const tools = document.createElement('span'); tools.className = 'kin-viewer-cell-tools'; tools.hidden = true;
+          tools.setAttribute('role', 'toolbar'); tools.setAttribute('aria-label', 'Cell Tools');
+          bar.append(label, mode, study, tools); pane.prepend(bar); bars.set(id, bar);
         }
         cells.push({ id, current, bar: bars.get(id) });
       }
@@ -125,7 +187,13 @@ window.KinViewerInfoBar = (() => {
         bar.children[0].title = labels.has(id) ? label : '';
         if (bar.children[1].textContent !== status) bar.children[1].textContent = status;
         bar.children[1].title = '영상 모드는 이 셀, 배치는 전체 뷰어에 적용됩니다.';
+        const fill = cellTools?.();
+        // A cell given images keeps its tools while its next image loads (every scroll and cine frame): only an empty
+        // cell, or one whose viewer has no data, has none.
+        const holding = !!given && current.viewport.viewportStatus !== viewportStatus.NO_DATA;
+        if (fill) fill(id, bar.children[3], { type, rendered: holding, width: bar.clientWidth }); else bar.children[3].hidden = true;
       }
+      for (const pane of document.querySelectorAll('[data-cy="viewport-grid"] [data-cy="viewport-pane"]') || []) settle(pane);
     }
     return {
       refresh,
@@ -147,5 +215,5 @@ window.KinViewerInfoBar = (() => {
       },
     };
   }
-  return { mount, identity };
+  return { mount, identity, settle };
 })();

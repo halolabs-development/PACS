@@ -167,6 +167,8 @@ window.KinViewerIdentity=(()=>{
           // identity first, in one bounded label when their measured boxes
           // would cover each other. Ordinary layouts keep their chosen corners.
           if(overlap){primary.textContent=[...groups.values()].flat().join(' · ');marked();for(const group of e.querySelectorAll('.kin-viewer-identity-group'))group.remove();place(e,p.position,true);}
+          // The other text over this image keeps clear of the label: settled in one place (viewer-info-bar.js).
+          window.KinViewerInfoBar?.settle?.(pane);
         }
         syncTitle();
       }catch(_){clear();}finally{viewing.update(displayed.values());}
