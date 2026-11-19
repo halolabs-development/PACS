@@ -26,10 +26,13 @@ class PrismaService {
       log('reread-audit');
       if (scenario.has('reread-fails')) throw new Error('synthetic database outage');
       // Another run's approval of the same person (a different audit id) is never this run's.
-      const rows = [...(scenario.has('other-run-committed') ? [{ id: 99 }] : []), ...(committed ? [{ id: AUDIT_ID }] : [])];
-      const row = rows.find(r => where.id.in.includes(r.id) && where.action === 'admin.user.approve');
-      return row ? { ...row, action: 'admin.user.approve', target: SUB,
-        detail: JSON.stringify({ after: { id: SUB, institution: INSTITUTION, version: VERSION } }) } : null;
+      // A session it ended (auth.logout) is this run's row too, but not the member change.
+      const action = scenario.has('promoted') ? 'admin.user.update' : 'admin.user.approve';
+      const rows = [...(scenario.has('other-run-committed') ? [{ id: 99, action: 'admin.user.approve' }] : []),
+        ...(committed ? [{ id: AUDIT_ID - 1, action: 'auth.logout' }, { id: AUDIT_ID, action }] : [])];
+      const row = rows.find(r => where.id.in.includes(r.id) && r.action.startsWith(where.action.startsWith));
+      return row ? { ...row, target: SUB, detail: row.action === 'auth.logout' ? '{}'
+        : JSON.stringify({ after: { id: SUB, institution: INSTITUTION, version: VERSION } }) } : null;
     } };
     this.providerChange = { findFirst: async ({ where }) => {
       log('lookup-change');
@@ -48,7 +51,10 @@ class AdminService {
     const facts = await makeFacts();
     await facts.request.work.transactionWithRecords(async (tx, record) => {
       if (scenario.has('callback-refused')) throw new ConflictException({ code: 'FIRST_ADMIN_EXISTS', message: '이 기관에는 이미 활성 관리자가 있습니다' });
-      await record({ eventId: 'synthetic-event' }, async () => ({ kind: 'AuditLog', id: String(AUDIT_ID), version: null }));
+      await record({ eventId: 'synthetic-event' }, async () => {
+        await record({ eventId: 'synthetic-session-end' }, async () => ({ kind: 'AuditLog', id: String(AUDIT_ID - 1), version: null }));
+        return { kind: 'AuditLog', id: String(AUDIT_ID), version: null };
+      });
       return { synthetic: true };
     });
     if (scenario.has('http-after-commit')) throw new ConflictException({ code: 'SYNTHETIC_AFTER_COMMIT', message: 'synthetic' });
@@ -85,6 +91,8 @@ const fakes = {
   'member-rights-import': { sendRecordedRoster },
   'emr-runtime/application': { EmrRuntime },
 };
+// Writing the outcome throws at once (as a write on a destroyed stream can); the exit code must still say it.
+if (scenario.has('write-throws')) process.stdout.write = () => { throw new Error('synthetic write failure'); };
 const resolve = Module._resolveFilename;
 Module._resolveFilename = function (request, parent, ...rest) {
   if (parent?.filename && request.startsWith('../dist/')) {

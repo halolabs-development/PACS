@@ -434,6 +434,15 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
     expect('commit-lost-not-committed', 3, null, 'a lost commit answer and no audit row of this run (it may still commit)', retry);
     expect('commit-lost-not-committed,other-run-committed', 3, null, 'another run\'s approval of the person is not this run\'s', retry);
     expect('commit-lost,reread-fails', 3, null, 'a lost commit answer and an unreadable record', retry);
+    // An approved member promoted to administrator: the change's audit row is admin.user.update, still this run's.
+    expect('commit-lost,promoted', 0, true, 'a lost commit answer for a promotion; its update row is there', r => assert.equal(r.out[0].version, 2));
+    expect('work-end-fails,promoted', 0, true, 'a promotion committed, then a later step threw', r => assert.equal(r.out[0].version, 2));
+    // Writing the outcome throws at once: the exit code still says what was saved.
+    for (const [scenario, code] of [['write-throws', 0], ['write-throws,commit-lost', 0], ['write-throws,roster-unknown', 2]]) {
+      const r = run(scenario);
+      assert.equal(r.code, code, `${scenario}: exit ${r.code}\n${r.stderr}`);
+      assert.ok(r.steps.includes('stop') && r.steps.includes('disconnect'), scenario + ': cleanup ran');
+    }
     // A failed cleanup is its own line and keeps the outcome.
     for (const [scenario, code, designated] of [['stop-fails', 0, true], ['stop-fails,roster-unknown', 2, true],
       ['stop-fails,refused', 1, false], ['disconnect-fails', 0, true], ['stop-fails,disconnect-fails,lookup-throws', 2, true]]) {
