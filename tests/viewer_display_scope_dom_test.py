@@ -132,8 +132,8 @@ class ViewerDisplayScopeDOMTest(unittest.TestCase):
 
     def test_scope_note_renders_above_the_transform_buttons_and_panel_text_is_at_least_12px(self):
         # S5-UI7 display requirements, read from what Chromium lays out: the note is seen before the buttons it
-        # qualifies, and the count, note and preset labels are not smaller than 12px (AGENTS §4 minimum, not an exact
-        # value), however the panel spells or attaches its CSS.
+        # qualifies, and the count, note and preset labels are not smaller than 12px (a minimum, not an exact value),
+        # however the panel spells or attaches its CSS.
         for width in (320, 900):
             with self.subTest(width=width):
                 page = self.new_page(width=width, height=900)
