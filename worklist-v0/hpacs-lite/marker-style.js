@@ -75,6 +75,13 @@
     }
     return result;
   }
+  // A cell's own styles outrank the defaults and the tool groups. The measurement-tracking cell sets its marks' dash there
+  // ('' once its measurements are tracked, '4,4' before), so the choice is laid over the cell's global entry the same way,
+  // changing only what the cell itself sets. Its tool entries (the reference lines' own dashes) stay.
+  function cellStyles(own,value){
+    if(!plain(own)||!plain(own.global))return own;
+    return {...own,global:styles({global:own.global},value,true).global};
+  }
   // null keeps the viewer's own dashes; '' is a solid line. Dashes grow with the chosen thickness.
   function dashOf(clean){const f=factorOf[clean.width];return clean.line==='solid'?'':clean.line==='dashed'?6*f+','+4*f:null;}
   // For marks drawn outside Cornerstone (the manual MPR 3D annotations): the chosen colour, or null
@@ -140,11 +147,23 @@
     const out={};for(const id of Object.keys(plain(registry.config?.toolGroups)?registry.config.toolGroups:{})){const own=registry.getToolGroupToolStyles(id);if(plain(own))out[id]=JSON.parse(JSON.stringify(own));}
     return out;
   }
+  // The cells' own styles, kept per style registry for the document's life. The viewer sets a cell's styles whenever its
+  // tracking changes, after any mount, so every later setting is kept as the cell's own and drawn with the current choice.
+  const cells=new WeakMap();
+  function cellsOf(registry){
+    if(cells.has(registry))return cells.get(registry);
+    if(typeof registry.setViewportToolStyles!=='function')return null;
+    const own=new Map(),set=registry.setViewportToolStyles;
+    for(const [id,s] of Object.entries(plain(registry.config?.viewports)?registry.config.viewports:{}))own.set(id,plain(s)?JSON.parse(JSON.stringify(s)):s);
+    registry.setViewportToolStyles=function(id,s){own.set(id,plain(s)?JSON.parse(JSON.stringify(s)):s);return set.call(this,id,cellStyles(s,applied));};
+    const entry={draw(value){for(const [id,s] of own)set.call(registry,id,cellStyles(s,value));}};
+    cells.set(registry,entry);return entry;
+  }
   function mount({tools,cornerstone,owner}){
     const registry=tools?.annotation?.config?.style;
     if(!owner||typeof registry?.getDefaultToolStyles!=='function'||typeof registry.setDefaultToolStyles!=='function')return null;
     if(!baselines.has(registry))baselines.set(registry,{global:JSON.parse(JSON.stringify(registry.getDefaultToolStyles()||{})),groups:groupBaseline(registry)});
-    const {global:baseline,groups}=baselines.get(registry);let shown=null,ended=false;
+    const {global:baseline,groups}=baselines.get(registry),own=cellsOf(registry);let shown=null,ended=false;
     // Registered before the first redraw so the first render already shows the arrowheads and dashes chosen.
     const arrows=svgMarks(tools);
     function redraw(){
@@ -155,8 +174,11 @@
     function apply(value){
       const clean=normalize(value)||defaults(),signature=JSON.stringify(clean);
       if(ended||signature===shown)return;
-      try{registry.setDefaultToolStyles(styles(baseline,clean));for(const [id,own] of Object.entries(groups))registry.setToolGroupToolStyles(id,styles(own,clean,true));shown=signature;}catch(_){return;}
-      arrows.set(clean.arrowheads==='off',clean.line==='dashed'?dashOf(clean):null);applied=clean;redraw();
+      try{
+        registry.setDefaultToolStyles(styles(baseline,clean));for(const [id,group] of Object.entries(groups))registry.setToolGroupToolStyles(id,styles(group,clean,true));
+        applied=clean;own?.draw(clean);shown=signature;
+      }catch(_){return;}
+      arrows.set(clean.arrowheads==='off',clean.line==='dashed'?dashOf(clean):null);redraw();
       host().dispatchEvent?.(new CustomEvent('kin-marker-style-shown',{detail:{...clean}}));
     }
     apply(read(owner));const stop=subscribe(owner,apply);

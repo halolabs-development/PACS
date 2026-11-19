@@ -234,15 +234,16 @@ window.KinViewerUXShell = (() => {
           displaySetInstanceUIDs: entry.displaySetInstanceUIDs, viewportOptions: { viewportType: 'stack', toolGroupId: 'default', allowUnmatchedView: true } })));
         return true;
       },
-      async assign(value, displaySetInstanceUIDs) {
-        if (!admits(value) || !tabs.guard()) return false;
+      // `signal`: a request the caller dropped while the patient was read again changes nothing (as in compare()).
+      async assign(value, displaySetInstanceUIDs, { signal } = {}) {
+        if (!admits(value) || !tabs.guard() || signal?.aborted) return false;
         const sets = displaySetInstanceUIDs.map(id => services.displaySetService.getDisplaySetByUID(id));
         if (sets.some(set => !set)) return false;
         const url = new URL('/ohif/viewer', location.origin);
         url.searchParams.set('StudyInstanceUIDs', [...new Set(sets.map(set => set.StudyInstanceUID))].join(','));
         let patient;
         try { patient = await tabs.resolve(url.href); } catch (_) { return false; }
-        if (!admits(value) || !tabs.guard(true) || patient.key !== value.patientKey) return false;
+        if (signal?.aborted || !admits(value) || !tabs.guard(true) || patient.key !== value.patientKey) return false;
         services.viewportGridService.setDisplaySetsForViewport({ viewportId: value.viewportId, displaySetInstanceUIDs });
         return true;
       },
@@ -277,7 +278,11 @@ window.KinViewerUXShell = (() => {
         // first opened study is.
         const scoped = /[?&]kinExamScopes=/.test(window.location?.search || '');
         const isCurrent = (study, series) => scoped ? window.KinViewerExamScope?.role?.(study, series) === 'current' : study === currentUid;
-        if (sets.every(set => set.StudyInstanceUID === value.studyUid)) return true;
+        // Images already in the cell's own place (its study; for a split original, its own part by the series) change
+        // nothing here. A series of the other part of the same original is another exam and is placed below.
+        const place = (study, series) => window.KinExamScope?.imagePlace?.(studies || [], study, series) ?? study;
+        const own = place(value.studyUid, value.seriesUid);
+        if (sets.every(set => place(set.StudyInstanceUID, set.SeriesInstanceUID) === own)) return true;
         // A prior cell is replaceable. From the current cell, preserve every
         // current image and reuse an assigned comparison or an empty cell.
         const originCell = cells.find(cell => cell.viewportId === value.viewportId);

@@ -40,13 +40,17 @@
     if (!Array.isArray(value) || new Set(value).size !== value.length || value.some(k => !PANELS.includes(k))) return null;
     return PANELS.filter(k => value.includes(k));
   }
-  function withHiddenPanels(value, hidden) {
-    const clean = toVersion3(value), panels = normalizeHidden(hidden);
+  // `field` is hiddenPanels (Panel Settings) or collapsedPanels (folded in place on the band): the same five panels,
+  // two separate choices that never overwrite each other.
+  function withPanelChoice(field, value, chosen) {
+    const clean = toVersion3(value), panels = normalizeHidden(chosen);
     if (!clean || !panels) return null;
     const workspace = { ...clean.workspace };
-    if (panels.length) workspace.hiddenPanels = panels; else delete workspace.hiddenPanels;
+    if (panels.length) workspace[field] = panels; else delete workspace[field];
     return normalize({ ...clean, workspace });
   }
+  const withHiddenPanels = (value, hidden) => withPanelChoice('hiddenPanels', value, hidden);
+  const withCollapsedPanels = (value, collapsed) => withPanelChoice('collapsedPanels', value, collapsed);
   function withBoxSwaps(value, swaps) {
     const clean = toVersion3(value), chosen = boxLayout.normalize(swaps);
     if (!clean || !chosen) return null;
@@ -60,7 +64,7 @@
       landscape: value.landscape, reading: value.reading });
     const workspace = value.workspace, clean = workspaceDefaults();
     if (!legacy || !object(workspace) || Object.keys(clean).some(k => !Object.hasOwn(workspace, k))
-        || Object.keys(workspace).some(k => !Object.hasOwn(clean, k) && !['studyPanel', 'hiddenPanels', 'boxSwaps'].includes(k)) || workspace.version !== 1
+        || Object.keys(workspace).some(k => !Object.hasOwn(clean, k) && !['studyPanel', 'hiddenPanels', 'collapsedPanels', 'boxSwaps'].includes(k)) || workspace.version !== 1
         || typeof workspace.railCollapsed !== 'boolean'
         || !['images', 'info', 'templates'].includes(workspace.studyPanelTab)) return null;
     for (const name of ['rail', 'worklist', 'related', 'prior']) {
@@ -78,10 +82,11 @@
       if (!studyPanel) return null;
       if (Object.keys(studyPanel).length) clean.studyPanel = studyPanel;
     }
-    if (Object.hasOwn(workspace, 'hiddenPanels')) {
-      const hidden = normalizeHidden(workspace.hiddenPanels);
-      if (!hidden) return null;
-      if (hidden.length) clean.hiddenPanels = hidden;
+    for (const field of ['hiddenPanels', 'collapsedPanels']) {
+      if (!Object.hasOwn(workspace, field)) continue;
+      const chosen = normalizeHidden(workspace[field]);
+      if (!chosen) return null;
+      if (chosen.length) clean[field] = chosen;
     }
     // The five boxes' places (box-layout.js); sparse, so a record without it is the default arrangement.
     if (Object.hasOwn(workspace, 'boxSwaps')) {
@@ -176,6 +181,14 @@
   }
   const hiddenPanels = value => normalize(value)?.workspace?.hiddenPanels?.slice() || [];
   const boxSwaps = value => normalize(value)?.workspace?.boxSwaps?.slice() || [];
+  const collapsedPanels = value => normalize(value)?.workspace?.collapsedPanels?.slice() || [];
+  // Each of the five panels as the reader chose it: shown (not hidden in Panel Settings) and expanded (not folded on
+  // the band). The two are separate: a folded panel hidden and shown again comes back folded. This is the one reading
+  // of the record; the page's workspacePanels() adds where each panel is on screen now.
+  function panelStates(value) {
+    const hidden = hiddenPanels(value), collapsed = collapsedPanels(value);
+    return Object.fromEntries(PANELS.map(key => [key, { shown: !hidden.includes(key), expanded: !collapsed.includes(key) }]));
+  }
   // The report window band's one allocation (W-SPACE layout contract 2026-10-29). Each workflow mode has its content
   // panels with the shares it has always painted (main.html: Thumbnail 34%, Clinical 30%, Template the rest; Technician
   // drops Template and gives Clinical 66%). A shown panel's width is its share of the shares still shown, so hiding one
@@ -189,25 +202,39 @@
     Technician: Object.freeze([['thumbnail', 34], ['clinical', 66]]),
   });
   const PLACEHOLDERS = Object.freeze(['aiReport']);
-  // `hidden` is the reader's choice and is never edited here: a panel the mode lacks stays chosen for the other mode.
-  function reportWindow(mode, hidden = []) {
-    const off = new Set(hidden);
-    const content = (MODE_PANELS[mode] || MODE_PANELS.Radiology).filter(([key]) => !off.has(key)).map(([key, share]) => ({ key, share }));
-    const tabs = PLACEHOLDERS.filter(key => !off.has(key));
+  // `hidden` and `collapsed` are the reader's choices and are never edited here: a panel the mode lacks stays chosen
+  // for the other mode. A folded panel (shown, not hidden) owns no column either: its width goes to the expanded
+  // panels by the same shares as hiding, and its name stays on the band as a button in the folded-panels row above
+  // the columns (`folds`). With nothing expanded the band is that row (state 'folds') and its height goes to the
+  // Related/report row, as with the placeholder strip; the stored band height stays for when a panel opens again.
+  // `away` names the panels the Study Panel drawer holds now: it shows them open, so the band offers no name to open
+  // them meanwhile (pressing it would open nothing on the band); the choice itself stays.
+  function reportWindow(mode, hidden = [], collapsed = [], away = []) {
+    const off = new Set(hidden), folded = new Set(collapsed.filter(key => !off.has(key)));
+    const modePanels = MODE_PANELS[mode] || MODE_PANELS.Radiology;
+    const content = modePanels.filter(([key]) => !off.has(key) && !folded.has(key)).map(([key, share]) => ({ key, share }));
+    const tabs = PLACEHOLDERS.filter(key => !off.has(key) && !folded.has(key));
+    const folds = PANELS.filter(key => folded.has(key) && !away.includes(key)
+      && (PLACEHOLDERS.includes(key) || modePanels.some(([k]) => k === key)));
     const strip = !content.some(p => p.key === 'thumbnail') && tabs.length > 0;
-    const state = content.length ? 'content' : strip ? 'tabs' : 'empty';
+    const state = content.length ? 'content' : strip ? 'tabs' : folds.length ? 'folds' : 'empty';
     const classes = {};
-    for (const key of PANELS) classes['kin-hide-' + key] = PLACEHOLDERS.includes(key) ? off.has(key) : !content.some(p => p.key === key);
+    for (const key of PANELS) {
+      classes['kin-hide-' + key] = PLACEHOLDERS.includes(key) ? off.has(key) || folded.has(key) : !content.some(p => p.key === key);
+      classes['kin-fold-' + key] = folds.includes(key);
+    }
     classes['kin-report-window-strip'] = strip;
     classes['kin-report-window-tabs'] = state === 'tabs';
+    classes['kin-report-window-folds'] = folds.length > 0;
+    classes['kin-report-window-folded'] = state === 'folds';
     classes['kin-report-window-empty'] = state === 'empty';
     // Each shown content panel's grid column, so a panel left in the band keeps its own column while the Study Panel
     // drawer holds the others.
     const columns = Object.fromEntries(content.map((p, i) => [p.key, i + 1]));
-    return { content, tabs, strip, state, classes, columns };
+    return { content, tabs, folds, strip, state, classes, columns };
   }
   const api = { PREFIX, PANELS, defaults, normalize, withReading, workspaceDefaults, toVersion3, withStudyPanel,
-    withHiddenPanels, hiddenPanels, withBoxSwaps, boxSwaps, reportWindow, mergeLoaded, key, read, write, remove };
+    withHiddenPanels, hiddenPanels, withCollapsedPanels, collapsedPanels, panelStates, withBoxSwaps, boxSwaps, reportWindow, mergeLoaded, key, read, write, remove };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.KinWorkspaceLayout = api;
 })(globalThis);

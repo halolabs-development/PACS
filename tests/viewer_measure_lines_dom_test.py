@@ -246,6 +246,18 @@ class ViewerMeasureLinesDOMTest(unittest.TestCase):
         # Each length is drawn on its own frame; the result's check from the originals passes; a changed value does not.
         expect(page.locator('[data-kin-measure-layer=left] [data-kin-volume-length]')).to_have_count(1)
         expect(page.locator('[data-kin-measure-layer=right] [data-kin-volume-length]')).to_have_count(2)
+        # A length dragged on its frame while the panel is open: the stamped line follows the volume beside the mark.
+        self.drag(page, 'left', (50, 10), (70, 10))
+        expect(panel.locator('[data-measure-result]')).to_have_text('Stamped: Prostate volume: 2.36 mL')
+        expect(page.locator('[data-kin-measure-layer=right] g[data-kin-mark=KinVolume]')).to_contain_text('Prostate volume: 2.36 mL')
+        # A screen calibration of a length's original frame: the volume is no longer given, beside the mark or on the line.
+        page.evaluate("""() => { const get = cornerstone.cache.getImage; window.synUncalibrated = get;
+          cornerstone.cache.getImage = id => ({ ...get(id), ...(id === 'syn:ct' ? { calibration: { type: 'User', scale: 1.2 } } : {}) });
+          document.dispatchEvent(new Event('CORNERSTONE_IMAGE_RENDERED')); }""")
+        expect(panel.locator('[data-measure-result]')).to_contain_text('재확인 필요')
+        expect(page.locator('[data-kin-measure-layer=right] g[data-kin-mark=KinVolume]')).to_contain_text('재확인 필요')
+        page.evaluate("() => { cornerstone.cache.getImage = synUncalibrated; document.dispatchEvent(new Event('CORNERSTONE_IMAGE_RENDERED')); }")
+        expect(panel.locator('[data-measure-result]')).to_have_text('Stamped: Prostate volume: 2.36 mL')
         self.assertEqual('', page.evaluate("uid => KinMeasureFrame.verify(cornerstoneTools.annotation.state.getAnnotation(uid))", mark['uid']))
         self.assertIn('재확인 필요', page.evaluate("""uid => { const a = cornerstoneTools.annotation.state.getAnnotation(uid);
           a.data.kinBaseline = { ...a.data.kinBaseline, values: [21, 15, 10, Math.PI / 6 * 21 * 15 * 10 / 1000] }; return KinMeasureFrame.verify(a); }""", mark['uid']))
@@ -358,6 +370,104 @@ class ViewerMeasureLinesDOMTest(unittest.TestCase):
         self.close([n for seg in guides['ctr'] for p in seg for n in p[:2]], [15, 20, 25, 20, 40, 25, 25, 25])
         self.close([n for seg in guides['angle'] for p in seg for n in p[:2]], [0, 2, 20, 2, 2, 10, 22, 30])
         self.assertEqual([], guides['ratio'])
+
+    def test_15_the_result_line_follows_the_mark_as_it_is_now(self):
+        # The panel's Result is the last mark's values where its points are now (moved while the panel is open, another
+        # image shown in the cell, a screen calibration and its removal), the same as the words beside the mark.
+        page = self.open()
+        panel = self.tool(page, 'CTR')
+        panel.get_by_label('CTR Method').select_option('2')
+        for pixel in [(10, 70), (90, 70), (30, 40), (70, 40)]: self.press(page, 'left', pixel)
+        result = panel.locator('[data-measure-result]')
+        words = page.locator('[data-kin-measure-layer=left] g[data-kin-mark=KinCTR] text').first
+        expect(result).to_contain_text('CTR 0.50 (50.0%)')
+        # One end of the heart line: CD 22 mm of ID 40 mm.
+        self.drag(page, 'left', (70, 40), (74, 40))
+        expect(words).to_contain_text('CTR 0.55 (55.0%)')
+        expect(result).to_contain_text('CTR 0.55 (55.0%)')
+        expect(result).to_contain_text('CD 22.0 mm')
+        # One end of the chest line: ID 30 mm.
+        self.drag(page, 'left', (90, 70), (70, 70))
+        expect(result).to_contain_text('CTR 0.73 (73.3%)')
+        expect(result).to_contain_text('ID 30.0 mm')
+        self.assertEqual(1, len(self.marks(page, 'KinCTR')))
+        # Another image in the cell: the mark's own values stay on the Result line.
+        page.evaluate("() => synImage('left', 'syn:ct2')")
+        expect(page.locator('[data-kin-measure-layer=left] g[data-kin-mark=KinCTR]')).to_have_count(0)
+        expect(result).to_contain_text('CTR 0.73 (73.3%)')
+        page.evaluate("() => synImage('left', 'syn:ct')")
+        # A screen calibration of the mark's image: the values are no longer given, on the image and on the Result line.
+        page.evaluate("""() => { const get = cornerstone.cache.getImage; window.synUncalibrated = get;
+          cornerstone.cache.getImage = id => ({ ...get(id), ...(id === 'syn:ct' ? { calibration: { type: 'User', scale: 1.2 } } : {}) });
+          document.dispatchEvent(new Event('CORNERSTONE_IMAGE_RENDERED')); }""")
+        expect(words).to_contain_text('재확인 필요')
+        expect(result).to_contain_text('재확인 필요')
+        expect(result).not_to_contain_text('CTR 0.73')
+        page.evaluate("() => { cornerstone.cache.getImage = synUncalibrated; document.dispatchEvent(new Event('CORNERSTONE_IMAGE_RENDERED')); }")
+        expect(result).to_contain_text('CTR 0.73 (73.3%)')
+        expect(words).to_contain_text('CTR 0.73 (73.3%)')
+        # The Calibration tool writes its calibrated-spacing metadata before the cached image changes: the same.
+        page.evaluate("""() => { const get = cornerstone.metaData.get; window.synUnwritten = get;
+          cornerstone.metaData.get = (type, id) => type === 'calibratedPixelSpacing' ? (id === 'syn:ct' ? { type: 'User', scale: 1.2 } : undefined) : get.call(cornerstone.metaData, type, id);
+          document.dispatchEvent(new Event('CORNERSTONE_IMAGE_RENDERED')); }""")
+        expect(result).to_contain_text('재확인 필요')
+        expect(words).to_contain_text('재확인 필요')
+        page.evaluate("() => { cornerstone.metaData.get = synUnwritten; document.dispatchEvent(new Event('CORNERSTONE_IMAGE_RENDERED')); }")
+        expect(result).to_contain_text('CTR 0.73 (73.3%)')
+        # Another method, or Restart, starts the Result line again.
+        panel.get_by_label('CTR Method').select_option('4')
+        expect(result).to_have_text('')
+
+    def style_page(self):
+        # The account's marker style document code on the viewer's default tool style registry, as the viewer mounts it.
+        page = self.open()
+        page.add_script_tag(path=str(HPACS / "marker-style.js"))
+        page.evaluate("""() => { let own = { global: { color: 'rgb(255, 255, 0)', lineWidth: '1', lineDash: '' } };
+          cornerstoneTools.annotation.config.style = { getDefaultToolStyles: () => own, setDefaultToolStyles: next => { own = next; } };
+          window.synMarkers = KinMarkerStyle.mount({ tools: cornerstoneTools, cornerstone: { getRenderingEngines: () => [] }, owner: 'reader' });
+          window.synChoose = over => KinMarkerStyle.publish('reader', { ...KinMarkerStyle.defaults(), ...over }); }""")
+        return page
+
+    LINES = """sel => [...document.querySelectorAll(sel)].map(n => ({ stroke: n.getAttribute('stroke'), dash: n.getAttribute('stroke-dasharray') }))"""
+
+    def test_16_marker_line_style_reaches_the_lines_the_tools_draw(self):
+        # Solid / Dashed of the account's marker style on the lines these tools draw, the marks already drawn and new ones;
+        # the guide lines (centre colour) keep their own dashes; Default returns the tools' own solid lines.
+        page = self.style_page()
+        panel = self.tool(page, 'CTR')
+        for pixel in [(50, 10), (50, 90), (30, 50), (85, 50), (10, 60), (90, 60)]: self.press(page, 'left', pixel)
+        expect(panel.locator('[data-measure-result]')).to_contain_text('CTR 0.69')
+        ctr = '[data-kin-measure-layer=left] g[data-kin-mark=KinCTR] line'
+        # The midline, the two heart-border perpendiculars and the lung field line, drawn on the next frame.
+        expect(page.locator(ctr)).to_have_count(4)
+        own = page.evaluate(self.LINES, ctr)
+        self.assertEqual([None, None, None], [l['dash'] for l in own if l['stroke'] != '#9fd4ff'])
+        self.assertEqual(['6 4'], [l['dash'] for l in own if l['stroke'] == '#9fd4ff'])
+        page.evaluate("() => synChoose({ line: 'dashed' })")
+        page.wait_for_function("sel => [...document.querySelectorAll(sel)].filter(n => n.getAttribute('stroke') !== '#9fd4ff').every(n => n.getAttribute('stroke-dasharray') === '6,4')", arg=ctr)
+        self.assertEqual(['6 4'], [l['dash'] for l in page.evaluate(self.LINES, ctr) if l['stroke'] == '#9fd4ff'])
+        # A mark drawn now (another tool) takes it too, and the dashes grow with the thickness.
+        panel = self.tool(page, 'Length Ratio')
+        for pixel in [(10, 10), (40, 50), (10, 10), (10, 30)]: self.press(page, 'right', pixel)
+        ratio = '[data-kin-measure-layer=right] g[data-kin-mark=KinLengthRatio] line'
+        expect(page.locator(ratio)).to_have_count(2)
+        self.assertEqual(['6,4', '6,4'], [l['dash'] for l in page.evaluate(self.LINES, ratio)])
+        page.evaluate("() => synChoose({ line: 'dashed', width: 'thick' })")
+        page.wait_for_function("sel => [...document.querySelectorAll(sel)].every(n => n.getAttribute('stroke-dasharray') === '12,8')", arg=ratio)
+        # Solid: no dashes on the marks' own lines, the guide keeps its own.
+        page.evaluate("() => synChoose({ line: 'solid' })")
+        page.wait_for_function("sel => [...document.querySelectorAll(sel)].filter(n => n.getAttribute('stroke') !== '#9fd4ff').every(n => !n.hasAttribute('stroke-dasharray'))", arg=ctr)
+        self.assertEqual([None, None], [l['dash'] for l in page.evaluate(self.LINES, ratio)])
+        self.assertEqual(['6 4'], [l['dash'] for l in page.evaluate(self.LINES, ctr) if l['stroke'] == '#9fd4ff'])
+        # Default: as the tools draw them.
+        page.evaluate("() => synChoose({ line: 'dashed' })")
+        page.wait_for_function("sel => [...document.querySelectorAll(sel)].every(n => n.getAttribute('stroke-dasharray') === '6,4')", arg=ratio)
+        page.evaluate("() => synChoose({})")
+        page.wait_for_function("sel => [...document.querySelectorAll(sel)].every(n => !n.hasAttribute('stroke-dasharray'))", arg=ratio)
+        self.assertEqual(own, page.evaluate(self.LINES, ctr))
+        # The drawing never changes a mark's points or values.
+        [mark] = self.marks(page, 'KinCTR')
+        self.close(mark['baseline']['values'], [10, 17.5, 40, 27.5 / 40])
 
     def test_10_narrow_windows_keep_the_panel_fields_reachable(self):
         for size in [(768, 1024), (1024, 768)]:

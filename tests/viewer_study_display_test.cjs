@@ -65,7 +65,7 @@ function projection(row) {
     }
     const b = values.birth.replace(/-/g, ''), d = values.date.replace(/-/g, '');
     values.age = b && d && d >= b ? Math.floor((+d - +b) / 10000) + 'Y' : '';
-    return { studyUid, series: { uids: [], ...series }, sourcePatientKey, values: { ...values, over } };
+    return { studyUid, series: { uids: [], ...series }, sourcePatientKey, values: { ...values, time: (member ?? row).time ?? '', over } };
   });
   return { uid, sourcePatientKey, examScope, state: { rs: state?.rs }, displaySources };
 }
@@ -301,6 +301,25 @@ test('the prior list (Study menu, Previous Report) names each study as the workl
   assert.deepEqual(plain(lists.at(-1).studies.map(s => [s.uid, s.relation, s.name, s.id, s.desc])),
     [[ROW.uid, 'Current', 'M172 ORDERNAME', 'ORD-1', 'CT CHEST LOW DOSE'], [prior.uid, 'Prior', 'M172 OLDORDER', 'ORD-0', 'CT CHEST OLD ORDER']]);
 });
+
+test('same-day priors use exam time for Exam Mark and Prev/Next Prior Exam', async () => {
+  require('./service_test_loader.cjs');
+  const { viewerStudyDisplay } = require('/app/dist/pacs/viewer-study-display');
+  const { marks, priorUids, step } = require('../worklist-v0/hpacs-lite/viewer-compare-model.js');
+  const morning = { ...ROW, uid: '2.25.9', date: '20261001', time: '090000', acc: 'ACC-2' };
+  const afternoon = { ...MATCHED, uid: '2.25.8', date: morning.date, time: '150000', acc: 'ACC-3' };
+  const rows = [ROW, morning, afternoon].map(row => ({ ...row, state: { ...row.state, institutionId: 'inst' } }));
+  const institutions = new Map(rows.map(row => [row.uid, 'inst']));
+  const identities = new Map(rows.map(row => [row.uid, { sourcePatientId: row.id, sourceInstitution: 'inst' }]));
+  const studies = JSON.parse(viewerStudyDisplay(rows, institutions, identities).json).studies;
+  const { controller, value } = priorsOf(world({ answer: () => studies }));
+  const marked = marks(await controller.related.studies(value), ROW.uid);
+  assert.deepEqual(marked.map(row => [row.mark, row.uid]), [['*', ROW.uid], ['P1', afternoon.uid], ['P2', morning.uid]]);
+  const priors = priorUids(marked);
+  assert.deepEqual(step(priors, afternoon.uid, 1), { uid: morning.uid });
+  assert.deepEqual(step(priors, morning.uid, -1), { uid: afternoon.uid });
+});
+
 test('the patient tab lookup is the opening\'s one read; another opening reads only its own studies', async () => {
   const gates = [];
   const w = world({ answer: uids => new Promise(resolve => gates.push(() => resolve(uids.map(uid => uid === '2.25.11' ? MATCHED

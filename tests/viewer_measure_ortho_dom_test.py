@@ -127,6 +127,27 @@ class ViewerMeasureOrthoDOMTest(unittest.TestCase):
         for value, expected in zip(mark['baseline']['values'], [8, 9, 1]):
             self.assertAlmostEqual(expected, value, places=9)
 
+    def test_04b_marker_line_style_reaches_the_lines_and_the_guides_keep_their_dashes(self):
+        # The account's marker line style (marker-style.js on the viewer's default tool style) on the lines these tools draw.
+        page = self.open()
+        page.add_script_tag(path=str(HPACS / "marker-style.js"))
+        page.evaluate("""() => { let own = { global: { color: 'rgb(255, 255, 0)', lineWidth: '1', lineDash: '' } };
+          cornerstoneTools.annotation.config.style = { getDefaultToolStyles: () => own, setDefaultToolStyles: next => { own = next; } };
+          KinMarkerStyle.mount({ tools: cornerstoneTools, cornerstone: { getRenderingEngines: () => [] }, owner: 'reader' });
+          window.synChoose = over => KinMarkerStyle.publish('reader', { ...KinMarkerStyle.defaults(), ...over }); }""")
+        self.tool(page, 'Limb Length Discrepancy')
+        self.presses(page, 'left', [[10, 20], [90, 20], [25, 24], [75, 22], [26, 40], [74, 40]])
+        lines = "() => [...document.querySelectorAll('[data-kin-mark=KinLimbLength] line')].map(n => n.getAttribute('stroke-dasharray'))"
+        # The baseline is the mark's own line, the two others are guides.
+        page.wait_for_function(lines.replace('() =>', '() => (') + ').length === 3')
+        self.assertEqual([None, '6 4', '6 4'], page.evaluate(lines))
+        page.evaluate("() => synChoose({ line: 'dashed' })")
+        page.wait_for_function(lines.replace('() =>', '() => (') + ')[0] === "6,4"')
+        self.assertEqual(['6,4', '6 4', '6 4'], page.evaluate(lines))
+        page.evaluate("() => synChoose({})")
+        page.wait_for_function(lines.replace('() =>', '() => (') + ')[0] === null')
+        self.assertEqual([None, '6 4', '6 4'], page.evaluate(lines))
+
     def test_05_acetabular_angle_both_ends_of_line_a(self):
         page = self.open()
         panel = self.tool(page, 'Acetabular Angle')

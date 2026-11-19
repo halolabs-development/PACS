@@ -25,7 +25,8 @@ function displayValues(base: any, source: any, other: boolean) {
   }
   const birth = birthKey(values.birth), date = birthKey(values.date);
   const age = birth && date && date >= birth ? Math.floor((Number(date) - Number(birth)) / 10000) + 'Y' : '';
-  return { ...values, age, over };
+  // Prior navigation orders same-day exams by the original StudyTime, even after a Match.
+  return { ...values, time: (other ? source : base).time ?? '', age, over };
 }
 
 /** Only metadata from the admitted exam selection reaches the viewer, including on the clinician route. */
