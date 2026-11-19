@@ -110,6 +110,15 @@
     const NOTE_HELP = { Unknown: '아직 Tech 메모 상태를 받지 못했습니다', Yes: 'Tech 메모가 있습니다',
       Cleared: '메모를 비웠고 이전 이력이 남아 있습니다', None: 'Tech 메모가 없습니다' };
     function noteHelp(uid) { return NOTE_HELP[noteLabel(uid)] || ''; }
+    /**
+     * The Tech Note chip's word, its hover help and its accessible name, from the one stored summary at once: the list's
+     * render (CELL.techNote) and the in-place update after a save or clear (updateNoteSummary) both take them from here, so
+     * the help never keeps an earlier state's sentence.
+     */
+    function noteChip(uid, id) {
+      const label = noteLabel(uid);
+      return { label, title: noteHelp(uid), aria: `${id ?? ''} Tech Note ${label}` };
+    }
     function updateNoteSummary(uid, value) {
       if (!value || !Number.isInteger(value.version) || value.version < 0 || typeof value.present !== 'boolean') return;
       // A list poll started before a local save must not roll the badge backward.
@@ -117,7 +126,10 @@
       noteSummaries.set(uid, value);
       const study = studies.find(s => s.uid === uid);
       const button = $('#rows').querySelector(`[data-tech-note="${CSS.escape(uid)}"]`);
-      if (button && study) { button.textContent = noteLabel(uid); button.setAttribute('aria-label', study.id + ' Tech 메모 ' + noteLabel(uid)); }
+      if (button && study) {
+        const chip = noteChip(uid, study.id);
+        button.textContent = chip.label; button.title = chip.title; button.setAttribute('aria-label', chip.aria);
+      }
     }
     const readerAssignments=new Map();
     function updateReaderAssignment(uid,value){

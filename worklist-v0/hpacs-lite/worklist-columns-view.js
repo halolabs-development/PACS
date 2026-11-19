@@ -167,7 +167,7 @@
     const viewingNames = new Map();
     const CELL = {
       assignedReader:s=>`<button type="button" class="chip" data-reader-assignment="${esc(s.uid)}" ${!serverMode||demoMode||offline?'disabled':''}>${s.assignedReader?`<span translate="no">${esc(s.assignedReader)}</span>`:'Unassigned'}</button>`,
-      techNote: s => `<button type="button" class="chip" data-tech-note="${esc(s.uid)}" aria-label="${esc(s.id)} Tech Note ${noteLabel(s.uid)}" title="${noteHelp(s.uid)}" ${!serverMode || demoMode || offline ? 'disabled' : ''}>${noteLabel(s.uid)}</button>`,
+      techNote: s => { const chip = noteChip(s.uid, s.id); return `<button type="button" class="chip" data-tech-note="${esc(s.uid)}" aria-label="${esc(chip.aria)}" title="${esc(chip.title)}" ${!serverMode || demoMode || offline ? 'disabled' : ''}>${esc(chip.label)}</button>`; },
       em: s => {const phase=studyPriority?.get(s.uid)?.phase;return phase?`<span title="${phase==='saving'?'응급 상태를 저장 중입니다':'저장 결과 미확인 — 문맥 메뉴의 Refresh Status로 확인하세요'}">${phase==='saving'?'Saving':'Unverified'}</span>`:s.em === "E" ? `<span class="em-e">E</span>` : "";},
       // 판독 상태 이름은 목록과 건수 줄에서 같은 계약을 따른다. 승인(A) 뒤 24시간이 지난 판독문은 낱말만 Finalized다(값은 A).
       rs: s => { const finalized = reportFinalized({ rs: s.rs, amendUntil: appState[s.uid]?.amendUntil }), word = finalized ? "Finalized" : RS_WORD[s.rs] ?? s.rs;
