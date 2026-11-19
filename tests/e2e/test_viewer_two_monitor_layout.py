@@ -29,6 +29,18 @@ ON_SEAM = '''async () => { const d = await getScreenDetails(), left = screenX + 
   return Math.abs((grid.left + grid.right) / 2 - seam) <= 1 && panes.length > 1 && !panes.some(p => p.left < seam - 1 && p.right > seam + 1); }'''
 
 
+# One Hanging Protocol rule that matches any study: one cell on monitor 1 and one on monitor 2 (the displays left to right).
+TWO_MONITOR_RULE_ID = '99999999-9999-4999-8999-999999999999'
+TWO_MONITOR_RULES = {'version': 1, 'activeRuleId': TWO_MONITOR_RULE_ID, 'rules': [{
+    'id': TWO_MONITOR_RULE_ID, 'name': 'Two Monitors', 'enabled': True,
+    'match': {'modality': None, 'retrieveAE': None, 'bodyPart': None, 'description': None},
+    'selectors': [{'alias': 'Current', 'role': 'current', 'historical': False, 'modality': None, 'retrieveAE': None, 'bodyPart': None,
+                   'description': None, 'laterality': None, 'order': 'ascending', 'occurrence': 1}],
+    'layout': {'rows': 1, 'cols': 2, 'cells': ['Current', 'Current']},
+    'monitors': {'count': 2, 'list': [{'images': '1x1', 'worklist': 'none', 'thumbs': 'top', 'toolbar': 'top'},
+                                      {'images': '1x1', 'worklist': 'none', 'thumbs': 'top', 'toolbar': 'top'}]}}]}
+
+
 class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
     def shows(self, viewer, uid, cell=None):
         # A divided screen has several canvases (some cells may be empty): the given cell, or any cell, shows that study.
@@ -170,12 +182,14 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
 
     def test_two_06_two_cells_on_two_monitors_stay_two_on_a_double_click(self):
         p, viewer, a, _ = self.setup_viewer('TWO6')
+        # The one cell the study opened with is divided by itself once the window is over both displays.
         self.stretch(viewer)
-        self.layout(viewer, 'Layout-0-0')
         self.until(viewer, '() => { const s = services.viewportGridService.getState(); return s.layout.numCols === 2 && s.viewports.size === 2; }')
         self.until(viewer, ON_SEAM)
         self.shows(viewer, a.uid)
+        viewer.wait_for_timeout(2500)
         before = viewer.evaluate(GRID)
+        self.assertEqual((1, 2), (before['rows'], before['cols']), before)
         left = sorted(before['cells'], key=lambda c: c[1])[0]
         self.shows(viewer, a.uid, left[0])
         viewer.wait_for_timeout(1500)
@@ -205,6 +219,62 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         now = viewer.evaluate('''id => { const s = services.viewportGridService.getState(), c = s.viewports.get(id), v = services.cornerstoneViewportService.getCornerstoneViewport(id);
           return { x: c ? c.x : null, active: s.activeViewportId, image: v?.getCurrentImageId?.() || null }; }''', was['id'])
         self.assertEqual(dict(x=0, active=was['id'], image=was['image']), now)
+
+    def refused_rule(self, viewer):
+        """A Hanging Protocol rule for monitors 1 and 2 (the two displays side by side) applied to a viewer window standing on
+        one of them: the browser does not move the window over both, and the reader is told to lay it there."""
+        left, right = self.displays
+        self.bounds(viewer, dict(left=right['left'], top=0, width=1920, height=1080))
+        tab = viewer.locator('#kin-workspace-dock nav button[aria-controls=kin-viewer-layout]')
+        expect(tab).to_be_visible(timeout=45000)
+        if tab.get_attribute('aria-expanded') != 'true':
+            tab.click()
+        expect(viewer.locator('#kin-hp-new')).to_be_visible(timeout=45000)
+        viewer.locator('#kin-hp-import').set_input_files(dict(name='two-monitors.json', mimeType='application/json', buffer=json.dumps(TWO_MONITOR_RULES).encode('utf-8')))
+        expect(viewer.locator('#kin-hp-status')).to_contain_text('초안으로 가져왔습니다')
+        viewer.locator('#kin-hp-apply').click()
+        status = viewer.locator('#kin-hp-status')
+        expect(status).to_contain_text('Applied: Two Monitors', timeout=45000)
+        expect(status).to_contain_text('브라우저가 영상 창을 Monitor 1·Monitor 2(으)로 옮기지 않았습니다. 영상 창의 가장자리를 끌어 그 화면에 걸쳐 놓으세요. '
+                                       '걸쳐 놓으면 이 규칙을 다시 적용합니다.')
+        self.assertTrue(viewer.evaluate('KinViewerMonitors.reaching()'))
+        return status
+
+    def test_two_08_a_protocol_the_browser_kept_on_one_display_comes_back_once_the_window_is_over_both(self):
+        p, viewer, a, _ = self.setup_viewer('TWO8')
+        left, right = self.displays
+        status = self.refused_rule(viewer)
+        viewer.evaluate("window.__reached = 0; addEventListener('kin-viewer-monitors-reached', () => __reached++)")
+        # The reader drags the window over both displays without touching the images: the rule is applied again, on them.
+        self.bounds(viewer, dict(left=left['left'], top=0, width=3840, height=1080))
+        expect(status).to_contain_text('Monitors: 적용 Monitor 1·Monitor 2.', timeout=45000)
+        self.until(viewer, '() => { const s = services.viewportGridService.getState(); return s.viewports.size === 2 && !KinViewerMonitors.reaching(); }')
+        self.until(viewer, ON_SEAM)
+        self.shows(viewer, a.uid)
+        # Once.
+        viewer.wait_for_timeout(3000)
+        self.assertEqual(1, viewer.evaluate('__reached'))
+        self.assertNotIn('옮기지 않았습니다', status.inner_text())
+
+    def test_two_09_work_on_the_images_meanwhile_is_not_built_over_by_the_protocol(self):
+        p, viewer, a, _ = self.setup_viewer('TWO9')
+        left, right = self.displays
+        status = self.refused_rule(viewer)
+        viewer.evaluate("window.__reached = 0; addEventListener('kin-viewer-monitors-reached', () => __reached++)")
+        self.shows(viewer, a.uid)
+        # The reader scrolls the image the rule left on screen.
+        cell = sorted(viewer.evaluate(GRID)['cells'], key=lambda c: (c[2], c[1]))[0]
+        viewer.mouse.move(*self.cell_centre(viewer, cell))
+        viewer.mouse.wheel(0, 120)
+        viewer.wait_for_function('() => !KinViewerMonitors.reaching()')
+        viewer.wait_for_timeout(1000)
+        image = viewer.evaluate('id => services.cornerstoneViewportService.getCornerstoneViewport(id)?.getCurrentImageId?.() || null', cell[0])
+        self.bounds(viewer, dict(left=left['left'], top=0, width=3840, height=1080))
+        viewer.wait_for_timeout(6000)
+        self.assertEqual(0, viewer.evaluate('__reached'))
+        self.assertNotIn('적용 Monitor 1·Monitor 2', status.inner_text())
+        # The image the reader went to is still the one shown in that cell.
+        self.assertEqual(image, viewer.evaluate('id => services.cornerstoneViewportService.getCornerstoneViewport(id)?.getCurrentImageId?.() || null', cell[0]))
 
 
 def load_tests(loader, tests, pattern):

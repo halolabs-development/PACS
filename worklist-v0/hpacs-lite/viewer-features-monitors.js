@@ -246,6 +246,29 @@ if (typeof window === 'object') {
   window.kinViewerMonitorEdgesNow = () => window.screen?.isExtended === false ? [] : edgesOf(kinViewerScreensInfoNow());
   // Read the access the reader already gave once now, so the first double click knows the displays.
   kinViewerScreensInfo().catch(() => {});
+
+  // The reader began to work on the images (kinViewerImageWork): whatever waits for a screen nobody touched ends
+  // ('kin-viewer-image-work'; below, the wait for the window to reach a rule's monitors). One function, called where
+  // image work begins:
+  //  - here: a press or a wheel step on an image cell, and a key the viewer may act on;
+  //  - where an image command is run from the toolbar, its copy on the other display or a shortcut key
+  //    (viewer-ux-toolbar.js invoke) - a shortcut key is taken before it reaches the document;
+  //  - where a wheel step is taken to scroll or to enlarge the image (config kinStackMouse).
+  // Not image work: Ctrl / Cmd / Alt chords (the browser's own zoom, the system's window keys), a Ctrl+wheel nobody took
+  // for the image (the browser's zoom), keys typed into a field or a dialog, and moving the window (no input to this page).
+  window.kinViewerImageWork = () => { try { window.dispatchEvent(new Event('kin-viewer-image-work')); } catch (_) {} };
+  if (!window.kinViewerImageWorkWatched) {
+    window.kinViewerImageWorkWatched = true;
+    const images = node => !!node?.closest?.('[data-cy="viewport-grid"]');
+    const field = node => !!node?.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"],dialog,[role="dialog"]');
+    document.addEventListener('pointerdown', event => { if (images(event.target)) window.kinViewerImageWork?.(); }, true);
+    document.addEventListener('wheel', event => { if (!event.ctrlKey && images(event.target)) window.kinViewerImageWork?.(); }, { capture: true, passive: true });
+    document.addEventListener('keydown', event => {
+      if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing || /^(Shift|Control|Alt|Meta|CapsLock|Tab|Escape|ContextMenu|F\d+)$/.test(event.key || '') ||
+          field(event.target) || field(document.activeElement)) return;
+      window.kinViewerImageWork?.();
+    }, true);
+  }
 }
 
 if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ store, ui }) => {
@@ -395,8 +418,9 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
         moved = result.moved;
         check();
         // The browser keeps a window on one display (it does not move it over two): the reader is asked to lay it there,
-        // and once it stands over those monitors the rule is applied again (reach, after this apply stands).
-        if (!result.reached && info.granted) reach = { monitors: [...aim.monitors], info };
+        // and once it stands over those monitors the rule is applied again (reach, after this apply stands). The monitors
+        // are those of the displays as they are now (displays): numbers mean nothing once a display comes or goes.
+        if (!result.reached && info.granted) reach = { monitors: [...aim.monitors], displays: displaysOf(info) };
         if (!result.reached) notes.push(info.granted ? '브라우저가 영상 창을 ' + aim.monitors.map(name).join('·') + '(으)로 옮기지 않았습니다. 영상 창의 가장자리를 끌어 그 화면에 걸쳐 놓으세요. 걸쳐 놓으면 이 규칙을 다시 적용합니다.'
           : '창 관리 권한이 없어 영상 창을 ' + aim.monitors.map(name).join('·') + '(으)로 옮기지 못했습니다.');
         await frames(2);
@@ -407,7 +431,7 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
       await frames(2);
       check();
       const columnBox = box(), gridBox = document.querySelector('[data-cy="viewport-grid"]')?.getBoundingClientRect();
-      const covered = columnBox ? plan.regions(info.screens, geometry(), info.zoom, columnBox).slice(0, 2) : [];
+      const covered = columnBox ? laidOn(aim.monitors, plan.regions(info.screens, geometry(), info.zoom, columnBox)) : [];
       const split = columnBox && gridBox ? plan.split(window.KinHangingProtocolModel, rule, covered, columnBox, gridBox) : null;
       for (const skipped of aim.skipped) notes.push(name(skipped.monitor) + ': ' + (skipped.reason === 'no-display' ? '이 화면 구성에 없어 적용하지 않았습니다.' : '한 영상 창은 이웃한 두 화면까지만 덮어 적용하지 않았습니다.'));
       // Rectangles inside the screen, none over another and none squeezed by the bands, or nothing at all.
@@ -463,34 +487,43 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
       if (text) ui.toast(text);
     }, () => {});
   }
-  // The rule stands with the browser having kept the window off its monitors: until the reader lays the window over them
-  // (its image column over each, KinViewerMonitorPlan.regions), for two minutes and while no newer prepare() or clear() came,
-  // this watches; then the Hanging Protocols panel is told, and applies that rule again if it is still the one applied
-  // (viewer-hanging-protocol.js). Rows this rule placed go back quietly when the window moves meanwhile (startWatch).
-  // The reader's own work on the images meanwhile (a click, a wheel step, a key) ends the wait: applying the rule again would
-  // build the cells anew over it. Moving the window is no input to this page. The displays are read again each time (the
-  // browser zoom may have changed since the apply).
+  // The parts of the window a rule is laid on: its image monitors' own parts once the window stands over every one of
+  // them - the same pair the wait below looks for, whichever other display the window also covers - else the first two
+  // parts it does cover (as far as the browser let it go).
+  const laidOn = (monitors, regions) => monitors.length && monitors.every(monitor => regions.some(region => region.monitor === monitor))
+    ? regions.filter(region => monitors.includes(region.monitor)) : regions.slice(0, 2);
+  // The displays by what they are (their place and size, left to right), not by their numbers.
+  const displaysOf = info => JSON.stringify((info?.screens || []).map(s => [s.left, s.top, s.width, s.height]));
+  // The rule stands with the browser having kept the window off its monitors. The whole wait is here: once the window's
+  // image column, as measured now, stands over each of those monitors (KinViewerMonitorPlan.regions; the browser zoom and
+  // the side panels are read again each time), the Hanging Protocols panel is told once, and applies the rule it applied
+  // again if it is still the one applied to that screen (viewer-hanging-protocol.js). It ends without doing anything when,
+  // first, the reader begins to work on the images (kinViewerImageWork: applying the rule again would build the cells
+  // anew over that work), another study is shown, a newer prepare() or a clear() came, the window-management access is
+  // no longer given or the displays are no longer the ones the rule was applied on (nothing is judged on what was read
+  // before), or two minutes have passed. While it lasts the grid is the rule's (reaching: nothing else rebuilds the
+  // cells; the rows this rule placed go back quietly when the window moves, startWatch).
   let reaching = null;
-  const INPUTS = ['pointerdown', 'wheel', 'keydown'];
-  function stopReaching() { if (reaching) { clearInterval(reaching.timer); for (const type of INPUTS) document.removeEventListener(type, stopReaching, true); reaching = null; } }
+  function stopReaching() { if (reaching) { clearInterval(reaching.timer); window.removeEventListener('kin-viewer-image-work', stopReaching); reaching = null; } }
   function awaitMonitors(rule, reach, mine) {
     stopReaching();
-    const until = Date.now() + 120000;
+    const until = Date.now() + 120000, study = location.search;
     const timer = setInterval(() => {
-      if (epoch !== mine || Date.now() > until) { stopReaching(); return; }
+      if (epoch !== mine || Date.now() > until || location.search !== study) { stopReaching(); return; }
+      const info = kinViewerScreensInfoNow();
+      if (!info?.granted || displaysOf(info) !== reach.displays) { stopReaching(); return; }
       const columnBox = box();
       if (!columnBox) return;
-      const info = kinViewerScreensInfoNow();
-      const read = info?.granted ? info : reach.info;
-      const now = plan.regions(read.screens, geometry(), read.zoom, columnBox).map(region => region.monitor);
+      const now = plan.regions(info.screens, geometry(), info.zoom, columnBox).map(region => region.monitor);
       if (!reach.monitors.every(monitor => now.includes(monitor))) return;
       stopReaching();
       window.dispatchEvent(new CustomEvent('kin-viewer-monitors-reached', { detail: { ruleId: rule.id } }));
     }, 500);
     reaching = { timer, mine };
-    for (const type of INPUTS) document.addEventListener(type, stopReaching, true);
+    window.addEventListener('kin-viewer-image-work', stopReaching);
   }
-  window.KinViewerMonitors = { prepare, clear: () => { epoch++; stopReaching(); if (active) show(null); settleWorklist(null, () => false); } };
+  window.KinViewerMonitors = { prepare, reaching: () => !!reaching,
+    clear: () => { epoch++; stopReaching(); if (active) show(null); settleWorklist(null, () => false); } };
 
   // ── The window: Viewer Settings › Monitors in Hanging Protocol… ──
   const element = (tag, attributes = {}, parent) => {

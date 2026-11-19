@@ -7240,6 +7240,8 @@ function kinStackMouse(services) {
     const scroll = cs.utilities?.scroll;
     if (!group || !applied.has(group) || tools.state?.isInteractingWithTool || !event.ctrlKey && typeof scroll !== 'function') return;
     event.preventDefault(); event.stopImmediatePropagation();
+    // The step is taken for the image (a Ctrl+wheel left to the browser is its own zoom, not image work).
+    window.kinViewerImageWork?.();
     const direction = event.deltaY < 0 ? -1 : 1;
     if (event.ctrlKey) {
       // Ctrl+wheel up enlarges by the chosen percent around the pointer; down undoes one such step.
