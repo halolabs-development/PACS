@@ -1135,6 +1135,13 @@ test('the hospital inbox: the admin sets an eligible member of the own instituti
   audits = await inboxAudits();
   assert.deepEqual(JSON.parse(audits[1].detail), { member: null });
   assert.equal((await w.svc.recipients(UID, S())).inbox, 'none');
+  // the offered members are the institution's member rights, as the save judges them: a member the rights put in another
+  // institution is neither offered nor saved while the provider's group still lists them here
+  await w.rights('Y', { institution: OTHER });
+  got = await w.svc.inbox(AD());
+  assert.equal(got.members.some(m => m.sub === SUBS.Y), false, 'moved in the rights: not offered');
+  assert.ok(got.members.some(m => m.sub === SUBS.X), 'the others are still offered');
+  await assert.rejects(w.svc.saveInbox(AD(), { sub: SUBS.Y }), code(400, 'CRITICAL_RESULT_RECIPIENT_INVALID'));
 });
 
 // ── S7-U1c: critical results on tele studies (TEST-S7-U1c-SERVICE TSV01..TSV19) ──

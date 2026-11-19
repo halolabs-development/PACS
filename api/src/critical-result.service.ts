@@ -944,14 +944,17 @@ export class CriticalResultService {
 
   /**
    * GET admin/critical-result-inbox. The administrator's own institution's hospital inbox and the members who can hold it
-   * (active clinicians and radiologists of that institution, as the dialog's candidates are drawn). The stored member who
-   * is no longer one of them is still reported (`member: null`), so the page says the setting no longer reaches anyone.
+   * (active clinicians and radiologists of that institution). Members are the durable member rights of the institution —
+   * the same record the save and every delivery judge — so the list never offers a member the save would refuse. The
+   * stored member who is no longer one of them is still reported (`member: null`), so the page says the setting no longer
+   * reaches anyone.
    */
   async inbox(c: CriticalCaller) {
     this.adminOnly(c);
     const institution = c.institution as string;
     let members: KeycloakUser[];
-    try { members = await this.keycloak.institutionMembers(institution); } catch { throw unavailable(); }
+    try { members = (await this.prisma.memberRights.findMany({ where: { institution } })).map(rightsUser).filter(Boolean); }
+    catch { throw unavailable(); }
     const eligible = members.map(user => this.inboxMember(user, institution)).filter(Boolean) as { sub: string; actor: string; name: string; role: RecipientClass }[];
     eligible.sort((a, b) => a.name.localeCompare(b.name) || a.sub.localeCompare(b.sub));
     const own = await this.prisma.institution.findUnique({ where: { id: institution }, select: { criticalResultInbox: true } });
@@ -972,14 +975,16 @@ export class CriticalResultService {
     const institution = c.institution as string;
     const sub = b.sub === null ? null : String(b.sub).toLowerCase();
     let member: { actor: string } | null = null;
-    if (sub !== null) {
-      const user = await this.user(sub);
-      const found = user ? this.inboxMember(user, institution) : null;
-      if (!found) throw refuse({ status: 400, code: CODE.RECIPIENT_INVALID },
-        '병원 수신 회원은 이 기관의 활성 임상의 또는 판독의여야 합니다');
-      member = found;
-    }
     const changed = await this.prisma.$transaction(async tx => {
+      // The member is judged under the lock every member change takes, so a suspension or move that commits first is seen.
+      if (sub !== null) {
+        await lockMemberRights(tx, sub);
+        const user = rightsUser(await tx.memberRights.findUnique({ where: { sub } }));
+        const found = user ? this.inboxMember(user, institution) : null;
+        if (!found) throw refuse({ status: 400, code: CODE.RECIPIENT_INVALID },
+          '병원 수신 회원은 이 기관의 활성 임상의 또는 판독의여야 합니다');
+        member = found;
+      }
       const rows: any[] = await tx.$queryRaw`SELECT "criticalResultInbox" FROM "Institution" WHERE id=${institution} FOR UPDATE`;
       if (!rows.length) throw roleRequired();
       if ((rows[0].criticalResultInbox ?? null) === sub) return false;
