@@ -11,7 +11,8 @@ import { BadRequestException, ConflictException } from '@nestjs/common';
 import type { Caller } from './access';
 
 export const QC_REASON_MAX = 500;
-const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
+// One line of text: no control character at all (tab and line breaks included), judged before trimming.
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 const EPOCH = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 /** The body keys of a QC command; it is sent alone, never mixed with another study change. */
 const QC_KEYS = ['qc', 'qcRevision', 'epoch'];
@@ -26,7 +27,8 @@ export function isQcCommand(body: any): boolean {
 /**
  * The QC command of a PATCH body: `{qc: {reason}, qcRevision, epoch}` marks (or changes the reason), `{qc: null, ...}`
  * clears. `qcRevision` is the revision the screen showed and `epoch` the row's draftEpoch it showed (a row deleted and
- * made again has a new one). The reason is trimmed, 1..500 characters, no control characters.
+ * made again has a new one). The reason is one line: no control character anywhere (tab and line breaks included), then
+ * trimmed to 1..500 characters.
  */
 export function qcCommand(body: any): QcCommand {
   if (Object.keys(body).some(k => !QC_KEYS.includes(k)))
@@ -37,8 +39,9 @@ export function qcCommand(body: any): QcCommand {
   if (qc === null) return { reason: null, revision: qcRevision, epoch };
   if (!qc || typeof qc !== 'object' || Array.isArray(qc) || Object.keys(qc).join() !== 'reason' || typeof qc.reason !== 'string')
     throw new BadRequestException('QC 표시는 {reason} 또는 null이어야 합니다');
+  if (CONTROL.test(qc.reason)) throw new BadRequestException(`QC 사유는 1~${QC_REASON_MAX}자의 글이어야 합니다`);
   const reason = qc.reason.trim();
-  if (!reason || reason.length > QC_REASON_MAX || CONTROL.test(reason))
+  if (!reason || reason.length > QC_REASON_MAX)
     throw new BadRequestException(`QC 사유는 1~${QC_REASON_MAX}자의 글이어야 합니다`);
   return { reason, revision: qcRevision, epoch };
 }

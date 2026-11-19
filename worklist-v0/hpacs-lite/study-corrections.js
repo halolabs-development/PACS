@@ -153,7 +153,8 @@
       const study = make("div", "qc-flag-study"); study.translate = false;
       const now = make("div", "qc-flag-now"); now.style.margin = "6px 0";
       const label = make("label", null, "Reason"); label.htmlFor = "qc-flag-reason"; label.style.display = "block";
-      const reason = make("textarea", "qc-flag-reason"); reason.rows = 3; reason.maxLength = 500; reason.translate = false;
+      // One line (the server refuses line breaks and tabs): an input, not a text area.
+      const reason = make("input", "qc-flag-reason"); reason.type = "text"; reason.maxLength = 500; reason.translate = false;
       reason.style.cssText = "width:100%;box-sizing:border-box";
       const status = make("p", "qc-flag-status"); status.setAttribute("role", "status"); status.setAttribute("aria-live", "polite");
       const flag = make("button", "qc-flag-save", "Flag"), clear = make("button", "qc-flag-clear", "Clear Flag"), cancel = make("button", "qc-flag-cancel", "Cancel");
@@ -208,8 +209,17 @@
         kinWrite(status, kinSay("그 사이 QC 표시가 바뀌었습니다. 지금 상태를 확인한 뒤 다시 누르세요."));
         return;
       }
-      const reason = $("#qc-flag-reason").value.trim();
-      if (!clearing && (!reason || reason.length > 500)) { kinWrite(status, kinSay("QC 사유를 1~500자로 적으세요.")); return; }
+      // Judged again at the moment of sending, not only when the window opened: the connection, the role and the row.
+      const row = studies.find(x => x.uid === uid);
+      if (!technicianWork() || !serverMode || offline || demoMode || !row || row.tele) {
+        kinWrite(status, kinSay("지금은 QC 표시를 바꿀 수 없습니다. 연결·권한·검사를 확인하세요."));
+        return;
+      }
+      const raw = $("#qc-flag-reason").value, reason = raw.trim();
+      if (!clearing && (!reason || reason.length > 500 || /[\u0000-\u001f\u007f-\u009f]/.test(raw))) {
+        kinWrite(status, kinSay("QC 사유를 줄바꿈 없이 1~500자로 적으세요."));
+        return;
+      }
       const token = String(++qcSeq), at = work.capture("document"), controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 15000);
       d.dataset.request = token; $("#qc-flag-save").disabled = $("#qc-flag-clear").disabled = true;
@@ -223,7 +233,7 @@
         const mine = d.dataset.request === token && d.open && d.dataset.uid === uid;
         if (mine) delete d.dataset.request;
         if (st) {
-          appState[uid] = mergeObservedReportState(uid, st);
+          takeQcAnswer(uid, st);
           syncStudy(uid); render(); renderClinical();
           if (!mine) return;
           d.close();
@@ -231,8 +241,11 @@
           toast(kinSay(saved?.reason === null ? "QC 표시를 지웠습니다" : "QC 표시를 저장했습니다"), "info");
           return;
         }
-        // Refused, lost or timed out: the result is read back from the server (the list) and the window says what happened.
-        if (!error?.auth) load();
+        // Refused, lost or timed out: the result is read back from the server (the list) and the window says what happened;
+        // when the read is done, the open window shows the mark it read (the status line stays).
+        if (!error?.auth) Promise.resolve(load()).catch(() => {}).then(() => work.commit(at, () => {
+          if (d.open && d.dataset.uid === uid && !d.dataset.request) drawQcWindow(d, uid);
+        }));
         if (!mine) return;
         drawQcWindow(d, uid);
         kinWrite(status, error?.name === "AbortError"

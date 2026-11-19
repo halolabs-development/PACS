@@ -302,6 +302,34 @@ class QcFlagDOM(Base):
         expect(self.page.locator('#rows tr[data-uid]')).to_have_count(1)
         self.assertEqual([], self.errors)
 
+    def test_a_late_qc_answer_takes_only_the_mark_never_an_older_report_state(self):
+        page = self.open_qc(TECH)
+        self.technician_tab()
+        page.locator('#rows tr[data-uid]').first.click()
+        self.site.patch_answers.append('hold')
+        page.locator('#t-qc-flag').click()
+        self.window().get_by_label('Reason').fill('SYN late answer')
+        self.window().get_by_role('button', name='Flag', exact=True).click()
+        for _ in range(50):
+            if self.site.held_patches:
+                break
+            page.wait_for_timeout(100)
+        self.assertTrue(self.site.held_patches)
+        self.window().get_by_role('button', name='Cancel', exact=True).click()
+        # Meanwhile the report was approved; a Refresh shows it.
+        self.site.report = {'version': 1, 'rs': 'A'}
+        page.locator('#m-refresh').click()
+        row = page.locator('#rows tr[data-uid]').first
+        expect(row).to_contain_text('Approved')
+        # The QC answer was made before the approval: its RS is W. Only its mark is taken.
+        route, uid, body, account = self.site.held_patches[0]
+        late = dict(self.site.study_row(account)['state'], rs='W', version=0,
+                    qc={'reason': 'SYN late answer', 'by': account['actor'], 'at': '2026-10-03T01:02:00.000Z', 'revision': 1})
+        route.fulfill(json=late)
+        expect(self.qc_cell()).to_contain_text('SYN late answer')
+        expect(row).to_contain_text('Approved')
+        self.assertEqual([], self.errors)
+
 
 # ── Protocol & Dose ──
 
@@ -323,9 +351,9 @@ def concept(code):
     return tag('SQ', {'00080100': tag('SH', code), '00080102': tag('SH', 'DCM')})
 
 
-def num(code, value, unit):
+def num(code, value, unit, scheme='UCUM'):
     return {'0040A040': tag('CS', 'NUM'), '0040A043': concept(code), '0040A300': tag('SQ', {'0040A30A': tag('DS', value),
-            '004008EA': tag('SQ', {'00080100': tag('SH', unit)}) if unit else tag('SQ')})}
+            '004008EA': tag('SQ', {'00080100': tag('SH', unit), '00080102': tag('SH', scheme)}) if unit else tag('SQ')})}
 
 
 def container(code, *children):
@@ -389,11 +417,11 @@ class AcquisitionDOM(Base):
         self.assertEqual('Protocol & Dose (recorded in DICOM)', lines[0])
         self.assertIn('Se 2 · CT · SYN CHEST', lines)
         self.assertIn('Protocol (0018,1030): SYN CHEST ROUTINE', lines)
-        self.assertIn('CTDIvol (0018,9345): 8.12 mGy (2), 9.4 mGy (1)', lines)
-        self.assertIn('Protocol (0018,1030): SYN THIN · Not in DICOM in 1 of 2', lines)
+        self.assertIn('CTDIvol (0018,9345): 8.12 mGy (images 1–2), 9.4 mGy (image 3)', lines)
+        self.assertIn('Protocol (0018,1030): SYN THIN (image 2) · Not in DICOM (image 1)', lines)
         self.assertIn('CTDIvol (0018,9345): 7.5 mGy', lines)
         # The SR's own total, with the unit it records; the events are not added to it or shown beside it.
-        self.assertIn('DLP (Dose SR Se 900): 312.4 mGy.cm (total, 113813)', lines)
+        self.assertIn('DLP (Dose SR Se 900) %s: 312.4 mGy.cm (total recorded in this Dose SR, 113813)' % (auth.UID + '.900.1'), lines)
         self.assertFalse(any('Event' in line for line in lines), lines)
         values = self.page.locator('#study-acquisition span[translate="no"]').all_inner_texts()
         self.assertIn('SYN CHEST ROUTINE', values)
@@ -428,7 +456,7 @@ class AcquisitionDOM(Base):
         self.assertIn('DLP (Dose SR): Not found in the series read', self.lines())
         self.page.locator('#rows tr[data-uid="%s"]' % auth.UID_B).click()
         expect(self.page.locator('#study-acquisition')).to_contain_text('Event 1:')
-        self.assertIn('DLP (Dose SR Se 9): Event 1: CTDIvol 5.5 mGy · DLP Could not read', self.lines())
+        self.assertIn('DLP (Dose SR Se 9) %s: Event 1: CTDIvol 5.5 mGy · DLP Could not read' % (b + '.9.1'), self.lines())
         self.assertEqual([], self.errors)
     def test_enhanced_ct_frames_and_a_split_part_keep_their_own_sources(self):
         site = self.site()
@@ -458,11 +486,91 @@ class AcquisitionDOM(Base):
         self.page.locator('#rows tr[data-uid="%s"]' % a).click()
         expect(self.page.locator('#study-acquisition')).to_contain_text('SYN ENHANCED')
         lines = self.lines()
-        self.assertIn('CTDIvol (0018,9345): 10 mGy (2), 12 mGy (1) · Not in DICOM in 1 of 4', lines)
+        self.assertIn('CTDIvol (0018,9345): 10 mGy (image 1: frames 1–2), 12 mGy (image 1: frame 3) · Not in DICOM (image 1: frame 4)', lines)
         self.assertFalse(any('SYN CHEST THIN' in line for line in lines), lines)
         self.assertNotIn('/dicom-web/studies/%s/series/%s/metadata' % (a, a + '.3'), site.dicom_calls)
         # The dose report of the original study is said to be the whole study's, not this part's.
-        self.assertIn('DLP (Dose SR Se 900) — of the whole original study, not of this part: 312.4 mGy.cm (total, 113813)', lines)
+        self.assertIn('DLP (Dose SR Se 900) %s — not computed for this part: 312.4 mGy.cm (total recorded in this Dose SR, 113813)' % (a + '.900.1'), lines)
+        self.assertEqual([], self.errors)
+    def test_a_unit_or_code_scheme_it_cannot_vouch_for_is_could_not_read(self):
+        site = self.site()
+        a, s9 = auth.UID, auth.UID + '.900'
+        site.gets['/dicom-web/studies/%s/series/%s/metadata' % (a, s9)] = (200, [
+            instance(a, s9, s9 + '.1', sop_class=RDSR, extra={'0040A730': tag('SQ', container('113811', num('113813', '312.4', 's')))}),
+            instance(a, s9, s9 + '.2', sop_class=RDSR, extra={'0040A730': tag('SQ', container('113811', num('113813', '99.9', 'mGy.cm', 'LOCAL')))})])
+        self.open(TECH, site)
+        self.go()
+        self.technician_tab()
+        self.page.locator('#rows tr[data-uid="%s"]' % a).click()
+        expect(self.page.locator('#study-acquisition')).to_contain_text(s9 + '.2')
+        lines = self.lines()
+        for sop in (s9 + '.1', s9 + '.2'):
+            self.assertIn('DLP (Dose SR Se 900) %s: Could not read (total recorded in this Dose SR, 113813)' % sop, lines)
+        self.assertFalse(any('312.4' in line or '99.9' in line for line in lines), lines)
+        self.assertEqual([], self.errors)
+
+    def test_an_answer_read_before_refresh_does_not_paint_over_the_newer_one(self):
+        site = self.site()
+        a, s9 = auth.UID, auth.UID + '.900'
+        path = '/dicom-web/studies/%s/series/%s/metadata' % (a, s9)
+        held = []
+        newer = [instance(a, s9, s9 + '.1', sop_class=RDSR, extra={'0040A730': tag('SQ', container('113811', num('113813', '412.4', 'mGy.cm')))})]
+        old = site.gets[path][1]
+
+        def answer(route):
+            if not held:
+                held.append(route)
+            else:
+                route.fulfill(json=newer)
+        self.open(TECH, site)
+        self.context.route('**' + path, answer)
+        self.go()
+        self.technician_tab()
+        self.page.locator('#rows tr[data-uid="%s"]' % a).click()
+        for _ in range(50):
+            if held:
+                break
+            self.page.wait_for_timeout(100)
+        self.assertTrue(held, 'the first read of the dose report was not sent')
+        self.page.locator('#m-refresh').click()
+        expect(self.page.locator('#study-acquisition')).to_contain_text('412.4 mGy.cm')
+        held[0].fulfill(json=old)
+        self.page.wait_for_timeout(500)
+        expect(self.page.locator('#study-acquisition')).to_contain_text('412.4 mGy.cm')
+        self.assertNotIn('312.4', self.page.locator('#study-acquisition').inner_text())
+        self.assertEqual([], self.errors)
+
+    def test_a_merged_exam_keeps_each_original_apart_and_a_failed_original_is_said(self):
+        site = self.site()
+        a, b = auth.UID, auth.UID_B
+        site.gets['/dicom-web/studies/%s/series' % b] = (500, {'code': 'SYN'})
+        # One object of the CT's thin series has no SOP Instance UID: that series is not read, never "absent".
+        broken = instance(a, a + '.3', a + '.3.1', ctdi=7.5)
+        del broken['00080018']
+        site.gets['/dicom-web/studies/%s/series/%s/metadata' % (a, a + '.3')] = (200, [broken])
+        original = site.study_row
+
+        def merged(account, uid=auth.UID, name=auth.PATIENT, patient='SYN-P-001'):
+            row = original(account, uid, name, patient)
+            if uid == a:
+                row['examScope'] = {'reportUid': a, 'groupId': '00000000-0000-4000-8000-0000000000f2', 'kind': 'merge', 'part': None,
+                                    'active': True, 'generation': 'SYN-G2', 'sources': [
+                                        {'studyUid': a, 'series': {'mode': 'all', 'uids': []}},
+                                        {'studyUid': b, 'series': {'mode': 'all', 'uids': []}}]}
+            return row
+        site.study_row = merged
+        self.open(TECH, site)
+        self.go()
+        self.technician_tab()
+        self.page.locator('#rows tr[data-uid="%s"]' % a).click()
+        expect(self.page.locator('#study-acquisition')).to_contain_text('Series list could not be read')
+        lines = self.lines()
+        self.assertIn('%s · Series list could not be read' % b, lines)
+        self.assertIn('%s · Se 2 · CT · SYN CHEST' % a, lines)
+        self.assertIn('CTDIvol (0018,9345): 8.12 mGy (images 1–2), 9.4 mGy (image 3)', lines)
+        self.assertIn('%s · Se 3 · CT · SYN CHEST THIN — Could not read' % a, lines)
+        self.assertIn('DLP (Dose SR Se 900) %s · %s: 312.4 mGy.cm (total recorded in this Dose SR, 113813)' % (a, a + '.900.1'), lines)
+        self.assertFalse(any(line.endswith('Not in DICOM') and line.startswith('DLP') for line in lines), lines)
         self.assertEqual([], self.errors)
 
 

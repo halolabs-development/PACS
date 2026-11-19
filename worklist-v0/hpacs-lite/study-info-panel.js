@@ -68,125 +68,166 @@
      * such). Answers are kept per exam scope in this tab's memory only and drawn only while that exam is still the one viewed.
      */
     const KinAcquisition = (() => {
-      const MAX_SERIES = 40, RDSR = "1.2.840.10008.5.1.4.1.1.88.67", MAX_VALUES = 4, MAX_EVENTS = 20;
+      const MAX_SERIES = 40, SERIES_LIMIT = 501, RDSR = "1.2.840.10008.5.1.4.1.1.88.67", MAX_VALUES = 4, MAX_EVENTS = 20;
       const first = (ds, tag) => ds?.[tag]?.Value?.[0];
       const text = (ds, tag) => { const v = first(ds, tag); return typeof v === "string" ? v.trim() : typeof v === "number" ? String(v) : ""; };
       const items = (ds, tag) => Array.isArray(ds?.[tag]?.Value) ? ds[tag].Value.filter(v => v && typeof v === "object") : [];
-      /** Distinct recorded values with how many objects (or frames) carry each, in first-seen order; never summed. */
-      function tally() {
-        const values = new Map();
-        return { add(v) { values.set(v, (values.get(v) ?? 0) + 1); }, absent: 0, unreadable: 0,
-          list() { return [...values].map(([value, count]) => ({ value, count })); } };
+      const number = raw => { const n = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() ? Number(raw) : NaN; return Number.isFinite(n) ? n : null; };
+      /**
+       * Where each recorded value was read: per distinct value, the images (Instance Number, or the object's place in the
+       * series when it has none) and, for an enhanced multi-frame object, its frames. Values are never added up.
+       */
+      function places() {
+        const values = new Map(), absent = [], unreadable = [];
+        const at = (list, image, frame) => list.push({ image, frame });
+        return { absent, unreadable,
+          add(value, image, frame) { if (!values.has(value)) values.set(value, []); at(values.get(value), image, frame); },
+          miss(image, frame) { at(absent, image, frame); }, bad(image, frame) { at(unreadable, image, frame); },
+          list() { return [...values].map(([value, where]) => ({ value, where })); } };
+      }
+      /** "images 1–3, 7" or "image 5: frames 1–2" — consecutive numbers joined; a long list is cut with "…". */
+      function where(list) {
+        const runs = numbers => { const sorted = [...new Set(numbers)].sort((a, b) => a - b), out = [];
+          for (const n of sorted) { const last = out[out.length - 1]; if (last && n === last[1] + 1) last[1] = n; else out.push([n, n]); }
+          return out.map(([a, b]) => a === b ? String(a) : a + "–" + b).join(", "); };
+        const framed = new Map(), plain = [];
+        for (const p of list) if (p.frame == null) plain.push(p.image); else { if (!framed.has(p.image)) framed.set(p.image, []); framed.get(p.image).push(p.frame); }
+        const parts = [];
+        if (plain.length) parts.push((plain.length === 1 ? "image " : "images ") + runs(plain));
+        for (const [image, frames] of framed) parts.push("image " + image + ": " + (frames.length === 1 ? "frame " : "frames ") + runs(frames));
+        const joined = parts.join("; ");
+        return joined.length > 80 ? joined.slice(0, 79) + "…" : joined;
       }
       // CTDIvol (0018,9345) is recorded in mGy (PS3.3 CT Exposure Macro). A value that is not a finite number is unreadable.
-      function ctdiOf(raw, into) {
-        if (raw === undefined) { into.absent++; return; }
-        const n = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() ? Number(raw) : NaN;
-        if (Number.isFinite(n)) into.add(String(n)); else into.unreadable++;
+      function ctdiInto(raw, into, image, frame) {
+        if (raw === undefined) into.miss(image, frame);
+        else { const n = number(raw); if (n === null) into.bad(image, frame); else into.add(String(n), image, frame); }
       }
-      /** One series' objects: Protocol Name per object; CTDIvol per object, or per frame of an enhanced multi-frame object. */
+      /**
+       * One series, every object of it: each must name this original, this series, its SOP Instance UID and its SOP Class, or
+       * the series is not read (never "absent"). Protocol Name per object; CTDIvol per object, or per frame of an enhanced object.
+       */
       function judgeSeries(objects, expected) {
-        const protocol = tally(), ctdi = tally();
+        const protocol = places(), ctdi = places();
         let frames = 0;
-        for (const ds of objects) {
-          if (text(ds, "0020000D") !== expected.study || text(ds, "0020000E") !== expected.series) throw new Error("identity");
+        objects.forEach((ds, index) => {
+          if (text(ds, "0020000D") !== expected.study || text(ds, "0020000E") !== expected.series || !text(ds, "00080018") || !text(ds, "00080016"))
+            throw new Error("identity");
+          const image = Number.isSafeInteger(number(first(ds, "00200013"))) ? number(first(ds, "00200013")) : index + 1;
           const name = text(ds, "00181030");
-          if (name) protocol.add(name); else protocol.absent++;
+          if (name) protocol.add(name, image, null); else protocol.miss(image, null);
           const perFrame = items(ds, "52009230"), shared = items(ds, "52009229")[0];
           const sharedCtdi = first(items(shared, "00189321")[0], "00189345");
-          if (perFrame.length) for (const frame of perFrame) {
+          if (perFrame.length) perFrame.forEach((frame, f) => {
             frames++;
             const own = first(items(frame, "00189321")[0], "00189345");
-            ctdiOf(own !== undefined ? own : sharedCtdi !== undefined ? sharedCtdi : first(ds, "00189345"), ctdi);
-          } else ctdiOf(sharedCtdi !== undefined ? sharedCtdi : first(ds, "00189345"), ctdi);
-        }
+            ctdiInto(own !== undefined ? own : sharedCtdi !== undefined ? sharedCtdi : first(ds, "00189345"), ctdi, image, f + 1);
+          });
+          else ctdiInto(sharedCtdi !== undefined ? sharedCtdi : first(ds, "00189345"), ctdi, image, null);
+        });
         return { protocol, ctdi, frames };
       }
-      const code = item => text(items(item, "0040A043")[0], "00080100");
-      function measured(item) {
-        const m = items(item, "0040A300")[0], raw = first(m, "0040A30A"), unit = text(items(m, "004008EA")[0], "00080100");
-        const n = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() ? Number(raw) : NaN;
-        return Number.isFinite(n) && unit ? { value: String(n), unit } : { unreadable: true };
+      // Dose SR content items are judged on their DCM concept code, their value type and their UCUM unit together.
+      const concept = item => { const c = items(item, "0040A043")[0]; return text(c, "00080102") === "DCM" ? text(c, "00080100") : ""; };
+      const typed = (item, type) => text(item, "0040A040") === type;
+      function measured(item, unit) {
+        const m = items(item, "0040A300")[0], u = items(m, "004008EA")[0], n = number(first(m, "0040A30A"));
+        return n !== null && text(u, "00080102") === "UCUM" && text(u, "00080100") === unit ? { value: String(n), unit } : { unreadable: true };
       }
-      function find(node, wanted, out = [], depth = 0) {
+      function find(node, code, type, out = [], depth = 0) {
         if (depth > 32) return out;
-        for (const item of items(node, "0040A730")) { if (code(item) === wanted) out.push(item); find(item, wanted, out, depth + 1); }
+        for (const item of items(node, "0040A730")) { if (concept(item) === code && typed(item, type)) out.push(item); find(item, code, type, out, depth + 1); }
         return out;
       }
       /**
-       * An X-Ray Radiation Dose SR: the total DLP it records (TID 10012 CT Accumulated Dose Data 113811 → 113813), as that
-       * report's own total; only when it has none, each irradiation event's Mean CTDIvol (113830) and DLP (113838) (TID 10013,
-       * CT Acquisition 113819). Its own unit is kept; nothing is added up across reports or events.
+       * An X-Ray Radiation Dose SR: the DLP total it records (TID 10012 CT Accumulated Dose Data 113811 → 113813, mGy.cm),
+       * as that report's own total; only when it has none, each irradiation event's Mean CTDIvol (113830, mGy) and DLP
+       * (113838, mGy.cm) (TID 10013, CT Acquisition 113819). Nothing is added up across reports or events.
        */
       function doseReport(ds) {
-        const totals = find(ds, "113811").flatMap(container => find(container, "113813")).map(measured);
-        const events = find(ds, "113819").map(event => ({ ctdi: find(event, "113830").map(measured)[0] ?? null,
-          dlp: find(event, "113838").map(measured)[0] ?? null }));
+        const totals = find(ds, "113811", "CONTAINER").flatMap(c => find(c, "113813", "NUM")).map(item => measured(item, "mGy.cm"));
+        const events = find(ds, "113819", "CONTAINER").map(event => ({
+          ctdi: find(event, "113830", "NUM").map(item => measured(item, "mGy"))[0] ?? null,
+          dlp: find(event, "113838", "NUM").map(item => measured(item, "mGy.cm"))[0] ?? null }));
         return { total: totals[0] ?? null, events: totals.length ? [] : events };
       }
+      /**
+       * The one reading of an exam: per original its series list (read, failed, or cut at the list limit), per series in the
+       * scope its objects (read, failed, or not read past the limit), and the dose reports found. `complete` says every part
+       * of the scope was read; only then may anything be called absent from the study.
+       */
       async function read(row, request) {
         const scope = KinExamScope.read(row);
         if (!scope) return { state: "unavailable" };
-        const listed = await KinExamScope.dicom(row, "series?limit=501", path => request(path));
-        const all = listed.map(({ sourceUid, row: ds }) => ({ sourceUid, seriesUid: text(ds, "0020000E"), modality: text(ds, "00080060"),
-          number: text(ds, "00200011"), description: text(ds, "0008103E") }))
-          .filter(s => s.seriesUid).sort((a, b) => a.sourceUid.localeCompare(b.sourceUid) || (Number(a.number) || 0) - (Number(b.number) || 0));
-        const chosen = all.slice(0, MAX_SERIES), series = [], reports = [];
-        for (const s of chosen) {
-          let objects;
-          try {
-            objects = await request("/dicom-web/studies/" + encodeURIComponent(s.sourceUid) + "/series/" + encodeURIComponent(s.seriesUid) + "/metadata");
-            if (!objects.length) throw new Error("empty");
-            const judged = judgeSeries(objects, { study: s.sourceUid, series: s.seriesUid });
-            series.push({ ...s, state: "read", objects: objects.length, ...judged });
-            for (const ds of objects) if (text(ds, "00080016") === RDSR)
-              reports.push({ sourceUid: s.sourceUid, seriesUid: s.seriesUid, number: s.number, ...doseReport(ds) });
-          } catch (e) { series.push({ ...s, state: "failed" }); }
+        const sources = [], all = [];
+        for (const source of scope.sources) {
+          let listed;
+          try { listed = await request("/dicom-web/studies/" + encodeURIComponent(source.studyUid) + "/series?limit=" + SERIES_LIMIT); }
+          catch (e) { sources.push({ studyUid: source.studyUid, state: "failed", status: e.status ?? null }); continue; }
+          const own = listed.filter(ds => text(ds, "0020000D") === source.studyUid);
+          const unnamed = own.filter(ds => !text(ds, "0020000E")).length;
+          sources.push({ studyUid: source.studyUid, state: listed.length >= SERIES_LIMIT ? "cut" : own.length !== listed.length || unnamed ? "unidentified" : "read" });
+          for (const ds of own) {
+            const seriesUid = text(ds, "0020000E");
+            if (seriesUid && KinExamScope.allows(source, seriesUid)) all.push({ sourceUid: source.studyUid, seriesUid, modality: text(ds, "00080060"),
+              number: text(ds, "00200011"), description: text(ds, "0008103E") });
+          }
         }
-        const partial = scope.sources.some(source => source.series.mode !== "all");
-        return { state: "done", series, reports, skipped: all.length - chosen.length, sources: scope.sources.length, partial,
-          complete: series.every(s => s.state === "read") };
+        all.sort((a, b) => a.sourceUid.localeCompare(b.sourceUid) || (Number(a.number) || 0) - (Number(b.number) || 0));
+        const chosen = all.slice(0, MAX_SERIES), series = [], reports = [];
+        let refused = false;
+        for (const s of chosen) {
+          try {
+            const objects = await request("/dicom-web/studies/" + encodeURIComponent(s.sourceUid) + "/series/" + encodeURIComponent(s.seriesUid) + "/metadata");
+            if (!objects.length) throw new Error("empty");
+            series.push({ ...s, state: "read", objects: objects.length, ...judgeSeries(objects, { study: s.sourceUid, series: s.seriesUid }) });
+            for (const ds of objects) if (text(ds, "00080016") === RDSR)
+              reports.push({ sourceUid: s.sourceUid, seriesUid: s.seriesUid, number: s.number, sop: text(ds, "00080018"), ...doseReport(ds) });
+          } catch (e) { if ([401, 403].includes(e.status)) refused = true; series.push({ ...s, state: "failed" }); }
+        }
+        if (sources.some(source => [401, 403].includes(source.status))) refused = true;
+        const skipped = all.length - chosen.length;
+        return { state: "done", sources, series, reports, skipped, refused, partial: scope.sources.some(source => source.series.mode !== "all"),
+          complete: sources.every(source => source.state === "read") && series.every(s => s.state === "read") && !skipped };
       }
-      const valuesText = (t, unit) => {
-        const list = t.list(), shown = list.slice(0, MAX_VALUES).map(v => v.value + (unit ? " " + unit : "") + (list.length > 1 ? ` (${v.count})` : ""));
-        return shown.join(", ") + (list.length > MAX_VALUES ? ` … +${list.length - MAX_VALUES}` : "");
-      };
-      /** One fact of a series: its recorded values, then how many objects lack it or carry an unreadable one. */
-      function factParts(label, t, unit, of) {
-        const parts = [{ say: label }, { say: ": " }];
-        if (t.list().length) parts.push({ data: valuesText(t, unit) });
-        if (t.absent && t.list().length) parts.push({ say: " · Not in DICOM in {n0} of {n1}", args: [t.absent, of] });
-        else if (t.absent) parts.push({ say: "Not in DICOM" });
-        if (t.unreadable) parts.push({ say: " · Could not read in {n0} of {n1}", args: [t.unreadable, of] });
+      const placeArgs = list => [{ t: where(list) }];
+      /** One fact of a series: each recorded value with where it was read; where it is missing or unreadable, said apart. */
+      function factParts(label, t, unit) {
+        const parts = [{ say: label }, { say: ": " }], list = t.list();
+        list.slice(0, MAX_VALUES).forEach((v, i) => parts.push(...(i ? [{ say: ", " }] : []), { data: v.value + (unit ? " " + unit : "") },
+          ...(list.length > 1 || t.absent.length || t.unreadable.length ? [{ say: " ({t0})", args: placeArgs(v.where) }] : [])));
+        if (list.length > MAX_VALUES) parts.push({ say: " … +{n0}", args: [list.length - MAX_VALUES] });
+        if (t.absent.length) parts.push(list.length ? { say: " · Not in DICOM ({t0})", args: placeArgs(t.absent) } : { say: "Not in DICOM" });
+        if (t.unreadable.length) parts.push({ say: " · Could not read ({t0})", args: placeArgs(t.unreadable) });
         return parts;
       }
       function lines(result) {
         if (result.state === "reading") return [{ kind: "status", parts: [{ say: "Protocol & Dose: reading DICOM…" }] }];
         if (result.state === "unavailable") return [{ kind: "status", parts: [{ say: "Protocol & Dose: Could not read (the exam's originals cannot all be read)" }] }];
         if (result.state === "failed") return [{ kind: "status", parts: [{ say: "Protocol & Dose: Could not read" }] }];
-        const out = [{ kind: "head", parts: [{ say: "Protocol & Dose (recorded in DICOM)" }] }];
-        if (!result.series.length) out.push({ kind: "status", parts: [{ say: "No series found" }] });
+        const many = result.sources.length > 1, out = [{ kind: "head", parts: [{ say: "Protocol & Dose (recorded in DICOM)" }] }];
+        for (const source of result.sources) if (source.state !== "read") out.push({ kind: "status", parts: [
+          ...(many ? [{ data: source.studyUid }, { say: " · " }] : []),
+          { say: source.state === "cut" ? "Series list cut at {n0}: some series not read" : "Series list could not be read", args: [SERIES_LIMIT] }] });
+        if (!result.series.length && result.sources.every(source => source.state === "read")) out.push({ kind: "status", parts: [{ say: "No series found" }] });
         for (const s of result.series) {
           const name = [s.number ? "Se " + s.number : "", s.modality, s.description].filter(Boolean).join(" · ") || s.seriesUid;
-          const head = { kind: "series", parts: [...(result.sources > 1 ? [{ data: s.sourceUid }, { say: " · " }] : []), { data: name }] };
+          const head = { kind: "series", parts: [...(many ? [{ data: s.sourceUid }, { say: " · " }] : []), { data: name }] };
           if (s.state !== "read") { head.parts.push({ say: " — Could not read" }); out.push(head); continue; }
-          const of = s.frames || s.objects;
-          out.push(head,
-            { kind: "protocol", parts: factParts("Protocol (0018,1030)", s.protocol, "", s.objects) },
-            { kind: "ctdi", parts: factParts("CTDIvol (0018,9345)", s.ctdi, "mGy", of) });
+          out.push(head, { kind: "protocol", parts: factParts("Protocol (0018,1030)", s.protocol, "") },
+            { kind: "ctdi", parts: factParts("CTDIvol (0018,9345)", s.ctdi, "mGy") });
         }
-        // DLP comes only from an X-Ray Radiation Dose SR of the study: each report on its own line, never added up.
-        const readAll = result.complete && !result.skipped;
-        if (!result.reports.length) out.push({ kind: "dlp", parts: readAll
-          ? [{ say: "DLP (Dose SR)" }, { say: ": " }, { say: "Not in DICOM" }]
-          : [{ say: "DLP (Dose SR)" }, { say: ": " }, { say: "Not found in the series read" }] });
+        // DLP comes only from an X-Ray Radiation Dose SR: each report on its own line (its series and SOP Instance UID), as that
+        // report records it, never added up and never computed for a split part.
+        if (!result.reports.length) out.push({ kind: "dlp", parts: [{ say: "DLP (Dose SR)" }, { say: ": " },
+          { say: result.complete ? "Not in DICOM" : "Not found in the series read" }] });
         for (const r of result.reports) {
-          const where = [{ say: "DLP (Dose SR{t0})", args: [{ t: r.number ? " Se " + r.number : "" }] },
-            ...(result.partial ? [{ say: " — of the whole original study, not of this part" }] : []), { say: ": " }];
-          if (r.total) out.push({ kind: "dlp", parts: [...where, r.total.unreadable ? { say: "Could not read" }
-            : { data: r.total.value + " " + r.total.unit }, { say: " (total, 113813)" }] });
-          else if (!r.events.length) out.push({ kind: "dlp", parts: [...where, { say: "Not in DICOM" }] });
-          else r.events.slice(0, MAX_EVENTS).forEach((event, i) => out.push({ kind: "dlp-event", parts: [...where,
+          const head = [{ say: "DLP (Dose SR{t0})", args: [{ t: r.number ? " Se " + r.number : "" }] }, { say: " " },
+            { data: (many ? r.sourceUid + " · " : "") + r.sop }, ...(result.partial ? [{ say: " — not computed for this part" }] : []), { say: ": " }];
+          if (r.total) out.push({ kind: "dlp", parts: [...head, r.total.unreadable ? { say: "Could not read" }
+            : { data: r.total.value + " " + r.total.unit }, { say: " (total recorded in this Dose SR, 113813)" }] });
+          else if (!r.events.length) out.push({ kind: "dlp", parts: [...head, { say: "Not in DICOM" }] });
+          else r.events.slice(0, MAX_EVENTS).forEach((event, i) => out.push({ kind: "dlp-event", parts: [...head,
             { say: "Event {n0}: ", args: [i + 1] },
             { say: "CTDIvol " }, event.ctdi && !event.ctdi.unreadable ? { data: event.ctdi.value + " " + event.ctdi.unit } : { say: event.ctdi ? "Could not read" : "Not in DICOM" },
             { say: " · DLP " }, event.dlp && !event.dlp.unreadable ? { data: event.dlp.value + " " + event.dlp.unit } : { say: event.dlp ? "Could not read" : "Not in DICOM" }] }));
@@ -248,11 +289,14 @@
       try { result = await KinAcquisition.read(s, request); }
       catch (e) { result = { state: "failed" }; }
       work.commit(at, () => {
+        // Only the latest read may keep or draw anything: a read started before a Refresh, another viewed exam or a session
+        // change neither fills the cache nor paints over a newer answer. A refused read (401/403) forgets every kept answer.
+        if (seq !== acquisitionSeq) return;
+        if (result.refused) acquisitionCache.clear();
         // A whole read is kept for its key (the exam scope, counts and series of the list row it was read for); a read with a
         // failure is not kept, so the next viewing reads again. It is drawn only while that same exam is the one viewed.
         if (result.state === "done" && result.complete) acquisitionCache.set(key, result);
         const box = $("#study-acquisition"), now = viewed();
-        if (seq !== acquisitionSeq && box?.dataset.key !== key) return;
         if (!box || box.hidden || box.dataset.key !== key || acquisitionKey(now) !== key) return;
         box.replaceChildren(...KinAcquisition.lines(result).map(acquisitionLine));
       });

@@ -111,6 +111,16 @@
       const held = qcMark(mine), seen = qcMark(st);
       return held && (!seen || held.revision > seen.revision) ? { qc: mine.qc } : {};
     }
+    /**
+     * A QC command's own answer: only its mark is taken, and only when it is not older than the mark shown. The rest of the
+     * state it carries is not: a list read that came back meanwhile may already show a later report state (RS, holder).
+     */
+    function takeQcAnswer(uid, st) {
+      const seen = qcMark(st), held = qcMark(appState[uid]);
+      if (!seen || held && held.revision > seen.revision) return false;
+      appState[uid] = { ...appState[uid], qc: st.qc };
+      return true;
+    }
     /** A row's QC fields from its state (applyState and syncStudy): the mark, and the word the column, filter and sort read. */
     function applyQcRow(s, a) {
       const mark = qcMark(a);

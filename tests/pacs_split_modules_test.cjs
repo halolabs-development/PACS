@@ -1701,6 +1701,7 @@ test('SPLIT-28 QC Flag marks, changes and clears with a rising revision; refusal
   // malformed commands: 400 before anything is read or written
   const before = w.db.writes.length;
   for (const body of [cmd({ reason: '' }), cmd({ reason: '   ' }), cmd({ reason: 'x'.repeat(501) }), cmd({ reason: 'SYN\u0007bell' }),
+    cmd({ reason: 'SYN first\nsecond line' }), cmd({ reason: 'SYN\ttab' }), cmd({ reason: 'SYN trailing\u000b' }), cmd({ reason: 'SYN\u0085' }),
     cmd({ reason: 1 }), cmd('SYN'), cmd({ reason: 'SYN', extra: 1 }), cmd({ reason: 'SYN' }, { em: 'E' }),
     { qc: { reason: 'SYN' } }, cmd({ reason: 'SYN' }, { qcRevision: -1 }), cmd({ reason: 'SYN' }, { epoch: 'not-an-epoch' })])
     await refused(() => w.studyState.patchState(s.uid, body, TECH_A), 400);
