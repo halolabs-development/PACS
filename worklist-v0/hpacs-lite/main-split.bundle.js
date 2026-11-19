@@ -13106,7 +13106,7 @@
       const card = document.createElement("section");
       card.style.cssText = "width:min(520px,100%);background:#111d2d;border:1px solid #29405d;border-radius:14px;padding:34px;box-shadow:0 18px 60px #0008";
       const brand = document.createElement("div");
-      brand.textContent = "KOREA IMAGING NETWORK";
+      brand.textContent = "HALO PACS";
       brand.style.cssText = "font-size:12px;letter-spacing:.18em;color:#75a9dc;margin-bottom:18px";
       const title = document.createElement("h1");
       title.textContent = pending ? "관리자 승인 대기" : "계정 설정 확인 필요";

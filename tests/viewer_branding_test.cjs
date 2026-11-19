@@ -132,7 +132,7 @@ test('mount: About leaves the settings menu, Preferences stays, and a late menu 
 
   w.unmount();
   assert.equal(w.observers.size,0,'unmount disconnects the observer');
-  assert.equal(w.doc.title,'판독 뷰어 — KOREA IMAGING NETWORK');
+  assert.equal(w.doc.title,'판독 뷰어 — HALO PACS');
 });
 
 test('About text outside the settings menu is not hidden',async()=>{

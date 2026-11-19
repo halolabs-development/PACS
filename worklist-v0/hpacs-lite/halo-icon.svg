@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="-25 -1 274 274">
+  <title>HALO LABS logo</title>
+  
+  
+  <g id="halo-icon" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M124 24 A100 100 0 0 1 224 124" stroke="#8AB4C8" stroke-width="13"/>
+    <path d="M224 148 A100 100 0 0 1 124 248" stroke="#8AB4C8" stroke-width="13"/>
+    <path d="M100 248 A100 100 0 0 1 0 148" stroke="#8AB4C8" stroke-width="13"/>
+    <path d="M0 124 A100 100 0 0 1 100 24" stroke="#8AB4C8" stroke-width="13"/>
+    <g transform="translate(-5 7)"><g transform="translate(-3 0)"><path d="M112 67 C82 42 55 60 63 89 C39 91 36 118 55 129 C34 145 43 173 65 174 C58 201 87 219 112 198 Z" stroke="#8AB4C8" stroke-width="7"/>
+    <path d="M112 67 L112 198 M63 89 L91 110 L112 103 M55 129 L83 137 L112 129 M65 174 L92 159 L112 166" stroke="#8AB4C8" stroke-width="5"/>
+    <circle cx="63" cy="89" r="7" fill="#8AB4C8" stroke="none"/>
+    <circle cx="83" cy="137" r="7" fill="#8AB4C8" stroke="none"/>
+    <circle cx="92" cy="159" r="7" fill="#8AB4C8" stroke="none"/>
+    <circle cx="108" cy="103" r="5" fill="#8AB4C8" stroke="none"/>
+    </g><g transform="translate(3 0)"><path d="M120 67 C150 42 183 59 177 88 C199 93 202 118 184 130 C202 147 191 174 172 175 C179 203 148 219 120 198 Z" stroke="#B4B4B4" stroke-width="7"/>
+    <path d="M145 75 C132 82 135 96 148 100 C160 104 157 119 146 124 C132 131 136 146 151 148 C165 151 166 167 154 174 C145 180 148 191 160 196" stroke="#B4B4B4" stroke-width="6"/></g></g>
+  </g>
+</svg>
