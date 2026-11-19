@@ -13,7 +13,8 @@ import { spawn, ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import { PrismaService } from './prisma.service';
 import { PacsService } from './pacs.service';
-import { aeTitle, answerQuery, MWL_ORDER_SELECT, MWL_STATUS } from './modality-worklist';
+import { aeTitle, answerPages, MWL_ORDER_SELECT, MWL_STATUS } from './modality-worklist';
+import type { MwlOrder } from './modality-worklist';
 import { dump } from './pacs/values';
 
 export interface MwlConfig { port: number; aet: string; answerSeconds: number; python: string; script: string }
@@ -35,6 +36,8 @@ export function mwlConfig(env: NodeJS.ProcessEnv): MwlConfig | null {
 }
 
 const RESTART_MS = [1000, 5000, 15000, 60000];
+/** Orders read per database round trip: a large institution list is read in pages, never all at once. */
+export const MWL_PAGE = 500;
 
 @Injectable()
 export class ModalityWorklistService implements OnApplicationBootstrap, OnApplicationShutdown {
@@ -86,15 +89,28 @@ export class ModalityWorklistService implements OnApplicationBootstrap, OnApplic
         this.line(child, line);
       }
     });
-    // The helper logs no identifier; its stderr is its own diagnostics.
+    // Only the helper's own diagnostic lines (`KIN-MWL <kind>`, no value) reach the log; anything else it or a library
+    // writes may hold a query value, so it is counted, never shown.
     child.stderr!.setEncoding('utf8');
-    child.stderr!.on('data', (chunk: string) => { for (const l of chunk.split('\n')) if (l.trim()) this.log.warn(l.trim().slice(0, 500)); });
-    child.stdin!.on('error', () => undefined);
-    child.on('error', error => this.log.error(`Modality Worklist helper: ${error.message}`));
-    child.on('exit', code => {
-      if (this.child === child) { this.child = null; this.listening = false; }
-      if (!this.stopping) { this.log.warn(`Modality Worklist helper stopped (${code}); starting it again`); this.again(); }
+    child.stderr!.on('data', (chunk: string) => {
+      for (const l of chunk.split('\n')) {
+        const line = l.trim();
+        if (!line) continue;
+        if (/^KIN-MWL [A-Za-z0-9_. -]{1,120}$/.test(line)) this.log.warn(line);
+        else this.log.warn('Modality Worklist helper wrote a diagnostic line (not shown: it may hold query values)');
+      }
     });
+    child.stdin!.on('error', () => undefined);
+    // A helper that could not start ('error' without 'exit') and one that stopped are started again the same way, once.
+    let ended = false;
+    const end = (why: string) => {
+      if (ended) return;
+      ended = true;
+      if (this.child === child) { this.child = null; this.listening = false; }
+      if (!this.stopping) { this.log.warn(`Modality Worklist helper ${why}; starting it again`); this.again(); }
+    };
+    child.on('error', error => end(`could not run (${(error as NodeJS.ErrnoException).code ?? error.name})`));
+    child.on('exit', code => end(`stopped (${code})`));
   }
 
   private again() {
@@ -132,24 +148,38 @@ export class ModalityWorklistService implements OnApplicationBootstrap, OnApplic
     const audit = (outcome: string, matches: number) => this.prisma.auditLog.create({ data: {
       actor: `device:${aet || '(none)'}`, action: 'modality-worklist.query', target: institution ?? '-',
       detail: dump({ institution, aet: aet || null, outcome, matches }) } });
+    const auditLost = (outcome: string) => () => this.log.error(`Modality Worklist audit row not written (${outcome} query of device ${aet || '(none)'})`);
     if (!institution) {
-      await audit('refused', 0).catch(() => undefined);
+      await audit('refused', 0).catch(auditLost('refused'));
       return { status: MWL_STATUS.refused, warning: false, items: [] };
     }
     let result;
     try {
-      const orders = await this.prisma.order.findMany({ where: { institutionId: institution, removedAt: null },
-        select: MWL_ORDER_SELECT, orderBy: [{ sched: 'asc' }, { oid: 'asc' }] });
-      result = answerQuery(orders, identifier);
+      result = await answerPages(identifier, this.pages(institution));
     } catch (error) {
-      this.log.error(`Modality Worklist query failed: ${(error as Error).message}`);
-      await audit('failed', 0).catch(() => undefined);
+      this.log.error(`Modality Worklist query failed (${(error as Error).name})`);
+      await audit('failed', 0).catch(auditLost('failed'));
       return { status: MWL_STATUS.unavailable, warning: false, items: [] };
     }
     const outcome = result.status === MWL_STATUS.success ? 'answered'
       : result.status === MWL_STATUS.identifier ? 'invalid' : result.status === MWL_STATUS.resources ? 'too-many' : 'failed';
     try { await audit(outcome, result.matches); }
-    catch { return { status: MWL_STATUS.audit, warning: false, items: [] }; }
+    catch { auditLost(outcome)(); return { status: MWL_STATUS.audit, warning: false, items: [] }; }
     return { status: result.status, warning: result.warning, items: result.items };
+  }
+
+  /** The institution's listed orders, page by page in (sched, oid) order. */
+  private async *pages(institution: string): AsyncGenerator<MwlOrder[]> {
+    let after: { sched: string; oid: string } | null = null;
+    for (;;) {
+      const page: MwlOrder[] = await this.prisma.order.findMany({
+        where: { institutionId: institution, removedAt: null,
+          ...(after ? { OR: [{ sched: { gt: after.sched } }, { sched: after.sched, oid: { gt: after.oid } }] } : {}) },
+        select: MWL_ORDER_SELECT, orderBy: [{ sched: 'asc' }, { oid: 'asc' }], take: MWL_PAGE });
+      if (page.length) yield page;
+      if (page.length < MWL_PAGE) return;
+      const last = page[page.length - 1];
+      after = { sched: last.sched, oid: last.oid };
+    }
   }
 }

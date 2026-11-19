@@ -221,6 +221,33 @@ class ModalityWorklistE2E(WorklistE2E):
         [back] = [d for d in self.found(dev_a, same_day) if d.PlacerOrderNumberImagingServiceRequest == od]
         self.assertEqual([back.RequestedProcedureID, back.StudyInstanceUID], [stored["mwlProcedureId"], stored["mwlStudyUid"]])
 
+        # Unmatch: the scheduled study keeps its identifiers; the order is listed as before.
+        unmatched = self.stack.request("POST", "/unmatch", "tech", {"uid": study.uid, "reason": "SYNTHETIC worklist check"})
+        self.assertIn(unmatched.status, (200, 201), unmatched.text)
+        self.assertEqual(self.row(oa)["matched"], "U")
+        [after_unmatch] = self.found(dev_a, ask)
+        self.assertEqual([after_unmatch.RequestedProcedureID, after_unmatch.StudyInstanceUID],
+                         [before[0]["mwlProcedureId"], before[0]["mwlStudyUid"]])
+
+        # The helper process stops: the API starts it again, and a new association is answered.
+        killed = subprocess.run(["docker", "compose", "exec", "-T", "api", "node", "-e",
+                                 "const fs=require('fs');let n=0;for(const p of fs.readdirSync('/proc')){if(!/^\\d+$/.test(p))continue;"
+                                 "let c='';try{c=fs.readFileSync('/proc/'+p+'/cmdline','utf8')}catch{continue}"
+                                 "if(c.includes('mwl_scp.py')){process.kill(+p,'SIGKILL');n++}}console.log(n)"],
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual((killed.returncode, killed.stdout.strip()), (0, "1"), killed.stderr)
+        deadline = time.monotonic() + 60
+        while True:
+            probe = AE(ae_title=dev_a)
+            probe.add_requested_context(ModalityWorklistInformationFind)
+            assoc = probe.associate("127.0.0.1", MWL_PORT, ae_title=MWL_AET)
+            if assoc.is_established:
+                assoc.release()
+                break
+            self.assertLess(time.monotonic(), deadline, "the helper was not started again")
+            time.sleep(1)
+        self.assertEqual(self.placers(dev_a, ask), [oa])
+
         # An order without a scheduled device, asked for its device: Unable to process, no identifier.
         self.assertEqual(self.find(dev_a, identifier(date="20260316", PatientID=patient)), [(0xC003, None)])
 

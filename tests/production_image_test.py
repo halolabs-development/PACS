@@ -230,6 +230,8 @@ for(const name of expected) assert(fs.existsSync('prisma/migrations/'+name+'/mig
 for(const p of ['dist/main.js','dist/emr-runtime/store.js',
   'node_modules/prisma/build/index.js','node_modules/.prisma/client/index.js']) assert(fs.existsSync(p),p);
 for(const p of ['src','node_modules/@nestjs/cli','node_modules/typescript']) assert(!fs.existsSync(p),p);
+// Modality Worklist: its DICOM helper ships in the image, beside the print helper.
+assert(fs.existsSync('mwl/mwl_scp.py'),'mwl/mwl_scp.py');
 assert.strictEqual(require('@prisma/client/package.json').version,'5.22.0');
 assert.strictEqual(require('prisma/package.json').version,'5.22.0');
 // The Orthanc connection pools (orthanc-transport.ts) are a runtime dependency the prune must keep.
@@ -245,6 +247,10 @@ assert.strictEqual(facts.build.revision,/^[0-9a-f]{40}$/.test(label)?label:null)
 """
         ops.temporary_run(["--network", "none", "--entrypoint", "node", self.image_id, "-e", script,
                            json.dumps(MIGRATIONS), expected])
+        # The helper loads on the image's own Python and pynetdicom (it is started only while KIN_MWL_PORT is set).
+        self.assertEqual(ops.temporary_run(["--network", "none", "--entrypoint", "/opt/kin-print/bin/python", self.image_id, "-I", "-c",
+            "import runpy,sys; sys.argv=['mwl_scp.py','--help']; runpy.run_path('/app/mwl/mwl_scp.py', run_name='__main__')"]).splitlines()[0][:6],
+            "usage:")
 
     def test_02_migrate_boot_restart_preserves_data_and_history(self):
         """TEST-C1-02/03: real Prisma engines, empty migration, auth guard and exec signal path.
@@ -323,6 +329,11 @@ const runtime=new EmrRuntime(process.env.DATABASE_URL, '/var/lib/kin-emr/outage'
         ops.run(["docker", "exec", name, "node", "-e",
             "fetch('http://127.0.0.1:3000/api/me').then(r=>{if(r.status!==401)process.exit(1)})"
             ".catch(()=>process.exit(1))"])
+        # Modality Worklist is off by default: no helper process and nothing on its port.
+        self.assertEqual(ops.text(["docker", "exec", name, "node", "-e",
+            "const fs=require('fs');const p=fs.readdirSync('/proc').filter(d=>/^\\d+$/.test(d)).filter(d=>{try{return fs.readFileSync('/proc/'+d+'/cmdline','utf8').includes('mwl_scp')}catch{return false}});"
+            "const s=require('net').connect(4243,'127.0.0.1');s.on('connect',()=>{console.log(p.length+' open');s.destroy()});s.on('error',()=>console.log(p.length+' closed'))"]),
+            "0 closed")
         self.assertEqual(ops.text(["docker", "exec", name, "node", "-e",
             "console.log(require('fs').readFileSync('/proc/1/cmdline').toString().split('\\0').filter(Boolean).join(' '))"]),
             "node dist/main.js")

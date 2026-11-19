@@ -18,19 +18,37 @@ the process ends, and with it every association it held.
 import argparse
 import itertools
 import json
+import logging
 import os
 import sys
 import threading
 import uuid
+import warnings
 
 from pydicom.dataset import Dataset
 from pynetdicom import AE, evt, _config
 from pynetdicom.sop_class import ModalityWorklistInformationFind, Verification
 
-# No identifier in any log line (the library logs them by default).
+# No identifier and no value in any output line: the libraries log identifiers by default, and their value warnings
+# (pydicom's VR checks) quote the value. The only diagnostics are this process's own `KIN-MWL <kind>` lines.
 _config.LOG_REQUEST_IDENTIFIERS = False
 _config.LOG_RESPONSE_IDENTIFIERS = False
 _config.LOG_HANDLER_LEVEL = 'none'
+warnings.simplefilter('ignore')
+for _name in ('pynetdicom', 'pydicom'):
+    _logger = logging.getLogger(_name)
+    _logger.handlers[:] = [logging.NullHandler()]
+    _logger.propagate = False
+    _logger.setLevel(logging.CRITICAL + 1)
+
+
+def diagnose(kind):
+    sys.stderr.write('KIN-MWL ' + kind + '\n')
+    sys.stderr.flush()
+
+
+sys.excepthook = lambda kind, value, trace: diagnose('stopped on ' + kind.__name__)
+threading.excepthook = lambda args: diagnose('thread stopped on ' + args.exc_type.__name__)
 
 CANCEL = 0xFE00
 UNAVAILABLE = 0xC001
@@ -78,7 +96,8 @@ def on_find(event, answer_seconds):
         return
     try:
         identifier = event.identifier.to_json_dict()
-    except Exception:
+    except Exception as error:
+        diagnose('query not readable ' + type(error).__name__)
         yield INVALID, None
         return
     rid = _boot + ':' + str(next(_ids))
@@ -100,6 +119,10 @@ def on_find(event, answer_seconds):
     finally:
         with _waiting_lock:
             _waiting.pop(rid, None)
+    # A C-CANCEL that came while the API answered ends the query Cancel, whatever the answer was.
+    if event.is_cancelled:
+        yield CANCEL, None
+        return
     answer = slot['answer']
     status = answer.get('status')
     if not isinstance(status, int):
@@ -112,7 +135,8 @@ def on_find(event, answer_seconds):
     items = answer.get('items') or []
     try:
         datasets = [Dataset.from_json(item) for item in items]
-    except Exception:
+    except Exception as error:
+        diagnose('answer not encodable ' + type(error).__name__)
         yield UNAVAILABLE, None
         return
     for ds in datasets:

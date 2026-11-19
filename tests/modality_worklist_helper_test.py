@@ -52,6 +52,12 @@ class Helper:
             raise RuntimeError('the helper did not open its port')
 
     def _read(self):
+        try:
+            self._lines()
+        except (OSError, ValueError):   # the stream closed with the test
+            pass
+
+    def _lines(self):
         for line in self.proc.stdout:
             message = json.loads(line)
             if message['type'] == 'listening':
@@ -202,6 +208,42 @@ class ModalityWorklistHelper(unittest.TestCase):
         assoc.release()
         self.assertEqual(got, [(0xFE00, None)])
         self.assertLess(time.monotonic() - started, 10)
+
+    def test_05b_a_cancel_that_came_while_the_api_answered_ends_with_cancel(self):
+        # The cancel reaches the helper first; then the API's answer arrives (no match, and one with items). Either way the
+        # query ends Cancel, never Success.
+        for items in ([], [item(NAME, 'SYN-1')]):
+            cancelled = threading.Event()
+
+            def answer(m, items=items):
+                cancelled.wait(10)
+                time.sleep(0.05)   # inside one of the helper's 0.2 s waits: the answer wakes it, not its own check
+                return {'status': 0, 'items': items}
+            h = self.helper(answer, answer_seconds=20)
+            assoc = scu().associate('127.0.0.1', h.port, ae_title=AET)
+            context = [c for c in assoc.accepted_contexts if c.abstract_syntax == ModalityWorklistInformationFind][0]
+            responses = assoc.send_c_find(query(), ModalityWorklistInformationFind, msg_id=9)
+
+            def cancel():
+                assoc.send_c_cancel(9, context.context_id)
+                cancelled.set()
+            threading.Timer(0.5, cancel).start()
+            got = [(s.Status, ds) for s, ds in responses]
+            assoc.release()
+            self.assertEqual(got, [(0xFE00, None)], len(items))
+
+    def test_05c_a_value_the_query_carries_never_reaches_the_helper_output(self):
+        h = self.helper(lambda m: {'status': 0, 'items': []})
+        ds = query()
+        ds.PatientBirthDate = 'SYNBADDATE987'          # not a date: the library's own check would quote it
+        ds.PatientID = 'SYN-' + 'Q' * 70               # longer than its VR allows
+        got = find(h.port, ds)
+        self.assertEqual(got[-1][0], 0x0000)
+        time.sleep(0.3)
+        output = ''.join(h.stderr)
+        self.assertNotIn('SYNBADDATE987', output)
+        self.assertNotIn('QQQQ', output)
+        self.assertTrue(all(line.startswith('KIN-MWL ') for line in output.splitlines() if line.strip()), output[:200])
 
     def test_06_two_devices_at_once_get_their_own_answers(self):
         def answer(m):
