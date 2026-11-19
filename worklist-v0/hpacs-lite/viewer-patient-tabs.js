@@ -4,6 +4,8 @@ window.KinViewerPatientTabs = (() => {
   const tabs = [], listeners = new Set();
   let current = null, explicitlyClosed = false, session, services, refreshChrome, host, status, sequence = 0, pending = false, mounted = false;
   let controller, pendingHref, restoreSubscription, dataSubscription, dataReady, mountEpoch = 0, focusAfterMount = false;
+  // The saved view of the tab shown that is being put back now ({ tab, epoch }), until its cells are back (restore).
+  let viewRestore = null;
   // A refused open (KinSessionTransport.openFailure 'denied'): no permission, or no such study for this account - one line
   // that names neither the study nor its patient. `refused` hides the image area (kin-viewer-empty) instead of a load that
   // never ends; it lasts until another study is shown.
@@ -379,8 +381,11 @@ window.KinViewerPatientTabs = (() => {
     tab.restorePending = false;
     const ids = saved.cells.map(() => 'kin-tab-' + crypto.randomUUID());
     const epoch = mountEpoch, restored = new Set(), ready = new Set();
+    // Until each saved cell has its image, frame and camera back, this tab's view is still being put back (settling).
+    const run = viewRestore = { tab, epoch };
+    const done = () => { if (viewRestore === run) viewRestore = null; };
     const onImage = async () => {
-      if (current !== tab || epoch !== mountEpoch || !mounted) return;
+      if (current !== tab || epoch !== mountEpoch || !mounted) { done(); return; }
       for (let index = 0; index < ids.length; index++) {
         if (restored.has(index)) continue;
         const cell = saved.cells[index], v = services.cornerstoneViewportService.getCornerstoneViewport(ids[index]);
@@ -394,7 +399,7 @@ window.KinViewerPatientTabs = (() => {
         v.targetImageIdIndex = imageIndex;
         if (v.getCurrentImageId() !== cell.image) await v.setImageIdIndex(imageIndex);
         await new Promise(requestAnimationFrame);
-        if (current !== tab || epoch !== mountEpoch || !mounted) return;
+        if (current !== tab || epoch !== mountEpoch || !mounted) { done(); return; }
         // Complete the info/series chrome before fitting the recreated canvas.
         // Loading headings have a different height from the real patient label.
         refreshChrome();
@@ -406,7 +411,7 @@ window.KinViewerPatientTabs = (() => {
         } else if (cell.presentation) v.setViewPresentation(cell.presentation);
         v.render();
       }
-      if (restored.size === ids.length) subscription.unsubscribe();
+      if (restored.size === ids.length) { subscription.unsubscribe(); done(); }
     };
     restoreSubscription?.();
     // As in the existing stack restore adapter, native viewport data is the
@@ -424,6 +429,8 @@ window.KinViewerPatientTabs = (() => {
         displaySetOptions: [{}], viewportOptions: { viewportId: ids[index], viewportType: 'stack', toolGroupId: 'default', allowUnmatchedView: true,
           presentationIds: { positionPresentationId: ids[index], lutPresentationId: ids[index] },
           ...(saved.cells[index].image ? { initialImageOptions: { index: saved.cells[index].index, useOnce: true } } : {}) } }) });
+    // Cells that showed no image have nothing to wait for.
+    if (saved.cells.every(cell => !cell.image)) done();
   }
   function render() {
     if (!host) return;
@@ -643,8 +650,12 @@ window.KinViewerPatientTabs = (() => {
   }
   function dispose() {
     mounted = false; mountEpoch++; dataSubscription?.unsubscribe(); dataSubscription = null; dataReady = null; restoreSubscription?.(); restoreSubscription = null; host?.remove(); host = null;
+    viewRestore = null;
   }
-  return { mount, dispose, refresh, open, guard, snapshot, resolve, list, unsaved, next, imagesRefused, moving: () => !!moving,
+  // The shown tab's saved view (its grid, and each cell's image, frame and camera) is still to be put back or is being
+  // put back: a layout change by another module meanwhile would be built over by it or would break it (viewer-display-span.js waits).
+  const settling = () => !!mounted && !!current && (!!current.view && !!current.restorePending || viewRestore?.tab === current && viewRestore.epoch === mountEpoch);
+  return { mount, dispose, refresh, open, guard, snapshot, resolve, list, unsaved, next, imagesRefused, moving: () => !!moving, settling,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     end() { turn.take(); sequence++; controller?.abort(); tabs.length = 0; current = null; explicitlyClosed = false; focusAfterMount = false; publish(); dispose(); delete window.kinViewerOpenPatient;
       leaving = null; announced.clear(); for (const wait of [...waits.values()]) wait.finish(); link?.close(); link = null; } };

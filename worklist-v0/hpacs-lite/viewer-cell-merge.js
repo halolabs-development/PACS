@@ -686,14 +686,14 @@
     }
 
     // A screen with an Average plane that cannot be rebuilt here: refused before anything is dispatched (run), and so never
-    // taken from the stock one-up either (claimsDoubleClick).
+    // taken from the stock one-up either (weighDoubleClick).
     const averageMissing = base => base.cells.some(cell => cell.kind === 'plane' && cell.blend === 3) && !averageReady();
 
     async function run(op, anchorId, known = null) {
       const reason = blocked(); if (reason) return { ok: false, message: note(reason) };
       // The display edges are asked before the screen is read; meanwhile this operation is busy, so a second double
       // click is remembered as usual (onDoubleClick) and a button press is refused. A double click this panel took from the
-      // stock one-up (claimsDoubleClick) brings the edges it was decided on.
+      // stock one-up (weighDoubleClick) brings the edges it was decided on.
       let edges = Array.isArray(known) ? known : null;
       if (op === 'maximize' && !edges && typeof win.kinViewerMonitorEdges === 'function') {
         const asked = layoutSignature();
@@ -834,26 +834,33 @@
     // cornerstoneTools listeners call stopImmediatePropagation on the element for both
     // tool-handled and drag-ignored double clicks, so this handler cannot double-handle
     // a measurement gesture. Images Only blocks the same event for 400ms after exit.
-    function onDoubleClick(event) {
-      if (ended || event.defaultPrevented || event.button !== 0 || (event.detail || 0) < 2) return;
-      if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
+    // The one image cell a double click was made on, or null: a plain double click of the primary button (the stock
+    // viewer runs no command of its own for one with a modifier key) outside this panel and any dialog.
+    function clickedCell(event) {
+      if (event.button !== 0 || (event.detail || 0) < 2 || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return null;
       const target = event.target;
-      if (!target || panel?.contains?.(target) || target.closest?.('#kin-viewer-layout,#kin-workspace-dock,dialog,[role="dialog"]')) return;
+      if (!target || panel?.contains?.(target) || target.closest?.('#kin-viewer-layout,#kin-workspace-dock,dialog,[role="dialog"]')) return null;
       const matches = ordered().filter(view => {
         const element = viewportOf(view.viewportId)?.element;
         return element?.isConnected && element.contains(target);
       });
-      if (matches.length !== 1) return;
+      return matches.length === 1 ? matches[0].viewportId : null;
+    }
+    function onDoubleClick(event) {
+      // What was decided for this very click on its way down (weighDoubleClick), and for no other.
+      const weighed = gesture?.event === event ? gesture : null;
+      gesture = null;
+      if (ended || event.defaultPrevented) return;
+      const clicked = clickedCell(event);
+      if (!clicked) return;
       // A second double click at reading speed can land while the maximize is still
       // settling. Dropping it left the native one-up acting alone on a merged screen, so it
       // is remembered - once: a third click is the same request, not another toggle - and
       // answered when the operation finishes.
       if (busy) { pendingToggle = true; return; }
       if (record) { unmerge(); return; }
-      // The edges this double click was taken from the stock one-up on (within the same gesture), or none.
-      const taken = claimed && Date.now() - claimed.at < 1000 ? claimed.edges : null;
-      claimed = null;
-      run('maximize', matches[0].viewportId, taken);
+      // The edges this double click was taken from the stock one-up on, or none.
+      run('maximize', clicked, weighed?.taken ? weighed.edges : null);
     }
 
     function refresh() {
@@ -885,7 +892,7 @@
     function stop() {
       if (ended) return; ended = true; record = null; pendingToggle = false;
       subscriptions.splice(0).forEach(item => item?.unsubscribe?.());
-      doc.removeEventListener('dblclick', onDoubleClick);
+      doc.removeEventListener('dblclick', onDoubleClick); doc.removeEventListener('dblclick', weighDoubleClick, true); gesture = null;
       channel?.close(); channel = null;
       if (listening) {  win.removeEventListener?.('pagehide', stop); listening = false; }
       if (workspace && win.kinCellMergeWorkspaceState === workspace) delete win.kinCellMergeWorkspaceState;
@@ -912,7 +919,7 @@
       });
       for (const event of new Set(Object.values(grid?.EVENTS || {})))
         try { subscriptions.push(grid.subscribe(event, observe)); } catch (_) { }
-      doc.addEventListener('dblclick', onDoubleClick);
+      doc.addEventListener('dblclick', weighDoubleClick, true); doc.addEventListener('dblclick', onDoubleClick);
       // The record is the only way back to the pre-merge grid and it lives nowhere but here.
       // A saved Job restore rebuilds the screen on viewports this record never saw, so the
       // Jobs panel reads this before it touches the screen; it is read-only by construction.
@@ -929,26 +936,36 @@
 
     // A window over two monitors: the double click is this panel's monitor maximize (onDoubleClick), not the stock one-up,
     // which would first make one cell of the whole window - over the display edge - and change the grid while the maximize
-    // reads the displays. Decided at once (the stock one-up runs before anything could be awaited) from the display edges
-    // last read (kinViewerMonitorEdgesNow): taken only when a display edge is inside the grid and the monitor maximize of
-    // the active cell would be made on this screen as it is (plan). Everything else - one display, unknown edges, a grid
-    // the monitor maximize refuses (a 3D, SR or PDF cell, a cell over the edge) - keeps the stock one-up as it was. The
-    // double click that follows uses the same edges (claimed), so what was decided is what is done.
-    let claimed = null;
-    function claimsDoubleClick() {
-      claimed = null;
-      if (ended || !panel || busy || record || quarantined || blocked()) return false;
+    // reads the displays. One double click has one owner, decided once, for the cell that was really clicked: on the
+    // click's way down (capture), before the stock one-up on the cell's element and this panel's own handler see it, from
+    // the display edges last read (kinViewerMonitorEdgesNow). Taken when a display edge is inside the grid and, on this
+    // screen as it is, the monitor maximize of that cell would be made (plan) - or that cell already is its monitor's one
+    // screen: the two cells of two monitors stay two. Everything else - one display, unknown edges, a grid the monitor
+    // maximize refuses (a 3D, SR or PDF cell, an Average plane that cannot be rebuilt, a cell over the edge) - keeps the
+    // stock one-up as it was. What was decided holds for that click alone: it is dropped when the click is over, whether
+    // or not it reached this panel (a measurement tool that used it, a shield over the cell), so no later click inherits
+    // it, and a stock one-up asked for outside a double click (a key, a menu) is never taken.
+    let gesture = null;
+    function weighDoubleClick(event) {
+      gesture = null;
+      if (ended || !panel) return;
+      const clicked = clickedCell(event);
+      if (!clicked) return;
+      const mine = gesture = { event, taken: false, edges: null };
+      win.setTimeout(() => { if (gesture === mine) gesture = null; }, 0);
+      if (busy || record || quarantined || blocked()) return;
       try {
         const edges = typeof win.kinViewerMonitorEdgesNow === 'function' ? win.kinViewerMonitorEdgesNow() : null;
-        if (!Array.isArray(edges) || !edges.length) return false;
-        const base = snapshot(), anchor = base?.active;
-        if (!base || !anchor || averageMissing(base)) return false;
-        const result = plan({ rows: base.rows, cols: base.cols, cells: base.cells, anchorId: anchor, op: 'maximize', edges, split: base.options });
-        if (!result.ok || !result.area) return false;
-        claimed = { edges: [...edges], at: Date.now() };
-        return true;
-      } catch (_) { return false; }
+        if (!Array.isArray(edges) || !edges.length) return;
+        const base = snapshot();
+        if (!base || averageMissing(base)) return;
+        const result = plan({ rows: base.rows, cols: base.cols, cells: base.cells, anchorId: clicked, op: 'maximize', edges, split: base.options });
+        const alone = !result.ok && result.reason === ALONE && base.cells.every(cell => ['stack', 'empty', 'plane'].includes(cell.kind));
+        if (!(result.ok && result.area) && !alone) return;
+        mine.edges = [...edges]; mine.taken = true;
+      } catch (_) { }
     }
+    const claimsDoubleClick = () => !!gesture?.taken;
 
     return { mount, stop, merge: run, unmerge, claimsDoubleClick,
       state: () => ({ merged: !!record, op: record?.op || null, busy, quarantined, ended }), refresh: observe };

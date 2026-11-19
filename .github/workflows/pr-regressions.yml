@@ -556,7 +556,7 @@ jobs:
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       timeout-minutes: 3
       run: |
-        python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/monitor-double-click --cwd . --file worklist-v0/hpacs-lite/viewer-cell-merge.js --file worklist-v0/hpacs-lite/viewer-features-monitors.js --file worklist-v0/hpacs-lite/viewer-display-layout.js --file tests/viewer_cell_merge_dom_test.py --file tests/viewer_monitor_double_click_dom_test.py -- "$RUNNER_TEMP/measurement-python/bin/python" -B tests/viewer_monitor_double_click_dom_test.py
+        python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/monitor-double-click --cwd . --file worklist-v0/hpacs-lite/viewer-cell-merge.js --file worklist-v0/hpacs-lite/viewer-features-monitors.js --file worklist-v0/hpacs-lite/viewer-display-layout.js --file worklist-v0/hpacs-lite/viewer-display-span.js --file config/ohif.js --file tests/viewer_cell_merge_dom_test.py --file tests/viewer_monitor_double_click_dom_test.py -- "$RUNNER_TEMP/measurement-python/bin/python" -B tests/viewer_monitor_double_click_dom_test.py
     - name: A viewer window over two monitors divides its grid at the display edge
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       timeout-minutes: 3

@@ -89,42 +89,67 @@ window.KinViewerDisplaySpan = (() => {
           seam = plan.seam;
           if (plan.left || plan.right) rule = 'body.kin-viewer-ux [data-cy="viewport-grid"] { margin-left: ' + plan.left + 'px !important; margin-right: ' + plan.right +
             'px !important; width: calc(100% - ' + (plan.left + plan.right) + 'px) !important; max-width: calc(100% - ' + (plan.left + plan.right) + 'px) !important; }';
-        } else if (plan) divide(state, cells);
+        // One column is divided only for one display edge in the image column: with two (three displays) no pair is guessed.
+        } else if (plan && list.filter(x => x > base.left + 1 && x < base.right - 1).length === 1) divide(state, cells);
       }
       if (style.textContent !== rule) style.textContent = rule;
       return seam;
     }
-    // F-20: one column of image stacks over two monitors - its one image would have the monitor seam down its middle - is
-    // made two columns, one per monitor, by the Layout menu's own command; a protocol that gives one column again (another
-    // patient in this window) is divided again. Left alone: what owns the grid itself (the mammography hanging; Monitors in
-    // Hanging Protocol does not reach here; the stock one-up's cell), MPR / 3D / PDF / report cells, and a grid while its
-    // image is not drawn yet, a layout operation runs, a cell is maximized or Auto Save View is still putting the saved view
-    // back (asked again once it ends: owed). One request at a time, at most one per 2 s.
+    // One column of image stacks over two monitors - each image would have the monitor seam down its middle - is made two
+    // columns, one per monitor, by the Layout menu's own command: that command keeps every cell there is in its place (the
+    // stack it shows, its frame, an empty cell empty, the active cell) and only adds the second column. A protocol that
+    // gives one column again (another patient in this window) is divided again. The whole rule is here:
+    //  - the grid: a plain grid of one column, judged on every cell's place;
+    //  - what it shows: at least one cell shows a display set, and every such cell shows it now as a drawn image stack
+    //    (shows). Not an MPR, 3D, PDF or report cell, nor a series still loading - an empty cell asks for nothing;
+    //  - never the cell the reader enlarged (the stock one-up's own cell; a maximized or merged cell), and never under an
+    //    operation that owns the screen now (holder). Asked again once that ends (owed), one request at a time, at most
+    //    one per 2 s.
     function divide(state, cells) {
       const rows = state.layout?.numRows;
       const single = (state.layout?.layoutType ?? 'grid') === 'grid' && state.layout?.numCols === 1 && Number.isInteger(rows) && rows >= 1 &&
-        cells.length === rows && cells.every(cell => Math.abs(cell.x ?? -1) < 0.001 && Math.abs((cell.width ?? 0) - 1) < 0.001 &&
-          (cell.viewportOptions?.viewportType ?? 'stack') === 'stack');
+        cells.length === rows && cells.every(cell => Math.abs(cell.x ?? -1) < 0.001 && Math.abs((cell.width ?? 0) - 1) < 0.001);
       if (!single || typeof commands?.runCommand !== 'function') return;
+      const showing = cells.filter(cell => (cell.displaySetInstanceUIDs || []).length);
+      if (!showing.length || showing.some(cell => (cell.viewportOptions?.viewportType ?? 'stack') !== 'stack')) return;
       let protocol = '';
       try { protocol = String(services.hangingProtocolService?.getState?.()?.protocolId || ''); } catch (_) { protocol = ''; }
       if (protocol.startsWith('kin.mammography')) return;
       // The stock one-up's one cell (a double click the monitor maximize could not take): that toggle puts its grid back.
       try { if (window.kinViewerStockOneUp?.()) return; } catch (_) { return; }
-      // Each cell an image stack drawn now: not a PDF, a report or an empty cell shown in a stack cell, not one still loading
-      // (asked again each second until it is, or the grid changes).
-      if (!cells.every(cell => { const v = services.cornerstoneViewportService?.getCornerstoneViewport?.(cell.viewportId);
-        return v?.type === 'stack' && (v.getImageIds?.() || []).length > 0 && !!v.getCurrentImageId?.(); })) { owed = true; return; }
-      if (layoutBusy() || dividing || Date.now() - divided < 2000) { owed = true; return; }
+      if (!showing.every(shows) || holder() || dividing || Date.now() - divided < 2000) { owed = true; return; }
       dividing = true; divided = Date.now();
       Promise.resolve().then(() => commands.runCommand('setViewportGridLayout', { numRows: rows, numCols: 2 }))
         .catch(() => {}).then(() => { dividing = false; schedule(); });
     }
-    function layoutBusy() {
+    // The cell shows its display set now as a drawn image stack: its stack viewport's current image is one of that set's
+    // own images and is the image drawn. An image id left in the cell by the series shown before (a PDF or a report took
+    // its place, or the new series is still loading) is not that.
+    function shows(cell) {
+      try {
+        const uids = cell.displaySetInstanceUIDs || [], view = services.cornerstoneViewportService?.getCornerstoneViewport?.(cell.viewportId);
+        const set = uids.length === 1 ? services.displaySetService?.getDisplaySetByUID?.(uids[0]) : null;
+        if (!set || !Array.isArray(set.images) || view?.type !== 'stack' || view.element?.isConnected === false) return false;
+        const image = view.getCurrentImageId?.();
+        if (!image || !(view.getImageIds?.() || []).includes(image)) return false;
+        const drawn = view.getCornerstoneImage?.();
+        if (drawn && drawn.imageId !== image) return false;
+        const sop = window.cornerstone?.metaData?.get?.('instance', image)?.SOPInstanceUID;
+        return !!sop && set.images.some(instance => instance?.SOPInstanceUID === sop);
+      } catch (_) { return false; }
+    }
+    // What owns the screen now, so that its cells are not built anew under it: a cell maximized or merged, a saved Job or
+    // History being put back, a Hanging Protocol being applied or waiting for the window to reach its monitors, cell
+    // rules, Auto Save View or a patient tab putting a saved view back, a patient switch, Images Only (a cell in the
+    // browser's full screen) and a playing Cine. Unknown counts as owned.
+    function holder() {
       try {
         const merge = window.kinCellMergeWorkspaceState?.();
-        return !!(merge?.busy || merge?.merged || window.kinViewerJobWorkspaceState?.()?.busy || window.kinViewerHistoryWorkspaceState?.()?.busy ||
-          window.KinViewerHangingProtocol?.current?.()?.busy?.() || window.KinViewerCellRules?.busy?.() || window.KinViewerAutoSave?.settling?.());
+        if (merge?.busy || merge?.merged || window.kinViewerJobWorkspaceState?.()?.busy || window.kinViewerHistoryWorkspaceState?.()?.busy ||
+          window.KinViewerHangingProtocol?.current?.()?.busy?.() || window.KinViewerMonitors?.reaching?.() || window.KinViewerCellRules?.busy?.() ||
+          window.KinViewerAutoSave?.settling?.() || window.KinViewerPatientTabs?.settling?.()) return true;
+        if (['kin-patient-switching', 'kin-viewer-empty'].some(name => document.body.classList.contains(name)) || document.fullscreenElement) return true;
+        return Object.values(services.cineService?.getState?.()?.cines || {}).some(cine => cine?.isPlaying);
       } catch (_) { return true; }
     }
     // M-2: the copy of one row on the display past the seam.

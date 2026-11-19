@@ -134,6 +134,78 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         self.until(viewer, ON_SEAM)
         self.shows(viewer, a.uid)
 
+    def cell_centre(self, viewer, cell):
+        box = viewer.locator('[data-cy="viewport-grid"]').bounding_box()
+        return box['x'] + box['width'] * (cell[1] + cell[3] / 2), box['y'] + box['height'] * (cell[2] + cell[4] / 2)
+
+    def test_two_05_the_stock_one_up_keeps_its_cell_until_another_layout_takes_its_place(self):
+        # 3 x 3 over two displays: the middle column lies over the display edge, so a double click is the stock one-up's.
+        p, viewer, a, _ = self.setup_viewer('TWO5')
+        self.stretch(viewer)
+        self.layout(viewer, 'Layout-2-2')
+        viewer.wait_for_function('() => services.viewportGridService.getState().viewports.size === 9')
+        before = viewer.evaluate(GRID)
+        first = sorted(before['cells'], key=lambda c: (c[2], c[1]))[0]
+        self.shows(viewer, a.uid, first[0])
+        x, y = self.cell_centre(viewer, first)
+        viewer.wait_for_timeout(1500)
+        viewer.mouse.dblclick(x, y)
+        self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 1')
+        # The one cell is the stock toggle's: it keeps the cell's id, and it is not divided however long it stands.
+        viewer.wait_for_timeout(3500)
+        one = viewer.evaluate(GRID)
+        self.assertEqual([[first[0], 0, 0, 1, 1]], one['cells'], one)
+        viewer.mouse.dblclick(x, y)
+        self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 9')
+        self.assertEqual(sorted(c[1:] for c in before['cells']), sorted(c[1:] for c in viewer.evaluate(GRID)['cells']))
+        # Enlarged again, then the reader picks 1 x 1 in the Layout menu: the same cell, but a layout of the reader's own
+        # choosing. Over two displays that one column is one cell per monitor.
+        viewer.wait_for_timeout(800)
+        viewer.mouse.dblclick(x, y)
+        self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 1')
+        viewer.wait_for_timeout(1500)
+        self.layout(viewer, 'Layout-0-0')
+        self.until(viewer, '() => { const s = services.viewportGridService.getState(); return s.layout.numCols === 2 && s.viewports.size === 2; }')
+        self.until(viewer, ON_SEAM)
+
+    def test_two_06_two_cells_on_two_monitors_stay_two_on_a_double_click(self):
+        p, viewer, a, _ = self.setup_viewer('TWO6')
+        self.stretch(viewer)
+        self.layout(viewer, 'Layout-0-0')
+        self.until(viewer, '() => { const s = services.viewportGridService.getState(); return s.layout.numCols === 2 && s.viewports.size === 2; }')
+        self.until(viewer, ON_SEAM)
+        self.shows(viewer, a.uid)
+        before = viewer.evaluate(GRID)
+        left = sorted(before['cells'], key=lambda c: c[1])[0]
+        self.shows(viewer, a.uid, left[0])
+        viewer.wait_for_timeout(1500)
+        viewer.mouse.dblclick(*self.cell_centre(viewer, left))
+        # Each monitor already shows one cell: nothing is enlarged over the display edge.
+        viewer.wait_for_timeout(3000)
+        self.assertEqual(before, viewer.evaluate(GRID))
+        self.assertTrue(viewer.evaluate(ON_SEAM), json.dumps(viewer.evaluate(SEAM_STATE)))
+
+    def test_two_07_dividing_one_column_keeps_the_cell_its_image_and_the_active_cell(self):
+        p, viewer, a, _ = self.setup_viewer('TWO7')
+        left, right = self.displays
+        # On one display: one cell, the reader on the last image of its series.
+        self.bounds(viewer, dict(left=right['left'], top=0, width=1920, height=1080))
+        self.shows(viewer, a.uid)
+        self.until(viewer, '() => { const s = services.viewportGridService.getState(); return s.layout.numCols === 1 && s.viewports.size === 1; }')
+        was = viewer.evaluate('''async () => { const id = services.viewportGridService.getActiveViewportId(), v = services.cornerstoneViewportService.getCornerstoneViewport(id);
+          const last = v.getImageIds().length - 1; if (last > 0) await v.setImageIdIndex(last);
+          return { id, last, image: v.getCurrentImageId() }; }''')
+        viewer.wait_for_function('([id, last]) => services.cornerstoneViewportService.getCornerstoneViewport(id)?.getCurrentImageIdIndex() === last', arg=[was['id'], was['last']])
+        viewer.wait_for_timeout(1500)
+        # The reader drags the window over both displays: the one column becomes one cell per monitor.
+        self.bounds(viewer, dict(left=left['left'], top=0, width=3840, height=1080))
+        self.until(viewer, '() => { const s = services.viewportGridService.getState(); return s.layout.numCols === 2 && s.viewports.size === 2; }')
+        self.until(viewer, ON_SEAM)
+        viewer.wait_for_timeout(2500)
+        now = viewer.evaluate('''id => { const s = services.viewportGridService.getState(), c = s.viewports.get(id), v = services.cornerstoneViewportService.getCornerstoneViewport(id);
+          return { x: c ? c.x : null, active: s.activeViewportId, image: v?.getCurrentImageId?.() || null }; }''', was['id'])
+        self.assertEqual(dict(x=0, active=was['id'], image=was['image']), now)
+
 
 def load_tests(loader, tests, pattern):
     # Only the cases this module declares; the inherited cases run in their own profiles.

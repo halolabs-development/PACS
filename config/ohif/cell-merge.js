@@ -17,36 +17,56 @@ function kinCreateCellMerge() {
   // gesture is the merge's alone; everywhere else (3x3, VR/SR/PDF cells, no merge module)
   // the native toggle runs unchanged. Only this one command is replaced, so the click
   // bindings and the right-click menu that share its customization are untouched.
-  // A window over two monitors is the merge's too (claimsDoubleClick): the native toggle
-  // would make one cell of the whole window, across the display edge, before the merge's
-  // maximize of that cell's monitor could read the screen.
+  // A double click on a window over two monitors is the merge's too, when it says so for that
+  // very click (claimsDoubleClick): the native toggle would make one cell of the whole window,
+  // across the display edge, before the merge's maximize of that cell's monitor could read the
+  // screen.
   // The native toggle's one cell is its own (kinViewerStockOneUp): a grid of one cell made by it is put back by it, so
   // nothing else may turn that cell into another layout meanwhile (the display span divides a one-column grid over two
-  // monitors). On while the native toggle went from several cells to one and the grid still has one; a new mode is off.
-  let stockOneUp = false;
+  // monitors). What is owned is the 1 x 1 layout that toggle made - the grid's own layout object, once the grid shows it -
+  // together with the id of its one cell, which the toggle keeps from the cell it enlarged. The toggle back, any other
+  // layout (the Layout menu's 1 x 1 picked again keeps that id but is a new layout; a saved Job; a protocol) and a new mode
+  // end it. Another series dropped on that cell does not: the grid keeps its layout object, and the toggle back still works.
+  let oneUp = null;
   function guardOneUp(commandsManager, services) {
-    restoreOneUp?.(); restoreOneUp = null; stockOneUp = false;
+    restoreOneUp?.(); restoreOneUp = null; oneUp = null;
     const native = commandsManager?.getCommand?.('toggleOneUp', 'DEFAULT');
     if (typeof native?.commandFn !== 'function') return;
-    const cells = () => { try { return services?.viewportGridService?.getState?.()?.viewports?.size ?? 0; } catch (_) { return 0; } };
-    // Any grid of several cells since (the toggle back, a Layout, a protocol) ends it - not the grid's own announcement of
-    // the toggle, which can come while its state still shows the cells it had (toggled: the moment of the toggle).
-    let toggled = 0;
-    const grid = services?.viewportGridService, ended = () => { if (Date.now() - toggled > 1500 && cells() > 1) stockOneUp = false; };
+    const grid = services?.viewportGridService;
+    const read = () => { try { return grid?.getState?.() || null; } catch (_) { return null; } };
+    // The toggle's layout shows in the grid's state a moment after it was asked for (before: the layout object it was asked
+    // on). The first layout to show after that is the toggle's when it is that one cell holding the very options object the
+    // toggle handed on; a first layout that is anything else is somebody else's, and so is every layout after the toggle's.
+    const owned = () => {
+      const now = oneUp && read();
+      if (!now) return false;
+      const cell = now.viewports?.size === 1 ? now.viewports.get(oneUp.id) : null;
+      if (!oneUp.layout) {
+        if (now.layout === oneUp.before) return true;
+        if (cell && cell.viewportOptions === oneUp.options) oneUp.layout = now.layout;
+      }
+      if (oneUp.layout && now.layout === oneUp.layout && cell) return true;
+      oneUp = null; return false;
+    };
+    // Looked at whenever the grid announces a change, so that the toggle's own layout is known before a later one replaces it.
     const watched = [];
-    for (const event of new Set(Object.values(grid?.EVENTS || {}))) try { watched.push(grid.subscribe(event, ended)); } catch (_) { }
-    window.kinViewerStockOneUp = () => { ended(); return stockOneUp && cells() === 1; };
+    for (const event of new Set(Object.values(grid?.EVENTS || {}))) try { watched.push(grid.subscribe(event, owned)); } catch (_) { }
+    window.kinViewerStockOneUp = owned;
     const guarded = { ...native, commandFn: options => {
       const merge = current?.state?.();
       if (merge && (merge.busy || merge.merged)) return;
       if (current?.claimsDoubleClick?.()) return;
-      stockOneUp = cells() > 1; toggled = Date.now();
-      return native.commandFn(options);
+      // As the toggle itself reads the grid: one that is not 1 x 1 goes to one cell, the active one's; a 1 x 1 goes back.
+      const now = read(), cell = now?.viewports?.get?.(now.activeViewportId);
+      oneUp = cell && !(now.layout?.numRows === 1 && now.layout?.numCols === 1)
+        ? { id: cell.viewportOptions?.viewportId ?? cell.viewportId ?? now.activeViewportId, options: cell.viewportOptions, before: now.layout, layout: null } : null;
+      try { return native.commandFn(options); } catch (error) { oneUp = null; throw error; }
     } };
     commandsManager.registerCommand('DEFAULT', 'toggleOneUp', guarded);
     restoreOneUp = () => {
       watched.splice(0).forEach(subscription => { try { subscription?.unsubscribe?.(); } catch (_) { } });
-      stockOneUp = false;
+      oneUp = null;
+      if (window.kinViewerStockOneUp === owned) delete window.kinViewerStockOneUp;
       if (commandsManager.getCommand('toggleOneUp', 'DEFAULT') === guarded) commandsManager.registerCommand('DEFAULT', 'toggleOneUp', native);
     };
   }
