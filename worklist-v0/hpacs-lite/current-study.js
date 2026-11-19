@@ -159,6 +159,11 @@
       const run = () => { if (selectedUid === uid) then(); };
       if (result instanceof Promise) result.then(run); else run();
     }
+    /**
+     * The move now waiting (for the text's draft save) to go to `uid` - `{done, target}`: its answer, and the destination it
+     * ends with (read once answered: a later choice replaces it) - or null when no move is on its way there.
+     */
+    function pendingMoveTo(uid) { return pendingLeave?.target?.uid === uid ? pendingLeave : null; }
 
     /**
      * 지금 검사를 떠나도 되는가(W5 인터페이스 `leaveStudyGate`). 바로 정해지면 결과를, 저장의 답을 기다려야 하면 Promise를
@@ -215,7 +220,7 @@
       if (offline) return { status: "refused", reason: "서버 연결이 끊겨 저장할 수 없습니다" };
       if (!KinAuth.has("radiologist")) return { status: "refused", reason: "판독의 권한이 없어 저장할 수 없습니다" };
       const a = appState[uid] ?? {};
-      if (a.prelimHidden) return { status: "refused", reason: "다른 판독의의 예비 판독(RS: P)입니다" };
+      if (a.prelimHidden) return { status: "refused", reason: (typeof reportLockText === "function" && reportLockText(a)) || "다른 판독의의 예비 판독(RS: P)입니다" };
       // WORKLIST-SPLIT-UID: an unresolved study's kept text is never sent. It is a refused save, answered like the others
       // (Retry/Check/Stay, no target switch, nothing written); the text stays in the editor.
       if (a.identityUnresolved) return { status: "refused", reason: "환자 식별 불일치로 이 검사의 글을 저장할 수 없습니다. 원본 확인이 필요합니다" };

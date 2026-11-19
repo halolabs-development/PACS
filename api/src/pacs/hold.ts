@@ -9,6 +9,7 @@ import type { PrismaService } from '../prisma.service';
 import { noteTransactionError, holdAlive, visibleHolder, dump, refuseDestroyed } from './values';
 import { need, inst } from './access';
 import { resolveExamScope } from '../exam-merge.service';
+import { assertHeadWritable, headForLock } from '../report-visibility';
 import type { Caller, PacsAccess } from './access';
 
 export class PacsHold {
@@ -48,6 +49,8 @@ export class PacsHold {
       const other=holdAlive(prev)&&prev.holder!==c.actor?prev.holder:null;
       if(renew&&prev.holder!==c.actor)
         return {holder:holdAlive(prev)?visibleHolder(prev,c):null,mine:false,conflict:!!other,lost:true};
+      // Another physician's saved (unsigned) report is not taken by typing: the screen shows it read-only (report-visibility.ts).
+      assertHeadWritable(prev,await headForLock(tx,uid,prev),c);
       if(!other){
         await tx.studyState.update({where:{uid},data:{holder:c.actor,holderInstitutionId:inst(c),heldAt:new Date()}});
         if(!holdAlive(prev))await tx.auditLog.create({data:{actor:c.actor,action:'report.hold',target:uid,detail:dump({institution:inst(c)})}});

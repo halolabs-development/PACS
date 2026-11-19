@@ -5,6 +5,7 @@ import { EMR_SIGNING_KEY_ADMIN, SigningKeyAdmin } from './emr-clinical/startup';
 import { OnlineSigningStore } from './emr-report/online-store';
 import { REQUEST_CONTEXT_SOURCE, RequestContextSource, RequestWorkContext } from './emr-runtime/request-context';
 import { PrismaService } from './prisma.service';
+import { memberInstitution, memberNotFound, requireInScope } from './member-scope';
 
 const ACTIONS = ['provision', 'replace', 'revoke'] as const;
 const KID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -24,7 +25,7 @@ export class SigningKeyAdminController {
   @Get('admin/users/:id/signing-key')
   read(@Param('id') id: string, @Req() req: any) {
     return this.requests.withWork(req, async request => {
-      const institution = await this.operator(request), member = await this.member(id);
+      const institution = await this.operator(request), member = await this.member(id, institution);
       // A read never enrolls the member's identity; none means no key was ever issued.
       const [row] = await this.prisma.$queryRaw<{ id: string | null }[]>`
         SELECT emr_access.existing_member_identity(${request.facts.issuer}::text, ${member}::text)::text AS id`;
@@ -35,7 +36,7 @@ export class SigningKeyAdminController {
   @Post('admin/users/:id/signing-key')
   change(@Param('id') id: string, @Body() body: unknown, @Req() req: any) {
     return this.requests.withWork(req, async request => {
-      const institution = await this.operator(request), member = await this.member(id), command = parse(body);
+      const institution = await this.operator(request), member = await this.member(id, institution), command = parse(body);
       // The member is known to this deployment; the identity binding is the one their own login resolves.
       const doctorId = await request.work.resolveRequestIdentity(request.facts.issuer, member);
       try {
@@ -52,9 +53,15 @@ export class SigningKeyAdminController {
     return institution;
   }
 
-  private async member(id: string): Promise<string> {
+  /**
+   * A member of the administrator's own institution or the waiting room (member-scope.ts) — a doctor whose approval was
+   * revoked is released to the waiting room and their keys at this institution must stay revocable. Another institution's
+   * member answers like an unknown id. Provisioning still requires current clinical rights here (keys.manage).
+   */
+  private async member(id: string, institution: string): Promise<string> {
     const row = typeof id === 'string' && id.length <= 512 ? await this.prisma.memberRights.findUnique({ where: { sub: id } }) : null;
-    if (!row) throw new NotFoundException('회원을 찾을 수 없습니다.');
+    if (!row) throw memberNotFound();
+    requireInScope(institution, memberInstitution(row));
     return row.sub;
   }
 

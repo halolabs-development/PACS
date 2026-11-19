@@ -78,6 +78,7 @@ model ProviderChange {
 
 /// PACS rights are authoritative here, never in identity-provider claims. Rows are retained on cancellation.
 model MemberRights {
+  ordersAsPhysician Order[]
   sub String @id
   username String
   email String
@@ -118,6 +119,9 @@ model Institution {
   /// FA-090 EMR Link: the hospital EMR's web address with {patientId}, {accession} and {studyUid} placeholders, entered by
   /// the institution's administrator. NULL = not set (the worklist's Open EMR stays grey).
   emrLinkTemplate String? @db.VarChar(2000)
+  /// Gateway settings of the institution's Gateways: routing rules and lossless compression
+  /// (api/src/gateway-settings.ts). NULL = none set: KIN only, nothing deleted, sent as stored.
+  gatewaySettings Json?
   /// Critical result hospital inbox: the subject id of the member the hospital uses as its shared receiving point for
   /// critical results, set by the institution's administrator. NULL = not set. A delivery to it is an ordinary record.
   criticalResultInbox String? @db.VarChar(256)
@@ -709,6 +713,8 @@ model Order {
   descr     String
   ward      String
   reqDoc    String
+  orderingPhysicianSub String?
+  orderingPhysician MemberRights? @relation(fields: [orderingPhysicianSub], references: [sub], onDelete: SetNull, onUpdate: Cascade)
   matched   String  @default("U")
   /// 반대편에도 같은 1:1 제약을 둔다. 애플리케이션 검사 사이의 경쟁은 DB만이 끝까지 볼 수 있다.
   studyUid  String? @unique
@@ -1217,6 +1223,8 @@ model StudyImageRequestReceipt {
 /// Report 본문·미리보기는 원천이 아니다. 기록은 지우지 않는다. 확인 대기(created)는 (studyUid, senderSub, recipientSub)당
 /// 하나다 — migration의 부분 unique index "CriticalResult_pending_key"가 강제한다(Prisma 스키마로 적을 수 없다).
 model CriticalResult {
+  /// Sender-only account outcomes at dispatch; old deliveries predate role attribution.
+  sendOutcome Json?
   id String @id @db.Uuid
   studyUid String
   study StudyState @relation(fields: [studyUid], references: [uid], onDelete: Restrict, onUpdate: Restrict)

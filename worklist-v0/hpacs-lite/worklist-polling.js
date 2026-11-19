@@ -195,7 +195,11 @@
           const known = new Map(studies.map(x => [x.uid, x]));
           const knownOriginals=new Set(KinExamScope.originals(studies).map(s=>s.uid));
           const fresh = KinExamScope.originals(r.studies).filter(s=>!knownOriginals.has(s.uid));
-          const scopeChanged = r.studies.some(s=>KinExamScope.screenStamp(s)!==KinExamScope.screenStamp(known.get(s.uid)));
+          // A row whose exam became (or stopped being) unreadable as a whole is a changed exam too, though neither answer
+          // carries a scope.
+          const lostKey = s => s?.examUnavailable === true ? String(s.examUnavailableKind ?? '') : null;
+          const scopeChanged = r.studies.some(s=>KinExamScope.screenStamp(s)!==KinExamScope.screenStamp(known.get(s.uid))
+            || lostKey(s)!==lostKey(known.get(s.uid)));
 
           // 목록이 달라졌으면(도착·삭제) 통째로 다시 그린다.
           if (scopeChanged || fresh.length || r.studies.length !== studies.length) {
@@ -206,6 +210,9 @@
             // 썸네일 등 오른쪽 전체를 다시 그릴 필요는 없지만, 판독문 잠금은 반영해야 한다.
             // loadReport가 값만 보호하므로 새 검사 도착과 Prelim 전환이 겹쳐도 입력은 유지된다.
             render();
+            // applyObservation drew the receipt block from the rows before this rebuild; a study that became a merged or
+            // split exam in this answer is drawn again from the rebuilt row (its missing-images line goes at once).
+            renderObservation();
             if (selectedUid) { loadReport(); updateReportButtons(); }
             autoPreload?.afterList();   // FC-073: a study that just arrived is queued without a manual Refresh
             if (fresh.length || arrivalNotice) {

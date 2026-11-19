@@ -1,6 +1,6 @@
 """S4-EG1 Gateway stability end to end: the real agent and hospital Orthanc against the whole KIN stack.
 
-One class, five fixed methods, dispatch only: .github/workflows/gateway-e2e.yml runs tests/measurement_ci.py --profile
+One class, six fixed methods, dispatch only: .github/workflows/gateway-e2e.yml runs tests/measurement_ci.py --profile
 gateway-e2e, which runs this module through scripts/run-tests.py (LiveStack refuses any other entry). It evidences the
 existing implementation and changes no product file; a product defect it finds is stopped and reported, not worked
 around. The local C-6 verification script is neither imported nor executed (D-2): it cannot run on a hosted runner.
@@ -18,6 +18,10 @@ here and again offline over the uploaded evidence. Requirement -> risk -> test (
   R9  agent logs carry UIDs and counts only                    patient data in logs                  X-4
   R10 producer stops before the consumer is cleaned            recreated rows, leftover resources    T-1..T-5
   R11 bound sources, exact selection, offline re-judgement     an unbound or partial pass            S-1, S-2, X-5
+  R12 Gateway settings: a rule sends a study to KIN and a       success at one destination written    G-1..G-7
+      hospital PACS, each with its own success; a copy is        as another's; a copy deleted while a
+      kept while a destination lacks it and deleted after;       destination lacks it; lossy or changed
+      lossless compression keeps every pixel                     pixels; a routed peer removed
 """
 import base64
 import hashlib
@@ -63,8 +67,20 @@ AGENT_ENV = {
     'GW_STABLE_AGE': '5', 'GW_POLL_SECONDS': '1', 'GW_HTTP_TIMEOUT_SECONDS': '10', 'GW_STOW_TIMEOUT_SECONDS': '30',
     'GW_BACKOFF_BASE_SECONDS': '90', 'GW_BACKOFF_MAX_SECONDS': '90', 'GW_BYTE_BUDGET_MIB': '24',
 }
-# Contract section 5 with A1 (B 290 -> 320, R 205 -> 235); their sum plus a 45 s teardown margin is the 1260 s cap.
-DEADLINES = {'setup': 240, 'fixtures': 60, 'N': 90, 'B': 320, 'R': 235, 'F': 90, 'X': 180}
+# Contract section 5 with A1 (B 290 -> 320, R 205 -> 235); their sum plus a 45 s teardown margin is the suite cap. Block G
+# waits for the settings read (60 s) and the independent forward retry (90 s).
+DEADLINES = {'setup': 240, 'fixtures': 60, 'N': 90, 'B': 320, 'R': 235, 'F': 90, 'X': 180, 'G': 360}
+# Block G's hospital PACS: a second Orthanc of the same image on the Gateway's own networks, labelled into the Gateway
+# project so its residue is the project's. The Gateway reaches it by an alias on the local network only, so detaching
+# that network is a destination that is down.
+PEER_IMAGE = 'orthancteam/orthanc:24.12.0'
+# The institution of the test Gateway credential: the group LiveStack.service_identity('gateway') puts it in (its client
+# name carries a test suffix, so it is not derived from the name). Block G's administrator belongs to the same one.
+GATEWAY_GROUP = 'kin-center'
+PEER_AET = 'EG1PEER'
+PEER_ALIAS = 'eg1-peer'
+PEER_HTTP_PORT = 18044
+NATIVE_SYNTAX = '1.2.840.10008.1.2.1'
 MIN_FREE_DISK = 4 * 1024 ** 3
 MIN_MEM_AVAILABLE = 1536 * 1024 ** 2
 RESOLVE_PROBE = '''import json, socket
@@ -118,6 +134,7 @@ class GatewayPipelineLive(unittest.TestCase):
         cls.hidden += [cls.gateway_password, identity['secret']]
         cls.project = 'kin-eg1-gw-' + secrets.token_hex(6)
         cls.agent, cls.gw_orthanc = cls.project + '-agent', cls.project + '-orthanc'
+        cls.peer = cls.project + '-peer'
         cls.cloud_network = cls.project + '-cloud'
         cls.ev['setup']['project'] = cls.project
         cls.write_env_file(identity['client_id'], identity['secret'])
@@ -186,7 +203,7 @@ class GatewayPipelineLive(unittest.TestCase):
         from pydicom.dataset import FileDataset, FileMetaDataset
         from pydicom.uid import CTImageStorage, ExplicitVRLittleEndian, generate_uid
 
-        def series(folder, count, size):
+        def series(folder, count, size, pattern=False):
             folder.mkdir()
             study, series_uid, frame = (generate_uid() for _ in range(3))
             for z in range(count):
@@ -210,13 +227,19 @@ class GatewayPipelineLive(unittest.TestCase):
                 ds.BitsAllocated = ds.BitsStored = 16
                 ds.HighBit, ds.PixelRepresentation = 15, 0
                 ds.RescaleSlope, ds.RescaleIntercept = 1, -1000
-                ds.PixelData = np.full((size, size), 1000 + z, dtype='<u2').tobytes()
+                if pattern:   # Block G: varied pixels, so a lossless round trip is a real comparison
+                    values = (np.arange(size * size, dtype='<u4').reshape(size, size) * 7919 + z * 31) % 4096
+                    ds.PixelData = values.astype('<u2').tobytes()
+                else:
+                    ds.PixelData = np.full((size, size), 1000 + z, dtype='<u2').tobytes()
                 ds.save_as(folder / ('%03d.dcm' % z), write_like_original=False)
 
         cls.small, cls.batch, cls.big = cls.work / 'small', cls.work / 'batch', cls.work / 'big'
+        cls.routed = cls.work / 'routed'
         series(cls.small, 1, 256)
         series(cls.batch, 48, 512)
         series(cls.big, 1, 3600)
+        series(cls.routed, 2, 256, pattern=True)
 
     @classmethod
     def write_artifact(cls, name, value):
@@ -376,6 +399,79 @@ class GatewayPipelineLive(unittest.TestCase):
     def sending(self, uid):
         row = self.status_row(uid)
         return row if row and row['phase'] == 'sending' else None
+
+    # ── Block G helpers ──────────────────────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def pixel_digest(raw):
+        # The pixel bytes of one uncompressed DICOM file as one digest: equal digests are equal pixels, bit for bit.
+        import io
+        import pydicom
+        return 'sha256:' + hashlib.sha256(pydicom.dcmread(io.BytesIO(raw)).PixelData).hexdigest()
+
+    @classmethod
+    def raw_get(cls, url, headers=None):
+        with urlopen(Request(url, headers=headers or {}), timeout=60) as response:
+            return response.read()
+
+    @classmethod
+    def local_digests(cls, uid):
+        # As the hospital sent them: the Gateway Orthanc stores the C-STORE bytes as they came (uncompressed).
+        token = base64.b64encode(('%s:%s' % (GATEWAY_USER, cls.gateway_password)).encode('ascii')).decode('ascii')
+        found = {}
+        for item in cls.gateway_orthanc('POST', '/tools/lookup', uid.encode('ascii')):
+            if item.get('Type') == 'Study':
+                for row in cls.gateway_orthanc('GET', '/studies/%s/instances' % quote(item['ID'])):
+                    raw = cls.raw_get('http://127.0.0.1:%d/instances/%s/file' % (ORTHANC_HTTP_PORT, quote(row['ID'])),
+                                      {'Authorization': 'Basic ' + token})
+                    found[row['MainDicomTags']['SOPInstanceUID']] = cls.pixel_digest(raw)
+        return found
+
+    def cloud_instances(self, uid):
+        lookup = self.stack._orthanc_request('POST', '/tools/lookup', uid.encode('ascii'))
+        self.assertEqual(lookup.status, 200, lookup.text[:500])
+        found = {}
+        for item in lookup.body:
+            if item.get('Type') == 'Study':
+                listed = self.stack._orthanc_request('GET', '/studies/%s/instances' % quote(item['ID']))
+                self.assertEqual(listed.status, 200, listed.text[:500])
+                found.update({row['MainDicomTags']['SOPInstanceUID']: row['ID'] for row in listed.body})
+        return found
+
+    def peer_digests(self, uid):
+        found = {}
+        lookup = json.loads(self.raw_get_post('/tools/lookup', uid.encode('ascii')))
+        for item in lookup:
+            if item.get('Type') == 'Study':
+                for row in json.loads(self.raw_get('http://127.0.0.1:%d/studies/%s/instances' % (PEER_HTTP_PORT, quote(item['ID'])))):
+                    raw = self.raw_get('http://127.0.0.1:%d/instances/%s/file' % (PEER_HTTP_PORT, quote(row['ID'])))
+                    found[row['MainDicomTags']['SOPInstanceUID']] = self.pixel_digest(raw)
+        return found
+
+    def raw_get_post(self, path, body):
+        request = Request('http://127.0.0.1:%d%s' % (PEER_HTTP_PORT, path), data=body,
+                          headers={'Content-Type': 'text/plain'}, method='POST')
+        with urlopen(request, timeout=30) as response:
+            return response.read()
+
+    @classmethod
+    def peer_ready(cls):
+        try:
+            cls.raw_get('http://127.0.0.1:%d/system' % PEER_HTTP_PORT)
+            return True
+        except (OSError, ValueError):
+            return False
+
+    @classmethod
+    def peer_on_local(cls):
+        return cls.project + '-local' in (cls.inspect(cls.peer, 'NetworkSettings.Networks') or {})
+
+    @classmethod
+    def applied_revision(cls):
+        # The settings the agent took, from the copy it keeps beside its queue (no environment is read).
+        done = cls.docker('exec', cls.agent, 'python', '-c',
+                          "import json; print(json.load(open('/data/settings.json'))['answer']['revision'])", check=False)
+        return int(done.stdout.strip()) if done.returncode == 0 and done.stdout.strip().isdigit() else None
 
     @classmethod
     def restart(cls, grace):
@@ -589,6 +685,84 @@ class GatewayPipelineLive(unittest.TestCase):
             self.ev['X'] = {'studies': {key: {'local': self.local_sops(self.ev[key]['uid']),
                                               'cloud': self.cloud_sops(self.ev[key]['uid'])}
                                         for key in ('N', 'B', 'R', 'F')}}
+
+    def test_eg1_6_routing_kept_copies_and_lossless_compression(self):
+        with self.block('G') as deadline:
+            study = self.new_study('G')
+            uid, block = study['uid'], self.ev['G']
+            admin = 'eg1-gw-admin'
+            try:
+                self.stack.create_test_identity(admin, ['admin'], GATEWAY_GROUP)
+            except Exception as error:   # the product's own refusal, kept as evidence (it names no patient value)
+                read = getattr(error, 'read', None)
+                block['identity_error'] = [type(error).__name__, getattr(error, 'code', None),
+                                           (read().decode('utf-8', 'replace') if read else str(error))[:400],
+                                           GATEWAY_GROUP]
+                raise
+            # The hospital PACS, registered as the institution's DICOM Peer, and the rule: CT -> KIN and that PACS.
+            self.docker('run', '-d', '--rm', '--name', self.peer, '--label', 'com.docker.compose.project=' + self.project,
+                        '--label', 'com.docker.compose.service=eg1-peer', '--network', self.project + '-ingress',
+                        '-p', '127.0.0.1:%d:8042' % PEER_HTTP_PORT, '-e', 'ORTHANC__AUTHENTICATION_ENABLED=false',
+                        '-e', 'ORTHANC__DICOM_AET=' + PEER_AET, '-e', 'ORTHANC__DICOM_ALWAYS_ALLOW_STORE=true',
+                        '-e', 'ORTHANC__DICOM_CHECK_CALLED_AET=false', PEER_IMAGE, timeout=180)
+            self.docker('network', 'connect', '--alias', PEER_ALIAS, self.project + '-local', self.peer)
+            self.until('G peer ready', deadline, self.peer_ready)
+            registered = self.stack.request('POST', '/admin/dicom-peers', admin,
+                                            {'name': 'EG1 SYN PACS', 'aet': PEER_AET, 'host': PEER_ALIAS, 'port': 4242})
+            peer_id = (registered.body or {}).get('peer', {}).get('id') if isinstance(registered.body, dict) else None
+            block['peer'] = {'status': registered.status, 'id': peer_id, 'up': self.peer_on_local()}
+            current = self.stack.request('GET', '/admin/gateway-settings', admin)
+            self.assertEqual(current.status, 200, current.text[:500])
+            routes = [{'modality': 'CT', 'sourceAe': None, 'destinations': ['kin', peer_id]}]
+            saved = self.stack.request('PUT', '/admin/gateway-settings', admin, {
+                'revision': current.body['settings']['revision'], 'routes': routes,
+                'compression': 'lossless'})
+            body = saved.body if isinstance(saved.body, dict) else {}
+            settings = body.get('settings') or {}
+            block['settings'] = {'status': saved.status, 'changed': body.get('changed'), 'revision': settings.get('revision'),
+                                 'routes': settings.get('routes'),
+                                 'compression': settings.get('compression')}
+            revision = settings.get('revision')
+            self.until('G-1 settings applied', deadline, lambda: self.applied_revision() == revision)
+            block['applied'] = {'revision': self.applied_revision(), 't': now()}
+            # G-4: the PACS is down (its alias leaves the local network) when the study comes.
+            self.docker('network', 'disconnect', self.project + '-local', self.peer)
+            block['down'] = {'t': now(), 'detached': not self.peer_on_local()}
+            block['send'] = send = {'t_send': now()}
+            send['cstore'] = self.cstore(study, self.routed, 2, 0)
+            self.sent(send['cstore'], 2, 'G-2')
+            self.wait_event('G-2 study.complete', deadline, event='study.complete', uid=uid, after=send['t_send'])
+            block['kin'] = kin = {'t_complete': now()}
+            kin['list'] = self.until('G-2 receipt complete 2/2', deadline, lambda: self.row_with(uid, 'complete', 2, 2))
+            original = self.local_digests(uid)
+            block['original'] = {'sops': sorted(original), 'pixels': [original[sop] for sop in sorted(original)]}
+            # G-3: what KIN stores is JPEG Lossless; decoded by KIN's Orthanc it is the same pixels as sent.
+            cloud = self.cloud_instances(uid)
+            kin['cloud'] = sorted(cloud)
+            kin['syntaxes'] = [self.stack._orthanc_request('GET', '/instances/%s/metadata/TransferSyntax'
+                                                           % quote(cloud[sop])).text.strip() for sop in sorted(cloud)]
+            kin['pixels'] = [self.pixel_digest(self.stack.orthanc_bytes('/instances/%s/file?transcode=%s'
+                                                                        % (quote(cloud[sop]), NATIVE_SYNTAX)))
+                             for sop in sorted(cloud)]
+            self.wait_event('G-4 forward.retry', deadline, event='forward.retry', uid=uid, after=send['t_send'])
+            block['hold'] = {'local': self.local_sops(uid), 'peer_sops': sorted(self.peer_digests(uid)), 't': now()}
+            # The peer's next attempt can start as soon as its network is reattached.
+            reconnect = now()
+            self.docker('network', 'connect', '--alias', PEER_ALIAS, self.project + '-local', self.peer)
+            block['up'] = {'t': reconnect, 'attached': self.peer_on_local()}
+            self.wait_event('G-5 forward.complete', deadline, event='forward.complete', uid=uid, after=block['up']['t'])
+            received = self.peer_digests(uid)
+            block['peer_received'] = {'sops': sorted(received), 'pixels': [received[sop] for sop in sorted(received)]}
+            block['copies'] = {'local': self.local_sops(uid), 'cloud': self.cloud_sops(uid), 't': now()}
+            # G-7: the routed peer is kept until the rule goes; then the settings are emptied again.
+            refused = self.stack.request('DELETE', '/admin/dicom-peers/' + quote(str(peer_id)), admin)
+            block['refuse'] = {'status': refused.status,
+                               'code': refused.body.get('code') if isinstance(refused.body, dict) else None}
+            cleared = self.stack.request('PUT', '/admin/gateway-settings', admin, {
+                'revision': revision, 'routes': [], 'compression': 'none'})
+            block['cleared'] = {'status': cleared.status,
+                                'revision': (cleared.body.get('settings') or {}).get('revision')
+                                if isinstance(cleared.body, dict) else None}
         # X-5: every block is complete and every scenario ID holds together; the T IDs follow the teardown, offline.
         self.assertEqual(judge.judge({'scenario': self.ev}, ids=judge.SCENARIO_IDS), [], 'X-5')
         type(self).passed = True
@@ -620,6 +794,8 @@ class GatewayPipelineLive(unittest.TestCase):
         if cls.proxy_attached:
             step('proxy detach', lambda: cls.docker('network', 'disconnect', cls.cloud_network, PROXY))
         if created:
+            # Block G's hospital PACS (labelled into the Gateway project; removing it is a no-op when G never ran).
+            step('peer', lambda: cls.docker('rm', '-f', cls.peer, check=False))
             # Producer before consumer: a running agent could re-announce and recreate a StudyState deleted below.
             step('gateway down', lambda: cls.compose('down', '-v', '--remove-orphans', timeout=180))
             step('gateway residue', lambda: record.update(gateway_project=cls.project_residue()))

@@ -65,8 +65,34 @@
       applyStudyIdentity(null);
       renderObservation();
     }
+    /**
+     * Missing images, Technician tab only: the one answer (KinStudyArrivals.receiptGap) that the list's Count cell, the
+     * Info panel's Needs Check line and a Not Observed item draw. A merged or split exam has no answer here: its originals
+     * are separate studies. The count and the Gateway report it compares are both the last successful observation's, so
+     * a row replaced before its observation is judged never pairs an old count with a new report. renderObservation()
+     * draws every surface of it at once (the list's marks too); setMode() and the poll's list rebuild call it.
+     */
+    function studyReceiptGap(s) {
+      // A row of a merged or split exam in force whose originals cannot all be read now has no scope, yet is that exam.
+      if (!s || !studyObservationModel || KinExamScope.read(s)?.groupId || KinExamScope.unavailable(s)?.kind) return null;
+      const seen = KinStudyArrivals.studyObservation(studyObservationModel, s.uid);
+      const gap = KinStudyArrivals.receiptGap(seen, seen.receipt ?? null);
+      return gap?.missing && mode === "Technician" ? gap : null;
+    }
+    /**
+     * One list Count cell between renders: the count (the span before the mark) and the mark, painted together from the
+     * study row and the answer, as CELL.count draws them on render() — the number never lags behind its mark.
+     */
+    function paintReceiptGap(mark, s) {
+      const gap = studyReceiptGap(s), value = mark.previousElementSibling;
+      if (s && value) value.textContent = String(s.count ?? "");
+      mark.hidden = !gap; mark.title = gap?.text ?? "";
+      if (gap) mark.setAttribute("aria-label", gap.text); else mark.removeAttribute("aria-label");
+    }
     function renderObservation() {
       if (!studyObservationModel) return;
+      for (const mark of $("#rows")?.querySelectorAll(".receipt-gap[data-gap-uid]") ?? [])
+        paintReceiptGap(mark, studies.find(s => s.uid === mark.dataset.gapUid));
       const summary = KinStudyArrivals.observationSummary(studyObservationModel), status = $("#observation-status");
       if (status) { status.hidden = !summary.text; kinWrite(status, summary.text); status.title = summary.title; }
       // S4-U4 Now Retry, drawn only from labels.retry. Another study or a newer receipt drops the in-flight token
@@ -102,9 +128,13 @@
             control.textContent = KinStudyArrivals.RETRY_TEXT.button;
             control.addEventListener("click", requestGatewayRetry);
             item = document.createElement("div"); item.dataset.uid = row.uid;
-            item.append(document.createElement("span"), " ", control, " ", document.createElement("span"));
+            const gapText = document.createElement("span"); gapText.className = "receipt-gap-line"; gapText.hidden = true;
+            item.append(document.createElement("span"), " ", control, " ", document.createElement("span"), " ", gapText);
           }
-          const gateway = row.gatewayReceipt ?? null, [text, button, note] = item.children;
+          const gateway = row.gatewayReceipt ?? null, [text, button, note, gapText] = item.children;
+          // An own study the observation did not see at all while its Gateway reported images sent: the same answer.
+          const gap = studyReceiptGap(row);
+          gapText.hidden = !gap; kinWrite(gapText, gap?.text ?? ""); gapText.title = gap?.title ?? "";
           const labels = KinStudyArrivals.receiptLabels({ assignment: "assigned",
             observation: KinStudyArrivals.studyObservation(studyObservationModel, row.uid), gateway });
           // Without a receipt the text stays the U1b item text; no No Gateway Report is added to this list.
@@ -146,6 +176,11 @@
       let originals=receipt.querySelector('.exam-original-receipts');
       if(!originals){originals=document.createElement('div');originals.className='exam-original-receipts';receipt.append(originals);}
       const scope=KinExamScope.read(s);
+      const gapLine = $("#receipt-gap");
+      if (gapLine) {
+        const gap = studyReceiptGap(s);
+        gapLine.hidden = !gap; kinWrite(gapLine, gap?.text ?? ""); gapLine.title = gap?.title ?? "";
+      }
       const receiptScope=scope?.groupId?KinExamScope.stamp(s):'';
       if(originals.dataset.scope!==receiptScope){
         for(const control of originals.querySelectorAll('button'))control.dataset.request='';

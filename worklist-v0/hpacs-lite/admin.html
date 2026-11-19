@@ -224,6 +224,31 @@
       <p class="gateway-empty" id="gateway-empty" hidden></p>
     </section>
 
+    <section class="gateway" id="gateway-rules" aria-labelledby="gateway-rules-title">
+      <div class="gateway-head">
+        <h2 id="gateway-rules-title">Gateway Rules</h2>
+        <span class="gstate not_loaded" id="gateway-rules-state" role="status">Not Loaded</span>
+        <div class="spacer"></div>
+        <button type="button" id="gateway-rules-refresh" disabled>Load Gateway Rules</button>
+      </div>
+      <p class="gateway-hint">이 기관 Gateway가 받은 검사를 어디로 보낼지(Routing), HALO PACS로 보낼 때 무손실로 줄일지(Compression)를 정합니다. 규칙은 적은 조건(Modality, 보낸 장비의 AE Title)이 모두 맞는 검사에 쓰이고, 빈 조건은 모든 검사에 맞습니다. 한 검사에 여러 규칙이 맞으면(예: CT와 SR 시리즈가 함께 있는 검사) 그 규칙들의 목적지 모두로 보내고, 맞는 규칙이 없는 검사는 HALO PACS로만 보냅니다. 목적지는 HALO PACS와 DICOM Peers에 PACS / Modality로 등록한 상대입니다. 재전송과 늦게 도착한 영상은 처음 정한 목적지 중 현재 규칙과 등록 정보가 일치하는 곳으로만 보냅니다. 모든 목적지가 받은 뒤에도 Gateway에 영상이 남습니다. 무손실 압축은 HALO PACS로 보내는 비압축 영상에만 쓰이며 화소 값은 바뀌지 않습니다(원내 PACS로는 받은 그대로 보냅니다). Gateway는 약 1분 안에 저장한 규칙을 읽습니다.</p>
+      <form id="gateway-rules-form">
+        <div class="audit-table" id="gateway-rules-wrap" hidden>
+          <table>
+            <thead><tr><th scope="col">Rule</th><th scope="col">Modality</th><th scope="col">Sending AE Title</th><th scope="col">Destinations</th><th scope="col">Action</th></tr></thead>
+            <tbody id="gateway-rules-rows"></tbody>
+          </table>
+        </div>
+        <p class="gateway-empty" id="gateway-rules-empty" hidden>규칙이 없습니다. 모든 검사를 HALO PACS로만 보냅니다.</p>
+        <div class="audit-head">
+          <button type="button" id="gateway-rule-add" disabled>Add Rule</button>
+          <label>Compression <select id="gateway-compression" disabled><option value="none" selected>None</option><option value="lossless">Lossless</option></select></label>
+          <button type="submit" class="primary" id="gateway-rules-save" disabled>Save Gateway Rules</button>
+        </div>
+      </form>
+      <p class="message" id="gateway-rules-message" role="alert"></p>
+    </section>
+
     <section class="gateway" id="held-sources" aria-labelledby="held-title">
       <div class="gateway-head">
         <h2 id="held-title">Held Studies</h2>
@@ -600,6 +625,10 @@
         return (!query || haystack.includes(query)) && (!institution || user.institution === institution);
       }
 
+      const REVOKE_HINT = "승인을 취소하고 계정을 정지합니다 — 회원은 로그인하지 못하고, 기관·역할이 비워져 가입 대기자처럼 승인 대기(PENDING)로 돌아갑니다. 다시 쓰게 하려면 Approve 뒤 Activate를 누르세요.";
+      // The server assigns members only to the administrator's own institution (member-scope.ts); start from it.
+      const ownInstitution = () => KinAuth.session()?.institution || "";
+
       // 이 화면이 관리하는 역할은 마크업의 체크박스가 정한다. 스크립트에 목록을 따로 두면 둘이 어긋난다.
       const roleInputs = () => [...$("#membership-form").querySelectorAll('input[name="role"]')];
 
@@ -624,7 +653,7 @@
         setDialogMessage("#membership-message", "");
         $("#membership-title").textContent = user.approvalState === "PENDING" ? "Approve Member" : "Change Membership";
         const form = $("#membership-form");
-        form.elements.institution.value = user.institution || "";
+        form.elements.institution.value = user.institution || ownInstitution();
         roleInputs().forEach(input => {
           input.checked = user.roles.includes(input.value);
         });
@@ -702,8 +731,12 @@
           const actions = document.createElement("td");
           actions.className = "actions";
           actions.append(action(user.approvalState === "PENDING" ? "Approve" : "Change Membership", () => openMembership(user)));
-          if (user.approvalState === "APPROVED")
-            actions.append(action("Revoke Approval", () => mutate(user, { approvalState: "PENDING" })));
+          if (user.approvalState === "APPROVED") {
+            const revoke = action("Revoke Approval", () => mutate(user, { approvalState: "PENDING" }));
+            // What the server does (admin.service.ts unapprove): PENDING, suspended, institution and roles cleared.
+            revoke.title = REVOKE_HINT;
+            actions.append(revoke);
+          }
           actions.append(action("Temp Password", () => resetPassword(user, "temp")));
           actions.append(action("Email Reset Link", () => resetPassword(user, "email")));
           actions.append(user.enabled
@@ -786,6 +819,8 @@
       $("#next").addEventListener("click", () => { state.page += 1; loadUsers(); });
       $("#open-create").addEventListener("click", () => {
         setDialogMessage("#create-message", "");
+        const institution = $("#create-form").elements.institution;
+        if (!institution.value) institution.value = ownInstitution();
         $("#create-dialog").showModal();
       });
       $("#logout").addEventListener("click", () => KinConsoleSession.end());
@@ -2010,6 +2045,7 @@
   <script src="emr-link-admin.js"></script>
   <script src="critical-result-inbox-admin.js"></script>
   <script src="dicom-peers-admin.js"></script>
+  <script src="gateway-rules-admin.js"></script>
   <script src="product-info-data.js"></script>
   <script src="product-info.js"></script>
 </body>

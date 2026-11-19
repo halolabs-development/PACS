@@ -80,11 +80,12 @@ const groups: readonly (RouteContract & { routes: readonly string[] })[] = [
     routes: ['GET admin/critical-result-inbox'] },
   { kinds: ['institution'], operation: 'write', causes: ['user-view'],
     routes: ['PATCH admin/critical-result-inbox'] },
-  // FC-070: the institution's registered peer PACS (name, AE Title, host, port); no patient or study record.
+  // Registered peer PACS and Gateway routing settings belong to the institution.
   { kinds: ['institution'], operation: 'read', causes: ['user-view'],
-    routes: ['GET admin/dicom-peers', 'GET query-retrieve/peers'] },
+    routes: ['GET admin/dicom-peers', 'GET query-retrieve/peers', 'GET admin/gateway-settings'] },
   { kinds: ['institution'], operation: 'write', causes: ['user-view'],
-    routes: ['POST admin/dicom-peers', 'DELETE admin/dicom-peers/:id'] },
+    routes: ['POST admin/dicom-peers', 'DELETE admin/dicom-peers/:id', 'PUT admin/gateway-settings'] },
+  { kinds: ['institution'], operation: 'read', causes: ['service-job'], routes: ['GET gateway/settings'] },
   // FC-070: a peer PACS's study-level answers (patient ID and name, date, modality, description, accession) to the
   // member's search; a retrieve asks the peer to send one study's images into this archive, where they arrive like any
   // DICOM arrival; its state is the job's progress and the arrival decision only.
@@ -297,6 +298,9 @@ export const INTERNAL_SURFACES: Readonly<Record<string, RouteContract>> = freeze
   'server:doctor-key-management': { kinds: ['identity-access'], operation: 'write', causes: ['user-view'] },
   'service:auth-session-sweep': { kinds: ['authentication-session'], operation: 'auth', causes: ['service-job'] },
   'service:member-rights-import': { kinds: ['identity-access'], operation: 'write', causes: ['service-job'] },
+  // An operator designates an institution's first administrator (api/prisma/designate-first-admin.cjs): the ordinary
+  // approval command run by that process (it refuses a signed-in person, so it never ends a session).
+  'service:first-admin-designation': { kinds: ['identity-access'], operation: 'write', causes: ['service-job'] },
   // S7-U3a / D1860: the receiving institution's reader allocation closes inside the member's PATCH/DELETE studies/:uid.
   // That close is the server's own allocation operation, not a record act of the study route: the study routes serve
   // record kinds, and a route that mixed them with the non-record allocation would demand a served-record manifest.

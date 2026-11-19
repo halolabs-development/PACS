@@ -312,7 +312,8 @@ window.kinViewerTechNote=function(services,session=null){
   function mount(){
     stop();
     const search=location.search,query=new URLSearchParams(search),values=query.getAll('StudyInstanceUIDs'),studies=values.length===1?values[0].split(','):[];
-    if(!studies.length||studies.length>2||new Set(studies).size!==studies.length||studies.some(uid=>uid.length>64||!/^\d+(?:\.\d+)+$/.test(uid)))return;
+    // A window opened on exam scopes holds every original of its exams (a merged exam may have more than two).
+    if(!studies.length||studies.length>(query.has('kinExamScopes')?20:2)||new Set(studies).size!==studies.length||studies.some(uid=>uid.length>64||!/^\d+(?:\.\d+)+$/.test(uid)))return;
     let ended=false,busy=false,owner=null,channel,dock,windowLink;const requests=new Set();
     const live=()=>!ended&&!session?.ended()&&location.search===search;
     const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);

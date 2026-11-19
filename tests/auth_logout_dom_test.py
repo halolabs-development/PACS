@@ -187,6 +187,7 @@ SERVED_FILES = (
     "worklist-v0/hpacs-lite/emr-link-admin.js",
     "worklist-v0/hpacs-lite/critical-result-inbox-admin.js",
     "worklist-v0/hpacs-lite/dicom-peers-admin.js",
+    "worklist-v0/hpacs-lite/gateway-rules-admin.js",
     "worklist-v0/hpacs-lite/clinician.html",
     "worklist-v0/hpacs-lite/clinician.js",
     # CD-01: the shared Product Information panel of main, admin and Clinician Home.

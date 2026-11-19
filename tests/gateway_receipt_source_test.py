@@ -333,13 +333,17 @@ class AgentPins(unittest.TestCase):
                       if isinstance(node, ast.Constant) and isinstance(node.value, str) and "UPDATE" in node.value]
         touched = 0
         for sql in statements:
+            # Receipt fields are columns of studies; a forwards row (another destination) carries no receipt.
+            if "UPDATE forwards" in sql or "INSERT INTO forwards" in sql:
+                continue
             assigned = set(re.findall(r"\b(\w+)\s*=", sql.split("WHERE")[0]))
             if assigned & columns:
                 touched += 1
                 self.assertIn("seq=seq+1", sql.replace(" ", ""), sql)
-        # record_changes (reopen), phase, announced, counts, complete, pending_now, fail, retry. add_successes and
-        # reported write no receipt field and so allocate no seq.
-        self.assertEqual(touched, 8)
+        # record_changes (reopen), phase, announced, counts, complete, pending_now, fail, retry, not_routed (a study whose
+        # destinations exclude KIN; never announced, so no receipt goes). add_successes and reported write no receipt
+        # field and so allocate no seq.
+        self.assertEqual(touched, 9)
 
     def test_receipt_delivery_never_reaches_the_transfer(self):
         report = between(AGENT, "    def report(self, uid: str) -> bool:", "    def flush_receipts(")
@@ -367,7 +371,8 @@ class AgentPins(unittest.TestCase):
         # 25 -> 26: S4-EG1 OrthancConnectionTests (one case).
         # CD-10 adds source-AE association, forwarded provenance and mixed-device batch coverage.
         # 29 -> 44: HeartbeatTests (15 cases), the operational heartbeat thread.
-        self.assertEqual(count, 44)
+        # 44 -> 70: RoutingTests (including upgrade from a pre-routing queue) and LogLineTests.
+        self.assertEqual(count, 70)
 
 
 class ServerPins(unittest.TestCase):
@@ -413,7 +418,8 @@ class ServerPins(unittest.TestCase):
 
 class ClientPins(unittest.TestCase):
     def test_main_wires_the_server_receipt_through_the_readable_observation_only(self):
-        # fromApi (2), applyObservation (2), renderObservation (2: the row and, since S4-F01V, the Not Observed item)
+        # fromApi (2), applyObservation (2), renderObservation (2: the row and, since S4-F01V, the Not Observed item).
+        # The missing-images answer reads the report kept with the observation (study-arrivals.js), not the row's.
         self.assertEqual(MAIN.count("gatewayReceipt"), 8)
         # The row built from the server keeps the server's receipt as is (later fields of that row do not matter here).
         self.assertIn("        gatewayReceipt: s.gatewayReceipt ?? null,\n", js_function(MAIN, "fromApi"))

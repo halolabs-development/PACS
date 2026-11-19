@@ -166,6 +166,16 @@ async function sendMemberRoster(prisma: PrismaService, keycloak: KeycloakService
   return answer.state;
 }
 
+/**
+ * One recorded roster intent sent now (operator CLI after its own command committed). The same send as recovery: the
+ * values come from the command's audit row of that generation; `--retry-roster` repeats it if this answer is lost.
+ */
+export function sendRecordedRoster(prisma: PrismaService, keycloak: KeycloakService, change: {
+  id: number; sub: string | null; target: string; generation: number;
+}) {
+  return sendMemberRoster(prisma, keycloak, change);
+}
+
 /** Explicit CLI only: no lifecycle hook or login path calls this recovery. */
 export async function retryMemberRoster(prisma: PrismaService, keycloak: KeycloakService) {
   const changes = await prisma.providerChange.findMany({ where: { kind: 'credentials' }, orderBy: { id: 'asc' } });

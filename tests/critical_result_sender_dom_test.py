@@ -293,7 +293,7 @@ REPORT_TEXT = "SYN findings text that must never become the message"
 # Contract wording (S7-U1p §16.1, §8.1 rule 2 and 4, §17) and the work order's "cannot check now".
 REASONS = {
     "NO_PINNABLE_SOURCE": "보낼 수 있는 판독 판이 없습니다(판독 전이거나 판독 취소됨)",
-    "SOURCE_FORBIDDEN": "예비 판독 중이라 지정된 판독의만 보낼 수 있습니다",
+    "SOURCE_FORBIDDEN": "이 판독 판을 읽을 수 있는 판독의만 보낼 수 있습니다(예비 판독은 지정된 판독의, Save해 둔 진행 중 판독은 그 판독의)",
     "NO_ELIGIBLE_RECIPIENT": "이 판독 판을 지금 읽을 수 있는 수신자가 없습니다(임상의는 승인·추가기재된 판독만 받을 수 있습니다)",
 }
 CANNOT_CHECK = "지금 확인할 수 없습니다"
@@ -403,6 +403,7 @@ class CvrServer:
         replaced = next((r["id"] for r in self.records.values() if r["supersedes"] == record["id"]), None)
         return {"id": record["id"], "studyUid": record["studyUid"], "state": record["state"], "revision": record["revision"],
                 "createdAt": record["createdAt"], "replacedBy": replaced, "supersedes": record["supersedes"], "view": "sender",
+                **({"send": record["send"]} if "send" in record else {}),
                 "recipient": {k: record["recipient"][k] for k in ("actor", "name", "role")}, "study": dict(record["study"]),
                 "message": record["message"], "source": {**record["source"], "current": current,
                                                          "reason": None if current else "head_moved"},
@@ -2302,6 +2303,72 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
         self.page.locator(f'#cvr-send-recipient input[value="{person["sub"]}"]').set_checked(on)
 
     EACH = '#cvr-send-each li[data-state="{0}"]'
+
+    def role_marks(self, disabled=False):
+        self.inbox_marks(X)
+        recipients = self.server.recipients
+
+        def marked(uid):
+            status, data = recipients(uid)
+            data["orderingPhysician"] = "unlisted" if disabled else "listed"
+            for row in data["recipients"]:
+                row["orderingPhysician"] = row["sub"] == P["sub"] and not disabled
+                row["reason"] = "CRITICAL_RESULT_RECIPIENT_CANNOT_READ" if disabled and row["sub"] == P["sub"] else None
+            return status, data
+        self.server.recipients = marked
+
+    def test_role_change_disables_the_visible_account(self):
+        self.role_marks(disabled=True)
+        self.ready_reader()
+        self.mark()
+        physician = self.page.locator(f'#cvr-send-recipient input[value="{P["sub"]}"]')
+        expect(physician).not_to_be_checked()
+        expect(physician).to_be_disabled()
+        expect(self.page.locator(f'#cvr-send-recipient input[value="{X["sub"]}"]')).to_be_checked()
+
+    def test_role_send_reopen_and_check_same_request_after_lost_partial_response(self):
+        self.role_marks()
+        applied = {}
+
+        def send(uid, body):
+            self.assertEqual(sorted(body["recipientSubs"]), sorted([P["sub"], X["sub"]]))
+            rid = body["requestId"]
+            if rid in applied:
+                return 201, {"owner": self.server.owner, "replayed": True, "applied": applied[rid]}
+            physician = {"sub": P["sub"], "status": "CRITICAL_RESULT_RECIPIENT_INVALID"}
+            inbox = {"sub": X["sub"], "actor": X["actor"], "status": "delivered", "id": rid}
+            summary = {"requestId": rid, "orderingPhysician": physician, "hospitalInbox": inbox}
+            self.server.add(uid, X, id=rid, send=summary)
+            applied[rid] = {**self.server.applied(rid, uid, rid, "create", None, "created", 1),
+                            "send": summary, "recipients": [physician, inbox]}
+            return 201, {"owner": self.server.owner, "replayed": False, "applied": applied[rid]}
+
+        self.server.create = send
+        self.ready_reader()
+        self.mark()
+        self.assertEqual({b["sub"] for b in self.boxes() if b["checked"]}, {P["sub"], X["sub"]})
+        self.fault("create", apply=True, abort=True)
+        self.page.locator("#cvr-send-message").fill("SYN dual-role notification")
+        self.page.locator("#cvr-send-submit").click()
+        self.dialog_says("Delivery status unknown")
+        self.close_dialog()
+        self.mark(ready=False)
+        dialog = self.page.locator("#cvr-send")
+        expect(dialog).to_contain_text("Delivery status unknown")
+        dialog.get_by_role("button", name="Check Again").click()
+        expect(dialog).to_contain_text("Partially delivered")
+        expect(dialog).to_contain_text("Ordering physician")
+        expect(dialog).to_contain_text("Hospital inbox")
+        self.assertEqual(len(self.requests("create")), 2)
+        self.assertEqual(self.requests("create")[0]["body"], self.requests("create")[1]["body"])
+        self.assertEqual(len(self.server.records), 1)
+        self.close_dialog()
+        self.show_sent()
+        history = self.page.locator("#cvr-sent-rows")
+        expect(history).to_contain_text("Ordering physician")
+        expect(history).to_contain_text("수신 자격 없음")
+        expect(history).to_contain_text("Hospital inbox")
+        expect(history).to_contain_text("Delivered")
 
     def test_sd13a_the_hospital_inbox_comes_checked_and_a_send_to_two_is_two_requests_each_shown(self):
         self.inbox_marks(P)

@@ -24,7 +24,7 @@ export const CRITICAL_RESULT_TRANSITIONS: Readonly<Record<string, { from: string
 
 export type RecipientClass = 'clinician' | 'radiologist';
 export type Refusal = { status: 400 | 403 | 404 | 409 | 503; code: string; id?: string; replacedBy?: string };
-export type Head = { version: number; action: string | null; author?: string | null; at?: any } | null;
+export type Head = { version: number; action: string | null; author?: string | null; at?: any; content?: boolean } | null;
 type StudyReadState = { rs?: string | null; preDoc?: string | null; preReviewer?: string | null; preDocSub?: string | null; preReviewerSub?: string | null };
 type RecipientCase = {
   case: 'C2' | 'C3' | 'C4' | 'C5' | 'R2' | 'R3' | 'R4' | 'R5';
@@ -125,6 +125,17 @@ export function recipientSees(record: RecordSides, state: StudyScopeState | null
 }
 
 /** 판독의의 기존 읽기 규칙(report-preview·versions(), F-8·F-9): P면 preDoc·preReviewer만. 가시성은 따로 본다. */
+/**
+ * The report state table (report-visibility.ts) at the source of a critical result: the sender reads the head it pins, and
+ * another physician's unsigned head (a Save or Defer outside a Preliminary) is not theirs to send. The recipients see what
+ * the sender chose to send.
+ */
+export function senderReadsHead(state: StudyReadState | null | undefined, head: Head, actor: string): boolean {
+  // An empty head (no text, structured item or drawing stored) is nobody's work: any eligible sender may send, as before.
+  if (!head || head.content === false || state?.rs === 'P' || !['W', 'T', 'H'].includes(state?.rs as string)) return true;
+  return !['save', 'defer'].includes(head.action as string) || head.author === actor;
+}
+
 export function legacyReadable(state: StudyReadState | null | undefined, actor: string, sub?: string): boolean {
   if (!state) return false;
   return canReadPreliminary(state, { actor, sub });
@@ -225,24 +236,6 @@ export function eligibleRecipient(user: KeycloakUserLike | null, expected: { sub
 }
 
 /**
- * Who the Send Critical Result dialog checks by default, decided here only. The institution's hospital inbox (its
- * administrator's setting: one member's subject id) is marked `inbox` when that member is a candidate now; a candidate
- * who already has this sender's pending record on this study is marked `pending` (a new send to them is refused with
- * PENDING_EXISTS, and that pending record may pin an older version - it is never this send's delivery). The dialog checks
- * `inbox && !pending`. The ordering physician is not matched to a member here: an order carries a name only, and two
- * people can share one, so the radiologist chooses that person. `inboxState` says whether a hospital inbox is set and,
- * if it is, whether its member is among the candidates now.
- */
-export function recipientMarks<T extends { sub: string }>(candidates: readonly T[], inbox: string | null | undefined,
-  pendingSubs: ReadonlySet<string>) {
-  const set = typeof inbox === 'string' && inbox.length > 0 ? inbox.toLowerCase() : null;
-  const recipients = candidates.map(candidate => ({ ...candidate, inbox: set !== null && candidate.sub.toLowerCase() === set,
-    pending: pendingSubs.has(candidate.sub.toLowerCase()) }));
-  const inboxState: 'none' | 'listed' | 'unlisted' = set === null ? 'none' : recipients.some(r => r.inbox) ? 'listed' : 'unlisted';
-  return { recipients, inboxState };
-}
-
-/**
  * 쓰기 전 caller의 Keycloak 재확인(T-9). 유효 역할 = 토큰 역할 ∩ Keycloak 역할이고, 활성·서비스 계정 아님·그룹 정확히
  * 하나 = 토큰 기관이어야 한다. 아니면 null(403 ROLE_REQUIRED)이다. route가 요구하는 역할은 호출자가 유효 역할로 본다.
  */
@@ -257,6 +250,8 @@ const sha = (value: unknown) => createHash('sha256').update(JSON.stringify(value
 /** 요청 지문(§7). 키 순서가 지문의 일부다 — 표의 순서 그대로 만든다. */
 export const createFingerprint = (v: { uid: string; institution: string; subject: string; recipientSub: string; sourceVersion: number; message: string }) =>
   sha({ uid: v.uid, institution: v.institution, subject: v.subject, recipientSub: v.recipientSub, sourceVersion: v.sourceVersion, message: v.message });
+export const sendFingerprint = (v: { uid: string; institution: string; subject: string; recipientSubs: string[]; sourceVersion: number; message: string }) =>
+  sha({ uid: v.uid, institution: v.institution, subject: v.subject, recipientSubs: v.recipientSubs, sourceVersion: v.sourceVersion, message: v.message });
 export const ackFingerprint = (v: { id: string; institution: string; subject: string; revision: number }) =>
   sha({ id: v.id, institution: v.institution, subject: v.subject, revision: v.revision, action: 'ack' });
 export const cancelFingerprint = (v: { id: string; institution: string; subject: string; revision: number; reason: string }) =>
@@ -328,6 +323,7 @@ export function recipientView(record: any, kase: RecipientCase, study: Record<st
 export function senderView(record: any, head: Head, study: Record<string, string>, delivery: string | null, replacedBy: string | null) {
   const current = !!head && head.version > 0 && record.sourceVersion === head.version;
   return { ...base(record, replacedBy), supersedes: record.supersedesId ?? null, view: 'sender' as const,
+    ...(record.sendOutcome ? { send: record.sendOutcome } : {}),
     recipient: { actor: record.recipientActor, name: record.recipientName, role: record.recipientRole }, study, message: record.message,
     source: { version: record.sourceVersion, action: record.sourceAction, author: record.sourceAuthor, at: iso(record.sourceAt), current,
       reason: current ? null : head?.action === 'reset' ? 'reset' : 'head_moved' },

@@ -5,8 +5,20 @@
     // 서버 없이도 앱이 열려야 GitHub Pages 데모와 오프라인 작업이 가능하다.
     // 역할에 따라 화면을 잠근다. 서버가 어차피 막지만, 눌러보고 거절당하는 것보다
     // 처음부터 회색인 편이 낫다. (서버 검사가 진짜 방어선이고 이건 안내다)
+    /**
+     * May this account do technician work on a study — Verify, Unverify, Modify Exam, Match, Unmatch, Switch ReqHosp,
+     * Delete, the emergency switch? One answer for the Technician bar's buttons and the row and order menus' items: the
+     * server's own rule (api/src/pacs/access.ts `need(roles, 'technician')`, admin passes). It does not depend on the tab
+     * the screen shows — switching to Technician grants nothing.
+     */
+    function technicianWork() { return KinAuth.has("technician"); }
+    const TECHNICIAN_WORK_REASON = "방사선사(technician) 권한이 필요합니다";
+    /** A row or order menu item that is technician work: grey with the bar's reason when this account may not do it. */
+    function technicianItem(item) {
+      return technicianWork() ? item : { ...item, dis: true, title: TECHNICIAN_WORK_REASON };
+    }
     function applyRoleUi() {
-      const rad = KinAuth.has("radiologist"), tec = KinAuth.has("technician");
+      const rad = KinAuth.has("radiologist"), tec = technicianWork();
       studyPanel?.setAvailable(studyPanelAvailable());
       document.querySelectorAll('[data-study-panel-tab]').forEach(button => {
         button.hidden = !studyPanelAvailable().includes(button.dataset.studyPanelTab);
@@ -24,7 +36,7 @@
       ["#findings", "#conclusion", "#recommendation"].forEach(s => $(s).readOnly = !rad);
       ["#t-verify", "#t-unverify", "#t-modify"].forEach(s => {
         const el = $(s); el.disabled = !tec;
-        if (!tec) el.title = "방사선사(technician) 권한이 필요합니다";
+        if (!tec) el.title = TECHNICIAN_WORK_REASON;
       });
       const r = sess.demo ? "데모" : (sess.roles.filter(x => ["radiologist","technician","admin"].includes(x)).join(", ") || "권한 없음");
       $("#roles").textContent = r;

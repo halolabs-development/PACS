@@ -17,10 +17,19 @@ import type { Caller, PacsAccess } from './access';
 import type { PacsWorklist } from './worklist';
 import { LocalReadResponse } from '../emr-viewing/local-read';
 import { consumerSource, viewerSources } from '../emr-viewing/consumer-read';
-import { resolveExamScope, prepareExamRead, relatedExamRecord, relatedExamReports, readableExamRecord, examScopeView, scopeIncludesSeries, ResolvedExamScope,
+import { activeGroups, resolveExamScope, prepareExamRead, relatedExamRecord, relatedExamReports, readableExamRecord, examScopeView, scopeIncludesSeries, ResolvedExamScope,
   groupedExamUids, ordinaryExamRecord } from '../exam-merge.service';
 import { versionDrawings, drawingEntries } from '../image-report';
+import { reportBodyLock, storedVersionReadable } from '../report-visibility';
 
+/**
+ * The state table (report-visibility.ts) on the clinician list and timeline rows: a caller who is not clinician-only gets
+ * no text of another physician's unsigned head (the row's state stays). ows are blanked in place, as examOf does.
+ */
+function withholdUnsigned(rows: any[], c: Caller) {
+  for (const row of rows)
+    if (reportBodyLock(row, row, c) === 'in-progress') Object.assign(row, { findings: '', conclusion: '', recommendation: '' });
+}
 export class PacsClinician {
   constructor(
     private readonly prisma: PrismaService,
@@ -48,17 +57,19 @@ export class PacsClinician {
     const uids: string[] = list.studies.map((row: any) => row.uid);
     const current = !uids.length ? [] : await this.prisma.$queryRaw<any[]>`
       SELECT s.uid, s."institutionId", s."teleInstitutionId", s.rs, s."repDoc", s.confirm,
-        COALESCE(r.version, 0) AS version, v.action, r.findings, r.conclusion, r.recommendation, r."groupId"
+        COALESCE(r.version, 0) AS version, v.action, r.findings, r.conclusion, r.recommendation, r."groupId", r."updatedBy"
       FROM "StudyState" s
       LEFT JOIN "Report" r ON r.uid = s.uid
       LEFT JOIN "ReportVersion" v ON v.uid = r.uid AND v.version = r.version
       WHERE s.uid IN (${Prisma.join(uids)})`;
     const exams = await this.examOf(c, current);
+    withholdUnsigned(current, c);
     if (clinicianListChanged(list.studies, current))
       throw new ConflictException({ code: 'STUDY_LIST_CHANGED', message: '검사 목록 또는 판독 상태가 바뀌었습니다. 새로고침하세요.' });
     const body = clinicianList(list, current);
     // Merge Exam: a study reported as one exam with others says so (the exam's studies and whether it is merged now).
     for (const row of body.studies as any[]) { const exam = exams.get(row.uid); if (exam) row.exam = exam; }
+    await this.markUnavailable(c, body.studies as any[]);
     return new LocalReadResponse(body, [
       ...body.studies.flatMap((row, index) => {
         const original = list.studies[index];
@@ -133,6 +144,24 @@ export class PacsClinician {
    * it is in now — with that exam's studies when the caller may read all of them. Otherwise the report text is withheld from
    * the list row (`rows` are blanked in place) and the studies are not named.
    */
+  /**
+   * Merge Exam: a listed study of a merged or split exam in force whose originals this caller cannot all read now (one gone
+   * from the archive, or outside the caller's access) says so, naming none of them; the page refuses to open it with the
+   * reason (KinExamScope.unavailable), as the worklist does.
+   */
+  private async markUnavailable(c: Caller, rows: any[]) {
+    if (!rows.length) return;
+    const groups = await activeGroups(this.prisma, rows.map(row => row.uid));
+    for (const row of rows) {
+      // Judged on the exam in force now only — never on the group a saved report was written on (that keeps its own
+      // stored-scope rule). A study whose group in force cannot be told adds no refusal.
+      const group = groups.find(g => g.members.some(m => m.studyUid === row.uid || m.logicalUid === row.uid));
+      if (!group) continue;
+      const now = await relatedExamRecord(this.prisma, this.studyAccess, c, { uid: row.uid });
+      if (!now) Object.assign(row, { examUnavailable: true, examUnavailableKind: group.kind === 'split' ? 'split' : 'merge' });
+    }
+  }
+
   private async examOf(c: Caller, rows: any[]) {
     const out = new Map<string, any>();
     const grouped = await groupedExamUids(this.prisma, rows.map(row => row.uid));
@@ -188,8 +217,12 @@ export class PacsClinician {
       const scope=await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:report?'stored':'current',...(report?{record:report}:{}),state,identity:true});
       const head = report?.version > 0 ? await tx.reportVersion.findUnique({
         where: { uid_version: { uid, version: report.version } },
-        select: { id: true, version: true, action: true, findings: true, conclusion: true, recommendation: true, drawings: true } }) : null;
-      return work(tx, state, head,scope);
+        select: { id: true, version: true, action: true, author: true, reason: true, findings: true, conclusion: true, recommendation: true, drawings: true } }) : null;
+      // The state table (report-visibility.ts): another physician's unsigned text is not read here by a caller who is not
+      // clinician-only (an administrator, or a radiologist who also holds the clinician role).
+      // Judged on the version row itself (its action and writer), so a Save of drawings alone is withheld too.
+      const withheld = !!head && !await storedVersionReadable(tx, uid, head, c);
+      return work(tx, state, withheld ? { ...head, findings: '', conclusion: '', recommendation: '', drawings: null } : head, scope);
     }, { isolationLevel: 'RepeatableRead', maxWait: 2000, timeout: 5000 });
   }
 
@@ -221,19 +254,21 @@ export class PacsClinician {
     const uids: string[] = window.rows.map((row: any) => row.uid);
     const current = !uids.length ? [] : await this.prisma.$queryRaw<any[]>`
       SELECT s.uid, s."institutionId", s."teleInstitutionId", s.rs, s."repDoc", s.confirm,
-        COALESCE(r.version, 0) AS version, v.action, r.findings, r.conclusion, r.recommendation, r."groupId"
+        COALESCE(r.version, 0) AS version, v.action, r.findings, r.conclusion, r.recommendation, r."groupId", r."updatedBy"
       FROM "StudyState" s
       LEFT JOIN "Report" r ON r.uid = s.uid
       LEFT JOIN "ReportVersion" v ON v.uid = r.uid AND v.version = r.version
       WHERE s.uid IN (${Prisma.join(uids)})`;
     // Merge Exam: the same text rule as the list (a report written on an exam group needs every study of it readable).
     const exams=await this.examOf(c, current);
+    withholdUnsigned(current, c);
     if (clinicianListChanged(window.rows, current))
       throw new ConflictException({ code: 'STUDY_LIST_CHANGED', message: '검사 목록 또는 판독 상태가 바뀌었습니다. 새로고침하세요.' });
     // listStudies 행의 birth·sex는 QIDO 원본 태그이고 덮어쓰기는 state.ov에 따로 있다 — 여기서는 원본만 비교한다.
     const body = clinicianTimeline(uid, anchor, members, window, current, list.serverTime,
       (row: any) => ({ birth: birthKey(row?.birth), sex: sexKey(row?.sex) }));
     for(const row of body.studies as any[]){const exam=exams.get(row.uid);if(exam)row.exam=exam;}
+    await this.markUnavailable(c, body.studies as any[]);
     return new LocalReadResponse(body, [
       consumerSource('study-metadata', uid, anchor.state.institutionId, uid, null, [],
         identities.get(uid), ['uid', 'patientKey', 'identity']),

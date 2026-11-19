@@ -12,6 +12,7 @@ import os
 import re
 import signal
 import sqlite3
+import sys
 import time
 import math
 import tempfile
@@ -19,8 +20,9 @@ import threading
 from contextlib import contextmanager
 import uuid
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import requests
 
@@ -38,12 +40,19 @@ class PermanentGatewayError(GatewayError):
     """A study cannot succeed by retrying the same bytes and needs operator action."""
 
 
+class ForwardError(RuntimeError):
+    """A delivery to a destination other than KIN failed. Safe to persist and print; never part of a KIN receipt (a
+    forward row has none), so it has no receipt error code."""
+
+
 # S4-U3: the receipt's errorCode. The free reason stays in the local queue and log; it never goes to
 # KIN, because no string blacklist can prove a message is free of patient data. Keys are the message
 # templates of every GatewayError constructed in this file ({} marks an f-string field, which never
 # holds a space). test_agent.py enumerates the constructors by AST and fails on a template missing here.
 GATEWAY_ERROR_CODES = {
     "missing environment: {}": "configuration",
+    "invalid KIN base address": "configuration",
+    "KIN destination no longer allowed": "other",
     "BYTE_BUDGET_MIB must be finite and > 0": "configuration",
     "local Orthanc {}": "local_orthanc_unreachable",
     "local Orthanc HTTP {}": "local_orthanc_http",
@@ -97,6 +106,8 @@ RECEIPT_COLUMNS = (
     ("announced", "announced INTEGER NOT NULL DEFAULT 0"),
     ("reported_seq", "reported_seq INTEGER NOT NULL DEFAULT 0"),
 )
+# not_routed: the study's destinations do not include KIN, so KIN is never announced to and gets no receipt.
+FINAL_STUDY_PHASES = ("complete", "failed", "not_routed")
 # KIN's final answers for one receipt: stored/replayed/stale (2xx) or refused for this body. Anything
 # else (401/403/5xx, transport) leaves the receipt pending for a later pass.
 RECEIPT_FINAL_REFUSALS = (400, 404, 409)
@@ -113,6 +124,156 @@ RETRY_POLL_UID = re.compile(r"[0-9.]+")
 # its own thread so a long STOW (up to STOW_TIMEOUT_SECONDS) never reads as a lost Gateway. Fixed cadence, not in Config.
 AGENT_VERSION = "2026.11.1"
 HEARTBEAT_SECONDS = 30.0
+# Gateway settings (routing rules and lossless compression) are set by the institution's
+# administrator in KIN and read by the heartbeat thread every SETTINGS_EVERY beats (the first right after start). No
+# settings = KIN only, nothing deleted, nothing transcoded: exactly the behaviour before settings existed.
+SETTINGS_EVERY = 2
+KIN_DESTINATION = "kin"
+# The stored transfer syntaxes lossless compression may replace (native, uncompressed pixel data), and the one it sends:
+# JPEG Lossless, Non-Hierarchical, First-Order Prediction. Anything else (already compressed, lossy or unknown) is sent
+# with its own bytes; there is no path to a lossy syntax.
+NATIVE_SYNTAXES = frozenset(("1.2.840.10008.1.2", "1.2.840.10008.1.2.1", "1.2.840.10008.1.2.2"))
+LOSSLESS_SYNTAX = "1.2.840.10008.1.2.4.70"
+SETTINGS_ROUTES_MAX = 32
+SETTINGS_DESTINATIONS_MAX = 9
+_SETTINGS_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_SETTINGS_AE = re.compile(r"[ -~]{1,16}")
+_SETTINGS_MODALITY = re.compile(r"[A-Z0-9]{1,16}")
+_SETTINGS_HOST = re.compile(r"[A-Za-z0-9.:\-]{1,253}")
+NO_SETTINGS: dict[str, Any] = {"revision": 0, "routes": [], "compression": "none", "peers": {}}
+
+
+def _closed(value: Any, keys: set[str]) -> bool:
+    return isinstance(value, dict) and set(value) == keys
+
+
+def parse_settings(payload: Any) -> dict[str, Any] | None:
+    """KIN's GET /api/gateway/settings answer as the agent uses it, or None when its shape is not exactly the contract.
+
+    Closed shape on purpose: an answer this agent does not understand is never half applied; the last good settings stay.
+    """
+    if not _closed(payload, {"revision", "routes", "compression", "destinations"}):
+        return None
+    revision, routes = payload["revision"], payload["routes"]
+    if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
+        return None
+    if payload["compression"] not in ("none", "lossless"):
+        return None
+    peers: dict[str, dict[str, Any]] = {}
+    destinations = payload["destinations"]
+    if not isinstance(destinations, list):
+        return None
+    for peer in destinations:
+        if not _closed(peer, {"id", "name", "aet", "host", "port"}):
+            return None
+        if not (isinstance(peer["id"], str) and _SETTINGS_ID.fullmatch(peer["id"]) and peer["id"] not in peers
+                and isinstance(peer["name"], str) and 0 < len(peer["name"]) <= 64
+                and isinstance(peer["aet"], str) and _SETTINGS_AE.fullmatch(peer["aet"])
+                and isinstance(peer["host"], str) and _SETTINGS_HOST.fullmatch(peer["host"])
+                and isinstance(peer["port"], int) and not isinstance(peer["port"], bool) and 1 <= peer["port"] <= 65535):
+            return None
+        peers[peer["id"]] = {"aet": peer["aet"], "host": peer["host"], "port": peer["port"]}
+    if not isinstance(routes, list) or len(routes) > SETTINGS_ROUTES_MAX:
+        return None
+    normalized = []
+    for route in routes:
+        if not _closed(route, {"modality", "sourceAe", "destinations"}):
+            return None
+        modality, source, targets = route["modality"], route["sourceAe"], route["destinations"]
+        if modality is not None and not (isinstance(modality, str) and _SETTINGS_MODALITY.fullmatch(modality)):
+            return None
+        if source is not None and not (isinstance(source, str) and _SETTINGS_AE.fullmatch(source)):
+            return None
+        if (not isinstance(targets, list) or not 1 <= len(targets) <= SETTINGS_DESTINATIONS_MAX
+                or len(set(map(str, targets))) != len(targets)
+                or not all(isinstance(target, str) and (target == KIN_DESTINATION or target in peers) for target in targets)):
+            return None
+        normalized.append({"modality": modality, "sourceAe": source, "destinations": list(targets)})
+    return {"revision": revision, "routes": normalized, "compression": payload["compression"],
+            "peers": peers}
+
+
+def route_for(routes: list[dict[str, Any]], modalities: set[str], source_aes: set[str]) -> list[str]:
+    """The one routing rule: the study goes to every destination of every route whose conditions all hold (in the order
+    they first appear); no route holds -> KIN. Order-free: one study (CT and SR series, two sending devices) may hold for
+    several routes, and none of them is dropped.
+
+    A condition is one value the agent already has: a Modality of any series of the study, or the sending device's AE of
+    any instance (the RemoteAET of its C-STORE). A route with neither condition holds for every study. The study is the
+    unit: a study is never split between destinations.
+    """
+    chosen: list[str] = []
+    for route in routes:
+        if route["modality"] is not None and route["modality"] not in modalities:
+            continue
+        if route["sourceAe"] is not None and route["sourceAe"] not in source_aes:
+            continue
+        chosen += [dest for dest in route["destinations"] if dest not in chosen]
+    return chosen or [KIN_DESTINATION]
+
+
+def kin_base_address(value: str) -> str:
+    """Normalize the origin and trailing slash while keeping distinct (case-sensitive) base paths."""
+    try:
+        parts = urlsplit(value.strip())
+        host, port = parts.hostname, parts.port
+        if (parts.scheme not in ("http", "https") or not host or parts.username is not None
+                or parts.query or parts.fragment or "\\" in value):
+            raise ValueError
+    except ValueError:
+        raise GatewayError("invalid KIN base address") from None
+    authority = f"[{host}]" if ":" in host else host
+    if port is not None and port != {"http": 80, "https": 443}[parts.scheme]:
+        authority += f":{port}"
+    return f"{parts.scheme}://{authority}{parts.path.rstrip('/')}"
+
+
+class SettingsStore:
+    """The last good Gateway settings: in memory for the main loop, in a file beside the queue for the next start.
+
+    Only the heartbeat thread writes (one assignment of a new dict, and a whole-file replace); the main loop only reads
+    `.current` and `.known`. Unknown is not "no rules": until a good answer was taken once (now or by an earlier run of
+    this same Gateway credential, kept in the file), `.known` is False and the main loop sends nothing, because a study
+    a rule keeps away from KIN must not go to KIN by default. KIN answers empty settings when none are set.
+    """
+
+    def __init__(self, queue_db: str, owner: dict[str, str]):
+        self.path = Path(queue_db).with_name("settings.json")
+        self.owner = owner
+        self.identity_error = None
+        stored = None
+        try:
+            saved = json.loads(self.path.read_text(encoding="utf-8"))
+            if isinstance(saved, dict) and all(saved.get(k) == v for k, v in owner.items()):
+                stored = saved.get("answer")
+            else:
+                self.identity_error = "settings_identity_mismatch"
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError):
+            self.identity_error = "settings_identity_unknown"
+        parsed = parse_settings(stored)
+        self.raw: Any = stored if parsed is not None else None
+        self.current: dict[str, Any] = parsed if parsed is not None else NO_SETTINGS
+        self.known = parsed is not None
+
+    def accept(self, payload: Any) -> bool:
+        """Take a new answer when it is good. True when it is good (changed or not)."""
+        parsed = parse_settings(payload)
+        if parsed is None:
+            return False
+        if payload != self.raw or not self.known:
+            temporary = self.path.with_name(self.path.name + ".tmp")
+            temporary.write_text(json.dumps({**self.owner, "answer": payload}, separators=(",", ":")),
+                                 encoding="utf-8")
+            os.replace(temporary, self.path)
+            self.raw = payload
+            self.current = parsed
+        self.known = True
+        return True
+
+
+_LOG_LOCK = threading.Lock()
 
 
 def log(event: str, *, uid: str | None = None, **fields: Any) -> None:
@@ -120,7 +281,12 @@ def log(event: str, *, uid: str | None = None, **fields: Any) -> None:
     if uid:
         safe["uid"] = uid
     safe.update(fields)
-    print(json.dumps(safe, ensure_ascii=False, separators=(",", ":")), flush=True)
+    # One whole line per write, one writer at a time: the main loop and the heartbeat thread both log, and print() writes
+    # the text and the newline separately, so two lines written at once could interleave into one unreadable line.
+    line = json.dumps(safe, ensure_ascii=False, separators=(",", ":")) + "\n"
+    with _LOG_LOCK:
+        sys.stdout.write(line)
+        sys.stdout.flush()
 
 
 def truthy(value: str) -> bool:
@@ -197,21 +363,31 @@ class Queue:
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
           );
+          CREATE TABLE IF NOT EXISTS forwards (
+            uid TEXT NOT NULL,
+            dest TEXT NOT NULL,
+            phase TEXT NOT NULL DEFAULT 'pending',
+            successful_sops TEXT NOT NULL DEFAULT '[]',
+            attempt INTEGER NOT NULL DEFAULT 0,
+            next_at REAL NOT NULL DEFAULT 0,
+            last_error TEXT,
+            peer TEXT,
+            updated_at REAL NOT NULL,
+            PRIMARY KEY (uid, dest)
+          );
         """)
         self.db.commit()
         # S4-U3 receipt state. New and pre-receipt queues take the same path, so an installed queue keeps
         # every row and phase. The epoch is born with this queue: a recreated queue is a new epoch, and
         # KIN refuses it for studies an earlier epoch already reported (no automatic rollover, H-1).
-        columns = {row["name"] for row in self.db.execute("PRAGMA table_info(studies)")}
         with self.db:
-            for name, ddl in RECEIPT_COLUMNS:
-                if name not in columns:
-                    try:
-                        self.db.execute(f"ALTER TABLE studies ADD COLUMN {ddl}")
-                    except sqlite3.OperationalError as error:
-                        # The HEALTHCHECK `status` process may open the same queue at the same moment.
-                        if "duplicate column name" not in str(error):
-                            raise
+            self.db.execute("BEGIN IMMEDIATE")
+            for table, additions in (("studies", (*RECEIPT_COLUMNS, ("destinations", "destinations TEXT"))),
+                                     ("forwards", (("peer", "peer TEXT"),))):
+                columns = {row["name"] for row in self.db.execute(f"PRAGMA table_info({table})")}
+                for name, ddl in additions:
+                    if name not in columns:
+                        self.db.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
             self.db.execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('epoch', ?)", (str(uuid.uuid4()),))
         self.epoch = str(self.db.execute("SELECT value FROM meta WHERE key='epoch'").fetchone()["value"])
 
@@ -234,6 +410,10 @@ class Queue:
                     phase='pending', batch_index=0, attempt=0, next_at=0,
                     last_error=NULL, error_code=NULL, seq=seq+1, updated_at=excluded.updated_at
                 """, (uid, orthanc_id, now))
+                # Every destination the study already has looks again at what is local now (only the delta goes out).
+                self.db.execute("""
+                  UPDATE forwards SET phase='pending', attempt=0, next_at=0, last_error=NULL, updated_at=? WHERE uid=?
+                """, (now, uid))
             self.db.execute("""
               INSERT INTO meta(key, value) VALUES ('changes_since', ?)
               ON CONFLICT(key) DO UPDATE SET value=excluded.value
@@ -242,9 +422,105 @@ class Queue:
     def due(self) -> sqlite3.Row | None:
         return self.db.execute("""
           SELECT * FROM studies
-          WHERE phase NOT IN ('complete', 'failed') AND next_at <= ?
+          WHERE phase NOT IN ('complete', 'failed', 'not_routed') AND next_at <= ?
           ORDER BY updated_at, uid LIMIT 1
         """, (time.time(),)).fetchone()
+
+    # ── routing: the study's destinations and one row per destination other than KIN ──
+
+    def destinations(self, uid: str) -> list[str] | None:
+        row = self.db.execute("SELECT destinations FROM studies WHERE uid=?", (uid,)).fetchone()
+        if not row or row["destinations"] is None:
+            return None
+        try:
+            value = json.loads(row["destinations"])
+        except (TypeError, json.JSONDecodeError):
+            return None
+        return [str(item) for item in value] if isinstance(value, list) else None
+
+    def set_destinations(self, uid: str, destinations: list[str], peers: dict[str, dict[str, Any]] | None = None) -> None:
+        """Keep the original registration alongside each forward, including its address at decision time."""
+        now = time.time()
+        with self.db:
+            self.db.execute("UPDATE studies SET destinations=? WHERE uid=?", (json.dumps(destinations), uid))
+            for dest in destinations:
+                if dest != KIN_DESTINATION:
+                    address = (peers or {}).get(dest)
+                    self.db.execute("""
+                      INSERT INTO forwards(uid, dest, phase, peer, updated_at) VALUES (?, ?, 'pending', ?, ?)
+                      ON CONFLICT(uid, dest) DO NOTHING
+                    """, (uid, dest, json.dumps(address) if address else None, now))
+
+    def not_routed(self, uid: str) -> None:
+        with self.db:
+            self.db.execute("""
+              UPDATE studies SET phase='not_routed', attempt=0, next_at=0, last_error=NULL, error_code=NULL, seq=seq+1,
+                updated_at=?
+              WHERE uid=?
+            """, (time.time(), uid))
+
+    def orthanc_id(self, uid: str) -> str:
+        row = self.db.execute("SELECT orthanc_id FROM studies WHERE uid=?", (uid,)).fetchone()
+        return str(row["orthanc_id"]) if row else ""
+
+    def forward_due(self) -> sqlite3.Row | None:
+        return self.db.execute("""
+          SELECT * FROM forwards WHERE phase != 'complete' AND next_at <= ? ORDER BY updated_at, uid, dest LIMIT 1
+        """, (time.time(),)).fetchone()
+
+    def forward_successes(self, uid: str, dest: str) -> set[str]:
+        row = self.db.execute("SELECT successful_sops FROM forwards WHERE uid=? AND dest=?", (uid, dest)).fetchone()
+        try:
+            value = json.loads(row["successful_sops"]) if row else []
+            return {str(item) for item in value if isinstance(item, str)}
+        except (TypeError, json.JSONDecodeError):
+            return set()
+
+    def forward_add(self, uid: str, dest: str, sops: set[str]) -> None:
+        merged = self.forward_successes(uid, dest) | sops
+        with self.db:
+            self.db.execute("UPDATE forwards SET successful_sops=?, updated_at=? WHERE uid=? AND dest=?",
+                            (json.dumps(sorted(merged)), time.time(), uid, dest))
+
+    def forward_phase(self, uid: str, dest: str, phase: str) -> None:
+        if phase not in ("pending", "sending", "complete"):
+            raise ValueError(f"unknown forward phase: {phase}")
+        reset = ", attempt=0, next_at=0, last_error=NULL" if phase in ("pending", "complete") else ""
+        with self.db:
+            self.db.execute(f"UPDATE forwards SET phase=?{reset}, updated_at=? WHERE uid=? AND dest=?",
+                            (phase, time.time(), uid, dest))
+
+    def forward_retry(self, uid: str, dest: str, reason: str, base: float, maximum: float) -> tuple[int, float]:
+        row = self.db.execute("SELECT attempt FROM forwards WHERE uid=? AND dest=?", (uid, dest)).fetchone()
+        attempt = int(row["attempt"] if row else 0) + 1
+        delay = min(maximum, base * (2 ** min(attempt - 1, 16)))
+        with self.db:
+            self.db.execute("""
+              UPDATE forwards SET phase='retry', attempt=?, next_at=?, last_error=?, updated_at=? WHERE uid=? AND dest=?
+            """, (attempt, time.time() + delay, reason[:160], time.time(), uid, dest))
+        return attempt, delay
+
+    def check_owner(self, owner: dict[str, str], settings_error: str | None) -> str | None:
+        """Queues from before routing can bind on upgrade. Fixed routes require a known owner."""
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            meta = dict(self.db.execute("SELECT key, value FROM meta"))
+            encoded = json.dumps(owner, sort_keys=True)
+            error = settings_error
+            if "owner" in meta:
+                if meta["owner"] != encoded:
+                    error = "queue_identity_mismatch"
+            elif self.db.execute("""
+                SELECT 1 FROM forwards UNION ALL SELECT 1 FROM studies WHERE destinations IS NOT NULL LIMIT 1
+            """).fetchone():
+                error = "queue_identity_unknown"
+            elif not error:
+                self.db.execute("INSERT INTO meta(key, value) VALUES ('owner', ?)", (encoded,))
+            if error:
+                self.db.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('identity_error', ?)", (error,))
+            elif "identity_error" in meta:
+                self.db.execute("DELETE FROM meta WHERE key='identity_error'")
+        return error
 
     def successes(self, uid: str) -> set[str]:
         row = self.db.execute("SELECT successful_sops FROM studies WHERE uid=?", (uid,)).fetchone()
@@ -387,17 +663,29 @@ class Queue:
         counts = {row["phase"]: row["n"] for row in self.db.execute(
             "SELECT phase, count(*) AS n FROM studies GROUP BY phase"
         )}
+        forwards: dict[str, list[dict[str, Any]]] = {}
+        for row in self.db.execute("SELECT * FROM forwards ORDER BY uid, dest"):
+            forwards.setdefault(str(row["uid"]), []).append({
+                "destination": row["dest"], "phase": row["phase"],
+                "successfulSops": len(json.loads(row["successful_sops"])), "attempt": row["attempt"],
+                "lastError": row["last_error"],
+            })
         rows = [{
             "uid": row["uid"], "phase": row["phase"], "batchIndex": row["batch_index"],
             "successfulSops": len(json.loads(row["successful_sops"])), "attempt": row["attempt"],
             "lastError": row["last_error"],
+            "destinations": json.loads(row["destinations"]) if row["destinations"] else [KIN_DESTINATION],
+            "forwards": forwards.get(str(row["uid"]), []),
         } for row in self.db.execute("SELECT * FROM studies ORDER BY updated_at, uid")]
+        error = self.db.execute("SELECT value FROM meta WHERE key='identity_error'").fetchone()
         return {
+            "identityError": error["value"] if error else None,
             "pending": sum(
-                count for phase, count in counts.items() if phase not in {"complete", "failed"}
+                count for phase, count in counts.items() if phase not in FINAL_STUDY_PHASES
             ),
             "failed": counts.get("failed", 0),
             "complete": counts.get("complete", 0),
+            "notRouted": counts.get("not_routed", 0),
             "rows": rows,
         }
 
@@ -431,10 +719,10 @@ class Orthanc:
         # says nothing about the DICOM port itself. The heartbeat thread only reads it (one tuple assignment).
         self.observed: tuple[bool, float] | None = None
 
-    def request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
+    def request(self, method: str, path: str, *, timeout: float | None = None, **kwargs: Any) -> requests.Response:
         try:
             response = self.session.request(
-                method, self.base + path, auth=self.auth, timeout=self.timeout, **kwargs,
+                method, self.base + path, auth=self.auth, timeout=timeout or self.timeout, **kwargs,
             )
         except requests.RequestException as error:
             self.observed = (False, time.monotonic())
@@ -478,7 +766,8 @@ class Orthanc:
             # RemoteAET is Orthanc's C-STORE association fact, not a DICOM patient-supplied tag.
             metadata = self.request("GET", f"/instances/{instance_id}/metadata?expand").json()
             normalized.append({"sop": sop, "id": instance_id, "size": size,
-                               "source_ae": str(metadata.get("RemoteAET", ""))})
+                               "source_ae": str(metadata.get("RemoteAET", "")),
+                               "syntax": str(metadata.get("TransferSyntax", ""))})
         if len({item["sop"] for item in normalized}) != len(normalized):
             raise GatewayError("duplicate local SOPInstanceUID")
         normalized.sort(key=lambda item: item["sop"])
@@ -492,10 +781,60 @@ class Orthanc:
                 size += len(chunk)
         return size
 
+    def copy_lossless(self, instance_id: str, sink) -> int | None:
+        """The instance transcoded by Orthanc to LOSSLESS_SYNTAX, or None (nothing written) when Orthanc refuses it.
+
+        A refusal is an HTTP answer before any byte is written, so the caller then copies the original bytes. A failure
+        after the first byte (a broken connection) raises like copy_file and the whole batch is retried.
+        """
+        try:
+            response = self.request("GET", f"/instances/{instance_id}/file", params={"transcode": LOSSLESS_SYNTAX},
+                                    stream=True)
+        except GatewayError as error:
+            if str(error).startswith("local Orthanc HTTP "):
+                return None
+            raise
+        size = 0
+        with response:
+            for chunk in response.iter_content(chunk_size=65536):
+                sink.write(chunk)
+                size += len(chunk)
+        return size
+
+    def series_modalities(self, orthanc_id: str) -> set[str]:
+        series = self.request("GET", f"/studies/{orthanc_id}/series").json()
+        return {str((item.get("MainDicomTags") or {}).get("Modality", "")) for item in series} - {""}
+
+    def put_modality(self, name: str, peer: dict[str, Any]) -> None:
+        # A destination only: it is given no right to send to, query or retrieve from this Gateway (the receiving
+        # devices stay the ones in orthanc.json).
+        self.request("PUT", f"/modalities/{name}", json={
+            "AET": peer["aet"], "Host": peer["host"], "Port": peer["port"], "AllowEcho": False, "AllowFind": False,
+            "AllowGet": False, "AllowMove": False, "AllowStore": False, "AllowStorageCommitment": False,
+            "AllowFindWorklist": False})
+
+    def store(self, name: str, instance_ids: list[str], timeout: float) -> dict[str, Any]:
+        """One synchronous C-STORE association from this Orthanc to a registered modality. Orthanc answers with counts."""
+        try:
+            response = self.request("POST", f"/modalities/{name}/store", timeout=timeout,
+                                    json={"Resources": instance_ids, "Synchronous": True})
+        except GatewayError as error:
+            match = re.fullmatch(r"local Orthanc HTTP (\d+)", str(error))
+            if match:
+                raise ForwardError(f"forward C-STORE HTTP {match.group(1)}") from None
+            raise
+        try:
+            answer = response.json()
+        except ValueError:
+            raise ForwardError("forward C-STORE answer invalid") from None
+        if not isinstance(answer, dict):
+            raise ForwardError("forward C-STORE answer invalid")
+        return answer
+
 
 class Cloud:
     def __init__(self, config: Config):
-        self.base = config.kin_base_url
+        self.base = kin_base_address(config.kin_base_url)
         self.token_url = self.base + "/auth/realms/kin/protocol/openid-connect/token"
         self.client_id = config.client_id
         self.client_secret = config.client_secret
@@ -505,6 +844,8 @@ class Cloud:
         self.session = requests.Session()
         self.access_token = ""
         self.token_until = 0.0
+        # The SOPs KIN named as stored (00081199) in the answer of the last successful STOW; empty before and on a refusal.
+        self.last_stored: set[str] = set()
         # monotonic time of the last STOW KIN answered 2xx for; the heartbeat thread only reads it.
         self.last_stow_at: float | None = None
         if not self.verify:
@@ -534,7 +875,8 @@ class Cloud:
         self.token_until = time.time() + max(1, expires_in - 30)
         return self.access_token
 
-    def request(self, method: str, path: str, *, timeout: float | None = None, **kwargs: Any) -> requests.Response:
+    def request(self, method: str, path: str, *, timeout: float | None = None,
+                before_send: Callable[[], None] | None = None, **kwargs: Any) -> requests.Response:
         base_headers = dict(kwargs.pop("headers", {}))
         body = kwargs.get("data")
         start = body.tell() if hasattr(body, "seek") else None
@@ -543,6 +885,8 @@ class Cloud:
                 body.seek(start)
             headers = dict(base_headers)
             headers["Authorization"] = "Bearer " + self.token(force=index == 1)
+            if before_send:
+                before_send()  # A settings refresh can withdraw KIN while obtaining or renewing the token.
             try:
                 response = self.session.request(
                     method, self.base + path, headers=headers,
@@ -554,8 +898,8 @@ class Cloud:
                 return response
         raise GatewayError("cloud authentication failed")
 
-    def announce(self, uid: str, institution_name: str) -> None:
-        response = self.request("POST", "/api/gateway/announce", json={
+    def announce(self, uid: str, institution_name: str, before_send: Callable[[], None] | None = None) -> None:
+        response = self.request("POST", "/api/gateway/announce", before_send=before_send, json={
             "studyUid": uid,
             "institutionNameTag": institution_name,
         })
@@ -572,9 +916,14 @@ class Cloud:
     def heartbeat(self, body: dict[str, Any]) -> requests.Response:
         return self.request("POST", "/api/gateway/heartbeat", json=body)
 
-    def stow(self, uid: str, body: bytes, content_type: str, source_ae: str) -> set[str]:
+    def settings(self) -> requests.Response:
+        return self.request("GET", "/api/gateway/settings")
+
+    def stow(self, uid: str, body: bytes, content_type: str, source_ae: str,
+             before_send: Callable[[], None] | None = None) -> set[str]:
+        self.last_stored = set()
         response = self.request(
-            "POST", f"/dicom-web/studies/{uid}", data=body,
+            "POST", f"/dicom-web/studies/{uid}", data=body, before_send=before_send,
             headers={"Content-Type": content_type, "Accept": "application/dicom+json",
                      "X-Kin-Source-AE": source_ae, "X-Kin-Gateway": self.client_id,
                      "X-Kin-Institution": self.client_id.removeprefix("gw-")},
@@ -587,7 +936,9 @@ class Cloud:
             payload = response.json() if response.content else {}
         except requests.JSONDecodeError:
             raise GatewayError("STOW response invalid") from None
-        return failed_sops(payload)
+        failures = failed_sops(payload)
+        self.last_stored = stored_sops(payload)
+        return failures
 
 
 def failed_sops(payload: Any) -> set[str]:
@@ -608,6 +959,23 @@ def failed_sops(payload: Any) -> set[str]:
     return failures
 
 
+def stored_sops(payload: Any) -> set[str]:
+    """The SOPs a STOW answer names in its ReferencedSOPSequence (00081199). Never raises: an answer without a readable
+    sequence names nothing. Receipt counts continue to use the separately reported failures."""
+    if isinstance(payload, list):
+        payload = payload[0] if payload else {}
+    if not isinstance(payload, dict) or not isinstance(payload.get("00081199"), dict):
+        return set()
+    sequence = payload["00081199"].get("Value", [])
+    stored = set()
+    for item in sequence if isinstance(sequence, list) else []:
+        element = item.get("00081155") if isinstance(item, dict) else None
+        values = element.get("Value") if isinstance(element, dict) else None
+        if isinstance(values, list) and values and isinstance(values[0], str):
+            stored.add(values[0])
+    return stored
+
+
 def plan_batches(instances: list[dict[str, Any]], budget: int) -> list[list[dict[str, Any]]]:
     batches: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
@@ -625,16 +993,27 @@ def plan_batches(instances: list[dict[str, Any]], budget: int) -> list[list[dict
     return batches
 
 
+def wants_lossless(settings: dict[str, Any], item: dict[str, Any]) -> bool:
+    """The one compression rule: lossless is on and the stored pixel data is native (uncompressed)."""
+    return settings.get("compression") == "lossless" and item.get("syntax", "") in NATIVE_SYNTAXES
+
+
 @contextmanager
-def multipart(instances, copy_file):
-    """Spool each STOW batch to disk; a large multiframe object stays one DICOM part."""
+def multipart(instances, copy_file, copy_lossless=None):
+    """Spool each STOW batch to disk; a large multiframe object stays one DICOM part.
+
+    copy_lossless(item, sink) -> int | None writes the item losslessly re-compressed, or returns None having written
+    nothing, and then the original bytes are copied and checked against the stored size as before.
+    """
     boundary = "kin-gateway-" + uuid.uuid4().hex
     with tempfile.TemporaryFile() as body:
         for item in instances:
             body.write(f"--{boundary}\r\nContent-Type: application/dicom\r\n\r\n".encode("ascii"))
-            size = copy_file(item["id"], body)
-            if size != item["size"]:
-                raise GatewayError("local instance metadata incomplete")
+            size = copy_lossless(item, body) if copy_lossless is not None else None
+            if size is None:
+                size = copy_file(item["id"], body)
+                if size != item["size"]:
+                    raise GatewayError("local instance metadata incomplete")
             body.write(b"\r\n")
         body.write(f"--{boundary}--\r\n".encode("ascii"))
         size = body.tell()
@@ -670,8 +1049,13 @@ class Heartbeat:
     elapsed seconds), no UID, no institution and no free text.
     """
 
-    def __init__(self, config: Config, epoch: str, orthanc: "Orthanc", stow: "Cloud", started: float):
+    def __init__(self, config: Config, epoch: str, orthanc: "Orthanc", stow: "Cloud", started: float,
+                 settings: "SettingsStore | None" = None):
         self.config = config
+        # The Gateway settings are read on this thread too (every SETTINGS_EVERY beats, the first right after the first
+        # beat), so the main loop's timing never waits for them. A failed read keeps the last good settings.
+        self.settings = settings
+        self.beats = 0
         self.epoch = epoch
         # In memory only: one random id per run, and a number per new status body (1, 2, ...; a failed beat does not give
         # its number back; the authentication retry of one body sends the same id and number). KIN keeps an older body of
@@ -717,9 +1101,28 @@ class Heartbeat:
             log("heartbeat.deferred", error=error_code(error))
         return False
 
+    def refresh_settings(self) -> bool:
+        """Read the Gateway settings once. Never raises; True when a good answer was taken."""
+        if self.settings is None:
+            return False
+        try:
+            response = self.cloud.settings()
+            if not response.ok:
+                log("settings.deferred", status=response.status_code)
+                return False
+            if self.settings.accept(response.json()):
+                return True
+            log("settings.invalid", status=response.status_code)
+        except Exception as error:
+            log("settings.deferred", error=error_code(error))
+        return False
+
     def run(self) -> None:
         while not self.stopped.is_set():
             self.beat()
+            if self.beats % SETTINGS_EVERY == 0:
+                self.refresh_settings()
+            self.beats += 1
             self.stopped.wait(HEARTBEAT_SECONDS)
 
     def start(self) -> None:
@@ -733,6 +1136,33 @@ class Heartbeat:
             self.thread.join(wait)
 
 
+class StudyRouting:
+    """Match current rules against this delivery's study facts, including settings received between batches."""
+
+    def __init__(self, settings: SettingsStore, orthanc: Orthanc, orthanc_id: str, instances: list[dict[str, Any]]):
+        self.settings = settings
+        self.orthanc = orthanc
+        self.orthanc_id = orthanc_id
+        self.source_aes = {item.get("source_ae", "") for item in instances} - {""}
+        self.modalities: set[str] | None = None
+
+    def current(self) -> tuple[dict[str, Any], list[str]]:
+        settings = self.settings.current
+        if self.modalities is None and settings["routes"]:
+            self.modalities = self.orthanc.series_modalities(self.orthanc_id)
+            settings = self.settings.current
+        return settings, route_for(settings["routes"], self.modalities or set(), self.source_aes)
+
+    def require_kin(self) -> None:
+        if KIN_DESTINATION not in self.current()[1]:
+            raise GatewayError("KIN destination no longer allowed")
+
+    def require_peer(self, dest: str, peer: Any) -> None:
+        settings, allowed = self.current()
+        if dest not in allowed or peer is None or settings["peers"].get(dest) != peer:
+            raise ForwardError("forward destination unknown")
+
+
 class Agent:
     def __init__(self, config: Config):
         self.config = config
@@ -744,6 +1174,9 @@ class Agent:
         self.receipts_resume_at = 0.0
         # The first Now Retry poll is one full period after start, so a restart never polls sooner than a running agent.
         self.retry_poll_at = time.monotonic() + RETRY_POLL_SECONDS
+        owner = {"client": config.client_id, "base": self.cloud.base}
+        self.settings = SettingsStore(config.queue_db, owner)
+        self.identity_error = self.queue.check_owner(owner, self.settings.identity_error)
 
     def stop(self, *_args: Any) -> None:
         self.stopping = True
@@ -856,7 +1289,14 @@ class Agent:
                 orthanc_id = str(change.get("ID", ""))
                 if not orthanc_id:
                     raise GatewayError("StableStudy missing Orthanc ID")
-                detail = self.orthanc.request("GET", f"/studies/{orthanc_id}").json()
+                try:
+                    detail = self.orthanc.request("GET", f"/studies/{orthanc_id}").json()
+                except GatewayError as error:
+                    # A study can disappear between the change event and the lookup.
+                    if str(error) != "local Orthanc HTTP 404":
+                        raise
+                    log("study.gone")
+                    continue
                 uid = str((detail.get("MainDicomTags") or {}).get("StudyInstanceUID", ""))
                 if not uid:
                     raise GatewayError("StableStudy missing StudyInstanceUID")
@@ -868,12 +1308,28 @@ class Agent:
             if payload.get("Done", True):
                 return
 
+    def decide(self, row: sqlite3.Row, routing: StudyRouting) -> list[str]:
+        uid = str(row["uid"])
+        decided = self.queue.destinations(uid)
+        if decided is None:
+            settings, allowed = routing.current()
+            decided = [KIN_DESTINATION] if row["announced"] or self.queue.successes(uid) else allowed
+            self.queue.set_destinations(uid, decided, settings["peers"])
+            if settings["routes"]:
+                log("study.routed", uid=uid, destinations=len(decided))
+        return decided
+
     def process(self, row: sqlite3.Row) -> None:
         uid = str(row["uid"])
         self.queue.phase(uid, "announcing")
         orthanc_id, detail, instances = self.orthanc.instances(uid, str(row["orthanc_id"]))
+        routing = StudyRouting(self.settings, self.orthanc, orthanc_id, instances)
+        if KIN_DESTINATION not in self.decide(row, routing):
+            self.queue.not_routed(uid)
+            return
+        routing.require_kin()
         institution_name = str((detail.get("MainDicomTags") or {}).get("InstitutionName", ""))
-        self.cloud.announce(uid, institution_name)
+        self.cloud.announce(uid, institution_name, routing.require_kin)
 
         local_sops = {item["sop"] for item in instances}
         successful = self.queue.successes(uid)
@@ -882,20 +1338,33 @@ class Agent:
         self.report(uid)
         pending = [item for item in instances if item["sop"] not in successful]
         batches = plan_batches(pending, self.config.byte_budget)
+        settings = self.settings.current
+        lossless, compressed = None, [0]
+        if settings["compression"] == "lossless":
+            def lossless(item, sink):
+                size = self.orthanc.copy_lossless(item["id"], sink) if wants_lossless(settings, item) else None
+                compressed[0] += size is not None
+                return size
         for batch_index, batch in enumerate(batches, int(row["batch_index"]) + 1):
             self.queue.phase(uid, "sending", batch_index)
-            with multipart(batch, self.orthanc.copy_file) as (body, content_type, body_size):
-                failures = self.cloud.stow(uid, body, content_type, batch[0].get("source_ae", ""))
+            with multipart(batch, self.orthanc.copy_file, lossless) as (body, content_type, body_size):
+                failures = self.cloud.stow(uid, body, content_type, batch[0].get("source_ae", ""), routing.require_kin)
             batch_sops = {item["sop"] for item in batch}
             unknown = failures - batch_sops
             if unknown:
                 raise GatewayError("STOW response named an unknown failed SOP")
             self.queue.add_successes(uid, batch_sops - failures, batch_index)
             self.queue.counts(uid, len(local_sops), len(self.queue.successes(uid) & local_sops))
-            log(
-                "batch.stored", uid=uid, batch=batch_index, sops=len(batch),
-                failed=len(failures), bytes=body_size,
-            )
+            if lossless is None:
+                log(
+                    "batch.stored", uid=uid, batch=batch_index, sops=len(batch),
+                    failed=len(failures), bytes=body_size,
+                )
+            else:
+                # With compression on, the line also says how many parts went re-compressed (the rest went as stored).
+                log("batch.stored", uid=uid, batch=batch_index, sops=len(batch), failed=len(failures), bytes=body_size,
+                    compressed=compressed[0])
+                compressed[0] = 0
             if failures:
                 raise GatewayError(f"STOW failed SOP count={len(failures)}")
             self.report(uid)
@@ -915,11 +1384,59 @@ class Agent:
         self.queue.complete(uid, len(successful))
         log("study.complete", uid=uid, sops=len(successful))
 
+    def process_forward(self, row: sqlite3.Row) -> None:
+        """Send one study to one destination other than KIN (a DICOM Peer) with this Gateway's Orthanc (C-STORE).
+
+        Only this row's own SOP set grows, and only from Orthanc's answer for this association: what KIN or another
+        destination received is never read here. Done when every SOP held locally now is in this destination's set.
+        """
+        uid, dest = str(row["uid"]), str(row["dest"])
+        if dest not in (self.queue.destinations(uid) or []):
+            raise ForwardError("forward destination unknown")
+        try:
+            peer = json.loads(row["peer"])
+        except (TypeError, ValueError):
+            raise ForwardError("forward destination unknown") from None
+        orthanc_id, _detail, instances = self.orthanc.instances(uid, self.queue.orthanc_id(uid))
+        routing = StudyRouting(self.settings, self.orthanc, orthanc_id, instances)
+        routing.require_peer(dest, peer)
+        self.queue.forward_phase(uid, dest, "sending")
+        modality = "kin-route-" + dest
+        self.orthanc.put_modality(modality, peer)
+        done = self.queue.forward_successes(uid, dest)
+        pending = [item for item in instances if item["sop"] not in done]
+        for index, batch in enumerate(plan_batches(pending, self.config.byte_budget), 1):
+            routing.require_peer(dest, peer)
+            answer = self.orthanc.store(modality, [item["id"] for item in batch], self.config.stow_timeout)
+            failed, count = answer.get("FailedInstancesCount"), answer.get("InstancesCount")
+            if not isinstance(failed, int) or not isinstance(count, int):
+                raise ForwardError("forward C-STORE answer invalid")
+            if failed or count != len(batch):
+                raise ForwardError(f"forward C-STORE failed count={max(failed, len(batch) - count)}")
+            self.queue.forward_add(uid, dest, {item["sop"] for item in batch})
+            log("forward.stored", uid=uid, batch=index, sops=len(batch))
+        _orthanc_id, _detail, latest = self.orthanc.instances(uid, orthanc_id)
+        missing = {item["sop"] for item in latest} - self.queue.forward_successes(uid, dest)
+        if missing:
+            self.queue.forward_phase(uid, dest, "pending")
+            log("forward.delta", uid=uid, pending=len(missing))
+            return
+        self.queue.forward_phase(uid, dest, "complete")
+        log("forward.complete", uid=uid, sops=len(self.queue.forward_successes(uid, dest)))
+
     def run(self) -> None:
         signal.signal(signal.SIGTERM, self.stop)
         signal.signal(signal.SIGINT, self.stop)
+        if self.identity_error:
+            log("agent.identity_blocked", error=self.identity_error)
+            # Stay available to status until the operator restarts with matching files and configuration.
+            while not self.stopping:
+                time.sleep(1)
+            self.queue.close()
+            return
         log("agent.started", byteBudget=self.config.byte_budget, version=AGENT_VERSION)
-        heartbeat = Heartbeat(self.config, self.queue.epoch, self.orthanc, self.cloud, time.monotonic())
+        heartbeat = Heartbeat(self.config, self.queue.epoch, self.orthanc, self.cloud, time.monotonic(),
+                              self.settings)
         heartbeat.start()
         try:
             self.loop()
@@ -937,7 +1454,10 @@ class Agent:
             self.retry_requests()
             try:
                 self.poll_changes()
-                row = self.queue.due()
+                # Until the settings are known once, nothing is sent: an unknown rule is not "no rule" (SettingsStore).
+                row = self.queue.due() if self.settings.known else None
+                # A KIN failure must still leave the other destinations their turn.
+                again = False
                 if row:
                     uid = str(row["uid"])
                     try:
@@ -946,14 +1466,29 @@ class Agent:
                         reason = str(error)
                         self.queue.fail(uid, reason, error_code(error))
                         log("study.failed", uid=uid, error=reason)
-                        continue
+                        again = True
                     except Exception as error:
                         reason = str(error) if isinstance(error, GatewayError) else type(error).__name__
                         attempt, delay = self.queue.retry(
                             uid, reason, self.config.backoff_base, self.config.backoff_max, error_code(error),
                         )
                         log("study.retry", uid=uid, attempt=attempt, afterSeconds=round(delay, 2), error=reason)
-                        continue
+                        again = True
+                # A destination other than KIN goes after the KIN row of this pass, with its own backoff: one that
+                # is down never holds KIN or another destination back.
+                forward = self.queue.forward_due() if self.settings.known else None
+                if forward:
+                    uid = str(forward["uid"])
+                    try:
+                        self.process_forward(forward)
+                    except Exception as error:
+                        reason = str(error) if isinstance(error, (GatewayError, ForwardError)) else type(error).__name__
+                        attempt, delay = self.queue.forward_retry(
+                            uid, str(forward["dest"]), reason, self.config.backoff_base, self.config.backoff_max,
+                        )
+                        log("forward.retry", uid=uid, attempt=attempt, afterSeconds=round(delay, 2), error=reason)
+                if again:
+                    continue
             except Exception as error:
                 reason = str(error) if isinstance(error, GatewayError) else type(error).__name__
                 log("agent.retry", error=reason)

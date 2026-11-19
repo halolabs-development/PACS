@@ -37,6 +37,18 @@ test('prior search uses the opened source patient and individually scoped UIDs',
   f.extension.onModeExit();
   assert.equal(f.studies.search, f.original);
 });
+test('a merged exam lists every original it holds in the Studies panel, each under its own UID, once', async () => {
+  const scope = sources => ({ reportUid: sources[0], groupId: 'g', kind: 'merge', part: null, active: true, generation: 'x',
+    sources: sources.map(studyUid => ({ studyUid, series: { mode: 'all', uids: [] } })) });
+  // The list has the base row only; '5' and '6' are its other originals. '2' is another exam of the patient.
+  const merged = [{ uid: '1', id: 'P', sourcePatientKey: 'site-a|P', examScope: scope(['1', '5', '6']) }, rows[1], rows[2], rows[3]];
+  const f = fixture(merged, undefined, '?StudyInstanceUIDs=1,5,6');
+  assert.deepEqual(Array.from(await f.studies.search({ patientId: 'P' })), ['1', '5', '6', '2']);
+  // Two split parts of one original search that original once.
+  const split = [{ uid: '1', id: 'P', sourcePatientKey: 'site-a|P', examScope: scope(['1']) },
+    { uid: '1.9', id: 'P', sourcePatientKey: 'site-a|P', examScope: scope(['1']) }];
+  assert.deepEqual(Array.from(await fixture(split).studies.search({ patientId: 'P' })), ['1']);
+});
 test('ordinary UID queries keep the pinned data source contract', async () => {
   const f = fixture(rows);
   const params = { studyInstanceUid: '1' };
