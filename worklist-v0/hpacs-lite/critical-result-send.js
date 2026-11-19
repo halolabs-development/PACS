@@ -34,6 +34,7 @@
   const STATES = { created: 'Pending ACK', acknowledged: 'Acknowledged', cancelled: 'Cancelled', superseded: 'Superseded' };
   const FILTER_STATE = { pending: 'created', acknowledged: 'acknowledged', cancelled: 'cancelled', superseded: 'superseded', all: null };
   const DELIVERIES = ['readable', 'stub', 'not_eligible', 'unknown'];
+  const INBOX_STATES = ['none', 'listed', 'unlisted'];
   // 확정 거절로 읽는 409(§8.1 표). STUDY_ACCESS_CHANGED와 모르는 code는 커밋 뒤에도 날 수 있어 여기 없다.
   const REFUSED_409 = new Set(['OWNER_CHANGED', 'REQUEST_ID_REUSED', 'CRITICAL_RESULT_CHANGED', 'CRITICAL_RESULT_ACKNOWLEDGED',
     'CRITICAL_RESULT_CANCELLED', 'CRITICAL_RESULT_SUPERSEDED', 'CRITICAL_RESULT_PENDING_EXISTS', 'CRITICAL_RESULT_SOURCE_MOVED',
@@ -43,6 +44,12 @@
   const LATER_409 = new Set(['CRITICAL_RESULT_ACKNOWLEDGED', 'CRITICAL_RESULT_CANCELLED', 'CRITICAL_RESULT_SUPERSEDED',
     'CRITICAL_RESULT_PENDING_EXISTS', 'CRITICAL_RESULT_CHANGED', 'CRITICAL_RESULT_SOURCE_MOVED', 'CRITICAL_RESULT_SOURCE_INVALID',
     'CRITICAL_RESULT_SOURCE_CHANGED', 'CRITICAL_RESULT_RECIPIENT_CANNOT_READ']);
+
+  const ROLE_LABELS = { orderingPhysician: 'Ordering physician', hospitalInbox: 'Hospital inbox' };
+  const OUTCOME_LABELS = {
+    delivered: 'Delivered', pending: '기존 전달 확인 대기', unchecked: '선택 해제',
+    CRITICAL_RESULT_RECIPIENT_INVALID: '수신 자격 없음', CRITICAL_RESULT_RECIPIENT_CANNOT_READ: '이 판을 읽을 수 없음',
+  };
 
   const TEXT = {
     entry: {
@@ -68,6 +75,20 @@
       invalid: 'Recipient를 고르고 1~2,000자의 메시지를 입력하세요. 줄바꿈·탭 말고 보이지 않는 제어 문자는 보낼 수 없습니다.',
       sending: '보내는 중입니다… 서버가 저장했다고 답하기 전에는 전달되었다고 표시하지 않습니다.',
       locked: '로그인한 계정이 바뀌었습니다. 이 화면에서는 중요 결과를 더 읽거나 보내지 않습니다. 화면을 다시 불러오세요.',
+    },
+    recipients: {
+      inbox: 'Hospital inbox',
+      pending: 'Pending ACK',
+      ordering: 'Ordering physician (ReqDoc): ',
+      orderingNone: '오더·검사에 처방의(ReqDoc) 이름이 없습니다.',
+      orderingHint: '처방의는 이름만 있어 회원과 자동으로 잇지 않습니다. 목록에서 그 의사를 직접 고르세요.',
+      inboxNone: '병원 공용 수신(Hospital inbox)이 정해져 있지 않습니다. 기관 관리자가 Members 화면에서 정합니다.',
+      inboxUnlisted: '병원 공용 수신(Hospital inbox)으로 정한 회원은 지금 이 판독 판을 받을 수 없어 목록에 없습니다.',
+      inboxPending: '병원 공용 수신(Hospital inbox)에는 이미 확인 대기 중인 전달이 있어 미리 고르지 않았습니다.',
+      each: '받는 사람마다 기록 하나씩 따로 보냅니다. 결과는 사람마다 아래에 있습니다.',
+      // Every outcome line names the account its request was sent to (fixed on the request at Send).
+      target: '요청 대상:',
+      targetUnknown: '요청 대상 알 수 없음',
     },
     // 첫 Send가 확정 SOURCE_MOVED로 거절된 뒤 열린 창이 지금 판과 후보를 다시 읽을 때(§8). 다시 보내는 것은 사용자의 다음 Send다.
     moved: {
@@ -196,19 +217,56 @@
     return JSON.stringify(value) === sent ? 'same' : 'other';
   }
 
+  const selectable = (read, r) => !r.reason && !(read.orderingPhysician !== undefined && r.pending);
+
   /** #1 Candidates(§3.3). 틀린 칸이 하나라도 있으면 null — 그 답으로는 단추를 켜지 않는다. */
   function readCandidates(data, uid) {
     if (!isObject(data) || data.uid !== uid || typeof data.sendable !== 'boolean' || !Array.isArray(data.recipients)
         || data.recipients.length > 1000 || !(data.reason === null || own(TEXT.reasons, data.reason))) return null;
     const recipients = data.recipients;
-    if (!recipients.every(r => isObject(r) && text(r.sub) && UUID.test(r.sub) && text(r.actor) && text(r.name) && own(ROLES, r.role)))
-      return null;
+    // `inbox` / `pending` (the hospital inbox member, a recipient this sender already has a pending record to) are the
+    // server's marks; an answer without them marks nobody.
+    const mark = value => value === undefined || typeof value === 'boolean';
+    if (!recipients.every(r => isObject(r) && text(r.sub) && UUID.test(r.sub) && text(r.actor) && text(r.name) && own(ROLES, r.role)
+        && mark(r.inbox) && mark(r.pending) && mark(r.orderingPhysician)
+        && (r.reason == null || ['CRITICAL_RESULT_RECIPIENT_INVALID', 'CRITICAL_RESULT_RECIPIENT_CANNOT_READ'].includes(r.reason)))) return null;
+    if (!(data.inbox === undefined || INBOX_STATES.includes(data.inbox))) return null;
+    if (data.orderingPhysician !== undefined && !INBOX_STATES.includes(data.orderingPhysician)) return null;
     const s = data.source;
     const source = isObject(s) && Number.isSafeInteger(s.version) && s.version >= 1 && own(ACTIONS, s.action) && text(s.author)
       && at(s.at) && typeof s.final === 'boolean' ? { version: s.version, action: s.action, author: s.author, at: s.at } : null;
-    if (data.sendable ? data.reason !== null || !source || !recipients.length : data.reason === null) return null;
-    return { sendable: data.sendable, reason: data.reason, source,
-      recipients: recipients.map(r => ({ sub: r.sub.toLowerCase(), actor: r.actor, name: r.name, role: r.role })) };
+    if (data.sendable ? data.reason !== null || !source || !recipients.some(r => selectable(data, r)) : data.reason === null) return null;
+    return { sendable: data.sendable, reason: data.reason, source, inbox: data.inbox === undefined ? null : data.inbox,
+      orderingPhysician: data.orderingPhysician,
+      recipients: recipients.map(r => ({ sub: r.sub.toLowerCase(), actor: r.actor, name: r.name, role: r.role,
+        inbox: r.inbox === true, pending: r.pending === true, orderingPhysician: r.orderingPhysician === true, reason: r.reason })) };
+  }
+
+  function validTarget(target) {
+    if (!isObject(target) || !(target.sub === null || (text(target.sub) && UUID.test(target.sub)))) return false;
+    if (target.actor !== undefined && !text(target.actor)) return false;
+    if (target.status === 'delivered') return !!target.sub && text(target.id) && UUID.test(target.id);
+    return target.id === undefined && (own(OUTCOME_LABELS, target.status) || (target.status === 'unlinked' && target.sub === null));
+  }
+
+  function validSummary(send) {
+    return isObject(send) && text(send.requestId) && UUID.test(send.requestId)
+      && Object.keys(ROLE_LABELS).every(role => validTarget(send[role]));
+  }
+
+  function matchesSend(attempt, result) {
+    const { send, recipients } = result;
+    if (!validSummary(send) || send.requestId !== attempt.requestId || !Array.isArray(recipients)
+        || recipients.length !== attempt.body.recipientSubs.length || !recipients.every(validTarget)) return false;
+    if (recipients.some(r => !r.sub || r.status === 'unchecked' || r.status === 'unlinked')) return false;
+    const bySub = new Map(recipients.map(r => [r.sub, r]));
+    const delivered = recipients.filter(r => r.status === 'delivered');
+    return attempt.body.recipientSubs.every(sub => bySub.has(sub)) && delivered.some(r => r.id === attempt.requestId)
+      && new Set(delivered.map(r => r.id)).size === delivered.length
+      && Object.keys(ROLE_LABELS).every(role => {
+        const r = send[role], selected = bySub.get(r.sub);
+        return selected ? selected.status === r.status && selected.id === r.id : r.status !== 'delivered';
+      });
   }
 
   /** 보낸 목록 한 행(SenderView, §3.3). */
@@ -225,7 +283,7 @@
       && (item.delivery === null || DELIVERIES.includes(item.delivery)) && (item.state === 'created' || item.delivery === null)
       && at(item.acknowledgedAt) && at(item.cancelledAt) && at(item.supersededAt)
       && (item.cancelReason === null || text(item.cancelReason));
-    return ok ? { ...item, id: item.id.toLowerCase(), replacedBy: item.replacedBy && item.replacedBy.toLowerCase() } : null;
+    return ok && (item.send == null || validSummary(item.send)) ? { ...item, id: item.id.toLowerCase(), replacedBy: item.replacedBy && item.replacedBy.toLowerCase() } : null;
   }
 
   function readList(data, filter) {
@@ -246,7 +304,7 @@
     if (!isObject(a) || typeof data.replayed !== 'boolean' || a.requestId !== attempt.requestId || a.action !== attempt.action
         || a.id !== e.id || a.studyUid !== attempt.uid || a.from !== e.from || a.to !== e.to || a.revision !== e.revision
         || !text(a.at) || !at(a.at)) return false;
-    if (e.replacement === null) return a.replacement === null;
+    if (e.replacement === null) return a.replacement === null && (!attempt.body.recipientSubs || matchesSend(attempt, a));
     const r = a.replacement;
     return isObject(r) && r.id === e.replacement.id && r.revision === 1 && r.sourceVersion === e.replacement.sourceVersion;
   }
@@ -285,6 +343,7 @@
     const entry = node('b-mark-cvr'), more = node('report-more');
     const dialog = node('cvr-send'), studyLine = node('cvr-send-study'), sourceLine = node('cvr-send-source');
     const recipientField = node('cvr-send-recipient'), messageField = node('cvr-send-message'), statusBox = node('cvr-send-status');
+    const recipientNote = node('cvr-send-recipient-note');
     const closeButton = node('cvr-send-close'), checkButton = node('cvr-send-check'), sendButton = node('cvr-send-submit');
     const panel = node('cvr-sent-p'), summary = node('cvr-sent-summary'), toggle = node('cvr-sent-toggle');
     const refreshButton = node('cvr-sent-refresh'), attemptList = node('cvr-sent-attempts'), pane = node('cvr-sent-pane');
@@ -304,7 +363,14 @@
       return element;
     };
     const statusWord = make('p', 'cvr-word'), statusText = make('p', 'cvr-text'), statusDetail = make('p', 'cvr-detail');
-    statusBox.append(statusWord, statusText, statusDetail);
+    // The account the shown request was sent to (one recipient); a Send to several names it on each line below.
+    const statusWho = make('p', 'cvr-who');
+    statusWho.hidden = true;
+    // One line per recipient when one Send went to more than one person (each its own request and record).
+    const eachList = make('ul');
+    eachList.id = 'cvr-send-each';
+    eachList.hidden = true;
+    statusBox.append(statusWord, statusWho, statusText, statusDetail, eachList);
     const modeNote = make('p', 'cvr-note');
     modeNote.id = 'cvr-sent-mode-reason';
     modeNote.setAttribute('role', 'status');
@@ -315,8 +381,12 @@
     // 진입 단추: 판독 대상(target)과 그 판독 상태(targetKey)마다 #1을 한 번 읽는다. 읽기마다 entrySeq가 오르고 답은 자기
     // 번호·대상·계정일 때만 쓴다.
     let target = null, targetKey = null, entrySeq = 0, entryView = { phase: 'idle' };
-    // 발신 창: 열 때마다 dialogSeq가 오르고 #1을 새로 읽는다. dialogAttempt는 이 창이 보이는 요청의 requestId다.
-    let dialogSeq = 0, dialogUid = null, dialogView = null, dialogAttempt = null, dialogNote = '', dialogReturn = null, dialogOwner = null;
+    // 발신 창: 열 때마다 dialogSeq가 오르고 #1을 새로 읽는다. dialogAttempts는 이 창이 보이는 요청들의 requestId다 — 고른 받는
+    // 사람마다 하나(한 명이면 하나).
+    let dialogSeq = 0, dialogUid = null, dialogView = null, dialogAttempts = [], dialogNote = '', dialogReturn = null, dialogOwner = null;
+    // Whether the dialog's last Send went to more than one person: its outcomes are then shown one line per person, however
+    // many of its requests are still kept (a lock drops the unsettled ones; one left never stands for the whole Send).
+    let dialogMany = false;
     // 연결이 돌아온 횟수. #1 읽기는 떠날 때의 값을 가진다 — 돌아온 뒤에 실패한 읽기가 그 전에 떠난 것이면 끊김의 실패다(recoverReads).
     let reconnects = 0;
     // 요청별 기록(§8.1 규칙 2): requestId → 요청. 결과를 모르는 요청은 창을 닫아도 보낸 목록 위 줄(lined)로 남는다.
@@ -349,6 +419,10 @@
     };
     const sourceText = source => `Source: v${source.version} · ${ACTIONS[source.action] || source.action} · ${actorName(source.author)} · ${time(source.at)}`;
     const unsettled = attempt => ['sending', 'checking', 'unknown', 'not-sent'].includes(attempt.state);
+    // The open dialog's requests in send order. The dialog takes a new Send only when it has none or every one was refused.
+    const shown = () => dialogAttempts.map(id => attempts.get(id)).filter(Boolean);
+    const allRefused = () => shown().every(attempt => attempt.state === 'rejected');
+    const checkedSubs = () => [...recipientField.querySelectorAll('input[type="checkbox"]')].filter(box => box.checked).map(box => box.value);
 
     // Admission precedes validation, ID allocation and removal of an existing form or attempt.
     function refuseMode() {
@@ -401,6 +475,7 @@
       else if (target === null) title = TEXT.entry.none;
       else if (entryView.phase === 'failed') title = entryView.detail ? kinSay('{t0}\n{e1}', { t: kinSay(TEXT.entry.unknown) }, { e: entryView.detail }) : TEXT.entry.unknown;
       else if (entryView.phase !== 'ready') title = TEXT.entry.loading;
+      else if (unconfirmedSend(target)) { enabled = true; title = TEXT.unknown; }
       else if (!entryView.data.sendable) title = TEXT.reasons[entryView.data.reason];
       else {
         enabled = true;
@@ -464,8 +539,7 @@
     function recoverReads() {
       if (ended || work.state() !== 'active' || !online() || lock !== null) return;
       if (entryView.phase === 'failed') targetKey = null;
-      const attempt = dialogAttempt ? attempts.get(dialogAttempt) : null;
-      if (dialogUid !== null && dialogView?.phase === 'failed' && (!attempt || attempt.state === 'rejected') && live(dialogOwner))
+      if (dialogUid !== null && dialogView?.phase === 'failed' && allRefused() && live(dialogOwner))
         readDialog(dialogView.moved || null);
       for (const form of forms.values()) if (form.kind === 'supersede' && !form.source) readFormSource(form);
     }
@@ -480,16 +554,68 @@
     // ── 발신 창(Send Critical Result) ──
 
     function resetForm() {
-      const placeholder = new Option('Choose Recipient', '');
-      recipientField.replaceChildren(placeholder);
-      recipientField.value = '';
+      recipientField.replaceChildren(kinWrite(make('legend'), kinSay('Recipient')));
+      recipientNote.replaceChildren();
       messageField.value = '';
     }
 
-    function fillRecipients(recipients) {
-      const options = recipients.map(r => Object.assign(new Option(`${r.name} (${r.actor}) · ${ROLES[r.role]}`, r.sub), { translate: false }));
-      recipientField.replaceChildren(new Option('Choose Recipient', ''), ...options);
-      recipientField.value = '';
+    /**
+     * One check box per candidate of #1. A re-read after SOURCE_MOVED (`keep`) keeps exactly the user's checks that are still
+     * candidates (a default the user unchecked stays unchecked); otherwise the available role accounts are checked.
+     * An older pending delivery may pin a different version and never counts as this send.
+     */
+    function fillRecipients(read, keep = null) {
+      const boxes = read.recipients.map(r => {
+        const box = make('input');
+        box.type = 'checkbox';
+        box.value = r.sub;
+        box.disabled = !selectable(read, r);
+        box.checked = !box.disabled && (keep ? keep.has(r.sub) : (r.inbox || r.orderingPhysician) && !r.pending);
+        const person = make('span', null, `${r.name} (${r.actor})`);
+        person.setAttribute('translate', 'no');
+        const label = make('label');
+        label.dataset.sub = r.sub;
+        label.append(box, person, make('span', null, `· ${ROLES[r.role]}`));
+        if (r.orderingPhysician) label.append(kinWrite(make('span', 'cvr-tag'), kinSay(ROLE_LABELS.orderingPhysician)));
+        if (r.reason) label.append(kinWrite(make('span', 'cvr-tag'), kinSay(OUTCOME_LABELS[r.reason])));
+        if (r.inbox) label.append(kinWrite(make('span', 'cvr-tag'), kinSay(TEXT.recipients.inbox)));
+        if (r.pending) label.append(kinWrite(make('span', 'cvr-tag'), kinSay(TEXT.recipients.pending)));
+        return label;
+      });
+      recipientField.replaceChildren(kinWrite(make('legend'), kinSay('Recipient')), ...boxes);
+      paintRecipientNote(read);
+    }
+
+    // ReqDoc helps the sender pick an account by hand. The name never selects a recipient.
+    function orderingPhysicianHint() {
+      const row = dialogUid === null ? null : study(dialogUid);
+      const doctor = row && text(row.reqDoc) ? row.reqDoc.trim() : '';
+      if (!doctor) return kinWrite(make('span'), kinSay(TEXT.recipients.orderingNone));
+      const name = make('span', null, doctor);
+      name.setAttribute('translate', 'no');
+      const line = make('span');
+      line.append(kinWrite(make('span'), kinSay(TEXT.recipients.ordering)), name, make('span', null, '\n'),
+        kinWrite(make('span'), kinSay(TEXT.recipients.orderingHint)));
+      return line;
+    }
+
+    function paintRecipientNote(read) {
+      if (read.orderingPhysician !== undefined) {
+        const notes = [];
+        const note = value => kinWrite(make('div'), kinSay(value));
+        if (read.orderingPhysician === 'none') notes.push(note('처방의 미도달 — 계정 미연결'), orderingPhysicianHint());
+        if (read.orderingPhysician === 'unlisted') notes.push(note('연결된 처방의는 지금 선택할 수 없습니다.'));
+        if (read.inbox === 'none') notes.push(note(TEXT.recipients.inboxNone));
+        if (read.inbox === 'unlisted') notes.push(note('지정된 병원 공용 수신함은 지금 선택할 수 없습니다.'));
+        recipientNote.replaceChildren(...notes);
+        return;
+      }
+      if (!read.recipients.length) { recipientNote.replaceChildren(); return; }
+      const lines = [orderingPhysicianHint()];
+      const inbox = read.inbox === 'none' ? TEXT.recipients.inboxNone : read.inbox === 'unlisted' ? TEXT.recipients.inboxUnlisted
+        : read.recipients.some(r => r.inbox && r.pending) ? TEXT.recipients.inboxPending : '';
+      if (inbox) lines.push(make('span', null, '\n'), kinWrite(make('span'), kinSay(inbox)));
+      recipientNote.replaceChildren(...lines);
     }
 
     /** 원천 이동 뒤 다시 읽은 결과의 안내. 다 읽기 전·실패·보낼 수 없음이면 그 이유다. */
@@ -506,52 +632,122 @@
     function paintDialog() {
       if (dialogUid === null) return;
       const waiting = blocked();
-      const view = dialogView, attempt = dialogAttempt ? attempts.get(dialogAttempt) : null;
+      const view = dialogView, list = shown(), attempt = !dialogMany && list.length === 1 ? list[0] : null;
       const row = study(dialogUid);
       kinWrite(studyLine, row ? kinSay("Study: {0} ({1}) · {2}", row.name || '—', row.id || '—', row.date || '—') : kinSay("Study: {0}", dialogUid));
       // 보낸(보내는 중·결과를 모르는·적용된) 요청은 그 요청이 고정한 판을 보인다. 거절된 요청 뒤에는 다음 Send가 쓸 판(#1의 답)을
       // 보인다 — SOURCE_MOVED 뒤 다시 읽은 새 판이 여기 선다.
-      const source = attempt && attempt.state !== 'rejected' ? attempt.source : view && view.data && view.data.source;
+      const out = list.find(item => item.state !== 'rejected');
+      const source = out ? out.source : view && view.data && view.data.source;
       sourceLine.textContent = source ? sourceText(source) : '';
       const phase = view ? view.phase : 'loading';
+      const again = list.length && allRefused() && view && view.moved && dialogAttempts.includes(view.moved.requestId) ? movedText(view) : null;
       let state = phase, word = '', line = '', detail = '';
       if (attempt) {
         state = attempt.state;
         ({ word, line, detail } = outcomeText(attempt));
-        if (attempt.state === 'rejected' && view && view.moved && view.moved.requestId === attempt.requestId) {
-          const again = movedText(view);
-          line = `${line}\n${again.line}`;
-          detail = [detail, again.detail].filter(Boolean).join('\n');
-        }
-      } else if (lock !== null) {
-        state = 'locked';
-        line = TEXT.dialog.locked;
-        detail = lock.detail;
-      } else if (phase === 'loading') line = TEXT.dialog.loading;
-      else if (phase === 'failed') { line = TEXT.dialog.failed; detail = view.detail; }
-      else if (phase === 'unavailable') line = `${TEXT.reasons[view.data.reason]}. ${TEXT.dialog.unavailable}`;
-      else line = dialogNote || TEXT.dialog.ready;
-      if (attempt && lock !== null && attempt.state !== 'rejected') {
+      } else if (list.length) {
+        // More than one recipient: no one word for all of them - each line below says its own outcome.
+        state = ['checking', 'unknown', 'not-sent', 'sending', 'rejected', 'delivered'].find(name => list.some(item => item.state === name)) || 'sending';
+        line = TEXT.recipients.each;
+      }
+      if (again) {
+        line = `${line}\n${again.line}`;
+        detail = [detail, again.detail].filter(Boolean).join('\n');
+      }
+      if (!list.length) {
+        if (lock !== null) {
+          state = 'locked';
+          line = TEXT.dialog.locked;
+          detail = lock.detail;
+        } else if (phase === 'loading') line = TEXT.dialog.loading;
+        else if (phase === 'failed') { line = TEXT.dialog.failed; detail = view.detail; }
+        else if (phase === 'unavailable') line = `${TEXT.reasons[view.data.reason]}. ${TEXT.dialog.unavailable}`;
+        else line = dialogNote || TEXT.dialog.ready;
+      }
+      const locked = list.length > 0 && lock !== null && !allRefused();
+      if (locked) {
         state = 'locked';
         word = '';
         line = TEXT.dialog.locked;
         detail = lock.detail;
       }
       statusBox.dataset.state = state;
-      statusWord.textContent = word;
+      kinWrite(statusWord, kinSay(word));
       statusWord.hidden = !word;
-      statusText.textContent = line;
+      if ((attempt?.body.recipientSubs && attempt.state === 'delivered') || line === TEXT.recipients.each) kinWrite(statusText, kinSay(line));
+      else statusText.textContent = line;
       statusDetail.textContent = [detail, waiting].filter(Boolean).join('\n');
       statusDetail.hidden = !detail && !waiting;
-      const editable = sender() && live(dialogOwner) && view && view.phase === 'ready' && (!attempt || attempt.state === 'rejected');
+      if (attempt?.result && !locked) {
+        statusWho.replaceChildren(...dispatchLines(attempt));
+      } else if (attempt && !locked) sentTo(attempt, statusWho);
+      else statusWho.replaceChildren();
+      statusWho.hidden = !(attempt && !locked);
+      paintEach(dialogMany ? list : []);
+      const editable = sender() && live(dialogOwner) && view && view.phase === 'ready' && allRefused();
       recipientField.disabled = !editable;
+      recipientField.setAttribute('aria-disabled', String(!editable));
       messageField.readOnly = !editable;
       sendButton.disabled = !editable || !!waiting;
       sendButton.title = waiting || '';
-      checkButton.hidden = !attempt || lock !== null || !['unknown', 'checking', 'not-sent'].includes(attempt.state);
-      checkButton.disabled = !!waiting || !sender() || (!!attempt && attempt.state === 'checking');
+      const open = list.filter(item => ['unknown', 'checking', 'not-sent'].includes(item.state));
+      checkButton.hidden = !open.length || lock !== null;
+      checkButton.disabled = !!waiting || !sender() || !open.some(item => item.state !== 'checking');
       checkButton.title = waiting || '';
-      kinWrite(checkButton, attempt?.state === 'not-sent' ? kinSay('Send') : kinSay('Check Again'));
+      kinWrite(checkButton, open.length && open.every(item => item.state === 'not-sent') ? kinSay('Send') : kinSay('Check Again'));
+    }
+
+    function targetLine(label, result, account = result.actor) {
+      const line = make('div');
+      const status = result.status === 'unlinked'
+        ? (label === ROLE_LABELS.orderingPhysician ? '미도달 — 계정 미연결' : '미도달 — 수신함 미지정')
+        : OUTCOME_LABELS[result.status];
+      line.append(kinWrite(make('span'), kinSay(label)), ' · ', kinWrite(make('span'), kinSay(status)));
+      if (account || result.sub) {
+        const who = make('span', null, account || result.sub);
+        who.setAttribute('translate', 'no');
+        line.append(' · ', who);
+      }
+      return line;
+    }
+
+    function roleLines(send) {
+      return Object.entries(ROLE_LABELS).map(([role, label]) => targetLine(label, send[role]));
+    }
+
+    function dispatchLines(attempt) {
+      const { send, recipients } = attempt.result;
+      const others = recipients.filter(r => !Object.keys(ROLE_LABELS).some(role => send[role].sub === r.sub));
+      return [...roleLines(send), ...others.map(r => targetLine(TEXT.recipients.target, r, r.actor || attempt.people.find(p => p.sub === r.sub)?.actor))];
+    }
+
+    function sentTo(attempt, element) {
+      const label = kinWrite(make('span'), kinSay(attempt.who ? TEXT.recipients.target : TEXT.recipients.targetUnknown));
+      if (!attempt.who) return element.replaceChildren(label), element;
+      const person = make('span', 'cvr-line-what', ` ${attempt.who}`);
+      person.setAttribute('translate', 'no');
+      element.replaceChildren(label, person);
+      return element;
+    }
+
+    /** One line per recipient of a Send that went to more than one person: that request's own word, sentence and detail. */
+    function paintEach(list) {
+      eachList.hidden = !list.length;
+      eachList.replaceChildren(...list.map(item => {
+        const { word, line, detail } = outcomeText(item);
+        const entry = make('li');
+        entry.dataset.state = item.state;
+        entry.dataset.request = item.requestId;
+        entry.append(kinWrite(make('strong', 'cvr-word'), word || kinSay('Sending')), make('span', null, ' · '), sentTo(item, make('span')),
+          make('span', 'cvr-text', `\n${line}`));
+        if (detail) entry.append(make('span', 'cvr-detail', `\n${detail}`));
+        return entry;
+      }));
+    }
+
+    function unconfirmedSend(uid) {
+      return [...attempts.values()].find(a => a.uid === uid && live(a.sent) && a.body.recipientSubs && unsettled(a));
     }
 
     function openDialog() {
@@ -559,7 +755,9 @@
       if (!sender() || target === null || entry.disabled) return;
       dialogUid = target;
       dialogOwner = who();
-      dialogAttempt = null;
+      const pending = unconfirmedSend(target);
+      dialogAttempts = pending ? [pending.requestId] : [];
+      dialogMany = false;
       dialogNote = '';
       dialogReturn = document.activeElement;
       resetForm();
@@ -572,13 +770,17 @@
     /**
      * 열린 창의 #1 읽기. 창을 열 때와, 첫 Send가 확정 SOURCE_MOVED로 거절된 뒤(§8: 화면은 #1을 다시 읽고 사용자가 다시 확정한다)
      * 부른다. 다 읽을 때까지 phase가 loading이라 Send가 잠긴다. 다시 읽을 때(moved)는 쓰던 메시지를 두고, 고른 받는 사람은 새
-     * 후보에 있을 때만 남긴다. 스스로 다시 보내지 않는다. 결과를 모르는 요청의 Check Again은 이 길을 타지 않는다 — 그 요청의
+     * 후보에 있을 때만 남긴다(사용자가 해제한 기본값은 해제한 채). 스스로 다시 보내지 않는다. 결과를 모르는 요청의 Check Again은 이 길을 타지 않는다 — 그 요청의
      * requestId·body(sourceVersion 포함)는 바꾸지 않는다(§8.1 규칙 2).
      */
     function readDialog(moved) {
       const uid = dialogUid, sent = who(), seq = ++dialogSeq, key = keyOf(uid), epoch = reconnects;
       const before = dialogView && dialogView.data;
-      const chosen = moved && before ? before.recipients.find(r => r.sub === recipientField.value) || null : null;
+      // The user's choice travels with the re-read itself: a re-read that fails and the one after it keep the same choice
+      // (never the defaults again, never nothing-was-chosen read as a default).
+      const chosen = moved ? moved.chosen || (before ? before.recipients.filter(r => checkedSubs().includes(r.sub)) : []) : null;
+      if (moved) moved = { ...moved, chosen };
+      const keep = chosen ? new Set(chosen.map(r => r.sub)) : null;
       dialogView = { phase: 'loading', data: null, detail: '', moved };
       paintDialog();
       call('GET', `/studies/${encodeURIComponent(uid)}/critical-result-recipients`, undefined, work.capture('study')).then(guarded(({ data }) => {
@@ -589,11 +791,10 @@
         if (!read) {
           dialogView = { phase: 'failed', data: null, detail: TEXT.malformed, moved };
         } else {
-          const kept = !!chosen && read.sendable && read.recipients.some(r => r.sub === chosen.sub);
+          const lost = keep && read.sendable ? chosen.filter(r => !read.recipients.some(next => next.sub === r.sub && selectable(read, next))) : [];
           dialogView = { phase: read.sendable ? 'ready' : 'unavailable', data: read, detail: '',
-            moved: moved && { ...moved, dropped: chosen && read.sendable && !kept ? chosen.name : null } };
-          fillRecipients(read.sendable ? read.recipients : []);
-          if (kept) recipientField.value = chosen.sub;
+            moved: moved && { ...moved, dropped: lost.length ? lost.map(r => r.name).join(', ') : null } };
+          fillRecipients(read, keep);
           // 같은 대상의 단추도 이 답을 따른다. 앞서 나간 #1 읽기의 늦은 답은 번호로 버린다. 이 읽기가 떠난 뒤 화면이 아는 판독
           // 상태가 바뀌었으면(승인·폴링) 이 답은 그 전 상태의 것이다 — 단추는 그 상태로 나간 읽기를 따른다.
           if (uid === target && keyOf(uid) === key) {
@@ -604,7 +805,8 @@
           }
         }
         paintDialog();
-        if (dialogView.phase === 'ready') recipientField.focus();
+        const first = recipientField.querySelector('input:checked') || recipientField.querySelector('input');
+        if (dialogView.phase === 'ready' && first) first.focus();
       }, 'study'), guarded(error => {
         if (seq !== dialogSeq || dialogUid !== uid || !live(sent)) return;
         dialogView = { phase: 'failed', data: null, detail: describe(error), moved };
@@ -617,20 +819,23 @@
     function closeDialog() {
       if (dialogUid === null) return;
       dialogSeq++;
-      const attempt = dialogAttempt ? attempts.get(dialogAttempt) : null;
-      if (attempt) {
+      for (const attempt of shown()) {
         if (unsettled(attempt)) attempt.lined = true;
         else if (!attempt.lined) attempts.delete(attempt.requestId);
       }
       const focusInside = dialog.contains(document.activeElement);
       dialogUid = null;
-      dialogAttempt = null;
+      dialogAttempts = [];
+      dialogMany = false;
       dialogView = null;
       dialogNote = '';
       dialog.classList.remove('show');
       resetForm();
       statusBox.dataset.state = '';
       statusWord.textContent = statusText.textContent = statusDetail.textContent = '';
+      statusWho.replaceChildren();
+      statusWho.hidden = true;
+      paintEach([]);
       studyLine.textContent = sourceLine.textContent = '';
       checkButton.hidden = true;
       if (focusInside && dialogReturn && dialogReturn.isConnected) dialogReturn.focus();
@@ -642,30 +847,42 @@
       if (refuseMode()) return;
       if (work.state() !== 'active') return;
       if (!sender() || !live(dialogOwner) || dialogUid === null || !dialogView || dialogView.phase !== 'ready') return;
-      const previous = dialogAttempt ? attempts.get(dialogAttempt) : null;
-      if (previous && previous.state !== 'rejected') return;
-      const read = dialogView.data, recipient = read.recipients.find(r => r.sub === recipientField.value);
+      const previous = shown();
+      if (!allRefused()) return;
+      const read = dialogView.data, chosen = new Set(checkedSubs());
+      const recipients = read.recipients.filter(r => chosen.has(r.sub) && selectable(read, r));
       const message = messageField.value;
-      if (!recipient || !textOk(message)) {
+      for (const item of previous) attempts.delete(item.requestId);
+      dialogAttempts = [];
+      dialogMany = false;
+      if (!recipients.length || !textOk(message)) {
         dialogNote = TEXT.dialog.invalid;
-        if (previous) { attempts.delete(previous.requestId); dialogAttempt = null; }
         paintDialog();
         return;
       }
-      const sent = who(), requestId = newRequestId(), uid = dialogUid;
-      if (previous) attempts.delete(previous.requestId);
-      const attempt = {
-        requestId, action: 'create', uid, recordId: requestId, sent, source: read.source, lined: false,
-        path: `/studies/${encodeURIComponent(uid)}/critical-results`,
-        body: { requestId, expectedOwner: JSON.parse(sent), recipientSub: recipient.sub, sourceVersion: read.source.version, message },
-        expect: { id: requestId, from: null, to: 'created', revision: 1, replacement: null },
-        label: `${studyLabel(uid)} · ${recipient.name} · ${ROLES[recipient.role]}`,
-        state: 'sending', dispatches: 0, retried: false, reason: '', detail: '', later: '', replayed: false,
-      };
-      attempts.set(requestId, attempt);
-      dialogAttempt = requestId;
+      const sent = who(), uid = dialogUid;
+      // Current servers commit the whole selection and its role outcomes under one request ID.
+      // An older server advertises only a single-recipient write.
+      const grouped = read.orderingPhysician !== undefined;
+      const groups = grouped ? [recipients] : recipients.map(r => [r]);
+      const made = groups.map(people => {
+        const who = people.map(r => `${r.name} (${r.actor}) · ${ROLES[r.role]}`).join(', ');
+        const selection = grouped ? { recipientSubs: people.map(r => r.sub) } : { recipientSub: people[0].sub };
+        const requestId = newRequestId();
+        return {
+          requestId, action: 'create', uid, recordId: requestId, sent, source: read.source, lined: false,
+          path: `/studies/${encodeURIComponent(uid)}/critical-results`,
+          body: { requestId, expectedOwner: JSON.parse(sent), ...selection, sourceVersion: read.source.version, message },
+          expect: { id: requestId, from: null, to: 'created', revision: 1, replacement: null },
+          label: `${studyLabel(uid)} · ${who}`, who, people,
+          state: 'sending', dispatches: 0, retried: false, reason: '', detail: '', later: '', replayed: false, code: null,
+        };
+      });
+      for (const attempt of made) attempts.set(attempt.requestId, attempt);
+      dialogAttempts = made.map(attempt => attempt.requestId);
+      dialogMany = made.length > 1;
       dialogNote = '';
-      transmit(attempt);
+      for (const attempt of made) transmit(attempt);
     }
 
     // ── 쓰기 답의 판별(§8.1) ──
@@ -699,7 +916,11 @@
       if (result) {
         const mine = ownerOf(result.data && result.data.owner, attempt.sent);
         if (mine === 'other') { accountChanged(TEXT.otherEnvelope); return; }
-        if (result.status === 201 && mine === 'same' && appliedMatches(attempt, result.data)) { applied(attempt, result.data.replayed); return; }
+        if (result.status === 201 && mine === 'same' && appliedMatches(attempt, result.data)) {
+          if (attempt.body.recipientSubs) attempt.result = result.data.applied;
+          applied(attempt, result.data.replayed);
+          return;
+        }
         unknown(attempt, retry, TEXT.unexpected(result.status), '');
         return;
       }
@@ -712,12 +933,12 @@
       if (error.status === 409 && error.code === 'CRITICAL_RESULT_PENDING_EXISTS' && error.body && text(error.body.id)) {
         const id = error.body.id.toLowerCase();
         // 규칙 4: 확인 대기 기록의 id가 이 요청(또는 결과를 모르는 다른 요청)이면 그것이 적용 증거다.
-        if (id === attempt.requestId && attempt.action === 'create') { applied(attempt, true); return; }
+        if (id === attempt.requestId && attempt.action === 'create' && !attempt.body.recipientSubs) { applied(attempt, true); return; }
         evidence(id);
       }
       if (!retry && refused(error)) {
-        Object.assign(attempt, { state: 'rejected', reason: reasonOf(error), detail: describe(error) });
-        if (attempt.action === 'create' && error.code === 'CRITICAL_RESULT_SOURCE_MOVED') sourceMoved(attempt);
+        Object.assign(attempt, { state: 'rejected', reason: reasonOf(error), detail: describe(error), code: error.code });
+        if (attempt.action === 'create') sourceMoved(attempt);
         paintAttempt(attempt);
         if (attempt.action !== 'create') loadList(false);
         return;
@@ -730,9 +951,12 @@
      * 있으면 그 창의 판과 후보를 다시 읽고, 창이 닫혔으면 단추의 #1만 다시 읽는다. 어느 쪽도 다시 보내지 않는다.
      */
     function sourceMoved(attempt) {
-      if (dialogAttempt === attempt.requestId && dialogUid === attempt.uid && lock === null) {
-        readDialog({ requestId: attempt.requestId, from: attempt.source.version, dropped: null });
-      } else if (attempt.uid === target) {
+      if (dialogAttempts.includes(attempt.requestId) && dialogUid === attempt.uid && lock === null) {
+        // A Send to several people reads again only when every one of its requests was refused and one of them because
+        // the head moved: a delivered, pending or unknown request of the same Send keeps the dialog as it is.
+        const moved = allRefused() ? shown().find(item => item.code === 'CRITICAL_RESULT_SOURCE_MOVED') : null;
+        if (moved) readDialog({ requestId: moved.requestId, from: moved.source.version, dropped: null });
+      } else if (attempt.code === 'CRITICAL_RESULT_SOURCE_MOVED' && attempt.uid === target) {
         targetKey = null;
         sync();
       }
@@ -774,6 +998,12 @@
 
     /** 읽기에서 본 한 기록으로 결과를 모르는 요청을 끝낸다(규칙 4 (a) 적용 증거, (b) 대상 기록의 종결). */
     function observe(item) {
+      const attempt = attempts.get(item.id);
+      if (attempt?.body.recipientSubs && attempt.state === 'unknown' && item.studyUid === attempt.uid
+          && appliedMatches(attempt, { applied: item.dispatch, replayed: true })) {
+        attempt.result = item.dispatch;
+        applied(attempt, true);
+      }
       evidence(item.id);
       if (item.state === 'created') return;
       for (const attempt of attempts.values()) {
@@ -787,7 +1017,7 @@
 
     function evidence(id) {
       const attempt = attempts.get(id);
-      if (attempt && attempt.action !== 'cancel' && ['sending', 'checking', 'unknown'].includes(attempt.state)) applied(attempt, false);
+      if (attempt && !attempt.body.recipientSubs && attempt.action !== 'cancel' && ['sending', 'checking', 'unknown'].includes(attempt.state)) applied(attempt, false);
     }
 
     /** 요청의 상태 이름·설명·세부. 창과 목록 위 줄이 같은 문구를 쓴다. */
@@ -800,7 +1030,13 @@
         case 'checking': return { word: cancel ? 'Cancellation status unknown' : 'Delivery status unknown', line: TEXT.checking, detail: retryText };
         case 'unknown': return { word: cancel ? 'Cancellation status unknown' : 'Delivery status unknown',
           line: cancel ? TEXT.cancelUnknown : TEXT.unknown, detail: [retryText, attempt.detail].filter(Boolean).join('\n') };
-        case 'delivered': return { word: 'Delivered', line: attempt.replayed ? `${TEXT.delivered} ${TEXT.replayed}` : TEXT.delivered, detail: '' };
+        case 'delivered':
+          if (attempt.result) {
+            const missing = [...Object.keys(ROLE_LABELS).map(k => attempt.result.send[k]), ...attempt.result.recipients]
+              .some(r => r.status !== 'delivered');
+            return { word: missing ? 'Partially delivered' : 'Delivered', line: TEXT.delivered, detail: '' };
+          }
+          return { word: 'Delivered', line: attempt.replayed ? `${TEXT.delivered} ${TEXT.replayed}` : TEXT.delivered, detail: '' };
         case 'cancelled': return { word: 'Cancelled', line: attempt.replayed ? `${TEXT.cancelled} ${TEXT.replayed}` : TEXT.cancelled, detail: '' };
         default: return { word: cancel ? 'Not cancelled' : 'Not delivered',
           line: attempt.action === 'create' && !attempt.lined && lock === null ? `${attempt.reason} ${TEXT.newRequest}` : attempt.reason,
@@ -809,7 +1045,7 @@
     }
 
     function paintAttempt(attempt) {
-      if (dialogAttempt === attempt.requestId && dialogUid !== null) paintDialog();
+      if (dialogAttempts.includes(attempt.requestId) && dialogUid !== null) paintDialog();
       if (attempt.lined) paintLines();
       paintPanel();
     }
@@ -882,12 +1118,14 @@
         const { word, line, detail } = outcomeText(attempt);
         const action = { create: 'Send', supersede: 'Supersede', cancel: 'Cancel Delivery' }[attempt.action];
         element.dataset.state = attempt.state;
-        kinWrite(element.querySelector('.cvr-word'), word || kinSay('Sending'));
+        kinWrite(element.querySelector('.cvr-word'), kinSay(word || 'Sending'));
         element.querySelector('.cvr-line-what').textContent = ` · ${action} · ${attempt.label}`;
-        element.querySelector('.cvr-text').textContent = line;
+        if (attempt.result) kinWrite(element.querySelector('.cvr-text'), kinSay(line));
+        else element.querySelector('.cvr-text').textContent = line;
         const extra = element.querySelector('.cvr-detail');
-        extra.textContent = detail;
-        extra.hidden = !detail;
+        if (attempt.result) extra.replaceChildren(...dispatchLines(attempt));
+        else extra.textContent = detail;
+        extra.hidden = !detail && !attempt.result;
         const again = element.querySelector('button');
         again.hidden = !['unknown', 'checking', 'not-sent'].includes(attempt.state);
         again.disabled = !!blocked() || !sender() || attempt.state === 'checking';
@@ -916,7 +1154,12 @@
       // C-R01-105: the description of the study from its worklist row (the record keeps identity only); nothing when the row is not loaded.
       const listed = study(item.studyUid), description = String(listed?.desc ?? '').trim() || String(listed?.modality ?? '').trim();
       if (description) studyCell.append(make('span', 'cvr-study-desc', description));
-      const recipientCell = make('td', null, `${item.recipient.name} · ${ROLES[item.recipient.role]}`);
+      // The account under the name: two recipients may share a name and a role, and each row is one of them.
+      const recipientCell = make('td');
+      const account = make('span', 'cvr-muted', item.recipient.actor);
+      account.setAttribute('translate', 'no');
+      recipientCell.append(make('span', null, `${item.recipient.name} · ${ROLES[item.recipient.role]}`), account);
+      if (item.send) recipientCell.append(...roleLines(item.send));
       const sentCell = make('td', null, time(item.createdAt));
       const stateCell = make('td');
       const state = make('span', 'cvr-state', STATES[item.state]);
@@ -1073,7 +1316,7 @@
         }
         form.source = read.source;
         form.sourceLine.textContent = sourceText(read.source);
-        const listed = read.recipients.some(r => r.actor === form.item.recipient.actor);
+        const listed = read.recipients.some(r => !r.reason && r.actor === form.item.recipient.actor);
         kinWrite(form.note, listed ? '' : kinSay(TEXT.form.notCandidate));
         form.note.hidden = listed;
         paintWriteControls();
@@ -1118,7 +1361,7 @@
           : { requestId, expectedOwner: JSON.parse(sent), revision: item.revision, sourceVersion: form.source.version, message: value },
         expect: { id: item.id, from: 'created', to: cancel ? 'cancelled' : 'superseded', revision: 2,
           replacement: cancel ? null : { id: requestId, sourceVersion: form.source.version } },
-        label: `${studyLabel(item.studyUid, item.study)} · ${item.recipient.name} · ${ROLES[item.recipient.role]}`,
+        label: `${studyLabel(item.studyUid, item.study)} · ${item.recipient.name} (${item.recipient.actor}) · ${ROLES[item.recipient.role]}`,
         state: 'sending', dispatches: 0, retried: false, reason: '', detail: '', later: '', replayed: false,
       };
       attempts.set(requestId, attempt);
@@ -1152,7 +1395,9 @@
       entrySeq++;
       listSeq++;
       dialogSeq++;
-      for (const [id, attempt] of attempts) if (id !== dialogAttempt || attempt.state !== 'rejected') attempts.delete(id);
+      // The other account never sends this account's requests: unsettled ones go. The open dialog's settled outcomes stay
+      // as they are - a delivered one is not erased to leave a refusal standing for the whole Send.
+      for (const [id, attempt] of attempts) if (!dialogAttempts.includes(id) || unsettled(attempt)) attempts.delete(id);
       forms.clear();
       items = [];
       nextCursor = null;
@@ -1191,7 +1436,7 @@
     entry.addEventListener('click', openDialog);
     more.addEventListener('toggle', () => { if (more.open) sync(); });
     sendButton.addEventListener('click', send);
-    checkButton.addEventListener('click', () => { const attempt = attempts.get(dialogAttempt); if (attempt) check(attempt); });
+    checkButton.addEventListener('click', () => { for (const attempt of shown()) if (['unknown', 'not-sent'].includes(attempt.state)) check(attempt); });
     closeButton.addEventListener('click', closeDialog);
     dialog.addEventListener('keydown', event => {
       if (event.key !== 'Escape' || dialogUid === null) return;
@@ -1244,7 +1489,7 @@
           attempt.state = 'unknown'; attempt.detail = TEXT.noResponse; paintAttempt(attempt);
         }
         if (entryView.phase === 'loading') targetKey = null;
-        if (dialogUid !== null && dialogView?.phase === 'loading') readDialog(false);
+        if (dialogUid !== null && dialogView?.phase === 'loading') readDialog(dialogView.moved || null);
         for (const form of forms.values()) if (form.kind === 'supersede' && !form.source) readFormSource(form);
         sync(); if (listPhase === 'loading') loadList(false);
         startTimers();
