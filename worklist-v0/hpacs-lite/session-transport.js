@@ -48,6 +48,20 @@
     return typeof code === 'string' && code.startsWith('AUTH_') ? 'temporary' : 'denied';
   }
 
+  /**
+   * The one split of a failed viewer open (an image list, a study's metadata, the open study lookup): `denied` ends the
+   * open (no permission, or no such study for this account - the same answer, so a refusal never tells which), `temporary`
+   * may succeed when asked again (the session check, the network, a busy or failing server), `ended` is the session's end
+   * (handled where sessions end), `failed` anything else. By status and code only - never the server's text.
+   */
+  function openFailure(reply) {
+    const kind = refusal(reply);
+    if (kind) return kind;
+    const status = reply?.status;
+    if (status === 404 || status === 410) return 'denied';
+    if (!Number.isInteger(status) || status === 0 || status === 408 || status === 429 || status >= 500) return 'temporary';
+    return 'failed';
+  }
   function responseError(reply, message = '요청을 완료하지 못했습니다.', denied = '검사 접근이 거절되었습니다. 접근 권한을 확인하세요.') {
     const kind = refusal(reply);
     return Object.assign(new Error(kind === 'temporary' ? '연결을 확인하지 못했습니다. 잠시 뒤 다시 시도하세요.'
@@ -333,7 +347,7 @@
     return shared;
   }
 
-  const api = Object.freeze({ create, page, DEADLINES, refusal, responseError, accessRecordNotice, ACCESS_RECORD_EVENT });
+  const api = Object.freeze({ create, page, DEADLINES, refusal, openFailure, responseError, accessRecordNotice, ACCESS_RECORD_EVENT });
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (root) root.KinSessionTransport = api;
 })(typeof window === 'object' ? window : null);

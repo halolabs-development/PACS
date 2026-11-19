@@ -1,6 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="-25 -1 274 274" role="img" aria-label="HALO PACS 엠블럼">
-  <title>HALO PACS</title>
-  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="-25 -1 274 274">
+  <title>HALO LABS logo</title>
+  
+  
+  <g id="halo-icon" fill="none" stroke-linecap="round" stroke-linejoin="round">
     <path d="M124 24 A100 100 0 0 1 224 124" stroke="#8AB4C8" stroke-width="13"/>
     <path d="M224 148 A100 100 0 0 1 124 248" stroke="#8AB4C8" stroke-width="13"/>
     <path d="M100 248 A100 100 0 0 1 0 148" stroke="#8AB4C8" stroke-width="13"/>

@@ -31,7 +31,8 @@ class MeasurementPanelE2E(MeasurementReadbackE2E):
     def tracked(self, p):
         row = self.draw_length(p)
         p.get_by_role('button', name='Yes', exact=True).click()
-        p.locator('[data-cy=trackedMeasurements-btn]').click()
+        # The panels' navigation is in the compact Panels group of the top row (the stock edge strip is not shown).
+        p.locator('.kin-ux-panels [data-panel=measurements]').click()
         panel = p.locator('[data-cy=trackedMeasurements-panel]')
         expect(panel).to_contain_text('mm')
         p.evaluate('''()=>{

@@ -709,6 +709,78 @@ class MultiStudyViewPage(unittest.TestCase):
         self.post_viewer_event(popup, opening, event)
         expect(self.member(n[0])).to_contain_text("Unverified")
 
+    def in_document_viewer(self, popup, failed):
+        # SYNTHETIC VIEWER: the real viewer's in-document patient move (it keeps this document) and its record of the
+        # studies whose image metadata failed in this document (`kinViewerFailedStudies`, series-recovery.js). A move
+        # in the same document reuses that document's failed metadata; only a new document asks the server again.
+        popup.evaluate("""failed => { window.kinViewerFailedStudies = () => failed.slice();
+          window.kinViewerOpenPatient = href => { history.replaceState(history.state, '', href); return Promise.resolve(true); }; }""",
+                       failed)
+
+    def test_member_retry_reads_a_new_viewer_document_for_a_study_that_failed_there(self):
+        self.open()
+        n = self.open_set(self.visible_order()[:2])["studyUids"]
+        self.wait_viewer(n)
+        popup = self.viewer()
+        self.in_document_viewer(popup, [n[1]])
+        self.post_viewer_event(popup, self.viewer_studies(popup)[2], {"type": "failed"})
+        expect(self.member(n[1])).to_contain_text("Unverified")
+        loads = len(self.site.viewer_loads)
+        self.press(f'#multi-study-members li[data-uid="{n[1]}"] [data-action=retry]')
+        self.wait(lambda: len(self.site.viewer_loads) > loads, "a new viewer document for the study that failed in the old one")
+        self.wait_viewer([n[1]])
+        self.assertIs(popup, self.viewer())
+        self.assertEqual(1, len(self.popups))
+        # Retry after another failure: the new document failed too, so the next Retry reads a new document again.
+        self.in_document_viewer(popup, [n[1]])
+        self.post_viewer_event(popup, self.viewer_studies(popup)[2], {"type": "failed"})
+        expect(self.member(n[1])).to_contain_text("Unverified")
+        loads = len(self.site.viewer_loads)
+        self.press(f'#multi-study-members li[data-uid="{n[1]}"] [data-action=retry]')
+        self.wait(lambda: len(self.site.viewer_loads) > loads, "a new viewer document again after the second failure")
+        self.wait_viewer([n[1]])
+        # A study that did not fail in this document still moves inside it (the open patient tabs stay).
+        self.in_document_viewer(popup, [n[1]])
+        loads = len(self.site.viewer_loads)
+        self.press(f'#multi-study-members li[data-uid="{n[0]}"] [data-action=view]')
+        self.wait_viewer([n[0]])
+        self.assertEqual(loads, len(self.site.viewer_loads))
+
+    def test_opening_the_same_study_again_rereads_a_viewer_document_where_it_failed(self):
+        self.open()
+        uid = self.visible_order()[0]
+        self.row(uid).dblclick()
+        self.wait(lambda: self.popups and self.viewer().url.startswith(h.ORIGIN + "/ohif/viewer"), "the viewer window")
+        popup = self.viewer()
+        studies = self.viewer_studies(popup)[0]
+        self.assertIn(uid, studies)
+        # Nothing failed here: the same study again only brings the window forward (no new document).
+        self.in_document_viewer(popup, [])
+        loads = len(self.site.viewer_loads)
+        self.row(uid).dblclick()
+        self.page.wait_for_timeout(300)
+        self.assertEqual(loads, len(self.site.viewer_loads))
+        # Its images failed in this document: the same study again reads a new document, in the same window.
+        self.in_document_viewer(popup, [studies[-1]])
+        self.row(uid).dblclick()
+        self.wait(lambda: len(self.site.viewer_loads) > loads, "a re-read of the viewer document")
+        self.assertEqual(studies, self.viewer_studies(popup)[0])
+        self.assertIs(popup, self.viewer())
+
+    def test_a_failed_study_with_unsaved_viewer_work_keeps_the_window(self):
+        self.open()
+        n = self.open_set(self.visible_order()[:2])["studyUids"]
+        self.wait_viewer(n)
+        popup = self.viewer()
+        self.in_document_viewer(popup, [n[1]])
+        popup.evaluate("() => { window.__synDirty = true; }")
+        self.post_viewer_event(popup, self.viewer_studies(popup)[2], {"type": "failed"})
+        loads = len(self.site.viewer_loads)
+        self.press(f'#multi-study-members li[data-uid="{n[1]}"] [data-action=retry]')
+        expect(self.status()).to_contain_text(BUSY)
+        self.assertEqual(n, self.viewer_studies(popup)[0])
+        self.assertEqual(loads, len(self.site.viewer_loads))
+
     def test_the_viewer_strip_intents_page_through_the_same_bounded_commands(self):
         self.open()
         order = self.visible_order()
