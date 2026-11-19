@@ -24,6 +24,13 @@ import type { EmrRecordPort } from '../emr-runtime/record-port';
 import { studyPatientLink } from '../emr-clinical/routes';
 import { hiddenAttachments, leftOutObject, namesHidden } from '../study-attachment';
 import type { HiddenAttachments } from '../study-attachment';
+import { DICOM_SOURCE_UNAVAILABLE, STUDY_SOURCE_UNAVAILABLE, STUDY_SOURCE_UNAVAILABLE_MESSAGE } from '../study-source-groups';
+
+/** assertUnsplitSource's "not observed" (503 STUDY_SOURCE_UNAVAILABLE), told apart from its split refusal by status and code. */
+function sourceUnavailable(error: any): boolean {
+  const body = typeof error?.getResponse === 'function' ? error.getResponse() : null;
+  return error?.getStatus?.() === 503 && !!body && typeof body === 'object' && (body as any).code === STUDY_SOURCE_UNAVAILABLE;
+}
 
 export const GATEWAY_STOW_SURFACE = 'POST gateway/stow/:uid';
 
@@ -160,8 +167,14 @@ export class PacsDicomGateway {
     // WORKLIST-SPLIT-UID: an old list or a typed URL can still name a UID two patient resources answer. Only after the
     // scope checks, this request observes the source; auth_request cannot carry 409/503, so every source refusal is 403.
     await this.studyAccess.prepareSourceIdentity(c, [uid]);
-    let patientId: string | null;
-    try { patientId = this.studyAccess.assertUnsplitSource(c, uid).sourcePatientId; } catch { throw new ForbiddenException('열람 권한이 없습니다'); }
+    // A source this request could not observe (the archive did not answer) is no refusal: it is answered after every
+    // refusal the database can decide, as a temporary failure (DICOM_SOURCE_UNAVAILABLE). A split UID stays a refusal.
+    let patientId: string | null = null, unobserved = false;
+    try { patientId = this.studyAccess.assertUnsplitSource(c, uid).sourcePatientId; }
+    catch (error) {
+      if (!sourceUnavailable(error)) throw new ForbiddenException('열람 권한이 없습니다');
+      unobserved = true;
+    }
     // FC-076: a withdrawn attachment (or one never confirmed stored) is no longer served on any image path: the same 403.
     const hidden = await hiddenAttachments(this.prisma, uid);
     if (namesHidden(path, hidden)) throw new ForbiddenException('열람 권한이 없습니다');
@@ -170,6 +183,7 @@ export class PacsDicomGateway {
     try { leftOut = await leftOutObject(this.prisma, path, id => this.orthanc.attachmentInstanceUids(id)); }
     catch { throw new ForbiddenException('열람 권한이 없습니다'); }
     if (leftOut) throw new ForbiddenException('열람 권한이 없습니다');
+    if (unobserved) throw new ForbiddenException({ code: DICOM_SOURCE_UNAVAILABLE, message: STUDY_SOURCE_UNAVAILABLE_MESSAGE });
     return { studyUid: uid, managingInstitutionId: s.institutionId, sourcePatientId: patientId, hidden };
   }
 

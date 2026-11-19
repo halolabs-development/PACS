@@ -13,6 +13,12 @@ export const STUDY_IDENTITY_UNRESOLVED = 'STUDY_IDENTITY_UNRESOLVED';
 export const STUDY_SOURCE_UNAVAILABLE = 'STUDY_SOURCE_UNAVAILABLE';
 export const STUDY_IDENTITY_UNRESOLVED_MESSAGE = '환자 식별 불일치로 이 검사를 사용할 수 없습니다. 원본 확인이 필요합니다.';
 export const STUDY_SOURCE_UNAVAILABLE_MESSAGE = '검사 원본을 확인하지 못했습니다. 잠시 후 다시 시도하세요';
+/**
+ * The same unobserved source on a DICOM path. auth_request carries only 401/403 (a 503 becomes 500), so the DICOM gate
+ * answers 403 with this code in `X-KIN-Auth-Code` - the existing shape of a temporary DICOM refusal (`AUTH_*`), which
+ * clients read as "try again", never as a refused study (session-transport.js refusal()).
+ */
+export const DICOM_SOURCE_UNAVAILABLE = 'AUTH_SOURCE_UNAVAILABLE';
 
 interface SourceGroups<T> {
   /** 열거에 처음 나온 순서의 UID. 정상 행의 기존 목록 순서를 그대로 지킨다. */

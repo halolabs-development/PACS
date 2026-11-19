@@ -58,6 +58,8 @@
   const UNRECORDED = '영상 열람 기록을 저장하지 못해 영상을 다시 표시하지 않았습니다. 연결을 확인한 뒤 다시 시도하세요.';
   // A status whose answer has no body (fetch spec "null body status"): nothing to wait for after its headers.
   const NULL_BODY = [101, 103, 204, 205, 304];
+  /** session-transport.js's reading of a refusal: loaded before this file in the viewer (config/ohif.js), required in Node. */
+  const refusal = reply => (root?.KinSessionTransport ?? (typeof module === 'object' && module.exports ? require('./session-transport.js') : null)).refusal(reply);
 
   function attach(win, send) {
     /** The same-origin URL of a request, else null. */
@@ -277,7 +279,9 @@
           // No revision answered (the archive could not say) proves nothing either way: live now, the held copy stays.
           entry.state = 'live';
           if (response.ok && now) post({ type: 'evict', uid, reason: CHANGED });
-          else if ([403, 404].includes(response.status)) post({ type: 'evict', uid, reason: DENIED });
+          // Refused only by the one shared reading of a refusal (session-transport.js): a 403 with an AUTH_* code - an
+          // archive the gate could not observe, a busy session check - is temporary and keeps the held copy.
+          else if (response.status === 404 || response.status === 403 && refusal(response) === 'denied') post({ type: 'evict', uid, reason: DENIED });
         }
         return response;
       })();

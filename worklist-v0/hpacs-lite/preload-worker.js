@@ -1,7 +1,7 @@
 /* D1890: only ciphertext survives the worker. A viewer still needs its live check and durable user-view root. */
 'use strict';
-importScripts('preload-store.js', 'preload-disk.js');
-const Model = self.KinPreloadStore, Disk = self.KinPreloadDisk, disk = Disk.create();
+importScripts('preload-store.js', 'preload-disk.js', 'session-transport.js');
+const Model = self.KinPreloadStore, Disk = self.KinPreloadDisk, disk = Disk.create(), Transport = self.KinSessionTransport;
 const FRAME_ACCEPT = ['application/octet-stream', 'image/jpeg', 'image/jls', 'image/jp2', 'image/dicom-rle']
   .map(type => 'multipart/related; type="' + type + '"; transfer-syntax=*').join(', ');
 const MESSAGES = Object.freeze({
@@ -56,9 +56,17 @@ async function get(url, headers, signal, bound = session) {
   try { await response.body?.cancel(); } catch (_) {}
   if (response.status === 401 || response.status === 428 || ['AUTH_SESSION_ENDED', 'AUTH_SESSION_MISMATCH'].includes(code)) throw new Stop('ended');
   if (url === '/api/preload/cache-key' && [403, 404].includes(response.status)) throw new Stop(MESSAGES.key);
-  if (response.status === 403) throw new Stop(MESSAGES.denied);
+  // A refused study only by the one shared reading of a refusal: a DICOM 403 with an AUTH_* code (an archive the gate could
+  // not observe, a busy session check) is temporary, never a refused study.
+  if (response.status === 403 && Transport.refusal(response) === 'denied') throw new Stop(MESSAGES.denied);
   if (response.status === 404) throw new Stop(MESSAGES.missing);
   throw new Stop(MESSAGES.busy);
+}
+/** A JSON answer's body: a cut read is the network's failure, an unreadable body the server's - never the browser's store. */
+async function readJson(response, signal) {
+  let text;
+  try { text = await response.text(); } catch (_) { throw new Stop(signal?.aborted ? null : MESSAGES.network); }
+  try { return JSON.parse(text); } catch (_) { throw new Stop(MESSAGES.malformed); }
 }
 const recordBytes = record => record.bytes ?? record.ct.byteLength;
 async function inventory() {
@@ -133,13 +141,13 @@ function prerequisites() {
   const asked = (async () => {
     try {
       const response = await get('/api/preload/cache-key', { Accept: 'application/json' }, signal, bound);
-      const answer = await response.json();
+      const answer = await readJson(response, signal);
       const raw = Uint8Array.from(atob(answer.key), c => c.charCodeAt(0));
       if (raw.length !== 32 || !Number.isFinite(Date.parse(answer.serverTime)) || typeof answer.keyId !== 'string') { raw.fill(0); throw new Stop(MESSAGES.key); }
       const imported = await Disk.importKey(raw);
       if (mine !== epoch) return MESSAGES.key;
       const clockOffset = Date.parse(answer.serverTime) - Date.now();
-      const me = await (await get('/api/me', { Accept: 'application/json' }, signal, bound)).json();
+      const me = await readJson(await get('/api/me', { Accept: 'application/json' }, signal, bound), signal);
       if (mine !== epoch) return MESSAGES.key;
       await locked(async () => {
         if (mine !== epoch) return;
@@ -198,12 +206,12 @@ async function download(study, mine) {
   const scopes=[];
   for(const ref of study.examRefs||[]) {
     const query=new URLSearchParams({purpose:'current',reference:JSON.stringify(ref)});
-    const scope=await (await get('/api/studies/'+encodeURIComponent(ref.reportUid)+'/exam-scope?'+query,{},signal,bound)).json();
+    const scope=await readJson(await get('/api/studies/'+encodeURIComponent(ref.reportUid)+'/exam-scope?'+query,{},signal,bound),signal);
     const source=scope.sources?.find(source=>source.studyUid===uid);
     if(!source)throw new Stop(MESSAGES.changed);
     scopes.push(source.series);
   }
-  const list = objects(await (await get(`/dicom-web/studies/${uid}/metadata`, { Accept: 'application/dicom+json' }, signal, bound)).json())
+  const list = objects(await readJson(await get(`/dicom-web/studies/${uid}/metadata`, { Accept: 'application/dicom+json' }, signal, bound), signal))
     .filter(object=>!scopes.length||scopes.some(series=>series.mode==='all'||(series.mode==='include'?series.uids.includes(object.series):!series.uids.includes(object.series))));
   if (!live()) return;
   if (!list.length) throw new Stop(MESSAGES.empty);

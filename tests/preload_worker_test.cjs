@@ -293,6 +293,53 @@ test('a refused, missing or changing study fails with a reason and Retry; a brow
   assert.equal(bare.state().budget, null);
 });
 
+// F68: an image archive that does not answer is one temporary failure on every row, whichever request met it - the gate's
+// 403 with its AUTH_* code (metadata through nginx, a frame from the API), a busy session check, the exam scope's 503 before
+// or after the frames, the frame route's 5xx. Only a plain 403 is a refused study. A cut or unreadable JSON body is the
+// network's or the server's failure, never the browser's store. Once the archive answers, Retry reaches Ready.
+test('F68 an archive that does not answer fails every row as busy with Retry; only a plain 403 is refused', async () => {
+  const BUSY = /서버가 바쁘거나 응답하지 않았습니다/;
+  const code = value => ({ status: 403, headers: { 'X-KIN-Auth-Code': value } });
+  const uid = n => '1.2.840.9.6' + n;
+  let down = true;
+  const scopeAnswer = study => ({ sources: [{ studyUid: study, series: { mode: 'all', uids: [] } }] });
+  const scopeReads = new Map();
+  const cases = {
+    [uid(1)]: { metadata: () => new Response('', code('AUTH_SOURCE_UNAVAILABLE')), reason: BUSY },
+    [uid(2)]: { frame: () => new Response('', code('AUTH_SOURCE_UNAVAILABLE')), reason: BUSY },
+    [uid(3)]: { metadata: () => new Response('', code('AUTH_SESSION_BUSY')), reason: BUSY },
+    [uid(4)]: { scope: n => n === 1 ? new Response('', { status: 503 }) : null, reason: BUSY },
+    [uid(5)]: { scope: n => n === 2 ? new Response('', { status: 503 }) : null, reason: BUSY, partial: true },
+    [uid(6)]: { frame: () => new Response('', { status: 502 }), reason: BUSY },
+    [uid(7)]: { metadata: () => new Response('', { status: 403 }), reason: /거절/ },
+    [uid(8)]: { metadata: () => new Response(new ReadableStream({ start(c) { c.error(new TypeError('cut')); } })), reason: /서버에 연결하지 못했습니다/ },
+    [uid(9)]: { metadata: () => new Response('{not json'), reason: /해석하지 못했습니다/ },
+  };
+  const { connect } = boot({ respond: async url => {
+    const scope = /^\/api\/studies\/([0-9.]+)\/exam-scope/.exec(url);
+    if (scope) {
+      const study = scope[1].replace(/\.0$/, ''), n = (scopeReads.get(study) || 0) + 1; scopeReads.set(study, n);
+      return (down && cases[study]?.scope?.(n)) || new Response(JSON.stringify(scopeAnswer(study)));
+    }
+    const study = /\/studies\/([0-9.]+)\//.exec(url)[1], how = down ? cases[study] : null;
+    if (url.endsWith('/metadata')) return how?.metadata?.() || new Response(JSON.stringify(metadata(study)));
+    if (how?.frame) return how.frame();
+    return new Response(zlib.gzipSync(multipart('x')), { headers: { 'Content-Type': 'application/gzip', 'X-KIN-Part-Type': PART, 'X-KIN-Study-Revision': 'r' } });
+  } });
+  const list = connect();
+  list.send({ type: 'hello', role: 'list' });
+  const studies = Object.keys(cases).map(study => ({ uid: study,
+    ...(cases[study].scope ? { examRefs: [{ reportUid: study + '.0', key: 'exam-' + study }] } : {}) }));
+  list.send({ type: 'add', session: 'sess-1', studies });
+  await until(() => studies.every(s => statusOf(list, s.uid)?.status === 'Failed'), 'every row failed');
+  for (const [study, how] of Object.entries(cases)) assert.match(statusOf(list, study).reason, how.reason, study);
+  assert.equal(scopeReads.get(uid(5)), 2, 'the exam scope is asked again after the frames; its 503 is no Ready');
+  assert.equal(list.state().studies.reduce((n, s) => n + s.bytes, 0), 0, 'no frame of a failed row is kept');
+  down = false;
+  for (const study of Object.keys(cases)) list.send({ type: 'retry', uid: study });
+  await until(() => studies.every(s => statusOf(list, s.uid)?.status === 'Ready'), 'Ready after the archive answers');
+});
+
 test('a study that could not fit alone in the disk cap fails with the size reason, its bytes go, and the next study loads', async () => {
   // Synthetic cap includes ciphertext and manifest growth; A is too large and B fits.
   const random = n => require('node:crypto').randomBytes(n);

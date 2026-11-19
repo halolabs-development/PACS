@@ -147,10 +147,13 @@ test('a different revision at opening drops the held study and stays live', asyn
   assert.equal(sent.length, 2);
 });
 
+// F68: a 403 with an AUTH_* code is the gate's temporary refusal (an archive it could not observe, a busy session check),
+// read by the one shared reading (session-transport.js refusal()): the held copy stays. Only a plain 403 or a 404 drops it.
 test('a refused opening drops the held study; a server failure keeps it but shows nothing from memory', async () => {
-  for (const [status, dropped] of [[403, true], [404, true], [503, false]]) {
+  for (const [status, dropped, code] of [[403, true], [404, true], [503, false], [502, false], [403, false, 'AUTH_SOURCE_UNAVAILABLE'],
+    [403, false, 'AUTH_SESSION_BUSY']]) {
     const { fetch, sent, posted } = setup({ held: { [STUDY]: { revision: 'rev-now', session: 'sess-1' } },
-      network: async () => new Response('{}', { status, headers: { 'X-KIN-Study-Revision': 'rev-now' } }) });
+      network: async () => new Response('{}', { status, headers: { 'X-KIN-Study-Revision': 'rev-now', ...(code ? { 'X-KIN-Auth-Code': code } : {}) } }) });
     assert.equal((await fetch(frameUrl(1), bound())).status, status);
     assert.equal(posted.some(m => m.type === 'evict'), dropped, String(status));
     assert.ok(!posted.some(m => m.type === 'open'), String(status));

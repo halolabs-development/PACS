@@ -41,7 +41,7 @@ test('R1 R2 R3 R4 R5 R9 R15 R16 real encrypted storage, persistent profile, corr
       res.setHeader('X-KIN-Study-Revision','rev');res.setHeader('Content-Length',frame.body.length);return res.end(frame.body);
     }
     const name=path.posix.basename(req.url);
-    if(['preload-worker.js','preload-store.js','preload-disk.js','preload-queue.js'].includes(name)){res.setHeader('Content-Type','application/javascript; charset=utf-8');return res.end(fs.readFileSync(path.join(root,'worklist-v0/hpacs-lite',name)));}
+    if(['preload-worker.js','preload-store.js','preload-disk.js','preload-queue.js','session-transport.js'].includes(name)){res.setHeader('Content-Type','application/javascript; charset=utf-8');return res.end(fs.readFileSync(path.join(root,'worklist-v0/hpacs-lite',name)));}
     res.setHeader('Content-Type','text/html; charset=utf-8');res.end('<!doctype html><meta charset="utf-8"><title>Synthetic retention test</title><div id="panel"></div>');
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
