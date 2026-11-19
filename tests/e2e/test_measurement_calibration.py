@@ -10,6 +10,7 @@ from pynetdicom import AE
 from invariants_live import Fixture
 from test_measurement_panel import MeasurementPanelE2E, expect
 from viewer_precision_support import canvas_ready
+from viewer_tools import select_image_tool
 
 NO_SPACING = '원본에 픽셀 간격이 없습니다 · Calibration으로 화면 보정 후 잴 수 있습니다'
 SCREEN = '화면 보정 · 저장 안 됨'
@@ -370,14 +371,17 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
                     self.assertEqual(1, len(self.saved(f)))
                 if modality == 'DX':
                     # A screen calibration over an image with spacing of its own gives no value in the original's basis.
-                    p.evaluate("()=>document.querySelector('[aria-label=Calibration]').click()")
-                    self.drag(p, box['x'] + box['width'] * .3, box['y'] + box['height'] * .2, 120, 0)
+                    # A real toolbar press also dismisses the series-tracking prompt covering the top of the image.
+                    select_image_tool(p, 'Calibration')
+                    x = box['x'] + box['width'] * .3
+                    dx = box['width'] * .3
+                    self.drag(p, x, box['y'] + box['height'] * .2, dx, 0)
                     field = p.locator('input[type=text]:visible').first
                     expect(field).to_be_visible(); field.fill('30'); field.press('Enter')
                     p.wait_for_function('''()=>{const v=cornerstone.getEnabledElements()[0].viewport, id=v.getCurrentImageId();
                       return !!(cornerstone.metaData.get('calibratedPixelSpacing', id)?.type || cornerstone.cache.getImage(id)?.calibration?.type);}''')
                     self.choose(p, 'Length')
-                    self.drag(p, box['x'] + box['width'] * .3, box['y'] + box['height'] * .8, 120, 0)
+                    self.drag(p, x, box['y'] + box['height'] * .8, dx, 0)
                     expect(p.locator('#kin-viewer-history [role=status]')).to_contain_text('표시 간격과 원본 간격이 일치하지 않습니다')
                     p.wait_for_timeout(600)
                     self.assertEqual(1, len(self.saved(f)))
