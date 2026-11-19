@@ -401,10 +401,10 @@ def expected_rows(uid):
     # composite key, the UUID epoch, the BIGINT seq and the timestamp carry real values through the dump.
     rows['GatewayRetryRequest'] = [dict(studyUid=uid, epoch='00000000-0000-4000-8000-000000000c01', seq=7,
         requestedAt=STAMP)]
-    rows['UserFilter'] = [dict(id=1, owner='SYNTHETIC-reader-sub', name='SYNTHETIC saved search',
+    rows['UserFilter'] = [dict(id=1, owner='SYNTHETIC-reader', ownerSub='SYNTHETIC-reader-sub', name='SYNTHETIC saved search',
         mode='Radiology', isDefault=True, quick='SYNTHETIC', days=-1, cols='{}', sortKey='date',
         sortDir=-1, folder='SYNTHETIC/CT', description='SYNTHETIC follow-up', ordinal=7, createdAt=STAMP)]
-    rows['UserFilterCollection'] = [dict(owner='SYNTHETIC-reader-sub', revision=3, folders=[
+    rows['UserFilterCollection'] = [dict(owner='SYNTHETIC-reader', ownerSub='SYNTHETIC-reader-sub', revision=3, folders=[
         dict(path='SYNTHETIC/Empty', description='SYNTHETIC empty folder', ordinal=2)],
         shortcuts=[dict(id='first', name='SYNTHETIC shortcut', searchId='own:1'),
                    dict(id='missing', name='SYNTHETIC unavailable', searchId='shared:999')])]

@@ -387,6 +387,11 @@
       renderTemplateBodyparts();
       const body = $("#t-body").value;
       const words = $("#tpl-search").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const titles = new Set(), repeatedTitles = new Set();
+      for (const template of templates) {
+        if (titles.has(template.title)) repeatedTitles.add(template.title);
+        titles.add(template.title);
+      }
       const list = templates.filter(t => {
         const text = [t.title, t.shortcut, t.modality, t.bodypart].map(v => String(v ?? "").toLowerCase()).join(" ");
         const kinds = templateModalities(t.modality);
@@ -403,7 +408,7 @@
       $("#tplrows").innerHTML = list.map(t => `
         <tr data-i="${templates.indexOf(t)}" title="더블클릭: 판독문에 삽입${
           t.shortcut ? ` / 판독문에서 &quot;${esc(t.shortcut)}&quot; 입력 후 Tab` : ""} / 우클릭: 편집">
-          <td translate="no">${esc(t.title)}</td><td translate="no">${esc(t.shortcut)}</td><td>${esc(t.modality)}</td>
+          <td translate="no">${esc(t.title)}${repeatedTitles.has(t.title) && Number.isInteger(t.id) ? ` (#${t.id})` : ""}</td><td translate="no">${esc(t.shortcut)}</td><td>${esc(t.modality)}</td>
           <td><button type="button" class="chip" data-tpl-preview aria-label="상용구 미리보기: ${esc(t.title)}">View</button></td>
         </tr>`).join("") || `<tr><td class="empty" colspan="4">${templates.length ? "조건에 맞는 상용구가 없습니다" : "상용구 없음 — 우클릭해서 추가하세요"}</td></tr>`;
       updateTemplatePreview();
@@ -1912,11 +1917,14 @@
         saveBtn.disabled = true; kinWrite(status, kinSay('저장 중입니다…'));
         try {
           const at = work.capture('document');
+          const request = collectionBody({ ...snapshotFilter(), name });
           if (await filterWriteReady(undefined, at)) throw new Error('서버 계정으로 로그인한 뒤 저장할 수 있습니다.');
-          const saved = await api('POST', '/filters', { ...snapshotFilter(), name }, undefined, at);
+          const saved = await api('POST', '/filters', request, undefined, at);
           if (!work.admits(at)) throw new Error('작업 화면이 바뀌었습니다. 다시 시도하세요.');
           work.commit(at, () => acceptSavedFilter(saved, false));
           await reloadFolderSearches(at);
+          if (!work.admits(at) || request.collection !== filterCollection?.collection)
+            throw new Error('검색 모음이 변경되었습니다. 다시 선택해 주세요.');
           const list = shortcutDraft ?? storedShortcuts ?? [];
           let id = 1; while (list.some(s => s.id === String(id))) ++id;
           const existing = list.find(s => s.name === name);
@@ -14636,7 +14644,35 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     // 정렬(sortKey/sortDir)도 함께 저장한다 — 필터가 같아도 정렬이 다르면 다른 화면이다.
     // (HPACS도 2025년에야 "정렬을 적용하여 사용자 필터로 저장"을 넣었다)
     const saveFiltersLocal = () => { try { localStorage.setItem("kin-filters", JSON.stringify(userFilters)); } catch (e) {} };
+    const collectionSelect = $('#search-collection');
+    const collectionBody = body => collectionSelect && !collectionSelect.hidden
+      ? { ...body, collection: collectionSelect.value } : body;
+    function personalSearches(value) {
+      const all = validUserFilters(value);
+      const owners = [...new Set(all.map(f => f.owner))].sort();
+      const defaultOwners = new Set(all.filter(f => f.isDefault).map(f => f.owner));
+      const key = collectionSelect?.hidden === false ? collectionSelect.value
+        : owners.find(owner => defaultOwners.has(owner)) ?? owners[0];
+      return all.filter(f => f.owner === key);
+    }
+    collectionSelect?.addEventListener('change', () => {
+      if (shortcutBusy || shortcutDraft) {
+        collectionSelect.value = filterCollection?.collection || '';
+        shortcutStatus('바로가기 편집을 마친 뒤 모음을 변경하세요.');
+        return;
+      }
+      activeFilterName = null; folderAppliedSearch = null;
+      storedShortcuts = []; userFilters = []; renderChips();
+      void reloadFolderSearches();
+    });
     function acceptFilterCollection(snapshot) {
+      const groups = snapshot?.collections;
+      if (Array.isArray(groups)) {
+        const previous = collectionSelect.value;
+        snapshot = groups.find(group => group.collection === previous)
+          || groups.find(group => group.filters.some(f => f.isDefault))
+          || groups.find(group => group.filters.length) || groups[0];
+      }
       if (JSON.stringify(snapshot?.owner) !== JSON.stringify([sess.institution, sess.sub])
         || !Number.isInteger(snapshot.revision) || snapshot.revision < 0
         || !Array.isArray(snapshot.filters) || !Array.isArray(snapshot.folders) || !Array.isArray(snapshot.shortcuts)
@@ -14645,7 +14681,13 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           || !/^(own|shared):[1-9]\d*$/.test(s.searchId))
         || new Set(snapshot.shortcuts.map(s => s.id)).size !== snapshot.shortcuts.length)
         throw new Error('계정 또는 검색 모음 응답을 확인할 수 없습니다. 다시 불러오세요.');
-      if (filterCollection && snapshot.revision < filterCollection.revision) throw staleAnswer();
+      if (filterCollection && snapshot.collection === filterCollection.collection && snapshot.revision < filterCollection.revision) throw staleAnswer();
+      if (collectionSelect) {
+        const options = Array.isArray(groups) ? groups.map(group => new Option(group.collection, group.collection)) : [];
+        collectionSelect.replaceChildren(...options);
+        collectionSelect.hidden = options.length === 0;
+        if (options.length) collectionSelect.value = snapshot.collection;
+      }
       filterCollection = JSON.parse(JSON.stringify(snapshot));
       storedShortcuts = filterCollection.shortcuts;
       userFilters = validUserFilters(snapshot.filters);
@@ -14696,8 +14738,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         shortcutStatus('검색 모음 버전을 확인해야 저장할 수 있습니다. Filter Exams를 다시 열어 불러오세요.'); return;
       }
       const at = work.capture('document'), sent = JSON.stringify(shortcutDraft);
-      const body = { expectedOwner: [...filterCollection.owner], revision: filterCollection.revision,
-        command: { action: 'replace-shortcuts', shortcuts: JSON.parse(sent) } };
+      const body = collectionBody({ expectedOwner: [...filterCollection.owner], revision: filterCollection.revision,
+        command: { action: 'replace-shortcuts', shortcuts: JSON.parse(sent) } });
       shortcutBusy = true; ++filterReadSequence; shortcutStatus('바로가기를 저장 중입니다.');
       let saved = false;
       try {
@@ -14772,6 +14814,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       return false;
     }
     function acceptSavedFilter(saved, local) {
+      if (!local && collectionSelect?.hidden === false && saved.owner !== collectionSelect.value) return;
       const next = userFilters.filter(f => f.name !== saved.name).map(f => saved.isDefault ? { ...f, isDefault: false } : f);
       // Keep the existing item's position when editing it.
       const index = userFilters.findIndex(f => f.name === saved.name);
@@ -14799,24 +14842,25 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           throw new Error('계정 또는 검색 모음 응답을 확인할 수 없습니다. 다시 로그인하세요.');
         if (!work.commit(at, () => { acceptFilterCollection(snapshot); shortcutStatus(''); })) throw staleAnswer();
         shortcutStatus('');
-        return snapshot;
+        return filterCollection;
         } catch (error) {
           work.commit(at, () => { if (sequence !== filterReadSequence) return; filterCollection = null; shortcutStatus('검색 모음을 읽지 못했습니다. 다시 불러오세요. ' + error.message); });
           throw error;
         }
       },
       async writeFolders(body, signal, at = work.capture("document")) {
+        const request = collectionBody(body);
         ++filterReadSequence;
         work.commit(at, () => { filterCollection = null; shortcutStatus('검색 모음을 저장 중입니다.'); });
         try {
         if (await filterWriteReady(signal, at)) throw new Error('폴더 관리는 서버 계정으로 로그인한 뒤 사용할 수 있습니다.');
-        const snapshot = await api('POST', '/filter-folders', body, signal, at);
+        const snapshot = await api('POST', '/filter-folders', request, signal, at);
         if (!work.admits(at)) throw staleAnswer();
         if (JSON.stringify(snapshot?.owner) !== JSON.stringify([sess.institution, sess.sub]) || !Array.isArray(snapshot.filters) || !Array.isArray(snapshot.folders))
           throw new Error('응답을 확인할 수 없습니다. 검색 모음을 다시 불러오세요.');
         if (!work.commit(at, () => { ++filterReadSequence; acceptFilterCollection(snapshot); })) throw staleAnswer();
         shortcutStatus('');
-        return snapshot;
+        return filterCollection;
         } catch (error) {
           work.commit(at, () => { filterCollection = null; shortcutStatus('검색 모음을 저장하지 못했습니다. 다시 불러오세요. ' + error.message); });
           throw error;
@@ -14839,22 +14883,24 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         }
       },
       async writeShared(body, signal, at = work.capture("document")) {
+        const request = collectionBody(body);
         ++sharedFilterReadSequence;
         if (await filterWriteReady(signal, at)) throw new Error('기관 검색은 서버 계정으로 로그인한 뒤 사용할 수 있습니다.');
-        const snapshot = await api('POST', '/shared-filters', body, signal, at);
+        const snapshot = await api('POST', '/shared-filters', request, signal, at);
         if (!work.admits(at)) throw staleAnswer();
         if (JSON.stringify(snapshot?.owner) !== JSON.stringify([sess.institution, sess.sub])) throw new Error('응답 계정을 확인할 수 없습니다. 공유 목록을 다시 불러오세요.');
         work.commit(at, () => { ++sharedFilterReadSequence; sharedSearches = validUserFilters(snapshot.filters); renderChips(); render(); });
         return snapshot;
       },
       async copyShared(body, signal, at = work.capture("document")) {
+        const request = collectionBody(body);
         if (await filterWriteReady(signal, at)) throw new Error('기관 검색은 서버 계정으로 로그인한 뒤 사용할 수 있습니다.');
-        const snapshot = await api('POST', '/shared-filters/copy', body, signal, at);
+        const snapshot = await api('POST', '/shared-filters/copy', request, signal, at);
         if (!work.admits(at)) throw staleAnswer();
         if (JSON.stringify(snapshot?.owner) !== JSON.stringify([sess.institution, sess.sub]) || !Array.isArray(snapshot.filters))
           throw new Error('응답을 확인할 수 없습니다. 개인 폴더를 다시 불러오세요.');
         if (!work.commit(at, () => { ++filterReadSequence; acceptFilterCollection(snapshot); })) throw staleAnswer();
-        return snapshot;
+        return filterCollection;
       },
       restoreFocus(opener) {
         if (opener?.isConnected && !opener.disabled && !opener.closest('[hidden]')) opener.focus();
@@ -14865,8 +14911,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       async save(filter, signal, at = work.capture("document")) {
         // Capture the transport before the request: a later disconnect must never
         // turn a completed account save into browser-local preference data.
+        const request = collectionBody(filter);
         const local = await filterWriteReady(signal, at);
-        const saved = local ? filter : await api('POST', '/filters', filter, signal, at);
+        const saved = local ? filter : await api('POST', '/filters', request, signal, at);
         if (!work.admits(at)) throw staleAnswer();
         if (!work.commit(at, () => acceptSavedFilter(saved, local))) throw staleAnswer();
         if (!local) await reloadFolderSearches(at);
@@ -14876,7 +14923,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         const local = await filterWriteReady(signal, at);
         if (!local) await api('DELETE', `/filters/${filter.id}`, undefined, signal, at);
         if (!work.admits(at)) throw staleAnswer();
-        const next = userFilters.filter(f => f.name !== filter.name);
+        const next = userFilters.filter(f => local ? f.name !== filter.name : f.id !== filter.id);
         if (!work.commit(at, () => {
           if (local) localStorage.setItem('kin-filters', JSON.stringify(next));
           userFilters = next; renderChips();
@@ -14889,7 +14936,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           const p = await api('GET', '/prefs', undefined, signal, at);
           if (!work.admits(at)) throw staleAnswer();
           if (!Array.isArray(p?.filters)) throw new Error('저장 검색 목록을 불러오지 못했습니다. 다시 시도하세요.');
-          if (!work.commit(at, () => { userFilters = validUserFilters(p.filters); renderChips(); })) throw staleAnswer();
+          if (!work.commit(at, () => { userFilters = personalSearches(p.filters); renderChips(); })) throw staleAnswer();
         }
       },
     });
@@ -14947,7 +14994,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           toast("환경설정 응답이 올바르지 않아 이전 값을 유지합니다", "err");
           return;
         }
-        userFilters = validUserFilters(p.filters); templates = p.templates;
+        userFilters = personalSearches(p.filters); templates = p.templates;
         renderChips(); renderTemplates();
       });
       if (work.admits(at)) await reloadFolderSearches(at);
@@ -15024,6 +15071,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       alignWorklistFolder(null);
       renderHeads(); render();
     }
+
 
 
     $("#heads").addEventListener("click", e => {
@@ -15506,6 +15554,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       savedFilterManager.reset();
       worklistFolders?.destroy(); worklistFolders = null;
       folderLoadState = 'unknown'; folderAppliedSearch = null; filterCollection = null;
+      if (collectionSelect) { collectionSelect.hidden = true; collectionSelect.replaceChildren(); }
       sharedSearches = []; storedShortcuts = []; shortcutDraft = null; shortcutBusy = false; ++filterReadSequence; ++sharedFilterReadSequence;
       userFilters = []; activeFilterName = null;
       autoPreload?.end(); autoPreload = null;   // FC-073: the More menu keeps no saved search of the ended session
@@ -15651,7 +15700,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
        * 그걸 눌러 저장하면 남의 필터 이름으로 내 화면이 만들어진다.
        * 계정에 붙인다고 해놓고 브라우저에 남은 것을 안 지우면 반쪽이다.
        */
-      userFilters = validUserFilters(b.filters);
+      userFilters = personalSearches(b.filters);
       mountWorklistFolders();
       void reloadFolderSearches();
       templates = Array.isArray(b.templates) ? b.templates : [];

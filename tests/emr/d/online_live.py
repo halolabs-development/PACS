@@ -74,7 +74,7 @@ class ReportCommitPg(pg.PgLedgerFixture):
         else:
             command = [os.environ['KIN_B2R_NODE'], '--test', str(ROOT / 'tests/emr/d' / self.script)]
         print('Report commit HTTP raw logs:', logs)
-        self.run_node_case(command, logs, env={**os.environ, **env})
+        self.run_node_case(command, logs, env={**os.environ, **env}, timeout=getattr(self, 'node_timeout', 120))
 
 
 class ImageReportPg(ReportCommitPg):
@@ -83,7 +83,9 @@ class ImageReportPg(ReportCommitPg):
 
 
 class OwnerKeysPg(ReportCommitPg):
-    # Whose rows are an account's: the owner-key migration's fill over rows shaped as before it, on PostgreSQL.
+    # Each history case installs every predecessor into its own database before upgrading.
+    disk_storage = True
+    node_timeout = 300
     script = 'owner_keys_pg_test.cjs'
 
 

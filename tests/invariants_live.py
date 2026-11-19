@@ -1064,7 +1064,7 @@ class LiveStack:
         if not re.fullmatch(UUID_RE, sub):
             raise RuntimeError("Invalid temporary account id")
         for table in ('ReadingTemplate', 'UserFilter', 'UserFilterCollection'):
-            if psql(f'SELECT count(*) FROM "{table}" WHERE owner=\'{sub}\'') != ["0"]:
+            if psql(f'''SELECT count(*) FROM "{table}" t WHERE owner='{sub}' OR to_jsonb(t)->>'ownerSub'='{sub}' ''') != ["0"]:
                 raise RuntimeError("Temporary settings account already has data; refusing reuse")
         self.settings_accounts.add(sub)
 
@@ -1087,11 +1087,13 @@ class LiveStack:
         # Both the historical and current API images run against synthetic fixtures.
         for owner in sorted(self.template_owners | self.settings_accounts):
             for table in ('ReadingTemplate', 'UserFilter', 'UserFilterCollection'):
-                rows = psql(f'SELECT to_jsonb(t)::text FROM "{table}" t WHERE owner=\'{owner}\'')
+                criterion = (f"to_jsonb(t)->>'ownerSub'='{owner}'" if owner in self.settings_accounts
+                             else f"owner='{owner}' AND to_jsonb(t)->>'ownerSub' IS NULL")
+                rows = psql(f'SELECT to_jsonb(t)::text FROM "{table}" t WHERE {criterion}')
                 for raw in rows:
                     saved = "'" + raw.replace("'", "''") + "'::jsonb"
-                    psql(f'DELETE FROM "{table}" t WHERE owner=\'{owner}\' AND to_jsonb(t)={saved}')
-                if psql(f'SELECT count(*) FROM "{table}" WHERE owner=\'{owner}\'') != ["0"]:
+                    psql(f'DELETE FROM "{table}" t WHERE {criterion} AND to_jsonb(t)={saved}')
+                if psql(f'SELECT count(*) FROM "{table}" t WHERE {criterion}') != ["0"]:
                     raise RuntimeError("Temporary saved searches changed during cleanup")
         self.template_owners.clear()
         self.settings_accounts.clear()

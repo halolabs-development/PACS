@@ -502,7 +502,7 @@ model ReportDraft {
   /// Immutable second part of the [uid, author] record id.
   author         String
   /// The account (sub) whose draft this is. Whose draft it is is judged by this, never by `author`; NULL = an older row
-  /// no member could be found for (it stays, and is nobody's).
+  /// whose ownership could not be established at migration time.
   authorSub      String?
   /// Login at first write. A legacy row stores its exact display name in author.
   authorLogin    String?
@@ -765,9 +765,11 @@ model Order {
 /// 사용자 필터로 저장" 기능을 넣었다 — 필터만 같고 정렬이 다르면 다른 화면이다.
 model UserFilterCollection {
   owner    String @id
+  ownerSub String?
   revision Int    @default(0)
   folders  Json   @default("[]")
   shortcuts Json @default("[]")
+  @@index([ownerSub])
 }
 
 model SharedFilterLibrary {
@@ -781,7 +783,8 @@ model SharedFilterLibrary {
 
 model UserFilter {
   id        Int      @id @default(autoincrement())
-  owner     String                          // 소유 계정의 sub
+  owner     String
+  ownerSub String?
   name      String
   mode      String   @default("Radiology")  // Radiology / Technician
   isDefault Boolean  @default(false)
@@ -797,6 +800,7 @@ model UserFilter {
 
   @@unique([owner, name])
   @@index([owner])
+  @@index([ownerSub])
 }
 
 /// 판독 상용구. 매뉴얼이 "Upload/Download **My** Template File"이라고 부르는 그것 —
@@ -806,6 +810,7 @@ model UserFilter {
 model ReadingTemplate {
   id             Int      @id @default(autoincrement())
   owner          String
+  ownerSub String?
   title          String
   shortcut       String   @default("")
   modality       String   @default("")   // 선택된 검사와 같은 유형만 보이게 하는 필터용
@@ -817,6 +822,7 @@ model ReadingTemplate {
   createdAt      DateTime @default(now())
 
   @@index([owner])
+  @@index([ownerSub])
 }
 
 /// 감사 로그. 의료영상 시스템에서 "누가 언제 무엇을 바꿨는가"는 기능이 아니라 요건이다.

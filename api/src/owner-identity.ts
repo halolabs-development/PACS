@@ -4,7 +4,7 @@
  *
  * The login email can change (an administrator corrects it), and an old email can later belong to another account. So
  * every "is this mine" judgement compares the stored account id with the caller's, and a row that names no account (an
- * older row the member table could not resolve when the account ids were filled in) is nobody's - it is kept, and never
+ * older row whose historical owner could not be established) is nobody's - it is kept, and never
  * handed to whoever has that email now.
  *
  * The email stays where it is written: as the shown name of a holder or a writer, in history and signed records, and as
@@ -47,7 +47,7 @@ export function ownDraftsWhere(caller: Account): { authorSub: string | { in: str
   return typeof caller.sub === 'string' && caller.sub ? { authorSub: caller.sub } : { authorSub: { in: [] } };
 }
 
-/** The owner value of an account's saved searches, folder collection and reading templates: its account id. */
+/** Require an authenticated subject for private settings. */
 export function accountOwner(caller: Account): string {
   if (typeof caller.sub !== 'string' || !caller.sub) throw new ForbiddenException('개인 계정으로 로그인하세요');
   return caller.sub;

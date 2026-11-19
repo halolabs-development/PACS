@@ -455,11 +455,14 @@
         saveBtn.disabled = true; kinWrite(status, kinSay('저장 중입니다…'));
         try {
           const at = work.capture('document');
+          const request = collectionBody({ ...snapshotFilter(), name });
           if (await filterWriteReady(undefined, at)) throw new Error('서버 계정으로 로그인한 뒤 저장할 수 있습니다.');
-          const saved = await api('POST', '/filters', { ...snapshotFilter(), name }, undefined, at);
+          const saved = await api('POST', '/filters', request, undefined, at);
           if (!work.admits(at)) throw new Error('작업 화면이 바뀌었습니다. 다시 시도하세요.');
           work.commit(at, () => acceptSavedFilter(saved, false));
           await reloadFolderSearches(at);
+          if (!work.admits(at) || request.collection !== filterCollection?.collection)
+            throw new Error('검색 모음이 변경되었습니다. 다시 선택해 주세요.');
           const list = shortcutDraft ?? storedShortcuts ?? [];
           let id = 1; while (list.some(s => s.id === String(id))) ++id;
           const existing = list.find(s => s.name === name);

@@ -145,6 +145,36 @@ class WorklistFoldersDOM(unittest.TestCase):
         expect(self.page.locator('#worklist-folders-panel')).to_have_attribute('open', '')
         expect(self.page.get_by_role('button', name='All Studies (6)', exact=True)).to_be_visible()
 
+    def test_same_name_searches_open_the_conditions_of_the_selected_collection(self):
+        groups = []
+        for i, owner in enumerate(('earlier-login', 'current-login'), start=1):
+            search = dict(id=i, owner=owner, name='Chest', mode='Radiology', quick='SYN-'+str(i), days=-1, cols={}, isDefault=True)
+            self.site.filters.append(search)
+            groups.append(dict(self.site.collection(), collection=owner, filters=[search]))
+        groups.sort(key=lambda group: group['collection'])
+        chosen = groups[-1]
+        def collections():
+            edited = dict(chosen, revision=self.site.collection_revision, shortcuts=self.site.shortcuts)
+            return dict(groups[0], collections=[groups[0], edited])
+        self.site.collection = collections
+        self.page.goto(auth.MAIN_URL)
+        expect(self.page.locator('#quick')).to_have_value(groups[0]['filters'][0]['quick'])
+        expect(self.page.locator('#rows tr[data-uid]')).to_have_count(1)
+        expect(self.page.get_by_role('row').filter(has_text='SYN-2')).to_have_count(1)
+        for group in groups:
+            self.menu('filters')
+            self.page.get_by_role('combobox', name='Saved Search Collection').select_option(group['collection'])
+            self.page.locator('#managefilters').click()
+            self.page.locator('#sfm-list').get_by_role('button', name='Default Search: Chest', exact=True).click()
+            expect(self.page.get_by_role('dialog').get_by_label('Patient ID or Name', exact=True)).to_have_value(group['filters'][0]['quick'])
+            self.page.locator('#sfm-close').click()
+        with self.page.expect_request(lambda r: r.method == 'POST' and r.url.endswith('/api/filters')) as save:
+            self.save_shortcut('Chest')
+        expect(self.page.locator('#shortcuts-status')).to_contain_text('저장했습니다')
+        self.assertEqual(save.value.post_data_json['collection'], chosen['collection'])
+        self.assertEqual(self.site.shortcut_writes[-1]['collection'], chosen['collection'])
+        self.assertEqual(self.site.shortcuts[0]['searchId'], 'own:' + str(chosen['filters'][0]['id']))
+
     def test_empty_list_returns_keyboard_focus_to_visible_search(self):
         """REQ-D01-ROW-KEYBOARD: disappearing rows retain a visible keyboard destination."""
         self.open()
