@@ -187,6 +187,7 @@ html,
   line-height: 1.5;
   letter-spacing: .04em;
   text-align: center;
+  word-break: keep-all;
   pointer-events: none;
 }
 
@@ -222,8 +223,10 @@ html,
   padding-right: 96px;
 }
 
+/* Korean words stay whole; only an unbroken string (a long address) breaks anywhere. */
 #kc-attempted-username,
 h1#kc-page-title {
+  word-break: keep-all;
   overflow-wrap: anywhere;
 }
 
@@ -827,6 +830,10 @@ h1#kc-page-title {
 
   #kc-locale {
     top: 0;
+  }
+
+  .login-pf-page .card-pf:has(#kc-locale) .login-pf-header {
+    padding-right: 72px;
   }
 
   .kin-legal-links {
