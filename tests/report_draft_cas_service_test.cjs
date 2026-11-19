@@ -1158,9 +1158,11 @@ test('D11 tombstones do not block the removal of a study; the same UID created a
     const late = await w.send('late', 'put', { as: A, uid, body: request('put', A, { token, head: 0, mark: 'late' })[1] });
     assert.deepEqual(brief(late), { ok: false, status: 409, code: 'REPORT_DRAFT_CONFLICT' }, token);
   }
-  assert.equal(await w.row(uid, A), null);
-  const fresh = await w.send('X', 'put', { as: A, uid, body: request('put', A, { token: `${next}:0`, head: 0, mark: 'X' })[1] });
-  assert.deepEqual([fresh.ok, fresh.body.revision], [true, `${next}:1`]);
+  // The kept tombstone is still empty and keeps its revision; the new epoch is what refuses every old boundary above.
+  const kept = await w.row(uid, A);
+  assert.deepEqual([kept.present, kept.findings], [false, '']);
+  const fresh = await w.send('X', 'put', { as: A, uid, body: request('put', A, { token: `${next}:${kept.revision}`, head: 0, mark: 'X' })[1] });
+  assert.deepEqual([fresh.ok, fresh.body.revision], [true, `${next}:${kept.revision + 1}`]);
 });
 
 // ── REQ-18: bounds ──
