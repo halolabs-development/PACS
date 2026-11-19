@@ -38,6 +38,7 @@ function fixture({states=[A,B,C,D,E,F].map(uid=>state(uid)),groups=[],members=[]
     $executeRaw:async()=>0,
     $queryRaw:async(strings,...values)=>{
       const sql=strings.join('?');
+      if (sql.startsWith('SELECT draft_account_author(')) return [{ author: 'account/' + values[0] }];
       if(sql.includes('FROM "StudyState"')&&sql.includes('FOR UPDATE')){
         const uids=values[0]?.values??values;db.locks.push({uids:[...uids],tx:db.tx});
         if(onLock)await onLock(db,uids);

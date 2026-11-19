@@ -1,10 +1,12 @@
 import { ServiceUnavailableException } from '@nestjs/common';
-import { draftRecordOf } from '../owner-identity';
 import { randomUUID } from 'node:crypto';
 import type { LocalReadTarget } from '../emr-contract/access-event';
 import type { SourceIdentity } from '../study-access.service';
 import { LocalReadResponse, LocalReadSource } from './local-read';
 import { LOCAL_READ_UNAVAILABLE } from './response-lifecycle';
+
+/** Captures the stored author with the returned draft snapshot so its viewing record survives a change of login. */
+export const draftRecordOf = new WeakMap<object, string>();
 
 const absent = Object.freeze({ status: 'unresolved', reason: 'not-observed' } as const);
 const observed = (value: string | number | null | undefined) => value === null || value === undefined || value === ''

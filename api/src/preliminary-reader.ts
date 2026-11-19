@@ -1,4 +1,4 @@
-import { sameAccount } from './owner-identity';
+import { sameAccount } from './account-identity';
 
 /**
  * The designated author and reviewer of a Preliminary report are the accounts stored (preDocSub, preReviewerSub); the

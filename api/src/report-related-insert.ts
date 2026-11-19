@@ -8,7 +8,7 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import type { DraftOwner } from './pacs/values';
-import { sameAccount } from './owner-identity';
+import { sameAccount } from './account-identity';
 
 /** 요청 digest의 첫 칸. 직렬화 규칙을 바꾸면 이 값도 바꾼다 — 옛 영수증과 새 요청이 우연히 같은 digest가 되지 않게. */
 export const RELATED_INSERT_SCHEMA = 'related-insert-v1';

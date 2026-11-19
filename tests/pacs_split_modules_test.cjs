@@ -232,6 +232,7 @@ function prismaDouble() {
     const sql = strings.join('?').replace(/\s+/g, ' ').trim();
     store.raw.push({ client: label, sql, params });
     fault('$raw', sql, label);
+    if (sql.startsWith('SELECT draft_account_author(')) return [{ author: 'account/' + params[0] }];
     if (sql.includes('pg_advisory_xact_lock') && typeof params[0] === 'string'
         && params[0].startsWith('["emr-fixed-record",')) {
       assert.notEqual(label, 'root');
@@ -359,6 +360,7 @@ const TECH_A = member('tech-a', INST_A, ['technician']), ADMIN_A = member('admin
 const RAD_B = member('rad-b', INST_B, ['radiologist']), TECH_B = member('tech-b', INST_B, ['technician']), ADMIN_B = member('admin-b', INST_B, ['admin']);
 const CLIN_A = member('clin-a', INST_A, ['clinician']);
 const GATEWAY_A = { kind: 'gateway', sub: 'syn-gw-a', actor: 'syn-gw-a', roles: ['gateway'], institution: INST_A };
+const storedAuthor = (w, uid, c) => w.db.rows('reportDraft').find(row => row.uid === uid && row.authorSub === c.sub).author;
 const ownerOf = c => ({ institution: c.institution, sub: c.sub, author: c.actor });
 const WRITE_FACTS = { actor: { identity: { id: '00000000-0000-4000-8000-0000000000c1', issuer: 'https://idp.synthetic.test', subject: TECH_A.sub },
   kind: 'member', roles: TECH_A.roles, institutionId: INST_A, signingRegistrationId: null }, requestId: 'syn-request-study',
@@ -883,7 +885,7 @@ test('SPLIT-09 a draft write is kept only on the boundary it saw, under a live s
   assert.deepEqual([discarded.revision, discarded.present, discarded.state.draft], [`${epoch}:3`, false, null]);
   assert.equal(mine().revision, 3);
   // 의료법 제23조④: the discard is a 수정 of this author's draft. No report is stored yet, so the answer provides none.
-  const row = JSON.stringify([s.uid, `${RAD_A.actor}#${RAD_A.sub}`]);
+  const row = JSON.stringify([s.uid, storedAuthor(w, s.uid, RAD_A)]);
   assert.deepEqual(actsOf(w.records, 'DELETE studies/:uid/draft'), [['수정', 'discard', 'private-draft', row, `${epoch}:3`]]);
 });
 
@@ -897,7 +899,7 @@ test('SPLIT-09b a discard answering a stored report records the 열람 of that r
   const out = await w.draft.discardDraft(s.uid, { expectedOwner: ownerOf(RAD_A), expectedRevision: `${epoch}:1` }, RAD_A, null);
   assert.deepEqual([out.state.version, out.state.findings, out.state.draft], [2, 'approved text', null]);
   assert.deepEqual(actsOf(w.records, 'DELETE studies/:uid/draft'), [
-    ['수정', 'discard', 'private-draft', JSON.stringify([s.uid, `${RAD_A.actor}#${RAD_A.sub}`]), `${epoch}:2`],
+    ['수정', 'discard', 'private-draft', JSON.stringify([s.uid, storedAuthor(w, s.uid, RAD_A)]), `${epoch}:2`],
     ['열람', 'provide-prepared', 'report-version', s.uid, '2']]);
 
   // A preliminary report another radiologist may not read: the answer carries no body, so no report read is recorded.
@@ -907,7 +909,7 @@ test('SPLIT-09b a discard answering a stored report records the 열람 of that r
   const hidden = await w.draft.discardDraft(p.uid, { expectedOwner: ownerOf(RAD_A), expectedRevision: `${p.draftEpoch}:0` }, RAD_A, null);
   assert.deepEqual([hidden.state.prelimHidden, hidden.state.findings], [true, '']);
   assert.deepEqual(actsOf(w.records.slice(before), 'DELETE studies/:uid/draft'),
-    [['수정', 'discard', 'private-draft', JSON.stringify([p.uid, `${RAD_A.actor}#${RAD_A.sub}`]), `${p.draftEpoch}:1`]]);
+    [['수정', 'discard', 'private-draft', JSON.stringify([p.uid, storedAuthor(w, p.uid, RAD_A)]), `${p.draftEpoch}:1`]]);
 });
 
 // ── SPLIT-10 the administrator's forced discard ──
@@ -1709,20 +1711,22 @@ test('OWNER-01 after its email changes the same account keeps its draft, its sav
   await refused(() => w.commit.commitReport(held.uid, commitBody(Y, 'save', held.draftEpoch, 0, 0, { findings: 'over it' }), Y, null), 409, 'REPORT_HELD');
   // their own first draft on a study the other account drafted is a row of their own
   await w.draft.putReport(beside.uid, draftBody(Y, beside.draftEpoch, 0, { findings: 'SYN Y DRAFT' }), Y, null);
+  const xKey = storedAuthor(w, drafted.uid, X), yKey = storedAuthor(w, beside.uid, Y);
+  assert.notEqual(xKey, yKey);
   const besideRows = w.db.rows('reportDraft').filter(d => d.uid === beside.uid).map(d => [d.author, d.authorSub, d.findings]).sort();
-  assert.deepEqual(besideRows, [[`${X.actor}#${X.sub}`, X.sub, 'SYN X BESIDE'], [`${Y.actor}#${Y.sub}`, Y.sub, 'SYN Y DRAFT']]);
+  assert.deepEqual(besideRows, [[xKey, X.sub, 'SYN X BESIDE'], [yKey, Y.sub, 'SYN Y DRAFT']].sort());
 
-  // the same account under its new email: its draft (same row, same record id [uid, old email]), saved text, hold and versions
+  // the same account under its new email: its draft (same row, same record id), saved text, hold and versions
   assert.equal((await stateOf(X2, drafted)).draft.findings, 'SYN X DRAFT');
   // the viewing record of that bootstrap names the draft row it read, never [uid, new email]
   const { bootstrapRead } = require('/app/dist/emr-viewing/consumer-read');
   const viewed = bootstrapRead(await w.worklist.bootstrap(X2), X2.actor, INST_A).sources
     .filter(source => source.target.kind === 'private-draft' && source.target.studyId.value === drafted.uid);
-  assert.deepEqual(viewed.map(source => source.target.recordId.value), [JSON.stringify([drafted.uid, `${X.actor}#${X.sub}`])]);
+  assert.deepEqual(viewed.map(source => source.target.recordId.value), [JSON.stringify([drafted.uid, xKey])]);
   assert.equal((await stateOf(X2, beside)).draft.findings, 'SYN X BESIDE');
   await w.draft.putReport(drafted.uid, draftBody(X2, drafted.draftEpoch, 1, { findings: 'SYN X DRAFT 2' }), X2, null);
   assert.deepEqual(w.db.rows('reportDraft').filter(d => d.uid === drafted.uid).map(d => [d.author, d.authorSub, d.revision, d.findings]),
-    [[`${X.actor}#${X.sub}`, X.sub, 2, 'SYN X DRAFT 2']]);
+    [[xKey, X.sub, 2, 'SYN X DRAFT 2']]);
   const mineSaved = await stateOf(X2, saved);
   assert.deepEqual([mineSaved.findings, mineSaved.bodyLock, mineSaved.savedBy], ['SYN X SAVED', null, NEW_EMAIL]);
   const ownVersion = readBody(await w.evidence.versions(saved.uid, X2))[0];
@@ -1779,14 +1783,15 @@ test('OWNER-04 a draft record id is never issued to another account: a study del
   const s = w.study();
   w.orthanc.rows = [qido(s.uid, 'SYN A HOSPITAL')];
   await w.draft.putReport(s.uid, draftBody(X, s.draftEpoch, 0, { findings: 'SYN X DRAFT' }), X, null);
+  const kept = storedAuthor(w, s.uid, X);
   await w.draft.discardDraft(s.uid, { expectedOwner: ownerOf(X), expectedRevision: `${s.draftEpoch}:1` }, X, null);
   await w.workflow(workflow => w.studyState.removeState(s.uid, TECH_A, workflow));
-  assert.deepEqual(w.db.rows('reportDraft').filter(d => d.uid === s.uid).map(d => [d.author, d.authorSub, d.present]), [[`${X.actor}#${X.sub}`, X.sub, false]],
+  assert.deepEqual(w.db.rows('reportDraft').filter(d => d.uid === s.uid).map(d => [d.author, d.authorSub, d.present]), [[kept, X.sub, false]],
     'the emptied row stays with its record id');
   const again = w.study({ uid: s.uid });
   await w.draft.putReport(s.uid, draftBody(Y, again.draftEpoch, 0, { findings: 'SYN Y DRAFT' }), Y, null);
-  assert.deepEqual(w.db.rows('reportDraft').filter(d => d.uid === s.uid && d.present).map(d => [d.author, d.authorSub]),
-    [[`${RAD_A.actor}#${Y.sub}`, Y.sub]], 'the account that now has the old email gets a record id of its own');
+  assert.deepEqual(w.db.rows('reportDraft').filter(d => d.uid === s.uid && d.present).map(d => d.authorSub), [Y.sub]);
+  assert.notEqual(storedAuthor(w, s.uid, Y), kept);
 });
 
 test('first empty view fixes the draft record id through rename, first save, and retention', async () => {
@@ -1795,30 +1800,37 @@ test('first empty view fixes the draft record id through rename, first save, and
   const s = w.study();
   const x = renamedAs(RAD_A, `old#${RAD_A.sub}@synthetic.test`);
   const renamed = renamedAs(x, NEW_EMAIL), next = renamedAs(tookOldEmail(), x.actor);
-  const recordId = JSON.stringify([s.uid, `${x.actor}#${x.sub}`]);
   await w.draft.readDraft(s.uid, x);
+  const recordId = actsOf(w.records, 'GET studies/:uid/draft').at(-1)[3];
+  assert.ok(!recordId.includes(x.actor));
+  assert.equal(w.db.rows('reportDraft').length, 0);
   await w.draft.putReport(s.uid, draftBody(renamed, s.draftEpoch, 0, { findings: 'SYN saved' }), renamed, null);
   await w.draft.readDraft(s.uid, renamed);
   assert.deepEqual(actsOf(w.records, 'GET studies/:uid/draft').map(entry => entry[3]), [recordId, recordId]);
   assert.equal((await w.draft.readDraft(s.uid, next)).present, false);
   const nextId = actsOf(w.records, 'GET studies/:uid/draft').at(-1)[3];
-  assert.equal(nextId, JSON.stringify([s.uid, `${next.actor}#${next.sub}`]));
+  assert.notEqual(nextId, recordId);
+  await w.draft.putReport(s.uid, draftBody(next, s.draftEpoch, 0, { findings: 'SYN next' }), next, null);
+  assert.deepEqual(w.db.rows('reportDraft').map(d => JSON.stringify([d.uid, d.author])), [recordId, nextId]);
   await w.draft.discardDraft(s.uid, { expectedOwner: ownerOf(renamed), expectedRevision: `${s.draftEpoch}:1` }, renamed, null);
   const end = w.db.rows('reportDraftPurposeEnd')[0];
   assert.equal(JSON.stringify([end.uid, end.author]), recordId);
   await w.draft.putReport(s.uid, draftBody(renamed, s.draftEpoch, 2, { findings: 'SYN again' }), renamed, null);
   await w.draft.forceDiscardDrafts(s.uid, { expectedOwner: ownerOf(ADMIN_A), expectedEpoch: s.draftEpoch }, ADMIN_A, null);
-  assert.equal(w.db.rows('reportVersion').find(v => v.uid === s.uid).author, x.actor);
+  assert.equal(w.db.rows('reportVersion').find(v => v.findings === 'SYN again').author, renamed.actor);
+  assert.equal(w.db.rows('reportVersion').find(v => v.findings === 'SYN next').author, next.actor);
 });
 
-test('a literal legacy login ending with the new suffix keeps both its id and full display name', async () => {
+test('a literal legacy login ending in #sub keeps its id and full display name', async () => {
   const w = world(), s = w.study();
   const x = RAD_A, legacyName = `${x.actor}#${x.sub}`;
   w.db.seed('reportDraft', { uid: s.uid, author: legacyName, authorSub: null, findings: 'legacy', conclusion: '',
     recommendation: '', baseVersion: 0, revision: 1, present: true });
   await w.draft.putReport(s.uid, draftBody(x, s.draftEpoch, 0, { findings: 'new' }), x, null);
   await w.draft.forceDiscardDrafts(s.uid, { expectedOwner: ownerOf(ADMIN_A), expectedEpoch: s.draftEpoch }, ADMIN_A, null);
-  assert.deepEqual(w.db.rows('reportDraft').map(row => row.author).sort(), [legacyName, legacyName + '#2']);
+  const newKey = storedAuthor(w, s.uid, x);
+  assert.notEqual(newKey, legacyName);
+  assert.deepEqual(w.db.rows('reportDraft').map(row => row.author).sort(), [legacyName, newKey].sort());
   assert.deepEqual(w.db.rows('reportVersion').map(row => [row.findings, row.author]).sort(),
     [['legacy', legacyName], ['new', x.actor]]);
 });

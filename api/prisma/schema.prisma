@@ -501,10 +501,8 @@ model ReportDraft {
   /// The account (sub) whose draft this is. Whose draft it is is judged by this, never by `author`; NULL = an older row
   /// no member could be found for (it stays, and is nobody's).
   authorSub      String?
-  /// Login at key allocation. A legacy row stores its exact display name in author.
+  /// Login at first write. A legacy row stores its exact display name in author.
   authorLogin    String?
-  /// Only a first-view reservation may have revision zero. A write consumes the reservation.
-  firstViewOnly  Boolean @default(false)
   findings       String   @default("")
   conclusion     String   @default("")
   recommendation String   @default("")

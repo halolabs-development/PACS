@@ -27,16 +27,14 @@ async function fixture(t) {
     try { await root.$executeRawUnsafe(`DROP SCHEMA "${schema}" CASCADE`); } finally { await root.$disconnect(); }
   });
   for (const table of ['MemberRights', 'StudyState', 'ReportDraft', 'Report', 'ReportVersion', 'UserFilter',
-    'UserFilterCollection', 'ReadingTemplate']) {
+    'UserFilterCollection', 'ReadingTemplate', 'ReportDraftPurposeEnd']) {
     await root.$executeRawUnsafe(`CREATE TABLE "${schema}"."${table}" (LIKE public."${table}" INCLUDING ALL)`);
   }
   async function migrate() {
-    for (const [table, columns] of [['ReportDraft', ['authorSub', 'authorLogin', 'firstViewOnly']], ['ReportVersion', ['authorSub']],
+    for (const [table, columns] of [['ReportDraft', ['authorSub', 'authorLogin']], ['ReportVersion', ['authorSub']],
       ['Report', ['updatedBySub']], ['StudyState', ['holderSub']]]) {
       for (const col of columns) await db.$executeRawUnsafe(`ALTER TABLE "${table}" DROP COLUMN IF EXISTS "${col}"`);
     }
-    await db.$executeRawUnsafe('ALTER TABLE "ReportDraft" DROP CONSTRAINT IF EXISTS "ReportDraft_revision_check"');
-    await db.$executeRawUnsafe('ALTER TABLE "ReportDraft" ADD CONSTRAINT "ReportDraft_revision_check" CHECK (revision >= 1)');
     // Prisma's db execute sends the file as one PostgreSQL script (including BEGIN, DO blocks and COMMIT).
     return spawnSync(process.execPath, [path.join(api, 'node_modules/prisma/build/index.js'), 'db', 'execute',
       '--stdin', '--url', url.href], { input: `SET search_path TO "${schema}", public;\n` + fs.readFileSync(MIGRATION, 'utf8'),
@@ -88,8 +86,21 @@ test('owner keys resolve only unique accounts and preserve their settings across
   await createSearch(U.sub, 'Solo', '2024-01-01', 'selected', true);
   const solo = await createSearch(U.username, 'Solo', '2025-01-01', 'updated');
   const template = await db.readingTemplate.create({ data: { owner: X.username, title: 'SYN template', findings: 'SYN preserved' } });
+  // A historical key may exist only in retained work. Its later destruction must not change
+  // the account-only ID that an empty view will already have recorded.
+  const historicalKey = 'account/' + X.sub;
+  const held = await db.reportDraftPurposeEnd.create({ data: { disposalUnitId: 'disposal:' + randomUUID(),
+    uid: s1, author: historicalKey, actorId: historicalKey, workSince: new Date('2026-01-01'), workIntent: 'approve',
+    trigger: 'explicit-discard', eventId: randomUUID(), endedAt: new Date('2026-01-02'), findings: 'SYN held', conclusion: '',
+    recommendation: '', baseVersion: 0 } });
   const result = await migrate();
   assert.equal(result.status, 0, result.stderr);
+  const key = async sub => (await db.$queryRaw`SELECT draft_account_author(${sub}::text) AS author`)[0].author;
+  const firstKey = await key(X.sub);
+  assert.notEqual(firstKey, historicalKey);
+  assert.notEqual(await key(U.sub), firstKey);
+  await db.reportDraftPurposeEnd.delete({ where: { disposalUnitId: held.disposalUnitId } });
+  assert.equal(await key(X.sub), firstKey);
 
   const draftSub = async (u, author) => (await db.reportDraft.findUnique({ where: { uid_author: { uid: u, author } } })).authorSub;
   assert.equal(await draftSub(s1, X.email), X.sub);

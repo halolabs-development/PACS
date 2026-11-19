@@ -164,7 +164,7 @@ before(async () => {
   await runtime.start();
   const app = await NestFactory.create(AppModule.withLedger(runtime, { proxyPeers: ['127.0.0.1'] }), { logger: ['error'], abortOnError: false, rawBody: true });
   app.setGlobalPrefix('api');
-  app.use('/worklist', apiRequire('express').static(path.resolve(__dirname, '../../../worklist-v0/hpacs-lite')));
+  app.use('/worklist/hpacs-lite', apiRequire('express').static(path.resolve(__dirname, '../../../worklist-v0/hpacs-lite')));
   await app.listen(0, '127.0.0.1');
   const origin = await app.getUrl();
   const clinicianSub = 'synthetic-consumer-clinician';

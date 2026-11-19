@@ -24,7 +24,7 @@ import { canReadPreliminary } from './preliminary-reader';
 import { clinicianOnly } from './clinician-policy';
 import { structureArray } from './report-structure';
 import { versionDrawings } from './image-report';
-import { sameAccount, shownActor } from './owner-identity';
+import { sameAccount, shownActor } from './account-identity';
 
 export type ReportBodyLock = 'preliminary' | 'in-progress' | 'destroyed' | null;
 

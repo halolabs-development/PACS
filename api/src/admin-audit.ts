@@ -1,4 +1,4 @@
-import { sameAccount, PRIVATE_WRITER } from './owner-identity';
+import { sameAccount, PRIVATE_WRITER } from './account-identity';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
 /**

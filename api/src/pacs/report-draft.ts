@@ -35,7 +35,8 @@ import { draftDrawings, drawingEntries, drawingHash, drawingKey, drawingRequest,
 import type { DrawingRequest } from '../image-report';
 
 import type { RequestWorkContext } from '../emr-runtime/request-context';
-import { sameAccount, lockedDraftOf, newDraftAuthor, draftRecordAuthor, draftAuthorName, draftRecordOf } from '../owner-identity';
+import { sameAccount, lockedDraftOf, newDraftAuthor, draftOf, accountOwner, draftAuthorName } from '../owner-identity';
+import { draftRecordOf } from '../emr-viewing/consumer-read';
 
 export interface DraftRequestFacts {
   request: RequestWorkContext;
@@ -83,8 +84,9 @@ export class PacsReportDraft {
         // A draft's record id is its row's (owner-identity.ts): the caller's own row is found by its account, whatever the
         // caller's email is now; a caller with no row yet is named as the row it would make.
         // A view captured earlier names the row it read (draftRecordOf), so its record never names another row read later.
-        const read = value && typeof value === 'object' ? draftRecordOf.get(value) : undefined;
-        const resource = report ? version?.uid ?? uid : JSON.stringify([uid, draft?.author ?? read ?? await draftRecordAuthor(tx, uid, c)]);
+        const read = value?.snapshot && draftRecordOf.get(value.snapshot);
+        const resource = report ? version?.uid ?? uid : JSON.stringify([uid, draft?.author ?? read ??
+          (await draftOf(tx, uid, c, { author: true }))?.author ?? await newDraftAuthor(tx, accountOwner(c))]);
         const event: AccessEventV1 = {
           formatVersion: 1, surface, eventId: randomUUID(),
           userId: { status: 'known', value: identity }, rolesAtTime: { status: 'known', value: facts.request.facts.roles },
@@ -110,22 +112,6 @@ export class PacsReportDraft {
       if (failed) for (const event of events) logUnrecordedProvide(event, failed);
       throw error;
     });
-  }
-
-  // The captured body keeps its stored id. Only an empty first view needs a reservation, serialized with first
-  // writes in a fresh read-committed transaction so a waiting reader sees the winning account key.
-  private async bindDraftView(uid: string, c: Caller, facts: DraftRequestFacts, epoch: string, value: object, author?: string) {
-    const key = author ?? await this.prisma.$transaction(async tx => {
-      await facts.request.requireCurrent(tx);
-      const reserved = await draftRecordAuthor(tx, uid, c);
-      // Allocation may have waited for another writer. Roll it back if the study moved, was recreated,
-      // or entered Preliminary under a different reader while we waited.
-      const current = await this.access.gate(uid, c, tx);
-      if (!current || current.draftEpoch !== epoch) throw draftConflict();
-      if (!canReadPreliminary(current, c)) throw new ForbiddenException('예비 판독 열람 권한이 없습니다.');
-      return reserved;
-    }, { isolationLevel: 'ReadCommitted', maxWait: 2000, timeout: 5000 });
-    draftRecordOf.set(value, key);
   }
 
   private relatedDraftView(outcome: any) {
@@ -329,14 +315,14 @@ export class PacsReportDraft {
     // A row is written under its own record id; a first row names its account (owner-identity.ts).
     if (!row) {
       if (!owner.sub) throw draftConflict();
-      const author = await newDraftAuthor(tx, uid, owner.sub, owner.actor);
+      const author = await newDraftAuthor(tx, owner.sub);
       return tx.reportDraft.create({ data: { uid, author, authorSub: owner.sub, authorLogin: owner.actor, ...text, revision,
         ...(citations ? { citations } : {}), ...(structured ? { structured } : {}), ...(drawings ? { drawings } : {}) } });
     }
     const author = row.author as string;
     const changed = await tx.reportDraft.updateMany({
       where: { uid, author, revision: row.revision },
-      data: { ...text, firstViewOnly: false, revision, citations: citations ?? Prisma.DbNull, structured: structured ?? Prisma.DbNull,
+      data: { ...text, revision, citations: citations ?? Prisma.DbNull, structured: structured ?? Prisma.DbNull,
         drawings: drawings ?? Prisma.DbNull },
     });
     if (changed.count !== 1) throw draftConflict();
@@ -441,12 +427,12 @@ export class PacsReportDraft {
   }
 
   /**
-   * 내 초안의 권위 있는 읽기(U5S-REQ-15, 17). 충돌이나 답을 받지 못한 저장 뒤에 화면이 무엇이 저장돼 있는지 확인하는
-   * 자리다 — 검사 행의 세대와 내 행을 한 스냅숏에서 읽는다. 관문은 초안 쓰기와 같은 역할·기관·예비 판독 규칙이다.
+   * 화면은 검사를 처음 열 때와 저장 충돌·응답 유실 뒤에 이 경로로 내 초안을 확인한다(U5S-REQ-15, 17).
+   * 검사 행의 세대와 내 초안을 한 스냅숏에서 읽는다. 관문은 초안 쓰기와 같은 역할·기관·예비 판독 규칙이다.
    *
    * `insertRequestId`(W5 Check, O4 R1)가 오면 같은 스냅숏에서 그 삽입 영수증도 읽어 봉투에 `relatedInsert`로 싣는다. 읽기는
    * 거절·취소 영수증을 만들지 않는다. 관문은 지금 Target 개인 초안의 가독뿐이고 Source의 글·상세는 답하지 않는다.
-   * 영수증이 없으면 unknown, 남의 영수증이면 그 내용 없이 ID_REUSED다. 첫 빈 조회는 열람 기록의 키만 예약한다.
+   * 영수증이 없으면 unknown, 남의 영수증이면 그 내용 없이 ID_REUSED다.
    */
   async readDraft(uid: string, c: Caller, facts: DraftRequestFacts, insertRequestId?: string) {
     need(c.roles, 'radiologist', '판독문 초안 조회');
@@ -468,13 +454,12 @@ export class PacsReportDraft {
       const receipt = receiptId === null ? null : await tx.reportDraftInsertReceipt.findUnique({ where: { insertRequestId: receiptId } });
       const value = receiptId === null ? envelope : { ...envelope,
         relatedInsert: relatedResult(receiptId, receipt, envelope, !receipt || relatedOwnReceipt(receipt, owner, uid), null) };
-      return { state, value, author: draft?.author };
+      return { state, value, author: draft?.author ?? await newDraftAuthor(tx, accountOwner(c)) };
     }, { isolationLevel: 'RepeatableRead', maxWait: 2000, timeout: 5000 });
-    await this.bindDraftView(uid, c, facts, snapshot.state.draftEpoch, snapshot.value, snapshot.author);
     // Preserve the existing repeatable read. The entry describes that captured
     // snapshot; no later fetch may substitute a different body after recording.
     return this.recorded(uid, c, { facts, surface: 'GET studies/:uid/draft', action: 'provide-prepared' }, async (_tx, record) => {
-      await record(snapshot.state, snapshot.value);
+      await record(snapshot.state, snapshot.value, 'provide-prepared', { author: snapshot.author, revision: snapshot.value.revision });
       return snapshot.value;
     }, { maxWait: 2000, timeout: 5000 }, true).catch(error => {
       const accessRecord = draftAccessRecord(error);
@@ -561,10 +546,9 @@ export class PacsReportDraft {
         if(mine?.present)await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:'stored',record:mine});
         const stored = await tx.reportDraftInsertReceipt.findUnique({ where: { insertRequestId: related.insertRequestId } });
         const outcome = settled(stored, draftEnvelope(uid, owner, state.draftEpoch, mine));
-        return { state, outcome, author: mine?.author };
+        return { state, outcome };
       }, { isolationLevel: 'RepeatableRead', maxWait: 2000, timeout: 5000 });
       const earlyView = this.relatedDraftView(early.outcome);
-      if (earlyView) await this.bindDraftView(uid, c, facts, early.state.draftEpoch, earlyView, early.author);
       const accessRecord = earlyView ? await this.recorded(uid, c,
         { facts, surface: 'PUT studies/:uid/report', action: 'provide-prepared' }, async (_tx, record) => {
           await record(early.state, earlyView);

@@ -118,6 +118,7 @@ function world({ resources = [], states = [], policy = null, institutions = INST
     };
     const raw = async (strings, ...values) => {
       const sql = strings.join('?');
+      if (sql.startsWith('SELECT draft_account_author(')) return [{ author: 'account/' + values[0] }];
       if (sql.includes('StudyAccessPolicy')) return w.policy ? [{ institution: 'hallym', revision: w.policy.revision ?? 1,
         policy: w.policy.policy ?? w.policy, reason: '', updatedBy: null, updatedAt: null }] : [];
       if (sql.includes('pg_advisory')) return [{ locked: 1 }];

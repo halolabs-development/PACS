@@ -23,7 +23,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = sorted([*(ROOT / "api" / "src").glob("critical-result*.ts"), ROOT / "api/src/member-rights.ts",
-                  ROOT / "api/src/preliminary-reader.ts"])
+                  ROOT / "api/src/preliminary-reader.ts", ROOT / "api/src/account-identity.ts"])
 MIGRATIONS = sorted(p for p in (ROOT / "api" / "prisma" / "migrations").iterdir() if p.is_dir())
 DEV_IMAGE = os.environ.get("KIN_TEST_API_DEV_IMAGE")
 DATABASE = "kin_critical_result_source"
@@ -33,7 +33,8 @@ DATABASE = "kin_critical_result_source"
 # no rows.
 # ./exam-merge.service: grouping access uses saved group references only; the record-only read boundary and fixed
 # bodies are exercised by access_record_writes_test.cjs and critical_result_service_test.cjs.
-IMPORTS = {"@nestjs/common", "node:crypto", "crypto", "./member-rights", "./prisma.service", "./study-access.service", "./keycloak.service",
+# ./account-identity compares stored and caller identities. It has no access to report storage.
+IMPORTS = {"./account-identity", "@nestjs/common", "node:crypto", "crypto", "./member-rights", "./prisma.service", "./study-access.service", "./keycloak.service",
            "./emr-viewing/consumer-read", "./orthanc.service", "./clinician-policy", "./critical-result-policy", "./critical-result.service", "./preliminary-reader",
            "./emr-clinical/routes", "./emr-runtime/fixed-record-lock", "./exam-merge.service"}
 REPORT_COLUMNS = {"uid", "version"}

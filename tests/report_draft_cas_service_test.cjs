@@ -1135,21 +1135,24 @@ test('D10 commit and discard answer the envelope and the state; the commit audit
 
 // ── D11: study removal and recreation ──
 
-test('a first view of a removed study cannot reserve a key on its replacement', async () => {
+test('opening a study without typing creates no draft and completes while a writer holds the study row', async () => {
   const w = await world();
   const uid = await w.study({ draft: false });
-  const captured = w.gate('R', 'read-commit');
-  const reading = w.send('R', 'read', { as: A, uid });
-  try {
-    await captured.arrived();
-    const removed = await w.send('X', 'remove', { as: ADMIN, uid });
-    assert.equal(removed.ok, true, JSON.stringify(removed.body));
-    await w.study({ uid, draft: false });
-  } finally {
-    captured.release();
-  }
-  assert.deepEqual(brief(await reading), { ok: false, status: 409, code: 'REPORT_DRAFT_CONFLICT' });
-  assert.equal(await w.row(uid, A), null);
+  const ordinary = await w.send('R', 'read', { as: A, uid });
+  let reading, finished = false;
+  const waited = await w.base.$transaction(async tx => {
+    await tx.$queryRaw`SELECT uid FROM "StudyState" WHERE uid = ${uid} FOR NO KEY UPDATE`;
+    reading = w.send('R', 'read', { as: B, uid }).finally(() => { finished = true; });
+    while (!finished) {
+      if (await w.blocked()) return true;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    return false;
+  }, { timeout: 15000 });
+  const concurrent = await reading;
+  const rows = await w.base.reportDraft.count({ where: { uid } });
+  assert.deepEqual([ordinary.status, ordinary.body?.present, concurrent.status, concurrent.body?.present, waited, rows],
+    [200, false, 200, false, false, 0]);
 });
 
 test('D11 tombstones do not block the removal of a study; the same UID created again has a new epoch that refuses every old boundary', async () => {
@@ -1184,11 +1187,13 @@ test('D11 tombstones do not block the removal of a study; the same UID created a
   assert.deepEqual([fresh.ok, fresh.body.revision], [true, `${next}:${kept.revision + 1}`]);
   // A second reader first opens this recreated study, then changes login before writing.
   const other = await w.send('R', 'read', { as: B, uid });
+  const viewed = await w.base.$queryRaw`SELECT DISTINCT record_id FROM emr_access.access_target
+    WHERE target_kind = 'private-draft' AND version_id = ${other.body.revision}`;
   const renamed = { ...B, actor: A.actor };
   const first = await w.send('Y', 'put', { as: renamed, uid, body: request('put', renamed,
     { token: other.body.revision, head: 0, mark: 'Y' })[1] });
   assert.equal(first.ok, true, JSON.stringify(first.body));
-  assert.equal((await w.row(uid, B)).author, `${B.actor}#${B.sub}`);
+  assert.deepEqual(viewed, [{ record_id: JSON.stringify([uid, (await w.row(uid, B)).author]) }]);
   assert.equal((await w.row(uid, A)).author, A.actor);
 });
 

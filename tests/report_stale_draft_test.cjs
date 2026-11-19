@@ -39,8 +39,8 @@ const OWNER = { institution: CALLER.institution, sub: CALLER.sub, author: CALLER
 // scheduling of the key is tests/emr/d/related_boundaries_pg_test.cjs.
 const { TransactionLocks, fixedRecord, fixedRecordKey } = require('./transaction_locks.cjs');
 const FIXED = 'fixed-record';
-// Each raw query by what it locks: the fixed-record key, or the table it reads.
-const locked = f => f.raw.map(sql => (sql.includes('pg_advisory_xact_lock') ? FIXED : sql.match(/FROM "(\w+)"/)[1]));
+const locked = f => f.raw.filter(sql => sql.includes('pg_advisory_xact_lock') || /\bFOR (UPDATE|NO KEY UPDATE|SHARE|KEY SHARE)\b/.test(sql))
+  .map(sql => sql.includes('pg_advisory_xact_lock') ? FIXED : sql.match(/FROM "(\w+)"/)[1]);
 
 function fixture({ state = STATE, head = HEAD, draft = null } = {}) {
   const writes = [], audits = [], raw = [], reads = [];
@@ -57,6 +57,7 @@ function fixture({ state = STATE, head = HEAD, draft = null } = {}) {
     $queryRaw: async (strings, ...values) => {
       const sql = strings.join('?').replace(/\s+/g, ' ').trim();
       raw.push(sql);
+      if (sql.startsWith('SELECT draft_account_author(')) return [{ author: 'account/' + values[0] }];
       const key = fixedRecordKey(strings, values);
       if (key !== null) { await locks.acquire(owner, key); keys.push(key); return [{ locked: '' }]; }
       if (sql.includes('FROM "StudyState"')) return [stored];

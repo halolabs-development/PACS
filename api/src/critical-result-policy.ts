@@ -1,7 +1,7 @@
 import { canReadPreliminary } from './preliminary-reader';
 import { createHash } from 'node:crypto';
 import { CLINICIAN_ROLE, clinicianFinal } from './clinician-policy';
-import { sameAccount } from './owner-identity';
+import { sameAccount } from './account-identity';
 
 /**
  * S7-U1a 중요 결과 전달(계약 S7-U1p §3~§8, §11)의 순수 판정. DB·Keycloak·Orthanc·Nest 예외를 모른다 — 서비스가 읽은

@@ -340,10 +340,9 @@ def expected_rows(uid):
         drawings=[dict(id=DRAWING_ID, background='breast', source=None, sha256='d' * 64)] if number == 2 else None, at=STAMP,
         groupId=EXAM_GROUP if number == 2 else None, snapshotFormat=number) for number in (1, 2)]
     # The account each draft belongs to travels with it; the emptied row is an older one no member was found for (NULL).
-    # These are rows written before a draft stored its login beside its id (authorLogin NULL), and none is a first-view
-    # reservation (firstViewOnly false): both columns are read back as the migration leaves existing rows.
+    # Legacy rows keep their display login in author.
     rows['ReportDraft'] = [dict(uid=uid, author='SYNTHETIC-reader'+str(number), authorSub='SYNTHETIC-reader'+str(number)+'-sub',
-        authorLogin=None, firstViewOnly=False,
+        authorLogin=None,
         findings='SYNTHETIC private '+str(number), conclusion='', recommendation='', baseVersion=2,
         citations=citation if number == 1 else None,
         structured=structured if number == 1 else None,
@@ -355,7 +354,7 @@ def expected_rows(uid):
         # CD-09-P: each present row holds its own work (an opaque unit, its server start and intent); the emptied row none.
         workUnit='disposal:00000000-0000-4000-8000-0000000000e'+str(number), workSince=STAMP,
         workIntent='addendum' if number == 1 else 'approve', groupId=EXAM_GROUP if number == 1 else None) for number in (1, 2)]
-    rows['ReportDraft'].append(dict(uid=uid, author='SYNTHETIC-reader3', authorSub=None, authorLogin=None, firstViewOnly=False,
+    rows['ReportDraft'].append(dict(uid=uid, author='SYNTHETIC-reader3', authorSub=None, authorLogin=None,
         findings='', conclusion='', recommendation='',
         baseVersion=0, citations=None, structured=None, drawings=None, revision=5, present=False, updatedAt=STAMP,
         workUnit=None, workSince=None, workIntent=None, groupId=None))

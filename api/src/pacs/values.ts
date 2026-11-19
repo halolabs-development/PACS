@@ -10,7 +10,8 @@ import { draftDrawings, namedDrawings } from '../image-report';
 import type { NamedDrawings } from '../image-report';
 import { relatedInsertIdReused } from '../report-related-insert';
 import type { Caller } from './access';
-import { sameAccount, shownActor, PRIVATE_WRITER, draftRecordOf } from '../owner-identity';
+import { sameAccount, shownActor, PRIVATE_WRITER } from '../account-identity';
+import { draftRecordOf } from '../emr-viewing/consumer-read';
 
 /**
  * QIDO 개수 태그(00201208 영상 수·00201206 시리즈 수)의 목록 값. 태그가 없거나
@@ -149,7 +150,7 @@ export function reportHeld(s: any, caller: Caller): ConflictException {
  * 이미 읽은 사람의 머릿속은 안 뒤집힌다 (RS=P를 가리는 것과 같은 이유).
  * 남이 쓰고 있다는 사실은 점유 표시(holder)가 이미 말해준다.
  */
-/** The caller's own draft as an answer carries it; the row's record id goes beside it (owner-identity.ts draftRecordOf). */
+/** Keep the stored record id beside the selected draft for the viewing record. */
 function ownDraft(d: any) {
   const draft = { findings: d.findings, conclusion: d.conclusion, recommendation: d.recommendation, baseVersion: d.baseVersion, at: d.updatedAt };
   if (typeof d.author === 'string') draftRecordOf.set(draft, d.author);
@@ -325,12 +326,14 @@ export const drawingsConflict = () => new ConflictException({ code: 'REPORT_DRAW
 /** 저장된 행의 표준 스냅숏. 인용·구조화는 식별자만 — 전문은 소견 가독을 다시 거는 전용 읽기로만 나간다. */
 function draftSnapshot(row: any) {
   if (!row?.present) return null;
-  return { findings: row.findings, conclusion: row.conclusion, recommendation: row.recommendation,
+  const snapshot = { findings: row.findings, conclusion: row.conclusion, recommendation: row.recommendation,
     baseVersion: row.baseVersion,
     citations: citationArray(row.citations).map(entry => String(entry?.cid ?? '')),
     structured: structureArray(row.structured).map(entry => String(entry?.sid ?? '')),
     // Image Report: only a draft that attached or removed a drawing names its drawing ids (the rest read as before).
     ...(draftDrawings(row.drawings) ? { drawings: draftDrawings(row.drawings)!.ids } : {}) };
+  draftRecordOf.set(snapshot, row.author);
+  return snapshot;
 }
 
 /** 초안 변경·권위 있는 읽기의 답 봉투. `saved`는 이 봉투 전체가 보낸 것과 같을 때만이다. */

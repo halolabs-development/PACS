@@ -20,7 +20,7 @@ import { need, inst } from './pacs/access';
 import type { Caller } from './pacs/access';
 import { dump, holdAlive, draftConflict } from './pacs/values';
 import { canReadPreliminary } from './preliminary-reader';
-import { sameAccount } from './owner-identity';
+import { sameAccount } from './account-identity';
 
 export const STUDY_MERGED = 'STUDY_MERGED';
 export const EXAM_GROUP_REFUSED = 'EXAM_GROUP_REFUSED';

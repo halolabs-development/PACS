@@ -185,7 +185,7 @@ test('TEST-F-02 patient_replay: patient, study, record and version filters exclu
 
 test('draft audit export filters the whole record id when two accounts used the same login', async () => {
   const uid = '1.2.3', author = 'old#sub-X@example.test';
-  const ids = ['sub-X', 'sub-Y'].map(sub => JSON.stringify([uid, `${author}#${sub}`]));
+  const ids = [author, `${author}#sub-X`, 'account/sub-X', 'account/sub-Y'].map(key => JSON.stringify([uid, key]));
   const events = ids.map(id => accessEvent({ surface: 'GET studies/:uid/draft',
     targets: [target(P1, uid, id, '1', 'private-draft')] }));
   const ledger = ledgerOf(ledgerRows(events)), auditor = authorityFor('draft-export');

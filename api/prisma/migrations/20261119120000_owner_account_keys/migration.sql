@@ -7,16 +7,28 @@
 -- Existing rows are filled from the member table: a stored login (the token's email, else its username, else its sub) names
 -- an account only when exactly one member has it as email, username or account id. A row no member can be found for is left
 -- as it is: kept, and nobody's (an unresolved live hold simply expires within its five minutes). A Preliminary designation
--- without an account is filled the same way. A first empty view reserves the draft id at revision zero.
+-- without an account is filled the same way.
 BEGIN;
-ALTER TABLE "ReportDraft" ADD COLUMN "authorSub" TEXT, ADD COLUMN "authorLogin" TEXT,
-  ADD COLUMN "firstViewOnly" BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE "ReportDraft" DROP CONSTRAINT "ReportDraft_revision_check",
-  ADD CONSTRAINT "ReportDraft_revision_check" CHECK ((revision >= 1 AND NOT "firstViewOnly") OR
-    (revision = 0 AND "firstViewOnly" AND NOT present AND "authorSub" IS NOT NULL AND "authorLogin" IS NOT NULL));
+ALTER TABLE "ReportDraft" ADD COLUMN "authorSub" TEXT, ADD COLUMN "authorLogin" TEXT;
 ALTER TABLE "ReportVersion" ADD COLUMN "authorSub" TEXT;
 ALTER TABLE "Report" ADD COLUMN "updatedBySub" TEXT;
 ALTER TABLE "StudyState" ADD COLUMN "holderSub" TEXT;
+
+-- Choose the namespace once, while the old author strings are still available. Even a literal
+-- legacy login resembling an account key, or retained work without a live draft, keeps its ID.
+-- The installed function depends only on its argument, including after old work is destroyed.
+DO $$
+DECLARE prefix text := 'account/';
+BEGIN
+  WHILE EXISTS (SELECT 1 FROM "ReportDraft" WHERE starts_with(author, prefix)
+                UNION ALL SELECT 1 FROM "ReportDraftPurposeEnd" WHERE starts_with(author, prefix)
+                UNION ALL SELECT 1 FROM emr_access.access_target WHERE target_kind = 'private-draft'
+                  AND strpos(record_id, ',"' || prefix) > 0) LOOP
+    prefix := prefix || '/';
+  END LOOP;
+  EXECUTE format('CREATE FUNCTION draft_account_author(text) RETURNS text LANGUAGE sql IMMUTABLE STRICT AS %L',
+                 format('SELECT %L || $1', prefix));
+END $$;
 
 -- Check the original namespace before discarding ambiguous logins. An unresolved owner equal to a
 -- different account id would otherwise become visible to that account immediately after deployment.

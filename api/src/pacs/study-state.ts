@@ -435,8 +435,8 @@ export class PacsStudyState {
     if (prev.teleInstitutionId)
       await closeReaderAssignments(tx, uid, { institutionId: prev.institutionId, teleInstitutionId: null }, c, 'study-deleted', workflow);
     // 남은 초안 행은 비운 자리뿐이다(위에서 present 행이 있으면 거절했다). 지우지 않고 둔다: 그 행의 (uid, author)는
-    // 보존·열람 기록이 가리키는 초안 기록 ID이고, 같은 UID로 다시 생긴 검사에서 그 ID가 다른 계정에 다시 발급되지
-    // 않게 하는 것이 이 행이다(owner-identity.ts newDraftAuthor). 내용은 없고, 새 검사는 새 세대(draftEpoch)를 받는다.
+    // 보존·열람 기록이 가리키는 초안 기록 ID다. 같은 UID가 다시 들어와도 기존 행의 ID와 revision을 유지하고
+    // 새 검사의 세대(draftEpoch)로 삭제 전 화면에서 보낸 쓰기를 거절한다.
     await tx.studyState.delete({ where: { uid } });
     const row = await tx.auditLog.create({ data: { actor: c.actor, action: 'state.delete', target: uid, detail: JSON.stringify({ by: me }) } });
     await workflow?.record(studyChange('DELETE studies/:uid', prev, 'study-metadata', row));

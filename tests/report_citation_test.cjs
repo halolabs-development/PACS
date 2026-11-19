@@ -92,6 +92,7 @@ function fixture({ state = STATE, report = { version: 4, updatedBy: CALLER.actor
     $queryRaw: async (strings, ...values) => {
       const sql = strings.join('?').replace(/\s+/g, ' ').trim();
       raw.push(sql);
+      if (sql.startsWith('SELECT draft_account_author(')) return [{ author: 'account/' + values[0] }];
       const locked = await recordKey(strings, values);
       if (locked !== null) return locked;
       if (sql.includes('FROM "StudyState"')) return [stored];

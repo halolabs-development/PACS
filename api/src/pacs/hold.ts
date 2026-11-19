@@ -11,7 +11,7 @@ import { need, inst } from './access';
 import { resolveExamScope } from '../exam-merge.service';
 import { assertHeadWritable, headForLock } from '../report-visibility';
 import type { Caller, PacsAccess } from './access';
-import { sameAccount } from '../owner-identity';
+import { sameAccount } from '../account-identity';
 
 export class PacsHold {
   constructor(

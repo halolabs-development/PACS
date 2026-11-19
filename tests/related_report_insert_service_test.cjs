@@ -88,8 +88,7 @@ function receiptGuard(before, after) {
     throw sqlError('42501', 'ReportDraftInsertReceipt keeps its binding and moves one receipt revision at a time');
 }
 function draftChecks(row) {
-  if (!(row.revision >= 1 && !row.firstViewOnly || row.revision === 0 && row.firstViewOnly &&
-      !row.present && row.authorSub && row.authorLogin)) throw sqlError('23514', 'ReportDraft_revision_check');
+  if (!(row.revision >= 1)) throw sqlError('23514', 'ReportDraft_revision_check');
   if (!row.present && !(row.findings === '' && row.conclusion === '' && row.recommendation === '' && row.baseVersion === 0
       && row.citations === null && row.structured === null)) throw sqlError('23514', 'ReportDraft_absent_check');
 }
@@ -192,6 +191,7 @@ function storeDouble() {
   const raw = (ctx, label) => async (strings, ...values) => {
     const sql = strings.join('?').replace(/\s+/g, ' ').trim();
     const t = ctx.tables;
+    if (sql.startsWith('SELECT draft_account_author(')) return [{ author: 'account/' + values[0] }];
     if (/^SET LOCAL lock_timeout/.test(sql)) return 0;
     if (sql.includes('pg_advisory_xact_lock')) {
       assert.notEqual(label, 'root');
@@ -688,7 +688,6 @@ test('W5API-09 Retry against Discard in both orders (serial in this store; the P
 test('W5API-10 Check reads the envelope and the receipt in one snapshot and writes nothing: absent, applied, superseded, refused, discarded, foreign', async () => {
   const w = world();
   const check = async (id, as = A) => w.send('read', { as, query: { insertRequestId: id } });
-  assert.equal((await w.send('read', { as: B })).status, 200); // B already has an empty first-view reservation.
   const before = w.snapshot();
   const absent = await check(randomUUID());
   assert.equal(absent.status, 200);
