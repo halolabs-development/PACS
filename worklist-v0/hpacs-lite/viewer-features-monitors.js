@@ -467,8 +467,12 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
   // (its image column over each, KinViewerMonitorPlan.regions), for two minutes and while no newer prepare() or clear() came,
   // this watches; then the Hanging Protocols panel is told, and applies that rule again if it is still the one applied
   // (viewer-hanging-protocol.js). Rows this rule placed go back quietly when the window moves meanwhile (startWatch).
+  // The reader's own work on the images meanwhile (a click, a wheel step, a key) ends the wait: applying the rule again would
+  // build the cells anew over it. Moving the window is no input to this page. The displays are read again each time (the
+  // browser zoom may have changed since the apply).
   let reaching = null;
-  function stopReaching() { if (reaching) { clearInterval(reaching.timer); reaching = null; } }
+  const INPUTS = ['pointerdown', 'wheel', 'keydown'];
+  function stopReaching() { if (reaching) { clearInterval(reaching.timer); for (const type of INPUTS) document.removeEventListener(type, stopReaching, true); reaching = null; } }
   function awaitMonitors(rule, reach, mine) {
     stopReaching();
     const until = Date.now() + 120000;
@@ -476,12 +480,15 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
       if (epoch !== mine || Date.now() > until) { stopReaching(); return; }
       const columnBox = box();
       if (!columnBox) return;
-      const now = plan.regions(reach.info.screens, geometry(), reach.info.zoom, columnBox).map(region => region.monitor);
+      const info = kinViewerScreensInfoNow();
+      const read = info?.granted ? info : reach.info;
+      const now = plan.regions(read.screens, geometry(), read.zoom, columnBox).map(region => region.monitor);
       if (!reach.monitors.every(monitor => now.includes(monitor))) return;
       stopReaching();
       window.dispatchEvent(new CustomEvent('kin-viewer-monitors-reached', { detail: { ruleId: rule.id } }));
     }, 500);
     reaching = { timer, mine };
+    for (const type of INPUTS) document.addEventListener(type, stopReaching, true);
   }
   window.KinViewerMonitors = { prepare, clear: () => { epoch++; stopReaching(); if (active) show(null); settleWorklist(null, () => false); } };
 

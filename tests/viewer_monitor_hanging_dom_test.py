@@ -432,6 +432,25 @@ class MonitorHangingDOMTest(unittest.TestCase):
         page.wait_for_timeout(1500)
         self.assertEqual([], page.evaluate('synReached'))
 
+    def test_18_the_readers_own_work_meanwhile_ends_the_wait(self):
+        # After the apply the reader works on the images (a click, a wheel step): laying the window over monitor 2 then does
+        # not apply the rule again over that work.
+        page = self.open(displays="""() => {
+          const at = screenX + (outerWidth - innerWidth) / 2, w = innerWidth;
+          const screens = [0, 1].map(i => ({ availLeft: at + i * w, availTop: screenY, availWidth: w, availHeight: 2000,
+            left: at + i * w, top: screenY, width: w, height: 2000, isPrimary: i === 0, devicePixelRatio }));
+          const query = navigator.permissions.query.bind(navigator.permissions);
+          navigator.permissions.query = async value => value?.name === 'window-management' ? { state: 'granted', onchange: null } : query(value);
+          window.getScreenDetails = async () => ({ screens, currentScreen: screens[0], addEventListener() {}, removeEventListener() {} });
+        }""", size=(900, 800))
+        page.evaluate("window.synReached = []; addEventListener('kin-viewer-monitors-reached', e => synReached.push(e.detail.ruleId))")
+        self.prepare(page, [monitor('1x1', toolbar='top'), monitor('1x1', toolbar='top')])
+        page.evaluate('synAnswer.commit()')
+        page.mouse.click(450, 500)
+        page.set_viewport_size({'width': 1800, 'height': 800})
+        page.wait_for_timeout(1500)
+        self.assertEqual([], page.evaluate('synReached'))
+
     def test_14_both_monitors_with_a_toolbar_each_reach_viewer_settings(self):
         page = self.open(displays=TWO_DISPLAYS)
         self.prepare(page, [monitor('1x1', toolbar='top', thumbs='none'), monitor('1x1', toolbar='left', thumbs='none')])

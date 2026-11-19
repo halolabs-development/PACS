@@ -4500,18 +4500,35 @@ function kinCreateCellMerge() {
   // A window over two monitors is the merge's too (claimsDoubleClick): the native toggle
   // would make one cell of the whole window, across the display edge, before the merge's
   // maximize of that cell's monitor could read the screen.
-  function guardOneUp(commandsManager) {
-    restoreOneUp?.(); restoreOneUp = null;
+  // The native toggle's one cell is its own (kinViewerStockOneUp): a grid of one cell made by it is put back by it, so
+  // nothing else may turn that cell into another layout meanwhile (the display span divides a one-column grid over two
+  // monitors). On while the native toggle went from several cells to one and the grid still has one; a new mode is off.
+  let stockOneUp = false;
+  function guardOneUp(commandsManager, services) {
+    restoreOneUp?.(); restoreOneUp = null; stockOneUp = false;
     const native = commandsManager?.getCommand?.('toggleOneUp', 'DEFAULT');
     if (typeof native?.commandFn !== 'function') return;
+    const cells = () => { try { return services?.viewportGridService?.getState?.()?.viewports?.size ?? 0; } catch (_) { return 0; } };
+    // Any grid of several cells since (the toggle back, a Layout, a protocol) ends it - not the grid's own announcement of
+    // the toggle, which can come while its state still shows the cells it had (toggled: the moment of the toggle).
+    let toggled = 0;
+    const grid = services?.viewportGridService, ended = () => { if (Date.now() - toggled > 1500 && cells() > 1) stockOneUp = false; };
+    const watched = [];
+    for (const event of new Set(Object.values(grid?.EVENTS || {}))) try { watched.push(grid.subscribe(event, ended)); } catch (_) { }
+    window.kinViewerStockOneUp = () => { ended(); return stockOneUp && cells() === 1; };
     const guarded = { ...native, commandFn: options => {
       const merge = current?.state?.();
       if (merge && (merge.busy || merge.merged)) return;
       if (current?.claimsDoubleClick?.()) return;
+      stockOneUp = cells() > 1; toggled = Date.now();
       return native.commandFn(options);
     } };
     commandsManager.registerCommand('DEFAULT', 'toggleOneUp', guarded);
-    restoreOneUp = () => { if (commandsManager.getCommand('toggleOneUp', 'DEFAULT') === guarded) commandsManager.registerCommand('DEFAULT', 'toggleOneUp', native); };
+    restoreOneUp = () => {
+      watched.splice(0).forEach(subscription => { try { subscription?.unsubscribe?.(); } catch (_) { } });
+      stockOneUp = false;
+      if (commandsManager.getCommand('toggleOneUp', 'DEFAULT') === guarded) commandsManager.registerCommand('DEFAULT', 'toggleOneUp', native);
+    };
   }
 
   function watchSession() {
@@ -4534,7 +4551,7 @@ function kinCreateCellMerge() {
   return { id: 'kin.cell-merge', onModeEnter({ servicesManager, commandsManager }) {
     if (ended) return; watchSession();
     const ticket = ++epoch; current?.stop(); current = null;
-    guardOneUp(commandsManager);
+    guardOneUp(commandsManager, servicesManager?.services);
     prepare().then(module => {
       if (ticket !== epoch) return;
       const connected = module.create(servicesManager.services);

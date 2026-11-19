@@ -97,9 +97,9 @@ window.KinViewerDisplaySpan = (() => {
     // F-20: one column of image stacks over two monitors - its one image would have the monitor seam down its middle - is
     // made two columns, one per monitor, by the Layout menu's own command; a protocol that gives one column again (another
     // patient in this window) is divided again. Left alone: what owns the grid itself (the mammography hanging; Monitors in
-    // Hanging Protocol does not reach here), MPR / 3D cells, and a grid while a layout operation runs, a cell is maximized
-    // or Auto Save View is still putting the saved view back (asked again once it ends: owed). One request at a time, at
-    // most one per 2 s.
+    // Hanging Protocol does not reach here; the stock one-up's cell), MPR / 3D / PDF / report cells, and a grid while its
+    // image is not drawn yet, a layout operation runs, a cell is maximized or Auto Save View is still putting the saved view
+    // back (asked again once it ends: owed). One request at a time, at most one per 2 s.
     function divide(state, cells) {
       const rows = state.layout?.numRows;
       const single = (state.layout?.layoutType ?? 'grid') === 'grid' && state.layout?.numCols === 1 && Number.isInteger(rows) && rows >= 1 &&
@@ -109,6 +109,12 @@ window.KinViewerDisplaySpan = (() => {
       let protocol = '';
       try { protocol = String(services.hangingProtocolService?.getState?.()?.protocolId || ''); } catch (_) { protocol = ''; }
       if (protocol.startsWith('kin.mammography')) return;
+      // The stock one-up's one cell (a double click the monitor maximize could not take): that toggle puts its grid back.
+      try { if (window.kinViewerStockOneUp?.()) return; } catch (_) { return; }
+      // Each cell an image stack drawn now: not a PDF, a report or an empty cell shown in a stack cell, not one still loading
+      // (asked again each second until it is, or the grid changes).
+      if (!cells.every(cell => { const v = services.cornerstoneViewportService?.getCornerstoneViewport?.(cell.viewportId);
+        return v?.type === 'stack' && (v.getImageIds?.() || []).length > 0 && !!v.getCurrentImageId?.(); })) { owed = true; return; }
       if (layoutBusy() || dividing || Date.now() - divided < 2000) { owed = true; return; }
       dividing = true; divided = Date.now();
       Promise.resolve().then(() => commands.runCommand('setViewportGridLayout', { numRows: rows, numCols: 2 }))

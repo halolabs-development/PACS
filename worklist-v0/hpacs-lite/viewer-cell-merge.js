@@ -685,6 +685,10 @@
       try { const value = win.kinMprMarks?.capture?.(true); return value ? JSON.stringify(value) : null; } catch (_) { return undefined; }
     }
 
+    // A screen with an Average plane that cannot be rebuilt here: refused before anything is dispatched (run), and so never
+    // taken from the stock one-up either (claimsDoubleClick).
+    const averageMissing = base => base.cells.some(cell => cell.kind === 'plane' && cell.blend === 3) && !averageReady();
+
     async function run(op, anchorId, known = null) {
       const reason = blocked(); if (reason) return { ok: false, message: note(reason) };
       // The display edges are asked before the screen is read; meanwhile this operation is busy, so a second double
@@ -712,8 +716,7 @@
       // the preparation above. Without that tool the operation is refused here - before a
       // single rectangle is dispatched - so the user keeps the screen they have instead of
       // being handed a restore that could not put the projection back.
-      if (base.cells.some(cell => cell.kind === 'plane' && cell.blend === 3) && !averageReady())
-        return { ok: false, message: note(AVERAGE_MISSING) };
+      if (averageMissing(base)) return { ok: false, message: note(AVERAGE_MISSING) };
       const expected = { rows: base.rows, cols: base.cols,
         cells: result.slots.map((cell, index) => ({ viewportId: cell.viewportId, sets: cell.sets, ...result.layoutOptions[index] })) };
       let crosshair = null, watch = null, dispatched = false;
@@ -939,7 +942,7 @@
         const edges = typeof win.kinViewerMonitorEdgesNow === 'function' ? win.kinViewerMonitorEdgesNow() : null;
         if (!Array.isArray(edges) || !edges.length) return false;
         const base = snapshot(), anchor = base?.active;
-        if (!base || !anchor) return false;
+        if (!base || !anchor || averageMissing(base)) return false;
         const result = plan({ rows: base.rows, cols: base.cols, cells: base.cells, anchorId: anchor, op: 'maximize', edges, split: base.options });
         if (!result.ok || !result.area) return false;
         claimed = { edges: [...edges], at: Date.now() };

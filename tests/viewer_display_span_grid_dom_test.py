@@ -52,7 +52,17 @@ window.synCommands = { calls: [], runCommand(name, options) {
   if (name === 'setViewportGridLayout') setTimeout(() => setGrid(options.numRows, options.numCols));
   return undefined; } };
 window.synHp = { protocolId: 'default' };
-window.synServices = { viewportGridService: synGrid, hangingProtocolService: { getState: () => ({ protocolId: synHp.protocolId }) } };
+// The cornerstone viewport of each cell: a drawn image stack, unless the test says the cell shows no stack (a PDF or a
+// report is drawn outside cornerstone) or its image is not there yet.
+window.synNoStack = new Set(); window.synLoading = new Set();
+const cornerstoneViewports = { getCornerstoneViewport: id => {
+  const cell = state.viewports.get(id);
+  if (!cell || synNoStack.has(id)) return null;
+  const type = cell.viewportOptions.viewportType === 'stack' ? 'stack' : 'orthographic';
+  return { type, getImageIds: () => synLoading.has(id) ? [] : ['img:' + id], getCurrentImageId: () => synLoading.has(id) ? undefined : 'img:' + id };
+} };
+window.synServices = { viewportGridService: synGrid, cornerstoneViewportService: cornerstoneViewports,
+  hangingProtocolService: { getState: () => ({ protocolId: synHp.protocolId }) } };
 window.gridBox = () => { const r = document.querySelector('[data-cy="viewport-grid"]').getBoundingClientRect(); return { left: r.left, right: r.right, middle: (r.left + r.right) / 2 }; };
 window.layouts = () => synCommands.calls.filter(call => call[0] === 'setViewportGridLayout').map(call => [call[1].numRows, call[1].numCols]);
 </script></body></html>"""
@@ -152,6 +162,23 @@ class DisplaySpanGridDOMTest(unittest.TestCase):
         page = self.open(rows=1, cols=1, before="window.KinViewerMonitorRows = { copies: {} }")
         page.wait_for_timeout(2500)
         self.assertEqual([], page.evaluate('layouts()'))
+        # The stock one-up's one cell (a double click it took): its own toggle puts the grid back.
+        page = self.open(rows=1, cols=1, before="window.kinViewerStockOneUp = () => true")
+        page.wait_for_timeout(2500)
+        self.assertEqual([], page.evaluate('layouts()'))
+        # A PDF (or a report) shown in a stack cell is no image stack.
+        page = self.open(rows=1, cols=1, before="synNoStack.add('v00')")
+        page.wait_for_timeout(2500)
+        self.assertEqual([], page.evaluate('layouts()'))
+
+    def test_06_a_cell_whose_image_comes_later_is_divided_once_it_is_drawn(self):
+        page = self.open(rows=1, cols=1, before="synLoading.add('v00')")
+        page.wait_for_timeout(2500)
+        self.assertEqual([], page.evaluate('layouts()'))
+        # The image arrives; nothing else changes in the grid.
+        page.evaluate("synLoading.clear()")
+        page.wait_for_function('() => layouts().length === 1', timeout=4000, polling=250)
+        self.on_seam(page)
 
     def test_05_while_another_layout_operation_runs_the_split_waits_for_it(self):
         page = self.open(rows=1, cols=1, before="window.mergeBusy = true; window.kinCellMergeWorkspaceState = () => ({ merged: false, busy: mergeBusy })")

@@ -203,6 +203,12 @@ class MonitorDoubleClickDOMTest(unittest.TestCase):
         page.wait_for_function("JSON.stringify(kinViewerMonitorEdgesNow()) === '[0.875]'")
         self.dblclick(page, 'A')
         page.wait_for_function("stockOneUps === 1")
+        # Its one cell is the stock toggle's own (the display span leaves it to that toggle), until it puts the grid back.
+        page.wait_for_function("geometry().length === 1")
+        self.assertTrue(page.evaluate('kinViewerStockOneUp()'))
+        self.dblclick(page, 'A')
+        page.wait_for_function("stockOneUps === 2 && geometry().length === 8")
+        self.assertFalse(page.evaluate('kinViewerStockOneUp()'))
 
     def test_09_mg_one_monitor_maximized_inverted_and_restored_keeps_every_frame_and_the_inversion(self):
         # Mammograms on two monitors: one monitor's cell maximized, the reader inverts it, the grid comes back. Each cell is
