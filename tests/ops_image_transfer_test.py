@@ -41,6 +41,26 @@ class Pure(unittest.TestCase):
                 transfer.ci_context()
             command.assert_not_called()
 
+    def test_01b_only_listed_repositories_pass_the_repository_check(self):
+        hosted = {'GITHUB_ACTIONS': 'true', 'RUNNER_ENVIRONMENT': 'github-hosted', 'GITHUB_SHA': 'b'*40,
+                  'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '1'}
+
+        class Reached(Exception):
+            pass
+
+        cases = [('halolabs-development/PACS', True), ('jmryu1989/PACS-ci', True), ('jmryu1989/PACS', False),
+                 ('someone/PACS', False), ('halolabs-development/PACS-ci', False), ('HALOLABS-DEVELOPMENT/PACS', False),
+                 ('halolabs-development/PACS ', False), ('', False), (None, False)]
+        for repository, allowed in cases:
+            env = dict(hosted) if repository is None else dict(hosted, GITHUB_REPOSITORY=repository)
+            with self.subTest(repository=repository), patch.dict(os.environ, env, clear=True), \
+                    patch.object(transfer.sys, 'platform', 'linux'), \
+                    patch.object(transfer, 'command', side_effect=Reached) as command:
+                # Passing the repository check means the next step (comparing the checkout) runs.
+                with self.assertRaises(Reached if allowed else ValueError):
+                    transfer.ci_context()
+                self.assertEqual(command.called, allowed)
+
     def test_02_receipt_scope_and_separate_boot(self):
         body, _ = fixture()
         raw = raw_json(body)

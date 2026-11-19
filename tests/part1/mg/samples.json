@@ -15,8 +15,7 @@
  "citations": {
   "CMMD": "The Chinese Mammography Database (CMMD), TCIA, CC BY 4.0",
   "EA1141": "Comstock C. et al. (2023). Abbreviated Breast MRI and Digital Tomosynthesis Mammography in Screening Women With Dense Breasts (EA1141) (Version 2) [dataset]. The Cancer Imaging Archive. https://doi.org/10.7937/2bas-hr33 (CC BY 4.0)",
-  "VICTRE": "VICTRE (in-silico phantom), TCIA, CC BY 3.0",
-  "BREAST-DIAGNOSIS": "BREAST-DIAGNOSIS, TCIA, CC BY 3.0"
+  "VICTRE": "VICTRE (in-silico phantom), TCIA, CC BY 3.0"
  },
  "used": [
   {
@@ -212,19 +211,19 @@
    "frames": 1
   },
   {
-   "id": "breastdx-01-0021-1",
+   "id": "ea1141-857478-specimen-1",
    "set": "tcia-20261004",
-   "path": "BREAST-DIAGNOSIS/BreastDx-01-0021/2008-05-29-0583587479/1.3.6.1.4.1.14519.5.2.1.4792.2001.133683364442727047283716402734/00000001.dcm",
-   "sha256": "bedf89dfc29764f9ad783a1743a1012d14d5bb7a9b7113affb2cc504b7908059",
-   "bytes": 17042400,
-   "collection": "BREAST-DIAGNOSIS",
-   "license": "CC BY 3.0",
+   "path": "EA1141/EA1141-857478/1944-03-27-1117293344/1.3.6.1.4.1.14519.5.2.1.1620.1225.723619651908211716650650009582/00000001.dcm",
+   "sha256": "4bf6de8133d8bf301789ff37a5313a4fae5be950eb1266378ac6d006badeb0c7",
+   "bytes": 17043398,
+   "collection": "EA1141",
+   "license": "CC BY 4.0",
    "sop_class": "1.2.840.10008.5.1.4.1.1.1.2",
-   "sop_instance": "1.3.6.1.4.1.14519.5.2.1.4792.2001.169703084598579738748669077239",
-   "study": "1.3.6.1.4.1.14519.5.2.1.4792.2001.262391003644983201750583587479",
-   "study_date": "20080529",
+   "sop_instance": "1.3.6.1.4.1.14519.5.2.1.1620.1225.108382537230872108929285868264",
+   "study": "1.3.6.1.4.1.14519.5.2.1.1620.1225.276924380729306575791117293344",
+   "study_date": "19440327",
    "description": "R SPECIMEN",
-   "transfer_syntax": "1.2.840.10008.1.2.1",
+   "transfer_syntax": "1.2.840.10008.1.2",
    "frames": 1
   },
   {
