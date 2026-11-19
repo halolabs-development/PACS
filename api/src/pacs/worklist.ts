@@ -26,6 +26,7 @@ import type { PacsAudit } from './audit';
 import { worklistRead } from '../emr-viewing/consumer-read';
 import { currentExams, prepareExamRead, readableExamRecords, scopeIncludesSeries, examLookupSources, examParentAccess, examScopeView,
   examTargets, relatedExamReports, resolveExamScope, storedExamScope } from '../exam-merge.service';
+import { viewerStudyDisplay } from './viewer-study-display';
 import type { ResolvedExamScope } from '../exam-merge.service';
 
 /** An order's accession as stored (trimmed); null when it has none. */
@@ -57,9 +58,10 @@ export class PacsWorklist {
     return (await this.selectStudies(c, query, purpose)).body;
   }
 
-  async readStudies(c: Caller, query?: any) {
+  async readStudies(c: Caller, query?: any, viewer = false) {
     // The worklist's own read (GET studies): a list of exams, like listStudies; every study a row returns is recorded.
-    const { body, institutions, identities } = await this.selectStudies(c, query, 'current');
+    const { body, institutions, identities, requestedUids } = await this.selectStudies(c, query, 'current');
+    if (viewer) return viewerStudyDisplay(body.studies, institutions, identities, requestedUids);
     return worklistRead(body, c.actor, inst(c), institutions, identities);
   }
 
@@ -562,7 +564,7 @@ export class PacsWorklist {
       ...(completes ? { identityIssues: identityIssueList(issues) } : {}), ...(page ? { pagination: window.pagination } : {}) };
     const identities = new Map([...sourceRows, ...memberRow.values()].map(st => [OrthancService.tag(st, '0020000D'), {
       sourcePatientId: OrthancService.tag(st, '00100020') || null, sourceInstitution: OrthancService.tag(st, '00080080') || null }]));
-    return { body, identities, institutions: new Map([...byUid].map(([uid, state]) => [uid, state.institutionId])) };
+    return { body, identities, requestedUids: uids, institutions: new Map([...byUid].map(([uid, state]) => [uid, state.institutionId])) };
   }
 
   /**

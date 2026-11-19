@@ -51,8 +51,9 @@ export class PacsClinician {
    * 기관 두 칸과 판독 상태를 함께 읽어 그 행에서만 상태를 만들고, 워크리스트 행과 그 칸들(CLINICIAN_LIST_PINS)이 하나라도
    * 다르면 워크리스트와 같은 409로 답 전체를 거절한다.
    */
-  async clinicianStudies(c: Caller, query?: any) {
+  async clinicianStudies(c: Caller, query?: any, viewer = false) {
     this.clinicianCaller(c);
+    if (viewer) return this.worklist.readStudies(c, query, true);
     const { body: list, identities, institutions } = await this.worklist.selectStudies(c, query, 'source');
     const uids: string[] = list.studies.map((row: any) => row.uid);
     const current = !uids.length ? [] : await this.prisma.$queryRaw<any[]>`
