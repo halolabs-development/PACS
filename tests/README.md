@@ -1306,8 +1306,8 @@ or migration approval; all five authority fields remain false.
 
 ## Synthetic image restoration across CI jobs (C12I)
 
-`python -B tests/ops_image_transfer_test.py` runs 12 refusal/validation checks on
-Linux; Windows runs six pure checks and skips six Linux file-handling checks.
+`python -B tests/ops_image_transfer_test.py` runs 13 refusal/validation checks on
+Linux; Windows runs seven pure checks and skips six Linux file-handling checks.
 Docker calls in these tests are mocked. The separate `restore-image.yml` workflow
 performs the real transfer between two hosted Ubuntu jobs: a fixed static probe
 in a scratch image is saved, uploaded with its receipt, downloaded by exact
@@ -1322,6 +1322,9 @@ The container runs nonroot, read-only, without networking/capabilities, with
 memory/CPU/PID/time bounds. Cleanup checks ownership. The real fixture refuses
 ordinary local invocation; CI environment flags prevent accidental use but are
 not an authorization boundary against a process with the same OS privileges.
+The hosted run must belong to one of the repositories listed in
+`CI_REPOSITORIES` (the project and its CI-only fork); any other repository,
+including an empty or missing name, is refused before Docker is touched.
 
 This verifies restoration of one synthetic executable image only. It does not
 verify the PACS service images, encrypted offsite backup, full restoration or
