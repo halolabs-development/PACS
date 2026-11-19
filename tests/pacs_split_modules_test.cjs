@@ -1709,6 +1709,11 @@ test('OWNER-01 after its email changes the same account keeps its draft, its sav
 
   // the same account under its new email: its draft (same row, same record id [uid, old email]), saved text, hold and versions
   assert.equal((await stateOf(X2, drafted)).draft.findings, 'SYN X DRAFT');
+  // the viewing record of that bootstrap names the draft row it read, never [uid, new email]
+  const { bootstrapRead } = require('/app/dist/emr-viewing/consumer-read');
+  const viewed = bootstrapRead(await w.worklist.bootstrap(X2), X2.actor, INST_A).sources
+    .filter(source => source.target.kind === 'private-draft' && source.target.studyId.value === drafted.uid);
+  assert.deepEqual(viewed.map(source => source.target.recordId.value), [JSON.stringify([drafted.uid, RAD_A.actor])]);
   assert.equal((await stateOf(X2, beside)).draft.findings, 'SYN X BESIDE');
   await w.draft.putReport(drafted.uid, draftBody(X2, drafted.draftEpoch, 1, { findings: 'SYN X DRAFT 2' }), X2, null);
   assert.deepEqual(w.db.rows('reportDraft').filter(d => d.uid === drafted.uid).map(d => [d.author, d.authorSub, d.revision, d.findings]),
