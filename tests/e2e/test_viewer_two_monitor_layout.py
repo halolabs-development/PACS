@@ -17,7 +17,6 @@ from playwright.sync_api import expect
 
 from test_viewer_ux_span import SEAM_STATE, ViewerSpanSeamEmulatedE2E
 from test_thumbnail_series import ThumbnailSeriesE2E
-from test_prior_selection import canvas_ready
 
 GRID = '''() => { const s = services.viewportGridService.getState();
   return { rows: s.layout.numRows, cols: s.layout.numCols, cells: [...s.viewports.values()].map(c => [c.viewportId, c.x, c.y, c.width, c.height]) }; }'''
@@ -31,6 +30,11 @@ ON_SEAM = '''async () => { const d = await getScreenDetails(), left = screenX + 
 
 
 class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
+    def shows(self, viewer, uid, cell=None):
+        # A divided screen has several canvases (some cells may be empty): the given cell, or any cell, shows that study.
+        viewer.wait_for_function('''([uid, cell]) => [...services.viewportGridService.getState().viewports.keys()].filter(id => !cell || id === cell)
+          .some(id => (services.cornerstoneViewportService.getCornerstoneViewport(id)?.getCurrentImageId?.() || '').includes('/studies/' + uid + '/'))''', arg=[uid, cell], timeout=60000)
+
     def setup_viewer(self, prefix):
         a = ThumbnailSeriesE2E.multiple(self, prefix + 'A-' + uuid.uuid4().hex[:10], 'two monitor A', '20260801')
         b = ThumbnailSeriesE2E.multiple(self, prefix + 'B-' + uuid.uuid4().hex[:10], 'two monitor B', '20260801')
@@ -73,7 +77,7 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         self.choose(p, b)
         p.locator('#m-filmbox').click()
         viewer.wait_for_url('**StudyInstanceUIDs=' + b.uid + '**', timeout=45000)
-        canvas_ready(viewer, 1)
+        self.shows(viewer, b.uid)
         self.until(viewer, '() => { const s = services.viewportGridService.getState(); return s.layout.numCols === 2 && s.viewports.size === 2; }')
         self.until(viewer, ON_SEAM)
 
@@ -83,10 +87,10 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         self.layout(viewer, 'Layout-3-1')
         viewer.wait_for_function('() => services.viewportGridService.getState().viewports.size === 8')
         self.until(viewer, ON_SEAM)
-        canvas_ready(viewer, 1)
         before = viewer.evaluate(GRID)
         # The first cell (it shows the first series), on the left display.
         first = sorted(before['cells'], key=lambda c: (c[2], c[1]))[0]
+        self.shows(viewer, a.uid, first[0])
         box = viewer.locator('[data-cy="viewport-grid"]').bounding_box()
         x, y = box['x'] + box['width'] * (first[1] + first[3] / 2), box['y'] + box['height'] * (first[2] + first[4] / 2)
         viewer.mouse.dblclick(x, y)
@@ -128,7 +132,7 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
                          p.evaluate("JSON.parse(localStorage.getItem('kin.ohif.span.screens')).map(s => [s.left, s.width])"))
         # The viewer divides its grid at the display edge by itself.
         self.until(viewer, ON_SEAM)
-        self.loaded(viewer, a)
+        self.shows(viewer, a.uid)
 
 
 def load_tests(loader, tests, pattern):
