@@ -39,7 +39,7 @@
     Object.freeze({key:'sex',tag:'(0010,0040)',label:'Patient Sex',field:'sex',absent:'Absent',title:''}),
     Object.freeze({key:'desc',tag:'(0008,1030)',label:'Study Description',field:'not_compared',absent:'Absent',title:''})]);
   const ORDER_TITLE=Object.freeze({
-    linked:'KIN에 저장된 오더와 서버가 읽은 검사 태그를 규칙으로 비교한 엔지니어링 확인 결과입니다. 권위 있는 병원 오더 출처가 연결되지 않았으므로 대사 결과나 환자 판정으로 쓰지 마세요.',
+    linked:'HALO PACS에 저장된 오더와 서버가 읽은 검사 태그를 규칙으로 비교한 엔지니어링 확인 결과입니다. 권위 있는 병원 오더 출처가 연결되지 않았으므로 대사 결과나 환자 판정으로 쓰지 마세요.',
     no_linked_order:'이 검사에 연결된 오더가 없어 비교하지 않았습니다.',
     tele:'원격판독으로 받은 검사의 오더는 보유 기관의 일입니다.',
     unknown:'이번 관측으로 연결 상태를 판정하지 못했습니다.'});

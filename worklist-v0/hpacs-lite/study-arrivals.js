@@ -188,8 +188,8 @@
     unsupported:'같은 바이트로는 성공할 수 없습니다 — 지원 범위 밖(F-01)',
     unsupportedTitle:'Gateway가 보낼 수 없는 영상(단일 인스턴스가 전송 상한을 넘음)이라 다시 시도해도 같은 결과입니다. 요청할 수 없습니다.',
     button:'Now Retry',
-    buttonTitle:'KIN에 재시도 요청을 남깁니다. Gateway가 30초 주기로 가져가 대기 중인 재시도를 앞당기며, 진행 중인 전송이 있으면 그 뒤에 반영됩니다.',
-    requestedTitle:'요청이 KIN에 저장됐다는 뜻이며 재시도가 실행됐다는 뜻은 아닙니다. Gateway는 30초 주기로 요청을 가져가고, 진행 중인 전송이 있으면 그 전송이 끝난 뒤에 가져갑니다.',
+    buttonTitle:'HALO PACS에 재시도 요청을 남깁니다. Gateway가 30초 주기로 가져가 대기 중인 재시도를 앞당기며, 진행 중인 전송이 있으면 그 뒤에 반영됩니다.',
+    requestedTitle:'요청이 HALO PACS에 저장됐다는 뜻이며 재시도가 실행됐다는 뜻은 아닙니다. Gateway는 30초 주기로 요청을 가져가고, 진행 중인 전송이 있으면 그 전송이 끝난 뒤에 가져갑니다.',
     notFound:'검사를 찾을 수 없어 요청하지 않았습니다.',
     notRetry:'지금은 재시도 대기 상태가 아니어서 요청하지 않았습니다. 목록이 갱신되면 다시 확인하세요.',
     busy:'요청이 겹쳐 처리하지 못했습니다. 잠시 후 다시 시도하세요.',
@@ -228,7 +228,7 @@
    */
   const GATEWAY_STATUS=Object.freeze({
     received:Object.freeze({text:'Report Received',
-      title:'KIN이 이 검사의 Gateway 전송 보고를 받았습니다. 보고 시점에 Gateway가 자기 큐에서 센 수이며 영상 수신이나 전송 종료를 뜻하지 않습니다.'}),
+      title:'HALO PACS가 이 검사의 Gateway 전송 보고를 받았습니다. 보고 시점에 Gateway가 자기 큐에서 센 수이며 영상 수신이나 전송 종료를 뜻하지 않습니다.'}),
     retry_requested:Object.freeze({text:'Retry Requested',title:RETRY_TEXT.requestedTitle}),
     failed:Object.freeze({text:'Transfer Failed',
       title:'Gateway가 이 검사의 전송 실패를 보고했습니다. 마지막 보고 기준이며 그 뒤의 결과는 다음 보고로만 알 수 있습니다.'}),
@@ -319,7 +319,7 @@
     if(m.available!==true)return {key:'not_attempted',text:'',title:'',notObserved:null,needsCheck};
     const absent=m.notObserved===null?' · Not Observed Unknown':m.notObserved.length?' · Not Observed '+m.notObserved.length:'';
     return {key:'observed',text:'Observed '+format(m.observedAt)+absent+tail,
-      title:'KIN이 이 시각에 성공한 관측으로 확인한 목록입니다.'+(m.notObserved===null?' 이번 관측으로는 부재를 판정하지 못했습니다.':''),
+      title:'HALO PACS가 이 시각에 성공한 관측으로 확인한 목록입니다.'+(m.notObserved===null?' 이번 관측으로는 부재를 판정하지 못했습니다.':''),
       notObserved:m.notObserved,needsCheck};
   }
 
