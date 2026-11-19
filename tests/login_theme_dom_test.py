@@ -266,6 +266,7 @@ class LoginThemeDomTest(unittest.TestCase):
                 self.assertGreaterEqual(place["links"]["top"], place["card"]["bottom"], "notice links under the card")
                 button = self.page.locator("#kc-login, #saveTOTPBtn").first
                 button.scroll_into_view_if_needed()
+                expect(button).to_be_in_viewport(ratio=0.95)  # less than 1: a sub-pixel sliver at the edge after scrolling
                 edge = button.bounding_box()
                 self.assertGreaterEqual(edge["x"], 0, "the button's left edge is inside the window")
                 self.assertLessEqual(edge["x"] + edge["width"], place["width"], "the button's right edge is inside the window")
