@@ -98,7 +98,21 @@ window.KinStudyTransferLocal = function (app) {
     prepareUnknown: '원본 준비 요청의 결과를 확인하지 못했습니다. 같은 작업의 상태를 다시 읽습니다.',
     grantUnknown: '내려받기 권한 요청의 결과를 확인하지 못했습니다. Check Again으로 확인하거나 Prepare Again으로 새로 준비하세요.',
     lifetimeEnded: '이 작업의 다운로드 시작 기회가 종료되어 늦게 도착한 답을 적용하지 않았습니다. Check Again으로 상태를 확인하거나 Prepare Again으로 새로 준비하세요.',
+    // Why a download could not go on (the panel's own notice line, see refuse()).
+    rowGone: '이 검사를 지금 목록에서 찾을 수 없어 원본 내려받기를 시작하지 않았습니다. 목록을 새로고침한 뒤 다시 시도하세요.',
+    teleRow: '원격판독으로 받은 검사의 원본은 내려받을 수 없습니다.',
+    examLost: '이 검사의 원본을 지금 모두 볼 수 없어 고를 수 없습니다.',
+    // A kept record that does not say what was downloaded (an older record): shown from the server's answer, read-only.
+    scopeUnknown: '이 탭의 기록에 내려받은 범위가 없어 서버 기록만 보여 줍니다. 다시 받으려면 검사 목록의 메뉴에서 새로 시작하세요.',
   });
+  // The same sentences for an operation that does not offer Prepare Again (sameChoiceAgain): they never point at it.
+  const WITHOUT_AGAIN = new Map([
+    [TEXT.incomplete, '서버 기록에서 전송 완료를 확인하지 못했습니다. Check Again으로 확인하세요. 새로 받으려면 검사 목록의 메뉴에서 다시 시작하세요.'],
+    [TEXT.downloadUnconfirmed, '서버의 전송 결과를 확인하지 못했습니다. Check Again으로 확인하세요. 새로 받으려면 검사 목록의 메뉴에서 다시 시작하세요.'],
+    [TEXT.selectionMoved, '검사 선택이 바뀌어 이 답을 적용하지 않았습니다. Check Again으로 상태를 확인하세요. 새로 받으려면 검사 목록의 메뉴에서 다시 시작하세요.'],
+    [TEXT.grantUnknown, '내려받기 권한 요청의 결과를 확인하지 못했습니다. Check Again으로 확인하세요. 새로 받으려면 검사 목록의 메뉴에서 다시 시작하세요.'],
+    [TEXT.lifetimeEnded, '이 작업의 다운로드 시작 기회가 종료되어 늦게 도착한 답을 적용하지 않았습니다. Check Again으로 상태를 확인하세요. 새로 받으려면 검사 목록의 메뉴에서 다시 시작하세요.'],
+  ]);
 
   // ── panel state ──
   let generation = 0;          // a cleared operation or an ended session leaves the late answers of the old one unwritten
@@ -142,11 +156,18 @@ window.KinStudyTransferLocal = function (app) {
   const persistence = node('p', 'study-transfer-note');
   persistence.lang = 'ko';
   body.append(persistence, resolveForm, list);
+  // Why a download could not go on (refuse()). A line of its own: the import progress, the import summary and a copy
+  // result are written to `status` and never here, so the reason stays readable until the person acts again (acted()).
+  const refusal = node('p', 'study-transfer-note study-transfer-refusal');
+  refusal.setAttribute('role', 'status');
+  refusal.setAttribute('aria-live', 'polite');
+  refusal.lang = 'ko';
+  refusal.hidden = true;
   const picker = document.createElement('input');
   picker.type = 'file';
   picker.multiple = true;
   picker.hidden = true;
-  if (root) root.append(header, body, status, picker);
+  if (root) root.append(header, body, refusal, status, picker);
   let pickFor = null;          // expected study for a new operation only
   buildResolveForm();
 
@@ -159,8 +180,23 @@ window.KinStudyTransferLocal = function (app) {
   function button(label, onClick) {
     const el = node('button', null, label);
     el.type = 'button';
-    el.addEventListener('click', event => { event.preventDefault(); onClick(); });
+    el.addEventListener('click', event => { event.preventDefault(); acted(); onClick(); });
     return el;
+  }
+  /** A download could not go on: the reason, in the panel's notice line (never the line the import progress writes). */
+  function refuse(words) {
+    openPanel();
+    kinWrite(refusal, words);
+    refusal.hidden = false;
+  }
+  /**
+   * The person acted again (a panel button - Close included -, a new import, a new download from a row menu): the notice
+   * of what could not go on before is cleared. Nothing else clears it: not a status read, an import's progress or end,
+   * nor the next original of the same command.
+   */
+  function acted() {
+    refusal.textContent = '';
+    refusal.hidden = true;
   }
   function later(fn, ms) {
     const timer = setTimeout(() => { timers.delete(timer); fn(); }, ms);
@@ -216,6 +252,7 @@ window.KinStudyTransferLocal = function (app) {
     owner = null;
     list.replaceChildren();
     status.textContent = '';
+    acted();
     resolveForm.hidden = true;
     if (root) root.hidden = true;
     if (toolbarButton) toolbarButton.hidden = true;
@@ -392,6 +429,30 @@ window.KinStudyTransferLocal = function (app) {
     return rows;
   }
 
+  /**
+   * What a download answer says the operation covers, and whether that is the choice the page holds for it. The server
+   * marks every answer: selectionSha256 is null for the whole study, else the SHA-256 of its stored choice beside the
+   * counts of that choice; an answer without the mark is not a valid answer. An operation whose choice the page holds
+   * (op.selection: null or the chosen lists) takes only an answer of the same choice - the same counts and the same mark -
+   * and that answer confirms the choice (Prepare Again, sameChoiceAgain). A kept record without a choice (op.selection
+   * undefined, an older record) is only shown: any well-formed answer is read and none confirms anything. Null: not a
+   * valid answer of this operation as the page holds it.
+   */
+  function answeredScope(v, op) {
+    const mark = v.selectionSha256, counts = v.selection, chosen = counts !== undefined;
+    if (chosen ? !(isObject(counts) && Object.keys(counts).sort().join() === 'instances,series'
+        && count(counts.series, Number.MAX_SAFE_INTEGER) && count(counts.instances, Number.MAX_SAFE_INTEGER)
+        && counts.series + counts.instances > 0 && hash(mark)) : mark !== null) return null;
+    // What the server says it covers: null for the whole study, else the counts of the choice.
+    const served = chosen ? { series: counts.series, instances: counts.instances } : null;
+    if (op.selection === undefined) return { served, confirmed: false };
+    if (op.selection ? !(chosen && counts.series === op.selection.series.length && counts.instances === op.selection.instances.length)
+      : chosen) return null;
+    // op.mark is the page's own mark of its choice (undefined when it could not be computed: nothing is confirmed then).
+    if (op.mark === undefined) return { served, confirmed: false };
+    return mark === op.mark ? { served, confirmed: true } : null;
+  }
+
   function downloadPositive(answer, op) {
     if (!complete(answer)) return null;
     const v = answer.body;
@@ -400,9 +461,7 @@ window.KinStudyTransferLocal = function (app) {
         || !(v.note === null || typeof v.note === 'string') || !Object.prototype.hasOwnProperty.call(DOWNLOAD_NAMES, v.state)
         || !Array.isArray(v.attempts) || (op.manifestSha256 && (op.manifestSha256 !== v.manifestSha256
           || op.preparedAt !== v.preparedAt || op.objects !== v.objects || op.bytes !== v.bytes))) return null;
-    // A chosen download is answered with the counts of its choice; a whole-study one with none.
-    if (op.selection ? !(isObject(v.selection) && v.selection.series === op.selection.series.length
-        && v.selection.instances === op.selection.instances.length) : v.selection !== undefined) return null;
+    if (!answeredScope(v, op)) return null;
     const ids = new Set();
     for (let i = 0; i < v.attempts.length; i++) {
       const a = v.attempts[i], last = i === v.attempts.length - 1;
@@ -472,9 +531,14 @@ window.KinStudyTransferLocal = function (app) {
   function descriptor(op) {
     return op.kind === 'import'
       ? { kind: 'import', id: op.id, expect: op.expect, files: op.files.map(f => ({ index: f.index, name: f.name, size: f.size, sha256: f.sha256 })) }
+      // The choice is always written: null for the whole study, else the chosen lists. A record that never had one (an
+      // older record, op.selection undefined) is written back without it, so it never turns into a whole-study record.
       : { kind: 'download', id: op.id, uid: op.uid, manifestSha256: op.manifestSha256, preparedAt: op.preparedAt, objects: op.objects, bytes: op.bytes,
-        ...(op.selection ? { selection: op.selection } : {}) };
+        ...(op.selection !== undefined ? { selection: op.selection } : {}) };
   }
+  // The choice of a kept download record: undefined when the record does not say (the key is missing), null for the
+  // whole study, else the chosen lists as kept.
+  const keptChoice = kept => (Object.prototype.hasOwnProperty.call(kept, 'selection') ? kept.selection : undefined);
 
   const sameOwner = value => JSON.stringify(value) === JSON.stringify(owner);
   // The exact identity the panel was mounted with ([issuer, institution, sub]); a name or an actor never selects the slot.
@@ -532,7 +596,9 @@ window.KinStudyTransferLocal = function (app) {
         if (!uid(kept.uid) || !(kept.manifestSha256 == null || hash(kept.manifestSha256))
             || !(kept.preparedAt == null || time(kept.preparedAt)) || !(kept.objects == null || count(kept.objects, Number.MAX_SAFE_INTEGER))
             || !(kept.bytes == null || count(kept.bytes, Number.MAX_SAFE_INTEGER))
-            || (Object.prototype.hasOwnProperty.call(kept, 'selection')
+            // The form alone (null, or the closed lists in their kept order): how many a new request may carry is not
+            // asked of a record, so one older record never keeps the tab's other operations from being read.
+            || (keptChoice(kept) != null
               && !(closedSelection(kept.selection) && sameSelection(closedSelection(kept.selection), kept.selection)))) throw new Error('Unverified download history');
       } else throw new Error('Unknown history kind');
     }
@@ -543,7 +609,7 @@ window.KinStudyTransferLocal = function (app) {
     for (const kept of saved) {
       const op = operations.find(o => o.id === kept.id) || clearedHistory.get(kept.id);
       if (!op) continue;
-      if (op.kind !== kept.kind || (op.kind === 'download' ? op.uid !== kept.uid || !sameSelection(op.selection, kept.selection)
+      if (op.kind !== kept.kind || (op.kind === 'download' ? op.uid !== kept.uid || !sameChoice(op.selection, keptChoice(kept))
           : op.expect !== (kept.expect ?? null)))
         throw new Error('Conflicting history');
       if (op.kind === 'import') for (const f of kept.files) {
@@ -602,7 +668,8 @@ window.KinStudyTransferLocal = function (app) {
           if (existing && !added.includes(op)) added.push(op);
         }
       } else {
-        op = op || downloadOperation(kept.id, kept.uid, kept.selection ? closedSelection(kept.selection) : null);
+        // The record's own choice, never a guess: a record without one stays without one (shown from the server only).
+        op = op || downloadOperation(kept.id, kept.uid, keptChoice(kept) == null ? keptChoice(kept) : closedSelection(kept.selection));
         if (!op.manifestSha256 && hash(kept.manifestSha256) && time(kept.preparedAt) && count(kept.objects, Number.MAX_SAFE_INTEGER) && count(kept.bytes, Number.MAX_SAFE_INTEGER))
           Object.assign(op, { manifestSha256: kept.manifestSha256, preparedAt: kept.preparedAt, objects: kept.objects, bytes: kept.bytes });
       }
@@ -661,6 +728,7 @@ window.KinStudyTransferLocal = function (app) {
 
   /** The toolbar's Import DICOM (a new study, or files of several studies) and the Technician row's (that study). */
   function choose(expect) {
+    acted();
     sync();
     if (!canImport()) return;
     openPanel();
@@ -836,23 +904,84 @@ window.KinStudyTransferLocal = function (app) {
   }
 
   // ── Download Originals (5.2, 5.3, 6) ──
-  // selection: null for the whole study, else { series, instances } of chosen original UIDs (Download Selected Originals).
-  function downloadOperation(id, uid, selection = null) {
-    return { kind: 'download', id, uid, selection, state: null, objects: 0, bytes: 0, done: 0, notice: '', gen: generation, readSeq: 0,
+  // selection: the choice the page holds for the operation - null for the whole study, { series, instances } of chosen
+  // original UIDs (Download Selected Originals), or undefined for a kept record that does not say (an older record).
+  // mark: the page's own mark of that choice (markOf; null for the whole study), compared with the server's answers.
+  // served / scopeConfirmed: what the server's valid answer of this operation said it covers (answeredScope).
+  // `selection` has no default: a caller that passes undefined means the record that does not say.
+  function downloadOperation(id, uid, selection, mark = selection === null ? null : undefined) {
+    const op = { kind: 'download', id, uid, selection, mark, marking: null, served: undefined, scopeConfirmed: false,
+      state: null, objects: 0, bytes: 0, done: 0, notice: '', gen: generation, readSeq: 0,
       inFlight: false, lost: false, polling: false, pollTimer: null, polls: 0, grantId: null, manifestSha256: null, preparedAt: null, label: studyLabel(uid) };
+    // A kept choice is marked before its first status read (readDownload waits for it); a failed digest confirms nothing.
+    if (selection && mark === undefined) op.marking = markOf(selection).then(value => { op.mark = value; }, () => {}).then(() => { op.marking = null; });
+    return op;
   }
 
-  // At most this many chosen series and images together (the server's own bound: the request stays within its body limit).
+  // At most this many chosen series and images together in a new preparation request (the server's own bound: the
+  // request stays within its body limit).
   const SELECTION_MAX = 1000;
-  /** The closed form of a choice, as the server keeps it: distinct UIDs, both lists sorted, together 1..SELECTION_MAX; else null. */
+  /** The closed form of a choice, as the server keeps it: distinct UIDs, both lists sorted, at least one together; else null. */
   function closedSelection(v) {
     if (!isObject(v) || Object.keys(v).sort().join() !== 'instances,series') return null;
     const list = items => Array.isArray(items) && items.every(uid) && new Set(items).size === items.length ? [...items].sort() : null;
     const series = list(v.series), instances = list(v.instances);
-    if (!series || !instances || series.length + instances.length < 1 || series.length + instances.length > SELECTION_MAX) return null;
-    return { series, instances };
+    return series && instances && series.length + instances.length >= 1 ? { series, instances } : null;
   }
+  /**
+   * Whether a new preparation request may carry this choice: asked by the choice dialog, before every new request and
+   * by Prepare Again - never of a kept record, which is read whatever its size.
+   */
+  const withinBound = selection => selection.series.length + selection.instances.length <= SELECTION_MAX;
   const sameSelection = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
+  // The same choice, a missing one (undefined) told apart from the whole study (null).
+  const sameChoice = (a, b) => (a === undefined) === (b === undefined) && sameSelection(a, b);
+  /** The mark of a choice as the server computes it: the SHA-256 of the UTF-8 text JSON.stringify([series, instances]). */
+  async function markOf(selection) {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([selection.series, selection.instances])));
+    return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  /**
+   * Prepare Again asks for the operation's own choice again under a new id. It is offered, and acts, only once the
+   * server's valid answer for this same operation and study carried the mark of the choice the page holds - never on the
+   * tab's kept record alone, and not while that answer is still awaited - and only for a choice a new request may carry.
+   */
+  const sameChoiceAgain = op => op.scopeConfirmed && op.selection !== undefined && (op.selection === null || withinBound(op.selection));
+
+  /**
+   * The one lifetime of a download's choice dialogs - the choice of originals (KinExamScope.chooseOriginals) and the
+   * choice of their series and images (pickOriginals) - taken when the row's menu item acts. Both dialogs open, stay open
+   * and are continued from only while all of it holds (KinExamScope.showWhileLive): the person may download (the role,
+   * the complete identity, the session and its work context), the study selection is the one the item acted on (A→B→A is
+   * not), the row is still listed, is not received for tele-reading and is an exam the reader can read whole, and its
+   * exam scope is the generation the dialogs show. A dialog that is no longer live chooses nothing.
+   */
+  function choiceLife(uid) {
+    const exam = window.KinExamScope, at = work.capture('study');
+    const generation = row => { try { return exam.screenStamp(row); } catch (_) { return undefined; } };
+    const first = app.study(uid), stamp = first ? generation(first) : undefined;
+    return () => {
+      const row = app.study(uid);
+      return !!row && !row.tele && !exam.unavailable(row) && stamp !== undefined && generation(row) === stamp
+        && canDownload() && usable() && work.admits(at);
+    };
+  }
+
+  /**
+   * A row menu's download item acts (Download Originals, Download Selected Originals; Radiology and Technician menus):
+   * the row is read again as the list holds it now. Returns the row and the lifetime of what follows, or null after
+   * saying why nothing starts - the list no longer holds the row, or it is a study received for tele-reading.
+   */
+  function begin(uid) {
+    acted();
+    sync();
+    if (!canDownload()) return null;
+    if (!usable()) { refuse(unavailable()); return null; }
+    const row = app.study(uid);
+    if (!row) { refuse(TEXT.rowGone); return null; }
+    if (row.tele) { refuse(TEXT.teleRow); return null; }
+    return { row, live: choiceLife(uid) };
+  }
 
   /**
    * Download Selected Originals: the chosen series and single images of one original study at a time. A merged or split
@@ -860,15 +989,14 @@ window.KinStudyTransferLocal = function (app) {
    * series and images by their own UIDs - never one exam's merged list. An exam the reader cannot read whole opens nothing.
    */
   async function downloadChosen(uid) {
-    sync();
-    if (!canDownload()) return;
-    const row = app.study(uid), scope = window.KinExamScope.read(row);
-    const at = work.capture('study'), stamp = window.KinExamScope.stamp(row);
-    const live = () => work.admits(at) && stamp === window.KinExamScope.stamp(app.study(uid));
-    if (!usable()) { openPanel(); status.textContent = unavailable(); return; }
+    const started = begin(uid);
+    if (!started) return;
+    const { row, live } = started;
     // An exam the reader cannot read whole names none of its originals: nothing is listed or chosen.
     const lost = window.KinExamScope.unavailable(row);
-    if (lost) { openPanel(); kinWrite(status, lost.message || kinSay('이 검사의 원본을 지금 모두 볼 수 없어 고를 수 없습니다.')); return; }
+    if (lost) { refuse(lost.message || TEXT.examLost); return; }
+    let scope = null;
+    try { scope = window.KinExamScope.read(row); } catch (_) { refuse(TEXT.examLost); return; }
     let sources = [uid];
     if (scope?.groupId) {
       sources = await window.KinExamScope.chooseOriginals(row, scope, { live, title: kinSay('Download Selected Originals'),
@@ -878,7 +1006,7 @@ window.KinStudyTransferLocal = function (app) {
       if (!live()) return;
       const selection = await pickOriginals(source, live);
       if (!selection || !live()) return;
-      await download(source, true, selection);
+      await download(source, true, selection, live);
     }
   }
 
@@ -894,8 +1022,10 @@ window.KinStudyTransferLocal = function (app) {
 
   /**
    * The choice of one original study's series and images. Continue only with something chosen; a chosen series takes all
-   * its images (its own image boxes are then off). Cancel, Escape or a moved selection choose nothing (null). A listing
-   * that answers after the dialog closed, or after the person or the work context changed, is not applied.
+   * its images (its own image boxes are then off). Cancel, Escape or a choice that is no longer live (choiceLife: not
+   * opened then, closed by itself while open, not continued from) choose nothing (null). A listing that answers after
+   * the dialog closed, or after the person or the work context changed, is not applied; none is asked for a dialog that
+   * did not open.
    */
   function pickOriginals(studyUid, live) {
     return new Promise(resolve => {
@@ -923,22 +1053,23 @@ window.KinStudyTransferLocal = function (app) {
         for (const b of imageBoxes) b.disabled = seriesBoxes.some(s => s.checked && s.value === b.dataset.series);
         const c = chosen();
         const total = c.series.length + c.instances.length;
-        go.disabled = total === 0 || total > SELECTION_MAX;
-        kinWrite(counted, total > SELECTION_MAX ? kinSay('한 번에 {n0}개까지 고를 수 있습니다. 영상이 많으면 시리즈 전체를 고르세요.', SELECTION_MAX)
+        go.disabled = total === 0 || !withinBound(c);
+        kinWrite(counted, !withinBound(c) ? kinSay('한 번에 {n0}개까지 고를 수 있습니다. 영상이 많으면 시리즈 전체를 고르세요.', SELECTION_MAX)
           : kinSay('고른 것: 시리즈 {n0}개, 영상 {n1}개', c.series.length, c.instances.length));
       };
       const failed = (where, words) => { where.replaceChildren(); where.append(kinWrite(node('p', 'study-transfer-pick-failed'), kinSay(words))); };
       dialog.addEventListener('change', update);
-      go.addEventListener('click', () => { if (live()) result = closedSelection(chosen()); dialog.close(); });
+      go.addEventListener('click', () => {
+        const picked = closedSelection(chosen());
+        if (live() && picked && withinBound(picked)) result = picked;
+        dialog.close();
+      });
       cancel.addEventListener('click', () => dialog.close());
-      // The dialog lives only while its row, its exam scope and the work context still hold (a list refresh, a lost right,
-      // a logout): checked while it is open, not only when an answer comes or Continue is pressed.
-      const watch = setInterval(() => { if (open && !live()) dialog.close(); }, 500);
-      dialog.addEventListener('close', () => { open = false; clearInterval(watch); dialog.remove(); resolve(result); }, { once: true });
+      dialog.addEventListener('close', () => { open = false; resolve(result); }, { once: true });
       kinWrite(list, kinSay('시리즈 목록을 읽는 중입니다…'));
       dialog.append(heading, note, study, list, counted, go, cancel);
-      document.body.append(dialog);
-      dialog.showModal();
+      // The one lifetime of the choice dialogs: not opened, closed by itself while open, when it no longer holds.
+      if (!window.KinExamScope.showWhileLive(dialog, live)) { open = false; resolve(null); return; }
       update();
       const base = '/dicom-web/studies/' + encodeURIComponent(studyUid) + '/series';
       listing(base + '?includefield=0020000E,00200011,00080060,0008103E,00201209', at).then(rows => work.commit(at, () => {
@@ -997,24 +1128,35 @@ window.KinStudyTransferLocal = function (app) {
     });
   }
 
-  /** The row's Download Originals: a new operation is prepared for that study's fixed manifest (5.2 steps 1-2). */
-  async function download(uid, original = false, selection = null) {
+  /**
+   * The row's Download Originals: a new operation is prepared for that study's fixed manifest (5.2 steps 1-2).
+   * `original`: the study is an original already decided (one of a merged exam's chosen originals, a chosen download,
+   * Prepare Again), with its `selection` (null: the whole study) and `still`, asked once more before the request leaves.
+   */
+  async function download(uid, original = false, selection = null, still = () => true) {
     if (!original) {
-      const row=app.study(uid),scope=window.KinExamScope.read(row);
-      if(scope?.groupId) {
-        const at=work.capture('study'),stamp=window.KinExamScope.stamp(row);
-        const live=()=>work.admits(at)&&stamp===window.KinExamScope.stamp(app.study(uid));
-        const picked=await window.KinExamScope.chooseOriginals(row,scope,{live});
-        for(const sourceUid of picked){if(!live())return;await download(sourceUid,true);}return;
+      // The menu item's own entry: the row as the list holds it now, and the role and session before any dialog opens.
+      const started = begin(uid);
+      if (!started) return;
+      const scope = window.KinExamScope.read(started.row);
+      if (scope?.groupId) {
+        const picked = await window.KinExamScope.chooseOriginals(started.row, scope, { live: started.live });
+        for (const sourceUid of picked) { if (!started.live()) return; await download(sourceUid, true, null, started.live); }
+        return;
       }
     }
+    const chosen = selection ? closedSelection(selection) : null;
+    // A choice outside its form, or more than a new request may carry, makes no request.
+    if (selection && (!chosen || !withinBound(chosen))) return;
+    // The page's own mark of the choice, before the operation exists: its answers are compared with it (answeredScope).
+    let mark = null;
+    if (chosen) { try { mark = await markOf(chosen); } catch (_) { mark = undefined; } }
+    if (!still()) return;
     sync();
     if (!canDownload()) return;
+    if (!usable()) { refuse(unavailable()); return; }
     openPanel();
-    if (!usable()) { status.textContent = unavailable(); return; }
-    const chosen = selection ? closedSelection(selection) : null;
-    if (selection && !chosen) return;
-    const op = downloadOperation(crypto.randomUUID(), uid, chosen);
+    const op = downloadOperation(crypto.randomUUID(), uid, chosen, mark);
     firstDownloads.add(op);
     operations.unshift(op);
     store();
@@ -1040,7 +1182,8 @@ window.KinStudyTransferLocal = function (app) {
         clearedHistory.set(op.id, op);
         op.gen = -1;
         operations.splice(operations.indexOf(op), 1);
-        status.textContent = TEXT.selectionMissing;
+        // In the panel's notice line: an import going on meanwhile writes its progress and its summary elsewhere.
+        refuse(TEXT.selectionMissing);
       }
       else { op.notice = TEXT.prepareUnknown; readDownload(op, false, true); }
       store();
@@ -1050,6 +1193,10 @@ window.KinStudyTransferLocal = function (app) {
   }
 
   function adoptDownload(op, view) {
+    // What this valid answer says the operation covers; the same mark as the page's own confirms the choice.
+    const scope = answeredScope(view, op);
+    op.served = scope.served;
+    if (scope.confirmed) op.scopeConfirmed = true;
     // An uncertain observation can never erase a previously validated supply result.
     if (op.state === 'sent') return;
     op.state = view.state;
@@ -1148,6 +1295,8 @@ window.KinStudyTransferLocal = function (app) {
 
   /** GET .../original-downloads/:operationId: the state the server recorded. Sent is not a saved file (5.3). */
   async function readDownload(op, polled = false, keepNotice = false) {
+    // A kept choice is read only once the page's own mark of it is known (downloadOperation), so the answer is compared.
+    if (op.marking) await op.marking;
     if (!live(op)) return;
     if (!usable()) { stopPolling(op); op.lost = true; return; }
     if (polled) {
@@ -1202,6 +1351,7 @@ window.KinStudyTransferLocal = function (app) {
     let busy = false;
     resolveForm.addEventListener('submit', async event => {
       event.preventDefault();
+      acted();
       if (busy || !isAdmin() || !usable()) return;
       const id = opInput.value.trim().toLowerCase(), index = indexInput.value.trim();
       // The local time the admin read is sent as the UTC instant it names (the route's closed form, 4.4).
@@ -1292,33 +1442,51 @@ window.KinStudyTransferLocal = function (app) {
     const box = node('section', 'study-transfer-op');
     box.dataset.operation = op.id;
     const head = node('div', 'study-transfer-op-head');
-    head.append(op.selection ? kinWrite(node('b'), kinSay('Download Selected Originals')) : node('b', null, 'Download Originals'),
+    // What the panel says the operation covers (covered): never the whole study for a record that does not say.
+    const covers = covered(op), again = sameChoiceAgain(op);
+    head.append(covers === undefined ? kinWrite(node('b'), kinSay('Download Originals (Range Not Confirmed)'))
+      : covers ? kinWrite(node('b'), kinSay('Download Selected Originals')) : node('b', null, 'Download Originals'),
       node('span', null, ' · ' + op.id.slice(0, 8) + (op.label ? ' · ' + op.label : '')));
     box.append(head);
-    if (op.selection) {
+    if (covers) {
       box.dataset.selected = 'true';
-      box.append(kinWrite(node('p', 'study-transfer-selection'),
-        kinSay('고른 범위: 시리즈 {n0}개, 영상 {n1}개', op.selection.series.length, op.selection.instances.length)));
+      box.append(kinWrite(node('p', 'study-transfer-selection'), kinSay('고른 범위: 시리즈 {n0}개, 영상 {n1}개', covers.series, covers.instances)));
     }
+    if (op.selection === undefined) box.append(kinWrite(node('p', 'study-transfer-note study-transfer-scope'), kinSay(TEXT.scopeUnknown)));
     const line = node('p', 'study-transfer-download');
     const ready = op.state === 'prepared' && firstDownloads.has(op);
+    // A sentence that points at Prepare Again is said only where that button is offered (WITHOUT_AGAIN otherwise).
+    const worded = text => (again ? text : WITHOUT_AGAIN.get(text) ?? text);
     line.append(node('span', 'study-transfer-state', ready ? 'Ready' : op.state && op.state !== 'prepared' ? DOWNLOAD_NAMES[op.state] : 'Not confirmed'),
-      kinWrite(node('span', 'study-transfer-reason'), downloadText(op)));
+      kinWrite(node('span', 'study-transfer-reason'), worded(downloadText(op, covers))));
     box.append(line);
-    if (op.notice) box.append(node('p', 'study-transfer-note', op.notice));
+    if (op.notice) box.append(node('p', 'study-transfer-note', worded(op.notice)));
     if (ready && !op.polling && !op.inFlight) box.append(button('Download', () => start(op)));
     box.append(button('Copy ID', () => copyId({ op })));
     if (!op.inFlight) {
       box.append(button('Check Again', () => readDownload(op)));
-      // Prepare Again keeps the operation's own choice: the whole study, or the same series and images.
-      box.append(button('Prepare Again', () => download(op.uid, true, op.selection)));
+      // Prepare Again keeps the operation's own choice (the whole study, or the same series and images), offered and
+      // acted on only under sameChoiceAgain: the press asks it again, and once more before the request leaves.
+      if (again) box.append(button('Prepare Again', () => prepareAgain(op)));
     }
     return box;
   }
-  function downloadText(op) {
-    if (op.state === 'prepared' && firstDownloads.has(op)) return op.selection ? TEXT.readyChosen(op.objects, size(op.bytes)) : TEXT.ready(op.objects, size(op.bytes));
+  function prepareAgain(op) {
+    const same = () => live(op) && !op.inFlight && sameChoiceAgain(op);
+    if (same()) download(op.uid, true, op.selection, same);
+  }
+  /**
+   * What the panel says an operation covers: the choice the page holds for it (null: the whole study, else its counts);
+   * for a kept record without one, what the server's own valid answer says; before that answer, not confirmed (undefined).
+   */
+  function covered(op) {
+    if (op.selection === undefined) return op.served;
+    return op.selection ? { series: op.selection.series.length, instances: op.selection.instances.length } : null;
+  }
+  function downloadText(op, covers) {
+    if (op.state === 'prepared' && firstDownloads.has(op)) return covers ? TEXT.readyChosen(op.objects, size(op.bytes)) : TEXT.ready(op.objects, size(op.bytes));
     if (op.state === 'sending') return TEXT.downloading(op.done, op.objects);
-    if (op.state === 'sent') return op.selection ? TEXT.sentChosen : TEXT.sent;
+    if (op.state === 'sent') return covers ? TEXT.sentChosen : TEXT.sent;
     if (op.state === 'incomplete') return TEXT.incomplete;
     return TEXT.downloadUnconfirmed;
   }

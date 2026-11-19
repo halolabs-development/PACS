@@ -1943,6 +1943,67 @@ test('S9U4-B92 a chosen download at its start compares only the chosen originals
   assert.deepEqual((await h.request('GET', `/api/studies/${study}/original-downloads/${broken}`, { as: RAD })).body.code, 'MANIFEST_STORE_INVALID');
 });
 
+const markOf = selection => createHash('sha256').update(JSON.stringify([selection.series, selection.instances]), 'utf8').digest('hex');
+
+test('S9U4-B93 the mark of a choice and the request bound: every preparation and status answer carries selectionSha256 (null for the whole study, the SHA-256 of the sorted lists otherwise; a whole series and its images one by one are two marks); a stored choice above the request bound is still read, granted and sent whole; a new request above it is 400; a stored choice outside its form stays 503', async () => {
+  const h = await harness({ realGuard: true });
+  sessionOf(h, 'sid-m1');
+  const study = uid(), big = study + '.7';
+  own(h.s, study, 'inst-a', 'gateway');
+  for (let i = 0; i < 1001; i++) h.orthanc.store(dicom({ study, series: big, id: 'SYN-D', pixel: 64 }));
+  h.orthanc.store(dicom({ study, series: study + '.8', id: 'SYN-D', pixel: 66 }));
+  const sops = originalsOf(h, study).filter(i => i.h.seriesInstanceUid === big).map(i => i.h.sopInstanceUid).sort();
+  assert.equal(sops.length, 1001);
+  const post = body => h.request('POST', `/api/studies/${study}/original-downloads`, { as: null, headers: boundHeaders('sid-m1'), body });
+  // The mark: explicit null for the whole study; of the sorted lists for a choice, whatever order the request had.
+  const wholeId = randomUUID(), seriesId = randomUUID(), imagesId = randomUUID();
+  const whole = await post({ operationId: wholeId });
+  assert.deepEqual([whole.status, whole.body.objects, whole.body.selectionSha256, 'selection' in whole.body], [200, 1002, null, false], JSON.stringify(whole.body).slice(0, 300));
+  const series = await post({ operationId: seriesId, selection: { series: [big], instances: [] } });
+  assert.deepEqual([series.status, series.body.objects, series.body.selectionSha256], [200, 1001, markOf({ series: [big], instances: [] })]);
+  const thousand = sops.slice(0, 1000);
+  const images = await post({ operationId: imagesId, selection: { instances: [...thousand].reverse(), series: [] } });
+  assert.deepEqual([images.status, images.body.objects, images.body.selection, images.body.selectionSha256],
+    [200, 1000, { series: 0, instances: 1000 }, markOf({ series: [], instances: thousand })], 'the bound itself is a request the server prepares');
+  for (const [id, answer] of [[wholeId, whole], [seriesId, series], [imagesId, images]]) {
+    const status = await boundStatus(h, study, id, 'sid-m1');
+    assert.ok(Object.prototype.hasOwnProperty.call(status.body, 'selectionSha256'), 'the status answer names the mark, null included');
+    assert.deepEqual([status.status, status.body.selectionSha256], [200, answer.body.selectionSha256]);
+  }
+  // A new request above the bound prepares nothing.
+  const over = randomUUID();
+  const refused = await post({ operationId: over, selection: { series: [], instances: sops } });
+  assert.deepEqual([refused.status, refused.body.code], [400, 'IMPORT_REQUEST_INVALID']);
+  assert.ok(!h.s.op(over), 'nothing prepared');
+  // A row kept before this bound: the series' 1,001 images chosen one by one. It is read, granted and sent to its end.
+  const old = randomUUID();
+  assert.equal((await post({ operationId: old, selection: { series: [big], instances: [] } })).status, 200);
+  h.s.ops.get(old).download.selection = { series: [], instances: sops };
+  const status = await boundStatus(h, study, old, 'sid-m1');
+  assert.deepEqual([status.status, status.body.state, status.body.selection, status.body.selectionSha256],
+    [200, 'prepared', { series: 0, instances: 1001 }, markOf({ series: [], instances: sops })], JSON.stringify(status.body).slice(0, 300));
+  assert.notEqual(status.body.selectionSha256, series.body.selectionSha256, 'a whole series and all its images one by one are two choices');
+  const grant = await grantRequest(h, study, old, 'sid-m1');
+  assert.equal(grant.status, 200, JSON.stringify(grant.body));
+  const zip = await nativeGet(h, study, old, grant.body.grant, 'sid-m1');
+  assert.equal(zip.status, 200, JSON.stringify(zip.body));
+  assert.equal(Number(zip.headers['content-length']), zip.bytes.length, 'the archive to its last byte');
+  const entries = parseZipEntries(zip.bytes);
+  assert.equal(entries.length, 1001 + 1);
+  assert.deepEqual(JSON.parse(entries[entries.length - 1].data.toString('utf8')).objects.map(o => o.sopUid).sort(), sops);
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(h.s.op(old).status, 'sent');
+  assert.equal((await boundStatus(h, study, old, 'sid-m1')).body.state, 'sent');
+  // The stored form itself is still required: nothing chosen, an unsorted list, a missing list or null is never used.
+  const broken = randomUUID();
+  assert.equal((await post({ operationId: broken, selection: { series: [big], instances: [] } })).status, 200);
+  for (const selection of [{ series: [], instances: [] }, { series: [], instances: [sops[1], sops[0]] }, { series: [big] }, null]) {
+    h.s.ops.get(broken).download.selection = selection;
+    assert.deepEqual((await boundStatus(h, study, broken, 'sid-m1')).body.code, 'MANIFEST_STORE_INVALID', JSON.stringify(selection));
+    assert.deepEqual((await grantRequest(h, study, broken, 'sid-m1')).body.code, 'MANIFEST_STORE_INVALID', JSON.stringify(selection));
+  }
+});
+
 test('S9U4-B30 download streams that stop: an MD5 change of a stored original is Incomplete and never a successful ZIP; a client disconnect is Incomplete; restart marks an expired sending attempt Unconfirmed', async () => {
   const h = await harness();
   const study = await downloadStudy(h, 2);

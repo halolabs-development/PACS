@@ -127,8 +127,9 @@ const BEFORE_STUDY_CODES = new Set(['DICOM_NOT_PART10', 'DICOM_FILE_META_MISSING
   'STUDY_OWNERSHIP_CONFLICT', 'STUDY_OWNERSHIP_UNDETERMINED', 'ORTHANC_UNAVAILABLE']);
 const storeInvalid = () => error(503, 'MANIFEST_STORE_INVALID', ORIGINAL_ARCHIVE_MESSAGES.MANIFEST_STORE_INVALID);
 /**
- * At most this many chosen series and images together in one download: with 64-character UIDs the request stays well
- * inside the JSON body limit (100 kB), so a choice the page allows is never refused for its size. More images are a series.
+ * At most this many chosen series and images together in one preparation request: with 64-character UIDs the request
+ * stays well inside the JSON body limit (100 kB), so a choice the page allows is never refused for its size. More images
+ * are a series. Applied to the request alone (prepareDownload), never to a row already stored.
  */
 const SELECTION_MAX = 1000;
 /** A chosen series or image that is not one of the study's downloadable originals now: one answer, naming none of them. */
@@ -138,8 +139,9 @@ const SELECTION_NOT_FOUND = '고른 시리즈·영상 가운데 이 검사의 �
 export type Selection = { series: string[]; instances: string[] };
 
 /**
- * A selection in its closed form - exactly series and instances, each a list of distinct UIDs, together 1 to
- * SELECTION_MAX - returned with both lists sorted (one text for one choice). Null when it is anything else.
+ * A selection in its closed form - exactly series and instances, each a list of distinct UIDs, at least one together -
+ * returned with both lists sorted (one text for one choice). Null when it is anything else. This is the form alone, as
+ * a stored row keeps it; how many a new request may carry (SELECTION_MAX) is the preparation's own rule.
  */
 export function readSelection(value: unknown): Selection | null {
   if (!exactKeys(value, ['series', 'instances'])) return null;
@@ -147,10 +149,16 @@ export function readSelection(value: unknown): Selection | null {
   const list = (items: unknown) => Array.isArray(items) && items.every(u => typeof u === 'string' && u.length <= 64 && UID.test(u))
     && new Set(items).size === items.length ? [...items as string[]].sort() : null;
   const series = list(v.series), instances = list(v.instances);
-  if (!series || !instances) return null;
-  const total = series.length + instances.length;
-  return total >= 1 && total <= SELECTION_MAX ? { series, instances } : null;
+  return series && instances && series.length + instances.length >= 1 ? { series, instances } : null;
 }
+
+/**
+ * The mark of a download's choice in its answers: null for the whole study, else the SHA-256 of the UTF-8 text
+ * JSON.stringify([series, instances]) of the stored (sorted) lists. The page compares it with the choice it holds before
+ * it offers the same choice again; the UIDs themselves stay out of the answer.
+ */
+export const selectionMark = (selection: Selection | null | undefined): string | null =>
+  selection ? createHash('sha256').update(JSON.stringify([selection.series, selection.instances]), 'utf8').digest('hex') : null;
 
 /** Whether an original (by its own Series and SOP Instance UIDs) is in the selection: a chosen series or a chosen image. */
 function chosenFilter(selection: Selection) {
@@ -554,9 +562,11 @@ export class StudyTransferLocalService implements OnModuleInit, OnModuleDestroy 
 
   private downloadView(op: any, stored: StoredDownload, now: Date | null = null) {
     const attempts = stored.download.attempts, selection: Selection | undefined = stored.download.selection;
-    // A chosen download also says how many series and single images were chosen (never which: the page holds them).
+    // A chosen download also says how many series and single images were chosen (never which: the page holds them), and
+    // every answer carries the mark of its choice (selectionSha256: null for the whole study).
     return { operationId: op.id, studyUid: op.studyUid, state: op.status, manifestSha256: op.manifestSha256, preparedAt: stored.download.preparedAt,
       ...(selection ? { selection: { series: selection.series.length, instances: selection.instances.length } } : {}),
+      selectionSha256: selectionMark(selection),
       objects: stored.manifest.objects.length, bytes: totalBytes(stored.manifest),
       note: op.status === 'sent' ? (selection ? TRANSFER_MESSAGES.sentChosen : TRANSFER_MESSAGES.sent) : null,
       attempts: attempts.map((a: any) => ({ attemptId: a.attemptId, number: a.number, state: a.state, startedAt: a.startedAt, endedAt: a.endedAt,
@@ -612,7 +622,9 @@ export class StudyTransferLocalService implements OnModuleInit, OnModuleDestroy 
         || typeof (body as any).operationId !== 'string' || !OPERATION_ID.test((body as any).operationId))
       throw error(400, 'IMPORT_REQUEST_INVALID', TRANSFER_MESSAGES.request);
     const selection = keys === 'operationId' ? null : readSelection((body as any).selection);
-    if (keys !== 'operationId' && !selection) throw error(400, 'IMPORT_REQUEST_INVALID', TRANSFER_MESSAGES.request);
+    // The bound belongs to a request only (a new preparation or its replay): a stored row is read by its form alone.
+    if (keys !== 'operationId' && (!selection || selection.series.length + selection.instances.length > SELECTION_MAX))
+      throw error(400, 'IMPORT_REQUEST_INVALID', TRANSFER_MESSAGES.request);
     const operationId = (body as any).operationId.toLowerCase();
     await this.storageRead(() => this.ownStudy(uid, c), downloadStorage);
     // A preparation and its replay alike: no download of a Study UID two original resources answer (WORKLIST-SPLIT-UID).

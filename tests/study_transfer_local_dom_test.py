@@ -122,7 +122,15 @@ def status_of(result):
     return 400 if (result["code"] or "").startswith(("DICOM_", "PATIENT_ID_", "MODALITY")) else 409
 
 
+def selection_mark(selection):
+    """The server's mark of a choice: the SHA-256 of the UTF-8 text JSON.stringify([series, instances]) of its sorted lists."""
+    text = json.dumps([sorted(selection["series"]), sorted(selection["instances"])], separators=(",", ":"))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def download_view(op, uid, state="prepared", objects=3, size=3 * 1048576, complete=0, selection=None):
+    """The server's answer for a download. `selection`: the chosen lists (None: the whole study); the answer carries
+    their counts and the mark of the choice (selectionSha256, null for the whole study), never the UIDs."""
     attempts = [] if state == "prepared" else [{"attemptId": "00000000-0000-4000-9000-000000000001", "number": 1,
         "state": state, "startedAt": "2026-10-17T00:00:00.000Z", "endedAt": None if state == "sending" else "2026-10-17T00:01:00.000Z",
         "archiveSha256": "1" * 64 if state == "sent" else None, "responseFinished": state == "sent",
@@ -130,7 +138,8 @@ def download_view(op, uid, state="prepared", objects=3, size=3 * 1048576, comple
     return {"operationId": op, "studyUid": uid, "state": state, "manifestSha256": "2" * 64,
             "preparedAt": "2026-10-17T00:00:00.000Z", "objects": objects, "bytes": size,
             "note": SENT if state == "sent" else None, "attempts": attempts, "archiveRequest": None,
-            **({"selection": selection} if selection else {})}
+            "selectionSha256": selection_mark(selection) if selection else None,
+            **({"selection": {"series": len(selection["series"]), "instances": len(selection["instances"])}} if selection else {})}
 
 
 # r6 (D1668, OPUS-01): the server's finite positive history (dicom-import-gate.service.ts retryEnded/resultBound). A
@@ -362,12 +371,18 @@ class TransferSite(rf.FlowSite):
         self.held_grants = []           # (route, record) answered by the case
         self.recovery_answers = []      # per recovery: (status, body)
         self.tele = {TELE_UID}
+        self.unavailable = {}           # uid -> exam kind: the row's exam cannot be read whole now (no original is named)
+        self.held_reads = []            # (route, operationId) of download status GETs answered by the case ("hold")
 
     def list_body(self, account, rename=None):
         body = super().list_body(account, rename)
         listed = {row["uid"]: dict(row) for row in body["studies"]}
         for row in body["studies"]:
             row["tele"] = row["uid"] in self.tele
+            if row["uid"] in self.unavailable:
+                # As the server lists an exam whose originals the reader cannot all read: the fact and the kind, no original.
+                row.update({"examUnavailable": True, "examUnavailableKind": self.unavailable[row["uid"]]})
+                continue
             if row["uid"] in self.exam_scopes:
                 row["examScope"] = self.exam_scopes[row["uid"]]
             if row["uid"] in self.source_acc:
@@ -430,10 +445,9 @@ class TransferSite(rf.FlowSite):
                 if reply[0] == "raw":
                     return route.fulfill(status=reply[1], body=reply[2], content_type=reply[3])
                 return self.answer(route, *reply)
-            # A chosen download is answered with the counts of its choice, as the server does.
+            # A chosen download is answered with the counts and the mark of its choice, as the server does.
             chosen = body.get("selection")
-            counts = {"series": len(chosen["series"]), "instances": len(chosen["instances"])} if isinstance(chosen, dict) else None
-            view = download_view(body["operationId"], uid, selection=counts)
+            view = download_view(body["operationId"], uid, selection=chosen if isinstance(chosen, dict) else None)
             self.download_state[body["operationId"]] = view
             return self.answer(route, 200, view)
         found = re.fullmatch(r"/api/studies/([^/]+)/original-downloads/([^/]+)/archive/grant", path)
@@ -451,7 +465,10 @@ class TransferSite(rf.FlowSite):
             self.download_reads.append(op)
             queued = self.download_answers.get(op)
             if queued:
-                self.download_state[op] = queued.pop(0)
+                reply = queued.pop(0)
+                if reply == "hold":
+                    return self.held_reads.append((route, op))
+                self.download_state[op] = reply
             if op not in self.download_state:
                 return self.answer(route, 404, {"statusCode": 404, "message": "SYN-SERVER download not found"})
             view = json.loads(json.dumps(self.download_state[op]))
@@ -1509,7 +1526,7 @@ class TransferPanelPage(rf.ReportFlowPage):
     def picker(self):
         return self.page.locator("dialog.study-transfer-pick")
 
-    def test_b38_selected_originals_series_and_one_image_sent_as_chosen_ready_download_prepare_again_and_reload(self):
+    def test_selected_originals_series_and_one_image_sent_as_chosen_ready_download_prepare_again_and_reload(self):
         s1, s2 = UID_A + ".901", UID_A + ".902"
         sops = [UID_A + ".9021." + str(i) for i in (1, 2, 3)]
         self.originals_listing(UID_A, {s1: [(UID_A + ".9011.1", 1, None), (UID_A + ".9011.2", 2, None)],
@@ -1547,7 +1564,7 @@ class TransferPanelPage(rf.ReportFlowPage):
         with self.page.expect_download() as started:
             box.get_by_role("button", name="Download", exact=True).click()
         self.assertEqual(f"/api/studies/{UID_A}/original-downloads/{op}/archive", urlparse(started.value.url).path)
-        self.site.download_state[op] = download_view(op, UID_A, "sent", complete=3, selection={"series": 1, "instances": 1})
+        self.site.download_state[op] = download_view(op, UID_A, "sent", complete=3, selection=body["selection"])
         self.page.clock.run_for(3100)
         expect(box.locator(".study-transfer-state")).to_have_text("Sent")
         self.assertNotEqual(SENT, box.locator(".study-transfer-reason").inner_text(), "not the whole study's Sent sentence")
@@ -1569,7 +1586,7 @@ class TransferPanelPage(rf.ReportFlowPage):
         self.wait(lambda: len(self.site.prepares) == 4, "the whole-study preparation")
         self.assertEqual(["operationId"], list(self.site.prepares[3][1]))
 
-    def test_b38_nothing_chosen_cancel_and_an_unreadable_listing_prepare_nothing(self):
+    def test_selected_originals_nothing_chosen_cancel_and_an_unreadable_listing_prepare_nothing(self):
         self.open_as(RAD_ONLY)
         # No listing stubbed: the archive's answer is not a list.
         self.row_menu(h.PATIENT)
@@ -1609,7 +1626,7 @@ class TransferPanelPage(rf.ReportFlowPage):
         dialog.locator(f"input[value='{study_uid}']").check()
         dialog.get_by_role("button", name="Continue", exact=True).click()
 
-    def test_b38_the_dialog_closes_when_its_row_moves_a_refused_choice_leaves_no_operation_and_a_broken_history_never_turns_whole(self):
+    def test_selected_originals_the_dialog_closes_when_its_row_moves_a_refused_choice_leaves_no_operation_and_a_broken_history_never_turns_whole(self):
         s1 = UID_A + ".901"
         many = [(UID_A + ".9022." + str(i), i, None) for i in range(1, 1003)]
         self.originals_listing(UID_A, {s1: [(UID_A + ".9011.1", 1, None)], UID_A + ".902": many})
@@ -1640,21 +1657,22 @@ class TransferPanelPage(rf.ReportFlowPage):
         self.choose_series(s1)
         self.wait(lambda: self.site.prepares, "the refused preparation")
         expect(self.operations()).to_have_count(0)
-        expect(self.panel().locator(".study-transfer-status")).to_contain_text("다시 골라")
+        expect(self.panel().locator(".study-transfer-refusal")).to_contain_text("다시 골라")
         kept = self.page.evaluate("k=>{const v=sessionStorage.getItem(k);return v?JSON.parse(v).operations:[]}", self.own_slot())
         self.assertEqual([], kept)
-        # A prepared chosen operation whose kept choice is broken (null) is unverified history: never restored as the whole study.
+        # A prepared chosen operation whose kept choice was turned into the whole study (null): the server's answer is
+        # of another choice, so the record is never offered again - least of all as the whole study.
         self.choose_series(s1)
         self.wait(lambda: len(self.site.prepares) == 2, "the chosen preparation")
         op = self.site.prepares[1][1]["operationId"]
         expect(self.page.locator(f"section.study-transfer-op[data-operation='{op}'] .study-transfer-state")).to_have_text("Ready")
-        self.page.evaluate("""k => { const v = JSON.parse(sessionStorage.getItem(k));
-          for (const o of v.operations) if (o.kind === 'download') o.selection = null; sessionStorage.setItem(k, JSON.stringify(v)); }""", self.own_slot())
+        self.rewrite_kept(op, "o.selection = null")
         self.reload_transfers()
-        expect(self.operations()).to_have_count(0)
+        self.observed(lambda: op in self.site.download_reads, "the restored operation's status read")
+        expect(self.again(op)).to_have_count(0)
         self.assertEqual(2, len(self.site.prepares), "nothing prepared again, least of all the whole study")
 
-    def test_b38_merged_exam_chooses_an_original_then_its_own_series_never_the_merged_list(self):
+    def test_selected_originals_merged_exam_chooses_an_original_then_its_own_series_never_the_merged_list(self):
         merged = {"reportUid": UID_A, "groupId": "syn-group", "kind": "merge", "part": None, "generation": "scope-2",
                   "sources": [{"studyUid": source, "series": {"mode": "all", "uids": []}} for source in (UID_A, UID_B)]}
         self.site.exam_scopes[UID_A] = merged
@@ -1697,6 +1715,288 @@ class TransferPanelPage(rf.ReportFlowPage):
         expect(self.picker()).to_have_count(0)
         self.assertEqual([], [u for u in self.page.evaluate("window.__synFetches")[before:] if "/dicom-web/" in u and "/series" in u])
         self.assertEqual(1, len(self.site.prepares))
+
+    # ── the choice dialogs' one lifetime (the row, the reader's reach, the right, the selection) ──
+    def merged_exam(self):
+        """A is a merged exam of the originals A and B; each original has its own series listing."""
+        self.site.exam_scopes[UID_A] = {"reportUid": UID_A, "groupId": "syn-group", "kind": "merge", "part": None, "generation": "scope-2",
+                                        "sources": [{"studyUid": source, "series": {"mode": "all", "uids": []}} for source in (UID_A, UID_B)]}
+        self.site.source_acc[UID_A] = {UID_A: "SYNACC-A", UID_B: "SYNACC-B"}
+        self.originals_listing(UID_A, {UID_A + ".901": [(UID_A + ".9011.1", 1, None)]})
+        self.originals_listing(UID_B, {UID_B + ".902": [(UID_B + ".9021.1", 1, None)]})
+
+    def read_the_list_again(self):
+        """The list is read again while a dialog is open (the page's own periodic read does the same): the Refresh control,
+        pressed from script because a modal dialog takes the pointer."""
+        self.page.locator("#m-refresh").dispatch_event("click")
+
+    def listed(self, uid, expression):
+        return self.page.evaluate("([uid, body]) => { const row = studies.find(s => s.uid === uid); return new Function('row', 'return ' + body)(row); }",
+                                  [uid, expression])
+
+    def series_listings(self, before=0):
+        return [urlparse(u).path for u in self.page.evaluate("window.__synFetches")[before:] if "/dicom-web/" in u and "/series" in u]
+
+    def test_selected_originals_a_merged_exams_dialogs_close_without_a_click_when_an_original_leaves_the_readers_reach(self):
+        self.merged_exam()
+        self.open_as(RAD_ONLY)
+        for item in ("Download Originals", "Download Selected Originals"):
+            with self.subTest(first_dialog=item):
+                self.row_menu(h.PATIENT)
+                self.menu_item(item).click()
+                sources = self.page.locator("dialog[open]").filter(has_text="SYNACC-B")
+                expect(sources).to_have_count(1)
+                expect(sources).to_contain_text(UID_B)
+                # Original B leaves the reader's reach: the list now says the exam cannot be read whole and names no original.
+                self.site.unavailable[UID_A] = "merge"
+                self.read_the_list_again()
+                expect(self.page.locator("dialog[open]")).to_have_count(0)
+                text = self.page.locator("body").inner_text()
+                self.assertNotIn("SYNACC-B", text, "B's Accession No is gone with the dialog")
+                self.assertNotIn(UID_B, text, "and B's Study UID")
+                self.settle(300)
+                self.assertEqual([], self.site.prepares, "nothing was prepared")
+                del self.site.unavailable[UID_A]
+                self.read_the_list_again()
+                self.wait(lambda: self.listed(UID_A, "!!row.examScope && !row.examUnavailable"), "the exam is whole again")
+        # The second dialog (the chosen original's series and images) while its listing is still out.
+        path = f"/dicom-web/studies/{UID_B}/series"
+        self.site.held_gets[path] = []
+        self.row_menu(h.PATIENT)
+        self.menu_item("Download Selected Originals").click()
+        sources = self.page.locator("dialog[open]").filter(has_text="SYNACC-B")
+        sources.locator(f"input[value='{UID_B}']").check()
+        sources.get_by_role("button", name="Continue", exact=True).click()
+        expect(self.picker()).to_contain_text(UID_B)
+        self.wait(lambda: self.site.held_gets[path], "the listing request of the chosen original")
+        self.site.unavailable[UID_A] = "merge"
+        self.read_the_list_again()
+        expect(self.page.locator("dialog[open]")).to_have_count(0)
+        self.site.answer(self.site.held_gets[path].pop(0), *self.site.gets[path])
+        self.settle(400)
+        expect(self.page.locator("dialog[open]")).to_have_count(0)
+        self.assertNotIn(UID_B, self.page.locator("body").inner_text(), "the late listing is not shown")
+        self.assertEqual([], self.site.prepares, "no preparation at all")
+
+    def test_selected_originals_a_single_exams_dialog_closes_on_a_lost_session_or_a_moved_selection_and_a_gone_row_opens_nothing(self):
+        s1 = UID_A + ".901"
+        self.originals_listing(UID_A, {s1: [(UID_A + ".9011.1", 1, None)]})
+        path = f"/dicom-web/studies/{UID_A}/series"
+        self.open_as(RAD_ONLY)
+        # A -> B -> A while the dialog is open and its listing is out: not the selection the menu acted on.
+        self.site.held_gets[path] = []
+        self.row_menu(h.PATIENT)
+        self.menu_item("Download Selected Originals").click()
+        expect(self.picker()).to_have_count(1)
+        self.wait(lambda: self.site.held_gets[path], "the listing request")
+        self.page.evaluate("""async () => { const uid = selectedUid;
+          await select(studies.find(s => s.name === 'SYN PATIENT BRAVO').uid); await select(uid); }""")
+        expect(self.page.locator("dialog[open]")).to_have_count(0)
+        self.assertEqual(h.PATIENT, self.selected(), "A is selected again, as another selection")
+        self.site.answer(self.site.held_gets[path].pop(0), *self.site.gets[path])
+        self.settle(400)
+        expect(self.page.locator("dialog[open]")).to_have_count(0)
+        self.assertNotIn(s1, self.page.locator("body").inner_text(), "the late listing is not shown")
+        # The row left the list after its menu opened: the item reads the list again, opens nothing and says why.
+        del self.site.held_gets[path]
+        before = len(self.page.evaluate("window.__synFetches"))
+        for item in ("Download Originals", "Download Selected Originals"):
+            with self.subTest(gone_row=item):
+                self.row_menu(h.PATIENT)
+                self.site.hidden.add(UID_A)
+                self.read_the_list_again()
+                self.wait(lambda: self.listed(UID_A, "!row"), "the row left the list")
+                self.menu_item(item).dispatch_event("click")
+                expect(self.panel().locator(".study-transfer-refusal")).to_contain_text("목록에서 찾을 수 없어")
+                self.settle(300)
+                expect(self.page.locator("dialog[open]")).to_have_count(0)
+                self.site.hidden.discard(UID_A)
+                self.read_the_list_again()
+                self.wait(lambda: self.listed(UID_A, "!!row"), "the row is listed again")
+        self.assertEqual([], self.series_listings(before), "no listing was read for a row the list does not hold")
+        self.assertEqual([], self.site.prepares, "and nothing was prepared")
+        # The session ends while the dialog is open (its listing out): the dialog closes, the late listing is not shown.
+        self.site.held_gets[path] = []
+        self.row_menu(h.PATIENT)
+        self.menu_item("Download Selected Originals").click()
+        expect(self.picker()).to_have_count(1)
+        self.wait(lambda: self.site.held_gets[path], "the listing request")
+        self.page.evaluate("document.querySelector('#logout').click()")
+        self.observed(lambda: self.page.evaluate("KinWorkContext.state() !== 'active'"), "the session ended")
+        expect(self.page.locator("dialog.study-transfer-pick")).to_have_count(0)
+        self.site.answer(self.site.held_gets[path].pop(0), *self.site.gets[path])
+        self.settle(400)
+        self.assertEqual(0, self.page.locator("dialog.study-transfer-pick").count())
+        self.assertEqual([], self.site.prepares, "no preparation at all")
+
+    # ── Prepare Again: only the choice the server's own answer confirmed ──
+    def rewrite_kept(self, op, change):
+        """The tab's kept record of download `op`, changed by the statement(s) `change` (its record is `o`)."""
+        self.page.evaluate("""([key, id, body]) => { const kept = JSON.parse(sessionStorage.getItem(key)), change = new Function('o', body);
+          for (const o of kept.operations) if (o.kind === 'download' && o.id === id) change(o);
+          sessionStorage.setItem(key, JSON.stringify(kept)); }""", [self.own_slot(), op, change])
+
+    def kept_downloads(self):
+        return {o["id"]: o for o in self.page.evaluate(
+            "k=>{const v=sessionStorage.getItem(k);return v?JSON.parse(v).operations.filter(o=>o.kind==='download'):[]}", self.own_slot())}
+
+    def box_of(self, op):
+        return self.page.locator(f"section.study-transfer-op[data-operation='{op}']")
+
+    def again(self, op):
+        return self.box_of(op).get_by_role("button", name="Prepare Again", exact=True)
+
+    def check_again(self, op):
+        reads = self.site.download_reads.count(op)
+        self.box_of(op).get_by_role("button", name="Check Again", exact=True).click()
+        self.observed(lambda: self.site.download_reads.count(op) > reads, "the status read")
+
+    def restored(self, op):
+        """The tab's history read back by a new document, and `op`'s first status read answered."""
+        reads = self.site.download_reads.count(op)
+        self.reload_transfers()
+        self.observed(lambda: self.site.download_reads.count(op) > reads, "the restored operation's status read")
+        return self.box_of(op)
+
+    def test_selected_originals_prepare_again_is_the_same_choice_after_reload_and_sign_in_and_never_without_the_servers_mark_of_it(self):
+        s1, s2 = UID_A + ".901", UID_A + ".902"
+        sop = UID_A + ".9011.1"
+        self.originals_listing(UID_A, {s1: [(sop, 1, None)], s2: [(UID_A + ".9021.1", 1, None)]})
+        self.open_as(RAD_ONLY)
+        whole = self.prepare()
+        self.choose_series(s1)
+        self.wait(lambda: len(self.site.prepares) == 2, "the chosen preparation")
+        chosen = self.site.prepares[1][1]["operationId"]
+        choice = {"series": [s1], "instances": []}
+        kept = self.kept_downloads()
+        self.assertIn("selection", kept[whole], "the whole study is written as such, not left out")
+        self.assertEqual((None, choice), (kept[whole]["selection"], kept[chosen]["selection"]))
+        # After a reload, and after the same person signed in again: the same choice under a new id.
+        for account in (RAD_ONLY, {**RAD_ONLY, "actor": "renamed@synthetic.test", "displayName": "renamed"}):
+            with self.subTest(restored_as=account["actor"]):
+                self.site.account = account
+                self.restored(chosen)
+                before = len(self.site.prepares)
+                self.again(whole).click()
+                self.wait(lambda: len(self.site.prepares) == before + 1, "the whole study again")
+                self.assertEqual(["operationId"], list(self.site.prepares[-1][1]))
+                self.again(chosen).click()
+                self.wait(lambda: len(self.site.prepares) == before + 2, "the same choice again")
+                self.assertEqual(choice, self.site.prepares[-1][1]["selection"])
+        ids = [body["operationId"] for _, body in self.site.prepares]
+        self.assertEqual(len(ids), len(set(ids)), "every preparation is a new operation")
+        prepared, grants = len(self.site.prepares), len(self.site.grants)
+
+        def never_again(op, why):
+            box = self.box_of(op)
+            expect(box).to_have_count(1)
+            expect(self.again(op)).to_have_count(0)
+            self.assertNotIn("Prepare Again", box.inner_text(), why + ": no sentence points at a button that is not offered")
+            self.check_again(op)
+            expect(self.again(op)).to_have_count(0)
+            self.assertEqual((prepared, grants), (len(self.site.prepares), len(self.site.grants)), why + ": Check Again is a GET only")
+
+        # The tab's record of the chosen operation without its choice, as the whole study, or as another choice of the same size.
+        for why, change in (("the key is missing", "delete o.selection"), ("null", "o.selection = null"),
+                            ("another UID, the same counts", f"o.selection = {{ series: ['{s2}'], instances: [] }}")):
+            with self.subTest(kept_choice=why):
+                self.rewrite_kept(chosen, change)
+                box = self.restored(chosen)
+                never_again(chosen, why)
+                if why == "the key is missing":
+                    # Shown from the server's own answer, never as the whole study; the record stays without a choice.
+                    expect(box.locator("b").first).to_have_text("Download Selected Originals")
+                    expect(box.locator(".study-transfer-scope")).to_be_visible()
+                    self.assertNotIn("selection", self.kept_downloads()[chosen], "a missing choice is never written back as the whole study")
+                expect(self.again(whole)).to_have_count(1)
+        # An older record of a whole-study operation (no key): read, never offered again.
+        self.rewrite_kept(chosen, f"o.selection = {{ series: ['{s1}'], instances: [] }}")
+        self.rewrite_kept(whole, "delete o.selection")
+        box = self.restored(whole)
+        never_again(whole, "an older whole-study record")
+        expect(box.locator("b").first).to_have_text("Download Originals")
+        expect(self.again(chosen)).to_have_count(1)
+        self.rewrite_kept(whole, "o.selection = null")
+        # The server's answer without the mark, with the mark of another choice of the same size, and of the series'
+        # images one by one instead of the series.
+        good = self.site.download_state[chosen]
+        unmarked = {k: v for k, v in good.items() if k != "selectionSha256"}
+        for why, view in (("no mark", unmarked), ("the mark of another choice", {**good, "selectionSha256": selection_mark({"series": [s2], "instances": []})}),
+                          ("the series' images one by one", download_view(chosen, UID_A, selection={"series": [], "instances": [sop]}))):
+            with self.subTest(server_answer=why):
+                self.site.download_state[chosen] = view
+                self.restored(chosen)
+                never_again(chosen, why)
+        # While the answer is awaited the button is not there, and an answer overtaken by a newer read never opens it.
+        self.site.download_state[chosen] = good
+        self.site.download_answers[chosen] = ["hold", unmarked]
+        self.reload_transfers()
+        self.wait(lambda: self.site.held_reads, "the restored operation's status read is out")
+        expect(self.box_of(chosen)).to_have_count(1)
+        expect(self.again(chosen)).to_have_count(0)
+        self.check_again(chosen)                       # a newer read, answered without the mark
+        route, _ = self.site.held_reads.pop(0)
+        self.site.answer(route, 200, good)             # the first read's valid answer arrives late
+        self.settle(300)
+        expect(self.again(chosen)).to_have_count(0)
+        self.site.download_state[chosen] = good
+        self.check_again(chosen)
+        expect(self.again(chosen)).to_have_count(1)
+        self.assertEqual((prepared, grants), (len(self.site.prepares), len(self.site.grants)), "nothing was prepared in between")
+        self.again(chosen).click()
+        self.wait(lambda: len(self.site.prepares) == prepared + 1, "the confirmed choice again")
+        self.assertEqual(choice, self.site.prepares[-1][1]["selection"])
+
+    def test_selected_originals_a_kept_choice_above_the_request_bound_is_read_beside_its_neighbours_and_never_asked_again(self):
+        self.open_as(RAD_ONLY)
+        whole = self.prepare()
+        self.site.download_state[whole] = download_view(whole, UID_A, "sent", complete=3)
+        # A record an earlier page kept: 1,001 single images, more than a new request may carry.
+        many = {"series": [], "instances": sorted(UID_A + ".77." + str(i) for i in range(1001))}
+        old = str(uuid.uuid4())
+        self.site.download_state[old] = download_view(old, UID_A, "incomplete", objects=1001, selection=many)
+        self.page.evaluate("""([key, id, uid, selection]) => { const kept = JSON.parse(sessionStorage.getItem(key));
+          kept.operations.push({ kind: 'download', id, uid, manifestSha256: null, preparedAt: null, objects: 0, bytes: 0, selection });
+          sessionStorage.setItem(key, JSON.stringify(kept)); }""", [self.own_slot(), old, UID_A, many])
+        box = self.restored(old)
+        expect(box.locator(".study-transfer-state")).to_have_text("Incomplete")
+        expect(box.locator(".study-transfer-selection")).to_contain_text("1001")
+        expect(self.again(old)).to_have_count(0)
+        self.assertNotIn("Prepare Again", box.inner_text(), "no sentence points at a button that is not offered")
+        # The record beside it is read as before and keeps its own Prepare Again.
+        expect(self.box_of(whole).locator(".study-transfer-state")).to_have_text("Sent")
+        expect(self.again(whole)).to_have_count(1)
+        self.assertNotIn("이 탭의 작업 기록을 보존하지 못했습니다", self.panel().inner_text(), "the tab's history is read whole")
+        self.assertEqual(1, len(self.site.prepares), "nothing was prepared again")
+
+    def test_selected_originals_a_refused_choice_stays_readable_through_an_imports_progress_and_summary(self):
+        s1 = UID_A + ".901"
+        self.originals_listing(UID_A, {s1: [(UID_A + ".9011.1", 1, None)]})
+        self.open_as(RAD_TECH, "Technician")
+        self.site.import_answers = ["hold", "hold"]
+        self.choose(self.files(2))
+        self.wait(lambda: self.site.held_imports, "the first upload is out")
+        status, refusal = self.panel().locator(".study-transfer-status"), self.panel().locator(".study-transfer-refusal")
+        expect(status).to_contain_text("(0/2)")
+        # The chosen series is gone on the server: the operation leaves the panel and the tab's record, the reason stays.
+        self.site.prepare_answers = [(409, {"code": "SELECTION_NOT_FOUND", "message": "SYN refused"})]
+        self.choose_series(s1)
+        self.wait(lambda: self.site.prepares, "the refused preparation")
+        expect(refusal).to_contain_text("다시 골라")
+        expect(self.panel().locator("section.study-transfer-op [data-selected], section.study-transfer-op[data-selected]")).to_have_count(0)
+        self.assertEqual({}, self.kept_downloads(), "no download in the tab's record")
+        # The import goes on: its progress changes and its summary comes, and the reason is still there to read.
+        self.site.release_import()
+        expect(status).to_contain_text("(1/2)")
+        expect(refusal).to_contain_text("다시 골라")
+        self.wait(lambda: self.site.held_imports, "the second upload is out")
+        self.site.release_import()
+        expect(status).to_contain_text("반입 결과")
+        expect(refusal).to_be_visible()
+        expect(refusal).to_contain_text("다시 골라")
+        # The person's next action clears it.
+        self.panel().get_by_role("button", name="Hide", exact=True).click()
+        expect(refusal).to_be_hidden()
 
     # ── C-07 late answers and account boundaries ──
 
@@ -2272,7 +2572,7 @@ class TransferPanelPage(rf.ReportFlowPage):
                         window.synOperation=JSON.parse(init.body).operationId;
                         return new Response(JSON.stringify({...view,operationId:synOperation}),{status:200,headers:{'Content-Type':'application/json'}});
                       }});
-                      window.synTransfer=KinStudyTransferLocal({api:'/api',transport,allowed:()=>true,identity:()=>synOwner,can:()=>true,demo:()=>false,study:()=>null});
+                      window.synTransfer=KinStudyTransferLocal({api:'/api',transport,allowed:()=>true,identity:()=>synOwner,can:()=>true,demo:()=>false,study:uid=>({uid})});
                     }''', download_view(str(uuid.uuid4()), UID_A))
                     page.evaluate('uid=>synTransfer.download(uid)', UID_A)
                     page.get_by_role('button', name='Download', exact=True).click()
