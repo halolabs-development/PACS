@@ -85,7 +85,9 @@ test('R1 R2 R3 R4 R5 R9 R15 R16 real encrypted storage, persistent profile, corr
   const rendered=await page.evaluate(expiry=>({text:document.querySelector('#preload-panel').textContent,expected:new Date(expiry).toLocaleString()+'까지'}),expiry);
   assert.ok(rendered.text.includes(rendered.expected),JSON.stringify(rendered));
   for(const r of stored.frames)assert.deepEqual(Object.keys(r).sort(),['entryId','keyId','expiresAt','bytes','iv','ct'].sort());
-  for(const r of stored.studies)assert.deepEqual(Object.keys(r).sort(),['manifestId','keyId','expiresAt','iv','ct'].sort());
+  for(const r of stored.studies)assert.deepEqual(Object.keys(r).sort(),['manifestId','keyId','expiresAt','frameIds','iv','ct'].sort());
+  // A study record lists its frames' random IDs in clear (B39: its frames live as long as it does), nothing of the study.
+  for(const r of stored.studies)assert.deepEqual([...r.frameIds].sort(),stored.frames.map(f=>f.entryId).sort());
   for(const r of [...stored.frames,...stored.studies]){
     const clear=JSON.stringify({...r,ct:undefined,iv:undefined});for(const secret of [uid,'SYN-123','Synthetic^Patient','session-A',key.toString('base64')])assert.equal(clear.includes(secret),false);
     assert.equal(Buffer.from(r.ct).includes(key),false);
@@ -133,4 +135,79 @@ test('R1 R2 R3 R4 R5 R9 R15 R16 real encrypted storage, persistent profile, corr
   await context.close();context=null;clock+=73*3600000;
   page=await connect('session-A3');assert.equal((await page.evaluate(uid=>ask({type:'query',uid,session:'session-A3'}),uid)).held,null);
   const expired=await dump(page);assert.equal(expired.frames.length+expired.studies.length,0);
+});
+
+// B39 on the real SharedWorker, IndexedDB and panel: two studies received at server hour 0; at hour 24 a viewer of the
+// session opens one (its live check confirmed the copy) and leaves. Started again at hour 73, the unopened one is gone
+// and the opened one is Ready until hour 96 - its record says so, its frames (their own date passed) still decrypt, and
+// the panel shows that date. At hour 96 nothing of it is served or kept. Synthetic loopback HTTP only.
+test('B39 only the unused copy goes: the opened one counts from its use, on real storage and the shipped panel', {timeout:180000}, async t=>{
+  const key=randomBytes(32), H=3600000, ids=['1.2.840.99.11','1.2.840.99.12'];
+  let clock=Date.parse('2026-11-02T00:00:00Z');
+  const start=clock, payload=uid=>Buffer.concat([Buffer.from('--body\r\nContent-Type: application/octet-stream\r\n\r\n'),Buffer.from('frame '+uid),Buffer.from('\r\n--body--\r\n')]);
+  const server=http.createServer((req,res)=>{
+    res.setHeader('Date',new Date(clock).toUTCString());res.setHeader('Cache-Control','no-store');
+    if(req.url==='/api/preload/cache-key'){res.setHeader('Content-Type','application/json');return res.end(JSON.stringify({keyId:'A',key:key.toString('base64'),serverTime:new Date(clock).toISOString()}));}
+    if(req.url==='/api/me')return res.end(JSON.stringify({preloadDiskGb:0.1}));
+    if(req.url.endsWith('/metadata'))return res.end(JSON.stringify([{'0020000E':{Value:['2']},'00080018':{Value:['3']},'00280008':{Value:[2]},'7FE00010':{BulkDataURI:'x'}}]));
+    if(req.url.startsWith('/dicom-web/')){const body=payload(req.url);res.setHeader('Content-Type','multipart/related; type="application/octet-stream"; boundary=body');
+      res.setHeader('X-KIN-Study-Revision','rev');res.setHeader('Content-Length',body.length);return res.end(body);}
+    const name=path.posix.basename(req.url);
+    if(['preload-worker.js','preload-store.js','preload-disk.js','preload-queue.js','session-transport.js'].includes(name)){res.setHeader('Content-Type','application/javascript; charset=utf-8');return res.end(fs.readFileSync(path.join(root,'worklist-v0/hpacs-lite',name)));}
+    res.setHeader('Content-Type','text/html; charset=utf-8');res.end('<!doctype html><meta charset="utf-8"><title>Synthetic retention test</title><div id="panel"></div>');
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const origin=`http://127.0.0.1:${server.address().port}`,profile=fs.mkdtempSync(path.join(root,'tmp','retention-b39-'));
+  let context; t.after(async()=>{await context?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));});
+  async function connect(){
+    context=await chromium.launchPersistentContext(profile,{headless:true,
+      ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ? {executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH} : {})});
+    const page=await context.newPage();page.setDefaultTimeout(20000);await page.goto(origin);
+    await page.evaluate(()=>{
+      window.messages=[];const open=role=>{const w=new SharedWorker('/worklist/hpacs-lite/preload-worker.js',{name:'kin-preload'});w.port.start();w.port.postMessage({type:'hello',role});return w.port;};
+      window.list=open('list');list.onmessage=e=>messages.push(e.data);list.postMessage({type:'session',session:'sess-1'});
+      window.viewer=open('viewer');
+      window.ask=data=>new Promise(resolve=>{const id=Math.random();const fn=e=>{if(e.data.id===id){viewer.removeEventListener('message',fn);resolve(e.data);}};viewer.addEventListener('message',fn);viewer.postMessage({...data,id});});
+    });
+    return page;
+  }
+  const rows=page=>page.evaluate(()=>messages.at(-1)?.studies||[]);
+  const row=async(page,uid)=>(await rows(page)).find(s=>s.uid===uid);
+  let page=await connect();
+  await page.evaluate(ids=>list.postMessage({type:'add',session:'sess-1',studies:ids.map(uid=>({uid,label:'SYN-B39 · Synthetic^Patient'}))}),ids);
+  await page.waitForFunction(ids=>ids.every(uid=>messages.at(-1)?.studies?.some(s=>s.uid===uid&&s.status==='Ready')),ids);
+  await context.close();context=null;
+  // Hour 24: a viewer of this session opens the first study and leaves it.
+  clock=start+24*H;page=await connect();
+  await page.waitForFunction(ids=>ids.every(uid=>messages.at(-1)?.studies?.some(s=>s.uid===uid&&s.status==='Ready')),ids);
+  const held=(await page.evaluate(uid=>ask({type:'query',uid,session:'sess-1'}),ids[0])).held;assert.ok(held);
+  await page.evaluate(({uid,copy})=>viewer.postMessage({type:'open',uid,copy,session:'sess-1'}),{uid:ids[0],copy:held.copy});
+  await page.waitForFunction(({uid,at})=>messages.at(-1)?.studies?.some(s=>s.uid===uid&&s.expiresAt===at),{uid:ids[0],at:start+96*H});
+  await page.evaluate(()=>viewer.postMessage({type:'bye'}));
+  assert.equal((await row(page,ids[1])).expiresAt,start+72*H);
+  await context.close();context=null;
+  // Hour 73: only the unopened copy went.
+  clock=start+73*H;page=await connect();
+  await page.waitForFunction(ids=>{const s=messages.at(-1)?.studies||[];return s.some(r=>r.uid===ids[1]&&r.status==='Evicted')&&s.some(r=>r.uid===ids[0]&&r.status==='Ready');},ids);
+  assert.match((await row(page,ids[1])).reason,/마지막으로 본 뒤 72시간이 지나 자동으로 지웠습니다/);
+  assert.equal((await row(page,ids[0])).expiresAt,start+96*H);
+  const kept=await dump(page);
+  assert.deepEqual(kept.studies.map(r=>r.expiresAt),[start+96*H],'one record left: the opened copy, until hour 96');
+  assert.ok(kept.frames.length===2&&kept.frames.every(f=>f.expiresAt===start+72*H&&kept.studies[0].frameIds.includes(f.entryId)),'its frames, past their own date, kept by its record');
+  const again=(await page.evaluate(uid=>ask({type:'query',uid,session:'sess-1'}),ids[0])).held;
+  for(const n of [1,2]){
+    const p=`/dicom-web/studies/${ids[0]}/series/2/instances/3/frames/${n}`;
+    const bytes=(await page.evaluate(async({p,copy})=>{const r=await ask({type:'frame',path:p,session:'sess-1',copy});return r.bytes?[...new Uint8Array(r.bytes)]:null;},{p,copy:again.copy}));
+    assert.deepEqual(Buffer.from(bytes),payload(p));
+  }
+  await page.addScriptTag({url:origin+'/worklist/hpacs-lite/preload-queue.js'});
+  await page.evaluate(()=>KinPreloadQueue.mount(document.getElementById('panel')));
+  await page.waitForFunction(()=>document.querySelector('#preload-panel')?.textContent.includes('Ready'));
+  const shown=await page.evaluate(at=>({text:document.querySelector('#preload-panel').textContent,expected:new Date(at).toLocaleString()+'까지'}),start+96*H);
+  assert.ok(shown.text.includes(shown.expected),JSON.stringify(shown));
+  await context.close();context=null;
+  // Hour 96: the opened copy is no longer served, and nothing of it is kept.
+  clock=start+96*H;page=await connect();
+  assert.equal((await page.evaluate(uid=>ask({type:'query',uid,session:'sess-1'}),ids[0])).held,null);
+  const gone=await dump(page);assert.equal(gone.frames.length+gone.studies.length,0);
 });

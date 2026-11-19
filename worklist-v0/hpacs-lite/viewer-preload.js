@@ -58,6 +58,8 @@
   const UNRECORDED = '영상 열람 기록을 저장하지 못해 영상을 다시 표시하지 않았습니다. 연결을 확인한 뒤 다시 시도하세요.';
   // A status whose answer has no body (fetch spec "null body status"): nothing to wait for after its headers.
   const NULL_BODY = [101, 103, 204, 205, 304];
+  // B39: how often a document says it still shows the copies it uses (the worker moves one on within an hour of its expiry).
+  const USING_EVERY = 10 * 60 * 1000;
   /** session-transport.js's reading of a refusal: loaded before this file in the viewer (config/ohif.js), required in Node. */
   const refusal = reply => (root?.KinSessionTransport ?? (typeof module === 'object' && module.exports ? require('./session-transport.js') : null)).refusal(reply);
 
@@ -159,6 +161,8 @@
         entries++;
         for (const uid of wanted) { openings.set(uid, next); entered.set(uid, entries); checks.delete(uid); }
         scopeOpening = next;
+        // B39: a copy this document no longer shows is left (the worker counts its last viewer's leaving as a use).
+        uses.leave(wanted);
       } };
     }
 
@@ -188,6 +192,8 @@
     win.addEventListener('pagehide', event => { if (event?.persisted && page()) page().style.visibility = 'hidden'; });
     win.addEventListener('pageshow', event => { if (event?.persisted) void returned(); });
 
+    // B39: the copies this document shows from the worker's memory - set by the worker part below.
+    const uses = { leave() {} };
     let read;
     if (typeof win.SharedWorker !== 'function') {
       read = (url, init) => {
@@ -196,17 +202,41 @@
         const ask = asking(path, init);
         return send(url, viewed(init, studyOf(path))).then(response => answered(response, path, url, init, ask));
       };
-    } else read = withWorker(win, send, { target, route, frameStudy, studyOf, viewed, answered, asking, checks });
+    } else read = withWorker(win, send, { target, route, frameStudy, studyOf, viewed, answered, asking, checks, uses });
 
     function preloadFetch(url, init = {}) { return read(url, init); }
     preloadFetch.reenter = reenter;
+    // The document shows no study any more (its last patient tab closed): every copy it showed is left.
+    preloadFetch.leave = () => uses.leave([]);
     return preloadFetch;
   }
 
   /** The preload worker's memory under the viewer's reads (see the head of this file). */
-  function withWorker(win, send, { target, route, frameStudy, studyOf, viewed, answered, asking, checks }) {
+  function withWorker(win, send, { target, route, frameStudy, studyOf, viewed, answered, asking, checks, uses }) {
     let port = null, broken = false, nextId = 0, inflight = 0;
-    const pending = new Map(), opened = new Set();
+    const pending = new Map();
+    /**
+     * B39: the copies this document uses - a held frame its current opening's check confirmed (the check read itself
+     * when that frame is held, else its first frame from memory). The worker keeps a used copy 72 hours from its last
+     * viewer's leaving; while shown, the document says so (`using`) so a copy shown for days is not removed under it.
+     * Each is tied to the session and copy it was confirmed for; a check left behind by a new opening, or by leaving the
+     * page, opens and drops nothing.
+     */
+    const opened = new Map();
+    let generation = 0;
+    function use(uid, entry) {
+      if (checks.get(uid) !== entry || opened.get(uid)?.copy === entry.copy) return;
+      opened.set(uid, { copy: entry.copy, session: entry.session });
+      post({ type: 'open', uid, copy: entry.copy, session: entry.session });
+    }
+    uses.leave = keep => {
+      for (const [uid, { copy, session }] of [...opened]) if (!keep.includes(uid)) {
+        opened.delete(uid); post({ type: 'close', uid, copy, session });
+      }
+    };
+    if (typeof win.setInterval === 'function') win.setInterval(() => {
+      for (const [uid, { copy, session }] of opened) post({ type: 'using', uid, copy, session });
+    }, USING_EVERY);
 
     function connect() {
       if (port || broken) return port;
@@ -262,11 +292,13 @@
     }
 
     /** The study's check for its current opening: null when nothing is held, else the live check read's own response. */
-    function check(uid, session, url, init) {
-      const entry = { state: 'checking', done: null, copy: null };
+    function check(uid, path, session, url, init) {
+      const entry = { state: 'checking', done: null, copy: null, session }, gen = generation;
       checks.set(uid, entry);
+      // A check whose opening ended meanwhile (a new opening, the page left) opens and drops nothing.
+      const current = () => gen === generation && checks.get(uid) === entry;
       entry.done = (async () => {
-        const { held } = await ask({ type: 'query', uid, session });
+        const { held } = await ask({ type: 'query', uid, session, path });
         if (!held?.revision) { entry.state = 'live'; return null; }
         let response;
         try { response = await network(url, viewed(init, uid, { 'X-KIN-Preload': 'check' })); }
@@ -274,14 +306,16 @@
         const now = response.headers.get('X-KIN-Study-Revision');
         if (response.ok && now === held.revision) {
           entry.state = 'held'; entry.copy = held.copy;
-          if (!opened.has(uid)) { opened.add(uid); post({ type: 'open', uid }); }
-        } else {
+          if (held.has && current()) use(uid, entry);
+        } else if (!current()) entry.state = 'live';
+        else {
           // No revision answered (the archive could not say) proves nothing either way: live now, the held copy stays.
+          // A drop names the copy checked: a later copy is not this one.
           entry.state = 'live';
-          if (response.ok && now) post({ type: 'evict', uid, reason: CHANGED });
+          if (response.ok && now) post({ type: 'evict', uid, copy: held.copy, reason: CHANGED });
           // Refused only by the one shared reading of a refusal (session-transport.js): a 403 with an AUTH_* code - an
           // archive the gate could not observe, a busy session check - is temporary and keeps the held copy.
-          else if (response.status === 404 || response.status === 403 && refusal(response) === 'denied') post({ type: 'evict', uid, reason: DENIED });
+          else if (response.status === 404 || response.status === 403 && refusal(response) === 'denied') post({ type: 'evict', uid, copy: held.copy, reason: DENIED });
         }
         return response;
       })();
@@ -292,13 +326,13 @@
       const session = new win.Headers(init.headers).get('X-KIN-Session');
       const entry = checks.get(uid);
       if (!entry) {
-        const response = await check(uid, session, url, init);
+        const response = await check(uid, path, session, url, init);
         return response || network(url, viewed(init, uid));
       }
       if (entry.state === 'checking') { try { await entry.done; } catch (_) {} }
       if (entry.state === 'held' && !init.signal?.aborted) {
         const { bytes, partType, stale } = await ask({ type: 'frame', path, session, copy: entry.copy });
-        if (bytes) return new win.Response(bytes, { status: 200, headers: { 'Content-Type': partType } });
+        if (bytes) { use(uid, entry); return new win.Response(bytes, { status: 200, headers: { 'Content-Type': partType } }); }
         // The worker now holds another copy of the study than the one checked: none of it before a check of its own.
         if (stale && checks.get(uid) === entry) checks.delete(uid);
       }
@@ -307,11 +341,11 @@
 
     // A window leaving releases its studies (they may be evicted once no viewer shows them) and its busy mark; a page
     // restored from the back/forward cache shows them again.
-    win.addEventListener('pagehide', () => { if (port) post({ type: 'bye' }); });
+    // A return from the back/forward cache is a new opening: its studies are checked again before any copy is used.
+    win.addEventListener('pagehide', () => { if (port) post({ type: 'bye' }); generation++; opened.clear(); checks.clear(); });
     win.addEventListener('pageshow', event => {
       if (!event?.persisted || !port) return;
       post({ type: 'hello', role: 'viewer' });
-      for (const uid of opened) post({ type: 'open', uid });
       if (inflight > 0) post({ type: 'busy', busy: true });
     });
 

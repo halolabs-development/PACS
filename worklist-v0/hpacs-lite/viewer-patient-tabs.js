@@ -577,7 +577,7 @@ window.KinViewerPatientTabs = (() => {
       const next = tabs[tabs.indexOf(tab) + 1] || tabs[tabs.indexOf(tab) - 1];
       if (next && !await open(next.href, { gen })) return false;
       if (!next && !guard(true)) return false;
-      if (!next) { sequence++; controller?.abort(); current = null; explicitlyClosed = true; publish(); }
+      if (!next) { sequence++; controller?.abort(); current = null; explicitlyClosed = true; window.KinViewerSessionBoundary?.leave?.(); publish(); }
     }
     tabs.splice(tabs.indexOf(tab), 1); render(); return true;
   }

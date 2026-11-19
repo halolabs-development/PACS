@@ -203,7 +203,7 @@
     panel.id = 'preload-panel';
     const summary = document.createElement('summary');
     summary.className = 'chip';
-    summary.title = '받은 뒤 72시간이 지나면 자동으로 지웁니다. 다른 계정으로는 읽을 수 없습니다.';
+    summary.title = '받은 뒤나 마지막으로 본 뒤 72시간이 지나면 자동으로 지웁니다. 다른 계정으로는 읽을 수 없습니다.';
     const body = document.createElement('div');
     body.className = 'preload-panel-body';
     const storage = document.createElement('p');
@@ -232,7 +232,7 @@
       summary.replaceChildren('Preload: ', ...(states.length ? states.flatMap((name, i) => [(i ? ' · ' : '') + counts[name] + ' ', name]) : ['0']));
       storage.textContent = own?.budget == null
         ? own?.unavailable || '미리 받기 저장 용량을 확인하고 있습니다.'
-        : `보관 ${gb(own.used)} / ${gb(own.budget)} GB · 받은 뒤 72시간이 지나면 자동으로 지웁니다. 다른 계정으로는 읽을 수 없습니다. 만료 항목은 표시하지 않으며, 실행 중 10분 이내 또는 다음 실행의 첫 응답 전에 지웁니다.`;
+        : `보관 ${gb(own.used)} / ${gb(own.budget)} GB · 받은 뒤나 마지막으로 본 뒤 72시간이 지나면 자동으로 지웁니다. 다른 계정으로는 읽을 수 없습니다. 만료 항목은 표시하지 않으며, 실행 중 10분 이내 또는 다음 실행의 첫 응답 전에 지웁니다.`;
       const rows = table.tBodies[0];
       rows.replaceChildren();
       for (const s of list) {

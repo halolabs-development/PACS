@@ -10,6 +10,8 @@ const path = (study, n = 1, sop = '9.1') => `/dicom-web/studies/${study}/series/
 let nextId = 0;
 const frame = bytes => ({ entryId: 'opaque-' + (++nextId), bytes });
 const status = (store, uid) => store.snapshot().studies.find(s => s.uid === uid);
+/** The copy a viewer's live check confirmed (open and close name it). */
+const copy = (store, uid) => store.get(uid).copy;
 
 /** Fetch `count` frames of `uid` of `bytes` each, as the worker does, and mark it Ready. */
 function fill(store, uid, count, bytes, revision = 'r1') {
@@ -41,8 +43,8 @@ test('disk space stays within the budget: the opened-and-closed study goes first
   fill(store, '1.1', 3, 10);           // read, then closed
   fill(store, '1.2', 3, 10);           // open in a viewer
   fill(store, '1.3', 3, 10);           // not read yet
-  store.open('1.1'); assert.equal(store.close('1.1'), true);
-  store.open('1.2');
+  store.open('1.1', copy(store, '1.1')); assert.equal(store.close('1.1', copy(store, '1.1')), true);
+  store.open('1.2', copy(store, '1.2'));
   store.start('1.4', 2);
   assert.equal(store.put('1.4', path('1.4', 1), frame(10), 'r1'), 'stored');   // 100 of 100
   assert.equal(store.put('1.4', path('1.4', 2), frame(25), 'r1'), 'stored', 'room made by dropping A');
@@ -61,7 +63,7 @@ test('disk space stays within the budget: the opened-and-closed study goes first
   assert.equal(status(store, '1.3').status, STATUS.ready);
   assert.ok(store.used() <= store.budget());
   // The viewer closes B: it may go now, and the queue resumes with D, keeping D's frames.
-  assert.equal(store.close('1.2'), true);
+  assert.equal(store.close('1.2', copy(store, '1.2')), true);
   assert.equal(store.wake(), true);
   assert.equal(store.next().uid, '1.4');
   store.start('1.4', 3);
@@ -75,12 +77,12 @@ test('a study open in two viewers stays until both closed it', () => {
   const store = create(30);
   store.add([{ uid: '1.1' }, { uid: '1.2' }]);
   fill(store, '1.1', 2, 10);
-  store.open('1.1'); store.open('1.1');
-  assert.equal(store.close('1.1'), false);
+  store.open('1.1', copy(store, '1.1')); store.open('1.1', copy(store, '1.1'));
+  assert.equal(store.close('1.1', copy(store, '1.1')), false);
   store.start('1.2', 1);
   assert.equal(store.put('1.2', path('1.2'), frame(20), 'r1'), 'full');
   assert.equal(status(store, '1.1').status, STATUS.ready);
-  assert.equal(store.close('1.1'), true);
+  assert.equal(store.close('1.1', copy(store, '1.1')), true);
   store.wake(); store.start('1.2', 1);
   assert.equal(store.put('1.2', path('1.2'), frame(20), 'r1'), 'stored');
   assert.equal(status(store, '1.1').status, STATUS.evicted);

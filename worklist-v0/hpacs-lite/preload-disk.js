@@ -88,17 +88,39 @@
           catalog[name] = catalog[name].filter(r => !replaced.has(r[id])).concat((puts[name] || []).map(r => summary(name, r)));
         }
       },
+      /**
+       * Expiry without any key (B39). A study record's expiry is its copy's; its `frameIds` (random IDs, no patient data)
+       * name its frames, so a used copy's frames live as long as its record - no frame is read or written again when a use
+       * moves the expiry. A frame's own expiry (its copy's at the time it was stored) still removes a frame no live record
+       * names: an orphan, a record written before frame lists, another account's whose record is gone.
+       */
       async sweep(now) {
-        const removed = await transaction(['frames', 'studies'], 'readwrite', (tx, done) => {
-          let removed = 0;
-          done(removed);
-          for (const name of ['frames', 'studies']) {
-            const request = tx.objectStore(name).index('byExpiry').openCursor(root.IDBKeyRange.upperBound(now));
-            request.onsuccess = () => { const cursor = request.result; if (cursor) { cursor.delete(); done(++removed); cursor.continue(); } };
-          }
+        const result = { removed: 0, live: new Set(), gone: new Set() };
+        await transaction(['frames', 'studies'], 'readwrite', (tx, done) => {
+          done(result);
+          const studies = tx.objectStore('studies'), frames = tx.objectStore('frames');
+          studies.getAll().onsuccess = e => {
+            for (const record of e.target.result) {
+              const listed = Array.isArray(record.frameIds) ? record.frameIds : [];
+              if (record.expiresAt > now) { for (const id of listed) result.live.add(id); continue; }
+              studies.delete(record.manifestId); result.removed++;
+              for (const id of listed) result.gone.add(id);
+            }
+            for (const id of result.gone) if (!result.live.has(id)) { frames.delete(id); result.removed++; }
+            const request = frames.index('byExpiry').openCursor(root.IDBKeyRange.upperBound(now));
+            request.onsuccess = () => {
+              const cursor = request.result; if (!cursor) return;
+              if (!result.live.has(cursor.primaryKey)) { cursor.delete(); result.removed++; }
+              cursor.continue();
+            };
+          };
         });
-        if (catalog) for (const name of ['frames', 'studies']) catalog[name] = catalog[name].filter(r => r.expiresAt > now);
-        return removed;
+        const { live, gone } = result;
+        if (catalog) {
+          catalog.studies = catalog.studies.filter(r => r.expiresAt > now);
+          catalog.frames = catalog.frames.filter(r => live.has(r.entryId) || (r.expiresAt > now && !gone.has(r.entryId)));
+        }
+        return result.removed;
       },
       async estimate() { return root.navigator?.storage?.estimate ? root.navigator.storage.estimate() : {}; },
     };

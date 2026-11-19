@@ -4,6 +4,12 @@
   const GB = 1024 ** 3, TTL = 72 * 60 * 60 * 1000;
   const STATUS = Object.freeze({ queued: 'Queued', downloading: 'Downloading', ready: 'Ready', failed: 'Failed', evicted: 'Evicted' });
 
+  /**
+   * B39: when a copy goes - 72 hours after the later of its first stored frame and its last confirmed use (a viewer that
+   * showed this copy after its live check, kept showing it, or left it), in server time; before its first frame, 72 hours
+   * after it was queued. The one rule every expiry reads: the model, the worker's records and the panel's date.
+   */
+  const expiryOf = study => Math.max(study.fetchedAt ?? study.queuedAt, study.usedAt ?? -Infinity) + TTL;
   const positive = value => typeof value === 'number' && Number.isFinite(value) && value > 0;
   function budgetFor(diskGb) {
     const bytes = positive(diskGb) ? Math.floor(diskGb * GB) : null;
@@ -30,6 +36,9 @@
       const ids = [...study.frames.values()].map(f => f.entryId);
       used -= study.bytes;
       study.frames.clear(); study.bytes = 0; study.revision = null; study.total = 0; study.estimate = null; study.copy = null;
+      // A copy's uses go with it: a later copy counts its own (an old viewer's close or check cannot reach it - open/close
+      // name the copy).
+      study.usedAt = null; study.opens = 0; study.closedAt = null;
       return ids;
     }
     function end(study, status, reason) {
@@ -55,7 +64,7 @@
         return { uid: s.uid, label: s.label, status: s.status === STATUS.downloading ? STATUS.queued : s.status,
           ...(s.examRefs?{examRefs:s.examRefs}:{}),
           reason: s.reason, revision: s.revision, copy: s.copy, seq: s.seq, total: s.total,
-          queuedAt: s.queuedAt, fetchedAt: s.fetchedAt, bytes: s.bytes,
+          queuedAt: s.queuedAt, fetchedAt: s.fetchedAt, usedAt: s.usedAt, bytes: s.bytes,
           frames: Object.fromEntries([...s.frames].map(([path, f]) => [path, f.entryId])) };
       },
       restore(value, records) {
@@ -64,17 +73,32 @@
         const frames = new Map(Object.entries(value.frames).map(([path, entryId]) => [path, { entryId, bytes: records.get(entryId)?.bytes || 0 }]));
         const s = { ...value, frames, bytes: [...frames.values()].reduce((n, f) => n + f.bytes, 0),
           status: value.status === STATUS.downloading ? STATUS.queued : value.status,
-          expiresAt: (value.fetchedAt ?? value.queuedAt) + TTL, waiting: false, opens: 0, closedAt: null, estimate: null };
+          usedAt: Number.isFinite(value.usedAt) ? value.usedAt : null, waiting: false, opens: 0, closedAt: null, estimate: null };
+        s.expiresAt = expiryOf(s);
         studies.set(s.uid, s); used += s.bytes; seq = Math.max(seq, s.seq); copies = Math.max(copies, s.copy || 0);
       },
       suspend() { for (const s of studies.values()) if (s.status === STATUS.downloading) s.status = STATUS.queued; },
-      fetched(uid, at) { const s = studies.get(uid); if (s && s.fetchedAt === null) { s.fetchedAt = at; s.expiresAt = at + TTL; } },
+      fetched(uid, at) { const s = studies.get(uid); if (s && s.fetchedAt === null) { s.fetchedAt = at; s.expiresAt = expiryOf(s); } },
+      /** The first stored frame's time taken back (its frame was not kept): the expiry follows. */
+      unfetched(uid, at) { const s = studies.get(uid); if (s) { s.fetchedAt = at; s.expiresAt = expiryOf(s); } },
+      /**
+       * A confirmed use of `copy` at `at` (server time), not after its expiry. False when the copy is gone, replaced, holds
+       * nothing or had expired at `at` - an expired copy is never brought back by a late open, close or key answer.
+       * `apply` false only asks: the worker writes the new expiry to disk first, then applies it.
+       */
+      use(uid, copy, at, apply = true) {
+        const s = studies.get(uid);
+        if (!s || s.copy === null || s.copy !== copy || !s.frames.size || !Number.isFinite(at) || at >= s.expiresAt
+          || ![STATUS.downloading, STATUS.ready, STATUS.queued].includes(s.status) || at <= (s.usedAt ?? -Infinity)) return false;
+        if (apply) { s.usedAt = at; s.expiresAt = expiryOf(s); }
+        return true;
+      },
       expire(at = now()) {
         const ids = [];
         for (const s of studies.values()) if (s.expiresAt <= at && ![STATUS.evicted, STATUS.failed].includes(s.status)) {
           ids.push(...end(s, STATUS.evicted, s.fetchedAt === null
             ? '72시간 안에 받지 못해 대기열에서 지웠습니다.'
-            : '받은 지 72시간이 지나 자동으로 지웠습니다. 다시 받으려면 Retry를 누르세요.'));
+            : '받은 뒤나 마지막으로 본 뒤 72시간이 지나 자동으로 지웠습니다. 다시 받으려면 Retry를 누르세요.'));
         }
         return ids;
       },
@@ -92,13 +116,13 @@
           const known = studies.get(uid);
           if(known && JSON.stringify(known.examRefs||null)!==JSON.stringify(examRefs||null)) {
             released.push(...release(known));
-            studies.set(uid,{...known,examRefs,status:STATUS.queued,reason:null,waiting:false,seq:++seq,queuedAt:now(),fetchedAt:null,expiresAt:now()+TTL});added.push(uid);continue;
+            studies.set(uid,{...known,examRefs,status:STATUS.queued,reason:null,waiting:false,seq:++seq,queuedAt:now(),fetchedAt:null,usedAt:null,opens:0,closedAt:null,expiresAt:now()+TTL});added.push(uid);continue;
           }
           if (known && (auto || ![STATUS.failed, STATUS.evicted].includes(known.status))) continue;
           if (first === true) urgent.push(uid);
-          if (known) { known.status = STATUS.queued; known.reason = null; known.seq = ++seq; known.queuedAt = now(); known.fetchedAt = null; known.expiresAt = now() + TTL; known.label = label ?? known.label; added.push(uid); continue; }
+          if (known) { known.status = STATUS.queued; known.reason = null; known.seq = ++seq; known.queuedAt = now(); known.fetchedAt = null; known.usedAt = null; known.expiresAt = now() + TTL; known.label = label ?? known.label; added.push(uid); continue; }
           studies.set(uid, { uid, ...(examRefs?{examRefs}:{}), label: label ?? null, status: STATUS.queued, reason: null, waiting: false, seq: ++seq,
-            queuedAt: now(), fetchedAt: null, expiresAt: now() + TTL, frames: new Map(), bytes: 0, total: 0, revision: null, estimate: null, copy: null, opens: 0, closedAt: null });
+            queuedAt: now(), fetchedAt: null, usedAt: null, expiresAt: now() + TTL, frames: new Map(), bytes: 0, total: 0, revision: null, estimate: null, copy: null, opens: 0, closedAt: null });
           added.push(uid);
         }
         if (urgent.length) {
@@ -113,7 +137,7 @@
         const study = studies.get(uid);
         if (!study || ![STATUS.failed, STATUS.evicted].includes(study.status)) return false;
         const first = Math.min(0, ...[...studies.values()].map(s => s.seq));
-        study.status = STATUS.queued; study.reason = null; study.waiting = false; study.seq = first - 1; study.queuedAt = now(); study.fetchedAt = null; study.expiresAt = now() + TTL;
+        study.status = STATUS.queued; study.reason = null; study.waiting = false; study.seq = first - 1; study.queuedAt = now(); study.fetchedAt = null; study.usedAt = null; study.expiresAt = now() + TTL;
         return true;
       },
       /** The next study to fetch: the earliest queued one that is not waiting for space. */
@@ -194,11 +218,14 @@
         const uid = studyOfPath(path), study = uid && studies.get(uid);
         return study && study.expiresAt > now() && [STATUS.downloading, STATUS.ready, STATUS.queued].includes(study.status) ? study.frames.get(path) || null : null;
       },
-      /** A viewer shows the study: it cannot be evicted until every viewer that opened it has closed it. */
-      open(uid) { const study = studies.get(uid); if (study) { study.opens++; study.closedAt = null; } },
-      close(uid) {
+      /**
+       * A viewer shows this copy of the study: it cannot be evicted for space until every viewer that opened it has closed it.
+       * Open and close name the copy - a close of an earlier copy is not one of this copy's.
+       */
+      open(uid, copy) { const study = studies.get(uid); if (!study || study.copy === null || study.copy !== copy) return false; study.opens++; study.closedAt = null; return true; },
+      close(uid, copy) {
         const study = studies.get(uid);
-        if (!study || study.opens === 0) return false;
+        if (!study || study.copy === null || study.copy !== copy || study.opens === 0) return false;
         if (--study.opens === 0) study.closedAt = ++clock;
         return study.opens === 0;
       },
@@ -208,7 +235,7 @@
     };
   }
 
-  const api = Object.freeze({ create, budgetFor, studyOfPath, STATUS, TTL });
+  const api = Object.freeze({ create, budgetFor, studyOfPath, expiryOf, STATUS, TTL });
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (root) root.KinPreloadStore = api;
 })(typeof self === 'object' ? self : typeof window === 'object' ? window : null);

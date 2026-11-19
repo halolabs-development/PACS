@@ -32,7 +32,8 @@ function setup({ held = {}, network, shared = true, studies = null, page = false
         const reply = value => queueMicrotask(() => port.onmessage({ data: { type: 'reply', id: message.id, ...value } }));
         if (message.type === 'query') {
           const entry = held[message.uid];
-          reply({ held: entry && entry.session === message.session ? { revision: entry.revision, copy: entry.copy ?? 1 } : null });
+          // `has`: the check's frame is one of the copy's (preload-worker.js) - every frame here unless the entry says not.
+          reply({ held: entry && entry.session === message.session ? { revision: entry.revision, copy: entry.copy ?? 1, has: entry.has ?? true } : null });
         } else if (message.type === 'frame') {
           const uid = /studies\/([0-9.]+)\//.exec(message.path)[1], entry = held[uid];
           if (entry && entry.session === message.session && (entry.copy ?? 1) !== message.copy) reply({ bytes: null, stale: true });
@@ -42,10 +43,10 @@ function setup({ held = {}, network, shared = true, studies = null, page = false
     }
   }
   // Every listener of a type runs (the module and its worker part both listen to pagehide/pageshow).
-  const handlers = {}, listeners = {};
+  const handlers = {}, listeners = {}, timers = [];
   const win = { location: { origin: ORIGIN, href: ORIGIN + '/ohif/viewer' + (studies ? '?StudyInstanceUIDs=' + studies.join(',') : '') },
     SharedWorker: shared ? FakeSharedWorker : undefined, Headers, Response, ReadableStream, crypto: globalThis.crypto,
-    document: page ? fakeDocument() : undefined,
+    document: page ? fakeDocument() : undefined, setInterval: (run, every) => { timers.push({ run, every }); return timers.length; },
     addEventListener: (type, run) => { (handlers[type] ??= []).push(run); listeners[type] = event => handlers[type].forEach(h => h(event)); } };
   const send = async (url, init) => {
     sent.push({ url, init, headers: new Headers(init.headers) });
@@ -57,7 +58,7 @@ function setup({ held = {}, network, shared = true, studies = null, page = false
     const headers = new Headers(init.headers); headers.set('X-KIN-Session', 'sess-1');
     return preloadFetch(url, { ...init, headers });
   };
-  return { fetch: preloadFetch, posted, sent, listeners, win };
+  return { fetch: preloadFetch, posted, sent, listeners, win, timers };
 }
 
 /** Enough of a document for the back/forward return: the root's style, an alert with a button. */
@@ -284,7 +285,8 @@ test('a copy fetched again after Clear All or Retry is never shown under the ear
   assert.equal(await (await fetch(frameUrl(4), bound())).text(), 'live ' + frameUrl(4));
   assert.equal(checks(), 2, 'a new check read for the new copy');
   assert.equal(await (await fetch(frameUrl(5), bound())).text(), 'held 2 ' + new URL(frameUrl(5)).pathname);
-  assert.equal(posted.filter(m => m.type === 'open').length, 1, 'the study is opened once in this document');
+  // B39: a use names the copy its check confirmed - each copy once.
+  assert.deepEqual(posted.filter(m => m.type === 'open').map(m => [m.uid, m.copy, m.session]), [[STUDY, 1, 'sess-1'], [STUDY, 2, 'sess-1']]);
   // A new copy whose revision no longer matches the archive is dropped at its check and never shown.
   held[STUDY] = { revision: 'rev-r2', session: 'sess-1', copy: 3 };
   live = 'rev-r3';
@@ -617,4 +619,86 @@ test('review R1 of 137c2b7: memory answers of a held study in flight across its 
   assert.ok(next && next !== first);
   assert.deepEqual(texts.map(t => t.split(' ')[0]).sort(), ['held', 'held', 'live'], 'the new check\'s answer, then memory');
   assert.ok(texts.includes('live ' + next), 'no answer of the earlier check is handed on');
+});
+
+// ── B39: the viewer tells the worker which copy it uses, for which session, and when it leaves it ──
+const OTHER_STUDY = '1.2.840.9.2';
+const kinds = (posted, ...types) => posted.filter(m => types.includes(m.type)).map(m => [m.type, m.uid, m.copy, m.session]);
+
+test('B39 a use names the copy and session its check confirmed: the check frame when held, else the first frame from memory; a live-only study is no use', async () => {
+  const held = { [STUDY]: { revision: 'rev-now', session: 'sess-1', copy: 4 }, [OTHER_STUDY]: { revision: 'rev-now', session: 'sess-1', copy: 7, has: false } };
+  const { fetch, posted } = setup({ held });
+  await (await fetch(frameUrl(1), bound())).text();
+  assert.deepEqual(kinds(posted, 'open'), [['open', STUDY, 4, 'sess-1']], 'the held check frame is a use');
+  assert.equal(posted.find(m => m.type === 'query').path, new URL(frameUrl(1)).pathname, 'the worker is told which frame the check reads');
+  // Another split part's frame checked live: no use until a frame of the copy comes from memory.
+  await (await fetch(frameUrl(1, OTHER_STUDY), bound())).text();
+  assert.equal(kinds(posted, 'open').length, 1);
+  await (await fetch(frameUrl(2, OTHER_STUDY), bound())).text();
+  await (await fetch(frameUrl(3, OTHER_STUDY), bound())).text();
+  assert.deepEqual(kinds(posted, 'open'), [['open', STUDY, 4, 'sess-1'], ['open', OTHER_STUDY, 7, 'sess-1']], 'once, at the first frame from memory');
+  // A study the worker does not hold is no use.
+  const live = setup();
+  await (await live.fetch(frameUrl(1), bound())).text();
+  assert.equal(kinds(live.posted, 'open').length, 0);
+});
+
+test('B39 a study the next scope no longer shows is left once it is shown; an abandoned switch and the last tab closing', async () => {
+  const held = { [STUDY]: { revision: 'rev-now', session: 'sess-1', copy: 2 }, [OTHER_STUDY]: { revision: 'rev-now', session: 'sess-1', copy: 3 } };
+  const { fetch, posted } = setup({ held, studies: [STUDY] });
+  await (await fetch(frameUrl(1), bound())).text();
+  await (await fetch(frameUrl(1, OTHER_STUDY), bound())).text();    // a comparison shown with it: each copy counts
+  assert.deepEqual(kinds(posted, 'open').map(o => o[1]), [STUDY, OTHER_STUDY]);
+  await fetch.reenter([OTHER_STUDY]);                                 // not committed: the switch did not happen
+  assert.deepEqual(kinds(posted, 'close'), []);
+  (await fetch.reenter([OTHER_STUDY])).commit();                      // another patient's scope shown
+  assert.deepEqual(kinds(posted, 'close'), [['close', STUDY, 2, 'sess-1']]);
+  fetch.leave();                                                      // the last patient tab closed
+  assert.deepEqual(kinds(posted, 'close'), [['close', STUDY, 2, 'sess-1'], ['close', OTHER_STUDY, 3, 'sess-1']]);
+  fetch.leave();
+  assert.equal(kinds(posted, 'close').length, 2, 'left once');
+});
+
+test('B39 a check left behind by a new opening or by leaving the page opens and drops nothing; the return checks again', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let revision = 'rev-now';
+  const held = { [STUDY]: { revision: 'rev-now', session: 'sess-1', copy: 1 } };
+  const s = setup({ held, studies: [STUDY], network: async url => { await gate; return new Response('live ' + url, { headers: { 'Content-Type': PART, 'X-KIN-Study-Revision': revision } }); } });
+  const pending = s.fetch(frameUrl(1), bound());
+  await tick();
+  s.listeners.pagehide({ persisted: true });
+  release();
+  await (await pending).text();
+  assert.deepEqual(kinds(s.posted, 'open', 'evict'), [], 'the check finished after the page was left');
+  assert.equal(s.posted.filter(m => m.type === 'bye').length, 1);
+  s.listeners.pageshow({ persisted: false });
+  assert.deepEqual(kinds(s.posted, 'open'), [], 'a return re-sends no use before its own check');
+  // A changed copy found by a check whose opening was replaced is not dropped by it.
+  revision = 'rev-other';
+  const t = setup({ held, studies: [STUDY], network: async url => { await tick(); return new Response('live ' + url, { headers: { 'Content-Type': PART, 'X-KIN-Study-Revision': revision } }); } });
+  const late = t.fetch(frameUrl(1), bound());
+  await new Promise(resolve => setTimeout(resolve, 0));
+  (await t.fetch.reenter([STUDY])).commit();
+  await (await late).text();
+  // The read asked under the earlier opening is read again under the new one (its own check): that check, not the
+  // earlier one, drops the copy it checked - one drop, naming it.
+  const checksSent = t.sent.filter(r => r.headers.get('X-KIN-Preload') === 'check');
+  assert.equal(checksSent.length, 2);
+  assert.notEqual(openingOf(checksSent[0]), openingOf(checksSent[1]));
+  assert.deepEqual(kinds(t.posted, 'evict'), [['evict', STUDY, 1, undefined]], 'one drop: the earlier opening\'s check drops nothing');
+});
+
+test('B39 while shown, the document says every ten minutes which copies it still uses; after leaving, nothing', async () => {
+  const held = { [STUDY]: { revision: 'rev-now', session: 'sess-1', copy: 5 } };
+  const s = setup({ held, studies: [STUDY] });
+  await (await s.fetch(frameUrl(1), bound())).text();
+  await (await s.fetch(frameUrl(2), bound())).text();                // the worker is started by the first read
+  const beat = s.timers.find(timer => timer.every === 10 * 60 * 1000);
+  assert.ok(beat, 'one ten-minute timer');
+  beat.run();
+  assert.deepEqual(kinds(s.posted, 'using'), [['using', STUDY, 5, 'sess-1']]);
+  s.fetch.leave();
+  beat.run();
+  assert.equal(kinds(s.posted, 'using').length, 1);
 });

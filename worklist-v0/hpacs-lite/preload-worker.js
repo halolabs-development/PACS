@@ -4,6 +4,8 @@ importScripts('preload-store.js', 'preload-disk.js', 'session-transport.js');
 const Model = self.KinPreloadStore, Disk = self.KinPreloadDisk, disk = Disk.create(), Transport = self.KinSessionTransport;
 const FRAME_ACCEPT = ['application/octet-stream', 'image/jpeg', 'image/jls', 'image/jp2', 'image/dicom-rle']
   .map(type => 'multipart/related; type="' + type + '"; transfer-syntax=*').join(', ');
+// B39: a viewer that keeps showing a copy says so (viewer-preload.js); within this much of its expiry the use moves it on.
+const RENEW_BEFORE = 60 * 60 * 1000;
 const MESSAGES = Object.freeze({
   unavailable: '이 브라우저의 보관 저장소를 사용할 수 없습니다. 다시 시도하세요.',
   unset: '이 기관에서 미리 받기에 쓸 저장 용량을 아직 정하지 않아 미리 받기를 할 수 없습니다. 관리자에게 문의하세요.',
@@ -23,6 +25,9 @@ const MESSAGES = Object.freeze({
 });
 const ports = new Map(), manifests = new Map();
 let session = null, epoch = 0, key = null, keyId = null, offset = null, settings = null, unavailable = null;
+// The server time of the latest issue of this key (/api/preload/cache-key renews it): no copy's received or used time
+// counts past it, so the key outlives every copy it reads (the server retires a key 72 hours after its last issue).
+let issuedAt = null;
 const now = () => Date.now() + (offset ?? 0);
 let store = Model.create(null, now), running = false, controller = null, keyController = null, idleWaiters = [];
 let serial = Promise.resolve(), diskUsed = 0;
@@ -38,7 +43,7 @@ function settleIdle() { if (!busy()) for (const resolve of idleWaiters.splice(0)
 function idle() { return busy() ? new Promise(resolve => idleWaiters.push(resolve)) : Promise.resolve(); }
 function changeSession(next) {
   epoch++; controller?.abort(); keyController?.abort();
-  session = next; key = null; keyId = null; settings = null; unavailable = null;
+  session = next; key = null; keyId = null; settings = null; unavailable = null; issuedAt = null;
   store = Model.create(null, now); manifests.clear(); diskUsed = 0;
   for (const info of ports.values()) info.opens.clear();
   for (const resolve of idleWaiters.splice(0)) resolve();
@@ -94,12 +99,14 @@ async function sweep() {
   if (ids.length || studies.length || removed) { await inventory(); store.wake(); }
   if (expired.length) broadcast();
 }
-async function envelope(uid) {
+/** The study record of uid as the model holds it, or with change (a use not yet on disk) laid over it. */
+async function envelope(uid, change = {}) {
   const study = store.get(uid);
   let manifestId = manifests.get(uid);
   if (!manifestId) { manifestId = crypto.randomUUID(); manifests.set(uid, manifestId); }
-  const value = await Disk.seal(key, new TextEncoder().encode(JSON.stringify(store.manifest(uid))), Disk.studyAAD(keyId, manifestId));
-  return { manifestId, keyId, expiresAt: study.expiresAt, ...value };
+  const manifest = { ...store.manifest(uid), ...change };
+  const value = await Disk.seal(key, new TextEncoder().encode(JSON.stringify(manifest)), Disk.studyAAD(keyId, manifestId));
+  return { manifestId, keyId, expiresAt: Model.expiryOf(manifest), frameIds: Object.values(manifest.frames), ...value };
 }
 async function room(extra, uid) {
   const mine = epoch;
@@ -134,7 +141,63 @@ async function persist(uid) {
   if (mine !== epoch || !key || store.get(uid)?.expiresAt <= now()) return false;
   await disk.write({ studies: [record] }); await inventory(); return true;
 }
-function prerequisites() {
+/** Frames the model let go (a Preload for another exam of the same original, an eviction for space) leave the disk too. */
+async function flushReleased() {
+  const ids = store.takeReleased();
+  if (ids.length) { await disk.write({}, { frames: ids }); await inventory(); }
+}
+/**
+ * The key issued again for this session (outside the queue: a slow answer holds no frame read or logout). The server
+ * time of an answer for this very key, else null: another key (the old one was retired) or a refused account stops
+ * serving from the old key in memory; a failure that may pass changes nothing.
+ */
+async function renewKey(mine, bound) {
+  let answer;
+  try { answer = await readJson(await get('/api/preload/cache-key', { Accept: 'application/json' }, undefined, bound)); }
+  catch (error) {
+    if (mine !== epoch || bound !== session) return null;
+    if (error?.reason === 'ended') changeSession(null);
+    else if (error?.reason === MESSAGES.key) { changeSession(bound); void prerequisites(); }
+    return null;
+  }
+  const at = Date.parse(answer?.serverTime);
+  if (mine !== epoch || bound !== session || !Number.isFinite(at)) return null;
+  if (answer.keyId !== keyId) { changeSession(bound); void prerequisites().then(() => pump()); return null; }
+  issuedAt = Math.max(issuedAt ?? at, at);
+  return at;
+}
+/**
+ * The latest issue time to count a received or used time against: the key is asked again only once its last issue is
+ * older than ten minutes (a time past it counts as the issue time - a little earlier, never past the key).
+ */
+const ISSUE_FRESH = 10 * 60 * 1000;
+function issue(mine, bound) {
+  return issuedAt !== null && now() - issuedAt < ISSUE_FRESH ? Promise.resolve(issuedAt) : renewKey(mine, bound);
+}
+/**
+ * B39: a confirmed use of `copy` at `at` (server time) moves the copy's expiry to 72 hours after it - once the key has
+ * been issued again at or after it and the study record with the new expiry is on disk. Only the record is written: its
+ * frames' ciphertext is neither read nor written again (preload-disk.js sweep keeps a live record's frames).
+ */
+async function touch(uid, copy, at) {
+  const mine = epoch, bound = session, held = keyId;
+  if (!bound || !key || !store.get(uid) || store.get(uid).copy !== copy) return;
+  const issued = await issue(mine, bound);
+  if (issued === null) return;
+  await locked(async () => {
+    if (mine !== epoch || bound !== session || !key || keyId !== held) return;
+    const study = store.get(uid), usedAt = Math.min(at, issued);
+    if (!study || !store.held(uid) || !store.use(uid, copy, usedAt, false)) return;
+    // The new expiry shows only once its record is on disk; until then the model keeps the last one written.
+    try {
+      const record = await envelope(uid, { usedAt });
+      if (mine !== epoch || !key || store.get(uid) !== study) return;
+      await disk.write({ studies: [record] });
+    } catch (_) { return; }
+    store.use(uid, copy, usedAt);
+    await inventory(); broadcast();
+  });
+}function prerequisites() {
   if (settings) return settings;
   const mine = epoch, bound = session;
   keyController = new AbortController(); const signal = keyController.signal;
@@ -151,7 +214,7 @@ function prerequisites() {
       if (mine !== epoch) return MESSAGES.key;
       await locked(async () => {
         if (mine !== epoch) return;
-        key = imported; keyId = answer.keyId; offset = clockOffset;
+        key = imported; keyId = answer.keyId; offset = clockOffset; issuedAt = Date.parse(answer.serverTime);
         store.setBudget(Model.budgetFor(me.preloadDiskGb));
         // Restore before sweeping so this session can show the expired row's reason and Retry.
         const records = await inventory(), frames = new Map(records.frames.map(r => [r.entryId, r]));
@@ -203,6 +266,8 @@ async function download(study, mine) {
   controller = new AbortController(); const signal = controller.signal;
   await idle(); if (!live() || !store.start(uid)) return;
   broadcast();
+  // B39: the key is issued again before a copy's first frame, so the copy's received time is covered by the key's issue.
+  if (study.fetchedAt === null) { await issue(mine, bound); if (!live()) return; }
   const scopes=[];
   for(const ref of study.examRefs||[]) {
     const query=new URLSearchParams({purpose:'current',reference:JSON.stringify(ref)});
@@ -237,9 +302,9 @@ async function download(study, mine) {
       if (!live() || !key || study.status !== 'Downloading') return 'gone';
       await sweep(); if (!live() || study.status !== 'Downloading') return 'gone';
       if (!revision || (study.revision !== null && study.revision !== revision)) throw new Stop(MESSAGES.changed);
-      const previousFetched = study.fetchedAt, previousExpiry = study.expiresAt;
+      const previousFetched = study.fetchedAt;
       const fetched = Date.parse(response.headers.get('Date'));
-      store.fetched(uid, Number.isFinite(fetched) ? fetched : now());
+      store.fetched(uid, Math.min(Number.isFinite(fetched) ? fetched : now(), issuedAt ?? Infinity));
       if (study.expiresAt <= now()) { await sweep(); return 'gone'; }
       const entryId = crypto.randomUUID();
       const sealed = await Disk.seal(key, data, Disk.frameAAD(keyId, uid, path, revision, study.copy));
@@ -257,7 +322,7 @@ async function download(study, mine) {
         if (!live()) return 'gone';
         const read = study.frames.size + 1;
         if ((study.bytes + frame.bytes) / read * study.total + recordBytes(manifest) > store.budget()) throw new Stop(MESSAGES.size);
-        study.fetchedAt = previousFetched; study.expiresAt = previousExpiry;
+        store.unfetched(uid, previousFetched);
         study.status = 'Queued'; study.waiting = true; study.reason = MESSAGES.space;
         await persist(uid); return 'full';
       }
@@ -265,12 +330,13 @@ async function download(study, mine) {
       try { await disk.write({ frames: [frame], studies: [manifest] }); }
       catch (error) {
         if (error.name !== 'QuotaExceededError') throw error;
-        study.fetchedAt = previousFetched; study.expiresAt = previousExpiry;
+        store.unfetched(uid, previousFetched);
         study.status = 'Queued'; study.waiting = true; study.reason = MESSAGES.space; return 'full';
       }
       if (!live()) return 'gone';
       const outcome = store.put(uid, path, { entryId, bytes: frame.bytes }, revision);
       if (outcome !== 'stored') await disk.write({}, { frames: [entryId] });
+      await flushReleased();
       await inventory(); return outcome;
     });
     if (result === 'full' || result === 'gone') return result;
@@ -325,11 +391,24 @@ function partType(bytes) {
   const delimiter = /^[\w'+.-]+$/.test(boundary) ? boundary : `"${boundary}"`;
   return `multipart/related; type="${quotedType}"; boundary=${delimiter}`;
 }
+/**
+ * B39: a viewer leaves the copies it showed (its window goes, or it shows another patient). The last viewer of a copy to
+ * leave it is a use: the copy is kept 72 hours from then. A copy another viewer still shows stays in use.
+ */
+function leave(info, entries) {
+  const at = now();
+  for (const name of entries) {
+    const opened = info.opens.get(name); if (!opened) continue;
+    info.opens.delete(name);
+    if (store.close(opened.uid, opened.copy)) void touch(opened.uid, opened.copy, at);
+  }
+}
 function release(port) {
   const info = ports.get(port); if (!info) return;
-  for (const [uid, count] of info.opens) for (let i = 0; i < count; i++) store.close(uid);
-  info.opens.clear(); info.busy = false; settleIdle(); store.wake(); void pump();
+  leave(info, [...info.opens.keys()]);
+  info.busy = false; settleIdle(); store.wake(); void pump();
 }
+const opening = (uid, copy) => uid + '|' + copy;
 async function handle(port, message, mine) {
   let info = ports.get(port);
   if (!info) { info = { role: null, busy: false, opens: new Map() }; ports.set(port, info); }
@@ -349,6 +428,7 @@ async function handle(port, message, mine) {
         const list = (Array.isArray(message.studies) ? message.studies : []).filter(s => /^[0-9.]{1,64}$/.test(s?.uid));
         const added = store.add(list.map(s => ({ uid: s.uid, label: typeof s.label === 'string' ? s.label.slice(0, 200) : null,
           urgent: s.urgent === true, ...(Array.isArray(s.examRefs)&&s.examRefs.length?{examRefs:s.examRefs}:{}) })), { auto });
+        await flushReleased();
         for (const uid of added) {
           if (reason) store.fail(uid, reason);
           else if (!await persist(uid)) { store.get(uid).waiting = true; store.get(uid).reason = MESSAGES.space; }
@@ -365,7 +445,9 @@ async function handle(port, message, mine) {
       try {
         await sweep();
         const uid = message.type === 'query' ? message.uid : Model.studyOfPath(message.path), held = store.held(uid);
-        if (message.type === 'query') { reply({ held: held ? { revision: held.revision, copy: held.copy } : null }); return; }
+        // `has`: the frame the viewer's check reads is one of this copy's (B39: then the check itself is a use of the copy).
+        if (message.type === 'query') { reply({ held: held ? { revision: held.revision, copy: held.copy,
+          has: typeof message.path === 'string' && Model.studyOfPath(message.path) === uid && !!store.frame(message.path) } : null }); return; }
         if (held && held.copy !== message.copy) { reply({ bytes: null, stale: true }); return; }
         const frame = held && store.frame(message.path); if (!frame) { reply({ bytes: null }); return; }
         const record = await disk.get(frame.entryId);
@@ -379,6 +461,7 @@ async function handle(port, message, mine) {
     }); return;
   }
   if (message.type === 'retry' && session && (!key || unavailable)) await prerequisites();
+  const used = [];
   await locked(async () => {
     if (mine !== epoch) return;
     switch (message.type) {
@@ -398,16 +481,35 @@ async function handle(port, message, mine) {
         }
         break;
       case 'remove': await erase(message.uid, MESSAGES.cleared); store.remove(message.uid); break;
-      case 'evict': await erase(message.uid, typeof message.reason === 'string' ? message.reason.slice(0, 200) : MESSAGES.changed); break;
-      case 'open':
-        if (session && (!message.session || message.session === session)) {
-          store.open(message.uid); info.opens.set(message.uid, (info.opens.get(message.uid) || 0) + 1);
+      case 'evict':
+        // A viewer drops only the copy it checked: an evict naming an earlier copy leaves a later one alone.
+        if (Number.isInteger(message.copy) && store.get(message.uid)?.copy !== message.copy) break;
+        await erase(message.uid, typeof message.reason === 'string' ? message.reason.slice(0, 200) : MESSAGES.changed); break;
+      // B39: open, close and using come from a viewer of this session, about the copy its live check confirmed. One viewer
+      // window counts once per copy; its close or its leaving ends its use.
+      case 'open': {
+        const name = opening(message.uid, message.copy);
+        if (session && message.session === session && Number.isInteger(message.copy) && !info.opens.has(name)
+          && store.open(message.uid, message.copy)) {
+          info.opens.set(name, { uid: message.uid, copy: message.copy }); used.push([message.uid, message.copy, now()]);
         }
         break;
+      }
+      case 'close':
+        if (session && message.session === session) leave(info, [opening(message.uid, message.copy)]);
+        break;
+      case 'using': {
+        // A viewer still shows the copy: within an hour of its expiry, the use moves it on (never a copy already gone).
+        const study = store.get(message.uid);
+        if (session && message.session === session && info.opens.has(opening(message.uid, message.copy)) && study
+          && study.copy === message.copy && study.expiresAt > now() && study.expiresAt - now() <= RENEW_BEFORE) used.push([message.uid, message.copy, now()]);
+        break;
+      }
     }
     if (['remove', 'clear', 'evict'].includes(message.type)) store.wake();
     broadcast();
   });
+  for (const [uid, copy, at] of used) void touch(uid, copy, at);
   void pump();
 }
 setInterval(() => { void locked(async () => { await sweep(); broadcast(); }).then(() => pump()).catch(() => {}); }, 10 * 60 * 1000);
