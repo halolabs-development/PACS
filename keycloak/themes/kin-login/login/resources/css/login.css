@@ -1,21 +1,30 @@
+/* HALO PACS sign-in, drawn like the other Halo Labs products' first screen: a top bar with the HALO LABS logo and the
+   product name, the product's line and picture on the left, and the sign-in column on the right behind one thin rule.
+   Charcoal ground, one accent (#8ab4c8) with dark text on the primary button, as the worklist and viewer. */
 :root {
-  --kin-bg: #0B1220;
-  --kin-text: #F2F6FD;
-  --kin-muted: #A7B8D6;
-  --kin-label: #8FA5CA;
-  --kin-accent: #4F8EF7;
-  --kin-highlight: #9CC3FF;
-  --kin-card-bg: rgba(9, 14, 26, .8);
-  --kin-card-border: rgba(140, 168, 215, .24);
-  --kin-card-radius: 10px;
-  --kin-card-shadow: 0 30px 80px rgba(0, 2, 8, .66), inset 0 1px 0 rgba(190, 215, 255, .14);
-  --kin-card-bar: linear-gradient(90deg, #2F6EE0, #4F8EF7 55%, #9CC3FF);
-  --kin-input-bg: #0A101E;
-  --kin-input-border: rgba(140, 168, 215, .3);
+  --kin-bg: #212121;
+  --kin-text: #e3e3e3;
+  --kin-muted: #b4b4b4;
+  --kin-dim: #9b9b9b;
+  --kin-label: #e3e3e3;
+  --kin-accent: #8ab4c8;
+  --kin-highlight: #8ab4c8;
+  /* The sign-in column has no box of its own: it is the page ground. */
+  --kin-card-bg: #212121;
+  --kin-line: rgba(255, 255, 255, .07);
+  --kin-input-bg: #252525;
+  --kin-input-border: #707070;
   --kin-input-radius: 8px;
-  --kin-focus-ring: rgba(79, 142, 247, .14);
-  --kin-btn: linear-gradient(180deg, #2E63C8, #1D4794);
-  --kin-btn-shadow: 0 12px 26px rgba(8, 20, 48, .55), inset 0 1px 0 rgba(190, 215, 255, .22);
+  --kin-focus-ring: rgba(138, 180, 200, .2);
+  --kin-btn: #8ab4c8;
+  --kin-btn-text: #212121;
+  --kin-btn-line: #8ab4c8;
+  --kin-btn-shadow: inset 0 1px 0 rgba(255, 255, 255, .19), 0 4px 14px rgba(0, 0, 0, .13);
+  --kin-bar-height: 78px;
+  --kin-bar-side: max(24px, calc((100vw - 1376px) / 2));
+  --kin-logo-width: 142px;
+  --halo-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", "Malgun Gothic", sans-serif;
+  --halo-wordmark-font: "DejaVu Sans", Arial, sans-serif;
 }
 
 * {
@@ -27,8 +36,7 @@ html,
 .login-pf body {
   width: 100%;
   min-width: 320px;
-  height: 100%;
-  min-height: 660px;
+  min-height: 100%;
 }
 
 .login-pf {
@@ -38,50 +46,73 @@ html,
 .login-pf body {
   position: relative;
   margin: 0;
-  overflow: hidden;
-  background: var(--kin-bg);
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: radial-gradient(ellipse at 48% -200px, rgba(138, 180, 200, .04), transparent 70%), var(--kin-bg);
   color: var(--kin-text);
-  font-family: Pretendard, "Noto Sans KR", -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+  font-family: var(--halo-font);
+  -webkit-font-smoothing: antialiased;
 }
 
+/* Top bar: the HALO LABS logo (light-text version for a dark ground). */
 .login-pf body::before {
   position: fixed;
-  inset: 0;
-  z-index: 1;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 10;
+  height: var(--kin-bar-height);
   content: "";
   pointer-events: none;
-  background:
-    linear-gradient(105deg, rgba(5, 9, 17, .66) 0%, rgba(5, 9, 17, .3) 45%, rgba(5, 9, 17, .5) 100%),
-    radial-gradient(1000px 650px at 78% 20%, rgba(79, 142, 247, .14), transparent 60%),
-    radial-gradient(ellipse at center, transparent 50%, rgba(3, 6, 12, .66) 100%);
+  background: url("../img/halo-labs-light-text.svg") var(--kin-bar-side) center / var(--kin-logo-width) auto no-repeat,
+    rgba(33, 33, 33, .95);
+  border-bottom: 1px solid var(--kin-line);
 }
 
+/* Top bar: the product name beside the logo, behind a thin rule. */
 .login-pf body::after {
   position: fixed;
-  inset: 0;
-  z-index: 0;
-  content: "";
+  top: calc((var(--kin-bar-height) - 26px) / 2);
+  left: calc(var(--kin-bar-side) + var(--kin-logo-width) + 18px);
+  z-index: 11;
+  height: 26px;
+  padding-left: 20px;
+  content: "HALO PACS";
+  color: var(--kin-text);
+  border-left: 1px solid rgba(255, 255, 255, .14);
+  font-family: var(--halo-wordmark-font);
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 26px;
+  letter-spacing: .045em;
+  white-space: nowrap;
   pointer-events: none;
-  background: url("../img/kin-login-background.jpg") center center / cover no-repeat;
-  filter: brightness(1.04) saturate(1.03);
 }
 
+/* Page: product line on the left, sign-in column on the right, notices under the sign-in column. */
 .login-pf-page {
   position: relative;
   z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(340px, .85fr);
+  grid-template-areas:
+    ". ."
+    "story card"
+    "story legal"
+    ". ."
+    "foot foot";
+  grid-template-rows: 1fr auto auto 1fr auto;
+  column-gap: clamp(48px, 7vw, 100px);
   width: 100%;
-  max-width: 1280px;
-  height: 100%;
+  max-width: 1300px;
+  min-height: 100vh;
   margin: 0 auto;
-  padding: 0 56px;
-  gap: 60px;
+  padding: calc(var(--kin-bar-height) + 32px) 48px 20px;
 }
 
 #kc-header {
-  flex: 1 1 auto;
+  grid-area: story;
+  align-self: center;
   min-width: 0;
   margin: 0;
   padding: 0;
@@ -91,126 +122,115 @@ html,
   white-space: normal;
 }
 
+/* The realm's display name is the template's text here; the line below is the product's own. */
 #kc-header-wrapper {
-  width: 420px;
   padding: 0;
   font-size: 0;
   line-height: 0;
 }
 
-#kc-header::before,
-#kc-header-wrapper::before,
-#kc-header-wrapper::after {
-  display: block;
-  width: 420px;
-  color: #F4F8FF;
-  font-size: clamp(34px, 4.4vw, 56px);
-  font-weight: 250;
-  line-height: 1.16;
-  letter-spacing: .09em;
-  text-transform: uppercase;
-  text-shadow: 0 2px 24px rgba(0, 0, 0, .5);
-}
-
+/* Eyebrow: a short accent rule and the product name. */
 #kc-header::before {
-  content: "KOREA";
+  display: block;
+  padding-left: 30px;
+  content: "HALO PACS";
+  color: var(--kin-accent);
+  background: linear-gradient(var(--kin-accent), var(--kin-accent)) left center / 20px 1px no-repeat;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  letter-spacing: 2.6px;
 }
 
 #kc-header-wrapper::before {
-  content: "IMAGING";
-  font-weight: 700;
+  display: block;
+  margin: 24px 0 18px;
+  content: "검사가 도착한 순간부터,\A판독이 승인되는 순간까지.";
+  color: var(--kin-text);
+  font-size: clamp(32px, 3.3vw, 50px);
+  font-weight: 550;
+  line-height: 1.18;
+  letter-spacing: -.035em;
+  white-space: pre-line;
 }
 
 #kc-header-wrapper::after {
-  content: "NETWORK";
+  display: block;
+  margin: 0 0 26px;
+  content: "영상의학 원격판독 네트워크";
+  color: var(--kin-muted);
+  font-size: 16px;
+  line-height: 1.7;
 }
 
+/* The product picture under the line, as the other Halo products show theirs. */
 #kc-header::after {
   display: block;
-  width: 510px;
-  margin-top: 28px;
-  padding-top: 24px;
-  content: "영상의학 원격판독 네트워크\A검사가 도착한 순간부터, 판독이 승인되는 순간까지.";
-  color: var(--kin-muted);
-  background: linear-gradient(90deg, var(--kin-accent), rgba(156, 195, 255, .25)) top left / 88px 1px no-repeat;
-  font-size: 15px;
-  font-weight: 300;
-  line-height: 1.9;
-  letter-spacing: .06em;
-  text-shadow: 0 1px 12px rgba(0, 0, 0, .5);
-  white-space: pre;
+  width: 100%;
+  height: clamp(180px, calc(100vh - 500px), 280px);
+  content: "";
+  background: linear-gradient(0deg, rgba(33, 33, 33, .88), transparent 42%),
+    url("../img/halo-pacs-art.svg") center / cover no-repeat, var(--kin-bg);
+  border: 1px solid var(--kin-line);
+  border-radius: 12px;
+  box-shadow: 0 16px 50px rgba(0, 0, 0, .13);
 }
 
 .login-pf-page::after {
-  position: absolute;
-  right: 0;
-  bottom: 16px;
-  left: 0;
-  content: "가입 신청 후 관리자 승인을 거쳐 사용할 수 있습니다 · © 2026 KOREA IMAGING NETWORK";
-  color: rgba(180, 196, 222, .55);
+  grid-area: foot;
+  align-self: end;
+  margin-top: 24px;
+  content: "가입 신청 후 관리자 승인을 거쳐 사용할 수 있습니다 · © 2026 주식회사 헤일로랩스";
+  color: var(--kin-muted);
   font-size: 11px;
   line-height: 1.5;
-  letter-spacing: .08em;
+  letter-spacing: .04em;
   text-align: center;
   pointer-events: none;
 }
 
+/* Sign-in column: no box, one rule on its left. */
 .login-pf-page .card-pf {
+  grid-area: card;
   position: relative;
-  flex: 0 0 380px;
-  width: 380px;
-  max-width: 380px;
+  min-width: 0;
+  width: 100%;
+  max-width: none;
   margin: 0;
-  padding: 36px 36px 30px;
-  overflow: hidden;
+  padding: 24px 0 24px 34px;
+  overflow: visible;
   color: var(--kin-text);
-  background: var(--kin-card-bg);
-  border: 1px solid var(--kin-card-border);
-  border-top-width: 4px;
-  border-top-color: transparent;
-  border-radius: var(--kin-card-radius);
-  box-shadow: var(--kin-card-shadow);
+  background: transparent;
+  border: 0;
+  border-left: 1px solid var(--kin-line);
+  border-radius: 0;
+  box-shadow: none;
 }
 
-.login-pf-page .card-pf::before {
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  height: 3px;
-  content: "";
-  background: var(--kin-card-bar);
-}
-
-@supports (backdrop-filter: blur(18px)) {
-  .login-pf-page .card-pf {
-    backdrop-filter: blur(18px);
-  }
-}
-
+/* The HALO mark above every page title. */
 .login-pf-page .login-pf-header {
-  min-height: 34px;
+  min-height: 0;
   margin: 0 0 26px;
-  padding: 0 0 0 46px;
-  background: url("../img/kin-emblem-j1.svg") left center / 34px 34px no-repeat;
+  padding: 70px 0 0;
+  background: url("../img/halo-icon.svg") left top / 48px 48px no-repeat;
   text-align: left;
 }
 
 h1#kc-page-title {
-  min-height: 34px;
+  min-height: 0;
   margin: 0;
   color: var(--kin-text);
-  font-size: 19px;
-  font-weight: 700;
-  line-height: normal;
-  letter-spacing: .1em;
+  font-size: 28px;
+  font-weight: 550;
+  line-height: 1.25;
+  letter-spacing: -.02em;
   text-align: left;
 }
 
 #kc-locale {
   position: absolute;
-  top: 18px;
-  right: 24px;
+  top: 24px;
+  right: 0;
   z-index: 5;
 }
 
@@ -220,14 +240,14 @@ h1#kc-page-title {
   background: transparent;
   border: 0;
   font-family: inherit;
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
 }
 
 #kc-current-locale-link::after {
   margin-left: 5px;
   content: "⌄";
-  color: var(--kin-dim, #5E7396);
+  color: var(--kin-dim);
 }
 
 #kc-locale-dropdown ul[role="menu"] {
@@ -235,10 +255,10 @@ h1#kc-page-title {
   min-width: 150px;
   margin: 6px 0 0;
   padding: 6px;
-  background: var(--kin-input-bg);
-  border: 1px solid var(--kin-input-border);
+  background: #2d2d2d;
+  border: 1px solid rgba(255, 255, 255, .12);
   border-radius: 7px;
-  box-shadow: 0 14px 34px rgba(0, 2, 8, .6);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .45);
 }
 
 #kc-locale-dropdown .pf-c-dropdown__menu-item {
@@ -253,34 +273,7 @@ h1#kc-page-title {
 #kc-locale-dropdown .pf-c-dropdown__menu-item:hover,
 #kc-locale-dropdown .pf-c-dropdown__menu-item:focus {
   color: var(--kin-text);
-  background: rgba(79, 142, 247, .14);
-}
-
-.login-pf-page .card-pf:has(#kc-form-login) h1#kc-page-title {
-  font-size: 0;
-  line-height: 1.2;
-}
-
-.login-pf-page .card-pf:has(#kc-form-login) h1#kc-page-title::before {
-  display: block;
-  margin: 0;
-  content: "KOREA IMAGING NETWORK";
-  color: #7E95BD;
-  font-size: 10.5px;
-  font-weight: 600;
-  line-height: normal;
-  letter-spacing: .34em;
-  white-space: nowrap;
-}
-
-.login-pf-page .card-pf:has(#kc-form-login) h1#kc-page-title::after {
-  display: block;
-  content: "시스템 로그인";
-  color: var(--kin-text);
-  font-size: 19px;
-  font-weight: 700;
-  line-height: normal;
-  letter-spacing: .1em;
+  background: rgba(138, 180, 200, .14);
 }
 
 #kc-content,
@@ -319,12 +312,11 @@ h1#kc-page-title {
 
 .login-pf-page .card-pf label {
   display: block;
-  margin: 0 0 8px 1px;
+  margin: 0 0 8px;
   color: var(--kin-label);
-  font-size: 11.5px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 500;
   line-height: normal;
-  letter-spacing: .1em;
 }
 
 #kc-form-login label {
@@ -333,7 +325,7 @@ h1#kc-page-title {
 }
 
 #kc-form-login label::before {
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: normal;
 }
 
@@ -347,18 +339,18 @@ h1#kc-page-title {
 
 .login-pf-page .card-pf .pf-c-form-control {
   width: 100%;
-  height: 48px;
+  height: 46px;
   margin: 0 0 20px;
-  padding: 0 15px;
-  color: #EDF3FC;
+  padding: 0 14px;
+  color: var(--kin-text);
   background: var(--kin-input-bg);
   border: 1px solid var(--kin-input-border);
   border-radius: var(--kin-input-radius);
   outline: 0;
   box-shadow: none;
   font-family: inherit;
-  font-size: 15px;
-  line-height: 48px;
+  font-size: 14px;
+  line-height: 46px;
   transition: border-color .15s, box-shadow .15s;
 }
 
@@ -369,23 +361,24 @@ h1#kc-page-title {
 
 .login-pf-page .card-pf .pf-c-button.pf-m-primary {
   width: 100%;
-  height: 50px;
+  height: 46px;
   margin: 0;
   padding: 0 15px;
-  color: #FFF;
+  color: var(--kin-btn-text);
   background: var(--kin-btn);
-  border: 0;
+  border: 1px solid var(--kin-btn-line);
   border-radius: var(--kin-input-radius);
   box-shadow: var(--kin-btn-shadow);
   font-family: inherit;
-  font-size: 15px;
-  font-weight: 700;
-  line-height: 50px;
-  letter-spacing: .1em;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 44px;
+  letter-spacing: .04em;
   cursor: pointer;
 }
 
-#kin-continue {
+#kin-continue,
+#kin-back {
   display: block;
   box-sizing: border-box;
   text-align: center;
@@ -397,7 +390,7 @@ h1#kc-page-title {
   padding: 0 15px;
   color: var(--kin-muted);
   background: transparent;
-  border: 1px solid var(--kin-input-border);
+  border: 1px solid rgba(255, 255, 255, .14);
   border-radius: var(--kin-input-radius);
   font-family: inherit;
   font-weight: 600;
@@ -428,7 +421,7 @@ h1#kc-page-title {
 
 #kc-form-login #kc-form-buttons {
   position: relative;
-  margin: 4px 0 0;
+  margin: 5px 0 0;
 }
 
 #kc-form-login #kc-form-buttons::after {
@@ -438,37 +431,68 @@ h1#kc-page-title {
   align-items: center;
   justify-content: center;
   content: "로그인";
-  color: #FFF;
-  font-size: 15px;
-  font-weight: 700;
-  line-height: 50px;
-  letter-spacing: .16em;
+  color: var(--kin-btn-text);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 46px;
+  letter-spacing: .12em;
   pointer-events: none;
 }
 
 #kc-login.pf-c-button {
   width: 100%;
-  height: 50px;
+  height: 46px;
   margin: 0;
   padding: 0 15px;
-  color: transparent;
+  color: var(--kin-btn-text);
   background: var(--kin-btn);
-  border: 0;
+  border: 1px solid var(--kin-btn-line);
   border-radius: var(--kin-input-radius);
   box-shadow: var(--kin-btn-shadow);
   font-family: inherit;
-  font-size: 15px;
-  font-weight: 700;
-  line-height: 50px;
-  letter-spacing: .16em;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 44px;
+  letter-spacing: .12em;
   cursor: pointer;
 }
 
-#kc-login.pf-c-button:hover {
-  filter: brightness(1.08);
+/* Only the password form draws its label beside the button (#kc-form-buttons::after above). Other forms that reuse
+   #kc-login - the administrator's OTP code - keep the button's own text. */
+#kc-form-login #kc-login.pf-c-button {
+  color: transparent;
 }
 
-#kc-login.pf-c-button:focus-visible {
+/* Hover, press and disabled as the worklist's buttons: brighten, press down, fade. */
+#kc-login.pf-c-button:not(:disabled):hover,
+.login-pf-page .card-pf .pf-c-button.pf-m-primary:not(:disabled):hover {
+  filter: brightness(1.12);
+}
+
+#kc-login.pf-c-button:not(:disabled):active,
+.login-pf-page .card-pf .pf-c-button.pf-m-primary:not(:disabled):active {
+  transform: translateY(1px) scale(.985);
+  filter: brightness(1.2);
+}
+
+#kc-login.pf-c-button:disabled,
+.login-pf-page .card-pf .pf-c-button.pf-m-primary:disabled {
+  opacity: .45;
+  box-shadow: none;
+  cursor: default;
+}
+
+/* The sign-in label is drawn beside the button, so it presses and fades with it. */
+#kc-form-login #kc-form-buttons:has(#kc-login:not(:disabled):active)::after {
+  transform: translateY(1px) scale(.985);
+}
+
+#kc-form-login #kc-form-buttons:has(#kc-login:disabled)::after {
+  opacity: .45;
+}
+
+#kc-login.pf-c-button:focus-visible,
+.login-pf-page .card-pf .pf-c-button.pf-m-primary:focus-visible {
   outline: 2px solid var(--kin-highlight);
   outline-offset: 3px;
 }
@@ -480,27 +504,30 @@ h1#kc-page-title {
   justify-content: space-between;
   gap: 10px 16px;
   min-height: 36px;
-  margin: 20px 0 0;
-  padding: 16px 0 0;
-  border-top: 1px solid rgba(140, 168, 215, .14);
-  color: #5E7396;
+  margin: 18px 0 0;
+  padding: 0;
+  color: var(--kin-dim);
+}
+
+/* The form group's clearfix box and an options box with nothing in it (only white space, so not :empty) would be flex
+   items and push the link off the column's edge by one gap. */
+#kc-form-login .login-pf-settings::before,
+#kc-form-login .login-pf-settings > #kc-form-options:not(:has(*)) {
+  display: none;
 }
 
 #kc-form-options:empty {
   display: none;
 }
 
+/* The template's own text (messages*.properties doForgotPassword) is drawn, so the link has a box, a click target
+   and one accessible name. */
 #kc-form-login .login-pf-settings a {
-  color: #7E95BD;
-  font-size: 0;
-  line-height: 1.2;
-  letter-spacing: .03em;
-  text-decoration: none;
-}
-
-#kc-form-login .login-pf-settings a::before {
-  content: "비밀번호를 잊으셨나요?";
+  color: var(--kin-accent);
   font-size: 12.5px;
+  font-weight: 550;
+  line-height: 1.2;
+  text-decoration: none;
 }
 
 #kc-form-login .login-pf-settings > div:last-of-type {
@@ -513,26 +540,26 @@ h1#kc-page-title {
   flex: none;
   margin-left: auto;
   content: "\1F512  TLS 암호화 연결";
-  color: #5E7396;
+  color: var(--kin-dim);
   font-size: 11px;
   line-height: 1.2;
-  letter-spacing: .06em;
+  letter-spacing: .04em;
   white-space: nowrap;
 }
 
 .login-pf a,
 .login-pf a:hover,
 .login-pf a:focus {
-  color: #7E95BD;
+  color: var(--kin-muted);
 }
 
 .pf-c-alert,
 .alert {
   margin: 0 0 20px;
-  color: #F5D5D5;
-  background: rgba(110, 30, 38, .35);
+  color: #f5d5d5;
+  background: rgba(110, 30, 38, .3);
   border: 1px solid rgba(245, 128, 140, .35);
-  border-radius: 7px;
+  border-radius: 8px;
   box-shadow: none;
 }
 
@@ -540,7 +567,7 @@ h1#kc-page-title {
 .pf-c-alert__title,
 .alert-error,
 .kc-feedback-text {
-  color: #F5D5D5;
+  color: #f5d5d5;
 }
 
 #input-error.kc-feedback-text {
@@ -551,14 +578,15 @@ h1#kc-page-title {
 }
 
 #kc-info {
-  margin: 20px 0 0;
+  margin: 24px 0 0;
 }
 
 #kc-info-wrapper {
-  padding: 14px;
+  padding: 20px 0 0;
   color: var(--kin-muted);
-  background: rgba(10, 16, 30, .7);
-  border-radius: 7px;
+  background: transparent;
+  border-top: 1px solid var(--kin-line);
+  border-radius: 0;
   font-size: 13px;
 }
 
@@ -571,32 +599,72 @@ h1#kc-page-title {
 
 #kc-registration a {
   color: var(--kin-highlight);
-  font-weight: 700;
+  font-weight: 650;
   text-decoration: none;
 }
 
-body:has(#kc-register-form) {
-  overflow-y: auto;
+.instruction,
+#kc-info-message p,
+#kc-error-message p {
+  color: var(--kin-muted);
+  font-size: 13px;
+  line-height: 1.7;
 }
 
-.login-pf-page:has(#kc-register-form) {
-  align-items: flex-start;
-  min-height: 100%;
-  height: auto;
-  padding-top: 28px;
-  padding-bottom: 52px;
+/* Long forms (registration, OTP setup) start at the top and scroll with the page. */
+.login-pf-page:has(#kc-register-form),
+.login-pf-page:has(#kc-totp-settings-form) {
+  grid-template-rows: 0 auto auto 1fr auto;
 }
 
-.login-pf-page .card-pf:has(#kc-register-form) {
-  flex-basis: 460px;
-  width: 460px;
-  max-width: 460px;
-  padding: 30px 34px 26px;
-  overflow: visible;
+.login-pf-page:has(#kc-register-form) #kc-header,
+.login-pf-page:has(#kc-totp-settings-form) #kc-header {
+  align-self: start;
+  margin-top: 34px;
 }
 
 #kc-register-form .form-group {
   margin: 0;
+}
+
+/* The template's grid rows and columns sit flush with the column's edges. */
+.login-pf-page .card-pf .form-horizontal .form-group {
+  margin-right: 0;
+  margin-left: 0;
+}
+
+.login-pf-page .card-pf [class*="col-"] {
+  padding-right: 0;
+  padding-left: 0;
+}
+
+/* Show-password control beside a password box (registration, password update): the box's own colours. */
+.login-pf-page .card-pf .pf-c-input-group {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin-bottom: 15px;
+  background: transparent;
+}
+
+.login-pf-page .card-pf .pf-c-input-group .pf-c-form-control {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.login-pf-page .card-pf .pf-c-button.pf-m-control {
+  flex: none;
+  width: 46px;
+  height: 46px;
+  color: var(--kin-muted);
+  background: var(--kin-input-bg);
+  border: 1px solid var(--kin-input-border);
+  border-radius: var(--kin-input-radius);
+}
+
+.login-pf-page .card-pf .pf-c-button.pf-m-control::after {
+  display: none;
 }
 
 #kc-register-form .pf-c-form-control {
@@ -609,26 +677,6 @@ body:has(#kc-register-form) {
 
 #kc-register-form #kc-form-buttons {
   margin-top: 4px;
-}
-
-.login-pf body:has(#kc-totp-settings-form) {
-  overflow-y: auto;
-}
-
-.login-pf-page:has(#kc-totp-settings-form) {
-  align-items: flex-start;
-  min-height: 100%;
-  height: auto;
-  padding-top: 24px;
-  padding-bottom: 40px;
-}
-
-.login-pf-page .card-pf:has(#kc-totp-settings-form) {
-  flex-basis: 520px;
-  width: 520px;
-  max-width: 520px;
-  padding: 28px 32px 24px;
-  overflow: visible;
 }
 
 .login-pf-page .card-pf:has(#kc-totp-settings-form) .login-pf-header {
@@ -671,68 +719,14 @@ body:has(#kc-register-form) {
   margin-top: 6px;
 }
 
-@media (max-width: 900px) {
-  html,
-  .login-pf,
-  .login-pf body {
-    min-height: 100%;
-  }
-
-  .login-pf body {
-    overflow: auto;
-  }
-
-  .login-pf-page {
-    justify-content: center;
-    min-height: 100%;
-    height: auto;
-    padding: 64px 24px 72px;
-  }
-
-  #kc-header {
-    display: none;
-  }
-
-  .login-pf-page .card-pf {
-    flex: none;
-    width: min(380px, 100%);
-    max-width: 380px;
-  }
-
-  .login-pf-page .card-pf:has(#kc-register-form) {
-    width: min(460px, 100%);
-    max-width: 460px;
-  }
-}
-
-@media (max-width: 460px) {
-  .login-pf-page {
-    padding-right: 18px;
-    padding-left: 18px;
-  }
-
-  .login-pf-page .card-pf {
-    padding-right: 28px;
-    padding-left: 28px;
-  }
-}
-
-@media (max-height: 659px) and (min-width: 901px) {
-  html,
-  .login-pf,
-  .login-pf body {
-    min-height: 660px;
-  }
-
-  .login-pf body {
-    overflow-y: auto;
-  }
-}
-
-/* CD-01: notice links appended by js/legal-links.js below the card. */
+/* Notice links (js/legal-links.js appends them to the page) under the sign-in column. */
 .kin-legal-links {
-  margin: 18px auto 0;
-  padding: 0 16px 14px;
+  grid-area: legal;
+  align-self: start;
+  min-width: 0;
+  margin: 0;
+  padding: 0 0 0 34px;
+  border-left: 1px solid var(--kin-line);
   text-align: center;
   font-size: 12px;
   line-height: 1.5;
@@ -743,13 +737,105 @@ body:has(#kc-register-form) {
   flex-wrap: wrap;
   justify-content: center;
   gap: 4px 14px;
+  padding-bottom: 8px;
 }
 
 .kin-legal-links a {
-  color: #A7B8D6;
+  color: var(--kin-muted);
 }
 
 .kin-legal-links a:hover,
 .kin-legal-links a:focus-visible {
-  color: #9CC3FF;
+  color: var(--kin-highlight);
+}
+
+@media (max-width: 1100px) {
+  .login-pf-page {
+    grid-template-columns: minmax(0, 1fr) minmax(320px, .85fr);
+    column-gap: 50px;
+    padding-right: 32px;
+    padding-left: 32px;
+  }
+
+  #kc-header::after {
+    height: clamp(170px, calc(100vh - 520px), 240px);
+  }
+}
+
+/* One column: the sign-in column and the notices stack and fit the window (nothing is wider than the screen). */
+@media (max-width: 900px) {
+  :root {
+    --kin-bar-height: 64px;
+    --kin-bar-side: 18px;
+    --kin-logo-width: 108px;
+  }
+
+  .login-pf body::after {
+    padding-left: 12px;
+    font-size: 14px;
+    letter-spacing: .02em;
+  }
+
+  .login-pf-page,
+  .login-pf-page:has(#kc-register-form),
+  .login-pf-page:has(#kc-totp-settings-form) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "."
+      "card"
+      "legal"
+      "."
+      "foot";
+    grid-template-rows: 0 auto auto 1fr auto;
+    justify-items: center;
+    max-width: none;
+    padding: calc(var(--kin-bar-height) + 28px) 24px 20px;
+  }
+
+  #kc-header {
+    display: none;
+  }
+
+  .login-pf-page .card-pf {
+    width: min(440px, 100%);
+    padding: 0;
+    border-left: 0;
+  }
+
+  .login-pf-page .login-pf-header {
+    padding-top: 0;
+    padding-left: 46px;
+    min-height: 34px;
+    background-size: 34px 34px;
+  }
+
+  h1#kc-page-title {
+    font-size: 22px;
+    line-height: 34px;
+  }
+
+  #kc-locale {
+    top: 0;
+  }
+
+  .kin-legal-links {
+    width: min(440px, 100%);
+    margin-top: 22px;
+    padding: 18px 0 0;
+    border-left: 0;
+    border-top: 1px solid var(--kin-line);
+  }
+
+  .login-pf-page::after {
+    margin-top: 24px;
+  }
+}
+
+@media (max-width: 460px) {
+  .login-pf-page,
+  .login-pf-page:has(#kc-register-form),
+  .login-pf-page:has(#kc-totp-settings-form) {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
 }
