@@ -3413,10 +3413,10 @@
       return row;
     }
     async function readAcquisition(s, key) {
-      const seq = ++acquisitionSeq, at = work.capture("document"), controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 30000);
+      // Each read has its own deadline (a study with many series is not cut off as a whole); the context drops a late answer.
+      const seq = ++acquisitionSeq, at = work.capture("document");
       const request = async path => {
-        const res = await transport.request(path, { context: at, signal: controller.signal, cache: "no-store",
+        const res = await transport.request(path, { context: at, cache: "no-store",
           headers: { Accept: "application/dicom+json" }, deadlineMs: 20000 });
         if (!res.ok || !Array.isArray(res.body)) throw Object.assign(new Error("HTTP " + res.status), { status: res.status });
         return res.body;
@@ -3424,7 +3424,6 @@
       let result;
       try { result = await KinAcquisition.read(s, request); }
       catch (e) { result = { state: "failed" }; }
-      finally { clearTimeout(timer); }
       work.commit(at, () => {
         // A whole read is kept for its key (the exam scope, counts and series of the list row it was read for); a read with a
         // failure is not kept, so the next viewing reads again. It is drawn only while that same exam is the one viewed.
