@@ -328,7 +328,11 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
                 shown = float(re.search(r'(\d+(?:\.\d+)?) ?°', text).group(1))
                 self.assertLess(abs(shown - expected), .051, (text, expected, angle))
                 self.assertLess(abs(angle['value'] - expected), 1e-3, (expected, angle))
-                box = p.locator('.cornerstone-canvas').bounding_box()
+                # The places below are fractions of the image as drawn (a fraction of the canvas falls beside a narrow
+                # image in a wide cell, and a line off the image is refused).
+                box = p.evaluate('''()=>{const v=cornerstone.getEnabledElements()[0].viewport, d=v.getImageData(), r=v.canvas.getBoundingClientRect();
+                  const [w,h]=d.dimensions, a=v.worldToCanvas(d.imageData.indexToWorld([0,0,0])), b=v.worldToCanvas(d.imageData.indexToWorld([w-1,h-1,0]));
+                  return {x:r.left+Math.min(a[0],b[0]), y:r.top+Math.min(a[1],b[1]), width:Math.abs(b[0]-a[0]), height:Math.abs(b[1]-a[1])};}''')
                 if modality == 'CR':
                     unconfirmed = '화면에 그려진 영상을 확인할 수 없어 이 점으로 재지 않습니다'
                     # Drawn with a spacing other than its own (a stack keeps the previous image's spacing when the next one
