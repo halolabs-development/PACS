@@ -154,11 +154,19 @@ is an admission condition for a clean install.
    [keycloak/README.md, "기관 첫 관리자 지정"](../../keycloak/README.md)):
    `ops.run(compose + ['exec', '-T', 'api', 'node', 'prisma/designate-first-admin.cjs',
    '--institution', '<group>', '--subject', '<Keycloak user id>', '--operator', '<who>',
-   '--reason', '<hospital request and how it was confirmed>'])`. Exit 0 records the
-   designation; exit 2 means the roster answer was lost — run
-   `node prisma/import-member-rights.cjs --retry-roster` in the same container;
-   exit 1 is a refusal with nothing written. Record the institution, subject and
-   exit code in the release record. Skip institutions that already have one.
+   '--reason', '<hospital request and how it was confirmed>'])`. The printed
+   `designated` matches the exit code. Exit 0: designated and the roster
+   confirmed. Exit 2: designated (committed), roster unconfirmed — run
+   `node prisma/import-member-rights.cjs --retry-roster` in the same container.
+   Exit 1: not designated — refused, or the designation transaction failed
+   before it committed or is known not to have committed (no rights granted).
+   Exit 3: unknown — the commit answer was lost and this run's audit row is not
+   seen; check the institution's members (or the audit log) for this person as
+   administrator, then run `--retry-roster` if they are, or the same command
+   again if they are not. A failed
+   cleanup at the end is printed on its own line and does not change the exit
+   code. Record the institution, subject and exit code in the release record.
+   Skip institutions that already have one.
 4. Backup and restore: after verification, take the **first populated backup**
    with `ops.backup('<backup-directory>')` in this same locked session (the CLI
    equivalent outside this session is `python3 scripts/ops_backup.py backup --output <backup-directory>`).

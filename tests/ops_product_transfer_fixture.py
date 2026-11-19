@@ -148,6 +148,7 @@ MIGRATIONS = ['api/prisma/migrations/0_init/migration.sql',
               'api/prisma/migrations/20261116120000_order_ris_status/migration.sql',
               'api/prisma/migrations/20261116120000_viewer_item_delete/migration.sql',
               'api/prisma/migrations/20261118120000_gateway_settings/migration.sql',
+              'api/prisma/migrations/20261119120000_access_review_linear/migration.sql',
               'api/prisma/migrations/20261119120000_owner_account_keys/migration.sql']
 # S9-U4b (52 tables, 47 migrations): ImportOperation, its twelve synthetic rows (one import with every attempt phase over four
 # studies, a prepared, a Sent and a still-sending download, four Study and four SOP reservations with their holders), one

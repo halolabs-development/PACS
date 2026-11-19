@@ -344,8 +344,7 @@ a { color: #7cc4ff; }
 
     # 토큰과 쿠키가 커서 기본 프록시 버퍼로는 응답 헤더가 넘칠 수 있다.
     location /auth/ {
-        # Keycloak 로그인 템플릿은 단일 favicon.ico 링크만 낸다. 테마 템플릿을
-        # 복제하지 않고 그 링크만 J1 SVG + 32px PNG 폴백으로 확장한다.
+        # 탭 아이콘은 kin-login 테마의 theme.properties(favicons)가 직접 낸다 — 응답을 고쳐 쓰지 않는다.
         proxy_set_header Accept-Encoding "";
         # 이 location이 자기 proxy_set_header를 두므로 서버 수준의 것은 물려받지 않는다(S7-U5 A007): 접속지를 여기서
         # 다시 정하지 않으면 클라이언트가 보낸 X-Real-IP·X-Forwarded-For가 그대로 Keycloak에 닿는다. 프록시가 본 주소로
@@ -356,8 +355,6 @@ a { color: #7cc4ff; }
         proxy_buffer_size       16k;
         proxy_buffers        8  16k;
         proxy_busy_buffers_size 32k;
-        sub_filter_once off;
-        sub_filter 'img/favicon.ico" />' 'img/kin-emblem-j1.svg" type="image/svg+xml" /><link rel="icon" type="image/png" sizes="32x32" href="/kin-brand/kin-favicon-32.png" />';
     }
 
     # 브라우저에 Orthanc 자격증명을 주지 않는다. 공개 경로 일곱 곳이 같은 include를

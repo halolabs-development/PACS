@@ -44,6 +44,19 @@ def select_image_tool(viewer, tool):
             more.locator('summary').click()
 
 
+def displayed_image_box(viewer):
+    """Screen bounds between the corner pixel centres of a single fitted, unrotated stack image."""
+    return viewer.evaluate("""() => {
+        const v = cornerstone.getEnabledElements()[0].viewport;
+        const { dimensions: [width, height], imageData } = v.getImageData();
+        const first = v.worldToCanvas(imageData.indexToWorld([0, 0, 0]));
+        const last = v.worldToCanvas(imageData.indexToWorld([width - 1, height - 1, 0]));
+        const r = v.canvas.getBoundingClientRect();
+        return { x: r.left + Math.min(first[0], last[0]), y: r.top + Math.min(first[1], last[1]),
+                 width: Math.abs(last[0] - first[0]), height: Math.abs(last[1] - first[1]) };
+    }""")
+
+
 def display_transform(viewer, action):
     if action == 'v':
         # Flip Vertical is a U2-only tool; this dock control also serves embedded viewers.

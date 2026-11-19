@@ -37,7 +37,8 @@ VISIBLE = [
     'worklist-v0/legal/' + name for name in ('privacy.html', 'operator-notice.html', 'accessibility.html', 'open-source-notices.html')
 ] + [
     KC + 'messages/messages.properties', KC + 'messages/messages_en.properties', KC + 'messages/messages_ko.properties',
-    KC + 'resources/css/login.css', KC + 'resources/img/kin-emblem-j1.svg',
+    KC + 'resources/css/login.css', KC + 'resources/img/halo-icon.svg', KC + 'resources/img/halo-labs-light-text.svg',
+    KC + 'resources/img/halo-pacs-art.svg',
     'keycloak/themes/kin-email/email/messages/messages_ko.properties', 'keycloak/kin-realm.json',
     'proxy/branding/kin-emblem-j1.svg', 'proxy/branding/viewer-manifest.json', 'proxy/nginx.conf.template',
     'proxy/10-selfsigned.sh', 'config/ohif/branding-defaults.js', 'config/ohif/branding.js', 'config/ohif/history.js',
