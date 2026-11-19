@@ -148,6 +148,8 @@ window.KinViewerFeatures?.module('navigate', ({ services, store, ui }) => {
     }
     paintBar(cell, v, host); paintSwitch(cell, host); paintTiles(cell, v, host);
     refresh(id);
+    // The bar's place beside the other text over the image is settled in one place (viewer-info-bar.js).
+    window.KinViewerInfoBar?.settle?.(host.closest('[data-cy=viewport-pane]') || host.parentElement);
   }
 
   function paintBar(cell, v, host) {

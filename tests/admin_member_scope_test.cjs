@@ -374,5 +374,85 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
     assert.equal((await w3.designate('kc-c-group', C)).institution, C);
   }
 
+  // 9. The operator command itself (api/prisma/designate-first-admin.cjs, run as a process over synthetic stand-ins of
+  // what it loads — tests/first_admin_command_fakes.cjs): its exit code and printed `designated` follow whether this
+  // run's transaction committed. 1 = not designated; 0 = designated, roster confirmed; 2 = designated, roster
+  // unconfirmed (--retry-roster); 3 = unknown. A failed cleanup is one line of its own and never changes the code.
+  {
+    const { spawnSync } = require('node:child_process'), os = require('node:os');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'first-admin-command-'));
+    const run = scenario => {
+      const logFile = path.join(dir, (scenario || 'plain').replace(/,/g, '+') + '.jsonl');
+      fs.writeFileSync(logFile, '');
+      const env = { ...process.env, KIN_TEST_FIRST_ADMIN_SCENARIO: scenario, KIN_TEST_FIRST_ADMIN_LOG: logFile,
+        DATABASE_URL: 'postgresql://synthetic.invalid/kin', KC_ADMIN_URL: 'https://synthetic-identity.example.test/admin',
+        KC_REALM: 'kin', KC_ISSUER: process.env.KC_ISSUER, KC_CLIENT_ID: 'synthetic', KC_CLIENT_SECRET: 'synthetic',
+        KIN_EMR_STATE_DIR: dir };
+      const result = spawnSync(process.execPath, ['-r', path.join(root, 'tests/first_admin_command_fakes.cjs'),
+        path.join(root, 'api/prisma/designate-first-admin.cjs'), '--institution', 'synthetic-hospital-c',
+        '--subject', 'synthetic-first-admin', '--operator', 'ops', '--reason', 'synthetic hospital request'],
+        { cwd: root, env, encoding: 'utf8', timeout: 60000 });
+      const json = text => text.split('\n').filter(l => l.startsWith('{')).map(l => JSON.parse(l));
+      return { code: result.status, out: json(result.stdout), errJson: json(result.stderr), stderr: result.stderr,
+        steps: fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) };
+    };
+    const expect = (scenario, code, designated, label, more = () => {}) => {
+      const r = run(scenario);
+      const shown = [...r.out, ...r.errJson].map(o => o.designated);
+      assert.equal(r.code, code, `${label}: exit ${r.code}\n${r.stderr}`);
+      assert.deepEqual(shown, [designated], `${label}: designated ${JSON.stringify(shown)}\n${r.stderr}`);
+      assert.ok(r.steps.includes('stop') && r.steps.includes('disconnect') || scenario.includes('start-fails'), label + ': cleanup ran');
+      more(r);
+      return r;
+    };
+    const retry = r => assert.match(r.stderr, /--retry-roster/);
+    const noRetry = r => assert.doesNotMatch(r.stderr, /--retry-roster/);
+    const untouched = (...steps) => r => { for (const step of steps) assert.ok(!r.steps.includes(step), step); noRetry(r); };
+    // Not committed — 1, and nothing after it is attempted; no re-read decides it.
+    expect('refused', 1, false, 'a refusal', r => {
+      assert.equal(r.errJson[0].code, 'FIRST_ADMIN_EXISTS');
+      untouched('operator-identity', 'transaction', 'reread-audit', 'lookup-change', 'send-roster')(r);
+    });
+    expect('start-fails', 1, false, 'the ledger did not start', r => assert.ok(!r.steps.includes('designate')));
+    expect('fails-before-commit', 1, false, 'a failure before the transaction', untouched('transaction', 'reread-audit'));
+    expect('callback-refused', 1, false, 'a refusal inside the transaction (rolled back)', r => {
+      assert.equal(r.errJson[0].code, 'FIRST_ADMIN_EXISTS'); untouched('reread-audit', 'lookup-change')(r); });
+    expect('not-committed', 1, false, 'COMMIT asked and known not committed', untouched('reread-audit', 'lookup-change'));
+    // Committed: designated, whatever fails after (the code is 2 unless the roster is confirmed).
+    expect('', 0, true, 'designated and roster confirmed', r => { assert.equal(r.out[0].roster, 'done'); noRetry(r); });
+    expect('lookup-throws', 2, true, 'the roster-intent lookup threw after the commit', r => {
+      assert.equal(r.out[0].version, 2); assert.equal(r.out[0].roster, 'unknown'); retry(r); });
+    expect('roster-throws', 2, true, 'the roster send threw after the commit', retry);
+    expect('roster-unknown', 2, true, 'the roster answer was lost', retry);
+    // Settled after a failure (not seen returning): designated, and the roster is left to --retry-roster, which sends
+    // each member's latest generation — this run's own generation is never re-sent over a later change.
+    const settled = r => { assert.equal(r.out[0].version, 2); assert.equal(r.out[0].roster, 'unknown');
+      assert.ok(!r.steps.includes('lookup-change') && !r.steps.includes('send-roster'), 'no roster sent'); retry(r); };
+    expect('work-end-fails', 2, true, 'closing the request work threw after the commit', settled);
+    expect('http-after-commit', 2, true, 'an HTTP-shaped error after the commit is not a refusal', settled);
+    expect('http-after-commit,reread-fails', 2, true, 'after the commit, its audit row unreadable: still designated', r => {
+      assert.equal(r.out[0].version, null); retry(r); });
+    // The commit answer was lost: only this run's own audit row (by id) says it committed.
+    expect('commit-lost', 2, true, 'a lost commit answer; this run\'s audit row is there', settled);
+    expect('commit-lost-not-committed', 3, null, 'a lost commit answer and no audit row of this run (it may still commit)', retry);
+    expect('commit-lost-not-committed,other-run-committed', 3, null, 'another run\'s approval of the person is not this run\'s', retry);
+    expect('commit-lost,reread-fails', 3, null, 'a lost commit answer and an unreadable record', retry);
+    // An approved member promoted to administrator: the change's audit row is admin.user.update, still this run's.
+    expect('commit-lost,promoted', 2, true, 'a lost commit answer for a promotion; its update row is there', settled);
+    expect('work-end-fails,promoted', 2, true, 'a promotion committed, then a later step threw', settled);
+    // Writing the outcome throws at once: the exit code still says what was saved.
+    for (const [scenario, code] of [['write-throws', 0], ['write-throws,commit-lost', 2], ['write-throws,roster-unknown', 2]]) {
+      const r = run(scenario);
+      assert.equal(r.code, code, `${scenario}: exit ${r.code}\n${r.stderr}`);
+      assert.ok(r.steps.includes('stop') && r.steps.includes('disconnect'), scenario + ': cleanup ran');
+    }
+    // A failed cleanup is its own line and keeps the outcome.
+    for (const [scenario, code, designated] of [['stop-fails', 0, true], ['stop-fails,roster-unknown', 2, true],
+      ['stop-fails,refused', 1, false], ['disconnect-fails', 0, true], ['stop-fails,disconnect-fails,lookup-throws', 2, true]]) {
+      expect(scenario, code, designated, 'cleanup failure: ' + scenario, r => assert.match(r.stderr, /cleanup failed|disconnect failed/i));
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
   process.stdout.write('Member institution scope contracts passed\n');
 })().catch(e => { console.error(e); process.exitCode = 1; });

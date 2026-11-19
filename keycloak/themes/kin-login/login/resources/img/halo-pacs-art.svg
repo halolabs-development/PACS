@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 500" preserveAspectRatio="xMidYMid slice">
+  <title>HALO PACS</title>
+  <defs>
+    <linearGradient id="ground" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2a2d2f"/>
+      <stop offset=".55" stop-color="#232526"/>
+      <stop offset="1" stop-color="#1c1d1e"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="800" cy="250" r="340" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8AB4C8" stop-opacity=".22"/>
+      <stop offset=".5" stop-color="#8AB4C8" stop-opacity=".07"/>
+      <stop offset="1" stop-color="#8AB4C8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="fade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#fff" stop-opacity="0"/>
+      <stop offset=".35" stop-color="#fff" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <mask id="grid-mask"><rect width="1200" height="500" fill="url(#fade)"/></mask>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="9"/></filter>
+  </defs>
+  <rect width="1200" height="500" fill="url(#ground)"/>
+  <g mask="url(#grid-mask)" stroke="#E3E3E3" stroke-opacity=".05" stroke-width="1">
+    <path d="M0 50H1200M0 100H1200M0 150H1200M0 200H1200M0 250H1200M0 300H1200M0 350H1200M0 400H1200M0 450H1200"/>
+    <path d="M100 0V500M200 0V500M300 0V500M400 0V500M500 0V500M600 0V500M700 0V500M800 0V500M900 0V500M1000 0V500M1100 0V500"/>
+  </g>
+  <rect width="1200" height="500" fill="url(#glow)"/>
+  <g fill="none" stroke="#8AB4C8" stroke-width="1.2">
+    <circle cx="800" cy="250" r="120" stroke-opacity=".42"/>
+    <circle cx="800" cy="250" r="158" stroke-opacity=".3"/>
+    <circle cx="800" cy="250" r="236" stroke-opacity=".2"/>
+    <circle cx="800" cy="250" r="278" stroke-opacity=".13"/>
+    <circle cx="800" cy="250" r="322" stroke-opacity=".08"/>
+    <circle cx="800" cy="250" r="368" stroke-opacity=".05"/>
+    <circle cx="800" cy="250" r="416" stroke-opacity=".03"/>
+  </g>
+  <g fill="none" stroke="#8AB4C8" stroke-width="9" stroke-linecap="round" filter="url(#soft)" opacity=".55">
+    <path d="M812 52 A198 198 0 0 1 998 238"/>
+    <path d="M998 262 A198 198 0 0 1 812 448"/>
+    <path d="M788 448 A198 198 0 0 1 602 262"/>
+    <path d="M602 238 A198 198 0 0 1 788 52"/>
+  </g>
+  <g fill="none" stroke="#8AB4C8" stroke-width="7" stroke-linecap="round">
+    <path d="M812 52 A198 198 0 0 1 998 238"/>
+    <path d="M998 262 A198 198 0 0 1 812 448"/>
+    <path d="M788 448 A198 198 0 0 1 602 262"/>
+    <path d="M602 238 A198 198 0 0 1 788 52"/>
+  </g>
+  <g fill="none" stroke="#B4B4B4" stroke-opacity=".35" stroke-width="1">
+    <path d="M800 92V134M800 366V408M642 250H684M916 250H958"/>
+  </g>
+  <g fill="#8AB4C8">
+    <circle cx="998" cy="250" r="3.5" fill-opacity=".9"/>
+    <circle cx="602" cy="250" r="3.5" fill-opacity=".9"/>
+    <circle cx="800" cy="52" r="3.5" fill-opacity=".9"/>
+    <circle cx="800" cy="448" r="3.5" fill-opacity=".9"/>
+  </g>
+</svg>

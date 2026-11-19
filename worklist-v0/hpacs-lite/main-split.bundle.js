@@ -11089,6 +11089,20 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const a = ohifScope(left), b = ohifScope(right);
       return !!a && !!b && a.series === b.series && a.exam === b.exam && JSON.stringify(a.studies) === JSON.stringify(b.studies);
     }
+    /**
+     * Does this viewer document hold a failed image read of a study in `url`? The fixed OHIF keeps a study's rejected
+     * metadata request for the whole document, so showing that study again in the same document (a patient-tab move,
+     * or the same scope brought forward) never asks the server again. Such an open reads a new document instead.
+     * The viewer reports the studies (`kinViewerFailedStudies`, series-recovery.js); unreadable means none.
+     */
+    function failedInViewer(popup, url) {
+      const scope = ohifScope(url);
+      if (!scope) return false;
+      try {
+        const failed = popup.kinViewerFailedStudies?.();
+        return Array.isArray(failed) && failed.some(uid => scope.studies.includes(uid));
+      } catch (_) { return false; }
+    }
     function ohifPopupState(popup) {
       try {
         const href = popup.location.href;
@@ -11208,13 +11222,16 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           return outcome('refused', '기존 영상 창을 불러오는 중입니다. 계속되지 않으면 그 창을 닫은 뒤 다시 여세요.');
         }
         const previous = ohifPopupState(popup);
+        // A study whose images failed in that document is shown again only in a new document (failedInViewer); an explicit
+        // Retry (openingOptions.reread) is always a new document, whatever made its member Unverified.
+        const reread = freshDocument || openingOptions?.reread === true || previous.kind === 'viewer' && failedInViewer(popup, url);
         const deferredPlacement = previous.kind === 'blank';
         const placementWrite = deferredPlacement ? {pending:true,baseline:null} : null;
         if (placementWrite) ohifPlacementWrites.set(popup, placementWrite);
         // 진입에서 멈춘 창은 초점만 주거나 "닫고 다시 여세요"로 돌려보내지 않는다: 아래에서 새 세션 확인과 함께 다시 읽게 한다.
         const stopped = previous.kind === "viewer" && !previous.ready && viewerEntryStopped(popup);
         if (previous.kind === "viewer" && !stopped) {
-          if (!freshDocument && sameOhifScope(previous.href, url)) {
+          if (!reread && sameOhifScope(previous.href, url)) {
             if(popup.location.hash!==new URL(url,location.origin).hash){
               try{
                 // Hash navigation can re-enter OHIF's mode and clear live job
@@ -11247,7 +11264,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
             return outcome('refused', kept);
           }
           // U2 keeps this document and checks coverage at the final assignment.
-          if (!freshDocument && !stopped && typeof popup.kinViewerOpenPatient === 'function') {
+          if (!reread && !stopped && typeof popup.kinViewerOpenPatient === 'function') {
             const at = work.capture('document'), previousSequence = ohifPopupSequences.get(popup);
             const pending = popup.kinViewerOpenPatient(url, { signal: openingOptions?.signal });
             KinExamScope.raiseWindow(popup); watchOhifRect(popup);
@@ -11311,7 +11328,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         ohifPopupSequences.set(popup, seq);
         // 멈춘 창을 같은 검사로 다시 열 때는 주소가 같아(달라도 # 뒤만 다르다) 대입으로는 새 문서가 읽히지 않는다 —
         // 주소만 맞춘 뒤 그 창을 다시 읽게 한다. 넘겨준 세션은 다시 읽힌 문서의 첫 스크립트가 받는다.
-        if ((stopped || freshDocument) && sameOhifScope(previous.href, url)) {
+        if ((stopped || reread) && sameOhifScope(previous.href, url)) {
           try { popup.history.replaceState(popup.history.state, "", url); } catch (_) {}
           popup.location.reload();
         } else popup.location.href = url;
@@ -11443,7 +11460,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         return readingWorkspace.openViewingSet(plan.uid, plan.priorUid, { opening, metadata });
       }
       if (reservation?.kind !== 'window') return { status: 'refused', message: '영상 창을 확인하지 못했습니다. 다시 여세요.' };
-      return Promise.resolve(openOhifWindow(plan.uid, plan.priorUid, null, null, { reservation, viewingSet: opening, signal, exam:KinExamScope.originalInput(uids) })).then(result => {
+      // A member's Retry (preservePartner marks it) asks the server again in a new document.
+      return Promise.resolve(openOhifWindow(plan.uid, plan.priorUid, null, null, { reservation, viewingSet: opening, signal, exam:KinExamScope.originalInput(uids),
+        reread: plan.preservePartner === true })).then(result => {
         if (result.status === 'accepted') {
           const sequence = ohifPopupSequences.get(reservation.popup);
           result.isOpen = () => !reservation.popup.closed && ohifPopupSequences.get(reservation.popup) === sequence;
@@ -15797,7 +15816,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       title.style.cssText = "font-size:24px;margin:0 0 14px";
       const message = document.createElement("p");
       message.textContent = pending
-        ? "가입 신청이 접수되었습니다. 관리자가 기관과 역할을 확인한 뒤 사용할 수 있습니다."
+        ? "가입 신청이 접수되었습니다. 관리자가 기관과 역할을 확인한 뒤 사용할 수 있습니다. 오래 걸리면 가입을 안내한 기관의 HALO PACS 관리자 또는 HALO PACS 운영 담당자에게 문의해 주세요."
         : "기관 또는 업무 역할 설정이 올바르지 않습니다. 관리자에게 문의해 주세요.";
       message.style.cssText = "line-height:1.7;color:#e3e3e3;margin:0 0 24px";
       const logout = document.createElement("button");

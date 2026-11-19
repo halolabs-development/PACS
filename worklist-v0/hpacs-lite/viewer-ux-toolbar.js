@@ -457,7 +457,7 @@ window.KinViewerUXToolbar = (() => {
       if (!menu.children.length) element('span', '도구를 여기로 끌어 놓으세요.', menu);
       edit.hidden = !session.writer();
       edit.disabled = saving; saveButton.disabled = !loaded || saving;
-      refreshState(); overflow();
+      refreshState(); overflow(); window.KinViewerUX?.refreshCells?.();
       if (secondDisplay(preferences) !== secondShown) {
         secondShown = secondDisplay(preferences);
         window.dispatchEvent(new CustomEvent('kin-viewer-second-display'));
@@ -475,6 +475,98 @@ window.KinViewerUXToolbar = (() => {
         node.disabled = !state || !!state.disabled;
         if (on !== undefined) node.setAttribute('aria-pressed', String(on));
         else node.removeAttribute('aria-pressed');
+      }
+      cellState();
+    }
+    // ── A cell's own compact tools (Minhoon 2026-10-27 item 4: "equivalent, compact controls for each viewport") ──
+    // Each image cell's information row ends with the reader's frequent tools of this bar, as icons, in the bar's order.
+    // A press acts in that cell: the cell becomes the active one and the tool runs there (viewer-features.js runInCell),
+    // as the bar and the shortcuts act in the active cell. Exports and other actions on the whole window (an item with a
+    // run of its own) stay on this bar. Where the cell is too narrow for the icons (decided by the cell's width alone, so
+    // the row never flips back and forth at one width), one Tools ▾ button lists the same tools. Only the active cell
+    // shows the tools' state: the viewer evaluates it for the active cell, so another cell's tools are not shown pressed
+    // or refused for a state that is not theirs. Cells that are not plain image stacks (MPR, 3D) and empty cells have none.
+    const CELL_ROOM = 320, CELL_TOOL = 26;
+    const cellNodes = new Map();
+    let cellMenu = null;
+    const cellItems = () => preferences.bar.filter(id => catalog.has(id) && !catalog.get(id).run);
+    function closeCellMenu(focus) {
+      if (!cellMenu) return;
+      const { node, opener } = cellMenu; cellMenu = null;
+      node.remove(); opener.setAttribute('aria-expanded', 'false');
+      if (focus && opener.isConnected) opener.focus();
+    }
+    function runCell(id, viewportId) {
+      closeCellMenu(false);
+      return Promise.resolve(features?.runInCell?.({ kind: 'tool', id }, viewportId)).finally(() => { if (!ended) refreshState(); });
+    }
+    function openCellMenu(opener, viewportId) {
+      if (cellMenu?.opener === opener) { closeCellMenu(true); return; }
+      closeCellMenu(false);
+      const node = element('div', '', document.body); node.className = 'kin-ux-feature-popup kin-ux-cell-menu';
+      node.setAttribute('role', 'menu'); node.setAttribute('aria-label', 'Cell Tools'); node.dataset.viewportId = viewportId;
+      for (const id of cellItems()) {
+        const item = catalog.get(id), key = preferences.shortcuts[id];
+        const entry = button('', node, () => runCell(id, viewportId)); entry.setAttribute('role', 'menuitem'); entry.dataset.cellTool = id;
+        const icon = element('span', symbols[id] || label(item).split(' ').map(word => word[0]).slice(0, 2).join(''), entry); icon.setAttribute('aria-hidden', 'true'); icon.className = 'kin-ux-tool-icon';
+        entry.append(' ' + label(item)); if (key) element('kbd', keys.display(key), entry);
+      }
+      const box = opener.getBoundingClientRect();
+      node.style.left = Math.max(0, Math.min(box.left, innerWidth - node.offsetWidth)) + 'px';
+      node.style.top = (box.bottom + node.offsetHeight > innerHeight && box.top >= node.offsetHeight ? box.top - node.offsetHeight : box.bottom) + 'px';
+      cellMenu = { node, opener }; opener.setAttribute('aria-expanded', 'true');
+      node.addEventListener('keydown', event => {
+        const entries = [...node.querySelectorAll('[role=menuitem]:not(:disabled)')], at = entries.indexOf(document.activeElement);
+        const next = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: entries.length - 1 }[event.key];
+        if (next !== undefined && entries.length) { event.preventDefault(); entries[(next + entries.length) % entries.length].focus(); }
+        else if (event.key === 'Tab') closeCellMenu(false);
+      });
+      node.querySelector('[role=menuitem]')?.focus();
+    }
+    document.addEventListener('pointerdown', event => {
+      if (cellMenu && !cellMenu.node.contains(event.target) && !cellMenu.opener.contains(event.target)) closeCellMenu(false);
+    }, { capture: true, signal: abort.signal });
+    document.addEventListener('keydown', event => {
+      if (event.key !== 'Escape' || !cellMenu) return;
+      event.stopPropagation(); closeCellMenu(true);
+    }, { capture: true, signal: abort.signal });
+    function fillCell(viewportId, node, { type, rendered, width }) {
+      if (!node) return;
+      const items = cellItems(), show = !ended && type === 'stack' && rendered && items.length > 0 && typeof features?.runInCell === 'function';
+      if (node.hidden !== !show) node.hidden = !show;
+      if (!show) { cellNodes.delete(viewportId); if (cellMenu?.node.dataset.viewportId === viewportId) closeCellMenu(false); return; }
+      cellNodes.set(viewportId, node);
+      const compact = width < CELL_ROOM + items.length * CELL_TOOL;
+      const signature = JSON.stringify([compact, items.map(id => [id, label(catalog.get(id)), preferences.shortcuts[id] || null])]);
+      if (node.dataset.signature !== signature) {
+        const focused = node.contains(document.activeElement) ? document.activeElement.dataset.cellTool : null;
+        if (cellMenu && node.contains(cellMenu.opener)) closeCellMenu(false);
+        node.replaceChildren(); node.dataset.signature = signature;
+        if (compact) {
+          const menu = button('Tools ▾', node, event => openCellMenu(event.currentTarget, viewportId));
+          menu.dataset.cellTool = 'menu'; menu.setAttribute('aria-haspopup', 'menu'); menu.setAttribute('aria-expanded', 'false');
+          menu.title = '이 칸의 도구 목록을 엽니다. 고른 도구는 이 칸에서 실행합니다.';
+        } else for (const id of items) {
+          const item = catalog.get(id), key = preferences.shortcuts[id];
+          const tool = button('', node, () => runCell(id, viewportId)); tool.dataset.cellTool = id; tool.setAttribute('aria-label', label(item));
+          tool.title = label(item) + (key ? ' · ' + keys.display(key) : '') + ' — 이 칸에서 실행합니다.';
+          const icon = element('span', symbols[id] || label(item).split(' ').map(word => word[0]).slice(0, 2).join(''), tool); icon.setAttribute('aria-hidden', 'true');
+        }
+        if (focused) node.querySelector('[data-cell-tool="' + CSS.escape(focused) + '"]')?.focus();
+      }
+      cellState(viewportId);
+    }
+    function cellState(only) {
+      const activeId = services.viewportGridService?.getActiveViewportId?.();
+      for (const [viewportId, node] of cellNodes) {
+        if (only && viewportId !== only) continue;
+        if (!node.isConnected) { cellNodes.delete(viewportId); continue; }
+        const active = viewportId === activeId;
+        for (const tool of node.querySelectorAll('[data-cell-tool]:not([data-cell-tool=menu])')) {
+          const state = active ? props(tool.dataset.cellTool) : null, on = active ? pressed(state) : undefined;
+          tool.disabled = active ? !state || !!state.disabled : false;
+          if (on !== undefined) tool.setAttribute('aria-pressed', String(on)); else tool.removeAttribute('aria-pressed');
+        }
       }
     }
     function move(id, visible, before) {
@@ -602,6 +694,7 @@ window.KinViewerUXToolbar = (() => {
     // (prepared before mount) tells them its values at once.
     features?.start();
     if (loaded) features?.changed();
+    const stopCells = window.KinViewerUX?.cellTools?.(fillCell);
     function focusTools() {
       if (!active() || document.querySelector('dialog[open],[role="dialog"][aria-modal="true"]')) return false;
       const first = bar.querySelector('button:not(:disabled)') || summary;
@@ -626,7 +719,7 @@ window.KinViewerUXToolbar = (() => {
       else load();
     }
     return { invoke, bindings: () => preferences.shortcuts, secondDisplay: () => secondDisplay(preferences), dispose() {
-      if (ended) return; features?.dispose(); ended = true; abort.abort(); window.KinViewerExport?.end?.(); settingsChannel?.close(); observer.disconnect(); resized.disconnect(); window.removeEventListener('pointerdown', trackPointer, true); toolbar.remove(); settings.remove(); dialog.remove();
+      if (ended) return; closeCellMenu(false); stopCells?.(); cellNodes.clear(); features?.dispose(); ended = true; abort.abort(); window.KinViewerExport?.end?.(); settingsChannel?.close(); observer.disconnect(); resized.disconnect(); window.removeEventListener('pointerdown', trackPointer, true); toolbar.remove(); settings.remove(); dialog.remove();
       subscription.unsubscribe();
       sizing.dispose(); generalHanging.dispose(); delete window.kinViewerHangingPreference;
       if (window.kinViewerUXFocusTools === focusTools) delete window.kinViewerUXFocusTools;
