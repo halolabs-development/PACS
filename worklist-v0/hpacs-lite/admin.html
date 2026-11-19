@@ -1061,8 +1061,8 @@
     (function (root) {
       "use strict";
       const HOUR = 3600 * 1000;
-      const TAT = "최근 7일 안에 처음 승인된 검사가 KIN 등록부터 첫 승인(ReportVersion approve)까지 걸린 시간입니다. Emergency 표시는 지금 값이며 사람이 입력합니다.";
-      const WAIT = "지금 승인 전(RS W·T·P·H)인 검사가 KIN 등록부터 지금까지 기다린 시간입니다. Emergency 표시는 지금 값이며 사람이 입력합니다.";
+      const TAT = "최근 7일 안에 처음 승인된 검사가 HALO PACS 등록부터 첫 승인(ReportVersion approve)까지 걸린 시간입니다. Emergency 표시는 지금 값이며 사람이 입력합니다.";
+      const WAIT = "지금 승인 전(RS W·T·P·H)인 검사가 HALO PACS 등록부터 지금까지 기다린 시간입니다. Emergency 표시는 지금 값이며 사람이 입력합니다.";
       const REGISTERED = "HALO PACS 등록 시각(StudyState.createdAt) 기준 건수입니다. 촬영 시각이나 영상 수신 시각이 아닙니다.";
       const METRICS = Object.freeze([
         ["storage.server", "Storage Used (Server-wide)", "byte", "server", null,
@@ -1075,8 +1075,8 @@
           "다른 기관이 원격판독을 맡겨 지금 이 기관 범위에 있는 검사 수입니다."],
         ["studies.flag_unreadable", "Emergency Flag Unreadable", "study", "institution", null,
           "Emergency 표시가 E·N 어느 쪽도 아니어서 TAT·대기 줄에 넣지 않은 검사 수입니다."],
-        ["studies.registered_24h", "Registered in KIN (Last 24 h)", "study", "institution", 24 * HOUR, REGISTERED],
-        ["studies.registered_7d", "Registered in KIN (Last 7 d)", "study", "institution", 7 * 24 * HOUR, REGISTERED],
+        ["studies.registered_24h", "Registered in HALO PACS (Last 24 h)", "study", "institution", 24 * HOUR, REGISTERED],
+        ["studies.registered_7d", "Registered in HALO PACS (Last 7 d)", "study", "institution", 7 * 24 * HOUR, REGISTERED],
         ["tat.emergency", "Report TAT (Emergency)", "second", "institution", 7 * 24 * HOUR, TAT],
         ["tat.normal", "Report TAT (Normal)", "second", "institution", 7 * 24 * HOUR, TAT],
         ["waiting.emergency", "Waiting (Emergency)", "second", "institution", null, WAIT],
