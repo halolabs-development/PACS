@@ -17,7 +17,7 @@ import { projectGatewayReceipt } from '../gateway-receipt';
 // ASR capability is optional; no engine URL or credentials leave the server.
 import { asrConfiguration } from '../asr.service';
 import { groupSources, consensus, sameUidSet, identityIssueList, sameAccessTags } from '../study-source-groups';
-import { dump, qidoCount, toClient, requestColumns, ORDER_REQUEST_SELECT } from './values';
+import { dump, qidoCount, toClient, requestColumns, referredAt, ORDER_REQUEST_SELECT } from './values';
 import { need, inst } from './access';
 import type { Caller, PacsAccess } from './access';
 import type { PacsInstitutions } from './institutions';
@@ -245,7 +245,8 @@ export class PacsWorklist {
     // The fields that decide who may see a row and read its report. The paged enumeration reads them too, so a change
     // made before the page's details are read is still a change.
     const accessFields = ['institutionId', 'teleInstitutionId', 'rs', 'preDoc', 'preReviewer', 'preDocSub', 'preReviewerSub', 'draftEpoch'];
-    const enumerated = { uid:true, draftEpoch:true, institutionId:true, teleInstitutionId:true, origin:true, createdAt:true,
+    // referredAt: a split exam's second row shows its original's time, read from these enumerated rows (sourceStates).
+    const enumerated = { uid:true, draftEpoch:true, institutionId:true, teleInstitutionId:true, origin:true, createdAt:true, referredAt:true,
       rs:true, preDoc:true, preReviewer:true, preDocSub:true, preReviewerSub:true };
 
     const states = uids ? await this.prisma.studyState.findMany({ where: { uid: { in: lookup?.parents ?? uids } } }) : page ? await this.prisma.studyState.findMany({ select: enumerated }) : await this.prisma.studyState.findMany();
@@ -437,7 +438,8 @@ export class PacsWorklist {
           time: OrthancService.tag(row, '00080030'), desc: OrthancService.tag(row, '00081030'), modality: row['00080061']?.Value?.join(',') ?? '',
           count: served(qidoCount(row, '00201208'), sourceUid), series: served(qidoCount(row, '00201206'), sourceUid),
           orderAccession: orderAccessionOf(order), ...requestColumns(order, { referringPhysician, requestingPhysician }),
-          referringPhysician, requestingPhysician, techNote: noteByUid.get(sourceUid) ?? { version: 0, present: false },
+          referringPhysician, requestingPhysician, referredAt: referredAt(state),
+          techNote: noteByUid.get(sourceUid) ?? { version: 0, present: false },
           metadataTarget: sourceUid, assignmentTarget: scope.reportUid,
           gatewayReceipt: state?.institutionId === me ? projectGatewayReceipt(receiptByUid.get(sourceUid)) : null,
           ss: state?.ss ?? null, em: state?.em ?? null, matched: state?.matched ?? null, orderOid: state?.orderOid ?? null };
@@ -505,6 +507,10 @@ export class PacsWorklist {
         birth, date,
         // StudyTime as stored (DICOM TM); two studies of one patient on one day differ only here.
         time: OrthancService.tag(st, '00080030'),
+        // Referred: when the referring hospital's Gateway sent this study (values.ts referredAt); null otherwise. Read from
+        // the original study the row's images are (a split exam's second row is a logical row of the same original), as its
+        // other study columns are; the row's own state is the original for every other row.
+        referredAt: referredAt(sourceStates.get(OrthancService.tag(st, '0020000D')) ?? s),
         sex: OrthancService.tag(st, '00100040'),
         modality: st['00080061']?.Value?.join(',') ?? '',
         desc: OrthancService.tag(st, '00081030'),

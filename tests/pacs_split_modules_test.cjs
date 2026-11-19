@@ -97,7 +97,7 @@ const DEFAULTS = {
   studyState: () => ({ teleInstitutionId: null, rs: 'W', ss: 'Unverified', em: 'N', ts: 'none', matched: 'U', ward: null,
     reqHosp: null, holder: null, heldAt: null, holdReason: null, preDoc: null, preReviewer: null, preDocSub: null,
     preReviewerSub: null, repDoc: null, confirm: null, ov: null, orig: null, orderOid: null, origin: 'device',
-    draftEpoch: randomUUID(), createdAt: new Date() }),
+    draftEpoch: randomUUID(), createdAt: new Date(), referredAt: null }),
   auditLog: () => ({ detail: null, at: new Date() }),
   reportVersion: () => ({ citations: null, structured: null, reason: null, at: new Date() }),
   reportDraft: () => ({ citations: null, structured: null, updatedAt: new Date() }),
@@ -1505,6 +1505,36 @@ test('SPLIT-18 Gateway surfaces admit only the gateway identity; a repeated anno
   assert.deepEqual([asked.result, repeated.result, repeated.requestedAt], ['requested', 'already_requested', asked.requestedAt]);
   assert.equal(w.db.rows('gatewayRetryRequest').length, 1);
   assert.equal(w.audits('gateway.retry.request').length, 1);
+});
+
+test('SPLIT-18b Referred is the first announce time: a new study gets its creation moment, a study registered another way gets it once', async () => {
+  const w = world();
+  await w.boot();
+  const row = uid => w.db.rows('studyState').find(s => s.uid === uid);
+  // A study the announce creates: one moment for its creation and its Referred time.
+  const fresh = uidOf();
+  await w.gateway.announceStudy(fresh, 'SYN A HOSPITAL', GATEWAY_A);
+  assert.ok(row(fresh).referredAt instanceof Date);
+  assert.equal(+row(fresh).referredAt, +row(fresh).createdAt);
+  const first = +row(fresh).referredAt;
+  await w.gateway.announceStudy(fresh, 'SYN A HOSPITAL', GATEWAY_A);
+  assert.equal(+row(fresh).referredAt, first, 'a retry keeps the first time');
+  // A study a device sent directly (registered by a list, no Referred) and then announced by the hospital's Gateway.
+  const direct = w.study({ origin: 'dicom', createdAt: new Date('2026-11-01T00:00:00.000Z') }).uid;
+  assert.equal(row(direct).referredAt, null);
+  const before = Date.now();
+  const answer = await w.gateway.announceStudy(direct, 'SYN A HOSPITAL', GATEWAY_A);
+  assert.equal(answer.origin, 'dicom', 'the origin stays as registered');
+  assert.ok(row(direct).referredAt instanceof Date && +row(direct).referredAt >= before, 'the first announce writes the time');
+  const once = +row(direct).referredAt, writes = w.db.writes.length;
+  await w.gateway.announceStudy(direct, 'SYN A HOSPITAL', GATEWAY_A);
+  assert.equal(+row(direct).referredAt, once, 'a second announce keeps it');
+  assert.equal(w.db.writes.length, writes, 'and writes nothing');
+  assert.equal(w.audits('study.announce').length, 1, 'only the created study is an announce audit');
+  // Another institution's announce of the same study is the same conflict and writes no time.
+  const foreign = w.study({ origin: 'dicom', institutionId: INST_B }).uid;
+  await refused(() => w.gateway.announceStudy(foreign, '', GATEWAY_A), 409, 'STUDY_OWNERSHIP_CONFLICT');
+  assert.equal(row(foreign).referredAt, null);
 });
 
 // ── SPLIT-19 preferences and searches: the CAS writes ──

@@ -919,6 +919,29 @@ test('worklist: a merged exam is its base row with every study\'s Count and Seri
   assert.deepEqual(original.body.studies.map(s=>s.uid).sort(),[A,B,C,D]);
 });
 
+test('worklist Referred: a split exam\'s second row shows its original\'s time; a merged exam\'s originals carry their own',async()=>{
+  const at=new Date('2026-11-19T23:10:00.000Z'),later=new Date('2026-11-19T23:40:00.000Z'),L='2.25.599';
+  const split={groups:[{id:G1,institutionId:'hallym',kind:'split',baseUid:A,createdBy:'syn-tech',createdBySub:'syn-tech-sub',dissolvedAt:null}],
+    members:[{groupId:G1,logicalUid:A,studyUid:A,part:0,seriesUids:[]},{groupId:G1,logicalUid:L,studyUid:A,part:1,seriesUids:['2.25.702']}]};
+  split.members.forEach(m=>Object.assign(m,{sourcePatientId:'SYN-P1',sourceInstitution:'hallym'}));
+  const extra=(uid,more)=>({...state(uid),origin:'dicom',createdAt:new Date('2020-01-01T00:00:00Z'),matched:'U',orderOid:null,referredAt:null,...more});
+  const parted=await listFixture({rows:[qido(A,'ACC-A',8,2),qido(D,'ACC-D',3,1,'SYN-P2')],group:split,
+    extraStates:[extra(A,{origin:'gateway',referredAt:at}),extra(L,{origin:'logical'}),extra(D)],
+    series:[{uid:'2.25.701',count:4},{uid:'2.25.702',count:4}]});
+  for(const query of [undefined,{limit:'100'}]){
+    const rows=new Map((await parted.listStudies(reader,query)).studies.map(r=>[r.uid,r]));
+    assert.deepEqual([...rows.keys()].sort(),[A,L,D].sort(),JSON.stringify(query));
+    // The logical row stores no time of its own: it shows its original's, like its other study columns.
+    assert.deepEqual([A,L,D].map(uid=>rows.get(uid).referredAt),[at.toISOString(),at.toISOString(),null],JSON.stringify(query));
+    assert.deepEqual(rows.get(L).sourceMetadata.map(m=>[m.uid,m.referredAt]),[[A,at.toISOString()]],JSON.stringify(query));
+  }
+  // Merged: the row is its base's; each original carries its own (a filter compares each).
+  const merge=await listFixture({extraStates:[extra(A,{referredAt:at}),extra(B,{referredAt:later})]});
+  const base=(await merge.listStudies(reader)).studies.find(s=>s.uid===B);
+  assert.equal(base.referredAt,later.toISOString());
+  assert.deepEqual(base.sourceMetadata.map(m=>[m.uid,m.referredAt]),[[B,later.toISOString()],[A,at.toISOString()],[C,null]]);
+});
+
 test('targeted source reads preserve a merged member UID while the worklist resolves its reporting exam', async () => {
   const svc = await listFixture();
   assert.deepEqual((await svc.listStudies(reader, { uids: A })).studies.map(s => s.uid), [B]);

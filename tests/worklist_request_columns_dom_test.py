@@ -1,6 +1,8 @@
 # coding: utf-8
 """Worklist request and approval columns on the shipped page: ReqDate, ReqDept, ReqDoc, Pt Class (after Name) and Confirm
-(after RS), their filters, a stored layout from before these columns, and the column chooser.
+(after RS), their filters, a stored layout from before these columns, and the column chooser. Referred (after StudyDate):
+when the referring hospital's Gateway sent the study, its filter, a sort by the server time itself, a poll that refreshes
+rows in place, and both screen languages.
 
 The page boots through its own boot() against the in-test server of multi_institution_worklist_dom_test.py; nothing of the
 page is cut out or replaced. Cells are read by the position of their visible header. Expected values are written here from
@@ -9,6 +11,7 @@ the stub rows (synthetic SYN-* data), never computed by product code. Times are 
 import json
 import re
 import unittest
+from datetime import datetime, timezone
 
 from playwright.sync_api import expect
 import multi_institution_worklist_dom_test as harness
@@ -36,7 +39,7 @@ ROWS = [
     request_row("2.25.906", "SYN-RC-06", rs="T"),
 ]
 IDS = ["SYN-RC-01", "SYN-RC-02", "SYN-RC-03", "SYN-RC-04", "SYN-RC-05", "SYN-RC-06"]
-DEFAULT_HEADS = ["No", "Assigned Reader", "RS", "Confirm", "StudyDate", "ID", "Name", "ReqDate", "ReqDept", "ReqDoc", "Pt Class",
+DEFAULT_HEADS = ["No", "Assigned Reader", "RS", "Confirm", "StudyDate", "Referred", "ID", "Name", "ReqDate", "ReqDept", "ReqDoc", "Pt Class",
                  "Age", "StudyDesc", "Modality", "Hospital"]
 
 
@@ -154,8 +157,8 @@ class WorklistRequestColumnsDOM(unittest.TestCase):
             "Technician": {"order": [], "hidden": []}}}
         screen = self.boot(Server(rows=ROWS), storage={layout_key(SESSION_A): json.dumps(stored)})
         screen.wait_rows(IDS)
-        self.assertEqual(["Name", "ReqDate", "ReqDept", "ReqDoc", "Pt Class", "ID", "RS", "Confirm", "StudyDate", "Modality"],
-                         screen.heads()[:10])
+        self.assertEqual(["Name", "ReqDate", "ReqDept", "ReqDoc", "Pt Class", "ID", "RS", "Confirm", "StudyDate", "Referred", "Modality"],
+                         screen.heads()[:11])
         self.assertNotIn("Age", screen.heads())
         # The column chooser lists them in the same order; one can be turned off and on again.
         screen.page.get_by_role("button", name="Choose columns", exact=True).click()
@@ -168,6 +171,122 @@ class WorklistRequestColumnsDOM(unittest.TestCase):
         saved = json.loads(screen.page.evaluate("key => localStorage.getItem(key)", layout_key(SESSION_A)))
         self.assertEqual(["name", "reqDate", "reqDept", "reqDoc", "ptClass", "id", "rs", "confirm"], saved["modes"]["Radiology"]["order"][:8])
         self.assertEqual(["age", "ptClass"], saved["modes"]["Radiology"]["hidden"])
+        screen.finish()
+
+
+
+# Referred (after StudyDate): when the referring hospital's Gateway sent the study (server row referredAt).
+def referred_row(uid, pid, referred=None):
+    body = row(uid, pid)
+    body["referredAt"] = referred
+    return body
+
+
+REFERRED_ROWS = [
+    referred_row("2.25.951", "SYN-RF-01", "2026-11-19T23:10:40.000Z"),
+    # The same minute as SYN-RF-01, twenty seconds earlier: the cells read alike, the sort still knows which came first.
+    referred_row("2.25.952", "SYN-RF-02", "2026-11-19T23:10:20.000Z"),
+    referred_row("2.25.953", "SYN-RF-03", "2026-11-20T02:45:00.000Z"),
+    # Not sent through a Gateway (a device sending directly): no time, blank cell.
+    referred_row("2.25.954", "SYN-RF-04", None),
+]
+REFERRED_IDS = ["SYN-RF-01", "SYN-RF-02", "SYN-RF-03", "SYN-RF-04"]
+REFERRED_HEADS = ["No", "Assigned Reader", "RS", "Confirm", "StudyDate", "Referred", "ID", "Name", "ReqDate", "ReqDept", "ReqDoc",
+                 "Pt Class", "Age", "StudyDesc", "Modality", "Hospital"]
+
+
+class WorklistReferredColumnDOM(unittest.TestCase):
+    # The harness's browser and boot only; that file's own cases are not run again here.
+    setUpClass = classmethod(harness.MultiInstitutionWorklist.setUpClass.__func__)
+    tearDownClass = classmethod(harness.MultiInstitutionWorklist.tearDownClass.__func__)
+    boot = harness.MultiInstitutionWorklist.boot
+
+    def test_rf01_default_columns_cells_and_header_help(self):
+        screen = self.boot(Server(rows=REFERRED_ROWS))
+        screen.wait_rows(REFERRED_IDS)
+        self.assertEqual(REFERRED_HEADS, screen.heads())
+        self.assertEqual({"SYN-RF-01": "2026-11-20 08:10", "SYN-RF-02": "2026-11-20 08:10", "SYN-RF-03": "2026-11-20 11:45",
+                          "SYN-RF-04": ""}, screen.cells_by_id("Referred"))
+        head = screen.table().locator('th[data-key="referredAt"]')
+        self.assertIn("Gateway", head.get_attribute("title"))
+        # The value is data of the study: never handed to the screen's translation.
+        cell = screen.data_row("SYN-RF-03").locator("td").nth(REFERRED_HEADS.index("Referred"))
+        self.assertEqual("no", cell.get_attribute("translate"))
+        screen.finish()
+
+    def test_rf02_filter_and_sort_by_the_server_time(self):
+        screen = self.boot(Server(rows=REFERRED_ROWS))
+        screen.wait_rows(REFERRED_IDS)
+        box = screen.filter_box("Referred")
+        box.fill("2026-11-20 08")
+        screen.wait_rows(["SYN-RF-01", "SYN-RF-02"])
+        box.fill("2026-11-20 11:45")
+        screen.wait_rows(["SYN-RF-03"])
+        box.fill("2026-11-19")
+        screen.wait_rows([])
+        box.fill("")
+        screen.wait_rows(REFERRED_IDS)
+        # Ascending: the blank first, then by the time with its seconds (RF-02 before RF-01 in the same minute).
+        screen.header("Referred").click()
+        screen.wait_rows(["SYN-RF-04", "SYN-RF-02", "SYN-RF-01", "SYN-RF-03"])
+        screen.header("Referred").click()
+        screen.wait_rows(["SYN-RF-03", "SYN-RF-01", "SYN-RF-02", "SYN-RF-04"])
+        screen.finish()
+
+    def test_rf03_a_stored_layout_gains_referred_after_studydate(self):
+        # A browser layout saved before this column: the user's order and hidden Age are kept; Referred joins after
+        # StudyDate wherever the user put it.
+        stored = {"version": 1, "modes": {
+            "Radiology": {"order": ["name", "id", "date", "rs", "modality", "age"], "hidden": ["age"]},
+            "Technician": {"order": [], "hidden": []}}}
+        screen = self.boot(Server(rows=REFERRED_ROWS), storage={layout_key(SESSION_A): json.dumps(stored)})
+        screen.wait_rows(REFERRED_IDS)
+        self.assertEqual(["Name", "ReqDate", "ReqDept", "ReqDoc", "Pt Class", "ID", "StudyDate", "Referred", "RS", "Confirm", "Modality"],
+                         screen.heads()[:11])
+        screen.page.get_by_role("button", name="Choose columns", exact=True).click()
+        picker = screen.page.locator("#column-picker")
+        labels = [t.strip() for t in picker.locator("label").all_inner_texts()]
+        self.assertEqual(["ID (Required)", "StudyDate", "Referred", "RS"], labels[5:9])
+        picker.get_by_role("checkbox", name="Referred", exact=True).uncheck()
+        picker.get_by_role("button", name="Close", exact=True).click()
+        until(lambda: "Referred" not in screen.heads(), 5, "Referred hidden")
+        saved = json.loads(screen.page.evaluate("key => localStorage.getItem(key)", layout_key(SESSION_A)))
+        self.assertEqual(["id", "date", "referredAt", "rs"], saved["modes"]["Radiology"]["order"][5:9])
+        self.assertEqual(["age", "referredAt"], saved["modes"]["Radiology"]["hidden"])
+        screen.finish()
+
+    def test_rf04_the_automatic_poll_refreshes_rows_in_place_by_the_same_rule(self):
+        # The page's own clock drives the 30-second poll; the list is never reloaded by hand here.
+        server = Server(rows=REFERRED_ROWS)
+        screen = self.boot(server, clock_at=datetime.now(timezone.utc))
+        screen.wait_rows(REFERRED_IDS)
+        screen.header("Referred").click()
+        screen.wait_rows(["SYN-RF-04", "SYN-RF-02", "SYN-RF-01", "SYN-RF-03"])
+        reads = sum(1 for e in server.ledger if e["path"] == "/api/studies")
+        # The same studies (no arrival, nothing removed), so the poll refreshes the rows in place. A value the server now
+        # sends (a stub change only - a real study's time never moves) is shown and sorted like the first list.
+        server.rows = [referred_row("2.25.951", "SYN-RF-01", "2026-11-19T23:10:40.000Z"),
+                       referred_row("2.25.952", "SYN-RF-02", "2026-11-19T23:10:20.000Z"),
+                       referred_row("2.25.953", "SYN-RF-03", "2026-11-20T02:45:00.000Z"),
+                       referred_row("2.25.954", "SYN-RF-04", "2026-11-20T03:00:05.000Z")]
+        screen.page.clock.run_for(31000)
+        until(lambda: sum(1 for e in server.ledger if e["path"] == "/api/studies") > reads, 10, "a poll read the list")
+        until(lambda: screen.cells_by_id("Referred")["SYN-RF-04"] == "2026-11-20 12:00", 10, "polled Referred")
+        # Still ascending by the server time: the refreshed row now sorts last.
+        screen.wait_rows(["SYN-RF-02", "SYN-RF-01", "SYN-RF-03", "SYN-RF-04"])
+        screen.finish()
+
+    def test_rf05_korean_screen_names_the_column_and_keeps_the_value(self):
+        screen = self.boot(Server(rows=REFERRED_ROWS))
+        screen.wait_rows(REFERRED_IDS)
+        self.assertTrue(screen.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", "ko"))
+        until(lambda: "병원 전송" in screen.heads(), 5, "Korean header")
+        self.assertNotIn("Referred", screen.heads())
+        cell = screen.data_row("SYN-RF-03").locator("td").nth(screen.heads().index("병원 전송"))
+        self.assertEqual("2026-11-20 11:45", cell.inner_text().strip())
+        self.assertIn("Gateway", screen.table().locator('th[data-key="referredAt"]').get_attribute("title"))
+        self.assertTrue(screen.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", "en"))
+        until(lambda: "Referred" in screen.heads(), 5, "English header")
         screen.finish()
 
 

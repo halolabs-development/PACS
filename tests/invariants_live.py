@@ -3957,6 +3957,14 @@ class LiveInvariantTests(unittest.TestCase):
             listed = self.stack.request("GET", "/studies", "kdoctor")
             self.assertIn(existing.uid, [row["uid"] for row in listed.body["studies"]])
             self.assertNotIn(existing.uid, [row["uid"] for row in listed.body["notObserved"]])
+            # Worklist Referred: this first announce of a study registered another way recorded when the Gateway sent
+            # it; a second announce keeps that first time.
+            referred = next(row for row in listed.body["studies"] if row["uid"] == existing.uid).get("referredAt")
+            self.assertIsInstance(referred, str, listed.text[:500])
+            again = self.stack.bearer_request("POST", "/gateway/announce", token, {"studyUid": existing.uid})
+            self.assertEqual(again.status, 200, again.text)
+            listed = self.stack.request("GET", "/studies", "kdoctor")
+            self.assertEqual(referred, next(row for row in listed.body["studies"] if row["uid"] == existing.uid).get("referredAt"))
 
         with self.stack.fixture() as foreign:
             conflict = self.stack.bearer_request(

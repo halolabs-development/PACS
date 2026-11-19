@@ -266,6 +266,10 @@ model StudyState {
   teleInstitutionId String?
   /// 최초 등록 경로. 기존·DICOM lazy 등록은 dicom, Gateway announce만 gateway, 자기 기관 member 반입(S9-U4b)의 새 검사 선점만 local-import.
   origin    String   @default("dicom")
+  /// 의뢰 병원의 Gateway가 이 검사를 처음 알린(announce) KIN 서버 시각 — 워크리스트 Referred 열. 처음 성공한 announce만
+  /// 한 번 쓰고 다시 바꾸지 않는다(직접 DICOM·로컬 가져오기로 먼저 등록된 검사도 첫 announce에서 쓴다). null = Gateway
+  /// announce 기록이 없음. Gateway 영수증의 receivedAt은 보고마다 바뀌므로 이 값이 아니다.
+  referredAt DateTime?
   rs        String   @default("W")            // Reading Status: W(대기) T(임시저장) A(승인) D(보존 기간 만료로 파기)
   holdReason String?
   ss        String   @default("Verified")     // Study Status: Verified / Unverified (기사 확인)

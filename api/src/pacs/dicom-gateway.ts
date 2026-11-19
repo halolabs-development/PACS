@@ -175,7 +175,9 @@ export class PacsDicomGateway {
 
   /**
    * Gateway 수신 예고. DICOM 태그는 참고 신호일 뿐이고 소유 기관은 서명된 자격증명으로 정한다.
-   * 같은 기관의 재시도는 쓰기와 감사를 모두 생략한다.
+   * 같은 기관의 재시도는 쓰기와 감사를 모두 생략한다. 단 하나: 직접 DICOM 전송·로컬 가져오기로 먼저 등록된 검사의
+   * **첫** announce는 Referred 시각(`referredAt`, 워크리스트 열)만 한 번 쓴다 — 조건부 쓰기라 재시도·동시 announce는
+   * 처음 쓴 시각을 바꾸지 않는다. 새로 만드는 행은 생성 시각과 같은 순간을 Referred로 갖는다.
    */
   async announceStudy(studyUid: string, institutionNameTag: unknown, c: Caller) {
     needExact(c, 'gateway', '검사 수신 예고');
@@ -185,10 +187,14 @@ export class PacsDicomGateway {
     if (institutionNameTag != null && typeof institutionNameTag !== 'string')
       throw new BadRequestException('institutionNameTag는 문자열이어야 합니다');
 
+    // The first announce of a study registered another way records when the hospital's Gateway sent it, once.
+    const referFirst = () => this.prisma.studyState.updateMany({
+      where: { uid: studyUid, institutionId: me, referredAt: null }, data: { referredAt: new Date() } });
     const existing = await this.prisma.studyState.findUnique({ where: { uid: studyUid } });
     if (existing) {
       if (existing.institutionId !== me)
         throw new ConflictException({ code: 'STUDY_OWNERSHIP_CONFLICT' });
+      if (existing.referredAt == null) await referFirst();
       return { studyUid, institutionId: me, origin: existing.origin };
     }
 
@@ -196,12 +202,16 @@ export class PacsDicomGateway {
     const tagMismatch = resolvedTag != null && resolvedTag !== me;
     try {
       const saved = await this.prisma.$transaction(async tx => {
+        // One moment: the row's creation (the TAT start) and its Referred time.
+        const at = new Date();
         const created = await tx.studyState.create({ data: {
           uid: studyUid,
           institutionId: me,
           reqHosp: this.institutions.instName(me),
           ss: 'Unverified',
           origin: 'gateway',
+          createdAt: at,
+          referredAt: at,
         } });
         await tx.auditLog.create({ data: {
           actor: c.actor || 'unknown',
@@ -218,6 +228,8 @@ export class PacsDicomGateway {
       const winner = await this.prisma.studyState.findUnique({ where: { uid: studyUid } });
       if (!winner || winner.institutionId !== me)
         throw new ConflictException({ code: 'STUDY_OWNERSHIP_CONFLICT' });
+      // A list registered the same study first (origin dicom): this announce is still its first.
+      if (winner.referredAt == null) await referFirst();
       return { studyUid, institutionId: me, origin: winner.origin };
     }
   }
