@@ -141,6 +141,19 @@ TOTP_SETUP = f"""<!doctype html><html class="login-pf" lang="ko" dir="ltr"><head
    </form></div></div>
  </div>
 </div></body></html>"""
+# An error page as error.ftl draws it with this theme (Keycloak's message, then kin-home.ftl's way back into HALO PACS).
+ERROR_PAGE = f"""<!doctype html><html class="login-pf" lang="ko" dir="ltr"><head><meta charset="utf-8">
+<title>{MSG["loginTitle"]}</title>{HEAD}</head>
+<body class="" data-page-id="login-error">
+<div class="login-pf-page">
+ <div id="kc-header" class="login-pf-page-header"><div id="kc-header-wrapper" class="">KIN</div></div>
+ <div class="card-pf"><header class="login-pf-header"><h1 id="kc-page-title">{MSG["errorTitle"]}</h1></header>
+  <div id="kc-content"><div id="kc-content-wrapper">
+   <div id="kc-error-message"><p class="instruction">SYN 작업이 만료되었습니다. 처음부터 다시 로그인하세요.</p>
+    <div id="kc-form-buttons" class="form-group"><a id="kin-back" class="pf-c-button pf-m-primary pf-m-block btn-lg" href="/api/auth/login">{MSG["backToKin"]}</a></div>
+   </div></div></div>
+ </div>
+</div></body></html>"""
 # Which element has focus, by the name a person would use.
 FOCUSED = """() => { const e = document.activeElement;
   return e.id === 'kc-login' ? 'Login' : e.id || e.textContent.trim(); }"""
@@ -272,6 +285,53 @@ class LoginThemeDomTest(unittest.TestCase):
                 self.assertLessEqual(edge["x"] + edge["width"], place["width"], "the button's right edge is inside the window")
                 if path == TOTP_SETUP_PATH:
                     self.assertGreater(self.page.locator("#kc-totp-secret-qr-code").evaluate("(i) => i.naturalWidth"), 0)
+
+    def test_08_a_laptop_chrome_window_shows_the_notices_without_scrolling(self):
+        """A laptop's Chrome window (inside 1366x640 and 1280x650: 768 less the task bar and the browser's tab, address and
+        bookmark rows): on the login page - as it opens, with a wrong password's line and with the locked account's
+        sentence under the username - and on an error page with its way back into HALO PACS, the notice links and the
+        line under them are in the window without scrolling, and so are the sign-in button and the way back. The line under
+        the links is drawn by the page (login.css `.login-pf-page::after`): the page box ends at the window's bottom and
+        that line is its last row, above the page's own bottom padding."""
+        wrong = '<span id="input-error" class="pf-c-form__helper-text pf-m-error required kc-feedback-text" aria-live="polite">' \
+                '잘못된 사용자 이름 또는 비밀번호입니다.</span>'
+        locked = wrong.replace("잘못된 사용자 이름 또는 비밀번호입니다.", MSG["accountTemporarilyDisabledMessage"])
+        username = '<input tabindex="2" id="username"'
+        field_end = 'dir="ltr"></div>'
+        assert LOGIN.count(field_end) == 1, "the username field's end in the page markup"
+        pages = {"login": LOGIN, "wrong password": LOGIN.replace(field_end, 'dir="ltr">' + wrong + '</div>'),
+                 "locked": LOGIN.replace(field_end, 'dir="ltr">' + locked + '</div>'),
+                 "error": ERROR_PAGE}
+        assert username in LOGIN
+        measure = """() => { const r = s => { const e = document.querySelector(s); return e && e.getBoundingClientRect().toJSON(); };
+          const page = document.querySelector('.login-pf-page'), box = page.getBoundingClientRect();
+          return {inner: innerHeight, scroll: document.scrollingElement.scrollHeight, page: box.toJSON(),
+                  pad: parseFloat(getComputedStyle(page).paddingBottom), foot: getComputedStyle(page, '::after').content,
+                  footHeight: parseFloat(getComputedStyle(page, '::after').height), links: r('#kin-legal-links'),
+                  button: r('#kc-login') || r('#kin-back'), error: r('#input-error')}; }"""
+        shown = {}
+        self.page.route(ORIGIN + "/short-window", lambda route: route.fulfill(body=shown["body"], content_type="text/html; charset=utf-8"))
+        for width, height in ((1366, 640), (1280, 650)):
+            self.page.set_viewport_size({"width": width, "height": height})
+            for name, body in pages.items():
+                with self.subTest(window=f"{width}x{height}", page=name):
+                    shown["body"] = body
+                    self.page.goto(ORIGIN + "/short-window")
+                    expect(self.page.locator("#kin-legal-links")).to_be_attached()
+                    seen = self.page.evaluate(measure)
+                    print("LOGIN-MEASURE", width, height, name, seen, flush=True)
+                    self.assertLessEqual(seen["scroll"], seen["inner"], "the page does not scroll")
+                    self.assertGreaterEqual(seen["links"]["top"], 0)
+                    self.assertLessEqual(seen["links"]["bottom"], seen["inner"], "the notice links in the window")
+                    self.assertIn("주식회사 헤일로랩스", seen["foot"])
+                    self.assertLessEqual(seen["page"]["bottom"] - seen["pad"], seen["inner"], "the line under the links in the window")
+                    self.assertGreaterEqual(seen["page"]["bottom"] - seen["pad"] - seen["footHeight"], seen["links"]["bottom"],
+                                            "the line under the links is below them")
+                    self.assertLessEqual(seen["button"]["bottom"], seen["inner"], "the sign-in button or the way back in the window")
+                    if name in ("wrong password", "locked"):
+                        self.assertLessEqual(seen["error"]["bottom"], seen["button"]["top"], "the error line above the button")
+                    for link in self.page.locator("#kin-legal-links a").all():
+                        expect(link).to_be_in_viewport(ratio=1)
 
     def test_07_the_page_wears_the_halo_labs_design(self):
         """Like the other Halo Labs products' first screen: charcoal ground, a top bar with the HALO LABS logo and the product
