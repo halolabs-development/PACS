@@ -232,6 +232,51 @@
        stays in the record for when a panel comes back (WS-02). The compact and Multi-Study floors are for content, and
        the strip does not yield height either: under Multi-Study's composition a shrinking band clipped it to 0 (WS-06). */
     body:not(.reading).kin-report-window-tabs .right > .rw { height: auto !important; min-height: 0 !important; flex: none !important; }
+    /* Folding a band panel in place (item 9: "independently collapsible", apart from Show/Hide in Panel Settings).
+       reportWindow() gives a folded panel no column, like a hidden one, and lists it in `folds`: the row above the
+       columns keeps its name as a button that opens it again (body class kin-fold-<panel>). With nothing left open the
+       band is that row and the Related/report row takes the height (kin-report-window-folded, as the tab strip above).
+       The reading layout's Study Information and the Study Panel drawer are explicit opens: every panel shows there,
+       open, and no fold control is drawn. */
+    .rw > .rw-folds { display: none; }
+    body:not(.reading).kin-report-window-folds .rw > .rw-folds { display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+      grid-column: 1 / -1; grid-row: 1; min-width: 0; padding: 3px 6px; background: var(--kin-panel);
+      border-bottom: 1px solid var(--kin-line2); }
+    .rw-folds > .panel-unfold { display: none; }
+    body.kin-fold-thumbnail .rw-folds > [data-unfold="thumbnail"], body.kin-fold-aiReport .rw-folds > [data-unfold="aiReport"],
+    body.kin-fold-imageReport .rw-folds > [data-unfold="imageReport"], body.kin-fold-clinical .rw-folds > [data-unfold="clinical"],
+    body.kin-fold-template .rw-folds > [data-unfold="template"] { display: inline-flex; align-items: center; }
+    .panel-unfold::before { content: "▸"; margin-right: 4px; }
+    body:not(.reading).kin-report-window-folds .right > .rw { grid-template-rows: auto minmax(0, 1fr); }
+    body:not(.reading).kin-report-window-folds .rw > section { grid-row: 2; }
+    body:not(.reading).kin-report-window-folds.kin-report-window-strip .right > .rw { grid-template-rows: auto auto minmax(0, 1fr); }
+    body:not(.reading).kin-report-window-folds.kin-report-window-strip .rw > .s-thumb { grid-row: 2; }
+    body:not(.reading).kin-report-window-folds.kin-report-window-strip .rw > section:not(.s-thumb) { grid-row: 3; }
+    body:not(.reading).kin-report-window-folded .right > .rw { height: auto !important; min-height: 0 !important; flex: none !important;
+      grid-template-rows: auto; }
+    body:not(.reading).kin-report-window-folded #resize-top { display: none !important; }
+    /* The fold button sits at the right end of its panel's title row, in room of its own, so no existing control moves;
+       in the Thumbnail section, whose title row is two tabs, each tab's button follows its own label. Nothing here is
+       positioned: a positioned title would paint over the Technician bar where its buttons run past the list column. */
+    .panel-fold { width: 20px; height: 16px; padding: 0; display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid transparent; border-radius: 3px; background: var(--kin-panel); color: var(--kin-muted);
+      font-family: inherit; font-size: 11px; line-height: 1; cursor: pointer; }
+    .panel-fold::before { content: "▾"; }
+    .panel-fold:hover { border-color: var(--kin-line2); }
+    .rw > :is(.s-imgreport, .s-template) > h3 > .panel-fold { float: right; margin: -1px -6px 0 4px; }
+    body:not(.reading) .rw > .s-clinical > h3 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+    .rw > .s-clinical > h3 > .panel-fold { grid-column: 3; grid-row: 1; margin: 0 4px; }
+    /* In the Thumbnail section each tab carries its own button in front of its label, so the two never part; a tab never
+       grows past its column: the 20 px button stays whole and only the label is cut short (…). A narrow column wraps
+       whole tabs. */
+    .rtabs .panel-fold { vertical-align: middle; width: 20px; min-width: 20px; margin: -2px 4px 0 -6px; }
+    body:not(.reading) .rw > .s-thumb > .rtabs > [data-panel] { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+    body:not(.reading) .rw > .s-thumb > .rtabs { flex-wrap: wrap; }
+    /* Clinical Context's heading stays in its own column: it is drawn after the fold button and must not lie over it. */
+    body:not(.reading) .rw > .s-clinical > h3::after { min-width: 0; overflow: hidden; }
+    .panel-fold:focus-visible, .panel-unfold:focus-visible { outline: 2px solid var(--kin-accent); outline-offset: -2px; }
+    body.reading .panel-fold, #study-panel-host .panel-fold { display: none !important; }
+
     /* The choice has no effect there, and the reading toolbar's View row (92px, G-LIVE-GEO) must stay one line. */
     body.reading #panel-settings-open { display: none; }
     .tpl-opts { display: flex; gap: 8px; padding: 3px 8px; background: #171c25; color: #8892a4; font-size: 11px; flex: none; flex-wrap: wrap; }
@@ -1774,10 +1819,18 @@
     <div class="right">
       <!-- Report window (7.3): 썸네일 | Clinical Info | Reading Template -->
       <div class="rw">
+        <!-- Folded panels (2026-10-27 item 9): each folded panel's name, to open it again in its place. -->
+        <div class="rw-folds" role="group" aria-label="접힌 패널">
+          <button type="button" class="chip panel-unfold" data-unfold="thumbnail" aria-expanded="false" title="Thumbnail 패널 펼치기">Thumbnail</button>
+          <button type="button" class="chip panel-unfold" data-unfold="aiReport" aria-expanded="false" title="AI Report 패널 펼치기">AI Report</button>
+          <button type="button" class="chip panel-unfold" data-unfold="imageReport" aria-expanded="false" title="Image Report 패널 펼치기">Image Report</button>
+          <button type="button" class="chip panel-unfold" data-unfold="clinical" aria-expanded="false" title="Clinical Information 패널 펼치기">Clinical Information</button>
+          <button type="button" class="chip panel-unfold" data-unfold="template" aria-expanded="false" title="Reading Template 패널 펼치기">Reading Template</button>
+        </div>
         <section class="s-thumb">
           <div class="rtabs">
-            <div class="on" data-panel="thumbnail">Thumbnail</div>
-            <div title="추후 구현" data-panel="aiReport">AI Report</div>
+            <div class="on" data-panel="thumbnail"><button type="button" class="panel-fold" data-fold="thumbnail" aria-expanded="true" aria-label="Thumbnail 패널 접기" title="Thumbnail 패널 접기"></button>Thumbnail</div>
+            <div title="추후 구현" data-panel="aiReport"><button type="button" class="panel-fold" data-fold="aiReport" aria-expanded="true" aria-label="AI Report 패널 접기" title="AI Report 패널 접기"></button>AI Report</div>
           </div>
           <div class="thumbwrap" id="thumbwrap">
             <div style="color:#556;padding:20px;text-align:center">검사를 선택하세요</div>
@@ -1786,14 +1839,14 @@
         <!-- Image Report panel (2026-10-27 item 9): the drawings attached to the selected study's report, and the way into the
              drawing window. image-report.js fills it from the same read as the strip under Conclusion. -->
         <section class="s-imgreport" aria-labelledby="image-report-panel-title">
-          <h3><span id="image-report-panel-title">Image Report</span> <button id="image-report-panel-open" class="chip" type="button" disabled title="유방·갑상선 도판이나 이 검사의 저장 영상 위에 그려 판독문에 붙입니다">Draw</button></h3>
+          <h3><span id="image-report-panel-title">Image Report</span> <button id="image-report-panel-open" class="chip" type="button" disabled title="유방·갑상선 도판이나 이 검사의 저장 영상 위에 그려 판독문에 붙입니다">Draw</button><button type="button" class="panel-fold" data-fold="imageReport" aria-expanded="true" aria-label="Image Report 패널 접기" title="Image Report 패널 접기"></button></h3>
           <div class="image-report-panel" id="image-report-panel">
             <p id="image-report-panel-status" role="status" aria-live="polite">검사를 선택하세요</p>
             <div class="ir-attached" id="image-report-panel-list" aria-label="Attached drawings"></div>
           </div>
         </section>
         <section class="s-clinical">
-          <h3><span class="clin-left">Clinical Info <button id="sr-open" class="chip" type="button" disabled>Source SR</button> <button id="tech-note-open" class="chip" type="button" disabled>Tech Note</button> <button id="clinical-copy" class="chip" type="button" disabled>Copy Clinical Info</button> <button id="clinical-paste" class="chip" type="button" disabled>Paste to Findings</button></span></h3>
+          <h3><span class="clin-left">Clinical Info <button id="sr-open" class="chip" type="button" disabled>Source SR</button> <button id="tech-note-open" class="chip" type="button" disabled>Tech Note</button> <button id="clinical-copy" class="chip" type="button" disabled>Copy Clinical Info</button> <button id="clinical-paste" class="chip" type="button" disabled>Paste to Findings</button></span><button type="button" class="panel-fold" data-fold="clinical" aria-expanded="true" aria-label="Clinical Information 패널 접기" title="Clinical Information 패널 접기"></button></h3>
           <div class="copy-patient-block" hidden style="padding:4px 10px;overflow-wrap:anywhere">
             <button id="copy-patient-id" class="chip" type="button" aria-keyshortcuts="Control+Alt+C" aria-describedby="copy-patient-context" disabled>Copy Patient ID</button>
             <span style="font-size:11px">Ctrl+Alt+C</span>
@@ -1825,7 +1878,7 @@
           </details>
         </section>
         <section class="s-template">
-          <h3>Reading Template</h3>
+          <h3>Reading Template<button type="button" class="panel-fold" data-fold="template" aria-expanded="true" aria-label="Reading Template 패널 접기" title="Reading Template 패널 접기"></button></h3>
           <div class="tpl-opts">
             <label><input type="checkbox" id="t-mod" checked> Modality</label>
             <label>부위 <select id="t-body" aria-label="상용구 부위"><option value="">전체 부위</option></select></label>

@@ -1790,6 +1790,9 @@ jobs:
     - name: Work page boxes trade places (Arrange Boxes) on the delivered split page
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: KIN_BOXES_OUT="$PWD/tmp/workspace-ui-ci/reading-boxes-screens" python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/reading-boxes-page --cwd . --tree worklist-v0/hpacs-lite --tree tests --file scripts/main-split-order.json --file scripts/build-main-split-bundle.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/reading_boxes_dom_test.py
+    - name: Report window band panels fold and open in place, kept per account, on the delivered split page
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/reading-panels-fold-page --cwd . --tree worklist-v0/hpacs-lite --tree tests --file scripts/main-split-order.json --file scripts/build-main-split-bundle.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/reading_panels_fold_dom_test.py
     - name: A1 FA-153 default colour scheme on the worklist, report editor and their dialogs
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/work-palette-page --cwd . --tree worklist-v0/hpacs-lite --tree tests --file scripts/main-split-order.json --file scripts/build-main-split-bundle.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/work_palette_dom_test.py
