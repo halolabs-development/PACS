@@ -170,6 +170,7 @@ REGRESSION_SUITES = {
         tests/admin_member_roles_dom_test.py
         tests/admin_metrics_dom_test.py
         tests/admin_session_dom_test.py
+        tests/admin_signing_key_dom_test.py
         tests/auth_entry_dom_test.py
         tests/auth_logout_dom_test.py
         tests/login_theme_dom_test.py
