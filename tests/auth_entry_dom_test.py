@@ -286,48 +286,56 @@ class AuthEntryDOMTest(unittest.TestCase):
         "admin_otp_required": "관리자 계정은 OTP 확인이 필요합니다. OTP를 방금 등록하셨다면 정상입니다 — 등록한 OTP로 한 번 더 로그인해 주십시오.",
     }
 
+    ENDED = "이 브라우저의 HALO PACS 로그인 세션을 끝냈습니다. 다시 사용하려면 로그인해 주세요."
+
     def test_a_refused_sign_in_says_why_and_whom_to_ask(self):
-        # Suspended (approval kept or not) and the administrator's OTP answer each say why, in the error colour; the
-        # general failure keeps its sentence. Nothing enters and nothing starts by itself.
+        # Suspended (approval kept or not) and the administrator's OTP answer each say why on their own line (#why), in
+        # the error colour; the general failure keeps its sentence in #msg and no #why. Nothing enters or starts.
         self.me_absent = True
-        for code, said in {**self.REFUSED, "login_failed": "로그인을 마치지 못했습니다. 잠시 뒤 로그인 버튼을 다시 눌러 주세요."}.items():
+        for code, said in self.REFUSED.items():
             with self.subTest(code=code):
                 self.landing(query="?auth_error=" + code)
-                expect(self.page.locator("#msg")).to_have_text(said)
-                expect(self.page.locator("#msg")).not_to_have_class("ended")
+                expect(self.page.locator("#why")).to_be_visible()
+                expect(self.page.locator("#why")).to_have_text(said)
+                expect(self.page.locator("#msg")).not_to_contain_text(said)
                 self.assertEqual((urlparse(self.page.url).path, urlparse(self.page.url).query, self.starts()),
                                  (BASE + "index.html", "", []))
+        self.landing(query="?auth_error=login_failed")
+        expect(self.page.locator("#msg")).to_have_text("로그인을 마치지 못했습니다. 잠시 뒤 로그인 버튼을 다시 눌러 주세요.")
+        expect(self.page.locator("#why")).to_be_hidden()
 
-    def test_a_refused_sign_in_after_a_finished_log_out_still_says_why(self):
-        # A browser that logged out cleanly (a confirmed end record) and then signs in as a suspended member: the
-        # refusal is what the person needs now, also after the window regains focus. An unfinished Log out still wins
-        # with its Retry Log Out (A012).
+    def test_a_refusal_and_the_log_out_state_each_keep_their_line(self):
+        # A browser that logged out cleanly (a confirmed end record) and then signs in as a suspended member: #why says
+        # why this attempt was refused, #msg keeps the log-out notice. Another tab clearing the old end record (its
+        # sign-in succeeded) or writing a newer one (its log out) changes #msg only; #why stays as this attempt's answer.
         self.landing(SESSION, query="?auth_error=member_suspended")
-        expect(self.page.locator("#msg")).to_have_text(self.REFUSED["member_suspended"])
+        why, msg = self.page.locator("#why"), self.page.locator("#msg")
+        expect(why).to_have_text(self.REFUSED["member_suspended"])
+        expect(msg).to_have_text(self.ENDED)
         self.page.evaluate("dispatchEvent(new Event('focus'))")
-        expect(self.page.locator("#msg")).to_have_text(self.REFUSED["member_suspended"])
-        expect(self.page.locator("#msg")).not_to_have_class("ended")
-        expect(self.page.locator("#retry-logout")).to_be_hidden()
-        # Another tab signs in and clears the old end record: that is no news here, the refusal stays.
+        expect(why).to_have_text(self.REFUSED["member_suspended"])
         key = "kin-session-end:" + SESSION
         self.page.evaluate("""key => { const old = localStorage.getItem(key); localStorage.removeItem(key);
           dispatchEvent(new StorageEvent('storage', {key, oldValue: old, newValue: null, storageArea: localStorage})); }""", key)
-        expect(self.page.locator("#msg")).to_have_text(self.REFUSED["member_suspended"])
+        expect(why).to_have_text(self.REFUSED["member_suspended"])
         self.assertEqual(self.logouts, [])
-        # Another tab then logs out (a newer end record is written): its result is the news.
         record = json.dumps({"session": SESSION, "operation": 2, "status": "confirmed", "origin": "logout"})
         self.page.evaluate("""([key, value]) => { localStorage.setItem(key, value);
           dispatchEvent(new StorageEvent('storage', {key, oldValue: null, newValue: value, storageArea: localStorage})); }""",
                            [key, record])
-        expect(self.page.locator("#msg")).to_have_text("이 브라우저의 HALO PACS 로그인 세션을 끝냈습니다. 다시 사용하려면 로그인해 주세요.")
+        expect(msg).to_have_text(self.ENDED)
+        expect(why).to_have_text(self.REFUSED["member_suspended"])
 
-    def test_an_unfinished_log_out_still_wins_over_a_refusal(self):
+    def test_retry_log_out_shows_its_result_beside_the_refusal(self):
+        # An unfinished log out keeps its notice and Retry Log Out in #msg (A012); the refusal has its own line. A
+        # successful Retry shows its result in #msg.
         self.landing(SESSION, query="?auth_error=member_suspended", status="unconfirmed", reason="network")
         expect(self.page.locator("#msg")).to_contain_text("서버에 연결하지 못해")
         expect(self.page.locator("#retry-logout")).to_be_visible()
-        # Retry Log Out now succeeds: the person just pressed it, so its result is the news, not the earlier refusal.
+        expect(self.page.locator("#why")).to_have_text(self.REFUSED["member_suspended"])
         self.page.locator("#retry-logout").click()
-        expect(self.page.locator("#msg")).to_have_text("이 브라우저의 HALO PACS 로그인 세션을 끝냈습니다. 다시 사용하려면 로그인해 주세요.")
+        expect(self.page.locator("#msg")).to_have_text(self.ENDED)
+        expect(self.page.locator("#why")).to_have_text(self.REFUSED["member_suspended"])
         self.assertEqual(self.logouts, [SESSION])
 
     def landing(self, record=None, query="?auth_error=stale", origin="logout", status="confirmed", reason=None,

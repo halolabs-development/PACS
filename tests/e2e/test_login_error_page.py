@@ -258,7 +258,7 @@ class LoginErrorPageE2E(base.WorklistE2E):
                 page.goto(self.stack.proxy + HOME)
                 self.submit(page, self.stack.username(logical), self.stack.passwords[logical])
                 page.wait_for_url(re.compile(r".*/worklist/hpacs-lite/index\.html(\?.*)?$"), timeout=30000)
-                expect(page.locator("#msg")).to_have_text(said)
+                expect(page.locator("#why")).to_have_text(said)
                 ARTIFACTS.mkdir(exist_ok=True)
                 page.screenshot(path=str(ARTIFACTS / f"LOGIN-ERROR-PAGE-blocked-{logical}.png"), full_page=True)
                 expect(page.locator("#signin")).to_be_visible()
