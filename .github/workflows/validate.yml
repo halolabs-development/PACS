@@ -312,7 +312,7 @@ jobs:
     - name: S5-U2c clinician CT sync access route, state wording and late-answer boundaries
       run: docker run --rm --network none --read-only -v "$PWD:/src:ro" -w /src node:22-alpine node --test tests/viewer_ct_sync_test.cjs
     - name: Compare menu calculations and the Prior Studies connection it opens studies through
-      run: docker run --rm --network none --read-only -v "$PWD:/src:ro" -w /src node:22-alpine node --test tests/viewer_compare_model_test.cjs tests/viewer_prior_related_test.cjs
+      run: docker run --rm --network none --read-only -v "$PWD:/src:ro" -w /src node:22-alpine node --test tests/viewer_compare_model_test.cjs tests/viewer_prior_related_test.cjs tests/viewer_split_exam_place_test.cjs
     - name: MG menu calculations (counterparts, quadrants, breast region and window, zoom modes, DBT slab, next tab)
       run: docker run --rm --network none --read-only -v "$PWD:/src:ro" -w /src node:22-alpine node --test tests/mg_breast_model_test.cjs
     - name: Cine range, playback ownership and preparation budget boundaries
@@ -1790,6 +1790,9 @@ jobs:
     - name: Work page boxes trade places (Arrange Boxes) on the delivered split page
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: KIN_BOXES_OUT="$PWD/tmp/workspace-ui-ci/reading-boxes-screens" python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/reading-boxes-page --cwd . --tree worklist-v0/hpacs-lite --tree tests --file scripts/main-split-order.json --file scripts/build-main-split-bundle.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/reading_boxes_dom_test.py
+    - name: Report window band panels fold and open in place, kept per account, on the delivered split page
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/reading-panels-fold-page --cwd . --tree worklist-v0/hpacs-lite --tree tests --file scripts/main-split-order.json --file scripts/build-main-split-bundle.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/reading_panels_fold_dom_test.py
     - name: A1 FA-153 default colour scheme on the worklist, report editor and their dialogs
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/work-palette-page --cwd . --tree worklist-v0/hpacs-lite --tree tests --file scripts/main-split-order.json --file scripts/build-main-split-bundle.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/work_palette_dom_test.py
@@ -2412,6 +2415,7 @@ jobs:
       run: |
         python3 -B tests/ops_combined_transfer_test.py
         python3 -B tests/ops_orthanc_transfer_test.py
+        python3 -B tests/ops_image_transfer_test.py
     - name: Apply product migration and bind synthetic rows to frozen DICOM
       id: prepare
       run: python3 -B tests/ops_product_transfer_fixture.py produce "$RUNNER_TEMP/kin-product-transfer"

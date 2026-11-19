@@ -106,7 +106,7 @@ export class PacsPreferences {
       const workspace = value.workspace;
       const own = (v: any, key: string) => Object.prototype.hasOwnProperty.call(v, key);
       // Drawer visibility belongs to the current opening, never the account's saved layout.
-      if (!object(workspace) || Object.keys(workspace).filter(k => k !== 'studyPanel' && k !== 'hiddenPanels' && k !== 'boxSwaps').sort().join(',') !==
+      if (!object(workspace) || Object.keys(workspace).filter(k => !['studyPanel', 'hiddenPanels', 'collapsedPanels', 'boxSwaps'].includes(k)).sort().join(',') !==
           'prior,rail,railCollapsed,related,studyPanelTab,version,worklist' ||
           workspace.version !== 1 || typeof workspace.railCollapsed !== 'boolean' ||
           !['images', 'info', 'templates'].includes(workspace.studyPanelTab))
@@ -139,12 +139,14 @@ export class PacsPreferences {
         }
         if (Object.keys(kept).length) clean.workspace.studyPanel = kept;
       }
-      // Report window panels hidden in Panel Settings (Minhoon item 9); sparse, the same rule as workspace-layout.js.
-      if (own(workspace, 'hiddenPanels')) {
-        const panels = ['thumbnail', 'aiReport', 'imageReport', 'clinical', 'template'], hidden = workspace.hiddenPanels;
-        if (!Array.isArray(hidden) || new Set(hidden).size !== hidden.length || hidden.some((k: any) => !panels.includes(k)))
+      // Report window panels hidden in Panel Settings, and those the reader folded in place (Minhoon item 9): two
+      // separate sparse choices over the same five panels, the same rule as workspace-layout.js.
+      for (const field of ['hiddenPanels', 'collapsedPanels']) {
+        if (!own(workspace, field)) continue;
+        const panels = ['thumbnail', 'aiReport', 'imageReport', 'clinical', 'template'], chosen = workspace[field];
+        if (!Array.isArray(chosen) || new Set(chosen).size !== chosen.length || chosen.some((k: any) => !panels.includes(k)))
           throw new BadRequestException('작업공간 배치 형식이 잘못되었습니다');
-        if (hidden.length) clean.workspace.hiddenPanels = panels.filter(k => hidden.includes(k));
+        if (chosen.length) clean.workspace[field] = panels.filter(k => chosen.includes(k));
       }
       // The work page's box swaps (box-layout.js); sparse, the same rule as workspace-layout.js.
       if (own(workspace, 'boxSwaps')) {

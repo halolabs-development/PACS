@@ -593,8 +593,9 @@ export class ExamMergeService {
     await this.studyAccess.require(c, unique(group.members.map(m => m.studyUid)));
     const rows = await this.prisma.studyState.findMany({ where: { uid: { in: uids } } });
     const refusals = await this.dissolveRefusals(this.prisma, c, group, rows);
-    return { group: this.view(group), checks: [...(group.institutionId === me ? [] : [
-      { rule: 'owner', ok: false, message: '검사 묶음은 원본 소유 기관에서만 되돌릴 수 있습니다.', uids: [] }]), ...this.checks(refusals)] };
+    const hidden = await this.unreadable(c, group);
+    return { group: this.view(group, hidden), checks: [...(group.institutionId === me ? [] : [
+      { rule: 'owner', ok: false, message: '검사 묶음은 원본 소유 기관에서만 되돌릴 수 있습니다.', uids: [] }]), ...this.checks(refusals, hidden)] };
   }
 
   /**
@@ -713,6 +714,7 @@ export class ExamMergeService {
     await this.studyAccess.prepareSourceIdentity(c, originals);
     const prepared = await resolveExamScope(this.prisma, this.studyAccess, c,
       { uid: before.baseUid, purpose: 'current', phase: 'prepare', intent: 'cleanup' });
+    const hidden = await this.unreadable(c, before);
     return this.prisma.$transaction(async tx => {
       await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
       await this.studyAccess.require(c, originals, tx);
@@ -725,14 +727,15 @@ export class ExamMergeService {
         throw new ConflictException({ code: EXAM_GROUP_REFUSED, message: '검사 묶음이 바뀌었습니다. 목록을 새로고침하세요.', refusals: [] });
       if (rows.length !== uids.length || rows.some(row => row.institutionId !== me)) throw new NotFoundException('검사 묶음을 찾을 수 없습니다');
       const refusals = await this.dissolveRefusals(tx, c, group, rows);
-      if (refusals.length) throw this.refused('되돌릴 수 없습니다', refusals);
+      // A refusal on an original the caller cannot read now keeps its rule and sentence, without its UID.
+      if (refusals.length) throw this.refused('되돌릴 수 없습니다', refusals.map(r => hidden.uids.has(r.uid) ? { ...r, uid: null } : r));
       const at = new Date();
       const ended = await tx.studyGroup.updateMany({ where: { id, dissolvedAt: null }, data: { dissolvedAt: at, dissolvedBy: c.actor, dissolvedBySub: c.sub } });
       if (ended.count !== 1) throw new ConflictException({ code: EXAM_GROUP_REFUSED, message: '이미 되돌린 검사입니다. 목록을 새로고침하세요.', refusals: [] });
       await this.newEpochs(tx, uids);
       await tx.auditLog.create({ data: { actor: c.actor || 'unknown', action: group.kind === 'split' ? 'study.unsplit' : 'study.unmerge',
         target: group.baseUid, detail: dump({ by: me, group: id, base: group.baseUid, studies: group.members.map(m => m.logicalUid) }) } });
-      return { group: { ...this.view(group), dissolvedAt: at.toISOString() } };
+      return { group: { ...this.view(group, hidden), dissolvedAt: at.toISOString() } };
     }, { maxWait: 4000, timeout: 8000 });
   }
 
@@ -790,10 +793,11 @@ export class ExamMergeService {
   }
 
   /** The Checks the Split / Unmerge window lists: each rule with ✓ (passes) or the refusals that apply. */
-  private checks(refusals: GroupRefusal[]) {
+  private checks(refusals: GroupRefusal[], hidden?: { uids: Set<string> }) {
     const rule = (key: string[], ok: string) => {
       const hit = refusals.filter(r => key.includes(r.rule));
-      return { rule: key[0], ok: !hit.length, message: hit.length ? hit.map(r => r.message).join(' ') : ok, uids: hit.map(r => r.uid) };
+      return { rule: key[0], ok: !hit.length, message: hit.length ? hit.map(r => r.message).join(' ') : ok,
+        uids: hit.map(r => r.uid).filter(uid => !hidden?.uids.has(uid)) };
     };
     return [rule(['approved', 'destroyed'], '합친 검사에 지금 승인된 판독문이 없습니다.'),
       rule(['transfer'], '이 검사들의 전송·내보내기가 진행 중이지 않습니다.'),
@@ -817,8 +821,41 @@ export class ExamMergeService {
     for (const uid of uids) await tx.studyState.update({ where: { uid }, data: { draftEpoch: randomUUID() } });
   }
 
-  private view(group: ExamGroup) {
-    return { id: group.id, kind: group.kind, baseUid: group.baseUid,
+  /**
+   * The UIDs a group answer must not name to this caller: every original this request cannot read as this exam's now
+   * and the report UIDs of the parts on it (a split part's logical UID). An original is readable only as an exam scope
+   * reads it (resolveExamScope): one identified original resource answers its UID, with the patient and institution
+   * fixed at grouping — not one gone from the archive, not observed, answered by two resources or by another patient's.
+   * Callers passed the access check of every original first; these are counted, never named — to the owner or anyone —
+   * in the group read (members, base, checks) and in an Unmerge refusal.
+   */
+  private async unreadable(c: Caller, group: ExamGroup) {
+    const originals = unique(group.members.map(m => m.studyUid));
+    await this.studyAccess.prepareSourceIdentity(c, originals);
+    const identity = (member: ExamGroupMember) => {
+      try { return this.studyAccess.assertIdentifiedSource(c, member.studyUid); } catch { return null; }
+    };
+    // The grouping snapshot of each member (activeGroups selects only the membership columns).
+    const members: ExamGroupMember[] = await this.prisma.studyGroupMember.findMany({ where: { groupId: group.id } });
+    const readable = members.filter(member => {
+      const source = identity(member);
+      return !!source && (member.sourcePatientId == null || member.sourcePatientId === source.sourcePatientId
+        && (member.sourceInstitution ?? null) === (source.sourceInstitution ?? null));
+    });
+    // The exam's originals are one patient's. Members grouped without a snapshot cannot say which of them changed when
+    // the readable ones disagree, so none of those is named (never guessed by majority).
+    const unsnapped = (member: ExamGroupMember) => member.sourcePatientId == null;
+    const split = new Set(readable.map(member => identity(member)!.sourcePatientId)).size > 1;
+    const gone = new Set(members.filter(member => !readable.includes(member) || split && unsnapped(member)).map(member => member.studyUid));
+    return { originals: gone, uids: new Set(group.members.filter(m => gone.has(m.studyUid)).flatMap(m => [m.studyUid, m.logicalUid])) };
+  }
+
+  /** `hidden`: the unreadable() answer — those originals (with the parts on them) are left out and only counted. */
+  private view(group: ExamGroup, hidden?: { originals: Set<string>; uids: Set<string> }) {
+    const out = { id: group.id, kind: group.kind, baseUid: group.baseUid,
       members: group.members.map(m => ({ logicalUid: m.logicalUid, studyUid: m.studyUid, part: m.part, seriesUids: m.seriesUids })) };
+    if (!hidden?.originals.size) return out;
+    return { ...out, baseUid: hidden.uids.has(group.baseUid) ? null : group.baseUid,
+      members: out.members.filter(m => !hidden.uids.has(m.studyUid)), unavailable: hidden.originals.size };
   }
 }

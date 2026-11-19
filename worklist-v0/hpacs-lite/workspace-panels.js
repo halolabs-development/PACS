@@ -244,6 +244,52 @@
       $('#panel-settings-status').textContent = ''; renderPanelSettings(); panelDialog.showModal();
       panelDialog.querySelector('input[data-panel]').focus();
     });
+    // ── Folding a band panel in place (Minhoon 2026-10-27 item 9: "Make these panels independently collapsible",
+    // "Remember each user's visibility and expanded/collapsed preferences") ──
+    // Separate from Show/Hide above: a folded panel keeps its name on the band (the folded-panels row) and opens again
+    // in its place with one press; hiding takes it off the band. Both are kept in the same layout record (sparse
+    // collapsedPanels next to hiddenPanels), so this browser keeps them per account, Account Layout carries them, and
+    // Reset Layout opens every panel. applyLayout() draws the band from both (reportWindow).
+    const PANEL_LABEL = { thumbnail: 'Thumbnail', aiReport: 'AI Report', imageReport: 'Image Report',
+      clinical: 'Clinical Information', template: 'Reading Template' };
+    // A fold is saved quietly, as Panel Settings and Study Panel choices are: rewriting the toolbar status line would
+    // wrap it in narrower windows and move the list and the work area under the reader (W3R7-04). A fold the browser
+    // could not keep is said once, until a fold is kept again.
+    let foldUnsavedSaid = false;
+    function foldPanel(key, fold) {
+      if (!workspaceEditable() || !KinWorkspaceLayout.PANELS.includes(key)) return;
+      const others = KinWorkspaceLayout.collapsedPanels(workspaceState).filter(k => k !== key);
+      const next = KinWorkspaceLayout.withCollapsedPanels(workspaceState, fold ? [...others, key] : others);
+      if (!next) { toast(kinSay('배치를 확인할 수 없습니다. Reset Layout으로 기본 배치를 사용할 수 있습니다.'), 'err'); return; }
+      workspaceState = next; applyLayout(); saveWorkspace(true);
+      if (workspaceLocalKept) foldUnsavedSaid = false;
+      else if (!foldUnsavedSaid) { foldUnsavedSaid = true; toast(kinSay('패널 접기를 브라우저에 저장하지 못해 이 창에서만 유지됩니다.'), 'err'); }
+      // The pressed button is gone with the panel's new state: the focus goes to the same panel's other button.
+      const target = $(fold ? `.rw > .rw-folds > [data-unfold="${key}"]` : `.rw [data-fold="${key}"]`);
+      if (target?.getClientRects().length) target.focus({ preventScroll: true });
+    }
+    $('.rw').addEventListener('click', event => {
+      const button = event.target.closest('.rw [data-fold], .rw [data-unfold]');
+      if (!button || button.closest('#study-panel-host') || document.body.classList.contains('reading')) return;
+      if (button.dataset.fold) foldPanel(button.dataset.fold, true); else foldPanel(button.dataset.unfold, false);
+    });
+    /**
+     * The five band panels in the item-9 order, for later work on this page (read here, never from the record or the
+     * classes): key, label, `shown` (not hidden in Panel Settings) and `expanded` (not folded) as the reader chose
+     * them, `onScreen` (the panel's content, or its name in the folded-panels row, is drawn on the band now — not in
+     * the Reading Workspace, not lent to the Study Panel drawer, not outside the workflow mode) and its rectangle.
+     */
+    function workspacePanels() {
+      const states = KinWorkspaceLayout.panelStates(workspaceState), reading = document.body.classList.contains('reading');
+      const content = { thumbnail: '.rw > .s-thumb > .thumbwrap', aiReport: '.rw > .s-thumb > .rtabs > [data-panel="aiReport"]',
+        imageReport: '.rw > .s-imgreport', clinical: '.rw > .s-clinical', template: '.rw > .s-template' };
+      const drawn = node => !!node?.isConnected && node.getClientRects().length > 0;
+      return KinWorkspaceLayout.PANELS.map(key => {
+        const body = $(content[key]), name = $(`.rw > .rw-folds > [data-unfold="${key}"]`);
+        const at = drawn(body) ? body : drawn(name) ? name : null;
+        return { key, label: PANEL_LABEL[key], ...states[key], onScreen: !reading && !!at, rect: at ? at.getBoundingClientRect() : null };
+      });
+    }
     // ── Arrange Boxes, from Panel Settings (studio 2026-11-01: "Allow me to drop and drag these boxes so I can configure it the way I want to") ──
     // The five boxes trade places inside the page's current structure (box-layout.js): the swaps are kept in the same
     // layout record as the panel sizes, so this browser keeps them per account, Account Layout carries them to another
@@ -289,7 +335,12 @@
       const clips = { worklist: ['.left'], relatedExams: ['.left'], clinical: ['.right'], relatedReports: ['.workrow', '.right'], editor: ['.workrow', '.right'] };
       return arrangement.order.map(key => {
         const { rect, visible } = boxRect(parts[key], clips[key].map(s => $(s)));
-        const clinicalAway = key === 'clinical' && !$('.rw > .s-clinical')?.getClientRects().length;
+        // The Clinical Information box is the band. It is away while the Clinical panel is hidden in Panel Settings or
+        // lent to the Study Panel drawer; folded, the band stays this box and `visible` (the band's part on screen) decides.
+        const clinicalAway = key === 'clinical' && (() => {
+          const section = $('.s-clinical'), chosen = KinWorkspaceLayout.panelStates(workspaceState).clinical;
+          return !section?.closest('.right > .rw') || !chosen.shown || (chosen.expanded && !section.getClientRects().length);
+        })();
         return { key, label: key === 'editor' && tech ? 'Order List' : BOX_LABEL[key], elements: parts[key],
           ...arrangement.positions[key], rect, visible, shown: !reading && !clinicalAway && !!visible };
       });
