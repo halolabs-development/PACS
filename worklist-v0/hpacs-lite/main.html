@@ -266,8 +266,11 @@
     .rw > :is(.s-imgreport, .s-template) > h3 > .panel-fold { float: right; margin: -1px -6px 0 4px; }
     body:not(.reading) .rw > .s-clinical > h3 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
     .rw > .s-clinical > h3 > .panel-fold { grid-column: 3; grid-row: 1; margin: 0 4px; }
-    /* In the Thumbnail section each tab carries its own button, so the two never part; a narrow column wraps whole tabs. */
-    .rtabs .panel-fold { vertical-align: middle; margin: -2px -6px 0 4px; }
+    /* In the Thumbnail section each tab carries its own button in front of its label, so the two never part; a tab never
+       grows past its column: the 20 px button stays whole and only the label is cut short (…). A narrow column wraps
+       whole tabs. */
+    .rtabs .panel-fold { vertical-align: middle; width: 20px; min-width: 20px; margin: -2px 4px 0 -6px; }
+    body:not(.reading) .rw > .s-thumb > .rtabs > [data-panel] { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
     body:not(.reading) .rw > .s-thumb > .rtabs { flex-wrap: wrap; }
     /* Clinical Context's heading stays in its own column: it is drawn after the fold button and must not lie over it. */
     body:not(.reading) .rw > .s-clinical > h3::after { min-width: 0; overflow: hidden; }
@@ -1813,8 +1816,8 @@
         </div>
         <section class="s-thumb">
           <div class="rtabs">
-            <div class="on" data-panel="thumbnail">Thumbnail<button type="button" class="panel-fold" data-fold="thumbnail" aria-expanded="true" aria-label="Thumbnail 패널 접기" title="Thumbnail 패널 접기"></button></div>
-            <div title="추후 구현" data-panel="aiReport">AI Report<button type="button" class="panel-fold" data-fold="aiReport" aria-expanded="true" aria-label="AI Report 패널 접기" title="AI Report 패널 접기"></button></div>
+            <div class="on" data-panel="thumbnail"><button type="button" class="panel-fold" data-fold="thumbnail" aria-expanded="true" aria-label="Thumbnail 패널 접기" title="Thumbnail 패널 접기"></button>Thumbnail</div>
+            <div title="추후 구현" data-panel="aiReport"><button type="button" class="panel-fold" data-fold="aiReport" aria-expanded="true" aria-label="AI Report 패널 접기" title="AI Report 패널 접기"></button>AI Report</div>
           </div>
           <div class="thumbwrap" id="thumbwrap">
             <div style="color:#556;padding:20px;text-align:center">검사를 선택하세요</div>

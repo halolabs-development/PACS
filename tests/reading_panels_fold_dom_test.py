@@ -527,25 +527,35 @@ class ReadingPanelsFoldDOM(unittest.TestCase):
                     'aria-label', 'Fold the Reading Template panel' if english else 'Reading Template 패널 접기')
                 expect(page.locator('.rw > .rw-folds')).to_have_attribute('aria-label', 'Folded panels' if english else '접힌 패널')
 
-    def test_19_every_fold_button_is_the_one_clicked_in_narrow_windows_with_all_panels_open(self):
-        """Narrow columns: each panel's own button takes the click (a real click checks what lies at that point)."""
-        for width, height in ((1024, 768), (900, 768), (840, 768)):
+    def test_19_every_fold_button_folds_and_opens_by_a_real_click_at_every_width(self):
+        """760-1366 px wide, with and without a selected study, all five panels open: each panel's own button takes a
+        real click (the click lands on what lies at that point) and folds it; its name opens it again. A label may be
+        cut short; the button never is."""
+        widths = (760, 780, 800, 820, 840, 870, 900, 960, 1024, 1100, 1200, 1366)
+        for width in widths:
             for select in (False, True):
-                with self.subTest(size=f'{width}x{height}', selected=select):
-                    page, _ = self.open(width=width, height=height, init=plant(record()))
+                with self.subTest(width=width, selected=select):
+                    page, _ = self.open(width=width, height=768, init=plant(record()))
                     if select:
                         page.locator('#rows tr[data-uid]').first.click()
                         settle(page)
-                    for key in ('aiReport', 'thumbnail', 'imageReport', 'clinical', 'template'):
+                    for key in PANELS:
+                        for other in PANELS:
+                            self.assert_open(page, other)
                         button = self.fold(page, key)
                         button.scroll_into_view_if_needed()
                         hit = button.evaluate("""b => { const r = b.getBoundingClientRect();
-                          return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === b; }""")
+                          return r.width >= 19 && document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === b; }""")
                         self.assertTrue(hit, key)
                         button.click(timeout=5000)
                         self.assert_folded(page, key)
-                    page.screenshot(path=str(OUT / f'panels-fold-narrow-{width}x{height}-{int(select)}.png'))
-
+                        name = self.unfold(page, key)
+                        name.scroll_into_view_if_needed()
+                        name.click(timeout=5000)
+                        self.assert_open(page, key)
+                    self.assertEqual([], self.collapsed(page))
+                    if width in (780, 800, 1366):
+                        page.screenshot(path=str(OUT / f'panels-fold-width-{width}-{int(select)}.png'))
     def test_20_a_folded_panel_the_study_panel_holds_has_no_name_on_the_band_until_it_comes_back(self):
         page, _ = self.open(init=plant(record(collapsed=('imageReport', 'clinical', 'template'))))
         page.locator('#rows tr[data-uid]').first.click()
