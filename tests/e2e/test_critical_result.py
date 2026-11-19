@@ -620,7 +620,7 @@ WRITE_ACTION = {"#2": "create", "#6": "ack", "#7": "cancel", "#8": "supersede"}
 # Contract section 16 names. They are what is judged, so they never tell which record an observation is (test-plan 6.1.1).
 ROW_WORDS = ("Pending ACK", "Source Changed", "Acknowledged", "Cancelled", "Superseded")
 LINE_WORDS = ("Acknowledgement status unknown", "Acknowledged", "Cancelled", "Superseded")
-SEND_WORDS = ("Delivered", "Not delivered", "Delivery status unknown", "Cancelled", "Not cancelled", "Cancellation status unknown")
+SEND_WORDS = ("Partially delivered", "Delivered", "Not delivered", "Delivery status unknown", "Cancelled", "Not cancelled", "Cancellation status unknown")
 SENT_WORDS = ("Pending ACK", "Acknowledged", "Cancelled", "Superseded")
 MARK_WORDS = ("Source Changed", "Recipient Not Eligible", "Status Unknown")
 STATE_NAME = {"created": "Pending ACK", "acknowledged": "Acknowledged", "cancelled": "Cancelled", "superseded": "Superseded"}
@@ -807,11 +807,36 @@ def send_outcome(net: list[dict], request: str, route: str, owner: list, target:
     cancel = route == "#7"
     done, refused, unknown = (("Cancelled", "Not cancelled", "Cancellation status unknown") if cancel
                               else ("Delivered", "Not delivered", "Delivery status unknown"))
-    if any(applied_write(entry, owner, request, target) for entry in posts):
-        return done
+    grouped = route == "#2" and "recipientSubs" in body_of(posts[0])
+
+    def group_outcome(applied):
+        summary, recipients = applied.get("send"), applied.get("recipients")
+        if not isinstance(summary, dict) or summary.get("requestId") != request or not isinstance(recipients, list):
+            return unknown
+        roles = [summary.get(role) for role in ("orderingPhysician", "hospitalInbox")]
+        if not all(isinstance(r, dict) for r in roles + recipients):
+            return unknown
+        expected = set(body_of(posts[0])["recipientSubs"])
+        by_sub = {r.get("sub"): r for r in recipients}
+        if len(recipients) != len(expected) or by_sub.keys() != expected:
+            return unknown
+        delivered = [key_of(r) for r in recipients if r.get("status") == "delivered"]
+        if request not in delivered or not all(delivered) or len(delivered) != len(set(delivered)):
+            return unknown
+        for role in roles:
+            selected = by_sub.get(role.get("sub"))
+            if selected and (role.get("status"), key_of(role)) != (selected.get("status"), key_of(selected)):
+                return unknown
+            if not selected and role.get("status") == "delivered":
+                return unknown
+        return "Partially delivered" if any(r.get("status") != "delivered" for r in roles + recipients) else done
+
+    for entry in posts:
+        if applied_write(entry, owner, request, target):
+            return group_outcome(entry["json"]["applied"]) if grouped else done
     for entry in posts:
         data = entry.get("json")
-        if (not cancel and answered(entry) and entry["status"] == 409 and isinstance(data, dict)
+        if (not cancel and not grouped and answered(entry) and entry["status"] == 409 and isinstance(data, dict)
                 and data.get("code") == "CRITICAL_RESULT_PENDING_EXISTS" and str(data.get("id") or "").lower() == request):
             return done
     first = posts[0]["n"]
@@ -824,7 +849,10 @@ def send_outcome(net: list[dict], request: str, route: str, owner: list, target:
             if cancel and key_of(item) == target and item.get("state") == "cancelled":
                 return done
             if not cancel and key_of(item) == request:
-                return done
+                if not grouped:
+                    return done
+                if entry["route"] == "#4" and item.get("dispatch"):
+                    return group_outcome(item["dispatch"])
     return refused if classify(posts[0]) == "refused" else unknown
 
 
@@ -1019,13 +1047,13 @@ def problems(cp: dict) -> list[str]:
         if dialog and mapping["dialog"]:
             request = mapping["dialog"]
             want = send_outcome(net, request, "#2", owner)
-            if "Delivered" in dialog["words"] and request not in records:
+            if any(w in ("Delivered", "Partially delivered") for w in dialog["words"]) and request not in records:
                 found.add("delivered-not-on-server")
             elif dialog["words"] != [want] or dialog["check"] != str(want).endswith("status unknown"):
                 found.add("state-word-mismatch")
         for line, (route, request, target) in zip(screen["sent_lines"], mapping["sent_lines"]):
             want = send_outcome(net, request, route, owner, target)
-            if "Delivered" in line["words"] and request not in records:
+            if any(w in ("Delivered", "Partially delivered") for w in line["words"]) and request not in records:
                 found.add("delivered-not-on-server")
             elif line["words"] != [want] or line["check"] != str(want).endswith("status unknown"):
                 found.add("state-word-mismatch")
@@ -1984,17 +2012,22 @@ class CriticalResultScreensE2E(KeycloakGroups, CriticalResultHarness, base.Workl
         return self.stable(read, page)
 
     def sender_screen(self, page: Any) -> dict:
+        def aggregate_words(text):
+            # Role and account outcomes follow the overall result; the same delivery may serve both roles.
+            first = text.splitlines()[0] if text else ""
+            return words(first if first.startswith(("Partially delivered", "Delivered")) else text, SEND_WORDS)
+
         def read() -> dict:
             dialog = page.get_by_role("dialog", name="Send Critical Result")
             view = None
             if dialog.count():
                 text = dialog.get_by_role("status").inner_text()
-                view = {"text": text, "words": words(text, SEND_WORDS),
+                view = {"text": text, "words": aggregate_words(text),
                         "check": dialog.get_by_role("button", name="Check Again", exact=True).count() > 0}
             lines = []
             for item in self.sent_lines(page).all():
                 text = item.inner_text()
-                lines.append({"text": text, "words": words(text, SEND_WORDS),
+                lines.append({"text": text, "words": aggregate_words(text),
                               "check": item.get_by_role("button", name="Check Again", exact=True).count() > 0})
             rows = []
             pane = self.sent_pane(page)
@@ -2161,11 +2194,15 @@ class CriticalResultScreensE2E(KeycloakGroups, CriticalResultHarness, base.Workl
         return dialog, read["json"] or {}
 
     def fill_and_send(self, dialog: Any, logical: str, message: str) -> None:
-        field = dialog.get_by_label("Recipient", exact=True)
+        # Recipient is one check box per candidate: exactly this account's box is checked, every other one is not.
+        field = dialog.get_by_role("group", name="Recipient", exact=True)
         actor = self.stack.actor(logical)
-        options = [text for text in field.get_by_role("option", include_hidden=True).all_inner_texts() if names(actor, text)]
-        self.screen_ok(len(options) == 1, f"one Recipient option names {logical}'s account, got {len(options)}")
-        field.select_option(label=options[0])
+        labels = field.locator("label")
+        texts = labels.all_inner_texts()
+        mine = [n for n, text in enumerate(texts) if names(actor, text)]
+        self.screen_ok(len(mine) == 1, f"one Recipient box names {logical}'s account, got {len(mine)}")
+        for n in range(len(texts)):
+            labels.nth(n).get_by_role("checkbox").set_checked(n == mine[0])
         dialog.get_by_label("Message", exact=True).fill(message)
         dialog.get_by_role("button", name="Send", exact=True).click()
 
@@ -2513,7 +2550,7 @@ class CriticalResultScreensE2E(KeycloakGroups, CriticalResultHarness, base.Workl
                 self.server_eq((source.get("version"), source.get("action")), (1, "approve"), "S-02 #1 source")
                 expect(dialog).to_contain_text("Source: v1 · Approve")
                 candidates = self.session_read(s, f"/studies/{u1.uid}/critical-result-recipients")["json"]["recipients"]
-                options = dialog.get_by_label("Recipient", exact=True).get_by_role("option", include_hidden=True).all_inner_texts()
+                options = dialog.get_by_role("group", name="Recipient", exact=True).locator("label").all_inner_texts()
                 for row in candidates:
                     self.screen_ok(sum(names(row["actor"], option) for option in options) == 1, f"S-02: one option for {row['actor']}")
                 self.screen_ok(sum(any(names(row["actor"], option) for row in candidates) for option in options) == len(candidates),
@@ -2531,17 +2568,20 @@ class CriticalResultScreensE2E(KeycloakGroups, CriticalResultHarness, base.Workl
                 post = self.answer(s, "#2", since, "S-03 create", target=u1.uid)
                 r0 = request_id(post)
                 body = body_of(post)
-                self.harness_ok(sorted(body) == ["expectedOwner", "message", "recipientSub", "requestId", "sourceVersion"],
+                self.harness_ok(sorted(body) == ["expectedOwner", "message", "recipientSubs", "requestId", "sourceVersion"],
                                 f"S-03 body keys {sorted(body)}")
                 self.harness_ok(re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", r0) is not None,
                                 "S-03 requestId is a UUID v4")
-                self.harness_ok((body["expectedOwner"], body["recipientSub"], body["sourceVersion"], body["message"])
-                                == (s.owner, self.sub("clinician"), 1, m1), "S-03 body values")
+                self.harness_ok((body["expectedOwner"], body["recipientSubs"], body["sourceVersion"], body["message"])
+                                == (s.owner, [self.sub("clinician")], 1, m1), "S-03 body values")
                 self.harness_ok(not post["authorization"], "S-03 cookie session")
                 applied = (post["json"] or {}).get("applied") or {}
                 self.server_eq((post["status"], (post["json"] or {}).get("replayed"), applied.get("action"), applied.get("from"),
                                 applied.get("to"), applied.get("revision")), (201, False, "create", None, "created", 1), "S-03 answer")
                 status = dialog.get_by_role("status")
+                expect(status).to_contain_text("Partially delivered")
+                expect(status).to_contain_text("계정 미연결")
+                expect(status).to_contain_text("수신함 미지정")
                 expect(status).to_contain_text("Delivered")
                 expect(status).to_contain_text(DELIVERED_TEXT)
                 self.harness_ok(len(self.posts(s, "#2", u1.uid)) == 1, "S-03 one create")
@@ -2678,7 +2718,7 @@ class CriticalResultScreensE2E(KeycloakGroups, CriticalResultHarness, base.Workl
                 expect(status).to_contain_text(UNKNOWN_TEXT)
                 expect(dialog.get_by_role("button", name="Check Again", exact=True)).to_be_visible()
                 expect(s.page.get_by_text("Not delivered")).to_have_count(0)
-                expect(dialog.get_by_label("Recipient", exact=True)).to_be_disabled()
+                expect(dialog.get_by_role("group", name="Recipient", exact=True)).to_be_disabled()
                 expect(dialog.get_by_label("Message", exact=True)).not_to_be_editable()
                 expect(dialog.get_by_role("button", name="Send", exact=True)).to_be_disabled()
                 self.server_eq(critical_row(q)["state"], "created", "L-01 R1 exists")
@@ -3288,11 +3328,17 @@ class CriticalResultScreensE2E(KeycloakGroups, CriticalResultHarness, base.Workl
                 self.choose(s, u5, page=m)
                 dialog, _ = self.open_dialog(s, u5, page=m)
                 fake = Control(self, s, "MU-B", page=m)
-                fake.add("hb", is_(route="#2", target=u5.uid), "fulfill", answer=lambda request: {
-                    "owner": s.owner, "replayed": False, "applied": {
-                        "id": request_id({"body": request.post_data}), "studyUid": u5.uid,
-                        "requestId": request_id({"body": request.post_data}), "action": "create", "from": None, "to": "created",
-                        "revision": 1, "replacement": None, "at": now_iso()}})
+                def fabricated_send(request):
+                    body = json.loads(request.post_data)
+                    rid = body["requestId"]
+                    unlinked = {"sub": None, "status": "unlinked"}
+                    return {"owner": s.owner, "replayed": False, "applied": {
+                        "id": rid, "studyUid": u5.uid, "requestId": rid, "action": "create", "from": None, "to": "created",
+                        "revision": 1, "replacement": None, "at": now_iso(),
+                        "send": {"requestId": rid, "orderingPhysician": unlinked, "hospitalInbox": unlinked},
+                        "recipients": [{"sub": body["recipientSubs"][0], "status": "delivered", "id": rid}]}}
+
+                fake.add("hb", is_(route="#2", target=u5.uid), "fulfill", answer=fabricated_send)
                 fake.start()
                 since = self.n
                 self.fill_and_send(dialog, "clinician3", self.message())
