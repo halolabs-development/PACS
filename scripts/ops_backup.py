@@ -468,6 +468,41 @@ class SealedComponent:
         return False
 
 
+def new_record(key):
+    """The encryption record a set starts with; seal_record completes it."""
+    return {"format": ENCRYPTION_FORMAT, "key_id": key.key_id, "set_id": uuid.uuid4().hex}
+
+
+@contextmanager
+def sealed_component(directory, name, key, plaintext):
+    """The writer of one component of a new set: its producer writes into the yielded sink; the plaintext digest and
+    size are recorded in `plaintext` only when the component was written whole."""
+    sealed = SealedComponent(Path(directory) / name, key)
+    with sealed as sink:
+        yield sink
+    plaintext[name] = {"sha256": sealed.sha.hexdigest(), "bytes": sealed.bytes}
+
+
+def seal_record(directory, manifest, key, plaintext, role_catalog=None):
+    """Complete the encryption record of a set whose components sealed_component wrote: the stored digests and sizes,
+    the sealed plaintext digests (and role catalog), and the authentication of the manifest's restore inputs."""
+    directory = Path(directory)
+    components = backup_components(manifest)
+    if set(plaintext) != set(components) or manifest["encryption"]["key_id"] != key.key_id:
+        raise RuntimeError("Backup component inventory differs")
+    for name in components:
+        (directory / name).chmod(0o600)
+    manifest["sha256"] = {name: digest(directory / name) for name in components}
+    manifest["bytes"] = {name: (directory / name).stat().st_size for name in components}
+    metadata = {"plaintext": {name: plaintext[name] for name in components}}
+    if role_catalog is not None:
+        metadata["role_catalog"] = role_catalog
+    sealed = age_bytes(key, json.dumps(metadata, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+    manifest["encryption"]["sealed"] = base64.b64encode(sealed).decode("ascii")
+    manifest["encryption"]["auth"] = manifest_auth(manifest, key)
+    return manifest
+
+
 def _authenticated_body(manifest):
     body = {key: value for key, value in manifest.items() if key not in UNAUTHENTICATED}
     body["encryption"] = {key: value for key, value in body["encryption"].items() if key != "auth"}
@@ -871,7 +906,7 @@ def backup(output, ready_timeout=120):
     directory = parent / (datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8])
     directory.mkdir(mode=0o700)
     manifest = {"format": 1, "complete": False, "created_utc": datetime.now(timezone.utc).isoformat(),
-                "encryption": {"format": ENCRYPTION_FORMAT, "key_id": key.key_id, "set_id": uuid.uuid4().hex},
+                "encryption": new_record(key),
                 "emr": {"state_volume": state_volume, "tablespace": "kin_emr_access", "same_pause": True},
                 "git_sha": text(["git", "rev-parse", "HEAD"]),
                 "git_dirty": bool(text(["git", "status", "--porcelain", "--untracked-files=no"])),
@@ -885,14 +920,7 @@ def backup(output, ready_timeout=120):
         image["repo_digests"] = metadata.get("RepoDigests") or []
     write_json(directory / "manifest.json", manifest)
     plaintext = {}
-
-    @contextmanager
-    def component(name):
-        sealed = SealedComponent(directory / name, key)
-        with sealed as sink:
-            yield sink
-        plaintext[name] = {"sha256": sealed.sha.hexdigest(), "bytes": sealed.bytes}
-
+    component = lambda name: sealed_component(directory, name, key, plaintext)
     pause_started = time.monotonic()
     stage = "stop writers"
     try:
@@ -938,18 +966,8 @@ def backup(output, ready_timeout=120):
         for name in FILES[3:]:
             with component(name) as sink:
                 sink.write((ROOT / name).read_bytes())
-        components = backup_components(manifest)
-        if set(plaintext) != set(components):
-            raise RuntimeError("Backup component inventory differs")
-        for name in components:
-            (directory / name).chmod(0o600)
-        manifest["sha256"] = {name: digest(directory / name) for name in components}
-        manifest["bytes"] = {name: (directory / name).stat().st_size for name in components}
         stage = "seal encryption record"
-        metadata = {"plaintext": {name: plaintext[name] for name in components}, "role_catalog": roles}
-        sealed = age_bytes(key, json.dumps(metadata, ensure_ascii=False, sort_keys=True).encode("utf-8"))
-        manifest["encryption"]["sealed"] = base64.b64encode(sealed).decode("ascii")
-        manifest["encryption"]["auth"] = manifest_auth(manifest, key)
+        seal_record(directory, manifest, key, plaintext, roles)
         manifest["complete"] = True
     except BaseException as error:
         manifest["backup_error"] = {"stage": stage, "type": type(error).__name__}

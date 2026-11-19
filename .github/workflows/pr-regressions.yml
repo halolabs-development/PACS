@@ -195,6 +195,15 @@ jobs:
     - name: EMR-A record classification, access events, signatures and lawful lifecycle contracts
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/emr-contract --cwd . --tree api/src --file api/tsconfig.json --file api/package-lock.json --file api/prisma/schema.prisma --file api/src/emr-contract/README.md --file api/src/emr-contract/access-event.ts --file api/src/emr-contract/classification.ts --file api/src/emr-contract/composition.ts --file api/src/emr-contract/lawful-defaults.ts --file api/src/emr-contract/legal-basis.ts --file api/src/emr-contract/report-lifecycle.ts --file api/src/emr-contract/routes.ts --file api/src/emr-contract/signature.ts --file api/src/emr-contract/validation.ts --file tests/emr_contract_test.cjs -- docker run --rm --network none --read-only --tmpfs /tmp -v "$PWD:/src:ro" -w /src node:22-alpine node --test tests/emr_contract_test.cjs
+    - name: Pinned age for encrypted daily backups
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      run: |
+        umask 077
+        age_dir=$(mktemp -d "$RUNNER_TEMP/kin-backup-age.XXXXXXXX")
+        curl --fail --location --proto '=https' --tlsv1.2 --retry 2 --max-time 60 https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz -o "$age_dir/age.tar.gz"
+        echo "cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10  $age_dir/age.tar.gz" | sha256sum --check --strict
+        tar -xzf "$age_dir/age.tar.gz" -C "$age_dir" age/age age/age-keygen
+        echo "KIN_TEST_AGE=$age_dir/age/age" >> "$GITHUB_ENV"
     - name: CD-09-P/C draft purpose ledger, destruction record formats and the composed startup gate (pure)
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: |

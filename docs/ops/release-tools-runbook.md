@@ -713,6 +713,24 @@ apt list --upgradable 2>/dev/null | grep -- '-security'
 Record the list in the private release record. Install host updates only in a maintenance window of their own (a
 kernel or Docker update restarts the stack), never between the judgement and the switch of this procedure.
 
+### Storage encryption
+
+Before the window, read where the site's data is stored, changing nothing:
+
+```sh
+python3 scripts/ops_deploy_preflight.py --storage-only --backup-root <backup-directory>
+```
+
+One line names every writable data location of the database, Orthanc and the API (the database files, the EMR
+tablespace, the image store, the EMR state, the retention ledgers and their mirror) and the backup root: `encrypted`
+when every block device under it reaches a dm-crypt (LUKS) layer, `not-detected` when one does not, `unknown` when
+this host cannot see it that way (a cloud provider's volume encryption, a network or ZFS file system, a missing path).
+It also says whether the backup encryption key is `configured`. The API-only preflight reports the same in its
+observation. This is a report, not a refusal: for a location that is not `encrypted`, the private release record
+names how it is protected instead (for example the provider's volume encryption, with its evidence) or the separate
+maintenance window in which it will be moved onto encrypted storage. Never re-partition or encrypt a disk inside this
+procedure. A backup configuration that is not `configured` stops the nightly backup (Nightly job).
+
 ### The host declaration
 
 The host is not enumerated and nothing on it is blocked. A reviewed host declaration names only what the
@@ -1642,6 +1660,32 @@ the new location with `--source` / `--wrapping-source` below; do not edit the
 set's manifest. This unit does not enable offsite transfer or change the
 external-backup OFF decision.
 
+### Backup encryption
+
+Every daily set is encrypted with the site's backup key; the nightly backup refuses, before it stops any writer,
+when the key cannot be used. Install a private JSON configuration at `/etc/kin-deploy/backup-encryption.json`, using
+`scripts/backup-encryption.example.json` as the shape (a direct invocation can name another file with
+`KIN_BACKUP_ENCRYPTION`):
+
+- `age`: the absolute path of the age program (v1.3.2, the version the export preparation and CI use; the nightly
+  job runs with a cleared environment, so no PATH lookup is involved).
+- `files`: each key ID mapped to the absolute path of one age identity file (`age-keygen -o <file>`). Keep it outside
+  the checkout, the backup root and every volume a backup copies, readable by the backup account only. Keep a second
+  copy of every identity away from the site: a set can only be restored with the identity it names, and losing it
+  loses every set encrypted to it. The identity is not the EMR signing wrapping secret; each is kept and restored on
+  its own.
+- `current`: the key ID new sets are written with. To change keys, add the new identity under a new ID, make it
+  `current`, and keep the old ID in `files` until the sets that name it have rotated out.
+- `workspace`: a directory outside the backup root (on encrypted storage, or volatile space large enough for one set)
+  where a rehearsal or restore opens an encrypted set. It needs the free space of one set's plaintext.
+
+While writers are paused, each component (database dumps, the Orthanc and EMR-state archives, catalogs, `.env` and
+the Compose files) goes through age as it is produced; no plaintext component is written into the backup root. The
+manifest records the stored (encrypted) bytes, so rotation, monitoring and export inventories compare what is on disk;
+the plaintext digests and the cluster's role catalog are sealed inside its `encryption` record, and that record with
+the manifest's restore inputs is authenticated by the key. A set that fails to encrypt is not complete, so it is never
+rotated in place of an older one. Encrypted sets are never sealed for the audit ledger.
+
 ## Recovery and rehearsal
 
 Restore the database as in “Restore B into a separate rollback project R” or, for a
@@ -1658,6 +1702,23 @@ python3 scripts/ops_backup.py rehearse /srv/kin-backups/SET
 python3 scripts/ops_backup.py restore-wrapping /srv/kin-backups/SET --source /mnt/custody/SET --destination /srv/kin-signing-restored/SET
 python3 scripts/ops_backup.py rehearse /srv/kin-backups/SET --wrapping-source /mnt/custody/SET
 ```
+
+An encrypted set (its manifest has an `encryption` record) is opened with the key it
+names: `rehearse` checks that key against the record before anything else, then
+decrypts every component into a new folder of the configured `workspace` and compares
+each with its sealed digest and size, and only then starts the isolated restore; the
+folder is removed afterwards. A wrong or missing key, a changed manifest or a changed
+component refuses before any container, volume or workspace folder exists. On another
+host, or with an identity kept elsewhere, give it for that set:
+
+```sh
+python3 scripts/ops_backup.py rehearse /srv/kin-backups/SET --encryption-key /mnt/keys/backup-key-1.txt --workspace /srv/kin-restore-work
+```
+
+A set written before encryption existed has no `encryption` record and is validated
+and rehearsed as before, without a key. A restore into a rollback project reads an
+encrypted B the same way, through `ops_backup.opened_set` (its `.env`, dumps and
+archives come from the opened folder; the hold, records and custody stay with B).
 
 The first command checks the custody files against the snapshot and prints only
 the restored ID/path mapping. It reads every custody file before creating the

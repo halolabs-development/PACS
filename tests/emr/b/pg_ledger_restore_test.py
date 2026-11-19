@@ -241,6 +241,7 @@ class PgLedgerFixture(unittest.TestCase):
         cls.command(['docker', 'exec', '-u', 'root', cls.container, 'sh', '-c',
                      'mkdir /var/lib/postgresql/emr-access/ts && chown postgres:postgres /var/lib/postgresql/emr-access/ts'])
         provision = cls.command([sys.executable, str(ROOT / 'scripts/emr-compose.py'), 'sql', 'provision']).stdout
+        cls.admin_password = password
         cls.runtime_password = secrets.token_hex(24)
         cls.command(['docker', 'exec', '-i', '-e', 'KIN_EMR_RUNTIME_PASSWORD=' + cls.runtime_password,
                      cls.container, 'psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1',
@@ -957,9 +958,11 @@ class PgLedgerNativeRestoreLive(PgLedgerFixture):
     database_name = 'kin'
 
     def test_native_backup_private_recovery_and_selected_identity(self):
+        import hashlib
         import io
         import sqlite3
         import tarfile
+        import tempfile
         import shutil
         from datetime import datetime, timezone
         from unittest.mock import patch
@@ -1035,6 +1038,7 @@ class PgLedgerNativeRestoreLive(PgLedgerFixture):
         source_before={n:ops.digest(snapshot/n) for n in (*components,'manifest.json')}
         observed={}
         original=ops.temporary_run
+        superuser={'name':'postgres'}   # the older daily rehearsal's cluster; the current daily shape's is kin
         def witness(args, **kwargs):
             result=original(args,**kwargs)
             if args[-1]==ops.EMR_RECOVERY_SCRIPT:
@@ -1043,8 +1047,17 @@ class PgLedgerNativeRestoreLive(PgLedgerFixture):
                   'outcomes',(SELECT count(*) FROM emr_access.attempt_outcome WHERE operation_id='{operation}' AND outcome='committed'),
                   'clinical',(SELECT count(*) FROM public."ReportVersion" WHERE uid='SYNTHETIC-restore' AND version=1 AND findings='SYNTHETIC only'),
                   'spool_imported',(SELECT count(*) FROM emr_access.failure_entry WHERE failure_id='{failure}'))"""
-                observed.update(json.loads(self.command(['docker','exec',restored,'psql','-X','-U','postgres','-d','kin','-qAt','-c',sql]).stdout))
+                observed.update(json.loads(self.command(['docker','exec',restored,'psql','-X','-U',superuser['name'],'-d','kin','-qAt','-c',sql]).stdout))
+                observed['keycloak']=self.command(['docker','exec',restored,'psql','-X','-U',superuser['name'],'-d','keycloak','-qAt','-c',
+                                                   'SELECT string_agg(id, \',\' ORDER BY id) FROM synthetic_realm']).stdout.strip()
+            if ops.SQLITE_CHECK in args and attachment:
+                # The restored image file itself, read back from the rehearsal's own volume before its cleanup.
+                volume=next(part.split(',')[1].removeprefix('source=') for part in args if part.startswith('type=volume,'))
+                observed['attachment_sha256']=self.command(['docker','run','--rm','--network','none','--mount',
+                    'type=volume,source='+volume+',target=/restore,readonly','--entrypoint','sha256sum','postgres:16-alpine',
+                    '/restore/'+attachment['path']]).stdout.split()[0]
             return result
+        attachment={}
         actual_catalog = ops.emr_catalog
         actual_expiry = ops.restored_emr_expiry
         def expiry_witness(container, user):
@@ -1062,7 +1075,7 @@ class PgLedgerNativeRestoreLive(PgLedgerFixture):
         with patch.object(ops,'temporary_run',side_effect=witness), patch.object(ops,'emr_catalog',side_effect=catalog_witness), \
                 patch.object(ops,'restored_emr_expiry',side_effect=expiry_witness):
             ops.rehearse(snapshot)
-        self.assertEqual(observed,dict(entries=2,outcomes=1,clinical=1,spool_imported=1,old_history_retained=1))
+        self.assertEqual(observed,dict(entries=2,outcomes=1,clinical=1,spool_imported=1,old_history_retained=1,keycloak='B2-owned-fixture'))
         reports=[json.loads(p.read_text()) for p in snapshot.glob('rehearsal-*.json')]
         self.assertTrue(reports[-1]['success']);self.assertEqual(reports[-1]['cleanup_failures'],[])
         sweep=reports[-1]['emr']['expiry_sweep']
@@ -1078,6 +1091,111 @@ class PgLedgerNativeRestoreLive(PgLedgerFixture):
         with self.assertRaisesRegex(RuntimeError,'owner/ACL/roles/tablespace differ'):ops.rehearse(wrong)
         self.assertEqual(source_before,{n:ops.digest(snapshot/n) for n in source_before})
         self.assertEqual(ops.emr_catalog(self.container,'kin'),catalog)
+        legacy_observed=dict(observed)
+
+        # Encrypted daily backups: each restored set is compared with what the same set restores without encryption.
+        def rehearse_observed(directory):
+            observed.clear()
+            with patch.object(ops,'temporary_run',side_effect=witness), patch.object(ops,'emr_catalog',side_effect=catalog_witness), \
+                    patch.object(ops,'restored_emr_expiry',side_effect=expiry_witness):
+                ops.rehearse(directory)
+            receipt=json.loads(max(directory.glob('rehearsal-*.json'),key=lambda path:path.stat().st_mtime_ns).read_text())
+            self.assertTrue(receipt['success']);self.assertEqual(receipt['cleanup_failures'],[])
+            return dict(observed),receipt
+        def encrypted_copy(source,target,plain,role_catalog=None):
+            """The set as a new daily backup writes it, through the product's writer: each dump straight from pg_dump into
+            age, every other component streamed from the plaintext set, then the sealed and authenticated record."""
+            key=ops.backup_key()
+            target.mkdir()
+            written={}
+            stored={name:value for name,value in plain.items() if name not in ('sha256','bytes','role_catalog')}
+            stored['encryption']=ops.new_record(key)
+            for name in ops.backup_components(plain):
+                with ops.sealed_component(target,name,key,written) as sink:
+                    if name.endswith('.dump'):
+                        ops.run(['docker','exec',self.container,'pg_dump','-U','kin','-d',name[:-len('.dump')],'--encoding=UTF8','-Fc','--create'],output=sink)
+                    else:
+                        sink.write((source/name).read_bytes())
+            ops.seal_record(target,stored,key,written,role_catalog)
+            ops.write_json(target/'manifest.json',stored)
+            for path in target.iterdir():
+                if path.name!='manifest.json':
+                    self.assertTrue(path.read_bytes().startswith(ops.AGE_HEADER),path.name)
+            return stored
+        def backup_config(key_id):
+            # Test-only age identity, workspace and configuration, outside the repository and the backup root.
+            age=Path(os.environ['KIN_TEST_AGE']).absolute()
+            keys=Path(tempfile.mkdtemp(prefix='kin-b22-'))
+            self.addCleanup(shutil.rmtree,keys,True)
+            self.command([str(age.with_name('age-keygen')),'-o',str(keys/'backup.key')])
+            (keys/'open').mkdir()
+            (keys/'backup-encryption.json').write_text(json.dumps({'format':1,'age':str(age),'current':key_id,
+                'files':{key_id:str(keys/'backup.key')},'workspace':str(keys/'open')}))
+            return keys/'backup-encryption.json'
+        config=backup_config('b22-live')
+        with patch.dict(os.environ,{'KIN_BACKUP_ENCRYPTION':str(config)}):
+            encrypted=evidence/'encrypted-snapshot'
+            encrypted_copy(snapshot,encrypted,manifest)
+            got,receipt=rehearse_observed(encrypted)
+            self.assertEqual(got,legacy_observed,'the encrypted set restores the same ledger, report, spool and realm rows')
+            self.assertEqual((receipt['backup'],receipt['encryption']),('encrypted-snapshot','b22-live'))
+            self.assertEqual(list((config.parent/'open').iterdir()),[],'the opened plaintext is removed')
+        # A wrong key: refused before any Docker command, workspace or rehearsal result.
+        other=backup_config('b22-live')
+        calls=[]
+        real_run,real_helper=ops.run,ops.temporary_run
+        results_before=set(encrypted.glob('rehearsal-*.json'))
+        with patch.dict(os.environ,{'KIN_BACKUP_ENCRYPTION':str(other)}), \
+                patch.object(ops,'run',side_effect=lambda args,**kw:(calls.append(list(args)),real_run(args,**kw))[1]), \
+                patch.object(ops,'temporary_run',side_effect=lambda args,**kw:(calls.append(list(args)),real_helper(args,**kw))[1]):
+            with self.assertRaisesRegex(RuntimeError,'key does not match this set'):
+                ops.rehearse(encrypted)
+        self.assertEqual(calls,[],'no docker run, volume create or restore command')
+        self.assertEqual(list((other.parent/'open').iterdir()),[])
+        self.assertEqual(set(encrypted.glob('rehearsal-*.json')),results_before)
+
+        # The current daily shape (the role catalog, synthetic credentials, one image attachment), restored by the
+        # catalog replay, without and with encryption.
+        daily=evidence/'daily-snapshot'
+        daily.mkdir()
+        role_catalog=ops.role_catalog(self.container)
+        (daily/'.env').write_text('POSTGRES_PASSWORD='+self.admin_password+'\nKIN_EMR_RUNTIME_PASSWORD='+self.runtime_password+'\n')
+        for name in ops.FILES[4:]:
+            shutil.copyfile(snapshot/name,daily/name)
+        def dump_into(args,name):
+            with (daily/name).open('wb') as output:
+                result=subprocess.run(args,stdout=output,stderr=subprocess.PIPE,timeout=120)
+                self.assertEqual(result.returncode,0,result.stderr.decode(errors='replace')[-500:])
+        for database in ('kin','keycloak'):
+            dump_into(['docker','exec',self.container,'pg_dump','-U','kin','-d',database,'--encoding=UTF8','-Fc','--create'],database+'.dump')
+        dump_into(['docker','exec',self.container,'pg_dumpall','-U','kin','--roles-only','--no-role-passwords'],'cluster-roles.sql')
+        for name in ('emr-catalog.json','emr-state.tgz'):
+            shutil.copyfile(snapshot/name,daily/name)
+        image=b'SYNTHETIC attachment bytes '+self.token.encode()
+        uid=str(uuid.uuid4())
+        attachment['path']=uid[:2]+'/'+uid[2:4]+'/'+uid
+        index=evidence/'daily-index'
+        with sqlite3.connect(index) as db:
+            db.execute('CREATE TABLE AttachedFiles(uuid TEXT, compressedSize INTEGER)')
+            db.execute('INSERT INTO AttachedFiles VALUES (?,?)',(uid,len(image)))
+        with tarfile.open(daily/'orthanc.tgz','w:gz') as archive:
+            archive.add(index,arcname='index')
+            entry=tarfile.TarInfo(attachment['path']);entry.size=len(image);archive.addfile(entry,io.BytesIO(image))
+        current={**{name:value for name,value in manifest.items() if name not in ('sha256','bytes')},'role_catalog':role_catalog}
+        current['sha256']={n:ops.digest(daily/n) for n in components}
+        current['bytes']={n:(daily/n).stat().st_size for n in components}
+        ops.write_json(daily/'manifest.json',current)
+        superuser['name']='kin'
+        daily_observed,receipt=rehearse_observed(daily)
+        self.assertEqual((receipt['shape'],receipt['roles'],receipt['encryption']),('post','catalog replay','none'))
+        self.assertEqual(daily_observed,{**legacy_observed,'attachment_sha256':hashlib.sha256(image).hexdigest()})
+        with patch.dict(os.environ,{'KIN_BACKUP_ENCRYPTION':str(config)}):
+            stored=encrypted_copy(daily,evidence/'encrypted-daily',current,role_catalog)
+            self.assertNotIn('role_catalog',stored,'role and database comments and settings stay sealed')
+            got,receipt=rehearse_observed(evidence/'encrypted-daily')
+        self.assertEqual((receipt['shape'],receipt['roles'],receipt['encryption']),('post','catalog replay','b22-live'))
+        self.assertEqual(got,daily_observed)
+        observed=dict(legacy=legacy_observed,daily=daily_observed)
         ops.write_json(evidence/'result.json',dict(status='PASS',source_preserved=True,observed=observed,
             seconds=time.monotonic()-started,backup_bytes=sum(manifest['bytes'].values()),
             recovery_point=manifest['created_utc'],rpo='selected synthetic quiescent snapshot; deployment schedule not measured',
