@@ -233,7 +233,7 @@ class ModalityWorklistE2E(WorklistE2E):
         killed = subprocess.run(["docker", "compose", "exec", "-T", "api", "node", "-e",
                                  "const fs=require('fs');let n=0;for(const p of fs.readdirSync('/proc')){if(!/^\\d+$/.test(p))continue;"
                                  "let c='';try{c=fs.readFileSync('/proc/'+p+'/cmdline','utf8')}catch{continue}"
-                                 "if(c.includes('mwl_scp.py')){process.kill(+p,'SIGKILL');n++}}console.log(n)"],
+                                 "if(+p!==process.pid&&c.includes('mwl_scp.py')){process.kill(+p,'SIGKILL');n++}}console.log(n)"],
                                 capture_output=True, text=True, timeout=60)
         self.assertEqual((killed.returncode, killed.stdout.strip()), (0, "1"), killed.stderr)
         deadline = time.monotonic() + 60
