@@ -327,62 +327,147 @@ window.KinViewerExport = (() => {
     } catch (error) { tell(services, failure(error), error instanceof Stopped ? 'warning' : 'error'); return false; }
   }
 
-  // Save Video: every image of the selected series is drawn first (so slow loading cannot change the speed), then
-  // played into a recorder at one image per 1/fps second. The next images are decoded ahead; an image that is not
-  // ready by its time stops the recording and writes no file, rather than a video with the wrong timing.
-  // MP4 where this browser records it, else WebM.
-  const videoType = () => ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
-    .find(type => window.MediaRecorder?.isTypeSupported?.(type));
-  const LATE = '영상을 제때 그리지 못해 동영상을 저장하지 않았습니다. 창을 가리지 말고 다른 작업을 줄인 뒤 다시 시도하세요.';
-  async function record(images, fps, type, check, say) {
-    const AHEAD = 8, decoded = [];
-    const decode = index => { decoded[index] = createImageBitmap(images[index]); decoded[index].catch(() => {}); };
-    for (let index = 0; index < Math.min(AHEAD, images.length); index++) decode(index);
-    const drop = () => decoded.forEach(item => item?.then(bitmap => bitmap.close(), () => {}));
-    let first;
-    try { first = await decoded[0]; } catch (error) { drop(); throw error; }
-    const canvas = document.createElement('canvas');
-    // Video encoders take even sizes.
-    canvas.width = Math.max(2, first.width - first.width % 2); canvas.height = Math.max(2, first.height - first.height % 2);
-    const context = canvas.getContext('2d'), stream = canvas.captureStream(0), track = stream.getVideoTracks()[0];
-    const recorder = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 8000000 }), chunks = [];
-    recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
-    const ended = new Promise((resolve, reject) => {
-      recorder.onstop = resolve; recorder.onerror = event => reject(event.error || new Error('동영상을 만들지 못했습니다.'));
-    });
-    const finish = () => { if (recorder.state !== 'inactive') recorder.stop(); track.stop(); return ended; };
-    const interval = 1000 / fps, until = time => new Promise(resolve => setTimeout(resolve, Math.max(0, time - performance.now())));
+  // Save Video: every image of the selected series is drawn first, in the series' own order (the cell's stack,
+  // one frame per image or frame of a multi-frame image), then encoded one video frame per image with its own time:
+  // image k starts at k/fps seconds. Nothing is played in real time, so slow loading, a busy computer or a hidden
+  // window cannot drop, repeat or shift an image. The file is written only when the encoder gave back exactly one
+  // frame per image, in order and at its time; a short, empty or failed encoding writes nothing and says so.
+  // H.264 in MP4 where this browser encodes it, else VP9 or VP8 in WebM.
+  const CODECS = [['avc1.640034', 'mp4'], ['avc1.4d0034', 'mp4'], ['avc1.42e034', 'mp4'], ['vp09.00.51.08', 'webm'], ['vp8', 'webm']];
+  const NO_VIDEO = '이 브라우저에서는 동영상을 저장할 수 없습니다.';
+  const SHORT = '동영상에 시리즈의 모든 영상이 담기지 않아 저장하지 않았습니다. 다시 시도하세요.';
+  const UNMADE = '동영상을 만들지 못해 저장하지 않았습니다. 다시 시도하세요.';
+  const videoReady = () => typeof window.VideoEncoder === 'function' && typeof window.VideoFrame === 'function';
+  // A frame's time in microseconds, the unit of the encoder and of the MP4 written here.
+  const frameTime = (index, fps) => Math.round(index * 1000000 / fps);
+  async function encodeVideo(images, fps, check, say) {
+    const first = await createImageBitmap(images[0]);
+    // Video encoders take even sizes; every image is drawn at the first one's size.
+    const width = Math.max(2, first.width - first.width % 2), height = Math.max(2, first.height - first.height % 2);
+    first.close();
+    let tried = false, last = null;
+    for (const [codec, container] of CODECS) {
+      const config = { codec, width, height, bitrate: 8000000, framerate: fps, ...(container === 'mp4' ? { avc: { format: 'avc' } } : {}) };
+      const support = await window.VideoEncoder.isConfigSupported(config).catch(() => null);
+      if (!support?.supported) continue;
+      tried = true;
+      try { return await encodeWith(config, container, images, fps, check, say); }
+      // Another codec is tried after a failed or short encoding; the file is still whole or not written.
+      catch (error) { if (error instanceof Stopped) throw error; last = error; }
+    }
+    throw last?.message === SHORT ? last : new Error(tried ? UNMADE : NO_VIDEO);
+  }
+  async function encodeWith(config, container, images, fps, check, say) {
+    const chunks = []; let failed = null, description = null;
+    const encoder = new window.VideoEncoder({
+      output: (chunk, metadata) => {
+        const data = new Uint8Array(chunk.byteLength); chunk.copyTo(data);
+        chunks.push({ data, key: chunk.type === 'key', time: chunk.timestamp });
+        const given = metadata?.decoderConfig?.description;
+        if (given && !description) description = new Uint8Array(ArrayBuffer.isView(given) ? given.buffer.slice(given.byteOffset, given.byteOffset + given.byteLength) : given.slice(0));
+      },
+      error: error => { failed = error || new Error(UNMADE); } });
+    const canvas = document.createElement('canvas'); canvas.width = config.width; canvas.height = config.height;
+    const context = canvas.getContext('2d'), every = Math.max(1, Math.round(fps));
+    const healthy = () => { check(); if (failed) throw failed; };
     try {
-      recorder.start();
-      const start = performance.now(), onTime = index => { if (performance.now() - (start + index * interval) > interval / 2) throw new Error(LATE); };
+      encoder.configure(config);
       for (let index = 0; index < images.length; index++) {
-        check(); say?.('동영상 녹화 중 ' + (index + 1) + '/' + images.length + ' · Esc로 멈춤');
-        const bitmap = await decoded[index]; decoded[index] = null;
-        if (index + AHEAD < images.length) decode(index + AHEAD);
-        try { onTime(index); context.drawImage(bitmap, 0, 0, canvas.width, canvas.height); } finally { bitmap.close(); }
-        track.requestFrame();
-        await until(start + (index + 1) * interval);
+        healthy(); say?.('동영상 파일 만드는 중 ' + (index + 1) + '/' + images.length + ' · Esc로 멈춤');
+        const bitmap = await createImageBitmap(images[index]); healthy();
+        try { context.drawImage(bitmap, 0, 0, canvas.width, canvas.height); } finally { bitmap.close(); }
+        const frame = new window.VideoFrame(canvas, { timestamp: frameTime(index, fps), duration: frameTime(index + 1, fps) - frameTime(index, fps) });
+        // A key frame every second, so a player can seek.
+        try { encoder.encode(frame, { keyFrame: index % every === 0 }); } finally { frame.close(); }
+        while (encoder.encodeQueueSize > 4) { healthy(); await new Promise(resolve => setTimeout(resolve, 5)); }
       }
-      check(); onTime(images.length);
-      // A video lasts until its last frame starts: one more frame of the last image gives that image its time.
-      // The canvas is drawn again, unchanged, because a capture stream skips a request on an untouched canvas.
-      context.drawImage(canvas, 0, 0); track.requestFrame(); await until(performance.now() + 50);
-    } catch (error) { drop(); await finish().catch(() => {}); throw error; }
-    await finish();
-    return new Blob(chunks, { type: type.split(';')[0] });
+      healthy(); await encoder.flush(); healthy();
+    } finally { if (encoder.state !== 'closed') encoder.close(); }
+    // One frame per image, the first a key frame, each at its own time and not empty.
+    const whole = chunks.length === images.length && chunks[0].key && (container !== 'mp4' || description) &&
+      chunks.every((chunk, index) => chunk.time === frameTime(index, fps) && chunk.data.length > 0);
+    if (!whole) throw new Error(SHORT);
+    const duration = frameTime(images.length, fps);
+    return container === 'mp4' ? mp4(chunks, description, config.width, config.height, fps, duration) : webm(chunks, config.codec, config.width, config.height, fps, duration);
+  }
+
+  // The file around the encoded frames. Byte helpers: big-endian numbers and joined parts.
+  const bytes = (...values) => Uint8Array.from(values);
+  const be = (value, size) => { const out = new Uint8Array(size); for (let i = size - 1; i >= 0; i--) { out[i] = value % 256; value = Math.floor(value / 256); } return out; };
+  const ascii = text => Uint8Array.from(text, c => c.charCodeAt(0));
+  const join = parts => {
+    const flat = parts.flat(Infinity), out = new Uint8Array(flat.reduce((sum, part) => sum + part.length, 0)); let at = 0;
+    for (const part of flat) { out.set(part, at); at += part.length; }
+    return out;
+  };
+  // MP4: ftyp, moov (one H.264 track, every sample's size, time and whether it is a key frame), then mdat.
+  function mp4(chunks, description, width, height, fps, duration) {
+    const box = (type, ...parts) => { const body = join(parts); return join([be(body.length + 8, 4), ascii(type), body]); };
+    const full = (type, flags, ...parts) => box(type, be(flags, 4), ...parts);
+    const size = chunks.reduce((sum, chunk) => sum + chunk.data.length, 0);
+    if (size > 0xFFFFFFF0 || duration > 0xFFFFFFFF) throw new Error('저장할 파일이 너무 큽니다.');
+    const scale = 1000000, matrix = [0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000].map(value => be(value, 4));
+    const deltas = [];
+    chunks.forEach((chunk, index) => {
+      const delta = frameTime(index + 1, fps) - chunk.time, last = deltas.at(-1);
+      if (last && last[1] === delta) last[0]++; else deltas.push([1, delta]);
+    });
+    const keys = chunks.map((chunk, index) => chunk.key ? index + 1 : 0).filter(Boolean);
+    const ftyp = box('ftyp', ascii('isom'), be(0x200, 4), ascii('isomiso2avc1mp41'));
+    const moov = offset => box('moov',
+      full('mvhd', 0, be(0, 4), be(0, 4), be(scale, 4), be(duration, 4), be(0x10000, 4), be(0x100, 2), be(0, 10), matrix, be(0, 24), be(2, 4)),
+      box('trak',
+        full('tkhd', 3, be(0, 4), be(0, 4), be(1, 4), be(0, 4), be(duration, 4), be(0, 8), be(0, 8), matrix, be(width * 0x10000, 4), be(height * 0x10000, 4)),
+        box('mdia',
+          full('mdhd', 0, be(0, 4), be(0, 4), be(scale, 4), be(duration, 4), be(0x55C4, 2), be(0, 2)),
+          full('hdlr', 0, be(0, 4), ascii('vide'), be(0, 12), ascii('VideoHandler\0')),
+          box('minf',
+            full('vmhd', 1, be(0, 8)),
+            box('dinf', full('dref', 0, be(1, 4), full('url ', 1))),
+            box('stbl',
+              full('stsd', 0, be(1, 4), box('avc1', be(0, 6), be(1, 2), be(0, 16), be(width, 2), be(height, 2),
+                be(0x480000, 4), be(0x480000, 4), be(0, 4), be(1, 2), be(0, 32), be(0x18, 2), bytes(0xFF, 0xFF), box('avcC', description))),
+              full('stts', 0, be(deltas.length, 4), deltas.map(([count, delta]) => [be(count, 4), be(delta, 4)])),
+              full('stss', 0, be(keys.length, 4), keys.map(number => be(number, 4))),
+              full('stsc', 0, be(1, 4), be(1, 4), be(chunks.length, 4), be(1, 4)),
+              full('stsz', 0, be(0, 4), be(chunks.length, 4), chunks.map(chunk => be(chunk.data.length, 4))),
+              full('stco', 0, be(1, 4), be(offset, 4)))))));
+    const head = ftyp.length + moov(0).length + 8;
+    return new Blob([ftyp, moov(head), be(size + 8, 4), ascii('mdat'), ...chunks.map(chunk => chunk.data)], { type: 'video/mp4' });
+  }
+  // WebM: EBML header, then one Segment with Info (length), Tracks (one video track), a Cluster from each key frame
+  // (times in milliseconds) and Cues pointing at the Clusters, so a player can seek.
+  function webm(chunks, codec, width, height, fps, duration) {
+    const size = value => { let length = 1; while (value >= 2 ** (7 * length) - 1) length++; const out = be(value, length); out[0] |= 1 << (8 - length); return out; };
+    const id = hex => Uint8Array.from(hex.match(/../g), pair => parseInt(pair, 16));
+    const element = (hex, ...parts) => { const body = join(parts); return join([id(hex), size(body.length), body]); };
+    const uint = (hex, value) => { let length = 1; while (value >= 2 ** (8 * length)) length++; return element(hex, be(value, length)); };
+    const float = (hex, value) => { const view = new DataView(new ArrayBuffer(8)); view.setFloat64(0, value); return element(hex, new Uint8Array(view.buffer)); };
+    const ms = time => Math.round(time / 1000);
+    const header = element('1A45DFA3', uint('4286', 1), uint('42F7', 1), uint('42F2', 4), uint('42F3', 8), element('4282', ascii('webm')), uint('4287', 4), uint('4285', 2));
+    const info = element('1549A966', uint('2AD7B1', 1000000), element('4D80', ascii('PACS viewer')), element('5741', ascii('PACS viewer')), float('4489', duration / 1000));
+    const tracks = element('1654AE6B', element('AE', uint('D7', 1), uint('73C5', 1), uint('83', 1), element('86', ascii(codec.startsWith('vp09') ? 'V_VP9' : 'V_VP8')),
+      uint('23E383', Math.round(1000000000 / fps)), uint('9C', 0), element('E0', uint('B0', width), uint('BA', height))));
+    const clusters = [], cues = []; let at = info.length + tracks.length, open = null;
+    const close = () => { if (!open) return; const cluster = element('1F43B675', uint('E7', open.time), open.blocks); cues.push([open.time, at]); clusters.push(cluster); at += cluster.length; open = null; };
+    for (const chunk of chunks) {
+      if (chunk.key || !open || ms(chunk.time) - open.time > 30000) { close(); open = { time: ms(chunk.time), blocks: [] }; }
+      const relative = new DataView(new ArrayBuffer(2)); relative.setInt16(0, ms(chunk.time) - open.time);
+      open.blocks.push(element('A3', bytes(0x81), new Uint8Array(relative.buffer), bytes(chunk.key ? 0x80 : 0), chunk.data));
+    }
+    close();
+    const index = element('1C53BB6B', cues.map(([time, position]) => element('BB', uint('B3', time), element('B7', uint('F7', 1), uint('F1', position)))));
+    return new Blob([header, element('18538067', info, tracks, clusters, index)], { type: 'video/webm' });
   }
   async function saveVideo(services, live, say) {
-    const type = videoType();
-    if (!type || typeof HTMLCanvasElement.prototype.captureStream !== 'function') {
-      tell(services, '이 브라우저에서는 동영상을 저장할 수 없습니다.', 'error'); return false;
-    }
+    if (!videoReady()) { tell(services, NO_VIDEO, 'error'); return false; }
     const images = [];
     try {
       const done = await walk(services, live, say, '동영상 영상 만드는 중', async canvas => { images.push(await blob(canvas, 'image/jpeg', 0.95)); },
         async (target, check) => {
           const rate = Number(services.cineService?.getState?.()?.cines?.[target.cells[0].id]?.frameRate);
           const fps = Number.isFinite(rate) && rate >= 1 && rate <= 90 ? rate : 10;
-          const file = await record(images, fps, type, check, say); check();
+          const file = await encodeVideo(images, fps, check, say); check();
           download(file, seriesName(target.cells[0].viewport) + '-' + stamp() + (file.type === 'video/mp4' ? '.mp4' : '.webm'));
           return fps;
         });

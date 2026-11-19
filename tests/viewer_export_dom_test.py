@@ -615,28 +615,32 @@ class ViewerExportDOMTest(unittest.TestCase):
         self.assertEqual('success', page.evaluate("() => synNotes.at(-1).type"))
         self.assertIn('5 fps', page.evaluate("() => synNotes.at(-1).message"))
 
-    def test_31_escape_while_recording_writes_no_file(self):
-        page = self.open(); seen = self.downloads(page)
-        page.evaluate("() => { synServices.cineService.getState = () => ({ cines: { left: { isPlaying: false, frameRate: 1 } } }); }")
+    def test_31_escape_while_the_file_is_made_writes_no_file(self):
+        page = self.open(before="""() => { const decode = window.createImageBitmap;
+          window.createImageBitmap = (...args) => new Promise(r => setTimeout(r, 300)).then(() => decode(...args)); }""")
+        seen = self.downloads(page)
         self.click(page, 'SaveVideo')
-        page.wait_for_function("() => document.querySelector('.kin-ux-toolbar-settings [role=status]').textContent.includes('동영상 녹화 중 2/4')")
+        page.wait_for_function("() => document.querySelector('.kin-ux-toolbar-settings [role=status]').textContent.includes('동영상 파일 만드는 중 2/4')")
         page.keyboard.press('Escape')
         page.wait_for_function("() => synNotes.length")
         self.assertIn('멈췄습니다', page.evaluate("() => synNotes[0].message"))
         page.wait_for_timeout(1500); self.assertEqual([], seen)
         self.assertEqual(1, page.evaluate("() => synViewports.get('left').getCurrentImageIdIndex()"))
 
-    def test_33_an_image_not_ready_by_its_time_writes_no_video(self):
-        # At 5 fps the second image is due 0.2 s after the first; its decode takes 0.7 s.
+    def test_33_an_image_slow_to_decode_neither_fails_nor_shifts_the_timing(self):
+        import base64
+        # At 5 fps the second image starts 0.2 s after the first; its decode takes 0.7 s. Frames carry their own time.
         page = self.open(before="""() => { const decode = window.createImageBitmap; let calls = 0;
-          window.createImageBitmap = (...args) => ++calls === 2 ? new Promise(r => setTimeout(r, 700)).then(() => decode(...args)) : decode(...args); }""")
-        seen = self.downloads(page)
+          window.createImageBitmap = (...args) => ++calls === 3 ? new Promise(r => setTimeout(r, 700)).then(() => decode(...args)) : decode(...args); }""")
         page.evaluate("() => { synServices.cineService.getState = () => ({ cines: { left: { isPlaying: false, frameRate: 5 } } }); }")
-        self.click(page, 'SaveVideo')
-        page.wait_for_function("() => synNotes.length", timeout=15000)
-        self.assertEqual('error', page.evaluate("() => synNotes.at(-1).type"))
-        self.assertIn('제때', page.evaluate("() => synNotes.at(-1).message"))
-        page.wait_for_timeout(500); self.assertEqual([], seen)
+        with page.expect_download(timeout=30000) as saved:
+            self.click(page, 'SaveVideo')
+        played = page.evaluate(self.PLAYED, base64.b64encode(Path(saved.value.path()).read_bytes()).decode())
+        first = {}
+        for time, image in played['seen']: first.setdefault(image, time)
+        for image in range(4):
+            self.assertAlmostEqual(image / 5, first[image], delta=0.12, msg='5 fps: %s' % played['seen'])
+        self.assertEqual('success', page.evaluate("() => synNotes.at(-1).type"))
 
     def test_34_a_short_decode_delay_is_absorbed_and_the_timing_holds(self):
         import base64
@@ -652,10 +656,133 @@ class ViewerExportDOMTest(unittest.TestCase):
         for image in range(4):
             self.assertAlmostEqual(image / 5, first[image], delta=0.12, msg='5 fps: %s' % played['seen'])
 
-    def test_32_a_browser_without_a_recorder_says_so(self):
-        page = self.open(before="() => { Object.defineProperty(window, 'MediaRecorder', { value: undefined }); }")
+    def test_32_a_browser_without_a_video_encoder_says_so(self):
+        page = self.open(before="() => { Object.defineProperty(window, 'VideoEncoder', { value: undefined }); }")
         self.click(page, 'SaveVideo')
         self.assertEqual(['error'], page.evaluate("() => synNotes.map(n => n.type)"))
+
+    # ── Save Video on whole series: CT 40 images on the left cell, MR 12 images on the right ──
+    # Each image carries its number in six bits (bright squares at x = 10 + 22 * bit, y = 115, 14 px) so a decoded
+    # frame tells which image of the series it is.
+    def series(self, before=None):
+        setup = SETUP.replace("const imageIds = ['syn:' + id + ':0', 'syn:' + id + ':1', 'syn:' + id + ':2', 'syn:' + id + ':3'];",
+                              "const imageIds = Array.from({ length: { left: 40, right: 12 }[id] }, (_, k) => 'syn:' + id + ':' + k);")
+        setup = setup.replace("c.fillStyle = 'rgb(255, 255, 255)'; c.fillRect((10 + 15 * index) * 2, 50 * 2, 10 * 2, 10 * 2);",
+                              "c.fillStyle = 'rgb(255, 255, 255)'; for (let bit = 0; bit < 6; bit++) if (index >> bit & 1) c.fillRect((10 + 22 * bit) * 2, 115 * 2, 14 * 2, 14 * 2);")
+        setup = setup.replace("TEXT_COLOURS[index]", "TEXT_COLOURS[index % 4]")
+        self.assertEqual(3, sum(part in setup for part in ["length: { left: 40", "index >> bit", "index % 4"]))
+        return self.open(setup=setup, before=before)
+
+    # Decodes the downloaded file in the page: the length, and the image seen in the middle of each frame's time.
+    DECODED = """async ({ b64, fps, count }) => {
+      const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+      const video = document.createElement('video'); video.muted = true; video.src = URL.createObjectURL(new Blob([bytes]));
+      document.body.append(video);
+      await new Promise((resolve, reject) => { video.onloadeddata = resolve; video.onerror = () => reject(new Error('not playable')); });
+      const c = document.createElement('canvas'); c.width = video.videoWidth; c.height = video.videoHeight;
+      const x = c.getContext('2d', { willReadFrequently: true }), scale = c.width / 200;
+      const bright = (px, py) => { const d = x.getImageData(Math.round(px * scale), Math.round(py * scale), 1, 1).data; return d[0] > 190 && d[1] > 190 && d[2] > 190; };
+      const shown = () => { x.drawImage(video, 0, 0); let value = 0;
+        for (let bit = 0; bit < 6; bit++) if (bright(10 + 22 * bit + 7, 122)) value |= 1 << bit;
+        return [value, [...x.getImageData(Math.round(180 * scale), Math.round(60 * scale), 1, 1).data].slice(0, 3)]; };
+      const seek = time => new Promise(resolve => { video.onseeked = () => { video.requestVideoFrameCallback(() => resolve()); setTimeout(resolve, 250); }; video.currentTime = time; });
+      const seen = [];
+      for (let k = 0; k < count; k++) { await seek((k + 0.5) / fps); seen.push(shown()); }
+      await seek(1e6);
+      return { width: c.width, height: c.height, duration: video.duration, end: video.currentTime, seen };
+    }"""
+
+    def saved_video(self, page, tool='SaveVideo', timeout=60000):
+        with page.expect_download(timeout=timeout) as saved:
+            self.click(page, tool)
+        return saved.value.suggested_filename, Path(saved.value.path()).read_bytes()
+
+    def assert_whole_series(self, page, name, data, count, fps, colour):
+        import base64
+        self.assertRegex(name, r'^series-7-\d{8}-\d{6}\.(mp4|webm)$')
+        if name.endswith('.webm'): self.assertEqual(b'\x1a\x45\xdf\xa3', data[:4])
+        else:
+            self.assertEqual(b'ftyp', data[4:8])
+            at = data.index(b'stsz')
+            self.assertEqual(count, int.from_bytes(data[at + 12:at + 16], 'big'), 'MP4 sample count')
+        decoded = page.evaluate(self.DECODED, {'b64': base64.b64encode(data).decode(), 'fps': fps, 'count': count})
+        self.assertEqual((400, 300), (decoded['width'], decoded['height']))
+        self.assertEqual(list(range(count)), [value for value, _ in decoded['seen']], 'every image once, in series order')
+        for _, rgb in decoded['seen']: self.assertTrue(near(rgb, colour), rgb)
+        self.assertAlmostEqual(count / fps, decoded['duration'], delta=0.5 / fps, msg='each image keeps 1/%s s' % fps)
+        self.assertAlmostEqual(count / fps, decoded['end'], delta=1.0 / fps)
+        note = page.evaluate("() => synNotes.at(-1)")
+        self.assertEqual('success', note['type'])
+        self.assertEqual('시리즈 영상 %d장을 %d fps 동영상으로 저장했습니다.' % (count, fps), note['message'])
+
+    def test_35_ct_40_images_every_image_once_in_series_order(self):
+        page = self.series()
+        name, data = self.saved_video(page)
+        self.assert_whole_series(page, name, data, 40, 10, (200, 0, 0))
+        page.wait_for_function("() => synViewports.get('left').getCurrentImageIdIndex() === 1")
+
+    def test_36_mr_12_images_on_the_other_cell_at_its_cine_speed(self):
+        page = self.series()
+        page.evaluate("() => { synServices.viewportGridService.setActive('right'); synServices.cineService.getState = () => ({ cines: { right: { isPlaying: false, frameRate: 5 } } }); }")
+        name, data = self.saved_video(page)
+        self.assert_whole_series(page, name, data, 12, 5, (0, 0, 200))
+        self.assertEqual(1, page.evaluate("() => synViewports.get('left').getCurrentImageIdIndex()"), 'the other cell is not moved')
+
+    def test_37_a_busy_computer_still_gets_every_image(self):
+        page = self.series()
+        cdp = page.context.new_cdp_session(page); cdp.send('Emulation.setCPUThrottlingRate', {'rate': 8})
+        name, data = self.saved_video(page, timeout=180000)
+        cdp.send('Emulation.setCPUThrottlingRate', {'rate': 1})
+        self.assert_whole_series(page, name, data, 40, 10, (200, 0, 0))
+
+    def test_38_a_short_empty_or_failed_encoding_writes_nothing_and_is_not_success(self):
+        # The browser's encoder is wrapped: it loses one frame, returns nothing, or fails part way.
+        for fault in ['drop', 'empty', 'fail']:
+            page = self.series(before="""() => { const fault = '%s', Real = window.VideoEncoder;
+              window.VideoEncoder = class extends Real {
+                constructor(init) { const seen = { frames: 0 }; super({ output: (chunk, meta) => { let frames = seen.frames++;
+                  if (fault === 'drop' && frames === 7) return;
+                  if (fault !== 'empty') init.output(chunk, meta); }, error: error => init.error(error) }); this.init = init; this.seen = seen; }
+                encode(frame, options) { if (fault === 'fail' && this.seen.frames > 10) { this.init.error(new DOMException('encoder failed', 'EncodingError')); return; } super.encode(frame, options); }
+              }; }""" % fault)
+            seen = self.downloads(page)
+            self.click(page, 'SaveVideo')
+            page.wait_for_function("() => synNotes.length", timeout=60000)
+            page.wait_for_timeout(500)
+            self.assertEqual([], seen, fault)
+            note = page.evaluate("() => synNotes.at(-1)")
+            self.assertEqual('error', note['type'], fault)
+            self.assertEqual({'drop': '동영상에 시리즈의 모든 영상이 담기지 않아 저장하지 않았습니다. 다시 시도하세요.', 'empty': '동영상에 시리즈의 모든 영상이 담기지 않아 저장하지 않았습니다. 다시 시도하세요.',
+                              'fail': '동영상을 만들지 못해 저장하지 않았습니다. 다시 시도하세요.'}[fault], note['message'], fault)
+
+    def test_39_a_browser_without_h264_gets_a_whole_webm(self):
+        page = self.series(before="""() => { const ask = VideoEncoder.isConfigSupported.bind(VideoEncoder);
+          VideoEncoder.isConfigSupported = config => config.codec.startsWith('avc1') ? Promise.resolve({ supported: false, config }) : ask(config); }""")
+        name, data = self.saved_video(page)
+        self.assertTrue(name.endswith('.webm'), name)
+        self.assert_whole_series(page, name, data, 40, 10, (200, 0, 0))
+
+    def test_39b_another_series_or_escape_while_the_file_is_made_writes_nothing_and_moves_nothing(self):
+        # Decoding each drawn image takes 0.1 s here, so the file is still being made when the reader acts.
+        slow = """() => { const decode = window.createImageBitmap;
+          window.createImageBitmap = (...args) => new Promise(r => setTimeout(r, 100)).then(() => decode(...args)); }"""
+        for act in ['series', 'escape']:
+            page = self.series(before=slow); seen = self.downloads(page)
+            self.click(page, 'SaveVideo')
+            page.wait_for_function("() => document.querySelector('.kin-ux-toolbar-settings [role=status]').textContent.includes('동영상 파일 만드는 중 3/40')", timeout=60000)
+            self.assertEqual(1, page.evaluate("() => synViewports.get('left').getCurrentImageIdIndex()"), 'back on the shown image first')
+            if act == 'series':
+                page.evaluate("""() => { const v = synViewports.get('left'); window.synMoved = [];
+                  synViewports.set('left', { ...v, getImageIds: () => ['syn:other:0', 'syn:other:1'], getCurrentImageIdIndex: () => 0,
+                    setImageIdIndex: async value => { synMoved.push(value); } }); }""")
+            else:
+                page.keyboard.press('Escape')
+            page.wait_for_function("() => synNotes.length", timeout=60000)
+            page.wait_for_timeout(1500)
+            self.assertEqual([], seen, act)
+            self.assertNotEqual('success', page.evaluate("() => synNotes.at(-1).type"), act)
+            if act == 'series': self.assertEqual([], page.evaluate("() => synMoved"), 'the newly chosen series is not wound back')
+            else: self.assertIn('멈췄습니다', page.evaluate("() => synNotes.at(-1).message"))
 
     # ── Captures: captures collect in this window's Captures panel ──
     def panel(self, page):
