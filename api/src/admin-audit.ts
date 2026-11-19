@@ -51,6 +51,7 @@ export const AUDIT_FIELD_RULES: Readonly<Record<string, AuditFieldSource>> = Obj
   "hanging-protocol.site.save": 'target',         // target이 기관 id다
   "hanging-protocol.site.reset": 'target',
   "institution.emr-link.save": 'target',          // FA-090: target이 EMR Link를 바꾼 관리자의 기관 id다
+  "institution.critical-result-inbox.save": 'target', // target is the institution whose hospital inbox the administrator set
   "institution.dicom-peer.register": 'detail.institution',  // FC-070: 상대 PACS를 자기 기관에 등록한 관리자의 기관
   "institution.dicom-peer.remove": 'detail.institution',    // FC-070: 상대 PACS를 자기 기관에서 지운 관리자의 기관
   "institution.gateway-settings.save": 'detail.institution',  // Gateway 규칙(목적지·보관·압축)을 저장한 관리자의 기관

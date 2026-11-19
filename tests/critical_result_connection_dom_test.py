@@ -231,7 +231,7 @@ class CriticalResultConnectionDOM(unittest.TestCase):
         held, self.site.held_recipients = self.site.held_recipients, None
         for route, body in held:
             route.fulfill(json=body)
-        expect(self.page.locator(f'#cvr-send-recipient option[value="{CLIN["sub"]}"]')).to_have_count(1)
+        expect(self.page.locator(f'#cvr-send-recipient input[value="{CLIN["sub"]}"]')).to_have_count(1)
         expect(self.page.locator("#cvr-send-recipient")).to_be_disabled()
         expect(self.page.locator("#cvr-send-submit")).to_be_disabled()
         self.assertTrue(self.page.locator("#cvr-send-message").evaluate("e => e.readOnly"))
@@ -242,7 +242,7 @@ class CriticalResultConnectionDOM(unittest.TestCase):
         expect(self.page.locator("#cvr-send")).to_be_visible()
         expect(self.page.locator("#cvr-send-recipient")).to_be_enabled()
         self.assertFalse(self.page.locator("#cvr-send-message").evaluate("e => e.readOnly"))
-        self.page.locator("#cvr-send-recipient").select_option(CLIN["sub"])
+        self.page.locator(f'#cvr-send-recipient input[value="{CLIN["sub"]}"]').check()
         self.page.locator("#cvr-send-message").fill("SYN critical finding written once back")
         expect(self.page.locator("#cvr-send-submit")).to_be_enabled()
         # Lost again with the window filled in: Send is off, the recipient and message stay; back, they are as left.
@@ -251,7 +251,7 @@ class CriticalResultConnectionDOM(unittest.TestCase):
         self.reconnect()
         expect(self.page.locator("#cvr-send-submit")).to_be_enabled()
         self.assertEqual((CLIN["sub"], "SYN critical finding written once back"),
-                         (self.page.locator("#cvr-send-recipient").input_value(),
+                         (self.page.evaluate("() => [...document.querySelectorAll('#cvr-send-recipient input:checked')].map(i => i.value).join(',')"),
                           self.page.locator("#cvr-send-message").input_value()))
 
     def test_a_read_that_left_before_the_outage_and_fails_once_back_is_read_again(self):
@@ -291,7 +291,7 @@ class CriticalResultConnectionDOM(unittest.TestCase):
             route.abort("connectionreset")
         expect(self.page.locator("#cvr-send")).to_be_visible()
         expect(self.page.locator("#cvr-send-recipient")).to_be_enabled()
-        self.page.locator("#cvr-send-recipient").select_option(CLIN["sub"])
+        self.page.locator(f'#cvr-send-recipient input[value="{CLIN["sub"]}"]').check()
         self.page.locator("#cvr-send-message").fill("SYN critical finding after the late failure")
         expect(self.page.locator("#cvr-send-submit")).to_be_enabled()
 

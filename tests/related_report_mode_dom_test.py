@@ -1882,7 +1882,7 @@ class RelatedModePage(unittest.TestCase):
         self.open();self.open_target()
         self.page.locator('#report-more').click()
         self.page.locator('#b-mark-cvr').click()
-        self.page.locator('#cvr-send-recipient').select_option('12345678-0000-4000-8000-123456789012')
+        self.page.locator('#cvr-send-recipient input[value="12345678-0000-4000-8000-123456789012"]').check()
         self.page.locator('#cvr-send-message').fill('SYN review message')
         self.page.locator('#cvr-send-submit').click()
         self.wait(lambda:len(posts)==1,'original CVR POST')
@@ -3324,7 +3324,7 @@ class RelatedModePage(unittest.TestCase):
         if action == "create":
             self.page.locator("#report-more").click()
             self.page.locator("#b-mark-cvr").click()
-            self.page.locator("#cvr-send-recipient").select_option(self.B05_RECIPIENT["sub"])
+            self.page.locator(f'#cvr-send-recipient input[value="{self.B05_RECIPIENT["sub"]}"]').check()
             field, confirm = self.page.locator("#cvr-send-message"), self.page.locator("#cvr-send-submit")
         else:
             self.page.get_by_role("button", name="Show Sent", exact=True).click()
