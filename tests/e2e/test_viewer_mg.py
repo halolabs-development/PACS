@@ -1,7 +1,9 @@
 # coding: utf-8
-"""MG menu on the served viewer with synthetic mammograms stored over C-STORE (test_mammography_hanging.py's phantoms:
-current needs no flips, prior L is stored flipped on both axes): Mirrored point on eight cells (the same view only, in
-image coordinates through each image's stored orientation), Quadrant Zoom Next ×3, a synthetic five-frame DBT where Step
+"""MG menu on the served viewer with synthetic mammograms stored over C-STORE (test_mammography_hanging.py's phantoms,
+their tissue against the chest wall each stored orientation names: current needs no flips, prior L is stored flipped on
+both axes): Mirrored point on eight cells (the same view only, in image coordinates through each image's stored
+orientation), Quadrant Zoom Next ×3 by the quarters of the breast as it was made, the I key, the lens, Breast Edge, Fit
+Breast and Match Size on the image as it was made, a synthetic five-frame DBT where Step
 Interval, Slab Thickness (pixel values in the cell and on its canvas, and back) and Play run on the real stack, and
 Mammo Keypad Patient ▶ between two patient tabs with a linked reading screen holding unconfirmed text."""
 import json, os, re, time, unittest, uuid
@@ -115,9 +117,20 @@ class ViewerMgE2E(ViewerUXPriorsE2E):
         self.assertEqual(self.stack.request('PATCH', '/studies/' + uid, 'jmryu', {'ss': 'Verified'}).status, 200)
         return fixture
 
+    # The camera's focal point (image index) at the middle of step `step`'s quarter of a CC breast as the phantom was made
+    # (MG.breast_box): the chest-wall upper quarter, the chest-wall lower, the nipple-side lower, the nipple-side upper;
+    # the chest wall is the stored right for R, the stored left for L. Not what the product found.
+    @staticmethod
+    def quarter_centre(side, step):
+        box, (top, chest) = MG.breast_box(side), [(True, True), (False, True), (False, False), (True, False)][step]
+        xm, ym = (box['x0'] + box['x1']) / 2, (box['y0'] + box['y1']) / 2
+        x = (xm + box['x1']) / 2 if chest == (side == 'R') else (box['x0'] + xm) / 2
+        y = (box['y0'] + ym) / 2 if top else (ym + box['y1']) / 2
+        return [x - 0.5, y - 0.5]
+
     def test_mg_01_mirrored_point_and_quadrant_zoom_on_eight_cells(self):
         patient = 'MGM-' + uuid.uuid4().hex[:12]
-        current = MG.phantom(self, patient); prior = MG.phantom(self, patient, prior=True)
+        current = MG.phantom(self, patient, breast=True); prior = MG.phantom(self, patient, prior=True, breast=True)
         page = self.login()
         MG.open_mg(self, page, [current, prior], 8)
         MG.image_state(self, page)
@@ -149,19 +162,14 @@ class ViewerMgE2E(ViewerUXPriorsE2E):
         # 4× is the first choice: every step shows each cell at four times its Fit (Display › Zoom… 400 %).
         expect(panel.get_by_label('Zoom')).to_have_value('4x')
         page.wait_for_function('''id=>services.cornerstoneViewportService.getCornerstoneViewport(id).getZoom()>2.5''', arg=source['id'], timeout=15000)
-        # Each step: the focus of today's R CC and L CC is the centre of that step's quarter of the breast box (as the model
-        # names it for each image's side and stored orientation), the same zoom on both, larger than Fit.
-        expected = '''([step, ids]) => ids.map(id => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id);
-          const m = cornerstone.metaData.get('instance', v.getCurrentImageId()), d = v.getImageData().imageData;
-          const box = KinMgBreastModel.detect(d.getPointData().getScalars().getData(), 128, 128).box;
-          const q = KinMgBreastModel.quadrant(step, { side: m.ImageLaterality, view: 'CC', verified: true, flipH: false, flipV: false, columns: 128, rows: 128 }, box);
-          return [(q.box.x0 + q.box.x1) / 2 - 0.5, (q.box.y0 + q.box.y1) / 2 - 0.5]; })'''
+        # Each step: the focus of today's R CC and L CC is the centre of that step's quarter of the breast as the phantom
+        # was made, the same zoom on both, larger than Fit.
         ids = [source['id'], before[(current.uid, 'L', 'CC')]['id']]
         heads = []
         for step in range(4):
             if step:
                 panel.get_by_role('button', name='Next Quadrant').click(); heads.append(panel.locator('b').text_content())
-            want = page.evaluate(expected, [step, ids])
+            want = [self.quarter_centre('R', step), self.quarter_centre('L', step)]
             page.wait_for_function('''([ids, want]) => ids.every((id, i) => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id);
               const f = v.getImageData().imageData.worldToIndex([...v.getCamera().focalPoint], new Float64Array(3));
               return Math.abs(f[0] - want[i][0]) < 0.01 && Math.abs(f[1] - want[i][1]) < 0.01; })''', arg=[ids, want], timeout=15000)
@@ -172,8 +180,9 @@ class ViewerMgE2E(ViewerUXPriorsE2E):
                 for key in [k for k in q if k[2] in ('CC', 'MLO')]:
                     self.assertAlmostEqual(q[key]['zoom'], 4, places=4, msg=key)
                 if step == 0:
-                    # The chest-wall upper quarter first: right of the box centre for R (chest wall right), left for L.
-                    self.assertGreater(q[(current.uid, 'R', 'CC')]['x'], 47.5); self.assertLess(q[(current.uid, 'L', 'CC')]['x'], 47.5)
+                    # The chest-wall upper quarter first: right of the breast's middle (x 95.5) for R (chest wall at the
+                    # stored right), left of it (x 32.5) for L.
+                    self.assertGreater(q[(current.uid, 'R', 'CC')]['x'], 95.5); self.assertLess(q[(current.uid, 'L', 'CC')]['x'], 32.5)
         self.assertEqual(['Quadrant 2/4: Upper-Inner (R/L matched)', 'Quadrant 3/4: Lower-Inner (R/L matched)', 'Quadrant 4/4: Lower-Outer (R/L matched)'], heads)
         page.screenshot(path=str(folder / 'MG-quadrant-4.png'))
         expect(page.locator('[data-cy=viewport-pane]:has([data-viewport-uid="' + source['id'] + '"]) [data-mg-badge=quadrant]')).to_have_text(re.compile(r'^Q4 Lower-Outer · 4×'))
@@ -197,7 +206,7 @@ class ViewerMgE2E(ViewerUXPriorsE2E):
 
     def test_mg_04_the_i_key_inverts_the_same_view_with_mirrored_and_the_lens_outline_and_fit_lie_on_the_image(self):
         patient = 'MGI-' + uuid.uuid4().hex[:12]
-        current = MG.phantom(self, patient); prior = MG.phantom(self, patient, prior=True)
+        current = MG.phantom(self, patient, breast=True); prior = MG.phantom(self, patient, prior=True, breast=True)
         page = self.login()
         MG.open_mg(self, page, [current, prior], 8)
         MG.image_state(self, page)
@@ -219,11 +228,11 @@ class ViewerMgE2E(ViewerUXPriorsE2E):
         page.evaluate('() => document.activeElement?.blur?.()')
         page.keyboard.press('i')
         page.wait_for_function('ids => !ids.some(id => services.cornerstoneViewportService.getCornerstoneViewport(id).getProperties().invert)', arg=cc, timeout=15000)
-        # Magnifier: pressed on a flat part of today's R CC's breast (image 60, 60), the lens stands on that place and its
+        # Magnifier: pressed on a flat part of today's R CC's breast (image 100, 60), the lens stands on that place and its
         # middle shows the cell's own canvas there; every lens shows the canvas under its own middle.
         self.mg(page, 'Magnifier')
         at = page.evaluate('''id => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id), d = v.getImageData().imageData;
-          const p = v.worldToCanvas(Array.from(d.indexToWorld([60, 60, 0], new Float64Array(3)))), r = v.element.getBoundingClientRect();
+          const p = v.worldToCanvas(Array.from(d.indexToWorld([100, 60, 0], new Float64Array(3)))), r = v.element.getBoundingClientRect();
           return { x: r.left + p[0], y: r.top + p[1], canvas: p.map(n => Math.round(n)) }; }''', rcc)
         page.mouse.move(at['x'], at['y']); page.mouse.down()
         lenses = page.locator('.kin-mg-lens')
@@ -256,15 +265,43 @@ class ViewerMgE2E(ViewerUXPriorsE2E):
           return [a.left - b.left, a.top - b.top, a.width - b.width, a.height - b.height]; })''')
         for offsets in placed:
             for n in offsets: self.assertAlmostEqual(0, n, delta=1, msg=placed)
+        # Each cell's breast as its phantom was made (MG.breast_box), on the cell's own screen: the four corners of the
+        # box, the screen length of its chest-wall-to-nipple side, and whether the line drawn crosses the box's nipple-side
+        # end at mid height (the skin line of the tissue as it was made).
+        boxes = {c['id']: MG.breast_box(side, prior=study == prior.uid) for (study, side, view), c in cells.items()}
+        shown = '''boxes => Object.fromEntries(Object.entries(boxes).map(([id, b]) => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id), d = v.getImageData().imageData;
+          const at = (x, y) => v.worldToCanvas(Array.from(d.indexToWorld([x - 0.5, y - 0.5, 0], new Float64Array(3))));
+          const corners = [[b.x0, b.y0], [b.x1, b.y1], [b.x0, b.y1], [b.x1, b.y0]].map(([x, y]) => at(x, y)), middle = (b.y0 + b.y1) / 2;
+          const xs = corners.map(p => p[0]), ys = corners.map(p => p[1]), w = v.element.clientWidth, h = v.element.clientHeight;
+          const a = at(b.x0, middle), z = at(b.x1, middle), skin = at(b.x1 === 128 ? b.x0 : b.x1, middle);
+          const outline = v.element.closest('[data-cy=viewport-pane]').querySelector('.kin-mg-outline');
+          let line = false;
+          if (outline) { const r = outline.width / w, strip = outline.getContext('2d').getImageData(Math.round((skin[0] - 4) * r), Math.round(skin[1] * r), Math.max(1, Math.round(8 * r)), 1).data;
+            for (let i = 3; i < strip.length; i += 4) if (strip[i] > 0) line = true; }
+          return [id, { inside: corners.every(([x, y]) => x >= -1 && y >= -1 && x <= w + 1 && y <= h + 1), line,
+            fill: Math.max((Math.max(...xs) - Math.min(...xs)) / w, (Math.max(...ys) - Math.min(...ys)) / h), length: Math.hypot(z[0] - a[0], z[1] - a[1]) }]; }))'''
+        drawn = page.evaluate(shown, boxes)
+        self.assertEqual({id: True for id in boxes}, {id: drawn[id]['line'] for id in boxes}, drawn)
+        # Fit Breast: the whole breast as it was made inside each cell, filling it one way to the 2 % margin.
         display.get_by_role('button', name='Fit Breast').click()
         expect(page.locator('[data-mg-badge=zoom]')).to_have_count(len(cc) + len(mlo), timeout=15000)
-        inside = page.evaluate('''ids => ids.map(id => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id), d = v.getImageData().imageData;
-          const [columns, rows] = v.getImageData().dimensions, b = KinMgBreastModel.detect(d.getPointData().getScalars().getData(), columns, rows).box;
-          const corners = [[b.x0, b.y0], [b.x1, b.y1], [b.x0, b.y1], [b.x1, b.y0]].map(([x, y]) => v.worldToCanvas(Array.from(d.indexToWorld([x - 0.5, y - 0.5, 0], new Float64Array(3)))));
-          const w = v.element.clientWidth, h = v.element.clientHeight;
-          return corners.every(([x, y]) => x >= -1 && y >= -1 && x <= w + 1 && y <= h + 1); })''', cc + mlo)
-        self.assertEqual([True] * len(inside), inside)
+        expect(page.locator('[data-mg-badge=zoom]').first).to_have_text('Zoom mode: Fit Breast', timeout=15000)
+        fitted = page.evaluate(shown, boxes)
+        for id in boxes:
+            with self.subTest(fit=id):
+                self.assertTrue(fitted[id]['inside'], fitted[id])
+                self.assertAlmostEqual(0.98, fitted[id]['fill'], delta=0.01, msg=fitted[id])
         page.screenshot(path=str(self.artifacts() / 'MG-fit-breast.png'))
+        # Match Size: the same chest-wall-to-nipple length on the screen in the cells of one view, every breast whole.
+        display.get_by_role('button', name='Match Size').click()
+        expect(page.locator('[data-mg-badge=zoom]').first).to_have_text('Zoom mode: Match Size', timeout=15000)
+        expect(page.locator('[data-mg-badge=zoom]').filter(has_text='Zoom mode: Match Size')).to_have_count(len(cc) + len(mlo), timeout=15000)
+        matched = page.evaluate(shown, boxes)
+        for view in (cc, mlo):
+            lengths = [matched[id]['length'] for id in view]
+            self.assertLessEqual(max(lengths) - min(lengths), 1.5, lengths)
+            self.assertGreater(min(lengths), 20, lengths)
+            self.assertEqual([True] * len(view), [matched[id]['inside'] for id in view], matched)
 
     def test_mg_02_dbt_step_interval_slab_pixels_and_play(self):
         f = self.dbt('MGD-' + uuid.uuid4().hex[:12])

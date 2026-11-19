@@ -5827,6 +5827,8 @@ window.KinLanguageTerms = {
     ["True Size에는 이 모니터의 실제 픽셀 크기가 필요합니다(브라우저는 알 수 없습니다). 모니터 사양의 픽셀 피치(mm)를 넣으세요. 이 PC의 이 브라우저에 화면별로 저장합니다.", "True Size needs this monitor's actual pixel size (the browser cannot know it). Enter the pixel pitch (mm) from the monitor's specifications. It is saved per display in this browser on this PC.", "m"],
     ["화면이 바뀌어 True Size를 Fit으로 돌렸습니다. Breast Display에서 이 화면의 픽셀 크기를 넣으세요.", "The display changed, so True Size was reset to Fit. Enter this display's pixel size in Breast Display.", "m"],
     ["유방 경계를 그렸습니다. 다시 누르면 지웁니다.", "Breast edge drawn. Press again to remove it.", "m"],
+    ["경계를 찾지 못한 칸 — {0}", "Viewports where the edge was not found — {0}", "m"],
+    ["MG 영상이 있는 칸을 찾지 못했습니다(영상 머리글을 읽지 못했을 수 있습니다). 바꾼 것이 없습니다.", "No viewport with an MG image was found (the image headers may not have been read). Nothing was changed.", "m"],
     ["각 MG 칸에서 유방 영역을 찾아 경계선을 그립니다", "Finds the breast region in each MG viewport and draws its edge", "m"],
     ["유방 영역 안의 픽셀만으로 창을 정합니다", "Sets the window from pixels inside the breast region only", "m"],
     ["영상을 칸에 맞춥니다", "Fits the image to the viewport", "m"],

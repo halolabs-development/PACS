@@ -64,22 +64,42 @@
       }
       return raws.get(sop);
     }
-    // One cell as the calculations see it: { id, v, imageId, mg, side, view, verified, flipH, flipV, columns, rows, monochrome1, study }.
+    // The image's declared pixel padding (Pixel Padding Value, with Pixel Padding Range Limit a range, both ends counted)
+    // in the values the cell holds: { low, high }, null without one, 'unknown' when the cell's values are converted ones
+    // (a rescale slope or intercept) and the image cannot say whether they are.
+    function paddingOf(item, v, imageId, modality) {
+      const value = Number(item['00280120']?.Value?.[0] ?? NaN), limit = Number(item['00280121']?.Value?.[0] ?? NaN);
+      if (!Number.isFinite(value)) return null;
+      const ends = Number.isFinite(limit) ? [Math.min(value, limit), Math.max(value, limit)] : [value, value];
+      const slope = Number(modality?.slope ?? 1), intercept = Number(modality?.intercept ?? 0);
+      if (slope === 1 && intercept === 0) return { low: ends[0], high: ends[1] };
+      let image = null; try { image = v.getCornerstoneImage?.() || core.cache?.getImage?.(imageId) || null; } catch (_) {}
+      if (!image || !Number.isFinite(slope) || !Number.isFinite(intercept)) return 'unknown';
+      if (image.preScale?.scaled !== true) return { low: ends[0], high: ends[1] };
+      const shown = ends.map(n => n * slope + intercept);
+      return { low: Math.min(...shown), high: Math.max(...shown) };
+    }
+    // One cell as the calculations see it: { id, v, imageId, mg, side, view, verified, flipH, flipV, columns, rows,
+    // monochrome1, partial, padding, study } — of the frame the cell shows now. partial: a magnification, spot or partial
+    // view (or a header that contradicts itself about it): not the whole breast.
     async function describe(v) {
       const instance = instanceOf(v), imageId = imageIdOf(v);
       if (!instance || !imageId) return null;
       const item = await rawOf(instance), model = window.KinMammographyModel;
       if (ended || !item || !model) return null;
-      let c = null, orientation = null;
+      let c = null, spec = null;
       try { c = model.classify(item); } catch (_) { return null; }
       const mg = item['00080060']?.Value?.[0] === 'MG' || !!c.kind || c.basis === 'ct-breast-tomosynthesis';
       const frame = Number(item['00280008']?.Value?.[0]) > 1 ? (v.getCurrentImageIdIndex?.() ?? 0) + 1 : 1;
-      try { orientation = model.displaySpec(item, frame).orientation; } catch (_) { orientation = null; }
+      try { spec = model.displaySpec(item, frame); } catch (_) { spec = null; }
+      const orientation = spec?.orientation, modifiers = Array.isArray(c.modifiers) ? c.modifiers : [];
       const dimensions = (() => { try { return v.getImageData()?.dimensions || null; } catch (_) { return null; } })();
       return { id: v.id, v, imageId, mg, kind: c.kind, basis: c.basis, side: c.laterality, view: c.view, verified: orientation?.status === 'verified',
         flipH: orientation?.flipH, flipV: orientation?.flipV,
         columns: Number(dimensions?.[0] ?? item['00280011']?.Value?.[0]), rows: Number(dimensions?.[1] ?? item['00280010']?.Value?.[0]),
-        monochrome1: String(item['00280004']?.Value?.[0] || '').toUpperCase() === 'MONOCHROME1', study: instance.StudyInstanceUID, series: instance.SeriesInstanceUID };
+        monochrome1: String(item['00280004']?.Value?.[0] || '').toUpperCase() === 'MONOCHROME1',
+        partial: c.partialState === 'yes' || c.partialState === 'conflict' || modifiers.some(m => m === 'Magnification' || m === 'Spot Compression'),
+        padding: paddingOf(item, v, imageId, spec?.modality), study: instance.StudyInstanceUID, series: instance.SeriesInstanceUID };
     }
     async function mgCells() {
       const list = await Promise.all(cellIds().map(viewportOf).filter(Boolean).map(v => describe(v).catch(() => null)));
@@ -171,20 +191,67 @@
     }
     const clearBadges = key => { for (const entry of layers.values()) { entry.marks.get(key)?.remove(); entry.marks.delete(key); } };
 
-    // ── The breast region of a cell's image now (cached for that image and pixel array) ──
+    // ── The breast region of a cell's image now ──
+    // The one place the region is worked out (Breast Edge, Breast W/L, Fit Breast, Match Size and Quadrant Zoom all ask
+    // here): from the pixel values the cell shows now (a slab's, while one is drawn) and what the image's own header says
+    // of the frame shown — the stored side of the chest wall, MONOCHROME1, declared padding, a partial view. Kept for the
+    // same image, the same pixel array and the same of those.
     const regions = new Map();
     function regionOf(cell) {
+      const chest = M.chestWall(cell);
+      if (!chest) return { found: false, reason: M.unlinkable(cell) || 'chest-wall-unknown' };
+      if (cell.padding === 'unknown') return { found: false, reason: 'padding-unknown' };
       const data = imageData(cell.v); if (!data) return { found: false, reason: 'no-pixels' };
       let values; try { values = data.getPointData().getScalars().getData(); } catch (_) { return { found: false, reason: 'no-pixels' }; }
+      const input = [chest, !!cell.monochrome1, !!cell.partial, cell.padding ? cell.padding.low + '…' + cell.padding.high : ''].join('|');
       const cached = regions.get(cell.id);
-      if (cached?.imageId === cell.imageId && cached.values === values) return cached.region;
-      const region = M.detect(values, cell.columns, cell.rows, { monochrome1: cell.monochrome1 });
-      regions.set(cell.id, { imageId: cell.imageId, values, region });
+      if (cached?.imageId === cell.imageId && cached.values === values && cached.input === input) return cached.region;
+      const region = M.detect(values, cell.columns, cell.rows, { chest, monochrome1: cell.monochrome1, partial: cell.partial, padding: cell.padding });
+      regions.set(cell.id, { imageId: cell.imageId, values, input, region });
       return region;
     }
+    const NO_CELLS = 'MG 영상이 있는 칸을 찾지 못했습니다(영상 머리글을 읽지 못했을 수 있습니다). 바꾼 것이 없습니다.';
+
+    // ── Acts that wait ──
+    // What the reader asks for is carried out once the image headers are read, and the first time that takes as long as
+    // the server does. An act is therefore taken down as things stood when it was received (the press, the camera event,
+    // the tool run, the button — not when the answer comes) and checked against that, here, just before each write:
+    // nothing is written for an act that a later one, a Reset, a Close or another image has overtaken.
+    // changes: how often each cell was given another image (a slice, a stack, a viewport); a cell held then is the same
+    // viewport on the same image with no change between (A → B → A is a change).
+    const changes = new Map(), moved = new Map(), turn = { camera: 0 };
+    const countOf = (map, id) => map.get(id) || 0;
+    const hold = v => ({ v, id: v.id, imageId: imageIdOf(v), changes: countOf(changes, v.id) });
+    const holds = held => !!held && viewportOf(held.id) === held.v && imageIdOf(held.v) === held.imageId && countOf(changes, held.id) === held.changes;
+    // A command that sets cameras (a Mirrored point or camera change, a Breast Display zoom mode, a Quadrant Zoom step or
+    // Close): the latest one received is the one carried out, and never on a cell whose camera was changed since by
+    // anything else (moved: the camera changes of each cell that this module did not make). later: false for an answer
+    // to something that is not a command of the reader's (a cell's new size) — it is overtaken, and overtakes nothing.
+    const cameraAct = (later = true) => ({ turn: later ? ++turn.camera : turn.camera, moved: new Map(moved) });
+    const cameraHolds = (act, id) => !ended && act.turn === turn.camera && (id === undefined || countOf(moved, id) === countOf(act.moved, id));
 
     // ── Mirrored ──
-    const mirror = { on: false, invert: true, panel: null, status: null, before: new Map(), epoch: 0 };
+    // epoch: every opening, Close and Reset; inverts: every time Invert together is turned off.
+    const mirror = { on: false, invert: true, panel: null, status: null, before: new Map(), epoch: 0, inverts: 0 };
+    // An act Mirrored carries from one cell to the others of its view ('camera': a point or a camera change, 'invert',
+    // 'lens'), as it stood when it was received: the Mirrored epoch, the source cell and every cell as held then, the
+    // display-rule mark, and for a camera act its place among the camera commands.
+    function mirrorAct(v, kind) {
+      const cells = new Map();
+      for (const id of cellIds()) { const cell = viewportOf(id); if (cell) cells.set(id, hold(cell)); }
+      return { kind, epoch: mirror.epoch, inverts: mirror.inverts, camera: kind === 'camera' ? cameraAct() : null, source: cells.get(v.id) || hold(v), cells, mark: ruleMark() };
+    }
+    // Whether the act is still to be carried out, and onto that cell (one of mgCells()): not after a Reset, a Close or
+    // a new opening, not from or onto a cell given another image since, a camera act not after a later camera command,
+    // an Invert not after Invert together was turned off (every Invert run while it stays on is carried, each in its turn).
+    function carried(act, target) {
+      if (ended || !mirror.on || act.epoch !== mirror.epoch || !holds(act.source)) return false;
+      if (act.camera && !cameraHolds(act.camera)) return false;
+      if (act.kind === 'invert' && !(mirror.invert && act.inverts === mirror.inverts)) return false;
+      if (!target) return true;
+      const held = act.cells.get(target.id);
+      return !!held && held.v === target.v && holds(held);
+    }
     async function openMirrored() {
       const panel = ui.panel({ id: 'mirrored', title: 'Mirrored' });
       if (!panel || panel === mirror.panel) return;
@@ -194,12 +261,18 @@
       note('대응 자리는 영상 좌표로 정합니다(반대쪽은 좌우 거울). 같은 조직이 아닐 수 있습니다. CC와 MLO 사이에는 걸지 않습니다.', panel.body);
       const label = element('label', '', panel.body, 'kin-mg-row'), invert = element('input', '', label);
       invert.type = 'checkbox'; invert.checked = mirror.invert; invert.setAttribute('aria-label', 'Invert together'); element('span', 'Invert together', label);
-      invert.onchange = () => { mirror.invert = invert.checked; };
+      // Turned off, the Inverts still waiting for the image headers are not carried either (nor when it is turned on again).
+      invert.onchange = () => { mirror.invert = invert.checked; if (!mirror.invert) mirror.inverts++; };
       const row = element('div', '', panel.body, 'kin-mg-row');
       button('Reset', row, () => resetMirrored(), '켜기 전의 보기로 되돌립니다');
       mirror.status = statusLine(panel.body);
-      // Close turns the link off and leaves the views as they are.
-      panel.onClose(() => { if (mirror.panel !== panel) return; mirror.on = false; mirror.epoch++; mirror.panel = mirror.status = null; clearBadges('mirrored'); });
+      // Close turns the link off and leaves the views as they are; the lenses of the linked cells go with it (the cell
+      // pressed keeps its own while it is pressed).
+      panel.onClose(() => {
+        if (mirror.panel !== panel) return;
+        mirror.on = false; mirror.epoch++; mirror.panel = mirror.status = null; clearBadges('mirrored');
+        for (const [id, entry] of layers) if (entry.lens && !(lens.pressed && lens.last?.id === id)) { entry.lens.remove(); entry.lens = null; }
+      });
       // Reset goes back to the views as they were when Mirrored was turned on (every cell's camera now; the link starts at
       // once — a point pressed before the image headers are read waits for them in pick()).
       mirror.before.clear();
@@ -211,9 +284,11 @@
       mirror.on = true; mirror.epoch++;
       await markUnlinked();
     }
+    // The cells Mirrored does not link, marked and named in this opening's panel (a Reset does not stop that).
     async function markUnlinked() {
+      const panel = mirror.panel;
       const list = await mgCells();
-      if (!mirror.on) return;
+      if (ended || !mirror.on || !panel || mirror.panel !== panel) return;
       clearBadges('mirrored');
       const lines = [];
       for (const cell of list) {
@@ -224,8 +299,10 @@
       }
       if (mirror.status) mirror.status.textContent = lines.length ? '연동하지 않는 칸 — ' + lines.join(' / ') : '';
     }
+    // Reset is carried out at once: every act received before it (a point, a camera change, an Invert, a lens) is dropped,
+    // and every camera command still waiting.
     function resetMirrored() {
-      mirror.epoch++;
+      mirror.epoch++; turn.camera++;
       for (const [id, before] of mirror.before) {
         const v = viewportOf(id);
         if (v !== before.viewport || imageIdOf(v) !== before.imageId) continue;
@@ -236,38 +313,41 @@
         });
       }
     }
-    // A point pressed in one cell: that place twice as large in it and the counterpart in the same view's other cells.
-    async function pick(viewportId, canvasPoint) {
-      const list = await mgCells(), t = M.targets(viewportId, list);
-      if (!mirror.on) return;
+    // A point pressed in one cell (point: that place in the cell's image, taken when it was pressed): that place twice as
+    // large in it and the counterpart in the same view's other cells.
+    async function pick(act, point) {
+      const list = await mgCells(), t = M.targets(act.source.id, list);
+      if (!carried(act)) return;
       if (t.reason) { if (mirror.status) mirror.status.textContent = '이 칸은 연동할 수 없습니다: ' + (REASONS[t.reason] || t.reason); return; }
-      const source = t.source, point = toImage(source.v, source.v.canvasToWorld(canvasPoint));
-      if (!point) return;
+      const source = t.source;
       for (const cell of [source, ...t.linked.map(id => list.find(c => c.id === id))]) {
+        if (!carried(act, cell)) continue;
         const at = cell === source ? point : M.counterpart(point, source, cell), world = at && toWorld(cell.v, at);
         if (world) steer(cell.v, () => { cell.v.setZoom(2); centerOn(cell.v, world); });
       }
     }
     // A reader's zoom or pan in one MG cell: the same zoom (relative to Fit) and the counterpart centre in the others.
-    const pendingCamera = new Map();  // source cell → the rule mark when its change was heard
+    // The act is taken down when the camera event is heard; it is carried a frame later, after the headers.
+    const pendingCamera = new Map();  // source cell → its latest act
     let cameraFrame = 0;
     function cameraChanged(event) {
       const id = event.detail?.viewportId;
       if (!mirror.on || !id || applying.has(id) || ruled(id)) return;
       const v = viewportOf(id);
       if (!v || lastSet.get(id) === signature(v)) return;
-      pendingCamera.set(id, ruleMark());
-      if (!cameraFrame) cameraFrame = requestAnimationFrame(() => { cameraFrame = 0; const ids = [...pendingCamera]; pendingCamera.clear(); ids.forEach(([id, mark]) => followCamera(id, mark)); });
+      pendingCamera.set(id, mirrorAct(v, 'camera'));
+      if (!cameraFrame) cameraFrame = requestAnimationFrame(() => { cameraFrame = 0; const acts = [...pendingCamera.values()]; pendingCamera.clear(); acts.forEach(act => followCamera(act)); });
     }
     // A change heard before a rule began on a cell is not carried onto it (nor carried from it).
-    async function followCamera(sourceId, mark) {
-      const list = await mgCells(), t = M.targets(sourceId, list);
-      if (!mirror.on || t.reason || ruled(sourceId, mark)) return;
+    async function followCamera(act) {
+      const list = await mgCells(), t = M.targets(act.source.id, list);
+      if (!carried(act) || t.reason || ruled(act.source.id, act.mark)) return;
       const source = t.source, zoom = zoomOf(source.v), focal = toImage(source.v, source.v.getCamera().focalPoint);
       if (!zoom || !focal) return;
       for (const id of t.linked) {
-        if (ruled(id, mark)) continue;
-        const cell = list.find(c => c.id === id), at = M.counterpart(focal, source, cell), world = at && toWorld(cell.v, at);
+        const cell = list.find(c => c.id === id);
+        if (ruled(id, act.mark) || !carried(act, cell)) continue;
+        const at = M.counterpart(focal, source, cell), world = at && toWorld(cell.v, at);
         if (world) steer(cell.v, () => { cell.v.setZoom(zoom); centerOn(cell.v, world); });
       }
     }
@@ -279,77 +359,99 @@
     async function invertRun(event) {
       const { id, viewportId } = event.detail || {}, v = id === 'invert' && viewportId && viewportOf(viewportId);
       if (!v || !mirror.on || !mirror.invert || ruled(viewportId)) return;
-      const mark = ruleMark(), epoch = mirror.epoch, image = imageIdOf(v);
+      const act = mirrorAct(v, 'invert');
       const list = await mgCells(), t = M.targets(viewportId, list);
-      // Not when Mirrored was reset, closed or opened again meanwhile, or the cell shows another image now (each Invert
-      // pressed meanwhile is carried in its turn).
-      if (!mirror.on || !mirror.invert || mirror.epoch !== epoch || t.reason || viewportOf(viewportId) !== v || ruled(viewportId, mark)
-        || imageIdOf(v) !== image) return;
+      if (!carried(act) || t.reason || ruled(viewportId, act.mark)) return;
       for (const target of t.linked) {
-        const other = list.find(c => c.id === target)?.v, invert = other && invertOf(other);
-        if (!other || invert === null || ruled(target, mark) || viewportOf(target) !== other) continue;
+        const cell = list.find(c => c.id === target), other = cell?.v, invert = other && invertOf(other);
+        if (!other || invert === null || ruled(target, act.mark) || !carried(act, cell)) continue;
         steer(other, () => other.setProperties({ invert: !invert }));
       }
     }
-    // A press without a drag in an MG cell while Mirrored is on is a point.
+    // A press without a drag in an MG cell while Mirrored is on is a point: the act and the place in the image are taken
+    // when it is pressed, its turn among the camera commands when it is let go (a drag is not a command).
     let press = null;
     document.addEventListener('pointerdown', event => {
       press = null;
       if (!mirror.on || event.button !== 0) return;
       const v = cellIds().map(viewportOf).find(v => v?.element.contains(event.target));
-      if (v) press = { id: v.id, x: event.clientX, y: event.clientY };
+      if (!v) return;
+      const rect = v.element.getBoundingClientRect();
+      let point = null; try { point = toImage(v, v.canvasToWorld([event.clientX - rect.left, event.clientY - rect.top])); } catch (_) {}
+      press = { x: event.clientX, y: event.clientY, act: mirrorAct(v, 'point'), point };
     }, { capture: true, signal });
     document.addEventListener('pointerup', event => {
       const start = press; press = null;
-      if (!start || !mirror.on || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 4) return;
-      const v = viewportOf(start.id); if (!v) return;
-      const rect = v.element.getBoundingClientRect();
-      pick(start.id, [event.clientX - rect.left, event.clientY - rect.top]).catch(error => console.error(error));
+      if (!start || !start.point || !mirror.on || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 4) return;
+      start.act.camera = cameraAct();
+      pick(start.act, start.point).catch(error => console.error(error));
     }, { capture: true, signal });
 
     // ── Magnifier: while pressed, the place under the pointer twice as large (and its counterparts with Mirrored on) ──
-    const lens = { on: false };
-    const LENS = 160, LENS_ZOOM = 2;
+    // press counts every press and every release (and the Magnifier turned on or off), moves every place a lens was asked
+    // for: a lens that comes late (after the image headers) is drawn only for the press and the place that are still the last.
+    const lens = { on: false, pressed: false, press: 0, moves: 0, last: null };
+    const LENS = 160, LENS_ZOOM = 2, LENS_MARGIN = 3;
+    // The one place a lens is drawn (the cell pressed, the linked cells, and again while it is held): the picture the
+    // screen shows at `point` (CSS pixels of the cell's image), twice as large. The cell's canvas is read on the screen's
+    // own pixel grid together with its neighbours (a 3 × 3 image filter needs one pixel around, the enlargement one
+    // more, a canvas not sized to the screen's pixels one more), an image filter of the cell (Display › Filter, a CSS
+    // filter on its canvas) is put on that once, at the screen's scale, and only the middle is enlarged — what cutting
+    // the place out of the filtered screen and enlarging it shows. At the canvas's own end nothing lies beyond it, as
+    // for the filter on the screen.
     function lensAt(v, point) {
       const entry = layerOf(v); if (!entry) return;
       if (!entry.lens) { entry.lens = element('div', '', entry.stage, 'kin-mg-lens'); element('canvas', '', entry.lens); }
-      const canvas = entry.lens.firstChild, source = v.canvas, ratio = source && source.clientWidth ? source.width / source.clientWidth : 1;
-      canvas.width = Math.round(LENS * ratio); canvas.height = Math.round(LENS * ratio);
+      const canvas = entry.lens.firstChild, source = v.canvas, dpr = window.devicePixelRatio || 1;
+      canvas.width = canvas.height = Math.round(LENS * dpr);
       Object.assign(entry.lens.style, { left: point[0] + 'px', top: point[1] + 'px' });
       entry.lens.dataset.at = point.map(n => Math.round(n)).join(',');
-      const side = LENS / LENS_ZOOM * ratio, x = point[0] * ratio - side / 2, y = point[1] * ratio - side / 2;
       try {
-        // An image filter of the cell (Display › Filter, a CSS filter on its canvas) works on the screen's own pixels: it is
-        // put on the place at the screen's size first, and that is magnified (as the screen shows it, twice as large).
-        const filter = source?.style?.filter || '';
-        let from = source, at = [x, y];
-        if (filter && filter !== 'none') {
-          const size = Math.ceil(side);
-          from = document.createElement('canvas'); from.width = from.height = size;
-          const g = from.getContext('2d'); g.filter = filter; g.drawImage(source, x, y, size, size, 0, 0, size, size);
-          at = [0, 0];
-        }
-        canvas.getContext('2d').drawImage(from, at[0], at[1], side, side, 0, 0, canvas.width, canvas.height);
+        // The canvas in screen (device) pixels: as the viewer sizes it, one of them to one pixel of the canvas.
+        const wide = Math.round(source.clientWidth * dpr), high = Math.round(source.clientHeight * dpr);
+        if (!(wide > 0 && high > 0 && source.width > 0 && source.height > 0)) return;
+        const side = LENS / LENS_ZOOM * dpr, x = point[0] * dpr - side / 2, y = point[1] * dpr - side / 2;
+        const x0 = Math.max(0, Math.floor(x) - LENS_MARGIN), y0 = Math.max(0, Math.floor(y) - LENS_MARGIN);
+        const x1 = Math.min(wide, Math.ceil(x + side) + LENS_MARGIN), y1 = Math.min(high, Math.ceil(y + side) + LENS_MARGIN);
+        const ax = Math.max(x, 0), ay = Math.max(y, 0), bx = Math.min(x + side, wide), by = Math.min(y + side, high);
+        if (bx <= ax || by <= ay) return;
+        const part = document.createElement('canvas'); part.width = x1 - x0; part.height = y1 - y0;
+        const g = part.getContext('2d'), filter = source.style?.filter || '', sx = source.width / wide, sy = source.height / high;
+        if (filter && filter !== 'none') g.filter = filter;
+        g.drawImage(source, x0 * sx, y0 * sy, part.width * sx, part.height * sy, 0, 0, part.width, part.height);
+        // The middle of it; what of the place lies beyond the canvas stays empty.
+        const k = canvas.width / side;
+        canvas.getContext('2d').drawImage(part, ax - x0, ay - y0, bx - ax, by - ay, (ax - x) * k, (ay - y) * k, (bx - ax) * k, (by - ay) * k);
       } catch (_) { /* a canvas not drawn yet */ }
     }
     const hideLenses = () => { for (const entry of layers.values()) { entry.lens?.remove(); entry.lens = null; } };
+    const lensUp = () => { lens.pressed = false; lens.press++; lens.last = null; hideLenses(); };
     // While pressed, a cell drawn again (an Invert, a window change) shows in the lenses at once.
     let lensFrame = 0;
     function lensRedraw(event) {
       const id = event.detail?.viewportId;
       if (!lens.pressed || !lens.last || lensFrame || ![...layers].some(([cell, entry]) => cell === id && entry.lens)) return;
-      lensFrame = requestAnimationFrame(() => { lensFrame = 0; if (lens.pressed && lens.last) magnify(lens.last.id, lens.last.point).catch(error => console.error(error)); });
+      const press = lens.press;
+      lensFrame = requestAnimationFrame(() => {
+        lensFrame = 0;
+        if (!ended && lens.pressed && lens.press === press && lens.last) magnify(lens.last.id, lens.last.point).catch(error => console.error(error));
+      });
     }
     async function magnify(viewportId, point) {
-      const v = viewportOf(viewportId); if (!v) return;
+      const v = viewportOf(viewportId); if (!v || !lens.pressed) return;
+      const press = lens.press, move = ++lens.moves;
       lens.last = { id: viewportId, point };
       hideLenses(); lensAt(v, point);
       if (!mirror.on) return;
+      // The linked cells: taken down as a Mirrored act now, with the place in the image now.
+      const act = mirrorAct(v, 'lens');
+      let at = null; try { at = toImage(v, v.canvasToWorld(point)); } catch (_) {}
       const list = await mgCells(), t = M.targets(viewportId, list);
-      if (t.reason || !lens.pressed) return;
-      const at = toImage(v, v.canvasToWorld(point));
+      if (!lens.pressed || press !== lens.press || move !== lens.moves || !carried(act) || t.reason || !at) return;
       for (const id of t.linked) {
-        const cell = list.find(c => c.id === id), p = at && M.counterpart(at, t.source, cell), world = p && toWorld(cell.v, p);
+        const cell = list.find(c => c.id === id);
+        if (!carried(act, cell)) continue;
+        const p = M.counterpart(at, t.source, cell), world = p && toWorld(cell.v, p);
         if (world) lensAt(cell.v, cell.v.worldToCanvas(world));
       }
     }
@@ -368,10 +470,13 @@
           entry.capture.addEventListener('pointerdown', event => {
             event.stopPropagation(); event.preventDefault();
             if (entry.capture.dataset.mode !== 'lens' || event.button !== 0) return;
-            entry.capture.setPointerCapture?.(event.pointerId); lens.pressed = true; magnify(id, at(event));
+            entry.capture.setPointerCapture?.(event.pointerId); lens.pressed = true; lens.press++;
+            magnify(id, at(event)).catch(error => console.error(error));
           });
-          entry.capture.addEventListener('pointermove', event => { if (lens.pressed && entry.capture.dataset.mode === 'lens') magnify(id, at(event)); });
-          for (const type of ['pointerup', 'pointercancel']) entry.capture.addEventListener(type, () => { lens.pressed = false; lens.last = null; hideLenses(); });
+          entry.capture.addEventListener('pointermove', event => {
+            if (lens.pressed && entry.capture.dataset.mode === 'lens') magnify(id, at(event)).catch(error => console.error(error));
+          });
+          for (const type of ['pointerup', 'pointercancel']) entry.capture.addEventListener(type, lensUp);
           entry.capture.addEventListener('mousedown', event => event.stopPropagation());
           entry.capture.addEventListener('wheel', event => {
             if (tomo.slabbed?.id !== id) return;
@@ -383,18 +488,21 @@
       }
     }
     async function setMagnifier(on) {
-      lens.on = on; lens.pressed = false; hideLenses();
-      pressLayers(on ? await mgCells() : []);
+      lens.on = on; lensUp();
+      const list = on ? await mgCells() : [];
+      if (ended || lens.on !== on) return;
+      pressLayers(list);
       ui.toast(on ? 'Magnifier: MG 영상을 누르고 있는 동안 그 자리를 2배로 보입니다. MG ▾ › Magnifier로 끕니다.' : 'Magnifier를 껐습니다.');
     }
 
     // ── Quadrant Zoom ──
-    // Every step and every Close takes a new ticket: an earlier one still reading image headers then changes nothing.
+    // Every step and every Close is a camera command (cameraAct): an earlier one still reading image headers then changes
+    // nothing, and neither writes a cell whose camera was changed meanwhile.
     // marks: the cells the step holds ({ viewport, stack, zoom, width, height, clipped, text }). A cell leaves the step when
     // its zoom, stack or viewport is changed by anything else (Breast Display, Mirrored, the reader): its badge then no
     // longer says what it shows, and nothing of the step is drawn there again. A pan keeps it (the way to an edge at 4×).
     // A held cell whose size changes (window, layout) has its step worked out again for the new size.
-    const quad = { panel: null, step: 0, ticket: 0, marks: new Map(), apply: null, paint: null, resized: new Set(), timer: 0 };
+    const quad = { panel: null, step: 0, marks: new Map(), apply: null, paint: null, resized: new Set(), timer: 0 };
     const QUAD_ZOOM_LABELS = { '4x': '4×', fill: 'Fill Quadrant' };
     const quadSizes = typeof ResizeObserver === 'function' ? new ResizeObserver(entries => {
       for (const entry of entries) for (const [id, mark] of quad.marks) {
@@ -475,13 +583,15 @@
         return true;
       }
       async function show(step) {
-        const ticket = ++quad.ticket, mode = carry.quadrantZoom;
+        const act = cameraAct(), mode = carry.quadrantZoom;
         quad.step = ((step % 4) + 4) % 4;
         heading.textContent = `Quadrant ${quad.step + 1}/4: ${M.QUADRANTS[quad.step]} (R/L matched)`;
         const skipped = [], failed = [];
         const list = await mgCells();
-        if (quad.panel !== panel || ticket !== quad.ticket) return;
+        if (quad.panel !== panel || !cameraHolds(act)) return;
         for (const cell of list) {
+          // A cell whose camera was changed since the step was asked for is left as it is, out of the step.
+          if (!cameraHolds(act, cell.id)) { dropQuadrant(cell.id); continue; }
           const reason = M.unlinkable(cell);
           if (reason) { dropQuadrant(cell.id); skipped.push(labelOf(cell) + ': ' + (REASONS[reason] || reason)); badge(cell.v, 'quadrant', 'Quadrant: ' + (REASONS[reason] || reason)); continue; }
           if (!place(cell, mode)) failed.push(labelOf(cell));
@@ -490,12 +600,13 @@
           failed.length ? '배율을 계산할 수 없어 확대하지 않은 칸 — ' + failed.join(' / ') : ''];
         paint();
       }
-      // Held cells whose size changed: the same step and zoom choice again, for those cells only (a step taken meanwhile wins).
+      // Held cells whose size changed: the same step and zoom choice again, for those cells only (a command received
+      // meanwhile wins, and a cell whose camera was changed meanwhile is left).
       quad.apply = async ids => {
-        const ticket = quad.ticket, mode = carry.quadrantZoom;
+        const act = cameraAct(false), mode = carry.quadrantZoom;
         const list = await mgCells();
-        if (quad.panel !== panel || ticket !== quad.ticket) return;
-        for (const cell of list) if (ids.includes(cell.id) && quad.marks.get(cell.id)?.viewport === cell.v && !place(cell, mode)) {
+        if (quad.panel !== panel || !cameraHolds(act)) return;
+        for (const cell of list) if (ids.includes(cell.id) && quad.marks.get(cell.id)?.viewport === cell.v && cameraHolds(act, cell.id) && !place(cell, mode)) {
           notes = [...notes.filter(Boolean), '배율을 계산할 수 없어 확대하지 않은 칸 — ' + labelOf(cell)];
         }
         paint();
@@ -503,11 +614,11 @@
       quad.paint = paint;
       panel.onClose(async () => {
         if (quad.panel !== panel) return;
-        const ticket = ++quad.ticket;
+        const act = cameraAct();
         endQuadrant();
         const list = await mgCells();
-        if (ticket !== quad.ticket) return;
-        for (const cell of list) fit(cell.v);
+        if (!cameraHolds(act)) return;
+        for (const cell of list) if (cameraHolds(act, cell.id)) fit(cell.v);
       });
       show(0);
     }
@@ -701,7 +812,7 @@
       if (!key || !M.validPitch(value)) return false;
       try { localStorage.setItem(PITCH_KEY, JSON.stringify({ ...pitches(), [key]: value })); return true; } catch (_) { return false; }
     }
-    const show = { panel: null, status: null, pitchRow: null, edge: false, wl: new Map(), modes: new Map(), screen: null, sessionPitch: null };
+    const show = { panel: null, status: null, pitchRow: null, edge: false, edgeAsked: false, wl: new Map(), wlTicket: 0, wlWaiting: false, modes: new Map(), screen: null, sessionPitch: null };
     // A Breast Display zoom mode and a Quadrant Zoom step are each the cell's zoom until the other is set there.
     const setMode = (v, text) => { dropQuadrant(v.id); show.modes.set(v.id, { viewport: v, text }); badge(v, 'zoom', 'Zoom mode: ' + text); };
     function dropZoomMode(id) { const mode = show.modes.get(id); if (mode) { show.modes.delete(id); badge(mode.viewport, 'zoom', null); } }
@@ -725,7 +836,8 @@
       canvas.dataset.points = String(region.outline.length);
     }
     // Each call takes a new ticket: one still reading image headers draws nothing when a later one (or Breast Edge off)
-    // came meanwhile.
+    // came meanwhile. The lines there were go at once; a cell without a region gets none, and is marked and named.
+    // What the Breast Edge button says is what was drawn, said once it is (by whichever drawing comes first after the press).
     let edgeTicket = 0;
     async function drawEdges() {
       const ticket = ++edgeTicket;
@@ -733,12 +845,17 @@
       clearBadges('edge');
       if (!show.edge) return;
       const list = await mgCells();
-      if (ticket !== edgeTicket || !show.edge) return;
+      if (ended || ticket !== edgeTicket || !show.edge) return;
+      const missed = [];
       for (const cell of list) {
         const region = regionOf(cell);
-        if (region.found) drawOutline(cell, region); else badge(cell.v, 'edge', '경계를 찾지 못했습니다');
+        if (region.found) drawOutline(cell, region); else { missed.push(labelOf(cell)); badge(cell.v, 'edge', '경계를 찾지 못했습니다'); }
       }
+      if (!show.edgeAsked) return;
+      show.edgeAsked = false;
+      say(!list.length ? NO_CELLS : missed.length ? '경계를 찾지 못한 칸 — ' + missed.join(' / ') : '유방 경계를 그렸습니다. 다시 누르면 지웁니다.');
     }
+    function pressEdge() { show.edge = !show.edge; show.edgeAsked = show.edge; say(''); drawEdges(); }
     // The cell's VOI as it is (window, function, inversion and a stored table on the GPU actor), and back.
     function transfer(v) { try { return v.getDefaultActor()?.actor?.getProperty().getRGBTransferFunction(0) || null; } catch (_) { return null; } }
     function voiNow(v) {
@@ -757,14 +874,22 @@
       for (const [id, entry] of show.wl) {
         const v = viewportOf(id);
         if (v === entry.viewport && stackKey(v) === entry.stack) try { applying.add(id); voiBack(v, entry.before); } catch (error) { console.error(error); } finally { applying.delete(id); }
-        badge(entry.viewport, 'wl', null);
       }
-      show.wl.clear();
+      show.wl.clear(); clearBadges('wl');
     }
+    // The button turns Breast W/L on, and off again: a press while the first is still waiting for the image headers is
+    // the press that turns it off (nothing was changed yet, and nothing is then), so the window, the table and the
+    // inversion a cell had are taken once, from the cell as the reader had it, and are what Off gives back.
     async function breastWl() {
-      if (show.wl.size) { wlOff(); say('Breast W/L을 껐습니다. 원래 창(VOI LUT·반전 포함)으로 돌아갔습니다.'); return; }
+      const ticket = ++show.wlTicket;
+      if (show.wlWaiting || show.wl.size) { show.wlWaiting = false; wlOff(); say('Breast W/L을 껐습니다. 원래 창(VOI LUT·반전 포함)으로 돌아갔습니다.'); return; }
+      show.wlWaiting = true;
+      const list = await mgCells();
+      if (ended || ticket !== show.wlTicket) return;
+      show.wlWaiting = false; clearBadges('wl');
+      if (!list.length) { say(NO_CELLS); return; }
       const failed = [];
-      for (const cell of await mgCells()) {
+      for (const cell of list) {
         const region = regionOf(cell);
         let values; try { values = imageData(cell.v).getPointData().getScalars().getData(); } catch (_) { values = null; }
         const window_ = region.found && values ? M.regionWindow(values, cell.columns, cell.rows, region) : null;
@@ -781,16 +906,24 @@
       say(failed.length ? '경계를 찾지 못해 창을 바꾸지 않은 칸 — ' + failed.join(' / ') : 'Breast W/L: 유방 영역 픽셀(1–99 백분위)로 창을 정했습니다. 다시 누르면 원래 창입니다.');
     }
     const say = text => { if (show.status) show.status.textContent = text; };
+    // A zoom mode is a camera command: the latest one pressed is the one carried out and the one that says so, and a
+    // cell whose camera was changed since it was pressed is left as it is (and named).
     async function zoomMode(kind) {
-      const list = await mgCells(), skipped = [];
+      const act = cameraAct();
+      const all = await mgCells(), skipped = [], left = [];
+      if (!cameraHolds(act)) return;
+      if (!all.length) { say(NO_CELLS); return; }
+      const list = all.filter(cell => cameraHolds(act, cell.id) || !left.push(labelOf(cell)));
+      if (!show.edge) clearBadges('edge');
+      const missed = cell => { skipped.push(labelOf(cell)); if (!show.edge) badge(cell.v, 'edge', '경계를 찾지 못했습니다'); };
       if (kind === 'match') {
         const groups = new Map();
         for (const cell of list) { if (!cell.view) { skipped.push(labelOf(cell)); continue; } groups.set(cell.view, [...(groups.get(cell.view) || []), cell]); }
-        const unset = [];
+        const unset = [...left];
         for (const group of groups.values()) {
           const entries = group.map(cell => {
             const region = regionOf(cell), box = region.found ? region.box : null, zoom = zoomOf(cell.v), shown = box && shownBox(cell.v, box);
-            if (!box) skipped.push(labelOf(cell));
+            if (!box) missed(cell);
             return { cell, box, id: cell.id, zoom, perPixel: 1, length: shown?.length ?? 0, fit: shown && fitShown(cell.v, zoom, shown) };
           });
           const zooms = M.matchSize(entries);
@@ -818,6 +951,7 @@
         say((skipped.length ? '픽셀 간격을 확인할 수 없어 바꾸지 않은 칸 — ' + skipped.join(' / ') + '. ' : '') + `True Size: 이 화면의 픽셀 크기 ${pitch} mm 기준입니다.`);
         return;
       }
+      skipped.push(...left);
       for (const cell of list) {
         const v = cell.v;
         if (kind === 'fit') { fit(v); setMode(v, 'Fit'); continue; }
@@ -828,7 +962,7 @@
         }
         if (kind === 'breast') {
           const region = regionOf(cell);
-          if (!region.found) { skipped.push(labelOf(cell)); badge(v, 'edge', '경계를 찾지 못했습니다'); continue; }
+          if (!region.found) { missed(cell); continue; }
           const box = region.box, shown = shownBox(v, box), zoom = shown && fitShown(v, zoomOf(v), shown);
           const world = toWorld(v, [(box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2]);
           if (zoom && world && steer(v, () => { v.setZoom(zoom); centerOn(v, world); })) setMode(v, 'Fit Breast'); else skipped.push(labelOf(cell));
@@ -877,7 +1011,7 @@
       if (!panel || panel === show.panel) return;
       show.panel = panel;
       const row = element('div', '', panel.body, 'kin-mg-row');
-      button('Breast Edge', row, () => { show.edge = !show.edge; drawEdges(); say(show.edge ? '유방 경계를 그렸습니다. 다시 누르면 지웁니다.' : ''); }, '각 MG 칸에서 유방 영역을 찾아 경계선을 그립니다');
+      button('Breast Edge', row, () => pressEdge(), '각 MG 칸에서 유방 영역을 찾아 경계선을 그립니다');
       button('Breast W/L', row, () => breastWl(), '유방 영역 안의 픽셀만으로 창을 정합니다');
       button('Fit', row, () => zoomMode('fit'), '영상을 칸에 맞춥니다');
       button('1:1', row, () => zoomMode('pixel'), '영상 픽셀 1개를 화면 픽셀 1개로');
@@ -980,15 +1114,23 @@
     // ── Events ──
     const listen = (type, fn) => { if (type) document.addEventListener(type, fn, { capture: true, signal }); };
     listen(events.IMAGE_RENDERED, lensRedraw);
-    listen(events.CAMERA_MODIFIED, event => { cameraChanged(event); if (event.detail?.viewportId) quadrantCamera(event.detail.viewportId); if (show.edge) drawEdges(); });
+    listen(events.CAMERA_MODIFIED, event => {
+      const id = event.detail?.viewportId;
+      // A camera change this module did not make (the reader's, the viewer's): a command still waiting leaves that cell.
+      if (id && !applying.has(id)) moved.set(id, countOf(moved, id) + 1);
+      cameraChanged(event); if (id) quadrantCamera(id); if (show.edge) drawEdges();
+    });
     window.addEventListener('kin-viewer-tool-run', event => { invertRun(event).catch(error => console.error(error)); }, { signal });
-    listen(events.STACK_NEW_IMAGE, event => { tomoImage(event); const id = event.detail?.viewportId; if (id) cellImage(id); });
+    listen(events.STACK_NEW_IMAGE, event => { tomoImage(event); const id = event.detail?.viewportId; if (id) { changes.set(id, countOf(changes, id) + 1); cellImage(id); } });
     window.addEventListener('resize', screenChanged, { signal });
     try { window.screen.addEventListener?.('change', screenChanged, { signal }); } catch (_) {}
     const subscriptions = [];
     const subscribe = (service, event, fn) => { try { if (event && service?.subscribe) subscriptions.push(service.subscribe(event, fn)); } catch (error) { console.error(error); } };
     subscribe(grid, grid?.EVENTS?.GRID_STATE_CHANGED, () => { tomoCell(null); for (const id of cellIds()) cellImage(id); if (lens.on) mgCells().then(pressLayers).catch(() => {}); if (mirror.on) markUnlinked(); });
-    subscribe(cellService, cellService?.EVENTS?.VIEWPORT_DATA_CHANGED, event => { tomoCell(event?.viewportId ? [event.viewportId] : null); if (event?.viewportId) cellImage(event.viewportId); });
+    subscribe(cellService, cellService?.EVENTS?.VIEWPORT_DATA_CHANGED, event => {
+      tomoCell(event?.viewportId ? [event.viewportId] : null);
+      if (event?.viewportId) { changes.set(event.viewportId, countOf(changes, event.viewportId) + 1); cellImage(event.viewportId); }
+    });
     subscribe(services.cineService, services.cineService?.EVENTS?.CINE_STATE_CHANGED, cineChanged);
 
     // ── Menu ──

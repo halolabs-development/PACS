@@ -92,159 +92,194 @@
   }
 
   // ── The breast region ──
-  // values: the image's pixel values, row after row (columns × rows). Searched on a grid of at most maxSide cells a side,
-  // each cell the mean of the image pixels it covers. The region reaches the skin line: everything brighter than the
-  // background, not only the dense tissue. The background is the largest histogram peak at the dark end (MONOCHROME1
-  // shows low values bright, so its values are read the other way round); the threshold is where that peak's slope ends
-  // (the triangle method, from the peak to the brightest value), so fat just inside the skin is tissue. Thin strips
-  // (a body edge or a paddle edge a few millimetres wide along the image border) are not the breast: an opening of
-  // `open` cells (default 2) cuts them off, what it took from the breast's own edge grows back through tissue up to `grow`
-  // cells (default 8), then the largest 4-connected region is taken, and holes in that region are part of it. Returns { found, reason?, step, width, height, mask, box, outline, threshold }: mask on the grid, box and
-  // outline (one point at each end of every grid row of the region, top to bottom on the left, then back up on the right)
-  // in image coordinates; threshold in the image's own values (tissue is above it, below it for MONOCHROME1).
+  // The side of the stored image the chest wall is at ('left' | 'right'), from the image's own header: the standard
+  // display has the right breast's chest wall at the screen right and the left breast's at the screen left, and flipH says
+  // the stored columns run the other way. Null without a known side, view and verified stored orientation. A flip or a
+  // rotation the reader put on the cell, and the cell's place on the screen, play no part.
+  function chestWall(cell) {
+    return unlinkable(cell) ? null : (cell.side === 'R') !== cell.flipH ? 'right' : 'left';
+  }
+  // The breast region of one image: the tissue that stands against the chest wall, out to the skin line. What is not the
+  // breast is decided by where it is, not by how bright it is:
+  // - Air is at the border opposite the chest wall, and it is flat: a device stores it as one value, where tissue has
+  //   its grain. The stretch of that border where every pixel is within a thousandth of the image's range (the darkest
+  //   border value to the 95th percentile of the grid) of the darkest is air, when it is an eighth of the border or
+  //   more; the values found there, and as much again above them, are the air's values. Air is every grid cell wholly
+  //   within those values that is reached from that border through such cells (4-connected). A cell with one brighter
+  //   pixel is not air, so fat is never air, and a nipple at or near the border stays tissue.
+  // - Pixel padding (options.padding: { low, high }, both ends counted, in the values' own space) is no pixel of the
+  //   image: it is neither air nor tissue, the search passes through it, and behind a band of it the border is the first
+  //   cell with a pixel.
+  // - The breast is the largest piece of what is left (4-connected) that reaches the chest-wall border. Where that piece
+  //   runs on along the chest wall as a thin strip (a body or paddle edge, the abdomen under an oblique view), the strip
+  //   is not the breast: the rows at either end whose tissue reaches no farther from the chest wall than an eighth of the
+  //   piece's greatest reach (or a twenty-fifth of the image's width) are left out when that run of rows is at least four
+  //   times as long as its median reach (the breast's own rounded end is not). Nothing is cut on the nipple side.
+  // - Holes in it are part of it.
+  // No region ({ found: false, reason }) rather than a doubtful one: without the chest-wall side ('chest-wall-unknown'),
+  // for a magnification, spot or partial view (options.partial: 'partial-view'), without clear air over a twentieth of
+  // the image ('no-air': tissue fills it, or its background is not flat), with tissue that does not reach the chest wall
+  // ('not-at-chest-wall': an unexplained band between them), with only strips ('no-region').
+  // values: the image's pixel values, row after row (columns × rows); MONOCHROME1 shows low values bright, so
+  // options.monochrome1 reads them the other way round. Searched on a grid of at most maxSide cells a side; the box and
+  // the outline are then taken from the pixels themselves. Returns { found, step, width, height, mask, box, outline,
+  // chest, air, monochrome1, padding }: mask on the grid; box and outline (one point at each end of every grid row of the
+  // region, down the left and back up the right) in image coordinates; air: the top of the air's values in the image's
+  // own values (the bottom for MONOCHROME1), null when all that is not the breast is padding.
   function detect(values, columns, rows, options = {}) {
     const none = reason => ({ found: false, reason });
     if (!values || typeof values.length !== 'number' || !Number.isSafeInteger(columns) || !Number.isSafeInteger(rows) || columns < 2 || rows < 2
       || values.length < columns * rows) return none('no-pixels');
+    if (options.partial) return none('partial-view');
+    if (options.chest !== 'left' && options.chest !== 'right') return none('chest-wall-unknown');
+    const chestRight = options.chest === 'right', sign = options.monochrome1 ? -1 : 1;
+    const padLow = Number(options.padding?.low), padHigh = Number(options.padding?.high), padded = finite(padLow) && finite(padHigh) && padHigh >= padLow;
     const maxSide = Number.isSafeInteger(options.maxSide) && options.maxSide >= 16 ? options.maxSide : 256;
-    const open = Number.isSafeInteger(options.open) && options.open >= 0 ? options.open : 2;
     const step = Math.max(1, Math.ceil(Math.max(columns, rows) / maxSide));
     const width = Math.ceil(columns / step), height = Math.ceil(rows / step), size = width * height;
-    const grid = new Float64Array(size), counts = new Uint32Array(size), column = new Int32Array(columns);
+    // Each grid cell: how many pixels of the image it holds, and their mean, lowest and highest (dark = air).
+    const count = new Uint32Array(size), mean = new Float64Array(size), low = new Float64Array(size).fill(Infinity), high = new Float64Array(size).fill(-Infinity);
+    const column = new Int32Array(columns);
     for (let x = 0; x < columns; x++) column[x] = Math.floor(x / step);
     for (let y = 0; y < rows; y++) {
       const row = Math.floor(y / step) * width, base = y * columns;
       for (let x = 0; x < columns; x++) {
         const value = +values[base + x];
-        if (value !== value || value === Infinity || value === -Infinity) continue;
-        const at = row + column[x];
-        grid[at] += value; counts[at]++;
+        if (value !== value || value === Infinity || value === -Infinity || (padded && value >= padLow && value <= padHigh)) continue;
+        const at = row + column[x], dark = sign * value;
+        mean[at] += dark; count[at]++;
+        if (dark < low[at]) low[at] = dark; if (dark > high[at]) high[at] = dark;
       }
     }
-    const sign = options.monochrome1 ? -1 : 1;
-    let low = Infinity, high = -Infinity;
-    for (let i = 0; i < size; i++) {
-      if (!counts[i]) { grid[i] = NaN; continue; }
-      const value = sign * grid[i] / counts[i];
-      grid[i] = value;
-      if (value < low) low = value; if (value > high) high = value;
+    const means = [];
+    for (let i = 0; i < size; i++) if (count[i]) { mean[i] /= count[i]; means.push(mean[i]); }
+    if (!means.length) return none('no-pixels');
+    // The border on each side: every grid row's first cell with a pixel, from the nipple side and from the chest wall.
+    const nippleX = chestRight ? 0 : width - 1, chestX = width - 1 - nippleX, inward = chestRight ? 1 : -1;
+    const nippleBorder = [], chestBorder = new Int32Array(height).fill(-1);
+    for (let gy = 0; gy < height; gy++) {
+      for (let n = 0, gx = nippleX; n < width; n++, gx += inward) if (count[gy * width + gx]) { nippleBorder.push(gy * width + gx); break; }
+      for (let n = 0, gx = chestX; n < width; n++, gx -= inward) if (count[gy * width + gx]) { chestBorder[gy] = gx; break; }
     }
-    if (!(finite(low) && finite(high)) || high <= low) return none('flat');
-    // The histogram runs up to the 95th percentile (a burned-in label far brighter than any tissue, up to a twentieth of the
-    // image, would otherwise squeeze background, fat and dense tissue into a few bins); brighter cells count in the last bin.
-    const sorted = Float64Array.from(grid.filter(finite)).sort();
-    const top = sorted[Math.floor(0.95 * (sorted.length - 1))];
-    if (top > low) high = top;
-    const BINS = 256, histogram = new Float64Array(BINS), scale = (BINS - 1) / (high - low);
-    for (let i = 0; i < size; i++) if (finite(grid[i])) histogram[Math.min(BINS - 1, Math.round((grid[i] - low) * scale))]++;
-    // The background peak: the largest bin of the darkest quarter of the range.
-    let peak = 0;
-    for (let i = 1; i < BINS / 4; i++) if (histogram[i] > histogram[peak]) peak = i;
-    let end = BINS - 1; while (end > peak && !histogram[end]) end--;
-    if (end <= peak + 1) return none('flat');
-    // Triangle: the bin farthest below the line from the peak down to nothing past the brightest bin (the line always falls,
-    // so a large bright part of the image - dense tissue, a clamped top - never lifts it).
-    let cut = peak, best = -Infinity;
-    for (let i = peak + 1; i <= end; i++) {
-      const distance = histogram[peak] * (1 - (i - peak) / (BINS - peak)) - histogram[i];
-      if (distance > best) { best = distance; cut = i; }
+    // The air's values, from the flat dark stretch of the nipple-side border.
+    let floor = Infinity;
+    for (const at of nippleBorder) if (mean[at] < floor) floor = mean[at];
+    means.sort((a, b) => a - b);
+    const flat = Math.max(0, 0.001 * (means[Math.floor(0.95 * (means.length - 1))] - floor));
+    const stretch = nippleBorder.filter(at => high[at] - floor <= flat && floor - low[at] <= flat);
+    let air = -Infinity;
+    if (stretch.length && stretch.length * 8 >= nippleBorder.length) {
+      for (const at of stretch) if (high[at] > air) air = high[at];
+      air += air - floor;
     }
-    const threshold = low + (cut + 0.5) / scale;
-    let tissue = new Uint8Array(size);
-    for (let i = 0; i < size; i++) tissue[i] = grid[i] > threshold ? 1 : 0;
-    // Opening: erode then dilate by `open` cells (a square), each as a row pass then a column pass.
-    const spread = (mask, keep) => {
-      if (!open) return mask;
-      const pass = (from, along) => {
-        const out = new Uint8Array(size), [outer, inner] = along ? [height, width] : [width, height];
-        for (let a = 0; a < outer; a++) for (let b = 0; b < inner; b++) {
-          let hit = keep;
-          for (let d = -open; d <= open && hit === keep; d++) {
-            const c = b + d;
-            const v = c < 0 || c >= inner ? 0 : from[along ? a * width + c : c * width + a];
-            if (v !== keep) hit = v;
-          }
-          out[along ? a * width + b : b * width + a] = hit;
-        }
-        return out;
-      };
-      return pass(pass(mask, true), false);
-    };
-    // Erosion keeps a cell only where every cell around is tissue (outside the image is not); dilation sets a cell where
-    // any cell around is, which gives a wide region its edge back, the chest-wall edge too. Only tissue stays tissue.
-    // Nothing left (only strips, no breast): no region.
-    const before = tissue;
-    tissue = spread(spread(tissue, 1), 0).map((v, i) => v & before[i]);
-    // What the opening took from the breast's own edge away from the image border (the nipple in profile, a fold of skin)
-    // grows back through tissue, up to `grow` cells (default 8) from what is left. Strips lie along the border: within
-    // `open` + 1 cells of it nothing grows back.
-    const grow = Number.isSafeInteger(options.grow) && options.grow >= 0 ? options.grow : 8;
-    for (let n = 0; n < grow; n++) {
-      const next = tissue.slice();
-      for (let i = 0; i < size; i++) if (before[i] && !tissue[i]) {
-        const x = i % width, y = (i - x) / width;
-        if (x <= open || y <= open || x >= width - 1 - open || y >= height - 1 - open) continue;
-        if ((x > 0 && tissue[i - 1]) || (x < width - 1 && tissue[i + 1]) || (i >= width && tissue[i - width]) || (i + width < size && tissue[i + width])) next[i] = 1;
-      }
-      tissue = next;
+    // Outside the breast: padding and air, reached from the nipple-side border.
+    const outside = new Uint8Array(size), queue = new Int32Array(size);
+    let tail = 0;
+    const reach = at => { if (!outside[at] && (!count[at] || high[at] <= air)) { outside[at] = 1; queue[tail++] = at; } };
+    for (let gy = 0; gy < height; gy++) reach(gy * width + nippleX);
+    for (let head = 0; head < tail; head++) {
+      const at = queue[head], x = at % width;
+      if (x > 0) reach(at - 1); if (x < width - 1) reach(at + 1); if (at >= width) reach(at - width); if (at + width < size) reach(at + width);
     }
-    // The largest 4-connected region.
-    const label = new Int32Array(size), queue = new Int32Array(size);
-    let bestLabel = 0, bestSize = 0, next = 0;
+    if (tail * 20 < size) return none('no-air');
+    // The pieces of tissue; the largest that reaches the chest-wall border.
+    const label = new Int32Array(size);
+    let body = 0, bodySize = 0, pieces = 0;
     for (let start = 0; start < size; start++) {
-      if (!tissue[start] || label[start]) continue;
-      next++; let head = 0, tail = 0; queue[tail++] = start; label[start] = next;
-      while (head < tail) {
+      if (!count[start] || outside[start] || label[start]) continue;
+      pieces++; let head = 0, end = 0, atChest = false; queue[end++] = start; label[start] = pieces;
+      while (head < end) {
         const at = queue[head++], x = at % width;
+        if (chestBorder[(at - x) / width] === x) atChest = true;
         for (const near of [x > 0 ? at - 1 : -1, x < width - 1 ? at + 1 : -1, at - width, at + width]) {
-          if (near < 0 || near >= size || !tissue[near] || label[near]) continue;
-          label[near] = next; queue[tail++] = near;
+          if (near < 0 || near >= size || !count[near] || outside[near] || label[near]) continue;
+          label[near] = pieces; queue[end++] = near;
         }
       }
-      if (tail > bestSize) { bestSize = tail; bestLabel = next; }
+      if (atChest && end > bodySize) { bodySize = end; body = pieces; }
     }
-    if (!bestLabel || bestSize < size * 0.02) return none('no-region');
+    if (!body) return none(pieces ? 'not-at-chest-wall' : 'no-region');
+    // Thin strips along the chest wall at either end are not the breast.
+    const farthest = new Float64Array(height);
+    let widest = 0, top = -1, bottom = -1;
+    for (let gy = 0; gy < height; gy++) {
+      for (let gx = 0; gx < width; gx++) if (label[gy * width + gx] === body) farthest[gy] = Math.max(farthest[gy], Math.abs(gx - chestBorder[gy]) + 1);
+      if (!farthest[gy]) continue;
+      if (top < 0) top = gy; bottom = gy; widest = Math.max(widest, farthest[gy]);
+    }
+    const thin = Math.max(widest / 8, width / 25);
+    const strip = (from, by) => {
+      const run = [];
+      for (let gy = from; gy >= top && gy <= bottom && farthest[gy] <= thin; gy += by) run.push(gy);
+      const reaches = run.map(gy => farthest[gy]).sort((a, b) => a - b);
+      if (!run.length || run.length < 4 * reaches[Math.floor(reaches.length / 2)]) return;
+      for (const gy of run) for (let gx = 0; gx < width; gx++) if (label[gy * width + gx] === body) { label[gy * width + gx] = 0; bodySize--; }
+    };
+    strip(top, 1); strip(bottom, -1);
+    if (bodySize < size * 0.02) return none('no-region');
     // Holes: cells outside the region that the image border cannot be reached from (4-connected) are inside it.
-    const outside = new Uint8Array(size);
+    const beyond = new Uint8Array(size);
     {
-      let tail = 0;
-      const seed = at => { if (label[at] !== bestLabel && !outside[at]) { outside[at] = 1; queue[tail++] = at; } };
+      let end = 0;
+      const seed = at => { if (label[at] !== body && !beyond[at]) { beyond[at] = 1; queue[end++] = at; } };
       for (let gx = 0; gx < width; gx++) { seed(gx); seed((height - 1) * width + gx); }
       for (let gy = 0; gy < height; gy++) { seed(gy * width); seed(gy * width + width - 1); }
-      for (let head = 0; head < tail; head++) {
+      for (let head = 0; head < end; head++) {
         const at = queue[head], x = at % width;
         if (x > 0) seed(at - 1); if (x < width - 1) seed(at + 1); if (at >= width) seed(at - width); if (at + width < size) seed(at + width);
       }
     }
+    // The box and the outline end on the region's own outermost tissue pixels, not on the grid.
     const mask = new Uint8Array(size);
-    let x0 = width, x1 = -1, y0 = height, y1 = -1;
-    const left = [], right = [];
+    const tissue = (x, y) => {
+      const value = +values[y * columns + x];
+      return value === value && value !== Infinity && value !== -Infinity && !(padded && value >= padLow && value <= padHigh) && sign * value > air;
+    };
+    const left = [], right = [], held = [];
+    let x0 = Infinity, x1 = -Infinity;
     for (let gy = 0; gy < height; gy++) {
       let first = -1, last = -1;
-      for (let gx = 0; gx < width; gx++) if (!outside[gy * width + gx]) { mask[gy * width + gx] = 1; if (first < 0) first = gx; last = gx; }
+      for (let gx = 0; gx < width; gx++) if (!beyond[gy * width + gx]) { mask[gy * width + gx] = 1; if (first < 0) first = gx; last = gx; }
       if (first < 0) continue;
-      x0 = Math.min(x0, first); x1 = Math.max(x1, last); y0 = Math.min(y0, gy); y1 = Math.max(y1, gy);
-      const y = Math.min(rows, (gy + 0.5) * step);
-      left.push([first * step, y]); right.push([Math.min(columns, (last + 1) * step), y]);
+      const ya = gy * step, yb = Math.min(rows, ya + step);
+      const any = x => { for (let y = ya; y < yb; y++) if (tissue(x, y)) return true; return false; };
+      const xa = first * step, xb = Math.min(columns, (last + 1) * step);
+      let a = xa, b = xb;
+      for (let x = xa; x < Math.min(columns, xa + step); x++) if (any(x)) { a = x; break; }
+      for (let x = xb - 1; x >= last * step; x--) if (any(x)) { b = x + 1; break; }
+      if (a < x0) x0 = a; if (b > x1) x1 = b;
+      left.push([a, Math.min(rows, (gy + 0.5) * step)]); right.push([b, Math.min(rows, (gy + 0.5) * step)]);
+      held.push([gy, first, last]);
     }
-    return { found: true, step, width, height, mask, threshold: sign * threshold, monochrome1: !!options.monochrome1,
-      box: { x0: x0 * step, y0: y0 * step, x1: Math.min(columns, (x1 + 1) * step), y1: Math.min(rows, (y1 + 1) * step) },
+    // The first and the last pixel row with tissue in the region's top and bottom grid rows.
+    const edge = ([gy, first, last], down) => {
+      const ya = gy * step, yb = Math.min(rows, ya + step), xa = first * step, xb = Math.min(columns, (last + 1) * step);
+      for (let n = 0; n < yb - ya; n++) {
+        const y = down ? ya + n : yb - 1 - n;
+        for (let x = xa; x < xb; x++) if (mask[gy * width + column[x]] && tissue(x, y)) return down ? y : y + 1;
+      }
+      return down ? ya : yb;
+    };
+    return { found: true, step, width, height, mask, chest: options.chest, air: air === -Infinity ? null : sign * air, monochrome1: !!options.monochrome1,
+      padding: padded ? { low: padLow, high: padHigh } : null,
+      box: { x0, y0: edge(held[0], true), x1, y1: edge(held[held.length - 1], false) },
       outline: [...left, ...right.reverse()] };
   }
-  // The window of the breast's pixels only: the low and high percentiles (default 1 and 99) of every image pixel that is in
-  // the region and is itself tissue (past the region's threshold: the air in a cell on the skin line does not count).
+  // The window of the breast's pixels only: the low and high percentiles (default 1 and 99) of every pixel of the image
+  // that is in the region and is itself tissue (the air and the padding in a cell on the skin line do not count).
   // { lower, upper } or null.
   function regionWindow(values, columns, rows, region, options = {}) {
     if (!region?.found || !values || values.length < columns * rows) return null;
     const lowP = finite(options.low) ? options.low : 0.01, highP = finite(options.high) ? options.high : 0.99;
-    const { step, width, mask } = region;
+    const { step, width, mask, padding } = region;
     let low = Infinity, high = -Infinity, count = 0;
-    const tissue = finite(region.threshold) ? (region.monochrome1 ? v => v < region.threshold : v => v > region.threshold) : () => true;
+    const beyondAir = !finite(region.air) ? () => true : region.monochrome1 ? v => v < region.air : v => v > region.air;
+    const tissue = v => finite(v) && !(padding && v >= padding.low && v <= padding.high) && beyondAir(v);
     const inside = (x, y) => mask[Math.floor(y / step) * width + Math.floor(x / step)] === 1;
     for (let y = 0; y < rows; y++) for (let x = 0; x < columns; x++) {
       if (!inside(x, y)) continue;
       const value = Number(values[y * columns + x]);
-      if (!finite(value) || !tissue(value)) continue;
+      if (!tissue(value)) continue;
       if (value < low) low = value; if (value > high) high = value; count++;
     }
     if (!count) return null;
@@ -255,7 +290,7 @@
     for (let y = 0; y < rows; y++) for (let x = 0; x < columns; x++) {
       if (!inside(x, y)) continue;
       const value = Number(values[y * columns + x]);
-      if (finite(value) && tissue(value)) histogram[Math.round((value - low) * scale)]++;
+      if (tissue(value)) histogram[Math.round((value - low) * scale)]++;
     }
     const at = fraction => {
       const wanted = fraction * (count - 1);
@@ -372,7 +407,7 @@
   }
 
   const api = { QUADRANTS: QUADRANTS.slice(), family, unlinkable, toStandard, fromStandard, counterpart, targets, quadrant,
-    detect, regionWindow, fitRect, QUADRANT_ZOOMS: QUADRANT_ZOOMS.slice(), quadrantZoom, onePixel, trueSize, matchSize, trueSizeLabel, monitorKey, validPitch,
+    chestWall, detect, regionWindow, fitRect, QUADRANT_ZOOMS: QUADRANT_ZOOMS.slice(), quadrantZoom, onePixel, trueSize, matchSize, trueSizeLabel, monitorKey, validPitch,
     slabRange, slabCompatible, slabAverage, slabLabel, nextTab };
   if (typeof module === 'object' && module.exports) module.exports = api; else root.KinMgBreastModel = api;
 })(globalThis);

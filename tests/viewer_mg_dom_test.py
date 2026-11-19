@@ -26,7 +26,8 @@ URL_B = ORIGIN + "/ohif/viewer?StudyInstanceUIDs=1.2.9" + HASH
 
 # Six cells. Images are 400 × 300 (columns × rows), 1 mm per pixel in world, world = image index; a cell is 200 × 150 CSS px,
 # so Fit shows 0.5 CSS px per image pixel. The breast is a bright half-ellipse against the chest wall (stored right for the
-# right breast, left for the left breast) with a bright marker apart from it; prior L CC has no stored orientation.
+# right breast, left for the left breast: 240 px out from it, y 30 … 270) with a bright marker apart from it, in the corner
+# at the nipple side; prior L CC has no stored orientation.
 CELLS = """() => {
   const grid = document.getElementById('grid');
   grid.replaceChildren();
@@ -126,6 +127,8 @@ CELLS = """() => {
       '00080060': tag('CS', 'MG'), '00200062': tag('CS', v.info.side), '00280010': tag('US', R), '00280011': tag('US', C), '00280004': tag('CS', 'MONOCHROME2'),
       '00540220': { vr: 'SQ', Value: [{ '00080100': tag('SH', v.info.view), '00080102': tag('SH', 'SCT') }] } };
     if (v.info.po) item['00200020'] = { vr: 'CS', Value: v.info.po };
+    // info.extra: more elements of that image's header (a partial view, a view modifier, pixel padding).
+    if (v.info.extra) Object.assign(item, structuredClone(v.info.extra));
     // The DBT cell: a regular 12-frame breast tomosynthesis object (thin contiguous sections, the classifier's 'dbt').
     if (v.info.slices) {
       const type = ['ORIGINAL', 'PRIMARY', 'VOLUME', 'NONE'];
@@ -427,12 +430,11 @@ class ViewerMgDOMTest(unittest.TestCase):
         panel.get_by_label('Zoom').select_option('fill')
         expect(page.locator('#pane-rcc [data-mg-badge=quadrant]')).to_have_text('Q1 Upper-Outer · Fill Quadrant')
         page.wait_for_function("() => synViews.get('lcc').getZoom() > 2.1 && synViews.get('lcc').getZoom() < 3")
-        # The breast box of R CC is x 160 … 400, y 32 … 272 (grid of 4 px); its chest-wall upper quarter is x 280 … 400, y 32 … 152.
-        rcc = page.evaluate("() => KinMgBreastModel.detect(synViews.get('rcc').imageDataObject.getPointData().getScalars().getData(), 400, 300).box")
-        quarter = {'x0': (rcc['x0'] + rcc['x1']) / 2, 'x1': rcc['x1'], 'y0': rcc['y0'], 'y1': (rcc['y0'] + rcc['y1']) / 2}
-        zoom = min(200 / (quarter['x1'] - quarter['x0']), 150 / (quarter['y1'] - quarter['y0'])) * 0.98 / 0.5
-        self.assertAlmostEqual(zoom, self.camera(page, 'rcc')['zoom'], places=6)
-        self.assertNear(self.camera(page, 'rcc')['focal'], [(quarter['x0'] + quarter['x1']) / 2 - 0.5, (quarter['y0'] + quarter['y1']) / 2 - 0.5])
+        # The breast of R CC as it was made is x 160 … 400, y 31 … 270; its chest-wall upper quarter is x 280 … 400, y 31 … 150.5.
+        quarter = self.quarter('rcc', 0)
+        self.assertEqual({'x0': 280, 'x1': 400, 'y0': 31, 'y1': 150.5}, quarter)
+        self.assertAlmostEqual(self.fit(quarter), self.camera(page, 'rcc')['zoom'], places=6)
+        self.assertClose(self.camera(page, 'rcc')['focal'], self.centre(quarter))
         # The left breast's step 1 is the mirrored half (its chest wall is at the left).
         self.assertLess(self.camera(page, 'lcc')['focal'][0], 200)
         expect(page.locator('#pane-plcc [data-mg-badge=quadrant]')).to_have_text('Quadrant: orientation unverified')
@@ -442,18 +444,48 @@ class ViewerMgDOMTest(unittest.TestCase):
             heads.append(panel.locator('b').text_content())
         self.assertEqual(['Quadrant 2/4: Upper-Inner (R/L matched)', 'Quadrant 3/4: Lower-Inner (R/L matched)',
                           'Quadrant 4/4: Lower-Outer (R/L matched)'], heads)
-        # Step 4 on R CC: the upper nipple-side quarter of the box.
-        last = [(rcc['x0'] + (rcc['x0'] + rcc['x1']) / 2) / 2 - 0.5, (rcc['y0'] + (rcc['y0'] + rcc['y1']) / 2) / 2 - 0.5]
+        # Step 4 on R CC: the upper nipple-side quarter of the box (x 160 … 280, y 31 … 150.5).
+        last = self.centre(self.quarter('rcc', 3))
+        self.assertEqual([219.5, 90.25], last)
         page.wait_for_function("([x, y]) => Math.abs(synViews.get('rcc').camera.focalPoint[0] - x) < 1e-6 && Math.abs(synViews.get('rcc').camera.focalPoint[1] - y) < 1e-6", arg=last)
         panel.get_by_role('button', name='Close').click()
         page.wait_for_function("() => Math.abs(synViews.get('rcc').getZoom() - 1) < 1e-9")
         self.assertNear(self.camera(page, 'lcc')['focal'], [199.5, 149.5])
 
-    # The centre of step `step`'s quarter of each cell's breast box, as the model names it for the cell's side and view.
-    QUARTER = """([id, step]) => { const v = synViews.get(id), side = v.info.side, view = v.info.view === '399162004' ? 'CC' : 'MLO';
-      const box = KinMgBreastModel.detect(v.imageDataObject.getPointData().getScalars().getData(), 400, 300).box;
-      const q = KinMgBreastModel.quadrant(step, { side, view, verified: true, flipH: false, flipV: false, columns: 400, rows: 300 }, box);
-      return { center: [(q.box.x0 + q.box.x1) / 2 - 0.5, (q.box.y0 + q.box.y1) / 2 - 0.5], name: q.name }; }"""
+    # The breast of each cell as its phantom was made (CELLS): the pixels of a half-ellipse 240 px out from the chest wall
+    # (the stored right border x 400 for the right breast, the stored left border x 0 for the left) and 120 px up and
+    # down from y 150 — for the right breast the pixels x 160 … 399, y 31 … 269, for the left x 0 … 240, y 30 … 270 —
+    # as a box of pixel edges. What the tests expect of a box, a quarter or a fit is worked out from this, never from
+    # what the product found.
+    BOX = {'R': {'x0': 160, 'x1': 400, 'y0': 31, 'y1': 270}, 'L': {'x0': 0, 'x1': 241, 'y0': 30, 'y1': 271}}
+    SIDE = {'dbt': 'R', 'rcc': 'R', 'lcc': 'L', 'rmlo': 'R', 'prcc': 'R', 'plcc': 'L'}
+    # The four steps: CC goes outer-chest, inner-chest, inner-nipple, outer-nipple; MLO upper-chest, upper-nipple,
+    # lower-nipple, lower-chest ((upper half, chest-wall half) of the box at each step).
+    STEPS = {'cc': [(True, True), (False, True), (False, False), (True, False)], 'mlo': [(True, True), (True, False), (False, False), (False, True)]}
+
+    def quarter(self, cell, step):
+        box, (top, chest) = self.BOX[self.SIDE[cell]], self.STEPS['mlo' if cell == 'rmlo' else 'cc'][step]
+        xm, ym = (box['x0'] + box['x1']) / 2, (box['y0'] + box['y1']) / 2
+        # The chest wall is the stored right for the right breast, the stored left for the left.
+        right = chest == (self.SIDE[cell] == 'R')
+        return {'x0': xm if right else box['x0'], 'x1': box['x1'] if right else xm, 'y0': box['y0'] if top else ym, 'y1': ym if top else box['y1']}
+
+    # The camera's focal point (image index) that shows the middle of a box (pixel edges).
+    def centre(self, box):
+        return [(box['x0'] + box['x1']) / 2 - 0.5, (box['y0'] + box['y1']) / 2 - 0.5]
+
+    # The zoom that fits a box in the 200 × 150 cell as Fit Breast does (2 % margin; Fit shows 0.5 CSS px per image pixel),
+    # and the screen length of its chest-wall-to-nipple side at that zoom.
+    def fit(self, box):
+        return min(200 / (box['x1'] - box['x0']), 150 / (box['y1'] - box['y0'])) * 0.98 / 0.5
+
+    def fitted_length(self, box):
+        return self.fit(box) * 0.5 * (box['x1'] - box['x0'])
+
+    def assertClose(self, actual, expected, delta=1e-6):
+        self.assertEqual(len(actual), len(expected))
+        for a, b in zip(actual, expected):
+            self.assertAlmostEqual(a, b, delta=delta, msg=f'{actual} != {expected}')
 
     def test_05b_quadrant_zoom_4x_is_four_times_fit_in_every_cell_through_the_four_steps_in_mirrored_order(self):
         page = self.open()
@@ -470,9 +502,9 @@ class ViewerMgDOMTest(unittest.TestCase):
             if step:
                 panel.get_by_role('button', name='Next Quadrant').click()
             expect(panel.locator('b')).to_have_text(f'Quadrant {step + 1}/4: {names[step]} (R/L matched)')
-            want = {cell: page.evaluate(self.QUARTER, [cell, step]) for cell in cells}
+            want = {cell: self.centre(self.quarter(cell, step)) for cell in cells}
             page.wait_for_function("([ids, want]) => ids.every(id => { const f = synViews.get(id).camera.focalPoint; return Math.abs(f[0] - want[id][0]) < 1e-6 && Math.abs(f[1] - want[id][1]) < 1e-6; })",
-                                   arg=[cells, {c: want[c]['center'] for c in cells}])
+                                   arg=[cells, want])
             with self.subTest(step=step):
                 for cell in cells:
                     # Four times Fit (400 %), the same in every cell whatever its quadrant's size.
@@ -551,7 +583,7 @@ class ViewerMgDOMTest(unittest.TestCase):
         page.evaluate("() => { for (const v of synViews.values()) v.element.style.width = '100px'; }")
         page.wait_for_function("z => Math.abs(synViews.get('rcc').getZoom() - z) > 1e-3", arg=before)
         # Fill Quadrant worked out again for the held cell's new width …
-        rcc = page.evaluate("() => KinMgBreastModel.detect(synViews.get('rcc').imageDataObject.getPointData().getScalars().getData(), 400, 300).box")
+        rcc = self.BOX['R']
         width = page.evaluate("() => synViews.get('rcc').element.clientWidth")
         self.assertEqual(100, width)
         self.assertAlmostEqual(min(width / ((rcc['x1'] - rcc['x0']) / 2), 150 / ((rcc['y1'] - rcc['y0']) / 2)) * 0.98 / 0.5, self.camera(page, 'rcc')['zoom'], places=6)
@@ -732,22 +764,39 @@ class ViewerMgDOMTest(unittest.TestCase):
         self.menu(page, 'Breast Display')
         panel = page.get_by_role('dialog', name='Breast Display')
         expect(panel.get_by_role('button')).to_have_text(['Breast Edge', 'Breast W/L', 'Fit', '1:1', 'True Size', 'Fit Breast', 'Match Size', 'Close'])
+        unverified = page.evaluate("() => ({ props: synViews.get('plcc').getProperties(), nodes: structuredClone(synViews.get('plcc').tf.nodes) })")
         panel.get_by_role('button', name='Breast Edge').click()
-        page.wait_for_function("() => document.querySelectorAll('.kin-mg-outline').length === 6")
+        # Five cells say where their chest wall is stored; the prior L CC has no stored orientation: no line is drawn
+        # there, the cell is marked and named, and the button does not say the edges were drawn.
+        page.wait_for_function("() => document.querySelectorAll('.kin-mg-outline').length === 5")
         self.assertGreater(int(page.locator('#pane-rcc .kin-mg-outline').get_attribute('data-points')), 20)
+        expect(page.locator('#pane-plcc .kin-mg-outline')).to_have_count(0)
+        expect(page.locator('#pane-plcc [data-mg-badge=edge]')).to_have_text('경계를 찾지 못했습니다')
+        expect(panel.locator('[role=status]')).to_have_text('경계를 찾지 못한 칸 — Prior · L CC')
         panel.get_by_role('button', name='Breast W/L').click()
         expect(page.locator('#pane-rcc [data-mg-badge=wl]')).to_have_text('Breast W/L')
         voi = page.evaluate("() => synViews.get('rcc').getProperties()")
         self.assertEqual('LINEAR', voi['VOILUTFunction'])
-        # The region's 1–99 percentiles (tissue 1000 … 1049); the inversion stays as the reader had it.
-        self.assertGreaterEqual(voi['voiRange']['lower'], 40); self.assertLessEqual(voi['voiRange']['lower'], 1001)
+        # The 1–99 percentiles of the breast's own pixels (the tissue was made 1000 … 1049; the air is 40 and the marker
+        # 3000): no air and no marker in it. The inversion stays as the reader had it.
+        self.assertGreaterEqual(voi['voiRange']['lower'], 1000); self.assertLessEqual(voi['voiRange']['lower'], 1001)
         self.assertGreaterEqual(voi['voiRange']['upper'], 1047); self.assertLessEqual(voi['voiRange']['upper'], 1049)
         self.assertTrue(voi['invert'])
+        # The cell without a region keeps its window, and is marked and named.
+        expect(page.locator('#pane-plcc [data-mg-badge=wl]')).to_have_text('Breast W/L: 경계를 찾지 못했습니다')
+        expect(panel.locator('[role=status]')).to_have_text('경계를 찾지 못해 창을 바꾸지 않은 칸 — Prior · L CC')
+        self.assertEqual(unverified, page.evaluate("() => ({ props: synViews.get('plcc').getProperties(), nodes: structuredClone(synViews.get('plcc').tf.nodes) })"))
         panel.get_by_role('button', name='Breast W/L').click()
         expect(page.locator('[data-mg-badge=wl]')).to_have_count(0)
         self.assertEqual(before, page.evaluate("() => ({ props: synViews.get('rcc').getProperties(), nodes: structuredClone(synViews.get('rcc').tf.nodes) })"))
         panel.get_by_role('button', name='Breast Edge').click()
         expect(page.locator('.kin-mg-outline')).to_have_count(0)
+        expect(page.locator('[data-mg-badge=edge]')).to_have_count(0)
+        # With every cell's edge found, the button says so — after they are drawn.
+        page.evaluate("() => { document.getElementById('pane-plcc').remove(); delete synShown.plcc; }")
+        panel.get_by_role('button', name='Breast Edge').click()
+        expect(panel.locator('[role=status]')).to_have_text('유방 경계를 그렸습니다. 다시 누르면 지웁니다.')
+        self.assertEqual(5, page.locator('.kin-mg-outline').count())
 
     def test_09_zoom_modes_fit_one_to_one_fit_breast_and_match_size_as_numbers(self):
         page = self.open(dpr=2)
@@ -760,27 +809,33 @@ class ViewerMgDOMTest(unittest.TestCase):
         expect(page.locator('#pane-rcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: 1:1')
         panel.get_by_role('button', name='Fit Breast').click()
         page.wait_for_function("() => synViews.get('rcc').getZoom() > 1.2")
-        box = page.evaluate("() => KinMgBreastModel.detect(synViews.get('rcc').imageDataObject.getPointData().getScalars().getData(), 400, 300).box")
-        expected = min(200 / (box['x1'] - box['x0']), 150 / (box['y1'] - box['y0'])) * 0.98 / 0.5
-        self.assertAlmostEqual(expected, self.camera(page, 'rcc')['zoom'], places=6)
+        # The breast as it was made (240 × 239 image px), fitted in the 200 × 150 cell with the 2 % margin and centred.
+        box = self.BOX['R']
+        self.assertAlmostEqual(self.fit(box), self.camera(page, 'rcc')['zoom'], places=6)
+        self.assertClose(self.camera(page, 'rcc')['focal'], self.centre(box))
         expect(page.locator('#pane-rcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: Fit Breast')
-        # Match Size: the CC cells (lengths equal here) at the longest length every breast shows whole in its cell; prior L CC has a
-        # region too (no orientation needed).
-        page.evaluate("() => { synViews.get('dbt').setZoom(1); synViews.get('plcc').setZoom(1); synViews.get('lcc').setZoom(1); synViews.get('prcc').setZoom(2); synViews.get('rcc').setZoom(1.5); }")
+        # The prior L CC (no stored orientation) has no region: it is left as it is (at 1:1, as its mark still says), and named.
+        expect(page.locator('#pane-plcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: 1:1')
+        self.assertAlmostEqual(1, self.camera(page, 'plcc')['zoom'])
+        expect(panel.locator('[role=status]')).to_have_text('바꾸지 않은 칸 — Prior · L CC')
+        # Match Size: the CC cells with a region (the right breasts were made 240 px from chest wall to nipple, the left
+        # 241) at the longest length every one of them shows whole in its cell: the least of the lengths Fit Breast would
+        # show them at. At zoom z a cell shows a breast w image px long at z × 0.5 × w CSS px.
+        page.evaluate("() => { synViews.get('dbt').setZoom(1); synViews.get('plcc').setZoom(1.75); synViews.get('lcc').setZoom(1); synViews.get('prcc').setZoom(2); synViews.get('rcc').setZoom(1.5); }")
         panel.get_by_role('button', name='Match Size').click()
         page.wait_for_function("() => document.querySelector('#pane-prcc [data-mg-badge=zoom]')?.textContent === 'Zoom mode: Match Size'")
-        # Each CC cell's breast box width (chest wall to nipple) shown at the length of the cell that fits it least (Fit Breast
-        # of a w × h box in a 200 × 150 cell shows w × min(200 / w, 150 / h) × 0.98 CSS px; at zoom z one shows z × 0.5 × w).
-        expected = page.evaluate("""() => { const ids = ['dbt', 'rcc', 'lcc', 'prcc', 'plcc'];
-          const width = id => { const b = KinMgBreastModel.detect(synViews.get(id).imageDataObject.getPointData().getScalars().getData(), 400, 300).box; return b.x1 - b.x0; };
-          const box = id => KinMgBreastModel.detect(synViews.get(id).imageDataObject.getPointData().getScalars().getData(), 400, 300).box;
-          const fits = ids.map(id => { const b = box(id), w = b.x1 - b.x0, h = b.y1 - b.y0; return w * Math.min(200 / w, 150 / h) * 0.98; }), least = Math.min(...fits);
-          return ids.map(id => least / (0.5 * width(id))); }""")
-        zooms = page.evaluate("() => ['dbt', 'rcc', 'lcc', 'prcc', 'plcc'].map(id => synViews.get(id).getZoom())")
-        self.assertNear(zooms, expected, places=6)
-        # The shown lengths are now equal.
-        self.assertEqual(1, len({round(z * w, 6) for z, w in zip(zooms, page.evaluate("""() => ['dbt', 'rcc', 'lcc', 'prcc', 'plcc'].map(id => {
-          const b = KinMgBreastModel.detect(synViews.get(id).imageDataObject.getPointData().getScalars().getData(), 400, 300).box; return b.x1 - b.x0; })"""))}))
+        matched = ['dbt', 'rcc', 'lcc', 'prcc']
+        zooms = page.evaluate("ids => ids.map(id => synViews.get(id).getZoom())", matched)
+        boxes = [self.BOX[self.SIDE[cell]] for cell in matched]
+        least = min(self.fitted_length(box) for box in boxes)
+        self.assertAlmostEqual(self.fitted_length(self.BOX['L']), least)
+        for zoom, box in zip(zooms, boxes):
+            # The shown length is the same in every cell.
+            self.assertAlmostEqual(least, zoom * 0.5 * (box['x1'] - box['x0']), places=6)
+        # The cell without a region takes no part: not matched, its zoom kept, no Match Size mark, and named.
+        self.assertAlmostEqual(1.75, self.camera(page, 'plcc')['zoom'])
+        expect(page.locator('#pane-plcc [data-mg-badge=zoom]')).not_to_have_text('Zoom mode: Match Size')
+        expect(panel.locator('[role=status]')).to_have_text('경계를 찾지 못해 맞추지 않은 칸 — Prior · L CC')
         panel.get_by_role('button', name='Fit', exact=True).click()
         page.wait_for_function("() => [...synViews.values()].every(v => Math.abs(v.getZoom() - 1) < 1e-9)")
         expect(page.locator('#pane-rmlo [data-mg-badge=zoom]')).to_have_text('Zoom mode: Fit')
@@ -888,6 +943,7 @@ class ViewerMgDOMTest(unittest.TestCase):
         page = self.open()
         page.evaluate("() => { const g = synViews.get('rcc').canvas.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, 200, 150); g.fillStyle = '#f00'; g.fillRect(47, 37, 6, 6); }")
         self.menu(page, 'Magnifier')
+        expect(page.locator('#pane-rcc .kin-mg-capture')).to_have_count(1)
         box = page.locator('#pane-rcc .viewport-element').bounding_box()
         page.mouse.move(box['x'] + 50, box['y'] + 40); page.mouse.down()
         middle = "() => { const c = document.querySelector('#pane-rcc .kin-mg-lens canvas'); return [...c.getContext('2d').getImageData(c.width / 2, c.height / 2, 1, 1).data]; }"
@@ -1003,7 +1059,7 @@ class ViewerMgDOMTest(unittest.TestCase):
         page.evaluate(self.FATTY, ['rcc', 'lcc'])
         self.menu(page, 'Breast Display')
         page.get_by_role('dialog', name='Breast Display').get_by_role('button', name='Breast Edge').click()
-        page.wait_for_function("() => document.querySelectorAll('.kin-mg-outline').length === 6")
+        page.wait_for_function("() => document.querySelectorAll('.kin-mg-outline').length === 5")
         for cell in ['rcc', 'lcc']:
             outline, own = page.locator('#pane-' + cell + ' .kin-mg-outline').bounding_box(), page.locator('#pane-' + cell + ' .viewport-element').bounding_box()
             self.assertEqual(own, outline)
@@ -1019,6 +1075,8 @@ class ViewerMgDOMTest(unittest.TestCase):
         page = self.open()
         page.evaluate(self.HEADER)
         page.evaluate("header => { window.synHeaders = { prcc: header }; }", self.ge_synthetic_2d())
+        # All four CC cells are matched: here the prior L CC too says how it is stored (chest wall at the stored left).
+        page.evaluate("() => { synViews.get('plcc').info.po = ['A', 'R']; }")
         cc = ['rcc', 'lcc', 'prcc', 'plcc']
         page.evaluate(self.FATTY, cc)
         self.menu(page, 'Breast Display')
@@ -1056,6 +1114,383 @@ class ViewerMgDOMTest(unittest.TestCase):
         skin = page.evaluate(self.SKIN, ['rcc', 'prcc', 'plcc'])
         for cell in ['rcc', 'prcc', 'plcc']:
             self.assertAlmostEqual(lengths[0], skin[cell][2] - skin[cell][0], delta=2.5)
+
+    # ── A cell without a breast region is left alone ──
+    # Pixels that are not a whole breast against the chest wall (400 × 300, the chest wall where the cell's side stores it):
+    # 'strip': only a strip along the chest wall; 'filled': tissue fills the image (fat with its grain, dense tissue by the
+    # chest wall — no air, no skin line); 'band': a breast (fat 24 … 36, dense 600, air 10) 240 px out from a band of 0, 20 px
+    # wide, that lies between it and the chest-wall border.
+    PIXELS = """([id, kind]) => { const C = 400, R = 300, v = synViews.get(id), right = v.info.side === 'R', values = new Uint16Array(C * R);
+      for (let y = 0; y < R; y++) for (let x = 0; x < C; x++) {
+        const fromChest = right ? C - 1 - x : x, grain = 20 + ((x * 7 + y * 13) % 13) - 6;
+        let value = 0;
+        if (kind === 'strip') value = fromChest < 3 ? 30 : 0;
+        else if (kind === 'filled') value = fromChest < 200 ? 600 : grain;
+        else if (kind === 'band') { const dx = (fromChest - 20) / 240, dy = (y - 150) / 120, r = dx * dx + dy * dy;
+          value = fromChest < 20 ? 0 : r <= 1 ? (r <= 0.3 ? 600 : 10 + grain) : 10; }
+        values[y * C + x] = value; }
+      v.imageDataObject.getPointData().getScalars().setData(values); }"""
+    STATE = "ids => ids.map(id => { const v = synViews.get(id); return { camera: v.getCamera(), props: v.getProperties(), nodes: structuredClone(v.tf.nodes) }; })"
+
+    def test_09c_a_cell_without_a_region_gets_no_line_no_window_and_no_zoom_and_is_named(self):
+        page = self.open()
+        # Today's R CC is a whole breast. The others are not: only a strip (the DBT cell), tissue filling the image (L CC),
+        # a partial view by its header (R MLO), a magnification view by its header (prior R CC), no stored orientation
+        # (prior L CC).
+        page.evaluate("""() => { const tag = (vr, value) => ({ vr, Value: [].concat(value) });
+          synViews.get('rmlo').info.extra = { '00281350': tag('CS', 'YES') };
+          synViews.get('prcc').info.extra = { '00540222': { vr: 'SQ', Value: [{ '00080100': tag('SH', '399163009'), '00080102': tag('SH', 'SCT') }] } }; }""")
+        page.evaluate(self.PIXELS, ['dbt', 'strip']); page.evaluate(self.PIXELS, ['lcc', 'filled'])
+        others = ['dbt', 'lcc', 'rmlo', 'prcc', 'plcc']
+        names = 'Current · R CC / Current · L CC / Current · R MLO / Prior · R CC / Prior · L CC'
+        before = page.evaluate(self.STATE, others)
+        self.menu(page, 'Breast Display')
+        panel = page.get_by_role('dialog', name='Breast Display')
+        status = panel.locator('[role=status]')
+        panel.get_by_role('button', name='Breast Edge').click()
+        expect(status).to_have_text('경계를 찾지 못한 칸 — ' + names)
+        expect(page.locator('#pane-rcc .kin-mg-outline')).to_have_count(1)
+        expect(page.locator('.kin-mg-outline')).to_have_count(1)
+        for cell in others:
+            expect(page.locator(f'#pane-{cell} [data-mg-badge=edge]')).to_have_text('경계를 찾지 못했습니다')
+        panel.get_by_role('button', name='Breast W/L').click()
+        expect(status).to_have_text('경계를 찾지 못해 창을 바꾸지 않은 칸 — ' + names)
+        expect(page.locator('#pane-rcc [data-mg-badge=wl]')).to_have_text('Breast W/L')
+        for cell in others:
+            expect(page.locator(f'#pane-{cell} [data-mg-badge=wl]')).to_have_text('Breast W/L: 경계를 찾지 못했습니다')
+        panel.get_by_role('button', name='Fit Breast').click()
+        expect(status).to_have_text('바꾸지 않은 칸 — ' + names)
+        expect(page.locator('#pane-rcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: Fit Breast')
+        expect(page.locator('[data-mg-badge=zoom]')).to_have_count(1)
+        panel.get_by_role('button', name='Match Size').click()
+        # (named view by view: the CC cells, then the MLO cell)
+        expect(status).to_have_text('경계를 찾지 못해 맞추지 않은 칸 — Current · R CC / Current · L CC / Prior · R CC / Prior · L CC / Current · R MLO')
+        expect(page.locator('#pane-rcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: Match Size')
+        expect(page.locator('[data-mg-badge=zoom]')).to_have_count(1)
+        # Their cameras, windows, tables and inversions are as they were, and no line was drawn on them.
+        self.assertEqual(before, page.evaluate(self.STATE, others))
+        page.wait_for_function("() => document.querySelectorAll('.kin-mg-outline').length === 1 && !!document.querySelector('#pane-rcc .kin-mg-outline')")
+        # Quadrant Zoom: a cell whose orientation is known but whose region is not is shown by quarters of the whole image
+        # (and says so); the cell without an orientation is not zoomed.
+        self.menu(page, 'Quadrant Zoom')
+        expect(page.locator('#pane-lcc [data-mg-badge=quadrant]')).to_have_text('Q1 Upper-Outer · 4× · whole image · edges outside')
+        self.assertClose(self.camera(page, 'lcc')['focal'], [99.5, 74.5])  # the chest-wall upper quarter of the whole 400 × 300 image
+        expect(page.locator('#pane-plcc [data-mg-badge=quadrant]')).to_have_text('Quadrant: orientation unverified')
+        self.assertEqual(before[4]['camera'], page.evaluate(self.STATE, ['plcc'])[0]['camera'])
+
+    def test_09d_a_band_between_the_chest_wall_and_the_tissue_is_no_region_unless_the_header_declares_it_padding(self):
+        for declared in (False, True):
+            with self.subTest(declared=declared):
+                page = self.open()
+                if declared:
+                    page.evaluate("() => { synViews.get('lcc').info.extra = { '00280120': { vr: 'US', Value: [0] } }; }")
+                page.evaluate(self.PIXELS, ['lcc', 'band'])
+                self.menu(page, 'Breast Display')
+                panel = page.get_by_role('dialog', name='Breast Display')
+                panel.get_by_role('button', name='Fit Breast').click()
+                expect(page.locator('#pane-rcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: Fit Breast')
+                if not declared:
+                    # Unexplained, the tissue does not stand against the chest wall: left as it is, and named.
+                    expect(panel.locator('[role=status]')).to_have_text('바꾸지 않은 칸 — Current · L CC / Prior · L CC')
+                    expect(page.locator('#pane-lcc [data-mg-badge=zoom]')).to_have_count(0)
+                    self.assertAlmostEqual(1, self.camera(page, 'lcc')['zoom'])
+                    continue
+                # Declared pixel padding is no pixel of the image: the breast as it was made (its pixels x 20 … 260,
+                # y 30 … 270, beyond the band) is fitted and centred,
+                box = {'x0': 20, 'x1': 261, 'y0': 30, 'y1': 271}
+                expect(page.locator('#pane-lcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: Fit Breast')
+                self.assertAlmostEqual(self.fit(box), self.camera(page, 'lcc')['zoom'], places=6)
+                self.assertClose(self.camera(page, 'lcc')['focal'], self.centre(box))
+                # and its window is the tissue's (fat 24 … 36, dense 600): neither the padding (0) nor the air (10).
+                panel.get_by_role('button', name='Breast W/L').click()
+                expect(page.locator('#pane-lcc [data-mg-badge=wl]')).to_have_text('Breast W/L')
+                voi = page.evaluate("() => synViews.get('lcc').getProperties().voiRange")
+                self.assertGreaterEqual(voi['lower'], 24); self.assertEqual(600, voi['upper'])
+
+    def test_09f_when_no_image_header_can_be_read_nothing_is_said_to_be_done(self):
+        page = self.open()
+        page.evaluate("""() => { const before = window.fetch;
+          window.fetch = (url, init) => /^\\/dicom-web\\//.test(String(url)) ? Promise.resolve(new Response('', { status: 503 })) : before(url, init); }""")
+        before = page.evaluate(self.STATE, ['rcc', 'lcc', 'prcc'])
+        self.menu(page, 'Breast Display')
+        panel = page.get_by_role('dialog', name='Breast Display')
+        status = panel.locator('[role=status]')
+        for name in ['Breast Edge', 'Breast W/L', 'Fit Breast', 'Match Size']:
+            status.evaluate("node => { node.textContent = ''; }")
+            panel.get_by_role('button', name=name).click()
+            expect(status).to_have_text('MG 영상이 있는 칸을 찾지 못했습니다(영상 머리글을 읽지 못했을 수 있습니다). 바꾼 것이 없습니다.')
+        expect(page.locator('.kin-mg-outline')).to_have_count(0)
+        expect(page.locator('[data-mg-badge]')).to_have_count(0)
+        self.assertEqual(before, page.evaluate(self.STATE, ['rcc', 'lcc', 'prcc']))
+
+    # ── What the reader asked for while the image headers were still being read ──
+    HEADERS_READ = "() => !!document.querySelector('#pane-plcc [data-mg-badge=mirrored]')"
+
+    def test_02d_a_point_pressed_before_a_reset_a_new_opening_or_another_image_is_not_carried_when_the_headers_come(self):
+        zooms = "ids => ids.map(id => synViews.get(id).getZoom())"
+        cc = ['rcc', 'lcc', 'prcc', 'dbt']
+        # Reset after the point.
+        page = self.open()
+        page.evaluate("() => { window.synMetadataDelay = 400; }")
+        self.menu(page, 'Mirrored')
+        self.click_cell(page, 'rcc', 50, 40)
+        page.get_by_role('dialog', name='Mirrored').get_by_role('button', name='Reset').click()
+        page.wait_for_function(self.HEADERS_READ); page.wait_for_timeout(250)
+        self.assertEqual([1, 1, 1, 1], page.evaluate(zooms, cc))
+        # Close and Mirrored again after the point.
+        page = self.open()
+        page.evaluate("() => { window.synMetadataDelay = 400; }")
+        self.menu(page, 'Mirrored')
+        self.click_cell(page, 'rcc', 50, 40)
+        page.get_by_role('dialog', name='Mirrored').get_by_role('button', name='Close').click()
+        self.menu(page, 'Mirrored')
+        page.wait_for_function(self.HEADERS_READ); page.wait_for_timeout(250)
+        self.assertEqual([1, 1, 1, 1], page.evaluate(zooms, cc))
+        # A linked cell shows another image and the first again (A → B → A) after the point: the point is carried to the
+        # cells that stayed, not onto that one.
+        page = self.open()
+        page.evaluate("() => { window.synMetadataDelay = 400; }")
+        self.menu(page, 'Mirrored')
+        self.click_cell(page, 'rcc', 50, 40)
+        page.evaluate("() => { synMetadataDelay = 0; const v = synViews.get('dbt'); v.show(3); v.show(0); }")
+        page.wait_for_function("() => Math.abs(synViews.get('lcc').getZoom() - 2) < 1e-9"); page.wait_for_timeout(250)
+        self.assertEqual([2, 2, 2, 1], page.evaluate(zooms, cc))
+        # The cell pressed itself shows another image and the first again: nothing is carried.
+        page = self.open()
+        page.evaluate("() => { window.synMetadataDelay = 400; }")
+        self.menu(page, 'Mirrored')
+        self.click_cell(page, 'dbt', 50, 40)
+        page.evaluate("() => { synMetadataDelay = 0; const v = synViews.get('dbt'); v.show(3); v.show(0); }")
+        page.wait_for_function(self.HEADERS_READ); page.wait_for_timeout(250)
+        self.assertEqual([1, 1, 1, 1], page.evaluate(zooms, cc))
+
+    def test_03f_a_camera_change_before_a_reset_is_not_carried_and_of_two_changes_the_later_is_the_one_carried(self):
+        page = self.open()
+        # The prior R CC stands at 1.5× when Mirrored is turned on: that is what Reset goes back to.
+        page.evaluate("() => { synViews.get('prcc').setZoom(1.5); window.synMetadataDelay = 400; }")
+        self.menu(page, 'Mirrored')
+        # The reader zooms today's R CC and presses Reset before the headers are read.
+        page.evaluate("() => synViews.get('rcc').setCamera({ parallelScale: 50, focalPoint: [100, 100, 0] })")
+        page.get_by_role('dialog', name='Mirrored').get_by_role('button', name='Reset').click()
+        self.assertEqual([1, 1.5], page.evaluate("() => ['rcc', 'prcc'].map(id => synViews.get(id).getZoom())"))
+        page.wait_for_function(self.HEADERS_READ); page.wait_for_timeout(250)
+        self.assertEqual([1, 1, 1.5], page.evaluate("() => ['rcc', 'lcc', 'prcc'].map(id => synViews.get(id).getZoom())"))
+        # Two cells changed one after the other before the headers are read (the DBT cell's next slice has its own header):
+        # the later change is the one the view follows.
+        page.evaluate("""() => { synMetadataDelay = 400; synViews.get('dbt').show(1);
+          synViews.get('rcc').setCamera({ parallelScale: 50, focalPoint: [100, 100, 0] });
+          synViews.get('lcc').setCamera({ parallelScale: 75, focalPoint: [300, 100, 0] }); }""")
+        page.wait_for_function("() => Math.abs(synViews.get('prcc').getZoom() - 2) < 1e-9"); page.wait_for_timeout(250)
+        self.assertEqual([2, 2, 2], page.evaluate("() => ['rcc', 'lcc', 'prcc'].map(id => synViews.get(id).getZoom())"))
+        self.assertNear(self.camera(page, 'rcc')['focal'], [99, 100])
+
+    def test_03g_an_invert_pressed_before_invert_together_was_turned_off_is_not_carried_when_it_is_on_again(self):
+        page = self.open()
+        page.evaluate("() => { window.synMetadataDelay = 400; synActive = 'rcc'; }")
+        self.menu(page, 'Mirrored')
+        together = page.get_by_role('dialog', name='Mirrored').get_by_label('Invert together')
+        page.evaluate("() => synToolbar.invoke('invert')")
+        together.uncheck(); together.check()
+        page.wait_for_function(self.HEADERS_READ); page.wait_for_timeout(250)
+        self.assertEqual([True, False, False], page.evaluate("() => ['rcc', 'lcc', 'prcc'].map(id => synViews.get(id).props.invert)"))
+
+    def test_08e_breast_wl_pressed_twice_while_the_headers_are_read_changes_nothing_and_off_gives_the_readers_window_back(self):
+        page = self.open()
+        cells = ['dbt', 'rcc', 'lcc', 'rmlo', 'prcc', 'plcc']
+        before = page.evaluate(self.STATE, cells)
+        page.evaluate("() => { window.synMetadataDelay = 400; }")
+        self.menu(page, 'Breast Display')
+        panel = page.get_by_role('dialog', name='Breast Display')
+        wl = panel.get_by_role('button', name='Breast W/L')
+        # On, and off again before the headers are read: nothing was changed, and nothing is when they come.
+        wl.click(); wl.click()
+        expect(panel.locator('[role=status]')).to_have_text('Breast W/L을 껐습니다. 원래 창(VOI LUT·반전 포함)으로 돌아갔습니다.')
+        page.wait_for_timeout(900)
+        self.assertEqual(before, page.evaluate(self.STATE, cells))
+        expect(page.locator('[data-mg-badge=wl]')).to_have_count(0)
+        # On (the breast's window), and off: the reader's own window again.
+        wl.click()
+        expect(page.locator('#pane-rcc [data-mg-badge=wl]')).to_have_text('Breast W/L')
+        self.assertGreaterEqual(page.evaluate("() => synViews.get('rcc').getProperties().voiRange.lower"), 1000)
+        wl.click()
+        expect(page.locator('[data-mg-badge=wl]')).to_have_count(0)
+        self.assertEqual(before, page.evaluate(self.STATE, cells))
+
+    def test_09e_of_two_zoom_modes_pressed_while_the_headers_are_read_only_the_later_is_carried_out(self):
+        page = self.open()
+        page.evaluate("() => { window.synMetadataDelay = 400; }")
+        self.menu(page, 'Breast Display')
+        panel = page.get_by_role('dialog', name='Breast Display')
+        panel.get_by_role('button', name='Fit Breast').click()
+        panel.get_by_role('button', name='1:1').click()
+        expect(page.locator('#pane-rcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: 1:1')
+        page.wait_for_timeout(250)
+        # 1:1 here is twice Fit; the cell's camera was set once (by 1:1), never by the Fit Breast pressed before it.
+        self.assertAlmostEqual(2, self.camera(page, 'rcc')['zoom'])
+        self.assertEqual(1, page.evaluate("() => synCameraSets.rcc"))
+        expect(page.locator('#pane-rcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: 1:1')
+        # A cell the reader zoomed after the button was pressed is left as the reader put it, and named.
+        page.evaluate("() => { synMetadataDelay = 400; synViews.get('dbt').show(1); }")
+        panel.get_by_role('button', name='Fit Breast').click()
+        page.evaluate("() => synViews.get('rcc').setZoom(3)")
+        expect(page.locator('#pane-lcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: Fit Breast')
+        self.assertAlmostEqual(3, self.camera(page, 'rcc')['zoom'])
+        expect(panel.locator('[role=status]')).to_have_text('바꾸지 않은 칸 — Current · R CC / Prior · L CC')
+
+    def test_05e_quadrant_close_does_not_undo_what_was_done_after_it(self):
+        page = self.open()
+        page.evaluate("() => { window.synMetadataDelay = 400; }")
+        # The first step and Close are both still waiting for the headers when the reader zooms today's R CC.
+        self.menu(page, 'Quadrant Zoom')
+        page.get_by_role('dialog', name='Quadrant Zoom').get_by_role('button', name='Close').click()
+        page.evaluate("() => synViews.get('rcc').setZoom(3)")
+        page.wait_for_timeout(900)
+        self.assertAlmostEqual(3, self.camera(page, 'rcc')['zoom'])
+        self.assertAlmostEqual(1, self.camera(page, 'lcc')['zoom'])
+        expect(page.locator('[data-mg-badge=quadrant]')).to_have_count(0)
+        # A zoom mode pressed after Close (the DBT cell's next slice has its own header to read): Close writes nothing.
+        self.menu(page, 'Breast Display')
+        display = page.get_by_role('dialog', name='Breast Display')
+        self.menu(page, 'Quadrant Zoom')
+        page.wait_for_function("() => Math.abs(synViews.get('lcc').getZoom() - 4) < 1e-9")
+        page.evaluate("() => { synMetadataDelay = 400; synViews.get('dbt').show(1); synCameraSets.lcc = 0; }")
+        page.get_by_role('dialog', name='Quadrant Zoom').get_by_role('button', name='Close').evaluate('b => b.click()')
+        display.get_by_role('button', name='Fit Breast').evaluate('b => b.click()')
+        expect(page.locator('#pane-lcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: Fit Breast')
+        page.wait_for_timeout(250)
+        self.assertAlmostEqual(self.fit(self.BOX['L']), self.camera(page, 'lcc')['zoom'], places=6)
+        # Fit Breast set that cell's camera (zoom and centre), and nothing else did.
+        self.assertEqual(2, page.evaluate("() => synCameraSets.lcc"))
+
+    def test_04f_a_linked_lens_asked_for_before_the_release_a_new_press_or_magnifier_off_is_not_drawn_when_the_headers_come(self):
+        page = self.open()
+        self.menu(page, 'Mirrored')
+        page.wait_for_function(self.HEADERS_READ)
+        self.menu(page, 'Magnifier')
+        expect(page.locator('#pane-rcc .kin-mg-capture[data-mode=lens]')).to_have_count(1)
+        box = page.locator('#pane-rcc .viewport-element').bounding_box()
+        # The DBT cell's next slice has its own header: the linked lenses wait for it, the pressed cell's own does not.
+        unread = "k => { synMetadataDelay = 400; synViews.get('dbt').show(k); }"
+        lenses = "() => Object.fromEntries([...document.querySelectorAll('.kin-mg-lens')].map(lens => [lens.closest('[data-cy=viewport-pane]').id.slice(5), lens.dataset.at]))"
+        # Let go before the headers come: no lens then, and none when they come.
+        page.evaluate(unread, 1)
+        page.mouse.move(box['x'] + 50, box['y'] + 40); page.mouse.down()
+        self.assertEqual({'rcc': '50,40'}, page.evaluate(lenses))
+        page.mouse.up()
+        page.wait_for_timeout(900)
+        self.assertEqual({}, page.evaluate(lenses))
+        # Pressed again at another place before they come: only that press's lenses.
+        page.evaluate(unread, 2)
+        page.mouse.move(box['x'] + 50, box['y'] + 40); page.mouse.down(); page.mouse.up()
+        page.mouse.move(box['x'] + 80, box['y'] + 60); page.mouse.down()
+        page.wait_for_function("() => document.querySelectorAll('.kin-mg-lens').length === 4")
+        page.wait_for_timeout(250)
+        self.assertEqual({'rcc': '80,60', 'lcc': '120,60', 'prcc': '80,60', 'dbt': '80,60'}, page.evaluate(lenses))
+        # Mirrored closed while it is held: the linked cells' lenses go, the pressed cell keeps its own, and a move draws only that.
+        page.get_by_role('dialog', name='Mirrored').get_by_role('button', name='Close').evaluate('b => b.click()')
+        self.assertEqual({'rcc': '80,60'}, page.evaluate(lenses))
+        page.mouse.move(box['x'] + 90, box['y'] + 60)
+        page.wait_for_timeout(100)
+        self.assertEqual({'rcc': '90,60'}, page.evaluate(lenses))
+        page.mouse.up()
+        # The Magnifier turned off before the headers come: no lens.
+        self.menu(page, 'Mirrored')
+        page.wait_for_function(self.HEADERS_READ)
+        page.evaluate(unread, 3)
+        page.mouse.move(box['x'] + 50, box['y'] + 40); page.mouse.down()
+        page.evaluate("() => KinViewerFeatures.run('mgMagnifier')")
+        page.mouse.up()
+        page.wait_for_timeout(900)
+        self.assertEqual({}, page.evaluate(lenses))
+        expect(page.locator('.kin-mg-capture')).to_have_count(0)
+
+    def test_18_nothing_is_written_once_the_module_has_ended(self):
+        page = self.open()
+        cells = ['dbt', 'rcc', 'lcc', 'rmlo', 'prcc', 'plcc']
+        before = page.evaluate(self.STATE, cells)
+        page.evaluate("() => { window.synMetadataDelay = 400; synActive = 'rcc'; }")
+        self.menu(page, 'Mirrored')
+        self.menu(page, 'Breast Display')
+        panel = page.get_by_role('dialog', name='Breast Display')
+        for name in ['Breast Edge', 'Breast W/L', 'Fit Breast']:
+            panel.get_by_role('button', name=name).evaluate('b => b.click()')
+        # The reader's own Invert on today's R CC and zoom of the prior R CC (Mirrored would carry both), then the end.
+        page.evaluate("() => { synToolbar.invoke('invert'); synViews.get('prcc').setCamera({ parallelScale: 50 }); }")
+        page.wait_for_timeout(50)
+        page.evaluate("() => synToolbar.dispose()")
+        after = page.evaluate(self.STATE, cells)
+        page.wait_for_timeout(900)
+        # The reader's own two changes stay; nothing else changed, then or when the headers came.
+        self.assertTrue(after[1]['props']['invert'])
+        self.assertEqual([before[i] for i in (0, 2, 3, 5)], [after[i] for i in (0, 2, 3, 5)])
+        self.assertEqual(after, page.evaluate(self.STATE, cells))
+        expect(page.locator('.kin-mg-outline, .kin-mg-lens, [data-mg-badge]')).to_have_count(0)
+
+    # ── The lens against the screen ──
+    # The screen's own picture of a cell's canvas (a screenshot of it, its image filter on it) cut at the lens's place and
+    # enlarged, beside what the lens shows: the greatest difference of any channel of any pixel; the lens's own pixels
+    # down its first column; and the screen's pixels down the first column of the lens's place.
+    LENS_VS_SCREEN = """async ([png, at, dpr]) => { const image = new Image(); image.src = 'data:image/png;base64,' + png; await image.decode();
+      const lens = document.querySelector('#pane-rcc .kin-mg-lens canvas'), size = lens.width, side = 80 * dpr;
+      const x = at[0] * dpr - side / 2, y = at[1] * dpr - side / 2, k = size / side;
+      const ax = Math.max(x, 0), ay = Math.max(y, 0), bx = Math.min(x + side, image.width), by = Math.min(y + side, image.height);
+      const wanted = document.createElement('canvas'); wanted.width = wanted.height = size;
+      wanted.getContext('2d').drawImage(image, ax, ay, bx - ax, by - ay, (ax - x) * k, (ay - y) * k, (bx - ax) * k, (by - ay) * k);
+      const a = wanted.getContext('2d').getImageData(0, 0, size, size).data, b = lens.getContext('2d').getImageData(0, 0, size, size).data;
+      let worst = 0, where = null;
+      for (let i = 0; i < a.length; i++) { const d = Math.abs(a[i] - b[i]); if (d > worst) { worst = d; where = [(i >> 2) % size, Math.floor((i >> 2) / size), i & 3, a[i], b[i]]; } }
+      const column = []; for (let row = 8; row < size; row += 8) column.push(b[(row * size) * 4]);
+      const all = document.createElement('canvas'); all.width = image.width; all.height = image.height; all.getContext('2d').drawImage(image, 0, 0);
+      const inside = []; for (let row = Math.ceil(ay) + 4; row < by - 4; row += 4) inside.push(all.getContext('2d').getImageData(Math.ceil(ax), row, 1, 1).data[0]);
+      return { size, worst, where, column, inside, screen: [image.width, image.height] }; }"""
+
+    def lens_and_screen(self, kind, at, dpr=1):
+        page = self.open(dpr=dpr)
+        page.add_script_tag(path=str(HPACS / 'viewer-image-filter.js'))
+        # Today's R CC draws black, a grey grain in the middle, and a white line one pixel wide at x 9 — the column just
+        # outside a lens pressed at x 50 (its place begins at x 10).
+        page.evaluate("""kind => { const canvas = synViews.get('rcc').canvas, g = canvas.getContext('2d'), image = g.createImageData(200, 150);
+          for (let y = 0; y < 150; y++) for (let x = 0; x < 200; x++) { const i = (y * 200 + x) * 4;
+            const grey = x === 9 ? 255 : x >= 30 && x < 120 && y >= 10 && y < 120 ? (x * 37 + y * 91) % 256 : 0;
+            image.data[i] = image.data[i + 1] = image.data[i + 2] = grey; image.data[i + 3] = 255; }
+          g.putImageData(image, 0, 0);
+          if (kind !== 'none') KinImageFilter.apply(canvas, kind); }""", kind)
+        self.assertEqual('' if kind == 'none' else 'url("#kin-image-filter-' + kind + '")', page.evaluate("() => synViews.get('rcc').canvas.style.filter"))
+        own = page.locator('#pane-rcc .viewport-element').bounding_box()
+        self.assertEqual([own['x'], own['y']], [round(own['x']), round(own['y'])], 'the canvas stands on whole pixels')
+        import base64
+        shot = base64.b64encode(page.screenshot(clip={'x': own['x'], 'y': own['y'], 'width': 200, 'height': 150})).decode()
+        self.menu(page, 'Magnifier')
+        expect(page.locator('#pane-rcc .kin-mg-capture')).to_have_count(1)
+        page.mouse.move(own['x'] + at[0], own['y'] + at[1]); page.mouse.down()
+        expect(page.locator('#pane-rcc .kin-mg-lens')).to_have_count(1)
+        result = page.evaluate(self.LENS_VS_SCREEN, [shot, at, dpr])
+        page.mouse.up()
+        return result
+
+    def test_04e_the_lens_shows_the_screen_with_its_image_filter_cut_at_its_place_and_enlarged(self):
+        for kind in ['smooth', 'sharpen', 'none']:
+            # In the image, and at the canvas's own corner (part of the place lies beyond the canvas).
+            for at in [[50, 40], [5, 6], [197, 146]]:
+                with self.subTest(kind=kind, at=at):
+                    result = self.lens_and_screen(kind, at)
+                    self.assertEqual([160, [200, 150]], [result['size'], result['screen']])
+                    self.assertLessEqual(result['worst'], 2, result)
+        # Smooth: the white line just outside the lens's place makes the screen's first column inside it grey (a quarter
+        # of white: 64), all the way down. The lens's first column is grey too, not black: that grey towards the line's
+        # own (128), as enlarging the screen there gives.
+        result = self.lens_and_screen('smooth', [50, 40])
+        self.assertEqual([64] * len(result['inside']), result['inside'])
+        for value in result['column']:
+            self.assertTrue(64 <= value <= 128, result['column'])
+        # Without a filter that column of the screen is black.
+        self.assertEqual([0] * len(result['inside']), self.lens_and_screen('none', [50, 40])['inside'])
+        # A screen of two device pixels to the canvas pixel: the same comparison holds there.
+        for kind in ['smooth', 'none']:
+            with self.subTest(kind=kind, dpr=2):
+                result = self.lens_and_screen(kind, [50, 40], dpr=2)
+                self.assertEqual([320, [400, 300]], [result['size'], result['screen']])
+                self.assertLessEqual(result['worst'], 6, result)
 
     def keypad(self, page):
         self.menu(page, 'Mammo Keypad')
