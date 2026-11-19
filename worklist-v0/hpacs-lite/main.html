@@ -1414,9 +1414,20 @@
     #cvr-send-help, #cvr-send-study, #cvr-send-source, #cvr-send-status > p { margin: 0; padding: 6px 12px; font-size: 12px; color: #cdd3dc;
       line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
     #cvr-send .tplbody select { font-size: 12px; }
+    /* Recipients: one check box per candidate; the hospital inbox is checked by default. The list scrolls inside the dialog. */
+    #cvr-send-recipient, #cvr-send-recipient-note { grid-column: 1 / -1; }
+    #cvr-send-recipient { margin: 0; padding: 4px 6px; border: 1px solid var(--kin-line2); border-radius: 3px; max-height: min(28vh, 200px); overflow: auto; }
+    #cvr-send-recipient legend { padding: 0 4px; font-size: 12px; font-weight: 700; }
+    #cvr-send-recipient label { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px; margin: 2px 0; font-size: 12px; cursor: pointer; }
+    #cvr-send-recipient .cvr-tag { padding: 0 6px; border: 1px solid var(--kin-line2); border-radius: 9px; font-weight: 700; color: var(--kin-accent); }
+    #cvr-send-recipient-note { margin: 4px 0; font-size: 12px; color: var(--kin-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+    #cvr-send-recipient-note:empty { display: none; }
+    #cvr-send-each { margin: 0; padding: 0 12px 6px 30px; font-size: 12px; color: var(--kin-text); }
+    #cvr-send-each li { margin: 2px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
     #cvr-send-status .cvr-word { font-weight: 700; padding-bottom: 0; }
-    #cvr-send-status:is([data-state="unknown"], [data-state="checking"], [data-state="rejected"], [data-state="locked"]) .cvr-word { color: #ffb4b4; }
-    #cvr-send-status[data-state="delivered"] .cvr-word { color: #b8f0cf; }
+    #cvr-send-status:is([data-state="unknown"], [data-state="checking"], [data-state="rejected"], [data-state="locked"]) .cvr-word,
+    #cvr-send-each li:is([data-state="unknown"], [data-state="checking"], [data-state="rejected"]) .cvr-word { color: #ffb4b4; }
+    #cvr-send-status[data-state="delivered"] .cvr-word, #cvr-send-each li[data-state="delivered"] .cvr-word { color: #b8f0cf; }
     /* ── S7-U1b 끝 ── */
     /* ── S7-U2a 중요 결과 수신 ──
        받는 세션(clinician·radiologist)에는 요약 줄 한 줄(Critical Results · Pending ACK · Show Received · Refresh)이 늘 서고, 본문만
@@ -2516,8 +2527,8 @@
       <p id="cvr-send-study"></p>
       <p id="cvr-send-source"></p>
       <div class="body tplbody">
-        <label for="cvr-send-recipient">Recipient</label>
-        <select id="cvr-send-recipient"><option value="">Choose Recipient</option></select>
+        <fieldset id="cvr-send-recipient"><legend>Recipient</legend></fieldset>
+        <p id="cvr-send-recipient-note"></p>
         <label for="cvr-send-message">Message</label>
         <textarea id="cvr-send-message" maxlength="2000" rows="5"></textarea>
       </div>
