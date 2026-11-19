@@ -201,7 +201,7 @@
 
     function showMembershipState(state) {
       const pending = state === "pending";
-      document.title = pending ? "관리자 승인 대기 — KIN" : "계정 설정 확인 — KIN";
+      document.title = pending ? "관리자 승인 대기 — HALO PACS" : "계정 설정 확인 — HALO PACS";
       const panel = document.createElement("main");
       panel.style.cssText = "min-height:100vh;display:grid;place-items:center;background:#07101d;color:#eef4ff;font-family:system-ui,sans-serif;padding:24px";
       const card = document.createElement("section");

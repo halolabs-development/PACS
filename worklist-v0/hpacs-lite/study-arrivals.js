@@ -129,7 +129,7 @@
     return {state:'outside_list'};
   }
 
-  function kinHeld(count,at,format){return (count===null?'KIN 보유 개수 모름':'KIN 보유 '+count+'건')+'('+format(at)+')';}
+  function kinHeld(count,at,format){return (count===null?'HALO PACS 보유 개수 모름':'HALO PACS 보유 '+count+'건')+'('+format(at)+')';}
 
   function assignmentLabel(value){
     if(value==='assigned')return {key:'assigned',text:'Institution Assigned',title:'검사가 기관에 연결되어 있습니다. 영상 수신 상태가 아닙니다.'};
@@ -140,12 +140,12 @@
 
   function observationLabel(b,format){
     if(b.state==='observed')return {key:'observed',text:kinHeld(b.count,b.observedAt,format),
-      title:'성공한 KIN 관측 시각의 보유 개수입니다.'+(b.count===null?' 개수 태그가 없거나 정수가 아니어서 알 수 없습니다.':'')};
+      title:'성공한 HALO PACS 관측 시각의 보유 개수입니다.'+(b.count===null?' 개수 태그가 없거나 정수가 아니어서 알 수 없습니다.':'')};
     if(b.state==='not_observed')return {key:'not_observed',text:'Not Observed('+format(b.observedAt)+')',
-      title:'성공한 KIN 관측에 이 검사의 영상 행이 없습니다. 예고만 된 검사·아직 저장 전·제거된 검사를 구분하지 않습니다.'};
+      title:'성공한 HALO PACS 관측에 이 검사의 영상 행이 없습니다. 예고만 된 검사·아직 저장 전·제거된 검사를 구분하지 않습니다.'};
     if(b.state==='observation_unavailable')return {key:'observation_unavailable',
       text:PHRASES.observationUnavailable+(!b.last?'':b.last.notObserved?' · 마지막 관측('+format(b.last.observedAt)+') Not Observed':' · 마지막 '+kinHeld(b.last.count,b.last.observedAt,format)),
-      title:'KIN 관측 요청이 실패했습니다. 마지막으로 성공한 관측값과 그 시각을 그대로 보여 줍니다.'};
+      title:'HALO PACS 관측 요청이 실패했습니다. 마지막으로 성공한 관측값과 그 시각을 그대로 보여 줍니다.'};
     if(b.state==='outside_list')return {key:'outside_list',text:'Outside Observed List',title:'이번 관측 목록에 없는 검사입니다. 삭제나 감소로 보지 않습니다.'};
     if(b.state==='not_attempted')return {key:'not_attempted',text:'',title:''};
     throw new TypeError('observation');
@@ -174,7 +174,7 @@
     if(b.state==='not_observed'&&M>=1)reasons.push('not_observed_with_reported_transfer');
     if(b.changedAt&&Date.parse(receipt.serverReceivedAt)<Date.parse(b.changedAt))reasons.push('receipt_older_than_change');
     return {label:{key:'reported',text:'Gateway 보고('+format(receipt.serverReceivedAt)+'): 병원 보유 '+N+'건 중 '+M+'건 전송',
-      title:'Gateway가 보고한 전송 수입니다. 검사 종료나 영상 수신 여부를 뜻하지 않습니다.'+(comparable?'':' KIN 보유 개수를 알 수 없어 비교하지 않았습니다.')},reasons};
+      title:'Gateway가 보고한 전송 수입니다. 검사 종료나 영상 수신 여부를 뜻하지 않습니다.'+(comparable?'':' HALO PACS 보유 개수를 알 수 없어 비교하지 않았습니다.')},reasons};
   }
 
   /*
@@ -314,7 +314,7 @@
     const tail=needsCheck?' · Needs Check '+needsCheck:'';
     if(m.available===false)return {key:'observation_unavailable',
       text:PHRASES.observationUnavailable+(m.observedAt?' · 마지막 관측 '+format(m.observedAt)+' 유지':'')+tail,
-      title:m.observedAt?'KIN 관측 요청이 실패했습니다. 목록·개수·관측 시각은 마지막으로 성공한 관측값입니다.':'아직 성공한 KIN 관측이 없습니다. 개수를 표시하지 않습니다.',
+      title:m.observedAt?'HALO PACS 관측 요청이 실패했습니다. 목록·개수·관측 시각은 마지막으로 성공한 관측값입니다.':'아직 성공한 HALO PACS 관측이 없습니다. 개수를 표시하지 않습니다.',
       notObserved:m.notObserved,needsCheck};
     if(m.available!==true)return {key:'not_attempted',text:'',title:'',notObserved:null,needsCheck};
     const absent=m.notObserved===null?' · Not Observed Unknown':m.notObserved.length?' · Not Observed '+m.notObserved.length:'';
