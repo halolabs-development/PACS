@@ -147,7 +147,7 @@ window.KinReadingWorkspace = function (app) {
   let active = false, ended = false, frame = null, shown = null, pending = null, epoch = 0, timer = null, deadline = 0, loaded = false, failed = false, lastSelection;
   let viewingSet = null; // W9: the fresh resolve metadata of the members this workspace was asked to show (openViewingSet)
   const panelModel = KinReadingPanelLayout;
-  let panelValues = panelModel.defaults(), panelDrag = null, panelStyleSignature = '';
+  let panelValues = panelModel.defaults(), panelDrag = null, panelStyleSignature = '', shownFieldFloor = null;
   const split = $('.split'), reportColumn = $('.right'), relatedRegion = $('.related-p');
   const relatedList = $('.related-list-pane'), priorReport = $('.prior-report-pane');
   const relatedListHome = { parent: relatedList.parentNode, next: relatedList.nextSibling };
@@ -174,13 +174,59 @@ window.KinReadingWorkspace = function (app) {
     const row = grid?.querySelector('tbody tr')?.getBoundingClientRect().height || 0;
     return { head: Math.ceil(head), floor: Math.max(40, Math.ceil(head + row)) };
   }
+  /**
+   * The report column's height, divided in this one place (B21: a laptop's Chrome window, inside 1366x640 or 1280x650,
+   * left Findings one 32px line under the button row). Beside the image the column keeps, from the window down:
+   *   its fixed rows - the target line at its one-line floor, the notice band, the editor's head and the button row (the
+   *   sizes the window's width and the reader's text give them; no server answer changes them: main.html "An answer never
+   *   resizes") - and the field region at `want`: the Findings label and five lines of the reader's text.
+   * Two places apply it: the related panel above gives way down to its own floor (resolve: reportMin), and the field region
+   * keeps what is left up to `want` (--reading-field-floor) so the rows under the button row (image requests, Critical
+   * Results) leave the window before it does - they stay in the column and its scroll reaches them. While the reader has
+   * opened a row before the button row (questions, citations, dictation) the region's floor is its one line as before, so
+   * those rows and the button row keep the order the Reading rules give them (reading-workspace.css, the column's height).
+   */
+  function reportColumnGeometry() {
+    const column = $('.report-p'), compose = column?.querySelector('.report-compose'), region = column?.querySelector('.redit');
+    const row = column?.querySelector('.rfoot2'), findings = $('#findings'), label = region?.querySelector('label');
+    if (!column || !compose || !region || !row || !findings || !column.getClientRects().length) return null;
+    const px = value => parseFloat(value) || 0, style = e => getComputedStyle(e);
+    const lineOf = e => { const s = style(e); return px(s.lineHeight) || px(s.fontSize) * 1.2; };
+    const target = reportTarget.getClientRects().length ? (s => lineOf(reportTarget) + px(s.paddingTop) + px(s.paddingBottom)
+      + px(s.borderTopWidth) + px(s.borderBottomWidth))(style(reportTarget)) : 0;
+    const band = $('#report-notices')?.getBoundingClientRect().height || 0;
+    const head = compose.getBoundingClientRect().height - region.getBoundingClientRect().height;
+    const fixed = target + band + Math.max(0, head) + row.getBoundingClientRect().height;
+    const r = style(region), f = style(findings), l = label ? style(label) : null;
+    const want = px(r.paddingTop) + px(r.paddingBottom) + (label ? label.getBoundingClientRect().height + px(l.marginTop) + px(l.marginBottom) : 0)
+      + px(r.rowGap) + 5 * lineOf(findings) + px(f.paddingTop) + px(f.paddingBottom) + px(f.borderTopWidth) + px(f.borderBottomWidth);
+    // The column's own frame, and what stands between it and a shown related panel: the separator and that card's margins.
+    const c = style(column), s = style(relatedRegion), separator = panelSeparators.find(item => item.kind === 'relatedHeight')?.el;
+    const frame = px(c.marginTop) + px(c.marginBottom) + px(c.borderTopWidth) + px(c.borderBottomWidth) + px(c.paddingTop) + px(c.paddingBottom);
+    const between = px(s.marginTop) + px(s.marginBottom) + (separator?.getClientRects().length ? separator.getBoundingClientRect().height : 0);
+    // A row the reader opened before the button row (not the target line, the band or the editor).
+    const opened = [...column.children].some(e => e !== reportTarget && e !== compose && e.id !== 'report-notices'
+      && (e.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING) && e.getClientRects().length && e.getBoundingClientRect().height > 0);
+    return { fixed: Math.ceil(fixed), want: Math.ceil(want), frame: Math.ceil(frame), between: Math.ceil(between), opened };
+  }
   function panelGeometry() {
     const grid = relatedList.querySelector('.grid2'), table = relatedTableFloor();
     const listMin = [...relatedList.children].filter(child => child !== grid && child.getClientRects().length)
       .reduce((total, child) => total + child.getBoundingClientRect().height, table.floor);
-    const geometry = panelModel.resolve(panelValues, { width: split.clientWidth || innerWidth, narrow: matchMedia('(max-width: 850px)').matches,
-      height: innerHeight, workHeight: $('.workrow').clientHeight, listMin });
-    return geometry && { ...geometry, table };
+    const narrow = matchMedia('(max-width: 850px)').matches, workHeight = $('.workrow').clientHeight;
+    const report = !narrow && active && !document.body.classList.contains('reading-context-open') ? reportColumnGeometry() : null;
+    const geometry = panelModel.resolve(panelValues, { width: split.clientWidth || innerWidth, narrow,
+      height: innerHeight, workHeight, listMin, reportMin: report ? report.between + report.frame + report.fixed + report.want : undefined });
+    if (!geometry) return geometry;
+    // The field region keeps what the column has left after its fixed rows, up to `want`, and never less than one line.
+    let fieldFloor = 32;
+    if (report && !report.opened) {
+      const related = relatedRegion.getClientRects().length ? geometry.effective.relatedHeight + report.between : 0;
+      const columnHeight = workHeight - related - report.frame;
+      // Whole pixels taken down (the rows' sub-pixel heights are rounded up above), so the button row is never pushed.
+      fieldFloor = Math.max(32, Math.floor(Math.min(report.want, columnHeight - report.fixed - 1)));
+    }
+    return { ...geometry, table, fieldFloor };
   }
   function snapshotPanels() { return panelModel.normalize(panelValues); }
   function applyPanels(value) {
@@ -202,6 +248,8 @@ window.KinReadingWorkspace = function (app) {
   }
   function renderPanels() {
     const geometry = panelGeometry(), values = geometry.effective;
+    // The field region's floor changes with the rows the reader opens, never the image: it is written apart from the sizes below.
+    if (geometry.fieldFloor !== shownFieldFloor) { shownFieldFloor = geometry.fieldFloor; split.style.setProperty('--reading-field-floor', shownFieldFloor + 'px'); }
     const signature = JSON.stringify([active, ended, panelValues.relatedHidden, values, geometry.table]);
     document.body.classList.toggle('reading-related-hidden', active && panelValues.relatedHidden);
     relatedRegion.inert = active && panelValues.relatedHidden;
@@ -295,6 +343,9 @@ window.KinReadingWorkspace = function (app) {
   [...relatedList.children].filter(child => !child.classList.contains('grid2')).forEach(child => panelObserver.observe(child));
   // The table's header and rows decide its floor (relatedTableFloor): a new row height or header font re-sizes the list.
   const relatedTable = relatedList.querySelector('.grid2 table'); if (relatedTable) panelObserver.observe(relatedTable);
+  // The report column's rows decide the field region's floor (reportColumnGeometry): a row the reader opens or folds, the
+  // editor's head or the button row taking another line (width, language, text size).
+  [...$('.report-p').children, $('.report-editor-head')].filter(Boolean).forEach(child => panelObserver.observe(child));
   let panelWindowResize = guarded(() => { if (panelDrag) cancelPanelDrag(); if (active && !ended) renderPanels(); });
   window.addEventListener('resize', panelWindowResize);
   const boundDocuments = new WeakSet();

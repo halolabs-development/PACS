@@ -1598,6 +1598,100 @@ class RelatedLayoutDOMTest(Base):
                 self.walk_report_row(w, parts, f"RL-13d {name}")
                 w.screen.finish()
 
+    # ── RL-14: a laptop's Chrome window ───────────────────────────────────────────────────────────────────────────
+    # Jungmo 2026-10-28: "실전은 그냥 일반 크롬화면처럼 맨위에 북마크 등이 뜨지 않겠냐" - a Chrome window on a 1366x768
+    # laptop is about 1366x640 inside (less the task bar and the tab, address and bookmark rows), 1280x650 on another. There
+    # the Reading Workspace left Findings one 32px line under the button row (its label, no text): the bar above took 186px,
+    # the Related panel kept 245px and the rows under the button row took the rest from the field region. The column's
+    # height is divided in one place (reading-workspace.js reportColumnGeometry): the Related panel gives way to its own floor
+    # and the field region keeps the Findings label and five lines where the column has them after its fixed rows; the rows
+    # under the button row leave the window first and the column's scroll reaches them. Judged on the long report, as a reader
+    # meets it: Findings shows at least three lines of its text above the button row (five at 1366x768 and with the Related
+    # panel hidden), the Related panel is whole at the work row's top, nothing in the column has scrolled, the wheel over
+    # Findings stays in it at its end, a shortcut message does not change the bar's height, every bar button keeps its row,
+    # and RL-13's walk (wheel, typing at the end and start of Findings and at the end of Conclusion) holds.
+    CHROME_WINDOWS = [((1366, 640), 3), ((1280, 650), 3), ((1366, 768), 4.9)]
+    FIELD_PROBE = r"""
+      const [field, row] = arg, s = getComputedStyle(field), rb = row.getBoundingClientRect(), fb = field.getBoundingClientRect();
+      const line = parseFloat(s.lineHeight) || parseFloat(s.fontSize) * 1.2;
+      const cut = clip(field, [fb.left, fb.top, fb.right, fb.bottom]);
+      const top = Math.max(cut[1], fb.top + parseFloat(s.borderTopWidth) + parseFloat(s.paddingTop)), bottom = Math.min(cut[3], rb.top);
+      const column = row.parentElement, work = column.parentElement, related = work.querySelector('.related-p');
+      return {line, lines: +(Math.max(0, bottom - top) / line).toFixed(2), region: Math.round(field.closest('.redit').getBoundingClientRect().height),
+              columnScroll: column.scrollTop, columnOverflow: column.scrollHeight - column.clientHeight, workScroll: work.scrollTop,
+              relatedTop: related && related.getClientRects().length ? related.getBoundingClientRect().top - work.getBoundingClientRect().top : null};"""
+    BAR_ROWS = """() => { const top = id => Math.round(document.getElementById(id).getBoundingClientRect().top), bar = document.getElementById('reading-bar');
+      const left = id => Math.round(document.getElementById(id).getBoundingClientRect().left);
+      return {bar: bar.getBoundingClientRect().height, worklistLeft: [...bar.querySelectorAll('button')].find(b => b.textContent.trim() === 'Worklist').getBoundingClientRect().left,
+              hideLeft: left('reading-related-toggle'), hideTop: top('reading-related-toggle'), editTop: top('workspace-shortcuts-edit'),
+              summary: (r => [r.top, r.bottom])(document.querySelector('#reading-shortcut-help > summary').getBoundingClientRect()),
+              target: (r => [r.top, r.bottom])(document.getElementById('reading-target').getBoundingClientRect())}; }"""
+
+    def field_view(self, page, parts):
+        return js(page, self.FIELD_PROBE, [parts[1][0].element_handle(), parts[0][0].evaluate_handle("b => b.closest('.rfoot2')")])
+
+    def test_rl14_findings_keeps_its_lines_in_a_laptop_chrome_window(self):
+        for (width, height), want in self.CHROME_WINDOWS:
+            name = f"{width}x{height}"
+            with self.subTest(size=name):
+                w, parts = self.open_report_row((width, height))
+                page, tag = w.page, f"RL-14 {name}"
+                self.assert_report_row(w, f"{tag} opened", parts)
+                seen = self.field_view(page, parts)
+                measure(f"{tag} opened", field=seen)
+                self.assertGreaterEqual(seen["lines"], want, f"{tag}: Findings shows {want} lines of its text above the button row {seen}")
+                self.assertEqual(0, seen["workScroll"], f"{tag}: the work row has not scrolled (the Related panel's top is not cut)")
+                self.assertGreaterEqual(seen["relatedTop"], -0.5, f"{tag}: the Related panel starts in the work row")
+                self.assertEqual(0, seen["columnScroll"], f"{tag}: the report column has not scrolled")
+                # The bar: Hide Related Panel still starts the row after Edit Shortcuts' row; Keyboard Shortcuts on the target line.
+                bar = page.evaluate(self.BAR_ROWS)
+                measure(f"{tag} bar", bar=bar)
+                self.assertAlmostEqual(bar["worklistLeft"], bar["hideLeft"], delta=1, msg=f"{tag}: Hide Related Panel starts its row {bar}")
+                self.assertGreater(bar["hideTop"], bar["editTop"], f"{tag}: Hide Related Panel stays on the row after Edit Shortcuts {bar}")
+                self.assertTrue(bar["target"][0] - 1 <= bar["summary"][0] and bar["summary"][1] <= bar["target"][1] + 1,
+                                f"{tag}: Keyboard Shortcuts on the target line {bar}")
+                # A message from the shortcut editor (as it writes one after Save) does not change the bar's height.
+                page.evaluate("() => { document.getElementById('workspace-shortcuts-status').textContent = "
+                              "'단축키를 저장했습니다. 열린 Viewer의 새 키는 다음 열기부터 적용됩니다. SYN 단축키 미배정 Image Report Editor'; }")
+                page.wait_for_timeout(100)
+                self.assertAlmostEqual(bar["bar"], page.evaluate(self.BAR_ROWS)["bar"], delta=0.5, msg=f"{tag}: a message resized the bar")
+                page.evaluate("() => { document.getElementById('workspace-shortcuts-status').textContent = ''; }")
+                # The wheel over Findings at its end stays in it: the column (the rows under the button row) does not move.
+                findings = parts[1][0]
+                box = findings.bounding_box()
+                at = self.assert_report_row(w, f"{tag} before the wheel", parts)
+                page.mouse.move(box["x"] + box["width"] / 2, min(box["y"] + box["height"] / 2, at["row"][1] - 10))
+                for _ in range(12):
+                    page.mouse.wheel(0, 1200)
+                    page.wait_for_timeout(40)
+                page.wait_for_timeout(200)
+                seen = self.field_view(page, parts)
+                measure(f"{tag} wheel to the end", field=seen)
+                self.assertEqual(0, seen["columnScroll"], f"{tag}: the wheel at the end of Findings scrolled the column {seen}")
+                self.assert_report_row(w, f"{tag} wheel to the end", parts, at)
+                # The rows under the button row are in the column: its scroll brings Critical Results into the window.
+                if seen["columnOverflow"] > 0:
+                    inbox = page.get_by_role("region", name="Critical Results", exact=True)
+                    inbox.evaluate("e => e.scrollIntoView({block: 'nearest'})")
+                    self.assertGreaterEqual(w.visible(inbox)["ratio"], 0.5, f"{tag}: Critical Results reachable by the column's scroll")
+                    js(page, "arg.scrollTop = 0; return null;", parts[0][0].evaluate_handle("b => b.closest('.rfoot2').parentElement"))
+                    page.wait_for_timeout(100)
+                js(page, "arg.scrollTop = 0; return null;", findings.evaluate_handle("f => f.closest('.redit')"))
+                # The Related panel hidden: the field region has its five lines.
+                if (width, height) == (1366, 640):
+                    page.get_by_role("button", name="Hide Related Panel", exact=True).click()
+                    page.wait_for_timeout(200)
+                    seen = self.field_view(page, parts)
+                    measure(f"{tag} Related hidden", field=seen)
+                    self.assertGreaterEqual(seen["lines"], 4.9, f"{tag}: Related hidden, Findings shows five lines {seen}")
+                    self.assert_report_row(w, f"{tag} Related hidden", parts)
+                    page.get_by_role("button", name="Show Related Panel", exact=True).click()
+                    page.wait_for_timeout(200)
+                    seen = self.field_view(page, parts)
+                    self.assertGreaterEqual(seen["lines"], want, f"{tag}: Related shown again {seen}")
+                self.walk_report_row(w, parts, tag)
+                w.screen.finish()
+
 
 # ── RelatedLayoutEquivalence (R-EQ; local record, not in CI) ────────────────────────────────────────────────────────
 BASE_SHA = "0856c1bda1b4a66a5abf59467f4926b7e75c8d78"   # implementation base B (S7-AUDIT-STORE merge)
