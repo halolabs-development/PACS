@@ -357,7 +357,7 @@ a { color: #7cc4ff; }
         proxy_buffers        8  16k;
         proxy_busy_buffers_size 32k;
         sub_filter_once off;
-        sub_filter 'img/favicon.ico" />' 'img/kin-emblem-j1.svg" type="image/svg+xml" /><link rel="icon" type="image/png" sizes="32x32" href="/kin-brand/kin-favicon-32.png" />';
+        sub_filter 'img/favicon.ico" />' 'img/halo-icon.svg" type="image/svg+xml" /><link rel="icon" type="image/png" sizes="32x32" href="/kin-brand/kin-favicon-32.png" />';
     }
 
     # 브라우저에 Orthanc 자격증명을 주지 않는다. 공개 경로 일곱 곳이 같은 include를
