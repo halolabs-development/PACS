@@ -159,33 +159,61 @@
       // (which it gave only after checking this technician's access to every original) is the one undone.
       const lost=!!scopes.unavailable(win.row)?.kind;
       if(!lost&&scope?.groupId!==answer.group.id)throw Error('검사 범위가 바뀌었습니다. 목록을 새로고침한 뒤 다시 여세요.');
+      // Originals this technician cannot read now (gone, even since the list was read): the server counts them and names
+      // none. The table shows only what the server's latest answer names; the window says how many it does not.
+      const hiddenOf=value=>Number.isSafeInteger(value.group.unavailable)&&value.group.unavailable>0?value.group.unavailable:0;
       // That exception is the owning institution's cleanup only: when the server says this technician's institution does
-      // not own the group, the window says that and lists none of the group's originals.
-      const owner=(answer.checks||[]).find(c=>c.rule==='owner'&&!c.ok);
-      if(lost&&owner){
+      // not own a group it cannot read whole (by the list or by the server's latest answer), the window says that and
+      // lists none of the group's originals.
+      const reasonOnly=value=>{
+        const owner=(value.checks||[]).find(c=>c.rule==='owner'&&!c.ok);
+        if(!owner||!lost&&!hiddenOf(value))return false;
         win.body.replaceChildren(el('p',{className:'order-note err',text:kinSay('{0}{t1}','✗ ',{t:owner.message})}));
-        win.buttons(win.closeButton());return;
-      }
-      const originals=lost?[...new Set((answer.group.members||[]).map(m=>m.studyUid))]:scope.sources.map(s=>s.studyUid);
-      const sources=lost?originals.map(uid=>({uid})):scopes.metadata(win.row),checks=el('ul',{className:'exam-merge-checks'});
+        win.buttons(win.closeButton());return true;
+      };
+      if(reasonOnly(answer))return;
+      const named=value=>{
+        const uids=Array.isArray(value.group.members)?new Set(value.group.members.map(m=>m.studyUid)):null;
+        return uid=>!hiddenOf(value)||!uids||uids.has(uid);
+      };
+      const originalsOf=value=>(lost?[...new Set((value.group.members||[]).map(m=>m.studyUid))]:scope.sources.map(s=>s.studyUid)).filter(named(value));
+      const listed=el('div'),checks=el('ul',{className:'exam-merge-checks'});
       const go=button(kinSay(split?'Unsplit':'Unmerge'),submit);
-      let busy=false;
+      // ended: after a refused Unmerge the server no longer gives this group to this technician (it ended, changed, or
+      // cannot be read): the window keeps the refusal, draws no originals and offers no Unmerge.
+      let busy=false,ended=false;
+      const paintOriginals=()=>{
+        if(ended){listed.replaceChildren(note(kinSay('검사 범위가 바뀌었습니다. 목록을 새로고침한 뒤 다시 여세요.'),'err'));return;}
+        const keep=named(answer),hidden=hiddenOf(answer);
+        const sources=lost?originalsOf(answer).map(uid=>({uid})):scopes.metadata(win.row).filter(s=>keep(s.uid??s.studyUid));
+        listed.replaceChildren(table(['Original exam','StudyDate','StudyDesc','Series / Images back'],sources.map(s=>[s.acc??s.uid,s.date,s.desc,seriesImages(s.series,s.count)])),
+          ...(hidden?[note(kinSay('원본 검사 {n0}건은 지금 볼 수 없어 이 표에 없습니다.',hidden),'exam-merge-hidden')]:[]));
+      };
       // The mark, then the server's sentence for that check (in the glossary when the server writes one sentence).
-      const paint=()=>{checks.replaceChildren(...(answer.checks||[]).map(c=>el('li',{className:c.ok?'order-note ok':'order-note err',text:kinSay('{0}{t1}',c.ok?'✓ ':'✗ ',{t:c.message})})));go.disabled=busy || !Array.isArray(answer.checks) || answer.checks.some(c=>!c.ok);};
+      const paint=()=>{paintOriginals();checks.replaceChildren(...(answer.checks||[]).map(c=>el('li',{className:c.ok?'order-note ok':'order-note err',text:kinSay('{0}{t1}',c.ok?'✓ ':'✗ ',{t:c.message})})));go.disabled=busy || ended || !Array.isArray(answer.checks) || answer.checks.some(c=>!c.ok);};
       win.body.replaceChildren(note(split?'나눈 검사를 원래 영상 소속으로 되돌립니다. 양쪽의 판독 이력은 남습니다.':'합친 검사를 원래 영상 소속으로 되돌립니다. 합친 동안 쓴 판독 이력은 남습니다.'),
-        table(['Original exam','StudyDate','StudyDesc','Series / Images back'],sources.map(s=>[s.acc??s.uid,s.date,s.desc,seriesImages(s.series,s.count)])),el('h4',{text:'Checks'}),checks,
+        listed,el('h4',{text:'Checks'}),checks,
         note(kinSay('현재 승인·점유·초안·진행 중 전송이 있으면 서버가 되돌리기를 거절합니다. 합친 뒤 도착한 영상은 자기 원본에 그대로 남습니다.'),'muted'));
       win.buttons(go,win.closeButton());paint();
       async function submit() {
         if(busy||go.disabled||!win.live())return;busy=true;paint();
+        // Every original this window knows of has changed groups (the list's too), named or not.
+        const originals=lost?[...new Set((answer.group.members||[]).map(m=>m.studyUid))]:scope.sources.map(s=>s.studyUid);
         try {
           await ctx.api('POST','/exam-groups/'+encodeURIComponent(answer.group.id)+'/dissolve',undefined,undefined,win.at);
           ctx.examChanged?.(originals);
           await changed(win,'되돌렸습니다. 원본 영상과 기존 판독 이력은 보존했습니다.');
         }catch(error){failure(win,error);
-          try {const next=await ctx.api('GET','/studies/'+encodeURIComponent(win.row.uid)+'/exam-group',undefined,undefined,win.at);
-            if(win.live()&&next.group?.id===answer.group.id)answer=next;
-          }catch(_){}
+          // Read again: the same group is the latest answer; no group, another group, or a refusal of this technician
+          // (403/404) ends it here. A failure that says nothing of the group (a busy server, the network) keeps the last
+          // answer, so Unmerge can be tried again.
+          let next;
+          try{next=await ctx.api('GET','/studies/'+encodeURIComponent(win.row.uid)+'/exam-group',undefined,undefined,win.at);}
+          catch(again){next=again?.status===403||again?.status===404?null:undefined;}
+          if(win.live()&&next!==undefined){
+            if(next?.group?.id===answer.group.id){answer=next;if(reasonOnly(answer))return;}
+            else ended=true;
+          }
         }finally{busy=false;if(win.live())paint();}
       }
     }
