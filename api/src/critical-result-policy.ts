@@ -242,12 +242,15 @@ export function eligibleRecipient(user: KeycloakUserLike | null, expected: { sub
  * PENDING_EXISTS, and that pending record may pin an older version - it is never this send's delivery). The dialog checks
  * `inbox && !pending`. The ordering physician is not matched to a member here: an order carries a name only, and two
  * people can share one, so the radiologist chooses that person. `inboxState` says whether a hospital inbox is set and,
- * if it is, whether its member is among the candidates now.
+ * if it is, whether its member is among the candidates now. Candidates come from the provider's roster, which may lag the
+ * durable member rights; the inbox is marked only while those rights still make its member a recipient here
+ * (`inboxReceivable`), so a member suspended or moved since is not checked by default.
  */
 export function recipientMarks<T extends { sub: string }>(candidates: readonly T[], inbox: string | null | undefined,
-  pendingSubs: ReadonlySet<string>) {
+  pendingSubs: ReadonlySet<string>, inboxReceivable: boolean) {
   const set = typeof inbox === 'string' && inbox.length > 0 ? inbox.toLowerCase() : null;
-  const recipients = candidates.map(candidate => ({ ...candidate, inbox: set !== null && candidate.sub.toLowerCase() === set,
+  const recipients = candidates.map(candidate => ({ ...candidate,
+    inbox: set !== null && inboxReceivable && candidate.sub.toLowerCase() === set,
     pending: pendingSubs.has(candidate.sub.toLowerCase()) }));
   const inboxState: 'none' | 'listed' | 'unlisted' = set === null ? 'none' : recipients.some(r => r.inbox) ? 'listed' : 'unlisted';
   return { recipients, inboxState };

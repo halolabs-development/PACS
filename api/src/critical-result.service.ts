@@ -486,8 +486,11 @@ export class CriticalResultService {
       const own: any[] = await tx.$queryRaw`SELECT "criticalResultInbox" FROM "Institution" WHERE id=${institution}`;
       const pendingRows: any[] = await tx.$queryRaw`SELECT "recipientSub" FROM "CriticalResult" WHERE "studyUid"=${uid}
         AND "senderSub"=${c.sub} AND state='created'`;
-      const marked = recipientMarks(recipients, own[0]?.criticalResultInbox ?? null,
-        new Set(pendingRows.map(row => String(row.recipientSub).toLowerCase())));
+      const inboxSub: string | null = own[0]?.criticalResultInbox ?? null;
+      const inboxRights = inboxSub === null ? null : rightsUser(await tx.memberRights.findUnique({ where: { sub: inboxSub } }));
+      const marked = recipientMarks(recipients, inboxSub,
+        new Set(pendingRows.map(row => String(row.recipientSub).toLowerCase())),
+        !!inboxRights && !!eligibleRecipient(inboxRights, { sub: inboxRights.id, institution, sender: c.sub }));
       return { state, head, pinnable, readable, recipients: marked.recipients, inbox: marked.inboxState };
     }, true);
     const reason = !out.pinnable ? 'NO_PINNABLE_SOURCE' : !out.readable ? 'SOURCE_FORBIDDEN' : !out.recipients.length ? 'NO_ELIGIBLE_RECIPIENT' : null;

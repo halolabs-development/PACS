@@ -188,7 +188,8 @@ async function world({ policies = {} } = {}) {
   const txView = tx => view('tx', tx, w.onRecordCreate ? { criticalResult: {
     create: async args => { await w.onRecordCreate(tx, args); return tx.criticalResult.create(args); },
     update: args => tx.criticalResult.update(args) } } : {});
-  const prisma = view('root', base, { memberRights: { findUnique: async args => { if(w.rightsFail) throw Error('SYNTHETIC rights unavailable'); return base.memberRights.findUnique(args); } }, $transaction: async (fn, options) => {
+  const prisma = view('root', base, { memberRights: { findUnique: async args => { if(w.rightsFail) throw Error('SYNTHETIC rights unavailable'); return base.memberRights.findUnique(args); },
+    findMany: async args => { if(w.rightsFail) throw Error('SYNTHETIC rights unavailable'); return base.memberRights.findMany(args); } }, $transaction: async (fn, options) => {
     transactions.push(options);
     return base.$transaction(async tx => {
       if(w.beforeTx) { const work=w.beforeTx;w.beforeTx=null;await work(); }
@@ -1142,6 +1143,13 @@ test('the hospital inbox: the admin sets an eligible member of the own instituti
   assert.equal(got.members.some(m => m.sub === SUBS.Y), false, 'moved in the rights: not offered');
   assert.ok(got.members.some(m => m.sub === SUBS.X), 'the others are still offered');
   await assert.rejects(w.svc.saveInbox(AD(), { sub: SUBS.Y }), code(400, 'CRITICAL_RESULT_RECIPIENT_INVALID'));
+  // the dialog checks the inbox only while the member's rights still make them a recipient: the roster may lag a suspension
+  await w.svc.saveInbox(AD(), { sub: SUBS.P });
+  assert.deepEqual((await w.svc.recipients(UID, S())).recipients.filter(r => r.inbox).map(r => r.sub), [SUBS.P]);
+  await w.rights('P', { suspended: true });
+  out = await w.svc.recipients(UID, S());
+  assert.deepEqual(out.recipients.filter(r => r.inbox), [], 'suspended in the rights: not checked by default');
+  assert.equal(out.inbox, 'unlisted');
 });
 
 // ── S7-U1c: critical results on tele studies (TEST-S7-U1c-SERVICE TSV01..TSV19) ──
