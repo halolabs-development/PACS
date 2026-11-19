@@ -2,9 +2,12 @@
 
 Usage: python scripts/ops_backup.py backup --output <outside-repository-directory> [--rotate-keep N | --no-rotate]
        python scripts/ops_backup.py rehearse <completed-backup-directory> [--wrapping-source <relocated-custody>]
+                                    [--encryption-key <identity-file>] [--workspace <opening-directory>]
        python scripts/ops_backup.py restore-wrapping <backup> --destination <new-secret-directory> [--source <relocated-custody>]
        python scripts/ops_backup.py rotate --root <backup-root> [--keep N] [--protect NAME ...] [--dry-run]
 The running write services pause during backup and are resumed in finally. New backups need no audit seal.
+Every new daily set is encrypted with the operator's age key (BACKUP_ENCRYPTION_CONFIG, or KIN_BACKUP_ENCRYPTION); sets
+written before encryption existed are still validated and rehearsed as they are (see opened_set).
 For older archives that declare audit-checkpoint.json, rehearse still verifies the restored copy against that checkpoint.
 
 The EMR-introduction release mode (scripts/ops_emr_introduction.py) uses capture_held() instead of backup(): it captures a
@@ -17,11 +20,13 @@ or retained set keeps its copy.
 from __future__ import annotations
 
 import argparse
+import base64
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -33,6 +38,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 import uuid
 from urllib.parse import urlsplit
@@ -298,6 +304,297 @@ def digest(path):
     return sha.hexdigest()
 
 
+# ── Daily backup encryption ──
+# One rule: whether a set is encrypted is decided by its manifest's `encryption` record alone, and every reader of a
+# component's bytes goes through opened_set(). For an encrypted set that checks the key against the record before any
+# workspace exists, decrypts every component into a private workspace outside the backup root, compares each plaintext
+# with its recorded digest and size and checks the archives; only then is that workspace handed to a restore. A set
+# without the record (written before encryption existed) is read as it is. A new daily set is always encrypted: each
+# component is written by `age` while its producer streams, so no plaintext component is written into the backup root.
+# The manifest keeps the digests and sizes of the stored (encrypted) bytes, so rotation, monitoring and export keep
+# comparing what is on disk; the plaintext digests and the role catalog are sealed inside the record, and the record
+# with every restore input of the manifest is authenticated with a key derived from the set's identity.
+BACKUP_ENCRYPTION_CONFIG = Path("/etc/kin-deploy/backup-encryption.json")
+ENCRYPTION_FORMAT = "kin-backup-age-v1"
+ENCRYPTION_FIELDS = frozenset(("format", "key_id", "set_id", "sealed", "auth"))
+KEY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
+AGE_IDENTITY = re.compile("AGE-SECRET-KEY-1[023456789ACDEFGHJKLMNPQRSTUVWXYZ]{58}")
+AGE_HEADER = b"age-encryption.org/v1\n"
+AGE_TIMEOUT = 3600
+OPEN_MARGIN = 64 * 1024 * 1024
+# What the backup writes after its snapshot is complete (the resume and readiness of the source) is not a restore input.
+UNAUTHENTICATED = frozenset(("complete", "ready", "ready_seconds", "readiness_error", "resume_failures", "pause_seconds",
+                             "proxy_reloaded", "backup_error"))
+
+
+class BackupEncryptionError(RuntimeError):
+    """A refusal of the backup encryption rule. Its message never carries a key or a file's content."""
+
+
+@dataclass(frozen=True)
+class BackupKey:
+    key_id: str
+    identity: Path
+    age: Path
+    secret: bytes            # the identity line; only the manifest authentication key is derived from it
+    workspace: Path | None   # where an encrypted set is opened for a restore
+
+
+@dataclass(frozen=True)
+class OpenedSet:
+    origin: Path       # the stored set: its name, its manifest, its rehearsal results and holds
+    path: Path         # where the verified plaintext components are read
+    manifest: dict     # the manifest a restore reads: plaintext digests and sizes, the role catalog
+
+
+def encryption_config(path=None):
+    """The operator's private configuration: {"format": 1, "age": <absolute program>, "current": <key ID>, "files":
+    {<key ID>: <absolute identity file>}, "workspace": <absolute directory>}; `workspace` is needed to open a set only."""
+    path = Path(path or os.environ.get("KIN_BACKUP_ENCRYPTION") or BACKUP_ENCRYPTION_CONFIG)
+    try:
+        body = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise BackupEncryptionError("Backup encryption configuration is missing or unreadable") from None
+    absolute = lambda value: type(value) is str and Path(value).is_absolute()
+    if (type(body) is not dict or not {"format", "age", "current", "files"} <= set(body) <= {"format", "age", "current", "files", "workspace"}
+            or body["format"] != 1 or type(body["files"]) is not dict or not body["files"]
+            or not all(type(key) is str and KEY_ID.fullmatch(key) and absolute(value) for key, value in body["files"].items())
+            or body["current"] not in body["files"] or not absolute(body["age"])
+            or ("workspace" in body and not absolute(body["workspace"]))):
+        raise BackupEncryptionError("Backup encryption configuration is invalid")
+    return body
+
+
+def backup_key(key_id=None, *, config_path=None, identity=None):
+    """The key a new set is written with (key_id None: the configured current key), or the key a set names. identity: an
+    identity file the operator gives for that set (a key kept elsewhere, another host); age is then the configured
+    program or, without a configuration, the one on PATH."""
+    try:
+        config = encryption_config(config_path)
+    except BackupEncryptionError:
+        if identity is None:
+            raise
+        config = None
+    if key_id is None:
+        key_id = config["current"]
+    if identity is None:
+        if key_id not in config["files"]:
+            raise BackupEncryptionError("No backup key is configured for this set's key ID " + key_id)
+        identity = config["files"][key_id]
+    program = config["age"] if config else shutil.which("age")
+    if not program or not Path(program).is_file():
+        raise BackupEncryptionError("The age program is unavailable")
+    identity = Path(identity)
+    try:
+        raw = identity.read_bytes()
+    except OSError:
+        raise BackupEncryptionError("Backup key file is unavailable") from None
+    lines = [line.strip() for line in raw.decode("ascii", "replace").splitlines() if line.strip() and not line.strip().startswith("#")]
+    if len(lines) != 1 or not AGE_IDENTITY.fullmatch(lines[0]):
+        raise BackupEncryptionError("Backup key file must hold exactly one age X25519 identity")
+    workspace = Path(config["workspace"]) if config and "workspace" in config else None
+    return BackupKey(key_id, identity.absolute(), Path(program).absolute(), lines[0].encode("ascii"), workspace)
+
+
+def _within(path, root):
+    path, root = Path(path).resolve(), Path(root).resolve()
+    return path == root or root in path.parents
+
+
+def age_bytes(key, data, *, decrypt=False):
+    result = subprocess.run([str(key.age), "--decrypt" if decrypt else "--encrypt", "-i", str(key.identity)], input=data,
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=300)
+    if result.returncode:
+        raise BackupEncryptionError("Backup " + ("decryption" if decrypt else "encryption") + " failed")
+    return result.stdout
+
+
+class SealedComponent:
+    """One component written as an age file while its producer streams into `sink` (the plaintext passes through
+    memory only). The producer's result (the caller's exception) and age's exit both decide; a failed, empty or
+    interrupted component leaves no file."""
+
+    def __init__(self, path, key):
+        self.path, self.key = Path(path), key
+        self.sha, self.bytes, self.error = hashlib.sha256(), 0, None
+
+    def __enter__(self):
+        self.output = self.path.open("xb")
+        self.path.chmod(0o600)
+        self.process = subprocess.Popen([str(self.key.age), "--encrypt", "-i", str(self.key.identity)],
+                                        stdin=subprocess.PIPE, stdout=self.output, stderr=subprocess.DEVNULL)
+        read_end, write_end = os.pipe()
+        self.source, self.sink = os.fdopen(read_end, "rb"), os.fdopen(write_end, "wb")
+        self.relay = threading.Thread(target=self._relay, daemon=True)
+        self.relay.start()
+        return self.sink
+
+    def _relay(self):
+        try:
+            for chunk in iter(lambda: self.source.read(1024 * 1024), b""):
+                self.sha.update(chunk)
+                self.bytes += len(chunk)
+                if self.error is None:
+                    try:
+                        self.process.stdin.write(chunk)
+                    except OSError as error:   # keep draining: the producer must still be able to finish
+                        self.error = error
+        except BaseException as error:
+            self.error = self.error or error
+        finally:
+            self.source.close()
+            try:
+                self.process.stdin.close()
+            except OSError as error:
+                self.error = self.error or error
+
+    def __exit__(self, kind, value, trace):
+        try:
+            self.sink.close()
+        except OSError as error:
+            self.error = self.error or error
+        self.relay.join(AGE_TIMEOUT)
+        try:
+            code = self.process.wait(timeout=AGE_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait()
+            code = None
+        self.output.close()
+        if kind is not None or self.relay.is_alive() or self.error is not None or code != 0 or not self.bytes:
+            self.path.unlink(missing_ok=True)
+            if kind is None:
+                raise BackupEncryptionError("Backup encryption failed" if self.bytes else "Empty backup component")
+        return False
+
+
+def _authenticated_body(manifest):
+    body = {key: value for key, value in manifest.items() if key not in UNAUTHENTICATED}
+    body["encryption"] = {key: value for key, value in body["encryption"].items() if key != "auth"}
+    if type(body.get("emr")) is dict:
+        body["emr"] = {key: value for key, value in body["emr"].items() if key != "resumed_pg_ready"}
+    return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+
+
+def manifest_auth(manifest, key):
+    mac_key = hmac.new(key.secret, b"kin-backup-manifest-v1", hashlib.sha256).digest()
+    return hmac.new(mac_key, _authenticated_body(manifest), hashlib.sha256).hexdigest()
+
+
+def encryption_record(manifest):
+    """None for a set written before encryption (no record); the record of an encrypted set; anything else refuses."""
+    if "encryption" not in manifest:
+        return None
+    record = manifest["encryption"]
+    if (type(record) is not dict or set(record) != ENCRYPTION_FIELDS or record["format"] != ENCRYPTION_FORMAT
+            or type(record["key_id"]) is not str or not KEY_ID.fullmatch(record["key_id"])
+            or type(record["set_id"]) is not str or not re.fullmatch(r"[0-9a-f]{32}", record["set_id"])
+            or type(record["sealed"]) is not str or type(record["auth"]) is not str
+            or not re.fullmatch(r"[0-9a-f]{64}", record["auth"])):
+        raise BackupEncryptionError("Unknown or damaged backup encryption record")
+    return record
+
+
+def authenticate(manifest, key):
+    """The key is this set's and the manifest's restore inputs are the ones the backup wrote."""
+    record = encryption_record(manifest)
+    if record is None:
+        raise BackupEncryptionError("The set is not encrypted")
+    if record["key_id"] != key.key_id or not hmac.compare_digest(record["auth"], manifest_auth(manifest, key)):
+        raise BackupEncryptionError("Backup encryption key does not match this set, or its manifest was changed")
+    return record
+
+
+def plaintext_manifest(manifest, key):
+    """The manifest a restore reads, from the authenticated record's sealed metadata."""
+    record = authenticate(manifest, key)
+    try:
+        sealed = base64.b64decode(record["sealed"], validate=True)
+    except ValueError:
+        raise BackupEncryptionError("Unknown or damaged backup encryption record") from None
+    metadata = json.loads(age_bytes(key, sealed, decrypt=True).decode("utf-8"))
+    names = set(manifest.get("sha256") or {})
+    if (type(metadata) is not dict or not {"plaintext"} <= set(metadata) <= {"plaintext", "role_catalog"}
+            or type(metadata["plaintext"]) is not dict or set(metadata["plaintext"]) != names
+            or not all(type(entry) is dict and set(entry) == {"sha256", "bytes"} and type(entry["bytes"]) is int and entry["bytes"] > 0
+                       and type(entry["sha256"]) is str and re.fullmatch(r"[0-9a-f]{64}", entry["sha256"])
+                       for entry in metadata["plaintext"].values())):
+        raise BackupEncryptionError("Sealed backup metadata does not match the set's components")
+    plain = {name: value for name, value in manifest.items() if name != "encryption"}
+    plain["sha256"] = {name: entry["sha256"] for name, entry in metadata["plaintext"].items()}
+    plain["bytes"] = {name: entry["bytes"] for name, entry in metadata["plaintext"].items()}
+    if "role_catalog" in metadata:
+        plain["role_catalog"] = metadata["role_catalog"]
+    return plain
+
+
+def check_archives(directory, manifest):
+    """Checksums prove consistency with the manifest, not trust in archive paths. Refuse links/devices/traversal before
+    any extraction, even in an isolated volume."""
+    found_index = False
+    with tarfile.open(directory / "orthanc.tgz", "r|gz") as archive:
+        for entry in archive:
+            path = PurePosixPath(entry.name)
+            if path.is_absolute() or ".." in path.parts or not (entry.isfile() or entry.isdir()):
+                raise RuntimeError("Unsafe Orthanc archive entry")
+            found_index |= str(path) == "index" and entry.isfile()
+    if not found_index:
+        raise RuntimeError("Orthanc archive has no SQLite index")
+    if "emr" in manifest:
+        if manifest.get("emr", {}).get("same_pause") is not True:
+            raise RuntimeError("EMR database/failure-spool capture was not paused together")
+        with tarfile.open(directory / "emr-state.tgz", "r|gz") as archive:
+            for entry in archive:
+                member = PurePosixPath(entry.name)
+                if member.is_absolute() or ".." in member.parts or not (entry.isfile() or entry.isdir()):
+                    raise RuntimeError("Unsafe EMR archive entry")
+
+
+@contextmanager
+def opened_set(directory, manifest=None, *, config_path=None, identity=None, workspace=None):
+    """The one way to a set's component bytes. A set without an encryption record is its own directory (archives
+    checked). An encrypted set: its key and authenticated manifest first (a wrong key creates nothing), then every
+    component decrypted into a new private folder of the workspace and compared with its recorded plaintext digest and
+    size, then the archives; the folder is removed when the caller is done. identity/workspace: the operator's
+    replacement for the configured key file of that set and for the configured workspace."""
+    directory = Path(directory).resolve(strict=True)
+    if manifest is None:
+        manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+    record = encryption_record(manifest)
+    if record is None:
+        # Only a set written before encryption has no record; age files under a removed record are refused, not read.
+        for name in manifest.get("sha256") or {}:
+            with (directory / name).open("rb") as handle:
+                if handle.read(len(AGE_HEADER)) == AGE_HEADER:
+                    raise BackupEncryptionError("Encrypted components without an encryption record")
+        check_archives(directory, manifest)
+        yield OpenedSet(directory, directory, manifest)
+        return
+    key = backup_key(record["key_id"], config_path=config_path, identity=identity)
+    plain = plaintext_manifest(manifest, key)
+    root = Path(workspace) if workspace is not None else key.workspace
+    if root is None or not root.is_absolute() or not root.is_dir():
+        raise BackupEncryptionError("Opening an encrypted backup needs an existing workspace directory (configuration 'workspace')")
+    if any(_within(root, other) or _within(other, root) for other in (ROOT, directory.parent)):
+        raise BackupEncryptionError("The opening workspace must be outside the repository and the backup root")
+    if shutil.disk_usage(root).free < sum(plain["bytes"].values()) + OPEN_MARGIN:
+        raise BackupEncryptionError("Insufficient free space in the opening workspace")
+    work = Path(tempfile.mkdtemp(prefix="kin-open-", dir=root))
+    try:
+        for name in plain["sha256"]:
+            with (directory / name).open("rb") as incoming, (work / name).open("xb") as outgoing:
+                (work / name).chmod(0o600)
+                result = subprocess.run([str(key.age), "--decrypt", "-i", str(key.identity)], stdin=incoming,
+                                        stdout=outgoing, stderr=subprocess.DEVNULL, timeout=AGE_TIMEOUT)
+            if (result.returncode or (work / name).stat().st_size != plain["bytes"][name]
+                    or digest(work / name) != plain["sha256"][name]):
+                raise BackupEncryptionError("Backup component did not decrypt to its recorded content: " + name)
+        check_archives(work, plain)
+        yield OpenedSet(directory, work, plain)
+    finally:
+        shutil.rmtree(work)
+
+
 def counts(container, database, user):
     command = ["docker", "exec", container, "psql", "-X", "-U", user, "-d", database, "-v", "ON_ERROR_STOP=1", "-qAt", "-c"]
     tables = text(command + ["SELECT schemaname || '.' || tablename FROM pg_tables WHERE schemaname IN ('public','emr_access','emr_signing','emr_clinical','emr_audit','emr_image') ORDER BY schemaname,tablename;"]).splitlines()
@@ -525,6 +822,13 @@ def backup(output, ready_timeout=120):
         raise RuntimeError("Backups containing secrets must be outside the Git repository")
     if not (ROOT / ".env").is_file():
         raise RuntimeError("Local .env is required")
+    # Every new daily set is encrypted. A missing or unusable key, configuration or program refuses here, before any
+    # writer stops; the key itself is never kept with the repository or the backups.
+    key = backup_key()
+    if any(_within(key.identity, other) for other in (ROOT, parent)):
+        raise BackupEncryptionError("The backup key must be kept outside the repository and the backup root")
+    if age_bytes(key, age_bytes(key, b"kin backup key check"), decrypt=True) != b"kin backup key check":
+        raise BackupEncryptionError("Backup encryption failed")
     # Inspect may contain secrets; only selected fields go into the manifest.
     info = json.loads(text(["docker", "inspect", *CONTAINERS, "kin-proxy"]))
     by_name = {item["Name"].lstrip("/"): item for item in info}
@@ -567,6 +871,7 @@ def backup(output, ready_timeout=120):
     directory = parent / (datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8])
     directory.mkdir(mode=0o700)
     manifest = {"format": 1, "complete": False, "created_utc": datetime.now(timezone.utc).isoformat(),
+                "encryption": {"format": ENCRYPTION_FORMAT, "key_id": key.key_id, "set_id": uuid.uuid4().hex},
                 "emr": {"state_volume": state_volume, "tablespace": "kin_emr_access", "same_pause": True},
                 "git_sha": text(["git", "rev-parse", "HEAD"]),
                 "git_dirty": bool(text(["git", "status", "--porcelain", "--untracked-files=no"])),
@@ -579,6 +884,15 @@ def backup(output, ready_timeout=120):
         metadata = json.loads(text(["docker", "image", "inspect", image["id"]]))[0]
         image["repo_digests"] = metadata.get("RepoDigests") or []
     write_json(directory / "manifest.json", manifest)
+    plaintext = {}
+
+    @contextmanager
+    def component(name):
+        sealed = SealedComponent(directory / name, key)
+        with sealed as sink:
+            yield sink
+        plaintext[name] = {"sha256": sealed.sha.hexdigest(), "bytes": sealed.bytes}
+
     pause_started = time.monotonic()
     stage = "stop writers"
     try:
@@ -592,43 +906,50 @@ def backup(output, ready_timeout=120):
                        "SELECT count(*) FROM pg_stat_activity WHERE datname='kin' AND backend_type='client backend' AND pid<>pg_backend_pid();"])
         if active != "0":
             raise RuntimeError("Database clients remain after stopping writers")
-        write_json(directory / "emr-catalog.json", emr_catalog("kin-db", "kin"))
+        with component("emr-catalog.json") as sink:
+            sink.write((json.dumps(emr_catalog("kin-db", "kin"), ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
         # D23: the cluster's roles, memberships, databases, tablespaces and schemas at the same pause, so that rehearse
         # rebuilds them by the catalog replay (as the held captures do) instead of replaying pg_dumpall's GRANTED BY
-        # statements, which PostgreSQL 16 refuses in a cluster whose bootstrap superuser is not kin. Kept in the manifest:
-        # the set's component files stay exactly the ones its consumers (validation, rotation, export inventory) know.
-        manifest["role_catalog"] = role_catalog("kin-db")
-        with (directory / "cluster-roles.sql").open("wb") as handle:
-            run(["docker", "exec", "kin-db", "pg_dumpall", "-U", "kin", "--encoding=UTF8", "--roles-only", "--no-role-passwords"], output=handle)
+        # statements, which PostgreSQL 16 refuses in a cluster whose bootstrap superuser is not kin. Kept in the sealed
+        # metadata of the encryption record (it holds role and database comments and settings): the set's component
+        # files stay exactly the ones its consumers (validation, rotation, export inventory) know.
+        roles = role_catalog("kin-db")
+        with component("cluster-roles.sql") as sink:
+            run(["docker", "exec", "kin-db", "pg_dumpall", "-U", "kin", "--encoding=UTF8", "--roles-only", "--no-role-passwords"], output=sink)
         for database in ("kin", "keycloak"):
             stage = "dump " + database
             manifest["counts"][database] = counts("kin-db", database, "kin")
-            with (directory / (database + ".dump")).open("wb") as handle:
-                run(["docker", "exec", "kin-db", "pg_dump", "-U", "kin", "-d", database, "--encoding=UTF8", "-Fc", "--create"], output=handle)
+            with component(database + ".dump") as sink:
+                run(["docker", "exec", "kin-db", "pg_dump", "-U", "kin", "-d", database, "--encoding=UTF8", "-Fc", "--create"], output=sink)
         stage = "archive Orthanc"
         # The Docker helper runs as root on Linux. Stream to a host-owned file
         # instead of creating a root-owned archive in a writable host bind mount.
-        with (directory / "orthanc.tgz").open("wb") as handle:
+        with component("orthanc.tgz") as sink:
             temporary_run(["--network", "none", "--read-only",
                  "--mount", f"type=volume,source={volume},target=/source,readonly",
                  "--entrypoint", "tar", manifest["postgres_image"], "-czf", "-", "-C", "/source", "."],
-                timeout=1800, output=handle)
+                timeout=1800, output=sink)
         stage = "archive EMR failure spool at the same pause"
-        with (directory / "emr-state.tgz").open("wb") as handle:
+        with component("emr-state.tgz") as sink:
             temporary_run(["--network", "none", "--read-only", "--mount", f"type=volume,source={state_volume},target=/source,readonly",
-                           "--entrypoint", "tar", manifest["postgres_image"], "-czf", "-", "-C", "/source", "."], timeout=1800, output=handle)
+                           "--entrypoint", "tar", manifest["postgres_image"], "-czf", "-", "-C", "/source", "."], timeout=1800, output=sink)
         stage = "copy configuration and checksum"
         capture_wrapping_custody(directory, manifest, "kin-db")
         for name in FILES[3:]:
-            shutil.copyfile(ROOT / name, directory / name)
+            with component(name) as sink:
+                sink.write((ROOT / name).read_bytes())
         components = backup_components(manifest)
+        if set(plaintext) != set(components):
+            raise RuntimeError("Backup component inventory differs")
         for name in components:
-            path = directory / name
-            path.chmod(0o600)
-            if not path.stat().st_size:
-                raise RuntimeError("Empty backup component")
+            (directory / name).chmod(0o600)
         manifest["sha256"] = {name: digest(directory / name) for name in components}
         manifest["bytes"] = {name: (directory / name).stat().st_size for name in components}
+        stage = "seal encryption record"
+        metadata = {"plaintext": {name: plaintext[name] for name in components}, "role_catalog": roles}
+        sealed = age_bytes(key, json.dumps(metadata, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+        manifest["encryption"]["sealed"] = base64.b64encode(sealed).decode("ascii")
+        manifest["encryption"]["auth"] = manifest_auth(manifest, key)
         manifest["complete"] = True
     except BaseException as error:
         manifest["backup_error"] = {"stage": stage, "type": type(error).__name__}
@@ -671,6 +992,7 @@ def backup(output, ready_timeout=120):
         write_json(directory / "manifest.json", manifest)
         # Even an unsuccessful resume must identify a complete recovery snapshot.
         print(json.dumps({"backup": str(directory), "complete": manifest["complete"],
+                          "encryption_key_id": manifest["encryption"]["key_id"],
                           "ready": manifest["ready"], "resume_failures": resume_failures,
                           "pause_seconds": manifest["pause_seconds"],
                           "backup_error": manifest.get("backup_error")}), flush=True)
@@ -681,7 +1003,9 @@ def backup(output, ready_timeout=120):
     return directory
 
 
-def validate_backup(directory):
+def _stored_backup(directory):
+    """The stored set: complete, not thinned, every declared component's stored bytes as the manifest records them, and
+    its encryption record (None: a set written before encryption)."""
     directory = Path(directory).resolve(strict=True)
     manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
     if manifest.get("format") != 1 or not manifest.get("complete"):
@@ -697,25 +1021,19 @@ def validate_backup(directory):
         path = directory / name
         if path.is_symlink() or not path.is_file() or digest(path) != manifest.get("sha256", {}).get(name):
             raise RuntimeError("Backup component checksum mismatch: " + name)
-    # Checksums prove consistency with the manifest, not trust in archive paths.
-    # Refuse links/devices/traversal before any extraction, even in an isolated volume.
-    found_index = False
-    with tarfile.open(directory / "orthanc.tgz", "r|gz") as archive:
-        for entry in archive:
-            path = PurePosixPath(entry.name)
-            if path.is_absolute() or ".." in path.parts or not (entry.isfile() or entry.isdir()):
-                raise RuntimeError("Unsafe Orthanc archive entry")
-            found_index |= str(path) == "index" and entry.isfile()
-    if not found_index:
-        raise RuntimeError("Orthanc archive has no SQLite index")
-    if "emr" in manifest:
-        if manifest.get("emr", {}).get("same_pause") is not True:
-            raise RuntimeError("EMR database/failure-spool capture was not paused together")
-        with tarfile.open(directory / "emr-state.tgz", "r|gz") as archive:
-            for entry in archive:
-                member = PurePosixPath(entry.name)
-                if member.is_absolute() or ".." in member.parts or not (entry.isfile() or entry.isdir()):
-                    raise RuntimeError("Unsafe EMR archive entry")
+    return directory, manifest, encryption_record(manifest)
+
+
+def validate_backup(directory, *, config_path=None, identity=None, workspace=None):
+    """The stored set whole: every stored component's digest, its images, and its contents - a set without an
+    encryption record by its archives here, an encrypted one by opening it completely (opened_set)."""
+    directory, manifest, _ = _stored_backup(directory)
+    with opened_set(directory, manifest, config_path=config_path, identity=identity, workspace=workspace):
+        backup_images(manifest)
+    return directory, manifest
+
+
+def backup_images(manifest):
     if "emr" in manifest:
         api_image = manifest.get("running_images", {}).get("kin-api", {}).get("id", "")
         if not re.fullmatch(r"sha256:[a-f0-9]{64}", api_image):
@@ -726,7 +1044,6 @@ def validate_backup(directory):
             raise RuntimeError("Backup image ID is invalid")
         # Rehearse with the exact local images used for backup. No implicit latest pull.
         run(["docker", "image", "inspect", manifest[key]])
-    return directory, manifest
 
 
 def remove_owned(kind, name, token, timeout=600):
@@ -783,7 +1100,7 @@ def restored_emr_expiry(container, user):
         "SELECT emr_access.restore_expiry_sweep(); COMMIT;", user)
 
 
-def rehearse_held(directory, manifest, *, daily=False, wrapping_source=None):
+def rehearse_held(directory, manifest, *, daily=False, wrapping_source=None, record=None, encryption="none"):
     """The isolated restore check of a held capture (L-04c for B0, L-10c for B1): restored exactly as a rollback would,
     in a fresh networkless cluster of the product's shape (bootstrap superuser kin), with its roles replayed and owners
     and privileges kept; then the whole catalog, the row counts, the per-table projection and the Orthanc index with
@@ -792,13 +1109,15 @@ def rehearse_held(directory, manifest, *, daily=False, wrapping_source=None):
     daily (D23): a daily EMR set that carries its role catalog in the manifest goes the same way in the post-EMR shape -
     its roles and memberships replayed by the catalog (never pg_dumpall's GRANTED BY statements), the restored cluster's
     role catalog compared with the manifest's within the set (R5-02: daily_set_catalog; a source database outside the
-    set is named in the result), the AuditLog seal verified as kin (no projection: a daily set has none)."""
+    set is named in the result), the AuditLog seal verified as kin (no projection: a daily set has none).
+    directory: where the components are read (an opened set's workspace); record: the stored set the result belongs to."""
+    record = Path(record) if record is not None else directory
     shape = "post" if daily else manifest["shape"]
     token = uuid.uuid4().hex
     name = resource_name(token)
     volume, state_volume = name + "-orthanc", name + "-emr-state"
     started = time.monotonic()
-    result = {"backup": directory.name, "git_sha": manifest["git_sha"], "success": False, "shape": shape}
+    result = {"backup": record.name, "git_sha": manifest["git_sha"], "success": False, "shape": shape, "encryption": encryption}
     try:
         run(["docker", "volume", "create", "--label", "kin.ops.run=" + token, volume])
         if shape == "post":
@@ -871,19 +1190,31 @@ def rehearse_held(directory, manifest, *, daily=False, wrapping_source=None):
                 failures.append(resource)
         result["cleanup_failures"] = failures
         result["seconds"] = round(time.monotonic() - started, 3)
-        write_json(directory / ("rehearsal-" + token[:16] + ".json"), result)
+        write_json(record / ("rehearsal-" + token[:16] + ".json"), result)
         if failures:
             raise RuntimeError("Rehearsal cleanup failed: " + ", ".join(failures))
     print(json.dumps(result))
 
 
-def rehearse(directory, *, wrapping_source=None):
-    directory, manifest = validate_backup(directory)
-    if manifest.get("kind") == HELD_KIND:
-        return rehearse_held(directory, manifest, wrapping_source=wrapping_source)
-    if "emr" in manifest and manifest.get("role_catalog") is not None:
-        # D23: a daily EMR set made since its role catalog is captured: the catalog replay of the held path.
-        return rehearse_held(directory, manifest, daily=True, wrapping_source=wrapping_source)
+def rehearse(directory, *, wrapping_source=None, config_path=None, identity=None, workspace=None):
+    """The stored set checked (digests, images), then opened (opened_set: an encrypted set's key and every decrypted
+    component checked before any rehearsal container or volume exists), then restored from the opened components; the
+    result is written beside the stored set. identity/workspace: see opened_set."""
+    directory, stored, record = _stored_backup(directory)
+    encryption = "none" if record is None else record["key_id"]
+    with opened_set(directory, stored, config_path=config_path, identity=identity, workspace=workspace) as opened:
+        backup_images(stored)
+        source, manifest = opened.path, opened.manifest
+        if manifest.get("kind") == HELD_KIND:
+            return rehearse_held(source, manifest, wrapping_source=wrapping_source, record=directory, encryption=encryption)
+        if "emr" in manifest and manifest.get("role_catalog") is not None:
+            # D23: a daily EMR set made since its role catalog is captured: the catalog replay of the held path.
+            return rehearse_held(source, manifest, daily=True, wrapping_source=wrapping_source, record=directory,
+                                 encryption=encryption)
+        return _rehearse_legacy(source, manifest, record=directory, wrapping_source=wrapping_source, encryption=encryption)
+
+
+def _rehearse_legacy(directory, manifest, *, record, wrapping_source=None, encryption="none"):
     # An older set (no role catalog): its pg_dumpall roles are replayed into a cluster bootstrapped as postgres, which
     # PostgreSQL 16 refuses for a membership recorded as GRANTED BY kin (a known limit of such sets; see D23).
     token = uuid.uuid4().hex
@@ -892,7 +1223,7 @@ def rehearse(directory, *, wrapping_source=None):
     state_volume = name + "-emr-state"
     emr = "emr" in manifest
     started = time.monotonic()
-    result = {"backup": directory.name, "git_sha": manifest["git_sha"], "success": False}
+    result = {"backup": record.name, "git_sha": manifest["git_sha"], "success": False, "encryption": encryption}
     try:
         run(["docker", "volume", "create", "--label", "kin.ops.run=" + token, volume])
         if emr:
@@ -965,7 +1296,7 @@ def rehearse(directory, *, wrapping_source=None):
                 failures.append(resource)
         result["cleanup_failures"] = failures
         result["seconds"] = round(time.monotonic() - started, 3)
-        write_json(directory / ("rehearsal-" + token[:16] + ".json"), result)
+        write_json(record / ("rehearsal-" + token[:16] + ".json"), result)
         if failures:
             raise RuntimeError("Rehearsal cleanup failed: " + ", ".join(failures))
     print(json.dumps(result))
@@ -2327,6 +2658,14 @@ def _daily_whole(folder, *, completing_thin=False):
     if (type(manifest) is not dict or type(manifest.get("format")) is not int or manifest.get("format") != 1
             or manifest.get("complete") is not True or manifest.get("kind")):
         return "manifest not complete daily backup"
+    # An encrypted set counts as a generation only when its record is authentic under its configured key: a set the
+    # installation could not open never replaces an older one that it can.
+    try:
+        record = encryption_record(manifest)
+        if record is not None:
+            authenticate(manifest, backup_key(record["key_id"]))
+    except (BackupEncryptionError, OSError, ValueError, KeyError, TypeError):
+        return "encryption record unreadable or not authentic under its configured key"
     if "wrapping_custody" in manifest:
         try:
             wrapping_custody_files(manifest)
@@ -2643,6 +2982,8 @@ def main():
     rehearse_parser = commands.add_parser("rehearse")
     rehearse_parser.add_argument("directory")
     rehearse_parser.add_argument("--wrapping-source", help="Relocated separate custody directory for this snapshot")
+    rehearse_parser.add_argument("--encryption-key", help="Identity file of this encrypted set's key, instead of the configured one")
+    rehearse_parser.add_argument("--workspace", help="Directory outside the backup root where an encrypted set is opened")
     custody_parser = commands.add_parser("restore-wrapping")
     custody_parser.add_argument("directory", help="Database backup directory containing manifest.json")
     custody_parser.add_argument("--source", help="Relocated separate custody directory for this snapshot")
@@ -2685,7 +3026,8 @@ def main():
                 if result["status"] != "complete":
                     raise RuntimeError("백업은 보존했으나 rotation을 마치지 못했습니다. 보존된 세트를 점검하세요")
         else:
-            rehearse(args.directory, wrapping_source=args.wrapping_source)
+            rehearse(args.directory, wrapping_source=args.wrapping_source, identity=args.encryption_key,
+                     workspace=args.workspace)
 
 
 
