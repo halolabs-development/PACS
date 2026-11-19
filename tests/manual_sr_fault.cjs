@@ -24,10 +24,11 @@ let phase = 'setup';
 const watchdog = setTimeout(() => { console.error('SR timeout at '+phase); process.exit(1); }, 55000);
 const prepare = requestId => service.prepare(uid, raw({ requestId: requestId || randomUUID(), items }), caller);
 // The running API shares this database and sweeps every study's rows older than 24 h every 15 s. Rows this script
-// ages are made 23 h old, which that sweep leaves alone; only this process's clock runs 2 h ahead while it expires
-// them, so every expiry asserted below is this process's own.
+// ages are made 23 h old, which that sweep leaves alone; only this process's clock runs 1 h 1 s ahead while it
+// expires them, so they are 24 h 1 s old to it - the same boundary as before - and every expiry asserted below is
+// this process's own.
 const realNow = Date.now, aged = () => new Date(realNow() - 23 * 3600000);
-async function ahead(work) { Date.now = () => realNow() + 2 * 3600000; try { return await work(); } finally { Date.now = realNow; } }
+async function ahead(work) { Date.now = () => realNow() + 3601000; try { return await work(); } finally { Date.now = realNow; } }
 
 async function run() {
   // Only admission facts are synthetic in this direct fault process. C2 reads
