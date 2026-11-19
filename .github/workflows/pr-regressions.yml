@@ -906,7 +906,7 @@ jobs:
     needs: select
     if: ${{ !cancelled() && (needs.select.result != 'success' || fromJSON(needs.select.outputs.jobs)['admin-session-dom']) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 103
+    timeout-minutes: 106
     steps:
     - name: Path selection completed
       if: ${{ needs.select.result != 'success' }}
