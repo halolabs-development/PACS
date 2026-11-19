@@ -195,6 +195,77 @@ class ViewerMgE2E(ViewerUXPriorsE2E):
         panel.get_by_role('button', name='Close').click()
         page.wait_for_function('''id=>Math.abs(services.cornerstoneViewportService.getCornerstoneViewport(id).getZoom()-1)<1e-6''', arg=source['id'], timeout=15000)
 
+    def test_mg_04_the_i_key_inverts_the_same_view_with_mirrored_and_the_lens_outline_and_fit_lie_on_the_image(self):
+        patient = 'MGI-' + uuid.uuid4().hex[:12]
+        current = MG.phantom(self, patient); prior = MG.phantom(self, patient, prior=True)
+        page = self.login()
+        MG.open_mg(self, page, [current, prior], 8)
+        MG.image_state(self, page)
+        cells = {(c['study'], c['side'], c['view']): c for c in self.cells(page)}
+        rcc = cells[(current.uid, 'R', 'CC')]['id']
+        cc = [cells[k]['id'] for k in cells if k[2] == 'CC']; mlo = [cells[k]['id'] for k in cells if k[2] == 'MLO']
+        self.assertEqual(4, len(cc))
+        invert = 'ids => ids.map(id => !!services.cornerstoneViewportService.getCornerstoneViewport(id).getProperties().invert)'
+        self.mg(page, 'Mirrored')
+        expect(page.get_by_role('dialog', name='Mirrored')).to_be_visible()
+        # The viewer's own Invert key on today's R CC: the four CC cells (both sides, current and prior) together, no MLO.
+        page.evaluate('id=>services.viewportGridService.setActiveViewportId(id)', rcc)
+        page.wait_for_function('id=>services.viewportGridService.getActiveViewportId()===id', arg=rcc)
+        page.evaluate('() => document.activeElement?.blur?.()')
+        page.keyboard.press('i')
+        page.wait_for_function('ids => ids.every(id => services.cornerstoneViewportService.getCornerstoneViewport(id).getProperties().invert)', arg=cc, timeout=15000)
+        self.assertEqual([False] * len(mlo), page.evaluate(invert, mlo))
+        page.screenshot(path=str(self.artifacts() / 'MG-mirrored-invert.png'))
+        page.evaluate('() => document.activeElement?.blur?.()')
+        page.keyboard.press('i')
+        page.wait_for_function('ids => !ids.some(id => services.cornerstoneViewportService.getCornerstoneViewport(id).getProperties().invert)', arg=cc, timeout=15000)
+        # Magnifier: pressed on a flat part of today's R CC's breast (image 60, 60), the lens stands on that place and its
+        # middle shows the cell's own canvas there; every lens shows the canvas under its own middle.
+        self.mg(page, 'Magnifier')
+        at = page.evaluate('''id => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id), d = v.getImageData().imageData;
+          const p = v.worldToCanvas(Array.from(d.indexToWorld([60, 60, 0], new Float64Array(3)))), r = v.element.getBoundingClientRect();
+          return { x: r.left + p[0], y: r.top + p[1], canvas: p.map(n => Math.round(n)) }; }''', rcc)
+        page.mouse.move(at['x'], at['y']); page.mouse.down()
+        lenses = page.locator('.kin-mg-lens')
+        expect(lenses).to_have_count(4, timeout=15000)
+        state = page.evaluate('''() => [...document.querySelectorAll('.kin-mg-lens')].map(lens => {
+          const pane = lens.closest('[data-cy=viewport-pane]'), v = [...services.viewportGridService.getState().viewports.keys()]
+            .map(id => services.cornerstoneViewportService.getCornerstoneViewport(id)).find(view => view && pane.contains(view.element));
+          const [x, y] = lens.dataset.at.split(',').map(Number), ratio = v.canvas.width / v.canvas.clientWidth, box = lens.getBoundingClientRect(), r = v.element.getBoundingClientRect();
+          const own = [...v.canvas.getContext('2d').getImageData(Math.round(x * ratio), Math.round(y * ratio), 1, 1).data];
+          const c = lens.querySelector('canvas'), shown = [...c.getContext('2d').getImageData(c.width / 2, c.height / 2, 1, 1).data];
+          return { id: v.id, at: [x, y], centre: [box.left + box.width / 2 - r.left, box.top + box.height / 2 - r.top], own, shown }; })''')
+        page.mouse.up()
+        self.assertEqual(sorted(cc), sorted(s['id'] for s in state))
+        for s in state:
+            with self.subTest(cell=s['id']):
+                self.assertAlmostEqual(s['at'][0], s['centre'][0], delta=1); self.assertAlmostEqual(s['at'][1], s['centre'][1], delta=1)
+                for a, b in zip(s['own'][:3], s['shown'][:3]): self.assertAlmostEqual(a, b, delta=24, msg=s)
+        self.assertEqual(at['canvas'], next(s['at'] for s in state if s['id'] == rcc))
+        self.mg(page, 'Magnifier')
+        # Breast Edge: the line lies on each image (its canvas covers the image, not the cell's header row); Fit Breast: the
+        # whole breast box inside each cell.
+        self.mg(page, 'Breast Display')
+        display = page.get_by_role('dialog', name='Breast Display')
+        display.get_by_role('button', name='Breast Edge').click()
+        page.wait_for_function('n => document.querySelectorAll(".kin-mg-outline").length === n', arg=len(cc) + len(mlo), timeout=15000)
+        placed = page.evaluate('''() => [...document.querySelectorAll('.kin-mg-outline')].map(canvas => {
+          const pane = canvas.closest('[data-cy=viewport-pane]'), v = [...services.viewportGridService.getState().viewports.keys()]
+            .map(id => services.cornerstoneViewportService.getCornerstoneViewport(id)).find(view => view && pane.contains(view.element));
+          const a = canvas.getBoundingClientRect(), b = v.element.getBoundingClientRect();
+          return [a.left - b.left, a.top - b.top, a.width - b.width, a.height - b.height]; })''')
+        for offsets in placed:
+            for n in offsets: self.assertAlmostEqual(0, n, delta=1, msg=placed)
+        display.get_by_role('button', name='Fit Breast').click()
+        expect(page.locator('[data-mg-badge=zoom]')).to_have_count(len(cc) + len(mlo), timeout=15000)
+        inside = page.evaluate('''ids => ids.map(id => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id), d = v.getImageData().imageData;
+          const [columns, rows] = v.getImageData().dimensions, b = KinMgBreastModel.detect(d.getPointData().getScalars().getData(), columns, rows).box;
+          const corners = [[b.x0, b.y0], [b.x1, b.y1], [b.x0, b.y1], [b.x1, b.y0]].map(([x, y]) => v.worldToCanvas(Array.from(d.indexToWorld([x - 0.5, y - 0.5, 0], new Float64Array(3)))));
+          const w = v.element.clientWidth, h = v.element.clientHeight;
+          return corners.every(([x, y]) => x >= -1 && y >= -1 && x <= w + 1 && y <= h + 1); })''', cc + mlo)
+        self.assertEqual([True] * len(inside), inside)
+        page.screenshot(path=str(self.artifacts() / 'MG-fit-breast.png'))
+
     def test_mg_02_dbt_step_interval_slab_pixels_and_play(self):
         f = self.dbt('MGD-' + uuid.uuid4().hex[:12])
         page = self.login()

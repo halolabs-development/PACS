@@ -25,6 +25,7 @@
 .kin-mg-layer{position:absolute;inset:0;pointer-events:none;z-index:6}
 .kin-mg-badges{position:absolute;left:50%;top:22px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:3px;font:11px sans-serif;color:#fff}
 .kin-mg-badges>span{background:#0b182bcc;border:1px solid #E8C547;border-radius:3px;padding:1px 5px;white-space:nowrap}
+.kin-mg-stage{position:absolute;pointer-events:none}
 .kin-mg-capture{position:absolute;inset:0;pointer-events:auto;cursor:zoom-in;touch-action:none}
 .kin-mg-capture[data-mode=slab]{cursor:ns-resize}
 .kin-mg-outline{position:absolute;inset:0;width:100%;height:100%}
@@ -134,6 +135,8 @@
     const ruleMark = () => { try { return window.KinViewerCellRules?.mark?.(); } catch (_) { return undefined; } };
 
     // ── This module's layer over each cell: badges, the outline, the press layer and the lens ──
+    // The cell layer covers the whole cell, its header row too; the outline, the press layer and the lens are on the
+    // stage, which lies exactly over the image (the viewport element), so a point on them is a point of the image's canvas.
     const layers = new Map();
     function layerOf(v) {
       let entry = layers.get(v.id);
@@ -141,11 +144,23 @@
       if (!entry) {
         const host = ui.cellLayer(v.id); if (!host) return null;
         host.classList.add('kin-mg-layer');
-        entry = { node: host, viewport: v, badges: element('div', '', host, 'kin-mg-badges'), marks: new Map(), outline: null, capture: null, lens: null };
+        entry = { node: host, viewport: v, badges: element('div', '', host, 'kin-mg-badges'), stage: element('div', '', host, 'kin-mg-stage'),
+          marks: new Map(), outline: null, capture: null, lens: null };
         layers.set(v.id, entry);
+        stageSizes?.observe(v.element); stageSizes?.observe(host);
       }
+      placeStage(entry);
       return entry;
     }
+    function placeStage(entry) {
+      const a = entry.node.getBoundingClientRect(), b = entry.viewport.element.getBoundingClientRect();
+      Object.assign(entry.stage.style, { left: b.left - a.left + 'px', top: b.top - a.top + 'px', right: a.right - b.right + 'px', bottom: a.bottom - b.bottom + 'px' });
+    }
+    // The image moves within its cell (a header row shown or hidden, the cell resized): the stage follows it.
+    const stageSizes = typeof ResizeObserver === 'function' ? new ResizeObserver(entries => {
+      const moved = new Set(entries.map(entry => entry.target));
+      for (const entry of layers.values()) if (entry.node.isConnected && (moved.has(entry.node) || moved.has(entry.viewport.element))) placeStage(entry);
+    }) : null;
     function badge(v, key, text) {
       const entry = text ? layerOf(v) : layers.get(v.id);
       if (!entry) return;
@@ -255,17 +270,21 @@
         if (world) steer(cell.v, () => { cell.v.setZoom(zoom); centerOn(cell.v, world); });
       }
     }
-    async function voiChanged(event) {
-      const id = event.detail?.viewportId;
-      if (!mirror.on || !mirror.invert || !id || applying.has(id) || ruled(id)) return;
+    // Invert together follows the reader's own Invert: the toolbar announces every tool run (the I key, More › Invert, a
+    // cell's control, the Context Toolbar), after the command. The same act then inverts each linked cell of that view
+    // (each image the other way from how it is shown, so a MONOCHROME1 image beside a MONOCHROME2 one turns too). Nothing
+    // else that sets an inversion (a stored presentation, a restored view, a display rule, Reset) is carried.
+    const invertOf = v => { try { return !!v.getProperties().invert; } catch (_) { return null; } };
+    async function invertRun(event) {
+      const { id, viewportId } = event.detail || {}, v = id === 'invert' && viewportId && viewportOf(viewportId);
+      if (!v || !mirror.on || !mirror.invert || ruled(viewportId)) return;
       const mark = ruleMark();
-      const list = await mgCells(), t = M.targets(id, list);
-      if (!mirror.on || t.reason || ruled(id, mark)) return;
-      let invert; try { invert = !!t.source.v.getProperties().invert; } catch (_) { return; }
+      const list = await mgCells(), t = M.targets(viewportId, list);
+      if (!mirror.on || !mirror.invert || t.reason || viewportOf(viewportId) !== v || ruled(viewportId, mark)) return;
       for (const target of t.linked) {
-        if (ruled(target, mark)) continue;
-        const v = list.find(c => c.id === target)?.v;
-        try { if (v && !!v.getProperties().invert !== invert) steer(v, () => v.setProperties({ invert })); } catch (error) { console.error(error); }
+        const other = list.find(c => c.id === target)?.v, invert = other && invertOf(other);
+        if (!other || invert === null || ruled(target, mark) || viewportOf(target) !== other) continue;
+        steer(other, () => other.setProperties({ invert: !invert }));
       }
     }
     // A press without a drag in an MG cell while Mirrored is on is a point.
@@ -289,9 +308,11 @@
     const LENS = 160, LENS_ZOOM = 2;
     function lensAt(v, point) {
       const entry = layerOf(v); if (!entry) return;
-      if (!entry.lens) { entry.lens = element('div', '', entry.node, 'kin-mg-lens'); element('canvas', '', entry.lens); }
+      if (!entry.lens) { entry.lens = element('div', '', entry.stage, 'kin-mg-lens'); element('canvas', '', entry.lens); }
       const canvas = entry.lens.firstChild, source = v.canvas, ratio = source && source.clientWidth ? source.width / source.clientWidth : 1;
       canvas.width = Math.round(LENS * ratio); canvas.height = Math.round(LENS * ratio);
+      // An image filter of the cell (Display › Filter, a CSS filter on its canvas) shows in the lens too.
+      canvas.style.filter = source?.style?.filter || '';
       Object.assign(entry.lens.style, { left: point[0] + 'px', top: point[1] + 'px' });
       entry.lens.dataset.at = point.map(n => Math.round(n)).join(',');
       const side = LENS / LENS_ZOOM * ratio;
@@ -321,7 +342,7 @@
       for (const [id, mode] of want) {
         const v = viewportOf(id), entry = v && layerOf(v); if (!entry) continue;
         if (!entry.capture) {
-          entry.capture = element('div', '', entry.node, 'kin-mg-capture');
+          entry.capture = element('div', '', entry.stage, 'kin-mg-capture');
           const at = event => { const r = entry.capture.getBoundingClientRect(); return [event.clientX - r.left, event.clientY - r.top]; };
           entry.capture.addEventListener('pointerdown', event => {
             event.stopPropagation(); event.preventDefault();
@@ -527,6 +548,8 @@
       if (v && original && applied && viewportOf(original.id) === original.viewport && imageIdOf(v) === original.imageId && scalarsOf(v)?.getData() === applied.array)
         try { putScalars(v, original.copy); } catch (error) { console.error(error); }
       tomo.original = null;
+      // The outline drawn for the slab is the slice's again.
+      if (show.edge) drawEdges();
       mgCells().then(pressLayers).catch(() => {});
     }
     async function drawSlab() {
@@ -557,6 +580,7 @@
       tomo.slabbed = { id: tomo.id, v };
       const pane = v.element.closest('[data-cy=viewport-pane]'); if (pane) pane.dataset.kinMgSlab = 'on';
       badge(v, 'slab', M.slabLabel(range));
+      if (show.edge) drawEdges();
       pressLayers(await mgCells());
       tomo.sync?.();
     }
@@ -670,7 +694,7 @@
     }
     function drawOutline(cell, region) {
       const entry = layerOf(cell.v); if (!entry) return;
-      if (!entry.outline) entry.outline = element('canvas', '', entry.node, 'kin-mg-outline');
+      if (!entry.outline) entry.outline = element('canvas', '', entry.stage, 'kin-mg-outline');
       const canvas = entry.outline, width = cell.v.element.clientWidth, height = cell.v.element.clientHeight, ratio = window.devicePixelRatio || 1;
       canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
       const g = canvas.getContext('2d'); g.setTransform(ratio, 0, 0, ratio, 0, 0); g.clearRect(0, 0, width, height);
@@ -735,13 +759,24 @@
       if (kind === 'match') {
         const groups = new Map();
         for (const cell of list) { if (!cell.view) { skipped.push(labelOf(cell)); continue; } groups.set(cell.view, [...(groups.get(cell.view) || []), cell]); }
+        const unset = [];
         for (const group of groups.values()) {
-          const entries = group.map(cell => { const region = regionOf(cell); if (!region.found) skipped.push(labelOf(cell));
-            return { cell, region, id: cell.id, zoom: zoomOf(cell.v), perPixel: perPixel(cell.v), length: region.found ? region.box.x1 - region.box.x0 : 0 }; });
+          const entries = group.map(cell => {
+            const region = regionOf(cell), box = region.found ? region.box : null, zoom = zoomOf(cell.v), shown = box && shownBox(cell.v, box);
+            if (!box) skipped.push(labelOf(cell));
+            return { cell, box, id: cell.id, zoom, perPixel: 1, length: shown?.length ?? 0, fit: shown && fitShown(cell.v, zoom, shown) };
+          });
           const zooms = M.matchSize(entries);
-          for (const entry of entries) if (zooms[entry.id]) { steer(entry.cell.v, () => entry.cell.v.setZoom(zooms[entry.id])); setMode(entry.cell.v, 'Match Size'); }
+          // Each breast at the matched zoom, centred in its cell (as Fit Breast centres it), so none is cut off.
+          for (const entry of entries) {
+            if (!entry.box) continue;
+            const world = zooms[entry.id] && toWorld(entry.cell.v, [(entry.box.x0 + entry.box.x1) / 2, (entry.box.y0 + entry.box.y1) / 2]);
+            if (world && steer(entry.cell.v, () => { entry.cell.v.setZoom(zooms[entry.id]); centerOn(entry.cell.v, world); })) setMode(entry.cell.v, 'Match Size');
+            else unset.push(labelOf(entry.cell));
+          }
         }
-        say(skipped.length ? '경계를 찾지 못해 맞추지 않은 칸 — ' + skipped.join(' / ') : 'Match Size: 같은 뷰의 칸끼리 흉벽–유두 길이를 화면에서 같게 맞췄습니다(가장 작게 보이던 칸에 맞춤).');
+        say(unset.length ? '바꾸지 않은 칸 — ' + [...skipped, ...unset].join(' / ') : skipped.length ? '경계를 찾지 못해 맞추지 않은 칸 — ' + skipped.join(' / ')
+          : 'Match Size: 같은 뷰의 칸끼리 흉벽–유두 길이를 화면에서 같게 맞췄습니다(모든 유방이 칸 안에 다 보이는 가장 큰 크기).');
         return;
       }
       if (kind === 'true') {
@@ -767,13 +802,26 @@
         if (kind === 'breast') {
           const region = regionOf(cell);
           if (!region.found) { skipped.push(labelOf(cell)); badge(v, 'edge', '경계를 찾지 못했습니다'); continue; }
-          const box = region.box, zoom = M.fitRect({ zoom: zoomOf(v), perPixel: perPixel(v), ...cellSize(v), width: box.x1 - box.x0, height: box.y1 - box.y0 });
+          const box = region.box, shown = shownBox(v, box), zoom = shown && fitShown(v, zoomOf(v), shown);
           const world = toWorld(v, [(box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2]);
-          if (zoom && world) { steer(v, () => { v.setZoom(zoom); centerOn(v, world); }); setMode(v, 'Fit Breast'); }
+          if (zoom && world && steer(v, () => { v.setZoom(zoom); centerOn(v, world); })) setMode(v, 'Fit Breast'); else skipped.push(labelOf(cell));
         }
       }
       say(skipped.length ? '바꾸지 않은 칸 — ' + skipped.join(' / ') : '');
     }
+    // The breast box as the cell shows it now, in CSS pixels: its width and height on the screen and the screen length of
+    // its chest-wall-to-nipple axis (along the image rows, through the box's middle) — whatever the cell's rotation, flips
+    // and pixel spacing. Null when the cell cannot say.
+    function shownBox(v, box) {
+      const at = (x, y) => { try { const world = toWorld(v, [x, y]), p = world && v.worldToCanvas(world); return p && p.every(Number.isFinite) ? p : null; } catch (_) { return null; } };
+      const corners = [[box.x0, box.y0], [box.x1, box.y0], [box.x0, box.y1], [box.x1, box.y1]].map(([x, y]) => at(x, y));
+      const middle = (box.y0 + box.y1) / 2, a = at(box.x0, middle), b = at(box.x1, middle);
+      if (!a || !b || corners.some(p => !p)) return null;
+      const xs = corners.map(p => p[0]), ys = corners.map(p => p[1]);
+      return { width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys), length: Math.hypot(b[0] - a[0], b[1] - a[1]) };
+    }
+    // The zoom that fits a box shown at `shown` (shownBox) in the cell, as the Fit Breast mode does.
+    const fitShown = (v, zoom, shown) => M.fitRect({ zoom, perPixel: 1, ...cellSize(v), width: shown.width, height: shown.height });
     function openPitch() {
       if (!show.pitchRow) return;
       show.pitchRow.hidden = false; show.pitchRow.querySelector('input').focus();
@@ -905,7 +953,7 @@
     // ── Events ──
     const listen = (type, fn) => { if (type) document.addEventListener(type, fn, { capture: true, signal }); };
     listen(events.CAMERA_MODIFIED, event => { cameraChanged(event); if (event.detail?.viewportId) quadrantCamera(event.detail.viewportId); if (show.edge) drawEdges(); });
-    listen(events.VOI_MODIFIED, event => { voiChanged(event); });
+    window.addEventListener('kin-viewer-tool-run', event => { invertRun(event).catch(error => console.error(error)); }, { signal });
     listen(events.STACK_NEW_IMAGE, event => { tomoImage(event); const id = event.detail?.viewportId; if (id) cellImage(id); });
     window.addEventListener('resize', screenChanged, { signal });
     try { window.screen.addEventListener?.('change', screenChanged, { signal }); } catch (_) {}
@@ -938,7 +986,7 @@
       ended = true;
       if (carry.listener === listener) carry.listener = null;
       try { stopTabs?.(); } catch (_) {}
-      stopPlay(); restoreSlab(); wlOff(); endQuadrant();
+      stopPlay(); restoreSlab(); wlOff(); endQuadrant(); stageSizes?.disconnect();
       abort.abort(); dprQuery?.removeEventListener?.('change', onDpr);
       for (const timer of timers) clearInterval(timer);
       if (cameraFrame) cancelAnimationFrame(cameraFrame);

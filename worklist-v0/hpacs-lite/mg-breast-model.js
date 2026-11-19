@@ -92,41 +92,88 @@
   }
 
   // ── The breast region ──
-  // values: the image's pixel values, row after row (columns × rows). Searched on a grid of at most maxSide samples a side:
-  // a threshold between background and tissue (Otsu) and the largest 4-connected tissue region. MONOCHROME1 shows low
-  // values bright, so its tissue is below the threshold. Returns { found, reason?, step, width, height, mask, box, outline,
-  // threshold }: mask on the grid, box and outline (one point at each end of every grid row of the region, top to bottom
-  // on the left, then back up on the right) in image coordinates.
+  // values: the image's pixel values, row after row (columns × rows). Searched on a grid of at most maxSide cells a side,
+  // each cell the mean of the image pixels it covers. The region reaches the skin line: everything brighter than the
+  // background, not only the dense tissue. The background is the largest histogram peak at the dark end (MONOCHROME1
+  // shows low values bright, so its values are read the other way round); the threshold is where that peak's slope ends
+  // (the triangle method, from the peak to the brightest value), so fat just inside the skin is tissue. Thin strips
+  // (a body edge or a paddle edge a few millimetres wide along the image border) are not the breast: an opening of
+  // `open` cells (default 2) cuts them off before the largest 4-connected region is taken, and holes in that region are
+  // part of it. Returns { found, reason?, step, width, height, mask, box, outline, threshold }: mask on the grid, box and
+  // outline (one point at each end of every grid row of the region, top to bottom on the left, then back up on the right)
+  // in image coordinates; threshold in the image's own values.
   function detect(values, columns, rows, options = {}) {
     const none = reason => ({ found: false, reason });
     if (!values || typeof values.length !== 'number' || !Number.isSafeInteger(columns) || !Number.isSafeInteger(rows) || columns < 2 || rows < 2
       || values.length < columns * rows) return none('no-pixels');
     const maxSide = Number.isSafeInteger(options.maxSide) && options.maxSide >= 16 ? options.maxSide : 256;
+    const open = Number.isSafeInteger(options.open) && options.open >= 0 ? options.open : 2;
     const step = Math.max(1, Math.ceil(Math.max(columns, rows) / maxSide));
     const width = Math.ceil(columns / step), height = Math.ceil(rows / step), size = width * height;
-    const grid = new Float64Array(size);
+    const grid = new Float64Array(size), counts = new Uint32Array(size), column = new Int32Array(columns);
+    for (let x = 0; x < columns; x++) column[x] = Math.floor(x / step);
+    for (let y = 0; y < rows; y++) {
+      const row = Math.floor(y / step) * width, base = y * columns;
+      for (let x = 0; x < columns; x++) {
+        const value = +values[base + x];
+        if (value !== value || value === Infinity || value === -Infinity) continue;
+        const at = row + column[x];
+        grid[at] += value; counts[at]++;
+      }
+    }
+    const sign = options.monochrome1 ? -1 : 1;
     let low = Infinity, high = -Infinity;
-    for (let gy = 0; gy < height; gy++) for (let gx = 0; gx < width; gx++) {
-      const value = Number(values[Math.min(rows - 1, gy * step) * columns + Math.min(columns - 1, gx * step)]);
-      grid[gy * width + gx] = value;
+    for (let i = 0; i < size; i++) {
+      if (!counts[i]) { grid[i] = NaN; continue; }
+      const value = sign * grid[i] / counts[i];
+      grid[i] = value;
       if (value < low) low = value; if (value > high) high = value;
     }
     if (!(finite(low) && finite(high)) || high <= low) return none('flat');
-    // Otsu on 256 bins.
+    // The histogram runs up to the 95th percentile (a burned-in label far brighter than any tissue, up to a twentieth of the
+    // image, would otherwise squeeze background, fat and dense tissue into a few bins); brighter cells count in the last bin.
+    const sorted = Float64Array.from(grid.filter(finite)).sort();
+    const top = sorted[Math.floor(0.95 * (sorted.length - 1))];
+    if (top > low) high = top;
     const BINS = 256, histogram = new Float64Array(BINS), scale = (BINS - 1) / (high - low);
-    for (let i = 0; i < size; i++) histogram[Math.round((grid[i] - low) * scale)]++;
-    let total = 0; for (let i = 0; i < BINS; i++) total += i * histogram[i];
-    let best = -1, cut = 0, backCount = 0, backSum = 0;
-    for (let i = 0; i < BINS - 1; i++) {
-      backCount += histogram[i]; backSum += i * histogram[i];
-      const foreCount = size - backCount;
-      if (!backCount || !foreCount) continue;
-      const between = backCount * foreCount * (backSum / backCount - (total - backSum) / foreCount) ** 2;
-      if (between > best) { best = between; cut = i; }
+    for (let i = 0; i < size; i++) if (finite(grid[i])) histogram[Math.min(BINS - 1, Math.round((grid[i] - low) * scale))]++;
+    // The background peak: the largest bin of the darkest quarter of the range.
+    let peak = 0;
+    for (let i = 1; i < BINS / 4; i++) if (histogram[i] > histogram[peak]) peak = i;
+    let end = BINS - 1; while (end > peak && !histogram[end]) end--;
+    if (end <= peak + 1) return none('flat');
+    // Triangle: the bin farthest below the line from the peak to the brightest bin.
+    let cut = peak, best = -Infinity;
+    const rise = histogram[end] - histogram[peak], run = end - peak;
+    for (let i = peak + 1; i < end; i++) {
+      const distance = histogram[peak] + rise * (i - peak) / run - histogram[i];
+      if (distance > best) { best = distance; cut = i; }
     }
     const threshold = low + (cut + 0.5) / scale;
-    const tissue = new Uint8Array(size);
-    for (let i = 0; i < size; i++) tissue[i] = (options.monochrome1 ? grid[i] < threshold : grid[i] > threshold) ? 1 : 0;
+    let tissue = new Uint8Array(size);
+    for (let i = 0; i < size; i++) tissue[i] = grid[i] > threshold ? 1 : 0;
+    // Opening: erode then dilate by `open` cells (a square), each as a row pass then a column pass.
+    const spread = (mask, keep) => {
+      if (!open) return mask;
+      const pass = (from, along) => {
+        const out = new Uint8Array(size), [outer, inner] = along ? [height, width] : [width, height];
+        for (let a = 0; a < outer; a++) for (let b = 0; b < inner; b++) {
+          let hit = keep;
+          for (let d = -open; d <= open && hit === keep; d++) {
+            const c = b + d;
+            const v = c < 0 || c >= inner ? 0 : from[along ? a * width + c : c * width + a];
+            if (v !== keep) hit = v;
+          }
+          out[along ? a * width + b : b * width + a] = hit;
+        }
+        return out;
+      };
+      return pass(pass(mask, true), false);
+    };
+    // Erosion keeps a cell only where every cell around is tissue (outside the image is not); dilation sets a cell where
+    // any cell around is, which gives a wide region its edge back, the chest-wall edge too. Only tissue stays tissue.
+    // Nothing left (only strips, no breast): no region.
+    tissue = spread(spread(tissue, 1), 0).map((v, i) => v & tissue[i]);
     // The largest 4-connected region.
     const label = new Int32Array(size), queue = new Int32Array(size);
     let bestLabel = 0, bestSize = 0, next = 0;
@@ -143,18 +190,30 @@
       if (tail > bestSize) { bestSize = tail; bestLabel = next; }
     }
     if (!bestLabel || bestSize < size * 0.02) return none('no-region');
+    // Holes: cells outside the region that the image border cannot be reached from (4-connected) are inside it.
+    const outside = new Uint8Array(size);
+    {
+      let tail = 0;
+      const seed = at => { if (label[at] !== bestLabel && !outside[at]) { outside[at] = 1; queue[tail++] = at; } };
+      for (let gx = 0; gx < width; gx++) { seed(gx); seed((height - 1) * width + gx); }
+      for (let gy = 0; gy < height; gy++) { seed(gy * width); seed(gy * width + width - 1); }
+      for (let head = 0; head < tail; head++) {
+        const at = queue[head], x = at % width;
+        if (x > 0) seed(at - 1); if (x < width - 1) seed(at + 1); if (at >= width) seed(at - width); if (at + width < size) seed(at + width);
+      }
+    }
     const mask = new Uint8Array(size);
     let x0 = width, x1 = -1, y0 = height, y1 = -1;
     const left = [], right = [];
     for (let gy = 0; gy < height; gy++) {
       let first = -1, last = -1;
-      for (let gx = 0; gx < width; gx++) if (label[gy * width + gx] === bestLabel) { mask[gy * width + gx] = 1; if (first < 0) first = gx; last = gx; }
+      for (let gx = 0; gx < width; gx++) if (!outside[gy * width + gx]) { mask[gy * width + gx] = 1; if (first < 0) first = gx; last = gx; }
       if (first < 0) continue;
       x0 = Math.min(x0, first); x1 = Math.max(x1, last); y0 = Math.min(y0, gy); y1 = Math.max(y1, gy);
       const y = Math.min(rows, (gy + 0.5) * step);
       left.push([first * step, y]); right.push([Math.min(columns, (last + 1) * step), y]);
     }
-    return { found: true, step, width, height, mask, threshold,
+    return { found: true, step, width, height, mask, threshold: sign * threshold,
       box: { x0: x0 * step, y0: y0 * step, x1: Math.min(columns, (x1 + 1) * step), y1: Math.min(rows, (y1 + 1) * step) },
       outline: [...left, ...right.reverse()] };
   }
@@ -222,12 +281,14 @@
     return zoom * (spacing / (pitch * dpr)) / perPixel;
   }
   // Match Size: the cells of one view show the breast's chest-wall-to-nipple length (length: image pixels across the
-  // breast box) at the same screen length — the shortest shown now, so no image grows past its cell to match.
-  // cells: [{ id, zoom, perPixel, length }] → { [id]: zoom }, only for cells with all three.
+  // breast box) at the same screen length — the longest at which every breast is still whole in its cell (fit: the zoom
+  // that fits that cell's breast box in it, as Fit Breast; a cell without one counts with the length it shows now).
+  // cells: [{ id, zoom, perPixel, length, fit? }] → { [id]: zoom }, only for cells with zoom, perPixel and length.
   function matchSize(cells) {
     const usable = (Array.isArray(cells) ? cells : []).filter(cell => [cell?.zoom, cell?.perPixel, cell?.length].every(positive));
     if (!usable.length) return {};
-    const shown = usable.map(cell => cell.length * cell.perPixel), target = Math.min(...shown);
+    const shown = usable.map(cell => cell.length * cell.perPixel);
+    const target = Math.min(...usable.map((cell, i) => positive(cell.fit) ? shown[i] * cell.fit / cell.zoom : shown[i]));
     return Object.fromEntries(usable.map((cell, i) => [cell.id, cell.zoom * target / shown[i]]));
   }
   // The basis of an image's spacing (mg-length.js): the True Size label.

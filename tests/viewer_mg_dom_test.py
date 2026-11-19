@@ -85,6 +85,12 @@ CELLS = """() => {
     views.set(id, v);
   }
   window.synViews = views;
+  // The viewer's Invert tool (its I key, More › Invert): as invertViewport, the active cell's property and a new drawing,
+  // and no VOI event.
+  synButtons.invert = { id: 'invert', uiType: 'ohif.radioGroup', props: { label: 'Invert', commands: 'invertViewport' } }; synSection.push('invert');
+  const record = synServices.toolbarService.recordInteraction;
+  synServices.toolbarService.recordInteraction = (item, options) => { record(item, options);
+    const v = item.itemId === 'invert' && views.get(synActive); if (v) { v.props.invert = !v.props.invert; v.render(); } };
   window.synShown = Object.fromEntries([...views.keys()].map(id => [id, ['set-' + id]]));
   synServices.cornerstoneViewportService.getCornerstoneViewport = id => views.get(id);
   const gridState = synServices.viewportGridService.getState;
@@ -113,6 +119,9 @@ CELLS = """() => {
   window.kinPlanarGeometry = () => ({ spacing: [0.1, 0.1], calculator: 'kin-mg-length-v1:detector' });
   // DICOMweb metadata of each image (the header mammography-model.js reads).
   const header = (v, sop) => { const tag = (vr, value) => ({ vr, Value: [].concat(value) });
+    // synHeaders[cell]: another device's own header for that cell (its UIDs and size made the cell's).
+    const own = window.synHeaders?.[v.id];
+    if (own) return { ...structuredClone(own), '00080018': tag('UI', sop), '0020000D': tag('UI', v.info.study), '0020000E': tag('UI', v.series), '00280010': tag('US', R), '00280011': tag('US', C) };
     const item = { '00080016': tag('UI', '1.2.840.10008.5.1.4.1.1.1.2'), '00080018': tag('UI', sop), '0020000D': tag('UI', v.info.study),
       '00080060': tag('CS', 'MG'), '00200062': tag('CS', v.info.side), '00280010': tag('US', R), '00280011': tag('US', C), '00280004': tag('CS', 'MONOCHROME2'),
       '00540220': { vr: 'SQ', Value: [{ '00080100': tag('SH', v.info.view), '00080102': tag('SH', 'SCT') }] } };
@@ -347,8 +356,8 @@ class ViewerMgDOMTest(unittest.TestCase):
         # No echo: the followers' own camera events do not move the others again.
         self.assertEqual(sets, page.evaluate("() => ({ ...synCameraSets })"))
         self.assertLessEqual(sets['lcc'], 1)
-        # Invert in one cell inverts the same view's others (Invert together), and not the MLO.
-        page.evaluate("() => synViews.get('rcc').setProperties({ invert: true })")
+        # The reader's Invert in one cell inverts the same view's others (Invert together), and not the MLO.
+        page.evaluate("() => { synActive = 'rcc'; synToolbar.invoke('invert'); }")
         page.wait_for_function("() => synViews.get('lcc').props.invert && synViews.get('prcc').props.invert")
         self.assertFalse(page.evaluate("() => synViews.get('rmlo').props.invert"))
         # Reset: the views as they were when Mirrored was turned on (camera and inversion).
@@ -755,15 +764,18 @@ class ViewerMgDOMTest(unittest.TestCase):
         expected = min(200 / (box['x1'] - box['x0']), 150 / (box['y1'] - box['y0'])) * 0.98 / 0.5
         self.assertAlmostEqual(expected, self.camera(page, 'rcc')['zoom'], places=6)
         expect(page.locator('#pane-rcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: Fit Breast')
-        # Match Size: the CC cells (lengths equal here) at the shortest shown length; prior L CC has a region too (no orientation needed).
+        # Match Size: the CC cells (lengths equal here) at the longest length every breast shows whole in its cell; prior L CC has a
+        # region too (no orientation needed).
         page.evaluate("() => { synViews.get('dbt').setZoom(1); synViews.get('plcc').setZoom(1); synViews.get('lcc').setZoom(1); synViews.get('prcc').setZoom(2); synViews.get('rcc').setZoom(1.5); }")
         panel.get_by_role('button', name='Match Size').click()
         page.wait_for_function("() => document.querySelector('#pane-prcc [data-mg-badge=zoom]')?.textContent === 'Zoom mode: Match Size'")
-        # Each CC cell's breast box width (chest wall to nipple) shown at the shortest shown length (zoom × 0.5 px × width).
+        # Each CC cell's breast box width (chest wall to nipple) shown at the length of the cell that fits it least (Fit Breast
+        # of a w × h box in a 200 × 150 cell shows w × min(200 / w, 150 / h) × 0.98 CSS px; at zoom z one shows z × 0.5 × w).
         expected = page.evaluate("""() => { const ids = ['dbt', 'rcc', 'lcc', 'prcc', 'plcc'];
           const width = id => { const b = KinMgBreastModel.detect(synViews.get(id).imageDataObject.getPointData().getScalars().getData(), 400, 300).box; return b.x1 - b.x0; };
-          const before = { dbt: 1, rcc: 1.5, lcc: 1, prcc: 2, plcc: 1 }, shown = ids.map(id => before[id] * 0.5 * width(id)), least = Math.min(...shown);
-          return ids.map((id, i) => before[id] * least / shown[i]); }""")
+          const box = id => KinMgBreastModel.detect(synViews.get(id).imageDataObject.getPointData().getScalars().getData(), 400, 300).box;
+          const fits = ids.map(id => { const b = box(id), w = b.x1 - b.x0, h = b.y1 - b.y0; return w * Math.min(200 / w, 150 / h) * 0.98; }), least = Math.min(...fits);
+          return ids.map(id => least / (0.5 * width(id))); }""")
         zooms = page.evaluate("() => ['dbt', 'rcc', 'lcc', 'prcc', 'plcc'].map(id => synViews.get(id).getZoom())")
         self.assertNear(zooms, expected, places=6)
         # The shown lengths are now equal.
@@ -792,6 +804,197 @@ class ViewerMgDOMTest(unittest.TestCase):
         panel.get_by_role('button', name='True Size').click()
         page.wait_for_function("() => Math.abs(synViews.get('rcc').getZoom() - 0.8) < 1e-9")
         expect(pitch).to_be_hidden()
+
+    # ── The breast and the cell as the viewer draws them ──
+    # As the shipped cell: a 42 px header row on top of the pane, the image (viewport element) under it.
+    HEADER = """() => { for (const pane of document.querySelectorAll('[data-cy=viewport-pane]')) {
+      pane.style.height = '192px';
+      const head = document.createElement('div'); head.className = 'syn-head'; head.style.cssText = 'position:absolute;left:0;right:0;top:0;height:42px'; pane.prepend(head);
+      pane.querySelector('.viewport-element').style.cssText = 'position:absolute;left:0;right:0;top:42px;height:150px'; } }"""
+    # A processed screening MG: background 0, a band of fat (20 ± 6) inside the skin, dense tissue (600) only in the middle.
+    FATTY = """ids => { const C = 400, R = 300;
+      for (const id of ids) { const v = synViews.get(id), right = v.info.side === 'R', values = new Uint16Array(C * R);
+        for (let y = 0; y < R; y++) for (let x = 0; x < C; x++) {
+          const dx = (x - (right ? C : 0)) / (C * 0.6), dy = (y - R / 2) / (R * 0.4), r = dx * dx + dy * dy;
+          values[y * C + x] = r <= 1 ? (r <= 0.3 ? 600 : 20 + ((x * 7 + y * 13) % 13) - 6) : 0; }
+        v.imageDataObject.getPointData().getScalars().setData(values); } }"""
+    # The skin line of those cells (the ellipse's ends) on each cell's canvas: { id: [left, top, right, bottom] }.
+    SKIN = """ids => Object.fromEntries(ids.map(id => { const v = synViews.get(id), right = v.info.side === 'R', cx = right ? 400 : 0;
+      const p = [[cx - 240, 150], [cx + 240, 150], [right ? 399 : 0, 30], [right ? 399 : 0, 270]].map(([x, y]) => v.worldToCanvas([Math.min(399, Math.max(0, x)), y, 0]));
+      return [id, [Math.min(...p.map(q => q[0])), Math.min(...p.map(q => q[1])), Math.max(...p.map(q => q[0])), Math.max(...p.map(q => q[1]))]]; }))"""
+
+    def ge_synthetic_2d(self):
+        import json, pathlib
+        cases = json.loads((pathlib.Path(__file__).parent / 'emr' / 'e' / 'rule-cases.json').read_text(encoding='utf-8'))
+        cases = cases if isinstance(cases, list) else cases['cases']
+        return next(c for c in cases if c['id'] == 'VENDOR-GE-GENERATED-BTO12')['input']['dicom']
+
+    def test_04b_magnifier_under_the_cell_header_row_magnifies_the_place_pressed_in_every_linked_cell(self):
+        page = self.open()
+        page.evaluate(self.HEADER)
+        # A red dot on today's R CC at canvas (50, 40) and on today's L CC at its counterpart (150, 40); black elsewhere.
+        page.evaluate("""() => { for (const [id, x] of [['rcc', 50], ['lcc', 150], ['prcc', 50]]) { const g = synViews.get(id).canvas.getContext('2d');
+          g.fillStyle = '#000'; g.fillRect(0, 0, 200, 150); g.fillStyle = '#f00'; g.fillRect(x - 3, 37, 6, 6); } }""")
+        self.menu(page, 'Mirrored')
+        page.wait_for_function("() => document.querySelector('#pane-plcc [data-mg-badge=mirrored]')")
+        self.menu(page, 'Magnifier')
+        image = page.locator('#pane-rcc .viewport-element').bounding_box()
+        page.mouse.move(image['x'] + 50, image['y'] + 40); page.mouse.down()
+        expect(page.locator('#pane-lcc .kin-mg-lens')).to_have_count(1)
+        expect(page.locator('#pane-prcc .kin-mg-lens')).to_have_count(1)
+        for cell, at in [('rcc', [50, 40]), ('lcc', [150, 40]), ('prcc', [50, 40])]:
+            self.assertEqual(','.join(map(str, at)), page.locator('#pane-' + cell + ' .kin-mg-lens').get_attribute('data-at'))
+            # The lens stands on that place of the image, and what it shows in its middle is that place (the red dot).
+            lens, own = page.locator('#pane-' + cell + ' .kin-mg-lens').bounding_box(), page.locator('#pane-' + cell + ' .viewport-element').bounding_box()
+            self.assertAlmostEqual(own['x'] + at[0], lens['x'] + lens['width'] / 2, delta=1)
+            self.assertAlmostEqual(own['y'] + at[1], lens['y'] + lens['height'] / 2, delta=1)
+            middle = page.evaluate("cell => { const c = document.querySelector('#pane-' + cell + ' .kin-mg-lens canvas'); return [...c.getContext('2d').getImageData(c.width / 2, c.height / 2, 1, 1).data]; }", cell)
+            self.assertEqual([255, 0, 0, 255], middle, cell)
+        page.mouse.up()
+        # The header row is not the Magnifier's: a press there is the cell's own.
+        head = page.locator('#pane-rcc .syn-head').bounding_box()
+        self.assertEqual('syn-head', page.evaluate("([x, y]) => document.elementFromPoint(x, y).className", [head['x'] + 100, head['y'] + 20]))
+
+    def test_04c_magnifier_follows_a_header_row_shown_after_it_was_turned_on_and_shows_the_cells_image_filter(self):
+        page = self.open()
+        page.evaluate("() => { const g = synViews.get('rcc').canvas.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, 200, 150); g.fillStyle = '#f00'; g.fillRect(47, 37, 6, 6); }")
+        self.menu(page, 'Magnifier')
+        expect(page.locator('#pane-rcc .kin-mg-capture')).to_have_count(1)
+        # The header row comes after the Magnifier was turned on; a filter is put on the cell's canvas (Display › Filter).
+        page.evaluate(self.HEADER)
+        page.evaluate("() => { synViews.get('rcc').canvas.style.filter = 'contrast(1.5)'; }")
+        page.wait_for_function("() => { const a = document.querySelector('#pane-rcc .kin-mg-stage').getBoundingClientRect(), b = document.querySelector('#pane-rcc .viewport-element').getBoundingClientRect(); return a.top === b.top && a.height === b.height; }")
+        image = page.locator('#pane-rcc .viewport-element').bounding_box()
+        page.mouse.move(image['x'] + 50, image['y'] + 40); page.mouse.down()
+        lens = page.locator('#pane-rcc .kin-mg-lens')
+        expect(lens).to_have_attribute('data-at', '50,40')
+        self.assertEqual('contrast(1.5)', page.evaluate("() => document.querySelector('#pane-rcc .kin-mg-lens canvas').style.filter"))
+        self.assertEqual([255, 0, 0, 255], page.evaluate("() => { const c = document.querySelector('#pane-rcc .kin-mg-lens canvas'); return [...c.getContext('2d').getImageData(c.width / 2, c.height / 2, 1, 1).data]; }"))
+        page.mouse.up()
+
+    def test_07d_breast_edge_is_drawn_again_for_the_slab_and_for_the_slice_it_gives_back(self):
+        page = self.open()
+        page.evaluate("() => { synActive = 'dbt'; }")
+        self.menu(page, 'Breast Display')
+        page.get_by_role('dialog', name='Breast Display').get_by_role('button', name='Breast Edge').click()
+        page.wait_for_function("() => document.querySelector('#pane-dbt .kin-mg-outline')")
+        page.evaluate("() => { window.synOutline = document.querySelector('#pane-dbt .kin-mg-outline'); }")
+        self.menu(page, 'Tomo (DBT) Slices')
+        panel = page.get_by_role('dialog', name='Tomo (DBT) Slices')
+        page.evaluate("() => synViews.get('dbt').show(5)")
+        page.wait_for_function("() => !synOutline.isConnected && document.querySelector('#pane-dbt .kin-mg-outline')")
+        page.evaluate("() => { window.synOutline = document.querySelector('#pane-dbt .kin-mg-outline'); }")
+        panel.get_by_label('Slab Thickness').select_option('3')
+        expect(page.locator('#pane-dbt [data-mg-badge=slab]')).to_have_text('Slab 3')
+        page.wait_for_function("() => !synOutline.isConnected && document.querySelector('#pane-dbt .kin-mg-outline')")
+        page.evaluate("() => { window.synOutline = document.querySelector('#pane-dbt .kin-mg-outline'); }")
+        panel.get_by_label('Slab Thickness').select_option('1')
+        expect(page.locator('#pane-dbt [data-mg-badge=slab]')).to_have_count(0)
+        page.wait_for_function("() => !synOutline.isConnected && document.querySelector('#pane-dbt .kin-mg-outline')")
+
+    def test_03c_mirrored_carries_the_viewers_own_invert_that_sends_no_voi_event_to_the_same_view(self):
+        page = self.open()
+        # Today's prior R CC is a GE synthetic 2D view (V-Preview): it is linked as any MG image is.
+        page.evaluate("header => { window.synHeaders = { prcc: header }; }", self.ge_synthetic_2d())
+        self.menu(page, 'Mirrored')
+        page.wait_for_function("() => document.querySelector('#pane-plcc [data-mg-badge=mirrored]')")
+        expect(page.locator('#pane-prcc [data-mg-badge=mirrored]')).to_have_count(0)
+        cc = "() => ['rcc', 'lcc', 'prcc'].map(id => synViews.get(id).props.invert)"
+        # The viewer's Invert by its I key on today's R CC (the property and a new drawing, no VOI event): the CC cells of
+        # both sides and both exams with it; not the MLO, not the prior L CC (not linked).
+        page.evaluate("() => { synActive = 'rcc'; document.activeElement?.blur?.(); }")
+        page.keyboard.press('i')
+        page.wait_for_function("() => synViews.get('lcc').props.invert && synViews.get('prcc').props.invert")
+        self.assertEqual([True, True, True], page.evaluate(cc))
+        self.assertFalse(page.evaluate("() => synViews.get('rmlo').props.invert"))
+        self.assertFalse(page.evaluate("() => synViews.get('plcc').props.invert"))
+        # Again from another cell of the view (the toolbar's Invert there): all of them back, once each (no echo).
+        page.evaluate("() => { synActive = 'lcc'; synToolbar.invoke('invert'); }")
+        page.wait_for_function("() => !synViews.get('rcc').props.invert && !synViews.get('prcc').props.invert")
+        page.wait_for_timeout(200)
+        self.assertEqual([False, False, False], page.evaluate(cc))
+        # The act is carried, not the value: an image shown inverted by its own presentation (a MONOCHROME1 image beside
+        # MONOCHROME2 ones) turns the other way too.
+        page.evaluate("() => { synViews.get('prcc').setProperties({ invert: true }); }")
+        page.wait_for_timeout(200)
+        self.assertEqual([False, False, True], page.evaluate(cc), 'an inversion the viewer itself set is not carried')
+        page.evaluate("() => { synActive = 'rcc'; synToolbar.invoke('invert'); }")
+        page.wait_for_function("() => synViews.get('lcc').props.invert && !synViews.get('prcc').props.invert")
+        self.assertEqual([True, True, False], page.evaluate(cc))
+        # Invert together off: the reader's Invert stays in its cell.
+        page.get_by_role('dialog', name='Mirrored').get_by_label('Invert together').uncheck()
+        page.evaluate("() => { synActive = 'rcc'; synToolbar.invoke('invert'); }")
+        page.wait_for_timeout(200)
+        self.assertEqual([False, True, False], page.evaluate(cc))
+
+    def test_02c_after_match_and_unmatch_the_side_and_view_are_each_originals_and_a_merged_exams_second_original_is_current(self):
+        page = self.open()
+        # A window opened on exam scopes: the merged exam holds both originals as current (Match), then the second goes back
+        # to being a prior exam (Unmatch).
+        page.evaluate("""() => { history.replaceState(null, '', location.pathname + location.search + '&kinExamScopes=syn' + location.hash);
+          window.synRoles = { '1.2.1': 'current', '1.2.2': 'current' }; KinViewerExamScope.role = study => synRoles[study] || null; }""")
+        self.menu(page, 'Mirrored')
+        panel = page.get_by_role('dialog', name='Mirrored')
+        expect(panel.locator('[role=status]')).to_contain_text('Current · L CC: orientation unverified')
+        panel.get_by_role('button', name='Close').click()
+        page.evaluate("() => { synRoles['1.2.2'] = 'prior'; }")
+        self.menu(page, 'Mirrored')
+        expect(page.get_by_role('dialog', name='Mirrored').locator('[role=status]')).to_contain_text('Prior · L CC: orientation unverified')
+        # The side and the view stay each original's own: a point on the merged exam's R CC goes to its L CC mirrored.
+        self.click_cell(page, 'prcc', 50, 40)
+        page.wait_for_function("() => Math.abs(synViews.get('lcc').getZoom() - 2) < 1e-9")
+        self.assertNear(self.camera(page, 'lcc')['focal'], [299.5, 79.5])
+
+    def test_08c_breast_edge_lies_on_the_image_under_the_cell_header_row_and_on_the_skin_line_through_the_fat(self):
+        page = self.open()
+        page.evaluate(self.HEADER)
+        page.evaluate(self.FATTY, ['rcc', 'lcc'])
+        self.menu(page, 'Breast Display')
+        page.get_by_role('dialog', name='Breast Display').get_by_role('button', name='Breast Edge').click()
+        page.wait_for_function("() => document.querySelectorAll('.kin-mg-outline').length === 6")
+        for cell in ['rcc', 'lcc']:
+            outline, own = page.locator('#pane-' + cell + ' .kin-mg-outline').bounding_box(), page.locator('#pane-' + cell + ' .viewport-element').bounding_box()
+            self.assertEqual(own, outline)
+            # The line reaches the skin (the ellipse's far end at canvas x 80 for R, 120 for L, mid height 75), not the
+            # dense middle only.
+            far = 80 if cell == 'rcc' else 120
+            drawn = page.evaluate("""([cell, far]) => { const c = document.querySelector('#pane-' + cell + ' .kin-mg-outline'), r = c.width / 200;
+              const d = c.getContext('2d').getImageData(Math.round((far - 6) * r), Math.round(75 * r), Math.round(12 * r), 1).data;
+              let hit = false; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) hit = true; return hit; }""", [cell, far])
+            self.assertTrue(drawn, cell)
+
+    def test_09b_fit_breast_and_match_size_keep_the_whole_breast_through_the_fat_and_match_the_lengths(self):
+        page = self.open()
+        page.evaluate(self.HEADER)
+        page.evaluate("header => { window.synHeaders = { prcc: header }; }", self.ge_synthetic_2d())
+        cc = ['rcc', 'lcc', 'prcc', 'plcc']
+        page.evaluate(self.FATTY, cc)
+        self.menu(page, 'Breast Display')
+        panel = page.get_by_role('dialog', name='Breast Display')
+        panel.get_by_role('button', name='Fit Breast').click()
+        page.wait_for_function("() => document.querySelector('#pane-prcc [data-mg-badge=zoom]')?.textContent === 'Zoom mode: Fit Breast'")
+        skin = page.evaluate(self.SKIN, cc)
+        for cell in cc:
+            left, top, right, bottom = skin[cell]
+            # The whole breast is in the cell (200 × 150), and it fills it one way (the 2 % margin).
+            self.assertTrue(left >= -0.5 and top >= -0.5 and right <= 200.5 and bottom <= 150.5, (cell, skin[cell]))
+            self.assertGreater(max((right - left) / 200, (bottom - top) / 150), 0.9, (cell, skin[cell]))
+        # Match Size from another zoom: the same chest-wall-to-nipple length on screen in all four CC cells, every breast whole.
+        page.evaluate("() => { synViews.get('lcc').setZoom(3); synViews.get('prcc').setZoom(0.5); }")
+        panel.get_by_role('button', name='Match Size').click()
+        page.wait_for_function("() => document.querySelector('#pane-prcc [data-mg-badge=zoom]')?.textContent === 'Zoom mode: Match Size'")
+        skin = page.evaluate(self.SKIN, cc)
+        lengths = [skin[c][2] - skin[c][0] for c in cc]
+        for length in lengths:
+            self.assertAlmostEqual(lengths[0], length, delta=2.5)
+        for cell in cc:
+            left, top, right, bottom = skin[cell]
+            self.assertTrue(left >= -0.5 and top >= -0.5 and right <= 200.5 and bottom <= 150.5, (cell, skin[cell]))
+        self.assertGreater(lengths[0], 100)
+        # A cell whose scale cannot be read is left as it is, and the status says so (not that every cell was matched).
+        page.evaluate("() => { synViews.get('lcc').worldToCanvas = () => [NaN, NaN]; }")
+        panel.get_by_role('button', name='Match Size').click()
+        expect(panel.locator('[role=status]')).to_contain_text('Current · L CC')
 
     def keypad(self, page):
         self.menu(page, 'Mammo Keypad')

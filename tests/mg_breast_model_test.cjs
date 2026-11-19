@@ -110,6 +110,46 @@ test('detect: the breast region of a synthetic MG (largest bright region, not th
   assert.equal(M.detect(null, columns, rows).found, false);
 });
 
+// As a processed screening MG is stored: background 0, a band of fat (20 ± 6) just inside the skin round the breast, dense
+// tissue (150) only in the middle, and a body edge 12 px wide along the chest-wall border below the breast.
+function fattyPhantom(columns, rows, { chestRight = true, monochrome1 = false } = {}) {
+  const values = new Uint16Array(columns * rows);
+  for (let y = 0; y < rows; y++) for (let x = 0; x < columns; x++) {
+    const cx = chestRight ? columns : 0, dx = (x - cx) / (columns * 0.6), dy = (y - rows * 0.4) / (rows * 0.35), r = dx * dx + dy * dy;
+    let v = r <= 1 ? (r <= 0.35 ? 150 : 20 + ((x * 7 + y * 13) % 13) - 6) : 0;
+    const strip = chestRight ? x >= columns - 12 : x < 12;
+    if (strip && y > rows * 0.75) v = 25;
+    values[y * columns + x] = monochrome1 ? 255 - v : v;
+  }
+  return values;
+}
+
+test('detect: the region reaches the skin line through the fat, not only the dense tissue, and leaves a thin body edge out', () => {
+  const columns = 600, rows = 800;
+  for (const chestRight of [true, false]) for (const monochrome1 of [false, true]) {
+    const r = M.detect(fattyPhantom(columns, rows, { chestRight, monochrome1 }), columns, rows, { monochrome1 });
+    assert.equal(r.found, true);
+    // The skin line: the ellipse spans 360 px from the chest wall (0.6 × 600) and y 40 … 600 (0.4 × 800 ± 0.35 × 800).
+    const [near, far] = chestRight ? [r.box.x1, r.box.x0] : [r.box.x0, r.box.x1];
+    assert.equal(near, chestRight ? columns : 0, JSON.stringify(r.box));
+    assert.ok(Math.abs(Math.abs(near - far) - 360) <= 8, JSON.stringify(r.box));
+    assert.ok(Math.abs(r.box.y0 - 40) <= 8 && Math.abs(r.box.y1 - 600) <= 8, JSON.stringify(r.box));
+    // Every outline point is on the skin line or on the chest-wall border.
+    for (const [x, y] of r.outline) {
+      const dx = (x - (chestRight ? columns : 0)) / 360, dy = (y - 320) / 280, edge = Math.abs(Math.hypot(dx, dy) - 1);
+      assert.ok(edge < 0.06 || x === 0 || x === columns, `${x},${y} ${edge}`);
+    }
+  }
+  // A burned-in label far brighter than any tissue (4095, 160 × 80 px, apart from the breast) changes nothing.
+  const labelled = fattyPhantom(columns, rows);
+  for (let y = 700; y < 780; y++) for (let x = 20; x < 180; x++) labelled[y * columns + x] = 4095;
+  assert.deepEqual(M.detect(labelled, columns, rows).box, M.detect(fattyPhantom(columns, rows), columns, rows).box);
+  // Only a strip along the border (no breast): no region.
+  const strip = new Uint16Array(columns * rows);
+  for (let y = 0; y < rows; y++) for (let x = columns - 3; x < columns; x++) strip[y * columns + x] = 30;
+  assert.deepEqual(M.detect(strip, columns, rows), { found: false, reason: 'no-region' });
+});
+
 test('regionWindow: 1–99 percentiles of the region pixels only (the background and the marker do not count)', () => {
   const columns = 400, rows = 300, values = phantom(columns, rows);
   const region = M.detect(values, columns, rows, { maxSide: 100 });
@@ -157,6 +197,10 @@ test('zoom modes: Fit Breast, 1:1, True Size and Match Size as numbers', () => {
   // Match Size: the shortest shown chest-wall-to-nipple length (b: 300 × 0.5 = 150) is kept; a: 400 × 0.5 = 200 → zoom × 0.75.
   assert.deepEqual(M.matchSize([{ id: 'a', zoom: 1, perPixel: 0.5, length: 400 }, { id: 'b', zoom: 2, perPixel: 0.5, length: 300 },
     { id: 'c', zoom: 1, perPixel: 0.5, length: 0 }]), { a: 0.75, b: 2 });
+  // With the zoom that fits each breast whole in its cell: the length is the longest every cell can show whole. a would
+  // show 400 at its fit (200 × 2), b 225 (150 × 1.5): both show 225, b at its fit and a below it.
+  assert.deepEqual(M.matchSize([{ id: 'a', zoom: 1, perPixel: 0.5, length: 400, fit: 2 }, { id: 'b', zoom: 1, perPixel: 0.5, length: 300, fit: 1.5 }]),
+    { a: 1.125, b: 1.5 });
   assert.equal(M.trueSizeLabel('detector'), 'True Size (at detector)');
   assert.equal(M.trueSizeLabel('ermf'), 'True Size (ERMF estimate)');
   assert.equal(M.trueSizeLabel('pixel'), 'True Size');

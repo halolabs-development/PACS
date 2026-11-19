@@ -5820,7 +5820,7 @@ window.KinLanguageTerms = {
     ["경계를 찾지 못해 창을 바꾸지 않은 칸 — {0}", "Viewports where the window was not changed because the edge was not found — {0}", "m"],
     ["Breast W/L: 유방 영역 픽셀(1–99 백분위)로 창을 정했습니다. 다시 누르면 원래 창입니다.", "Breast W/L: window set from breast-region pixels (1–99th percentile). Press again for the original window.", "m"],
     ["경계를 찾지 못해 맞추지 않은 칸 — {0}", "Viewports not matched because the edge was not found — {0}", "m"],
-    ["Match Size: 같은 뷰의 칸끼리 흉벽–유두 길이를 화면에서 같게 맞췄습니다(가장 작게 보이던 칸에 맞춤).", "Match Size: matched the on-screen chest wall–nipple length across viewports of the same view (to the one shown smallest).", "m"],
+    ["Match Size: 같은 뷰의 칸끼리 흉벽–유두 길이를 화면에서 같게 맞췄습니다(모든 유방이 칸 안에 다 보이는 가장 큰 크기).", "Match Size: matched the on-screen chest wall–nipple length across viewports of the same view (the largest size at which every breast is whole in its viewport).", "m"],
     ["{0}True Size: 이 화면의 픽셀 크기 {1} mm 기준입니다.", "{0}True Size: based on this display's pixel size of {1} mm.", "m"],
     ["픽셀 간격을 확인할 수 없어 바꾸지 않은 칸 — {0}.", "Viewports not changed because pixel spacing could not be determined — {0}.", "m"],
     ["바꾸지 않은 칸 — {0}", "Viewports not changed — {0}", "m"],
