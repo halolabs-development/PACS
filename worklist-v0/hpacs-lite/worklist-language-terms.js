@@ -14,6 +14,19 @@ window.KinLanguageTerms = {
     ["worklist", "#filterrow .date-filter .date-custom::before", "Custom date range", "직접 지정 기간"],
   ],
   terms: [
+    // Folding the report window band's panels in place (main.html .rw; workspace-panels.js foldPanel).
+    ["접힌 패널", "Folded panels", "l"],
+    ["Thumbnail 패널 접기", "Fold the Thumbnail panel", "l"],
+    ["AI Report 패널 접기", "Fold the AI Report panel", "l"],
+    ["Image Report 패널 접기", "Fold the Image Report panel", "l"],
+    ["Clinical Information 패널 접기", "Fold the Clinical Information panel", "l"],
+    ["Reading Template 패널 접기", "Fold the Reading Template panel", "l"],
+    ["Thumbnail 패널 펼치기", "Open the Thumbnail panel", "l"],
+    ["AI Report 패널 펼치기", "Open the AI Report panel", "l"],
+    ["Image Report 패널 펼치기", "Open the Image Report panel", "l"],
+    ["Clinical Information 패널 펼치기", "Open the Clinical Information panel", "l"],
+    ["Reading Template 패널 펼치기", "Open the Reading Template panel", "l"],
+    ["패널 접기를 브라우저에 저장하지 못해 이 창에서만 유지됩니다.", "The panel fold could not be saved in the browser, so it stays in this window only.", "m"],
     // Arrange Boxes (workspace-panels.js): the work page's five boxes trade places.
     ["Arrange Boxes", "상자 배치", "l"],
     ["Worklist·Related Exam·Clinical Information·Related Report·Report Editor 상자를 끌어 서로 자리를 바꿉니다.", "Drag the Worklist, Related Exam, Clinical Information, Related Report and Report Editor boxes to swap their places.", "m"],
