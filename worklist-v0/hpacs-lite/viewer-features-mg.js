@@ -184,7 +184,7 @@
     }
 
     // ── Mirrored ──
-    const mirror = { on: false, invert: true, panel: null, status: null, before: new Map() };
+    const mirror = { on: false, invert: true, panel: null, status: null, before: new Map(), epoch: 0 };
     async function openMirrored() {
       const panel = ui.panel({ id: 'mirrored', title: 'Mirrored' });
       if (!panel || panel === mirror.panel) return;
@@ -199,7 +199,7 @@
       button('Reset', row, () => resetMirrored(), '켜기 전의 보기로 되돌립니다');
       mirror.status = statusLine(panel.body);
       // Close turns the link off and leaves the views as they are.
-      panel.onClose(() => { if (mirror.panel !== panel) return; mirror.on = false; mirror.panel = mirror.status = null; clearBadges('mirrored'); });
+      panel.onClose(() => { if (mirror.panel !== panel) return; mirror.on = false; mirror.epoch++; mirror.panel = mirror.status = null; clearBadges('mirrored'); });
       // Reset goes back to the views as they were when Mirrored was turned on (every cell's camera now; the link starts at
       // once — a point pressed before the image headers are read waits for them in pick()).
       mirror.before.clear();
@@ -208,7 +208,7 @@
         let props = {}; try { props = v.getProperties(); } catch (_) {}
         try { mirror.before.set(id, { viewport: v, imageId: imageIdOf(v), camera: structuredClone(v.getCamera()), invert: !!props.invert }); } catch (_) {}
       }
-      mirror.on = true;
+      mirror.on = true; mirror.epoch++;
       await markUnlinked();
     }
     async function markUnlinked() {
@@ -225,6 +225,7 @@
       if (mirror.status) mirror.status.textContent = lines.length ? '연동하지 않는 칸 — ' + lines.join(' / ') : '';
     }
     function resetMirrored() {
+      mirror.epoch++;
       for (const [id, before] of mirror.before) {
         const v = viewportOf(id);
         if (v !== before.viewport || imageIdOf(v) !== before.imageId) continue;
@@ -278,9 +279,12 @@
     async function invertRun(event) {
       const { id, viewportId } = event.detail || {}, v = id === 'invert' && viewportId && viewportOf(viewportId);
       if (!v || !mirror.on || !mirror.invert || ruled(viewportId)) return;
-      const mark = ruleMark();
+      const mark = ruleMark(), epoch = mirror.epoch, image = imageIdOf(v);
       const list = await mgCells(), t = M.targets(viewportId, list);
-      if (!mirror.on || !mirror.invert || t.reason || viewportOf(viewportId) !== v || ruled(viewportId, mark)) return;
+      // Not when Mirrored was reset, closed or opened again meanwhile, or the cell shows another image now (each Invert
+      // pressed meanwhile is carried in its turn).
+      if (!mirror.on || !mirror.invert || mirror.epoch !== epoch || t.reason || viewportOf(viewportId) !== v || ruled(viewportId, mark)
+        || imageIdOf(v) !== image) return;
       for (const target of t.linked) {
         const other = list.find(c => c.id === target)?.v, invert = other && invertOf(other);
         if (!other || invert === null || ruled(target, mark) || viewportOf(target) !== other) continue;
@@ -311,17 +315,34 @@
       if (!entry.lens) { entry.lens = element('div', '', entry.stage, 'kin-mg-lens'); element('canvas', '', entry.lens); }
       const canvas = entry.lens.firstChild, source = v.canvas, ratio = source && source.clientWidth ? source.width / source.clientWidth : 1;
       canvas.width = Math.round(LENS * ratio); canvas.height = Math.round(LENS * ratio);
-      // An image filter of the cell (Display › Filter, a CSS filter on its canvas) shows in the lens too.
-      canvas.style.filter = source?.style?.filter || '';
       Object.assign(entry.lens.style, { left: point[0] + 'px', top: point[1] + 'px' });
       entry.lens.dataset.at = point.map(n => Math.round(n)).join(',');
-      const side = LENS / LENS_ZOOM * ratio;
-      try { canvas.getContext('2d').drawImage(source, point[0] * ratio - side / 2, point[1] * ratio - side / 2, side, side, 0, 0, canvas.width, canvas.height); }
-      catch (_) { /* a canvas not drawn yet */ }
+      const side = LENS / LENS_ZOOM * ratio, x = point[0] * ratio - side / 2, y = point[1] * ratio - side / 2;
+      try {
+        // An image filter of the cell (Display › Filter, a CSS filter on its canvas) works on the screen's own pixels: it is
+        // put on the place at the screen's size first, and that is magnified (as the screen shows it, twice as large).
+        const filter = source?.style?.filter || '';
+        let from = source, at = [x, y];
+        if (filter && filter !== 'none') {
+          const size = Math.ceil(side);
+          from = document.createElement('canvas'); from.width = from.height = size;
+          const g = from.getContext('2d'); g.filter = filter; g.drawImage(source, x, y, size, size, 0, 0, size, size);
+          at = [0, 0];
+        }
+        canvas.getContext('2d').drawImage(from, at[0], at[1], side, side, 0, 0, canvas.width, canvas.height);
+      } catch (_) { /* a canvas not drawn yet */ }
     }
     const hideLenses = () => { for (const entry of layers.values()) { entry.lens?.remove(); entry.lens = null; } };
+    // While pressed, a cell drawn again (an Invert, a window change) shows in the lenses at once.
+    let lensFrame = 0;
+    function lensRedraw(event) {
+      const id = event.detail?.viewportId;
+      if (!lens.pressed || !lens.last || lensFrame || ![...layers].some(([cell, entry]) => cell === id && entry.lens)) return;
+      lensFrame = requestAnimationFrame(() => { lensFrame = 0; if (lens.pressed && lens.last) magnify(lens.last.id, lens.last.point).catch(error => console.error(error)); });
+    }
     async function magnify(viewportId, point) {
       const v = viewportOf(viewportId); if (!v) return;
+      lens.last = { id: viewportId, point };
       hideLenses(); lensAt(v, point);
       if (!mirror.on) return;
       const list = await mgCells(), t = M.targets(viewportId, list);
@@ -350,7 +371,7 @@
             entry.capture.setPointerCapture?.(event.pointerId); lens.pressed = true; magnify(id, at(event));
           });
           entry.capture.addEventListener('pointermove', event => { if (lens.pressed && entry.capture.dataset.mode === 'lens') magnify(id, at(event)); });
-          for (const type of ['pointerup', 'pointercancel']) entry.capture.addEventListener(type, () => { lens.pressed = false; hideLenses(); });
+          for (const type of ['pointerup', 'pointercancel']) entry.capture.addEventListener(type, () => { lens.pressed = false; lens.last = null; hideLenses(); });
           entry.capture.addEventListener('mousedown', event => event.stopPropagation());
           entry.capture.addEventListener('wheel', event => {
             if (tomo.slabbed?.id !== id) return;
@@ -703,11 +724,17 @@
       g.closePath(); g.stroke();
       canvas.dataset.points = String(region.outline.length);
     }
+    // Each call takes a new ticket: one still reading image headers draws nothing when a later one (or Breast Edge off)
+    // came meanwhile.
+    let edgeTicket = 0;
     async function drawEdges() {
+      const ticket = ++edgeTicket;
       for (const entry of layers.values()) { entry.outline?.remove(); entry.outline = null; }
       clearBadges('edge');
       if (!show.edge) return;
-      for (const cell of await mgCells()) {
+      const list = await mgCells();
+      if (ticket !== edgeTicket || !show.edge) return;
+      for (const cell of list) {
         const region = regionOf(cell);
         if (region.found) drawOutline(cell, region); else badge(cell.v, 'edge', '경계를 찾지 못했습니다');
       }
@@ -952,6 +979,7 @@
 
     // ── Events ──
     const listen = (type, fn) => { if (type) document.addEventListener(type, fn, { capture: true, signal }); };
+    listen(events.IMAGE_RENDERED, lensRedraw);
     listen(events.CAMERA_MODIFIED, event => { cameraChanged(event); if (event.detail?.viewportId) quadrantCamera(event.detail.viewportId); if (show.edge) drawEdges(); });
     window.addEventListener('kin-viewer-tool-run', event => { invertRun(event).catch(error => console.error(error)); }, { signal });
     listen(events.STACK_NEW_IMAGE, event => { tomoImage(event); const id = event.detail?.viewportId; if (id) cellImage(id); });
@@ -990,6 +1018,7 @@
       abort.abort(); dprQuery?.removeEventListener?.('change', onDpr);
       for (const timer of timers) clearInterval(timer);
       if (cameraFrame) cancelAnimationFrame(cameraFrame);
+      if (lensFrame) cancelAnimationFrame(lensFrame);
       for (const subscription of subscriptions) try { subscription?.unsubscribe?.(); } catch (_) {}
       for (const entry of layers.values()) entry.node.remove();
       layers.clear(); style.remove();

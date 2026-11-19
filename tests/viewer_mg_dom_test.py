@@ -80,7 +80,7 @@ CELLS = """() => {
       setProperties(p) { Object.assign(this.props, structuredClone(p)); event(element, 'CORNERSTONE_VOI_MODIFIED', id); },
       setVOI(range) { this.props.voiRange = { ...range }; this.tf.nodes = [[range.lower, 0, 0, 0, 0.5, 0], [range.upper, 1, 1, 1, 0.5, 0]]; event(element, 'CORNERSTONE_VOI_MODIFIED', id); },
       getDefaultActor() { return { actor: { getProperty: () => ({ getRGBTransferFunction: () => tf }) } }; },
-      render() { synRenders[id]++; },
+      render() { synRenders[id]++; event(element, 'CORNERSTONE_IMAGE_RENDERED', id); },
       show(index) { this.index = index; scalars.data = synSlices[index]; event(element, 'CORNERSTONE_STACK_NEW_IMAGE', id); } };
     views.set(id, v);
   }
@@ -104,7 +104,7 @@ CELLS = """() => {
   // cornerstone stand-ins: metadata, events, jumpToSlice and the image loader of the DBT stack.
   const uidOf = imageId => { const [, id, k] = imageId.split(':'); const v = views.get(id); return { v, sop: v.series + '.' + (Number(k) + 1) }; };
   window.synJumps = [];
-  window.cornerstone = { Enums: { Events: { STACK_NEW_IMAGE: 'CORNERSTONE_STACK_NEW_IMAGE', CAMERA_MODIFIED: 'CORNERSTONE_CAMERA_MODIFIED', VOI_MODIFIED: 'CORNERSTONE_VOI_MODIFIED' } },
+  window.cornerstone = { Enums: { Events: { STACK_NEW_IMAGE: 'CORNERSTONE_STACK_NEW_IMAGE', CAMERA_MODIFIED: 'CORNERSTONE_CAMERA_MODIFIED', VOI_MODIFIED: 'CORNERSTONE_VOI_MODIFIED', IMAGE_RENDERED: 'CORNERSTONE_IMAGE_RENDERED' } },
     metaData: { get(type, imageId) { const { v, sop } = uidOf(imageId);
       if (type === 'instance') return { SOPInstanceUID: sop, StudyInstanceUID: v.info.study, SeriesInstanceUID: v.series, Modality: 'MG', NumberOfFrames: 1 };
       if (type === 'imagePlaneModule') { const k = Number(imageId.split(':')[2]);
@@ -823,11 +823,22 @@ class ViewerMgDOMTest(unittest.TestCase):
       const p = [[cx - 240, 150], [cx + 240, 150], [right ? 399 : 0, 30], [right ? 399 : 0, 270]].map(([x, y]) => v.worldToCanvas([Math.min(399, Math.max(0, x)), y, 0]));
       return [id, [Math.min(...p.map(q => q[0])), Math.min(...p.map(q => q[1])), Math.max(...p.map(q => q[0])), Math.max(...p.map(q => q[1]))]]; }))"""
 
+    # A GE synthetic 2D view (Senographe Pristina V-Preview, a one-frame breast tomosynthesis object marked GENERATED_2D):
+    # the synthetic header of the vendor rule case VENDOR-GE-GENERATED-BTO12, R CC.
+    GE_SYNTHETIC_2D = r'''{"20500020":{"vr":"CS","Value":["IDENTITY"]},"52009229":{"vr":"SQ","Value":[{"00289110":{"vr":"SQ","Value":[{"00280030":{"vr":"DS","Value":[0.085,0.085]},"00180050":{"vr":"DS","Value":[1]}}]},"00209116":{"vr":"SQ","Value":[{"00200037":{"vr":"DS","Value":[0,1,0,1,0,0]}}]},"00289132":{"vr":"SQ","Value":[{"00281050":{"vr":"DS","Value":[733]},"00281051":{"vr":"DS","Value":[1300]}}]},"00209071":{"vr":"SQ","Value":[{"00209072":{"vr":"CS","Value":["R"]}}]},"00289145":{"vr":"SQ","Value":[{"00281052":{"vr":"DS","Value":[0]},"00281053":{"vr":"DS","Value":[1]},"00281054":{"vr":"LO","Value":["US"]}}]}}]},
+      "52009230":{"vr":"SQ","Value":[{"00209113":{"vr":"SQ","Value":[{"00200032":{"vr":"DS","Value":[0,0,0]}}]},"00189504":{"vr":"SQ","Value":[{"00089007":{"vr":"CS","Value":["DERIVED","PRIMARY","TOMOSYNTHESIS","GENERATED_2D"]},"00089206":{"vr":"CS","Value":["SAMPLED"]},"00089207":{"vr":"CS","Value":["TOMOSYNTHESIS"]},"00089205":{"vr":"CS","Value":["MONOCHROME"]}}]},"00209111":{"vr":"SQ","Value":[{"00209057":{"vr":"UL","Value":[1]},"00209056":{"vr":"SH","Value":["1"]}}]}}]},
+      "00080016":{"vr":"UI","Value":["1.2.840.10008.5.1.4.1.1.13.1.3"]},"00080060":{"vr":"CS","Value":["MG"]},"00080008":{"vr":"CS","Value":["DERIVED","PRIMARY","TOMOSYNTHESIS","GENERATED_2D"]},
+      "00080070":{"vr":"LO","Value":["GE MEDICAL SYSTEMS"]},"00081090":{"vr":"LO","Value":["Senographe Pristina"]},"00181020":{"vr":"LO","Value":["10.x"]},
+      "00100020":{"vr":"LO","Value":["SYNTHETIC-MG-VENDOR"]},"00100010":{"vr":"PN","Value":[{"Alphabetic":"VENDOR^PHANTOM"}]},"00100030":{"vr":"DA","Value":["19700101"]},"00080020":{"vr":"DA","Value":["20261030"]},"00080030":{"vr":"TM","Value":["120000"]},
+      "00200013":{"vr":"IS","Value":[1]},"00200011":{"vr":"IS","Value":[1]},"00200052":{"vr":"UI","Value":["2.25.2026103019.9"]},"00200062":{"vr":"CS","Value":["R"]},"00200060":{"vr":"CS","Value":["R"]},"00185101":{"vr":"CS","Value":["CC"]},"00281350":{"vr":"CS","Value":["NO"]},
+      "00540220":{"vr":"SQ","Value":[{"00080102":{"vr":"SH","Value":["SCT"]},"00080100":{"vr":"SH","Value":["399162004"]},"00080104":{"vr":"LO","Value":["cranio-caudal"]}}]},
+      "00280002":{"vr":"US","Value":[1]},"00280100":{"vr":"US","Value":[16]},"00280101":{"vr":"US","Value":[12]},"00280102":{"vr":"US","Value":[11]},"00280103":{"vr":"US","Value":[0]},"00280004":{"vr":"CS","Value":["MONOCHROME2"]},
+      "00200020":{"vr":"CS","Value":["P","L"]},"00280030":{"vr":"DS","Value":[0.085,0.085]},"00181164":{"vr":"DS","Value":[0.085,0.085]},"00280008":{"vr":"IS","Value":[1]},
+      "00089206":{"vr":"CS","Value":["SAMPLED"]},"00089207":{"vr":"CS","Value":["TOMOSYNTHESIS"]},"00089205":{"vr":"CS","Value":["MONOCHROME"]}}'''
+
     def ge_synthetic_2d(self):
-        import json, pathlib
-        cases = json.loads((pathlib.Path(__file__).parent / 'emr' / 'e' / 'rule-cases.json').read_text(encoding='utf-8'))
-        cases = cases if isinstance(cases, list) else cases['cases']
-        return next(c for c in cases if c['id'] == 'VENDOR-GE-GENERATED-BTO12')['input']['dicom']
+        import json
+        return json.loads(self.GE_SYNTHETIC_2D)
 
     def test_04b_magnifier_under_the_cell_header_row_magnifies_the_place_pressed_in_every_linked_cell(self):
         page = self.open()
@@ -862,15 +873,56 @@ class ViewerMgDOMTest(unittest.TestCase):
         expect(page.locator('#pane-rcc .kin-mg-capture')).to_have_count(1)
         # The header row comes after the Magnifier was turned on; a filter is put on the cell's canvas (Display › Filter).
         page.evaluate(self.HEADER)
-        page.evaluate("() => { synViews.get('rcc').canvas.style.filter = 'contrast(1.5)'; }")
+        page.evaluate("() => { synViews.get('rcc').canvas.style.filter = 'invert(1)'; }")
         page.wait_for_function("() => { const a = document.querySelector('#pane-rcc .kin-mg-stage').getBoundingClientRect(), b = document.querySelector('#pane-rcc .viewport-element').getBoundingClientRect(); return a.top === b.top && a.height === b.height; }")
         image = page.locator('#pane-rcc .viewport-element').bounding_box()
         page.mouse.move(image['x'] + 50, image['y'] + 40); page.mouse.down()
         lens = page.locator('#pane-rcc .kin-mg-lens')
         expect(lens).to_have_attribute('data-at', '50,40')
-        self.assertEqual('contrast(1.5)', page.evaluate("() => document.querySelector('#pane-rcc .kin-mg-lens canvas').style.filter"))
-        self.assertEqual([255, 0, 0, 255], page.evaluate("() => { const c = document.querySelector('#pane-rcc .kin-mg-lens canvas'); return [...c.getContext('2d').getImageData(c.width / 2, c.height / 2, 1, 1).data]; }"))
+        # The lens shows the filtered screen (the red dot inverted), the filter not put on it a second time.
+        self.assertEqual('', page.evaluate("() => document.querySelector('#pane-rcc .kin-mg-lens canvas').style.filter"))
+        self.assertEqual([0, 255, 255, 255], page.evaluate("() => { const c = document.querySelector('#pane-rcc .kin-mg-lens canvas'); return [...c.getContext('2d').getImageData(c.width / 2, c.height / 2, 1, 1).data]; }"))
         page.mouse.up()
+
+    def test_04d_a_cell_drawn_again_while_the_magnifier_is_held_shows_in_the_lens_at_once(self):
+        page = self.open()
+        page.evaluate("() => { const g = synViews.get('rcc').canvas.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, 200, 150); g.fillStyle = '#f00'; g.fillRect(47, 37, 6, 6); }")
+        self.menu(page, 'Magnifier')
+        box = page.locator('#pane-rcc .viewport-element').bounding_box()
+        page.mouse.move(box['x'] + 50, box['y'] + 40); page.mouse.down()
+        middle = "() => { const c = document.querySelector('#pane-rcc .kin-mg-lens canvas'); return [...c.getContext('2d').getImageData(c.width / 2, c.height / 2, 1, 1).data]; }"
+        page.wait_for_function("() => document.querySelector('#pane-rcc .kin-mg-lens')")
+        self.assertEqual([255, 0, 0, 255], page.evaluate(middle))
+        # The pointer stays; the cell is drawn again (an Invert, a window change): the lens follows without a move.
+        page.evaluate("() => { const v = synViews.get('rcc'), g = v.canvas.getContext('2d'); g.fillStyle = '#00f'; g.fillRect(47, 37, 6, 6); v.render(); }")
+        page.wait_for_function(middle.replace('return [...', 'const d = [...').replace('.data]; }', '.data]; return d[2] === 255 && d[0] === 0; }'))
+        page.mouse.up()
+        expect(page.locator('.kin-mg-lens')).to_have_count(0)
+
+    def test_03e_an_invert_undone_by_reset_while_the_headers_are_read_is_not_carried_and_two_inverts_are_both_carried(self):
+        page = self.open()
+        page.evaluate("() => { window.synMetadataDelay = 500; synActive = 'rcc'; }")
+        self.menu(page, 'Mirrored')
+        panel = page.get_by_role('dialog', name='Mirrored')
+        page.evaluate("() => synToolbar.invoke('invert')")
+        panel.get_by_role('button', name='Reset').click()
+        page.wait_for_function("() => document.querySelector('#pane-plcc [data-mg-badge=mirrored]')")
+        page.wait_for_timeout(300)
+        self.assertEqual([False, False, False], page.evaluate("() => ['rcc', 'lcc', 'prcc'].map(id => synViews.get(id).props.invert)"))
+        # Two Inverts before the answer: both are carried (the linked cells end where the source is).
+        page.evaluate("() => { synMetadataDelay = 0; synToolbar.invoke('invert'); synToolbar.invoke('invert'); synToolbar.invoke('invert'); }")
+        page.wait_for_function("() => synViews.get('lcc').props.invert && synViews.get('prcc').props.invert")
+        page.wait_for_timeout(200)
+        self.assertEqual([True, True, True], page.evaluate("() => ['rcc', 'lcc', 'prcc'].map(id => synViews.get(id).props.invert)"))
+
+    def test_08d_breast_edge_turned_off_while_the_headers_are_read_draws_nothing(self):
+        page = self.open()
+        page.evaluate("() => { window.synMetadataDelay = 500; }")
+        self.menu(page, 'Breast Display')
+        edge = page.get_by_role('dialog', name='Breast Display').get_by_role('button', name='Breast Edge')
+        edge.click(); edge.click()
+        page.wait_for_timeout(1000)
+        expect(page.locator('.kin-mg-outline')).to_have_count(0)
 
     def test_07d_breast_edge_is_drawn_again_for_the_slab_and_for_the_slice_it_gives_back(self):
         page = self.open()
@@ -992,9 +1044,18 @@ class ViewerMgDOMTest(unittest.TestCase):
             self.assertTrue(left >= -0.5 and top >= -0.5 and right <= 200.5 and bottom <= 150.5, (cell, skin[cell]))
         self.assertGreater(lengths[0], 100)
         # A cell whose scale cannot be read is left as it is, and the status says so (not that every cell was matched).
-        page.evaluate("() => { synViews.get('lcc').worldToCanvas = () => [NaN, NaN]; }")
+        page.evaluate("() => { const v = synViews.get('lcc'); v.synWorldToCanvas = v.worldToCanvas; v.worldToCanvas = () => [NaN, NaN]; }")
         panel.get_by_role('button', name='Match Size').click()
         expect(panel.locator('[role=status]')).to_contain_text('Current · L CC')
+        # A cell of no height (its breast cannot be fitted in it) sets no length: the others keep theirs, and it is named.
+        page.evaluate("() => { const v = synViews.get('lcc'); v.worldToCanvas = v.synWorldToCanvas; v.setZoom(0.25); v.element.style.height = '0px'; }")
+        page.evaluate("() => { document.querySelector('#pane-prcc [data-mg-badge=zoom]').textContent = ''; }")
+        panel.get_by_role('button', name='Match Size').click()
+        page.wait_for_function("() => document.querySelector('#pane-prcc [data-mg-badge=zoom]')?.textContent === 'Zoom mode: Match Size'")
+        expect(panel.locator('[role=status]')).to_contain_text('Current · L CC')
+        skin = page.evaluate(self.SKIN, ['rcc', 'prcc', 'plcc'])
+        for cell in ['rcc', 'prcc', 'plcc']:
+            self.assertAlmostEqual(lengths[0], skin[cell][2] - skin[cell][0], delta=2.5)
 
     def keypad(self, page):
         self.menu(page, 'Mammo Keypad')

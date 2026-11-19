@@ -144,6 +144,22 @@ test('detect: the region reaches the skin line through the fat, not only the den
   const labelled = fattyPhantom(columns, rows);
   for (let y = 700; y < 780; y++) for (let x = 20; x < 180; x++) labelled[y * columns + x] = 4095;
   assert.deepEqual(M.detect(labelled, columns, rows).box, M.detect(fattyPhantom(columns, rows), columns, rows).box);
+  // The window counts the breast's own pixels: the air in a grid cell on the skin line does not pull it down (fat is 14 … 26).
+  const plain = fattyPhantom(columns, rows), region = M.detect(plain, columns, rows);
+  assert.ok(M.regionWindow(plain, columns, rows, region).lower >= 14, JSON.stringify(M.regionWindow(plain, columns, rows, region)));
+  const m1 = fattyPhantom(columns, rows, { monochrome1: true }), r1 = M.detect(m1, columns, rows, { monochrome1: true });
+  assert.ok(M.regionWindow(m1, columns, rows, r1).upper <= 255 - 14, JSON.stringify(M.regionWindow(m1, columns, rows, r1)));
+  // Dense tissue over much of the image (air 20 %, fat 40 %, dense 40 %): the edge is still the skin line, not the dense part.
+  const dense = new Uint16Array(columns * rows);
+  for (let y = 0; y < rows; y++) for (let x = 0; x < columns; x++) dense[y * columns + x] = x < 120 ? 0 : x < 360 ? 20 + ((x * 7 + y * 13) % 13) - 6 : 150;
+  assert.ok(Math.abs(M.detect(dense, columns, rows).box.x0 - 120) <= 4, JSON.stringify(M.detect(dense, columns, rows).box));
+  // The nipple in profile (24 px wide, 60 px out from the skin line, narrower than the opening) stays part of the breast.
+  const big = 2000, nipple = new Uint16Array(big * big);
+  for (let y = 0; y < big; y++) for (let x = 0; x < big; x++) {
+    const dx = (x - big) / 1100, dy = (y - 1000) / 800;
+    nipple[y * big + x] = dx * dx + dy * dy <= 1 || (x >= 840 && x < 910 && Math.abs(y - 1000) < 12) ? 60 : 0;
+  }
+  assert.ok(Math.abs(M.detect(nipple, big, big).box.x0 - 840) <= 8, JSON.stringify(M.detect(nipple, big, big).box));
   // Only a strip along the border (no breast): no region.
   const strip = new Uint16Array(columns * rows);
   for (let y = 0; y < rows; y++) for (let x = columns - 3; x < columns; x++) strip[y * columns + x] = 30;
@@ -194,9 +210,11 @@ test('zoom modes: Fit Breast, 1:1, True Size and Match Size as numbers', () => {
   // The same monitor with the browser at 200 %: twice as many device pixels per CSS pixel, half the zoom.
   assert.ok(Math.abs(M.trueSize({ zoom: 1, perPixel: 0.25, spacing: 0.1, pitch: 0.25, dpr: 2 }) - 0.8) < 1e-12);
   assert.equal(M.trueSize({ zoom: 1, perPixel: 0.25, spacing: 0.1, pitch: 0, dpr: 1 }), null);
-  // Match Size: the shortest shown chest-wall-to-nipple length (b: 300 × 0.5 = 150) is kept; a: 400 × 0.5 = 200 → zoom × 0.75.
+  // Match Size: a cell without the zoom that fits its breast (a cell of no height, say) takes no part and sets no length;
+  // without such a zoom anywhere nothing is matched.
   assert.deepEqual(M.matchSize([{ id: 'a', zoom: 1, perPixel: 0.5, length: 400 }, { id: 'b', zoom: 2, perPixel: 0.5, length: 300 },
-    { id: 'c', zoom: 1, perPixel: 0.5, length: 0 }]), { a: 0.75, b: 2 });
+    { id: 'c', zoom: 1, perPixel: 0.5, length: 0 }]), {});
+  assert.deepEqual(M.matchSize([{ id: 'a', zoom: 1, perPixel: 0.5, length: 400, fit: 2 }, { id: 'z', zoom: 0.25, perPixel: 0.5, length: 300, fit: null }]), { a: 2 });
   // With the zoom that fits each breast whole in its cell: the length is the longest every cell can show whole. a would
   // show 400 at its fit (200 × 2), b 225 (150 × 1.5): both show 225, b at its fit and a below it.
   assert.deepEqual(M.matchSize([{ id: 'a', zoom: 1, perPixel: 0.5, length: 400, fit: 2 }, { id: 'b', zoom: 1, perPixel: 0.5, length: 300, fit: 1.5 }]),

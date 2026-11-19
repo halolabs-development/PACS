@@ -98,10 +98,10 @@
   // shows low values bright, so its values are read the other way round); the threshold is where that peak's slope ends
   // (the triangle method, from the peak to the brightest value), so fat just inside the skin is tissue. Thin strips
   // (a body edge or a paddle edge a few millimetres wide along the image border) are not the breast: an opening of
-  // `open` cells (default 2) cuts them off before the largest 4-connected region is taken, and holes in that region are
-  // part of it. Returns { found, reason?, step, width, height, mask, box, outline, threshold }: mask on the grid, box and
+  // `open` cells (default 2) cuts them off, what it took from the breast's own edge grows back through tissue up to `grow`
+  // cells (default 8), then the largest 4-connected region is taken, and holes in that region are part of it. Returns { found, reason?, step, width, height, mask, box, outline, threshold }: mask on the grid, box and
   // outline (one point at each end of every grid row of the region, top to bottom on the left, then back up on the right)
-  // in image coordinates; threshold in the image's own values.
+  // in image coordinates; threshold in the image's own values (tissue is above it, below it for MONOCHROME1).
   function detect(values, columns, rows, options = {}) {
     const none = reason => ({ found: false, reason });
     if (!values || typeof values.length !== 'number' || !Number.isSafeInteger(columns) || !Number.isSafeInteger(rows) || columns < 2 || rows < 2
@@ -142,11 +142,11 @@
     for (let i = 1; i < BINS / 4; i++) if (histogram[i] > histogram[peak]) peak = i;
     let end = BINS - 1; while (end > peak && !histogram[end]) end--;
     if (end <= peak + 1) return none('flat');
-    // Triangle: the bin farthest below the line from the peak to the brightest bin.
+    // Triangle: the bin farthest below the line from the peak down to nothing past the brightest bin (the line always falls,
+    // so a large bright part of the image - dense tissue, a clamped top - never lifts it).
     let cut = peak, best = -Infinity;
-    const rise = histogram[end] - histogram[peak], run = end - peak;
-    for (let i = peak + 1; i < end; i++) {
-      const distance = histogram[peak] + rise * (i - peak) / run - histogram[i];
+    for (let i = peak + 1; i <= end; i++) {
+      const distance = histogram[peak] * (1 - (i - peak) / (BINS - peak)) - histogram[i];
       if (distance > best) { best = distance; cut = i; }
     }
     const threshold = low + (cut + 0.5) / scale;
@@ -173,7 +173,21 @@
     // Erosion keeps a cell only where every cell around is tissue (outside the image is not); dilation sets a cell where
     // any cell around is, which gives a wide region its edge back, the chest-wall edge too. Only tissue stays tissue.
     // Nothing left (only strips, no breast): no region.
-    tissue = spread(spread(tissue, 1), 0).map((v, i) => v & tissue[i]);
+    const before = tissue;
+    tissue = spread(spread(tissue, 1), 0).map((v, i) => v & before[i]);
+    // What the opening took from the breast's own edge away from the image border (the nipple in profile, a fold of skin)
+    // grows back through tissue, up to `grow` cells (default 8) from what is left. Strips lie along the border: within
+    // `open` + 1 cells of it nothing grows back.
+    const grow = Number.isSafeInteger(options.grow) && options.grow >= 0 ? options.grow : 8;
+    for (let n = 0; n < grow; n++) {
+      const next = tissue.slice();
+      for (let i = 0; i < size; i++) if (before[i] && !tissue[i]) {
+        const x = i % width, y = (i - x) / width;
+        if (x <= open || y <= open || x >= width - 1 - open || y >= height - 1 - open) continue;
+        if ((x > 0 && tissue[i - 1]) || (x < width - 1 && tissue[i + 1]) || (i >= width && tissue[i - width]) || (i + width < size && tissue[i + width])) next[i] = 1;
+      }
+      tissue = next;
+    }
     // The largest 4-connected region.
     const label = new Int32Array(size), queue = new Int32Array(size);
     let bestLabel = 0, bestSize = 0, next = 0;
@@ -213,22 +227,24 @@
       const y = Math.min(rows, (gy + 0.5) * step);
       left.push([first * step, y]); right.push([Math.min(columns, (last + 1) * step), y]);
     }
-    return { found: true, step, width, height, mask, threshold: sign * threshold,
+    return { found: true, step, width, height, mask, threshold: sign * threshold, monochrome1: !!options.monochrome1,
       box: { x0: x0 * step, y0: y0 * step, x1: Math.min(columns, (x1 + 1) * step), y1: Math.min(rows, (y1 + 1) * step) },
       outline: [...left, ...right.reverse()] };
   }
-  // The window of the region's pixels only: the low and high percentiles (default 1 and 99) of every image pixel whose
-  // grid sample is in the region. { lower, upper } or null.
+  // The window of the breast's pixels only: the low and high percentiles (default 1 and 99) of every image pixel that is in
+  // the region and is itself tissue (past the region's threshold: the air in a cell on the skin line does not count).
+  // { lower, upper } or null.
   function regionWindow(values, columns, rows, region, options = {}) {
     if (!region?.found || !values || values.length < columns * rows) return null;
     const lowP = finite(options.low) ? options.low : 0.01, highP = finite(options.high) ? options.high : 0.99;
     const { step, width, mask } = region;
     let low = Infinity, high = -Infinity, count = 0;
+    const tissue = finite(region.threshold) ? (region.monochrome1 ? v => v < region.threshold : v => v > region.threshold) : () => true;
     const inside = (x, y) => mask[Math.floor(y / step) * width + Math.floor(x / step)] === 1;
     for (let y = 0; y < rows; y++) for (let x = 0; x < columns; x++) {
       if (!inside(x, y)) continue;
       const value = Number(values[y * columns + x]);
-      if (!finite(value)) continue;
+      if (!finite(value) || !tissue(value)) continue;
       if (value < low) low = value; if (value > high) high = value; count++;
     }
     if (!count) return null;
@@ -239,7 +255,7 @@
     for (let y = 0; y < rows; y++) for (let x = 0; x < columns; x++) {
       if (!inside(x, y)) continue;
       const value = Number(values[y * columns + x]);
-      if (finite(value)) histogram[Math.round((value - low) * scale)]++;
+      if (finite(value) && tissue(value)) histogram[Math.round((value - low) * scale)]++;
     }
     const at = fraction => {
       const wanted = fraction * (count - 1);
@@ -282,13 +298,13 @@
   }
   // Match Size: the cells of one view show the breast's chest-wall-to-nipple length (length: image pixels across the
   // breast box) at the same screen length — the longest at which every breast is still whole in its cell (fit: the zoom
-  // that fits that cell's breast box in it, as Fit Breast; a cell without one counts with the length it shows now).
-  // cells: [{ id, zoom, perPixel, length, fit? }] → { [id]: zoom }, only for cells with zoom, perPixel and length.
+  // that fits that cell's breast box in it, as Fit Breast). A cell without all of zoom, perPixel, length and fit takes no
+  // part (it is not matched and sets no length). cells: [{ id, zoom, perPixel, length, fit }] → { [id]: zoom }.
   function matchSize(cells) {
-    const usable = (Array.isArray(cells) ? cells : []).filter(cell => [cell?.zoom, cell?.perPixel, cell?.length].every(positive));
+    const usable = (Array.isArray(cells) ? cells : []).filter(cell => [cell?.zoom, cell?.perPixel, cell?.length, cell?.fit].every(positive));
     if (!usable.length) return {};
     const shown = usable.map(cell => cell.length * cell.perPixel);
-    const target = Math.min(...usable.map((cell, i) => positive(cell.fit) ? shown[i] * cell.fit / cell.zoom : shown[i]));
+    const target = Math.min(...usable.map((cell, i) => shown[i] * cell.fit / cell.zoom));
     return Object.fromEntries(usable.map((cell, i) => [cell.id, cell.zoom * target / shown[i]]));
   }
   // The basis of an image's spacing (mg-length.js): the True Size label.
