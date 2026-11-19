@@ -1150,6 +1150,52 @@ class RelatedModePage(unittest.TestCase):
         self.assertFalse(self.js("reportConverge.has(selectedUid)"))
         self.assertEqual(self.whole(), self.value())
 
+    # The notice band's one line, the notice row and each shown button of the row (whole inside the band and the window, the
+    # one on top at its centre), without scrolling the band.
+    NOTICE_BUTTONS = """() => { const band = document.getElementById('report-notices'), b = band.getBoundingClientRect(), out = {};
+      for (const e of document.querySelectorAll('#report-notice > button')) { if (getComputedStyle(e).display === 'none') continue;
+        const r = e.getBoundingClientRect(), hit = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2);
+        out[e.textContent.trim()] = {inside: r.top >= b.top - 0.5 && r.bottom <= b.bottom + 0.5 && r.left >= b.left - 0.5 && r.right <= b.right + 0.5
+          && r.bottom <= innerHeight && r.top >= 0, top: hit === e || e.contains(hit)}; }
+      return {band: b.height, scroll: band.scrollTop, buttons: out,
+              words: (r => r.top >= b.top - 0.5 && r.top + 8 <= b.bottom)(document.getElementById('report-notice-msg').getBoundingClientRect())}; }"""
+
+    def test_f81_the_notice_buttons_stand_in_the_band_line_in_every_window(self):
+        """F81: an explicit Related insert whose answer was lost (Result Unknown: Retry, Check, Stay) or that the server refused
+        (Retry, Discard Insert, Stay) is told in the notice band above the editor, whose height is one notice line. The words
+        took the whole row and the buttons went to a line below the band in every window (1920x1080 too). Each shown button
+        is now whole inside the band's line and on top, the words' first line beside them, the band at its one line and not
+        scrolled: the worklist layout at 1920x1080 and 1400x900, the Reading Workspace in a laptop's Chrome window (1366x640)."""
+        cases = [((1920, 1080), False), ((1400, 900), False), ((1366, 640), True)]
+        for (width, height), reading in cases:
+            for outcome in ("lost", "refused"):
+                with self.subTest(window=f"{width}x{height}{' reading' if reading else ''}", outcome=outcome):
+                    self.tearDown()
+                    self.setUp()
+                    self.page.set_viewport_size({"width": width, "height": height})
+                    self.open()
+                    self.open_target()
+                    if reading:
+                        self.enter_reading()
+                    band = self.page.locator("#report-notices").bounding_box()["height"]
+                    self.enter()
+                    if outcome == "lost":
+                        self.site.related_answers = ["lost"]
+                    else:
+                        self.site.refuse_reason = "TARGET_HELD"
+                    self.insert()
+                    expect(self.notice()).to_contain_text("Result Unknown" if outcome == "lost" else "Save Failed")
+                    self.settle(200)
+                    seen = self.js(self.NOTICE_BUTTONS)
+                    names = {"lost": {"Retry", "Check", "Stay"}, "refused": {"Retry", "Discard Insert", "Stay"}}[outcome]
+                    self.assertEqual(names, set(seen["buttons"]), f"the notice's buttons {seen}")
+                    for label, b in seen["buttons"].items():
+                        self.assertTrue(b["inside"], f"{label} whole inside the band's line {seen}")
+                        self.assertTrue(b["top"], f"{label} on top at its centre {seen}")
+                    self.assertTrue(seen["words"], f"the words' first line in the band {seen}")
+                    self.assertEqual(0, seen["scroll"], "the band is not scrolled")
+                    self.assertAlmostEqual(band, seen["band"], delta=0.5, msg="the band keeps its one line")
+
     def test_w5_same_text_without_a_receipt_is_never_saved(self):
         """The server holds the very proposal text but has no receipt (another window wrote it): Check finds RECEIPT_ABSENT
         and the operation stays unknown — text equality is not the receipt."""

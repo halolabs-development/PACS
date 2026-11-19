@@ -623,6 +623,20 @@
       container-type: inline-size; }
     .report-notices > .draftbar { flex-wrap: wrap; align-items: safe center; }
     .report-notices > .draftbar button { white-space: nowrap; }
+    /* The notice of a move or a Related Report insert that did not go through (#report-notice: Retry, Check, Discard Insert,
+       Stay). Its words were one flex item as wide as the row, so in every window its buttons went to a line below the
+       band's one line (1920x1080 too: "Result Unknown" took two lines) and the reader saw the words without the buttons,
+       or the middle of them. The words keep at least a short first line (6em: the start of the state's name) beside the buttons and wrap in their own
+       column; the buttons stand at the top of the row, on its first line, wherever that line has room for them, and where it
+       has not (a narrow column beside the question notices) they go down one by one, each whole, as the band scrolls. */
+    .report-notices > #report-notice { align-items: flex-start; }
+    #report-notice > #report-notice-msg { flex: 1 1 6em; min-width: 0; }
+    #report-notice > .spacer { display: none; }
+    #report-notice > button { flex: none; }
+    /* While that notice is shown (report-editor.js renderReportNotice writes its display) the question and request notices
+       beside it (#report-alerts, below) take at most a quarter of the band, not 40%: in the Reading column they left the row
+       233px and Stay went below the line. Their words are short and whole in their tooltips. */
+    #report-notices:has(> #report-notice[style*="flex"]) > #report-alerts { max-width: 25cqw; }
     /* W4 숨긴 Recommendation의 읽기 전용 띠 — 안내줄과 같은 등급, 펼쳐도 판독문 칸을 밀어내지 않게 글은 짧게 스크롤한다. */
     .recnote { flex: none; padding: 3px 10px; background: #1f2530; border-top: 1px solid #3a4356; color: #c3cad6; font-size: 11px; }
     #recnote { white-space: nowrap; overflow-x: auto; }
