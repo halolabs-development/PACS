@@ -147,6 +147,10 @@ class ProductInfoDomTest(unittest.TestCase):
             if local.is_file():
                 kind = "text/css" if local.suffix == ".css" else "application/javascript" if local.suffix == ".js" else "text/html"
                 return route.fulfill(path=str(local), content_type=kind + "; charset=utf-8")
+        if path.startswith("/worklist/hpacs-lite/") and path.endswith((".svg", ".png")):
+            local = HPACS / path[len("/worklist/hpacs-lite/"):]
+            if local.is_file():
+                return route.fulfill(path=str(local), content_type="image/svg+xml" if local.suffix == ".svg" else "image/png")
         if path.startswith("/kin-brand/"):
             return route.fulfill(status=404, body="")
         self.unexpected.append(f"{route.request.method} {path}")
@@ -341,7 +345,7 @@ class ProductInfoDomTest(unittest.TestCase):
         notices = next(s for s in panel["sections"] if s["heading"] == "Notices")
         self.assertEqual([(n["label"], n["href"]) for n in MODEL["notices"]],
                          [(link["text"], link["href"]) for link in notices["links"]])
-        titles = {"privacy": "KIN 개인정보 처리방침", "operator": "사업자·운영자 고지",
+        titles = {"privacy": "HALO PACS 개인정보 처리방침", "operator": "사업자·운영자 고지",
                   "open-source": "Open Source Notices", "accessibility": "접근성 안내"}
         for notice in MODEL["notices"]:
             with self.subTest(notice=notice["id"]):

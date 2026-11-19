@@ -10,7 +10,7 @@
  * [KIN 추가] 표시가 붙은 부분만 기본값과 다름.
  */
 
-const KIN_VIEWER_DEFAULT_TITLE = '판독 뷰어 — KOREA IMAGING NETWORK';
+const KIN_VIEWER_DEFAULT_TITLE = '판독 뷰어 — HALO PACS';
 const KIN_VIEWER_PRODUCT = 'KIN Viewer';
 
 // Consume the opener-less handoff before loading any other script. Neither the address nor

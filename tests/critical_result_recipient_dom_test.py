@@ -1763,7 +1763,7 @@ class CriticalResultRecipientDOMTest(unittest.TestCase):
         self.me = me(CLIN_B, ["clinician"])
         count = len(self.log)
         # The landing keeps A's logout (confirmed) and enters nothing by itself; B presses its login control.
-        expect(self.page.locator("#msg")).to_have_text("이 브라우저의 KIN 로그인 세션을 끝냈습니다. 다시 사용하려면 로그인해 주세요.")
+        expect(self.page.locator("#msg")).to_have_text("이 브라우저의 HALO PACS 로그인 세션을 끝냈습니다. 다시 사용하려면 로그인해 주세요.")
         self.assertEqual(ORIGIN + BASE + "index.html", self.page.url)
         self.page.get_by_role("button", name="HALO PACS 계정으로 로그인").click()
         self.page.wait_for_url(ORIGIN + BASE + "clinician.html")
