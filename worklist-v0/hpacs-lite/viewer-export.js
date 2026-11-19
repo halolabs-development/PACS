@@ -31,9 +31,11 @@ window.KinViewerExport = (() => {
     // (A -> B -> A) is not the cell this action started on. New stacks and grid changes are watched until release().
     let moved = false;
     const restacked = () => { moved = true; };
-    const stack = window.cornerstone?.Enums?.Events?.STACK_NEW_STACK || 'CORNERSTONE_STACK_NEW_STACK';
+    // A new stack in the same viewport: the older event name and the one the viewer's Cornerstone sends.
+    const events = window.cornerstone?.Enums?.Events || {};
+    const stacks = [...new Set([events.STACK_NEW_STACK || 'CORNERSTONE_STACK_NEW_STACK', events.VIEWPORT_NEW_IMAGE_SET || 'CORNERSTONE_VIEWPORT_NEW_IMAGE_SET'])];
     const sets = id => JSON.stringify(grid.getState?.()?.viewports?.get?.(id)?.displaySetInstanceUIDs ?? null);
-    cells.forEach(cell => { cell.sets = sets(cell.id); cell.viewport.element.addEventListener(stack, restacked); });
+    cells.forEach(cell => { cell.sets = sets(cell.id); stacks.forEach(stack => cell.viewport.element.addEventListener(stack, restacked)); });
     const watched = Object.values(grid.EVENTS || {}).map(event => grid.subscribe?.(event, () => {
       if (cells.some(cell => sets(cell.id) !== cell.sets)) moved = true;
     }));
@@ -42,7 +44,7 @@ window.KinViewerExport = (() => {
       viewports.getCornerstoneViewport(cell.id) === cell.viewport && cell.viewport.element?.isConnected &&
       JSON.stringify(cell.viewport.getImageIds?.() || []) === cell.imageIds && (moving || cell.viewport.getCurrentImageIdIndex?.() === cell.index));
     const release = () => {
-      cells.forEach(cell => cell.viewport.element.removeEventListener(stack, restacked));
+      cells.forEach(cell => stacks.forEach(stack => cell.viewport.element.removeEventListener(stack, restacked)));
       watched.forEach(subscription => subscription?.unsubscribe?.());
     };
     return { cells, same, release };
@@ -118,9 +120,12 @@ window.KinViewerExport = (() => {
       context.restore();
     }
   }
-  // One canvas for the given cells, at the image canvases' own pixel density.
+  // One canvas for the given cells, at the image canvases' own pixel density. A cell that has no image to show
+  // (folded away, hidden, no visible image canvas) is not drawn as a black picture: nothing is made.
   async function render(cells) {
     const rects = cells.map(cell => cell.pane.getBoundingClientRect());
+    if (cells.some((cell, index) => !rects[index].width || !rects[index].height || !visible(cell.pane) ||
+        ![...cell.pane.querySelectorAll('canvas')].some(visible))) throw new Error('영상 칸이 보이지 않아 내보내지 못했습니다. 다시 시도하세요.');
     const region = { left: Math.min(...rects.map(r => r.left)), top: Math.min(...rects.map(r => r.top)) };
     region.width = Math.max(...rects.map(r => r.right)) - region.left; region.height = Math.max(...rects.map(r => r.bottom)) - region.top;
     const densities = cells.flatMap(cell => [...cell.pane.querySelectorAll('canvas')].filter(visible)
@@ -184,6 +189,8 @@ window.KinViewerExport = (() => {
   }
 
   // File names carry no patient data: what, the series number when the image states it, and the local time.
+  // A download is handed to the browser, which may still refuse or cancel it; so a notice says the file was made and its
+  // download started, never that it is on the disk.
   const stamp = () => { const d = new Date(), two = n => String(n).padStart(2, '0');
     return d.getFullYear() + two(d.getMonth() + 1) + two(d.getDate()) + '-' + two(d.getHours()) + two(d.getMinutes()) + two(d.getSeconds()); };
   const seriesName = viewport => {
@@ -230,16 +237,26 @@ window.KinViewerExport = (() => {
   // Show one image of a stack: the viewport has set that image (its own promise) and then drawn while showing
   // it, and two more frames passed so the measurement layer and the image text follow. A draw of anything else
   // does not end the wait. The call in flight is kept, so a stop can let it land before anything else moves.
+  // The image whose pixels the cell shows: the index moves before its image arrives, and a failed load can leave the
+  // previous image on the canvas at the new index, so only the image Cornerstone drew counts.
+  const drawnImage = viewport => typeof viewport.getCornerstoneImage === 'function' ? viewport.getCornerstoneImage()?.imageId : undefined;
+  const NOT_LOADED = '영상을 불러오지 못해 내보내기를 멈췄습니다.';
   function show(viewport, index, flight) {
     if (viewport.getCurrentImageIdIndex() === index) return frames(2);
-    const event = window.cornerstone?.Enums?.Events?.IMAGE_RENDERED || 'CORNERSTONE_IMAGE_RENDERED';
+    const cornerstone = window.cornerstone, events = cornerstone?.Enums?.Events || {};
+    const event = events.IMAGE_RENDERED || 'CORNERSTONE_IMAGE_RENDERED', wanted = viewport.getImageIds?.()?.[index];
+    const failures = [events.IMAGE_LOAD_FAILED, events.IMAGE_LOAD_ERROR].filter(Boolean), target = cornerstone?.eventTarget;
     const set = Promise.resolve().then(() => viewport.setImageIdIndex(index));
     flight.index = index; flight.call = set.catch(() => {});
     return new Promise((resolve, reject) => {
       let over = false;
-      const stop = () => { over = true; clearTimeout(timer); viewport.element.removeEventListener(event, drawn); };
-      const drawn = () => { if (viewport.getCurrentImageIdIndex() !== index) return; stop(); frames(2).then(resolve); };
-      const timer = setTimeout(() => { stop(); reject(new Error('영상을 불러오지 못해 내보내기를 멈췄습니다.')); }, options.loadTimeout);
+      const stop = () => { over = true; clearTimeout(timer); viewport.element.removeEventListener(event, drawn);
+        failures.forEach(name => target?.removeEventListener?.(name, failed)); };
+      const drawn = () => { if (viewport.getCurrentImageIdIndex() !== index || drawnImage(viewport) !== wanted) return; stop(); frames(2).then(resolve); };
+      // A load that failed for this image (and was not loaded since) ends the wait at once.
+      const failed = notice => { if (notice?.detail?.imageId !== wanted || cornerstone?.cache?.getImage?.(wanted)) return; stop(); reject(new Error(NOT_LOADED)); };
+      const timer = setTimeout(() => { stop(); reject(new Error(NOT_LOADED)); }, options.loadTimeout);
+      failures.forEach(name => target?.addEventListener?.(name, failed));
       // A show that already ended (timed out) adds no listener when its call lands later.
       set.then(() => { if (over) return; viewport.element.addEventListener(event, drawn); viewport.render?.(); }, error => { stop(); reject(error); });
     });
@@ -275,6 +292,8 @@ window.KinViewerExport = (() => {
         for (let index = 0; index < ids.length; index++) {
           check(); say?.(verb + ' ' + (index + 1) + '/' + ids.length + ' · Esc로 멈춤');
           await show(viewport, index, flight); shown = index; check();
+          // Every exported image is the series image it stands for, never the one shown before it.
+          if (drawnImage(viewport) !== ids[index]) throw new Error(NOT_LOADED);
           const canvas = await render(target.cells); check();
           await each(canvas, index, ids.length); check();
         }
@@ -308,7 +327,7 @@ window.KinViewerExport = (() => {
     try {
       const file = await blob(await render(target.cells), 'image/jpeg', 0.92);
       if (!target.same()) throw changed();
-      download(file, 'image-' + stamp() + '.jpg'); tell(services, 'JPEG 파일로 저장했습니다.', 'success'); return true;
+      download(file, 'image-' + stamp() + '.jpg'); tell(services, 'JPEG 파일을 만들어 내려받기를 시작했습니다.', 'success'); return true;
     } catch (error) { tell(services, failure(error), 'error'); return false; }
     finally { target.release(); }
   }
@@ -323,7 +342,7 @@ window.KinViewerExport = (() => {
         download(file, seriesName(target.cells[0].viewport) + '-' + stamp() + '.zip'); return true;
       });
       if (!target) return false;
-      tell(services, '시리즈 영상 ' + files.length + '장을 JPEG로 저장했습니다.', 'success'); return true;
+      tell(services, '시리즈 영상 ' + files.length + '장을 JPEG 파일로 만들어 내려받기를 시작했습니다.', 'success'); return true;
     } catch (error) { tell(services, failure(error), error instanceof Stopped ? 'warning' : 'error'); return false; }
   }
 
@@ -358,13 +377,20 @@ window.KinViewerExport = (() => {
     throw last?.message === SHORT ? last : new Error(tried ? UNMADE : NO_VIDEO);
   }
   async function encodeWith(config, container, images, fps, check, say) {
-    const chunks = []; let failed = null, description = null;
+    // The decoder setup the encoder gives with its first frame; one that is empty (H.264) or changes later cannot be
+    // written as the single setup of the file.
+    const chunks = []; let failed = null, setup = null, unsteady = false;
+    const copy = data => new Uint8Array(ArrayBuffer.isView(data) ? data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) : data.slice(0));
+    const same = (one, two) => one.length === two.length && one.every((value, index) => value === two[index]);
     const encoder = new window.VideoEncoder({
       output: (chunk, metadata) => {
         const data = new Uint8Array(chunk.byteLength); chunk.copyTo(data);
         chunks.push({ data, key: chunk.type === 'key', time: chunk.timestamp });
-        const given = metadata?.decoderConfig?.description;
-        if (given && !description) description = new Uint8Array(ArrayBuffer.isView(given) ? given.buffer.slice(given.byteOffset, given.byteOffset + given.byteLength) : given.slice(0));
+        const given = metadata?.decoderConfig;
+        if (!given) return;
+        const next = { ...given, description: given.description ? copy(given.description) : undefined };
+        if (!setup) setup = next;
+        else if (next.codec !== setup.codec || !same(next.description || [], setup.description || [])) unsteady = true;
       },
       error: error => { failed = error || new Error(UNMADE); } });
     const canvas = document.createElement('canvas'); canvas.width = config.width; canvas.height = config.height;
@@ -383,14 +409,37 @@ window.KinViewerExport = (() => {
       }
       healthy(); await encoder.flush(); healthy();
     } finally { if (encoder.state !== 'closed') encoder.close(); }
-    // One frame per image, the first a key frame, each at its own time and not empty.
-    const whole = chunks.length === images.length && chunks[0].key && (container !== 'mp4' || description) &&
+    // One frame per image, the first a key frame, each at its own time and not empty, under one setup.
+    const whole = chunks.length === images.length && chunks[0].key && setup && !unsteady && (container !== 'mp4' || setup.description?.length) &&
       chunks.every((chunk, index) => chunk.time === frameTime(index, fps) && chunk.data.length > 0);
     if (!whole) throw new Error(SHORT);
+    // The frames are decoded back with that setup: the file is written only if every frame decodes, in order.
+    say?.('동영상 파일 확인 중 · Esc로 멈춤');
+    if (!await decodes(chunks, { codec: setup.codec, codedWidth: setup.codedWidth || config.width, codedHeight: setup.codedHeight || config.height,
+      ...(setup.description?.length ? { description: setup.description } : {}) }, check)) throw new Error(SHORT);
+    check();
     const duration = frameTime(images.length, fps);
-    return container === 'mp4' ? mp4(chunks, description, config.width, config.height, fps, duration) : webm(chunks, config.codec, config.width, config.height, fps, duration);
+    return container === 'mp4' ? mp4(chunks, setup.description, config.width, config.height, fps, duration) : webm(chunks, config.codec, config.width, config.height, fps, duration);
   }
-
+  // True only when the browser's decoder takes the setup and returns one picture per frame at the frame's time, with no error.
+  async function decodes(chunks, config, check) {
+    if (typeof window.VideoDecoder !== 'function' || typeof window.EncodedVideoChunk !== 'function') return false;
+    const support = await window.VideoDecoder.isConfigSupported(config).catch(() => null);
+    if (!support?.supported) return false;
+    const times = []; let broken = false;
+    const decoder = new window.VideoDecoder({ output: picture => { times.push(picture.timestamp); picture.close(); }, error: () => { broken = true; } });
+    try {
+      decoder.configure(config);
+      for (const chunk of chunks) {
+        check(); if (broken) return false;
+        decoder.decode(new window.EncodedVideoChunk({ type: chunk.key ? 'key' : 'delta', timestamp: chunk.time, data: chunk.data }));
+        while (decoder.decodeQueueSize > 4 && !broken) { check(); await new Promise(resolve => setTimeout(resolve, 5)); }
+      }
+      await decoder.flush();
+    } catch (error) { if (error instanceof Stopped) throw error; return false; }
+    finally { if (decoder.state !== 'closed') decoder.close(); }
+    return !broken && times.length === chunks.length && times.every((time, index) => time === chunks[index].time);
+  }
   // The file around the encoded frames. Byte helpers: big-endian numbers and joined parts.
   const bytes = (...values) => Uint8Array.from(values);
   const be = (value, size) => { const out = new Uint8Array(size); for (let i = size - 1; i >= 0; i--) { out[i] = value % 256; value = Math.floor(value / 256); } return out; };
@@ -463,7 +512,11 @@ window.KinViewerExport = (() => {
     if (!videoReady()) { tell(services, NO_VIDEO, 'error'); return false; }
     const images = [];
     try {
-      const done = await walk(services, live, say, '동영상 영상 만드는 중', async canvas => { images.push(await blob(canvas, 'image/jpeg', 0.95)); },
+      // Every image is drawn at one size; a cell resized part way through is a changed screen, not a stretched frame.
+      let size = null;
+      const done = await walk(services, live, say, '동영상 영상 만드는 중', async canvas => {
+        if (size && size !== canvas.width + 'x' + canvas.height) throw changed();
+        size = canvas.width + 'x' + canvas.height; images.push(await blob(canvas, 'image/jpeg', 0.95)); },
         async (target, check) => {
           const rate = Number(services.cineService?.getState?.()?.cines?.[target.cells[0].id]?.frameRate);
           const fps = Number.isFinite(rate) && rate >= 1 && rate <= 90 ? rate : 10;
@@ -472,7 +525,7 @@ window.KinViewerExport = (() => {
           return fps;
         });
       if (!done) return false;
-      tell(services, '시리즈 영상 ' + images.length + '장을 ' + done + ' fps 동영상으로 저장했습니다.', 'success'); return true;
+      tell(services, '시리즈 영상 ' + images.length + '장을 ' + done + ' fps 동영상 파일로 만들어 내려받기를 시작했습니다.', 'success'); return true;
     } catch (error) { tell(services, failure(error), error instanceof Stopped ? 'warning' : 'error'); return false; }
   }
 

@@ -45,18 +45,20 @@ SETUP = """() => {
     const action = document.createElement('button'); action.className = 'action'; action.textContent = 'XX';
     pane.append(element, text, action); document.getElementById('grid').append(pane);
     const imageIds = ['syn:' + id + ':0', 'syn:' + id + ':1', 'syn:' + id + ':2', 'syn:' + id + ':3'];
-    let index = 1;
+    // index is the image asked for; drawn is the image on the canvas (a failed load leaves the one before).
+    let index = 1, drawn = 1;
     const draw = () => {
       const c = canvas.getContext('2d'); c.fillStyle = 'rgb(' + colours[id].join(',') + ')'; c.fillRect(0, 0, 400, 300);
-      c.fillStyle = 'rgb(255, 255, 255)'; c.fillRect((10 + 15 * index) * 2, 50 * 2, 10 * 2, 10 * 2);
+      c.fillStyle = 'rgb(255, 255, 255)'; c.fillRect((10 + 15 * drawn) * 2, 50 * 2, 10 * 2, 10 * 2);
       // The viewport reports the draw; the image text follows one frame later, as React overlays do.
       requestAnimationFrame(() => { element.dispatchEvent(new CustomEvent('CORNERSTONE_IMAGE_RENDERED'));
-        requestAnimationFrame(() => { text.style.color = TEXT_COLOURS[index]; }); });
+        requestAnimationFrame(() => { text.style.color = TEXT_COLOURS[drawn]; }); });
     };
     draw();
     viewports.set(id, { id, type: 'stack', element, canvas, getImageIds: () => imageIds.slice(),
-      getCurrentImageIdIndex: () => index,
-      setImageIdIndex: async value => { await new Promise(r => setTimeout(r, 5)); index = value; draw(); return imageIds[value]; },
+      getCurrentImageIdIndex: () => index, getCornerstoneImage: () => ({ imageId: imageIds[drawn] }),
+      setImageIdIndex: async value => { await new Promise(r => setTimeout(r, 5)); index = value;
+        if (!window.synFailAt?.has(id + ':' + value)) drawn = value; draw(); return imageIds[value]; },
       render: () => {} });
   }
   window.synViewports = viewports;
@@ -667,10 +669,10 @@ class ViewerExportDOMTest(unittest.TestCase):
     def series(self, before=None):
         setup = SETUP.replace("const imageIds = ['syn:' + id + ':0', 'syn:' + id + ':1', 'syn:' + id + ':2', 'syn:' + id + ':3'];",
                               "const imageIds = Array.from({ length: { left: 40, right: 12 }[id] }, (_, k) => 'syn:' + id + ':' + k);")
-        setup = setup.replace("c.fillStyle = 'rgb(255, 255, 255)'; c.fillRect((10 + 15 * index) * 2, 50 * 2, 10 * 2, 10 * 2);",
-                              "c.fillStyle = 'rgb(255, 255, 255)'; for (let bit = 0; bit < 6; bit++) if (index >> bit & 1) c.fillRect((10 + 22 * bit) * 2, 115 * 2, 14 * 2, 14 * 2);")
-        setup = setup.replace("TEXT_COLOURS[index]", "TEXT_COLOURS[index % 4]")
-        self.assertEqual(3, sum(part in setup for part in ["length: { left: 40", "index >> bit", "index % 4"]))
+        setup = setup.replace("c.fillStyle = 'rgb(255, 255, 255)'; c.fillRect((10 + 15 * drawn) * 2, 50 * 2, 10 * 2, 10 * 2);",
+                              "c.fillStyle = 'rgb(255, 255, 255)'; for (let bit = 0; bit < 6; bit++) if (drawn >> bit & 1) c.fillRect((10 + 22 * bit) * 2, 115 * 2, 14 * 2, 14 * 2);")
+        setup = setup.replace("TEXT_COLOURS[drawn]", "TEXT_COLOURS[drawn % 4]")
+        self.assertEqual(3, sum(part in setup for part in ["length: { left: 40", "drawn >> bit", "drawn % 4"]))
         return self.open(setup=setup, before=before)
 
     # Decodes the downloaded file in the page: the length, and the image seen in the middle of each frame's time.
@@ -713,7 +715,7 @@ class ViewerExportDOMTest(unittest.TestCase):
         self.assertAlmostEqual(count / fps, decoded['end'], delta=1.0 / fps)
         note = page.evaluate("() => synNotes.at(-1)")
         self.assertEqual('success', note['type'])
-        self.assertEqual('시리즈 영상 %d장을 %d fps 동영상으로 저장했습니다.' % (count, fps), note['message'])
+        self.assertEqual('시리즈 영상 %d장을 %d fps 동영상 파일로 만들어 내려받기를 시작했습니다.' % (count, fps), note['message'])
 
     def test_35_ct_40_images_every_image_once_in_series_order(self):
         page = self.series()
@@ -737,11 +739,13 @@ class ViewerExportDOMTest(unittest.TestCase):
 
     def test_38_a_short_empty_or_failed_encoding_writes_nothing_and_is_not_success(self):
         # The browser's encoder is wrapped: it loses one frame, returns nothing, or fails part way.
-        for fault in ['drop', 'empty', 'fail']:
+        for fault in ['drop', 'empty', 'fail', 'truncate']:
             page = self.series(before="""() => { const fault = '%s', Real = window.VideoEncoder;
               window.VideoEncoder = class extends Real {
                 constructor(init) { const seen = { frames: 0 }; super({ output: (chunk, meta) => { let frames = seen.frames++;
                   if (fault === 'drop' && frames === 7) return;
+                  if (fault === 'truncate' && frames === 4) { const data = new Uint8Array(chunk.byteLength); chunk.copyTo(data);
+                    chunk = new EncodedVideoChunk({ type: chunk.type, timestamp: chunk.timestamp, duration: chunk.duration ?? undefined, data: data.slice(0, 1) }); }
                   if (fault !== 'empty') init.output(chunk, meta); }, error: error => init.error(error) }); this.init = init; this.seen = seen; }
                 encode(frame, options) { if (fault === 'fail' && this.seen.frames > 10) { this.init.error(new DOMException('encoder failed', 'EncodingError')); return; } super.encode(frame, options); }
               }; }""" % fault)
@@ -752,7 +756,8 @@ class ViewerExportDOMTest(unittest.TestCase):
             self.assertEqual([], seen, fault)
             note = page.evaluate("() => synNotes.at(-1)")
             self.assertEqual('error', note['type'], fault)
-            self.assertEqual({'drop': '동영상에 시리즈의 모든 영상이 담기지 않아 저장하지 않았습니다. 다시 시도하세요.', 'empty': '동영상에 시리즈의 모든 영상이 담기지 않아 저장하지 않았습니다. 다시 시도하세요.',
+            short = '동영상에 시리즈의 모든 영상이 담기지 않아 저장하지 않았습니다. 다시 시도하세요.'
+            self.assertEqual({'drop': short, 'empty': short, 'truncate': short,
                               'fail': '동영상을 만들지 못해 저장하지 않았습니다. 다시 시도하세요.'}[fault], note['message'], fault)
 
     def test_39_a_browser_without_h264_gets_a_whole_webm(self):
@@ -784,6 +789,60 @@ class ViewerExportDOMTest(unittest.TestCase):
             if act == 'series': self.assertEqual([], page.evaluate("() => synMoved"), 'the newly chosen series is not wound back')
             else: self.assertIn('멈췄습니다', page.evaluate("() => synNotes.at(-1).message"))
 
+    def test_39c_an_empty_h264_setup_is_never_written_and_webm_is_whole(self):
+        # The H.264 encoder gives an empty decoder setup: no MP4 is written; the WebM made instead holds every image.
+        page = self.series(before="""() => { const Real = window.VideoEncoder;
+          window.VideoEncoder = class extends Real {
+            constructor(init) { super({ output: (chunk, meta) => init.output(chunk, meta?.decoderConfig?.codec?.startsWith('avc1')
+              ? { ...meta, decoderConfig: { ...meta.decoderConfig, description: new Uint8Array(0) } } : meta), error: error => init.error(error) }); }
+          }; }""")
+        name, data = self.saved_video(page)
+        self.assertTrue(name.endswith('.webm'), name)
+        self.assert_whole_series(page, name, data, 40, 10, (200, 0, 0))
+
+    def test_39d_an_image_that_did_not_load_is_not_replaced_by_the_one_before(self):
+        # Image 5 of 40 does not load: the cell's index moves to it but the canvas keeps image 4. With the loader's failure
+        # notice the export ends at once; without it, at the load timeout. Either way no file and no success.
+        for notice in [True, False]:
+            page = self.series(); seen = self.downloads(page)
+            page.evaluate("""notice => { window.synFailAt = new Set(['left:4']); KinViewerExport.options.loadTimeout = 1500;
+              if (!notice) return;
+              cornerstone.eventTarget = new EventTarget(); cornerstone.Enums.Events.IMAGE_LOAD_FAILED = 'CORNERSTONE_IMAGE_LOAD_FAILED';
+              cornerstone.cache = { getImage: () => undefined };
+              const v = synViewports.get('left'), set = v.setImageIdIndex;
+              v.setImageIdIndex = value => set(value).then(id => { if (value === 4) cornerstone.eventTarget.dispatchEvent(
+                new CustomEvent('CORNERSTONE_IMAGE_LOAD_FAILED', { detail: { imageId: 'syn:left:4', error: new Error('load failed') } })); return id; }); }""", notice)
+            self.click(page, 'SaveVideo')
+            page.wait_for_function("() => synNotes.length", timeout=60000)
+            page.wait_for_timeout(500)
+            self.assertEqual([], seen, notice)
+            self.assertEqual('error', page.evaluate("() => synNotes.at(-1).type"), notice)
+            self.assertIn('불러오지 못해', page.evaluate("() => synNotes.at(-1).message"), notice)
+
+    def test_39e_the_same_series_chosen_again_at_the_last_image_is_not_wound_back(self):
+        # While the export shows image 40 of 40, the reader picks the same series again in that cell (A -> B -> A), which
+        # lands on image 40: the viewer sends a new image set. The export stops and leaves the reader's image where it is.
+        page = self.series(); seen = self.downloads(page); self.slow(page, 300)
+        self.click(page, 'SaveVideo')
+        page.wait_for_function("() => document.querySelector('.kin-ux-toolbar-settings [role=status]').textContent.includes('40/40')", timeout=60000)
+        page.evaluate("() => synViewports.get('left').element.dispatchEvent(new CustomEvent('CORNERSTONE_VIEWPORT_NEW_IMAGE_SET'))")
+        page.wait_for_function("() => synNotes.length", timeout=60000)
+        page.wait_for_timeout(1000)
+        self.assertEqual([], seen)
+        self.assertNotEqual('success', page.evaluate("() => synNotes.at(-1).type"))
+        self.assertEqual(39, page.evaluate("() => synViewports.get('left').getCurrentImageIdIndex()"), 'not wound back')
+
+    def test_39f_a_cell_folded_or_resized_part_way_writes_nothing(self):
+        for act, said in [("pane.style.display = 'none'", '보이지 않아'), ("pane.style.width = '260px'", '바뀌어')]:
+            page = self.series(); seen = self.downloads(page); self.slow(page, 100)
+            self.click(page, 'SaveVideo')
+            page.wait_for_function("() => document.querySelector('.kin-ux-toolbar-settings [role=status]').textContent.includes('5/40')", timeout=60000)
+            page.evaluate("() => { const pane = synViewports.get('left').element.closest('[data-cy=viewport-pane]'); " + act + "; }")
+            page.wait_for_function("() => synNotes.length", timeout=60000)
+            page.wait_for_timeout(500)
+            self.assertEqual([], seen, act)
+            self.assertEqual('error' if said == '보이지 않아' else 'warning', page.evaluate("() => synNotes.at(-1).type"), act)
+            self.assertIn(said, page.evaluate("() => synNotes.at(-1).message"), act)
     # ── Captures: captures collect in this window's Captures panel ──
     def panel(self, page):
         return page.get_by_role('complementary', name='Captures')
