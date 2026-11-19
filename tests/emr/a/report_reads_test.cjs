@@ -251,8 +251,9 @@ async function study(fields = {}) {
   return uid;
 }
 async function version(uid, n, fields = {}) {
+  // A version names the account it belongs to beside its login (owner-identity.ts), as the product writes it.
   return ctx.witness.reportVersion.create({ data: { uid, version: n, action: 'approve', author: actor,
-    findings: '', conclusion: '', recommendation: '', ...fields } });
+    authorSub: fields.author && fields.author !== actor ? null : sub, findings: '', conclusion: '', recommendation: '', ...fields } });
 }
 function assertAttribution(event, surface) {
   assert.equal(event.surface, surface);

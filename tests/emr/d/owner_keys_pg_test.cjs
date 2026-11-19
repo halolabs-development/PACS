@@ -36,7 +36,7 @@ test('owner keys: the migration fills the account only where one member has the 
   const empty = { findings: '', conclusion: '', recommendation: '', baseVersion: 0, present: false, revision: 1 };
   try {
     for (const [m, email] of [[X, X.email], [U, U.email], [{ sub: id('d1'), username: id('d1') }, shared], [{ sub: id('d2'), username: id('d2') }, shared]])
-      await db.memberRights.create({ data: { sub: m.sub, username: m.username, email, name: 'SYN', emailVerified: true, approved: true, roles: ['radiologist'] } });
+      await db.memberRights.create({ data: { sub: m.sub, username: m.username, email, name: 'SYN', emailVerified: true, approved: true, institution: id('inst'), roles: ['radiologist'] } });
     await db.studyState.createMany({ data: [s1, s2, s3].map(u => ({ uid: u, institutionId: id('inst'), ss: 'Verified' })) });
     await db.studyState.update({ where: { uid: s1 }, data: { rs: 'P', preDoc: X.email, preReviewer: U.username, holder: X.email, heldAt: new Date() } });
     await db.studyState.update({ where: { uid: s3 }, data: { holder: id('gone') + '@example.test', heldAt: new Date() } });

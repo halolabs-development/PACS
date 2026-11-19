@@ -375,18 +375,22 @@ export class PacsReportEvidence {
     // 열람이 기록에서 빠진다. 응답은 기록이 COMMIT된 뒤 이 행 그대로 나간다(A1 응답 경계).
     // A signer already disclosed in this list is shared report provenance. A
     // discarded draft alone cannot establish that its author belongs to a side.
-    const signers = new Set(scoped.filter(row => row.action !== 'discarded').map(row => row.author));
+    // A signer is an account and the login it wrote under (owner-identity.ts): an email that later named another account
+    // does not disclose a discarded copy of the first account's text.
+    const signer = (row: { author: string; authorSub?: string | null }) => `${row.authorSub ?? ''}\u0000${row.author}`;
+    const signers = new Set(scoped.filter(row => row.action !== 'discarded').map(signer));
     const resets = new Map(scoped.filter(row => row.action === 'reset').map(row => [row.version, row.author]));
     // The account id of each version stays here: it judges whose text it is (below), and is not shown.
     const shown = scoped.map(({ authorSub, ...row }) => {
       if (row.action !== 'discarded') return row;
+      const disclosed = signers.has(signer({ author: row.author, authorSub }));
       // Historical copies share action=discarded. Reset writes this reason and
       // its following reset row atomically; adjacency alone could be an admin
       // draft discard followed by a reset of an already empty report.
       const resetActor = resets.get(row.version + 1);
       const resetCopy = resetActor && row.reason === `판독 취소로 폐기 (취소자: ${resetActor})`;
       return { ...row,
-        author: signers.has(row.author) ? row.author : visibleDraftAuthor(row.author, authorSub, c),
+        author: disclosed ? row.author : visibleDraftAuthor(row.author, authorSub, c),
         reason: resetCopy ? row.reason : '관리자 강제 초안 해제' };
     });
     // The state table (report-visibility.ts): a Save/Defer version outside a Preliminary, and a discarded copy of one or of a

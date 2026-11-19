@@ -1765,3 +1765,20 @@ test('OWNER-03 saved searches, the default, folders and reading templates follow
   assert.deepEqual((await w.preferences.deleteTemplate(template.id, X2)), { ok: true });
   assert.equal((await w.filters.readFilterFolders(Y)).revision, 0, 'the other account has no folder collection of the old email');
 });
+
+test('OWNER-04 a draft record id is never issued to another account: a study deleted and arriving again under its UID keeps the emptied row', async () => {
+  const w = world();
+  await w.boot();
+  const X = RAD_A, Y = tookOldEmail();
+  const s = w.study();
+  w.orthanc.rows = [qido(s.uid, 'SYN A HOSPITAL')];
+  await w.draft.putReport(s.uid, draftBody(X, s.draftEpoch, 0, { findings: 'SYN X DRAFT' }), X, null);
+  await w.draft.discardDraft(s.uid, { expectedOwner: ownerOf(X), expectedRevision: `${s.draftEpoch}:1` }, X, null);
+  await w.workflow(workflow => w.studyState.removeState(s.uid, TECH_A, workflow));
+  assert.deepEqual(w.db.rows('reportDraft').filter(d => d.uid === s.uid).map(d => [d.author, d.authorSub, d.present]), [[RAD_A.actor, X.sub, false]],
+    'the emptied row stays with its record id');
+  const again = w.study({ uid: s.uid });
+  await w.draft.putReport(s.uid, draftBody(Y, again.draftEpoch, 0, { findings: 'SYN Y DRAFT' }), Y, null);
+  assert.deepEqual(w.db.rows('reportDraft').filter(d => d.uid === s.uid && d.present).map(d => [d.author, d.authorSub]),
+    [[`${RAD_A.actor}#${Y.sub}`, Y.sub]], 'the account that now has the old email gets a record id of its own');
+});

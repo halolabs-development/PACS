@@ -217,7 +217,7 @@ export class PacsClinician {
       const scope=await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:report?'stored':'current',...(report?{record:report}:{}),state,identity:true});
       const head = report?.version > 0 ? await tx.reportVersion.findUnique({
         where: { uid_version: { uid, version: report.version } },
-        select: { id: true, version: true, action: true, author: true, reason: true, findings: true, conclusion: true, recommendation: true, drawings: true } }) : null;
+        select: { id: true, version: true, action: true, author: true, authorSub: true, reason: true, findings: true, conclusion: true, recommendation: true, drawings: true } }) : null;
       // The state table (report-visibility.ts): another physician's unsigned text is not read here by a caller who is not
       // clinician-only (an administrator, or a radiologist who also holds the clinician role).
       // Judged on the version row itself (its action and writer), so a Save of drawings alone is withheld too.

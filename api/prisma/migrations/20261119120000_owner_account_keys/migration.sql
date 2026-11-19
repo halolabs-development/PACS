@@ -30,13 +30,17 @@ UPDATE "Report" r SET "updatedBySub" = m.sub FROM owner_login_account m WHERE r.
 UPDATE "StudyState" s SET "holderSub" = m.sub FROM owner_login_account m WHERE s.holder = m.login;
 UPDATE "StudyState" s SET "preDocSub" = m.sub FROM owner_login_account m WHERE s."preDocSub" IS NULL AND s."preDoc" = m.login;
 UPDATE "StudyState" s SET "preReviewerSub" = m.sub FROM owner_login_account m WHERE s."preReviewerSub" IS NULL AND s."preReviewer" = m.login;
--- The owner key moves to the account id only where that account has no row under its id already (no two keys merge).
+-- The owner key moves to the account id only where that account has no row under its id already and no other old key of
+-- that account moves too (two keys never merge).
 UPDATE "UserFilterCollection" f SET owner = m.sub FROM owner_login_account m
-  WHERE f.owner = m.login AND f.owner <> m.sub AND NOT EXISTS (SELECT 1 FROM "UserFilterCollection" x WHERE x.owner = m.sub);
+  WHERE f.owner = m.login AND f.owner <> m.sub AND NOT EXISTS (SELECT 1 FROM "UserFilterCollection" x WHERE x.owner = m.sub)
+  AND NOT EXISTS (SELECT 1 FROM "UserFilterCollection" y JOIN owner_login_account n ON y.owner = n.login WHERE n.sub = m.sub AND y.owner <> f.owner);
 UPDATE "UserFilter" f SET owner = m.sub FROM owner_login_account m
-  WHERE f.owner = m.login AND f.owner <> m.sub AND NOT EXISTS (SELECT 1 FROM "UserFilter" x WHERE x.owner = m.sub);
-UPDATE "ReadingTemplate" t SET owner = m.sub FROM owner_login_account m
-  WHERE t.owner = m.login AND t.owner <> m.sub AND NOT EXISTS (SELECT 1 FROM "ReadingTemplate" x WHERE x.owner = m.sub);
+  WHERE f.owner = m.login AND f.owner <> m.sub AND NOT EXISTS (SELECT 1 FROM "UserFilter" x WHERE x.owner = m.sub)
+  AND NOT EXISTS (SELECT 1 FROM "UserFilter" y JOIN owner_login_account n ON y.owner = n.login WHERE n.sub = m.sub AND y.owner <> f.owner);
+UPDATE "ReadingTemplate" f SET owner = m.sub FROM owner_login_account m
+  WHERE f.owner = m.login AND f.owner <> m.sub AND NOT EXISTS (SELECT 1 FROM "ReadingTemplate" x WHERE x.owner = m.sub)
+  AND NOT EXISTS (SELECT 1 FROM "ReadingTemplate" y JOIN owner_login_account n ON y.owner = n.login WHERE n.sub = m.sub AND y.owner <> f.owner);
 
 CREATE UNIQUE INDEX "ReportDraft_uid_authorSub_key" ON "ReportDraft"("uid", "authorSub");
 COMMIT;

@@ -35,7 +35,7 @@ import { draftDrawings, drawingEntries, drawingHash, drawingKey, drawingRequest,
 import type { DrawingRequest } from '../image-report';
 
 import type { RequestWorkContext } from '../emr-runtime/request-context';
-import { sameAccount, lockedDraftOf, newDraftAuthor, draftRecordAuthor, draftAuthorName } from '../owner-identity';
+import { sameAccount, lockedDraftOf, newDraftAuthor, draftRecordAuthor, draftAuthorName, draftRecordOf } from '../owner-identity';
 
 export interface DraftRequestFacts {
   request: RequestWorkContext;
@@ -82,7 +82,9 @@ export class PacsReportDraft {
         const revision = draft ? draft.revision : version ? String(version.version) : report ? String(value.state.version) : value.revision;
         // A draft's record id is its row's (owner-identity.ts): the caller's own row is found by its account, whatever the
         // caller's email is now; a caller with no row yet is named as the row it would make.
-        const resource = report ? version?.uid ?? uid : JSON.stringify([uid, draft?.author ?? await draftRecordAuthor(tx, uid, c)]);
+        // A view captured earlier names the row it read (draftRecordOf), so its record never names another row read later.
+        const read = value && typeof value === 'object' ? draftRecordOf.get(value) : undefined;
+        const resource = report ? version?.uid ?? uid : JSON.stringify([uid, draft?.author ?? read ?? await draftRecordAuthor(tx, uid, c)]);
         const event: AccessEventV1 = {
           formatVersion: 1, surface, eventId: randomUUID(),
           userId: { status: 'known', value: identity }, rolesAtTime: { status: 'known', value: facts.request.facts.roles },
@@ -447,10 +449,13 @@ export class PacsReportDraft {
       const draft = await this.access.myDraft(uid, c, tx);
       if (draft?.present) await resolveExamScope(tx, this.studyAccess, c, { uid, purpose: 'stored', record: draft });
       const envelope = draftEnvelope(uid, owner, state.draftEpoch, draft);
-      if (receiptId === null) return { state, value: envelope };
+      // The record id of what this snapshot read goes with it to the viewing record.
+      const recordAuthor = draft?.author ?? await draftRecordAuthor(tx, uid, c);
+      const withRecord = <T extends object>(value: T) => { draftRecordOf.set(value, recordAuthor); return value; };
+      if (receiptId === null) return { state, value: withRecord(envelope) };
       const receipt = await tx.reportDraftInsertReceipt.findUnique({ where: { insertRequestId: receiptId } });
-      return { state, value: { ...envelope,
-        relatedInsert: relatedResult(receiptId, receipt, envelope, !receipt || relatedOwnReceipt(receipt, owner, uid), null) } };
+      return { state, value: withRecord({ ...envelope,
+        relatedInsert: relatedResult(receiptId, receipt, envelope, !receipt || relatedOwnReceipt(receipt, owner, uid), null) }) };
     }, { isolationLevel: 'RepeatableRead', maxWait: 2000, timeout: 5000 });
     // Preserve the existing repeatable read. The entry describes that captured
     // snapshot; no later fetch may substitute a different body after recording.
@@ -541,7 +546,11 @@ export class PacsReportDraft {
         const mine = await this.access.myDraft(uid, c, tx);
         if(mine?.present)await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:'stored',record:mine});
         const stored = await tx.reportDraftInsertReceipt.findUnique({ where: { insertRequestId: related.insertRequestId } });
-        return { state, outcome: settled(stored, draftEnvelope(uid, owner, state.draftEpoch, mine)) };
+        const outcome = settled(stored, draftEnvelope(uid, owner, state.draftEpoch, mine));
+        // The record id of the draft this snapshot read goes with the view it answers.
+        const view = this.relatedDraftView(outcome);
+        if (view) draftRecordOf.set(view, mine?.author ?? await draftRecordAuthor(tx, uid, c));
+        return { state, outcome };
       }, { isolationLevel: 'RepeatableRead', maxWait: 2000, timeout: 5000 });
       const earlyView = this.relatedDraftView(early.outcome);
       const accessRecord = earlyView ? await this.recorded(uid, c,

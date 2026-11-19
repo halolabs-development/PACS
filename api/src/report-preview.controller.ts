@@ -12,6 +12,7 @@ import { consumerSource, viewerSources } from './emr-viewing/consumer-read';
 import { prepareExamRead, resolveExamScope, scopeIncludesSeries, examScopeView, examScopeChanged, examParentAccess } from './exam-merge.service';
 import { versionDrawings, draftDrawings, effectiveDrawingIds, drawingEntries } from './image-report';
 import { draftOf } from './owner-identity';
+import { draftDeliveries } from './emr-retention/draft-purpose';
 
 const member = (req: any): Caller => ({ sub: req.sub, actor: req.actor, roles: req.roles ?? [],
   institution: req.institution ?? null, kind: req.kind ?? 'member' });
@@ -48,6 +49,8 @@ export class ReportPreviewController {
   @Get('studies/:uid/report-preview')
   async read(@Param('uid') uid: string, @Req() caller: any) {
     viewerUid(uid);
+    // A preview of the caller's own draft is a delivery of that draft: a destruction of it waits for this answer.
+    if (caller?.query?.draft === '1') draftDeliveries.track(caller.sub, caller, caller.res);
     // Same read rule as PacsService.visible()/versions(): owner or current
     // tele grant, and the P author/reviewer pair. A hold only restricts writes.
     // patchState clears teleInstitutionId when the owner cancels the referral;

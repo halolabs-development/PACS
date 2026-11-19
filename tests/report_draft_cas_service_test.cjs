@@ -1146,7 +1146,8 @@ test('D11 tombstones do not block the removal of a study; the same UID created a
   assert.equal((await w.row(uid, A)).present, false);
   const removed = await w.send('X', 'remove', { as: ADMIN, uid });
   assert.equal(removed.ok, true, JSON.stringify(removed.body));
-  assert.equal(await w.base.reportDraft.count({ where: { uid } }), 0, 'the tombstones went with the study');
+  // The emptied rows stay: their (uid, author) is a draft record id that is never issued to another account again.
+  assert.deepEqual((await w.base.reportDraft.findMany({ where: { uid } })).map(d => [d.author, d.present]), [[A.actor, false]], 'the tombstone keeps its record id');
   // a write of the removed study: unknown study
   assert.equal((await w.send('X', 'put', { as: A, uid, body: request('put', A, { token: `${epoch}:2`, head: 0, mark: 'X' })[1] })).status, 404);
   // the study arrives again under the same UID

@@ -276,15 +276,18 @@ function fieldAttribution(rule: string, base: Omit<AuditProjection, 'rule' | 'de
   // A local administrator may release a foreign writer. Attribution of the
   // action does not grant access to that writer's identity. Never alter storage.
   if (base.action === 'hold.force-release') {
-    const { holderInstitutionId, holderSub: _account, ...rest } = detail;
+    // A record that names the holder's account (owner-identity.ts) is never "the releaser's own" by its email alone: the
+    // releaser's email may be one the holder's account had before.
+    const { holderInstitutionId, holderSub, ...rest } = detail;
+    const ownByEmail = holderSub === undefined && rest.holder === base.actor;
     detail = { ...rest, holder: !rest.holder ? null
-      : rest.holder === base.actor || holderInstitutionId === value ? rest.holder
+      : ownByEmail || holderInstitutionId === value ? rest.holder
       : holderInstitutionId ? '다른 기관' : '작성자 비공개' };
   } else if (base.action === 'report.draft.force-discard' && Array.isArray(detail.drafts)) {
     // Drafts do not record their author's institution. The releasing institution
     // is not evidence of authorship, including for legacy rows.
-    detail = { ...detail, drafts: detail.drafts.map(({ authorSub: _account, ...draft }: any) => ({ ...draft,
-      author: draft.author === base.actor ? draft.author : '작성자 비공개' })) };
+    detail = { ...detail, drafts: detail.drafts.map(({ authorSub, ...draft }: any) => ({ ...draft,
+      author: authorSub === undefined && draft.author === base.actor ? draft.author : '작성자 비공개' })) };
   }
   return { rule, visible_to: [value], projection_by_side: new Map([[value, { ...base, rule, detail }]]), hidden: null };
 }
