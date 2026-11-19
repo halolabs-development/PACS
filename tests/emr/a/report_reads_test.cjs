@@ -294,16 +294,17 @@ test('A-HTTP-REPORT / A-HTTP-BODY / A-PG-COMMIT: every returned version is commi
   assert.equal(answer.status, 200, answer.text);
   assert.equal(firstByte, rows.length, 'every returned version is committed before the first byte');
   assert.match(answer.headers['content-type'], /^application\/json/);
-  // The existing array contract: newest first, the same ten fields, plus each row's opaque accessRef.
+  // The array contract: newest first, the same ten fields, whether the version is the caller's own account's (`mine`,
+  // judged on the server), plus each row's opaque accessRef.
   assert.deepEqual(answer.body.map(r => r.version), [4, 3, 2, 1]);
   for (const row of answer.body) {
     const stored = rows.find(r => r.version === row.version);
     const { accessRef, ...fields } = row;
     assert.match(accessRef, UUID4);
     // v3 is an administrator's release copy of another user's private draft: its row stays, its text stays with its writer
-    // (the report state table), and the row says why it is empty.
+    // (the report state table), and the row says why it is empty. It names no account, so it is not the caller's.
     const withheld = stored.version === 3;
-    assert.deepEqual(fields, { id: stored.id, uid, version: stored.version, action: stored.action,
+    assert.deepEqual(fields, { id: stored.id, uid, version: stored.version, action: stored.action, mine: !withheld,
       findings: withheld ? '' : stored.findings, conclusion: withheld ? '' : stored.conclusion,
       recommendation: withheld ? '' : stored.recommendation,
       reason: withheld ? '관리자 강제 초안 해제' : stored.reason,
