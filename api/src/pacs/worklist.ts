@@ -650,7 +650,7 @@ export class PacsWorklist {
     }
     // A tele assignment without its owning institution is held residue, not a
     // publishable study. Exclude it before reading reports/drafts or recording delivery.
-    const states = [];
+    let states: any[] = [];
     for (const state of stateRows) {
       if (!this.access.visible(state, me) || unresolved.has(state.uid)) continue;
       if (state.origin !== 'logical') { if (permitted.has(state.uid)) states.push(state); continue; }
@@ -677,7 +677,7 @@ export class PacsWorklist {
           const now = fresh.get(s.uid);
           return now && now.origin === s.origin && this.access.visible(now, me) ? [now] : [];
         });
-        states.splice(0, states.length, ...kept);
+        states = kept;
         const shown = new Set(kept.map(s => s.uid));
         reports = reports.filter(report => shown.has(report.uid));
         break;
