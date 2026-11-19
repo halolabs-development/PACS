@@ -61,11 +61,12 @@ function kinCreateSeriesMetadataRecovery() {
     node.textContent = text;
   }
   // The same reason where the reader looks (the panel above may be collapsed): one line in the patient tab row, in the page's
-  // flow so it covers no control; without that row, a fixed line that lets clicks through. Full text in its title.
+  // flow so it covers no control; without that row shown, a fixed line that lets clicks through. Full text in its title.
   function show(text) {
     let node = document.querySelector('#kin-viewer-open-status');
     if (!text || refusedScreen()) { node?.remove(); return; }
-    const row = document.querySelector('.kin-patient-tabs');
+    // Only a row that is shown (a secondary comparison window hides it).
+    const shownRow = document.querySelector('.kin-patient-tabs'), row = shownRow?.getClientRects?.().length ? shownRow : null;
     if (node && node.parentNode !== (row || document.body)) { node.remove(); node = null; }
     if (!node) {
       node = document.createElement('p'); node.id = 'kin-viewer-open-status'; node.setAttribute('role', 'status');
