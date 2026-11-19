@@ -1511,8 +1511,9 @@ test('SPLIT-18 Gateway surfaces admit only the gateway identity; a repeated anno
 // Referred, as a study row stores it: [time or null, still waiting for its first announce].
 const referredOf = (w, uid) => { const s = w.db.rows('studyState').find(r => r.uid === uid); return s ? [s.referredAt === null ? null : +s.referredAt, s.referredOpen] : 'no row'; };
 const STUDY_LOCK = /^SELECT \* FROM "StudyState" WHERE uid = \? FOR UPDATE$/;
-/** What another session commits while this announce waits for the study row's lock: applied once, to both views of the store. */
-function whileWaitingForLock(w, change) {
+/** What another session commits between this announce's first look and the moment it holds the study row's lock: applied
+ *  once, to the committed store and to what the locking statement then reads. */
+function beforeLockIsHeld(w, change) {
   const entry = [STUDY_LOCK, ([uid], tables, label, store) => {
     store.handlers.splice(store.handlers.indexOf(entry), 1);
     assert.equal(label, 'tx', 'the row is locked inside a transaction');
@@ -1598,28 +1599,29 @@ test('SPLIT-18d announce judges the row under its lock: one first time; a study 
   // Deleted between that look and the lock: there is no row to record on, so not a success (and no time written anywhere).
   for (const fields of [{ origin: 'dicom' }, { origin: 'gateway', referredAt: new Date('2026-11-02T00:00:00.000Z'), referredOpen: false }]) {
     const gone = w.study(fields).uid;
-    whileWaitingForLock(w, (rows, uid) => rows.filter(r => r.uid !== uid));
+    beforeLockIsHeld(w, (rows, uid) => rows.filter(r => r.uid !== uid));
     await conflict(gone);
     assert.equal(referredOf(w, gone), 'no row');
   }
-  // Deleted and registered again by a list while the announce waited: the row found under the lock is a new, open one of
-  // this institution, and this announce is its first.
+  // Deleted and registered again by a list between the look and the lock: the row found under the lock is a new, open one
+  // of this institution, and this announce is its first.
   const again = w.study({ origin: 'gateway', referredAt: new Date('2026-11-02T00:00:00.000Z'), referredOpen: false }).uid;
-  whileWaitingForLock(w, (rows, uid) => rows.map(r => r.uid === uid ? { ...r, origin: 'dicom', referredAt: null, referredOpen: true } : r));
+  beforeLockIsHeld(w, (rows, uid) => rows.map(r => r.uid === uid ? { ...r, origin: 'dicom', referredAt: null, referredOpen: true } : r));
   const before = Date.now();
   assert.equal((await w.gateway.announceStudy(again, '', GATEWAY_A)).origin, 'dicom', 'the answer is read from the locked row');
   assert.ok(referredOf(w, again)[0] >= before && referredOf(w, again)[1] === false);
   // Two announces of one institution that both looked before either wrote: the one that gets the lock second finds the
   // row recorded and keeps that first time.
   const twice = w.study({ origin: 'dicom' }).uid, firstTime = new Date('2026-11-03T05:06:07.008Z');
-  whileWaitingForLock(w, (rows, uid) => rows.map(r => r.uid === uid ? { ...r, referredAt: firstTime, referredOpen: false } : r));
+  beforeLockIsHeld(w, (rows, uid) => rows.map(r => r.uid === uid ? { ...r, referredAt: firstTime, referredOpen: false } : r));
   const writes = w.db.writes.length;
   assert.equal((await w.gateway.announceStudy(twice, '', GATEWAY_A)).origin, 'dicom');
   assert.deepEqual(referredOf(w, twice), [+firstTime, false], 'one first time');
   assert.equal(w.db.writes.length, writes);
-  // Reassigned while the announce waited, or never this institution's: another institution's and an unassigned study.
+  // No longer this institution's when the lock is held, or never this institution's: another institution's and an
+  // unassigned study.
   const moved = w.study({ origin: 'dicom' }).uid;
-  whileWaitingForLock(w, (rows, uid) => rows.map(r => r.uid === uid ? { ...r, institutionId: INST_B } : r));
+  beforeLockIsHeld(w, (rows, uid) => rows.map(r => r.uid === uid ? { ...r, institutionId: INST_B } : r));
   await conflict(moved);
   assert.deepEqual(referredOf(w, moved), [null, true]);
   const foreign = w.study({ origin: 'dicom', institutionId: INST_B }).uid, held = w.study({ origin: 'dicom', institutionId: null }).uid;
