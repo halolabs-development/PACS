@@ -105,6 +105,8 @@
     button.ghost:hover { color: var(--kin-text); border-color: var(--kin-accent); background: var(--kin-panel2); }
     #msg { min-height: 18px; margin-top: 14px; color: var(--kin-error); font-size: 12px; line-height: 1.5; }
     #msg.ended { color: var(--kin-muted); }
+    /* Why this page's sign-in attempt was refused (the callback's answer): its own line, never shared with #msg. */
+    #why { margin-top: 14px; color: var(--kin-error); font-size: 12px; line-height: 1.5; }
     .hint { margin-top: 18px; padding-top: 16px; color: var(--kin-muted); border-top: 1px solid var(--kin-line); font-size: 11.5px; line-height: 1.7; }
     .hint b { color: var(--kin-muted); font-weight: normal; }
     .stat { margin-top: 14px; color: var(--kin-dim); font-size: 11.5px; }
@@ -147,6 +149,7 @@
     <button class="ghost" id="demo">데모 모드로 둘러보기 (서버 없이)</button>
     <button class="ghost" id="retry-logout" style="display:none">Retry Log Out</button>
 
+    <div id="why" role="alert" hidden></div>
     <div id="msg"></div>
 
     <div class="hint" id="hint">
@@ -207,8 +210,20 @@
       login_failed: '로그인을 마치지 못했습니다. 잠시 뒤 로그인 버튼을 다시 눌러 주세요.',
       // 관리자 OTP 관문의 거절. 서버 콜백이 이 답을 내는 것은 검증된 로그인의 관문에서만이다(이 문구가 그 증거는 아니다 —
       // 주소에 직접 단 값도 같은 문구를 보일 뿐 권한·세션은 없다). OTP를 처음 등록한 로그인도 여기로 온다 — 다시 로그인하면 들어간다.
-      admin_otp_required: '관리자 계정은 OTP 확인이 필요합니다. 다시 로그인해 주십시오.',
+      admin_otp_required: '관리자 계정은 OTP 확인이 필요합니다. OTP를 방금 등록하셨다면 정상입니다 — 등록한 OTP로 한 번 더 로그인해 주십시오.',
+      // 정지된 회원의 검증된 로그인(auth.service.ts BlockedAnswer). 승인이 남은 정지와, 승인이 없는 정지(승인 철회 또는 승인 전 정지).
+      // 기관에 관리자가 없을 수 있어 운영 담당자도 함께 말한다.
+      member_suspended: '이 계정은 사용이 정지되어 로그인할 수 없습니다. 소속 기관의 HALO PACS 관리자 또는 HALO PACS 운영 담당자에게 문의해 주세요.',
+      member_suspended_unapproved: '이 계정은 현재 승인이 없고 사용이 정지되어 로그인할 수 없습니다. 다시 쓰려면 승인이 필요합니다 — 소속 기관의 HALO PACS 관리자 또는 HALO PACS 운영 담당자에게 문의해 주세요.',
     };
+    // 이 문서에 실려 온 로그인 시도의 거절 이유(서버가 검증한 로그인을 받아들이지 않은 답)는 따로 한 줄(#why)에 한 번 쓴다.
+    // #msg(로그아웃 종료 안내·Retry Log Out의 결과)와 칸을 나누지 않으므로 종료 기록의 바뀜과 겨루지 않는다. 답이 없으면 숨긴 채다.
+    const REFUSALS = ['member_suspended', 'member_suspended_unapproved', 'admin_otp_required'];
+    const refused = REFUSALS.includes(authError);
+    if (refused) {
+      $("#why").textContent = ARRIVAL_NOTICES[authError];
+      $("#why").hidden = false;
+    }
 
     let shownEnd = false;
     function showEnd(end) {
@@ -322,7 +337,7 @@
       const closed = KinAuth.endState();
       if (closed)
         showEnd(closed);
-      else if (authError)
+      else if (authError && !refused)
         $("#msg").textContent = ARRIVAL_NOTICES[authError] || '로그인 실패: ' + authError;
       else if (initError)
         $("#msg").textContent = '세션을 확인하지 못했습니다. 로그인 버튼을 누르면 다시 확인합니다. ' + initError.message;

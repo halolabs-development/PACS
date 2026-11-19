@@ -332,6 +332,45 @@ class LoginThemeDomTest(unittest.TestCase):
         self.assertFalse(list((THEME / "resources" / "img").glob("kin-*")), "no old picture left in the theme")
 
 
+class LoginThemeMessagesTest(unittest.TestCase):
+    """The lock sentence (Keycloak 26.7.3 draws `accountTemporarilyDisabledMessage` on the password form and
+    `accountTemporarilyDisabledMessageTotp` on the OTP form only for a temporarily locked account, before it reads the
+    password). Keycloak's base theme gives both the same words as a wrong password; this theme says the account is locked
+    and how long to wait, from the realm's own brute-force values. A wrong password and an unknown username keep
+    Keycloak's one sentence (the theme does not override invalidUserMessage)."""
+
+    REALM = ROOT / "keycloak" / "kin-realm.json"
+    # Keycloak 26.7.3 base theme words for a wrong password (theme/base/login/messages), written out here.
+    WRONG = {"messages.properties": "잘못된 사용자 이름 또는 비밀번호입니다.", "messages_ko.properties": "잘못된 사용자 이름 또는 비밀번호입니다.",
+             "messages_en.properties": "Invalid username or password."}
+    WORDS = {"messages.properties": ("잠", "1분", "15분"), "messages_ko.properties": ("잠", "1분", "15분"),
+             "messages_en.properties": ("locked", "1 minute", "15 minutes")}
+
+    def test_06_a_locked_account_is_told_it_is_locked_and_how_long_to_wait(self):
+        import json
+        realm = json.loads(self.REALM.read_text(encoding="utf-8"))
+        # The sentence's minutes are the realm's: 60 s per lock step, Keycloak's default 900 s ceiling, no permanent lock.
+        self.assertEqual((realm["bruteForceProtected"], realm["failureFactor"], realm["waitIncrementSeconds"]), (True, 5, 60))
+        self.assertEqual(realm.get("maxFailureWaitSeconds", 900), 900)
+        self.assertFalse(realm.get("permanentLockout", False))
+        for name, (locked, first, longest) in self.WORDS.items():
+            rows = properties(THEME / "messages" / name)
+            for key in ("accountTemporarilyDisabledMessage", "accountTemporarilyDisabledMessageTotp"):
+                with self.subTest(file=name, key=key):
+                    said = rows.get(key, "")
+                    self.assertIn(locked, said)
+                    self.assertIn(first, said)
+                    self.assertIn(longest, said)
+                    self.assertNotEqual(said, self.WRONG[name])
+                    # Keycloak formats these with MessageFormat: a quote or a brace would be eaten or break the text.
+                    self.assertFalse(set("'{}") & set(said), said)
+            # The lock is the account's, not the form's: the OTP form says the same first sentence (failed sign-ins of any
+            # kind lock it, also from another window), not that codes were wrong.
+            first = rows["accountTemporarilyDisabledMessage"].split(":")[0].split(".")[0]
+            self.assertTrue(rows["accountTemporarilyDisabledMessageTotp"].startswith(first), name)
+            self.assertNotIn("invalidUserMessage", rows, "a wrong password and an unknown username keep one sentence")
+
+
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     unittest.main(verbosity=2)

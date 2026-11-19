@@ -1996,7 +1996,9 @@ class MeasurementCiTests(unittest.TestCase):
                           'test_login_error_page_02_lost_login_cookie_has_one_way_back',
                           'test_login_error_page_03_the_way_back_starts_a_real_login',
                           'test_login_error_page_04_phone_sized_window',
-                          'test_login_error_page_05_logged_out_page_keeps_its_continue_button'])
+                          'test_login_error_page_05_logged_out_page_keeps_its_continue_button',
+                          'test_login_error_page_06_a_locked_account_is_told_it_is_locked',
+                          'test_login_error_page_07_a_suspended_member_is_told_why'])
         self.assertNotIn('login-error-page', self.catalog.text(automatic_only=True))
         dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
         self.assertIn('- login-error-page', dispatch)

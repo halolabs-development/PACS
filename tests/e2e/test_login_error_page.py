@@ -19,7 +19,9 @@ development stack: `python tests/e2e/test_login_error_page.py`.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import sys
+import time
 import unittest
 from urllib.parse import parse_qs, urlencode, urlsplit
 
@@ -45,6 +47,15 @@ SAID = {
     # Keycloak's English sentence, with the button it names as the theme draws it.
     "lost-login-cookie-en": 'If cookies are disabled then enable them. Click "HALO PACS로 돌아가기" to login again.',
 }
+# A locked account (the theme's accountTemporarilyDisabledMessage), and Keycloak's own wrong-password sentence that an
+# unknown username and an unlocked wrong password keep.
+LOCKED = "로그인에 여러 번 실패해 이 계정이 잠시 잠겼습니다."
+LOCKED_EN = "Too many failed sign-in attempts: this account is locked for a while"
+WRONG = "잘못된 사용자 이름 또는 비밀번호입니다."
+# The product landing's answers for a suspended member (index.html ARRIVAL_NOTICES).
+SUSPENDED = "이 계정은 사용이 정지되어 로그인할 수 없습니다. 소속 기관의 HALO PACS 관리자 또는 HALO PACS 운영 담당자에게 문의해 주세요."
+SUSPENDED_UNAPPROVED = ("이 계정은 현재 승인이 없고 사용이 정지되어 로그인할 수 없습니다. 다시 쓰려면 승인이 필요합니다 — "
+                        "소속 기관의 HALO PACS 관리자 또는 HALO PACS 운영 담당자에게 문의해 주세요.")
 
 
 def auth_request(client_id, redirect, **extra):
@@ -164,6 +175,13 @@ class LoginErrorPageE2E(base.WorklistE2E):
         self.assertGreaterEqual(box["height"], 40)
         back.click()
         expect(page.locator("#kc-form-login")).to_be_visible()
+        # The login card that follows stays inside the phone window: no letters cut off on the left, no sideways page.
+        place = page.evaluate("""() => { const card = document.querySelector('.card-pf').getBoundingClientRect();
+          return {left: card.left, right: card.right, width: innerWidth, scroll: document.documentElement.scrollWidth}; }""")
+        page.screenshot(path=str(ARTIFACTS / "LOGIN-ERROR-PAGE-login-narrow.png"), full_page=True)
+        self.assertGreaterEqual(place["left"], 0, place)
+        self.assertLessEqual(place["right"], place["width"], place)
+        self.assertLessEqual(place["scroll"], place["width"], place)
 
     def test_login_error_page_05_logged_out_page_keeps_its_continue_button(self):
         """The logged-out page (info.ftl) draws its "HALO PACS로 계속" through the same macro as the error page."""
@@ -178,6 +196,72 @@ class LoginErrorPageE2E(base.WorklistE2E):
         self.assertEqual(go_on.get_attribute("href"), HOME)
         go_on.click()
         expect(page.locator("#kc-form-login")).to_be_visible()
+
+    def submit(self, page, username, password):
+        """One try on the real login form; the page that answers is the form again (refused) or somewhere else."""
+        page.locator("#username").fill(username)
+        page.locator("#password").fill(password)
+        page.locator("#kc-login").click()
+        page.wait_for_load_state()
+
+    def test_login_error_page_06_a_locked_account_is_told_it_is_locked(self):
+        """Five wrong passwords lock the account for a while (realm brute-force protection). While it is locked the
+        right password and a wrong one both say it is locked and how long to wait, in Korean and in English. A username
+        that does not exist keeps the wrong-password sentence however often it is tried: nothing new about who exists."""
+        self.stack.create_test_identity("locked", [], "")
+        name, right = self.stack.username("locked"), self.stack.passwords["locked"]
+        page = self.fresh_page()
+        page.goto(self.stack.proxy + HOME)
+        expect(page.locator("#kc-form-login")).to_be_visible()
+        # Before the lock, a wrong password on this account and any password for a username nobody has draw the very
+        # same sentence: the page says nothing about who exists.
+        self.submit(page, name, "syn-wrong-password")
+        expect(page.locator("#input-error")).to_have_text(WRONG)
+        nobody = self.fresh_page()
+        nobody.goto(self.stack.proxy + HOME)
+        self.submit(nobody, "syn-nobody-has-this-name", "syn-wrong-password")
+        expect(nobody.locator("#input-error")).to_have_text(WRONG)
+        self.assertEqual(page.locator("#input-error").inner_text().strip(), nobody.locator("#input-error").inner_text().strip())
+        for _ in range(4):
+            self.submit(page, name, "syn-wrong-password")
+            expect(page.locator("#kc-form-login")).to_be_visible()
+        ARTIFACTS.mkdir(exist_ok=True)
+        for label, password in (("right", right), ("wrong", "syn-wrong-password")):
+            self.submit(page, name, password)
+            content = page.locator("#kc-content")
+            expect(content, label).to_contain_text(LOCKED)
+            expect(content, label).not_to_contain_text(WRONG)
+            page.screenshot(path=str(ARTIFACTS / f"LOGIN-ERROR-PAGE-locked-{label}-password.png"), full_page=True)
+        # The English screen says the same.
+        english = self.fresh_page(locale="en-US")
+        english.goto(self.stack.proxy + HOME)
+        expect(english.locator("html")).to_have_attribute("lang", "en")
+        self.submit(english, name, right)
+        expect(english.locator("#kc-content")).to_contain_text(LOCKED_EN)
+        english.screenshot(path=str(ARTIFACTS / "LOGIN-ERROR-PAGE-locked-en.png"), full_page=True)
+        # The username nobody has, five more tries (six in all): the same wrong-password sentence every time, never the lock.
+        for _ in range(5):
+            self.submit(nobody, "syn-nobody-has-this-name", "syn-wrong-password")
+            expect(nobody.locator("#input-error")).to_have_text(WRONG)
+            expect(nobody.locator("#kc-content")).not_to_contain_text(LOCKED)
+
+    def test_login_error_page_07_a_suspended_member_is_told_why(self):
+        """A member an administrator suspended, and one whose approval was revoked, sign in with the right password: the
+        product's landing says why and whom to ask (not the general failure), and nothing opens."""
+        for logical, change, said in (("suspended", {"enabled": False}, SUSPENDED),
+                                      ("revoked", {"approvalState": "PENDING"}, SUSPENDED_UNAPPROVED)):
+            with self.subTest(member=logical):
+                member = self.stack.create_test_identity(logical, ["radiologist"], "hallym")
+                self.stack.set_member_rights(member, **change)
+                time.sleep(1.05)  # the fixture's whole-second allowance after a rights change (set_member_rights)
+                page = self.fresh_page()
+                page.goto(self.stack.proxy + HOME)
+                self.submit(page, self.stack.username(logical), self.stack.passwords[logical])
+                page.wait_for_url(re.compile(r".*/worklist/hpacs-lite/index\.html(\?.*)?$"), timeout=30000)
+                expect(page.locator("#why")).to_have_text(said)
+                ARTIFACTS.mkdir(exist_ok=True)
+                page.screenshot(path=str(ARTIFACTS / f"LOGIN-ERROR-PAGE-blocked-{logical}.png"), full_page=True)
+                expect(page.locator("#signin")).to_be_visible()
 
 
 def load_tests(loader, tests, pattern):
