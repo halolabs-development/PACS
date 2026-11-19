@@ -112,3 +112,30 @@ test('a double click on a column edge forgets only that column\'s width, and a r
   assert.deepEqual(reloaded.controller.widths('Radiology'),{id:90,date:80});
   assert.deepEqual(reloaded.controller.columns('Radiology').map(c=>c.k),['name','id','date']);
 });
+
+test('QC Flag is a Technician column: it joins a stored Technician layout after Tech Note, a moved or hidden QC Flag stays, and Radiology is untouched (page and server alike)', () => {
+  require('./service_test_loader.cjs');
+  const { normalizeWorklistColumns, COLUMN_KEYS } = require('/app/dist/worklist-columns');
+  assert.ok(COLUMN_KEYS.Technician.includes('qc') && !COLUMN_KEYS.Radiology.includes('qc'));
+  const catalog = Object.fromEntries(Object.entries(COLUMN_KEYS).map(([mode, keys]) => [mode, keys.map(k => ({ k }))]));
+  const radiology = { order: [...COLUMN_KEYS.Radiology].reverse(), hidden: ['age', 'birth'] };
+  // A Technician layout saved before QC Flag existed: QC Flag goes right after Tech Note; the Radiology layout is kept exactly.
+  const before = { version: 1, modes: { Radiology: structuredClone(radiology),
+    Technician: { order: ['name', 'id', 'techNote', 'ss', 'ward'], hidden: ['ward'] } } };
+  for (const normalized of [model.normalize(structuredClone(before), catalog), normalizeWorklistColumns(structuredClone(before))]) {
+    assert.deepEqual(normalized.modes.Radiology, radiology);
+    assert.deepEqual(normalized.modes.Technician.order.slice(0, 6), ['name', 'id', 'techNote', 'qc', 'ss', 'ward']);
+    assert.deepEqual(normalized.modes.Technician.hidden, ['ward']);
+  }
+  // The person moved QC Flag first and hid it: kept as stored, in both normalizers; Radiology still as it was.
+  const moved = { version: 1, modes: { Radiology: structuredClone(radiology),
+    Technician: { order: ['qc', ...COLUMN_KEYS.Technician.filter(k => k !== 'qc')], hidden: ['qc'] } } };
+  for (const normalized of [model.normalize(structuredClone(moved), catalog), normalizeWorklistColumns(structuredClone(moved))]) {
+    assert.deepEqual(normalized.modes.Technician, moved.modes.Technician);
+    assert.deepEqual(normalized.modes.Radiology, radiology);
+  }
+  // QC Flag is not a Radiology column: a Radiology layout naming it is refused whole.
+  const wrong = structuredClone(before); wrong.modes.Radiology.order.push('qc');
+  assert.equal(model.normalize(wrong, catalog), null);
+  assert.equal(normalizeWorklistColumns(wrong), null);
+});

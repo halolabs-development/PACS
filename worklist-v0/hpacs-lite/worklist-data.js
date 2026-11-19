@@ -79,6 +79,7 @@
       // above always stay as the server sent them, whatever a stored overlay carries.
       for (const key of OVERLAY_KEYS) if (overlayValue(key, a.ov?.[key])) s[key] = a.ov[key];
       s.confirm = confirmText({ ...a, rs: s.rs });
+      applyQcRow(s, a);
       // Without a server the matched order of this list (demo) gives the request columns, as the server does for its rows.
       if (!serverMode) {
         const order = a.matched === "M" && a.oid ? orders.find(o => o.oid === a.oid) : null;
@@ -88,6 +89,34 @@
       return s;
     }
     function requestText(v) { return typeof v === "string" ? v.trim() : ""; }
+
+    /**
+     * QC Flag (the server's rule: api/src/pacs/qc-flag.ts). The mark a state answer carries, read here only: `{reason, by,
+     * at, revision}` (reason null = not flagged), or null when the answer has no readable mark (Unknown - never None).
+     */
+    function qcMark(value) {
+      const qc = value?.qc;
+      if (!qc || typeof qc !== "object" || !Number.isSafeInteger(qc.revision) || qc.revision < 0
+        || !(qc.reason === null || typeof qc.reason === "string" && qc.reason)) return null;
+      return { reason: qc.reason, by: typeof qc.by === "string" ? qc.by : null, at: typeof qc.at === "string" ? qc.at : null,
+        revision: qc.revision };
+    }
+    /**
+     * Every place a server state answer replaces this document's state of a row (mergeObservedReportState and
+     * replaceReportState: list, poll, bootstrap, reconnect, PATCH, Match, commit, discard) keeps the mark of the highest
+     * revision this document has seen: the server never lowers it, so a lower one is an answer read before a later change.
+     * An answer without a readable mark keeps the shown one. Only the mark is kept; the rest of the answer is taken.
+     */
+    function newerQc(mine, st) {
+      const held = qcMark(mine), seen = qcMark(st);
+      return held && (!seen || held.revision > seen.revision) ? { qc: mine.qc } : {};
+    }
+    /** A row's QC fields from its state (applyState and syncStudy): the mark, and the word the column, filter and sort read. */
+    function applyQcRow(s, a) {
+      const mark = qcMark(a);
+      s.qcMark = mark;
+      s.qc = !mark ? "Unknown" : mark.reason !== null ? "Flagged" : "None";
+    }
 
     /**
      * 검사 목록.
@@ -398,7 +427,7 @@
     }
     // My Shortcuts → popup that sets the same column filters as the filter row (fval), so the
     // list, the active-filter summary and Saved Searches all see them. No separate filter state.
-    const EXAM_FILTER_KEYS = ['date', 'id', 'name', 'age', 'sex', 'modality', 'desc', 'acc', 'institutionName', 'assignedReader', 'techNote', 'pf',
+    const EXAM_FILTER_KEYS = ['date', 'id', 'name', 'age', 'sex', 'modality', 'desc', 'acc', 'institutionName', 'assignedReader', 'techNote', 'qc', 'pf',
       'rs', 'em', 'ss', 'matched', 'preDoc', 'preReviewer', 'ward'];
     let examFilterDialog = null;
     function openExamFilterPopup(opener) {
@@ -619,6 +648,8 @@
       worklistExport?.sync(list.length);
       rowNavigation?.sync();
       worklistSearch?.show();
+      // The Info panel's QC line and Protocol & Dose follow the list (a poll, a tab change): study-info-panel.js.
+      renderQcInfo(); renderAcquisition();
 
       const active = [];
       if (consultationFilter) {
@@ -1017,6 +1048,8 @@
       const loadSequence = ++listLoadSequence, epoch = commitEpoch;
       // 이 읽기를 시작한 문맥. 목록·관측·안내를 쓰는 자리는 모두 이것을 지난다 — 준비·종료 뒤에 온 답은 목록을 바꾸지 않는다.
       const at = work.capture("document");
+      // A list read (Refresh, a correction, a reconnect) reads the viewed exam's protocol and dose again (study-info-panel.js).
+      forgetAcquisition();
       /**
        * **서버가 죽었다고 Orthanc를 직접 부르지 않는다.**
        *

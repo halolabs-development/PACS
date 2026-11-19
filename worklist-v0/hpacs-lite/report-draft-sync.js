@@ -101,7 +101,7 @@
       const seen = numbered(st?.draftRevision), held = numbered(mine.draftRevision);
       const late = seen && held && seen[1] === held[1] && Number(seen[2]) < Number(held[2])
         ? { draft: mine.draft ?? null, draftRevision: mine.draftRevision, draftEpoch: mine.draftEpoch } : null;
-      return { ...mine, ...st, ...late, ...preservedLocal(uid, mine) };
+      return { ...mine, ...st, ...late, ...newerQc(mine, st), ...preservedLocal(uid, mine) };
     }
 
     /**
@@ -122,7 +122,7 @@
       recordReportOrigin(uid, renderedOrigin(st));
       citations.forget(uid); citationNotes.delete(uid);
       structureState.forget(uid); structureNotes.delete(uid);
-      return { ...appState[uid], ...st, draft: st.draft ?? null, examScopeChanged: false };
+      return { ...appState[uid], ...st, draft: st.draft ?? null, examScopeChanged: false, ...newerQc(appState[uid], st) };
     }
 
     /** 삽입이 나가 있는 동안의 비-keepalive 초안 저장을 **전부** 비켜세운다(B1). */

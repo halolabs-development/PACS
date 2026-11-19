@@ -48,7 +48,8 @@ EXAM_OBSERVE = "\n".join(extract_function(MAIN, name) for name in ("observeExamL
 # harness asserts that the selected study keeps its drawn version and its local draft, and that
 # claim is only worth anything if the product's own rule is what produced it.
 PRESERVE = extract_function(MAIN, "preservedLocal")
-MERGE = extract_function(MAIN, "mergeObservedReportState")
+# QC Flag: the merge keeps the mark of the highest revision through these two (worklist-data.js).
+MERGE = "\n".join(extract_function(MAIN, name) for name in ("qcMark", "newerQc", "mergeObservedReportState"))
 # S4-U1b: the poll now reports each observation to these; they are sliced, not re-described, so the
 # cases below judge the shipped labels and the shipped failure rule.
 OBSERVE = "\n".join(extract_function(MAIN, name) for name in ("kinWrite", "applyObservation", "markObservationUnavailable", "studyReceiptGap", "paintReceiptGap", "renderObservation"))

@@ -1,7 +1,7 @@
 // Persist column identifiers only, never cell values, filters or report content.
 export const COLUMN_KEYS = {
   Radiology: ['pf','assignedReader','techNote','no','viewing','count','series','em','ss','rs','confirm','acc','ts','id','name','reqDate','reqDept','reqDoc','ptClass','age','birth','sex','modality','desc','date','preDoc','preReviewer','institutionName','time'],
-  Technician: ['assignedReader','techNote','no','count','series','em','ss','matched','rs','acc','id','name','age','sex','modality','desc','date','ward','reqHosp','time'],
+  Technician: ['assignedReader','techNote','qc','no','count','series','em','ss','matched','rs','acc','id','name','age','sex','modality','desc','date','ward','reqHosp','time'],
 };
 
 /**
@@ -12,7 +12,8 @@ export const COLUMN_KEYS = {
  */
 export const PLACED_COLUMNS: Record<string, [string, string][]> = {
   Radiology: [['reqDate','name'],['reqDept','reqDate'],['reqDoc','reqDept'],['ptClass','reqDoc'],['confirm','rs']],
-  Technician: [],
+  // QC Flag (Technician only) joins a stored Technician layout right after Tech Note.
+  Technician: [['qc','techNote']],
 };
 
 export function placeMissingColumns(stored: string[], keys: string[], placed: [string, string][]) {

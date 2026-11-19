@@ -914,6 +914,9 @@
       Technician: [
         { k: "assignedReader", t: "Assigned Reader", f: "text" },
         { k: "techNote", t: "Tech Note", f: ["Yes", "None", "Cleared", "Unknown"] },
+        // QC Flag: the technician's image quality mark (the server's, pacs/qc-flag.ts). Unknown is a row whose mark has not
+        // been received; it is neither Flagged nor None.
+        { k: "qc", t: "QC Flag", f: ["Flagged", "None", "Unknown"] },
         { k: "no", t: "No", num: 1 },
         { k: "count", t: "Count", num: 1 },
         { k: "series", t: "Series", num: 1 },
@@ -1034,6 +1037,9 @@
     const CELL = {
       assignedReader:s=>`<button type="button" class="chip" data-reader-assignment="${esc(s.uid)}" ${!serverMode||demoMode||offline?'disabled':''}>${s.assignedReader?`<span translate="no">${esc(s.assignedReader)}</span>`:'Unassigned'}</button>`,
       techNote: s => { const chip = noteChip(s.uid, s.id); return `<button type="button" class="chip" data-tech-note="${esc(s.uid)}" aria-label="${esc(chip.aria)}" title="${esc(chip.title)}" ${!serverMode || demoMode || offline ? 'disabled' : ''}>${esc(chip.label)}</button>`; },
+      // QC Flag: the word, and when flagged the reason (data: never translated or read as markup); the full reason is the title.
+      qc: s => s.qc === "Flagged" ? `<span class="qc-flag">Flagged</span> <span class="qc-reason" translate="no" data-kin-keep="title" title="${esc(s.qcMark.reason)}">${esc(s.qcMark.reason)}</span>`
+        : s.qc === "Unknown" ? `<span class="qc-unknown">Unknown</span>` : "",
       em: s => {const phase=studyPriority?.get(s.uid)?.phase;return phase?`<span title="${phase==='saving'?'응급 상태를 저장 중입니다':'저장 결과 미확인 — 문맥 메뉴의 Refresh Status로 확인하세요'}">${phase==='saving'?'Saving':'Unverified'}</span>`:s.em === "E" ? `<span class="em-e">E</span>` : "";},
       // 판독 상태 이름은 목록과 건수 줄에서 같은 계약을 따른다. 승인(A) 뒤 24시간이 지난 판독문은 낱말만 Finalized다(값은 A).
       rs: s => { const finalized = reportFinalized({ rs: s.rs, amendUntil: appState[s.uid]?.amendUntil }), word = finalized ? "Finalized" : RS_WORD[s.rs] ?? s.rs;
@@ -1536,6 +1542,7 @@
       // above always stay as the server sent them, whatever a stored overlay carries.
       for (const key of OVERLAY_KEYS) if (overlayValue(key, a.ov?.[key])) s[key] = a.ov[key];
       s.confirm = confirmText({ ...a, rs: s.rs });
+      applyQcRow(s, a);
       // Without a server the matched order of this list (demo) gives the request columns, as the server does for its rows.
       if (!serverMode) {
         const order = a.matched === "M" && a.oid ? orders.find(o => o.oid === a.oid) : null;
@@ -1545,6 +1552,34 @@
       return s;
     }
     function requestText(v) { return typeof v === "string" ? v.trim() : ""; }
+
+    /**
+     * QC Flag (the server's rule: api/src/pacs/qc-flag.ts). The mark a state answer carries, read here only: `{reason, by,
+     * at, revision}` (reason null = not flagged), or null when the answer has no readable mark (Unknown - never None).
+     */
+    function qcMark(value) {
+      const qc = value?.qc;
+      if (!qc || typeof qc !== "object" || !Number.isSafeInteger(qc.revision) || qc.revision < 0
+        || !(qc.reason === null || typeof qc.reason === "string" && qc.reason)) return null;
+      return { reason: qc.reason, by: typeof qc.by === "string" ? qc.by : null, at: typeof qc.at === "string" ? qc.at : null,
+        revision: qc.revision };
+    }
+    /**
+     * Every place a server state answer replaces this document's state of a row (mergeObservedReportState and
+     * replaceReportState: list, poll, bootstrap, reconnect, PATCH, Match, commit, discard) keeps the mark of the highest
+     * revision this document has seen: the server never lowers it, so a lower one is an answer read before a later change.
+     * An answer without a readable mark keeps the shown one. Only the mark is kept; the rest of the answer is taken.
+     */
+    function newerQc(mine, st) {
+      const held = qcMark(mine), seen = qcMark(st);
+      return held && (!seen || held.revision > seen.revision) ? { qc: mine.qc } : {};
+    }
+    /** A row's QC fields from its state (applyState and syncStudy): the mark, and the word the column, filter and sort read. */
+    function applyQcRow(s, a) {
+      const mark = qcMark(a);
+      s.qcMark = mark;
+      s.qc = !mark ? "Unknown" : mark.reason !== null ? "Flagged" : "None";
+    }
 
     /**
      * 검사 목록.
@@ -1855,7 +1890,7 @@
     }
     // My Shortcuts → popup that sets the same column filters as the filter row (fval), so the
     // list, the active-filter summary and Saved Searches all see them. No separate filter state.
-    const EXAM_FILTER_KEYS = ['date', 'id', 'name', 'age', 'sex', 'modality', 'desc', 'acc', 'institutionName', 'assignedReader', 'techNote', 'pf',
+    const EXAM_FILTER_KEYS = ['date', 'id', 'name', 'age', 'sex', 'modality', 'desc', 'acc', 'institutionName', 'assignedReader', 'techNote', 'qc', 'pf',
       'rs', 'em', 'ss', 'matched', 'preDoc', 'preReviewer', 'ward'];
     let examFilterDialog = null;
     function openExamFilterPopup(opener) {
@@ -2076,6 +2111,8 @@
       worklistExport?.sync(list.length);
       rowNavigation?.sync();
       worklistSearch?.show();
+      // The Info panel's QC line and Protocol & Dose follow the list (a poll, a tab change): study-info-panel.js.
+      renderQcInfo(); renderAcquisition();
 
       const active = [];
       if (consultationFilter) {
@@ -2474,6 +2511,8 @@
       const loadSequence = ++listLoadSequence, epoch = commitEpoch;
       // 이 읽기를 시작한 문맥. 목록·관측·안내를 쓰는 자리는 모두 이것을 지난다 — 준비·종료 뒤에 온 답은 목록을 바꾸지 않는다.
       const at = work.capture("document");
+      // A list read (Refresh, a correction, a reconnect) reads the viewed exam's protocol and dose again (study-info-panel.js).
+      forgetAcquisition();
       /**
        * **서버가 죽었다고 Orthanc를 직접 부르지 않는다.**
        *
@@ -3168,7 +3207,233 @@
         </table>` : "No clinical information provided.";
       if (s) kinWrite($("#clinical .clinical-scope"), s.uid === selectedUid ? kinSay("판독 대상 검사 정보") : kinSay("관련 검사 정보 · 판독 대상은 바뀌지 않습니다"));
       renderStudyIdentity();
+      renderQcInfo();
+      renderAcquisition();
       renderObservation();
+    }
+
+    /**
+     * QC Flag line (every tab; render() repaints it after each poll): the viewed study's mark as this page last took it from
+     * the server (qcMark). The reason and who are data and are never translated. It is its own line: SS, RS, the order match
+     * and the missing-images line are drawn apart and are not changed by it.
+     */
+    function renderQcInfo() {
+      const box = $("#study-qc");
+      if (!box) return;
+      const s = viewed();
+      box.hidden = !s;
+      if (!s) { box.replaceChildren(); return; }
+      const mark = qcMark(appState[s.uid]), parts = [kinWrite(document.createElement("span"), kinSay("QC Flag")), ": "];
+      const word = kinWrite(document.createElement("strong"), kinSay(!mark ? "Unknown" : mark.reason === null ? "None" : "Flagged"));
+      word.className = "qc-word";
+      parts.push(word);
+      if (mark?.reason) {
+        const data = text => Object.assign(document.createElement("span"), { translate: false, textContent: text });
+        const reason = data(mark.reason); reason.className = "qc-info-reason";
+        parts.push(" — ", reason);
+        const who = [mark.by ? displayActor(mark.by) : "", mark.at ? localStamp(mark.at) : ""].filter(Boolean).join(" · ");
+        if (who) parts.push(" (", data(who), ")");
+      }
+      box.dataset.qc = !mark ? "Unknown" : mark.reason === null ? "None" : "Flagged";
+      box.replaceChildren(...parts);
+    }
+
+    /**
+     * Protocol and dose (Technician tab only): what the viewed exam's own DICOM records, read in this tab for the originals
+     * and series of its scope (KinExamScope) and judged by KinAcquisition (one rule: a value is shown with the tag it was read
+     * from and its unit; "Not in DICOM" only after every object of the series was read; a failed or skipped read is said as
+     * such). Answers are kept per exam scope in this tab's memory only and drawn only while that exam is still the one viewed.
+     */
+    const KinAcquisition = (() => {
+      const MAX_SERIES = 40, RDSR = "1.2.840.10008.5.1.4.1.1.88.67", MAX_VALUES = 4, MAX_EVENTS = 20;
+      const first = (ds, tag) => ds?.[tag]?.Value?.[0];
+      const text = (ds, tag) => { const v = first(ds, tag); return typeof v === "string" ? v.trim() : typeof v === "number" ? String(v) : ""; };
+      const items = (ds, tag) => Array.isArray(ds?.[tag]?.Value) ? ds[tag].Value.filter(v => v && typeof v === "object") : [];
+      /** Distinct recorded values with how many objects (or frames) carry each, in first-seen order; never summed. */
+      function tally() {
+        const values = new Map();
+        return { add(v) { values.set(v, (values.get(v) ?? 0) + 1); }, absent: 0, unreadable: 0,
+          list() { return [...values].map(([value, count]) => ({ value, count })); } };
+      }
+      // CTDIvol (0018,9345) is recorded in mGy (PS3.3 CT Exposure Macro). A value that is not a finite number is unreadable.
+      function ctdiOf(raw, into) {
+        if (raw === undefined) { into.absent++; return; }
+        const n = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() ? Number(raw) : NaN;
+        if (Number.isFinite(n)) into.add(String(n)); else into.unreadable++;
+      }
+      /** One series' objects: Protocol Name per object; CTDIvol per object, or per frame of an enhanced multi-frame object. */
+      function judgeSeries(objects, expected) {
+        const protocol = tally(), ctdi = tally();
+        let frames = 0;
+        for (const ds of objects) {
+          if (text(ds, "0020000D") !== expected.study || text(ds, "0020000E") !== expected.series) throw new Error("identity");
+          const name = text(ds, "00181030");
+          if (name) protocol.add(name); else protocol.absent++;
+          const perFrame = items(ds, "52009230"), shared = items(ds, "52009229")[0];
+          const sharedCtdi = first(items(shared, "00189321")[0], "00189345");
+          if (perFrame.length) for (const frame of perFrame) {
+            frames++;
+            const own = first(items(frame, "00189321")[0], "00189345");
+            ctdiOf(own !== undefined ? own : sharedCtdi !== undefined ? sharedCtdi : first(ds, "00189345"), ctdi);
+          } else ctdiOf(sharedCtdi !== undefined ? sharedCtdi : first(ds, "00189345"), ctdi);
+        }
+        return { protocol, ctdi, frames };
+      }
+      const code = item => text(items(item, "0040A043")[0], "00080100");
+      function measured(item) {
+        const m = items(item, "0040A300")[0], raw = first(m, "0040A30A"), unit = text(items(m, "004008EA")[0], "00080100");
+        const n = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() ? Number(raw) : NaN;
+        return Number.isFinite(n) && unit ? { value: String(n), unit } : { unreadable: true };
+      }
+      function find(node, wanted, out = [], depth = 0) {
+        if (depth > 32) return out;
+        for (const item of items(node, "0040A730")) { if (code(item) === wanted) out.push(item); find(item, wanted, out, depth + 1); }
+        return out;
+      }
+      /**
+       * An X-Ray Radiation Dose SR: the total DLP it records (TID 10012 CT Accumulated Dose Data 113811 → 113813), as that
+       * report's own total; only when it has none, each irradiation event's Mean CTDIvol (113830) and DLP (113838) (TID 10013,
+       * CT Acquisition 113819). Its own unit is kept; nothing is added up across reports or events.
+       */
+      function doseReport(ds) {
+        const totals = find(ds, "113811").flatMap(container => find(container, "113813")).map(measured);
+        const events = find(ds, "113819").map(event => ({ ctdi: find(event, "113830").map(measured)[0] ?? null,
+          dlp: find(event, "113838").map(measured)[0] ?? null }));
+        return { total: totals[0] ?? null, events: totals.length ? [] : events };
+      }
+      async function read(row, request) {
+        const scope = KinExamScope.read(row);
+        if (!scope) return { state: "unavailable" };
+        const listed = await KinExamScope.dicom(row, "series?limit=501", path => request(path));
+        const all = listed.map(({ sourceUid, row: ds }) => ({ sourceUid, seriesUid: text(ds, "0020000E"), modality: text(ds, "00080060"),
+          number: text(ds, "00200011"), description: text(ds, "0008103E") }))
+          .filter(s => s.seriesUid).sort((a, b) => a.sourceUid.localeCompare(b.sourceUid) || (Number(a.number) || 0) - (Number(b.number) || 0));
+        const chosen = all.slice(0, MAX_SERIES), series = [], reports = [];
+        for (const s of chosen) {
+          let objects;
+          try {
+            objects = await request("/dicom-web/studies/" + encodeURIComponent(s.sourceUid) + "/series/" + encodeURIComponent(s.seriesUid) + "/metadata");
+            if (!objects.length) throw new Error("empty");
+            const judged = judgeSeries(objects, { study: s.sourceUid, series: s.seriesUid });
+            series.push({ ...s, state: "read", objects: objects.length, ...judged });
+            for (const ds of objects) if (text(ds, "00080016") === RDSR)
+              reports.push({ sourceUid: s.sourceUid, seriesUid: s.seriesUid, number: s.number, ...doseReport(ds) });
+          } catch (e) { series.push({ ...s, state: "failed" }); }
+        }
+        const partial = scope.sources.some(source => source.series.mode !== "all");
+        return { state: "done", series, reports, skipped: all.length - chosen.length, sources: scope.sources.length, partial,
+          complete: series.every(s => s.state === "read") };
+      }
+      const valuesText = (t, unit) => {
+        const list = t.list(), shown = list.slice(0, MAX_VALUES).map(v => v.value + (unit ? " " + unit : "") + (list.length > 1 ? ` (${v.count})` : ""));
+        return shown.join(", ") + (list.length > MAX_VALUES ? ` … +${list.length - MAX_VALUES}` : "");
+      };
+      /** One fact of a series: its recorded values, then how many objects lack it or carry an unreadable one. */
+      function factParts(label, t, unit, of) {
+        const parts = [{ say: label }, { say: ": " }];
+        if (t.list().length) parts.push({ data: valuesText(t, unit) });
+        if (t.absent && t.list().length) parts.push({ say: " · Not in DICOM in {n0} of {n1}", args: [t.absent, of] });
+        else if (t.absent) parts.push({ say: "Not in DICOM" });
+        if (t.unreadable) parts.push({ say: " · Could not read in {n0} of {n1}", args: [t.unreadable, of] });
+        return parts;
+      }
+      function lines(result) {
+        if (result.state === "reading") return [{ kind: "status", parts: [{ say: "Protocol & Dose: reading DICOM…" }] }];
+        if (result.state === "unavailable") return [{ kind: "status", parts: [{ say: "Protocol & Dose: Could not read (the exam's originals cannot all be read)" }] }];
+        if (result.state === "failed") return [{ kind: "status", parts: [{ say: "Protocol & Dose: Could not read" }] }];
+        const out = [{ kind: "head", parts: [{ say: "Protocol & Dose (recorded in DICOM)" }] }];
+        if (!result.series.length) out.push({ kind: "status", parts: [{ say: "No series found" }] });
+        for (const s of result.series) {
+          const name = [s.number ? "Se " + s.number : "", s.modality, s.description].filter(Boolean).join(" · ") || s.seriesUid;
+          const head = { kind: "series", parts: [...(result.sources > 1 ? [{ data: s.sourceUid }, { say: " · " }] : []), { data: name }] };
+          if (s.state !== "read") { head.parts.push({ say: " — Could not read" }); out.push(head); continue; }
+          const of = s.frames || s.objects;
+          out.push(head,
+            { kind: "protocol", parts: factParts("Protocol (0018,1030)", s.protocol, "", s.objects) },
+            { kind: "ctdi", parts: factParts("CTDIvol (0018,9345)", s.ctdi, "mGy", of) });
+        }
+        // DLP comes only from an X-Ray Radiation Dose SR of the study: each report on its own line, never added up.
+        const readAll = result.complete && !result.skipped;
+        if (!result.reports.length) out.push({ kind: "dlp", parts: readAll
+          ? [{ say: "DLP (Dose SR)" }, { say: ": " }, { say: "Not in DICOM" }]
+          : [{ say: "DLP (Dose SR)" }, { say: ": " }, { say: "Not found in the series read" }] });
+        for (const r of result.reports) {
+          const where = [{ say: "DLP (Dose SR{t0})", args: [{ t: r.number ? " Se " + r.number : "" }] },
+            ...(result.partial ? [{ say: " — of the whole original study, not of this part" }] : []), { say: ": " }];
+          if (r.total) out.push({ kind: "dlp", parts: [...where, r.total.unreadable ? { say: "Could not read" }
+            : { data: r.total.value + " " + r.total.unit }, { say: " (total, 113813)" }] });
+          else if (!r.events.length) out.push({ kind: "dlp", parts: [...where, { say: "Not in DICOM" }] });
+          else r.events.slice(0, MAX_EVENTS).forEach((event, i) => out.push({ kind: "dlp-event", parts: [...where,
+            { say: "Event {n0}: ", args: [i + 1] },
+            { say: "CTDIvol " }, event.ctdi && !event.ctdi.unreadable ? { data: event.ctdi.value + " " + event.ctdi.unit } : { say: event.ctdi ? "Could not read" : "Not in DICOM" },
+            { say: " · DLP " }, event.dlp && !event.dlp.unreadable ? { data: event.dlp.value + " " + event.dlp.unit } : { say: event.dlp ? "Could not read" : "Not in DICOM" }] }));
+        }
+        if (result.skipped) out.push({ kind: "status", parts: [{ say: "{n0} more series not read (limit {n1})", args: [result.skipped, MAX_SERIES] }] });
+        return out;
+      }
+      return { read, lines, judgeSeries, doseReport };
+    })();
+    const acquisitionCache = new Map();
+    let acquisitionSeq = 0;
+    /** Refresh (a list read the person asked for), a session change or a refused read: read the DICOM again next time. */
+    function forgetAcquisition() {
+      acquisitionCache.clear(); acquisitionSeq++;
+      const box = $("#study-acquisition"); if (box) box.dataset.key = "";
+    }
+    function acquisitionKey(s) {
+      if (!s || s.examUnavailable) return null;
+      let scope = null;
+      try { scope = KinExamScope.read(s); } catch (_) { scope = null; }
+      return scope ? s.uid + "|" + KinExamScope.screenStamp(s) + "|" + (s.count ?? "") + "|" + (s.series ?? "") : null;
+    }
+    function renderAcquisition() {
+      const box = $("#study-acquisition");
+      if (!box) return;
+      const s = viewed(), show = !!s && mode === "Technician" && serverMode && !demoMode;
+      box.hidden = !show;
+      if (!show) { box.replaceChildren(); box.dataset.key = ""; return; }
+      const key = acquisitionKey(s);
+      if (!key) { box.dataset.key = ""; box.replaceChildren(...KinAcquisition.lines({ state: "unavailable" }).map(acquisitionLine)); return; }
+      // Drawn (or being read) for this key already: nothing to do. Refresh and a session change clear the key (forgetAcquisition).
+      if (box.dataset.key === key) return;
+      const known = acquisitionCache.get(key);
+      box.dataset.key = key;
+      if (known) { box.replaceChildren(...KinAcquisition.lines(known).map(acquisitionLine)); return; }
+      box.replaceChildren(...KinAcquisition.lines({ state: "reading" }).map(acquisitionLine));
+      if (offline) return;
+      readAcquisition(s, key);
+    }
+    /** One drawn line: its fixed words through the screen language, its values (tags' contents, series names) as data. */
+    function acquisitionLine(line) {
+      const row = document.createElement("div");
+      row.className = "acq-line"; if (line.kind) row.dataset.kind = line.kind;
+      for (const part of line.parts) row.append(part.data
+        ? Object.assign(document.createElement("span"), { translate: false, textContent: part.data })
+        : kinWrite(document.createElement("span"), kinSay(part.say, ...(part.args || []))));
+      return row;
+    }
+    async function readAcquisition(s, key) {
+      const seq = ++acquisitionSeq, at = work.capture("document"), controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30000);
+      const request = async path => {
+        const res = await transport.request(path, { context: at, signal: controller.signal, cache: "no-store",
+          headers: { Accept: "application/dicom+json" }, deadlineMs: 20000 });
+        if (!res.ok || !Array.isArray(res.body)) throw Object.assign(new Error("HTTP " + res.status), { status: res.status });
+        return res.body;
+      };
+      let result;
+      try { result = await KinAcquisition.read(s, request); }
+      catch (e) { result = { state: "failed" }; }
+      finally { clearTimeout(timer); }
+      work.commit(at, () => {
+        // A whole read is kept for its key (the exam scope, counts and series of the list row it was read for); a read with a
+        // failure is not kept, so the next viewing reads again. It is drawn only while that same exam is the one viewed.
+        if (result.state === "done" && result.complete) acquisitionCache.set(key, result);
+        const box = $("#study-acquisition"), now = viewed();
+        if (seq !== acquisitionSeq && box?.dataset.key !== key) return;
+        if (!box || box.hidden || box.dataset.key !== key || acquisitionKey(now) !== key) return;
+        box.replaceChildren(...KinAcquisition.lines(result).map(acquisitionLine));
+      });
     }
 
     /**
@@ -5004,6 +5269,113 @@
     $("#t-verify").addEventListener("click", () => selectedUid ? setSs(selectedUid, "Verified") : alert("검사를 선택하세요."));
     $("#t-unverify").addEventListener("click", () => selectedUid ? setSs(selectedUid, "Unverified") : alert("검사를 선택하세요."));
 
+    /**
+     * ── QC Flag (Technician bar) ──
+     * One window on the selected study (the row the change is stored on, even while a Related study is viewed). It shows the
+     * mark this page last took from the server and sends one command based on that mark's revision and the row's epoch
+     * (api/src/pacs/qc-flag.ts); nothing is painted before the answer. The answer passes mergeObservedReportState like every
+     * other state answer. A refusal, a lost answer or a timeout is said in the window and the list is read again; a mark that
+     * changed meanwhile is shown before anything is sent. The bar button follows technicianWork() (applyRoleUi).
+     */
+    let qcWindow = null, qcSeq = 0;
+    function qcWindowNode() {
+      if (qcWindow) return qcWindow;
+      const d = document.createElement("dialog"); d.id = "qc-flag-window"; d.setAttribute("aria-labelledby", "qc-flag-title");
+      d.style.cssText = "width:min(520px,94vw);background:#141c29;color:#dae6f6;border:1px solid #6683aa;border-radius:8px;padding:14px";
+      const make = (tag, id, text) => { const el = document.createElement(tag); if (id) el.id = id; if (text) kinWrite(el, kinSay(text)); return el; };
+      const title = make("h3", "qc-flag-title", "QC Flag"); title.style.margin = "0 0 8px";
+      const study = make("div", "qc-flag-study"); study.translate = false;
+      const now = make("div", "qc-flag-now"); now.style.margin = "6px 0";
+      const label = make("label", null, "Reason"); label.htmlFor = "qc-flag-reason"; label.style.display = "block";
+      const reason = make("textarea", "qc-flag-reason"); reason.rows = 3; reason.maxLength = 500; reason.translate = false;
+      reason.style.cssText = "width:100%;box-sizing:border-box";
+      const status = make("p", "qc-flag-status"); status.setAttribute("role", "status"); status.setAttribute("aria-live", "polite");
+      const flag = make("button", "qc-flag-save", "Flag"), clear = make("button", "qc-flag-clear", "Clear Flag"), cancel = make("button", "qc-flag-cancel", "Cancel");
+      for (const b of [flag, clear, cancel]) b.type = "button";
+      const actions = document.createElement("div"); actions.style.cssText = "display:flex;gap:8px;flex-wrap:wrap"; actions.append(flag, clear, cancel);
+      d.append(title, study, now, label, reason, status, actions);
+      flag.addEventListener("click", () => sendQc(false));
+      clear.addEventListener("click", () => sendQc(true));
+      cancel.addEventListener("click", () => d.close());
+      // Closing drops the window's request token: a late answer still updates the row (above), never this window.
+      d.addEventListener("close", () => { qcSeq++; d.dataset.uid = ""; delete d.dataset.request; });
+      document.body.append(d);
+      return qcWindow = d;
+    }
+    /** The window's picture of its study: the mark and epoch it will send against, drawn from this page's state. */
+    function drawQcWindow(d, uid) {
+      const s = studies.find(x => x.uid === uid), mark = qcMark(appState[uid]);
+      d.dataset.uid = uid; d.dataset.revision = mark ? String(mark.revision) : ""; d.dataset.epoch = appState[uid]?.draftEpoch ?? "";
+      $("#qc-flag-study").textContent = s ? `${s.name} (${s.id}) · ${s.date} · ${shownStudyDesc(s)}` : uid;
+      const now = $("#qc-flag-now");
+      if (!mark) kinWrite(now, kinSay("QC 상태를 아직 받지 못했습니다. 목록을 새로고침한 뒤 다시 여세요."));
+      else if (mark.reason === null) kinWrite(now, kinSay("No QC flag"));
+      else {
+        const why = document.createElement("span"); why.translate = false; why.textContent = mark.reason;
+        const who = [mark.by ? displayActor(mark.by) : "", mark.at ? localStamp(mark.at) : ""].filter(Boolean).join(" · ");
+        now.replaceChildren(kinWrite(document.createElement("span"), kinSay("Flagged")), ": ", why,
+          ...(who ? [" · ", Object.assign(document.createElement("span"), { translate: false, textContent: who })] : []));
+      }
+      $("#qc-flag-save").disabled = !mark; $("#qc-flag-clear").disabled = !mark || mark.reason === null;
+    }
+    function openQcFlag() {
+      if (!technicianWork()) return;
+      const s = selectedUid ? studies.find(x => x.uid === selectedUid) : null;
+      if (!s) { alert("검사를 선택하세요."); return; }
+      if (!serverMode || offline || demoMode) { toast(kinSay("QC 표시는 서버에 연결된 동안에만 바꿀 수 있습니다"), "err"); return; }
+      if (s.tele) { toast(kinSay("원격판독으로 받은 검사의 QC 표시는 보유 기관에서만 바꿀 수 있습니다"), "err"); return; }
+      const d = qcWindowNode();
+      qcSeq++;
+      drawQcWindow(d, s.uid);
+      $("#qc-flag-reason").value = s.qcMark?.reason ?? "";
+      $("#qc-flag-status").textContent = "";
+      if (!d.open) d.showModal();
+      $("#qc-flag-reason").focus();
+    }
+    async function sendQc(clearing) {
+      const d = qcWindow, uid = d?.dataset.uid;
+      if (!d?.open || !uid || d.dataset.request) return;
+      const status = $("#qc-flag-status"), mark = qcMark(appState[uid]);
+      // The mark changed since the window drew it (a poll, another window): show the new one before anything is sent.
+      if (!mark || String(mark.revision) !== d.dataset.revision || (appState[uid]?.draftEpoch ?? "") !== d.dataset.epoch) {
+        drawQcWindow(d, uid);
+        kinWrite(status, kinSay("그 사이 QC 표시가 바뀌었습니다. 지금 상태를 확인한 뒤 다시 누르세요."));
+        return;
+      }
+      const reason = $("#qc-flag-reason").value.trim();
+      if (!clearing && (!reason || reason.length > 500)) { kinWrite(status, kinSay("QC 사유를 1~500자로 적으세요.")); return; }
+      const token = String(++qcSeq), at = work.capture("document"), controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+      d.dataset.request = token; $("#qc-flag-save").disabled = $("#qc-flag-clear").disabled = true;
+      kinWrite(status, kinSay("저장 중…"));
+      let st = null, error = null;
+      try {
+        st = await api("PATCH", "/studies/" + encodeURIComponent(uid),
+          { qc: clearing ? null : { reason }, qcRevision: mark.revision, epoch: d.dataset.epoch }, controller.signal, at);
+      } catch (e) { error = e; } finally { clearTimeout(timer); }
+      work.commit(at, () => {
+        const mine = d.dataset.request === token && d.open && d.dataset.uid === uid;
+        if (mine) delete d.dataset.request;
+        if (st) {
+          appState[uid] = mergeObservedReportState(uid, st);
+          syncStudy(uid); render(); renderClinical();
+          if (!mine) return;
+          d.close();
+          const saved = qcMark(st);
+          toast(kinSay(saved?.reason === null ? "QC 표시를 지웠습니다" : "QC 표시를 저장했습니다"), "info");
+          return;
+        }
+        // Refused, lost or timed out: the result is read back from the server (the list) and the window says what happened.
+        if (!error?.auth) load();
+        if (!mine) return;
+        drawQcWindow(d, uid);
+        kinWrite(status, error?.name === "AbortError"
+          ? kinSay("응답 시간이 지났습니다. 저장됐는지 목록을 다시 읽어 확인합니다.")
+          : kinSay("QC 표시를 저장하지 못했습니다: {e0}", error?.message ?? ""));
+      });
+    }
+    $("#t-qc-flag").addEventListener("click", openQcFlag);
+
     // ── 장비 수신 ──
     // 예전엔 여기 "장비 수신 시뮬" 버튼이 있었다. localStorage에 가짜 행을 만들 뿐이라
     // 영상도 없고 서버도 몰랐다 — 화면에만 있는 검사였다.
@@ -6629,7 +7001,7 @@
       const seen = numbered(st?.draftRevision), held = numbered(mine.draftRevision);
       const late = seen && held && seen[1] === held[1] && Number(seen[2]) < Number(held[2])
         ? { draft: mine.draft ?? null, draftRevision: mine.draftRevision, draftEpoch: mine.draftEpoch } : null;
-      return { ...mine, ...st, ...late, ...preservedLocal(uid, mine) };
+      return { ...mine, ...st, ...late, ...newerQc(mine, st), ...preservedLocal(uid, mine) };
     }
 
     /**
@@ -6650,7 +7022,7 @@
       recordReportOrigin(uid, renderedOrigin(st));
       citations.forget(uid); citationNotes.delete(uid);
       structureState.forget(uid); structureNotes.delete(uid);
-      return { ...appState[uid], ...st, draft: st.draft ?? null, examScopeChanged: false };
+      return { ...appState[uid], ...st, draft: st.draft ?? null, examScopeChanged: false, ...newerQc(appState[uid], st) };
     }
 
     /** 삽입이 나가 있는 동안의 비-keepalive 초안 저장을 **전부** 비켜세운다(B1). */
@@ -9241,6 +9613,7 @@
       if (typeof a.ward === "string") s.ward = a.ward;
       if (overlayValue("ward", a.ov?.ward)) s.ward = a.ov.ward;
       if (a.reqHosp && !s.institutionName) s.reqHosp = a.reqHosp;
+      applyQcRow(s, a);
     }
 
 
@@ -15602,7 +15975,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         if (!rad) el.title = "판독의(radiologist) 권한이 필요합니다";
       });
       ["#findings", "#conclusion", "#recommendation"].forEach(s => $(s).readOnly = !rad);
-      ["#t-verify", "#t-unverify", "#t-modify"].forEach(s => {
+      ["#t-verify", "#t-unverify", "#t-modify", "#t-qc-flag"].forEach(s => {
         const el = $(s); el.disabled = !tec;
         if (!tec) el.title = TECHNICIAN_WORK_REASON;
       });

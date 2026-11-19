@@ -74,6 +74,7 @@ REGRESSION_SUITES = {
         tests/report_actions_dom_test.py
         tests/row_menu_rights_dom_test.py
         tests/study_identity_dom_test.py
+        tests/technician_qc_dose_dom_test.py
         tests/unavailable_controls_dom_test.py
         tests/worklist_arrivals_dom_test.py
         tests/worklist_body_parts_dom_test.py

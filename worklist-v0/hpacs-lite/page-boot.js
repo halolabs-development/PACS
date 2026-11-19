@@ -34,7 +34,7 @@
         if (!rad) el.title = "판독의(radiologist) 권한이 필요합니다";
       });
       ["#findings", "#conclusion", "#recommendation"].forEach(s => $(s).readOnly = !rad);
-      ["#t-verify", "#t-unverify", "#t-modify"].forEach(s => {
+      ["#t-verify", "#t-unverify", "#t-modify", "#t-qc-flag"].forEach(s => {
         const el = $(s); el.disabled = !tec;
         if (!tec) el.title = TECHNICIAN_WORK_REASON;
       });

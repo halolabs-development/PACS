@@ -30,7 +30,233 @@
         </table>` : "No clinical information provided.";
       if (s) kinWrite($("#clinical .clinical-scope"), s.uid === selectedUid ? kinSay("판독 대상 검사 정보") : kinSay("관련 검사 정보 · 판독 대상은 바뀌지 않습니다"));
       renderStudyIdentity();
+      renderQcInfo();
+      renderAcquisition();
       renderObservation();
+    }
+
+    /**
+     * QC Flag line (every tab; render() repaints it after each poll): the viewed study's mark as this page last took it from
+     * the server (qcMark). The reason and who are data and are never translated. It is its own line: SS, RS, the order match
+     * and the missing-images line are drawn apart and are not changed by it.
+     */
+    function renderQcInfo() {
+      const box = $("#study-qc");
+      if (!box) return;
+      const s = viewed();
+      box.hidden = !s;
+      if (!s) { box.replaceChildren(); return; }
+      const mark = qcMark(appState[s.uid]), parts = [kinWrite(document.createElement("span"), kinSay("QC Flag")), ": "];
+      const word = kinWrite(document.createElement("strong"), kinSay(!mark ? "Unknown" : mark.reason === null ? "None" : "Flagged"));
+      word.className = "qc-word";
+      parts.push(word);
+      if (mark?.reason) {
+        const data = text => Object.assign(document.createElement("span"), { translate: false, textContent: text });
+        const reason = data(mark.reason); reason.className = "qc-info-reason";
+        parts.push(" — ", reason);
+        const who = [mark.by ? displayActor(mark.by) : "", mark.at ? localStamp(mark.at) : ""].filter(Boolean).join(" · ");
+        if (who) parts.push(" (", data(who), ")");
+      }
+      box.dataset.qc = !mark ? "Unknown" : mark.reason === null ? "None" : "Flagged";
+      box.replaceChildren(...parts);
+    }
+
+    /**
+     * Protocol and dose (Technician tab only): what the viewed exam's own DICOM records, read in this tab for the originals
+     * and series of its scope (KinExamScope) and judged by KinAcquisition (one rule: a value is shown with the tag it was read
+     * from and its unit; "Not in DICOM" only after every object of the series was read; a failed or skipped read is said as
+     * such). Answers are kept per exam scope in this tab's memory only and drawn only while that exam is still the one viewed.
+     */
+    const KinAcquisition = (() => {
+      const MAX_SERIES = 40, RDSR = "1.2.840.10008.5.1.4.1.1.88.67", MAX_VALUES = 4, MAX_EVENTS = 20;
+      const first = (ds, tag) => ds?.[tag]?.Value?.[0];
+      const text = (ds, tag) => { const v = first(ds, tag); return typeof v === "string" ? v.trim() : typeof v === "number" ? String(v) : ""; };
+      const items = (ds, tag) => Array.isArray(ds?.[tag]?.Value) ? ds[tag].Value.filter(v => v && typeof v === "object") : [];
+      /** Distinct recorded values with how many objects (or frames) carry each, in first-seen order; never summed. */
+      function tally() {
+        const values = new Map();
+        return { add(v) { values.set(v, (values.get(v) ?? 0) + 1); }, absent: 0, unreadable: 0,
+          list() { return [...values].map(([value, count]) => ({ value, count })); } };
+      }
+      // CTDIvol (0018,9345) is recorded in mGy (PS3.3 CT Exposure Macro). A value that is not a finite number is unreadable.
+      function ctdiOf(raw, into) {
+        if (raw === undefined) { into.absent++; return; }
+        const n = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() ? Number(raw) : NaN;
+        if (Number.isFinite(n)) into.add(String(n)); else into.unreadable++;
+      }
+      /** One series' objects: Protocol Name per object; CTDIvol per object, or per frame of an enhanced multi-frame object. */
+      function judgeSeries(objects, expected) {
+        const protocol = tally(), ctdi = tally();
+        let frames = 0;
+        for (const ds of objects) {
+          if (text(ds, "0020000D") !== expected.study || text(ds, "0020000E") !== expected.series) throw new Error("identity");
+          const name = text(ds, "00181030");
+          if (name) protocol.add(name); else protocol.absent++;
+          const perFrame = items(ds, "52009230"), shared = items(ds, "52009229")[0];
+          const sharedCtdi = first(items(shared, "00189321")[0], "00189345");
+          if (perFrame.length) for (const frame of perFrame) {
+            frames++;
+            const own = first(items(frame, "00189321")[0], "00189345");
+            ctdiOf(own !== undefined ? own : sharedCtdi !== undefined ? sharedCtdi : first(ds, "00189345"), ctdi);
+          } else ctdiOf(sharedCtdi !== undefined ? sharedCtdi : first(ds, "00189345"), ctdi);
+        }
+        return { protocol, ctdi, frames };
+      }
+      const code = item => text(items(item, "0040A043")[0], "00080100");
+      function measured(item) {
+        const m = items(item, "0040A300")[0], raw = first(m, "0040A30A"), unit = text(items(m, "004008EA")[0], "00080100");
+        const n = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() ? Number(raw) : NaN;
+        return Number.isFinite(n) && unit ? { value: String(n), unit } : { unreadable: true };
+      }
+      function find(node, wanted, out = [], depth = 0) {
+        if (depth > 32) return out;
+        for (const item of items(node, "0040A730")) { if (code(item) === wanted) out.push(item); find(item, wanted, out, depth + 1); }
+        return out;
+      }
+      /**
+       * An X-Ray Radiation Dose SR: the total DLP it records (TID 10012 CT Accumulated Dose Data 113811 → 113813), as that
+       * report's own total; only when it has none, each irradiation event's Mean CTDIvol (113830) and DLP (113838) (TID 10013,
+       * CT Acquisition 113819). Its own unit is kept; nothing is added up across reports or events.
+       */
+      function doseReport(ds) {
+        const totals = find(ds, "113811").flatMap(container => find(container, "113813")).map(measured);
+        const events = find(ds, "113819").map(event => ({ ctdi: find(event, "113830").map(measured)[0] ?? null,
+          dlp: find(event, "113838").map(measured)[0] ?? null }));
+        return { total: totals[0] ?? null, events: totals.length ? [] : events };
+      }
+      async function read(row, request) {
+        const scope = KinExamScope.read(row);
+        if (!scope) return { state: "unavailable" };
+        const listed = await KinExamScope.dicom(row, "series?limit=501", path => request(path));
+        const all = listed.map(({ sourceUid, row: ds }) => ({ sourceUid, seriesUid: text(ds, "0020000E"), modality: text(ds, "00080060"),
+          number: text(ds, "00200011"), description: text(ds, "0008103E") }))
+          .filter(s => s.seriesUid).sort((a, b) => a.sourceUid.localeCompare(b.sourceUid) || (Number(a.number) || 0) - (Number(b.number) || 0));
+        const chosen = all.slice(0, MAX_SERIES), series = [], reports = [];
+        for (const s of chosen) {
+          let objects;
+          try {
+            objects = await request("/dicom-web/studies/" + encodeURIComponent(s.sourceUid) + "/series/" + encodeURIComponent(s.seriesUid) + "/metadata");
+            if (!objects.length) throw new Error("empty");
+            const judged = judgeSeries(objects, { study: s.sourceUid, series: s.seriesUid });
+            series.push({ ...s, state: "read", objects: objects.length, ...judged });
+            for (const ds of objects) if (text(ds, "00080016") === RDSR)
+              reports.push({ sourceUid: s.sourceUid, seriesUid: s.seriesUid, number: s.number, ...doseReport(ds) });
+          } catch (e) { series.push({ ...s, state: "failed" }); }
+        }
+        const partial = scope.sources.some(source => source.series.mode !== "all");
+        return { state: "done", series, reports, skipped: all.length - chosen.length, sources: scope.sources.length, partial,
+          complete: series.every(s => s.state === "read") };
+      }
+      const valuesText = (t, unit) => {
+        const list = t.list(), shown = list.slice(0, MAX_VALUES).map(v => v.value + (unit ? " " + unit : "") + (list.length > 1 ? ` (${v.count})` : ""));
+        return shown.join(", ") + (list.length > MAX_VALUES ? ` … +${list.length - MAX_VALUES}` : "");
+      };
+      /** One fact of a series: its recorded values, then how many objects lack it or carry an unreadable one. */
+      function factParts(label, t, unit, of) {
+        const parts = [{ say: label }, { say: ": " }];
+        if (t.list().length) parts.push({ data: valuesText(t, unit) });
+        if (t.absent && t.list().length) parts.push({ say: " · Not in DICOM in {n0} of {n1}", args: [t.absent, of] });
+        else if (t.absent) parts.push({ say: "Not in DICOM" });
+        if (t.unreadable) parts.push({ say: " · Could not read in {n0} of {n1}", args: [t.unreadable, of] });
+        return parts;
+      }
+      function lines(result) {
+        if (result.state === "reading") return [{ kind: "status", parts: [{ say: "Protocol & Dose: reading DICOM…" }] }];
+        if (result.state === "unavailable") return [{ kind: "status", parts: [{ say: "Protocol & Dose: Could not read (the exam's originals cannot all be read)" }] }];
+        if (result.state === "failed") return [{ kind: "status", parts: [{ say: "Protocol & Dose: Could not read" }] }];
+        const out = [{ kind: "head", parts: [{ say: "Protocol & Dose (recorded in DICOM)" }] }];
+        if (!result.series.length) out.push({ kind: "status", parts: [{ say: "No series found" }] });
+        for (const s of result.series) {
+          const name = [s.number ? "Se " + s.number : "", s.modality, s.description].filter(Boolean).join(" · ") || s.seriesUid;
+          const head = { kind: "series", parts: [...(result.sources > 1 ? [{ data: s.sourceUid }, { say: " · " }] : []), { data: name }] };
+          if (s.state !== "read") { head.parts.push({ say: " — Could not read" }); out.push(head); continue; }
+          const of = s.frames || s.objects;
+          out.push(head,
+            { kind: "protocol", parts: factParts("Protocol (0018,1030)", s.protocol, "", s.objects) },
+            { kind: "ctdi", parts: factParts("CTDIvol (0018,9345)", s.ctdi, "mGy", of) });
+        }
+        // DLP comes only from an X-Ray Radiation Dose SR of the study: each report on its own line, never added up.
+        const readAll = result.complete && !result.skipped;
+        if (!result.reports.length) out.push({ kind: "dlp", parts: readAll
+          ? [{ say: "DLP (Dose SR)" }, { say: ": " }, { say: "Not in DICOM" }]
+          : [{ say: "DLP (Dose SR)" }, { say: ": " }, { say: "Not found in the series read" }] });
+        for (const r of result.reports) {
+          const where = [{ say: "DLP (Dose SR{t0})", args: [{ t: r.number ? " Se " + r.number : "" }] },
+            ...(result.partial ? [{ say: " — of the whole original study, not of this part" }] : []), { say: ": " }];
+          if (r.total) out.push({ kind: "dlp", parts: [...where, r.total.unreadable ? { say: "Could not read" }
+            : { data: r.total.value + " " + r.total.unit }, { say: " (total, 113813)" }] });
+          else if (!r.events.length) out.push({ kind: "dlp", parts: [...where, { say: "Not in DICOM" }] });
+          else r.events.slice(0, MAX_EVENTS).forEach((event, i) => out.push({ kind: "dlp-event", parts: [...where,
+            { say: "Event {n0}: ", args: [i + 1] },
+            { say: "CTDIvol " }, event.ctdi && !event.ctdi.unreadable ? { data: event.ctdi.value + " " + event.ctdi.unit } : { say: event.ctdi ? "Could not read" : "Not in DICOM" },
+            { say: " · DLP " }, event.dlp && !event.dlp.unreadable ? { data: event.dlp.value + " " + event.dlp.unit } : { say: event.dlp ? "Could not read" : "Not in DICOM" }] }));
+        }
+        if (result.skipped) out.push({ kind: "status", parts: [{ say: "{n0} more series not read (limit {n1})", args: [result.skipped, MAX_SERIES] }] });
+        return out;
+      }
+      return { read, lines, judgeSeries, doseReport };
+    })();
+    const acquisitionCache = new Map();
+    let acquisitionSeq = 0;
+    /** Refresh (a list read the person asked for), a session change or a refused read: read the DICOM again next time. */
+    function forgetAcquisition() {
+      acquisitionCache.clear(); acquisitionSeq++;
+      const box = $("#study-acquisition"); if (box) box.dataset.key = "";
+    }
+    function acquisitionKey(s) {
+      if (!s || s.examUnavailable) return null;
+      let scope = null;
+      try { scope = KinExamScope.read(s); } catch (_) { scope = null; }
+      return scope ? s.uid + "|" + KinExamScope.screenStamp(s) + "|" + (s.count ?? "") + "|" + (s.series ?? "") : null;
+    }
+    function renderAcquisition() {
+      const box = $("#study-acquisition");
+      if (!box) return;
+      const s = viewed(), show = !!s && mode === "Technician" && serverMode && !demoMode;
+      box.hidden = !show;
+      if (!show) { box.replaceChildren(); box.dataset.key = ""; return; }
+      const key = acquisitionKey(s);
+      if (!key) { box.dataset.key = ""; box.replaceChildren(...KinAcquisition.lines({ state: "unavailable" }).map(acquisitionLine)); return; }
+      // Drawn (or being read) for this key already: nothing to do. Refresh and a session change clear the key (forgetAcquisition).
+      if (box.dataset.key === key) return;
+      const known = acquisitionCache.get(key);
+      box.dataset.key = key;
+      if (known) { box.replaceChildren(...KinAcquisition.lines(known).map(acquisitionLine)); return; }
+      box.replaceChildren(...KinAcquisition.lines({ state: "reading" }).map(acquisitionLine));
+      if (offline) return;
+      readAcquisition(s, key);
+    }
+    /** One drawn line: its fixed words through the screen language, its values (tags' contents, series names) as data. */
+    function acquisitionLine(line) {
+      const row = document.createElement("div");
+      row.className = "acq-line"; if (line.kind) row.dataset.kind = line.kind;
+      for (const part of line.parts) row.append(part.data
+        ? Object.assign(document.createElement("span"), { translate: false, textContent: part.data })
+        : kinWrite(document.createElement("span"), kinSay(part.say, ...(part.args || []))));
+      return row;
+    }
+    async function readAcquisition(s, key) {
+      const seq = ++acquisitionSeq, at = work.capture("document"), controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30000);
+      const request = async path => {
+        const res = await transport.request(path, { context: at, signal: controller.signal, cache: "no-store",
+          headers: { Accept: "application/dicom+json" }, deadlineMs: 20000 });
+        if (!res.ok || !Array.isArray(res.body)) throw Object.assign(new Error("HTTP " + res.status), { status: res.status });
+        return res.body;
+      };
+      let result;
+      try { result = await KinAcquisition.read(s, request); }
+      catch (e) { result = { state: "failed" }; }
+      finally { clearTimeout(timer); }
+      work.commit(at, () => {
+        // A whole read is kept for its key (the exam scope, counts and series of the list row it was read for); a read with a
+        // failure is not kept, so the next viewing reads again. It is drawn only while that same exam is the one viewed.
+        if (result.state === "done" && result.complete) acquisitionCache.set(key, result);
+        const box = $("#study-acquisition"), now = viewed();
+        if (seq !== acquisitionSeq && box?.dataset.key !== key) return;
+        if (!box || box.hidden || box.dataset.key !== key || acquisitionKey(now) !== key) return;
+        box.replaceChildren(...KinAcquisition.lines(result).map(acquisitionLine));
+      });
     }
 
     /**

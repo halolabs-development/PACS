@@ -22,7 +22,9 @@
   // A stored layout that lacks one of these columns gets it right after its anchor (request columns after Name, Confirm
   // after RS), in this sequence; other missing columns are still added at the end. Same list as the server
   // (api/src/worklist-columns.ts PLACED_COLUMNS).
-  const PLACED = { Radiology: [['reqDate', 'name'], ['reqDept', 'reqDate'], ['reqDoc', 'reqDept'], ['ptClass', 'reqDoc'], ['confirm', 'rs']] };
+  // QC Flag (a Technician column) joins after Tech Note.
+  const PLACED = { Radiology: [['reqDate', 'name'], ['reqDept', 'reqDate'], ['reqDoc', 'reqDept'], ['ptClass', 'reqDoc'], ['confirm', 'rs']],
+    Technician: [['qc', 'techNote']] };
   function placeMissing(stored, keys, placed) {
     const late = new Set(placed.map(([k]) => k));
     const order = [...stored, ...keys.filter(k => !stored.includes(k) && !late.has(k))];
