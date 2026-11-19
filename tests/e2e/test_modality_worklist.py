@@ -34,6 +34,7 @@ from pydicom.dataset import Dataset
 from pynetdicom import AE
 from pynetdicom.sop_class import ModalityWorklistInformationFind, Verification
 
+from invariants_live import ROOT
 from test_worklist import WorklistE2E, psql
 
 MWL_PORT = int(os.environ.get("KIN_MWL_HOST_PORT", "4243"))
@@ -234,7 +235,7 @@ class ModalityWorklistE2E(WorklistE2E):
                                  "const fs=require('fs');let n=0;for(const p of fs.readdirSync('/proc')){if(!/^\\d+$/.test(p))continue;"
                                  "let c='';try{c=fs.readFileSync('/proc/'+p+'/cmdline','utf8')}catch{continue}"
                                  "if(+p!==process.pid&&c.includes('mwl_scp.py')){process.kill(+p,'SIGKILL');n++}}console.log(n)"],
-                                capture_output=True, text=True, timeout=60)
+                                cwd=ROOT, capture_output=True, text=True, timeout=60)
         self.assertEqual((killed.returncode, killed.stdout.strip()), (0, "1"), killed.stderr)
         deadline = time.monotonic() + 60
         while True:
