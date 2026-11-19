@@ -2838,6 +2838,8 @@ window.KinLanguageTerms = {
     ["서버가 고른 시리즈·영상의 원본을 모두 보냈습니다. 내 컴퓨터에 저장됐는지는 브라우저의 다운로드 목록에서 확인하세요.", "The server has sent all originals of the chosen series and images. Check your browser's download list to see whether they were saved on your computer.", "m"],
     ["고른 시리즈·영상 가운데 이 검사의 원본에서 찾을 수 없는 것이 있습니다. 목록을 다시 열어 고르세요. 내려받기는 준비되지 않았습니다.", "Some of the chosen series or images are not among this study's originals. Open the list again and choose. Nothing was prepared for download.", "s"],
     ["고른 원본 {n0}개({1})를 내려받을 준비가 되었습니다.", "{n0} chosen originals ({1}) are ready to download.", "m"],
+    ["원본 {n0}개({1})를 내려받을 준비가 되었습니다.", "{n0} originals ({1}) are ready to download.", "m"],
+    ["서버가 이 작업의 원본 전송을 마쳤습니다. 내 컴퓨터에 저장됐는지는 브라우저의 다운로드 목록에서 확인하세요.", "The server has finished sending this job's originals. Check your browser's download list to see whether they were saved on your computer.", "m"],
     ["고른 시리즈·영상 가운데 이 검사의 원본에서 찾을 수 없는 것이 있어 준비하지 않았습니다. 다시 골라 주세요.", "Some of the chosen series or images are not among this study's originals, so nothing was prepared. Choose again.", "m"],
     ["이 검사의 원본을 지금 모두 볼 수 없어 고를 수 없습니다.", "Not all originals of this exam can be read now, so nothing can be chosen.", "m"],
     ["이 검사를 지금 목록에서 찾을 수 없어 원본 내려받기를 시작하지 않았습니다. 목록을 새로고침한 뒤 다시 시도하세요.", "This study is not in the list now, so the download of originals was not started. Refresh the list and try again.", "m"],

@@ -361,7 +361,8 @@ class TransferSite(rf.FlowSite):
         self.import_reads = []          # operationId of every status GET
         self.status_answers = []        # per status GET: (status, body) | "abort"; none queued: the stored state
         self.prepares = []              # (uid, body) of every download preparation
-        self.prepare_answers = []       # per preparation: (status, body)
+        self.prepare_answers = []       # per preparation: (status, body) | "hold"
+        self.held_prepares = []         # (route, uid, body) of preparations answered by the case ("hold")
         self.download_state = {}        # operationId -> view
         self.download_reads = []        # operationId of every download status GET
         self.download_answers = {}      # operationId -> list of views answered in turn by its status GETs
@@ -438,6 +439,8 @@ class TransferSite(rf.FlowSite):
             self.prepares.append((uid, body))
             if self.prepare_answers:
                 reply = self.prepare_answers.pop(0)
+                if reply == "hold":
+                    return self.held_prepares.append((route, uid, body))
                 if reply[0] == "prepared-then":
                     # The server prepared the operation, then the answer was replaced on the way.
                     self.download_state[body["operationId"]] = download_view(body["operationId"], uid)
@@ -506,6 +509,16 @@ class TransferSite(rf.FlowSite):
             reply = (200, {"operationId": record["operation"], "grantId": record["grantId"], "grant": record["grant"],
                            "expiresAt": "2026-10-17T00:02:00.000Z"})
         return self.answer(route, *reply)
+
+    def release_prepare(self, reply=None):
+        """Answers the oldest held preparation: as the server prepares it (None), or with `reply` = (status, body)."""
+        route, uid, body = self.held_prepares.pop(0)
+        if reply is None:
+            chosen = body.get("selection")
+            view = download_view(body["operationId"], uid, selection=chosen if isinstance(chosen, dict) else None)
+            self.download_state[body["operationId"]] = view
+            reply = (200, view)
+        self.answer(route, *reply)
 
     def release_import(self, reply="stored", index=0):
         route, record = self.held_imports.pop(index)
@@ -1858,6 +1871,177 @@ class TransferPanelPage(rf.ReportFlowPage):
         self.observed(lambda: self.site.download_reads.count(op) > reads, "the restored operation's status read")
         return self.box_of(op)
 
+    RANGE_UNCONFIRMED = "Download Originals (Range Not Confirmed)"
+    READY_ALONE = "원본 3개(3.0 MiB)를 내려받을 준비가 되었습니다."
+    SENT_ALONE = "서버가 이 작업의 원본 전송을 마쳤습니다. 내 컴퓨터에 저장됐는지는 브라우저의 다운로드 목록에서 확인하세요."
+
+    def reason(self, op):
+        return self.box_of(op).locator(".study-transfer-reason").inner_text()
+
+    def says(self, op, series=None, images=None):
+        """The panel says what `op` covers: the whole study, or (`series`, `images`) the counts of a choice."""
+        box = self.box_of(op)
+        expect(box.locator("b").first).to_have_text("Download Originals" if series is None else "Download Selected Originals")
+        line = box.locator(".study-transfer-selection")
+        if series is None:
+            expect(line).to_have_count(0)
+        else:
+            expect(line).to_have_text(f"고른 범위: 시리즈 {series}개, 영상 {images}개")
+
+    def says_no_range(self, op, why):
+        """Nothing of `op`'s box says the whole study or a choice, and Prepare Again is neither offered nor pointed at."""
+        box = self.box_of(op)
+        expect(box.locator("b").first).to_have_text(self.RANGE_UNCONFIRMED)
+        expect(box.locator(".study-transfer-selection")).to_have_count(0)
+        expect(self.again(op)).to_have_count(0)
+        text = box.inner_text()
+        for words in ("Prepare Again", "Download Selected Originals", "검사 원본", "모든 원본", "고른"):
+            self.assertNotIn(words, text, why)
+
+    def read_out(self, op):
+        """Check Again of `op` pressed and its status read held by the case: the held read's route."""
+        self.site.download_answers[op] = ["hold"]
+        self.box_of(op).get_by_role("button", name="Check Again", exact=True).click()
+        self.wait(lambda: self.site.held_reads, "the status read is out")
+        return self.site.held_reads.pop(0)[0]
+
+    def test_selected_originals_a_first_request_says_what_it_asks_for_and_a_new_document_says_no_range_before_its_answer(self):
+        s1 = UID_A + ".901"
+        self.originals_listing(UID_A, {s1: [(UID_A + ".9011.1", 1, None)]})
+        self.open_as(RAD_ONLY)
+        choice = {"series": [s1], "instances": []}
+        # A first request that ends without a valid answer: its range is no longer said while the read that follows is out.
+        self.site.prepare_answers = ["hold"]
+        self.choose_series(s1)
+        self.wait(lambda: self.site.held_prepares, "the chosen preparation is out")
+        lost = self.site.prepares[0][1]["operationId"]
+        self.says(lost, 1, 0)
+        expect(self.again(lost)).to_have_count(0)
+        self.site.download_answers[lost] = ["hold"]
+        self.site.download_state[lost] = download_view(lost, UID_A, selection=choice)
+        self.site.release_prepare((502, {"code": "SYN_PROXY_REPLACED", "message": "SYN lost preparation"}))
+        self.wait(lambda: self.site.held_reads, "the read after the unreadable answer is out")
+        with self.subTest("the first request ended without a valid answer"):
+            self.says_no_range(lost, "the first request ended without a valid answer")
+        self.site.answer(self.site.held_reads.pop(0)[0], 200, self.site.download_state[lost])
+        self.says(lost, 1, 0)
+        expect(self.again(lost)).to_have_count(1)
+        # This document's own first requests, still out: the range each request asks for, and no Prepare Again.
+        self.site.prepare_answers = ["hold", "hold"]
+        self.row_menu(h.PATIENT)
+        self.menu_item("Download Originals").click()
+        self.wait(lambda: len(self.site.held_prepares) == 1, "the whole-study preparation is out")
+        whole = self.site.prepares[1][1]["operationId"]
+        self.says(whole)
+        self.choose_series(s1)
+        self.wait(lambda: len(self.site.held_prepares) == 2, "the chosen preparation is out")
+        chosen = self.site.prepares[2][1]["operationId"]
+        self.says(chosen, 1, 0)
+        for op in (whole, chosen):
+            expect(self.again(op)).to_have_count(0)
+            self.assertNotIn("Prepare Again", self.box_of(op).inner_text())
+        self.settle(300)
+        self.assertEqual(3, len(self.site.prepares), "the requests the reader made, nothing more")
+        # A new document while those requests are still out: the tab's record alone says no range.
+        self.site.download_answers.update({whole: ["hold"], chosen: ["hold"]})
+        self.reload_transfers()
+        self.wait(lambda: len(self.site.held_reads) == 2, "the restored operations' reads are out")
+        for op in (whole, chosen):
+            with self.subTest(restored="chosen" if op == chosen else "whole"):
+                self.says_no_range(op, "restored, its read still out")
+        answers = {whole: download_view(whole, UID_A), chosen: download_view(chosen, UID_A, selection=choice)}
+        self.site.download_state.update(answers)
+        while self.site.held_reads:
+            route, op = self.site.held_reads.pop(0)
+            self.site.answer(route, 200, answers[op])
+        self.says(whole)
+        self.says(chosen, 1, 0)
+        for op in (whole, chosen):
+            expect(self.again(op)).to_have_count(1)
+        self.assertEqual(3, len(self.site.prepares), "nothing was prepared by the new document")
+
+    def test_selected_originals_check_again_takes_a_confirmed_range_down_until_the_newest_answer_agrees(self):
+        s1, s2 = UID_A + ".901", UID_A + ".902"
+        self.originals_listing(UID_A, {s1: [(UID_A + ".9011.1", 1, None)], s2: [(UID_A + ".9021.1", 1, None)]})
+        self.open_as(RAD_ONLY)
+        choice = {"series": [s1], "instances": []}
+        whole = self.prepare()
+        self.choose_series(s1)
+        self.wait(lambda: len(self.site.prepares) == 2, "the chosen preparation")
+        chosen = self.site.prepares[1][1]["operationId"]
+        state = lambda op: self.box_of(op).locator(".study-transfer-state")
+        told = {whole: lambda: self.says(whole), chosen: lambda: self.says(chosen, 1, 0)}
+        for op in (whole, chosen):
+            expect(state(op)).to_have_text("Ready")
+            expect(self.again(op)).to_have_count(1)
+            told[op]()
+        self.assertEqual(("검사 원본 3개(3.0 MiB)를 내려받을 준비가 되었습니다.", "고른 원본 3개(3.0 MiB)를 내려받을 준비가 되었습니다."),
+                         (self.reason(whole), self.reason(chosen)))
+        prepared, grants = len(self.site.prepares), len(self.site.grants)
+        # Ready, confirmed: Check Again takes the range down at once and Ready says the state alone, until its answer.
+        for op in (whole, chosen):
+            held = self.read_out(op)
+            with self.subTest(ready="chosen" if op == chosen else "whole", answer="awaited"):
+                self.says_no_range(op, "a confirmed range, its next read out")
+                expect(state(op)).to_have_text("Ready")
+                self.assertEqual(self.READY_ALONE, self.reason(op))
+            self.site.answer(held, 200, self.site.download_state[op])
+            told[op]()
+            expect(self.again(op)).to_have_count(1)
+        # A newer read answered without the mark, the held read's valid answer arriving late, the mark of another choice.
+        good = self.site.download_state[chosen]
+        late = self.read_out(chosen)
+        self.site.download_state[chosen] = {k: v for k, v in good.items() if k != "selectionSha256"}
+        self.check_again(chosen)
+        with self.subTest(answer="without the mark"):
+            self.says_no_range(chosen, "an answer without the mark")
+            self.assertEqual(self.READY_ALONE, self.reason(chosen))
+        self.site.answer(late, 200, good)
+        self.settle(300)
+        with self.subTest(answer="the late valid answer of an overtaken read"):
+            self.says_no_range(chosen, "the late valid answer of an overtaken read")
+        self.site.download_state[chosen] = {**good, "selectionSha256": selection_mark({"series": [s2], "instances": []})}
+        self.check_again(chosen)
+        with self.subTest(answer="the mark of another choice"):
+            self.says_no_range(chosen, "the mark of another choice")
+            self.assertEqual(self.READY_ALONE, self.reason(chosen))
+        # The newest read agrees again: the range and Prepare Again are back.
+        self.site.download_state[chosen] = good
+        self.check_again(chosen)
+        told[chosen]()
+        expect(self.again(chosen)).to_have_count(1)
+        # Sent: the sentence of the confirmed range, and the state alone while a read is out or its answer does not agree.
+        sent = {whole: (download_view(whole, UID_A, "sent", complete=3), SENT),
+                chosen: (download_view(chosen, UID_A, "sent", complete=3, selection=choice),
+                         "서버가 고른 시리즈·영상의 원본을 모두 보냈습니다. 내 컴퓨터에 저장됐는지는 브라우저의 다운로드 목록에서 확인하세요.")}
+        for op, (view, sentence) in sent.items():
+            self.site.download_state[op] = view
+            self.check_again(op)
+            expect(state(op)).to_have_text("Sent")
+            self.assertEqual(sentence, self.reason(op))
+            held = self.read_out(op)
+            with self.subTest(sent="chosen" if op == chosen else "whole", answer="awaited"):
+                self.says_no_range(op, "Sent, its next read out")
+                expect(state(op)).to_have_text("Sent")
+                self.assertEqual(self.SENT_ALONE, self.reason(op))
+            self.site.answer(held, 200, {k: v for k, v in view.items() if k != "selectionSha256"})
+            self.settle(300)
+            with self.subTest(sent="chosen" if op == chosen else "whole", answer="without the mark"):
+                self.says_no_range(op, "Sent, an answer without the mark")
+                self.assertEqual(self.SENT_ALONE, self.reason(op))
+            self.check_again(op)
+            told[op]()
+            self.assertEqual(sentence, self.reason(op))
+            expect(self.again(op)).to_have_count(1)
+        self.assertEqual((prepared, grants), (len(self.site.prepares), len(self.site.grants)), "Check Again is a GET only")
+        # One press of the confirmed choice's Prepare Again: one request, the same range, a new id.
+        self.again(chosen).click()
+        self.wait(lambda: len(self.site.prepares) == prepared + 1, "the confirmed choice again")
+        self.settle(300)
+        self.assertEqual(prepared + 1, len(self.site.prepares), "one press, one request")
+        self.assertEqual(choice, self.site.prepares[-1][1]["selection"])
+        self.assertNotIn(self.site.prepares[-1][1]["operationId"], (whole, chosen), "a new operation")
+
     def test_selected_originals_prepare_again_is_the_same_choice_after_reload_and_sign_in_and_never_without_the_servers_mark_of_it(self):
         s1, s2 = UID_A + ".901", UID_A + ".902"
         sop = UID_A + ".9011.1"
@@ -1876,6 +2060,8 @@ class TransferPanelPage(rf.ReportFlowPage):
             with self.subTest(restored_as=account["actor"]):
                 self.site.account = account
                 self.restored(chosen)
+                self.says(whole)
+                self.says(chosen, 1, 0)
                 before = len(self.site.prepares)
                 self.again(whole).click()
                 self.wait(lambda: len(self.site.prepares) == before + 1, "the whole study again")
@@ -1904,17 +2090,27 @@ class TransferPanelPage(rf.ReportFlowPage):
                 box = self.restored(chosen)
                 never_again(chosen, why)
                 if why == "the key is missing":
-                    # Shown from the server's own answer, never as the whole study; the record stays without a choice.
-                    expect(box.locator("b").first).to_have_text("Download Selected Originals")
+                    # Shown from the server's own valid answer, read-only, never as the whole study - and not while
+                    # that answer is still out; the record stays without a choice.
+                    self.says(chosen, 1, 0)
                     expect(box.locator(".study-transfer-scope")).to_be_visible()
                     self.assertNotIn("selection", self.kept_downloads()[chosen], "a missing choice is never written back as the whole study")
+                    held = self.read_out(chosen)
+                    self.says_no_range(chosen, why + ", its read out")
+                    self.site.answer(held, 200, self.site.download_state[chosen])
+                    self.says(chosen, 1, 0)
+                    expect(self.again(chosen)).to_have_count(0)
+                else:
+                    # The record no longer agrees with the server's answer: neither the whole study nor a choice is said.
+                    self.says_no_range(chosen, why)
                 expect(self.again(whole)).to_have_count(1)
         # An older record of a whole-study operation (no key): read, never offered again.
         self.rewrite_kept(chosen, f"o.selection = {{ series: ['{s1}'], instances: [] }}")
         self.rewrite_kept(whole, "delete o.selection")
         box = self.restored(whole)
         never_again(whole, "an older whole-study record")
-        expect(box.locator("b").first).to_have_text("Download Originals")
+        self.says(whole)
+        expect(box.locator(".study-transfer-scope")).to_be_visible()
         expect(self.again(chosen)).to_have_count(1)
         self.rewrite_kept(whole, "o.selection = null")
         # The server's answer without the mark, with the mark of another choice of the same size, and of the series'
@@ -1927,6 +2123,7 @@ class TransferPanelPage(rf.ReportFlowPage):
                 self.site.download_state[chosen] = view
                 self.restored(chosen)
                 never_again(chosen, why)
+                self.says_no_range(chosen, why)
         # While the answer is awaited the button is not there, and an answer overtaken by a newer read never opens it.
         self.site.download_state[chosen] = good
         self.site.download_answers[chosen] = ["hold", unmarked]

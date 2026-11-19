@@ -79,6 +79,10 @@ window.KinStudyTransferLocal = function (app) {
     ready: (n, size) => `검사 원본 ${n}개(${size})를 내려받을 준비가 되었습니다.`,
     readyChosen: (n, size) => kinSay('고른 원본 {n0}개({1})를 내려받을 준비가 되었습니다.', n, size),
     sentChosen: '서버가 고른 시리즈·영상의 원본을 모두 보냈습니다. 내 컴퓨터에 저장됐는지는 브라우저의 다운로드 목록에서 확인하세요.',
+    // Ready and Sent of an operation whose range is not confirmed (covered): the state alone, neither the whole study
+    // nor a choice.
+    readyAlone: (n, size) => kinSay('원본 {n0}개({1})를 내려받을 준비가 되었습니다.', n, size),
+    sentAlone: '서버가 이 작업의 원본 전송을 마쳤습니다. 내 컴퓨터에 저장됐는지는 브라우저의 다운로드 목록에서 확인하세요.',
     selectionMissing: '고른 시리즈·영상 가운데 이 검사의 원본에서 찾을 수 없는 것이 있어 준비하지 않았습니다. 다시 골라 주세요.',
     downloading: (done, n) => `서버가 원본을 보내는 중입니다 (${done}/${n}).`,
     incomplete: '서버 기록에서 전송 완료를 확인하지 못했습니다. Check Again으로 확인하거나 Prepare Again으로 새 원본 목록을 준비하세요.',
@@ -907,10 +911,13 @@ window.KinStudyTransferLocal = function (app) {
   // selection: the choice the page holds for the operation - null for the whole study, { series, instances } of chosen
   // original UIDs (Download Selected Originals), or undefined for a kept record that does not say (an older record).
   // mark: the page's own mark of that choice (markOf; null for the whole study), compared with the server's answers.
-  // served / scopeConfirmed: what the server's valid answer of this operation said it covers (answeredScope).
+  // served / scopeConfirmed: what the last applied valid answer of this operation said it covers, and whether that is
+  // the page's own choice (answeredScope, adoptDownload); a status read takes both down when it leaves (readDownload).
+  // asked: the range of this document's own first preparation request while that request is out (download), else
+  // undefined. What the panel says and does about a range is decided from these in one place: covered, sameChoiceAgain.
   // `selection` has no default: a caller that passes undefined means the record that does not say.
   function downloadOperation(id, uid, selection, mark = selection === null ? null : undefined) {
-    const op = { kind: 'download', id, uid, selection, mark, marking: null, served: undefined, scopeConfirmed: false,
+    const op = { kind: 'download', id, uid, selection, mark, marking: null, served: undefined, scopeConfirmed: false, asked: undefined,
       state: null, objects: 0, bytes: 0, done: 0, notice: '', gen: generation, readSeq: 0,
       inFlight: false, lost: false, polling: false, pollTimer: null, polls: 0, grantId: null, manifestSha256: null, preparedAt: null, label: studyLabel(uid) };
     // A kept choice is marked before its first status read (readDownload waits for it); a failed digest confirms nothing.
@@ -942,9 +949,10 @@ window.KinStudyTransferLocal = function (app) {
     return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
   }
   /**
-   * Prepare Again asks for the operation's own choice again under a new id. It is offered, and acts, only once the
-   * server's valid answer for this same operation and study carried the mark of the choice the page holds - never on the
-   * tab's kept record alone, and not while that answer is still awaited - and only for a choice a new request may carry.
+   * Prepare Again asks for the operation's own choice again under a new id. It is offered, and acts, only while the last
+   * applied answer for this same operation and study carried the mark of the choice the page holds - never on the tab's
+   * kept record alone, not while an answer is awaited (the first request's or a status read's) and not after an answer
+   * that does not agree - and only for a choice a new request may carry.
    */
   const sameChoiceAgain = op => op.scopeConfirmed && op.selection !== undefined && (op.selection === null || withinBound(op.selection));
 
@@ -1162,6 +1170,9 @@ window.KinStudyTransferLocal = function (app) {
     store();
     const gen = op.gen, at = work.capture('document');
     op.inFlight = true;
+    // While this first request is out the panel says the range the request's own body asks for (covered); nothing is
+    // confirmed by it. Kept in this document only: a new document says no range before the server's answer.
+    op.asked = chosen ? { series: chosen.series.length, instances: chosen.instances.length } : null;
     op.notice = TEXT.preparing;
     render();
     let answer = null;
@@ -1170,6 +1181,8 @@ window.KinStudyTransferLocal = function (app) {
       answer = await app.transport.request(app.api + '/studies/' + encodeURIComponent(uid) + '/original-downloads',
         { method: 'POST', json: chosen ? { operationId: op.id, selection: chosen } : { operationId: op.id }, context: at });
     } catch (_) {}
+    // The first request has ended, whatever came back: from here on only an applied answer says a range.
+    op.asked = undefined;
     const applied = work.commit(at, () => {
       if (!live(op) || op.gen !== gen) return;
       op.inFlight = false;
@@ -1189,14 +1202,15 @@ window.KinStudyTransferLocal = function (app) {
       store();
       render();
     });
-    if (!applied) lostAnswer(op, null);
+    if (!applied) { lostAnswer(op, null); render(); }
   }
 
   function adoptDownload(op, view) {
-    // What this valid answer says the operation covers; the same mark as the page's own confirms the choice.
+    // What this valid answer says the operation covers, and whether its mark is the page's own: the answer applied last
+    // decides both, so an earlier confirmation never outlives it.
     const scope = answeredScope(view, op);
     op.served = scope.served;
-    if (scope.confirmed) op.scopeConfirmed = true;
+    op.scopeConfirmed = scope.confirmed;
     // An uncertain observation can never erase a previously validated supply result.
     if (op.state === 'sent') return;
     op.state = view.state;
@@ -1305,6 +1319,12 @@ window.KinStudyTransferLocal = function (app) {
       op.polls++;
     }
     const gen = op.gen, seq = ++op.readSeq, at = work.capture('document');
+    // The answer now asked for is the only one that may say a range: what an earlier answer said or confirmed is taken
+    // down before the request leaves and the panel is drawn without it (covered, sameChoiceAgain), until this read's own
+    // valid answer is applied.
+    op.served = undefined;
+    op.scopeConfirmed = false;
+    render();
     let answer = null;
     try {
       answer = await app.transport.request(app.api + '/studies/' + encodeURIComponent(op.uid) + '/original-downloads/'
@@ -1442,7 +1462,7 @@ window.KinStudyTransferLocal = function (app) {
     const box = node('section', 'study-transfer-op');
     box.dataset.operation = op.id;
     const head = node('div', 'study-transfer-op-head');
-    // What the panel says the operation covers (covered): never the whole study for a record that does not say.
+    // What the panel says the operation covers (covered): undefined - no range is said - unless an answer confirmed it.
     const covers = covered(op), again = sameChoiceAgain(op);
     head.append(covers === undefined ? kinWrite(node('b'), kinSay('Download Originals (Range Not Confirmed)'))
       : covers ? kinWrite(node('b'), kinSay('Download Selected Originals')) : node('b', null, 'Download Originals'),
@@ -1476,17 +1496,23 @@ window.KinStudyTransferLocal = function (app) {
     if (same()) download(op.uid, true, op.selection, same);
   }
   /**
-   * What the panel says an operation covers: the choice the page holds for it (null: the whole study, else its counts);
-   * for a kept record without one, what the server's own valid answer says; before that answer, not confirmed (undefined).
+   * What the panel says an operation covers - the head, the range line and the Ready and Sent sentences all say this and
+   * nothing else: null for the whole study, the counts of a choice, or undefined when no range may be said (the head
+   * then says Range Not Confirmed). A range is said only as the last applied answer of the server confirmed it for the
+   * choice the page holds (op.scopeConfirmed; the tab's kept record alone says nothing, nor does it while a status read
+   * is out or after an answer that does not agree). Two cases beside it: while this document's own first preparation
+   * request is out, the range that request asks for (op.asked); and a kept record without a choice says, read-only,
+   * what the current valid answer says (op.served) - it is never confirmed and never prepared again (sameChoiceAgain).
    */
   function covered(op) {
-    if (op.selection === undefined) return op.served;
-    return op.selection ? { series: op.selection.series.length, instances: op.selection.instances.length } : null;
+    if (op.asked !== undefined) return op.asked;
+    return op.scopeConfirmed || op.selection === undefined ? op.served : undefined;
   }
   function downloadText(op, covers) {
-    if (op.state === 'prepared' && firstDownloads.has(op)) return covers ? TEXT.readyChosen(op.objects, size(op.bytes)) : TEXT.ready(op.objects, size(op.bytes));
+    if (op.state === 'prepared' && firstDownloads.has(op)) return covers === undefined ? TEXT.readyAlone(op.objects, size(op.bytes))
+      : covers ? TEXT.readyChosen(op.objects, size(op.bytes)) : TEXT.ready(op.objects, size(op.bytes));
     if (op.state === 'sending') return TEXT.downloading(op.done, op.objects);
-    if (op.state === 'sent') return covers ? TEXT.sentChosen : TEXT.sent;
+    if (op.state === 'sent') return covers === undefined ? TEXT.sentAlone : covers ? TEXT.sentChosen : TEXT.sent;
     if (op.state === 'incomplete') return TEXT.incomplete;
     return TEXT.downloadUnconfirmed;
   }
