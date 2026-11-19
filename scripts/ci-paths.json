@@ -14,6 +14,8 @@
     "tests/invariants_live.py",
     "tests/live_admin_credential.py",
     "tests/live_test_gate.py",
+    "tests/emr/d/provision_synthetic.cjs",
+    "tests/main_move_spec.json",
     "tests/main_split_harness*",
     "tests/measurement_ci.py",
     "tests/measurement_ci_test.py",
@@ -192,7 +194,8 @@
     "worklist-v0/hpacs-lite/viewer-exam-scope.js",
     "tests/viewer_exam_scope_test.cjs",
     "tests/gateway_exam_receipt_test.cjs",
-    "tests/e2e/viewer_tools.py"
+    "tests/e2e/viewer_tools.py",
+    "worklist-v0/hpacs-lite/**"
   ],
   "browser_jobs": [
     "asr-engine",
@@ -2150,7 +2153,8 @@
       "worklist-v0/hpacs-lite/related-report-mode.css",
       "worklist-v0/hpacs-lite/study-panel.css",
       "worklist-v0/hpacs-lite/workspace-theme.css",
-      "worklist-v0/hpacs-lite/viewer-editor-link.js"
+      "worklist-v0/hpacs-lite/viewer-editor-link.js",
+      "worklist-v0/hpacs-lite/**"
     ],
     "viewer-dom": [
       "worklist-v0/hpacs-lite/product-info.js",
@@ -2480,7 +2484,8 @@
       "tests/main_move_spec.json",
       "worklist-v0/hpacs-lite/viewer-volume-job.js",
       "worklist-v0/hpacs-lite/volume-rendering-removal.js",
-      "worklist-v0/legal/open-source-notices.html"
+      "worklist-v0/legal/open-source-notices.html",
+      "worklist-v0/hpacs-lite/**"
     ],
     "clinician-dom": [
       "worklist-v0/hpacs-lite/product-info.js",
@@ -2684,7 +2689,8 @@
       "worklist-v0/hpacs-lite/held-sources-admin.js",
       "worklist-v0/hpacs-lite/signing-key-admin.js",
       "worklist-v0/hpacs-lite/study-access-admin.js",
-      "worklist-v0/legal/open-source-notices.html"
+      "worklist-v0/legal/open-source-notices.html",
+      "worklist-v0/hpacs-lite/**"
     ],
     "critical-result-dom": [
       "worklist-v0/hpacs-lite/product-info.js",
@@ -2880,7 +2886,8 @@
       "worklist-v0/hpacs-lite/held-sources-admin.js",
       "worklist-v0/hpacs-lite/signing-key-admin.js",
       "worklist-v0/hpacs-lite/study-access-admin.js",
-      "worklist-v0/legal/open-source-notices.html"
+      "worklist-v0/legal/open-source-notices.html",
+      "worklist-v0/hpacs-lite/**"
     ],
     "admin-session-dom": [
       "tests/product_info_dom_test.py",
@@ -3110,7 +3117,8 @@
       "worklist-v0/hpacs-lite/study-panel.css",
       "worklist-v0/hpacs-lite/workspace-theme.css",
       "api/src/auth.controller.ts",
-      "tests/main_move_spec.json"
+      "tests/main_move_spec.json",
+      "worklist-v0/hpacs-lite/**"
     ],
     "related-layout-dom": [
       "worklist-v0/hpacs-lite/product-info.js",
@@ -3302,7 +3310,8 @@
       "worklist-v0/hpacs-lite/emr-link-admin.js",
       "worklist-v0/hpacs-lite/held-sources-admin.js",
       "worklist-v0/hpacs-lite/signing-key-admin.js",
-      "worklist-v0/hpacs-lite/study-access-admin.js"
+      "worklist-v0/hpacs-lite/study-access-admin.js",
+      "worklist-v0/hpacs-lite/**"
     ],
     "study-transfer-dom": [
       "api/package*.json",
@@ -3333,7 +3342,8 @@
       "tests/privacy_date_dom_test.py",
       "worklist-v0/legal/legal.css",
       "worklist-v0/legal/privacy-date.js",
-      "worklist-v0/legal/privacy.html"
+      "worklist-v0/legal/privacy.html",
+      "worklist-v0/hpacs-lite/**"
     ],
     "viewer-native-dom": [
       "api/package*.json",
@@ -3354,7 +3364,8 @@
       "worklist-v0/hpacs-lite/viewer-jobs.js",
       "worklist-v0/hpacs-lite/viewer-stack-restore.js",
       "worklist-v0/hpacs-lite/viewer-volume-job.js",
-      "worklist-v0/hpacs-lite/exam-scope.js"
+      "worklist-v0/hpacs-lite/exam-scope.js",
+      "worklist-v0/hpacs-lite/**"
     ],
     "proxy-contracts": [
       "proxy/15-kin-config.envsh",

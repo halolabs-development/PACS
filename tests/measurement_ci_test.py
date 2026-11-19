@@ -332,6 +332,26 @@ class MeasurementCiTests(unittest.TestCase):
                 with patch.object(selector, 'ROOT', root):
                     self.assertEqual(jobs('worklist-v0/hpacs-lite/page-core.js'), everything)
 
+    def selected_by(self, path):
+        return {job for job, enabled in self.path_selector().select([path]).items() if enabled}
+
+    def test_scripts_a_viewer_test_injects_select_viewer_and_clinician_dom(self):
+        # The viewer and clinician DOM tests inject this script by a folder variable plus its name.
+        self.assertLessEqual({'viewer-dom', 'clinician-dom'}, self.selected_by('worklist-v0/hpacs-lite/viewer-exam-scope.js'))
+
+    def test_script_order_spec_the_page_helper_requires_selects_emr_d(self):
+        # The page-serving helper requires this spec; emr-d's served clinician page runs through it.
+        self.assertIn('emr-d', self.selected_by('tests/main_move_spec.json'))
+
+    def test_synthetic_provisioning_the_live_helpers_run_selects_every_job(self):
+        # The live helpers hand this file to Node when they create test accounts, for every live profile.
+        self.assertEqual(self.selected_by('tests/emr/d/provision_synthetic.cjs'),
+                         set(self.path_selector().select([], all_jobs=True)))
+
+    def test_print_and_editor_scripts_the_viewer_loads_select_mip_output(self):
+        # The viewer's job page loads both at run time; the MIP output test prints through them.
+        for path in ('worklist-v0/hpacs-lite/viewer-job-print.js', 'worklist-v0/hpacs-lite/viewer-editor-link.js'):
+            self.assertIn('volume-mip-voi', self.selected_by(path), path)
     def test_shared_runner_image_and_generator_changes_select_every_job(self):
         # Shared test running/judging, image and stack assembly with pinned versions, and generation method/order
         # decide every job's result, so a ready PR that touches one runs all of them.
