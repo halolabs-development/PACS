@@ -912,7 +912,7 @@ class ViewerUXPriorsE2E(ViewerLayoutE2E):
         # The prior's failure comes after the refusal ...
         reader = self.login()
         held = []
-        reader.context.route(prior_list, held.append)
+        reader.context.route(prior_list, lambda r: held.append(r))
         viewer = reader.context.new_page()
         viewer.goto(url)
         self.refused_screen(viewer, hidden.uid, unknown, patient)
@@ -925,8 +925,8 @@ class ViewerUXPriorsE2E(ViewerLayoutE2E):
         reader = self.login()
         lookups, failed = [], []
         reader.context.route(prior_list, lambda r: (failed.append(1), r.fulfill(status=503, body='Unavailable')))
-        reader.context.route(re.compile(r'/api/studies\?uids='), lookups.append)
-        reader.context.route(re.compile(re.escape(self.PRIOR_LIST.format(hidden.uid)) + r'(\?|$)'), lookups.append)
+        reader.context.route(re.compile(r'/api/studies\?uids='), lambda r: lookups.append(r))
+        reader.context.route(re.compile(re.escape(self.PRIOR_LIST.format(hidden.uid)) + r'(\?|$)'), lambda r: lookups.append(r))
         viewer = reader.context.new_page()
         viewer.goto(url)
         deadline = __import__('time').monotonic() + 30
