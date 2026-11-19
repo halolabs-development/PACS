@@ -424,6 +424,25 @@ class StorageEncryptionTests(unittest.TestCase):
         self.assertEqual((report["status"], report["locations"][0]["detail"]), ("unknown", "not Linux"))
         self.assertTrue(deploy.storage_valid(report))
 
+    def test_a_refused_or_failing_read_is_unknown_never_an_error(self):
+        """The protected deployment entry admits only its fixed git/docker commands through ops.run: the report's other
+        reads are refused there, and the observation must still be made (the report is a warning)."""
+        def protected(args, *, input_data=None, timeout=60, check=True, **kwargs):
+            if args[0] not in ("git", "docker") or kwargs:
+                raise RuntimeError("Invalid protected deployment state")
+            return SimpleNamespace(returncode=0, stdout=json.dumps([{"Mounts": [volume("/var/lib/postgresql/data", self.PG)]}]).encode())
+        for failure in (protected, RuntimeError("daemon"), subprocess.TimeoutExpired("findmnt", 30), OSError("no tool")):
+            with self.subTest(failure=type(failure).__name__), patch.object(ops, "run", side_effect=failure), \
+                    patch.object(deploy.sys, "platform", "linux"), patch.object(deploy, "backup_key_state", return_value="absent"):
+                report = deploy.storage_encryption("/srv/backups")
+            self.assertEqual(report["status"], "unknown")
+            self.assertTrue(deploy.storage_valid(report))
+        with patch.object(ops, "backup_key", side_effect=KeyError("files")), tempfile.TemporaryDirectory() as folder:
+            config = Path(folder) / "backup-encryption.json"
+            config.write_text("{}")
+            with patch.dict(os.environ, {"KIN_BACKUP_ENCRYPTION": str(config)}):
+                self.assertEqual(deploy.backup_key_state(), "invalid")
+
     def test_backup_key_state(self):
         with tempfile.TemporaryDirectory() as folder:
             config = Path(folder) / "backup-encryption.json"

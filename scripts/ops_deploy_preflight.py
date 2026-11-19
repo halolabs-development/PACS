@@ -13,7 +13,6 @@ import json
 import os
 from pathlib import Path
 import re
-import subprocess
 import sys
 from urllib.parse import urlsplit
 
@@ -192,11 +191,13 @@ BACKUP_KEY_STATES = ("configured", "absent", "invalid")
 
 
 def _read(args):
+    """One read of the report, through the caller's command channel. Whatever refuses or fails it (a missing tool, a
+    protected entry that admits only its fixed commands) makes that answer unknown; the report never raises."""
     try:
         result = ops.run(args, check=False, timeout=30)
-    except (OSError, ValueError, subprocess.SubprocessError):
+        return result.stdout.decode("utf-8", "replace") if result.returncode == 0 else None
+    except Exception:
         return None
-    return result.stdout.decode("utf-8", "replace") if result.returncode == 0 else None
 
 
 def _device_encrypted(device, seen):
@@ -269,7 +270,7 @@ def backup_key_state():
         return "absent"
     try:
         ops.backup_key()
-    except ops.BackupEncryptionError:
+    except Exception:
         return "invalid"
     return "configured"
 
