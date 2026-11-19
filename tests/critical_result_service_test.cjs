@@ -714,7 +714,8 @@ test('the received list and pending leave out C5 and R5 rows in the same SQL, be
     assert.deepEqual(before.items.map(item => item.id), who === asClinician ? [] : [recordId]);
   }
   // the P pair moves away from Y at the same head: R5, absent from the list, the count and the one-record read
-  await w.base.$executeRaw`UPDATE "StudyState" SET "preReviewer" = ${actorOf('Z')} WHERE uid = ${UID2}`;
+  // (the designation is the account: the reviewer's account moves with its shown name)
+  await w.base.$executeRaw`UPDATE "StudyState" SET "preReviewer" = ${actorOf('Z')}, "preReviewerSub" = ${SUBS.Z} WHERE uid = ${UID2}`;
   const after = readBody(await w.svc.list(person('Y'), { view: 'received' }));
   assert.deepEqual([after.items, after.pending], [[], 0]);
   await assert.rejects(w.svc.read(id(172), person('Y')), code(404, 'CRITICAL_RESULT_NOT_FOUND'));
@@ -1571,15 +1572,16 @@ test('TSV18 a reopened channel: B sees its records again; reads follow section 4
     ['readable', 'stub', false, 'reset', 'reset', 2]);
   assert.deepEqual(await w.count(), L0);
   // (b) R4 stub needs RS P with the reset head, a state the product API never makes (TO-05): pair outside, then inside
-  await w.base.$executeRaw`UPDATE "StudyState" SET rs = 'P', "preDoc" = ${actorOf('S')}, "preReviewer" = ${actorOf('Y')} WHERE uid = ${REOPEN_UID}`;
+  await w.base.$executeRaw`UPDATE "StudyState" SET rs = 'P', "preDoc" = ${actorOf('S')}, "preReviewer" = ${actorOf('Y')},
+    "preDocSub" = ${SUBS.S}, "preReviewerSub" = ${SUBS.Y} WHERE uid = ${REOPEN_UID}`;
   const outside = (readBody(await w.svc.read(rX, person('K')))).item;
   assert.deepEqual([outside.view, outside.source, 'message' in outside, 'body' in outside], ['stub', { current: false, reason: 'reset' }, false, false]);
   await assert.rejects(w.svc.ack(rX, person('K'), ackBody(person('K'), id(2085))), code(409, 'CRITICAL_RESULT_SOURCE_CHANGED'));
   assert.equal((await sentOf())[0][rX].delivery, 'stub');
-  await w.base.$executeRaw`UPDATE "StudyState" SET "preReviewer" = ${actorOf('K')} WHERE uid = ${REOPEN_UID}`;
+  await w.base.$executeRaw`UPDATE "StudyState" SET "preReviewer" = ${actorOf('K')}, "preReviewerSub" = ${SUBS.K} WHERE uid = ${REOPEN_UID}`;
   assert.equal((readBody(await w.svc.read(rX, person('K')))).item.view, 'full');
   assert.equal((await sentOf())[0][rX].delivery, 'readable');
-  await w.base.$executeRaw`UPDATE "StudyState" SET rs = 'W', "preDoc" = NULL, "preReviewer" = NULL WHERE uid = ${REOPEN_UID}`;
+  await w.base.$executeRaw`UPDATE "StudyState" SET rs = 'W', "preDoc" = NULL, "preReviewer" = NULL, "preDocSub" = NULL, "preReviewerSub" = NULL WHERE uid = ${REOPEN_UID}`;
   assert.deepEqual(await w.count(), L0);
   // (c) requests prepared before the close that arrive after the reopen, in this order (section 4 steps 11, 12, 14)
   const replay = await w.svc.create(REOPEN_UID, S(), bodyX);
