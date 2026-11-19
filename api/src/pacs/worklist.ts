@@ -671,7 +671,7 @@ export class PacsWorklist {
       reports = await withStoredExtras(this.prisma, await this.prisma.report.findMany({ where: { uid: { in: uids } } }));
       const fresh = new Map((await this.prisma.studyState.findMany({ where: { uid: { in: uids } } })).map(s => [s.uid, s]));
       if (await headVersionsUnchanged(this.prisma, uids, reports)) {
-        // A fresh row replaces the first read only while it is still this caller's to see (a tele request cancelled
+        // A fresh row replaces the first read only while it is still visible to this caller (a tele request cancelled
         // meanwhile takes it away) and of the same kind; a row gone or changed is left out, never kept from the first read.
         const kept = states.flatMap(s => {
           const now = fresh.get(s.uid);

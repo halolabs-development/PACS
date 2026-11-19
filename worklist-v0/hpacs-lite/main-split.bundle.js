@@ -28,8 +28,8 @@
      * The report state table (server: report-visibility.ts): why this study's report text is not on this screen, from the
      * server's `prelimHidden` (no text for you) and `bodyLock` (the reason) - "" when the text is yours to read. Every screen
      * that says why a report is empty or read-only says it with these words. reportLockSay is the product phrase for a
-     * control written with kinWrite (its own region's language); reportLockText is the same words as a plain string (the
-     * writer's name as is) for text that is interpolated, stored or posted to another window.
+     * control written with kinWrite (in the language of its own region); reportLockText is the same words as a plain string
+     * (the name of the writer as is) for text that is interpolated, stored or posted to another window.
      */
     function reportLockText(a) {
       const said = reportLockSay(a);
@@ -2183,7 +2183,7 @@
       // The report state table (report-visibility.ts): another physician's Save is theirs - the same bar says who is on it.
       // Fixtures that load this block without page-core.js keep the Preliminary words.
       const lockText = typeof reportLockText === "function" ? reportLockText(appState[selectedUid]) : appState[selectedUid]?.prelimHidden ? "다른 판독의의 예비 판독(RS: P)입니다" : "";
-      // The button titles carry the phrase itself, so each says it in its own screen's language.
+      // The button titles carry the phrase itself, so each says it in the language of its own screen.
       const lockSay = typeof reportLockSay === "function" ? reportLockSay(appState[selectedUid]) : lockText && kinSay(lockText);
       const inProgress = appState[selectedUid]?.bodyLock === "in-progress";
       $("#holdbar").style.display = held || inProgress ? "flex" : "none";

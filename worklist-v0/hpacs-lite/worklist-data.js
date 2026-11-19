@@ -726,7 +726,7 @@
       // The report state table (report-visibility.ts): another physician's Save is theirs - the same bar says who is on it.
       // Fixtures that load this block without page-core.js keep the Preliminary words.
       const lockText = typeof reportLockText === "function" ? reportLockText(appState[selectedUid]) : appState[selectedUid]?.prelimHidden ? "다른 판독의의 예비 판독(RS: P)입니다" : "";
-      // The button titles carry the phrase itself, so each says it in its own screen's language.
+      // The button titles carry the phrase itself, so each says it in the language of its own screen.
       const lockSay = typeof reportLockSay === "function" ? reportLockSay(appState[selectedUid]) : lockText && kinSay(lockText);
       const inProgress = appState[selectedUid]?.bodyLock === "in-progress";
       $("#holdbar").style.display = held || inProgress ? "flex" : "none";
