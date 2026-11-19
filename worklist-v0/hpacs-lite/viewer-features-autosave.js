@@ -87,6 +87,7 @@
     const instance = id => { try { return native.metaData.get('instance', id) || null; } catch (_) { return null; } };
     const setOf = id => { try { return grid.getState().viewports.get(id)?.displaySetInstanceUIDs?.[0] || ''; } catch (_) { return ''; } };
     const switching = () => ['kin-patient-switching', 'kin-viewer-empty'].some(name => document.body.classList.contains(name));
+    const exporting = () => { try { return window.KinViewerExport?.moving?.() === true; } catch (_) { return false; } };
     const live = () => !ended && location.search === search && !session?.ended?.();
     const restoring = () => live() && sameOwner() && on && restoreAt === restoreRun && !landing();
     // A restore the address chose is changing this screen now. No length of time ends it: only that restore letting go.
@@ -298,6 +299,13 @@
     // the address chose is landing (the window closing included): a save captured before it still goes.
     function save(mode = 'queue') {
       if (!on || phase !== 'ready' || held || discarding || landing() || !path || !writer()) return chain;
+      // A series export is moving a cell through its series (viewer-export.js): the image on its way is not the reader's
+      // view. Nothing is captured meanwhile (the window closing included: a save captured before it still goes); the
+      // screen is looked at again after a quiet moment, when the cell is back on the reader's image or the reader took it.
+      if (exporting()) {
+        if (mode === 'queue') { clearTimeout(timer); timer = setTimeout(() => { timer = null; if (!ended && !switching()) save(); }, DEBOUNCE); }
+        return chain;
+      }
       // No starting point yet: this look takes one if the screen can be captured now. Either way nothing is sent
       // (going away included); what the reader changes after it is.
       if (settling) { rebase(); return chain; }
