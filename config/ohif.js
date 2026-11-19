@@ -434,7 +434,7 @@ function KinViewerBrand({ React }) {
     },
     React.createElement('style', null, style),
     React.createElement('img', {
-      src: '/kin-brand/kin-emblem-j1.svg',
+      src: '/worklist/hpacs-lite/kin-emblem-j1.svg?v=halo-20261119',
       alt: '',
       width: 24,
       height: 24,
@@ -444,7 +444,7 @@ function KinViewerBrand({ React }) {
       'span',
       {
         style: {
-          color: '#AFC3E2',
+          color: '#B4B4B4',
           fontSize: '9.5px',
           fontWeight: 600,
           lineHeight: 1.3,
@@ -452,9 +452,7 @@ function KinViewerBrand({ React }) {
           whiteSpace: 'nowrap',
         },
       },
-      'KOREA IMAGING',
-      React.createElement('br'),
-      'NETWORK'
+      'HALO PACS'
     )
   );
 }
