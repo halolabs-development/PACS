@@ -11,7 +11,7 @@
  */
 
 const KIN_VIEWER_DEFAULT_TITLE = '판독 뷰어 — HALO PACS';
-const KIN_VIEWER_PRODUCT = 'KIN Viewer';
+const KIN_VIEWER_PRODUCT = 'HALO PACS Viewer';
 
 // Consume the opener-less handoff before loading any other script. Neither the address nor
 // a later document's window.name retains the expected session; the boundary records it locally.

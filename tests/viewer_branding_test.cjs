@@ -237,7 +237,7 @@ test('VUI-08: upstream wording is neutralized in the gear dropdown only; clinica
   const region=w.el('main','',...clinical.map(t=>w.el('span',t)));
   w.body.append(h,region);
   w.mount();
-  assert.deepEqual([a,b,c].map(e=>e.textContent),['Powered by 업스트림','업스트림 오픈소스 프로젝트','KIN Viewer'],'chrome: OHIF Viewer becomes the product name');
+  assert.deepEqual([a,b,c].map(e=>e.textContent),['Powered by 업스트림','업스트림 오픈소스 프로젝트','HALO PACS Viewer'],'chrome: OHIF Viewer becomes the product name');
   assert.equal(list.children[0].textContent,'settingsAbout OHIF Viewer','the About title is judged and hidden, never renamed');
   assert.ok(hidden(list.children[0]));
   assert.equal(patient.textContent,'SYN^OHIF PATIENT','header text outside the dropdown keeps the original');
@@ -252,11 +252,11 @@ test('VUI-08: upstream wording is neutralized in the gear dropdown only; clinica
   const rebuilt=w.el('div','',w.el('span','OHIF Viewer'),w.el('span','Powered by OHIF'));
   h.dropdown.append(rebuilt);
   await tick();
-  assert.deepEqual(rebuilt.children.map(e=>e.textContent),['KIN Viewer','Powered by 업스트림']);
+  assert.deepEqual(rebuilt.children.map(e=>e.textContent),['HALO PACS Viewer','Powered by 업스트림']);
   // Another header change runs the whole header again: nothing is rewritten a second time.
   h.dropdown.append(w.el('span','Logout'));
   await tick();
-  assert.deepEqual([...rebuilt.children,a,b,c].map(e=>e.textContent),['KIN Viewer','Powered by 업스트림','Powered by 업스트림','업스트림 오픈소스 프로젝트','KIN Viewer']);
+  assert.deepEqual([...rebuilt.children,a,b,c].map(e=>e.textContent),['HALO PACS Viewer','Powered by 업스트림','Powered by 업스트림','업스트림 오픈소스 프로젝트','HALO PACS Viewer']);
   assert.deepEqual(region.children.map(e=>e.textContent),clinical);
   w.unmount();
 });

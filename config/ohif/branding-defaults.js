@@ -11,4 +11,4 @@
  */
 
 const KIN_VIEWER_DEFAULT_TITLE = '판독 뷰어 — HALO PACS';
-const KIN_VIEWER_PRODUCT = 'KIN Viewer';
+const KIN_VIEWER_PRODUCT = 'HALO PACS Viewer';
