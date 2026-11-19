@@ -16,7 +16,7 @@ import {
   CRITICAL_RESULT_CODES as CODE, CRITICAL_RESULT_PAGE, CRITICAL_RESULT_PINNABLE_ACTIONS, CRITICAL_RESULT_STATE_FILTERS, Head,
   RADIOLOGIST, RecipientClass, Refusal, ackFingerprint, ackRefusal, appliedResult, auditDetail, cancelFingerprint, clip,
   createCase, createFingerprint, decodeCursor, deliveryOf, eligibleRecipient, effectiveRoles, encodeCursor, exactKeys, holds,
-  isObject, legacyReadable, senderReadsHead, originalIdentity, positiveValue, recipientCase, recipientClass, recipientSees, recipientView, recordRefusal,
+  isObject, legacyReadable, senderReadsHead, originalIdentity, positiveValue, recipientCase, recipientClass, recipientMarks, recipientSees, recipientView, recordRefusal,
   senderScope, senderSees, senderView, sourceRefusal, studyIdentity, studyUidValue, supersedeFingerprint, textValue, userActor, userName,
   uuidValue,
 } from './critical-result-policy';
@@ -37,6 +37,9 @@ import {
  * 쓰지 않는다(§4.1). 쓰기의 새 요청은 caller의 Keycloak 현재 상태를 다시 확인하고, 읽기는 토큰만 쓴다(I-10, §17 L-10).
  */
 export const CRITICAL_RESULT_AUDIT_ACTION = 'study.critical-result';
+/** The administrator's hospital inbox setting (target = the institution it changed). */
+export const CRITICAL_RESULT_INBOX_AUDIT_ACTION = 'institution.critical-result-inbox.save';
+const ADMIN = 'admin';
 const CREATE_KEYS = ['requestId', 'expectedOwner', 'recipientSub', 'sourceVersion', 'message'];
 const ACK_KEYS = ['requestId', 'expectedOwner', 'revision'];
 const CANCEL_KEYS = ['requestId', 'expectedOwner', 'revision', 'reason'];
@@ -479,11 +482,17 @@ export class CriticalResultService {
           state: this.recipientReadState(state, roster), actor: userActor(x.user), sub: x.user.id });
         if (kase === 'C2' || kase === 'R2') recipients.push({ sub: x.user.id, actor: userActor(x.user), name: userName(x.user), role: x.cls });
       }
-      return { state, head, pinnable, readable, recipients };
+      // The record institution's hospital inbox and this sender's pending records on this study, in the same snapshot.
+      const own: any[] = await tx.$queryRaw`SELECT "criticalResultInbox" FROM "Institution" WHERE id=${institution}`;
+      const pendingRows: any[] = await tx.$queryRaw`SELECT "recipientSub" FROM "CriticalResult" WHERE "studyUid"=${uid}
+        AND "senderSub"=${c.sub} AND state='created'`;
+      const marked = recipientMarks(recipients, own[0]?.criticalResultInbox ?? null,
+        new Set(pendingRows.map(row => String(row.recipientSub).toLowerCase())));
+      return { state, head, pinnable, readable, recipients: marked.recipients, inbox: marked.inboxState };
     }, true);
     const reason = !out.pinnable ? 'NO_PINNABLE_SOURCE' : !out.readable ? 'SOURCE_FORBIDDEN' : !out.recipients.length ? 'NO_ELIGIBLE_RECIPIENT' : null;
     out.recipients.sort((a, b) => a.name.localeCompare(b.name) || a.sub.localeCompare(b.sub));
-    return { owner: this.owner(c), uid, sendable: reason === null, reason,
+    return { owner: this.owner(c), uid, sendable: reason === null, inbox: out.inbox, reason,
       // 발신자가 읽을 수 없는 머리(P 짝 밖)는 판 메타데이터도 싣지 않는다.
       source: out.pinnable && out.readable ? { version: out.head.version, action: out.head.action, author: out.head.author,
         at: out.head.at == null ? null : new Date(out.head.at).toISOString(), final: clinicianFinal(out.state.rs, out.head) } : null,
@@ -918,5 +927,67 @@ export class CriticalResultService {
         this.replacementOf(next, { cls, state: out.state, head: out.head, actor: c.actor, sub: c.sub }));
     });
     return criticalRead({ owner: this.owner(c), uid, items }, out.rows);
+  }
+
+  // ── Hospital inbox: the institution setting the dialog's default recipient comes from ──
+
+  private adminOnly(c: CriticalCaller) {
+    this.member(c);
+    if (!holds(c.roles, ADMIN)) throw roleRequired();
+  }
+
+  /** A member as the setting shows it. Only an eligible one (as a candidate would be) is offered. */
+  private inboxMember(user: KeycloakUser, institution: string) {
+    const cls = eligibleRecipient(user, { sub: user.id, institution, sender: '' });
+    return cls ? { sub: user.id, actor: userActor(user), name: userName(user), role: cls } : null;
+  }
+
+  /**
+   * GET admin/critical-result-inbox. The administrator's own institution's hospital inbox and the members who can hold it
+   * (active clinicians and radiologists of that institution, as the dialog's candidates are drawn). The stored member who
+   * is no longer one of them is still reported (`member: null`), so the page says the setting no longer reaches anyone.
+   */
+  async inbox(c: CriticalCaller) {
+    this.adminOnly(c);
+    const institution = c.institution as string;
+    let members: KeycloakUser[];
+    try { members = await this.keycloak.institutionMembers(institution); } catch { throw unavailable(); }
+    const eligible = members.map(user => this.inboxMember(user, institution)).filter(Boolean) as { sub: string; actor: string; name: string; role: RecipientClass }[];
+    eligible.sort((a, b) => a.name.localeCompare(b.name) || a.sub.localeCompare(b.sub));
+    const own = await this.prisma.institution.findUnique({ where: { id: institution }, select: { criticalResultInbox: true } });
+    const sub = own?.criticalResultInbox ?? null;
+    return { owner: this.owner(c), inbox: sub === null ? null : { sub, member: eligible.find(m => m.sub === sub) ?? null },
+      members: eligible };
+  }
+
+  /**
+   * PATCH admin/critical-result-inbox `{ sub: string | null }`. Sets or clears the own institution's hospital inbox. The
+   * member must be an eligible recipient of that institution now (the current member rights, as create judges a
+   * recipient). The write and its audit row are one transaction; saving the stored value changes nothing and writes no row.
+   */
+  async saveInbox(c: CriticalCaller, b: any) {
+    this.adminOnly(c);
+    if (!exactKeys(b, ['sub']) || !(b.sub === null || uuidValue(b.sub))) throw invalid('받는 회원을 고르거나 해제하세요');
+    await this.recheck(c, roles => holds(roles, ADMIN));
+    const institution = c.institution as string;
+    const sub = b.sub === null ? null : String(b.sub).toLowerCase();
+    let member: { actor: string } | null = null;
+    if (sub !== null) {
+      const user = await this.user(sub);
+      const found = user ? this.inboxMember(user, institution) : null;
+      if (!found) throw refuse({ status: 400, code: CODE.RECIPIENT_INVALID },
+        '병원 수신 회원은 이 기관의 활성 임상의 또는 판독의여야 합니다');
+      member = found;
+    }
+    const changed = await this.prisma.$transaction(async tx => {
+      const rows: any[] = await tx.$queryRaw`SELECT "criticalResultInbox" FROM "Institution" WHERE id=${institution} FOR UPDATE`;
+      if (!rows.length) throw roleRequired();
+      if ((rows[0].criticalResultInbox ?? null) === sub) return false;
+      await tx.institution.update({ where: { id: institution }, data: { criticalResultInbox: sub } });
+      await tx.auditLog.create({ data: { actor: c.actor, action: CRITICAL_RESULT_INBOX_AUDIT_ACTION, target: institution,
+        detail: JSON.stringify({ member: member?.actor ?? null }) } });
+      return true;
+    }, WRITE);
+    return { ...(await this.inbox(c)), changed };
   }
 }

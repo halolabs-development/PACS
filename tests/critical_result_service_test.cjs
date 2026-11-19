@@ -1041,11 +1041,13 @@ test('candidates follow the create rules: C1 clinicians, readers outside the P p
   const w = await world();
   const s1 = await w.commit(UID, 'save');
   let out = await w.svc.recipients(UID, S());
-  assert.deepEqual(Object.keys(out).sort(), ['owner', 'reason', 'recipients', 'sendable', 'source', 'uid']);
+  assert.deepEqual(Object.keys(out).sort(), ['inbox', 'owner', 'reason', 'recipients', 'sendable', 'source', 'uid']);
+  assert.equal(out.inbox, 'none', 'no hospital inbox is set');
   assert.deepEqual([out.sendable, out.reason, out.source.version, out.source.action, out.source.final], [true, null, s1, 'save', false]);
   const subs = out.recipients.map(r => r.sub).sort();
   assert.deepEqual(subs, [SUBS.AR, SUBS.M, SUBS.X, SUBS.Y, SUBS.Z].sort(), 'radiologists (and mixed) only for an unsigned head');
-  for (const r of out.recipients) assert.deepEqual(Object.keys(r).sort(), ['actor', 'name', 'role', 'sub']);
+  for (const r of out.recipients) assert.deepEqual(Object.keys(r).sort(), ['actor', 'inbox', 'name', 'pending', 'role', 'sub']);
+  assert.deepEqual(out.recipients.filter(r => r.inbox || r.pending), [], 'nothing is marked without a setting or a pending record');
   await w.commit(UID, 'approve');
   out = await w.svc.recipients(UID, S());
   assert.deepEqual(out.recipients.map(r => r.sub).sort(), [SUBS.AR, SUBS.CA, SUBS.CT, SUBS.M, SUBS.P, SUBS.P2, SUBS.X, SUBS.Y, SUBS.Z].sort());
@@ -1064,6 +1066,75 @@ test('candidates follow the create rules: C1 clinicians, readers outside the P p
   assert.deepEqual([out.sendable, out.reason, out.source], [false, 'NO_PINNABLE_SOURCE', null]);
   assert.equal(p1 > 0, true);
   await assert.rejects(w.svc.recipients(UID, person('P')), code(403, 'CRITICAL_RESULT_ROLE_REQUIRED'));
+});
+
+test('the hospital inbox: the admin sets an eligible member of the own institution; the candidates mark it and every pending recipient', async () => {
+  const w = await world();
+  const AD = () => person('AD');
+  const inboxAudits = async () => w.base.$queryRaw`SELECT actor, action, target, detail FROM "AuditLog"
+    WHERE action = 'institution.critical-result-inbox.save' ORDER BY id`;
+  // reading: admin only, the own institution's eligible members (clinicians and radiologists; the technician is not one)
+  let got = await w.svc.inbox(AD());
+  assert.deepEqual(Object.keys(got).sort(), ['inbox', 'members', 'owner']);
+  assert.equal(got.inbox, null);
+  assert.deepEqual(got.members.map(m => m.sub).sort(), [SUBS.S, SUBS.X, SUBS.Y, SUBS.Z, SUBS.P, SUBS.P2, SUBS.M, SUBS.CT, SUBS.CA, SUBS.AR].sort());
+  for (const m of got.members) assert.deepEqual(Object.keys(m).sort(), ['actor', 'name', 'role', 'sub']);
+  for (const who of ['S', 'P', 'T']) {
+    await assert.rejects(w.svc.inbox(person(who)), code(403, 'CRITICAL_RESULT_ROLE_REQUIRED'), who);
+    await assert.rejects(w.svc.saveInbox(person(who), { sub: SUBS.P2 }), code(403, 'CRITICAL_RESULT_ROLE_REQUIRED'), who);
+  }
+  // refused: a wrong body, a member of another institution, a technician, an unknown subject - nothing is written
+  for (const body of [{}, { sub: 'x' }, { sub: SUBS.P2, extra: 1 }, { sub: undefined }])
+    await assert.rejects(w.svc.saveInbox(AD(), body), code(400, 'CRITICAL_RESULT_INPUT_INVALID'), JSON.stringify(body));
+  for (const sub of [SUBS.KC, SUBS.T, id(8999)])
+    await assert.rejects(w.svc.saveInbox(AD(), { sub }), code(400, 'CRITICAL_RESULT_RECIPIENT_INVALID'), sub);
+  assert.deepEqual(await inboxAudits(), []);
+  // set: one audit row whose target is the institution; saving the same value again writes nothing
+  got = await w.svc.saveInbox(AD(), { sub: SUBS.P2 });
+  assert.equal(got.changed, true);
+  assert.deepEqual(got.inbox, { sub: SUBS.P2, member: { sub: SUBS.P2, actor: actorOf('P2'), name: 'P2 SYNTHETIC', role: 'clinician' } });
+  assert.equal((await w.svc.saveInbox(AD(), { sub: SUBS.P2 })).changed, false);
+  let audits = await inboxAudits();
+  assert.equal(audits.length, 1);
+  assert.deepEqual([audits[0].actor, audits[0].target, JSON.parse(audits[0].detail)], [actorOf('AD'), INST, { member: actorOf('P2') }]);
+  assert.equal(auditRule('institution.critical-result-inbox.save'), 'field:target');
+  // the dialog's candidates: an unsigned head lists no clinician, so the set inbox is not among them
+  await w.commit(UID, 'save');
+  let out = await w.svc.recipients(UID, S());
+  assert.equal(out.inbox, 'unlisted');
+  assert.deepEqual(out.recipients.filter(r => r.inbox), []);
+  // approved: the inbox member is a candidate and marked; nobody else is
+  const v = await w.commit(UID, 'approve');
+  out = await w.svc.recipients(UID, S());
+  assert.equal(out.inbox, 'listed');
+  assert.deepEqual(out.recipients.filter(r => r.inbox).map(r => r.sub), [SUBS.P2]);
+  assert.deepEqual(out.recipients.filter(r => r.pending), []);
+  // a delivery to the inbox is an ordinary record of that one member; a second sender's candidates are their own
+  await w.svc.create(UID, S(), createBody(S(), id(4801), 'P2', v));
+  await w.svc.create(UID, S(), createBody(S(), id(4802), 'P', v));
+  out = await w.svc.recipients(UID, S());
+  assert.deepEqual(out.recipients.filter(r => r.pending).map(r => r.sub).sort(), [SUBS.P, SUBS.P2].sort());
+  assert.deepEqual(out.recipients.filter(r => r.inbox).map(r => [r.sub, r.pending]), [[SUBS.P2, true]]);
+  const other = await w.svc.recipients(UID, person('X'));
+  assert.deepEqual(other.recipients.filter(r => r.pending), [], 'pending is per sender');
+  assert.deepEqual(other.recipients.filter(r => r.inbox).map(r => [r.sub, r.pending]), [[SUBS.P2, false]]);
+  // one recipient's acknowledgement is that record's only: the other stays pending
+  await w.svc.ack(id(4801), person('P2'), ackBody(person('P2'), id(4803)));
+  assert.deepEqual([(await w.record(id(4801))).state, (await w.record(id(4802))).state], ['acknowledged', 'created']);
+  out = await w.svc.recipients(UID, S());
+  assert.deepEqual(out.recipients.filter(r => r.pending).map(r => r.sub), [SUBS.P]);
+  // the member loses the role: still the setting, no longer a candidate or an offered member
+  await w.rights('P2', { roles: ['technician'] });
+  w.users.get(SUBS.P2).roles = ['technician'];
+  got = await w.svc.inbox(AD());
+  assert.deepEqual(got.inbox, { sub: SUBS.P2, member: null });
+  assert.equal((await w.svc.recipients(UID, S())).inbox, 'unlisted');
+  // cleared: one more audit row with no member
+  got = await w.svc.saveInbox(AD(), { sub: null });
+  assert.deepEqual([got.changed, got.inbox], [true, null]);
+  audits = await inboxAudits();
+  assert.deepEqual(JSON.parse(audits[1].detail), { member: null });
+  assert.equal((await w.svc.recipients(UID, S())).inbox, 'none');
 });
 
 // ── S7-U1c: critical results on tele studies (TEST-S7-U1c-SERVICE TSV01..TSV19) ──

@@ -121,6 +121,9 @@ model Institution {
   /// Gateway settings of the institution's Gateways: routing rules and lossless compression
   /// (api/src/gateway-settings.ts). NULL = none set: KIN only, nothing deleted, sent as stored.
   gatewaySettings Json?
+  /// Critical result hospital inbox: the subject id of the member the hospital uses as its shared receiving point for
+  /// critical results, set by the institution's administrator. NULL = not set. A delivery to it is an ordinary record.
+  criticalResultInbox String? @db.VarChar(256)
   createdAt  DateTime @default(now())
   transferBases TransferBasis[]
   agreementsFrom ProcessingAgreement[] @relation("AgreementFrom")

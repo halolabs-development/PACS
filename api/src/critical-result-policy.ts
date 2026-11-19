@@ -236,6 +236,24 @@ export function eligibleRecipient(user: KeycloakUserLike | null, expected: { sub
 }
 
 /**
+ * Who the Send Critical Result dialog checks by default, decided here only. The institution's hospital inbox (its
+ * administrator's setting: one member's subject id) is marked `inbox` when that member is a candidate now; a candidate
+ * who already has this sender's pending record on this study is marked `pending` (a new send to them is refused with
+ * PENDING_EXISTS, and that pending record may pin an older version - it is never this send's delivery). The dialog checks
+ * `inbox && !pending`. The ordering physician is not matched to a member here: an order carries a name only, and two
+ * people can share one, so the radiologist chooses that person. `inboxState` says whether a hospital inbox is set and,
+ * if it is, whether its member is among the candidates now.
+ */
+export function recipientMarks<T extends { sub: string }>(candidates: readonly T[], inbox: string | null | undefined,
+  pendingSubs: ReadonlySet<string>) {
+  const set = typeof inbox === 'string' && inbox.length > 0 ? inbox.toLowerCase() : null;
+  const recipients = candidates.map(candidate => ({ ...candidate, inbox: set !== null && candidate.sub.toLowerCase() === set,
+    pending: pendingSubs.has(candidate.sub.toLowerCase()) }));
+  const inboxState: 'none' | 'listed' | 'unlisted' = set === null ? 'none' : recipients.some(r => r.inbox) ? 'listed' : 'unlisted';
+  return { recipients, inboxState };
+}
+
+/**
  * 쓰기 전 caller의 Keycloak 재확인(T-9). 유효 역할 = 토큰 역할 ∩ Keycloak 역할이고, 활성·서비스 계정 아님·그룹 정확히
  * 하나 = 토큰 기관이어야 한다. 아니면 null(403 ROLE_REQUIRED)이다. route가 요구하는 역할은 호출자가 유효 역할로 본다.
  */
