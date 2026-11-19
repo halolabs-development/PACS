@@ -1243,6 +1243,7 @@
       "tests/fixtures/legal/verified-statutes-addendum-20261006.md",
       "tests/fixtures/legal/verified-statutes.md",
       "tests/fixtures/retention/**",
+      "tests/first_admin_command_fakes.cjs",
       "tests/gateway_pipeline_contract_test.py",
       "tests/gateway_pipeline_judge.py",
       "tests/gateway_pipeline_live.py",
