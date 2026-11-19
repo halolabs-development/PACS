@@ -402,7 +402,8 @@ class MonitorHangingDOMTest(unittest.TestCase):
     # ── The browser kept the window off the rule's monitors: the wait for the reader's drag ──
     def waiting(self, page, monitors=None):
         """A rule for monitors 1 and 2 applied to a window the browser keeps on monitor 1: the wait for the drag has begun."""
-        page.evaluate("window.synReached = []; addEventListener('kin-viewer-monitors-reached', e => synReached.push(e.detail.ruleId))")
+        page.evaluate("""() => { window.synReached = [];
+          if (!window.synListening) { window.synListening = true; addEventListener('kin-viewer-monitors-reached', e => synReached.push(e.detail.ruleId)); } }""")
         result = self.prepare(page, monitors or [monitor('1x1', toolbar='top'), monitor('1x1', toolbar='top')])
         page.evaluate('synAnswer.commit()')
         self.assertTrue(page.evaluate('KinViewerMonitors.reaching()'))
@@ -413,7 +414,8 @@ class MonitorHangingDOMTest(unittest.TestCase):
         page.set_viewport_size({'width': width, 'height': 800})
         if reached:
             page.wait_for_function("() => synReached.length === 1")
-        page.wait_for_timeout(1300)
+        # The wait looks twice a second.
+        page.wait_for_timeout(1100)
         self.assertEqual([RULE_ID] if reached else [], page.evaluate('synReached'))
         self.assertFalse(page.evaluate('KinViewerMonitors.reaching()'))
 
@@ -444,12 +446,15 @@ class MonitorHangingDOMTest(unittest.TestCase):
         # Laying the window over monitor 2 after the reader began to work on the images does not apply the rule again over
         # that work. Each way that work begins.
         inside = "() => !!document.elementFromPoint(450, 500)?.closest('[data-cy=\"viewport-grid\"]')"
+        page = self.open(displays=BESIDE, size=(900, 800), tools=MANY_TOOLS)
+        # The letter keys, as the viewer mounts them: taken before they reach the document.
+        page.evaluate("""() => { window.synRan = []; const record = synServices.toolbarService.recordInteraction;
+          synServices.toolbarService.recordInteraction = item => { synRan.push(item.itemId); return record(item); };
+          KinViewerUXShortcuts.mount({ getBindings: () => synToolbar.bindings(), invoke: id => synToolbar.invoke(id), allowed: () => true }); }""")
         for work in ('press', 'wheel', 'key', 'shortcut', 'toolbar', 'taken wheel'):
-            page = self.open(displays=BESIDE, size=(900, 800), tools=MANY_TOOLS)
-            # The letter keys, as the viewer mounts them: taken before they reach the document.
-            page.evaluate("""() => { window.synRan = []; const record = synServices.toolbarService.recordInteraction;
-              synServices.toolbarService.recordInteraction = item => { synRan.push(item.itemId); return record(item); };
-              KinViewerUXShortcuts.mount({ getBindings: () => synToolbar.bindings(), invoke: id => synToolbar.invoke(id), allowed: () => true }); }""")
+            # The window back on monitor 1, the rule applied again: a new wait.
+            page.set_viewport_size({'width': 900, 'height': 800})
+            page.evaluate("synRan.length = 0")
             self.waiting(page)
             self.assertTrue(page.evaluate(inside))
             if work == 'press':

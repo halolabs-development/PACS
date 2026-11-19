@@ -10927,20 +10927,70 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const touched = screensCache.filter(target => overlapArea(intended, target) > 0);
       return touched.length >= 2 ? touched : [];
     }
-    // The reader was asked to drag the viewer window over `targets` (the browser would not move it there): this watches
-    // for the window to stand over every one of them (KinViewerDisplayLayout.covers) and runs done(rect) once when it does.
-    // It stops without a word when still() no longer holds (the window closed or reloaded, the list's account or context
-    // changed, another move was asked) or after two minutes; a later move is still saved as any move is (watchOhifRect).
-    function awaitSpan(popup, targets, still, done) {
+    // The two displays chosen for the viewer window (Viewer Displays), as they are among the displays known now; null when
+    // none are chosen, one of them is not there, or the display access is not given.
+    function ohifSpanPair() {
+      const selected = readOhifSpanScreens();
+      if (!selected || !monitorPermissionGranted()) return null;
+      return selected.every(saved => screensCache.some(s => KinViewerDisplayLayout.identity(s) === KinViewerDisplayLayout.identity(saved))) ? selected : null;
+    }
+    // The pair of displays under a window nobody chose displays for: the two it is laid over, when they are exactly two.
+    // Over three no pair is guessed.
+    function spanPairUnder(rect) {
+      const over = monitorPermissionGranted() ? KinViewerDisplayLayout.covered(rect, screensCache) : [];
+      return over.length === 2 ? over : null;
+    }
+    // The viewer window was to stand over two displays and the browser kept it on one: this watches for the window to
+    // stand there after all, the reader having dragged it (or the window being there already, away from the exact place
+    // asked for: then at once, and true is returned - nobody is asked to drag). wanted: the two displays chosen - both
+    // must be under the window; null: only a saved place said so - then any two displays or more, and a pair only when
+    // they are exactly two. done(rect, pair) runs once, with the window rectangle the judgement was made on and the two
+    // displays confirmed under it (null: more than two). It ends without a word when still() no longer holds (the window
+    // closed or shows another document, the list's account or context changed, another move was asked), the display access
+    // was taken back, a chosen display is gone, or after two minutes; a window minimized meanwhile is not judged. A later
+    // move is still saved as any move is (watchOhifRect).
+    function awaitSpan(popup, wanted, still, done) {
       const until = Date.now() + 120000;
-      const timer = setInterval(() => {
+      const known = target => screensCache.some(s => KinViewerDisplayLayout.identity(s) === KinViewerDisplayLayout.identity(target));
+      const look = () => {
         let going = false;
-        try { going = !popup.closed && still(); } catch (_) { going = false; }
-        if (!going || Date.now() > until) { clearInterval(timer); return; }
-        const rect = popupRect(popup);
-        if (rect && KinViewerDisplayLayout.covers(rect, targets)) { clearInterval(timer); done(rect); }
-      }, 500);
-      return () => clearInterval(timer);
+        try { going = !popup.closed && monitorPermissionGranted() && still() && (!wanted || wanted.every(known)); } catch (_) { going = false; }
+        if (!going || Date.now() > until) return 'ended';
+        let hidden = false;
+        try { hidden = popup.document.visibilityState === 'hidden'; } catch (_) {}
+        const rect = hidden ? null : popupRect(popup);
+        if (!rect) return 'waiting';
+        const over = wanted ? KinViewerDisplayLayout.covers(rect, wanted) : KinViewerDisplayLayout.covered(rect, screensCache).length >= 2;
+        if (!over) return 'waiting';
+        done(rect, wanted || spanPairUnder(rect));
+        return 'reached';
+      };
+      const first = look();
+      if (first === 'waiting') { const timer = setInterval(() => { if (look() !== 'waiting') clearInterval(timer); }, 500); }
+      return first === 'reached';
+    }
+    // A viewer window standing over two displays is remembered here, whichever way it got there (Span Displays, or the
+    // placement of a window as it opens; moved there by the browser at once, or dragged there by the reader): the window
+    // rectangle the judgement was made on goes to that window's slot, and the two displays confirmed under it become this
+    // browser's Viewer Displays. pair null: no pair to write (more than two displays under the window). since: for an
+    // opening, the stored choice as it was when the window began to open - written back when the choice is still that, or
+    // was only dropped meanwhile (a window dragged after a refused placement drops it); a choice made since for another
+    // window is kept. The window counts as placed from here on: its later moves are saved as any window's.
+    // Returns what was written, { rect, pair }: either can fail by itself.
+    function rememberSpan(popup, rect, pair, since) {
+      const written = { rect: false, pair: false };
+      try {
+        const slot = ohifPopupSlots.get(popup) || 0;
+        localStorage.setItem(slot ? OHIF_RECT_KEY + ':' + slot : OHIF_RECT_KEY, JSON.stringify(rect));
+        written.rect = true;
+      } catch (_) {}
+      try {
+        const now = pair ? localStorage.getItem(OHIF_SPAN_SCREENS_KEY) : null;
+        if (pair && (since === undefined || now === null || now === since)) localStorage.setItem(OHIF_SPAN_SCREENS_KEY, JSON.stringify(pair));
+        written.pair = true;
+      } catch (_) {}
+      ohifPlacementWrites.delete(popup);
+      return written;
     }
 
     function popupRect(popup) {
@@ -11375,23 +11425,26 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
               placementOwner && placementOwner === KinViewerOpening.key(KinAuth.session()); }
             catch (_) { return false; }
           };
-          // Where this placement meant the window to stand (ohifPlacement), once known.
-          let intended = null;
+          // Where this placement meant the window to stand (ohifPlacement), once known; the two displays chosen for it
+          // (Viewer Displays), if any, and that stored choice as it was then (rememberSpan).
+          let intended = null, chosen = null, choice;
           const stopPlacement = () => {
             if (currentPlacement() && placementWrite.pending) {
               placementWrite.pending = false; placementWrite.baseline = popupRect(popup);
               if (!validPlacement()) return;
               // A window meant to stand over two displays: the browser opens and moves a window over one display only.
-              // The reader is asked to drag it over them, and the place is saved once it stands there.
-              const targets = spanTargets(intended);
-              if (!targets.length) { notify('자동 창 배치를 확인하지 못해 이전 저장 위치를 유지했습니다. 영상 창을 직접 이동하거나 늘리세요.', 'info', 8000); return; }
+              // The reader is asked to drag it over them, and once it stands there its place and the two displays are
+              // saved as a placement that worked saves them (rememberSpan). A window that stands there already is not
+              // asked to be dragged.
+              if (!spanTargets(intended).length) { notify('자동 창 배치를 확인하지 못해 이전 저장 위치를 유지했습니다. 영상 창을 직접 이동하거나 늘리세요.', 'info', 8000); return; }
               const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
-              notify(kinSay('브라우저가 영상 창을 두 화면에 걸쳐 열지 않았습니다. 영상 창의 가장자리를 끌어 두 화면에 걸쳐 놓으세요. 걸쳐 놓으면 그 자리를 저장합니다.'), 'info', 12000);
-              awaitSpan(popup, targets, validPlacement, () => {
-                const saved = rememberOhifRect(popup);
-                notify(saved ? kinSay('영상 창이 두 화면에 걸쳐 있습니다. 창 위치를 저장했습니다.')
+              const there = awaitSpan(popup, chosen, validPlacement, (rect, pair) => {
+                const written = rememberSpan(popup, rect, pair, choice);
+                notify(written.rect && written.pair ? kinSay('영상 창이 두 화면에 걸쳐 있습니다. 창 위치를 저장했습니다.')
+                  : written.rect || written.pair ? kinSay('영상 창이 두 화면에 걸쳐 있습니다. 창 위치와 화면 선택 가운데 일부만 저장했습니다. 브라우저 저장소를 확인하세요.')
                   : kinSay('영상 창이 두 화면에 걸쳐 있지만 창 위치를 저장하지 못했습니다. 브라우저 저장소를 확인하세요.'), 'info', 8000);
               });
+              if (!there) notify(kinSay('브라우저가 영상 창을 두 화면에 걸쳐 열지 않았습니다. 영상 창의 가장자리를 끌어 두 화면에 걸쳐 놓으세요. 걸쳐 놓으면 그 자리를 저장합니다.'), 'info', 12000);
             }
           };
           // This timer also bounds a screen-details promise that never settles.
@@ -11403,7 +11456,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
               if (details) cacheMonitorScreens(details);
               if (readOhifSpanScreens() && (!monitorPermissionGranted() || !ohifSpanTarget())) { clearTimeout(expiry); stopPlacement(); return; }
               const rect = ohifPlacement(stored, details);
-              intended = rect;
+              intended = rect; chosen = ohifSpanPair();
+              try { choice = localStorage.getItem(OHIF_SPAN_SCREENS_KEY); } catch (_) { choice = null; }
               const place = () => {
                 if (!currentPlacement() || !placementWrite.pending) return;
                 if (Date.now() >= deadline || !validPlacement() || (details && !monitorPermissionGranted()) || (readOhifSpanScreens() && !ohifSpanTarget())) { clearTimeout(expiry);stopPlacement();return; }
@@ -11423,7 +11477,11 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
                     if (Date.now() >= deadline || !validPlacement() || (details && !monitorPermissionGranted()) || (readOhifSpanScreens() && !ohifSpanTarget()) || !sameOhifScope(popup.location.href,url)) { clearTimeout(expiry);stopPlacement();return; }
                     const actual = popupRect(popup);
                     if (actual && Object.keys(rect).every(k => Math.abs(actual[k]-rect[k]) <= 16)) {
-                      clearTimeout(expiry);ohifPlacementWrites.delete(popup);rememberOhifRect(popup);
+                      clearTimeout(expiry);
+                      // Placed at once. Over two displays it is remembered as a window dragged there is (rememberSpan).
+                      const pair = chosen ? (KinViewerDisplayLayout.covers(actual, chosen) ? chosen : null) : spanPairUnder(actual);
+                      if (pair) rememberSpan(popup, actual, pair, choice);
+                      else { ohifPlacementWrites.delete(popup);rememberOhifRect(popup); }
                     } else setTimeout(settled,100);
                     } catch (_) { clearTimeout(expiry);stopPlacement(); }
                   };
@@ -11604,45 +11662,49 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           const gate={pending:true,baseline:null};ohifPlacementWrites.set(popup,gate);
           const moved=await new Promise(resolve=>{
             let finished=false;
-            const finish=ok=>{if(finished)return;finished=true;clearTimeout(timeout);
-              let saved=false;
+            // written: over two displays, what rememberSpan wrote ({ rect, pair }) - the same saving as for a window the
+            // reader drags there after a refused move.
+            const finish=(ok,actual=null)=>{if(finished)return;finished=true;clearTimeout(timeout);
+              let saved=false,written=null;
               if(ohifPlacementWrites.get(popup)===gate){
-                if(ok){
+                if(ok&&spanning){written=rememberSpan(popup,actual,selected);saved=written.rect&&written.pair;}
+                else if(ok){
                   try {
-                    if(spanning)localStorage.setItem(OHIF_SPAN_SCREENS_KEY,JSON.stringify(selected));
-                    else localStorage.removeItem(OHIF_SPAN_SCREENS_KEY);
+                    localStorage.removeItem(OHIF_SPAN_SCREENS_KEY);
                     ohifPlacementWrites.delete(popup);saved=rememberOhifRect(popup);
                   } catch (_) { gate.pending=false;gate.baseline=popupRect(popup); }
                 }else{gate.pending=false;gate.baseline=popupRect(popup);}
               }
-              resolve({moved:ok,saved});
+              resolve({moved:ok,saved,written});
             };
             const timeout=setTimeout(()=>finish(false),2500);
             const check=()=>{if(finished)return;
               if(!valid()||!monitorPermissionGranted()||selected.some(s=>!screensCache.some(current=>KinViewerDisplayLayout.identity(s)===KinViewerDisplayLayout.identity(current)))||ohifPlacementWrites.get(popup)!==gate){finish(false);return;}
               const actual=popupRect(popup);
-              if(actual&&Object.keys(rect).every(k=>Math.abs(actual[k]-rect[k])<=16))finish(true);else setTimeout(check,100);
+              if(actual&&Object.keys(rect).every(k=>Math.abs(actual[k]-rect[k])<=16))finish(true,actual);else setTimeout(check,100);
             };
             try{KinExamScope.raiseWindow(popup);popup.moveTo(rect.left,rect.top);popup.resizeTo(rect.width,rect.height);popup.moveTo(rect.left,rect.top);setTimeout(check,100);}
             catch(_){finish(false);}
           });
+          const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
+          const number=s=>fresh.findIndex(d=>KinViewerDisplayLayout.identity(d)===KinViewerDisplayLayout.identity(s))+1;
+          const [first,second]=spanning?selected.map(number):[];
+          const partly=()=>kinSay('영상 창이 Display {0}·{1}에 걸쳐 있습니다. 창 위치와 화면 선택 가운데 일부만 저장했습니다. 브라우저 저장소를 확인하세요.',first,second);
           if(spanning&&!moved.moved){
             // The browser keeps a window on one display (it does not move a popup over two). The reader is asked to drag it
             // over the two chosen displays; once it stands there it is taken as placed: its position and the two displays
-            // are saved, as a move that worked would have saved them. The position saved before stays until then.
-            const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
-            const number=s=>fresh.findIndex(d=>KinViewerDisplayLayout.identity(d)===KinViewerDisplayLayout.identity(s))+1;
-            const [first,second]=selected.map(number);
-            if(shown())kinWrite(status,kinSay('브라우저가 영상 창을 두 화면에 걸쳐 옮기지 않았습니다. 영상 창의 가장자리를 끌어 Display {0}과 Display {1}에 걸쳐 놓으세요. 걸쳐 놓으면 그 자리를 저장합니다.',first,second));
-            const still=()=>shown()&&owner&&owner===KinViewerOpening.key(KinAuth.session())&&sequence===ohifPopupSequences.get(popup)&&monitorPermissionGranted()&&
-              selected.every(s=>screensCache.some(current=>KinViewerDisplayLayout.identity(s)===KinViewerDisplayLayout.identity(current)));
-            awaitSpan(popup,selected,still,()=>{
-              let saved=false;
-              try{saved=rememberOhifRect(popup);if(saved)localStorage.setItem(OHIF_SPAN_SCREENS_KEY,JSON.stringify(selected));}catch(_){}
-              if(shown())kinWrite(status,saved?kinSay('영상 창이 Display {0}·{1}에 걸쳐 있습니다. 창 위치를 저장했습니다.',first,second)
+            // are saved as a move that worked saves them (rememberSpan). The position saved before stays until then. A
+            // window that stands over them already - only not at the exact place asked for - is taken at once.
+            const still=()=>shown()&&owner&&owner===KinViewerOpening.key(KinAuth.session())&&sequence===ohifPopupSequences.get(popup);
+            const there=awaitSpan(popup,selected,still,(reached,pair)=>{
+              const written=rememberSpan(popup,reached,pair);
+              if(shown())kinWrite(status,written.rect&&written.pair?kinSay('영상 창이 Display {0}·{1}에 걸쳐 있습니다. 창 위치를 저장했습니다.',first,second)
+                :written.rect||written.pair?partly()
                 :kinSay('영상 창이 Display {0}·{1}에 걸쳐 있지만 창 위치를 저장하지 못했습니다. 브라우저 저장소를 확인하세요.',first,second));
             });
+            if(!there&&shown())kinWrite(status,kinSay('브라우저가 영상 창을 두 화면에 걸쳐 옮기지 않았습니다. 영상 창의 가장자리를 끌어 Display {0}과 Display {1}에 걸쳐 놓으세요. 걸쳐 놓으면 그 자리를 저장합니다.',first,second));
           }
+          else if(shown()&&moved.written&&!moved.saved&&(moved.written.rect||moved.written.pair))kinWrite(status,partly());
           else if(shown())status.textContent=moved.saved?'지정 화면으로 이동하고 창 위치를 저장했습니다.':moved.moved?'창을 이동했지만 위치를 저장하지 못했습니다. 현재 창 상태와 브라우저 저장소를 확인하세요.':'창 이동을 확인하지 못해 이전 저장 위치를 유지했습니다. 창을 직접 이동하거나 다시 시도하세요.';
         }catch(_){if(shown())status.textContent='화면에 접근하지 못했습니다. 권한과 창 상태를 확인한 뒤 다시 시도하세요.';}
         finally{if(movingWindows.get(popup)===request)movingWindows.delete(popup);if(work.admits(at)&&viewerWindows.available())render();}

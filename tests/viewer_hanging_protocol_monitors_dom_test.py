@@ -282,6 +282,37 @@ class HangingProtocolMonitorsDOMTest(unittest.TestCase):
         self.page.wait_for_timeout(500)
         self.assertEqual(4, len(self.page.evaluate('monitorCalls')))
 
+    def test_14_the_rule_that_first_match_or_next_protocol_put_on_is_the_one_that_comes_back(self):
+        # Two rules match this study, both with monitors; another one is selected in the panel.
+        value = split_library([monitor('2x1'), monitor('2x1')])
+        second = copy.deepcopy(value['rules'][0]); second.update(id=OTHER_ID, name='Second CT')
+        value['rules'].append(second)
+        self.seed(value)
+        reached = "id => dispatchEvent(new CustomEvent('kin-viewer-monitors-reached', { detail: { ruleId: id } }))"
+        first_id = value['rules'][0]['id']
+        self.page.get_by_label('Hanging Protocol Rule').select_option(OTHER_ID)
+        # Apply First Match puts the first rule on - not the selected one - and that is the rule its monitors bring back.
+        self.page.locator('#kin-hp-apply-first').click()
+        expect(self.page.locator('#kin-hp-status')).to_contain_text('Applied: Brain CT')
+        self.assertEqual([['prepare', 'Brain CT'], ['commit', 'Brain CT']], self.page.evaluate('monitorCalls'))
+        self.page.evaluate(reached, OTHER_ID)
+        self.page.wait_for_timeout(300)
+        self.assertEqual(2, len(self.page.evaluate('monitorCalls')))
+        self.page.evaluate(reached, first_id)
+        self.page.wait_for_function("monitorCalls.length === 4")
+        self.assertEqual([['prepare', 'Brain CT'], ['commit', 'Brain CT']], self.page.evaluate('monitorCalls.slice(2)'))
+        # Next Protocol puts the second rule on: from then on only that rule comes back; the first one's wait is over.
+        self.page.locator('#kin-hp-next').click()
+        expect(self.page.locator('#kin-hp-status')).to_contain_text('Applied: Second CT')
+        self.page.wait_for_function("monitorCalls.length === 6")
+        self.page.evaluate(reached, first_id)
+        self.page.wait_for_timeout(300)
+        self.assertEqual(6, len(self.page.evaluate('monitorCalls')))
+        self.page.evaluate(reached, OTHER_ID)
+        self.page.wait_for_function("monitorCalls.length === 8")
+        self.assertEqual([['prepare', 'Second CT'], ['commit', 'Second CT']], self.page.evaluate('monitorCalls.slice(6)'))
+        expect(self.page.locator('#kin-hp-status')).to_contain_text('Applied: Second CT')
+
     def test_09_export_and_duplicate_keep_the_monitors(self):
         monitors = [monitor('1x1'), monitor('2x2', thumbs='right')]
         self.seed(split_library(monitors))

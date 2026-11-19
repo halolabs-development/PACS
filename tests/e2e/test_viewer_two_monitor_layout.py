@@ -146,6 +146,62 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         self.until(viewer, ON_SEAM)
         self.shows(viewer, a.uid)
 
+    def test_two_10_a_window_opened_for_the_chosen_displays_is_taken_once_dragged_over_them(self):
+        p, viewer, a, b = self.setup_viewer('TWO10')
+        targets = p.evaluate('''async () => Array.from((await getScreenDetails()).screens,
+          s => ({ left: s.availLeft, top: s.availTop, width: s.availWidth, height: s.availHeight })).filter(s => s.left < 0).sort((x, y) => x.left - y.left)''')
+        self.assertEqual(2, len(targets))
+        span = dict(left=targets[0]['left'], top=0, width=targets[1]['left'] + targets[1]['width'] - targets[0]['left'], height=1080)
+        # The viewer window is closed. Viewer Displays holds the two displays and the place saved for the window lies over
+        # both, as Span Displays leaves them.
+        viewer.close()
+        p.wait_for_timeout(2500)
+        p.evaluate('''([pair, rect]) => { localStorage.setItem('kin.ohif.span.screens', JSON.stringify(pair));
+          localStorage.setItem('kin.ohif.current.rect', JSON.stringify(rect)); }''', [targets, span])
+        # The next study opens a new window: the browser shows it on one display, and the reader is told to drag it.
+        second = self.open_first(p, b)
+        toast = p.locator('#toast')
+        expect(toast).to_have_text('브라우저가 영상 창을 두 화면에 걸쳐 열지 않았습니다. 영상 창의 가장자리를 끌어 두 화면에 걸쳐 놓으세요. '
+                                   '걸쳐 놓으면 그 자리를 저장합니다.', timeout=40000)
+        self.bounds(second, span)
+        expect(toast).to_have_text('영상 창이 두 화면에 걸쳐 있습니다. 창 위치를 저장했습니다.', timeout=15000)
+        # Its place over both and the two displays are what the next opening finds.
+        saved = p.evaluate("JSON.parse(localStorage.getItem('kin.ohif.current.rect'))")
+        self.assertEqual((span['left'], span['width']), (saved['left'], saved['width']))
+        self.assertEqual([[t['left'], t['width']] for t in targets],
+                         p.evaluate("JSON.parse(localStorage.getItem('kin.ohif.span.screens')).map(s => [s.left, s.width])"))
+        self.until(second, ON_SEAM)
+        self.shows(second, b.uid)
+
+    def test_two_11_back_on_the_first_patients_tab_the_view_returns_divided_and_stays_so(self):
+        p, viewer, a, b = self.setup_viewer('TWO11')
+        two = '() => { const s = services.viewportGridService.getState(); return s.layout.numCols === 2 && s.viewports.size === 2; }'
+        self.stretch(viewer)
+        self.until(viewer, two)
+        self.until(viewer, ON_SEAM)
+        self.shows(viewer, a.uid)
+        # The next patient from the list, in the same window; then back to the first patient by its tab in the viewer.
+        self.choose(p, b)
+        p.locator('#m-filmbox').click()
+        viewer.wait_for_url('**StudyInstanceUIDs=' + b.uid + '**', timeout=45000)
+        self.shows(viewer, b.uid)
+        self.until(viewer, two)
+        self.until(viewer, ON_SEAM)
+        viewer.wait_for_timeout(2500)
+        tabs = viewer.locator('.kin-patient-tabs > [role=tablist] [role=tab]')
+        expect(tabs).to_have_count(2)
+        tabs.first.click()
+        viewer.wait_for_url('**StudyInstanceUIDs=' + a.uid + '**', timeout=45000)
+        self.shows(viewer, a.uid)
+        # The tab's saved view (one cell per monitor) is put back, and nothing divides or rebuilds it again afterwards.
+        self.until(viewer, two)
+        self.until(viewer, ON_SEAM)
+        self.until(viewer, '() => !KinViewerPatientTabs.settling()')
+        settled = viewer.evaluate(GRID)
+        viewer.wait_for_timeout(4000)
+        self.assertEqual(settled, viewer.evaluate(GRID))
+        self.assertTrue(viewer.evaluate(ON_SEAM), json.dumps(viewer.evaluate(SEAM_STATE)))
+
     def cell_centre(self, viewer, cell):
         box = viewer.locator('[data-cy="viewport-grid"]').bounding_box()
         return box['x'] + box['width'] * (cell[1] + cell[3] / 2), box['y'] + box['height'] * (cell[2] + cell[4] / 2)

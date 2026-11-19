@@ -292,10 +292,21 @@ class DisplaySpanGridDOMTest(unittest.TestCase):
         self.assertEqual([[1, 2]], page.evaluate('layouts()'))
 
     def test_10_the_cell_the_reader_enlarged_is_divided_only_once_it_is_no_longer_that(self):
-        # The stock one-up's cell stays one; when another layout takes its place (the answer changes), the one column is divided.
+        # The stock one-up's cell stays one; when another layout of the same shape takes its place - the answer changes and
+        # nothing else does, no announcement is read after it - the one column is divided.
         page = self.open(rows=1, cols=1, before="window.synOneUp = true; window.kinViewerStockOneUp = () => synOneUp")
         self.left_alone(page)
-        page.evaluate("synOneUp = false; setGrid(1, 1)")
+        page.evaluate("synOneUp = false")
+        self.divided(page)
+
+    def test_12_a_series_put_into_an_empty_cell_is_seen_without_an_announcement_read_after_it(self):
+        page = self.open(grid="() => setGrid(1, 1, { empty: [0] })")
+        self.left_alone(page)
+        # The grid announces the change before its state shows it: the cell gets its series a moment after the event.
+        page.evaluate("""() => { const id = first(), old = state.viewports.get(id), viewports = new Map(state.viewports);
+          viewports.set(id, { ...old, displaySetInstanceUIDs: [series('ds-dropped')], viewportOptions: { ...old.viewportOptions } });
+          synServices.cornerstoneViewportService.getCornerstoneViewport(id).held = 'ds-dropped';
+          setTimeout(() => { state = { ...state, viewports }; }, 50); }""")
         self.divided(page)
 
     def test_11_three_displays_under_the_images_no_pair_is_guessed(self):

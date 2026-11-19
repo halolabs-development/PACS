@@ -116,7 +116,8 @@ window.KinViewerDisplaySpan = (() => {
       try { protocol = String(services.hangingProtocolService?.getState?.()?.protocolId || ''); } catch (_) { protocol = ''; }
       if (protocol.startsWith('kin.mammography')) return;
       // The stock one-up's one cell (a double click the monitor maximize could not take): that toggle puts its grid back.
-      try { if (window.kinViewerStockOneUp?.()) return; } catch (_) { return; }
+      // Looked at again each second: another layout of the same shape can take its place with nothing else changing.
+      try { if (window.kinViewerStockOneUp?.()) { owed = true; return; } } catch (_) { return; }
       if (!showing.every(shows) || holder() || dividing || Date.now() - divided < 2000) { owed = true; return; }
       dividing = true; divided = Date.now();
       Promise.resolve().then(() => commands.runCommand('setViewportGridLayout', { numRows: rows, numCols: 2 }))
@@ -397,12 +398,13 @@ window.KinViewerDisplaySpan = (() => {
       document.body.classList.toggle('kin-second-display-tabs-off', !!placed && !on() && !!second);
     }
     function schedule() { if (!ended && !frame) frame = requestAnimationFrame(update); }
-    // The grid's shape, to measure again when it changed without an event read after it: the stock grid announces a new
-    // layout before its state shows it, so the first layout picked after stretching the window stayed across the seam.
+    // The grid's shape and what its cells show, to measure again when either changed without an event read after it: the
+    // stock grid announces a change before its state shows it, so the first layout picked after stretching the window
+    // stayed across the seam (and a series put into an empty cell would not be seen).
     function shape() {
       try {
         const state = services.viewportGridService.getState();
-        return JSON.stringify([state.layout?.numRows, state.layout?.numCols, [...state.viewports.values()].map(cell => [cell.x, cell.width])]);
+        return JSON.stringify([state.layout?.numRows, state.layout?.numCols, [...state.viewports.values()].map(cell => [cell.x, cell.width, cell.displaySetInstanceUIDs || []])]);
       } catch (_) { return ''; }
     }
     function poll() {
