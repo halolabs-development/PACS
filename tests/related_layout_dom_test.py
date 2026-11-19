@@ -1622,7 +1622,7 @@ class RelatedLayoutDOMTest(Base):
       const cut = clip(field, [fb.left, fb.top, fb.right, fb.bottom]);
       const top = Math.max(cut[1], fb.top + parseFloat(s.borderTopWidth) + parseFloat(s.paddingTop)), bottom = Math.min(cut[3], rb.top);
       const column = row.parentElement, work = column.parentElement, related = work.querySelector('.related-p');
-      return {line, lines: +(Math.max(0, bottom - top) / line).toFixed(2), region: Math.round(field.closest('.redit').getBoundingClientRect().height),
+      return {line, visible: Math.max(0, bottom - top), lines: +(Math.max(0, bottom - top) / line).toFixed(2), region: Math.round(field.closest('.redit').getBoundingClientRect().height),
               columnScroll: column.scrollTop, columnOverflow: column.scrollHeight - column.clientHeight, workScroll: work.scrollTop,
               relatedTop: related && related.getClientRects().length ? related.getBoundingClientRect().top - work.getBoundingClientRect().top : null};"""
     BAR_ROWS = """() => { const top = id => Math.round(document.getElementById(id).getBoundingClientRect().top), bar = document.getElementById('reading-bar');
@@ -1725,7 +1725,7 @@ class RelatedLayoutDOMTest(Base):
                     page.wait_for_timeout(200)
                     seen = self.field_view(page, parts)
                     measure(f"{tag} 20px text", field=seen)
-                    self.assertGreaterEqual(seen["lines"], 4.9, f"{tag}: five whole lines of the larger text {seen}")
+                    self.assertGreaterEqual(seen["visible"], 5 * seen["line"], f"{tag}: five whole lines of the larger text {seen}")
                     self.assert_report_row(w, f"{tag} 20px text", parts)
                     page.evaluate("() => document.documentElement.style.removeProperty('--kin-current-text')")
                     page.wait_for_timeout(200)
