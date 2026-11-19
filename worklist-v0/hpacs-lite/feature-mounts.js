@@ -227,6 +227,8 @@
               const panel = studyPanel; studyPanel = null; panel?.destroy();
               studyPanelPreview = null;
               document.body.classList.remove('study-panel-open');
+              // The borrowed sections are back on the band: draw it again (a folded panel's name returns to it).
+              applyLayout();
             }
           },
           onResize: resizeStudyPanel,
@@ -281,7 +283,10 @@
       // Each column is its share of the shown shares; the last takes the remainder, as Template always has, so the
       // default band paints to the same sub-pixel as the percentage widths it replaces.
       // Panels에서 되살린 선택을 기본 숨김 규칙으로 다시 덮지 않는다.
-      const band = KinWorkspaceLayout.reportWindow(mode, geometry?.hiddenPanels || []);
+      // Panels the Study Panel drawer holds now (it borrows the Thumbnail section with AI Report, Clinical and Template).
+      const lent = { thumbnail: '.s-thumb', aiReport: '.s-thumb', clinical: '.s-clinical', template: '.s-template' };
+      const away = Object.keys(lent).filter(key => !$(lent[key])?.closest('.right > .rw'));
+      const band = KinWorkspaceLayout.reportWindow(mode, geometry?.hiddenPanels || [], geometry?.collapsedPanels || [], away);
       for (const [name, on] of Object.entries(band.classes)) document.body.classList.toggle(name, on);
       // The five boxes' places (box-layout.js; the stylesheet applies them on the list screen only).
       const boxSwaps = KinBoxLayout.arrangement(geometry?.boxSwaps || []).swaps;

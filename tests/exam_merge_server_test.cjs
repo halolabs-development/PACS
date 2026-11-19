@@ -798,6 +798,69 @@ test('exam group read: the window gets the group and its checks (each ✓ or the
   assert.deepEqual(await svc.group(tech,D),{group:null});
 });
 
+test('exam group read names no original the caller cannot read now: only how many, for the owner and a receiving institution',async()=>{
+  // Every original of the merged exam was sent for remote reading; then one is gone from the archive (its registration
+  // stays). The receiving institution's technician and the owner's both get the group: neither gets the gone original's
+  // UID (as a member, the base or a check), both get how many such originals there are, and the owner can still undo it.
+  // Not readable as this exam's original: gone, answered by two resources, or by another patient's resource.
+  for(const [gone,alteration] of [[B,'missing'],[A,'missing'],[B,'ambiguous'],[B,'patient']])for(const who of ['owner','remote']){
+    const grouped=merged(G1,A,[A,B,C]);
+    grouped.members.forEach(m=>Object.assign(m,{sourcePatientId:'SYN-P1',sourceInstitution:'hallym'}));
+    const f=fixture({...grouped,states:[A,B,C].map(uid=>state(uid,{teleInstitutionId:'remote',rs:uid===gone?'A':'W'})),
+      transfers:[{studyUid:gone,status:'OPEN'}]});
+    const raw=f.prisma.$queryRaw;
+    f.prisma.$queryRaw=async(strings,...values)=>strings.join('').includes('StudyAccessPolicy')?[]:raw(strings,...values);
+    const access=new StudyAccessService(f.prisma,{studyIdentityResources:async uid=>uid!==gone?[qido(uid,'SYN',3,1)]
+      :alteration==='missing'?[]:alteration==='ambiguous'?[qido(uid,'SYN',3,1),qido(uid,'SYN',3,1)]:[qido(uid,'SYN',3,1,'SYN-OTHER')]},{});
+    const svc=new ExamMergeService(f.prisma,access),caller=who==='owner'?{...tech}:{...tech,institution:'remote'};
+    const out=await svc.group(caller,gone===A?B:A);
+    const label=`${who}, ${alteration} ${gone===A?'base':'member'}`;
+    assert.equal(out.group.id,G1,label);
+    assert.equal(JSON.stringify(out).includes(gone),false,label+': the gone original is named nowhere');
+    assert.deepEqual(out.group.members.map(m=>m.studyUid),[A,B,C].filter(uid=>uid!==gone),label);
+    assert.equal(out.group.unavailable,1,label);
+    // Its approval and transfer still refuse Unmerge, said without its UID.
+    assert.deepEqual(out.checks.filter(c=>!c.ok).map(c=>c.rule),[...(who==='remote'?['owner']:[]),'approved','transfer'],label);
+    if(who==='owner'){
+      // Unmerge refused on the gone original's approval and transfer: the rules and sentences, never its UID.
+      await assert.rejects(svc.dissolve(caller,G1),e=>{
+        assert.equal(status(e),409,label);assert.equal(JSON.stringify(body(e)).includes(gone),false,label+': refusal');
+        assert.deepEqual(rulesOf(e).map(([,rule])=>rule).sort(),['approved','transfer'],label);return true;});
+      f.db.states.get(gone).rs='W';f.db.transfers=[];
+      const undone=await svc.dissolve(caller,G1);
+      assert.ok(f.db.groups[0].dissolvedAt,label+': the owner undoes the group');
+      assert.equal(JSON.stringify(undone).includes(gone),false,label+': the Unmerge answer');
+    } else await assert.rejects(svc.dissolve(caller,G1),e=>status(e)===404,label);
+  }
+  // A split original gone, its second part approved: neither the original nor the part's own UID is named.
+  const L='2.25.599',split={groups:[{id:G1,institutionId:'hallym',kind:'split',baseUid:A,createdBy:'syn-tech',createdBySub:'syn-tech-sub',dissolvedAt:null}],
+    members:[{groupId:G1,logicalUid:A,studyUid:A,part:0,seriesUids:[]},{groupId:G1,logicalUid:L,studyUid:A,part:1,seriesUids:['2.25.702']}]};
+  split.members.forEach(m=>Object.assign(m,{sourcePatientId:'SYN-P1',sourceInstitution:'hallym'}));
+  const parted=fixture({...split,states:[state(A),state(L,{rs:'A',origin:'logical'})]});
+  const raw=parted.prisma.$queryRaw;
+  parted.prisma.$queryRaw=async(strings,...values)=>strings.join('').includes('StudyAccessPolicy')?[]:raw(strings,...values);
+  const access=new StudyAccessService(parted.prisma,{studyIdentityResources:async()=>[]},{});
+  const read=await new ExamMergeService(parted.prisma,access).group({...tech},L);
+  assert.equal(JSON.stringify(read).includes(A),false,'split: the original');assert.equal(JSON.stringify(read).includes(L),false,'split: the part');
+  assert.deepEqual([read.group.members,read.group.unavailable],[[],1]);
+  assert.deepEqual(read.checks.find(c=>c.rule==='approved'),{rule:'approved',ok:false,message:'승인된 판독문이 있습니다. 먼저 판독 취소(Reset)를 하세요.',uids:[]});
+  // A group made before patient snapshots were kept: when its originals now answer for two patients, which one changed
+  // cannot be told, so none is named; while they agree, all are.
+  for(const changed of [true,false]){
+    const old=fixture({...merged(G1,A,[A,B,C])});
+    const rawOld=old.prisma.$queryRaw;
+    old.prisma.$queryRaw=async(strings,...values)=>strings.join('').includes('StudyAccessPolicy')?[]:rawOld(strings,...values);
+    const oldAccess=new StudyAccessService(old.prisma,{studyIdentityResources:async uid=>[qido(uid,'SYN',3,1,changed&&uid===B?'SYN-OTHER':'SYN-P1')]},{});
+    const answer=await new ExamMergeService(old.prisma,oldAccess).group({...tech},A);
+    if(changed){assert.equal([A,B,C].some(uid=>JSON.stringify(answer).includes(uid)),false);assert.equal(answer.group.unavailable,3);}
+    else assert.deepEqual([answer.group.members.map(m=>m.studyUid),'unavailable' in answer.group],[[A,B,C],false]);
+  }
+  // Every original readable: the answer is as before (no count).
+  const whole=fixture(merged(G1,B,[B,A]));
+  const out=await whole.svc.group(tech,B);
+  assert.deepEqual(out.group,{id:G1,kind:'merge',baseUid:B,members:[B,A].map((uid,part)=>({logicalUid:uid,studyUid:uid,part,seriesUids:[]}))});
+});
+
 // ── the worklist: a merged exam is one row before paging ──
 const qido=(uid,acc,count,series,patient='SYN-P1')=>({'0020000D':{Value:[uid]},'00080050':{Value:[acc]},'00080080':{Value:['hallym']},
   '00100020':{Value:[patient]},'00100010':{Value:['SYN^PATIENT']},'00080020':{Value:['20261114']},'00080061':{Value:['CT']},

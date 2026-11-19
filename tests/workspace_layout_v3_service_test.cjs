@@ -374,3 +374,35 @@ test('TEST-BOXES-SERVER-02 unknown, repeated or non-list box swaps are refused b
   }
   assert.equal(f.transactions(), 0); assert.equal(f.writes(), 0);
 });
+// The band's panels folded in place: optional and sparse in v3 like hiddenPanels, a separate choice.
+const foldLayout = collapsed => { const v = layout(); v.workspace.collapsedPanels = collapsed; return v; };
+
+test('TEST-PANELS-FOLD-SERVER-01 folded panels roundtrip in a fixed order; empty is not stored; they travel with hidden panels and boxes', async () => {
+  for (const [given, kept] of [[['clinical'], ['clinical']], [['template', 'thumbnail'], ['thumbnail', 'template']],
+    [['template', 'clinical', 'imageReport', 'aiReport', 'thumbnail'], ['thumbnail', 'aiReport', 'imageReport', 'clinical', 'template']]]) {
+    const f = fixture(), source = client.normalize(foldLayout(given));
+    assert.deepEqual(source.workspace.collapsedPanels, kept);
+    const saved = await f.service.writeWorkspaceLayout(request(source, 0), caller, false);
+    assert.deepEqual(saved.layout.workspace.collapsedPanels, kept);
+    assert.deepEqual(await f.service.workspaceLayout(caller), saved);
+    assert.deepEqual(client.normalize(saved.layout), source);
+  }
+  const f = fixture(), saved = await f.service.writeWorkspaceLayout(request(foldLayout([])), caller, false);
+  assert.equal(Object.hasOwn(saved.layout.workspace, 'collapsedPanels'), false);
+  const all = foldLayout(['clinical']); all.workspace.hiddenPanels = ['clinical', 'template']; all.workspace.boxSwaps = ['side'];
+  const g = fixture(), kept = await g.service.writeWorkspaceLayout(request(all), caller, false);
+  assert.deepEqual([kept.layout.workspace.collapsedPanels, kept.layout.workspace.hiddenPanels, kept.layout.workspace.boxSwaps],
+    [['clinical'], ['clinical', 'template'], ['side']]);
+});
+
+test('TEST-PANELS-FOLD-SERVER-02 unknown, repeated or non-list folded panels are refused before storage', async () => {
+  const invalid = [null, 'clinical', {}, ['Clinical'], ['clinical', 'clinical'], ['viewer'], [1], [null]].map(foldLayout);
+  for (const version of [1, 2]) invalid.push({ ...layout(version), collapsedPanels: ['clinical'] });
+  const f = fixture(); f.seed(layout()); const before = f.snapshot();
+  for (const value of invalid) {
+    assert.equal(client.normalize(clone(value)), null, JSON.stringify(value.workspace?.collapsedPanels));
+    await assert.rejects(f.service.writeWorkspaceLayout(request(value, 7), caller, false), status(400), JSON.stringify(value.workspace?.collapsedPanels));
+    assert.deepEqual(f.snapshot(), before);
+  }
+  assert.equal(f.transactions(), 0); assert.equal(f.writes(), 0);
+});
