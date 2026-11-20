@@ -299,6 +299,19 @@ function metadataNumbers(value: any, count: number): number[] {
     const n = Number(field); if (!Number.isFinite(n)) invalid(); return n;
   });
 }
+// Whether a CT's stored values give HU (the one answer for a saved Ellipse ROI; the viewer asks the same, config/ohif/history.js
+// ctHu): a CT with no Modality LUT Sequence, a finite non-zero Rescale Slope and a finite Rescale Intercept, whose Rescale Type is
+// HU — or is not given, which in the CT Image module means HU (PS3.3 C.8.2.1: Rescale Type is required only when it is not HU or
+// the acquisition is multi-energy), unless Multi-energy CT Acquisition is YES. A slope or intercept that cannot be read is refused.
+function ctHu(tags: any): boolean {
+  const slope = metadataNumbers(tags.RescaleSlope, 1)[0];
+  metadataNumbers(tags.RescaleIntercept, 1);
+  const one = (v: any) => Array.isArray(v) ? (v.length === 1 ? v[0] : '?') : v;
+  const text = (v: any) => v === undefined || v === null ? '' : typeof v === 'string' ? v.trim() : '?';
+  const type = text(one(tags.RescaleType)), multi = text(one(tags.MultienergyCTAcquisition ?? tags['0018,9361']));
+  return slope !== 0 && tags.Modality === 'CT' && tags.ModalityLUTSequence === undefined &&
+    (type === 'HU' || type === '' && (multi === '' || multi === 'NO'));
+}
 // sourceTags: a Volume's other frames (the tags of each length's original, by SOP Instance UID). Every caller that verifies a
 // Volume passes it; a Volume whose lengths' originals cannot be read is refused.
 export function verifyViewerReference(studyUid: string, item: ViewerItemInput, tags: any, sourceTags?: (sopUid: string) => any): void {
@@ -384,10 +397,7 @@ export function verifyViewerReference(studyUid: string, item: ViewerItemInput, t
       // Until oblique inclusion is supported, reject it rather than storing a plausible wrong HU.
       const axis = (a: number[]) => a.filter(n => Math.abs(n) > 1e-6).length === 1;
       if (!axis(normal) || !axis(a) || !axis(b)) invalid('이 방향의 ROI 측정은 아직 지원하지 않습니다');
-      const slope = metadataNumbers(tags.RescaleSlope, 1)[0];
-      metadataNumbers(tags.RescaleIntercept, 1);
-      if (slope === 0 || tags.Modality !== 'CT' || tags.RescaleType !== 'HU' || tags.ModalityLUTSequence !== undefined)
-        invalid('HU 보정을 확인할 수 없습니다');
+      if (!ctHu(tags)) invalid('HU 보정을 확인할 수 없습니다');
     }
   }
   for (const point of item.points) {

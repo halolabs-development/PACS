@@ -2694,6 +2694,49 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.assertNotIn('Length', self.panel()['buttons'])
         self.assertEqual([False, False], self.page.evaluate("() => [synInteracting, !!cornerstoneTools.annotation.state.getAnnotation('syn-drawing-Length')]"))
 
+    def test_30b_a_ct_ellipse_is_in_hu_unless_the_original_names_another_rescale(self):
+        """An Ellipse ROI on a CT is drawn when the original's values are HU: Rescale Type HU, or not given (the CT Image module's
+        default) unless the acquisition is multi-energy. Another Rescale Type, a Modality LUT Sequence, a slope of 0 or a missing
+        intercept is refused with the HU reason, and no mark is made."""
+        tools = r'''() => {
+          window.synCt = {Modality: 'CT', SOPClassUID: '1.2.840.10008.5.1.4.1.1.2', PixelSpacing: [1, 1], ImageOrientationPatient: [1, 0, 0, 0, 1, 0],
+            ImagePositionPatient: [0, 0, 0], FrameOfReferenceUID: 'SYN-FOR', Rows: 128, Columns: 128, RescaleSlope: '1', RescaleIntercept: '-1024'};
+          window.synCtMeta = synCt;
+          cornerstone.metaData.get = type => type === 'instance' ? synCtMeta : {rowPixelSpacing: 1, columnPixelSpacing: 1};
+          synTools.EllipticalROI = { mode: 'Active',
+            configuration: {statsCalculator: {statsCallback() {}, getStatistics: () => ({array: []})}, getTextLines: () => []},
+            addNewAnnotation() {
+              const a = {annotationUID: 'syn-ct-ellipse', metadata: {toolName: 'EllipticalROI', referencedImageId: synImage()},
+                data: {handles: {points: Array.from({length: 4}, () => [20, 20, 0])}, cachedStats: {}}};
+              cornerstoneTools.annotation.state.addAnnotation(a);
+              this.editData = {annotation: a, newAnnotation: true}; this.isDrawing = true; return a; },
+            cancel() { this.editData = null; this.isDrawing = false; } };
+        }'''
+        self.me = RADIOLOGIST
+        self.open_viewer(before_boot=tools)
+        self.wait_until(lambda: 'Ellipse ROI' in self.panel()['buttons'], 'writer controls')
+        press = r'''([change, drop]) => {
+          const meta = {...synCt, ...change}; for (const key of drop) delete meta[key]; window.synCtMeta = meta;
+          document.querySelector('#kin-viewer-history [role=status]').textContent = '';
+          const a = synTools.EllipticalROI.addNewAnnotation({detail: {element: cornerstone.getEnabledElement().viewport.element}});
+          const made = !!a?.annotationUID && !!cornerstoneTools.annotation.state.getAnnotation(a.annotationUID);
+          const status = document.querySelector('#kin-viewer-history [role=status]').textContent;
+          window.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}));
+          return [made, status]; }'''
+        for change, drop in [({}, []), ({'RescaleType': 'HU'}, []), ({'RescaleType': ''}, []), ({'MultienergyCTAcquisition': 'NO'}, []),
+                             ({'RescaleType': 'HU', 'MultienergyCTAcquisition': 'YES'}, [])]:
+            with self.subTest(change=change, drop=drop):
+                made, status = self.page.evaluate(press, [change, drop])
+                self.assertTrue(made, status)
+                self.assertNotIn('HU 보정', status)
+        for change, drop in [({'RescaleType': 'OD'}, []), ({'RescaleType': 'US'}, []), ({'ModalityLUTSequence': [{}]}, []),
+                             ({'RescaleSlope': '0'}, []), ({}, ['RescaleIntercept']), ({'MultienergyCTAcquisition': 'YES'}, [])]:
+            with self.subTest(change=change, drop=drop):
+                made, status = self.page.evaluate(press, [change, drop])
+                self.assertFalse(made, status)
+                self.assertEqual('HU 보정을 확인할 수 없습니다', status)
+        self.assertEqual(0, self.page.evaluate("() => cornerstoneTools.annotation.state.getAllAnnotations().filter(a => a.metadata.toolName === 'EllipticalROI').length"))
+
     CALIBRATION_TOOLS = r'''() => {
       // An image whose original gives no pixel spacing (a scanned film, an outside CR): no PixelSpacing, no ImagerPixelSpacing.
       window.synMeta = {Modality: 'CR', SOPClassUID: '1.2.840.10008.5.1.4.1.1.1', Rows: 512, Columns: 512};
@@ -2850,7 +2893,13 @@ class ClinicianViewerDOMTest(unittest.TestCase):
       window.synFreehandPinned = pinned;
       // The image a target names, as the tool reads it (getTargetImageData), and the pinned unit function: mm with a pixel
       // spacing, px without, a calibration's name after it and its scale.
-      window.synFreehandImage = { imageData: { syn: true }, hasPixelSpacing: true };
+      // Its grid's world-to-index answer is continuous (column, row): twice the world x and y, as transformWorldToIndex below.
+      window.synGrid = { syn: true, worldToIndex: p => [p[0] * 2, p[1] * 2, 0] };
+      window.synFreehandImage = { imageData: synGrid, hasPixelSpacing: true };
+      // The Measurements panel's rows (the pinned OHIF 3.9.1 PlanarFreehandROI mapping: the area first, in the tool's areaUnit;
+      // its CSV report's Mean, Max, Area and Unit columns).
+      window.synMeasurements = [];
+      synServices.measurementService.getMeasurements = () => synMeasurements;
       // The image's own header (synFreehandHeader): its pixel spacing, or none, or an ultrasound region.
       window.synFreehandHeader = { Modality: 'CT', PixelSpacing: [0.7, 0.7] };
       const plane = cornerstone.metaData.get;
@@ -2881,9 +2930,11 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         """Where a Freehand ROI's length is known to be physical — the image's own header gives a pixel spacing, no ultrasound
         region, the tool measures in mm with a positive scale — its perimeter (closed outline) and length (open line) are the
         outline's length on the image, the same at any zoom, never a distance on the screen or "undefined"; the other lines
-        stay as they are. Anywhere else (no spacing in the header, where the viewer stands in a spacing of 1; an ultrasound
-        region; the image not shown) the tool's own words are given unchanged, as before. The measurement itself is never
-        changed by its words."""
+        stay as they are. Where the header gives no spacing at all (the viewer stands in a spacing of 1), the outline is measured
+        on the image's pixel grid: its length in px and a closed outline's area in px², at any zoom and with a screen calibration
+        too — never mm, and the Measurements panel and its CSV say the same area in px². Anywhere else (an ultrasound region; the
+        image not shown) no length is said, rather than a distance on the screen in "undefined". The measurement itself is
+        never changed by its words."""
         self.me = RADIOLOGIST
         self.open_viewer(before_boot=self.FREEHAND_TOOL)
         self.wait_until(lambda: 'Length' in self.panel()['buttons'], 'writer controls')
@@ -2895,12 +2946,13 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         line = [[10, 10, 0], [40, 10, 0], [40, 30, 0]]
         closed = "{area: 283.2, areaUnit: '%s', perimeter: 253.39, mean: -800, max: -800, stdDev: 3.2, modalityUnit: 'HU', unit: undefined}"
         opened = "{length: 208.8, modalityUnit: 'HU', getPixelValueUnitunit: undefined}"
-        spaced = "{imageData: {syn: true}, hasPixelSpacing: true}"
-        user = "{imageData: {syn: true}, hasPixelSpacing: true, calibration: {type: 'User', scale: 2}}"
+        spaced = "{imageData: synGrid, hasPixelSpacing: true}"
+        user = "{imageData: synGrid, hasPixelSpacing: true, calibration: {type: 'User', scale: 2}}"
         ct, bare = "{Modality: 'CT', PixelSpacing: [0.7, 0.7]}", "{Modality: 'CR'}"
         us = "{Modality: 'US', SequenceOfUltrasoundRegions: [{RegionDataType: 1}]}"
-        region = "{imageData: {syn: true}, hasPixelSpacing: true, calibration: {sequenceOfUltrasoundRegions: [{}]}}"
+        region = "{imageData: synGrid, hasPixelSpacing: true, calibration: {sequenceOfUltrasoundRegions: [{}]}}"
         values = lambda unit: ['Area: 283 ' + unit, 'Mean: -800 HU', 'Max: -800 HU', 'Std Dev: 3 HU']
+        area_px = ['Area: 1200 px²', 'Mean: -800 HU', 'Max: -800 HU', 'Std Dev: 3 HU']
         cases = [
             (closed % 'mm²', True, ct, spaced, 1, values('mm²') + ['Perimeter: 86 mm']),
             (closed % 'mm²', True, ct, spaced, 3, values('mm²') + ['Perimeter: 86 mm']),
@@ -2908,14 +2960,20 @@ class ClinicianViewerDOMTest(unittest.TestCase):
             (opened, False, ct, spaced, 1, ['50 mm']),
             (opened, False, ct, spaced, 3, ['50 mm']),
             (opened, False, ct, user, 1, ['25 mm User']),
-            # The header gives no spacing (the viewer stands in 1 and says it has one): the tool's own words, as before.
-            (closed % 'mm²', True, bare, spaced, 1, values('mm²') + ['Perimeter: 253 undefined']),
-            (opened, False, bare, spaced, 1, ['209 undefined']),
-            # An ultrasound region, in the header or in the image's calibration: as before.
-            (opened, False, us, spaced, 1, ['209 undefined']),
-            (opened, False, ct, region, 1, ['209 undefined']),
-            # The image cannot be read (no cell shows it now): as before.
-            (opened, False, ct, 'undefined', 1, ['209 undefined']),
+            # The header gives no spacing (the viewer stands in 1 and says it has one): on the pixel grid — image (20,20), (80,20),
+            # (80,60): sides 60, 40 and 72.11, closed 172.11, open 100, area 1200 — at any zoom, a screen calibration or not.
+            (closed % 'mm²', True, bare, spaced, 1, area_px + ['Perimeter: 172 px']),
+            (closed % 'mm²', True, bare, spaced, 3, area_px + ['Perimeter: 172 px']),
+            (closed % 'mm² User', True, bare, user, 1, area_px + ['Perimeter: 172 px']),
+            (opened, False, bare, spaced, 1, ['100 px']),
+            (opened, False, bare, user, 3, ['100 px']),
+            # An ultrasound region, in the header or in the image's calibration: no length, the area as the tool gave it.
+            (opened, False, us, spaced, 1, []),
+            (opened, False, ct, region, 1, []),
+            (closed % 'cm² US Region', True, us, region, 1, values('cm² US Region')),
+            # The image cannot be read (no cell shows it now): no length.
+            (opened, False, ct, 'undefined', 1, []),
+            (opened, False, bare, 'undefined', 1, []),
             # A tool that does fill the unit (a fixed release) is left as it is.
             ("{length: 208.8, modalityUnit: 'HU', unit: 'mm'}", False, ct, spaced, 1, ['209 mm']),
         ]
@@ -2933,6 +2991,23 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         got = self.page.evaluate("([line]) => synFreehandText({length: 208.8, modalityUnit: 'HU'}, line, false)", [line])
         self.assertEqual(['50 mm'], got['lines'])
         self.assertEqual([[20, 20, 0], [80, 60, 0]], self.page.evaluate('() => synUnitCalls[0]'))
+        # The Measurements panel's row and its CSV: on an image without spacing the area is the pixel grid's, in px²; on one with
+        # spacing the row is the tool's own.
+        panel = r'''([header]) => {
+          window.synFreehandHeader = header; window.synFreehandImage = { imageData: synGrid, hasPixelSpacing: true };
+          const uid = 'syn-freehand-row', target = 'imageId:' + synImage();
+          if (!cornerstoneTools.annotation.state.getAnnotation(uid)) cornerstoneTools.annotation.state.addAnnotation({ annotationUID: uid,
+            metadata: { toolName: 'PlanarFreehandROI', referencedImageId: synImage() },
+            data: { contour: { polyline: [[10, 10, 0], [40, 10, 0], [40, 30, 0]], closed: true }, handles: { points: [] },
+              cachedStats: { [target]: { area: 283.2, areaUnit: 'mm²', mean: -800, max: -800 } } } });
+          synMeasurements = [{ uid, toolName: 'PlanarFreehandROI', displayText: { primary: ['283.2 mm²', 'Max: -800 HU'], secondary: ['S: 1'] },
+            getReport: () => ({ columns: ['AnnotationType', 'Mean', 'Max', 'Area', 'Unit'], values: ['Cornerstone:PlanarFreehandROI', -800, -800, 283.2, 'not available'] }) }];
+          const [row] = synServices.measurementService.getMeasurements();
+          return { primary: row.displayText.primary, report: row.getReport().values }; }'''
+        self.assertEqual({'primary': ['1200 px²', 'Max: -800 HU'], 'report': ['Cornerstone:PlanarFreehandROI', -800, -800, 1200, 'px²']},
+                         self.page.evaluate(panel, [{'Modality': 'CT'}]))
+        self.assertEqual({'primary': ['283.2 mm²', 'Max: -800 HU'], 'report': ['Cornerstone:PlanarFreehandROI', -800, -800, 283.2, 'not available']},
+                         self.page.evaluate(panel, [{'Modality': 'CT', 'PixelSpacing': [0.7, 0.7]}]))
     def test_34_the_saved_item_count_follows_saves_and_deletes(self):
         """The panel's "n개 저장 항목" is the study's saved items now: a save answered adds one, a delete answered takes one
         away (with the delete's own words), not only when the list is read again. A list read that began before a save or a

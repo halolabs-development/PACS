@@ -118,12 +118,10 @@ function kinCreateViewerHistory() {
     const groupSpacing = groups => Array.isArray(groups) && groups.some(group =>
       (Array.isArray(group?.PixelMeasuresSequence) ? group.PixelMeasuresSequence : []).some(item => given(item?.PixelSpacing)) ||
       (Array.isArray(group?.FramePixelDataPropertiesSequence) ? group.FramePixelDataPropertiesSequence : []).some(item => given(item?.ImagerPixelSpacing)));
-    const noSpacing = (imageId, kind) => {
-      if (kind !== 'length' || !imageId) return false;
-      const image = cs.metaData.get('instance', imageId);
-      return !!image && !['PixelSpacing', 'ImagerPixelSpacing', 'SequenceOfUltrasoundRegions'].some(key => given(image[key])) &&
-        !groupSpacing(image.SharedFunctionalGroupsSequence) && !groupSpacing(image.PerFrameFunctionalGroupsSequence);
-    };
+    // The original's header gives no spacing of its own at all (the one answer to "has this image a spacing").
+    const spacingless = image => !!image && !['PixelSpacing', 'ImagerPixelSpacing', 'SequenceOfUltrasoundRegions'].some(key => given(image[key])) &&
+      !groupSpacing(image.SharedFunctionalGroupsSequence) && !groupSpacing(image.PerFrameFunctionalGroupsSequence);
+    const noSpacing = (imageId, kind) => kind === 'length' && !!imageId && spacingless(cs.metaData.get('instance', imageId));
     // The calibration the reader set on this image: the calibrated-spacing metadata the Calibration tool writes (kept for the
     // image id while the viewer is open); the cached image's only when there is no such metadata. A region (ultrasound), an
     // "uncalibrated" answer or a scale that is not a positive number is no screen calibration.
@@ -138,6 +136,18 @@ function kinCreateViewerHistory() {
       return usable ? { label: SCREEN_LABEL } : null;
     }
     const screenData = data => data?.kinScreenCalibration === true;
+    // Whether a CT's stored values give HU (the one answer the Ellipse ROI asks; the server asks the same of the saved item,
+    // api/src/viewer-input.ts ctHu): a CT with no Modality LUT Sequence, a finite non-zero Rescale Slope and a finite Rescale
+    // Intercept, whose Rescale Type is HU — or is not given, which in the CT Image module means HU (PS3.3 C.8.2.1: Rescale Type is
+    // required only when it is not HU or the acquisition is multi-energy), unless Multi-energy CT Acquisition is YES.
+    function ctHu(image) {
+      const finite = n => (typeof n === 'number' || typeof n === 'string' && n.trim() !== '') && Number.isFinite(Number(n));
+      const one = v => Array.isArray(v) ? (v.length === 1 ? v[0] : '?') : v;
+      const text = v => v === undefined || v === null ? '' : typeof v === 'string' ? v.trim() : '?';
+      const type = text(one(image?.RescaleType)), multi = text(one(image?.MultienergyCTAcquisition ?? image?.['00189361']));
+      return image?.Modality === 'CT' && !image.ModalityLUTSequence && finite(image.RescaleSlope) && Number(image.RescaleSlope) !== 0 &&
+        finite(image.RescaleIntercept) && (type === 'HU' || type === '' && (multi === '' || multi === 'NO'));
+    }
     // A screen-calibrated Length's words: its value in the calibrated unit the tool computed for its current points, or why not.
     function screenText(data, target) {
       const id = target.startsWith('imageId:') && target.slice(8);
@@ -238,8 +248,7 @@ function kinCreateViewerHistory() {
       const normal = [u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0]];
       if (Math.max(Math.abs(dot(u,u)-1), Math.abs(dot(v,v)-1), Math.abs(dot(u,v))) > 1e-4) return '원본 방향이 올바르지 않습니다';
       if (kind === 'ellipse') {
-        if (!finite(image.RescaleSlope) || Number(image.RescaleSlope) === 0 || !finite(image.RescaleIntercept) || image.RescaleType !== 'HU' || image.ModalityLUTSequence)
-          return 'HU 보정을 확인할 수 없습니다';
+        if (!ctHu(image)) return 'HU 보정을 확인할 수 없습니다';
         const axis = a => a.filter(n => Math.abs(n) > 1e-6).length === 1;
         if (!axis(normal) || points?.length === 4 && (!axis(points[0].map((n,i)=>n-points[1][i])) || !axis(points[3].map((n,i)=>n-points[2][i]))))
           return '사선·회전 ROI는 아직 지원하지 않습니다';
@@ -324,7 +333,31 @@ function kinCreateViewerHistory() {
         return checked;
       } catch (_) { return null; } // Display sets may disappear before their metadata.
     }
+    // A Freehand ROI tool instance (any group's: it reads a target's image the same way), for the Measurements panel's words.
+    let freehandTool = null;
+    // The Measurements panel and its CSV read a Freehand ROI's area from the tool's own numbers, in "mm²" even where the original
+    // gives no spacing. There (freehandMeasure's px) the row says the area on the image's pixel grid, in px², as the cell does;
+    // anywhere else the row is the tool's own.
+    function freehandView(m) {
+      const a = freehandTool && ct.annotation.state.getAnnotation(m.uid);
+      if (!a?.data?.contour) return m;
+      const measure = () => freehandMeasure(freehandTool, a.data, 'imageId:' + a.metadata.referencedImageId);
+      const found = measure();
+      if (found?.unit !== 'px') return m;
+      const primary = Array.isArray(m.displayText?.primary) ? m.displayText.primary.slice(1) : [];
+      return { ...m, displayText: { ...m.displayText, primary: [Math.round((found.area ?? 0) * 100) / 100 + ' px²', ...primary] },
+        getReport: () => {
+          // Read when the CSV is made, from the outline as it is then.
+          const report = m.getReport?.() || { columns: [], values: [] }, values = [...report.values], now = measure();
+          report.columns.forEach((column, i) => {
+            if (column === 'Area') values[i] = now?.unit === 'px' && now.area !== undefined ? now.area : 'not available';
+            if (column === 'Unit') values[i] = now?.unit === 'px' ? 'px²' : 'not available';
+          });
+          return { ...report, values };
+        } };
+    }
     function projectMeasurement(m) {
+      if (m?.toolName === 'PlanarFreehandROI') return freehandView(m);
       if (!numericMeasurement(m)) return m;
       const mark = ct.annotation.state.getAnnotation(m.uid);
       // The measurement list and its CSV show a screen-calibrated Length as the cell does, and export no number for it.
@@ -1160,6 +1193,34 @@ function kinCreateViewerHistory() {
     // spacing — the viewer then stands in a spacing of 1 —, an ultrasound region, a reformatted plane) is left to the tool's
     // own words, as before.
     const physical = v => Array.isArray(v) && v.length >= 2 && v.slice(0, 2).every(x => Number.isFinite(Number(x)) && Number(x) > 0);
+    // A Freehand ROI's measure and where its unit comes from — the one answer for the cell's words, the Measurements panel and
+    // its CSV: { unit: 'mm…', length } where the length is known to be physical (freehandLength, the tool's own area kept);
+    // { unit: 'px', length, area } where the original's header gives no spacing at all (spacingless: the viewer stands in a
+    // spacing of 1, so neither the tool's "mm" nor a screen calibration is the original's) — the outline measured on the image's
+    // own pixel grid, its points in continuous column/row coordinates, the area (a closed outline's) in px²; null anywhere else
+    // (an ultrasound region, a reformatted plane, an image that cannot be read): no length is said, as the tool's own number is
+    // a distance on the screen in no unit, and the area stays the tool's own under its own calibration.
+    function freehandMeasure(tool, data, target) {
+      const found = freehandLength(tool, data, target);
+      if (found) return found;
+      try {
+        const id = target.startsWith('imageId:') && target.slice(8), points = data.contour?.polyline;
+        if (!id || !spacingless(cs.metaData.get('instance', id)) || !Array.isArray(points) || points.length < 2) return null;
+        const grid = tool.getTargetImageData(target)?.imageData;
+        if (typeof grid?.worldToIndex !== 'function') return null;
+        const index = points.map(p => grid.worldToIndex(p));
+        if (index.some(p => !Array.isArray(p) && !ArrayBuffer.isView(p) || ![0, 1, 2].every(i => Number.isFinite(p[i] ?? 0)))) return null;
+        const along = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], (a[2] ?? 0) - (b[2] ?? 0));
+        let length = 0, twice = 0;
+        for (let i = 1; i < index.length; i++) length += along(index[i - 1], index[i]);
+        if (data.contour.closed) {
+          length += along(index[index.length - 1], index[0]);
+          for (let i = 0; i < index.length; i++) { const a = index[i], b = index[(i + 1) % index.length]; twice += a[0] * b[1] - b[0] * a[1]; }
+        }
+        return Number.isFinite(length) && length > 0
+          ? { unit: 'px', length, ...(data.contour.closed ? { area: Math.abs(twice) / 2, areaUnit: 'px²' } : {}) } : null;
+      } catch (_) { return null; }
+    }
     function freehandLength(tool, data, target) {
       try {
         const image = tool.getTargetImageData(target), points = data.contour?.polyline;
@@ -1186,7 +1247,7 @@ function kinCreateViewerHistory() {
         if (data.contour.closed) distance += along(points[points.length - 1], points[0]);
         const value = distance / scale;
         return typeof unit === 'string' && /^mm( |$)/.test(unit) && Number.isFinite(scale) && scale > 0 && Number.isFinite(value) && value > 0
-          ? { value, unit } : null;
+          ? { length: value, unit } : null;
       } catch (_) { return null; }
     }
     function configureMeasurements(group) {
@@ -1221,16 +1282,18 @@ function kinCreateViewerHistory() {
       const restores = [() => { roi.configuration = previous; }];
       // Freehand ROI's words: the pinned tool gave a closed outline's perimeter and an open line's length as a distance on the
       // screen with the unit "undefined". Its own text is made from a copy whose perimeter or length is the outline's length on
-      // the image in its unit (freehandLength), the other lines (area, values) as they are; where that length is not known to be
-      // physical the tool's own words are given unchanged. The measurement itself (and so what is saved or exported) is not touched.
+      // the image in its unit (freehandMeasure), the area in px² where the original has no spacing, the other lines (values) as
+      // they are; where no unit is known the length line is left out rather than said in "undefined". The measurement itself (and
+      // so what is saved or exported) is not touched.
       const freehand = group.getToolInstance('PlanarFreehandROI'), freehandConfig = freehand?.configuration;
+      if (freehand) freehandTool = freehand;
       if (typeof freehandConfig?.getTextLines === 'function') {
         freehand.configuration = { ...freehandConfig, getTextLines(data, target) {
           const s = data?.cachedStats?.[target];
           if (!s || typeof s.unit === 'string') return freehandConfig.getTextLines(data, target);
-          const found = freehandLength(freehand, data, target), key = data.contour?.closed ? 'perimeter' : 'length';
-          if (!found) return freehandConfig.getTextLines(data, target);
-          const words = { ...s, perimeter: undefined, length: undefined, unit: found.unit, [key]: found.value };
+          const found = freehandMeasure(freehand, data, target), key = data.contour?.closed ? 'perimeter' : 'length';
+          const words = { ...s, perimeter: undefined, length: undefined,
+            ...(found ? { unit: found.unit, [key]: found.length, ...(found.area !== undefined ? { area: found.area, areaUnit: found.areaUnit } : {}) } : {}) };
           return freehandConfig.getTextLines({ ...data, cachedStats: { ...data.cachedStats, [target]: words } }, target);
         } };
         restores.push(() => { freehand.configuration = freehandConfig; });

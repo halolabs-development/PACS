@@ -2193,8 +2193,9 @@ class MeasurementCiTests(unittest.TestCase):
                           'test_overlay_units_01c_an_overlay_plane_whose_answer_is_short_is_left_out_and_the_length_still_drawn',
                           'test_overlay_units_02_a_palette_colour_image_is_drawn_without_an_error',
                           'test_overlay_units_03_freehand_roi_says_its_outline_length_in_mm_at_any_zoom',
-                          'test_overlay_units_03b_freehand_roi_on_an_image_without_pixel_spacing_keeps_its_own_words',
-                          'test_overlay_units_04_the_saved_item_count_follows_save_and_delete'])
+                          'test_overlay_units_03b_freehand_roi_on_an_image_without_pixel_spacing_says_pixels',
+                          'test_overlay_units_04_the_saved_item_count_follows_save_and_delete',
+                          'test_overlay_units_05_a_ct_without_rescale_type_is_measured_saved_and_reopened_in_hu'])
         self.assertNotIn('viewer-overlay-units', self.catalog.text(automatic_only=True))
         dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
         self.assertIn('- viewer-overlay-units', dispatch)
