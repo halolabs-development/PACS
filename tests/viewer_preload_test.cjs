@@ -29,6 +29,7 @@ function setup({ held = {}, network, shared = true, studies = null, page = false
       assert.equal(options.name, 'kin-preload');
       const port = this.port = { start() {}, postMessage(message) {
         posted.push(message);
+        if (gates.silent) return;                                        // a worker that stopped: it answers nothing
         const reply = value => queueMicrotask(() => port.onmessage({ data: { type: 'reply', id: message.id, ...value } }));
         if (message.type === 'query') {
           const entry = held[message.uid];
@@ -68,7 +69,7 @@ function setup({ held = {}, network, shared = true, studies = null, page = false
     const headers = new Headers(init.headers); headers.set('X-KIN-Session', 'sess-1');
     return preloadFetch(url, { ...init, headers });
   };
-  return { fetch: preloadFetch, posted, sent, listeners, win, timers, gates, ends, through };
+  return { fetch: preloadFetch, posted, sent, listeners, win, timers, gates, ends, through, silence() { gates.silent = true; } };
 }
 
 /** Enough of a document for the back/forward return: the root's style, an alert with a button. */
@@ -812,8 +813,16 @@ test('a return uses again only the very copy the page left: a later copy of the 
     for (let i = 0; i < 10; i++) await tick();
     assert.equal(root.style.visibility, '', changed + ': the return is recorded and shown');
     assert.deepEqual(kinds(s.posted.slice(posted), 'open', 'evict', 'close'), [], changed + ' ' + revision + ': the return opens and drops nothing');
-    assert.deepEqual(s.sent.slice(before).map(r => r.headers.get('X-KIN-Preload')), [null], changed + ': a plain live read');
+    assert.equal(s.sent.length, before + 1, changed + ': one live read');
   }
+  // The return does not wait for the worker: one that never answers leaves the page shown and the copy simply not used.
+  const silent = await leftPage();
+  const posted = silent.s.posted.length;
+  silent.s.silence();
+  silent.s.listeners.pageshow({ persisted: true });
+  for (let i = 0; i < 10; i++) await tick();
+  assert.equal(silent.root.style.visibility, '', 'shown although the worker said nothing');
+  assert.deepEqual(kinds(silent.s.posted.slice(posted), 'open', 'evict'), []);
   // The next frame read checks the copy held now, for itself.
   const { s, held } = await leftPage();
   held[STUDY] = { revision: 'rev-now', session: 'sess-1', copy: 7 };

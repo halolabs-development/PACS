@@ -295,16 +295,21 @@
      * marked as a check, answers the archive's revision. The copy is used again only if it is still the very copy the
      * page left (same session, same token), the revision is the copy's and the body came in full - and only once the
      * return's opening is shown (`end`). Another copy of the study is neither used nor dropped here: the next frame read
-     * checks it for itself.
+     * checks it for itself. The worker is asked beside the read, never before it: the return's read, and so the kept
+     * page's showing again, does not wait for the worker - a copy it has not named by the time the read has come in is
+     * simply not used again.
      */
     async function rechecked(uid, path, url, init) {
       const mine = returns, was = left.get(uid), session = new win.Headers(init.headers).get('X-KIN-Session');
-      const held = session === was.session ? (await ask({ type: 'query', uid, session, path })).held : null;
-      const same = !!held?.revision && held.copy === was.copy;
-      const response = await network(url, same ? viewed(init, uid, { 'X-KIN-Preload': 'check' }) : init);
-      if (!same || !response.ok || response.headers.get('X-KIN-Study-Revision') !== held.revision) return response;
+      if (session !== was.session) return network(url, init);
+      let held = null;
+      void ask({ type: 'query', uid, session, path }).then(answer => { held = answer.held || null; });
+      const response = await network(url, viewed(init, uid, { 'X-KIN-Preload': 'check' }));
+      const revision = response.headers.get('X-KIN-Study-Revision');
+      if (!response.ok || !revision) return response;
       const body = await response.arrayBuffer();
-      if (returns === mine) mine.confirmed.set(uid, { state: 'held', done: null, copy: held.copy, session });
+      if (returns === mine && held?.revision === revision && held.copy === was.copy)
+        mine.confirmed.set(uid, { state: 'held', done: null, copy: held.copy, session });
       return new win.Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
     }
     if (typeof win.setInterval === 'function') win.setInterval(() => {

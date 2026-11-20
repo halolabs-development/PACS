@@ -501,8 +501,10 @@ async function handle(port, message, mine) {
   await locked(async () => {
     if (mine !== epoch) return;
     // The model first catches up with the clock, so no message acts on a copy past its date as if it were held: Retry
-    // of a row the panel shows gone queues it again, an open or a using of it counts nothing.
-    await sweep(); if (mine !== epoch) return;
+    // of a row the panel shows gone queues it again, an open or a using of it counts nothing. (A store that cannot be
+    // swept now fails what needs it below, as before; it does not turn a viewer's message into a failure of its own.)
+    try { await sweep(); } catch (_) {}
+    if (mine !== epoch) return;
     switch (message.type) {
       case 'retry':
         if (!key || unavailable) { store.fail(message.uid, unavailable || MESSAGES.key); break; }
