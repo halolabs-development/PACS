@@ -147,7 +147,7 @@
     function qcWindowNode() {
       if (qcWindow) return qcWindow;
       const d = document.createElement("dialog"); d.id = "qc-flag-window"; d.setAttribute("aria-labelledby", "qc-flag-title");
-      d.style.cssText = "width:min(520px,94vw);background:#141c29;color:#dae6f6;border:1px solid #6683aa;border-radius:8px;padding:14px";
+      d.style.cssText = "width:min(520px,94vw);background:var(--kin-panel);color:var(--kin-text);border:1px solid var(--kin-muted);border-radius:8px;padding:14px";
       const make = (tag, id, text) => { const el = document.createElement(tag); if (id) el.id = id; if (text) kinWrite(el, kinSay(text)); return el; };
       const title = make("h3", "qc-flag-title", "QC Flag"); title.style.margin = "0 0 8px";
       const study = make("div", "qc-flag-study"); study.translate = false;

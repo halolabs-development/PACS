@@ -91,27 +91,6 @@
     function requestText(v) { return typeof v === "string" ? v.trim() : ""; }
 
     /**
-     * QC Flag (the server's rule: api/src/pacs/qc-flag.ts). The mark a state answer carries, read here only: `{reason, by,
-     * at, revision}` (reason null = not flagged), or null when the answer has no readable mark (Unknown - never None).
-     */
-    function qcMark(value) {
-      const qc = value?.qc;
-      if (!qc || typeof qc !== "object" || !Number.isSafeInteger(qc.revision) || qc.revision < 0
-        || !(qc.reason === null || typeof qc.reason === "string" && qc.reason)) return null;
-      return { reason: qc.reason, by: typeof qc.by === "string" ? qc.by : null, at: typeof qc.at === "string" ? qc.at : null,
-        revision: qc.revision };
-    }
-    /**
-     * Every place a server state answer replaces this document's state of a row (mergeObservedReportState and
-     * replaceReportState: list, poll, bootstrap, reconnect, PATCH, Match, commit, discard) keeps the mark of the highest
-     * revision this document has seen: the server never lowers it, so a lower one is an answer read before a later change.
-     * An answer without a readable mark keeps the shown one. Only the mark is kept; the rest of the answer is taken.
-     */
-    function newerQc(mine, st) {
-      const held = qcMark(mine), seen = qcMark(st);
-      return held && (!seen || held.revision > seen.revision) ? { qc: mine.qc } : {};
-    }
-    /**
      * A QC command's own answer: only its mark is taken, and only when it is not older than the mark shown. The rest of the
      * state it carries is not: a list read that came back meanwhile may already show a later report state (RS, holder).
      */

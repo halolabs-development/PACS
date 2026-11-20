@@ -767,6 +767,9 @@
        from shrinking; in landscape the identity table still gives way first. */
     body:not(.reading) .s-clinical { overflow: auto; }
     body.portrait:not(.reading) .clinical { flex: none; }
+    /* #clinical sits in .clin-pair (beside Clinical Context): the pair is what must not shrink, or the lines drawn below it
+       (QC Flag, the receipt, DICOM Identity) cover the clinical text instead of the column scrolling. */
+    body.portrait:not(.reading) .clin-pair { flex: none; }
     body.portrait .rtabs { flex-wrap: wrap; }
     body.portrait .workrow { flex-direction: column; flex: 1 0 480px; min-height: 480px; }
     body.portrait .related-p { width: 100%; height: 56%; min-height: 286px; flex: none; }
