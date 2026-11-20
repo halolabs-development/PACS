@@ -740,7 +740,7 @@ class ViewerExportDOMTest(unittest.TestCase):
 
     def test_28_escape_or_a_viewer_ending_while_it_returns_writes_nothing(self):
         for stop in ["() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))", "() => synToolbar.dispose()"]:
-            page = self.open(); seen = self.downloads(page); page.evaluate(self.SLOW_RETURN, 400)
+            page = self.open(); seen = self.downloads(page); page.evaluate(self.SLOW_RETURN, 2500)
             self.click(page, 'SaveSeriesJPEG')
             self.returning(page)
             page.evaluate(stop)
@@ -1080,10 +1080,10 @@ class ViewerExportDOMTest(unittest.TestCase):
         self.left_alone(page, seen, [2, 'syn:left:2', 2])
         self.assertIn('바뀌어', page.evaluate("() => synNotes[0].message"))
         # While the export goes back to the image the reader was on (that image still loads; the cell is on the last one):
-        page = self.open(); seen = self.downloads(page); page.evaluate(self.SLOW_RETURN, 400)
+        page = self.open(); seen = self.downloads(page); page.evaluate(self.SLOW_RETURN, 2500)
         self.click(page, 'SaveSeriesJPEG'); self.returning(page)
         page.evaluate(self.AGAIN, None)
-        self.left_alone(page, seen, [3, 'syn:left:3', 3])
+        self.left_alone(page, seen, [3, 'syn:left:3', 3], wait=3000)
         # While the video file is made (each image takes 0.3 s to decode here), back on the reader's image:
         page = self.open(before="""() => { const decode = window.createImageBitmap;
           window.createImageBitmap = (...args) => new Promise(r => setTimeout(r, 300)).then(() => decode(...args)); }""")
@@ -1281,11 +1281,11 @@ class ViewerExportDOMTest(unittest.TestCase):
     def test_60_an_image_the_export_wanted_never_lands_on_what_the_reader_opened(self):
         # CPU rendering takes an arriving image by its image number alone. The export wants image 1 of 4 of series A (it
         # still loads) when the reader opens series B in the cell: B's first image is drawn and A's does not land on it.
-        page = self.open(before="() => { window.synCPU = true; }"); seen = self.downloads(page); self.slow(page, 300)
+        page = self.open(before="() => { window.synCPU = true; }"); seen = self.downloads(page); self.slow(page, 1500)
         self.click(page, 'SaveSeriesJPEG'); self.said(page, '1/4')
         page.wait_for_timeout(80)
         page.evaluate("() => { synViewports.get('left').setStack(['syn:other:0', 'syn:other:1'], 0); window.synAfter = synRequests.length; }")
-        self.left_alone(page, seen, [0, 'syn:other:0', 0], wait=900)
+        self.left_alone(page, seen, [0, 'syn:other:0', 0], wait=2500)
         self.assertTrue(near(page.evaluate(self.COLOUR), (0, 120, 0)), 'the pixels are of the series the reader opened')
         # The loader's queue is full and the cache has let go of A's image by the time the queue moves again.
         page = self.open(before="() => { window.synCPU = true; }"); seen = self.downloads(page); self.slow(page, 150)
@@ -1302,11 +1302,11 @@ class ViewerExportDOMTest(unittest.TestCase):
         # wants an image for the left cell (it still loads) when the reader selects the right cell: no image arrives on
         # the left cell after that, so nothing is there to follow, and the right cell stays on its image. The reader's
         # next move of the left cell is the reader's.
-        page = self.open(); page.evaluate(self.FOLLOW); seen = self.downloads(page); self.slow(page, 300)
+        page = self.open(); page.evaluate(self.FOLLOW); seen = self.downloads(page); self.slow(page, 1500)
         self.click(page, 'SaveSeriesJPEG'); self.said(page, '1/4')
         page.wait_for_timeout(80)
         page.evaluate("() => { synFollowed.length = 0; synServices.viewportGridService.setActiveViewportId('right'); window.synAfter = synRequests.length; }")
-        self.left_alone(page, seen, [1, 'syn:left:1', 1], wait=900)
+        self.left_alone(page, seen, [1, 'syn:left:1', 1], wait=2500)
         self.assertEqual([], page.evaluate("() => synFollowed"))
         self.assertEqual(1, page.evaluate("() => synViewports.get('right').getCurrentImageIdIndex()"))
         page.evaluate("() => synViewports.get('left').setImageIdIndex(2)")
