@@ -47,7 +47,7 @@ export class PacsFilters {
       if (body.createOnly === true) {
         try { return await tx.userFilter.create({ data: { owner, ownerSub, name, ...data } }); }
         catch (error) {
-          if ((error as any)?.code === 'P2002') throw new ConflictException('같은 이름의 검색이 있습니다. 다른 이름으로 저장하세요.');
+          if ((error as any)?.code === 'P2002') throw new ConflictException('같은 이름의 검색이 있습니다. 다른 이름으로 저장하세요. 기존 검색은 변경하지 않았습니다.');
           throw error;
         }
       }
