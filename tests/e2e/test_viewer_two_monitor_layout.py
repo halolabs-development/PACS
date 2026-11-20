@@ -202,6 +202,53 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         self.assertEqual(settled, viewer.evaluate(GRID))
         self.assertTrue(viewer.evaluate(ON_SEAM), json.dumps(viewer.evaluate(SEAM_STATE)))
 
+    def test_two_13_four_by_two_over_both_comes_back_with_its_patient_images_and_frame_after_a_tab_round_trip(self):
+        pa, pb = 'TWO13A-' + uuid.uuid4().hex[:10], 'TWO13B-' + uuid.uuid4().hex[:10]
+        a = ThumbnailSeriesE2E.multiple(self, pa, 'two monitor A', '20260801')
+        b = ThumbnailSeriesE2E.multiple(self, pb, 'two monitor B', '20260801')
+        p = self.sign_in(self.device())
+        self.grant(p)
+        viewer = self.open_first(p, a)
+        self.stretch(viewer)
+        self.layout(viewer, 'Layout-3-1')
+        viewer.wait_for_function('() => services.viewportGridService.getState().viewports.size === 8')
+        self.until(viewer, ON_SEAM)
+        # The first cell (on the left display) on the last image of its series.
+        first = sorted(viewer.evaluate(GRID)['cells'], key=lambda c: (c[2], c[1]))[0]
+        self.shows(viewer, a.uid, first[0])
+        last = viewer.evaluate('''async id => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id);
+          const last = v.getImageIds().length - 1; if (last > 0) await v.setImageIdIndex(last); return last; }''', first[0])
+        self.assertGreater(last, 0)
+        viewer.wait_for_function('([id, last]) => services.cornerstoneViewportService.getCornerstoneViewport(id)?.getCurrentImageIdIndex() === last', arg=[first[0], last])
+        viewer.wait_for_timeout(2500)
+        # Each cell's place and the image it shows (the cell ids are new after a tab is put back).
+        cells = '''() => [...services.viewportGridService.getState().viewports.values()].map(c => [c.x, c.y, c.width, c.height,
+          services.cornerstoneViewportService.getCornerstoneViewport(c.viewportId)?.getCurrentImageId?.() || null])'''
+        before = sorted(viewer.evaluate(cells), key=lambda c: (c[1], c[0]))
+        self.assertEqual(8, len(before))
+        self.assertIn('/studies/' + a.uid + '/', before[0][4] or '')
+        # The next patient from the list, in the same window; then back to the first patient by its tab in the viewer.
+        self.choose(p, b)
+        p.locator('#m-filmbox').click()
+        viewer.wait_for_url('**StudyInstanceUIDs=' + b.uid + '**', timeout=45000)
+        self.shows(viewer, b.uid)
+        viewer.wait_for_timeout(2500)
+        tabs = viewer.locator('.kin-patient-tabs > [role=tablist] [role=tab]')
+        expect(tabs).to_have_count(2)
+        tabs.first.click()
+        viewer.wait_for_url('**StudyInstanceUIDs=' + a.uid + '**', timeout=45000)
+        # The first patient is the one shown, with the eight cells, their images and the frame the reader left.
+        selected = viewer.locator('.kin-patient-tabs > [role=tablist] [role=tab][aria-selected=true]')
+        expect(selected).to_have_count(1)
+        expect(selected).to_contain_text(pa)
+        self.assertNotIn(pb, selected.inner_text())
+        self.until(viewer, '() => !KinViewerPatientTabs.settling()')
+        self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 8')
+        self.until(viewer, ON_SEAM)
+        viewer.wait_for_timeout(2000)
+        self.assertEqual(before, sorted(viewer.evaluate(cells), key=lambda c: (c[1], c[0])))
+        self.assertTrue(viewer.evaluate(ON_SEAM), json.dumps(viewer.evaluate(SEAM_STATE)))
+
     def cell_centre(self, viewer, cell):
         box = viewer.locator('[data-cy="viewport-grid"]').bounding_box()
         return box['x'] + box['width'] * (cell[1] + cell[3] / 2), box['y'] + box['height'] * (cell[2] + cell[4] / 2)

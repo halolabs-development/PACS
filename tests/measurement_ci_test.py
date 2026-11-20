@@ -2051,6 +2051,7 @@ class MeasurementCiTests(unittest.TestCase):
                           'test_two_04_span_displays_the_browser_refuses_asks_for_a_drag_and_takes_the_window_over_both',
                           'test_two_10_a_window_opened_for_the_chosen_displays_is_taken_once_dragged_over_them',
                           'test_two_11_back_on_the_first_patients_tab_the_view_returns_divided_and_stays_so',
+                          'test_two_13_four_by_two_over_both_comes_back_with_its_patient_images_and_frame_after_a_tab_round_trip',
                           'test_two_05_the_stock_one_up_keeps_its_cell_until_another_layout_takes_its_place',
                           'test_two_06_two_cells_on_two_monitors_stay_two_on_a_double_click',
                           'test_two_07_dividing_one_column_keeps_the_cell_its_image_and_the_active_cell',
