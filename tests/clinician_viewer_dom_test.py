@@ -1099,6 +1099,11 @@ class ClinicianViewerDOMTest(unittest.TestCase):
             if self.real_api and target == VP and (query == {'limit': ['100']}):
                 route.fulfill(json={'items': [], 'nextCursor': None})
                 return
+            if getattr(self, 'viewer_mode', None) == 'physician' and query == {'limit': ['100']}:
+                # B14: a writer account's viewer opened from the Physician mode asks the read-only list; the server answers
+                # every caller in its ordinary shape (viewer.service.ts). The read-only list reading it is a later item.
+                route.fulfill(json={'items': [], 'nextCursor': None})
+                return
             first = {'includeHidden': ['true'], 'limit': ['100']}
             following = {**first, 'cursor': [WRITER_CURSOR]}
             if query != first and (not (self.writer_paged and query == following)):
