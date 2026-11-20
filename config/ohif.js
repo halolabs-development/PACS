@@ -4281,6 +4281,8 @@ function kinCreateCTSync() {
     }
     const current = (info, before) => before && view(info)?.signature === before.signature;
     const manual = viewportId => window.kinManualSync?.has?.(viewportId) === true;
+    // A cell a series export is moving through its series (viewer-export.js): the images on its way lead no position sync.
+    const exporting = viewportId => { try { return window.KinViewerExport?.moving?.(viewportId) === true; } catch (_) { return false; } };
     for (const [type, original] of creators) {
       groups.addSynchronizerType(type, (id, options) => {
         const sync = original(id, options), fire = sync.fireEvent;
@@ -4290,7 +4292,7 @@ function kinCreateCTSync() {
         sync.fireEvent = async function (sourceInfo, event) {
           // Cells the reader tied by hand (Compare › Manual Sync) neither lead nor follow this position sync, in either
           // direction, while they stay tied; each event asks again, so a cell untied is synchronized again.
-          if (!live() || sync.isDisabled() || manual(sourceInfo.viewportId)) return;
+          if (!live() || sync.isDisabled() || manual(sourceInfo.viewportId) || exporting(sourceInfo.viewportId)) return;
           const ticket = ++serial, source = view(sourceInfo), targets = sync.getTargetViewports().filter(t => t.viewportId !== sourceInfo.viewportId);
           const snapshots = targets.map(view);
           // Refused or unconfirmed: nothing moves, and the reason stays with Recheck Access. Still asking: this event waits for it.
