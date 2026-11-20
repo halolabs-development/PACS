@@ -118,7 +118,8 @@ export class PacsReportCommit {
       throw new BadRequestException('Addendum은 승인(RS: A)된 판독문에만 붙일 수 있습니다');
 
     /**
-     * 승인(A)에서 나가는 길도 둘뿐이다 — 이전 판을 남기는 Addendum, 사유가 남는 Reset.
+     * 승인본(A)에 허용하는 길은 셋뿐이다 — 기록된 첫 승인 시각부터 24시간 안·Addendum이 없을 때 승인한
+     * 판독의의 본문 수정(amend, 아래 FC-034), 이전 판을 남기는 Addendum, 사유가 남는 Reset. Reset만 W로 되돌린다.
      *
      * v0.6.3 회귀 확충에서 드러났다: `save`는 사유 없이 승인을 T로 떨어뜨리면서 repDoc·confirm을
      * 그대로 남겨 화면이 "읽었다"와 "아직 안 읽었다"를 동시에 말하게 했고, `approve`는 다른 판독의가
