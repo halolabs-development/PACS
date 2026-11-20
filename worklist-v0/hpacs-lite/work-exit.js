@@ -518,8 +518,8 @@
         if (binding.status === "none") { say(noSession); return; }
         if (binding.status !== "ok") { say("로그인 상태를 확인하지 못했습니다. 잠시 뒤 다시 누르세요." + kept); return; }
         const owner = prep.owner ?? {};
-        if (binding.owner.sub !== owner.sub || (binding.owner.institution ?? null) !== (owner.institution ?? null)
-            || binding.owner.author !== owner.author) { say(otherAccount); return; }
+        // Another account is another institution or account id (the login email of the same account may have changed).
+        if (binding.owner.sub !== owner.sub || (binding.owner.institution ?? null) !== (owner.institution ?? null)) { say(otherAccount); return; }
         const via = { context: at, session: binding.session };
         await draftClient.settled();
         if (!ended() || !work.admits(at)) return;

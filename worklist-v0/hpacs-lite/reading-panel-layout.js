@@ -24,11 +24,16 @@
     const narrow = typeof screen.narrow === 'boolean' ? screen.narrow : width <= 850;
     const listMin = Math.max(125, Math.ceil(Number(screen.listMin) || 125));
     const relatedMin = listMin + 86;
-    const workHeight = Math.max(621, Number(screen.workHeight) || 621);
+    // What the report column below the related panel keeps (reportMin: its rows, its usable field region, the separator and
+    // the cards' margins, measured by the page beside the image) bounds the related panel in the work row's real height: in
+    // a short window (a laptop's Chrome window) the panel gives way to its own floor before the report's field region does.
+    // Without it - stacked, or a caller that does not measure - the work row keeps its 621px floor and the column 376px.
+    const reportMin = Number(screen.reportMin) > 0 && !narrow ? Math.ceil(Number(screen.reportMin)) : null;
+    const workHeight = reportMin ? Math.max(1, Number(screen.workHeight) || 621) : Math.max(621, Number(screen.workHeight) || 621);
     const ranges = {
       reportWidth: { min: 300, max: Math.max(300, Math.floor(width - 366)), default: width <= 1250 ? 340 : 420 },
       imageHeight: { min: 300, max: Math.max(530, Math.floor(height * 1.25)), default: Math.max(530, Math.round(height * .6)) },
-      relatedHeight: { min: relatedMin, max: Math.max(relatedMin, Math.floor(workHeight - 376)), default: 245 },
+      relatedHeight: { min: relatedMin, max: Math.max(relatedMin, Math.floor(workHeight - (reportMin ?? 376))), default: 245 },
     };
     const effective = {};
     for (const key of ['reportWidth', 'imageHeight', 'relatedHeight']) {

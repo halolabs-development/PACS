@@ -174,14 +174,14 @@
       // 이 메뉴가 열린 선택. 항목은 이 선택이 그대로일 때만 실행된다(위 클릭 처리).
       const opened = { uid, seq: selectionSeq, oid: selectedOid };
       const forceReleaseItems = KinAuth.has("admin") && s?.holder ? [{
-        label: kinSay("점유 강제 해제 (관리자)"), dis: s.holder === user, act: async () => {
+        label: kinSay("점유 강제 해제 (관리자)"), dis: s.holderMine === true, act: async () => {
           if (!confirm(`${displayActor(s.holder)} 님의 점유를 강제로 해제합니다. 그쪽 화면은 다음 저장에서 거절됩니다. 계속할까요?`)) return;
           const at = work.capture("document");
           try { await api("POST", `/studies/${encodeURIComponent(uid)}/release/force`, undefined, undefined, at); }
           catch (e) { work.commit(at, () => apiFail(e)); return; }
           work.commit(at, () => {
-            s.holder = null;
-            appState[uid] = { ...appState[uid], holder: null };
+            s.holder = null; s.holderMine = false;
+            appState[uid] = { ...appState[uid], holder: null, holderMine: false };
             render();
             if (uid === selectedUid) { updateReportButtons(); loadReport(); }
             toast("점유를 해제했습니다 (감사로그 기록)");
@@ -213,7 +213,9 @@
           { sep: 1 },
           { label: kinSay("판독 시작 (수신 기관)"), act: teleLater },
           // 원본 다운로드는 자기 기관 검사만이다(S9-U4p §3·§6) — 원격판독으로 받은 행은 회색, 서버도 404로 막는다.
-          ...(studyTransfer.canDownload() ? [{ sep: 1 }, { label: kinSay("Download Originals"), dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) }] : []),
+          ...(studyTransfer.canDownload() ? [{ sep: 1 }, { label: kinSay("Download Originals"), dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) },
+            // The chosen series or images of the same originals, right after the whole-study item (which keeps its name and place).
+            { label: kinSay("Download Selected Originals"), dis: !!s?.tele, act: () => studyTransfer.downloadChosen(opened.uid) }] : []),
           ...forceReleaseItems,
           // FC-076: attach a scanned document or picture to this row's study, at the end of the menu.
           ...(studyAttachments.canAttach() ? [{ sep: 1 }, { label: kinSay("Attach Document"), dis: !!s?.tele, act: () => studyAttachments.open(opened.uid) }] : []),
@@ -252,7 +254,8 @@
           ...(studyTransfer.canImport() ? [{ label: kinSay("Import DICOM"), act: () => studyTransfer.importInto(opened.uid) }] : []),
           // FC-076: right after Import DICOM; grey on a study received for tele-reading.
           ...(studyAttachments.canAttach() ? [{ label: kinSay("Attach Document"), dis: !!s?.tele, act: () => studyAttachments.open(opened.uid) }] : []),
-          ...(studyTransfer.canDownload() ? [{ label: kinSay("Download Originals"), dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) }] : []),
+          ...(studyTransfer.canDownload() ? [{ label: kinSay("Download Originals"), dis: !!s?.tele, act: () => studyTransfer.download(opened.uid) },
+            { label: kinSay("Download Selected Originals"), dis: !!s?.tele, act: () => studyTransfer.downloadChosen(opened.uid) }] : []),
           ...forceReleaseItems,
         ], keyboard, opened);
       }

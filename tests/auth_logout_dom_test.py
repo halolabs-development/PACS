@@ -712,7 +712,7 @@ class Site:
             what = found.group(2)
             if method == "POST" and what == "hold":
                 self.holds.append(path)
-                return route.fulfill(json={"holder": account["user"], "conflict": False})
+                return route.fulfill(json={"holder": account["user"], "mine": True, "conflict": False})
             if method == "POST" and what == "release":
                 self.releases.append((path, request.headers.get("x-kin-session")))
                 return route.fulfill(json={"ok": True})

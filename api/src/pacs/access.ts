@@ -10,6 +10,7 @@ import type { Prisma } from '@prisma/client';
 import type { PrismaService } from '../prisma.service';
 import { noteTransactionError, dump } from './values';
 import { examParentAccess, prepareExamParent } from '../exam-merge.service';
+import { draftOf } from '../owner-identity';
 
 /**
  * 호출자. 다섯 필드 모두 **서명된 토큰**과 가드 판정에서 나온다 — 클라이언트가 정할 수 없다.
@@ -88,8 +89,8 @@ export class PacsAccess {
    * 사라지는 것이다. §14("비움도 값이다")의 정확히 반대편 함정이고,
    * 같은 실수를 `holder`에서 한 번, `toClient`의 7개 필드에서 또 했다.
    */
-  myDraft(uid: string, actor: string, db:any=this.prisma) {
-    return db.reportDraft.findUnique({ where: { uid_author: { uid, author: actor } } });
+  myDraft(uid: string, c: Caller, db:any=this.prisma) {
+    return draftOf(db, uid, c);
   }
 
   async scopeWrite<T>(uid:string,c:Caller,work:(tx:Prisma.TransactionClient,audit:(actor:string,action:string,target:string,detail?:any)=>Promise<any>)=>Promise<T>,transaction?:Prisma.TransactionClient):Promise<T> {

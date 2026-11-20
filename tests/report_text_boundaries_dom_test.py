@@ -261,7 +261,7 @@ class MultiStudySite(h.Site):
         return [] if not head["version"] else [{
             "id": head["version"], "uid": h.UID, "version": head["version"], "reason": None,
             "action": head.get("action") or ("approve" if head["rs"] == "A" else "save"),
-            "author": h.RAD["actor"], "at": "2026-10-03T00:00:00.000Z", **{k: head.get(k, "") for k in h.FIELDS}}]
+            "author": h.RAD["actor"], "mine": True, "at": "2026-10-03T00:00:00.000Z", **{k: head.get(k, "") for k in h.FIELDS}}]
 
     def api(self, route, request, method, path, query):
         if method == "GET" and path == f"/api/studies/{h.UID}/report/versions":

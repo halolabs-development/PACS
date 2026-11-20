@@ -21,6 +21,7 @@ import type { PacsReportEvidence } from './report-evidence';
 import type { PacsReportDraft, DraftRequestFacts, EndedWork } from './report-draft';
 import { resolveExamScope, examScopeChanged } from '../exam-merge.service';
 import { nativeReportScope } from '../emr-report/native-snapshot';
+import { sameAccount, shownActor, draftOf } from '../owner-identity';
 
 export class PacsReportCommit {
   constructor(
@@ -82,7 +83,8 @@ export class PacsReportCommit {
       }, async (tx, prev, audit, record) => {
     if (prev?.ss === 'Unverified' && prev.em !== 'E')
       throw new ConflictException('촬영 중(미확인) 검사입니다 — 기사 확인(Verify) 뒤 판독할 수 있습니다');
-    const heldByOther = holdAlive(prev) && prev.holder !== c.actor ? prev.holder : null;
+    // Whose hold and whose saved text it is follows the account (owner-identity.ts), never the email string.
+    const heldByOther = holdAlive(prev) && !sameAccount(prev.holderSub, c) ? prev.holder : null;
     // 진행 중 판독 되돌리기는 "남이 Save해 둔 글"을 판정에 쓰므로 그 후보(W·T·H의 reset)만 머리 판을 여기서 잠가 읽는다.
     // 예비 판독(P) 관문에 걸리는 호출은 이 후보가 아니다 — 거절되는 호출이 Report 행에 닿지 않는다는 약속은 그대로다.
     const inProgress = action === 'reset' && ['W', 'T', 'H'].includes(prev?.rs);
@@ -96,7 +98,7 @@ export class PacsReportCommit {
      * 사유는 묻지 않고 **이 잠금 안에서** 서버가 만든다: 요청이 본 것이 아니라 지금 잠근 점유·저장 글이 기록된다.
      */
     // Someone's work is any stored content - text, a structured item or a drawing (report-visibility.ts storedContent).
-    const savedByOther = early?.updatedBy && early.updatedBy !== c.actor && storedContent(early)
+    const savedByOther = early?.updatedBy && !sameAccount(early.updatedBySub, c) && storedContent(early)
       ? early.updatedBy as string : null;
     const takeover = inProgress && (heldByOther || savedByOther)
       ? { holder: heldByOther ? visibleHolder(prev, c) : null, heldAt: heldByOther ? prev.heldAt : null, savedBy: savedByOther }
@@ -197,7 +199,6 @@ export class PacsReportCommit {
           '예비 판독(RS: P) 중에는 지정을 바꿀 수 없습니다 — 사유를 남기는 판독 취소(Reset) 뒤 다시 지정하세요');
       reviewer = wanted;
       if (!reviewer) throw new BadRequestException('상급 판독의를 지정해야 합니다');
-      if (reviewer === c.actor) throw new BadRequestException('자기 자신을 상급 판독의로 지정할 수 없습니다');
       if (candidate?.sub === c.sub) throw new BadRequestException('자기 자신을 상급 판독의로 지정할 수 없습니다');
       if (candidate) await lockMemberRights(tx, candidate.sub);
       const current = candidate && await tx.memberRights.findUnique({ where: { sub: candidate.sub } });
@@ -207,7 +208,7 @@ export class PacsReportCommit {
 
     // 승인으로 P를 끝내는 것은 **지정된 상급 판독의**의 일이다.
     // 예비 판독을 쓴 사람이 스스로 승인하면 감독이라는 절차 자체가 없어진다.
-    if (action === 'approve' && prev?.rs === 'P' && !designationMatches(prev.preReviewer, prev.preReviewerSub, c))
+    if (action === 'approve' && prev?.rs === 'P' && !designationMatches(prev.preReviewerSub, c))
       throw new ForbiddenException(
         `예비 판독의 최종 승인은 지정된 상급 판독의(${prev.preReviewer})만 할 수 있습니다`);
 
@@ -232,7 +233,7 @@ export class PacsReportCommit {
           recommendation: body.recommendation ?? '',
         };
 
-    const stateData: any = { rs, holder: null, holderInstitutionId: null, heldAt: null };   // 확정하면 점유가 풀린다
+    const stateData: any = { rs, holder: null, holderSub: null, holderInstitutionId: null, heldAt: null };   // 확정하면 점유가 풀린다
     stateData.holdReason = action === 'defer' ? body.reason : null;
     if (action === 'preliminary') {
       stateData.preDoc = c.actor;
@@ -330,7 +331,7 @@ export class PacsReportCommit {
             message: `이 초안은 v${draft.baseVersion}을 기준으로 씁니다. 지금 승인본은 ` +
               `v${cur.version}입니다 — 승인본을 확인한 뒤 기준을 다시 잡아 주세요.`,
             head: {
-              version: cur.version, updatedBy: cur.updatedBy ?? null,
+              version: cur.version, updatedBy: cur.updatedBy ? shownActor(cur.updatedBy, cur.updatedBySub, c) : null,
               findings: cur.findings, conclusion: cur.conclusion, recommendation: cur.recommendation,
             },
             draftBaseVersion: draft.baseVersion,
@@ -338,7 +339,7 @@ export class PacsReportCommit {
 
         if ((cur?.version ?? 0) !== body.baseVersion)
           throw new ConflictException(
-            `그 사이 ${cur?.updatedBy ?? '다른 사용자'}가 v${cur?.version}을 저장했습니다. ` +
+            `그 사이 ${cur?.updatedBy ? shownActor(cur.updatedBy, cur.updatedBySub, c) : '다른 사용자'}가 v${cur?.version}을 저장했습니다. ` +
             `내용을 다시 불러온 뒤 작성해 주세요.`);
 
         /**
@@ -435,6 +436,8 @@ export class PacsReportCommit {
             ...(headDrawings.length ? { drawings: headDrawings } : {}),
             reason: `판독 취소로 폐기 (취소자: ${c.actor})`,
             author: cur.updatedBy ?? c.actor,
+            // The copy is the text of the account that saved it (a head without a writer: the one who resets it).
+            authorSub: cur.updatedBy ? cur.updatedBySub ?? null : c.sub,
           }});
           await record(prev, null, 'cancel', { uid, version });
           version += 1;
@@ -445,30 +448,33 @@ export class PacsReportCommit {
          * (있는지만 본다 — 같은 부모 잠금 아래라 이 읽기와 그 사람의 초안 쓰기는 엇갈리지 않는다), 남이 Save해 둔 글은
          * 위의 `discarded` 판에 더해 그 글을 쓴 사람의 개인 초안으로 옮긴다(그 사람에게 살아 있는 초안이 없을 때만).
          */
-        let released: { holder: string | null; holderDraft: boolean; savedBy: string | null; savedKept: boolean } | null = null;
+        let released: { holder: string | null; holderDraft: boolean; savedBy: string | null; savedKept: boolean; sameWriter?: true } | null = null;
         if (takeover) {
-          const holderDraft = !!heldByOther && !!(await tx.reportDraft.findUnique({
-            where: { uid_author: { uid, author: heldByOther } }, select: { present: true } }))?.present;
+          const holderDraft = !!heldByOther && !!(await draftOf(tx, uid, { sub: prev.holderSub }, { present: true }))?.present;
           // Only saved text moves into the writer's draft; a Save of drawings alone has none to move - its drawings stay with
           // the writer in the Reset copy above (no empty draft is made for them).
-          const savedKept = !!savedByOther && !!(cur.findings || cur.conclusion || cur.recommendation) && await this.reportDraft.keepSavedText(tx, uid, prev.draftEpoch, savedByOther, {
+          const savedKept = !!savedByOther && !!(cur.findings || cur.conclusion || cur.recommendation) && await this.reportDraft.keepSavedText(tx, uid, prev.draftEpoch, { sub: early.updatedBySub ?? null, actor: savedByOther }, {
             findings: cur.findings, conclusion: cur.conclusion, recommendation: cur.recommendation,
             baseVersion: cur.version, citations: headCitations, structured: headStructured, groupId: cur.groupId ?? null,
           }, source => record!(prev, null, 'draft-save', source));
-          released = { holder: takeover.holder, holderDraft, savedBy: savedByOther, savedKept };
+          // The notice combines the two draft outcomes only when the holder and saver were the same account.
+          const sameWriter = !!(savedByOther && heldByOther && sameAccount(early.updatedBySub, { sub: prev.holderSub }));
+          const savedName = !savedByOther ? null : sameWriter
+            ? takeover.holder : shownActor(savedByOther, early.updatedBySub, c);
+          released = { holder: takeover.holder, holderDraft, savedBy: savedName, savedKept, ...(sameWriter ? { sameWriter: true as const } : {}) };
         }
 
         const state = await tx.studyState.update({ where: { uid }, data: stateData });
         const report = await tx.report.upsert({ where: { uid },
-          create: { uid, ...content, version, updatedBy: c.actor, groupId: scope.groupId },
-          update: { ...content, version, updatedBy: c.actor, groupId: scope.groupId } });
+          create: { uid, ...content, version, updatedBy: c.actor, updatedBySub: c.sub, groupId: scope.groupId },
+          update: { ...content, version, updatedBy: c.actor, updatedBySub: c.sub, groupId: scope.groupId } });
         // 인용은 **`ReportVersion` 행에만** 쓴다. `Report`에는 칸이 없다 — 거울을 두면
         // 같은 사실이 두 곳에서 엇갈릴 수 있고, 그 순간 어느 쪽이 기록인지 말할 수 없다.
         const savedVersion = await tx.reportVersion.create({ data: {
           uid, version, action, ...content, citations,
           ...(structured.length ? { structured } : {}),
           ...(drawings.length ? { drawings } : {}),
-          reason, author: c.actor, ...nativeReportScope(scope.groupId, scope.hasMembership) } });
+          reason, author: c.actor, authorSub: c.sub, ...nativeReportScope(scope.groupId, scope.hasMembership) } });
         let signature = null;
         // An empty reset before any report exists is only a state change. C2
         // cancellation refers to a real previous version; never invent one.
@@ -491,10 +497,10 @@ export class PacsReportCommit {
         // 확정에 실패하면 초안도 남아야 하므로 같은 트랜잭션에서 비운다. 초안이 없던 확정도 경계를 올린다 —
         // 이 확정보다 앞서 보낸 초안 쓰기가 뒤늦게 닿아 확정 뒤에 초안을 만들지 못한다.
         if ((action === 'approve' || action === 'amend' || action === 'addendum') && signature)
-          ended = await this.reportDraft.endWork(tx, mine, c.actor, { trigger: 'result-version-signed', action: action as 'approve' | 'amend' | 'addendum', signed: signature });
+          ended = await this.reportDraft.endWork(tx, mine, c, { trigger: 'result-version-signed', action: action as 'approve' | 'amend' | 'addendum', signed: signature });
         else if (action === 'reset')
-          ended = await this.reportDraft.endWork(tx, mine, c.actor, { trigger: 'explicit-discard' });
-        const cleared = await this.reportDraft.storeDraft(tx, uid, c.actor, mine, null);
+          ended = await this.reportDraft.endWork(tx, mine, c, { trigger: 'explicit-discard' });
+        const cleared = await this.reportDraft.storeDraft(tx, uid, c, mine, null);
 
         /**
          * 감사 행은 **같은 트랜잭션에서** 쓴다(U5S-REQ-03). 밖에서 쓰면 확정은 남고 감사만 실패한 판이 생긴다 —
@@ -540,7 +546,7 @@ export class PacsReportCommit {
   /** 지금의 머리 판(Report 행)을 잠근 채 읽는다. 검사 행 잠금 아래에서만 부른다. 행이 없으면(첫 확정) undefined. */
   private async lockHead(tx: any, uid: string): Promise<any> {
     const [head] = await tx.$queryRaw`
-      SELECT version, "updatedBy", findings, conclusion, recommendation, "groupId"
+      SELECT version, "updatedBy", "updatedBySub", findings, conclusion, recommendation, "groupId"
       FROM "Report" WHERE uid = ${uid} FOR UPDATE`;
     // With whether its version stored a structured item or a drawing (a head without text is judged by them).
     return head ? (await withStoredExtras(tx, [{ ...head, uid }]))[0] : head;

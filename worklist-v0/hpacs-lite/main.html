@@ -564,6 +564,10 @@
       min-height: calc(2 * 4px + 2 * (1lh + 2 * 2px) + 3 * 2px + var(--kin-findings-floor) + var(--kin-conclusion-floor)); }
     body:not(.reading) .workrow > .report-p .redit > #findings { min-height: var(--kin-findings-floor); }
     body:not(.reading) .workrow > .report-p .redit > #conclusion { min-height: var(--kin-conclusion-floor); }
+    /* Below the region's own end the wheel stays in it: carried on to the card, whose scroll reaches the rows under the
+       button row (step 3), it moved the button row 84px at 1366x768 - the card scrolling as a whole (Minhoon 2026-11-04).
+       The portrait layout scrolls the page instead and keeps the wheel's way to it. */
+    body:not(.reading):not(.portrait) .workrow > .report-p .redit { overscroll-behavior-y: contain; }
     body:not(.reading) .workrow > .report-p > :not(.report-compose, #report-notices, #dictation-pane, .rfoot2, .rfoot2 ~ *) { flex-shrink: 1;
       box-sizing: content-box; min-height: var(--kin-row-floor, 1lh); overflow-y: auto; }
     body:not(.reading) .workrow > .report-p > #question-p:not([hidden]) { display: flex; flex-direction: column; --kin-row-floor: calc(24px + 2 * 3px); }
@@ -623,6 +627,21 @@
       container-type: inline-size; }
     .report-notices > .draftbar { flex-wrap: wrap; align-items: safe center; }
     .report-notices > .draftbar button { white-space: nowrap; }
+    /* The notice of a move or a Related Report insert that did not go through (#report-notice: Retry, Check, Discard Insert,
+       Stay). Its words were one flex item as wide as the row, so in every window its buttons went to a line below the
+       band's one line (1920x1080 too: "Result Unknown" took two lines) and the reader saw the words without the buttons,
+       or the middle of them. The words keep at least a short first line (6em: the start of the state's name) beside the buttons and wrap in their own
+       column; the buttons stand at the top of the row, on its first line, wherever that line has room for them, and where it
+       has not (a narrow column beside the question notices) they go down one by one, each whole, as the band scrolls. */
+    .report-notices > #report-notice { align-items: flex-start; }
+    #report-notice > #report-notice-msg { flex: 1 1 6em; min-width: 0; }
+    #report-notice > .spacer { display: none; }
+    #report-notice > button { flex: none; }
+    /* While that notice is shown (report-editor.js renderReportNotice writes its display) the question and request notices
+       beside it (#report-alerts, below) take at most a quarter of the band, not 40%: in the Reading column they left the row
+       233px and Stay went below the line. Their words are short and whole in their tooltips; two of them keep their
+       4em minimum each (and their gap), so neither leaves the band at the column's narrowest. */
+    #report-notices:has(> #report-notice[style*="flex"]) > #report-alerts { max-width: max(25cqw, 8em + 4px); }
     /* W4 숨긴 Recommendation의 읽기 전용 띠 — 안내줄과 같은 등급, 펼쳐도 판독문 칸을 밀어내지 않게 글은 짧게 스크롤한다. */
     .recnote { flex: none; padding: 3px 10px; background: #1f2530; border-top: 1px solid #3a4356; color: #c3cad6; font-size: 11px; }
     #recnote { white-space: nowrap; overflow-x: auto; }
@@ -1643,6 +1662,7 @@
         <input id="quick" placeholder="ID or Name" aria-label="Patient ID or Name">
         <div class="toolbar-section" role="group" aria-label="Filter Actions">
           <button class="chip" id="savefilter" aria-haspopup="dialog">Save Filter</button>
+          <select id="search-collection" aria-label="Saved Search Collection" hidden></select>
           <button class="chip" id="managefilters" aria-haspopup="dialog">Search &amp; Saved Filters</button>
           <button class="chip" id="favorite-open" type="button" aria-haspopup="dialog">Favorites</button>
           <button class="chip" id="favorite-clear" type="button" hidden>Clear Favorite Filter</button>
@@ -2300,6 +2320,7 @@
     .study-transfer-reason { flex-basis: 100%; }
     .study-transfer-note, .study-transfer-status { margin: 4px 0; color: var(--kin-muted); }
     .study-transfer-status { padding: 0 8px 6px; }
+    .study-transfer-refusal { padding: 0 8px; }
     .study-transfer-resolve { display: grid; gap: 4px; padding: 6px 0; border-bottom: 1px solid var(--kin-line); }
     .study-transfer-resolve label { display: grid; gap: 2px; }
   </style>
