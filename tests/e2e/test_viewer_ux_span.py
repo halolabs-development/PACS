@@ -403,7 +403,8 @@ if '--boundary' not in sys.argv:
                 p.get_by_label('Viewer Display '+str(number)).select_option(value)
             viewer.evaluate('window.__u1NativeBounds=true')
             p.get_by_role('button',name='Span Displays',exact=True).click()
-            expect(p.locator('#viewer-windows-status')).to_contain_text('이전 저장 위치를 유지')
+            # The browser keeps the window on one display: the reader is told to drag it over both; the saved place stays.
+            expect(p.locator('#viewer-windows-status')).to_contain_text('영상 창의 가장자리를 끌어 Display 1과 Display 2에 걸쳐 놓으세요')
             self.assertEqual(p.evaluate("JSON.parse(localStorage.getItem('kin.ohif.current.rect'))"),saved)
             self.assertEqual(viewer.evaluate('__clampDocument'),marker)
             # Explicit user resize/move through the browser OS boundary.
@@ -417,6 +418,7 @@ if '--boundary' not in sys.argv:
               const actual=JSON.parse(localStorage.getItem('kin.ohif.current.rect'));
               return actual && Object.entries(expected).every(([key,value])=>actual[key]===value);
             }''',arg=manual)
+            expect(p.locator('#viewer-windows-status')).to_have_text('영상 창이 Display 1·2에 걸쳐 있습니다. 창 위치를 저장했습니다.')
             self.loaded(viewer, a)
             self.capture(viewer, 'manual-span')
             self.assertEqual(viewer.evaluate('__clampDocument'),marker)

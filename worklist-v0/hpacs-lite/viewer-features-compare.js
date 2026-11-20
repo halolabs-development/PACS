@@ -410,9 +410,12 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
   // A cell Display Set Presets is putting a rule on (viewer-features-view.js): its new order or image is the rule's, not a
   // move for the group to follow, and the group does not move it meanwhile.
   const ruled = id => { try { return !!window.KinViewerCellRules?.setting?.(id); } catch (_) { return false; } };
+  // A cell a series export is moving through its series (viewer-export.js): the images on its way are not moves for the
+  // group to follow. The reader's own move of that cell ends the export, and the group follows it as any other.
+  const exporting = id => { try { return window.KinViewerExport?.moving?.(id) === true; } catch (_) { return false; } };
   function moved(event) {
     const id = event.detail?.viewportId, member = id && bound.get(id);
-    if (!member || !model || ruled(id)) return;
+    if (!member || !model || ruled(id) || exporting(id)) return;
     const v = stack(id);
     if (!v || shownSets(id)[0] !== member.set) { bind(); return; }
     const index = v.getCurrentImageIdIndex();

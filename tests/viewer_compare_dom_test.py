@@ -540,6 +540,29 @@ class ViewerCompareDOMTest(unittest.TestCase):
         page.wait_for_function("() => synIndexCalls.length === 1")
         self.assertEqual([['right', 0]], page.evaluate('synIndexCalls'))
 
+    def test_05c_manual_sync_follows_no_image_a_series_export_shows_on_its_way(self):
+        page = self.open()
+        page.evaluate("() => { synAt('left', 9); synAt('right', 2); }")
+        self.menu(page, 'Manual Sync…')
+        panel = page.get_by_role('dialog', name='Manual Sync')
+        panel.get_by_label('Sync cell 1').check(); panel.get_by_label('Sync cell 2').check()
+        panel.get_by_role('button', name='Lock Selection').click()
+        expect(panel.get_by_role('button', name='Unlock')).to_be_visible()
+        # Save Series JPEG or Save Video walks the left cell through its series and back (viewer-export.js moving()): the
+        # images on its way are not moves for the group. The right cell stays.
+        page.evaluate("""() => { window.synExporting = new Set(['left']); window.KinViewerExport = { moving: id => synExporting.has(id) };
+          synMove('left', 0); synMove('left', 1); synMove('left', 9); }""")
+        page.wait_for_timeout(150)
+        self.assertEqual([], page.evaluate('synIndexCalls'))
+        self.assertEqual(2, page.evaluate("synViews.get('right').index"))
+        # The reader's own move of the other cell moves the tied cell as always (which ends the export on it).
+        page.evaluate("synMove('right', 4)")
+        page.wait_for_function("() => synViews.get('left').index === 11")
+        # The export over, the reader's moves of that cell lead again.
+        page.evaluate("() => { synExporting.clear(); synIndexCalls.length = 0; synMove('left', 14); }")
+        page.wait_for_function("() => synViews.get('right').index === 7")
+        self.assertEqual([['right', 7]], page.evaluate('synIndexCalls'))
+
     def test_06_unlocked_group_drops_a_cell_given_other_images(self):
         page = self.open()
         self.menu(page, 'Manual Sync…')

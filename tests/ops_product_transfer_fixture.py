@@ -153,7 +153,8 @@ MIGRATIONS = ['api/prisma/migrations/0_init/migration.sql',
               'api/prisma/migrations/20261119160000_critical_result_send_roles/migration.sql',
               'api/prisma/migrations/20261120120000_study_referred_at/migration.sql',
               'api/prisma/migrations/20261120140000_order_modality_worklist/migration.sql',
-              'api/prisma/migrations/20261120150000_owner_account_keys/migration.sql']
+              'api/prisma/migrations/20261120150000_owner_account_keys/migration.sql',
+              'api/prisma/migrations/20261120180000_gateway_receipt_series/migration.sql']
 # S9-U4b (52 tables, 47 migrations): ImportOperation, its twelve synthetic rows (one import with every attempt phase over four
 # studies, a prepared, a Sent and a still-sending download, four Study and four SOP reservations with their holders), one
 # primary key, two checks and three indexes. Not measured on a stack when written: estimated at about 16 KB of catalog and
@@ -406,7 +407,7 @@ def expected_rows(uid):
     # errorCode all carry real values through the dump (an empty table would pass on nothing).
     rows['GatewayReceipt'] = [dict(studyUid=uid, institutionId='SYNTHETIC-hospital',
         epoch='00000000-0000-4000-8000-000000000c01', seq=7, phase='retry', attempt=2, successCount=3,
-        localCount=12, errorCode='stow_http', receivedAt=STAMP)]
+        localCount=12, errorCode='stow_http', receivedAt=STAMP, successSeries=2)]
     # S4-U4: one Now Retry request bound to exactly that retry receipt state (epoch ...c01, seq 7), so the
     # composite key, the UUID epoch, the BIGINT seq and the timestamp carry real values through the dump.
     rows['GatewayRetryRequest'] = [dict(studyUid=uid, epoch='00000000-0000-4000-8000-000000000c01', seq=7,
@@ -1291,6 +1292,8 @@ def constraint_probes(name, product):
         RAISE EXCEPTION 'missing gateway receipt completeness check'; EXCEPTION WHEN check_violation THEN NULL; END;
       BEGIN UPDATE "GatewayReceipt" SET "errorCode"=NULL;
         RAISE EXCEPTION 'missing gateway receipt error code check'; EXCEPTION WHEN check_violation THEN NULL; END;
+      BEGIN UPDATE "GatewayReceipt" SET "successSeries"="successCount"+1;
+        RAISE EXCEPTION 'missing gateway receipt series check'; EXCEPTION WHEN check_violation THEN NULL; END;
       BEGIN UPDATE "GatewayRetryRequest" SET seq=-1;
         RAISE EXCEPTION 'missing gateway retry seq check'; EXCEPTION WHEN check_violation THEN NULL; END;
       BEGIN UPDATE "GatewayRetryRequest" SET "studyUid"='2.25.0';

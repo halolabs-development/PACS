@@ -5,8 +5,8 @@ they are in the image, turning the button off takes them away and on again draws
 image is drawn with its value. An overlay plane on pixels that are not square, or whose bits come back short, is left out and
 the cell's Length is still drawn. A palette colour image (its colour tables sent as bulk data) is drawn without an error. A
 Freehand ROI on an image with pixel spacing says its perimeter (closed outline) and length (open line) as the outline's length
-in mm at any zoom; on an image without pixel spacing it keeps its own words. The history panel's "n개 저장 항목" follows a Save
-and a Delete at once."""
+in mm at any zoom; on an image without pixel spacing it says them on the image's pixel grid in px (a closed outline's area in
+px²), never mm or "undefined". The history panel's "n개 저장 항목" follows a Save and a Delete at once."""
 import json
 import os
 import re
@@ -46,6 +46,13 @@ OUTLINES = '''() => cornerstoneTools.annotation.state.getAllAnnotations().filter
   const p = a.data.contour.polyline, d = (u, w) => Math.hypot(u[0] - w[0], u[1] - w[1], u[2] - w[2]); let n = 0;
   for (let i = 1; i < p.length; i++) n += d(p[i - 1], p[i]); if (a.data.contour.closed) n += d(p[p.length - 1], p[0]);
   return [a.data.contour.closed, n]; })'''
+# The same outlines on the shown image's own pixel grid (continuous column and row): [closed, length in px, area in px²].
+PIXEL_OUTLINES = '''() => { const grid = (%s)().getImageData().imageData;
+  return cornerstoneTools.annotation.state.getAllAnnotations().filter(a => a.metadata.toolName === 'PlanarFreehandROI').map(a => {
+  const p = a.data.contour.polyline.map(q => Array.from(grid.worldToIndex(q))), d = (u, w) => Math.hypot(u[0] - w[0], u[1] - w[1]);
+  let n = 0, s = 0; for (let i = 1; i < p.length; i++) n += d(p[i - 1], p[i]);
+  if (a.data.contour.closed) { n += d(p[p.length - 1], p[0]); p.forEach((u, i) => { const w = p[(i + 1) %% p.length]; s += u[0] * w[1] - w[0] * u[1]; }); }
+  return [a.data.contour.closed, n, Math.abs(s) / 2]; }); }''' % CELL
 
 
 class ViewerOverlayUnitsE2E(ViewerToolsE2E):
@@ -142,10 +149,15 @@ class ViewerOverlayUnitsE2E(ViewerToolsE2E):
         return rgb[0] - rgb[1] > 60 and abs(rgb[1] - rgb[2]) < 30
 
     def length_on(self, page):
+        # Between two points of the image itself (below the overlay's bars), wherever the cell puts the image on the screen: a
+        # place on the cell's canvas may lie outside the image, which the viewer refuses to measure.
+        # The cell's own image grid (indexToWorld) places them as drawn, square pixels or not.
         select_image_tool(page, 'Length')
-        box = self.canvas_box(page)
-        x, y = box['x'] + box['width'] * .3, box['y'] + box['height'] * .8
-        self.drag_path(page, [(x, y), (x + 90, y)])
+        start, end = page.evaluate('''points => { const v = (%s)(), grid = v.getImageData().imageData;
+            const box = v.element.querySelector('canvas').getBoundingClientRect();
+            return points.map(p => { const c = v.worldToCanvas(Array.from(grid.indexToWorld([p[0], p[1], 0]))); return [c[0] + box.x, c[1] + box.y]; }); }''' % CELL,
+            [[80, 215], [176, 215]])
+        self.drag_path(page, [tuple(start), tuple(end)])
         page.wait_for_function('() => / mm/.test((%s)())' % SVG_TEXT)
 
     def bulk_requests(self, page):
@@ -324,9 +336,10 @@ class ViewerOverlayUnitsE2E(ViewerToolsE2E):
         finally:
             page.close(); work.close()
 
-    def test_overlay_units_03b_freehand_roi_on_an_image_without_pixel_spacing_keeps_its_own_words(self):
-        # No pixel spacing in the image's header (the viewer stands in a spacing of 1): a length in mm would be made up, so the
-        # tool's own words are kept as on the current viewer.
+    def test_overlay_units_03b_freehand_roi_on_an_image_without_pixel_spacing_says_pixels(self):
+        # No pixel spacing in the image's header (the viewer stands in a spacing of 1): a length or area in mm would be made up,
+        # and "undefined" is no unit. The outline is said on the image's own pixel grid: its perimeter and length in px, a closed
+        # outline's area in px², the same at any zoom; the Measurements panel's row says the same area.
         source = self.plain_ct(); ds = self.source_dicom(source)
         for name in ['PixelSpacing', 'ImagerPixelSpacing']:
             if name in ds:
@@ -337,15 +350,54 @@ class ViewerOverlayUnitsE2E(ViewerToolsE2E):
         try:
             select_image_tool(page, 'Freehand ROI')
             box = self.canvas_box(page)
-            sx, sy = box['x'] + box['width'] * .2, box['y'] + box['height'] * .7
+            cx, cy, r = box['x'] + box['width'] * .45, box['y'] + box['height'] * .4, min(box['width'], box['height']) * .12
+            self.drag_path(page, [(cx + r * np.cos(a), cy + r * np.sin(a)) for a in np.linspace(0, 2 * np.pi, 25)])
+            page.wait_for_function('() => /Perimeter: [0-9.]+ px/.test((%s)())' % SVG_TEXT)
+            sx, sy = box['x'] + box['width'] * .2, box['y'] + box['height'] * .8
             self.drag_path(page, [(sx + i * 12, sy - (i % 2) * 6) for i in range(15)])
-            page.wait_for_function('''() => cornerstoneTools.annotation.state.getAllAnnotations().some(a => a.metadata.toolName === 'PlanarFreehandROI'
-                && a.data.contour && !a.data.contour.closed && Object.values(a.data.cachedStats || {}).some(s => Number.isFinite(s.length)))''')
+            page.wait_for_function('''() => cornerstoneTools.annotation.state.getAllAnnotations().filter(a => a.metadata.toolName === 'PlanarFreehandROI'
+                && a.data.contour && !a.data.contour.closed && Object.values(a.data.cachedStats || {}).some(s => Number.isFinite(s.length))).length === 1''')
+            page.wait_for_function('''() => (%s)().split(' | ').some(t => /^[0-9.]+ px$/.test(t.trim()))''' % SVG_TEXT)
             page.wait_for_timeout(500)
-            words = [w.strip() for w in page.evaluate(SVG_TEXT).split(' | ') if w.strip()]
+            text = page.evaluate(SVG_TEXT)
             page.screenshot(path=str(EVIDENCE / 'freehand-no-spacing.png'))
-            self.assertFalse([w for w in words if re.fullmatch(r'[0-9.]+ mm.*', w)], words)
-            self.assertTrue([w for w in words if re.fullmatch(r'[0-9.]+ undefined', w)], ('the tool\'s own words, as before', words))
+            self.assertNotIn('undefined', text)
+            self.assertNotIn('mm', text)
+            def said():
+                words = [w.strip() for w in page.evaluate(SVG_TEXT).split(' | ') if w.strip()]
+                closed = [float(m) for w in words for m in re.findall(r'Perimeter: ([0-9.]+) px', w)]
+                opened = [float(w[:-3]) for w in words if re.fullmatch(r'[0-9.]+ px', w)]
+                areas = [float(m) for w in words for m in re.findall(r'Area: ([0-9.]+) px²', w)]
+                return closed, opened, areas
+            outlines = {closed: (length, area) for closed, length, area in page.evaluate(PIXEL_OUTLINES)}
+            closed, opened, areas = said()
+            self.assertEqual((len(closed), len(opened), len(areas)), (1, 1, 1), text)
+            self.assertAlmostEqual(closed[0], outlines[True][0], delta=1, msg=(text, outlines))
+            self.assertAlmostEqual(opened[0], outlines[False][0], delta=1, msg=(text, outlines))
+            self.assertAlmostEqual(areas[0], outlines[True][1], delta=max(1, outlines[True][1] * .01), msg=(text, outlines))
+            page.evaluate('''() => { const v = (%s)(); v.setZoom(v.getZoom() * 2); v.render(); }''' % CELL)
+            page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+            page.wait_for_timeout(500)
+            self.assertEqual(said(), (closed, opened, areas), page.evaluate(SVG_TEXT))
+            page.screenshot(path=str(EVIDENCE / 'freehand-no-spacing-zoomed.png'))
+            # The Measurements panel's rows and their CSV reports: the closed outline's area in px² (the CSV's named Area and
+            # Area unit columns), the open line's length in px and no area; never mm.
+            rows = page.evaluate('''() => services.measurementService.getMeasurements().filter(m => m.toolName === 'PlanarFreehandROI')
+                .map(m => { const report = m.getReport(m); return [m.displayText?.primary || [], report.columns, report.values]; })''')
+            self.assertEqual(2, len(rows), rows)
+            self.assertFalse([r for r in rows if 'mm' in json.dumps(r[0]) or [v for v in r[2] if 'mm' in str(v)]], rows)
+            ring = next(r for r in rows if r[0] and r[0][0].endswith(' px²'))
+            line = next(r for r in rows if r[0] and re.fullmatch(r'[0-9.]+ px', r[0][0]))
+            self.assertAlmostEqual(float(ring[0][0].split()[0]), outlines[True][1], delta=max(1, outlines[True][1] * .01), msg=rows)
+            self.assertAlmostEqual(float(line[0][0].split()[0]), outlines[False][0], delta=1, msg=rows)
+            columns, values = ring[1], ring[2]
+            self.assertAlmostEqual(values[columns.index('Area')], outlines[True][1], delta=max(1, outlines[True][1] * .01), msg=ring)
+            self.assertEqual('px²', values[columns.index('Area unit')], ring)
+            self.assertEqual(['not available', 'not available'], [line[2][line[1].index('Area')], line[2][line[1].index('Area unit')]], line)
+            # The words only: the measurement the tool keeps is as the pinned tool made it.
+            kept = page.evaluate('''() => cornerstoneTools.annotation.state.getAllAnnotations().filter(a => a.metadata.toolName === 'PlanarFreehandROI')
+                .map(a => Object.values(a.data.cachedStats)[0]).map(s => s.unit ?? null)''')
+            self.assertEqual([None, None], kept)
             self.assertEqual([], errors)
         finally:
             page.close(); work.close()
@@ -372,6 +424,108 @@ class ViewerOverlayUnitsE2E(ViewerToolsE2E):
             self.assertEqual(self.saved(fixture), [])
         finally:
             page.close(); work.close()
+
+    def ct_values(self, ds, image_points):
+        """The original's own pixels inside an Ellipse ROI given by its handles' (continuous) image coordinates, in HU, and the
+        ROI's area in mm² — computed from the DICOM here, not by the viewer."""
+        bottom, top, left, right = np.array(image_points) * [float(ds.PixelSpacing[1]), float(ds.PixelSpacing[0]), 1]
+        ru, rv = np.linalg.norm(right - left) / 2, np.linalg.norm(bottom - top) / 2
+        center = (bottom + top + left + right) / 4
+        yy, xx = np.mgrid[:int(ds.Rows), :int(ds.Columns)]
+        world = np.stack([xx * float(ds.PixelSpacing[1]), yy * float(ds.PixelSpacing[0]), np.zeros_like(xx)], axis=-1)
+        d = world - center
+        mask = (d @ ((right - left) / (2 * ru)) / ru) ** 2 + (d @ ((bottom - top) / (2 * rv)) / rv) ** 2 <= 1
+        values = ds.pixel_array[mask].astype(float) * float(ds.RescaleSlope) + float(ds.RescaleIntercept)
+        return np.pi * ru * rv, values
+
+    def assert_hu(self, drawn, ds):
+        area, values = self.ct_values(ds, drawn['imagePoints'])
+        stats = drawn['stats']; named = {s['name']: s['value'] for s in stats['statsArray'] if s}
+        self.assertEqual('HU', stats['modalityUnit'])
+        self.assertAlmostEqual(stats['area'], area, delta=.01)
+        self.assertAlmostEqual(stats['mean'], values.mean(), places=5)
+        self.assertEqual(named['min'], values.min()); self.assertEqual(stats['max'], values.max())
+        self.assertEqual(named['count'], values.size)
+        return values
+
+    def test_overlay_units_05_a_ct_without_rescale_type_is_measured_saved_and_reopened_in_hu(self):
+        # A CT whose values are HU may leave Rescale Type out (the CT Image module's default). An Ellipse ROI on it is drawn
+        # with the original's pixels in HU, moved, saved and verified by the server, reopened with the same points and HU, and
+        # a manual SR made from it carries the same HU.
+        source = self.plain_ct(); ds = self.source_dicom(source)
+        delattr(ds, 'RescaleType')
+        fixture = self.store(ds, source, 'OVUNITS no rescale type')
+        original = self.source_dicom(fixture)
+        self.assertNotIn('RescaleType', original)
+        self.assertEqual((1.0, -1000.0), (float(original.RescaleSlope), float(original.RescaleIntercept)))
+        work, page = self.open_tools_viewer(fixture)
+        errors = self.watched(page)
+        try:
+            select_image_tool(page, 'EllipticalROI')
+            box = self.canvas_box(page)
+            x, y = box['x'] + box['width'] * .4, box['y'] + box['height'] * .4
+            self.drag_path(page, [(x, y), (x + 65, y + 32)])
+            drawn = self.ellipse(page)
+            self.assert_hu(drawn, original)
+            expect(page.locator('svg.svg-layer')).to_contain_text(' HU')
+            expect(page.locator('#kin-viewer-history [role=status]')).not_to_contain_text('HU 보정')
+            # Moved by its right handle: the statistics follow the new outline on the original.
+            before = drawn['points']
+            right = drawn['canvas'][3]
+            page.mouse.move(*right); page.mouse.down(); page.mouse.move(right[0] + 30, right[1], steps=10); page.mouse.up()
+            page.wait_for_function('''old => cornerstoneTools.annotation.state.getAllAnnotations().some(a => a.metadata.toolName === 'EllipticalROI'
+                && !a.invalidated && JSON.stringify(a.data.handles.points) !== JSON.stringify(old))''', arg=before)
+            page.wait_for_timeout(400)
+            moved = self.ellipse(page)
+            self.assertNotEqual(moved['points'], before)
+            values = self.assert_hu(moved, original)
+            row = page.locator('#kin-viewer-history section[data-kind=ellipse]')
+            row.get_by_role('button', name='Save', exact=True).click()
+            expect(row).to_contain_text('저장 완료')
+            heads = self.saved(fixture)
+            self.assertEqual(1, len(heads))
+            head = heads[0]
+            self.assertEqual('verified', head['referenceStatus'])
+            saved = head['item']['baseline']['values']
+            self.assertAlmostEqual(saved[1], values.mean(), places=5)
+            self.assertEqual([saved[2], saved[3], saved[4]], [values.min(), values.max(), values.size])
+            page.screenshot(path=str(EVIDENCE / 'ct-no-rescale-type-saved.png'))
+            self.assertEqual([], errors)
+        finally:
+            page.close(); work.close()
+        # Reopened: the same points, verified again, the same HU.
+        work, page = self.open_tools_viewer(fixture)
+        try:
+            page.wait_for_function('''() => cornerstoneTools.annotation.state.getAllAnnotations().some(a => a.metadata.toolName === 'EllipticalROI'
+                && !a.invalidated && a.data.kinUnverified === false)''', timeout=30000)
+            again = self.ellipse(page)
+            self.assertEqual(again['points'], moved['points'])
+            self.assert_hu(again, original)
+            expect(page.locator('#kin-viewer-history section[data-kind=ellipse]')).not_to_contain_text('재확인 필요')
+            page.screenshot(path=str(EVIDENCE / 'ct-no-rescale-type-reopened.png'))
+        finally:
+            page.close(); work.close()
+        # A manual SR from the saved item: the server recomputes the ROI from the original and says the same HU.
+        response = self.stack.request('POST', '/studies/' + fixture.uid + '/manual-sr', 'doctor',
+                                      {'requestId': str(uuid.uuid4()), 'items': [{'id': head['id'], 'revision': head['revision']}]})
+        self.assertEqual(200, response.status, response.text)
+        found = {}
+        def walk(node):
+            for item in node if isinstance(node, list) else [node]:
+                if not isinstance(item, dict):
+                    continue
+                if item.get('ValueType') == 'NUM':
+                    name = item['ConceptNameCodeSequence']; measured = item['MeasuredValueSequence']
+                    name = name[0] if isinstance(name, list) else name; measured = measured[0] if isinstance(measured, list) else measured
+                    unit = measured['MeasurementUnitsCodeSequence']; unit = unit[0] if isinstance(unit, list) else unit
+                    found[name['CodeMeaning']] = (float(measured['NumericValue']), unit['CodeValue'])
+                if 'ContentSequence' in item:
+                    walk(item['ContentSequence'])
+        walk(response.body['dataset'])
+        self.assertEqual("[hnsf'U]", found['Mean CT attenuation'][1])
+        self.assertAlmostEqual(found['Mean CT attenuation'][0], values.mean(), places=5)
+        self.assertEqual(found['Minimum CT attenuation'][0], values.min())
+        self.assertEqual(found['Maximum CT attenuation'][0], values.max())
 
 
 if __name__ == '__main__':

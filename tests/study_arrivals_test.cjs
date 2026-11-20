@@ -229,11 +229,18 @@ const gapObservation=name=>Object.hasOwn(V.observations,name)?V.observations[nam
 test('missing images: K below the reported sent M, only when the observation is not older than the report',()=>{
   for(const row of V.gapCases){
     const observation=gapObservation(row.observation),got=arrivals.receiptGap(observation,gapReceipt(row.receipt),same);
-    assert.deepEqual(got&&{missing:got.missing,...(got.pending?{pending:true}:{}),held:got.held,sent:got.sent,stale:got.stale},row.gap,row.id);
+    assert.deepEqual(got&&{missing:got.missing,...(got.pending?{pending:true}:{}),held:got.held,sent:got.sent,stale:got.stale,series:got.series},row.gap,row.id);
     if(got?.missing){
-      assert.equal(got.text,got.stale
+      // Images short: the images sentence; otherwise series short: the series sentence. Then the series counts when known.
+      const images=got.held!==null&&got.held<got.sent;
+      const lead=images?got.stale
         ?`Needs Check · 영상 누락(관측 불가 · 마지막 관측 ${observation.last.observedAt} 기준): Gateway 전송 ${got.sent}건 중 HALO PACS 보유 ${got.held}건`
-        :`Needs Check · 영상 누락: Gateway 전송 ${got.sent}건 중 HALO PACS 보유 ${got.held}건`,row.id);
+        :`Needs Check · 영상 누락: Gateway 전송 ${got.sent}건 중 HALO PACS 보유 ${got.held}건`
+        :got.stale?`Needs Check · series 누락(관측 불가 · 마지막 관측 ${observation.last.observedAt} 기준)`:'Needs Check · series 누락';
+      const part=!got.series?'':got.series.held<=got.series.sent?` · 기대 series ${got.series.sent} 가운데 ${got.series.held}`
+        :` · 기대 series ${got.series.sent} · 보유 ${got.series.held}`;
+      assert.equal(got.text,lead+part,row.id);
+      assert.match(got.title,images?/영상이 적습니다/:/series가 적습니다/,row.id);
       assert.doesNotMatch(got.text+' '+got.title,arrivals.BANNED,row.id);
     }else if(got)assert.equal(got.text,undefined,row.id);
   }
@@ -305,6 +312,37 @@ test('missing images of a merged exam: each original answered alone, never from 
   // Filled, or never observed: no answer.
   assert.equal(arrivals.examGap(read([row('1.1',15,3,{gatewayReceipt:report(15,1)}),sources[1]]),['1.1','1.2']),null);
   assert.equal(arrivals.examGap(arrivals.observationStart(),['1.1','1.2']),null);
+});
+
+test('missing series of a merged exam: an original short of series alone is said as series, per original',()=>{
+  const report=(sent,series,seq)=>({phase:'retry',successCount:sent,localCount:20,successSeries:series,attempt:1,errorCode:'stow_http',
+    serverReceivedAt:'2026-09-24T01:01:00.000Z',agentSeq:seq,epoch:1});
+  const exam=list=>row('1.1',list.reduce((sum,s)=>sum+s.count,0),list.reduce((sum,s)=>sum+s.series,0),{examScope:{reportUid:'1.1',groupId:'g',kind:'merge',part:null,generation:'g1',
+    sources:list.map(s=>({studyUid:s.uid,series:{mode:'all',uids:[]}}))},sourceMetadata:list});
+  const read=list=>arrivals.observationSucceeded(arrivals.observationStart(),{owner:['h','s'],studies:[exam(list)],
+    observation:{observedAt:'2026-09-24T01:02:00.000Z',notObserved:[]}}).model;
+  // The first original holds all 15 images it was sent but 2 of their 3 series; the second holds all of its own.
+  // The summed series (2+4=6) is above either original's 3: it never hides the first original's shortfall.
+  const model=read([row('1.1',15,2,{gatewayReceipt:report(15,3,1)}),row('1.2',8,4,{gatewayReceipt:report(8,3,2)})]);
+  const first=arrivals.originalGap(model,'1.1');
+  assert.deepEqual([first.missing,first.imagesMissing,first.series,String(first.text)],
+    [true,false,{held:2,sent:3,missing:true},'Needs Check · series 누락 · 기대 series 3 가운데 2']);
+  assert.match(first.title,/series가 적습니다/);
+  assert.equal(arrivals.originalGap(model,'1.2').missing,false);
+  assert.deepEqual((({missing,originals,short,text})=>({missing,originals,short,text}))(arrivals.examGap(model,['1.1','1.2'])),
+    {missing:true,originals:2,short:1,text:'Needs Check · 영상·series 누락: 원본 검사 2건 중 1건'});
+  assert.match(arrivals.examGap(model,['1.1','1.2']).title,/영상이나 그 series/);
+  const failed=arrivals.examGap(arrivals.observationFailed(model),['1.1','1.2'],()=>'T');
+  assert.equal(failed.text,'Needs Check · 영상·series 누락(관측 불가 · 마지막 관측 T 기준): 원본 검사 2건 중 1건');
+  // Images short in one original and series in the other: both named; images alone only when every short one is images.
+  const both=read([row('1.1',12,3,{gatewayReceipt:report(15,3,1)}),row('1.2',8,2,{gatewayReceipt:report(8,3,2)})]);
+  assert.equal(arrivals.examGap(both,['1.1','1.2']).text,'Needs Check · 영상·series 누락: 원본 검사 2건 중 2건');
+  const imagesOnly=read([row('1.1',12,3,{gatewayReceipt:report(15,3,1)}),row('1.2',8,3,{gatewayReceipt:report(8,3,2)})]);
+  assert.equal(arrivals.examGap(imagesOnly,['1.1','1.2']).text,'Needs Check · 영상 누락: 원본 검사 2건 중 1건');
+  assert.equal(String(arrivals.originalGap(imagesOnly,'1.1').text),
+    'Needs Check · 영상 누락: Gateway 전송 15건 중 HALO PACS 보유 12건 · 기대 series 3 가운데 3');
+  // Filled on the next observation: no answer remains.
+  assert.equal(arrivals.examGap(read([row('1.1',15,3,{gatewayReceipt:report(15,3,1)}),row('1.2',8,3,{gatewayReceipt:report(8,3,2)})]),['1.1','1.2']),null);
 });
 
 test('S4-U1b IF-W09 three phrases are distinct and only 관측 불가 comes from a failed observation',()=>{

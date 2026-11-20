@@ -1689,12 +1689,10 @@ function kinCreateViewerHistory() {
     const groupSpacing = groups => Array.isArray(groups) && groups.some(group =>
       (Array.isArray(group?.PixelMeasuresSequence) ? group.PixelMeasuresSequence : []).some(item => given(item?.PixelSpacing)) ||
       (Array.isArray(group?.FramePixelDataPropertiesSequence) ? group.FramePixelDataPropertiesSequence : []).some(item => given(item?.ImagerPixelSpacing)));
-    const noSpacing = (imageId, kind) => {
-      if (kind !== 'length' || !imageId) return false;
-      const image = cs.metaData.get('instance', imageId);
-      return !!image && !['PixelSpacing', 'ImagerPixelSpacing', 'SequenceOfUltrasoundRegions'].some(key => given(image[key])) &&
-        !groupSpacing(image.SharedFunctionalGroupsSequence) && !groupSpacing(image.PerFrameFunctionalGroupsSequence);
-    };
+    // The original's header gives no spacing of its own at all (the one answer to "has this image a spacing").
+    const spacingless = image => !!image && !['PixelSpacing', 'ImagerPixelSpacing', 'SequenceOfUltrasoundRegions'].some(key => given(image[key])) &&
+      !groupSpacing(image.SharedFunctionalGroupsSequence) && !groupSpacing(image.PerFrameFunctionalGroupsSequence);
+    const noSpacing = (imageId, kind) => kind === 'length' && !!imageId && spacingless(cs.metaData.get('instance', imageId));
     // The calibration the reader set on this image: the calibrated-spacing metadata the Calibration tool writes (kept for the
     // image id while the viewer is open); the cached image's only when there is no such metadata. A region (ultrasound), an
     // "uncalibrated" answer or a scale that is not a positive number is no screen calibration.
@@ -1709,6 +1707,18 @@ function kinCreateViewerHistory() {
       return usable ? { label: SCREEN_LABEL } : null;
     }
     const screenData = data => data?.kinScreenCalibration === true;
+    // Whether a CT's stored values give HU (the one answer the Ellipse ROI asks; the server asks the same of the saved item,
+    // api/src/viewer-input.ts ctHu): a CT with no Modality LUT Sequence, a finite non-zero Rescale Slope and a finite Rescale
+    // Intercept, whose Rescale Type is HU — or is not given, which in the CT Image module means HU (PS3.3 C.8.2.1: Rescale Type is
+    // required only when it is not HU or the acquisition is multi-energy), unless Multi-energy CT Acquisition is YES.
+    function ctHu(image) {
+      const finite = n => (typeof n === 'number' || typeof n === 'string' && n.trim() !== '') && Number.isFinite(Number(n));
+      const one = v => Array.isArray(v) ? (v.length === 1 ? v[0] : '?') : v;
+      const text = v => v === undefined || v === null ? '' : typeof v === 'string' ? v.trim() : '?';
+      const type = text(one(image?.RescaleType)), multi = text(one(image?.MultienergyCTAcquisition ?? image?.['00189361']));
+      return image?.Modality === 'CT' && !image.ModalityLUTSequence && finite(image.RescaleSlope) && Number(image.RescaleSlope) !== 0 &&
+        finite(image.RescaleIntercept) && (type === 'HU' || type === '' && (multi === '' || multi === 'NO'));
+    }
     // A screen-calibrated Length's words: its value in the calibrated unit the tool computed for its current points, or why not.
     function screenText(data, target) {
       const id = target.startsWith('imageId:') && target.slice(8);
@@ -1809,8 +1819,7 @@ function kinCreateViewerHistory() {
       const normal = [u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0]];
       if (Math.max(Math.abs(dot(u,u)-1), Math.abs(dot(v,v)-1), Math.abs(dot(u,v))) > 1e-4) return '원본 방향이 올바르지 않습니다';
       if (kind === 'ellipse') {
-        if (!finite(image.RescaleSlope) || Number(image.RescaleSlope) === 0 || !finite(image.RescaleIntercept) || image.RescaleType !== 'HU' || image.ModalityLUTSequence)
-          return 'HU 보정을 확인할 수 없습니다';
+        if (!ctHu(image)) return 'HU 보정을 확인할 수 없습니다';
         const axis = a => a.filter(n => Math.abs(n) > 1e-6).length === 1;
         if (!axis(normal) || points?.length === 4 && (!axis(points[0].map((n,i)=>n-points[1][i])) || !axis(points[3].map((n,i)=>n-points[2][i]))))
           return '사선·회전 ROI는 아직 지원하지 않습니다';
@@ -1895,7 +1904,45 @@ function kinCreateViewerHistory() {
         return checked;
       } catch (_) { return null; } // Display sets may disappear before their metadata.
     }
+    // A Freehand ROI tool instance (any group's: it reads a target's image the same way), for the Measurements panel's words.
+    let freehandTool = null;
+    // The Measurements panel and its CSV read a Freehand ROI's area from the tool's own numbers, in "mm²" even where the original
+    // gives no spacing. Where the original gives none (spacingless) the row says the outline as the cell does (freehandMeasure's
+    // px): a closed outline's area in px², an open line's length in px, and no number when it cannot be measured; anywhere
+    // else the row is the tool's own.
+    const roundTwo = x => Math.round(x * 100) / 100;
+    function freehandView(m) {
+      const a = freehandTool && ct.annotation.state.getAnnotation(m.uid);
+      if (!a?.data?.contour || !spacingless(cs.metaData.get('instance', a.metadata.referencedImageId))) return m;
+      const measure = () => { const found = freehandMeasure(freehandTool, a.data, 'imageId:' + a.metadata.referencedImageId); return found?.unit === 'px' ? found : null; };
+      const found = measure();
+      const said = !found ? [] : found.area !== undefined ? [roundTwo(found.area) + ' px²'] : [roundTwo(found.length) + ' px'];
+      const rest = Array.isArray(m.displayText?.primary) ? m.displayText.primary.slice(1) : [];
+      return { ...m, displayText: { ...m.displayText, primary: [...said, ...rest] }, getReport: () => freehandReport(m, measure()) };
+    }
+    // The CSV row: the pinned report names its customised columns by a key its entries do not have, so they come out unnamed
+    // and the CSV keeps only the last of them. The area entry and the unit entry (found by their place, after AnnotationType,
+    // in the 'cornerstone.measurements' customisation, or by the names "Area" and "Unit") are named "Area" and "Area unit"
+    // and hold the outline's area in px² — or "not available" for an open line or an outline that cannot be measured.
+    function freehandReport(m, found) {
+      let report; try { report = m.getReport?.(); } catch (_) { report = null; }
+      report = report || { columns: [], values: [] };
+      const columns = [...report.columns], values = [...report.values];
+      let entries; try { entries = services.customizationService?.get?.('cornerstone.measurements')?.PlanarFreehandROI?.report; } catch (_) { entries = null; }
+      const place = (value, name) => {
+        const k = Array.isArray(entries) ? entries.findIndex(e => e?.value === value) : -1;
+        if (k >= 0 && columns[0] === 'AnnotationType' && k + 1 < columns.length) return k + 1;
+        const i = columns.findIndex(c => typeof c === 'string' && c.toLowerCase() === name);
+        if (i >= 0) return i;
+        columns.push(null); values.push(null); return columns.length - 1;
+      };
+      const area = place('area', 'area'), unit = place('unit', 'unit'), known = found?.area !== undefined;
+      columns[area] = 'Area'; values[area] = known ? found.area : 'not available';
+      columns[unit] = 'Area unit'; values[unit] = known ? 'px²' : 'not available';
+      return { ...report, columns, values };
+    }
     function projectMeasurement(m) {
+      if (m?.toolName === 'PlanarFreehandROI') return freehandView(m);
       if (!numericMeasurement(m)) return m;
       const mark = ct.annotation.state.getAnnotation(m.uid);
       // The measurement list and its CSV show a screen-calibrated Length as the cell does, and export no number for it.
@@ -2731,6 +2778,40 @@ function kinCreateViewerHistory() {
     // spacing — the viewer then stands in a spacing of 1 —, an ultrasound region, a reformatted plane) is left to the tool's
     // own words, as before.
     const physical = v => Array.isArray(v) && v.length >= 2 && v.slice(0, 2).every(x => Number.isFinite(Number(x)) && Number(x) > 0);
+    // A Freehand ROI's measure and where its unit comes from — the one answer for the cell's words, the Measurements panel and
+    // its CSV: { unit: 'mm…', length } where the length is known to be physical (freehandLength, the tool's own area kept);
+    // { unit: 'px', length, area } where the original's header gives no spacing at all (spacingless: the viewer stands in a
+    // spacing of 1, so neither the tool's "mm" nor a screen calibration is the original's) — the outline measured on the image's
+    // own pixel grid, its points in continuous column/row coordinates, the area (a closed outline's) in px²; null anywhere else
+    // (an ultrasound region, a reformatted plane, an image that cannot be read): no length is said, as the tool's own number is
+    // a distance on the screen in no unit, and the area stays the tool's own under its own calibration.
+    // The last px measure of each outline (by its annotation data): while no cell shows its image (the reader has scrolled
+    // to another slice) the same outline on the same image keeps that measure rather than falling back to the tool's "mm²".
+    const freehandSeen = new WeakMap();
+    function freehandMeasure(tool, data, target) {
+      const found = freehandLength(tool, data, target);
+      if (found) return found;
+      try {
+        const id = target.startsWith('imageId:') && target.slice(8), points = data.contour?.polyline;
+        if (!id || !spacingless(cs.metaData.get('instance', id)) || !Array.isArray(points) || points.length < 2) return null;
+        const key = target + '|' + JSON.stringify(points) + '|' + !!data.contour.closed, seen = freehandSeen.get(data);
+        let grid; try { grid = tool.getTargetImageData(target)?.imageData; } catch (_) { grid = null; }
+        if (typeof grid?.worldToIndex !== 'function') return seen?.key === key ? seen.found : null;
+        const index = points.map(p => grid.worldToIndex(p));
+        if (index.some(p => !Array.isArray(p) && !ArrayBuffer.isView(p) || ![0, 1, 2].every(i => Number.isFinite(p[i] ?? 0)))) return null;
+        const along = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], (a[2] ?? 0) - (b[2] ?? 0));
+        let length = 0, twice = 0;
+        for (let i = 1; i < index.length; i++) length += along(index[i - 1], index[i]);
+        if (data.contour.closed) {
+          length += along(index[index.length - 1], index[0]);
+          for (let i = 0; i < index.length; i++) { const a = index[i], b = index[(i + 1) % index.length]; twice += a[0] * b[1] - b[0] * a[1]; }
+        }
+        const result = Number.isFinite(length) && length > 0
+          ? { unit: 'px', length, ...(data.contour.closed ? { area: Math.abs(twice) / 2, areaUnit: 'px²' } : {}) } : null;
+        if (result) freehandSeen.set(data, { key, found: result });
+        return result;
+      } catch (_) { return null; }
+    }
     function freehandLength(tool, data, target) {
       try {
         const image = tool.getTargetImageData(target), points = data.contour?.polyline;
@@ -2757,7 +2838,7 @@ function kinCreateViewerHistory() {
         if (data.contour.closed) distance += along(points[points.length - 1], points[0]);
         const value = distance / scale;
         return typeof unit === 'string' && /^mm( |$)/.test(unit) && Number.isFinite(scale) && scale > 0 && Number.isFinite(value) && value > 0
-          ? { value, unit } : null;
+          ? { length: value, unit } : null;
       } catch (_) { return null; }
     }
     function configureMeasurements(group) {
@@ -2792,16 +2873,18 @@ function kinCreateViewerHistory() {
       const restores = [() => { roi.configuration = previous; }];
       // Freehand ROI's words: the pinned tool gave a closed outline's perimeter and an open line's length as a distance on the
       // screen with the unit "undefined". Its own text is made from a copy whose perimeter or length is the outline's length on
-      // the image in its unit (freehandLength), the other lines (area, values) as they are; where that length is not known to be
-      // physical the tool's own words are given unchanged. The measurement itself (and so what is saved or exported) is not touched.
+      // the image in its unit (freehandMeasure), the area in px² where the original has no spacing, the other lines (values) as
+      // they are; where no unit is known the length line is left out rather than said in "undefined". The measurement itself (and
+      // so what is saved or exported) is not touched.
       const freehand = group.getToolInstance('PlanarFreehandROI'), freehandConfig = freehand?.configuration;
+      if (freehand) freehandTool = freehand;
       if (typeof freehandConfig?.getTextLines === 'function') {
         freehand.configuration = { ...freehandConfig, getTextLines(data, target) {
           const s = data?.cachedStats?.[target];
           if (!s || typeof s.unit === 'string') return freehandConfig.getTextLines(data, target);
-          const found = freehandLength(freehand, data, target), key = data.contour?.closed ? 'perimeter' : 'length';
-          if (!found) return freehandConfig.getTextLines(data, target);
-          const words = { ...s, perimeter: undefined, length: undefined, unit: found.unit, [key]: found.value };
+          const found = freehandMeasure(freehand, data, target), key = data.contour?.closed ? 'perimeter' : 'length';
+          const words = { ...s, perimeter: undefined, length: undefined,
+            ...(found ? { unit: found.unit, [key]: found.length, ...(found.area !== undefined ? { area: found.area, areaUnit: found.areaUnit } : {}) } : {}) };
           return freehandConfig.getTextLines({ ...data, cachedStats: { ...data.cachedStats, [target]: words } }, target);
         } };
         restores.push(() => { freehand.configuration = freehandConfig; });
@@ -4210,6 +4293,8 @@ function kinCreateCTSync() {
     }
     const current = (info, before) => before && view(info)?.signature === before.signature;
     const manual = viewportId => window.kinManualSync?.has?.(viewportId) === true;
+    // A cell a series export is moving through its series (viewer-export.js): the images on its way lead no position sync.
+    const exporting = viewportId => { try { return window.KinViewerExport?.moving?.(viewportId) === true; } catch (_) { return false; } };
     for (const [type, original] of creators) {
       groups.addSynchronizerType(type, (id, options) => {
         const sync = original(id, options), fire = sync.fireEvent;
@@ -4219,7 +4304,7 @@ function kinCreateCTSync() {
         sync.fireEvent = async function (sourceInfo, event) {
           // Cells the reader tied by hand (Compare › Manual Sync) neither lead nor follow this position sync, in either
           // direction, while they stay tied; each event asks again, so a cell untied is synchronized again.
-          if (!live() || sync.isDisabled() || manual(sourceInfo.viewportId)) return;
+          if (!live() || sync.isDisabled() || manual(sourceInfo.viewportId) || exporting(sourceInfo.viewportId)) return;
           const ticket = ++serial, source = view(sourceInfo), targets = sync.getTargetViewports().filter(t => t.viewportId !== sourceInfo.viewportId);
           const snapshots = targets.map(view);
           // Refused or unconfirmed: nothing moves, and the reason stays with Recheck Access. Still asking: this event waits for it.
@@ -4692,17 +4777,58 @@ function kinCreateCellMerge() {
   // gesture is the merge's alone; everywhere else (3x3, VR/SR/PDF cells, no merge module)
   // the native toggle runs unchanged. Only this one command is replaced, so the click
   // bindings and the right-click menu that share its customization are untouched.
-  function guardOneUp(commandsManager) {
-    restoreOneUp?.(); restoreOneUp = null;
+  // A double click on a window over two monitors is the merge's too, when it says so for that
+  // very click (claimsDoubleClick): the native toggle would make one cell of the whole window,
+  // across the display edge, before the merge's maximize of that cell's monitor could read the
+  // screen.
+  // The native toggle's one cell is its own (kinViewerStockOneUp): a grid of one cell made by it is put back by it, so
+  // nothing else may turn that cell into another layout meanwhile (the display span divides a one-column grid over two
+  // monitors). What is owned is the 1 x 1 layout that toggle made - the grid's own layout object, once the grid shows it -
+  // together with the id of its one cell, which the toggle keeps from the cell it enlarged. The toggle back, any other
+  // layout (the Layout menu's 1 x 1 picked again keeps that id but is a new layout; a saved Job; a protocol) and a new mode
+  // end it. Another series dropped on that cell does not: the grid keeps its layout object, and the toggle back still works.
+  let oneUp = null;
+  function guardOneUp(commandsManager, services) {
+    restoreOneUp?.(); restoreOneUp = null; oneUp = null;
     const native = commandsManager?.getCommand?.('toggleOneUp', 'DEFAULT');
     if (typeof native?.commandFn !== 'function') return;
+    const grid = services?.viewportGridService;
+    const read = () => { try { return grid?.getState?.() || null; } catch (_) { return null; } };
+    // The toggle's layout shows in the grid's state a moment after it was asked for (before: the layout object it was asked
+    // on). The first layout to show after that is the toggle's when it is that one cell holding the very options object the
+    // toggle handed on; a first layout that is anything else is somebody else's, and so is every layout after the toggle's.
+    const owned = () => {
+      const now = oneUp && read();
+      if (!now) return false;
+      const cell = now.viewports?.size === 1 ? now.viewports.get(oneUp.id) : null;
+      if (!oneUp.layout) {
+        if (now.layout === oneUp.before) return true;
+        if (cell && cell.viewportOptions === oneUp.options) oneUp.layout = now.layout;
+      }
+      if (oneUp.layout && now.layout === oneUp.layout && cell) return true;
+      oneUp = null; return false;
+    };
+    // Looked at whenever the grid announces a change, so that the toggle's own layout is known before a later one replaces it.
+    const watched = [];
+    for (const event of new Set(Object.values(grid?.EVENTS || {}))) try { watched.push(grid.subscribe(event, owned)); } catch (_) { }
+    window.kinViewerStockOneUp = owned;
     const guarded = { ...native, commandFn: options => {
       const merge = current?.state?.();
       if (merge && (merge.busy || merge.merged)) return;
-      return native.commandFn(options);
+      if (current?.claimsDoubleClick?.()) return;
+      // As the toggle itself reads the grid: one that is not 1 x 1 goes to one cell, the active one's; a 1 x 1 goes back.
+      const now = read(), cell = now?.viewports?.get?.(now.activeViewportId);
+      oneUp = cell && !(now.layout?.numRows === 1 && now.layout?.numCols === 1)
+        ? { id: cell.viewportOptions?.viewportId ?? cell.viewportId ?? now.activeViewportId, options: cell.viewportOptions, before: now.layout, layout: null } : null;
+      try { return native.commandFn(options); } catch (error) { oneUp = null; throw error; }
     } };
     commandsManager.registerCommand('DEFAULT', 'toggleOneUp', guarded);
-    restoreOneUp = () => { if (commandsManager.getCommand('toggleOneUp', 'DEFAULT') === guarded) commandsManager.registerCommand('DEFAULT', 'toggleOneUp', native); };
+    restoreOneUp = () => {
+      watched.splice(0).forEach(subscription => { try { subscription?.unsubscribe?.(); } catch (_) { } });
+      oneUp = null;
+      if (window.kinViewerStockOneUp === owned) delete window.kinViewerStockOneUp;
+      if (commandsManager.getCommand('toggleOneUp', 'DEFAULT') === guarded) commandsManager.registerCommand('DEFAULT', 'toggleOneUp', native);
+    };
   }
 
   function watchSession() {
@@ -4725,7 +4851,7 @@ function kinCreateCellMerge() {
   return { id: 'kin.cell-merge', onModeEnter({ servicesManager, commandsManager }) {
     if (ended) return; watchSession();
     const ticket = ++epoch; current?.stop(); current = null;
-    guardOneUp(commandsManager);
+    guardOneUp(commandsManager, servicesManager?.services);
     prepare().then(module => {
       if (ticket !== epoch) return;
       const connected = module.create(servicesManager.services);
@@ -7215,7 +7341,8 @@ function kinCreateViewerUX() {
         const shell = window.KinViewerUXShell.mount({ services, session: kinViewerSession });
         toolbar = window.KinViewerUXToolbar.mount({ services, commands, session: kinViewerSession });
         // A window across two displays, or a second window: the account's Second Display setting.
-        const span = window.KinViewerDisplaySpan.mount({ services, enabled: () => toolbar?.secondDisplay?.() });
+        // Its commands: a one-column grid over two monitors is divided by the Layout menu's own command.
+        const span = window.KinViewerDisplaySpan.mount({ services, commands, enabled: () => toolbar?.secondDisplay?.() });
         const channel = kinViewerOnEnd(() => { window.KinViewerPatientTabs.end(); stop(); });
         dispose = () => { channel?.close(); span.dispose(); toolbar?.dispose(); toolbar = null; shell.dispose(); };
       } catch (error) {
@@ -7393,6 +7520,8 @@ function kinStackMouse(services) {
     const scroll = cs.utilities?.scroll;
     if (!group || !applied.has(group) || tools.state?.isInteractingWithTool || !event.ctrlKey && typeof scroll !== 'function') return;
     event.preventDefault(); event.stopImmediatePropagation();
+    // The step is taken for the image (a Ctrl+wheel left to the browser is its own zoom, not image work).
+    window.kinViewerImageWork?.();
     const direction = event.deltaY < 0 ? -1 : 1;
     if (event.ctrlKey) {
       // Ctrl+wheel up enlarges by the chosen percent around the pointer; down undoes one such step.
