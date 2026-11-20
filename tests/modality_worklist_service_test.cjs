@@ -87,9 +87,9 @@ test('a registered device gets its own institution listed orders only; another d
   // The second registered device of A gets A's, with the station key telling A's devices apart.
   const second = await service.answer('SYNCT2', dayQuery('20261120', { '00400100': SQ({ '00400001': S('AE', 'SYNCT2') }) }));
   assert.equal(second.items.length, 0);
-  assert.deepEqual(audits.map(r => [r.action, r.detail.institution, r.detail.aet, r.detail.outcome, r.detail.matches]),
-    [['modality-worklist.query', 'inst-a', 'SYNCT1', 'answered', 1], ['modality-worklist.query', 'inst-b', 'SYNCTB', 'answered', 1],
-     ['modality-worklist.query', 'inst-a', 'SYNCT2', 'answered', 0]]);
+  assert.deepEqual(audits.map(r => [r.action, r.detail.institution, r.detail.aet, r.detail.outcome, r.detail.matches, r.detail.excluded]),
+    [['modality-worklist.query', 'inst-a', 'SYNCT1', 'answered', 1, 0], ['modality-worklist.query', 'inst-b', 'SYNCTB', 'answered', 1, 0],
+     ['modality-worklist.query', 'inst-a', 'SYNCT2', 'answered', 0, 0]]);
   for (const r of audits) assert.ok(!JSON.stringify(r).includes('SYN-SAME') && !JSON.stringify(r).includes('SYNTHETIC'), 'no patient or search value');
 });
 
@@ -157,7 +157,7 @@ test('only the keys asked for come back, with the character set and the hospital
   assert.deepEqual(Object.keys(part.items[0]['00400100'].Value[0]), ['00080060']);
 });
 
-test('return values come from the order, fit their VR and are never made up; Type 1 and VR failures answer nothing', async () => {
+test('return values come from the order, fit their VR and are never made up; an order that cannot be carried is not answered', async () => {
   const o = order({ accession: null, reqDoc: 'SYN REQ', birth: '1980-02-03', sex: 'X' });
   const got = (await answerQuery([o], { '00080050': S('SH'), '00321032': S('PN'), '00080090': S('PN'), '00100030': S('DA'), '00100040': S('CS'),
     '00401001': S('SH'), '00402016': S('LO'), '0020000D': S('UI'), '00380300': S('LO'), '00321060': S('LO') })).items[0];
@@ -176,21 +176,28 @@ test('return values come from the order, fit their VR and are never made up; Typ
   assert.deepEqual(pairs, [[one.mwlProcedureId, one.mwlProcedureId], [two.mwlProcedureId, two.mwlProcedureId]]);
   // A specific accession does not match an order without one.
   assert.equal((await answerQuery([o], { '00080050': S('SH', 'SYNACC1') })).items.length, 0);
-  // Type 1 values the order cannot give, and values their VR cannot carry, fail the query with no identifier.
+  // A Type 1 value the order cannot give, or a value its VR cannot carry: the order is not answered in those keys. When it
+  // is the only match, the query ends Unable to process with no identifier.
   const fails = [
     [order({ name: '', patientId: '' }), { '00100010': S('PN'), '00100020': S('LO') }],
+    [order({ name: '^^^^' }), { '00100010': S('PN') }],
+    [order({ name: ' ^ = ^ ' }), { '00100010': S('PN') }],
     [order({ descr: '' }), { '00321060': S('LO') }],
     [order({ descr: '' }), { '00400100': SQ() }],
     [order({ oid: 'SYN-' + 'X'.repeat(61) }), { '00402016': S('LO') }],
     [order({ ward: 'W'.repeat(65) }), { '00380300': S('LO') }],
-    [order({ name: 'SYN=ALT' }), { '00100010': S('PN') }],
+    [order({ name: 'SYN=ALT=THIRD=FOURTH' }), { '00100010': S('PN') }],
     [order({ modality: 'ct' }), { '00400100': SQ({ '00080060': S('CS') }) }],
+    [order({ scheduledStationAet: '한글장비' }), { '00400100': SQ({ '00400001': S('AE') }) }],
+    [order({ scheduledStationAet: '한글장비' }), { '00400100': SQ() }],
+    [order({ scheduledStationAet: 'SYN\\CT' }), { '00400100': SQ({ '00400001': S('AE') }) }],
   ];
   for (const [row, q] of fails) {
     const r = await answerQuery([row], q);
-    assert.equal(r.status, MWL_STATUS.missingValue, JSON.stringify(q));
-    assert.deepEqual(r.items, []);
+    assert.deepEqual([r.status, r.items, r.matches, r.excluded], [MWL_STATUS.missingValue, [], 1, 1], JSON.stringify(q));
   }
+  // A Type 2 person name of delimiters only is no name: it comes back empty.
+  assert.deepEqual((await answerQuery([order({ reqDoc: '^^' })], { '00321032': S('PN') })).items[0]['00321032'], { vr: 'PN' });
   // A standard Type 2 key the order does not hold comes back empty, without a warning.
   const weight = await answerQuery([order()], { '00100020': S('LO'), '00101030': S('DS'), '00081110': S('SQ') });
   assert.equal(weight.warning, false);
@@ -222,9 +229,130 @@ test('matching: exact single values, name wildcards in any one representation, p
   assert.deepEqual(await ids(rows, { '00400100': SQ({ '00400006': S('PN', 'SYN DOCTOR') }) }), []);
   assert.deepEqual(await ids(rows, { '00400100': SQ({ '00400006': S('PN', '*') }) }), ['SYN-A', 'SYN-B', 'SYN-C']);
   assert.deepEqual(await ids(rows, { '0020000D': { vr: 'UI', Value: [a.mwlStudyUid, b.mwlStudyUid] } }), ['SYN-A', 'SYN-B']);
-  // Asking for the station back while an order without one matches: the query fails, no identifier, no silent drop.
-  const failed = await answerQuery([a, c], { '00400100': SQ({ '00400001': S('AE'), '00080060': S('CS', 'CT') }) });
-  assert.deepEqual([failed.status, failed.items, failed.matches], [MWL_STATUS.missingValue, [], 2]);
+  // Asking for the station back while an order without one matches: that order alone is left out, and counted.
+  const partly = await answerQuery([a, c], { '00100020': S('LO'), '00400100': SQ({ '00400001': S('AE'), '00080060': S('CS', 'CT') }) });
+  assert.deepEqual([partly.status, partly.items.map(i => value(i['00100020'])), partly.matches, partly.excluded], [0, ['SYN-A'], 2, 1]);
+});
+
+const HAN = '\u{20000}';   // one character outside the Basic Multilingual Plane (two UTF-16 units)
+
+test('an order the keys asked for cannot carry is left out alone: the others are answered, all left out is Unable to process, no match is success', async () => {
+  const good = order({ patientId: 'SYN-GOOD' });
+  const unnamed = order({ patientId: 'SYN-UNNAMED', name: '^^^^' });
+  const station = order({ patientId: 'SYN-STATION', scheduledStationAet: '한글장비' });
+  const rows = [good, unnamed, station];
+  const named = { '00100010': S('PN'), '00100020': S('LO') };
+  const got = async q => { const r = await answerQuery(rows, q); return [r.status, r.items.map(i => value(i['00100020'])), r.matches, r.excluded]; };
+  // Mixed: every order that can be carried is answered; the one that cannot is counted, not sent.
+  assert.deepEqual(await got(named), [0, ['SYN-GOOD', 'SYN-STATION'], 3, 1]);
+  assert.deepEqual(await got({ '00100020': S('LO'), '00400100': SQ() }), [0, ['SYN-GOOD', 'SYN-UNNAMED'], 3, 1]);
+  assert.deepEqual(await got({ ...named, '00400100': SQ({ '00400001': S('AE') }) }), [0, ['SYN-GOOD'], 3, 2]);
+  // A flaw in a field nobody asked for leaves the order in.
+  assert.deepEqual(await got({ '00100020': S('LO') }), [0, ['SYN-GOOD', 'SYN-UNNAMED', 'SYN-STATION'], 3, 0]);
+  // Every matching order left out: Unable to process, no identifier - the device can tell it from an empty list.
+  assert.deepEqual(await got({ ...named, '00100020': S('LO', 'SYN-UNNAMED') }), [MWL_STATUS.missingValue, [], 1, 1]);
+  // No order matches the keys: success, no identifier.
+  assert.deepEqual(await got({ ...named, '00100020': S('LO', 'SYN-NOBODY') }), [0, [], 0, 0]);
+  // The audit row counts the matches and the orders left out apart, with no value.
+  const { service, audits } = harness(rows);
+  assert.deepEqual((await service.answer('SYNCT1', named)).items.map(i => value(i['00100020'])), ['SYN-GOOD', 'SYN-STATION']);
+  assert.deepEqual(await service.answer('SYNCT1', { ...named, '00100020': S('LO', 'SYN-UNNAMED') }), { status: MWL_STATUS.missingValue, warning: false, items: [] });
+  assert.deepEqual(audits.map(r => [r.detail.outcome, r.detail.matches, r.detail.excluded]), [['answered', 3, 1], ['failed', 1, 1]]);
+  for (const r of audits) assert.ok(!/SYN-|SYNTHETIC|한글/.test(JSON.stringify(r)), 'no patient or search value');
+  // The limit is on the orders that can be answered: 5,000 left out and one that can go is one answer.
+  const many = Array.from({ length: MWL_MAX_MATCHES }, () => order({ name: '^^^^' }));
+  const one = await answerQuery([...many, order({ patientId: 'SYN-ONE' })], named);
+  assert.deepEqual([one.status, one.items.map(i => value(i['00100020'])), one.matches, one.excluded], [0, ['SYN-ONE'], MWL_MAX_MATCHES + 1, MWL_MAX_MATCHES]);
+});
+
+test('lengths count characters, not UTF-16 units; a person name is measured and returned by representation', async () => {
+  const id33 = HAN.repeat(33), proc16 = HAN.repeat(16);
+  const o = order({ patientId: id33, mwlProcedureId: proc16, name: HAN.repeat(60) + '^SYN', accession: HAN.repeat(16), ward: HAN.repeat(64) });
+  const got = await answerQuery([o], { '00100020': S('LO', id33), '00100010': S('PN'), '00401001': S('SH', proc16), '00080050': S('SH'), '00380300': S('LO') });
+  assert.equal(got.status, 0, JSON.stringify(got));
+  assert.deepEqual([value(got.items[0]['00100020']), value(got.items[0]['00401001']), value(got.items[0]['00100010']), value(got.items[0]['00080050']),
+    value(got.items[0]['00380300'])], [id33, proc16, HAN.repeat(60) + '^SYN', HAN.repeat(16), HAN.repeat(64)]);
+  // One character more than the VR carries: the order is not answered in that key.
+  for (const [row, q] of [[order({ patientId: HAN.repeat(65) }), { '00100020': S('LO') }], [order({ accession: HAN.repeat(17) }), { '00080050': S('SH') }],
+    [order({ name: HAN.repeat(65) }), { '00100010': S('PN') }], [order({ name: 'SYN=' + 'S'.repeat(65) }), { '00100010': S('PN') }],
+    [order({ scheduledStationAet: 'S'.repeat(17) }), { '00400100': SQ({ '00400001': S('AE') }) }]])
+    assert.equal((await answerQuery([row], q)).status, MWL_STATUS.missingValue, JSON.stringify(q));
+  // A stored name in two or three representations is found by its patient ID and comes back with each of them.
+  const two = order({ patientId: 'SYN-TWO', name: 'KIM^A=金' }), three = order({ patientId: 'SYN-THREE', name: 'LEE^B=李=イ' });
+  const long = order({ patientId: 'SYN-LONG', name: 'S'.repeat(64) + '=' + HAN.repeat(64) });
+  const ideographic = order({ patientId: 'SYN-IDEO', name: '=朴' });
+  const names = await answerQuery([two, three, long, ideographic], { '00100020': S('LO'), '00100010': S('PN') });
+  assert.equal(names.status, 0, JSON.stringify(names));
+  assert.deepEqual(names.items.map(i => i['00100010']), [
+    { vr: 'PN', Value: [{ Alphabetic: 'KIM^A', Ideographic: '金' }] },
+    { vr: 'PN', Value: [{ Alphabetic: 'LEE^B', Ideographic: '李', Phonetic: 'イ' }] },
+    { vr: 'PN', Value: [{ Alphabetic: 'S'.repeat(64), Ideographic: HAN.repeat(64) }] },
+    { vr: 'PN', Value: [{ Ideographic: '朴' }] },
+  ]);
+  const exact = await answerQuery([two, three], { '00100020': S('LO', 'SYN-TWO'), '00100010': S('PN') });
+  assert.deepEqual([exact.status, exact.items.length, exact.excluded], [0, 1, 0]);
+  // Either representation of the stored name answers a name searched in one.
+  const rows = [two, three, ideographic];
+  assert.deepEqual(await ids(rows, { '00100010': PN('KIM^A') }), ['SYN-TWO']);
+  assert.deepEqual(await ids(rows, { '00100010': PN('金', 'Ideographic') }), ['SYN-TWO']);
+  assert.deepEqual(await ids(rows, { '00100010': PN('李*') }), ['SYN-THREE']);
+  assert.deepEqual(await ids(rows, { '00100010': PN('イ', 'Phonetic') }), ['SYN-THREE']);
+  assert.deepEqual(await ids(rows, { '00100010': PN('朴') }), ['SYN-IDEO']);
+  assert.deepEqual(await ids(rows, { '00100010': PN('KIM') }), []);
+});
+
+test('wildcards and padding work by character: `?` is one character outside the BMP too; only the DICOM padding space is taken off', async () => {
+  const han = order({ patientId: 'SYN-HAN', name: 'SYN^' + HAN }), two = order({ patientId: 'SYN-HAN2', name: 'SYN^' + HAN + HAN });
+  const rows = [han, two];
+  assert.deepEqual(await ids(rows, { '00100010': PN('SYN^?') }), ['SYN-HAN']);
+  assert.deepEqual(await ids(rows, { '00100010': PN('SYN^??') }), ['SYN-HAN2']);
+  assert.deepEqual(await ids(rows, { '00100010': PN('SYN^*') }), ['SYN-HAN', 'SYN-HAN2']);
+  assert.deepEqual(await ids(rows, { '00100010': PN('SYN^' + HAN) }), ['SYN-HAN']);
+  // Delimiters that end a name are not part of it; a name of delimiters only asks for no name.
+  const tail = order({ patientId: 'SYN-TAIL', name: 'PARK^C^^^' });
+  assert.deepEqual(await ids([tail, han], { '00100010': PN('PARK^C') }), ['SYN-TAIL']);
+  assert.deepEqual(await ids([tail, han], { '00100010': PN('PARK^C^^') }), ['SYN-TAIL']);
+  assert.deepEqual(await ids([tail, han], { '00100010': PN('^^^^') }), ['SYN-TAIL', 'SYN-HAN']);
+  // An identifier that begins with an ideographic space is another identifier; SPACE padding is not part of one.
+  const wide = order({ patientId: '　A' }), plain = order({ patientId: 'A' }), padded = order({ patientId: ' B ' });
+  const list = [wide, plain, padded];
+  assert.deepEqual(await ids(list, { '00100020': S('LO', 'A') }), ['A']);
+  assert.deepEqual(await ids(list, { '00100020': S('LO', ' A ') }), ['A']);
+  assert.deepEqual(await ids(list, { '00100020': S('LO', '　A') }), ['　A']);
+  assert.deepEqual(await ids(list, { '00100020': S('LO', 'B') }), ['B']);
+  assert.deepEqual(await ids(list, {}), ['　A', 'A', 'B']);
+});
+
+test('a patient key given a value is compared (birth date, sex); a patient attribute the order cannot be compared on never matches', async () => {
+  const a = order({ patientId: 'SYN-A', birth: '1980-02-03', sex: 'F' });
+  const b = order({ patientId: 'SYN-B', birth: '1975-07-09', sex: 'M' });
+  const c = order({ patientId: 'SYN-C', birth: '', sex: '' });
+  const rows = [a, b, c];
+  const got = async q => { const r = await answerQuery(rows, { '00100020': S('LO'), ...q }); return [r.status, r.warning, r.items.map(i => value(i['00100020']))]; };
+  // Both given: only the patient both are true of - never the others under a warning.
+  assert.deepEqual(await got({ '00100030': S('DA', '19800203'), '00100040': S('CS', 'F') }), [0, false, ['SYN-A']]);
+  assert.deepEqual(await got({ '00100030': S('DA', '19800203'), '00100040': S('CS', 'M') }), [0, false, []]);
+  assert.deepEqual(await got({ '00100030': S('DA', '19750709') }), [0, false, ['SYN-B']]);
+  assert.deepEqual(await got({ '00100030': S('DA', '19700101-19791231') }), [0, false, ['SYN-B']]);
+  assert.deepEqual(await got({ '00100030': S('DA', '19760101-') }), [0, false, ['SYN-A']]);
+  assert.deepEqual(await got({ '00100040': S('CS', 'M') }), [0, false, ['SYN-B']]);
+  assert.deepEqual(await got({ '00100040': S('CS', 'O') }), [0, false, []]);
+  // Asked back only (zero length): every order, each with its own value or empty.
+  const back = await answerQuery(rows, { '00100020': S('LO'), '00100030': S('DA'), '00100040': S('CS') });
+  assert.deepEqual(back.items.map(i => [value(i['00100030']), value(i['00100040'])]), [['19800203', 'F'], ['19750709', 'M'], ['', '']]);
+  assert.equal((await answerQuery(rows, { '00100030': S('DA', '1980-02-03') })).status, MWL_STATUS.identifier);
+  // A value for a patient attribute the order has nothing to compare with (issuer of the patient ID, other patient IDs,
+  // a referenced patient, weight) is never taken as matched.
+  assert.deepEqual(await got({ '00100021': S('LO', 'SYN-ISSUER') }), [0, true, []]);
+  assert.deepEqual(await got({ '00101000': S('LO', 'SYN-A') }), [0, true, []]);
+  assert.deepEqual(await got({ '00101002': SQ({ '00100020': S('LO', 'SYN-A') }) }), [0, true, []]);
+  assert.deepEqual(await got({ '00081120': SQ({ '00081150': S('UI'), '00081155': S('UI', '2.25.5') }) }), [0, true, []]);
+  assert.deepEqual(await got({ '00101030': S('DS', '70') }), [0, true, []]);
+  // The same attributes asked back only (no value, or a sequence item of empty keys) narrow nothing.
+  assert.deepEqual((await got({ '00100021': S('LO') }))[2], ['SYN-A', 'SYN-B', 'SYN-C']);
+  assert.deepEqual((await got({ '00081120': SQ({ '00081150': S('UI'), '00081155': S('UI') }), '00101002': SQ({ '00100020': S('LO') }) }))[2], ['SYN-A', 'SYN-B', 'SYN-C']);
+  // A value for an attribute that is not the patient's and the answer does not match: a warning, as before.
+  assert.deepEqual(await got({ '00380300': S('LO', 'SYNWARD') }), [0, true, ['SYN-A', 'SYN-B', 'SYN-C']]);
 });
 
 test('scheduled date and time: single, ranges, one span only when both are ranges, date-only and unreadable orders', async () => {
@@ -243,10 +371,12 @@ test('scheduled date and time: single, ranges, one span only when both are range
   assert.deepEqual(await when('20261120-20261122', '100000'), ['2026-11-21 10:00', '2026-11-22 10:00:00']);
   assert.deepEqual(await when('20261120', '2100'), ['2026-11-20 21:00']);
   assert.deepEqual(await when(undefined, '0000-0200'), ['2026-11-21 01:00']);
-  // A date-only order has no midnight: a time key does not match it, and asking for its time fails the query.
+  // A date-only order has no midnight: a time key does not match it, and asked for its time it is the one left out.
   assert.ok(!(await when('20261120', '0000-2359')).includes('20261120'));
   const timeAsked = await answerQuery(rows, { '00100020': S('LO'), '00400100': SQ({ '00400002': S('DA', '20261120'), '00400003': S('TM') }) });
-  assert.equal(timeAsked.status, MWL_STATUS.missingValue);
+  assert.deepEqual([timeAsked.status, timeAsked.items.map(i => value(i['00100020'])), timeAsked.matches, timeAsked.excluded],
+    [0, ['2026-11-20 21:00', '2026-11-20 23:00'], 3, 1]);
+  assert.equal((await answerQuery([at('20261120')], { '00400100': SQ({ '00400002': S('DA', '20261120'), '00400003': S('TM') }) })).status, MWL_STATUS.missingValue);
   // Two times out of order are one span only across two dates.
   assert.equal((await pick('20261120', '2200-0200')).status, MWL_STATUS.identifier);
   assert.equal((await pick(undefined, '2200-0200')).status, MWL_STATUS.identifier);
@@ -288,7 +418,7 @@ test('identifiers the SOP Class does not allow, an empty identifier, unsupported
   assert.equal(await status({ '00400100': SQ({ '00400001': S('SH', 'SYNCT1') }) }), MWL_STATUS.identifier);
   assert.throws(() => prepareQuery([]));
   // Nothing asked: no match. Only the character set: still nothing asked.
-  assert.deepEqual(await answerQuery([o], {}), { status: 0, items: [], warning: false, matches: 0 });
+  assert.deepEqual(await answerQuery([o], {}), { status: 0, items: [], warning: false, matches: 0, excluded: 0 });
   assert.equal((await answerQuery([o], { '00080005': S('CS', 'ISO_IR 192') })).items.length, 0);
   // A key outside the worklist keys: a warning, returned empty; a value given to a returned-only key: a warning.
   const unknown = await answerQuery([o], { '00100020': S('LO'), '00181030': S('LO'), '00400100': SQ({ '00400099': S('LO') }) });

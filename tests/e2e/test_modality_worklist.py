@@ -7,12 +7,17 @@ synthetic orders and devices.
   - two registered devices, one per institution, asking the same date, patient ID and accession each get only their own
     institution's order; an unregistered device is refused (Refused: Not Authorized, 0x0124) with no identifier;
   - the answer carries the order's own values: its procedure ID (16 characters at most) and worklist Study Instance UID as
-    stored, never the matched study's UID; the scheduled date, time and device; a Korean patient name in UTF-8;
+    stored, never the matched study's UID; the scheduled date, time and device; a Korean patient name in UTF-8; a patient
+    ID of 33 characters outside the Basic Multilingual Plane and a name stored in two representations, as stored;
+  - an order the asked keys cannot carry (a name of delimiters only, no scheduled device) is left out while the patient's
+    other orders come; when it is the only match the query ends Unable to process with no identifier; no match ends
+    Success with no identifier;
+  - scheduled time ranges, alone and as one span with a date range; a birth date and a sex given are compared;
   - Delete Order takes the order out of the next query and Undo brings it back with the same identifiers;
   - repeated queries change no Order, StudyState or Gateway receipt row - also for a matched order;
-  - a query asking for the scheduled device of an order that has none fails Unable to process with no identifier;
-  - each query leaves one audit row with the device, its institution, the outcome and the match count only;
-  - C-ECHO answers; another called AE Title is rejected.
+  - each query leaves one audit row with the device, its institution, the outcome and the counts of orders matched and
+    left out only;
+  - the helper process is started again after it stops; C-ECHO answers; another called AE Title is rejected.
 
 Run in CI: `python tests/measurement_ci.py --profile technician-orders`; on a development stack started with
 docker-compose.mwl.yml: `python tests/e2e/test_modality_worklist.py`. Synthetic only; cleanup removes this run's orders and
@@ -40,13 +45,14 @@ from test_worklist import WorklistE2E, psql
 MWL_PORT = int(os.environ.get("KIN_MWL_HOST_PORT", "4243"))
 MWL_AET = "KINMWL"
 DAY, DA = "2026-03-15", "20260315"
+HAN = "\U00020000"   # one character outside the Basic Multilingual Plane
 
 
 def lit(value):
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def identifier(date=DA, **top):
+def identifier(date=DA, time="", **top):
     ds = Dataset()
     ds.SpecificCharacterSet = "ISO_IR 192"
     for keyword in ("PatientName", "PatientID", "AccessionNumber", "PlacerOrderNumberImagingServiceRequest",
@@ -56,7 +62,7 @@ def identifier(date=DA, **top):
     sps.Modality = ""
     sps.ScheduledStationAETitle = ""
     sps.ScheduledProcedureStepStartDate = date
-    sps.ScheduledProcedureStepStartTime = ""
+    sps.ScheduledProcedureStepStartTime = time
     sps.ScheduledProcedureStepID = ""
     ds.ScheduledProcedureStepSequence = [sps]
     for keyword, value in top.items():
@@ -173,6 +179,9 @@ class ModalityWorklistE2E(WorklistE2E):
         ob = self.order("kin-center", patient, "SYNTHETIC^MWL^B", accession, "SYKC" + run)
         od = self.order("hallym", patient, "홍길동^SYNTHETIC", None, station, sched=DAY + " 10:30")
         none = self.order("hallym", patient, "SYNTHETIC^MWL^NOSTATION", None, None, sched="2026-03-16 08:00")
+        unnamed = self.order("hallym", patient, "^^^^", None, station, sched=DAY + " 13:00")
+        wide_patient = HAN * 33
+        wide = self.order("hallym", wide_patient, "KIM^SYNTHETIC=金", None, station, sched=DAY + " 12:00")
         ask = identifier(PatientID=patient, AccessionNumber=accession)
         self.assertEqual(self.placers(dev_a, ask), [oa])
         self.assertEqual(self.placers(dev_b, ask), [ob])
@@ -194,6 +203,36 @@ class ModalityWorklistE2E(WorklistE2E):
         self.assertEqual([sps.ScheduledProcedureStepStartDate, sps.ScheduledProcedureStepStartTime, sps.ScheduledStationAETitle,
                           sps.Modality, sps.ScheduledProcedureStepID], [DA, "103000", station, "CT", stored["mwlProcedureId"]])
         self.assertNotEqual(self.row(oa)["mwlProcedureId"], stored["mwlProcedureId"])
+
+        # A patient ID of 33 characters outside the Basic Multilingual Plane and a name stored in two representations go
+        # out as stored.
+        [far] = self.found(dev_a, identifier(PatientID=wide_patient))
+        self.assertEqual([far.PatientID, str(far.PatientName), far.PatientName.ideographic, far.PlacerOrderNumberImagingServiceRequest],
+                         [wide_patient, "KIM^SYNTHETIC=金", "金", wide])
+
+        # An order the asked keys cannot carry (its name is delimiters only) is left out; the patient's other orders of the
+        # day come, each as one pending identifier, and the query ends Success.
+        mixed = self.find(dev_a, identifier(PatientID=patient))
+        self.assertEqual([s for s, _ in mixed], [0xFF00, 0xFF00, 0x0000])
+        self.assertEqual(sorted(d.PlacerOrderNumberImagingServiceRequest for _, d in mixed[:-1]), sorted([oa, od]))
+        # Asked without its name, the same order is answered: a flaw in a field nobody asked for leaves it in.
+        least = Dataset()
+        least.SpecificCharacterSet = "ISO_IR 192"
+        least.PatientID = patient
+        least.PlacerOrderNumberImagingServiceRequest = ""
+        least.ScheduledProcedureStepSequence = [Dataset()]
+        least.ScheduledProcedureStepSequence[0].ScheduledProcedureStepStartDate = DA
+        self.assertEqual(self.placers(dev_a, least), sorted([oa, od, unnamed]))
+        # No order matches: Success with no identifier.
+        self.assertEqual(self.find(dev_a, identifier(date="20260320", PatientID=patient)), [(0x0000, None)])
+        # Scheduled time: a range on the day; a date range with a time range is one span from the first day's start time
+        # to the last day's end time (the orders in it that cannot be carried stay out).
+        self.assertEqual(self.placers(dev_a, identifier(PatientID=patient, time="1000-1100")), [od])
+        self.assertEqual(self.placers(dev_a, identifier(date="20260315-20260316", PatientID=patient, time="1000-0900")), [od])
+        # A birth date and a sex given are compared: another patient's are no match, the patient's own are.
+        self.assertEqual(self.find(dev_a, identifier(PatientID=patient, PatientBirthDate="19750709", PatientSex="M")), [(0x0000, None)])
+        own = self.find(dev_a, identifier(PatientID=patient, AccessionNumber=accession, PatientBirthDate="19800203", PatientSex="F"))
+        self.assertEqual([(s, d and d.PlacerOrderNumberImagingServiceRequest) for s, d in own], [(0xFF00, oa), (0x0000, None)])
 
         # Match the order to a study: the worklist UID is still the order's, and queries change nothing.
         matched = self.stack.request("POST", "/match", "tech", {"uid": study.uid, "oid": oa, "patient": {}})
@@ -230,11 +269,13 @@ class ModalityWorklistE2E(WorklistE2E):
         self.assertEqual([after_unmatch.RequestedProcedureID, after_unmatch.StudyInstanceUID],
                          [before[0]["mwlProcedureId"], before[0]["mwlStudyUid"]])
 
-        # The helper process stops: the API starts it again, and a new association is answered.
+        # The helper process stops: the API starts it again, and a new association is answered. The helper is the one
+        # process an argument of which is the helper script's path (this step's own process is not it).
         killed = subprocess.run(["docker", "compose", "exec", "-T", "api", "node", "-e",
-                                 "const fs=require('fs');let n=0;for(const p of fs.readdirSync('/proc')){if(!/^\\d+$/.test(p))continue;"
-                                 "let c='';try{c=fs.readFileSync('/proc/'+p+'/cmdline','utf8')}catch{continue}"
-                                 "if(+p!==process.pid&&c.includes('mwl_scp.py')){process.kill(+p,'SIGKILL');n++}}console.log(n)"],
+                                 "const fs=require('fs'),path=require('path');let n=0;"
+                                 "for(const p of fs.readdirSync('/proc')){if(!/^\\d+$/.test(p)||+p===process.pid)continue;"
+                                 "let a=[];try{a=fs.readFileSync('/proc/'+p+'/cmdline','utf8').split('\\0')}catch{continue}"
+                                 "if(a.some(x=>path.basename(x)==='mwl_scp.py')){process.kill(+p,'SIGKILL');n++}}console.log(n)"],
                                 cwd=ROOT, capture_output=True, text=True, timeout=60)
         self.assertEqual((killed.returncode, killed.stdout.strip()), (0, "1"), killed.stderr)
         deadline = time.monotonic() + 60
@@ -249,17 +290,22 @@ class ModalityWorklistE2E(WorklistE2E):
             time.sleep(1)
         self.assertEqual(self.placers(dev_a, ask), [oa])
 
-        # An order without a scheduled device, asked for its device: Unable to process, no identifier.
+        # The only order that matches has no scheduled device and is asked for it: every match is left out, so the query
+        # ends Unable to process with no identifier (the device can tell it from an empty list).
         self.assertEqual(self.find(dev_a, identifier(date="20260316", PatientID=patient)), [(0xC003, None)])
 
-        # Each query's audit row: device, institution, outcome and match count; no patient or search value.
+        # Each query's audit row: device, institution, outcome and the counts of orders matched and left out; no patient
+        # or search value.
         rows = [json.loads(d) for d in psql('SELECT detail FROM "AuditLog" WHERE action=\'modality-worklist.query\' AND detail::jsonb->>\'aet\' IN ('
                                             + ",".join(lit(v) for v in [dev_a, dev_b, "SYNNOTREG" + run[:4]]) + ") ORDER BY id")]
-        self.assertIn({"institution": "hallym", "aet": dev_a, "outcome": "answered", "matches": 1}, rows)
-        self.assertIn({"institution": "kin-center", "aet": dev_b, "outcome": "answered", "matches": 1}, rows)
-        self.assertIn({"institution": None, "aet": "SYNNOTREG" + run[:4], "outcome": "refused", "matches": 0}, rows)
-        self.assertIn({"institution": "hallym", "aet": dev_a, "outcome": "failed", "matches": 1}, rows)
+        self.assertIn({"institution": "hallym", "aet": dev_a, "outcome": "answered", "matches": 1, "excluded": 0}, rows)
+        self.assertIn({"institution": "kin-center", "aet": dev_b, "outcome": "answered", "matches": 1, "excluded": 0}, rows)
+        self.assertIn({"institution": None, "aet": "SYNNOTREG" + run[:4], "outcome": "refused", "matches": 0, "excluded": 0}, rows)
+        self.assertIn({"institution": "hallym", "aet": dev_a, "outcome": "answered", "matches": 3, "excluded": 1}, rows)
+        self.assertIn({"institution": "hallym", "aet": dev_a, "outcome": "answered", "matches": 3, "excluded": 2}, rows)
+        self.assertIn({"institution": "hallym", "aet": dev_a, "outcome": "failed", "matches": 1, "excluded": 1}, rows)
         self.assertNotIn(patient, json.dumps(rows))
+        self.assertNotIn(HAN, json.dumps(rows, ensure_ascii=False))
 
         # C-ECHO answers; an association to another AE Title is rejected.
         ae = AE(ae_title=dev_a)

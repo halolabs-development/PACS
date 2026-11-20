@@ -387,7 +387,12 @@ def expected_rows(uid):
         # Delete Order: the order is taken off the list with who and why (a mark, never a row delete).
         removedAt=STAMP, removedBySub='SYNTHETIC-sub', removedBy='SYNTHETIC-actor', removeReason='SYNTHETIC reason',
         # Order List RIS Status: a real value of the CHECK set, so a dump that lost the column or its CHECK would differ.
-        risStatus='acquired', orderingPhysicianSub=None)]
+        risStatus='acquired', orderingPhysicianSub=None,
+        # Modality Worklist: the database gives each order its procedure ID and worklist Study Instance UID by default
+        # (new values each time), so the synthetic order names fixed ones - a restore that drew them again would differ -
+        # and carries a scheduled device.
+        mwlProcedureId='SYNMWLPROC000001', mwlStudyUid='2.25.329800735698586629295641978511506172918',
+        scheduledStationAet='SYNTHETIC_CT1')]
     # S4-U3: one synthetic receipt in a retry state, so BIGINT counts, the UUID epoch and a non-null
     # errorCode all carry real values through the dump (an empty table would pass on nothing).
     rows['GatewayReceipt'] = [dict(studyUid=uid, institutionId='SYNTHETIC-hospital',

@@ -329,10 +329,17 @@ const runtime=new EmrRuntime(process.env.DATABASE_URL, '/var/lib/kin-emr/outage'
         ops.run(["docker", "exec", name, "node", "-e",
             "fetch('http://127.0.0.1:3000/api/me').then(r=>{if(r.status!==401)process.exit(1)})"
             ".catch(()=>process.exit(1))"])
-        # Modality Worklist is off by default: no helper process and nothing on its port.
+        # Modality Worklist is off by default: no helper process, and its port refuses a connection. A helper is a process
+        # one of whose arguments is the helper script's path (an argument of its own, not a text that mentions it); this
+        # check's own process is not counted.
         self.assertEqual(ops.text(["docker", "exec", name, "node", "-e",
-            "const fs=require('fs');const p=fs.readdirSync('/proc').filter(d=>/^\\d+$/.test(d)).filter(d=>{try{return fs.readFileSync('/proc/'+d+'/cmdline','utf8').includes('mwl_scp')}catch{return false}});"
-            "const s=require('net').connect(4243,'127.0.0.1');s.on('connect',()=>{console.log(p.length+' open');s.destroy()});s.on('error',()=>console.log(p.length+' closed'))"]),
+            "const fs=require('fs'),path=require('path');let helpers=0;"
+            "for(const d of fs.readdirSync('/proc')){if(!/^\\d+$/.test(d)||+d===process.pid)continue;"
+            "let args=[];try{args=fs.readFileSync('/proc/'+d+'/cmdline','utf8').split('\\0')}catch{continue}"
+            "if(args.some(a=>path.basename(a)==='mwl_scp.py'))helpers++}"
+            "const s=require('net').connect(4243,'127.0.0.1');"
+            "s.on('connect',()=>{console.log(helpers+' open');s.destroy()});"
+            "s.on('error',e=>console.log(helpers+' '+(e.code==='ECONNREFUSED'?'closed':e.code)))"]),
             "0 closed")
         self.assertEqual(ops.text(["docker", "exec", name, "node", "-e",
             "console.log(require('fs').readFileSync('/proc/1/cmdline').toString().split('\\0').filter(Boolean).join(' '))"]),

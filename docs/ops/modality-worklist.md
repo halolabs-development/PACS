@@ -29,8 +29,20 @@ it on needs. They are conditions to confirm with the hospital at deployment; a g
    (assigned once and kept), the patient's name, ID, birth date and sex, the accession (empty when the order has none -
    none is made up), the scheduled date and time (hospital time, sent with offset +0900), modality and description, the
    requesting physician and the ward. The scheduled device (Scheduled Station AE Title) is the order's own; an order
-   without one is not found by a query naming a device, and a query asking for the device back fails (Unable to process)
-   rather than send an empty value. Confirm the console's query keys and character set (answers are UTF-8, ISO_IR 192).
+   without one is not found by a query naming a device. Confirm the console's query keys and character set (answers are
+   UTF-8, ISO_IR 192).
+4. **An order that cannot be sent in what the console asks for is left out, not sent incomplete.** When the console asks
+   back a value DICOM requires (the patient's name or ID, the scheduled device, date, time, modality, the description,
+   the identifiers) and an order has none, or holds one its DICOM type cannot carry (a device name that is not an AE
+   Title, a text longer than the type allows), that order alone is left out of the answer; the other orders are sent.
+   When orders match and every one of them is left out, the query ends Unable to process (0xC003) instead of an empty
+   list, so the technician sees a fault rather than "no patients". The audit row of each query counts the orders left
+   out: a count above zero means an order needs correcting at its source.
+5. **Search keys.** Patient name (with `*` and `?`), patient ID, birth date, sex, accession, the scheduled date and time
+   (single or range), modality, scheduled device, procedure and step IDs and the Study Instance UID are compared. A value
+   given for another patient attribute (for example the issuer of the patient ID) matches no order, because an order
+   holds nothing to compare it with; a value for any other key the worklist does not compare is not used, and the answer
+   says so (pending status FF01).
 
 ## What the product does and does not decide
 
@@ -39,7 +51,7 @@ it on needs. They are conditions to confirm with the hospital at deployment; a g
   and a query changes none of them: being queried is not being acquired.
 - The worklist accepts only C-FIND (Modality Worklist) and C-ECHO; it takes no images, answers no other query and does
   not take Modality Performed Procedure Step.
-- Every query is recorded in the audit log with the modality's AE Title, its hospital, the outcome and the number of
-  matches (no patient or search value).
+- Every query is recorded in the audit log with the modality's AE Title, its hospital, the outcome, the number of
+  orders matched and the number of those left out of the answer (no patient or search value).
 - The order source itself (how the hospital RIS gives orders) is a separate decision; this worklist answers with whatever
   orders the Order List holds.

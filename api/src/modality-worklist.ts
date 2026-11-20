@@ -9,9 +9,14 @@
  *
  * Every key the answer knows is one row of KEYS below: its VR (a request giving another VR is refused, A900), how a
  * value given to it is matched (single value: exact; person name: exact or `*` `?` wildcards; UID list; date; time; or
- * not matched, which is a warning, FF01), its return type, and the order value it returns. Values an order does not
- * have are never made up; a value that does not fit its VR or a Type 1 value the order cannot give fails the whole
- * query (0xC003) instead of going out empty, cut, or silently dropping the order.
+ * not matched, which is a warning, FF01 - except a patient attribute, where a value the order cannot be compared on
+ * never matches), its return type, and the order value it returns. Values an order does not have are never made up.
+ *
+ * Whether a matching order can be answered is decided per order, in `returned` only, by the keys the query asks back:
+ * an order with no value for a Type 1 key asked for, or with a value its VR cannot carry, is left out of that answer -
+ * never sent empty or cut - and the other orders are answered. Left-out orders are counted (the audit row has the
+ * count). When orders match and every one of them is left out, the query ends Unable to process (0xC003) with no
+ * identifier, so the device can tell a data fault from an empty list; no match at all is a success.
  *
  * The DICOM side (association, encoding, cancel) is the helper process api/mwl/mwl_scp.py; it hands the identifier over
  * in the DICOM JSON model (PS3.18 F.2) and sends back what this module answers. This module has no I/O.
@@ -23,15 +28,15 @@ export const MWL_STATUS = Object.freeze({
   pending: 0xff00,
   pendingWarning: 0xff01,
   refused: 0x0124,        // Refused: Not Authorized - the calling device names no single institution
-  resources: 0xa700,      // Out of Resources - more matches than one answer carries
+  resources: 0xa700,      // Out of Resources - more orders to answer than one answer carries
   identifier: 0xa900,     // Identifier does not match SOP Class
   unavailable: 0xc001,    // Unable to process - the API did not answer in time (sent by the helper)
   audit: 0xc002,          // Unable to process - the query's audit row could not be written
-  missingValue: 0xc003,   // Unable to process - a matched order lacks a Type 1 value or holds one its VR cannot carry
+  missingValue: 0xc003,   // Unable to process - orders match, and none of them can be carried in the keys asked back
   nameGroups: 0xc004,     // Unable to process - a person name searched in more than one representation
 });
 
-/** Matches one answer carries at most; more is answered Out of Resources, never cut short as a success. */
+/** Orders one answer carries at most; more is answered Out of Resources, never cut short as a success. */
 export const MWL_MAX_MATCHES = 5000;
 
 /** The hospital's local time: an order's scheduled time is the hospital's wall time (Asia/Seoul, no daylight saving). */
@@ -48,14 +53,22 @@ export interface MwlOrder {
 type Json = Record<string, any>;
 /** The order's value: a string ('' = known to be empty) or null (the order cannot say). */
 type Field = (o: MwlOrder) => string | null;
-type Match = 'single' | 'name' | 'uid' | 'date' | 'time' | 'none';
+type Match = 'single' | 'name' | 'uid' | 'day' | 'date' | 'time' | 'none';
 interface Key { vr: string; match: Match; type: 1 | 2 | 3; value?: Field }
 
-const text = (v: unknown) => typeof v === 'string' ? v.trim() : '';
+/**
+ * A stored or queried value without its DICOM padding: leading and trailing SPACE (20H) only (PS3.5 6.2). Any other
+ * white space is part of the value: an identifier that begins with an ideographic space is another identifier.
+ */
+const text = (v: unknown) => typeof v === 'string' ? v.replace(/^ +| +$/g, '') : '';
+/** A date or time as written, read loosely: white space around it says nothing. */
+const loose = (v: unknown) => typeof v === 'string' ? v.trim() : '';
+/** Length in characters (Unicode code points), as a VR's limit counts them - not in UTF-16 units. */
+const count = (v: string) => Array.from(v).length;
 
 /** An order's scheduled date and time as the hospital wrote them: `YYYY-MM-DD[ HH:MM[:SS]]` or `YYYYMMDD`. */
 export function scheduledAt(sched: unknown): { date: string; time: string | null } | null {
-  const s = text(sched);
+  const s = loose(sched);
   let m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(s);
   let date: string, time: string | null = null;
   if (m) {
@@ -77,7 +90,7 @@ function validTime(t: string): boolean {
 }
 
 const birthDate = (o: MwlOrder) => {
-  const b = text(o.birth).replace(/-/g, '');
+  const b = loose(o.birth).replace(/-/g, '');
   return /^\d{8}$/.test(b) && validDate(b) ? b : '';
 };
 const sex = (o: MwlOrder) => ['M', 'F', 'O'].includes(text(o.sex)) ? text(o.sex) : '';
@@ -86,13 +99,14 @@ const none: Field = () => '';
 /**
  * The Modality Worklist keys (PS3.4 Table K.6-1). `value` absent: the order does not hold it (returned zero length, a
  * specific value never matches it). A 1C key is listed as Type 1 when its condition holds here: no procedure or protocol
- * code sequence is given, so the descriptions are required.
+ * code sequence is given, so the descriptions are required. The keys that tell patients apart - name, ID, birth date,
+ * sex - are all compared when a value is given: a query naming a birth date and a sex is answered with that patient only.
  */
 const TOP: Record<string, Key> = {
   '00100010': { vr: 'PN', match: 'name', type: 1, value: o => text(o.name) },            // Patient's Name
   '00100020': { vr: 'LO', match: 'single', type: 1, value: o => text(o.patientId) },     // Patient ID
-  '00100030': { vr: 'DA', match: 'none', type: 2, value: birthDate },                    // Patient's Birth Date
-  '00100040': { vr: 'CS', match: 'none', type: 2, value: sex },                          // Patient's Sex
+  '00100030': { vr: 'DA', match: 'day', type: 2, value: birthDate },                     // Patient's Birth Date
+  '00100040': { vr: 'CS', match: 'single', type: 2, value: sex },                        // Patient's Sex
   '00101030': { vr: 'DS', match: 'none', type: 2 },                                      // Patient's Weight
   '00102000': { vr: 'LO', match: 'none', type: 2 },                                      // Medical Alerts
   '00102110': { vr: 'LO', match: 'none', type: 2 },                                      // Allergies
@@ -138,16 +152,20 @@ const SPS: Record<string, Key> = {
 /** Attributes every answer carries, asked for or not (PS3.4 K.4.1.2.3.1 lets the SCP add them). */
 const CHARSET = '00080005', OFFSET = '00080201';
 
-/** A value fits its VR (PS3.5 6.2) as this answer writes it: one value, the VR's length and characters. */
+/**
+ * A value fits its VR (PS3.5 6.2) as this answer writes it: one value, the VR's characters, and its length counted in
+ * characters (SH 16, LO 64, PN 64 for each of at most three representations). An AE Title is the default character
+ * repertoire only, 16 bytes at most.
+ */
 function fits(vr: string, v: string): boolean {
   if (v === '') return true;
   const plain = !/[\\\u0000-\u001f\u007f]/.test(v);
   switch (vr) {
-    case 'AE': return plain && v.length <= 16;
+    case 'AE': return /^[\x20-\x5b\x5d-\x7e]{1,16}$/.test(v);
     case 'CS': return /^[A-Z0-9 _]{1,16}$/.test(v);
-    case 'SH': return plain && v.length <= 16;
-    case 'LO': return plain && v.length <= 64;
-    case 'PN': return plain && !v.includes('=') && v.length <= 64;
+    case 'SH': return plain && count(v) <= 16;
+    case 'LO': return plain && count(v) <= 64;
+    case 'PN': { const groups = v.split('='); return plain && groups.length <= 3 && groups.every(g => count(g) <= 64); }
     case 'DA': return /^\d{8}$/.test(v) && validDate(v);
     case 'TM': return /^\d{6}$/.test(v) && validTime(v);
     case 'UI': return /^(0|[1-9]\d*)(\.(0|[1-9]\d*))*$/.test(v) && v.length <= 64;
@@ -155,8 +173,26 @@ function fits(vr: string, v: string): boolean {
   }
 }
 
+/**
+ * A person name as it is compared: its representations (alphabetic, ideographic, phonetic, between `=`), each without
+ * the delimiters and spaces that end it ("KIM^A^^^" is "KIM^A"). A name of delimiters only has none: it is no name.
+ */
+const nameParts = (v: string) => v.split('=').map(g => g.replace(/[\^ ]+$/, '').replace(/^ +/, '')).filter(Boolean);
+/** A stored person name in the DICOM JSON model, each representation kept in its own place. */
+function nameValue(v: string): Json {
+  const [alphabetic, ideographic, phonetic] = v.split('=');
+  return { vr: 'PN', Value: [{ ...(alphabetic ? { Alphabetic: alphabetic } : {}), ...(ideographic ? { Ideographic: ideographic } : {}),
+    ...(phonetic ? { Phonetic: phonetic } : {}) }] };
+}
+
 type Range = { lo: string | null; hi: string | null; range: boolean };
-type Entry = { tag: string; key: Key | null; vr: string; value: string[] };
+type Entry = {
+  tag: string; key: Key | null; vr: string; value: string[];
+  /** A value was given to the key (for a sequence: a value somewhere inside its items), not only the key asked back. */
+  given: boolean;
+  /** The comparison a given value asks for, read once: a person name, or a birth date (single or range). */
+  name?: (value: string) => boolean; day?: Range;
+};
 export interface PreparedQuery {
   top: Entry[];
   sps: null | { whole: boolean; keys: Entry[] };
@@ -180,15 +216,31 @@ function values(element: Json): string[] {
   if (!Array.isArray(v)) throw invalid('Value is not an array');
   return v.map(item => {
     if (item === null) return '';
-    if (typeof item === 'string') return item;
+    if (typeof item === 'string') return element.vr === 'PN' ? oneName(item.split('=')) : item;
     if (typeof item === 'number') return String(item);
-    if (typeof item === 'object' && !Array.isArray(item) && element.vr === 'PN') {
-      // A name searched in one representation is compared with the order's one name; in several, it cannot be.
-      const groups = ['Alphabetic', 'Ideographic', 'Phonetic'].map(g => typeof item[g] === 'string' ? item[g].trim() : '').filter(Boolean);
-      if (groups.length > 1) throw new QueryRefused(MWL_STATUS.nameGroups, 'Person name in more than one representation');
-      return groups[0] ?? '';
-    }
+    if (typeof item === 'object' && !Array.isArray(item) && element.vr === 'PN')
+      return oneName(['Alphabetic', 'Ideographic', 'Phonetic'].map(g => item[g]));
     throw invalid('Value item is not a string');
+  });
+}
+
+/** A name searched in one representation is compared with each representation the order holds; in several, it cannot be. */
+function oneName(representations: unknown[]): string {
+  const given = representations.map(text).filter(Boolean);
+  if (given.length > 1) throw new QueryRefused(MWL_STATUS.nameGroups, 'Person name in more than one representation');
+  return given[0] ?? '';
+}
+
+/** Whether an element carries a value: a non-empty one of its own, or one anywhere inside a sequence's items. */
+function holdsValue(element: unknown): boolean {
+  const v = (element as Json | null)?.Value;
+  if (!Array.isArray(v)) return false;
+  return v.some(item => {
+    if (typeof item === 'string') return text(item) !== '';
+    if (typeof item === 'number') return true;
+    if (!item || typeof item !== 'object') return false;
+    // A person name's representations, or a sequence item's elements.
+    return Object.values(item).some(inner => typeof inner === 'string' ? text(inner) !== '' : holdsValue(inner));
   });
 }
 
@@ -246,7 +298,10 @@ function entries(identifier: Json, table: Record<string, Key>): Entry[] {
     if (value.length > 1 && key?.match !== 'uid') throw invalid('More than one value');
     // A sequence key with an item asks to match inside it, which this answer does not do.
     const sequenceMatch = vr === 'SQ' && Array.isArray(element.Value) && element.Value.some((i: any) => i && Object.keys(i).length);
-    out.push({ tag, key, vr: key ? key.vr : (vr || 'UN'), value: sequenceMatch ? ['*'] : value });
+    const entry: Entry = { tag, key, vr: key ? key.vr : (vr || 'UN'), value: sequenceMatch ? ['*'] : value, given: holdsValue(element) };
+    if (entry.given && key?.match === 'name') entry.name = nameMatcher(text(value[0]));
+    if (entry.given && key?.match === 'day') entry.day = dateRange(text(value[0]));
+    out.push(entry);
   }
   return out;
 }
@@ -283,31 +338,43 @@ export function prepareQuery(identifier: unknown): PreparedQuery {
     if (stated) shift = offsetMinutes(stated) - SITE_OFFSET_MINUTES;
   }
   // A key the answer does not know, or a value given to a key it returns but does not match: a warning (FF01).
-  const warning = [...top, ...spsKeys].some(e => !e.key || (e.key.match === 'none' && e.value.some(v => v.trim())));
+  const warning = [...top, ...spsKeys].some(e => !e.key || (e.key.match === 'none' && e.value.some(v => text(v))));
   // An identifier with no key at all asks for nothing: no match (PS3.4 K.4.1.3).
   const empty = top.length === 0 && sps === null;
   return { top, sps, date, time, shift, warning, empty };
 }
 
-/** Person name wildcard match: `*` any run, `?` one character; a value of only `*` matches every value, empty ones too. */
-function nameMatch(query: string, value: string): boolean {
-  if (/^\*+$/.test(query)) return true;
-  if (!value) return false;
-  if (!/[*?]/.test(query)) return query === value;
-  const pattern = '^' + query.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$';
-  return new RegExp(pattern, 's').test(value);
+/**
+ * Person name match for one searched name: exact, or with wildcards - `*` any run, `?` one character (a character, also
+ * outside the Basic Multilingual Plane, never half of one). It holds when any representation of the order's name
+ * matches. Only `*`, or a name of delimiters only, asks for every order, those without a name too.
+ */
+function nameMatcher(query: string): (value: string) => boolean {
+  const [q] = nameParts(query);
+  if (!q || /^\*+$/.test(q)) return () => true;
+  if (!/[*?]/.test(q)) return value => nameParts(value).includes(q);
+  const pattern = new RegExp('^' + q.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$', 'su');
+  return value => nameParts(value).some(part => pattern.test(part));
 }
+
+/** The patient's own attributes (group 0010) and the reference to the patient: what a query can tell patients apart by. */
+const patientKey = (tag: string) => tag.startsWith('0010') || tag === '00081120';
 
 function keyMatch(e: Entry, o: MwlOrder): boolean {
   const k = e.key;
-  if (!k || k.match === 'none' || k.match === 'date' || k.match === 'time') return true;
-  const q = e.value.map(v => v.trim());
-  if (!q.length || q.every(v => !v)) return true;   // zero length: universal match
+  // A value given to a patient attribute the order cannot be compared on (the issuer of the patient ID, another patient
+  // ID, ...) is never taken as matched: nothing says the order is that patient's. For any other attribute the answer
+  // does not match, the value is not used (the warning, FF01).
+  if (!k || k.match === 'none') return !(e.given && patientKey(e.tag));
+  if (k.match === 'date' || k.match === 'time') return true;   // the scheduled date and time: whenMatch
+  if (!e.given) return true;                                   // zero length: universal match
   const have = k.value ? k.value(o) : '';
-  if (k.match === 'uid') return have !== null && have !== '' && q.includes(have);
-  if (k.match === 'name') return nameMatch(q[0], have ?? '');
-  // Single value: the order's value exactly; an order without one never matches a value.
-  return have !== null && have !== '' && have === q[0];
+  if (k.match === 'name') return e.name!(have ?? '');
+  // Every other value: an order without one never matches a value.
+  if (have === null || have === '') return false;
+  if (k.match === 'day') return inRange(have, e.day!);
+  const q = e.value.map(text);
+  return k.match === 'uid' ? q.includes(have) : have === q[0];
 }
 
 function moved(date: string, time: string, minutes: number): { date: string; time: string } {
@@ -346,21 +413,35 @@ function whenMatch(p: PreparedQuery, o: MwlOrder): boolean {
   return (!p.date || inRange(local.date, p.date)) && (!p.time || inRange(t, p.time));
 }
 
-export class MissingValue extends Error {}
+type Asked = { tag: string; key: Key | null; vr: string };
+const WHOLE_SPS: Asked[] = Object.entries(SPS).map(([tag, key]) => ({ tag, key, vr: key.vr }));
 
-function returned(list: { tag: string; key: Key | null; vr: string }[], o: MwlOrder): Json {
-  const out: Json = {};
-  for (const e of list) {
-    if (!e.key || e.key.vr === 'SQ') { out[e.tag] = e.vr === 'SQ' ? { vr: 'SQ', Value: [] } : { vr: e.vr }; continue; }
-    const v = e.key.value ? e.key.value(o) : '';
-    if (e.key.type === 1 && (v === null || v === '')) throw new MissingValue(e.tag);
-    if (v !== null && !fits(e.key.vr, v)) throw new MissingValue(e.tag);
-    out[e.tag] = v === null || v === '' ? { vr: e.key.vr } : e.key.vr === 'PN' ? { vr: 'PN', Value: [{ Alphabetic: v }] } : { vr: e.key.vr, Value: [v] };
-  }
-  return out;
+/**
+ * The identifier one matching order is answered with - only the keys asked for (a whole Scheduled Procedure Step is
+ * every step key), with the character set and the offset - or null when the order cannot be carried in them: it has no
+ * value for a Type 1 key asked for (a person name of delimiters only is no name), or a value asked for does not fit its
+ * VR. The one place that decides it, per order and only by what was asked: a flaw in a field nobody asked for leaves the
+ * order in, and an order left out never takes another order with it.
+ */
+function returned(p: PreparedQuery, o: MwlOrder): Json | null {
+  const carried = (list: readonly Asked[]): Json | null => {
+    const out: Json = {};
+    for (const e of list) {
+      if (!e.key || e.key.vr === 'SQ') { out[e.tag] = e.vr === 'SQ' ? { vr: 'SQ', Value: [] } : { vr: e.vr }; continue; }
+      let v = e.key.value ? e.key.value(o) : '';
+      if (e.key.vr === 'PN' && v !== null && !nameParts(v).length) v = '';
+      if (e.key.type === 1 && (v === null || v === '')) return null;
+      if (v !== null && !fits(e.key.vr, v)) return null;
+      out[e.tag] = v === null || v === '' ? { vr: e.key.vr } : e.key.vr === 'PN' ? nameValue(v) : { vr: e.key.vr, Value: [v] };
+    }
+    return out;
+  };
+  const top = carried(p.top);
+  const step = top && p.sps ? carried(p.sps.whole ? WHOLE_SPS : p.sps.keys) : null;
+  if (!top || (p.sps && !step)) return null;
+  return { [CHARSET]: { vr: 'CS', Value: ['ISO_IR 192'] }, [OFFSET]: { vr: 'SH', Value: [MWL_SITE_OFFSET] }, ...top,
+    ...(step ? { [SPS_TAG]: { vr: 'SQ', Value: [step] } } : {}) };
 }
-
-const WHOLE_SPS = Object.entries(SPS).map(([tag, key]) => ({ tag, key, vr: key.vr }));
 
 /** Whether an order of the institution's list answers the query. */
 export function orderMatches(p: PreparedQuery, o: MwlOrder): boolean {
@@ -368,39 +449,40 @@ export function orderMatches(p: PreparedQuery, o: MwlOrder): boolean {
   return p.top.every(e => keyMatch(e, o)) && (p.sps?.keys ?? []).every(e => keyMatch(e, o)) && whenMatch(p, o);
 }
 
-/** The identifier answered for one matching order: only the keys asked for, with the character set and the offset. */
-export function orderAnswer(p: PreparedQuery, o: MwlOrder): Json {
-  const item: Json = { [CHARSET]: { vr: 'CS', Value: ['ISO_IR 192'] }, [OFFSET]: { vr: 'SH', Value: [MWL_SITE_OFFSET] }, ...returned(p.top, o) };
-  if (p.sps) item[SPS_TAG] = { vr: 'SQ', Value: [returned(p.sps.whole ? WHOLE_SPS : p.sps.keys, o)] };
-  return item;
-}
-
-export type MwlAnswer = { status: number; items: Json[]; warning: boolean; matches: number; reason?: string };
+/**
+ * One query's answer. `matches`: the orders the keys matched; `excluded`: those of them left out because the keys asked
+ * back cannot carry them (see `returned`). The counts say nothing about any value.
+ */
+export type MwlAnswer = { status: number; items: Json[]; warning: boolean; matches: number; excluded: number; reason?: string };
 
 /** Answers one query over orders read page by page (`pages` yields the institution's listed orders in turn). */
 export async function answerPages(identifier: unknown, pages: AsyncIterable<readonly MwlOrder[]> | Iterable<readonly MwlOrder[]>): Promise<MwlAnswer> {
   let p: PreparedQuery;
   try { p = prepareQuery(identifier); }
   catch (error) {
-    if (error instanceof QueryRefused) return { status: error.status, items: [], warning: false, matches: 0, reason: error.message };
+    if (error instanceof QueryRefused) return { status: error.status, items: [], warning: false, matches: 0, excluded: 0, reason: error.message };
     throw error;
   }
-  if (p.empty) return { status: MWL_STATUS.success, items: [], warning: false, matches: 0 };
+  if (p.empty) return { status: MWL_STATUS.success, items: [], warning: false, matches: 0, excluded: 0 };
   const items: Json[] = [];
-  let matches = 0, missing: string | null = null;
+  let matches = 0, excluded = 0;
   for await (const page of pages) {
     for (const o of page) {
       if (!orderMatches(p, o)) continue;
       matches += 1;
-      if (matches > MWL_MAX_MATCHES)
-        return { status: MWL_STATUS.resources, items: [], warning: false, matches, reason: 'too many matches' };
-      if (missing) continue;
-      try { items.push(orderAnswer(p, o)); }
-      catch (error) { if (error instanceof MissingValue) missing = error.message; else throw error; }
+      const item = returned(p, o);
+      // An order that cannot be carried is left out and counted; the next orders are still read and answered.
+      if (!item) { excluded += 1; continue; }
+      // The limit is on what the answer carries: orders left out do not use it up.
+      if (items.length === MWL_MAX_MATCHES)
+        return { status: MWL_STATUS.resources, items: [], warning: false, matches, excluded, reason: 'too many orders to answer' };
+      items.push(item);
     }
   }
-  if (missing) return { status: MWL_STATUS.missingValue, items: [], warning: false, matches, reason: 'value missing or not fitting its VR: ' + missing };
-  return { status: MWL_STATUS.success, items, warning: p.warning, matches };
+  // Orders matched and none can be carried: a data fault the device must be able to tell from an empty list.
+  if (matches && !items.length)
+    return { status: MWL_STATUS.missingValue, items: [], warning: false, matches, excluded, reason: 'no matching order can be carried in the keys asked back' };
+  return { status: MWL_STATUS.success, items, warning: p.warning, matches, excluded };
 }
 
 /** The same answer over orders already in memory (one page). */

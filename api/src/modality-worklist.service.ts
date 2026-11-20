@@ -5,8 +5,9 @@
  *
  * Which orders a device gets is decided only in `answer` (rule in modality-worklist.ts): the calling AE Title's one
  * institution by the registered devices (PacsService.resolveDevice, the arrival rule), that institution's orders on the
- * Order List. A query reads; the only row it writes is its audit row (device, institution, outcome, match count — no
- * patient value and no search value), committed before any patient identifier is handed back.
+ * Order List. A query reads; the only row it writes is its audit row (device, institution, outcome, the counts of orders
+ * matched and of those left out — no patient value and no search value), committed before any patient identifier is
+ * handed back.
  */
 import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 import { spawn, ChildProcess } from 'node:child_process';
@@ -132,25 +133,28 @@ export class ModalityWorklistService implements OnApplicationBootstrap, OnApplic
     if (message?.type === 'bind_failed') { this.log.error(`Modality Worklist port not opened: ${String(message.error ?? '').slice(0, 200)}`); return; }
     if (message?.type !== 'find' || typeof message.id !== 'string') return;
     void this.answer(message.calling, message.identifier).then(result => {
-      // The answer goes to the helper that asked; a helper that has since stopped never gets another's answer.
+      // The answer goes to the helper that asked; a helper that has since stopped never gets another's answer. The line is
+      // ASCII (every other character escaped), as the helper's own lines are: no name depends on a process's locale.
       if (child.exitCode === null && !child.killed)
-        child.stdin!.write(JSON.stringify({ id: message.id, status: result.status, warning: result.warning, items: result.items }) + '\n');
+        child.stdin!.write(JSON.stringify({ id: message.id, status: result.status, warning: result.warning, items: result.items })
+          .replace(/[\u0080-￿]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0')) + '\n');
     });
   }
 
   /**
    * One C-FIND: the device's institution, its listed orders, the match, the audit row, then the identifiers. A device that
-   * names no single institution is refused (0x0124) without reading any order. Any failure answers no identifier.
+   * names no single institution is refused (0x0124) without reading any order. Any failure answers no identifier. The audit
+   * row counts the orders the keys matched and, apart, those of them left out of the answer (no value of either).
    */
   async answer(calling: unknown, identifier: unknown): Promise<{ status: number; warning: boolean; items: any[] }> {
     const aet = aeTitle(calling) ?? '';
     const institution = aet ? this.pacs.resolveDevice(aet) : null;
-    const audit = (outcome: string, matches: number) => this.prisma.auditLog.create({ data: {
+    const audit = (outcome: string, matches: number, excluded: number) => this.prisma.auditLog.create({ data: {
       actor: `device:${aet || '(none)'}`, action: 'modality-worklist.query', target: institution ?? '-',
-      detail: dump({ institution, aet: aet || null, outcome, matches }) } });
+      detail: dump({ institution, aet: aet || null, outcome, matches, excluded }) } });
     const auditLost = (outcome: string) => () => this.log.error(`Modality Worklist audit row not written (${outcome} query of device ${aet || '(none)'})`);
     if (!institution) {
-      await audit('refused', 0).catch(auditLost('refused'));
+      await audit('refused', 0, 0).catch(auditLost('refused'));
       return { status: MWL_STATUS.refused, warning: false, items: [] };
     }
     let result;
@@ -158,12 +162,12 @@ export class ModalityWorklistService implements OnApplicationBootstrap, OnApplic
       result = await answerPages(identifier, this.pages(institution));
     } catch (error) {
       this.log.error(`Modality Worklist query failed (${(error as Error).name})`);
-      await audit('failed', 0).catch(auditLost('failed'));
+      await audit('failed', 0, 0).catch(auditLost('failed'));
       return { status: MWL_STATUS.unavailable, warning: false, items: [] };
     }
     const outcome = result.status === MWL_STATUS.success ? 'answered'
       : result.status === MWL_STATUS.identifier ? 'invalid' : result.status === MWL_STATUS.resources ? 'too-many' : 'failed';
-    try { await audit(outcome, result.matches); }
+    try { await audit(outcome, result.matches, result.excluded); }
     catch { auditLost(outcome)(); return { status: MWL_STATUS.audit, warning: false, items: [] }; }
     return { status: result.status, warning: result.warning, items: result.items };
   }
