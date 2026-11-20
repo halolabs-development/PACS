@@ -647,6 +647,7 @@
       renderArrangeBar(); renderBoxCovers();
     };
     boxArrangeLayout();
+    boxArrangeEnd = () => endArrange(false);
     function stopWorkspaceLayout() {
       if (panelDialog.open) panelDialog.close();
       endArrange(false); document.removeEventListener('scroll', scheduleCovers, true);

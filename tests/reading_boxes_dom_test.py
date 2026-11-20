@@ -653,12 +653,15 @@ class ReadingBoxesDOM(unittest.TestCase):
         if (hit((r.left + r.right) / 2, (r.top + r.bottom) / 2) !== b || r.left < 0 || r.top < 0 || r.right > innerWidth || r.bottom > innerHeight)
           bad.push({ button: b.textContent, at: [r.left, r.top, r.right, r.bottom].map(Math.round) });
       }
-      return { covers: covers.length - thin, thin, bad }; }'''
+      return { names: covers.map(c => c.getAttribute('aria-label')).sort(), thin, bad }; }'''
 
-    def assert_names_clear(self, page, label, covers=4):
+    FIVE = ('Worklist', 'Related Exam', 'Clinical Information', 'Related Report', 'Report Editor')
+
+    def assert_names_clear(self, page, label, names=FIVE):
         settle(page)
         found = page.evaluate(self.NAMES_CLEAR)
-        self.assertGreaterEqual(found['covers'], covers, f'{label}: {found}')
+        # Every box that should have a cover has one (a thin one is only spared the name check).
+        self.assertEqual(sorted(names), found['names'], label)
         self.assertEqual([], found['bad'], label)
 
     def set_swaps(self, bar, swaps):
@@ -685,7 +688,11 @@ class ReadingBoxesDOM(unittest.TestCase):
             for swaps in arrangements:
                 with self.subTest(width=width, height=height, swaps=swaps):
                     self.set_swaps(bar, swaps)
-                    self.assert_names_clear(page, f'{width}x{height} {swaps}')
+                    # The stacked (portrait) page puts Related Report below the window when it goes under the editor
+                    # and Clinical Information stays above them.
+                    below = width < height and 'report' in swaps and 'side' not in swaps
+                    self.assert_names_clear(page, f'{width}x{height} {swaps}',
+                                            names=tuple(n for n in self.FIVE if not (below and n == 'Related Report')))
             # A picked box says so in the bar's status line; the names stay clear.
             self.cover(page, 'Worklist').focus()
             page.keyboard.press('Enter')
@@ -741,16 +748,17 @@ class ReadingBoxesDOM(unittest.TestCase):
             with self.subTest(technician=swaps):
                 self.set_swaps(bar, swaps)
                 expect(self.cover(page, 'Order List')).to_be_visible()
-                self.assert_names_clear(page, f'technician {swaps}')
+                self.assert_names_clear(page, f'technician {swaps}', names=self.FIVE[:4] + ('Order List',))
         self.set_swaps(bar, [])
         # Held over the box at the top of the report column, before the release.
         page.mouse.move(*self.point(page, 'Worklist'))
         page.mouse.down()
         page.mouse.move(*self.point(page, 'Clinical Information'), steps=8)
         expect(self.cover(page, 'Clinical Information')).to_contain_text('놓으면')
-        self.assert_names_clear(page, 'held over Clinical Information')
+        tech = self.FIVE[:4] + ('Order List',)
+        self.assert_names_clear(page, 'held over Clinical Information', names=tech)
         page.mouse.move(*self.point(page, 'Related Exam'), steps=4)
-        self.assert_names_clear(page, 'held over Related Exam')
+        self.assert_names_clear(page, 'held over Related Exam', names=tech)
         page.mouse.up()
         settle(page)
         self.set_swaps(bar, [])
@@ -769,7 +777,7 @@ class ReadingBoxesDOM(unittest.TestCase):
         place = drawer.bounding_box()
         bar = self.arrange(page)
         expect(drawer).to_be_hidden()
-        self.assert_names_clear(page, '800x600 study panel', covers=3)
+        self.assert_names_clear(page, '800x600 study panel', names=('Worklist', 'Related Exam', 'Related Report'))
         bar.locator('#box-arrange-done').click()
         expect(bar).to_be_hidden()
         expect(drawer).to_be_visible()
@@ -786,6 +794,14 @@ class ReadingBoxesDOM(unittest.TestCase):
         expect(bar).to_be_hidden()
         expect(drawer).to_be_visible()
         expect(page.locator('#box-arrange-covers .kin-box-cover')).to_have_count(0)
+        # A drawer tab asked for by its shortcut while arranging (the drawer open and stepped aside): arranging ends and
+        # the drawer shows that tab.
+        bar = self.arrange(page)
+        expect(drawer).to_be_hidden()
+        page.keyboard.press('Control+Alt+T')
+        expect(bar).to_be_hidden()
+        expect(drawer).to_be_visible()
+        expect(page.locator('#study-panel-host [role=tab][aria-selected=true]')).to_contain_text('Templates')
 
     def arrange_any_language(self, page):
         page.locator('#m-config').click()

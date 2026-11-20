@@ -11899,7 +11899,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     let workspaceState = KinWorkspaceLayout.defaults();
     let workspaceEnded = false, studyPanel = null, studyPanelRestoring = false, workspaceWasNarrow = false;
     // Arrange Boxes (workspace-panels.js) follows every layout pass; it is defined later in the page.
-    let boxArrangeLayout = null;
+    let boxArrangeLayout = null, boxArrangeEnd = null;
     // A size under a drag is shown but stored only when the drag ends; the edge being resized now.
     let studyPanelPreview = null, studyPanelEdge = null;
     const studyPanelAvailable = () => KinAuth.has('radiologist') ? ['images', 'info', 'templates'] : ['images', 'info'];
@@ -11915,6 +11915,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     function openStudyPanel(tab) {
       if (workspaceEnded || work.state() !== 'active') return false;
       if (tab && !studyPanelAvailable().includes(tab)) return false;
+      // The drawer steps aside while the boxes are arranged: asked for (opened or a tab chosen), it ends arranging first.
+      boxArrangeEnd?.();
       // A new drawer starts from the focus it is opened from.
       if (!studyPanel) studyPanelField = null;
       noteStudyPanelOpener(document.activeElement);
@@ -14580,6 +14582,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       renderArrangeBar(); renderBoxCovers();
     };
     boxArrangeLayout();
+    boxArrangeEnd = () => endArrange(false);
     function stopWorkspaceLayout() {
       if (panelDialog.open) panelDialog.close();
       endArrange(false); document.removeEventListener('scroll', scheduleCovers, true);
