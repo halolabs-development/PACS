@@ -176,6 +176,7 @@ class ClinicianPolicyLive(unittest.TestCase):
         # The existing addClassCleanup runs even after an assertion/setup failure. /prefs can seed templates before
         # this member is revoked; register its proven-empty owner before any subsequent fixture step can fail.
         self.stack.template_owners.add(template_owner)
+        self.stack.register_settings_account(user_id)
         reset = self.stack.kc_admin("PUT", f"/users/{quote(user_id)}/reset-password", {
             "type": "password", "value": password, "temporary": False,
         })

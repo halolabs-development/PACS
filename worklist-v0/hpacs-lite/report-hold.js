@@ -39,8 +39,8 @@
         const r = await api("POST", `/studies/${encodeURIComponent(uid)}/hold`, undefined, undefined, at);
         if (!work.admits(at)) return;
         const s = studies.find(x => x.uid === uid);
-        if (s) s.holder = r.holder;
-        appState[uid] = { ...appState[uid], holder: r.holder };
+        if (s) { s.holder = r.holder; s.holderMine = r.mine === true; }
+        appState[uid] = { ...appState[uid], holder: r.holder, holderMine: r.mine === true };
         render();
         if (uid === selectedUid) { updateReportButtons(); loadReport(); }
 
@@ -70,9 +70,9 @@
         if (uid !== selectedUid) {
           try { await api("POST", `/studies/${encodeURIComponent(uid)}/release`, undefined, undefined, at); } catch (e) {}
           work.commit(at, () => {
-            if (appState[uid]) appState[uid].holder = null;
+            if (appState[uid]) Object.assign(appState[uid], { holder: null, holderMine: false });
             const s2 = studies.find(x => x.uid === uid);
-            if (s2) s2.holder = null;
+            if (s2) Object.assign(s2, { holder: null, holderMine: false });
             render();
           });
           return;
@@ -104,8 +104,8 @@
       clearInterval(heartbeat); heartbeat = null;
       const holder = r.holder ?? null;
       const s = studies.find(x => x.uid === uid);
-      if (s) s.holder = holder;
-      appState[uid] = { ...appState[uid], holder };
+      if (s) { s.holder = holder; s.holderMine = false; }
+      appState[uid] = { ...appState[uid], holder, holderMine: false };
       render();
       if (uid === selectedUid) updateReportButtons();
       toast("이 검사의 판독 점유가 풀렸습니다 — 이어 쓰면 다시 판독을 시작합니다.", "err");
@@ -117,8 +117,8 @@
       heldUid = null;
       clearInterval(heartbeat); heartbeat = null;
       const s = studies.find(x => x.uid === uid);
-      if (s) s.holder = undefined;
-      if (appState[uid]) appState[uid].holder = undefined;
+      if (s) Object.assign(s, { holder: undefined, holderMine: false });
+      if (appState[uid]) Object.assign(appState[uid], { holder: undefined, holderMine: false });
       // 세션을 끝내는 중의 해제(auth.js가 종료 기록·통지 뒤, 로그아웃 POST 앞에 부른다)는 업무가 아니라 그 종료의 일부다:
       // 닫힌 문서의 수명주기 문맥으로, 끝나는 그 세션의 식별값을 실어 나간다. 그 밖에는 평소의 업무 요청이다.
       const at = work.capture(closing ? "lifecycle" : "document");

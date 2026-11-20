@@ -183,6 +183,19 @@ test('TEST-F-02 patient_replay: patient, study, record and version filters exclu
   }
 });
 
+test('draft audit export filters the whole record id when two accounts used the same login', async () => {
+  const uid = '1.2.3', author = 'old#sub-X@example.test';
+  const ids = [author, `${author}#sub-X`, 'account/sub-X', 'account/sub-Y'].map(key => JSON.stringify([uid, key]));
+  const events = ids.map(id => accessEvent({ surface: 'GET studies/:uid/draft',
+    targets: [target(P1, uid, id, '1', 'private-draft')] }));
+  const ledger = ledgerOf(ledgerRows(events)), auditor = authorityFor('draft-export');
+  for (const id of ids) {
+    const page = await F.readInvestigationPage(F.planInvestigation(auditor, query({ recordId: id }), 'export'), ledger);
+    assert.deepEqual(page.rows.map(row => row.targets[0].recordId.value), [id]);
+  }
+});
+
+
 // Fixed versions (C's listing in round 2)
 function signedVersion(recordId, versionId, at, previous, o = {}) {
   const patient = o.patient ?? P1, studyId = o.study ?? 'study-1', inst = o.inst ?? INST_X;

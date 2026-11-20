@@ -1694,6 +1694,9 @@ jobs:
     - name: Film / DICOM Print layout, jobs, output record and restart against a synthetic Orthanc
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/film-print-service --cwd . --tree api/src --file api/prisma/schema.prisma --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/film_print_service_test.cjs -- node --test tests/film_print_service_test.cjs
+    - name: Modality Worklist answer (calling device's institution, listed orders, keys, dates and times, failures, audit) and its helper process
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/modality-worklist-service --cwd . --tree api/src --tree api/mwl --file api/prisma/schema.prisma --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/modality_worklist_service_test.cjs -- node --test tests/modality_worklist_service_test.cjs
     - name: Auto Save View saved view per reader and study, read-back checks and Discard against an in-memory database
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/viewer-saved-view-service --cwd . --tree api/src --file api/prisma/schema.prisma --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/viewer_auto_view_service_test.cjs -- node --test tests/viewer_auto_view_service_test.cjs
@@ -1810,6 +1813,9 @@ jobs:
     - name: Film / DICOM Print helper (Print SCU order and attributes, Printed / No answer / warnings, device C-STORE) against synthetic printers
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/film-print-helper --cwd . --tree api/print --file tests/film_print_scp.py --file tests/film_print_helper_test.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/film_print_helper_test.py
+    - name: Modality Worklist helper (association and contexts, answers carried as pending identifiers, failures, late answer, cancel, two devices) and what a modality receives from the API's own rule behind it, against a DICOM client
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/modality-worklist-helper --cwd . --tree api/mwl --tree api/src --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/modality_worklist_bridge.cjs --file tests/modality_worklist_helper_test.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/modality_worklist_helper_test.py
     - name: Technician Order List (Scheduled and Report tabs, Search Orders, Delete Order, Match… / Unmatch… windows) on the delivered split page
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/technician-orders-page --cwd . --tree worklist-v0/hpacs-lite --tree tests --file scripts/main-split-order.json --file scripts/build-main-split-bundle.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/technician_orders_dom_test.py

@@ -776,6 +776,62 @@ h1#kc-page-title {
   }
 }
 
+/* A short window: a laptop's Chrome window with its tabs, address and bookmarks rows (inside 1366x640, 1280x650). The page
+   was 728px high, so the notice links and the line under them lay below the window's edge. Here the space between the
+   rows is smaller and the HALO mark stands beside the title instead of above it, so the sign-in column, the notice links
+   and the line under them fit the window - also with the one-line error Keycloak draws above the form (a wrong password,
+   a locked account). Nothing is hidden and the order is the same. */
+@media (min-width: 901px) and (max-height: 800px) {
+  .login-pf-page {
+    padding-top: calc(var(--kin-bar-height) + 16px);
+  }
+
+  .login-pf-page .card-pf {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  .login-pf-page .login-pf-header {
+    display: flex;
+    align-items: center;
+    min-height: 48px;
+    margin-bottom: 18px;
+    padding-top: 0;
+    padding-left: 62px;
+    background-position: left center;
+  }
+
+  .login-pf-page .card-pf .pf-c-form-control,
+  #kc-form-login .pf-c-input-group {
+    margin-bottom: 14px;
+  }
+
+  #kc-form-login #password {
+    margin-bottom: 0;
+  }
+
+  #kc-form-login .login-pf-settings {
+    margin-top: 10px;
+  }
+
+  #kc-info {
+    margin-top: 14px;
+  }
+
+  #kc-info-wrapper {
+    padding-top: 12px;
+  }
+
+  .pf-c-alert,
+  .alert {
+    margin-bottom: 12px;
+  }
+
+  .login-pf-page::after {
+    margin-top: 12px;
+  }
+}
+
 /* One column: the sign-in column and the notices stack and fit the window (nothing is wider than the screen). */
 @media (max-width: 900px) {
   :root {

@@ -1,0 +1,13 @@
+# Modality Worklist: CI and development only - a hospital turns it on by its own deployment decision
+# (docs/ops/modality-worklist.md), never by this file.
+#   docker compose -f docker-compose.yml -f docker-compose.mwl.yml up -d api
+# The API starts its DICOM worklist helper (AE KINMWL) on port 4243 in the container and the port is published on loopback
+# only, for the live test (tests/e2e/test_modality_worklist.py) to query as a synthetic modality would. The main and
+# production compose files are unchanged: without KIN_MWL_PORT there is no worklist port and no helper process.
+services:
+  api:
+    environment:
+      KIN_MWL_PORT: "4243"
+      KIN_MWL_AET: "KINMWL"
+    ports:
+      - "127.0.0.1:${KIN_MWL_HOST_PORT:-4243}:4243"

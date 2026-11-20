@@ -280,7 +280,7 @@ window.fetch = async (url, options = {}) => {
      the structured read. */
   if (path.endsWith("/hold") || path.endsWith("/release")) {
     holdCalls.push(record);
-    return { ok: true, status: 200, json: async () => ({ holder: user, conflict: false }) };
+    return { ok: true, status: 200, json: async () => ({ holder: user, mine: true, conflict: false }) };
   }
   if (path.endsWith("/report/citations")) {
     citeCalls.push(record);

@@ -37,7 +37,7 @@ class BatchSite(rf.FlowSite):
             report = self.store[uid]["report"]
             self.history[uid].insert(0, {"id": len(self.history[uid]) + 1, "uid": uid, "version": report["version"],
                                          "action": body.get("action"), "reason": body.get("reason"),
-                                         "author": account["actor"], "at": "2026-10-03T00:00:00.000Z",
+                                         "mine": True, "author": self.version_author or account["actor"], "at": "2026-10-03T00:00:00.000Z",
                                          **{k: report.get(k, "") for k in rf.FIELDS}})
         return status, answer
 
@@ -47,7 +47,7 @@ class BatchSite(rf.FlowSite):
         st = self.store[uid]
         st["report"] = {"version": st["report"]["version"] + 1, "rs": "T", **texts}
         self.history[uid].insert(0, {"id": 100 + st["report"]["version"], "uid": uid, "version": st["report"]["version"],
-                                     "action": "save", "reason": reason, "author": author,
+                                     "action": "save", "reason": reason, "mine": False, "author": author,
                                      "at": "2026-10-03T00:00:00.000Z", **texts})
 
     def api(self, route, request, method, path, query):
@@ -290,6 +290,7 @@ class BatchReadingPage(unittest.TestCase):
     def test_a_lost_answer_found_in_the_version_list_is_saved(self):
         self.open()
         self.open_batch(UIDS[0])
+        self.site.version_author = "renamed@example.test"
         self.site.commit_answers = ["lost"]   # stored, then the connection drops
         self.save()
         self.done()
@@ -305,8 +306,8 @@ class BatchReadingPage(unittest.TestCase):
     def test_someone_elses_same_text_save_is_not_counted_and_a_late_success_is_not_called_unsaved(self):
         self.open()
         self.open_batch(UIDS[0], UIDS[1])
-        # A: another reader saved the very same template text (another reason); my request's answer is lost.
-        self.site.saved_by_other(UIDS[0], dict(TEXTS), reason="SYN other batch")
+        # A: another reader saved the very same template text with the same reason and inherited login; my request's answer is lost.
+        self.site.saved_by_other(UIDS[0], dict(TEXTS), author=h.RAD["actor"], reason=REASON)
         # B: my request's answer is lost and it has not landed yet.
         self.site.commit_answers = [(502, {"code": "SYN_GATEWAY"}), "hold"]
         self.save()

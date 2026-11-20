@@ -147,7 +147,7 @@ window.KinReadingWorkspace = function (app) {
   let active = false, ended = false, frame = null, shown = null, pending = null, epoch = 0, timer = null, deadline = 0, loaded = false, failed = false, lastSelection;
   let viewingSet = null; // W9: the fresh resolve metadata of the members this workspace was asked to show (openViewingSet)
   const panelModel = KinReadingPanelLayout;
-  let panelValues = panelModel.defaults(), panelDrag = null, panelStyleSignature = '';
+  let panelValues = panelModel.defaults(), panelDrag = null, panelStyleSignature = '', shownFieldFloor = null;
   const split = $('.split'), reportColumn = $('.right'), relatedRegion = $('.related-p');
   const relatedList = $('.related-list-pane'), priorReport = $('.prior-report-pane');
   const relatedListHome = { parent: relatedList.parentNode, next: relatedList.nextSibling };
@@ -174,13 +174,75 @@ window.KinReadingWorkspace = function (app) {
     const row = grid?.querySelector('tbody tr')?.getBoundingClientRect().height || 0;
     return { head: Math.ceil(head), floor: Math.max(40, Math.ceil(head + row)) };
   }
+  /**
+   * The report column's height, divided in this one place (B21: a laptop's Chrome window, inside 1366x640 or 1280x650,
+   * left Findings one 32px line under the button row). Beside the image the column keeps, from the window down:
+   *   its fixed rows - the target line at its one-line floor, the notice band, the editor's head and the button row (the
+   *   sizes the window's width and the reader's text give them; no server answer changes them: main.html "An answer never
+   *   resizes") - and the field region at `want`: the Findings label and five lines of the reader's text.
+   * Two places apply it: the related panel above gives way down to its own floor (resolve: reportMin), and the field region
+   * keeps what is left up to `want` (--reading-field-floor) so the rows under the button row (image requests, Critical
+   * Results) leave the window before it does - they stay in the column and its scroll reaches them. While the reader has
+   * opened a row before the button row (questions, citations, dictation) the region's floor is its one line as before, so
+   * those rows and the button row keep the order the Reading rules give them (reading-workspace.css, the column's height).
+   */
+  // The line pitch of an element's text as laid out. A `normal` line height is not 1.2 times the size: a Korean line in a
+  // 20px Latin font is 29px. So it is read from two lines of that font (Korean and Latin) laid out once per font.
+  const pitches = new Map();
+  function linePitch(e) {
+    const s = getComputedStyle(e), stated = parseFloat(s.lineHeight);
+    if (stated) return stated;
+    const key = [s.fontStyle, s.fontWeight, s.fontSize, s.fontFamily].join('|');
+    if (!pitches.has(key)) {
+      const probe = document.createElement('div');
+      probe.style.cssText = 'position:absolute;left:-10000px;top:0;visibility:hidden;white-space:pre;margin:0;padding:0;border:0;line-height:normal';
+      Object.assign(probe.style, { fontStyle: s.fontStyle, fontWeight: s.fontWeight, fontSize: s.fontSize, fontFamily: s.fontFamily });
+      // A Hangul syllable and Latin letters on each line, built from code points: a sample of glyphs, not a screen word.
+      const sample = String.fromCharCode(0xAC00) + 'Ag'; probe.textContent = sample + '\n' + sample; document.body.append(probe);
+      pitches.set(key, probe.getBoundingClientRect().height / 2); probe.remove();
+    }
+    return pitches.get(key);
+  }
+  function reportColumnGeometry() {
+    const column = $('.report-p'), compose = column?.querySelector('.report-compose'), region = column?.querySelector('.redit');
+    const row = column?.querySelector('.rfoot2'), findings = $('#findings'), label = region?.querySelector('label');
+    if (!column || !compose || !region || !row || !findings || !column.getClientRects().length) return null;
+    const px = value => parseFloat(value) || 0, style = e => getComputedStyle(e), lineOf = linePitch;
+    const target = reportTarget.getClientRects().length ? (s => lineOf(reportTarget) + px(s.paddingTop) + px(s.paddingBottom)
+      + px(s.borderTopWidth) + px(s.borderBottomWidth))(style(reportTarget)) : 0;
+    const band = $('#report-notices')?.getBoundingClientRect().height || 0;
+    const head = compose.getBoundingClientRect().height - region.getBoundingClientRect().height;
+    const fixed = target + band + Math.max(0, head) + row.getBoundingClientRect().height;
+    const r = style(region), f = style(findings), l = label ? style(label) : null;
+    const want = px(r.paddingTop) + px(r.paddingBottom) + (label ? label.getBoundingClientRect().height + px(l.marginTop) + px(l.marginBottom) : 0)
+      + px(r.rowGap) + 5 * lineOf(findings) + px(f.paddingTop) + px(f.paddingBottom) + px(f.borderTopWidth) + px(f.borderBottomWidth);
+    // The column's own frame, and what stands between it and a shown related panel: the separator and that card's margins.
+    const c = style(column), s = style(relatedRegion), separator = panelSeparators.find(item => item.kind === 'relatedHeight')?.el;
+    const frame = px(c.marginTop) + px(c.marginBottom) + px(c.borderTopWidth) + px(c.borderBottomWidth) + px(c.paddingTop) + px(c.paddingBottom);
+    const between = px(s.marginTop) + px(s.marginBottom) + (separator?.getClientRects().length ? separator.getBoundingClientRect().height : 0);
+    // A row the reader opened before the button row (not the target line, the band or the editor).
+    const opened = [...column.children].some(e => e !== reportTarget && e !== compose && e.id !== 'report-notices'
+      && (e.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING) && e.getClientRects().length && e.getBoundingClientRect().height > 0);
+    return { fixed: Math.ceil(fixed), want: Math.ceil(want), frame: Math.ceil(frame), between: Math.ceil(between), opened };
+  }
   function panelGeometry() {
     const grid = relatedList.querySelector('.grid2'), table = relatedTableFloor();
     const listMin = [...relatedList.children].filter(child => child !== grid && child.getClientRects().length)
       .reduce((total, child) => total + child.getBoundingClientRect().height, table.floor);
-    const geometry = panelModel.resolve(panelValues, { width: split.clientWidth || innerWidth, narrow: matchMedia('(max-width: 850px)').matches,
-      height: innerHeight, workHeight: $('.workrow').clientHeight, listMin });
-    return geometry && { ...geometry, table };
+    const narrow = matchMedia('(max-width: 850px)').matches, workHeight = $('.workrow').clientHeight;
+    const report = !narrow && active && !document.body.classList.contains('reading-context-open') ? reportColumnGeometry() : null;
+    const geometry = panelModel.resolve(panelValues, { width: split.clientWidth || innerWidth, narrow,
+      height: innerHeight, workHeight, listMin, reportMin: report ? report.between + report.frame + report.fixed + report.want : undefined });
+    if (!geometry) return geometry;
+    // The field region keeps what the column has left after its fixed rows, up to `want`, and never less than one line.
+    let fieldFloor = 32;
+    if (report && !report.opened) {
+      const related = relatedRegion.getClientRects().length ? geometry.effective.relatedHeight + report.between : 0;
+      const columnHeight = workHeight - related - report.frame;
+      // Whole pixels taken down (the rows' sub-pixel heights are rounded up above), so the button row is never pushed.
+      fieldFloor = Math.max(32, Math.floor(Math.min(report.want, columnHeight - report.fixed - 1)));
+    }
+    return { ...geometry, table, fieldFloor };
   }
   function snapshotPanels() { return panelModel.normalize(panelValues); }
   function applyPanels(value) {
@@ -202,6 +264,8 @@ window.KinReadingWorkspace = function (app) {
   }
   function renderPanels() {
     const geometry = panelGeometry(), values = geometry.effective;
+    // The field region's floor changes with the rows the reader opens, never the image: it is written apart from the sizes below.
+    if (geometry.fieldFloor !== shownFieldFloor) { shownFieldFloor = geometry.fieldFloor; split.style.setProperty('--reading-field-floor', shownFieldFloor + 'px'); }
     const signature = JSON.stringify([active, ended, panelValues.relatedHidden, values, geometry.table]);
     document.body.classList.toggle('reading-related-hidden', active && panelValues.relatedHidden);
     relatedRegion.inert = active && panelValues.relatedHidden;
@@ -290,11 +354,25 @@ window.KinReadingWorkspace = function (app) {
   separator('report', 'reading-resize-report', 'Image and Report Size', 'reading-viewer reading-report-column', host);
   separator('relatedHeight', 'reading-resize-related', 'Related Panel Height', relatedRegion.id, relatedRegion);
   separator('relatedListHeight', 'reading-resize-prior', 'Related List and Report Size', relatedList.id + ' ' + priorReport.id, relatedList);
-  let panelObserver = new ResizeObserver(guarded(() => { if (active && !ended) renderPanels(); }));
-  panelObserver.observe(split); panelObserver.observe($('.workrow')); panelObserver.observe(relatedList);
-  [...relatedList.children].filter(child => !child.classList.contains('grid2')).forEach(child => panelObserver.observe(child));
-  // The table's header and rows decide its floor (relatedTableFloor): a new row height or header font re-sizes the list.
-  const relatedTable = relatedList.querySelector('.grid2 table'); if (relatedTable) panelObserver.observe(relatedTable);
+  // Everything the panels' sizes and the report column's division depend on (panelGeometry), in one list: set up here and
+  // again when a session becomes active, so no path keeps an observer that misses some of it. The split, the work row and
+  // the Related list's rows; the table's header and rows (relatedTableFloor: a new row height or header font re-sizes the
+  // list); the report column's rows (reportColumnGeometry: a row the reader opens or folds, the editor's head taking
+  // another line when its state words change, the button row's lines); and the root element's style, where Reading
+  // Appearance writes the reader's text sizes and fonts (the field region's five lines follow them).
+  let panelObserver = null, panelStyleObserver = null;
+  const relatedTable = relatedList.querySelector('.grid2 table');
+  function watchPanels() {
+    panelObserver?.disconnect(); panelStyleObserver?.disconnect();
+    const changed = guarded(() => { if (active && !ended) renderPanels(); });
+    panelObserver = new ResizeObserver(changed);
+    [split, $('.workrow'), relatedList, ...[...relatedList.children].filter(child => !child.classList.contains('grid2')), relatedTable,
+      ...($('.report-p')?.children || []), $('.report-editor-head')].filter(Boolean).forEach(e => panelObserver.observe(e));
+    panelStyleObserver = new MutationObserver(changed);
+    panelStyleObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
+  }
+  function unwatchPanels() { panelObserver?.disconnect(); panelStyleObserver?.disconnect(); }
+  watchPanels();
   let panelWindowResize = guarded(() => { if (panelDrag) cancelPanelDrag(); if (active && !ended) renderPanels(); });
   window.addEventListener('resize', panelWindowResize);
   const boundDocuments = new WeakSet();
@@ -832,16 +910,13 @@ window.KinReadingWorkspace = function (app) {
   }
   // Session invalidation must hide the embedded document even if its own request
   // has not yet noticed the expired account. Never reconnect it from a late load.
-  function end() { ended = true; cancelPanelDrag(); panelObserver.disconnect(); window.removeEventListener('resize', panelWindowResize); shortcuts.end(); epoch++; returnChannel?.close();returnChannel=null;clearInterval(timer); timer = null; queueObserver.disconnect(); document.removeEventListener('keydown', parentKeyboard, true); frame?.remove(); frame = null; shown = pending = null; loaded = false; active = false; layout(); identify(); }
+  function end() { ended = true; cancelPanelDrag(); unwatchPanels(); window.removeEventListener('resize', panelWindowResize); shortcuts.end(); epoch++; returnChannel?.close();returnChannel=null;clearInterval(timer); timer = null; queueObserver.disconnect(); document.removeEventListener('keydown', parentKeyboard, true); frame?.remove(); frame = null; shown = pending = null; loaded = false; active = false; layout(); identify(); }
   work.onInvalidate(event=>{
     if(event.reason==='lifecycle'&&!['active','preparing'].includes(event.state)){end();return;}
-    if(event.reason==='prepare'){cancelPanelDrag();clearInterval(timer);panelObserver.disconnect();queueObserver.disconnect();}
+    if(event.reason==='prepare'){cancelPanelDrag();clearInterval(timer);unwatchPanels();queueObserver.disconnect();}
     if(event.reason==='cancel'||event.reason==='lifecycle'&&event.state==='active'){
-      panelObserver.disconnect();queueObserver.disconnect();
-      panelObserver=new ResizeObserver(guarded(()=>{if(active&&!ended)renderPanels();}));
-      panelObserver.observe(split);panelObserver.observe($('.workrow'));panelObserver.observe(relatedList);
-      [...relatedList.children].filter(child=>!child.classList.contains('grid2')).forEach(child=>panelObserver.observe(child));
-      if(relatedTable)panelObserver.observe(relatedTable);
+      queueObserver.disconnect();
+      watchPanels();
       queueObserver=new MutationObserver(guarded(navigation));queueObserver.observe($('#rows'),{childList:true});
       window.removeEventListener('resize',panelWindowResize);panelWindowResize=guarded(()=>{if(panelDrag)cancelPanelDrag();if(active&&!ended)renderPanels();});window.addEventListener('resize',panelWindowResize);
       renewFrame();renewReturn();
