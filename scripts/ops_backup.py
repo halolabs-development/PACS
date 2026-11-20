@@ -538,7 +538,13 @@ def backup_admission(output, *, checkout=None, config_path=None):
     if _within(parent, root):
         raise RuntimeError("Backups containing secrets must be outside the Git repository")
     key = usable_backup_key(parent, checkout=root, config_path=config_path)
-    return parent, key, backup_parent_owner(parent)
+    owner = backup_parent_owner(parent)
+    # This account can write there: into the destination, or - where it does not exist yet - into the nearest
+    # existing folder above it, where the backup will make it.
+    place = next(folder for folder in (parent, *parent.parents) if folder.exists())
+    if owner is None and not (place.is_dir() and os.access(place, os.W_OK | os.X_OK)):
+        raise RuntimeError("The backup destination cannot be written or made by this account")
+    return parent, key, owner
 
 
 class SealedComponent:
@@ -1212,11 +1218,17 @@ def _stored_backup(directory, manifest=None, *, config_path=None, identity=None,
         components = backup_components(manifest)
         if AUDIT_CHECKPOINT in sums:
             components = (*components, AUDIT_CHECKPOINT)
-    # The manifest's own list is the kind's table, for every kind: a component the manifest records but the table no
-    # longer asks for (a held capture's shortened configuration list) is a changed set, not a smaller one.
-    if set(sums) != set(components) or (record is not None and set(sizes) != set(components)):
+    # The manifest's own lists are the kind's table, for every kind: a component the manifest records anywhere (its
+    # digests or its sizes) but the table no longer asks for - a held capture's shortened configuration list - is a
+    # changed set, not a smaller one. Only the oldest daily sets record no size for a component.
+    exact_sizes = record is not None or manifest.get("kind") == HELD_KIND
+    if (set(sums) != set(components) or not set(sizes) <= set(components)
+            or (exact_sizes and set(sizes) != set(components))):
         raise StoredSetError("Backup component inventory differs")
-    if "emr" in manifest and (manifest["emr"] if type(manifest["emr"]) is dict else {}).get("same_pause") is not True:
+    # One pause is attested by every set whose table holds the EMR state - by the table (a post-EMR held capture, a
+    # daily set with EMR storage), not by whether the manifest still carries the entry.
+    emr = manifest.get("emr")
+    if (EMR_FILES[1] in components or "emr" in manifest) and (type(emr) is not dict or emr.get("same_pause") is not True):
         raise StoredSetError("EMR database/failure-spool capture was not paused together")
     for name in () if bytes_verified else components:
         path = directory / name

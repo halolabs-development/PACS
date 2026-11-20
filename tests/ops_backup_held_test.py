@@ -414,12 +414,33 @@ class HeldCaptureTests(unittest.TestCase):
                 with self.assertRaisesRegex(ops.StoredSetError, "Backup component inventory differs"):
                     opening(directory)
         self.assertEqual((host.commands, list(directory.glob("rehearsal-*.json"))), ([], []))
+        # The same when its name is left in the sizes only.
+        partly = json.loads(written)
+        partly["config"] = []
+        partly["sha256"].pop("docker-compose.monitor.yml")
+        (directory / "manifest.json").write_text(json.dumps(partly))
+        with host.bound(), patch.object(ops, "remove_owned_if_present"):
+            with self.assertRaisesRegex(ops.StoredSetError, "Backup component inventory differs"):
+                ops.rehearse(directory)
+        self.assertEqual((host.commands, list(directory.glob("rehearsal-*.json"))), ([], []))
         (directory / "manifest.json").write_bytes(written)
         (directory / "docker-compose.monitor.yml").write_bytes(configuration)
         with host.bound(), patch.object(ops, "remove_owned_if_present"):
             ops.rehearse(directory)
         (record,) = directory.glob("rehearsal-*.json")
         self.assertTrue(json.loads(record.read_text())["success"])
+        # A post-EMR capture attests one pause by its shape: without the entry that says so it starts no restore.
+        host = FakeHost(tempfile.mkdtemp(dir=self.folder), shape="post")
+        directory = host.capture(label="emr-b1")
+        manifest = json.loads((directory / "manifest.json").read_text())
+        for changed in ({name: value for name, value in manifest.items() if name != "emr"},
+                        {**manifest, "emr": {**manifest["emr"], "same_pause": False}}):
+            (directory / "manifest.json").write_text(json.dumps(changed))
+            host.commands.clear()
+            with host.bound(), patch.object(ops, "remove_owned_if_present"):
+                with self.assertRaisesRegex(ops.StoredSetError, "was not paused together"):
+                    ops.rehearse(directory)
+            self.assertEqual((host.commands, list(directory.glob("rehearsal-*.json"))), ([], []))
 
     def test_13_a_restore_whose_row_values_differ_is_refused_with_equal_counts(self):
         """IRT2-24: the held restore check compares every table's value digest of both databases (any schema) with the

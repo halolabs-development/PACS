@@ -1420,6 +1420,13 @@ class BackupEncryptionTests(unittest.TestCase):
             destinations["readable by others"] = Path(self.temp) / "shared-backups"
             destinations["readable by others"].mkdir()
             destinations["readable by others"].chmod(0o755)
+            if os.geteuid() != 0:
+                # A destination that does not exist yet, under a folder this account cannot create in.
+                closed = Path(self.temp) / "closed"
+                closed.mkdir()
+                closed.chmod(0o555)
+                self.addCleanup(closed.chmod, 0o700)
+                destinations["cannot be made"] = closed / "backups"
         for label, destination in destinations.items():
             with self.subTest(destination=label):
                 refused_without_a_command(destination)
