@@ -974,8 +974,15 @@ class ViewerUXPriorsE2E(ViewerLayoutE2E):
             if (Date.now() > until) return { waited: [...waited], result: 'not ready' };
             await new Promise(r => setTimeout(r, 50));
           }
-          const result = await Promise.race([kinViewerOpenPatient(u), new Promise(r => setTimeout(() => r('no answer'), 30000))]);
-          return { waited: [...waited], result, status: document.querySelector('.kin-patient-tabs [role=status]')?.textContent || '' };
+          // For a refused move: the line before it, any other open asked while it ran, and what blocked during it.
+          const status = () => document.querySelector('.kin-patient-tabs [role=status]')?.textContent || '';
+          const before = status(), open = window.kinViewerOpenPatient, others = [], during = new Set();
+          const wrap = (...args) => { others.push(String(args[0])); return open(...args); }; window.kinViewerOpenPatient = wrap;
+          const sample = setInterval(() => blockers().forEach(b => during.add(b)), 10);
+          let result;
+          try { result = await Promise.race([open(u), new Promise(r => setTimeout(() => r('no answer'), 30000))]); }
+          finally { clearInterval(sample); if (window.kinViewerOpenPatient === wrap) window.kinViewerOpenPatient = open; }
+          return { waited: [...waited], result, before, status: status(), others, during: [...during] };
         }''', target)
         print('PRIORS_14 MOVE', json.dumps(moved, ensure_ascii=False), flush=True)
         self.assertIs(moved['result'], True, moved)
