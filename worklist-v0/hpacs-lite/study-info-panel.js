@@ -91,6 +91,9 @@
       const MAX_SERIES = 40, SERIES_LIMIT = 501, RDSR = "1.2.840.10008.5.1.4.1.1.88.67", MAX_VALUES = 4, MAX_EVENTS = 20,
         MAX_DEPTH = 32, MAX_PLACES = 4, MAX_RUNS = 8, MAX_TITLE_PLACES = 60;
       const SERIES_FIELDS = "0020000D,0020000E,00200011,0008103E,00080060,00201209";
+      // Enhanced X-Ray Radiation Dose SR: a dose report in another form, which this reader does not read. It is said as a
+      // dose report that could not be read, so the exam is never said to have none.
+      const OTHER_RDSR = "1.2.840.10008.5.1.4.1.1.88.76";
       const BAD = Symbol("unreadable");
       const isItem = v => !!v && typeof v === "object" && !Array.isArray(v);
       const first = (ds, tag) => ds?.[tag]?.Value?.[0];
@@ -278,8 +281,9 @@
             if (!live()) return { state: "stale" };
             if (!objects.length) throw new Error("empty");
             const judged = judgeSeries(objects, { study: s.sourceUid, series: s.seriesUid });
-            const found = objects.filter(ds => text(ds, "00080016") === RDSR).map(ds => (
-              { sourceUid: s.sourceUid, seriesUid: s.seriesUid, number: s.number, sop: text(ds, "00080018"), ...doseReport(ds) }));
+            const found = objects.filter(ds => [RDSR, OTHER_RDSR].includes(text(ds, "00080016"))).map(ds => (
+              { sourceUid: s.sourceUid, seriesUid: s.seriesUid, number: s.number, sop: text(ds, "00080018"),
+                ...(text(ds, "00080016") === RDSR ? doseReport(ds) : { totals: [], events: [], cut: true }) }));
             // Whole: as many objects as the archive's series list says, each describing as many frames as it counts.
             series.push({ ...s, state: "read", objects: objects.length, whole: s.known === objects.length && !judged.cut, ...judged });
             reports.push(...found);

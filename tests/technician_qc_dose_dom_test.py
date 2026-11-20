@@ -946,13 +946,24 @@ class AcquisitionSourceDOM(AcquisitionBase):
             # A content item that cannot be read may be the one looked for.
             dose_report(a, s9, s9 + '.2', None, container('121070')),
             # Searched to its end, and nothing of dose in it.
-            dose_report(a, s9, s9 + '.3', container('121070'))]))
+            dose_report(a, s9, s9 + '.3', container('121070')),
+            # A dose report in the enhanced form, which this reader does not read: said as not read, never as no report.
+            instance(a, s9, s9 + '.4', sop_class='1.2.840.10008.5.1.4.1.1.88.76',
+                     extra={'0040A730': tag('SQ', container('113811', num('113813', '55.5', 'mGy.cm')))})]))
         self.start(site)
         expect(self.box()).to_contain_text(s9 + '.3')
         lines = self.lines()
         self.assertIn('DLP (Dose SR Se 900) %s.1: Could not read' % s9, lines)
         self.assertIn('DLP (Dose SR Se 900) %s.2: Could not read' % s9, lines)
         self.assertIn('DLP (Dose SR Se 900) %s.3: Not in DICOM' % s9, lines)
+        self.assertIn('DLP (Dose SR Se 900) %s.4: Could not read' % s9, lines)
+        self.assertNotIn('55.5', ' '.join(lines))
+        # An exam whose only dose report is of that form is not said to have none.
+        archive(site, a, (s9, '900', 'SR', 'SYN DOSE REPORT', [instance(a, s9, s9 + '.4', sop_class='1.2.840.10008.5.1.4.1.1.88.76')]))
+        self.page.locator('#m-refresh').click()
+        expect(self.box().locator('.acq-line[data-kind="dlp"]')).to_have_count(1)
+        self.assertIn('DLP (Dose SR Se 900) %s.4: Could not read' % s9, self.lines())
+        self.assertNotIn('DLP (Dose SR): Not in DICOM', self.lines())
         self.assertEqual([], self.errors)
 
     def test_a_split_part_whose_named_series_is_not_listed_is_not_read_whole(self):
