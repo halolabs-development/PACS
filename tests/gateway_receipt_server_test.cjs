@@ -27,7 +27,8 @@ test('S4-U3 compiled parse matches every shared vector and names only the refuse
 test('S4-U3 compiled decide matches every shared vector',()=>{
   for(const c of V.decide){
     const stored='stored' in c&&c.stored===null?null:{...V.stored,...(c.storedSet||{})};
-    const got=R.decideGatewayReceipt(stored,{...V.valid,...c.next});
+    // The route decides on the parsed body, where an absent series count is the unknown one (null).
+    const got=R.decideGatewayReceipt(stored,R.parseGatewayReceipt({...V.valid,...c.next}));
     assert.deepEqual(got,c.kind==='advance'?{kind:'advance',transition:c.transition}:{kind:c.kind},c.id);
   }
 });
@@ -44,7 +45,8 @@ test('S4-U3 projection is the S4-U1b receipt shape; BIGINT and Date convert; non
 
 const GATEWAY={institution:'hallym',sub:'gw-sub',actor:'service-account-gw-hallym',roles:['gateway'],kind:'gateway'};
 const MEMBER={institution:'hallym',sub:'member-sub',actor:'synthetic-admin',roles:['technician','admin'],kind:'member'};
-const big=data=>({...data,seq:BigInt(data.seq),attempt:BigInt(data.attempt),successCount:BigInt(data.successCount),localCount:BigInt(data.localCount)});
+const big=data=>({...data,seq:BigInt(data.seq),attempt:BigInt(data.attempt),successCount:BigInt(data.successCount),localCount:BigInt(data.localCount),
+  ...(data.successSeries===undefined||data.successSeries===null?{}:{successSeries:BigInt(data.successSeries)})});
 // S9-U0b: the institution cache belongs to the institutions concern. It is filled as the API process fills it, by the
 // service's own start (onModuleInit), over a start-time view of this store: the institution list given here, and the
 // start's seed writes absorbed. The cases begin after the start and keep every refusal of their own store.
@@ -70,7 +72,7 @@ function store({busy=false}={}){
     auditLog:{create:async({data})=>{audits.push({...data,at:new Date()});return data;},
       findFirst:async({where})=>audits.find(a=>a.action===where.action&&a.target===where.target&&a.at>=where.at.gte)??null},
   };
-  return {svc:new PacsService(prisma,{},{},new StudyAccessService(prisma,{},{})),receipts,audits,log,writes:()=>writes};
+  return {svc:new PacsService(prisma,{},{},new StudyAccessService(prisma,{},{})),prisma,receipts,audits,log,writes:()=>writes};
 }
 
 test('S4-U3 route: gateway credentials only and a closed body, both before any store access',async()=>{
@@ -141,6 +143,29 @@ test('S4-U3 route: another epoch is refused, never stored, audited once per wind
   assert.equal(s.receipts.get('2.25.1').seq,6n);
 });
 
+test('S4-U3 route: the series count is stored with its key, unknown is never 0, and no receipt moves the study state',async()=>{
+  const s=store(),studyWrites=[];
+  // Only the ownership read may touch StudyState: the first Gateway announce time (Referred) lives there and a receipt,
+  // whatever it says and however often it comes, writes nothing of it.
+  s.prisma.studyState=new Proxy(s.prisma.studyState,{get:(target,name)=>name==='findUnique'?target[name]:(studyWrites.push(name),target[name])});
+  assert.deepEqual(await s.svc.gatewayReceipt(body('2.25.1',5,{successSeries:2}),GATEWAY),{studyUid:'2.25.1',result:'stored'});
+  assert.equal(s.receipts.get('2.25.1').successSeries,2n);
+  assert.equal(R.projectGatewayReceipt(s.receipts.get('2.25.1')).successSeries,2);
+  assert.deepEqual(await s.svc.gatewayReceipt(body('2.25.1',5,{successSeries:2}),GATEWAY),{studyUid:'2.25.1',result:'duplicate'});
+  for(const successSeries of [3,null,undefined])
+    await assert.rejects(s.svc.gatewayReceipt(body('2.25.1',5,successSeries===undefined?{}:{successSeries}),GATEWAY),
+      e=>e.getStatus()===409&&e.getResponse().code==='GATEWAY_RECEIPT_CONFLICT',String(successSeries));
+  await assert.rejects(s.svc.gatewayReceipt(body('2.25.1',6,{successSeries:4}),GATEWAY),
+    e=>e.getStatus()===400&&e.getResponse().field==='successSeries');
+  assert.equal(s.receipts.get('2.25.1').seq,5n,'a refused body writes nothing');
+  // A newer report from a Gateway that does not count series replaces the count with unknown, never with 0.
+  assert.deepEqual(await s.svc.gatewayReceipt(body('2.25.1',6,{successCount:4}),GATEWAY),{studyUid:'2.25.1',result:'stored'});
+  assert.equal(s.receipts.get('2.25.1').successSeries,null);
+  assert.equal(R.projectGatewayReceipt(s.receipts.get('2.25.1')).successSeries,null);
+  assert.deepEqual(await s.svc.gatewayReceipt(body('2.25.1',6,{successCount:4,successSeries:null}),GATEWAY),{studyUid:'2.25.1',result:'duplicate'});
+  assert.deepEqual(studyWrites,[]);
+});
+
 test('S4-U3 route: a lock or transaction timeout is 503, which the agent keeps owed',async()=>{
   const s=store({busy:true});
   await assert.rejects(s.svc.gatewayReceipt(body('2.25.1',1),GATEWAY),e=>e.getStatus()===503&&e.getResponse().code==='GATEWAY_RECEIPT_BUSY');
@@ -189,7 +214,7 @@ test('S4-U3 list: only own rows carry the stored receipt; tele, stray and absent
   assert.ok(Date.parse(r.readFrom)<=enumerated[0]&&Date.parse(r.readFrom)<=Date.parse(r.observedAt),JSON.stringify([r.readFrom,enumerated,r.observedAt]));
   const rows=Object.fromEntries(r.studies.map(s=>[s.uid,s]));
   assert.deepEqual(Object.keys(rows).sort(),['2.25.21','2.25.22','2.25.23','2.25.24']);
-  assert.deepEqual(rows['2.25.21'].gatewayReceipt,{phase:'complete',successCount:12,localCount:12,attempt:0,errorCode:null,
+  assert.deepEqual(rows['2.25.21'].gatewayReceipt,{phase:'complete',successCount:12,localCount:12,successSeries:null,attempt:0,errorCode:null,
     serverReceivedAt:'2026-09-24T01:04:00.000Z',agentSeq:9,epoch:V.valid.epoch});
   assert.equal(rows['2.25.21'].count,14,'the observation moved on; the receipt stays what the Gateway reported');
   for(const uid of ['2.25.22','2.25.23','2.25.24'])assert.equal(rows[uid].gatewayReceipt,null,uid);
@@ -249,7 +274,7 @@ test('S4-F01V list: an absent own study carries only its own receipt, read befor
   const svc=new PacsService(prisma,orthanc,{},new StudyAccessService(prisma,orthanc,{}));
   await start(svc,prisma,[{id:'hallym',name:'hallym'},{id:'kin-center',name:'kin-center'}]);
   const caller={institution:'hallym',sub:'synthetic-sub',actor:'synthetic-tech',roles:['technician'],kind:'member'};
-  const projection=(phase,successCount,localCount,errorCode,seq)=>({phase,successCount,localCount,attempt:1,errorCode,
+  const projection=(phase,successCount,localCount,errorCode,seq)=>({phase,successCount,localCount,successSeries:null,attempt:1,errorCode,
     serverReceivedAt:'2026-09-24T01:0'+seq+':00.000Z',agentSeq:seq,epoch:V.valid.epoch});
   const OWN_ABSENT=['2.25.31','2.25.32','2.25.33','2.25.34'];
   const ABSENT=[{uid:'2.25.31',origin:'gateway',createdAt:CREATED,gatewayReceipt:projection('failed',0,1,'instance_exceeds_budget',3)},
@@ -330,7 +355,7 @@ test('S5-U6a admin view: each institution admin sees only its own receipts, ever
   const svc=new PacsService(prisma,orthanc,{},new StudyAccessService(prisma,orthanc,{}));
   await start(svc,prisma,[{id:'hallym',name:'hallym'},{id:'kin-center',name:'kin-center'}]);
   const admin=institution=>({institution,sub:'synthetic-admin-'+institution,actor:'synthetic-admin-'+institution,roles:['admin'],kind:'member'});
-  const projection=(phase,successCount,localCount,seq,epoch)=>({phase,successCount,localCount,attempt:2,errorCode:CODE[phase]??null,
+  const projection=(phase,successCount,localCount,seq,epoch)=>({phase,successCount,localCount,successSeries:null,attempt:2,errorCode:CODE[phase]??null,
     serverReceivedAt:minute(seq),agentSeq:seq,epoch});
   const keys=['institutionId','studyUid'];
 

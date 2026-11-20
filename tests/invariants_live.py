@@ -4160,7 +4160,7 @@ class LiveInvariantTests(unittest.TestCase):
             self.assertEqual(set(item), {"uid", "origin", "createdAt", "gatewayReceipt"})
             self.assertEqual(item["origin"], "gateway")
             shown = item["gatewayReceipt"]
-            self.assertEqual(set(shown), {"phase", "successCount", "localCount", "attempt", "errorCode",
+            self.assertEqual(set(shown), {"phase", "successCount", "localCount", "successSeries", "attempt", "errorCode",
                                           "serverReceivedAt", "agentSeq", "epoch"})
             self.assertEqual((shown["phase"], shown["successCount"], shown["localCount"], shown["attempt"],
                               shown["errorCode"], shown["agentSeq"], shown["epoch"]), (phase, 0, 1, 1, code, seq, epoch))
@@ -4457,6 +4457,22 @@ class LiveInvariantTests(unittest.TestCase):
         self.assertGreaterEqual(advanced["receivedAt"], saved["receivedAt"])
         self.assertEqual(audits(uid), ["gateway.receipt.first", "gateway.receipt.epoch_unrecognised",
                                        "gateway.receipt.transition"])
+        # The series count of the sent images: stored with its key (a real BIGINT), 400 past the images, unknown
+        # (NULL, never 0) from an older Gateway's newer report, and the same key with another count is a conflict.
+        self.assertIsNone(advanced["successSeries"])
+        counted = send(body(uid, 7, phase="complete", successCount=12, successSeries=3))
+        self.assertEqual((counted.status, counted.body.get("result")), (200, "stored"), counted.text)
+        self.assertEqual(json.loads(stored(uid)[0])["successSeries"], 3)
+        changed = send(body(uid, 7, phase="complete", successCount=12, successSeries=2))
+        self.assertEqual((changed.status, changed.body.get("code")), (409, "GATEWAY_RECEIPT_CONFLICT"), changed.text)
+        beyond = send(body(uid, 8, phase="complete", successCount=12, successSeries=13))
+        self.assertEqual((beyond.status, beyond.body.get("field")), (400, "successSeries"), beyond.text)
+        older_gateway = send(body(uid, 8, phase="complete", successCount=12))
+        self.assertEqual((older_gateway.status, older_gateway.body.get("result")), (200, "stored"), older_gateway.text)
+        self.assertIsNone(json.loads(stored(uid)[0])["successSeries"])
+        refused = psql('DO $$ BEGIN UPDATE "GatewayReceipt" SET "successSeries"=0 WHERE "studyUid"=' + lit(uid)
+                       + "; RAISE EXCEPTION 'unchecked'; EXCEPTION WHEN check_violation THEN NULL; END $$; SELECT 'refused'")
+        self.assertEqual(refused, ["refused"], "the table refuses no series for sent images")
 
         # The worklist: null before any receipt (normal); origin is no gate (a dicom study is accepted);
         # only the owner's list carries it; bootstrap carries none.
@@ -4472,8 +4488,9 @@ class LiveInvariantTests(unittest.TestCase):
             report = send(body(existing.uid, 3, successCount=0, localCount=1))
             self.assertEqual((report.status, report.body.get("result")), (200, "stored"), report.text)
             receipt = listed_row("kdoctor")["gatewayReceipt"]
-            self.assertEqual(set(receipt), {"phase", "successCount", "localCount", "attempt", "errorCode",
+            self.assertEqual(set(receipt), {"phase", "successCount", "localCount", "successSeries", "attempt", "errorCode",
                                             "serverReceivedAt", "agentSeq", "epoch"})
+            self.assertIsNone(receipt["successSeries"], "a report without the series count is unknown, never 0")
             self.assertEqual((receipt["phase"], receipt["successCount"], receipt["localCount"], receipt["attempt"],
                               receipt["errorCode"], receipt["agentSeq"], receipt["epoch"]),
                              ("sending", 0, 1, 0, None, 3, epoch_a))
@@ -4667,7 +4684,7 @@ class LiveInvariantTests(unittest.TestCase):
             listed = self.stack.request("GET", "/studies", "kdoctor")
             self.assert_status(listed, 200)
             row = next(item for item in listed.body["studies"] if item["uid"] == existing.uid)
-            self.assertEqual(set(row["gatewayReceipt"]), {"phase", "successCount", "localCount", "attempt", "errorCode",
+            self.assertEqual(set(row["gatewayReceipt"]), {"phase", "successCount", "localCount", "successSeries", "attempt", "errorCode",
                                                           "serverReceivedAt", "agentSeq", "epoch"})
             self.assertEqual(row["gatewayReceipt"]["phase"], "retry")
             boot = self.stack.request("GET", "/bootstrap", "ktech")
@@ -4686,9 +4703,10 @@ class LiveInvariantTests(unittest.TestCase):
         # 5 -> 18: S4-U3 added the receipt suites (error-code mapping, queue epoch/seq/body, delivery).
         # 18 -> 25: S4-U4 added RetryNowTests (T1-T6, seven cases) for Now Retry.
         # 25 -> 26: S4-EG1 added OrthancConnectionTests (local reads never reuse a pooled connection).
+        # 70 -> 76: the receipt's series count (SeriesCountTests and one routing case).
         # The number is the suite as authored; tests/gateway_receipt_source_test.py pins it to an AST
         # count of test_agent.py, so neither can move without the other.
-        self.assertIn("Ran 70 tests", completed.stderr + completed.stdout)
+        self.assertIn("Ran 76 tests", completed.stderr + completed.stdout)
 
     def test_production_gateway_contract_is_declared(self) -> None:
         completed = subprocess.run(

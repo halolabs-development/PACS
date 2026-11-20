@@ -183,6 +183,12 @@ class LeakBoundaryTests(SourceCase):
         # S7-U5: the lock is `ownDraft`, the one read of the caller's row every draft mutation takes.
         assert_behaviour('pacs_split_test.cjs', '^(U0B-STRUCT-NORMAL|U0B-HISTORY)')
 
+    def test_the_whole_split_suite_holds_with_its_nest_registration(self) -> None:
+        # Every case of the split suite, not only the two above: its Nest DI and route contract (U0B-DI*) compares the
+        # running module with the pre-split snapshot plus each feature's declared additions, so a feature that adds a
+        # controller, provider or route without declaring it in pacs_split_spec.json is red here.
+        assert_behaviour('pacs_split_test.cjs')
+
     def test_the_forced_release_retry_is_inside_the_same_mapping(self) -> None:
         # S3-structured-report renamed this wrapper to `reportLimitChecked` because it now maps two
         # CHECK families, not one. A CHECK raised by the release must sit INSIDE the mapping.

@@ -53,6 +53,8 @@
     let held = false, hpRun = 0, discarding = false;
     // restoreRun: turning the check off ends the putting back of the saved view that was going on (restoreAt).
     let restoreRun = 0, restoreAt = -1;
+    // The saved cells still being put back (their image, frame and camera) after the layout stands (settling, below).
+    let cellRestores = 0;
     // The server's Discard generation is pinned at capture, even for queued/closing saves. A rejected old capture is
     // never relabelled with a newer generation; only a subsequent capture may use it.
     const viewerId = crypto.randomUUID();
@@ -87,6 +89,7 @@
     const instance = id => { try { return native.metaData.get('instance', id) || null; } catch (_) { return null; } };
     const setOf = id => { try { return grid.getState().viewports.get(id)?.displaySetInstanceUIDs?.[0] || ''; } catch (_) { return ''; } };
     const switching = () => ['kin-patient-switching', 'kin-viewer-empty'].some(name => document.body.classList.contains(name));
+    const exporting = () => { try { return window.KinViewerExport?.moving?.() === true; } catch (_) { return false; } };
     const live = () => !ended && location.search === search && !session?.ended?.();
     const restoring = () => live() && sameOwner() && on && restoreAt === restoreRun && !landing();
     // A restore the address chose is changing this screen now. No length of time ends it: only that restore letting go.
@@ -298,6 +301,13 @@
     // the address chose is landing (the window closing included): a save captured before it still goes.
     function save(mode = 'queue') {
       if (!on || phase !== 'ready' || held || discarding || landing() || !path || !writer()) return chain;
+      // A series export is moving a cell through its series (viewer-export.js): the image on its way is not the reader's
+      // view. Nothing is captured meanwhile (the window closing included: a save captured before it still goes); the
+      // screen is looked at again after a quiet moment, when the cell is back on the reader's image or the reader took it.
+      if (exporting()) {
+        if (mode === 'queue') { clearTimeout(timer); timer = setTimeout(() => { timer = null; if (!ended && !switching()) save(); }, DEBOUNCE); }
+        return chain;
+      }
       // No starting point yet: this look takes one if the screen can be captured now. Either way nothing is sent
       // (going away included); what the reader changes after it is.
       if (settling) { rebase(); return chain; }
@@ -572,7 +582,8 @@
       targets.forEach((id, i) => {
         const pane = panes.get(id), cell = view.cells[i];
         if (!pane || pane.placed || !cell || !wanted[i]) return;
-        restoreCell(id, pane, cell, previous[i]).then(result => {
+        cellRestores++;
+        restoreCell(id, pane, cell, previous[i]).finally(() => { cellRestores--; }).then(result => {
           if (!result || !restoring() || panes.get(id) !== pane) return;
           results[i] = result;
           const actualView = { ...view, cells: view.cells.map((saved, n) => results[n]?.actual || saved) };
@@ -643,7 +654,10 @@
     // The marks' side of the setting (the History panel saves each mark as it is drawn or changed): on, for a writer, while
     // this viewer is up. It does not wait for the view's own start or a restore landing, which concern the view only, nor
     // for the address (a patient tab changes it before this viewer ends). A later viewer's own answer is not taken away.
-    const marks = { marks: () => on && !ended && writer() };
+    // settling: the saved view is still being read or put back at opening; a layout change by another module then would be
+    // taken for one the reader made first and keep the saved layout from coming back (viewer-display-span.js waits).
+    const marks = { marks: () => on && !ended && writer(),
+      settling: () => !ended && on && (phase === 'starting' || phase === 'restoring' || cellRestores > 0) };
     window.KinViewerAutoSave = marks;
     (async () => {
       await Promise.race([settingsRead, wait(SETTINGS_MS)]);

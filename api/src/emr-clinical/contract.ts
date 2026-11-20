@@ -102,9 +102,10 @@ export const CLINICAL_SURFACES = freeze({
     paths: [{ relation: 'author', role: 'clinician', capacity: C, kind: 'clinical-question' },
       { relation: 'other', role: 'radiologist', capacity: C, kind: 'clinical-answer', text: 'required' },
       { relation: 'other', role: 'admin', capacity: S, kind: 'clinical-question', text: 'required' }], from: THREAD, to: 'Closed' },
-  // consultation.service.ts:97 create, :128 change
+  // consultation.service.ts:97 create, :128 change. The request reason is optional there and on the screen; an empty one
+  // opens the request with no clinical text (nothing to sign).
   'consultation.create': { ...base, record: 'consultation', model: 'StudyConsultation', route: 'POST studies/:uid/consultations', opens: true,
-    client: ['requestId', 'expectedOwner', 'recipientSub', 'reason'], textField: 'reason', text: 'required', revisionField: null, act: 'additional-entry',
+    client: ['requestId', 'expectedOwner', 'recipientSub', 'reason'], textField: 'reason', text: 'optional', revisionField: null, act: 'additional-entry',
     paths: [{ relation: 'any', role: 'radiologist', capacity: C, kind: 'consultation' }, { relation: 'any', role: 'admin', capacity: S, kind: 'consultation' }],
     from: [null], to: 'Requested' },
   'consultation.accept': { ...base, record: 'consultation', model: 'StudyConsultation', route: 'POST consultations/:id', opens: false, client: reply,
@@ -306,7 +307,8 @@ export function versionAct(spec: SurfaceSpec, entry: EntryClass, opening: boolea
 export function accessAction(spec: SurfaceSpec, entry: EntryClass, act: VersionAct, opening: boolean): 'write' | 'additional-entry' | 'modify' | 'cancel' {
   if (spec.cancel) return 'cancel';
   if (entry === 'assignment') return opening ? 'write' : 'modify';
-  if (act === 'entry') return 'write';
+  // Opening a unit is its writing even when it carries no text (a consultation request without a reason).
+  if (act === 'entry' || (opening && entry === 'state-change')) return 'write';
   if (act === 'additional-entry') return 'additional-entry';
   return 'modify';
 }

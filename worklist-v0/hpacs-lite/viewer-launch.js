@@ -244,7 +244,8 @@
         // Retry (openingOptions.reread) is always a new document, whatever made its member Unverified.
         const reread = freshDocument || openingOptions?.reread === true || previous.kind === 'viewer' && failedInViewer(popup, url);
         const deferredPlacement = previous.kind === 'blank';
-        const placementWrite = deferredPlacement ? {pending:true,baseline:null} : null;
+        // choice: the display choice stored as this placement begins (rememberOhifRect, rememberSpan).
+        const placementWrite = deferredPlacement ? {pending:true,baseline:null,choice:storedSpanChoice()} : null;
         if (placementWrite) ohifPlacementWrites.set(popup, placementWrite);
         // 진입에서 멈춘 창은 초점만 주거나 "닫고 다시 여세요"로 돌려보내지 않는다: 아래에서 새 세션 확인과 함께 다시 읽게 한다.
         const stopped = previous.kind === "viewer" && !previous.ready && viewerEntryStopped(popup);
@@ -369,10 +370,37 @@
               placementOwner && placementOwner === KinViewerOpening.key(KinAuth.session()); }
             catch (_) { return false; }
           };
+          // Where this placement meant the window to stand (ohifPlacement), once known, and the two displays chosen for it
+          // (Viewer Displays), if any. The stored choice as it was when this placement began is its gate's (placementWrite).
+          let intended = null, chosen = null;
+          const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
+          // The window stands over two displays: remembered in the one place (rememberSpan), and what was written is
+          // said here, for a window the browser put there at once and for one dragged there alike. All of it written is
+          // said only to a reader who was asked to drag (asked) - a placement that simply worked says nothing, as any
+          // placement; a part, or nothing, written is always said.
+          const remembered = (rect, pair, asked) => {
+            const written = rememberSpan(popup, rect, pair, placementWrite.choice);
+            if (written.rect && written.pair) { if (asked) notify(kinSay('영상 창이 두 화면에 걸쳐 있습니다. 창 위치를 저장했습니다.'), 'info', 8000); }
+            else notify(written.rect || written.pair ? kinSay('영상 창이 두 화면에 걸쳐 있습니다. 창 위치와 화면 선택 가운데 일부만 저장했습니다. 브라우저 저장소를 확인하세요.')
+              : kinSay('영상 창이 두 화면에 걸쳐 있지만 창 위치를 저장하지 못했습니다. 브라우저 저장소를 확인하세요.'), 'info', 8000);
+          };
+          // The wait for a drag is for the window, not for the study it was opened with: the next patient opened in the
+          // same window does not end it (awaitSpan checks the window itself); another account or an ended context does.
+          const stillWaited = () => {
+            try { return work.admits(placementAt) && !!placementOwner && placementOwner === KinViewerOpening.key(KinAuth.session()); }
+            catch (_) { return false; }
+          };
           const stopPlacement = () => {
             if (currentPlacement() && placementWrite.pending) {
               placementWrite.pending = false; placementWrite.baseline = popupRect(popup);
-              if (validPlacement()) notify('자동 창 배치를 확인하지 못해 이전 저장 위치를 유지했습니다. 영상 창을 직접 이동하거나 늘리세요.', 'info', 8000);
+              if (!validPlacement()) return;
+              // A window meant to stand over two displays: the browser opens and moves a window over one display only.
+              // The reader is asked to drag it over them, and once it stands there its place and the two displays are
+              // saved as a placement that worked saves them (remembered). A window that stands there already is not
+              // asked to be dragged.
+              if (!spanTargets(intended).length) { notify('자동 창 배치를 확인하지 못해 이전 저장 위치를 유지했습니다. 영상 창을 직접 이동하거나 늘리세요.', 'info', 8000); return; }
+              const there = awaitSpan(popup, chosen, stillWaited, (rect, pair) => remembered(rect, pair, true));
+              if (!there) notify(kinSay('브라우저가 영상 창을 두 화면에 걸쳐 열지 않았습니다. 영상 창의 가장자리를 끌어 두 화면에 걸쳐 놓으세요. 걸쳐 놓으면 그 자리를 저장합니다.'), 'info', 12000);
             }
           };
           // This timer also bounds a screen-details promise that never settles.
@@ -384,6 +412,7 @@
               if (details) cacheMonitorScreens(details);
               if (readOhifSpanScreens() && (!monitorPermissionGranted() || !ohifSpanTarget())) { clearTimeout(expiry); stopPlacement(); return; }
               const rect = ohifPlacement(stored, details);
+              intended = rect; chosen = ohifSpanPair();
               const place = () => {
                 if (!currentPlacement() || !placementWrite.pending) return;
                 if (Date.now() >= deadline || !validPlacement() || (details && !monitorPermissionGranted()) || (readOhifSpanScreens() && !ohifSpanTarget())) { clearTimeout(expiry);stopPlacement();return; }
@@ -403,7 +432,13 @@
                     if (Date.now() >= deadline || !validPlacement() || (details && !monitorPermissionGranted()) || (readOhifSpanScreens() && !ohifSpanTarget()) || !sameOhifScope(popup.location.href,url)) { clearTimeout(expiry);stopPlacement();return; }
                     const actual = popupRect(popup);
                     if (actual && Object.keys(rect).every(k => Math.abs(actual[k]-rect[k]) <= 16)) {
-                      clearTimeout(expiry);ohifPlacementWrites.delete(popup);rememberOhifRect(popup);
+                      // Placed at once. Over two displays it is judged and remembered as a window dragged there is
+                      // (spanReached, remembered); a window minimized just now is judged once it is shown again.
+                      const stands = spanReached(popup, chosen);
+                      if (!stands && popupHidden(popup) && spanTargets(rect).length) { setTimeout(settled,100); return; }
+                      clearTimeout(expiry);
+                      if (stands) remembered(stands.rect, stands.pair, false);
+                      else { ohifPlacementWrites.delete(popup);rememberOhifRect(popup); }
                     } else setTimeout(settled,100);
                     } catch (_) { clearTimeout(expiry);stopPlacement(); }
                   };
@@ -581,32 +616,60 @@
           if(!target||!monitorPermissionGranted()){displayScreens=fresh;render();status.textContent='화면 구성이나 권한이 바뀌었습니다. 화면을 다시 확인한 뒤 선택하세요.';return;}
           const rect=spanning?target:KinViewerDisplayLayout.fit(popupRect(popup),target);
           if(!rect){status.textContent='창을 복원한 뒤 다시 이동하세요.';return;}
-          const gate={pending:true,baseline:null};ohifPlacementWrites.set(popup,gate);
+          const gate={pending:true,baseline:null,choice:storedSpanChoice()};ohifPlacementWrites.set(popup,gate);
           const moved=await new Promise(resolve=>{
             let finished=false;
-            const finish=ok=>{if(finished)return;finished=true;clearTimeout(timeout);
-              let saved=false;
+            // written: over two displays, what rememberSpan wrote ({ rect, pair }) - the same saving as for a window the
+            // reader drags there after a refused move.
+            const finish=(ok,actual=null)=>{if(finished)return;finished=true;clearTimeout(timeout);
+              let saved=false,written=null;
               if(ohifPlacementWrites.get(popup)===gate){
-                if(ok){
+                if(ok&&spanning){written=rememberSpan(popup,actual,selected);saved=written.rect&&written.pair;}
+                else if(ok){
                   try {
-                    if(spanning)localStorage.setItem(OHIF_SPAN_SCREENS_KEY,JSON.stringify(selected));
-                    else localStorage.removeItem(OHIF_SPAN_SCREENS_KEY);
+                    localStorage.removeItem(OHIF_SPAN_SCREENS_KEY);
                     ohifPlacementWrites.delete(popup);saved=rememberOhifRect(popup);
                   } catch (_) { gate.pending=false;gate.baseline=popupRect(popup); }
                 }else{gate.pending=false;gate.baseline=popupRect(popup);}
               }
-              resolve({moved:ok,saved});
+              resolve({moved:ok,saved,written});
             };
             const timeout=setTimeout(()=>finish(false),2500);
             const check=()=>{if(finished)return;
               if(!valid()||!monitorPermissionGranted()||selected.some(s=>!screensCache.some(current=>KinViewerDisplayLayout.identity(s)===KinViewerDisplayLayout.identity(current)))||ohifPlacementWrites.get(popup)!==gate){finish(false);return;}
               const actual=popupRect(popup);
-              if(actual&&Object.keys(rect).every(k=>Math.abs(actual[k]-rect[k])<=16))finish(true);else setTimeout(check,100);
+              if(!actual||!Object.keys(rect).every(k=>Math.abs(actual[k]-rect[k])<=16)){setTimeout(check,100);return;}
+              if(!spanning){finish(true,actual);return;}
+              // Over two displays: the same judgement as for a window dragged there (spanReached) - not made of a window
+              // minimized meanwhile, which is looked at again.
+              const stands=spanReached(popup,selected);
+              if(stands)finish(true,stands.rect);else setTimeout(check,100);
             };
             try{KinExamScope.raiseWindow(popup);popup.moveTo(rect.left,rect.top);popup.resizeTo(rect.width,rect.height);popup.moveTo(rect.left,rect.top);setTimeout(check,100);}
             catch(_){finish(false);}
           });
-          if(shown())status.textContent=moved.saved?'지정 화면으로 이동하고 창 위치를 저장했습니다.':moved.moved?'창을 이동했지만 위치를 저장하지 못했습니다. 현재 창 상태와 브라우저 저장소를 확인하세요.':'창 이동을 확인하지 못해 이전 저장 위치를 유지했습니다. 창을 직접 이동하거나 다시 시도하세요.';
+          const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
+          const number=s=>fresh.findIndex(d=>KinViewerDisplayLayout.identity(d)===KinViewerDisplayLayout.identity(s))+1;
+          const [first,second]=spanning?selected.map(number):[];
+          const partly=()=>kinSay('영상 창이 Display {0}·{1}에 걸쳐 있습니다. 창 위치와 화면 선택 가운데 일부만 저장했습니다. 브라우저 저장소를 확인하세요.',first,second);
+          if(spanning&&!moved.moved){
+            // The browser keeps a window on one display (it does not move a popup over two). The reader is asked to drag it
+            // over the two chosen displays; once it stands there it is taken as placed: its position and the two displays
+            // are saved as a move that worked saves them (rememberSpan). The position saved before stays until then. A
+            // window that stands over them already - only not at the exact place asked for - is taken at once. The wait
+            // is for the window, not for the study shown in it: the next patient opened in that window does not end it
+            // (awaitSpan checks the window itself).
+            const still=()=>shown()&&!!owner&&owner===KinViewerOpening.key(KinAuth.session());
+            const there=awaitSpan(popup,selected,still,(reached,pair)=>{
+              const written=rememberSpan(popup,reached,pair);
+              if(shown())kinWrite(status,written.rect&&written.pair?kinSay('영상 창이 Display {0}·{1}에 걸쳐 있습니다. 창 위치를 저장했습니다.',first,second)
+                :written.rect||written.pair?partly()
+                :kinSay('영상 창이 Display {0}·{1}에 걸쳐 있지만 창 위치를 저장하지 못했습니다. 브라우저 저장소를 확인하세요.',first,second));
+            });
+            if(!there&&shown())kinWrite(status,kinSay('브라우저가 영상 창을 두 화면에 걸쳐 옮기지 않았습니다. 영상 창의 가장자리를 끌어 Display {0}과 Display {1}에 걸쳐 놓으세요. 걸쳐 놓으면 그 자리를 저장합니다.',first,second));
+          }
+          else if(shown()&&moved.written&&!moved.saved&&(moved.written.rect||moved.written.pair))kinWrite(status,partly());
+          else if(shown())status.textContent=moved.saved?'지정 화면으로 이동하고 창 위치를 저장했습니다.':moved.moved?'창을 이동했지만 위치를 저장하지 못했습니다. 현재 창 상태와 브라우저 저장소를 확인하세요.':'창 이동을 확인하지 못해 이전 저장 위치를 유지했습니다. 창을 직접 이동하거나 다시 시도하세요.';
         }catch(_){if(shown())status.textContent='화면에 접근하지 못했습니다. 권한과 창 상태를 확인한 뒤 다시 시도하세요.';}
         finally{if(movingWindows.get(popup)===request)movingWindows.delete(popup);if(work.admits(at)&&viewerWindows.available())render();}
       }

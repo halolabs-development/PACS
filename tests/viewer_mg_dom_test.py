@@ -592,7 +592,10 @@ class ViewerMgDOMTest(unittest.TestCase):
         panel = page.get_by_role('dialog', name='Tomo (DBT) Slices')
         page.evaluate("() => synViews.get('dbt').show(5)")
         page.evaluate("() => { window.synCache = synSlices.map(a => a.slice()); }")
+        # What needs a cell's own slices (a series export) asks whether a slab is chosen for the cell.
+        self.assertEqual([False, False], page.evaluate("() => [kinMgSlab.on('dbt'), kinMgSlab.on('nowhere')]"))
         panel.get_by_label('Slab Thickness').select_option('3')
+        self.assertEqual([True, False], page.evaluate("() => [kinMgSlab.on('dbt'), kinMgSlab.on('nowhere')]"))
         expect(page.locator('#pane-dbt [data-mg-badge=slab]')).to_have_text('Slab 3')
         # Slices 4, 5 and 6 (each pixel +10 per slice): the mean is slice 5's value at every pixel.
         self.assertTrue(page.evaluate("""() => { const shown = synViews.get('dbt').imageDataObject.getPointData().getScalars().getData();
@@ -615,6 +618,7 @@ class ViewerMgDOMTest(unittest.TestCase):
         # 1 slice: the slice's own values again.
         panel.get_by_label('Slab Thickness').select_option('1')
         expect(page.locator('#pane-dbt [data-mg-badge=slab]')).to_have_count(0)
+        self.assertFalse(page.evaluate("() => kinMgSlab.on('dbt')"))
         self.assertTrue(page.evaluate("() => synViews.get('dbt').imageDataObject.getPointData().getScalars().getData().every((n, i) => n === synSlices[10][i])"))
         self.assertIsNone(page.locator('#pane-dbt').get_attribute('data-kin-mg-slab'))
         expect(page.locator('#pane-dbt .kin-mg-capture')).to_have_count(0)
@@ -622,6 +626,7 @@ class ViewerMgDOMTest(unittest.TestCase):
         panel.get_by_label('Slab Thickness').select_option('5')
         expect(page.locator('#pane-dbt [data-mg-badge=slab]')).to_have_text('Slab 4 of 5')
         panel.get_by_role('button', name='Close').click()
+        self.assertFalse(page.evaluate("() => kinMgSlab.on('dbt')"))
         self.assertTrue(page.evaluate("() => synViews.get('dbt').imageDataObject.getPointData().getScalars().getData().every((n, i) => n === synSlices[10][i])"))
 
     def test_07b_slab_is_refused_for_a_slice_shifted_in_the_plane_or_in_another_value_space_and_hides_every_measurement(self):
