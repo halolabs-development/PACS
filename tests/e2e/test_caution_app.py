@@ -148,6 +148,7 @@ class CautionAppE2E(WorklistE2E):
             self.stack.user_ids['signup'] = found[0]['id']
             self.stack.usernames['signup'] = username
             self.stack.template_owners.add(email)
+            self.stack.register_settings_account(found[0]['id'])
         self.assertEqual(len(found), 1, page.locator('body').inner_text()[:300])
         self.assertEqual({k: found[0].get(k) for k in IDENTITY}, {'email': email, 'firstName': 'Signup', 'lastName': 'Synthetic'})
 

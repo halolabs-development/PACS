@@ -1676,3 +1676,11 @@ or open duty request keeps them, and history rows without ending evidence are ke
 and counted. Record retention stays at 의료법 시행규칙 제15조제1항. Its receipt records
 `wrapping_custody`, `emr.expiry_sweep` and `success`; secret bytes are never printed. Existing signatures retain public verification
 evidence, but successful DB restoration alone does not certify new approvals.
+
+## Upgrading stored login owners
+
+For an existing installation on the preceding schema, keep application writes paused. In the target API image use the installer's `DATABASE_URL` and a private mounted directory for the inputs and report. An empty installation needs no review.
+
+1. Run `node prisma/owner-upgrade.mjs configure unchanged [aliases.json]` only after confirming that every unlisted login had the same owner throughout the history being migrated. Use `unknown` in place of `unchanged` where that history is unavailable. The optional UTF-8 JSON file is an array of pairs, for example `[["former-login","verified-subject"],["reused-login",null]]`. A subject must be verified for **all** stored rows with that exact login. Use null for mixed or unknown authorship. Verify the subject against historical identity records, including for a deleted account whose subject is absent from the current directory. The command stores the review as `pacs.owner_history` on the installer role for this database. Login keys are SHA-256 of the exact UTF-8 string.
+2. Run `node prisma/owner-upgrade.mjs before /evidence/owners.json` before `prisma migrate deploy`. Stop on a nonzero exit or an unexpected unresolved count or login hash. The SQL preflight reads a consistent snapshot. Two drafts for one subject and study both keep their original keys and appear in the unresolved count.
+3. Before reopening writes run `node prisma/owner-upgrade.mjs after /evidence/owners.json`. A nonzero exit blocks reopening. The comparison covers per-table counts, record keys, exact login strings and expected account assignments. Study rows count once even with several unresolved assignments. Audit actors are included in preservation checks. Keep the report with the private upgrade record and run `node prisma/owner-upgrade.mjs clear` to remove the one-time setting.

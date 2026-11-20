@@ -164,7 +164,7 @@ before(async () => {
   await runtime.start();
   const app = await NestFactory.create(AppModule.withLedger(runtime, { proxyPeers: ['127.0.0.1'] }), { logger: ['error'], abortOnError: false, rawBody: true });
   app.setGlobalPrefix('api');
-  app.use('/worklist', apiRequire('express').static(path.resolve(__dirname, '../../../worklist-v0/hpacs-lite')));
+  app.use('/worklist/hpacs-lite', apiRequire('express').static(path.resolve(__dirname, '../../../worklist-v0/hpacs-lite')));
   await app.listen(0, '127.0.0.1');
   const origin = await app.getUrl();
   const clinicianSub = 'synthetic-consumer-clinician';
@@ -251,8 +251,9 @@ async function study(fields = {}) {
   return uid;
 }
 async function version(uid, n, fields = {}) {
+  // A version names the account it belongs to beside its login (owner-identity.ts), as the product writes it.
   return ctx.witness.reportVersion.create({ data: { uid, version: n, action: 'approve', author: actor,
-    findings: '', conclusion: '', recommendation: '', ...fields } });
+    authorSub: fields.author && fields.author !== actor ? null : sub, findings: '', conclusion: '', recommendation: '', ...fields } });
 }
 function assertAttribution(event, surface) {
   assert.equal(event.surface, surface);
@@ -293,16 +294,17 @@ test('A-HTTP-REPORT / A-HTTP-BODY / A-PG-COMMIT: every returned version is commi
   assert.equal(answer.status, 200, answer.text);
   assert.equal(firstByte, rows.length, 'every returned version is committed before the first byte');
   assert.match(answer.headers['content-type'], /^application\/json/);
-  // The existing array contract: newest first, the same ten fields, plus each row's opaque accessRef.
+  // The array contract: newest first, the same ten fields, whether the version is the caller's own account's (`mine`,
+  // judged on the server), plus each row's opaque accessRef.
   assert.deepEqual(answer.body.map(r => r.version), [4, 3, 2, 1]);
   for (const row of answer.body) {
     const stored = rows.find(r => r.version === row.version);
     const { accessRef, ...fields } = row;
     assert.match(accessRef, UUID4);
     // v3 is an administrator's release copy of another user's private draft: its row stays, its text stays with its writer
-    // (the report state table), and the row says why it is empty.
+    // (the report state table), and the row says why it is empty. It names no account, so it is not the caller's.
     const withheld = stored.version === 3;
-    assert.deepEqual(fields, { id: stored.id, uid, version: stored.version, action: stored.action,
+    assert.deepEqual(fields, { id: stored.id, uid, version: stored.version, action: stored.action, mine: !withheld,
       findings: withheld ? '' : stored.findings, conclusion: withheld ? '' : stored.conclusion,
       recommendation: withheld ? '' : stored.recommendation,
       reason: withheld ? '관리자 강제 초안 해제' : stored.reason,
@@ -560,8 +562,8 @@ test('A-REMAINDER worklist: returned page, own draft, hidden preliminary, and or
   await ctx.witness.report.create({ data: { uid, version: 1, findings: 'SYN approved' } });
   // Each present draft holds its own work (CD-09-P ReportDraft_work_check); on an approved study it is written for an Addendum.
   const work = () => ({ workUnit: 'disposal:' + randomUUID(), workSince: new Date(), workIntent: 'addendum' });
-  await ctx.witness.reportDraft.create({ data: { uid, author: actor, findings: 'SYN private', revision: 3, ...work() } });
-  await ctx.witness.reportDraft.create({ data: { uid, author: 'other@example.test', findings: 'SYN other draft', ...work() } });
+  await ctx.witness.reportDraft.create({ data: { uid, author: actor, authorSub: sub, findings: 'SYN private', revision: 3, ...work() } });
+  await ctx.witness.reportDraft.create({ data: { uid, author: 'other@example.test', authorSub: 'other-author', findings: 'SYN other draft', ...work() } });
   const hidden = await consumerStudy({ rs: 'P', preDocSub: 'other-author', preReviewerSub: 'other-reviewer' });
   await ctx.witness.report.create({ data: { uid: hidden, version: 2, findings: 'SYN withheld' } });
   const { answer, selected } = await readRecorded('/studies?limit=100', uid);

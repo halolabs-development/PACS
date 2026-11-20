@@ -335,10 +335,12 @@ class DraftPurposeServed(unittest.TestCase):
 
     # ── stored facts ──
 
-    def row(self, user):
-        actor = self.stack.actor(user)
-        lines = psql('SELECT row_to_json(d)::text FROM (SELECT present, findings, conclusion, revision, "workUnit", "workIntent", '
-                     f'structured FROM "ReportDraft" WHERE uid={sql_text(self.uid)} AND author={sql_text(actor)}) d')
+    def row(self, user, *, legacy=False):
+        # The historical P image writes its login as the record id. New rows are selected by account.
+        owner = (f'author={sql_text(self.stack.actor(user))}' if legacy
+                 else f'"authorSub"={sql_text(self.stack.user_ids[user])}')
+        lines = psql('SELECT row_to_json(d)::text FROM (SELECT author, present, findings, conclusion, revision, "workUnit", "workIntent", '
+                     f'structured FROM "ReportDraft" WHERE uid={sql_text(self.uid)} AND {owner}) d')
         return json.loads(lines[0]) if lines else None
 
     def ended(self, unit):
@@ -683,9 +685,10 @@ class DraftPurposeServed(unittest.TestCase):
         self.apply_structure(doctor, secret, value)
         colleague_value = "SYN-P7 colleague " + uuid.uuid4().hex
         self.apply_structure(other, "SYN-P7 colleague text", colleague_value)
-        self.assertIn(value, json.dumps(self.row(doctor)["structured"]))
-        unit = self.row(doctor)["workUnit"]
-        record = json.dumps([self.uid, self.stack.actor(doctor)], separators=(",", ":"))
+        draft = self.row(doctor)
+        self.assertIn(value, json.dumps(draft["structured"]))
+        unit = draft["workUnit"]
+        record = json.dumps([self.uid, draft["author"]], separators=(",", ":"))
         # A hold binds this work only from its own placement on (never before the work started): place it a second later.
         time.sleep(1.1)
         hold = self.place_hold(record)
@@ -834,8 +837,9 @@ class DraftPurposeServed(unittest.TestCase):
     def test_p11_a_hold_placement_in_flight_is_seen_by_the_destruction(self):
         doctor, secret = "doctor", "SYN-P11 " + uuid.uuid4().hex
         self.assertEqual(self.save(doctor, secret).status, 200)
-        unit = self.row(doctor)["workUnit"]
-        record = json.dumps([self.uid, self.stack.actor(doctor)], separators=(",", ":"))
+        draft = self.row(doctor)
+        unit = draft["workUnit"]
+        record = json.dumps([self.uid, draft["author"]], separators=(",", ":"))
         time.sleep(1.1)
         hold = self.place_hold(record)
         # A second connection places the hold and has not committed when the work ends.
@@ -1248,8 +1252,9 @@ class DraftPurposeCommitJudgement(DraftPurposeServed):
     def held_end(self, user, secret):
         """An ended work whose payload is still stored (a hold keeps it): the copy a backup takes between end and destruction."""
         self.assertEqual(self.save(user, secret).status, 200)
-        unit = self.row(user)["workUnit"]
-        record = json.dumps([self.uid, self.stack.actor(user)], separators=(",", ":"))
+        draft = self.row(user)
+        unit = draft["workUnit"]
+        record = json.dumps([self.uid, draft["author"]], separators=(",", ":"))
         time.sleep(1.1)
         hold = self.place_hold(record)
         psql(f"SELECT emr_access.place_hold({sql_text(hold['holdId'])}, {sql_text(record)}, {sql_text(json.dumps(hold))})::text")
@@ -1603,13 +1608,14 @@ class DraftPurposeCommitJudgement(DraftPurposeServed):
         self.assertEqual(approved.status, 201, approved.text)
         # ① the citation is readable as the author's ② both drafts carry one ③ the signed version carries one.
         self.assertEqual([c["cid"] for c in self.citations(doctor)["draft"]], [mine])
-        stored = {u: psql(f'SELECT citations::text FROM "ReportDraft" WHERE uid={sql_text(self.uid)} AND author={sql_text(self.stack.actor(u))}')
+        stored = {u: psql(f'SELECT citations::text FROM "ReportDraft" WHERE uid={sql_text(self.uid)} AND "authorSub"={sql_text(self.stack.user_ids[u])}')
                   for u in (doctor, colleague)}
         self.assertIn(mine, stored[doctor][0]); self.assertIn(theirs, stored[colleague][0])
         head = self.citations(signer)["head"]
         self.assertEqual([c["cid"] for c in head], [signed_cid])
-        unit = self.row(doctor)["workUnit"]
-        record = json.dumps([self.uid, self.stack.actor(doctor)], separators=(",", ":"))
+        draft = self.row(doctor)
+        unit = draft["workUnit"]
+        record = json.dumps([self.uid, draft["author"]], separators=(",", ":"))
         time.sleep(1.1)
         hold = self.place_hold(record)
         psql(f"SELECT emr_access.place_hold({sql_text(hold['holdId'])}, {sql_text(record)}, {sql_text(json.dumps(hold))})::text")
@@ -1627,8 +1633,8 @@ class DraftPurposeCommitJudgement(DraftPurposeServed):
         self.assertEqual(self.phases(unit), ["started", "completed"])
         row = self.row(doctor)
         self.assertEqual((row["present"], row["revision"]), (False, int(discarded.body["revision"].rsplit(":", 1)[1])))
-        self.assertEqual(psql(f'SELECT citations IS NULL FROM "ReportDraft" WHERE uid={sql_text(self.uid)} AND author={sql_text(self.stack.actor(doctor))}'), ["t"])
-        self.assertEqual(psql(f'SELECT citations::text FROM "ReportDraft" WHERE uid={sql_text(self.uid)} AND author={sql_text(self.stack.actor(colleague))}'),
+        self.assertEqual(psql(f'SELECT citations IS NULL FROM "ReportDraft" WHERE uid={sql_text(self.uid)} AND "authorSub"={sql_text(self.stack.user_ids[doctor])}'), ["t"])
+        self.assertEqual(psql(f'SELECT citations::text FROM "ReportDraft" WHERE uid={sql_text(self.uid)} AND "authorSub"={sql_text(self.stack.user_ids[colleague])}'),
                          stored[colleague])
         self.assertEqual(self.citations(signer)["head"], head)
         self.assert_ledger_names_nothing(mine, secret, block, finding.body["id"])
@@ -1940,7 +1946,7 @@ class DraftPurposeUpgradeServed(DraftPurposeCommitJudgement):
         self.assertTrue(self.anchor()["initialized"])
 
     def hold_work(self, user):
-        record = json.dumps([self.uid, self.stack.actor(user)], separators=(",", ":"))
+        record = json.dumps([self.uid, self.row(user, legacy=True)["author"]], separators=(",", ":"))
         time.sleep(1.1)
         hold = self.place_hold(record)
         psql(f"SELECT emr_access.place_hold({sql_text(hold['holdId'])}, {sql_text(record)}, {sql_text(json.dumps(hold))})::text")
@@ -1954,7 +1960,7 @@ class DraftPurposeUpgradeServed(DraftPurposeCommitJudgement):
         self.p_era()
         self.p_save(doctor, secret_a)
         self.p_save(other, secret_b)
-        unit_a, unit_b = self.row(doctor)["workUnit"], self.row(other)["workUnit"]
+        unit_a, unit_b = self.row(doctor, legacy=True)["workUnit"], self.row(other, legacy=True)["workUnit"]
         hold = self.hold_work(other)
         # The copy restored later: both works still live (their text in the authors' rows).
         self.dump("cd09c-u1-before.dump")
@@ -1996,7 +2002,7 @@ class DraftPurposeUpgradeServed(DraftPurposeCommitJudgement):
         self.reload_proxy()
         self.wait_api()
         for user in (doctor, other):
-            row = self.row(user)
+            row = self.row(user, legacy=True)
             self.assertEqual((row["present"], row["findings"], row["workUnit"]), (False, "", None), user)
         self.assertEqual(self.ledger_bytes(), upgraded, "a re-application writes nothing")
         event("cd09c_u1_upgrade", p_lines=len(p_records), format2_lines=len(added), restored_reapplied=2)
@@ -2023,7 +2029,7 @@ class DraftPurposeUpgradeServed(DraftPurposeCommitJudgement):
         doctor = "doctor"
         self.p_era()
         self.p_save(doctor, "SYN-CD09C-U2 " + uuid.uuid4().hex)
-        unit = self.row(doctor)["workUnit"]
+        unit = self.row(doctor, legacy=True)["workUnit"]
         self.p_discard(doctor)
         self.wait_p_completed(unit)
         self.stop_p()
@@ -2060,7 +2066,7 @@ class DraftPurposeUpgradeServed(DraftPurposeCommitJudgement):
         doctor, secret = "doctor", "SYN-CD09C-U3 " + uuid.uuid4().hex
         self.p_era()
         self.p_save(doctor, secret)
-        unit, before = self.row(doctor)["workUnit"], self.anchor()
+        unit, before = self.row(doctor, legacy=True)["workUnit"], self.anchor()
         key, holder = self.key_holder()
         drop = self.t1("ReportDraftPurposeEnd", "DELETE", f'OLD."disposalUnitId" = {sql_text(unit)}', key, fail=False)
         self.p_discard(doctor)

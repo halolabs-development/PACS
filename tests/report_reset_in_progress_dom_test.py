@@ -31,19 +31,22 @@ class ResetSite(rf.FlowSite):
         super().__init__(count)
         self.holder = {}            # uid -> another reader's live hold, as the state carries it
         self.saved_by = {}          # uid -> who saved the head text, as the state carries it
+        self.saver_sub = {}
         self.released = {}          # uid -> the `released` facts an in-progress reset of that study answers
         self.hold_bodies = []       # (uid, body) of every POST hold
         self.renew_answers = []     # queued answers to renew heartbeats ("hold" parks the request)
         self.held_renews = []       # parked renew routes
 
     def state_of(self, uid, account):
-        return {**super().state_of(uid, account), "holder": self.holder.get(uid), "savedBy": self.saved_by.get(uid)}
+        return {**super().state_of(uid, account), "holder": self.holder.get(uid), "holderMine": False,
+                "savedBy": self.saved_by.get(uid), "savedByMine": self.saver_sub.get(uid) == account["sub"]}
 
     def commit_of(self, uid, body, account):
         status, answer = super().commit_of(uid, body, account)
         if status == 200 and body.get("action") == "reset" and uid in self.released:
             self.holder.pop(uid, None)
             self.saved_by.pop(uid, None)
+            self.saver_sub.pop(uid, None)
             answer = {**answer, "state": self.state_of(uid, account), "released": self.released[uid]}
         return status, answer
 
@@ -164,6 +167,7 @@ class ResetInProgressPage(unittest.TestCase):
     def test_my_own_saved_text_still_asks_for_the_reason(self):
         self.site.store[h.UID]["report"].update({"rs": "T", "version": 1, "findings": "SYN saved by me"})
         self.site.saved_by[h.UID] = h.RAD["actor"]
+        self.site.saver_sub[h.UID] = h.RAD["sub"]
         self.open()
         self.select(h.PATIENT)
         self.press_unread()

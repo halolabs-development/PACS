@@ -262,8 +262,12 @@ PROFILES = {
         'project_prefix': 'kin-techord-ci-',
         # Technician Order List (worklist-ux-measurements job): Match… / Unmatch… windows with a synthetic order, Delete Order
         # and Undo, the Report and Scheduled tabs. One case; the single-suite cap is a hang ceiling, not an estimate.
+        # The same stack runs the Modality Worklist (docker-compose.mwl.yml publishes the API's worklist port on loopback): a
+        # synthetic modality queries seed and run orders by two institutions' devices, Delete Order and Undo, no side effects.
+        'compose_overlays': ('docker-compose.mwl.yml',),
         'suite_timeout': 900,
-        'suites': (('e2e/test_technician_orders.py', 'TechnicianOrdersE2E', 'ci-technician-orders'),),
+        'suites': (('e2e/test_technician_orders.py', 'TechnicianOrdersE2E', 'ci-technician-orders'),
+                   ('e2e/test_modality_worklist.py', 'ModalityWorklistE2E', 'ci-modality-worklist')),
     },
     'exam-merge': {
         'out': ROOT / 'tests/e2e/artifacts/exam-merge-ci',

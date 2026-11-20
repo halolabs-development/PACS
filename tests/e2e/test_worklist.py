@@ -130,10 +130,20 @@ class WorklistE2E(unittest.TestCase):
 
     def cleanup_fixtures(self):
         uids = list(self.stack.active)
-        self.stack.cleanup_all()
         for uid in uids:
             if not re.fullmatch(r"[0-9.]+", uid):
                 raise RuntimeError("Invalid fixture UID in cleanup verification")
+        # The original-download operations of this case, by the studies it owns - never by an id the case read from an
+        # answer, so a case that failed before it read one leaves nothing behind. Only download rows of exactly these
+        # Study UIDs: another study's row and a row of another kind under the same UID are not this cleanup's. The
+        # browser contexts are closed before this runs (close_contexts), so no page of the case prepares another one.
+        downloads = "\"ImportOperation\" WHERE kind='download' AND \"studyUid\" IN (" + ", ".join(f"'{uid}'" for uid in uids) + ")"
+        if uids:
+            psql(f"DELETE FROM {downloads};")
+        self.stack.cleanup_all()
+        if uids:
+            self.assertEqual(psql(f"SELECT count(*) FROM {downloads};"), ["0"], "A download operation of an owned fixture remains")
+        for uid in uids:
             lookup = self.stack._orthanc_request("POST", "/tools/lookup", uid.encode("ascii"))
             self.assertEqual(lookup.status, 200)
             self.assertEqual(lookup.body, [], "An owned Orthanc fixture remains")
@@ -806,6 +816,57 @@ class WorklistE2E(unittest.TestCase):
         rows = psql(f"SELECT action || E'\\t' || detail FROM \"AuditLog\" WHERE detail::jsonb->>'operationId'='{operation}' ORDER BY id;")
         return [(action, json.loads(detail)) for action, detail in (line.split("\t", 1) for line in rows)]
 
+    def test_s9_u4_download_selected_originals(self):
+        """Download Selected Originals on the real stack: the row menu's item lists the study's own series from the archive;
+        one chosen series is prepared with that choice and the saved ZIP is the whole archive of exactly that series'
+        originals (each entry its stored bytes, under its own Series and SOP UIDs) plus manifest.json."""
+        fixture = self.fixture()
+        # A later series of two images of the same patient under the fixture's Study UID (the fixture's own: one series of one
+        # image): choosing the later series must leave the fixture's own image out of the ZIP.
+        command = self.stack.fixture_command(fixture.institution, "INVARIANT^" + fixture.secret[len("REPORT-"):][:10], fixture.patient_id)
+        command += ["--study-uid", fixture.uid, "--slices", "2", "--instance-offset", "1"]
+        done = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        # The operation's row is the fixture cleanup's (by the fixture's Study UID), whatever this case got to read.
+        page = self.login("doctor")
+        self.select(page, fixture)
+        page.locator(f'#rows tr[data-uid="{fixture.uid}"]').click(button="right")
+        page.locator("#ctx").get_by_text("Download Selected Originals", exact=True).click()
+        dialog = page.locator("dialog.study-transfer-pick")
+        rows = dialog.locator(".study-transfer-pick-series")
+        expect(rows).to_have_count(2, timeout=30000)
+        expect(dialog.get_by_role("button", name="Continue", exact=True)).to_be_disabled()
+        counts = [int(re.search(r"\d+", rows.nth(i).locator(".study-transfer-pick-images").inner_text()).group(0)) for i in range(2)]
+        self.assertEqual(sorted(counts), [1, 2], "the fixture's series of one image and the later series of two")
+        first = rows.nth(counts.index(2))
+        series = first.locator("input[type=checkbox]").get_attribute("value")
+        images = 2
+        first.locator("input[type=checkbox]").check()
+        with page.expect_response(lambda r: r.request.method == "POST"
+                                  and r.url.endswith(f"/studies/{fixture.uid}/original-downloads")) as prepared:
+            dialog.get_by_role("button", name="Continue", exact=True).click()
+        self.assertEqual(prepared.value.status, 200, prepared.value.text())
+        self.assertEqual(prepared.value.request.post_data_json["selection"], {"series": [series], "instances": []})
+        operation = prepared.value.json()["operationId"]
+        self.assertEqual((prepared.value.json()["objects"], prepared.value.json()["selection"]), (images, {"series": 1, "instances": 0}))
+        mark = hashlib.sha256(json.dumps([[series], []], separators=(",", ":")).encode("utf-8")).hexdigest()
+        self.assertEqual(prepared.value.json()["selectionSha256"], mark, "the answer carries the mark of the choice, never its UIDs")
+        expect(self.transfer_box(page, operation).locator(".study-transfer-state")).to_have_text("Ready")
+        download, _ = self.native_download(page, fixture, operation)
+        self.archive_supplied(page, download.path(), operation, 1)
+        [stored] = psql(f"SELECT download::text FROM \"ImportOperation\" WHERE id='{operation}';")
+        row = json.loads(stored)
+        manifest = json.loads(row["manifestCanonical"])
+        self.assertEqual((manifest["studyUid"], row["selection"]), (fixture.uid, {"series": [series], "instances": []}))
+        self.assertEqual(len(manifest["objects"]), images, "as many originals as the chosen series holds")
+        self.assertEqual({o["seriesUid"] for o in manifest["objects"]}, {series}, "only the chosen series, under its own UID")
+        with zipfile.ZipFile(download.path()) as archive:
+            self.assertEqual(len(archive.infolist()), images + 1, "the chosen originals and manifest.json")
+        prepare = [json.loads(detail) for action, detail in
+                   (line.split("\t", 1) for line in psql(f"SELECT action || E'\\t' || detail FROM \"AuditLog\" WHERE detail::jsonb->>'operationId'='{operation}' ORDER BY id;"))
+                   if action == "original.download.prepare"]
+        self.assertEqual([p["selection"] for p in prepare], [{"series": 1, "instances": 0}], "the audit says how much was chosen")
+
     def test_s9_u4_download_states(self):
         """REQ-S9-U4-09 with the D1489 grant (REQ-S9-U4-DG-01..06): Download Originals in an authenticated member session
         with no terminal registration: Ready, one bound grant request and the browser's own download of the archive with
@@ -819,221 +880,37 @@ class WorklistE2E(unittest.TestCase):
         # LIVE-11's second study B exists before the doctor's page loads its worklist, so its row can be selected (D1677).
         other = self.fixture()
         operations = []
-        try:
-            page = self.login("doctor")
-            seen = self.transfer_requests(page)
+        # The download rows of this case are the fixture cleanup's (by the fixture's Study UID); the ids read here are
+        # for the assertions only.
+        page = self.login("doctor")
+        seen = self.transfer_requests(page)
 
-            def prepare_again(old):
-                with page.expect_response(lambda r: r.request.method == "POST"
-                                          and r.url.endswith(f"/studies/{fixture.uid}/original-downloads")) as prepared:
-                    self.transfer_box(page, old).get_by_role("button", name="Prepare Again", exact=True).click()
-                self.assertEqual(prepared.value.status, 200)
-                new = prepared.value.json()["operationId"]
-                operations.append(new)
-                self.assertNotIn(new, operations[:-1], "D1606: explicit preparation has a fresh UUID")
-                expect(self.transfer_box(page, new).locator(".study-transfer-state")).to_have_text("Ready")
-                expect(self.transfer_box(page, old)).to_have_count(1)
-                return new
+        def prepare_again(old):
+            with page.expect_response(lambda r: r.request.method == "POST"
+                                      and r.url.endswith(f"/studies/{fixture.uid}/original-downloads")) as prepared:
+                self.transfer_box(page, old).get_by_role("button", name="Prepare Again", exact=True).click()
+            self.assertEqual(prepared.value.status, 200)
+            new = prepared.value.json()["operationId"]
+            operations.append(new)
+            self.assertNotIn(new, operations[:-1], "D1606: explicit preparation has a fresh UUID")
+            expect(self.transfer_box(page, new).locator(".study-transfer-state")).to_have_text("Ready")
+            expect(self.transfer_box(page, old)).to_have_count(1)
+            return new
 
-            def read_only_then_new(old, state):
-                self.select(page, fixture)
-                old_box = self.transfer_box(page, old)
-                expect(old_box.locator(".study-transfer-state")).to_have_text(state)
-                self.assertEqual(old_box.get_by_role("button", name="Download", exact=True).count(), 0,
-                                 "D1606: restored operation cannot request another grant")
-                history = psql(f"SELECT download::text FROM \"ImportOperation\" WHERE id='{old}';")
-                audit = self.download_audit(old)
-                before = len(seen)
-                with page.expect_response(lambda r: r.request.method == "GET"
-                                          and r.url.endswith(f"/original-downloads/{old}")):
-                    old_box.get_by_role("button", name="Check Again", exact=True).click()
-                expect(old_box.locator(".study-transfer-state")).to_have_text(state)
-                self.assertEqual([item for item in seen[before:] if item[0] != "GET"], [], "Check Again is read-only")
-                clear = page.locator("#study-transfer").get_by_role("button", name="Clear Finished", exact=True)
-                if clear.is_enabled():
-                    clear.click()
-                expect(old_box).to_have_count(1)
-                new = prepare_again(old)
-                downloaded, _ = self.native_download(page, fixture, new)
-                self.archive_supplied(page, downloaded.path(), new, 1)
-                self.assertEqual(self.download_row(new), "sent|1")
-                self.assertEqual(psql(f"SELECT download::text FROM \"ImportOperation\" WHERE id='{old}';"), history,
-                                 "D1606: new preparation preserves every old attempt and grant fact")
-                self.assertEqual(self.download_audit(old), audit, "old operation audit history unchanged")
-                expect(old_box).to_have_count(1)
-
+        def read_only_then_new(old, state):
             self.select(page, fixture)
-            operation = self.download_operation(page, fixture, operations)
-            box = self.transfer_box(page, operation)
-            since = str(int(time.time()) - 5)
-            download, grant = self.native_download(page, fixture, operation)
-            stored, attempt, use = self.archive_supplied(page, download.path(), operation, 1)
-            self.assertEqual(use["hash"], hashlib.sha256(("kin-original-download-grant-v1:" + grant).encode()).hexdigest(),
-                             "the row keeps the domain-separated hash of this grant")
-            audit = self.download_audit(operation)
-            self.assertEqual([action for action, _ in audit], ["original.download.prepare", "original.download.grant",
-                                                               "original.download.intent", "original.download.result"])
-            issued, intent, result = audit[1][1], audit[2][1], audit[3][1]
-            self.assertEqual((issued["phase"], issued["grantId"], issued["grantHash"]), ("issued", use["grantId"], use["hash"]))
-            # The intent row names the attempt it opened; the destination is the attempt's own (M-U4B-02: no grant use).
-            self.assertEqual((intent["attemptId"], intent["number"], attempt["destination"]),
-                             (attempt["attemptId"], 1, "browser-download"))
-            self.assertEqual((result["attemptId"], result["state"]), (attempt["attemptId"], "sent"))
-            self.assertEqual(len({detail["institutionId"] for _, detail in audit}), 1, "one record-time institution")
-            self.assertFalse(grant in stored or any(grant in json.dumps(detail) for _, detail in audit), "the raw grant is stored nowhere")
-            status = self.stack.request("GET", f"/studies/{fixture.uid}/original-downloads/{operation}", "doctor")
-            self.assertEqual(status.body["state"], "sent")
-            # SRU4-1: the same grant on the non-canonical spellings never reaches the API's general log path - the proxy
-            # refuses each with 400 before any location and logs it in the archive format (no query).
-            base = f"/api/studies/{fixture.uid}/original-downloads/{operation}"
-            origin = "{0.scheme}://{0.netloc}".format(urlsplit(page.url))
-            aliases = [f"/api/studies/{fixture.uid}/original-downloads/{operation.upper()}/archive", base + "/archive/",
-                       "/API" + base[len("/api"):] + "/archive", base]
-            for path in aliases:
-                self.assertEqual(page.request.get(origin + path + "?grant=" + grant).status, 400, "a grant outside the archive path")
-            # U4C-01: the proxy's privacy filter is broader than what the API admits. The API takes a grant only as the literal
-            # whole query `grant=<43 base64url characters>` (lower-case key, no percent or case alias); the proxy treats any
-            # spelling a receiver could decode to the key (another case, a percent-encoded letter) as a grant, refuses it
-            # outside the archive path and logs it without the query, so a mistyped grant never lands in a log (U4C3-2).
-            for path, key in ((base, "%67rant="), ("/api/health", "Gr%61nt=")):
-                self.assertEqual(page.request.get(origin + path + "?" + key + grant).status, 400, "an encoded grant key outside the archive path")
-            logs = subprocess.run(["docker", "compose", "logs", "--no-color", "--since", since, "proxy", "api"], cwd=ROOT,
-                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-            self.assertEqual(logs.returncode, 0, "the proxy and API logs could be read")
-            self.assertFalse(grant in logs.stdout + logs.stderr, "the raw grant is in no proxy or API log line")
-            self.assertIn(f'"GET /api/studies/{fixture.uid}/original-downloads/{operation}/archive" 200 ', logs.stdout,
-                          "the archive GET is logged by the archive location's format (method, path, status)")
-            for path in aliases + ["/api/health"]:
-                self.assertIn(f'"GET {path}" 400 ', logs.stdout, "each refused spelling is logged by the archive format")
-            expect(box.locator(".study-transfer-state")).to_have_text("Sent", timeout=30000)
-            expect(box.locator(".study-transfer-reason")).to_have_text(self.SENT)
-            for claim in ("저장했습니다", "저장되었습니다", "보관했습니다"):
-                self.assertNotIn(claim, page.locator("#study-transfer").inner_text(), "no text says the file was saved")
-            self.assertEqual(box.get_by_role("button", name="Download", exact=True).count(), 0, "Sent is not downloaded again")
-            self.assertEqual(page.locator("#study-transfer").get_by_role("button", name=re.compile("Resume|Range")).count(), 0)
-            self.assertEqual(self.download_row(operation), "sent|1")
-            again = self.stack.bearer_request("GET", f"/studies/{fixture.uid}/original-downloads/{operation}/archive",
-                                              self.stack.token("doctor"), headers={"Range": "bytes=10-"})
-            self.assertEqual((again.status, (again.body or {}).get("code")), (409, "DOWNLOAD_ALREADY_SENT"), "no Range resume")
-            with page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith("/original-downloads")) as fresh:
-                box.get_by_role("button", name="Prepare Again").click()
-            operations.append(fresh.value.json()["operationId"])
-            self.assertNotEqual(operations[-1], operation, "after Sent a new operation is prepared")
-
-            # Incomplete (5.2 step 6): retain the interrupted attempt, then explicitly prepare a different operation.
-            dropped = self.download_operation(page, fixture, operations)
-            insecure = ssl.create_default_context()
-            insecure.check_hostname, insecure.verify_mode = False, ssl.CERT_NONE
-            request = Request(self.stack.api + f"/studies/{fixture.uid}/original-downloads/{dropped}/archive",
-                              headers={"Authorization": "Bearer " + self.stack.token("doctor")})
-            with urlopen(request, context=insecure, timeout=30) as stream:
-                stream.read(64)
-            deadline = time.monotonic() + 30
-            while self.download_row(dropped) != "incomplete|1" and time.monotonic() < deadline:
-                time.sleep(0.5)
-            self.assertEqual(self.download_row(dropped), "incomplete|1")
-            page.reload()
-            expect(page.locator("#dbstat")).to_contain_text("DB Connected")
-            expect(self.transfer_box(page, dropped).locator(".study-transfer-state")).to_have_text("Incomplete", timeout=30000)
-            read_only_then_new(dropped, "Incomplete")
-            self.assertEqual(self.download_row(dropped), "incomplete|1")
-
-            # Unconfirmed (5.2 step 7): an attempt a stopped server left sending, its lease run out; the status read closes it.
-            stopped = self.download_operation(page, fixture, operations)
-            [row] = psql(f"SELECT download::text || '|' || \"manifestSha256\" FROM \"ImportOperation\" WHERE id='{stopped}';")
-            stored, manifest = row.rsplit("|", 1)
-            body = json.loads(stored)
-            body["attempts"].append({"attemptId": str(uuid.uuid4()), "number": 1, "ownerSubject": self.stack.user_ids["doctor"],
-                                     "actor": self.stack.actor("doctor"), "manifestSha256": manifest,
-                                     "destination": "browser-download", "state": "sending",
-                                     "startedAt": "2026-01-01T00:00:00.000Z", "endedAt": None, "ownerInstance": str(uuid.uuid4()),
-                                     "leaseUntil": "2026-01-01T00:00:30.000Z", "objects": [], "archiveSha256": None,
-                                     "responseFinished": False})
-            psql(f"UPDATE \"ImportOperation\" SET download = '{json.dumps(body).replace(chr(39), chr(39) * 2)}'::jsonb, "
-                 f"status = 'sending' WHERE id='{stopped}';")
-            self.sign_in_again(page, "doctor")
-            expect(self.transfer_box(page, stopped).locator(".study-transfer-state")).to_have_text("Unconfirmed", timeout=30000)
-            read_only_then_new(stopped, "Unconfirmed")
-            self.assertEqual(self.download_row(stopped), "unconfirmed|1")
-
-            # Commit at the real service before replacing either answer. A prepared GET cannot replenish a lost grant.
-            self.select(page, fixture)
-            prepare_path = f"/api/studies/{fixture.uid}/original-downloads"
-            committed = []
-            native_events = []
-            page.on("download", lambda _: native_events.append(True))
-
-            def lost_preparation(route):
-                response = route.fetch()
-                self.assertEqual(response.status, 200, "real preparation committed before answer replacement")
-                old = response.json()["operationId"]
-                operations.append(old)
-                committed.append(old)
-                self.assertEqual(self.download_row(old), "prepared|0")
-                route.fulfill(status=502, content_type="text/html", body="<html>SYN lost preparation reply</html>")
-
-            # Each replaced answer is followed at once by the panel's own status read. The route is removed only after that
-            # read has answered: page.unroute turns Playwright's request interception off, and a request leaving at that
-            # moment can stay paused in the browser forever, never reaching the proxy (reproduced without the product:
-            # 4/500 such reads hung with unroute in the finally, 0/500 with unroute after the read).
-            page.route("**" + prepare_path, lost_preparation)
-            try:
-                page.locator(f'#rows tr[data-uid="{fixture.uid}"]').click(button="right")
-                with page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith(prepare_path)):
-                    page.locator("#ctx").get_by_text("Download Originals", exact=True).click()
-                self.assertEqual(len(committed), 1)
-                old = committed[0]
-                old_box = self.transfer_box(page, old)
-                expect(old_box.locator(".study-transfer-state")).to_have_text("Ready", timeout=30000)
-            finally:
-                page.unroute("**" + prepare_path, lost_preparation)
-            grant_path = prepare_path + f"/{old}/archive/grant"
-            status_path = prepare_path + "/" + old
-            issued = []
-
-            def lost_grant(route):
-                response = route.fetch()
-                self.assertEqual(response.status, 200, "real grant issued before answer replacement")
-                issued.append(response.json()["grantId"])
-                route.fulfill(status=502, content_type="text/html", body="<html>SYN lost grant reply</html>")
-
-            page.route("**" + grant_path, lost_grant)
-            try:
-                with page.expect_response(lambda r: r.request.method == "GET" and r.url.endswith(status_path)):
-                    with page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith(grant_path)):
-                        old_box.get_by_role("button", name="Download", exact=True).click()
-                expect(old_box.get_by_role("button", name="Check Again", exact=True)).to_be_visible()
-            finally:
-                page.unroute("**" + grant_path, lost_grant)
-            self.assertEqual(len(issued), 1)
-            self.assertEqual(psql(f"SELECT download->'activeArchiveGrant'->>'grantId' FROM \"ImportOperation\" WHERE id='{old}';"), issued)
-            self.assertEqual(self.download_row(old), "prepared|0", "issuance did not start an archive")
-            self.assertEqual(native_events, [], "lost grant answer cannot start native download")
-            self.assertEqual(old_box.get_by_role("button", name="Download", exact=True).count(), 0)
-
-            def malformed_archive_status(route):
-                response = route.fetch()
-                self.assertEqual(response.status, 200)
-                view = response.json()
-                self.assertEqual(view["state"], "prepared")
-                view["archiveRequest"] = {"grantId": issued[0], "state": "refused", "attemptId": str(uuid.uuid4()),
-                                          "expiresAt": 17, "code": "SYN_UNDECLARED", "message": "not started"}
-                route.fulfill(status=200, json=view)
-
-            for malformed in (False, True, False):
-                if malformed:
-                    page.route("**" + status_path, malformed_archive_status)
-                try:
-                    with page.expect_response(lambda r: r.request.method == "GET" and r.url.endswith(status_path)):
-                        old_box.get_by_role("button", name="Check Again", exact=True).click()
-                    expect(old_box.get_by_role("button", name="Check Again", exact=True)).to_be_visible()
-                    self.assertEqual(old_box.get_by_role("button", name="Download", exact=True).count(), 0,
-                                     "prepared or malformed GET cannot reopen a spent grant")
-                    self.assertNotIn("not started", old_box.inner_text(), "no raw non-start certificate")
-                    self.assertEqual(native_events, [])
-                finally:
-                    if malformed:
-                        page.unroute("**" + status_path, malformed_archive_status)
+            old_box = self.transfer_box(page, old)
+            expect(old_box.locator(".study-transfer-state")).to_have_text(state)
+            self.assertEqual(old_box.get_by_role("button", name="Download", exact=True).count(), 0,
+                             "D1606: restored operation cannot request another grant")
+            history = psql(f"SELECT download::text FROM \"ImportOperation\" WHERE id='{old}';")
+            audit = self.download_audit(old)
+            before = len(seen)
+            with page.expect_response(lambda r: r.request.method == "GET"
+                                      and r.url.endswith(f"/original-downloads/{old}")):
+                old_box.get_by_role("button", name="Check Again", exact=True).click()
+            expect(old_box.locator(".study-transfer-state")).to_have_text(state)
+            self.assertEqual([item for item in seen[before:] if item[0] != "GET"], [], "Check Again is read-only")
             clear = page.locator("#study-transfer").get_by_role("button", name="Clear Finished", exact=True)
             if clear.is_enabled():
                 clear.click()
@@ -1041,57 +918,237 @@ class WorklistE2E(unittest.TestCase):
             new = prepare_again(old)
             downloaded, _ = self.native_download(page, fixture, new)
             self.archive_supplied(page, downloaded.path(), new, 1)
-            self.assertEqual(native_events, [True], "only the new operation starts a download")
-            self.assertEqual(seen.count(("POST", grant_path)), 1, "one old-operation grant across all reads and new preparation")
-            self.assertEqual(self.download_row(old), "prepared|0")
+            self.assertEqual(self.download_row(new), "sent|1")
+            self.assertEqual(psql(f"SELECT download::text FROM \"ImportOperation\" WHERE id='{old}';"), history,
+                             "D1606: new preparation preserves every old attempt and grant fact")
+            self.assertEqual(self.download_audit(old), audit, "old operation audit history unchanged")
             expect(old_box).to_have_count(1)
 
-            # LIVE-11 (r6): a grant the real service issued (committed) whose answer is delayed until the selection went
-            # A -> B -> A, or until the panel was closed. Neither late answer starts the browser download, the old operation
-            # had exactly one grant and a fresh operation still downloads.
-            for ending in ("A-B-A", "Close"):
-                self.select(page, fixture)
-                late = self.download_operation(page, fixture, operations)
-                late_path = prepare_path + f"/{late}/archive/grant"
-                delayed = []
+        self.select(page, fixture)
+        operation = self.download_operation(page, fixture, operations)
+        box = self.transfer_box(page, operation)
+        since = str(int(time.time()) - 5)
+        download, grant = self.native_download(page, fixture, operation)
+        stored, attempt, use = self.archive_supplied(page, download.path(), operation, 1)
+        self.assertEqual(use["hash"], hashlib.sha256(("kin-original-download-grant-v1:" + grant).encode()).hexdigest(),
+                         "the row keeps the domain-separated hash of this grant")
+        audit = self.download_audit(operation)
+        self.assertEqual([action for action, _ in audit], ["original.download.prepare", "original.download.grant",
+                                                           "original.download.intent", "original.download.result"])
+        issued, intent, result = audit[1][1], audit[2][1], audit[3][1]
+        self.assertEqual((issued["phase"], issued["grantId"], issued["grantHash"]), ("issued", use["grantId"], use["hash"]))
+        # The intent row names the attempt it opened; the destination is the attempt's own (M-U4B-02: no grant use).
+        self.assertEqual((intent["attemptId"], intent["number"], attempt["destination"]),
+                         (attempt["attemptId"], 1, "browser-download"))
+        self.assertEqual((result["attemptId"], result["state"]), (attempt["attemptId"], "sent"))
+        self.assertEqual(len({detail["institutionId"] for _, detail in audit}), 1, "one record-time institution")
+        self.assertFalse(grant in stored or any(grant in json.dumps(detail) for _, detail in audit), "the raw grant is stored nowhere")
+        status = self.stack.request("GET", f"/studies/{fixture.uid}/original-downloads/{operation}", "doctor")
+        self.assertEqual(status.body["state"], "sent")
+        # SRU4-1: the same grant on the non-canonical spellings never reaches the API's general log path - the proxy
+        # refuses each with 400 before any location and logs it in the archive format (no query).
+        base = f"/api/studies/{fixture.uid}/original-downloads/{operation}"
+        origin = "{0.scheme}://{0.netloc}".format(urlsplit(page.url))
+        aliases = [f"/api/studies/{fixture.uid}/original-downloads/{operation.upper()}/archive", base + "/archive/",
+                   "/API" + base[len("/api"):] + "/archive", base]
+        for path in aliases:
+            self.assertEqual(page.request.get(origin + path + "?grant=" + grant).status, 400, "a grant outside the archive path")
+        # U4C-01: the proxy's privacy filter is broader than what the API admits. The API takes a grant only as the literal
+        # whole query `grant=<43 base64url characters>` (lower-case key, no percent or case alias); the proxy treats any
+        # spelling a receiver could decode to the key (another case, a percent-encoded letter) as a grant, refuses it
+        # outside the archive path and logs it without the query, so a mistyped grant never lands in a log (U4C3-2).
+        for path, key in ((base, "%67rant="), ("/api/health", "Gr%61nt=")):
+            self.assertEqual(page.request.get(origin + path + "?" + key + grant).status, 400, "an encoded grant key outside the archive path")
+        logs = subprocess.run(["docker", "compose", "logs", "--no-color", "--since", since, "proxy", "api"], cwd=ROOT,
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(logs.returncode, 0, "the proxy and API logs could be read")
+        self.assertFalse(grant in logs.stdout + logs.stderr, "the raw grant is in no proxy or API log line")
+        self.assertIn(f'"GET /api/studies/{fixture.uid}/original-downloads/{operation}/archive" 200 ', logs.stdout,
+                      "the archive GET is logged by the archive location's format (method, path, status)")
+        for path in aliases + ["/api/health"]:
+            self.assertIn(f'"GET {path}" 400 ', logs.stdout, "each refused spelling is logged by the archive format")
+        expect(box.locator(".study-transfer-state")).to_have_text("Sent", timeout=30000)
+        expect(box.locator(".study-transfer-reason")).to_have_text(self.SENT)
+        for claim in ("저장했습니다", "저장되었습니다", "보관했습니다"):
+            self.assertNotIn(claim, page.locator("#study-transfer").inner_text(), "no text says the file was saved")
+        self.assertEqual(box.get_by_role("button", name="Download", exact=True).count(), 0, "Sent is not downloaded again")
+        self.assertEqual(page.locator("#study-transfer").get_by_role("button", name=re.compile("Resume|Range")).count(), 0)
+        self.assertEqual(self.download_row(operation), "sent|1")
+        again = self.stack.bearer_request("GET", f"/studies/{fixture.uid}/original-downloads/{operation}/archive",
+                                          self.stack.token("doctor"), headers={"Range": "bytes=10-"})
+        self.assertEqual((again.status, (again.body or {}).get("code")), (409, "DOWNLOAD_ALREADY_SENT"), "no Range resume")
+        with page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith("/original-downloads")) as fresh:
+            box.get_by_role("button", name="Prepare Again").click()
+        operations.append(fresh.value.json()["operationId"])
+        self.assertNotEqual(operations[-1], operation, "after Sent a new operation is prepared")
 
-                def hold_grant(route):
-                    response = route.fetch()
-                    self.assertEqual(response.status, 200, "real grant issued before its answer is delayed")
-                    delayed.append((route, response))
+        # Incomplete (5.2 step 6): retain the interrupted attempt, then explicitly prepare a different operation.
+        dropped = self.download_operation(page, fixture, operations)
+        insecure = ssl.create_default_context()
+        insecure.check_hostname, insecure.verify_mode = False, ssl.CERT_NONE
+        request = Request(self.stack.api + f"/studies/{fixture.uid}/original-downloads/{dropped}/archive",
+                          headers={"Authorization": "Bearer " + self.stack.token("doctor")})
+        with urlopen(request, context=insecure, timeout=30) as stream:
+            stream.read(64)
+        deadline = time.monotonic() + 30
+        while self.download_row(dropped) != "incomplete|1" and time.monotonic() < deadline:
+            time.sleep(0.5)
+        self.assertEqual(self.download_row(dropped), "incomplete|1")
+        page.reload()
+        expect(page.locator("#dbstat")).to_contain_text("DB Connected")
+        expect(self.transfer_box(page, dropped).locator(".study-transfer-state")).to_have_text("Incomplete", timeout=30000)
+        read_only_then_new(dropped, "Incomplete")
+        self.assertEqual(self.download_row(dropped), "incomplete|1")
 
-                page.route("**" + late_path, hold_grant)
-                try:
-                    self.transfer_box(page, late).get_by_role("button", name="Download", exact=True).click()
-                    deadline = time.monotonic() + 30
-                    while not delayed and time.monotonic() < deadline:
-                        page.wait_for_timeout(100)
-                    self.assertEqual(len(delayed), 1, "the grant reached the real service")
-                    if ending == "A-B-A":
-                        self.select(page, other)
-                        self.select(page, fixture)
-                    else:
-                        page.locator("#study-transfer").get_by_role("button", name="Close", exact=True).click()
-                    route, response = delayed[0]
-                    route.fulfill(response=response)
-                    page.wait_for_timeout(1500)
-                finally:
-                    page.unroute("**" + late_path, hold_grant)
-                self.assertEqual(native_events, [True], f"{ending}: a late grant answer starts no browser download")
-                self.assertEqual(seen.count(("POST", late_path)), 1, f"{ending}: one grant of the old operation")
-                self.assertEqual(self.download_row(late), "prepared|0", f"{ending}: no archive attempt began")
-                self.assertEqual(self.transfer_box(page, late).get_by_role("button", name="Download", exact=True).count(), 0,
-                                 f"{ending}: the spent grant is never offered again")
-            self.select(page, fixture)
-            fresh = self.download_operation(page, fixture, operations)
-            downloaded, _ = self.native_download(page, fixture, fresh)
-            self.archive_supplied(page, downloaded.path(), fresh, 1)
-            self.assertEqual(native_events, [True, True], "a fresh operation still downloads once")
+        # Unconfirmed (5.2 step 7): an attempt a stopped server left sending, its lease run out; the status read closes it.
+        stopped = self.download_operation(page, fixture, operations)
+        [row] = psql(f"SELECT download::text || '|' || \"manifestSha256\" FROM \"ImportOperation\" WHERE id='{stopped}';")
+        stored, manifest = row.rsplit("|", 1)
+        body = json.loads(stored)
+        body["attempts"].append({"attemptId": str(uuid.uuid4()), "number": 1, "ownerSubject": self.stack.user_ids["doctor"],
+                                 "actor": self.stack.actor("doctor"), "manifestSha256": manifest,
+                                 "destination": "browser-download", "state": "sending",
+                                 "startedAt": "2026-01-01T00:00:00.000Z", "endedAt": None, "ownerInstance": str(uuid.uuid4()),
+                                 "leaseUntil": "2026-01-01T00:00:30.000Z", "objects": [], "archiveSha256": None,
+                                 "responseFinished": False})
+        psql(f"UPDATE \"ImportOperation\" SET download = '{json.dumps(body).replace(chr(39), chr(39) * 2)}'::jsonb, "
+             f"status = 'sending' WHERE id='{stopped}';")
+        self.sign_in_again(page, "doctor")
+        expect(self.transfer_box(page, stopped).locator(".study-transfer-state")).to_have_text("Unconfirmed", timeout=30000)
+        read_only_then_new(stopped, "Unconfirmed")
+        self.assertEqual(self.download_row(stopped), "unconfirmed|1")
+
+        # Commit at the real service before replacing either answer. A prepared GET cannot replenish a lost grant.
+        self.select(page, fixture)
+        prepare_path = f"/api/studies/{fixture.uid}/original-downloads"
+        committed = []
+        native_events = []
+        page.on("download", lambda _: native_events.append(True))
+
+        def lost_preparation(route):
+            response = route.fetch()
+            self.assertEqual(response.status, 200, "real preparation committed before answer replacement")
+            old = response.json()["operationId"]
+            operations.append(old)
+            committed.append(old)
+            self.assertEqual(self.download_row(old), "prepared|0")
+            route.fulfill(status=502, content_type="text/html", body="<html>SYN lost preparation reply</html>")
+
+        # Each replaced answer is followed at once by the panel's own status read. The route is removed only after that
+        # read has answered: page.unroute turns Playwright's request interception off, and a request leaving at that
+        # moment can stay paused in the browser forever, never reaching the proxy (reproduced without the product:
+        # 4/500 such reads hung with unroute in the finally, 0/500 with unroute after the read).
+        page.route("**" + prepare_path, lost_preparation)
+        try:
+            page.locator(f'#rows tr[data-uid="{fixture.uid}"]').click(button="right")
+            with page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith(prepare_path)):
+                page.locator("#ctx").get_by_text("Download Originals", exact=True).click()
+            self.assertEqual(len(committed), 1)
+            old = committed[0]
+            old_box = self.transfer_box(page, old)
+            expect(old_box.locator(".study-transfer-state")).to_have_text("Ready", timeout=30000)
         finally:
-            # The download rows of this case; the fixture's own cleanup removes its study, originals and audit rows.
-            ids = [op for op in operations if re.fullmatch(r"[0-9a-f-]{36}", op)]
-            if ids:
-                psql("DELETE FROM \"ImportOperation\" WHERE kind='download' AND id IN (" + ",".join(f"'{op}'" for op in ids) + ");")
+            page.unroute("**" + prepare_path, lost_preparation)
+        grant_path = prepare_path + f"/{old}/archive/grant"
+        status_path = prepare_path + "/" + old
+        issued = []
+
+        def lost_grant(route):
+            response = route.fetch()
+            self.assertEqual(response.status, 200, "real grant issued before answer replacement")
+            issued.append(response.json()["grantId"])
+            route.fulfill(status=502, content_type="text/html", body="<html>SYN lost grant reply</html>")
+
+        page.route("**" + grant_path, lost_grant)
+        try:
+            with page.expect_response(lambda r: r.request.method == "GET" and r.url.endswith(status_path)):
+                with page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith(grant_path)):
+                    old_box.get_by_role("button", name="Download", exact=True).click()
+            expect(old_box.get_by_role("button", name="Check Again", exact=True)).to_be_visible()
+        finally:
+            page.unroute("**" + grant_path, lost_grant)
+        self.assertEqual(len(issued), 1)
+        self.assertEqual(psql(f"SELECT download->'activeArchiveGrant'->>'grantId' FROM \"ImportOperation\" WHERE id='{old}';"), issued)
+        self.assertEqual(self.download_row(old), "prepared|0", "issuance did not start an archive")
+        self.assertEqual(native_events, [], "lost grant answer cannot start native download")
+        self.assertEqual(old_box.get_by_role("button", name="Download", exact=True).count(), 0)
+
+        def malformed_archive_status(route):
+            response = route.fetch()
+            self.assertEqual(response.status, 200)
+            view = response.json()
+            self.assertEqual(view["state"], "prepared")
+            view["archiveRequest"] = {"grantId": issued[0], "state": "refused", "attemptId": str(uuid.uuid4()),
+                                      "expiresAt": 17, "code": "SYN_UNDECLARED", "message": "not started"}
+            route.fulfill(status=200, json=view)
+
+        for malformed in (False, True, False):
+            if malformed:
+                page.route("**" + status_path, malformed_archive_status)
+            try:
+                with page.expect_response(lambda r: r.request.method == "GET" and r.url.endswith(status_path)):
+                    old_box.get_by_role("button", name="Check Again", exact=True).click()
+                expect(old_box.get_by_role("button", name="Check Again", exact=True)).to_be_visible()
+                self.assertEqual(old_box.get_by_role("button", name="Download", exact=True).count(), 0,
+                                 "prepared or malformed GET cannot reopen a spent grant")
+                self.assertNotIn("not started", old_box.inner_text(), "no raw non-start certificate")
+                self.assertEqual(native_events, [])
+            finally:
+                if malformed:
+                    page.unroute("**" + status_path, malformed_archive_status)
+        clear = page.locator("#study-transfer").get_by_role("button", name="Clear Finished", exact=True)
+        if clear.is_enabled():
+            clear.click()
+        expect(old_box).to_have_count(1)
+        new = prepare_again(old)
+        downloaded, _ = self.native_download(page, fixture, new)
+        self.archive_supplied(page, downloaded.path(), new, 1)
+        self.assertEqual(native_events, [True], "only the new operation starts a download")
+        self.assertEqual(seen.count(("POST", grant_path)), 1, "one old-operation grant across all reads and new preparation")
+        self.assertEqual(self.download_row(old), "prepared|0")
+        expect(old_box).to_have_count(1)
+
+        # LIVE-11 (r6): a grant the real service issued (committed) whose answer is delayed until the selection went
+        # A -> B -> A, or until the panel was closed. Neither late answer starts the browser download, the old operation
+        # had exactly one grant and a fresh operation still downloads.
+        for ending in ("A-B-A", "Close"):
+            self.select(page, fixture)
+            late = self.download_operation(page, fixture, operations)
+            late_path = prepare_path + f"/{late}/archive/grant"
+            delayed = []
+
+            def hold_grant(route):
+                response = route.fetch()
+                self.assertEqual(response.status, 200, "real grant issued before its answer is delayed")
+                delayed.append((route, response))
+
+            page.route("**" + late_path, hold_grant)
+            try:
+                self.transfer_box(page, late).get_by_role("button", name="Download", exact=True).click()
+                deadline = time.monotonic() + 30
+                while not delayed and time.monotonic() < deadline:
+                    page.wait_for_timeout(100)
+                self.assertEqual(len(delayed), 1, "the grant reached the real service")
+                if ending == "A-B-A":
+                    self.select(page, other)
+                    self.select(page, fixture)
+                else:
+                    page.locator("#study-transfer").get_by_role("button", name="Close", exact=True).click()
+                route, response = delayed[0]
+                route.fulfill(response=response)
+                page.wait_for_timeout(1500)
+            finally:
+                page.unroute("**" + late_path, hold_grant)
+            self.assertEqual(native_events, [True], f"{ending}: a late grant answer starts no browser download")
+            self.assertEqual(seen.count(("POST", late_path)), 1, f"{ending}: one grant of the old operation")
+            self.assertEqual(self.download_row(late), "prepared|0", f"{ending}: no archive attempt began")
+            self.assertEqual(self.transfer_box(page, late).get_by_role("button", name="Download", exact=True).count(), 0,
+                             f"{ending}: the spent grant is never offered again")
+        self.select(page, fixture)
+        fresh = self.download_operation(page, fixture, operations)
+        downloaded, _ = self.native_download(page, fixture, fresh)
+        self.archive_supplied(page, downloaded.path(), fresh, 1)
+        self.assertEqual(native_events, [True, True], "a fresh operation still downloads once")
 
     def test_s9_u4_import_retry_and_account_change(self):
         """D1606 REQ-S9-U4-05/10: restored history is read-only; explicit new selection uses a new UUID.
@@ -1450,6 +1507,51 @@ class WorklistE2E(unittest.TestCase):
             failures = s9u4_cleanup(self.stack._orthanc_request, psql, studies, operations, deleted)
             if failures:
                 raise RuntimeError("S9-U4 (c) cleanup failed; rows kept for inspection: " + "; ".join(failures))
+
+
+class DownloadCleanupTests(unittest.TestCase):
+    """The common fixture cleanup (WorklistE2E.cleanup_fixtures) owns a case's original-download operations by the
+    studies the case owns. No stack: the cleanup's own SQL runs on an in-memory table and the case uses a stand-in stack."""
+
+    def test_a_case_that_fails_before_reading_an_operation_id_shows_its_failure_and_leaves_no_download_row_of_its_study(self):
+        import sqlite3
+        db = sqlite3.connect(":memory:")
+        db.executescript('CREATE TABLE "ImportOperation" (id TEXT, kind TEXT, "studyUid" TEXT);'
+                         + "".join(f'CREATE TABLE "{table}" (uid TEXT);' for table in ("StudyState", "Report", "ReportDraft", "ReportVersion"))
+                         + 'CREATE TABLE "AuditLog" (target TEXT);')
+
+        def run(sql):
+            rows = db.execute(sql).fetchall()
+            db.commit()
+            return [str(row[0]) for row in rows]
+
+        own, other = "1.2.826.0.1.3680043.10.901", "1.2.826.0.1.3680043.10.902"
+        db.execute('INSERT INTO "ImportOperation" VALUES (?, ?, ?)', ("another-study", "download", other))
+        db.execute('INSERT INTO "ImportOperation" VALUES (?, ?, ?)', ("same-uid-other-kind", "study-claim", own))
+        stack = SimpleNamespace(active={}, cleanup_all=lambda: stack.active.clear(),
+                                _orthanc_request=lambda *request: SimpleNamespace(status=200, body=[]))
+
+        class Case(WorklistE2E):
+            def tearDown(self):   # nothing to capture: the case opens no page
+                pass
+
+            def runTest(self):
+                self.stack.active[own] = object()
+                # The server created the operation's row; the case fails on the answer before it reads the id.
+                db.execute('INSERT INTO "ImportOperation" VALUES (?, ?, ?)', ("never-read", "download", own))
+                self.assertEqual("the whole study", "the chosen series", "SYN the case's own assertion")
+
+        Case.stack = stack
+        result = unittest.TestResult()
+        with patch(__name__ + ".psql", run):
+            Case().run(result)
+        self.assertEqual([], result.errors, "the cleanup raised nothing of its own")
+        self.assertEqual(1, len(result.failures))
+        self.assertIn("SYN the case's own assertion", result.failures[0][1], "the case's own failure is the one shown")
+        self.assertEqual({}, stack.active, "the case's fixture was cleaned")
+        self.assertEqual([("another-study", "download", other), ("same-uid-other-kind", "study-claim", own)],
+                         sorted(db.execute('SELECT * FROM "ImportOperation"').fetchall()),
+                         "no download row of the case's study; another study's row and another kind's row stay")
 
 
 if __name__ == "__main__":

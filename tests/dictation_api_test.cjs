@@ -239,7 +239,8 @@ test('CORE_R11_DICTATION role -> institution -> unverified -> hold -> designatio
   }
   assert.ok(!JSON.stringify(audits).includes('TRANSCRIPT'));
   state.preDocSub=null; state.preReviewerSub=null;
-  assert.equal((await call({...x,sub:'legacy-sub',actor:'old-label'})).status,200);
+  // A designation without an account matches nobody - never the email someone has now (owner-identity.ts).
+  assert.equal((await call({...x,sub:'legacy-sub',actor:'old-label'})).status,403);
   assert.equal((await call(x)).status,403);
   // A revocation after inference must withhold the body and still record exactly one metadata audit.
   state.preDocSub=x.sub; asr.transcribe=async()=>{state.preDocSub='someone-else';return {text:'SYNTHETIC TRANSCRIPT'};};

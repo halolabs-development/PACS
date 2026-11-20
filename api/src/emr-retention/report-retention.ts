@@ -377,7 +377,7 @@ async function anchorOf(tx: Tx, forUpdate: boolean): Promise<Anchor> {
 /** Mark one study's report destroyed and delete it, in this order (the signature function requires the first two). */
 async function deleteReport(tx: Tx, uid: string, unit: string, versions: number, signatures: number): Promise<void> {
   const marked = await tx.$executeRaw`UPDATE "StudyState" SET rs = 'D', "reportUnit" = NULL, "repDoc" = NULL, confirm = NULL,
-    "preDoc" = NULL, "preReviewer" = NULL, "preDocSub" = NULL, "preReviewerSub" = NULL, "holdReason" = NULL, holder = NULL,
+    "preDoc" = NULL, "preReviewer" = NULL, "preDocSub" = NULL, "preReviewerSub" = NULL, "holdReason" = NULL, holder = NULL, "holderSub" = NULL,
     "holderInstitutionId" = NULL, "heldAt" = NULL, "draftEpoch" = gen_random_uuid(), "updatedAt" = now() AT TIME ZONE 'UTC'
     WHERE uid = ${uid} AND "reportUnit" = ${unit}`;
   if (marked !== 1) refuse('ReportRowChanged');

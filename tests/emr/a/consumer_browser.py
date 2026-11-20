@@ -17,7 +17,8 @@ with sync_playwright() as playwright:
     page.on('response', lambda response: responses.append({'url': response.url, 'status': response.status})
             if '/api/' in response.url else None)
     try:
-        page.goto(facts['origin'] + '/worklist/main.html', wait_until='networkidle')
+        # The preload worker can outlive the page load. The returned study and its rendered row establish readiness.
+        page.goto(facts['origin'] + '/worklist/hpacs-lite/main.html', wait_until='domcontentloaded')
         page.wait_for_function("document.body.innerText.includes('SYN CONSUMER')")
         assert any('/api/studies' in r['url'] and r['status'] == 200 for r in responses), responses
     finally:

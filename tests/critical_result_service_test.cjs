@@ -67,6 +67,8 @@ const PEOPLE = {
 };
 const SUBS = Object.fromEntries(Object.keys(PEOPLE).map((name, n) => [name, id(9000 + n)]));
 const actorOf = name => 'syn-' + name.toLowerCase() + '@synthetic.test';
+// The account a synthetic login names (the product writes it beside the login: owner-identity.ts); null for any other login.
+const subOf = actor => { const name = Object.keys(PEOPLE).find(n => actorOf(n) === actor); return name ? SUBS[name] : null; };
 const person = name => ({ kind: 'member', institution: PEOPLE[name].group ?? INST, sub: SUBS[name], actor: actorOf(name),
   roles: [...PEOPLE[name].roles], name: 'SYNTHETIC ' + name });
 const owner = c => [c.institution, c.sub];
@@ -143,20 +145,22 @@ async function world({ policies = {} } = {}) {
     let version = top + 1;
     const at = new Date(Date.UTC(2026, 8, 28, 0, 0, version));
     const row = async (n, act, findings, conclusion) => base.$executeRaw`INSERT INTO "ReportVersion"
-      (uid, version, action, findings, conclusion, recommendation, author, at) VALUES (${uid}, ${n}, ${act}, ${findings}, ${conclusion}, '', ${author}, ${at})`;
+      (uid, version, action, findings, conclusion, recommendation, author, "authorSub", at) VALUES (${uid}, ${n}, ${act}, ${findings}, ${conclusion}, '', ${author}, ${subOf(author)}, ${at})`;
     if (action === 'reset' && discard) { await row(version, 'discarded', pinnedText(version), ''); version += 1; }
     const empty = action === 'reset';
     await row(version, action, empty ? '' : pinnedText(version), empty ? '' : 'SYNTHETIC conclusion v' + version);
     await base.$executeRaw`INSERT INTO "Report" (uid, findings, conclusion, recommendation, version, "updatedAt")
       VALUES (${uid}, ${HEAD_BODY}, ${HEAD_BODY}, ${HEAD_BODY}, ${version}, now())
       ON CONFLICT (uid) DO UPDATE SET version = EXCLUDED.version, "updatedAt" = now()`;
-    const [s] = await base.$queryRaw`SELECT rs, "preDoc", "preReviewer" FROM "StudyState" WHERE uid = ${uid}`;
+    const [s] = await base.$queryRaw`SELECT rs, "preDoc", "preReviewer", "preDocSub", "preReviewerSub" FROM "StudyState" WHERE uid = ${uid}`;
     let rs = { save: 'T', approve: 'A', addendum: 'A', reset: 'W', preliminary: 'P', defer: 'H' }[action];
-    let preDoc = s.preDoc, preReviewer = s.preReviewer;
+    let preDoc = s.preDoc, preReviewer = s.preReviewer, preDocSub = s.preDocSub, preReviewerSub = s.preReviewerSub;
     if (action === 'save' && preDoc) rs = 'P';
-    if (action === 'preliminary') { preDoc = author; preReviewer = reviewer; }
-    if (action === 'reset' || action === 'approve') { preDoc = null; preReviewer = null; }
-    await base.$executeRaw`UPDATE "StudyState" SET rs = ${rs}, "preDoc" = ${preDoc}, "preReviewer" = ${preReviewer}, "updatedAt" = now() WHERE uid = ${uid}`;
+    // A Preliminary names its pair by account, as the product's commit does.
+    if (action === 'preliminary') { preDoc = author; preReviewer = reviewer; preDocSub = subOf(author); preReviewerSub = subOf(reviewer); }
+    if (action === 'reset' || action === 'approve') { preDoc = null; preReviewer = null; preDocSub = null; preReviewerSub = null; }
+    await base.$executeRaw`UPDATE "StudyState" SET rs = ${rs}, "preDoc" = ${preDoc}, "preReviewer" = ${preReviewer},
+      "preDocSub" = ${preDocSub}, "preReviewerSub" = ${preReviewerSub}, "updatedAt" = now() WHERE uid = ${uid}`;
     // A present draft holds its work (CD-09-P ReportDraft_work_check); a later version keeps the work it already has.
     await base.$executeRaw`INSERT INTO "ReportDraft" (uid, author, findings, conclusion, recommendation, "updatedAt", "workUnit", "workSince", "workIntent")
       VALUES (${uid}, 'syn-draft-author@synthetic.test', ${DRAFT_BODY}, ${DRAFT_BODY}, ${DRAFT_BODY}, now(), ${'disposal:' + randomUUID()}, now(), 'approve')
@@ -276,7 +280,9 @@ test('SV01 recipient class: radiologist makes R, otherwise clinician makes C (mi
 
 test('SV01 M-S7-CVR C1..C5 and the R rows R1..R5 as the contract states them (create and record cases)', () => {
   const h = (version, action) => ({ version, action });
-  const st = (rs, preDoc = null, preReviewer = null) => ({ rs, preDoc, preReviewer });
+  // The Preliminary pair is the designated accounts (owner-identity.ts): each name below stands for the account sub-<name>.
+  const st = (rs, preDoc = null, preReviewer = null) => ({ rs, preDoc, preReviewer,
+    preDocSub: preDoc && 'sub-' + preDoc, preReviewerSub: preReviewer && 'sub-' + preReviewer });
   // create: the pin is the head by construction (the source check came first)
   const creates = [
     ['C approve A', 'clinician', true, h(1, 'approve'), st('A'), 'C2'], ['C addendum A', 'clinician', true, h(2, 'addendum'), st('A'), 'C2'],
@@ -290,7 +296,7 @@ test('SV01 M-S7-CVR C1..C5 and the R rows R1..R5 as the contract states them (cr
     ['R approve, not visible (StudyAccess)', 'radiologist', false, h(1, 'approve'), st('A'), 'R1'],
   ];
   for (const [label, cls, visible, head, state, expected] of creates)
-    assert.equal(P.createCase({ cls, visible, head, state, actor: 'me' }), expected, label);
+    assert.equal(P.createCase({ cls, visible, head, state, actor: 'me', sub: 'sub-me' }), expected, label);
   // records: [label, class, visible, pin, head, state, case, view, ack, reason]
   const records = [
     ['C2 approve', 'clinician', true, 1, h(1, 'approve'), st('A'), 'C2', 'full', true, null],
@@ -310,7 +316,7 @@ test('SV01 M-S7-CVR C1..C5 and the R rows R1..R5 as the contract states them (cr
     ['R5 not visible', 'radiologist', false, 1, h(1, 'save'), st('T'), 'R5', null, false, null],
   ];
   for (const [label, cls, visible, pin, head, state, kase, view, ack, reason] of records) {
-    const out = P.recipientCase({ cls, visible, pin, head, state, actor: 'me' });
+    const out = P.recipientCase({ cls, visible, pin, head, state, actor: 'me', sub: 'sub-me' });
     assert.deepEqual([out.case, out.view, out.ack, out.reason], [kase, view, ack, reason], label);
   }
   // ACK is allowed in C2 and R2 only; delivery follows the view.
@@ -709,7 +715,8 @@ test('the received list and pending leave out C5 and R5 rows in the same SQL, be
     assert.deepEqual(before.items.map(item => item.id), who === asClinician ? [] : [recordId]);
   }
   // the P pair moves away from Y at the same head: R5, absent from the list, the count and the one-record read
-  await w.base.$executeRaw`UPDATE "StudyState" SET "preReviewer" = ${actorOf('Z')} WHERE uid = ${UID2}`;
+  // (the designation is the account: the reviewer's account moves with its shown name)
+  await w.base.$executeRaw`UPDATE "StudyState" SET "preReviewer" = ${actorOf('Z')}, "preReviewerSub" = ${SUBS.Z} WHERE uid = ${UID2}`;
   const after = readBody(await w.svc.list(person('Y'), { view: 'received' }));
   assert.deepEqual([after.items, after.pending], [[], 0]);
   await assert.rejects(w.svc.read(id(172), person('Y')), code(404, 'CRITICAL_RESULT_NOT_FOUND'));
@@ -1656,15 +1663,16 @@ test('TSV18 a reopened channel: B sees its records again; reads follow section 4
     ['readable', 'stub', false, 'reset', 'reset', 2]);
   assert.deepEqual(await w.count(), L0);
   // (b) R4 stub needs RS P with the reset head, a state the product API never makes (TO-05): pair outside, then inside
-  await w.base.$executeRaw`UPDATE "StudyState" SET rs = 'P', "preDoc" = ${actorOf('S')}, "preReviewer" = ${actorOf('Y')} WHERE uid = ${REOPEN_UID}`;
+  await w.base.$executeRaw`UPDATE "StudyState" SET rs = 'P', "preDoc" = ${actorOf('S')}, "preReviewer" = ${actorOf('Y')},
+    "preDocSub" = ${SUBS.S}, "preReviewerSub" = ${SUBS.Y} WHERE uid = ${REOPEN_UID}`;
   const outside = (readBody(await w.svc.read(rX, person('K')))).item;
   assert.deepEqual([outside.view, outside.source, 'message' in outside, 'body' in outside], ['stub', { current: false, reason: 'reset' }, false, false]);
   await assert.rejects(w.svc.ack(rX, person('K'), ackBody(person('K'), id(2085))), code(409, 'CRITICAL_RESULT_SOURCE_CHANGED'));
   assert.equal((await sentOf())[0][rX].delivery, 'stub');
-  await w.base.$executeRaw`UPDATE "StudyState" SET "preReviewer" = ${actorOf('K')} WHERE uid = ${REOPEN_UID}`;
+  await w.base.$executeRaw`UPDATE "StudyState" SET "preReviewer" = ${actorOf('K')}, "preReviewerSub" = ${SUBS.K} WHERE uid = ${REOPEN_UID}`;
   assert.equal((readBody(await w.svc.read(rX, person('K')))).item.view, 'full');
   assert.equal((await sentOf())[0][rX].delivery, 'readable');
-  await w.base.$executeRaw`UPDATE "StudyState" SET rs = 'W', "preDoc" = NULL, "preReviewer" = NULL WHERE uid = ${REOPEN_UID}`;
+  await w.base.$executeRaw`UPDATE "StudyState" SET rs = 'W', "preDoc" = NULL, "preReviewer" = NULL, "preDocSub" = NULL, "preReviewerSub" = NULL WHERE uid = ${REOPEN_UID}`;
   assert.deepEqual(await w.count(), L0);
   // (c) requests prepared before the close that arrive after the reopen, in this order (section 4 steps 11, 12, 14)
   const replay = await w.svc.create(REOPEN_UID, S(), bodyX);
@@ -1770,6 +1778,14 @@ for(const bound of [false,true])test(`CORE_R10_CVR_KC_DOWN P designated reviewer
   const w=await world(),version=await w.commit(UID,'preliminary',{reviewer:actorOf('X')});
   if(bound)await w.base.studyState.update({where:{uid:UID},data:{preDocSub:SUBS.S,preReviewerSub:SUBS.X}});
   w.kcFail=true;w.log.length=0;
+  if(!bound){
+    // A reviewer designation without an account (a row the member table could not resolve) is nobody's: the reviewer's
+    // email never stands in for it (owner-identity.ts), with or without the provider.
+    await w.base.studyState.update({where:{uid:UID},data:{preReviewerSub:null}});
+    await assert.rejects(w.svc.create(UID,S(),createBody(S(),id(8101),'X',version)),code(409,'CRITICAL_RESULT_RECIPIENT_CANNOT_READ'));
+    assert.ok(!w.log.some(line=>line.startsWith('kc:')),'sending a critical result has no Keycloak dependency');
+    return;
+  }
   let created,replaced;
   await assert.doesNotReject(async()=>{created=await w.svc.create(UID,S(),createBody(S(),id(8101),'X',version));});
   await assert.doesNotReject(async()=>{replaced=await w.svc.supersede(id(8101),S(),supersedeBody(S(),id(8102),1,version));});
@@ -1804,6 +1820,8 @@ test('CORE_R10_CVR_RENAME_AFTER_DESIGNATION subjects keep X readable and reject 
 
 test('CORE_R10_CVR_AMBIGUOUS legacy roster id shared by two subjects admits neither candidate nor final recipient',async()=>{
   const w=await world(),label=actorOf('X'),version=await w.commit(UID,'preliminary',{reviewer:label});
+  // A legacy reviewer designation by label only (no account): nobody's, whoever has that label now.
+  await w.base.studyState.update({where:{uid:UID},data:{preReviewerSub:null}});
   // Email/username collisions are possible even when provider emails themselves are unique.
   w.users.get(SUBS.Y).email='';w.users.get(SUBS.Y).username=label;
   await w.rights('Y',{email:'',username:label});
@@ -2652,6 +2670,24 @@ async function matchOrderingPhysician(w, uid, physician) {
 }
 const roleSend = (selected, requestId = randomUUID()) => ({requestId, expectedOwner: owner(S()),
   recipientSubs: selected, sourceVersion: 1, message: MESSAGE});
+
+test('send roles: a preliminary reviewer with only a matching roster login cannot receive the result', async () => {
+  const w = await world();
+  await w.commit(UID, 'preliminary', {reviewer: actorOf('X')});
+  await matchOrderingPhysician(w, UID, SUBS.X);
+  await w.svc.saveInbox(person('AD'), {sub: SUBS.X});
+  const bound = await w.svc.recipients(UID, S());
+  assert.deepEqual(bound.recipients.filter(r => r.orderingPhysician && r.inbox).map(r => r.sub), [SUBS.X]);
+
+  await w.base.studyState.update({where: {uid: UID}, data: {preReviewerSub: null}});
+  const unbound = await w.svc.recipients(UID, S());
+  assert.equal(unbound.recipients.some(r => r.sub === SUBS.X), false);
+  assert.deepEqual([unbound.orderingPhysician, unbound.inbox, unbound.reason],
+    ['unlisted', 'unlisted', 'NO_ELIGIBLE_RECIPIENT']);
+  const before = await w.count();
+  await assert.rejects(w.svc.create(UID, S(), roleSend([SUBS.X])), code(409, P.CRITICAL_RESULT_CODES.RECIPIENT_CANNOT_READ));
+  assert.deepEqual(await w.count(), before);
+});
 
 test('send roles: matched physician and inbox receive independently, or share one delivery and ACK', async () => {
   const w = await world();
