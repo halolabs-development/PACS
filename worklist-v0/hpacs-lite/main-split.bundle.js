@@ -14317,6 +14317,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     coverLayer.id = 'box-arrange-covers'; coverLayer.hidden = true;
     document.body.append(coverLayer, arrangeBar);
     let arranging = false, boxPicked = null, boxDrag = null, boxDropped = false, arrangeReturn = null, lastWorkFocus = null, coverFrame = 0;
+    let arrangeDrawer = false;
     // The field the reader was in before opening Panel Settings: Done puts focus back there (its caret and text are
     // untouched). Kept only while the page works (stopWorkspaceLayout removes it and forgets the field).
     const noteWorkFocus = event => {
@@ -14337,12 +14338,56 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     }
     // Only the product's own sentences above and below come here (boxOutcome, BOX_SAID, literals), never a value.
     const arrangeStatus = text => { kinWrite($('#box-arrange-status'), kinSay(text)); };
+    // The bar never hides a box's name: each shown cover lays its name out in the part of its on-screen rectangle that
+    // the bar does not cover (below the bar, else beside it, else above it), by the two rectangles as drawn now. The bar
+    // stays at the top unless some cover has no such part big enough for its name there; then it sits at the bottom
+    // edge, or stays at the top when the bottom leaves no room either.
+    const COVER_PAD = 8, COVER_BORDER = 2, BAR_GAP = 4;
+    // The cover's padding that puts its name in a bar-free part of `seen` (the cover's rectangle), or null.
+    function nameRoom(seen, bar, name) {
+      const box = { top: seen.y, left: seen.x, bottom: seen.y + seen.height, right: seen.x + seen.width };
+      const under = bar.left < box.right && bar.right > box.left && bar.top < box.bottom && bar.bottom > box.top;
+      const sides = [{ ...box, right: bar.left }, { ...box, left: bar.right }].sort((a, b) => (b.right - b.left) - (a.right - a.left));
+      const parts = under ? [{ ...box, top: bar.bottom }, ...sides, { ...box, bottom: bar.top }] : [box];
+      for (const part of parts) {
+        const own = side => part[side] === box[side];
+        // Each side of the part keeps the name off its edge: the cover's border on a side it shares with the cover
+        // (plus its usual padding where there is room for it), a small gap on a side the bar makes.
+        const fixed = side => own(side) ? COVER_BORDER : BAR_GAP;
+        const spareX = part.right - part.left - fixed('left') - fixed('right') - name.width;
+        const spareY = part.bottom - part.top - fixed('top') - fixed('bottom') - name.height;
+        if (spareX < 0 || spareY < 0) continue;
+        const pad = (side, spare, pair) => own(side)
+          ? Math.min(COVER_PAD, Math.floor(spare / pair.filter(own).length))
+          : Math.abs(part[side] - box[side]) - COVER_BORDER + BAR_GAP;
+        const y = ['top', 'bottom'], x = ['left', 'right'];
+        return `${pad('top', spareY, y)}px ${pad('right', spareX, x)}px ${pad('bottom', spareY, y)}px ${pad('left', spareX, x)}px`;
+      }
+      return null;
+    }
+    function placeBoxNames(boxes, covers) {
+      const names = covers.map(cover => cover.querySelector('.kin-box-name').getBoundingClientRect());
+      const roomAt = end => {
+        arrangeBar.dataset.end = end;
+        const bar = arrangeBar.getBoundingClientRect();
+        return boxes.map((box, i) => nameRoom(box.visible, bar, names[i]));
+      };
+      let rooms = roomAt('top');
+      if (!rooms.every(Boolean)) {
+        const low = roomAt('bottom');
+        if (low.every(Boolean)) rooms = low;
+        else arrangeBar.dataset.end = 'top';
+      }
+      // A cover with no room for its name anywhere (a box scrolled almost out of view) keeps to its box: no padding.
+      covers.forEach((cover, i) => { cover.style.padding = rooms[i] || '0px'; });
+    }
     function renderBoxCovers() {
       if (!arranging) return;
       const boxes = workspaceBoxes().filter(box => box.shown);
       const keep = new Map([...coverLayer.children].map(node => [node.dataset.box, node]));
       // Each box element is observed once while arranging (observing again would report it again, every frame).
-      for (const box of workspaceBoxes()) for (const node of box.elements) {
+      // The bar too: a status sentence or a language that wraps it to another line moves the names below it.
+      for (const node of [arrangeBar, ...workspaceBoxes().flatMap(box => box.elements)]) {
         if (node && !coverObserved.has(node)) { coverObserved.add(node); coverObserver.observe(node); }
       }
       const nodes = boxes.map(box => {
@@ -14383,6 +14428,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         else if (focused && document.activeElement !== focused) focused.focus({ preventScroll: true });
       }
       if (boxPicked && !nodes.some(node => node.dataset.box === boxPicked)) boxPicked = null;
+      placeBoxNames(boxes, nodes);
     }
     const scheduleCovers = () => {
       if (!arranging || coverFrame) return;
@@ -14484,7 +14530,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       arrangeReturn = lastWorkFocus;
       const view = $('#toolbar-view'); if (view.open) view.open = false;
       if (panelDialog.open) panelDialog.close();
-      arranging = true; boxPicked = null;
+      arranging = true; boxPicked = null; arrangeDrawer = document.body.classList.contains('study-panel-open');
       document.body.classList.add('kin-arranging');
       coverLayer.hidden = false; arrangeBar.hidden = false;
       renderArrangeBar(); arrangeStatus('');
@@ -14528,7 +14574,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const reading = document.body.classList.contains('reading');
       $('#box-arrange-open').disabled = reading;
       if (!arranging) return;
-      if (reading || !workspaceEditable()) { endArrange(false); return; }
+      // The Study Panel opened or closed by the reader while arranging (it steps aside only for an arrangement it was
+      // already in): arranging ends and the drawer shows as asked.
+      if (reading || !workspaceEditable() || document.body.classList.contains('study-panel-open') !== arrangeDrawer) { endArrange(false); return; }
       renderArrangeBar(); renderBoxCovers();
     };
     boxArrangeLayout();
