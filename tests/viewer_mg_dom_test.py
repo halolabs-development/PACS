@@ -589,7 +589,7 @@ class ViewerMgDOMTest(unittest.TestCase):
         expect(panel.locator('b')).to_have_text('Quadrant 4/4: Lower-Outer (R/L matched)')
         self.assertAlmostEqual(1, self.camera(page, 'plcc')['zoom'])
         expect(page.locator('#pane-plcc [data-mg-badge=quadrant]')).to_have_text('Quadrant: orientation unverified')
-        # Close: every MG cell back to Fit; the choice stays for the next opening in this window.
+        # Close: the cells of the step back to Fit; the choice stays for the next opening in this window.
         panel.get_by_label('Zoom').select_option('fill')
         panel.get_by_role('button', name='Close').click()
         page.wait_for_function("() => Math.abs(synViews.get('rcc').getZoom() - 1) < 1e-9")
@@ -666,6 +666,8 @@ class ViewerMgDOMTest(unittest.TestCase):
         page.wait_for_timeout(400)
         self.assertAlmostEqual(1, self.camera(page, 'rcc')['zoom'], places=9)
         expect(page.locator('[data-mg-badge=quadrant]')).to_have_count(0)
+        # The cell the reader zoomed left the step: Close leaves it as the reader has it.
+        self.assertAlmostEqual(2, self.camera(page, 'lcc')['zoom'], places=9)
     def test_06_tomo_steps_by_the_interval_plays_and_gives_way_to_cine(self):
         page = self.open()
         page.evaluate("() => { synActive = 'dbt'; }")
@@ -1580,6 +1582,34 @@ class ViewerMgDOMTest(unittest.TestCase):
         self.assertEqual([2, 2, 2], page.evaluate(zooms))
         self.assertNear(self.camera(page, 'rcc')['focal'], [99, 100])
 
+    def test_03g_reset_gives_back_the_cells_in_the_link_each_to_its_view_when_it_joined_and_leaves_the_cells_not_linked_to_the_reader(self):
+        state = "() => ['rcc', 'lcc', 'prcc', 'plcc'].map(id => [synViews.get(id).getZoom(), synViews.get(id).props.invert])"
+        # The prior R CC is still being read when Mirrored is turned on: the panel names it as not linked. The reader
+        # zooms and inverts it, and the prior L CC (no verified orientation: not linked either) …
+        page = self.open(setup=self.held('prcc'), read=False)
+        self.read_but(page, 'prcc')
+        self.menu(page, 'Mirrored')
+        panel = page.get_by_role('dialog', name='Mirrored')
+        expect(panel.locator('[role=status]')).to_have_text('연동하지 않는 칸 — Prior · R CC' + self.READING + ' / Prior · L CC: orientation unverified')
+        page.evaluate("() => { for (const id of ['prcc', 'plcc']) { const v = synViews.get(id); v.setZoom(3); v.setProperties({ invert: true }); } }")
+        # … and zooms today's R CC, which is linked: today's L CC follows.
+        page.evaluate("() => synViews.get('rcc').setCamera({ parallelScale: 75, focalPoint: [100, 100, 0] })")
+        self.assertEqual([[2, False], [2, False], [3, True], [3, True]], page.evaluate(state))
+        # Reset: the linked cells go back to the views Mirrored was turned on with. The two cells not linked are the
+        # reader's own and stay as the reader has them — also once the header has come.
+        panel.get_by_role('button', name='Reset').click()
+        self.assertEqual([[1, False], [1, False], [3, True], [3, True]], page.evaluate(state))
+        self.release(page)
+        expect(panel.locator('[role=status]')).to_have_text('연동하지 않는 칸 — Prior · L CC: orientation unverified')
+        page.wait_for_timeout(200)
+        self.assertEqual([[1, False], [1, False], [3, True], [3, True]], page.evaluate(state))
+        # The prior R CC is in the link from now on, with the view it has then (3×, inverted): a point takes it to 2×,
+        # and Reset gives it that view back — not the one it had when Mirrored was turned on.
+        self.click_cell(page, 'rcc', 50, 40)
+        self.assertEqual([[2, False], [2, False], [2, True], [3, True]], page.evaluate(state))
+        panel.get_by_role('button', name='Reset').click()
+        self.assertEqual([[1, False], [1, False], [3, True], [3, True]], page.evaluate(state))
+
     def test_02e_the_table_takes_a_header_only_for_the_image_the_cell_holds_and_asks_again_at_the_next_press_for_one_not_read(self):
         captures = '.kin-mg-capture[data-mode=lens]'
         # The header of the image the prior R CC holds is kept back.
@@ -1766,17 +1796,18 @@ class ViewerMgDOMTest(unittest.TestCase):
         self.assertAlmostEqual(one, self.camera(page, 'prcc')['zoom'], places=9)
         expect(page.locator('[data-mg-badge=quadrant]')).to_have_count(0)
         # Close: the cells the step holds go back to Fit — also one whose image is being read just then (the DBT cell
-        # on its next slice) — with every MG cell read.
+        # on its next slice). The prior L CC, never in the step (no verified orientation), stays at the reader's 1:1.
         quadrant.get_by_role('button', name='Next Quadrant').evaluate('b => b.click()')
         expect(page.locator('#pane-dbt [data-mg-badge=quadrant]')).to_contain_text('Q2 Upper-Inner')
         page.evaluate("() => { synHeld = ['dbt']; synViews.get('dbt').show(1); }")
         self.assertEqual('reading', page.locator('#pane-dbt').get_attribute('data-kin-mg-image'))
         quadrant.get_by_role('button', name='Close').evaluate('b => b.click()')
-        self.assertEqual([1] * 6, page.evaluate("() => [...synViews.values()].map(v => v.getZoom())"))
+        self.assertEqual([1, 1, 1, 1, 1, 2], page.evaluate("() => [...synViews.values()].map(v => Math.round(v.getZoom() * 1e6) / 1e6)"))
         expect(page.locator('[data-mg-badge=quadrant]')).to_have_count(0)
+        expect(page.locator('#pane-plcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: 1:1')
         self.release(page)
         page.wait_for_timeout(200)
-        self.assertEqual([1] * 6, page.evaluate("() => [...synViews.values()].map(v => v.getZoom())"))
+        self.assertEqual([1, 1, 1, 1, 1, 2], page.evaluate("() => [...synViews.values()].map(v => Math.round(v.getZoom() * 1e6) / 1e6)"))
 
     def test_04f_a_linked_cell_still_being_read_gets_no_lens_then_or_when_its_header_comes_and_close_and_magnifier_off_take_the_lenses(self):
         page = self.open(setup=self.held('prcc'), read=False)

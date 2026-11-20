@@ -205,9 +205,6 @@
     // What to say when nothing was done: the cells not read, or that there is no MG cell.
     const NO_MG = 'MG 영상이 있는 칸이 없습니다.';
     const nothingDone = list => list.left.length ? '바꾼 것이 없습니다. 영상을 읽지 못한 칸 — ' + leftOut(list).join(' / ') : NO_MG + ' 바꾼 것이 없습니다.';
-    // A cell this module leaves alone whatever is pressed: not a mammography image (by the viewer's metadata, or by
-    // its header once read), or no image.
-    const notMg = id => { const entry = look(id); return !entry || entry.state === 'other' || (entry.state === 'read' && !entry.cell.mg); };
 
     // ── Geometry of a cell: image points (pixel edges 0 … columns), world points and the camera ──
     function toImage(v, world) {
@@ -341,37 +338,43 @@
         mirror.on = false; mirror.panel = mirror.status = null; pointer.press = null; clearBadges('mirrored');
         for (const [id, entry] of layers) if (entry.lens && !(lens.pressed && lens.last?.id === id)) { entry.lens.remove(); entry.lens = null; }
       });
-      // Reset goes back to the views as they were when Mirrored was turned on (every cell's camera and inversion now).
       mirror.before.clear();
-      for (const id of cellIds()) {
-        const v = viewportOf(id); if (!v) continue;
-        let props = {}; try { props = v.getProperties(); } catch (_) {}
-        try { mirror.before.set(id, { viewport: v, imageId: imageIdOf(v), camera: structuredClone(v.getCamera()), invert: !!props.invert }); } catch (_) {}
-      }
       mirror.on = true;
       markUnlinked(cellsPressed());
     }
+    // A cell Mirrored links (an MG cell read and linkable) joins the link with the image it holds: its camera and
+    // inversion just before are what Reset gives back — for the cells linked from the start the views Mirrored was
+    // turned on with, for a cell that joins later (its image read later, or another image) its view then.
+    function join(cell) {
+      const held = mirror.before.get(cell.id);
+      if (held && held.viewport === cell.v && held.imageId === cell.imageId) return;
+      let props = {}; try { props = cell.v.getProperties(); } catch (_) {}
+      try { mirror.before.set(cell.id, { viewport: cell.v, imageId: cell.imageId, camera: structuredClone(cell.v.getCamera()), invert: !!props.invert }); } catch (_) {}
+    }
+    // What Mirrored sets on a linked cell.
+    const setLinked = (cell, change) => { join(cell); return steer(cell.v, change); };
     // The cells Mirrored does not link, marked and named in the panel: those the table has now — a cell whose image is
-    // not read among them, until it is.
+    // not read among them, until it is. The others are in the link from here on (join).
     function markUnlinked(list = cellsNow()) {
       if (!mirror.on) return;
       clearBadges('mirrored');
       const lines = leftOut(list);
       for (const cell of list) {
         const reason = M.unlinkable(cell);
-        if (!reason) continue;
+        if (!reason) { join(cell); continue; }
         badge(cell.v, 'mirrored', 'Mirrored: ' + (REASONS[reason] || reason) + ' — not linked');
         lines.push(labelOf(cell) + ': ' + (REASONS[reason] || reason));
       }
       if (mirror.status) mirror.status.textContent = lines.length ? '연동하지 않는 칸 — ' + lines.join(' / ') : list.length ? '' : NO_MG;
     }
-    // Reset: every MG cell that still holds the image it held then, back to its camera and inversion — a cell of
-    // another modality is the reader's own throughout. A point still pressed is dropped.
+    // Reset: every cell in the link that still holds the image it joined with, back to its camera and inversion
+    // then. A cell Mirrored names as not linked (not read, no verified orientation) and a cell of another modality
+    // are the reader's own throughout: they are not touched. A point still pressed is dropped.
     function resetMirrored() {
       pointer.press = null;
       for (const [id, before] of mirror.before) {
         const v = viewportOf(id);
-        if (v !== before.viewport || imageIdOf(v) !== before.imageId || notMg(id)) continue;
+        if (v !== before.viewport || imageIdOf(v) !== before.imageId) continue;
         steer(v, () => {
           const { flipHorizontal, flipVertical, ...camera } = before.camera;
           v.setCamera({ ...camera, flipHorizontal, flipVertical });
@@ -389,7 +392,7 @@
       const source = t.source;
       for (const cell of [source, ...t.linked.map(id => list.find(c => c.id === id))]) {
         const at = cell === source ? point : M.counterpart(point, source, cell), world = at && toWorld(cell.v, at);
-        if (world) steer(cell.v, () => { cell.v.setZoom(2); centerOn(cell.v, world); });
+        if (world) setLinked(cell, () => { cell.v.setZoom(2); centerOn(cell.v, world); });
       }
     }
     // A reader's zoom or pan in one MG cell, when it is heard: the same zoom (relative to Fit) and the counterpart
@@ -404,7 +407,7 @@
         const cell = list.find(c => c.id === id);
         if (ruled(id)) continue;
         const at = M.counterpart(focal, source, cell), world = at && toWorld(cell.v, at);
-        if (world) steer(cell.v, () => { cell.v.setZoom(zoom); centerOn(cell.v, world); });
+        if (world) setLinked(cell, () => { cell.v.setZoom(zoom); centerOn(cell.v, world); });
       }
     }
     // Invert together follows the reader's own Invert: the toolbar announces every tool run (the I key, More › Invert, a
@@ -419,9 +422,9 @@
       markUnlinked(list);
       if (t.reason) return;
       for (const target of t.linked) {
-        const other = list.find(c => c.id === target).v, invert = invertOf(other);
+        const cell = list.find(c => c.id === target), other = cell.v, invert = invertOf(other);
         if (invert === null || ruled(target)) continue;
-        steer(other, () => other.setProperties({ invert: !invert }));
+        setLinked(cell, () => other.setProperties({ invert: !invert }));
       }
     }
     // The pointer: the cell it is pressed in (a drag there is the reader's own camera change), and with Mirrored on the
@@ -673,12 +676,13 @@
         paint();
       };
       quad.paint = paint;
-      // Close: the cells the step holds and every MG cell read now, back to Fit.
+      // Close: the cells the step holds — that viewport, those images, that zoom — go back to Fit. A cell that left
+      // the step (the reader's own zoom) or was never in it (no verified orientation, not read) stays as it is.
       panel.onClose(() => {
         if (quad.panel !== panel) return;
-        const held = [...quad.marks].filter(([id, mark]) => sameImages(mark, viewportOf(id))).map(([, mark]) => mark.viewport);
+        const held = [...quad.marks].filter(([id, mark]) => sameImages(mark, viewportOf(id)) && sameZoom(mark, mark.viewport)).map(([, mark]) => mark.viewport);
         endQuadrant();
-        for (const v of new Set([...held, ...cellsNow().map(cell => cell.v)])) fit(v);
+        for (const v of held) fit(v);
       });
       show(0);
     }
