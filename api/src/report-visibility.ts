@@ -11,9 +11,9 @@
  * - D (report destroyed at the end of its retention): no text, nothing to write.
  * - A (approved): unchanged - everyone the study is visible to.
  *
- * A clinician-only reader keeps the reads of the 2026-11-02 decision (the radiologist's rules of that day, which
- * included other readers' saved text). That one exception is the open question between that decision and the request
- * that a save is seen only by the physician writing it; it never covers another user's private draft.
+ * A clinician-only reader reads by these same rules, as a radiologist who did not write the text (the 2026-11-02 decision:
+ * clinician reads follow the radiologist's rules). There is no role exception: another physician's Save or Defer is not in
+ * a clinician's list, timeline, report read, history, citations, structure or preview either.
  *
  * The writer of the unsigned head is the account that made it: `Report.updatedBySub` (= its version's `authorSub`), judged by
  * owner-identity.ts. `updatedBy` keeps the login email of the time, shown as the writer; an email or display name change
@@ -21,7 +21,6 @@
  */
 import { ForbiddenException } from '@nestjs/common';
 import { canReadPreliminary } from './preliminary-reader';
-import { clinicianOnly } from './clinician-policy';
 import { structureArray } from './report-structure';
 import { versionDrawings } from './image-report';
 import { sameAccount, shownActor } from './account-identity';
@@ -74,9 +73,6 @@ export function unsignedAuthor(state: any, head: Head): UnsignedWriter | null {
 export function reportBodyLock(state: any, head: Head, reader: Reader): ReportBodyLock {
   if (state?.rs === 'D') return 'destroyed';
   if (!canReadPreliminary(state, reader)) return 'preliminary';
-  // The clinician cell of the state table: left as the 2026-11-02 decision has it (clinician role alone; an admin or a
-  // radiologist who also holds the clinician role reads as a radiologist).
-  if (clinicianOnly(reader.roles)) return null;
   const author = unsignedAuthor(state, head);
   return author !== null && !sameAccount(author.sub, reader) ? 'in-progress' : null;
 }
@@ -142,8 +138,7 @@ export async function headForLock(db: any, uid: string, state: any): Promise<Hea
  * Each stored version's text class, walking the versions in order:
  * - 'shared': approve, amend, addendum, preliminary, reset, and a Save/Defer written while the report was Preliminary
  *   (that is still the preliminary reading, kept for its designated pair as before);
- * - 'unsigned': a Save/Defer outside a Preliminary, and a Reset's discarded copy of one - its writer only (a clinician-only
- *   reader keeps the 2026-11-02 reads);
+ * - 'unsigned': a Save/Defer outside a Preliminary, and a Reset's discarded copy of one - its writer only;
  * - 'private': a discarded copy that is not a Reset's (an administrator's draft release keeps someone's private draft) -
  *   its writer only, for every reader.
  * A Reset's copy preserved the head of that moment: the newest non-discarded version below it (an administrator's
@@ -177,8 +172,7 @@ export function versionClasses(rows: readonly VersionRow[]): Map<number, 'shared
 export function versionBodyReadable(row: { action: string; authorSub?: string | null },
   kind: 'shared' | 'unsigned' | 'private' | undefined, reader: Reader): boolean {
   if (!kind || kind === 'shared') return true;
-  if (sameAccount(row.authorSub, reader)) return true;
-  return kind === 'unsigned' && clinicianOnly(reader.roles);
+  return sameAccount(row.authorSub, reader);
 }
 
 /** `versionBodyReadable` for one stored row read alone (a version's citations, a preview, a drawing, a clinician read). */
