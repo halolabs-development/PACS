@@ -27,6 +27,11 @@ export const GATEWAY_ERROR_CODES = [
 export type GatewayErrorCode = typeof GATEWAY_ERROR_CODES[number];
 
 export const GATEWAY_RECEIPT_KEYS = ['studyUid', 'phase', 'attempt', 'successCount', 'localCount', 'errorCode', 'epoch', 'seq'] as const;
+/**
+ * The one key a body may add to the closed set: the number of distinct series the Gateway's sent images (successCount) belong
+ * to. A Gateway from before it sends the eight keys; an absent key and null are the same "unknown", never 0.
+ */
+export const GATEWAY_RECEIPT_OPTIONAL_KEYS = ['successSeries'] as const;
 
 /** 다른 epoch 사건의 감사는 검사당 이 창에 한 건이다. 거절 자체는 창과 무관하게 매번 한다. */
 export const GATEWAY_EPOCH_INCIDENT_WINDOW_MS = 60 * 60 * 1000;
@@ -42,6 +47,8 @@ export interface GatewayReceipt {
   errorCode: GatewayErrorCode | null;
   epoch: string;
   seq: number;
+  /** null = unknown (an older Gateway, or a sent image whose series it could not read). */
+  successSeries: number | null;
 }
 
 const EPOCH = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -53,9 +60,11 @@ const member = <T extends string>(list: readonly T[], value: unknown): value is 
 export function parseGatewayReceipt(body: unknown): GatewayReceipt {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new GatewayReceiptInputError('body');
   const keys = Object.keys(body);
-  if (keys.length !== GATEWAY_RECEIPT_KEYS.length || !keys.every(key => member(GATEWAY_RECEIPT_KEYS, key)))
+  const optional = keys.filter(key => member(GATEWAY_RECEIPT_OPTIONAL_KEYS, key)).length;
+  if (keys.length !== GATEWAY_RECEIPT_KEYS.length + optional
+    || !keys.every(key => member(GATEWAY_RECEIPT_KEYS, key) || member(GATEWAY_RECEIPT_OPTIONAL_KEYS, key)))
     throw new GatewayReceiptInputError('keys');
-  const { studyUid, phase, attempt, successCount, localCount, errorCode, epoch, seq } = body as Record<string, unknown>;
+  const { studyUid, phase, attempt, successCount, localCount, errorCode, epoch, seq, successSeries } = body as Record<string, unknown>;
   // announce와 같은 UID 규칙이다. 예고할 수 있었던 검사는 보고도 할 수 있다.
   if (typeof studyUid !== 'string' || !/^[0-9.]+$/.test(studyUid)) throw new GatewayReceiptInputError('studyUid');
   if (!member(GATEWAY_PHASES, phase)) throw new GatewayReceiptInputError('phase');
@@ -71,7 +80,14 @@ export function parseGatewayReceipt(body: unknown): GatewayReceipt {
     code = errorCode;
   } else if (errorCode !== null) throw new GatewayReceiptInputError('errorCode');
   if (typeof epoch !== 'string' || !EPOCH.test(epoch)) throw new GatewayReceiptInputError('epoch');
-  return { studyUid, phase, attempt, successCount, localCount, errorCode: code, epoch, seq };
+  // Every sent image is in one series: no more series than images, and none exactly when no image was sent.
+  let series: number | null = null;
+  if (successSeries !== undefined && successSeries !== null) {
+    if (!count(successSeries) || successSeries > successCount || (successSeries === 0) !== (successCount === 0))
+      throw new GatewayReceiptInputError('successSeries');
+    series = successSeries;
+  }
+  return { studyUid, phase, attempt, successCount, localCount, errorCode: code, epoch, seq, successSeries: series };
 }
 
 /** 저장된 영수증을 숫자로 읽은 모양(BIGINT 칸은 저장 전에 안전 정수로 검사됐다). */
@@ -83,12 +99,15 @@ export interface StoredGatewayReceipt {
   successCount: number;
   localCount: number;
   errorCode: string | null;
+  successSeries: number | null;
 }
 
 export function storedGatewayReceipt(row: any): StoredGatewayReceipt {
   return {
     epoch: String(row.epoch), seq: Number(row.seq), phase: String(row.phase), attempt: Number(row.attempt),
     successCount: Number(row.successCount), localCount: Number(row.localCount), errorCode: row.errorCode ?? null,
+    // A row stored before the column, or from a Gateway that did not say, stays unknown: Number(null) would be 0.
+    successSeries: row.successSeries === null || row.successSeries === undefined ? null : Number(row.successSeries),
   };
 }
 
@@ -112,7 +131,7 @@ export function decideGatewayReceipt(stored: StoredGatewayReceipt | null, next: 
   if (next.seq < stored.seq) return { kind: 'stale' };
   if (next.seq === stored.seq) {
     const same = stored.phase === next.phase && stored.attempt === next.attempt && stored.successCount === next.successCount
-      && stored.localCount === next.localCount && stored.errorCode === next.errorCode;
+      && stored.localCount === next.localCount && stored.errorCode === next.errorCode && stored.successSeries === next.successSeries;
     return same ? { kind: 'duplicate' } : { kind: 'conflict' };
   }
   return { kind: 'advance', transition: next.phase !== stored.phase && TERMINAL.includes(next.phase) };
@@ -123,7 +142,7 @@ export function projectGatewayReceipt(row: any) {
   if (!row) return null;
   const s = storedGatewayReceipt(row);
   return {
-    phase: s.phase, successCount: s.successCount, localCount: s.localCount, attempt: s.attempt,
+    phase: s.phase, successCount: s.successCount, localCount: s.localCount, successSeries: s.successSeries, attempt: s.attempt,
     errorCode: s.errorCode, serverReceivedAt: new Date(row.receivedAt).toISOString(), agentSeq: s.seq, epoch: s.epoch,
   };
 }

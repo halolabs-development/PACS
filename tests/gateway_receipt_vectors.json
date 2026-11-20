@@ -1,6 +1,7 @@
 {
-  "comment": "S4-U3 shared receipt vectors. Read by tests/gateway_receipt_source_test.py (an independent stdlib model, local and hosted) and tests/gateway_receipt_server_test.cjs (the compiled api/src/gateway-receipt.ts in kin-api:ci). A parse case is `valid` with `set` applied and `drop` removed, unless it gives a whole `body`. `error` is the refused field name; `ok` cases name nothing.",
+  "comment": "S4-U3 shared receipt vectors. Read by tests/gateway_receipt_source_test.py (an independent stdlib model, local and hosted) and tests/gateway_receipt_server_test.cjs (the compiled api/src/gateway-receipt.ts in kin-api:ci). A parse case is `valid` with `set` applied and `drop` removed, unless it gives a whole `body`. `error` is the refused field name; `ok` cases name nothing. `optionalKeys` may be added to the required `keys` (a Gateway from before them sends none); absent and null are both unknown.",
   "keys": ["studyUid", "phase", "attempt", "successCount", "localCount", "errorCode", "epoch", "seq"],
+  "optionalKeys": ["successSeries"],
   "phases": ["pending", "announcing", "sending", "retry", "failed", "complete"],
   "errorPhases": ["retry", "failed"],
   "maxSafe": 9007199254740991,
@@ -53,9 +54,21 @@
     {"id": "P44 epoch not a UUID", "set": {"epoch": "not-an-epoch"}, "error": "epoch"},
     {"id": "P45 upper-case epoch", "set": {"epoch": "0A1B2C3D-0000-4000-8000-00000000000A"}, "error": "epoch"},
     {"id": "P46 numeric epoch", "set": {"epoch": 1}, "error": "epoch"},
-    {"id": "P47 epoch without dashes", "set": {"epoch": "0a1b2c3d000040008000000000000000a"}, "error": "epoch"}
+    {"id": "P47 epoch without dashes", "set": {"epoch": "0a1b2c3d000040008000000000000000a"}, "error": "epoch"},
+    {"id": "P48 series count of the sent images", "set": {"successSeries": 2}, "ok": true},
+    {"id": "P49 series count null is unknown", "set": {"successSeries": null}, "ok": true},
+    {"id": "P50 one series per sent image", "set": {"successSeries": 3}, "ok": true},
+    {"id": "P51 no image sent, no series", "set": {"phase": "announcing", "successCount": 0, "successSeries": 0}, "ok": true},
+    {"id": "P52 more series than sent images", "set": {"successSeries": 4}, "error": "successSeries"},
+    {"id": "P53 no series for sent images", "set": {"successSeries": 0}, "error": "successSeries"},
+    {"id": "P54 a series without a sent image", "set": {"phase": "announcing", "successCount": 0, "successSeries": 1}, "error": "successSeries"},
+    {"id": "P55 negative series count", "set": {"successSeries": -1}, "error": "successSeries"},
+    {"id": "P56 fractional series count", "set": {"successSeries": 1.5}, "error": "successSeries"},
+    {"id": "P57 string series count", "set": {"successSeries": "2"}, "error": "successSeries"},
+    {"id": "P58 boolean series count", "set": {"successSeries": true}, "error": "successSeries"},
+    {"id": "P59 another count key beside the series", "set": {"successSeries": 2, "localSeries": 3}, "error": "keys"}
   ],
-  "stored": {"epoch": "0a1b2c3d-0000-4000-8000-00000000000a", "seq": 7, "phase": "sending", "attempt": 0, "successCount": 3, "localCount": 12, "errorCode": null},
+  "stored": {"epoch": "0a1b2c3d-0000-4000-8000-00000000000a", "seq": 7, "phase": "sending", "attempt": 0, "successCount": 3, "localCount": 12, "errorCode": null, "successSeries": null},
   "decide": [
     {"id": "D1 nothing stored: the first epoch is accepted", "stored": null, "next": {}, "kind": "first"},
     {"id": "D2 same epoch, seq and body: replay", "next": {}, "kind": "duplicate"},
@@ -75,10 +88,16 @@
     {"id": "D16 another epoch with a higher seq never replaces", "next": {"epoch": "ffffffff-ffff-4fff-bfff-ffffffffffff", "seq": 500}, "kind": "epoch"},
     {"id": "D17 another epoch with a lower seq", "next": {"epoch": "ffffffff-ffff-4fff-bfff-ffffffffffff", "seq": 1}, "kind": "epoch"},
     {"id": "D18 another epoch replaying the stored body", "next": {"epoch": "ffffffff-ffff-4fff-bfff-ffffffffffff"}, "kind": "epoch"},
-    {"id": "D19 another epoch cannot roll back a complete", "storedSet": {"phase": "complete", "successCount": 12}, "next": {"epoch": "ffffffff-ffff-4fff-bfff-ffffffffffff", "seq": 99, "phase": "pending", "successCount": 0}, "kind": "epoch"}
+    {"id": "D19 another epoch cannot roll back a complete", "storedSet": {"phase": "complete", "successCount": 12}, "next": {"epoch": "ffffffff-ffff-4fff-bfff-ffffffffffff", "seq": 99, "phase": "pending", "successCount": 0}, "kind": "epoch"},
+    {"id": "D20 same key, absent and null series alike: replay", "next": {"successSeries": null}, "kind": "duplicate"},
+    {"id": "D21 same key, unknown then a series count: conflict", "next": {"successSeries": 2}, "kind": "conflict"},
+    {"id": "D22 same key, other series count: conflict", "storedSet": {"successSeries": 2}, "next": {"successSeries": 3}, "kind": "conflict"},
+    {"id": "D23 same key, same series count: replay", "storedSet": {"successSeries": 2}, "next": {"successSeries": 2}, "kind": "duplicate"},
+    {"id": "D24 same key, a known series count then unknown: conflict", "storedSet": {"successSeries": 2}, "next": {"successSeries": null}, "kind": "conflict"},
+    {"id": "D25 higher seq from an older Gateway forgets the series count", "storedSet": {"successSeries": 2}, "next": {"seq": 8, "successCount": 4, "successSeries": null}, "kind": "advance", "transition": false}
   ],
   "project": {
     "row": {"studyUid": "1.2.840.10", "institutionId": "hallym", "epoch": "0a1b2c3d-0000-4000-8000-00000000000a", "seq": 9, "phase": "complete", "attempt": 0, "successCount": 12, "localCount": 12, "errorCode": null, "receivedAt": "2026-09-24T01:04:00.000Z"},
-    "expect": {"phase": "complete", "successCount": 12, "localCount": 12, "attempt": 0, "errorCode": null, "serverReceivedAt": "2026-09-24T01:04:00.000Z", "agentSeq": 9, "epoch": "0a1b2c3d-0000-4000-8000-00000000000a"}
+    "expect": {"phase": "complete", "successCount": 12, "localCount": 12, "attempt": 0, "errorCode": null, "successSeries": null, "serverReceivedAt": "2026-09-24T01:04:00.000Z", "agentSeq": 9, "epoch": "0a1b2c3d-0000-4000-8000-00000000000a"}
   }
 }
