@@ -266,6 +266,34 @@ class ResetInProgressPage(unittest.TestCase):
         self.assertEqual(1, self.site.store[h.UID]["row"]["baseVersion"])
         expect(self.page.locator("#draftbar")).to_contain_text("Draft Saved")
 
+    def test_my_emptied_editor_stays_empty_after_reset_and_empties_my_draft_then(self):
+        """Emptying the editor is an edit: the stored draft's old text does not come back with the Reset's answer."""
+        self.site.store[h.UID]["revs"] = 1
+        self.site.store[h.UID]["row"] = {"findings": "SYN old text", "conclusion": "", "recommendation": "",
+                                         "baseVersion": 0, "citations": [], "structured": []}
+        self.open()
+        self.select(h.PATIENT)
+        expect(self.page.locator("#findings")).to_have_value("SYN old text")
+        self.site.put_answers = [(409, {"code": "REPORT_HELD", "message": "SYN held", "holder": OTHER})]
+        self.site.holder[h.UID] = OTHER
+        self.page.locator("#findings").fill("")
+        self.page.clock.run_for(20001)
+        self.wait(lambda: self.site.flow_puts, "the refused draft write")
+        expect(self.page.locator("#draftbar")).to_contain_text("Unsaved Draft")
+        self.site.released[h.UID] = {"holder": OTHER, "holderDraft": False, "savedBy": None, "savedKept": False}
+        self.press_unread()
+        self.wait(lambda: self.resets(), "the reset is sent")
+        self.wait(lambda: self.page.evaluate("() => studies.find(s => s.uid === selectedUid)?.holder ?? null") is None,
+                  "the reset is taken")
+        self.assertEqual("", self.page.locator("#findings").input_value(), "the deleted text does not come back")
+        expect(self.page.locator("#draftbar")).to_contain_text("Unsaved Draft")
+        self.assertNotIn("내가 쓰던 글", self.toast().inner_text(), "no text of mine is left to speak of")
+        writes = len(self.site.flow_puts)
+        self.page.clock.run_for(20001)
+        self.wait(lambda: len(self.site.flow_puts) > writes, "the emptied editor is written")
+        self.wait(lambda: self.site.store[h.UID]["row"] is None, "my draft is emptied as I left it")
+        self.assertEqual("", self.page.locator("#findings").input_value())
+
     def test_my_stored_draft_stays_mine_on_the_new_version_and_saves_without_a_conflict(self):
         self.site.store[h.UID]["revs"] = 1
         self.site.store[h.UID]["row"] = {"findings": "SYN my stored draft", "conclusion": "", "recommendation": "",

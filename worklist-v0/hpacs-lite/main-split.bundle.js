@@ -8428,11 +8428,12 @@
        * FC-040: `kept` is the text the editor held when Reset to Unread took another reader's in-progress reading back. That
        * Reset is not mine to cancel my text: the server kept my draft (on its new version), and text it never had - its draft
        * writes were refused while the other reader held the study - stays here the same way as text written after pressing:
-       * an unconfirmed draft on the new version, which the next draft write takes. Text the kept draft already holds is shown
-       * from it; with no text at all there is nothing to keep.
+       * an unconfirmed draft on the new version, which the next draft write takes. An emptied editor is an edit too: over a
+       * kept draft that still has text it stays empty, and that write empties the draft. Text the kept draft already holds
+       * is shown from it; with no text on either side there is nothing to keep.
        */
       const same = text => RFIELDS.every(k => KinReportCitation.toLf(String(st.draft?.[k] ?? "")) === KinReportCitation.toLf(String(text[k] ?? "")));
-      const keep = later ?? (kept && RFIELDS.some(k => kept[k]) && !same(kept) ? kept : null);
+      const keep = later ?? (kept && !same(kept) ? kept : null);
       // 서버가 받아들인 확정이다: 확정이 나가 있는 동안 검사를 옮겨 그 검사의 쓰기가 뒤에 줄 서 있어도 실패로 알리지 않는다.
       appState[uid] = replaceReportState(uid, st, { confirmed: true });
       reportUnknownCommits.delete(uid);
@@ -8744,8 +8745,8 @@
           heldUid = null; clearInterval(heartbeat); heartbeat = null;   // 확정하면 서버가 점유를 푼다
           released = action === "reset" ? result.answer?.body?.released ?? null : null;
           lateText = applyAcceptedCommit(uid, result.state, sentAt, released ? content : null);
-          // Whether my own text is still there after it (in the editor or the draft the server kept) - the notice says so.
-          ownKept = !!released && RFIELDS.some(k => content[k] || result.state?.draft?.[k]);
+          // Whether my own text is still there after it - the text the editor held, which stays (the notice says so).
+          ownKept = !!released && RFIELDS.some(k => content[k]);
         } catch (e) {
           // 낙관적 락에 걸린 경우 — 그 사이 남이 저장했다.
           // 내가 쓴 내용을 지우지 않는다. 서버 것을 보여주고 사용자가 판단하게 한다.
