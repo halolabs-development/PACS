@@ -71,7 +71,8 @@ function kinCreateViewerUX() {
         const shell = window.KinViewerUXShell.mount({ services, session: kinViewerSession });
         toolbar = window.KinViewerUXToolbar.mount({ services, commands, session: kinViewerSession });
         // A window across two displays, or a second window: the account's Second Display setting.
-        const span = window.KinViewerDisplaySpan.mount({ services, enabled: () => toolbar?.secondDisplay?.() });
+        // Its commands: a one-column grid over two monitors is divided by the Layout menu's own command.
+        const span = window.KinViewerDisplaySpan.mount({ services, commands, enabled: () => toolbar?.secondDisplay?.() });
         const channel = kinViewerOnEnd(() => { window.KinViewerPatientTabs.end(); stop(); });
         dispose = () => { channel?.close(); span.dispose(); toolbar?.dispose(); toolbar = null; shell.dispose(); };
       } catch (error) {
@@ -249,6 +250,8 @@ function kinStackMouse(services) {
     const scroll = cs.utilities?.scroll;
     if (!group || !applied.has(group) || tools.state?.isInteractingWithTool || !event.ctrlKey && typeof scroll !== 'function') return;
     event.preventDefault(); event.stopImmediatePropagation();
+    // The step is taken for the image (a Ctrl+wheel left to the browser is its own zoom, not image work).
+    window.kinViewerImageWork?.();
     const direction = event.deltaY < 0 ? -1 : 1;
     if (event.ctrlKey) {
       // Ctrl+wheel up enlarges by the chosen percent around the pointer; down undoes one such step.

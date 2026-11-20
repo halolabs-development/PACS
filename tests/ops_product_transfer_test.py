@@ -261,7 +261,7 @@ class Pure(unittest.TestCase):
         for table,field,value in [('FavoriteWorkspace','value','[]'),('FavoriteWorkspace','subject','wrong-owner'),
                 ('StudyTagCatalog','ownerSub','wrong-owner'),('StudyTagCatalog','lastRequest','00000000-0000-4000-8000-000000000999'),
                 ('ReaderAssignment','readerSub',None),('ReaderAssignment','revision',1),('ReaderAssignment','lastFingerprint','0'*64),('StudyConsultation','reply','wrong reply'),('StudyConsultation','recipientSub','wrong recipient'),('StudyConsultation','revision',1),
-                ('GatewayReceipt','seq',6),('GatewayReceipt','epoch','00000000-0000-4000-8000-000000000c02'),('GatewayReceipt','errorCode',None),
+                ('GatewayReceipt','seq',6),('GatewayReceipt','epoch','00000000-0000-4000-8000-000000000c02'),('GatewayReceipt','errorCode',None),('GatewayReceipt','successSeries',None),
                 ('GatewayRetryRequest','seq',6),('GatewayRetryRequest','epoch','00000000-0000-4000-8000-000000000c02'),('GatewayRetryRequest','requestedAt','2026-09-06T00:00:00.124'),
                 ('StudyQuestion','institutionId','SYNTHETIC-tele'),('StudyQuestion','closedByRole',None),('StudyQuestion','revision',2),
                 ('StudyQuestionEntry','fingerprint','0'*64),('StudyQuestionEntry','result',{}),('StudyQuestionEntry','reportVersion',1),
@@ -502,8 +502,8 @@ class Pure(unittest.TestCase):
         self.assertEqual((len(rows['Finding']), len(rows['FindingRevision'])), (1, 2))
         self.assertEqual([(r['oid'], r['accession'], r['studyUid']) for r in rows['Order']],
                          [('SYNTHETIC-order-1', 'SYNTHETIC-ACC-1', None)])
-        self.assertEqual([(r['studyUid'], r['institutionId'], r['seq'], r['phase'], r['successCount'], r['localCount'], r['errorCode'])
-                          for r in rows['GatewayReceipt']], [(UID, 'SYNTHETIC-hospital', 7, 'retry', 3, 12, 'stow_http')])
+        self.assertEqual([(r['studyUid'], r['institutionId'], r['seq'], r['phase'], r['successCount'], r['localCount'], r['errorCode'], r['successSeries'])
+                          for r in rows['GatewayReceipt']], [(UID, 'SYNTHETIC-hospital', 7, 'retry', 3, 12, 'stow_http', 2)])
         [receipt] = rows['GatewayReceipt']
         self.assertEqual([(r['studyUid'], r['epoch'], r['seq']) for r in rows['GatewayRetryRequest']],
                          [(receipt['studyUid'], receipt['epoch'], receipt['seq'])])

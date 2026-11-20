@@ -412,8 +412,15 @@ window.KinViewerUXToolbar = (() => {
         setTimeout(check, 0);
       });
     }
+    // A tool or an image command run from this toolbar, from its copy on the other display or by its shortcut key is the
+    // reader beginning to work on the images (viewer-features-monitors.js kinViewerImageWork): said here, the one place
+    // all three come through - a shortcut key never reaches the document.
     function invoke(id) {
-      if (!catalog.has(id) && features?.has(id)) return features.run(id);
+      const feature = !catalog.has(id) && !!features?.has(id), done = feature ? features.run(id) : command(id);
+      if (feature || done) window.kinViewerImageWork?.();
+      return done;
+    }
+    function command(id) {
       if (!usable()) return false;
       const item = props(id); if (!item || item.disabled) return false;
       if (!idle()) return false;

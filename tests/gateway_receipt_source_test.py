@@ -44,7 +44,7 @@ WORKFLOW = CATALOG.text()
 OBSERVATION = json.loads(text("tests", "study_observation_vectors.json"))
 MAX_SAFE = 2 ** 53 - 1
 EPOCH = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
-RECEIPT_FIELDS = ("phase", "attempt", "successCount", "localCount", "errorCode")
+RECEIPT_FIELDS = ("phase", "attempt", "successCount", "localCount", "errorCode", "successSeries")
 
 
 def between(source, start, end):
@@ -153,10 +153,12 @@ def is_count(value, wrong=None):
 
 
 def parse(body, wrong=None):
-    keys = VECTORS["keys"]
+    keys, optional = VECTORS["keys"], VECTORS["optionalKeys"]
     if not isinstance(body, dict):
         raise Refused("body")
-    extra, missing = set(body) - set(keys), set(keys) - set(body)
+    extra, missing = set(body) - set(keys) - set(optional), set(keys) - set(body)
+    if wrong == "series is required":
+        missing |= set(optional) - set(body)
     if wrong == "time keys tolerated":
         extra = {key for key in extra if not re.search(r"At$", key)}
     if wrong == "institution tolerated":
@@ -189,7 +191,15 @@ def parse(body, wrong=None):
     if not isinstance(epoch, str) or not (
             EPOCH.fullmatch(epoch.lower() if wrong == "epoch case-insensitive" else epoch) or wrong == "any epoch"):
         raise Refused("epoch")
-    return {key: body.get(key) for key in keys}
+    series = body.get("successSeries")
+    if series is not None:
+        if not is_count(series, wrong):
+            raise Refused("successSeries")
+        if series > body["successCount"] and wrong != "series above images":
+            raise Refused("successSeries")
+        if (series == 0) != (body["successCount"] == 0) and wrong != "series apart from images":
+            raise Refused("successSeries")
+    return {**{key: body.get(key) for key in keys}, "successSeries": series}
 
 
 def decide(stored, incoming, wrong=None):
@@ -204,7 +214,9 @@ def decide(stored, incoming, wrong=None):
     if incoming["seq"] < stored["seq"]:
         return ("advance", False) if wrong == "lower seq overwrites" else ("stale", None)
     if incoming["seq"] == stored["seq"]:
-        same = all(stored[key] == incoming[key] for key in RECEIPT_FIELDS)
+        fields = [key for key in RECEIPT_FIELDS if not (wrong == "series ignored in a replay" and key == "successSeries")]
+        # An absent series count is the unknown one, as the compiled rule reads it.
+        same = all(stored.get(key) == incoming.get(key) for key in fields)
         if wrong == "same key is always a replay":
             same = True
         if wrong == "same key overwrites" and not same:
@@ -249,10 +261,11 @@ def expected_decision(case):
 
 WRONG_PARSE = ["extra keys tolerated", "missing keys tolerated", "time keys tolerated", "institution tolerated",
                "booleans are counts", "no safe bound", "M above N", "complete without M == N", "free-text code",
-               "error phase without code", "code in any phase", "epoch case-insensitive", "any epoch"]
+               "error phase without code", "code in any phase", "epoch case-insensitive", "any epoch",
+               "series is required", "series above images", "series apart from images"]
 WRONG_DECIDE = ["other epoch is a first association", "higher seq of another epoch replaces", "lower seq overwrites",
                 "same key is always a replay", "same key overwrites", "every advance audited",
-                "only complete is a transition", "a terminal phase is always a transition"]
+                "only complete is a transition", "a terminal phase is always a transition", "series ignored in a replay"]
 
 
 class ModelVectors(unittest.TestCase):
@@ -283,10 +296,13 @@ class ModelVectors(unittest.TestCase):
             self.assertIn(needle, ids)
         self.assertEqual(VECTORS["keys"], ["studyUid", "phase", "attempt", "successCount", "localCount", "errorCode",
                                            "epoch", "seq"])
+        self.assertEqual(VECTORS["optionalKeys"], ["successSeries"])
         self.assertEqual(VECTORS["maxSafe"], MAX_SAFE)
         valid = VECTORS["valid"]
-        self.assertEqual(parse(valid), valid)
-        self.assertEqual(VECTORS["stored"], {key: valid[key] for key in ("epoch", "seq", *RECEIPT_FIELDS)})
+        # The valid body is a Gateway's from before the series count: its series is unknown, never 0.
+        self.assertNotIn("successSeries", valid)
+        self.assertEqual(parse(valid), {**valid, "successSeries": None})
+        self.assertEqual(VECTORS["stored"], {key: parse(valid)[key] for key in ("epoch", "seq", *RECEIPT_FIELDS)})
 
 
 class AgentPins(unittest.TestCase):
@@ -320,7 +336,7 @@ class AgentPins(unittest.TestCase):
     def test_the_receipt_body_is_the_closed_key_set_without_time_institution_or_text(self):
         receipt = between(AGENT, "    def receipt(self, uid: str)", "    def unreported(")
         keys = re.findall(r'^\s+"(\w+)":', receipt, re.M)
-        self.assertEqual(keys, VECTORS["keys"])
+        self.assertEqual(keys, VECTORS["keys"] + VECTORS["optionalKeys"])
         for banned in ("last_error", "updated_at", "time.", "institution", "reason"):
             self.assertNotIn(banned, receipt.split('"""', 2)[-1], banned)
         self.assertIn('if not row or not row["announced"] or row["local_count"] is None:', receipt)
@@ -328,7 +344,7 @@ class AgentPins(unittest.TestCase):
         self.assertIn('return self.request("POST", "/api/gateway/receipt", json=body)', AGENT)
 
     def test_seq_moves_in_the_same_statement_as_every_receipt_field(self):
-        columns = {"phase", "attempt", "local_count", "success_count", "error_code"}
+        columns = {"phase", "attempt", "local_count", "success_count", "success_series", "error_code"}
         statements = [node.value for node in ast.walk(agent_tree())
                       if isinstance(node, ast.Constant) and isinstance(node.value, str) and "UPDATE" in node.value]
         touched = 0
@@ -372,7 +388,8 @@ class AgentPins(unittest.TestCase):
         # CD-10 adds source-AE association, forwarded provenance and mixed-device batch coverage.
         # 29 -> 44: HeartbeatTests (15 cases), the operational heartbeat thread.
         # 44 -> 70: RoutingTests (including upgrade from a pre-routing queue) and LogLineTests.
-        self.assertEqual(count, 70)
+        # 70 -> 76: the receipt's series count (SeriesCountTests, five cases; one routing case).
+        self.assertEqual(count, 76)
 
 
 class ServerPins(unittest.TestCase):
@@ -382,6 +399,7 @@ class ServerPins(unittest.TestCase):
 
     def test_the_rule_constants_are_the_vectors_and_the_agent_table(self):
         self.assertEqual(self.ts_list("GATEWAY_RECEIPT_KEYS"), VECTORS["keys"])
+        self.assertEqual(self.ts_list("GATEWAY_RECEIPT_OPTIONAL_KEYS"), VECTORS["optionalKeys"])
         self.assertEqual(self.ts_list("GATEWAY_PHASES"), VECTORS["phases"])
         self.assertEqual(self.ts_list("GATEWAY_ERROR_PHASES"), VECTORS["errorPhases"])
         codes = self.ts_list("GATEWAY_ERROR_CODES")

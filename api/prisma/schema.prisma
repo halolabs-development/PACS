@@ -356,6 +356,8 @@ model GatewayReceipt {
   localCount    BigInt
   errorCode     String?  @db.VarChar(40)
   receivedAt    DateTime
+  /// Distinct series of the sent images (successCount). NULL = unknown (older Gateway or row), never 0.
+  successSeries BigInt?
   study StudyState @relation(fields: [studyUid], references: [uid], onDelete: Cascade, onUpdate: Restrict)
   retryRequests GatewayRetryRequest[]
 }

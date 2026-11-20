@@ -663,6 +663,15 @@ PROFILES = {
         'suite_timeout': 900,
         'suites': (('e2e/test_monitor_hanging.py', 'MonitorHangingE2E', 'ci-monitor-hanging'),),
     },
+    'two-monitor-layout': {
+        'out': ROOT / 'tests/e2e/artifacts/two-monitor-layout-ci',
+        'project_prefix': 'kin-two-monitor-ci-',
+        # Dispatch only (Focused integration): one viewer window over two synthetic CDP displays on a real stack - the first
+        # layout after stretching, one column per monitor, the double click per monitor, Span Displays the browser refuses.
+        # The module's load_tests is the allowlist (test_two_*), so no class is passed and no inherited case runs.
+        'suite_timeout': 900,
+        'suites': (('e2e/test_viewer_two_monitor_layout.py', None, 'ci-two-monitor-layout'),),
+    },
     'image-report': {
         'out': ROOT / 'tests/e2e/artifacts/image-report-ci',
         'project_prefix': 'kin-image-report-ci-',
@@ -712,9 +721,10 @@ PROFILES = {
         'project_prefix': 'kin-viewer-overlay-units-ci-',
         # Dispatch only (Focused integration): a square-pixel CT with a DICOM overlay plane drawn where it is, turned off and on and
         # measured on; overlay planes on non-square pixels or with a short answer left out with the Length still drawn; a palette
-        # colour image drawn without an error; a Freehand ROI's perimeter and length in mm at any zoom, and its own words on an
-        # image without pixel spacing; the history panel's saved-item count after a Save and a Delete, on a real stack. Seven
-        # cases; the single-suite cap is a hang ceiling, not an estimate.
+        # colour image drawn without an error; a Freehand ROI's perimeter and length in mm at any zoom, and in px (area px²) on an
+        # image without pixel spacing; the history panel's saved-item count after a Save and a Delete; an Ellipse ROI on a CT that
+        # leaves Rescale Type out drawn, saved, reopened and put in a manual SR in HU, on a real stack. Eight cases; the
+        # single-suite cap is a hang ceiling, not an estimate.
         'suite_timeout': 900,
         'suites': (('e2e/test_viewer_overlay_units.py', 'ViewerOverlayUnitsE2E', 'ci-viewer-overlay-units'),),
     },

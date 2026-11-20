@@ -430,7 +430,8 @@
       await session(signal);const response=await fetcher('/api/studies',{credentials:'same-origin',cache:'no-store',signal});if(!response.ok)throw Error('검사 접근 권한을 확인할 수 없습니다.');
       const data=await json(response),uids=urlStudies();if(!uids||!Array.isArray(data.studies))throw Error('현재 검사 범위를 확인할 수 없습니다.');const studies=uids.map(uid=>data.studies.find(s=>s.uid===uid));if(studies.some(v=>!v))throw Error('현재 검사 접근 권한을 확인할 수 없습니다.');return {studies,displaySets:displaySets.getActiveDisplaySets()};
     }
-    async function runApply(firstMatch=false,navigation=null){
+    // again: { scope, ruleId } - the rule this panel applied, applied once more (its monitors reached, below).
+    async function runApply(firstMatch=false,navigation=null,again=null){
       if(busy||ended||!live())return;if(layoutQuarantined){status.textContent='이전 배치 요청의 완료를 확인하지 못했습니다. 뷰어 창을 닫고 다시 열어 주세요.';return;}if(!workspaceSafe()){status.textContent='저장하지 않은 영상 작업이 있어 배치를 변경하지 않았습니다.';return;}
       let value;try{value=strict();}catch(error){status.textContent=error.message;return;}
       if(navigation&&appliedCursor&&appliedFingerprint!==navigationFingerprint())invalidateApplied();
@@ -455,7 +456,7 @@
         // Site rule is a fallback for an account that has no matching rule, never an override.
         const scoped=bothLibraries(value);
         const result=navigation?model.navigateScoped(scoped,resolveContext,appliedCursor,navigation)
-          :model.resolveScoped(scoped,resolveContext,firstMatch?null:{scope,ruleId:selected});
+          :model.resolveScoped(scoped,resolveContext,firstMatch?null:(again||{scope,ruleId:selected}));
         if(result.kind==='no-match'){
           // A no-match reached without the institution library is reported as what it is, so it
           // is never read as "the institution published nothing".
@@ -656,7 +657,13 @@
         library=value;selected=value.activeRuleId||value.rules[0]?.id||null;markChanged();render();status.textContent='규칙을 초안으로 가져왔습니다. Save Draft 또는 Save to Account를 선택하세요.';
       }catch(error){if(!ended)status.textContent=error instanceof SyntaxError?'가져올 JSON 형식이 잘못되었습니다.':error.message;}
     };
-    function end(){ended=true;if(mounted===handle)mounted=null;request?.abort();siteRequest?.abort();channel?.close();subscriptions.splice(0).forEach(value=>{try{value?.unsubscribe?.();}catch(_){}});refresh();}
+    // Monitors in Hanging Protocol: the browser kept the window off the rule's monitors and the reader has now laid it over
+    // them (viewer-features-monitors.js). The rule this panel applied - the one Apply, Apply First Match or Previous/Next
+    // put on - is applied once more, only while it is still the one applied and the screen is as it left it.
+    const reached=event=>{if(busy||ended||!live()||!appliedCursor||appliedCursor.ruleId!==event?.detail?.ruleId||appliedFingerprint!==navigationFingerprint())return;
+      runApply(false,null,{scope:appliedCursor.scope,ruleId:appliedCursor.ruleId});};
+    root.addEventListener?.('kin-viewer-monitors-reached',reached);
+    function end(){ended=true;if(mounted===handle)mounted=null;root.removeEventListener?.('kin-viewer-monitors-reached',reached);request?.abort();siteRequest?.abort();channel?.close();subscriptions.splice(0).forEach(value=>{try{value?.unsubscribe?.();}catch(_){}});refresh();}
     try{channel = window.kinViewerOnEnd(() => end());}catch(_){}
     const navigationChanged=()=>{if(!busy&&appliedCursor&&appliedFingerprint!==navigationFingerprint()){invalidateApplied();refresh();}};
     for(const service of [grid,displaySets])for(const event of new Set(Object.values(service?.EVENTS||{})))try{subscriptions.push(service.subscribe(event,navigationChanged));}catch(_){}
