@@ -388,7 +388,7 @@ def correction_page(apply_state=None, cells=None, modify=None):
     for name in ("kinWrite", "saveApp", "apiFail", "preservedLocal", "mergeObservedReportState", "syncStudy", "applyStudyIdentity",
                  "renderStudyIdentity", "openModify", "confirmText", "localStamp", "requestText",
                  # QC Flag: applyState, syncStudy and the state merge read the row's mark through these.
-                 "qcMark", "newerQc", "applyQcRow"):
+                 "qcMark", "qcScopes", "qcReading", "qcScope", "shownQc", "newerQc", "applyQcRow"):
         functions.append(extract_function(MAIN, name))
     functions.append("async " + extract_function(MAIN, "saveModify"))
     functions.append(corrections())

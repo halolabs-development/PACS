@@ -198,8 +198,10 @@
           // A row whose exam became (or stopped being) unreadable as a whole is a changed exam too, though neither answer
           // carries a scope.
           const lostKey = s => s?.examUnavailable === true ? String(s.examUnavailableKind ?? '') : null;
+          // A row that became (or stopped being) one received for tele-reading is another row for this account: every
+          // field of it is rebuilt from this answer, like a changed exam.
           const scopeChanged = r.studies.some(s=>KinExamScope.screenStamp(s)!==KinExamScope.screenStamp(known.get(s.uid))
-            || lostKey(s)!==lostKey(known.get(s.uid)));
+            || lostKey(s)!==lostKey(known.get(s.uid)) || known.has(s.uid) && (s.tele===true)!==(known.get(s.uid).tele===true));
 
           // 목록이 달라졌으면(도착·삭제) 통째로 다시 그린다.
           if (scopeChanged || fresh.length || r.studies.length !== studies.length) {
@@ -223,8 +225,11 @@
             return;
           }
 
+          // QC marks follow this answer too (report-draft-sync.js observeQcList): the rows it lists and how each is read now.
+          observeQcList(r.studies);
           for (const s of r.studies) {
             const uid = s.uid, st = s.state, existing = known.get(uid);
+            observeQcScope(s);
             if (existing) Object.assign(existing, {examScope:s.examScope??null, reportScope:s.reportScope??null,
               draftEpoch:s.state?.draftEpoch??null, sourceMetadata:(s.sourceMetadata||[]).map(m=>({...m,sourceAcc:m.acc,acc:m.orderAccession||m.acc,date:fmtD(m.date),reqDate:localStamp(m.reqDate)}))});
             if (existing) for (const field of ['count', 'series'])
@@ -240,7 +245,7 @@
               //     되돌아간다. 확정본(findings 등)은 갱신해도 된다 — 초안이 있는 동안
               //     화면은 초안을 그리고, 확정본은 "그 사이 남이 v5를 확정했다" 안내에만 쓰인다.
               // 나머지(rs·ss·holder 등)도 갱신한다. 남이 승인한 게 화면에 보여야 하니까.
-              appState[uid] = mergeObservedReportState(uid, st);
+              appState[uid] = mergeObservedReportState(uid, st, true);
               /**
                * 판독문 값은 loadReport가 스스로 지키므로, 호출자는 항상 상태를 반영한다.
                * 예전엔 폴링이 `prelimHidden`만 반영하고 판독문 패널은 그대로 뒀다 —
@@ -254,7 +259,7 @@
                * 서버 어디에도 없다. 폴링 한 번이 그것을 서버 투영으로 갈아끼우면 돌아온
                * 화면은 옛 글을 그리고, 수렴 저장이 그 옛 글을 서버에 밀어 넣는다.
                */
-              appState[uid] = mergeObservedReportState(uid, st);
+              appState[uid] = mergeObservedReportState(uid, st, true);
             }
             syncStudy(uid);
             if (selectedUid === uid) { loadReport(); updateReportButtons(); }

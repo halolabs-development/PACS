@@ -93,17 +93,63 @@
         revision: qc.revision };
     }
     /**
-     * Every place a server state answer replaces this document's state of a row (mergeObservedReportState and
-     * replaceReportState: list, poll, bootstrap, reconnect, PATCH, Match, commit, discard) keeps the mark of the highest
-     * revision this document has seen: the server never lowers it, so a lower one is an answer read before a later change.
-     * An answer without a readable mark keeps the shown one. Only the mark is kept; the rest of the answer is taken.
+     * QC marks follow the list the server last sent. A mark is shown, compared or written only for a row of that list this
+     * account can read now, and only inside one reading of that row: one generation of the study's state (draftEpoch) read
+     * one way (by its owning institution, or by a tele-reading receiver, who is not told who marked). qcScopes holds that
+     * reading per listed UID; a UID the list does not have, and a row of a merged or split exam whose originals cannot all
+     * be read now, have none. When the list says another reading for a UID - or stops listing it - the mark held under the
+     * earlier one is dropped first, so a revision is never compared across two readings and nothing read under the earlier
+     * one (the reason, the author's name) is shown under the new one. The list column, its filter and sort, Export List,
+     * the Info line and the QC window all ask shownQc(); none reads the stored mark itself.
      */
-    function newerQc(mine, st) {
-      const held = qcMark(mine), seen = qcMark(st);
-      return held && (!seen || held.revision > seen.revision) ? { qc: mine.qc } : {};
+    function qcScopes() { return qcScopes.byUid ??= new Map(); }
+    /** The reading a state answer was made under: whose study it is, who receives it for tele-reading, and its generation. */
+    function qcReading(st) {
+      return JSON.stringify([st?.institutionId ?? null, st?.teleInstitutionId ?? null, st?.draftEpoch ?? null]);
     }
-    /** 폴링 응답 한 건을 그 검사의 화면 상태에 합친다. 가려진 예비 판독은 서버가 본문을 안 준다. */
-    function mergeObservedReportState(uid, st) {
+    function dropQc(uid) {
+      if (appState[uid] && Object.hasOwn(appState[uid], "qc")) { const { qc, ...rest } = appState[uid]; appState[uid] = rest; }
+    }
+    /** One row of a list answer, before its state is merged (fromApi and the poll's in-place update). */
+    function observeQcScope(s) {
+      const next = s.examUnavailable === true ? null : qcReading(s.state);
+      if (qcScopes().get(s.uid) !== next) dropQc(s.uid);
+      qcScopes().set(s.uid, next);
+    }
+    /** This study is not there for this account now (it left the list; a QC command was answered 404): its mark goes at once. */
+    function loseQc(uid) { qcScopes().delete(uid); dropQc(uid); }
+    /** A whole list answer: a UID it does not list has no mark on this page any more. */
+    function observeQcList(rows) {
+      const listed = new Set(rows.map(s => s.uid));
+      for (const uid of [...qcScopes().keys()]) if (!listed.has(uid)) loseQc(uid);
+    }
+    function qcScope(uid) { return qcScopes().get(uid) ?? null; }
+    /** The mark this page may show for a study now; null (shown as Unknown) when it is not a readable row of the last list. */
+    function shownQc(uid) { return qcScope(uid) === null ? null : qcMark(appState[uid]); }
+    /**
+     * Every place a server state answer replaces this document's state of a row passes here (mergeObservedReportState and
+     * replaceReportState: list, poll, bootstrap, reconnect, PATCH, Match, commit, discard), and a QC command's own answer
+     * (takeQcAnswer). What it returns is spread over the merged state: `{}` takes the answer's mark, `{ qc }` keeps the
+     * held one (or none).
+     *   - The list's answer (`listed`) says how the row is read now, and the mark held under an earlier reading is already
+     *     dropped (observeQcScope): its mark is taken unless it is older than the held one - the server never lowers the
+     *     revision, so a lower one is a list read before a later change - or carries no readable mark.
+     *   - Any other answer may have been made under an earlier reading of the row: its mark is taken only when it names the
+     *     reading the list says now and is newer than the held one. At the same revision the list's stands (with or
+     *     without the author's name), and an answer for a row the list does not have leaves no mark.
+     * Only the mark is kept or taken this way; the rest of the answer is merged as before.
+     */
+    function newerQc(uid, mine, st, listed) {
+      const held = qcMark(mine), seen = qcMark(st), keep = { qc: held ? mine.qc : undefined };
+      if (!seen) return keep;
+      if (listed) return held && held.revision > seen.revision ? keep : {};
+      return qcScope(uid) !== null && qcScope(uid) === qcReading(st) && !(held && held.revision >= seen.revision) ? {} : keep;
+    }
+    /**
+     * 폴링 응답 한 건을 그 검사의 화면 상태에 합친다. 가려진 예비 판독은 서버가 본문을 안 준다. `listed`: 이 답이 목록(조회·폴링)의
+     * 그 행이다 — QC 표시의 기준이 된다(newerQc).
+     */
+    function mergeObservedReportState(uid, st, listed = false) {
       // An observation can update an idle document, including its draft command baseline.
       const mine = appState[uid] ?? {};
       if (!reportConverge.has(uid) && st)
@@ -122,7 +168,7 @@
       const seen = numbered(st?.draftRevision), held = numbered(mine.draftRevision);
       const late = seen && held && seen[1] === held[1] && Number(seen[2]) < Number(held[2])
         ? { draft: mine.draft ?? null, draftRevision: mine.draftRevision, draftEpoch: mine.draftEpoch } : null;
-      return { ...mine, ...st, ...late, ...newerQc(mine, st), ...preservedLocal(uid, mine) };
+      return { ...mine, ...st, ...late, ...newerQc(uid, mine, st, listed), ...preservedLocal(uid, mine) };
     }
 
     /**
@@ -143,7 +189,7 @@
       recordReportOrigin(uid, renderedOrigin(st));
       citations.forget(uid); citationNotes.delete(uid);
       structureState.forget(uid); structureNotes.delete(uid);
-      return { ...appState[uid], ...st, draft: st.draft ?? null, examScopeChanged: false, ...newerQc(appState[uid], st) };
+      return { ...appState[uid], ...st, draft: st.draft ?? null, examScopeChanged: false, ...newerQc(uid, appState[uid], st, false) };
     }
 
     /** 삽입이 나가 있는 동안의 비-keepalive 초안 저장을 **전부** 비켜세운다(B1). */

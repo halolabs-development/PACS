@@ -79,7 +79,7 @@
       // above always stay as the server sent them, whatever a stored overlay carries.
       for (const key of OVERLAY_KEYS) if (overlayValue(key, a.ov?.[key])) s[key] = a.ov[key];
       s.confirm = confirmText({ ...a, rs: s.rs });
-      applyQcRow(s, a);
+      applyQcRow(s);
       // Without a server the matched order of this list (demo) gives the request columns, as the server does for its rows.
       if (!serverMode) {
         const order = a.matched === "M" && a.oid ? orders.find(o => o.oid === a.oid) : null;
@@ -91,18 +91,21 @@
     function requestText(v) { return typeof v === "string" ? v.trim() : ""; }
 
     /**
-     * A QC command's own answer: only its mark is taken, and only when it is not older than the mark shown. The rest of the
-     * state it carries is not: a list read that came back meanwhile may already show a later report state (RS, holder).
+     * A QC command's own answer: only its mark is taken, by the rule every answer that is not the list's passes (newerQc,
+     * report-draft-sync.js: the reading the list says for the row now, and a newer revision), and only when the row is
+     * still read the way it was when the command was sent (`scope`). The rest of the state it carries is never taken: a
+     * list read that came back meanwhile may already show a later report state (RS, holder).
      */
-    function takeQcAnswer(uid, st) {
-      const seen = qcMark(st), held = qcMark(appState[uid]);
-      if (!seen || held && held.revision > seen.revision) return false;
+    function takeQcAnswer(uid, st, scope) {
+      if (!scope || qcScope(uid) !== scope) return false;
+      const kept = newerQc(uid, appState[uid], st, false);
+      if (Object.hasOwn(kept, "qc")) return false;
       appState[uid] = { ...appState[uid], qc: st.qc };
       return true;
     }
-    /** A row's QC fields from its state (applyState and syncStudy): the mark, and the word the column, filter and sort read. */
-    function applyQcRow(s, a) {
-      const mark = qcMark(a);
+    /** A row's QC fields (applyState and syncStudy): the mark it may show, and the word the column, filter and sort read. */
+    function applyQcRow(s) {
+      const mark = shownQc(s.uid);
       s.qcMark = mark;
       s.qc = !mark ? "Unknown" : mark.reason !== null ? "Flagged" : "None";
     }
@@ -158,6 +161,7 @@
     function observeExamList(rows) {
       const present=new Set(rows.map(s=>s.uid));
       for(const uid of observedExamScopes.keys()) if(!present.has(uid)) observeExamScope({uid,origin:"logical"});
+      observeQcList(rows);
     }
     function observeExamScope(s) {
       const next = KinExamScope.screenStamp(s), previous = observedExamScopes.get(s.uid);
@@ -184,7 +188,8 @@
        * 아직 서버에 보내지 못한 글을 담은 검사가 고른 검사가 아니면 그 글이 사라졌다.
        * 바로 아래 `applyState`가 `appState`를 읽으므로 목록 행의 판 번호도 여기서 맞는다.
        */
-      appState[s.uid] = mergeObservedReportState(s.uid, s.state);
+      observeQcScope(s);
+      appState[s.uid] = mergeObservedReportState(s.uid, s.state, true);
       return applyState({
         uid: s.uid, pf: "·", assignedReader:readerAssignments.get(s.uid)?.reader?[readerAssignments.get(s.uid).reader.name,readerAssignments.get(s.uid).reader.actor].filter(Boolean).join(" · "):"",
         // While matched, the order's own accession is shown (orderAccession, null without one); sourceAcc keeps the archive's.
@@ -637,8 +642,9 @@
       worklistExport?.sync(list.length);
       rowNavigation?.sync();
       worklistSearch?.show();
-      // The Info panel's QC line and Protocol & Dose follow the list (a poll, a tab change): study-info-panel.js.
-      renderQcInfo(); renderAcquisition();
+      // What shows a study's QC mark or its DICOM follows the list (a poll, a Refresh, a tab change): the Info panel's study,
+      // QC line and Protocol & Dose together (study-info-panel.js) and the open QC window (study-corrections.js).
+      renderViewedInfo(); syncQcWindow();
 
       const active = [];
       if (consultationFilter) {
