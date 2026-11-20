@@ -42,8 +42,9 @@ body { margin: 0; background: #111; font-family: sans-serif; }
 #   the same number, and a dropped request never answers) or the image is not at that number of the stack as it is now
 #   (GPU). A kept image is held (getCornerstoneImage), announced (STACK_NEW_IMAGE) and drawn at the next frame
 #   (IMAGE_RENDERED). setStack() announces its first request at once and the new stack (VIEWPORT_NEW_IMAGE_SET) only
-#   after that load. scroll() moves the scroll target and announces it (STACK_VIEWPORT_SCROLL) at once, but asks for an
-#   image not loaded yet 40 ms later.
+#   after that load. scroll() moves the scroll target by its step (from the target, not from the image shown) and
+#   announces it (STACK_VIEWPORT_SCROLL) once the request is made, but asks for an image not loaded yet 40 ms later.
+#   successCallback() is how a loader hands the viewport an image; renderImageObject() puts one on it as it is.
 # The viewer's slice number and scroll bar follow STACK_VIEWPORT_SCROLL only, a frame later (a pink box of image text
 # at x = 10 + 15 * number, y = 68; synScrollbar), and its "Loading" cover rises 50 ms after a scroll unless the image came.
 # The grid sends its notices a moment after a change, as the viewer's grid service does (setActive places the selection
@@ -166,6 +167,16 @@ SETUP = """() => {
             .then(arrived, refused), 'interaction', cpu ? { imageId, imageIdIndex } : { imageId }, -5);
         });
       },
+      // The loader hands the viewport an image (GPU): kept if it is at the viewport's image number in the stack as it is.
+      successCallback(imageId, image) {
+        const imageIdIndex = this.imageIds.indexOf(imageId);
+        if (this.currentImageIdIndex !== imageIdIndex) return;
+        this.csImage = image;
+        fire(element, 'CORNERSTONE_STACK_NEW_IMAGE', { image, imageId, imageIdIndex, viewportId: id });
+        this.render();
+      },
+      // An image is put on the viewport as it is: no notice, no draw.
+      renderImageObject(image) { this.csImage = image; },
       setImageIdIndex(index) {
         if (this.currentImageIdIndex === index) return Promise.resolve(this.getCurrentImageId());
         this.currentImageIdIndex = index; this.viewportStatus = 'preRender';
@@ -727,12 +738,11 @@ class ViewerExportDOMTest(unittest.TestCase):
         self.click(page, 'SaveSeriesJPEG')
         self.assertNotIn('진행 중', page.evaluate("() => synNotes.at(-1).message"), 'the export was released')
 
-    # The way back takes `ms`: once the export is past the reader's image the cache lets go of it, has no room to take
-    # the held one back, and loading it again takes that long.
-    SLOW_RETURN = """ms => { const v = synViewports.get('left'), load = synLoadMs;
-      v.element.addEventListener('CORNERSTONE_STACK_NEW_IMAGE', event => {
-        if (event.detail.imageIdIndex !== 2 || synNoRoom) return;
-        synNoRoom = true; synDecache('syn:left:1'); synLoadMs = (id, index, seen) => id === 'left' && index === 1 ? ms : load(id, index, seen); }); }"""
+    # The way back takes `ms`: once the last image is drawn, every draw of the cell comes that much later.
+    SLOW_RETURN = """ms => { const v = synViewports.get('left'), draw = v.render.bind(v); let slow = false;
+      v.element.addEventListener('CORNERSTONE_IMAGE_RENDERED', () => {
+        if (slow || v.getCurrentImageIdIndex() !== 3) return;
+        slow = true; v.render = () => { setTimeout(draw, ms); }; }); }"""
 
     def returning(self, page):
         # The export has shown its last image and is on its way back to the image the reader was on.
@@ -750,10 +760,10 @@ class ViewerExportDOMTest(unittest.TestCase):
             self.assertNotEqual('success', page.evaluate("() => synNotes.at(-1).type"), stop)
 
     def test_29_a_failed_return_writes_nothing_and_says_so(self):
-        # Four images are shown (requests 0, 1, 2, 3); the fifth request, back to image 2 of 4, is refused by the viewport.
+        # Four images are shown (requests 0, 1, 2, 3); the fifth request, back to image 2 of 4, is not taken by the viewport.
         page = self.open(); seen = self.downloads(page)
         page.evaluate("""() => { const v = synViewports.get('left'), set = v.setImageIdIndex.bind(v); let calls = 0;
-          v.setImageIdIndex = value => ++calls > 4 ? Promise.reject(new Error('load failed')) : set(value); }""")
+          v.setImageIdIndex = value => ++calls > 4 ? Promise.resolve(v.getCurrentImageId()) : set(value); }""")
         self.click(page, 'SaveSeriesJPEG')
         page.wait_for_function("() => synNotes.length")
         self.assertEqual('error', page.evaluate("() => synNotes.at(-1).type"))
@@ -1079,11 +1089,11 @@ class ViewerExportDOMTest(unittest.TestCase):
         page.evaluate(self.AGAIN, None)
         self.left_alone(page, seen, [2, 'syn:left:2', 2])
         self.assertIn('바뀌어', page.evaluate("() => synNotes[0].message"))
-        # While the export goes back to the image the reader was on (that image still loads; the cell is on the last one):
+        # While the export goes back to the image the reader was on (the cell is on it, not drawn yet):
         page = self.open(); seen = self.downloads(page); page.evaluate(self.SLOW_RETURN, 2500)
         self.click(page, 'SaveSeriesJPEG'); self.returning(page)
         page.evaluate(self.AGAIN, None)
-        self.left_alone(page, seen, [3, 'syn:left:3', 3], wait=3000)
+        self.left_alone(page, seen, [1, 'syn:left:1', 1], wait=3000)
         # While the video file is made (each image takes 0.3 s to decode here), back on the reader's image:
         page = self.open(before="""() => { const decode = window.createImageBitmap;
           window.createImageBitmap = (...args) => new Promise(r => setTimeout(r, 300)).then(() => decode(...args)); }""")
@@ -1092,13 +1102,18 @@ class ViewerExportDOMTest(unittest.TestCase):
         page.evaluate(self.AGAIN.replace('1000', '4000'), None)
         self.left_alone(page, seen, [1, 'syn:left:1', 1], wait=5000)
 
-    def test_51_a_wheel_step_that_asks_for_no_image_ends_the_claim_at_once(self):
-        # The reader's wheel step names the image the export happens to show: the stack announces the scroll and asks for
-        # nothing, as the cell is on that image number already. The cell is the reader's from the scroll.
+    def test_51_a_wheel_step_ends_the_claim_at_once_before_its_image_is_asked_for(self):
+        # The reader's wheel step on the image the export shows: the stack announces the scroll now and asks for the next
+        # image 40 ms later. The cell is the reader's from the scroll, and goes where the reader scrolled.
         page = self.open(); seen = self.started(page)
-        page.evaluate("() => { synViewports.get('left').scroll(1); window.synAfter = synRequests.length; }")
-        self.left_alone(page, seen, [2, 'syn:left:2', 2])
-        self.assertEqual(2, page.evaluate("() => synViewports.get('left').getTargetImageIdIndex()"))
+        moving = page.evaluate("() => { synViewports.get('left').scroll(1); window.synAfter = synRequests.length; return KinViewerExport.moving('left'); }")
+        self.assertFalse(moving, 'the reader\'s from the scroll on')
+        page.wait_for_function("() => synNotes.length", timeout=60000)
+        page.wait_for_timeout(1500)
+        self.assertEqual([[], []], [seen, page.evaluate("() => synNotes.filter(n => n.type === 'success')")])
+        self.assertEqual([['left', 3]], page.evaluate("() => synRequests.slice(synAfter)"), 'the reader\'s own request, and none of the export\'s')
+        self.assertEqual([3, 'syn:left:3', 3], page.evaluate(self.SHOWN))
+        self.assertEqual([3, 3, False], page.evaluate("() => [synViewports.get('left').getTargetImageIdIndex(), synScrollbar.left, synCover.up]"))
 
     def test_52_selecting_another_cell_changing_the_grid_or_starting_cine_ends_the_claim(self):
         grid = "const g = synServices.viewportGridService; "
@@ -1150,43 +1165,37 @@ class ViewerExportDOMTest(unittest.TestCase):
             self.assertEqual(['error'], page.evaluate("() => synNotes.map(n => n.type)"), act)
             self.assertIn('보이지 않아', page.evaluate("() => synNotes[0].message"), act)
 
-    # Once the export shows image `past`, the cache lets go of the reader's image `start`, which then cannot be loaded again.
-    GONE = """([start, past]) => { const v = synViewports.get('left'), id = 'syn:left:' + start; let done = false;
+    # Once the export shows image `past`, the cache lets go of the reader's image `start`, which then cannot be loaded
+    # again; `more` is what else has happened to it by then.
+    GONE = """([start, past, more]) => { const v = synViewports.get('left'), id = 'syn:left:' + start; let done = false;
       v.element.addEventListener('CORNERSTONE_STACK_NEW_IMAGE', event => {
         if (done || event.detail.imageIdIndex !== past) return;
-        done = true; synDecache(id); synFailAt.add('left:' + start); synFailNotice = true; window.synGoneAt = synLoads.length; }); }"""
+        done = true; synDecache(id); synFailAt.add('left:' + start);
+        // The load is refused; the cache has no room for the image either; or another load of it is under way and never answers.
+        if (more === 'refused') synFailNotice = true;
+        if (more === 'no room') { synFailNotice = true; synNoRoom = true; }
+        if (more === 'pending') cornerstone.imageLoader.loadAndCacheImage(id);
+        window.synGoneAt = synLoads.length; }); }"""
 
-    def test_56_the_way_back_to_the_readers_image_does_not_depend_on_loading_it_again(self):
-        # While the export ran the cache let go of the reader's image and it cannot be loaded again: the image the cell held
-        # at the start goes back on it. The file is whole and the reader's image is on the cell: its number, the image and
-        # the pixels. Also when the reader's image is the last one of the series.
-        for start, past in [(1, 2), (3, 0)]:
+    def test_56_the_readers_image_is_handed_back_to_the_cell_and_never_loaded_again(self):
+        # While the export ran the cache let go of the reader's image and it cannot be loaded again. The image the cell
+        # held at the start is handed back to it: the file is whole and the reader's image is on the cell, its number,
+        # the image and the pixels. Also when the reader's image is the last one of the series.
+        for start, past, more in [(1, 2, 'refused'), (3, 0, 'refused'), (1, 2, 'no room'), (1, 2, 'pending')]:
             page = self.open()
             if start != 1:
                 page.evaluate("start => synViewports.get('left').scroll(start - 1)", start)
                 page.wait_for_function("shown => JSON.stringify((%s)()) === shown" % self.SHOWN, arg='[%d,"syn:left:%d",%d]' % (start, start, start))
-            page.evaluate(self.GONE, [start, past])
+            page.evaluate(self.GONE, [start, past, more])
             with page.expect_download() as saved:
                 self.click(page, 'SaveSeriesJPEG')
             archive = self.archive(saved.value)
-            self.assertEqual(4, len(archive.namelist()))
+            self.assertEqual(4, len(archive.namelist()), more)
             for index, name in enumerate(archive.namelist()): self.assert_frame(self.image(archive.read(name)), index)
             page.wait_for_function("() => synNotes.some(n => n.type === 'success')")
-            self.assertEqual([start, 'syn:left:%d' % start, start], page.evaluate(self.SHOWN), start)
-            self.assertEqual(start, page.evaluate("() => synScrollbar.left"), start)
-            self.assertEqual([], page.evaluate("start => synLoads.slice(synGoneAt).filter(id => id === 'syn:left:' + start)", start), 'no load is asked for')
-        # A cache with no room for even that one image (the viewer could not show it either): the export says it could not
-        # go back and writes nothing; the cell stays on the last image it showed, its number and scroll bar with it.
-        page = self.open(); seen = self.downloads(page)
-        page.evaluate(self.GONE, [1, 2]); page.evaluate("() => { synNoRoom = true; KinViewerExport.options.loadTimeout = 600; }")
-        self.click(page, 'SaveSeriesJPEG')
-        page.wait_for_function("() => synNotes.length", timeout=60000)
-        page.wait_for_timeout(300)
-        self.assertEqual(['error'], page.evaluate("() => synNotes.map(n => n.type)"))
-        self.assertIn('돌아가지 못해', page.evaluate("() => synNotes[0].message"))
-        self.assertEqual([], seen)
-        self.assertEqual([3, 'syn:left:3', 3], page.evaluate(self.SHOWN))
-        self.assertEqual(3, page.evaluate("() => synScrollbar.left"))
+            self.assertEqual([start, 'syn:left:%d' % start, start], page.evaluate(self.SHOWN), more)
+            self.assertEqual([start, start], page.evaluate("() => [synScrollbar.left, synViewports.get('left').getTargetImageIdIndex()]"), more)
+            self.assertEqual([], page.evaluate("start => synLoads.slice(synGoneAt).filter(id => id === 'syn:left:' + start)", start), 'the export asks for no load of it')
 
     def test_57_the_series_and_the_image_are_settled_before_anything_moves(self):
         # The grid names another series for the cell than the one its images are of (it was just given, the images are not there yet).
@@ -1499,6 +1508,20 @@ class ViewerExportDOMTest(unittest.TestCase):
             for index, name in enumerate(archive.namelist()): self.assert_frame(self.image(archive.read(name)), index)
             page.wait_for_function("() => synNotes.some(n => n.type === 'success')")
             self.assertEqual([1, 'syn:left:1', 1], page.evaluate(self.SHOWN), cpu)
+
+    def test_69_the_readers_next_step_counts_from_the_image_on_the_screen(self):
+        # The export shows image 3 of 4 on a cell the reader had on image 2. What the reader does next is done to what is
+        # on the screen: a slider that goes to image 4 by its distance from the image shown (as the viewer's jump to an
+        # image does), a wheel step on, one back, two back. The cell ends where the reader went, with its scroll bar, and
+        # the viewer's "Loading" cover does not stay up.
+        for act, to in [("v.scroll(3 - v.getCurrentImageIdIndex())", 3), ("v.scroll(1)", 3), ("v.scroll(-1)", 1), ("v.scroll(-2)", 0)]:
+            page = self.open(); seen = self.started(page)
+            page.evaluate("() => { const v = synViewports.get('left'); " + act + "; }")
+            page.wait_for_function("() => synNotes.length", timeout=60000)
+            page.wait_for_timeout(1500)
+            self.assertEqual([[], []], [seen, page.evaluate("() => synNotes.filter(n => n.type === 'success')")], act)
+            self.assertEqual([to, 'syn:left:%d' % to, to], page.evaluate(self.SHOWN), act)
+            self.assertEqual([to, to, False], page.evaluate("() => [synViewports.get('left').getTargetImageIdIndex(), synScrollbar.left, synCover.up]"), act)
 
     # ── Captures: captures collect in this window's Captures panel ──
     def panel(self, page):

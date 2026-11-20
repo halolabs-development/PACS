@@ -324,7 +324,7 @@ window.KinViewerExport = (() => {
   // The cell is asked for an image only once that image's load has ended (the loader alone loads it; the cell is asked
   // for nothing meanwhile), and the request is run where it is made, on the very load that was waited for: the image is
   // on the cell within the same task. So no request of the export's is on its way when the reader takes the cell, and
-  // none arrives on what the reader chose.
+  // none arrives on what the reader chose. The reader's own image is held from the start and handed back, not loaded.
   function claim(services, live) {
     const target = pin(services, 'image', live);
     if (!target) return null;
@@ -332,7 +332,7 @@ window.KinViewerExport = (() => {
     // The stack as it is now: the viewport's own list (a different list later is one more sign of a new stack) and a
     // copy of its order, which is the order of the export to its end.
     const list = viewport.getImageIds?.() || [], ids = [...list];
-    // Where the reader's scrolling stands. A scroll or a new stack moves it; the export's own requests do not.
+    // Where the cell's scrolling stands. A scroll or a new stack moves it; so does the export, which scrolls the cell.
     const aim = () => viewport.getTargetImageIdIndex?.();
     const core = window.cornerstone, names = core?.Enums?.Events || {}, cache = core?.cache;
     const SCROLL = names.STACK_VIEWPORT_SCROLL || 'CORNERSTONE_STACK_VIEWPORT_SCROLL';
@@ -342,7 +342,7 @@ window.KinViewerExport = (() => {
     // settled: the reader's last move has ended; its image is the one to go back to (start; kept: that image itself).
     // unsettled: told of each move of the reader's until then. waited: the one image whose load was last waited for (the
     // export holds on to no other image, so the cache can let go of the ones behind it).
-    let lost = '', settled = false, unsettled = null, start, aimed, kept = null, waited = null, own = null, telling = false, painted = null, wake = null;
+    let lost = '', settled = false, unsettled = null, start, aimed, kept = null, waited = null, own = null, telling = false, noticed = false, painted = null, wake = null;
     const playing = () => !!cine?.getState?.()?.cines?.[cell.id]?.isPlaying;
     const lose = how => { if (!lost) lost = how; wake?.(); };
     const state = () => {
@@ -364,9 +364,9 @@ window.KinViewerExport = (() => {
       if (own && !own.heard && event.detail?.imageIdIndex === own.index && event.detail?.imageId === ids[own.index]) { own.heard = true; return; }
       if (settled) lose('taken'); else unsettled?.();
     });
-    // A scroll names its image before the request, which may come a moment later (the export's own notice of the image
-    // it asked for is not a scroll); a new stack is announced once it loaded.
-    on(SCROLL, () => { if (telling) return; if (settled) lose('taken'); else unsettled?.(); });
+    // A scroll names its image before the request, which may come a moment later (the scroll the export itself makes is
+    // not the reader's); a new stack is announced once it loaded.
+    on(SCROLL, () => { if (telling) { noticed = true; return; } if (settled) lose('taken'); else unsettled?.(); });
     for (const name of new Set([names.STACK_NEW_STACK || 'CORNERSTONE_STACK_NEW_STACK', names.VIEWPORT_NEW_IMAGE_SET || 'CORNERSTONE_VIEWPORT_NEW_IMAGE_SET'])) on(name, () => lose('taken'));
     // A finished draw: the image the viewport held as it drew.
     on(names.IMAGE_RENDERED || 'CORNERSTONE_IMAGE_RENDERED', () => {
@@ -443,47 +443,60 @@ window.KinViewerExport = (() => {
     // Loads image k with the loader alone and gives the load the cache holds for it, once that load has ended.
     function fetch(k) {
       const imageId = ids[k];
-      // The reader's image, held since the start, goes back into a cache that let go of it: the way back needs no load.
-      if (k === start && kept?.imageId === imageId && !cache?.getImageLoadObject?.(imageId)) {
-        try { cache.putImageSync(imageId, kept); return Promise.resolve(cache.getImageLoadObject(imageId)); } catch (_) {}
-      }
       try {
         const loading = core.imageLoader.loadAndCacheImage(imageId, asking(imageId)), load = cache.getImageLoadObject(imageId);
         return Promise.resolve(loading).then(() => load);
       } catch (error) { return Promise.reject(error); }
     }
-    // The one request this export makes of the cell, for an image whose load has ended. The viewport announces it inside
-    // the call (only that announcement is the export's own) and hands it to the loader's queue, where it could wait
-    // behind other loads and arrive after the reader took the cell. So it is not queued: it runs where it is handed
-    // over, if the cell is still this export's and on this image and the cache still holds the load waited for, and its
-    // image is then on the cell within this task; otherwise it is dropped before a pixel is applied. Returns the
-    // viewport's own answer to the request, or false if it was dropped.
-    function ask(k) {
-      const imageId = ids[k], from = viewport.getCurrentImageIdIndex(), queue = core?.imageLoadPoolManager, add = queue?.addRequest;
-      const had = !!queue && Object.prototype.hasOwnProperty.call(queue, 'addRequest');
-      let dropped = false;
+    // The one way this export puts the cell on image k. The cell is scrolled there as the reader's wheel scrolls it, so
+    // where the cell's scrolling stands goes with the image shown: the reader's next step, whenever it comes, counts
+    // from what is on the screen. The viewport announces the request inside the call (only that announcement is the
+    // export's own) and then the scroll, which the viewer's slice number and scroll bar follow. It hands the request to
+    // the loader's queue, where it could wait behind other loads and arrive after the reader took the cell. So it is not
+    // queued: where it is handed over, `take` says whether it runs there (its image is then on the cell within this
+    // task) or is dropped before a pixel is applied. Tells whether the cell is on image k now, and whether the request
+    // ran (null when the viewport did not hand one over).
+    function go(k, take) {
+      const imageId = ids[k], from = viewport.getCurrentImageIdIndex(), to = aim(), queue = core?.imageLoadPoolManager, add = queue?.addRequest;
+      const had = !!queue && Object.prototype.hasOwnProperty.call(queue, 'addRequest'), scrolls = typeof viewport.scroll === 'function' && Number.isInteger(to);
+      let ran = null;
       if (typeof add === 'function') queue.addRequest = function (run, type, details, ...rest) {
         if (details?.imageId !== imageId || typeof run !== 'function') return add.call(this, run, type, details, ...rest);
-        if (state() !== 'own' || viewport.getCurrentImageIdIndex() !== k || !ready(k)) { dropped = true; return; }
+        if (!(ran = !!take())) return;
         try { Promise.resolve(run()).catch(() => {}); } catch (_) {}
       };
-      painted = null; own = { index: k, heard: false };
-      let call;
-      try { call = viewport.setImageIdIndex(k); }
-      finally { own = null; if (typeof add === 'function') { if (had) queue.addRequest = add; else delete queue.addRequest; } }
-      const answer = Promise.resolve(call);
-      if (dropped) { answer.catch(() => {}); return false; }
-      // The viewer's image number and scroll bar follow the scroll notice, which the viewport sends for its own scrolling
-      // only: sent here as the viewport's scroll sends it, once the request is made and before its image is applied.
-      if (viewport.getCurrentImageIdIndex() === k) {
-        telling = true;
-        try { element.dispatchEvent(new CustomEvent(SCROLL, { cancelable: true, detail: { newImageIdIndex: k, imageId, direction: k - from } })); }
-        finally { telling = false; }
+      painted = null; own = { index: k, heard: false }; telling = true; noticed = false;
+      try {
+        if (scrolls) { aimed = k; viewport.scroll(k - to, false); }
+        else Promise.resolve(viewport.setImageIdIndex(k)).catch(() => {});
+        const on = viewport.getCurrentImageIdIndex() === k;
+        // A viewport that sent no scroll notice of its own (its scrolling stood on this image already): sent here as it
+        // sends it, once the request is made and before its image is applied.
+        if (on && !noticed) element.dispatchEvent(new CustomEvent(SCROLL, { cancelable: true, detail: { newImageIdIndex: k, imageId, direction: k - from } }));
+        return { on, ran };
+      } finally {
+        own = null; telling = false; if (scrolls) aimed = aim();
+        if (typeof add === 'function') { if (had) queue.addRequest = add; else delete queue.addRequest; }
       }
-      return answer;
     }
-    // Waits until the cell shows image k. An image the cell is not on is loaded first and then asked for (the export's
-    // own request); for one it is on, a draw is asked for and judged like any other.
+    // The reader's image is never loaded again: the image the cell held at the start is handed back to the cell, as the
+    // loader hands it one. So the way back to it (and its own turn in the file) depends on no load and on no room in the
+    // cache. False when the cell did not take it.
+    function home() {
+      const imageId = ids[start];
+      if (!kept || kept.imageId !== imageId) return false;
+      if (viewport.getCurrentImageIdIndex() !== start && !go(start, () => false).on) return false;
+      painted = null;
+      if (viewport.useCPURendering) {
+        viewport.renderImageObject(kept);
+        element.dispatchEvent(new CustomEvent(names.STACK_NEW_IMAGE || 'CORNERSTONE_STACK_NEW_IMAGE', { cancelable: true,
+          detail: { image: kept, imageId, imageIdIndex: start, viewportId: viewport.id, renderingEngineId: viewport.renderingEngineId } }));
+        viewport.render?.();
+      } else viewport.successCallback(imageId, kept);
+      return heldImage(viewport) === imageId;
+    }
+    // Waits until the cell shows image k. An image the cell already holds is drawn again and judged like any other; the
+    // reader's image is handed back; any other image is loaded first and then asked for (the export's own request).
     function show(k, stopped) {
       let begun = false;
       return wait(stopped, it => {
@@ -492,20 +505,19 @@ window.KinViewerExport = (() => {
         begun = true;
         const failed = error => it.finish(error?.constructor === Error && /[가-힣]/.test(error.message) ? error : new Error(NOT_LOADED));
         try {
-          if (viewport.getCurrentImageIdIndex() === k) { viewport.render?.(); return; }
+          if (viewport.getCurrentImageIdIndex() === k && heldImage(viewport) === ids[k]) { viewport.render?.(); return; }
+          if (k === start) { if (!home()) failed(); return; }
           const step = () => {
             if (!it.going()) return;
             if (stopped?.() || state() !== 'own') { it.again(); return; }
             try {
               if (ready(k)) {
-                const answer = ask(k);
-                if (answer) answer.catch(failed); else if (state() === 'own') failed(); else it.again();
+                const went = go(k, () => state() === 'own' && viewport.getCurrentImageIdIndex() === k && ready(k));
+                if (state() !== 'own') it.again(); else if (!went.on || went.ran === false) failed();
                 return;
               }
-              // A load that ended without its image in the cache (no room for it) is asked for again a moment later; so is
-              // a failed load of the reader's image, which is then put back from the one held.
-              fetch(k).then(load => { if (!it.going()) return; waited = { index: k, load }; if (ready(k)) step(); else it.later(step, 250); },
-                error => k === start ? it.later(step, 250) : failed(error));
+              // A load that ended without its image in the cache (no room for it) is asked for again a moment later.
+              fetch(k).then(load => { if (!it.going()) return; waited = { index: k, load }; if (ready(k)) step(); else it.later(step, 250); }, failed);
             } catch (error) { failed(error); }
           };
           step();
