@@ -1091,12 +1091,17 @@
           applied = true;
         });
         if (!applied) return;
-        await refreshStorage(at);
+        // The list is drawn as soon as it is applied, not after the storage read below answers: what the new list no longer
+        // has (a row, the QC mark of a row that cannot be read now) leaves the screen at once. The storage line paints
+        // itself when its own answer comes; this read still ends after both.
+        const storage = refreshStorage(at);
         // 그리기 실패는 그리기 실패라고 말한다. 데이터는 이미 들어와 있고, 버리지 않는다.
-        return work.commit(at, () => {
+        const drawn = work.commit(at, () => {
           try { render(); refreshRight(); worklistStartup?.afterList(); autoPreload?.afterList(); }
           catch (e2) { console.error(e2); toast("화면 그리기 오류: " + e2.message, "err"); }
-        }) ? true : undefined;
+        });
+        await storage;
+        return drawn ? true : undefined;
       } catch (e) {
         if (!work.admits(at) || loadSequence !== listLoadSequence) return;
         // 목록 읽기가 "계정이 바뀌었다"고 했다. 이 세션에 묶어 한 번 확인해 정말 다른 계정의 답일 때만 세션 교체로 닫는다.
