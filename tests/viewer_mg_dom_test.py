@@ -1610,6 +1610,87 @@ class ViewerMgDOMTest(unittest.TestCase):
         panel.get_by_role('button', name='Reset').click()
         self.assertEqual([[1, False], [1, False], [3, True], [3, True]], page.evaluate(state))
 
+    def test_03h_a_cell_out_of_the_link_and_back_in_it_joins_anew_with_its_view_then(self):
+        state = "() => ['rcc', 'lcc', 'dbt'].map(id => [synViews.get(id).getZoom(), synViews.get(id).props.invert])"
+        other = "() => { const v = synViews.get('rcc'); window.synOwn = window.synOwn || { ids: v.ids, po: v.info.po }; v.ids = ['img:rcc:5']; %s synEmit('cells', 'data', { viewportId: 'rcc' }); }"
+        back = "() => { const v = synViews.get('rcc'); v.ids = synOwn.ids; v.info.po = synOwn.po; synEmit('cells', 'data', { viewportId: 'rcc' }); }"
+        changed = "() => { const v = synViews.get('rcc'); v.setZoom(3); v.setProperties({ invert: true }); }"
+        # Away to an image Mirrored does not link (no stored orientation), changed there by the reader, and back
+        # (A → B → A): the cell is in the link again with the view it has then.
+        page = self.open()
+        self.menu(page, 'Mirrored')
+        panel = page.get_by_role('dialog', name='Mirrored')
+        page.evaluate(other % 'v.info.po = null;')
+        expect(page.locator('#pane-rcc [data-mg-badge=mirrored]')).to_have_text('Mirrored: orientation unverified — not linked')
+        page.evaluate(changed); page.evaluate(back)
+        expect(page.locator('#pane-rcc [data-mg-badge=mirrored]')).to_have_count(0)
+        self.assertEqual([[3, True], [1, False], [1, False]], page.evaluate(state))
+        # A point takes the view to 2×; Reset gives the cell that view back (3×, inverted), and the others the views
+        # Mirrored was turned on with.
+        self.click_cell(page, 'rcc', 50, 40)
+        self.assertEqual([[2, True], [2, False], [2, False]], page.evaluate(state))
+        panel.get_by_role('button', name='Reset').click()
+        self.assertEqual([[3, True], [1, False], [1, False]], page.evaluate(state))
+        # Away to an image whose header is still on its way when it is changed, and back: the same.
+        page = self.open()
+        self.menu(page, 'Mirrored')
+        panel = page.get_by_role('dialog', name='Mirrored')
+        page.evaluate("() => { synHeld = ['rcc']; }"); page.evaluate(other % '')
+        self.assertEqual('reading', page.locator('#pane-rcc').get_attribute('data-kin-mg-image'))
+        page.evaluate(changed); page.evaluate(back)
+        self.click_cell(page, 'rcc', 50, 40)
+        self.assertEqual([[2, True], [2, False], [2, False]], page.evaluate(state))
+        panel.get_by_role('button', name='Reset').click()
+        self.assertEqual([[3, True], [1, False], [1, False]], page.evaluate(state))
+        # Away to another image Mirrored links, and back: with the view it has on coming back.
+        page = self.open()
+        self.menu(page, 'Mirrored')
+        panel = page.get_by_role('dialog', name='Mirrored')
+        page.evaluate(other % '')
+        page.wait_for_function(self.READ)
+        page.evaluate("() => synViews.get('rcc').setProperties({ invert: true })")
+        page.evaluate(back)
+        self.click_cell(page, 'rcc', 50, 40)
+        panel.get_by_role('button', name='Reset').click()
+        self.assertEqual([True, False], page.evaluate("() => ['rcc', 'lcc'].map(id => synViews.get(id).props.invert)"))
+        # A cell given a new viewport of the same id joins anew too.
+        page.evaluate("() => { const v = { ...synViews.get('rcc') }; v.camera = structuredClone(v.camera); synViews.set('rcc', v); v.setZoom(1.5); synEmit('cells', 'data', { viewportId: 'rcc' }); }")
+        self.click_cell(page, 'rcc', 50, 40)
+        panel.get_by_role('button', name='Reset').click()
+        self.assertAlmostEqual(1.5, self.camera(page, 'rcc')['zoom'])
+
+    def test_03j_reset_gives_a_dbt_cell_on_another_slice_of_its_stack_its_view_back_but_keeps_what_the_reader_changed_while_the_slice_was_read(self):
+        zooms = "() => ['rcc', 'dbt'].map(id => synViews.get(id).getZoom())"
+        page = self.open()
+        self.menu(page, 'Mirrored')
+        reset = page.get_by_role('dialog', name='Mirrored').get_by_role('button', name='Reset')
+        # A point takes the R CC cells to 2×; the DBT cell then goes on to its next slice (the reader chose another
+        # slice, nothing else): Reset gives it, on that slice, the view it had when Mirrored was turned on.
+        self.click_cell(page, 'rcc', 50, 40)
+        self.assertEqual([2, 2], page.evaluate(zooms))
+        page.evaluate("() => synViews.get('dbt').show(1)")
+        page.wait_for_function(self.READ)
+        reset.click()
+        self.assertEqual([1, 1], page.evaluate(zooms))
+        # Reset while the next slice is still being read gives it back too (nothing was changed there meanwhile).
+        self.click_cell(page, 'rcc', 50, 40)
+        page.evaluate("() => { synHeld = ['dbt']; synViews.get('dbt').show(2); }")
+        reset.click()
+        self.assertEqual([1, 1], page.evaluate(zooms))
+        self.release(page)
+        self.click_cell(page, 'rcc', 50, 40)
+        self.assertEqual([2, 2], page.evaluate(zooms))
+        # While a slice is being read the reader zooms the cell: that is the reader's own — Reset leaves it, and once
+        # the slice is read it is the view a later Reset gives back.
+        page.evaluate("() => { synHeld = ['dbt']; synViews.get('dbt').show(3); synViews.get('dbt').setZoom(5); }")
+        reset.click()
+        self.assertEqual([1, 5], page.evaluate(zooms))
+        self.release(page)
+        self.click_cell(page, 'rcc', 50, 40)
+        self.assertEqual([2, 2], page.evaluate(zooms))
+        reset.click()
+        self.assertEqual([1, 5], page.evaluate(zooms))
+
     def test_02e_the_table_takes_a_header_only_for_the_image_the_cell_holds_and_asks_again_at_the_next_press_for_one_not_read(self):
         captures = '.kin-mg-capture[data-mode=lens]'
         # The header of the image the prior R CC holds is kept back.
