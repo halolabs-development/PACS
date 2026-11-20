@@ -105,11 +105,15 @@ export class KeycloakService {
    * 실제로 렐름을 다시 import한 직후 이 상태에 빠졌다.
    * **만료는 시계가 아니라 상대방이 정한다.**
    */
-  private async adm(path: string, method = 'GET', body?: any, retry = true, signal?: AbortSignal): Promise<any> {
+  private async adm(path: string, method = 'GET', body?: any, retry = true, signal?: AbortSignal,
+    beforeSend?: () => Promise<void>): Promise<any> {
+    const token = await this.admToken(signal);
+    // `beforeSend`: the caller's last check, after the token wait and before the request leaves (a refusal sends nothing).
+    if (beforeSend) await beforeSend();
     const res = await fetch(`${this.base}/admin/realms/${this.realm}${path}`, {
       method,
       headers: {
-        Authorization: 'Bearer ' + (await this.admToken(signal)),
+        Authorization: 'Bearer ' + token,
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -117,7 +121,7 @@ export class KeycloakService {
     });
     if (res.status === 401 && retry) {
       this.token = null;
-      return this.adm(path, method, body, false, signal);
+      return this.adm(path, method, body, false, signal, beforeSend);
     }
     // Only a single-user lookup has an "absent" result. A missing realm/list/roster endpoint is a failed read.
     if (res.status === 404 && method === 'GET' && /^\/users\/[^/?]+$/.test(path)) return null;
@@ -307,11 +311,12 @@ export class KeycloakService {
     this.cache.clear();
   }
 
-  async resetPassword(id: string, mode: 'temp' | 'email', password?: string): Promise<void> {
+  /** `beforeSend` (temporary password only): run after the service token is obtained or renewed, just before the `PUT`. */
+  async resetPassword(id: string, mode: 'temp' | 'email', password?: string, beforeSend?: () => Promise<void>): Promise<void> {
     if (mode === 'temp') {
       await this.adm(`/users/${encodeURIComponent(id)}/reset-password`, 'PUT', {
         type: 'password', value: password, temporary: true,
-      });
+      }, true, undefined, beforeSend);
       return;
     }
     await this.adm(`/users/${encodeURIComponent(id)}/execute-actions-email`, 'PUT', ['UPDATE_PASSWORD']);

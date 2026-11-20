@@ -703,7 +703,8 @@ export class AdminService {
     await facts?.request.requireCurrent();
     if (mode === 'temp') {
       const temporaryPassword = randomBytes(18).toString('base64url') + 'aA1!';
-      await this.keycloak.resetPassword(id, mode, temporaryPassword);
+      // And once more after the provider client's token wait, just before its PUT (a replacement committed meanwhile).
+      await this.keycloak.resetPassword(id, mode, temporaryPassword, facts ? () => facts.request.requireCurrent() : undefined);
       const after = this.row(await this.member(id));
       await this.audit(c.actor, 'admin.user.reset-password', id, { before, after, mode });
       // The provider write runs outside the member lock. If another institution approved a waiting member meanwhile,

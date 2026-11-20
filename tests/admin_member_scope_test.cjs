@@ -734,6 +734,46 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
       };
       await assert.rejects(w3.reset('kc-d-group', { mode: 'temp' }, adminD, current3), e => e.getStatus?.() === 401);
       assert.ok(w3.rows.get('admin-d').suspended && !w3.kcCalls.some(c => c[0] === 'reset'), 'no provider write after the replacement');
+      // Through the real provider client: the replacement commits while it waits for its service token (after every
+      // earlier recheck). The caller is checked again after the token and before the PUT — refused, nothing sent.
+      {
+        const w4 = setup();
+        const current4 = async () => { if (w4.rows.get('admin-d').suspended) throw Object.assign(new Error('session ended'), { getStatus: () => 401 }); };
+        const provider = new KeycloakService();
+        provider.secret = 'synthetic-secret';
+        w4.kc.resetPassword = (...a) => provider.resetPassword(...a);
+        const sent = [], realFetch = globalThis.fetch;
+        globalThis.fetch = async (url, init = {}) => {
+          sent.push([init.method ?? 'GET', String(url)]);
+          if (/\/protocol\/openid-connect\/token$/.test(String(url))) {
+            await w4.replace('admin-d', 'reader-d', D);
+            return new Response(JSON.stringify({ access_token: 'synthetic-token', expires_in: 300 }), { status: 200 });
+          }
+          return new Response(null, { status: 204 });
+        };
+        try {
+          await assert.rejects(w4.reset('colleague-d', { mode: 'temp' }, adminD, current4), e => e.getStatus?.() === 401);
+        } finally { globalThis.fetch = realFetch; }
+        assert.ok(w4.rows.get('admin-d').suspended, 'replaced during the token wait');
+        assert.deepEqual(sent.filter(([, url]) => /reset-password/.test(url)), [], 'no reset PUT after the replacement');
+        assert.ok(!w4.audits.some(a => a.action.startsWith('admin.user.reset-password')));
+        // Not replaced: the same real client sends the PUT once and the password is returned.
+        const w5 = setup();
+        const provider5 = new KeycloakService();
+        provider5.secret = 'synthetic-secret';
+        w5.kc.resetPassword = (...a) => provider5.resetPassword(...a);
+        const sent5 = [];
+        globalThis.fetch = async (url, init = {}) => {
+          sent5.push([init.method ?? 'GET', String(url)]);
+          return /\/token$/.test(String(url))
+            ? new Response(JSON.stringify({ access_token: 'synthetic-token', expires_in: 300 }), { status: 200 })
+            : new Response(null, { status: 204 });
+        };
+        try {
+          assert.ok((await w5.reset('colleague-d', { mode: 'temp' }, adminD, async () => {})).temporaryPassword);
+        } finally { globalThis.fetch = realFetch; }
+        assert.equal(sent5.filter(([method, url]) => method === 'PUT' && /reset-password/.test(url)).length, 1);
+      }
       // Not replaced: the same reset returns the temporary password.
       const w2 = setup();
       const current2 = async () => { if (w2.rows.get('admin-d').suspended) throw new Error('unexpected'); };
