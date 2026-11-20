@@ -380,18 +380,20 @@ class ViewerOverlayUnitsE2E(ViewerToolsE2E):
             page.wait_for_timeout(500)
             self.assertEqual(said(), (closed, opened, areas), page.evaluate(SVG_TEXT))
             page.screenshot(path=str(EVIDENCE / 'freehand-no-spacing-zoomed.png'))
-            # The Measurements panel's rows (what its CSV reads too): the closed outline's area in px², never mm².
+            # The Measurements panel's rows and their CSV reports: the closed outline's area in px² (the CSV's named Area and
+            # Area unit columns), the open line's length in px and no area; never mm.
             rows = page.evaluate('''() => services.measurementService.getMeasurements().filter(m => m.toolName === 'PlanarFreehandROI')
-                .map(m => [m.displayText?.primary?.[0], m.getReport().columns, m.getReport().values])''')
+                .map(m => { const report = m.getReport(m); return [m.displayText?.primary || [], report.columns, report.values]; })''')
             self.assertEqual(2, len(rows), rows)
-            self.assertFalse([r for r in rows if 'mm' in str(r[0])], rows)
-            ring = next(r for r in rows if r[0] != '0 px²')
-            self.assertAlmostEqual(float(ring[0].split()[0]), outlines[True][1], delta=max(1, outlines[True][1] * .01), msg=rows)
+            self.assertFalse([r for r in rows if 'mm' in json.dumps(r[0]) or [v for v in r[2] if 'mm' in str(v)]], rows)
+            ring = next(r for r in rows if r[0] and r[0][0].endswith(' px²'))
+            line = next(r for r in rows if r[0] and re.fullmatch(r'[0-9.]+ px', r[0][0]))
+            self.assertAlmostEqual(float(ring[0][0].split()[0]), outlines[True][1], delta=max(1, outlines[True][1] * .01), msg=rows)
+            self.assertAlmostEqual(float(line[0][0].split()[0]), outlines[False][0], delta=1, msg=rows)
             columns, values = ring[1], ring[2]
-            self.assertIn('px²', values, ring)
-            self.assertFalse([v for v in values if 'mm' in str(v)], ring)
-            if 'Area' in columns:
-                self.assertAlmostEqual(values[columns.index('Area')], outlines[True][1], delta=max(1, outlines[True][1] * .01), msg=ring)
+            self.assertAlmostEqual(values[columns.index('Area')], outlines[True][1], delta=max(1, outlines[True][1] * .01), msg=ring)
+            self.assertEqual('px²', values[columns.index('Area unit')], ring)
+            self.assertEqual(['not available', 'not available'], [line[2][line[1].index('Area')], line[2][line[1].index('Area unit')]], line)
             # The words only: the measurement the tool keeps is as the pinned tool made it.
             kept = page.evaluate('''() => cornerstoneTools.annotation.state.getAllAnnotations().filter(a => a.metadata.toolName === 'PlanarFreehandROI')
                 .map(a => Object.values(a.data.cachedStats)[0]).map(s => s.unit ?? null)''')

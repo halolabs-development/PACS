@@ -2993,21 +2993,42 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.assertEqual([[20, 20, 0], [80, 60, 0]], self.page.evaluate('() => synUnitCalls[0]'))
         # The Measurements panel's row and its CSV: on an image without spacing the area is the pixel grid's, in px²; on one with
         # spacing the row is the tool's own.
-        panel = r'''([header]) => {
-          window.synFreehandHeader = header; window.synFreehandImage = { imageData: synGrid, hasPixelSpacing: true };
-          const uid = 'syn-freehand-row', target = 'imageId:' + synImage();
+        # The pinned report (getColumnValueReport) names its customised entries by a key they lack: unnamed columns after
+        # AnnotationType, in the order of the 'cornerstone.measurements' customisation.
+        panel = r'''([uid, header, shown, closed]) => {
+          synServices.customizationService = { get: name => name === 'cornerstone.measurements' ? { PlanarFreehandROI: { report: [
+            { displayName: 'Mean', value: 'mean' }, { displayName: 'Max', value: 'max' }, { displayName: 'Area', value: 'area' },
+            { displayName: 'Unit', value: 'unit' }] } } : undefined };
+          window.synFreehandHeader = header; window.synFreehandImage = shown ? { imageData: synGrid, hasPixelSpacing: true } : undefined;
+          const target = 'imageId:' + synImage();
           if (!cornerstoneTools.annotation.state.getAnnotation(uid)) cornerstoneTools.annotation.state.addAnnotation({ annotationUID: uid,
             metadata: { toolName: 'PlanarFreehandROI', referencedImageId: synImage() },
-            data: { contour: { polyline: [[10, 10, 0], [40, 10, 0], [40, 30, 0]], closed: true }, handles: { points: [] },
-              cachedStats: { [target]: { area: 283.2, areaUnit: 'mm²', mean: -800, max: -800 } } } });
-          synMeasurements = [{ uid, toolName: 'PlanarFreehandROI', displayText: { primary: ['283.2 mm²', 'Max: -800 HU'], secondary: ['S: 1'] },
-            getReport: () => ({ columns: ['AnnotationType', 'Mean', 'Max', 'Area', 'Unit'], values: ['Cornerstone:PlanarFreehandROI', -800, -800, 283.2, 'not available'] }) }];
-          const [row] = synServices.measurementService.getMeasurements();
-          return { primary: row.displayText.primary, report: row.getReport().values }; }'''
-        self.assertEqual({'primary': ['1200 px²', 'Max: -800 HU'], 'report': ['Cornerstone:PlanarFreehandROI', -800, -800, 1200, 'px²']},
-                         self.page.evaluate(panel, [{'Modality': 'CT'}]))
-        self.assertEqual({'primary': ['283.2 mm²', 'Max: -800 HU'], 'report': ['Cornerstone:PlanarFreehandROI', -800, -800, 283.2, 'not available']},
-                         self.page.evaluate(panel, [{'Modality': 'CT', 'PixelSpacing': [0.7, 0.7]}]))
+            data: { contour: { polyline: [[10, 10, 0], [40, 10, 0], [40, 30, 0]], closed }, handles: { points: [] },
+              cachedStats: { [target]: closed ? { area: 283.2, areaUnit: 'mm²', mean: -800, max: -800 } : { length: 208.8 } } } });
+          synMeasurements = [{ uid, toolName: 'PlanarFreehandROI', displayText: { primary: [(closed ? 283.2 : 0) + ' mm²', 'Max: -800 HU'], secondary: ['S: 1'] },
+            getReport: () => ({ columns: ['AnnotationType', undefined, undefined, undefined, undefined, 'points'],
+              values: ['Cornerstone:PlanarFreehandROI', -800, -800, closed ? 283.2 : 'not available', 'not available', '10 10 0;40 10 0;40 30 0'] }) }];
+          const [row] = synServices.measurementService.getMeasurements(), report = row.getReport();
+          return { primary: row.displayText.primary, columns: report.columns, values: report.values }; }'''
+        spaced_ct, bare_ct = {'Modality': 'CT', 'PixelSpacing': [0.7, 0.7]}, {'Modality': 'CT'}
+        pixels = lambda area, unit: ['Cornerstone:PlanarFreehandROI', -800, -800, area, unit, '10 10 0;40 10 0;40 30 0']
+        named = ['AnnotationType', None, None, 'Area', 'Area unit', 'points']
+        # No spacing in the header: the area on the pixel grid in the panel and in the CSV's named Area / Area unit columns.
+        self.assertEqual({'primary': ['1200 px²', 'Max: -800 HU'], 'columns': named, 'values': pixels(1200, 'px²')},
+                         self.page.evaluate(panel, ['syn-freehand-ring', bare_ct, True, True]))
+        # The reader scrolls to another slice (no cell shows the image): the same outline keeps its px² — never the tool's mm².
+        self.assertEqual({'primary': ['1200 px²', 'Max: -800 HU'], 'columns': named, 'values': pixels(1200, 'px²')},
+                         self.page.evaluate(panel, ['syn-freehand-ring', bare_ct, False, True]))
+        # An open line has no area: the panel says its length in px, the CSV no area.
+        self.assertEqual({'primary': ['100 px', 'Max: -800 HU'], 'columns': named, 'values': pixels('not available', 'not available')},
+                         self.page.evaluate(panel, ['syn-freehand-line', bare_ct, True, False]))
+        # An outline never measured on its shown image: no number at all rather than the tool's mm².
+        self.assertEqual({'primary': ['Max: -800 HU'], 'columns': named, 'values': pixels('not available', 'not available')},
+                         self.page.evaluate(panel, ['syn-freehand-unseen', bare_ct, False, True]))
+        # An image with spacing of its own: the tool's row as it is.
+        self.assertEqual({'primary': ['283.2 mm²', 'Max: -800 HU'], 'columns': ['AnnotationType', None, None, None, None, 'points'],
+                          'values': ['Cornerstone:PlanarFreehandROI', -800, -800, 283.2, 'not available', '10 10 0;40 10 0;40 30 0']},
+                         self.page.evaluate(panel, ['syn-freehand-spaced', spaced_ct, True, True]))
     def test_34_the_saved_item_count_follows_saves_and_deletes(self):
         """The panel's "n개 저장 항목" is the study's saved items now: a save answered adds one, a delete answered takes one
         away (with the delete's own words), not only when the list is read again. A list read that began before a save or a

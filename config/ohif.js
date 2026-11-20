@@ -1887,28 +1887,39 @@ function kinCreateViewerHistory() {
     // A Freehand ROI tool instance (any group's: it reads a target's image the same way), for the Measurements panel's words.
     let freehandTool = null;
     // The Measurements panel and its CSV read a Freehand ROI's area from the tool's own numbers, in "mm²" even where the original
-    // gives no spacing. There (freehandMeasure's px) the row says the area on the image's pixel grid, in px², as the cell does;
-    // anywhere else the row is the tool's own.
+    // gives no spacing. Where the original gives none (spacingless) the row says the outline as the cell does (freehandMeasure's
+    // px): a closed outline's area in px², an open line's length in px, and no number when it cannot be measured; anywhere
+    // else the row is the tool's own.
+    const roundTwo = x => Math.round(x * 100) / 100;
     function freehandView(m) {
       const a = freehandTool && ct.annotation.state.getAnnotation(m.uid);
-      if (!a?.data?.contour) return m;
-      const measure = () => freehandMeasure(freehandTool, a.data, 'imageId:' + a.metadata.referencedImageId);
+      if (!a?.data?.contour || !spacingless(cs.metaData.get('instance', a.metadata.referencedImageId))) return m;
+      const measure = () => { const found = freehandMeasure(freehandTool, a.data, 'imageId:' + a.metadata.referencedImageId); return found?.unit === 'px' ? found : null; };
       const found = measure();
-      if (found?.unit !== 'px') return m;
-      const primary = Array.isArray(m.displayText?.primary) ? m.displayText.primary.slice(1) : [];
-      return { ...m, displayText: { ...m.displayText, primary: [Math.round((found.area ?? 0) * 100) / 100 + ' px²', ...primary] },
-        getReport: () => {
-          // Read when the CSV is made, from the outline as it is then.
-          // The area column holds this area and its unit column ("Unit" or an area unit) px²; one is added when there is none.
-          const report = m.getReport?.() || { columns: [], values: [] }, columns = [...report.columns], values = [...report.values], now = measure();
-          const px = now?.unit === 'px', unit = name => /^unit$|area.*unit/i.test(String(name));
-          columns.forEach((column, i) => {
-            if (/^area$/i.test(String(column))) values[i] = px && now.area !== undefined ? now.area : 'not available';
-            else if (unit(column)) values[i] = px ? 'px²' : 'not available';
-          });
-          if (!columns.some(unit)) { columns.push('Area unit'); values.push(px ? 'px²' : 'not available'); }
-          return { ...report, columns, values };
-        } };
+      const said = !found ? [] : found.area !== undefined ? [roundTwo(found.area) + ' px²'] : [roundTwo(found.length) + ' px'];
+      const rest = Array.isArray(m.displayText?.primary) ? m.displayText.primary.slice(1) : [];
+      return { ...m, displayText: { ...m.displayText, primary: [...said, ...rest] }, getReport: () => freehandReport(m, measure()) };
+    }
+    // The CSV row: the pinned report names its customised columns by a key its entries do not have, so they come out unnamed
+    // and the CSV keeps only the last of them. The area entry and the unit entry (found by their place, after AnnotationType,
+    // in the 'cornerstone.measurements' customisation, or by the names "Area" and "Unit") are named "Area" and "Area unit"
+    // and hold the outline's area in px² — or "not available" for an open line or an outline that cannot be measured.
+    function freehandReport(m, found) {
+      let report; try { report = m.getReport?.(); } catch (_) { report = null; }
+      report = report || { columns: [], values: [] };
+      const columns = [...report.columns], values = [...report.values];
+      let entries; try { entries = services.customizationService?.get?.('cornerstone.measurements')?.PlanarFreehandROI?.report; } catch (_) { entries = null; }
+      const place = (value, name) => {
+        const k = Array.isArray(entries) ? entries.findIndex(e => e?.value === value) : -1;
+        if (k >= 0 && columns[0] === 'AnnotationType' && k + 1 < columns.length) return k + 1;
+        const i = columns.findIndex(c => typeof c === 'string' && c.toLowerCase() === name);
+        if (i >= 0) return i;
+        columns.push(null); values.push(null); return columns.length - 1;
+      };
+      const area = place('area', 'area'), unit = place('unit', 'unit'), known = found?.area !== undefined;
+      columns[area] = 'Area'; values[area] = known ? found.area : 'not available';
+      columns[unit] = 'Area unit'; values[unit] = known ? 'px²' : 'not available';
+      return { ...report, columns, values };
     }
     function projectMeasurement(m) {
       if (m?.toolName === 'PlanarFreehandROI') return freehandView(m);
@@ -2754,14 +2765,18 @@ function kinCreateViewerHistory() {
     // own pixel grid, its points in continuous column/row coordinates, the area (a closed outline's) in px²; null anywhere else
     // (an ultrasound region, a reformatted plane, an image that cannot be read): no length is said, as the tool's own number is
     // a distance on the screen in no unit, and the area stays the tool's own under its own calibration.
+    // The last px measure of each outline (by its annotation data): while no cell shows its image (the reader has scrolled
+    // to another slice) the same outline on the same image keeps that measure rather than falling back to the tool's "mm²".
+    const freehandSeen = new WeakMap();
     function freehandMeasure(tool, data, target) {
       const found = freehandLength(tool, data, target);
       if (found) return found;
       try {
         const id = target.startsWith('imageId:') && target.slice(8), points = data.contour?.polyline;
         if (!id || !spacingless(cs.metaData.get('instance', id)) || !Array.isArray(points) || points.length < 2) return null;
-        const grid = tool.getTargetImageData(target)?.imageData;
-        if (typeof grid?.worldToIndex !== 'function') return null;
+        const key = target + '|' + JSON.stringify(points) + '|' + !!data.contour.closed, seen = freehandSeen.get(data);
+        let grid; try { grid = tool.getTargetImageData(target)?.imageData; } catch (_) { grid = null; }
+        if (typeof grid?.worldToIndex !== 'function') return seen?.key === key ? seen.found : null;
         const index = points.map(p => grid.worldToIndex(p));
         if (index.some(p => !Array.isArray(p) && !ArrayBuffer.isView(p) || ![0, 1, 2].every(i => Number.isFinite(p[i] ?? 0)))) return null;
         const along = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], (a[2] ?? 0) - (b[2] ?? 0));
@@ -2771,8 +2786,10 @@ function kinCreateViewerHistory() {
           length += along(index[index.length - 1], index[0]);
           for (let i = 0; i < index.length; i++) { const a = index[i], b = index[(i + 1) % index.length]; twice += a[0] * b[1] - b[0] * a[1]; }
         }
-        return Number.isFinite(length) && length > 0
+        const result = Number.isFinite(length) && length > 0
           ? { unit: 'px', length, ...(data.contour.closed ? { area: Math.abs(twice) / 2, areaUnit: 'px²' } : {}) } : null;
+        if (result) freehandSeen.set(data, { key, found: result });
+        return result;
       } catch (_) { return null; }
     }
     function freehandLength(tool, data, target) {
