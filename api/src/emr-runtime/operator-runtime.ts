@@ -64,7 +64,7 @@ const alive = (pid: number) => {
  * directory marked closed, the single spool file of the earlier layout, and a spool another command claimed but did
  * not finish because its process ended. After the import a spool directory is removed only if nothing but its emptied
  * spool file is left; anything replay set aside (an incomplete last record) is kept as `kept-<uuid>` for inspection.
- * A failed import puts the spool back as it was and fails.
+ * A failed import puts the spool back to be replayed again (anything replay set aside is kept as kept-<uuid>) and fails.
  */
 export async function importFinishedSpools(base: string, ownName: string,
   importSpool: (directory: string) => Promise<number>): Promise<number> {
@@ -87,7 +87,14 @@ export async function importFinishedSpools(base: string, ownName: string,
     fs.mkdirSync(claimed, { mode: 0o700 });
     if (claim(legacy, path.join(claimed, SPOOL_FILE))) {
       try { imported += await importSpool(claimed); }
-      catch (error) { fs.renameSync(path.join(claimed, SPOOL_FILE), legacy); fs.rmSync(claimed, { recursive: true, force: true }); throw error; }
+      catch (error) {
+        // The file to replay goes back; anything replay set aside meanwhile (an incomplete last record's `.partial`,
+        // its original bytes) is kept for inspection, never removed.
+        fs.renameSync(path.join(claimed, SPOOL_FILE), legacy);
+        if (fs.readdirSync(claimed).length) fs.renameSync(claimed, path.join(base, 'kept-' + randomUUID()));
+        else fs.rmSync(claimed, { recursive: true, force: true });
+        throw error;
+      }
       finish(claimed);
     } else fs.rmSync(claimed, { recursive: true, force: true });
   }

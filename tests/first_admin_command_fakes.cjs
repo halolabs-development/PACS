@@ -14,6 +14,7 @@ require.extensions['.ts'] = (mod, filename) => mod._compile(ts.transpileModule(f
 }).outputText, filename);
 const { ConflictException } = require(path.join(root, 'api/node_modules/@nestjs/common'));
 const { LedgerFailure } = require(path.join(root, 'api/src/emr-runtime/store.ts'));
+const { OutcomeUndetermined } = require(path.join(root, 'api/src/first-admin-command.ts'));
 
 const scenario = new Set((process.env.KIN_TEST_FIRST_ADMIN_SCENARIO || '').split(',').filter(Boolean));
 const log = step => fs.appendFileSync(process.env.KIN_TEST_FIRST_ADMIN_LOG, JSON.stringify(step) + '\n');
@@ -71,6 +72,11 @@ class AdminService {
     log('replace');
     if (scenario.has('refused')) throw new ConflictException({ code: 'REPLACE_ADMIN_NOT_SOLE', message: '이 기관에는 다른 활성 관리자가 있습니다' });
     if (scenario.has('fails-before-commit')) throw new Error('synthetic failure before the transaction');
+    // Run again over its own saved replacement (decided under the locks, writing nothing), or unable to tell.
+    if (scenario.has('undetermined')) throw new OutcomeUndetermined();
+    if (scenario.has('again-standing')) return { id: to, institution, version: VERSION, roles: ['admin'], again: 'standing' };
+    if (scenario.has('again-changed')) return { id: to, institution, version: VERSION + 1, roles: ['admin'], again: 'changed',
+      current: { from: { id: from, enabled: false }, to: { id: to, version: VERSION + 1 } } };
     await work.transactionWithRecords(async (tx, record) => {
       if (scenario.has('callback-refused')) throw new ConflictException({ code: 'REPLACE_ADMIN_FROM_NOT_ADMIN', message: '전임은 이 기관의 승인·활성 관리자가 아닙니다' });
       await work.resolveIdentity(tx, 'urn:kin:pacs:operator', operator.name);
@@ -85,6 +91,11 @@ class AdminService {
     return { id: to, institution, version: VERSION, roles: ['admin'] };
   }
 }
+const recoverMemberRoster = async (prisma, keycloak, sub, generation) => {
+  log('recover-roster');
+  if (generation !== VERSION) throw new Error('synthetic: not the standing generation');
+  return scenario.has('roster-unknown') ? 'unknown' : 'done';
+};
 const sendRecordedRoster = async () => {
   log('send-roster');
   if (scenario.has('roster-throws')) throw new Error('synthetic provider failure');
@@ -113,7 +124,7 @@ const fakes = {
   'prisma.service': { PrismaService },
   'keycloak.service': { KeycloakService },
   'admin.service': { AdminService },
-  'member-rights-import': { sendRecordedRoster },
+  'member-rights-import': { sendRecordedRoster, recoverMemberRoster },
   'emr-runtime/application': { EmrRuntime },
   'emr-runtime/operator-runtime': { OperatorRuntime: class OperatorRuntime extends EmrRuntime {} },
 };

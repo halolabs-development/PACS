@@ -1004,12 +1004,22 @@ async function rightsReplace() {
   const { createRequestContext } = require(path.join(build, 'emr-runtime/request-context.js'));
   const { createRequestIngress } = require(path.join(build, 'emr-runtime/request-ingress.js'));
   const { IncomingMessage, ServerResponse } = require('node:http'), { Socket } = require('node:net');
-  const screen=async(adminSub,institution,sub,body)=>{
+  // The product's own recheck of the admitted request's authorization (AuthService.bindCurrentAuthorization, as
+  // AuthGuard binds it): a Bearer with the administrator OTP, its rights read at admission.
+  const { AuthService } = require(path.join(build, 'auth.service.js'));
+  const auth=new AuthService(db,null,null,null,null);
+  const admit=async adminSub=>{const row=await witness.memberRights.findUnique({where:{sub:adminSub}});
+    return {payload:{iss:process.env.KC_ISSUER,sub:adminSub,auth_time:Math.floor(Date.now()/1000)+1,
+      realm_access:{roles:['admin']},amr:['otp']},rights:{version:row.version,institution:row.institution,roles:row.roles}};};
+  const screen=async(adminSub,institution,sub,body,admitted)=>{
+    admitted??=await admit(adminSub);
     const requests=createRequestContext(createRequestIngress({proxyPeers:[]}),runtime.port);
-    const caller={sub:adminSub,actor:adminSub+'@synthetic.invalid',roles:['admin'],institution,kind:'member'};
+    const caller={sub:adminSub,actor:adminSub+'@synthetic.invalid',roles:admitted.rights.roles,institution,kind:'member'};
     const req=new IncomingMessage(new Socket()),res=new ServerResponse(req);
-    requests.capture.capture(req,res,{issuer:process.env.KC_ISSUER,subject:adminSub,roles:['admin'],rightsVersion:1,institution,
-      binding:{method:'bearer',sessionRef:null}},{method:'PATCH',route:'admin/users/:id',purpose:'clinical'},async()=>{});
+    requests.capture.capture(req,res,{issuer:process.env.KC_ISSUER,subject:adminSub,roles:admitted.rights.roles,
+      rightsVersion:admitted.rights.version,institution,binding:{method:'bearer',sessionRef:null}},
+      {method:'PATCH',route:'admin/users/:id',purpose:'clinical'},
+      auth.bindCurrentAuthorization(admitted.payload,'synthetic-bearer',null,admitted.rights));
     try{
       return await requests.source.withWork(req,request=>service.patchUser(sub,body,caller,{surface:request.facts.surface,
         actor:request.facts.actor,roles:request.facts.roles,rightsVersion:request.facts.rightsVersion,institution:request.facts.institution,
@@ -1045,6 +1055,7 @@ async function rightsReplace() {
     const [state]=await witness.$queryRaw`SELECT emr_access.operation_result(${pending.operationId}::uuid) AS value`;
     assert.equal(state.value.outcome,'pending','an operator start leaves the running API\'s pending work alone');
     await other.settle(pending.operationId);
+    await witness.memberRightsImport.upsert({where:{id:'realm-v1'},create:{id:'realm-v1'},update:{}});
     // The institution, its sole administrator who left, two candidate successors, a colleague; another institution.
     const member=(sub,institution,roles)=>witness.memberRights.create({data:{sub,username:sub,email:sub+'@synthetic.invalid',
       name:'Synthetic '+sub,emailVerified:true,approved:true,suspended:false,institution,roles}});
@@ -1052,7 +1063,16 @@ async function rightsReplace() {
     await member('second-successor',X,['technician']);await member('colleague',X,['radiologist']);await member('other-admin',Y,['admin']);
     const session=sub=>witness.authSession.create({data:{sid:randomUUID(),sub,accessToken:'synthetic-unused',refreshToken:randomUUID(),
       atExpiresAt:new Date(Date.now()+600000),lastSeenAt:new Date(),rightsVersion:1,institution:X}});
-    for(const sub of ['departed','departed','first-successor','second-successor','colleague']) await session(sub);
+    const sids={};
+    for(const sub of ['departed','departed','first-successor','second-successor','colleague']) sids[sub]=(await session(sub)).sid;
+    // The viewing display (PresenceService, its own process state): the departed administrator has the study open, and a
+    // colleague viewing the same study sees them.
+    const { PresenceService } = require(path.join(build, 'presence.service.js'));
+    const presence=new PresenceService(db,{allowed:async(c,uids)=>new Set(uids)});
+    await witness.studyState.create({data:{uid:UID,institutionId:X}});
+    const viewer=sub=>({sub,actor:sub+'@synthetic.invalid',roles:['radiologist'],institution:X,kind:'member'});
+    await presence.update(viewer('departed'),sids.departed,'authref:'+randomUUID(),'Synthetic departed',{viewerId:'w1',sequence:1,uids:[UID]});
+    assert.deepEqual((await presence.read(viewer('colleague'),[UID])).studies[UID].map(p=>p.name),['Synthetic departed']);
     // The departed administrator's own draft, signed history and audit trail.
     // A present draft holds its work (CD-09-P ReportDraft_work_check).
     await witness.reportDraft.create({data:{uid:UID,author:'departed@synthetic.invalid',revision:1,present:true,
@@ -1092,6 +1112,8 @@ async function rightsReplace() {
     assert.equal(await witness.authSession.count({where:{sub:winner}}),0,'the successor\'s sessions end');
     assert.equal(await witness.authSession.count({where:{sub:loser}}),1,'the losing successor\'s session lives');
     assert.equal(await witness.authSession.count({where:{sub:'colleague'}}),1,'a colleague\'s session lives');
+    assert.deepEqual((await presence.read(viewer('colleague'),[UID])).studies[UID],[],
+      'the first read after the replacement no longer shows the predecessor');
     const changes=await witness.auditLog.findMany({where:{action:{startsWith:'admin.user.'}},orderBy:{id:'asc'}});
     assert.deepEqual(changes.map(a=>[a.action,a.target]),[['admin.user.suspend','departed'],['admin.user.update',winner]]);
     for(const row of changes) assert.deepEqual(JSON.parse(row.detail).operator,{by:'ops',institution:X,
@@ -1109,15 +1131,29 @@ async function rightsReplace() {
     assert.ok(entries.filter(e=>JSON.parse(e.payload).formatVersion===1).every(e=>e.retention_class==='rights3y'));
     // The predecessor's draft, signed history and audit trail stay theirs, unchanged.
     assert.equal(await history(),kept);
-    // 4. The same command again: the predecessor is no longer X's administrator; nothing changes.
+    // 4. The same command again (the winner's, with its own arguments): it stands — nothing is rewritten. The loser's
+    // command again: the predecessor is no longer X's administrator and that replacement was never saved; nothing changes.
     const settled=await snapshot();
+    const again=await replace('departed',winner);
+    assert.deepEqual([again.id,again.again],[winner,'standing']);
+    assert.equal(await snapshot(),settled,'the same replacement again writes nothing');
     await assert.rejects(replace('departed',loser),refusedWith('REPLACE_ADMIN_FROM_NOT_ADMIN'));
     assert.equal(await snapshot(),settled);
+    // 4b. The winner, admitted as X's sole administrator before its own replacement, then promotes a third person: the
+    // replacement committed first, so the product's recheck refuses the request — no third administrator.
+    const admittedWinner=await admit(winner);
     // 5. Two institutions, one waiting member. Y's administrator approves it first: X's replacement refuses it.
     await screen('other-admin',Y,'waiting-1',{approvalState:'APPROVED',institution:Y,roles:['radiologist']});
     await assert.rejects(replace(winner,'waiting-1'),refusedWith('REPLACE_ADMIN_TO_CONFLICT'));
     // X's replacement takes the other waiting member first: to Y's administrator it is now an unknown member.
     await replace(winner,'waiting-2');
+    const colleagueBefore=await witness.memberRights.findUnique({where:{sub:'colleague'}});
+    await assert.rejects(screen(winner,X,'colleague',{roles:['radiologist','admin'],version:colleagueBefore.version},admittedWinner),
+      e=>e.getStatus?.()===401);
+    const colleagueAfter=await witness.memberRights.findUnique({where:{sub:'colleague'}});
+    assert.deepEqual([colleagueAfter.version,colleagueAfter.roles],[colleagueBefore.version,colleagueBefore.roles],'no third administrator');
+    assert.deepEqual((await witness.memberRights.findMany({where:{institution:X,approved:true,suspended:false,roles:{has:'admin'}}}))
+      .map(a=>a.sub),['waiting-2'],'X\'s one administrator is the new successor');
     await assert.rejects(screen('other-admin',Y,'waiting-2',{approvalState:'APPROVED',institution:Y,roles:['radiologist']}),
       e=>e.getStatus()===404);
     assert.equal((await witness.memberRights.findUnique({where:{sub:'waiting-2'}})).institution,X);
@@ -1170,10 +1206,19 @@ Module._resolveFilename=function(request,parent,...rest){
     assert.deepEqual(yAdmins.map(a=>a.sub),[yWinner.to],'one administrator of Y: the winning command\'s successor');
     assert.equal((await witness.memberRights.findUnique({where:{sub:yLoser.to}})).version,1,'the losing successor is untouched');
     assert.equal(await witness.providerChange.count({where:{target:yLoser.to}}),0);
+    // The winning command again, same arguments: it stands — no audit, rights or session rewritten; roster confirmed.
+    const audits=await witness.auditLog.count(),yRights=JSON.stringify(await witness.memberRights.findMany({where:{institution:Y},orderBy:{sub:'asc'}}));
+    const rerun=await command(yWinner.to);
+    assert.equal(rerun.code,0,rerun.err);
+    const rerunLine=JSON.parse(rerun.out.trim().split('\n').pop());
+    assert.deepEqual([rerunLine.replaced,rerunLine.again,rerunLine.roster],[true,'standing','done']);
+    assert.equal(await witness.auditLog.count(),audits,'no audit row rewritten');
+    assert.equal(JSON.stringify(await witness.memberRights.findMany({where:{institution:Y},orderBy:{sub:'asc'}})),yRights);
     fs.rmSync(scratch,{recursive:true,force:true});
     console.log(JSON.stringify({status:'PASS',boundary:'actual replacement service and CLI + operator runtime + independent PG',
       green:['operator start leaves pending work','failed second change rolls back both','concurrent replacements: one winner',
-        'both members\' sessions end, colleague\'s live','predecessor history unchanged','rerun refused without writes',
+        'both members\' sessions end, colleague\'s live','predecessor leaves the viewing display','predecessor history unchanged','same replacement again stands without writes',
+        'admitted predecessor\'s promotion refused after the replacement','rerun of the winning CLI: exit 0 standing',
         'waiting successor taken by one institution only','screen promotion first refuses the replacement','two CLI processes: exit 0 and 1']}));
   }finally{
     await witness.$executeRawUnsafe('DROP TRIGGER IF EXISTS b2r_fail_replace ON public."AuditLog"');

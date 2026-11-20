@@ -12,6 +12,12 @@ import { LedgerFailure } from './emr-runtime/store';
  *    overwritten). Recover with `node prisma/import-member-rights.cjs --retry-roster` (each member's latest generation).
  *  - 3, designated:null — the commit answer was lost and this run's own audit row is not (or cannot be) seen: it may
  *    still have committed. Check the member list or audit log, then run --retry-roster or the same command again.
+ *    The replacement (replaced:null) says first: run the same command with the same arguments again — that run finds
+ *    a saved replacement and only confirms its roster, or replaces from the start; also 3 when the database cannot
+ *    be read to tell whether an earlier run saved it (OutcomeUndetermined).
+ *  - The replacement run again over its own saved result: `again:"standing"` — nothing rewritten, the successor's
+ *    latest roster confirmed (0) or not (2); `again:"changed"` — a member changed since: the current state, no roster
+ *    sent (2).
  * The run's transaction is observed through `track` (the records work the designation uses): whether its callback
  * returned (COMMIT asked), whether it resolved (committed), and the audit rows it wrote. A lost commit answer is settled
  * only by reading those audit rows by id — never by who holds the rights now. A failure of the final cleanup is reported
@@ -20,6 +26,14 @@ import { LedgerFailure } from './emr-runtime/store';
 export const FIRST_ADMIN_EXIT = { designated: 0, notDesignated: 1, rosterUnconfirmed: 2, unknown: 3 } as const;
 
 export const RETRY_ROSTER = 'node prisma/import-member-rights.cjs --retry-roster';
+
+/** Thrown by a command whose earlier run's result cannot be read (the database cannot be read): exit 3, `null`. */
+export class OutcomeUndetermined extends Error {
+  constructor() { super('The outcome of an earlier run cannot be read'); }
+}
+
+/** The first sentence of every exit-3 instruction of the replacement (keycloak/README.md says the same). */
+export const RUN_AGAIN = '같은 명령을 같은 인자로 다시 실행하세요.';
 
 /** An operator command's arguments: each flag of `flags` (flag -> option name) exactly once with its value, and
  * nothing else. Only the table's own flags count (an inherited name such as `constructor` is no flag). */
@@ -52,6 +66,8 @@ export type FirstAdminCommand = {
   /** Runs the designation; the records work it hands to the service must be `track(work)`. */
   designate(track: <W extends RecordsWork>(work: W) => W): Promise<{ id: string; institution: string; version: number }>;
   sendRoster(change: RecordedChange): Promise<string>;
+  /** The same command again found its replacement standing: confirm (or complete) the member's latest roster. */
+  recoverRoster?(subject: string, generation: number): Promise<string>;
   /** Run in order after the outcome is known, each whatever the others did. */
   cleanup: ReadonlyArray<readonly [string, () => Promise<void>]>;
   out(line: string): void;
@@ -111,9 +127,8 @@ const DESIGNATION: Words = { key: 'designated',
     + '; if they are not, run the same command again' };
 const REPLACEMENT: Words = { key: 'replaced',
   failed: 'Administrator replacement failed before it was saved; nothing was changed',
-  unknown: 'Outcome unknown: the commit answer was lost; the replacement may have been saved. Check the institution\'s '
-    + 'members (or the audit log): if the successor is administrator and the predecessor suspended, run ' + RETRY_ROSTER
-    + '; if not, run the same command again' };
+  unknown: RUN_AGAIN + ' 이번 실행의 교체가 저장됐는지 알 수 없습니다. 다시 실행하면, 저장된 교체는 아무것도 다시 쓰지 않고 '
+    + '후임의 명부만 확인하며, 저장되지 않았으면 처음부터 교체합니다.' };
 
 async function outcome(command: FirstAdminCommand, say: Say, transaction: Transaction, words: Words): Promise<number> {
   const notDesignated = (error: unknown) => {
@@ -128,10 +143,17 @@ async function outcome(command: FirstAdminCommand, say: Say, transaction: Transa
   // Only a designation this command saw return sends its own generation. Settled after a failure, a later change may
   // already be on the roster: leave the roster to --retry-roster (it sends each member's latest generation).
   let send = false;
+  let again: 'standing' | 'changed' | undefined, current: unknown;
   try {
-    designated = await command.designate(tracker(transaction));
+    const result: any = await command.designate(tracker(transaction));
+    designated = result;
+    again = result?.again; current = result?.current;
     send = true;
   } catch (error) {
+    if (error instanceof OutcomeUndetermined) {
+      say.err(JSON.stringify({ [words.key]: null, code: null, message: words.unknown }));
+      return FIRST_ADMIN_EXIT.unknown;
+    }
     if (transaction.phase === 'none' || transaction.phase === 'not-committed') return notDesignated(error);
     // Committed (a later step threw), or COMMIT asked without an answer: this run's own audit row says what was saved.
     try { designated = await ownChange(command.db, transaction, command.subject); } catch { designated = null; }
@@ -143,14 +165,26 @@ async function outcome(command: FirstAdminCommand, say: Say, transaction: Transa
   }
   // Saved. Nothing after this point may report it as not designated.
   transaction.saved = true;
+  if (again === 'changed') {
+    // Saved by an earlier run, and a member changed since: the current state, and no older roster sent over it.
+    say.out(JSON.stringify({ [words.key]: true, institution: designated.institution, subject: designated.id,
+      version: designated.version, roster: 'not-sent', again, current }));
+    say.err('Saved by an earlier run; the members changed since (current state above). This run sent no roster; '
+      + 'if one is unconfirmed: ' + RETRY_ROSTER);
+    return FIRST_ADMIN_EXIT.rosterUnconfirmed;
+  }
   let roster = 'unknown';
   try {
-    const change = !send || designated.version === null ? null : await command.db.providerChange.findFirst({ where: {
-      kind: 'credentials', sub: command.subject, target: command.subject, generation: designated.version }, orderBy: { id: 'desc' } });
-    if (change) roster = await command.sendRoster(change);
+    if (again === 'standing') {
+      if (command.recoverRoster && designated.version !== null) roster = await command.recoverRoster(command.subject, designated.version);
+    } else {
+      const change = !send || designated.version === null ? null : await command.db.providerChange.findFirst({ where: {
+        kind: 'credentials', sub: command.subject, target: command.subject, generation: designated.version }, orderBy: { id: 'desc' } });
+      if (change) roster = await command.sendRoster(change);
+    }
   } catch { roster = 'unknown'; }
   say.out(JSON.stringify({ [words.key]: true, institution: designated.institution, subject: designated.id,
-    version: designated.version, roster }));
+    version: designated.version, roster, ...(again ? { again } : {}) }));
   if (roster === 'done') return FIRST_ADMIN_EXIT.designated;
   say.err('Roster unconfirmed; recover with: ' + RETRY_ROSTER);
   return FIRST_ADMIN_EXIT.rosterUnconfirmed;

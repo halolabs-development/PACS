@@ -1737,7 +1737,9 @@ class BffInvariantTests(unittest.TestCase):
             headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST",
         )
         with opener.open(submitted, timeout=30) as response:
-            admin_otp.answer_http(opener, response.read().decode("utf-8", "replace"), response.geturl(), self.stack.username(username))
+            # Where the login ended (a refused member lands on the sign-in page with its `auth_error`).
+            opener.kin_landing = admin_otp.answer_http(opener, response.read().decode("utf-8", "replace"), response.geturl(),
+                                                       self.stack.username(username))[1]
         sid = next((cookie.value for cookie in jar if cookie.name == "kin_sid"), None)
         if refused:
             self.assertIsNone(sid, "DB-refused member must not receive a product session")
@@ -1989,7 +1991,14 @@ class BffInvariantTests(unittest.TestCase):
             self.assertEqual(self.proxy(old_opener, "GET", "/api/me", headers={"X-KIN-Session": old_session}).status, 401)
             self.assertEqual(self.stack._member_rights_row(predecessor), (institution, True, ["admin"]))
             self.assertEqual(self.stack.request("GET", "/me", predecessor_logical).status, 401, "the predecessor's earlier Bearer")
-            self.bff_login(predecessor_logical, self.stack.passwords[predecessor_logical], refused=True)
+            # This new login: no session, the browser returns with `auth_error=member_suspended`, and its own new
+            # `auth.login` audit row names the predecessor, a failure, cause `member_isolated`.
+            last_audit = int(psql('SELECT coalesce(max(id), 0) FROM "AuditLog"')[0])
+            refused_login, _ = self.bff_login(predecessor_logical, self.stack.passwords[predecessor_logical], refused=True)
+            self.assertIn("auth_error=member_suspended", refused_login.kin_landing)
+            self.assertEqual(psql('SELECT target, detail::jsonb->>\'outcome\', detail::jsonb->>\'cause\' FROM "AuditLog" '
+                                  f'WHERE action=\'auth.login\' AND id > {last_audit} AND target=\'{predecessor}\''),
+                             [f"{predecessor}|failure|member_isolated"])
             # The successor's earlier session and earlier Bearer end; a colleague's session lives.
             self.assertEqual(self.proxy(waiting_opener, "GET", "/api/me").status, 401)
             self.assertEqual(self.stack.request("GET", "/me", successor).status, 401, "an authentication from before the replacement")

@@ -11,9 +11,11 @@
 // The exit codes are those of designate-first-admin.cjs, printed as `replaced`. Exit 0: replaced and the roster
 // (Keycloak groups/roles) confirmed. Exit 2: replaced (committed), roster unconfirmed — recover with
 // `node prisma/import-member-rights.cjs --retry-roster`. Exit 1: not replaced — refused, or failed before its
-// transaction committed; nothing was changed. Exit 3: the commit answer was lost and this run's audit row is not seen —
-// it may still commit: check the institution's members, then --retry-roster if the successor is administrator and the
-// predecessor suspended, or the same command again if not.
+// transaction committed; nothing was changed. Exit 3 (replaced:null): the commit answer was lost and this run's audit
+// row is not seen, or the database could not be read — run the same command with the same arguments again. That run
+// finds a saved replacement and rewrites nothing: it confirms the successor's latest roster (exit 0, or 2 unconfirmed;
+// `again:"standing"`), or, when a member changed since, prints the current state and sends no roster (exit 2,
+// `again:"changed"`); a replacement never saved runs from the start.
 // A failed cleanup at the end is reported on its own line and does not change the exit code.
 for (const name of ['DATABASE_URL', 'KC_ADMIN_URL', 'KC_REALM', 'KC_ISSUER', 'KC_CLIENT_ID', 'KC_CLIENT_SECRET', 'KIN_EMR_STATE_DIR']) {
   if (!process.env[name]) throw new Error('Missing setting: ' + name);
@@ -21,7 +23,7 @@ for (const name of ['DATABASE_URL', 'KC_ADMIN_URL', 'KC_REALM', 'KC_ISSUER', 'KC
 const { PrismaService } = require('../dist/prisma.service');
 const { KeycloakService } = require('../dist/keycloak.service');
 const { AdminService } = require('../dist/admin.service');
-const { sendRecordedRoster } = require('../dist/member-rights-import');
+const { sendRecordedRoster, recoverMemberRoster } = require('../dist/member-rights-import');
 const { OperatorRuntime } = require('../dist/emr-runtime/operator-runtime');
 const { operatorArguments, runReplaceSoleAdminCommand } = require('../dist/first-admin-command');
 
@@ -55,6 +57,7 @@ runReplaceSoleAdminCommand({
     } finally { begun.end(); }
   },
   sendRoster: change => sendRecordedRoster(db, keycloak, change),
+  recoverRoster: (subject, generation) => recoverMemberRoster(db, keycloak, subject, generation),
   cleanup: [
     ['Ledger cleanup', async () => { if (runtime) await runtime.stop(Date.now() + 5000); }],
     ['Database disconnect', () => db.$disconnect()],

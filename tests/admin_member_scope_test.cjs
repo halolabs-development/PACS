@@ -61,7 +61,8 @@ function world() {
       deleteMany: async ({ where }) => { const before = sessions.length; sessions.splice(0, sessions.length, ...sessions.filter(s => s.sid !== where.sid)); return { count: before - sessions.length }; } },
     memberIsolation: { findUnique: async ({ where }) => isolations.has(where.sub) ? { sub: where.sub } : null },
     auditLog: { create: async ({ data }) => { audits.push(data); return { id: audits.length }; }, findFirst: async () => null,
-      findMany: async ({ where }) => audits.filter(a => a.target === where.target && where.action.in.includes(a.action)).reverse() },
+      findMany: async ({ where }) => audits.filter(a => (where.target?.in ? where.target.in.includes(a.target) : a.target === where.target)
+        && where.action.in.includes(a.action)).reverse() },
     providerChange: { create: async ({ data }) => { writes++; changes.push({ id: changes.length + 1, ...data }); return changes.at(-1); },
       findMany: async () => [], findFirst: async () => null,
       updateMany: async ({ where, data }) => { const row = changes.find(c => c.id === where.id); if (row) Object.assign(row, data); return { count: row ? 1 : 0 }; } },
@@ -533,14 +534,7 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
       await assert.rejects(w.replace('admin-d', 'kc-d-group', D), RosterWriteFailure, 'an unreadable standing refuses');
       assert.deepEqual([w.writes(), w.changes.length, w.identities()], [0, 0, 0]);
       w.standingOverride(() => undefined);
-      // A successor whose email or username is the predecessor's would act under the same key: the predecessor's
-      // private drafts and history would answer to them.
-      for (const [field, value] of [['email', 'admin-d@example.test'], ['email', 'ADMIN-D@example.test'], ['username', 'admin-d']]) {
-        w.identityOverride(sub => sub === 'reader-d' ? { id: sub, username: 'reader-d', email: 'reader-d@example.test', emailVerified: true,
-          firstName: 'S', lastName: sub, enabled: true, serviceAccountClientId: null, groups: [D], roles: [], [field]: value } : undefined);
-        await refused(w, 'admin-d', 'reader-d', 'REPLACE_ADMIN_TO_SHARES_KEY', `a successor ${field} ${value}`);
-      }
-      w.identityOverride(() => undefined);
+
       // The input itself.
       await refused(w, 'admin-d', 'admin-d', 400, 'the predecessor as successor');
       await refused(w, 'admin-d', 'reader-d', 400, 'an unknown institution', 'not-an-institution');
@@ -582,6 +576,11 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
       // Every ledger event is valid under the access-event contract: two rights changes, three service isolations.
       assert.equal(w.events.length, 5);
       for (const event of w.events) parseAccessEvent(JSON.parse(JSON.stringify(event)));
+      // The two rights changes are recorded as the operator's service identity, as its session ends are: no member
+      // roles, no acting institution; X is the institution they manage.
+      assert.deepEqual(w.events.filter(e => e.formatVersion === 1).map(e => [e.executor, e.cause, e.userId.value.subject, e.rolesAtTime,
+        e.actingInstitution, e.managingInstitution]), Array(2).fill(['service', 'service-job', 'ops', { status: 'known', value: [] },
+        { status: 'not-applicable', reason: 'in-process-service' }, { status: 'known', value: D }]));
       const ends = w.events.filter(e => e.action === 'auth.logout');
       assert.deepEqual(ends.map(e => [e.surface, e.executor, e.auth.endCause, e.cause]),
         Array(3).fill(['service:sole-admin-replacement', 'service', 'isolation', 'service-job']));
@@ -595,6 +594,35 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
       // Again: the predecessor is no longer X's administrator.
       w.changes.length = 0;
       await refused(w, 'admin-d', 'colleague-d', 'REPLACE_ADMIN_FROM_NOT_ADMIN', 'the same predecessor again');
+      // The same command with the same arguments again (after a lost answer, exit 3): its replacement stands — nothing is
+      // rewritten (rights, sessions, audits, ledger), and the successor is returned for the roster check.
+      const quiet = () => JSON.stringify([w.writes(), w.audits.length, w.identities(), w.sessions.length, w.changes.length, [...w.rows.values()]]);
+      const unchanged = quiet();
+      const standing = await w.replace('admin-d', 'reader-d', D);
+      assert.deepEqual([standing.id, standing.again, standing.version], ['reader-d', 'standing', 2]);
+      assert.equal(quiet(), unchanged, 'a standing replacement run again writes nothing');
+      // Another operator or reason is another command: never taken for this one.
+      await refused(w, 'admin-d', 'reader-d', 'REPLACE_ADMIN_FROM_NOT_ADMIN', 'the same pair with another reason', D,
+        { name: 'ops', reason: 'another synthetic request' });
+      await refused(w, 'admin-d', 'reader-d', 'REPLACE_ADMIN_FROM_NOT_ADMIN', 'the same pair by another operator', D,
+        { name: 'ops2', reason: 'synthetic hospital request confirmed by phone' });
+      // A member changed since: the current state of both, nothing written (the command sends no roster).
+      w.rows.get('reader-d').version = 5;
+      const changedAgain = await w.replace('admin-d', 'reader-d', D);
+      assert.deepEqual([changedAgain.again, changedAgain.current.to.version, changedAgain.current.from.enabled], ['changed', 5, false]);
+      w.rows.get('reader-d').version = 2;
+      assert.equal(quiet(), unchanged);
+      // Unreadable: the earlier run's result cannot be told — exit 3 again (OutcomeUndetermined).
+      const { OutcomeUndetermined } = require('../api/src/first-admin-command.ts');
+      const realAudits = w.db.auditLog.findMany;
+      w.db.auditLog.findMany = async () => { throw new Error('synthetic database outage'); };
+      await assert.rejects(w.replace('admin-d', 'reader-d', D), OutcomeUndetermined);
+      w.db.auditLog.findMany = realAudits;
+      const realFind = w.db.memberRights.findUnique;
+      w.db.memberRights.findUnique = async () => { throw new Error('synthetic database outage'); };
+      await assert.rejects(w.replace('admin-d', 'reader-d', D), OutcomeUndetermined, 'the first read fails: undetermined');
+      w.db.memberRights.findUnique = realFind;
+      assert.equal(quiet(), unchanged);
       // The successor now administers X from the screen: another institution's member stays unknown to them.
       const adminD = { sub: 'reader-d', actor: 'reader-d@example.test', roles: ['admin', 'radiologist'], institution: D, kind: 'member' };
       await assert.rejects(w.call('admin/users/:id', 'PATCH', req => w.controller.patch('reader-b', { enabled: false, version: 1 }, req), adminD), sameAsUnknown);
@@ -609,6 +637,14 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
       assert.equal(w.audits.find(a => a.target === 'waiting').action, 'admin.user.approve');
       const w2 = setup();
       assert.equal((await w2.replace('admin-d', 'kc-d-group', D)).institution, D);
+      // A successor who now has the predecessor's old email or username is not refused: drafts and history belong to an
+      // account id, so none of the predecessor's answers to them (the real PostgreSQL case is in the owner-keys test).
+      for (const [field, value] of [['email', 'admin-d@example.test'], ['username', 'admin-d']]) {
+        const w3 = setup();
+        w3.identityOverride(sub => sub === 'reader-d' ? { id: sub, username: 'reader-d', email: 'reader-d@example.test', emailVerified: true,
+          firstName: 'S', lastName: sub, enabled: true, serviceAccountClientId: null, groups: [D], roles: [], [field]: value } : undefined);
+        assert.equal((await w3.replace('admin-d', 'reader-d', D)).approvalState, 'APPROVED', `a successor ${field} ${value}`);
+      }
     }
     // Same predecessor, two different successors at once: the second read the rows before the first committed, and is
     // refused on the rows read again under the institution lock. Only one replacement is applied.
@@ -723,8 +759,21 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
     expect('commit-lost', 2, true, 'a lost commit answer; this run\'s successor row is there', r => {
       assert.equal(r.out[0].subject, 'synthetic-first-admin'); assert.equal(r.out[0].version, 2);
       assert.ok(!r.steps.includes('send-roster'), 'no roster sent'); retry(r); });
-    expect('commit-lost-not-committed', 3, null, 'a lost commit answer and no row of this run', retry);
-    expect('commit-lost,reread-fails', 3, null, 'a lost commit answer and an unreadable record', retry);
+    // Exit 3 says first: run the same command with the same arguments again.
+    const runAgain = r => assert.ok(r.errJson[0].message.startsWith('같은 명령을 같은 인자로 다시 실행하세요.'), r.stderr);
+    expect('commit-lost-not-committed', 3, null, 'a lost commit answer and no row of this run', runAgain);
+    expect('commit-lost,reread-fails', 3, null, 'a lost commit answer and an unreadable record', runAgain);
+    expect('undetermined', 3, null, 'an earlier run\'s result cannot be read', r => {
+      runAgain(r); assert.ok(!r.steps.includes('transaction') && !r.steps.includes('send-roster')); });
+    // The same command again over its own saved replacement: nothing rewritten; the successor's latest roster confirmed.
+    expect('again-standing', 0, true, 'run again: the replacement stands, roster confirmed', r => {
+      assert.deepEqual([r.out[0].again, r.out[0].roster], ['standing', 'done']);
+      assert.ok(r.steps.includes('recover-roster') && !r.steps.includes('transaction') && !r.steps.includes('send-roster')); noRetry(r); });
+    expect('again-standing,roster-unknown', 2, true, 'run again: the replacement stands, roster unconfirmed', retry);
+    // A member changed since: the current state, and no roster sent over the later change.
+    expect('again-changed', 2, true, 'run again: a member changed since', r => {
+      assert.deepEqual([r.out[0].again, r.out[0].roster, r.out[0].current.to.version], ['changed', 'not-sent', 3]);
+      assert.ok(!r.steps.includes('recover-roster') && !r.steps.includes('send-roster') && !r.steps.includes('lookup-change')); });
     expect('stop-fails', 0, true, 'a cleanup failure keeps the outcome', r => assert.match(r.stderr, /cleanup failed/i));
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -777,6 +826,25 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
     const kept = fs.readdirSync(base).filter(name => name.startsWith('kept-'));
     assert.equal(kept.length, 1, 'the spool with an incomplete record is kept');
     assert.equal(fs.readFileSync(path.join(base, kept[0], 'failure-spool.jsonl.partial'), 'utf8'), '{"id":"torn');
+    fs.rmSync(path.join(base, kept[0]), { recursive: true, force: true });
+    // The earlier layout's single spool, replayed for real, fails after it was emptied (fsync fails): the complete record
+    // was imported, the file to replay is back, and the torn tail is kept with its original bytes — no line is lost.
+    fs.writeFileSync(path.join(base, 'failure-spool.jsonl'), record + '\n{"id":"legacy-torn');
+    replayed.length = 0;
+    const { fsyncSync, ftruncateSync } = fs;
+    let emptied = false;
+    fs.ftruncateSync = (...args) => { const out = ftruncateSync(...args); emptied = true; return out; };
+    fs.fsyncSync = (...args) => { if (emptied) throw new Error('synthetic fsync failure'); return fsyncSync(...args); };
+    try { await assert.rejects(importFinishedSpools(base, 'run-own', real), /synthetic fsync failure/); }
+    finally { fs.fsyncSync = fsyncSync; fs.ftruncateSync = ftruncateSync; }
+    assert.deepEqual(replayed, ['00000000-0000-4000-8000-0000000000f1'], 'the complete record reached the importer');
+    assert.ok(fs.existsSync(path.join(base, 'failure-spool.jsonl')), 'the file to replay is put back');
+    const keptTail = fs.readdirSync(base).filter(name => name.startsWith('kept-'));
+    assert.equal(keptTail.length, 1, 'what replay set aside is kept');
+    assert.equal(fs.readFileSync(path.join(base, keptTail[0], 'failure-spool.jsonl.partial'), 'utf8'), '{"id":"legacy-torn');
+    assert.ok(!fs.readdirSync(base).some(name => name.startsWith('claim-')), 'no claim left behind');
+    fs.rmSync(path.join(base, keptTail[0]), { recursive: true, force: true });
+    fs.rmSync(path.join(base, 'failure-spool.jsonl'), { force: true });
     // A claim whose process has ended is claimed again and imported; one of a live process (this one) is left alone.
     write('claim-999999-abandoned', record + '\n');
     write(`claim-${process.pid}-in-progress`, record + '\n');
