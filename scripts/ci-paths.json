@@ -1806,6 +1806,7 @@
       "tests/report_page_contract.py",
       "tests/study_identity_dom_test.py",
       "tests/worklist_arrivals_dom_test.py",
+      "tests/worklist_attach_refresh_dom_test.py",
       "tests/worklist_body_parts_dom_test.py",
       "tests/worklist_columns_vectors.json",
       "tests/worklist_folders_dom_test.py",

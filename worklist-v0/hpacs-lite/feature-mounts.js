@@ -61,6 +61,8 @@
     const studyAttachments=KinStudyAttachments({api:API,transport,allowed:()=>!!sess&&serverMode&&!demoMode&&!offline,
       can:role=>KinAuth.has(role),demo:()=>!!KinAuth.session()?.demo,study:uid=>studies.find(s=>s.uid===uid),
       current:()=>selectedUid,button:$('#t-attach'),notice:message=>toast(message,'err'),
+      // A stored document or a withdrawal changes the row's Count, Series and Modality: the list is read again as Refresh does.
+      reload:()=>load(),
     });
 
 
