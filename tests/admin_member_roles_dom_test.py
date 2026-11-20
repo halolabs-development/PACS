@@ -236,6 +236,7 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         self.version_reads = 0
         self.held_lists = None
         self.patch_error = None
+        self.creates, self.create_reply = [], None
         self.page = self.browser.new_page(viewport={"width": 1280, "height": 900})
         self.page.on("pageerror", lambda error: self.errors.append(str(error)))
         self.page.route("**/*", self.route)
@@ -276,6 +277,10 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
                 self.held_lists.append(route)
                 return
             route.fulfill(json=self.listing())
+            return
+        if method == "POST" and path == "/api/admin/users" and self.create_reply:
+            self.creates.append(request.post_data_json)
+            route.fulfill(status=self.create_reply[0], json=self.create_reply[1])
             return
         found = re.fullmatch(r"/api/admin/users/([^/]+)(/reset-password)?", path)
         user = found and next((u for u in self.users if u["id"] == unquote(found.group(1))), None)
@@ -737,6 +742,32 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         self.page.locator("#open-create").click()
         self.page.wait_for_function("() => document.querySelector('#create-dialog').open")
         self.assertEqual(INSTITUTION, self.page.locator("#create-form input[name=institution]").input_value())
+
+    def test_04c_create_with_an_existing_username_or_email_says_so_and_keeps_the_input(self):
+        # The server's answer (AdminService.createUser): 409 MEMBER_EXISTS with the words of the field that already exists.
+        words = {"username": "같은 아이디의 계정이 이미 있습니다. 다른 아이디로 만드세요.",
+                 "email": "같은 이메일의 계정이 이미 있습니다. 다른 이메일로 만드세요."}
+        self.load()
+        lists = self.list_reads
+        self.page.locator("#open-create").click()
+        self.page.wait_for_function("() => document.querySelector('#create-dialog').open")
+        form = self.page.locator("#create-form")
+        typed = {"username": "syn-existing", "email": "syn-existing@example.test", "firstName": "Syn", "lastName": "Existing"}
+        for name, value in typed.items():
+            form.locator(f"input[name={name}]").fill(value)
+        form.locator("select[name=role]").select_option("radiologist")
+        for field, message in words.items():
+            self.create_reply = (409, {"code": "MEMBER_EXISTS", "field": field, "message": message})
+            form.locator("button[type=submit]").click()
+            expect(self.page.locator("#create-message")).to_have_text(message)
+            self.assertTrue(self.page.evaluate("() => document.querySelector('#create-dialog').open"), "the dialog stays open")
+            for name, value in typed.items():
+                self.assertEqual(value, form.locator(f"input[name={name}]").input_value(), f"{name} is kept")
+            self.assertNotIn("http_", self.page.locator("#create-message").inner_text())
+        self.assertEqual(2, len(self.creates))
+        self.assertEqual("syn-existing", self.creates[-1]["username"])
+        self.assertFalse(self.page.locator("#password-dialog").evaluate("dialog => dialog.open"), "no temporary password")
+        self.assertEqual(lists, self.list_reads, "the member list is not read again")
 
     def test_05_english_required_labels_static_and_script_rendered(self):
         self.assertEqual(24, len(ENGLISH_REQUIRED))
