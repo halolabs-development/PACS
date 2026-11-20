@@ -2005,6 +2005,7 @@ window.KinLanguageTerms = {
     ["{0} 측정 도구 · Control+Alt+8 비교 작업 도구 · {1} 기본 영상 도구 (Tab 이동·Enter 선택) · {2} 선택 영상 · {3} 판독문으로", "{0} Measurement tools · Control+Alt+8 Comparison tools · {1} Basic image tools (Tab to move · Enter to select) · {2} Selected image · {3} To report", "m"],
     ["{0} 판독 상태를 Unread로 되돌렸습니다.", "{0} Reading status reset to Unread.", "mc", "{0} 판독 상태를 미판독으로 되돌렸습니다."],
     ["{0} 판독 중입니다 — 저장되지 않았습니다", "{0} is reading this study — not saved", "m"],
+    ["내가 쓰던 글은 지우지 않았습니다 — 편집기에 그대로 있습니다.", "Your own text was not deleted — it is still in the editor.", "m"],
     ["{0}(UTC)", "{0}(UTC)", "m"],
     ["{0}(으)로 가려던 이동은 이 삽입이 확인된 뒤에 이어 갑니다.", "The move to {0} will continue after this insert is confirmed.", "m"],
     ["{0}, 로드된 목록 기준 {n1}건{t2}{t3}", "{0}, {n1} in loaded list{t2}{t3}", "m"],

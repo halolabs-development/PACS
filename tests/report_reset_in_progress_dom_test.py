@@ -42,12 +42,16 @@ class ResetSite(rf.FlowSite):
                 "savedBy": self.saved_by.get(uid), "savedByMine": self.saver_sub.get(uid) == account["sub"]}
 
     def commit_of(self, uid, body, account):
+        own = self.store[uid]["row"]
         status, answer = super().commit_of(uid, body, account)
         if status == 200 and body.get("action") == "reset" and uid in self.released:
             self.holder.pop(uid, None)
             self.saved_by.pop(uid, None)
             self.saver_sub.pop(uid, None)
-            answer = {**answer, "state": self.state_of(uid, account), "released": self.released[uid]}
+            # The reader's own draft is not ended by taking another reader's reading back: it stays, on the new version.
+            if own is not None:
+                self.store[uid]["row"] = {**own, "baseVersion": self.store[uid]["report"]["version"]}
+            answer = {**self.envelope_of(uid, account), "state": self.state_of(uid, account), "released": self.released[uid]}
         return status, answer
 
     def api(self, route, request, method, path, query):
@@ -227,6 +231,63 @@ class ResetInProgressPage(unittest.TestCase):
         self.wait(lambda: self.resets(), "the reset is sent")
         expect(self.toast()).to_contain_text("점유를 풀고 Unread로 되돌렸습니다")
         self.assertNotIn("임시글", self.toast().inner_text())
+        self.assertNotIn("내가 쓰던 글", self.toast().inner_text(), "no text of mine, nothing said about it")
+        self.assertEqual("", self.page.locator("#findings").input_value())
+
+    # ── my own text is not what a Reset of another reader's reading cancels ──
+    def test_my_text_the_server_refused_while_another_reader_held_stays_after_reset_and_is_saved_then(self):
+        """The order seen on the served page: my hold was released, another reader took the study, my draft writes were
+        refused (REPORT_HELD) so my text was only on this screen, and I pressed Reset to Unread to go on."""
+        self.open()
+        self.select(h.PATIENT)
+        self.site.put_answers = [(409, {"code": "REPORT_HELD", "message": "SYN held", "holder": OTHER})]
+        self.site.holder[h.UID] = OTHER
+        self.page.locator("#findings").fill("SYN my text, never stored")
+        self.page.clock.run_for(20001)
+        self.wait(lambda: self.site.flow_puts, "the refused draft write")
+        expect(self.page.locator("#b-unread")).to_be_enabled()
+        expect(self.page.locator("#draftbar")).to_contain_text("Unsaved Draft")
+        self.site.released[h.UID] = {"holder": OTHER, "holderDraft": True, "savedBy": None, "savedKept": False}
+        self.press_unread()
+        self.wait(lambda: self.resets(), "the reset is sent")
+        self.assertEqual(0, self.resets()[0]["baseVersion"], "the reset is sent on the head the screen shows")
+        self.wait(lambda: self.page.evaluate("() => studies.find(s => s.uid === selectedUid)?.holder ?? null") is None,
+                  "the reset is taken")
+        self.assertEqual("SYN my text, never stored", self.page.locator("#findings").input_value())
+        expect(self.toast()).to_contain_text("Unread로 되돌렸습니다")
+        expect(self.toast()).to_contain_text("내가 쓰던 글은 지우지 않았습니다")
+        expect(self.page.locator("#draftbar")).to_contain_text("Unsaved Draft")
+        # nobody holds it now: the next draft write takes my text, on the version the Reset made
+        writes = len(self.site.flow_puts)
+        self.page.clock.run_for(20001)
+        self.wait(lambda: len(self.site.flow_puts) > writes, "my text is written as my draft")
+        self.wait(lambda: self.site.stored_of(h.UID) == {"findings": "SYN my text, never stored", "conclusion": "",
+                                                         "recommendation": ""}, "the server holds my text")
+        self.assertEqual(1, self.site.store[h.UID]["row"]["baseVersion"])
+        expect(self.page.locator("#draftbar")).to_contain_text("Draft Saved")
+
+    def test_my_stored_draft_stays_mine_on_the_new_version_and_saves_without_a_conflict(self):
+        self.site.store[h.UID]["revs"] = 1
+        self.site.store[h.UID]["row"] = {"findings": "SYN my stored draft", "conclusion": "", "recommendation": "",
+                                         "baseVersion": 0, "citations": [], "structured": []}
+        self.site.holder[h.UID] = OTHER
+        self.site.released[h.UID] = {"holder": OTHER, "holderDraft": True, "savedBy": None, "savedKept": False}
+        self.open()
+        self.select(h.PATIENT)
+        expect(self.page.locator("#findings")).to_have_value("SYN my stored draft")
+        self.press_unread()
+        self.wait(lambda: self.resets(), "the reset is sent")
+        expect(self.toast()).to_contain_text("내가 쓰던 글은 지우지 않았습니다")
+        self.assertNotIn("확인하지 못해", self.toast().inner_text(), "the kept draft is an accepted answer")
+        expect(self.page.locator("#findings")).to_have_value("SYN my stored draft")
+        expect(self.page.locator("#draftbar")).to_contain_text("Draft Saved")
+        # the Reset made v1; my Save goes on it and is taken
+        expect(self.page.locator("#b-save")).to_be_enabled()
+        self.page.locator("#b-save").click()
+        self.wait(lambda: [b for _, b in self.site.flow_commits if b.get("action") == "save"], "the Save is sent")
+        save = [b for _, b in self.site.flow_commits if b.get("action") == "save"][0]
+        self.assertEqual((1, "SYN my stored draft"), (save["baseVersion"], save["findings"]))
+        self.wait(lambda: self.site.store[h.UID]["report"]["rs"] == "T", "the Save is taken")
 
     # ── the heartbeat renews only its own hold ──
     def claim(self):

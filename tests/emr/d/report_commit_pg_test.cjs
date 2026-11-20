@@ -283,6 +283,41 @@ test('actual HTTP report approval/reset and ledger failure preserve exact versio
     assert.equal(deferredReset.body.state.rs, 'W');
     assert.deepEqual(deferredReset.body.released, { holder: second.author, holderDraft: false, savedBy: null, savedKept: false });
 
+    // (다) the resetting reader has a draft of their own (their hold went, another reader took the study): the Reset releases
+    // that hold as before, and my draft stays mine - text, work unit, no purpose end - standing on the version it made.
+    const mineStudy = await study('1.2.840.9999.46');
+    await write(mineStudy.uid, 'first', { findings: '합성 내 초안', conclusion: '합성 내 결론', recommendation: '' });
+    assert.equal((await hold(mineStudy.uid, second)).mine, true);
+    const myBefore = await draftOf(mineStudy.uid, sub);
+    const mineEpoch = (await witness.studyState.findUnique({ where: { uid: mineStudy.uid } })).draftEpoch;
+    const mineReset = await send(mineStudy.uid, '/report/commit', { expectedOwner: { institution, sub, author },
+      expectedRevision: mineEpoch + ':' + myBefore.revision, baseVersion: 0, findings: '합성 내 초안', conclusion: '합성 내 결론',
+      recommendation: '', citationIds: [], structureIds: [], action: 'reset' });
+    assert.equal(mineReset.status, 201, JSON.stringify(mineReset.body));
+    assert.deepEqual(mineReset.body.released, { holder: second.author, holderDraft: false, savedBy: null, savedKept: false });
+    assert.equal(mineReset.body.state.holder, null);
+    assert.equal(mineReset.body.present, true, 'the answer carries my kept draft');
+    const myAfter = await draftOf(mineStudy.uid, sub);
+    assert.deepEqual([myAfter.present, myAfter.findings, myAfter.conclusion, myAfter.workUnit, myAfter.revision, myAfter.baseVersion],
+      [true, '합성 내 초안', '합성 내 결론', myBefore.workUnit, myBefore.revision + 1, mineReset.body.state.version]);
+    // I go on: my Save stands on the version the Reset made.
+    const mineSave = await send(mineStudy.uid, '/report/commit', { expectedOwner: { institution, sub, author },
+      expectedRevision: mineReset.body.revision, baseVersion: mineReset.body.state.version, findings: '합성 내 초안',
+      conclusion: '합성 내 결론', recommendation: '', citationIds: [], structureIds: [], action: 'save' });
+    assert.equal(mineSave.status, 201, JSON.stringify(mineSave.body));
+    assert.equal(mineSave.body.state.rs, 'T');
+    // My own Reset (with a reason, nobody else's work) still ends my draft as before.
+    const myOwn = await study('1.2.840.9999.47');
+    await write(myOwn.uid, 'first', { findings: '합성 내 초안 둘', conclusion: '', recommendation: '' });
+    const ownBefore = await draftOf(myOwn.uid, sub);
+    const ownEpoch = (await witness.studyState.findUnique({ where: { uid: myOwn.uid } })).draftEpoch;
+    const ownReset = await send(myOwn.uid, '/report/commit', { expectedOwner: { institution, sub, author },
+      expectedRevision: ownEpoch + ':' + ownBefore.revision, baseVersion: 0, findings: '합성 내 초안 둘', conclusion: '',
+      recommendation: '', citationIds: [], structureIds: [], action: 'reset', reason: '합성 정정' });
+    assert.equal(ownReset.status, 201, JSON.stringify(ownReset.body));
+    assert.equal(ownReset.body.released, undefined);
+    assert.equal((await draftOf(myOwn.uid, sub)).present, false);
+
     // (나) another reader's saved text (T), hold expired, no live draft of theirs: kept as history and moved to their draft.
     const saved = await study('1.2.840.9999.42');
     const savedHead = await save(saved.uid, second);
