@@ -49,9 +49,11 @@
   const sameSet = (a, b) => a.length === b.length && a.every(id => b.includes(id)) && b.every(id => a.includes(id));
   const epochOf = revision => { const found = REVISION.exec(revision || ''); return found ? found[1] : null; };
 
+  // The same account is the same institution and account id; `author` is the login the screen was opened under and may
+  // have changed since (an administrator corrected the email) - the server judges the same way.
   function sameOwner(a, b) {
     return !!a && !!b && typeof a.sub === 'string' && a.sub === b.sub
-      && (a.institution ?? null) === (b.institution ?? null) && a.author === b.author;
+      && (a.institution ?? null) === (b.institution ?? null);
   }
 
   /** 세 칸과 기준 판의 모양(목록 없이). */

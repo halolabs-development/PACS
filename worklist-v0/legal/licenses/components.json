@@ -9374,11 +9374,12 @@
     "Orthanc": 21
   },
   "inputs": {
-    "api/Dockerfile": "30b9126732b1a0e1561902c2797fe3e7fabf6957464e9c051509f6e62d77c64d",
+    "api/Dockerfile": "82f52b94e1f083eed0040b17addcd8f1dd321d0a12450a6d1dc2f4dc0eb4ed01",
     "api/package-lock.json": "a0fa9ff31cdde02a5dbb6460557d70ef000e3291e1e7c8098c6e5ae26f66e2e6",
     "api/print/requirements.txt": "8239516f33da445f550bc459b6732bec82ccedeec26778039af79a1975920576",
     "docker-compose.film-print.yml": "0f18bbb5f004f723110ee7f7eaf1170d73b9cb9982549a86b36e6a6043720710",
     "docker-compose.monitor.yml": "3ec33e73df32c484bf2187bc0ab1b95c77eaacf74fe18deeab482d3de4af1395",
+    "docker-compose.mwl.yml": "1f36df90ceb523b1951b65f7637975fe80762d451395af94bff4e92fc1c5b310",
     "docker-compose.prod.yml": "9bbdf6d4e8e1b9a7b700c748f84eca275eaf63ea4e789549fd5ff2545ad25448",
     "docker-compose.qr-peer.yml": "691dd0cde19132d1170e6f128ce59e2d3dea7c8066b2825c2b93c75099b63e91",
     "docker-compose.runtime-test.yml": "6b87c7d9e784ad471c1701ba750bad4405d86d3f1b0a68551716e47c84451e82",

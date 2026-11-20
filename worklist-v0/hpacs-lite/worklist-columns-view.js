@@ -165,9 +165,9 @@
      */
     function reportOnIt(s) {
       if (!s || !["W", "T", "H"].includes(s.rs)) return { typing: false, by: null, label: "" };
-      if (s.holder) return { typing: s.rs === "W", by: s.holder, label: displayActor(s.holder) };
+      if (s.holder) return { typing: s.rs === "W", by: s.holder, mine: s.holderMine, label: displayActor(s.holder) };
       const saved = appState[s.uid]?.savedBy || null;
-      return { typing: false, by: saved, label: saved ? displayActor(saved) : "" };
+      return { typing: false, by: saved, mine: appState[s.uid]?.savedByMine, label: saved ? displayActor(saved) : "" };
     }
 
     // 특수 렌더링이 필요한 칸만 함수로
@@ -185,7 +185,7 @@
           : s.rs === "D" ? "보존 기간이 끝나 판독문을 파기한 검사입니다"
           : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : "");
         // "In Progress by <name>": who is on it, for the other readers (the writer's own row needs no name). The name is data.
-        const by = on.by && on.by !== user ? ` <span class="rs-by">by <span translate="no">${esc(on.label)}</span></span>` : "";
+        const by = on.by && !on.mine ? ` <span class="rs-by">by <span translate="no">${esc(on.label)}</span></span>` : "";
         return `<span class="rs ${esc(on.typing ? "T" : s.rs)}"${s.holdReason ? ' data-kin-keep="title"' : ''} title="${esc(help + (by ? (help ? " — " : "") + on.label : ""))}">${esc(shown)}${by}</span>`; },
       confirm: s => esc(confirmText({ ...appState[s.uid], rs: s.rs })),
       // Missing images (Technician tab only): a mark beside the count, the same answer as the Info panel's Needs Check line
@@ -201,7 +201,7 @@
       preReviewer: s => esc(displayActor(s.preReviewer)),
       // A writer can hold the report with no viewer open. Presence excludes self; the lock does not.
       viewing: s => {
-        const hold = !s.holder ? '' : s.holder === user
+        const hold = !s.holder ? '' : s.holderMine
           ? `<span class="hold me" title="내가 작성 중">✎ 나</span>`
           : `<span class="hold other" title="${s.holder === '다른 기관' ? '다른 기관 판독의가' : s.holder === '작성자 비공개' ? '비공개 작성자가' : esc(displayActor(s.holder)) + ' 님이'} 작성 중">✎ <span translate="no">${esc(displayActor(s.holder))}</span></span>`;
         const presence = esc(viewingNames.get(s.uid) || '');

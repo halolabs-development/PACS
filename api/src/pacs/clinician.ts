@@ -58,7 +58,7 @@ export class PacsClinician {
     const uids: string[] = list.studies.map((row: any) => row.uid);
     const current = !uids.length ? [] : await this.prisma.$queryRaw<any[]>`
       SELECT s.uid, s."institutionId", s."teleInstitutionId", s.rs, s."repDoc", s.confirm,
-        COALESCE(r.version, 0) AS version, v.action, r.findings, r.conclusion, r.recommendation, r."groupId", r."updatedBy"
+        COALESCE(r.version, 0) AS version, v.action, r.findings, r.conclusion, r.recommendation, r."groupId", r."updatedBy", r."updatedBySub"
       FROM "StudyState" s
       LEFT JOIN "Report" r ON r.uid = s.uid
       LEFT JOIN "ReportVersion" v ON v.uid = r.uid AND v.version = r.version
@@ -218,7 +218,7 @@ export class PacsClinician {
       const scope=await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:report?'stored':'current',...(report?{record:report}:{}),state,identity:true});
       const head = report?.version > 0 ? await tx.reportVersion.findUnique({
         where: { uid_version: { uid, version: report.version } },
-        select: { id: true, version: true, action: true, author: true, reason: true, findings: true, conclusion: true, recommendation: true, drawings: true } }) : null;
+        select: { id: true, version: true, action: true, author: true, authorSub: true, reason: true, findings: true, conclusion: true, recommendation: true, drawings: true } }) : null;
       // The state table (report-visibility.ts): another physician's unsigned text is not read here by a caller who is not
       // clinician-only (an administrator, or a radiologist who also holds the clinician role).
       // Judged on the version row itself (its action and writer), so a Save of drawings alone is withheld too.
@@ -255,7 +255,7 @@ export class PacsClinician {
     const uids: string[] = window.rows.map((row: any) => row.uid);
     const current = !uids.length ? [] : await this.prisma.$queryRaw<any[]>`
       SELECT s.uid, s."institutionId", s."teleInstitutionId", s.rs, s."repDoc", s.confirm,
-        COALESCE(r.version, 0) AS version, v.action, r.findings, r.conclusion, r.recommendation, r."groupId", r."updatedBy"
+        COALESCE(r.version, 0) AS version, v.action, r.findings, r.conclusion, r.recommendation, r."groupId", r."updatedBy", r."updatedBySub"
       FROM "StudyState" s
       LEFT JOIN "Report" r ON r.uid = s.uid
       LEFT JOIN "ReportVersion" v ON v.uid = r.uid AND v.version = r.version

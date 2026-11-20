@@ -28,6 +28,7 @@ import { currentExams, prepareExamRead, readableExamRecords, scopeIncludesSeries
   examTargets, relatedExamReports, resolveExamScope, storedExamScope } from '../exam-merge.service';
 import { viewerStudyDisplay } from './viewer-study-display';
 import type { ResolvedExamScope } from '../exam-merge.service';
+import { ownDraftsWhere } from '../owner-identity';
 
 /** An order's accession as stored (trimmed); null when it has none. */
 const orderAccessionOf = (order: { accession?: unknown } | null | undefined): string | null =>
@@ -334,7 +335,7 @@ export class PacsWorklist {
     };
     // 목록에도 내 초안을 함께 싣는다. 30초 폴링 응답이 초안 없이 오면
     // 클라이언트 병합이 쓰고 있던 초안을 지운다.
-    const drafts = await this.prisma.reportDraft.findMany({ where: { author: c.actor, uid: { in: pageUids } } });
+    const drafts = await this.prisma.reportDraft.findMany({ where: { ...ownDraftsWhere(c), uid: { in: pageUids } } });
     const draftByUid = new Map(drafts.map(d => [d.uid, d]));
     for (const [uid, scope] of await readableExamRecords(this.prisma, this.studyAccess, c, drafts.filter(draft => draft.present)))
       if (!scope) draftByUid.delete(uid);
@@ -707,7 +708,7 @@ export class PacsWorklist {
     // 필터·상용구를 계정에 붙인 것과 같은 이유다 (§6-A-4).
     // 보이는 검사의 것만 읽는다: 비운 자리(present=false)도 행으로 남으므로 작성자 전체를 읽으면 끝없이 늘어난다.
     const drafts = omitStates ? [] : await this.prisma.reportDraft.findMany({
-      where: { author: c.actor, uid: { in: states.map(s => s.uid) } } });
+      where: { ...ownDraftsWhere(c), uid: { in: states.map(s => s.uid) } } });
     const draftByUid = Object.fromEntries(drafts.map(d => [d.uid, d]));
     for (const [uid, scope] of await readableExamRecords(this.prisma, this.studyAccess, c, drafts.filter(draft => draft.present)))
       if (!scope) delete draftByUid[uid];

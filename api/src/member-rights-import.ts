@@ -32,7 +32,7 @@ export async function importMemberRights(prisma: PrismaService, keycloak: Keyclo
   if (users.length !== expectedTotal || new Set(users.map(user => user.id)).size !== users.length) throw new Error('Unstable realm member import');
   signal?.throwIfAborted();
   const work = ledger.begin();
-  let changes: { legacy: { id: number; sub: string | null; target: string; generation: number }[]; bound: number };
+  let changes: { legacy: { id: number; sub: string | null; target: string; generation: number }[] };
   try {
   const issuer = process.env.KC_ISSUER;
   if (!issuer) throw new Error('Missing member identity issuer');
@@ -46,7 +46,7 @@ export async function importMemberRights(prisma: PrismaService, keycloak: Keyclo
   changes = await work.transactionWithRecords(async (tx, record) => {
     signal?.throwIfAborted();
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(${0x4b494e4d}::int4, ${0}::int4)`;
-    if (await tx.memberRightsImport.findUnique({ where: { id: 'realm-v1' } })) return { legacy: [], bound: 0 };
+    if (await tx.memberRightsImport.findUnique({ where: { id: 'realm-v1' } })) return { legacy: [] };
     const occurredAt = new Date().toISOString(), requestId = randomUUID();
     const facts = { surface: 'service:member-rights-import', actor, roles: [], rightsVersion: 0,
       institution: null, ip: null, sessionRef: null, requestId };
@@ -89,22 +89,8 @@ export async function importMemberRights(prisma: PrismaService, keycloak: Keyclo
         } });
       }
     }
-    // Bind legacy P designations only when the imported roster identifies exactly one subject.
-    // Existing bindings are immutable through import; ambiguous/missing identities keep the legacy fallback.
-    const subject = (actor: string | null) => {
-      const matches = users.filter(user => (user.email || user.username) === actor);
-      return matches.length === 1 ? matches[0].id : null;
-    };
-    let bound = 0;
-    const studies = await tx.studyState.findMany({ where: { rs: 'P' } });
-    for (const study of studies) {
-      const preDocSub = study.preDocSub ?? subject(study.preDoc);
-      const preReviewerSub = study.preReviewerSub ?? subject(study.preReviewer);
-      if (preDocSub !== study.preDocSub || preReviewerSub !== study.preReviewerSub) {
-        await tx.studyState.update({ where: { uid: study.uid }, data: { preDocSub, preReviewerSub } });
-        bound++;
-      }
-    }
+    // Historical designations were settled by the ownership migration. A newly
+    // imported directory cannot identify the writer of an unresolved legacy row.
     // Import is one rights decision: stamp its commit boundary after all member/session work,
     // so a slow import cannot admit a Bearer authenticated between the first and last row.
     const completedAt = new Date();
@@ -112,7 +98,7 @@ export async function importMemberRights(prisma: PrismaService, keycloak: Keyclo
       newAuthAfter: completedAt,
     } });
     await tx.memberRightsImport.create({ data: { id: 'realm-v1', completedAt } });
-    return { legacy, bound };
+    return { legacy };
     };
     if (!users.length) return apply();
     // One realm decision shares one transaction and event; member count must not
@@ -129,7 +115,6 @@ export async function importMemberRights(prisma: PrismaService, keycloak: Keyclo
     return result!;
   }, { maxWait: 4000, timeout: 120000 });
   } finally { work.end(); }
-  new Logger('MemberRightsImport').log(`realm-v1 designation rows bound: ${changes.bound}`);
   const publications = (signal?.aborted ? [] : changes.legacy).map(change => {
     // Neither startup, a member command, nor login waits for this one-shot post-commit send.
     return sendMemberRoster(prisma, keycloak, change).catch(() => new Logger('MemberRightsImport').warn('명부 반영 미확인'));
