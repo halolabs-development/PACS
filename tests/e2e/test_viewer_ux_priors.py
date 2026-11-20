@@ -959,15 +959,15 @@ class ViewerUXPriorsE2E(ViewerLayoutE2E):
         deadline = __import__('time').monotonic() + 30
         while not held and __import__('time').monotonic() < deadline: viewer.wait_for_timeout(200)
         self.assertTrue(held, 'the comparison waits on the prior list')
-        # Move this window to the prior alone while the comparison's layout is still waiting. The viewer takes a move only
-        # when its patient tabs' guard lets it (no History/Job work busy or unsaved, no open dialog, no unsaved MPR mark; a
-        # freshly opened viewer may still be reading its work). That is waited for and the move called in the same task, so
-        # nothing starts in between; what was waited for is logged. The move itself must succeed.
+        # Move this window to the prior alone while the comparison's layout is still waiting - as a reader does from the window's
+        # Prior Studies, once the window shows its patient (the patient tabs hold the opening) and its patient tabs' guard takes a
+        # move (no History/Job work busy or unsaved, no open dialog, no unsaved MPR mark). That is waited for and the move called
+        # in the same task, so nothing starts in between; what was waited for is logged. The move itself must succeed.
         target = self.stack.proxy + '/ohif/viewer?StudyInstanceUIDs=' + prior.uid
-        moved = viewer.evaluate('''async u => {
-          const blockers = () => [['history', window.kinViewerHistoryWorkspaceState?.()], ['jobs', window.kinViewerJobWorkspaceState?.()]]
+        moved = viewer.evaluate('''async ([u, shown]) => {
+          const blockers = () => ((window.KinViewerPatientTabs?.snapshot?.()?.studyUIDs || []).includes(shown) ? [] : ['patient']).concat([['history', window.kinViewerHistoryWorkspaceState?.()], ['jobs', window.kinViewerJobWorkspaceState?.()]]
             .flatMap(([name, s]) => [s?.busy && name + '.busy', s?.dirty && name + '.dirty']).filter(Boolean)
-            .concat(document.querySelector('dialog[open]') ? ['dialog'] : [], window.kinMprMarks?.dirty?.() ? ['mpr-marks'] : []);
+            .concat(document.querySelector('dialog[open]') ? ['dialog'] : [], window.kinMprMarks?.dirty?.() ? ['mpr-marks'] : []));
           const waited = new Set(), until = Date.now() + 30000;
           for (let now = blockers(); now.length; now = blockers()) {
             now.forEach(b => waited.add(b));
@@ -983,7 +983,7 @@ class ViewerUXPriorsE2E(ViewerLayoutE2E):
           try { result = await Promise.race([open(u), new Promise(r => setTimeout(() => r('no answer'), 30000))]); }
           finally { clearInterval(sample); if (window.kinViewerOpenPatient === wrap) window.kinViewerOpenPatient = open; }
           return { waited: [...waited], result, before, status: status(), others, during: [...during] };
-        }''', target)
+        }''', [target, current.uid])
         print('PRIORS_14 MOVE', json.dumps(moved, ensure_ascii=False), flush=True)
         self.assertIs(moved['result'], True, moved)
         viewer.wait_for_function('uid => new URLSearchParams(location.search).get("StudyInstanceUIDs") === uid', arg=prior.uid, timeout=30000)
