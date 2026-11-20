@@ -23,6 +23,7 @@ import stat
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 from types import SimpleNamespace
 import unittest
@@ -139,6 +140,8 @@ def another_run(source, arguments, environment=None, *, kill):
     child = subprocess.Popen([sys.executable, "-B", "-c", source, str(Path(ops.__file__).parent), *map(str, arguments)],
                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                              env={**os.environ, **(environment or {})})
+    stalled = threading.Timer(120, child.kill)   # a run that never reports must not hold the suite
+    stalled.start()
     try:
         line = child.stdout.readline().decode("utf-8").strip()
         if not line:
@@ -151,6 +154,7 @@ def another_run(source, arguments, environment=None, *, kill):
         else:
             child.stdin.close()
         child.wait()
+        stalled.cancel()
         for stream in (child.stdin, child.stdout, child.stderr):
             stream.close()
 
