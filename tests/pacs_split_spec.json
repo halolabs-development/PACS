@@ -11038,5 +11038,152 @@
         "optional": []
       }
     }
+  },
+  "di_additions_critical_result_inbox": {
+    "unit": "critical-result-inbox",
+    "decision": "Critical result hospital inbox",
+    "note": "The institution's shared critical-result inbox that the send dialog checks by default: the admin's read and save on a feature controller of its own, forwarding to the existing CriticalResultService. No new provider. U0B-DI compares the snapshot minus exactly these.",
+    "middleware_routes": [],
+    "controllers": [
+      "CriticalResultInboxController"
+    ],
+    "providers": [],
+    "routes": [
+      {
+        "controller": "CriticalResultInboxController",
+        "handler": "inbox",
+        "method": "GET",
+        "paths": [
+          "admin|critical-result-inbox"
+        ],
+        "public": null,
+        "status": null,
+        "headers": [],
+        "guards": [],
+        "interceptors": [],
+        "args": [
+          "0:0@0:null:0"
+        ]
+      },
+      {
+        "controller": "CriticalResultInboxController",
+        "handler": "save",
+        "method": "PATCH",
+        "paths": [
+          "admin|critical-result-inbox"
+        ],
+        "public": null,
+        "status": null,
+        "headers": [],
+        "guards": [],
+        "interceptors": [],
+        "args": [
+          "0:0@0:null:0",
+          "3:1@1:null:0"
+        ]
+      }
+    ],
+    "injectables": {
+      "CriticalResultInboxController": {
+        "params": [
+          "CriticalResultService"
+        ],
+        "scope": null,
+        "declared": [],
+        "optional": []
+      }
+    }
+  },
+  "di_additions_gateway_settings": {
+    "unit": "gateway-settings",
+    "decision": "Gateway settings",
+    "note": "The institution's Gateway routing rules, kept-copy days and compression: the Gateway's read of its settings and the admin's read and save, on a feature controller of its own with its service. U0B-DI compares the snapshot minus exactly these.",
+    "middleware_routes": [],
+    "controllers": [
+      "GatewaySettingsController"
+    ],
+    "providers": [
+      "GatewaySettingsService"
+    ],
+    "routes": [
+      {
+        "controller": "GatewaySettingsController",
+        "handler": "gateway",
+        "method": "GET",
+        "paths": [
+          "/|gateway/settings"
+        ],
+        "public": null,
+        "status": null,
+        "headers": [
+          {
+            "name": "Cache-Control",
+            "value": "no-store"
+          }
+        ],
+        "guards": [],
+        "interceptors": [],
+        "args": [
+          "0:0@0:null:0"
+        ]
+      },
+      {
+        "controller": "GatewaySettingsController",
+        "handler": "read",
+        "method": "GET",
+        "paths": [
+          "/|admin/gateway-settings"
+        ],
+        "public": null,
+        "status": null,
+        "headers": [
+          {
+            "name": "Cache-Control",
+            "value": "no-store"
+          }
+        ],
+        "guards": [],
+        "interceptors": [],
+        "args": [
+          "0:0@0:null:0"
+        ]
+      },
+      {
+        "controller": "GatewaySettingsController",
+        "handler": "save",
+        "method": "PUT",
+        "paths": [
+          "/|admin/gateway-settings"
+        ],
+        "public": null,
+        "status": null,
+        "headers": [],
+        "guards": [],
+        "interceptors": [],
+        "args": [
+          "0:1@1:null:0",
+          "3:0@0:null:0"
+        ]
+      }
+    ],
+    "injectables": {
+      "GatewaySettingsController": {
+        "params": [
+          "GatewaySettingsService"
+        ],
+        "scope": null,
+        "declared": [],
+        "optional": []
+      },
+      "GatewaySettingsService": {
+        "params": [
+          "PrismaService",
+          "StudyAccessService"
+        ],
+        "scope": null,
+        "declared": [],
+        "optional": []
+      }
+    }
   }
 }
