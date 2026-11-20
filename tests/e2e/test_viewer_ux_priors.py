@@ -996,10 +996,9 @@ class ViewerUXPriorsE2E(ViewerLayoutE2E):
         self.release(held)
         viewer.wait_for_function('uid => (' + self.SHOWN_STUDIES + ')().includes(uid)', arg=prior.uid, timeout=30000)
         viewer.wait_for_timeout(2500)
-        # After the late answer: the prior is shown and the study left is not (one read of the final screen).
+        # After the late answer: only the prior is shown - not the study left, nor any other (one read of the final screen).
         shown = viewer.evaluate(self.SHOWN_STUDIES)
-        self.assertIn(prior.uid, shown)
-        self.assertNotIn(current.uid, shown)
+        self.assertEqual(set(shown), {prior.uid}, shown)
         self.assertEqual(prior.uid, viewer.evaluate('() => new URLSearchParams(location.search).get("StudyInstanceUIDs")'))
         self.evidence(viewer, 'left-comparison-late-layout')
 
