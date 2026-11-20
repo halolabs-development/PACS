@@ -712,9 +712,10 @@ PROFILES = {
         'project_prefix': 'kin-viewer-overlay-units-ci-',
         # Dispatch only (Focused integration): a square-pixel CT with a DICOM overlay plane drawn where it is, turned off and on and
         # measured on; overlay planes on non-square pixels or with a short answer left out with the Length still drawn; a palette
-        # colour image drawn without an error; a Freehand ROI's perimeter and length in mm at any zoom, and its own words on an
-        # image without pixel spacing; the history panel's saved-item count after a Save and a Delete, on a real stack. Seven
-        # cases; the single-suite cap is a hang ceiling, not an estimate.
+        # colour image drawn without an error; a Freehand ROI's perimeter and length in mm at any zoom, and in px (area px²) on an
+        # image without pixel spacing; the history panel's saved-item count after a Save and a Delete; an Ellipse ROI on a CT that
+        # leaves Rescale Type out drawn, saved, reopened and put in a manual SR in HU, on a real stack. Eight cases; the
+        # single-suite cap is a hang ceiling, not an estimate.
         'suite_timeout': 900,
         'suites': (('e2e/test_viewer_overlay_units.py', 'ViewerOverlayUnitsE2E', 'ci-viewer-overlay-units'),),
     },
