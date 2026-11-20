@@ -23,32 +23,88 @@ body { margin: 0; background: #111; font-family: sans-serif; }
 .viewport-element canvas, .viewport-element svg { position: absolute; left: 0; top: 0; width: 200px; height: 150px; }
 .overlay { position: absolute; left: 4px; top: 4px; color: rgb(255, 255, 0); font: bold 28px sans-serif; }
 .action { position: absolute; right: 2px; bottom: 2px; color: rgb(255, 0, 255); font: bold 28px sans-serif; }
+.slice { position: absolute; top: 68px; color: rgb(255, 105, 180); font: bold 14px sans-serif; line-height: 14px; }
+.cover { position: absolute; left: 90px; top: 122px; color: rgb(255, 255, 255); font: bold 16px sans-serif; }
 </style></head><body><div id="root"><div class="kin-ux-toolbar-slot"></div><div id="grid"></div></div></body></html>"""
 
-# Two cells. Each image is one colour with a frame number drawn as a bright square at x = 10 + 15 * frame, y = 50 (a
-# whole series, synBits: six bits at x = 10 + 22 * bit, y = 115); the measurement layer draws a green line across the
-# middle. The cell action button text is not image text.
-# Each cell's viewport behaves as the viewer's stack viewport (Cornerstone 2.2.4 StackViewport) in what an export depends
-# on. getImageIds() is the stack's own list. setImageIdIndex() of the image already asked for does nothing; of another
-# it moves the image number at once, announces the request (PRE_STACK_NEW_IMAGE) inside the call and then loads. A load
-# that is no longer the image asked for when it arrives is dropped. A loaded image is held (getCornerstoneImage),
-# announced (STACK_NEW_IMAGE) and drawn at the next frame (IMAGE_RENDERED). setStack() announces its first request at
-# once and the new stack (VIEWPORT_NEW_IMAGE_SET) only after that load. scroll() moves the scroll target and announces
-# it (STACK_VIEWPORT_SCROLL) at once, but asks for an image not loaded yet 40 ms later. The grid sends its notices a
-# moment after a change, as the viewer's grid service does (setActive places the selection without a notice).
+# Two cells. Each image is one colour (its series': left red, right blue, any other green) with a frame number drawn as
+# a bright square at x = 10 + 15 * frame, y = 50 (a whole series, synBits: six bits at x = 10 + 22 * bit, y = 115); the
+# measurement layer draws a green line across the middle. The cell action button text is not image text.
+# Cornerstone's cache, image loader and load queue and each cell's stack viewport behave as the viewer's (Cornerstone
+# 2.2.4) in what an export depends on.
+#   The loader (loadAndCacheImage) gives the load the cache already holds for an image, else starts one and puts it in
+#   the cache; a load that ended is in the cache as loaded, a failed one is taken out.
+#   The queue (imageLoadPoolManager) runs a request inside addRequest when it has room, else when room comes.
+#   getImageIds() is the stack's own list. setImageIdIndex() of the image already asked for does nothing; of another it
+#   moves the image number at once, announces the request (PRE_STACK_NEW_IMAGE) inside the call and hands it to the
+#   queue; the request loads through the loader. When the image arrives it is dropped if the viewport is on another
+#   image number (CPU rendering looks at the number only: an image of a stack since replaced lands on the new stack at
+#   the same number, and a dropped request never answers) or the image is not at that number of the stack as it is now
+#   (GPU). A kept image is held (getCornerstoneImage), announced (STACK_NEW_IMAGE) and drawn at the next frame
+#   (IMAGE_RENDERED). setStack() announces its first request at once and the new stack (VIEWPORT_NEW_IMAGE_SET) only
+#   after that load. scroll() moves the scroll target and announces it (STACK_VIEWPORT_SCROLL) at once, but asks for an
+#   image not loaded yet 40 ms later.
+# The viewer's slice number and scroll bar follow STACK_VIEWPORT_SCROLL only, a frame later (a pink mark at
+# x = 10 + 15 * number, y = 68; synScrollbar), and its "Loading" cover rises 50 ms after a scroll unless the image came.
+# The grid sends its notices a moment after a change, as the viewer's grid service does (setActive places the selection
+# without a notice). The Cine service keeps each cell's state and tells of a play and a stop as they are made.
 SETUP = """() => {
-  const colours = { left: [200, 0, 0], right: [0, 0, 200] };
+  const colours = { left: [200, 0, 0], right: [0, 0, 200], other: [0, 120, 0] };
   const TEXT_COLOURS = ['rgb(0, 255, 255)', 'rgb(255, 255, 0)', 'rgb(255, 128, 0)', 'rgb(128, 255, 128)'];
   window.synNotes = []; window.synInteractions = []; window.synBusy = false;
-  // Loads: how long image `index` of a cell takes (seen: it loaded before); which images fail to load (the image number
-  // moves, the image never arrives) and whether the failure is announced; every request made; and whether a load that
-  // was dropped never answers (as with CPU rendering).
+  // Loads: how long image `index` of a series takes (seen: it loaded before); which images fail to load, and whether
+  // the failure is told (the load is refused) or the load never answers; every request a viewport made and every load
+  // the loader started; whether a request dropped by a GPU viewport never answers either; whether the cache has no
+  // room for an image put back into it.
   window.synLoadMs = (id, index, seen) => 5; window.synFailAt = new Set(); window.synFailNotice = false;
-  window.synRequests = []; window.synNeverAnswers = false;
+  window.synRequests = []; window.synLoads = []; window.synNeverAnswers = false; window.synNoRoom = false;
+  window.synScrollbar = {}; window.synCover = { raised: 0, up: false };
   const counts = window.synCounts || { left: 4, right: 4 };
   const fire = (target, type, detail) => target.dispatchEvent(new CustomEvent(type, { detail, cancelable: true }));
-  const loader = new EventTarget(), cached = new Set(), instances = new Map(), numbers = new Map();
+  const loader = new EventTarget(), instances = new Map(), numbers = new Map(), owners = new Map(), seen = new Set();
   const sets = new Map(), viewports = new Map();
+  // Which series an image is of and its number in it.
+  const where = imageId => owners.has(imageId) ? [owners.get(imageId), numbers.get(imageId)]
+    : [String(imageId).split(':')[1] || 'other', Number(String(imageId).split(':')[2]) || 0];
+  const entries = new Map();
+  const cache = {
+    getImage: imageId => entries.get(imageId)?.image,
+    getImageLoadObject: imageId => entries.get(imageId)?.imageLoadObject,
+    isLoaded: imageId => !!entries.get(imageId)?.loaded,
+    putImageSync(imageId, image) {
+      if (entries.has(imageId)) throw new Error('putImageSync: imageId already in cache');
+      if (window.synNoRoom) throw new Error('CACHE_SIZE_EXCEEDED');
+      entries.set(imageId, { imageLoadObject: { promise: Promise.resolve(image) }, loaded: true, image });
+    } };
+  // The cache lets go of an image (it needed the room).
+  window.synDecache = imageId => entries.delete(imageId);
+  const imageLoader = { loadAndCacheImage(imageId, options) {
+    const held = entries.get(imageId);
+    if (held?.imageLoadObject) return held.imageLoadObject.promise;
+    synLoads.push(imageId);
+    const [id, index] = where(imageId);
+    const promise = new Promise((resolve, reject) => setTimeout(() => {
+      if (!synFailAt.has(id + ':' + index)) resolve({ imageId });
+      else if (synFailNotice) { const error = new Error('load failed'); fire(loader, 'CORNERSTONE_IMAGE_LOAD_FAILED', { imageId, error }); reject(error); }
+    }, synLoadMs(id, index, seen.has(imageId))));
+    const entry = { imageLoadObject: { promise }, loaded: false, image: undefined };
+    entries.set(imageId, entry);
+    promise.then(image => { seen.add(imageId); if (entries.get(imageId) === entry) { entry.loaded = true; entry.image = image; } },
+      () => { if (entries.get(imageId) === entry) entries.delete(imageId); });
+    return promise;
+  } };
+  const pool = { maxNumRequests: { interaction: 10 }, numRequests: { interaction: 0 }, grabDelay: 5, waiting: [], timer: 0,
+    addRequest(requestFn, type, additionalDetails, priority = 0) {
+      this.waiting.push({ requestFn, type, additionalDetails, priority }); this.waiting.sort((a, b) => a.priority - b.priority); this.startGrabbing(); },
+    filterRequests(keep) { this.waiting = this.waiting.filter(keep); },
+    startGrabbing() {
+      while (this.numRequests.interaction < this.maxNumRequests.interaction && this.waiting.length) {
+        const next = this.waiting.shift(); this.numRequests.interaction++;
+        let result; try { result = next.requestFn(); } catch (_) {}
+        if (result?.finally) result.finally(() => { this.numRequests.interaction--; this.startAgain(); }); else this.numRequests.interaction--;
+      } },
+    startAgain() { if (!this.timer) this.timer = setTimeout(() => { this.timer = 0; this.startGrabbing(); }, this.grabDelay); } };
+  window.synPool = pool;
   for (const id of ['left', 'right']) {
     const pane = document.createElement('div'); pane.dataset.cy = 'viewport-pane';
     const element = document.createElement('div'); element.className = 'viewport-element';
@@ -59,25 +115,30 @@ SETUP = """() => {
     for (const [k, v] of Object.entries({ x1: 0, y1: 100, x2: 200, y2: 100, stroke: 'rgb(0, 255, 0)', 'stroke-width': 6 })) line.setAttribute(k, v);
     svg.append(line); element.append(canvas, svg);
     const text = document.createElement('div'); text.className = 'overlay'; text.textContent = 'SYN ' + id.toUpperCase();
+    const slice = document.createElement('div'); slice.className = 'slice'; slice.textContent = '\\u25A0'; slice.style.left = (10 + 15 * 1) + 'px';
+    const cover = document.createElement('div'); cover.className = 'cover'; cover.textContent = 'Loading'; cover.hidden = true;
     const action = document.createElement('button'); action.className = 'action'; action.textContent = 'XX';
-    pane.append(element, text, action); document.getElementById('grid').append(pane);
+    pane.append(element, text, slice, cover, action); document.getElementById('grid').append(pane);
     const series = '1.2.3.' + (id === 'left' ? 1 : 2);
     const imageIds = Array.from({ length: counts[id] }, (_, k) => window.synImageId ? synImageId(id, k) : 'syn:' + id + ':' + k);
-    imageIds.forEach((imageId, k) => { numbers.set(imageId, k);
+    imageIds.forEach((imageId, k) => { numbers.set(imageId, k); owners.set(imageId, id);
       instances.set(imageId, { StudyInstanceUID: '1.2.3', SeriesInstanceUID: series, SOPInstanceUID: series + '.' + (k + 1) }); });
     sets.set('set-' + id, { displaySetInstanceUID: 'set-' + id, StudyInstanceUID: '1.2.3', SeriesInstanceUID: series,
       images: imageIds.map(imageId => ({ imageId, SOPInstanceUID: instances.get(imageId).SOPInstanceUID })) });
+    const first = { imageId: imageIds[1] };
+    entries.set(imageIds[1], { imageLoadObject: { promise: Promise.resolve(first) }, loaded: true, image: first }); seen.add(imageIds[1]);
     const view = { id, type: 'stack', element, canvas, imageIds, currentImageIdIndex: 1, targetImageIdIndex: 1,
-      csImage: { imageId: imageIds[1] }, viewportStatus: 'rendered', stackInvalidated: false, frame: 0, debounced: 0,
+      csImage: first, viewportStatus: 'rendered', stackInvalidated: false, frame: 0, debounced: 0, useCPURendering: !!window.synCPU,
       getImageIds() { return this.imageIds; },
       getCurrentImageIdIndex() { return this.currentImageIdIndex; },
       getTargetImageIdIndex() { return this.targetImageIdIndex; },
       getCurrentImageId() { return this.imageIds[this.currentImageIdIndex]; },
       getCornerstoneImage() { return this.csImage; },
+      getLoaderImageOptions(imageId) { return { useRGBA: false, priority: 5, requestType: 'interaction', additionalDetails: { imageId, imageIdIndex: this.imageIds.indexOf(imageId) } }; },
       // The image the viewport holds is drawn at the next frame, and the draw is announced.
       paint() {
-        const drawn = numbers.get(this.csImage.imageId) ?? 0;
-        const c = canvas.getContext('2d'); c.fillStyle = 'rgb(' + colours[id].join(',') + ')'; c.fillRect(0, 0, 400, 300);
+        const [of, drawn] = where(this.csImage.imageId);
+        const c = canvas.getContext('2d'); c.fillStyle = 'rgb(' + (colours[of] || colours.other).join(',') + ')'; c.fillRect(0, 0, 400, 300);
         c.fillStyle = 'rgb(255, 255, 255)';
         if (window.synBits) { for (let bit = 0; bit < 6; bit++) if (drawn >> bit & 1) c.fillRect((10 + 22 * bit) * 2, 115 * 2, 14 * 2, 14 * 2); }
         else c.fillRect((10 + 15 * drawn) * 2, 50 * 2, 10 * 2, 10 * 2);
@@ -92,16 +153,17 @@ SETUP = """() => {
       load(imageId, imageIdIndex) {
         fire(element, 'CORNERSTONE_PRE_STACK_NEW_IMAGE', { imageId, imageIdIndex, viewportId: id });
         synRequests.push([id, imageIdIndex]);
-        return new Promise(resolve => setTimeout(resolve, synLoadMs(id, imageIdIndex, cached.has(imageId)))).then(() => {
-          if (synFailAt.has(id + ':' + imageIdIndex)) {
-            if (synFailNotice) fire(loader, 'CORNERSTONE_IMAGE_LOAD_ERROR', { imageId, imageIdIndex, error: new Error('load failed') });
-            return imageId;
-          }
-          cached.add(imageId);
-          if (this.currentImageIdIndex !== this.imageIds.indexOf(imageId)) return synNeverAnswers ? new Promise(() => {}) : imageId;
-          this.csImage = { imageId };
-          fire(element, 'CORNERSTONE_STACK_NEW_IMAGE', { imageId, imageIdIndex, viewportId: id });
-          this.render(); return imageId;
+        const cpu = this.useCPURendering;
+        return new Promise((resolve, reject) => {
+          const arrived = image => {
+            if (this.currentImageIdIndex !== (cpu ? imageIdIndex : this.imageIds.indexOf(imageId))) { if (!cpu && !synNeverAnswers) resolve(imageId); return; }
+            this.csImage = image;
+            fire(element, 'CORNERSTONE_STACK_NEW_IMAGE', { image, imageId, imageIdIndex, viewportId: id });
+            this.render(); resolve(imageId);
+          };
+          const refused = error => { fire(loader, 'CORNERSTONE_IMAGE_LOAD_ERROR', { imageId, imageIdIndex, error }); if (cpu) reject(error); else resolve(imageId); };
+          pool.addRequest(() => imageLoader.loadAndCacheImage(imageId, cpu ? { useRGBA: true, requestType: 'interaction' } : this.getLoaderImageOptions(imageId))
+            .then(arrived, refused), 'interaction', cpu ? { imageId, imageIdIndex } : { imageId }, -5);
         });
       },
       setImageIdIndex(index) {
@@ -118,15 +180,23 @@ SETUP = """() => {
       scroll(delta, debounce = true) {
         const before = this.targetImageIdIndex, next = Math.min(this.imageIds.length - 1, Math.max(0, before + delta));
         this.targetImageIdIndex = next;
-        if (cached.has(this.imageIds[next]) || !debounce) this.setImageIdIndex(next);
+        if (cache.isLoaded(this.imageIds[next]) || !debounce) this.setImageIdIndex(next);
         else { clearTimeout(this.debounced); this.debounced = setTimeout(() => this.setImageIdIndex(next), 40); }
         if (next !== before) fire(element, 'CORNERSTONE_STACK_VIEWPORT_SCROLL', { newImageIdIndex: next, imageId: this.imageIds[next], direction: delta });
       } };
-    cached.add(imageIds[1]); view.paint(); viewports.set(id, view);
+    // The viewer's slice number, scroll bar and "Loading" cover.
+    let covering = 0; synScrollbar[id] = 1;
+    element.addEventListener('CORNERSTONE_STACK_VIEWPORT_SCROLL', event => {
+      const number = event.detail.newImageIdIndex; synScrollbar[id] = number;
+      requestAnimationFrame(() => { slice.style.left = (10 + 15 * number) + 'px'; });
+      clearTimeout(covering); covering = setTimeout(() => { cover.hidden = false; synCover.up = true; synCover.raised++; }, 50);
+    });
+    element.addEventListener('CORNERSTONE_STACK_NEW_IMAGE', () => { clearTimeout(covering); cover.hidden = true; synCover.up = false; });
+    view.paint(); viewports.set(id, view);
   }
   window.synViewports = viewports; window.synSets = sets; window.synInstances = instances;
-  window.cornerstone = { eventTarget: loader, cache: { getImage: imageId => cached.has(imageId) ? { imageId } : undefined },
-    Enums: { ViewportStatus: { RENDERED: 'rendered', PRE_RENDER: 'preRender', LOADING: 'loading' },
+  window.cornerstone = { eventTarget: loader, cache, imageLoader, imageLoadPoolManager: pool,
+    Enums: { ViewportStatus: { RENDERED: 'rendered', PRE_RENDER: 'preRender', LOADING: 'loading' }, RequestType: { Interaction: 'interaction' },
       Events: { IMAGE_RENDERED: 'CORNERSTONE_IMAGE_RENDERED', PRE_STACK_NEW_IMAGE: 'CORNERSTONE_PRE_STACK_NEW_IMAGE',
         STACK_NEW_IMAGE: 'CORNERSTONE_STACK_NEW_IMAGE', STACK_VIEWPORT_SCROLL: 'CORNERSTONE_STACK_VIEWPORT_SCROLL',
         VIEWPORT_NEW_IMAGE_SET: 'CORNERSTONE_VIEWPORT_NEW_IMAGE_SET', IMAGE_LOAD_ERROR: 'CORNERSTONE_IMAGE_LOAD_ERROR',
@@ -146,6 +216,14 @@ SETUP = """() => {
       setTimeout(() => { told(grid.EVENTS.LAYOUT_CHANGED, { numRows, numCols }); told(grid.EVENTS.GRID_STATE_CHANGED, { state, removedViewportIds: [] }); }, 0); },
     setDisplaySetsForViewport({ viewportId, displaySetInstanceUIDs }) { state.viewports.get(viewportId).displaySetInstanceUIDs = displaySetInstanceUIDs;
       setTimeout(() => told(grid.EVENTS.GRID_STATE_CHANGED, { state, viewports: [state.viewports.get(viewportId)], removedViewportIds: [] }), 0); } };
+  // The Cine service: setCine keeps a cell's state and tells nobody; playClip and stopClip tell as they are called.
+  const cines = {}, cineHeard = [];
+  const cine = { EVENTS: { CINE_STATE_CHANGED: 'event::cineStateChanged' },
+    getState: () => ({ isCineEnabled: true, cines }),
+    setCine({ id, frameRate, isPlaying }) { cines[id] = { ...cines[id], ...(frameRate === undefined ? {} : { frameRate }), ...(isPlaying === undefined ? {} : { isPlaying }) }; },
+    playClip(element, options) { cineHeard.slice().forEach(fn => fn({ isPlaying: true })); },
+    stopClip(element, options) { cineHeard.slice().forEach(fn => fn({ isPlaying: false })); },
+    subscribe(name, fn) { cineHeard.push(fn); return { unsubscribe() { const at = cineHeard.indexOf(fn); if (at >= 0) cineHeard.splice(at, 1); } }; } };
   window.synButtons = {
     WindowLevel: { id: 'WindowLevel', uiType: 'ohif.radioGroup', props: { label: 'Window / Level', commands: 'setToolActiveToolbar' } },
     Capture: { id: 'Capture', uiType: 'ohif.radioGroup', props: { label: 'Capture', commands: 'showDownloadViewportModal' } },
@@ -158,7 +236,7 @@ SETUP = """() => {
     viewportGridService: grid,
     cornerstoneViewportService: { getCornerstoneViewport: id => viewports.get(id) },
     displaySetService: { getDisplaySetByUID: uid => sets.get(uid) },
-    cineService: { getState: () => ({ cines: {} }) },
+    cineService: cine,
     uiNotificationService: { show: note => window.synNotes.push(note) },
     toolbarService: {
       EVENTS: { TOOL_BAR_MODIFIED: 'modified' },
@@ -491,6 +569,9 @@ class ViewerExportDOMTest(unittest.TestCase):
                 self.assertFalse(near(rgb.getpixel(((10 + 15 * other + 5) * 2, 55 * 2)), (255, 255, 255)), 'only image %d' % index)
         text = {rgb.getpixel((x, y)) for x in range(8, 240, 2) for y in range(8, 68, 2)}
         self.assertTrue(any(near(c, self.TEXT_COLOURS[index], 60) for c in text), 'the image text of image %d is drawn' % index)
+        # The slice number the viewer shows (the pink mark, which follows the scroll notice) is this image's.
+        mark = lambda k: any(near(rgb.getpixel((x, y)), (255, 105, 180), 70) for x in range(20 + 30 * k, 44 + 30 * k, 2) for y in range(136, 168, 2))
+        self.assertEqual([index], [k for k in range(4) if mark(k)], 'the slice number shown with image %d' % index)
 
     def test_20_save_jpeg_downloads_the_cell_as_a_real_jpeg(self):
         page = self.open()
@@ -524,6 +605,10 @@ class ViewerExportDOMTest(unittest.TestCase):
         page.wait_for_function("before => document.querySelector('.kin-ux-toolbar-settings [role=status]').textContent === before", arg=before)
         self.assertIn('JPEG 만드는 중 4/4 · Esc로 멈춤', page.evaluate("() => synSaid"))
         self.assertEqual('success', page.evaluate("() => synNotes.at(-1).type"))
+        # Back on the reader's image: its pixels, the viewer's scroll bar and where the reader's scrolling stands; the
+        # viewer's "Loading" cover never rose over an image of the export.
+        self.assertEqual([1, 'syn:left:1', 1], page.evaluate(self.SHOWN))
+        self.assertEqual([1, 1, 0], page.evaluate("() => [synScrollbar.left, synViewports.get('left').getTargetImageIdIndex(), synCover.raised]"))
 
     def slow(self, page, ms=150, seen=False):
         # Images of the left cell take `ms` to load: the ones not loaded before, or (seen) every one.
@@ -642,13 +727,20 @@ class ViewerExportDOMTest(unittest.TestCase):
         self.click(page, 'SaveSeriesJPEG')
         self.assertNotIn('진행 중', page.evaluate("() => synNotes.at(-1).message"), 'the export was released')
 
+    # The way back takes `ms`: once the export is past the reader's image the cache lets go of it, has no room to take
+    # the held one back, and loading it again takes that long.
+    SLOW_RETURN = """ms => { const v = synViewports.get('left'), load = synLoadMs;
+      v.element.addEventListener('CORNERSTONE_STACK_NEW_IMAGE', event => {
+        if (event.detail.imageIdIndex !== 2 || synNoRoom) return;
+        synNoRoom = true; synDecache('syn:left:1'); synLoadMs = (id, index, seen) => id === 'left' && index === 1 ? ms : load(id, index, seen); }); }"""
+
     def returning(self, page):
-        # The export has asked for the last image and then for the image the reader was on.
-        page.wait_for_function("() => synRequests.length >= 2 && synRequests.at(-1)[1] === 1 && synRequests.at(-2)[1] === 3", timeout=60000)
+        # The export has shown its last image and is on its way back to the image the reader was on.
+        self.said(page, '돌아가는 중')
 
     def test_28_escape_or_a_viewer_ending_while_it_returns_writes_nothing(self):
         for stop in ["() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))", "() => synToolbar.dispose()"]:
-            page = self.open(); seen = self.downloads(page); self.slow(page, 300, seen=True)
+            page = self.open(); seen = self.downloads(page); page.evaluate(self.SLOW_RETURN, 400)
             self.click(page, 'SaveSeriesJPEG')
             self.returning(page)
             page.evaluate(stop)
@@ -919,9 +1011,7 @@ class ViewerExportDOMTest(unittest.TestCase):
 
     def test_39e_the_same_series_chosen_again_at_the_last_image_is_not_wound_back(self):
         # While the export shows image 40 of 40 the reader picks the same series again, which lands on image 40 too.
-        page = self.series(); seen = self.downloads(page); self.slow(page, 300)
-        self.click(page, 'SaveVideo')
-        self.said(page, '40/40')
+        page = self.series(); seen = self.started(page, 'SaveVideo', at=39, ms=20)
         page.evaluate(self.AGAIN, None)
         page.wait_for_function("() => synNotes.length", timeout=60000)
         page.wait_for_timeout(2500)
@@ -958,9 +1048,19 @@ class ViewerExportDOMTest(unittest.TestCase):
         page.wait_for_timeout(300); self.assertEqual(1, len(seen), 'one file')
 
     # ── A series export's claim on its cell: once the reader acts, the export moves nothing more and writes nothing ──
-    def started(self, page, tool='SaveSeriesJPEG', at='3/4', ms=150):
+    # The export is on image `at` (from 0) of the left cell: the cell shows that image, and it is being made into a
+    # file for the next 1.5 s (the canvas encoder is held back for that one image), so what the reader does now is
+    # done while the cell shows an image the export put there.
+    HOLD = """([nth, ms]) => { const encode = HTMLCanvasElement.prototype.toBlob; let calls = 0;
+      HTMLCanvasElement.prototype.toBlob = function (...args) { if (++calls === nth) setTimeout(() => encode.apply(this, args), ms); else encode.apply(this, args); }; }"""
+
+    def started(self, page, tool='SaveSeriesJPEG', at=2, ms=150):
+        import json
         seen = self.downloads(page); self.slow(page, ms)
-        self.click(page, tool); self.said(page, at)
+        page.evaluate(self.HOLD, [at + 1, 1500])
+        self.click(page, tool)
+        page.wait_for_function("shown => JSON.stringify((%s)()) === shown" % self.SHOWN,
+                               arg=json.dumps([at, 'syn:left:%d' % at, at], separators=(',', ':')), timeout=60000)
         return seen
 
     def left_alone(self, page, seen, shown=None, wait=1500):
@@ -979,11 +1079,11 @@ class ViewerExportDOMTest(unittest.TestCase):
         page.evaluate(self.AGAIN, None)
         self.left_alone(page, seen, [2, 'syn:left:2', 2])
         self.assertIn('바뀌어', page.evaluate("() => synNotes[0].message"))
-        # While the export goes back to the image the reader was on:
-        page = self.open(); seen = self.downloads(page); self.slow(page, 300, seen=True)
+        # While the export goes back to the image the reader was on (that image still loads; the cell is on the last one):
+        page = self.open(); seen = self.downloads(page); page.evaluate(self.SLOW_RETURN, 400)
         self.click(page, 'SaveSeriesJPEG'); self.returning(page)
         page.evaluate(self.AGAIN, None)
-        self.left_alone(page, seen, [1, 'syn:left:1', 1])
+        self.left_alone(page, seen, [3, 'syn:left:3', 3])
         # While the video file is made (each image takes 0.3 s to decode here), back on the reader's image:
         page = self.open(before="""() => { const decode = window.createImageBitmap;
           window.createImageBitmap = (...args) => new Promise(r => setTimeout(r, 300)).then(() => decode(...args)); }""")
@@ -992,9 +1092,9 @@ class ViewerExportDOMTest(unittest.TestCase):
         page.evaluate(self.AGAIN.replace('1000', '4000'), None)
         self.left_alone(page, seen, [1, 'syn:left:1', 1], wait=5000)
 
-    def test_51_a_wheel_step_whose_image_is_asked_for_a_moment_later_ends_the_claim_at_once(self):
-        # The reader's wheel step names the image the export happens to be loading: the stack announces the scroll now and
-        # would ask for the image 40 ms later, which then is no request at all. The cell is the reader's from the scroll.
+    def test_51_a_wheel_step_that_asks_for_no_image_ends_the_claim_at_once(self):
+        # The reader's wheel step names the image the export happens to show: the stack announces the scroll and asks for
+        # nothing, as the cell is on that image number already. The cell is the reader's from the scroll.
         page = self.open(); seen = self.started(page)
         page.evaluate("() => { synViewports.get('left').scroll(1); window.synAfter = synRequests.length; }")
         self.left_alone(page, seen, [2, 'syn:left:2', 2])
@@ -1050,29 +1150,43 @@ class ViewerExportDOMTest(unittest.TestCase):
             self.assertEqual(['error'], page.evaluate("() => synNotes.map(n => n.type)"), act)
             self.assertIn('보이지 않아', page.evaluate("() => synNotes[0].message"), act)
 
-    def test_56_a_return_that_does_not_show_the_readers_image_writes_nothing_and_says_so(self):
-        # The image number goes back to the reader's image but that image does not arrive: the last image stays on the cell.
-        page = self.open(); seen = self.started(page)
-        page.evaluate("() => { synFailAt.add('left:1'); KinViewerExport.options.loadTimeout = 400; }")
+    # Once the export shows image `past`, the cache lets go of the reader's image `start`, which then cannot be loaded again.
+    GONE = """([start, past]) => { const v = synViewports.get('left'), id = 'syn:left:' + start; let done = false;
+      v.element.addEventListener('CORNERSTONE_STACK_NEW_IMAGE', event => {
+        if (done || event.detail.imageIdIndex !== past) return;
+        done = true; synDecache(id); synFailAt.add('left:' + start); synFailNotice = true; window.synGoneAt = synLoads.length; }); }"""
+
+    def test_56_the_way_back_to_the_readers_image_does_not_depend_on_loading_it_again(self):
+        # While the export ran the cache let go of the reader's image and it cannot be loaded again: the image the cell held
+        # at the start goes back on it. The file is whole and the reader's image is on the cell: its number, the image and
+        # the pixels. Also when the reader's image is the last one of the series.
+        for start, past in [(1, 2), (3, 0)]:
+            page = self.open()
+            if start != 1:
+                page.evaluate("start => synViewports.get('left').scroll(start - 1)", start)
+                page.wait_for_function("shown => JSON.stringify((%s)()) === shown" % self.SHOWN, arg='[%d,"syn:left:%d",%d]' % (start, start, start))
+            page.evaluate(self.GONE, [start, past])
+            with page.expect_download() as saved:
+                self.click(page, 'SaveSeriesJPEG')
+            archive = self.archive(saved.value)
+            self.assertEqual(4, len(archive.namelist()))
+            for index, name in enumerate(archive.namelist()): self.assert_frame(self.image(archive.read(name)), index)
+            page.wait_for_function("() => synNotes.some(n => n.type === 'success')")
+            self.assertEqual([start, 'syn:left:%d' % start, start], page.evaluate(self.SHOWN), start)
+            self.assertEqual(start, page.evaluate("() => synScrollbar.left"), start)
+            self.assertEqual([], page.evaluate("start => synLoads.slice(synGoneAt).filter(id => id === 'syn:left:' + start)", start), 'no load is asked for')
+        # A cache with no room for even that one image (the viewer could not show it either): the export says it could not
+        # go back and writes nothing; the cell stays on the last image it showed, its number and scroll bar with it.
+        page = self.open(); seen = self.downloads(page)
+        page.evaluate(self.GONE, [1, 2]); page.evaluate("() => { synNoRoom = true; KinViewerExport.options.loadTimeout = 600; }")
+        self.click(page, 'SaveSeriesJPEG')
         page.wait_for_function("() => synNotes.length", timeout=60000)
         page.wait_for_timeout(300)
-        self.assertEqual([1, 'syn:left:3', 3], page.evaluate(self.SHOWN))
-        self.assertEqual([], seen)
         self.assertEqual(['error'], page.evaluate("() => synNotes.map(n => n.type)"))
         self.assertIn('돌아가지 못해', page.evaluate("() => synNotes[0].message"))
-        # The reader's image is the last one, and it does not arrive when the export comes to it: the number is the
-        # reader's from the start to the end, the image is not.
-        page = self.open()
-        page.evaluate("() => synViewports.get('left').setImageIdIndex(3)")
-        page.wait_for_function("shown => JSON.stringify((%s)()) === shown" % self.SHOWN, arg='[3,"syn:left:3",3]')
-        seen = self.started(page)
-        page.evaluate("() => { synFailAt.add('left:3'); KinViewerExport.options.loadTimeout = 400; }")
-        page.wait_for_function("() => synNotes.length", timeout=60000)
-        page.wait_for_timeout(300)
-        self.assertEqual([3, 'syn:left:2', 2], page.evaluate(self.SHOWN))
         self.assertEqual([], seen)
-        self.assertEqual(['error'], page.evaluate("() => synNotes.map(n => n.type)"))
-        self.assertIn('돌아가지 못해', page.evaluate("() => synNotes[0].message"))
+        self.assertEqual([3, 'syn:left:3', 3], page.evaluate(self.SHOWN))
+        self.assertEqual(3, page.evaluate("() => synScrollbar.left"))
 
     def test_57_the_series_and_the_image_are_settled_before_anything_moves(self):
         # The grid names another series for the cell than the one its images are of (it was just given, the images are not there yet).
@@ -1156,6 +1270,235 @@ class ViewerExportDOMTest(unittest.TestCase):
         self.assertTrue(page.evaluate("() => { document.body.classList.add('kin-patient-switching'); return KinViewerExport.moving(); }"))
         page.wait_for_function("() => synNotes.length")
         self.assertFalse(page.evaluate("() => KinViewerExport.moving()"))
+
+    # ── What a series export leaves on the reader's screen, and what it puts in its file ──
+    # The colour of the left cell's image (its series').
+    COLOUR = "() => [...synViewports.get('left').canvas.getContext('2d').getImageData(300, 260, 1, 1).data].slice(0, 3)"
+    FOLLOW = """() => { window.synFollowed = [];
+      document.addEventListener('CORNERSTONE_STACK_NEW_IMAGE', event => { if (event.detail.viewportId === 'left') synFollowed.push(
+        [event.detail.imageId, KinViewerExport.moving('left')]); }, true); }"""
+
+    def test_60_an_image_the_export_wanted_never_lands_on_what_the_reader_opened(self):
+        # CPU rendering takes an arriving image by its image number alone. The export wants image 1 of 4 of series A (it
+        # still loads) when the reader opens series B in the cell: B's first image is drawn and A's does not land on it.
+        page = self.open(before="() => { window.synCPU = true; }"); seen = self.downloads(page); self.slow(page, 300)
+        self.click(page, 'SaveSeriesJPEG'); self.said(page, '1/4')
+        page.wait_for_timeout(80)
+        page.evaluate("() => { synViewports.get('left').setStack(['syn:other:0', 'syn:other:1'], 0); window.synAfter = synRequests.length; }")
+        self.left_alone(page, seen, [0, 'syn:other:0', 0], wait=900)
+        self.assertTrue(near(page.evaluate(self.COLOUR), (0, 120, 0)), 'the pixels are of the series the reader opened')
+        # The loader's queue is full and the cache has let go of A's image by the time the queue moves again.
+        page = self.open(before="() => { window.synCPU = true; }"); seen = self.downloads(page); self.slow(page, 150)
+        page.evaluate("() => { synPool.numRequests.interaction = synPool.maxNumRequests.interaction; }")
+        self.click(page, 'SaveSeriesJPEG')
+        page.wait_for_function("() => synViewports.get('left').getCurrentImageIdIndex() === 0", timeout=60000)
+        page.evaluate("""() => { synViewports.get('left').setStack(['syn:other:0', 'syn:other:1'], 0); window.synAfter = synRequests.length;
+          synDecache('syn:left:0'); synPool.numRequests.interaction = 0; synPool.startGrabbing(); }""")
+        self.left_alone(page, seen, [0, 'syn:other:0', 0], wait=900)
+        self.assertTrue(near(page.evaluate(self.COLOUR), (0, 120, 0)), 'the pixels are of the series the reader opened')
+
+    def test_61_nothing_of_the_export_arrives_on_its_cell_after_the_reader_selected_another(self):
+        # What follows a cell's image (Manual Sync, position sync) hears of every image that arrives on it. The export
+        # wants an image for the left cell (it still loads) when the reader selects the right cell: no image arrives on
+        # the left cell after that, so nothing is there to follow, and the right cell stays on its image. The reader's
+        # next move of the left cell is the reader's.
+        page = self.open(); page.evaluate(self.FOLLOW); seen = self.downloads(page); self.slow(page, 300)
+        self.click(page, 'SaveSeriesJPEG'); self.said(page, '1/4')
+        page.wait_for_timeout(80)
+        page.evaluate("() => { synFollowed.length = 0; synServices.viewportGridService.setActiveViewportId('right'); window.synAfter = synRequests.length; }")
+        self.left_alone(page, seen, [1, 'syn:left:1', 1], wait=900)
+        self.assertEqual([], page.evaluate("() => synFollowed"))
+        self.assertEqual(1, page.evaluate("() => synViewports.get('right').getCurrentImageIdIndex()"))
+        page.evaluate("() => synViewports.get('left').setImageIdIndex(2)")
+        page.wait_for_function("() => synFollowed.length")
+        self.assertEqual([['syn:left:2', False]], page.evaluate("() => synFollowed"))
+
+    def test_62_a_cell_that_does_not_show_its_stack_one_image_at_a_time_is_refused(self):
+        # Navigate's Tile and Unfolded lay the images out over the cell; Tomo's Slab draws the mean of several slices
+        # over each slice a moment after it. Each module says so for its own cells.
+        views = [("window.kinNavigate = { laid: id => id === 'left' ? 'tile' : null }", 'Stack 보기에서 내보내세요'),
+                 ("window.kinNavigate = { laid: id => id === 'left' ? 'unfolded' : null }", 'Folded (Cine) 보기에서 내보내세요'),
+                 ("window.kinMgSlab = { on: id => id === 'left' }", 'Slab Thickness를 1 slice로')]
+        for view, said in views:
+            for tool in ['SaveSeriesJPEG', 'SaveVideo']:
+                page = self.open(); seen = self.downloads(page)
+                page.evaluate("() => { " + view + "; }")
+                self.click(page, tool)
+                page.wait_for_function("() => synNotes.length")
+                page.wait_for_timeout(300)
+                self.assertEqual(['warning'], page.evaluate("() => synNotes.map(n => n.type)"), view)
+                self.assertIn(said, page.evaluate("() => synNotes[0].message"), view)
+                self.assertEqual([[], []], [seen, page.evaluate("() => synRequests")], view)
+        # Chosen while the export runs: no file.
+        for view, said in views:
+            page = self.open(); seen = self.started(page)
+            page.evaluate("() => { " + view + "; }")
+            page.wait_for_function("() => synNotes.length", timeout=60000)
+            page.wait_for_timeout(500)
+            self.assertEqual(['error'], page.evaluate("() => synNotes.map(n => n.type)"), view)
+            self.assertIn(said, page.evaluate("() => synNotes[0].message"), view)
+            self.assertEqual([], seen, view)
+        # Another cell laid out is no matter.
+        page = self.open()
+        page.evaluate("() => { window.kinNavigate = { laid: id => id === 'right' ? 'tile' : null }; window.kinMgSlab = { on: id => id === 'right' }; }")
+        with page.expect_download() as saved:
+            self.click(page, 'SaveSeriesJPEG')
+        self.assertEqual(4, len(self.archive(saved.value).namelist()))
+
+    def test_63_a_series_file_holds_the_image_and_its_marks_not_another_picture_standing_in_the_cell(self):
+        # Another picture stands in the cell on a canvas of its own (a magnifier, tiles): it is not the series image. The
+        # breast outline, drawn over the image on its own canvas, is a mark of the image.
+        page = self.open()
+        page.evaluate("""() => { const v = synViewports.get('left');
+          const other = document.createElement('canvas'); other.width = 80; other.height = 60;
+          other.style.cssText = 'left:120px;top:110px;width:40px;height:30px';
+          const o = other.getContext('2d'); o.fillStyle = 'rgb(255, 0, 255)'; o.fillRect(0, 0, 80, 60);
+          const outline = document.createElement('canvas'); outline.className = 'kin-mg-outline'; outline.width = 400; outline.height = 300;
+          const g = outline.getContext('2d'); g.fillStyle = 'rgb(232, 197, 71)'; g.fillRect(330, 20, 60, 20);
+          v.element.append(other, outline); }""")
+        with page.expect_download() as saved:
+            self.click(page, 'SaveSeriesJPEG')
+        archive = self.archive(saved.value)
+        self.assertEqual(4, len(archive.namelist()))
+        for index, name in enumerate(archive.namelist()):
+            rgb = self.image(archive.read(name)).convert('RGB')
+            self.assert_frame(rgb, index)
+            self.assertTrue(near(rgb.getpixel((280, 250)), (200, 0, 0)), 'the image, not the other picture: %s' % (rgb.getpixel((280, 250)),))
+            self.assertTrue(near(rgb.getpixel((360, 30)), (232, 197, 71)), 'the outline: %s' % (rgb.getpixel((360, 30)),))
+
+    def test_64_a_readers_image_that_cannot_be_seen_when_the_export_is_back_on_it_publishes_nothing(self):
+        # The export is back on the reader's image, but the viewer has hidden the cell's canvases meanwhile (as it does
+        # when the exam in the window is no longer the one shown): the number and the image are right, the reader does
+        # not see them.
+        for tool in ['SaveSeriesJPEG', 'SaveVideo']:
+            page = self.open(); seen = self.downloads(page)
+            page.evaluate("""() => { const v = synViewports.get('left'); let last = false;
+              v.element.addEventListener('CORNERSTONE_STACK_NEW_IMAGE', event => {
+                if (event.detail.imageIdIndex === 3) last = true;
+                else if (last && event.detail.imageIdIndex === 1) for (const canvas of v.element.querySelectorAll('canvas')) canvas.style.visibility = 'hidden'; }); }""")
+            self.click(page, tool)
+            page.wait_for_function("() => synNotes.length", timeout=60000)
+            page.wait_for_timeout(1500)
+            self.assertEqual(['error'], page.evaluate("() => synNotes.map(n => n.type)"), tool)
+            self.assertIn('보이지 않아', page.evaluate("() => synNotes[0].message"), tool)
+            self.assertEqual([], seen, tool)
+
+    def test_65_cine_started_in_the_cell_and_stopped_again_ends_the_claim(self):
+        # Cine is started in the cell and stopped before it moved an image: when the export next looks, nothing plays.
+        # The viewer's play button sets the cell playing and asks the Cine service to play (playClip); a range or a back
+        # and forth play is the viewer's own playClip in front of the service's, which never starts the service's play; a
+        # menu or key sets the state alone (setCine).
+        slow = """() => { const decode = window.createImageBitmap;
+          window.createImageBitmap = (...args) => new Promise(r => setTimeout(r, 300)).then(() => decode(...args)); }"""
+        own = """() => { const c = synServices.cineService, stop = c.stopClip;
+          c.playClip = function (element, options) { return stop.call(this, element, options); }; }"""
+        acts = [(None, "c.getState().cines.left = { isPlaying: true }; c.playClip(v.element, { framesPerSecond: 24, viewportId: 'left' }); "
+                       "c.getState().cines.left = { isPlaying: false }; c.stopClip(v.element, { viewportId: 'left' })"),
+                (own, "c.getState().cines.left = { isPlaying: true }; c.playClip(v.element, { framesPerSecond: 24, viewportId: 'left' }); "
+                      "c.getState().cines.left = { isPlaying: false }; c.stopClip(v.element, { viewportId: 'left' })"),
+                (None, "c.setCine({ id: 'left', isPlaying: true }); c.setCine({ id: 'left', isPlaying: false })")]
+        for product, act in acts:
+            # While the video file is made:
+            page = self.open(before=slow); seen = self.downloads(page)
+            if product: page.evaluate(product)
+            page.evaluate("() => { const c = synServices.cineService; window.synCine = [c.playClip, c.setCine]; }")
+            self.click(page, 'SaveVideo'); self.said(page, '동영상 파일 만드는 중 2/4')
+            page.evaluate("() => { const c = synServices.cineService, v = synViewports.get('left'); " + act + "; window.synAfter = synRequests.length; }")
+            self.left_alone(page, seen, [1, 'syn:left:1', 1])
+            self.assertEqual(['warning'], page.evaluate("() => synNotes.map(n => n.type)"), act)
+            self.assertIn('바뀌어', page.evaluate("() => synNotes[0].message"), act)
+            self.assertEqual([True, True], page.evaluate("() => { const c = synServices.cineService; return [c.playClip === synCine[0], c.setCine === synCine[1]]; }"),
+                             'the Cine service is as it was')
+            # While an image is shown for the file:
+            page = self.open()
+            if product: page.evaluate(product)
+            seen = self.started(page)
+            page.evaluate("() => { const c = synServices.cineService, v = synViewports.get('left'); " + act + "; window.synAfter = synRequests.length; }")
+            self.left_alone(page, seen, [2, 'syn:left:2', 2])
+        # Cine of another cell is not this cell's.
+        page = self.open(before=slow)
+        with page.expect_download(timeout=60000):
+            self.click(page, 'SaveVideo'); self.said(page, '동영상 파일 만드는 중 2/4')
+            page.evaluate("""() => { const c = synServices.cineService, v = synViewports.get('right');
+              c.setCine({ id: 'right', isPlaying: true }); c.setCine({ id: 'right', isPlaying: false }); }""")
+
+    def test_66_a_list_that_is_not_the_whole_series_each_image_once_is_refused(self):
+        # The cell's stack and the series the grid names for the cell are compared both ways before anything moves.
+        for act in ["v.imageIds = v.imageIds.slice(0, 3)",
+                    "v.imageIds = [...v.imageIds.slice(0, 3), v.imageIds[2]]",
+                    "synSets.get('set-left').images.push({ SOPInstanceUID: '1.2.3.1.99' })",
+                    "synSets.get('set-left').images = null"]:
+            for tool in ['SaveSeriesJPEG', 'SaveVideo']:
+                page = self.open(); seen = self.downloads(page)
+                page.evaluate("() => { const v = synViewports.get('left'); " + act + "; }")
+                self.click(page, tool)
+                page.wait_for_function("() => synNotes.length", timeout=60000)
+                page.wait_for_timeout(300)
+                self.assertEqual(['error'], page.evaluate("() => synNotes.map(n => n.type)"), act)
+                self.assertIn('시리즈를 확인하지 못해', page.evaluate("() => synNotes[0].message"), act)
+                self.assertEqual([[], []], [seen, page.evaluate("() => synRequests")], act)
+        # A multi-frame file holds all its frames; a set laid over the series (no images of its own) is beside the point.
+        before = """() => { window.synImageId = (id, k) => id === 'left'
+          ? 'wadors:/dicom-web/studies/1.2.3/series/1.2.3.1/instances/1.2.3.1.9/frames/' + (k + 1) : 'syn:' + id + ':' + k; }"""
+        page = self.open(before=before)
+        page.evaluate("""() => { for (const imageId of synViewports.get('left').getImageIds()) synInstances.get(imageId).SOPInstanceUID = '1.2.3.1.9';
+          synSets.get('set-left').images = [{ SOPInstanceUID: '1.2.3.1.9', NumberOfFrames: 4 }]; synSets.set('laid-over', { displaySetInstanceUID: 'laid-over' });
+          synServices.viewportGridService.getState().viewports.get('left').displaySetInstanceUIDs = ['set-left', 'laid-over']; }""")
+        with page.expect_download() as saved:
+            self.click(page, 'SaveSeriesJPEG')
+        archive = self.archive(saved.value)
+        self.assertEqual(4, len(archive.namelist()))
+        for index, name in enumerate(archive.namelist()): self.assert_frame(self.image(archive.read(name)), index)
+
+    def test_67_a_wheel_step_made_just_before_is_where_the_export_goes_back_to(self):
+        # The reader wheels from image 2 to image 1, which is asked for 40 ms later, and starts the export within that
+        # time: the export waits for the step, and goes back to image 1 at its end.
+        page = self.open()
+        with page.expect_download() as saved:
+            page.evaluate("""() => { synViewports.get('left').scroll(-1);
+              document.querySelector('.kin-ux-toolbar [data-tool="SaveSeriesJPEG"]').click(); }""")
+        archive = self.archive(saved.value)
+        self.assertEqual(4, len(archive.namelist()))
+        for index, name in enumerate(archive.namelist()): self.assert_frame(self.image(archive.read(name)), index)
+        page.wait_for_function("() => synNotes.some(n => n.type === 'success')")
+        self.assertEqual([0, 'syn:left:0', 0], page.evaluate(self.SHOWN))
+        self.assertEqual([0, 0], page.evaluate("() => [synViewports.get('left').getTargetImageIdIndex(), synScrollbar.left]"))
+        # The cell was put on the first image without a scroll (the viewer's slice number still says image 2): the first
+        # image of the file carries its own number, like every other, and so does the cell at the end.
+        page = self.open()
+        page.evaluate("() => synViewports.get('left').setImageIdIndex(0)")
+        page.wait_for_function("shown => JSON.stringify((%s)()) === shown" % self.SHOWN, arg='[0,"syn:left:0",0]')
+        self.assertEqual(1, page.evaluate("() => synScrollbar.left"))
+        with page.expect_download() as saved:
+            self.click(page, 'SaveSeriesJPEG')
+        archive = self.archive(saved.value)
+        self.assertEqual(4, len(archive.namelist()))
+        for index, name in enumerate(archive.namelist()): self.assert_frame(self.image(archive.read(name)), index)
+        page.wait_for_function("() => synNotes.some(n => n.type === 'success')")
+        self.assertEqual([0, 'syn:left:0', 0], page.evaluate(self.SHOWN))
+        self.assertEqual(0, page.evaluate("() => synScrollbar.left"))
+        # A scroll target left behind by a move made without scrolling is no step still to come: the export starts.
+        page = self.open()
+        page.evaluate("() => { synViewports.get('left').targetImageIdIndex = 3; }")
+        with page.expect_download() as saved:
+            self.click(page, 'SaveSeriesJPEG')
+        self.assertEqual(4, len(self.archive(saved.value).namelist()))
+        page.wait_for_function("() => synNotes.some(n => n.type === 'success')")
+        self.assertEqual([1, 'syn:left:1', 1], page.evaluate(self.SHOWN))
+
+    def test_68_a_full_load_queue_does_not_hold_the_exports_images_back(self):
+        # Other loads fill the loader's queue for as long as the export runs: its own requests are for images already
+        # loaded and do not wait in it.
+        for cpu in ['false', 'true']:
+            page = self.open(before="() => { window.synCPU = %s; }" % cpu)
+            page.evaluate("() => { synPool.numRequests.interaction = synPool.maxNumRequests.interaction; }")
+            with page.expect_download(timeout=15000) as saved:
+                self.click(page, 'SaveSeriesJPEG')
+            archive = self.archive(saved.value)
+            self.assertEqual(4, len(archive.namelist()), cpu)
+            for index, name in enumerate(archive.namelist()): self.assert_frame(self.image(archive.read(name)), index)
+            page.wait_for_function("() => synNotes.some(n => n.type === 'success')")
+            self.assertEqual([1, 'syn:left:1', 1], page.evaluate(self.SHOWN), cpu)
 
     # ── Captures: captures collect in this window's Captures panel ──
     def panel(self, page):

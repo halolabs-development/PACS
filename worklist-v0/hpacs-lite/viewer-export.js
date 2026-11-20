@@ -137,17 +137,21 @@ window.KinViewerExport = (() => {
         (engine && window.kinViewerContextLoss?.usable?.(engine) === false)) return null;
     return canvas;
   }
+  const HIDDEN = '영상 칸이 보이지 않아 내보내지 못했습니다. 다시 시도하세요.';
   // One canvas for the given cells, at the image canvases' own pixel density. A cell that has no image to show
   // (folded away, hidden, its image canvas gone or hidden) is not drawn as a black picture: nothing is made.
   // `verify` runs in the same moment the pixels are copied (nothing is awaited between them) and stops the copy by throwing.
-  async function render(cells, verify) {
+  // `only` names the canvases of a cell that are drawn (a series export: the image and the marks drawn over it, not
+  // another picture that stands in the cell); without it, every canvas shown.
+  async function render(cells, verify, only) {
     const rects = cells.map(cell => cell.pane.getBoundingClientRect());
     if (cells.some((cell, index) => !rects[index].width || !rects[index].height || !visible(cell.pane) || !imageCanvas(cell, rects[index])))
-      throw new Error('영상 칸이 보이지 않아 내보내지 못했습니다. 다시 시도하세요.');
+      throw new Error(HIDDEN);
     verify?.();
     const region = { left: Math.min(...rects.map(r => r.left)), top: Math.min(...rects.map(r => r.top)) };
     region.width = Math.max(...rects.map(r => r.right)) - region.left; region.height = Math.max(...rects.map(r => r.bottom)) - region.top;
-    const densities = cells.flatMap(cell => [...cell.pane.querySelectorAll('canvas')].filter(visible)
+    const canvases = cell => [...cell.pane.querySelectorAll('canvas')].filter(canvas => visible(canvas) && (!only || only(cell, canvas)));
+    const densities = cells.flatMap(cell => canvases(cell)
       .map(canvas => canvas.width / canvas.getBoundingClientRect().width)).filter(value => Number.isFinite(value) && value > 0);
     const scale = densities.length ? Math.max(...densities) : (window.devicePixelRatio || 1);
     const output = document.createElement('canvas');
@@ -157,7 +161,7 @@ window.KinViewerExport = (() => {
     context.scale(scale, scale);
     // Everything is read from the page before the first await, so one call draws one moment of the cells.
     const layers = cells.map((cell, index) => ({ pane: rects[index], cell,
-      canvases: [...cell.pane.querySelectorAll('canvas')].filter(visible).map(canvas => [canvas, canvas.getBoundingClientRect()]),
+      canvases: canvases(cell).map(canvas => [canvas, canvas.getBoundingClientRect()]),
       // The annotation layer and the Measure menu's own layer (Spine Label, Text, Memo, circles; viewer-features-measure.js).
       svgs: [...cell.pane.querySelectorAll('svg.svg-layer, svg[data-kin-measure-layer]')].filter(visible).map(svg => [svgImage(svg, svg.getBoundingClientRect()), svg.getBoundingClientRect()]) }));
     const frozen = layers.map(layer => layer.canvases.map(([canvas, r]) => {
@@ -257,71 +261,113 @@ window.KinViewerExport = (() => {
   const NOT_BACK = '원래 보던 영상으로 돌아가지 못해 저장하지 않았습니다.';
   const UNSURE = '영상 칸의 시리즈를 확인하지 못해 내보내지 못했습니다. 영상이 모두 표시된 뒤 다시 시도하세요.';
   const STOPPED = '내보내기를 멈췄습니다.';
+  const TILED = 'Tile 보기에서는 시리즈를 내보낼 수 없습니다. Stack 보기에서 내보내세요.';
+  const UNFOLDED = 'Unfolded 보기에서는 시리즈를 내보낼 수 없습니다. Folded (Cine) 보기에서 내보내세요.';
+  const SLABBED = 'Slab을 보는 동안에는 시리즈를 내보낼 수 없습니다. Slab Thickness를 1 slice로 바꾼 뒤 내보내세요.';
   // The image the viewport holds for its canvas. The image number moves before its image arrives, and a failed load can
   // leave the previous image on the canvas at the new number, so the number alone never says what a cell shows.
   const heldImage = viewport => typeof viewport.getCornerstoneImage === 'function' ? viewport.getCornerstoneImage()?.imageId : undefined;
   // The DICOM frame an image id names (WADO-RS `/frames/N`, WADO-URI `frame=N`); a single-frame image is frame 1.
   const frameOf = imageId => { const match = /\/frames\/(\d+)(?:[/?#]|$)/.exec(imageId) || /[?&]frame=(\d+)(?:&|#|$)/.exec(imageId); return match ? Number(match[1]) : 1; };
-  // Whether a series (display set) the grid names for the cell holds this image: its study and series, its SOP instance
-  // and, for a part split from a multi-frame file, its frame (the viewer's own rule, series-split.js, when it is there).
-  function belongs(services, id, imageId) {
-    let meta = null; try { meta = window.cornerstone?.metaData?.get?.('instance', imageId); } catch (_) {}
-    if (!meta?.SOPInstanceUID) return false;
-    const frame = frameOf(imageId), named = services.viewportGridService.getState?.()?.viewports?.get?.(id)?.displaySetInstanceUIDs || [];
-    return named.some(uid => {
+  // Whether the cell's list is a series (display set) the grid names for the cell, whole and once: every image of the
+  // list is one the series holds (its study and series, its SOP instance and frame), none stands twice, and every image
+  // the series holds is in the list. A part split from a multi-frame file holds only the frames it was given (the
+  // viewer's own rule, series-split.js); any other instance holds all its frames. A series that cannot be read is not it.
+  function covers(services, id, ids) {
+    const listed = new Set();
+    for (const imageId of ids) {
+      let meta = null; try { meta = window.cornerstone?.metaData?.get?.('instance', imageId); } catch (_) {}
+      if (typeof meta?.SOPInstanceUID !== 'string' || !meta.SOPInstanceUID) return false;
+      const key = JSON.stringify([meta.StudyInstanceUID, meta.SeriesInstanceUID, meta.SOPInstanceUID, frameOf(imageId)]);
+      if (listed.has(key)) return false;
+      listed.add(key);
+    }
+    const named = services.viewportGridService.getState?.()?.viewports?.get?.(id)?.displaySetInstanceUIDs || [];
+    return listed.size > 0 && named.some(uid => {
       const set = services.displaySetService?.getDisplaySetByUID?.(uid);
-      if (!set || set.StudyInstanceUID !== meta.StudyInstanceUID || set.SeriesInstanceUID !== meta.SeriesInstanceUID) return false;
-      if (!Array.isArray(set.images)) return true;
-      return typeof window.kinSeriesSplitHolds === 'function' ? window.kinSeriesSplitHolds(set, meta.SOPInstanceUID, frame)
-        : set.images.some(image => image?.SOPInstanceUID === meta.SOPInstanceUID);
+      const images = Array.isArray(set?.images) ? set.images : Array.isArray(set?.instances) ? set.instances : null;
+      if (!images) return false;
+      const held = new Set();
+      for (const image of images) {
+        if (typeof image?.SOPInstanceUID !== 'string' || !image.SOPInstanceUID) return false;
+        const part = typeof window.kinSeriesSplitFrame === 'function' ? window.kinSeriesSplitFrame(image) : null;
+        const count = Number.isSafeInteger(Number(image.NumberOfFrames)) && Number(image.NumberOfFrames) > 1 ? Number(image.NumberOfFrames) : 1;
+        for (let frame = part ?? 1; frame <= (part ?? count); frame++) held.add(JSON.stringify([set.StudyInstanceUID, set.SeriesInstanceUID, image.SOPInstanceUID, frame]));
+      }
+      return held.size === listed.size && [...listed].every(key => held.has(key));
     });
   }
+  // Why a cell does not show its stack one image at a time, if so: laid out as tiles (Navigate: Tile, Unfolded) or drawn
+  // as the mean of several slices (Tomo: Slab Thickness). Each of those modules answers for its own cells.
+  const otherView = id => {
+    let laid = null, slab = false;
+    try { laid = window.kinNavigate?.laid?.(id) || null; } catch (_) {}
+    try { slab = window.kinMgSlab?.on?.(id) === true; } catch (_) {}
+    return laid === 'unfolded' ? UNFOLDED : laid ? TILED : slab ? SLABBED : '';
+  };
+  // What a series export draws of its cell: the cell's own image canvas and the marks drawn over it on a canvas of their
+  // own (the breast outline). Another picture standing in the cell (tiles, a magnifier) is not the image.
+  const seriesLayer = (cell, canvas) => canvas === cell.viewport.canvas || canvas.classList.contains('kin-mg-outline');
   // A series export's claim on its cell. Two questions, each answered here and nowhere else, and never by the image
   // number alone:
   //   state()   'own' while this export may still move the cell and publish a file. 'taken' for good from the moment
   //             anything but the export itself asks the cell for an image (the viewport announces every request before
   //             it loads; the one request the export makes is told apart while it makes it), the cell is scrolled or
-  //             given a stack or other series, another cell is selected, the layout or grid changes, or Cine starts:
-  //             even when everything looks the same again later. 'ended' for good when the viewer ends, switches
-  //             patient or the window goes away.
-  //   shows(k)  whether the cell's pixels show image k of the list copied at the start: the viewport finished a draw of
-  //             that image after the last request for an image, and still holds it.
-  // The first image, an image the cell is already on, every image as its pixels are copied and the reader's image when
-  // the export goes back to it all pass shows().
+  //             given a stack or other series, another cell is selected, the layout or grid changes, or Cine is started
+  //             in the cell (however briefly): even when everything looks the same again later. 'ended' for good when
+  //             the viewer ends, switches patient or the window goes away.
+  //   shows(k)  whether the reader sees image k of the list copied at the start in the cell: the viewport finished a draw
+  //             of that image after the last request for an image and still holds it, its own canvas is in the cell,
+  //             shown and sized, and the cell shows its stack one image at a time.
+  // The image the export starts on, every image as its pixels are copied and the reader's image when the export goes
+  // back to it all pass shows().
+  // The cell is asked for an image only once that image's load has ended (the loader alone loads it; the cell is asked
+  // for nothing meanwhile), and the request is run where it is made, on the very load that was waited for: the image is
+  // on the cell within the same task. So no request of the export's is on its way when the reader takes the cell, and
+  // none arrives on what the reader chose.
   function claim(services, live) {
     const target = pin(services, 'image', live);
     if (!target) return null;
-    const grid = services.viewportGridService, cell = target.cells[0], viewport = cell.viewport, element = viewport.element;
+    const grid = services.viewportGridService, cine = services.cineService, cell = target.cells[0], viewport = cell.viewport, element = viewport.element;
     // The stack as it is now: the viewport's own list (a different list later is one more sign of a new stack) and a
     // copy of its order, which is the order of the export to its end.
-    const list = viewport.getImageIds?.() || [], ids = [...list], start = viewport.getCurrentImageIdIndex?.();
+    const list = viewport.getImageIds?.() || [], ids = [...list];
     // Where the reader's scrolling stands. A scroll or a new stack moves it; the export's own requests do not.
-    const aim = () => viewport.getTargetImageIdIndex?.(), aimed = aim();
-    const core = window.cornerstone, names = core?.Enums?.Events || {};
+    const aim = () => viewport.getTargetImageIdIndex?.();
+    const core = window.cornerstone, names = core?.Enums?.Events || {}, cache = core?.cache;
+    const SCROLL = names.STACK_VIEWPORT_SCROLL || 'CORNERSTONE_STACK_VIEWPORT_SCROLL';
     const shape = () => { const now = grid.getState?.() || {};
       return JSON.stringify([grid.getActiveViewportId?.(), now.layout?.numRows, now.layout?.numCols, now.layout?.layoutType, now.viewports?.size]); };
     const pinned = shape(), offs = [];
-    let lost = '', own = null, painted = null, wake = null;
+    // settled: the reader's last move has ended; its image is the one to go back to (start; kept: that image itself).
+    // unsettled: told of each move of the reader's until then. waited: the one image whose load was last waited for (the
+    // export holds on to no other image, so the cache can let go of the ones behind it).
+    let lost = '', settled = false, unsettled = null, start, aimed, kept = null, waited = null, own = null, telling = false, painted = null, wake = null;
+    const playing = () => !!cine?.getState?.()?.cines?.[cell.id]?.isPlaying;
     const lose = how => { if (!lost) lost = how; wake?.(); };
     const state = () => {
       if (!lost) {
         if ((live && !live()) || document.body.classList.contains('kin-patient-switching')) lost = 'ended';
-        else if (!target.same(true) || viewport.getImageIds?.() !== list || aim() !== aimed || shape() !== pinned ||
-            services.cineService?.getState?.()?.cines?.[cell.id]?.isPlaying) lost = 'taken';
+        else if (!target.same(true) || viewport.getImageIds?.() !== list || (settled && aim() !== aimed) || shape() !== pinned || playing()) lost = 'taken';
       }
       return lost || 'own';
     };
-    const shows = k => typeof ids[k] === 'string' && !!ids[k] && viewport.getCurrentImageIdIndex() === k && painted === ids[k] && heldImage(viewport) === ids[k];
+    const drawn = k => typeof ids[k] === 'string' && !!ids[k] && viewport.getCurrentImageIdIndex() === k && painted === ids[k] && heldImage(viewport) === ids[k];
+    // Why the reader does not see the cell's image, if so.
+    const hidden = () => otherView(cell.id) || (visible(cell.pane) && imageCanvas(cell, cell.pane.getBoundingClientRect()) ? '' : HIDDEN);
+    const shows = k => drawn(k) && !hidden();
     const on = (name, heard) => { element.addEventListener(name, heard); offs.push(() => element.removeEventListener(name, heard)); };
-    // Every request for an image, before it loads. What was drawn before it no longer says what the cell shows.
+    // Every request for an image, before it loads. What was drawn before it no longer says what the cell shows. Until the
+    // reader's last move has ended, a request is that move.
     on(names.PRE_STACK_NEW_IMAGE || 'CORNERSTONE_PRE_STACK_NEW_IMAGE', event => {
       painted = null;
       if (own && !own.heard && event.detail?.imageIdIndex === own.index && event.detail?.imageId === ids[own.index]) { own.heard = true; return; }
-      lose('taken');
+      if (settled) lose('taken'); else unsettled?.();
     });
-    // A scroll names its image before the request, which may come a moment later; a new stack is announced once it loaded.
-    for (const name of new Set([names.STACK_VIEWPORT_SCROLL || 'CORNERSTONE_STACK_VIEWPORT_SCROLL', names.STACK_NEW_STACK || 'CORNERSTONE_STACK_NEW_STACK',
-      names.VIEWPORT_NEW_IMAGE_SET || 'CORNERSTONE_VIEWPORT_NEW_IMAGE_SET'])) on(name, () => lose('taken'));
+    // A scroll names its image before the request, which may come a moment later (the export's own notice of the image
+    // it asked for is not a scroll); a new stack is announced once it loaded.
+    on(SCROLL, () => { if (telling) return; if (settled) lose('taken'); else unsettled?.(); });
+    for (const name of new Set([names.STACK_NEW_STACK || 'CORNERSTONE_STACK_NEW_STACK', names.VIEWPORT_NEW_IMAGE_SET || 'CORNERSTONE_VIEWPORT_NEW_IMAGE_SET'])) on(name, () => lose('taken'));
     // A finished draw: the image the viewport held as it drew.
     on(names.IMAGE_RENDERED || 'CORNERSTONE_IMAGE_RENDERED', () => {
       const status = viewport.viewportStatus, done = core?.Enums?.ViewportStatus?.RENDERED || 'rendered';
@@ -336,41 +382,138 @@ window.KinViewerExport = (() => {
       const subscription = name && grid.subscribe?.(name, heard);
       if (subscription) offs.push(() => subscription.unsubscribe?.());
     }
+    // Cine started in this cell is the reader's, also when it is stopped again before it moved an image: a state read
+    // later no longer tells. Every start reaches the Cine service as playClip for the cell (the viewer's play button,
+    // also for a range or back and forth) or as setCine; the service tells of a play once it began.
+    for (const name of ['setCine', 'playClip']) {
+      const inner = cine?.[name];
+      if (typeof inner !== 'function') continue;
+      const had = Object.prototype.hasOwnProperty.call(cine, name);
+      const outer = function (...args) {
+        if (name === 'setCine' ? args[0]?.id === cell.id && args[0]?.isPlaying : args[0] === element || args[1]?.viewportId === cell.id) lose('taken');
+        return inner.apply(this, args);
+      };
+      cine[name] = outer;
+      offs.push(() => { if (cine[name] !== outer) return; if (had) cine[name] = inner; else delete cine[name]; });
+    }
+    const played = cine?.EVENTS?.CINE_STATE_CHANGED && cine.subscribe?.(cine.EVENTS.CINE_STATE_CHANGED, () => { if (playing()) lose('taken'); });
+    if (played) offs.push(() => played.unsubscribe?.());
     const gone = () => lose('ended');
     window.addEventListener('pagehide', gone); offs.push(() => window.removeEventListener('pagehide', gone));
-    // Waits until the cell shows image k. An image the cell is not on is asked for (the export's own request); for one
-    // it is on, a draw is asked for and judged like any other. The wait ends at once when the export is stopped, the
-    // claim is lost or the image fails to load, and at the latest at the load timeout: it never waits for a call to
-    // return, so a load that never answers holds nothing up.
-    function show(k, stopped) {
+    // A wait that ends at once when the export is stopped or the claim is lost, when `look` ends it, and at the latest
+    // at the load timeout: it never waits for a call to return, so a load that never answers holds nothing up.
+    // `look` is given the wait itself: finish(error), later(run, ms) for a timer that dies with the wait, going(), again().
+    function wait(stopped, look) {
       return new Promise((resolve, reject) => {
-        const wanted = ids[k], failures = [names.IMAGE_LOAD_FAILED, names.IMAGE_LOAD_ERROR].filter(Boolean), loader = core?.eventTarget;
-        let over = false;
+        let over = false; const timers = new Set();
         const finish = error => {
           if (over) return;
-          over = true; clearTimeout(timer); if (wake === look) wake = null;
-          failures.forEach(name => loader?.removeEventListener?.(name, failed));
+          over = true; timers.forEach(clearTimeout); if (wake === seeing) wake = null;
           if (error) reject(error); else resolve();
         };
-        const look = () => { if (stopped?.()) finish(new Stopped(STOPPED)); else if (state() !== 'own') finish(changed()); else if (shows(k)) finish(); };
-        // A load that failed for this image (and was not loaded since) ends the wait at once.
-        const failed = notice => { if (notice?.detail?.imageId === wanted && !core?.cache?.getImage?.(wanted)) finish(new Error(NOT_LOADED)); };
-        const timer = setTimeout(() => finish(new Error(NOT_LOADED)), options.loadTimeout);
-        failures.forEach(name => loader?.addEventListener?.(name, failed));
-        wake = look; look();
-        if (over) return;
-        try {
-          if (viewport.getCurrentImageIdIndex() !== k) {
-            // The one request this export makes: the viewport announces it inside this call, and only that announcement is its own.
-            painted = null; own = { index: k, heard: false };
-            let call; try { call = viewport.setImageIdIndex(k); } finally { own = null; }
-            Promise.resolve(call).catch(error => finish(error instanceof Error ? error : new Error(NOT_LOADED)));
-          } else viewport.render?.();
-        } catch (error) { finish(error instanceof Error ? error : new Error(NOT_LOADED)); }
+        const later = (run, ms) => { const timer = setTimeout(() => { timers.delete(timer); if (!over) run(); }, ms); timers.add(timer); };
+        const seeing = () => { if (over) return; if (stopped?.()) finish(new Stopped(STOPPED)); else if (state() !== 'own') finish(changed()); else look(it); };
+        const it = { finish, later, going: () => !over, again: seeing };
+        later(() => finish(new Error(NOT_LOADED)), options.loadTimeout);
+        wake = seeing; seeing();
       });
     }
-    const release = () => { offs.splice(0).forEach(off => off()); target.release(); };
-    return { cells: target.cells, cell, ids, start, state, shows, show, lose, wake: () => wake?.(), release };
+    // Before anything is asked of the cell, the reader's last move ends, and the image it ends on is the reader's image,
+    // the one to go back to. A wheel step names its image at once but may ask for it up to 40 ms later, so a scroll
+    // target that is not the image number may be a step still to come (or be left from a move made without scrolling):
+    // then a timer longer than that delay must pass with no move announced. The image asked for last may still load.
+    function settle(stopped) {
+      let moves = 0, calm = aim() === undefined || aim() === viewport.getCurrentImageIdIndex(), timing = false;
+      unsettled = () => { moves++; calm = false; };
+      return wait(stopped, it => {
+        const at = viewport.getCurrentImageIdIndex();
+        if (calm && heldImage(viewport) === ids[at]) {
+          start = at; aimed = aim(); kept = viewport.getCornerstoneImage?.() || null; settled = true; unsettled = null; it.finish();
+        } else if (!calm && !timing) {
+          timing = true; const seen = moves;
+          it.later(() => { timing = false; if (moves === seen) calm = true; it.again(); }, 100);
+        }
+      }).then(() => start, error => { unsettled = null; throw error; });
+    }
+    // The loader's options for an image, as the cell itself asks for it.
+    const asking = imageId => viewport.useCPURendering ? { useRGBA: true, requestType: core?.Enums?.RequestType?.Interaction || 'interaction' }
+      : viewport.getLoaderImageOptions?.(imageId);
+    // Image k is loaded to its end, and the load the cache holds for it is the very one that was waited for.
+    const ready = k => !!waited?.load && waited.index === k && cache?.getImageLoadObject?.(ids[k]) === waited.load && cache.isLoaded?.(ids[k]) !== false;
+    // Loads image k with the loader alone and gives the load the cache holds for it, once that load has ended.
+    function fetch(k) {
+      const imageId = ids[k];
+      // The reader's image, held since the start, goes back into a cache that let go of it: the way back needs no load.
+      if (k === start && kept?.imageId === imageId && !cache?.getImageLoadObject?.(imageId)) {
+        try { cache.putImageSync(imageId, kept); return Promise.resolve(cache.getImageLoadObject(imageId)); } catch (_) {}
+      }
+      try {
+        const loading = core.imageLoader.loadAndCacheImage(imageId, asking(imageId)), load = cache.getImageLoadObject(imageId);
+        return Promise.resolve(loading).then(() => load);
+      } catch (error) { return Promise.reject(error); }
+    }
+    // The one request this export makes of the cell, for an image whose load has ended. The viewport announces it inside
+    // the call (only that announcement is the export's own) and hands it to the loader's queue, where it could wait
+    // behind other loads and arrive after the reader took the cell. So it is not queued: it runs where it is handed
+    // over, if the cell is still this export's and on this image and the cache still holds the load waited for, and its
+    // image is then on the cell within this task; otherwise it is dropped before a pixel is applied. Returns the
+    // viewport's own answer to the request, or false if it was dropped.
+    function ask(k) {
+      const imageId = ids[k], from = viewport.getCurrentImageIdIndex(), queue = core?.imageLoadPoolManager, add = queue?.addRequest;
+      const had = !!queue && Object.prototype.hasOwnProperty.call(queue, 'addRequest');
+      let dropped = false;
+      if (typeof add === 'function') queue.addRequest = function (run, type, details, ...rest) {
+        if (details?.imageId !== imageId || typeof run !== 'function') return add.call(this, run, type, details, ...rest);
+        if (state() !== 'own' || viewport.getCurrentImageIdIndex() !== k || !ready(k)) { dropped = true; return; }
+        try { Promise.resolve(run()).catch(() => {}); } catch (_) {}
+      };
+      painted = null; own = { index: k, heard: false };
+      let call;
+      try { call = viewport.setImageIdIndex(k); }
+      finally { own = null; if (typeof add === 'function') { if (had) queue.addRequest = add; else delete queue.addRequest; } }
+      const answer = Promise.resolve(call);
+      if (dropped) { answer.catch(() => {}); return false; }
+      // The viewer's image number and scroll bar follow the scroll notice, which the viewport sends for its own scrolling
+      // only: sent here as the viewport's scroll sends it, once the request is made and before its image is applied.
+      if (viewport.getCurrentImageIdIndex() === k) {
+        telling = true;
+        try { element.dispatchEvent(new CustomEvent(SCROLL, { cancelable: true, detail: { newImageIdIndex: k, imageId, direction: k - from } })); }
+        finally { telling = false; }
+      }
+      return answer;
+    }
+    // Waits until the cell shows image k. An image the cell is not on is loaded first and then asked for (the export's
+    // own request); for one it is on, a draw is asked for and judged like any other.
+    function show(k, stopped) {
+      let begun = false;
+      return wait(stopped, it => {
+        if (drawn(k)) { const why = hidden(); it.finish(why ? new Error(why) : undefined); return; }
+        if (begun) return;
+        begun = true;
+        const failed = error => it.finish(error?.constructor === Error && /[가-힣]/.test(error.message) ? error : new Error(NOT_LOADED));
+        try {
+          if (viewport.getCurrentImageIdIndex() === k) { viewport.render?.(); return; }
+          const step = () => {
+            if (!it.going()) return;
+            if (stopped?.() || state() !== 'own') { it.again(); return; }
+            try {
+              if (ready(k)) {
+                const answer = ask(k);
+                if (answer) answer.catch(failed); else if (state() === 'own') failed(); else it.again();
+                return;
+              }
+              // A load that ended without its image in the cache (no room for it) is asked for again a moment later; so is
+              // a failed load of the reader's image, which is then put back from the one held.
+              fetch(k).then(load => { if (!it.going()) return; waited = { index: k, load }; if (ready(k)) step(); else it.later(step, 250); },
+                error => k === start ? it.later(step, 250) : failed(error));
+            } catch (error) { failed(error); }
+          };
+          step();
+        } catch (error) { failed(error); }
+      });
+    }
+    const release = () => { offs.splice(0).forEach(off => off()); kept = waited = null; target.release(); };
+    return { cells: target.cells, cell, ids, state, hidden, shows, settle, show, lose, wake: () => wake?.(), release };
   }
   // One series export at a time. It walks the stack copied at the start from its first image to its last on the cell
   // itself (so each image is drawn as the reader would see it), and Esc stops it. A stop or a failure goes back to the
@@ -382,10 +525,12 @@ window.KinViewerExport = (() => {
     if (job) { tell(services, '다른 내보내기가 진행 중입니다. 끝난 뒤 다시 시도하세요.', 'warning'); return false; }
     const hold = claim(services, live);
     if (!hold) { tell(services, '저장할 영상 칸이 없습니다.', 'warning'); return false; }
-    const { cell, ids, start } = hold, viewport = cell.viewport;
+    const { cell, ids } = hold, viewport = cell.viewport;
     const refuse = message => { hold.release(); tell(services, message, 'warning'); return false; };
     if (viewport.type !== 'stack' || typeof viewport.setImageIdIndex !== 'function' || !ids.length) return refuse('시리즈 저장은 일반(2D) 영상 칸에서 할 수 있습니다.');
     if (services.cineService?.getState?.()?.cines?.[cell.id]?.isPlaying) return refuse('Cine 재생을 멈춘 뒤 다시 시도하세요.');
+    const view = otherView(cell.id);
+    if (view) return refuse(view);
     // away: the cell shows an image this export put there on its way, until it is back on the reader's image and shows it.
     const run = job = { id: cell.id, hold, stopped: false, away: false };
     const key = event => { if (event.key === 'Escape') { run.stopped = true; event.preventDefault(); event.stopImmediatePropagation(); hold.wake(); } };
@@ -396,19 +541,24 @@ window.KinViewerExport = (() => {
       if (hold.state() !== 'own') throw changed();
     };
     try {
-      let failed = null;
+      let failed = null, start;
       try {
-        // Before anything moves: the cell shows the image its list names, and the list is of the series the grid names for the cell.
+        // Before anything moves: the list is the series the grid names for the cell, whole and once; the reader's last
+        // move has ended; and the cell shows the image it ended on.
         say?.(verb + ' 1/' + ids.length + ' · Esc로 멈춤');
+        if (!covers(services, cell.id, ids)) throw new Error(UNSURE);
+        start = await hold.settle(stopped); check();
         await hold.show(start, stopped); check();
-        if (!ids.every(id => belongs(services, cell.id, id))) throw new Error(UNSURE);
+        // The viewer's slice number follows the requests made of the cell, so the first image of the file is asked for
+        // like every other: a cell that starts on it goes to the next image first.
+        if (start === 0 && ids.length > 1) { run.away = true; await hold.show(1, stopped); check(); }
         for (let index = 0; index < ids.length; index++) {
           check(); say?.(verb + ' ' + (index + 1) + '/' + ids.length + ' · Esc로 멈춤');
           if (viewport.getCurrentImageIdIndex() !== index) run.away = true;
           // Two more frames pass after the draw, so the measurement layer and the image text follow the image.
           await hold.show(index, stopped); await frames(2);
-          // Every exported image is the series image it stands for, on a cell that is still this export's, as its pixels are copied.
-          const canvas = await render(hold.cells, () => { check(); if (!hold.shows(index)) throw new Error(NOT_LOADED); }); check();
+          // Every exported image is the series image it stands for, seen on a cell that is still this export's, as its pixels are copied.
+          const canvas = await render(hold.cells, () => { check(); if (!hold.shows(index)) throw new Error(hold.hidden() || NOT_LOADED); }, seriesLayer); check();
           await each(canvas, index, ids.length); check();
         }
       } catch (error) { failed = error; }
@@ -417,7 +567,7 @@ window.KinViewerExport = (() => {
       if (run.away && hold.state() === 'own') {
         say?.('원래 보던 영상으로 돌아가는 중입니다.');
         try { await hold.show(start); }
-        catch (_) { if (hold.state() === 'own') failed = new Error(NOT_BACK); }
+        catch (_) { if (hold.state() === 'own') failed = new Error(hold.hidden() || NOT_BACK); }
       }
       if (hold.state() !== 'own') throw failed || changed();
       run.away = false;
