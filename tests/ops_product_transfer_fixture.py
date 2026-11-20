@@ -151,7 +151,8 @@ MIGRATIONS = ['api/prisma/migrations/0_init/migration.sql',
               'api/prisma/migrations/20261118120000_institution_critical_result_inbox/migration.sql',
               'api/prisma/migrations/20261119120000_access_review_linear/migration.sql',
               'api/prisma/migrations/20261119160000_critical_result_send_roles/migration.sql',
-              'api/prisma/migrations/20261120120000_study_referred_at/migration.sql']
+              'api/prisma/migrations/20261120120000_study_referred_at/migration.sql',
+              'api/prisma/migrations/20261120140000_order_modality_worklist/migration.sql']
 # S9-U4b (52 tables, 47 migrations): ImportOperation, its twelve synthetic rows (one import with every attempt phase over four
 # studies, a prepared, a Sent and a still-sending download, four Study and four SOP reservations with their holders), one
 # primary key, two checks and three indexes. Not measured on a stack when written: estimated at about 16 KB of catalog and
@@ -390,7 +391,12 @@ def expected_rows(uid):
         # Delete Order: the order is taken off the list with who and why (a mark, never a row delete).
         removedAt=STAMP, removedBySub='SYNTHETIC-sub', removedBy='SYNTHETIC-actor', removeReason='SYNTHETIC reason',
         # Order List RIS Status: a real value of the CHECK set, so a dump that lost the column or its CHECK would differ.
-        risStatus='acquired', orderingPhysicianSub=None)]
+        risStatus='acquired', orderingPhysicianSub=None,
+        # Modality Worklist: the database gives each order its procedure ID and worklist Study Instance UID by default
+        # (new values each time), so the synthetic order names fixed ones - a restore that drew them again would differ -
+        # and carries a scheduled device.
+        mwlProcedureId='SYNMWLPROC000001', mwlStudyUid='2.25.329800735698586629295641978511506172918',
+        scheduledStationAet='SYNTHETIC_CT1')]
     # S4-U3: one synthetic receipt in a retry state, so BIGINT counts, the UUID epoch and a non-null
     # errorCode all carry real values through the dump (an empty table would pass on nothing).
     rows['GatewayReceipt'] = [dict(studyUid=uid, institutionId='SYNTHETIC-hospital',

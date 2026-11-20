@@ -47,6 +47,9 @@ RUN npx prisma generate
 COPY tsconfig.json nest-cli.json ./
 COPY src ./src
 COPY print ./print
+# Modality Worklist: the DICOM worklist helper (mwl/mwl_scp.py, started by the API while KIN_MWL_PORT is set) runs on the same
+# Python and pynetdicom as the print helper.
+COPY mwl ./mwl
 
 EXPOSE 3000
 
@@ -76,6 +79,7 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/print ./print
+COPY --from=build /app/mwl ./mwl
 COPY start-production.sh ./start-production.sh
 # 운영 서버의 legacy builder도 지원한다(COPY --chmod는 BuildKit 전용).
 # 실패 전달 스풀 디렉터리와 CD-09-P 초안 파기 원장·그 사본(백업 밖 볼륨): node만 읽고 쓴다. 이름 있는 볼륨은 이 소유·권한을 처음 한 번 물려받는다.

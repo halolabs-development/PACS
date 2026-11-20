@@ -52,6 +52,9 @@ export class PacsInstitutions {
         });
         // A seed order made before the RIS Status column existed gets the seed's status once (never over a value).
         await this.prisma.order.updateMany({ where: { oid: o.oid, risStatus: null }, data: { risStatus: o.risStatus } });
+        // A seed order made before the scheduled-device column existed gets the seed's device once (never over a value).
+        await this.prisma.order.updateMany({ where: { oid: o.oid, scheduledStationAet: null },
+          data: { scheduledStationAet: o.scheduledStationAet } });
       }
     }
     console.log(`[KIN API] 기관 ${this.institutions.length}개: ${this.institutions.map(i => `${i.id}(${i.name})`).join(', ')}`);

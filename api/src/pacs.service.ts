@@ -96,6 +96,10 @@ export class PacsService implements OnModuleInit {
     return this.institutionsConcern.institutionName(id);
   }
 
+  resolveDevice(aet: string | null) {
+    return this.institutionsConcern.resolveDevice(aet);
+  }
+
   emrLink(id: string | null) {
     return this.institutionsConcern.emrLink(id);
   }

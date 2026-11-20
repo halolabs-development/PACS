@@ -744,6 +744,17 @@ model Order {
   /// no default: until an authoritative order source is connected only test orders carry it, and the PACS never derives it
   /// (a matched order is not thereby acquired; Mt stays its own column). A missing value stays blank on the Order List.
   risStatus     String?
+  /// Modality Worklist: the order's scheduled procedure identifier, given to a modality as Requested Procedure ID and
+  /// Scheduled Procedure Step ID (VR SH, 16 characters at most). Given once by the database to every order row (a default,
+  /// so an order from any source has one) and never changed: a worklist query only reads it.
+  mwlProcedureId String @unique @default(dbgenerated("upper(substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 16))")) @db.VarChar(16)
+  /// Modality Worklist: the Study Instance UID a modality is given for this scheduled study (2.25 UUID root), given once
+  /// like mwlProcedureId. Not the matched study's UID (studyUid): Match and Unmatch never change it.
+  mwlStudyUid    String @unique @default(dbgenerated("kin_new_uuid_uid()")) @db.VarChar(64)
+  /// Modality Worklist: the AE Title of the device the order is scheduled on, as the hospital RIS gives it. NULL = not
+  /// scheduled on a device: a worklist query naming a station does not find it, and one asking for the station back
+  /// leaves the order out rather than send an empty Type 1 value. The PACS never derives it from the device that asks.
+  scheduledStationAet String? @db.VarChar(16)
 
   @@index([institutionId])
 }
