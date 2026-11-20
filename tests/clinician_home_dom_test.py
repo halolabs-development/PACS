@@ -56,6 +56,13 @@ Each scenario that follows a logout runs in a new browser context: the end state
       exactly the set test_08 checks; a line "Pending ACK 1" or a title "Acknowledged" outside the region is reported, the
       same words inside it are not, and the exact label lists change when a button is added outside it.
 
+B14 (the reading window's form, Minhoon 11-01): b14 cases - Folders left of the list and the study's boxes under both, no
+report editor anywhere; My Studies (Requesting Physician = the account's family and given name, physician-name.js) is the
+first folder and All Studies keeps every study; a merged or split exam that cannot be read whole says Unavailable and why
+without row.exam and opens no window; the mode menu (Physician / Radiologist / Technician) with its reasons. F35: the row
+says the state of the panel's newer read. F41: an unsigned W/T/H text the server sends is shown, marked not final; P and
+D stay states. The harness opens most cases on All Studies (all_studies): its rows name no requesting physician.
+
 Synthetic data only (SYN-* names): no server, no network, no credentials. A request the harness does not answer is
 aborted and fails the case. The service half is tests/clinician_read_live.py (hosted synthetic stack only).
 """
@@ -84,7 +91,7 @@ def lf_text(path):
 
 ORIGIN = "https://clinician.test"
 BASE = "/worklist/hpacs-lite/"
-SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "product-info-data.js", "product-info.js", "index.html", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js",
+SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "index.html", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js",
                                                     "critical-result-inbox.js", "clinical-signature.js")}
 MAIN_HTML = read_page_source(HPACS / "main.html")
 AUTH_CONTROLLER = lf_text(ROOT / "api" / "src" / "auth.controller.ts")
@@ -194,21 +201,24 @@ PENDING_CVR = {"id": "5a1b2c3d-0000-4000-8000-00000000c201", "studyUid": uid(1),
                "body": {"findings": "SYN-A findings", "conclusion": "SYN-A conclusion", "recommendation": ""},
                "acknowledgedAt": None, "cancelledAt": None, "cancelReason": None, "supersededAt": None}
 
-# Product wording, verbatim (clinician.js TEXT / OPEN_NOTE / FINAL_ONLY).
+# Product wording, verbatim (clinician.js TEXT / OPEN_NOTE / STATUS_NOTE).
+# B14 / F41: "only a final report shows its body" is gone - since 2026-11-02 a clinician reads the unsigned text the server sends.
 FINAL_ONLY = "확정된 판독문(승인 또는 Addendum)만 본문과 키 이미지를 표시합니다."
+NO_BODY = "서버가 보낸 판독 본문이 없습니다."
+NOT_FINAL = "아래는 확정 전 판독문입니다. 승인 전에 바뀔 수 있습니다."
 LIST_LOADING = "검사 목록을 불러오는 중입니다…"
 LIST_EMPTY = "표시할 검사가 없습니다. 목록 조회는 성공했습니다."
 LIST_FAILED = "검사 목록을 불러오지 못했습니다."
 REPORT_FAILED = "판독문을 불러오지 못했습니다."
 KEYS_LOADING = "키 이미지를 불러오는 중입니다…"
-KEYS_WITHHELD = "확정 전에는 키 이미지를 표시하지 않습니다."
+KEYS_WITHHELD = "서버가 이 판독 상태에서는 키 이미지를 보내지 않았습니다."
 KEYS_NONE = "이 판독문에 지정된 키 이미지가 없습니다."
 KEYS_FAILED = "판독문을 불러오지 못해 키 이미지도 표시하지 않았습니다."
 CHANGED = "검사 목록 또는 판독 상태가 바뀌었습니다. 새로고침하세요."
 RECHECK = "검사 목록을 다시 확인하는 중입니다. 확인이 끝나면 선택했던 검사의 판독문을 다시 불러옵니다."
 UNVERIFIED = "검사 목록을 다시 확인하지 못해 선택했던 검사를 내렸습니다. 목록을 다시 불러오면 그 검사의 판독문을 새로 읽습니다."
 CLOSING = "세션을 닫았습니다. 로그인 화면으로 이동하는 중입니다…"
-PICK = "목록에서 검사를 고르면 확정 판독문과 키 이미지를 먼저 표시합니다."
+PICK = "목록에서 검사를 고르면 판독문과 키 이미지를 표시합니다."
 
 # UXR-SP-34 / UXR-G-18 core-screen avoided words (as tests/admin_member_roles_dom_test.py), and UXR-S5-15: nothing on
 # this screen may read as a critical-result delivery or acknowledgement state.
@@ -330,6 +340,13 @@ HOLD_401_BODY = """(() => {
     return new Response(body, {status: response.status, statusText: response.statusText, headers: response.headers});
   };
 })()"""
+
+
+def all_studies(page):
+    """B14: Clinician Home opens on My Studies. These synthetic rows name no requesting physician, so the cases read All
+    Studies, chosen through the page without moving the keyboard focus."""
+    page.wait_for_function("() => ['ready', 'empty'].includes(document.querySelector('#list-state')?.dataset.state)")
+    page.evaluate("() => [...document.querySelectorAll('#folder-tree button')].find(b => b.textContent.startsWith('All Studies'))?.click()")
 
 
 class ClinicianHomeDOMTest(unittest.TestCase):
@@ -473,8 +490,9 @@ class ClinicianHomeDOMTest(unittest.TestCase):
             route.fulfill(**self.list_reply(query))
             return
         found = re.fullmatch(r"/api/clinician/studies/([^/]+)/report", path)
-        if method == "GET" and found and not url.query:
-            target = unquote(found.group(1))
+        # A stored version (?version=n, the Exam Reports buttons) is answered from "<uid>?version=n".
+        if method == "GET" and found and (not url.query or re.fullmatch(r"version=[1-9][0-9]*", url.query)):
+            target = unquote(found.group(1)) + (f"?{url.query}" if url.query else "")
             self.report_requests.append(target)
             self.calls.append(f"report {target}")
             if self.held_reports is not None:
@@ -558,6 +576,7 @@ class ClinicianHomeDOMTest(unittest.TestCase):
 
     def open_home(self, count=len(ROWS)):
         self.page.goto(ORIGIN + BASE + "clinician.html")
+        all_studies(self.page)
         expect(self.page.locator("#list-state")).to_have_attribute("data-state", "ready")
         expect(self.page.locator("#studies tr[data-uid]")).to_have_count(count)
 
@@ -592,6 +611,11 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.page.keyboard.press("Tab")
         while stops < 8 and self.page.evaluate(IN_REGION):
             stops += 1
+            self.page.keyboard.press("Tab")
+        # B14: then the Folders column (left of the list), each stop one of the folder tree's own buttons.
+        folders = 0
+        while folders < 40 and self.page.evaluate("() => !!document.activeElement.closest('#folder-tree')"):
+            folders += 1
             self.page.keyboard.press("Tab")
         return stops, self.active()["id"]
 
@@ -740,6 +764,7 @@ class ClinicianHomeDOMTest(unittest.TestCase):
                     self.wait_until(lambda: self.booted, "main.html boot past init()")
                     self.assertEqual([{"roles": [",".join(roles)]}], self.booted)
                 else:
+                    all_studies(self.page)
                     expect(self.page.locator("#list-state")).to_have_attribute("data-state", "ready")
         with self.subTest(entry="index.html", session="pending"):
             self.me, self.booted = (403, {"code": "INSTITUTION_PENDING", "sessionId": "SYN-PENDING"}), []
@@ -753,6 +778,7 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         lists = len(self.list_requests)
         self.page.goto(ORIGIN + BASE + "main.html")
         self.page.wait_for_url(ORIGIN + BASE + "clinician.html")
+        all_studies(self.page)
         expect(self.page.locator("#list-state")).to_have_attribute("data-state", "ready")
         self.assertEqual([], self.booted, "main.html boot must not run past init() for clinician-only")
         self.assertEqual(lists + 1, len(self.list_requests))
@@ -819,6 +845,8 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.assertTrue(raised[0]["name"].startswith("kin-raise:"))
         # The window keeps the session hand-over name its viewer document reads.
         self.assertTrue(self.page.evaluate("window.synOpened[0].popup.name").startswith("kin-viewer-entry:"))
+        # B14: the hand-off says the Physician mode opened it (config/ohif/session.js: read-only for every account).
+        self.assertEqual("physician", json.loads(self.page.evaluate("window.synOpened[0].popup.name")[len("kin-viewer-entry:"):])["mode"])
         self.assertTrue(has_hangul(self.page.locator("#viewer-note").text_content()))
 
         seen = self.pick(2)
@@ -838,7 +866,7 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.open_home()
         self.assertGreater(self.page.locator('.status').count(), 0)
         for badge in self.page.locator('.status').all():
-            self.assertIn(FINAL_ONLY, badge.get_attribute('title') or '')
+            self.assertNotIn(FINAL_ONLY, badge.get_attribute('title') or '')
             self.assertRegex(badge.get_attribute('title'), '[가-힣]')
         notes = {3: ("Preliminary", "예비 판독 단계입니다."), 4: ("Unknown", "판독 상태를 확인할 수 없습니다."),
                  5: ("Awaiting Report", "아직 판독되지 않은 검사입니다."), 6: ("On Hold", "판독이 보류된 검사입니다."),
@@ -846,7 +874,7 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         for n, (status, note) in notes.items():
             with self.subTest(study=n, status=status):
                 seen = self.pick(n, "status")
-                self.assertEqual({"detailUid": uid(n), "reportUid": uid(n), "state": "status", "text": f"{note} {FINAL_ONLY}",
+                self.assertEqual({"detailUid": uid(n), "reportUid": uid(n), "state": "status", "text": f"{note} {NO_BODY}",
                                   "detail": "", "retry": False, "status": status, "metaHidden": True, "meta": {},
                                   "bodyHidden": True, "sections": [], "keysState": KEYS_WITHHELD, "keysHidden": True,
                                   "keys": []}, seen)
@@ -889,6 +917,202 @@ class ClinicianHomeDOMTest(unittest.TestCase):
                           "status": "Destroyed", "metaHidden": True, "meta": {}, "bodyHidden": True, "sections": [],
                           "keysState": KEYS_WITHHELD, "keysHidden": True, "keys": []}, seen)
         self.assertNotIn("SYN-LEAK", self.page.content())
+
+    def test_f41_an_unsigned_text_the_server_sends_is_shown_as_not_final(self):
+        """F41: the state table (api/src/report-visibility.ts) gives a clinician the unsigned W/T/H text; the page shows the
+        text, the drawings and the key images the server sent, says it is not final, and never fills a state-only answer
+        (an emptied text, P, D) from anywhere else. Key images null (not sent) and [] (none) read apart."""
+        self.open_home()
+        unsigned = lambda n, rs, findings, conclusion, recommendation, keys: {"uid": uid(n), "report": {
+            "final": False, "rs": rs, "action": "save" if rs == "T" else "defer", "version": 2, "repDoc": "syn-rad",
+            "confirm": None, "findings": findings, "conclusion": conclusion, "recommendation": recommendation}, "keys": keys}
+        self.reports[uid(7)] = unsigned(7, "T", "SYN-T saved findings", "SYN-T saved conclusion", "", [key(5, "SYN key T", "", 3)])
+        seen = self.pick(7, "open")
+        self.assertEqual(("In Progress", f"판독이 진행 중입니다. {NOT_FINAL}", {"Version": "2", "Status": "In Progress"}),
+                         (seen["status"], seen["text"], seen["meta"]))
+        self.assertEqual([["Findings", "SYN-T saved findings"], ["Conclusion", "SYN-T saved conclusion"],
+                          ["Recommendation", "기재된 내용이 없습니다."]], seen["sections"])
+        self.assertEqual(("키 이미지 1건", False), (seen["keysState"], seen["keysHidden"]))
+        self.assertNotIn(FINAL_ONLY, self.page.content())
+        self.reports[uid(6)] = unsigned(6, "H", "SYN-H held findings", "", "", [])
+        seen = self.pick(6, "open")
+        self.assertEqual(("On Hold", ["Findings", "SYN-H held findings"], KEYS_NONE), (seen["status"], seen["sections"][0], seen["keysState"]))
+        # A text the server emptied (a reader who is not clinician-only, another physician's Save) stays a state.
+        self.reports[uid(7)] = unsigned(7, "T", "", "", "", [])
+        seen = self.pick(7, "status")
+        self.assertEqual((f"판독이 진행 중입니다. {NO_BODY}", True, [], KEYS_NONE),
+                         (seen["text"], seen["bodyHidden"], seen["sections"], seen["keysState"]))
+        # P and D are status-only on this route, whatever a stub carries.
+        self.reports[uid(3)] = unsigned(3, "P", "SYN-LEAK-P", "SYN-LEAK-P", "SYN-LEAK-P", None)
+        seen = self.pick(3, "status")
+        self.assertEqual((True, KEYS_WITHHELD), (seen["bodyHidden"], seen["keysState"]))
+        self.assertNotIn("SYN-LEAK", self.page.content())
+
+    def test_f35_the_row_and_the_panel_say_the_state_of_the_latest_read(self):
+        """F35: the list said Preliminary; the report was approved before the doctor picked the row. The panel's read is newer:
+        the row's Report cell says the same state, and keeps it when the rows are drawn again (a folder change)."""
+        self.open_home()
+        self.assertEqual("Preliminary", self.row(3).locator("td[data-report] .status").text_content())
+        self.reports[uid(3)] = final_report(3, 4, "approve", "SYN-C findings", "SYN-C conclusion", "", [])
+        seen = self.pick(3)
+        self.assertEqual("Final", seen["status"])
+        expect(self.row(3).locator("td[data-report] .status")).to_have_text("Final")
+        self.page.locator("#folder-tree button", has_text="My Studies").click()
+        self.page.locator("#folder-tree button", has_text="All Studies").click()
+        expect(self.row(3).locator("td[data-report] .status")).to_have_text("Final")
+        # A read refused keeps the row as it was.
+        self.reports[uid(5)] = (404, {"statusCode": 404, "message": "검사를 찾을 수 없습니다", "error": "Not Found"})
+        self.pick(5, "failed")
+        expect(self.row(5).locator("td[data-report] .status")).to_have_text("Awaiting Report")
+
+    FOLDER_BUTTON = "(name) => [...document.querySelectorAll('#folder-tree button')].find(b => b.textContent.startsWith(name))"
+
+    def folder(self, name):
+        return self.page.locator("#folder-tree button", has_text=name).first
+
+    def test_b14_the_reading_window_form_without_an_editor(self):
+        """B14 (Minhoon 11-01 "판독창이랑 거의 똑같아야돼. 다만 다른 것은 report editor 창이 없어야해"): Folders left of the list,
+        the picked study's boxes under both, at 1366x768 and 1920x1080; stacked under 1100px. Nowhere a report editor:
+        no text box, no editable region, no Save / Approve / Prelim / Addendum."""
+        for width, height in ((1366, 768), (1920, 1080), (1024, 768)):
+            with self.subTest(size=f"{width}x{height}"):
+                self.page.set_viewport_size({"width": width, "height": height})
+                self.open_home()
+                self.pick(1)
+                box = lambda selector: self.page.locator(selector).bounding_box()
+                folders, studies, detail, report = box("#folders"), box("#studies-panel"), box("#detail"), box("#report")
+                if width > 1100:
+                    self.assertLessEqual(folders["x"] + folders["width"], studies["x"], "Folders stand left of the list")
+                    self.assertAlmostEqual(folders["y"], studies["y"], delta=2)
+                else:
+                    self.assertLessEqual(folders["y"] + folders["height"], studies["y"] + 1, "narrow: Folders above the list")
+                self.assertGreaterEqual(detail["y"], studies["y"] + studies["height"] - 1, "the study's boxes are under the list")
+                self.assertGreater(report["width"], 0)
+                editors = self.page.evaluate("""() => [...document.querySelectorAll('textarea, input:not([type]), input[type=text], [contenteditable]')]
+                  .filter(e => !e.closest('#folder-tree')).length""")
+                self.assertEqual(0, editors)
+                words = set(self.page.locator("button").all_text_contents())
+                self.assertFalse(words & {"Save", "Approve", "Approve & Next", "Prelim", "Addendum", "Defer", "Unread"}, words)
+                self.assertEqual(self.page.evaluate("() => document.documentElement.scrollWidth"), width, "no sideways scroll")
+        self.page.set_viewport_size({"width": 1366, "height": 768})
+
+    def test_b14_my_studies_is_the_requesting_physician_and_opens_first(self):
+        """B14 (Minhoon 11-01 #32 "do "my studies" folder as the ordering/requesting physician"; all patients stay open): the
+        page opens on My Studies, the studies whose Requesting Physician is the account's own family and given name - not a
+        swapped name, not a Referring Physician. All Studies keeps every study; Compare reaches a study outside the folder;
+        a refresh keeps the folder the doctor chose."""
+        self.me = {**me(["clinician", *KEYCLOAK_DEFAULTS]), "familyName": "Clinician", "givenName": "SYN", "fullName": None}
+        rows = {r["uid"]: r for r in self.rows}
+        rows[uid(1)]["requestingPhysician"] = "CLINICIAN^SYN"
+        rows[uid(6)]["requestingPhysician"] = "Clinician^Syn=클리니션^신"
+        rows[uid(2)]["requestingPhysician"] = "SYN^CLINICIAN"
+        rows[uid(3)]["referringPhysician"] = "CLINICIAN^SYN"
+        rows[uid(2)]["sourcePatientKey"] = rows[uid(1)]["sourcePatientKey"]
+        self.page.goto(ORIGIN + BASE + "clinician.html")
+        expect(self.page.locator("#list-state")).to_have_attribute("data-state", "ready")
+        expect(self.folder("My Studies")).to_have_attribute("aria-current", "true")
+        listed = self.listed()
+        self.assertEqual(([uid(1), uid(6)], "My Studies: 검사 2건을 표시합니다 (전체 7건)."), (listed["rows"], listed["text"]))
+        self.assertIn("Requesting Physician", listed["detail"])
+        self.assertEqual(["All Studies (7)", "My Studies (2)"], self.page.locator("#folder-tree button").all_text_contents()[:2])
+        # Compare reads the whole list: the same patient's study outside My Studies is offered.
+        self.pick(1)
+        expect(self.page.locator(f'#compare-list li[data-uid="{uid(2)}"]')).to_have_count(1)
+        self.folder("All Studies").click()
+        self.assertEqual(ORDER, self.listed()["rows"])
+        self.assertEqual("검사 7건을 표시합니다.", self.listed()["text"])
+        expect(self.row(1)).to_have_attribute("aria-current", "true")
+        self.page.locator("#refresh").click()
+        expect(self.page.locator("#list-state")).to_have_attribute("data-state", "ready")
+        expect(self.folder("All Studies")).to_have_attribute("aria-current", "true")
+        self.assertEqual(ORDER, self.listed()["rows"])
+        # An account without name parts finds none of its studies: the page still opens on My Studies (0) and says why.
+        self.me = me(["clinician", *KEYCLOAK_DEFAULTS])
+        self.fresh_context() if hasattr(self, "fresh_context") else None
+        self.page.goto(ORIGIN + BASE + "clinician.html")
+        expect(self.page.locator("#list-state")).to_have_attribute("data-state", "empty")
+        self.assertEqual(("My Studies에 해당하는 검사가 없습니다. 목록 조회는 성공했습니다 (전체 7건).", []),
+                         (self.listed()["text"], self.listed()["rows"]))
+        self.folder("All Studies").click()
+        expect(self.page.locator("#studies tr[data-uid]")).to_have_count(7)
+
+    def test_b14_an_exam_that_cannot_be_read_whole_says_why_without_row_exam(self):
+        """Order table row C (merged-exam knot): a listed study of a merged or split exam in force that this account cannot
+        read whole carries the server's mark (examUnavailable, examUnavailableKind) even when the row names no exam. The
+        row says Unavailable with the reason, the picked study says the reason, and no viewer window opens."""
+        rows = {r["uid"]: r for r in self.rows}
+        rows[uid(7)].update(examUnavailable=True, examUnavailableKind="merge")
+        rows[uid(4)].update(examUnavailable=True, examUnavailableKind="split")
+        merge = "합친 검사의 원본 일부를 볼 수 없어 열거나 미리 받지 않습니다. 원본이 영상 저장소에 없거나 이 계정이 볼 수 없습니다. 목록을 새로고침하세요."
+        self.open_home()
+        tag = self.row(7).locator("td[data-report] [data-unavailable]")
+        self.assertEqual(("Unavailable", merge), (tag.text_content(), tag.get_attribute("title")))
+        expect(self.row(4).locator("td[data-report] [data-unavailable]")).to_have_count(1)
+        expect(self.row(1).locator("td[data-report] [data-unavailable]")).to_have_count(0)
+        self.pick(7, "status")
+        expect(self.page.locator("#exam-note")).to_be_visible()
+        self.assertIn(merge, self.page.locator("#exam-note").text_content())
+        self.page.evaluate("() => { window.synOpened = []; window.open = (...args) => { window.synOpened.push(args); return null; }; }")
+        self.page.locator("#open-viewer").click()
+        expect(self.page.locator("#viewer-note")).to_have_text(merge)
+        self.assertEqual([], self.page.evaluate("window.synOpened"))
+        self.pick(1)
+        expect(self.page.locator("#exam-note")).to_be_hidden()
+
+    def test_b14_a_stored_version_says_which_one_and_leaves_the_row_alone(self):
+        """F35 / B14 (Astra's design answer): a stored version read from the Exam Reports buttons shows that version and says
+        so; the row keeps the state of its own latest read (it is not that version)."""
+        scope = {"reportUid": uid(1), "groupId": "SYN-G1", "kind": "merge", "part": None, "active": False, "generation": "SYN-GEN",
+                 "sources": [{"studyUid": uid(1), "series": {"mode": "all", "uids": []}}]}
+        rows = {r["uid"]: r for r in self.rows}
+        rows[uid(1)]["exam"] = {"id": "SYN-G1", "active": False, "baseUid": uid(1), "readable": True, "studies": [uid(1)],
+                                "scope": None, "reports": [{"uid": uid(1), "version": 2, "scope": scope}]}
+        self.reports[uid(1) + "?version=2"] = final_report(1, 2, "addendum", "SYN-A v2 findings", "SYN-A v2 conclusion", "", [])
+        self.open_home()
+        self.pick(1)
+        expect(self.row(1).locator("td[data-report] .status")).to_have_text("Final")
+        self.page.locator("#exam-note button", has_text="v2").click()
+        expect(self.page.locator("#report-meta")).to_contain_text("2")
+        seen = self.report()
+        self.assertEqual(("Final · Addendum", "2", ["Findings", "SYN-A v2 findings"]), (seen["status"], seen["meta"]["Version"], seen["sections"][0]))
+        self.assertEqual("저장된 판 v2을 표시합니다. 이 검사의 지금 판독 상태는 목록의 Report 칸에 있습니다.",
+                         self.page.locator("#report-target").text_content())
+        expect(self.row(1).locator("td[data-report] .status")).to_have_text("Final")
+        self.assertIn(uid(1) + "?version=2", self.report_requests)
+
+    def menu(self):
+        return self.page.evaluate("""() => [...document.querySelectorAll('#work-mode-menu [role=menuitemradio]')].map(b =>
+          [b.textContent, b.getAttribute('aria-checked'), b.getAttribute('aria-disabled'),
+           b.getAttribute('aria-describedby') ? document.getElementById(b.getAttribute('aria-describedby')).textContent : ''])""")
+
+    def test_b14_mode_menu_physician_radiologist_technician(self):
+        """B14 (Minhoon 11-01 "I want this icon to be a pull down menu, so that there are three different modes. Physician,
+        Radiologist, Technician"): the top bar's button opens the three modes; this page is Physician. A clinician-only
+        account keeps the other two with their reason (its home is this page - the landing rule) and moves nowhere; a
+        clinician + radiologist account opens the worklist on the asked tab. The menu grants nothing (the server decides)."""
+        self.open_home()
+        button = self.page.locator("#work-mode-open")
+        self.assertEqual(("Physician ▾", "menu", "false"), (button.text_content(), button.get_attribute("aria-haspopup"), button.get_attribute("aria-expanded")))
+        button.click()
+        expect(self.page.locator("#work-mode-menu")).to_be_visible()
+        self.assertEqual("true", button.get_attribute("aria-expanded"))
+        reason = "이 계정은 진료과 의사 화면만 엽니다 — 판독·기사 화면은 radiologist·technician 역할이 있는 계정이 씁니다"
+        self.assertEqual([["Physician", "true", None, ""], ["Radiologist", "false", "true", reason], ["Technician", "false", "true", reason]], self.menu())
+        self.assertEqual("Physician", self.active()["text"], "the open menu focuses the current mode")
+        self.page.keyboard.press("ArrowDown")
+        self.assertEqual("Radiologist", self.active()["text"], "a mode with a reason is still reached from the keyboard")
+        self.page.keyboard.press("Enter")
+        self.page.wait_for_timeout(200)
+        self.assertEqual(ORIGIN + BASE + "clinician.html", self.page.url)
+        self.page.keyboard.press("Escape")
+        expect(self.page.locator("#work-mode-menu")).to_be_hidden()
+        # clinician + radiologist: Technician opens the worklist's Technician tab.
+        self.me = me(["clinician", "radiologist"])
+        self.open_home()
+        self.page.locator("#work-mode-open").click()
+        self.assertEqual([["Physician", "true", None, ""], ["Radiologist", "false", None, ""], ["Technician", "false", None, ""]], self.menu())
+        self.page.locator("#work-mode-menu [data-mode=technician]").click()
+        self.page.wait_for_url(ORIGIN + BASE + "main.html?mode=Technician")
 
     def test_fc034_an_amended_report_says_it_was_amended_and_when(self):
         """FC-034: when the reader who approved a report corrects it within 24 hours, the clinician reads the corrected text
@@ -1025,6 +1249,7 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.assertEqual(3, len({loading["text"], empty["text"], failed["text"]}))
         self.assertEqual(3, len({loading["state"], empty["state"], failed["state"]}))
         self.page.locator("#list-retry").click()
+        all_studies(self.page)
         expect(self.page.locator("#list-state")).to_have_attribute("data-state", "ready")
         self.assertEqual(ORDER, self.listed()["rows"])
 
@@ -1057,6 +1282,7 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.held_lists = None
         before = self.me_requests
         self.release(second, self.listing(None))
+        all_studies(self.page)
         expect(self.page.locator("#list-state")).to_have_attribute("data-state", "ready")
         self.release(first, self.listing(None, rows=[self.rows[0]]))
         self.assertEqual(("ready", "검사 7건을 표시합니다.", ORDER), tuple(self.listed()[k] for k in ("state", "text", "rows")))
@@ -1072,6 +1298,7 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         first, second = self.held_lists
         self.held_lists = None
         self.release(second, self.listing(None))
+        all_studies(self.page)
         expect(self.page.locator("#studies tr[data-uid]")).to_have_count(7)
         self.release(first, self.listing(None, rows=[self.rows[0]]))
         expect(self.page.locator("#studies tr[data-uid]")).to_have_count(1)
@@ -1091,6 +1318,7 @@ class ClinicianHomeDOMTest(unittest.TestCase):
             query = self.list_requests[page]
             self.held_lists[page].fulfill(json=self.listing(query.get("after", [None])[0]))
         self.held_lists = None
+        all_studies(self.page)
         expect(self.page.locator("#list-state")).to_have_attribute("data-state", "ready")
         cursors = list(self.cursors)
         self.assertEqual([{"limit": ["100"]}, {"limit": ["100"], "after": [cursors[0]]},
@@ -1134,6 +1362,9 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         # S7-U2a Critical Results region's own controls (the region is above Studies); every stop passed there is inside it.
         # C-R02-120: the user button (the name) is the header's first stop. CD-01: Product Information next, Log out after.
         self.page.keyboard.press("Tab")
+        # B14: the mode menu (Physician / Radiologist / Technician) is the top bar's first stop.
+        self.assertEqual("work-mode-open", self.active()["id"])
+        self.page.keyboard.press("Tab")
         self.assertEqual("session-who", self.active()["id"])
         self.page.keyboard.press("Tab")
         self.assertEqual("product-info-open", self.active()["id"])
@@ -1173,9 +1404,14 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.assertEqual("Clinician Home — HALO PACS", labels["title"])
         # DOM order: header (the user button reads the name), list Retry (hidden), rows in ORDER (B selected), the Study
         # panel's Close, report Retry (hidden), viewer slot, membership card (hidden).
-        self.assertEqual(["SYN Clinician", "Product Information", "Log out", "Refresh", "Retry", "View", "Viewing", "View", "View", "View", "View",
+        # B14: the mode menu (its button, three modes and its Leave / Stay line) and the Folders column's folder tree.
+        self.assertEqual(["Physician ▾", "Physician", "Radiologist", "Technician", "Leave", "Stay",
+                          "SYN Clinician", "Product Information", "Log out",
+                          "All Studies (7)", "My Studies (0)", "My Shortcuts", "Modality", "CT (7)", "MR (0)", "CR (0)", "US (0)",
+                          "SC (0)", "Saved Searches",
+                          "Refresh", "Retry", "View", "Viewing", "View", "View", "View", "View",
                           "View", "Close", "Retry", "Open Viewer", "Log out"], labels["buttons"])
-        self.assertEqual(["Clinician Home", "Studies", "Study", "Report", "Findings", "Conclusion", "Recommendation",
+        self.assertEqual(["Clinician Home", "Folders", "Studies", "Study", "Report", "Findings", "Conclusion", "Recommendation",
                           "Key Images", ""], labels["headings"])
         self.assertEqual(["Action", "Name", "Patient ID", "Sex / Age", "Birth Date", "Study Date", "Modality", "Description",
                           "Institution", "Report"], labels["th"])
@@ -1350,6 +1586,9 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.page.evaluate("""() => { const between = document.createElement('button'); between.id = 'syn-between';
           between.textContent = 'SYN Between'; document.getElementById('critical-results').after(between);
           document.activeElement.blur(); }""")
+        self.page.keyboard.press("Tab")
+        # B14: the mode menu (Physician / Radiologist / Technician) is the top bar's first stop.
+        self.assertEqual("work-mode-open", self.active()["id"])
         self.page.keyboard.press("Tab")
         self.assertEqual("session-who", self.active()["id"])
         self.page.keyboard.press("Tab")

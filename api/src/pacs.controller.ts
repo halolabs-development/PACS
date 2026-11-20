@@ -108,6 +108,7 @@ export class PacsController {
     // Home's user button reads it here). Display only - every boundary decision stays on `institution`.
     // emrLink: the institution's EMR Link ({ template } or null) - the worklist's Open EMR and the Members page read it here.
     return { ...caller(req), user: req.actor, displayName: req.displayName ?? req.actor,
+      familyName: req.familyName ?? null, givenName: req.givenName ?? null, fullName: req.fullName ?? null,
       institutionName: req.institution ? this.svc.institutionName(req.institution) : null,
       emrLink: req.institution ? this.svc.emrLink(req.institution) : null, sessionId: req.sessionId ?? null,
       issuer: process.env.KC_ISSUER || null, preloadDiskGb: preloadDiskGb() };

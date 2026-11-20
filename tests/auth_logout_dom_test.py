@@ -87,6 +87,8 @@ SERVED_FILES = (
     "worklist-v0/hpacs-lite/saved-filter-manager.css",
     "worklist-v0/hpacs-lite/worklist-folder-tree.css",
     "worklist-v0/hpacs-lite/worklist-folder-tree.js",
+    "worklist-v0/hpacs-lite/work-mode.js",
+    "worklist-v0/hpacs-lite/physician-name.js",
     "worklist-v0/hpacs-lite/consultations.css",
     "worklist-v0/hpacs-lite/worklist-columns.css",
     "worklist-v0/hpacs-lite/reading-workspace.css",
@@ -1044,6 +1046,9 @@ class LogoutDOMTest(unittest.TestCase):
     def open_clinician(self):
         self.site.account = CLINICIAN
         self.page.goto(ORIGIN + BASE + "clinician.html")
+        # B14: Clinician Home opens on My Studies; these synthetic rows name no requesting physician.
+        self.page.wait_for_function("() => ['ready', 'empty'].includes(document.querySelector('#list-state')?.dataset.state)")
+        self.page.evaluate("() => [...document.querySelectorAll('#folder-tree button')].find(b => b.textContent.startsWith('All Studies'))?.click()")
         expect(self.page.locator("#list-state")).to_have_attribute("data-state", "ready")
 
     def select_and_type(self, page=None, fields=FIELDS, patient=PATIENT):

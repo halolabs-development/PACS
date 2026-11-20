@@ -351,6 +351,9 @@ const KIN_VIEWER_EXPECTED_SESSION = (() => {
     const entry = JSON.parse(raw);
     window.name = typeof entry.name === 'string' ? entry.name : '';
     const expected = typeof entry.session === 'string' && entry.session ? entry.session : null;
+    // B14: the screen that opened this window. Opened from Clinician Home (the Physician mode) it is read-only for every
+    // account (kinViewerClinicianOnly); every hand-off says it again and a reload of this tab keeps the last one.
+    try { sessionStorage.setItem('kin-viewer-mode', entry.mode === 'physician' ? 'physician' : ''); } catch (_) {}
     // A fresh list action may reuse the named window and its URL. It starts a new
     // verification; a reload has no handoff and retains the previous entry instead.
     history.replaceState({ ...history.state, kinViewerSession: {
@@ -3564,7 +3567,14 @@ function kinHangingProtocolDisplaySets(values) {
 function kinViewerClinicianOnly(me) {
   const roles = me && me.kind === 'member' && Array.isArray(me.roles) ? me.roles : [];
   const app = roles.filter(role => ['radiologist', 'technician', 'admin', 'clinician'].includes(role));
-  return app.length > 0 && app.every(role => role === 'clinician');
+  // B14: a window opened from the Physician mode (Clinician Home) reads as a clinician's for every account — a radiologist
+  // who also holds the clinician role annotates from the Radiologist screen (config/ohif/session.js keeps the mode).
+  return app.length > 0 && (app.every(role => role === 'clinician') || kinViewerPhysicianMode());
+}
+
+/** Whether this viewer tab was opened from the Physician mode (the last hand-off said so). */
+function kinViewerPhysicianMode() {
+  try { return sessionStorage.getItem('kin-viewer-mode') === 'physician'; } catch (_) { return false; }
 }
 
 /* Shared viewer role, distinct from the document's session authority. Ordinary HTTP failures

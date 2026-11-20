@@ -107,7 +107,7 @@ def lf_text(path):
 
 ORIGIN = "https://clinician.test"
 BASE = "/worklist/hpacs-lite/"
-SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "critical-result-inbox.js", "report-editor-frame.js")}
+SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "critical-result-inbox.js", "report-editor-frame.js")}
 MAIN = read_page_source(HPACS / "main.html")
 EMBLEM = (HPACS / "kin-emblem-j1.svg").read_bytes()
 INDEX_STAND_IN = ('<!doctype html><html><head><meta charset="utf-8"><title>SYN index stand-in</title></head>'
@@ -807,6 +807,13 @@ ASK_ENVELOPES = [
 ]
 
 
+def all_studies(page):
+    """B14: Clinician Home opens on My Studies. These synthetic rows name no requesting physician, so the cases read All
+    Studies, chosen through the page without moving the keyboard focus."""
+    page.wait_for_function("() => ['ready', 'empty'].includes(document.querySelector('#list-state')?.dataset.state)")
+    page.evaluate("() => [...document.querySelectorAll('#folder-tree button')].find(b => b.textContent.startsWith('All Studies'))?.click()")
+
+
 class ClinicianQuestionDOMTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -1037,6 +1044,7 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
     def open_home(self, script=None):
         self.files["clinician.js"] = SHIPPED["clinician.js"] if script is None else script
         self.page.goto(ORIGIN + BASE + "clinician.html")
+        all_studies(self.page)
         expect(self.page.locator("#list-state")).to_have_attribute("data-state", "ready")
         expect(self.page.locator("#studies tr[data-uid]")).to_have_count(len(self.rows))
 
@@ -1150,6 +1158,29 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         return opened, answered, closed
 
     # ── Clinician Home cases ──
+    def test_b14_leaving_through_the_mode_menu_asks_while_a_question_is_unsent(self):
+        """B14: Clinician Home's mode menu leaves the page for the worklist. A question written and not sent lives only in
+        this document; the menu then says so in place (no browser dialog) - Stay keeps the text, Leave goes."""
+        self.me = me(CLINICIAN, ["clinician", "radiologist"])
+        self.open_home()
+        self.pick(A)
+        self.open_questions("empty")
+        self.write("ask", "SYN unsent question", press=False)
+        self.page.locator("#work-mode-open").click()
+        self.page.locator("#work-mode-menu [data-mode=technician]").click()
+        expect(self.page.locator(".work-mode-leave")).to_be_visible()
+        self.assertEqual("보내지 않은 글이 있습니다 — 이 화면을 떠나면 사라집니다.", self.page.locator(".work-mode-leave p").text_content())
+        self.page.locator(".work-mode-leave button", has_text="Stay").click()
+        expect(self.page.locator(".work-mode-leave")).to_be_hidden()
+        self.assertEqual("SYN unsent question", self.page.locator("#question-ask-text").input_value())
+        self.assertTrue(self.page.url.endswith("/clinician.html"), self.page.url)
+        self.page.route("**/main.html*", lambda route: route.fulfill(body="<!doctype html><title>SYN main</title>",
+                                                                       content_type="text/html; charset=utf-8"))
+        self.page.locator("#work-mode-menu [data-mode=technician]").click()
+        with self.page.expect_navigation(url="**/main.html?mode=Technician"):
+            self.page.locator(".work-mode-leave button", has_text="Leave").click()
+        self.assertEqual([], self.dialogs)
+
     def test_01_closed_section_reads_nothing_and_ask_creates_a_thread(self):
         self.open_home()
         for u in (A, B, A):
@@ -1602,6 +1633,7 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
         # state, which stays until an explicit login (S7-U5 §0.C 6).
         self.fresh_context()
         self.page.goto(ORIGIN + BASE + "clinician.html")
+        all_studies(self.page)
         expect(self.page.locator("#list-state")).to_have_attribute("data-state", "ready")
         self.pick(A)
         self.open_questions("ready")

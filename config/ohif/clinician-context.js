@@ -5,7 +5,14 @@
 function kinViewerClinicianOnly(me) {
   const roles = me && me.kind === 'member' && Array.isArray(me.roles) ? me.roles : [];
   const app = roles.filter(role => ['radiologist', 'technician', 'admin', 'clinician'].includes(role));
-  return app.length > 0 && app.every(role => role === 'clinician');
+  // B14: a window opened from the Physician mode (Clinician Home) reads as a clinician's for every account — a radiologist
+  // who also holds the clinician role annotates from the Radiologist screen (config/ohif/session.js keeps the mode).
+  return app.length > 0 && (app.every(role => role === 'clinician') || kinViewerPhysicianMode());
+}
+
+/** Whether this viewer tab was opened from the Physician mode (the last hand-off said so). */
+function kinViewerPhysicianMode() {
+  try { return sessionStorage.getItem('kin-viewer-mode') === 'physician'; } catch (_) { return false; }
 }
 
 /* Shared viewer role, distinct from the document's session authority. Ordinary HTTP failures

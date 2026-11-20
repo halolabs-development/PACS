@@ -144,6 +144,60 @@ class RowMenuRightsDOM(unittest.TestCase):
     def non_get(self):
         return [w for w in self.site.writes]
 
+    # ── the mode menu (B14) ──
+    def mode_items(self):
+        return self.page.evaluate("""() => [...document.querySelectorAll('#work-mode-menu [role=menuitemradio]')].map(b =>
+          [b.textContent, b.getAttribute('aria-checked'), b.getAttribute('aria-disabled'),
+           b.getAttribute('aria-describedby') ? document.getElementById(b.getAttribute('aria-describedby')).textContent : ''])""")
+
+    def test_mode_menu_follows_the_tabs_and_grants_nothing(self):
+        """B14 (Minhoon 11-01 "I want this icon to be a pull down menu ... Physician, Radiologist, Technician"): the HALO PACS
+        mark opens the three modes; the two tabs stay as they are. Radiologist and Technician are those tabs and the menu follows a
+        tab however it changes; choosing Technician grants no technician work. Physician needs the clinician (or admin)
+        role and says so; a clinician + radiologist account opens Clinician Home. main.html?mode= picks the tab once."""
+        page = self.open(auth.RAD)
+        button = page.locator('#work-mode-open')
+        self.assertEqual(('HALO PACS', 'HALO PACS — Mode: Radiologist', 'button', 'menu'),
+                         (button.text_content().strip(), button.get_attribute('aria-label'), button.get_attribute('role'),
+                          button.get_attribute('aria-haspopup')))
+        button.click()
+        expect(page.locator('#work-mode-menu')).to_be_visible()
+        self.assertEqual([['Physician', 'false', 'true', '진료과 의사 화면은 clinician 또는 admin 역할이 있는 계정만 엽니다'],
+                          ['Radiologist', 'true', None, ''], ['Technician', 'false', None, '']], self.mode_items())
+        page.locator('#work-mode-menu [data-mode=physician]').dispatch_event('click')
+        page.wait_for_timeout(200)
+        self.assertTrue(page.url.endswith('main.html'), page.url)
+        page.locator('#work-mode-menu [data-mode=technician]').click()
+        expect(page.locator('.tabs > div[data-tab="Technician"]')).to_have_class('on')
+        expect(page.locator('#work-mode-menu')).to_be_hidden()
+        self.assertEqual('HALO PACS — Mode: Technician', button.get_attribute('aria-label'))
+        expect(page.locator('#t-verify')).to_be_disabled()
+        self.assertEqual(NEED_TECH, page.locator('#t-verify').get_attribute('title'))
+        self.radiology_tab()
+        expect(button).to_have_attribute('aria-label', 'HALO PACS — Mode: Radiologist')
+        self.assertEqual([], self.non_get())
+        # From the keyboard: the mark is one Tab stop and Enter opens the menu on the current mode.
+        button.focus()
+        page.keyboard.press('Enter')
+        expect(page.locator('#work-mode-menu')).to_be_visible()
+        page.wait_for_function("() => document.activeElement.textContent === 'Radiologist'")
+        page.keyboard.press('Escape')
+        expect(page.locator('#work-mode-menu')).to_be_hidden()
+        # Asked by Clinician Home's menu: the Technician tab, once (the address no longer asks after it).
+        page.goto(auth.MAIN_URL + '?mode=Technician')
+        expect(page.locator('#rows tr[data-uid]')).to_have_count(len(self.site.modalities))
+        expect(page.locator('.tabs > div[data-tab="Technician"]')).to_have_class('on')
+        expect(button).to_have_attribute('aria-label', 'HALO PACS — Mode: Technician')
+        self.assertNotIn('mode=', page.url)
+        self.assertEqual([], self.errors)
+        # clinician + radiologist: Physician opens Clinician Home.
+        page = self.open({**auth.RAD, 'roles': ['radiologist', 'clinician']})
+        page.locator('#work-mode-open').click()
+        self.assertEqual([['Physician', 'false', None, ''], ['Radiologist', 'true', None, ''], ['Technician', 'false', None, '']],
+                         self.mode_items())
+        with page.expect_request(lambda r: r.url.split('?')[0].endswith('/clinician.html')):
+            page.locator('#work-mode-menu [data-mode=physician]').click()
+
     # ── rights ──
     def test_radiologist_only_technician_menus_follow_the_toolbar(self):
         """A radiologist-only account: the Technician bar's buttons are grey with the reason, and the row menu's and the

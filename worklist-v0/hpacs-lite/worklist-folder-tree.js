@@ -38,10 +38,17 @@
   // On conflict/unknown outcome, retain the draft and block writes until a fresh
   // collection read; update({shortcuts}) can restore an authoritative array silently.
   // Account end must destroy this module. It owns neither storage nor transport.
-  function mount({ host, rows = [], loadState = 'unknown', searches = [], shortcuts = [], onSelect, onChange, onShortcutsMenu }) {
+  // folders: the page's own fixed folders, [{id, name, matches(row)}], listed right after All Studies (Clinician Home's
+  // My Studies). They are neither edited nor saved; a match that is not true or false leaves the count unknown.
+  function mount({ host, rows = [], loadState = 'unknown', searches = [], shortcuts = [], folders = [], onSelect, onChange, onShortcutsMenu }) {
     if (!host?.ownerDocument || typeof onSelect !== 'function' || typeof onChange !== 'function') {
       throw new Error('폴더 표시 영역과 변경 콜백을 확인해 주세요.');
     }
+    if (!Array.isArray(folders) || folders.some(folder => !object(folder) || !text(folder.id) || !text(folder.name)
+      || typeof folder.matches !== 'function') || new Set(folders.map(folder => folder.id)).size !== folders.length) {
+      throw new Error('폴더 목록 또는 바로가기 형식을 확인해 주세요.');
+    }
+    const fixed = folders.map(folder => ({ id: 'folder:' + folder.id, name: folder.name.trim(), kind: 'folder', matches: folder.matches }));
     const doc = host.ownerDocument;
     const sectionPrefix = 'worklist-folders-' + ++nextMountId;
     let state, selected = ['all'], applied = [{ id: 'all', name: 'All Studies', kind: 'all' }], appliedSearch, ended = false, narrowed = false;
@@ -72,13 +79,14 @@
     }
     // 저장 데이터의 이름 충돌은 적재를 막지 않는다. 이름 정책은 지금 편집하는 항목에만 적용한다.
     function validateName(item) {
-      const names = ['All Studies', ...BASE, ...state.shortcuts.filter(other => other.id !== item.id).map(other => other.name)];
+      const names = ['All Studies', ...fixed.map(folder => folder.name), ...BASE, ...state.shortcuts.filter(other => other.id !== item.id).map(other => other.name)];
       if (names.some(name => name.toUpperCase() === item.name.toUpperCase())) {
         throw new Error('이미 사용 중인 폴더 또는 바로가기 이름입니다. 다른 이름을 입력해 주세요.');
       }
     }
     function availableItems() {
       return [{ id: 'all', name: 'All Studies', kind: 'all' },
+        ...fixed.map(folder => ({ id: folder.id, name: folder.name, kind: 'folder' })),
         ...state.shortcuts.map(item => ({ ...item, id: 'shortcut:' + item.id, shortcutId: item.id, kind: 'shortcut',
           unavailable: !state.searches.some(search => search.id === item.searchId) })),
         ...state.searches.map(search => ({ id: search.id, searchId: search.id, name: search.name, kind: 'search' })),
@@ -98,6 +106,12 @@
     function matches(item, row) {
       if (item.kind === 'all') return true;
       if (item.kind === 'modality') return matchesModality(row.modality, item.modality);
+      if (item.kind === 'folder') {
+        const folder = fixed.find(candidate => candidate.id === item.id);
+        if (!folder) return null;
+        try { const result = folder.matches(row); return typeof result === 'boolean' ? result : null; }
+        catch (_) { return null; }
+      }
       if (item.unavailable) return null;
       // A refreshed adapter must not silently replace the doctor's applied criteria.
       const search = selected.includes(item.id) ? appliedSearch : state.searches.find(search => search.id === item.searchId);
@@ -244,6 +258,7 @@
         control.disabled = !!item.unavailable; li.append(control); parent.append(li); return li;
       }
       const all = items(); itemRow(all[0], list);
+      for (const item of all.filter(item => item.kind === 'folder')) itemRow(item, list);
       for (const [kind, title] of [['shortcut', 'My Shortcuts'], ['modality', 'Modality'], ['search', 'Saved Searches']]) {
         const group = element('li'), children = element('ul'); children.hidden = collapsed.has(kind);
         // With a menu handler, the My Shortcuts title opens the exam-filter popup instead of folding the list.

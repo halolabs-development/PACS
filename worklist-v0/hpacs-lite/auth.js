@@ -1154,5 +1154,8 @@ const KinAuth = (() => {
     holdLeave(test) { keep = typeof test === 'function' ? test : null; },
 
     leave() { leave(); },
+
+    /** The page this session lands on (the landing rule above): 'clinician.html' or 'main.html'. Not a permission. */
+    home(session) { return home(session); },
   };
 })();
