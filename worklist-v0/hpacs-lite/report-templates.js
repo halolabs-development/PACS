@@ -45,6 +45,11 @@
       renderTemplateBodyparts();
       const body = $("#t-body").value;
       const words = $("#tpl-search").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const titles = new Set(), repeatedTitles = new Set();
+      for (const template of templates) {
+        if (titles.has(template.title)) repeatedTitles.add(template.title);
+        titles.add(template.title);
+      }
       const list = templates.filter(t => {
         const text = [t.title, t.shortcut, t.modality, t.bodypart].map(v => String(v ?? "").toLowerCase()).join(" ");
         const kinds = templateModalities(t.modality);
@@ -61,7 +66,7 @@
       $("#tplrows").innerHTML = list.map(t => `
         <tr data-i="${templates.indexOf(t)}" title="더블클릭: 판독문에 삽입${
           t.shortcut ? ` / 판독문에서 &quot;${esc(t.shortcut)}&quot; 입력 후 Tab` : ""} / 우클릭: 편집">
-          <td translate="no">${esc(t.title)}</td><td translate="no">${esc(t.shortcut)}</td><td>${esc(t.modality)}</td>
+          <td translate="no">${esc(t.title)}${repeatedTitles.has(t.title) && Number.isInteger(t.id) ? ` (#${t.id})` : ""}</td><td translate="no">${esc(t.shortcut)}</td><td>${esc(t.modality)}</td>
           <td><button type="button" class="chip" data-tpl-preview aria-label="상용구 미리보기: ${esc(t.title)}">View</button></td>
         </tr>`).join("") || `<tr><td class="empty" colspan="4">${templates.length ? "조건에 맞는 상용구가 없습니다" : "상용구 없음 — 우클릭해서 추가하세요"}</td></tr>`;
       updateTemplatePreview();

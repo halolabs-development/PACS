@@ -542,7 +542,7 @@ export class AdminService {
           ORDER BY "id" DESC LIMIT ${take}`;
       };
       const observedAt = new Date().toISOString();
-      read = { top, observedAt, ...await readAuditPage(source, me, { after: cursor?.after ?? null, limit: page.limit }) };
+      read = { top, observedAt, ...await readAuditPage(source, me, { after: cursor?.after ?? null, limit: page.limit }, c.sub) };
     } catch (e: any) {
       // 읽기 실패는 0건이 아니다. 원인 문구(주소·SQL이 섞일 수 있다)는 싣지 않고 코드만 남긴다.
       console.warn(`[KIN API] 감사 기록 읽기 실패: ${e?.code ?? e?.name ?? 'unknown'}`);

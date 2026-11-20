@@ -168,8 +168,9 @@ test('the text of one account under another account\'s session is refused before
     const other = route === 'force' ? { ...ADMIN, sub: 'sub-admin-2', actor: 'admin-2@synthetic' } : B;
     assert.deepEqual(await refused(route, good[route](owner), other, route + ' under another session'),
       [409, 'REPORT_DRAFT_OWNER_CHANGED', null]);
-    // each part of the owner is compared: another institution, another subject, another author
-    for (const [part, value] of [['institution', OTHER_INST], ['sub', 'sub-x'], ['author', 'someone-else@synthetic']])
+    // the owner is the account: another institution or another subject is another owner. The author (the login the
+    // document was opened under) is not compared - the same account's email may have changed since (owner-identity.ts).
+    for (const [part, value] of [['institution', OTHER_INST], ['sub', 'sub-x']])
       assert.deepEqual(await refused(route, { ...good[route](owner), expectedOwner: { ...ownerOf(owner), [part]: value } }, owner, `${route} ${part}`),
         [409, 'REPORT_DRAFT_OWNER_CHANGED', null]);
   }

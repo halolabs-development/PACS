@@ -137,7 +137,7 @@ class ViewingCellDOM(MultiInstitutionWorklist):
         server = PresenceServer()
         writer = '<img src=x onerror=window.synXss=1>'
         server.rows[0]['state']['holder'] = writer
-        server.rows[1]['state']['holder'] = SESSION_A['actor']
+        server.rows[1]['state'].update(holder=SESSION_A['actor'], holderMine=True)
         server.people = {}
         screen = self.boot_viewing(server)
         other, own = self.cell(screen, 'SYN-CURRENT'), self.cell(screen, 'SYN-PRIOR')
@@ -153,7 +153,7 @@ class ViewingCellDOM(MultiInstitutionWorklist):
         server.fail = False
         server.people = {}
         server.rows[0]['state']['holder'] = None
-        server.rows[1]['state']['holder'] = None
+        server.rows[1]['state'].update(holder=None, holderMine=False)
         screen.refresh()
         expect(other).to_have_text('', timeout=12000)
         expect(own).to_have_text('', timeout=12000)

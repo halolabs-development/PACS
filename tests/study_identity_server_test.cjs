@@ -126,7 +126,7 @@ async function setup({policies=()=>[],studies}={}){
         else seq.push('order');
         return project(rows,arg.select);},
       update:refuse('order.update'),updateMany:refuse('order.updateMany'),create:refuse('order.create')},
-    studyGroup:{findMany:async()=>[]},studyGroupMember:{findMany:async()=>[]},report:{findMany:async()=>[]},reportDraft:{findMany:async()=>[]},readerAssignment:{findMany:async()=>[]},studyAttachment:{groupBy:async()=>[],findMany:async()=>[],findFirst:async()=>null},gatewayReceipt:{findMany:async()=>[]},
+    studyGroup:{findMany:async()=>[]},studyGroupMember:{findMany:async()=>[]},report:{findMany:async()=>[]},reportDraft:{findMany:async()=>[],findFirst:async()=>null},readerAssignment:{findMany:async()=>[]},studyAttachment:{groupBy:async()=>[],findMany:async()=>[],findFirst:async()=>null},gatewayReceipt:{findMany:async()=>[]},
     readingTemplate:{count:async()=>1,findMany:async()=>[]},userFilter:{findMany:async()=>[]},
     auditLog:{create:refuse('auditLog.create')},
     $queryRaw:async(strings)=>{const sql=strings.join('?');if(sql.includes('StudyAccessPolicy')){seq.push('policy');return policies(++policyReads);}return [];},
@@ -244,6 +244,7 @@ async function r11Store() {
   const matches=(row,w)=>!w||Object.entries(w).every(([k,v])=>k==='OR'?v.some(x=>matches(row,x)):v&&typeof v==='object'&&'in'in v?v.in.includes(row[k]):row[k]===v);
   const delegate=rows=>({findMany:async({where,select}={})=>project(structuredClone(rows.filter(r=>matches(r,where))),select),
     findUnique:async({where})=>structuredClone(rows.find(r=>matches(r,where))||null),
+    findFirst:async({where,select}={})=>project(structuredClone(rows.filter(r=>matches(r,where))),select)[0]??null,
     update:async({where,data})=>{const row=rows.find(r=>matches(r,where));assert.ok(row);Object.assign(row,data);return structuredClone(row);}});
   const db={studyState:delegate(states),order:delegate(orders),report:delegate(reports),reportDraft:delegate([]),studyGroup:{findMany:async()=>[]},studyGroupMember:{findMany:async()=>[],findFirst:async()=>null},
     readingTemplate:{count:async()=>1,findMany:async()=>[]},userFilter:{findMany:async()=>[]},
@@ -275,7 +276,8 @@ test('CORE_R11_BOOTSTRAP scoped orders never enter states; subject-bound P seria
     assert.ok(!JSON.stringify(result).includes('P-SECRET'));
   }
   w.states[0].preDocSub=null;w.states[0].preReviewerSub=null;
-  assert.equal((await w.svc.bootstrap({...x,sub:'legacy'})).states[w.uid].prelimHidden,false);
+  // A designation without an account matches nobody - never the email someone has now (owner-identity.ts).
+  assert.equal((await w.svc.bootstrap({...x,sub:'legacy'})).states[w.uid].prelimHidden,true);
   assert.equal((await w.svc.bootstrap({...x,actor:'renamed-x'})).states[w.uid].prelimHidden,true);
   assert.equal(w.audits.length,0);
 });

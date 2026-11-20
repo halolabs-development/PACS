@@ -83,7 +83,7 @@ class DraftPurposeScreen(worklist.WorklistE2E):
 
     def work_unit(self, fixture, actor="doctor"):
         rows = psql(f'SELECT coalesce("workUnit", \'\') FROM "ReportDraft" WHERE uid={sql_text(fixture.uid)} '
-                    f'AND author={sql_text(self.stack.actor(actor))}')
+                    f'AND "authorSub"={sql_text(self.stack.user_ids[actor])}')
         return rows[0] if rows else ""
 
     def wait_no_ended_rows(self, fixture, timeout=60):
@@ -605,7 +605,7 @@ class DraftPurposeRelatedR3(related.RelatedReportModeE2E):
         # The author's own draft row, whole (row_to_json keeps a multi-line findings on one output line).
         stored = [json.loads(line) for line in psql(
             'SELECT row_to_json(d)::text FROM (SELECT author, findings FROM "ReportDraft" '
-            f'WHERE uid={sql_text(target.uid)} AND author={sql_text(self.stack.actor("doctor"))}) d')]
+            f'WHERE uid={sql_text(target.uid)} AND "authorSub"={sql_text(self.stack.user_ids["doctor"])}) d')]
         print("CD09P-SCREEN " + json.dumps({"c10b1-kept": {"answer": {k: answer.get(k) for k in ("revision", "present", "relatedInsert")},
                                                            "rows": stored, "receipt": self.receipt(request_id)}}), flush=True)
         self.assertEqual(answer["relatedInsert"]["result"], "applied", answer)

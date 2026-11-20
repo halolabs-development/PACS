@@ -4811,6 +4811,16 @@
         "slot": "institutionsConcern"
       },
       {
+        "name": "resolveDevice",
+        "slot": "institutionsConcern",
+        "implementation": {
+          "file": "api/src/pacs/institutions.ts",
+          "owner": "PacsInstitutions",
+          "name": "resolveDevice",
+          "kind": "MethodDeclaration"
+        }
+      },
+      {
         "name": "emrLink",
         "slot": "institutionsConcern",
         "implementation": {
@@ -11000,6 +11010,28 @@
         "params": [
           "PrismaService",
           "StudyAccessService"
+        ],
+        "scope": null,
+        "declared": [],
+        "optional": []
+      }
+    }
+  },
+  "di_additions_modality_worklist": {
+    "unit": "modality-worklist",
+    "decision": "Modality Worklist",
+    "note": "Modality Worklist: the API's provider that owns the DICOM worklist helper process and answers its queries from the Order table, by the calling device's registered institution (PacsService.resolveDevice). No controller and no route. U0B-DI compares the snapshot minus exactly these.",
+    "middleware_routes": [],
+    "controllers": [],
+    "providers": [
+      "ModalityWorklistService"
+    ],
+    "routes": [],
+    "injectables": {
+      "ModalityWorklistService": {
+        "params": [
+          "PrismaService",
+          "PacsService"
         ],
         "scope": null,
         "declared": [],

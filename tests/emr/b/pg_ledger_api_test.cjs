@@ -418,7 +418,7 @@ async function clinicalHttp() {
       await witness.reportVersion.create({data:{uid:sourceUid,version:1,action:'approve',author,
         findings:sourceText,conclusion:'',recommendation:''}});
       // A present draft holds its work (CD-09-P ReportDraft_work_check): the unit, start and intent a first save would draw.
-      await witness.reportDraft.create({data:{uid,author,revision:1,present:true,findings:seed,conclusion:'',recommendation:'',baseVersion:0,
+      await witness.reportDraft.create({data:{uid,author,authorSub:sub,revision:1,present:true,findings:seed,conclusion:'',recommendation:'',baseVersion:0,
         workUnit:'disposal:'+randomUUID(),workSince:new Date(),workIntent:'approve'}});
       const text='\n'+sourceText;
       const body={...input(state.draftEpoch+':1',seed+text),relatedInsert:{intent:'apply',insertRequestId:randomUUID(),
@@ -501,7 +501,7 @@ async function clinicalHttp() {
     assert.equal(unchanged.version,3);assert.equal(unchanged.suspended,false);
     const refused=await send('PUT',green.uid,input(saved.body.revision,'SYNTHETIC refused draft'));
     assert.equal(refused.status>=400,true);assert.equal(refused.text.includes('SYNTHETIC refused draft'),false);
-    assert.equal((await witness.reportDraft.findUnique({where:{uid_author:{uid:green.uid,author}}})).findings,content);
+    assert.equal((await witness.reportDraft.findUnique({where:{uid_authorSub:{uid:green.uid,authorSub:sub}}})).findings,content);
     const noView=await send('GET',green.uid);assert.equal(noView.status>=400,true);assert.equal(noView.text.includes(content),false);
     for(const f of [related,held]){
       const denied=await send('PUT',f.uid,f.body);assert.ok(denied.status>=400);assert.equal(denied.text.includes(f.seed),false);

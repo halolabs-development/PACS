@@ -756,6 +756,17 @@ class SyntheticStack:
         return subprocess.run(["docker", "exec", self.target["containers"]["db"], "psql", "-X", "-U", "kin", "-d", database, "-qAt", "-v",
                                "ON_ERROR_STOP=1", "-c", sql], check=True, capture_output=True, text=True).stdout.strip()
 
+    def confirm_seeded_designations(self):
+        # These designations were seeded above. This old host predates MemberRights,
+        # so confirm their subjects in the fixture realm before the first directory import.
+        people = json.loads(self.psql("SELECT json_object_agg(email,id) FROM user_entity "
+                                      "WHERE realm_id=(SELECT id FROM realm WHERE name='kin') "
+                                      "AND username IN ('doctor','doctor2')", "keycloak"))
+        self.test.assertEqual(len(people), 2)
+        aliases = {hashlib.sha256(email.encode()).hexdigest(): subject for email, subject in people.items()}
+        history = json.dumps(dict(unlisted="unchanged", aliases=aliases)).replace("'", "''")
+        self.psql(f"ALTER ROLE CURRENT_USER IN DATABASE kin SET pacs.owner_history = '{history}'")
+
     def keycloak(self, image, operation, admin_user, network=None):
         """Test-side realm work through the admin REST API (as the executor would): Keycloak may still be starting.
         'disable' disables the member tech; 'client' prepares one interactive login of doctor (a temporary PKCE client and
@@ -901,6 +912,7 @@ class EmrIntroductionRehearsal(unittest.TestCase):
         # D01/D02: the browser itself and the smoke member's roles and group were proved before the fence.
         self.assertTrue(baseline["smoke_browser"]["browser"].startswith("chromium "), baseline["smoke_browser"])
         self.assertEqual(baseline["smoke_member_realm"], {"roles": ["radiologist"], "group": "hallym"})
+        clone.confirm_seeded_designations()
         clone.phase("introduce", "INTRODUCED")
         realm = "(SELECT id FROM realm WHERE name='kin')"
         self.assertEqual(clone.psql(f"SELECT enabled FROM user_entity WHERE username='tech' AND realm_id={realm};", "keycloak"), "t")
@@ -1033,6 +1045,7 @@ class EmrIntroductionRehearsal(unittest.TestCase):
         stack.keycloak(images["previous"]["api"], "origin", "admin")
         members = json.loads(stack.psql(intro.REALM_MEMBERS_SQL, "keycloak"))
         stack.plan(images, members=members)
+        stack.confirm_seeded_designations()
         stack.phase("capture", "HELD")
         state = json.loads((stack.records.directory / "state.json").read_text())
         self.assertEqual(state["compose_env"]["KIN_MONITOR_PUBLIC_DIR"]["from"], ["mount:proxy"])

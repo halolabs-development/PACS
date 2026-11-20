@@ -4,7 +4,6 @@ Synthetic LiveStack only, through scripts/run-tests.py. The archive is downloade
 by the browser without a query or custom headers and checked against its manifest.
 """
 import os
-import re
 from pathlib import Path
 import unittest
 from datetime import datetime
@@ -14,7 +13,6 @@ from playwright.sync_api import expect
 from test_worklist import WorklistE2E
 import admin_otp
 from document_session import document_request
-from invariants_live import psql
 from viewer_precision_fixture import synthetic_ct
 
 
@@ -94,9 +92,7 @@ class AuthFlowSubtractionE2E(WorklistE2E):
                 page.screenshot(path=str(evidence / 'served-flow-final.png'))
             except Exception:
                 pass
-            if operations:
-                self.assertTrue(all(re.fullmatch(r'[0-9a-f-]{36}', value) for value in operations))
-                psql('DELETE FROM "ImportOperation" WHERE kind=\'download\' AND id IN (' + ','.join("'" + value + "'" for value in operations) + ');')
+            # The download operation's row is the fixture cleanup's (by the fixture's Study UID).
 
 
 def load_tests(loader, tests, pattern):
