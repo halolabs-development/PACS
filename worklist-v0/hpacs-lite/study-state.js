@@ -15,6 +15,19 @@
     const overlayValue = (key, value) => typeof value === "string" || (key === "age" && Number.isFinite(value));
 
     /**
+     * 검사 쓰기의 한 관문(Match·Unmatch·Verify·Unverify·Delete·Modify Exam과 saveApp). 로그인한 화면(데모가 아님)에서
+     * 검사 쓰기는 서버가 받아들인 답에서만 행을 바꾸고 성공을 알린다. 연결이 끊긴 것으로 보이는 동안은 보내지도 그리지도
+     * 않고 저장되지 않았다고 한 번 말한다 — 끊김을 데모(이 브라우저에만 남는) 경로로 떨어뜨리면 저장되지 않은 쓰기가
+     * 성공처럼 보인다. 답: "server" 서버에 보낸다 · "local" 데모 모드(로그인 안 함) · null 막힘(say이면 토스트로 말함;
+     * 아니면 부른 쪽이 NOT_CONNECTED를 제 자리에 보인다 — Match…·Unmatch… 창).
+     */
+    const NOT_CONNECTED = "서버에 연결돼 있지 않습니다 — 저장되지 않았습니다";
+    function studyWriteRoute(say = true) {
+      if (offline) { if (say) toast(NOT_CONNECTED, "err"); return null; }
+      return serverMode ? "server" : "local";
+    }
+
+    /**
      * 상태 저장. 로컬 모드면 통째로 localStorage에, 서버 모드면 **바뀐 필드만** PATCH.
      *
      * 전체를 보내면 안 되는 이유: 서버가 필드별로 권한을 본다. 방사선사가 Verify(ss)만
@@ -24,8 +37,9 @@
     function saveApp(uid, patch) {
       // 로그인한 계정으로 일하는 중에 서버가 죽었다면, localStorage는 안전한 곳이 아니라
       // **다음 로그인에 조용히 버려질 곳**이다. 쌓지 않고 막는다.
-      if (offline) { toast("서버에 연결돼 있지 않습니다 — 저장되지 않았습니다", "err"); return false; }
-      if (!serverMode) {
+      const route = studyWriteRoute();
+      if (!route) return false;
+      if (route === "local") {
         try { localStorage.setItem("kin-app", JSON.stringify(appState)); } catch (e) {}
         return;
       }

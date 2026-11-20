@@ -233,6 +233,19 @@
     const overlayValue = (key, value) => typeof value === "string" || (key === "age" && Number.isFinite(value));
 
     /**
+     * 검사 쓰기의 한 관문(Match·Unmatch·Verify·Unverify·Delete·Modify Exam과 saveApp). 로그인한 화면(데모가 아님)에서
+     * 검사 쓰기는 서버가 받아들인 답에서만 행을 바꾸고 성공을 알린다. 연결이 끊긴 것으로 보이는 동안은 보내지도 그리지도
+     * 않고 저장되지 않았다고 한 번 말한다 — 끊김을 데모(이 브라우저에만 남는) 경로로 떨어뜨리면 저장되지 않은 쓰기가
+     * 성공처럼 보인다. 답: "server" 서버에 보낸다 · "local" 데모 모드(로그인 안 함) · null 막힘(say이면 토스트로 말함;
+     * 아니면 부른 쪽이 NOT_CONNECTED를 제 자리에 보인다 — Match…·Unmatch… 창).
+     */
+    const NOT_CONNECTED = "서버에 연결돼 있지 않습니다 — 저장되지 않았습니다";
+    function studyWriteRoute(say = true) {
+      if (offline) { if (say) toast(NOT_CONNECTED, "err"); return null; }
+      return serverMode ? "server" : "local";
+    }
+
+    /**
      * 상태 저장. 로컬 모드면 통째로 localStorage에, 서버 모드면 **바뀐 필드만** PATCH.
      *
      * 전체를 보내면 안 되는 이유: 서버가 필드별로 권한을 본다. 방사선사가 Verify(ss)만
@@ -242,8 +255,9 @@
     function saveApp(uid, patch) {
       // 로그인한 계정으로 일하는 중에 서버가 죽었다면, localStorage는 안전한 곳이 아니라
       // **다음 로그인에 조용히 버려질 곳**이다. 쌓지 않고 막는다.
-      if (offline) { toast("서버에 연결돼 있지 않습니다 — 저장되지 않았습니다", "err"); return false; }
-      if (!serverMode) {
+      const route = studyWriteRoute();
+      if (!route) return false;
+      if (route === "local") {
         try { localStorage.setItem("kin-app", JSON.stringify(appState)); } catch (e) {}
         return;
       }
@@ -4908,6 +4922,7 @@
       const s = cur(), o = curOrder();
       if (!s || !o) { alert("Study List에서 검사 1건, Order List에서 오더 1건을 각각 선택하세요."); return; }
       if (s.matched === "M" || o.matched === "M") { alert("이미 매칭된 항목입니다."); return; }
+      if (!studyWriteRoute()) return;   // disconnected: said once, before the confirm
       if (!confirm(`아래 오더 정보를 검사에 덮어씁니다.\n\n검사: ${s.name} (${s.id}) ${s.date}\n오더: ${o.name} (${o.id}) ${o.sched}\n\n진행할까요?`)) return;
       await runMatch(s, o, message => alert("매칭 실패: " + message));
     }
@@ -4919,11 +4934,15 @@
      * or `{ ok: false, message }`; `refused` is called at the moment the page shows a refusal (not after a session end).
      */
     async function runMatch(s, o, refused = null) {
+      // 끊긴 동안은 보내지도 그리지도 않는다(study-state.js studyWriteRoute). 행 메뉴(refused가 있음)는 토스트로 한 번,
+      // Match… 창은 답의 message를 창 안에 한 번 보인다 — 매칭 실패 alert는 없다.
+      const route = studyWriteRoute(!!refused);
+      if (!route) return { ok: false, message: NOT_CONNECTED, reloaded: Promise.resolve(false) };
       const a = appState[s.uid] ??= {};
       const orig = a.orig ?? { id: s.id, name: s.name, sex: s.sex, birth: s.birth, age: s.age, desc: s.desc, ward: s.ward };
       const ov = { id: o.id, name: o.name, sex: o.sex, birth: o.birth, age: ageOf(o.birth, s.date), desc: o.desc, ward: o.ward };
 
-      if (serverMode) {
+      if (route === "server") {
         // 검사와 오더를 함께 바꾸는 일이라 서버 트랜잭션에 맡긴다.
         // 한쪽만 바뀌면 M/U가 어긋난 유령 상태가 남는다.
         // S4-U5: the server stores a claimed original only in the overlay shape, so only those fields are sent
@@ -4971,14 +4990,17 @@
     async function doUnmatch() {
       const s = cur();
       if (!s || s.matched !== "M") { alert("매칭(M)된 검사를 선택하세요."); return; }
+      if (!studyWriteRoute()) return;
       await runUnmatch(s, undefined, message => alert("매칭 해제 실패: " + message));
     }
 
     /** The Unmatch itself (right-click Unmatch without a reason, the Unmatch… window with one); answers as runMatch. */
     async function runUnmatch(s, reason, refused = null) {
+      const route = studyWriteRoute(!!refused);
+      if (!route) return { ok: false, message: NOT_CONNECTED, reloaded: Promise.resolve(false) };
       const a = appState[s.uid] ?? {};
 
-      if (serverMode) {
+      if (route === "server") {
         const at = work.capture("document");
         let st;
         try {
@@ -5025,15 +5047,31 @@
     }
 
     // ── Verify / Unverify (8.1.3) ──
-    function setSs(uid, ss) {
+    /**
+     * Verify / Unverify (the Technician bar and the row menu). With a server the row is painted from the accepted answer
+     * (saveApp) and only then announced; a refusal keeps the row as the server has it and says the server's reason
+     * (saveApp). Disconnected, nothing is sent or painted (studyWriteRoute). The demo path is the previous behavior.
+     */
+    async function setSs(uid, ss) {
       const s = studies.find(x => x.uid === uid); if (!s) return;
+      const route = studyWriteRoute();
+      if (!route) return;
+      const said = () => toast(ss === "Verified"
+        ? "검사를 확인했습니다 — 판독할 수 있습니다"
+        : "확인을 해제했습니다 — Unverified로 표시되고 판독이 잠깁니다 (응급 제외)", "info");
+      if (route === "server") {
+        // The row is the accepted answer's (saveApp); the report pane only if that study is still the selected one.
+        const at = work.capture("document"), view = uid === selectedUid ? work.capture("study") : null;
+        if (await saveApp(uid, { ss }) !== true) return;
+        work.commit(at, () => { renderClinical(); said(); });
+        if (view) work.commit(view, () => { loadReport(); updateReportButtons(); });
+        return;
+      }
       s.ss = ss;
       appState[uid] = { ...appState[uid], ss };
       saveApp(uid, { ss }); render(); renderClinical();
       if (uid === selectedUid) { loadReport(); updateReportButtons(); }
-      toast(ss === "Verified"
-        ? "검사를 확인했습니다 — 판독할 수 있습니다"
-        : "확인을 해제했습니다 — Unverified로 표시되고 판독이 잠깁니다 (응급 제외)", "info");
+      said();
     }
     $("#t-verify").addEventListener("click", () => selectedUid ? setSs(selectedUid, "Verified") : alert("검사를 선택하세요."));
     $("#t-unverify").addEventListener("click", () => selectedUid ? setSs(selectedUid, "Unverified") : alert("검사를 선택하세요."));
@@ -5075,7 +5113,9 @@
       Object.assign(ov, {
         id: $("#m-id").value.trim(), name: $("#m-name").value.trim(), sex: $("#m-sex").value,
         birth, age: ageOf(birth, s.date), desc: $("#m-desc").value.trim(), ward: $("#m-ward").value.trim() });
-      if (serverMode || offline) {
+      const route = studyWriteRoute();
+      if (!route) return;   // disconnected: nothing sent or painted; the modal keeps what was typed
+      if (route === "server") {
         const guidance = $("#m-guidance");
         guidance.hidden = true; guidance.textContent = "";
         button.disabled = true;
@@ -5118,6 +5158,7 @@
     async function doDelete(uid) {
       const s = studies.find(x => x.uid === uid); if (!s) return;
       if (s.rs !== "W") { alert("RS가 W(Wait)인 검사만 삭제할 수 있습니다."); return; }
+      if (!studyWriteRoute()) return;   // disconnected: said once, before the confirm
       // 영상 자체(Orthanc)를 지우는 것은 아직 안 한다. 되돌릴 수 없는 동작이라
       // 권한·감사로그·연쇄 해제를 갖춰야 한다 (교훈 §5). 지금 지울 수 있는 건
       // "영상에 대한 사람의 결정"뿐이고, 그러면 다음 목록 조회 때 그 검사는
@@ -5126,8 +5167,10 @@
                    `영상은 남고, 검사는 방금 도착한 것처럼 다시 나타납니다. 계속할까요?`)) return;
       // 서버가 거절했는데 화면부터 지우면 검사가 사라진 것처럼 거짓말한다.
       // 응답을 기다려야 판독 이력·다른 사람의 초안 때문에 거절된 이유도 메뉴의 catch가 보여준다.
+      const route = studyWriteRoute();
+      if (!route) return;
       const at = work.capture("document");
-      if (serverMode) await api("DELETE", `/studies/${encodeURIComponent(uid)}`, undefined, undefined, at);
+      if (route === "server") await api("DELETE", `/studies/${encodeURIComponent(uid)}`, undefined, undefined, at);
       else saveApp();
       work.commit(at, () => {
         studies = studies.filter(x => x.uid !== uid);
@@ -15602,7 +15645,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const opened = { uid, seq: selectionSeq, oid: selectedOid };
       const forceReleaseItems = KinAuth.has("admin") && s?.holder ? [{
         label: kinSay("점유 강제 해제 (관리자)"), dis: s.holderMine === true, act: async () => {
-          if (!confirm(`${displayActor(s.holder)} 님의 점유를 강제로 해제합니다. 그쪽 화면은 다음 저장에서 거절됩니다. 계속할까요?`)) return;
+          // 서버가 하는 일 그대로: 점유만 풀린다(api/src/pacs/hold.ts forceRelease). 이름은 자료라 번역되지 않는 자리({0})로.
+          if (!confirm(kinSay("{0} 님의 점유를 강제로 해제할까요? 저장된 초안은 그대로 남고, 해제 내역은 감사로그에 기록됩니다. 다른 사람이 먼저 점유하지 않으면 그분은 이어서 저장할 수 있습니다.", displayActor(s.holder)))) return;
           const at = work.capture("document");
           try { await api("POST", `/studies/${encodeURIComponent(uid)}/release/force`, undefined, undefined, at); }
           catch (e) { work.commit(at, () => apiFail(e)); return; }
@@ -15700,6 +15744,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         technicianItem({ label: kinSay("Unmatch"), dis: o.matched !== "M", act: async () => {
             const s2 = studies.find(x => x.uid === o.studyUid);
             if (!s2) { toast("이 오더에 매칭된 검사를 목록에서 찾을 수 없습니다", "err"); return; }
+            // 끊긴 동안은 그 검사로 옮기지도 않는다(study-state.js studyWriteRoute) — 해제할 수 없는 동작이 선택과 판독 화면부터 바꾸지 않게.
+            if (!studyWriteRoute()) return;
             // 그 검사로 옮겨졌을 때만 한다 — 옮겨지지 않았으면(글자 조합·쓰던 글의 저장) Unmatch가 지금 선택에 닿는다.
             await select(s2.uid);
             if (selectedUid !== s2.uid) return;
