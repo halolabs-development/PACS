@@ -303,18 +303,26 @@ class SettingsStore:
 
 
 _LOG_LOCK = threading.Lock()
-# The last LOG_RING_MAX log lines of this run, as the remote-support diagnostics carry them: the time, the event and
-# only numbers, true/false and error codes — never a UID, a destination or free text. A line about one study (it has a
-# uid) is not kept at all: a study's own history stays out of the report (the KIN-bound ones are its queue rows).
+# The last LOG_RING_MAX log lines of this run, as the remote-support diagnostics carry them. Only the whole-Gateway
+# events named in LOG_RING_EVENTS are kept — each by its full name, never by prefix. Every event about one study
+# (study.*, batch.*, forward.*, receipt.*, retry_request.*, agent.retry, ...) stays out whether or not it names a UID: its
+# time alone would tell which study was handled when. A kept line carries the time, the event and only numbers,
+# true/false and error codes — never a UID, a destination or free text.
 LOG_RING_MAX = 200
 LOG_RING: deque[dict[str, Any]] = deque(maxlen=LOG_RING_MAX)
-_SAFE_EVENT = re.compile(r"[a-z_.]{1,64}")
+LOG_RING_EVENTS = frozenset({
+    "agent.started", "agent.stopped", "agent.ready", "agent.identity_blocked",
+    "heartbeat.deferred", "heartbeat.queue_unreadable",
+    "settings.deferred", "settings.invalid",
+    "support.deferred", "support.invalid", "support.queue_unreadable", "support.restart",
+    "support.update_handed_over",
+})
 
 
 def _ring_line(safe: dict[str, Any]) -> dict[str, Any]:
-    line: dict[str, Any] = {"at": safe["at"], "event": safe["event"] if _SAFE_EVENT.fullmatch(safe["event"]) else "other"}
+    line: dict[str, Any] = {"at": safe["at"], "event": safe["event"]}
     for key, value in safe.items():
-        if key in ("at", "event", "uid") or not re.fullmatch(r"[A-Za-z]{1,32}", key):
+        if key in ("at", "event") or not re.fullmatch(r"[A-Za-z]{1,32}", key):
             continue
         if isinstance(value, bool) or (isinstance(value, int) and abs(value) < 2 ** 53):
             line[key] = value
@@ -334,7 +342,7 @@ def log(event: str, *, uid: str | None = None, **fields: Any) -> None:
     # the text and the newline separately, so two lines written at once could interleave into one unreadable line.
     line = json.dumps(safe, ensure_ascii=False, separators=(",", ":")) + "\n"
     with _LOG_LOCK:
-        if not uid:
+        if event in LOG_RING_EVENTS:
             LOG_RING.append(_ring_line(safe))
         sys.stdout.write(line)
         sys.stdout.flush()
