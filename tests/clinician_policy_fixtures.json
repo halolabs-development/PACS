@@ -357,7 +357,7 @@
     "unit": "S5-U1c",
     "head": "9e7f69885b3eaa8e6c90ca9bd6de01b460e2794b",
     "rule": "Every (method, template) of the controllers has exactly one row: public_routes, session_routes, business_routes or one basis group of denied. The pure test fails on a controller route without a row, a row without a controller route, a row in two places, and counts that disagree with the controllers or invariants_live ROUTES. Nothing is denied by subtraction.",
-    "counts": {"routes": 222, "public": 7, "session": 2, "business": 93, "denied": 120},
+    "counts": {"routes": 228, "public": 7, "session": 2, "business": 93, "denied": 126},
     "basis_legend": {
       "report": "Clinical writes and private draft reads stay denied. Shared worklist and report reads follow radiologist rules, P body excluded (owner 2026-11-02).",
       "viewer": "Clinical annotation, finding, manual SR and viewer-job writes stay denied; current viewer items and finding reads follow radiologist rules.",
@@ -432,7 +432,7 @@
         "GET admin/users/:id/study-access", "POST admin/users/:id/study-access", "GET audit", "GET admin/held-sources",
         "POST admin/source-devices", "POST admin/institution-aliases", "GET admin/metrics", "GET admin/audit", "POST admin/dicom-import/:operationId/files/:index/recovery",
         "GET admin/users/:id/signing-key", "POST admin/users/:id/signing-key", "PATCH admin/emr-link", "GET admin/gateway-status",
-        "GET admin/gateway-settings", "PUT admin/gateway-settings",
+        "GET admin/gateway-settings", "PUT admin/gateway-settings", "GET admin/gateway-support", "POST admin/gateway-support", "GET admin/gateway-support/:id/diagnostics",
         "GET admin/critical-result-inbox", "PATCH admin/critical-result-inbox"
       ],
       "attachment": [
@@ -455,7 +455,7 @@
         "POST transfers/:id/revoke"
       ],
       "gateway": [
-        "POST gateway/announce", "POST gateway/receipt", "POST gateway/stow/:uid", "GET gateway/retry-requests", "POST studies/:uid/gateway-retry", "POST gateway/heartbeat", "GET gateway/settings"
+        "POST gateway/announce", "POST gateway/receipt", "POST gateway/stow/:uid", "GET gateway/retry-requests", "POST studies/:uid/gateway-retry", "POST gateway/heartbeat", "GET gateway/settings", "GET gateway/support", "POST gateway/support/:id", "GET gateway/update/:version"
       ],
       "critical_result": [
         "GET studies/:uid/critical-result-recipients", "POST studies/:uid/critical-results", "GET studies/:uid/critical-results",
@@ -519,6 +519,12 @@
       "GET admin/gateway-settings": {"decision": "denied", "unit": "S9-gateway-settings", "commit": null, "basis": "admin read of this institution's Gateway settings (routing rules and compression; need admin, restricted study access refused); not a clinician read"},
       "PUT admin/gateway-settings": {"decision": "denied", "unit": "S9-gateway-settings", "commit": null, "basis": "admin save of this institution's Gateway settings (need admin, restricted study access refused, revision checked, audited); not a clinician write"},
       "GET gateway/settings": {"decision": "denied", "unit": "S9-gateway-settings", "commit": null, "basis": "gateway client-credentials read of its institution's Gateway settings (needExact gateway)"},
+      "GET admin/gateway-support": {"decision": "denied", "unit": "S9-gateway-remote-support", "commit": null, "basis": "admin read of this institution's Gateway lines with their newest remote support request and the held update versions (need admin, restricted study access refused); not a clinician read"},
+      "POST admin/gateway-support": {"decision": "denied", "unit": "S9-gateway-remote-support", "commit": null, "basis": "admin request of diagnostics, a restart or an update on one of this institution's Gateway lines (need admin, restricted study access refused, audited); not a clinician write"},
+      "GET admin/gateway-support/:id/diagnostics": {"decision": "denied", "unit": "S9-gateway-remote-support", "commit": null, "basis": "admin read of one Gateway diagnostics report of this institution (need admin, restricted study access refused); not a clinician read"},
+      "GET gateway/support": {"decision": "denied", "unit": "S9-gateway-remote-support", "commit": null, "basis": "gateway client-credentials pull of the open remote support request of its own line (needExact gateway)"},
+      "POST gateway/support/:id": {"decision": "denied", "unit": "S9-gateway-remote-support", "commit": null, "basis": "gateway client-credentials result of a request bound to its own credential, institution and queue (needExact gateway)"},
+      "GET gateway/update/:version": {"decision": "denied", "unit": "S9-gateway-remote-support", "commit": null, "basis": "gateway client-credentials download of a held update bundle; the Gateway host verifies it (needExact gateway)"},
       "GET admin/metrics": {"decision": "denied", "unit": "S5-U6b", "commit": "9fe2f14", "basis": "admin operations metrics: institution-scoped counts, report TAT and server-wide storage (need admin, restricted study access refused); not a clinician read"},
       "GET image-requests": {"decision": "business", "unit": "S5-U4c", "commit": "4749f5f", "basis": "image request list: view=mine is the clinician's own requests, view=queue needs radiologist, technician or admin (service 403 otherwise); owning institution and StudyAccess only, no count; declared in allowed_additions"},
       "GET image-requests/:id": {"decision": "business", "unit": "S5-U4c", "commit": "4749f5f", "basis": "one request: a clinician-only member reads only its own (404 otherwise), staff and radiologists the owning institution's; the counterparty institution never reads it; declared in allowed_additions"},

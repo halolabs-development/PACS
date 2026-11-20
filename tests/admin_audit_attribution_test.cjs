@@ -125,6 +125,7 @@ CONTRACT.field_rules["institution.critical-result-inbox.save"] = {"source":"targ
 Object.assign(CONTRACT.field_rules, {
   "institution.dicom-peer.register":{"source":"detail.institution","meaning":"registering administrator's institution"},
   "institution.dicom-peer.remove":{"source":"detail.institution","meaning":"removing administrator's institution"},
+  "gateway.support.request":{"source":"detail.institution","meaning":"the requesting administrator's institution (Gateway remote support)"},
   "institution.gateway-settings.save":{"source":"detail.institution","meaning":"saving administrator's institution"},
   "query-retrieve.search":{"source":"detail.institution","meaning":"searching member's institution (criteria names and counts only)"},
   "query-retrieve.retrieve":{"source":"detail.institution","meaning":"retrieving member's institution"}});

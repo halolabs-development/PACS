@@ -54,6 +54,7 @@ export const AUDIT_FIELD_RULES: Readonly<Record<string, AuditFieldSource>> = Obj
   "institution.critical-result-inbox.save": 'target', // target is the institution whose hospital inbox the administrator set
   "institution.dicom-peer.register": 'detail.institution',  // FC-070: 상대 PACS를 자기 기관에 등록한 관리자의 기관
   "institution.dicom-peer.remove": 'detail.institution',    // FC-070: 상대 PACS를 자기 기관에서 지운 관리자의 기관
+  "gateway.support.request": 'detail.institution',  // Gateway remote support: the requesting administrator's institution
   "institution.gateway-settings.save": 'detail.institution',  // Gateway 규칙(목적지·보관·압축)을 저장한 관리자의 기관
   "query-retrieve.search": 'detail.institution',  // FC-070: 자기 기관의 상대 PACS를 검색한 회원의 기관(조건 이름·건수만)
   "query-retrieve.retrieve": 'detail.institution',  // FC-070: 자기 기관의 상대 PACS에서 가져오기를 건 회원의 기관

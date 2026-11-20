@@ -372,7 +372,8 @@ class AgentPins(unittest.TestCase):
         # CD-10 adds source-AE association, forwarded provenance and mixed-device batch coverage.
         # 29 -> 44: HeartbeatTests (15 cases), the operational heartbeat thread.
         # 44 -> 70: RoutingTests (including upgrade from a pre-routing queue) and LogLineTests.
-        self.assertEqual(count, 70)
+        # 70 -> 83: SupportTests (signed updates' ready signal and remote support, the agent's half).
+        self.assertEqual(count, 83)
 
 
 class ServerPins(unittest.TestCase):

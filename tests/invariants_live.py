@@ -171,6 +171,10 @@ ROUTES: dict[tuple[str, str], Route] = {
     ("POST", "gateway/heartbeat"): Route(Kind.TENANT),
     # Gateway settings: the Gateway reads its institution's routing rules, kept-copy days and compression.
     ("GET", "gateway/settings"): Route(Kind.TENANT),
+    # Gateway remote support: the Gateway pulls the open request of its own line, answers it, and downloads a held update.
+    ("GET", "gateway/support"): Route(Kind.TENANT),
+    ("POST", "gateway/support/:id"): Route(Kind.TENANT),
+    ("GET", "gateway/update/:version"): Route(Kind.TENANT),
     ("POST", "studies/:uid/gateway-retry"): Route(Kind.TENANT),
     ("POST", "dicom/lookup"): Route(Kind.TENANT),
     ("GET", "colleagues"): Route(Kind.TENANT),
@@ -325,6 +329,9 @@ ROUTES: dict[tuple[str, str], Route] = {
     ("GET", "admin/gateway-status"): Route(Kind.TENANT),
     ("GET", "admin/gateway-settings"): Route(Kind.TENANT),
     ("PUT", "admin/gateway-settings"): Route(Kind.TENANT),
+    ("GET", "admin/gateway-support"): Route(Kind.TENANT),
+    ("POST", "admin/gateway-support"): Route(Kind.TENANT),
+    ("GET", "admin/gateway-support/:id/diagnostics"): Route(Kind.TENANT),
     ("GET", "admin/held-sources"): Route(Kind.TENANT),
     ("POST", "admin/source-devices"): Route(Kind.TENANT),
     ("POST", "admin/institution-aliases"): Route(Kind.TENANT),
@@ -4589,6 +4596,15 @@ class LiveInvariantTests(unittest.TestCase):
                 self.assertNotIn("already_requested", text)
             self.assertNotIn(epoch_a, boot.text)
 
+    def test_gateway_launcher_signed_update_contract(self) -> None:
+        # The launcher (gateway/agent/update.py): signature, newer-only, probation and rollback with real child processes.
+        completed = subprocess.run(
+            [sys.executable, str(ROOT / "gateway" / "agent" / "test_update.py")],
+            cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("Ran 22 tests", completed.stderr + completed.stdout)
+
     def test_gateway_agent_queue_and_batch_contract(self) -> None:
         completed = subprocess.run(
             [sys.executable, str(ROOT / "gateway" / "agent" / "test_agent.py")],
@@ -4600,7 +4616,8 @@ class LiveInvariantTests(unittest.TestCase):
         # 25 -> 26: S4-EG1 added OrthancConnectionTests (local reads never reuse a pooled connection).
         # The number is the suite as authored; tests/gateway_receipt_source_test.py pins it to an AST
         # count of test_agent.py, so neither can move without the other.
-        self.assertIn("Ran 70 tests", completed.stderr + completed.stdout)
+        # 70 -> 83: signed updates and remote support added SupportTests (the agent's half).
+        self.assertIn("Ran 83 tests", completed.stderr + completed.stdout)
 
     def test_production_gateway_contract_is_declared(self) -> None:
         completed = subprocess.run(

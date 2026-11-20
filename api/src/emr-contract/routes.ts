@@ -86,6 +86,15 @@ const groups: readonly (RouteContract & { routes: readonly string[] })[] = [
   { kinds: ['institution'], operation: 'write', causes: ['user-view'],
     routes: ['POST admin/dicom-peers', 'DELETE admin/dicom-peers/:id', 'PUT admin/gateway-settings'] },
   { kinds: ['institution'], operation: 'read', causes: ['service-job'], routes: ['GET gateway/settings'] },
+  // Gateway remote support: the admin's requests on its institution's Gateway lines and its read of one diagnostics report
+  // (operational state in the API's memory: versions, counts, codes, and the UIDs of studies routed to KIN); the Gateway's
+  // pull of its own line's request, its result, and its download of a held update bundle.
+  { kinds: ['system-operation'], operation: 'read', causes: ['user-view', 'background-fetch'],
+    routes: ['GET admin/gateway-support', 'GET admin/gateway-support/:id/diagnostics'] },
+  { kinds: ['system-operation'], operation: 'write', causes: ['user-view'], routes: ['POST admin/gateway-support'] },
+  { kinds: ['system-operation'], operation: 'read', causes: ['service-job'],
+    routes: ['GET gateway/support', 'GET gateway/update/:version'] },
+  { kinds: ['system-operation'], operation: 'write', causes: ['service-job'], routes: ['POST gateway/support/:id'] },
   // FC-070: a peer PACS's study-level answers (patient ID and name, date, modality, description, accession) to the
   // member's search; a retrieve asks the peer to send one study's images into this archive, where they arrive like any
   // DICOM arrival; its state is the job's progress and the arrival decision only.
