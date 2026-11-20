@@ -195,14 +195,20 @@ SRCDOC = ("m => { const f = document.querySelector('#kin-job-print iframe');"
 # The stock viewer's base rules for form fields (the same subset viewer_study_tabs_pointer_dom_test.py uses).
 OHIF_BASE_CSS = ('button,input,optgroup,select,textarea{color:inherit;font-family:inherit;font-size:100%;'
                  'font-weight:inherit;line-height:inherit;margin:0;padding:0}')
-# WCAG contrast of each field's text against its own field; a transparent field is read as the nearest painted box.
+# WCAG contrast of each field's text against its own field as painted: a transparent field is read as the nearest
+# painted box behind it, and the field's opacity (Chromium dims a disabled select) blends both into that box.
 FIELD_CONTRAST = """selector => [...document.querySelectorAll(selector)].map(field => {
   const rgb = value => value.match(/[\\d.]+/g).map(Number);
   const channel = c => (c /= 255) <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
   const luminance = ([r, g, b]) => 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
-  let box = field, back = rgb(getComputedStyle(box).backgroundColor);
-  while (back.length === 4 && back[3] === 0 && box.parentElement) { box = box.parentElement; back = rgb(getComputedStyle(box).backgroundColor); }
-  const [a, b] = [luminance(rgb(getComputedStyle(field).color)), luminance(back)].sort((x, y) => y - x);
+  const painted = node => { let back = rgb(getComputedStyle(node).backgroundColor);
+    while (back.length === 4 && back[3] === 0 && node.parentElement) { node = node.parentElement; back = rgb(getComputedStyle(node).backgroundColor); }
+    return back; };
+  const behind = painted(field.parentElement), own = rgb(getComputedStyle(field).backgroundColor);
+  let alpha = 1; for (let node = field; node; node = node.parentElement) alpha *= Number(getComputedStyle(node).opacity);
+  const blend = colour => colour.slice(0, 3).map((c, i) => alpha * c + (1 - alpha) * behind[i]);
+  const back = blend(own.length === 4 && own[3] === 0 ? behind : own);
+  const [a, b] = [luminance(blend(rgb(getComputedStyle(field).color))), luminance(back)].sort((x, y) => y - x);
   return [field.getAttribute('aria-label') || field.parentElement.firstChild.textContent, field.disabled,
           Math.round((a + 0.05) / (b + 0.05) * 100) / 100];
 })"""
@@ -1196,6 +1202,14 @@ class ViewerJobPrintPages(unittest.TestCase):
         self.assertEqual(low, [], "every output adjustment value is readable (WCAG AA 4.5:1), W/L open")
         # Only the look changes: the values the output reads stay as they were.
         self.assertEqual(page.eval_on_selector_all(fields, "fs => fs.map(f => f.value)"), before[:-1] + ["manual"])
+        # Applying reopens the target choice, still readable.
+        page.get_by_role("button", name="출력 조절 적용", exact=True).click()
+        page.wait_for_function(READY, timeout=60000)
+        self.assertFalse(page.eval_on_selector('[aria-label="출력 조절 대상"]', "s => s.disabled"))
+        low = [item for item in page.evaluate(FIELD_CONTRAST, fields) if item[2] < 4.5]
+        self.assertEqual(low, [], "every output adjustment value is readable (WCAG AA 4.5:1), applied")
+        # This job has no image cell to keep an edit, so the fields show the saved state again (as before this rule).
+        self.assertEqual(page.eval_on_selector_all(fields, "fs => fs.map(f => f.value)"), before)
         self.no_writes(page)
 
     def test_parser_01_keeps_font_runs_in_stream_order(self):
