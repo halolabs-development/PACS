@@ -487,19 +487,18 @@
        width for one more button; up to 1199px the mark is folded away with the other names and the tabs stay. */
     body .menubar .work-mode { display: contents; }
     body .menubar .brand.work-mode-trigger { cursor: pointer; border-radius: 4px; }
-    body .menubar .brand.work-mode-trigger:hover { background: var(--kin-row-hover, #383838); }
+    body .menubar .brand.work-mode-trigger:hover { background: var(--kin-row-hover); }
     body .menubar .brand.work-mode-trigger:focus-visible { outline: 2px solid var(--kin-accent, #8ab4c8); outline-offset: 1px; }
     #work-mode-more { display: none; }
     @media (max-width: 1199px) { #work-mode-more { display: revert; } }
     .work-mode-menu { position: fixed; inset: auto; margin: 0; min-width: 220px; max-width: min(28em, calc(100vw - 16px)); padding: 6px;
-      color: var(--kin-text, #e3e3e3); background: var(--kin-panel, #2d2d2d); border: 1px solid var(--kin-line, #b4b4b440); border-radius: 6px;
-      box-shadow: 0 6px 18px #0009; font-size: 12px; }
+      color: var(--kin-text); background: var(--kin-panel); border: 1px solid var(--kin-border); border-radius: 6px; font-size: 12px; }
     .work-mode-item { display: block; width: 100%; text-align: start; margin: 2px 0; }
     .work-mode-item[aria-checked="true"] { font-weight: 700; }
     .work-mode-item[aria-checked="true"]::before { content: "✓ "; }
     .work-mode-item[aria-disabled="true"] { opacity: .65; cursor: not-allowed; }
-    .work-mode-reason { margin: 0 4px 6px; color: var(--kin-muted, #b4b4b4); font-size: 11px; }
-    .work-mode-leave { margin-top: 6px; padding: 6px; border: 1px solid #7c343e; border-radius: 6px; background: #3c1b23; color: #ffd9dd; }
+    .work-mode-reason { margin: 0 4px 6px; color: var(--kin-muted); font-size: 11px; }
+    .work-mode-leave { margin-top: 6px; padding: 6px; border: 1px solid var(--kin-accent); border-radius: 6px; background: var(--kin-bg); color: var(--kin-text); }
     .work-mode-leave p { margin: 0 0 6px; }
     body .menubar-status { display: flex; align-items: center; column-gap: 10px; margin-left: 6px; white-space: nowrap; }
     @media (max-width: 1919px) { body .menubar-status > :not(#dbstat) { display: none; } }
