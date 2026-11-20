@@ -1036,6 +1036,27 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.folder("All Studies").click()
         expect(self.page.locator("#studies tr[data-uid]")).to_have_count(7)
 
+    def test_b14_the_name_rule_of_my_studies(self):
+        """B14: My Studies' one rule (physician-name.js, as shipped on this page): a Requesting Physician representation
+        matches when its family and given (+ middle) name are the account's family and given name; Hangul also written
+        together; never a swapped boundary, a generation suffix, a missing side or a display name that may be a login."""
+        self.open_home()
+        hong = {"familyName": "홍", "givenName": "길동", "fullName": "홍길동", "displayName": "홍 길동"}
+        lee = {"familyName": "Lee", "givenName": "Soojin", "fullName": "Soojin Lee", "displayName": "Lee Soojin"}
+        cases = [
+            ("Hong^Gil Dong=홍^길동", hong, True), ("홍^길동", hong, True), ("홍길동", hong, True),
+            ("LEE^SOOJIN", lee, True), ("Lee^Soo-Jin", {**lee, "givenName": "Soo Jin"}, True), ("Lee^Soojin^^Dr.", lee, True),
+            ("Ｌｅｅ^Ｓｏｏｊｉｎ", lee, True), ("Kim^Gil^Dong", {"familyName": "Kim", "givenName": "Gil Dong"}, True),
+            ("Kim^Lee", {"familyName": "Lee", "givenName": "Kim"}, False), ("Lee^Soojin", {"familyName": "Lee", "givenName": "Minho"}, False),
+            ("Lee^Soojin^^^Jr", lee, False), ("이^수진", hong, False), ("", lee, False), (None, lee, False),
+            ("Lee^Soojin", {"familyName": "Lee"}, False), ("Lee^Soojin", {"displayName": "Lee Soojin"}, False),
+            ("Lee^Soojin", {"fullName": "Soojin Lee"}, False),
+            ("홍^길동", {"fullName": "홍길동"}, True), ("Hong^Gildong=홍^길동", {"fullName": "홍길동"}, True),
+            ("홍^길동", {"fullName": "홍 길동"}, False), ("길동^홍", {"fullName": "홍길동"}, False),
+        ]
+        seen = self.page.evaluate("cases => cases.map(([pn, me]) => KinPhysicianName.matches(pn, me))", [[pn, who] for pn, who, _ in cases])
+        self.assertEqual([want for _, _, want in cases], seen, [(pn, want) for pn, _, want in cases])
+
     def test_b14_an_exam_that_cannot_be_read_whole_says_why_without_row_exam(self):
         """Order table row C (merged-exam knot): a listed study of a merged or split exam in force that this account cannot
         read whole carries the server's mark (examUnavailable, examUnavailableKind) even when the row names no exam. The
