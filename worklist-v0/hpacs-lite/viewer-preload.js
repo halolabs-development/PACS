@@ -58,7 +58,7 @@
   const UNRECORDED = '영상 열람 기록을 저장하지 못해 영상을 다시 표시하지 않았습니다. 연결을 확인한 뒤 다시 시도하세요.';
   // A status whose answer has no body (fetch spec "null body status"): nothing to wait for after its headers.
   const NULL_BODY = [101, 103, 204, 205, 304];
-  // B39: how often a document says it still shows the copies it uses (the worker moves one on within an hour of its expiry).
+  // How often a document says it still shows the copies it uses (the worker moves one on within an hour of its expiry).
   const USING_EVERY = 10 * 60 * 1000;
   /** session-transport.js's reading of a refusal: loaded before this file in the viewer (config/ohif.js), required in Node. */
   const refusal = reply => (root?.KinSessionTransport ?? (typeof module === 'object' && module.exports ? require('./session-transport.js') : null)).refusal(reply);
@@ -139,8 +139,10 @@
      * shown; an entry abandoned before that leaves every opening as it was. Null when an opening could not be recorded:
      * the scope is not shown.
      */
-    async function reenter(uids, signal) {
+    async function reenter(uids, signal, returning = false) {
       const next = win.crypto.randomUUID(), wanted = [...new Set(uids)], done = new Set();
+      // A return from the back/forward cache: its read of a study whose copy the page used is that copy's check as well.
+      if (returning) uses.returning(next);
       // The reads still owed: one per study shown (keyed by the study), and each object read standing for one (by URL).
       const owed = () => [...wanted.filter(uid => shown.has(uid)).map(uid => [uid, shown.get(uid)]),
         ...[...unplaced].filter(([, read]) => read.studies.some(uid => wanted.includes(uid)))].filter(([key]) => !done.has(key));
@@ -161,27 +163,49 @@
         entries++;
         for (const uid of wanted) { openings.set(uid, next); entered.set(uid, entries); checks.delete(uid); }
         scopeOpening = next;
-        // B39: the earlier opening ends - its copies are left (the worker counts a last viewer's leaving as a use) and its
-        // checks still under way open and drop nothing; this opening's own checks confirm the copies it uses.
-        uses.end();
+        // The earlier view ends - its copies are left (the worker counts a last viewer's leaving as a use) and whatever
+        // was asked under it changes nothing; this opening's own checks confirm the copies it uses (a return's reads
+        // were those checks). What the page shows from here on was read for this opening: a kept page waits no longer.
+        end({ opening: next });
+        reveal();
       } };
     }
+
+    /**
+     * The view: what this document shows now, under the opening it was read for. It ends when another opening is shown
+     * (`commit`), when the last patient tab closes (`leave`) and when the page is left. Whatever was asked under a view
+     * that has ended - a copy's check, a frame from memory, a return's reads - is compared with the view at the moment
+     * its answer would be applied, and applies nothing once the view has moved on: no use, no drop, no held bytes, no
+     * change of the screen. Session end signals are not of the view: the transport tells them to the session they are of.
+     */
+    let view = 0;
+    function end(how) { view++; uses.end(how); }
 
     // A return from the back/forward cache is a new opening of the studies the page shows: what the browser kept stays
     // hidden from the moment the page is left until the return's opening is recorded. A plain visibility change is not
     // a return and keeps the opening.
-    let notice = null;
+    let notice = null, away = false;
     const page = () => win.document?.documentElement ?? null;
+    /** The kept page shows again (never while it is away in the back/forward cache). */
+    function reveal() {
+      if (away) return;
+      notice?.remove(); notice = null;
+      if (page() && page().style.visibility === 'hidden') page().style.visibility = '';
+    }
     function scope() {
       try { return (new URL(win.location.href).searchParams.get('StudyInstanceUIDs') || '').split(',').filter(Boolean); }
       catch (_) { return []; }
     }
     async function returned() {
       notice?.remove(); notice = null;
+      const mine = view;
       // The kept page shows the studies of its address and any other it read under the scope it shows (a comparison).
       const here = [...openings].filter(([, opening]) => opening === scopeOpening).map(([uid]) => uid);
-      const entry = await reenter([...scope(), ...here]);
-      if (entry) { entry.commit(); uses.resume(here.length ? [...scope(), ...here] : scope(), shown); if (page()) page().style.visibility = ''; return; }
+      const entry = await reenter([...scope(), ...here], undefined, true);
+      // Another opening was shown, the last tab closed or the page was left again while these reads were out: that owns
+      // the screen now, and this late answer shows, uses and reports nothing.
+      if (mine !== view) return;
+      if (entry) { entry.commit(); return; }
       const doc = win.document;
       notice = doc.createElement('section'); notice.setAttribute('role', 'alert');
       notice.style.cssText = 'visibility:visible;position:fixed;inset:30% 20% auto;z-index:10000;background:#18212b;color:white;padding:24px';
@@ -190,11 +214,20 @@
       retry.onclick = () => { void returned(); };
       notice.append(text, retry); doc.body.append(notice);
     }
-    win.addEventListener('pagehide', event => { if (event?.persisted && page()) page().style.visibility = 'hidden'; });
-    win.addEventListener('pageshow', event => { if (event?.persisted) void returned(); });
+    // A window leaving releases its studies and its busy mark. A page kept by the back/forward cache stays hidden, and
+    // its return is a new opening: its studies are read live again before the page shows or any copy is used.
+    win.addEventListener('pagehide', event => {
+      if (event?.persisted) { away = true; if (page()) page().style.visibility = 'hidden'; }
+      end({ page: true });
+    });
+    win.addEventListener('pageshow', event => {
+      if (!event?.persisted) return;
+      away = false; uses.back();
+      void returned();
+    });
 
-    // B39: the copies this document shows from the worker's memory - set by the worker part below.
-    const uses = { end() {}, resume() {} };
+    // The copies this document shows from the worker's memory - set by the worker part below.
+    const uses = { end() {}, returning() {}, back() {} };
     let read;
     if (typeof win.SharedWorker !== 'function') {
       read = (url, init) => {
@@ -206,9 +239,9 @@
     } else read = withWorker(win, send, { target, route, frameStudy, studyOf, viewed, answered, asking, checks, uses });
 
     function preloadFetch(url, init = {}) { return read(url, init); }
-    preloadFetch.reenter = reenter;
-    // The document shows no study any more (its last patient tab closed): every copy it showed is left.
-    preloadFetch.leave = () => uses.end();
+    preloadFetch.reenter = (uids, signal) => reenter(uids, signal);
+    // The document shows no study any more (its last patient tab closed): the view ends and every copy it showed is left.
+    preloadFetch.leave = () => { end(); reveal(); };
     return preloadFetch;
   }
 
@@ -217,47 +250,63 @@
     let port = null, broken = false, nextId = 0, inflight = 0;
     const pending = new Map();
     /**
-     * B39: the copies this document uses - a held frame its current opening's check confirmed (the check read itself
-     * when that frame is held, else its first frame from memory). The worker keeps a used copy 72 hours from its last
+     * The copies this document uses - a held frame its current opening's check confirmed (the check read itself when
+     * that frame is held, else its first frame from memory). The worker keeps a used copy 72 hours from its last
      * viewer's leaving; while shown, the document says so (`using`) so a copy shown for days is not removed under it.
-     * Each is tied to the session and copy it was confirmed for; a check left behind by a new opening, or by leaving the
-     * page, opens and drops nothing.
+     * Each is tied to the session and copy it was confirmed for (the copy's token: a later copy of the study is another).
+     * `checks` holds a study's check only while the view it was made under lasts: one that is no longer there opens and
+     * drops nothing and hands on no held bytes.
      */
     const opened = new Map();
-    let generation = 0;
     function use(uid, entry) {
       if (checks.get(uid) !== entry || opened.get(uid)?.copy === entry.copy) return;
       opened.set(uid, { copy: entry.copy, session: entry.session });
       post({ type: 'open', uid, copy: entry.copy, session: entry.session });
     }
+    // What the page used when it was left (uid -> copy and session), and the return under way: the opening its reads
+    // name and the copies those reads confirmed.
+    let left = new Map(), returns = null;
+    // Whether the document shows studies: not after its last patient tab closed or while it is left, until an opening
+    // is shown again. A frame read made meanwhile is a straggler of the view that ended: read live, never a use.
+    let showing = true;
     /**
-     * The one end of an opening - a new opening shown, the last patient tab closed, the page left: every check still
-     * under way is of the ended opening (it opens and drops nothing), and every copy used is left. Leaving the page says
-     * `bye` instead of each close, and keeps what it used for its return.
+     * The one end of a view - a new opening shown, the last patient tab closed, the page left: every check still under
+     * way is of the ended view, and every copy used is left. Leaving the page says `bye` instead of each close and
+     * remembers what it used; the opening of its return, when shown, uses again the copies its own reads confirmed.
      */
-    let resumable = [];
-    uses.end = ({ page = false } = {}) => {
-      generation++; checks.clear();
-      if (page) resumable = [...opened];
-      if (!page) for (const [uid, { copy, session }] of opened) post({ type: 'close', uid, copy, session });
+    uses.end = ({ page = false, opening = null } = {}) => {
+      const again = returns && returns.opening === opening ? returns.confirmed : null;
+      checks.clear(); returns = null; showing = !!opening;
+      if (page) { if (opened.size) left = new Map(opened); if (port) post({ type: 'bye' }); }
+      else { left = new Map(); for (const [uid, { copy, session }] of opened) post({ type: 'close', uid, copy, session }); }
       opened.clear();
+      for (const [uid, entry] of again || []) { checks.set(uid, entry); use(uid, entry); }
+    };
+    uses.returning = opening => { returns = { opening, confirmed: new Map() }; };
+    // The page is back from the back/forward cache: the worker hears this window again.
+    uses.back = () => {
+      if (!port) return;
+      post({ type: 'hello', role: 'viewer' });
+      if (inflight > 0) post({ type: 'busy', busy: true });
     };
     /**
-     * A return from the back/forward cache, once its opening is recorded: each copy the page used before leaving is
-     * checked live again under the new opening (the frame it last showed), and used again only when that check confirms
-     * it - the page may show it again without reading any frame.
+     * A return's read of a study whose copy the page used when it was left. The one read - sent by the page's own
+     * fetch, so bound to its session and heard by the session's end like any other - records the return's opening and,
+     * marked as a check, answers the archive's revision. The copy is used again only if it is still the very copy the
+     * page left (same session, same token), the revision is the copy's and the body came in full - and only once the
+     * return's opening is shown (`end`). Another copy of the study is neither used nor dropped here: the next frame read
+     * checks it for itself.
      */
-    uses.resume = (wanted, shown) => {
-      const before = resumable; resumable = [];
-      for (const [uid, { session }] of before) {
-        const read = shown.get(uid);
-        if (!wanted.includes(uid) || !read?.frame || !port || broken) continue;
-        const parsed = target(read.url), path = route(parsed);
-        if (!path) continue;
-        const headers = { 'X-KIN-Session': session, ...(read.accept ? { Accept: read.accept } : {}) };
-        void check(uid, path, session, read.url, { headers }).then(response => response?.arrayBuffer()).catch(() => {});
-      }
-    };
+    async function rechecked(uid, path, url, init) {
+      const mine = returns, was = left.get(uid), session = new win.Headers(init.headers).get('X-KIN-Session');
+      const held = session === was.session ? (await ask({ type: 'query', uid, session, path })).held : null;
+      const same = !!held?.revision && held.copy === was.copy;
+      const response = await network(url, same ? viewed(init, uid, { 'X-KIN-Preload': 'check' }) : init);
+      if (!same || !response.ok || response.headers.get('X-KIN-Study-Revision') !== held.revision) return response;
+      const body = await response.arrayBuffer();
+      if (returns === mine) mine.confirmed.set(uid, { state: 'held', done: null, copy: held.copy, session });
+      return new win.Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+    }
     if (typeof win.setInterval === 'function') win.setInterval(() => {
       for (const [uid, { copy, session }] of opened) post({ type: 'using', uid, copy, session });
     }, USING_EVERY);
@@ -317,10 +366,10 @@
 
     /** The study's check for its current opening: null when nothing is held, else the live check read's own response. */
     function check(uid, path, session, url, init) {
-      const entry = { state: 'checking', done: null, copy: null, session }, gen = generation;
+      const entry = { state: 'checking', done: null, copy: null, session };
       checks.set(uid, entry);
-      // A check whose opening ended meanwhile (a new opening, the page left) opens and drops nothing.
-      const current = () => gen === generation && checks.get(uid) === entry;
+      // A check whose view ended meanwhile (a new opening, the last tab closed, the page left) opens and drops nothing.
+      const current = () => checks.get(uid) === entry;
       entry.done = (async () => {
         const { held } = await ask({ type: 'query', uid, session, path });
         if (!held?.revision) { entry.state = 'live'; return null; }
@@ -352,35 +401,37 @@
     }
 
     async function frame(uid, path, url, init) {
+      if (!showing) return network(url, viewed(init, uid));
       const session = new win.Headers(init.headers).get('X-KIN-Session');
       const entry = checks.get(uid);
       if (!entry) {
         const response = await check(uid, path, session, url, init);
         return response || network(url, viewed(init, uid));
       }
-      if (entry.state === 'checking') { try { await entry.done; } catch (_) {} }
+      // The copy's bytes are handed on only while this check is still the study's - the view it was made under still
+      // shown. A read that waited (for the check, for the worker's answer) across the end of that view starts over under
+      // whatever is shown now: that view's own check first, or a live read when nothing is.
+      const current = () => checks.get(uid) === entry;
+      if (entry.state === 'checking') { try { await entry.done; } catch (_) {} if (!current()) return frame(uid, path, url, init); }
       if (entry.state === 'held' && !init.signal?.aborted) {
         const { bytes, partType, stale } = await ask({ type: 'frame', path, session, copy: entry.copy });
+        if (!current()) return frame(uid, path, url, init);
         if (bytes) { use(uid, entry); return new win.Response(bytes, { status: 200, headers: { 'Content-Type': partType } }); }
         // The worker now holds another copy of the study than the one checked: none of it before a check of its own.
-        if (stale && checks.get(uid) === entry) checks.delete(uid);
+        if (stale) checks.delete(uid);
       }
       return network(url, viewed(init, uid));
     }
 
-    // A window leaving releases its studies (they may be evicted once no viewer shows them) and its busy mark; a page
-    // restored from the back/forward cache shows them again.
-    // A return from the back/forward cache is a new opening: its studies are checked again before any copy is used.
-    win.addEventListener('pagehide', () => { if (port) post({ type: 'bye' }); uses.end({ page: true }); });
-    win.addEventListener('pageshow', event => {
-      if (!event?.persisted || !port) return;
-      post({ type: 'hello', role: 'viewer' });
-      if (inflight > 0) post({ type: 'busy', busy: true });
-    });
-
     function read(parsed, path, url, init) {
-      // A new opening's own live read (`reenter`) names its opening already: never from memory, never a check.
-      if (new win.Headers(init.headers).has(OPENING)) return broken ? send(url, init) : network(url, init);
+      // A new opening's own live read (`reenter`) names its opening already: never from memory. A return's read of a
+      // study whose copy the page used is that copy's check too (`rechecked`).
+      const opening = new win.Headers(init.headers).get(OPENING);
+      if (opening) {
+        if (broken) return send(url, init);
+        const kept = returns?.opening === opening ? frameStudy(parsed, path, init) : null;
+        return kept && left.has(kept) ? rechecked(kept, path, url, init) : network(url, init);
+      }
       const uid = frameStudy(parsed, path, init);
       if (uid && !broken) return frame(uid, path, url, init);
       return broken ? send(url, viewed(init, studyOf(path))) : network(url, viewed(init, studyOf(path)));

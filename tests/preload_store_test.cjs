@@ -105,7 +105,8 @@ test('held frames are answered by path and revision; failed, evicted and cleared
   const store = create(1000);
   store.add([{ uid: '1.1', label: 'SYN-1 · Synthetic' }, { uid: '1.2' }]);
   fill(store, '1.1', 2, 10, 'rev-A');
-  assert.deepEqual(store.held('1.1'), { revision: 'rev-A', status: STATUS.ready, copy: 1 });
+  assert.deepEqual(store.held('1.1'), { revision: 'rev-A', status: STATUS.ready, copy: copy(store, '1.1') });
+  assert.match(String(copy(store, '1.1')), /^[0-9a-f-]{36}$/, 'a copy is named by a random token');
   assert.equal(store.frame(path('1.1', 2)).bytes, 10);
   assert.equal(store.frame(path('1.1', 3)), null);
   assert.equal(store.held('1.2'), null, 'queued with nothing fetched is not held');
@@ -198,7 +199,8 @@ test('R5 fixed 72-hour window blocks held/frame before sweep and releases every 
   assert.equal(store.frame(path('1.1')), null);
   assert.deepEqual(store.expire(), [id]);
   assert.equal(store.used(), 0);
-  assert.match(status(store, '1.1').reason, /72시간/);
+  assert.match(status(store, '1.1').reason, /표시된 보관 기한이 지나/);
+  assert.doesNotMatch(status(store, '1.1').reason, /72시간/, 'the words name the date the row showed, not a count of hours');
   assert.match(status(store, '1.2').reason, /대기열/);
   assert.equal(store.retry('1.1'), true);
   assert.equal(status(store, '1.1').expiresAt, now + 72*3600000);

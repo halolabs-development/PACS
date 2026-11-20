@@ -4,12 +4,20 @@
   const GB = 1024 ** 3, TTL = 72 * 60 * 60 * 1000;
   const STATUS = Object.freeze({ queued: 'Queued', downloading: 'Downloading', ready: 'Ready', failed: 'Failed', evicted: 'Evicted' });
 
+  const LIVE = [STATUS.downloading, STATUS.ready, STATUS.queued];
   /**
-   * B39: when a copy goes - 72 hours after the later of its first stored frame and its last confirmed use (a viewer that
+   * When a copy goes - 72 hours after the later of its first stored frame and its last confirmed use (a viewer that
    * showed this copy after its live check, kept showing it, or left it), in server time; before its first frame, 72 hours
    * after it was queued. The one rule every expiry reads: the model, the worker's records and the panel's date.
    */
   const expiryOf = study => Math.max(study.fetchedAt ?? study.queuedAt, study.usedAt ?? -Infinity) + TTL;
+  /**
+   * Why an entry past its date went. A received copy went at the date its row showed - the words name that date, never a
+   * count of hours (a copy's count starts no later than its key's last issue, so it can be shorter than 72 hours from
+   * receipt when the key could not be issued again).
+   */
+  const lapsed = study => study.fetchedAt === null ? '72시간 안에 받지 못해 대기열에서 지웠습니다.'
+    : '표시된 보관 기한이 지나 자동으로 지웠습니다. 다시 받으려면 Retry를 누르세요.';
   const positive = value => typeof value === 'number' && Number.isFinite(value) && value > 0;
   function budgetFor(diskGb) {
     const bytes = positive(diskGb) ? Math.floor(diskGb * GB) : null;
@@ -22,15 +30,24 @@
     return m ? m[1] : null;
   }
 
-  function create(budget, now = Date.now) {
+  /**
+   * `mint` names each copy: a random token, so a copy fetched after its key was replaced, or after the model was made
+   * again, is never taken for an earlier one (a viewer's late answer names the copy it checked).
+   */
+  function create(budget, now = Date.now, mint = () => globalThis.crypto.randomUUID()) {
     const studies = new Map();
-    let used = 0, seq = 0, clock = 0, copies = 0;
+    let used = 0, seq = 0, clock = 0;
     const released = [];
 
-    const view = study => Object.freeze({ uid: study.uid, label: study.label, status: study.status, reason: study.reason,
-      waiting: study.waiting, done: study.frames.size, total: study.total, bytes: study.bytes, open: study.opens > 0, expiresAt: study.expiresAt,
-      // The exams the entry was fetched for (none: the whole original): a list row's PF reads only its own exam's entry.
-      ...(study.examRefs ? { examRefs: study.examRefs } : {}) });
+    // An entry past its date is shown as the next sweep leaves it: no row says Ready, or waits, past the date it showed.
+    const view = study => {
+      const gone = LIVE.includes(study.status) && study.expiresAt <= now();
+      return Object.freeze({ uid: study.uid, label: study.label, status: gone ? STATUS.evicted : study.status,
+        reason: gone ? lapsed(study) : study.reason, waiting: !gone && study.waiting, done: gone ? 0 : study.frames.size,
+        total: gone ? 0 : study.total, bytes: gone ? 0 : study.bytes, open: !gone && study.opens > 0, expiresAt: study.expiresAt,
+        // The exams the entry was fetched for (none: the whole original): a list row's PF reads only its own exam's entry.
+        ...(study.examRefs ? { examRefs: study.examRefs } : {}) });
+    };
 
     function release(study) {
       const ids = [...study.frames.values()].map(f => f.entryId);
@@ -67,7 +84,9 @@
           queuedAt: s.queuedAt, fetchedAt: s.fetchedAt, usedAt: s.usedAt, bytes: s.bytes,
           frames: Object.fromEntries([...s.frames].map(([path, f]) => [path, f.entryId])) };
       },
-      restore(value, records) {
+      restore(stored, records) {
+        // A use only claimed (preload-worker.js touch: its approval never reached the disk) counts for nothing.
+        const { claimedUse, ...value } = stored;
         const previous = studies.get(value.uid);
         if (previous) used -= previous.bytes;
         const frames = new Map(Object.entries(value.frames).map(([path, entryId]) => [path, { entryId, bytes: records.get(entryId)?.bytes || 0 }]));
@@ -75,32 +94,36 @@
           status: value.status === STATUS.downloading ? STATUS.queued : value.status,
           usedAt: Number.isFinite(value.usedAt) ? value.usedAt : null, waiting: false, opens: 0, closedAt: null, estimate: null };
         s.expiresAt = expiryOf(s);
-        studies.set(s.uid, s); used += s.bytes; seq = Math.max(seq, s.seq); copies = Math.max(copies, s.copy || 0);
+        studies.set(s.uid, s); used += s.bytes; seq = Math.max(seq, s.seq);
       },
       suspend() { for (const s of studies.values()) if (s.status === STATUS.downloading) s.status = STATUS.queued; },
       fetched(uid, at) { const s = studies.get(uid); if (s && s.fetchedAt === null) { s.fetchedAt = at; s.expiresAt = expiryOf(s); } },
       /** The first stored frame's time taken back (its frame was not kept): the expiry follows. */
       unfetched(uid, at) { const s = studies.get(uid); if (s) { s.fetchedAt = at; s.expiresAt = expiryOf(s); } },
       /**
-       * A confirmed use of `copy` at `at` (server time), not after its expiry. False when the copy is gone, replaced, holds
-       * nothing, had expired at `at` or has expired by now (a record written meanwhile does not bring it back) - an expired
-       * copy is never brought back by a late open, close, key answer or slow disk.
-       * `apply` false only asks: the worker writes the new expiry to disk first, then applies it.
+       * Whether a use of `copy` at `at` (server time) may move its date on, asked at this moment: the copy is the one held,
+       * holds frames, was not past its date at `at` and is not past it now, and the use is later than the last one counted.
+       * An expired copy is never brought back by a late open, close, key answer or slow disk.
        */
-      use(uid, copy, at, apply = true) {
+      usable(uid, copy, at) {
         const s = studies.get(uid);
-        if (!s || s.copy === null || s.copy !== copy || !s.frames.size || !Number.isFinite(at) || at >= s.expiresAt || s.expiresAt <= now()
-          || ![STATUS.downloading, STATUS.ready, STATUS.queued].includes(s.status) || at <= (s.usedAt ?? -Infinity)) return false;
-        if (apply) { s.usedAt = at; s.expiresAt = expiryOf(s); }
+        return !!s && s.copy !== null && s.copy === copy && s.frames.size > 0 && Number.isFinite(at) && at < s.expiresAt && s.expiresAt > now()
+          && LIVE.includes(s.status) && at > (s.usedAt ?? -Infinity);
+      },
+      /**
+       * A use the worker approved is counted: the copy's date moves to 72 hours after it. The worker asks `usable` when its
+       * write of the claim has ended and stores the approval before it calls this (preload-worker.js touch) - the clock is
+       * not read again here.
+       */
+      use(uid, copy, at) {
+        const s = studies.get(uid);
+        if (!s || s.copy === null || s.copy !== copy || !Number.isFinite(at) || at <= (s.usedAt ?? -Infinity)) return false;
+        s.usedAt = at; s.expiresAt = expiryOf(s);
         return true;
       },
       expire(at = now()) {
         const ids = [];
-        for (const s of studies.values()) if (s.expiresAt <= at && ![STATUS.evicted, STATUS.failed].includes(s.status)) {
-          ids.push(...end(s, STATUS.evicted, s.fetchedAt === null
-            ? '72시간 안에 받지 못해 대기열에서 지웠습니다.'
-            : '받은 뒤나 마지막으로 본 뒤 72시간이 지나 자동으로 지웠습니다. 다시 받으려면 Retry를 누르세요.'));
-        }
+        for (const s of studies.values()) if (s.expiresAt <= at && LIVE.includes(s.status)) ids.push(...end(s, STATUS.evicted, lapsed(s)));
         return ids;
       },
       /** Site disk cap (null: preload off). */
@@ -149,7 +172,7 @@
       start(uid, total) {
         const study = studies.get(uid);
         if (!study || ![STATUS.queued, STATUS.downloading].includes(study.status)) return false;
-        if (study.copy === null) study.copy = ++copies;
+        if (study.copy === null) study.copy = mint();
         study.status = STATUS.downloading; study.reason = null; study.waiting = false;
         if (Number.isInteger(total) && total > 0) study.total = total;
         return true;
@@ -184,7 +207,7 @@
           }
         }
         study.revision = revision;
-        if (study.copy === null) study.copy = ++copies;
+        if (study.copy === null) study.copy = mint();
         study.frames.set(path, frame);
         study.bytes += size; used += size;
         return 'stored';
@@ -212,12 +235,12 @@
       /** The held study a viewer may check: its revision and copy, or null when nothing of it is held. */
       held(uid) {
         const study = studies.get(uid);
-        return study && study.expiresAt > now() && study.frames.size && [STATUS.downloading, STATUS.ready, STATUS.queued].includes(study.status)
+        return study && study.expiresAt > now() && study.frames.size && LIVE.includes(study.status)
           ? { revision: study.revision, status: study.status, copy: study.copy } : null;
       },
       frame(path) {
         const uid = studyOfPath(path), study = uid && studies.get(uid);
-        return study && study.expiresAt > now() && [STATUS.downloading, STATUS.ready, STATUS.queued].includes(study.status) ? study.frames.get(path) || null : null;
+        return study && study.expiresAt > now() && LIVE.includes(study.status) ? study.frames.get(path) || null : null;
       },
       /**
        * A viewer shows this copy of the study: it cannot be evicted for space until every viewer that opened it has closed it.

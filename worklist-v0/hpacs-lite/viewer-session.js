@@ -547,7 +547,7 @@
       unsaved(read) { unsavedReaders.add(read); declareUnsaved(); return () => { unsavedReaders.delete(read); declareUnsaved(); }; },
       // A new opening of studies this document shows again (viewer-preload.js `reenter`): null when it was not recorded.
       reenter: (uids, signal) => send.reenter ? send.reenter(uids, signal) : Promise.resolve({ commit() {} }),
-      // The document shows no study any more (its last patient tab closed): the preload copies it used are left (B39).
+      // The document shows no study any more (its last patient tab closed): the preload copies it used are left.
       leave: () => { send.leave?.(); },
       authFailure,
     });

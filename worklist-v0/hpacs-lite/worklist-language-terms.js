@@ -2625,7 +2625,7 @@ window.KinLanguageTerms = {
     ["받아쓴 글을 확인하세요 — Insert를 눌러야 판독문에 들어갑니다", "Check the dictated text — it goes into the report only when you press Insert", "m", "받아쓴 글을 확인하세요 — 넣기를 눌러야 판독문에 들어갑니다"],
     ["받아쓴 글을 확인할 수 없습니다", "Cannot verify the dictated text", "m"],
     ["받은 뒤나 마지막으로 본 뒤 72시간이 지나면 자동으로 지웁니다. 다른 계정으로는 읽을 수 없습니다.", "Deleted automatically 72 hours after download or after it was last viewed, whichever is later. Other accounts cannot read it.", "m"],
-    ["받은 뒤나 마지막으로 본 뒤 72시간이 지나 자동으로 지웠습니다. 다시 받으려면 Retry를 누르세요.", "Deleted automatically 72 hours after download or after it was last viewed. To download it again, press Retry.", "m"],
+    ["표시된 보관 기한이 지나 자동으로 지웠습니다. 다시 받으려면 Retry를 누르세요.", "Deleted automatically after the retention date shown had passed. To download it again, press Retry.", "m"],
     ["받은 목록을 닫습니다. Esc로도 닫을 수 있습니다.", "Closes the received list. You can also close it with Esc.", "m"],
     ["받은 목록을 서버에서 다시 읽습니다. 읽기만 하며 어떤 전달도 바꾸지 않습니다.", "Reloads the received list from the server. Read only; it does not change any delivery.", "m"],
     ["받은 중요 결과 {n0}건을 최신순으로 표시합니다.{t1}", "Showing {n0} received critical results, newest first.{t1}", "m"],

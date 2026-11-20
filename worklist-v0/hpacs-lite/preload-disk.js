@@ -17,7 +17,7 @@
     return root.crypto.subtle.decrypt({ name: 'AES-GCM', iv: record.iv, additionalData: encoder.encode(aad) }, key, record.ct);
   }
   /**
-   * B39: the units disk space is given back by, each with the expiry it really has - a study record together with the
+   * The units disk space is given back by, each with the expiry it really has - a study record together with the
    * frames it lists (their expiry is the record's), and each frame no record lists (its own). sweep() below removes the
    * same units when they expire; the worker reclaims another key's units in this order (earliest real expiry first).
    */
@@ -108,7 +108,7 @@
         }
       },
       /**
-       * Expiry without any key (B39; the units of holdings() above). A study record's expiry is its copy's; its `frameIds` (random IDs, no patient data)
+       * Expiry without any key (the units of holdings() above). A study record's expiry is its copy's; its `frameIds` (random IDs, no patient data)
        * name its frames, so a used copy's frames live as long as its record - no frame is read or written again when a use
        * moves the expiry. A frame's own expiry (its copy's at the time it was stored) still removes a frame no live record
        * names: an orphan, a record written before frame lists, another account's whose record is gone.

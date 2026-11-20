@@ -4,7 +4,7 @@ importScripts('preload-store.js', 'preload-disk.js', 'session-transport.js');
 const Model = self.KinPreloadStore, Disk = self.KinPreloadDisk, disk = Disk.create(), Transport = self.KinSessionTransport;
 const FRAME_ACCEPT = ['application/octet-stream', 'image/jpeg', 'image/jls', 'image/jp2', 'image/dicom-rle']
   .map(type => 'multipart/related; type="' + type + '"; transfer-syntax=*').join(', ');
-// B39: a viewer that keeps showing a copy says so (viewer-preload.js); within this much of its expiry the use moves it on.
+// A viewer that keeps showing a copy says so (viewer-preload.js); within this much of its expiry the use moves it on.
 const RENEW_BEFORE = 60 * 60 * 1000;
 const MESSAGES = Object.freeze({
   unavailable: '이 브라우저의 보관 저장소를 사용할 수 없습니다. 다시 시도하세요.',
@@ -24,11 +24,22 @@ const MESSAGES = Object.freeze({
   space: '저장 공간이 비기를 기다립니다.',
 });
 const ports = new Map(), manifests = new Map();
-let session = null, epoch = 0, key = null, keyId = null, offset = null, settings = null, unavailable = null;
+let session = null, epoch = 0, key = null, keyId = null, settings = null, unavailable = null;
 // The server time of the latest issue of this key (/api/preload/cache-key renews it): no copy's received or used time
 // counts past it, so the key outlives every copy it reads (the server retires a key 72 hours after its last issue).
 let issuedAt = null;
-const now = () => Date.now() + (offset ?? 0);
+/**
+ * Server time: what the server last said (a key answer's serverTime; before any, an answer's Date) plus the time since.
+ * The time since is read from the clock nobody can set (performance.now()), or from the PC's when that says more (a
+ * sleeping PC may stop the first) - a PC clock set back while the worker runs brings no expired copy back. Of two words
+ * of the server, the one that puts its time later stands.
+ */
+let said = null;
+const ticks = () => typeof performance === 'object' ? performance.now() : 0;
+const word = server => ({ server, ticks: ticks(), wall: Date.now() });
+const timeBy = heard => heard.server + Math.max(0, ticks() - heard.ticks, Date.now() - heard.wall);
+const now = () => said ? timeBy(said) : Date.now();
+function hear(heard) { if (Number.isFinite(heard.server) && (!said || timeBy(heard) >= timeBy(said))) said = heard; }
 let store = Model.create(null, now), running = false, controller = null, keyController = null, idleWaiters = [];
 let serial = Promise.resolve(), diskUsed = 0;
 // Mutations share one queue. Network reads never hold it, so reading and logout can interrupt downloads.
@@ -54,8 +65,7 @@ async function get(url, headers, signal, bound = session) {
   try { response = await fetch(url, { headers: { ...headers, 'X-KIN-Session': bound }, cache: 'no-store',
     credentials: 'same-origin', priority: 'low', signal }); }
   catch (_) { throw new Stop(signal?.aborted ? null : MESSAGES.network); }
-  const serverDate = Date.parse(response.headers.get('Date'));
-  if (bound === session && offset === null && Number.isFinite(serverDate)) offset = serverDate - Date.now();
+  if (bound === session && !said) hear(word(Date.parse(response.headers.get('Date'))));
   if (response.ok) return response;
   const code = response.headers.get('X-KIN-Auth-Code');
   try { await response.body?.cancel(); } catch (_) {}
@@ -89,7 +99,7 @@ async function erase(uid, reason, failed = false) {
 }
 async function sweep() {
   // The first key response establishes server time. No cached answer is possible before this initialization.
-  if (offset === null) return;
+  if (!said) return;
   const expired = store.entries().filter(s => s.expiresAt <= now());
   const ids = store.expire(now());
   const studies = expired.map(s => manifests.get(s.uid)).filter(Boolean);
@@ -153,45 +163,60 @@ async function flushReleased() {
  * serving from the old key in memory; a failure that may pass changes nothing.
  */
 async function renewKey(mine, bound) {
-  let answer;
-  try { answer = await readJson(await get('/api/preload/cache-key', { Accept: 'application/json' }, undefined, bound)); }
-  catch (error) {
+  let answer, heard;
+  try {
+    answer = await readJson(await get('/api/preload/cache-key', { Accept: 'application/json' }, undefined, bound));
+    heard = word(Date.parse(answer?.serverTime));
+  } catch (error) {
     if (mine !== epoch || bound !== session) return null;
     if (error?.reason === 'ended') changeSession(null);
     else if (error?.reason === MESSAGES.key) { changeSession(bound); void prerequisites(); }
     return null;
   }
-  const at = Date.parse(answer?.serverTime);
+  const at = heard.server;
   if (mine !== epoch || bound !== session || !Number.isFinite(at)) return null;
   if (answer.keyId !== keyId) { changeSession(bound); void prerequisites().then(() => pump()); return null; }
+  hear(heard);
   issuedAt = Math.max(issuedAt ?? at, at);
   return at;
 }
 /**
- * B39: a confirmed use of `copy` at `at` (server time) moves the copy's expiry to 72 hours after it - once the key has
- * been issued again at or after it and the study record with the new expiry is on disk. Only the record is written: its
- * frames' ciphertext is neither read nor written again (preload-disk.js sweep keeps a live record's frames).
+ * A confirmed use of `copy` at `at` (server time) moves the copy's expiry to 72 hours after it - once the key has been
+ * issued again at or after it, and by two writes of the study record alone (its frames' ciphertext is neither read nor
+ * written again: preload-disk.js sweep keeps a live record's frames):
+ *   1. the claim - the record as it stands, its expiry unchanged, with the use beside it. A claim counts for nothing:
+ *      restore and the disk sweep read the expiry the record had.
+ *   2. the approval - the record with the use and its new expiry, and only after it the model.
+ * The one judgement is made when the claim's write has ended: the same session, key and copy, and server time still
+ * before the expiry the copy had. A write that ends past that expiry, a refusal, a worker stopped between the writes
+ * or an approval that could not be stored all leave the earlier expiry - on disk, after a restart and in memory alike.
  */
 async function touch(uid, copy, at) {
   const mine = epoch, bound = session, held = keyId;
-  if (!bound || !key || !store.get(uid) || store.get(uid).copy !== copy) return;
+  if (!bound || !key || store.get(uid)?.copy !== copy) return;
   // The key is issued again at or after the use, so the use counts from its own time and the key outlives the copy.
   const issued = await renewKey(mine, bound);
   if (issued === null) return;
   await locked(async () => {
-    if (mine !== epoch || bound !== session || !key || keyId !== held) return;
     const study = store.get(uid), usedAt = Math.min(at, issued);
-    if (!study || !store.held(uid) || !store.use(uid, copy, usedAt, false)) return;
-    // The new expiry shows only once its record is on disk; until then the model keeps the last one written.
+    const same = () => mine === epoch && bound === session && !!key && keyId === held && store.get(uid) === study;
+    const approved = () => same() && store.usable(uid, copy, usedAt);
+    if (!study || !approved()) return;
     try {
+      const claim = await envelope(uid, { claimedUse: usedAt });
+      if (!same()) return;
+      await disk.write({ studies: [claim] }); await inventory();
+      if (!approved()) return;
       const record = await envelope(uid, { usedAt });
-      if (mine !== epoch || !key || store.get(uid) !== study) return;
+      if (!same()) return;
       await disk.write({ studies: [record] });
     } catch (_) { return; }
-    store.use(uid, copy, usedAt);
+    // Approved and stored. Only a session that changed meanwhile has another model: its own restore reads the record.
+    if (mine !== epoch || store.get(uid) !== study || !store.use(uid, copy, usedAt)) return;
     await inventory(); broadcast();
   });
-}function prerequisites() {
+}
+function prerequisites() {
   if (settings) return settings;
   const mine = epoch, bound = session;
   keyController = new AbortController(); const signal = keyController.signal;
@@ -201,14 +226,14 @@ async function touch(uid, copy, at) {
       const answer = await readJson(response, signal);
       const raw = Uint8Array.from(atob(answer.key), c => c.charCodeAt(0));
       if (raw.length !== 32 || !Number.isFinite(Date.parse(answer.serverTime)) || typeof answer.keyId !== 'string') { raw.fill(0); throw new Stop(MESSAGES.key); }
+      const heard = word(Date.parse(answer.serverTime));
       const imported = await Disk.importKey(raw);
       if (mine !== epoch) return MESSAGES.key;
-      const clockOffset = Date.parse(answer.serverTime) - Date.now();
       const me = await readJson(await get('/api/me', { Accept: 'application/json' }, signal, bound), signal);
       if (mine !== epoch) return MESSAGES.key;
       await locked(async () => {
         if (mine !== epoch) return;
-        key = imported; keyId = answer.keyId; offset = clockOffset; issuedAt = Date.parse(answer.serverTime);
+        key = imported; keyId = answer.keyId; hear(heard); issuedAt = heard.server;
         store.setBudget(Model.budgetFor(me.preloadDiskGb));
         // Restore before sweeping so this session can show the expired row's reason and Retry.
         const records = await inventory(), frames = new Map(records.frames.map(r => [r.entryId, r]));
@@ -295,7 +320,7 @@ async function download(study, mine) {
     // Reject unusable multipart headers before persisting a copy the viewer cannot read.
     try { partType(await decoded(data)); } catch (_) { throw new Stop(MESSAGES.malformed); }
     if (!live()) return;
-    // B39: before a copy's first frame is kept the key is issued again, so the copy counts from its own receipt and the
+    // Before a copy's first frame is kept the key is issued again, so the copy counts from its own receipt and the
     // key outlives it.
     if (study.fetchedAt === null) { await renewKey(mine, bound); if (!live()) return; }
     const result = await locked(async () => {
@@ -390,7 +415,7 @@ function partType(bytes) {
   return `multipart/related; type="${quotedType}"; boundary=${delimiter}`;
 }
 /**
- * B39: a viewer leaves the copies it showed (its window goes, or it shows another patient). The last viewer of a copy to
+ * A viewer leaves the copies it showed (its window goes, or it shows another patient). The last viewer of a copy to
  * leave it is a use: the copy is kept 72 hours from then. A copy another viewer still shows stays in use.
  */
 function leave(info, entries) {
@@ -401,8 +426,12 @@ function leave(info, entries) {
     if (store.close(opened.uid, opened.copy)) { void touch(opened.uid, opened.copy, at); store.wake(); }
   }
 }
-/** A message a viewer sends about a copy: of this session, naming the copy its check confirmed. */
-const fromViewer = message => !!session && message.session === session && Number.isInteger(message.copy);
+/**
+ * A message a viewer sends about a copy: of this session, naming the copy its check confirmed (the copy's random token;
+ * a number in a record kept from before copies had tokens).
+ */
+const fromViewer = message => !!session && message.session === session
+  && (typeof message.copy === 'string' && !!message.copy || Number.isInteger(message.copy));
 function release(port) {
   const info = ports.get(port); if (!info) return;
   leave(info, [...info.opens.keys()]);
@@ -445,7 +474,7 @@ async function handle(port, message, mine) {
       try {
         await sweep();
         const uid = message.type === 'query' ? message.uid : Model.studyOfPath(message.path), held = store.held(uid);
-        // `has`: the frame the viewer's check reads is one of this copy's (B39: then the check itself is a use of the copy).
+        // `has`: the frame the viewer's check reads is one of this copy's (then the check itself is a use of the copy).
         if (message.type === 'query') { reply({ held: held ? { revision: held.revision, copy: held.copy,
           has: typeof message.path === 'string' && Model.studyOfPath(message.path) === uid && !!store.frame(message.path) } : null }); return; }
         if (held && held.copy !== message.copy) { reply({ bytes: null, stale: true }); return; }
@@ -485,7 +514,7 @@ async function handle(port, message, mine) {
         // A viewer drops only the copy it checked: an evict naming an earlier copy leaves a later one alone.
         if (!fromViewer(message) || store.get(message.uid)?.copy !== message.copy) break;
         await erase(message.uid, typeof message.reason === 'string' ? message.reason.slice(0, 200) : MESSAGES.changed); break;
-      // B39: open, close and using come from a viewer of this session, about the copy its live check confirmed. One viewer
+      // Open, close and using come from a viewer of this session, about the copy its live check confirmed. One viewer
       // window counts once per copy; its close or its leaving ends its use.
       case 'open': {
         const name = opening(message.uid, message.copy);

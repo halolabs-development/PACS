@@ -86,7 +86,7 @@ test('R1 R2 R3 R4 R5 R9 R15 R16 real encrypted storage, persistent profile, corr
   assert.ok(rendered.text.includes(rendered.expected),JSON.stringify(rendered));
   for(const r of stored.frames)assert.deepEqual(Object.keys(r).sort(),['entryId','keyId','expiresAt','bytes','iv','ct'].sort());
   for(const r of stored.studies)assert.deepEqual(Object.keys(r).sort(),['manifestId','keyId','expiresAt','frameIds','iv','ct'].sort());
-  // A study record lists its frames' random IDs in clear (B39: its frames live as long as it does), nothing of the study.
+  // A study record lists its frames' random IDs in clear (its frames live as long as it does), nothing of the study.
   for(const r of stored.studies)assert.deepEqual([...r.frameIds].sort(),stored.frames.map(f=>f.entryId).sort());
   for(const r of [...stored.frames,...stored.studies]){
     const clear=JSON.stringify({...r,ct:undefined,iv:undefined});for(const secret of [uid,'SYN-123','Synthetic^Patient','session-A',key.toString('base64')])assert.equal(clear.includes(secret),false);
@@ -137,12 +137,12 @@ test('R1 R2 R3 R4 R5 R9 R15 R16 real encrypted storage, persistent profile, corr
   const expired=await dump(page);assert.equal(expired.frames.length+expired.studies.length,0);
 });
 
-// B39 on the real SharedWorker, IndexedDB and panel, through the shipped viewer code (viewer-preload.js): two studies
+// On the real SharedWorker, IndexedDB and panel, through the shipped viewer code (viewer-preload.js): two studies
 // received at server hour 0; at hour 24 a viewer window reads the first one (its live check confirms the held copy - the
 // use) and is left. Started again at hour 73, the unopened one is gone and the opened one is Ready until hour 96 - its
 // record says so, its frames (their own date passed) still decrypt, and the panel shows that date. At hour 96 nothing of
 // it is served or kept. Synthetic loopback HTTP only.
-test('B39 only the unused copy goes: the copy a viewer used counts from its use, on real storage and the shipped panel', {timeout:180000}, async t=>{
+test('only the unused copy goes: the copy a viewer used counts from its use, on real storage and the shipped panel', {timeout:180000}, async t=>{
   const key=randomBytes(32), keyId='key-'+randomBytes(4).toString('hex'), H=3600000, ids=['1.2.840.99.11','1.2.840.99.12'];
   const PART='multipart/related; type="application/octet-stream"; boundary=body';
   let clock=Date.parse('2026-11-02T00:00:00Z');
@@ -178,7 +178,7 @@ test('B39 only the unused copy goes: the copy a viewer used counts from its use,
   const row=async(page,uid)=>(await page.evaluate(()=>messages.at(-1)?.studies||[])).find(s=>s.uid===uid);
   const framePath=(uid,n)=>`/dicom-web/studies/${uid}/series/2/instances/3/frames/${n}`;
   let page=await connect();
-  await page.evaluate(ids=>list.postMessage({type:'add',session:'sess-1',studies:ids.map(uid=>({uid,label:'SYN-B39 · Synthetic^Patient'}))}),ids);
+  await page.evaluate(ids=>list.postMessage({type:'add',session:'sess-1',studies:ids.map(uid=>({uid,label:'SYN-USED · Synthetic^Patient'}))}),ids);
   await page.waitForFunction(ids=>ids.every(uid=>messages.at(-1)?.studies?.some(s=>s.uid===uid&&s.status==='Ready')),ids);
   await context.close();context=null;
   // Hour 24: a viewer window (the shipped viewer-preload.js under a bound fetch) reads the first study, then is left.
@@ -202,7 +202,7 @@ test('B39 only the unused copy goes: the copy a viewer used counts from its use,
   // Hour 73: only the unopened copy went.
   clock=start+73*H;page=await connect();
   await page.waitForFunction(ids=>{const s=messages.at(-1)?.studies||[];return s.some(r=>r.uid===ids[1]&&r.status==='Evicted')&&s.some(r=>r.uid===ids[0]&&r.status==='Ready');},ids);
-  assert.match((await row(page,ids[1])).reason,/마지막으로 본 뒤 72시간이 지나 자동으로 지웠습니다/);
+  assert.match((await row(page,ids[1])).reason,/표시된 보관 기한이 지나 자동으로 지웠습니다/);
   assert.equal((await row(page,ids[0])).expiresAt,start+96*H);
   const kept=await dump(page);
   assert.deepEqual(kept.studies.map(r=>r.expiresAt),[start+96*H],'one record left: the opened copy, until hour 96');
