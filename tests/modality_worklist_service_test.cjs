@@ -314,13 +314,13 @@ test('wildcards and padding work by character: `?` is one character outside the 
   assert.deepEqual(await ids([tail, han], { '00100010': PN('PARK^C^^') }), ['SYN-TAIL']);
   assert.deepEqual(await ids([tail, han], { '00100010': PN('^^^^') }), ['SYN-TAIL', 'SYN-HAN']);
   // An identifier that begins with an ideographic space is another identifier; SPACE padding is not part of one.
-  const wide = order({ patientId: '　A' }), plain = order({ patientId: 'A' }), padded = order({ patientId: ' B ' });
+  const wide = order({ patientId: '\u3000A' }), plain = order({ patientId: 'A' }), padded = order({ patientId: ' B ' });
   const list = [wide, plain, padded];
   assert.deepEqual(await ids(list, { '00100020': S('LO', 'A') }), ['A']);
   assert.deepEqual(await ids(list, { '00100020': S('LO', ' A ') }), ['A']);
-  assert.deepEqual(await ids(list, { '00100020': S('LO', '　A') }), ['　A']);
+  assert.deepEqual(await ids(list, { '00100020': S('LO', '\u3000A') }), ['\u3000A']);
   assert.deepEqual(await ids(list, { '00100020': S('LO', 'B') }), ['B']);
-  assert.deepEqual(await ids(list, {}), ['　A', 'A', 'B']);
+  assert.deepEqual(await ids(list, {}), ['\u3000A', 'A', 'B']);
 });
 
 test('a patient key given a value is compared (birth date, sex); a patient attribute the order cannot be compared on never matches', async () => {

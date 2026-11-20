@@ -444,7 +444,7 @@ class ModalityWorklistAnswered(unittest.TestCase):
     def test_22_values_go_out_and_come_back_character_for_character(self):
         long_id = HAN * 33
         self.orders(order(1, patientId=long_id, name='홍길동^합성'), order(2, patientId='SYN-TWO', name='KIM^A=金'),
-                    order(3, patientId='SYN-HAN', name='SYN^' + HAN), order(4, patientId='　A', name='SYNTHETIC^WIDE'),
+                    order(3, patientId='SYN-HAN', name='SYN^' + HAN), order(4, patientId='\u3000A', name='SYNTHETIC^WIDE'),
                     order(5, patientId='A', name='SYNTHETIC^PLAIN'))
         # The fewest keys: only what was asked comes back, with the character set and the hospital's offset.
         [least] = self.got(ask(PatientID=long_id))
@@ -467,8 +467,8 @@ class ModalityWorklistAnswered(unittest.TestCase):
         self.assertEqual(self.find(ask(PatientID='', PatientName='SYN^??')), [(0x0000, None)])
         # A patient ID that begins with an ideographic space is another patient's: asking for `A` never gives it as `A`.
         self.assertEqual([str(d.PatientName) for d in self.got(ask(PatientID='A', PatientName=''))], ['SYNTHETIC^PLAIN'])
-        [wide] = self.got(ask(PatientID='　A', PatientName=''))
-        self.assertEqual([wide.PatientID, str(wide.PatientName)], ['　A', 'SYNTHETIC^WIDE'])
+        [wide] = self.got(ask(PatientID='\u3000A', PatientName=''))
+        self.assertEqual([wide.PatientID, str(wide.PatientName)], ['\u3000A', 'SYNTHETIC^WIDE'])
 
     def test_23_scheduled_date_and_time_ranges(self):
         at = lambda n, sched: order(n, sched=sched)

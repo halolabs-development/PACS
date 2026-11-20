@@ -28,7 +28,7 @@ const [port, python] = process.argv.slice(2);
 if (!/^\d+$/.test(port || '') || !python) { process.stderr.write('usage: modality_worklist_bridge.cjs <port> <python>\n'); process.exit(2); }
 
 // Every line is ASCII, so no name depends on either process's locale.
-const say = value => process.stdout.write(JSON.stringify(value).replace(/[\u0080-￿]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0')) + '\n');
+const say = value => process.stdout.write(JSON.stringify(value).replace(/[\u0080-\uffff]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0')) + '\n');
 
 let rows = [];
 const settings = { delayMs: 0, auditFails: false };

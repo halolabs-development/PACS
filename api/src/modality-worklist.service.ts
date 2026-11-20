@@ -137,7 +137,7 @@ export class ModalityWorklistService implements OnApplicationBootstrap, OnApplic
       // ASCII (every other character escaped), as the helper's own lines are: no name depends on a process's locale.
       if (child.exitCode === null && !child.killed)
         child.stdin!.write(JSON.stringify({ id: message.id, status: result.status, warning: result.warning, items: result.items })
-          .replace(/[\u0080-￿]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0')) + '\n');
+          .replace(/[\u0080-\uffff]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0')) + '\n');
     });
   }
 
