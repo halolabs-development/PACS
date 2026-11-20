@@ -492,7 +492,7 @@ class ReportTextBoundaries(h.LogoutDOMTest):
                       const channel = new BroadcastChannel('kin-session');
                       channel.postMessage({type:'session-ended',session,operation:1,status:'ending'}); channel.close();
                     }""", self.site.cookie)
-                expect(self.panel_title()).to_have_text("Session Ended")
+                expect(self.panel_title()).to_have_text("Draft Not Saved")
                 expect(self.page.locator("dialog.kin-logout")).to_contain_text(h.UID)
                 expect(self.page.locator("dialog.kin-logout")).to_contain_text(h.UID_B)
                 expect(self.page.locator("dialog.kin-logout")).not_to_contain_text(h.PATIENT)
@@ -1710,7 +1710,7 @@ class ReportTextBoundaries(h.LogoutDOMTest):
                     self.log_out_main(other)
                     self.wait_until(lambda: len(self.site.held_logouts) == 1, "the other document's end", page=other)
                 if ending != "Log out completes":
-                    expect(self.panel_title()).to_have_text("Session Ended")
+                    expect(self.panel_title()).to_have_text("Draft Not Saved")
                 self.wait_until(lambda: self.heard(viewer, "session-ended"), "the end notice", page=viewer)
                 # (4) The end lock is asked for before the end is posted; whoever hears the end can already read it.
                 order = [step[:2] for step in self.order(other)]
@@ -2382,7 +2382,7 @@ class ReportTextBoundaries(h.LogoutDOMTest):
           const channel = new BroadcastChannel('kin-session');
           channel.postMessage({type:'session-ended',session,operation:1,status:'ending'}); channel.close();
         }""", self.site.cookie)
-        expect(self.panel_title()).to_have_text("Session Ended")
+        expect(self.panel_title()).to_have_text("Draft Not Saved")
         self.site.account = h.RAD
         self.panel_button("Recover Draft").click()
         self.page.wait_for_url(h.INDEX_URL)
@@ -2651,7 +2651,7 @@ class ReportTextBoundaries(h.LogoutDOMTest):
           const channel = new BroadcastChannel('kin-session');
           channel.postMessage({type:'session-ended',session,operation:1,status:'ending'}); channel.close();
         }""", self.site.cookie)
-        expect(self.panel_title()).to_have_text("Session Ended")
+        expect(self.panel_title()).to_have_text("Draft Not Saved")
         panel = self.page.locator("dialog.kin-logout")
         expect(panel).to_contain_text(h.UID)
         expect(panel).to_contain_text(h.UID_B)
@@ -2661,7 +2661,7 @@ class ReportTextBoundaries(h.LogoutDOMTest):
         self.wait_until(lambda: (self.site.stored_for(h.UID_B) or {}).get("findings") == "SYN B recovery",
                         "A020: study B is stored although study A before it was refused")
         expect(self.panel_status()).to_contain_text("그대로 있습니다")
-        expect(self.panel_title()).to_have_text("Session Ended")
+        expect(self.panel_title()).to_have_text("Draft Not Saved")
         # What is left is A alone, with why; B is no longer among the studies that need preserving.
         listed = panel.locator("p", has_text="보존이 필요한 검사")
         expect(listed).to_contain_text(h.UID)

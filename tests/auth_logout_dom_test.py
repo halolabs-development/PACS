@@ -2037,7 +2037,7 @@ class LogoutDOMTest(unittest.TestCase):
                     # The browser's cookie becomes another reader's login; the save is refused by code before any handler.
                     self.site.account = RAD_OTHER
                     self.site.refuse(route, 409, "AUTH_SESSION_MISMATCH")
-                expect(self.panel_title()).to_have_text("Session Ended")
+                expect(self.panel_title()).to_have_text("Draft Not Saved")
                 self.assert_closed(f"{cause} while the save is out")
                 self.page.wait_for_timeout(300)
                 self.assertEqual([], self.docs(name="index.html"), "no move: the text would be lost")
@@ -2087,7 +2087,7 @@ class LogoutDOMTest(unittest.TestCase):
                     self.site.ended.add(session)
                     # A request still queued from the typing can get the 401 first and hide the toolbar; click like a script.
                     self.page.evaluate("() => document.querySelector('#m-refresh').click()")
-                expect(self.panel_title()).to_have_text("Session Ended")
+                expect(self.panel_title()).to_have_text("Draft Not Saved")
                 # The window says what it knows - this screen closed and the draft is not saved - not that the server
                 # ended the login session (the other tab's logout may not have reached it).
                 expect(self.page.locator("dialog.kin-logout")).to_contain_text("업무 화면이 닫혀 판독문 초안을 저장하지 못했습니다.")
@@ -2109,7 +2109,7 @@ class LogoutDOMTest(unittest.TestCase):
         self.wait_until(lambda: self.site.held_puts, "the preparation's save")
         self.site.ended.add(self.site.cookie)
         self.site.refuse(self.site.held_puts.pop()[0], 401, "AUTH_SESSION_ENDED")
-        expect(self.panel_title()).to_have_text("Session Ended")
+        expect(self.panel_title()).to_have_text("Draft Not Saved")
         self.dialog_answers = [False]
         self.panel_button("Discard Draft").click()
         self.page.wait_for_timeout(200)
@@ -2355,7 +2355,7 @@ class LogoutDOMTest(unittest.TestCase):
                     continue
                 # Going back asked nothing; the reads that start again learn from the server that this session ended: the
                 # screen closes and the text is kept in this window.
-                expect(self.panel_title()).to_have_text("Session Ended")
+                expect(self.panel_title()).to_have_text("Draft Not Saved")
                 self.assertEqual([], [c for c in self.site.calls[calls:] if c == ("GET", "/api/me")])
                 self.assert_closed("the end learned after Back to Editing")
                 self.page.wait_for_timeout(300)
@@ -2384,7 +2384,7 @@ class LogoutDOMTest(unittest.TestCase):
             # The preparation waits behind the write that is out; that write meets the ended session.
             expect(self.panel_title()).to_have_text("Saving Draft")
             self.site.refuse(self.site.held_puts.pop()[0], 401, "AUTH_SESSION_ENDED")
-        expect(self.panel_title()).to_have_text("Session Ended")
+        expect(self.panel_title()).to_have_text("Draft Not Saved")
         self.assert_closed("the session ended during the preparation")
 
     def test_s10_recover_draft_discards_the_capture_only_on_an_exact_match(self):
@@ -2408,7 +2408,7 @@ class LogoutDOMTest(unittest.TestCase):
                 # Not declared: the capture stays in this window, nothing moves.
                 expect(self.panel_status()).to_contain_text("그대로 있습니다")
                 self.page.wait_for_timeout(300)
-                expect(self.panel_title()).to_have_text("Session Ended")
+                expect(self.panel_title()).to_have_text("Draft Not Saved")
                 self.assertEqual([], self.docs(name="index.html"))
                 self.assert_closed("the recovery kept undeclared")
                 self.assertEqual(0, self.site.count("POST", f"/api/studies/{UID}/report/commit"))
@@ -2438,7 +2438,7 @@ class LogoutDOMTest(unittest.TestCase):
         self.page.wait_for_timeout(300)
         self.assertEqual((other_text, []), (self.site.stored(), self.docs(name="index.html")),
                          "the capture was written over another draft without the person's word")
-        expect(self.panel_title()).to_have_text("Session Ended")
+        expect(self.panel_title()).to_have_text("Draft Not Saved")
         # Recover Draft again does not overwrite either (and sends no write); only the explicit control does - one press.
         puts = len(self.site.puts)
         self.panel_button("Recover Draft").click()

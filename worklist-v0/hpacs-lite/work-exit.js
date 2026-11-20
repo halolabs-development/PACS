@@ -621,7 +621,7 @@
     }
 
     const LOGOUT_TITLES = { waiting: "Logging Out", saving: "Saving Draft", failed: "Draft Not Saved", closing: "Logging Out",
-      ended: "Session Ended" };
+      ended: "Draft Not Saved" };
     const LOGOUT_NOTES = {
       waiting: "진행 중인 저장 또는 초안 버리기가 끝나는 대로 로그아웃을 이어 갑니다. 다시 누를 필요가 없습니다.",
       saving: "작성 중인 판독문 초안을 저장한 뒤 로그아웃합니다. 저장을 확인하면 바로 이어 갑니다.",
