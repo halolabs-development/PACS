@@ -14,6 +14,14 @@ ENV KIN_PURPOSE_LEDGER_DIR=/var/lib/kin-purpose
 RUN apt-get update -y \
  && apt-get install -y --no-install-recommends openssl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
+# The in-process Prisma engine sets these two variables on its first database connection. When they do not exist
+# yet, that setenv grows the environment array while a node thread may be reading it, and the process dies with
+# SIGSEGV (Node 22 + Prisma 5 library engine; measured 29 in 1500 starts, 0 with both preset). Preset, the engine
+# only updates them in place. The values are this image's OpenSSL defaults, which the engine writes itself, so the
+# trust store is unchanged (tests/production_image_test.py test_07). Compose sets the same values for the API
+# service; this covers every other node process started from the image (docker run, backup recovery, tests).
+ENV SSL_CERT_FILE=/usr/lib/ssl/cert.pem \
+    SSL_CERT_DIR=/usr/lib/ssl/certs
 
 # Film / DICOM Print: the DICOM print helper (print/film_print.py, started by the API per job) runs on Debian's Python
 # with pydicom and pynetdicom from print/requirements.txt, hash-pinned, in a virtual environment of its own.
@@ -39,6 +47,9 @@ RUN npx prisma generate
 COPY tsconfig.json nest-cli.json ./
 COPY src ./src
 COPY print ./print
+# Modality Worklist: the DICOM worklist helper (mwl/mwl_scp.py, started by the API while KIN_MWL_PORT is set) runs on the same
+# Python and pynetdicom as the print helper.
+COPY mwl ./mwl
 
 EXPOSE 3000
 
@@ -68,6 +79,7 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/print ./print
+COPY --from=build /app/mwl ./mwl
 COPY start-production.sh ./start-production.sh
 # 운영 서버의 legacy builder도 지원한다(COPY --chmod는 BuildKit 전용).
 # 실패 전달 스풀 디렉터리와 CD-09-P 초안 파기 원장·그 사본(백업 밖 볼륨): node만 읽고 쓴다. 이름 있는 볼륨은 이 소유·권한을 처음 한 번 물려받는다.

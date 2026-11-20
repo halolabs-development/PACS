@@ -5,7 +5,7 @@ Orthanc, NestJS/Prisma, PostgreSQL, Keycloak, nginx로 구성된 의료영상 �
 
 ## 작업을 시작하기 전에
 
-개발 규칙은 [AGENTS.md](AGENTS.md), 시험 실행과 제한은 [tests/README.md](tests/README.md)를 따른다. 인접한 비공개 `docs-repo`가 있으면 그 `README.md`가 안내하는 현행 상태·로드맵·평가 기준을 먼저 읽는다. 없으면 대화에서 제공된 범위를 따르고, 오래된 단계 번호로 다음 작업을 추정하지 않는다.
+개발 규칙은 [AGENTS.md](AGENTS.md), 시험 실행과 제한은 [tests/README.md](tests/README.md)를 따른다. 작업지시가 주어졌으면 그 작업지시를 읽고, 작업지시는 읽을 자료의 정확한 경로를 직접 지정한다. 없으면 대화에서 제공된 범위를 따르고, 오래된 단계 번호로 다음 작업을 추정하지 않는다.
 
 기존 작업 파일, DB, DICOM 원본, 계정과 설정을 보존한다. 작업 전에 Git 상태와 실행 중인 컨테이너를 확인하며, 문서 정리를 이유로 환경을 다시 만들지 않는다.
 

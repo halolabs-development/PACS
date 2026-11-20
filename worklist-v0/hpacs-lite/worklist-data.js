@@ -73,6 +73,7 @@
       s.preDoc = a.preDoc ?? "";
       s.preReviewer = a.preReviewer ?? "";
       s.prelimHidden = a.prelimHidden;
+      s.holderMine = a.holderMine === true;
       s.holder = a.holder;          // 서버가 만료된 점유는 빼고 준다
       s.version = a.version ?? 0;   // 낙관적 락 기준
       // S4-U5: the overlay repaints display fields only. RS, matching, UID, patient key and the rest of the row state
@@ -141,6 +142,23 @@
       cancelThumbs();
       window.dispatchEvent(new CustomEvent("kin-exam-scope-changed", { detail: { uid: s.uid, previous, next } }));
     }
+    /**
+     * The original studies of a merged or split exam row (server `sourceMetadata`) as the screen keeps them. The one place
+     * both the whole-list rebuild (fromApi) and the poll that refreshes rows in place (worklist-polling.js) read them, so a
+     * column a filter compares per original (exam-scope.js projections) has the same form after either.
+     */
+    function sourceMetadataView(list) {
+      return (list || []).map(m => ({ ...m, sourceAcc: m.acc, acc: m.orderAccession || m.acc, date: fmtD(m.date),
+        reqDate: localStamp(m.reqDate), ...referredFields(m) }));
+    }
+    /**
+     * Referred (server `referredAt`): when the referring hospital's Gateway sent the study. The cell and its filter read the
+     * local "YYYY-MM-DD HH:mm"; the sort reads referredAtIso, the same time with its seconds (orderedStudies). Blank both
+     * when the server sent none. A row and each original of a merged or split exam, on a rebuild and on a poll, all pass here.
+     */
+    function referredFields(s) {
+      return { referredAt: localStamp(s?.referredAt), referredAtIso: serverInstant(s?.referredAt) };
+    }
     function fromApi(s) {
       observeExamScope(s);
       updateReaderAssignment(s.uid,s.readerAssignment);
@@ -174,14 +192,14 @@
         gatewayReceipt: s.gatewayReceipt ?? null,
         // Request columns as the server decided them (matched order first); a value it did not send stays blank.
         reqDate: localStamp(s.reqDate), reqDept: requestText(s.reqDept), reqDoc: requestText(s.reqDoc), ptClass: requestText(s.ptClass),
+        ...referredFields(s),
         // Merge Exam: the studies of a merged exam (the base first); Count and Series above are already of all of them.
         examScope: s.examScope ?? null, reportScope: s.reportScope ?? null,
         relatedExamReports: s.relatedExamReports ?? [], examUnavailable: s.examUnavailable === true,
         // The kind of exam in force (merge / split) this row belongs to when its originals cannot all be read now.
         examUnavailableKind: s.examUnavailable === true && ['merge', 'split'].includes(s.examUnavailableKind) ? s.examUnavailableKind : null,
         draftEpoch: s.state?.draftEpoch ?? null,
-        sourceMetadata: (s.sourceMetadata || []).map(m => ({ ...m, sourceAcc: m.acc,
-          acc: m.orderAccession || m.acc, date: fmtD(m.date), reqDate: localStamp(m.reqDate) })),
+        sourceMetadata: sourceMetadataView(s.sourceMetadata),
         ...(s.group ? { group: s.group } : {}),
         // A report written on a merged exam (now or before Unmerge): which studies, and whether this account may read them all.
         ...(s.reportGroup && typeof s.reportGroup === 'object' ? { reportGroup: s.reportGroup } : {}),
@@ -454,11 +472,14 @@
         saveBtn.disabled = true; kinWrite(status, kinSay('저장 중입니다…'));
         try {
           const at = work.capture('document');
+          const request = collectionBody({ ...snapshotFilter(), name });
           if (await filterWriteReady(undefined, at)) throw new Error('서버 계정으로 로그인한 뒤 저장할 수 있습니다.');
-          const saved = await api('POST', '/filters', { ...snapshotFilter(), name }, undefined, at);
+          const saved = await api('POST', '/filters', request, undefined, at);
           if (!work.admits(at)) throw new Error('작업 화면이 바뀌었습니다. 다시 시도하세요.');
           work.commit(at, () => acceptSavedFilter(saved, false));
           await reloadFolderSearches(at);
+          if (!work.admits(at) || request.collection !== filterCollection?.collection)
+            throw new Error('검색 모음이 변경되었습니다. 다시 선택해 주세요.');
           const list = shortcutDraft ?? storedShortcuts ?? [];
           let id = 1; while (list.some(s => s.id === String(id))) ++id;
           const existing = list.find(s => s.name === name);
@@ -536,8 +557,9 @@
     let queueSeen = null;
     function orderedStudies() {
       const list = filtered();
-      // PF sorts by the queue word the cell and the filter read now (preloadWord), not the row's stored "·".
-      const sortValue = s => sortKey === "pf" ? preloadWord(s) : s[sortKey];
+      // PF sorts by the queue word the cell and the filter read now (preloadWord), not the row's stored "·"; Referred by the
+      // server time itself (its cell drops the seconds).
+      const sortValue = s => sortKey === "pf" ? preloadWord(s) : sortKey === "referredAt" ? s.referredAtIso : s[sortKey];
       if (sortDir !== 0 && sortKey)
         list.sort((a, b) => { const x = sortValue(a), y = sortValue(b); return (x > y ? 1 : x < y ? -1 : 0) * sortDir; });
       if (selectedUid && list.some(s => s.uid === selectedUid)) queueSeen = { uid: selectedUid, order: list.map(s => s.uid) };
@@ -705,7 +727,7 @@
         : open("#b-save") && open("#b-approve") ? kinSay(" · 확정하려면 Save 또는 Approve")
         : open("#b-save") ? kinSay(" · 확정하려면 Save") : open("#b-approve") ? kinSay(" · 확정하려면 Approve") : "");
     }
-    function heldByOther(s) { return s?.holder && s.holder !== user ? s.holder : null; }
+    function heldByOther(s) { return s?.holder && !s.holderMine ? s.holder : null; }
     /**
      * FC-040 진행 중 판독 되돌리기: 대기·임시저장·보류(W·T·H)인 검사를 남이 판독 중이거나(살아 있는 점유) 남이 Save해 둔 글이
      * 있으면, 판독의 누구나 Reset to Unread로 점유를 풀고 Unread로 되돌린다 — 사유는 묻지 않는다(서버가 기록한다).
@@ -714,7 +736,7 @@
     function inProgressReset(s) {
       if (!s || !["W", "T", "H"].includes(s.rs)) return null;
       const savedBy = appState[s.uid]?.savedBy;
-      return heldByOther(s) || (savedBy && savedBy !== user ? savedBy : null);
+      return heldByOther(s) || (savedBy && !appState[s.uid].savedByMine ? savedBy : null);
     }
     function updateReportButtons() {
       const s = cur();

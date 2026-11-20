@@ -42,7 +42,8 @@ MIGRATIONS = [
     '20261008120000_emr_b', '20261010120000_emr_seal_attempts', '20261010150000_emr_read_jit_off', '20261011120000_filter_shortcuts',
     '20261015013945_import_operation', '20261016120000_related_report_insert_receipt', '20261023180000_emr_pg_ledger', '20261023200000_emr_server_signing', '20261024120000_emr_d_online', '20261025000000_emr_e_online', '20261025120000_access_review', '20261025120000_auth_flow_subtraction', '20261025150000_emr_f_link', '20261026120000_assignment_access_stream', '20261026180000_emr_signing_key_admin', '20261026210000_emr_e_source_manifest', '20261027090000_emr_e_study_delivery', '20261027150000_emr_e_observation_delivery', '20261027180000_emr_image_object_digest', '20261027230000_caution_app_limits', '20261028120000_held_unknown_source', '20261029120000_emr_image_retention', '20261029130000_emr_preparation_manifest_index', '20261030120000_preload_cache_key', '20261030130000_writer_institution', '20261102140000_cd10_access_seen', '20261103150000_cd09p_draft_purpose', '20261105120000_cd09d_report_retention', '20261111120000_critical_result_study_label', '20261111150000_report_amend_window', '20261111160000_institution_emr_link', '20261111180000_dicom_peer', '20261111200000_study_attachment', '20261113120000_order_request_columns', '20261114120000_film_print', '20261114120000_order_removal', '20261114180000_exam_group', '20261114180000_report_drawing', '20261114180000_viewer_auto_view',
     '20261114210000_exam_scope', '20261114220000_report_snapshot_format', '20261115010000_exam_view_drawing_scope', '20261115120000_report_drawing_work', '20261116120000_order_ris_status', '20261116120000_viewer_item_delete', '20261118120000_gateway_settings', '20261118120000_institution_critical_result_inbox',
-    '20261119120000_access_review_linear', '20261119160000_critical_result_send_roles',
+    '20261119120000_access_review_linear', '20261119160000_critical_result_send_roles', '20261120120000_study_referred_at',
+    '20261120140000_order_modality_worklist', '20261120150000_owner_account_keys',
 ]
 # docker-compose.yml refuses to resolve without these; the compose reads below give each a synthetic value.
 COMPOSE_SECRETS = ("ORTHANC_PASS", "POSTGRES_PASSWORD", "KIN_EMR_RUNTIME_PASSWORD", "KC_ADMIN_PASSWORD",
@@ -230,6 +231,8 @@ for(const name of expected) assert(fs.existsSync('prisma/migrations/'+name+'/mig
 for(const p of ['dist/main.js','dist/emr-runtime/store.js',
   'node_modules/prisma/build/index.js','node_modules/.prisma/client/index.js']) assert(fs.existsSync(p),p);
 for(const p of ['src','node_modules/@nestjs/cli','node_modules/typescript']) assert(!fs.existsSync(p),p);
+// Modality Worklist: its DICOM helper ships in the image, beside the print helper.
+assert(fs.existsSync('mwl/mwl_scp.py'),'mwl/mwl_scp.py');
 assert.strictEqual(require('@prisma/client/package.json').version,'5.22.0');
 assert.strictEqual(require('prisma/package.json').version,'5.22.0');
 // The Orthanc connection pools (orthanc-transport.ts) are a runtime dependency the prune must keep.
@@ -245,6 +248,10 @@ assert.strictEqual(facts.build.revision,/^[0-9a-f]{40}$/.test(label)?label:null)
 """
         ops.temporary_run(["--network", "none", "--entrypoint", "node", self.image_id, "-e", script,
                            json.dumps(MIGRATIONS), expected])
+        # The helper loads on the image's own Python and pynetdicom (it is started only while KIN_MWL_PORT is set).
+        self.assertEqual(ops.temporary_run(["--network", "none", "--entrypoint", "/opt/kin-print/bin/python", self.image_id, "-I", "-c",
+            "import runpy,sys; sys.argv=['mwl_scp.py','--help']; runpy.run_path('/app/mwl/mwl_scp.py', run_name='__main__')"]).splitlines()[0][:6],
+            "usage:")
 
     def test_02_migrate_boot_restart_preserves_data_and_history(self):
         """TEST-C1-02/03: real Prisma engines, empty migration, auth guard and exec signal path.
@@ -323,6 +330,18 @@ const runtime=new EmrRuntime(process.env.DATABASE_URL, '/var/lib/kin-emr/outage'
         ops.run(["docker", "exec", name, "node", "-e",
             "fetch('http://127.0.0.1:3000/api/me').then(r=>{if(r.status!==401)process.exit(1)})"
             ".catch(()=>process.exit(1))"])
+        # Modality Worklist is off by default: no helper process, and its port refuses a connection. A helper is a process
+        # one of whose arguments is the helper script's path (an argument of its own, not a text that mentions it); this
+        # check's own process is not counted.
+        self.assertEqual(ops.text(["docker", "exec", name, "node", "-e",
+            "const fs=require('fs'),path=require('path');let helpers=0;"
+            "for(const d of fs.readdirSync('/proc')){if(!/^\\d+$/.test(d)||+d===process.pid)continue;"
+            "let args=[];try{args=fs.readFileSync('/proc/'+d+'/cmdline','utf8').split('\\0')}catch{continue}"
+            "if(args.some(a=>path.basename(a)==='mwl_scp.py'))helpers++}"
+            "const s=require('net').connect(4243,'127.0.0.1');"
+            "s.on('connect',()=>{console.log(helpers+' open');s.destroy()});"
+            "s.on('error',e=>console.log(helpers+' '+(e.code==='ECONNREFUSED'?'closed':e.code)))"]),
+            "0 closed")
         self.assertEqual(ops.text(["docker", "exec", name, "node", "-e",
             "console.log(require('fs').readFileSync('/proc/1/cmdline').toString().split('\\0').filter(Boolean).join(' '))"]),
             "node dist/main.js")
@@ -414,14 +433,18 @@ c.Module({controllers:[Probe],providers:[PrismaService]})(ProbeModule);
     def test_07_production_ssl_cert_preset_is_what_the_image_uses_unset(self):
         """exp-node-sigsegv: docker-compose.prod.yml presets SSL_CERT_FILE/SSL_CERT_DIR for the API so the Prisma library
         engine's setenv on its first TLS connector updates them in place instead of adding them under the server's
-        environment reads. The preset must change nothing else: it is this image's OpenSSL default (OPENSSLDIR) and what
-        the engine writes itself when nothing is set, and both paths exist with certificates. A base image that moves
-        them fails here instead of a deployment pinning a stale path. The values are the API service's environment as Compose
-        resolves the production files (test_08)."""
+        environment reads. The image carries the same two values for every other node process started from it (docker run
+        children, backup recovery). The preset must change nothing else: it is this image's OpenSSL default (OPENSSLDIR)
+        and what the engine writes itself when nothing is set, and both paths exist with certificates. A base image that
+        moves them fails here instead of a deployment pinning a stale path. The values are the API service's environment
+        as Compose resolves the production files (test_08)."""
         file, directory = api_ssl_preset(production_compose((ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8")))
         script = """
 const fs=require('fs'), path=require('path'), assert=require('assert'), {execFileSync}=require('child_process');
 const [file,dir,url]=process.argv.slice(1);
+// The image's own values are the Compose preset; then both are removed so the engine below shows what it writes itself.
+assert.deepStrictEqual([process.env.SSL_CERT_FILE,process.env.SSL_CERT_DIR],[file,dir]);
+delete process.env.SSL_CERT_FILE; delete process.env.SSL_CERT_DIR;
 assert.strictEqual(process.env.SSL_CERT_FILE,undefined); assert.strictEqual(process.env.SSL_CERT_DIR,undefined);
 const openssldir=/^OPENSSLDIR: "([^"]+)"$/m.exec(execFileSync('openssl',['version','-d'],{encoding:'utf8'}))[1];
 assert.deepStrictEqual([file,dir],[path.posix.join(openssldir,'cert.pem'),path.posix.join(openssldir,'certs')]);

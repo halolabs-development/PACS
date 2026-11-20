@@ -1005,7 +1005,7 @@ class CaptureServer:
                     status, answer = self.config.get("post_answer") or (500, {"code": "U4B_NO_ANSWER"})
                 return status, as_json, json.dumps(answer, ensure_ascii=False).encode("utf-8"), "contract"
             if method == "POST" and kind in ("hold", "release"):
-                return 200, as_json, json.dumps({"holder": "doctor@kin", "conflict": False}).encode(), "contract"
+                return 200, as_json, json.dumps({"holder": "doctor@kin", "mine": True, "conflict": False}).encode(), "contract"
             if method == "GET" and kind == "report/citations":
                 return 200, as_json, b'{"version":1,"head":[],"draft":[],"draftRevision":"SYNEPOCH:0"}', "contract"
             if method == "GET" and kind == "report/structure":

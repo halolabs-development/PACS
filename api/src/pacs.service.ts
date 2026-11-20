@@ -96,6 +96,10 @@ export class PacsService implements OnModuleInit {
     return this.institutionsConcern.institutionName(id);
   }
 
+  resolveDevice(aet: string | null) {
+    return this.institutionsConcern.resolveDevice(aet);
+  }
+
   emrLink(id: string | null) {
     return this.institutionsConcern.emrLink(id);
   }
@@ -225,8 +229,8 @@ export class PacsService implements OnModuleInit {
   }
 
   // ── worklist (api/src/pacs/worklist.ts) ──
-  async readStudies(c: Caller, query?: any) {
-    return this.worklistConcern.readStudies(c, query);
+  async readStudies(c: Caller, query?: any, viewer = false) {
+    return this.worklistConcern.readStudies(c, query, viewer);
   }
 
   async heldSources(c: Caller) {
@@ -314,8 +318,8 @@ export class PacsService implements OnModuleInit {
   }
 
   // ── clinician (api/src/pacs/clinician.ts) ──
-  async clinicianStudies(c: Caller, query?: any) {
-    return this.clinicianConcern.clinicianStudies(c, query);
+  async clinicianStudies(c: Caller, query?: any, viewer = false) {
+    return this.clinicianConcern.clinicianStudies(c, query, viewer);
   }
 
   async clinicianReportRead(uid: string, c: Caller, version?:string) {

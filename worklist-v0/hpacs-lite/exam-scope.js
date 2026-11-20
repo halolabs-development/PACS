@@ -2,7 +2,7 @@
 (function(root) {
   'use strict';
   const sourceFields = new Set(['id','name','acc','sourceAcc','date','time','desc','modality','birth','sex','age',
-    'institutionName','reqHosp','reqDate','reqDept','reqDoc','ptClass']);
+    'institutionName','reqHosp','reqDate','reqDept','reqDoc','ptClass','referredAt']);
   const copy = value => JSON.parse(JSON.stringify(value));
   function read(value, purpose = 'current') {
     const scope = value?.sources ? value : purpose === 'stored' ? value?.reportScope : value?.examScope;
@@ -258,14 +258,30 @@
     };
     return {send(uids){const identity=owner();if(identity)channel.postMessage({owner:identity,uids:[...new Set(uids)]});},close(){channel.close();}};
   }
-  function chooseOriginals(row,scope,{title,multiple=true,live=()=>true}={}) {
+  // One lifetime for a dialog that names an exam's originals (the choice of originals below, and a caller's own choice
+  // of an original's series and images): it is shown only while live() holds - asked before it opens and again and again
+  // while it is open; its caller asks once more when the person continues. When live() no longer holds, the dialog closes
+  // by itself and leaves the page with everything it showed. False: it did not hold at the start and nothing was shown.
+  const LIVE_CHECK_MS=250;
+  function showWhileLive(dialog,live) {
+    const holds=()=>{try{return live()===true;}catch(_){return false;}};
+    if(!holds())return false;
+    const watch=setInterval(()=>{if(!holds())dialog.close();},LIVE_CHECK_MS);
+    dialog.addEventListener('close',()=>{clearInterval(watch);dialog.remove();},{once:true});
+    document.body.append(dialog);dialog.showModal();
+    return true;
+  }
+  // `note`: the caller's own sentence when what follows the choice is not the whole original (a chosen download).
+  // `live`: the caller's lifetime of the choice (showWhileLive); a choice that is no longer live chooses nothing.
+  function chooseOriginals(row,scope,{title,note:said,multiple=true,live=()=>true}={}) {
     return new Promise(resolve=>{
       const dialog=document.createElement('dialog'),heading=document.createElement('h3'),note=document.createElement('p');
       const language = root.KinLanguage;
       const write = (node, words) => language ? language.write(node, words) : (node.textContent = words);
       const phrase = words => language ? language.say(words) : words;
       dialog.className='order-dialog';write(heading,title ?? phrase('Download Originals'));
-      note.textContent=scope.kind==='split'?'나눈 시리즈만이 아니라 원본 검사 전체를 내보냅니다. 원본 UID와 영상은 바뀌지 않습니다.':'내보낼 원본 검사를 고르세요. 원본 UID와 영상은 바뀌지 않습니다.';
+      if(said!=null)write(note,said);
+      else note.textContent=scope.kind==='split'?'나눈 시리즈만이 아니라 원본 검사 전체를 내보냅니다. 원본 UID와 영상은 바뀌지 않습니다.':'내보낼 원본 검사를 고르세요. 원본 UID와 영상은 바뀌지 않습니다.';
       dialog.append(heading,note);const choices=[];
       for(const source of scope.sources){
         const original=metadata(row).find(s=>s.uid===source.studyUid),label=document.createElement('label'),input=document.createElement('input');
@@ -276,8 +292,9 @@
       }
       const go=document.createElement('button'),close=document.createElement('button');go.type=close.type='button';write(go,phrase('Continue'));write(close,phrase('Cancel'));
       const update=()=>{go.disabled=!choices.some(c=>c.checked);};dialog.onchange=update;update();
-      let result=[];go.onclick=()=>{if(live())result=choices.filter(c=>c.checked).map(c=>c.value);dialog.close();};close.onclick=()=>dialog.close();
-      dialog.addEventListener('close',()=>{dialog.remove();resolve(result);},{once:true});dialog.append(go,close);document.body.append(dialog);dialog.showModal();
+      let result=[];go.onclick=()=>{if(live()===true)result=choices.filter(c=>c.checked).map(c=>c.value);dialog.close();};close.onclick=()=>dialog.close();
+      dialog.addEventListener('close',()=>resolve(result),{once:true});dialog.append(go,close);
+      if(!showWhileLive(dialog,live))resolve(result);
     });
   }
   /**
@@ -305,7 +322,7 @@
     finally{try{popup.name=name;}catch(_){}}
     return true;
   }
-  const api={raiseWindow,read,key,stamp,screenScope,screenStamp,originalLabel,sourceRequest,seriesValue,seriesRequest,attachmentTarget,attachmentHeaders,storedReport,allows,listedExam,imagePlace,metadata,projections,values,originals,viewingSelection,originalInput,readingScope,readingStamp,fetch:fetchScope,dicom,unavailable,examRole,examSources,viewerInput,viewerUrl,viewerReference,reference,roleRows,snapshotReference,jobSnapshot,snapshotUrl,preload,preloadState,chooseOriginals,changes};
+  const api={raiseWindow,read,key,stamp,screenScope,screenStamp,originalLabel,sourceRequest,seriesValue,seriesRequest,attachmentTarget,attachmentHeaders,storedReport,allows,listedExam,imagePlace,metadata,projections,values,originals,viewingSelection,originalInput,readingScope,readingStamp,fetch:fetchScope,dicom,unavailable,examRole,examSources,viewerInput,viewerUrl,viewerReference,reference,roleRows,snapshotReference,jobSnapshot,snapshotUrl,preload,preloadState,showWhileLive,chooseOriginals,changes};
   root.KinExamScope=api;
   if(typeof module==='object'&&module.exports)module.exports=api;
 })(globalThis);
