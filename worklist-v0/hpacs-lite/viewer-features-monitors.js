@@ -12,19 +12,26 @@
   const upright = side => side === 'left' || side === 'right';
   const finite = (...values) => values.every(Number.isFinite);
 
-  // Displays (left to right, as KinViewerDisplayLayout.screens lists them) that this window covers, in its client px.
-  // win: screenX/screenY/outerWidth/outerHeight/innerWidth/innerHeight; zoom: CSS px -> screen px, or null when unknown
-  // (then only a plain window frame is accepted, as KinViewerDisplayLayout.seams does). Column: the image column's left
-  // and right in client px. A part narrower than `least` (MIN_REGION: a window barely over the edge) is not a monitor's
-  // region; the display edges of a maximize count a narrower part too (EDGE_SLACK).
-  function regions(screens, win, zoom, column, least = MIN_REGION) {
-    if (!win || !finite(win.screenX, win.screenY, win.outerWidth, win.outerHeight, win.innerWidth, win.innerHeight) || win.innerWidth <= 0) return [];
+  // The window's client area in screen px ({ z, left, top, bottom }; z: CSS px -> screen px), or null when its frame
+  // cannot be read. win: screenX/screenY/outerWidth/outerHeight/innerWidth/innerHeight; zoom: CSS px -> screen px, or
+  // null when unknown (then only a plain window frame is accepted, as KinViewerDisplayLayout.seams does).
+  function client(win, zoom) {
+    if (!win || !finite(win.screenX, win.screenY, win.outerWidth, win.outerHeight, win.innerWidth, win.innerHeight) || win.innerWidth <= 0) return null;
     let z = zoom;
-    if (!(Number.isFinite(z) && z > 0)) { const plain = win.outerWidth - win.innerWidth; if (plain < 0 || plain > 40) return []; z = 1; }
+    if (!(Number.isFinite(z) && z > 0)) { const plain = win.outerWidth - win.innerWidth; if (plain < 0 || plain > 40) return null; z = 1; }
     const frame = win.outerWidth - win.innerWidth * z;
-    if (frame < -1 || frame > 80) return [];
-    const side = Math.max(0, frame) / 2, left = win.screenX + side, top = win.screenY + (win.outerHeight - win.innerHeight * z) - side;
-    const bottom = top + win.innerHeight * z, from = Math.max(0, column?.left ?? 0), to = Math.min(win.innerWidth, column?.right ?? win.innerWidth);
+    if (frame < -1 || frame > 80) return null;
+    const side = Math.max(0, frame) / 2, top = win.screenY + (win.outerHeight - win.innerHeight * z) - side;
+    return { z, left: win.screenX + side, top, bottom: top + win.innerHeight * z };
+  }
+  // Displays (left to right, as KinViewerDisplayLayout.screens lists them) that this window covers, in its client px
+  // (win and zoom as for client). Column: the image column's left and right in client px. A part narrower than `least`
+  // (MIN_REGION: a window barely over the edge) is not a monitor's region; the display edges of a maximize count a
+  // narrower part too (EDGE_SLACK).
+  function regions(screens, win, zoom, column, least = MIN_REGION) {
+    const area = client(win, zoom);
+    if (!area) return [];
+    const { z, left, top, bottom } = area, from = Math.max(0, column?.left ?? 0), to = Math.min(win.innerWidth, column?.right ?? win.innerWidth);
     const list = [];
     (screens || []).forEach((s, monitor) => {
       if (!s || !finite(s.left, s.top, s.width, s.height) || s.top >= bottom || s.top + s.height <= top) return;
@@ -181,20 +188,52 @@
     if (to - last >= EDGE_SLACK) cuts.push(last);
     return cuts.map(x => Math.round((x - from) / grid.width * 1e6) / 1e6).filter(edge => edge > 0 && edge < 1);
   }
+  // Whether the viewport grid stands on two monitors side by side: the parts of it on exactly two of the listed displays
+  // (regions - of two displays one above the other only one is the monitor there), nothing of the grid left on anything
+  // else (within EDGE_SLACK), and each of the two holding at least half of the window's height. A window laid over two
+  // displays one above the other and set apart sideways has the side edge of one of them inside it, yet stands on one
+  // monitor there: false. Nothing known about the window: null. One column of images is divided on this
+  // (viewer-display-span.js).
+  function pair(screens, win, zoom, grid) {
+    if (!grid || !finite(grid.left, grid.width) || !(grid.width > 0)) return null;
+    const from = grid.left, to = grid.left + grid.width, list = regions(screens, win, zoom, { left: from, right: to }, EDGE_SLACK);
+    if (!list.length) return null;
+    if (list.length !== 2 || list[0].left - from >= EDGE_SLACK || to - list[1].right >= EDGE_SLACK) return false;
+    const area = client(win, zoom);
+    return list.every(region => { const s = screens[region.monitor];
+      return (Math.min(area.bottom, s.top + s.height) - Math.max(area.top, s.top)) * 2 >= area.bottom - area.top; });
+  }
 
-  const plan = { THICKNESS, MIN_REGION, regions, target, bands, split, monitorOf, validRects, place, edges };
+  const plan = { THICKNESS, MIN_REGION, regions, target, bands, split, monitorOf, validRects, place, edges, pair };
   if (typeof module === 'object' && module.exports) module.exports = plan;
   if (root) root.KinViewerMonitorPlan = plan;
 })(typeof window === 'object' ? window : null);
 
 // The displays this browser reports, with only the window-management access the reader already gave (never asked here):
 // { screens (left to right), granted, zoom } or null. One display the browser says it has is monitor 1.
+// The last answer is kept (the screen details object stays current by itself), so the double click can read the display
+// edges at once (kinViewerMonitorEdgesNow) - the stock one-up runs before any await could finish.
+var kinViewerScreenAccess = kinViewerScreenAccess || { permission: null, details: null, watched: null };
 async function kinViewerScreensInfo() {
   let details = null;
   try {
     const permission = await navigator.permissions?.query({ name: 'window-management' });
+    kinViewerScreenAccess.permission = permission || null;
+    if (permission && kinViewerScreenAccess.watched !== permission && typeof permission.addEventListener === 'function') {
+      kinViewerScreenAccess.watched = permission;
+      permission.addEventListener('change', () => { kinViewerScreensInfo().catch(() => {}); });
+    }
     if (permission?.state === 'granted') details = await window.getScreenDetails?.();
   } catch (_) { details = null; }
+  kinViewerScreenAccess.details = details || null;
+  return kinViewerScreensInfoFrom(details);
+}
+// The same answer from what is known now: the kept screen details while the access stands, or the window's own display.
+function kinViewerScreensInfoNow() {
+  const access = kinViewerScreenAccess;
+  return kinViewerScreensInfoFrom(access.permission?.state === 'granted' ? access.details : null);
+}
+function kinViewerScreensInfoFrom(details) {
   const layout = window.KinViewerDisplayLayout;
   if (details?.screens?.length && layout) {
     const os = details.currentScreen?.devicePixelRatio;
@@ -208,12 +247,10 @@ async function kinViewerScreensInfo() {
 if (typeof window === 'object') {
   // The display edges inside the viewport grid now (KinViewerMonitorPlan.edges), for the double click's maximize.
   // Without the access, the display this window is on (window.screen) is the one known; a part of the grid past it is
-  // another monitor. null: unknown.
-  window.kinViewerMonitorEdges = async () => {
+  // another monitor. null: unknown. kinViewerMonitorEdges reads the displays again; kinViewerMonitorEdgesNow answers at
+  // once from the last reading (the double click's owner is decided before anything can be awaited).
+  const edgesOf = info => {
     const s = window.screen;
-    // One display, as the browser says: no edge.
-    if (s?.isExtended === false) return [];
-    const info = await kinViewerScreensInfo();
     const box = document.querySelector('[data-cy="viewport-grid"]')?.getBoundingClientRect();
     if (!box) return null;
     const own = [s?.availLeft, s?.availTop, s?.availWidth, s?.availHeight].every(Number.isFinite)
@@ -226,6 +263,44 @@ if (typeof window === 'object') {
     // The frame cannot be read (a browser zoom without the access): a window inside its own display has no edge.
     return own && win.screenX >= own.left - 16 && win.screenX + win.outerWidth <= own.left + own.width + 16 ? [] : null;
   };
+  // One display, as the browser says: no edge.
+  window.kinViewerMonitorEdges = async () => window.screen?.isExtended === false ? [] : edgesOf(await kinViewerScreensInfo());
+  window.kinViewerMonitorEdgesNow = () => window.screen?.isExtended === false ? [] : edgesOf(kinViewerScreensInfoNow());
+  // Whether the viewport grid stands on two monitors side by side now (KinViewerMonitorPlan.pair), from the last reading
+  // of the displays. One display, as the browser says: false. null: not known - which displays lie where is known only
+  // with the window-management access, and the window's frame must be readable.
+  window.kinViewerTwoMonitorsNow = () => {
+    if (window.screen?.isExtended === false) return false;
+    const info = kinViewerScreensInfoNow(), box = document.querySelector('[data-cy="viewport-grid"]')?.getBoundingClientRect();
+    if (!info?.granted || !box) return null;
+    return window.KinViewerMonitorPlan.pair(info.screens, { screenX: window.screenX, screenY: window.screenY, outerWidth: window.outerWidth,
+      outerHeight: window.outerHeight, innerWidth: window.innerWidth, innerHeight: window.innerHeight }, info.zoom, { left: box.left, width: box.width });
+  };
+  // Read the access the reader already gave once now, so the first double click knows the displays.
+  kinViewerScreensInfo().catch(() => {});
+
+  // The reader began to work on the images (kinViewerImageWork): whatever waits for a screen nobody touched ends
+  // ('kin-viewer-image-work'; below, the wait for the window to reach a rule's monitors). One function, called where
+  // image work begins:
+  //  - here: a press or a wheel step on an image cell, and a key the viewer may act on;
+  //  - where an image command is run from the toolbar, its copy on the other display or a shortcut key
+  //    (viewer-ux-toolbar.js invoke) - a shortcut key is taken before it reaches the document;
+  //  - where a wheel step is taken to scroll or to enlarge the image (config kinStackMouse).
+  // Not image work: Ctrl / Cmd / Alt chords (the browser's own zoom, the system's window keys), a Ctrl+wheel nobody took
+  // for the image (the browser's zoom), keys typed into a field or a dialog, and moving the window (no input to this page).
+  window.kinViewerImageWork = () => { try { window.dispatchEvent(new Event('kin-viewer-image-work')); } catch (_) {} };
+  if (!window.kinViewerImageWorkWatched) {
+    window.kinViewerImageWorkWatched = true;
+    const images = node => !!node?.closest?.('[data-cy="viewport-grid"]');
+    const field = node => !!node?.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"],dialog,[role="dialog"]');
+    document.addEventListener('pointerdown', event => { if (images(event.target)) window.kinViewerImageWork?.(); }, true);
+    document.addEventListener('wheel', event => { if (!event.ctrlKey && images(event.target)) window.kinViewerImageWork?.(); }, { capture: true, passive: true });
+    document.addEventListener('keydown', event => {
+      if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing || /^(Shift|Control|Alt|Meta|CapsLock|Tab|Escape|ContextMenu|F\d+)$/.test(event.key || '') ||
+          field(event.target) || field(document.activeElement)) return;
+      window.kinViewerImageWork?.();
+    }, true);
+  }
 }
 
 if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ store, ui }) => {
@@ -288,7 +363,8 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
       if (active !== state) { stopWatch(); return; }
       if (preparing || placedAt() === state.at) return;
       show(null);
-      ui.toast('창 크기나 위치가 바뀌어 모니터별 도구 줄·썸네일 배치를 해제했습니다. 영상 칸은 그대로입니다. 다시 맞추려면 Hanging Protocols에서 Apply 하세요.');
+      // The reader was asked to lay the window over the rule's monitors (awaitMonitors): the rule comes back once it does.
+      if (!reaching) ui.toast('창 크기나 위치가 바뀌어 모니터별 도구 줄·썸네일 배치를 해제했습니다. 영상 칸은 그대로입니다. 다시 맞추려면 Hanging Protocols에서 Apply 하세요.');
     };
     const observer = new ResizeObserver(() => requestAnimationFrame(check));
     const node = column(); if (node) observer.observe(node);
@@ -337,7 +413,7 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
     const mine = ++epoch, before = active, notes = [];
     // What this rule wants of the worklist once it stands: { monitor, rect } (Worklist Show on a display there is) or null
     // (nothing: an offer made for an earlier rule is taken back).
-    let placed = null, worklist = null;
+    let placed = null, worklist = null, reach = null;
     const owns = () => epoch === mine;
     const undo = () => { if (placed && active === placed) show(before); };
     // An abort puts the rows back at once; every later step checks that this prepare still owns them.
@@ -349,6 +425,7 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
         if (!owns()) return;
         // Every rule that stands says once what it wants of the worklist (settleWorklist), applied or not.
         settleWorklist(split ? worklist : null, owns);
+        if (reach) awaitMonitors(rule, reach, mine);
         if (!split) { if (active) show(null); return; }
         if (active === placed) { placed.at = placedAt(); placed.watching = true; startWatch(placed); }
       } });
@@ -372,7 +449,11 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
         const result = await move(aim.rect, signal);
         moved = result.moved;
         check();
-        if (!result.reached) notes.push(info.granted ? '브라우저가 영상 창을 ' + aim.monitors.map(name).join('·') + '(으)로 옮기지 않았습니다. 창을 직접 옮긴 뒤 다시 Apply 하세요.'
+        // The browser keeps a window on one display (it does not move it over two): the reader is asked to lay it there,
+        // and once it stands over those monitors the rule is applied again (reach, after this apply stands). The monitors
+        // are those of the displays as they are now (displays): numbers mean nothing once a display comes or goes.
+        if (!result.reached && info.granted) reach = { monitors: [...aim.monitors], displays: displaysOf(info) };
+        if (!result.reached) notes.push(info.granted ? '브라우저가 영상 창을 ' + aim.monitors.map(name).join('·') + '(으)로 옮기지 않았습니다. 영상 창의 가장자리를 끌어 그 화면에 걸쳐 놓으세요. 걸쳐 놓으면 이 규칙을 다시 적용합니다.'
           : '창 관리 권한이 없어 영상 창을 ' + aim.monitors.map(name).join('·') + '(으)로 옮기지 못했습니다.');
         await frames(2);
         check();
@@ -382,7 +463,7 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
       await frames(2);
       check();
       const columnBox = box(), gridBox = document.querySelector('[data-cy="viewport-grid"]')?.getBoundingClientRect();
-      const covered = columnBox ? plan.regions(info.screens, geometry(), info.zoom, columnBox).slice(0, 2) : [];
+      const covered = columnBox ? laidOn(aim.monitors, plan.regions(info.screens, geometry(), info.zoom, columnBox)) : [];
       const split = columnBox && gridBox ? plan.split(window.KinHangingProtocolModel, rule, covered, columnBox, gridBox) : null;
       for (const skipped of aim.skipped) notes.push(name(skipped.monitor) + ': ' + (skipped.reason === 'no-display' ? '이 화면 구성에 없어 적용하지 않았습니다.' : '한 영상 창은 이웃한 두 화면까지만 덮어 적용하지 않았습니다.'));
       // Rectangles inside the screen, none over another and none squeezed by the bands, or nothing at all.
@@ -438,7 +519,43 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
       if (text) ui.toast(text);
     }, () => {});
   }
-  window.KinViewerMonitors = { prepare, clear: () => { epoch++; if (active) show(null); settleWorklist(null, () => false); } };
+  // The parts of the window a rule is laid on: its image monitors' own parts once the window stands over every one of
+  // them - the same pair the wait below looks for, whichever other display the window also covers - else the first two
+  // parts it does cover (as far as the browser let it go).
+  const laidOn = (monitors, regions) => monitors.length && monitors.every(monitor => regions.some(region => region.monitor === monitor))
+    ? regions.filter(region => monitors.includes(region.monitor)) : regions.slice(0, 2);
+  // The displays by what they are (their place and size, left to right), not by their numbers.
+  const displaysOf = info => JSON.stringify((info?.screens || []).map(s => [s.left, s.top, s.width, s.height]));
+  // The rule stands with the browser having kept the window off its monitors. The whole wait is here: once the window's
+  // image column, as measured now, stands over each of those monitors (KinViewerMonitorPlan.regions; the browser zoom and
+  // the side panels are read again each time), the Hanging Protocols panel is told once, and applies the rule it applied
+  // again if it is still the one applied to that screen (viewer-hanging-protocol.js). It ends without doing anything when,
+  // first, the reader begins to work on the images (kinViewerImageWork: applying the rule again would build the cells
+  // anew over that work), another study is shown, a newer prepare() or a clear() came, the window-management access is
+  // no longer given or the displays are no longer the ones the rule was applied on (nothing is judged on what was read
+  // before), or two minutes have passed. While it lasts the grid is the rule's (reaching: nothing else rebuilds the
+  // cells; the rows this rule placed go back quietly when the window moves, startWatch).
+  let reaching = null;
+  function stopReaching() { if (reaching) { clearInterval(reaching.timer); window.removeEventListener('kin-viewer-image-work', stopReaching); reaching = null; } }
+  function awaitMonitors(rule, reach, mine) {
+    stopReaching();
+    const until = Date.now() + 120000, study = location.search;
+    const timer = setInterval(() => {
+      if (epoch !== mine || Date.now() > until || location.search !== study) { stopReaching(); return; }
+      const info = kinViewerScreensInfoNow();
+      if (!info?.granted || displaysOf(info) !== reach.displays) { stopReaching(); return; }
+      const columnBox = box();
+      if (!columnBox) return;
+      const now = plan.regions(info.screens, geometry(), info.zoom, columnBox).map(region => region.monitor);
+      if (!reach.monitors.every(monitor => now.includes(monitor))) return;
+      stopReaching();
+      window.dispatchEvent(new CustomEvent('kin-viewer-monitors-reached', { detail: { ruleId: rule.id } }));
+    }, 500);
+    reaching = { timer, mine };
+    window.addEventListener('kin-viewer-image-work', stopReaching);
+  }
+  window.KinViewerMonitors = { prepare, reaching: () => !!reaching,
+    clear: () => { epoch++; stopReaching(); if (active) show(null); settleWorklist(null, () => false); } };
 
   // ── The window: Viewer Settings › Monitors in Hanging Protocol… ──
   const element = (tag, attributes = {}, parent) => {
@@ -595,7 +712,7 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
 
   ui.setting({ id: 'monitorHanging', kind: 'button', label: 'Monitors in Hanging Protocol…', order: 61, run: () => open() });
   return () => {
-    epoch++; stopWatch();
+    epoch++; stopWatch(); stopReaching();
     if (active) show(null);
     if (window.KinViewerMonitors?.prepare === prepare) window.KinViewerMonitors = null;
     fixedStyle.remove(); placeStyle.remove();

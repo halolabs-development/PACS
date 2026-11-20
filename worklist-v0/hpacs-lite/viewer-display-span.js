@@ -41,9 +41,10 @@ window.KinViewerDisplaySpan = (() => {
     for (const index of path || []) { at = at?.children[index]; if (!at) return null; }
     return at;
   }
-  function mount({ services, enabled }) {
+  function mount({ services, commands = null, enabled }) {
     const layout = window.KinViewerDisplayLayout;
     let ended = false, frame = null, details = null, geometry = '', firstSeen = 0, link = null, channel = null;
+    let owed = false, dividing = false, divided = 0;
     const abort = new AbortController(), mirrors = new Map();
     const style = document.createElement('style'); style.dataset.kinUxOwned = ''; document.head.append(style);
     const on = () => { try { return enabled() !== false; } catch (_) { return true; } };
@@ -70,25 +71,101 @@ window.KinViewerDisplaySpan = (() => {
       return layout.seams(screens(), { screenX: window.screenX, screenY: window.screenY, outerWidth: window.outerWidth,
         outerHeight: window.outerHeight, innerWidth: window.innerWidth, innerHeight: window.innerHeight }, zoom());
     }
-    // M-1: the grid fills its column; its middle edge goes to the seam.
+    // M-1: the grid fills its column; its middle edge goes to the seam. A grid of one column has no middle edge: over two
+    // monitors it becomes one cell per monitor (divide), and then its middle edge goes to the seam as any other.
     function placeGrid(list) {
       const grid = document.querySelector('[data-cy="viewport-grid"]'), column = grid?.parentElement;
       let rule = '', seam = null;
       const state = services.viewportGridService.getState();
-      const middle = [...state.viewports.values()].some(cell => Math.abs((cell.x ?? -1) - 0.5) < 0.001);
-      if (grid && column && middle) {
+      const cells = [...state.viewports.values()];
+      const middle = cells.some(cell => Math.abs((cell.x ?? -1) - 0.5) < 0.001);
+      owed = false;
+      if (grid && column) {
         const box = column.getBoundingClientRect(), css = getComputedStyle(column);
         const base = { left: box.left + parseFloat(css.paddingLeft || 0) + parseFloat(css.borderLeftWidth || 0),
           right: box.right - parseFloat(css.paddingRight || 0) - parseFloat(css.borderRightWidth || 0) };
         const plan = layout.split(base, list);
-        if (plan && (plan.left || plan.right)) {
+        if (plan && middle) {
           seam = plan.seam;
-          rule = 'body.kin-viewer-ux [data-cy="viewport-grid"] { margin-left: ' + plan.left + 'px !important; margin-right: ' + plan.right +
+          if (plan.left || plan.right) rule = 'body.kin-viewer-ux [data-cy="viewport-grid"] { margin-left: ' + plan.left + 'px !important; margin-right: ' + plan.right +
             'px !important; width: calc(100% - ' + (plan.left + plan.right) + 'px) !important; max-width: calc(100% - ' + (plan.left + plan.right) + 'px) !important; }';
-        } else if (plan) seam = plan.seam;
+        // One column is divided only for one display edge in the image column: with two (three displays) no pair is guessed.
+        } else if (plan && list.filter(x => x > base.left + 1 && x < base.right - 1).length === 1) divide(state, cells);
       }
       if (style.textContent !== rule) style.textContent = rule;
       return seam;
+    }
+    // One column of image stacks over two monitors - each image would have the monitor seam down its middle - is made two
+    // columns, one per monitor, by the Layout menu's own command: that command keeps every cell there is in its place (the
+    // stack it shows, its frame, an empty cell empty, the active cell) and only adds the second column. A protocol that
+    // gives one column again (another patient in this window) is divided again. The whole rule is here:
+    //  - the grid: a plain grid of one column, judged on every cell's whole place (plain) - a cell that a protocol or a
+    //    saved view put elsewhere (not from the top, not the full height) is theirs;
+    //  - the monitors: two side by side under the images, as far as the viewer can tell (kinViewerTwoMonitorsNow);
+    //  - what it shows: at least one cell shows a display set, and every such cell shows it now as a drawn image stack
+    //    (shows). Not an MPR, 3D, PDF or report cell, nor a series still loading - an empty cell asks for nothing;
+    //  - never the cell the reader enlarged (the stock one-up's own cell; a maximized or merged cell), and never under an
+    //    operation that owns the screen now (holder). Asked again once that ends (owed), one request at a time, at most
+    //    one per 2 s.
+    function divide(state, cells) {
+      const rows = state.layout?.numRows;
+      const single = (state.layout?.layoutType ?? 'grid') === 'grid' && state.layout?.numCols === 1 && Number.isInteger(rows) && rows >= 1 && plain(cells, rows);
+      if (!single || typeof commands?.runCommand !== 'function') return;
+      const showing = cells.filter(cell => (cell.displaySetInstanceUIDs || []).length);
+      if (!showing.length || showing.some(cell => (cell.viewportOptions?.viewportType ?? 'stack') !== 'stack')) return;
+      let protocol = '';
+      try { protocol = String(services.hangingProtocolService?.getState?.()?.protocolId || ''); } catch (_) { protocol = ''; }
+      if (protocol.startsWith('kin.mammography')) return;
+      // Two monitors side by side under the images, as Monitors in Hanging Protocol counts them (viewer-features-monitors.js:
+      // of two displays one above the other only one is the monitor there, whatever side edge of the other lies inside
+      // the window). Not so: left alone, and looked at again each second - that answer follows a later reading of the
+      // displays, with nothing else changing here. Not known (no display access): the display edge found above decides.
+      try { if (window.kinViewerTwoMonitorsNow?.() === false) { owed = true; return; } } catch (_) { return; }
+      // The stock one-up's one cell (a double click the monitor maximize could not take): that toggle puts its grid back.
+      // Looked at again each second: another layout of the same shape can take its place with nothing else changing.
+      try { if (window.kinViewerStockOneUp?.()) { owed = true; return; } } catch (_) { return; }
+      if (!showing.every(shows) || holder() || dividing || Date.now() - divided < 2000) { owed = true; return; }
+      dividing = true; divided = Date.now();
+      Promise.resolve().then(() => commands.runCommand('setViewportGridLayout', { numRows: rows, numCols: 2 }))
+        .catch(() => {}).then(() => { dividing = false; schedule(); });
+    }
+    // The cells are those of a plain grid of one column: each fills the width, and top to bottom they are its equal rows.
+    function plain(cells, rows) {
+      const near = (value, wanted) => Number.isFinite(value) && Math.abs(value - wanted) < 0.001;
+      return cells.length === rows && [...cells].sort((a, b) => (a.y ?? 0) - (b.y ?? 0)).every((cell, row) =>
+        near(cell.x, 0) && near(cell.width, 1) && near(cell.y, row / rows) && near(cell.height, 1 / rows));
+    }
+    // The cell shows its display set now as a drawn image stack: its stack viewport's current image is the image it has
+    // drawn, and is one of that set's own images - for a part of one multi-frame file (a display set per time point,
+    // config series-split.js) that very frame, by the viewer's own rule. An image id left in the cell by the series
+    // shown before (a PDF or a report took its place, or the new series is still loading), an image not drawn yet and
+    // another part's frame of the same file are not that.
+    function shows(cell) {
+      try {
+        const uids = cell.displaySetInstanceUIDs || [], view = services.cornerstoneViewportService?.getCornerstoneViewport?.(cell.viewportId);
+        const set = uids.length === 1 ? services.displaySetService?.getDisplaySetByUID?.(uids[0]) : null;
+        if (!set || !Array.isArray(set.images) || view?.type !== 'stack' || view.element?.isConnected === false) return false;
+        const image = view.getCurrentImageId?.();
+        if (!image || !(view.getImageIds?.() || []).includes(image) || view.getCornerstoneImage?.()?.imageId !== image) return false;
+        const sop = window.cornerstone?.metaData?.get?.('instance', image)?.SOPInstanceUID;
+        if (!sop) return false;
+        if (typeof window.kinSeriesSplitHolds !== 'function') return set.images.some(instance => instance?.SOPInstanceUID === sop);
+        return window.kinSeriesSplitHolds(set, sop, window.kinViewerImageReference?.(image)?.frame ?? 1);
+      } catch (_) { return false; }
+    }
+    // What owns the screen now, so that its cells are not built anew under it: a cell maximized or merged, a saved Job or
+    // History being put back, a Hanging Protocol being applied or waiting for the window to reach its monitors, cell
+    // rules, Auto Save View or a patient tab putting a saved view back, a patient switch, Images Only (a cell in the
+    // browser's full screen) and a playing Cine. Unknown counts as owned.
+    function holder() {
+      try {
+        const merge = window.kinCellMergeWorkspaceState?.();
+        if (merge?.busy || merge?.merged || window.kinViewerJobWorkspaceState?.()?.busy || window.kinViewerHistoryWorkspaceState?.()?.busy ||
+          window.KinViewerHangingProtocol?.current?.()?.busy?.() || window.KinViewerMonitors?.reaching?.() || window.KinViewerCellRules?.busy?.() ||
+          window.KinViewerAutoSave?.settling?.() || window.KinViewerPatientTabs?.settling?.()) return true;
+        if (['kin-patient-switching', 'kin-viewer-empty'].some(name => document.body.classList.contains(name)) || document.fullscreenElement) return true;
+        return Object.values(services.cineService?.getState?.()?.cines || {}).some(cine => cine?.isPlaying);
+      } catch (_) { return true; }
     }
     // M-2: the copy of one row on the display past the seam.
     function drop(spec) { const state = mirrors.get(spec); if (!state) return; clearTimeout(state.timer); state.observer.disconnect(); state.host.remove(); state.row?.classList.remove('kin-span-row'); mirrors.delete(spec); }
@@ -322,6 +399,7 @@ window.KinViewerDisplaySpan = (() => {
       const placed = window.KinViewerMonitorRows || null;
       const list = seams();
       if (placed && style.textContent) style.textContent = '';
+      if (placed) owed = false;
       const seam = placed ? null : placeGrid(list);
       const rowSeam = seam ?? list.find(x => x > window.innerWidth / 4 && x < window.innerWidth * 3 / 4) ?? null;
       for (const spec of ROWS) {
@@ -334,10 +412,19 @@ window.KinViewerDisplaySpan = (() => {
       document.body.classList.toggle('kin-second-display-tabs-off', !!placed && !on() && !!second);
     }
     function schedule() { if (!ended && !frame) frame = requestAnimationFrame(update); }
+    // The grid's shape and what its cells show, to measure again when either changed without an event read after it: the
+    // stock grid announces a change before its state shows it, so the first layout picked after stretching the window
+    // stayed across the seam (and a series put into an empty cell would not be seen).
+    function shape() {
+      try {
+        const state = services.viewportGridService.getState();
+        return JSON.stringify([state.layout?.numRows, state.layout?.numCols, [...state.viewports.values()].map(cell => [cell.x, cell.y, cell.width, cell.height, cell.displaySetInstanceUIDs || []])]);
+      } catch (_) { return ''; }
+    }
     function poll() {
-      // Browsers announce no window move. Compare the geometry each second.
-      const now = [window.screenX, window.screenY, window.outerWidth, window.outerHeight, window.innerWidth, window.innerHeight].join(',');
-      if (now !== geometry) { geometry = now; schedule(); }
+      // Browsers announce no window move. Compare the geometry each second, and the grid's shape with it.
+      const now = [window.screenX, window.screenY, window.outerWidth, window.outerHeight, window.innerWidth, window.innerHeight, shape()].join(',');
+      if (now !== geometry || owed) { geometry = now; schedule(); }
       if (link?.slot > 0) channel?.postMessage({ type: 'who' });
       if (link && link.slot > 0 && firstSeen && Date.now() - firstSeen >= 7000) schedule();
     }

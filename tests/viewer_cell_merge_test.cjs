@@ -68,8 +68,8 @@ mutate('merge-mixed-kinds',
 // preparation cannot rebuild, and a restore that sets the mode without that preparation -
 // which puts a black CT on the screen and lets the oracle call it a restored plane.
 mutate('skip-average-precheck',
-  "if (base.cells.some(cell => cell.kind === 'plane' && cell.blend === 3) && !averageReady())",
-  'if (false)');
+  "if (averageMissing(base)) return { ok: false, message: note(AVERAGE_MISSING) };",
+  'if (false) return { ok: false, message: note(AVERAGE_MISSING) };');
 mutate('set-average-blind', '        if (ready) viewport.setBlendMode?.(cell.blend);', '        viewport.setBlendMode?.(cell.blend);');
 // The hold and the interaction listeners taken before the try, which is what let a failure
 // during setup leave the MPR tool group's camera reset replaced for the rest of the session.

@@ -15,7 +15,7 @@ import unittest
 
 from playwright.sync_api import sync_playwright, expect
 
-from viewer_chrome_position_dom_test import BOXES, FRAME, HARNESS, HPACS, ORIGIN, OWNER, SETUP, TOOLS
+from viewer_chrome_position_dom_test import BOXES, FRAME, HARNESS, HPACS, MANY_TOOLS, ORIGIN, OWNER, SETUP, TOOLS
 
 RULE_ID = '11111111-1111-4111-8111-111111111111'
 OTHER_ID = '22222222-2222-4222-8222-222222222222'
@@ -58,6 +58,20 @@ TWO_DISPLAYS = """() => {
 # One display, and the browser says so.
 ONE_DISPLAY = "() => { Object.defineProperty(screen, 'isExtended', { configurable: true, get: () => false }); }"
 
+# Monitor 1 is this window's display and monitor 2 the one to its right, each as wide as the window is at first: a
+# browser does not move the window over both. The access given (synPermission) and the displays (synScreens) are the
+# browser's live answers, so a case can change them afterwards.
+BESIDE = """() => {
+  const at = screenX + (outerWidth - innerWidth) / 2, w = innerWidth;
+  window.synScreens = [0, 1].map(i => ({ availLeft: at + i * w, availTop: screenY, availWidth: w, availHeight: 2000,
+    left: at + i * w, top: screenY, width: w, height: 2000, isPrimary: i === 0, devicePixelRatio }));
+  window.synPermission = { state: 'granted', onchange: null };
+  const query = navigator.permissions.query.bind(navigator.permissions);
+  navigator.permissions.query = async value => value?.name === 'window-management' ? synPermission : query(value);
+  window.getScreenDetails = async () => ({ get screens() { return synScreens; }, get currentScreen() { return synScreens.find(s => s.isPrimary) || synScreens[0]; },
+    addEventListener() {}, removeEventListener() {} });
+}"""
+
 
 class MonitorHangingDOMTest(unittest.TestCase):
     @classmethod
@@ -68,7 +82,7 @@ class MonitorHangingDOMTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.browser.close(); cls.pw.stop()
 
-    def open(self, library=None, applied=None, displays=ONE_DISPLAY, settings=None, second=True, size=(1366, 900)):
+    def open(self, library=None, applied=None, displays=ONE_DISPLAY, settings=None, second=True, size=(1366, 900), tools=TOOLS):
         context = self.browser.new_context(viewport={'width': size[0], 'height': size[1]})
         page = context.new_page(); errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
@@ -78,7 +92,7 @@ class MonitorHangingDOMTest(unittest.TestCase):
         for name in ["hanging-protocol-model.js", "viewer-display-layout.js", "viewer-ux-shortcuts.js", "viewer-features.js", "viewer-features-chrome.js",
                      "viewer-features-monitors.js", "viewer-ux-toolbar.js", "viewer-series-strip.js", "viewer-display-span.js", "viewer-ux-shell.js"]:
             page.add_script_tag(path=str(HPACS / name))
-        page.evaluate(SETUP, [OWNER, TOOLS, 4])
+        page.evaluate(SETUP, [OWNER, tools, 4])
         page.evaluate("settings => { synServer.viewerSettings = settings; }", settings)
         page.evaluate(HP, [library or {'version': 1, 'activeRuleId': None, 'rules': [hp_rule(RULE_ID, 'Brain CT'), hp_rule(OTHER_ID, 'Chest CT')]}, applied])
         if displays:
@@ -384,6 +398,146 @@ class MonitorHangingDOMTest(unittest.TestCase):
         boxes = page.evaluate(BOXES)
         self.assertAlmostEqual(boxes['toolbar']['bottom'], boxes['thumbs']['top'], delta=1)
         self.assertLessEqual(boxes['thumbs']['bottom'], boxes['grid']['top'] + 1)
+
+    # ── The browser kept the window off the rule's monitors: the wait for the reader's drag ──
+    def waiting(self, page, monitors=None):
+        """A rule for monitors 1 and 2 applied to a window the browser keeps on monitor 1: the wait for the drag has begun."""
+        page.evaluate("""() => { window.synReached = [];
+          if (!window.synListening) { window.synListening = true; addEventListener('kin-viewer-monitors-reached', e => synReached.push(e.detail.ruleId)); } }""")
+        result = self.prepare(page, monitors or [monitor('1x1', toolbar='top'), monitor('1x1', toolbar='top')])
+        page.evaluate('synAnswer.commit()')
+        self.assertTrue(page.evaluate('KinViewerMonitors.reaching()'))
+        return result
+
+    def stretched(self, page, reached, width=1800):
+        """The reader lays the window over the next display; whether the rule is asked for again."""
+        page.set_viewport_size({'width': width, 'height': 800})
+        if reached:
+            page.wait_for_function("() => synReached.length === 1")
+        # The wait looks twice a second.
+        page.wait_for_timeout(1100)
+        self.assertEqual([RULE_ID] if reached else [], page.evaluate('synReached'))
+        self.assertFalse(page.evaluate('KinViewerMonitors.reaching()'))
+
+    def test_16_the_browser_keeps_the_window_off_monitor_2_and_the_drag_over_it_is_noticed(self):
+        # Monitor 1 is this window's display, monitor 2 the one to its right; a browser does not move the window over both.
+        page = self.open(displays=BESIDE, size=(900, 800))
+        result = self.waiting(page)
+        # Not a dead end: the reader is told to lay the window over them. (The headless window's refused move leaves its outer
+        # size apart from its inner one, so what this apply itself placed is not judged here; viewer_hanging_protocol_monitors
+        # covers the rule standing.)
+        self.assertIn('브라우저가 영상 창을 Monitor 1·Monitor 2(으)로 옮기지 않았습니다. 영상 창의 가장자리를 끌어 그 화면에 걸쳐 놓으세요. '
+                      '걸쳐 놓으면 이 규칙을 다시 적용합니다.', result['note'])
+        page.wait_for_timeout(1200)
+        self.assertEqual([], page.evaluate('synReached'))
+        # The reader stretches the window over monitor 2: noticed, and the rule is asked for again, once; the rows the rule
+        # placed are released without the "window changed" notice (the rule is coming back).
+        self.stretched(page, True)
+        self.assertFalse(page.evaluate("() => synNotes.some(n => String(n.message).includes('모니터별 도구 줄·썸네일 배치를 해제했습니다'))"))
+
+    def test_17_a_newer_rule_ends_the_wait_for_the_drag(self):
+        page = self.open(displays=BESIDE, size=(900, 800))
+        self.waiting(page)
+        # A rule without monitors is applied meanwhile (the panel clears the monitors module).
+        page.evaluate('KinViewerMonitors.clear()')
+        self.stretched(page, False)
+
+    def test_18_the_readers_own_work_on_the_images_meanwhile_ends_the_wait(self):
+        # Laying the window over monitor 2 after the reader began to work on the images does not apply the rule again over
+        # that work. Each way that work begins.
+        inside = "() => !!document.elementFromPoint(450, 500)?.closest('[data-cy=\"viewport-grid\"]')"
+        page = self.open(displays=BESIDE, size=(900, 800), tools=MANY_TOOLS)
+        # The letter keys, as the viewer mounts them: taken before they reach the document.
+        page.evaluate("""() => { window.synRan = []; const record = synServices.toolbarService.recordInteraction;
+          synServices.toolbarService.recordInteraction = item => { synRan.push(item.itemId); return record(item); };
+          KinViewerUXShortcuts.mount({ getBindings: () => synToolbar.bindings(), invoke: id => synToolbar.invoke(id), allowed: () => true }); }""")
+        for work in ('press', 'wheel', 'key', 'shortcut', 'toolbar', 'taken wheel'):
+            # The window back on monitor 1, the rule applied again: a new wait.
+            page.set_viewport_size({'width': 900, 'height': 800})
+            page.evaluate("synRan.length = 0")
+            self.waiting(page)
+            self.assertTrue(page.evaluate(inside))
+            if work == 'press':
+                page.mouse.click(450, 500)
+            elif work == 'wheel':
+                page.mouse.move(450, 500); page.mouse.wheel(0, 120)
+            elif work == 'key':
+                # A key the viewer may act on (the next image).
+                page.keyboard.press('ArrowDown')
+            elif work == 'shortcut':
+                page.keyboard.press('i')
+                self.assertEqual(['invert'], page.evaluate('synRan'), 'the key ran Invert')
+            elif work == 'toolbar':
+                page.evaluate("synToolbar.invoke('invert')")
+                self.assertEqual(['invert'], page.evaluate('synRan'))
+            else:
+                # A wheel step the viewer took to enlarge the image (Ctrl+wheel with that choice on) says so itself.
+                page.evaluate("kinViewerImageWork()")
+            # (A wheel step reaches the page a moment after it is sent.)
+            page.wait_for_function('() => !KinViewerMonitors.reaching()', timeout=2000)
+            self.stretched(page, False)
+
+    def test_19_what_is_not_work_on_the_images_keeps_the_wait(self):
+        # The browser's own zoom keys, a Ctrl+wheel nobody took for the image, a press outside the images and keys typed
+        # into a field: the reader has not begun to work on the images, and the rule comes back once the window is there.
+        page = self.open(displays=BESIDE, size=(900, 800), tools=MANY_TOOLS)
+        page.evaluate("""() => { KinViewerUXShortcuts.mount({ getBindings: () => synToolbar.bindings(), invoke: id => synToolbar.invoke(id), allowed: () => true });
+          const field = document.createElement('input'); field.id = 'syn-field'; document.querySelector('#tabs').append(field); }""")
+        self.waiting(page)
+        for chord in ('Control+Equal', 'Control+Minus', 'Control+Digit0', 'Meta+Equal', 'Shift', 'F6'):
+            page.keyboard.press(chord)
+        page.evaluate("""() => document.elementFromPoint(450, 500).dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -120 }))""")
+        page.locator('#tabs button').click()
+        page.locator('#syn-field').click(); page.keyboard.type('invert'); page.locator('#syn-field').blur()
+        self.assertTrue(page.evaluate('KinViewerMonitors.reaching()'))
+        self.stretched(page, True)
+
+    def test_20_the_access_taken_back_ends_the_wait_and_nothing_read_before_is_used(self):
+        page = self.open(displays=BESIDE, size=(900, 800))
+        self.waiting(page)
+        # The reader takes the window-management access back, then stretches the window.
+        page.evaluate("synPermission.state = 'prompt'")
+        self.stretched(page, False)
+
+    def test_21_other_displays_than_the_rule_was_applied_on_end_the_wait(self):
+        # Monitor 1 lies to the left of this window's display (monitor 2); the rule is for those two.
+        page = self.open(displays=BESIDE.replace('[0, 1]', '[-1, 0]'), size=(900, 800))
+        self.waiting(page)
+        # Monitor 1 is unplugged and a display to the right is plugged in: the numbers now name another pair. The window then
+        # reaches over that pair; the rule that was waiting for the old one is not applied to it.
+        page.evaluate("""() => { const own = synScreens[1]; synScreens.shift();
+          synScreens.push({ ...own, availLeft: own.availLeft + own.availWidth, left: own.left + own.width, isPrimary: false }); }""")
+        self.stretched(page, False)
+
+    def test_22_three_displays_the_wait_and_the_split_use_the_same_pair(self):
+        # Three displays, each as wide as this window at first; the rule shows images on monitors 2 and 3 only.
+        page = self.open(displays=BESIDE.replace('[0, 1]', '[-1, 0, 1]'), size=(900, 800))
+        rule = [monitor('none', toolbar='none', thumbs='none'), monitor('1x1', toolbar='top'), monitor('1x1', toolbar='top')]
+        self.waiting(page, rule)
+        # Stretched to the right over monitor 3: the window now stands over monitors 2 and 3.
+        self.stretched(page, True)
+        # And when it also reaches over monitor 1 on its left, the rule is still laid on monitors 2 and 3 - not on the first
+        # two displays the window happens to cover.
+        page.evaluate("""() => { const shift = innerWidth / 3; for (const s of synScreens) { s.availLeft += shift; s.left += shift; } }""")
+        again = self.prepare(page, rule)
+        self.assertEqual([1, 2], again['split']['applied'], again['note'])
+        self.assertNotIn('그 화면을 덮지 않아', again['note'])
+
+    def test_23_a_side_panel_or_the_browser_zoom_is_measured_again_each_time(self):
+        page = self.open(displays=BESIDE, size=(900, 800))
+        self.waiting(page)
+        # Stretched, but a side panel now takes the part of the window that lies on monitor 2: its image column does not
+        # reach that monitor, so nothing yet.
+        page.evaluate("""() => { const panel = document.createElement('div'); panel.id = 'syn-side'; panel.style.cssText = 'flex: none; width: 850px';
+          document.querySelector('#column').after(panel); }""")
+        page.set_viewport_size({'width': 1800, 'height': 800})
+        page.wait_for_timeout(1300)
+        self.assertEqual([], page.evaluate('synReached'))
+        self.assertTrue(page.evaluate('KinViewerMonitors.reaching()'))
+        # The panel is closed: the image column is over monitor 2 now.
+        page.evaluate("document.querySelector('#syn-side').remove()")
+        page.wait_for_function("() => synReached.length === 1")
+
 
     def test_14_both_monitors_with_a_toolbar_each_reach_viewer_settings(self):
         page = self.open(displays=TWO_DISPLAYS)
