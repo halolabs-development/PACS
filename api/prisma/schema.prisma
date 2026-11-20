@@ -310,6 +310,8 @@ model StudyState {
   /// 매칭은 1:1이다. nullable unique라 미매칭(NULL)은 여럿이어도 같은 오더가 두 검사에 붙지는 않는다.
   orderOid  String?  @unique                  // 매칭된 오더
   holder    String?                           // 지금 판독문을 쓰고 있는 사람
+  /// The account (sub) of the holder; who holds the study is judged by this. `holder` is the login email shown.
+  holderSub String?
   holderInstitutionId String?                 // 점유/하트비트에서 인증된 작성자의 기관. 없으면 이름을 공개하지 않는다
   heldAt    DateTime?                         // 마지막 하트비트. TTL이 지나면 점유가 풀린다
   /// S7-U5 초안 경계의 세대(U5S-REQ-14). 행이 생길 때마다 DB가 새 값을 주고(지웠다 다시 생긴 검사도 새 세대),
@@ -466,6 +468,8 @@ model Report {
   recommendation String   @default("")
   version        Int      @default(0)   // 마지막으로 확정된 판(버전)
   updatedBy      String?
+  /// The account (sub) that made the head version; whose saved text it is is judged by this, never by `updatedBy`.
+  updatedBySub   String?
   updatedAt      DateTime @updatedAt
   /// Merge Exam / Split: the exam group (StudyGroup) whose images this report's current version was written on; null = this
   /// study alone. Written by each commit, never by Unmerge, so the group's original studies stay readable after it.
@@ -504,7 +508,13 @@ model Report {
 /// 없는 것으로 읽는다). `Report.version`/`baseVersion`과는 별개의 수다.
 model ReportDraft {
   uid            String
+  /// Immutable second part of the [uid, author] record id.
   author         String
+  /// The account (sub) whose draft this is. Whose draft it is is judged by this, never by `author`; NULL = an older row
+  /// whose ownership could not be established at migration time.
+  authorSub      String?
+  /// Login at first write. A legacy row stores its exact display name in author.
+  authorLogin    String?
   findings       String   @default("")
   conclusion     String   @default("")
   recommendation String   @default("")
@@ -528,6 +538,7 @@ model ReportDraft {
   groupId        String?   @db.Uuid
 
   @@id([uid, author])
+  @@unique([uid, authorSub])
   @@index([uid])
 }
 
@@ -646,6 +657,9 @@ model ReportVersion {
   recommendation String   @default("")
   reason         String?
   author         String
+  /// The account (sub) whose text this version is (a Reset or release copy: the writer of the copied text). `author` keeps
+  /// the login email as it was; whose version it is is judged by this.
+  authorSub      String?
   /// 확정 시 1회 기록되고 이후 불변이다. 머리 판에서 이월된 건은 원래 작성자·시각을
   /// 바이트 그대로 유지한다 — 이월은 새 증언이 아니라 같은 증언의 계속이기 때문이다.
   citations      Json?
@@ -771,9 +785,11 @@ model Order {
 /// 사용자 필터로 저장" 기능을 넣었다 — 필터만 같고 정렬이 다르면 다른 화면이다.
 model UserFilterCollection {
   owner    String @id
+  ownerSub String?
   revision Int    @default(0)
   folders  Json   @default("[]")
   shortcuts Json @default("[]")
+  @@index([ownerSub])
 }
 
 model SharedFilterLibrary {
@@ -787,7 +803,8 @@ model SharedFilterLibrary {
 
 model UserFilter {
   id        Int      @id @default(autoincrement())
-  owner     String                          // 토큰의 actor. 이 사람 것만 보인다
+  owner     String
+  ownerSub String?
   name      String
   mode      String   @default("Radiology")  // Radiology / Technician
   isDefault Boolean  @default(false)
@@ -803,6 +820,7 @@ model UserFilter {
 
   @@unique([owner, name])
   @@index([owner])
+  @@index([ownerSub])
 }
 
 /// 판독 상용구. 매뉴얼이 "Upload/Download **My** Template File"이라고 부르는 그것 —
@@ -812,6 +830,7 @@ model UserFilter {
 model ReadingTemplate {
   id             Int      @id @default(autoincrement())
   owner          String
+  ownerSub String?
   title          String
   shortcut       String   @default("")
   modality       String   @default("")   // 선택된 검사와 같은 유형만 보이게 하는 필터용
@@ -823,6 +842,7 @@ model ReadingTemplate {
   createdAt      DateTime @default(now())
 
   @@index([owner])
+  @@index([ownerSub])
 }
 
 /// 감사 로그. 의료영상 시스템에서 "누가 언제 무엇을 바꿨는가"는 기능이 아니라 요건이다.

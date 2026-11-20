@@ -174,14 +174,14 @@
       // 이 메뉴가 열린 선택. 항목은 이 선택이 그대로일 때만 실행된다(위 클릭 처리).
       const opened = { uid, seq: selectionSeq, oid: selectedOid };
       const forceReleaseItems = KinAuth.has("admin") && s?.holder ? [{
-        label: kinSay("점유 강제 해제 (관리자)"), dis: s.holder === user, act: async () => {
+        label: kinSay("점유 강제 해제 (관리자)"), dis: s.holderMine === true, act: async () => {
           if (!confirm(`${displayActor(s.holder)} 님의 점유를 강제로 해제합니다. 그쪽 화면은 다음 저장에서 거절됩니다. 계속할까요?`)) return;
           const at = work.capture("document");
           try { await api("POST", `/studies/${encodeURIComponent(uid)}/release/force`, undefined, undefined, at); }
           catch (e) { work.commit(at, () => apiFail(e)); return; }
           work.commit(at, () => {
-            s.holder = null;
-            appState[uid] = { ...appState[uid], holder: null };
+            s.holder = null; s.holderMine = false;
+            appState[uid] = { ...appState[uid], holder: null, holderMine: false };
             render();
             if (uid === selectedUid) { updateReportButtons(); loadReport(); }
             toast("점유를 해제했습니다 (감사로그 기록)");

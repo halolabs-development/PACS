@@ -20,6 +20,7 @@ import { need, inst } from './pacs/access';
 import type { Caller } from './pacs/access';
 import { dump, holdAlive, draftConflict } from './pacs/values';
 import { canReadPreliminary } from './preliminary-reader';
+import { sameAccount } from './account-identity';
 
 export const STUDY_MERGED = 'STUDY_MERGED';
 export const EXAM_GROUP_REFUSED = 'EXAM_GROUP_REFUSED';
@@ -781,7 +782,7 @@ export class ExamMergeService {
       if (row.rs === 'D') out.push({ uid: row.uid, rule: 'destroyed', message: '보존 기간이 끝나 판독문을 파기한 검사입니다.' });
       else if (row.rs === 'A') out.push({ uid: row.uid, rule: 'approved', message: '승인된 판독문이 있습니다. 먼저 판독 취소(Reset)를 하세요.' });
       else if (!dissolving && row.rs !== 'W') out.push({ uid: row.uid, rule: 'reported', message: `판독문이 있습니다(RS ${row.rs}). 먼저 판독 취소(Reset)를 하세요.` });
-      if (holdAlive(row) && row.holder !== c.actor) out.push({ uid: row.uid, rule: 'held', message: '판독의가 지금 이 검사의 판독문을 쓰고 있습니다.' });
+      if (holdAlive(row) && !sameAccount(row.holderSub, c)) out.push({ uid: row.uid, rule: 'held', message: '판독의가 지금 이 검사의 판독문을 쓰고 있습니다.' });
     }
     const uids = states.map(row => row.uid);
     const drafts = await tx.reportDraft.findMany({ where: { uid: { in: uids }, present: true }, select: { uid: true } });

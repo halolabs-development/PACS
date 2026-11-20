@@ -4096,18 +4096,18 @@ test('CORE_R10_LEGACY_LABEL a confirmed ordinary publication cannot hide an unce
   await w.finish('CORE_R10_LEGACY_LABEL');
 });
 
-test('CORE_R10_IMPORT_DESIGNATION binds unique legacy P subjects atomically, preserving ambiguous and unmatched nulls',async t=>{
+test('CORE_R10_IMPORT_DESIGNATION keeps historical P subjects and leaves unresolved designations unattributed',async t=>{
   const w=await world(t,{imported:false});
   const users=[['syn-bind-one','one@synthetic.test'],['syn-bind-two','duplicate@synthetic.test'],['syn-bind-three','duplicate@synthetic.test']]
     .map(([id,email])=>({id,email,username:id,emailVerified:true,enabled:true,groups:[A],roles:['radiologist']}));
   const ids=['2.25.710001','2.25.710002'];
   t.after(async()=>{for(const uid of ids)await w.base.studyState.deleteMany({where:{uid}});});
-  await w.base.studyState.create({data:{uid:ids[0],rs:'P',preDoc:'one@synthetic.test',preReviewer:'duplicate@synthetic.test'}});
+  await w.base.studyState.create({data:{uid:ids[0],rs:'P',preDoc:'one@synthetic.test',preDocSub:'syn-bind-original',preReviewer:'duplicate@synthetic.test'}});
   await w.base.studyState.create({data:{uid:ids[1],rs:'P',preDoc:'unmatched@synthetic.test',preReviewer:'one@synthetic.test'}});
   const {importMemberRights}=require('/app/dist/member-rights-import');
   await importMemberRights(w.I1.prisma,{listUsers:async()=>({total:users.length,users})},w.I1.ledger);
   const one=await w.base.studyState.findUnique({where:{uid:ids[0]}}),two=await w.base.studyState.findUnique({where:{uid:ids[1]}});
-  assert.deepEqual([one.preDocSub,one.preReviewerSub,two.preDocSub,two.preReviewerSub],['syn-bind-one',null,null,'syn-bind-one']);
+  assert.deepEqual([one.preDocSub,one.preReviewerSub,two.preDocSub,two.preReviewerSub],['syn-bind-original',null,null,null]);
   assert.equal(await w.base.memberRightsImport.count(),1);
   await importMemberRights(w.I2.prisma,{listUsers:async()=>assert.fail('marker prevents a second import')},w.I2.ledger);
   assert.deepEqual(await w.base.studyState.findUnique({where:{uid:ids[0]}}),one);

@@ -332,9 +332,10 @@ function database(state) {
     if (/FROM "PurposeLedgerAnchor"/.test(text)) return [view(state)];
     if (/SELECT \* FROM "ReportDraftPurposeEnd"/.test(text)) return state.ended.has(values[0]) ? [structuredClone(state.ended.get(values[0]))] : [];
     if (/SELECT 1 (AS present )?FROM "ReportDraftPurposeEnd"/.test(text)) return state.ended.has(values[0]) ? [{ present: 1 }] : [];
-    if (/SELECT "disposalUnitId"/.test(text)) {
+    if (/SELECT (p\.)?"disposalUnitId"/.test(text)) {
+      // Deliveries are tracked by account; in this double the work's account key is its author string.
       const rows = [...state.ended.values()].filter(r => !/WHERE "deliverySettled"/.test(text) || r.deliverySettled);
-      return rows.map(r => ({ disposalUnitId: r.disposalUnitId, author: r.author, deliverySettled: r.deliverySettled }));
+      return rows.map(r => ({ disposalUnitId: r.disposalUnitId, author: r.author, account: r.account ?? r.author, deliverySettled: r.deliverySettled }));
     }
     if (/emr_access.holds_for/.test(text)) {
       state.log.push('holds');
@@ -840,7 +841,7 @@ endService.scheduleDestruction = u => { scheduled.push(u); };
 
 function endWorld({ commit, reject, confirmFails = 0, ledger = null, refusal = null }) {
   const epoch = randomUUID(), work = unit();
-  const durable = { draft: { uid: UID, author: AUTHOR, findings: 'SYN end text', conclusion: 'SYN c', recommendation: '', baseVersion: 0,
+  const durable = { draft: { uid: UID, author: AUTHOR, authorSub: 'syn-sub', findings: 'SYN end text', conclusion: 'SYN c', recommendation: '', baseVersion: 0,
     citations: null, structured: null, revision: 3, present: true, updatedAt: new Date(START), workUnit: work, workSince: new Date(START),
     workIntent: 'approve' }, ended: new Map() };
   const study = { uid: UID, institutionId: 'syn-inst', draftEpoch: epoch, rs: 'N', ss: 'Verified', em: 'N' };
@@ -879,10 +880,12 @@ function endWorld({ commit, reject, confirmFails = 0, ledger = null, refusal = n
         if (/FROM "StudyState"/.test(text)) seen.order.push('StudyState');
         return read(local, text, values);
       },
-      reportDraftPurposeEnd: { create: async ({ data }) => { local.ended.set(data.disposalUnitId, data); return data; } },
+      reportDraftPurposeEnd: { create: async ({ data }) => { local.ended.set(data.disposalUnitId, data); return data; }, findFirst: async () => null },
       reportDraft: {
         updateMany: async ({ data }) => { Object.assign(local.draft, data); return { count: 1 }; },
         findUnique: async () => structuredClone(local.draft), create: async ({ data }) => { local.draft = data; return data; },
+        // the caller's own row by its account (owner-identity.ts)
+        findFirst: async ({ where }) => (local.draft && local.draft.authorSub === where.authorSub ? structuredClone(local.draft) : null),
       },
       auditLog: { create: async () => ({}) },
       report: { findUnique: async () => null, upsert: async ({ create }) => structuredClone(create) },
@@ -1082,7 +1085,9 @@ test('B2-COMMIT a refusal whose snapshot view cannot be recorded is still that r
     w.facts.request.work.transactionWithRecords = async fn => {
       calls++;
       const study = { uid: UID, institutionId: 'syn-inst', draftEpoch: w.body.expectedRevision.split(':')[0] };
+      // The refusal carries this caller's stored draft snapshot, including its immutable record id.
       await fn({ studyGroupMember: { findMany: async () => [] }, studyState: { findUnique: async () => study },
+        reportDraft: { findFirst: async () => ({ author: AUTHOR }) },
         $executeRaw: async () => 0, $queryRaw: async () => [study] },
         async () => {});
       if (calls === 2) throw new LedgerFailure(ledger);

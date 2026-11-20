@@ -179,6 +179,6 @@ export class PacsInstitutions {
     need(c.roles, 'radiologist', '판독의 목록 조회');   // Preliminary 지정 화면 전용
     const me = inst(c);
     const users = await this.keycloak.usersInGroupWithRole(me, 'radiologist');
-    return users.filter(u => u.id !== c.actor);   // 자기 자신은 지정 대상이 아니다
+    return users.filter(u => u.sub !== c.sub);   // 자기 자신은 지정 대상이 아니다 (계정으로 판정: owner-identity.ts)
   }
 }

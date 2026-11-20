@@ -12,6 +12,7 @@ import { normalizeHangingProtocol } from '../hanging-protocol';
 import type { HangingProtocolLibrary } from '../hanging-protocol';
 import { parse } from './values';
 import { need, inst } from './access';
+import { accountOwner } from '../owner-identity';
 import type { Caller } from './access';
 
 export class PacsPreferences {
@@ -33,7 +34,8 @@ export class PacsPreferences {
 
   /** 내 필터 + 내 상용구. 처음 보는 계정이면 기본 상용구를 넣어준다. */
   async prefs(c: Caller) {
-    const owner = c.actor;
+    // Reading templates (and the saved searches read beside them) are the account's (owner-identity.ts).
+    const ownerSub = accountOwner(c);
     /**
      * 새 계정에는 기본 상용구를 넣어준다 — 빈 목록은 버그로 보이기 때문.
      * (HPACS도 "신규계정인 경우 Reading Template 생성이 되지 않았던 오류"를 고친 적이 있다)
@@ -43,15 +45,15 @@ export class PacsPreferences {
      * 화면에 있는데 아무것도 못 하는 것은 안내가 아니라 소음이다.
      */
     const canRead = c.roles?.includes('radiologist') || c.roles?.includes('admin');
-    const n = await this.prisma.readingTemplate.count({ where: { owner } });
+    const n = await this.prisma.readingTemplate.count({ where: { ownerSub } });
     if (n === 0 && canRead)
       await this.prisma.readingTemplate.createMany({
-        data: SEED_TEMPLATES.map(t => ({ ...t, owner })),
+        data: SEED_TEMPLATES.map(t => ({ ...t, owner: c.actor, ownerSub })),
       });
 
     const [filters, templates] = await Promise.all([
-      this.prisma.userFilter.findMany({ where: { owner }, orderBy: { createdAt: 'asc' } }),
-      this.prisma.readingTemplate.findMany({ where: { owner }, orderBy: [{ ord: 'asc' }, { id: 'asc' }] }),
+      this.prisma.userFilter.findMany({ where: { ownerSub }, orderBy: { createdAt: 'asc' } }),
+      this.prisma.readingTemplate.findMany({ where: { ownerSub }, orderBy: [{ ord: 'asc' }, { id: 'asc' }] }),
     ]);
     return {
       filters: filters.map(f => ({ ...f, cols: parse(f.cols) ?? {} })),
@@ -593,9 +595,9 @@ export class PacsPreferences {
     }
   }
 
-  private async nextTemplateOrd(owner: string) {
+  private async nextTemplateOrd(ownerSub: string) {
     const last = await this.prisma.readingTemplate.findFirst({
-      where: { owner }, orderBy: { ord: 'desc' }, select: { ord: true },
+      where: { ownerSub }, orderBy: { ord: 'desc' }, select: { ord: true },
     });
     return (last?.ord ?? 0) + 1;
   }
@@ -603,7 +605,8 @@ export class PacsPreferences {
   /** 상용구 저장 (id가 있으면 수정) */
   async saveTemplate(body: any, c: Caller) {
     need(c.roles, 'radiologist', '판독 상용구 편집');
-    const owner = c.actor;
+    // Reading templates (and the saved searches read beside them) are the account's (owner-identity.ts).
+    const ownerSub = accountOwner(c);
     const title = String(body.title ?? '').trim();
     if (!title) throw new BadRequestException('제목이 필요합니다');
     const data = {
@@ -616,22 +619,22 @@ export class PacsPreferences {
       recommendation: body.recommendation ?? '',
       // 새로 만든 건 목록 끝에 붙는다. 0으로 두면 맨 위로 올라가서, 방금 만든 하나가
       // 매일 쓰던 상용구들을 밀어낸다. 순서는 사용자가 정할 것이지 우연히 정해질 게 아니다.
-      ord: +body.ord || (body.id ? 0 : await this.nextTemplateOrd(owner)),
+      ord: +body.ord || (body.id ? 0 : await this.nextTemplateOrd(ownerSub)),
     };
     if (body.id) {
       const id = Number(body.id);
       if (!Number.isInteger(id) || id <= 0)
         throw new BadRequestException(`잘못된 상용구 id입니다: ${body.id}`);
-      const r = await this.prisma.readingTemplate.updateMany({ where: { id, owner }, data });
+      const r = await this.prisma.readingTemplate.updateMany({ where: { id, ownerSub }, data });
       if (!r.count) throw new NotFoundException('상용구를 찾을 수 없습니다');
       return this.prisma.readingTemplate.findUnique({ where: { id } });
     }
-    return this.prisma.readingTemplate.create({ data: { owner, ...data } });
+    return this.prisma.readingTemplate.create({ data: { owner: c.actor, ownerSub, ...data } });
   }
 
   async deleteTemplate(id: number, c: Caller) {
     need(c.roles, 'radiologist', '판독 상용구 삭제');   // saveTemplate과 같은 역할 경계
-    const r = await this.prisma.readingTemplate.deleteMany({ where: { id, owner: c.actor } });
+    const r = await this.prisma.readingTemplate.deleteMany({ where: { id, ownerSub: accountOwner(c) } });
     if (!r.count) throw new NotFoundException('상용구를 찾을 수 없습니다');
     return { ok: true };
   }

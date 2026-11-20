@@ -387,6 +387,11 @@
       renderTemplateBodyparts();
       const body = $("#t-body").value;
       const words = $("#tpl-search").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const titles = new Set(), repeatedTitles = new Set();
+      for (const template of templates) {
+        if (titles.has(template.title)) repeatedTitles.add(template.title);
+        titles.add(template.title);
+      }
       const list = templates.filter(t => {
         const text = [t.title, t.shortcut, t.modality, t.bodypart].map(v => String(v ?? "").toLowerCase()).join(" ");
         const kinds = templateModalities(t.modality);
@@ -403,7 +408,7 @@
       $("#tplrows").innerHTML = list.map(t => `
         <tr data-i="${templates.indexOf(t)}" title="더블클릭: 판독문에 삽입${
           t.shortcut ? ` / 판독문에서 &quot;${esc(t.shortcut)}&quot; 입력 후 Tab` : ""} / 우클릭: 편집">
-          <td translate="no">${esc(t.title)}</td><td translate="no">${esc(t.shortcut)}</td><td>${esc(t.modality)}</td>
+          <td translate="no">${esc(t.title)}${repeatedTitles.has(t.title) && Number.isInteger(t.id) ? ` (#${t.id})` : ""}</td><td translate="no">${esc(t.shortcut)}</td><td>${esc(t.modality)}</td>
           <td><button type="button" class="chip" data-tpl-preview aria-label="상용구 미리보기: ${esc(t.title)}">View</button></td>
         </tr>`).join("") || `<tr><td class="empty" colspan="4">${templates.length ? "조건에 맞는 상용구가 없습니다" : "상용구 없음 — 우클릭해서 추가하세요"}</td></tr>`;
       updateTemplatePreview();
@@ -1031,9 +1036,9 @@
      */
     function reportOnIt(s) {
       if (!s || !["W", "T", "H"].includes(s.rs)) return { typing: false, by: null, label: "" };
-      if (s.holder) return { typing: s.rs === "W", by: s.holder, label: displayActor(s.holder) };
+      if (s.holder) return { typing: s.rs === "W", by: s.holder, mine: s.holderMine, label: displayActor(s.holder) };
       const saved = appState[s.uid]?.savedBy || null;
-      return { typing: false, by: saved, label: saved ? displayActor(saved) : "" };
+      return { typing: false, by: saved, mine: appState[s.uid]?.savedByMine, label: saved ? displayActor(saved) : "" };
     }
 
     // 특수 렌더링이 필요한 칸만 함수로
@@ -1051,7 +1056,7 @@
           : s.rs === "D" ? "보존 기간이 끝나 판독문을 파기한 검사입니다"
           : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : "");
         // "In Progress by <name>": who is on it, for the other readers (the writer's own row needs no name). The name is data.
-        const by = on.by && on.by !== user ? ` <span class="rs-by">by <span translate="no">${esc(on.label)}</span></span>` : "";
+        const by = on.by && !on.mine ? ` <span class="rs-by">by <span translate="no">${esc(on.label)}</span></span>` : "";
         return `<span class="rs ${esc(on.typing ? "T" : s.rs)}"${s.holdReason ? ' data-kin-keep="title"' : ''} title="${esc(help + (by ? (help ? " — " : "") + on.label : ""))}">${esc(shown)}${by}</span>`; },
       confirm: s => esc(confirmText({ ...appState[s.uid], rs: s.rs })),
       // Missing images (Technician tab only): a mark beside the count, the same answer as the Info panel's Needs Check line
@@ -1067,7 +1072,7 @@
       preReviewer: s => esc(displayActor(s.preReviewer)),
       // A writer can hold the report with no viewer open. Presence excludes self; the lock does not.
       viewing: s => {
-        const hold = !s.holder ? '' : s.holder === user
+        const hold = !s.holder ? '' : s.holderMine
           ? `<span class="hold me" title="내가 작성 중">✎ 나</span>`
           : `<span class="hold other" title="${s.holder === '다른 기관' ? '다른 기관 판독의가' : s.holder === '작성자 비공개' ? '비공개 작성자가' : esc(displayActor(s.holder)) + ' 님이'} 작성 중">✎ <span translate="no">${esc(displayActor(s.holder))}</span></span>`;
         const presence = esc(viewingNames.get(s.uid) || '');
@@ -1540,6 +1545,7 @@
       s.preDoc = a.preDoc ?? "";
       s.preReviewer = a.preReviewer ?? "";
       s.prelimHidden = a.prelimHidden;
+      s.holderMine = a.holderMine === true;
       s.holder = a.holder;          // 서버가 만료된 점유는 빼고 준다
       s.version = a.version ?? 0;   // 낙관적 락 기준
       // S4-U5: the overlay repaints display fields only. RS, matching, UID, patient key and the rest of the row state
@@ -1938,11 +1944,14 @@
         saveBtn.disabled = true; kinWrite(status, kinSay('저장 중입니다…'));
         try {
           const at = work.capture('document');
+          const request = collectionBody({ ...snapshotFilter(), name });
           if (await filterWriteReady(undefined, at)) throw new Error('서버 계정으로 로그인한 뒤 저장할 수 있습니다.');
-          const saved = await api('POST', '/filters', { ...snapshotFilter(), name }, undefined, at);
+          const saved = await api('POST', '/filters', request, undefined, at);
           if (!work.admits(at)) throw new Error('작업 화면이 바뀌었습니다. 다시 시도하세요.');
           work.commit(at, () => acceptSavedFilter(saved, false));
           await reloadFolderSearches(at);
+          if (!work.admits(at) || request.collection !== filterCollection?.collection)
+            throw new Error('검색 모음이 변경되었습니다. 다시 선택해 주세요.');
           const list = shortcutDraft ?? storedShortcuts ?? [];
           let id = 1; while (list.some(s => s.id === String(id))) ++id;
           const existing = list.find(s => s.name === name);
@@ -2190,7 +2199,7 @@
         : open("#b-save") && open("#b-approve") ? kinSay(" · 확정하려면 Save 또는 Approve")
         : open("#b-save") ? kinSay(" · 확정하려면 Save") : open("#b-approve") ? kinSay(" · 확정하려면 Approve") : "");
     }
-    function heldByOther(s) { return s?.holder && s.holder !== user ? s.holder : null; }
+    function heldByOther(s) { return s?.holder && !s.holderMine ? s.holder : null; }
     /**
      * FC-040 진행 중 판독 되돌리기: 대기·임시저장·보류(W·T·H)인 검사를 남이 판독 중이거나(살아 있는 점유) 남이 Save해 둔 글이
      * 있으면, 판독의 누구나 Reset to Unread로 점유를 풀고 Unread로 되돌린다 — 사유는 묻지 않는다(서버가 기록한다).
@@ -2199,7 +2208,7 @@
     function inProgressReset(s) {
       if (!s || !["W", "T", "H"].includes(s.rs)) return null;
       const savedBy = appState[s.uid]?.savedBy;
-      return heldByOther(s) || (savedBy && savedBy !== user ? savedBy : null);
+      return heldByOther(s) || (savedBy && !appState[s.uid].savedByMine ? savedBy : null);
     }
     function updateReportButtons() {
       const s = cur();
@@ -5729,7 +5738,7 @@
       const state = target ? appState[target.uid] : null;
       const savedByOther = !holder && state?.bodyLock === "in-progress" && state.savedBy ? state.savedBy : null;
       const own = !target ? ""
-        : holder && holder === user ? "✎ Held by you"
+        : holder && target.holderMine ? "✎ Held by you"
         : holder ? `✎ Held by ${displayActor(holder)}`
         : savedByOther ? `✎ In Progress by ${displayActor(savedByOther)}`
         : "Opened by you";
@@ -5737,7 +5746,7 @@
       // The head can wrap in a narrow column; keep presence updates within their reserved space so typing stays put.
       // Longer explanations belong in the title.
       kinWrite(line, !target ? "" : savedByOther ? kinSay("다른 판독의가 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다")
-        : holder && holder !== user ? kinSay("다른 판독의가 작성 중입니다")
+        : holder && !target.holderMine ? kinSay("다른 판독의가 작성 중입니다")
         : holder ? kinSay("이 판독의가 작성 중입니다(점유){0}", others ? " · " + others : "")
         : kinSay("검사를 여는 것만으로는 점유하지 않습니다. 판독문에 두 글자 이상 쓰면 이 판독의가 잡습니다.{0}", others ? " · " + others : ""), "title");
     }
@@ -5984,10 +5993,9 @@
       clearReportNotice();
       continueReportNotice(n);
     }
-    /** 서버가 읽어 준 초안의 작성자가 이 페이지의 계정인가(기관·사용자 ID·작성자 셋 다 같아야 한다). */
+    /** 서버가 읽어 준 초안의 작성자가 이 페이지의 계정인가(기관·계정 ID가 같아야 한다 — 로그인 이메일은 바뀌었을 수 있다). */
     function sameDraftOwner(owner, mine) {
-      return !!owner && !!mine && owner.sub === mine.sub && (owner.institution ?? null) === (mine.institution ?? null)
-        && owner.author === mine.author;
+      return !!owner && !!mine && owner.sub === mine.sub && (owner.institution ?? null) === (mine.institution ?? null);
     }
     /**
      * Check(W4-PAGE-01/02, 설계 v4 §4.2): 쓰기를 다시 보내지 않는다. 초안 명령 경로의 전체 읽기 하나(`draftClient.read`)로 서버가
@@ -7071,7 +7079,7 @@
 
     /** 점유 거절(REPORT_HELD): 누가 잡고 있는지 화면에 반영하고 그 검사에 한 번만 알린다. */
     function noteHeld(uid, holder) {
-      appState[uid] = { ...appState[uid], holder };
+      appState[uid] = { ...appState[uid], holder, holderMine: false };
       syncStudy(uid);
       if (uid === selectedUid) { updateReportButtons(); loadReport(); }
       if (warnedFor !== uid) {
@@ -8275,7 +8283,7 @@
         const draft = unconfirmedReport(uid);
         if (!draft) continue;
         const a = appState[uid];
-        if (a.prelimHidden || a.identityUnresolved || relatedInsertPending(uid) || (a.holder && a.holder !== user) || draftClient.busy(uid)) continue;
+        if (a.prelimHidden || a.identityUnresolved || relatedInsertPending(uid) || (a.holder && !a.holderMine) || draftClient.busy(uid)) continue;
         const conflict = draftClient.conflict(uid);
         if (conflict) {
           draftClient.keep(uid, draft);
@@ -8452,7 +8460,7 @@
     function releasedText(r) {
       const parts = [];
       // 점유자가 곧 저장 글을 쓴 사람이고 임시글이 있으면 아래 저장 글 문장이 같은 사실을 말한다.
-      if (r.holder && r.holderDraft && r.holder !== r.savedBy) {
+      if (r.holder && r.holderDraft && !r.sameWriter) {
         const who = displayActor(r.holder);
         parts.push(`${who} 선생님이 쓰던 글이 있습니다 — 그 글은 ${who} 선생님의 개인 임시글로 남아 있습니다.`);
       }
@@ -8547,7 +8555,7 @@
         .sort((a, b) => a.version - b.version)[0];
       if (!next) return "none";
       const drawn = Array.isArray(next.drawings) ? next.drawings.map(d => d?.id) : [], named = sent.drawings ?? [];
-      return next.action === sent.action && !!sent.author && next.author === sent.author
+      return next.action === sent.action && next.mine === true
         && RFIELDS.every(k => KinReportCitation.toLf(String(next[k] ?? "")) === KinReportCitation.toLf(sent.texts[k]))
         && drawn.length === named.length && named.every(id => drawn.includes(id)) ? "mine" : "other";
     }
@@ -8706,7 +8714,7 @@
                * 확정이 끝나며 `commitEpoch`이 올라가 그 읽기의 답은 버려진다 — 읽는다고 말해 놓고 읽지 않는 셈이 된다.
                */
               // Image Report: the list this commit named as its version's (none named, or a Reset: the version holds none).
-              reportUnknownCommits.set(uid, { sentAt, action, reason, baseVersion, author: draftOwner?.author ?? null,
+              reportUnknownCommits.set(uid, { sentAt, action, reason, baseVersion,
                 texts: action === "reset" ? Object.fromEntries(RFIELDS.map(k => [k, ""])) : content,
                 drawings: action === "reset" ? [] : [...(result.named?.expectedEffectiveDrawingIds ?? [])],
                 revision: draftClient.revision(uid) });
@@ -9038,7 +9046,7 @@
       catch (_) { list = null; }
       if (!work.admits(at)) return { status: "stopped" };
       const record = { batch: true, sentAt: sent?.sentAt ?? reportEdits, seq: sent?.seq ?? null, action, reason,
-        author: draftOwner?.author ?? null, baseVersion: item.version, texts: { ...texts }, revision: draftClient.revision(uid) };
+        baseVersion: item.version, texts: { ...texts }, revision: draftClient.revision(uid) };
       const found = batchVersionOutcome(list, record);
       if (found === "mine") {
         if (heldUid === uid) { heldUid = null; clearInterval(heartbeat); heartbeat = null; }
@@ -9072,7 +9080,7 @@
       if (!Array.isArray(list)) return "none";
       const same = v => RFIELDS.every(k => KinReportCitation.toLf(String(v?.[k] ?? "")) === KinReportCitation.toLf(sent.texts[k]));
       // Image Report: a batch commit names no drawings, so its version holds none - a version with drawings is not it.
-      if (list.some(v => v && v.version === sent.baseVersion + 1 && v.action === sent.action && !!sent.author && v.author === sent.author
+      if (list.some(v => v && v.version === sent.baseVersion + 1 && v.action === sent.action && v.mine === true
         && v.reason === sent.reason && same(v) && !(Array.isArray(v.drawings) && v.drawings.length))) return "mine";
       return list.some(v => v && Number.isSafeInteger(v.version) && v.version > sent.baseVersion) ? "other" : "none";
     }
@@ -9247,7 +9255,7 @@
       const s = studies.find(x => x.uid === uid);
       const a = appState[uid];
       if (!s || !a) return;
-      for (const k of ["rs", "ss", "em", "ts", "matched", "holder", "version", "repDoc", "confirm",
+      for (const k of ["rs", "ss", "em", "ts", "matched", "holder", "holderMine", "version", "repDoc", "confirm",
                         "preDoc", "preReviewer", "prelimHidden", "holdReason"])
         if (a[k] !== undefined) s[k] = a[k];
       if (a.holder === null || a.holder === undefined) s.holder = a.holder;
@@ -9300,8 +9308,8 @@
         const r = await api("POST", `/studies/${encodeURIComponent(uid)}/hold`, undefined, undefined, at);
         if (!work.admits(at)) return;
         const s = studies.find(x => x.uid === uid);
-        if (s) s.holder = r.holder;
-        appState[uid] = { ...appState[uid], holder: r.holder };
+        if (s) { s.holder = r.holder; s.holderMine = r.mine === true; }
+        appState[uid] = { ...appState[uid], holder: r.holder, holderMine: r.mine === true };
         render();
         if (uid === selectedUid) { updateReportButtons(); loadReport(); }
 
@@ -9331,9 +9339,9 @@
         if (uid !== selectedUid) {
           try { await api("POST", `/studies/${encodeURIComponent(uid)}/release`, undefined, undefined, at); } catch (e) {}
           work.commit(at, () => {
-            if (appState[uid]) appState[uid].holder = null;
+            if (appState[uid]) Object.assign(appState[uid], { holder: null, holderMine: false });
             const s2 = studies.find(x => x.uid === uid);
-            if (s2) s2.holder = null;
+            if (s2) Object.assign(s2, { holder: null, holderMine: false });
             render();
           });
           return;
@@ -9365,8 +9373,8 @@
       clearInterval(heartbeat); heartbeat = null;
       const holder = r.holder ?? null;
       const s = studies.find(x => x.uid === uid);
-      if (s) s.holder = holder;
-      appState[uid] = { ...appState[uid], holder };
+      if (s) { s.holder = holder; s.holderMine = false; }
+      appState[uid] = { ...appState[uid], holder, holderMine: false };
       render();
       if (uid === selectedUid) updateReportButtons();
       toast("이 검사의 판독 점유가 풀렸습니다 — 이어 쓰면 다시 판독을 시작합니다.", "err");
@@ -9378,8 +9386,8 @@
       heldUid = null;
       clearInterval(heartbeat); heartbeat = null;
       const s = studies.find(x => x.uid === uid);
-      if (s) s.holder = undefined;
-      if (appState[uid]) appState[uid].holder = undefined;
+      if (s) Object.assign(s, { holder: undefined, holderMine: false });
+      if (appState[uid]) Object.assign(appState[uid], { holder: undefined, holderMine: false });
       // 세션을 끝내는 중의 해제(auth.js가 종료 기록·통지 뒤, 로그아웃 POST 앞에 부른다)는 업무가 아니라 그 종료의 일부다:
       // 닫힌 문서의 수명주기 문맥으로, 끝나는 그 세션의 식별값을 실어 나간다. 그 밖에는 평소의 업무 요청이다.
       const at = work.capture(closing ? "lifecycle" : "document");
@@ -9913,8 +9921,8 @@
         if (binding.status === "none") { say(noSession); return; }
         if (binding.status !== "ok") { say("로그인 상태를 확인하지 못했습니다. 잠시 뒤 다시 누르세요." + kept); return; }
         const owner = prep.owner ?? {};
-        if (binding.owner.sub !== owner.sub || (binding.owner.institution ?? null) !== (owner.institution ?? null)
-            || binding.owner.author !== owner.author) { say(otherAccount); return; }
+        // Another account is another institution or account id (the login email of the same account may have changed).
+        if (binding.owner.sub !== owner.sub || (binding.owner.institution ?? null) !== (owner.institution ?? null)) { say(otherAccount); return; }
         const via = { context: at, session: binding.session };
         await draftClient.settled();
         if (!ended() || !work.admits(at)) return;
@@ -14667,7 +14675,35 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     // 정렬(sortKey/sortDir)도 함께 저장한다 — 필터가 같아도 정렬이 다르면 다른 화면이다.
     // (HPACS도 2025년에야 "정렬을 적용하여 사용자 필터로 저장"을 넣었다)
     const saveFiltersLocal = () => { try { localStorage.setItem("kin-filters", JSON.stringify(userFilters)); } catch (e) {} };
+    const collectionSelect = $('#search-collection');
+    const collectionBody = body => collectionSelect && !collectionSelect.hidden
+      ? { ...body, collection: collectionSelect.value } : body;
+    function personalSearches(value) {
+      const all = validUserFilters(value);
+      const owners = [...new Set(all.map(f => f.owner))].sort();
+      const defaultOwners = new Set(all.filter(f => f.isDefault).map(f => f.owner));
+      const key = collectionSelect?.hidden === false ? collectionSelect.value
+        : owners.find(owner => defaultOwners.has(owner)) ?? owners[0];
+      return all.filter(f => f.owner === key);
+    }
+    collectionSelect?.addEventListener('change', () => {
+      if (shortcutBusy || shortcutDraft) {
+        collectionSelect.value = filterCollection?.collection || '';
+        shortcutStatus('바로가기 편집을 마친 뒤 모음을 변경하세요.');
+        return;
+      }
+      activeFilterName = null; folderAppliedSearch = null;
+      storedShortcuts = []; userFilters = []; renderChips();
+      void reloadFolderSearches();
+    });
     function acceptFilterCollection(snapshot) {
+      const groups = snapshot?.collections;
+      if (Array.isArray(groups)) {
+        const previous = collectionSelect.value;
+        snapshot = groups.find(group => group.collection === previous)
+          || groups.find(group => group.filters.some(f => f.isDefault))
+          || groups.find(group => group.filters.length) || groups[0];
+      }
       if (JSON.stringify(snapshot?.owner) !== JSON.stringify([sess.institution, sess.sub])
         || !Number.isInteger(snapshot.revision) || snapshot.revision < 0
         || !Array.isArray(snapshot.filters) || !Array.isArray(snapshot.folders) || !Array.isArray(snapshot.shortcuts)
@@ -14676,7 +14712,13 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           || !/^(own|shared):[1-9]\d*$/.test(s.searchId))
         || new Set(snapshot.shortcuts.map(s => s.id)).size !== snapshot.shortcuts.length)
         throw new Error('계정 또는 검색 모음 응답을 확인할 수 없습니다. 다시 불러오세요.');
-      if (filterCollection && snapshot.revision < filterCollection.revision) throw staleAnswer();
+      if (filterCollection && snapshot.collection === filterCollection.collection && snapshot.revision < filterCollection.revision) throw staleAnswer();
+      if (collectionSelect) {
+        const options = Array.isArray(groups) ? groups.map(group => new Option(group.collection, group.collection)) : [];
+        collectionSelect.replaceChildren(...options);
+        collectionSelect.hidden = options.length === 0;
+        if (options.length) collectionSelect.value = snapshot.collection;
+      }
       filterCollection = JSON.parse(JSON.stringify(snapshot));
       storedShortcuts = filterCollection.shortcuts;
       userFilters = validUserFilters(snapshot.filters);
@@ -14727,8 +14769,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         shortcutStatus('검색 모음 버전을 확인해야 저장할 수 있습니다. Filter Exams를 다시 열어 불러오세요.'); return;
       }
       const at = work.capture('document'), sent = JSON.stringify(shortcutDraft);
-      const body = { expectedOwner: [...filterCollection.owner], revision: filterCollection.revision,
-        command: { action: 'replace-shortcuts', shortcuts: JSON.parse(sent) } };
+      const body = collectionBody({ expectedOwner: [...filterCollection.owner], revision: filterCollection.revision,
+        command: { action: 'replace-shortcuts', shortcuts: JSON.parse(sent) } });
       shortcutBusy = true; ++filterReadSequence; shortcutStatus('바로가기를 저장 중입니다.');
       let saved = false;
       try {
@@ -14803,6 +14845,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       return false;
     }
     function acceptSavedFilter(saved, local) {
+      if (!local && collectionSelect?.hidden === false && saved.owner !== collectionSelect.value) return;
       const next = userFilters.filter(f => f.name !== saved.name).map(f => saved.isDefault ? { ...f, isDefault: false } : f);
       // Keep the existing item's position when editing it.
       const index = userFilters.findIndex(f => f.name === saved.name);
@@ -14830,24 +14873,25 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           throw new Error('계정 또는 검색 모음 응답을 확인할 수 없습니다. 다시 로그인하세요.');
         if (!work.commit(at, () => { acceptFilterCollection(snapshot); shortcutStatus(''); })) throw staleAnswer();
         shortcutStatus('');
-        return snapshot;
+        return filterCollection;
         } catch (error) {
           work.commit(at, () => { if (sequence !== filterReadSequence) return; filterCollection = null; shortcutStatus('검색 모음을 읽지 못했습니다. 다시 불러오세요. ' + error.message); });
           throw error;
         }
       },
       async writeFolders(body, signal, at = work.capture("document")) {
+        const request = collectionBody(body);
         ++filterReadSequence;
         work.commit(at, () => { filterCollection = null; shortcutStatus('검색 모음을 저장 중입니다.'); });
         try {
         if (await filterWriteReady(signal, at)) throw new Error('폴더 관리는 서버 계정으로 로그인한 뒤 사용할 수 있습니다.');
-        const snapshot = await api('POST', '/filter-folders', body, signal, at);
+        const snapshot = await api('POST', '/filter-folders', request, signal, at);
         if (!work.admits(at)) throw staleAnswer();
         if (JSON.stringify(snapshot?.owner) !== JSON.stringify([sess.institution, sess.sub]) || !Array.isArray(snapshot.filters) || !Array.isArray(snapshot.folders))
           throw new Error('응답을 확인할 수 없습니다. 검색 모음을 다시 불러오세요.');
         if (!work.commit(at, () => { ++filterReadSequence; acceptFilterCollection(snapshot); })) throw staleAnswer();
         shortcutStatus('');
-        return snapshot;
+        return filterCollection;
         } catch (error) {
           work.commit(at, () => { filterCollection = null; shortcutStatus('검색 모음을 저장하지 못했습니다. 다시 불러오세요. ' + error.message); });
           throw error;
@@ -14870,22 +14914,24 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         }
       },
       async writeShared(body, signal, at = work.capture("document")) {
+        const request = collectionBody(body);
         ++sharedFilterReadSequence;
         if (await filterWriteReady(signal, at)) throw new Error('기관 검색은 서버 계정으로 로그인한 뒤 사용할 수 있습니다.');
-        const snapshot = await api('POST', '/shared-filters', body, signal, at);
+        const snapshot = await api('POST', '/shared-filters', request, signal, at);
         if (!work.admits(at)) throw staleAnswer();
         if (JSON.stringify(snapshot?.owner) !== JSON.stringify([sess.institution, sess.sub])) throw new Error('응답 계정을 확인할 수 없습니다. 공유 목록을 다시 불러오세요.');
         work.commit(at, () => { ++sharedFilterReadSequence; sharedSearches = validUserFilters(snapshot.filters); renderChips(); render(); });
         return snapshot;
       },
       async copyShared(body, signal, at = work.capture("document")) {
+        const request = collectionBody(body);
         if (await filterWriteReady(signal, at)) throw new Error('기관 검색은 서버 계정으로 로그인한 뒤 사용할 수 있습니다.');
-        const snapshot = await api('POST', '/shared-filters/copy', body, signal, at);
+        const snapshot = await api('POST', '/shared-filters/copy', request, signal, at);
         if (!work.admits(at)) throw staleAnswer();
         if (JSON.stringify(snapshot?.owner) !== JSON.stringify([sess.institution, sess.sub]) || !Array.isArray(snapshot.filters))
           throw new Error('응답을 확인할 수 없습니다. 개인 폴더를 다시 불러오세요.');
         if (!work.commit(at, () => { ++filterReadSequence; acceptFilterCollection(snapshot); })) throw staleAnswer();
-        return snapshot;
+        return filterCollection;
       },
       restoreFocus(opener) {
         if (opener?.isConnected && !opener.disabled && !opener.closest('[hidden]')) opener.focus();
@@ -14896,8 +14942,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       async save(filter, signal, at = work.capture("document")) {
         // Capture the transport before the request: a later disconnect must never
         // turn a completed account save into browser-local preference data.
+        const request = collectionBody(filter);
         const local = await filterWriteReady(signal, at);
-        const saved = local ? filter : await api('POST', '/filters', filter, signal, at);
+        const saved = local ? filter : await api('POST', '/filters', request, signal, at);
         if (!work.admits(at)) throw staleAnswer();
         if (!work.commit(at, () => acceptSavedFilter(saved, local))) throw staleAnswer();
         if (!local) await reloadFolderSearches(at);
@@ -14907,7 +14954,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         const local = await filterWriteReady(signal, at);
         if (!local) await api('DELETE', `/filters/${filter.id}`, undefined, signal, at);
         if (!work.admits(at)) throw staleAnswer();
-        const next = userFilters.filter(f => f.name !== filter.name);
+        const next = userFilters.filter(f => local ? f.name !== filter.name : f.id !== filter.id);
         if (!work.commit(at, () => {
           if (local) localStorage.setItem('kin-filters', JSON.stringify(next));
           userFilters = next; renderChips();
@@ -14920,7 +14967,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           const p = await api('GET', '/prefs', undefined, signal, at);
           if (!work.admits(at)) throw staleAnswer();
           if (!Array.isArray(p?.filters)) throw new Error('저장 검색 목록을 불러오지 못했습니다. 다시 시도하세요.');
-          if (!work.commit(at, () => { userFilters = validUserFilters(p.filters); renderChips(); })) throw staleAnswer();
+          if (!work.commit(at, () => { userFilters = personalSearches(p.filters); renderChips(); })) throw staleAnswer();
         }
       },
     });
@@ -14978,7 +15025,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           toast("환경설정 응답이 올바르지 않아 이전 값을 유지합니다", "err");
           return;
         }
-        userFilters = validUserFilters(p.filters); templates = p.templates;
+        userFilters = personalSearches(p.filters); templates = p.templates;
         renderChips(); renderTemplates();
       });
       if (work.admits(at)) await reloadFolderSearches(at);
@@ -15055,6 +15102,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       alignWorklistFolder(null);
       renderHeads(); render();
     }
+
 
 
     $("#heads").addEventListener("click", e => {
@@ -15331,14 +15379,14 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       // 이 메뉴가 열린 선택. 항목은 이 선택이 그대로일 때만 실행된다(위 클릭 처리).
       const opened = { uid, seq: selectionSeq, oid: selectedOid };
       const forceReleaseItems = KinAuth.has("admin") && s?.holder ? [{
-        label: kinSay("점유 강제 해제 (관리자)"), dis: s.holder === user, act: async () => {
+        label: kinSay("점유 강제 해제 (관리자)"), dis: s.holderMine === true, act: async () => {
           if (!confirm(`${displayActor(s.holder)} 님의 점유를 강제로 해제합니다. 그쪽 화면은 다음 저장에서 거절됩니다. 계속할까요?`)) return;
           const at = work.capture("document");
           try { await api("POST", `/studies/${encodeURIComponent(uid)}/release/force`, undefined, undefined, at); }
           catch (e) { work.commit(at, () => apiFail(e)); return; }
           work.commit(at, () => {
-            s.holder = null;
-            appState[uid] = { ...appState[uid], holder: null };
+            s.holder = null; s.holderMine = false;
+            appState[uid] = { ...appState[uid], holder: null, holderMine: false };
             render();
             if (uid === selectedUid) { updateReportButtons(); loadReport(); }
             toast("점유를 해제했습니다 (감사로그 기록)");
@@ -15540,6 +15588,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       savedFilterManager.reset();
       worklistFolders?.destroy(); worklistFolders = null;
       folderLoadState = 'unknown'; folderAppliedSearch = null; filterCollection = null;
+      if (collectionSelect) { collectionSelect.hidden = true; collectionSelect.replaceChildren(); }
       sharedSearches = []; storedShortcuts = []; shortcutDraft = null; shortcutBusy = false; ++filterReadSequence; ++sharedFilterReadSequence;
       userFilters = []; activeFilterName = null;
       autoPreload?.end(); autoPreload = null;   // FC-073: the More menu keeps no saved search of the ended session
@@ -15685,7 +15734,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
        * 그걸 눌러 저장하면 남의 필터 이름으로 내 화면이 만들어진다.
        * 계정에 붙인다고 해놓고 브라우저에 남은 것을 안 지우면 반쪽이다.
        */
-      userFilters = validUserFilters(b.filters);
+      userFilters = personalSearches(b.filters);
       mountWorklistFolders();
       void reloadFolderSearches();
       templates = Array.isArray(b.templates) ? b.templates : [];

@@ -5,6 +5,9 @@ import type { SourceIdentity } from '../study-access.service';
 import { LocalReadResponse, LocalReadSource } from './local-read';
 import { LOCAL_READ_UNAVAILABLE } from './response-lifecycle';
 
+/** Captures the stored author with the returned draft snapshot so its viewing record survives a change of login. */
+export const draftRecordOf = new WeakMap<object, string>();
+
 const absent = Object.freeze({ status: 'unresolved', reason: 'not-observed' } as const);
 const observed = (value: string | number | null | undefined) => value === null || value === undefined || value === ''
   ? absent : { status: 'known' as const, value: String(value) };
@@ -36,7 +39,7 @@ export function worklistRead(body: any, author: string, institution: string, ins
     if (state.version > 0 && !state.prelimHidden && row.reportReadable !== false)
       sources.push(consumerSource('report-head', uid, state.institutionId, uid, state.version, [...path, 'state'], identity, reportFields));
     if (state.draft)
-      sources.push(consumerSource('private-draft', uid, state.institutionId, JSON.stringify([uid, author]), state.draftRevision,
+      sources.push(consumerSource('private-draft', uid, state.institutionId, JSON.stringify([uid, draftRecordOf.get(state.draft) ?? author]), state.draftRevision,
         [...path, 'state', 'draft'], identity));
   }
   for (const [index, row] of (body.identityIssues ?? []).entries())
@@ -56,7 +59,7 @@ export function bootstrapRead(body: any, author: string, institution: string): L
     sources.push(consumerSource('study-metadata', uid, state.institutionId, uid, null, path));
     if (state.version > 0 && !state.prelimHidden && state.reportReadable !== false)
       sources.push(consumerSource('report-head', uid, state.institutionId, uid, state.version, path, undefined, reportFields));
-    if (state.draft) sources.push(consumerSource('private-draft', uid, state.institutionId, JSON.stringify([uid, author]),
+    if (state.draft) sources.push(consumerSource('private-draft', uid, state.institutionId, JSON.stringify([uid, draftRecordOf.get(state.draft) ?? author]),
       state.draftRevision, [...path, 'draft']));
   }
   for (const [index, order] of body.orders.entries())

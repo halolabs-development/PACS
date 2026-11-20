@@ -732,6 +732,12 @@ class ImageReportPage(unittest.TestCase):
         expect(self.page.locator("#image-report-attached figure")).to_have_count(0)
 
     def test_a_lost_commit_answer_is_this_commit_only_with_the_drawings_it_named(self):
+        self.check_other_version(mine=True)
+
+    def test_a_lost_commit_answer_is_not_the_same_text_and_login_of_another_account(self):
+        self.check_other_version(mine=False)
+
+    def check_other_version(self, mine):
         # A saved version holds one drawing; my draft removes it and keeps the saved text. Save names an empty final list.
         saved = self.drawing()
         st = self.stored(text="SYN saved", ids=[], head=[saved], rs="T")
@@ -744,18 +750,18 @@ class ImageReportPage(unittest.TestCase):
         self.wait(lambda: len(self.site.held_flow_commits) == 1, "the save reached the server")
         route, _, body, account = self.site.held_flow_commits.pop(0)
         self.assertEqual((body.get("drawingIds"), body.get("expectedEffectiveDrawingIds")), ([], []))
-        # The answer is lost, and the version that stands on that base is not this commit: the same text, by the same
-        # author (another window), with the drawing still attached.
+        # The other version either kept a different drawing or came from the new holder of the same login.
         st["revs"] += 1
         st["row"] = None
         self.site.draw[h.UID] = None
         st["report"] = {**st["report"], "version": 2}
-        st["versions"].append({"version": 2, "action": "save", "author": h.owner_of(account)["author"], "reason": None,
-                               **{k: st["report"].get(k, "") for k in FIELDS}, "drawings": [{"id": saved}]})
-        route.abort("connectionreset")
+        st["versions"].append({"version": 2, "action": "save", "author": h.owner_of(account)["author"], "mine": mine, "reason": None,
+                               **{k: st["report"].get(k, "") for k in FIELDS}, "drawings": [{"id": saved}] if mine else []})
+        with self.page.expect_response(lambda res: res.url.endswith("/report/versions")):
+            route.abort("connectionreset")
         self.wait(lambda: self.page.evaluate("() => !reportUnknownCommits.has(selectedUid)"), "the page read what the server holds")
         self.assertEqual(self.page.evaluate("() => appState[selectedUid].version"), 1,
-                         "a version with the same text and other drawings was taken as this commit")
+                         "another version with the same text was taken as this commit")
 
     def test_a_lost_commit_answer_is_found_as_the_version_it_made(self):
         saved = self.drawing()
@@ -763,6 +769,7 @@ class ImageReportPage(unittest.TestCase):
         self.open()
         self.open_study(h.PATIENT)
         self.settle(300)
+        self.site.version_author = "renamed@example.test"
         self.site.commit_answers = ["lost"]         # the server makes the version (no drawing) and the answer is lost
         self.page.locator("#b-save").click()
         self.wait(lambda: st["report"]["version"] == 2, "the server made the version")

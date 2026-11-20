@@ -120,7 +120,7 @@ test('Image Report drawings ride the draft boundary, are bound and signed with t
     const discard = (uid, body, as) => call('DELETE', uid, '/draft', body, as);
     /** My draft row, the versions and the drawing rows of a study: a request the gate refuses leaves all three as they were. */
     const facts = async uid => JSON.stringify([
-      await witness.reportDraft.findUnique({ where: { uid_author: { uid, author } },
+      await witness.reportDraft.findUnique({ where: { uid_authorSub: { uid, authorSub: sub } },
         select: { revision: true, present: true, findings: true, conclusion: true, recommendation: true, baseVersion: true, drawings: true } }),
       await witness.reportVersion.count({ where: { uid } }), await drawingRows(uid)]);
     const refusedByGate = async (uid, send, label) => {
@@ -163,7 +163,7 @@ test('Image Report drawings ride the draft boundary, are bound and signed with t
     assert.equal(stored.width, 640); assert.equal(stored.height, 440);
     assert.equal(stored.sha256, drawingRules.drawingHash({ background: 'breast', source: null, strokes, png: Buffer.from(breast.png, 'base64') }));
     // It belongs to the work its attach started (the draft's own unit), the one CD-09-P destroys it with.
-    const work = (await witness.reportDraft.findUnique({ where: { uid_author: { uid, author } } })).workUnit;
+    const work = (await witness.reportDraft.findUnique({ where: { uid_authorSub: { uid, authorSub: sub } } })).workUnit;
     assert.match(work, /^disposal:/); assert.equal(stored.workUnit, work);
 
     // ── a PNG that is not a whole picture is refused before anything is read or written ──
@@ -171,7 +171,7 @@ test('Image Report drawings ride the draft boundary, are bound and signed with t
       png: Buffer.from(breast.png, 'base64').subarray(0, 40).toString('base64') } }));
     assert.equal(truncated.status, 400, JSON.stringify(truncated.body));
     assert.equal(await drawingRows(uid), 1);
-    assert.equal((await witness.reportDraft.findUnique({ where: { uid_author: { uid, author } } })).revision, 1);
+    assert.equal((await witness.reportDraft.findUnique({ where: { uid_authorSub: { uid, authorSub: sub } } })).revision, 1);
     // An unknown critical chunk (its CRC right) is one a viewer must understand: refused, nothing written.
     {
       const good = Buffer.from(breast.png, 'base64'), type = Buffer.from('ABCD'), len = Buffer.alloc(4), sum = Buffer.alloc(4);
@@ -283,7 +283,7 @@ test('Image Report drawings ride the draft boundary, are bound and signed with t
     try { assert.equal((await commit(uid, approve)).status, 503); }
     finally { await witness.$executeRaw`UPDATE emr_signing.doctor_key SET status='active'`; }
     assert.equal(await witness.reportVersion.count({ where: { uid } }), 0);
-    const kept = await witness.reportDraft.findUnique({ where: { uid_author: { uid, author } } });
+    const kept = await witness.reportDraft.findUnique({ where: { uid_authorSub: { uid, authorSub: sub } } });
     assert.equal(kept.present, true); assert.deepEqual(kept.drawings.ids, [breast2, imageId]);
 
     // ── approve: the version holds them, the signature names each by the server's hash ──
@@ -439,12 +439,12 @@ test('Image Report drawings ride the draft boundary, are bound and signed with t
     const goneAttach = await put(gone.uid, { ...base(0, { drawingIds: null, drawing: breast }), ...goneAt(0) });
     assert.equal(goneAttach.status, 200, JSON.stringify(goneAttach.body));
     const goneId = goneAttach.body.drawn.added;
-    const goneWork = (await witness.reportDraft.findUnique({ where: { uid_author: { uid: gone.uid, author } } })).workUnit;
+    const goneWork = (await witness.reportDraft.findUnique({ where: { uid_authorSub: { uid: gone.uid, authorSub: sub } } })).workUnit;
     const goneRow = await witness.reportDrawing.findUnique({ where: { id: goneId } });
     const discarded = await discard(gone.uid, { ...goneAt(1), drawingIds: [goneId] });
     assert.equal(discarded.status, 200, JSON.stringify(discarded.body));
     assert.equal(discarded.body.present, false);
-    assert.equal((await witness.reportDraft.findUnique({ where: { uid_author: { uid: gone.uid, author } } })).drawings, null);
+    assert.equal((await witness.reportDraft.findUnique({ where: { uid_authorSub: { uid: gone.uid, authorSub: sub } } })).drawings, null);
     assert.equal((await read(gone.uid, '/' + goneId)).status, 404);
     // CD-09-P destroyed the discarded work, and the drawing only it held with it.
     await purpose.drained();
@@ -461,11 +461,11 @@ test('Image Report drawings ride the draft boundary, are bound and signed with t
     // A copy taken while the work was still live: the author's draft holds the drawing again. The re-application empties
     // that draft with its drawing list, and the drawing goes with it.
     await witness.reportDrawing.create({ data: goneCopy });
-    const goneDraft = await witness.reportDraft.findUnique({ where: { uid_author: { uid: gone.uid, author } } });
-    await witness.reportDraft.update({ where: { uid_author: { uid: gone.uid, author } }, data: { present: true, findings: 'copy',
+    const goneDraft = await witness.reportDraft.findUnique({ where: { uid_authorSub: { uid: gone.uid, authorSub: sub } } });
+    await witness.reportDraft.update({ where: { uid_authorSub: { uid: gone.uid, authorSub: sub } }, data: { present: true, findings: 'copy',
       workUnit: goneWork, workSince: new Date(), workIntent: 'approve', drawings: { seed: [], ids: [goneId] } } });
     assert.equal((await purpose.destroy(goneWork)).outcome, 'reapplied');
-    const goneEmptied = await witness.reportDraft.findUnique({ where: { uid_author: { uid: gone.uid, author } } });
+    const goneEmptied = await witness.reportDraft.findUnique({ where: { uid_authorSub: { uid: gone.uid, authorSub: sub } } });
     assert.deepEqual([goneEmptied.present, goneEmptied.workUnit, goneEmptied.drawings, goneEmptied.revision],
       [false, null, null, goneDraft.revision + 1]);
     assert.deepEqual(await drawingIds(gone.uid), []);
@@ -490,7 +490,7 @@ test('Image Report drawings ride the draft boundary, are bound and signed with t
     const keptThyroid = await put(saving.uid, { ...keptAt(3, { drawingIds: null, drawing: { ...breast, background: 'thyroid' } }), baseVersion: keptSaved.body.state.version });
     assert.equal(keptThyroid.status, 200, JSON.stringify(keptThyroid.body));
     const keptLive = keptThyroid.body.drawn.added;
-    const keptWork = (await witness.reportDraft.findUnique({ where: { uid_author: { uid: saving.uid, author } } })).workUnit;
+    const keptWork = (await witness.reportDraft.findUnique({ where: { uid_authorSub: { uid: saving.uid, authorSub: sub } } })).workUnit;
     await witness.reportDrawing.updateMany({ where: { studyUid: saving.uid }, data: { workUnit: null } });
     const migration = require('node:fs').readFileSync(path.join(api, 'prisma/migrations/20261115120000_report_drawing_work/migration.sql'), 'utf8');
     const backfill = migration.split(';').map(s => s.replace(/^\s*--.*$/gm, '').trim()).filter(s => /^UPDATE /.test(s));
@@ -532,7 +532,7 @@ test('Image Report drawings ride the draft boundary, are bound and signed with t
     const exam = await witness.studyState.create({ data: { uid: '1.2.840.9999.144', institutionId: institution, ss: 'Verified' } });
     const part = await witness.studyState.create({ data: { uid: '1.2.840.9999.145', institutionId: institution, ss: 'Verified' } });
     for (const study of [exam, part]) patients.set(study.uid, 'SYN-DRAWING-PATIENT');
-    const examDraft = () => witness.reportDraft.findUnique({ where: { uid_author: { uid: exam.uid, author } } });
+    const examDraft = () => witness.reportDraft.findUnique({ where: { uid_authorSub: { uid: exam.uid, authorSub: sub } } });
     // A request of the screen as it is now: the study's epoch (every Merge and Unmerge draws a new one) and my row's revision.
     const now = async (extra = {}, uid = exam.uid) => ({ ...base(0, extra), expectedRevision:
       (await witness.studyState.findUnique({ where: { uid } })).draftEpoch + ':' + (uid === exam.uid ? (await examDraft())?.revision ?? 0 : 0) });
@@ -612,7 +612,7 @@ test('Image Report drawings ride the draft boundary, are bound and signed with t
     const mergedLedger = require('node:fs').readFileSync(purpose.ledger.file);
     const { source: _mergedSource, ...latestCopy } = latestRow;
     await witness.reportDrawing.create({ data: latestCopy });
-    await witness.reportDraft.update({ where: { uid_author: { uid: exam.uid, author } }, data: { present: true, findings: 'copy',
+    await witness.reportDraft.update({ where: { uid_authorSub: { uid: exam.uid, authorSub: sub } }, data: { present: true, findings: 'copy',
       baseVersion: examHead, groupId: groupTwo, workUnit: lastWork, workSince: lastDraft.workSince, workIntent: 'approve', drawings: lastDraft.drawings } });
     const copyRevision = (await examDraft()).revision;
     assert.equal((await purpose.destroy(lastWork)).outcome, 'reapplied');
@@ -639,7 +639,7 @@ test('Image Report drawings ride the draft boundary, are bound and signed with t
     // drawings and none of the other part's or of the study before the split, whichever order the destructions run in.
     const whole = await witness.studyState.create({ data: { uid: '1.2.840.9999.146', institutionId: institution, ss: 'Verified' } });
     patients.set(whole.uid, 'SYN-DRAWING-PATIENT');
-    const draftOn = uid => witness.reportDraft.findUnique({ where: { uid_author: { uid, author } } });
+    const draftOn = uid => witness.reportDraft.findUnique({ where: { uid_authorSub: { uid, authorSub: sub } } });
     const nowOn = async (uid, extra = {}) => ({ ...base(0, extra), expectedRevision:
       (await witness.studyState.findUnique({ where: { uid } })).draftEpoch + ':' + ((await draftOn(uid))?.revision ?? 0) });
     const endsOn = async uid => (await witness.reportDraftPurposeEnd.findMany({ where: { uid }, select: { disposalUnitId: true } }))

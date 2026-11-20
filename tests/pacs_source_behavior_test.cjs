@@ -125,7 +125,7 @@ function fixture(options = {}) {
         update: async ({ data }) => { writes.push(['order', data]); return { ...order, ...data }; } },
       report: { findMany: async () => [{ uid: UID, ...report }], findUnique: async () => { calls.push(`${label}:report`); return report; } },
       studyGroup: { findMany: async () => [] }, studyGroupMember: { findMany: async () => [],findFirst:async()=>null },
-      reportDraft: { findMany: async () => [], findUnique: async () => options.draft || null },
+      reportDraft: { findMany: async () => [], findUnique: async () => options.draft || null, findFirst: async () => options.draft || null },
       reportVersion: { findFirst:async()=>({uid:UID,...head}), findUnique: async args => { calls.push([`${label}:head`, args.where]); return project(head, args.select); },
         findMany: async args => [project({ ...head, citations: ['secret'], structured: ['secret'] }, args.select)] },
       viewerItem: { findMany: async () => { calls.push('keys'); return []; } },
