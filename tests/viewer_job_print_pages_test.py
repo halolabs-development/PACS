@@ -192,6 +192,21 @@ READY = ("() => { const s = document.querySelector('#kin-job-print [role=status]
 SRCDOC = ("m => { const f = document.querySelector('#kin-job-print iframe');"
           " const s = f ? f.getAttribute('srcdoc') : ''; return !!s && s.includes(m); }")
 
+# The stock viewer's base rules for form fields (the same subset viewer_study_tabs_pointer_dom_test.py uses).
+OHIF_BASE_CSS = ('button,input,optgroup,select,textarea{color:inherit;font-family:inherit;font-size:100%;'
+                 'font-weight:inherit;line-height:inherit;margin:0;padding:0}')
+# WCAG contrast of each field's text against its own field; a transparent field is read as the nearest painted box.
+FIELD_CONTRAST = """selector => [...document.querySelectorAll(selector)].map(field => {
+  const rgb = value => value.match(/[\\d.]+/g).map(Number);
+  const channel = c => (c /= 255) <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  const luminance = ([r, g, b]) => 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+  let box = field, back = rgb(getComputedStyle(box).backgroundColor);
+  while (back.length === 4 && back[3] === 0 && box.parentElement) { box = box.parentElement; back = rgb(getComputedStyle(box).backgroundColor); }
+  const [a, b] = [luminance(rgb(getComputedStyle(field).color)), luminance(back)].sort((x, y) => y - x);
+  return [field.getAttribute('aria-label') || field.parentElement.firstChild.textContent, field.disabled,
+          Math.round((a + 0.05) / (b + 0.05) * 100) / 100];
+})"""
+
 
 def load_citation_modules(page):
     """The two libraries viewer-jobs.js lazily loads beside the print dialog."""
@@ -1163,6 +1178,24 @@ class ViewerJobPrintPages(unittest.TestCase):
             self.assertNotIn(secret, whole)
         self.assertIn(flat("열람 권한 기준"), whole)
         print("OUTPUT CITATION PDF pages=%d path=%s" % (len(flats), path), flush=True)
+        self.no_writes(page)
+
+    def test_pages_19_output_adjustment_fields_are_readable_on_the_viewer_base_rules(self):
+        # The stock viewer's base rules hand every field the dialog's light text and leave the browser's white
+        # field: the zoom, pan and W/L numbers (and the two choices beside them) must still be read.
+        page = self.prepared(self.data("20260801", "20260901"))
+        page.add_style_tag(content=OHIF_BASE_CSS)
+        fields = "#kin-job-print fieldset :is(input, select)"
+        before = page.eval_on_selector_all(fields, "fs => fs.map(f => f.value)")
+        self.assertEqual(before, ["all", "100", "0", "0", "400", "40", "saved"])
+        low = [item for item in page.evaluate(FIELD_CONTRAST, fields) if item[2] < 4.5]
+        self.assertEqual(low, [], "every output adjustment value is readable (WCAG AA 4.5:1), W/L locked")
+        page.select_option('[aria-label="비교 출력 밝기"]', "manual")
+        self.assertEqual(page.eval_on_selector_all("#kin-job-print fieldset input", "fs => fs.map(f => f.disabled)"), [False] * 5)
+        low = [item for item in page.evaluate(FIELD_CONTRAST, fields) if item[2] < 4.5]
+        self.assertEqual(low, [], "every output adjustment value is readable (WCAG AA 4.5:1), W/L open")
+        # Only the look changes: the values the output reads stay as they were.
+        self.assertEqual(page.eval_on_selector_all(fields, "fs => fs.map(f => f.value)"), before[:-1] + ["manual"])
         self.no_writes(page)
 
     def test_parser_01_keeps_font_runs_in_stream_order(self):
