@@ -311,7 +311,8 @@ class ViewerPriorHistory(unittest.TestCase):
     def test_history_lists_versions_and_close_history_shows_the_report_again(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
-            page = browser.new_page()
+            # A fixed browser time zone: a version's time is this screen's minute (Asia/Seoul), not the server's UTC text.
+            page = browser.new_page(timezone_id="Asia/Seoul")
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.route("**/*", self.serve)
@@ -327,7 +328,7 @@ class ViewerPriorHistory(unittest.TestCase):
             expect(listed).to_be_visible()
             expect(history).to_have_attribute("aria-expanded", "true")
             expect(listed.get_by_role("article")).to_have_count(1)
-            expect(listed.get_by_role("article")).to_contain_text("v1 | Approve | syn-rad@synthetic.test | 2026-11-10 08:12:00")
+            expect(listed.get_by_role("article")).to_contain_text("v1 | Approve | syn-rad@synthetic.test | 2026-11-10 17:12")
             expect(listed).to_contain_text("8 mm nodule in the right upper lobe.")
             expect(region.get_by_text("Version 1 | Approved", exact=False)).to_be_hidden()
             expect(listed.get_by_role("button", name="Close History", exact=True)).to_be_focused()

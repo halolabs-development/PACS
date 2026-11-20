@@ -3,6 +3,7 @@
 No replacement page, controller, markup or display-set renderer. Faults delay
 or fail actual network reads only after the normally served baseline renders.
 """
+import datetime
 import hashlib
 import json
 import os
@@ -117,8 +118,14 @@ class ViewerUXPriorsE2E(ViewerLayoutE2E):
         report = self.report_panel(page)
         expect(report).to_contain_text(head['findings'])
         expect(report).to_contain_text('Version ' + str(head['version']))
-        expect(report).to_contain_text(head['author'])
-        expect(report).to_contain_text(head['at'])
+        # Who signed it: the member name the server sends beside the stored login. When: this browser's minute of the
+        # version's time (the current cycle's approval at the time the study keeps), never the server's UTC text.
+        expect(report).to_contain_text(head.get('authorName') or head['author'])
+        shown_at = head.get('approvedAt') or head['at']
+        offset = page.evaluate("iso => new Date(iso).getTimezoneOffset()", shown_at)
+        local = datetime.datetime.fromisoformat(shown_at.replace('Z', '+00:00')).replace(tzinfo=None) - datetime.timedelta(minutes=offset)
+        expect(report).to_contain_text(f"{local:%Y-%m-%d %H:%M}")
+        expect(report).not_to_contain_text(head['at'])
         expect(report).to_contain_text(y.uid)
         self.assertEqual(report.locator('input,textarea,[contenteditable=true]').count(), 0)
         self.assertEqual(self.cells(page), before)
