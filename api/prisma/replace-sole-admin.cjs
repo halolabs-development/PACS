@@ -12,10 +12,11 @@
 // (Keycloak groups/roles) confirmed. Exit 2: replaced (committed), roster unconfirmed — recover with
 // `node prisma/import-member-rights.cjs --retry-roster`. Exit 1: not replaced — refused, or failed before its
 // transaction committed; nothing was changed. Exit 3 (replaced:null): the commit answer was lost and this run's audit
-// row is not seen, or the database could not be read — run the same command with the same arguments again. That run
+// row is not seen, or the database could not be opened or read — run the same command with the same arguments again. That run
 // finds a saved replacement and rewrites nothing: it confirms the successor's latest roster (exit 0, or 2 unconfirmed;
 // `again:"standing"`), or, when a member changed since, prints the current state and sends no roster (exit 2,
-// `again:"changed"`); a replacement never saved runs from the start.
+// `again:"changed"` — also when the predecessor was made sole administrator again since: never replaced twice); a
+// replacement never saved runs from the start.
 // A failed cleanup at the end is reported on its own line and does not change the exit code.
 for (const name of ['DATABASE_URL', 'KC_ADMIN_URL', 'KC_REALM', 'KC_ISSUER', 'KC_CLIENT_ID', 'KC_CLIENT_SECRET', 'KIN_EMR_STATE_DIR']) {
   if (!process.env[name]) throw new Error('Missing setting: ' + name);

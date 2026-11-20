@@ -14,7 +14,7 @@ import { LedgerFailure } from './emr-runtime/store';
  *    still have committed. Check the member list or audit log, then run --retry-roster or the same command again.
  *    The replacement (replaced:null) says first: run the same command with the same arguments again — that run finds
  *    a saved replacement and only confirms its roster, or replaces from the start; also 3 when the database cannot
- *    be read to tell whether an earlier run saved it (OutcomeUndetermined).
+ *    be opened or read to tell whether an earlier run saved it (a failed start, OutcomeUndetermined).
  *  - The replacement run again over its own saved result: `again:"standing"` — nothing rewritten, the successor's
  *    latest roster confirmed (0) or not (2); `again:"changed"` — a member changed since: the current state, no roster
  *    sent (2).
@@ -119,13 +119,14 @@ async function ownChange(db: Records, transaction: Transaction, subject: string)
 type Say = { out(line: string): void; err(line: string): void };
 
 /** What an operator member command calls its outcome. The codes and the rule that decides them are the same. */
-type Words = { key: 'designated' | 'replaced'; failed: string; unknown: string };
+/** startUnknown: a start that fails (the database or ledger cannot be opened) cannot tell an earlier run's result. */
+type Words = { key: 'designated' | 'replaced'; failed: string; unknown: string; startUnknown?: boolean };
 const DESIGNATION: Words = { key: 'designated',
   failed: 'First administrator designation failed before it was saved; nothing was granted',
   unknown: 'Outcome unknown: the commit answer was lost; the designation may have been saved. Check the institution\'s '
     + 'members (or the audit log) for this person as administrator, then run ' + RETRY_ROSTER
     + '; if they are not, run the same command again' };
-const REPLACEMENT: Words = { key: 'replaced',
+const REPLACEMENT: Words = { key: 'replaced', startUnknown: true,
   failed: 'Administrator replacement failed before it was saved; nothing was changed',
   unknown: RUN_AGAIN + ' 이번 실행의 교체가 저장됐는지 알 수 없습니다. 다시 실행하면, 저장된 교체는 아무것도 다시 쓰지 않고 '
     + '후임의 명부만 확인하며, 저장되지 않았으면 처음부터 교체합니다.' };
@@ -138,7 +139,12 @@ async function outcome(command: FirstAdminCommand, say: Say, transaction: Transa
     say.err(JSON.stringify({ [words.key]: false, code, message: typeof message === 'string' ? message : words.failed }));
     return FIRST_ADMIN_EXIT.notDesignated;
   };
-  try { await command.start(); } catch (error) { return notDesignated(error); }
+  try { await command.start(); } catch (error) {
+    // The replacement's rerun is how a lost answer is recovered: unable to open the database, it cannot say "not replaced".
+    if (!words.startUnknown) return notDesignated(error);
+    say.err(JSON.stringify({ [words.key]: null, code: null, message: words.unknown }));
+    return FIRST_ADMIN_EXIT.unknown;
+  }
   let designated: Designation | null = null;
   // Only a designation this command saw return sends its own generation. Settled after a failure, a later change may
   // already be on the roster: leave the roster to --retry-roster (it sends each member's latest generation).

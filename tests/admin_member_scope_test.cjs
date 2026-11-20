@@ -615,6 +615,22 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
       assert.deepEqual([changedAgain.again, changedAgain.current.to.version, changedAgain.current.from.enabled], ['changed', 5, false]);
       w.rows.get('reader-d').version = 2;
       assert.equal(quiet(), unchanged);
+      // Rerun while the provider cannot be read: the database alone tells a saved replacement.
+      const realInstitutions = w.kc.institutions;
+      w.kc.institutions = async () => { throw new Error('synthetic provider outage'); };
+      assert.equal((await w.replace('admin-d', 'reader-d', D)).again, 'standing');
+      w.kc.institutions = realInstitutions;
+      // The hospital made the predecessor sole administrator again since (reactivated; the successor demoted): the
+      // original command run again reports that change and never replaces twice.
+      const pre = w.rows.get('admin-d'), suc = w.rows.get('reader-d');
+      Object.assign(pre, { suspended: false, version: pre.version + 1 });
+      Object.assign(suc, { roles: ['radiologist'], version: suc.version + 1 });
+      const reinstated = quiet();
+      const changedBack = await w.replace('admin-d', 'reader-d', D);
+      assert.deepEqual([changedBack.again, changedBack.current.from.enabled, changedBack.current.to.roles], ['changed', true, ['radiologist']]);
+      assert.equal(quiet(), reinstated, 'never replaced twice');
+      Object.assign(pre, { suspended: true, version: pre.version - 1 });
+      Object.assign(suc, { roles: ['radiologist', 'admin'], version: suc.version - 1 });
       // Unreadable: the earlier run's result cannot be told — exit 3 again (OutcomeUndetermined).
       const { OutcomeUndetermined } = require('../api/src/first-admin-command.ts');
       const realAudits = w.db.auditLog.findMany;
@@ -706,6 +722,18 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
       await assert.rejects(w.reset('colleague-d', { mode: 'temp' }, adminD, current), e => e.getStatus?.() === 401);
       assert.ok(!pending && !w.kcCalls.some(c => c[0] === 'reset'), 'replaced meanwhile: no provider write, no password');
       assert.ok(!w.audits.some(a => a.action.startsWith('admin.user.reset-password')));
+      // The replacement commits while the reset registers a provider-only member (after the recheck under the lock):
+      // the recheck just before the provider write refuses — no provider write, no password.
+      const w3 = setup();
+      const current3 = async () => { if (w3.rows.get('admin-d').suspended) throw Object.assign(new Error('session ended'), { getStatus: () => 401 }); };
+      const realCreate = w3.db.memberRights.create;
+      w3.db.memberRights.create = async args => {
+        const created = await realCreate(args);
+        if (args.data.sub === 'kc-d-group') await w3.replace('admin-d', 'reader-d', D);
+        return created;
+      };
+      await assert.rejects(w3.reset('kc-d-group', { mode: 'temp' }, adminD, current3), e => e.getStatus?.() === 401);
+      assert.ok(w3.rows.get('admin-d').suspended && !w3.kcCalls.some(c => c[0] === 'reset'), 'no provider write after the replacement');
       // Not replaced: the same reset returns the temporary password.
       const w2 = setup();
       const current2 = async () => { if (w2.rows.get('admin-d').suspended) throw new Error('unexpected'); };
@@ -770,7 +798,9 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
       for (const step of ['operator-identity', 'transaction', 'reread-audit', 'lookup-change', 'send-roster']) assert.ok(!r.steps.includes(step), step);
       noRetry(r);
     });
-    expect('start-fails', 1, false, 'the ledger did not start', r => assert.ok(!r.steps.includes('replace')));
+    // Unable to open the database, a rerun cannot say "not replaced": exit 3, run again.
+    expect('start-fails', 3, null, 'the ledger did not start', r => { assert.ok(!r.steps.includes('replace'));
+      assert.ok(r.errJson[0].message.startsWith('같은 명령을 같은 인자로 다시 실행하세요.'), r.stderr); });
     expect('callback-refused', 1, false, 'a refusal under the locks (rolled back)', r => {
       assert.equal(r.errJson[0].code, 'REPLACE_ADMIN_FROM_NOT_ADMIN'); assert.ok(!r.steps.includes('operator-identity')); noRetry(r); });
     expect('not-committed', 1, false, 'COMMIT asked and known not committed', noRetry);

@@ -62,6 +62,21 @@ export class ReplaceAdminRefusal extends ConflictException {
 }
 /** One run's arguments: a later run with the same ones is the same replacement. */
 type ReplacementRun = { institution: string; from: string; to: string; name: string; reason: string };
+/** The latest audit rows of this replacement (same institution, pair, operator and reason) — the predecessor's
+ * suspension and the successor's approval, written in one transaction — as their parsed details, or null. */
+async function savedReplacement(db: any, run: ReplacementRun): Promise<{ from: any; to: any } | null> {
+  const rows: { target: string; action: string; detail: string | null }[] = await db.auditLog.findMany({
+    where: { target: { in: [run.from, run.to] }, action: { in: ['admin.user.suspend', 'admin.user.approve', 'admin.user.update'] } },
+    orderBy: { id: 'desc' } });
+  const ours = (row: { detail: string | null }) => {
+    const detail = JSON.parse(row.detail ?? '{}'), o = detail?.operator;
+    return o && o.by === run.name && o.institution === run.institution && o.reason === run.reason
+      && o.replaced?.from === run.from && o.replaced?.to === run.to ? detail : null;
+  };
+  const from = rows.find(row => row.target === run.from && row.action === 'admin.user.suspend' && ours(row));
+  const to = rows.find(row => row.target === run.to && row.action !== 'admin.user.suspend' && ours(row));
+  return from && to ? { from: ours(from), to: ours(to) } : null;
+}
 const adminsOf = (db: any, institution: string): Promise<{ sub: string }[]> => db.memberRights.findMany({
   where: { institution, approved: true, suspended: false, roles: { has: 'admin' } }, select: { sub: true } });
 /** The predecessor is X's approved, active administrator, and the only one. */
@@ -527,17 +542,24 @@ export class AdminService {
     const reason = text(operator?.reason, 'reason', 500);
     const name = operator.name;
     if (from === to) throw new BadRequestException('전임과 후임이 같습니다');
-    if (!(await this.keycloak.institutions()).includes(institution)) throw new BadRequestException('허용되지 않은 기관입니다');
     const run: ReplacementRun = { institution, from, to, name, reason };
-    // The predecessor is judged on the rights row alone: a departed person's provider account may already be gone.
-    // Unreadable, the state is unknown — an earlier run of this command may have replaced them.
-    let fromRow: any, admins: { sub: string }[];
+    // The database first, the provider after: an earlier run of this same command is told from the database alone.
+    // Unreadable, the state is unknown — an earlier run may have replaced them. Saved by an earlier run (whatever
+    // happened since), it is never applied again: the rerun reports it.
+    let fromRow: any, admins: { sub: string }[], saved: boolean;
     try {
       fromRow = await this.prisma.memberRights.findUnique({ where: { sub: from } });
       admins = await adminsOf(this.prisma, institution);
+      saved = !!await savedReplacement(this.prisma, run);
     } catch { throw new OutcomeUndetermined(); }
+    if (saved) {
+      const again = await this.replacementAgain(run);
+      if (again) return again;
+    }
+    if (!(await this.keycloak.institutions()).includes(institution)) throw new BadRequestException('허용되지 않은 기관입니다');
+    // The predecessor is judged on the rights row alone: a departed person's provider account may already be gone.
     try { replacementGate(fromRow, admins, from, institution); }
-    catch (error) { return this.replacementAgain(run, error); }
+    catch (error) { return this.againOr(run, error); }
     // The successor's provider account, then — the last remote read, strict — their groups and effective roles. The
     // identity registered for them is this one, with those groups.
     const account = await this.managed(to);
@@ -591,50 +613,49 @@ export class AdminService {
       if (lockWaitExceeded(error))
         throw new ConflictException({ code: 'MEMBER_BUSY', message: '다른 요청이 회원 상태를 변경하고 있습니다. 잠시 후 다시 실행하세요' });
       // Under the locks the predecessor is no longer X's sole administrator: perhaps this same command saved it already.
-      if (error instanceof ReplaceAdminRefusal) return this.replacementAgain(run, error);
+      if (error instanceof ReplaceAdminRefusal) return this.againOr(run, error);
       throw error;
     }
   }
 
   /**
-   * The same command again (the operator reruns it after a lost answer, exit 3): the predecessor is no longer X's
-   * administrator, or not the only one. Decided under X's lock and both members' locks, writing nothing — no rights,
-   * session, audit or ledger record:
+   * The same command again (the operator reruns it after a lost answer, exit 3): its own audit rows exist, or the
+   * predecessor is no longer X's sole administrator. Decided under X's lock and both members' locks, writing nothing —
+   * no rights, session, audit or ledger record:
    *  - this replacement's two audit rows exist (same institution, pair, operator and reason) and neither member changed
    *    since (their versions are those rows' `after`): it stands — `standing`, the successor's latest roster is checked
    *    and completed by the command;
    *  - those rows exist but a member changed since: `changed`, the current state of both, and no roster is sent (an older
    *    roster never overwrites a later change);
-   *  - no such rows: this replacement was never saved and its premise does not hold — the original refusal.
+   *  - no such rows: null — this replacement was never saved (the caller runs it, or refuses).
    * Anything unreadable here: `OutcomeUndetermined`.
    */
-  private async replacementAgain(run: ReplacementRun, refusal: unknown) {
+  /** A refusal of the predecessor: this same command's saved replacement if there is one, else the refusal. */
+  private async againOr(run: ReplacementRun, refusal: unknown) {
     if (!(refusal instanceof ReplaceAdminRefusal) || !['REPLACE_ADMIN_FROM_NOT_ADMIN', 'REPLACE_ADMIN_NOT_SOLE']
       .includes((refusal.getResponse() as any)?.code)) throw refusal;
+    const again = await this.replacementAgain(run);
+    if (!again) throw refusal;
+    return again;
+  }
+
+  private async replacementAgain(run: ReplacementRun) {
     let found: { standing: boolean; from: ReturnType<AdminService['row']>; to: ReturnType<AdminService['row']> } | null;
     try {
       found = await this.prisma.$transaction(async tx => {
         await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
         await lockInstitution(tx, run.institution);
         await lockMembersInOrder(tx, [run.from, run.to]);
-        const rows = await tx.auditLog.findMany({ where: { target: { in: [run.from, run.to] },
-          action: { in: ['admin.user.suspend', 'admin.user.approve', 'admin.user.update'] } }, orderBy: { id: 'desc' } });
-        const ours = (row: { detail: string | null }) => {
-          const detail = JSON.parse(row.detail ?? '{}'), o = detail?.operator;
-          return o && o.by === run.name && o.institution === run.institution && o.reason === run.reason
-            && o.replaced?.from === run.from && o.replaced?.to === run.to ? detail : null;
-        };
-        const suspended = rows.find(row => row.target === run.from && row.action === 'admin.user.suspend' && ours(row));
-        const approved = rows.find(row => row.target === run.to && row.action !== 'admin.user.suspend' && ours(row));
-        if (!suspended || !approved) return null;
+        const saved = await savedReplacement(tx, run);
+        if (!saved) return null;
         const fromNow = await tx.memberRights.findUnique({ where: { sub: run.from } });
         const toNow = await tx.memberRights.findUnique({ where: { sub: run.to } });
         if (!fromNow || !toNow) return null;
-        return { standing: fromNow.version === ours(suspended).after?.version && toNow.version === ours(approved).after?.version,
+        return { standing: fromNow.version === saved.from.after?.version && toNow.version === saved.to.after?.version,
           from: this.row(fromNow), to: this.row(toNow) };
       }, { maxWait: 4000, timeout: 8000 });
     } catch { throw new OutcomeUndetermined(); }
-    if (!found) throw refusal;
+    if (!found) return null;
     return found.standing ? { ...found.to, again: 'standing' as const }
       : { ...found.to, again: 'changed' as const, current: { from: found.from, to: found.to } };
   }
@@ -678,6 +699,8 @@ export class AdminService {
         throw new ConflictException({ code: 'MEMBER_BUSY', message: '다른 요청이 회원 상태를 변경하고 있습니다. 잠시 후 다시 시도하세요' });
       throw error;
     }
+    // Again just before the provider write: a replacement committed while the member row was read or registered.
+    await facts?.request.requireCurrent();
     if (mode === 'temp') {
       const temporaryPassword = randomBytes(18).toString('base64url') + 'aA1!';
       await this.keycloak.resetPassword(id, mode, temporaryPassword);
