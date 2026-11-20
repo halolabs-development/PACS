@@ -603,7 +603,7 @@
 
     /** 점유 거절(REPORT_HELD): 누가 잡고 있는지 화면에 반영하고 그 검사에 한 번만 알린다. */
     function noteHeld(uid, holder) {
-      appState[uid] = { ...appState[uid], holder };
+      appState[uid] = { ...appState[uid], holder, holderMine: false };
       syncStudy(uid);
       if (uid === selectedUid) { updateReportButtons(); loadReport(); }
       if (warnedFor !== uid) {

@@ -59,7 +59,7 @@
     let accountRequest=null, accountEpoch=0, accountRevision=null, accountBusy=false;
     const edit = el('button','Edit Shortcuts',host); edit.type='button'; edit.className='chip'; edit.id='workspace-shortcuts-edit';
     const status = el('span','',host); status.id='workspace-shortcuts-status'; status.setAttribute('role','status');
-    status.style.cssText='display:block;flex-basis:100%;min-height:1.5em';
+    // Its place in the bar (one line kept for it, beside the buttons where the bar has room) is reading-workspace.css's.
     const dialog = el('dialog','',d.body); dialog.id='workspace-shortcuts-dialog'; dialog.style.cssText='max-height:85vh;overflow:auto;width:640px;max-width:95vw;box-sizing:border-box;padding:20px;background:#111c2f;color:#d6e6ff;border:1px solid #718eaa;border-radius:8px';
     const title = el('h2','Workspace Shortcuts',dialog); title.id='workspace-shortcuts-title'; dialog.setAttribute('aria-labelledby',title.id);
     el('p','이 브라우저의 현재 계정에 저장합니다. Ctrl+Alt 조합 또는 Ctrl+S를 지정하세요. Ctrl+Alt+C(환자 ID 복사), Ctrl+Alt+8(영상 배치)과 나머지 브라우저·입력 키는 예약되어 있습니다. Backspace/Delete로 미배정할 수 있습니다. Viewer의 새 키는 다음 열기부터 적용하며 열린 창은 현재 키를 유지합니다.',dialog);

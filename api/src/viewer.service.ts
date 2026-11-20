@@ -138,7 +138,7 @@ export class ViewerService {
     const pageResult = await this.bounded(async tx => {
       const parent = Prisma.sql`SELECT uid, "institutionId" FROM "StudyState" WHERE uid = ${uid}
         AND ("institutionId" = ${c.institution} OR "teleInstitutionId" = ${c.institution})
-        AND (rs <> 'P' OR (CASE WHEN "preDocSub" IS NOT NULL THEN "preDocSub" = ${c.sub} ELSE "preDoc" = ${c.actor} END) OR (CASE WHEN "preReviewerSub" IS NOT NULL THEN "preReviewerSub" = ${c.sub} ELSE "preReviewer" = ${c.actor} END))`;
+        AND (rs <> 'P' OR COALESCE("preDocSub" = ${c.sub}, false) OR COALESCE("preReviewerSub" = ${c.sub}, false))`;
       // Checking "signed?" before and after a separate read cannot see a reset
       // and re-approval in between; the pinned head is part of this statement.
       const signed = final === null ? null : Prisma.sql`SELECT r.version FROM "Report" r

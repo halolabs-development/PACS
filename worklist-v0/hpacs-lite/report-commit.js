@@ -75,7 +75,7 @@
     function releasedText(r) {
       const parts = [];
       // 점유자가 곧 저장 글을 쓴 사람이고 임시글이 있으면 아래 저장 글 문장이 같은 사실을 말한다.
-      if (r.holder && r.holderDraft && r.holder !== r.savedBy) {
+      if (r.holder && r.holderDraft && !r.sameWriter) {
         const who = displayActor(r.holder);
         parts.push(`${who} 선생님이 쓰던 글이 있습니다 — 그 글은 ${who} 선생님의 개인 임시글로 남아 있습니다.`);
       }
@@ -170,7 +170,7 @@
         .sort((a, b) => a.version - b.version)[0];
       if (!next) return "none";
       const drawn = Array.isArray(next.drawings) ? next.drawings.map(d => d?.id) : [], named = sent.drawings ?? [];
-      return next.action === sent.action && !!sent.author && next.author === sent.author
+      return next.action === sent.action && next.mine === true
         && RFIELDS.every(k => KinReportCitation.toLf(String(next[k] ?? "")) === KinReportCitation.toLf(sent.texts[k]))
         && drawn.length === named.length && named.every(id => drawn.includes(id)) ? "mine" : "other";
     }
@@ -329,7 +329,7 @@
                * 확정이 끝나며 `commitEpoch`이 올라가 그 읽기의 답은 버려진다 — 읽는다고 말해 놓고 읽지 않는 셈이 된다.
                */
               // Image Report: the list this commit named as its version's (none named, or a Reset: the version holds none).
-              reportUnknownCommits.set(uid, { sentAt, action, reason, baseVersion, author: draftOwner?.author ?? null,
+              reportUnknownCommits.set(uid, { sentAt, action, reason, baseVersion,
                 texts: action === "reset" ? Object.fromEntries(RFIELDS.map(k => [k, ""])) : content,
                 drawings: action === "reset" ? [] : [...(result.named?.expectedEffectiveDrawingIds ?? [])],
                 revision: draftClient.revision(uid) });
@@ -661,7 +661,7 @@
       catch (_) { list = null; }
       if (!work.admits(at)) return { status: "stopped" };
       const record = { batch: true, sentAt: sent?.sentAt ?? reportEdits, seq: sent?.seq ?? null, action, reason,
-        author: draftOwner?.author ?? null, baseVersion: item.version, texts: { ...texts }, revision: draftClient.revision(uid) };
+        baseVersion: item.version, texts: { ...texts }, revision: draftClient.revision(uid) };
       const found = batchVersionOutcome(list, record);
       if (found === "mine") {
         if (heldUid === uid) { heldUid = null; clearInterval(heartbeat); heartbeat = null; }
@@ -695,7 +695,7 @@
       if (!Array.isArray(list)) return "none";
       const same = v => RFIELDS.every(k => KinReportCitation.toLf(String(v?.[k] ?? "")) === KinReportCitation.toLf(sent.texts[k]));
       // Image Report: a batch commit names no drawings, so its version holds none - a version with drawings is not it.
-      if (list.some(v => v && v.version === sent.baseVersion + 1 && v.action === sent.action && !!sent.author && v.author === sent.author
+      if (list.some(v => v && v.version === sent.baseVersion + 1 && v.action === sent.action && v.mine === true
         && v.reason === sent.reason && same(v) && !(Array.isArray(v.drawings) && v.drawings.length))) return "mine";
       return list.some(v => v && Number.isSafeInteger(v.version) && v.version > sent.baseVersion) ? "other" : "none";
     }
@@ -870,7 +870,7 @@
       const s = studies.find(x => x.uid === uid);
       const a = appState[uid];
       if (!s || !a) return;
-      for (const k of ["rs", "ss", "em", "ts", "matched", "holder", "version", "repDoc", "confirm",
+      for (const k of ["rs", "ss", "em", "ts", "matched", "holder", "holderMine", "version", "repDoc", "confirm",
                         "preDoc", "preReviewer", "prelimHidden", "holdReason"])
         if (a[k] !== undefined) s[k] = a[k];
       if (a.holder === null || a.holder === undefined) s.holder = a.holder;

@@ -25,13 +25,13 @@ export class ImageReportController {
 
   @Get('studies/:uid/report/drawings')
   drawings(@Param('uid') uid: string, @Req() req: any) {
-    draftDeliveries.track(caller(req).actor, req, req.res);   // my draft's drawings
+    draftDeliveries.track(caller(req).sub, req, req.res);   // my draft's drawings
     return this.pacs.reportDrawings(uid, caller(req));
   }
 
   @Get('studies/:uid/report/drawings/:id')
   drawing(@Param('uid') uid: string, @Param('id') id: string, @Req() req: any) {
-    draftDeliveries.track(caller(req).actor, req, req.res);   // a drawing my draft holds
+    draftDeliveries.track(caller(req).sub, req, req.res);   // a drawing my draft holds
     return this.pacs.reportDrawing(uid, drawingId(id), caller(req));
   }
 }

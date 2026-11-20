@@ -23,7 +23,7 @@ require('/app/node_modules/reflect-metadata');
 const { NestFactory, APP_GUARD } = require('/app/node_modules/@nestjs/core');
 const common = require('/app/node_modules/@nestjs/common');
 const { StudyTransferLocalController } = require('/app/dist/study-transfer-local.controller');
-const { StudyTransferLocalService } = require('/app/dist/study-transfer-local.service');
+const { StudyTransferLocalService, checkDownloadRow } = require('/app/dist/study-transfer-local.service');
 const { studyTransferLocalParser } = require('/app/dist/study-transfer-local-parser');
 const Gate = require('/app/dist/dicom-import-gate.service');
 const { Prisma } = require('/app/node_modules/@prisma/client');
@@ -1714,7 +1714,7 @@ test('S9U4-B28 download: prepare -> one fixed manifest (replayed for the same id
   assert.equal((await h.request('GET', `/api/studies/${study}/original-downloads/${id}`, { as: TECH2 })).status, 404);
   assert.equal((await h.request('GET', `/api/studies/${study}/original-downloads/${id}/archive`, { as: TECH2 })).status, 404);
   const zip = await h.request('GET', `/api/studies/${study}/original-downloads/${id}/archive`, { as: RAD });
-  assert.equal(zip.status, 200);
+  assert.equal(zip.status, 200, JSON.stringify(zip.body));
   assert.equal(zip.headers['content-type'], 'application/zip');
   assert.equal(zip.headers['content-disposition'], `attachment; filename="HALO-PACS-originals-${id.slice(0, 8)}.zip"`);
   assert.equal(Number(zip.headers['content-length']), zip.bytes.length);
@@ -1802,6 +1802,206 @@ test('S9U4-B29 download refusals before byte 1: roles, foreign/tele study 404, M
   h.s.ops.get(id3).download.manifestCanonical += ' ';
   assert.deepEqual((await h.request('GET', `/api/studies/${study3}/original-downloads/${id3}/archive`, { as: RAD })).body.code, 'MANIFEST_STORE_INVALID');
   assert.deepEqual((await h.request('GET', `/api/studies/${study3}/original-downloads/${id3}`, { as: RAD })).body.code, 'MANIFEST_STORE_INVALID');
+});
+
+const prepareChosen = (h, study, selection, id = randomUUID(), as = RAD) =>
+  h.request('POST', `/api/studies/${study}/original-downloads`, { as, body: { operationId: id, selection } });
+const originalsOf = (h, study) => [...h.orthanc.instances.values()].filter(i => i.h.studyInstanceUid === study);
+const settledArchive = async (h, study, id) => {
+  const zip = await h.request('GET', `/api/studies/${study}/original-downloads/${id}/archive`, { as: RAD });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  return zip;
+};
+
+test('S9U4-B90 chosen originals: a chosen series and a chosen image of another series give a ZIP of exactly those stored originals under their own UIDs; the whole study is unchanged', async () => {
+  const h = await harness();
+  const study = await downloadStudy(h, 5);
+  const s1 = study + '.1', s2 = study + '.2';
+  const inS1 = originalsOf(h, study).filter(i => i.h.seriesInstanceUid === s1), inS2 = originalsOf(h, study).filter(i => i.h.seriesInstanceUid === s2);
+  assert.deepEqual([inS1.length, inS2.length], [3, 2]);
+  const image = inS2[1].h.sopInstanceUid;
+  const id = randomUUID();
+  // The lists in any order: the server keeps them sorted, one text for one choice.
+  const chosen = await prepareChosen(h, study, { instances: [image], series: [s1] }, id);
+  assert.deepEqual([chosen.status, chosen.body.state, chosen.body.objects, chosen.body.selection], [200, 'prepared', 4, { series: 1, instances: 1 }], JSON.stringify(chosen.body));
+  assert.deepEqual(h.s.op(id).download.selection, { series: [s1], instances: [image] });
+  const zip = await settledArchive(h, study, id);
+  assert.equal(zip.status, 200);
+  const entries = parseZipEntries(zip.bytes);
+  assert.equal(entries.length, 4 + 1, 'the chosen originals and manifest.json, nothing else');
+  const manifest = JSON.parse(entries[entries.length - 1].data.toString('utf8'));
+  assert.equal(entries[entries.length - 1].name, 'manifest.json');
+  assert.equal(manifest.studyUid, study, 'the original study, never another exam');
+  const expected = [...inS1, inS2[1]];
+  assert.deepEqual(manifest.objects.map(o => o.sopUid).sort(), expected.map(i => i.h.sopInstanceUid).sort(), 'exactly the chosen SOPs');
+  const bySop = new Map(expected.map(i => [i.h.sopInstanceUid, i]));
+  for (const o of manifest.objects) {
+    assert.equal(o.seriesUid, bySop.get(o.sopUid).h.seriesInstanceUid, 'each original keeps its own series');
+  }
+  const stored = new Map(expected.map(i => [sha(i.bytes), i]));
+  for (const e of entries.slice(0, -1)) assert.ok(stored.has(sha(e.data)), e.name + ' is a chosen stored original, byte for byte');
+  noPatientValue(manifest, 'SYN-D', 'SYNTHETIC^PATIENT');
+  const status = await h.request('GET', `/api/studies/${study}/original-downloads/${id}`, { as: RAD });
+  assert.deepEqual([status.body.state, status.body.selection, status.body.note],
+    ['sent', { series: 1, instances: 1 }, '서버가 고른 시리즈·영상의 원본을 모두 보냈습니다. 내 컴퓨터에 저장됐는지는 브라우저의 다운로드 목록에서 확인하세요.']);
+  const [prepared] = audits(h.s, 'original.download.prepare');
+  assert.deepEqual([prepared.detail.objects, prepared.detail.selection], [4, { series: 1, instances: 1 }], 'the audit says how much was chosen, never which UIDs');
+  assert.deepEqual(audits(h.s, 'original.download.result')[0].detail.objects.map(o => o.sopUid).sort(), expected.map(i => i.h.sopInstanceUid).sort());
+  // The whole study: the same closed body and answer as before, all five originals, no selection anywhere.
+  const whole = randomUUID();
+  const all = await prepare(h, study, whole);
+  assert.deepEqual([all.status, all.body.objects, 'selection' in all.body], [200, 5, false]);
+  assert.equal('selection' in h.s.op(whole).download, false);
+  assert.equal('selection' in audits(h.s, 'original.download.prepare')[1].detail, false);
+  const wholeZip = await settledArchive(h, study, whole);
+  assert.equal(parseZipEntries(wholeZip.bytes).length, 6);
+  assert.equal((await h.request('GET', `/api/studies/${study}/original-downloads/${whole}`, { as: RAD })).body.note,
+    '서버가 이 검사의 모든 원본을 보냈습니다. 내 컴퓨터에 저장됐는지는 브라우저의 다운로드 목록에서 확인하세요.');
+});
+
+test('S9U4-B91 chosen originals refused before any row: nothing chosen or a malformed choice is 400; a series or image the study does not hold now (another study, a withdrawn attachment) is 409 SELECTION_NOT_FOUND naming none; replays compare the choice', async () => {
+  const h = await harness();
+  const study = await downloadStudy(h, 4), other = await downloadStudy(h, 2);
+  const s1 = study + '.1', s2 = study + '.2';
+  const [first] = originalsOf(h, study).filter(i => i.h.seriesInstanceUid === s2);
+  for (const selection of [{ series: [], instances: [] }, { series: [s1] }, { series: [s1], instances: [], more: [] }, { series: [s1, s1], instances: [] },
+    { series: ['not-a-uid'], instances: [] }, { series: s1, instances: [] }, null, []]) {
+    const id = randomUUID();
+    const r = await prepareChosen(h, study, selection, id);
+    assert.deepEqual([r.status, r.body.code], [400, 'IMPORT_REQUEST_INVALID'], JSON.stringify(selection));
+    assert.ok(!h.s.op(id), 'nothing prepared');
+  }
+  // The bound: 1,000 choices of 64-character UIDs fit the request body and are judged (here: not the study's); 1,001 is 400.
+  const long = n => Array.from({ length: n }, (_, i) => '2.25.' + (10n ** 58n + BigInt(i)).toString());
+  assert.equal(long(1)[0].length, 64);
+  const most = await prepareChosen(h, study, { series: [], instances: long(1000) });
+  assert.deepEqual([most.status, most.body.code], [409, 'SELECTION_NOT_FOUND'], 'a full choice reaches the rule, never 413');
+  assert.deepEqual((await prepareChosen(h, study, { series: [], instances: long(1001) })).body.code, 'IMPORT_REQUEST_INVALID');
+  const before = h.s.audits.length;
+  for (const selection of [{ series: [other + '.1'], instances: [] }, { series: [], instances: [originalsOf(h, other)[0].h.sopInstanceUid] },
+    { series: [s1], instances: [uid()] }]) {
+    const id = randomUUID();
+    const r = await prepareChosen(h, study, selection, id);
+    assert.deepEqual([r.status, r.body.code], [409, 'SELECTION_NOT_FOUND'], JSON.stringify(selection));
+    for (const value of [...selection.series, ...selection.instances]) assert.ok(!JSON.stringify(r.body).includes(value), 'the answer names no UID');
+    assert.ok(!h.s.op(id), 'nothing prepared');
+  }
+  assert.equal(h.s.audits.length, before, 'no audit row for a refused choice');
+  // A withdrawn attachment's series is not an original anyone downloads, chosen or not.
+  const findMany = h.s.prisma.studyAttachment.findMany;
+  h.s.prisma.studyAttachment.findMany = async () => [{ seriesInstanceUid: s2, sopInstanceUid: first.h.sopInstanceUid, orthancId: first.id, objectSeriesUid: null }];
+  assert.equal((await prepareChosen(h, study, { series: [s2], instances: [] })).body.code, 'SELECTION_NOT_FOUND');
+  assert.equal((await prepareChosen(h, study, { series: [], instances: [first.h.sopInstanceUid] })).body.code, 'SELECTION_NOT_FOUND');
+  assert.equal((await prepareChosen(h, study, { series: [s1], instances: [] })).body.objects, 2);
+  h.s.prisma.studyAttachment.findMany = findMany;
+  // Replays: the same choice answers the same; the whole study, another choice or a series against its images is another request.
+  const id = randomUUID();
+  const one = await prepareChosen(h, study, { series: [s2], instances: [] }, id);
+  assert.equal(one.status, 200);
+  assert.deepEqual((await prepareChosen(h, study, { series: [s2], instances: [] }, id)).body.manifestSha256, one.body.manifestSha256);
+  for (const again of [() => prepare(h, study, id), () => prepareChosen(h, study, { series: [s1], instances: [] }, id),
+    () => prepareChosen(h, study, { series: [], instances: originalsOf(h, study).filter(i => i.h.seriesInstanceUid === s2).map(i => i.h.sopInstanceUid) }, id)])
+    assert.equal((await again()).body.code, 'OPERATION_CONFLICT');
+  const wholeId = randomUUID();
+  assert.equal((await prepare(h, study, wholeId)).status, 200);
+  assert.equal((await prepareChosen(h, study, { series: [s1], instances: [] }, wholeId)).body.code, 'OPERATION_CONFLICT');
+  assert.equal(audits(h.s, 'original.download.prepare').length, 3, 'one prepare row per new operation');
+});
+
+test('S9U4-B92 a chosen download at its start compares only the chosen originals: a change inside the choice is MANIFEST_CHANGED with byte 0; a new image elsewhere or an unreadable original outside it changes nothing; the stored choice keeps its closed form', async () => {
+  const h = await harness();
+  const study = await downloadStudy(h, 4);
+  const s1 = study + '.1', s2 = study + '.2';
+  const outside = originalsOf(h, study).find(i => i.h.seriesInstanceUid === s2);
+  // An original outside the choice whose size and MD5 cannot be read does not stop the chosen preparation.
+  h.orthanc.fault = call => (call.path.includes(outside.id) && call.path.endsWith('/attachments/dicom/info') ? { status: 500 } : null);
+  const kept = randomUUID();
+  assert.equal((await prepareChosen(h, study, { series: [s1], instances: [] }, kept)).status, 200);
+  assert.deepEqual((await prepare(h, study)).body.code, 'MANIFEST_INCOMPLETE', 'the whole study still needs every original');
+  h.orthanc.fault = null;
+  h.orthanc.store(dicom({ study, series: s2, id: 'SYN-D', pixel: 220 }));
+  const zip = await settledArchive(h, study, kept);
+  assert.deepEqual([zip.status, parseZipEntries(zip.bytes).length], [200, 3], 'a new image outside the choice changes nothing');
+  const changed = randomUUID();
+  assert.equal((await prepareChosen(h, study, { series: [s1], instances: [] }, changed)).status, 200);
+  h.orthanc.store(dicom({ study, series: s1, id: 'SYN-D', pixel: 230 }));
+  const refused = await h.request('GET', `/api/studies/${study}/original-downloads/${changed}/archive`, { as: RAD });
+  assert.deepEqual([refused.status, refused.body.code], [409, 'MANIFEST_CHANGED']);
+  assert.equal(h.s.op(changed).download.attempts.length, 0, 'no attempt, no byte');
+  const gone = randomUUID(), image = originalsOf(h, study).find(i => i.h.seriesInstanceUid === s2);
+  assert.equal((await prepareChosen(h, study, { series: [], instances: [image.h.sopInstanceUid] }, gone)).status, 200);
+  h.orthanc.instances.delete(image.id);
+  assert.deepEqual((await h.request('GET', `/api/studies/${study}/original-downloads/${gone}/archive`, { as: RAD })).body.code, 'MANIFEST_CHANGED');
+  // The stored row: format 2 (the grant's) keeps the choice; a choice outside its closed form is never used.
+  const row = h.s.op(kept);
+  assert.doesNotThrow(() => checkDownloadRow({ ...row, download: { ...row.download, schemaVersion: 2, activeArchiveGrant: null, archiveGrantUses: [] } }));
+  for (const selection of [{ series: [s1], instances: [], extra: 1 }, { series: [], instances: [] }, { series: ['2.25.9', '2.25.1'], instances: [] }])
+    assert.throws(() => checkDownloadRow({ ...row, download: { ...row.download, selection } }), JSON.stringify(selection));
+  const broken = randomUUID();
+  assert.equal((await prepareChosen(h, study, { series: [s1], instances: [] }, broken)).status, 200);
+  h.s.ops.get(broken).download.selection = { series: [], instances: [] };
+  assert.deepEqual((await h.request('GET', `/api/studies/${study}/original-downloads/${broken}`, { as: RAD })).body.code, 'MANIFEST_STORE_INVALID');
+});
+
+const markOf = selection => createHash('sha256').update(JSON.stringify([selection.series, selection.instances]), 'utf8').digest('hex');
+
+test('S9U4-B93 the mark of a choice and the request bound: every preparation and status answer carries selectionSha256 (null for the whole study, the SHA-256 of the sorted lists otherwise; a whole series and its images one by one are two marks); a stored choice above the request bound is still read, granted and sent whole; a new request above it is 400; a stored choice outside its form stays 503', async () => {
+  const h = await harness({ realGuard: true });
+  sessionOf(h, 'sid-m1');
+  const study = uid(), big = study + '.7';
+  own(h.s, study, 'inst-a', 'gateway');
+  for (let i = 0; i < 1001; i++) h.orthanc.store(dicom({ study, series: big, id: 'SYN-D', pixel: 64 }));
+  h.orthanc.store(dicom({ study, series: study + '.8', id: 'SYN-D', pixel: 66 }));
+  const sops = originalsOf(h, study).filter(i => i.h.seriesInstanceUid === big).map(i => i.h.sopInstanceUid).sort();
+  assert.equal(sops.length, 1001);
+  const post = body => h.request('POST', `/api/studies/${study}/original-downloads`, { as: null, headers: boundHeaders('sid-m1'), body });
+  // The mark: explicit null for the whole study; of the sorted lists for a choice, whatever order the request had.
+  const wholeId = randomUUID(), seriesId = randomUUID(), imagesId = randomUUID();
+  const whole = await post({ operationId: wholeId });
+  assert.deepEqual([whole.status, whole.body.objects, whole.body.selectionSha256, 'selection' in whole.body], [200, 1002, null, false], JSON.stringify(whole.body).slice(0, 300));
+  const series = await post({ operationId: seriesId, selection: { series: [big], instances: [] } });
+  assert.deepEqual([series.status, series.body.objects, series.body.selectionSha256], [200, 1001, markOf({ series: [big], instances: [] })]);
+  const thousand = sops.slice(0, 1000);
+  const images = await post({ operationId: imagesId, selection: { instances: [...thousand].reverse(), series: [] } });
+  assert.deepEqual([images.status, images.body.objects, images.body.selection, images.body.selectionSha256],
+    [200, 1000, { series: 0, instances: 1000 }, markOf({ series: [], instances: thousand })], 'the bound itself is a request the server prepares');
+  for (const [id, answer] of [[wholeId, whole], [seriesId, series], [imagesId, images]]) {
+    const status = await boundStatus(h, study, id, 'sid-m1');
+    assert.ok(Object.prototype.hasOwnProperty.call(status.body, 'selectionSha256'), 'the status answer names the mark, null included');
+    assert.deepEqual([status.status, status.body.selectionSha256], [200, answer.body.selectionSha256]);
+  }
+  // A new request above the bound prepares nothing.
+  const over = randomUUID();
+  const refused = await post({ operationId: over, selection: { series: [], instances: sops } });
+  assert.deepEqual([refused.status, refused.body.code], [400, 'IMPORT_REQUEST_INVALID']);
+  assert.ok(!h.s.op(over), 'nothing prepared');
+  // A row kept before this bound: the series' 1,001 images chosen one by one. It is read, granted and sent to its end.
+  const old = randomUUID();
+  assert.equal((await post({ operationId: old, selection: { series: [big], instances: [] } })).status, 200);
+  h.s.ops.get(old).download.selection = { series: [], instances: sops };
+  const status = await boundStatus(h, study, old, 'sid-m1');
+  assert.deepEqual([status.status, status.body.state, status.body.selection, status.body.selectionSha256],
+    [200, 'prepared', { series: 0, instances: 1001 }, markOf({ series: [], instances: sops })], JSON.stringify(status.body).slice(0, 300));
+  assert.notEqual(status.body.selectionSha256, series.body.selectionSha256, 'a whole series and all its images one by one are two choices');
+  const grant = await grantRequest(h, study, old, 'sid-m1');
+  assert.equal(grant.status, 200, JSON.stringify(grant.body));
+  const zip = await nativeGet(h, study, old, grant.body.grant, 'sid-m1');
+  assert.equal(zip.status, 200, JSON.stringify(zip.body));
+  assert.equal(Number(zip.headers['content-length']), zip.bytes.length, 'the archive to its last byte');
+  const entries = parseZipEntries(zip.bytes);
+  assert.equal(entries.length, 1001 + 1);
+  assert.deepEqual(JSON.parse(entries[entries.length - 1].data.toString('utf8')).objects.map(o => o.sopUid).sort(), sops);
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(h.s.op(old).status, 'sent');
+  assert.equal((await boundStatus(h, study, old, 'sid-m1')).body.state, 'sent');
+  // The stored form itself is still required: nothing chosen, an unsorted list, a missing list or null is never used.
+  const broken = randomUUID();
+  assert.equal((await post({ operationId: broken, selection: { series: [big], instances: [] } })).status, 200);
+  for (const selection of [{ series: [], instances: [] }, { series: [], instances: [sops[1], sops[0]] }, { series: [big] }, null]) {
+    h.s.ops.get(broken).download.selection = selection;
+    assert.deepEqual((await boundStatus(h, study, broken, 'sid-m1')).body.code, 'MANIFEST_STORE_INVALID', JSON.stringify(selection));
+    assert.deepEqual((await grantRequest(h, study, broken, 'sid-m1')).body.code, 'MANIFEST_STORE_INVALID', JSON.stringify(selection));
+  }
 });
 
 test('S9U4-B30 download streams that stop: an MD5 change of a stored original is Incomplete and never a successful ZIP; a client disconnect is Incomplete; restart marks an expired sending attempt Unconfirmed', async () => {

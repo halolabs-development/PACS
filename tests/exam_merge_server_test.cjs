@@ -38,6 +38,7 @@ function fixture({states=[A,B,C,D,E,F].map(uid=>state(uid)),groups=[],members=[]
     $executeRaw:async()=>0,
     $queryRaw:async(strings,...values)=>{
       const sql=strings.join('?');
+      if (sql.startsWith('SELECT draft_account_author(')) return [{ author: 'account/' + values[0] }];
       if(sql.includes('FROM "StudyState"')&&sql.includes('FOR UPDATE')){
         const uids=values[0]?.values??values;db.locks.push({uids:[...uids],tx:db.tx});
         if(onLock)await onLock(db,uids);
@@ -58,7 +59,11 @@ function fixture({states=[A,B,C,D,E,F].map(uid=>state(uid)),groups=[],members=[]
       updateMany:async({where,data})=>{const hit=db.groups.filter(g=>match(g,where));for(const g of hit)Object.assign(g,data);return {count:hit.length};}},
     studyGroupMember:{findMany:async({where,select})=>db.members.filter(m=>match(m,where)).map(m=>pick(clone(m),select)),
       createMany:async({data})=>{db.members.push(...clone(data));return {count:data.length};}},
-    reportDraft:{findMany:async({where,select})=>db.drafts.filter(d=>match(d,where)).map(d=>pick(d,select))},
+    // The caller's own draft is read by its account (findFirst); a case that stubs findUnique answers both.
+    reportDraft:{findMany:async({where,select})=>db.drafts.filter(d=>match(d,where)).map(d=>pick(d,select)),
+      async findUnique({where,select}){const w=where.uid_author??where;return db.drafts.filter(d=>Object.entries(w).every(([k,v])=>d[k]===v)).map(d=>pick(d,select))[0]??null;},
+      async findFirst(args){return this.findUnique(args);}},
+    reportDraftPurposeEnd:{findFirst:async()=>null},
     transfer:{findMany:async({where,select})=>db.transfers.filter(t=>match(t,where)).map(t=>pick(t,select))},
     importOperation:{findMany:async({where,select})=>db.downloads.filter(t=>match(t,where)).map(t=>pick(t,select))},
     auditLog:{create:async({data})=>{db.audits.push(data);return data;}},
@@ -267,7 +272,7 @@ test('preview selects stored text, private text and every permitted original key
   const report={uid:A,version:1,groupId:G1,findings:'SYN SAVED',conclusion:'',recommendation:''};
   f.prisma.report={findUnique:async()=>report};
   f.prisma.reportVersion={findUnique:async()=>({...report,id:10,action:'approve'})};
-  f.prisma.reportDraft={findUnique:async()=>({...report,present:true,revision:2,findings:'SYN PRIVATE',version:undefined})};
+  f.prisma.reportDraft={findUnique:async()=>({...report,present:true,revision:2,findings:'SYN PRIVATE',version:undefined}),async findFirst(args){return this.findUnique(args);}};
   f.prisma.viewerItem={findMany:async()=>[A,B].map((studyUid,i)=>({id:'key-'+i,studyUid,revision:1,snapshot:{kind:'key',seriesUid:'2.25.701'}}))};
   const controller=new ReportPreviewController(f.prisma,{reportPreviewStudy:async()=>qido(A,'ACC-A',3,1)},f.access,{});
   const saved=await controller.read(A,{...reader,query:{}}),body=JSON.parse(saved.json);
@@ -420,7 +425,7 @@ test('Split creates independent report parents, keeps series ownership on later 
   f.prisma.reportDraft.create=async({data})=>{writes.push(clone(data));return data;};
   const drafts=Object.create(PacsReportDraft.prototype);
   drafts.studyAccess=f.access;
-  for(const uid of [A,second])await drafts.storeDraft(f.prisma,uid,reader.actor,null,
+  for(const uid of [A,second])await drafts.storeDraft(f.prisma,uid,reader,null,
     {findings:uid,conclusion:'',recommendation:'',baseVersion:0,citations:[],structured:[]},'approve',undefined,reader);
   assert.deepEqual(writes.map(d=>[d.uid,d.groupId]),[[A,out.group.id],[second,out.group.id]]);
   f.db.states.get(second).rs='A';
@@ -486,9 +491,9 @@ function reportingFixture(grouped, alteration) {
   const f = fixture(grouped ? merged(G1, A, [A, B]) : {});
   for (const member of f.db.members) Object.assign(member, { sourcePatientId: 'SYN-P1', sourceInstitution: 'hallym' });
   const groupId = grouped ? G1 : null;
-  f.db.drafts = [{ uid: A, author: reader.actor, present: true, revision: 1, groupId,
+  f.db.drafts = [{ uid: A, author:reader.actor,authorSub:reader.sub, present: true, revision: 1, groupId,
     findings: 'SYN PRIVATE', conclusion: '', recommendation: '', baseVersion: 1 }];
-  let head = { uid: A, version: 1, groupId, updatedBy: reader.actor, findings: 'SYN HEAD', conclusion: '', recommendation: '' };
+  let head = { uid: A, version: 1, groupId, updatedBy:reader.actor,updatedBySub:reader.sub, findings: 'SYN HEAD', conclusion: '', recommendation: '' };
   const versions = [{ ...head, action: 'save' }];
   const raw = f.prisma.$queryRaw;
   f.prisma.$queryRaw = async (strings, ...values) => {
@@ -614,9 +619,9 @@ test('report service eligibility refuses changed originals for reading and allow
 test('ended draft purpose keeps the payload original scope, including a split report target',async()=>{
   const saved=[];const tx={reportDraftPurposeEnd:{create:async({data})=>saved.push(data)}};
   const drafts=Object.create(PacsReportDraft.prototype);
-  const row={uid:B,author:reader.actor,revision:7,present:true,workUnit:'disposal:synthetic',workSince:new Date(0),
+  const row={uid:B,author:reader.actor,authorSub:reader.sub,revision:7,present:true,workUnit:'disposal:synthetic',workSince:new Date(0),
     workIntent:'approve',findings:'SYN TEXT',conclusion:'',recommendation:'',baseVersion:3,groupId:G1};
-  await drafts.endWork(tx,row,reader.actor,{trigger:'explicit-discard'});
+  await drafts.endWork(tx,row,reader,{trigger:'explicit-discard'});
   assert.equal(saved[0].groupId,G1);assert.equal(saved[0].uid,B);assert.equal(saved[0].findings,row.findings);
 });
 
@@ -626,7 +631,7 @@ test('citations and structured evidence apply the saved scope of each head, draf
   for(const surface of ['head','draft','version'])for(const method of surface==='version'?['reportVersionCitations']:['reportCitations','reportStructure']){
     const f=fixture({...merged(G1,A,[A,B],{dissolvedAt:new Date()}),denied:[B]});
     f.prisma.report={findUnique:async()=>({uid:A,version:1,groupId:surface==='head'?G1:null})};
-    f.prisma.reportDraft.findUnique=async()=>({uid:A,author:reader.actor,present:true,revision:1,groupId:surface==='draft'?G1:null});
+    f.prisma.reportDraft.findUnique=async()=>({uid:A,author:reader.actor,authorSub:reader.sub,present:true,revision:1,groupId:surface==='draft'?G1:null});
     f.prisma.reportVersion={findUnique:async()=>({uid:A,version:1,groupId:surface==='version'?G1:null,citations:[],structured:[]})};
     const unit=new PacsReportEvidence(f.prisma,f.access,{readableFindings:async()=>[]},new PacsAccess(f.prisma,f.access));
     await assert.rejects(surface==='version'?unit[method](A,'1',reader):unit[method](A,reader),e=>status(e)===404,surface+' '+method);
@@ -639,7 +644,7 @@ test('Reset checks the preserved head before copying text from an ended group',a
   const unit=new PacsReportCommit({},f.access,{citationKeys:()=>[],structureKeys:()=>[]},{
     settleEnding:async fn=>fn(),ownDraft:async()=>null,
     draftTransaction:async(_uid,_c,_session,_epoch,_prepare,work)=>work(f.prisma,f.db.states.get(A),async()=>{})});
-  unit.lockHead=async()=>({uid:A,version:1,findings:'SYN PRESERVED',conclusion:'',recommendation:'',updatedBy:reader.actor,groupId:G1});
+  unit.lockHead=async()=>({uid:A,version:1,findings:'SYN PRESERVED',conclusion:'',recommendation:'',updatedBy:reader.actor,updatedBySub:reader.sub,groupId:G1});
   await assert.rejects(unit.commitReport(A,{action:'reset',reason:'SYN',baseVersion:1,
     expectedOwner:{institution:reader.institution,sub:reader.sub,author:reader.actor},expectedRevision:f.db.states.get(A).draftEpoch+':0'},reader,null,{}),e=>status(e)===404);
   assert.equal(f.db.updates.length,0);assert.equal(f.db.audits.length,0);
@@ -649,7 +654,7 @@ test('draft GET checks the draft saved scope after Unmerge even when the current
   const {PacsAccess}=require('/app/dist/pacs/access');
   for(const revoked of [false,true]){
     const f=fixture({...merged(G1,A,[A,B],{dissolvedAt:new Date()}),denied:revoked?[B]:[]});
-    f.prisma.reportDraft.findUnique=async()=>({uid:A,author:reader.actor,present:true,revision:1,groupId:G1,
+    f.prisma.reportDraft.findUnique=async()=>({uid:A,author:reader.actor,authorSub:reader.sub,present:true,revision:1,groupId:G1,
       findings:'SYN PRESERVED',conclusion:'',recommendation:'',baseVersion:0,citations:null,structured:null});
     const unit=new PacsReportDraft(f.prisma,f.access,new PacsAccess(f.prisma,f.access),{}, {}, {});
     unit.recorded=async(_uid,_c,_observation,work)=>work(f.prisma,async()=>{});
@@ -1075,7 +1080,7 @@ test('worklist: a merged exam with an original the caller cannot read now says s
 test('worklist and bootstrap: reports and drafts of never-grouped studies cost one membership read, and each gets the answer one record gets',async()=>{
   const {resolveExamScope,examScopeView}=require('/app/dist/exam-merge.service');
   const reports=[A,B,C,D].map(uid=>({uid,version:1,findings:'SYN '+uid,conclusion:'',recommendation:'',groupId:null}));
-  const drafts=[A,B].map(uid=>({uid,author:reader.actor,present:true,revision:1,findings:'SYN DRAFT '+uid,groupId:null}));
+  const drafts=[A,B].map(uid=>({uid,author:reader.actor,authorSub:reader.sub,present:true,revision:1,findings:'SYN DRAFT '+uid,groupId:null}));
   // What one request reads: membership rows, single states and raw statements (the access policy among them).
   const counted=async(svc,work)=>{
     const seen={members:0,states:0,raw:0},undo=[];
@@ -1218,8 +1223,8 @@ test('links: a held, tele-only, foreign, denied or unregistered study gets the l
 async function boundaryList(roles=reader.roles){
   const shown=[A,C,F,H,P],hidden=[B,D,E],all=[...shown,...hidden];
   // The heads are the caller's own: another physician's unsigned head is withheld by the report state table, not by the exam.
-  const reports=all.map(uid=>({uid,version:1,findings:'SYN '+uid,conclusion:'',recommendation:'',updatedBy:reader.actor,groupId:uid===F?G1:null}));
-  const drafts=all.map(uid=>({uid,author:reader.actor,present:true,revision:1,findings:'SYN DRAFT '+uid,groupId:uid===F?G1:null}));
+  const reports=all.map(uid=>({uid,version:1,findings:'SYN '+uid,conclusion:'',recommendation:'',updatedBy:reader.actor,updatedBySub:reader.sub,groupId:uid===F?G1:null}));
+  const drafts=all.map(uid=>({uid,author:reader.actor,authorSub:reader.sub,present:true,revision:1,findings:'SYN DRAFT '+uid,groupId:uid===F?G1:null}));
   const extra={rs:'A',repDoc:'syn-reader',confirm:null,origin:'dicom',createdAt:new Date('2020-01-01T00:00:00Z'),matched:'U',orderOid:null};
   const svc=await listFixture({group:merged(G1,F,[F,A],{dissolvedAt:new Date()}),reports,drafts,
     versions:reports.map(report=>({...report,action:'approve'})),
@@ -1288,7 +1293,7 @@ test('Split list projects two independently reported rows before paging and coun
   const svc=await listFixture({group,rows:[qido(A,'ACC-A',12,3)],extraStates:[state(B,{origin:'logical',rs:'T'})],
     series:[{uid:'2.25.701',count:3,images:true},{uid:'2.25.702',count:5,images:true},{uid:'2.25.703',count:4}],
     reports:[{uid:B,version:1,findings:'SYN SECOND',conclusion:'',recommendation:'',groupId:G1}],
-    drafts:[{uid:B,author:reader.actor,present:true,revision:1,findings:'SYN DRAFT',groupId:G1}],
+    drafts:[{uid:B,author:reader.actor,authorSub:reader.sub,present:true,revision:1,findings:'SYN DRAFT',groupId:G1}],
     policy:{version:1,restricted:true,startsAt:null,endsAt:null,rules:[{patientId:null,modalities:[],dateFrom:null,dateTo:null,studyUids:[A]}]}});
   const all=await svc.listStudies({...reader});
   assert.deepEqual(all.studies.map(s=>[s.uid,s.count,s.series,s.state.rs]),[[A,9,2,'W'],[B,3,1,'T']]);
@@ -1308,7 +1313,7 @@ test('Split list projects two independently reported rows before paging and coun
 test('bootstrap and worklist withhold an own draft whose preserved group is only partly readable',async()=>{
   const group=merged(G1,A,[A,B],{dissolvedAt:new Date()});
   const svc=await listFixture({group,rows:[qido(A,'ACC-A',8,1)],extraStates:[state(B,{institutionId:'other'})],
-    drafts:[{uid:A,author:reader.actor,present:true,revision:1,groupId:G1,findings:'SYN HIDDEN'}]});
+    drafts:[{uid:A,author:reader.actor,authorSub:reader.sub,present:true,revision:1,groupId:G1,findings:'SYN HIDDEN'}]});
   assert.equal((await svc.listStudies({...reader})).studies[0].state.draft,null);
   assert.equal((await svc.bootstrap({...reader})).states[A].draft,null);
 });
@@ -1329,21 +1334,22 @@ test('drafts carry the exam group they were written on (the study\'s current one
   const {prisma,access}=fixture(merged(G1,B,[B,A]));
   const writes=[];
   const tx={...prisma,reportDraft:{create:async({data})=>{writes.push(data);return {...data};},
-    updateMany:async({data})=>{writes.push(data);return {count:1};},findUnique:async()=>({revision:2})}};
+    // The record id probe of a first row (uid_author) finds none; a read after a write finds the row.
+    updateMany:async({data})=>{writes.push(data);return {count:1};},findUnique:async({where})=>where.uid_author?null:({revision:2})}};
   const drafts=Object.create(PacsReportDraft.prototype);
   drafts.studyAccess=access;
   const text={findings:'f',conclusion:'',recommendation:'',baseVersion:0,citations:[],structured:[]};
-  await drafts.storeDraft(tx,B,'syn-reader',null,text,'approve',undefined,reader);
+  await drafts.storeDraft(tx,B,reader,null,text,'approve',undefined,reader);
   assert.equal(writes.at(-1).groupId,G1);
-  await drafts.storeDraft(tx,D,'syn-reader',null,text,'approve',undefined,reader);
+  await drafts.storeDraft(tx,D,reader,null,text,'approve',undefined,reader);
   assert.equal(writes.at(-1).groupId,null);
-  await drafts.storeDraft(tx,B,'syn-reader',{revision:1,present:true,workUnit:'disposal:x',workSince:new Date()},null);
+  await drafts.storeDraft(tx,B,reader,{author:reader.actor,authorSub:reader.sub,revision:1,present:true,workUnit:'disposal:x',workSince:new Date()},null);
   assert.equal(writes.at(-1).groupId,null);assert.equal(writes.at(-1).present,false);
   // Reset moving another reader's saved text into that reader's draft keeps the text's own group.
-  await drafts.storeDraft(tx,B,'syn-other',null,text,'approve',null);
+  await drafts.storeDraft(tx,B,{sub:'syn-other-sub',actor:'syn-other'},null,text,'approve',null);
   assert.equal(writes.at(-1).groupId,null);
   // A merged member has no draft of its own while merged.
-  await assert.rejects(drafts.storeDraft(tx,A,'syn-reader',null,text,'approve',undefined,reader),e=>body(e)?.code===STUDY_MERGED);
+  await assert.rejects(drafts.storeDraft(tx,A,reader,null,text,'approve',undefined,reader),e=>body(e)?.code===STUDY_MERGED);
 });
 
 test('worklist read (GET studies): the merged exam row is listed alone and each of its studies is recorded as read', async () => {
@@ -1364,7 +1370,7 @@ test('worklist read (GET studies): the merged exam row is listed alone and each 
 });
 test('worklist: a report written on a merged exam says so after Unmerge, and its text is withheld from a caller who cannot read every study of it', async () => {
   const ended = merged(G1, B, [B, A], { dissolvedAt: new Date(), dissolvedBy: 'syn-tech', dissolvedBySub: 'syn-tech-sub' });
-  const report = { uid: B, findings: 'SYN MERGED FINDINGS', conclusion: 'SYN', recommendation: '', version: 1, updatedBy: 'syn-reader', groupId: G1 };
+  const report = { uid: B, findings: 'SYN MERGED FINDINGS', conclusion: 'SYN', recommendation: '', version: 1, updatedBy: 'syn-reader', updatedBySub: reader.sub, groupId: G1 };
   const open = await listFixture({ group: ended, reports: [report] });
   const row = (await open.listStudies(reader)).studies.find(s => s.uid === B);
   assert.deepEqual(row.reportGroup, { id: G1, active: false, readable: true, studies: [B, A] });

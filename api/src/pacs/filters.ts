@@ -9,6 +9,7 @@ import { folderAction, folderEntries, folderPath, shortcutEntries } from '../fil
 import { copySearchFolder, mergeCopiedFolders, sharedKeys, sharedLibrary, sharedSearch } from '../shared-filters';
 import { parse, dump } from './values';
 import { need, inst } from './access';
+import { accountOwner, newDraftAuthor } from '../owner-identity';
 import type { Caller } from './access';
 
 export class PacsFilters {
@@ -17,7 +18,6 @@ export class PacsFilters {
 
   /** 필터 저장 (같은 이름이면 덮어쓴다 — 이름이 곧 사용자에게는 그 필터다) */
   async saveFilter(body: any, c: Caller) {
-    const owner = c.actor;
     const name = String(body.name ?? '').trim();
     if (!name) throw new BadRequestException('필터 이름이 필요합니다');
 
@@ -39,32 +39,21 @@ export class PacsFilters {
       isDefault: !!body.isDefault,
     };
 
-    // Copies are create-only even when another tab just claimed the name.
-    if (body.createOnly === true) {
-      try {
-        const saved = await this.prisma.$transaction(async tx => {
-          await this.lockFilterCollection(tx, owner);
-          const created = await tx.userFilter.create({ data: { owner, name, ...data } });
-          if (data.isDefault) await tx.userFilter.updateMany({
-            where: { owner, id: { not: created.id } }, data: { isDefault: false },
-          });
-          return created;
-        });
-        return { ...saved, cols: parse(saved.cols) ?? {} };
-      } catch (error) {
-        if ((error as any)?.code === 'P2002') throw new ConflictException('같은 이름의 검색이 있습니다. 다른 이름으로 저장하세요. 기존 검색은 변경하지 않았습니다.');
-        throw error;
-      }
-    }
-
-    // 기본 필터는 하나뿐이다. 새로 지정하면 이전 것이 풀린다 —
-    // 두 개가 기본이면 로그인할 때마다 어느 쪽이 걸릴지 모른다.
+    const ownerSub = accountOwner(c);
     const saved = await this.prisma.$transaction(async tx => {
-      await this.lockFilterCollection(tx, owner);
-      if (data.isDefault) await tx.userFilter.updateMany({ where: { owner }, data: { isDefault: false } });
+      const owner = await this.selectedCollection(tx, ownerSub, body.collection);
+      await this.lockFilterCollection(tx, owner, ownerSub);
+      if (data.isDefault) await this.clearDefaults(tx, ownerSub);
+      if (body.createOnly === true) {
+        try { return await tx.userFilter.create({ data: { owner, ownerSub, name, ...data } }); }
+        catch (error) {
+          if ((error as any)?.code === 'P2002') throw new ConflictException('같은 이름의 검색이 있습니다. 다른 이름으로 저장하세요. 기존 검색은 변경하지 않았습니다.');
+          throw error;
+        }
+      }
       return tx.userFilter.upsert({
-        where: { owner_name: { owner, name } },
-        create: { owner, name, ...data }, update: data,
+        where: { owner_name: { owner, name }, ownerSub },
+        create: { owner, ownerSub, name, ...data }, update: data,
       });
     });
     return { ...saved, cols: parse(saved.cols) ?? {} };
@@ -72,13 +61,13 @@ export class PacsFilters {
 
   /** 기본 필터 지정/해제 */
   async setDefaultFilter(id: number, on: boolean, c: Caller) {
-    const owner = c.actor;
+    const ownerSub = accountOwner(c);
     await this.prisma.$transaction(async tx => {
-      await this.lockFilterCollection(tx, owner);
-      const f = await tx.userFilter.findUnique({ where: { id } });
-      if (!f || f.owner !== owner) throw new NotFoundException('필터를 찾을 수 없습니다');
-      if (on) await tx.userFilter.updateMany({ where: { owner }, data: { isDefault: false } });
-      await tx.userFilter.update({ where: { id }, data: { isDefault: on } });
+      const f = await tx.userFilter.findFirst({ where: { id, ownerSub } });
+      if (!f) throw new NotFoundException('필터를 찾을 수 없습니다');
+      await this.lockFilterCollection(tx, f.owner, ownerSub);
+      if (on) await this.clearDefaults(tx, ownerSub);
+      await tx.userFilter.update({ where: { id, ownerSub }, data: { isDefault: on } });
     });
     return { ok: true };
   }
@@ -87,19 +76,46 @@ export class PacsFilters {
     // 남의 것을 지우지 못하게 owner를 조건에 넣는다. 찾아서 검사하고 지우면
     // 그 사이가 벌어질 수 있으므로 조건을 삭제문 안에 둔다.
     await this.prisma.$transaction(async tx => {
-      await this.lockFilterCollection(tx, c.actor);
-      const r = await tx.userFilter.deleteMany({ where: { id, owner: c.actor } });
+      const ownerSub = accountOwner(c);
+      const f = await tx.userFilter.findFirst({ where: { id, ownerSub } });
+      if (!f) throw new NotFoundException('필터를 찾을 수 없습니다');
+      await this.lockFilterCollection(tx, f.owner, ownerSub);
+      const r = await tx.userFilter.deleteMany({ where: { id, ownerSub } });
       if (!r.count) throw new NotFoundException('필터를 찾을 수 없습니다');
     });
     return { ok: true };
   }
 
-  private lockFilterCollection(tx: Prisma.TransactionClient, owner: string, increment = 1) {
+  private async clearDefaults(tx: Prisma.TransactionClient, ownerSub: string) {
+    await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${ownerSub}::text, 7))`;
+    await tx.userFilter.updateMany({ where: { ownerSub, isDefault: true }, data: { isDefault: false } });
+  }
+
+  private async collectionKeys(tx: Prisma.TransactionClient, ownerSub: string) {
+    const [collections, filters] = await Promise.all([
+      tx.userFilterCollection.findMany({ where: { ownerSub }, select: { owner: true } }),
+      tx.userFilter.findMany({ where: { ownerSub }, distinct: ['owner'], select: { owner: true } }),
+    ]);
+    const keys = [...new Set([...collections, ...filters].map(row => row.owner))].sort();
+    // A fresh account cannot collide with a legacy key, even one that looks like a subject.
+    return keys.length ? keys : [await newDraftAuthor(tx, ownerSub)];
+  }
+
+  private async selectedCollection(tx: Prisma.TransactionClient, sub: string, selected: unknown) {
+    const keys = await this.collectionKeys(tx, sub);
+    if (selected === undefined && keys.length === 1) return keys[0];
+    if (typeof selected === 'string' && keys.includes(selected)) return selected;
+    throw new ConflictException('저장 검색 모음을 선택한 뒤 다시 시도하세요');
+  }
+
+  private async lockFilterCollection(tx: Prisma.TransactionClient, owner: string, ownerSub: string, increment = 1) {
     // A single PostgreSQL upsert locks this owner's row until the transaction ends.
-    return tx.userFilterCollection.upsert({
-      where: { owner }, create: { owner, revision: increment, folders: [] },
+    const collection = await tx.userFilterCollection.upsert({
+      where: { owner }, create: { owner, ownerSub, revision: increment, folders: [] },
       update: { revision: { increment } },
     });
+    if (collection.ownerSub !== ownerSub) throw new ConflictException('검색 모음의 소유 계정을 확인할 수 없습니다');
+    return collection;
   }
 
   private filterCollectionOwner(c: Caller) {
@@ -108,12 +124,21 @@ export class PacsFilters {
   }
 
   private async filterCollectionSnapshot(tx: Prisma.TransactionClient, c: Caller) {
-    const collection = await tx.userFilterCollection.findUnique({ where: { owner: c.actor } });
-    const filters = await tx.userFilter.findMany({ where: { owner: c.actor }, orderBy: { id: 'asc' } });
-    return { owner: this.filterCollectionOwner(c), revision: collection?.revision ?? 0,
-      folders: folderEntries(collection?.folders ?? []),
-      shortcuts: shortcutEntries(collection?.shortcuts ?? []),
-      filters: filters.map(filter => ({ ...filter, cols: parse(filter.cols) ?? {} })) };
+    const ownerSub = accountOwner(c);
+    const owner = this.filterCollectionOwner(c);
+    const collections = await tx.userFilterCollection.findMany({ where: { ownerSub } });
+    const filters = await tx.userFilter.findMany({ where: { ownerSub }, orderBy: { id: 'asc' } });
+    const keys = [...new Set([...collections, ...filters].map(row => row.owner))].sort();
+    const snapshot = (key?: string) => {
+      const row = collections.find(r => r.owner === key);
+      return { owner, revision: row?.revision ?? 0, folders: folderEntries(row?.folders ?? []),
+        shortcuts: shortcutEntries(row?.shortcuts ?? []),
+        filters: filters.filter(f => f.owner === key).map(f => ({ ...f, cols: parse(f.cols) ?? {} })) };
+    };
+    if (keys.length < 2) return snapshot(keys[0]);
+    // Each editor retains its own revision, folder paths, shortcut IDs and name namespace.
+    const groups = keys.map(key => ({ ...snapshot(key), collection: key }));
+    return { ...groups[0], collections: groups };
   }
 
   async readFilterFolders(c: Caller) {
@@ -125,33 +150,35 @@ export class PacsFilters {
   async writeFilterFolders(body: any, c: Caller) {
     const owner = this.filterCollectionOwner(c);
     if (!body || typeof body !== 'object' || Array.isArray(body) ||
-        Object.keys(body).sort().join(',') !== 'command,expectedOwner,revision' ||
+        Object.keys(body).filter(k => k !== 'collection').sort().join(',') !== 'command,expectedOwner,revision' ||
         !Number.isInteger(body.revision) || body.revision < 0 || body.revision >= 2147483647)
       throw new BadRequestException('검색 모음 요청 형식을 확인하세요');
     if (JSON.stringify(body.expectedOwner) !== JSON.stringify(owner))
       throw new ConflictException('계정이 변경되었습니다. 다시 로그인하세요');
     return this.prisma.$transaction(async tx => {
-      const collection = await this.lockFilterCollection(tx, c.actor);
+      const ownerSub = accountOwner(c);
+      const key = await this.selectedCollection(tx, ownerSub, body.collection);
+      const collection = await this.lockFilterCollection(tx, key, ownerSub);
       if (collection.revision !== body.revision + 1)
         throw new ConflictException('다른 화면에서 검색 모음이 변경되었습니다. 편집 내용을 확인한 뒤 다시 불러오세요');
       if (body.command?.action === 'replace-shortcuts') {
         if (Object.keys(body.command).sort().join(',') !== 'action,shortcuts')
           throw new BadRequestException('바로가기 교체 요청 형식을 확인하세요');
         const shortcuts = shortcutEntries(body.command.shortcuts);
-        await tx.userFilterCollection.update({ where: { owner: c.actor }, data: { shortcuts } });
+        await tx.userFilterCollection.update({ where: { owner: key, ownerSub }, data: { shortcuts } });
         return this.filterCollectionSnapshot(tx, c);
       }
-      const searches = await tx.userFilter.findMany({ where: { owner: c.actor }, select: { id: true, folder: true } });
+      const searches = await tx.userFilter.findMany({ where: { owner: key, ownerSub }, select: { id: true, folder: true } });
       const result = folderAction(collection.folders, searches, body.command);
       for (const move of result.moves) {
-        const changed = await tx.userFilter.updateMany({ where: { id: move.id, owner: c.actor }, data: { folder: move.folder } });
+        const changed = await tx.userFilter.updateMany({ where: { id: move.id, owner: key, ownerSub }, data: { folder: move.folder } });
         if (changed.count !== 1) throw new ConflictException('선택한 검색이 변경되었습니다');
       }
       if (result.deletes.length) {
-        const changed = await tx.userFilter.deleteMany({ where: { owner: c.actor, id: { in: result.deletes } } });
+        const changed = await tx.userFilter.deleteMany({ where: { owner: key, ownerSub, id: { in: result.deletes } } });
         if (changed.count !== result.deletes.length) throw new ConflictException('선택한 검색이 변경되었습니다');
       }
-      await tx.userFilterCollection.update({ where: { owner: c.actor }, data: { folders: result.folders } });
+      await tx.userFilterCollection.update({ where: { owner: key, ownerSub }, data: { folders: result.folders } });
       return this.filterCollectionSnapshot(tx, c);
     });
   }
@@ -177,7 +204,8 @@ export class PacsFilters {
 
   private sharedFilterRequest(body: any, c: Caller, fields: string) {
     const owner = this.filterCollectionOwner(c);
-    if (!sharedKeys(body, fields) || !Number.isInteger(body.revision) || body.revision < 0 || body.revision >= 2147483647)
+    const allowed = body?.collection === undefined ? fields : ['collection', ...fields.split(',')].sort().join(',');
+    if (!sharedKeys(body, allowed) || !Number.isInteger(body.revision) || body.revision < 0 || body.revision >= 2147483647)
       throw new BadRequestException('기관 검색 요청 형식을 확인하세요');
     if (JSON.stringify(body.expectedOwner) !== JSON.stringify(owner)) throw new ConflictException('계정이 변경되었습니다. 다시 로그인하세요');
   }
@@ -191,7 +219,9 @@ export class PacsFilters {
         typeof body.command.replace !== 'boolean')) throw new BadRequestException('폴더 배포 요청 형식을 확인하세요');
     return this.prisma.$transaction(async tx => {
       // Every operation needing both locks uses personal -> institution order.
-      const personal = publish ? await this.lockFilterCollection(tx, c.actor, 0) : null;
+      const ownerSub = accountOwner(c);
+      const key = publish ? await this.selectedCollection(tx, ownerSub, body.collection) : null;
+      const personal = publish ? await this.lockFilterCollection(tx, key, ownerSub, 0) : null;
       if (publish && personal.revision !== body.command.sourceRevision)
         throw new ConflictException('개인 검색이 변경되었습니다. 개인 폴더를 다시 불러오세요');
       const row = await this.lockSharedFilters(tx, c, 1);
@@ -199,7 +229,7 @@ export class PacsFilters {
       let library = sharedLibrary(row.folders, row.filters);
       if (publish) {
         const from = folderPath(body.command.from, true);
-        const owned = await tx.userFilter.findMany({ where: { owner: c.actor } });
+        const owned = await tx.userFilter.findMany({ where: { owner: key, ownerSub } });
         const sources = owned.filter(filter => !from || filter.folder === from || filter.folder.startsWith(from + '/'))
           .map(filter => sharedSearch(filter, filter.id));
         const copied = copySearchFolder(folderEntries(personal.folders), sources, from, body.command.to, body.command.namePrefix);
@@ -229,7 +259,9 @@ export class PacsFilters {
     if (!Number.isInteger(body.personalRevision) || body.personalRevision < 0 || body.personalRevision >= 2147483647)
       throw new BadRequestException('개인 검색 버전을 확인하세요');
     return this.prisma.$transaction(async tx => {
-      const personal = await this.lockFilterCollection(tx, c.actor);
+      const ownerSub = accountOwner(c);
+      const key = await this.selectedCollection(tx, ownerSub, body.collection);
+      const personal = await this.lockFilterCollection(tx, key, ownerSub);
       if (personal.revision !== body.personalRevision + 1) throw new ConflictException('개인 검색이 변경되었습니다. 개인 폴더를 다시 불러오세요');
       const row = await this.lockSharedFilters(tx, c, 0);
       if (row.revision !== body.revision) throw new ConflictException('기관 검색이 변경되었습니다. 공유 목록을 다시 불러오세요');
@@ -237,15 +269,15 @@ export class PacsFilters {
       if (row.revision === 0 && !library.folders.length && !library.filters.length)
         throw new NotFoundException('배포된 기관 검색이 없습니다');
       const copied = copySearchFolder(library.folders, library.filters, body.from, body.to, body.namePrefix);
-      const owned = await tx.userFilter.findMany({ where: { owner: c.actor } });
+      const owned = await tx.userFilter.findMany({ where: { owner: key, ownerSub } });
       const folders = mergeCopiedFolders(folderEntries(personal.folders), owned, copied.folders, false);
       const names = new Set(owned.map(filter => filter.name));
       if (copied.filters.some(filter => names.has(filter.name))) throw new ConflictException('같은 이름의 개인 검색이 있습니다. 이름 접두사를 입력하세요');
       for (const filter of copied.filters) {
         const { id, cols, ...definition } = filter;
-        await tx.userFilter.create({ data: { ...definition, owner: c.actor, cols: JSON.stringify(cols), isDefault: false } });
+        await tx.userFilter.create({ data: { ...definition, owner: key, ownerSub, cols: JSON.stringify(cols), isDefault: false } });
       }
-      await tx.userFilterCollection.update({ where: { owner: c.actor }, data: { folders } });
+      await tx.userFilterCollection.update({ where: { owner: key, ownerSub }, data: { folders } });
       return this.filterCollectionSnapshot(tx, c);
     });
   }

@@ -95,7 +95,7 @@
        * 그걸 눌러 저장하면 남의 필터 이름으로 내 화면이 만들어진다.
        * 계정에 붙인다고 해놓고 브라우저에 남은 것을 안 지우면 반쪽이다.
        */
-      userFilters = validUserFilters(b.filters);
+      userFilters = personalSearches(b.filters);
       mountWorklistFolders();
       void reloadFolderSearches();
       templates = Array.isArray(b.templates) ? b.templates : [];
