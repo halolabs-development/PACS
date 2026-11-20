@@ -1,8 +1,10 @@
 // Viewer feature module: MG menu — Mirrored, Quadrant Zoom, Tomo (DBT) Slices, Breast Display, Mammo Keypad and
 // Magnifier. It registers through viewer-features.js; the calculations are in mg-breast-model.js. Only stack cells with
 // an MG image (or a breast tomosynthesis stack) take part. Laterality, view and the stored orientation come from the
-// image's own DICOM header (mammography-model.js), read from the same DICOMweb service the viewer reads. Every display
-// change is made only when the reader presses for it, is marked on the cell it changed and goes back in one step.
+// image's own DICOM header (mammography-model.js), read from the same DICOMweb service the viewer reads — when a cell is
+// given an image, not when something is pressed. Every display change is made only when the reader presses for it, at
+// once, from what is known of each cell's image then: a cell whose image is not read yet is left as it is and named,
+// and nothing is carried out later for it. A change is marked on the cell it changed and goes back in one step.
 (() => {
   // A Patient ▶ move remounts the viewer, and this module with it: the keypad opens again there with the move's result.
   const carry = { busy: false, message: null, listener: null, reportTarget: null };
@@ -45,29 +47,45 @@
     const cellIds = () => { try { return [...grid.getState().viewports.keys()]; } catch (_) { return []; } };
     const viewportOf = id => { try { const v = cellService.getCornerstoneViewport(id); return v?.type === 'stack' && v.element?.isConnected ? v : null; } catch (_) { return null; } };
     const imageIdOf = v => { try { return v.getCurrentImageId?.() || null; } catch (_) { return null; } };
+    const idsOf = v => { try { return v.getImageIds?.() || []; } catch (_) { return []; } };
+    const indexOf = v => { try { return v.getCurrentImageIdIndex(); } catch (_) { return 0; } };
     const instanceOf = v => { const id = imageIdOf(v); try { return id ? core.metaData.get('instance', id) || null : null; } catch (_) { return null; } };
     const imageData = v => { try { return v.getImageData()?.imageData || null; } catch (_) { return null; } };
+    const paneOf = v => v.element?.closest?.('[data-cy=viewport-pane]') || null;
     const opened = () => new URLSearchParams(location.search).get('StudyInstanceUIDs')?.split(',')[0] || null;
+    // A window opened on exam scopes names the role by them (every original of a merged exam is current; an image in
+    // neither role, or not yet admitted, is '?'); elsewhere the first opened study is current.
+    const roleOf = cell => /[?&]kinExamScopes=/.test(globalThis.location?.search || '')
+      ? ({ current: 'Current', prior: 'Prior' })[globalThis.KinViewerExamScope?.role?.(cell.study, cell.series) || ''] || '?'
+      : cell.study === opened() ? 'Current' : 'Prior';
+    const labelOf = cell => roleOf(cell) + ' · ' + (cell.side || '?') + ' ' + (cell.view || '?');
+    // A cell whose header is not read is named by what the viewer itself holds of its image: the role, and the side and
+    // the view when it has them.
+    function nameOf(v) {
+      const instance = instanceOf(v); if (!instance) return '?';
+      const said = [instance.ImageLaterality || instance.Laterality, instance.ViewPosition].filter(value => typeof value === 'string' && value);
+      return roleOf({ study: instance.StudyInstanceUID, series: instance.SeriesInstanceUID }) + (said.length ? ' · ' + said.join(' ') : '');
+    }
+    const REASONS = { 'orientation-unverified': 'orientation unverified', 'laterality-unknown': 'laterality unknown', 'view-unknown': 'view unknown',
+      'size-unknown': 'image size unknown', 'no-image': 'no image' };
 
-    // The DICOM JSON of an image, once per SOP (a Promise of the item or null). A header that could not be read is asked
-    // for again when it is next wanted, but not within a few seconds of the failure.
-    const raws = new Map(), failed = new Map(), UID = /^\d+(?:\.\d+)+$/;
-    function rawOf(instance) {
+    // The DICOM JSON of an image, once per SOP: the item once it is read, a Promise of it (of null when it cannot be
+    // read) while it is being read. One that could not be read is forgotten, and asked for anew when it is next wanted.
+    const headers = new Map(), UID = /^\d+(?:\.\d+)+$/;
+    function headerOf(instance) {
       const sop = instance?.SOPInstanceUID, study = instance?.StudyInstanceUID, series = instance?.SeriesInstanceUID;
-      if (![study, series, sop].every(uid => typeof uid === 'string' && uid.length <= 64 && UID.test(uid))) return Promise.resolve(null);
-      const again = failed.has(sop) && Date.now() - failed.get(sop) > 3000;
-      if (again) { failed.delete(sop); raws.delete(sop); }
-      if (!raws.has(sop)) {
-        if (raws.size > 200) { const oldest = raws.keys().next().value; raws.delete(oldest); failed.delete(oldest); }
-        raws.set(sop, fetch('/dicom-web/studies/' + study + '/series/' + series + '/instances/' + sop + '/metadata',
+      if (![study, series, sop].every(uid => typeof uid === 'string' && uid.length <= 64 && UID.test(uid))) return null;
+      if (!headers.has(sop)) {
+        if (headers.size > 200) headers.delete(headers.keys().next().value);
+        const reading = fetch('/dicom-web/studies/' + study + '/series/' + series + '/instances/' + sop + '/metadata',
           { credentials: 'same-origin', headers: { Accept: 'application/dicom+json' }, signal })
           .then(response => response.ok ? response.json() : null)
           .then(json => { const item = Array.isArray(json) ? json[0] : null; return item && typeof item === 'object' ? item : null; })
           .catch(() => null)
-          // Read after all: what was drawn of the cells while it could not be read (Mirrored's marks, the press layers) is drawn again.
-          .then(item => { if (!item) failed.set(sop, Date.now()); else if (again && !ended) cellsChanged(); return item; }));
+          .then(item => { if (headers.get(sop) === reading) { if (item) headers.set(sop, item); else headers.delete(sop); } return item; });
+        headers.set(sop, reading);
       }
-      return raws.get(sop);
+      return headers.get(sop);
     }
     // The image's declared pixel padding (Pixel Padding Value, with Pixel Padding Range Limit a range, both ends counted)
     // in the values the cell holds: { low, high }, null without one, 'unknown' when the cell's values are converted ones
@@ -84,75 +102,108 @@
       const shown = ends.map(n => n * slope + intercept);
       return { low: Math.min(...shown), high: Math.max(...shown) };
     }
-    // One cell as the calculations see it: { id, v, imageId, mg, side, view, verified, flipH, flipV, columns, rows,
-    // monochrome1, partial, padding, study } — of the frame the cell shows now. partial: a magnification, spot or partial
-    // view (or a header that contradicts itself about it): not the whole breast.
-    async function describe(v) {
-      const instance = instanceOf(v), imageId = imageIdOf(v);
-      if (!instance || !imageId) return null;
-      const item = await rawOf(instance), model = window.KinMammographyModel;
-      if (ended || !item || !model) return null;
+    // One cell as the calculations see it, from its image's header: { id, v, imageId, mg, side, view, verified, flipH,
+    // flipV, columns, rows, monochrome1, partial, padding, study } — of the frame the cell shows. partial: a
+    // magnification, spot or partial view (or a header that contradicts itself about it): not the whole breast.
+    function describe(entry, instance, item) {
+      const model = window.KinMammographyModel, v = entry.v;
+      if (!model) return null;
       let c = null, spec = null;
       try { c = model.classify(item); } catch (_) { return null; }
-      const mg = item['00080060']?.Value?.[0] === 'MG' || !!c.kind || c.basis === 'ct-breast-tomosynthesis';
-      const frame = Number(item['00280008']?.Value?.[0]) > 1 ? (v.getCurrentImageIdIndex?.() ?? 0) + 1 : 1;
+      const mg = item['00080060']?.Value?.[0] === 'MG' || (!!c.kind && c.kind !== 'other') || c.basis === 'ct-breast-tomosynthesis';
+      const frame = Number(item['00280008']?.Value?.[0]) > 1 ? entry.index + 1 : 1;
       try { spec = model.displaySpec(item, frame); } catch (_) { spec = null; }
       const orientation = spec?.orientation, modifiers = Array.isArray(c.modifiers) ? c.modifiers : [];
       const dimensions = (() => { try { return v.getImageData()?.dimensions || null; } catch (_) { return null; } })();
-      return { id: v.id, v, imageId, mg, kind: c.kind, basis: c.basis, side: c.laterality, view: c.view, verified: orientation?.status === 'verified',
+      return { id: entry.id, v, imageId: entry.imageId, mg, kind: c.kind, basis: c.basis, side: c.laterality, view: c.view, verified: orientation?.status === 'verified',
         flipH: orientation?.flipH, flipV: orientation?.flipV,
         columns: Number(dimensions?.[0] ?? item['00280011']?.Value?.[0]), rows: Number(dimensions?.[1] ?? item['00280010']?.Value?.[0]),
         monochrome1: String(item['00280004']?.Value?.[0] || '').toUpperCase() === 'MONOCHROME1',
         partial: c.partialState === 'yes' || c.partialState === 'conflict' || modifiers.some(m => m === 'Magnification' || m === 'Spot Compression'),
-        padding: paddingOf(item, v, imageId, spec?.modality), study: instance.StudyInstanceUID, series: instance.SeriesInstanceUID };
+        padding: paddingOf(item, v, entry.imageId, spec?.modality), study: instance.StudyInstanceUID, series: instance.SeriesInstanceUID };
     }
-    // changes: how often each cell was given another image (a slice, a stack, a viewport); a cell held then is the same
-    // viewport on the same image with no change between (A → B → A is a change). stacks: how often it was given other
-    // images to show (not another slice of those it has).
-    const changes = new Map(), stacks = new Map(), countOf = (map, id) => map.get(id) || 0;
-    const hold = v => ({ v, id: v.id, imageId: imageIdOf(v), changes: countOf(changes, v.id) });
-    const holds = held => !!held && viewportOf(held.id) === held.v && imageIdOf(held.v) === held.imageId && countOf(changes, held.id) === held.changes;
-    // The MG cells, of the images the cells hold when this is asked: the headers are read meanwhile, and the first time
-    // that takes as long as the server does. A cell given another image since (A → B → A too) is not described by the
-    // header read for it, and one whose header could not be read is not described at all: neither is in the list, and
-    // both are in list.left ([{ id, label, changed }]) for whoever says what was done — unless the header read says
-    // the image is not an MG one. (A cell that shows no image is in neither.)
-    async function mgCells() {
-      const held = cellIds().map(viewportOf).filter(Boolean).map(v => ({ ...hold(v), instance: instanceOf(v) }));
-      const cells = await Promise.all(held.map(h => describe(h.v).catch(() => null)));
-      const list = []; list.left = [];
-      if (ended) return list;
-      held.forEach((h, i) => {
-        const cell = cells[i], same = holds(h);
-        if (cell ? !cell.mg : !h.imageId) return;
-        if (cell && same) list.push(cell);
-        else list.left.push({ id: h.id, changed: !same, label: cell ? labelOf(cell) + ' · 그 사이 영상이 바뀜'
-          : (h.instance ? roleOf({ study: h.instance.StudyInstanceUID, series: h.instance.SeriesInstanceUID }) : '?') + ' · 영상 머리글을 읽지 못함' });
+
+    // ── What is known of each cell's image ──
+    // known: cell → { id, v, imageId, index, state, cell } for the image the cell holds now. state: 'reading' (the
+    // header is being read, or the cell does not draw that image yet), 'read' (cell: its description), 'unread' (the
+    // header could not be read), 'other' (not a mammography image by the viewer's own metadata — MG, or a CT object
+    // typed as a tomosynthesis section: nothing is read for another, so paging through a CT or MR stack asks nothing).
+    // The table is the one thing written when a header comes: an entry is made the moment a cell is seen to hold another
+    // image (reading from then on), and a header is taken only by the entry that asked for it, while that is still the
+    // cell's entry and the cell still holds that viewport, image and frame — the answer for an image the cell has left
+    // (and come back to: A → B → A makes a new entry each time) writes nothing. Everything the reader asks for is
+    // carried out at once from the table as it stands then (cellsNow()): nothing waits for a header, and nothing is
+    // carried out when one comes. Then only what is drawn from the table itself is drawn again (redraw()).
+    // The state is on the cell's pane too (data-kin-mg-image).
+    const known = new Map();
+    const typeOf = instance => Array.isArray(instance.ImageType) ? instance.ImageType : String(instance.ImageType || '').split('\\');
+    const mammography = instance => { const modality = String(instance.Modality || '').toUpperCase(); return !modality || modality === 'MG' || (modality === 'CT' && typeOf(instance)[2] === 'TOMO'); };
+    // Whether the cell draws the image it says it holds: while another is being loaded into it, its pixels and its size
+    // are still the earlier image's.
+    const drawn = v => { if (typeof v.getCornerstoneImage !== 'function') return true; try { return v.getCornerstoneImage()?.imageId === imageIdOf(v); } catch (_) { return false; } };
+    const holdsNow = entry => viewportOf(entry.id) === entry.v && imageIdOf(entry.v) === entry.imageId && indexOf(entry.v) === entry.index;
+    function settle(entry, state, cell) {
+      entry.state = state; entry.cell = cell || null;
+      const pane = paneOf(entry.v); if (!pane) return;
+      if (state === 'other') delete pane.dataset.kinMgImage; else pane.dataset.kinMgImage = state;
+    }
+    function leave(id) {
+      const was = known.get(id); if (!was) return;
+      known.delete(id);
+      const pane = paneOf(was.v); if (pane) delete pane.dataset.kinMgImage;
+    }
+    // Asks for the header of the image an entry stands for, once the cell draws that image: taken at once from a
+    // header already read (the frames of one object), else when it comes (always so with later: the entry is settled
+    // after what asked has gone by the table as it stood).
+    function ask(entry, later) {
+      const instance = instanceOf(entry.v);
+      if (instance && !mammography(instance)) { settle(entry, 'other'); return; }
+      const held = instance ? headerOf(instance) : null;
+      settle(entry, 'reading');
+      if (instance && !drawn(entry.v)) return;
+      entry.asked = true;
+      const take = item => { const cell = item ? describe(entry, instance, item) : null; settle(entry, cell ? 'read' : 'unread', cell); };
+      if (!held) { settle(entry, 'unread'); return; }
+      if (!later && typeof held.then !== 'function') { take(held); return; }
+      Promise.resolve(held).then(item => {
+        if (ended || known.get(entry.id) !== entry) return;
+        if (!holdsNow(entry)) { entry.asked = false; return; }
+        take(item); redraw(true);
       });
+    }
+    // The cell's entry for the image it holds now (null without an image): a new one, reading, when that is not the
+    // image of the entry it has.
+    function look(id) {
+      const v = viewportOf(id), imageId = v && imageIdOf(v);
+      if (!imageId) { leave(id); return null; }
+      const index = indexOf(v), was = known.get(id);
+      if (was && was.v === v && was.imageId === imageId && was.index === index) { if (was.state === 'reading' && !was.asked) ask(was); return was; }
+      if (was && paneOf(was.v) !== paneOf(v)) leave(id);
+      const entry = { id, v, imageId, index, state: 'reading', cell: null, asked: false };
+      known.set(id, entry);
+      ask(entry);
+      return entry;
+    }
+    // The MG cells as the table has them now: the descriptions of the cells whose header is read, and in list.left
+    // ([{ id, label }]) the cells that may hold an MG image but are not read — still being read, or not readable: what
+    // is asked for is not carried out there, and whoever says what was done names them.
+    function cellsNow() {
+      const list = []; list.left = [];
+      for (const id of cellIds()) {
+        const entry = look(id);
+        if (!entry || entry.state === 'other') continue;
+        if (entry.state === 'read') { if (entry.cell.mg) list.push(entry.cell); continue; }
+        list.left.push({ id, label: nameOf(entry.v) + (entry.state === 'unread' ? ' · 영상 머리글을 읽지 못함' : ' · 영상을 읽는 중') });
+      }
       return list;
     }
+    // For what the reader presses: the same list, and a header that could not be read is asked for once more — the
+    // press itself goes by the list as it stood.
+    function askAgain(list) { for (const { id } of list.left) { const entry = known.get(id); if (entry?.state === 'unread') ask(entry, true); } }
+    function cellsPressed() { const list = cellsNow(); askAgain(list); return list; }
     const leftOut = list => list.left.map(entry => entry.label);
-    // What is drawn from the cells as they are (Mirrored's marks, the press layers) is drawn from the latest reading
-    // only — an earlier one that ends later draws nothing (null) — and the cells are read again when one was given
-    // another image meanwhile.
-    const readings = new Map();
-    async function cellsNow(key) {
-      const reading = countOf(readings, key) + 1;
-      readings.set(key, reading);
-      for (;;) {
-        const list = await mgCells();
-        if (ended || readings.get(key) !== reading) return null;
-        if (!list.left.some(entry => entry.changed)) return list;
-      }
-    }
-    // A window opened on exam scopes names the role by them (every original of a merged exam is current; an image in
-    // neither role, or not yet admitted, is '?'); elsewhere the first opened study is current.
-    const roleOf = cell => /[?&]kinExamScopes=/.test(globalThis.location?.search || '')
-      ? ({ current: 'Current', prior: 'Prior' })[globalThis.KinViewerExamScope?.role?.(cell.study, cell.series) || ''] || '?'
-      : cell.study === opened() ? 'Current' : 'Prior';
-    const labelOf = cell => roleOf(cell) + ' · ' + (cell.side || '?') + ' ' + (cell.view || '?');
-    const REASONS = { 'orientation-unverified': 'orientation unverified', 'laterality-unknown': 'laterality unknown', 'view-unknown': 'view unknown',
-      'size-unknown': 'image size unknown', 'no-image': 'no image' };
+    // What to say when nothing was done: the cells not read, or that there is no MG cell.
+    const nothingDone = list => list.left.length ? '바꾼 것이 없습니다. 영상을 읽지 못한 칸 — ' + leftOut(list).join(' / ') : 'MG 영상이 있는 칸이 없습니다. 바꾼 것이 없습니다.';
 
     // ── Geometry of a cell: image points (pixel edges 0 … columns), world points and the camera ──
     function toImage(v, world) {
@@ -182,17 +233,30 @@
     // Camera changes this module makes: the cell's own camera events then are not the reader's (no echo between cells).
     const applying = new Set(), lastSet = new Map();
     const signature = v => { try { const c = v.getCamera(); return [c.parallelScale, ...c.focalPoint].map(n => Number(n).toFixed(4)).join(','); } catch (_) { return ''; } };
-    // act: the camera act (cameraAct) this is carried out for — the cell's camera is that act's from now on.
-    function steer(v, change, act) {
+    function steer(v, change) {
       applying.add(v.id);
-      try { change(); v.render(); if (act) stamps.set(v.id, act.n); return true; } catch (error) { console.error(error); return false; }
+      try { change(); v.render(); return true; } catch (error) { console.error(error); return false; }
       finally { lastSet.set(v.id, signature(v)); applying.delete(v.id); }
     }
-    const fit = (v, act) => steer(v, () => { v.setZoom(1); v.setPan([0, 0]); }, act);
+    const fit = v => steer(v, () => { v.setZoom(1); v.setPan([0, 0]); });
+    // A camera event heard on a cell: the cell (viewport) when it is a change that is not this module's — not while this
+    // module sets that cell's camera, and not the camera it last set there, however late that is heard. Once the cell
+    // has had another camera, the same camera again is a change like any other (back to 1× after 3×).
+    function foreignCamera(id) {
+      const v = !applying.has(id) && viewportOf(id);
+      if (!v || lastSet.get(id) === signature(v)) return null;
+      lastSet.delete(id);
+      return v;
+    }
     // A cell Display Set Presets is putting a rule on (viewer-features-view.js): its changes are the rule's, not the
-    // reader's, and are not followed; given the mark taken when a change was heard, also a cell a rule began on since.
-    const ruled = (id, since) => { try { return !!window.KinViewerCellRules?.setting?.(id, since); } catch (_) { return false; } };
-    const ruleMark = () => { try { return window.KinViewerCellRules?.mark?.(); } catch (_) { return undefined; } };
+    // reader's, and are neither followed nor written over.
+    const ruled = id => { try { return !!window.KinViewerCellRules?.setting?.(id); } catch (_) { return false; } };
+    // What this module set on a cell and marked there (a Breast Display zoom mode, a Quadrant Zoom step, Breast W/L)
+    // holds for that viewport and those images: { viewport, stack, … }. A zoom holds while the cell's zoom is the one
+    // it set — whatever changes that (the reader, Mirrored, another mode) ends it, and its mark goes.
+    const stackKey = v => { const ids = idsOf(v); return ids.length + '|' + (ids[0] || '') + '|' + (ids[ids.length - 1] || ''); };
+    const sameImages = (mark, v) => !!v && v === mark.viewport && stackKey(v) === mark.stack;
+    const sameZoom = (mark, v) => { const zoom = v && zoomOf(v); return !!zoom && Math.abs(zoom - mark.zoom) <= 1e-6 * mark.zoom; };
 
     // ── This module's layer over each cell: badges, the outline, the press layer and the lens ──
     // The cell layer covers the whole cell, its header row too; the outline, the press layer and the lens are on the
@@ -250,51 +314,10 @@
       regions.set(cell.id, { imageId: cell.imageId, values, input, region });
       return region;
     }
-    const NO_CELLS = 'MG 영상이 있는 칸을 찾지 못했습니다(영상 머리글을 읽지 못했을 수 있습니다). 바꾼 것이 없습니다.';
-
-    // ── Acts that wait ──
-    // What the reader asks for is carried out once the image headers are read, and the first time that takes as long as
-    // the server does. An act is therefore taken down as things stood when it was received (the press, the camera event,
-    // the tool run, the button — not when the answer comes) and checked against that, here, just before each write:
-    // nothing is written for an act that a later one, a Reset, a Close or another image has overtaken (the cells
-    // themselves are held in mgCells(), as each stood when the headers were asked for).
-    // Camera acts. Everything that sets a cell's camera has its number in the order received: each act of this module
-    // when it is received, and every camera change that is not this module's (the reader's, the viewer's) when it is
-    // heard. stamps: for each cell, the number of the latest of them that set its camera. An act sets a cell's camera
-    // only if nothing received after it has (cameraHolds with the cell).
-    // A command sets cameras on its own word (a Breast Display zoom mode, a Quadrant Zoom step or Close, Mirrored's
-    // Reset): of the commands, the latest received is the only one carried out. A Mirrored point or camera change may
-    // turn out to carry nothing (the cell may not be linked), and a cell's new size is not the reader's act: neither is
-    // a command (command: false) — it is not carried out after a later command, and it stops nothing that was asked
-    // before it. What a Mirrored act sets is that act's (steer with the act); a new size leaves the cell's number as it is.
-    const stamps = new Map(), turn = { received: 0, command: 0 };
-    const cameraAct = (command = true) => ({ n: ++turn.received, command: command ? ++turn.command : turn.command });
-    const cameraHolds = (act, id) => !ended && act.command === turn.command && (id === undefined || act.n > countOf(stamps, id));
 
     // ── Mirrored ──
-    // epoch: every opening, Close and Reset; inverts: every time Invert together is turned off.
-    const mirror = { on: false, invert: true, panel: null, status: null, before: new Map(), epoch: 0, inverts: 0 };
-    // An act Mirrored carries from one cell to the others of its view ('camera': a point or a camera change, 'invert',
-    // 'lens'), as it stood when it was received: the Mirrored epoch, the source cell and every cell as held then, the
-    // display-rule mark, and for a camera act its place among the camera commands.
-    function mirrorAct(v, kind) {
-      const cells = new Map();
-      for (const id of cellIds()) { const cell = viewportOf(id); if (cell) cells.set(id, hold(cell)); }
-      return { kind, epoch: mirror.epoch, inverts: mirror.inverts, camera: kind === 'camera' ? cameraAct(false) : null, source: cells.get(v.id) || hold(v), cells, mark: ruleMark() };
-    }
-    // Whether the act is still to be carried out, and onto that cell (one of mgCells()): not after a Reset, a Close or
-    // a new opening, not from or onto a cell given another image since, a camera act not after a later command nor onto
-    // a cell whose camera something received later has set, an Invert not after Invert together was turned off (every
-    // Invert run while it stays on is carried, each in its turn).
-    function carried(act, target) {
-      if (ended || !mirror.on || act.epoch !== mirror.epoch || !holds(act.source)) return false;
-      if (act.camera && !cameraHolds(act.camera)) return false;
-      if (act.kind === 'invert' && !(mirror.invert && act.inverts === mirror.inverts)) return false;
-      if (!target) return true;
-      const held = act.cells.get(target.id);
-      return !!held && held.v === target.v && holds(held) && (!act.camera || cameraHolds(act.camera, target.id));
-    }
-    async function openMirrored() {
+    const mirror = { on: false, invert: true, panel: null, status: null, before: new Map() };
+    function openMirrored() {
       const panel = ui.panel({ id: 'mirrored', title: 'Mirrored' });
       if (!panel || panel === mirror.panel) return;
       mirror.panel = panel;
@@ -303,8 +326,7 @@
       note('대응 자리는 영상 좌표로 정합니다(반대쪽은 좌우 거울). 같은 조직이 아닐 수 있습니다. CC와 MLO 사이에는 걸지 않습니다.', panel.body);
       const label = element('label', '', panel.body, 'kin-mg-row'), invert = element('input', '', label);
       invert.type = 'checkbox'; invert.checked = mirror.invert; invert.setAttribute('aria-label', 'Invert together'); element('span', 'Invert together', label);
-      // Turned off, the Inverts still waiting for the image headers are not carried either (nor when it is turned on again).
-      invert.onchange = () => { mirror.invert = invert.checked; if (!mirror.invert) mirror.inverts++; };
+      invert.onchange = () => { mirror.invert = invert.checked; };
       const row = element('div', '', panel.body, 'kin-mg-row');
       button('Reset', row, () => resetMirrored(), '켜기 전의 보기로 되돌립니다');
       mirror.status = statusLine(panel.body);
@@ -312,26 +334,23 @@
       // pressed keeps its own while it is pressed).
       panel.onClose(() => {
         if (mirror.panel !== panel) return;
-        mirror.on = false; mirror.epoch++; mirror.panel = mirror.status = null; clearBadges('mirrored');
+        mirror.on = false; mirror.panel = mirror.status = null; pointer.press = null; clearBadges('mirrored');
         for (const [id, entry] of layers) if (entry.lens && !(lens.pressed && lens.last?.id === id)) { entry.lens.remove(); entry.lens = null; }
       });
-      // Reset goes back to the views as they were when Mirrored was turned on (every cell's camera now; the link starts at
-      // once — a point pressed before the image headers are read waits for them in pick()).
+      // Reset goes back to the views as they were when Mirrored was turned on (every cell's camera and inversion now).
       mirror.before.clear();
       for (const id of cellIds()) {
         const v = viewportOf(id); if (!v) continue;
         let props = {}; try { props = v.getProperties(); } catch (_) {}
         try { mirror.before.set(id, { viewport: v, imageId: imageIdOf(v), camera: structuredClone(v.getCamera()), invert: !!props.invert }); } catch (_) {}
       }
-      mirror.on = true; mirror.epoch++;
-      await markUnlinked();
+      mirror.on = true;
+      markUnlinked(cellsPressed());
     }
-    // The cells Mirrored does not link, marked and named in this opening's panel (a Reset does not stop that): those of
-    // the latest reading of the cells, a cell whose header could not be read among them.
-    async function markUnlinked() {
-      const panel = mirror.panel;
-      const list = await cellsNow('mirrored');
-      if (!list || !mirror.on || !panel || mirror.panel !== panel) return;
+    // The cells Mirrored does not link, marked and named in the panel: those the table has now — a cell whose image is
+    // not read among them, until it is.
+    function markUnlinked(list = cellsNow()) {
+      if (!mirror.on) return;
       clearBadges('mirrored');
       const lines = leftOut(list);
       for (const cell of list) {
@@ -342,11 +361,10 @@
       }
       if (mirror.status) mirror.status.textContent = lines.length ? '연동하지 않는 칸 — ' + lines.join(' / ') : '';
     }
-    // Reset is carried out at once: every act received before it (a point, a camera change, an Invert, a lens) is dropped,
-    // and every camera command still waiting.
+    // Reset: every cell that still holds the image it held then, back to its camera and inversion; a point still
+    // pressed is dropped.
     function resetMirrored() {
-      mirror.epoch++;
-      const act = cameraAct();
+      pointer.press = null;
       for (const [id, before] of mirror.before) {
         const v = viewportOf(id);
         if (v !== before.viewport || imageIdOf(v) !== before.imageId) continue;
@@ -354,52 +372,35 @@
           const { flipHorizontal, flipVertical, ...camera } = before.camera;
           v.setCamera({ ...camera, flipHorizontal, flipVertical });
           if (!!v.getProperties().invert !== before.invert) v.setProperties({ invert: before.invert });
-        }, act);
+        });
       }
     }
-    // A point pressed in one cell (point: that place in the cell's image, taken when it was pressed): that place twice as
-    // large in it and the counterpart in the same view's other cells.
-    async function pick(act, point) {
-      const list = await mgCells(), t = M.targets(act.source.id, list);
-      if (!carried(act)) return;
-      if (t.reason) { if (mirror.status) mirror.status.textContent = '이 칸은 연동할 수 없습니다: ' + (REASONS[t.reason] || t.reason); return; }
+    // A point pressed in one cell (point: that place in the cell's image): that place twice as large in it and the
+    // counterpart in the same view's other cells — those read now; the panel names the others.
+    function pick(v, point) {
+      const list = cellsPressed(), t = M.targets(v.id, list), unread = list.left.find(entry => entry.id === v.id);
+      if (!t.source && !unread) return;
+      markUnlinked(list);
+      if (unread || t.reason) { if (mirror.status) mirror.status.textContent = '이 칸은 연동할 수 없습니다: ' + (unread ? unread.label : REASONS[t.reason] || t.reason); return; }
       const source = t.source;
       for (const cell of [source, ...t.linked.map(id => list.find(c => c.id === id))]) {
-        if (!carried(act, cell)) continue;
         const at = cell === source ? point : M.counterpart(point, source, cell), world = at && toWorld(cell.v, at);
-        if (world) steer(cell.v, () => { cell.v.setZoom(2); centerOn(cell.v, world); }, act.camera);
+        if (world) steer(cell.v, () => { cell.v.setZoom(2); centerOn(cell.v, world); });
       }
     }
-    // A reader's zoom or pan in one MG cell: the same zoom (relative to Fit) and the counterpart centre in the others.
-    // The act is taken down when the camera event is heard; it is carried a frame later, after the headers.
-    const pendingCamera = new Map();  // source cell → its latest act
-    let cameraFrame = 0;
-    // A camera event heard on a cell: the cell (viewport) when it is a change that is not this module's — not while this
-    // module sets that cell's camera, and not the camera it last set there, however late that is heard. Once the cell
-    // has had another camera, the same camera again is a change like any other (back to 1× after 3×).
-    function foreignCamera(id) {
-      const v = !applying.has(id) && viewportOf(id);
-      if (!v || lastSet.get(id) === signature(v)) return null;
-      lastSet.delete(id);
-      return v;
-    }
-    function cameraChanged(v) {
-      const id = v.id;
-      if (!mirror.on || ruled(id)) return;
-      pendingCamera.set(id, mirrorAct(v, 'camera'));
-      if (!cameraFrame) cameraFrame = requestAnimationFrame(() => { cameraFrame = 0; const acts = [...pendingCamera.values()]; pendingCamera.clear(); acts.forEach(act => followCamera(act)); });
-    }
-    // A change heard before a rule began on a cell is not carried onto it (nor carried from it).
-    async function followCamera(act) {
-      const list = await mgCells(), t = M.targets(act.source.id, list);
-      if (!carried(act) || t.reason || ruled(act.source.id, act.mark)) return;
-      const source = t.source, zoom = zoomOf(source.v), focal = toImage(source.v, source.v.getCamera().focalPoint);
+    // A reader's zoom or pan in one MG cell, when it is heard: the same zoom (relative to Fit) and the counterpart
+    // centre in the others read now.
+    function followCamera(v) {
+      if (!mirror.on || ruled(v.id)) return;
+      const list = cellsNow(), t = M.targets(v.id, list);
+      if (t.reason) return;
+      const source = t.source, zoom = zoomOf(v), focal = toImage(v, v.getCamera().focalPoint);
       if (!zoom || !focal) return;
       for (const id of t.linked) {
         const cell = list.find(c => c.id === id);
-        if (ruled(id, act.mark) || !carried(act, cell)) continue;
+        if (ruled(id)) continue;
         const at = M.counterpart(focal, source, cell), world = at && toWorld(cell.v, at);
-        if (world) steer(cell.v, () => { cell.v.setZoom(zoom); centerOn(cell.v, world); }, act.camera);
+        if (world) steer(cell.v, () => { cell.v.setZoom(zoom); centerOn(cell.v, world); });
       }
     }
     // Invert together follows the reader's own Invert: the toolbar announces every tool run (the I key, More › Invert, a
@@ -407,41 +408,41 @@
     // (each image the other way from how it is shown, so a MONOCHROME1 image beside a MONOCHROME2 one turns too). Nothing
     // else that sets an inversion (a stored presentation, a restored view, a display rule, Reset) is carried.
     const invertOf = v => { try { return !!v.getProperties().invert; } catch (_) { return null; } };
-    async function invertRun(event) {
+    function invertRun(event) {
       const { id, viewportId } = event.detail || {}, v = id === 'invert' && viewportId && viewportOf(viewportId);
       if (!v || !mirror.on || !mirror.invert || ruled(viewportId)) return;
-      const act = mirrorAct(v, 'invert');
-      const list = await mgCells(), t = M.targets(viewportId, list);
-      if (!carried(act) || t.reason || ruled(viewportId, act.mark)) return;
+      const list = cellsPressed(), t = M.targets(viewportId, list);
+      markUnlinked(list);
+      if (t.reason) return;
       for (const target of t.linked) {
-        const cell = list.find(c => c.id === target), other = cell?.v, invert = other && invertOf(other);
-        if (!other || invert === null || ruled(target, act.mark) || !carried(act, cell)) continue;
+        const other = list.find(c => c.id === target).v, invert = invertOf(other);
+        if (invert === null || ruled(target)) continue;
         steer(other, () => other.setProperties({ invert: !invert }));
       }
     }
-    // A press without a drag in an MG cell while Mirrored is on is a point: the act and the place in the image are taken
-    // when it is pressed, its number among the camera acts when it is let go (a drag is no point).
-    let press = null;
+    // The pointer: the cell it is pressed in (a drag there is the reader's own camera change), and with Mirrored on the
+    // point pressed there — the place in the image and the cell's entry in the table, taken when it is pressed. Let go
+    // without a drag it is a point, unless the cell was given another image meanwhile (A → B → A too) or Reset or Close
+    // came while it was held.
+    const pointer = { id: null, press: null };
     document.addEventListener('pointerdown', event => {
-      press = null;
-      if (!mirror.on || event.button !== 0) return;
       const v = cellIds().map(viewportOf).find(v => v?.element.contains(event.target));
-      if (!v) return;
+      pointer.id = v?.id ?? null; pointer.press = null;
+      if (!v || !mirror.on || event.button !== 0) return;
       const rect = v.element.getBoundingClientRect();
       let point = null; try { point = toImage(v, v.canvasToWorld([event.clientX - rect.left, event.clientY - rect.top])); } catch (_) {}
-      press = { x: event.clientX, y: event.clientY, act: mirrorAct(v, 'point'), point };
+      pointer.press = { x: event.clientX, y: event.clientY, v, entry: look(v.id), point };
     }, { capture: true, signal });
-    document.addEventListener('pointerup', event => {
-      const start = press; press = null;
-      if (!start || !start.point || !mirror.on || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 4) return;
-      start.act.camera = cameraAct(false);
-      pick(start.act, start.point).catch(error => console.error(error));
+    for (const type of ['pointerup', 'pointercancel']) document.addEventListener(type, event => {
+      const start = pointer.press; pointer.id = null; pointer.press = null;
+      // (the release ends the Magnifier's press wherever it is heard — the layer pressed may be gone by then)
+      if (lens.pressed) lensUp();
+      if (type !== 'pointerup' || !start?.point || !mirror.on || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 4) return;
+      if (look(start.v.id) === start.entry) pick(start.v, start.point);
     }, { capture: true, signal });
 
     // ── Magnifier: while pressed, the place under the pointer twice as large (and its counterparts with Mirrored on) ──
-    // press counts every press and every release (and the Magnifier turned on or off), moves every place a lens was asked
-    // for: a lens that comes late (after the image headers) is drawn only for the press and the place that are still the last.
-    const lens = { on: false, pressed: false, press: 0, moves: 0, last: null };
+    const lens = { on: false, pressed: false, last: null };
     const LENS = 160, LENS_ZOOM = 2, LENS_MARGIN = 3;
     // The one place a lens is drawn (the cell pressed, the linked cells, and again while it is held): the picture the
     // screen shows at `point` (CSS pixels of the cell's image), twice as large. The cell's canvas is read on the screen's
@@ -476,44 +477,37 @@
       } catch (_) { /* a canvas not drawn yet */ }
     }
     const hideLenses = () => { for (const entry of layers.values()) { entry.lens?.remove(); entry.lens = null; } };
-    const lensUp = () => { lens.pressed = false; lens.press++; lens.last = null; hideLenses(); };
-    // While pressed, a cell drawn again (an Invert, a window change) shows in the lenses at once.
+    const lensUp = () => { lens.pressed = false; lens.last = null; hideLenses(); };
+    // While pressed, a cell drawn again (an Invert, a window change) shows in the lenses on the next frame: the press
+    // and the place that are the last then.
     let lensFrame = 0;
     function lensRedraw(event) {
       const id = event.detail?.viewportId;
       if (!lens.pressed || !lens.last || lensFrame || ![...layers].some(([cell, entry]) => cell === id && entry.lens)) return;
-      const press = lens.press;
-      lensFrame = requestAnimationFrame(() => {
-        lensFrame = 0;
-        if (!ended && lens.pressed && lens.press === press && lens.last) magnify(lens.last.id, lens.last.point).catch(error => console.error(error));
-      });
+      lensFrame = requestAnimationFrame(() => { lensFrame = 0; if (!ended && lens.pressed && lens.last) magnify(lens.last.id, lens.last.point); });
     }
-    async function magnify(viewportId, point) {
+    function magnify(viewportId, point) {
       const v = viewportOf(viewportId); if (!v || !lens.pressed) return;
-      const press = lens.press, move = ++lens.moves;
       lens.last = { id: viewportId, point };
       hideLenses(); lensAt(v, point);
       if (!mirror.on) return;
-      // The linked cells: taken down as a Mirrored act now, with the place in the image now.
-      const act = mirrorAct(v, 'lens');
+      // The linked cells read now: the counterpart of the place in the image.
       let at = null; try { at = toImage(v, v.canvasToWorld(point)); } catch (_) {}
-      const list = await mgCells(), t = M.targets(viewportId, list);
-      if (!lens.pressed || press !== lens.press || move !== lens.moves || !carried(act) || t.reason || !at) return;
+      const list = cellsNow(), t = M.targets(viewportId, list);
+      if (t.reason || !at) return;
       for (const id of t.linked) {
-        const cell = list.find(c => c.id === id);
-        if (!carried(act, cell)) continue;
-        const p = M.counterpart(at, t.source, cell), world = p && toWorld(cell.v, p);
+        const cell = list.find(c => c.id === id), p = M.counterpart(at, t.source, cell), world = p && toWorld(cell.v, p);
         if (world) lensAt(cell.v, cell.v.worldToCanvas(world));
       }
     }
 
-    // ── The press layer: the Magnifier on every MG cell, the slab cell's wheel (its mouse tools are off) ──
-    function pressLayers(list) {
+    // ── The press layer: the Magnifier on every MG cell read now, the slab cell's wheel (its mouse tools are off) ──
+    function pressLayers() {
       const want = new Map();
-      if (lens.on) for (const cell of list) want.set(cell.id, 'lens');
+      if (lens.on) for (const cell of cellsNow()) want.set(cell.id, 'lens');
       if (tomo.slabbed) want.set(tomo.slabbed.id, lens.on ? 'lens' : 'slab');
       for (const [id, entry] of layers) if (!want.has(id) && entry.capture) {
-        // The layer of the cell being pressed goes with its press (no release would be heard on it): the lenses go too.
+        // The layer of the cell being pressed goes with its press: the lenses go too.
         if (lens.pressed && lens.last?.id === id) lensUp();
         entry.capture.remove(); entry.capture = null;
       }
@@ -525,13 +519,12 @@
           entry.capture.addEventListener('pointerdown', event => {
             event.stopPropagation(); event.preventDefault();
             if (entry.capture.dataset.mode !== 'lens' || event.button !== 0) return;
-            entry.capture.setPointerCapture?.(event.pointerId); lens.pressed = true; lens.press++;
-            magnify(id, at(event)).catch(error => console.error(error));
+            entry.capture.setPointerCapture?.(event.pointerId); lens.pressed = true;
+            magnify(id, at(event));
           });
           entry.capture.addEventListener('pointermove', event => {
-            if (lens.pressed && entry.capture.dataset.mode === 'lens') magnify(id, at(event)).catch(error => console.error(error));
+            if (lens.pressed && entry.capture.dataset.mode === 'lens') magnify(id, at(event));
           });
-          for (const type of ['pointerup', 'pointercancel']) entry.capture.addEventListener(type, lensUp);
           entry.capture.addEventListener('mousedown', event => event.stopPropagation());
           entry.capture.addEventListener('wheel', event => {
             if (tomo.slabbed?.id !== id) return;
@@ -542,27 +535,26 @@
         entry.capture.dataset.mode = mode;
       }
     }
-    // The press layers for the cells as they are now (the latest reading of them).
-    const pressNow = async () => { const list = await cellsNow('press'); if (list) pressLayers(list); };
-    // A cell was given another image (a slice, a stack) or the grid changed: Mirrored's marks and the press layers are
-    // those of the cells as they are now.
-    const cellsChanged = () => { if (mirror.on) markUnlinked().catch(() => {}); if (lens.on) pressNow().catch(() => {}); };
-    async function setMagnifier(on) {
+    // What is drawn from the table itself — Mirrored's marks, the press layers, and (edges) the lines of a Breast Edge
+    // that is on — drawn again from the table as it is now: when a cell is given another image, and when a header is read.
+    function redraw(edges) {
+      if (mirror.on) markUnlinked();
+      if (lens.on || tomo.slabbed) pressLayers();
+      if (edges && show.edge) drawEdges();
+    }
+    function setMagnifier(on) {
       lens.on = on; lensUp();
-      const list = on ? await cellsNow('press') : [];
-      if (ended || lens.on !== on) return;
-      if (list) pressLayers(list);
+      if (on) cellsPressed();
+      pressLayers();
       ui.toast(on ? 'Magnifier: MG 영상을 누르고 있는 동안 그 자리를 2배로 보입니다. MG ▾ › Magnifier로 끕니다.' : 'Magnifier를 껐습니다.');
     }
 
     // ── Quadrant Zoom ──
-    // Every step and every Close is a camera command (cameraAct): an earlier one still reading image headers then changes
-    // nothing, and neither writes a cell whose camera was changed meanwhile.
-    // marks: the cells the step holds ({ viewport, stack, step, mode, zoom, width, height, clipped, label }). A cell leaves
-    // the step when its zoom, stack or viewport is changed by anything else (Breast Display, Mirrored, the reader): its
-    // badge then no longer says what it shows, and nothing of the step is drawn there again. A pan keeps it (the way to
-    // an edge at 4×). A held cell whose size changes (window, layout) has the step it holds worked out again for the new
-    // size — the step and zoom choice drawn there, not one asked for since and still waiting.
+    // marks: the cells the step holds ({ viewport, stack, zoom, step, mode, width, height, clipped, label }). A cell
+    // leaves the step when its zoom, stack or viewport is changed by anything else (Breast Display, Mirrored, the
+    // reader): its badge then no longer says what it shows, and nothing of the step is drawn there again. A pan keeps
+    // it (the way to an edge at 4×). A held cell whose size changes (window, layout) has the step it holds worked out
+    // again for the new size, a moment later — unless the reader drags in it or it leaves the step meanwhile.
     const quad = { panel: null, step: 0, marks: new Map(), apply: null, paint: null, resized: new Set(), timer: 0 };
     const QUAD_ZOOM_LABELS = { '4x': '4×', fill: 'Fill Quadrant' };
     const quadSizes = typeof ResizeObserver === 'function' ? new ResizeObserver(entries => {
@@ -587,12 +579,12 @@
       quad.paint?.();
     }
     function quadrantCamera(id) {
-      const mark = quad.marks.get(id), v = mark && viewportOf(id), zoom = v && zoomOf(v);
-      if (mark && (v !== mark.viewport || !zoom || Math.abs(zoom - mark.zoom) > 1e-6 * mark.zoom)) dropQuadrant(id);
+      const mark = quad.marks.get(id), v = mark && viewportOf(id);
+      if (mark && (v !== mark.viewport || !sameZoom(mark, v))) dropQuadrant(id);
     }
     function quadrantImage(id) {
-      const mark = quad.marks.get(id), v = viewportOf(id);
-      if (mark && (v !== mark.viewport || stackKey(v) !== mark.stack)) dropQuadrant(id);
+      const mark = quad.marks.get(id);
+      if (mark && !sameImages(mark, viewportOf(id))) dropQuadrant(id);
     }
     function endQuadrant() {
       clearTimeout(quad.timer); timers.delete(quad.timer); quad.timer = 0; quad.resized.clear();
@@ -631,74 +623,62 @@
         status.textContent = [...notes, clipped.length ? '4×에서 사분면의 가장자리가 칸 밖에 있는 칸 — ' + clipped.join(' / ') : ''].filter(Boolean).join('. ');
       };
       // A step on one cell: zoomed and centred, held (marked) and badged; false when it could not be drawn.
-      // act: the step's command (none for a cell's new size).
-      function place(cell, step, mode, act) {
+      function place(cell, step, mode) {
         const region = regionOf(cell), q = M.quadrant(step, cell, region.found ? region.box : null), size = cellSize(cell.v);
         const z = M.quadrantZoom({ mode, zoom: zoomOf(cell.v), perPixel: perPixel(cell.v), ...size, width: q.box.x1 - q.box.x0, height: q.box.y1 - q.box.y0 });
         const world = toWorld(cell.v, [(q.box.x0 + q.box.x1) / 2, (q.box.y0 + q.box.y1) / 2]);
         dropQuadrant(cell.id);
-        if (!z || !world || !steer(cell.v, () => { cell.v.setZoom(z.zoom); centerOn(cell.v, world); }, act)) { badge(cell.v, 'quadrant', 'Quadrant: not zoomed'); return false; }
+        if (!z || !world || !steer(cell.v, () => { cell.v.setZoom(z.zoom); centerOn(cell.v, world); })) { badge(cell.v, 'quadrant', 'Quadrant: not zoomed'); return false; }
         // The cell's zoom is the quadrant's now: a Breast Display zoom mode no longer holds there.
         dropZoomMode(cell.id);
-        quad.marks.set(cell.id, { viewport: cell.v, stack: stackKey(cell.v), step, mode, zoom: zoomOf(cell.v) ?? z.zoom, width: size.cellWidth, height: size.cellHeight,
+        quad.marks.set(cell.id, { viewport: cell.v, stack: stackKey(cell.v), zoom: zoomOf(cell.v) ?? z.zoom, step, mode, width: size.cellWidth, height: size.cellHeight,
           clipped: z.clipped, label: labelOf(cell) });
         quadSizes?.observe(cell.v.element);
         badge(cell.v, 'quadrant', `Q${step + 1} ${q.name} · ${QUAD_ZOOM_LABELS[mode]}` + (region.found ? '' : ' · whole image') + (z.clipped ? ' · edges outside' : ''));
         return true;
       }
-      async function show(next) {
-        const act = cameraAct(), mode = carry.quadrantZoom, step = ((next % 4) + 4) % 4;
+      // A step: every MG cell read now. A cell whose image is not read is left as it is, out of the step, and named.
+      function show(next) {
+        const mode = carry.quadrantZoom, step = ((next % 4) + 4) % 4;
         quad.step = step;
         heading.textContent = `Quadrant ${quad.step + 1}/4: ${M.QUADRANTS[quad.step]} (R/L matched)`;
-        const skipped = [], failed = [];
-        const list = await mgCells();
-        if (quad.panel !== panel || !cameraHolds(act)) return;
-        // A cell given another image since the step was asked for, or whose header could not be read, is left as it
-        // is, out of the step (and named),
+        const skipped = [], failed = [], list = cellsPressed();
         for (const entry of list.left) dropQuadrant(entry.id);
         for (const cell of list) {
-          // as is a cell whose camera was changed since.
-          if (!cameraHolds(act, cell.id)) { dropQuadrant(cell.id); continue; }
           const reason = M.unlinkable(cell);
           if (reason) { dropQuadrant(cell.id); skipped.push(labelOf(cell) + ': ' + (REASONS[reason] || reason)); badge(cell.v, 'quadrant', 'Quadrant: ' + (REASONS[reason] || reason)); continue; }
-          if (!place(cell, step, mode, act)) failed.push(labelOf(cell));
+          if (!place(cell, step, mode)) failed.push(labelOf(cell));
         }
         notes = [list.left.length ? '확대하지 않은 칸 — ' + leftOut(list).join(' / ') : '',
           skipped.length ? '방향을 확인할 수 없어 확대하지 않은 칸 — ' + skipped.join(' / ') : '',
           failed.length ? '배율을 계산할 수 없어 확대하지 않은 칸 — ' + failed.join(' / ') : ''];
         paint();
       }
-      // Held cells whose size changed: the step and zoom choice each holds again, for those cells only (a command
-      // received meanwhile wins, and a cell whose camera was changed meanwhile is left). The answer is taken down when
-      // it is worked out, a moment after the size changed: the viewer's own camera changes for the new size come
-      // before it, and cannot be told from the reader's.
-      quad.apply = async ids => {
-        const act = cameraAct(false);
-        const list = await mgCells();
-        if (quad.panel !== panel || !cameraHolds(act)) return;
-        for (const cell of list) {
-          const mark = quad.marks.get(cell.id);
-          if (ids.includes(cell.id) && mark?.viewport === cell.v && cameraHolds(act, cell.id) && !place(cell, mark.step, mark.mode))
-            notes = [...notes.filter(Boolean), '배율을 계산할 수 없어 확대하지 않은 칸 — ' + labelOf(cell)];
+      // Held cells whose size changed: the step and zoom choice each holds, again, for those cells only. A cell that
+      // cannot be worked out again (its image not read now) leaves the step.
+      quad.apply = ids => {
+        const list = cellsNow();
+        for (const id of ids) {
+          const mark = quad.marks.get(id), cell = list.find(c => c.id === id);
+          if (!mark) continue;
+          if (!cell || mark.viewport !== cell.v) { dropQuadrant(id); continue; }
+          if (!place(cell, mark.step, mark.mode)) notes = [...notes.filter(Boolean), '배율을 계산할 수 없어 확대하지 않은 칸 — ' + labelOf(cell)];
         }
         paint();
       };
       quad.paint = paint;
-      panel.onClose(async () => {
+      // Close: the cells the step holds and every MG cell read now, back to Fit.
+      panel.onClose(() => {
         if (quad.panel !== panel) return;
-        const act = cameraAct();
+        const held = [...quad.marks].filter(([id, mark]) => sameImages(mark, viewportOf(id))).map(([, mark]) => mark.viewport);
         endQuadrant();
-        const list = await mgCells();
-        if (!cameraHolds(act)) return;
-        for (const cell of list) if (cameraHolds(act, cell.id)) fit(cell.v, act);
+        for (const v of new Set([...held, ...cellsNow().map(cell => cell.v)])) fit(v);
       });
       show(0);
     }
 
     // ── Tomo (DBT) Slices ──
-    const tomo = { panel: null, v: null, id: null, imageIds: null, timer: 0, step: 1, slab: 1, ticket: 0, opening: 0, original: null, applied: null, slabbed: null, sync: null };
-    const idsOf = v => { try { return v.getImageIds?.() || []; } catch (_) { return []; } };
-    const indexOf = v => { try { return v.getCurrentImageIdIndex(); } catch (_) { return 0; } };
+    const tomo = { panel: null, v: null, id: null, imageIds: null, timer: 0, step: 1, slab: 1, ticket: 0, original: null, applied: null, slabbed: null, sync: null };
     function tomoGo(index) {
       const v = tomo.v; if (!v || viewportOf(tomo.id) !== v) return;
       const total = idsOf(v).length, at = Math.max(0, Math.min(total - 1, index));
@@ -754,7 +734,7 @@
       tomo.original = null;
       // The outline drawn for the slab is the slice's again.
       if (show.edge) drawEdges();
-      pressNow().catch(() => {});
+      pressLayers();
     }
     async function drawSlab() {
       const v = tomo.v, ticket = ++tomo.ticket;
@@ -785,25 +765,19 @@
       const pane = v.element.closest('[data-cy=viewport-pane]'); if (pane) pane.dataset.kinMgSlab = 'on';
       badge(v, 'slab', M.slabLabel(range));
       if (show.edge) drawEdges();
-      await pressNow();
+      pressLayers();
       tomo.sync?.();
     }
     // The DBT cell: the active cell when the classifier confirms it holds a breast tomosynthesis stack, else the first such
-    // cell; a CT, MR or other multi-image stack is never a Tomo cell — nor a cell given other images (A → B → A too)
-    // while the header of those it held was read. Of the openings still reading headers only the latest opens the
-    // panel, and none does once the panel was closed.
-    async function openTomo(viewportId) {
-      const opening = ++tomo.opening;
-      let v = null, unread = false, changed = false;
-      // (every candidate as it stands now, when the opening is asked for)
-      const candidates = [viewportOf(viewportId), ...cellIds().map(viewportOf)].filter((view, i, list) => view && list.indexOf(view) === i && idsOf(view).length > 1)
-        .map(view => ({ view, stack: stackKey(view), given: countOf(stacks, view.id) }));
-      for (const { view, stack, given } of candidates) {
-        const cell = await describe(view).catch(() => null);
-        if (ended || opening !== tomo.opening) return;
-        if (viewportOf(view.id) !== view || stackKey(view) !== stack || countOf(stacks, view.id) !== given) { changed = true; continue; }
-        if (!cell) { unread = true; continue; }
-        if (cell.kind === 'dbt' || cell.basis === 'ct-breast-tomosynthesis') { v = view; break; }
+    // cell, of the cells read now; a CT, MR or other multi-image stack is never a Tomo cell. A cell with several images
+    // whose image is not read cannot be told yet: it is named, and Tomo is opened again for it.
+    function openTomo(viewportId) {
+      const list = cellsPressed(), unread = [];
+      let v = null;
+      for (const view of [viewportOf(viewportId), ...cellIds().map(viewportOf)].filter((view, i, all) => view && all.indexOf(view) === i && idsOf(view).length > 1)) {
+        const cell = list.find(c => c.id === view.id), left = list.left.find(entry => entry.id === view.id);
+        if (left) unread.push(left.label);
+        if (cell && (cell.kind === 'dbt' || cell.basis === 'ct-breast-tomosynthesis')) { v = view; break; }
       }
       const panel = ui.panel({ id: 'tomo', title: 'Tomo (DBT) Slices' });
       if (!panel || panel === tomo.panel) return;
@@ -833,12 +807,11 @@
         playButton.textContent = tomo.timer ? 'Stop' : 'Play';
         for (const node of [slider, prev, next, playButton, step, slab]) node.disabled = !live;
         status.textContent = v ? (live ? message : '칸의 영상이 바뀌어 멈췄습니다. 다시 여세요.')
-          : changed ? '여는 동안 칸의 영상이 바뀌었습니다. 다시 여세요.'
-          : unread ? '영상 머리글을 읽지 못해 DBT(유방 단층) 칸인지 확인하지 못했습니다. 다시 여세요.' : '여러 단면이 있는 DBT(유방 단층) 칸이 없습니다. DBT 칸을 고른 뒤 다시 여세요.';
+          : unread.length ? 'DBT(유방 단층) 칸인지 확인하지 못했습니다 — ' + unread.join(' / ') + '. 다시 여세요.'
+          : '여러 단면이 있는 DBT(유방 단층) 칸이 없습니다. DBT 칸을 고른 뒤 다시 여세요.';
       };
       slider.oninput = () => tomoGo(Number(slider.value) - 1);
       panel.onClose(() => {
-        tomo.opening++;
         if (tomo.panel !== panel) return;
         stopPlay(); restoreSlab();
         tomo.panel = tomo.v = tomo.id = tomo.sync = null;
@@ -889,15 +862,21 @@
       dprQuery?.removeEventListener?.('change', onDpr);
       try { dprQuery = window.matchMedia('(resolution: ' + (window.devicePixelRatio || 1) + 'dppx)'); dprQuery.addEventListener?.('change', onDpr); } catch (_) { dprQuery = null; }
     }
-    watchDpr();    const pitchFor = key => { const value = key ? pitches()[key] : undefined; return M.validPitch(value) ? value : null; };
+    watchDpr();
+    const pitchFor = key => { const value = key ? pitches()[key] : undefined; return M.validPitch(value) ? value : null; };
     function savePitch(key, value) {
       if (!key || !M.validPitch(value)) return false;
       try { localStorage.setItem(PITCH_KEY, JSON.stringify({ ...pitches(), [key]: value })); return true; } catch (_) { return false; }
     }
-    const show = { panel: null, status: null, pitchRow: null, edge: false, edgeAsked: false, wl: new Map(), wlTicket: 0, wlWaiting: false, modes: new Map(), screen: null, sessionPitch: null };
-    // A Breast Display zoom mode and a Quadrant Zoom step are each the cell's zoom until the other is set there.
-    const setMode = (v, text) => { dropQuadrant(v.id); show.modes.set(v.id, { viewport: v, text }); badge(v, 'zoom', 'Zoom mode: ' + text); };
+    const show = { panel: null, status: null, pitchRow: null, edge: false, wl: new Map(), modes: new Map(), screen: null, sessionPitch: null };
+    // A Breast Display zoom mode and a Quadrant Zoom step are each the cell's zoom until the other is set there, or
+    // the zoom is changed by anything else: modes holds { viewport, stack, zoom, text } for the cells a mode stands on.
+    const setMode = (v, text) => { dropQuadrant(v.id); show.modes.set(v.id, { viewport: v, stack: stackKey(v), zoom: zoomOf(v), text }); badge(v, 'zoom', 'Zoom mode: ' + text); };
     function dropZoomMode(id) { const mode = show.modes.get(id); if (mode) { show.modes.delete(id); badge(mode.viewport, 'zoom', null); } }
+    function modeCamera(id) {
+      const mode = show.modes.get(id), v = mode && viewportOf(id);
+      if (mode && (v !== mode.viewport || !sameZoom(mode, v))) dropZoomMode(id);
+    }
     function geometryOf(v) {
       const instance = instanceOf(v);
       if (!instance || typeof window.kinPlanarGeometry !== 'function') return null;
@@ -917,27 +896,32 @@
       g.closePath(); g.stroke();
       canvas.dataset.points = String(region.outline.length);
     }
-    // Each call takes a new ticket: one still reading image headers draws nothing when a later one (or Breast Edge off)
-    // came meanwhile. The lines there were go at once; a cell without a region gets none, and is marked and named.
-    // What the Breast Edge button says is what was drawn, said once it is (by whichever drawing comes first after the press).
-    let edgeTicket = 0;
-    async function drawEdges() {
-      const ticket = ++edgeTicket;
+    // Breast Edge: the lines there were go, and every MG cell read now gets its line; a cell without a region gets none
+    // and is marked. Returns what was drawn of ({ list, missed: the cells without a line, by name }), null when off.
+    function drawEdges() {
       for (const entry of layers.values()) { entry.outline?.remove(); entry.outline = null; }
       clearBadges('edge');
-      if (!show.edge) return;
-      const list = await mgCells();
-      if (ended || ticket !== edgeTicket || !show.edge) return;
-      const missed = leftOut(list);
+      if (!show.edge) return null;
+      const list = cellsNow(), missed = leftOut(list);
       for (const cell of list) {
         const region = regionOf(cell);
         if (region.found) drawOutline(cell, region); else { missed.push(labelOf(cell)); badge(cell.v, 'edge', '경계를 찾지 못했습니다'); }
       }
-      if (!show.edgeAsked) return;
-      show.edgeAsked = false;
-      say(!list.length ? NO_CELLS : missed.length ? '경계를 찾지 못한 칸 — ' + missed.join(' / ') : '유방 경계를 그렸습니다. 다시 누르면 지웁니다.');
+      return { list, missed };
     }
-    function pressEdge() { show.edge = !show.edge; show.edgeAsked = show.edge; say(''); drawEdges(); }
+    // The line of one cell again, where it is drawn (the cell's camera changed).
+    function edgeAgain(id) {
+      const cell = layers.get(id)?.outline && look(id)?.cell, region = cell && regionOf(cell);
+      if (region?.found) drawOutline(cell, region);
+    }
+    // The button says what was drawn, of the cells as the table has them at the press.
+    function pressEdge() {
+      show.edge = !show.edge;
+      const drawn = drawEdges();
+      if (drawn) askAgain(drawn.list);
+      say(!drawn ? '' : !drawn.list.length && !drawn.list.left.length ? nothingDone(drawn.list)
+        : drawn.missed.length ? (drawn.list.left.length ? '경계선을 그리지 않은 칸 — ' : '경계를 찾지 못한 칸 — ') + drawn.missed.join(' / ') : '유방 경계를 그렸습니다. 다시 누르면 지웁니다.');
+    }
     // The cell's VOI as it is (window, function, inversion and a stored table on the GPU actor), and back.
     function transfer(v) { try { return v.getDefaultActor()?.actor?.getProperty().getRGBTransferFunction(0) || null; } catch (_) { return null; } }
     function voiNow(v) {
@@ -959,18 +943,14 @@
       }
       show.wl.clear(); clearBadges('wl');
     }
-    // The button turns Breast W/L on, and off again: a press while the first is still waiting for the image headers is
-    // the press that turns it off (nothing was changed yet, and nothing is then), so the window, the table and the
-    // inversion a cell had are taken once, from the cell as the reader had it, and are what Off gives back.
-    async function breastWl() {
-      const ticket = ++show.wlTicket;
-      if (show.wlWaiting || show.wl.size) { show.wlWaiting = false; wlOff(); say('Breast W/L을 껐습니다. 원래 창(VOI LUT·반전 포함)으로 돌아갔습니다.'); return; }
-      show.wlWaiting = true;
-      const list = await mgCells();
-      if (ended || ticket !== show.wlTicket) return;
-      show.wlWaiting = false; clearBadges('wl');
-      if (!list.length) { say(NO_CELLS); return; }
-      const failed = leftOut(list);
+    // The button turns Breast W/L on for the MG cells read now, and off again while any cell holds it: the window, the
+    // table and the inversion a cell had are taken when it is turned on there, and are what Off gives back. A cell left
+    // out when it was turned on (its image not read, no region) is named then; it is not turned on later.
+    function breastWl() {
+      if (show.wl.size) { wlOff(); say('Breast W/L을 껐습니다. 원래 창(VOI LUT·반전 포함)으로 돌아갔습니다.'); return; }
+      clearBadges('wl');
+      const list = cellsPressed(), failed = leftOut(list);
+      if (!list.length) { say(nothingDone(list)); return; }
       for (const cell of list) {
         const region = regionOf(cell);
         let values; try { values = imageData(cell.v).getPointData().getScalars().getData(); } catch (_) { values = null; }
@@ -985,18 +965,22 @@
         show.wl.set(cell.id, { viewport: cell.v, stack: stackKey(cell.v), before, window: window_ });
         badge(cell.v, 'wl', 'Breast W/L');
       }
-      say(failed.length ? '경계를 찾지 못해 창을 바꾸지 않은 칸 — ' + failed.join(' / ') : 'Breast W/L: 유방 영역 픽셀(1–99 백분위)로 창을 정했습니다. 다시 누르면 원래 창입니다.');
+      say(failed.length ? (list.left.length ? '창을 바꾸지 않은 칸 — ' : '경계를 찾지 못해 창을 바꾸지 않은 칸 — ') + failed.join(' / ')
+        : 'Breast W/L: 유방 영역 픽셀(1–99 백분위)로 창을 정했습니다. 다시 누르면 원래 창입니다.');
     }
     const say = text => { if (show.status) show.status.textContent = text; };
-    // A zoom mode is a camera command: the latest one pressed is the one carried out and the one that says so, and a
-    // cell whose camera was changed since it was pressed is left as it is and named — as is one given another image
-    // since, or whose header could not be read (left).
-    async function zoomMode(kind) {
-      const act = cameraAct();
-      const all = await mgCells(), skipped = [], left = leftOut(all);
-      if (!cameraHolds(act)) return;
-      if (!all.length) { say(NO_CELLS); return; }
-      const list = all.filter(cell => cameraHolds(act, cell.id) || !left.push(labelOf(cell)));
+    // True Size on one cell for a screen (its pixel pitch and scale): false when the image's pixel spacing cannot be told.
+    function trueSize(v, pitch, dpr) {
+      const g = geometryOf(v), zoom = g && M.trueSize({ zoom: zoomOf(v), perPixel: perPixel(v), spacing: g.spacing, pitch, dpr });
+      if (!zoom) return false;
+      steer(v, () => v.setZoom(zoom)); setMode(v, M.trueSizeLabel(g.basis));
+      return true;
+    }
+    // A zoom mode: carried out at once on the MG cells read now, and it says so — a cell whose image is not read is
+    // left as it is and named.
+    function zoomMode(kind) {
+      const list = cellsPressed(), skipped = [], left = leftOut(list);
+      if (!list.length) { say(nothingDone(list)); return; }
       if (!show.edge) clearBadges('edge');
       const missed = cell => { skipped.push(labelOf(cell)); if (!show.edge) badge(cell.v, 'edge', '경계를 찾지 못했습니다'); };
       if (kind === 'match') {
@@ -1014,7 +998,7 @@
           for (const entry of entries) {
             if (!entry.box) continue;
             const world = zooms[entry.id] && toWorld(entry.cell.v, [(entry.box.x0 + entry.box.x1) / 2, (entry.box.y0 + entry.box.y1) / 2]);
-            if (world && steer(entry.cell.v, () => { entry.cell.v.setZoom(zooms[entry.id]); centerOn(entry.cell.v, world); }, act)) setMode(entry.cell.v, 'Match Size');
+            if (world && steer(entry.cell.v, () => { entry.cell.v.setZoom(zooms[entry.id]); centerOn(entry.cell.v, world); })) setMode(entry.cell.v, 'Match Size');
             else unset.push(labelOf(entry.cell));
           }
         }
@@ -1026,11 +1010,7 @@
         const now = screenNow(), pitch = pitchFor(now.key) ?? (show.sessionPitch?.key === now.key && now.key === null ? show.sessionPitch.value : null);
         if (!pitch) { openPitch(); return; }
         show.screen = now;
-        for (const cell of list) {
-          const g = geometryOf(cell.v), zoom = g && M.trueSize({ zoom: zoomOf(cell.v), perPixel: perPixel(cell.v), spacing: g.spacing, pitch, dpr: now.dpr });
-          if (!zoom) { skipped.push(labelOf(cell)); continue; }
-          steer(cell.v, () => cell.v.setZoom(zoom), act); setMode(cell.v, M.trueSizeLabel(g.basis));
-        }
+        for (const cell of list) if (!trueSize(cell.v, pitch, now.dpr)) skipped.push(labelOf(cell));
         say((left.length ? '바꾸지 않은 칸 — ' + left.join(' / ') + '. ' : '') + (skipped.length ? '픽셀 간격을 확인할 수 없어 바꾸지 않은 칸 — ' + skipped.join(' / ') + '. ' : '')
           + `True Size: 이 화면의 픽셀 크기 ${pitch} mm 기준입니다.`);
         return;
@@ -1038,10 +1018,10 @@
       skipped.push(...left);
       for (const cell of list) {
         const v = cell.v;
-        if (kind === 'fit') { fit(v, act); setMode(v, 'Fit'); continue; }
+        if (kind === 'fit') { fit(v); setMode(v, 'Fit'); continue; }
         if (kind === 'pixel') {
           const zoom = M.onePixel({ zoom: zoomOf(v), perPixel: perPixel(v), dpr: window.devicePixelRatio || 1 });
-          if (zoom) { steer(v, () => v.setZoom(zoom), act); setMode(v, '1:1'); } else skipped.push(labelOf(cell));
+          if (zoom) { steer(v, () => v.setZoom(zoom)); setMode(v, '1:1'); } else skipped.push(labelOf(cell));
           continue;
         }
         if (kind === 'breast') {
@@ -1049,7 +1029,7 @@
           if (!region.found) { missed(cell); continue; }
           const box = region.box, shown = shownBox(v, box), zoom = shown && fitShown(v, zoomOf(v), shown);
           const world = toWorld(v, [(box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2]);
-          if (zoom && world && steer(v, () => { v.setZoom(zoom); centerOn(v, world); }, act)) setMode(v, 'Fit Breast'); else skipped.push(labelOf(cell));
+          if (zoom && world && steer(v, () => { v.setZoom(zoom); centerOn(v, world); })) setMode(v, 'Fit Breast'); else skipped.push(labelOf(cell));
         }
       }
       say(skipped.length ? '바꾸지 않은 칸 — ' + skipped.join(' / ') : '');
@@ -1072,8 +1052,8 @@
       show.pitchRow.hidden = false; show.pitchRow.querySelector('input').focus();
       say('True Size에는 이 모니터의 실제 픽셀 크기가 필요합니다(브라우저는 알 수 없습니다). 모니터 사양의 픽셀 피치(mm)를 넣으세요. 이 PC의 이 브라우저에 화면별로 저장합니다.');
     }
-    // The window moved to another screen or the browser's zoom changed: True Size is drawn again for that screen's value,
-    // or the cells go back to Fit and the value is asked for.
+    // The window moved to another screen or the browser's zoom changed: the cells True Size still stands on are drawn
+    // again for that screen's value, or go back to Fit and the value is asked for. No other cell is touched.
     // A screen change event (the browser moved the window to another screen) is a change in itself: on screens that cannot
     // be told apart (no key) it is never taken as the same screen. A resize only counts when the key or the scale changed.
     function screenChanged(event) {
@@ -1083,14 +1063,14 @@
       const unknown = was.key === null || now.key === null;
       if (was.key === now.key && was.dpr === now.dpr && !(moved && unknown)) return;
       show.sessionPitch = null;
-      const trueCells = [...show.modes].filter(([, mode]) => mode.text.startsWith('True Size'));
+      const trueCells = [...show.modes].filter(([id, mode]) => mode.text.startsWith('True Size') && sameImages(mode, viewportOf(id))).map(([, mode]) => mode.viewport);
       show.screen = null;
       if (!trueCells.length) return;
-      if (!unknown && pitchFor(now.key)) { zoomMode('true'); return; }
-      // Back to Fit at once, as a command received now: nothing asked for before it is carried out afterwards.
-      const act = cameraAct();
-      for (const [id, mode] of trueCells) { const v = viewportOf(id); if (v === mode.viewport) { fit(v, act); setMode(v, 'Fit'); } }
-      if (show.panel) openPitch(); else ui.toast('화면이 바뀌어 True Size를 Fit으로 돌렸습니다. Breast Display에서 이 화면의 픽셀 크기를 넣으세요.');
+      const pitch = unknown ? null : pitchFor(now.key);
+      if (pitch) show.screen = now;
+      for (const v of trueCells) if (!(pitch && trueSize(v, pitch, now.dpr))) { fit(v); setMode(v, 'Fit'); }
+      if (pitch) say(`True Size: 이 화면의 픽셀 크기 ${pitch} mm 기준입니다.`);
+      else if (show.panel) openPitch(); else ui.toast('화면이 바뀌어 True Size를 Fit으로 돌렸습니다. Breast Display에서 이 화면의 픽셀 크기를 넣으세요.');
     }
     function openBreastDisplay() {
       const panel = ui.panel({ id: 'breast', title: 'Breast Display' });
@@ -1126,16 +1106,16 @@
       if (!show.edge) badge({ id }, 'edge', null);
       if (!quad.marks.has(id)) badge({ id }, 'quadrant', null);
     }
-    // A cell given another image drops what was drawn for the earlier one.
-    const stackKey = v => { const ids = idsOf(v); return ids.length + '|' + (ids[0] || '') + '|' + (ids[ids.length - 1] || ''); };
+    // A cell given another image: the table has it as reading from now (look), and what this module set and marked for
+    // the images the cell held goes with them. Another slice or frame of the same stack keeps the window (the viewer
+    // does not set the stored one again for it), the zoom mode and the step, with their marks and their way back;
+    // another stack or viewport drops them.
     function cellImage(id) {
-      const v = viewportOf(id);
-      const entry = show.wl.get(id);
-      // Another slice or frame of the same stack keeps the window (the viewer does not set the stored one again for it), so it
-      // keeps its mark and its way back; another stack or viewport drops it.
-      if (entry && (v !== entry.viewport || stackKey(v) !== entry.stack)) { show.wl.delete(id); badge(entry.viewport, 'wl', null); }
+      look(id);
+      const v = viewportOf(id), entry = show.wl.get(id);
+      if (entry && !sameImages(entry, v)) { show.wl.delete(id); badge(entry.viewport, 'wl', null); }
       const mode = show.modes.get(id);
-      if (mode && v !== mode.viewport) { show.modes.delete(id); badge(mode.viewport, 'zoom', null); }
+      if (mode && !sameImages(mode, v)) dropZoomMode(id);
       quadrantImage(id);
       if (show.edge) drawEdges();
     }
@@ -1207,26 +1187,46 @@
     const listen = (type, fn) => { if (type) document.addEventListener(type, fn, { capture: true, signal }); };
     listen(events.IMAGE_RENDERED, lensRedraw);
     listen(events.CAMERA_MODIFIED, event => {
-      const id = event.detail?.viewportId, v = id && foreignCamera(id);
-      // A camera change this module did not make (the reader's, the viewer's): an act received before it leaves that
-      // cell, and Mirrored carries it.
-      if (v) { stamps.set(id, ++turn.received); cameraChanged(v); }
-      if (id) quadrantCamera(id); if (show.edge) drawEdges();
+      const id = event.detail?.viewportId; if (!id) return;
+      // The zoom a step or a mode set on the cell holds only while it is the cell's zoom, whoever changed it.
+      quadrantCamera(id); modeCamera(id);
+      // A camera change this module did not make (the reader's, the viewer's) is carried by Mirrored as it is heard. In
+      // the cell the pointer is pressed in it is the reader's drag: a new size still to be answered there is left to it.
+      const v = foreignCamera(id);
+      if (v) { if (pointer.id === id) quad.resized.delete(id); followCamera(v); }
+      if (show.edge) edgeAgain(id);
     });
-    window.addEventListener('kin-viewer-tool-run', event => { invertRun(event).catch(error => console.error(error)); }, { signal });
-    listen(events.STACK_NEW_IMAGE, event => { tomoImage(event); const id = event.detail?.viewportId; if (id) { changes.set(id, countOf(changes, id) + 1); cellImage(id); cellSaid(id); cellsChanged(); } });
+    window.addEventListener('kin-viewer-tool-run', invertRun, { signal });
+    // Every image a cell is given goes into the table as it is given: a slice or a stack shown (STACK_NEW_IMAGE), other
+    // images or another viewport (VIEWPORT_DATA_CHANGED), the grid.
+    listen(events.STACK_NEW_IMAGE, event => {
+      const id = event.detail?.viewportId;
+      if (id) look(id);
+      tomoImage(event);
+      if (id) { cellImage(id); cellSaid(id); redraw(false); }
+    });
     window.addEventListener('resize', screenChanged, { signal });
     try { window.screen.addEventListener?.('change', screenChanged, { signal }); } catch (_) {}
     const subscriptions = [];
     const subscribe = (service, event, fn) => { try { if (event && service?.subscribe) subscriptions.push(service.subscribe(event, fn)); } catch (error) { console.error(error); } };
-    subscribe(grid, grid?.EVENTS?.GRID_STATE_CHANGED, () => { tomoCell(null); for (const id of cellIds()) cellImage(id); cellsChanged(); });
+    subscribe(grid, grid?.EVENTS?.GRID_STATE_CHANGED, () => {
+      tomoCell(null);
+      const ids = cellIds();
+      for (const id of [...known.keys()]) if (!ids.includes(id)) leave(id);
+      for (const id of ids) cellImage(id);
+      // (a pane drawn anew shows its cell's state again)
+      for (const entry of known.values()) settle(entry, entry.state, entry.cell);
+      redraw(false);
+    });
     subscribe(cellService, cellService?.EVENTS?.VIEWPORT_DATA_CHANGED, event => {
       tomoCell(event?.viewportId ? [event.viewportId] : null);
       const id = event?.viewportId;
-      if (id) { changes.set(id, countOf(changes, id) + 1); stacks.set(id, countOf(stacks, id) + 1); cellImage(id); cellSaid(id); }
-      cellsChanged();
+      if (id) { cellImage(id); cellSaid(id); }
+      redraw(false);
     });
     subscribe(services.cineService, services.cineService?.EVENTS?.CINE_STATE_CHANGED, cineChanged);
+    // The cells as they are when the viewer is mounted.
+    for (const id of cellIds()) look(id);
 
     // ── Menu ──
     ui.menuItem('MG', { id: 'mgMirrored', label: 'Mirrored', order: 1, run: () => openMirrored() });
@@ -1254,8 +1254,8 @@
       stopPlay(); restoreSlab(); wlOff(); endQuadrant(); stageSizes?.disconnect();
       abort.abort(); dprQuery?.removeEventListener?.('change', onDpr);
       for (const timer of timers) clearInterval(timer);
-      if (cameraFrame) cancelAnimationFrame(cameraFrame);
       if (lensFrame) cancelAnimationFrame(lensFrame);
+      for (const id of [...known.keys()]) leave(id);
       for (const subscription of subscriptions) try { subscription?.unsubscribe?.(); } catch (_) {}
       for (const entry of layers.values()) entry.node.remove();
       layers.clear(); style.remove();

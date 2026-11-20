@@ -35,6 +35,11 @@ class ViewerMgE2E(ViewerUXPriorsE2E):
     def cells(self, page):
         return [c for c in page.evaluate(CELLS) if c]
 
+    # The MG menu goes by the image headers, read when the cells are given their images: what is pressed before a
+    # cell's header is read leaves that cell out. Here every cell's header is read before anything is pressed.
+    def headers_read(self, page, count):
+        page.wait_for_function('n => document.querySelectorAll("[data-cy=viewport-pane][data-kin-mg-image=read]").length === n', arg=count, timeout=30000)
+
     def cell(self, page, study, side, view):
         return next(c for c in self.cells(page) if c['study'] == study and c['side'] == side and c['view'] == view)
 
@@ -134,6 +139,7 @@ class ViewerMgE2E(ViewerUXPriorsE2E):
         page = self.login()
         MG.open_mg(self, page, [current, prior], 8)
         MG.image_state(self, page)
+        self.headers_read(page, 8)
         before = {(c['study'], c['side'], c['view']): c for c in self.cells(page)}
         self.mg(page, 'Mirrored')
         expect(page.get_by_role('dialog', name='Mirrored')).to_be_visible()
@@ -210,6 +216,7 @@ class ViewerMgE2E(ViewerUXPriorsE2E):
         page = self.login()
         MG.open_mg(self, page, [current, prior], 8)
         MG.image_state(self, page)
+        self.headers_read(page, 8)
         cells = {(c['study'], c['side'], c['view']): c for c in self.cells(page)}
         rcc = cells[(current.uid, 'R', 'CC')]['id']
         cc = [cells[k]['id'] for k in cells if k[2] == 'CC']; mlo = [cells[k]['id'] for k in cells if k[2] == 'MLO']
@@ -308,6 +315,7 @@ class ViewerMgE2E(ViewerUXPriorsE2E):
         page = self.login()
         MG.open_mg(self, page, [f], 4)
         page.wait_for_function('''()=>[...services.viewportGridService.getState().viewports.values()].some(g=>services.cornerstoneViewportService.getCornerstoneViewport(g.viewportId)?.getImageIds?.().length===5)''', timeout=60000)
+        self.headers_read(page, 4)
         rcc = next(c for c in self.cells(page) if c['side'] == 'R' and c['view'] == 'CC')
         page.evaluate('id=>services.viewportGridService.setActiveViewportId(id)', rcc['id'])
         page.wait_for_function('id=>services.viewportGridService.getActiveViewportId()===id', arg=rcc['id'])
