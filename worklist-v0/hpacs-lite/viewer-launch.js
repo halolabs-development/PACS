@@ -172,6 +172,16 @@
       } catch (_) { return false; }
     }
     /**
+     * 이 목록이 연 창이 뷰어 대신 제품 오류 화면(프록시의 @kin_error_page — 영상 저장소가 멈춘 동안 연 창의 504 같은 것)을
+     * 쥐고 있는가. 그 화면은 스스로 `<meta name="kin-error-page">`로 밝힌다. 뷰어 문서가 아니라 지킬 작업이 없다 — 진입에서
+     * 멈춘 창처럼, 목록에서 다시 열면 그 창만 새로 읽는다. 이 목록이 그 창으로 이동시킨 적이 없으면(목록을 새로 읽었다) 평소의
+     * 보호 그대로다. 읽을 수 없으면 오류 화면으로 보지 않는다.
+     */
+    function productErrorDocument(popup) {
+      try { return ohifPopupSequences.has(popup) && !!popup.document.querySelector('meta[name="kin-error-page"]'); }
+      catch (_) { return false; }
+    }
+    /**
      * Opens or replaces the list's viewer window. The answer is typed for a caller that needs it (W9's launch): `accepted`
      * (navigated, or the same scope focused), `refused` (a protected or unverifiable window kept, a session or slot that
      * cannot be used), `blocked` (no popup) or `failed` (an invalid series). Ordinary callers ignore it; every check and
@@ -247,7 +257,7 @@
         const placementWrite = deferredPlacement ? {pending:true,baseline:null} : null;
         if (placementWrite) ohifPlacementWrites.set(popup, placementWrite);
         // 진입에서 멈춘 창은 초점만 주거나 "닫고 다시 여세요"로 돌려보내지 않는다: 아래에서 새 세션 확인과 함께 다시 읽게 한다.
-        const stopped = previous.kind === "viewer" && !previous.ready && viewerEntryStopped(popup);
+        const stopped = previous.kind === "viewer" && !previous.ready && (viewerEntryStopped(popup) || productErrorDocument(popup));
         if (previous.kind === "viewer" && !stopped) {
           if (!reread && sameOhifScope(previous.href, url)) {
             if(popup.location.hash!==new URL(url,location.origin).hash){

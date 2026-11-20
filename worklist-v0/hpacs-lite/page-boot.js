@@ -156,10 +156,12 @@
     function serverUnanswered(e) {
       return !e?.auth && e?.name !== "AbortError" && !e?.stale && !e?.ownerChanged && !(Number.isInteger(e?.status) && e.status < 500);
     }
+    // The check reads only this member's access policy from the database (GET study-access): the image store is not asked,
+    // so a list that failed because only the image store stopped leaves the connection, the writes and the report as they are.
     async function confirmConnection(cause, at, current) {
       if (offline || !serverMode || !serverUnanswered(cause) || !current()) return;
       const connection = pollGeneration;
-      try { await api("GET", "/bootstrap?states=omit", undefined, undefined, at); }
+      try { await api("GET", "/study-access", undefined, undefined, at); }
       catch (e) {
         if (serverUnanswered(e))
           work.commit(at, () => { if (!offline && serverMode && connection === pollGeneration && current()) goOffline(cause); });
@@ -172,6 +174,16 @@
      */
     let reconnectTimer = null;
     function stopReconnect() { clearInterval(reconnectTimer); reconnectTimer = null; $("#dbstat").style.cursor = ""; }
+    // Whether the server is back does not wait on the study list: the full answer reads the image store's identities, so
+    // when it ends without the server's answer the answer without the states (database only) reconnects; the list read after
+    // it says on its own whether the list could be refreshed.
+    async function reconnectAnswer(at) {
+      try { return await api("GET", "/bootstrap", undefined, undefined, at); }
+      catch (e) {
+        if (!serverUnanswered(e) || !work.admits(at)) throw e;
+        return api("GET", "/bootstrap?states=omit", undefined, undefined, at);
+      }
+    }
     function startReconnect() {
       if (reconnectTimer) return;
       reconnectTimer = setInterval(async () => {
@@ -180,7 +192,7 @@
         const at = work.capture("document");
         if (!work.admits(at)) return;
         try {
-          const b = await api("GET", "/bootstrap", undefined, undefined, at);
+          const b = await reconnectAnswer(at);
           if (!work.commit(at, () => goOnline(b))) return;
           await loadActorNames(at);
           await load();
@@ -192,7 +204,7 @@
       if (!offline) return;
       const at = work.capture("document");
       try {
-        const b = await api("GET", "/bootstrap", undefined, undefined, at);
+        const b = await reconnectAnswer(at);
         if (!work.commit(at, () => goOnline(b))) return;
         await loadActorNames(at); await load();
         work.commit(at, () => toast("서버에 다시 연결됐습니다", "ok"));

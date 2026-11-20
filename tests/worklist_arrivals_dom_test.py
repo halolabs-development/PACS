@@ -106,6 +106,8 @@ const worklistRefresh={seconds:()=>30},favoriteList={refresh:async()=>{}},studyT
 const studyPageClient={busy:false,paused:false,clear(){},read:async options=>{readStarted++;if(window.readError)throw Object.assign(new Error('synthetic observation failure'),window.readError);if(readResolver)return await new Promise(resolve=>window.releaseRead=value=>resolve(value));return structuredClone(nextReply)}};
 let grants=[],apiCalls=[],gatewayRetryRequestSeq=0;
 const assertStudyOwner=()=>{},KinAuth={logout:async()=>{},has:role=>grants.includes(role)},goOffline=()=>{};
+// Two failed polls ask whether the server answers (page-boot.js) and say the list was not refreshed; neither is this fixture's.
+const confirmConnection=async()=>{},listRefreshWarning=()=>{};
 function api(method,path,body){apiCalls.push({method,path,body});return new Promise((resolve,reject)=>{window.settleApi=(ok,value)=>ok?resolve(value):reject(value)})}
 function applyState(value){return value}function fmtD(value){return value}
 function updateNoteSummary(){}function updateReaderAssignment(){}

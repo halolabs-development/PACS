@@ -237,6 +237,7 @@ server {
 <meta charset='utf-8'>
 <meta name='viewport' content='width=device-width, initial-scale=1'>
 <meta name='robots' content='noindex'>
+<meta name='kin-error-page' content='$status'>
 <title>HALO PACS</title>
 <link rel='icon' type='image/svg+xml' href='/kin-brand/kin-emblem-j1.svg'>
 <style>

@@ -453,7 +453,10 @@ const finals = [
         self.assertLess(poll.index("if (!live() || commitInFlight || epoch !== commitEpoch) return;\n          pollFails = 0;"),
                         poll.index("applyObservation(r);"))
         self.assertLess(poll.index("if (e.stale || e.code === 'STUDY_LIST_CHANGED') return;"), poll.index("markObservationUnavailable();"))
-        self.assertLess(poll.index("markObservationUnavailable();"), poll.index("if (++pollFails >= 2) goOffline(e);"))
+        self.assertLess(poll.index("markObservationUnavailable();"), poll.index("if (++pollFails >= 2) {"))
+        # The second failure asks whether the server answers before going offline (page-boot.js confirmConnection).
+        self.assertLess(poll.index("if (++pollFails >= 2) {"), poll.index("await confirmConnection(e, at, live);"))
+        self.assertNotIn("goOffline(", poll)
         # The per-poll observation time stays out of #clinical, whose text Stage 3 tests hold still.
         clinical = body(self.main, "    function renderClinical() {", "    function applyObservation(")
         self.assertNotIn("receipt-", clinical)
