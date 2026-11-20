@@ -131,8 +131,9 @@ class QcSite(auth.Site):
         self.tele = set()         # rows this institution only receives for tele-reading now (another institution's study)
         self.scopes = {}          # uid -> examScope of the row
         self.one_patient = False  # both rows are one patient's studies (Related)
-        self.listed = {}          # study -> the Series Instance UIDs its archive holds (archive())
+        self.listed = {}          # study -> {Series Instance UID: the number of objects its archive holds} (archive())
         self.series_said = {}     # uid -> the number of series the list row says, when not the archive's (None: unknown)
+        self.images_said = {}     # uid -> the number of images the list row says, when not the archive's (None: unknown)
 
     def mark(self, uid, account):
         mark = self.qc.get(uid) or {'reason': None, 'by': None, 'at': None, 'revision': 0}
@@ -152,18 +153,24 @@ class QcSite(auth.Site):
             row['examScope'] = self.scopes[uid]
         if self.one_patient:
             row['sourcePatientKey'] = auth.INSTITUTION + '|SYN-P-001'
-        row['series'] = self.series_said[uid] if uid in self.series_said else self.series_of(uid, row['series'])
+        held = self.held(uid)
+        if held is not None:
+            row['series'], row['count'] = len(held), sum(held)
+        if uid in self.series_said:
+            row['series'] = self.series_said[uid]
+        if uid in self.images_said:
+            row['count'] = self.images_said[uid]
         return row
 
-    def series_of(self, uid, default):
-        """The number of series of the row's exam, as the server counts it: every series the archive holds of each original
-        of its scope, a split part's own series only."""
+    def held(self, uid):
+        """The object counts of the series of the row's exam, as the server counts them: every series the archive holds of
+        each original of its scope, a split part's own series only. None: no archive was described for it."""
         sources = self.scopes[uid]['sources'] if uid in self.scopes else [{'studyUid': uid, 'series': {'mode': 'all', 'uids': []}}]
         if not any(source['studyUid'] in self.listed for source in sources):
-            return default
+            return None
         allowed = lambda source, series: source['series']['mode'] == 'all' or \
             (series in source['series']['uids']) == (source['series']['mode'] == 'include')
-        return sum(1 for source in sources for series in self.listed.get(source['studyUid'], []) if allowed(source, series))
+        return [count for source in sources for series, count in self.listed.get(source['studyUid'], {}).items() if allowed(source, series)]
 
     def list_body(self, account, rename=None):
         body = super().list_body(account, rename)
@@ -710,7 +717,7 @@ def archive(site, study, *series):
         rows.append(series_row(study, uid, number, modality, description, listed[0] if listed else len(objects)))
         site.gets['/dicom-web/studies/%s/series/%s/metadata' % (study, uid)] = (200, objects)
     site.gets['/dicom-web/studies/%s/series' % study] = (200, rows)
-    site.listed[study] = [row[0] for row in series]
+    site.listed[study] = {row[0]: (row[5] if len(row) > 5 and row[5] is not None else len(row[4])) for row in series}
 
 
 RDSR = '1.2.840.10008.5.1.4.1.1.88.67'
@@ -1052,10 +1059,17 @@ class AcquisitionSourceDOM(AcquisitionBase):
         self.page.locator('#m-refresh').click()
         expect(self.box()).to_contain_text('the list does not say how many')
         self.assertIn('DLP (Dose SR): Not found in the series read', self.lines())
-        # As many as the row counts: read whole.
+        # As many series as the row counts, but the row counts more images than the archive holds: not whole either.
         site.series_said[a] = 1
+        site.images_said[a] = 3
+        self.page.locator('#m-refresh').click()
+        expect(self.box()).to_contain_text('Objects read: 1 of the 3 the list counts')
+        self.assertIn('DLP (Dose SR): Not found in the series read', self.lines())
+        # As many as the row counts: read whole.
+        site.images_said[a] = 1
         self.page.locator('#m-refresh').click()
         expect(self.box()).to_contain_text('DLP (Dose SR): Not in DICOM')
+        self.assertFalse(any(line.startswith(('Series found', 'Objects read')) for line in self.lines()), self.lines())
         self.assertEqual([], self.errors)
 
     def test_a_dose_report_not_searched_to_its_end_is_not_called_absent(self):

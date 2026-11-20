@@ -7388,6 +7388,8 @@ window.KinLanguageTerms = {
     ["This original cannot be read now (not found)", "이 원본은 지금 읽을 수 없음 (찾을 수 없음)", "m"],
     ["Series found: {n0} of the {n1} the list counts", "찾은 시리즈: 목록이 센 {n1}개 중 {n0}개", "m"],
     ["Series found: {n0} (the list does not say how many the exam has)", "찾은 시리즈: {n0}개 (목록이 검사의 시리즈 수를 알려 주지 않음)", "m"],
+    ["Objects read: {n0} of the {n1} the list counts", "읽은 객체: 목록이 센 {n1}개 중 {n0}개", "m"],
+    ["Objects read: {n0} (the list does not say how many the exam has)", "읽은 객체: {n0}개 (목록이 검사의 객체 수를 알려 주지 않음)", "m"],
     ["{n0} series of this exam not in the series list (not read):", "이 검사의 시리즈 {n0}개가 시리즈 목록에 없음 (읽지 않음):", "m"],
     ["Objects read: {n0} of {n1}", "읽은 객체: {n1}개 중 {n0}개", "m"],
     ["Objects read: {n0} (the archive did not say how many there are)", "읽은 객체: {n0}개 (저장소가 전체 개수를 알려 주지 않음)", "m"],

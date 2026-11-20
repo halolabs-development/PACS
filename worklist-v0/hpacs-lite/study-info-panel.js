@@ -271,8 +271,9 @@
        * The one reading of an exam. Per original: its series list (read / failed / cut at the list limit / unidentified /
        * refused / gone) and the series the scope names that the list did not have (`missing`). Per series of the scope: its
        * objects (read whole, read in part, failed, or not read past the limit). And the dose reports found. `listed` is the
-       * number of series of the scope the archive listed and `expected` the number the list row counts (null: it does not
-       * say). `complete` says every part of the scope was read whole; only then may the study be said to have no dose
+       * number of series of the scope the archive listed and `expected` the number the list row counts, `objects` the
+       * number of objects read and `images` the number the list row counts (null: the row does not say).
+       * `complete` says every part of the scope was read whole; only then may the study be said to have no dose
        * report. `live()` false ends the read early (its answer is not used). `unreachable(studyUid)` is told at once of an
        * original that refuses a read or is not found - whatever becomes of this read.
        */
@@ -280,7 +281,8 @@
         const scope = KinExamScope.read(row);
         if (!scope) return { state: "unavailable" };
         const sources = [], all = [];
-        const expected = Number.isSafeInteger(row?.series) && row.series >= 0 ? row.series : null;
+        const counted = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
+        const expected = counted(row?.series), images = counted(row?.count);
         for (const source of scope.sources) {
           const entry = { studyUid: source.studyUid, state: "read", missing: [] };
           sources.push(entry);
@@ -332,10 +334,12 @@
         // read from it before goes with it.
         const refused = sources.filter(outOfReach).map(x => x.studyUid), reached = x => !refused.includes(x.sourceUid);
         const kept = series.filter(reached), skipped = all.length - chosen.length;
+        const objects = kept.reduce((sum, x) => sum + (x.objects ?? 0), 0);
         return { state: "done", sources, series: kept, reports: reports.filter(reached), skipped, refused, listed: all.length, expected,
-          partial: scope.sources.some(source => source.series.mode !== "all"),
-          // Whole: every original's list read, as many series as the list row counts, each read whole, none past the limit.
-          complete: sources.every(x => x.state === "read" && !x.missing.length) && expected === all.length
+          objects, images, partial: scope.sources.some(source => source.series.mode !== "all"),
+          // Whole: every original's list read, as many series and objects as the list row counts, each series read whole,
+          // none past the limit.
+          complete: sources.every(x => x.state === "read" && !x.missing.length) && expected === all.length && images === objects
             && kept.every(x => x.state === "read" && x.whole) && !skipped };
       }
       // The original study and the series of a line, for its title.
@@ -379,6 +383,12 @@
           out.push({ kind: "status", parts: [result.expected === null
             ? { say: "Series found: {n0} (the list does not say how many the exam has)", args: [result.listed] }
             : { say: "Series found: {n0} of the {n1} the list counts", args: [result.listed, result.expected] }] });
+        // The same for the exam's objects, once every listed series was read: the list row counts another number of them.
+        else if (result.sources.every(source => source.state === "read") && !result.skipped
+            && result.series.every(s => s.state === "read") && result.images !== result.objects)
+          out.push({ kind: "status", parts: [result.images === null
+            ? { say: "Objects read: {n0} (the list does not say how many the exam has)", args: [result.objects] }
+            : { say: "Objects read: {n0} of the {n1} the list counts", args: [result.objects, result.images] }] });
         if (!result.series.length && result.sources.every(source => source.state === "read" && !source.missing.length))
           out.push({ kind: "status", parts: [{ say: "No series found" }] });
         // A series is named by its number only when no other series of that original has the same one; else its UID follows.
