@@ -285,7 +285,7 @@ test('actual HTTP report approval/reset and ledger failure preserve exact versio
 
     // (다) the resetting reader has a draft of their own (their hold went, another reader took the study): the Reset releases
     // that hold as before, and my draft stays mine - text, work unit, no purpose end - standing on the version it made.
-    const mineStudy = await study('1.2.840.9999.46');
+    const mineStudy = await study('1.2.840.9999.48');
     await write(mineStudy.uid, 'first', { findings: '합성 내 초안', conclusion: '합성 내 결론', recommendation: '' });
     assert.equal((await hold(mineStudy.uid, second)).mine, true);
     const myBefore = await draftOf(mineStudy.uid, sub);
@@ -307,7 +307,7 @@ test('actual HTTP report approval/reset and ledger failure preserve exact versio
     assert.equal(mineSave.status, 201, JSON.stringify(mineSave.body));
     assert.equal(mineSave.body.state.rs, 'T');
     // My own Reset (with a reason, nobody else's work) still ends my draft as before.
-    const myOwn = await study('1.2.840.9999.47');
+    const myOwn = await study('1.2.840.9999.49');
     await write(myOwn.uid, 'first', { findings: '합성 내 초안 둘', conclusion: '', recommendation: '' });
     const ownBefore = await draftOf(myOwn.uid, sub);
     const ownEpoch = (await witness.studyState.findUnique({ where: { uid: myOwn.uid } })).draftEpoch;
