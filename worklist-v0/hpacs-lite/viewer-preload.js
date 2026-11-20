@@ -266,9 +266,10 @@
     // What the page used when it was left (uid -> copy and session), and the return under way: the opening its reads
     // name and the copies those reads confirmed.
     let left = new Map(), returns = null;
-    // Whether the document shows studies: not after its last patient tab closed or while it is left, until an opening
-    // is shown again. A frame read made meanwhile is a straggler of the view that ended: read live, never a use.
-    let showing = true;
+    // The opening the document shows studies under (the document's own at first): none after its last patient tab
+    // closed or while it is left, until an opening is shown again. A frame read made meanwhile is a straggler of the
+    // view that ended: read live, never a use.
+    let viewOf = 'document';
     /**
      * The one end of a view - a new opening shown, the last patient tab closed, the page left: every check still under
      * way is of the ended view, and every copy used is left. Leaving the page says `bye` instead of each close and
@@ -276,7 +277,7 @@
      */
     uses.end = ({ page = false, opening = null } = {}) => {
       const again = returns && returns.opening === opening ? returns.confirmed : null;
-      checks.clear(); returns = null; showing = !!opening;
+      checks.clear(); returns = null; viewOf = opening;
       if (page) { if (opened.size) left = new Map(opened); if (port) post({ type: 'bye' }); }
       else { left = new Map(); for (const [uid, { copy, session }] of opened) post({ type: 'close', uid, copy, session }); }
       opened.clear();
@@ -296,20 +297,27 @@
      * page left (same session, same token), the revision is the copy's and the body came in full - and only once the
      * return's opening is shown (`end`). Another copy of the study is neither used nor dropped here: the next frame read
      * checks it for itself. The worker is asked beside the read, never before it: the return's read, and so the kept
-     * page's showing again, does not wait for the worker - a copy it has not named by the time the read has come in is
-     * simply not used again.
+     * page's showing again, does not wait for the worker. Its answer and the read's end come in either order; when both
+     * are in the copy is used again - with the return's opening when that is still to be shown, at once when it is
+     * shown already and still is the view (and the study has no check of its own since). Under any other view the late
+     * answer uses nothing.
      */
     async function rechecked(uid, path, url, init) {
       const mine = returns, was = left.get(uid), session = new win.Headers(init.headers).get('X-KIN-Session');
       if (session !== was.session) return network(url, init);
-      let held = null;
-      void ask({ type: 'query', uid, session, path }).then(answer => { held = answer.held || null; });
+      let held, revision;
+      const settle = () => {
+        if (held === undefined || revision === undefined || !held?.revision || held.revision !== revision || held.copy !== was.copy) return;
+        const entry = { state: 'held', done: null, copy: held.copy, session };
+        if (returns === mine) mine.confirmed.set(uid, entry);
+        else if (viewOf === mine.opening && !checks.has(uid)) { checks.set(uid, entry); use(uid, entry); }
+      };
+      void ask({ type: 'query', uid, session, path }).then(answer => { held = answer.held || null; settle(); });
       const response = await network(url, viewed(init, uid, { 'X-KIN-Preload': 'check' }));
-      const revision = response.headers.get('X-KIN-Study-Revision');
-      if (!response.ok || !revision) return response;
+      const answered = response.headers.get('X-KIN-Study-Revision');
+      if (!response.ok || !answered) return response;
       const body = await response.arrayBuffer();
-      if (returns === mine && held?.revision === revision && held.copy === was.copy)
-        mine.confirmed.set(uid, { state: 'held', done: null, copy: held.copy, session });
+      revision = answered; settle();
       return new win.Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
     }
     if (typeof win.setInterval === 'function') win.setInterval(() => {
@@ -406,7 +414,7 @@
     }
 
     async function frame(uid, path, url, init) {
-      if (!showing) return network(url, viewed(init, uid));
+      if (!viewOf) return network(url, viewed(init, uid));
       const session = new win.Headers(init.headers).get('X-KIN-Session');
       const entry = checks.get(uid);
       if (!entry) {

@@ -22,7 +22,7 @@ const bound = (extra = {}) => ({ method: 'GET', headers: new Headers({ 'X-KIN-Se
 /** A window with a scripted preload worker: `held` maps study -> { revision, session, copy }; frames answer their path
  * from the held copy only, as preload-worker.js does (another copy: `stale`). */
 function setup({ held = {}, network, shared = true, studies = null, page = false, transport = false } = {}) {
-  const posted = [], sent = [], gates = { frame: null }, ends = [], through = [];
+  const posted = [], sent = [], gates = { frame: null, query: null }, ends = [], through = [];
   class FakeSharedWorker {
     constructor(url, options) {
       assert.equal(url, '/worklist/hpacs-lite/preload-worker.js');
@@ -32,9 +32,13 @@ function setup({ held = {}, network, shared = true, studies = null, page = false
         if (gates.silent) return;                                        // a worker that stopped: it answers nothing
         const reply = value => queueMicrotask(() => port.onmessage({ data: { type: 'reply', id: message.id, ...value } }));
         if (message.type === 'query') {
-          const entry = held[message.uid];
-          // `has`: the check's frame is one of the copy's (preload-worker.js) - every frame here unless the entry says not.
-          reply({ held: entry && entry.session === message.session ? { revision: entry.revision, copy: entry.copy ?? 1, has: entry.has ?? true } : null });
+          const answer = () => {
+            const entry = held[message.uid];
+            // `has`: the check's frame is one of the copy's (preload-worker.js) - every frame here unless the entry says not.
+            reply({ held: entry && entry.session === message.session ? { revision: entry.revision, copy: entry.copy ?? 1, has: entry.has ?? true } : null });
+          };
+          // `gates.query`: the worker's answers to what it holds wait for it (its queue is busy).
+          if (gates.query) gates.query.then(answer); else answer();
         } else if (message.type === 'frame') {
           const uid = /studies\/([0-9.]+)\//.exec(message.path)[1], entry = held[uid];
           const answer = () => {
@@ -834,6 +838,27 @@ test('a return uses again only the very copy the page left: a later copy of the 
   assert.deepEqual(kinds(s.posted, 'open').slice(opens), [['open', STUDY, 7, 'sess-1']]);
 });
 
+test('a return whose worker answers only after the read has come in still uses the copy again - while the return\'s opening is the view shown, never under another', async () => {
+  for (const moved of [false, true]) {
+    const { s, root } = await leftPage();
+    let answer;
+    s.gates.query = new Promise(resolve => { answer = resolve; });      // the worker is slow to say what it holds
+    const posted = s.posted.length;
+    s.listeners.pageshow({ persisted: true });
+    for (let i = 0; i < 10; i++) await tick();
+    assert.equal(root.style.visibility, '', 'shown without waiting for the worker');
+    assert.deepEqual(kinds(s.posted.slice(posted), 'open'), [], 'not used yet: the worker has not named the copy');
+    if (moved) s.fetch.leave();                                         // the last patient tab closed before it answered
+    s.gates.query = null; answer();
+    for (let i = 0; i < 10; i++) await tick();
+    // Shown and still the view: the copy on screen is in use again (it cannot be removed for space under the reader).
+    assert.deepEqual(kinds(s.posted.slice(posted), 'open'), moved ? [] : [['open', STUDY, 6, 'sess-1']], 'moved=' + moved);
+    if (!moved) {
+      assert.equal(await (await s.win.fetch(frameUrl(1), bound())).text(), 'held 6 ' + new URL(frameUrl(1)).pathname, 'no further check');
+      assert.equal(kinds(s.posted.slice(posted), 'open').length, 1, 'used once');
+    }
+  }
+});
 test('a return\'s check whose body is cut, or whose revision is not the copy\'s, is no use of the copy', async () => {
   let cut = false;
   const { s, root } = await leftPage({ network: async url => new Response(cut

@@ -29,17 +29,23 @@ let session = null, epoch = 0, key = null, keyId = null, settings = null, unavai
 // counts past it, so the key outlives every copy it reads (the server retires a key 72 hours after its last issue).
 let issuedAt = null;
 /**
- * Server time: what the server last said (a key answer's serverTime; before any, an answer's Date) plus the time since.
- * The time since is read from the clock nobody can set (performance.now()), or from the PC's when that says more (a
- * sleeping PC may stop the first) - a PC clock set back while the worker runs brings no expired copy back. Of two words
- * of the server, the one that puts its time later stands.
+ * Server time: what the server last said (a key answer's serverTime; before any, an answer's Date) plus the time since,
+ * read from the clock nobody can set (performance.now()). The PC's own clock decides nothing: set back or forward while
+ * the worker runs, it neither brings an expired copy back nor ends a copy before its date.
+ * It is only a hint. Where it has run ahead of the ticks since the server's last word (`adrift`), the PC slept with its
+ * ticks stopped or its clock was set forward - the worker cannot tell which. So it asks the server before it serves
+ * anything (`resync`), and until the server has said the time it serves nothing and removes nothing by that doubt.
+ * The server's word moves the time on or confirms it; either way the PC clock is read against it afresh.
  */
-let said = null;
-const ticks = () => typeof performance === 'object' ? performance.now() : 0;
+let said = null, asked = -Infinity, syncing = null;
+// The two clocks are taken to disagree past SLACK (their ordinary drift is far smaller; a stopped tick is not).
+const SLACK = 2 * 1000, ASK_AGAIN = 5 * 1000;
+const ticks = () => typeof performance === 'object' ? performance.now() : Date.now();
 const word = server => ({ server, ticks: ticks(), wall: Date.now() });
-const timeBy = heard => heard.server + Math.max(0, ticks() - heard.ticks, Date.now() - heard.wall);
+const timeBy = heard => heard.server + Math.max(0, ticks() - heard.ticks);
 const now = () => said ? timeBy(said) : Date.now();
-function hear(heard) { if (Number.isFinite(heard.server) && (!said || timeBy(heard) >= timeBy(said))) said = heard; }
+function hear(heard) { if (Number.isFinite(heard.server)) said = !said || timeBy(heard) >= now() ? heard : word(now()); }
+const adrift = () => !!said && (Date.now() - said.wall) - (ticks() - said.ticks) > SLACK;
 let store = Model.create(null, now), running = false, controller = null, keyController = null, idleWaiters = [];
 let serial = Promise.resolve(), diskUsed = 0;
 // Mutations share one queue. Network reads never hold it, so reading and logout can interrupt downloads.
@@ -179,6 +185,19 @@ async function renewKey(mine, bound) {
   hear(heard);
   issuedAt = Math.max(issuedAt ?? at, at);
   return at;
+}
+/**
+ * The server asked for its time (the key's issue says it) when the PC clock has run ahead of the ticks. Outside the
+ * queue, like every network read; not asked again at once when the server could not be reached.
+ */
+function resync() {
+  if (!adrift() || !session || !key) return Promise.resolve();
+  // Everything that waits for the time waits for the one question under way.
+  if (syncing) return syncing;
+  if (ticks() - asked < ASK_AGAIN) return Promise.resolve();
+  asked = ticks();
+  syncing = renewKey(epoch, session).catch(() => {}).then(() => { syncing = null; });
+  return syncing;
 }
 /**
  * A confirmed use of `copy` at `at` (server time) moves the copy's expiry to 72 hours after it - once the key has been
@@ -447,12 +466,18 @@ async function handle(port, message, mine) {
   let info = ports.get(port);
   if (!info) { info = { role: null, busy: false, opens: new Map() }; ports.set(port, info); }
   const reply = value => port.postMessage({ type: 'reply', id: message.id, ...value }, value.bytes ? [value.bytes] : []);
-  if (message.type === 'hello') { info.role = message.role === 'viewer' ? 'viewer' : 'list'; broadcast(); return; }
+  if (message.type === 'hello') {
+    info.role = message.role === 'viewer' ? 'viewer' : 'list'; broadcast();
+    // A panel opened after the PC slept: the rows follow once the server has said the time.
+    if (adrift()) void resync().then(() => locked(async () => { await sweep(); broadcast(); })).catch(() => {});
+    return;
+  }
   if (message.type === 'busy') { info.busy = message.busy === true; settleIdle(); return; }
   if (message.type === 'bye') { release(port); ports.delete(port); broadcast(); return; }
   if (message.type === 'session' || message.type === 'add') {
     if (!session || mine !== epoch) return;
     const reason = await prerequisites(); if (mine !== epoch) return;
+    await resync(); if (mine !== epoch) return;
     await locked(async () => {
       if (mine !== epoch) return;
       // The model first catches up with the clock: a row the panel shows gone (past its date) is gone for this add too.
@@ -476,8 +501,10 @@ async function handle(port, message, mine) {
   }
   if (message.type === 'query' || message.type === 'frame') {
     if (settings) await settings;
+    await resync();
     await locked(async () => {
-      if (mine !== epoch || !session || message.session !== session || !key || unavailable) { reply(message.type === 'query' ? { held: null } : { bytes: null }); return; }
+      // Nothing is served while the server's time is in doubt (`adrift`: it could not be asked just now).
+      if (mine !== epoch || !session || message.session !== session || !key || unavailable || adrift()) { reply(message.type === 'query' ? { held: null } : { bytes: null }); return; }
       try {
         await sweep();
         const uid = message.type === 'query' ? message.uid : Model.studyOfPath(message.path), held = store.held(uid);
@@ -497,6 +524,7 @@ async function handle(port, message, mine) {
     }); return;
   }
   if (message.type === 'retry' && session && (!key || unavailable)) await prerequisites();
+  await resync();
   const used = [];
   await locked(async () => {
     if (mine !== epoch) return;
@@ -532,7 +560,11 @@ async function handle(port, message, mine) {
         const name = opening(message.uid, message.copy);
         if (fromViewer(message) && !info.opens.has(name)
           && store.open(message.uid, message.copy)) {
-          info.opens.set(name, { uid: message.uid, copy: message.copy }); used.push([message.uid, message.copy, now()]);
+          // Its window may have left while this message waited its turn (a `bye` waits for nothing): then the window
+          // used the copy and left it - it is not left open with no window to close it.
+          if (ports.get(port) === info) info.opens.set(name, { uid: message.uid, copy: message.copy });
+          else if (store.close(message.uid, message.copy)) store.wake();
+          used.push([message.uid, message.copy, now()]);
         }
         break;
       }
@@ -553,7 +585,7 @@ async function handle(port, message, mine) {
   for (const [uid, copy, at] of used) void touch(uid, copy, at);
   void pump();
 }
-setInterval(() => { void locked(async () => { await sweep(); broadcast(); }).then(() => pump()).catch(() => {}); }, 10 * 60 * 1000);
+setInterval(() => { void resync().then(() => locked(async () => { await sweep(); broadcast(); })).then(() => pump()).catch(() => {}); }, 10 * 60 * 1000);
 self.onconnect = event => {
   const port = event.ports[0]; ports.set(port, { role: null, busy: false, opens: new Map() });
   port.onmessage = e => {

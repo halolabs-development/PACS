@@ -57,9 +57,10 @@ const { webcrypto, randomBytes } = require('node:crypto');
 const KEY = randomBytes(32), SERVER_START = Date.parse('2026-10-30T00:00:00Z');
 function boot({ diskGb = 0.25, respond, disk = memoryDisk(), skew = 0, keyResponse, unavailableDisk = false } = {}) {
   const requests = [], timers = [], imports = [], decryptKeys = [];
-  // `clock` is the server's time and the time that really passes (performance.now()); the PC's own clock reads `skew`
-  // off it, and `setSkew` is someone setting the PC clock while the worker runs.
-  let clock = SERVER_START;
+  // `clock` is the server's time and the time that really passes; the PC's own clock reads `skew` off it, and `setSkew`
+  // is someone setting the PC clock while the worker runs. The ticks (performance.now()) follow the time that passes,
+  // except while the PC `sleep`s with its ticks stopped.
+  let clock = SERVER_START, asleep = 0;
   const me = () => new Response(JSON.stringify({ kind: 'member', preloadDiskGb: diskGb }), { headers: { 'Content-Type': 'application/json' } });
   const images = respond || (async url => {
     const study = /\/studies\/([0-9.]+)\//.exec(url)[1];
@@ -73,7 +74,7 @@ function boot({ diskGb = 0.25, respond, disk = memoryDisk(), skew = 0, keyRespon
   const context = {
     navigator: {storage:{estimate:()=>disk.estimate()}}, Blob, Response, DecompressionStream, AbortController, URL, URLSearchParams, Headers, setTimeout, console,
     TextEncoder, TextDecoder, atob, Uint8Array, Date: class extends Date { static now(){return clock+skew;} },
-    performance: { now: () => clock - SERVER_START },
+    performance: { now: () => clock - SERVER_START - asleep },
     crypto: { randomUUID:()=>webcrypto.randomUUID(), getRandomValues:b=>webcrypto.getRandomValues(b),
       subtle: { encrypt:(...a)=>webcrypto.subtle.encrypt(...a),
         decrypt:(...a)=> { decryptKeys.push(a[1]); return webcrypto.subtle.decrypt(...a); },
@@ -106,7 +107,7 @@ function boot({ diskGb = 0.25, respond, disk = memoryDisk(), skew = 0, keyRespon
     return port;
   };
   const reads = () => requests.filter(r => !r.url.startsWith('/api/'));
-  return { requests, reads, connect, disk, imports, decryptKeys, advance:ms=>{clock+=ms;}, now:()=>clock, setSkew:ms=>{skew=ms;}, sweep:()=>timers.forEach(fn=>fn()),
+  return { requests, reads, connect, disk, imports, decryptKeys, advance:ms=>{clock+=ms;}, sleep:ms=>{clock+=ms;asleep+=ms;}, now:()=>clock, setSkew:ms=>{skew=ms;}, sweep:()=>timers.forEach(fn=>fn()),
     hold: () => { let open; gate = new Promise(resolve => { open = resolve; }); return () => { gate = null; open(); }; } };
 }
 
@@ -1169,6 +1170,65 @@ test('server time is not the PC clock: set back, or forward and back again, whil
     assert.equal((await viewer.ask({ type: 'query', uid: STUDY, session: 'sess-A' })).held, null, 'not held at its date');
     assert.deepEqual([h.disk.frames.size, h.disk.studies.size], [0, 0]);
   }
+});
+
+test('the PC clock decides nothing: set forward under a copy in use, the copy is read until its server date; after a sleep with the ticks stopped, or while the server cannot be asked, nothing is served until the server has said the time', async () => {
+  const frame = (viewer, copy) => viewer.ask({ type: 'frame', path: FRAME, session: 'sess-A', copy });
+  // The PC clock is set three hours forward at server hour 70, a viewer showing the copy (its date: hour 72).
+  const h = boot(), list = await ready(h), { viewer, copy } = await viewerOf(h);
+  viewer.send({ type: 'open', uid: STUDY, copy, session: 'sess-A' });
+  await until(() => statusOf(list, STUDY).open && keyReads(h) >= 3, 'open');
+  for (let i = 0; i < 20; i++) await tick();
+  h.advance(70 * HOUR);
+  h.setSkew(3 * HOUR);
+  const asked = keyReads(h);
+  // Two reads at once: both wait for the one question to the server, and both are served.
+  const both = await Promise.all([frame(viewer, copy), frame(viewer, copy)]);
+  assert.ok(both[0].bytes && both[1].bytes, 'still read: by the server it is hour 70');
+  assert.equal(keyReads(h), asked + 1, 'the two clocks disagreed: the server was asked the time, once');
+  assert.ok((await frame(viewer, copy)).bytes);
+  assert.equal(keyReads(h), asked + 1, 'and not again');
+  assert.deepEqual([statusOf(list, STUDY).status, statusOf(list, STUDY).expiresAt, h.disk.frames.size > 0], ['Ready', SERVER_START + 72 * HOUR, true]);
+  h.advance(2 * HOUR - 1);
+  assert.ok((await frame(viewer, copy)).bytes, 'until its date');
+  h.advance(1);
+  assert.equal((await frame(viewer, copy)).bytes, null, 'and not at it');
+  // The PC sleeps 80 hours and its ticks stop: on waking, the server says the time before anything is served.
+  const s = boot(), slept = await ready(s), sleeper = await viewerOf(s);
+  s.sleep(80 * HOUR);
+  assert.equal((await frame(sleeper.viewer, sleeper.copy)).bytes, null, 'not read after its date, although the ticks say hour 0');
+  await until(() => statusOf(slept, STUDY).status === 'Evicted', 'gone');
+  assert.deepEqual([s.disk.frames.size, s.disk.studies.size], [0, 0]);
+  // The clocks disagree and the server cannot be asked: nothing is served, nothing is removed, no row is said gone.
+  let down = false;
+  const u = boot({ keyResponse: () => down ? new Response('', { status: 503 })
+    : new Response(JSON.stringify({ keyId: 'key-A', key: KEY.toString('base64'), serverTime: new Date(u.now()).toISOString() })) });
+  const unsure = await ready(u), reader = await viewerOf(u);
+  u.advance(10 * HOUR); u.setSkew(3 * HOUR); down = true;
+  assert.equal((await frame(reader.viewer, reader.copy)).bytes, null, 'not served while the time is in doubt');
+  assert.equal((await reader.viewer.ask({ type: 'query', uid: STUDY, session: 'sess-A' })).held, null);
+  assert.deepEqual([statusOf(unsure, STUDY).status, u.disk.frames.size > 0], ['Ready', true], 'kept: it may well be within its date');
+  down = false; u.advance(6000);
+  assert.ok((await frame(reader.viewer, reader.copy)).bytes, 'served again once the server has said the time');
+});
+
+test('an open still waiting its turn when its window leaves is a copy used and left - never one left open with no window to close it', async () => {
+  const h = boot({ diskGb: 1800 / 1024 ** 3 }), list = await ready(h), { viewer, copy } = await viewerOf(h);
+  let release;
+  const gate = new Promise(resolve => { release = resolve; }), get = h.disk.get;
+  h.disk.get = async id => { await gate; return get(id); };             // a frame read holds the worker's queue
+  const reading = viewer.ask({ type: 'frame', path: FRAME, session: 'sess-A', copy });
+  for (let i = 0; i < 5; i++) await tick();
+  h.advance(HOUR);
+  viewer.send({ type: 'open', uid: STUDY, copy, session: 'sess-A' });     // the check's frame came in ...
+  viewer.send({ type: 'bye' });                                           // ... and the window closed at once
+  h.disk.get = get; release();
+  assert.ok((await reading).bytes);
+  await until(() => statusOf(list, STUDY).expiresAt === SERVER_START + 73 * HOUR, 'the use counts, from hour 1');
+  assert.equal(statusOf(list, STUDY).open, false, 'not left open');
+  list.send({ type: 'add', session: 'sess-A', studies: [{ uid: OTHER }] });
+  await until(() => statusOf(list, OTHER)?.status === 'Ready', 'the next study gets the room');
+  assert.equal(statusOf(list, STUDY).status, 'Evicted');
 });
 
 test('a row shown gone at its date can be fetched again at once: Retry, or Preload again, before any sweep has run', async () => {
