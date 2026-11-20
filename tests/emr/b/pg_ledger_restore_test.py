@@ -1087,6 +1087,7 @@ class PgLedgerNativeRestoreLive(PgLedgerFixture):
         other={**catalog,'ledger':{**catalog['ledger'],'installation_id':str(uuid.uuid4())}}
         ops.write_json(wrong/'emr-catalog.json',other)
         manifest['sha256']['emr-catalog.json']=ops.digest(wrong/'emr-catalog.json')
+        manifest['bytes']['emr-catalog.json']=(wrong/'emr-catalog.json').stat().st_size
         ops.write_json(wrong/'manifest.json',manifest)
         with self.assertRaisesRegex(RuntimeError,'owner/ACL/roles/tablespace differ'):ops.rehearse(wrong)
         self.assertEqual(source_before,{n:ops.digest(snapshot/n) for n in source_before})
