@@ -99,6 +99,8 @@ class ViewerUXPriorsE2E(ViewerLayoutE2E):
         other = self.ct('U3-OTHER-' + uuid.uuid4().hex[:8], 'other patient', '20250101')
         self.seed_report(y, 'approve', findings='Original Y findings\nSecond line')
         head = self.versions(y)[-1]
+        # The same row as the screen reads it, with the time the study keeps for its approval (versions() drops it).
+        shown = max(self.stack.request("GET", f"/studies/{y.uid}/report/versions", "doctor").body, key=lambda row: row["version"])
         self.seed_report(current)
         work, page = self.open_viewer(current)
         work.locator('#findings').fill('Retained private draft')
@@ -120,12 +122,12 @@ class ViewerUXPriorsE2E(ViewerLayoutE2E):
         expect(report).to_contain_text('Version ' + str(head['version']))
         # Who signed it: the member name the server sends beside the stored login. When: this browser's minute of the
         # version's time (the current cycle's approval at the time the study keeps), never the server's UTC text.
-        expect(report).to_contain_text(head.get('authorName') or head['author'])
-        shown_at = head.get('keptAt') or head['at']
+        expect(report).to_contain_text(shown.get('authorName') or shown['author'])
+        shown_at = shown.get('keptAt') or shown['at']
         offset = page.evaluate("iso => new Date(iso).getTimezoneOffset()", shown_at)
         local = datetime.datetime.fromisoformat(shown_at.replace('Z', '+00:00')).replace(tzinfo=None) - datetime.timedelta(minutes=offset)
-        expect(report).to_contain_text(head['keptOn'] if head.get('keptOn') else f"{local:%Y-%m-%d %H:%M}")
-        expect(report).not_to_contain_text(head['at'])
+        expect(report).to_contain_text(shown['keptOn'] if shown.get('keptOn') else f"{local:%Y-%m-%d %H:%M}")
+        expect(report).not_to_contain_text(shown['at'])
         expect(report).to_contain_text(y.uid)
         self.assertEqual(report.locator('input,textarea,[contenteditable=true]').count(), 0)
         self.assertEqual(self.cells(page), before)

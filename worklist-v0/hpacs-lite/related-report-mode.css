@@ -21,7 +21,7 @@
 .related-mode-role { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 #related-mode-status { flex: 1 1 0; width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The shown report's version, signer and time (the plain view's head line is hidden in the mode): cut, whole in its tooltip. */
-.related-mode-signed { flex: 1 1 0; width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c3cad6; font-size: 11px; }
+.related-mode-signed { flex: 1 1 0; width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .related-mode-foot .spacer { display: none; }
 #related-mode button { flex: none; white-space: nowrap; }
 #related-mode-title { margin: 0; padding: 0; font-size: 13px; font-weight: 600; }

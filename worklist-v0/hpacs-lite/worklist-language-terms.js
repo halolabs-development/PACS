@@ -1325,7 +1325,7 @@ window.KinLanguageTerms = {
     ["{0} · {n1}건", "{0} · {n1}", "l"],
     ["{0} · 마지막 관측 기준 {1}", "{0} · As of last observation {1}", "l"],
     ["{0} · 아직 성공한 조회가 없습니다", "{0} · No successful query yet", "l"],
-    ["{0} · 판독의 {1}", "{0} · Reader {1}", "l"],
+    ["{0} · 판독의 {1} · {2}", "{0} · Reader {1} · {2}", "l"],
     ["{0} · 프레임 {1}", "{0} · Frame {1}", "l"],
     ["{0} — 판독 뷰어", "{0} — Reading Viewer", "l"],
     ["{0} ▸원격", "{0} ▸Remote", "l"],
